@@ -5129,3 +5129,31 @@ target of 2^16,609.6, and a randomly animated palette. Three findings came out o
 - The twin-still check (`a still split across this device and a twin is bit-identical, both
   rendering`) flaked `tiles [12, 0]` again: the twin rendered none of the 12 tiles. That is its
   one-tile margin, first seen in W5.
+
+*The two flakes' cause, fixed, and the driver cache made visible* (`f0cf44ea` and the next commit).
+- The cause of both `--selftest` flakes was NVIDIA's Vulkan shader cache (`%LOCALAPPDATA%\NVIDIA\GLCache`),
+  full at its 1 GB cap. 621 MB of it was written on 2026-10-16 by test runs from many exe paths;
+  the driver keeps a set per path. My earlier "first selftest of an exe at a new path" was a
+  symptom. The big iterate pipelines then missed on every run: the gather pipeline ~7.5 s each of
+  6 times, a u-space BLA iterate pipeline up to 9.5 s, so `--selftest` took 386-450 s instead of 164 s.
+- The selftest creates ~1,480 pipelines of ~18 shapes beside the custom formulas, because every
+  export creates its own.
+- `fractadyne_gpu::pipeline_compile` accounts every pipeline creation. The watchdog counts a
+  finished compile as activity, and a compile in flight under 60 s is not a hang.
+  `--recordtest`'s 13 s wedge is still caught. The twin-still check warms the twin first.
+- Under the full cache: exit 0, 0 `possible hang`, twin tiles [9, 3].
+- A `wgpu::PipelineCache` per device, which would compile each pipeline once per process, was tried
+  and backed out. wgpu 24 has no device identity unique across instances, and `open_headless`
+  makes an instance per device, so a same-card twin was handed the window's cache (wgpu-core
+  panic). It needs the cache passed in by the device's owner, or one instance for every device:
+  an offer.
+- Detection, at the maintainer's request ("check the shader cache when full and inform the user").
+  - The signal is the symptom, not a folder size: a repeat of a pipeline this process compiled
+    before (same source, entry, constants, formats), taking 1 s or more, where a working cache
+    answers in ~7 ms. Reported from the second such repeat.
+  - The source is in the key, because each custom formula is a new shader that legitimately
+    compiles slowly once.
+  - The app logs `[fd-gpu] the graphics driver's shader cache is not keeping compiled shaders`
+    once: per frame, and from `crate::exit`, because a harness can do all its work inside one
+    frame. Outside a harness it shows the notice "Graphics driver not keeping shaders": on NVIDIA
+    the folder with its size and the Shader Cache Size setting; on AMD, Reset Shader Cache.

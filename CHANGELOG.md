@@ -68,6 +68,12 @@ Changes after 0.3.0-beta.1:
   restart a pixel's orbit exactly as the slower arithmetic does. Deep renders are pixel-identical
   to the full-precision path again (38 of 38), at the same speed: 4.2e275× at 4K still takes
   0.30 s of GPU time against 0.74 s without the faster arithmetic.
+- **Fractadyne tells you when the graphics driver stops keeping its shaders (0.3.0-beta.20).** A
+  driver's shader cache normally answers a shader Fractadyne has compiled before in milliseconds.
+  Once the cache is full it does not, and every export and launch spends seconds compiling. When
+  the same shader compiles slowly a second time in one session, a notice says so, names the
+  shader and the time it took, and says what to clear: on NVIDIA, the cache folder with its size
+  and the Control Panel setting that keeps it from filling again; on AMD, Reset Shader Cache.
 - **A slow shader compile is no longer logged as a hang (0.3.0-beta.20).** When the graphics
   driver's shader cache misses (after a driver update, or once the cache is full), Fractadyne's
   largest shaders take 5 to 10 seconds each to compile. Two in a row made the watchdog log a

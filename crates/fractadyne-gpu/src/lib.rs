@@ -1677,7 +1677,13 @@ pub(crate) fn raster_pipeline_c(
             })
         })
         .collect();
-    pipeline_compile::compiling(|| device.create_render_pipeline(&wgpu::RenderPipelineDescriptor {
+    // What makes this pipeline the same as an earlier one, so a slow repeat can be recognised
+    // (`pipeline_compile::driver_cache_not_keeping`).
+    let mut consts: Vec<String> = constants.iter().map(|(k, v)| format!("{k}={v}")).collect();
+    consts.sort();
+    let name = format!("{label} {fs_entry}");
+    let shape = format!("{vs_entry} {} {formats:?}", consts.join(","));
+    pipeline_compile::compiling_keyed(&name, &shape, || device.create_render_pipeline(&wgpu::RenderPipelineDescriptor {
         label: Some(label),
         layout: Some(layout),
         vertex: wgpu::VertexState {
@@ -1704,6 +1710,7 @@ pub(crate) fn raster_pipeline_c(
 /// once at init and each export builds it once; both are occasional, so the compile cost is
 /// negligible and a single definition keeps the four former copies from drifting.
 pub(crate) fn shader_module(device: &wgpu::Device) -> wgpu::ShaderModule {
+    pipeline_compile::set_source(0);
     device.create_shader_module(wgpu::ShaderModuleDescriptor {
         label: Some("fractadyne.shader"),
         source: wgpu::ShaderSource::Wgsl(include_str!("mandelbrot.wgsl").into()),
@@ -1719,10 +1726,13 @@ pub(crate) fn shader_module_for(
 ) -> wgpu::ShaderModule {
     match custom {
         None => shader_module(device),
-        Some(c) => device.create_shader_module(wgpu::ShaderModuleDescriptor {
-            label: Some("fractadyne.custom"),
-            source: wgpu::ShaderSource::Wgsl(c.source.as_str().into()),
-        }),
+        Some(c) => {
+            pipeline_compile::set_source(c.key);
+            device.create_shader_module(wgpu::ShaderModuleDescriptor {
+                label: Some("fractadyne.custom"),
+                source: wgpu::ShaderSource::Wgsl(c.source.as_str().into()),
+            })
+        }
     }
 }
 

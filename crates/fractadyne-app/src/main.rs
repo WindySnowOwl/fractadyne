@@ -73,6 +73,7 @@ mod fractal;
 mod life_view;
 pub(crate) use life_view::UiPointer;
 mod lsystem_view;
+mod driver_cache;
 mod gpu_choice;
 mod gpu_worker;
 mod motion_worker;
@@ -484,6 +485,8 @@ fn main() -> eframe::Result<()> {
 pub(crate) fn exit(code: i32) -> ! {
     // A task logs its exit code and holds its own log to `validation/logcheck-rules.toml`; a rule
     // it broke turns a 0 into a 1 (`harness::logcheck::at_exit`).
+    // A harness can do all its work inside one frame, so the per-frame check never saw it.
+    let _ = driver_cache::log_once();
     let code = harness::logcheck::at_exit(code);
     diag::end_session();
     std::process::exit(code)
@@ -6189,6 +6192,8 @@ struct FractadyneApp {
     last_good_view: [Option<Viewport>; 2],
     view_guard_trips: u32,
     view_guard_line: diag::LineLimiter,
+    /// The driver's shader cache was found not keeping compiled shaders, and said so (`driver_cache`).
+    driver_cache_told: bool,
     /// After a scale-factor change: the logical size to restore, when the scale LAST changed (the
     /// settle clock, refreshed by every flip) and when the anchor was FIRST set (its expiry clock,
     /// which is not — or a burst that never settles would hold an anchor for ever). See the
@@ -7211,6 +7216,7 @@ impl FractadyneApp {
             last_good_view: [None, None],
             view_guard_trips: 0,
             view_guard_line: diag::LineLimiter::default(),
+            driver_cache_told: false,
             dpi_hold: None,
             suppress_autosave: false,
             pending_state_warning,
@@ -15660,6 +15666,8 @@ impl eframe::App for FractadyneApp {
         self.stash_crash_view();
         // Advanced ▸ Second graphics card: start, stop or replace the worker as the setting says.
         self.drive_worker_setting();
+        // The driver's shader cache stopped keeping compiled shaders: say so once (`driver_cache`).
+        self.check_driver_shader_cache();
         // While the centre still sits exactly on a coordinate expression, top its precision up to
         // whatever the current zoom needs — so zooming straight into an exact landmark stays exact
         // rather than freezing at the digits it was entered with. Cheap no-op once off-point.
@@ -15896,6 +15904,9 @@ impl eframe::App for FractadyneApp {
         }
         // Adapter name for the --uitest report header (once is enough; cheap to read each frame).
         let gpu_name = frame.wgpu_render_state().map(|rs| rs.adapter.get_info().name);
+        if let Some(rs) = frame.wgpu_render_state() {
+            driver_cache::set_vendor(rs.adapter.get_info().vendor);
+        }
         // The ADAPTER limit, not the device's: see `attach_bytes_per_sample`.
         let adapter_attach = frame
             .wgpu_render_state()
