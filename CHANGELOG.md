@@ -79,8 +79,8 @@ Changes after 0.3.0-beta.1:
 - **Fractadyne tells you when the graphics driver stops keeping its shaders (0.3.0-beta.20).** A
   driver's shader cache normally answers a shader Fractadyne has compiled before in milliseconds.
   Once the cache is full it does not, and every export and launch spends seconds compiling. When
-  the same shader compiles slowly a second time in one session, a notice says so, names the
-  shader and the time it took, and says what to clear: on NVIDIA, the cache folder with its size
+  the same shader compiles slowly a second time on the same graphics card in one session, a
+  notice says so, names the shader and the time it took, and says what to clear: on NVIDIA, the cache folder with its size
   and the Control Panel setting that keeps it from filling again; on AMD, Reset Shader Cache.
 - **A slow shader compile is no longer logged as a hang (0.3.0-beta.20).** When the graphics
   driver's shader cache misses (after a driver update, or once the cache is full), Fractadyne's

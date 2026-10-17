@@ -1509,7 +1509,7 @@ impl FractadyneApp {
                 // `together`: both devices set up before either takes a tile. Twelve small tiles
                 // otherwise go to this device before the twin is ready ([12, 0] in ~0.5 s, with a
                 // warm driver cache and a cold one, 2026-10-16/17; once in W5).
-                fractadyne_gpu::render_export_multi_with(&[(device, queue), (&t.device, &t.queue)], &s, &progress, &cancel, lose, true)
+                fractadyne_gpu::render_export_multi_with(&[(device, queue), (&t.device, &t.queue)], &[0, t.compile_tag], &s, &progress, &cancel, lose, true)
                     .map_err(|e| e.to_string())
             };
             for (lose, name, threshold) in [

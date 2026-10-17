@@ -2229,16 +2229,18 @@ pub(crate) fn render_split(
     let (device, queue, name) = window;
     let mut devices: Vec<(&eframe::wgpu::Device, &eframe::wgpu::Queue)> = vec![(device, queue)];
     let mut names = vec![name.to_string()];
+    let mut adapters = vec![0];
     for h in extra.iter().filter(|h| h.alive.load(std::sync::atomic::Ordering::Relaxed)) {
         devices.push((&h.device, &h.queue));
         names.push(h.name.clone());
+        adapters.push(h.compile_tag);
     }
     let limits: Vec<eframe::wgpu::Limits> = devices.iter().map(|(d, _)| d.limits()).collect();
     if !fractadyne_gpu::export_splits(&limits, req) {
         crate::diag::log_line("render", "this render cannot be split by tile (outside the chunked iterate): the window's card renders it");
     }
     let t = std::time::Instant::now();
-    let (r, shares) = fractadyne_gpu::render_export_multi(&devices, req, progress, cancel)?;
+    let (r, shares) = fractadyne_gpu::render_export_multi(&devices, &adapters, req, progress, cancel)?;
     let words: Vec<String> = shares
         .iter()
         .zip(&names)

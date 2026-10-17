@@ -2198,8 +2198,11 @@ fn min_limits(limits: &[wgpu::Limits]) -> wgpu::Limits {
 /// each tile as ITS device draws it. A device that fails (lost, or its reference too large for it)
 /// is retired and its tile goes back for another; the render fails only when none is left.
 /// Requires [`export_splits`]; a request outside it renders on the first device as usual.
+/// `adapters`: each device's card for the compile account ([`crate::pipeline_compile::set_adapter`]),
+/// 0 for the window's card; a device it does not cover counts as the window's.
 pub fn render_export_multi(
     devices: &[(&wgpu::Device, &wgpu::Queue)],
+    adapters: &[u64],
     req: &ExportRequest,
     progress: &std::sync::atomic::AtomicU32,
     cancel: &std::sync::atomic::AtomicBool,
@@ -2210,7 +2213,7 @@ pub fn render_export_multi(
         let (d, n) = v.trim().split_once(':')?;
         Some((d.parse().ok()?, n.parse().ok()?))
     });
-    render_export_multi_with(devices, req, progress, cancel, lose_after, false)
+    render_export_multi_with(devices, adapters, req, progress, cancel, lose_after, false)
 }
 
 /// [`render_export_multi`] with its failure hook as a parameter: `lose_after = Some((d, n))` makes
@@ -2222,6 +2225,7 @@ pub fn render_export_multi(
 #[doc(hidden)]
 pub fn render_export_multi_with(
     devices: &[(&wgpu::Device, &wgpu::Queue)],
+    adapters: &[u64],
     req: &ExportRequest,
     progress: &std::sync::atomic::AtomicU32,
     cancel: &std::sync::atomic::AtomicBool,
@@ -2264,7 +2268,9 @@ pub fn render_export_multi_with(
     std::thread::scope(|sc| {
         for (di, &(device, queue)) in devices.iter().enumerate() {
             let (tx, take, requeue, rects, together) = (tx.clone(), &take, &requeue, &rects, &together_barrier);
+            let adapter = adapters.get(di).copied().unwrap_or(0);
             sc.spawn(move || {
+                crate::pipeline_compile::set_adapter(adapter);
                 let renderer = TileRenderer::new(device, queue, req, plan);
                 if start_together {
                     together.wait();

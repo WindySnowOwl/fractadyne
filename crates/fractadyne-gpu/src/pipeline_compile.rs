@@ -15,8 +15,9 @@
 //!
 //! ⭐**A DRIVER CACHE THAT DOES NOT KEEP SHADERS IS NAMED** ([`driver_cache_not_keeping`]). A
 //! repeat of a pipeline this process has already compiled (same shader source, entry point,
-//! constants and formats) is answered by a working driver cache in milliseconds. A repeat that
-//! takes [`SLOW_REPEAT_MS`] or more means the cache did not keep it, usually because it is full.
+//! constants and formats, on the same card: [`set_adapter`]) is answered by a working driver cache
+//! in milliseconds. A repeat that takes [`SLOW_REPEAT_MS`] or more means the cache did not keep it,
+//! usually because it is full.
 //! From the [`SLOW_REPEATS_TO_REPORT`]th such repeat on, the app is told (the slowest, and how
 //! many): one could be a disk stall, and a full cache makes dozens a self-test (2026-10-16). The
 //! source is in the key, because each custom formula is a new shader that legitimately compiles
@@ -62,6 +63,27 @@ thread_local! {
     /// The shader source the pipelines this thread creates next are built from: 0 for the fixed
     /// shader, a custom formula's key for its generated one ([`set_source`]).
     static SOURCE: Cell<u64> = const { Cell::new(0) };
+    /// The card the pipelines this thread creates next are compiled for: 0 for the window's (the
+    /// main thread, and any thread not told otherwise), else [`adapter_tag`] ([`set_adapter`]).
+    static ADAPTER: Cell<u64> = const { Cell::new(0) };
+}
+
+/// A card's tag for [`set_adapter`]: its name and backend, hashed (FNV-1a), never 0 (the window's).
+pub fn adapter_tag(name: &str, backend: &str) -> u64 {
+    let mut h: u64 = 0xcbf2_9ce4_8422_2325;
+    for b in name.bytes().chain([0]).chain(backend.bytes()) {
+        h = (h ^ u64::from(b)).wrapping_mul(0x0100_0000_01b3);
+    }
+    h.max(1)
+}
+
+/// Compile this thread's next pipelines for card `tag` ([`adapter_tag`], 0 = the window's). Each
+/// card, and each graphics API on one card, has its own driver shader cache, so a pipeline another
+/// card compiled is a first compile here, not a repeat: without the tag, the second card of a
+/// two-card machine compiling the window's pipelines cold would read as a cache that does not keep
+/// shaders. A device on the window's own card and API passes 0: it shares the window's cache.
+pub fn set_adapter(tag: u64) {
+    ADAPTER.with(|a| a.set(tag));
 }
 
 static EPOCH: OnceLock<Instant> = OnceLock::new();
@@ -96,21 +118,32 @@ pub(crate) fn set_source(key: u64) {
 }
 
 /// [`compiling`] for a pipeline that a repeat can be recognised by: `name` (label and entry point)
-/// and `shape` (constants and formats), with this thread's shader source.
+/// and `shape` (constants and formats), with this thread's shader source and card.
 pub(crate) fn compiling_keyed<T>(name: &str, shape: &str, f: impl FnOnce() -> T) -> T {
     let start = now_ms();
     let out = compiling(f);
     let ms = now_ms().saturating_sub(start);
-    let key = format!("{name}|{shape}|{:016x}", SOURCE.with(|s| s.get()));
+    note_compile(repeat_key(name, shape), name, ms);
+    out
+}
+
+/// What recognises a repeat: the pipeline (`name`, `shape`) with this thread's shader source and card.
+fn repeat_key(name: &str, shape: &str) -> String {
+    format!("{name}|{shape}|{:016x}|{:016x}", SOURCE.with(|s| s.get()), ADAPTER.with(|a| a.get()))
+}
+
+/// Account one keyed compile of `ms`; true when it was a slow repeat (and so recorded).
+fn note_compile(key: String, name: &str, ms: u64) -> bool {
     let repeat = {
         let mut seen = SEEN.lock().unwrap_or_else(|e| e.into_inner());
         !seen.get_or_insert_with(HashSet::new).insert(key)
     };
-    if slow_repeat(repeat, ms) {
+    let slow = slow_repeat(repeat, ms);
+    if slow {
         let mut slowest = SLOWEST.lock().unwrap_or_else(|e| e.into_inner());
         *slowest = Some(worse(slowest.take(), name, ms));
     }
-    out
+    slow
 }
 
 /// The record after one more slow repeat of `name` taking `ms`: the slowest kept, the count up.
