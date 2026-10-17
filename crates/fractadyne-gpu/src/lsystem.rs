@@ -108,7 +108,7 @@ impl LSystemRenderer {
             push_constant_ranges: &[],
         });
         let target = Some(wgpu::ColorTargetState { format: crate::ITER_FORMAT, blend: None, write_mask: wgpu::ColorWrites::ALL });
-        let pipeline = device.create_render_pipeline(&wgpu::RenderPipelineDescriptor {
+        let pipeline = crate::pipeline_compile::compiling(|| device.create_render_pipeline(&wgpu::RenderPipelineDescriptor {
             label: Some("lsystem.segments"),
             layout: Some(&layout),
             vertex: wgpu::VertexState {
@@ -132,9 +132,9 @@ impl LSystemRenderer {
             multisample: wgpu::MultisampleState::default(),
             multiview: None,
             cache: None,
-        });
+        }));
         let target = Some(wgpu::ColorTargetState { format: crate::ITER_FORMAT, blend: None, write_mask: wgpu::ColorWrites::ALL });
-        let tri_pipeline = device.create_render_pipeline(&wgpu::RenderPipelineDescriptor {
+        let tri_pipeline = crate::pipeline_compile::compiling(|| device.create_render_pipeline(&wgpu::RenderPipelineDescriptor {
             label: Some("lsystem.triangles"),
             layout: Some(&layout),
             vertex: wgpu::VertexState {
@@ -159,7 +159,7 @@ impl LSystemRenderer {
             multisample: wgpu::MultisampleState::default(),
             multiview: None,
             cache: None,
-        });
+        }));
         use wgpu::BufferUsages as U;
         let uniform = device.create_buffer(&wgpu::BufferDescriptor {
             label: Some("lsystem.view"),

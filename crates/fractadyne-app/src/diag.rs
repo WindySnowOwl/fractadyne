@@ -1314,13 +1314,28 @@ pub(crate) fn start_watchdog() {
             // start" — so the re-warn spacing suppressed EVERY hang in a process's first 30 s:
             // found when `--recordtest` wedged its UI thread for 13 s at +6 s and the watchdog
             // said nothing at all.
+            // A pipeline compile is one blocking driver call with no progress inside it: with the
+            // driver's shader cache cold or full, 5-10 s each (`fractadyne_gpu::pipeline_compile`).
+            // One that FINISHED is work, as a reference build's steps are; one still running is not
+            // a hang until it has run this long, far past any measured.
+            const COMPILE_GRACE_S: u64 = 60;
             let mut last_warn_ms: Option<u64> = None;
+            let mut compiles_seen = fractadyne_gpu::pipeline_compile::compiles_done();
             loop {
                 std::thread::sleep(Duration::from_secs(2));
                 let Some(t) = START.get() else { continue };
+                let compiles = fractadyne_gpu::pipeline_compile::compiles_done();
+                if compiles != compiles_seen {
+                    compiles_seen = compiles;
+                    alive();
+                }
+                let compiling_ms = fractadyne_gpu::pipeline_compile::compile_in_flight_ms();
                 let now_ms = t.elapsed().as_millis() as u64;
                 let alive_ms = ALIVE_MS.load(Ordering::Relaxed);
                 let stale_s = now_ms.saturating_sub(alive_ms) / 1000;
+                if compiling_ms.is_some_and(|ms| ms < COMPILE_GRACE_S * 1000) {
+                    continue;
+                }
                 if stale_s >= STALL_S
                     && last_warn_ms.is_none_or(|w| now_ms.saturating_sub(w) >= REWARN_S * 1000)
                 {
@@ -1332,11 +1347,15 @@ pub(crate) fn start_watchdog() {
                     log_line(
                         "watch",
                         &format!(
-                            "possible hang: no activity for {stale_s}s — last activity: {}",
+                            "possible hang: no activity for {stale_s}s — last activity: {}{}",
                             {
                                 let b = current_breadcrumb();
                                 if b.is_empty() { "<none recorded>".into() } else { b }
-                            }
+                            },
+                            compiling_ms.map_or(String::new(), |ms| format!(
+                                " (a pipeline compile has run {} s)",
+                                ms / 1000
+                            ))
                         ),
                     );
                 }

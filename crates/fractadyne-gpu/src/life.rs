@@ -161,14 +161,14 @@ impl LifeGpu {
                 bind_group_layouts: &[layout],
                 push_constant_ranges: &[],
             });
-            device.create_compute_pipeline(&wgpu::ComputePipelineDescriptor {
+            crate::pipeline_compile::compiling(|| device.create_compute_pipeline(&wgpu::ComputePipelineDescriptor {
                 label: Some(entry_point),
                 layout: Some(&pl),
                 module: &module,
                 entry_point: Some(entry_point),
                 compilation_options: Default::default(),
                 cache: None,
-            })
+            }))
         };
         let step_pipeline = pipeline(&step_layout, "cs_step");
         let stats_pipeline = pipeline(&stats_layout, "cs_stats");

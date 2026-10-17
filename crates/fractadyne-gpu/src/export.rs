@@ -864,7 +864,7 @@ impl Packer {
                 Some(wgpu::ColorTargetState { format, blend: None, write_mask: wgpu::ColorWrites::ALL })
             })
             .collect();
-        let scatter_pipeline = device.create_render_pipeline(&wgpu::RenderPipelineDescriptor {
+        let scatter_pipeline = crate::pipeline_compile::compiling(|| device.create_render_pipeline(&wgpu::RenderPipelineDescriptor {
             label: Some("export.pack_scatter"),
             layout: Some(&layout),
             vertex: wgpu::VertexState {
@@ -895,7 +895,7 @@ impl Packer {
             multisample: wgpu::MultisampleState::default(),
             multiview: None,
             cache: None,
-        });
+        }));
         let area = tile_size[0] as u64 * tile_size[1] as u64;
         let list = |label| {
             device.create_buffer(&wgpu::BufferDescriptor {

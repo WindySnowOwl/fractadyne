@@ -26,6 +26,8 @@ pub mod custom;
 pub mod life;
 /// L-systems: the segment pass (design/lsystems.md).
 pub mod lsystem;
+/// What compiling pipelines costs, for the app's watchdog and the self-test.
+pub mod pipeline_compile;
 
 /// The Rust/WGSL uniform-layout gate — see the module's own docs.
 #[cfg(test)]
@@ -1675,7 +1677,7 @@ pub(crate) fn raster_pipeline_c(
             })
         })
         .collect();
-    device.create_render_pipeline(&wgpu::RenderPipelineDescriptor {
+    pipeline_compile::compiling(|| device.create_render_pipeline(&wgpu::RenderPipelineDescriptor {
         label: Some(label),
         layout: Some(layout),
         vertex: wgpu::VertexState {
@@ -1695,7 +1697,7 @@ pub(crate) fn raster_pipeline_c(
         multisample: wgpu::MultisampleState::default(),
         multiview: None,
         cache: None,
-    })
+    }))
 }
 
 /// The WGSL shader module (iterate + color passes). Created per call site — the live view builds it

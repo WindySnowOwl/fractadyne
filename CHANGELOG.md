@@ -68,6 +68,13 @@ Changes after 0.3.0-beta.1:
   restart a pixel's orbit exactly as the slower arithmetic does. Deep renders are pixel-identical
   to the full-precision path again (38 of 38), at the same speed: 4.2e275× at 4K still takes
   0.30 s of GPU time against 0.74 s without the faster arithmetic.
+- **A slow shader compile is no longer logged as a hang (0.3.0-beta.20).** When the graphics
+  driver's shader cache misses (after a driver update, or once the cache is full), Fractadyne's
+  largest shaders take 5 to 10 seconds each to compile. Two in a row made the watchdog log a
+  possible hang, and the self-test's log check failed a run that was compiling. A compile now
+  counts as activity (one still running is given a minute), and the self-test says how long
+  compiling took. Found on a machine whose NVIDIA shader cache had filled its 1 GB: the self-test
+  took 386 s instead of 164 s, with 219 s of it compiling, and now passes either way.
 - **A busy session's log is a quarter of the size (0.3.0-beta.20).** While zooming, the app
   builds four to eight small reference orbits a second, and each wrote two lines to the log: 70 to
   86% of a busy session's log, 300 KB to 1.4 MB per 14 minutes. A small build now logs at most
