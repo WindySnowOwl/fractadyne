@@ -1452,7 +1452,7 @@ fn sa_replay(steps: &[SaStep], log2_max_dc: f64, limit: u32) -> SeriesSkip {
 }
 
 /// One recorded walk and what it can answer.
-struct SaTrace {
+pub(crate) struct SaTrace {
     cx: BigFloat,
     cy: BigFloat,
     formula: u32,
@@ -1479,13 +1479,18 @@ impl SaTrace {
 }
 
 /// Recorded walks, the latest few (a tour holds one reference for hundreds of frames).
-pub(crate) struct SaTraces(std::sync::Mutex<Vec<SaTrace>>);
+pub(crate) struct SaTraces {
+    pub(crate) traces: std::sync::Mutex<Vec<SaTrace>>,
+    /// The longest walk this cache records (steps); a longer one is walked plainly
+    /// ([`set_sa_trace_cache_limited`] sets the session's).
+    pub(crate) max_steps: std::sync::atomic::AtomicU32,
+}
 
 const SA_TRACES_KEPT: usize = 2;
 
 impl SaTraces {
     pub(crate) const fn new() -> SaTraces {
-        SaTraces(std::sync::Mutex::new(Vec::new()))
+        SaTraces { traces: std::sync::Mutex::new(Vec::new()), max_steps: std::sync::atomic::AtomicU32::new(u32::MAX) }
     }
 
     /// [`series_skip_in`], from a recorded walk when one covers it, else recording one.
@@ -1504,10 +1509,16 @@ impl SaTraces {
     ) -> SeriesSkip {
         let limit = max_iter.min(orbit_len.saturating_sub(2)).min(sa_step_budget(p));
         {
-            let traces = self.0.lock().unwrap_or_else(|e| e.into_inner());
+            let traces = self.traces.lock().unwrap_or_else(|e| e.into_inner());
             if let Some(t) = traces.iter().find(|t| t.is_for(cx, cy, formula, p) && t.covers(limit)) {
                 return sa_replay(&t.steps, log2_max_dc, limit);
             }
+        }
+        // A record longer than the session allows (`set_sa_trace_cache_limited`) is not made: the
+        // frame walks as it would with the cache off.
+        let record_len = orbit_len.saturating_sub(2).min(sa_step_budget(p));
+        if record_len > self.max_steps.load(std::sync::atomic::Ordering::Relaxed) {
+            return series_skip_walk(backend, cx, cy, log2_max_dc, max_iter, orbit_len, formula, p, cancel, None);
         }
         // Record to the limit the orbit and the budget allow, not the frame's `max_iter`: the
         // steps do not depend on the limit, so a longer record serves the deeper frames too. A
@@ -1531,7 +1542,7 @@ impl SaTraces {
             ended,
         };
         let out = sa_replay(&trace.steps, log2_max_dc, limit);
-        let mut traces = self.0.lock().unwrap_or_else(|e| e.into_inner());
+        let mut traces = self.traces.lock().unwrap_or_else(|e| e.into_inner());
         traces.retain(|t| !t.is_for(cx, cy, formula, p));
         traces.push(trace);
         if traces.len() > SA_TRACES_KEPT {
@@ -1548,7 +1559,19 @@ static SA_TRACES_ON: std::sync::atomic::AtomicBool = std::sync::atomic::AtomicBo
 /// one reference). Off by default: a single render walks once anyway, and the record walks the
 /// whole budget where the frame's own walk may stop early.
 pub fn set_sa_trace_cache(on: bool) {
+    SA_TRACES.max_steps.store(u32::MAX, std::sync::atomic::Ordering::Relaxed);
     SA_TRACES_ON.store(on, std::sync::atomic::Ordering::Relaxed);
+}
+
+/// [`set_sa_trace_cache`] for a live session: record a walk only when it is at most `max_steps`
+/// long (0 = the cache off). A live dive rebuilds one reference point's orbit and BLA every fraction
+/// of an octave, and where the orbit escapes early the series walk is forced on for it (the app's
+/// `sa_short_escaper`): measured at 2^250 on a 4× dive, 151–163 ms of each ~180 ms build, the same
+/// walk every time. A record is ~90 bytes a step and walks to the orbit's end, so a long orbit (a
+/// deep hold's millions of samples) is walked plainly instead of recorded.
+pub fn set_sa_trace_cache_limited(max_steps: u32) {
+    SA_TRACES.max_steps.store(max_steps, std::sync::atomic::Ordering::Relaxed);
+    SA_TRACES_ON.store(max_steps > 0, std::sync::atomic::Ordering::Relaxed);
 }
 
 /// Whether a skip walked with `orbit_len` = an UPPER BOUND on the reference length is also the

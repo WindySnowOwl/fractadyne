@@ -524,6 +524,27 @@ it as a detail floor before a change that trades one for the other is judged by 
 
 The 4× rows still fail the gate: the 2^93 switch (P-E: seed floatexp's budget from the df32 rate it
 leaves, scaled by the measured per-step cost ratio — safety-sensitive, the device losses above);
-the per-build series walk at depth (turn the SA trace cache on for live dives — measure the first
-walk, which records to the orbit's end, and the record's size); the df32 episodes at 2^54–2^65; and
+the per-build series walk at depth (done the same day, §7.6); the df32 episodes at 2^54–2^65; and
 the 1× rows' frames over 50 ms, which come and go between runs in every arm (2 to 355).
+
+### 7.6 The series walk, recorded for live dives (`SA_TRACE_LIVE_STEPS`, 2026-10-17)
+
+The tours' record of a reference's series walk (`set_sa_trace_cache`, byte-identical replays) is now
+on outside a `--render-tour` too, for walks of at most `SA_TRACE_LIVE_STEPS` (65,536) steps
+(`set_sa_trace_cache_limited`): a record walks to the orbit's end at ~90 bytes a step, so a deep
+hold's long orbit is walked plainly instead. Same exe, alternated, the 4× continuous row
+(`FRACTADYNE_TRACE=ref` on one pair):
+
+| | record on | `--set SA_TRACE_LIVE_STEPS=0` |
+|---|---|---|
+| reference build, median ms (2^250–2^330) | 19 (23) | 128–139 (204–216) |
+| of it the series walk, median ms | 0 | 105–119 (181–188) |
+| reference lag max (oct) | 2.16, 2.22, 2.73, 1.76 | 3.16, 2.68, 2.42 |
+| pacer throttled | 8.3, 8.0, 12.5, 8.1% | 11.1, 26.4, 11.2% |
+| reference installs | 1,086, 1,082, 872, 1,093 | 697, 642, 696 |
+| picture's lag, mean (oct) | 0.71 | 0.71 |
+
+(One run of the off arm was STEERED and is left out.) CPU spent on reference builds over the dive
+falls ~5.6× (~24 s against ~136 s) though more builds complete. The picture's age does not move:
+with builds this cheap the lag at depth is set by the refresh cadence and the 2^93 switch, not by
+the reference pipeline any more.

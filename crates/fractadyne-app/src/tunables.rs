@@ -122,6 +122,9 @@ pub(crate) struct Cost {
     pub orbit_schedule: u64,
     /// A tour's series walk recorded once per reference (`SA_TRACE_DEFAULT`; 0 = off, 1 = on).
     pub sa_trace: u64,
+    /// Outside a tour, the longest series walk recorded for reuse, steps (`SA_TRACE_LIVE_STEPS_DEFAULT`;
+    /// 0 = off).
+    pub sa_trace_live_steps: u64,
     /// A settled mode-2 walk charges the pixels still running (`CHUNK_CHARGE_DEFAULT`; 0 = off).
     pub chunk_charge: u64,
     /// Test hook: deterministic uneven settled-walk windows (`CHUNK_SHUFFLE_DEFAULT`; 0 = off).
@@ -185,6 +188,7 @@ impl Default for Cost {
             renorm_bla: RENORM_BLA_DEFAULT,
             orbit_schedule: ORBIT_SCHEDULE_DEFAULT,
             sa_trace: SA_TRACE_DEFAULT,
+            sa_trace_live_steps: SA_TRACE_LIVE_STEPS_DEFAULT,
             chunk_charge: CHUNK_CHARGE_DEFAULT,
             chunk_shuffle: CHUNK_SHUFFLE_DEFAULT,
             worker_motion: WORKER_MOTION_DEFAULT,
@@ -496,6 +500,15 @@ pub(crate) fn apply_overrides(pairs: &[(String, String)]) -> Result<(), String> 
                     .ok_or_else(|| format!("--set WORKER_PASS_MS: '{raw}' is not a number of ms from 1 to 400"))?;
                 p.to_string()
             }
+            "SA_TRACE_LIVE_STEPS" => {
+                let p = c.sa_trace_live_steps;
+                c.sa_trace_live_steps = raw
+                    .parse::<u64>()
+                    .ok()
+                    .filter(|v| *v <= u64::from(u32::MAX))
+                    .ok_or_else(|| format!("--set SA_TRACE_LIVE_STEPS: '{raw}' is not a step count (0 = off)"))?;
+                p.to_string()
+            }
             "REF_OVERTAKEN_DROP" => {
                 let p = c.ref_overtaken_drop;
                 c.ref_overtaken_drop = match raw.as_str() {
@@ -650,7 +663,7 @@ pub(crate) const OVERRIDABLE: &str = "TDR_BUDGET_MS, TDR_EXPLICIT_BUDGET_MS, \
     EXPLICIT_DISPATCH_CAP, TDR_MAX_TILES, TDR_TILES_CEIL, BLA_EPS, PASS_FIXED_MS, MOTION_NEED_QUANTILE, MOTION_NEED_SOURCE, READING_POOL, \
     DEAD_MAN, DISPATCH_CEILING, SETTLE_SERIALIZE, ADMISSION, PIN_TIMEOUT_SCALED, TAIL_DF32, REF_OVERLAP, EARLY_REF, TILE_OCCUPANCY, LIVE_REFRESH, \
     ORBIT_LEN_CAP, RENORM, TILE_PACK, RENORM_BLA, ORBIT_SCHEDULE, SA_TRACE, CHUNK_CHARGE, \
-    CHUNK_SHUFFLE, WORKER_MOTION, WORKER_YIELD, WORKER_PASS_MS, RECORD_COST_PPM, REUSE_MAX_WRAPS, PIN_BAND_SPAN, REF_OVERTAKEN_DROP";
+    CHUNK_SHUFFLE, WORKER_MOTION, WORKER_YIELD, WORKER_PASS_MS, RECORD_COST_PPM, REUSE_MAX_WRAPS, PIN_BAND_SPAN, REF_OVERTAKEN_DROP, SA_TRACE_LIVE_STEPS";
 
 #[cfg(test)]
 #[path = "../tests/unit/tunables/override_tests.rs"]
@@ -1234,6 +1247,15 @@ pub(crate) const ORBIT_SCHEDULE_DEFAULT: u64 = 1;
 /// the walk, every frame, once its iteration count passed twice the reference's length. 0 = every
 /// frame walks, for the before/after measurement.
 pub(crate) const SA_TRACE_DEFAULT: u64 = 1;
+
+/// Outside a `--render-tour` process (the live view, `--render`, the harnesses), a reference's series
+/// walk is recorded for reuse when it is at most this many steps (`fractadyne_core::
+/// set_sa_trace_cache_limited`); 0 = every build walks, for the before/after measurement. A live dive
+/// rebuilds one point's orbit and BLA every fraction of an octave, and an orbit that escapes early
+/// has the walk forced on (`sa_short_escaper`): 151–163 ms of each ~180 ms build at 2^250 on a 4×
+/// dive, the same walk each time. A record walks to the orbit's end at ~90 bytes a step, so a long
+/// orbit is walked plainly: 65,536 steps is ~6 MB a record, two kept.
+pub(crate) const SA_TRACE_LIVE_STEPS_DEFAULT: u64 = 65_536;
 
 /// 1 = the OVERLAPPED pick + build (render.rs `pick_and_build`): the view centre's orbit build and
 /// series walk run beside the pick, and the pick's centre rescue reads its score off that build.

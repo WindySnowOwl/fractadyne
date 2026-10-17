@@ -386,7 +386,13 @@ of its own still stops it, and a spanned pass's price is charged to every band i
 because spanned passes run over their price where costs jump (design/live-zoom-smoothing.md §7).
 With `FRACTADYNE_TRACE=tile` every pin pass prints `pin-pass v… f… to=… size=… band=…` (`band=1..5`
 for a pass across bands), and `pin-price` names each band's licence after the price
-(`licence=a/b/c`).
+(`licence=a/b/c`). — and `SA_TRACE_LIVE_STEPS` (default 65,536 from 0.3.0-beta.20; `0` = off, for a
+before/after measurement): outside a `--render-tour` process, a reference's series walk of at most
+this many steps is recorded and later builds of the same point replay it, as a tour's do
+(`SA_TRACE`); a longer walk is walked each time, since a record is ~90 bytes a step. A live dive
+rebuilds one point's reference every fraction of an octave, and where its orbit escapes early the
+walk was most of each build: on a 4× dive at 2^250, builds took 204–216 ms (the walk 181–188 ms)
+and now 23 ms. `FRACTADYNE_TRACE=ref` shows each build's `sa_ms`.
 
 - **Not a configuration surface.** The defaults are the only tested path: the self-test, the
   goldens, `--bench-matrix` and `--livetest` all assume them. `--selftest` carries a check that

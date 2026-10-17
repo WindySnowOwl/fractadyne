@@ -891,6 +891,32 @@ fn the_sa_trace_replays_the_walk() {
     }
 }
 
+// A live session records only short walks (`set_sa_trace_cache_limited`): a walk longer than the
+// cache's limit is walked plainly — the same skip, bit for bit, and no record kept — and one within
+// it is recorded and answers the next call.
+#[test]
+fn the_sa_trace_records_only_walks_within_its_limit() {
+    use std::sync::atomic::Ordering::Relaxed;
+    let p = 1024;
+    let (cx, cy) = sa_near_i(p);
+    let backend = crate::backend::selected();
+    let (max_iter, orbit_len, dc) = (3000u32, 3002u32, -400.0);
+    let direct = crate::reference::series_skip_walk(backend, &cx, &cy, dc, max_iter, orbit_len, 0, p, None, None);
+    assert!(direct.skip > 0, "a real skip, or the comparison means nothing");
+    let traces = crate::reference::SaTraces::new();
+    traces.max_steps.store(orbit_len - 3, Relaxed);
+    let plain = traces.series_skip(backend, &cx, &cy, dc, max_iter, orbit_len, 0, p, None);
+    assert_eq!(sa_bits(&plain), sa_bits(&direct));
+    assert_eq!(traces.traces.lock().unwrap().len(), 0, "a walk past the limit is not recorded");
+    traces.max_steps.store(orbit_len - 2, Relaxed);
+    let recorded = traces.series_skip(backend, &cx, &cy, dc, max_iter, orbit_len, 0, p, None);
+    assert_eq!(sa_bits(&recorded), sa_bits(&direct));
+    assert_eq!(traces.traces.lock().unwrap().len(), 1, "a walk within the limit is recorded");
+    let replayed = traces.series_skip(backend, &cx, &cy, dc - 100.0, max_iter, orbit_len, 0, p, None);
+    let direct2 = crate::reference::series_skip_walk(backend, &cx, &cy, dc - 100.0, max_iter, orbit_len, 0, p, None, None);
+    assert_eq!(sa_bits(&replayed), sa_bits(&direct2), "and answers the next view from the record");
+}
+
 // The same, where the SEED BOUND decides: for z⁴ + c it is |Z|² ≤ 2^30, inside the reference's
 // 1e12 bailout (for z² it is 2^60, past the bailout, so a Mandelbrot walk never meets it). A walk
 // that never fails validity must stop there, short of the escape — else the rule went untested.
