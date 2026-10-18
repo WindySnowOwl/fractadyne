@@ -3327,6 +3327,25 @@ pub fn render_iter(
     render_iter_passes(device, queue, req, None, None)
 }
 
+/// [`render_iter`], warmed and timed: the pass once untimed, then `reps` times, each in a submission
+/// of its own, waited for and timed both ways (`[GPU timestamp ms, wall ms]`, the timestamp NaN
+/// without `TIMESTAMP_QUERY`; in a queue other threads also use, the wall includes the work queued
+/// ahead of it and only the timestamp is the pass's own), then once more for the image returned. A driver
+/// may compile a pipeline at its first use, not its creation, and a COLD pass — all `render_iter`
+/// ever times — is not its own cost: the RX 6800 XT's timestamps read a 1024² pass at 1.75 ms whose
+/// warmed twin took ~190. For the live view's pre-switch floatexp probe, which prices a mode from
+/// these on a worker thread.
+pub fn render_iter_timed(
+    device: &wgpu::Device,
+    queue: &wgpu::Queue,
+    req: &ExportRequest,
+    reps: u32,
+) -> Result<(ExportResult, Vec<[f64; 2]>), GpuError> {
+    let mut out = Vec::new();
+    let r = render_iter_passes(device, queue, req, None, Some((reps, &mut out)))?;
+    Ok((r, out))
+}
+
 fn render_iter_passes(
     device: &wgpu::Device,
     queue: &wgpu::Queue,

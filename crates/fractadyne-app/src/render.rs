@@ -1791,6 +1791,78 @@ fn refwaste_log(origin: &str, outcome: &str, cost_ms: f64) {
     }
 }
 
+/// The pre-switch probe's window (`PRE_SWITCH_PROBE`): the view at `l2` is below the floatexp
+/// switch at `switch_l2` by no more than `oct` octaves.
+pub(crate) fn pre_switch_window(l2: f64, switch_l2: f64, oct: f64) -> bool {
+    l2.is_finite() && l2 < switch_l2 && switch_l2 - l2 <= oct
+}
+
+/// The pre-switch probe's square side and iteration count: the occupancy knee's pixels (below it a
+/// pass costs its iteration window, so a smaller probe would price floatexp up to knee/px too
+/// dear and gain nothing), and as many iterations as `steps` buys there, at least 8 so the fixed
+/// cost of a pass does not dominate, at most `max_iter`.
+pub(crate) fn pre_switch_probe_shape(knee_px: u64, steps: u64, max_iter: u32) -> (u32, u32) {
+    let side = (knee_px.max(1) as f64).sqrt().ceil().clamp(64.0, 1024.0) as u32;
+    let px = u64::from(side) * u64::from(side);
+    let iters = (steps / px).clamp(8, 256) as u32;
+    (side, iters.min(max_iter.max(1)))
+}
+
+/// Whether a pre-switch probe's pass priced what it claims: the fraction of its `w × h` pixels still
+/// running at its last iteration (`px` from `render_iter`, `r = -1` = reached `max_iter`; a
+/// glitched pixel's -2 left the loop early), and whether that is nearly all of them. A pass whose
+/// pixels left early ran fewer steps than it counts, so it would price floatexp CHEAP — the
+/// direction that lost the device at this switch.
+pub(crate) fn pre_switch_probe_representative(px: &[f32], w: u32, h: u32) -> (f64, bool) {
+    let n = (w as usize) * (h as usize);
+    if n == 0 || px.len() < n * 4 {
+        return (f64::NAN, false);
+    }
+    let running = (0..n).filter(|i| (px[i * 4] + 1.0).abs() < 0.5).count();
+    let frac = running as f64 / n as f64;
+    (frac, frac >= 0.98)
+}
+
+/// The floatexp rate a pre-switch probe may record: its SLOWEST timed pass (`ms`, at least two,
+/// `steps` each), and no faster than `df32` — this view's measured df32 rate — over `ratio_min`.
+/// Measured on the RTX 3080 at 2^91, no-BLA floatexp ran ~11× slower per step than df32 (the
+/// RX 6800 XT field loss: ~152×); a probe reading faster than df32/`ratio_min` is a misreading,
+/// and it would size the switch's opening dispatch. `None` = no usable time.
+pub(crate) fn pre_switch_probe_rate(steps: u64, ms: &[f64], df32: f64, ratio_min: f64) -> Option<f64> {
+    if ms.len() < 2 || steps == 0 || !ms.iter().all(|&t| t > 0.0 && t.is_finite()) {
+        return None;
+    }
+    let slowest = ms.iter().copied().fold(0.0, f64::max);
+    let rate = steps as f64 / slowest;
+    let cap = if df32 > 0.0 && df32.is_finite() { df32 / ratio_min.max(1.0) } else { return None };
+    Some(rate.min(cap))
+}
+
+/// A timed probe pass's time: the GPU's own (no submission or queue wait in it) when the card gave
+/// one, else the wall from its submission to its completion.
+pub(crate) fn pre_switch_pass_ms([ts, wall]: [f64; 2]) -> f64 {
+    if ts > 0.0 && ts.is_finite() { ts } else { wall }
+}
+
+/// A pre-switch floatexp probe running on its own thread (`FractadyneApp::pre_switch_probe`).
+pub(crate) struct PreSwitchJob {
+    /// The timed passes (`[GPU ms, wall ms]`) and the final pass's running fraction and verdict
+    /// (`pre_switch_probe_representative`), or why there are none.
+    rx: std::sync::mpsc::Receiver<Result<(Vec<[f64; 2]>, f64, bool), String>>,
+    l2: f64,
+    side: u32,
+    iters: u32,
+    /// This view's df32 rate when the probe started (the cap, `pre_switch_probe_rate`).
+    df32: f64,
+    /// UI-thread time spent starting it, ms.
+    setup_ms: f64,
+    started: Instant,
+}
+
+#[cfg(test)]
+#[path = "../tests/unit/render/pre_switch_tests.rs"]
+mod pre_switch_tests;
+
 /// Verdict on a coarse-preview probe frame: `(escaped_fraction, worth_showing)`.
 ///
 /// `px` is `render_iter` output — `r < 0` = did not escape (interior OR capped; at the coarse
@@ -2434,6 +2506,150 @@ impl FractadyneApp {
         self.perf.rate_count += 1;
         // res.orbit etc. are moved above; ref_ms/series_ms/bla_ms are Copy and still readable.
         refwaste_log("install", "USED", res.ref_ms + res.series_ms + res.bla_ms);
+    }
+
+    /// ⭐BEFORE A DIVE REACHES FLOATEXP, MEASURE IT (`PRE_SWITCH_PROBE`, 2026-10-18). At the 2^93
+    /// switch the frame budget is unmeasured in the new mode and opens at df32's rate ÷
+    /// `MODE_RATE_UNKNOWN_MARGIN` (256): ~4e6 steps on the RTX 3080, 8 iterations a pass at 813×606,
+    /// re-climbing ×1.5 a reading — the first floatexp pin of a 4× dive held the picture 1.4–3
+    /// octaves. The rule that opening keeps — a budget that has measured nothing IN THIS MODE may
+    /// only bound the first dispatch — holds just as well when this mode HAS been measured, here, on
+    /// this card: within `PRE_SWITCH_OCT` below the switch, while zooming in, a floatexp pass of
+    /// the current view at the occupancy knee's size, a few dozen iterations from iteration 0 with
+    /// BLA and the series skip OFF. That is the regime the first frames after the switch can be in
+    /// (no valid BLA tree yet: the 2026-08-15 loss, every nominal step a real one, ~152× df32's), so
+    /// its GPU time prices floatexp's worst case at this view, and the switch opens at that rate ×
+    /// `TDR_BOOTSTRAP_MS` (still clamped to `TDR_BOOTSTRAP_STEPS`). It sets that opening and nothing
+    /// else (`Meter::opening_rate`): recorded as a reading, its no-BLA rate sized every refresh after
+    /// the switch and halved the detail on screen.
+    ///
+    /// The pass runs on a WORKER THREAD in the window's queue (`render_iter_timed`), warmed once and
+    /// then timed `PRE_SWITCH_PROBE_REPS` times; it counts only when its pixels ran every iteration
+    /// (`pre_switch_probe_representative`), at its slowest pass, and no faster than this view's df32
+    /// rate over `PRE_SWITCH_FLOATEXP_RATIO_MIN` (`pre_switch_probe_rate`). On this thread, two cold
+    /// `render_iter` calls cost 47–69 ms a probe for ~3 ms of GPU work each (2026-10-18: a frame over
+    /// 50 ms in every probed dive) — the shader parse, the pipeline, the drain of the frames already
+    /// queued, the readback. It borrows the live reference or does not run: a fresh build here would
+    /// be a synchronous bignum stall.
+    pub(crate) fn pre_switch_probe(&mut self, dev: &eframe::wgpu::Device, q: &eframe::wgpu::Queue) {
+        if let Some(job) = &self.pre_switch_job {
+            let got = match job.rx.try_recv() {
+                Ok(got) => got,
+                Err(std::sync::mpsc::TryRecvError::Empty) => return,
+                Err(std::sync::mpsc::TryRecvError::Disconnected) => {
+                    Err("its thread ended without a reading".to_string())
+                }
+            };
+            let job = self.pre_switch_job.take().expect("checked above");
+            self.pre_switch_count(job, got);
+            return;
+        }
+        if crate::tunables::cost().pre_switch_probe != 1 || self.render_cli.run || self.dual {
+            return;
+        }
+        let t0 = Instant::now();
+        let floatexp = RenderMode::Floatexp.to_u32();
+        let (vp, julia) = (self.viewport.clone(), self.julia_mode);
+        if self.render_mode(self.fractal, julia, vp.magnification()) != RenderMode::Df32Pert
+            || !pre_switch_window(vp.log2_magnification(), PERT_FE_THRESHOLD.log2(), crate::tunables::PRE_SWITCH_OCT)
+            || self.perf.zoom_oct_s <= 0.0
+            || self.perf.mode_rate_known(0, floatexp)
+            || self.perf.frame_idx < self.perf.pre_switch_probe_next
+        {
+            return;
+        }
+        self.perf.pre_switch_probe_next = self.perf.frame_idx + crate::tunables::PRE_SWITCH_PROBE_RETRY_FRAMES;
+        // Its cap is this view's df32 rate, so it waits for one.
+        let Some(df32) = self.perf.worst_rate_steps_per_ms(0) else { return };
+        let scale = vp.gpu_scale();
+        let eff_iter = self.export_eff_iter(&vp, julia);
+        if self.live_ref_fields(&vp, julia, eff_iter, scale.delta_exp, vp.precision).is_none() {
+            return;
+        }
+        let mut req = self.build_export_request(&vp, julia, RefSource::Live);
+        let (side, iters) = pre_switch_probe_shape(
+            crate::calibration::knee_px(),
+            crate::tunables::PRE_SWITCH_PROBE_STEPS,
+            req.max_iter.min(req.orbit_len.saturating_sub(1).max(1)),
+        );
+        req.width = side;
+        req.height = side;
+        req.ss = 1;
+        req.mode = floatexp;
+        req.bla_on = 0;
+        req.bla = std::sync::Arc::new(Vec::new());
+        req.rn = fractadyne_gpu::Renorm::default();
+        req.rn_bla = std::sync::Arc::new(Vec::new());
+        req.sa_skip = 0;
+        req.glitch_on = 0;
+        req.max_iter = iters;
+        let (tx, rx) = std::sync::mpsc::channel();
+        let (dev, q) = (dev.clone(), q.clone());
+        spawn_named("fd-preswitch", move || {
+            crate::diag::breadcrumb(format!("pre-switch probe: {side}x{side} floatexp BLA off iter={iters}"));
+            let got = fractadyne_gpu::render_iter_timed(&dev, &q, &req, crate::tunables::PRE_SWITCH_PROBE_REPS)
+                .map(|(r, reps)| {
+                    let (running, ok) = pre_switch_probe_representative(&r.pixels, side, side);
+                    (reps, running, ok)
+                })
+                .map_err(|e| e.to_string());
+            let _ = tx.send(got);
+        });
+        self.pre_switch_job = Some(PreSwitchJob {
+            rx,
+            l2: vp.log2_magnification(),
+            side,
+            iters,
+            df32,
+            setup_ms: t0.elapsed().as_secs_f64() * 1000.0,
+            started: Instant::now(),
+        });
+    }
+
+    /// A pre-switch probe's reading has landed (`pre_switch_probe`): record it as this view's
+    /// floatexp rate if it is usable and floatexp is still unmeasured, and log what it read.
+    fn pre_switch_count(&mut self, job: PreSwitchJob, got: Result<(Vec<[f64; 2]>, f64, bool), String>) {
+        let floatexp = RenderMode::Floatexp.to_u32();
+        let PreSwitchJob { l2, side, iters, df32, setup_ms, started, .. } = job;
+        let took_ms = started.elapsed().as_secs_f64() * 1000.0;
+        let px = u64::from(side) * u64::from(side);
+        let steps = px * u64::from(iters);
+        let head = format!(
+            "pre-switch floatexp probe at 2^{l2:.1}: {side}x{side} x {iters} iterations, BLA off \
+             ({setup_ms:.1} ms on the UI thread, {took_ms:.0} ms on its own)"
+        );
+        let line = match got {
+            Err(e) => format!("{head} NOT counted: {e}"),
+            Ok((_, running, false)) => {
+                format!("{head} NOT counted: {:.1}% of pixels still running (need 98%)", running * 100.0)
+            }
+            Ok((reps, _, true)) => {
+                let times: Vec<f64> = reps.iter().map(|&r| pre_switch_pass_ms(r)).collect();
+                let shown = reps
+                    .iter()
+                    .map(|&[ts, wall]| format!("{ts:.2} ({wall:.2} wall)"))
+                    .collect::<Vec<_>>()
+                    .join(" / ");
+                if self.perf.mode_rate_known(0, floatexp) {
+                    format!("{head}, {shown} ms NOT counted: floatexp was measured before it landed")
+                } else {
+                    let ratio = crate::tunables::PRE_SWITCH_FLOATEXP_RATIO_MIN;
+                    match pre_switch_probe_rate(steps, &times, df32, ratio) {
+                        Some(rate) => {
+                            self.perf.record_opening_rate(0, floatexp, rate);
+                            format!(
+                                "{head}, {shown} ms ⇒ {:.2e} steps/ms (df32 {df32:.2e}, cap 1/{ratio}) ⇒ {rate:.2e}; \
+                                 the switch will open at {:.2e} steps",
+                                steps as f64 / times.iter().copied().fold(0.0, f64::max),
+                                crate::render::bootstrap_steps(rate, 0.0) as f64,
+                            )
+                        }
+                        None => format!("{head} NOT counted: unusable times {shown} ms"),
+                    }
+                }
+            }
+        };
+        crate::diag::log_line("render", &line);
     }
 
     /// Probe a parked coarse-preview reference (56×56, at the preview's own iteration cap) and

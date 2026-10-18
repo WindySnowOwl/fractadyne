@@ -46,3 +46,24 @@ fn the_meter_keeps_a_slow_reading_and_lets_it_go_slowly() {
     // The other view's slot is its own.
     assert_eq!(m.worst_rate_steps_per_ms(1, 0), None);
 }
+
+#[test]
+fn an_opening_rate_prices_only_the_opening_and_only_until_the_mode_measures() {
+    let fe = 2; // floatexp
+    let mut m = Meter::default();
+    m.record_mode_rate(0, 0, false, 100.0, 2_700_000_000, 1.0); // df32: 2.7e7 steps/ms
+    // Floatexp unmeasured opens at df32's rate over the margin.
+    let unmeasured = m.bootstrap_steps(0, fe);
+    m.record_opening_rate(0, fe, 2.5e6);
+    assert!(m.has_opening_rate(0, fe));
+    assert_eq!(m.bootstrap_steps(0, fe), bootstrap_steps(2.5e6, 0.0));
+    assert!(m.bootstrap_steps(0, fe) > unmeasured);
+    // It is not a reading: the rates the passes are sized from know nothing of it.
+    assert_eq!(m.worst_rate_steps_per_ms(0, fe), None);
+    assert_eq!(m.motion_rate, Meter::default().motion_rate);
+    // The mode's first reading replaces it.
+    m.record_mode_rate(0, fe, false, 100.0, 1_800_000_000, 2.0); // 1.8e7
+    assert_eq!(m.bootstrap_steps(0, fe), bootstrap_steps(1.8e7, 0.0));
+    // The other view knows nothing of it.
+    assert!(!m.has_opening_rate(1, fe));
+}

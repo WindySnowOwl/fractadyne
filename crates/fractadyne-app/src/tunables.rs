@@ -129,6 +129,8 @@ pub(crate) struct Cost {
     pub growth_in_work: u64,
     /// A cheap GPU-timed pin pass lets the next grow by the band lane (`PIN_GROWTH_LANE_DEFAULT`).
     pub pin_growth_lane: u64,
+    /// Floatexp measured before a dive reaches it (`PRE_SWITCH_PROBE_DEFAULT`; 0 = off).
+    pub pre_switch_probe: u64,
     /// A settled mode-2 walk charges the pixels still running (`CHUNK_CHARGE_DEFAULT`; 0 = off).
     pub chunk_charge: u64,
     /// Test hook: deterministic uneven settled-walk windows (`CHUNK_SHUFFLE_DEFAULT`; 0 = off).
@@ -195,6 +197,7 @@ impl Default for Cost {
             sa_trace_live_steps: SA_TRACE_LIVE_STEPS_DEFAULT,
             growth_in_work: GROWTH_IN_WORK_DEFAULT,
             pin_growth_lane: PIN_GROWTH_LANE_DEFAULT,
+            pre_switch_probe: PRE_SWITCH_PROBE_DEFAULT,
             chunk_charge: CHUNK_CHARGE_DEFAULT,
             chunk_shuffle: CHUNK_SHUFFLE_DEFAULT,
             worker_motion: WORKER_MOTION_DEFAULT,
@@ -506,6 +509,15 @@ pub(crate) fn apply_overrides(pairs: &[(String, String)]) -> Result<(), String> 
                     .ok_or_else(|| format!("--set WORKER_PASS_MS: '{raw}' is not a number of ms from 1 to 400"))?;
                 p.to_string()
             }
+            "PRE_SWITCH_PROBE" => {
+                let p = c.pre_switch_probe;
+                c.pre_switch_probe = match raw.as_str() {
+                    "0" => 0,
+                    "1" => 1,
+                    _ => return Err(format!("--set PRE_SWITCH_PROBE: '{raw}' is not 0 (off) or 1 (on)")),
+                };
+                p.to_string()
+            }
             "GROWTH_IN_WORK" => {
                 let p = c.growth_in_work;
                 c.growth_in_work = match raw.as_str() {
@@ -687,7 +699,7 @@ pub(crate) const OVERRIDABLE: &str = "TDR_BUDGET_MS, TDR_EXPLICIT_BUDGET_MS, \
     EXPLICIT_DISPATCH_CAP, TDR_MAX_TILES, TDR_TILES_CEIL, BLA_EPS, PASS_FIXED_MS, MOTION_NEED_QUANTILE, MOTION_NEED_SOURCE, READING_POOL, \
     DEAD_MAN, DISPATCH_CEILING, SETTLE_SERIALIZE, ADMISSION, PIN_TIMEOUT_SCALED, TAIL_DF32, REF_OVERLAP, EARLY_REF, TILE_OCCUPANCY, LIVE_REFRESH, \
     ORBIT_LEN_CAP, RENORM, TILE_PACK, RENORM_BLA, ORBIT_SCHEDULE, SA_TRACE, CHUNK_CHARGE, \
-    CHUNK_SHUFFLE, WORKER_MOTION, WORKER_YIELD, WORKER_PASS_MS, RECORD_COST_PPM, REUSE_MAX_WRAPS, PIN_BAND_SPAN, REF_OVERTAKEN_DROP, SA_TRACE_LIVE_STEPS, GROWTH_IN_WORK, PIN_GROWTH_LANE";
+    CHUNK_SHUFFLE, WORKER_MOTION, WORKER_YIELD, WORKER_PASS_MS, RECORD_COST_PPM, REUSE_MAX_WRAPS, PIN_BAND_SPAN, REF_OVERTAKEN_DROP, SA_TRACE_LIVE_STEPS, GROWTH_IN_WORK, PIN_GROWTH_LANE, PRE_SWITCH_PROBE";
 
 #[cfg(test)]
 #[path = "../tests/unit/tunables/override_tests.rs"]
@@ -1299,6 +1311,40 @@ pub(crate) const GROWTH_IN_WORK_DEFAULT: u64 = 1;
 /// 256 pin floor), not the limiter; and the df32 stalls of the runs the pacer throttled ~20% were
 /// worst with it on (8.95, 3.17, 3.08 octaves against 1.57–1.96 off).
 pub(crate) const PIN_GROWTH_LANE_DEFAULT: u64 = 0;
+
+/// 1 = within `PRE_SWITCH_OCT` below the floatexp switch, while zooming in, floatexp passes of the
+/// current view with BLA and the series skip off are timed on a worker thread
+/// (`FractadyneApp::pre_switch_probe`), and the switch opens its budget at that rate
+/// (`Meter::opening_rate`, the opening only). 0 = the switch opens unmeasured (df32's rate over
+/// `MODE_RATE_UNKNOWN_MARGIN`), as before.
+pub(crate) const PRE_SWITCH_PROBE_DEFAULT: u64 = 1;
+
+/// How far below the floatexp switch (octaves) a dive measures floatexp (`PRE_SWITCH_PROBE`): at
+/// 4× (~2.6 oct/s) about 0.8 s ahead, time for a probe and a retry.
+pub(crate) const PRE_SWITCH_OCT: f64 = 2.0;
+
+/// Nominal steps of each pre-switch probe pass: at the occupancy knee's size (262,144 px on the RTX
+/// 3080) about 30 iterations, ~14 ms at the slowest floatexp rate measured without BLA (5.7e5
+/// steps/ms, the RX 6800 XT, 2026-08-15). The probe runs `PRE_SWITCH_PROBE_REPS` + 2 of them once
+/// per approach, on a worker thread, in the window's queue.
+pub(crate) const PRE_SWITCH_PROBE_STEPS: u64 = 8_000_000;
+
+/// Timed passes of a pre-switch probe (after one untimed pass that warms its pipeline); it counts
+/// the slowest. On the RTX 3080 the same 512² × 30 pass read ~3.0 ms in 9 probes and 0.6–1.1 ms in
+/// 4 (2026-10-18), the two passes of a probe always agreeing; the first floatexp passes after the
+/// switch measured 1.6e6–1.0e7 steps/ms, so the 3 ms reading (2.5e6) is the one to believe.
+pub(crate) const PRE_SWITCH_PROBE_REPS: u32 = 2;
+
+/// Frames before a pre-switch probe that was not counted (unrepresentative, or no reference to
+/// borrow) is tried again.
+pub(crate) const PRE_SWITCH_PROBE_RETRY_FRAMES: u64 = 60;
+
+/// The least a no-BLA floatexp step is taken to cost against a df32 step at the same view, as a
+/// divisor on this view's measured df32 rate: a pre-switch probe reading faster than that is not
+/// believed (`pre_switch_probe_rate`). Measured at 2^91: ~11× on the RTX 3080 (the first real
+/// floatexp passes after the switch, 2.6–18.5×); ~152× in the RX 6800 XT field loss. Probes read 2×
+/// four times in thirteen (2026-10-18), which would have opened the switch at the 4e8 ceiling.
+pub(crate) const PRE_SWITCH_FLOATEXP_RATIO_MIN: f64 = 8.0;
 
 /// 1 = the OVERLAPPED pick + build (render.rs `pick_and_build`): the view centre's orbit build and
 /// series walk run beside the pick, and the pick's centre rescue reads its score off that build.
