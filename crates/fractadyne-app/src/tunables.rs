@@ -147,6 +147,8 @@ pub(crate) struct Cost {
     /// A span is bounded by its bands' measured costs, not their licences (`PIN_SPAN_PRICED_DEFAULT`;
     /// 0 = by licences).
     pub pin_span_priced: u64,
+    /// Live iterate timers that may be armed at once (`TIMER_SLOTS_DEFAULT`; 1 = one, as before).
+    pub timer_slots: u64,
     /// A reactive reference build overtaken while it ran is dropped (`REF_OVERTAKEN_DROP_DEFAULT`;
     /// 0 = installed, as before).
     pub ref_overtaken_drop: u64,
@@ -208,6 +210,7 @@ impl Default for Cost {
             worker_pass_ms: WORKER_PASS_MS_DEFAULT,
             pin_band_span: PIN_BAND_SPAN_DEFAULT,
             pin_span_priced: PIN_SPAN_PRICED_DEFAULT,
+            timer_slots: TIMER_SLOTS_DEFAULT,
             ref_overtaken_drop: REF_OVERTAKEN_DROP_DEFAULT,
             bla_eps: BLA_EPS,
         }
@@ -558,6 +561,15 @@ pub(crate) fn apply_overrides(pairs: &[(String, String)]) -> Result<(), String> 
                 };
                 p.to_string()
             }
+            "TIMER_SLOTS" => {
+                let p = c.timer_slots;
+                c.timer_slots = raw
+                    .parse::<u64>()
+                    .ok()
+                    .filter(|n| (1..=fractadyne_gpu::TIMER_RING as u64).contains(n))
+                    .ok_or_else(|| format!("--set TIMER_SLOTS: '{raw}' is not a count of timers from 1 to {}", fractadyne_gpu::TIMER_RING))?;
+                p.to_string()
+            }
             "PIN_SPAN_PRICED" => {
                 let p = c.pin_span_priced;
                 c.pin_span_priced = match raw.as_str() {
@@ -712,7 +724,7 @@ pub(crate) const OVERRIDABLE: &str = "TDR_BUDGET_MS, TDR_EXPLICIT_BUDGET_MS, \
     EXPLICIT_DISPATCH_CAP, TDR_MAX_TILES, TDR_TILES_CEIL, BLA_EPS, PASS_FIXED_MS, MOTION_NEED_QUANTILE, MOTION_NEED_SOURCE, READING_POOL, \
     DEAD_MAN, DISPATCH_CEILING, SETTLE_SERIALIZE, ADMISSION, PIN_TIMEOUT_SCALED, TAIL_DF32, REF_OVERLAP, EARLY_REF, TILE_OCCUPANCY, LIVE_REFRESH, \
     ORBIT_LEN_CAP, RENORM, TILE_PACK, RENORM_BLA, ORBIT_SCHEDULE, SA_TRACE, CHUNK_CHARGE, \
-    CHUNK_SHUFFLE, WORKER_MOTION, WORKER_YIELD, WORKER_PASS_MS, RECORD_COST_PPM, REUSE_MAX_WRAPS, PIN_BAND_SPAN, REF_OVERTAKEN_DROP, SA_TRACE_LIVE_STEPS, GROWTH_IN_WORK, PIN_GROWTH_LANE, PRE_SWITCH_PROBE, PIN_SPAN_PRICED";
+    CHUNK_SHUFFLE, WORKER_MOTION, WORKER_YIELD, WORKER_PASS_MS, RECORD_COST_PPM, REUSE_MAX_WRAPS, PIN_BAND_SPAN, REF_OVERTAKEN_DROP, SA_TRACE_LIVE_STEPS, GROWTH_IN_WORK, PIN_GROWTH_LANE, PRE_SWITCH_PROBE, PIN_SPAN_PRICED, TIMER_SLOTS";
 
 #[cfg(test)]
 #[path = "../tests/unit/tunables/override_tests.rs"]
@@ -1581,6 +1593,17 @@ pub(crate) const PIN_BAND_SPAN_DEFAULT: f64 = 0.0;
 /// 1.1–1.7 ms whatever its length, and one band a pass made each pin nine passes and twelve frames
 /// (held ~1.1 octaves at 4×). 0 = spans bounded by licences, as before.
 pub(crate) const PIN_SPAN_PRICED_DEFAULT: u64 = 0;
+
+/// EXPERIMENT (2026-10-18): how many of a view's live iterate timers (`fractadyne_gpu::TIMER_RING`)
+/// may be armed at once. A reading lands two frames after its pass and a timer is armed only when
+/// idle, so with one, at a pass a frame, every other pass goes untimed: half of a 4× dive's pin
+/// passes were never priced (2,020–2,520 a dive, every arm of §7.8), and two thirds of priced spans
+/// (§7.10). 3 times every pass: the first timer is armed exactly as when it was the only one and
+/// feeds everything it fed; the others time the passes it is too busy for and PRICE PIN PASSES ONLY
+/// (`MandelbrotParams::extra_ms`). ⚠Fed to every controller term — the budget's ×1.5 climb a reading,
+/// the motion EMA, the latched minimum — three timers made the 1× deep dive's picture 4× older and
+/// 92 of its frames run over 33 ms (2026-10-18, RTX 3080): those terms were tuned on one timer.
+pub(crate) const TIMER_SLOTS_DEFAULT: u64 = 1;
 
 /// 1 = a reactive reference build that another install overtook while it ran is dropped instead
 /// of installed over it (`render::reactive_build_overtaken`). 0 = it is installed, as before, for

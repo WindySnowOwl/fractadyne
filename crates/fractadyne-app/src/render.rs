@@ -5578,6 +5578,8 @@ impl FractadyneApp {
                     band_ms: self.perf.chunk_band_ms[vs],
                     band_ms_iters: self.perf.chunk_band_ms_iters[vs],
                     band_ms_len: self.perf.chunk_band_ms_len[vs],
+                    band_ms_px: self.perf.chunk_band_ms_px[vs],
+                    late_px: self.perf.chunk_late_px[vs],
                 },
                 tdr_budget_ms: crate::tunables::cost().tdr_budget_ms,
                 tdr_explicit_budget_ms: crate::tunables::cost().tdr_explicit_budget_ms,
@@ -5595,6 +5597,8 @@ impl FractadyneApp {
             self.perf.chunk_band_ms[vs] = price.ledger.band_ms;
             self.perf.chunk_band_ms_iters[vs] = price.ledger.band_ms_iters;
             self.perf.chunk_band_ms_len[vs] = price.ledger.band_ms_len;
+            self.perf.chunk_band_ms_px[vs] = price.ledger.band_ms_px;
+            self.perf.chunk_late_px[vs] = price.ledger.late_px;
             // Readings keep only while their pass is still parked.
             self.perf.chunk_late[vs] = price.ledger.late;
             let parked = price.ledger.late;
@@ -5732,6 +5736,7 @@ impl FractadyneApp {
                 self.perf.chunk_pass_dt[vs] = 0.0;
                 // A parked price belongs to the ledger it was earned in.
                 self.perf.chunk_late[vs] = [None; decide::LATE_MAX];
+                self.perf.chunk_late_px[vs] = [0; decide::LATE_MAX];
                 self.perf.late_readings[vs].clear();
             }
             if id.restarted {
@@ -5805,6 +5810,7 @@ impl FractadyneApp {
                 band_ms: self.perf.chunk_band_ms[vs],
                 band_ms_iters: self.perf.chunk_band_ms_iters[vs],
                 band_ms_len: self.perf.chunk_band_ms_len[vs],
+                band_ms_px: self.perf.chunk_band_ms_px[vs],
                 pin_timeout_scaled: crate::tunables::cost().pin_timeout_scaled,
                 chunk_charge: crate::tunables::cost().chunk_charge,
                 chunk_shuffle: crate::tunables::cost().chunk_shuffle,
@@ -6410,6 +6416,10 @@ impl FractadyneApp {
             iterate_armed_us,
             iterate_prov: Some(self.perf.iterate_prov[vs].clone()),
             live_timing: self.perf.live_pass[vs.min(1)] && chunk_range.is_none() && tile.is_none(),
+            timer_slots: crate::tunables::cost().timer_slots as u32,
+            extra_ms: Some(self.perf.extra_ms[vs].clone()),
+            extra_steps: Some(self.perf.extra_steps[vs].clone()),
+            extra_frame: Some(self.perf.extra_frame[vs].clone()),
             live_ms: Some(self.perf.live_ms[vs.min(1)].clone()),
             live_steps: Some(self.perf.live_steps[vs.min(1)].clone()),
             live_frame: Some(self.perf.live_frame[vs.min(1)].clone()),
@@ -10111,21 +10121,32 @@ pub(crate) fn pin_span_end(
     (end, span_band_code(first, last))
 }
 
-/// The band-cost memory a priced span reads (`WalkLedger::band_ms`, `band_ms_iters`, `band_ms_len`).
+/// The band-cost memory a priced span reads (`WalkLedger::band_ms`, `band_ms_iters`, `band_ms_len`,
+/// `band_ms_px`), the pixels of the pass it sizes and the adapter's occupancy knee.
 pub(crate) struct BandCosts<'a> {
     pub(crate) ms: &'a [f32; crate::tunables::CHUNK_BANDS],
     pub(crate) iters: &'a [u32; crate::tunables::CHUNK_BANDS],
     pub(crate) len: &'a [u32; crate::tunables::CHUNK_BANDS],
+    pub(crate) px: &'a [u32; crate::tunables::CHUNK_BANDS],
+    pub(crate) px_now: u64,
+    pub(crate) knee: u64,
 }
 
 impl BandCosts<'_> {
     /// What `len` iterations in band `b` are predicted to cost, ms: the band's measured cost, scaled
-    /// up for iterations past those it covered (never down: at depth a band's cost hardly depends on
-    /// its length). `None` = the band has no measured cost.
+    /// up for iterations past those it covered and for pixels past those it ran at, both charged at
+    /// no fewer than the occupancy knee (below it a pass costs its iteration window); never scaled
+    /// down (at depth a band's cost hardly depends on its length). `None` = no measured cost, or one
+    /// with no pixel count.
     pub(crate) fn predict(&self, b: usize, len: u32) -> Option<f64> {
         let b = b.min(crate::tunables::CHUNK_BANDS - 1);
-        (self.ms[b] > 0.0 && self.iters[b] > 0)
-            .then(|| f64::from(self.ms[b]) * (f64::from(len) / f64::from(self.iters[b])).max(1.0))
+        if !(self.ms[b] > 0.0 && self.iters[b] > 0 && self.px[b] > 0) {
+            return None;
+        }
+        let iters = (f64::from(len) / f64::from(self.iters[b])).max(1.0);
+        let at = |p: u64| p.max(self.knee).max(1) as f64;
+        let pixels = (at(self.px_now) / at(u64::from(self.px[b]))).max(1.0);
+        Some(f64::from(self.ms[b]) * iters * pixels)
     }
 }
 

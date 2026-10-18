@@ -1246,6 +1246,12 @@ struct Perf {
     iterate_frame: [std::sync::Arc<std::sync::atomic::AtomicU64>; 2],
     /// `app_micros` when that pass's timer was armed, published with it (0 = none).
     iterate_armed: [std::sync::Arc<std::sync::atomic::AtomicU64>; 2],
+    /// The ring's EXTRA timers' sinks (`TIMER_SLOTS`, `MandelbrotParams::extra_ms`): ms (f64 bits),
+    /// nominal steps and pass frame of a pass the iterate timer was too busy to time. They price pin
+    /// passes and feed nothing else.
+    extra_ms: [std::sync::Arc<std::sync::atomic::AtomicU64>; 2],
+    extra_steps: [std::sync::Arc<std::sync::atomic::AtomicU64>; 2],
+    extra_frame: [std::sync::Arc<std::sync::atomic::AtomicU64>; 2],
     /// The LIVE-REFRESH timer's sinks (`MandelbrotParams::live_timing`): ms (f64 bits), nominal
     /// steps and pass frame of a live pass it timed. They feed only the live-refresh price.
     live_ms: [std::sync::Arc<std::sync::atomic::AtomicU64>; 2],
@@ -1700,6 +1706,9 @@ struct Perf {
     chunk_band_ms: [[f32; crate::tunables::CHUNK_BANDS]; 2],
     chunk_band_ms_iters: [[u32; crate::tunables::CHUNK_BANDS]; 2],
     chunk_band_ms_len: [[u32; crate::tunables::CHUNK_BANDS]; 2],
+    chunk_band_ms_px: [[u32; crate::tunables::CHUNK_BANDS]; 2],
+    /// The pixels each parked pin pass ran at (`decide::WalkLedger::late_px`).
+    chunk_late_px: [[u32; render::decide::LATE_MAX]; 2],
     /// Budget-climb probe (see `MandelbrotParams::probe_nonce`): bumped on settled frames while
     /// the budget is unconverged so the GPU re-measures — breaks the resolution-floor deadlock
     /// where budget growth is too small to re-key the frame and the climb freezes.
@@ -2272,6 +2281,9 @@ impl Default for Perf {
             pass_clock_sink: [Default::default(), Default::default()],
             pass_clock_prev_t1: [0.0, 0.0],
             iterate_frame: [Default::default(), Default::default()],
+            extra_ms: [Default::default(), Default::default()],
+            extra_steps: [Default::default(), Default::default()],
+            extra_frame: [Default::default(), Default::default()],
             iterate_armed: [Default::default(), Default::default()],
             live_ms: [Default::default(), Default::default()],
             live_steps: [Default::default(), Default::default()],
@@ -2459,6 +2471,8 @@ impl Default for Perf {
             chunk_band_ms: [[0.0; crate::tunables::CHUNK_BANDS]; 2],
             chunk_band_ms_iters: [[0; crate::tunables::CHUNK_BANDS]; 2],
             chunk_band_ms_len: [[0; crate::tunables::CHUNK_BANDS]; 2],
+            chunk_band_ms_px: [[0; crate::tunables::CHUNK_BANDS]; 2],
+            chunk_late_px: [[0; render::decide::LATE_MAX]; 2],
             probe_nonce: [0, 0],
             hold_active: [false, false],
             hold_uv: [[0.0, 0.0, 1.0], [0.0, 0.0, 1.0]],
@@ -16177,6 +16191,33 @@ impl eframe::App for FractadyneApp {
                     && self.perf.unpriced_since[v].is_none()
                 {
                     self.perf.unpriced_since[v] = Some(ran);
+                }
+            }
+            // An EXTRA timer's reading (`TIMER_SLOTS`): a pin pass's own price, parked or in flight,
+            // and nothing else — every rate and budget below was tuned on the iterate timer's cadence
+            // (three timers fed to them all made the 1× deep dive's frames run over 33 ms 92 times).
+            {
+                use std::sync::atomic::Ordering::SeqCst;
+                let xbits = self.perf.extra_ms[v].swap(0, SeqCst);
+                if xbits != 0 {
+                    let (ms, steps, frame) =
+                        (f64::from_bits(xbits), self.perf.extra_steps[v].load(SeqCst), self.perf.extra_frame[v].load(SeqCst));
+                    let to = if !(ms > 0.0 && ms.is_finite()) {
+                        "unusable"
+                    } else if self.perf.chunk_late[v].iter().flatten().any(|l| l.2 == frame) {
+                        if !self.perf.late_readings[v].iter().any(|r| r.0 == frame) {
+                            self.perf.late_readings[v].push((frame, ms));
+                        }
+                        "parked pin pass"
+                    } else if steps > 0 && steps == self.perf.pin_pass_steps[v] && self.perf.pin_pass_gpu_ms[v] < 0.0 {
+                        self.perf.pin_pass_gpu_ms[v] = ms;
+                        "pin pass in flight"
+                    } else {
+                        "nothing"
+                    };
+                    if diag::trace_on("gpu") {
+                        diag::trace("gpu", format!("view={v} extra timer: {ms:.2} ms, frame {frame}, steps {steps} -> {to}"));
+                    }
                 }
             }
             let bits = self.perf.iterate_ms[v].swap(0, std::sync::atomic::Ordering::SeqCst);

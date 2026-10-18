@@ -628,6 +628,8 @@ fn walk() -> WalkPriceInputs {
             band_ms: [0.0; crate::tunables::CHUNK_BANDS],
             band_ms_iters: [0; crate::tunables::CHUNK_BANDS],
             band_ms_len: [0; crate::tunables::CHUNK_BANDS],
+            band_ms_px: [0; crate::tunables::CHUNK_BANDS],
+            late_px: [0; LATE_MAX],
         },
         tdr_budget_ms: c.tdr_budget_ms,
         tdr_explicit_budget_ms: c.tdr_explicit_budget_ms,
@@ -1109,6 +1111,7 @@ fn dispatch() -> WalkDispatchInputs {
         band_ms: [0.0; crate::tunables::CHUNK_BANDS],
         band_ms_iters: [0; crate::tunables::CHUNK_BANDS],
         band_ms_len: [0; crate::tunables::CHUNK_BANDS],
+        band_ms_px: [0; crate::tunables::CHUNK_BANDS],
         pin_timeout_scaled: 1,
         chunk_charge: 1,
         chunk_shuffle: 0,
@@ -1223,6 +1226,7 @@ fn a_gpu_timed_pin_pass_feeds_the_band_costs_only_when_spans_are_priced() {
     // On: band 0's cost, the iterations it covered and the reference it was measured against.
     let d = decide_walk_price(&pass(2.0, true));
     assert_eq!((d.ledger.band_ms[0], d.ledger.band_ms_iters[0], d.ledger.band_ms_len[0]), (2.0, 545, 35_138));
+    assert_eq!(d.ledger.band_ms_px[0], 800_000, "the pixels the pass ran at (1000×800)");
     // A zero reading (the RX 6800 XT's timestamps lag a dispatch) measures nothing.
     let d = decide_walk_price(&pass(0.0, true));
     assert_eq!(d.ledger.band_ms[0], 0.0);
