@@ -1694,6 +1694,12 @@ struct Perf {
     /// Survives same-sig restarts — re-crossing the wrap-storm band with amnesia was the kill —
     /// and clears when the sig changes.
     chunk_bands: [[u32; crate::tunables::CHUNK_BANDS]; 2],
+    /// The band-cost memory (`decide::WalkLedger::band_ms`, `PIN_SPAN_PRICED`): per band, the GPU-timed
+    /// cost of a pin pass's iterations there, those iterations, and the reference length it was
+    /// measured against. Doubled where the licences are halved, cleared where they are.
+    chunk_band_ms: [[f32; crate::tunables::CHUNK_BANDS]; 2],
+    chunk_band_ms_iters: [[u32; crate::tunables::CHUNK_BANDS]; 2],
+    chunk_band_ms_len: [[u32; crate::tunables::CHUNK_BANDS]; 2],
     /// Budget-climb probe (see `MandelbrotParams::probe_nonce`): bumped on settled frames while
     /// the budget is unconverged so the GPU re-measures — breaks the resolution-floor deadlock
     /// where budget growth is too small to re-key the frame and the climb freezes.
@@ -2450,6 +2456,9 @@ impl Default for Perf {
             chunk_pass_dt: [0.0, 0.0],
             chunk_inflight: [None, None],
             chunk_bands: [[0; crate::tunables::CHUNK_BANDS], [0; crate::tunables::CHUNK_BANDS]],
+            chunk_band_ms: [[0.0; crate::tunables::CHUNK_BANDS]; 2],
+            chunk_band_ms_iters: [[0; crate::tunables::CHUNK_BANDS]; 2],
+            chunk_band_ms_len: [[0; crate::tunables::CHUNK_BANDS]; 2],
             probe_nonce: [0, 0],
             hold_active: [false, false],
             hold_uv: [[0.0, 0.0, 1.0], [0.0, 0.0, 1.0]],
@@ -15518,6 +15527,8 @@ impl FractadyneApp {
             // on a pass the walk judged drained, which a saturated queue stops producing exactly
             // when this fires. Output-neutral (see `chunk_band_retreat`).
             render::chunk_band_retreat(&mut self.perf.chunk_bands[v.min(1)]);
+            // …and the costs a span is bounded by (`PIN_SPAN_PRICED`): they priced what came back lethal.
+            self.perf.chunk_band_ms[v.min(1)] = [0.0; crate::tunables::CHUNK_BANDS];
             // What the retreat REACHED (W3 gate 2): every live dispatch sizes from the budget, so
             // the next one is below the lethal one only if the new budget is.
             let outcome = render::retreat_outcome(steps, next);

@@ -144,6 +144,9 @@ pub(crate) struct Cost {
     /// The share of one pin pass a pass across several bands may take (`PIN_BAND_SPAN_DEFAULT`;
     /// 0 = off).
     pub pin_band_span: f64,
+    /// A span is bounded by its bands' measured costs, not their licences (`PIN_SPAN_PRICED_DEFAULT`;
+    /// 0 = by licences).
+    pub pin_span_priced: u64,
     /// A reactive reference build overtaken while it ran is dropped (`REF_OVERTAKEN_DROP_DEFAULT`;
     /// 0 = installed, as before).
     pub ref_overtaken_drop: u64,
@@ -204,6 +207,7 @@ impl Default for Cost {
             worker_yield: WORKER_YIELD_DEFAULT,
             worker_pass_ms: WORKER_PASS_MS_DEFAULT,
             pin_band_span: PIN_BAND_SPAN_DEFAULT,
+            pin_span_priced: PIN_SPAN_PRICED_DEFAULT,
             ref_overtaken_drop: REF_OVERTAKEN_DROP_DEFAULT,
             bla_eps: BLA_EPS,
         }
@@ -554,6 +558,15 @@ pub(crate) fn apply_overrides(pairs: &[(String, String)]) -> Result<(), String> 
                 };
                 p.to_string()
             }
+            "PIN_SPAN_PRICED" => {
+                let p = c.pin_span_priced;
+                c.pin_span_priced = match raw.as_str() {
+                    "0" => 0,
+                    "1" => 1,
+                    _ => return Err(format!("--set PIN_SPAN_PRICED: '{raw}' is not 0 (by licences) or 1 (by costs)")),
+                };
+                p.to_string()
+            }
             "PIN_BAND_SPAN" => {
                 let p = c.pin_band_span;
                 c.pin_band_span = raw
@@ -699,7 +712,7 @@ pub(crate) const OVERRIDABLE: &str = "TDR_BUDGET_MS, TDR_EXPLICIT_BUDGET_MS, \
     EXPLICIT_DISPATCH_CAP, TDR_MAX_TILES, TDR_TILES_CEIL, BLA_EPS, PASS_FIXED_MS, MOTION_NEED_QUANTILE, MOTION_NEED_SOURCE, READING_POOL, \
     DEAD_MAN, DISPATCH_CEILING, SETTLE_SERIALIZE, ADMISSION, PIN_TIMEOUT_SCALED, TAIL_DF32, REF_OVERLAP, EARLY_REF, TILE_OCCUPANCY, LIVE_REFRESH, \
     ORBIT_LEN_CAP, RENORM, TILE_PACK, RENORM_BLA, ORBIT_SCHEDULE, SA_TRACE, CHUNK_CHARGE, \
-    CHUNK_SHUFFLE, WORKER_MOTION, WORKER_YIELD, WORKER_PASS_MS, RECORD_COST_PPM, REUSE_MAX_WRAPS, PIN_BAND_SPAN, REF_OVERTAKEN_DROP, SA_TRACE_LIVE_STEPS, GROWTH_IN_WORK, PIN_GROWTH_LANE, PRE_SWITCH_PROBE";
+    CHUNK_SHUFFLE, WORKER_MOTION, WORKER_YIELD, WORKER_PASS_MS, RECORD_COST_PPM, REUSE_MAX_WRAPS, PIN_BAND_SPAN, REF_OVERTAKEN_DROP, SA_TRACE_LIVE_STEPS, GROWTH_IN_WORK, PIN_GROWTH_LANE, PRE_SWITCH_PROBE, PIN_SPAN_PRICED";
 
 #[cfg(test)]
 #[path = "../tests/unit/tunables/override_tests.rs"]
@@ -1559,6 +1572,15 @@ pub(crate) const PIN_INFLIGHT_MAX: u32 = 2;
 /// In the df32 hand-over (2^10–2^26) the refreshes sat at the visible ladder's floor (147 px wide) in
 /// 7 of 10 runs with spans, 1 of 8 without. At 0.5 the 4× gain mostly went (0.71–0.72).
 pub(crate) const PIN_BAND_SPAN_DEFAULT: f64 = 0.0;
+
+/// EXPERIMENT, off by default (2026-10-18). 1 = a span (`PIN_BAND_SPAN` above 0) runs on through the
+/// next bands while the GPU-timed costs of those bands (`WalkLedger::band_ms`: what a whole pass over
+/// each cost the last time it was priced) sum to no more than that share of the pin target
+/// (`pin_span_end_priced`), instead of their licences' shares. A licence is a price extrapolated
+/// ×4–×16; a cost is what the band took. At 2^260 on the (49,3) spiral every band's pass cost
+/// 1.1–1.7 ms whatever its length, and one band a pass made each pin nine passes and twelve frames
+/// (held ~1.1 octaves at 4×). 0 = spans bounded by licences, as before.
+pub(crate) const PIN_SPAN_PRICED_DEFAULT: u64 = 0;
 
 /// 1 = a reactive reference build that another install overtook while it ran is dropped instead
 /// of installed over it (`render::reactive_build_overtaken`). 0 = it is installed, as before, for

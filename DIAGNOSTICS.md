@@ -386,7 +386,11 @@ of its own still stops it, and a spanned pass's price is charged to every band i
 because spanned passes run over their price where costs jump (design/live-zoom-smoothing.md §7).
 With `FRACTADYNE_TRACE=tile` every pin pass prints `pin-pass v… f… to=… size=… band=…` (`band=1..5`
 for a pass across bands), and `pin-price` names each band's licence after the price
-(`licence=a/b/c`). — and `SA_TRACE_LIVE_STEPS` (default 65,536 from 0.3.0-beta.20; `0` = off, for a
+(`licence=a/b/c`). — and `PIN_SPAN_PRICED` (an experiment, default 0; with `PIN_BAND_SPAN` above
+0): a span is bounded by what its bands last cost the GPU (`WalkLedger::band_ms`, fed by pin
+passes' own timestamps, scaled up past the iterations each covered) rather than by their licences,
+and the growth limiter remembers a span's size; its `pin-pass` line ends `pred=…ms`, to hold
+against the `pin-price` that comes back (design/live-zoom-smoothing.md §7.10). — and `SA_TRACE_LIVE_STEPS` (default 65,536 from 0.3.0-beta.20; `0` = off, for a
 before/after measurement): outside a `--render-tour` process, a reference's series walk of at most
 this many steps is recorded and later builds of the same point replay it, as a tour's do
 (`SA_TRACE`); a longer walk is walked each time, since a record is ~90 bytes a step. A live dive
