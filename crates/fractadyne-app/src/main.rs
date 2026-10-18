@@ -1780,6 +1780,8 @@ struct Perf {
     /// ~0.5 s on a still view (2026-10-16), and nothing said why.
     accum_norm_sig: [u64; 2],
     accum_end_why: [Option<String>; 2],
+    /// The frame from which the pre-switch floatexp probe may run again (`pre_switch_probe`).
+    pre_switch_probe_next: u64,
     accum_ss: [u32; 2],
     /// The view sample 0 of the running average was folded at — (log2 magnification, f64
     /// centre) — so a later fold at ANOTHER view is caught and logged (always, no trace flag):
@@ -2205,6 +2207,17 @@ impl Perf {
         crate::tunables::instrument("FRACTADYNE_POISON_VIEW_AT")
     }
 
+    /// A floatexp rate measured before the view reaches floatexp (`pre_switch_probe`): the opening
+    /// guess's rate in `mode` until the mode measures its own, and nothing else (`Meter::opening_rate`).
+    pub(crate) fn record_opening_rate(&mut self, v: usize, mode: u32, rate: f64) {
+        self.meter.record_opening_rate(v, mode, rate);
+    }
+
+    /// This view has a measured rate in `mode`, or an opening rate for it.
+    pub(crate) fn mode_rate_known(&self, v: usize, mode: u32) -> bool {
+        self.meter.worst_rate_steps_per_ms(v, mode).is_some() || self.meter.has_opening_rate(v, mode)
+    }
+
     /// See `render::Meter::bootstrap_steps`.
     fn bootstrap_steps(&self, v: usize) -> u64 {
         self.meter.bootstrap_steps(v, self.budget_mode[v])
@@ -2382,6 +2395,7 @@ impl Default for Perf {
             accum_sig: [0, 0],
             accum_norm_sig: [0, 0],
             accum_end_why: [None, None],
+            pre_switch_probe_next: 0,
             accum_ss: [1, 1],
             accum_view0: [(0.0, 0.0, 0.0), (0.0, 0.0, 0.0)],
             content_stamp: [
@@ -6020,6 +6034,8 @@ struct FractadyneApp {
     /// did. The view jumps immediately and corrects itself when the answer lands, rather than
     /// making the user wait to find out where they are going.
     snap_solve: Option<SnapSolve>,
+    /// The pre-switch floatexp probe running on its own thread, if one is (`pre_switch_probe`).
+    pre_switch_job: Option<render::PreSwitchJob>,
     /// Dual view: if `Some`, the Julia `c` is pinned to this Mandelbrot point (a marker
     /// is drawn there) instead of following the cursor. Click to pin, click it to release.
     julia_pin: Option<(f64, f64)>,
@@ -6950,6 +6966,7 @@ impl FractadyneApp {
             click_zoom: s.click_zoom,
             click_zoom_snap: s.click_zoom_snap,
             snap_solve: None,
+            pre_switch_job: None,
             julia_pin: None,
             dual: s.dual && fractal.supports_julia(),
             dual_split: s.dual_split.clamp(DUAL_SPLIT_MIN, DUAL_SPLIT_MAX),
@@ -16406,6 +16423,8 @@ impl eframe::App for FractadyneApp {
         // GPU handles the install path lacks. Before the draw, so a kept preview serves this frame.
         if let Some((dev, q)) = &gpu {
             self.probe_pending_coarse(dev, q);
+            // A dive about to reach floatexp measures it first (`PRE_SWITCH_PROBE`).
+            self.pre_switch_probe(dev, q);
         }
 
         // Auto-zoom autopilot — dive toward detail (advance before drawing so this frame

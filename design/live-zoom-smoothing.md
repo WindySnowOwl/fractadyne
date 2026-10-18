@@ -608,3 +608,73 @@ rounds alternated with `--set GROWTH_IN_WORK=0`) the work-counted limiter gained
 (1, 7, 7, 2 against 2, 1, 0, 2; worst 53–67 ms against 42–54). No lethal-band reading or device
 loss either way; the battery and two motion tests passed. Shipped ON (the user's call, 2026-10-18):
 the RTX 3080's gain is consistent and the Radeon's cost is a few frames short of the 100 ms line.
+
+### 7.9 Floatexp measured before the switch (`PRE_SWITCH_PROBE`, 2026-10-18)
+
+The user's question after §7.8: would starting the floatexp calculations as a dive approaches 2^93
+speed up the switch's opening budget? Within `PRE_SWITCH_OCT` (2) octaves below the switch, while
+zooming in, a worker thread runs floatexp passes of the current view in the window's queue
+(`fractadyne_gpu::render_iter_timed`: the occupancy knee's size, ~30 iterations from iteration 0,
+BLA, the series skip and glitch detection off), one untimed and two timed, and the switch opens at
+the slower pass's rate × `TDR_BOOTSTRAP_MS` instead of df32's rate ÷ 256. Built and measured on the
+RTX 3080 in five rounds of the 4× jump row (`--zoomtest 20 --zoomtest-start-log2 86.37`), alternated
+with `--set PRE_SWITCH_PROBE=0`.
+
+- ⭐**The opening holds the first floatexp pin**, as §7.8 said. Traced (`FRACTADYNE_TRACE=tile`) with
+  the probe off, its passes are `fe_budget / px`: 371, 556, 834, 1,252, 1,878 iterations at 147×110,
+  the budget climbing ×1.5 a reading from 6e6, each pass priced 0.1–0.2 ms against a ~20 ms target;
+  adopted 23 frames after the switch. With the probe (opening 9.6e7): passes of 434, 1,658, 390, 4,096,
+  8,192, 4,427 iterations, adopted 7 frames after it started, 15 after the switch.
+- **Measured on the switch alone** (frames from the first floatexp frame to the next adoption): 11, 13,
+  15, 15, 17, 23, 24, 26, 40 with the probe against 17, 23, 27, 28, 28, 29, 32, 33, 39 without — median
+  17 against 28 (Mann-Whitney U 15, n 9 + 9, p < 0.05). The worst held age in the 40 frames after the
+  switch: median 1.34 octaves against 1.69. Whole-run "held max" does not show it: it is set as often
+  by a slow df32 pin just before the switch or a large refresh past 2^100.
+- ⛔**The probe prices the OPENING and nothing else** (`Meter::opening_rate`). Recorded as a reading
+  (into `mode_rate` and `motion_rate`), its no-BLA rate (2.5e6–4e6 steps/ms) outlived the switch —
+  real BLA-on passes measured ~1.8e7 — and every refresh after it was sized from it: held max
+  improved (1.34 against 1.66 octaves over eight runs a side) only because on-screen detail halved
+  (median 305–475 px against 615–819). ⛔The P-G gate scores age; `pg/sharp.py` scores what is shown.
+  Opening-only, detail is unchanged within noise: a mean of the run medians 552 px against 587 (nine
+  runs a side; round 5 alone 608 against 630).
+- **On the UI thread it cost a frame of 47–69 ms per dive** (two cold `render_iter` calls: the shader
+  parse, the pipeline, the drain of the frames already queued, the readback, for ~3 ms of GPU work);
+  on the worker it costs 0.1 ms there.
+- **Readings are location-dependent, not noisy**: ~3 ms per pass at the jump row's location (2.5e6
+  steps/ms) and 0.6–1.1 ms at misi-49-3, whose first real floatexp passes measured ~1.7e7. Warming
+  did not remove the jump row's two populations (1.07 and 2.1–3.2 ms in different runs; GPU and wall
+  times agree within each). A pass is believed no faster than this view's df32 rate ÷
+  `PRE_SWITCH_FLOATEXP_RATIO_MIN` (8): the first real floatexp passes after the switch ran 2.6–18.5×
+  slower per step than df32 at the jump row.
+
+Open: frames over 50 ms in 2 of 9 runs with the probe against 0 of 9 without. One run's were df32
+frames with 28–36 ms of GUI time, some before the probe ran; the other's (50.2–53.6 ms, 1.5–4 s
+after the switch) came after floatexp had measured its own rate (2.89e7, the highest of the round).
+A bigger opening makes the first floatexp readings come from passes of a useful size rather than
+tiny ones dominated by their fixed cost, so the mode's latched minimum starts higher (2.89e7 here,
+1.46e6 in a run without the probe that kept it for the rest of the dive) — a plausible path to bolder
+sizing later, not shown.
+
+On the RX 6800 XT (PLUTO, dev.30 = `faaea1ce`, the same jump row with `--adapter 1`, five runs a side,
+one traced each way): safe — no device loss, no lethal-band reading, no frame over 100 ms, the one
+over 50 ms (75.6 ms at 2^87.6) before the probe ran — and no gain. Frames from the switch to the next
+adoption: 29, 29, 30, 30, 32 with the probe against 21, 22, 23, 30, 33 without (not significant at
+n 5 + 5, but the wrong way). The probe read 3.91 ms a pass in every run (2.02e6 steps/ms), and the
+cap bound every time: this card's latched df32 rate at 2^91 was 2.0e6–1.1e7 steps/ms, so df32 ÷ 8
+opened the switch at 9.8e6–5.5e7, not the 8e7 the reading gives. ⭐**On this card the opening does
+not hold the first floatexp pin**: its first pass priced 0.0–0.1 ms (this card's timestamps lag a
+dispatch), floatexp's rate counted as measured, and the opening guess went to the
+4e8 ceiling at the next frame in both arms; the band ledger then set the passes (256-iteration
+passes, a band-3 pass priced 16.7 ms that cut its licence to 320). What the probe changed was the
+pin's SIZE: it started at the size of the df32 pins before it (620×466, 99 iterations a pass) where
+without it the 4e6 opening started one at 345×259 (44), and the bigger one took 24 frames to the
+smaller's 18.
+
+What bounds that pin, from the traced pair: the band ledger's 256-iteration floor in each band not
+yet priced, the band-3 cliff (probe arm), then `fe_budget / px` (1,280–2,064 iterations on, 1,408–
+2,117 off), the budget re-climbing ×1.5 a reading from the first real reading (2.65e8 on, 1.26e8
+off); never the growth limiter. The same budget over 3× the pixels is 3× fewer iterations a pass.
+⭐**The cap stays at df32 ÷ 8.** On this card a looser one could not shorten the switch (the opening
+does not bind) and would only start a bigger first pin; on the RTX 3080 it binds on the fast
+readings (1.07 ms a pass at the jump row, 0.6 at misi-49-3) and the gain was measured under it, so
+nothing pays for raising the first dispatch at the crossing of the six device losses.

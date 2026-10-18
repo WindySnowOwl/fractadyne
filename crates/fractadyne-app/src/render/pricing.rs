@@ -820,6 +820,15 @@ pub(crate) struct Meter {
     pub(crate) mode_rate: [[f64; MODE_RATE_SLOTS]; 2],
     /// When each `mode_rate` slot last took a reading, seconds of process time.
     pub(crate) mode_rate_t: [[f64; MODE_RATE_SLOTS]; 2],
+    /// A rate measured for a mode before the view reached it (the pre-switch floatexp probe,
+    /// `FractadyneApp::pre_switch_probe`; 0.0 = none). It prices only the OPENING guess
+    /// ([`Self::bootstrap_steps`]) while the mode has no reading of its own, and nothing else.
+    ///
+    /// ⛔**Not a `mode_rate` reading** (2026-10-18). Recorded as one (and into `motion_rate`), the
+    /// probe's no-BLA worst case outlived the switch: real BLA-on passes measured ~1.8e7 steps/ms
+    /// where it held 2.5e6–4e6, and every refresh after the switch was sized from it — on the
+    /// RTX 3080's 4× jump row, on-screen detail at a median 305–475 px against 615–819 without it.
+    pub(crate) opening_rate: [[f64; MODE_RATE_SLOTS]; 2],
     /// SMOOTHNESS-pacing rate per mode: nominal steps per ms as currently measured (an
     /// asymmetric EMA — a slower reading is adopted at once, a faster one is blended in), as
     /// opposed to `mode_rate`'s all-time pessimistic minimum. `mode_rate` sizes SAFETY floors and
@@ -905,6 +914,19 @@ impl Meter {
     pub(crate) fn worst_rate_steps_per_ms(&self, v: usize, mode: u32) -> Option<f64> {
         let r = slot(mode).map_or(0.0, |s| self.mode_rate[v][s]);
         (r.is_finite() && r > 0.0).then_some(r)
+    }
+
+    /// Set the rate this view's opening guess in `mode` uses until the mode measures one of its own
+    /// (see `opening_rate`).
+    pub(crate) fn record_opening_rate(&mut self, v: usize, mode: u32, rate: f64) {
+        if let (Some(s), true) = (slot(mode), rate.is_finite() && rate > 0.0) {
+            self.opening_rate[v][s] = rate;
+        }
+    }
+
+    /// This view has an opening rate for `mode` (see `opening_rate`).
+    pub(crate) fn has_opening_rate(&self, v: usize, mode: u32) -> bool {
+        slot(mode).is_some_and(|s| self.opening_rate[v][s] > 0.0)
     }
 
     /// Fold one priced dispatch into this view's per-mode rate, keeping the PESSIMISTIC extreme,
@@ -1091,7 +1113,10 @@ impl Meter {
     /// on this device. `rate_other` is the most pessimistic rate seen in any other mode, which is
     /// all we have to go on the first time a dive crosses into a mode.
     pub(crate) fn bootstrap_steps(&self, v: usize, mode: u32) -> u64 {
-        let this = slot(mode).map_or(0.0, |s| self.mode_rate[v][s]);
+        // A reading of this mode's own; until there is one, a rate measured ahead of it.
+        let this = slot(mode).map_or(0.0, |s| {
+            if self.mode_rate[v][s] > 0.0 { self.mode_rate[v][s] } else { self.opening_rate[v][s] }
+        });
         let other = self.mode_rate[v]
             .iter()
             .enumerate()

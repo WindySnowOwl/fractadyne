@@ -59,6 +59,12 @@ published as the pre-releases `v0.2.41-beta.1` to `v0.2.41-beta.150`, and a "bet
 
 Changes after 0.3.0-beta.1:
 
+- **A deep zoom passing 1e28× catches up sooner (0.3.0-beta.20).** At about 1e28× the live view
+  switches to a slower arithmetic with a wider range. It had measured nothing in that arithmetic yet,
+  so it began with very small refreshes and grew them over many frames while the picture on screen
+  aged. It now times a few passes of the slower arithmetic shortly before the crossing, on a
+  separate thread, and begins at the size that measurement supports. On a fast dive through the
+  crossing, the first refresh after it arrives in a median of 17 frames instead of 28.
 - **Zoom refreshes size themselves by the work they do (0.3.0-beta.20).** While zooming, each
   refresh grows its passes step by step, at most doubling each time, and it measured "double" in
   iterations. The low-resolution refreshes ran beside full-resolution frames, so a refresh started

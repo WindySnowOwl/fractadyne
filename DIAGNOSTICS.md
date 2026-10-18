@@ -402,7 +402,14 @@ iterations. — and `PIN_GROWTH_LANE` (an experiment, default 0): a pin pass the
 eighth of the pin target lets the next grow by the band ledger's proportional lane (×4–×16) instead
 of ×2. Off because it did not shorten the first floatexp pin after the 2^93 switch, which the
 switch's opening budget holds, and the slow df32 stretches of throttled runs were worst with it on
-(design/live-zoom-smoothing.md §7.8).
+(design/live-zoom-smoothing.md §7.8). — and `PRE_SWITCH_PROBE` (default 1 from 0.3.0-beta.20; `0` =
+off, for a before/after measurement): within two octaves below the 2^93 floatexp switch, while
+zooming in, a worker thread times a few floatexp passes of the view (the occupancy knee's size, BLA
+and the series skip off) in the window's queue, and the switch opens its budget at that rate instead
+of df32's rate ÷ 256. It sets only that opening; the mode's own readings replace it. The log line
+`pre-switch floatexp probe at 2^…: …` gives each timed pass (GPU and wall ms), the rate, the cap
+(this view's df32 rate ÷ 8) and the opening; `NOT counted: …` says why a probe was dropped
+(design/live-zoom-smoothing.md §7.9).
 
 - **Not a configuration surface.** The defaults are the only tested path: the self-test, the
   goldens, `--bench-matrix` and `--livetest` all assume them. `--selftest` carries a check that
