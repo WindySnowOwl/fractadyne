@@ -1594,16 +1594,17 @@ pub(crate) const PIN_BAND_SPAN_DEFAULT: f64 = 0.0;
 /// (held ~1.1 octaves at 4×). 0 = spans bounded by licences, as before.
 pub(crate) const PIN_SPAN_PRICED_DEFAULT: u64 = 0;
 
-/// EXPERIMENT (2026-10-18): how many of a view's live iterate timers (`fractadyne_gpu::TIMER_RING`)
-/// may be armed at once. A reading lands two frames after its pass and a timer is armed only when
-/// idle, so with one, at a pass a frame, every other pass goes untimed: half of a 4× dive's pin
-/// passes were never priced (2,020–2,520 a dive, every arm of §7.8), and two thirds of priced spans
-/// (§7.10). 3 times every pass: the first timer is armed exactly as when it was the only one and
+/// (2026-10-18; a candidate default, under test): how many of a view's live iterate timers
+/// (`fractadyne_gpu::TIMER_RING`) may be armed at once. A reading lands two frames after its pass
+/// and a timer is armed only when idle, so with one, at a pass a frame, every other pass goes
+/// untimed: half of a 4× dive's pin passes were never priced (2,020–2,520 a dive, every arm of
+/// §7.8), and two thirds of priced spans (§7.10). 3 times every pass: the first timer is armed
+/// exactly as when it was the only one and
 /// feeds everything it fed; the others time the passes it is too busy for and PRICE PIN PASSES ONLY
 /// (`MandelbrotParams::extra_ms`). ⚠Fed to every controller term — the budget's ×1.5 climb a reading,
 /// the motion EMA, the latched minimum — three timers made the 1× deep dive's picture 4× older and
 /// 92 of its frames run over 33 ms (2026-10-18, RTX 3080): those terms were tuned on one timer.
-pub(crate) const TIMER_SLOTS_DEFAULT: u64 = 1;
+pub(crate) const TIMER_SLOTS_DEFAULT: u64 = 3;
 
 /// 1 = a reactive reference build that another install overtook while it ran is dropped instead
 /// of installed over it (`render::reactive_build_overtaken`). 0 = it is installed, as before, for
