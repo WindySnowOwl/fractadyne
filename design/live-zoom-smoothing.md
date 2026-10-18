@@ -653,5 +653,19 @@ after the switch) came after floatexp had measured its own rate (2.89e7, the hig
 A bigger opening makes the first floatexp readings come from passes of a useful size rather than
 tiny ones dominated by their fixed cost, so the mode's latched minimum starts higher (2.89e7 here,
 1.46e6 in a run without the probe that kept it for the rest of the dive) — a plausible path to bolder
-sizing later, not shown. The Radeon (PLUTO) runs are the device-loss check this crossing needs
-before the default ships.
+sizing later, not shown.
+
+On the RX 6800 XT (PLUTO, dev.30 = `faaea1ce`, the same jump row with `--adapter 1`, five runs a side,
+one traced each way): safe — no device loss, no lethal-band reading, no frame over 100 ms, the one
+over 50 ms (75.6 ms at 2^87.6) before the probe ran — and no gain. Frames from the switch to the next
+adoption: 29, 29, 30, 30, 32 with the probe against 21, 22, 23, 30, 33 without (not significant at
+n 5 + 5, but the wrong way). The probe read 3.91 ms a pass in every run (2.02e6 steps/ms), and the
+cap bound every time: this card's latched df32 rate at 2^91 was 2.0e6–1.1e7 steps/ms, so df32 ÷ 8
+opened the switch at 9.8e6–5.5e7, not the 8e7 the reading gives. ⭐**On this card the opening does
+not hold the first floatexp pin**: its first pass priced 0.0–0.1 ms (this card's timestamps lag a
+dispatch), floatexp's rate counted as measured, and the opening guess went to the
+4e8 ceiling at the next frame in both arms; the band ledger then set the passes (256-iteration
+passes, a band-3 pass priced 16.7 ms that cut its licence to 320). What the probe changed was the
+pin's SIZE: it started at the size of the df32 pins before it (620×466, 99 iterations a pass) where
+without it the 4e6 opening started one at 345×259 (44), and the bigger one took 24 frames to the
+smaller's 18.
