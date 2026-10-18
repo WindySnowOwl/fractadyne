@@ -59,6 +59,13 @@ published as the pre-releases `v0.2.41-beta.1` to `v0.2.41-beta.150`, and a "bet
 
 Changes after 0.3.0-beta.1:
 
+- **Every pass of a deep zoom's refresh is timed (0.3.0-beta.20).** While zooming deep, the live
+  view builds each refreshed picture over several passes and sizes each pass from what the ones
+  before it cost. Only every other pass was timed: the graphics card's timer was still busy with
+  the one before. Each view now keeps three timers, so every pass is priced; the frame budget still
+  reads the first, as before. On a fast dive through 1e28× on an RTX 3080 the picture on screen
+  was at its oldest 1.0 to 1.4 octaves behind instead of 1.5 to 1.75, and sharper; on an
+  RX 6800 XT it is unchanged.
 - **A deep zoom passing 1e28× catches up sooner (0.3.0-beta.20).** At about 1e28× the live view
   switches to a slower arithmetic with a wider range. It had measured nothing in that arithmetic yet,
   so it began with very small refreshes and grew them over many frames while the picture on screen

@@ -722,3 +722,39 @@ with a pass every frame, every other pass goes untimed (`gpu` trace: a reading e
 only. A ring of timers would price every pass; it also doubles the readings every controller term was
 tuned on (the ×1.5 climbs, the motion EMA, the latched minimum, the licences), so it is its own
 experiment.
+
+**The timer ring (`TIMER_SLOTS`, default 3 on this branch).** Fed to every rate and budget, three
+timers changed what the controller had been tuned on: the 4× jump row improved on every measure, but
+the df32 4× row's held age went 0.23 → 0.55 octaves on average and the 1× deep stretch's 0.048 →
+0.218 with 92 frames over 33 ms. So the first timer is armed exactly as when it was the only one and
+feeds everything it fed; the others time only the passes it is too busy for, into their own sinks
+(`MandelbrotParams::extra_ms`), and price pin passes and nothing else. On the jump row that priced 193
+of 207 pin passes, against 97 of 194 with one timer, while the first timer's readings were as many as
+before (119 against 127). RTX 3080, alternated, two rounds:
+
+| row | one timer | ring, pins only |
+|---|---|---|
+| 4× jump, held max (oct) | 1.51, 1.75, 1.71, 1.70 | 1.23, 1.01, 1.42, 1.42 |
+| 4× jump, detail median (px) | 578, 649, 689, 515 | 715, 824, 605, 829 |
+| 4× continuous, held max / gap mean | 1.32–1.75 / 0.65–0.70 | 1.18–1.52 / 0.69–0.72 |
+| 1× deep (2^245–2^305) | gap 0.048, detail 351 | the same, run for run |
+| df32 4×, hand-over 4× | within each row's run-to-run spread in both | |
+
+No frame over 50 ms in either arm of those rows. Gates on the ring: workspace tests (one caught a twin
+keeping the new sinks: a second GPU's passes would have priced the window's), selftest 529/529 and
+31/31 goldens, three motiontests and the worker one PASS, livetest 24/24 with no drift, uitest 75/1
+(the standing warn), autodive with no loss. RX 6800 XT (PLUTO, dev.31, `--adapter 1`): the jump row
+held 1.59, 1.43 against 1.31, 1.67 (the only frame over 100 ms, 110 ms, in the one-timer arm);
+`--zoomtest 40` lag 0.314, 0.324 against 0.294, 0.331, 6 and 6 frames over 33 ms against 3 and 3,
+none over 100 ms; motiontest PASS; the battery PASS with the card's standing failures only (selftest
+527/528, the wider-canvas check; gputest's folded EFTs). No lethal-band reading or device loss.
+
+**Priced spans with pixel-aware costs, not yet.** Recording each cost with the pixels its pass ran at
+(`band_ms_px`) kept the full 4× dive's detail gain (median 664–691 px against 245–258) and its
+freshness (gap 0.64–0.65 against 0.65–0.70), but its worst episodes got longer (1.81 and 2.88
+octaves, an 87 ms frame): at 2^124–136 and 2^206–214 a 1150–1455 px pin walked 30–60 frames. The
+refresh sizing (`decide_moving`, the measured cap) assumes a walk's frames grow with its pixels,
+`res · sqrt(allowed / took)`, ×1.25 a pin at most; with spans a walk takes ~6 frames at any size, so
+the cap climbs to full resolution and meets a harder region there. What would fix it is a cap from
+the band costs themselves (the frames a walk at that size is predicted to take) — and that code's
+own history says a pessimistic model became a permanent ceiling once, so it is a design of its own.
