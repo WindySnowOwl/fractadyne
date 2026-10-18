@@ -361,6 +361,10 @@ struct IterTiming {
     fails: u32,
 }
 
+/// The iterate timers each view keeps ([`MandelbrotParams::timer_slots`] of them may be armed): a
+/// reading lands two frames after its pass, so three cover a pass every frame.
+pub const TIMER_RING: usize = 3;
+
 /// `IterTiming`/`CounterRead` `map_async` status codes (see [`IterTiming::status`]).
 const MAP_PENDING: u8 = 0;
 const MAP_OK: u8 = 1;
@@ -374,6 +378,9 @@ enum TimingState {
     Recorded,
     /// `map_async` issued; waiting for the callback.
     Mapping,
+    /// Mapped and read to publish: a slot of the iterate timer's ring ([`MandelbrotParams::timer_slots`])
+    /// waits here when another finished first, since the app drains one reading a frame.
+    Ready,
 }
 
 impl IterTiming {
@@ -413,8 +420,10 @@ impl IterTiming {
         })
     }
 
-    /// Advance the readback state machine; publishes the last completed pass time (ms, f64 bits) into
-    /// `out`. Called once per `prepare`, before the pass is (re)recorded.
+    /// Advance the readback state machine and publish a finished reading (ms, f64 bits, into `out`,
+    /// its count, frame, arming stamp and provenance first). Called once per `prepare`, before the
+    /// pass is (re)recorded: [`Self::advance`] then [`Self::publish`].
+    #[allow(clippy::too_many_arguments)]
     fn pump(
         &mut self,
         device: &wgpu::Device,
@@ -425,6 +434,17 @@ impl IterTiming {
         out_armed: Option<&Arc<std::sync::atomic::AtomicU64>>,
         out_prov: Option<&ProvenanceSink>,
     ) {
+        if self.state == TimingState::Mapping {
+            let _ = device.poll(wgpu::Maintain::Poll);
+        }
+        self.advance();
+        self.publish(queue, out, out_steps, out_frame, out_armed, out_prov);
+    }
+
+    /// Move the readback on: a recorded pass's copy is in the queue now, so its `map_async` is issued;
+    /// a finished map is `Ready` to publish; a failed one recovers to `Idle`. (Polling the device is
+    /// the caller's, once for every timer it advances.)
+    fn advance(&mut self) {
         use std::sync::atomic::Ordering::SeqCst;
         match self.state {
             // The encoder that wrote these timestamps was submitted after last frame's `prepare`
@@ -437,58 +457,71 @@ impl IterTiming {
                 });
                 self.state = TimingState::Mapping;
             }
-            TimingState::Mapping => {
-                let _ = device.poll(wgpu::Maintain::Poll);
-                match self.status.load(SeqCst) {
-                    MAP_OK => {
-                        {
-                            let data = self.read.slice(..).get_mapped_range();
-                            let ticks: [u64; 2] = bytemuck::pod_read_unaligned(&data[..16]);
-                            let ns = ticks[1].saturating_sub(ticks[0]) as f64
-                                * queue.get_timestamp_period() as f64;
-                            // Steps FIRST: the app treats a non-zero `iterate_ms` as "a reading is
-                            // ready" and reads the paired count in the same breath, so publishing the
-                            // time first would expose one frame's timing against the previous count.
-                            if let Some(o) = out_prov {
-                                if let Ok(mut g) = o.lock() {
-                                    *g = self.prov;
-                                }
-                            }
-                            if let Some(o) = out_steps {
-                                o.store(self.steps, SeqCst);
-                            }
-                            if let Some(o) = out_frame {
-                                o.store(self.frame, SeqCst);
-                            }
-                            if let Some(o) = out_armed {
-                                o.store(self.armed_us, SeqCst);
-                            }
-                            if let Some(o) = out {
-                                o.store((ns / 1.0e6).to_bits(), SeqCst);
-                            }
-                        }
-                        self.read.unmap();
-                        self.fails = 0;
-                        self.state = TimingState::Idle;
+            TimingState::Mapping => match self.status.load(SeqCst) {
+                MAP_OK => {
+                    self.fails = 0;
+                    self.state = TimingState::Ready;
+                }
+                // Map failed: the buffer is NOT mapped, so do not read or unmap it — just
+                // recover to Idle and let the next frame re-arm. Without this the machine used
+                // to sit in Mapping forever, silently killing adaptive iterate timing.
+                MAP_ERR => {
+                    self.fails += 1;
+                    if self.fails == 1 || self.fails % 600 == 0 {
+                        eprintln!(
+                            "[fd-gpu] iterate-timing readback map failed ({} in a row) — skipping this reading",
+                            self.fails
+                        );
                     }
-                    // Map failed: the buffer is NOT mapped, so do not read or unmap it — just
-                    // recover to Idle and let the next frame re-arm. Without this the machine used
-                    // to sit in Mapping forever, silently killing adaptive iterate timing.
-                    MAP_ERR => {
-                        self.fails += 1;
-                        if self.fails == 1 || self.fails % 600 == 0 {
-                            eprintln!(
-                                "[fd-gpu] iterate-timing readback map failed ({} in a row) — skipping this reading",
-                                self.fails
-                            );
-                        }
-                        self.state = TimingState::Idle;
-                    }
-                    _ => {} // still pending — keep polling next frame
+                    self.state = TimingState::Idle;
+                }
+                _ => {} // still pending — keep polling next frame
+            },
+            TimingState::Idle | TimingState::Ready => {}
+        }
+    }
+
+    /// Publish a `Ready` reading into the sinks and free the slot.
+    fn publish(
+        &mut self,
+        queue: &wgpu::Queue,
+        out: Option<&Arc<std::sync::atomic::AtomicU64>>,
+        out_steps: Option<&Arc<std::sync::atomic::AtomicU64>>,
+        out_frame: Option<&Arc<std::sync::atomic::AtomicU64>>,
+        out_armed: Option<&Arc<std::sync::atomic::AtomicU64>>,
+        out_prov: Option<&ProvenanceSink>,
+    ) {
+        use std::sync::atomic::Ordering::SeqCst;
+        if self.state != TimingState::Ready {
+            return;
+        }
+        {
+            let data = self.read.slice(..).get_mapped_range();
+            let ticks: [u64; 2] = bytemuck::pod_read_unaligned(&data[..16]);
+            let ns = ticks[1].saturating_sub(ticks[0]) as f64 * queue.get_timestamp_period() as f64;
+            // Steps FIRST: the app treats a non-zero `iterate_ms` as "a reading is
+            // ready" and reads the paired count in the same breath, so publishing the
+            // time first would expose one frame's timing against the previous count.
+            if let Some(o) = out_prov {
+                if let Ok(mut g) = o.lock() {
+                    *g = self.prov;
                 }
             }
-            TimingState::Idle => {}
+            if let Some(o) = out_steps {
+                o.store(self.steps, SeqCst);
+            }
+            if let Some(o) = out_frame {
+                o.store(self.frame, SeqCst);
+            }
+            if let Some(o) = out_armed {
+                o.store(self.armed_us, SeqCst);
+            }
+            if let Some(o) = out {
+                o.store((ns / 1.0e6).to_bits(), SeqCst);
+            }
         }
+        self.read.unmap();
+        self.state = TimingState::Idle;
     }
 }
 
@@ -715,7 +748,7 @@ impl PassClock {
                         _ => {}
                     }
                 }
-                TimingState::Idle => {}
+                TimingState::Idle | TimingState::Ready => {} // (a ring's state; never this one's)
             }
         }
     }
@@ -937,7 +970,7 @@ impl CounterRead {
                     _ => {} // still pending — keep polling next frame
                 }
             }
-            TimingState::Idle => {}
+            TimingState::Idle | TimingState::Ready => {} // (a ring's state; never this one's)
         }
     }
 }
@@ -946,8 +979,11 @@ impl CounterRead {
 /// view owns its offscreen iteration texture, uniforms, orbit buffer, and caching
 /// state so two panels (e.g. Mandelbrot + Julia) can render without clobbering.
 struct ViewResources {
-    /// GPU timing for the live iterate pass; `None` when the device lacks `TIMESTAMP_QUERY`.
-    timing: Option<IterTiming>,
+    /// GPU timing for the live iterate pass: a ring of [`TIMER_RING`] timers, of which
+    /// [`MandelbrotParams::timer_slots`] may be armed; empty when the device lacks `TIMESTAMP_QUERY`.
+    /// The first is THE iterate timer, armed whenever it is idle exactly as when it was the only
+    /// one; the others time the passes it is too busy for, into their own sinks (`extra_ms`).
+    timing: Vec<IterTiming>,
     /// A second timer for LIVE-REFRESH passes only ([`MandelbrotParams::live_timing`]).
     live_timing: Option<IterTiming>,
     /// The diagnostic pass clock, created on the first frame that asks for it
@@ -2255,7 +2291,7 @@ impl ViewResources {
             make_color_bg(device, color_bgl, &color_uniform, &lut_buf, &tex_view, &aux_view);
 
         Self {
-            timing: IterTiming::new(device),
+            timing: (0..TIMER_RING).filter_map(|_| IterTiming::new(device)).collect(),
             live_timing: IterTiming::new(device),
             pass_clock: None,
             counter_read: CounterRead::new(device),
@@ -2609,6 +2645,16 @@ pub struct MandelbrotParams {
     /// copied into it, so the frame budget's readings lose nothing. Single passes only (a chunked
     /// pass is never live).
     pub live_timing: bool,
+    /// How many timers of the iterate timer's ring ([`TIMER_RING`]) may be armed: 1 = one pass timed
+    /// whenever the single timer is idle (about one pass in two at a pass a frame), up to every pass.
+    pub timer_slots: u32,
+    /// Sinks for the ring's EXTRA timers (`timer_slots` above 1): the time (ms, f64 bits), nominal
+    /// steps and pass frame of a pass the first timer was too busy to time, published like
+    /// `iterate_ms`'s (count and frame first). The app prices pin passes with them and feeds nothing
+    /// else: every rate and budget it keeps was tuned on the first timer's cadence.
+    pub extra_ms: Option<Arc<std::sync::atomic::AtomicU64>>,
+    pub extra_steps: Option<Arc<std::sync::atomic::AtomicU64>>,
+    pub extra_frame: Option<Arc<std::sync::atomic::AtomicU64>>,
     /// That timer's sinks, published like `iterate_ms` / `iterate_steps` / `iterate_frame` (the
     /// count and frame before the time).
     pub live_ms: Option<Arc<std::sync::atomic::AtomicU64>>,
@@ -2931,6 +2977,10 @@ impl Default for MandelbrotParams {
             iterate_armed_us: None,
             iterate_prov: None,
             live_timing: false,
+            timer_slots: 1,
+            extra_ms: None,
+            extra_steps: None,
+            extra_frame: None,
             live_ms: None,
             live_steps: None,
             live_frame: None,
@@ -3129,10 +3179,18 @@ impl CallbackTrait for MandelbrotParams {
         let accum_format = r.target_format;
         let view = r.views.get_mut(&self.view_id).unwrap();
 
-        // Drain any timestamp readback armed on an earlier frame before this frame may re-arm it.
-        if let Some(t) = view.timing.as_mut() {
-            t.pump(
-                device,
+        // Drain any timestamp readback armed on an earlier frame before this frame may re-arm it:
+        // every timer of the ring moves on; the first publishes into the iterate sinks as it always
+        // did, and the oldest finished extra into its own — one each a frame, since the app drains
+        // one of each a frame (a second would overwrite the first unread).
+        if view.timing.iter().any(|t| t.state == TimingState::Mapping) {
+            let _ = device.poll(wgpu::Maintain::Poll);
+        }
+        for t in view.timing.iter_mut() {
+            t.advance();
+        }
+        if let Some(t) = view.timing.first_mut() {
+            t.publish(
                 queue,
                 self.iterate_ms.as_ref(),
                 self.iterate_steps.as_ref(),
@@ -3140,6 +3198,9 @@ impl CallbackTrait for MandelbrotParams {
                 self.iterate_armed_us.as_ref(),
                 self.iterate_prov.as_ref(),
             );
+        }
+        if let Some(t) = view.timing.iter_mut().skip(1).filter(|t| t.state == TimingState::Ready).min_by_key(|t| t.frame) {
+            t.publish(queue, self.extra_ms.as_ref(), self.extra_steps.as_ref(), self.extra_frame.as_ref(), None, None);
         }
         if let Some(t) = view.live_timing.as_mut() {
             t.pump(
@@ -3590,9 +3651,27 @@ impl CallbackTrait for MandelbrotParams {
             // app's timing witness proved impossible (2 of 1,505, 2026-09-27: 42.6 ms inside an
             // 18.9 ms window, 118.8 inside 104). Leaving it unarmed frees the timer for real work.
             // (A Life display pass is not an iterate: it arms no iterate timer.)
-            let arm_ts = !life_on
-                && view.timing.as_ref().is_some_and(|t| t.state == TimingState::Idle)
-                && !matches!(chunk, Some([s, e]) if s >= e);
+            // ⭐…and with a RING (`timer_slots` above 1) every such pass: a timer is idle again two
+            // frames after its pass, so with a pass a frame the one timer timed every other one and
+            // half of all pin passes were never priced (2026-10-18, `gpu` trace: a reading every
+            // second frame). The first timer is armed exactly as before; an extra takes a pass only
+            // when it is busy.
+            let ts_slot = if !life_on && !matches!(chunk, Some([s, e]) if s >= e) {
+                if view.timing.first().is_some_and(|t| t.state == TimingState::Idle) {
+                    Some(0)
+                } else {
+                    view.timing
+                        .iter()
+                        .enumerate()
+                        .skip(1)
+                        .take((self.timer_slots.max(1) - 1) as usize)
+                        .find(|(_, t)| t.state == TimingState::Idle)
+                        .map(|(k, _)| k)
+                }
+            } else {
+                None
+            };
+            let arm_ts = ts_slot.is_some();
             // A live refresh's own timer (see `MandelbrotParams::live_timing`): single passes only.
             let arm_live = !life_on
                 && self.live_timing
@@ -3717,8 +3796,8 @@ impl CallbackTrait for MandelbrotParams {
                             beginning_of_pass_write_index: Some(PASS_CLOCK_Q * k as u32),
                             end_of_pass_write_index: Some(PASS_CLOCK_Q * k as u32 + 1),
                         }),
-                        None => arm_ts.then(|| wgpu::RenderPassTimestampWrites {
-                            query_set: &view.timing.as_ref().unwrap().qs,
+                        None => ts_slot.map(|k| wgpu::RenderPassTimestampWrites {
+                            query_set: &view.timing[k].qs,
                             beginning_of_pass_write_index: Some(0),
                             end_of_pass_write_index: Some(1),
                         }),
@@ -3793,8 +3872,8 @@ impl CallbackTrait for MandelbrotParams {
                         beginning_of_pass_write_index: Some(0),
                         end_of_pass_write_index: Some(1),
                     }),
-                    None => arm_ts.then(|| wgpu::RenderPassTimestampWrites {
-                        query_set: &view.timing.as_ref().unwrap().qs,
+                    None => ts_slot.map(|k| wgpu::RenderPassTimestampWrites {
+                        query_set: &view.timing[k].qs,
                         beginning_of_pass_write_index: Some(0),
                         end_of_pass_write_index: Some(1),
                     }),
@@ -3836,14 +3915,14 @@ impl CallbackTrait for MandelbrotParams {
                     chunk,
                     tiled: chunk.is_none() && tile_px.is_some(),
                     steps: self.nominal_steps,
-                    priced: arm_ts,
+                    priced: ts_slot == Some(0),
                     ..Default::default()
                 };
                 s.state = TimingState::Recorded;
                 if arm_ts {
                     // The pricer's reading is this pass's iterate ticks, exactly as if it had
                     // bracketed the pass itself.
-                    let t = view.timing.as_mut().unwrap();
+                    let t = &mut view.timing[ts_slot.unwrap()];
                     encoder.copy_buffer_to_buffer(&s.resolve, 0, &t.read, 0, 16);
                     t.steps = self.nominal_steps;
                     t.frame = self.pass_frame;
@@ -3869,8 +3948,8 @@ impl CallbackTrait for MandelbrotParams {
                 lt.state = TimingState::Recorded;
                 if arm_ts {
                     // The same ticks, for the frame budget — as if its own timer had bracketed it.
-                    let t = view.timing.as_mut().unwrap();
                     let live_resolve = &view.live_timing.as_ref().unwrap().resolve;
+                    let t = &mut view.timing[ts_slot.unwrap()];
                     encoder.copy_buffer_to_buffer(live_resolve, 0, &t.read, 0, 16);
                     t.steps = self.nominal_steps;
                     t.frame = self.pass_frame;
@@ -3878,8 +3957,8 @@ impl CallbackTrait for MandelbrotParams {
                     t.armed_us = witness_stamp(device, self.now_us);
                     t.state = TimingState::Recorded;
                 }
-            } else if arm_ts {
-                let t = view.timing.as_mut().unwrap();
+            } else if let Some(k) = ts_slot {
+                let t = &mut view.timing[k];
                 encoder.resolve_query_set(&t.qs, 0..2, &t.resolve, 0);
                 encoder.copy_buffer_to_buffer(&t.resolve, 0, &t.read, 0, 16);
                 t.steps = self.nominal_steps; // pair the cost with the time it took

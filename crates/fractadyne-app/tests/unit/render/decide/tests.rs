@@ -616,6 +616,8 @@ fn walk() -> WalkPriceInputs {
         growth_in_work: false,
         knee_px: 0,
         pin_growth_lane: false,
+        span_priced: false,
+        orbit_len: 0,
         ledger: WalkLedger {
             inflight: Some((1024, 3, 50.0, false)),
             bands: [0; crate::tunables::CHUNK_BANDS],
@@ -623,6 +625,11 @@ fn walk() -> WalkPriceInputs {
             motion_step_last: 0,
             motion_work_last: 0,
             late: [None; LATE_MAX],
+            band_ms: [0.0; crate::tunables::CHUNK_BANDS],
+            band_ms_iters: [0; crate::tunables::CHUNK_BANDS],
+            band_ms_len: [0; crate::tunables::CHUNK_BANDS],
+            band_ms_px: [0; crate::tunables::CHUNK_BANDS],
+            late_px: [0; LATE_MAX],
         },
         tdr_budget_ms: c.tdr_budget_ms,
         tdr_explicit_budget_ms: c.tdr_explicit_budget_ms,
@@ -1100,6 +1107,11 @@ fn dispatch() -> WalkDispatchInputs {
         norm_sig_submit: 0,
         pin_inflight_max: 1,
         pin_span_share: 0.0,
+        pin_span_priced: false,
+        band_ms: [0.0; crate::tunables::CHUNK_BANDS],
+        band_ms_iters: [0; crate::tunables::CHUNK_BANDS],
+        band_ms_len: [0; crate::tunables::CHUNK_BANDS],
+        band_ms_px: [0; crate::tunables::CHUNK_BANDS],
         pin_timeout_scaled: 1,
         chunk_charge: 1,
         chunk_shuffle: 0,
@@ -1198,4 +1210,50 @@ fn a_recorded_decision_round_trips() {
     assert_eq!(back_i, i);
     assert_eq!(back_d, d);
     assert_eq!(decide_moving(&back_i), d, "a replayed decision is the recorded one");
+}
+
+#[test]
+fn a_gpu_timed_pin_pass_feeds_the_band_costs_only_when_spans_are_priced() {
+    let pass = |gpu_ms, priced| WalkPriceInputs {
+        pin_pass_gpu_ms: gpu_ms,
+        span_priced: priced,
+        orbit_len: 35_138,
+        ..released_pin_pass()
+    };
+    // Off (the default): the ledger is what a recording made before the memory recorded.
+    let d = decide_walk_price(&pass(2.0, false));
+    assert_eq!(d.ledger.band_ms, [0.0; crate::tunables::CHUNK_BANDS]);
+    // On: band 0's cost, the iterations it covered and the reference it was measured against.
+    let d = decide_walk_price(&pass(2.0, true));
+    assert_eq!((d.ledger.band_ms[0], d.ledger.band_ms_iters[0], d.ledger.band_ms_len[0]), (2.0, 545, 35_138));
+    assert_eq!(d.ledger.band_ms_px[0], 800_000, "the pixels the pass ran at (1000×800)");
+    // A zero reading (the RX 6800 XT's timestamps lag a dispatch) measures nothing.
+    let d = decide_walk_price(&pass(0.0, true));
+    assert_eq!(d.ledger.band_ms[0], 0.0);
+    // Nor does a completion stand-in: the pass waits for its reading.
+    let d = decide_walk_price(&pass(-1.0, true));
+    assert_eq!(d.ledger.band_ms[0], 0.0);
+}
+
+#[test]
+fn a_spanned_pass_shares_its_price_out_by_what_its_bands_cost_before() {
+    let span = crate::render::span_band_code(1, 5);
+    let mut before = [0.0f32; crate::tunables::CHUNK_BANDS];
+    for (b, ms) in [(1, 1.0), (2, 1.0), (3, 2.0), (4, 2.0), (5, 4.0)] {
+        before[b] = ms;
+    }
+    let pass = WalkPriceInputs {
+        pin_pass_gpu_ms: 5.0,
+        span_priced: true,
+        ledger: WalkLedger { inflight: Some((7_936, span, 0.0, false)), band_ms: before, ..released_pin_pass().ledger },
+        ..released_pin_pass()
+    };
+    // 5 ms over a sum of 10: each band at half what it cost before, with its own iterations.
+    let d = decide_walk_price(&pass);
+    assert_eq!(d.ledger.band_ms[1..=5], [0.5, 0.5, 1.0, 1.0, 2.0]);
+    assert_eq!(d.ledger.band_ms_iters[1..=5], [256, 512, 1_024, 2_048, 4_096]);
+    // A band with no cost before: each is charged the whole price.
+    before[3] = 0.0;
+    let d = decide_walk_price(&WalkPriceInputs { ledger: WalkLedger { band_ms: before, ..pass.ledger }, ..pass.clone() });
+    assert_eq!(d.ledger.band_ms[1..=5], [5.0; 5]);
 }

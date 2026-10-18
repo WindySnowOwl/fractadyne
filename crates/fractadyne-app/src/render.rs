@@ -2481,6 +2481,11 @@ impl FractadyneApp {
             for b in self.perf.chunk_bands[vb].iter_mut() {
                 *b /= 2;
             }
+            // …and a span's costs predicted at twice what they were (`PIN_SPAN_PRICED`): the same
+            // caution, in the other unit.
+            for m in self.perf.chunk_band_ms[vb].iter_mut() {
+                *m *= 2.0;
+            }
             self.perf.chunk_pass_dt[vb] = 0.0;
         }
         let vc = &mut self.ref_cache[vi];
@@ -5561,6 +5566,8 @@ impl FractadyneApp {
                 growth_in_work: crate::tunables::cost().growth_in_work == 1,
                 pin_growth_lane: crate::tunables::cost().pin_growth_lane == 1,
                 knee_px: crate::calibration::knee_px(),
+                span_priced: crate::tunables::cost().pin_span_priced == 1,
+                orbit_len: self.ref_cache[vidx].orbit_len,
                 ledger: decide::WalkLedger {
                     inflight: self.perf.chunk_inflight[vs],
                     bands: self.perf.chunk_bands[vs],
@@ -5568,6 +5575,11 @@ impl FractadyneApp {
                     motion_step_last: self.perf.motion_step_last[vs],
                     motion_work_last: self.perf.motion_work_last[vs],
                     late: self.perf.chunk_late[vs],
+                    band_ms: self.perf.chunk_band_ms[vs],
+                    band_ms_iters: self.perf.chunk_band_ms_iters[vs],
+                    band_ms_len: self.perf.chunk_band_ms_len[vs],
+                    band_ms_px: self.perf.chunk_band_ms_px[vs],
+                    late_px: self.perf.chunk_late_px[vs],
                 },
                 tdr_budget_ms: crate::tunables::cost().tdr_budget_ms,
                 tdr_explicit_budget_ms: crate::tunables::cost().tdr_explicit_budget_ms,
@@ -5582,6 +5594,11 @@ impl FractadyneApp {
             self.perf.chunk_pass_dt[vs] = price.ledger.pass_dt;
             self.perf.motion_step_last[vs] = price.ledger.motion_step_last;
             self.perf.motion_work_last[vs] = price.ledger.motion_work_last;
+            self.perf.chunk_band_ms[vs] = price.ledger.band_ms;
+            self.perf.chunk_band_ms_iters[vs] = price.ledger.band_ms_iters;
+            self.perf.chunk_band_ms_len[vs] = price.ledger.band_ms_len;
+            self.perf.chunk_band_ms_px[vs] = price.ledger.band_ms_px;
+            self.perf.chunk_late_px[vs] = price.ledger.late_px;
             // Readings keep only while their pass is still parked.
             self.perf.chunk_late[vs] = price.ledger.late;
             let parked = price.ledger.late;
@@ -5715,9 +5732,11 @@ impl FractadyneApp {
             }
             if id.clear_ledger {
                 self.perf.chunk_bands[vs] = [0; crate::tunables::CHUNK_BANDS];
+                self.perf.chunk_band_ms[vs] = [0.0; crate::tunables::CHUNK_BANDS];
                 self.perf.chunk_pass_dt[vs] = 0.0;
                 // A parked price belongs to the ledger it was earned in.
                 self.perf.chunk_late[vs] = [None; decide::LATE_MAX];
+                self.perf.chunk_late_px[vs] = [0; decide::LATE_MAX];
                 self.perf.late_readings[vs].clear();
             }
             if id.restarted {
@@ -5787,6 +5806,11 @@ impl FractadyneApp {
                 norm_sig_submit: self.perf.norm_sig_submit[vs],
                 pin_inflight_max: crate::tunables::pin_inflight_max(self.perf.ts_supported),
                 pin_span_share: crate::tunables::cost().pin_band_span,
+                pin_span_priced: crate::tunables::cost().pin_span_priced == 1,
+                band_ms: self.perf.chunk_band_ms[vs],
+                band_ms_iters: self.perf.chunk_band_ms_iters[vs],
+                band_ms_len: self.perf.chunk_band_ms_len[vs],
+                band_ms_px: self.perf.chunk_band_ms_px[vs],
                 pin_timeout_scaled: crate::tunables::cost().pin_timeout_scaled,
                 chunk_charge: crate::tunables::cost().chunk_charge,
                 chunk_shuffle: crate::tunables::cost().chunk_shuffle,
@@ -5834,10 +5858,20 @@ impl FractadyneApp {
                 self.perf.pin_dispatch_at[vs] = crate::app_micros();
                 if crate::diag::trace_on("tile") {
                     if let (Some([_, to]), Some((size, band, _, _))) = (dispatch.chunk_range, dispatch.state.inflight) {
+                        // A priced span's predicted cost (`PIN_SPAN_PRICED`), against the price its
+                        // `pin-price` line reports when it comes back.
+                        let pred = dispatch
+                            .events
+                            .iter()
+                            .find_map(|e| match *e {
+                                decide::DispatchEvent::PricedSpan { pred_ms, .. } => Some(format!(" pred={pred_ms:.1}ms")),
+                                _ => None,
+                            })
+                            .unwrap_or_default();
                         crate::diag::trace(
                             "tile",
                             format!(
-                                "pin-pass v={vs} f={} to={to} size={size} band={}",
+                                "pin-pass v={vs} f={} to={to} size={size} band={}{pred}",
                                 self.perf.frame_idx,
                                 span_band_label(band)
                             ),
@@ -5882,6 +5916,11 @@ impl FractadyneApp {
                                 ),
                             );
                         }
+                    }
+                    // A priced span vouches for its size: the growth limiter remembers it.
+                    decide::DispatchEvent::PricedSpan { size, work, .. } => {
+                        self.perf.motion_step_last[vs] = self.perf.motion_step_last[vs].max(size);
+                        self.perf.motion_work_last[vs] = self.perf.motion_work_last[vs].max(work);
                     }
                 }
             }
@@ -6377,6 +6416,10 @@ impl FractadyneApp {
             iterate_armed_us,
             iterate_prov: Some(self.perf.iterate_prov[vs].clone()),
             live_timing: self.perf.live_pass[vs.min(1)] && chunk_range.is_none() && tile.is_none(),
+            timer_slots: crate::tunables::cost().timer_slots as u32,
+            extra_ms: Some(self.perf.extra_ms[vs].clone()),
+            extra_steps: Some(self.perf.extra_steps[vs].clone()),
+            extra_frame: Some(self.perf.extra_frame[vs].clone()),
             live_ms: Some(self.perf.live_ms[vs.min(1)].clone()),
             live_steps: Some(self.perf.live_steps[vs.min(1)].clone()),
             live_frame: Some(self.perf.live_frame[vs.min(1)].clone()),
@@ -10076,6 +10119,85 @@ pub(crate) fn pin_span_end(
         (share, end, last) = (s, next, b);
     }
     (end, span_band_code(first, last))
+}
+
+/// The band-cost memory a priced span reads (`WalkLedger::band_ms`, `band_ms_iters`, `band_ms_len`,
+/// `band_ms_px`), the pixels of the pass it sizes and the adapter's occupancy knee.
+pub(crate) struct BandCosts<'a> {
+    pub(crate) ms: &'a [f32; crate::tunables::CHUNK_BANDS],
+    pub(crate) iters: &'a [u32; crate::tunables::CHUNK_BANDS],
+    pub(crate) len: &'a [u32; crate::tunables::CHUNK_BANDS],
+    pub(crate) px: &'a [u32; crate::tunables::CHUNK_BANDS],
+    pub(crate) px_now: u64,
+    pub(crate) knee: u64,
+}
+
+impl BandCosts<'_> {
+    /// What `len` iterations in band `b` are predicted to cost, ms: the band's measured cost, scaled
+    /// up for iterations past those it covered and for pixels past those it ran at, both charged at
+    /// no fewer than the occupancy knee (below it a pass costs its iteration window); never scaled
+    /// down (at depth a band's cost hardly depends on its length). `None` = no measured cost, or one
+    /// with no pixel count.
+    pub(crate) fn predict(&self, b: usize, len: u32) -> Option<f64> {
+        let b = b.min(crate::tunables::CHUNK_BANDS - 1);
+        if !(self.ms[b] > 0.0 && self.iters[b] > 0 && self.px[b] > 0) {
+            return None;
+        }
+        let iters = (f64::from(len) / f64::from(self.iters[b])).max(1.0);
+        let at = |p: u64| p.max(self.knee).max(1) as f64;
+        let pixels = (at(self.px_now) / at(u64::from(self.px[b]))).max(1.0);
+        Some(f64::from(self.ms[b]) * iters * pixels)
+    }
+}
+
+/// [`pin_span_end`] bounded by what the bands COST (`PIN_SPAN_PRICED`): a PIN pass that covers its
+/// whole start band runs on through the following bands while each has a GPU-timed cost of its own
+/// and a licence (`BandCosts::predict`) and the costs of all the bands it covers sum to no more than
+/// `budget_ms`, within `step_cap` iterations. The start band's cost is its own when it has one, else
+/// its licence's share of the pin target. A band holding the reference's first wrap (cur ≈
+/// `orbit_len`, the rebase storm, 10–70× the cold cost) is entered only if its cost was measured
+/// against this same length. Returns the end, the band byte (`span_band_code`) and the cost predicted.
+///
+/// ⭐Why: `pin_span_end` sums its bands' LICENCES, and a licence is a price extrapolated ×4–×16; where
+/// cost jumps between bands its spans ran 2–3× over their price (design/live-zoom-smoothing.md §7.3).
+/// A cost is what the band took, the last time it was walked. At 2^260 on the (49,3) spiral every
+/// band's pass cost 1.1–1.7 ms whatever its length, and one band a pass made each pin nine passes and
+/// twelve frames (held ~1.1 octaves at 4×).
+#[allow(clippy::too_many_arguments)]
+pub(crate) fn pin_span_end_priced(
+    costs: &BandCosts<'_>,
+    bands: &[u32; crate::tunables::CHUNK_BANDS],
+    real_lo: u32,
+    end: u32,
+    licence: u32,
+    walk_end: u32,
+    step_cap: u32,
+    orbit_len: u32,
+    budget_ms: f64,
+) -> ((u32, u8), f64) {
+    let first = chunk_band_of(real_lo);
+    if real_lo != chunk_band_start(first) || end != chunk_band_end(real_lo) || end >= walk_end || licence == 0 {
+        return ((end, first as u8), 0.0);
+    }
+    let target = crate::tunables::MOTION_PIN_TARGET_MS;
+    let mut cost = costs
+        .predict(first, end - real_lo)
+        .unwrap_or(target * f64::from(end - real_lo) / f64::from(licence));
+    let storm = (orbit_len > 0).then(|| chunk_band_of(orbit_len));
+    let (mut end, mut last) = (end, first);
+    while end < walk_end {
+        let b = chunk_band_of(end);
+        if b <= last || bands[b] == 0 || (storm == Some(b) && costs.len[b] != orbit_len) {
+            break;
+        }
+        let next = chunk_band_end(end).min(walk_end);
+        let Some(c) = costs.predict(b, next - end) else { break };
+        if cost + c > budget_ms || next - real_lo > step_cap {
+            break;
+        }
+        (cost, end, last) = (cost + c, next, b);
+    }
+    ((end, span_band_code(first, last)), cost)
 }
 
 const _: () = assert!(crate::tunables::CHUNK_BANDS <= 16, "a band index must fit in four bits");

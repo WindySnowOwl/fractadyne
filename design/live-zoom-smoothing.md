@@ -678,3 +678,83 @@ off); never the growth limiter. The same budget over 3× the pixels is 3× fewer
 does not bind) and would only start a bigger first pin; on the RTX 3080 it binds on the fast
 readings (1.07 ms a pass at the jump row, 0.6 at misi-49-3) and the gain was measured under it, so
 nothing pays for raising the first dispatch at the crossing of the six device losses.
+
+### 7.10 Spans bounded by measured cost (`PIN_SPAN_PRICED`, an experiment, 2026-10-18)
+
+Past the switch, the 4× dive's held age is set by its refresh cycle. Traced on main (`cont-4`,
+`FRACTADYNE_TRACE=tile`, stderr keeps what the rolled log loses): at 2^260 every pin is 436×330, asks
+~67k iterations, and walks one octave band a pass — 256, 512 … 32,768, then the rest: nine passes,
+each priced 1.1–1.7 ms against the 20 ms pin target, the band clip (not the growth limiter) setting
+every one, and adoption three frames after the last pass (the verified-present reading). Twelve frames
+a pin, adopted 0.56 octaves behind and ~1.1 behind before the next: every cycle at the gate's edge.
+
+`pin_span_end` (§7.3) spanned bands by their LICENCES, prices extrapolated ×4–×16, and overran where
+cost jumps. `PIN_SPAN_PRICED` bounds a span by what its bands last COST: `WalkLedger::band_ms`, fed
+only by pin passes' own GPU timestamps (never a completion stand-in, never a 0.0 reading — the RX
+6800 XT's lag), a span's price shared out in proportion to its bands' earlier costs, each cost scaled
+up (never down) past the iterations it covered; doubled where the licences are halved (a new
+reference), cleared where they are; never into the band of the reference's first wrap unless that
+band was measured against this length. The span vouches for its size, so the growth limiter
+remembers it (`DispatchEvent::PricedSpan`) — without that the next band restarted its doubling at
+1,024 after a 16,128-iteration span and could never be covered whole to span again.
+
+RTX 3080, `cont-4` traced, `--set PIN_BAND_SPAN=0.5 --set PIN_SPAN_PRICED=1`:
+
+| | spans off | priced | priced + limiter |
+|---|---|---|---|
+| walk, frames (median) | 10 | 8 | 6 |
+| held age mean / max (oct) | 0.685 / 1.23 | 0.587 / 1.18 | 0.529 / 2.03 (the switch) |
+| on-screen detail median (px; refresh width) | 220 (363) | 222 (363) | 395 (514) |
+| frames over 33 / 50 ms | 0 / 0 | 0 / 0 | 45 / 2 |
+
+Predictions held: spanned passes priced at a median 0.97× their prediction, p90 1.5×, none over the
+pin target. The adoption count did not move (588–611): with fresher adoptions the reuse-hold waits
+out `REFRESH_OCTAVES` (0.5) of drift before the next pin starts, so the cycle stays ~11 frames and the
+held age per cycle drops from ~1.06 to ~0.77 octaves.
+
+⚠**What still fails.** (1) Shorter walks let the refresh sizing take pins of 1M+ pixels, and the
+frames under them carry the tail (p99 39 ms, max 67, 46 of 1,263 over 33 ms; under 1M px: p99 19–20)
+— 45 of the 46 at one step of the pin's walk, after a same-point re-key; a second traced run had 2.
+(2) ⭐**Half of all pin passes are never priced, and it is the GPU timer, not the passes**: the live
+iterate timer (`IterTiming`) is ONE slot, armed only when idle, and its readback takes two frames —
+with a pass every frame, every other pass goes untimed (`gpu` trace: a reading every second frame).
+66–78% of spans fell in the untimed phase, so the costs that bound them come from one-band passes
+only. A ring of timers would price every pass; it also doubles the readings every controller term was
+tuned on (the ×1.5 climbs, the motion EMA, the latched minimum, the licences), so it is its own
+experiment.
+
+**The timer ring (`TIMER_SLOTS`, default 3 on this branch).** Fed to every rate and budget, three
+timers changed what the controller had been tuned on: the 4× jump row improved on every measure, but
+the df32 4× row's held age went 0.23 → 0.55 octaves on average and the 1× deep stretch's 0.048 →
+0.218 with 92 frames over 33 ms. So the first timer is armed exactly as when it was the only one and
+feeds everything it fed; the others time only the passes it is too busy for, into their own sinks
+(`MandelbrotParams::extra_ms`), and price pin passes and nothing else. On the jump row that priced 193
+of 207 pin passes, against 97 of 194 with one timer, while the first timer's readings were as many as
+before (119 against 127). RTX 3080, alternated, two rounds:
+
+| row | one timer | ring, pins only |
+|---|---|---|
+| 4× jump, held max (oct) | 1.51, 1.75, 1.71, 1.70 | 1.23, 1.01, 1.42, 1.42 |
+| 4× jump, detail median (px) | 578, 649, 689, 515 | 715, 824, 605, 829 |
+| 4× continuous, held max / gap mean | 1.32–1.75 / 0.65–0.70 | 1.18–1.52 / 0.69–0.72 |
+| 1× deep (2^245–2^305) | gap 0.048, detail 351 | the same, run for run |
+| df32 4×, hand-over 4× | within each row's run-to-run spread in both | |
+
+No frame over 50 ms in either arm of those rows. Gates on the ring: workspace tests (one caught a twin
+keeping the new sinks: a second GPU's passes would have priced the window's), selftest 529/529 and
+31/31 goldens, three motiontests and the worker one PASS, livetest 24/24 with no drift, uitest 75/1
+(the standing warn), autodive with no loss. RX 6800 XT (PLUTO, dev.31, `--adapter 1`): the jump row
+held 1.59, 1.43 against 1.31, 1.67 (the only frame over 100 ms, 110 ms, in the one-timer arm);
+`--zoomtest 40` lag 0.314, 0.324 against 0.294, 0.331, 6 and 6 frames over 33 ms against 3 and 3,
+none over 100 ms; motiontest PASS; the battery PASS with the card's standing failures only (selftest
+527/528, the wider-canvas check; gputest's folded EFTs). No lethal-band reading or device loss.
+
+**Priced spans with pixel-aware costs, not yet.** Recording each cost with the pixels its pass ran at
+(`band_ms_px`) kept the full 4× dive's detail gain (median 664–691 px against 245–258) and its
+freshness (gap 0.64–0.65 against 0.65–0.70), but its worst episodes got longer (1.81 and 2.88
+octaves, an 87 ms frame): at 2^124–136 and 2^206–214 a 1150–1455 px pin walked 30–60 frames. The
+refresh sizing (`decide_moving`, the measured cap) assumes a walk's frames grow with its pixels,
+`res · sqrt(allowed / took)`, ×1.25 a pin at most; with spans a walk takes ~6 frames at any size, so
+the cap climbs to full resolution and meets a harder region there. What would fix it is a cap from
+the band costs themselves (the frames a walk at that size is predicted to take) — and that code's
+own history says a pessimistic model became a permanent ceiling once, so it is a design of its own.

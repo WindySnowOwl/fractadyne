@@ -101,3 +101,120 @@ fn bands_licensed_at_their_width_admit_no_span() {
     }
     assert_eq!(pin_span_end(&bands, 256, 512, bands[1], 1, 42_237, 100_000, 50_000, 1.0), (512, 1));
 }
+
+/// The 2^260 trace's shape (cont-4, 2026-10-18): every band's last pass cost 1.5 ms over its whole
+/// width; the walk ends 1,550 iterations into band 9, which cost 1.5 ms over those.
+fn costed() -> ([f32; crate::tunables::CHUNK_BANDS], [u32; crate::tunables::CHUNK_BANDS], [u32; crate::tunables::CHUNK_BANDS]) {
+    let (mut ms, mut iters, mut len) = ([0.0; crate::tunables::CHUNK_BANDS], [0; crate::tunables::CHUNK_BANDS], [0; crate::tunables::CHUNK_BANDS]);
+    for b in 1..=9 {
+        ms[b] = 1.5;
+        iters[b] = if b == 9 { 1_550 } else { chunk_band_end(chunk_band_start(b)) - chunk_band_start(b) };
+        len[b] = 35_138;
+    }
+    (ms, iters, len)
+}
+
+/// Every band measured on a 200,000-pixel pin (below the RTX 3080's knee of 262,144).
+fn px() -> [u32; crate::tunables::CHUNK_BANDS] {
+    let mut px = [0; crate::tunables::CHUNK_BANDS];
+    for b in 1..=9 {
+        px[b] = 200_000;
+    }
+    px
+}
+
+fn licensed() -> [u32; crate::tunables::CHUNK_BANDS] {
+    let mut bands = [0; crate::tunables::CHUNK_BANDS];
+    for b in 1..=9 {
+        bands[b] = 4_096;
+    }
+    bands
+}
+
+#[test]
+fn a_priced_span_runs_on_while_the_bands_measured_costs_fit() {
+    let (ms, iters, len) = costed();
+    let costs = BandCosts { ms: &ms, iters: &iters, len: &len, px: &px(), px_now: 200_000, knee: 262_144 };
+    let bands = licensed();
+    // 10 ms (half the pin target): bands 1–6 at 1.5 ms each is 9.0, band 7 would make 10.5.
+    let ((end, band), cost) = pin_span_end_priced(&costs, &bands, 256, 512, 4_096, 67_086, 100_000, 35_138, 10.0);
+    assert_eq!((end, band), (16_384, span_band_code(1, 6)));
+    assert!((cost - 9.0).abs() < 1e-9, "{cost}");
+    // The whole pin target: on to the walk's end, inside band 9 (13.5 ms), in one pass.
+    let ((end, band), _) = pin_span_end_priced(&costs, &bands, 256, 512, 4_096, 67_086, 100_000, 35_138, 20.0);
+    assert_eq!((end, band), (67_086, span_band_code(1, 9)));
+    // ⛔The licences never enter the sum: one priced 4,096 for a band 32,768 wide spans nothing less.
+    // The rate model's pass size still caps the span.
+    let ((end, _), _) = pin_span_end_priced(&costs, &bands, 256, 512, 4_096, 67_086, 4_000, 35_138, 20.0);
+    assert_eq!(end, 4_096);
+}
+
+#[test]
+fn a_priced_span_stops_at_a_band_with_no_cost_or_no_licence() {
+    let (mut ms, iters, len) = costed();
+    ms[4] = 0.0;
+    let costs = BandCosts { ms: &ms, iters: &iters, len: &len, px: &px(), px_now: 200_000, knee: 262_144 };
+    let ((end, _), _) = pin_span_end_priced(&costs, &licensed(), 256, 512, 4_096, 67_086, 100_000, 35_138, 20.0);
+    assert_eq!(end, 2_048, "band 4 was never timed");
+    let (ms, iters, len) = costed();
+    let costs = BandCosts { ms: &ms, iters: &iters, len: &len, px: &px(), px_now: 200_000, knee: 262_144 };
+    let mut bands = licensed();
+    bands[5] = 0;
+    let ((end, _), _) = pin_span_end_priced(&costs, &bands, 256, 512, 4_096, 67_086, 100_000, 35_138, 20.0);
+    assert_eq!(end, 4_096, "band 5 has no licence (a retreat shed it)");
+}
+
+#[test]
+fn a_priced_span_enters_the_storm_band_only_on_this_references_cost() {
+    // The reference escapes at 35,138: its first wrap's rebase storm sits in band 8 [32,768, 65,536).
+    let (ms, iters, mut len) = costed();
+    len[8] = 30_000;
+    let costs = BandCosts { ms: &ms, iters: &iters, len: &len, px: &px(), px_now: 200_000, knee: 262_144 };
+    let ((end, _), _) = pin_span_end_priced(&costs, &licensed(), 256, 512, 4_096, 67_086, 100_000, 35_138, 20.0);
+    assert_eq!(end, 32_768, "band 8's cost was measured against another length");
+    // With the wrap past the walk (200,000 is in band 10), bands measured against another length are
+    // entered as any other.
+    let ((end, _), _) = pin_span_end_priced(&costs, &licensed(), 256, 512, 4_096, 67_086, 100_000, 200_000, 20.0);
+    assert_eq!(end, 67_086);
+    // …and with it early (3,000, band 4), the span stops at band 4's edge.
+    let ((end, _), _) = pin_span_end_priced(&costs, &licensed(), 256, 512, 4_096, 67_086, 100_000, 3_000, 20.0);
+    assert_eq!(end, 2_048);
+}
+
+#[test]
+fn a_band_is_predicted_at_its_cost_scaled_up_past_the_iterations_it_covered() {
+    let (ms, iters, len) = costed();
+    let costs = BandCosts { ms: &ms, iters: &iters, len: &len, px: &px(), px_now: 200_000, knee: 262_144 };
+    // Band 9 cost 1.5 ms over 1,550 iterations: 3,100 are predicted at 3.0, 1,000 at 1.5 (never less).
+    assert_eq!(costs.predict(9, 3_100), Some(3.0));
+    assert_eq!(costs.predict(9, 1_000), Some(1.5));
+    assert_eq!(costs.predict(10, 1_000), None);
+    // A start band with no cost of its own counts its licence's share of the 20 ms target (256 of
+    // 4,096 = 1.25 ms), as `pin_span_end` would.
+    let (mut ms, iters, len) = costed();
+    ms[1] = 0.0;
+    let costs = BandCosts { ms: &ms, iters: &iters, len: &len, px: &px(), px_now: 200_000, knee: 262_144 };
+    let ((end, _), cost) = pin_span_end_priced(&costs, &licensed(), 256, 512, 4_096, 67_086, 100_000, 35_138, 3.0);
+    assert_eq!(end, 1_024);
+    assert!((cost - 2.75).abs() < 1e-9, "{cost}");
+}
+
+#[test]
+fn a_band_is_predicted_dearer_for_a_pin_of_more_pixels_than_it_was_measured_on() {
+    let (ms, iters, len) = costed();
+    let px = px();
+    // Measured on 200,000 px, charged at the knee (262,144): a 1,600,000-px pin is 6.1× the cost.
+    let big = BandCosts { ms: &ms, iters: &iters, len: &len, px: &px, px_now: 1_600_000, knee: 262_144 };
+    let p = big.predict(3, 1_024).unwrap();
+    assert!((p - 1.5 * 1_600_000.0 / 262_144.0).abs() < 1e-9, "{p}");
+    // A smaller pin is never predicted cheaper: below the knee a pass costs its iteration window.
+    let small = BandCosts { ms: &ms, iters: &iters, len: &len, px: &px, px_now: 50_000, knee: 262_144 };
+    assert_eq!(small.predict(3, 1_024), Some(1.5));
+    // A cost with no pixel count (a ledger from before them) predicts nothing.
+    let none = [0; crate::tunables::CHUNK_BANDS];
+    let old = BandCosts { ms: &ms, iters: &iters, len: &len, px: &none, px_now: 200_000, knee: 262_144 };
+    assert_eq!(old.predict(3, 1_024), None);
+    // The span shortens with it: at 1.6M px each band is ~9.2 ms, so 10 ms holds bands 1 alone.
+    let ((end, _), _) = pin_span_end_priced(&big, &licensed(), 256, 512, 4_096, 67_086, 100_000, 35_138, 10.0);
+    assert_eq!(end, 512);
+}

@@ -1074,6 +1074,23 @@ fn no_work(w: &u64) -> bool {
     *w == 0
 }
 
+/// A band-cost memory holding nothing is left out of a recording (`WalkLedger::band_ms`), as a
+/// ledger recorded before it had none.
+fn no_cost(c: &[f32; crate::tunables::CHUNK_BANDS]) -> bool {
+    c.iter().all(|&m| m == 0.0)
+}
+
+/// The same for the iterations and reference lengths beside it (`WalkLedger::band_ms_iters`,
+/// `band_ms_len`).
+fn no_cost_len(c: &[u32; crate::tunables::CHUNK_BANDS]) -> bool {
+    c.iter().all(|&m| m == 0)
+}
+
+/// Pixel counts of nothing parked are left out of a recording (`WalkLedger::late_px`).
+fn no_late_px(l: &[u32; LATE_MAX]) -> bool {
+    l.iter().all(|&p| p == 0)
+}
+
 /// A recorded input's pin cap where the recording predates it: one.
 fn one() -> u32 {
     1
@@ -1104,6 +1121,26 @@ pub(crate) struct WalkLedger {
     /// stand-in). See [`decide_walk_price`]'s deferred feed. (Absent when empty.)
     #[serde(default, skip_serializing_if = "no_late")]
     pub(crate) late: [Option<(u32, u8, u64, f64)>; LATE_MAX],
+    /// Per iteration band: what the GPU last timed a pin pass's iterations there at, ms (a span's
+    /// price shared out in proportion to what its bands cost before), the iterations that cost
+    /// covered, and the reference length it was measured against (`PIN_SPAN_PRICED`,
+    /// `feed_pin_cost`; 0 = none). A span is bounded by these, not by the licences
+    /// (`pin_span_end_priced`). (Absent when empty, and empty unless `PIN_SPAN_PRICED` is on.)
+    #[serde(default, skip_serializing_if = "no_cost")]
+    pub(crate) band_ms: [f32; crate::tunables::CHUNK_BANDS],
+    #[serde(default, skip_serializing_if = "no_cost_len")]
+    pub(crate) band_ms_iters: [u32; crate::tunables::CHUNK_BANDS],
+    #[serde(default, skip_serializing_if = "no_cost_len")]
+    pub(crate) band_ms_len: [u32; crate::tunables::CHUNK_BANDS],
+    /// …and the pixels the pass it was measured on ran at (`band_ms`; 0 = none): a cost measured on a
+    /// 200k-pixel pin said nothing about a 1.6M-pixel one, and spans sized from it let the refresh
+    /// sizing reach full-resolution pins that walked 30 frames (§7.10).
+    #[serde(default, skip_serializing_if = "no_cost_len")]
+    pub(crate) band_ms_px: [u32; crate::tunables::CHUNK_BANDS],
+    /// The pixels each `late` pass ran at, by slot (a reading can land after the next pin started at
+    /// another size). (Absent when empty.)
+    #[serde(default, skip_serializing_if = "no_late_px")]
+    pub(crate) late_px: [u32; LATE_MAX],
 }
 
 /// What [`decide_walk_price`] reads: `bp_chunk_tiling`'s pricing and sizing inputs, one view, one frame
@@ -1165,6 +1202,13 @@ pub(crate) struct WalkPriceInputs {
     /// proportional lane (`tunables::PIN_GROWTH_LANE_DEFAULT`); recordings made before it read false.
     #[serde(default)]
     pub(crate) pin_growth_lane: bool,
+    /// Pin passes' GPU prices also feed the band-cost memory (`WalkLedger::band_ms`,
+    /// `tunables::PIN_SPAN_PRICED_DEFAULT`), against the installed reference's length (0 = unknown);
+    /// recordings made before them read false and 0.
+    #[serde(default)]
+    pub(crate) span_priced: bool,
+    #[serde(default)]
+    pub(crate) orbit_len: u32,
     pub(crate) ledger: WalkLedger,
     /// The overridable tunables it reads, and this adapter's per-pass fixed cost (see
     /// `MovingInputs::pass_fixed_ms`).
@@ -1218,6 +1262,34 @@ fn feed_pin_price(led: &mut WalkLedger, band: u8, size: u32, price: f64, target_
     }
 }
 
+/// Feed one GPU-timed pin pass into the band-cost memory (`WalkLedger::band_ms`, `PIN_SPAN_PRICED`):
+/// for a pass in one band, its price and its iterations; for a pass across several, its price
+/// shared out in proportion to what those bands cost before, each with its own iterations
+/// (`span_band_lengths`), or, where one of them had no cost yet, the whole price charged to each.
+/// A zero price measures nothing: the RX 6800 XT's timestamps lag a dispatch and read 0.0 for a
+/// pass that ran.
+fn feed_pin_cost(led: &mut WalkLedger, band: u8, size: u32, price: f64, orbit_len: u32, px: u32) {
+    if !(price > 0.0) || !price.is_finite() || size == 0 {
+        return;
+    }
+    let parts: Vec<(usize, u32)> = super::span_band_lengths(band, size)
+        .map(|(b, len)| (b.min(crate::tunables::CHUNK_BANDS - 1), len))
+        .filter(|&(_, len)| len > 0)
+        .collect();
+    let before: f64 = parts.iter().map(|&(b, _)| f64::from(led.band_ms[b])).sum();
+    let all = parts.iter().all(|&(b, _)| led.band_ms[b] > 0.0);
+    for &(b, len) in &parts {
+        led.band_ms[b] = if parts.len() > 1 && all && before > 0.0 {
+            (f64::from(led.band_ms[b]) * price / before) as f32
+        } else {
+            price as f32
+        };
+        led.band_ms_iters[b] = len;
+        led.band_ms_len[b] = orbit_len;
+        led.band_ms_px[b] = px;
+    }
+}
+
 /// The pass size a pin pass of `size` iterations the GPU timed at `price_ms` vouches for: `size` ×
 /// the band ledger's proportional lane (`pin_fast_lane`, ×4..×16, the grown pass predicted at no
 /// more than half the target), when the price is within an eighth of the target (where that lane is
@@ -1231,10 +1303,12 @@ fn pin_growth_iters(size: u32, price_ms: f64, target_ms: f64) -> u32 {
     }
 }
 
-/// Park a pin pass's price in `led.late`. Full: the oldest stands on its stand-in, or goes unpriced.
-fn park_pin_price(led: &mut WalkLedger, events: &mut Vec<WalkPriceEvent>, pass: (u32, u8, u64, f64), target_ms: f64) {
-    if let Some(slot) = led.late.iter_mut().find(|s| s.is_none()) {
-        *slot = Some(pass);
+/// Park a pin pass's price in `led.late`, with the pixels it ran at (`late_px`). Full: the oldest
+/// stands on its stand-in, or goes unpriced.
+fn park_pin_price(led: &mut WalkLedger, events: &mut Vec<WalkPriceEvent>, pass: (u32, u8, u64, f64), px: u32, target_ms: f64) {
+    if let Some(k) = led.late.iter().position(Option::is_none) {
+        led.late[k] = Some(pass);
+        led.late_px[k] = px;
         return;
     }
     let k = (0..LATE_MAX).min_by_key(|&k| led.late[k].map_or(u64::MAX, |l| l.2)).unwrap_or(0);
@@ -1247,6 +1321,7 @@ fn park_pin_price(led: &mut WalkLedger, events: &mut Vec<WalkPriceEvent>, pass: 
         }
     }
     led.late[k] = Some(pass);
+    led.late_px[k] = px;
 }
 
 /// The chunk walk's PRICING and SIZING (`bp_chunk_tiling`'s, lifted): the wall-aware floor, the
@@ -1345,6 +1420,13 @@ pub(crate) fn decide_walk_price(i: &WalkPriceInputs) -> WalkPriceDecision {
     // ⭐…and with two in flight (rung 1d) a pass still running as the next goes out is parked the
     // same way, with no stand-in: priced by its reading, or, after twice the wait, unpriced.
     let pin_target = crate::tunables::MOTION_PIN_TARGET_MS;
+    // The pixels this frame's pin pass ran at (a parked one keeps its own, `late_px`) — kept only for
+    // the band-cost memory, so a ledger without it is what a recording made before it recorded.
+    let pass_px = if i.span_priced {
+        u32::try_from(i.spx.saturating_mul(u64::from(i.ss).pow(2))).unwrap_or(u32::MAX)
+    } else {
+        0
+    };
     // The largest pass a GPU-timed pin price this frame vouches for (`pin_growth_iters`; 0 = none).
     let mut lane_iters = 0u32;
     for k in 0..LATE_MAX {
@@ -1359,6 +1441,7 @@ pub(crate) fn decide_walk_price(i: &WalkPriceInputs) -> WalkPriceDecision {
             None if stand_in < 0.0 && age >= 2 * wait => {
                 events.push(WalkPriceEvent::PinUnpriced { band, size });
                 led.late[k] = None;
+                led.late_px[k] = 0;
                 None
             }
             None => None,
@@ -1366,10 +1449,15 @@ pub(crate) fn decide_walk_price(i: &WalkPriceInputs) -> WalkPriceDecision {
         if let Some((price, acc)) = price {
             if acc == -1.0 {
                 lane_iters = lane_iters.max(pin_growth_iters(size, price, pin_target));
+                if i.span_priced {
+                    let px = led.late_px[k];
+                    feed_pin_cost(&mut led, band, size, price, i.orbit_len, px);
+                }
             }
             feed_pin_price(&mut led, band, size, price, pin_target);
             events.push(WalkPriceEvent::PinPriced { band, size, price, acc });
             led.late[k] = None;
+            led.late_px[k] = 0;
         }
     }
     if !interacting || pin_frame {
@@ -1482,11 +1570,14 @@ pub(crate) fn decide_walk_price(i: &WalkPriceInputs) -> WalkPriceDecision {
                     && i.frame.saturating_sub(i.pin_pass_frame) < crate::tunables::PIN_PRICE_WAIT_FRAMES
                     && acc <= target_ms * 60.0;
                 if defer {
-                    park_pin_price(&mut led, &mut events, (size, band, i.pin_pass_frame, price), target_ms);
+                    park_pin_price(&mut led, &mut events, (size, band, i.pin_pass_frame, price), pass_px, target_ms);
                     events.push(WalkPriceEvent::PinDeferred { band, size, stand_in: price });
                 } else if pin_frame {
                     if i.pin_pass_gpu_ms >= 0.0 {
                         lane_iters = lane_iters.max(pin_growth_iters(size, price, target_ms));
+                        if i.span_priced {
+                            feed_pin_cost(&mut led, band, size, price, i.orbit_len, pass_px);
+                        }
                     }
                     feed_pin_price(&mut led, band, size, price, target_ms);
                     // Traced by the caller under `tile` (`WalkPriceEvent::PinPriced`).
@@ -1501,7 +1592,7 @@ pub(crate) fn decide_walk_price(i: &WalkPriceInputs) -> WalkPriceDecision {
                 // still in flight, and its dispatch rewrites the in-flight record. Park this one's
                 // price for its own reading instead of losing it: at two in flight the motiontest
                 // priced 26 pin passes across 70 pins, the licences barely grew, and 50 pins drifted out.
-                park_pin_price(&mut led, &mut events, (size, band, i.pin_pass_frame, -1.0), target_ms);
+                park_pin_price(&mut led, &mut events, (size, band, i.pin_pass_frame, -1.0), pass_px, target_ms);
                 events.push(WalkPriceEvent::PinDeferred { band, size, stand_in: -1.0 });
                 led.inflight = None;
             } else {
@@ -1949,6 +2040,19 @@ pub(crate) struct WalkDispatchInputs {
     /// `pin_span_end`; 0 = off); recordings made before it read 0, the one-band pass they recorded.
     #[serde(default)]
     pub(crate) pin_span_share: f64,
+    /// A span is bounded by its bands' measured costs (`tunables::PIN_SPAN_PRICED_DEFAULT`,
+    /// `pin_span_end_priced`): those costs, the iterations each covered and the reference length each
+    /// was measured against (`WalkLedger::band_ms`); recordings made before them read false and none.
+    #[serde(default)]
+    pub(crate) pin_span_priced: bool,
+    #[serde(default, skip_serializing_if = "no_cost")]
+    pub(crate) band_ms: [f32; crate::tunables::CHUNK_BANDS],
+    #[serde(default, skip_serializing_if = "no_cost_len")]
+    pub(crate) band_ms_iters: [u32; crate::tunables::CHUNK_BANDS],
+    #[serde(default, skip_serializing_if = "no_cost_len")]
+    pub(crate) band_ms_len: [u32; crate::tunables::CHUNK_BANDS],
+    #[serde(default, skip_serializing_if = "no_cost_len")]
+    pub(crate) band_ms_px: [u32; crate::tunables::CHUNK_BANDS],
     /// The overridable tunables it reads.
     pub(crate) pin_timeout_scaled: u64,
     pub(crate) chunk_charge: u64,
@@ -1976,6 +2080,12 @@ pub(crate) enum DispatchEvent {
     PinEscape { age_us: u64, limit_us: u64, registered: bool, n: u32 },
     /// The pass was charged for the pixels still running, not the frame.
     Charge { running: u32, charged: u64, all_px: u64, from: u32, to: u32 },
+    /// A pin pass ran on through bands bounded by their measured costs (`PIN_SPAN_PRICED`): its
+    /// iterations, its work (iterations × the pixels the growth limiter charges) and the cost its
+    /// bands predicted, ms. The span vouches for its size, so the caller's growth limiter remembers
+    /// it: without that the next band restarted its doubling from the pass before the span (at
+    /// 2^260, 1,024 after a 16,128-iteration span) and could never cover a band whole to span again.
+    PricedSpan { size: u32, work: u64, pred_ms: f64 },
 }
 
 /// The chunk walk's DISPATCH (`bp_chunk_tiling`'s, lifted): the serialized hold (the settled walk's
@@ -2159,17 +2269,45 @@ pub(crate) fn decide_walk_dispatch(i: &WalkDispatchInputs) -> WalkDispatchDecisi
             // it; every band past the first is bounded by its own prices.
             let (end, band) = if pin_frame && i.pin_span_share > 0.0 {
                 let step_cap = ((pass_steps / spx.saturating_mul(ss2).max(1)) as u32).max(budget_step);
-                super::pin_span_end(
-                    &i.bands,
-                    real_lo,
-                    end,
-                    licence,
-                    pin_floor,
-                    walk_end,
-                    step_cap,
-                    i.orbit_len,
-                    i.pin_span_share,
-                )
+                if i.pin_span_priced {
+                    // …bounded by what those bands COST, not by their licences (`PIN_SPAN_PRICED`).
+                    let (span, pred_ms) = super::pin_span_end_priced(
+                        &super::BandCosts {
+                            ms: &i.band_ms,
+                            iters: &i.band_ms_iters,
+                            len: &i.band_ms_len,
+                            px: &i.band_ms_px,
+                            px_now: spx.saturating_mul(ss2),
+                            knee: i.knee_px,
+                        },
+                        &i.bands,
+                        real_lo,
+                        end,
+                        licence,
+                        walk_end,
+                        step_cap,
+                        i.orbit_len,
+                        i.pin_span_share * crate::tunables::MOTION_PIN_TARGET_MS,
+                    );
+                    if span.0 > end {
+                        let size = span.0 - real_lo;
+                        let px = spx.saturating_mul(ss2).max(i.knee_px).max(1);
+                        events.push(DispatchEvent::PricedSpan { size, work: u64::from(size).saturating_mul(px), pred_ms });
+                    }
+                    span
+                } else {
+                    super::pin_span_end(
+                        &i.bands,
+                        real_lo,
+                        end,
+                        licence,
+                        pin_floor,
+                        walk_end,
+                        step_cap,
+                        i.orbit_len,
+                        i.pin_span_share,
+                    )
+                }
             } else {
                 (end, band)
             };

@@ -452,6 +452,10 @@ impl MandelbrotParams {
         p.iterate_frame = None;
         p.iterate_armed_us = None;
         p.iterate_prov = None;
+        // …and the ring's extra timers' (`timer_slots`): they price the window's pin passes.
+        p.extra_ms = None;
+        p.extra_steps = None;
+        p.extra_frame = None;
         p.live_timing = false;
         p.live_ms = None;
         p.live_steps = None;
