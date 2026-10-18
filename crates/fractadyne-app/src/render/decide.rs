@@ -1069,6 +1069,11 @@ fn no_late(l: &[Option<(u32, u8, u64, f64)>; LATE_MAX]) -> bool {
     l.iter().all(Option::is_none)
 }
 
+/// A work memory of 0 (none) is left out of a recording, as a ledger recorded before it had none.
+fn no_work(w: &u64) -> bool {
+    *w == 0
+}
+
 /// A recorded input's pin cap where the recording predates it: one.
 fn one() -> u32 {
     1
@@ -1087,6 +1092,11 @@ pub(crate) struct WalkLedger {
     pub(crate) pass_dt: f64,
     /// The last moving / pin pass's iteration step (the growth limiter's memory).
     pub(crate) motion_step_last: u32,
+    /// The same step as WORK, iterations × the pixels it was charged for (`WalkPriceInputs::
+    /// growth_in_work`: at least the occupancy knee's);
+    /// 0 = none, and in recordings made before it; absent when 0, so they replay as recorded).
+    #[serde(default, skip_serializing_if = "no_work")]
+    pub(crate) motion_work_last: u64,
     /// Pin passes whose PRICE waits for their own GPU reading: `(size, band, the frame it went out,
     /// a stand-in price in ms, < 0 = none)`. A pass is parked here when it is released at its
     /// completion before its reading landed (its completion stand-in is the fallback), or when it is
@@ -1143,6 +1153,18 @@ pub(crate) struct WalkPriceInputs {
     /// will ever have, so it is fed at once.
     #[serde(default)]
     pub(crate) no_timestamps: bool,
+    /// The growth limiter compares WORK (iterations × pixels, `WalkLedger::motion_work_last`), not
+    /// iterations (`tunables::GROWTH_IN_WORK_DEFAULT`); recordings made before it read false.
+    #[serde(default)]
+    pub(crate) growth_in_work: bool,
+    /// The adapter's occupancy knee, pixels (`calibration::knee_px`; 0 = unknown): below it a pass
+    /// costs its iteration window, not pixels × iterations, so work is charged at the knee.
+    #[serde(default)]
+    pub(crate) knee_px: u64,
+    /// A pin pass the GPU timed far under the pin target lets the next grow by the band ledger's
+    /// proportional lane (`tunables::PIN_GROWTH_LANE_DEFAULT`); recordings made before it read false.
+    #[serde(default)]
+    pub(crate) pin_growth_lane: bool,
     pub(crate) ledger: WalkLedger,
     /// The overridable tunables it reads, and this adapter's per-pass fixed cost (see
     /// `MovingInputs::pass_fixed_ms`).
@@ -1193,6 +1215,19 @@ fn feed_pin_price(led: &mut WalkLedger, band: u8, size: u32, price: f64, target_
     let lane = super::pin_fast_lane(price, target_ms);
     for (b, len) in super::span_band_lengths(band, size) {
         super::chunk_band_update_with_lane(&mut led.bands, b, len, price, target_ms, lane);
+    }
+}
+
+/// The pass size a pin pass of `size` iterations the GPU timed at `price_ms` vouches for: `size` ×
+/// the band ledger's proportional lane (`pin_fast_lane`, ×4..×16, the grown pass predicted at no
+/// more than half the target), when the price is within an eighth of the target (where that lane is
+/// the model's own); 0 otherwise. Only GPU timestamp readings come here: a completion stand-in once
+/// read 0.0 ms for a 12.5 ms pass (W8).
+fn pin_growth_iters(size: u32, price_ms: f64, target_ms: f64) -> u32 {
+    if price_ms >= 0.0 && price_ms <= target_ms / 8.0 {
+        size.saturating_mul(super::pin_fast_lane(price_ms, target_ms))
+    } else {
+        0
     }
 }
 
@@ -1310,6 +1345,8 @@ pub(crate) fn decide_walk_price(i: &WalkPriceInputs) -> WalkPriceDecision {
     // ⭐…and with two in flight (rung 1d) a pass still running as the next goes out is parked the
     // same way, with no stand-in: priced by its reading, or, after twice the wait, unpriced.
     let pin_target = crate::tunables::MOTION_PIN_TARGET_MS;
+    // The largest pass a GPU-timed pin price this frame vouches for (`pin_growth_iters`; 0 = none).
+    let mut lane_iters = 0u32;
     for k in 0..LATE_MAX {
         let Some((size, band, sent, stand_in)) = led.late[k] else {
             continue;
@@ -1327,6 +1364,9 @@ pub(crate) fn decide_walk_price(i: &WalkPriceInputs) -> WalkPriceDecision {
             None => None,
         };
         if let Some((price, acc)) = price {
+            if acc == -1.0 {
+                lane_iters = lane_iters.max(pin_growth_iters(size, price, pin_target));
+            }
             feed_pin_price(&mut led, band, size, price, pin_target);
             events.push(WalkPriceEvent::PinPriced { band, size, price, acc });
             led.late[k] = None;
@@ -1445,6 +1485,9 @@ pub(crate) fn decide_walk_price(i: &WalkPriceInputs) -> WalkPriceDecision {
                     park_pin_price(&mut led, &mut events, (size, band, i.pin_pass_frame, price), target_ms);
                     events.push(WalkPriceEvent::PinDeferred { band, size, stand_in: price });
                 } else if pin_frame {
+                    if i.pin_pass_gpu_ms >= 0.0 {
+                        lane_iters = lane_iters.max(pin_growth_iters(size, price, target_ms));
+                    }
                     feed_pin_price(&mut led, band, size, price, target_ms);
                     // Traced by the caller under `tile` (`WalkPriceEvent::PinPriced`).
                     events.push(WalkPriceEvent::PinPriced { band, size, price, acc });
@@ -1538,15 +1581,45 @@ pub(crate) fn decide_walk_price(i: &WalkPriceInputs) -> WalkPriceDecision {
     // a pass 20× its size before the reading that would have said otherwise lands —
     // measured as a 257 ms pass right after a 256-iteration one. Doubling meets a cost
     // cliff with one ~2× overshoot, and the wall-clock cut halves the memory next frame.
+    // ⭐IN WORK, NOT ITERATIONS (`growth_in_work`, 2026-10-17). "At most double the previous pass"
+    // means its work: the moving frames between pins run at full resolution and the pins at a
+    // fraction of it, and one memory in iterations served both. Recorded through the 2^93 switch: a
+    // moving frame at 1,627,654 px left 120 iterations (1.95e8 steps) and the next pin, at 25,208
+    // px, restarted its doubling at 240 iterations — 6e6 steps, 1/32 of the frame before; the other
+    // way round, a full-resolution pass after a small one took twice the iterations at 100× the
+    // pixels. A mode switch still zeroes the memory (a floatexp step costs ~100× a df32 one).
+    // ⚠Work is charged at no fewer pixels than the occupancy KNEE (`knee_px`), as the dispatch
+    // ceiling charges it: below ~262k px (RTX 3080) a pass costs its iteration window, so raw
+    // pixels × iterations made a 145×110 pin look 16× cheaper than it is. Counted raw, its first
+    // pass opened at 3,773 iterations after a full-resolution frame and df32 pins at 2^73–2^88
+    // stalled for up to 119 frames (held 8.95 octaves, one run of four, 2026-10-17).
+    // ⭐…and a pin pass the GPU timed far under the pin target lets the next grow by the band
+    // ledger's own proportional lane (`pin_growth_lane`): the first floatexp pin's passes priced
+    // 0.16–0.85 ms against 20 while the ×2 a frame held them for five frames. The rate model (its
+    // own per mode: floatexp starts from the bootstrap at the switch), the band licences and the
+    // band clip still bound every pass. The licences df32 earned are LARGER than floatexp's, so
+    // they never bind first; clearing them at the switch was tried and gave the lane nothing to
+    // grow into (every band reopened at its 256 floor: the first floatexp pin took 256-iteration
+    // passes while the lane allowed 7,899).
     let budget_step = if interacting || pin_frame {
-        let last = led.motion_step_last;
-        let lim = if last == 0 {
-            crate::tunables::MOTION_STEP_OPEN
+        let px = spx.saturating_mul(ss2).max(i.knee_px).max(1);
+        let doubling = if i.growth_in_work {
+            match led.motion_work_last {
+                0 => crate::tunables::MOTION_STEP_OPEN,
+                w => (w.saturating_mul(2) / px).min(u64::from(u32::MAX)) as u32,
+            }
         } else {
-            last.saturating_mul(2)
+            match led.motion_step_last {
+                0 => crate::tunables::MOTION_STEP_OPEN,
+                last => last.saturating_mul(2),
+            }
         };
+        let lim = if pin_frame && i.pin_growth_lane { doubling.max(lane_iters) } else { doubling };
         let s = budget_step.min(lim.max(floor));
         led.motion_step_last = s;
+        if i.growth_in_work {
+            led.motion_work_last = u64::from(s).saturating_mul(px);
+        }
         s
     } else {
         budget_step

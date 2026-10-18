@@ -392,7 +392,17 @@ this many steps is recorded and later builds of the same point replay it, as a t
 (`SA_TRACE`); a longer walk is walked each time, since a record is ~90 bytes a step. A live dive
 rebuilds one point's reference every fraction of an octave, and where its orbit escapes early the
 walk was most of each build: on a 4× dive at 2^250, builds took 204–216 ms (the walk 181–188 ms)
-and now 23 ms. `FRACTADYNE_TRACE=ref` shows each build's `sa_ms`.
+and now 23 ms. `FRACTADYNE_TRACE=ref` shows each build's `sa_ms`. — and `GROWTH_IN_WORK` (default 1
+from 0.3.0-beta.20; `0` = iterations, for a before/after measurement): the moving and pinned
+walk's growth limit, "at most twice the previous pass", compares work, iterations × pixels charged
+at no fewer than the adapter's occupancy knee (below it a pass costs its iteration window), so a
+pin at a fraction of the moving frames' pixels no longer restarts its doubling from their
+iteration count, and a full-resolution pass after a small one no longer takes twice its
+iterations. — and `PIN_GROWTH_LANE` (an experiment, default 0): a pin pass the GPU timed within an
+eighth of the pin target lets the next grow by the band ledger's proportional lane (×4–×16) instead
+of ×2. Off because it did not shorten the first floatexp pin after the 2^93 switch, which the
+switch's opening budget holds, and the slow df32 stretches of throttled runs were worst with it on
+(design/live-zoom-smoothing.md §7.8).
 
 - **Not a configuration surface.** The defaults are the only tested path: the self-test, the
   goldens, `--bench-matrix` and `--livetest` all assume them. `--selftest` carries a check that

@@ -613,11 +613,15 @@ fn walk() -> WalkPriceInputs {
         late_readings: Vec::new(),
         pin_inflight_max: 1,
         no_timestamps: false,
+        growth_in_work: false,
+        knee_px: 0,
+        pin_growth_lane: false,
         ledger: WalkLedger {
             inflight: Some((1024, 3, 50.0, false)),
             bands: [0; crate::tunables::CHUNK_BANDS],
             pass_dt: 0.0,
             motion_step_last: 0,
+            motion_work_last: 0,
             late: [None; LATE_MAX],
         },
         tdr_budget_ms: c.tdr_budget_ms,
@@ -847,6 +851,94 @@ fn motion_abandons_the_pass_in_flight_and_grows_its_step_gently() {
         ..walk()
     });
     assert!((grown.floor..=600).contains(&grown.budget_step), "{}", grown.budget_step);
+}
+
+/// A pin at the pixels the 2^93 trace recorded (25,208), after a moving frame of 1,627,654 px that
+/// left 120 iterations; a rate and a dispatch budget large enough that only the limiter binds.
+fn pin_after_frame(growth_in_work: bool) -> WalkPriceInputs {
+    WalkPriceInputs {
+        interacting: true,
+        pin_frame: true,
+        spx: 25_208,
+        motion_rate: 1.0e9,
+        growth_in_work,
+        ledger: WalkLedger {
+            inflight: None,
+            motion_step_last: 120,
+            motion_work_last: 120 * 1_627_654,
+            ..walk().ledger
+        },
+        ..walk()
+    }
+}
+
+#[test]
+fn the_growth_limiter_counts_work_not_iterations() {
+    // Twice the frame's WORK at the pin's pixels — not twice its iteration count.
+    let by_work = decide_walk_price(&pin_after_frame(true));
+    assert_eq!(by_work.budget_step, (2 * 120 * 1_627_654 / 25_208) as u32);
+    assert_eq!(by_work.ledger.motion_work_last, u64::from(by_work.budget_step) * 25_208);
+    let by_iterations = decide_walk_price(&pin_after_frame(false));
+    assert_eq!(by_iterations.budget_step, 240_u32.max(by_iterations.floor), "the old rule restarted the pin at 1/32 of the frame's work");
+    assert_eq!(by_iterations.ledger.motion_work_last, 120 * 1_627_654, "and leaves the work memory alone");
+    // The other way round it is the stricter rule: a full-resolution frame after a small pin may not
+    // take twice the pin's iterations at 65× its pixels.
+    let frame = WalkPriceInputs {
+        pin_frame: false,
+        spx: 1_627_654,
+        ledger: WalkLedger { motion_step_last: 12_106, motion_work_last: 12_106 * 25_208, ..pin_after_frame(true).ledger },
+        ..pin_after_frame(true)
+    };
+    let d = decide_walk_price(&frame);
+    assert_eq!(d.budget_step, ((2 * 12_106 * 25_208 / 1_627_654) as u32).max(d.floor));
+    assert!(d.budget_step < 24_212);
+    // A cleared memory (a mode switch) opens at MOTION_STEP_OPEN, as before.
+    let open = WalkPriceInputs { ledger: WalkLedger { motion_work_last: 0, ..pin_after_frame(true).ledger }, ..pin_after_frame(true) };
+    assert_eq!(decide_walk_price(&open).budget_step, crate::tunables::MOTION_STEP_OPEN);
+}
+
+/// Below the occupancy knee a pass costs its iteration window, so work is charged at the knee: the
+/// 25,208-px pin after the 1,627,654-px frame, on the RTX 3080's 262,144-px knee.
+#[test]
+fn work_is_charged_at_the_occupancy_knee() {
+    let knee = 262_144u64;
+    let pin = WalkPriceInputs { knee_px: knee, ..pin_after_frame(true) };
+    let d = decide_walk_price(&pin);
+    assert_eq!(d.budget_step, (2 * 120 * 1_627_654 / knee) as u32, "not the 15,496 raw pixels allow");
+    assert_eq!(d.ledger.motion_work_last, u64::from(d.budget_step) * knee);
+    // Above the knee the charge is the pixels themselves.
+    let big = WalkPriceInputs { spx: 1_000_000, knee_px: knee, ..pin_after_frame(true) };
+    assert_eq!(decide_walk_price(&big).budget_step, (2 * 120 * 1_627_654 / 1_000_000) as u32);
+}
+
+/// The first floatexp pin's in-flight pass, read back by the GPU at 0.16 ms (the trace's): 545
+/// iterations, the limiter's memory at 263.
+fn cheap_reading(lane: bool) -> WalkPriceInputs {
+    WalkPriceInputs {
+        spx: 25_208,
+        motion_rate: 1.0e9,
+        pin_pass_gpu_ms: 0.16,
+        pin_growth_lane: lane,
+        ledger: WalkLedger { motion_step_last: 263, ..released_pin_pass().ledger },
+        ..released_pin_pass()
+    }
+}
+
+#[test]
+fn a_pin_pass_timed_far_under_its_target_lets_the_next_grow_by_the_lane() {
+    // 0.16 ms against 20: the ×16 lane, 545 × 16 = 8,720 — not 263 × 2.
+    let d = decide_walk_price(&cheap_reading(true));
+    assert!(matches!(d.events[..], [WalkPriceEvent::PinPriced { size: 545, .. }]), "{:?}", d.events);
+    assert_eq!(d.budget_step, 545 * 16);
+    assert_eq!(decide_walk_price(&cheap_reading(false)).budget_step, 526, "off: ×2 a frame");
+    // A price past an eighth of the target vouches for nothing more than doubling.
+    assert_eq!(decide_walk_price(&WalkPriceInputs { pin_pass_gpu_ms: 3.0, ..cheap_reading(true) }).budget_step, 526);
+    // Nor does a completion stand-in (no GPU reading): one read 0.0 ms for a 12.5 ms pass (W8).
+    let stand_in = WalkPriceInputs { pin_pass_gpu_ms: -1.0, no_timestamps: true, ..cheap_reading(true) };
+    assert_eq!(decide_walk_price(&stand_in).budget_step, 526);
+    // A moving frame takes no lane.
+    let moving = WalkPriceInputs { pin_frame: false, ..cheap_reading(true) };
+    assert!(decide_walk_price(&moving).budget_step <= 526);
 }
 
 #[test]

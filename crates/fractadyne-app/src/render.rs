@@ -5342,11 +5342,15 @@ impl FractadyneApp {
                 late_readings: self.perf.late_readings[vs].clone(),
                 pin_inflight_max: crate::tunables::pin_inflight_max(self.perf.ts_supported),
                 no_timestamps: !self.perf.ts_supported,
+                growth_in_work: crate::tunables::cost().growth_in_work == 1,
+                pin_growth_lane: crate::tunables::cost().pin_growth_lane == 1,
+                knee_px: crate::calibration::knee_px(),
                 ledger: decide::WalkLedger {
                     inflight: self.perf.chunk_inflight[vs],
                     bands: self.perf.chunk_bands[vs],
                     pass_dt: self.perf.chunk_pass_dt[vs],
                     motion_step_last: self.perf.motion_step_last[vs],
+                    motion_work_last: self.perf.motion_work_last[vs],
                     late: self.perf.chunk_late[vs],
                 },
                 tdr_budget_ms: crate::tunables::cost().tdr_budget_ms,
@@ -5361,6 +5365,7 @@ impl FractadyneApp {
             self.perf.chunk_bands[vs] = price.ledger.bands;
             self.perf.chunk_pass_dt[vs] = price.ledger.pass_dt;
             self.perf.motion_step_last[vs] = price.ledger.motion_step_last;
+            self.perf.motion_work_last[vs] = price.ledger.motion_work_last;
             // Readings keep only while their pass is still parked.
             self.perf.chunk_late[vs] = price.ledger.late;
             let parked = price.ledger.late;
@@ -7191,6 +7196,7 @@ impl FractadyneApp {
                 // The pacer's growth memory belongs to the mode being left; the new mode
                 // re-opens at `MOTION_STEP_OPEN`.
                 self.perf.motion_step_last[vidx.min(1)] = 0;
+                self.perf.motion_work_last[vidx.min(1)] = 0;
                 // So does the refresh-size measurement: a nominal step costs several times more
                 // in floatexp than in df32, so the frame that priced the old mode says nothing
                 // about this one. The rate model's opening guess sizes the next refresh until a

@@ -1426,6 +1426,8 @@ struct Perf {
     /// memory (`MOTION_STEP_OPEN`): the next pass may at most double it, a wall-clock cut halves
     /// it, a mode switch clears it.
     motion_step_last: [u32; 2],
+    /// The same memory as WORK, iterations × pixels (`GROWTH_IN_WORK`): halved and cleared with it.
+    motion_work_last: [u64; 2],
     /// Pinned-refresh passes submitted and not yet COMPLETED on the GPU, per view — the pin's
     /// serialization gate. The frame interval cannot price a pass: the swap chain hides a
     /// pass's cost for two frames (frames in flight), so a 100 ms pass reads as a 17 ms
@@ -2174,6 +2176,7 @@ impl Perf {
         let (samples, knee) = (self.view_dispatch_samples[v], crate::calibration::knee_px());
         if self.meter.motion_wall_cut(v, self.budget_mode[v], self.fe_steps_last[v], dt_ms, moving, pin, samples, knee) {
             self.motion_step_last[v] = (self.motion_step_last[v] / 2).max(1);
+            self.motion_work_last[v] = (self.motion_work_last[v] / 2).max(1);
         }
     }
 
@@ -2311,6 +2314,7 @@ impl Default for Perf {
             zoom_oct_s: 0.0,
             last_l2: 0.0,
             motion_step_last: [0, 0],
+            motion_work_last: [0, 0],
             pin_inflight: [0, 0],
             pin_reg_pending: [0, 0],
             pin_frames_last: [0, 0],
