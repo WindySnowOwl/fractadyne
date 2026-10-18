@@ -601,3 +601,10 @@ What would shorten the switch is the opening budget's re-climb itself — the sa
 device losses at this crossing — so it is a decision of its own, with Radeon runs before it ships.
 About half of all pin passes are never priced (no GPU reading pairs with them; 2,020–2,520 a 4× dive in
 every arm), which is also why a rate model cut low recovers slowly.
+
+On the RX 6800 XT (PLUTO, dev.29 = `3e9c4100`, `--zoomtest 40 --zoomtest-rate 4.0 --adapter 1`, four
+rounds alternated with `--set GROWTH_IN_WORK=0`) the work-counted limiter gained nothing: mean lag
+0.384, 0.267, 0.353, 0.379 against 0.397, 0.287, 0.343, 0.287, and a few more frames over 50 ms
+(1, 7, 7, 2 against 2, 1, 0, 2; worst 53–67 ms against 42–54). No lethal-band reading or device
+loss either way; the battery and two motion tests passed. Shipped ON (the user's call, 2026-10-18):
+the RTX 3080's gain is consistent and the Radeon's cost is a few frames short of the 100 ms line.
