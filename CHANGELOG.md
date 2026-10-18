@@ -59,6 +59,12 @@ published as the pre-releases `v0.2.41-beta.1` to `v0.2.41-beta.150`, and a "bet
 
 Changes after 0.3.0-beta.1:
 
+- **Zoom refreshes size themselves by the work they do (0.3.0-beta.20).** While zooming, each
+  refresh grows its passes step by step, at most doubling each time, and it measured "double" in
+  iterations. The low-resolution refreshes ran beside full-resolution frames, so a refresh started
+  over from a fraction of the work the frame before it did. It now compares work, counted the way
+  the graphics card spends it. On a fast dive to 1e100× the picture on screen is about 0.05 octaves
+  fresher on average, with about 20 more refreshes completed per dive.
 - **Reference updates in a deep zoom take a seventh of the time (0.3.0-beta.20).** A zoom past
   about 1e70× rebuilds its reference orbit every fraction of an octave, and where that orbit
   escapes early each rebuild recalculated the same series approximation, 180 of its 210 ms. The

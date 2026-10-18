@@ -125,6 +125,10 @@ pub(crate) struct Cost {
     /// Outside a tour, the longest series walk recorded for reuse, steps (`SA_TRACE_LIVE_STEPS_DEFAULT`;
     /// 0 = off).
     pub sa_trace_live_steps: u64,
+    /// The growth limiter counts work, not iterations (`GROWTH_IN_WORK_DEFAULT`; 0 = iterations).
+    pub growth_in_work: u64,
+    /// A cheap GPU-timed pin pass lets the next grow by the band lane (`PIN_GROWTH_LANE_DEFAULT`).
+    pub pin_growth_lane: u64,
     /// A settled mode-2 walk charges the pixels still running (`CHUNK_CHARGE_DEFAULT`; 0 = off).
     pub chunk_charge: u64,
     /// Test hook: deterministic uneven settled-walk windows (`CHUNK_SHUFFLE_DEFAULT`; 0 = off).
@@ -189,6 +193,8 @@ impl Default for Cost {
             orbit_schedule: ORBIT_SCHEDULE_DEFAULT,
             sa_trace: SA_TRACE_DEFAULT,
             sa_trace_live_steps: SA_TRACE_LIVE_STEPS_DEFAULT,
+            growth_in_work: GROWTH_IN_WORK_DEFAULT,
+            pin_growth_lane: PIN_GROWTH_LANE_DEFAULT,
             chunk_charge: CHUNK_CHARGE_DEFAULT,
             chunk_shuffle: CHUNK_SHUFFLE_DEFAULT,
             worker_motion: WORKER_MOTION_DEFAULT,
@@ -500,6 +506,24 @@ pub(crate) fn apply_overrides(pairs: &[(String, String)]) -> Result<(), String> 
                     .ok_or_else(|| format!("--set WORKER_PASS_MS: '{raw}' is not a number of ms from 1 to 400"))?;
                 p.to_string()
             }
+            "GROWTH_IN_WORK" => {
+                let p = c.growth_in_work;
+                c.growth_in_work = match raw.as_str() {
+                    "0" => 0,
+                    "1" => 1,
+                    _ => return Err(format!("--set GROWTH_IN_WORK: '{raw}' is not 0 (off) or 1 (on)")),
+                };
+                p.to_string()
+            }
+            "PIN_GROWTH_LANE" => {
+                let p = c.pin_growth_lane;
+                c.pin_growth_lane = match raw.as_str() {
+                    "0" => 0,
+                    "1" => 1,
+                    _ => return Err(format!("--set PIN_GROWTH_LANE: '{raw}' is not 0 (off) or 1 (on)")),
+                };
+                p.to_string()
+            }
             "SA_TRACE_LIVE_STEPS" => {
                 let p = c.sa_trace_live_steps;
                 c.sa_trace_live_steps = raw
@@ -663,7 +687,7 @@ pub(crate) const OVERRIDABLE: &str = "TDR_BUDGET_MS, TDR_EXPLICIT_BUDGET_MS, \
     EXPLICIT_DISPATCH_CAP, TDR_MAX_TILES, TDR_TILES_CEIL, BLA_EPS, PASS_FIXED_MS, MOTION_NEED_QUANTILE, MOTION_NEED_SOURCE, READING_POOL, \
     DEAD_MAN, DISPATCH_CEILING, SETTLE_SERIALIZE, ADMISSION, PIN_TIMEOUT_SCALED, TAIL_DF32, REF_OVERLAP, EARLY_REF, TILE_OCCUPANCY, LIVE_REFRESH, \
     ORBIT_LEN_CAP, RENORM, TILE_PACK, RENORM_BLA, ORBIT_SCHEDULE, SA_TRACE, CHUNK_CHARGE, \
-    CHUNK_SHUFFLE, WORKER_MOTION, WORKER_YIELD, WORKER_PASS_MS, RECORD_COST_PPM, REUSE_MAX_WRAPS, PIN_BAND_SPAN, REF_OVERTAKEN_DROP, SA_TRACE_LIVE_STEPS";
+    CHUNK_SHUFFLE, WORKER_MOTION, WORKER_YIELD, WORKER_PASS_MS, RECORD_COST_PPM, REUSE_MAX_WRAPS, PIN_BAND_SPAN, REF_OVERTAKEN_DROP, SA_TRACE_LIVE_STEPS, GROWTH_IN_WORK, PIN_GROWTH_LANE";
 
 #[cfg(test)]
 #[path = "../tests/unit/tunables/override_tests.rs"]
@@ -1256,6 +1280,25 @@ pub(crate) const SA_TRACE_DEFAULT: u64 = 1;
 /// dive, the same walk each time. A record walks to the orbit's end at ~90 bytes a step, so a long
 /// orbit is walked plainly: 65,536 steps is ~6 MB a record, two kept.
 pub(crate) const SA_TRACE_LIVE_STEPS_DEFAULT: u64 = 65_536;
+
+/// 1 = the moving / pin walk's growth limiter ("at most double the previous pass") compares WORK,
+/// iterations × pixels charged at no fewer than the occupancy knee (`decide_walk_price`), so a pin
+/// at a fraction of the moving frames' pixels does not restart its doubling from their iteration
+/// count. 0 = iterations, as before. Measured (RTX 3080, alternated, the P-G rows): the 4×
+/// continuous dive's picture lags 0.64–0.69 octaves against 0.70–0.72 with ~20 more refreshes
+/// adopted, the hand-over 0.32–0.40 against 0.40–0.41. Counted in raw pixels (no knee) a small pin
+/// looked cheap and df32 pins stalled for up to 119 frames.
+pub(crate) const GROWTH_IN_WORK_DEFAULT: u64 = 1;
+
+/// EXPERIMENT, off by default (2026-10-17). 1 = a pin pass the GPU timed within an eighth of the pin
+/// target lets the next grow by the band ledger's proportional lane (×4..×16) instead of ×2
+/// (`decide_walk_price`). 0 = ×2 a frame. Meant for the first floatexp pin after the 2^93 switch;
+/// measured (RTX 3080, eight runs on, alternated): the jump row's worst lag no better than off
+/// (1.39–2.99 against 1.22–2.22 octaves), because what holds that pin is the switch's opening
+/// budget (4e6 steps, re-climbing ×1.5 a reading: 8 iterations a pass at 813×606, lifted to the
+/// 256 pin floor), not the limiter; and the df32 stalls of the runs the pacer throttled ~20% were
+/// worst with it on (8.95, 3.17, 3.08 octaves against 1.57–1.96 off).
+pub(crate) const PIN_GROWTH_LANE_DEFAULT: u64 = 0;
 
 /// 1 = the OVERLAPPED pick + build (render.rs `pick_and_build`): the view centre's orbit build and
 /// series walk run beside the pick, and the pick's centre rescue reads its score off that build.

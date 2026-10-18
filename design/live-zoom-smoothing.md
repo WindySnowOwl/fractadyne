@@ -574,3 +574,30 @@ the device-loss gates of §P-G.
 The df32 stretch at 2^54–2^65 (a jump-start at 2^48, 4×) is the sizing working at its edge, not a
 defect: refreshes at ~1028×779 adopt every 13–14 frames, held max 1.03 octaves, median on-screen
 detail 643 px. `HELD_MAX_OCT` (0.5) trades that age against resolution.
+
+### 7.8 The growth limiter counts work; the lane stays off (2026-10-17)
+
+The user's choices on §7.7: count work, and let the first floatexp pin grow faster once its passes
+are measured cheap. Built behind `GROWTH_IN_WORK` and `PIN_GROWTH_LANE` (recorded inputs; old
+recordings replay unchanged), measured on the RTX 3080 in two rounds of alternated arms.
+
+- ⭐**Work, charged at the occupancy knee** (`WalkPriceInputs::knee_px`). Counted as raw pixels ×
+  iterations, a 145×110 pin looked 16× cheaper than it is (below ~262k px a pass costs its iteration
+  window) and opened at 3,773 iterations after a full-resolution frame; df32 pins at 2^73–2^88 then
+  stalled for up to 119 frames (held 8.95 octaves). Charged at the knee, three rounds: the 4× continuous
+  dive 0.64–0.69 octaves mean lag against 0.70–0.72 off, ~20 more refreshes adopted; the hand-over
+  0.32–0.40 against 0.40–0.41; the 1× dive 0.256 against 0.263. **On by default.**
+- ⛔**The lane does not help the switch**, and was off by default. Eight runs with it on: the jump row's
+  worst 1.39–2.99 octaves against 1.22–2.22 off. Traced, the first floatexp pin is held by the switch's
+  opening budget, not the limiter: `fe_budget` restarts at the bootstrap (4e6 steps) and re-climbs ×1.5
+  a reading, which at 813×606 is 8 iterations a pass, lifted to the 256 pin floor — 18 frames of
+  256-iteration passes. §7.7's frames 311–315 (limiter-bound) were one run's case, not the rule.
+  Clearing the band ledger at the switch (so df32 licences could not feed the lane) was tried first and
+  made it worse: every band reopened at its 256 floor while the lane allowed 7,899. And in the runs the
+  pacer throttled ~20% (bimodal, every arm), the df32 stalls were worst with the lane on: 8.95, 3.17,
+  3.08 octaves against 1.57–1.96 off.
+
+What would shorten the switch is the opening budget's re-climb itself — the safeguard of the six
+device losses at this crossing — so it is a decision of its own, with Radeon runs before it ships.
+About half of all pin passes are never priced (no GPU reading pairs with them; 2,020–2,520 a 4× dive in
+every arm), which is also why a rate model cut low recovers slowly.
