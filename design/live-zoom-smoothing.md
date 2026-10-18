@@ -669,3 +669,12 @@ passes, a band-3 pass priced 16.7 ms that cut its licence to 320). What the prob
 pin's SIZE: it started at the size of the df32 pins before it (620×466, 99 iterations a pass) where
 without it the 4e6 opening started one at 345×259 (44), and the bigger one took 24 frames to the
 smaller's 18.
+
+What bounds that pin, from the traced pair: the band ledger's 256-iteration floor in each band not
+yet priced, the band-3 cliff (probe arm), then `fe_budget / px` (1,280–2,064 iterations on, 1,408–
+2,117 off), the budget re-climbing ×1.5 a reading from the first real reading (2.65e8 on, 1.26e8
+off); never the growth limiter. The same budget over 3× the pixels is 3× fewer iterations a pass.
+⭐**The cap stays at df32 ÷ 8.** On this card a looser one could not shorten the switch (the opening
+does not bind) and would only start a bigger first pin; on the RTX 3080 it binds on the fast
+readings (1.07 ms a pass at the jump row, 0.6 at misi-49-3) and the gain was measured under it, so
+nothing pays for raising the first dispatch at the crossing of the six device losses.
