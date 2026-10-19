@@ -279,6 +279,14 @@ impl FractadyneApp {
                     st.passes += d.walk.passes;
                     st.max_pass_ms = st.max_pass_ms.max(d.walk.max_pass_ms);
                     self.perf.live_res[v] = live_res_next(self.perf.live_res[v], ms);
+                    // The worker GPU's time on this frame (its walk), for the panel's engine room.
+                    crate::blinken::events::emit(
+                        v,
+                        crate::blinken::events::Kind::PassTimed,
+                        crate::blinken::events::Pass::Worker as u32,
+                        ticket.frame as u32,
+                        d.walk.ms as f32,
+                    );
                     if crate::diag::trace_on("live") {
                         crate::diag::trace(
                             "live",

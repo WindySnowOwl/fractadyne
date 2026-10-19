@@ -12,6 +12,7 @@ fn inputs_for(cx: &str, cy: &str, log2mag: f64, gpu_iter: u32, reuse: Option<Reu
     let scale = vp.gpu_scale();
     RecomputeInputs {
         origin: "test",
+        blinken: (crate::blinken::events::NO_PANEL_ROLE, 0),
         center_bf: [vp.center_x.clone(), vp.center_y.clone()],
         span: vp.complex_span_fe(),
         span_mantissa: scale.span_mantissa,

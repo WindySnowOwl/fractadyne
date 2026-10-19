@@ -757,6 +757,7 @@ pub(crate) const CLI_REFERENCE: &[CliRef] = {
         Flag("--show-zoom-target / --no-show-zoom-target", "Force the auto-zoom target overlay on / off (View > Show auto-zoom target; overrides the saved preference). While the auto-zoom runs, outlines the region of the view it is zooming into with lines from its corners to the corners of the screen, and rings the point it is steering toward."),
         Flag("--autopilot-priority speed|quality", "What the auto-zoom puts first (the \"Auto-zoom priority\" switch in the right panel; overrides the saved preference). speed: zoom at the set rate and refresh the screen as soon as a frame with detail is ready. quality: only fully resolved full-resolution frames reach the screen, and the zoom slows as needed so the picture never magnifies far before the next one lands."),
         Flag("--autopilot-target detail|misiurewicz", "What the auto-zoom aims at (the \"Auto-zoom target\" switch; overrides the saved preference). detail: the richest edge in view, re-chosen as the dive goes. misiurewicz: the nearest Misiurewicz point, solved to the dive limit's depth first (the dive holds still meanwhile), then dived into exactly — Mandelbrot set only."),
+        Flag("--live-panel off|strip|panel|full", "Open the live-render front panel at this size (View > Live render panel, key B; overrides the saved preference): a 1970s-style instrument panel over the view showing what each frame dispatched, how old the picture on screen is, the walk through the iteration bands, the reference builders, and the machine underneath."),
         Flag("--show-timestamp / --no-show-timestamp", "Force the elapsed-time overlay on / off (View > Show timestamp; overrides the saved preference). Draws a large clock over the view reading the same \"+12.345s\" the log stamps every line with, plus the frame number, so a screen recording of a problem that only appears in motion can be lined up against the log frame by frame."),
         Flag("--bla / --no-bla", "Force bilinear approximation (BLA) on / off for deep floatexp Mandelbrot, Multibrot and the fold families (Tricorn, Burning Ship, Celtic, Buffalo)."),
         Flag("--glitch / --no-glitch", "Force multi-reference glitch correction on / off for the export (default on). It never runs for Mandelbrot or Multibrot views outside Julia mode, where --glitch-audit found it repairs nothing."),
@@ -869,6 +870,7 @@ pub(crate) fn help_shortcuts(ui: &mut egui::Ui) {
     help_kv(ui, "Shift+Backspace / Ctrl+Y", "Redo view");
     help_kv(ui, "M", "Find minibrot + zoom to it (Newton-Raphson)");
     help_kv(ui, "A", "Auto-zoom autopilot (dive toward detail; any input stops)");
+    help_kv(ui, "B", "Live-render panel: off / strip / panel / full (hover an instrument for what it means)");
     help_kv(ui, "Esc", "Stop autopilot / a playing tour, or exit fullscreen");
     help_kv(
         ui,

@@ -1442,6 +1442,9 @@ impl FractadyneApp {
             );
         }
 
+        // ---- the live-render front panel (View ▸ Live render panel, key B) ----
+        self.draw_blinken(ctx, central.response.rect);
+
         // ---- guided-tour annotations (captions + coordinate-anchored callouts) ----
         if self.playback.is_some() {
             let caption_rects = self.draw_captions(ctx, central.response.rect);

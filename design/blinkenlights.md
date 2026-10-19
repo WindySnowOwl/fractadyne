@@ -223,6 +223,50 @@ run whether or not it is open. The overlay asks for repaints only while its ligh
 decaying (≤ 1 s after the last event), so an idle app still idles. Measured, not assumed: the P-G
 rows with the overlay at full size against off, for frame interval and the picture's age.
 
+### As built (2026-10-19)
+
+What the implementation settled, where it differs from or adds to the above:
+
+- **Where it lives:** `crates/fractadyne-app/src/blinken.rs` and `blinken/` (`events`, `registry`,
+  `model`, `panel`, `paint`, `help`); the app side in `ui/blinken_overlay.rs`. The model is pure
+  and unit-tested (`tests/unit/blinken/`).
+- **The third builder is the tour's hold prefetch** (`fd-ref-hold`), lamp REF HOLD. The code's
+  "reactive" build is `fd-ref-live` itself, so REF LIVE and REF REACT would have been one lamp.
+  Builds carry `(role, id)` from launch (`RecomputeInputs::blinken`) through the build thread
+  (built, series walk) to install or drop (`RecomputeResult::blinken`); a marker whose end is
+  never seen leaves the dial after 30 s.
+- **Picture age** is the zoom harness's own measure: how far the view has zoomed past the picture
+  frozen on screen (`ref_cache.frozen_l2`).
+- **GPU time**: the iterate timer's and the extra timers' readings, each filed under the kind of
+  pass its frame ran (`PASS_OF_FRAME`); the live-refresh timer shares the iterate timer's ticks
+  and is not counted twice. The worker's walk time feeds the second engine.
+- **Two new GPU sinks** on `MandelbrotParams`, dropped by the worker's twin like the others:
+  `timer_states_out` (the ring's slot states, two bits each; the T0–T2 lamps) and `step_out`
+  (the armed frame's `StepStats`: loop trips against iterations advanced, the tachometer's BLA
+  multiplier).
+- **GPU memory** is reckoned from the sizes the renderer allocates (G-buffers, hold and SSAA,
+  orbit and BLA, the worker's copy) rather than a ledger of every allocation.
+- **CPU per core**: `sysinfo::CoreSampler` (`NtQuerySystemInformation` on Windows, `/proc/stat`
+  on Linux), four times a second. The clock: `sysinfo::local_now` (`GetLocalTime` /
+  `localtime_r`).
+- **Cost**: the panel logs its own UI-thread time every 600 frames it is open (`blinken` log
+  lines, with a per-section breakdown), and asks for frames only while something on it moves
+  (else once a second, for the clock), so an idle app idles. Measured on the RTX 3080 at full
+  size over a 1920×1200 window, in four steps:
+  - first build: 1.5–1.7 ms a frame of the panel's own time (each tracked letter was its own
+    text shape, three times for the engraving); the P-G rows' frame interval +0.6 ms;
+  - one layout per legend (`extra_letter_spacing`), one per nixie row, one per tabular number:
+    0.67 ms;
+  - a STATIC layer (case, faces, scales, titles, labels, bezels) drawn once and replayed:
+    0.25–0.28 ms, but the frame interval still +0.5–0.7 ms, because egui tessellates every
+    replayed shape every frame;
+  - the static layer kept already tessellated (re-tessellated when the font atlas grows or
+    anything it depends on changes): 0.27 ms of its own, the frame interval +0.2–0.4 ms
+    (df32-4 17.8 → 18.2 ms, deep-4 18.0 → 18.4 ms), and the picture's age unchanged within
+    run-to-run noise (df32-4 1.00 → 1.02 octaves at most, deep-4 0.92–0.96 → 0.94).
+- **Harness hooks**: `--live-panel off|strip|panel|full`, and `--uitest` screens
+  `live-panel-strip`, `live-panel`, `live-panel-full`.
+
 ### Build order
 
 1. **Plumbing:** the event ring and its emitters, the frame history, timer-ring states, the thread

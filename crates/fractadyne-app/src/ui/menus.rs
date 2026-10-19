@@ -525,6 +525,25 @@ impl FractadyneApp {
                                  of the screen, and a ring on the point it is steering toward. Off \
                                  by default.",
                             );
+                        ui.menu_button("Live render panel", |ui| {
+                            use crate::blinken::Size;
+                            for (size, label, tip) in [
+                                (Size::Off, "Off", "No panel."),
+                                (Size::Strip, "Strip", "The nixie readouts and the light bank."),
+                                (Size::Panel, "Panel", "The instruments: walk dial, picture age, tiles, GPU passes, depth dial, lamps."),
+                                (Size::Full, "Full", "The panel and the engine room: steps, GPUs, memory, cores, pixels."),
+                            ] {
+                                if ui.radio(self.blinken.size == size, label).on_hover_text(tip).clicked() {
+                                    self.blinken.size = size;
+                                }
+                            }
+                            ui.separator();
+                            ui.add(egui::Slider::new(&mut self.blinken.opacity, 0.3..=1.0).text("Opacity"));
+                        })
+                        .response
+                        .on_hover_text(
+                            "A front panel over the view that shows the live renderer at work: what                              each frame dispatched, how old the picture on screen is, the walk                              through the iteration bands, the reference builders, and the machine                              underneath. B cycles it; drag it to any corner; hover an instrument for                              what it means and what healthy and troubled look like.",
+                        );
                         ui.checkbox(&mut self.watermark, "Show \"Fd\" watermark")
                             .on_hover_text(
                                 "Draw a discreet \"Fd\" brand mark in the lower-right corner of the \

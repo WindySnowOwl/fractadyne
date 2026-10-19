@@ -18,6 +18,12 @@ Fractadyne's own source is dual-licensed **MIT OR Apache-2.0** (see `LICENSE-MIT
 hand. Keep this section in step with `crates/fractadyne-app/assets/fonts/`.
 
 * **Spline Sans** and **Spline Sans Mono** - SIL Open Font License 1.1 (text below).
+* **Routed Gothic** and **Routed Gothic Narrow** (the live-render panel's engraved legends) - SIL
+  Open Font License 1.1 (text below), unmodified. Upstream: <https://github.com/dse/routed-gothic>.
+* **Barlow Condensed** SemiBold and Bold Italic (the panel's dial numerals) - SIL Open Font License
+  1.1 (text below), unmodified. Upstream: <https://github.com/jpt/barlow>.
+* **Share Tech Mono** (the panel's nixie readouts) - SIL Open Font License 1.1 (text below),
+  unmodified. Upstream: <https://fonts.google.com/specimen/Share+Tech+Mono>.
 * **Lucide** icons - ISC (text below). The bundled `Lucide.ttf` is a SUBSET containing only the
   icons the UI uses, produced by `scripts/subset_lucide.py` from the upstream font; the icon
   artwork is unmodified. Upstream: <https://lucide.dev/>.
@@ -28,10 +34,13 @@ hand. Keep this section in step with `crates/fractadyne-app/assets/fonts/`.
   Area code points, OpenType layout tables and hinting removed, renamed as the licence asks. The
   unmodified original: <https://ctan.org/pkg/lm-math>.
 
-### SIL Open Font License 1.1 - Spline Sans, Spline Sans Mono
+### SIL Open Font License 1.1 - Spline Sans, Spline Sans Mono, Routed Gothic, Barlow Condensed, Share Tech Mono
 
 ```
 Copyright 2021 The Spline Sans Project Authors (https://github.com/SorkinType/SplineSans)
+Copyright (c) 2017, Darren Embry (<https://webonastick.com/>), with Reserved Font Name Routed Gothic.
+Copyright 2017 The Barlow Project Authors (https://github.com/jpt/barlow)
+Copyright (c) 2012, Carrois Type Design, Ralph du Carrois (post@carrois.com www.carrois.com), with Reserved Font Name 'Share'
 
 This Font Software is licensed under the SIL Open Font License, Version 1.1.
 This license is copied below, and is also available with a FAQ at:

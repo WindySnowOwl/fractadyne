@@ -298,6 +298,9 @@ pub(crate) fn install_fonts(ctx: &egui::Context) {
         crate::ui::textbook::font::family(),
         vec![crate::ui::textbook::font::FONT_NAME.to_owned()],
     );
+    // The live-render panel's machinist typefaces (design/blinkenlights.md, "Type"); each falls
+    // back to the proportional list for glyphs it lacks.
+    crate::blinken::paint::install_fonts(&mut fonts);
     ctx.set_fonts(fonts);
 
     // Secondary text, one step up from egui's default.
