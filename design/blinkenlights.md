@@ -121,7 +121,7 @@ A sixth cluster for the machine underneath the picture: how much of it is busy, 
   dragged; its opacity is a View-menu slider.
 - **`B` cycles it** through off → strip → panel → full (and the View menu has the same entry).
   - **Strip:** the light bank and three readouts in one band along the bottom edge.
-  - **Panel:** the five instruments.
+  - **Panel:** the five instruments and the tile plane.
   - **Full:** the panel plus the engine room beneath it.
 - **Tooltips** on every instrument and lamp say what it shows and what it means (the understanding
   goal); a **legend** lamp lights a key over the panel while held.
@@ -139,11 +139,33 @@ screws, engraved labels in small caps, a thin bevel. Instruments are the period'
 | GPU oscilloscope | a **phosphor scope**: green P31 trace on a graticule, one column per frame scrolling left, the passes as stacked bars by kind (bright = priced, hollow = unpriced), the 16.7 / 33 / 50 ms lines on the graticule; above it the three **timer-ring lamps** |
 | depth ruler | a **radio tuning dial**: backlit amber glass with a log2-magnification scale, the view as the red pointer gliding along it; scale bands shaded by arithmetic (direct, df32, floatexp) with the 2^93 crossing marked; the reference builders as three small lamps riding the dial ahead of or at the pointer, an install pulsing, an overtaken build blinking out |
 | readouts | **nixie tubes** for the headline numbers (depth 2^N, iterations, frame ms), amber **seven-segment** for the rest |
+| tile plane | an **amber lamp matrix** behind smoked glass, in the picture's own aspect: the cells this frame's pass covers light up, those done earlier in the same refresh or grid stay lit, and the tile size and tiles per frame read out beneath it in amber (see below) |
 | engine room | a **dual-needle tachometer** (nominal and executed steps/s, log scale, redline at the TDR budget) with a **mechanical odometer**; **two engine gauges** for the GPUs with dots running down a glass tube from each to a screen glyph; **thermometer columns** for RAM and GPU memory; an **LED bar graph** of cores with a small round scope beside it where busy threads orbit their role; a **dot-matrix window** where the pixel stream falls |
 
 Colour: warm amber and red lamps, phosphor green, cream meter faces, on charcoal. The price colours
 run green → amber → red and also brighten, so they read without colour vision. Everything is drawn as
 vectors, so it scales with the display.
+
+### The tile plane (added on review, 2026-10-19)
+
+The user asked for tile size and tiles per frame. The walk dial shows how a refresh is split along
+the iteration axis; the tile plane shows how a frame is split in space. The live view does this in
+three ways, and the plane draws each one the way it happens:
+
+| how the frame is split | in the code | the plane shows | tile size · tiles a frame |
+|---|---|---|---|
+| **The whole frame in one pass:** a moving frame, a priced live refresh, each pass of a pinned walk | one full-screen draw | the whole plane flashes on each pass; for a pin, the band (e.g. 4,096–8,192) captions it | the resolution · 1 |
+| **A split refresh:** a live refresh priced dearer than one frame's share goes out in `k` passes, one a frame, each about `LIVE_REFRESH_MS` (4.5 ms), up to `LIVE_SPLIT_MAX` (8) | `LiveRefresh::Split(k)`, `PinnedRefresh::split`; set `j` = the 16-texel tiles with (x + y) mod k = j (`SPLIT_TILE`, `vs_split_tiles`) | the interleaved sets fill pass by pass (a checkerboard at k = 2, diagonals above), this frame's set brightest | 16 px · tiles ÷ k (about 2,100 at 1455×1102, k = 3) |
+| **The settle grid:** a settled frame too dear for one dispatch | `TileGrid`: side √(admission ÷ (iterations × ss²)), at least 16 px, frozen for the grid; 16 to 512 tiles (`TDR_MAX_TILES`, `TDR_TILES_CEIL`); one a frame, centre-out; a tile over the admission goes out as strips (`settle_strip`) | lamps fill from the centre out, the next tile outlined, a stripped tile filling row by row; then SSAA samples pulse the whole plane | the side · 1 (or 1/strips) |
+
+A frame with no pass (reprojected, held, waiting on a reading) leaves the plane dark and says why.
+The GPU oscilloscope gets a fourth bar kind (settle tiles), and the light bank gets **SPLIT** and
+**TILE** lamps.
+
+The frame record already has `tiled`, `tile_w`, `tile_h`, `tile_pending` and the chunk range. The
+event ring needs **grid start** (cols, rows, side), **tile sent** (index, strip of strips) and **split
+pass** (j of k). Later, an export's own tiles could drive the same plane while it runs: 2048-px
+occupancy tiles with packed tails (design notes in the GPU-tail work).
 
 ### Motion: real events, honest ballistics
 
@@ -160,7 +182,8 @@ renderer gives a still panel; a frozen panel next to a moving picture is a bug.
   frame plan, dispatch (by pass kind), present (live / reprojected / held), reading landed, pin
   start / pass / price / adopt / abandon (with reason), reference launch / built / installed /
   dropped / re-keyed (by builder), mode switch, pre-switch probe, worker offer / delivery / adoption
-  (live or hold), SSAA sample, palette feed, timer armed / read (by slot). The emitters are the
+  (live or hold), SSAA sample, settle grid start / tile sent (with its strip), split pass (j of k),
+  palette feed, timer armed / read (by slot). The emitters are the
   places that write the `tile`, `ref`, `live`, `gpu` and `accum` trace lines today; they push whether
   or not tracing is on. Builders on other threads push through the same lock (a few events a second).
 - **A slim frame history** (new): the last 600 frames (~10 s) of a dozen frame-record fields: time,
@@ -188,8 +211,8 @@ rows with the overlay at full size against off, for frame interval and the pictu
    emitter's event at the trace line it mirrors.
 2. **The panel and the light bank:** the overlay, the `B` cycle, corners and dragging, the panel art,
    lamps, nixie and seven-segment readouts. `--uitest` screenshots of each size, looked at.
-3. **The three scopes and the meter:** the radar walk dial, the VU freshness gauge, the GPU
-   oscilloscope with the timer-ring lamps.
+3. **The three scopes, the meter and the tile plane:** the radar walk dial, the VU freshness gauge,
+   the GPU oscilloscope with the timer-ring lamps, the tile plane.
 4. **The tuning dial:** the depth ruler with the reference builders.
 5. **The engine room.**
 6. **The cost check:** the P-G rows with the overlay full against off, on the RTX 3080 and on PLUTO.
