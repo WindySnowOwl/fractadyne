@@ -79,3 +79,21 @@ fn headless_drops_every_sink_the_params_carry() {
     let kept: Vec<_> = sinks.iter().filter(|n| !body.contains(&format!("p.{n} = None;"))).collect();
     assert!(kept.is_empty(), "headless() keeps the window's sink(s) {kept:?}: a twin's passes would land in the window's readings");
 }
+
+#[test]
+fn a_gbuffers_escape_range_spans_its_escaped_texels_only() {
+    // r: 0 = cleared, -1 interior, -2 glitched, positive = the smooth iteration it escaped at.
+    let texel = |r: f32| [r, 0.0, 0.0, 0.0];
+    let g = |rs: &[f32]| GBuffer {
+        width: rs.len() as u32,
+        height: 1,
+        ss: 1,
+        iter: rs.iter().flat_map(|&r| texel(r)).collect(),
+        aux: Vec::new(),
+    };
+    assert_eq!(g(&[-1.0, 1_778.5, 2_747.25, -2.0, 2_001.0]).escape_range(), Some((1_778.5, 2_747.25)));
+    // Nothing escaped (all interior, or a cleared texture): no range to normalize to.
+    assert_eq!(g(&[-1.0, -1.0, 0.0]).escape_range(), None);
+    // A non-finite value is no escape.
+    assert_eq!(g(&[f32::NAN, 5.0, f32::INFINITY]).escape_range(), Some((5.0, 5.0)));
+}

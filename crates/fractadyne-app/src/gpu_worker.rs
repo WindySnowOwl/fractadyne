@@ -52,6 +52,8 @@ pub(crate) struct LiveDone {
     /// The G-buffer's readback, and its upload to the window's device, ms (inside `ms`).
     pub(crate) read_ms: f64,
     pub(crate) upload_ms: f64,
+    /// The frame's escape range (`GBuffer::escape_range`): the window normalizes its palette to it.
+    pub(crate) esc_range: Option<(f32, f32)>,
     /// From the worker taking the job to its answer, ms.
     pub(crate) ms: f64,
     pub(crate) err: Option<String>,
@@ -511,6 +513,7 @@ fn render_live(
         walk: Default::default(),
         read_ms: 0.0,
         upload_ms: 0.0,
+        esc_range: None,
         ms: 0.0,
         err: None,
     };
@@ -527,6 +530,7 @@ fn render_live(
                 match tw.gbuffer(device, queue, job.params.view_id, job.with_aux) {
                     Ok(g) if g.drawn() => {
                         out.read_ms = tr.elapsed().as_secs_f64() * 1000.0;
+                        out.esc_range = g.escape_range();
                         let tu = std::time::Instant::now();
                         out.frame = fractadyne_gpu::AdoptFrame::upload(&job.window, &g).map(Arc::new);
                         out.upload_ms = tu.elapsed().as_secs_f64() * 1000.0;

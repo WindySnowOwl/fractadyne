@@ -59,6 +59,14 @@ published as the pre-releases `v0.2.41-beta.1` to `v0.2.41-beta.150`, and a "bet
 
 Changes after 0.3.0-beta.1:
 
+- **The palette keeps its contrast while zooming with a second graphics device (0.3.0-beta.20).**
+  With "Normalize deep colors" on, the palette is spread over the escape counts in the picture,
+  and the view learned that range only from its own refreshes. With a second device rendering
+  the frames shown while zooming (the worker GPU, also when it is the same card), those refreshes
+  rarely finished, so the range stayed where the zoom began: on one dive it read 63 to 552 for
+  over a minute while the picture's escapes rose past 1,778, and the image went flat and low in
+  contrast until the zoom stopped. Each frame from the second device now carries its own range,
+  and the palette follows the dive.
 - **Every pass of a deep zoom's refresh is timed (0.3.0-beta.20).** While zooming deep, the live
   view builds each refreshed picture over several passes and sizes each pass from what the ones
   before it cost. Only every other pass was timed: the graphics card's timer was still busy with

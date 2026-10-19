@@ -42,6 +42,20 @@ impl GBuffer {
     pub fn drawn(&self) -> bool {
         self.iter.chunks(4).any(|t| t[0] != 0.0)
     }
+
+    /// The smooth-iteration range of the escaped texels (`r > 0`; interior and glitched read
+    /// negative), as the window's escape-range reading measures its own frames: what a palette
+    /// normalized to this picture must span. `None` when nothing escaped.
+    pub fn escape_range(&self) -> Option<(f32, f32)> {
+        let mut r: Option<(f32, f32)> = None;
+        for t in self.iter.chunks_exact(4) {
+            let v = t[0];
+            if v > 0.0 && v.is_finite() {
+                r = Some(r.map_or((v, v), |(lo, hi)| (lo.min(v), hi.max(v))));
+            }
+        }
+        r
+    }
 }
 
 /// A G-buffer handed to the device that will show it, ready to install (`MandelbrotParams::adopt`).

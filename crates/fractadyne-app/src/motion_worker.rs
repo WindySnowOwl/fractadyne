@@ -44,6 +44,9 @@ pub(crate) struct LiveTicket {
 pub(crate) struct LiveDelivery {
     pub(crate) ticket: LiveTicket,
     pub(crate) frame: Arc<fractadyne_gpu::AdoptFrame>,
+    /// Its escape range (`GBuffer::escape_range`), fed to the window's palette normalization when
+    /// the frame is adopted.
+    pub(crate) esc_range: Option<(f32, f32)>,
 }
 
 /// The live view a pin frame's params are re-aimed at (`build_params` saves it before shadowing
@@ -295,7 +298,7 @@ impl FractadyneApp {
                             ),
                         );
                     }
-                    self.perf.live_ready[v] = Some(LiveDelivery { ticket, frame });
+                    self.perf.live_ready[v] = Some(LiveDelivery { ticket, frame, esc_range: d.esc_range });
                 }
                 None => {
                     if let Some(e) = d.err {
