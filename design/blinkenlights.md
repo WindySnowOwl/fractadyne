@@ -123,8 +123,13 @@ A sixth cluster for the machine underneath the picture: how much of it is busy, 
   - **Strip:** the light bank and three readouts in one band along the bottom edge.
   - **Panel:** the five instruments and the tile plane.
   - **Full:** the panel plus the engine room beneath it.
-- **Tooltips** on every instrument and lamp say what it shows and what it means (the understanding
-  goal); a **legend** lamp lights a key over the panel while held.
+- **Help cards** (the understanding goal; asked for on review, 2026-10-19): hovering, focusing or
+  tapping any instrument, lamp or readout opens a card saying what it shows, what **healthy** looks
+  like and what signals **trouble** (e.g. the picture-age needle living past 1.0; red arcs on the walk
+  dial; PALETTE dark while zooming). The mockup carries the first draft of every card's text. A
+  **legend** lamp lights a key over the panel while held.
+- **Even rows:** the instruments in a row share one height and title line; each draws to the box it
+  is given.
 
 ### The look
 
@@ -141,6 +146,20 @@ screws, engraved labels in small caps, a thin bevel. Instruments are the period'
 | readouts | **nixie tubes** for the headline numbers (depth 2^N, iterations, frame ms), amber **seven-segment** for the rest |
 | tile plane | an **amber lamp matrix** behind smoked glass, in the picture's own aspect: the cells this frame's pass covers light up, those done earlier in the same refresh or grid stay lit, and the tile size and tiles per frame read out beneath it in amber (see below) |
 | engine room | a **dual-needle tachometer** (nominal and executed steps/s, log scale, redline at the TDR budget) with a **mechanical odometer**; **two engine gauges** for the GPUs with dots running down a glass tube from each to a screen glyph; **thermometer columns** for RAM and GPU memory; an **LED bar graph** of cores with a small round scope beside it where busy threads orbit their role; a **dot-matrix window** where the pixel stream falls |
+
+Type (chosen on review, 2026-10-19, after the user's machinist-tool references: a steel rule and a
+Starrett dial indicator):
+
+| role | face | why |
+|---|---|---|
+| engraved legends: panel and instrument titles, lamp labels, screen captions | **Routed Gothic** (regular; narrow on screens and lamps), SIL OFL 1.1, © 2017 Darren Embry | a tracing of K&E Leroy lettering, the single-stroke drafting and engraving standard; drawn paint-filled (a dark lip above, a faint highlight below) |
+| printed dial faces: meter and gauge numerals, scale labels, the odometer | **Barlow Condensed**, SIL OFL | the narrow, slightly rounded DIN-like numerals of a printed dial |
+| maker's mark on the plate | Barlow Condensed Bold Italic, in red | as a toolmaker signs a dial |
+| nixie readouts: depth, iterations, frame ms, date and time | Share Tech Mono, with the neon glow (the user: keep it) | |
+
+Routed Gothic's 1 is narrower than its other digits, so a number that changes is drawn with every
+digit in a cell as wide as a 0; fixed labels are drawn as set. The nixie row sits at the top of the
+panel with a clock (`yyyy-mm-dd hh:mm:ss.s`, local time), which stamps any screenshot of the panel.
 
 Colour: warm amber and red lamps, phosphor green, cream meter faces, on charcoal. The price colours
 run green → amber → red and also brighten, so they read without colour vision. Everything is drawn as
