@@ -398,6 +398,146 @@ fn read_cpu_times() -> Option<(u64, u64)> {
     None
 }
 
+/// CPU busy fraction per logical core (0..1), as a DELTA between successive calls, like
+/// [`CpuSampler`]: the first call returns `None`. For the live-render panel's core strip, sampled
+/// a few times a second on the UI thread (one system call).
+#[derive(Default)]
+pub(crate) struct CoreSampler {
+    prev: Vec<(u64, u64)>, // per core (idle, total)
+}
+
+impl CoreSampler {
+    pub(crate) fn sample(&mut self) -> Option<Vec<f32>> {
+        let now = read_core_times()?;
+        let out = (self.prev.len() == now.len()).then(|| core_busy(&self.prev, &now));
+        self.prev = now;
+        out
+    }
+}
+
+/// Busy fraction per core between two samples of (idle, total) counters.
+pub(crate) fn core_busy(prev: &[(u64, u64)], now: &[(u64, u64)]) -> Vec<f32> {
+    prev.iter()
+        .zip(now.iter())
+        .map(|(&(pi, pt), &(ni, nt))| {
+            let dt = nt.saturating_sub(pt) as f64;
+            if dt <= 0.0 {
+                return 0.0;
+            }
+            let di = ni.saturating_sub(pi) as f64;
+            ((dt - di) / dt).clamp(0.0, 1.0) as f32
+        })
+        .collect()
+}
+
+/// Per-core (idle, total) from `/proc/stat`'s `cpuN` lines (not the aggregate `cpu` line).
+#[cfg_attr(not(target_os = "linux"), allow(dead_code))] // read on Linux only; its test runs everywhere
+pub(crate) fn parse_proc_stat_cores(text: &str) -> Vec<(u64, u64)> {
+    text.lines()
+        .filter(|l| l.starts_with("cpu") && l.as_bytes().get(3).is_some_and(|b| b.is_ascii_digit()))
+        .filter_map(|l| {
+            let f: Vec<u64> = l.split_whitespace().skip(1).filter_map(|t| t.parse().ok()).collect();
+            (f.len() >= 5).then(|| (f[3] + f[4], f.iter().sum()))
+        })
+        .collect()
+}
+
+#[cfg(windows)]
+fn read_core_times() -> Option<Vec<(u64, u64)>> {
+    // SYSTEM_PROCESSOR_PERFORMANCE_INFORMATION, one per logical processor (48 bytes each).
+    #[repr(C)]
+    #[derive(Default, Clone, Copy)]
+    struct ProcPerf {
+        idle: i64,
+        kernel: i64,
+        user: i64,
+        dpc: i64,
+        interrupt: i64,
+        interrupts: u32,
+    }
+    #[link(name = "ntdll")]
+    extern "system" {
+        fn NtQuerySystemInformation(class: u32, info: *mut core::ffi::c_void, len: u32, ret: *mut u32) -> i32;
+    }
+    const SYSTEM_PROCESSOR_PERFORMANCE_INFORMATION: u32 = 8;
+    let n = std::thread::available_parallelism().map_or(1, |n| n.get()).clamp(1, 1024);
+    let mut buf = vec![ProcPerf::default(); n];
+    let mut ret = 0u32;
+    // SAFETY: the buffer holds `n` records of the documented layout and its byte length is passed;
+    // the call writes at most that many bytes and reports how many it wrote. A non-negative NTSTATUS
+    // is success. Kernel time includes idle time, so total is kernel + user.
+    let status = unsafe {
+        NtQuerySystemInformation(
+            SYSTEM_PROCESSOR_PERFORMANCE_INFORMATION,
+            buf.as_mut_ptr().cast(),
+            (n * std::mem::size_of::<ProcPerf>()) as u32,
+            &mut ret,
+        )
+    };
+    if status < 0 {
+        return None;
+    }
+    let got = (ret as usize / std::mem::size_of::<ProcPerf>()).min(n);
+    Some(buf[..got].iter().map(|p| (p.idle.max(0) as u64, (p.kernel.max(0) + p.user.max(0)) as u64)).collect())
+}
+
+#[cfg(target_os = "linux")]
+fn read_core_times() -> Option<Vec<(u64, u64)>> {
+    let cores = parse_proc_stat_cores(&std::fs::read_to_string("/proc/stat").ok()?);
+    (!cores.is_empty()).then_some(cores)
+}
+
+#[cfg(not(any(windows, target_os = "linux")))]
+fn read_core_times() -> Option<Vec<(u64, u64)>> {
+    None
+}
+
+/// The local wall-clock time: (year, month, day, hour, minute, second, millisecond). `None` where
+/// the platform's local time cannot be read (the caller shows UTC instead).
+#[cfg(windows)]
+pub(crate) fn local_now() -> Option<(i32, u32, u32, u32, u32, u32, u32)> {
+    #[repr(C)]
+    #[derive(Default)]
+    struct SystemTime {
+        year: u16,
+        month: u16,
+        day_of_week: u16,
+        day: u16,
+        hour: u16,
+        minute: u16,
+        second: u16,
+        ms: u16,
+    }
+    extern "system" {
+        fn GetLocalTime(t: *mut SystemTime);
+    }
+    let mut t = SystemTime::default();
+    // SAFETY: one out-param of the exact SYSTEMTIME layout; the call cannot fail.
+    unsafe { GetLocalTime(&mut t) };
+    Some((t.year as i32, t.month as u32, t.day as u32, t.hour as u32, t.minute as u32, t.second as u32, t.ms as u32))
+}
+
+#[cfg(target_os = "linux")]
+pub(crate) fn local_now() -> Option<(i32, u32, u32, u32, u32, u32, u32)> {
+    let now = std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).ok()?;
+    let secs = now.as_secs() as libc::time_t;
+    // SAFETY: `localtime_r` writes one `tm` through the pointer given and reads one `time_t`; a
+    // null return means it failed and the struct is not used.
+    let tm = unsafe {
+        let mut tm: libc::tm = std::mem::zeroed();
+        if libc::localtime_r(&secs, &mut tm).is_null() {
+            return None;
+        }
+        tm
+    };
+    Some((tm.tm_year + 1900, (tm.tm_mon + 1) as u32, tm.tm_mday as u32, tm.tm_hour as u32, tm.tm_min as u32, tm.tm_sec as u32, now.subsec_millis()))
+}
+
+#[cfg(not(any(windows, target_os = "linux")))]
+pub(crate) fn local_now() -> Option<(i32, u32, u32, u32, u32, u32, u32)> {
+    None
+}
+
 /// GPU utilisation percent and VRAM used/total bytes, via `nvidia-smi`.
 ///
 /// ⚠Deliberately best-effort and vendor-limited: there is no portable GPU counter, and shelling out
@@ -744,3 +884,7 @@ pub(crate) fn gpu_vram_bytes(_active_gpu: Option<&str>) -> u64 {
 pub(crate) fn gpu_vram_bytes(_active_gpu: Option<&str>) -> u64 {
     0
 }
+
+#[cfg(test)]
+#[path = "../tests/unit/sysinfo/tests.rs"]
+mod tests;
