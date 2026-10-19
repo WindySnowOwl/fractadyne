@@ -264,6 +264,14 @@ What the implementation settled, where it differs from or adds to the above:
     anything it depends on changes): 0.27 ms of its own, the frame interval +0.2–0.4 ms
     (df32-4 17.8 → 18.2 ms, deep-4 18.0 → 18.4 ms), and the picture's age unchanged within
     run-to-run noise (df32-4 1.00 → 1.02 octaves at most, deep-4 0.92–0.96 → 0.94).
+  - PLUTO's RX 6800 XT (dev.32, agent v29, off/full interleaved, a 40-octave 4× dive and one
+    from 2^80 through the floatexp switch, 2560×1600 display): the panel's own time 0.54–0.64 ms
+    a frame (its CPU is slower), the median frame interval +0.2–0.4 ms (19.1 → 19.3–19.5 ms;
+    17.8 → 18.1 ms), refreshes completed the same (84–88; 54–55), and the picture's age within
+    that card's wide run-to-run spread (1.17–1.89 octaves off, 1.32–2.16 full). The battery on the
+    same build: PASS (every step as declared for the card). A `--shot` with the panel open showed
+    it drawn correctly there; its log check failed on the startup wall-clock-pricing flaps every
+    earlier PLUTO shot has (beta.18, no panel: 32–40 of them; this one 22).
 - **Harness hooks**: `--live-panel off|strip|panel|full`, and `--uitest` screens
   `live-panel-strip`, `live-panel`, `live-panel-full`.
 
