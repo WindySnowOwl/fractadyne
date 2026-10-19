@@ -2083,7 +2083,6 @@ impl FractadyneApp {
                             .norm_alias_fraction(vi)
                             .is_some_and(|f| f > crate::tunables::ALIAS_FRACTION_LIMIT)) =>
             {
-                let sweeps = 0.5 + self.coloring.cycle * 6.0;
                 // ⭐⭐**A HEAVY-TAILED RANGE TAKES THE LOG MAPPING EVEN IF THE USER DID NOT ASK
                 // FOR IT.** Normalizing LINEARLY is right when the escaped values sit in a narrow
                 // high band — the deep field this feature was built for (measured at 9.8e27×:
@@ -2105,19 +2104,27 @@ impl FractadyneApp {
                 // range simply routes to it. ⭐Ratio, not span: `[45075, 63736]` is wide in
                 // absolute terms and must stay LINEAR, while `[1, 7925]` is narrower in absolute
                 // terms and must not.
-                if norm_map_is_log(mn, mx, self.coloring.log_palette) {
-                    // LOG mapping: the shader compresses to log(v − mn + 1), so the range spans
-                    // log(mx − mn + 1) and the palette is spread over the values as the eye reads
-                    // them. The shader subtracts `mn` itself, so the offset here is the user's
-                    // phase alone — no `−mn·cycle` term as in the linear case.
-                    let span = ((mx - mn) + 1.0).ln().max(1.0e-6);
-                    Some(NormMap { cycle: sweeps / span, offset: self.coloring.offset, mode: 1, lo: mn })
-                } else {
-                    let c = sweeps / (mx - mn);
-                    Some(NormMap { cycle: c, offset: self.coloring.offset - mn * c, mode: 0, lo: 0.0 })
-                }
+                Some(self.norm_map_for(mn, mx))
             }
             _ => None,
+        }
+    }
+
+    /// The normalized colour map for an escape range `[mn, mx]` under the user's colouring (the
+    /// mapping half of [`Self::live_norm_cycle_offset`], whose predicate decides whether to map at
+    /// all): log for a heavy-tailed range or when asked, linear otherwise.
+    pub(crate) fn norm_map_for(&self, mn: f32, mx: f32) -> NormMap {
+        let sweeps = 0.5 + self.coloring.cycle * 6.0;
+        if norm_map_is_log(mn, mx, self.coloring.log_palette) {
+            // LOG mapping: the shader compresses to log(v − mn + 1), so the range spans
+            // log(mx − mn + 1) and the palette is spread over the values as the eye reads
+            // them. The shader subtracts `mn` itself, so the offset here is the user's
+            // phase alone — no `−mn·cycle` term as in the linear case.
+            let span = ((mx - mn) + 1.0).ln().max(1.0e-6);
+            NormMap { cycle: sweeps / span, offset: self.coloring.offset, mode: 1, lo: mn }
+        } else {
+            let c = sweeps / (mx - mn).max(1.0e-6);
+            NormMap { cycle: c, offset: self.coloring.offset - mn * c, mode: 0, lo: 0.0 }
         }
     }
 }
@@ -8903,6 +8910,24 @@ impl FractadyneApp {
                             t.res[1],
                         ),
                     );
+                }
+                // ⭐ITS PALETTE RANGE. The window's normalization learns the escape range from its OWN
+                // passes; while the worker supplies the frames on screen the window's refreshes are
+                // superseded before they complete, and the range stayed where the zoom began — on a
+                // user's dive it read 63..552 for 87 s while the picture's escapes rose past 1778
+                // (2026-10-18), every pixel above the window's top: flat, low contrast. So the
+                // frame's own range is a reading — complete, and of the view (`norm_sig_submit`) — and
+                // a frame going into the hold is seen under its own map: the hold's map stays frozen
+                // against the walk composing underneath (U43), but this IS the picture shown.
+                if let Some((mn, mx)) = d.esc_range {
+                    use std::sync::atomic::Ordering::SeqCst;
+                    let vb = vi.min(1);
+                    self.perf.norm_sink[vb].store((u64::from(mn.to_bits()) << 32) | u64::from(mx.to_bits()), SeqCst);
+                    self.perf.norm_complete_sink[vb].store(true, SeqCst);
+                    self.perf.norm_sig_sink[vb].store(self.perf.norm_sig_submit[vb], SeqCst);
+                    if into_hold && mx > mn && self.live_norm_cycle_offset(vi).is_some() {
+                        self.perf.hold_norm[vb] = Some((self.norm_map_for(mn, mx), self.norm_user_sig()));
+                    }
                 }
                 let stamp = if into_hold { 0 } else { self.perf.content[vsub].live_stamp };
                 worker_adopt = Some((d.frame, into_hold, stamp));
