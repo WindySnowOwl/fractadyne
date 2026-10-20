@@ -906,6 +906,14 @@ fn rn_trip_weight() -> u32 {
 // would land outside the model (|u|² > rn_r2) takes a smaller one, so a pixel leaves on the same
 // u-step it would have. Bounded by `k_max` (never past the cap), never by the pass's own end, so
 // where passes split does not change a pixel; `trip_max` bounds the pass's work in loop trips.
+// May a plain u-step update δu in df32? `tail_step_ok`'s rule on the u-step's operands: δu at least
+// 2^-50, and U zero (after every rebase) or at least 2^-50; both well inside f32's range (|u| ≤ R ≤
+// 2^60, so δu² ≤ 2^122).
+fn rn_tail_ok(U: Fe, du: Fe) -> bool {
+    let u_zero = U.m.re.x == 0.0 && U.m.im.x == 0.0;
+    return tail_df32_ok() && (u_zero || (U.e >= TAIL_DF32_MIN_E && U.e <= 60))
+        && du.e >= TAIL_DF32_MIN_E && du.e <= 60;
+}
 fn rn_steps(dcp: Fe, s0: RnState, k_end: u32, trip_max: u32) -> RnState {
     var s = s0;
     s.trips = 0u;
@@ -919,10 +927,23 @@ fn rn_steps(dcp: Fe, s0: RnState, k_end: u32, trip_max: u32) -> RnState {
         ub_levels = 32u - countLeadingZeros(kk - 1u) + 1u; // until a level has one node
     }
     let ub_base = iu.orbit_len + iu.rn_bla_off - 1u;
+    // U at `s.kr`, kept from the trip that moved there (`rn_ref_u` is a pure function of the index;
+    // a plain step used to compute it twice).
+    var Uk = rn_ref_u(s.kr);
+    let dcd = tail_dc(dcp);
     loop {
         if (s.k >= k_end || s.trips >= trip_max) { break; }
         s.trips = s.trips + 1u;
-        if (ub_levels > 0u) {
+        // A trip whose δu the level-0 node at `kr` already rejects skips the search: every node the
+        // search could take starts at `kr`, and a merged radius is at most its first child's
+        // (`bla_merge`), so no level can accept it either. 70% of the trips at the ladder's period
+        // 951,094 were such plain steps, each after a full failed search.
+        var blocked = true;
+        if (ub_levels > 0u && s.kr < kk) {
+            let r0 = reference[ub_base + s.kr * 4u + 2u];
+            blocked = !sf_lt(fe_abs_sf(s.du), sf_norm(vec2<f32>(r0.w, 0.0), i32(r0.z)));
+        }
+        if (!blocked) {
             let dum = fe_abs_sf(s.du);
             var applied = false;
             var l = ub_levels - 1u;
@@ -943,16 +964,19 @@ fn rn_steps(dcp: Fe, s0: RnState, k_end: u32, trip_max: u32) -> RnState {
                         let B = fe_norm(cset(v1.xy, v1.zw), i32(v2.y));
                         let ndu = fe_add(fe_mul(A, s.du), fe_mul(B, dcp));
                         let nkr = s.kr + span;
-                        let u = fe_add(rn_ref_u(nkr), ndu);
+                        let Un = rn_ref_u(nkr);
+                        let u = fe_add(Un, ndu);
                         // A skip that would land outside the model takes a smaller one.
                         if (fe_mag2(u) <= iu.rn_r2) {
                             s.ddu = fe_add(fe_mul(A, s.ddu), B);
                             s.du = ndu;
                             s.kr = nkr;
                             s.k = s.k + span;
+                            Uk = Un;
                             if (sf_lt(fe_abs_sf(u), fe_abs_sf(s.du)) || (s.kr + 1u) * iu.rn_len >= iu.orbit_len) {
                                 s.du = u;
                                 s.kr = 0u;
+                                Uk = rn_ref_u(0u);
                             }
                             applied = true;
                             break;
@@ -965,17 +989,27 @@ fn rn_steps(dcp: Fe, s0: RnState, k_end: u32, trip_max: u32) -> RnState {
             }
             if (applied) { continue; }
         }
-        let U = rn_ref_u(s.kr);
+        let U = Uk;
         s.ddu = fe_add(fe_two(fe_mul(fe_add(U, s.du), s.ddu)), fe_one());
-        s.du = fe_add(fe_add(fe_two(fe_mul(U, s.du)), fe_sqr(s.du)), dcp);
+        if (rn_tail_ok(U, s.du)) {
+            // The main loop's df32 tail (TAIL_DF32_MIN), for δu alone: the same operands in the same
+            // order, an exact power-of-two scaling away from floatexp's, under the same guards
+            // (`tail_step_ok`). The derivative, the rebase and the exit stay in floatexp.
+            let dud = fe_to_cdf(s.du);
+            s.du = fe_from_cdf(c_add(c_add(c_two(c_mul(fe_to_cdf(U), dud)), c_sqr(dud)), dcd));
+        } else {
+            s.du = fe_add(fe_add(fe_two(fe_mul(U, s.du)), fe_sqr(s.du)), dcp);
+        }
         s.kr = s.kr + 1u;
         s.k = s.k + 1u;
-        let u = fe_add(rn_ref_u(s.kr), s.du);
+        Uk = rn_ref_u(s.kr);
+        let u = fe_add(Uk, s.du);
         // Rebase first (u is unchanged: U_0 = 0), so a pixel never leaves on the reference's last
         // sample — the main loop has no state there; it wraps before reaching it.
         if (sf_lt(fe_abs_sf(u), fe_abs_sf(s.du)) || (s.kr + 1u) * iu.rn_len >= iu.orbit_len) {
             s.du = u;
             s.kr = 0u;
+            Uk = rn_ref_u(0u);
         }
         if (fe_mag2(u) > iu.rn_r2) {
             s.out = true;

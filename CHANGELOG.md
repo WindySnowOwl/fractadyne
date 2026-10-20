@@ -59,6 +59,27 @@ published as the pre-releases `v0.2.41-beta.1` to `v0.2.41-beta.150`, and a "bet
 
 Changes after 0.3.0-beta.1:
 
+- **Minibrots inside minibrots iterate faster (0.3.0-beta.20).** Near a minibrot nested in another,
+  a pixel takes whole periods of its parent per step. Most of those steps could not use the skip
+  table, and each searched it first anyway; they now go straight to the step, reuse the reference
+  value they already have, and use the cheaper arithmetic when it is exact. At the benchmark's
+  period-15,248 and period-121,984 minibrots a 4K render's graphics time falls 12 to 14%, with
+  identical images.
+- **Deep exports with high iteration counts finish sooner (0.3.0-beta.20).** A deep export iterates
+  in passes, each kept short enough for the graphics driver's watchdog, and every pass was sized from
+  the slowest steps any earlier pass had shown. Once only a few pixels are left running, a pass costs
+  about the same whatever its size, so the last pixels of each part of the picture took hundreds of
+  short passes: a 4K export of a period-951,094 minibrot ran 900 to 1,800. Those last passes now
+  size themselves from the one before, the passes while the card is busy are sized as before, and
+  the image is the same. That export takes about 200 passes and 8% less graphics time on an
+  RTX 3080, 45% less on an RX 6800 XT.
+- **Reference orbits build a third faster again below about 1e1000× (0.3.0-beta.20).** Since
+  beta.18, a reference orbit at moderate depths took longer to build than in beta.17: at the
+  benchmark's 1.2e148× view, 1.57 s instead of 0.94 s (standard build). The extended-range
+  arithmetic beside the high-precision walk, which watches for a minibrot's orbit closing and
+  tracks the precision each step needs, renormalized almost every number it produced through a
+  logarithm and a power of two. It now reads the exponent directly, with the same results bit for
+  bit. That reference now takes 1.05 s, and the skip table built from it 130 ms instead of 180.
 - **The palette keeps its contrast while zooming with a second graphics device (0.3.0-beta.20).**
   With "Normalize deep colors" on, the palette is spread over the escape counts in the picture,
   and the view learned that range only from its own refreshes. With a second device rendering
