@@ -289,6 +289,18 @@ What the implementation settled, where it differs from or adds to the above:
   legend entry (they were a green the eye could not tell from moving frames), and the HELD card
   says it is lit steadily while a still view sharpens under Prefer detail (it had called that a
   fault).
+- **The tile plane, checked at every tiling (2026-10-20, on review: "only a full or half panel"):**
+  the instrument is drawn headlessly in a unit test (egui's own shapes, tessellated, rasterized in
+  software) for settle grids of 16 to 1000-px tiles at several stages, strips, splits of 2 to 8
+  passes, whole frames, SSAA and idle, and read back tile by tile. The geometry was right; what
+  the eye saw was not. Its levels were amber at an alpha over the dark face, and egui premultiplies
+  a faint colour in linear light: the plane at 0.04 showed as a quarter-bright brown, done cells at
+  0.3 almost matched the pass's own at 0.95, so a two-pass split read as half the plane, then all
+  of it. The levels are now opaque mixes into the face (plane 0.07, to come 0.13, done 0.38, the
+  pass 0.7 to 1). At the instrument's own size a 16-px tile is ~2 px: grids of tiles under 6 px
+  meet edge to edge (with a gap each, a finished grid read as dots), and a split whose 16-px cells
+  would be under 5 px is drawn as the same interleave at 5-px cells, the captions keeping the
+  truth ("TILE 16 PX", the tiles a frame).
 
 ### Build order
 
