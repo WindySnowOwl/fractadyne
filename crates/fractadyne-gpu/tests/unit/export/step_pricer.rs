@@ -108,26 +108,32 @@ fn under_a_pass_target_a_tile_opens_at_its_price_and_then_follows_its_walls() {
 }
 
 #[test]
-fn the_export_opens_each_tile_at_the_worst_price_and_then_follows_its_walls() {
+fn the_export_prices_busy_passes_at_the_worst_price_and_follows_only_in_the_tail() {
     // The ladder's period-951,094 minibrot at 4K (2026-10-19): one half-empty pass at 1.7 ns a step
-    // set the price, and every later pass of every tile ran 43–58 steps.
+    // set the price, and every later pass of every tile ran 43–58 steps, ~600 of them in the tails.
     let area = 2_073_600u64;
     let mut p = StepPricer::new();
     p.observe(0.6e-6 * area as f64 * 100.0, area, 100);
     p.observe(1.7e-6 * 400_000.0 * 100.0, 400_000, 100);
     let open = p.cap_for(area, area, true);
     assert_eq!(open, p.cap(area), "a tile opens at the worst price seen");
-    // The passes after it follow their own walls: far under the target, at most doubled...
+    // While the card is busy (STEP_PRICE_MIN_ACTIVE or more running) every pass stays there,
+    // however short the last one ran: a long pass costs more a step, and one in which half the
+    // tile escapes runs unpacked to its end.
     p.observe(50.0, area, open);
-    assert_eq!(p.cap_for(area, 1_000_000, false), 2 * open);
+    assert_eq!(p.cap_for(area, 1_000_000, false), open);
+    assert_eq!(p.cap_for(area, STEP_PRICE_MIN_ACTIVE, false), open);
+    // In the tail it follows its own walls: far under the target, at most doubled...
+    p.observe(50.0, 120_000, 300);
+    assert_eq!(p.cap_for(area, 100_000, false), 600);
     // ...on it, kept; twice it, halved.
-    p.observe(STEP_TARGET_MS, 1_000_000, 300);
-    assert_eq!(p.cap_for(area, 900_000, false), 300);
-    p.observe(2.0 * STEP_TARGET_MS, 900_000, 300);
-    assert_eq!(p.cap_for(area, 800_000, false), 150);
+    p.observe(STEP_TARGET_MS, 100_000, 600);
+    assert_eq!(p.cap_for(area, 90_000, false), 600);
+    p.observe(2.0 * STEP_TARGET_MS, 90_000, 600);
+    assert_eq!(p.cap_for(area, 80_000, false), 300);
     // The pixel-step ceiling is held against the pixels still RUNNING...
-    p.observe(1.0, 800_000, 5_000);
-    assert_eq!(p.cap_for(area, 600_000, false), (STEP_MAX_PX_STEPS / 600_000.0) as u32);
+    p.observe(1.0, 80_000, 4_000);
+    assert_eq!(p.cap_for(area, 100_000, false), (STEP_MAX_PX_STEPS / 100_000.0) as u32);
     // ...and a thin tail, one chain of dependent steps, at most STEP_MAX_FOLLOW_CAP however fast
     // its last pass ran.
     p.observe(1.0, 50, 30_000);

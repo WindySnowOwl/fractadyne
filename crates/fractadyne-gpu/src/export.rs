@@ -625,20 +625,22 @@ impl StepPricer {
     /// by its running pixels, a 9.3e78× tail asked ~27,000 steps and took 100–220 ms, RTX 3080,
     /// 2026-10-09). The last wall measures whichever it is.
     ///
-    /// Without a pass target (the export): a tile opens at [`Self::cap`], the worst price seen,
-    /// and follows from there, with [`STEP_MAX_PX_STEPS`] held against its RUNNING pixels — a
-    /// settled pixel passes its state through and costs a pass nothing — and at most
-    /// [`STEP_MAX_FOLLOW_CAP`] steps. The export used to price
-    /// every pass at the worst cost any busy pass had shown: one half-empty pass at 1.7 ns a step
-    /// held the rest of the ladder's period-951,094 minibrot at 43–58 steps a pass, 900 passes
-    /// for 4K (RTX 3080, 2026-10-19); following, 54 passes and 15% less GPU time, the longest pass
-    /// 331 ms. Following cannot run away: the pixels still running ran the whole last cap, so a
+    /// Without a pass target (the export): every pass is [`Self::cap`], the worst price seen,
+    /// until the tile's TAIL — fewer than [`STEP_PRICE_MIN_ACTIVE`] pixels running, the card no
+    /// longer busy — which follows from the pass before, with [`STEP_MAX_PX_STEPS`] held against
+    /// its running pixels and at most [`STEP_MAX_FOLLOW_CAP`] steps. A tail is one pixel's chain of
+    /// dependent steps whatever its cap, and at the worst price the ladder's period-951,094
+    /// minibrot spent ~600 passes of 43–58 steps in its tails (4K: 2.5 s of ~8 on the RX 6800 XT,
+    /// 2026-10-19). Following everywhere was tried first and lost while the card is busy: on the
+    /// RX 6800 XT a pass of 289 steps cost 0.20–0.22 ns a step against 0.16 at 135 (1.2e148, 4K),
+    /// and a long pass in which half the tile escapes runs unpacked to its end, so 1.2e148 took 5%
+    /// longer. Following cannot run away: the pixels still running ran the whole last cap, so a
     /// pass that doubles it does at most twice their work. Under a target the floor is
     /// [`STEP_MIN_CAP_TARGET`].
     fn cap_for(&self, area: u64, active: u64, fresh: bool) -> u32 {
         if self.recent.is_none() {
             return match self.last {
-                Some((cap, wall)) if !fresh && wall.is_finite() && wall > 0.0 => {
+                Some((cap, wall)) if !fresh && active < STEP_PRICE_MIN_ACTIVE && wall.is_finite() && wall > 0.0 => {
                     let floor = STEP_MIN_CAP as f64;
                     let ceiling = (STEP_MAX_PX_STEPS / active.max(1) as f64).min(STEP_MAX_FOLLOW_CAP).max(floor);
                     (cap as f64 * (self.target_ms / wall).min(2.0)).clamp(floor, ceiling) as u32
