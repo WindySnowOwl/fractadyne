@@ -88,23 +88,52 @@ fn under_a_pass_target_a_tile_opens_at_its_price_and_then_follows_its_walls() {
         p.observe(1.5e-6 * area as f64 * 10.0, area, 10);
     }
     // A tile's first pass: the whole area at that price, below the export's 16-step floor.
-    let open = p.cap_for(area, true);
+    let open = p.cap_for(area, area, true);
     assert_eq!(open, (8.0e6 / 1.5 / area as f64) as u32);
     assert!(open < STEP_MIN_CAP);
-    assert_eq!(StepPricer::for_pass(Some(0.01)).cap_for(area, true), STEP_MIN_CAP_TARGET);
+    assert_eq!(StepPricer::for_pass(Some(0.01)).cap_for(area, area, true), STEP_MIN_CAP_TARGET);
     // Later passes follow the last wall: on target, kept; twice it, halved; far under it, at most
     // doubled — a latency-bound tail grows its cap pass by pass instead of jumping to thousands.
     p.observe(8.0, area, 100);
-    assert_eq!(p.cap_for(area, false), 100);
+    assert_eq!(p.cap_for(area, area, false), 100);
     p.observe(16.0, area, 100);
-    assert_eq!(p.cap_for(area, false), 50);
+    assert_eq!(p.cap_for(area, area, false), 50);
     p.observe(0.5, 2_000, 100);
-    assert_eq!(p.cap_for(area, false), 200);
+    assert_eq!(p.cap_for(area, area, false), 200);
     // A new tile opens at the price again, whatever the last tail allowed.
-    assert_eq!(p.cap_for(area, true), (8.0e6 / p.price_ns() / area as f64) as u32);
-    // Without a target nothing changes: the export's own cap.
+    assert_eq!(p.cap_for(area, area, true), (8.0e6 / p.price_ns() / area as f64) as u32);
+    // Without a target and nothing measured, the export's own cap.
     let w = StepPricer::new();
-    assert_eq!(w.cap_for(area, false), w.cap(area));
+    assert_eq!(w.cap_for(area, area, false), w.cap(area));
+}
+
+#[test]
+fn the_export_opens_each_tile_at_the_worst_price_and_then_follows_its_walls() {
+    // The ladder's period-951,094 minibrot at 4K (2026-10-19): one half-empty pass at 1.7 ns a step
+    // set the price, and every later pass of every tile ran 43–58 steps.
+    let area = 2_073_600u64;
+    let mut p = StepPricer::new();
+    p.observe(0.6e-6 * area as f64 * 100.0, area, 100);
+    p.observe(1.7e-6 * 400_000.0 * 100.0, 400_000, 100);
+    let open = p.cap_for(area, area, true);
+    assert_eq!(open, p.cap(area), "a tile opens at the worst price seen");
+    // The passes after it follow their own walls: far under the target, at most doubled...
+    p.observe(50.0, area, open);
+    assert_eq!(p.cap_for(area, 1_000_000, false), 2 * open);
+    // ...on it, kept; twice it, halved.
+    p.observe(STEP_TARGET_MS, 1_000_000, 300);
+    assert_eq!(p.cap_for(area, 900_000, false), 300);
+    p.observe(2.0 * STEP_TARGET_MS, 900_000, 300);
+    assert_eq!(p.cap_for(area, 800_000, false), 150);
+    // The pixel-step ceiling is held against the pixels still RUNNING...
+    p.observe(1.0, 800_000, 5_000);
+    assert_eq!(p.cap_for(area, 600_000, false), (STEP_MAX_PX_STEPS / 600_000.0) as u32);
+    // ...and a thin tail, one chain of dependent steps, at most STEP_MAX_FOLLOW_CAP however fast
+    // its last pass ran.
+    p.observe(1.0, 50, 30_000);
+    assert_eq!(p.cap_for(area, 50, false), STEP_MAX_FOLLOW_CAP as u32);
+    // A new tile opens at the worst price again, whatever the last tail allowed.
+    assert_eq!(p.cap_for(area, area, true), open);
 }
 
 #[test]

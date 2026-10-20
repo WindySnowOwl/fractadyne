@@ -59,6 +59,12 @@ published as the pre-releases `v0.2.41-beta.1` to `v0.2.41-beta.150`, and a "bet
 
 Changes after 0.3.0-beta.1:
 
+- **Deep exports with high iteration counts finish sooner (0.3.0-beta.20).** A deep export iterates
+  in passes, each kept short enough for the graphics driver's watchdog, and every pass was sized from
+  the slowest steps any earlier pass had shown, so one slow pass shrank all the rest: a 4K export of
+  a period-951,094 minibrot ran about 900 passes of 43 to 58 steps. After its first pass, each tile's
+  pass now sizes itself from the one before, under the same ceilings on its work; the image is the
+  same. That export takes under 60 passes and about 15% less graphics time (RTX 3080).
 - **Reference orbits build a third faster again below about 1e1000× (0.3.0-beta.20).** Since
   beta.18, a reference orbit at moderate depths took longer to build than in beta.17: at the
   benchmark's 1.2e148× view, 1.57 s instead of 0.94 s (standard build). The extended-range
