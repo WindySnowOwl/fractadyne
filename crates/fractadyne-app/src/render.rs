@@ -3,6 +3,7 @@
 //! skip, and assembles the live (`MandelbrotParams`) and offscreen (`ExportRequest`) jobs,
 //! choosing the direct / df32-perturbation / floatexp render mode by depth.
 
+use crate::blinken::events as bl;
 use crate::{harness::profile, zoom_iter_cap, FractadyneApp, FractalKind, RenderMode, PERT_FE_THRESHOLD};
 use fractadyne_core::Viewport;
 use fractadyne_gpu::{ContentReading, MandelbrotParams, RefOffset};
@@ -208,6 +209,8 @@ pub(crate) struct RecomputeResult {
     orbit_tail: Option<fractadyne_core::OrbitTail>,
     /// The view's `orbit_id` when this build was spawned (see `RecomputeInputs::spawn_orbit_id`).
     spawn_orbit_id: u64,
+    /// The live-render panel's (role, build id) for this build (see `RecomputeInputs::blinken`).
+    blinken: (u32, u32),
     /// True when this came from EXTENDING a cached reference ([`try_reuse_reference`]) rather than
     /// picking and building a fresh one.
     ///
@@ -416,6 +419,10 @@ pub(crate) struct RecomputeInputs {
     /// entries — naming the caller is the difference between reading a 5 MB log and knowing which
     /// queue is spinning.
     origin: &'static str,
+    /// The live-render panel's (role, build id): `blinken::events::RefRole` as u32 and an id from
+    /// `next_build_id`, so the panel can follow a build from launch to install or drop.
+    /// `bl::NO_PANEL_ROLE` for builds the panel does not show (exports).
+    blinken: (u32, u32),
     center_bf: [fractadyne_core::BigFloat; 2],
     span: (fractadyne_core::FloatExp, fractadyne_core::FloatExp),
     span_mantissa: fractadyne_core::SpanMantissa,
@@ -1255,6 +1262,11 @@ fn pick_reference(
     centre: Option<fractadyne_core::CentreSource<'_>>,
 ) -> ([fractadyne_core::BigFloat; 2], fractadyne_core::RefPickDiag) {
     let (center, span, julia_c) = (&inp.center_bf, [inp.span.0, inp.span.1], [inp.julia_c.0, inp.julia_c.1]);
+    // The pick's scoring fans out across every core (fractadyne-core's scoped pool).
+    let _pool = crate::blinken::registry::busy_n(
+        crate::blinken::registry::Role::Pool,
+        std::thread::available_parallelism().map_or(1, |n| n.get()) as u32,
+    );
     let (point, diag) = match centre {
         Some(centre) => fractadyne_core::best_reference_diag_from_build(
             center, span, inp.formula, inp.julia, julia_c, inp.gpu_iter, inp.precision, centre,
@@ -1479,6 +1491,10 @@ fn finish_reference(
     // A skip walked beside the build (`sa_pre`, same point and inputs) stands when the bound rule
     // says the walk to this `len` would stop at the same index; its time is its own walk's.
     let t_sa = Instant::now();
+    let shows = inp.blinken.0 != bl::NO_PANEL_ROLE;
+    if shows && (do_sa || short_escaper) {
+        bl::emit(inp.julia as usize, bl::Kind::Series, inp.blinken.0, inp.blinken.1, 0.0);
+    }
     let mut sa_from = "";
     let mut pre_ms = None;
     // A periodic orbit repeats past its last sample, so the series may skip up to the period
@@ -1503,6 +1519,9 @@ fn finish_reference(
         fc::SeriesSkip::NONE
     };
     let series_ms = pre_ms.unwrap_or_else(|| t_sa.elapsed().as_secs_f64() * 1000.0);
+    if shows && (do_sa || short_escaper) {
+        bl::emit(inp.julia as usize, bl::Kind::Series, inp.blinken.0, inp.blinken.1, series_ms.max(0.001) as f32);
+    }
     // BLA tree (deep `z^d + c` only — `FormulaCaps::bla`; empty otherwise). Built with the same conservative dc_max the
     // live path uses so the main thread reuses it across pans.
     //
@@ -1551,6 +1570,9 @@ fn finish_reference(
         "reference built [{}]: len={len} iter={orbit_iter} prec={orbit_prec}",
         inp.origin
     ));
+    if shows {
+        bl::emit(inp.julia as usize, bl::Kind::RefBuilt, inp.blinken.0, inp.blinken.1, 0.0);
+    }
     if crate::diag::trace_on("ref") {
         // Timing is on the line now (design/diagnostics.md F14): the cold export reference
         // build dominates a deep render (~12 s of a ~15 s 2560×1440 me148 render, vs ~2.7 s
@@ -1598,6 +1620,7 @@ fn finish_reference(
         coarse_stage: false,
         orbit_tail,
         spawn_orbit_id: inp.spawn_orbit_id,
+        blinken: inp.blinken,
         // The reuse path sets this on the way out; every other caller of `finish_reference` built
         // the orbit from a fresh pick. `from_disk` likewise, by `recompute_worker`.
         reused: false,
@@ -1770,6 +1793,7 @@ fn recompute_worker_staged(
             // The full build finished, but by then nobody was listening: its whole cost was spent
             // on a reference that will never be displayed.
             refwaste_log(inp.origin, "DROPPED-full", cost);
+            bl::emit(inp.julia as usize, bl::Kind::RefDropped, inp.blinken.0, inp.blinken.1, 0.0);
         }
     } else {
         let res = recompute_worker(inp);
@@ -2270,6 +2294,9 @@ impl FractadyneApp {
                 );
             }
             refwaste_log("install", "SUPERSEDED", res.ref_ms + res.series_ms + res.bla_ms);
+            if res.blinken.0 != bl::NO_PANEL_ROLE {
+                bl::emit(vi, bl::Kind::RefDropped, res.blinken.0, res.blinken.1, 0.0);
+            }
             return;
         }
         // ⭐A coarse preview stage is PARKED for a usefulness probe, not installed sight-unseen.
@@ -2518,6 +2545,9 @@ impl FractadyneApp {
         self.perf.rate_count += 1;
         // res.orbit etc. are moved above; ref_ms/series_ms/bla_ms are Copy and still readable.
         refwaste_log("install", "USED", res.ref_ms + res.series_ms + res.bla_ms);
+        if res.blinken.0 != bl::NO_PANEL_ROLE {
+            bl::emit(vi, bl::Kind::RefInstalled, res.blinken.0, res.blinken.1, 0.0);
+        }
     }
 
     /// ⭐BEFORE A DIVE REACHES FLOATEXP, MEASURE IT (`PRE_SWITCH_PROBE`, 2026-10-18). At the 2^93
@@ -2598,6 +2628,7 @@ impl FractadyneApp {
         let (tx, rx) = std::sync::mpsc::channel();
         let (dev, q) = (dev.clone(), q.clone());
         spawn_named("fd-preswitch", move || {
+            let _busy = crate::blinken::registry::busy(crate::blinken::registry::Role::Probe);
             crate::diag::breadcrumb(format!("pre-switch probe: {side}x{side} floatexp BLA off iter={iters}"));
             let got = fractadyne_gpu::render_iter_timed(&dev, &q, &req, crate::tunables::PRE_SWITCH_PROBE_REPS)
                 .map(|(r, reps)| {
@@ -2812,6 +2843,11 @@ impl FractadyneApp {
             install = self.ref_prefetch[i].ready.take();
             // Everything at or above this depth is superseded — including still-building slots,
             // whose result would land for a depth the dive has left.
+            for slot in self.ref_prefetch.iter().filter(|s| s.target_l2 <= target) {
+                if let Some(r) = &slot.ready {
+                    bl::emit(0, bl::Kind::RefDropped, r.blinken.0, r.blinken.1, 0.0);
+                }
+            }
             self.ref_prefetch.retain(|s| s.target_l2 > target);
         }
         if let Some(res) = install {
@@ -2940,8 +2976,10 @@ impl FractadyneApp {
                 }),
                 _ => None,
             };
+            let bid = bl::next_build_id();
             let inputs = RecomputeInputs {
                 origin: "lookahead",
+                blinken: (bl::RefRole::Ahead as u32, bid),
                 center_bf: [vp.center_x.clone(), vp.center_y.clone()],
                 span,
                 span_mantissa,
@@ -2969,13 +3007,17 @@ impl FractadyneApp {
             };
             let (tx, rx) = std::sync::mpsc::channel();
             spawn_named("fd-ref-lookahead", move || {
+                let _busy = crate::blinken::registry::busy(crate::blinken::registry::Role::Reference);
                 let origin = inputs.origin;
+                let tag = inputs.blinken;
                 let res = recompute_worker(inputs);
                 let cost = res.ref_ms + res.series_ms + res.bla_ms;
                 if tx.send(res).is_err() {
                     refwaste_log(origin, "DROPPED-prefetch", cost);
+                    bl::emit(0, bl::Kind::RefDropped, tag.0, tag.1, 0.0);
                 }
             });
+            bl::emit(0, bl::Kind::RefLaunch, bl::RefRole::Ahead as u32, bid, target_l2 as f32);
             self.perf.build_count += 1;
             self.perf.prefetch_count += 1;
             self.ref_prefetch.push(RefPrefetchSlot { rx: Some(rx), ready: None, target_l2 });
@@ -3222,8 +3264,10 @@ impl FractadyneApp {
                 _ => None,
             }
         };
+        let bid = bl::next_build_id();
         let inputs = RecomputeInputs {
             origin: "hold",
+            blinken: (bl::RefRole::Hold as u32, bid),
             center_bf: [vp.center_x.clone(), vp.center_y.clone()],
             span,
             span_mantissa,
@@ -3256,13 +3300,19 @@ impl FractadyneApp {
         }
         let (tx, rx) = std::sync::mpsc::channel();
         spawn_named("fd-ref-hold", move || {
+            let _busy = crate::blinken::registry::busy(crate::blinken::registry::Role::Reference);
             let origin = inputs.origin;
+            let tag = inputs.blinken;
             let res = recompute_worker(inputs);
             let cost = res.ref_ms + res.series_ms + res.bla_ms;
             if tx.send(res).is_err() {
                 refwaste_log(origin, "DROPPED-prefetch", cost);
+                if tag.0 != bl::NO_PANEL_ROLE {
+                    bl::emit(0, bl::Kind::RefDropped, tag.0, tag.1, 0.0);
+                }
             }
         });
+        bl::emit(0, bl::Kind::RefLaunch, bl::RefRole::Hold as u32, bid, target_l2 as f32);
         self.perf.build_count += 1;
         self.hold_prefetch.push(HoldPrefetch {
             at,
@@ -3504,6 +3554,7 @@ impl FractadyneApp {
             && bla_dc_max.is_none();
         RecomputeInputs {
             origin: "export",
+            blinken: (bl::NO_PANEL_ROLE, 0),
             center_bf: [vp.center_x.clone(), vp.center_y.clone()],
             span: vp.complex_span_fe(),
             span_mantissa,
@@ -3697,11 +3748,16 @@ impl FractadyneApp {
         // this raw `Receiver` + the `pub` `ExportPrep.rx` should be wrapped behind a method API
         // before crossing a crate boundary.
         spawn_named("fd-ref-export", move || {
+            let _busy = crate::blinken::registry::busy(crate::blinken::registry::Role::Export);
             let origin = inputs.origin;
+            let tag = inputs.blinken;
             let res = recompute_worker(inputs);
             let cost = res.ref_ms + res.series_ms + res.bla_ms;
             if tx.send(res).is_err() {
                 refwaste_log(origin, "DROPPED-prefetch", cost);
+                if tag.0 != bl::NO_PANEL_ROLE {
+                    bl::emit(0, bl::Kind::RefDropped, tag.0, tag.1, 0.0);
+                }
             }
         });
         Some(rx)
@@ -4805,6 +4861,7 @@ impl FractadyneApp {
                 state.geo = Some((resolution, ss, side));
                 state.next = 0;
                 state.row = 0;
+                bl::emit(vidx, bl::Kind::GridStart, bl::pack_res(resolution[0], resolution[1]), side, 0.0);
                 (resolution, ss, side)
             }
         };
@@ -4886,10 +4943,17 @@ impl FractadyneApp {
         }
         self.perf.tile_turn = self.perf.frame_idx;
         let full = rect(idx);
+        // For the live-render panel: the tile's rows sent once this piece is, of its rows, and this
+        // piece's rows (a strip of a tile too dear for the admission is part of it).
+        let sent = (piece[1] - full[1]) + piece[3];
+        bl::emit(vidx, bl::Kind::TileSent, idx, (sent.min(0xffff) << 16) | full[3].min(0xffff), piece[3] as f32);
         state.row = (piece[1] - full[1]) + piece[3];
         if state.row >= full[3] {
             state.next += 1;
             state.row = 0;
+            if state.next == n {
+                bl::emit(vidx, bl::Kind::GridDone, 0, 0, 0.0);
+            }
         }
         state.last = piece;
         self.perf.tile_pending[vidx] = state.next < n;
@@ -5393,6 +5457,7 @@ impl FractadyneApp {
                         // the exterior aliased into speckle. Measured before the fix: consecutive
                         // frames read [46422,54614] then [54614,63736] — adjacent windows, never a
                         // frame range. After: [45075,63736] on the first reading.
+                        let fed_before = self.perf.norm_range[vb];
                         match nfeed {
                             NormFeed::Hold => {
                                 // Held — unless the reading proves the hold wrong (see
@@ -5442,6 +5507,9 @@ impl FractadyneApp {
                                     self.perf.norm_range[vb] = Some(e);
                                 }
                             }
+                        }
+                        if let Some((lo, hi)) = self.perf.norm_range[vb].filter(|_| self.perf.norm_range[vb] != fed_before) {
+                            bl::emit(vb, bl::Kind::PaletteFeed, lo.max(0.0) as u32, hi.max(0.0) as u32, 0.0);
                         }
                         crate::diag::trace(
                             "gpu",
@@ -5863,6 +5931,9 @@ impl FractadyneApp {
             }
             if dispatch.pin_dispatched {
                 self.perf.pin_dispatch_at[vs] = crate::app_micros();
+                if let (Some([_, to]), Some((size, ..))) = (dispatch.chunk_range, dispatch.state.inflight) {
+                    bl::emit(vs, bl::Kind::PinPass, to.saturating_sub(size), to, 0.0);
+                }
                 if crate::diag::trace_on("tile") {
                     if let (Some([_, to]), Some((size, band, _, _))) = (dispatch.chunk_range, dispatch.state.inflight) {
                         // A priced span's predicted cost (`PIN_SPAN_PRICED`), against the price its
@@ -6442,6 +6513,7 @@ impl FractadyneApp {
             grad_range,
             grad_hist,
             work_counters,
+            step_out: Some(self.perf.step_stats[vs.min(1)].clone()),
             norm_sig_out: Some(self.perf.norm_sig_sink[vs.min(1)].clone()),
             norm_sig: self.perf.norm_sig_submit[vs.min(1)],
             norm_complete: self.perf.norm_complete_submit[vs.min(1)],
@@ -6556,6 +6628,7 @@ impl FractadyneApp {
             hold_verified: self.perf.content[vsub].hold_verified,
             pixels_stamp_out: Some(self.perf.pixels_stamp[vsub].clone()),
             hold_out: Some(self.perf.gpu_hold[vsub].clone()),
+            timer_states_out: Some(self.perf.timer_states[vsub].clone()),
         };
         // Record whether THIS frame really re-iterates (vs reprojecting a held frame) — the
         // motion-res controller adapts only on the interval that FOLLOWS a real frame, since
@@ -6972,6 +7045,7 @@ impl FractadyneApp {
                     self.perf.hold_jump[vsub] = false;
                     self.perf.adopt_complete[vsub] =
                         self.perf.adopt_complete[vsub].wrapping_add(1);
+                    bl::emit(vsub, bl::Kind::PinAdopt, 0, 0, (live_l2 - pin.log2mag).abs() as f32);
                     // A SPLIT's texture is complete by construction — every pixel ran the whole
                     // ask in its set's pass — so it is verified as a single live pass is, and the
                     // next split may snapshot it this same frame.
@@ -7033,6 +7107,14 @@ impl FractadyneApp {
                                 (p.resolution[0] as f64 / p.panel[0].max(1) as f64).clamp(0.05, 1.0);
                         }
                     }
+                    let why = match reason {
+                        PinStop::Drift | PinStop::Pan => bl::Abandon::Drift,
+                        PinStop::Age => bl::Abandon::Age,
+                        PinStop::Superseded => bl::Abandon::Superseded,
+                        PinStop::Orbit | PinStop::Panel => bl::Abandon::Rekeyed,
+                        _ => bl::Abandon::Other,
+                    };
+                    bl::emit(vsub, bl::Kind::PinAbandon, why as u32, 0, 0.0);
                     self.perf.pin[vsub] = None;
                     // The dirty residue survives most abandons (the texture still diverges from
                     // the frozen bookkeeping, and the display must keep serving the snapshot
@@ -7056,6 +7138,12 @@ impl FractadyneApp {
                 }
                 PinVerdict::Continue => {
                     pin_frame = true;
+                    // A walk past its ask waits only for its last pass's reading.
+                    if let Some(p) = self.perf.pin[vsub].as_ref() {
+                        if p.split <= 1 && self.perf.chunk_cursor[vsub] >= p.gpu_iter {
+                            bl::emit(vsub, bl::Kind::PinVerify, 0, 0, 0.0);
+                        }
+                    }
                     // A same-point extension was admitted (see `pin_verdict`): re-key the pin to
                     // the reference now installed, so the next frame compares against it rather
                     // than re-deriving the exemption, and so a LATER change is judged against the
@@ -7480,7 +7568,9 @@ impl FractadyneApp {
                 // of a glide held). Between the perturbation modes the latch still runs, so those
                 // crossovers keep their pins and their holds unchanged.
                 if sel.is_direct() {
-                    self.perf.pin[vsub] = None;
+                    if self.perf.pin[vsub].take().is_some() {
+                        bl::emit(vsub, bl::Kind::PinAbandon, bl::Abandon::Other as u32, 0, 0.0);
+                    }
                     self.perf.chunk_dirty[vsub] = false;
                 }
                 // Arm the BLA-suppression instrument (off unless FRACTADYNE_BLA_DROP_FRAMES is
@@ -7496,6 +7586,15 @@ impl FractadyneApp {
                              {prev} → {m} switch (FRACTADYNE_BLA_DROP_FRAMES)"
                         ),
                     );
+                }
+                if prev != u32::MAX {
+                    // RenderMode's numbering (0 df32, 1 direct, 2 floatexp) to the panel's.
+                    let arith = |m: u32| match m {
+                        1 => bl::Arith::Direct,
+                        2 => bl::Arith::Floatexp,
+                        _ => bl::Arith::Df32,
+                    } as u32;
+                    bl::emit(vidx, bl::Kind::ModeSwitch, arith(prev), arith(m), 0.0);
                 }
                 // Always logged, not trace-gated: this crossover is the suspect in the
                 // `orbit_len=626` device-loss class, the class is intermittent, and a trace run
@@ -7993,7 +8092,10 @@ impl FractadyneApp {
         // gate's own arithmetic — and the ordinary latch below re-synchronizes the frozen
         // bookkeeping with the texture, clearing the dirty residue. Next frame is live again.
         if pin_frame && !chunk_over && !split_frame {
-            self.perf.pin[vsub] = None;
+            // The pinned view renders complete in this one pass: the walk's picture lands now.
+            if self.perf.pin[vsub].take().is_some() {
+                bl::emit(vsub, bl::Kind::PinAdopt, 0, 0, 0.0);
+            }
             if crate::diag::trace_on("tile") {
                 crate::diag::trace(
                     "tile",
@@ -8304,6 +8406,7 @@ impl FractadyneApp {
                                 }
                                 self.perf.overtaken_installs[vi.min(1)] += 1;
                                 refwaste_log("install", "OVERTAKEN", res.ref_ms + res.series_ms + res.bla_ms);
+                                bl::emit(vi, bl::Kind::RefDropped, res.blinken.0, res.blinken.1, 0.0);
                             } else {
                                 self.install_recompute(vi, res);
                             }
@@ -8470,8 +8573,10 @@ impl FractadyneApp {
                         _ => None,
                     }
                 };
+                let bid = bl::next_build_id();
                 let inputs = RecomputeInputs {
                     origin: "live",
+                    blinken: (bl::RefRole::Live as u32, bid),
                     center_bf: center_bf.clone(),
                     span,
                     span_mantissa,
@@ -8554,7 +8659,9 @@ impl FractadyneApp {
                             ),
                         );
                     }
+                    bl::emit(vi, bl::Kind::RefLaunch, bl::RefRole::Live as u32, bid, log2mag as f32);
                     spawn_named("fd-ref-live", move || {
+                        let _busy = crate::blinken::registry::busy(crate::blinken::registry::Role::Reference);
                         recompute_worker_staged(inputs, tx, progressive);
                     });
                     self.perf.build_count += 1;
@@ -8696,7 +8803,9 @@ impl FractadyneApp {
                 // Belt: the pre-step abandons on every input that could freeze a pin frame, so
                 // this is unreachable by analysis — but if it ever fires, the cursor advanced
                 // with no dispatch and the resume state is untrustworthy. Discard it.
-                self.perf.pin[vsub] = None;
+                if self.perf.pin[vsub].take().is_some() {
+                    bl::emit(vsub, bl::Kind::PinAbandon, bl::Abandon::Other as u32, 0, 0.0);
+                }
                 self.perf.chunk_cursor[vs] = 0;
                 self.perf.chunk_walk_epoch[vs] = self.perf.chunk_walk_epoch[vs].wrapping_add(1).max(1);
                 self.perf.chunk_running[vs] = None;
@@ -8750,6 +8859,8 @@ impl FractadyneApp {
                     split: 0,
                     split_next: 0,
                 });
+                bl::emit(vsub, bl::Kind::PinStart, gpu_iter, bl::pack_res(resolution[0], resolution[1]), 0.0);
+                bl::emit(vsub, bl::Kind::PinPass, 0, end, 0.0);
                 self.perf.chunk_cursor[vs] = end;
                 self.perf.chunk_walk_epoch[vs] = self.perf.chunk_walk_epoch[vs].wrapping_add(1).max(1);
                 self.perf.chunk_running[vs] = None;
@@ -8840,7 +8951,9 @@ impl FractadyneApp {
                     self.perf.hold_active[vs] = true;
                     display_hold = true;
                     pin_gate = true;
+                    bl::emit(vsub, bl::Kind::PinStart, gpu_iter, bl::pack_res(resolution[0], resolution[1]), 0.0);
                 }
+                bl::emit(vsub, bl::Kind::SplitPass, j, k, 0.0);
                 if crate::diag::trace_on("live") {
                     crate::diag::trace(
                         "live",
@@ -8873,6 +8986,7 @@ impl FractadyneApp {
                 self.ref_cache[vi].frozen_by_worker = true;
                 self.perf.hold_jump[vi.min(1)] = false;
                 self.perf.content[vsub].note_adopt(crate::app_micros());
+                bl::emit(vi, bl::Kind::WorkerFrame, into_hold as u32, 0, 0.0);
                 if into_hold {
                     self.perf.content[vsub].hold_verified = true;
                 } else {

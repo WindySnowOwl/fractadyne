@@ -80,6 +80,16 @@ Changes after 0.3.0-beta.1:
   tracks the precision each step needs, renormalized almost every number it produced through a
   logarithm and a power of two. It now reads the exponent directly, with the same results bit for
   bit. That reference now takes 1.05 s, and the skip table built from it 130 ms instead of 180.
+- **A front panel shows the live renderer at work (0.3.0-beta.20).** Press B, or View ▸ Live
+  render panel, for an instrument panel over the view styled after a 1970s lab rack. Nixie tubes
+  read the depth, the iteration count, the frame time and the clock. A radar dial sweeps through
+  each deep refresh's iteration bands, a meter shows how far the picture on screen lags the view,
+  a plane shows the tiles each frame's pass covers, a scope plots the graphics card's time per
+  frame, and a tuning dial shows the depth with the reference builds racing it. A bank of lamps
+  lights for the renderer's events. At full size an engine room adds steps per second, the two
+  graphics devices, memory, cores and pixels. Every light is driven by a real event or reading.
+  Hover over any instrument for what it shows, what healthy looks like and what signals trouble.
+  B cycles off, strip, panel and full, and the panel can be dragged to any corner.
 - **The palette keeps its contrast while zooming with a second graphics device (0.3.0-beta.20).**
   With "Normalize deep colors" on, the palette is spread over the escape counts in the picture,
   and the view learned that range only from its own refreshes. With a second device rendering

@@ -28,6 +28,13 @@ enum Screen {
     /// photograph an empty list.
     RightPanelAdvanced,
     Minimap,       // the minimap overview on
+    /// The live-render front panel (design/blinkenlights.md, key `B`) at each size, over a deep
+    /// view so its instruments have a reference, a walk and a settle to show.
+    LivePanelStrip,
+    LivePanel,
+    LivePanelFull,
+    /// The panel with a help card held open (the picture-age meter's).
+    LivePanelHelp,
     Help,
     /// Help opened AT the coordinate-expression reference — the section the Go-to dialog's `?`
     /// jumps to, and the one page whose tables are rendered from core data rather than prose.
@@ -814,6 +821,12 @@ fn build_steps() -> Vec<Step> {
         screen("lsystem", Screen::LSystem),
         screen("lsystem-draw-on", Screen::LSystemDrawOn),
         // --- live render, one per mode (Direct <1e4, Df32Pert <1e28, Floatexp ≥1e28) ---
+        // The live-render panel over a deep view: here, among the deep steps, because the view it
+        // leaves behind (1e30×) is what every following step would otherwise inherit.
+        screen("live-panel-strip", Screen::LivePanelStrip),
+        screen("live-panel", Screen::LivePanel),
+        screen("live-panel-full", Screen::LivePanelFull),
+        screen("live-panel-help", Screen::LivePanelHelp),
         live("live-direct-1e2", 2.0),
         live("live-df32-1e6", 6.0),
         live("live-df32-1e12", 12.0),
@@ -1146,6 +1159,8 @@ impl FractadyneApp {
 
     /// Close every dialog/overlay so each screenshot shows one screen only.
     fn uitest_close_all(&mut self) {
+        self.blinken.size = crate::blinken::Size::Off;
+        self.blinken.pinned_help = None;
         self.dialogs.help_open = false;
         self.dialogs.welcome_open = false;
         self.dialogs.second_device_prompt = None;
@@ -1244,6 +1259,17 @@ impl FractadyneApp {
                     crate::gpu_worker::WorkerState::Running(format!("same card, {} · Vulkan", self.gpu_name));
             }
             Screen::Minimap => self.dialogs.minimap = true,
+            Screen::LivePanelStrip | Screen::LivePanel | Screen::LivePanelFull | Screen::LivePanelHelp => {
+                self.uitest_set_live(ctx, 30.0);
+                self.blinken.size = match s {
+                    Screen::LivePanelStrip => crate::blinken::Size::Strip,
+                    Screen::LivePanel | Screen::LivePanelHelp => crate::blinken::Size::Panel,
+                    _ => crate::blinken::Size::Full,
+                };
+                if matches!(s, Screen::LivePanelHelp) {
+                    self.blinken.pinned_help = Some("age");
+                }
+            }
             Screen::Help => self.dialogs.help_open = true,
             Screen::HelpExpressions => {
                 self.dialogs.help_section =

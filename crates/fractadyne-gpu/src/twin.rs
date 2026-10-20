@@ -483,12 +483,14 @@ impl MandelbrotParams {
         p.grad_range = None;
         p.grad_hist = None;
         p.work_counters = None;
+        p.step_out = None;
         p.norm_sig_out = None;
         p.norm_complete_out = None;
         p.content_out = None;
         p.content_stamp_out = None;
         p.pixels_stamp_out = None;
         p.hold_out = None;
+        p.timer_states_out = None;
         p.hold_copy = false;
         p.display_hold = false;
         p.reproject = 0;

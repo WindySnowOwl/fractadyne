@@ -147,6 +147,7 @@ impl Worker {
                         let job = match work {
                             Work::Sample(job) => job,
                             Work::Live(job) => {
+                                let _busy = crate::blinken::registry::busy(crate::blinken::registry::Role::Worker);
                                 let out = render_live(&device, &queue, &alive, &live_cancel, &mut twin, &mut pricer, job);
                                 if live_done.send(out).is_err() {
                                     break; // the app has gone
@@ -165,6 +166,7 @@ impl Worker {
                             (None, None) // cancelled while it waited in the queue
                         } else {
                             let progress = AtomicU32::new(0);
+                            let _busy = crate::blinken::registry::busy(crate::blinken::registry::Role::Worker);
                             match fractadyne_gpu::render_export(&device, &queue, &job.req, &progress, &cancel) {
                                 Ok(r) => (Some(Arc::new(sample_of(r))), None),
                                 Err(fractadyne_gpu::GpuError::Canceled) => (None, None),

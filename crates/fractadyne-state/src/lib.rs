@@ -162,6 +162,17 @@ pub struct SessionState {
     /// gets there. Off by default. `serde(default)` = `false` keeps older session files loadable.
     #[serde(default)]
     pub show_zoom_target: bool,
+    /// The live-render front panel over the view (View ▸ Live render panel, key `B`): `"off"`,
+    /// `"strip"`, `"panel"` or `"full"`. Empty or unknown = off. `serde(default)` keeps older
+    /// session files loadable.
+    #[serde(default)]
+    pub live_panel: String,
+    /// The view corner the panel snaps to: `"tl"`, `"tr"`, `"bl"` or `"br"`. Empty = top-left.
+    #[serde(default)]
+    pub live_panel_corner: String,
+    /// The panel's opacity, 0.3–1.0. `serde(default)` = the 0.95 default.
+    #[serde(default = "default_live_panel_opacity")]
+    pub live_panel_opacity: f32,
     /// Supersampling / anti-alias factor (1 = off, 2/3/4/8 = N×N).
     #[serde(default = "default_aa")]
     pub aa: u32,
@@ -471,6 +482,10 @@ fn default_click_zoom_factor() -> f32 {
 fn default_finish_sound() -> bool {
     true
 }
+fn default_live_panel_opacity() -> f32 {
+    0.95
+}
+
 fn default_aa() -> u32 {
     2
 }
@@ -609,6 +624,9 @@ impl Default for SessionState {
             live_worker_gpu: String::new(),
             show_timestamp: false,
             show_zoom_target: false,
+            live_panel: String::new(),
+            live_panel_corner: String::new(),
+            live_panel_opacity: default_live_panel_opacity(),
             aa: default_aa(),
             finish_sound: default_finish_sound(),
             fps_cap: default_fps_cap(), // 60 (0 = uncapped)

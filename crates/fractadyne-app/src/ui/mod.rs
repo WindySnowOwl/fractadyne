@@ -19,6 +19,7 @@ pub(crate) use panels::labelled;
 pub(crate) mod diagnostics;
 mod orbit_cache;
 pub(crate) mod autopilot_overlay;
+pub(crate) mod blinken_overlay;
 pub(crate) mod misiurewicz_explorer;
 pub(crate) mod timestamp_overlay;
 pub(crate) mod tour_render;

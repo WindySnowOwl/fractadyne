@@ -58,6 +58,7 @@ use fractadyne_gpu::{add_mandelbrot, install_renderer};
 
 mod alloc;
 mod autopilot;
+mod blinken;
 mod cli;
 mod diag;
 mod color_picker;
@@ -1271,6 +1272,9 @@ struct Perf {
     /// did with an asked-for hold (`MandelbrotParams::hold_out`: `frame << 8 | hold_why`).
     pixels_stamp: [std::sync::Arc<std::sync::atomic::AtomicU64>; 2],
     gpu_hold: [std::sync::Arc<std::sync::atomic::AtomicU64>; 2],
+    /// The GPU timer ring's states after each view's last frame (`MandelbrotParams::timer_states_out`:
+    /// two bits a slot), for the live-render panel's T0–T2 lamps.
+    timer_states: [std::sync::Arc<std::sync::atomic::AtomicU32>; 2],
     /// W6 (U20): the reuse-hold wanted to reproject the live texture this frame and was refused,
     /// because it was not a verified picture of the view the app believes (`render::reuse_source_ok`).
     reuse_refused: [bool; 2],
@@ -1921,6 +1925,9 @@ struct Perf {
     /// is on the frames the user is looking at. Until beta.48 only the offline paths could see
     /// this, and a reference whose BLA skips nothing cost ~1 s a frame unnoticed.
     work_sink: [std::sync::Arc<std::sync::atomic::AtomicU64>; 2],
+    /// The armed frame's step accounting (`MandelbrotParams::step_out`: loop trips executed and
+    /// iterations advanced), taken by the live-render panel's tachometer.
+    step_stats: [fractadyne_gpu::StepSink; 2],
     /// Echo sink for the view signature of the frame that SUBMITTED the norm/gradient readings.
     ///
     /// ⭐⭐The readings land 2-3 frames after their render, and the signature used to be computed
@@ -2297,6 +2304,7 @@ impl Default for Perf {
                 std::sync::Arc::new(std::sync::atomic::AtomicU64::new(u64::MAX)),
             ],
             gpu_hold: [Default::default(), Default::default()],
+            timer_states: [Default::default(), Default::default()],
             reuse_refused: [false, false],
             prov: [Default::default(); 2],
             gpu_ran_frames: [std::collections::VecDeque::new(), std::collections::VecDeque::new()],
@@ -2517,6 +2525,7 @@ impl Default for Perf {
                 std::sync::Arc::new(std::sync::atomic::AtomicU64::new(0)),
                 std::sync::Arc::new(std::sync::atomic::AtomicU64::new(0)),
             ],
+            step_stats: [Default::default(), Default::default()],
             norm_sig_sink: [
                 std::sync::Arc::new(std::sync::atomic::AtomicU64::new(0)),
                 std::sync::Arc::new(std::sync::atomic::AtomicU64::new(0)),
@@ -6298,6 +6307,11 @@ struct FractadyneApp {
     attach_bytes_per_sample: (u32, u32),
     /// Draw the "Fd" brand mark (live view + exports). Persisted; opt-out offered on first run.
     show_watermark: bool,
+    /// The live-render front panel over the view (design/blinkenlights.md; key `B`). Its size,
+    /// corner and opacity are persisted.
+    blinken: crate::blinken::Overlay,
+    /// The last iteration ask a planned frame carried, for the panel's frames that plan nothing.
+    blinken_last_iter: u32,
     /// "Don't ask again" for the post-crash report prompt. Persisted.
     crash_prompt_disabled: bool,
     /// In-flight update check (worker → UI) and its last result, and whether the launch check has
@@ -7403,6 +7417,8 @@ impl FractadyneApp {
             update_check_on_launch: s.update_check_on_launch,
             attach_bytes_per_sample: (0, 0), // (granted, available) — filled on the first frame
             show_watermark: s.show_watermark,
+            blinken: crate::blinken::Overlay::from_session(&s.live_panel, &s.live_panel_corner, s.live_panel_opacity),
+            blinken_last_iter: 0,
             crash_prompt_disabled: s.crash_prompt_disabled,
             update_rx: None,
             update_status: None,
@@ -7485,6 +7501,14 @@ impl FractadyneApp {
         }
         if args.iter().any(|a| a == "--no-show-zoom-target") {
             app.render_cfg.show_zoom_target = false;
+        }
+        // The live-render front panel (key B), from the command line too, so a harness run can
+        // show it (and screenshot it) without a session file.
+        if let Some(i) = args.iter().position(|a| a == "--live-panel") {
+            match args.get(i + 1).and_then(|v| crate::blinken::Size::from_name(v)) {
+                Some(size) => app.blinken.size = size,
+                None => eprintln!("fractadyne: --live-panel expects `off`, `strip`, `panel` or `full`"),
+            }
         }
         // The autopilot's priority, from the command line as well as the panel, so a harness
         // dive can be run either way without editing a session file.
@@ -8061,6 +8085,9 @@ impl FractadyneApp {
             live_worker_gpu: self.render_cfg.worker_gpu.clone(),
             show_timestamp: self.render_cfg.show_timestamp,
             show_zoom_target: self.render_cfg.show_zoom_target,
+            live_panel: self.blinken.size.name().to_owned(),
+            live_panel_corner: self.blinken.corner.name().to_owned(),
+            live_panel_opacity: self.blinken.opacity,
             finish_sound: self.render_cfg.finish_sound,
             aa: self.render_cfg.aa,
             fps_cap: self.fps_cap.unwrap_or(0.0), // None (uncapped) → 0, so it round-trips
@@ -14638,6 +14665,7 @@ impl FractadyneApp {
                 self.perf.accum_ext_attach[view] = Some(sample);
                 let folded = self.perf.accum_count[view] + 1;
                 self.perf.accum_count[view] = folded;
+                crate::blinken::events::emit(view, crate::blinken::events::Kind::SsaaSample, folded, 0, 0.0);
                 if folded >= accum_target() {
                     if let Some(held) = self.perf.accum_converged_line[view].admit(diag::elapsed_ms(), ACCUM_LINE_GAP_MS) {
                         crate::diag::log_line(
@@ -15039,6 +15067,7 @@ impl FractadyneApp {
         }
         let folded = count + 1;
         self.perf.accum_count[view] = folded;
+        crate::blinken::events::emit(view, crate::blinken::events::Kind::SsaaSample, folded, 0, 0.0);
         self.perf.accum_committed[view] = true;
         if count == 0 && self.gpu_worker.is_some() {
             // Sample 0's frame is the settled view: the worker renders its samples from it.
@@ -16202,6 +16231,9 @@ impl eframe::App for FractadyneApp {
                 if xbits != 0 {
                     let (ms, steps, frame) =
                         (f64::from_bits(xbits), self.perf.extra_steps[v].load(SeqCst), self.perf.extra_frame[v].load(SeqCst));
+                    if ms > 0.0 && ms.is_finite() {
+                        crate::blinken::events::emit(v, crate::blinken::events::Kind::PassTimed, crate::blinken::events::PASS_OF_FRAME, frame as u32, ms as f32);
+                    }
                     let to = if !(ms > 0.0 && ms.is_finite()) {
                         "unusable"
                     } else if self.perf.chunk_late[v].iter().flatten().any(|l| l.2 == frame) {
@@ -16222,6 +16254,11 @@ impl eframe::App for FractadyneApp {
             }
             let bits = self.perf.iterate_ms[v].swap(0, std::sync::atomic::Ordering::SeqCst);
             let ms = f64::from_bits(bits);
+            if bits != 0 && ms > 0.01 && ms.is_finite() {
+                // The live-render panel's scope and engine room: this reading's frame and time.
+                let frame = self.perf.iterate_frame[v].load(std::sync::atomic::Ordering::SeqCst);
+                crate::blinken::events::emit(v, crate::blinken::events::Kind::PassTimed, crate::blinken::events::PASS_OF_FRAME, frame as u32, ms as f32);
+            }
             if bits == 0 || !(ms > 0.01) || self.perf.fe_steps_last[v] == 0 {
                 // A real timing the budget cannot use (no app-side count to price it against) still
                 // carries its OWN paired count and frame, which is all the live-refresh gate needs.
@@ -16429,6 +16466,10 @@ impl eframe::App for FractadyneApp {
             // A: toggle the auto-zoom autopilot (single view only).
             if ctx.input(|i| i.key_pressed(egui::Key::A) && !i.modifiers.any()) && !self.dual {
                 self.toggle_autopilot(ctx);
+            }
+            // B: cycle the live-render front panel, off → strip → panel → full.
+            if ctx.input(|i| i.key_pressed(egui::Key::B) && !i.modifiers.any()) {
+                self.blinken.cycle();
             }
             // F1 / ? : toggle the help overlay.
             if ctx.input(|i| {
@@ -16673,6 +16714,7 @@ impl eframe::App for FractadyneApp {
             }
         }
         self.perf.frame_idx += 1;
+        crate::blinken::events::set_frame(self.perf.frame_idx);
         self.perf.last_frame = Some(frame_start);
 
         if !self.bench.auto && !self.bench.auto_std && !self.render_cli.run && !self.selftest.run && !self.profile.run && !self.harness.reusetest && self.render_cli.tour.is_none() && self.bench.std.is_none() && !self.uitest_active() {

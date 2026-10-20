@@ -839,6 +839,7 @@ impl CounterRead {
         norm_sig_out: Option<&Arc<std::sync::atomic::AtomicU64>>,
         norm_complete_out: Option<&Arc<std::sync::atomic::AtomicBool>>,
         content_out: Option<&ContentSink>,
+        step_out: Option<&StepSink>,
     ) {
         use std::sync::atomic::Ordering::SeqCst;
         match self.state {
@@ -948,6 +949,13 @@ impl CounterRead {
                             let packed = (((slots[CTR_REBASE] as u64) + 1) << 32)
                                 | ((slots[CTR_BLA_SKIP] as u64) + 1);
                             o.store(packed, SeqCst);
+                        }
+                        // The step accounting from the same frame: loop trips executed against
+                        // iterations advanced, for the app's live-render panel.
+                        if let Some(o) = step_out {
+                            if let Ok(mut g) = o.lock() {
+                                *g = Some(StepStats::from_slots(&slots));
+                            }
                         }
                         }
                         self.read.unmap();
@@ -1392,6 +1400,9 @@ pub const CTR_CHUNK_RUNNING: usize = CTR_STEP_BIG + 2;
 /// Pixels that took THE RENORMALIZED STEP ([`Renorm`]), counted on the step-accounting grid — the
 /// proof it ran, comparable with `CTR_STEP_PX`.
 pub const CTR_RENORM: usize = CTR_CHUNK_RUNNING + 1;
+
+/// Where a frame's [`StepStats`] are published for the app (`MandelbrotParams::step_out`).
+pub type StepSink = Arc<std::sync::Mutex<Option<StepStats>>>;
 
 /// A counter readback's step accounting (see [`CTR_STEP_PX`]).
 #[derive(Clone, Copy, Debug, Default, PartialEq)]
@@ -2696,6 +2707,9 @@ pub struct MandelbrotParams {
     pub grad_hist: Option<GradHistSink>,
     /// Live sink for `(rebase + 1) << 32 | (bla_skip + 1)` — see `CounterRead::pump`.
     pub work_counters: Option<Arc<std::sync::atomic::AtomicU64>>,
+    /// Live sink for the armed frame's step accounting ([`StepStats`]: loop trips executed and
+    /// iterations advanced on the 1-in-64 grid), taken by the app's live-render panel.
+    pub step_out: Option<StepSink>,
     /// Sink for the view signature of the frame that submitted the norm/gradient readings, echoed
     /// back with them. See `CounterRead::norm_sig` — this is what makes the live-normalization
     /// mapping attribute a late reading to the view it was MEASURED at rather than the view that
@@ -2931,6 +2945,9 @@ pub struct MandelbrotParams {
     pub pixels_stamp_out: Option<Arc<std::sync::atomic::AtomicU64>>,
     /// Sink for what the display gate did: `pass_frame << 8 | hold_why` bits.
     pub hold_out: Option<Arc<std::sync::atomic::AtomicU64>>,
+    /// Sink for the timer ring's states after this frame, for the app's live-render panel: two
+    /// bits a slot, slot `k` at bits `2k..2k+2` (0 idle, 1 recorded, 2 mapping, 3 ready).
+    pub timer_states_out: Option<Arc<std::sync::atomic::AtomicU32>>,
 }
 
 /// A frame that asks for nothing: no sinks, no reference, the direct mode, one sample a pixel, no
@@ -2995,6 +3012,7 @@ impl Default for MandelbrotParams {
             grad_range: None,
             grad_hist: None,
             work_counters: None,
+            step_out: None,
             norm_sig_out: None,
             norm_sig: 0,
             norm_complete: true,
@@ -3010,6 +3028,7 @@ impl Default for MandelbrotParams {
             hold_verified: false,
             pixels_stamp_out: None,
             hold_out: None,
+            timer_states_out: None,
             tile: None,
             chunk_range: None,
             chunk_idx: 0,
@@ -3230,6 +3249,7 @@ impl CallbackTrait for MandelbrotParams {
             self.norm_sig_out.as_ref(),
             self.norm_complete_out.as_ref(),
             self.content_out.as_ref(),
+            self.step_out.as_ref(),
         );
 
         // The offscreen iteration texture is (resolution × ss). It must not exceed
@@ -4207,6 +4227,19 @@ impl CallbackTrait for MandelbrotParams {
             view.accum = None; // accumulation fully off → release the accumulator's textures
         }
 
+        // The timer ring's states, for the app's live-render panel (two bits a slot).
+        if let Some(o) = &self.timer_states_out {
+            let packed = view.timing.iter().take(16).enumerate().fold(0u32, |acc, (k, t)| {
+                let st = match t.state {
+                    TimingState::Idle => 0,
+                    TimingState::Recorded => 1,
+                    TimingState::Mapping => 2,
+                    TimingState::Ready => 3,
+                };
+                acc | (st << (2 * k))
+            });
+            o.store(packed, std::sync::atomic::Ordering::Relaxed);
+        }
         Vec::new()
     }
 
