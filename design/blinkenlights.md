@@ -133,8 +133,9 @@ A sixth cluster for the machine underneath the picture: how much of it is busy, 
 
 ### The look
 
-A rack instrument from a 1970s lab: charcoal anodized panel, a fine brushed grain, four corner
-screws, engraved labels in small caps, a thin bevel. Instruments are the period's own:
+A rack instrument from a 1970s lab: a slate hammertone case (first built as charcoal anodizing with
+a brushed grain; see "As built"), four corner screws, engraved labels in small caps, a thin bevel.
+Instruments are the period's own:
 
 | instrument | period form |
 |---|---|
@@ -274,6 +275,20 @@ What the implementation settled, where it differs from or adds to the above:
     earlier PLUTO shot has (beta.18, no panel: 32–40 of them; this one 22).
 - **Harness hooks**: `--live-panel off|strip|panel|full`, and `--uitest` screens
   `live-panel-strip`, `live-panel`, `live-panel-full`.
+- **Hammertone (2026-10-20, on review):** the case is a 512-texel tile generated once
+  (`paint::hammertone`: small round dents with defined rims, `(1 − d²/r²)²`, pressed in round the
+  tile's edges so it repeats without a seam, lit from the top left with a glint and a speckle of
+  flake) and uploaded with a repeating sampler; one texel is one panel unit, so the dents scale
+  with the panel, and it lives in the static layer, so it costs nothing a frame. Soft Gaussian
+  dents read as smoke at 1:1 and were dropped. Legibility is measured, not judged: every legend
+  printed on the case carries a dark halo a pixel round it, the legend colours were raised
+  (`ENGRAVE_DIM` #8f8875 → #ccc2a8), and a unit test holds each at 4.5:1 or better against the
+  tile's median texel and against its p99.5 glint under the halo; the maker's mark moved onto a
+  dark enamel badge (red on the hammertone itself would read at 1.5–2:1).
+- **Review fixes (2026-10-20):** supersampling passes are lavender on the scope, with their own
+  legend entry (they were a green the eye could not tell from moving frames), and the HELD card
+  says it is lit steadily while a still view sharpens under Prefer detail (it had called that a
+  fault).
 
 ### Build order
 

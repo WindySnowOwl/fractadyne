@@ -10,15 +10,17 @@ use egui::epaint::{Mesh, PathShape, PathStroke};
 use egui::{Align2, Color32, FontFamily, FontId, Painter, Pos2, Rect, Shape, Stroke, vec2};
 use std::f32::consts::TAU;
 
-/// The panel's palette: charcoal anodizing, engraved cream, lamp and phosphor colours.
+/// The panel's palette: a slate hammertone case, engraved cream, lamp and phosphor colours.
 pub(crate) mod ink {
     use egui::Color32;
-    pub(crate) const PANEL_HI: Color32 = Color32::from_rgb(0x31, 0x35, 0x3b);
-    pub(crate) const PANEL: Color32 = Color32::from_rgb(0x25, 0x28, 0x2c);
-    pub(crate) const PANEL_LO: Color32 = Color32::from_rgb(0x16, 0x18, 0x1b);
+    /// The hammertone's base, before its dimples are lit ([`super::hammertone`]).
+    pub(crate) const HAMMER: Color32 = Color32::from_rgb(0x34, 0x39, 0x3f);
     pub(crate) const BEZEL: Color32 = Color32::from_rgb(0x3a, 0x3f, 0x45);
-    pub(crate) const ENGRAVE: Color32 = Color32::from_rgb(0xd2, 0xc9, 0xb2);
-    pub(crate) const ENGRAVE_DIM: Color32 = Color32::from_rgb(0x8f, 0x88, 0x75);
+    pub(crate) const ENGRAVE: Color32 = Color32::from_rgb(0xe4, 0xdb, 0xc4);
+    /// Every legend printed on the case (titles, lamp labels, the model tag). The hammertone is
+    /// busier than the flat anodizing it replaced, so this stays at least 4.5:1 (WCAG AA for small
+    /// text) against the case's brightest texels — checked by a unit test, not by eye.
+    pub(crate) const ENGRAVE_DIM: Color32 = Color32::from_rgb(0xcc, 0xc2, 0xa8);
     pub(crate) const AMBER: Color32 = Color32::from_rgb(0xff, 0xa5, 0x3a);
     pub(crate) const RED: Color32 = Color32::from_rgb(0xff, 0x4a, 0x2a);
     pub(crate) const LAMP_GREEN: Color32 = Color32::from_rgb(0x8c, 0xff, 0x70);
@@ -36,6 +38,8 @@ pub(crate) mod ink {
     pub(crate) const NIXIE_GLOW: Color32 = Color32::from_rgb(0xff, 0x6a, 0x1a);
     pub(crate) const MAKER_RED: Color32 = Color32::from_rgb(0xd8, 0x40, 0x2a);
     pub(crate) const FACE_DARK: Color32 = Color32::from_rgb(0x12, 0x13, 0x15);
+    /// Supersampling passes on the scope: lavender, so they never pass for moving frames' green.
+    pub(crate) const SSAA: Color32 = Color32::from_rgb(0xc8, 0x9c, 0xff);
 }
 
 /// The panel's typefaces, registered in `theme.rs` (design/blinkenlights.md, "Type").
@@ -70,6 +74,80 @@ pub(crate) mod face {
     pub(crate) fn nixie(size: f32) -> FontId {
         id(NIXIE, size)
     }
+}
+
+/// The hammertone tile's side, texels; one texel is one panel unit at scale 1.
+pub(crate) const HAMMER_TILE: usize = 512;
+/// The dents' mean radius, texels, and how many times over their discs cover the tile.
+const HAMMER_DENT_R: f32 = 6.5;
+const HAMMER_COVER: f32 = 1.6;
+/// Height to slope: how strongly a dent's walls tilt toward the light.
+const HAMMER_RELIEF: f32 = 0.45;
+/// The light's share of brightness, and the metal flake's glint.
+const HAMMER_GAIN: f32 = 0.5;
+const HAMMER_SHEEN: f32 = 20.0;
+
+/// A seamless square tile of hammertone paint, `n` texels a side: the hammered, faintly metallic
+/// finish of a period instrument case. Small round dents of varied size, each a cap with a defined
+/// rim (`(1 − d²/r²)²` inside its radius), are pressed into a flat height field round the tile's
+/// edges so opposite edges meet; the result is lit from the
+/// top left, with a glint where a dent's wall faces the light, and a fine speckle of metal flake.
+/// Tuned in a prototype against the panel's legends (2026-10-20; soft Gaussian dents read as smoke
+/// at 1:1, not as hammered paint): every legend on the case keeps
+/// at least 4.5:1 against the tile's brightest texels once its halo ([`draw_galley`]) darkens
+/// them, and the tile's seam is no rougher than its interior.
+pub(crate) fn hammertone(n: usize, seed: u64) -> egui::ColorImage {
+    let mut rng = seed ^ 0x9e37_79b9_7f4a_7c15;
+    let mut next = move || {
+        rng ^= rng >> 12;
+        rng ^= rng << 25;
+        rng ^= rng >> 27;
+        (rng.wrapping_mul(0x2545_f491_4f6c_dd1d) >> 11) as f32 / (1u64 << 53) as f32
+    };
+    let nf = n as f32;
+    let mut height = vec![0.0f32; n * n];
+    let count = (HAMMER_COVER * nf * nf / (std::f32::consts::PI * HAMMER_DENT_R * HAMMER_DENT_R)) as usize;
+    for _ in 0..count {
+        let (cx, cy) = (next() * nf, next() * nf);
+        let r = HAMMER_DENT_R * (0.7 + 0.6 * next());
+        let depth = r * (0.7 + 0.6 * next());
+        let reach = r as i64 + 1;
+        let inv = 1.0 / (r * r);
+        for yi in cy as i64 - reach..=cy as i64 + reach {
+            let dy = yi as f32 + 0.5 - cy;
+            let row = yi.rem_euclid(n as i64) as usize * n;
+            for xi in cx as i64 - reach..=cx as i64 + reach {
+                let dx = xi as f32 + 0.5 - cx;
+                let cap = (1.0 - (dx * dx + dy * dy) * inv).max(0.0);
+                height[row + xi.rem_euclid(n as i64) as usize] -= depth * cap * cap;
+            }
+        }
+    }
+    let h = |x: usize, y: usize| height[(y % n) * n + (x % n)];
+    // Lit from the top left (egui's y runs down), with the viewer straight on.
+    let unit = |x: f32, y: f32, z: f32| {
+        let l = (x * x + y * y + z * z).sqrt();
+        (x / l, y / l, z / l)
+    };
+    let light = unit(-0.55, -0.65, 0.52);
+    let half = unit(light.0, light.1, light.2 + 1.0);
+    let base = ink::HAMMER.to_srgba_unmultiplied();
+    let mut pixels = Vec::with_capacity(n * n);
+    for y in 0..n {
+        for x in 0..n {
+            let gx = (h(x + 1, y) - h(x + n - 1, y)) * 0.5 * HAMMER_RELIEF;
+            let gy = (h(x, y + 1) - h(x, y + n - 1)) * 0.5 * HAMMER_RELIEF;
+            let nrm = unit(-gx, -gy, 1.0);
+            let diffuse = (nrm.0 * light.0 + nrm.1 * light.1 + nrm.2 * light.2).max(0.0);
+            let glint = (nrm.0 * half.0 + nrm.1 * half.1 + nrm.2 * half.2).max(0.0).powi(28);
+            let flake = (next() - 0.5) * 0.05;
+            // A flat texel's diffuse is `light.2`: the base colour, as specified.
+            let k = 1.0 + HAMMER_GAIN * (diffuse - light.2) + flake;
+            let c = |v: u8, tint: f32| (v as f32 * k + HAMMER_SHEEN * glint * tint).round().clamp(0.0, 255.0) as u8;
+            pixels.push(Color32::from_rgb(c(base[0], 0.95), c(base[1], 1.0), c(base[2], 1.08)));
+        }
+    }
+    egui::ColorImage { size: [n, n], pixels }
 }
 
 /// `c` with its alpha scaled by `k` (0..1), unmultiplied, so a dimmer lamp is more transparent.
@@ -213,10 +291,17 @@ pub(crate) fn polar(c: Pos2, r: f32, a: f32) -> Pos2 {
     c + vec2(a.cos(), a.sin()) * r
 }
 
-/// Draws a laid-out galley at `rect.min`; engraved, with a dark lip above and a faint highlight
-/// below, as paint-filled lettering cut into the anodizing. One layout serves all three draws.
+/// The alpha of the dark halo round an engraved legend ([`draw_galley`]).
+pub(crate) const HALO_ALPHA: u8 = 110;
+
+/// Draws a laid-out galley at `rect.min`; engraved, as paint-filled lettering cut into the case: a
+/// dark halo a pixel round it, so a stroke never lands on a bright glint of the hammertone
+/// unseparated, then a dark lip above and a faint highlight below. One layout serves every draw.
 fn draw_galley(p: &Painter, at: Pos2, galley: std::sync::Arc<egui::Galley>, color: Color32, engrave: bool) {
     if engrave {
+        for d in [vec2(-1.0, -1.0), vec2(1.0, -1.0), vec2(-1.0, 1.0), vec2(1.0, 1.0)] {
+            p.galley_with_override_text_color(at + d, galley.clone(), Color32::from_black_alpha(HALO_ALPHA));
+        }
         p.galley_with_override_text_color(at + vec2(0.0, -1.0), galley.clone(), Color32::from_black_alpha(190));
         p.galley_with_override_text_color(at + vec2(0.0, 1.0), galley.clone(), Color32::from_white_alpha(18));
     }
@@ -305,3 +390,7 @@ pub(crate) fn install_fonts(fonts: &mut egui::FontDefinitions) {
         fonts.families.insert(FontFamily::Name(family.into()), list);
     }
 }
+
+#[cfg(test)]
+#[path = "../../tests/unit/blinken/paint/tests.rs"]
+mod tests;

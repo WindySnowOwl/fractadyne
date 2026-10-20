@@ -113,6 +113,8 @@ pub(crate) struct Inputs<'a> {
     /// The depth (log2 magnification) where floatexp takes over, and where df32 does.
     pub(crate) fe_from: f32,
     pub(crate) df32_from: f32,
+    /// The case's hammertone tile ([`paint::hammertone`]), uploaded once with a repeating sampler.
+    pub(crate) hammer: egui::TextureId,
 }
 
 /// Which of the two layers a drawing call is making.
@@ -347,7 +349,7 @@ fn tessellate(ctx: &egui::Context, shapes: Vec<ClippedShape>) -> Vec<ClippedShap
 fn layout(p: &Painter, layer: Layer, rect: Rect, width: f32, s: f32, size: Size, inp: &Inputs, texts: &[String; 4], hits: &mut Vec<Hit>, cost: &mut [f64; 11]) {
     let mut t = std::time::Instant::now();
     if layer == Layer::Static {
-        draw_case(p, rect, s);
+        draw_case(p, rect, s, inp.hammer);
     }
     let inner_l = rect.left() + PAD_X * s;
     let inner_w = (width - 2.0 * PAD_X) * s;
@@ -397,29 +399,18 @@ fn layout(p: &Painter, layer: Layer, rect: Rect, width: f32, s: f32, size: Size,
     lap(&mut t, cost, 10);
 }
 
-/// The panel's case: anodized gradient, bevel, four screws.
-fn draw_case(p: &Painter, r: Rect, s: f32) {
+/// The panel's case: hammertone paint, a light falling off down it, a bevel and four screws.
+fn draw_case(p: &Painter, r: Rect, s: f32, hammer: egui::TextureId) {
     p.rect_filled(r.translate(vec2(0.0, 6.0 * s)), 9.0 * s, Color32::from_black_alpha(90));
-    p.rect_filled(r, 7.0 * s, ink::PANEL);
-    let mid = r.top() + r.height() * 0.3;
-    paint::vgradient(p, Rect::from_min_max(r.left_top() + vec2(1.0, 1.0), pos2(r.right() - 1.0, mid)), ink::PANEL_HI, ink::PANEL);
-    paint::vgradient(p, Rect::from_min_max(pos2(r.left() + 1.0, mid), r.right_bottom() - vec2(1.0, 1.0)), ink::PANEL, ink::PANEL_LO);
-    // A brushed grain: faint vertical hairlines.
-    let mut x = r.left() + 3.0;
-    let mut m = Mesh::default();
-    while x < r.right() - 3.0 {
-        let c = Color32::from_white_alpha(if ((x as i32) / 3) % 2 == 0 { 3 } else { 0 });
-        let i = m.vertices.len() as u32;
-        m.colored_vertex(pos2(x, r.top() + 2.0), c);
-        m.colored_vertex(pos2(x + 1.0, r.top() + 2.0), c);
-        m.colored_vertex(pos2(x + 1.0, r.bottom() - 2.0), c);
-        m.colored_vertex(pos2(x, r.bottom() - 2.0), c);
-        m.add_triangle(i, i + 1, i + 2);
-        m.add_triangle(i, i + 2, i + 3);
-        x += 3.0;
-    }
-    p.add(Shape::mesh(m));
-    p.rect_stroke(r, 7.0 * s, Stroke::new(1.0_f32, Color32::from_rgb(0x42, 0x47, 0x4e)), egui::StrokeKind::Inside);
+    // One texel a panel unit, so the dents scale with the panel; the tile repeats across it.
+    let tile = paint::HAMMER_TILE as f32 * s;
+    let uv = Rect::from_min_max(pos2(0.0, 0.0), pos2(r.width() / tile, r.height() / tile));
+    p.add(egui::epaint::RectShape::filled(r, 7.0 * s, Color32::WHITE).with_texture(hammer, uv));
+    // The light falls off down the case (clear of the rounded corners).
+    let (top, bot, mid) = (r.top() + 7.0 * s, r.bottom() - 7.0 * s, r.top() + r.height() * 0.3);
+    paint::vgradient(p, Rect::from_min_max(pos2(r.left() + 1.0, top), pos2(r.right() - 1.0, mid)), Color32::from_white_alpha(8), Color32::TRANSPARENT);
+    paint::vgradient(p, Rect::from_min_max(pos2(r.left() + 1.0, mid), pos2(r.right() - 1.0, bot)), Color32::TRANSPARENT, Color32::from_black_alpha(55));
+    p.rect_stroke(r, 7.0 * s, Stroke::new(1.0_f32, Color32::from_rgb(0x4a, 0x50, 0x57)), egui::StrokeKind::Inside);
     p.line_segment([r.left_top() + vec2(8.0, 1.5), r.right_top() + vec2(-8.0, 1.5)], Stroke::new(1.0_f32, Color32::from_white_alpha(16)));
     for c in [r.left_top() + vec2(11.0, 11.0) * s, r.right_top() + vec2(-11.0, 11.0) * s, r.left_bottom() + vec2(11.0, -11.0) * s, r.right_bottom() + vec2(-11.0, -11.0) * s] {
         screw(p, c, 5.5 * s);
@@ -449,8 +440,14 @@ fn draw_plate(p: &Painter, r: Rect, s: f32, inp: &Inputs) {
     paint::tracked(p, pos2(r.left() + 4.0 * s, r.center().y), Align2::LEFT_CENTER, "LIVE RENDER · FRONT PANEL", face::engrave(14.0 * s), ink::ENGRAVE, 4.2 * s, true);
     let tag = format!("MODEL FD-B · {}", inp.version.to_uppercase());
     let tr = paint::tracked(p, pos2(r.right() - 4.0 * s, r.center().y), Align2::RIGHT_CENTER, &tag, face::engrave(11.0 * s), ink::ENGRAVE_DIM, 1.8 * s, true);
-    let mark = pos2(tr.left() - 12.0 * s, r.center().y);
-    p.text(mark + vec2(0.0, -1.0), Align2::RIGHT_CENTER, "Fractadyne", face::maker(19.0 * s), Color32::from_black_alpha(150));
+    // The maker's mark on its own enamelled badge: red on the hammertone itself would read at
+    // 1.5–2:1.
+    let mark = pos2(tr.left() - 18.0 * s, r.center().y);
+    let mr = Align2::RIGHT_CENTER.anchor_size(mark, p.layout_no_wrap("Fractadyne".to_owned(), face::maker(19.0 * s), ink::MAKER_RED).size());
+    let badge = mr.expand2(vec2(8.0, 2.0) * s);
+    p.rect_filled(badge.translate(vec2(0.0, 1.0 * s)), 4.0 * s, Color32::from_black_alpha(120));
+    p.rect_filled(badge, 4.0 * s, ink::FACE_DARK);
+    p.rect_stroke(badge, 4.0 * s, Stroke::new(1.0_f32, Color32::from_rgb(0x55, 0x5a, 0x60)), egui::StrokeKind::Inside);
     p.text(mark, Align2::RIGHT_CENTER, "Fractadyne", face::maker(19.0 * s), ink::MAKER_RED);
 }
 
@@ -568,7 +565,7 @@ fn draw_row1(p: &Painter, layer: Layer, r: Rect, s: f32, inp: &Inputs, hits: &mu
         let label = format!("T{k}");
         let font = face::narrow(10.0 * s);
         let lr = if layer == Layer::Static {
-            p.text(pos2(lx, ly), Align2::RIGHT_CENTER, &label, font, ink::ENGRAVE_DIM)
+            paint::tracked(p, pos2(lx, ly), Align2::RIGHT_CENTER, &label, font, ink::ENGRAVE_DIM, 0.0, true)
         } else {
             Align2::RIGHT_CENTER.anchor_size(pos2(lx, ly), p.layout_no_wrap(label, font, ink::ENGRAVE_DIM).size())
         };
@@ -871,7 +868,7 @@ fn draw_scope(p: &Painter, layer: Layer, r: Rect, s: f32, m: &Model) {
         }
         let f = face::narrow(10.0 * s);
         let mut x = r.left() + 6.0 * s;
-        for (label, col) in [("MOVING", fade(ink::PHOSPHOR_TEXT, 0.8)), ("PIN", Color32::from_rgb(0xff, 0xc8, 0x78)), ("WORKER", ink::LAMP_BLUE), ("TILE", Color32::from_rgb(0xff, 0xec, 0xc8))] {
+        for (label, col) in [("MOVING", fade(ink::PHOSPHOR_TEXT, 0.8)), ("PIN", Color32::from_rgb(0xff, 0xc8, 0x78)), ("WORKER", ink::LAMP_BLUE), ("TILE", Color32::from_rgb(0xff, 0xec, 0xc8)), ("SSAA", ink::SSAA)] {
             let lr = p.text(pos2(x, r.top() + 4.0 * s), Align2::LEFT_TOP, label, f.clone(), col);
             x = lr.right() + 8.0 * s;
         }
@@ -901,7 +898,7 @@ fn draw_scope(p: &Painter, layer: Layer, r: Rect, s: f32, m: &Model) {
         bar(c.ms[Pass::Probe as usize], Color32::from_rgba_unmultiplied(90, 200, 120, (a * 0.45 * 255.0) as u8));
         bar(c.ms[Pass::Pin as usize] + c.ms[Pass::Split as usize], price_color(c.ms[Pass::Pin as usize] + c.ms[Pass::Split as usize], a));
         bar(c.ms[Pass::Tile as usize], Color32::from_rgba_unmultiplied(255, 236, 200, (a * 0.8 * 255.0) as u8));
-        bar(c.ms[Pass::Ssaa as usize], Color32::from_rgba_unmultiplied(140, 255, 112, (a * 0.6 * 255.0) as u8));
+        bar(c.ms[Pass::Ssaa as usize], fade(ink::SSAA, a * 0.7));
         bar(c.ms[Pass::Worker as usize], Color32::from_rgba_unmultiplied(154, 216, 255, (a * 0.75 * 255.0) as u8));
         // A pass that ran with no timing back by now: a hollow mark at the baseline.
         let ran_untimed = (0..7).any(|k| c.ran[k] && c.ms[k] <= 0.0);
