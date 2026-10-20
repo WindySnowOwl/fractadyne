@@ -136,6 +136,9 @@ pub(crate) struct Overlay {
     pub(crate) pinned_help: Option<&'static str>,
     /// The static layer's shapes, kept between frames (`panel::Statics`).
     statics: panel::Statics,
+    /// The case's hammertone ([`paint::hammertone`]), generated and uploaded the first time the
+    /// panel opens.
+    hammer: Option<egui::TextureHandle>,
     /// The panel's own UI-thread cost while open (design/blinkenlights.md, "Cost": ≤ 0.5 ms a frame):
     /// the sum and worst of the frames since the last log line, and how many; and each section's
     /// sum (`panel::SECTIONS`).
@@ -165,6 +168,7 @@ impl Overlay {
             cost: (0.0, 0.0, 0),
             sections: [0.0; 11],
             statics: panel::Statics::default(),
+            hammer: None,
         }
     }
 
@@ -275,7 +279,13 @@ impl Overlay {
         let version = format!("v{}", env!("CARGO_PKG_VERSION"));
         let mut hits = Vec::new();
         let mut sections = [0.0f64; 11];
-        let inp = panel::Inputs { model: &self.model, engine: &self.engine, clock: &clock, version: &version, fe_from, df32_from };
+        let hammer = self
+            .hammer
+            .get_or_insert_with(|| {
+                ctx.load_texture("blinken-hammertone", paint::hammertone(paint::HAMMER_TILE, 0x4a11_e7), egui::TextureOptions::LINEAR_REPEAT)
+            })
+            .id();
+        let inp = panel::Inputs { model: &self.model, engine: &self.engine, clock: &clock, version: &version, fe_from, df32_from, hammer };
         let opacity = self.opacity;
         let area = egui::Area::new(Id::new("fractadyne.blinken"))
             .fixed_pos(at)

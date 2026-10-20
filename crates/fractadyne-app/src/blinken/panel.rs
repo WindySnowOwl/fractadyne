@@ -113,6 +113,8 @@ pub(crate) struct Inputs<'a> {
     /// The depth (log2 magnification) where floatexp takes over, and where df32 does.
     pub(crate) fe_from: f32,
     pub(crate) df32_from: f32,
+    /// The case's hammertone tile ([`paint::hammertone`]), uploaded once with a repeating sampler.
+    pub(crate) hammer: egui::TextureId,
 }
 
 /// Which of the two layers a drawing call is making.
@@ -347,7 +349,7 @@ fn tessellate(ctx: &egui::Context, shapes: Vec<ClippedShape>) -> Vec<ClippedShap
 fn layout(p: &Painter, layer: Layer, rect: Rect, width: f32, s: f32, size: Size, inp: &Inputs, texts: &[String; 4], hits: &mut Vec<Hit>, cost: &mut [f64; 11]) {
     let mut t = std::time::Instant::now();
     if layer == Layer::Static {
-        draw_case(p, rect, s);
+        draw_case(p, rect, s, inp.hammer);
     }
     let inner_l = rect.left() + PAD_X * s;
     let inner_w = (width - 2.0 * PAD_X) * s;
@@ -397,29 +399,18 @@ fn layout(p: &Painter, layer: Layer, rect: Rect, width: f32, s: f32, size: Size,
     lap(&mut t, cost, 10);
 }
 
-/// The panel's case: anodized gradient, bevel, four screws.
-fn draw_case(p: &Painter, r: Rect, s: f32) {
+/// The panel's case: hammertone paint, a light falling off down it, a bevel and four screws.
+fn draw_case(p: &Painter, r: Rect, s: f32, hammer: egui::TextureId) {
     p.rect_filled(r.translate(vec2(0.0, 6.0 * s)), 9.0 * s, Color32::from_black_alpha(90));
-    p.rect_filled(r, 7.0 * s, ink::PANEL);
-    let mid = r.top() + r.height() * 0.3;
-    paint::vgradient(p, Rect::from_min_max(r.left_top() + vec2(1.0, 1.0), pos2(r.right() - 1.0, mid)), ink::PANEL_HI, ink::PANEL);
-    paint::vgradient(p, Rect::from_min_max(pos2(r.left() + 1.0, mid), r.right_bottom() - vec2(1.0, 1.0)), ink::PANEL, ink::PANEL_LO);
-    // A brushed grain: faint vertical hairlines.
-    let mut x = r.left() + 3.0;
-    let mut m = Mesh::default();
-    while x < r.right() - 3.0 {
-        let c = Color32::from_white_alpha(if ((x as i32) / 3) % 2 == 0 { 3 } else { 0 });
-        let i = m.vertices.len() as u32;
-        m.colored_vertex(pos2(x, r.top() + 2.0), c);
-        m.colored_vertex(pos2(x + 1.0, r.top() + 2.0), c);
-        m.colored_vertex(pos2(x + 1.0, r.bottom() - 2.0), c);
-        m.colored_vertex(pos2(x, r.bottom() - 2.0), c);
-        m.add_triangle(i, i + 1, i + 2);
-        m.add_triangle(i, i + 2, i + 3);
-        x += 3.0;
-    }
-    p.add(Shape::mesh(m));
-    p.rect_stroke(r, 7.0 * s, Stroke::new(1.0_f32, Color32::from_rgb(0x42, 0x47, 0x4e)), egui::StrokeKind::Inside);
+    // One texel a panel unit, so the dents scale with the panel; the tile repeats across it.
+    let tile = paint::HAMMER_TILE as f32 * s;
+    let uv = Rect::from_min_max(pos2(0.0, 0.0), pos2(r.width() / tile, r.height() / tile));
+    p.add(egui::epaint::RectShape::filled(r, 7.0 * s, Color32::WHITE).with_texture(hammer, uv));
+    // The light falls off down the case (clear of the rounded corners).
+    let (top, bot, mid) = (r.top() + 7.0 * s, r.bottom() - 7.0 * s, r.top() + r.height() * 0.3);
+    paint::vgradient(p, Rect::from_min_max(pos2(r.left() + 1.0, top), pos2(r.right() - 1.0, mid)), Color32::from_white_alpha(8), Color32::TRANSPARENT);
+    paint::vgradient(p, Rect::from_min_max(pos2(r.left() + 1.0, mid), pos2(r.right() - 1.0, bot)), Color32::TRANSPARENT, Color32::from_black_alpha(55));
+    p.rect_stroke(r, 7.0 * s, Stroke::new(1.0_f32, Color32::from_rgb(0x4a, 0x50, 0x57)), egui::StrokeKind::Inside);
     p.line_segment([r.left_top() + vec2(8.0, 1.5), r.right_top() + vec2(-8.0, 1.5)], Stroke::new(1.0_f32, Color32::from_white_alpha(16)));
     for c in [r.left_top() + vec2(11.0, 11.0) * s, r.right_top() + vec2(-11.0, 11.0) * s, r.left_bottom() + vec2(11.0, -11.0) * s, r.right_bottom() + vec2(-11.0, -11.0) * s] {
         screw(p, c, 5.5 * s);
@@ -449,8 +440,14 @@ fn draw_plate(p: &Painter, r: Rect, s: f32, inp: &Inputs) {
     paint::tracked(p, pos2(r.left() + 4.0 * s, r.center().y), Align2::LEFT_CENTER, "LIVE RENDER · FRONT PANEL", face::engrave(14.0 * s), ink::ENGRAVE, 4.2 * s, true);
     let tag = format!("MODEL FD-B · {}", inp.version.to_uppercase());
     let tr = paint::tracked(p, pos2(r.right() - 4.0 * s, r.center().y), Align2::RIGHT_CENTER, &tag, face::engrave(11.0 * s), ink::ENGRAVE_DIM, 1.8 * s, true);
-    let mark = pos2(tr.left() - 12.0 * s, r.center().y);
-    p.text(mark + vec2(0.0, -1.0), Align2::RIGHT_CENTER, "Fractadyne", face::maker(19.0 * s), Color32::from_black_alpha(150));
+    // The maker's mark on its own enamelled badge: red on the hammertone itself would read at
+    // 1.5–2:1.
+    let mark = pos2(tr.left() - 18.0 * s, r.center().y);
+    let mr = Align2::RIGHT_CENTER.anchor_size(mark, p.layout_no_wrap("Fractadyne".to_owned(), face::maker(19.0 * s), ink::MAKER_RED).size());
+    let badge = mr.expand2(vec2(8.0, 2.0) * s);
+    p.rect_filled(badge.translate(vec2(0.0, 1.0 * s)), 4.0 * s, Color32::from_black_alpha(120));
+    p.rect_filled(badge, 4.0 * s, ink::FACE_DARK);
+    p.rect_stroke(badge, 4.0 * s, Stroke::new(1.0_f32, Color32::from_rgb(0x55, 0x5a, 0x60)), egui::StrokeKind::Inside);
     p.text(mark, Align2::RIGHT_CENTER, "Fractadyne", face::maker(19.0 * s), ink::MAKER_RED);
 }
 
@@ -568,7 +565,7 @@ fn draw_row1(p: &Painter, layer: Layer, r: Rect, s: f32, inp: &Inputs, hits: &mu
         let label = format!("T{k}");
         let font = face::narrow(10.0 * s);
         let lr = if layer == Layer::Static {
-            p.text(pos2(lx, ly), Align2::RIGHT_CENTER, &label, font, ink::ENGRAVE_DIM)
+            paint::tracked(p, pos2(lx, ly), Align2::RIGHT_CENTER, &label, font, ink::ENGRAVE_DIM, 0.0, true)
         } else {
             Align2::RIGHT_CENTER.anchor_size(pos2(lx, ly), p.layout_no_wrap(label, font, ink::ENGRAVE_DIM).size())
         };
@@ -736,91 +733,165 @@ fn dashed(p: &Painter, a: Pos2, b: Pos2, st: Stroke, dash: f32) {
 }
 
 /// The tile plane: what this frame's pass covered.
-fn draw_tiles(p: &Painter, layer: Layer, r: Rect, s: f32, m: &Model) {
-    if layer == Layer::Static {
-        p.rect_filled(r, 6.0 * s, Color32::from_rgb(0x0d, 0x0b, 0x08));
-        return;
-    }
-    let res = match &m.plane {
-        Plane::Whole { res, .. } | Plane::Split { res, .. } | Plane::Ssaa { res, .. } => *res,
-        Plane::Grid(g) => g.res,
-        Plane::Idle(_) => m.snap.res,
-    };
+/// The side of a split refresh's tiles, px: a pass covers every tile whose `(x + y) mod k` is its
+/// own (the renderer's interleave).
+const SPLIT_TILE_PX: u32 = 16;
+
+/// The tiles instrument's face, behind the plane.
+const TILES_FACE: Color32 = Color32::from_rgb(0x0d, 0x0b, 0x08);
+/// The plane's levels, as shares of amber mixed into the face: the plane itself, a tile still to
+/// come, a tile done, and the tiles of this frame's pass (up to 1 while its glow lasts). Opaque
+/// mixes, not amber at an alpha: egui premultiplies a faint colour in linear light, so amber at
+/// 0.04 alpha showed as a quarter-bright brown and done tiles at 0.3 nearly matched the pass's
+/// own at 0.95 — the last pass of a split read as the whole plane lit (2026-10-20).
+const LEVEL_PLANE: f32 = 0.07;
+const LEVEL_TO_COME: f32 = 0.13;
+const LEVEL_DONE: f32 = 0.38;
+const LEVEL_PASS: f32 = 0.7;
+
+/// The plane's colour at a level (a share of amber in the face).
+fn level(t: f32) -> Color32 {
+    paint::mix(TILES_FACE, ink::AMBER, t)
+}
+
+/// Where the picture's plane sits in the tiles instrument `r` (its aspect, scaled to fit above the
+/// captions), and the scale from picture px to panel px.
+fn plane_rect(r: Rect, s: f32, res: (u32, u32)) -> (Rect, f32) {
     let (rw, rh) = (res.0.max(1) as f32, res.1.max(1) as f32);
     let cap = 30.0 * s;
     let sc = ((r.width() - 12.0 * s) / rw).min((r.height() - cap - 8.0 * s) / rh);
     let (pw, ph) = (rw * sc, rh * sc);
-    let plane = Rect::from_min_size(pos2(r.center().x - pw / 2.0, r.top() + 6.0 * s), vec2(pw, ph));
-    let amber = |a: f32| fade(ink::AMBER, a);
-    p.rect_filled(plane, 0.0_f32, amber(0.04));
-    let (l1, tl, tr): (String, String, String);
+    (Rect::from_min_size(pos2(r.center().x - pw / 2.0, r.top() + 6.0 * s), vec2(pw, ph)), sc)
+}
+
+/// The resolution a plane is drawn at.
+fn plane_res(m: &Model) -> (u32, u32) {
     match &m.plane {
-        Plane::Whole { res, band, glow } => {
-            p.rect_filled(plane, 0.0_f32, amber(0.08 + 0.6 * glow));
-            l1 = match band {
+        Plane::Whole { res, .. } | Plane::Split { res, .. } | Plane::Ssaa { res, .. } => *res,
+        Plane::Grid(g) => g.res,
+        Plane::Idle(_) => m.snap.res,
+    }
+}
+
+/// A split refresh's 16-px tiles across a picture: (columns, rows).
+fn split_cells(res: (u32, u32)) -> (u32, u32) {
+    (res.0.max(1).div_ceil(SPLIT_TILE_PX), res.1.max(1).div_ceil(SPLIT_TILE_PX))
+}
+
+/// The smallest cell the plane draws, panel px: below it a grid of cells aliases into stripes and
+/// plaids, and its gaps eat the cells (a finished 16-px grid read as a field of dots at real size).
+const MIN_CELL_PX: f32 = 5.0;
+/// Tiles at least this big on the plane keep a hairline gap between them.
+const GAP_CELL_PX: f32 = 6.0;
+
+/// The cells a split refresh is drawn with on a `plane`: its real 16-px tiles where they are big
+/// enough to see, else the same interleave at the smallest legible cell — a diagram of the sets,
+/// which the captions keep honest ("TILE 16 PX", the tiles a frame).
+fn split_display(plane: Rect, res: (u32, u32)) -> (u32, u32) {
+    let (cols, rows) = split_cells(res);
+    if plane.width() / cols as f32 >= MIN_CELL_PX {
+        (cols, rows)
+    } else {
+        ((plane.width() / MIN_CELL_PX).floor().max(1.0) as u32, (plane.height() / MIN_CELL_PX).floor().max(1.0) as u32)
+    }
+}
+
+/// The tiles instrument's captions: the line under the plane, then the tile size and the tiles a
+/// frame (or a sample).
+fn tile_labels(plane: &Plane, res: (u32, u32)) -> (String, String, String) {
+    match plane {
+        Plane::Whole { res, band, .. } => (
+            match band {
                 Some((lo, hi)) => format!("PIN PASS · BAND {}–{}", group(*lo as u64), group(*hi as u64)),
                 None => "MOVING FRAME · WHOLE PICTURE".to_owned(),
-            };
-            tl = format!("TILE {}×{}", res.0, res.1);
-            tr = "1 TILE/FRAME".to_owned();
+            },
+            format!("TILE {}×{}", res.0, res.1),
+            "1 TILE/FRAME".to_owned(),
+        ),
+        Plane::Split { k, j, .. } => {
+            let k = (*k).max(1);
+            let (cols, rows) = split_cells(res);
+            (
+                format!("SPLIT REFRESH · PASS {} OF {}", j + 1, k),
+                format!("TILE {SPLIT_TILE_PX} PX"),
+                format!("{}/FRAME", group(((cols * rows) as f32 / k as f32).ceil() as u64)),
+            )
+        }
+        Plane::Grid(g) => {
+            let done = g.done.iter().filter(|d| **d).count();
+            // A tile dearer than the admission goes out in strips: this frame sends part of one.
+            let part = g.last.filter(|&(_, _, rows, piece)| !g.complete && piece < rows).map(|(_, _, rows, piece)| piece as f32 / rows as f32);
+            (
+                if g.complete {
+                    format!("SETTLE GRID {}×{} · DONE", g.cols, g.rows)
+                } else {
+                    format!("SETTLE GRID {}×{} · {} OF {} DONE{}", g.cols, g.rows, done, g.done.len(), if part.is_some() { " · IN STRIPS" } else { "" })
+                },
+                format!("TILE {} PX", g.side),
+                match part {
+                    _ if g.complete => "0/FRAME".to_owned(),
+                    Some(f) => format!("{f:.2} TILE/FRAME"),
+                    None => "1 TILE/FRAME".to_owned(),
+                },
+            )
+        }
+        Plane::Ssaa { res, samples, .. } => (format!("SSAA SAMPLE {samples} · WHOLE FRAME"), format!("TILE {}×{}", res.0, res.1), "1 TILE/SAMPLE".to_owned()),
+        Plane::Idle(why) => ((*why).to_owned(), "NO PASS".to_owned(), "0/FRAME".to_owned()),
+    }
+}
+
+fn draw_tiles(p: &Painter, layer: Layer, r: Rect, s: f32, m: &Model) {
+    if layer == Layer::Static {
+        p.rect_filled(r, 6.0 * s, TILES_FACE);
+        return;
+    }
+    let res = plane_res(m);
+    let (plane, sc) = plane_rect(r, s, res);
+    let amber = |a: f32| fade(ink::AMBER, a);
+    let pass = |glow: f32| level(LEVEL_PASS + (1.0 - LEVEL_PASS) * glow);
+    p.rect_filled(plane, 0.0_f32, level(LEVEL_PLANE));
+    match &m.plane {
+        Plane::Whole { glow, .. } => {
+            p.rect_filled(plane, 0.0_f32, pass(*glow));
         }
         Plane::Split { k, j, glow, .. } => {
-            let side = 16.0;
-            let (cols, rows) = ((rw / side).ceil() as u32, (rh / side).ceil() as u32);
-            let (cw, ch) = (pw / cols as f32, ph / rows as f32);
+            let (cols, rows) = split_display(plane, res);
+            let (cw, ch) = (plane.width() / cols as f32, plane.height() / rows as f32);
+            let gap = if cw >= GAP_CELL_PX { 0.5 } else { 0.0 };
             let mut mesh = Mesh::default();
             let k = (*k).max(1);
             for y in 0..rows {
                 for x in 0..cols {
                     let set = (x + y) % k;
-                    let a = if set == *j { 0.3 + 0.65 * glow } else if set < *j { 0.3 } else { 0.04 };
+                    let c = if set == *j { pass(*glow) } else if set < *j { level(LEVEL_DONE) } else { level(LEVEL_TO_COME) };
                     let c0 = pos2(plane.left() + x as f32 * cw, plane.top() + y as f32 * ch);
-                    let cell = Rect::from_min_size(c0, vec2((cw - 0.5).max(1.0), (ch - 0.5).max(1.0)));
-                    mesh.add_colored_rect(cell, amber(a));
+                    let cell = Rect::from_min_size(c0, vec2(cw - gap, ch - gap));
+                    mesh.add_colored_rect(cell, c);
                 }
             }
             p.add(Shape::mesh(mesh));
-            l1 = format!("SPLIT REFRESH · PASS {} OF {}", j + 1, k);
-            tl = "TILE 16 PX".to_owned();
-            tr = format!("{}/FRAME", group(((cols * rows) as f32 / k as f32).ceil() as u64));
         }
         Plane::Grid(g) => {
             let cs = g.side as f32 * sc;
-            draw_grid(p, plane, cs, g, |i| (if g.done[i] { 0.4 } else { 0.05 }) + 0.5 * g.flash[i]);
+            // A tile just finished flashes toward the pass's level and settles to done.
+            draw_grid(p, plane, cs, g, |i| {
+                let base = if g.done[i] { LEVEL_DONE } else { LEVEL_TO_COME };
+                level(base + (1.0 - base) * g.flash[i].clamp(0.0, 1.0))
+            });
             if let Some((idx, sent, rows, _)) = g.last.filter(|_| !g.complete) {
                 let t = tile_rect(plane, cs, g.cols, idx);
                 if sent < rows {
-                    p.rect_filled(Rect::from_min_size(t.min, vec2(t.width(), t.height() * sent as f32 / rows as f32)), 0.0_f32, amber(0.75));
+                    p.rect_filled(Rect::from_min_size(t.min, vec2(t.width(), t.height() * sent as f32 / rows as f32)), 0.0_f32, pass(1.0));
                 }
                 p.rect_stroke(t, 0.0_f32, Stroke::new(1.2 * s, Color32::from_rgb(0xff, 0xe2, 0xb0)), egui::StrokeKind::Inside);
             }
-            let done = g.done.iter().filter(|d| **d).count();
-            // A tile dearer than the admission goes out in strips: this frame sends part of one.
-            let part = g.last.filter(|&(_, _, rows, piece)| !g.complete && piece < rows).map(|(_, _, rows, piece)| piece as f32 / rows as f32);
-            l1 = if g.complete {
-                format!("SETTLE GRID {}×{} · DONE", g.cols, g.rows)
-            } else {
-                format!("SETTLE GRID {}×{} · {} OF {} DONE{}", g.cols, g.rows, done, g.done.len(), if part.is_some() { " · IN STRIPS" } else { "" })
-            };
-            tl = format!("TILE {} PX", g.side);
-            tr = match part {
-                _ if g.complete => "0/FRAME".to_owned(),
-                Some(f) => format!("{f:.2} TILE/FRAME"),
-                None => "1 TILE/FRAME".to_owned(),
-            };
         }
-        Plane::Ssaa { res, samples, glow } => {
-            p.rect_filled(plane, 0.0_f32, amber(0.4 + 0.35 * glow));
-            l1 = format!("SSAA SAMPLE {samples} · WHOLE FRAME");
-            tl = format!("TILE {}×{}", res.0, res.1);
-            tr = "1 TILE/SAMPLE".to_owned();
+        Plane::Ssaa { glow, .. } => {
+            p.rect_filled(plane, 0.0_f32, level(LEVEL_DONE + (1.0 - LEVEL_DONE) * 0.6 * glow));
         }
-        Plane::Idle(why) => {
-            l1 = (*why).to_owned();
-            tl = "NO PASS".to_owned();
-            tr = "0/FRAME".to_owned();
-        }
+        Plane::Idle(_) => {}
     }
+    let (l1, tl, tr) = tile_labels(&m.plane, res);
     p.rect_stroke(plane.expand(0.5), 0.0_f32, Stroke::new(1.0_f32, amber(0.3)), egui::StrokeKind::Outside);
     p.text(pos2(r.center().x, r.bottom() - 17.0 * s), Align2::CENTER_BOTTOM, &l1, face::narrow(10.0 * s), Color32::from_rgb(0xa8, 0x9f, 0x88));
     let f = face::narrow(12.0 * s);
@@ -839,12 +910,14 @@ fn tile_rect(plane: Rect, cs: f32, cols: u32, i: u32) -> Rect {
     Rect::from_min_max(min, max)
 }
 
-fn draw_grid(p: &Painter, plane: Rect, cs: f32, g: &super::model::Grid, alpha: impl Fn(usize) -> f32) {
+fn draw_grid(p: &Painter, plane: Rect, cs: f32, g: &super::model::Grid, color: impl Fn(usize) -> Color32) {
     let mut mesh = Mesh::default();
+    // Small tiles meet edge to edge: a gap round a 2-px tile leaves almost nothing of it.
+    let gap = if cs >= GAP_CELL_PX { 0.75 } else { 0.0 };
     for i in 0..g.done.len() {
-        let t = tile_rect(plane, cs, g.cols, i as u32).shrink(0.75);
+        let t = tile_rect(plane, cs, g.cols, i as u32).shrink(gap);
         if t.width() > 0.0 && t.height() > 0.0 {
-            mesh.add_colored_rect(t, fade(ink::AMBER, alpha(i).clamp(0.0, 1.0)));
+            mesh.add_colored_rect(t, color(i));
         }
     }
     p.add(Shape::mesh(mesh));
@@ -871,7 +944,7 @@ fn draw_scope(p: &Painter, layer: Layer, r: Rect, s: f32, m: &Model) {
         }
         let f = face::narrow(10.0 * s);
         let mut x = r.left() + 6.0 * s;
-        for (label, col) in [("MOVING", fade(ink::PHOSPHOR_TEXT, 0.8)), ("PIN", Color32::from_rgb(0xff, 0xc8, 0x78)), ("WORKER", ink::LAMP_BLUE), ("TILE", Color32::from_rgb(0xff, 0xec, 0xc8))] {
+        for (label, col) in [("MOVING", fade(ink::PHOSPHOR_TEXT, 0.8)), ("PIN", Color32::from_rgb(0xff, 0xc8, 0x78)), ("WORKER", ink::LAMP_BLUE), ("TILE", Color32::from_rgb(0xff, 0xec, 0xc8)), ("SSAA", ink::SSAA)] {
             let lr = p.text(pos2(x, r.top() + 4.0 * s), Align2::LEFT_TOP, label, f.clone(), col);
             x = lr.right() + 8.0 * s;
         }
@@ -901,7 +974,7 @@ fn draw_scope(p: &Painter, layer: Layer, r: Rect, s: f32, m: &Model) {
         bar(c.ms[Pass::Probe as usize], Color32::from_rgba_unmultiplied(90, 200, 120, (a * 0.45 * 255.0) as u8));
         bar(c.ms[Pass::Pin as usize] + c.ms[Pass::Split as usize], price_color(c.ms[Pass::Pin as usize] + c.ms[Pass::Split as usize], a));
         bar(c.ms[Pass::Tile as usize], Color32::from_rgba_unmultiplied(255, 236, 200, (a * 0.8 * 255.0) as u8));
-        bar(c.ms[Pass::Ssaa as usize], Color32::from_rgba_unmultiplied(140, 255, 112, (a * 0.6 * 255.0) as u8));
+        bar(c.ms[Pass::Ssaa as usize], fade(ink::SSAA, a * 0.7));
         bar(c.ms[Pass::Worker as usize], Color32::from_rgba_unmultiplied(154, 216, 255, (a * 0.75 * 255.0) as u8));
         // A pass that ran with no timing back by now: a hollow mark at the baseline.
         let ran_untimed = (0..7).any(|k| c.ran[k] && c.ms[k] <= 0.0);
@@ -1302,3 +1375,7 @@ fn draw_pixels(p: &Painter, layer: Layer, r: Rect, s: f32, inp: &Inputs) {
 #[cfg(test)]
 #[path = "../../tests/unit/blinken/panel/tests.rs"]
 mod tests;
+
+#[cfg(test)]
+#[path = "../../tests/unit/blinken/panel/tile_plane_tests.rs"]
+mod tile_plane_tests;
