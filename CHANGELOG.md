@@ -59,6 +59,12 @@ published as the pre-releases `v0.2.41-beta.1` to `v0.2.41-beta.150`, and a "bet
 
 Changes after 0.3.0-beta.1:
 
+- **Minibrots inside minibrots iterate faster (0.3.0-beta.20).** Near a minibrot nested in another,
+  a pixel takes whole periods of its parent per step. Most of those steps could not use the skip
+  table, and each searched it first anyway; they now go straight to the step, reuse the reference
+  value they already have, and use the cheaper arithmetic when it is exact. At the benchmark's
+  period-15,248 and period-121,984 minibrots a 4K render's graphics time falls 12 to 14%, with
+  identical images.
 - **Deep exports with high iteration counts finish sooner (0.3.0-beta.20).** A deep export iterates
   in passes, each kept short enough for the graphics driver's watchdog, and every pass was sized from
   the slowest steps any earlier pass had shown, so one slow pass shrank all the rest: a 4K export of
