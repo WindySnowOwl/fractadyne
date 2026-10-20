@@ -5,6 +5,14 @@
 
 use astro_float::BigFloat;
 
+/// `2^k` for `k` in f64's normal exponent range `[-1022, 1023]`, built from its bits: exact, as
+/// `powi` is for a power of two, without `powi`'s loop.
+#[inline]
+fn pow2_normal(k: i32) -> f64 {
+    debug_assert!((-1022..=1023).contains(&k));
+    f64::from_bits(((k + 1023) as u64) << 52)
+}
+
 fn ldexp_f64(m: f64, e: i32) -> f64 {
     if e >= -1022 {
         m * 2f64.powi(e.min(1023))
@@ -48,7 +56,7 @@ impl std::ops::Add for FloatExp {
         if de > 120 {
             return hi;
         }
-        FloatExp::norm(hi.m + lo.m * 2f64.powi(-de), hi.e)
+        FloatExp::norm(hi.m + lo.m * pow2_normal(-de), hi.e)
     }
 }
 impl std::ops::Sub for FloatExp {
@@ -61,25 +69,30 @@ impl std::ops::Sub for FloatExp {
 impl FloatExp {
     pub const ZERO: FloatExp = FloatExp { m: 0.0, e: 0 };
 
-    fn norm(mut m: f64, mut e: i32) -> FloatExp {
+    /// ⭐Hot: every `*`, `+` and conversion ends here. A normal `f64`'s exponent field IS
+    /// `floor(log2|m|)`, so one exact scale by `2^-k` puts `|m|` in `[1, 2)`: the same bits the
+    /// estimate-and-adjust loop it replaces reached (`log2`, two `powi`s, then halving or doubling;
+    /// every step of either is an exact power-of-two scaling). That loop made the period probe
+    /// beside the bignum reference walk (`PeriodProbe`, ~14 calls a step) cost 28% of the walk at
+    /// 1.2e148× (905 → 1,157 ms at 685 bits, found by bisecting beta.18's slower references,
+    /// 2026-10-19). It also never ended below 2^-1023, where its `2^-k` overflowed to infinity;
+    /// a subnormal is lifted by an exact 2^64 instead.
+    fn norm(m: f64, e: i32) -> FloatExp {
         if m == 0.0 || !m.is_finite() {
             return FloatExp { m, e: 0 };
         }
         let a = m.abs();
-        if !(1.0..2.0).contains(&a) {
-            let k = a.log2().floor() as i32;
-            m *= 2f64.powi(-k);
-            e += k;
-            while m.abs() >= 2.0 {
-                m *= 0.5;
-                e += 1;
-            }
-            while m.abs() < 1.0 {
-                m *= 2.0;
-                e -= 1;
-            }
+        if (1.0..2.0).contains(&a) {
+            return FloatExp { m, e };
         }
-        FloatExp { m, e }
+        let biased = ((a.to_bits() >> 52) & 0x7ff) as i32;
+        if biased == 0 {
+            return FloatExp::norm(m * pow2_normal(64), e - 64);
+        }
+        let k = biased - 1023;
+        // 2^-1023 is itself subnormal: take that one in two exact steps.
+        let m = if k == 1023 { m * 0.5 * pow2_normal(-1022) } else { m * pow2_normal(-k) };
+        FloatExp { m, e: e + k }
     }
 
     pub fn from_f64(v: f64) -> FloatExp {
@@ -234,3 +247,7 @@ impl CFloatExp {
         ([rh, rl, ih, il], e)
     }
 }
+
+#[cfg(test)]
+#[path = "../tests/unit/floatexp/norm_tests.rs"]
+mod norm_tests;

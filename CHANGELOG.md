@@ -59,6 +59,13 @@ published as the pre-releases `v0.2.41-beta.1` to `v0.2.41-beta.150`, and a "bet
 
 Changes after 0.3.0-beta.1:
 
+- **Reference orbits build a third faster again below about 1e1000× (0.3.0-beta.20).** Since
+  beta.18, a reference orbit at moderate depths took longer to build than in beta.17: at the
+  benchmark's 1.2e148× view, 1.57 s instead of 0.94 s (standard build). The extended-range
+  arithmetic beside the high-precision walk, which watches for a minibrot's orbit closing and
+  tracks the precision each step needs, renormalized almost every number it produced through a
+  logarithm and a power of two. It now reads the exponent directly, with the same results bit for
+  bit. That reference now takes 1.05 s, and the skip table built from it 130 ms instead of 180.
 - **The palette keeps its contrast while zooming with a second graphics device (0.3.0-beta.20).**
   With "Normalize deep colors" on, the palette is spread over the escape counts in the picture,
   and the view learned that range only from its own refreshes. With a second device rendering
