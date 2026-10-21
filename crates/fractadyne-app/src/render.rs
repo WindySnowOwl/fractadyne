@@ -6565,17 +6565,29 @@ impl FractadyneApp {
             self.perf.hold_norm[vs] = None;
             self.perf.shown_norm[vs] = drawn;
         }
-        // ⭐U43's rule for the colour box too: a held snapshot is drawn with the box it was SEEN
-        // with. The decision sizes `aa_filter` for this frame's own pass, and a pin composing under
-        // the hold at a quarter or an eighth of the resolution asked for a 4-texel box, which the
-        // colour pass then applied to the HELD picture: under a same-card worker every pin blurred
-        // the picture on screen for its whole walk and it came back sharp when the pin landed (40 of
-        // 735 moving frames of a 16-octave glide, 2026-10-21). A worker frame entering the hold is
-        // drawn as every held frame is, point-sampled (`live_take`).
+        // ⭐THE COLOUR BOX IS THE SHOWN PICTURE'S, NOT THIS FRAME'S PASS'S. The decision sizes
+        // `aa_filter` for the pass this frame renders, before the pin and freeze verdicts, and the
+        // colour pass applied it to whatever the frame SHOWS: a pin composing under the hold at a
+        // quarter or an eighth of the resolution asked for a 4-texel box and blurred the held,
+        // full-resolution picture for the pin's whole walk (40 of 735 moving frames of a 16-octave
+        // glide with a same-card worker, 2026-10-21), and a frame expected to render that then froze
+        // stretched the old picture under the new pass's box. So a picture shown again — held, or
+        // re-sampled by a reprojection — is point-sampled while the view moves, as every held and
+        // reprojected frame already was by the decision's own rule; on a still view a held picture
+        // keeps the box it was seen with (U43's rule for the box), so composing the next tile or
+        // sample under it never changes how it looks. A worker frame is a held one (`live_take`).
         if hold_copy {
             self.perf.hold_aa[vs] = self.perf.shown_aa[vs];
         }
-        let aa_filter = if display_hold { self.perf.hold_aa[vs].unwrap_or(1) } else { aa_filter };
+        let aa_filter = if !(display_hold || reproject.is_some()) {
+            aa_filter
+        } else if interacting {
+            1
+        } else if display_hold {
+            self.perf.hold_aa[vs].unwrap_or(1)
+        } else {
+            self.perf.shown_aa[vs].unwrap_or(1)
+        };
         if !display_hold {
             self.perf.shown_aa[vs] = Some(aa_filter);
         }
