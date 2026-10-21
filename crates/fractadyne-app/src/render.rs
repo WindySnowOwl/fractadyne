@@ -4022,6 +4022,7 @@ impl FractadyneApp {
                 let vi = (self.dual && julia) as usize;
                 self.live_norm_cycle_offset(vi).map_or(0.0, |m| m.lo)
             },
+            palette_fade: fractadyne_gpu::PaletteFade::default(),
             aa_palette: crate::palette_aa_enabled(),
             lut,
             lut_smooth,
@@ -4064,6 +4065,7 @@ pub(crate) fn params_to_request(p: &fractadyne_gpu::MandelbrotParams) -> fractad
         // path stays on the classic linear map regardless of the session's setting.
         norm_mode: 0,
         norm_lo: 0.0,
+        palette_fade: fractadyne_gpu::PaletteFade::default(),
         aa_palette: false,
         glitch_on: 0,
         vignette: p.vignette,
@@ -6554,12 +6556,35 @@ impl FractadyneApp {
         let nm = drawn.map_or(NormMap { cycle: self.color_cycle(), offset: self.coloring.offset, mode: 0, lo: 0.0 }, |(mn, mx)| {
             self.norm_map_for(mn, mx)
         });
-        // The colour map this frame is drawn under, for judging how the palette moves frame to frame.
+        // ⭐…and a change of map KIND (the normalization on or off, linear or log) DISSOLVES from the
+        // last frame's map: no window glides from one kind to the other (`palette_fade_step`).
+        let (fade_state, palette_fade) =
+            palette_fade_step(self.perf.palette_fade[vs], nm, drawn.is_some(), user_sig, (self.perf.last_dt_ms / 1000.0) as f32);
+        self.perf.palette_fade[vs] = fade_state;
+        if !display_hold {
+            self.perf.hold_norm[vs] = None;
+            self.perf.shown_norm[vs] = drawn;
+        }
+        // ⭐U43's rule for the colour box too: a held snapshot is drawn with the box it was SEEN
+        // with. The decision sizes `aa_filter` for this frame's own pass, and a pin composing under
+        // the hold at a quarter or an eighth of the resolution asked for a 4-texel box, which the
+        // colour pass then applied to the HELD picture: under a same-card worker every pin blurred
+        // the picture on screen for its whole walk and it came back sharp when the pin landed (40 of
+        // 735 moving frames of a 16-octave glide, 2026-10-21). A worker frame entering the hold is
+        // drawn as every held frame is, point-sampled (`live_take`).
+        if hold_copy {
+            self.perf.hold_aa[vs] = self.perf.shown_aa[vs];
+        }
+        let aa_filter = if display_hold { self.perf.hold_aa[vs].unwrap_or(1) } else { aa_filter };
+        if !display_hold {
+            self.perf.shown_aa[vs] = Some(aa_filter);
+        }
+        // The colour map and box this frame is drawn under, for judging how the picture moves frame to frame.
         if crate::diag::trace_on("palette") {
             crate::diag::trace(
                 "palette",
                 format!(
-                    "map v={vs} f={} interacting={interacting} held={} mode={} cycle={:.6e} offset={:.6} lo={:.3} shown={:?}",
+                    "map v={vs} f={} interacting={interacting} held={} mode={} cycle={:.6e} offset={:.6} lo={:.3} shown={:?} fade={:.3} box={aa_filter}",
                     self.perf.frame_idx,
                     u8::from(held_map.is_some()),
                     nm.mode,
@@ -6567,12 +6592,9 @@ impl FractadyneApp {
                     nm.offset,
                     nm.lo,
                     self.perf.norm_shown[vs.min(1)],
+                    palette_fade.weight,
                 ),
             );
-        }
-        if !display_hold {
-            self.perf.hold_norm[vs] = None;
-            self.perf.shown_norm[vs] = drawn;
         }
         let (cycle_eff, offset_eff) = (nm.cycle, nm.offset);
 
@@ -6680,6 +6702,7 @@ impl FractadyneApp {
             offset: offset_eff,
             norm_mode: nm.mode,
             norm_lo: nm.lo,
+            palette_fade,
             aa_palette: crate::palette_aa_enabled(),
             lut,
             lut_smooth,
@@ -9165,6 +9188,9 @@ impl FractadyneApp {
                     if into_hold && mx > mn && self.live_norm_window(vi).is_some() {
                         self.perf.hold_norm[vb] = Some((Some((mn, mx)), self.norm_user_sig()));
                     }
+                    if into_hold {
+                        self.perf.hold_aa[vb] = Some(1);
+                    }
                 }
                 let stamp = if into_hold { 0 } else { self.perf.content[vsub].live_stamp };
                 worker_adopt = Some((d.frame, into_hold, stamp));
@@ -9445,6 +9471,12 @@ impl FractadyneApp {
             params.adopt = Some(g);
             params.adopt_hold = hold;
             params.adopt_stamp = stamp;
+            // Taken into the live texture, it is drawn as a worker frame in the hold is, point-sampled:
+            // the box this frame's decision sized was for the window's own pass, not this picture.
+            if !hold {
+                params.aa_filter = 1;
+                self.perf.shown_aa[vs] = Some(1);
+            }
         }
         if vi == 0 {
             let real = !caller_pan
@@ -11063,6 +11095,13 @@ pub(crate) struct DrawnNorm {
     tracking: bool,
 }
 
+impl DrawnNorm {
+    /// The drawn window has reached the window its picture wants.
+    pub(crate) fn arrived(&self) -> bool {
+        self.tracking
+    }
+}
+
 /// ⭐One frame of the drawn palette window. Each picture on screen wants a window: the live one
 /// (`norm_shown`, which glides by itself), or a held picture's own frozen one (U43), which a worker
 /// frame going into the hold brings with it. When the picture on screen changes source the wanted
@@ -11088,6 +11127,69 @@ pub(crate) fn drawn_norm_step(prev: Option<DrawnNorm>, want: Option<(f32, f32)>,
 #[cfg(test)]
 #[path = "../tests/unit/render/drawn_norm.rs"]
 mod drawn_norm;
+
+/// How long a dissolve between two kinds of palette map takes, seconds.
+pub(crate) const PALETTE_FADE_S: f32 = 0.4;
+
+/// A view's palette maps for dissolving between them (`Perf::palette_fade`).
+#[derive(Clone, Copy, Debug, Default, PartialEq)]
+pub(crate) struct PaletteFadeState {
+    /// The map the last frame was drawn under, whether it was a normalised one, and the user's
+    /// colouring then (`norm_user_sig`).
+    last: Option<(NormMap, bool, u64)>,
+    /// The dissolve under way: the map it fades from, and that map's remaining weight.
+    fade: Option<(NormMap, f32)>,
+}
+
+/// ⭐One frame of the palette dissolve. The drawn window (`drawn_norm_step`) glides within one kind
+/// of map, but the KIND can change too: "Normalize deep colors" switches the normalised map on or
+/// off as the field starts or stops aliasing, and a normalised map turns from linear to log as its
+/// range grows heavy-tailed. No window joins two kinds, and interpolating their parameters would
+/// sweep the colours through many palette cycles; drawn at once it is a cut, measured as one phase
+/// step of 0.22–0.33 of a palette cycle near the end of a 16-octave glide (2026-10-21). So a change of
+/// kind starts a dissolve from the last frame's map, which the colour pass blends in with a weight
+/// falling from 1 to 0 over [`PALETTE_FADE_S`]. The user's own colouring changing snaps instead, as
+/// every colour control does. Returns the new state and the fade this frame draws.
+pub(crate) fn palette_fade_step(
+    st: PaletteFadeState,
+    map: NormMap,
+    normalized: bool,
+    user_sig: u64,
+    dt_s: f32,
+) -> (PaletteFadeState, fractadyne_gpu::PaletteFade) {
+    // A slow frame advances the dissolve no more than a tenth of a second.
+    let dt = dt_s.clamp(0.0, 0.1);
+    let mut fade = st.fade.and_then(|(m, w)| {
+        let w = w - dt / PALETTE_FADE_S;
+        (w > 0.0).then_some((m, w))
+    });
+    if let Some((prev, was_normalized, sig)) = st.last {
+        if sig != user_sig {
+            fade = None;
+        } else if was_normalized != normalized || prev.mode != map.mode {
+            fade = Some((prev, 1.0));
+        }
+    }
+    let out = fade.map_or(fractadyne_gpu::PaletteFade::default(), |(m, w)| fractadyne_gpu::PaletteFade {
+        weight: w,
+        cycle: m.cycle,
+        offset: m.offset,
+        mode: m.mode,
+        lo: m.lo,
+    });
+    (PaletteFadeState { last: Some((map, normalized, user_sig)), fade }, out)
+}
+
+impl PaletteFadeState {
+    /// The weight left to the dissolve under way, 0 with none.
+    pub(crate) fn weight(&self) -> f32 {
+        self.fade.map_or(0.0, |(_, w)| w)
+    }
+}
+
+#[cfg(test)]
+#[path = "../tests/unit/render/palette_fade.rs"]
+mod palette_fade;
 
 /// Lower bound for the held-frame reprojection scale — how far the last good frame may be MAGNIFIED
 /// while a fresh reference builds. `jumped` means a jump stands between the held frame and the view

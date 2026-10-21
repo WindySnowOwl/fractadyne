@@ -5334,3 +5334,34 @@ pictures alternating):
   a cut between the normalised and the classic map that no window can glide. It switches on once
   early in every glide and off again near the end in about half of the runs without the worker; a
   cross-fade there is the open half.
+
+*Closed the same day (the maintainer: "work on those two open items").* (1) The KIND of map
+changing — the normalization switching on or off (`live_norm_window` → `None`), or a normalised map
+turning between linear and log (`norm_map_is_log`) — now DISSOLVES: `render::palette_fade_step`
+starts a fade from the last frame's map whose weight falls from 1 to 0 over `PALETTE_FADE_S` (0.4 s;
+a slow frame advances it at most 0.1 s), and the colour pass (`ColorU::fade_*`, `PaletteFade`,
+`coord_under`/`coord_fade`, `shade_aa`'s second footprint) shades each tap under both maps and mixes
+them. The user's own colouring changing (`norm_user_sig`) snaps, as every colour control does. Three
+glides without the worker at the maintainer's settings: each had the switch to the normalised (log)
+map before the glide and the switch back to classic near its end (frames 919–950), and every one is a
+dissolve of 48–51 frames, where the old build cut in one frame (0.22–0.33 of a palette cycle). The
+selftest's `palette-fade` check colours one iteration buffer three ways (map A, map B, A fading from
+B at 1/4) and holds the third to 3/4 A + 1/4 B (6e-8; a shader ignoring the fade is off by up to
+0.25). A uniform test now holds each `fade_*` field's offset in `ColorU` to the Rust struct's.
+(2) The blur: the "quarter-resolution frames" were not shown frames at all. All 40 widened boxes of
+the worker glide were PIN frames serving the HOLD (`display_hold`): the decision sized `aa_filter` for
+the pin composing underneath at 1/4 or 1/8 resolution, and the colour pass applied it to the held,
+full-resolution picture — blurred for the pin's whole walk, sharp when it landed. U43's rule now
+covers the box too: a hold snapshot keeps the box it was seen with (`Perf::shown_aa` → `hold_aa` at
+`hold_copy`), a worker frame entering the hold or taken live is point-sampled like every held frame.
+Two worker glides after: 21 and 27 held frames asked for a 4-texel box and were drawn with 1; no
+moving frame drawn widened. (Without the worker, a handful of genuinely low-resolution frames, 0.1 to
+0.71, are still shown live with their box — 18 in a glide; centred now, but at 0.1 still very soft.)
+And a defect in the first half, fixed with it: the drawn window was hashed only into
+`accum_norm_sig` (which names why a supersampling run ended), not `accum_color_sig` (which ends it),
+so a run could begin while the drawn window still glided; both signatures now carry the drawn window
+and the fade's weight. A moving palette (a dissolve, the drawn or the shown window gliding) now asks for the
+next frame (`FractadyneApp::palette_moving`): each advances only when a frame is built. And the
+uitest's screen steps wait for it as for the grid: the dissolve first made the minimap pan's capture
+read 11.3 and 13.8 against its 9.5 gate (2 runs of 3; 0.0 before), a settled view's normalization
+switch landing as the grid drained and the capture catching the blend.
