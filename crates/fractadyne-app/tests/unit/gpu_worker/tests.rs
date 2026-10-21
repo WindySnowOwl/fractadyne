@@ -75,3 +75,21 @@ fn the_status_line_says_where_the_card_stands() {
     assert!(WorkerState::Lost("X".into()).text(false).contains("choose it again"));
     assert!(WorkerState::Running("X".into()).text(true).ends_with("(set by --worker-gpu)"));
 }
+
+#[test]
+fn a_samples_passes_reach_the_panel_a_batch_per_ui_frame_and_never_held_for_long() {
+    let mut b = PassBatch::default();
+    // Passes in the same UI frame gather.
+    assert_eq!(b.add(8.0, 100, 1_000), None);
+    assert_eq!(b.add(7.5, 100, 9_000), None);
+    // The UI moved on: the batch closes, filed under the frame it began in.
+    assert_eq!(b.add(8.0, 101, 17_000), Some((100, 15.5)));
+    // An idle window draws no frames: a batch is pushed after PASS_BATCH_US all the same.
+    assert_eq!(b.add(8.0, 101, 17_000 + PASS_BATCH_US / 2), None);
+    assert_eq!(b.add(8.0, 101, 17_000 + PASS_BATCH_US), Some((101, 16.0)));
+    // What is left goes when the sample ends; an empty batch pushes nothing.
+    assert_eq!(b.take(), Some((101, 8.0)));
+    assert_eq!(b.take(), None);
+    assert_eq!(b.add(0.0, 102, 200_000), None);
+    assert_eq!(b.take(), None);
+}

@@ -10,8 +10,8 @@
 //! panel's cost on the UI thread within its budget (design/blinkenlights.md, "Cost"): egui
 //! tessellates every shape every frame, and the static layer's thousands of glyphs were most of it.
 
-use super::events::{Pass, RefRole};
-use super::model::{Engine, Lamp, Model, Plane, PuckState, STREAM_COLS, STREAM_ROWS, UNTIMED_AFTER_FRAMES};
+use super::events::{PASSES, Pass, RefRole};
+use super::model::{Engine, Lamp, Model, Plane, PuckState, STREAM_COLS, STREAM_ROWS, UNTIMED_AFTER_FRAMES, WalkKind};
 use super::paint::{self, face, fade, ink, polar};
 use egui::epaint::{ClippedShape, Mesh, PathShape, PathStroke};
 use egui::{Align2, Color32, Painter, Pos2, Rect, Shape, Stroke, pos2, vec2};
@@ -204,7 +204,13 @@ pub(crate) fn height(size: Size, width: f32) -> f32 {
 
 /// A price's colour: green when cheap, amber near the 20 ms target, red past it, brightening.
 pub(crate) fn price_color(ms: f32, alpha: f32) -> Color32 {
-    let p = (ms / 20.0).clamp(0.0, 1.6);
+    target_color(ms, super::model::PIN_TARGET_MS, alpha)
+}
+
+/// A pass's colour against the GPU time it was sized for: green when cheap, amber near the
+/// target, red past it, brightening.
+pub(crate) fn target_color(ms: f32, target_ms: f32, alpha: f32) -> Color32 {
+    let p = (ms / target_ms.max(1.0)).clamp(0.0, 1.6);
     let hue = if p < 0.5 { 130.0 - p * 140.0 } else if p < 1.0 { 60.0 - (p - 0.5) * 70.0 } else { 18.0 - (p - 1.0) * 20.0 };
     let light = 0.52 + p.min(1.0) * 0.14;
     fade(hsl(hue, 1.0, light), alpha)
@@ -601,7 +607,7 @@ fn draw_radar(p: &Painter, layer: Layer, r: Rect, s: f32, m: &Model) {
         for (i, pass) in w.passes.iter().rev().take(k as usize).rev().enumerate() {
             let rad = rr * (0.9 - i as f32 * (0.55 / k as f32));
             let col = match pass.ms {
-                Some(ms) => price_color(ms, 0.85 * w.fade),
+                Some(ms) => target_color(ms, pass.target_ms, 0.85 * w.fade),
                 None => fade(ink::PHOSPHOR, 0.45 * w.fade),
             };
             p.circle_stroke(c, rad, Stroke::new((rr * 0.4 / k as f32).max(2.0 * s), col));
@@ -627,7 +633,7 @@ fn draw_radar(p: &Painter, layer: Layer, r: Rect, s: f32, m: &Model) {
             continue;
         }
         match (pass.ms, pass.untimed) {
-            (Some(ms), _) => paint::sector(p, c, rr * 0.62, rr * 0.86, t0, t1, price_color(ms, 0.85 * w.fade)),
+            (Some(ms), _) => paint::sector(p, c, rr * 0.62, rr * 0.86, t0, t1, target_color(ms, pass.target_ms, 0.85 * w.fade)),
             (None, true) => {
                 let col = fade(ink::PHOSPHOR, 0.7 * w.fade);
                 paint::arc(p, c, rr * 0.86, t0, t1, Stroke::new(1.2_f32, col));
@@ -652,6 +658,16 @@ fn draw_radar(p: &Painter, layer: Layer, r: Rect, s: f32, m: &Model) {
         }
     }
     flash(p, c, rr, m.flash);
+    // A still view's walk names itself above the resolution: the same sweep, a slower budget.
+    let tag = match w.kind {
+        WalkKind::Pin => None,
+        WalkKind::Settle => Some("SETTLE"),
+        WalkKind::Ssaa => Some("SSAA"),
+    };
+    if let Some(tag) = tag {
+        let at = c + vec2(0.0, -2.0 * s - text_font.size * 1.15);
+        paint::tabular(p, at, Align2::CENTER_BOTTOM, tag, text_font.clone(), fade(ink::PHOSPHOR_TEXT, 0.8));
+    }
     paint::tabular(p, c + vec2(0.0, -2.0 * s), Align2::CENTER_BOTTOM, &format!("{}×{}", w.res.0, w.res.1), text_font.clone(), ink::PHOSPHOR_TEXT);
     paint::tabular(p, c + vec2(0.0, 1.0 * s), Align2::CENTER_TOP, &format!("{} / {}", group(w.cursor.min(w.ask) as u64), group(w.ask as u64)), text_font, ink::PHOSPHOR_TEXT);
 }
@@ -800,9 +816,10 @@ fn split_display(plane: Rect, res: (u32, u32)) -> (u32, u32) {
 /// frame (or a sample).
 fn tile_labels(plane: &Plane, res: (u32, u32)) -> (String, String, String) {
     match plane {
-        Plane::Whole { res, band, .. } => (
+        Plane::Whole { res, band, settled, .. } => (
             match band {
-                Some((lo, hi)) => format!("PIN PASS · BAND {}–{}", group(*lo as u64), group(*hi as u64)),
+                Some((lo, hi)) => format!("{} · BAND {}–{}", if *settled { "SETTLE PASS" } else { "PIN PASS" }, group(*lo as u64), group(*hi as u64)),
+                None if *settled => "SETTLED FRAME · WHOLE PICTURE".to_owned(),
                 None => "MOVING FRAME · WHOLE PICTURE".to_owned(),
             },
             format!("TILE {}×{}", res.0, res.1),
@@ -835,7 +852,15 @@ fn tile_labels(plane: &Plane, res: (u32, u32)) -> (String, String, String) {
                 },
             )
         }
-        Plane::Ssaa { res, samples, .. } => (format!("SSAA SAMPLE {samples} · WHOLE FRAME"), format!("TILE {}×{}", res.0, res.1), "1 TILE/SAMPLE".to_owned()),
+        Plane::Ssaa { res, samples, band, .. } => (
+            match band {
+                // The next sample walks: its pass's band (the samples folded so far stay counted).
+                Some((lo, hi)) => format!("SSAA · {samples} DONE · BAND {}–{}", group(*lo as u64), group(*hi as u64)),
+                None => format!("SSAA SAMPLE {samples} · WHOLE FRAME"),
+            },
+            format!("TILE {}×{}", res.0, res.1),
+            "1 TILE/SAMPLE".to_owned(),
+        ),
         Plane::Idle(why) => ((*why).to_owned(), "NO PASS".to_owned(), "0/FRAME".to_owned()),
     }
 }
@@ -944,7 +969,7 @@ fn draw_scope(p: &Painter, layer: Layer, r: Rect, s: f32, m: &Model) {
         }
         let f = face::narrow(10.0 * s);
         let mut x = r.left() + 6.0 * s;
-        for (label, col) in [("MOVING", fade(ink::PHOSPHOR_TEXT, 0.8)), ("PIN", Color32::from_rgb(0xff, 0xc8, 0x78)), ("WORKER", ink::LAMP_BLUE), ("TILE", Color32::from_rgb(0xff, 0xec, 0xc8)), ("SSAA", ink::SSAA)] {
+        for (label, col) in [("MOVING", fade(ink::PHOSPHOR_TEXT, 0.8)), ("PIN", Color32::from_rgb(0xff, 0xc8, 0x78)), ("WORKER", ink::LAMP_BLUE), ("SETTLE", Color32::from_rgb(0xff, 0xec, 0xc8)), ("SSAA", ink::SSAA)] {
             let lr = p.text(pos2(x, r.top() + 4.0 * s), Align2::LEFT_TOP, label, f.clone(), col);
             x = lr.right() + 8.0 * s;
         }
@@ -973,11 +998,11 @@ fn draw_scope(p: &Painter, layer: Layer, r: Rect, s: f32, m: &Model) {
         bar(c.ms[Pass::Moving as usize], Color32::from_rgba_unmultiplied(90, 200, 120, (a * 0.6 * 255.0) as u8));
         bar(c.ms[Pass::Probe as usize], Color32::from_rgba_unmultiplied(90, 200, 120, (a * 0.45 * 255.0) as u8));
         bar(c.ms[Pass::Pin as usize] + c.ms[Pass::Split as usize], price_color(c.ms[Pass::Pin as usize] + c.ms[Pass::Split as usize], a));
-        bar(c.ms[Pass::Tile as usize], Color32::from_rgba_unmultiplied(255, 236, 200, (a * 0.8 * 255.0) as u8));
+        bar(c.ms[Pass::Tile as usize] + c.ms[Pass::Walk as usize], Color32::from_rgba_unmultiplied(255, 236, 200, (a * 0.8 * 255.0) as u8));
         bar(c.ms[Pass::Ssaa as usize], fade(ink::SSAA, a * 0.7));
         bar(c.ms[Pass::Worker as usize], Color32::from_rgba_unmultiplied(154, 216, 255, (a * 0.75 * 255.0) as u8));
         // A pass that ran with no timing back by now: a hollow mark at the baseline.
-        let ran_untimed = (0..7).any(|k| c.ran[k] && c.ms[k] <= 0.0);
+        let ran_untimed = (0..PASSES).any(|k| c.ran[k] && c.ms[k] <= 0.0);
         if ran_untimed && now.saturating_sub(c.frame) > UNTIMED_AFTER_FRAMES {
             hollow.push(Rect::from_min_size(pos2(x, r.bottom() - 10.0 * s), vec2(col_w - 1.0, 4.0 * s)));
         }

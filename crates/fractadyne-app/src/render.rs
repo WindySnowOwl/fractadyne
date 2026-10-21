@@ -6015,6 +6015,19 @@ impl FractadyneApp {
                 p.chunk_inflight_lo[vs] = s.inflight_lo;
                 p.chunk_inflight_px[vs] = s.inflight_px;
             }
+            // The live panel's radar follows a still view's walk as it does a pin's: the walk's start
+            // (the cursor at 0: the settle's walk, or a supersampling sample's) and each pass.
+            if dispatch.pass && !interacting && !pin_frame {
+                if let Some([_, hi]) = dispatch.chunk_range {
+                    if dispatch_in.cur == 0 {
+                        let [w, h] = resolution.get();
+                        let ssaa = self.perf.accum_cmd[vs.min(1)].jitter != [0.0, 0.0];
+                        bl::emit(vs, bl::Kind::WalkStart, dispatch_in.walk_end, bl::pack_res(w, h), if ssaa { 1.0 } else { 0.0 });
+                    }
+                    let lo = dispatch_in.cur.max(dispatch_in.walk_floor);
+                    bl::emit(vs, bl::Kind::WalkPass, lo, hi, crate::tunables::cost().tdr_budget_ms as f32);
+                }
+            }
             if dispatch.pin_dispatched {
                 self.perf.pin_dispatch_at[vs] = crate::app_micros();
                 if let (Some([_, to]), Some((size, ..))) = (dispatch.chunk_range, dispatch.state.inflight) {

@@ -97,11 +97,13 @@ Changes after 0.3.0-beta.1:
 - **A front panel shows the live renderer at work (0.3.0-beta.20).** Press B, or View ▸ Live render
   panel, for an instrument panel over the view styled after a 1970s lab rack, in hammertone paint
   with legends that read on every part of it. Nixie tubes read the depth, the iteration count, the
-  frame time and the clock. A radar dial sweeps through each deep refresh's iteration bands, a
-  meter shows how far the picture on screen lags the view, a plane shows the tiles each frame's
-  pass covers, a scope plots the graphics card's time per frame, and a tuning dial shows the depth
-  with the reference builds racing it. A bank of lamps lights for the renderer's events. At full
-  size an engine room adds steps per second, the two graphics devices, memory, cores and pixels.
+  frame time and the clock. A radar dial sweeps through each deep refresh's iteration bands, and
+  through a still view's settling and each supersampling sample, a meter shows how far the picture
+  on screen lags the view, a plane shows the tiles and the iteration band each frame's pass covers,
+  a scope plots the graphics card's time per frame, and a tuning dial shows the depth with the
+  reference builds racing it. A bank of lamps lights for the renderer's events. At full size an
+  engine room adds steps per second, the two graphics devices (a second device's supersampling
+  samples included), memory, cores and pixels.
   Every light is driven by a real event or reading. Hover over any instrument for what it shows,
   what healthy looks like and what signals trouble. B cycles off, strip, panel and full, and the
   panel can be dragged to any corner.

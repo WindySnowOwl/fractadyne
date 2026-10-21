@@ -332,9 +332,11 @@ fn small_settle_tiles_meet_edge_to_edge_so_a_finished_grid_lights_the_plane() {
 #[test]
 fn whole_frames_supersampling_and_idle_fill_the_plane_or_leave_it_dark() {
     let cases = [
-        ("whole", Plane::Whole { res: RES, band: None, glow: 1.0 }, true),
-        ("pin", Plane::Whole { res: RES, band: Some((0, 22_224)), glow: 1.0 }, true),
-        ("ssaa", Plane::Ssaa { res: RES, samples: 16, glow: 1.0 }, true),
+        ("whole", Plane::Whole { res: RES, band: None, settled: false, glow: 1.0 }, true),
+        ("pin", Plane::Whole { res: RES, band: Some((0, 22_224)), settled: false, glow: 1.0 }, true),
+        ("settle-walk", Plane::Whole { res: RES, band: Some((65_536, 98_304)), settled: true, glow: 1.0 }, true),
+        ("ssaa", Plane::Ssaa { res: RES, samples: 16, band: None, glow: 1.0 }, true),
+        ("ssaa-walk", Plane::Ssaa { res: RES, samples: 3, band: Some((1_024, 2_048)), glow: 1.0 }, true),
         ("idle", Plane::Idle("HELD"), false),
     ];
     for (name, plane_kind, lit) in cases {
@@ -349,7 +351,7 @@ fn whole_frames_supersampling_and_idle_fill_the_plane_or_leave_it_dark() {
         }
         c.dump(name);
     }
-    assert_eq!(tile_labels(&Plane::Ssaa { res: RES, samples: 16, glow: 0.0 }, RES).2, "1 TILE/SAMPLE");
+    assert_eq!(tile_labels(&Plane::Ssaa { res: RES, samples: 16, band: None, glow: 0.0 }, RES).2, "1 TILE/SAMPLE");
     assert_eq!(tile_labels(&Plane::Idle("HELD"), RES), ("HELD".to_owned(), "NO PASS".to_owned(), "0/FRAME".to_owned()));
 }
 

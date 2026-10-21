@@ -64,6 +64,11 @@ per frame today (A: ✓ kept, ~ kept in a trace only, ✗ needs plumbing).
    a cheap band fills in one stroke and a dear one in several. The verification wait is a pulse at
    the rim; adoption flashes the dial white and it resets for the next pin. An abandoned walk fades
    red with its reason. A small second dial can show the worker GPU's walk beside it.
+   *(Added 2026-10-21, on the user's 2^704 view, where the dial sat empty through two minutes of
+   settling:)* a still view's walk sweeps the dial too, tagged SETTLE, and so does each
+   supersampling sample's, tagged SSAA (`WalkStart`, `WalkPass`): each arc is coloured against the
+   time the pass was sized for (the 400 ms settle budget, not the pin's 20 ms), and the walk ends
+   when its last pass is timed.
 2. **The freshness gauge** (D). A needle for how far the picture on screen lags the view, in
    octaves, with the 0.5 target and the 1.0 gate marked, and the last few seconds as a trace behind
    it: the sawtooth of ageing and adoption that is the zoom blur. Reprojection and hold show as the
@@ -174,7 +179,7 @@ three ways, and the plane draws each one the way it happens:
 
 | how the frame is split | in the code | the plane shows | tile size · tiles a frame |
 |---|---|---|---|
-| **The whole frame in one pass:** a moving frame, a priced live refresh, each pass of a pinned walk | one full-screen draw | the whole plane flashes on each pass; for a pin, the band (e.g. 4,096–8,192) captions it | the resolution · 1 |
+| **The whole frame in one pass:** a moving frame, a priced live refresh, each pass of a pinned walk or of a still view's walk (the settle's, or a supersampling sample's) | one full-screen draw | the whole plane flashes on each pass; for a walk, the band (e.g. 4,096–8,192) captions it, named PIN PASS, SETTLE PASS, or SSAA with the samples done | the resolution · 1 |
 | **A split refresh:** a live refresh priced dearer than one frame's share goes out in `k` passes, one a frame, each about `LIVE_REFRESH_MS` (4.5 ms), up to `LIVE_SPLIT_MAX` (8) | `LiveRefresh::Split(k)`, `PinnedRefresh::split`; set `j` = the 16-texel tiles with (x + y) mod k = j (`SPLIT_TILE`, `vs_split_tiles`) | the interleaved sets fill pass by pass (a checkerboard at k = 2, diagonals above), this frame's set brightest | 16 px · tiles ÷ k (about 2,100 at 1455×1102, k = 3) |
 | **The settle grid:** a settled frame too dear for one dispatch | `TileGrid`: side √(admission ÷ (iterations × ss²)), at least 16 px, frozen for the grid; 16 to 512 tiles (`TDR_MAX_TILES`, `TDR_TILES_CEIL`); one a frame, centre-out; a tile over the admission goes out as strips (`settle_strip`) | lamps fill from the centre out, the next tile outlined, a stripped tile filling row by row; then SSAA samples pulse the whole plane | the side · 1 (or 1/strips) |
 
@@ -240,7 +245,11 @@ What the implementation settled, where it differs from or adds to the above:
   frozen on screen (`ref_cache.frozen_l2`).
 - **GPU time**: the iterate timer's and the extra timers' readings, each filed under the kind of
   pass its frame ran (`PASS_OF_FRAME`); the live-refresh timer shares the iterate timer's ticks
-  and is not counted twice. The worker's walk time feeds the second engine.
+  and is not counted twice. The worker's walk time feeds the second engine, and so do its
+  supersampling samples: each export pass reports its GPU time on the rendering thread
+  (`fractadyne_gpu::pass_sink`), batched per UI frame (`gpu_worker::PassBatch`) into the worker's
+  `PassTimed` (added 2026-10-21: the gauge read 0% while the worker rendered a sample every
+  ~20 s).
 - **Two new GPU sinks** on `MandelbrotParams`, dropped by the worker's twin like the others:
   `timer_states_out` (the ring's slot states, two bits each; the T0–T2 lamps) and `step_out`
   (the armed frame's `StepStats`: loop trips against iterations advanced, the tachometer's BLA

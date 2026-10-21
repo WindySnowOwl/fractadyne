@@ -1243,6 +1243,7 @@ impl TileChunker {
             // already fenced (`await_submitted` right above), so its wall IS its GPU time to
             // well under the 1% the doc comment quotes.
             crate::timing::accumulate(wall, 0.0);
+            crate::pass_sink::report(wall);
             max_chunk_ms = max_chunk_ms.max(wall);
             pricer.observe(e - s, wall);
             window = pricer.next(window, wall, max_iter);
@@ -1386,6 +1387,7 @@ px_steps={px_steps} ns_per={:.3} packed={} full={full} full_df32={big}",
             *wall_sum_ms += wall;
             // Into the profiler's accumulator too — see the note in `run_tile`.
             crate::timing::accumulate(wall, 0.0);
+            crate::pass_sink::report(wall);
             max_chunk_ms = max_chunk_ms.max(wall);
             steps.observe(wall, active, cap);
             active = running as u64;
@@ -1987,6 +1989,7 @@ impl<'a> TileRenderer<'a> {
                 iterate_ms += it_ms;
                 color_ms += co_ms;
                 crate::timing::accumulate(it_ms, co_ms);
+                crate::pass_sink::report(it_ms + co_ms);
             }
         }
 
@@ -2840,6 +2843,7 @@ pub fn render_iter_tiled(
                     read.unmap();
                     sum_iterate_ms += iterate_ms;
                     crate::timing::accumulate(iterate_ms, 0.0);
+                    crate::pass_sink::report(iterate_ms);
                 }
             }
             let data = slice.get_mapped_range();
@@ -3973,6 +3977,7 @@ pub fn color_iter_buffer_ss(
             drop(mapped);
             read.unmap();
             crate::timing::accumulate(0.0, color_ms);
+            crate::pass_sink::report(color_ms);
         }
     }
 
