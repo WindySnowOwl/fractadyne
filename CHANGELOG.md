@@ -59,6 +59,14 @@ published as the pre-releases `v0.2.41-beta.1` to `v0.2.41-beta.150`, and a "bet
 
 Changes after 0.3.0-beta.1:
 
+- **Deep zooms no longer shake, and their colours no longer jump (0.3.0-beta.20).** While zooming
+  deep, the view shows a mix of fresh frames and held ones, and frames rendered below full resolution
+  were drawn a few pixels down and to the right of where they belong: up to 6 pixels for a
+  quarter-resolution frame, which reads as the picture's centre jittering as such frames come and
+  go. They are now drawn in place. With a second graphics device (the worker GPU), each of its
+  frames was shown with a colour mapping taken from that frame alone, so the palette jumped several
+  times a second; the colour mapping now glides from one frame to the next. The supersampling
+  samples the second device renders are also no longer half a pixel off the window's own.
 - **A deep view settles without overrunning the graphics card, and stops sooner (0.3.0-beta.20).**
   After a deep view settles, it renders each pixel again at sub-pixel offsets and averages them
   (supersampling), up to 24 times. At a 2^704 view in a 5120×2054 window each of those renders took
@@ -97,11 +105,13 @@ Changes after 0.3.0-beta.1:
 - **A front panel shows the live renderer at work (0.3.0-beta.20).** Press B, or View ▸ Live render
   panel, for an instrument panel over the view styled after a 1970s lab rack, in hammertone paint
   with legends that read on every part of it. Nixie tubes read the depth, the iteration count, the
-  frame time and the clock. A radar dial sweeps through each deep refresh's iteration bands, a
-  meter shows how far the picture on screen lags the view, a plane shows the tiles each frame's
-  pass covers, a scope plots the graphics card's time per frame, and a tuning dial shows the depth
-  with the reference builds racing it. A bank of lamps lights for the renderer's events. At full
-  size an engine room adds steps per second, the two graphics devices, memory, cores and pixels.
+  frame time and the clock. A radar dial sweeps through each deep refresh's iteration bands, and
+  through a still view's settling and each supersampling sample, a meter shows how far the picture
+  on screen lags the view, a plane shows the tiles and the iteration band each frame's pass covers,
+  a scope plots the graphics card's time per frame, and a tuning dial shows the depth with the
+  reference builds racing it. A bank of lamps lights for the renderer's events. At full size an
+  engine room adds steps per second, the two graphics devices (a second device's supersampling
+  samples included), memory, cores and pixels.
   Every light is driven by a real event or reading. Hover over any instrument for what it shows,
   what healthy looks like and what signals trouble. B cycles off, strip, panel and full, and the
   panel can be dragged to any corner.

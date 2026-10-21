@@ -3514,24 +3514,37 @@ fn fs_color(in: VsOut) -> @location(0) vec4<f32> {
     // below display resolution (work-budget at deep zoom on a big window), `aa_filter`
     // widens the box so the upscaled, finely-banded texture is anti-aliased instead of
     // point-sampled into speckle. Also accumulates the slope normal (relief lighting).
+    //
+    // ⭐The box is CENTRED on this pixel's own texels. A box wider than them (`aa_filter`: a frame
+    // rendered below display resolution) used to start at the pixel's first texel and run right and
+    // down, so it drew the picture (taps - ss)/2 texels off: 6 screen px for a quarter-resolution
+    // frame, shown between held frames that had no such offset, and the view's centre jumped as they
+    // alternated (2026-10-21). The overhang each side is whole or half a texel; a half one takes one
+    // more texel each way at half weight. With no overhang (taps == ss) this is the plain block.
     let taps = max(ss, max(cu.aa_filter, 1u));
+    let lead2 = i32(taps) - i32(ss);        // twice the overhang each side, texels
+    let lead = (lead2 + 1) / 2;             // texels taken before the pixel's own
+    let half_ends = (lead2 & 1) == 1;
+    let n = i32(taps) + (lead2 & 1);        // samples a row
     var acc = vec3<f32>(0.0);
     var nacc = vec2<f32>(0.0);
     var dacc = 0.0;
     var count = 0.0;
-    for (var dj: u32 = 0u; dj < taps; dj = dj + 1u) {
-        for (var di: u32 = 0u; di < taps; di = di + 1u) {
+    for (var dj: i32 = 0; dj < n; dj = dj + 1) {
+        let wy = select(1.0, 0.5, half_ends && (dj == 0 || dj == n - 1));
+        for (var di: i32 = 0; di < n; di = di + 1) {
+            let w = wy * select(1.0, 0.5, half_ends && (di == 0 || di == n - 1));
             let texel = clamp(
-                pix * i32(ss) + vec2<i32>(i32(di), i32(dj)),
+                pix * i32(ss) + vec2<i32>(di - lead, dj - lead),
                 vec2<i32>(0, 0),
                 maxc,
             );
             let t = textureLoad(iter_tex, texel, 0);
             let ta = textureLoad(aux_tex, texel, 0);
-            acc = acc + shade_aa(t, ta, pal_w);
-            nacc = nacc + vec2<f32>(t.g, t.b);
-            dacc = dacc + t.a;
-            count = count + 1.0;
+            acc = acc + shade_aa(t, ta, pal_w) * w;
+            nacc = nacc + vec2<f32>(t.g, t.b) * w;
+            dacc = dacc + t.a * w;
+            count = count + w;
         }
     }
     var col = acc / count;

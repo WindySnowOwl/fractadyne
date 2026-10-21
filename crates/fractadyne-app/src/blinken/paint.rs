@@ -329,6 +329,16 @@ pub(crate) fn tabular(p: &Painter, pos: Pos2, anchor: Align2, text: &str, font: 
     rect
 }
 
+/// [`tabular`] on a plate of `plate` reaching `pad` px past it either side: a readout on a scope's
+/// screen that the beam or a bright trace passing under it cannot swallow (a radar's data block).
+pub(crate) fn plated(p: &Painter, pos: Pos2, anchor: Align2, text: &str, font: FontId, color: Color32, plate: Color32, pad: f32) -> Rect {
+    let galley = p.layout_job(tabular_job(p, text, &font, color));
+    let rect = anchor.anchor_size(pos, galley.size());
+    p.rect_filled(rect.expand2(vec2(pad, 0.0)), pad, plate);
+    p.galley_with_override_text_color(rect.min, galley, color);
+    rect
+}
+
 fn tabular_job(p: &Painter, text: &str, font: &FontId, color: Color32) -> egui::text::LayoutJob {
     let pad: [f32; 10] = p.fonts(|f| {
         let cell = f.glyph_width(font, '0');

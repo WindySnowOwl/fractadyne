@@ -34,6 +34,37 @@ fn the_time_cap_ends_a_costly_run_once_it_holds_enough_samples() {
     assert!(!accum_time_capped(23, 600_000, 0), "off");
 }
 
+/// The cap ends a run in the frame the worker's sample was counted (its fold asks for the next index
+/// right after): the sample attached to that frame's fold is one of the run's count and must stay,
+/// while the worker stops and what it finished but nobody counted goes. Dropped, the run converged
+/// "at 8 samples, but the average holds 7" (3 runs of 7 at the 2^704 view, 2026-10-21).
+#[test]
+fn the_time_cap_keeps_the_worker_sample_it_already_counted() {
+    use fractadyne_gpu::AccumSample;
+    use std::sync::Arc;
+    let sample = |w| Arc::new(AccumSample { width: w, height: 1, rgba: vec![0.0; 4 * w as usize] });
+    let mut p = Perf::default();
+    p.accum_count[0] = 8;
+    p.accum_run[0] = 5;
+    p.accum_ext_attach[0] = Some(sample(1));
+    p.accum_ext_ready[0] = vec![sample(2)];
+    p.accum_free[0] = vec![3];
+    p.worker_job = Some((0, 5, 9));
+    assert_eq!(p.accum_cap(0, 8), Some((0, 5)), "the worker's job is cancelled");
+    assert_eq!(p.accum_goal(0), 8);
+    assert_eq!(p.accum_ext_attach[0].as_ref().map(|s| s.width), Some(1), "the counted sample still folds");
+    assert!(p.accum_ext_ready[0].is_empty() && p.accum_free[0].is_empty());
+    assert_eq!(p.accum_run[0], 6, "a sample of the old run that comes back is not this one's");
+
+    // Any other stop (a new run, a view change) drops the attached sample with the rest.
+    p.accum_ext_attach[0] = Some(sample(1));
+    assert_eq!(p.accum_worker_stop(0), Some((0, 5)));
+    assert!(p.accum_ext_attach[0].is_none());
+    // Another view's job is not this view's to cancel.
+    p.worker_job = Some((1, 2, 0));
+    assert_eq!(p.accum_cap(0, 4), None);
+}
+
 /// Sample 0 is the pixel centre (so the hand-off from the ordinary settle is seamless); every
 /// later sample stays inside the pixel.
 #[test]

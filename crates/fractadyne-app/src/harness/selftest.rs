@@ -2647,6 +2647,83 @@ impl FractadyneApp {
             self.render_cfg.auto_iter = saved_auto;
         }
 
+        // ⭐THE COLOUR PASS'S WIDENED BOX IS CENTRED ON ITS PIXEL (2026-10-21). A frame drawn below
+        // display resolution takes a box `aa_filter` texels wide; it started at the pixel's own texel
+        // and ran right and down, so it drew the picture (taps - 1)/2 texels off, and the live view's
+        // centre jumped 6 screen px as quarter-resolution frames alternated with held ones. With `ss`
+        // 1 and the palette's own anti-aliasing off, every pixel of the plain render is its texel's
+        // colour, so a widened render must EQUAL the centred box average of the plain one, computed
+        // here with the shader's weights (half weight on a half-texel overhang) and clamping.
+        if want("colour-box") {
+            let colour = |req: &fractadyne_gpu::ExportRequest| -> Option<Vec<f32>> {
+                let (progress, cancel) = (std::sync::atomic::AtomicU32::new(0), std::sync::atomic::AtomicBool::new(false));
+                match fractadyne_gpu::render_export(device, queue, req, &progress, &cancel) {
+                    Ok(r) => Some(r.pixels),
+                    Err(e) => {
+                        eprintln!("[selftest] GPU ERROR (render_export): {e}");
+                        None
+                    }
+                }
+            };
+            // The box over an N x N RGBA image: centred (the shader now), or from the pixel's corner
+            // (the shader before), each tap clamped to the image as the shader clamps it.
+            let boxed = |img: &[f32], taps: i32, centred: bool| -> Vec<f32> {
+                let n = N as i32;
+                let (lead2, mut out) = (taps - 1, vec![0.0f32; img.len()]);
+                let (lead, half_ends) = if centred { ((lead2 + 1) / 2, lead2 & 1 == 1) } else { (0, false) };
+                let k = if centred { taps + (lead2 & 1) } else { taps };
+                let w = |i: i32| if half_ends && (i == 0 || i == k - 1) { 0.5f32 } else { 1.0 };
+                for y in 0..n {
+                    for x in 0..n {
+                        let (mut acc, mut sum) = ([0.0f32; 3], 0.0f32);
+                        for dj in 0..k {
+                            for di in 0..k {
+                                let wt = w(dj) * w(di);
+                                let (tx, ty) = ((x + di - lead).clamp(0, n - 1), (y + dj - lead).clamp(0, n - 1));
+                                let i = ((ty * n + tx) * 4) as usize;
+                                for c in 0..3 {
+                                    acc[c] += img[i + c] * wt;
+                                }
+                                sum += wt;
+                            }
+                        }
+                        let o = ((y * n + x) * 4) as usize;
+                        for c in 0..3 {
+                            out[o + c] = acc[c] / sum;
+                        }
+                        out[o + 3] = 1.0;
+                    }
+                }
+                out
+            };
+            let max_diff = |a: &[f32], b: &[f32]| -> f64 {
+                a.iter().zip(b).enumerate().filter(|(i, _)| i % 4 != 3).map(|(_, (x, y))| (x - y).abs() as f64).fold(0.0, f64::max)
+            };
+            let mut base = make(self, SX, SY, 1.0e2);
+            base.aa_filter = 1;
+            base.aa_palette = false;
+            base.light = 0;
+            base.de_on = 0;
+            base.vignette.on = 0;
+            let plain = colour(&base);
+            for taps in [2u32, 3, 4] {
+                let mut req = base.clone();
+                req.aa_filter = taps;
+                let (centred, corner) = match (&plain, colour(&req)) {
+                    (Some(a), Some(b)) => (max_diff(&b, &boxed(a, taps as i32, true)), max_diff(&b, &boxed(a, taps as i32, false))),
+                    _ => (f64::INFINITY, f64::INFINITY),
+                };
+                push_check(&mut checks, &mut last_check_t, SelfCheck {
+                    category: "Framing",
+                    name: format!("a widened colour box ({taps} texels) is centred on its pixel"),
+                    params: format!("seahorse 1e2x, {N}px, ss 1, palette anti-aliasing off"),
+                    result: format!("max |colour - centred box| {centred:.2e} (a box from the pixel's corner: {corner:.2e})"),
+                    threshold: "< 1e-4",
+                    pass: centred < 1.0e-4,
+                });
+            }
+        }
+
         if want("iter-chunk") {
             let mag = 1.0e24;
             const C6X: &str = "-0.7436438870371587047521915061147707";

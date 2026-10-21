@@ -2017,11 +2017,14 @@ struct Perf {
     /// around"; gliding turns the same information into a continuous drift. See
     /// `render::norm_glide_step`.
     norm_shown: [Option<(f32, f32)>; 2],
-    /// W6 (U43): the palette-range map the LIVE texture was last shown under, and the one a hold
-    /// snapshot was taken under (with the user's colouring then, `norm_user_sig`) — the map the
-    /// held frame keeps while it is served.
-    shown_norm: [Option<render::NormMap>; 2],
-    hold_norm: [Option<(render::NormMap, u64)>; 2],
+    /// W6 (U43): the palette window the LIVE texture was last drawn with, and the one a hold
+    /// snapshot was taken under (with the user's colouring then, `norm_user_sig`) — the window the
+    /// held frame keeps while it is served. `None` inside: drawn in the classic colouring.
+    shown_norm: [Option<(f32, f32)>; 2],
+    hold_norm: [Option<(Option<(f32, f32)>, u64)>; 2],
+    /// The palette window each view was last DRAWN with, gliding from one picture's window to the
+    /// next's (`render::drawn_norm_step`).
+    norm_drawn: [Option<render::DrawnNorm>; 2],
     /// This view's frames are currently chunk-governed (`chunk_over`), stamped every
     /// `build_params`. The norm drain keys on THIS, not on the cursor: escape readings lag their
     /// dispatches by 2-3 frames, so a completed walk's LAST band lands with the cursor already at
@@ -2202,6 +2205,33 @@ impl Perf {
             0 => accum_target(),
             g => g,
         }
+    }
+
+    /// Stops view `v`'s share of supersampling on the worker GPU: a new run (a sample of the old one
+    /// that comes back is not this run's), no template, no indices to give back, and the finished
+    /// samples not yet counted dropped — with the one attached to this frame's fold. Returns the
+    /// worker job to cancel, (view, run), when the worker is rendering one of this view's.
+    pub(crate) fn accum_worker_stop(&mut self, v: usize) -> Option<(usize, u64)> {
+        self.accum_run[v] = self.accum_run[v].wrapping_add(1);
+        self.accum_template[v] = None;
+        self.accum_free[v].clear();
+        self.accum_ext_ready[v].clear();
+        self.accum_ext_attach[v] = None;
+        self.worker_job.filter(|&(w, ..)| w == v).map(|(w, run, _)| (w, run))
+    }
+
+    /// The time cap ends view `v`'s run at the `count` samples it holds (`accum_time_capped`): that
+    /// is its goal now, and the worker stops ([`Perf::accum_worker_stop`]). A worker sample counted
+    /// this frame and attached to its fold is one of the `count`, so it stays attached: the worker's
+    /// fold asks for its next index right after counting one, and dropped there the run ended a
+    /// sample short of its count ("converged at 8 samples, but the average holds 7", 2026-10-21).
+    /// Returns the worker job to cancel.
+    pub(crate) fn accum_cap(&mut self, v: usize, count: u32) -> Option<(usize, u64)> {
+        self.accum_goal[v] = count;
+        let counted = self.accum_ext_attach[v].take();
+        let job = self.accum_worker_stop(v);
+        self.accum_ext_attach[v] = counted;
+        job
     }
 
     /// Registrations of this view's work not yet confirmed complete.
@@ -2589,6 +2619,7 @@ impl Default for Perf {
             norm_shown: [None, None],
             shown_norm: [None, None],
             hold_norm: [None, None],
+            norm_drawn: [None, None],
             chunk_governed: [false, false],
             motion_res: [0.6, 0.6],
             visible_res: [1.0, 1.0],
@@ -14738,8 +14769,8 @@ impl FractadyneApp {
         if self.perf.accum_goal(view) > count {
             let elapsed = diag::elapsed_ms().saturating_sub(self.perf.accum_begin_ms[view]);
             if accum_time_capped(count, elapsed, tunables::cost().accum_time_cap_ms) {
-                self.perf.accum_goal[view] = count;
-                self.accum_worker_reset(view);
+                let job = self.perf.accum_cap(view, count);
+                self.cancel_worker_job(job);
                 if let Some(held) = self.perf.accum_converged_line[view].admit(diag::elapsed_ms(), ACCUM_LINE_GAP_MS) {
                     crate::diag::log_line(
                         "accum",
@@ -14767,15 +14798,14 @@ impl FractadyneApp {
     /// Forget view `view`'s worker samples: a run starts or stops. The job in flight, if it is this
     /// view's, is cancelled; its answer arrives under the old run id and is dropped.
     fn accum_worker_reset(&mut self, view: usize) {
-        self.perf.accum_run[view] = self.perf.accum_run[view].wrapping_add(1);
-        self.perf.accum_template[view] = None;
-        self.perf.accum_free[view].clear();
-        self.perf.accum_ext_ready[view].clear();
-        self.perf.accum_ext_attach[view] = None;
-        if let Some((v, r, _)) = self.perf.worker_job.filter(|&(v, ..)| v == view) {
-            if let Some(w) = &self.gpu_worker {
-                w.cancel(v, r);
-            }
+        let job = self.perf.accum_worker_stop(view);
+        self.cancel_worker_job(job);
+    }
+
+    /// Cancels the worker's job (view, run), if there is one.
+    fn cancel_worker_job(&self, job: Option<(usize, u64)>) {
+        if let (Some((v, run)), Some(w)) = (job, &self.gpu_worker) {
+            w.cancel(v, run);
         }
     }
 
@@ -15251,7 +15281,8 @@ impl FractadyneApp {
     fn accum_norm_sig(&self, view: usize) -> u64 {
         use std::hash::{Hash, Hasher};
         let mut h = std::collections::hash_map::DefaultHasher::new();
-        for r in [self.perf.norm_range[view], self.perf.norm_shown[view]] {
+        // …and the window drawn: a palette still gliding to the view's own is not its colours yet.
+        for r in [self.perf.norm_range[view], self.perf.norm_shown[view], self.perf.norm_drawn[view].map(|d| d.win)] {
             r.map(|(lo, hi)| (lo.to_bits(), hi.to_bits())).hash(&mut h);
         }
         self.perf.norm_sig[view].hash(&mut h);

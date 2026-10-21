@@ -43,3 +43,29 @@ fn sizes_cycle_in_order() {
     assert_eq!(Size::Off.next(), Size::Strip);
     assert_eq!(Size::Full.next(), Size::Off);
 }
+
+#[test]
+fn a_pass_is_coloured_against_the_time_it_was_sized_for() {
+    // The pin's 20 ms target is the price colour's.
+    assert_eq!(target_color(12.0, 20.0, 1.0), price_color(12.0, 1.0));
+    // A still view's 300 ms pass against its 400 ms target reads as a 15 ms pin pass would, not red.
+    assert_eq!(target_color(300.0, 400.0, 1.0), price_color(15.0, 1.0));
+    let [r, g, _, _] = target_color(600.0, 400.0, 1.0).to_srgba_unmultiplied();
+    assert!(r > g, "past its target is red");
+    // A target of nothing is not a division by zero.
+    assert!(target_color(5.0, 0.0, 1.0).a() > 0);
+}
+
+#[test]
+fn a_walk_pass_caption_names_its_walk_and_its_band() {
+    let res = (2400, 1300);
+    let whole = |band, settled| tile_labels(&Plane::Whole { res, band, settled, glow: 1.0 }, res).0;
+    assert_eq!(whole(Some((1_024, 2_048)), false), "PIN PASS · BAND 1,024–2,048");
+    assert_eq!(whole(Some((147_000, 200_000)), true), "SETTLE PASS · BAND 147,000–200,000");
+    assert_eq!(whole(None, false), "MOVING FRAME · WHOLE PICTURE");
+    assert_eq!(whole(None, true), "SETTLED FRAME · WHOLE PICTURE");
+    let ssaa = |band| tile_labels(&Plane::Ssaa { res, samples: 3, band, glow: 1.0 }, res);
+    assert_eq!(ssaa(Some((0, 65_536))).0, "SSAA · 3 DONE · BAND 0–65,536");
+    assert_eq!(ssaa(None).0, "SSAA SAMPLE 3 · WHOLE FRAME");
+    assert_eq!(ssaa(Some((0, 65_536))).2, "1 TILE/SAMPLE");
+}

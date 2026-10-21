@@ -28,6 +28,13 @@ pub(crate) enum Kind {
     PinAbandon,
     /// A pass of a split refresh. `a` = this pass (0-based), `b` = passes in the refresh.
     SplitPass,
+    /// A still view's walk began: the settle's, or a supersampling sample's (each walks again).
+    /// `a` = the iteration it walks to, `b` = its resolution packed as `w << 16 | h`, `f` = 1 for a
+    /// supersampling sample's walk, 0 for the settle's.
+    WalkStart,
+    /// A pass of a still view's walk went to the GPU. `a` = its first live iteration, `b` = its
+    /// end, `f` = the GPU time it is sized for, ms (the settled pass budget).
+    WalkPass,
     /// A pass's GPU time came back. `a` = [`Pass`] as u32, or [`PASS_OF_FRAME`] for the frame's
     /// own pass (whatever kind it was); `b` = the frame it ran in (low 32 bits), `f` = ms. `b`'s
     /// frame lets the scope put it in its column.
@@ -93,7 +100,12 @@ pub(crate) enum Pass {
     Ssaa = 4,
     Probe = 5,
     Worker = 6,
+    /// A pass of a still view's walk (a supersampling sample's walk is [`Pass::Ssaa`]).
+    Walk = 7,
 }
+
+/// How many kinds of pass there are.
+pub(crate) const PASSES: usize = 8;
 
 impl Pass {
     pub(crate) fn from_u32(v: u32) -> Pass {
@@ -104,6 +116,7 @@ impl Pass {
             4 => Pass::Ssaa,
             5 => Pass::Probe,
             6 => Pass::Worker,
+            7 => Pass::Walk,
             _ => Pass::Moving,
         }
     }

@@ -7,7 +7,7 @@
 //! follow with τ = [`NEEDLE_TAU_S`], an adoption flash with τ = [`FLASH_TAU_S`]. A frozen renderer
 //! gives a still panel: every movement starts from an event or a reading.
 
-use super::events::{Abandon, Arith, Event, Kind, PASS_OF_FRAME, Pass, RefRole};
+use super::events::{Abandon, Arith, Event, Kind, PASS_OF_FRAME, PASSES, Pass, RefRole};
 use std::collections::VecDeque;
 
 /// An incandescent lamp's fade, seconds.
@@ -22,8 +22,14 @@ pub(crate) const WALK_AFTERGLOW_S: f32 = 0.6;
 pub(crate) const PUCK_AFTERGLOW_S: f32 = 0.6;
 /// Frames kept for the scope and the age strip.
 pub(crate) const HISTORY_FRAMES: usize = 400;
-/// A pass whose timing has not come back this many frames after it ran is drawn as never timed.
+/// A pass whose timing has not come back this many frames after it ran is drawn as never timed
+/// (and, for a pass sized for longer than a few frames, not before twice its target has passed).
 pub(crate) const UNTIMED_AFTER_FRAMES: u64 = 8;
+/// The GPU time a pinned walk's pass is sized for, ms (`tunables::MOTION_PIN_TARGET_MS`).
+pub(crate) const PIN_TARGET_MS: f32 = 20.0;
+/// A still view's walk that has had no pass and no timing this long is over: its end was never seen
+/// (the panel opened partway, or the walk was cut off), seconds.
+pub(crate) const WALK_STALE_S: f32 = 5.0;
 
 /// The light bank's lamps, left to right (design/blinkenlights.md, "The light bank").
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -148,6 +154,21 @@ pub(crate) struct WalkPass {
     pub(crate) ms: Option<f32>,
     /// No timing came back in time: drawn hollow.
     pub(crate) untimed: bool,
+    /// The GPU time it was sized for, ms: its colour is its time against this.
+    pub(crate) target_ms: f32,
+    /// Seconds since it ran.
+    pub(crate) age_s: f32,
+}
+
+/// Which walk the radar shows.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(crate) enum WalkKind {
+    /// A pinned refresh while the view moves (or a split refresh).
+    Pin,
+    /// A still view walked to its iteration ask.
+    Settle,
+    /// A supersampling sample's walk over the still view.
+    Ssaa,
 }
 
 /// The refresh being walked (or the last one, fading).
@@ -164,6 +185,20 @@ pub(crate) struct Walk {
     /// 1 while live; fades after it ends.
     pub(crate) fade: f32,
     pub(crate) ended: bool,
+    pub(crate) kind: WalkKind,
+    /// Seconds since its last pass or timing (a still view's walk ends at [`WALK_STALE_S`]).
+    pub(crate) idle_s: f32,
+}
+
+impl Walk {
+    fn new(kind: WalkKind, ask: u32, res: (u32, u32)) -> Walk {
+        Walk { ask, res, cursor: 0, passes: Vec::new(), verifying: false, split: None, fade: 1.0, ended: false, kind, idle_s: 0.0 }
+    }
+
+    /// A still view's walk, not yet over.
+    fn settling(&self) -> bool {
+        self.kind != WalkKind::Pin && !self.ended
+    }
 }
 
 /// What this frame's pass covered, for the tile plane.
@@ -171,14 +206,16 @@ pub(crate) struct Walk {
 pub(crate) enum Plane {
     /// No pass this frame; the label says why.
     Idle(&'static str),
-    /// A whole-frame pass: a moving frame or a walk's band. `band` = (lo, hi) for a walk pass.
-    Whole { res: (u32, u32), band: Option<(u32, u32)>, glow: f32 },
+    /// A whole-frame pass: a moving frame or a walk's band. `band` = (lo, hi) for a walk pass;
+    /// `settled`: a still view's walk, not a pinned one.
+    Whole { res: (u32, u32), band: Option<(u32, u32)>, settled: bool, glow: f32 },
     /// Pass `j` of a split refresh in `k` passes of interleaved 16-px tiles.
     Split { res: (u32, u32), k: u32, j: u32, glow: f32 },
     /// The settle grid: done tiles lit, the one in progress outlined.
     Grid(Grid),
-    /// Supersampling samples over the settled picture.
-    Ssaa { res: (u32, u32), samples: u32, glow: f32 },
+    /// Supersampling samples over the settled picture: `samples` folded so far, and `band` = (lo,
+    /// hi) while the next sample walks.
+    Ssaa { res: (u32, u32), samples: u32, band: Option<(u32, u32)>, glow: f32 },
 }
 
 /// A settle grid's progress.
@@ -199,10 +236,10 @@ pub(crate) struct Grid {
 #[derive(Clone, Copy, Debug, Default, PartialEq)]
 pub(crate) struct Column {
     pub(crate) frame: u64,
-    /// ms by `Pass as usize` (7 kinds).
-    pub(crate) ms: [f32; 7],
+    /// ms by `Pass as usize`.
+    pub(crate) ms: [f32; PASSES],
     /// A pass of this kind ran in this frame.
-    pub(crate) ran: [bool; 7],
+    pub(crate) ran: [bool; PASSES],
 }
 
 /// A reference build on the dial.
@@ -331,6 +368,14 @@ impl Model {
             if w.ended {
                 w.fade -= dt / WALK_AFTERGLOW_S;
             }
+            w.idle_s += dt;
+            for p in w.passes.iter_mut() {
+                p.age_s += dt;
+            }
+            if w.settling() && w.idle_s > WALK_STALE_S {
+                w.ended = true;
+                w.verifying = false;
+            }
         }
         if self.walk.as_ref().is_some_and(|w| w.ended && w.fade <= 0.0) {
             self.walk = None;
@@ -365,12 +410,17 @@ impl Model {
         if self.series_running > 0 {
             self.light(Lamp::Series, 0.8);
         }
-        // Passes whose timing never came: hollow.
+        // Passes whose timing never came: hollow. A still view's walk whose last pass is one of them
+        // is over (nothing else will end it).
         if let Some(w) = &mut self.walk {
             for p in w.passes.iter_mut() {
-                if p.ms.is_none() && snap.frame.saturating_sub(p.frame) > UNTIMED_AFTER_FRAMES {
+                if p.ms.is_none() && snap.frame.saturating_sub(p.frame) > UNTIMED_AFTER_FRAMES && p.age_s > 2.0 * p.target_ms / 1000.0 {
                     p.untimed = true;
                 }
+            }
+            if w.settling() && w.verifying && w.passes.last().is_some_and(|p| p.untimed) {
+                w.ended = true;
+                w.verifying = false;
             }
         }
         let horizon = snap.frame.saturating_sub(120);
@@ -407,10 +457,24 @@ impl Model {
         while self.age_hist.len() > HISTORY_FRAMES {
             self.age_hist.pop_front();
         }
-        // A moving frame's pass covers the whole picture; a walk's pass is set by its own event.
+        // A moving frame or a settle grid ends a still view's walk: the view moved, or settles
+        // another way.
+        if matches!(s.dispatched, Some(Pass::Moving | Pass::Tile)) {
+            if let Some(w) = self.walk.as_mut().filter(|w| w.settling()) {
+                w.ended = true;
+                w.verifying = false;
+            }
+        }
+        // A moving frame's pass covers the whole picture; a walk's pass is set by its own event,
+        // and a still view's walk keeps its pass on the plane between passes (one runs for many
+        // frames).
+        let settling = self.walk.as_ref().is_some_and(Walk::settling);
         if s.dispatched == Some(Pass::Moving) {
-            self.plane = Plane::Whole { res: s.res, band: None, glow: 1.0 };
-        } else if s.dispatched.is_none() && !matches!(self.plane, Plane::Grid(_) | Plane::Ssaa { .. }) {
+            self.plane = Plane::Whole { res: s.res, band: None, settled: false, glow: 1.0 };
+        } else if s.dispatched == Some(Pass::Walk) && !settling {
+            // A still view rendered whole (a walk's pass names its band in its own event, after).
+            self.plane = Plane::Whole { res: s.res, band: None, settled: true, glow: 1.0 };
+        } else if s.dispatched.is_none() && !settling && !matches!(self.plane, Plane::Grid(_) | Plane::Ssaa { .. }) {
             self.plane = Plane::Idle(match s.present {
                 Present::Held => "HELD",
                 Present::Reprojected => "REPROJECTED",
@@ -424,48 +488,60 @@ impl Model {
         match e.kind {
             Kind::PinStart => {
                 let res = (e.b >> 16, e.b & 0xffff);
-                self.walk = Some(Walk { ask: e.a, res, cursor: 0, passes: Vec::new(), verifying: false, split: None, fade: 1.0, ended: false });
+                self.walk = Some(Walk::new(WalkKind::Pin, e.a, res));
             }
             Kind::PinPass => {
                 self.light(Lamp::PinPass, 1.0);
-                let w = self.walk.get_or_insert_with(|| Walk {
-                    ask: e.b,
-                    res: s.res,
-                    cursor: 0,
-                    passes: Vec::new(),
-                    verifying: false,
-                    split: None,
-                    fade: 1.0,
-                    ended: false,
-                });
-                w.passes.push(WalkPass { lo: e.a, hi: e.b, frame: e.frame, ms: None, untimed: false });
+                let w = self.walk.get_or_insert_with(|| Walk::new(WalkKind::Pin, e.b, s.res));
+                w.passes.push(WalkPass { lo: e.a, hi: e.b, frame: e.frame, ms: None, untimed: false, target_ms: PIN_TARGET_MS, age_s: 0.0 });
                 w.cursor = w.cursor.max(e.b);
                 w.ask = w.ask.max(e.b);
+                w.idle_s = 0.0;
                 let res = w.res;
-                self.plane = Plane::Whole { res, band: Some((e.a, e.b)), glow: 1.0 };
+                self.plane = Plane::Whole { res, band: Some((e.a, e.b)), settled: false, glow: 1.0 };
                 if let Some(c) = self.column(e.frame) {
                     c.ran[Pass::Pin as usize] = true;
                 }
             }
             Kind::SplitPass => {
                 self.light(Lamp::Split, 1.0);
-                let w = self.walk.get_or_insert_with(|| Walk {
-                    ask: s.iterations,
-                    res: s.res,
-                    cursor: 0,
-                    passes: Vec::new(),
-                    verifying: false,
-                    split: None,
-                    fade: 1.0,
-                    ended: false,
-                });
+                let w = self.walk.get_or_insert_with(|| Walk::new(WalkKind::Pin, s.iterations, s.res));
                 w.split = Some((e.a + 1, e.b.max(1)));
                 w.cursor = w.ask;
-                w.passes.push(WalkPass { lo: 0, hi: w.ask, frame: e.frame, ms: None, untimed: false });
+                w.idle_s = 0.0;
+                w.passes.push(WalkPass { lo: 0, hi: w.ask, frame: e.frame, ms: None, untimed: false, target_ms: PIN_TARGET_MS, age_s: 0.0 });
                 let res = w.res;
                 self.plane = Plane::Split { res, k: e.b.max(1), j: e.a, glow: 1.0 };
                 if let Some(c) = self.column(e.frame) {
                     c.ran[Pass::Split as usize] = true;
+                }
+            }
+            Kind::WalkStart => {
+                let res = (e.b >> 16, e.b & 0xffff);
+                self.walk = Some(Walk::new(if e.f > 0.0 { WalkKind::Ssaa } else { WalkKind::Settle }, e.a, res));
+            }
+            Kind::WalkPass => {
+                // A pass with no start seen (the panel opened partway): a walk of the kind this frame ran.
+                if !self.walk.as_ref().is_some_and(Walk::settling) {
+                    let kind = if s.dispatched == Some(Pass::Ssaa) { WalkKind::Ssaa } else { WalkKind::Settle };
+                    self.walk = Some(Walk::new(kind, s.iterations.max(e.b), s.res));
+                }
+                let Some(w) = self.walk.as_mut() else { return };
+                w.passes.push(WalkPass { lo: e.a, hi: e.b, frame: e.frame, ms: None, untimed: false, target_ms: e.f.max(1.0), age_s: 0.0 });
+                w.cursor = w.cursor.max(e.b);
+                w.ask = w.ask.max(e.b);
+                w.idle_s = 0.0;
+                // The last pass is out: the walk waits for its timing.
+                w.verifying = e.b >= w.ask;
+                let (res, band, kind) = (w.res, Some((e.a, e.b)), w.kind);
+                self.plane = match (kind, &self.plane) {
+                    (WalkKind::Ssaa, Plane::Ssaa { samples, .. }) => Plane::Ssaa { res, samples: *samples, band, glow: 1.0 },
+                    (WalkKind::Ssaa, _) => Plane::Ssaa { res, samples: 0, band, glow: 1.0 },
+                    _ => Plane::Whole { res, band, settled: true, glow: 1.0 },
+                };
+                let pass = if kind == WalkKind::Ssaa { Pass::Ssaa } else { Pass::Walk };
+                if let Some(c) = self.column(e.frame) {
+                    c.ran[pass as usize] = true;
                 }
             }
             Kind::PinVerify => {
@@ -495,7 +571,7 @@ impl Model {
                 // The frame's own pass: whichever kind that frame ran.
                 let kind = if e.a == PASS_OF_FRAME {
                     let ran = self.columns.iter().rev().find(|c| c.frame == frame).map(|c| c.ran).unwrap_or_default();
-                    [Pass::Pin, Pass::Split, Pass::Tile, Pass::Ssaa, Pass::Probe, Pass::Moving]
+                    [Pass::Pin, Pass::Split, Pass::Walk, Pass::Tile, Pass::Ssaa, Pass::Probe, Pass::Moving]
                         .into_iter()
                         .find(|k| ran[*k as usize])
                         .unwrap_or(Pass::Moving)
@@ -506,11 +582,17 @@ impl Model {
                     c.ms[kind as usize] += e.f.max(0.0);
                     c.ran[kind as usize] = true;
                 }
-                if matches!(kind, Pass::Pin | Pass::Split) {
+                if matches!(kind, Pass::Pin | Pass::Split | Pass::Walk | Pass::Ssaa) {
                     if let Some(w) = &mut self.walk {
                         if let Some(p) = w.passes.iter_mut().rev().find(|p| p.frame == frame) {
                             p.ms = Some(e.f);
                             p.untimed = false;
+                            w.idle_s = 0.0;
+                        }
+                        // A still view's walk is over when its last pass is timed.
+                        if w.settling() && w.verifying && w.passes.last().is_some_and(|p| p.ms.is_some()) {
+                            w.ended = true;
+                            w.verifying = false;
                         }
                     }
                 }
@@ -553,7 +635,7 @@ impl Model {
                     Plane::Ssaa { res, .. } => *res,
                     _ => s.res,
                 };
-                self.plane = Plane::Ssaa { res, samples: e.a, glow: 1.0 };
+                self.plane = Plane::Ssaa { res, samples: e.a, band: None, glow: 1.0 };
                 if let Some(c) = self.column(e.frame) {
                     c.ran[Pass::Ssaa as usize] = true;
                 }

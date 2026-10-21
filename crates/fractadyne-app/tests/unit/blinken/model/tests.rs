@@ -204,3 +204,120 @@ fn a_still_panel_says_so_and_an_event_wakes_it() {
     m.update(&[ev(200, Kind::PaletteFeed, 10, 900, 0.0)], snap(200));
     assert!(m.active());
 }
+
+/// A frame of a still view's walk: `dispatched` is what the frame ran (None for a hold between passes).
+fn still(frame: u64, dispatched: Option<Pass>) -> Snapshot {
+    Snapshot { dispatched, res: (2400, 1300), iterations: 396_661, present: Present::Held, ..snap(frame) }
+}
+
+#[test]
+fn a_still_views_walk_sweeps_the_radar_coloured_against_its_own_target_and_ends_when_its_last_pass_is_timed() {
+    let mut m = Model::default();
+    let res = 2400 << 16 | 1300;
+    m.update(&[ev(10, Kind::WalkStart, 396_661, res, 0.0), ev(10, Kind::WalkPass, 147_000, 200_000, 400.0)], still(10, Some(Pass::Walk)));
+    let w = m.walk.as_ref().expect("walking");
+    assert_eq!((w.kind, w.ask, w.res, w.cursor), (WalkKind::Settle, 396_661, (2400, 1300), 200_000));
+    assert_eq!(w.passes[0].target_ms, 400.0);
+    assert!(!w.verifying);
+    assert_eq!(m.plane, Plane::Whole { res: (2400, 1300), band: Some((147_000, 200_000)), settled: true, glow: 1.0 });
+    // Frames between passes hold: the plane keeps the pass in flight rather than going idle.
+    for f in 11..14 {
+        m.update(&[], still(f, None));
+        assert!(matches!(m.plane, Plane::Whole { band: Some((147_000, 200_000)), settled: true, .. }), "frame {f}: {:?}", m.plane);
+    }
+    // The pass's reading is the frame's own, filed under the walk.
+    m.update(&[ev(14, Kind::PassTimed, PASS_OF_FRAME, 10, 310.0)], still(14, None));
+    assert_eq!(m.walk.as_ref().unwrap().passes[0].ms, Some(310.0));
+    let c10 = m.columns.iter().find(|c| c.frame == 10).expect("column 10");
+    assert_eq!(c10.ms[Pass::Walk as usize], 310.0);
+    // The last pass: the walk waits for its reading, then ends and fades.
+    m.update(&[ev(15, Kind::WalkPass, 200_000, 396_661, 400.0)], still(15, Some(Pass::Walk)));
+    assert!(m.walk.as_ref().unwrap().verifying);
+    m.update(&[ev(18, Kind::PassTimed, PASS_OF_FRAME, 15, 280.0)], still(18, None));
+    let w = m.walk.as_ref().unwrap();
+    assert!(w.ended && !w.verifying);
+    for f in 19..19 + 60 {
+        m.update(&[], still(f, None));
+    }
+    assert!(m.walk.is_none());
+    assert_eq!(m.plane, Plane::Idle("HELD"), "the walk over, an idle frame says why again");
+}
+
+#[test]
+fn a_supersampling_samples_walk_shows_its_band_and_the_samples_done_on_the_plane() {
+    let mut m = Model::default();
+    let res = 2400 << 16 | 1300;
+    m.update(&[ev(1, Kind::SsaaSample, 1, 0, 0.0)], still(1, None));
+    m.update(&[ev(2, Kind::WalkStart, 396_661, res, 1.0), ev(2, Kind::WalkPass, 0, 65_536, 400.0)], still(2, Some(Pass::Ssaa)));
+    assert_eq!(m.walk.as_ref().unwrap().kind, WalkKind::Ssaa);
+    assert_eq!(m.plane, Plane::Ssaa { res: (2400, 1300), samples: 1, band: Some((0, 65_536)), glow: 1.0 });
+    m.update(&[ev(5, Kind::PassTimed, PASS_OF_FRAME, 2, 120.0)], still(5, None));
+    assert_eq!(m.walk.as_ref().unwrap().passes[0].ms, Some(120.0));
+    assert_eq!(m.columns.iter().find(|c| c.frame == 2).unwrap().ms[Pass::Ssaa as usize], 120.0);
+    // Folded: the plane counts it and drops the band until the next sample walks.
+    m.update(&[ev(6, Kind::SsaaSample, 2, 0, 0.0)], still(6, None));
+    assert_eq!(m.plane, Plane::Ssaa { res: (2400, 1300), samples: 2, band: None, glow: 1.0 });
+    // Each sample's walk starts the radar again.
+    m.update(&[ev(7, Kind::WalkStart, 396_661, res, 1.0), ev(7, Kind::WalkPass, 0, 32_768, 400.0)], still(7, Some(Pass::Ssaa)));
+    let w = m.walk.as_ref().unwrap();
+    assert_eq!((w.passes.len(), w.cursor), (1, 32_768));
+}
+
+#[test]
+fn a_long_pass_is_not_called_untimed_before_twice_its_target_has_passed() {
+    let mut m = Model::default();
+    m.update(&[ev(1, Kind::WalkStart, 396_661, 2400 << 16 | 1300, 0.0), ev(1, Kind::WalkPass, 0, 396_661, 400.0)], still(1, Some(Pass::Walk)));
+    // 60 fps hold frames: 8 frames is 133 ms, far inside a 400 ms pass (to 0.65 s here).
+    for f in 2..=40 {
+        m.update(&[], still(f, None));
+        let w = m.walk.as_ref().unwrap();
+        assert!(!w.passes[0].untimed && !w.ended, "frame {f}");
+    }
+    // Past 0.8 s with no reading: hollow, and the walk is over (nothing else would end it).
+    for f in 41..=60 {
+        m.update(&[], still(f, None));
+    }
+    let w = m.walk.as_ref().unwrap();
+    assert!(w.passes[0].untimed && w.ended);
+}
+
+#[test]
+fn a_still_views_walk_ends_when_the_view_moves_or_nothing_is_heard_from_it() {
+    let mut m = Model::default();
+    m.update(&[ev(1, Kind::WalkStart, 396_661, 2400 << 16 | 1300, 0.0), ev(1, Kind::WalkPass, 0, 50_000, 400.0)], still(1, Some(Pass::Walk)));
+    m.update(&[], still(2, Some(Pass::Moving)));
+    assert!(m.walk.as_ref().unwrap().ended, "a moving frame ends it");
+    assert!(matches!(m.plane, Plane::Whole { band: None, settled: false, .. }));
+    // A still view rendered whole in one pass is a settled frame, not a moving one.
+    m.update(&[], still(3, Some(Pass::Walk)));
+    assert!(matches!(m.plane, Plane::Whole { band: None, settled: true, .. }));
+
+    // A walk whose passes stop (its end never seen) is over after WALK_STALE_S, and the panel idles.
+    let mut m = Model::default();
+    m.update(&[ev(1, Kind::WalkPass, 0, 50_000, 400.0)], still(1, Some(Pass::Walk)));
+    assert_eq!(m.walk.as_ref().unwrap().kind, WalkKind::Settle, "a pass with no start seen walks as the frame ran");
+    let frames = (WALK_STALE_S * 60.0) as u64;
+    let quiet = |f| Snapshot { present: Present::None, ..still(f, None) };
+    m.update(&[ev(2, Kind::PassTimed, PASS_OF_FRAME, 1, 300.0)], quiet(2));
+    for f in 3..frames {
+        m.update(&[], quiet(f));
+        assert!(!m.walk.as_ref().unwrap().ended, "frame {f}");
+    }
+    for f in frames..frames + 120 {
+        m.update(&[], quiet(f));
+    }
+    assert!(m.walk.is_none());
+    assert!(!m.active(), "nothing left moving: the panel can idle");
+}
+
+#[test]
+fn a_pin_walks_passes_keep_the_pin_target_and_its_hold_frames_still_read_held() {
+    let mut m = Model::default();
+    m.update(&[ev(1, Kind::PinStart, 30_000, 436 << 16 | 330, 0.0), ev(1, Kind::PinPass, 256, 512, 0.0)], snap(1));
+    let w = m.walk.as_ref().unwrap();
+    assert_eq!((w.kind, w.passes[0].target_ms), (WalkKind::Pin, PIN_TARGET_MS));
+    let mut s = snap(2);
+    s.present = Present::Held;
+    m.update(&[], s);
+    assert_eq!(m.plane, Plane::Idle("HELD"));
+}

@@ -2074,6 +2074,12 @@ impl FractadyneApp {
     }
 
     pub(crate) fn live_norm_cycle_offset(&self, vi: usize) -> Option<NormMap> {
+        self.live_norm_window(vi).map(|(mn, mx)| self.norm_map_for(mn, mx))
+    }
+
+    /// The escape window the live colour map is built from ([`Self::live_norm_cycle_offset`]), or
+    /// `None` for the classic colouring.
+    pub(crate) fn live_norm_window(&self, vi: usize) -> Option<(f32, f32)> {
         // ⭐⭐**THE PREDICATE IS AN ALIASING TEST, NOT A SPAN TEST.** It used to be
         // `mx - mn > NORM_RANGE_MIN` with `NORM_RANGE_MIN = 20_000` — an ABSOLUTE escape span,
         // which cannot decide this. Aliasing is LOCAL: what matters is how far the palette moves
@@ -2127,8 +2133,8 @@ impl FractadyneApp {
                 // The log form is already implemented for the `log_palette` checkbox; a skewed
                 // range simply routes to it. ⭐Ratio, not span: `[45075, 63736]` is wide in
                 // absolute terms and must stay LINEAR, while `[1, 7925]` is narrower in absolute
-                // terms and must not.
-                Some(self.norm_map_for(mn, mx))
+                // terms and must not. (`norm_map_for` makes that choice.)
+                Some((mn, mx))
             }
             _ => None,
         }
@@ -6015,6 +6021,19 @@ impl FractadyneApp {
                 p.chunk_inflight_lo[vs] = s.inflight_lo;
                 p.chunk_inflight_px[vs] = s.inflight_px;
             }
+            // The live panel's radar follows a still view's walk as it does a pin's: the walk's start
+            // (the cursor at 0: the settle's walk, or a supersampling sample's) and each pass.
+            if dispatch.pass && !interacting && !pin_frame {
+                if let Some([_, hi]) = dispatch.chunk_range {
+                    if dispatch_in.cur == 0 {
+                        let [w, h] = resolution.get();
+                        let ssaa = self.perf.accum_cmd[vs.min(1)].jitter != [0.0, 0.0];
+                        bl::emit(vs, bl::Kind::WalkStart, dispatch_in.walk_end, bl::pack_res(w, h), if ssaa { 1.0 } else { 0.0 });
+                    }
+                    let lo = dispatch_in.cur.max(dispatch_in.walk_floor);
+                    bl::emit(vs, bl::Kind::WalkPass, lo, hi, crate::tunables::cost().tdr_budget_ms as f32);
+                }
+            }
             if dispatch.pin_dispatched {
                 self.perf.pin_dispatch_at[vs] = crate::app_micros();
                 if let (Some([_, to]), Some((size, ..))) = (dispatch.chunk_range, dispatch.state.inflight) {
@@ -6514,12 +6533,7 @@ impl FractadyneApp {
         // adjacent pixels and a CORRECT dense escape field reads as speckle "noise pools" (the
         // corpus-14/15 aliasing, now surfacing live since the adaptive budget resolves these
         // fields). Smooth method only; range-thresholded so ordinary views keep classic coloring.
-        let nm_live = self.live_norm_cycle_offset(vs).unwrap_or(NormMap {
-            cycle: self.color_cycle(),
-            offset: self.coloring.offset,
-            mode: 0,
-            lo: 0.0,
-        });
+        let live_win = self.live_norm_window(vs);
         // ⭐W6 (U43): a HELD snapshot keeps the colour map it was seen under. The map follows the
         // escape-range readings, and while a hold is served those readings are the composing walk's
         // — a picture nobody sees yet — so the snapshot was recoloured every frame under another
@@ -6529,13 +6543,36 @@ impl FractadyneApp {
         // own colouring still applies at once: a change to it un-freezes (`norm_user_sig`).
         let user_sig = self.norm_user_sig();
         if hold_copy {
-            self.perf.hold_norm[vs] = self.perf.shown_norm[vs].map(|m| (m, user_sig));
+            self.perf.hold_norm[vs] = Some((self.perf.shown_norm[vs], user_sig));
         }
-        let held_map = self.perf.hold_norm[vs].filter(|&(_, u)| display_hold && u == user_sig).map(|(m, _)| m);
-        let nm = held_map.unwrap_or(nm_live);
+        // The held picture's own window, while one is served (inside, `None`: classic colours).
+        let held_map = self.perf.hold_norm[vs].filter(|&(_, u)| display_hold && u == user_sig).map(|(w, _)| w);
+        // ⭐…REACHED BY GLIDING: a picture of another source wants another window, and drawing it at
+        // once snapped the palette (`drawn_norm_step`).
+        self.perf.norm_drawn[vs] = drawn_norm_step(self.perf.norm_drawn[vs], held_map.unwrap_or(live_win), held_map.is_some());
+        let drawn = self.perf.norm_drawn[vs].map(|d| d.win);
+        let nm = drawn.map_or(NormMap { cycle: self.color_cycle(), offset: self.coloring.offset, mode: 0, lo: 0.0 }, |(mn, mx)| {
+            self.norm_map_for(mn, mx)
+        });
+        // The colour map this frame is drawn under, for judging how the palette moves frame to frame.
+        if crate::diag::trace_on("palette") {
+            crate::diag::trace(
+                "palette",
+                format!(
+                    "map v={vs} f={} interacting={interacting} held={} mode={} cycle={:.6e} offset={:.6} lo={:.3} shown={:?}",
+                    self.perf.frame_idx,
+                    u8::from(held_map.is_some()),
+                    nm.mode,
+                    nm.cycle,
+                    nm.offset,
+                    nm.lo,
+                    self.perf.norm_shown[vs.min(1)],
+                ),
+            );
+        }
         if !display_hold {
             self.perf.hold_norm[vs] = None;
-            self.perf.shown_norm[vs] = Some(nm_live);
+            self.perf.shown_norm[vs] = drawn;
         }
         let (cycle_eff, offset_eff) = (nm.cycle, nm.offset);
 
@@ -9125,8 +9162,8 @@ impl FractadyneApp {
                     self.perf.norm_sink[vb].store((u64::from(mn.to_bits()) << 32) | u64::from(mx.to_bits()), SeqCst);
                     self.perf.norm_complete_sink[vb].store(true, SeqCst);
                     self.perf.norm_sig_sink[vb].store(self.perf.norm_sig_submit[vb], SeqCst);
-                    if into_hold && mx > mn && self.live_norm_cycle_offset(vi).is_some() {
-                        self.perf.hold_norm[vb] = Some((self.norm_map_for(mn, mx), self.norm_user_sig()));
+                    if into_hold && mx > mn && self.live_norm_window(vi).is_some() {
+                        self.perf.hold_norm[vb] = Some((Some((mn, mx)), self.norm_user_sig()));
                     }
                 }
                 let stamp = if into_hold { 0 } else { self.perf.content[vsub].live_stamp };
@@ -11013,6 +11050,44 @@ pub(crate) fn norm_glide_step(shown: Option<(f32, f32)>, target: (f32, f32), sna
 #[cfg(test)]
 #[path = "../tests/unit/render/norm_glide.rs"]
 mod norm_glide;
+
+/// The palette window a view was last drawn with (`Perf::norm_drawn`).
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub(crate) struct DrawnNorm {
+    /// The window drawn, (lo, hi).
+    pub(crate) win: (f32, f32),
+    /// The window wanted when it was drawn, and whether a held picture wanted it.
+    want: (f32, f32),
+    held: bool,
+    /// The drawn window reached the wanted one and follows it exactly from then on.
+    tracking: bool,
+}
+
+/// ⭐One frame of the drawn palette window. Each picture on screen wants a window: the live one
+/// (`norm_shown`, which glides by itself), or a held picture's own frozen one (U43), which a worker
+/// frame going into the hold brings with it. When the picture on screen changes source the wanted
+/// window jumps, and drawing it at once snapped the palette: on a 16-octave glide at 2^103 with a
+/// same-card worker, 12 frame-to-frame phase steps of more than 0.05 of a palette cycle (to 0.11),
+/// each a worker frame entering the hold; without the worker, one of 0.25 where a held picture gave
+/// way to a live one (2026-10-21, the `palette` trace). So a change of source glides at the live
+/// window's own pace (`norm_glide_step`) until it arrives, and only then tracks the wanted window
+/// exactly: a live view gains no lag. `None` wanted (classic colouring) draws no window.
+pub(crate) fn drawn_norm_step(prev: Option<DrawnNorm>, want: Option<(f32, f32)>, held: bool) -> Option<DrawnNorm> {
+    let want = want?;
+    let Some(p) = prev else { return Some(DrawnNorm { win: want, want, held, tracking: true }) };
+    // Another source: held for live or the other way, or a new held picture (a held one's window
+    // never moves while it is served).
+    let switched = p.held != held || (held && p.want != want);
+    if p.tracking && !switched {
+        return Some(DrawnNorm { win: want, want, held, tracking: true });
+    }
+    let win = norm_glide_step(Some(p.win), want, false);
+    Some(DrawnNorm { win, want, held, tracking: win == want })
+}
+
+#[cfg(test)]
+#[path = "../tests/unit/render/drawn_norm.rs"]
+mod drawn_norm;
 
 /// Lower bound for the held-frame reprojection scale — how far the last good frame may be MAGNIFIED
 /// while a fresh reference builds. `jumped` means a jump stands between the held frame and the view

@@ -24,7 +24,9 @@ impl FractadyneApp {
         let rc = &self.ref_cache[v];
         let age = if rc.frozen_center.is_some() { (l2 - rc.frozen_l2).max(0.0) } else { 0.0 };
         let dispatched = (planned && rec.dispatched).then(|| match rec.frame_kind {
-            3 | 6 => Pass::Pin,
+            3 => Pass::Pin,
+            // A still view's walk pass, or a still view rendered whole in one pass.
+            6 | 9 => Pass::Walk,
             7 => Pass::Tile,
             8 => Pass::Ssaa,
             _ => Pass::Moving,

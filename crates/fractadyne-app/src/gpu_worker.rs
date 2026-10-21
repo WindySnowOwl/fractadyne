@@ -167,7 +167,15 @@ impl Worker {
                         } else {
                             let progress = AtomicU32::new(0);
                             let _busy = crate::blinken::registry::busy(crate::blinken::registry::Role::Worker);
-                            match fractadyne_gpu::render_export(&device, &queue, &job.req, &progress, &cancel) {
+                            // Each pass's GPU time to the live panel as it is measured, so this card's
+                            // gauge and the scope show the sample rendering, not one figure at its end.
+                            let mut panel = PanelPasses { view: job.view, batch: PassBatch::default() };
+                            let sink = move |ms: f64| {
+                                if let Some(b) = panel.batch.add(ms, crate::blinken::events::frame(), crate::app_micros()) {
+                                    panel.push(b);
+                                }
+                            };
+                            match fractadyne_gpu::pass_sink::with(sink, || fractadyne_gpu::render_export(&device, &queue, &job.req, &progress, &cancel)) {
                                 Ok(r) => (Some(Arc::new(sample_of(r))), None),
                                 Err(fractadyne_gpu::GpuError::Canceled) => (None, None),
                                 Err(e) => (None, Some(format!("{e}"))),
@@ -555,6 +563,66 @@ fn render_live(
 /// A job's identity for [`Worker::cancel`]: its run, and its view in the low bit (views are 0 and 1).
 fn job_key(view: usize, run: u64) -> u64 {
     (run << 1) | (view as u64 & 1)
+}
+
+/// A supersampling sample's passes on this card, gathered for the live panel: a sample runs many
+/// passes of a few ms, and the panel files GPU time by the UI frame it lands in. A batch is pushed
+/// when the UI moves to another frame, or after [`PASS_BATCH_US`] when it does not (an idle window
+/// draws few frames, and a batch held for seconds would read as one impossible spike).
+#[derive(Default)]
+pub(crate) struct PassBatch {
+    /// The UI frame the batch began in, and when (app µs).
+    frame: u64,
+    since_us: u64,
+    /// Its GPU time, ms.
+    ms: f64,
+}
+
+/// The longest a batch is held, µs.
+pub(crate) const PASS_BATCH_US: u64 = 100_000;
+
+impl PassBatch {
+    /// Adds a pass of `ms` measured during UI frame `frame` at `now_us`, and returns the batch it
+    /// closed, if it closed one: (the frame it began in, its ms).
+    pub(crate) fn add(&mut self, ms: f64, frame: u64, now_us: u64) -> Option<(u64, f64)> {
+        let closed = if self.ms > 0.0 && (frame != self.frame || now_us.saturating_sub(self.since_us) >= PASS_BATCH_US) {
+            self.take()
+        } else {
+            None
+        };
+        if self.ms == 0.0 {
+            (self.frame, self.since_us) = (frame, now_us);
+        }
+        self.ms += ms.max(0.0);
+        closed
+    }
+
+    /// The batch so far, emptied: (the frame it began in, its ms), or `None` when it is empty.
+    pub(crate) fn take(&mut self) -> Option<(u64, f64)> {
+        let ms = std::mem::take(&mut self.ms);
+        (ms > 0.0).then_some((self.frame, ms))
+    }
+}
+
+/// [`PassBatch`] pushing to the panel's ring as the worker's `PassTimed`, the rest when it drops.
+struct PanelPasses {
+    view: usize,
+    batch: PassBatch,
+}
+
+impl PanelPasses {
+    fn push(&self, (frame, ms): (u64, f64)) {
+        use crate::blinken::events as bl;
+        bl::emit(self.view, bl::Kind::PassTimed, bl::Pass::Worker as u32, frame as u32, ms as f32);
+    }
+}
+
+impl Drop for PanelPasses {
+    fn drop(&mut self) {
+        if let Some(b) = self.batch.take() {
+            self.push(b);
+        }
+    }
 }
 
 /// An export's colour (`fs_color`'s output, RGBA floats) as a supersampling sample.

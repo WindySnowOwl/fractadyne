@@ -20,6 +20,8 @@ mod twin;
 pub use twin::*;
 #[path = "harness/timing.rs"]
 pub mod timing;
+/// Each offscreen pass's GPU time as it is measured, for a live instrument on the rendering thread.
+pub mod pass_sink;
 /// Custom formulas: WGSL generated from the formula IR and spliced into the fixed shader.
 pub mod custom;
 /// Life-like automata: the tile stepper, the app's first compute pipeline (design/automata.md).
