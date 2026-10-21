@@ -1094,12 +1094,42 @@ impl FractadyneApp {
             }
             // …and the split refresh's geometry must not make the frame itself dearer: every tile
             // through `vs_split_tiles` against the one full-screen triangle, by the wall clock.
-            let geo = walls[1] / walls[0];
+            // ⭐IN PAIRS, back to back, and the MEDIAN of the pairs' ratios (2026-10-21). Timed as
+            // three triangles and then three tile passes (`walls` above), anything that drifted
+            // between the two blocks — the clocks, the heat, the machine's other work — landed on one
+            // side of the ratio: an RTX 3080 read 0.92 to 1.35 across eleven runs of one build
+            // against this 1.3 gate, and main failed it as often as the branch under test. Each pair
+            // is measured within a few hundred ms, the first of a pair alternates, and the drift
+            // divides out of every ratio.
+            const GEO_PAIRS: usize = 7;
+            let wall = |tiles: bool| {
+                fractadyne_gpu::time_iter_pass(device, queue, &req, tiles, 1)
+                    .map_err(|e| eprintln!("[selftest] GPU ERROR (time_iter_pass): {e}"))
+                    .ok()
+                    .and_then(|t| t.first().map(|r| r[1]))
+            };
+            let pairs: Vec<f64> = (0..GEO_PAIRS)
+                .filter_map(|i| {
+                    let (tri, tiles) = if i % 2 == 0 {
+                        let t = wall(false)?;
+                        (t, wall(true)?)
+                    } else {
+                        let g = wall(true)?;
+                        (wall(false)?, g)
+                    };
+                    Some(tiles / tri)
+                })
+                .collect();
+            let spread = pairs.iter().copied().fold((f64::INFINITY, f64::NEG_INFINITY), |(lo, hi), r| (lo.min(r), hi.max(r)));
+            let geo = if pairs.len() == GEO_PAIRS { median(pairs) } else { f64::NAN };
             push_check(&mut checks, &mut last_check_t, SelfCheck {
                 category: "LiveSplit",
                 name: "the split tile geometry costs what the full-screen pass does".into(),
-                params: format!("{SPLIT_COST_N}×{SPLIT_COST_N} df32 1e8x, every tile, wall, median of 3"),
-                result: format!("tiles {:.2} ms against the triangle {:.2} ms = {geo:.2}", walls[1], walls[0]),
+                params: format!("{SPLIT_COST_N}×{SPLIT_COST_N} df32 1e8x, every tile, wall, median of {GEO_PAIRS} back-to-back pairs"),
+                result: format!(
+                    "tiles over the triangle {geo:.2} (pairs {:.2}..{:.2}; blocks of three: tiles {:.2} ms, triangle {:.2} ms)",
+                    spread.0, spread.1, walls[1], walls[0]
+                ),
                 threshold: "≤ 1.3",
                 pass: geo.is_finite() && geo <= 1.3,
             });
