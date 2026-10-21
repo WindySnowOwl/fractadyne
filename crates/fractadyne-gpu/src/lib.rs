@@ -260,9 +260,28 @@ pub(crate) struct ColorUniforms {
     /// (`palette_box` in the shader) so a steep escape field at deep zoom stops aliasing into
     /// speckle. 0 = point sample (the old behaviour), for A/B and golden re-blessing.
     pub(crate) aa_palette: u32,
-    /// Restores the 16-byte-multiple size a uniform needs (and keeps the struct free of implicit
-    /// padding, which `bytemuck::Pod` forbids). Mirrored by three `_pad_aa*` words in `ColorU`.
-    pub(crate) _pad_aa: [u32; 3],
+    /// A dissolve from another palette map ([`PaletteFade`]): its weight (0 = none) and that map,
+    /// in the three words that padded `aa_palette` and one more 16-byte row. `ColorU` mirrors them.
+    pub(crate) fade_weight: f32,
+    pub(crate) fade_mode: u32,
+    pub(crate) fade_lo: f32,
+    pub(crate) fade_cycle: f32,
+    pub(crate) fade_offset: f32,
+    pub(crate) _pad_fade: [u32; 2],
+}
+
+/// A dissolve between two palette maps: a frame drawn under its own map (`cycle`, `offset`,
+/// `norm_mode`, `norm_lo`) is blended with the same frame under the map it replaces, that map's
+/// colour taking `weight` (0 = no dissolve). The app runs one when the KIND of map changes — the
+/// palette normalization switching on or off, or between its linear and log forms — where no
+/// window can glide from one map to the other.
+#[derive(Clone, Copy, Debug, Default, PartialEq)]
+pub struct PaletteFade {
+    pub weight: f32,
+    pub cycle: f32,
+    pub offset: f32,
+    pub mode: u32,
+    pub lo: f32,
 }
 
 /// Uniform for the progressive-SSAA accumulate pass (`fs_accum`): the running-mean step
@@ -2842,6 +2861,8 @@ pub struct MandelbrotParams {
     /// Defaults to 0, so every existing caller keeps the classic affine mapping untouched.
     pub norm_mode: u32,
     pub norm_lo: f32,
+    /// A dissolve from the map this frame's replaces ([`PaletteFade`]); none by default.
+    pub palette_fade: PaletteFade,
     /// Analytic palette anti-aliasing: box-filter the palette over each pixel's phase footprint
     /// (`palette_box` in the shader) so a steep escape field at deep zoom stops aliasing into
     /// speckle. `false` = point sample (the classic behaviour).
@@ -3067,6 +3088,7 @@ impl Default for MandelbrotParams {
             offset: 0.0,
             norm_mode: 0,
             norm_lo: 0.0,
+            palette_fade: PaletteFade::default(),
             aa_palette: false,
             lut: Arc::new(Vec::new()),
             lut_smooth: true,
@@ -3487,7 +3509,12 @@ impl CallbackTrait for MandelbrotParams {
             norm_mode: self.norm_mode,
             norm_lo: self.norm_lo,
             aa_palette: self.aa_palette as u32,
-            _pad_aa: [0; 3],
+            fade_weight: self.palette_fade.weight,
+            fade_mode: self.palette_fade.mode,
+            fade_lo: self.palette_fade.lo,
+            fade_cycle: self.palette_fade.cycle,
+            fade_offset: self.palette_fade.offset,
+            _pad_fade: [0; 2],
         };
         queue.write_buffer(&view.color_uniform, 0, bytemuck::bytes_of(&cu));
 

@@ -105,6 +105,25 @@ fn lut_binding_is_declared_and_sized() {
 }
 
 /// Byte offset of `field` in a WGSL struct laid out as [`wgsl_struct_size`] does.
+/// The palette dissolve's fields sit where the Rust struct puts them, one by one: the size check
+/// alone would pass two fields swapped, and the dissolve would blend in a map built from the wrong
+/// words.
+#[test]
+fn the_palette_fade_fields_line_up() {
+    let src = include_str!(concat!(env!("CARGO_MANIFEST_DIR"), "/src/mandelbrot.wgsl"));
+    let fields = wgsl_struct_fields(src, "ColorU");
+    for (wgsl, rust) in [
+        ("aa_palette", std::mem::offset_of!(ColorUniforms, aa_palette)),
+        ("fade_weight", std::mem::offset_of!(ColorUniforms, fade_weight)),
+        ("fade_mode", std::mem::offset_of!(ColorUniforms, fade_mode)),
+        ("fade_lo", std::mem::offset_of!(ColorUniforms, fade_lo)),
+        ("fade_cycle", std::mem::offset_of!(ColorUniforms, fade_cycle)),
+        ("fade_offset", std::mem::offset_of!(ColorUniforms, fade_offset)),
+    ] {
+        assert_eq!(wgsl_field_offset(&fields, wgsl), rust, "`{wgsl}` is at another offset in ColorU than in ColorUniforms");
+    }
+}
+
 fn wgsl_field_offset(fields: &[(String, String)], field: &str) -> usize {
     let mut off = 0usize;
     for (name, ty) in fields {

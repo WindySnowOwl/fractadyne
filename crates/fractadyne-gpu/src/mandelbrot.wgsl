@@ -3283,9 +3283,15 @@ struct ColorU {
     // `palette_box`); 0 = point sample. The three pad words restore the 16-byte-multiple size and
     // mirror `_pad_aa` in the Rust `ColorUniforms` (kept in step, per uniform_layout_tests).
     aa_palette: u32,
-    _pad_aa0: u32,
-    _pad_aa1: u32,
-    _pad_aa2: u32,
+    // A dissolve from another palette map (`PaletteFade`): that map's colour takes `fade_weight`
+    // (0 = none). Mirrors the Rust `ColorUniforms` field for field.
+    fade_weight: f32,
+    fade_mode: u32,
+    fade_lo: f32,
+    fade_cycle: f32,
+    fade_offset: f32,
+    _pad_fade0: u32,
+    _pad_fade1: u32,
 };
 @group(0) @binding(0) var<uniform> cu: ColorU;
 @group(0) @binding(1) var iter_tex: texture_2d<f32>;
@@ -3361,6 +3367,17 @@ const INTERIOR_COORD: f32 = 1.0e30;
 // diffing the pre-`fract` value is what keeps that footprint free of wrap discontinuities.
 // `m` = (smooth iter, normal.x, normal.y, DE log2); `a` = (stripe, TIA, trap, decomp).
 fn coord_of(m: vec4<f32>, a: vec4<f32>) -> f32 {
+    return coord_under(m, a, cu.cycle, cu.offset, cu.norm_mode, cu.norm_lo);
+}
+
+// The palette coordinate under the map a dissolve fades from (`cu.fade_*`).
+fn coord_fade(m: vec4<f32>, a: vec4<f32>) -> f32 {
+    return coord_under(m, a, cu.fade_cycle, cu.fade_offset, cu.fade_mode, cu.fade_lo);
+}
+
+// The palette coordinate of a texel under a palette map (`cycle`, `offset`, and the range mapping
+// `mode` about `lo`); `INTERIOR_COORD` for an interior texel, whatever the map.
+fn coord_under(m: vec4<f32>, a: vec4<f32>, cycle: f32, offset: f32, mode: u32, lo: f32) -> f32 {
     var pv: f32;
     var interior: bool = (m.r < 0.0);
     if (cu.color_method == 1u) {
@@ -3386,10 +3403,10 @@ fn coord_of(m: vec4<f32>, a: vec4<f32>) -> f32 {
     // zoom video rather than washing out as the range grows.
     // `+ 1` keeps the argument ≥ 1 (log ≥ 0) so the floor of the range maps to 0 exactly.
     var pv_mapped = pv;
-    if (cu.norm_mode == 1u) {
-        pv_mapped = log(max(pv - cu.norm_lo, 0.0) + 1.0);
+    if (mode == 1u) {
+        pv_mapped = log(max(pv - lo, 0.0) + 1.0);
     }
-    return pv_mapped * cu.cycle + cu.offset;
+    return pv_mapped * cycle + offset;
 }
 
 // Cyclic antiderivative of the palette at texel coordinate `x` (may be < 0 or > n), from the
@@ -3435,10 +3452,14 @@ fn shade(m: vec4<f32>, a: vec4<f32>) -> vec3<f32> {
 // Band-limited shade: colour one texel with the palette box-averaged over `width` cycles (the
 // output pixel's palette-phase footprint). `width == 0` degenerates to the point sample, so this
 // is a drop-in for `shade` when the anti-aliasing is off (`cu.aa_palette == 0`, width left 0).
-fn shade_aa(m: vec4<f32>, a: vec4<f32>, width: f32) -> vec3<f32> {
+// During a dissolve (`cu.fade_weight` > 0) the texel is also shaded under the map it fades from,
+// with that map's own footprint `width_fade`, and the two colours are blended.
+fn shade_aa(m: vec4<f32>, a: vec4<f32>, width: f32, width_fade: f32) -> vec3<f32> {
     let coord = coord_of(m, a);
     if (coord >= INTERIOR_COORD) { return cu.interior_col.xyz; }
-    return palette_box(coord, width);
+    let col = palette_box(coord, width);
+    if (cu.fade_weight <= 0.0) { return col; }
+    return mix(col, palette_box(coord_fade(m, a), width_fade), cu.fade_weight);
 }
 
 // Average color of the frozen frame, from a coarse grid over the iteration texture. Used to
@@ -3496,16 +3517,28 @@ fn fs_color(in: VsOut) -> @location(0) vec4<f32> {
     // free of pops (the footprint grows smoothly with depth). Zero when off ⇒ `shade_aa` is a
     // point sample identical to the old `shade`.
     var pal_w = 0.0;
+    var pal_wf = 0.0; // the same footprint under the map a dissolve fades from
     if (cu.aa_palette == 1u) {
         let o0 = clamp(pix * i32(ss), vec2<i32>(0, 0), maxc);
-        let c0 = coord_of(textureLoad(iter_tex, o0, 0), textureLoad(aux_tex, o0, 0));
+        let ox = clamp((pix + vec2<i32>(1, 0)) * i32(ss), vec2<i32>(0, 0), maxc);
+        let oy = clamp((pix + vec2<i32>(0, 1)) * i32(ss), vec2<i32>(0, 0), maxc);
+        let m0 = textureLoad(iter_tex, o0, 0);
+        let a0 = textureLoad(aux_tex, o0, 0);
+        let mx = textureLoad(iter_tex, ox, 0);
+        let ax = textureLoad(aux_tex, ox, 0);
+        let my = textureLoad(iter_tex, oy, 0);
+        let ay = textureLoad(aux_tex, oy, 0);
+        let c0 = coord_of(m0, a0);
         if (c0 < INTERIOR_COORD) {
-            let ox = clamp((pix + vec2<i32>(1, 0)) * i32(ss), vec2<i32>(0, 0), maxc);
-            let oy = clamp((pix + vec2<i32>(0, 1)) * i32(ss), vec2<i32>(0, 0), maxc);
-            let cx = coord_of(textureLoad(iter_tex, ox, 0), textureLoad(aux_tex, ox, 0));
-            let cy = coord_of(textureLoad(iter_tex, oy, 0), textureLoad(aux_tex, oy, 0));
+            let cx = coord_of(mx, ax);
+            let cy = coord_of(my, ay);
             if (cx < INTERIOR_COORD) { pal_w = max(pal_w, abs(cx - c0)); }
             if (cy < INTERIOR_COORD) { pal_w = max(pal_w, abs(cy - c0)); }
+            if (cu.fade_weight > 0.0) {
+                let f0 = coord_fade(m0, a0);
+                if (cx < INTERIOR_COORD) { pal_wf = max(pal_wf, abs(coord_fade(mx, ax) - f0)); }
+                if (cy < INTERIOR_COORD) { pal_wf = max(pal_wf, abs(coord_fade(my, ay) - f0)); }
+            }
         }
     }
 
@@ -3541,7 +3574,7 @@ fn fs_color(in: VsOut) -> @location(0) vec4<f32> {
             );
             let t = textureLoad(iter_tex, texel, 0);
             let ta = textureLoad(aux_tex, texel, 0);
-            acc = acc + shade_aa(t, ta, pal_w) * w;
+            acc = acc + shade_aa(t, ta, pal_w, pal_wf) * w;
             nacc = nacc + vec2<f32>(t.g, t.b) * w;
             dacc = dacc + t.a * w;
             count = count + w;

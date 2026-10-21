@@ -2025,6 +2025,13 @@ struct Perf {
     /// The palette window each view was last DRAWN with, gliding from one picture's window to the
     /// next's (`render::drawn_norm_step`).
     norm_drawn: [Option<render::DrawnNorm>; 2],
+    /// The colour box (`aa_filter`) the live texture was last shown with, and the one a hold
+    /// snapshot keeps while it is served (U43's rule for the box).
+    shown_aa: [Option<u32>; 2],
+    hold_aa: [Option<u32>; 2],
+    /// The palette map each view was last drawn under, and any dissolve from a map of another kind
+    /// (`render::palette_fade_step`).
+    palette_fade: [render::PaletteFadeState; 2],
     /// This view's frames are currently chunk-governed (`chunk_over`), stamped every
     /// `build_params`. The norm drain keys on THIS, not on the cursor: escape readings lag their
     /// dispatches by 2-3 frames, so a completed walk's LAST band lands with the cursor already at
@@ -2620,6 +2627,9 @@ impl Default for Perf {
             shown_norm: [None, None],
             hold_norm: [None, None],
             norm_drawn: [None, None],
+            shown_aa: [None, None],
+            hold_aa: [None, None],
+            palette_fade: Default::default(),
             chunk_governed: [false, false],
             motion_res: [0.6, 0.6],
             visible_res: [1.0, 1.0],
@@ -9697,7 +9707,10 @@ impl FractadyneApp {
         self.accum_confirm(ctx, view, &mut params);
         // A settle grid (or a chunked iteration progression) in progress needs the next frame
         // promptly — each frame renders one tile / one iteration range.
-        if self.perf.tile_pending[view_id as usize] || self.perf.chunk_pending[view_id as usize] {
+        if self.perf.tile_pending[view_id as usize]
+            || self.perf.chunk_pending[view_id as usize]
+            || self.palette_moving(view_id as usize)
+        {
             self.schedule_repaint(ctx);
         }
         add_mandelbrot(ui.painter(), rect, params);
@@ -14046,6 +14059,19 @@ impl FractadyneApp {
             || self.tour_render.child.is_some()
     }
 
+    /// The palette of view `v` is still moving toward its colours: the shown window gliding to the
+    /// fed one (`render::norm_glide_step`), the drawn window gliding to a new picture's
+    /// (`render::drawn_norm_step`), or a dissolve from another kind of map (`render::palette_fade_step`).
+    /// Each advances only when a frame is built, so it asks for the next one: on a view gone still,
+    /// a dissolve stalled part-way and the settled picture kept a blend of two palettes (the uitest's
+    /// minimap pan read 11.3 and 13.8 against its 9.5 gate, 2026-10-21).
+    pub(crate) fn palette_moving(&self, v: usize) -> bool {
+        let p = &self.perf;
+        p.palette_fade[v].weight() > 0.0
+            || p.norm_drawn[v].is_some_and(|d| !d.arrived())
+            || (p.norm_shown[v].is_some() && p.norm_shown[v] != p.norm_range[v])
+    }
+
     /// Nothing rendering, refining, building or animating in EITHER view — see
     /// [`render::render_quiescent`] for why this is one predicate with two readers.
     fn render_quiescent(&self) -> bool {
@@ -15270,6 +15296,11 @@ impl FractadyneApp {
             lo.to_bits().hash(&mut h);
             hi.to_bits().hash(&mut h);
         }
+        // …and the window DRAWN, which glides to the shown one after a change of picture
+        // (`render::drawn_norm_step`), and a dissolve from another kind of map still under way
+        // (`render::palette_fade_step`): both land exactly, so this settles too.
+        self.perf.norm_drawn[view].map(|d| (d.win.0.to_bits(), d.win.1.to_bits())).hash(&mut h);
+        self.perf.palette_fade[view].weight().to_bits().hash(&mut h);
         self.perf.norm_sig[view].hash(&mut h);
         self.perf.norm_locked[view].hash(&mut h);
         h.finish()
@@ -15285,6 +15316,7 @@ impl FractadyneApp {
         for r in [self.perf.norm_range[view], self.perf.norm_shown[view], self.perf.norm_drawn[view].map(|d| d.win)] {
             r.map(|(lo, hi)| (lo.to_bits(), hi.to_bits())).hash(&mut h);
         }
+        self.perf.palette_fade[view].weight().to_bits().hash(&mut h);
         self.perf.norm_sig[view].hash(&mut h);
         self.perf.norm_locked[view].hash(&mut h);
         h.finish()

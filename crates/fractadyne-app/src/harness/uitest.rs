@@ -1032,6 +1032,12 @@ impl FractadyneApp {
                     || self.perf.chunk_pending[1]
                     || !ramp_done(0)
                     || (self.dual && !ramp_done(1))
+                    // …and its COLOURS settled: a settled view's normalization is decided on its
+                    // completed walk, so the switch it makes can start a 0.4 s dissolve just as the
+                    // grid drains, and a capture inside it held a blend of two palettes (the
+                    // minimap pan read 11.3 and 13.8 against the 9.5 gate, 2026-10-21).
+                    || self.palette_moving(0)
+                    || (self.dual && self.palette_moving(1))
                     || !self.misi_gallery_ready()
                     || self.misi_jump_busy()
                     || self.formula_dialog.pending.is_some()

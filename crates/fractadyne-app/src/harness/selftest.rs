@@ -2724,6 +2724,60 @@ impl FractadyneApp {
             }
         }
 
+        // ⭐THE PALETTE DISSOLVE BLENDS TWO MAPS OF ONE PICTURE (2026-10-21). When the palette map
+        // changes kind mid-zoom ("Normalize deep colors" switching on or off, linear to log), the
+        // colour pass draws the frame under its own map and under the one it replaces, and mixes
+        // them by `palette_fade.weight`. One iteration buffer coloured three ways — map A, map B, and
+        // A fading from B at a quarter — must give exactly 3/4 A + 1/4 B.
+        if want("palette-fade") {
+            let mut base = make(self, SX, SY, 1.0e2);
+            base.aa_filter = 1;
+            base.aa_palette = false;
+            base.light = 0;
+            base.de_on = 0;
+            base.vignette.on = 0;
+            let coloured = |req: &fractadyne_gpu::ExportRequest, iter: &[f32]| -> Option<Vec<f32>> {
+                match fractadyne_gpu::color_iter_buffer(device, queue, req, iter) {
+                    Ok(r) => Some(r.pixels),
+                    Err(e) => {
+                        eprintln!("[selftest] GPU ERROR (color_iter_buffer): {e}");
+                        None
+                    }
+                }
+            };
+            let (a_req, mut b_req) = (base.clone(), base.clone());
+            b_req.norm_mode = 1;
+            b_req.norm_lo = 2.0;
+            b_req.cycle = 0.41;
+            b_req.offset = 0.27;
+            let mut c_req = base.clone();
+            c_req.palette_fade = fractadyne_gpu::PaletteFade { weight: 0.25, cycle: b_req.cycle, offset: b_req.offset, mode: 1, lo: b_req.norm_lo };
+            let (err, apart) = match render(&base) {
+                Some(iter) => match (coloured(&a_req, &iter), coloured(&b_req, &iter), coloured(&c_req, &iter)) {
+                    (Some(a), Some(b), Some(c)) => {
+                        let mut err = 0.0f64;
+                        let mut apart = 0.0f64;
+                        for i in (0..a.len()).filter(|i| i % 4 != 3) {
+                            let want = 0.75 * a[i] + 0.25 * b[i];
+                            err = err.max((c[i] - want).abs() as f64);
+                            apart = apart.max((a[i] - b[i]).abs() as f64);
+                        }
+                        (err, apart)
+                    }
+                    _ => (f64::INFINITY, 0.0),
+                },
+                None => (f64::INFINITY, 0.0),
+            };
+            push_check(&mut checks, &mut last_check_t, SelfCheck {
+                category: "appearance",
+                name: "a palette dissolve blends the two maps by its weight".to_string(),
+                params: format!("seahorse 1e2x, {N}px, linear map fading from a log map at 0.25"),
+                result: format!("max |colour - (3/4 A + 1/4 B)| {err:.2e} (the two maps differ by up to {apart:.2})"),
+                threshold: "< 1e-4, and the maps at least 0.2 apart",
+                pass: err < 1.0e-4 && apart > 0.2,
+            });
+        }
+
         if want("iter-chunk") {
             let mag = 1.0e24;
             const C6X: &str = "-0.7436438870371587047521915061147707";
