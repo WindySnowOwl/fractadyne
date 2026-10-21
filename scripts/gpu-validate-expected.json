@@ -25,7 +25,8 @@
     "uitest": { "exit": [0], "why": "the deep floatexp band is WARN-not-FAIL by design" },
     "recordtest": { "exit": [0], "why": "must pass everywhere: the frame record diagnoses the next crash" },
     "screen": { "exit": [0], "why": "0 = three dives captured; the verdict is screengate.py's" },
-    "regime": { "exit": [0], "why": "the escaped-reference storm at the view that lost the RX 6800 XT: 0 = entered and survived, 2 = a budget stall or a liveness failure, 3 = never entered (W9)" }
+    "regime": { "exit": [0], "why": "the escaped-reference storm at the view that lost the RX 6800 XT: 0 = entered and survived, 2 = a budget stall or a liveness failure, 3 = never entered (W9)" },
+    "settle": { "exit": [0], "why": "a user's 2^704 view settling and supersampling: 0 = no pass in the lethal band and no blind budget, 1 = the app's log check broke a rule (named), 2 = VACUOUS (2026-10-20)" }
   },
   "adapters": {
     "nvidia-geforce-rtx-3080": {

@@ -5322,6 +5322,21 @@ impl FractadyneApp {
                 // render it describes (`r.tag`). The work counters come from the same readback of
                 // the same armed frame (one `CounterRead::pump`, which runs in `prepare`, i.e.
                 // never while `update` is running), so they are that render's too.
+                // The view's ESCAPE ONSET (`WALK_ONSET`): the lowest escape any reading of it has seen.
+                // A walk's passes each report the escapes in their own window, so their minimum is
+                // where the picture begins to escape; `bp_chunk_tiling` forgets it with the view.
+                // ⚠Only a reading of a dispatch made since then: readings land two or three frames
+                // after their pass, and the last moving frames' are of shallower views, whose
+                // pixels escape sooner — an onset too low puts cheap territory in the region, and
+                // its licence is earned there and carried into the dear part again.
+                if r.escaped > 0 && r.esc_min_bits != u32::MAX && r.prov.frame >= self.perf.walk_onset_from[vb] {
+                    let lo = f32::from_bits(r.esc_min_bits);
+                    if lo.is_finite() && lo >= 1.0 {
+                        let lo = lo as u32;
+                        let o = &mut self.perf.walk_onset[vb];
+                        *o = if *o == 0 { lo } else { (*o).min(lo) };
+                    }
+                }
                 {
                     let (rebase, bla_skip) = self.live_work_counters(vb);
                     let rec = &mut self.perf.rec[vb];
@@ -5612,6 +5627,47 @@ impl FractadyneApp {
                 self.perf.tile_state[vidx] = None;
                 self.perf.tile_pending[vidx] = false;
             }
+            // The escape onset belongs to the VIEW (`WALK_ONSET`, `Perf::walk_onset`): a new centre,
+            // magnification or settings forgets it. A new resolution, ask or supersampling sample
+            // does not — the next sample's pixels escape where the last one's did.
+            let onset_key = center.0.to_bits()
+                ^ center.1.to_bits().rotate_left(17)
+                ^ magnification.to_bits().rotate_left(34)
+                ^ view_key.4.rotate_left(29);
+            if self.perf.walk_onset_key[vs] != onset_key {
+                self.perf.walk_onset_key[vs] = onset_key;
+                self.perf.walk_onset[vs] = 0;
+                self.perf.walk_onset_from[vs] = self.perf.frame_idx;
+            }
+            // …and while none has been seen, an ESCAPED reference's length stands in: past it every
+            // pixel rebases (the pin floor's "rebase storm at the end of an escaped reference"), and
+            // at the 2^704 view the cost cliff (~220k) sat just short of the reference's end
+            // (247,533). Before this, a view's first walk met that cliff with an octave band's licence
+            // earned on the cheap front (one ~900 ms pass a fresh view). A partial reference is still
+            // growing, and an un-escaped one has no end short of the ask.
+            let onset_start = if crate::tunables::cost().walk_onset == 1 {
+                let rc = &self.ref_cache[vidx];
+                let ref_end = if rc.ref_pt.is_some() && !rc.partial && rc.orbit_len > 0 && rc.orbit_len < gpu_iter {
+                    rc.orbit_len
+                } else {
+                    0
+                };
+                walk_onset_start(self.perf.walk_onset[vs], ref_end)
+            } else {
+                0
+            };
+            // Has the settled pass in flight COMPLETED (`WALK_SERIALIZE`)? Every registration of this
+            // view's work confirmed by its callback (the settle tiles' signal, `settle_tile_waits`), or
+            // the completion overdue: a callback that late is a lost device or one that is not coming,
+            // and the walk must not wedge on it. ⚠Registrations, not `view_reg_pending`: `update` arms
+            // the last frame's before this runs, and a harness that drives `build_params` without an
+            // event loop arms none — waiting on its pending flag wedged the self-test's walks after one
+            // pass ("a STALE budget chunks inside the admission", "a completed tiled settle REVEALS").
+            let walk_done = (crate::tunables::cost().walk_serialize == 1).then(|| {
+                let outstanding = self.perf.view_outstanding(vs);
+                let age = crate::app_micros().saturating_sub(self.perf.view_reg_at[vs]);
+                outstanding == 0 || age > crate::tunables::SETTLE_COMPLETION_TIMEOUT_US
+            });
             // The pass's PRICING and SIZING: the pure `decide::decide_walk_price` (its notes moved
             // with it), so a recording replays it exactly.
             let price_in = decide::WalkPriceInputs {
@@ -5643,6 +5699,10 @@ impl FractadyneApp {
                 knee_px: crate::calibration::knee_px(),
                 span_priced: crate::tunables::cost().pin_span_priced == 1,
                 orbit_len: self.ref_cache[vidx].orbit_len,
+                walk_done,
+                inflight_lo: self.perf.chunk_inflight_lo[vs],
+                inflight_px: self.perf.chunk_inflight_px[vs],
+                onset_start,
                 ledger: decide::WalkLedger {
                     inflight: self.perf.chunk_inflight[vs],
                     bands: self.perf.chunk_bands[vs],
@@ -5655,6 +5715,8 @@ impl FractadyneApp {
                     band_ms_len: self.perf.chunk_band_ms_len[vs],
                     band_ms_px: self.perf.chunk_band_ms_px[vs],
                     late_px: self.perf.chunk_late_px[vs],
+                    onset_work: self.perf.chunk_onset_work[vs],
+                    band_px: self.perf.chunk_band_px[vs],
                 },
                 tdr_budget_ms: crate::tunables::cost().tdr_budget_ms,
                 tdr_explicit_budget_ms: crate::tunables::cost().tdr_explicit_budget_ms,
@@ -5674,6 +5736,8 @@ impl FractadyneApp {
             self.perf.chunk_band_ms_len[vs] = price.ledger.band_ms_len;
             self.perf.chunk_band_ms_px[vs] = price.ledger.band_ms_px;
             self.perf.chunk_late_px[vs] = price.ledger.late_px;
+            self.perf.chunk_onset_work[vs] = price.ledger.onset_work;
+            self.perf.chunk_band_px[vs] = price.ledger.band_px;
             // Readings keep only while their pass is still parked.
             self.perf.chunk_late[vs] = price.ledger.late;
             let parked = price.ledger.late;
@@ -5809,6 +5873,8 @@ impl FractadyneApp {
                 self.perf.chunk_bands[vs] = [0; crate::tunables::CHUNK_BANDS];
                 self.perf.chunk_band_ms[vs] = [0.0; crate::tunables::CHUNK_BANDS];
                 self.perf.chunk_pass_dt[vs] = 0.0;
+                self.perf.chunk_onset_work[vs] = 0;
+                self.perf.chunk_band_px[vs] = [0; crate::tunables::CHUNK_BANDS];
                 // A parked price belongs to the ledger it was earned in.
                 self.perf.chunk_late[vs] = [None; decide::LATE_MAX];
                 self.perf.chunk_late_px[vs] = [0; decide::LATE_MAX];
@@ -5886,6 +5952,9 @@ impl FractadyneApp {
                 band_ms_iters: self.perf.chunk_band_ms_iters[vs],
                 band_ms_len: self.perf.chunk_band_ms_len[vs],
                 band_ms_px: self.perf.chunk_band_ms_px[vs],
+                onset_start,
+                onset_work: self.perf.chunk_onset_work[vs],
+                band_px: if crate::tunables::cost().walk_onset == 1 { self.perf.chunk_band_px[vs] } else { [0; crate::tunables::CHUNK_BANDS] },
                 pin_timeout_scaled: crate::tunables::cost().pin_timeout_scaled,
                 chunk_charge: crate::tunables::cost().chunk_charge,
                 chunk_shuffle: crate::tunables::cost().chunk_shuffle,
@@ -5907,9 +5976,24 @@ impl FractadyneApp {
                     tail_retries: self.perf.tail_retries[vs],
                     probe_nonce: self.perf.probe_nonce[vs],
                     norm_complete_submit: self.perf.norm_complete_submit[vs],
+                    inflight_lo: self.perf.chunk_inflight_lo[vs],
+                    inflight_px: self.perf.chunk_inflight_px[vs],
                 },
             };
             let dispatch = decide::decide_walk_dispatch(&dispatch_in);
+            if let (Some((budget, band, onset, charged)), Some([lo, hi])) = (dispatch.bounds, dispatch.chunk_range) {
+                if dispatch.pass && crate::diag::trace_on("tile") {
+                    crate::diag::trace(
+                        "tile",
+                        format!(
+                            "walk-bounds v={vs} f={} [{lo},{hi}) step={} budget={budget} band={band} onset={onset} (from {}) charged={charged}",
+                            self.perf.frame_idx,
+                            hi.saturating_sub(lo.max(dispatch_in.walk_floor)),
+                            dispatch_in.onset_start,
+                        ),
+                    );
+                }
+            }
             {
                 let (p, s) = (&mut self.perf, &dispatch.state);
                 p.pin_inflight[vs] = s.pin_inflight;
@@ -5928,6 +6012,8 @@ impl FractadyneApp {
                 p.tail_retries[vs] = s.tail_retries;
                 p.probe_nonce[vs] = s.probe_nonce;
                 p.norm_complete_submit[vs] = s.norm_complete_submit;
+                p.chunk_inflight_lo[vs] = s.inflight_lo;
+                p.chunk_inflight_px[vs] = s.inflight_px;
             }
             if dispatch.pin_dispatched {
                 self.perf.pin_dispatch_at[vs] = crate::app_micros();

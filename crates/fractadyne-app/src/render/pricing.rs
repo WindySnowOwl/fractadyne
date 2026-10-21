@@ -640,29 +640,72 @@ pub(crate) fn chunk_band_update_with_lane(
     fast_lane: u32,
 ) {
     let band = band.min(crate::tunables::CHUNK_BANDS - 1);
+    bands[band] = licence_update(bands[band], size, price_ms, target_ms, fast_lane);
+}
+
+/// One licence after a pass of `size` iterations priced at `price_ms` against `target_ms`
+/// (`chunk_band_update_with_lane`'s rule, for a band's licence and for the settled walk's escape-onset
+/// licence alike, `decide::WalkLedger::onset_licence`). `cur` itself for a garbage price.
+pub(crate) fn licence_update(cur: u32, size: u32, price_ms: f64, target_ms: f64, fast_lane: u32) -> u32 {
     // NaN/negative are garbage; ZERO is not — it is a pass whose accumulated wall time was
     // literally unmeasurable (headless harnesses, and any pass cheaper than the clock), which is
     // the strongest possible "clearly cheap" and takes the fast lane below.
     if !price_ms.is_finite() || price_ms < 0.0 {
-        return;
+        return cur;
     }
     if price_ms <= target_ms * 0.5 {
         // Clearly cheap: the fast lane (×2 settled, ×4 pinned) is what keeps healthy walks
         // quick despite every band opening at the floor — full size in ~8 priced passes.
-        bands[band] = bands[band].max(size.saturating_mul(fast_lane.max(2)));
+        cur.max(size.saturating_mul(fast_lane.max(2)))
     } else if price_ms <= target_ms {
-        bands[band] = bands[band].max(size.saturating_add(size / 4));
+        cur.max(size.saturating_add(size / 4))
     } else if price_ms > target_ms * 2.0 {
         // A cliff: quarter the record (never to zero — a shed band is still priced knowledge;
         // zero would reopen at the floor, which is FINE, but keeping a small non-zero record
         // spares the re-climb from scratch).
-        bands[band] = (size / 4).max(1);
+        (size / 4).max(1)
     } else {
         // Above target but short of a cliff: drift DOWN (×0.5). Holding the line here let an
         // over-target size re-dispatch itself forever inside the (1x, 2x] gap.
-        bands[band] = (size / 2).max(1);
+        (size / 2).max(1)
     }
 }
+
+/// Where the settled walk's escape-onset region begins (`WALK_ONSET`), for the lowest escape the
+/// view's readings have seen (`seen`) and an escaped reference's length (`ref_end`; 0 = unknown).
+/// Once an escape is seen: [`WALK_ONSET_SHARE_SEEN`] × the earlier of the two (past the reference's
+/// end every pixel rebases, a cliff of its own, and as exact). Before: [`WALK_ONSET_SHARE_REF`] ×
+/// the reference's end, standing in. 0 = no region.
+///
+/// ⭐**At the escape itself, not short of it.** The region's own licence grows on its own cheap
+/// prices, so any cheap stretch inside it is where the licence balloons before the cliff: from
+/// 0.85 × the escape the 2^704 view's region held [188k, 221k), nearly free, and its passes doubled
+/// 1,542 → 24,672 iterations and ran the last into the cliff at ~221k for 1 s (2026-10-21). The cost
+/// there rose AT the first escape: a pass over [204,279, 220,663) cost 12 ms, [220,663, 228,855)
+/// 508 ms, against a first escape at 221,354.
+pub(crate) fn walk_onset_start(seen: u32, ref_end: u32) -> u32 {
+    match (seen, ref_end) {
+        (0, r) => (f64::from(r) * WALK_ONSET_SHARE_REF) as u32,
+        (s, 0) => (f64::from(s) * WALK_ONSET_SHARE_SEEN) as u32,
+        (s, r) => (f64::from(s.min(r)) * WALK_ONSET_SHARE_SEEN) as u32,
+    }
+}
+
+/// The share of its target the escape-onset region's licence is priced against
+/// (`WalkLedger::onset_work`): half. A band's licence aims at the full target; inside the region the
+/// cost per iteration still varies ~2× from stretch to stretch (at the 2^704 view 25, 31 and 32 ms
+/// per 1,000 iterations along one walk, and a licence carried from a cheaper stretch), so a licence
+/// doubled on a price under half the target landed a pass at 909 ms, 2.3× it (2026-10-21).
+pub(crate) const WALK_ONSET_TARGET_SHARE: f64 = 0.5;
+
+/// The share of a MEASURED lowest escape the onset region starts at (`walk_onset_start`).
+pub(crate) const WALK_ONSET_SHARE_SEEN: f64 = 0.99;
+
+/// The share of an escaped reference's length the onset region starts at while no escape has been
+/// seen (`walk_onset_start`): a guess, so further short — at the 2^704 view the cliff (~221k) sat at
+/// 0.89 of the reference's end (247,533). Its cheap stretch is walked from the floor, the region
+/// unvisited, and doubles to ~8k by the cliff.
+pub(crate) const WALK_ONSET_SHARE_REF: f64 = 0.85;
 
 /// Arithmetic modes are `RenderMode::to_u32()` ∈ {0, 1, 2}; `u32::MAX` means "none yet" and is
 /// simply out of range, so [`slot`] rejects it along with anything a future mode adds.

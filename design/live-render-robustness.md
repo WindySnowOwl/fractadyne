@@ -5212,3 +5212,80 @@ What this changes in §5.8:
   longest escaped orbit among 368 of the same identity, and the log does not say whether a fitter
   one was admissible. Ranking by fitness now would be a guess; the hit line should first name the
   runner-up.
+
+**2026-10-21 — The settle that kept working: a walk released on quick frames, and licences that
+assumed the cost and the pixels of the passes that earned them** (`fix/settle-lethal-band`).
+
+The maintainer: "check the rendering of the current location. It seems to continue working after
+settling for a while." A 2^704.7 view (auto-iterations at ~396,000, supersampled) at a 5120×2054
+window, beta.19 build 5374, RTX 3080. The picture was right; the work after the settle was the
+on-settle supersampling, 24 full re-renders at 4–6 s each (`accum_target`'s comment promised
+~10–15 s). The maintainer's own log showed what else it was doing: 16 passes in flight past the
+lethal band in 92 s (to 1,257 ms). A `--zoomtest` settle at the same view and window (the settle
+tail, `FRACTADYNE_ZOOMTEST_SETTLE`) reproduced it and failed the run's own log check on three rules
+(26 in-flight passes to 1,869 ms, 4–8 lethal frames, 15–19 budget-blind lines).
+
+`framelog.py summarize` filed every slow episode under (d), the cost outside the timed pass. The
+decoded record (every frame) showed why, four layers deep:
+
+1. **A settled pass was released by a quick frame.** `decide_walk_price` priced the walk's one pass
+   in flight at the wall it accumulated until a frame came back under `CHUNK_DRAIN_DT_MS` (100 ms),
+   "proof the queue drained". It is not: the swap chain hides a pass's cost for two frames, and
+   frames ran at ~10 ms while the passes queued — `full_inflight` read 4. The pins
+   (`Perf::pin_inflight`) and the settle tiles (`SETTLE_SERIALIZE`) had each learned this; the walk
+   had not. Fixed by `WALK_SERIALIZE`: released by its GPU completion, the tiles' signal
+   (`view_reg_seq` / `view_done`), with the tiles' 3 s backstop.
+2. **An octave band's licence carried a cheap stretch's size into a dear one.** Band 10
+   ([131k, 262k)) cost ~10 ms a pass up to ~220k and ~100× more past it, where the pixels begin to
+   escape. Its licence, doubled on the cheap front, sent a 32,585-iteration pass into the dear part;
+   the lethal shed floored every band; the next supersampling sample re-earned it and did it again.
+   A per-band memory of the worst cost was tried first and dropped: held to the dear part's cost,
+   the cheap front crawled at 572 iterations a pass, 2.2× slower samples. Kept: `WALK_ONSET`, the
+   ESCAPE ONSET as a boundary of its own (0.99 × the lowest escape the view's readings have seen,
+   `walk_onset_start`), a pass stopping at it and past it carrying no more than that region's own
+   licence (`WalkLedger::onset_work`), opening at the floor and earned by its own prices. ⚠AT the
+   escape: from 0.85 × it, the region held [188k, 221k), nearly free, its own licence doubled there
+   1,542 → 24,672, and a pass from 211,281 ran into the cliff for 1 s. The cost rose at the first
+   escape itself: [204,279, 220,663) 12 ms, [220,663, 228,855) 508 ms, the escape at 221,354.
+   ⚠And priced against HALF the target (`WALK_ONSET_TARGET_SHARE`): inside the region the cost per
+   iteration still varies ~2× from stretch to stretch, and a licence doubled at the full target's
+   rule (a price under 200 ms) landed passes at 900–930 ms, about one a 22-sample run.
+3. **A licence in iterations earned where few pixels run.** The onset region runs on into the tail,
+   where a few hundred thousand pixels still run and a cheap pass carries 20–30k iterations; in
+   iterations, the tail's licence opened the next sample's first dear pass at 20,608 over all 9.2M.
+   So the onset licence counts WORK (iterations × the pixels a pass is charged for), and every band
+   licence a settled pass earns remembers its pixels (`WalkLedger::band_px`) and is scaled down for
+   a pass charged for more — inside band 11 the running pixels fall ~5×, and an end-of-band licence
+   ran 29,596 iterations at the band's start, 922 ms. Never scaled up.
+4. **First contact.** A fresh view's onset is known only once pixels escape, which is the cliff
+   itself. While none has been seen, an escaped reference's length stands in, at 0.85 of it (past
+   it every pixel rebases; here the cliff sat at ~221k, 0.89 of the reference's end at 247,533); the
+   region is unvisited then, so its cheap stretch is walked from the floor and reaches ~8k by the
+   cliff. Once an escape is seen the stand-in steps aside, unless the reference ends first.
+
+And the supersampling's length: `ACCUM_TIME_CAP_MS` (20 s) ends a run between samples once it
+holds `ACCUM_MIN_SAMPLES` (4), at a folded sample (`accum_take_index`, `Perf::accum_goal`).
+
+Measured at the view and window (RTX 3080, the old rules as `--set WALK_SERIALIZE=0 --set
+WALK_ONSET=0 --set ACCUM_TIME_CAP_MS=0` in the same binary; the final build three runs an arm):
+
+| | old rules | stock | stock, no time cap |
+|---|---|---|---|
+| passes in flight past 900 ms | 26 / 26 (to 1,869 ms) | 0 / 0 / 0 | 0 / 0 / 0 |
+| lethal-band frames | 4 / 6 | 0 / 0 / 0 | 0 / 0 / 0 |
+| budget-blind lines | 15 / 16 | 0 / 0 / 0 | 0 / 0 / 0 |
+| worst frame | 1,022 / 1,011 ms | 470 / 463 / 457 ms | 451 / 459 / 451 ms |
+| supersampling | 22 samples in the 120 s tail | 5 samples, 20.6–20.7 s | 22 samples in the 120 s tail |
+| the run's log check | FAIL / FAIL | PASS ×3 | PASS ×3 |
+
+The battery row's own configuration (stock settings, a 2400×1300 window, a three-octave glide onto
+the view) passed four runs of four, stock and uncapped, 8 samples under the cap. The intermediate
+builds left a lesson each, kept in the notes above: the per-band worst cost (a crawl), the region
+from 0.85 of the escape (a cheap stretch inside it), and the full target's rule inside it (a
+pass at 900–930 ms about once a 22-sample run).
+
+
+The battery has a row for it now (step 10, `settle`: `validation/field/settle-2p704-2026-10-20.fdn`
+at a 2400×1300 window, expected exit 0). Recordings made before these inputs replay as recorded
+(`walk_done: None` keeps the quick frame; the new fields are left out when empty); the fixtures do
+not yet exercise the new branches (`fixture_coverage` has no terms for them).

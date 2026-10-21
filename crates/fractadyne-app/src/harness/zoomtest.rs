@@ -774,7 +774,7 @@ impl FractadyneApp {
                 } else {
                     let count = self.perf.accum_count[0];
                     let active = self.perf.accum_active[0];
-                    let converged = active && count >= crate::accum_target();
+                    let converged = active && count >= self.perf.accum_goal(0);
                     // With accumulation off (`FRACTADYNE_NO_ACCUM=1`) there is nothing to
                     // converge: capture once the settled render has been quiet for a while.
                     let quiet_single = no_accum

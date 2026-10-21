@@ -152,6 +152,15 @@ pub(crate) struct Cost {
     /// A reactive reference build overtaken while it ran is dropped (`REF_OVERTAKEN_DROP_DEFAULT`;
     /// 0 = installed, as before).
     pub ref_overtaken_drop: u64,
+    /// The settled walk's pass is released by its GPU completion (`WALK_SERIALIZE_DEFAULT`; 0 = by
+    /// a quick frame, as before).
+    pub walk_serialize: u64,
+    /// The settled walk enters the view's escape-onset region under that region's own licence
+    /// (`WALK_ONSET_DEFAULT`; 0 = under the octave bands' licences alone, as before).
+    pub walk_onset: u64,
+    /// The on-settle supersampling stops after this much wall time, ms, once it holds
+    /// `ACCUM_MIN_SAMPLES` (`ACCUM_TIME_CAP_MS_DEFAULT`; 0 = only the sample count ends it).
+    pub accum_time_cap_ms: u64,
     /// BLA per-step linear tolerance. The one non-frame-cost member, and it is here rather than in a
     /// second override channel because duplicating the machinery for a single value would be worse.
     /// See the note above on what earns a place in this set.
@@ -212,6 +221,9 @@ impl Default for Cost {
             pin_span_priced: PIN_SPAN_PRICED_DEFAULT,
             timer_slots: TIMER_SLOTS_DEFAULT,
             ref_overtaken_drop: REF_OVERTAKEN_DROP_DEFAULT,
+            walk_serialize: WALK_SERIALIZE_DEFAULT,
+            walk_onset: WALK_ONSET_DEFAULT,
+            accum_time_cap_ms: ACCUM_TIME_CAP_MS_DEFAULT,
             bla_eps: BLA_EPS,
         }
     }
@@ -561,6 +573,32 @@ pub(crate) fn apply_overrides(pairs: &[(String, String)]) -> Result<(), String> 
                 };
                 p.to_string()
             }
+            "WALK_SERIALIZE" => {
+                let p = c.walk_serialize;
+                c.walk_serialize = match raw.as_str() {
+                    "0" => 0,
+                    "1" => 1,
+                    _ => return Err(format!("--set WALK_SERIALIZE: '{raw}' is not 0 (a quick frame) or 1 (completion)")),
+                };
+                p.to_string()
+            }
+            "WALK_ONSET" => {
+                let p = c.walk_onset;
+                c.walk_onset = match raw.as_str() {
+                    "0" => 0,
+                    "1" => 1,
+                    _ => return Err(format!("--set WALK_ONSET: '{raw}' is not 0 (off) or 1 (on)")),
+                };
+                p.to_string()
+            }
+            "ACCUM_TIME_CAP_MS" => {
+                let p = c.accum_time_cap_ms;
+                c.accum_time_cap_ms = raw
+                    .parse::<u64>()
+                    .ok()
+                    .ok_or_else(|| format!("--set ACCUM_TIME_CAP_MS: '{raw}' is not a time in ms (0 = off)"))?;
+                p.to_string()
+            }
             "TIMER_SLOTS" => {
                 let p = c.timer_slots;
                 c.timer_slots = raw
@@ -724,7 +762,8 @@ pub(crate) const OVERRIDABLE: &str = "TDR_BUDGET_MS, TDR_EXPLICIT_BUDGET_MS, \
     EXPLICIT_DISPATCH_CAP, TDR_MAX_TILES, TDR_TILES_CEIL, BLA_EPS, PASS_FIXED_MS, MOTION_NEED_QUANTILE, MOTION_NEED_SOURCE, READING_POOL, \
     DEAD_MAN, DISPATCH_CEILING, SETTLE_SERIALIZE, ADMISSION, PIN_TIMEOUT_SCALED, TAIL_DF32, REF_OVERLAP, EARLY_REF, TILE_OCCUPANCY, LIVE_REFRESH, \
     ORBIT_LEN_CAP, RENORM, TILE_PACK, RENORM_BLA, ORBIT_SCHEDULE, SA_TRACE, CHUNK_CHARGE, \
-    CHUNK_SHUFFLE, WORKER_MOTION, WORKER_YIELD, WORKER_PASS_MS, RECORD_COST_PPM, REUSE_MAX_WRAPS, PIN_BAND_SPAN, REF_OVERTAKEN_DROP, SA_TRACE_LIVE_STEPS, GROWTH_IN_WORK, PIN_GROWTH_LANE, PRE_SWITCH_PROBE, PIN_SPAN_PRICED, TIMER_SLOTS";
+    CHUNK_SHUFFLE, WORKER_MOTION, WORKER_YIELD, WORKER_PASS_MS, RECORD_COST_PPM, REUSE_MAX_WRAPS, PIN_BAND_SPAN, REF_OVERTAKEN_DROP, SA_TRACE_LIVE_STEPS, GROWTH_IN_WORK, PIN_GROWTH_LANE, PRE_SWITCH_PROBE, PIN_SPAN_PRICED, TIMER_SLOTS, \
+    WALK_SERIALIZE, WALK_ONSET, ACCUM_TIME_CAP_MS";
 
 #[cfg(test)]
 #[path = "../tests/unit/tunables/override_tests.rs"]
@@ -1605,6 +1644,46 @@ pub(crate) const PIN_SPAN_PRICED_DEFAULT: u64 = 0;
 /// the motion EMA, the latched minimum — three timers made the 1× deep dive's picture 4× older and
 /// 92 of its frames run over 33 ms (2026-10-18, RTX 3080): those terms were tuned on one timer.
 pub(crate) const TIMER_SLOTS_DEFAULT: u64 = 3;
+
+/// 1 = the SETTLED WALK's pass in flight is released by its GPU COMPLETION (`Perf::view_reg_seq` /
+/// `view_done`, the settle tiles' signal), not by the next quick frame. ⚠The frame interval after a
+/// pass is no proof it finished: the swap chain hides a pass's cost for two frames, so a pass read
+/// "drained" at ~10 ms, its successor went out, and at the user's 2^704 view at 5120×2054
+/// (2026-10-20) up to four full passes stood in the queue when the walk reached its dense band:
+/// 947 and 1,011 ms frames, in-flight passes to 1,865 ms. The pins (`Perf::pin_inflight`) and the
+/// tiles (`SETTLE_SERIALIZE`) had each learned this; the walk had not. 0 = the quick frame, for the
+/// before/after measurement and as a field fallback.
+pub(crate) const WALK_SERIALIZE_DEFAULT: u64 = 1;
+
+/// 1 = the settled walk treats the view's ESCAPE ONSET as a boundary of its own
+/// (`render::walk_onset_start`: 0.99 × the lowest escape the view's readings have seen): a pass stops
+/// at it, and past it carries no more than that region's licence (`decide::WalkLedger::onset_licence`),
+/// which opens at the floor and is earned by its own passes' prices like a band's. A band's licence
+/// is one number for a whole octave, and the cost is not uniform inside one: at the 2^704 view band
+/// 10 ([131k, 262k)) is nearly free up to ~200k and ~100× dearer past it, where the pixels begin to
+/// escape. The licence earned on the cheap front carried a 32,585-iteration pass into the dear part,
+/// the lethal retreat shed every band, and the next supersampling sample re-earned it there and did it
+/// again: one ~1 s pass a sample. (A per-band memory of the worst cost was tried first: held to the
+/// dear part's cost, band 10's cheap front crawled at 572 iterations a pass, 2.2× slower samples.)
+/// The region's licence counts WORK (iterations × the pixels a pass is charged for); while no escape
+/// has been seen, an escaped reference's length stands in for the onset (the first walk of a fresh
+/// view); and a band's licence remembers the pixels it was earned over and is scaled down for a
+/// pass charged for more (`decide::WalkLedger::band_px`): a count of iterations holds only at the
+/// pixels it was priced at, and in the tail the running pixels fall ~5× inside one band. The
+/// region's licence is priced against half the target (`render::WALK_ONSET_TARGET_SHARE`).
+/// 0 = the octave bands alone, in iterations.
+pub(crate) const WALK_ONSET_DEFAULT: u64 = 1;
+
+/// The on-settle supersampling stops after this much wall time, ms, once it holds
+/// [`ACCUM_MIN_SAMPLES`] (main.rs `accum_goal`). Each sample is a full re-render: 24 of them are
+/// ~10–15 s at a typical deep view, but ~2 minutes at the 2^704 view at 5120×2054 (4–6 s a sample;
+/// 2026-10-20, the user: "It seems to continue working after settling for a while"). 0 = only the
+/// sample count (`accum_target`) ends the run.
+pub(crate) const ACCUM_TIME_CAP_MS_DEFAULT: u64 = 20_000;
+
+/// The least a supersampling run holds before its time cap may end it ([`ACCUM_TIME_CAP_MS_DEFAULT`]):
+/// a costly view still gets some de-speckle.
+pub(crate) const ACCUM_MIN_SAMPLES: u32 = 4;
 
 /// 1 = a reactive reference build that another install overtook while it ran is dropped instead
 /// of installed over it (`render::reactive_build_overtaken`). 0 = it is installed, as before, for

@@ -175,7 +175,7 @@ impl crate::FractadyneApp {
             || self.perf.chunk_pending[0]
             // Progressive on-settle supersampling: wait for the running average to converge before
             // capturing, so the shot shows the de-speckled result, not the first (single) sample.
-            || (self.perf.accum_active[0] && self.perf.accum_count[0] < crate::accum_target())
+            || (self.perf.accum_active[0] && self.perf.accum_count[0] < self.perf.accum_goal(0))
             // ...and for a due run to BEGIN. Between the settle and `accum: begin` nothing is in
             // flight and no run is active, and this gate once passed there: a shot at 9.3e78× was
             // written 80 ms after `begin`, one unaveraged sample (2026-10-07).
