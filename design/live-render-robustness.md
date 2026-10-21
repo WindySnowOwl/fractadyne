@@ -5265,6 +5265,15 @@ decoded record (every frame) showed why, four layers deep:
 
 And the supersampling's length: `ACCUM_TIME_CAP_MS` (20 s) ends a run between samples once it
 holds `ACCUM_MIN_SAMPLES` (4), at a folded sample (`accum_take_index`, `Perf::accum_goal`).
+*(Fixed 2026-10-21, after the merge:)* with a worker GPU the cap can end the run in the frame that
+counts one of the worker's samples, because the worker's fold asks for its next index right after.
+The reset that stopped the worker also dropped that sample, attached to the frame's fold but not yet
+folded, and the run ended a sample short of its count: "converged at 8 samples, but the average holds
+7", in 3 of 7 runs at the view with `--worker-gpu same`. The picture was right, since the GPU weights
+by its own count, but a finished sample was thrown away. `Perf::accum_cap` keeps the counted sample;
+the unit test `the_time_cap_keeps_the_worker_sample_it_already_counted` fails without it. (Random runs
+cannot show the fix: 12 more runs, old and new builds interleaved, never landed the cap on a worker
+fold.)
 
 Measured at the view and window (RTX 3080, the old rules as `--set WALK_SERIALIZE=0 --set
 WALK_ONSET=0 --set ACCUM_TIME_CAP_MS=0` in the same binary; the final build three runs an arm):
