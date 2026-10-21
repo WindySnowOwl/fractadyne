@@ -69,8 +69,8 @@ Changes after 0.3.0-beta.1:
   samples the second device renders are also no longer half a pixel off the window's own. When
   "Normalize deep colors" switches on or off as you zoom, or between its two kinds of mapping, the
   colours now dissolve from one to the other over 0.4 s instead of changing in one frame. And while
-  a deep refresh composes behind the picture on screen, that picture is no longer blurred for as
-  long as it takes.
+  a deep refresh composes behind the picture on screen, or the picture is stretched to follow the
+  zoom, it is no longer blurred by a filter meant for a lower-resolution frame.
 - **A deep view settles without overrunning the graphics card, and stops sooner (0.3.0-beta.20).**
   After a deep view settles, it renders each pixel again at sub-pixel offsets and averages them
   (supersampling), up to 24 times. At a 2^704 view in a 5120×2054 window each of those renders took

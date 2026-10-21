@@ -5365,3 +5365,22 @@ next frame (`FractadyneApp::palette_moving`): each advances only when a frame is
 uitest's screen steps wait for it as for the grid: the dissolve first made the minimap pan's capture
 read 11.3 and 13.8 against its 9.5 gate (2 runs of 3; 0.0 before), a settled view's normalization
 switch landing as the grid drained and the capture catching the blend.
+
+*And the rest of it (the maintainer: "work on open items").* The worker-off "low-resolution frames
+shown live" were not live either: all 18 were pin STARTS, whose frame the pin's commit point flips to
+the hold after the present decision (so the decision recorded `display_hold: false`), and the
+held-box rule above already covered them. What remained was the same mismatch through the FREEZE
+verdict: 6 reprojected frames a glide drew the old picture under a 2- or 4-texel box sized for a
+pass that never ran. And keeping a held picture's box through a whole zoom carried the still view's
+gentle 2× box into every held frame of the glide (pins land by replacing the live texture, which no
+live-shown frame records). So the rule is now the picture's: a picture shown again — held or
+re-sampled — is point-sampled while the view moves, as reprojected frames always were by the
+decision's own rule, and on a still view keeps the box it was seen with. Two glides at the
+maintainer's settings, worker on and off: every moving held or reprojected frame drawn with box 1
+(was 2 or 4 on 25–40 of them); still views unchanged (live box 2, holds their own).
+The flaky selftest check "the split tile geometry costs what the full-screen pass does" (≤ 1.3) timed
+three triangle passes, then three tile passes, and compared the medians: drift between the blocks
+landed on one side (0.92–1.35 across eleven runs on an RTX 3080, main as often as a branch). It now
+measures seven back-to-back pairs, the first of each pair alternating, and takes the median of their
+ratios: eight runs read 1.02–1.17 (single pairs still 0.83–1.41: per-pass jitter, which the median
+absorbs). The gate stands at 1.3.
