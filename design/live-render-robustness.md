@@ -5298,3 +5298,39 @@ The battery has a row for it now (step 10, `settle`: `validation/field/settle-2p
 at a 2400×1300 window, expected exit 0). Recordings made before these inputs replay as recorded
 (`walk_done: None` keeps the quick frame; the new fields are left out when empty); the fixtures do
 not yet exercise the new branches (`fixture_coverage` has no terms for them).
+
+**2026-10-21 — the view's centre jumps and the palette steps while zooming (the maintainer's
+report: "the frame center seems to jump slightly so it looks a bit like jitter. Also the palette
+shifts non continuously").** The maintainer's session had a same-card worker GPU; their recent
+zooms took 500–1,000 of its frames each, most into the hold. Two defects, each measured from what
+the app drew rather than from screen captures (PrintWindow captures, 110 ms apart and
+scale-fitted, were too noisy to settle a few pixels; they did show blurry, blocky and sharp
+pictures alternating):
+
+- *The centre.* A frame rendered below display resolution and shown as it is (`res_scale < 1`, not
+  reprojected) is coloured with a box `aa_filter` = clamp(round(1/res), 2, 4) texels wide, and the
+  box started at the pixel's own texel and ran right and down (`fs_color`), so the picture was drawn
+  (taps − 1)/2 texels off. Held frames (box 1) are not. With the worker, 39 of 735 moving frames of
+  a 16-octave glide at 2^103 (the maintainer's settings and window, `FRACTADYNE_RECORD_DECIDE`)
+  were GPU 0's own quarter-resolution frames with a 4-texel box: each drawn 6 screen px off between
+  held frames, and blurred over 16 px; without the worker 19, 0.7 to 15 px off. The box is centred
+  now (a half-texel overhang takes one more texel each way at half weight; with no overhang it is
+  the plain block, so supersampled and full-resolution frames are untouched). The selftest's
+  `colour-box` checks hold a widened render equal to the centred average of the plain one, computed
+  on the CPU: 0 to 6e-8 after, 0.42 to 0.54 before (and the old shader matched the corner-anchored
+  box exactly). A worker supersampling sample takes the live `aa_filter` too, so its samples were
+  half a pixel off the window's own and blurred the average: centred with the rest.
+- *The palette.* A worker frame adopted into the hold was coloured under a map built from its own
+  raw escape range, and a held snapshot under its frozen one (U43), while live frames follow the
+  gliding window, so the map was cut over whenever the picture changed source. The `palette` trace
+  (new: each frame's map) gives the phase step of fixed escape values between frames: with the
+  worker, 14–16 steps over 0.05 of a palette cycle per glide (to 0.12), every one a worker frame
+  entering the hold; without it, one of 0.25–0.33 where a hold gave way to a live frame. Now the
+  view's DRAWN window (`Perf::norm_drawn`, `drawn_norm_step`) glides to whatever window the picture
+  on screen wants, at the live window's own pace, and then tracks it exactly (no lag added to a live
+  view); a held picture's target stays frozen (U43 kept). Three runs an arm, old and new builds
+  interleaved: with the worker 0 steps over 0.05 (largest 0.024–0.025); without it 0 in two runs.
+  ⚠The third had one 0.22 step: "Normalize deep colors" switching OFF mid-glide (the aliasing test),
+  a cut between the normalised and the classic map that no window can glide. It switches on once
+  early in every glide and off again near the end in about half of the runs without the worker; a
+  cross-fade there is the open half.

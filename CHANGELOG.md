@@ -59,6 +59,14 @@ published as the pre-releases `v0.2.41-beta.1` to `v0.2.41-beta.150`, and a "bet
 
 Changes after 0.3.0-beta.1:
 
+- **Deep zooms no longer shake, and their colours no longer jump (0.3.0-beta.20).** While zooming
+  deep, the view shows a mix of fresh frames and held ones, and frames rendered below full resolution
+  were drawn a few pixels down and to the right of where they belong: up to 6 pixels for a
+  quarter-resolution frame, which reads as the picture's centre jittering as such frames come and
+  go. They are now drawn in place. With a second graphics device (the worker GPU), each of its
+  frames was shown with a colour mapping taken from that frame alone, so the palette jumped several
+  times a second; the colour mapping now glides from one frame to the next. The supersampling
+  samples the second device renders are also no longer half a pixel off the window's own.
 - **A deep view settles without overrunning the graphics card, and stops sooner (0.3.0-beta.20).**
   After a deep view settles, it renders each pixel again at sub-pixel offsets and averages them
   (supersampling), up to 24 times. At a 2^704 view in a 5120×2054 window each of those renders took
