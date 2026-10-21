@@ -878,7 +878,14 @@ fn draw_tiles(p: &Painter, layer: Layer, r: Rect, s: f32, m: &Model) {
     let amber = |a: f32| fade(ink::AMBER, a);
     let pass = |glow: f32| level(LEVEL_PASS + (1.0 - LEVEL_PASS) * glow);
     p.rect_filled(plane, 0.0_f32, level(LEVEL_PLANE));
+    // A walk's pass covers the whole picture but iterates only the pixels still running: the plane
+    // fills to that share (`running_level`), labelled.
+    let running = m.snap.running.filter(|_| matches!(&m.plane, Plane::Whole { band: Some(_), .. } | Plane::Ssaa { band: Some(_), .. }));
     match &m.plane {
+        Plane::Whole { glow, .. } if running.is_some() => draw_running(p, plane, s, running.unwrap_or(1.0), pass(*glow)),
+        Plane::Ssaa { glow, .. } if running.is_some() => {
+            draw_running(p, plane, s, running.unwrap_or(1.0), level(LEVEL_DONE + (1.0 - LEVEL_DONE) * 0.6 * glow))
+        }
         Plane::Whole { glow, .. } => {
             p.rect_filled(plane, 0.0_f32, pass(*glow));
         }
@@ -929,6 +936,37 @@ fn draw_tiles(p: &Painter, layer: Layer, r: Rect, s: f32, m: &Model) {
     paint::tabular(p, pos2(r.right() - 5.4 * s, r.bottom() - 4.0 * s), Align2::RIGHT_BOTTOM, &tr, f.clone(), glow);
     paint::tabular(p, pos2(r.left() + 6.0 * s, r.bottom() - 4.0 * s), Align2::LEFT_BOTTOM, &tl, f.clone(), lit);
     paint::tabular(p, pos2(r.right() - 6.0 * s, r.bottom() - 4.0 * s), Align2::RIGHT_BOTTOM, &tr, f, lit);
+}
+
+/// Where a walk's plane fills to for `share` of its texels still running: a log scale, from 1 in
+/// 10,000 at the floor to all of them at the top, so the late passes' last few percent still show.
+pub(crate) fn running_level(share: f32) -> f32 {
+    ((share.max(1.0e-6).log10() + 4.0) / 4.0).clamp(0.0, 1.0)
+}
+
+/// A share as the readout prints it: two significant figures down to a hundredth of a percent.
+pub(crate) fn running_text(share: f32) -> String {
+    let pc = share * 100.0;
+    if pc >= 10.0 {
+        format!("RUNNING {pc:.0}%")
+    } else if pc >= 1.0 {
+        format!("RUNNING {pc:.1}%")
+    } else {
+        format!("RUNNING {pc:.2}%")
+    }
+}
+
+/// A walk's pass on the plane: the whole picture lit as done, filled from the bottom to the share
+/// of its pixels still iterating (`running_level`) in the pass's colour, with a hairline at the
+/// level and the share printed in the corner.
+fn draw_running(p: &Painter, plane: Rect, s: f32, share: f32, lit: Color32) {
+    p.rect_filled(plane, 0.0_f32, level(LEVEL_DONE));
+    let top = plane.bottom() - plane.height() * running_level(share);
+    if share > 0.0 {
+        p.rect_filled(Rect::from_min_max(pos2(plane.left(), top.min(plane.bottom() - 1.0)), plane.max), 0.0_f32, lit);
+        p.line_segment([pos2(plane.left(), top), pos2(plane.right(), top)], Stroke::new(1.0_f32, Color32::from_rgb(0xff, 0xe2, 0xb0)));
+    }
+    paint::tabular(p, plane.right_top() + vec2(-4.0 * s, 3.0 * s), Align2::RIGHT_TOP, &running_text(share), face::narrow(10.0 * s), Color32::from_rgb(0xff, 0xec, 0xc8));
 }
 
 fn tile_rect(plane: Rect, cs: f32, cols: u32, i: u32) -> Rect {

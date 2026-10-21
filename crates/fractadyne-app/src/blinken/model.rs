@@ -97,6 +97,9 @@ pub(crate) struct Snapshot {
     pub(crate) res: (u32, u32),
     /// The GPU timer ring's slots: 0 idle, else a timing in flight (recorded, mapping, ready).
     pub(crate) timers: [u8; 3],
+    /// The walk under way: the share of its texels still iterating after its last counted pass
+    /// (`Perf::chunk_running`); a pixel that escaped is done, so later passes iterate only these.
+    pub(crate) running: Option<f32>,
 }
 
 /// The engine room's readings, sampled by the UI thread (some, such as CPU use, a few times a
