@@ -613,8 +613,9 @@ fn draw_radar(p: &Painter, layer: Layer, r: Rect, s: f32, m: &Model) {
             p.circle_stroke(c, rad, Stroke::new((rr * 0.4 / k as f32).max(2.0 * s), col));
         }
         flash(p, c, rr, m.flash);
-        paint::tabular(p, c + vec2(0.0, -2.0 * s), Align2::CENTER_BOTTOM, &format!("{}×{}", w.res.0, w.res.1), text_font.clone(), ink::PHOSPHOR_TEXT);
-        paint::tabular(p, c + vec2(0.0, 1.0 * s), Align2::CENTER_TOP, &format!("SPLIT {done}/{k}"), text_font, ink::PHOSPHOR_TEXT);
+        let plate = fade(ink::SCREEN_LO, 0.85);
+        paint::plated(p, c + vec2(0.0, -2.0 * s), Align2::CENTER_BOTTOM, &format!("{}×{}", w.res.0, w.res.1), text_font.clone(), ink::PHOSPHOR_TEXT, plate, 3.0 * s);
+        paint::plated(p, c + vec2(0.0, 1.0 * s), Align2::CENTER_TOP, &format!("SPLIT {done}/{k}"), text_font, ink::PHOSPHOR_TEXT, plate, 3.0 * s);
         return;
     }
     let ask = w.ask.max(512) as f32;
@@ -664,12 +665,14 @@ fn draw_radar(p: &Painter, layer: Layer, r: Rect, s: f32, m: &Model) {
         WalkKind::Settle => Some("SETTLE"),
         WalkKind::Ssaa => Some("SSAA"),
     };
+    // The readouts sit on plates, so the beam sweeping through the middle never swallows them.
+    let plate = fade(ink::SCREEN_LO, 0.85);
     if let Some(tag) = tag {
         let at = c + vec2(0.0, -2.0 * s - text_font.size * 1.15);
-        paint::tabular(p, at, Align2::CENTER_BOTTOM, tag, text_font.clone(), fade(ink::PHOSPHOR_TEXT, 0.8));
+        paint::plated(p, at, Align2::CENTER_BOTTOM, tag, text_font.clone(), fade(ink::PHOSPHOR_TEXT, 0.8), plate, 3.0 * s);
     }
-    paint::tabular(p, c + vec2(0.0, -2.0 * s), Align2::CENTER_BOTTOM, &format!("{}×{}", w.res.0, w.res.1), text_font.clone(), ink::PHOSPHOR_TEXT);
-    paint::tabular(p, c + vec2(0.0, 1.0 * s), Align2::CENTER_TOP, &format!("{} / {}", group(w.cursor.min(w.ask) as u64), group(w.ask as u64)), text_font, ink::PHOSPHOR_TEXT);
+    paint::plated(p, c + vec2(0.0, -2.0 * s), Align2::CENTER_BOTTOM, &format!("{}×{}", w.res.0, w.res.1), text_font.clone(), ink::PHOSPHOR_TEXT, plate, 3.0 * s);
+    paint::plated(p, c + vec2(0.0, 1.0 * s), Align2::CENTER_TOP, &format!("{} / {}", group(w.cursor.min(w.ask) as u64), group(w.ask as u64)), text_font, ink::PHOSPHOR_TEXT, plate, 3.0 * s);
 }
 
 fn flash(p: &Painter, c: Pos2, r: f32, k: f32) {
