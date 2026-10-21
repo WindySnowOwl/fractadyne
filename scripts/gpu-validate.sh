@@ -237,6 +237,12 @@ else
   echo -e "\033[2m-> skipping regime (--quick)\033[0m"
 fi
 
+# The settle that kept working (2026-10-20; see gpu-validate.ps1 step 10).
+step "settle" "10-settle.txt" \
+  "the 2^704 view settling and supersampling: no pass in the lethal band (~1 min)" \
+  env FRACTADYNE_ZOOMTEST_SETTLE="$DIR/10-settle.png" $XVFB "$BIN" --zoomtest 3 --zoomtest-start-log2 702.4 \
+    --zoomtest-location validation/field/settle-2p704-2026-10-20.fdn --window 2400x1300 --out "$DIR/10-settle.json"
+
 # --- harvest the app's own evidence --------------------------------------------------------------
 [ -f "$CFG/logs/fractadyne.log" ] && cp "$CFG/logs/fractadyne.log" "$DIR/app.log"
 cp "$CFG"/logs/crash-*.txt "$DIR/crash/" 2>/dev/null || true
@@ -293,6 +299,9 @@ regime       The view that lost the RX 6800 XT (2026-09-21) with its reference t
              samples: the escaped-reference storm. 0 = entered and survived; 2 = the frame budget
              never came down across 8+ slow frames, or liveness, memory or a crash report failed;
              3 = the regime was never entered, so surviving proves nothing.
+settle       A user's 2^704 view (2026-10-20) settling and supersampling: 0 = the app's own log check
+             passed (no pass in the lethal band, no blind budget); 1 = a rule broke, named in the
+             output; 2 = VACUOUS. 10-settle.png is the converged window.
 verdict      The battery's own judgement, below: each step's exit code (and, for a step known to
              fail, which checks failed) against what gpu-validate-expected.json declares for this
              card. Exit 0 = all as declared, 2 = something UNEXPECTED (named), 3 = not judged. A

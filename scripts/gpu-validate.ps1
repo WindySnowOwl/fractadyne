@@ -43,6 +43,8 @@
 #   07-recordtest.txt    the per-frame record's own gate (~20 s)
 #   08-screen.txt        three autopilot dives captured off the screen, in screen\run1-3 (~100 s)
 #   09-regime.txt        the field view in the escaped-reference storm (W9, ~2.5 min; skipped by -Quick)
+#   10-settle.txt        the 2^704 view settling and supersampling with no pass in the lethal band (~1 min);
+#                        10-settle.png is the converged window, 10-settle.json the harness's own record
 #   app.log              the app's own log across all steps
 #   frames/              each step's frame record (<step>.frames.bin, <step>.frames.jsonl) -
 #                        read with scripts/framelog.py summarize
@@ -337,6 +339,24 @@ if (-not $Quick) {
 }
 else {
     Write-Host "-> skipping regime (-Quick)" -ForegroundColor DarkGray
+}
+
+# --- step 10: the SETTLE that kept working (2026-10-20) --------------------------------------------
+# A user's 2^704 view at a 5120x2054 window: after it settled, every walk of the on-settle
+# supersampling ran passes past the lethal band (in flight to 1,865 ms on an RTX 3080), because a
+# pass was released on a quick frame while it was still queued, and an octave band's licence,
+# earned where the iterations were cheap, carried a pass into the part where the pixels begin to
+# escape. Glide three octaves onto it (one made 85 frames under the stock settings, VACUOUS),
+# ending at its depth, let it settle and its supersampling converge, and capture the window
+# (FRACTADYNE_ZOOMTEST_SETTLE). 0 = no rule of the app's own log check broken; 1 = one was (a pass
+# in the lethal band, a blind budget: named in the output); 2 = VACUOUS.
+$env:FRACTADYNE_ZOOMTEST_SETTLE = (Join-Path $dir "10-settle.png")
+try {
+    Invoke-Step "settle" "10-settle.txt" @("--zoomtest", "3", "--zoomtest-start-log2", "702.4", "--zoomtest-location", "validation/field/settle-2p704-2026-10-20.fdn", "--window", "2400x1300", "--out", (Join-Path $dir "10-settle.json")) `
+        "the 2^704 view settling and supersampling: no pass in the lethal band (~1 min)"
+}
+finally {
+    Remove-Item Env:FRACTADYNE_ZOOMTEST_SETTLE -ErrorAction SilentlyContinue
 }
 
 # --- harvest the app's own evidence -------------------------------------------------------------

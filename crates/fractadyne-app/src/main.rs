@@ -1713,6 +1713,22 @@ struct Perf {
     chunk_band_ms_px: [[u32; crate::tunables::CHUNK_BANDS]; 2],
     /// The pixels each parked pin pass ran at (`decide::WalkLedger::late_px`).
     chunk_late_px: [[u32; render::decide::LATE_MAX]; 2],
+    /// The settled walk's licence past the view's escape onset, in work (`decide::WalkLedger::
+    /// onset_work`, `WALK_ONSET`): cleared and shed with the band licences.
+    chunk_onset_work: [u64; 2],
+    /// The pixels each band's licence was earned over by a settled pass (`decide::WalkLedger::band_px`).
+    chunk_band_px: [[u32; crate::tunables::CHUNK_BANDS]; 2],
+    /// The view's ESCAPE ONSET: the lowest escape iteration its counter readings have seen (0 = none
+    /// yet), forgotten when the view — its f64 centre and magnification and its settings
+    /// (`walk_onset_key`) — changes.
+    walk_onset: [u32; 2],
+    walk_onset_key: [u64; 2],
+    /// The frame `walk_onset` was last forgotten at: only readings of dispatches since feed it.
+    walk_onset_from: [u64; 2],
+    /// The settled pass in flight's first live iteration and the pixels it was charged for
+    /// (`decide::DispatchState::inflight_lo`, `inflight_px`).
+    chunk_inflight_lo: [u32; 2],
+    chunk_inflight_px: [u64; 2],
     /// Budget-climb probe (see `MandelbrotParams::probe_nonce`): bumped on settled frames while
     /// the budget is unconverged so the GPU re-measures — breaks the resolution-floor deadlock
     /// where budget growth is too small to re-key the frame and the climb freezes.
@@ -1732,6 +1748,10 @@ struct Perf {
     /// accumulation stage is active for this view, the current sample's sub-pixel jitter, and the
     /// per-frame command handed to the GPU via `MandelbrotParams`. See `drive_accumulation`.
     accum_count: [u32; 2],
+    /// The run's goal (`accum_goal`): `accum_target()`, or fewer once the time cap
+    /// (`ACCUM_TIME_CAP_MS`) ended it; and when the run began (`diag::elapsed_ms`).
+    accum_goal: [u32; 2],
+    accum_begin_ms: [u64; 2],
     accum_active: [bool; 2],
     /// A run is DUE for this view but has not begun: accumulation is allowed here and
     /// `drive_accumulation` is waiting for the settle to finish. `--shot` waits on it — between
@@ -2175,6 +2195,15 @@ impl Perf {
         self.view_done[v].lock().map(|d| *d).unwrap_or_default()
     }
 
+    /// The supersampling run's goal for view `v`: `accum_target()`, or what the time cap ended the run
+    /// at (`accum_time_capped`). Before any run began, the target.
+    pub(crate) fn accum_goal(&self, v: usize) -> u32 {
+        match self.accum_goal[v] {
+            0 => accum_target(),
+            g => g,
+        }
+    }
+
     /// Registrations of this view's work not yet confirmed complete.
     pub(crate) fn view_outstanding(&self, v: usize) -> u64 {
         self.view_reg_seq[v].saturating_sub(self.view_last_done(v).seq)
@@ -2393,6 +2422,8 @@ impl Default for Perf {
             tile_state: [None, None],
             tile_pending: [false, false],
             accum_count: [0, 0],
+            accum_goal: [0, 0],
+            accum_begin_ms: [0, 0],
             accum_active: [false, false],
             accum_due: [false, false],
             accum_gate_wait: [0, 0],
@@ -2481,6 +2512,13 @@ impl Default for Perf {
             chunk_band_ms_len: [[0; crate::tunables::CHUNK_BANDS]; 2],
             chunk_band_ms_px: [[0; crate::tunables::CHUNK_BANDS]; 2],
             chunk_late_px: [[0; render::decide::LATE_MAX]; 2],
+            chunk_onset_work: [0; 2],
+            chunk_band_px: [[0; crate::tunables::CHUNK_BANDS]; 2],
+            walk_onset: [0; 2],
+            walk_onset_key: [0; 2],
+            walk_onset_from: [0; 2],
+            chunk_inflight_lo: [0; 2],
+            chunk_inflight_px: [0; 2],
             probe_nonce: [0, 0],
             hold_active: [false, false],
             hold_uv: [[0.0, 0.0, 1.0], [0.0, 0.0, 1.0]],
@@ -2712,7 +2750,8 @@ fn held_note(held: u32) -> String {
 /// How many sub-pixel samples to fold once the view settles. Each is a full deep re-render, so this
 /// trades convergence quality against how long the view keeps the GPU busy while idle — a real
 /// consideration on hardware prone to sustained-load device loss. Default 24 (a good de-speckle in
-/// ~10–15 s); `FRACTADYNE_ACCUM_TARGET` overrides (clamped 2..=256), or `FRACTADYNE_NO_ACCUM`
+/// ~10–15 s at a typical deep view, but ~2 minutes at 4–6 s a sample: the time cap, `accum_time_capped`,
+/// ends such a run sooner); `FRACTADYNE_ACCUM_TARGET` overrides (clamped 2..=256), or `FRACTADYNE_NO_ACCUM`
 /// disables accumulation entirely.
 pub(crate) fn accum_target() -> u32 {
     std::env::var("FRACTADYNE_ACCUM_TARGET")
@@ -2720,6 +2759,14 @@ pub(crate) fn accum_target() -> u32 {
         .and_then(|s| s.trim().parse::<u32>().ok())
         .map(|n| n.clamp(2, 256))
         .unwrap_or(24)
+}
+
+/// Does the time cap end a supersampling run that has folded `count` samples in `elapsed_ms`?
+/// (`ACCUM_TIME_CAP_MS`; `cap_ms` 0 = never.) Only once it holds `ACCUM_MIN_SAMPLES`, so a costly view
+/// still gets some de-speckle. Asked where the next sample would be handed out, so the run ends on
+/// a folded sample, never with one half-walked.
+pub(crate) fn accum_time_capped(count: u32, elapsed_ms: u64, cap_ms: u64) -> bool {
+    cap_ms > 0 && elapsed_ms >= cap_ms && count >= tunables::ACCUM_MIN_SAMPLES
 }
 
 /// Van der Corput radical inverse of `i` in `base` (a low-discrepancy value in `[0, 1)`).
@@ -14591,6 +14638,8 @@ impl FractadyneApp {
             self.perf.accum_due[view] = false;
             self.perf.content_wait_logged[view] = false; // arm the next episode's single line
             self.perf.accum_count[view] = 0;
+            self.perf.accum_goal[view] = accum_target();
+            self.perf.accum_begin_ms[view] = diag::elapsed_ms();
             self.perf.accum_folds_checked[view] = false;
             self.perf.accum_committed[view] = false;
             self.perf.accum_jitter[view] = [0.0, 0.0];
@@ -14615,7 +14664,7 @@ impl FractadyneApp {
         }
         let count = self.perf.accum_count[view];
         cmd.jitter = self.perf.accum_jitter[view];
-        if count >= accum_target() {
+        if count >= self.perf.accum_goal(view) {
             // Converged: keep presenting the average, request no repaint → the view quiesces. The
             // last fold ran in the previous frame's prepare, so the GPU's count is final here.
             if !self.perf.accum_folds_checked[view] {
@@ -14659,14 +14708,14 @@ impl FractadyneApp {
         }
         // The worker's samples: fold a finished one on a frame that does not fold its own (the two
         // folds would share the accumulator's weight uniform), and keep the worker busy.
-        if self.perf.accum_count[view] < accum_target() {
+        if self.perf.accum_count[view] < self.perf.accum_goal(view) {
             if !cmd.commit && !self.perf.accum_ext_ready[view].is_empty() {
                 let sample = self.perf.accum_ext_ready[view].remove(0);
                 self.perf.accum_ext_attach[view] = Some(sample);
                 let folded = self.perf.accum_count[view] + 1;
                 self.perf.accum_count[view] = folded;
                 crate::blinken::events::emit(view, crate::blinken::events::Kind::SsaaSample, folded, 0, 0.0);
-                if folded >= accum_target() {
+                if folded >= self.perf.accum_goal(view) {
                     if let Some(held) = self.perf.accum_converged_line[view].admit(diag::elapsed_ms(), ACCUM_LINE_GAP_MS) {
                         crate::diag::log_line(
                             "accum",
@@ -14682,13 +14731,34 @@ impl FractadyneApp {
     }
 
     /// The next supersampling sample index for view `view` (a given-back one first), or `None` when
-    /// all `accum_target()` are handed out.
+    /// the run's goal is handed out — all `accum_target()`, or as many as are folded once the time cap
+    /// (`accum_time_capped`) ends the run here, between samples.
     fn accum_take_index(&mut self, view: usize) -> Option<u32> {
+        let count = self.perf.accum_count[view];
+        if self.perf.accum_goal(view) > count {
+            let elapsed = diag::elapsed_ms().saturating_sub(self.perf.accum_begin_ms[view]);
+            if accum_time_capped(count, elapsed, tunables::cost().accum_time_cap_ms) {
+                self.perf.accum_goal[view] = count;
+                self.accum_worker_reset(view);
+                if let Some(held) = self.perf.accum_converged_line[view].admit(diag::elapsed_ms(), ACCUM_LINE_GAP_MS) {
+                    crate::diag::log_line(
+                        "accum",
+                        &format!(
+                            "view {view}: converged at {count} samples (time cap: {:.1} s, {} ms allowed){}",
+                            elapsed as f64 / 1000.0,
+                            tunables::cost().accum_time_cap_ms,
+                            held_note(held)
+                        ),
+                    );
+                }
+                return None;
+            }
+        }
         if let Some(i) = self.perf.accum_free[view].pop() {
             return Some(i);
         }
         let i = self.perf.accum_next[view];
-        (i < accum_target()).then(|| {
+        (i < self.perf.accum_goal(view)).then(|| {
             self.perf.accum_next[view] = i + 1;
             i
         })
@@ -15111,7 +15181,7 @@ impl FractadyneApp {
                 ),
             );
         }
-        if folded >= accum_target() {
+        if folded >= self.perf.accum_goal(view) {
             if let Some(held) = self.perf.accum_converged_line[view].admit(diag::elapsed_ms(), ACCUM_LINE_GAP_MS) {
                 crate::diag::log_line("accum", &format!("view {view}: converged at {folded} samples{}", held_note(held)));
             }
@@ -15570,6 +15640,7 @@ impl FractadyneApp {
             // on a pass the walk judged drained, which a saturated queue stops producing exactly
             // when this fires. Output-neutral (see `chunk_band_retreat`).
             render::chunk_band_retreat(&mut self.perf.chunk_bands[v.min(1)]);
+            self.perf.chunk_onset_work[v.min(1)] = 0;
             // …and the costs a span is bounded by (`PIN_SPAN_PRICED`): they priced what came back lethal.
             self.perf.chunk_band_ms[v.min(1)] = [0.0; crate::tunables::CHUNK_BANDS];
             // What the retreat REACHED (W3 gate 2): every live dispatch sizes from the budget, so

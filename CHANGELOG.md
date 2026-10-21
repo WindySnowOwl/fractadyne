@@ -59,6 +59,20 @@ published as the pre-releases `v0.2.41-beta.1` to `v0.2.41-beta.150`, and a "bet
 
 Changes after 0.3.0-beta.1:
 
+- **A deep view settles without overrunning the graphics card, and stops sooner (0.3.0-beta.20).**
+  After a deep view settles, it renders each pixel again at sub-pixel offsets and averages them
+  (supersampling), up to 24 times. At a 2^704 view in a 5120×2054 window each of those renders took
+  4–6 s, so the work went on for about two minutes, and some of its passes ran close to the point
+  where the graphics driver resets the card: 26 passes past 0.9 s in two minutes, the longest
+  1.87 s. A pass was sent on as soon as the next frame came back quickly, which does not mean it
+  had finished, so up to four queued behind one another. And the size a pass could take was learned
+  over whole octaves of the iteration count, where the work is not uniform: nearly free until the
+  pixels begin to escape, then about a hundred times dearer. Now each pass waits for the card to
+  finish the one before; where the pixels begin to escape is a boundary the passes are sized on
+  their own side of; and a size learned while few pixels were still running is scaled down when
+  more are. In repeated runs at that view no pass reached 0.9 s, the longest frame was under 0.5 s,
+  and the supersampling takes the same time per sample as before. It also stops after 20 s once it
+  holds 4 samples (5 at that view), instead of running on for two minutes.
 - **Minibrots inside minibrots iterate faster (0.3.0-beta.20).** Near a minibrot nested in another,
   a pixel takes whole periods of its parent per step. Most of those steps could not use the skip
   table, and each searched it first anyway; they now go straight to the step, reuse the reference

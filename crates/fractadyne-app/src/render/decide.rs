@@ -1141,6 +1141,27 @@ pub(crate) struct WalkLedger {
     /// another size). (Absent when empty.)
     #[serde(default, skip_serializing_if = "no_late_px")]
     pub(crate) late_px: [u32; LATE_MAX],
+    /// The settled walk's licence past the ESCAPE ONSET (`WALK_ONSET`, `walk_onset_start`), as WORK:
+    /// iterations × the pixels a pass is charged for, earned by those passes' own prices with a band
+    /// licence's rule (`licence_update`) and shed with the band licences. 0 = unvisited, which opens
+    /// at the floor. A band is one octave and the cost is not uniform inside one: at the 2^704 view
+    /// band 10 ([131k, 262k)) is nearly free up to ~220k and ~100x dearer past it, where the pixels
+    /// begin to escape, so the band's licence, earned on its cheap front, carried a 32,585-iteration
+    /// pass into the dear part. ⚠Work, not iterations: the region runs on into the tail, where a
+    /// few hundred thousand pixels still run and a cheap pass carries 20-30k iterations; a licence
+    /// in iterations earned there opened the next sample's first dear pass at 20,608 over all 9.2M
+    /// (2026-10-21). (Absent when 0.)
+    #[serde(default, skip_serializing_if = "zero_u64")]
+    pub(crate) onset_work: u64,
+    /// Per iteration band: the pixels the settled pass that last priced its licence was charged for
+    /// (`WALK_ONSET`; 0 = unknown, or priced by a pin). A licence is a count of iterations, and it
+    /// holds only at the pixels it was earned over: inside band 11 at the 2^704 view the running
+    /// pixels fall from ~1.4M to a few hundred thousand, so a licence earned at the band's end opened
+    /// the next sample's first pass there at 29,596 iterations, 922 ms. A settled pass charged for
+    /// more pixels takes the licence scaled down to the same work (`decide_walk_dispatch`); never up.
+    /// (Absent when empty.)
+    #[serde(default, skip_serializing_if = "no_cost_len")]
+    pub(crate) band_px: [u32; crate::tunables::CHUNK_BANDS],
 }
 
 /// What [`decide_walk_price`] reads: `bp_chunk_tiling`'s pricing and sizing inputs, one view, one frame
@@ -1209,6 +1230,23 @@ pub(crate) struct WalkPriceInputs {
     pub(crate) span_priced: bool,
     #[serde(default)]
     pub(crate) orbit_len: u32,
+    /// Has the settled pass in flight COMPLETED on the GPU (`WALK_SERIALIZE`: every registration
+    /// of this view's work confirmed by its completion callback, or the completion overdue past
+    /// `SETTLE_COMPLETION_TIMEOUT_US`)? `None` = the quick frame decides, as before (recordings made
+    /// before it, and `WALK_SERIALIZE` 0).
+    #[serde(default)]
+    pub(crate) walk_done: Option<bool>,
+    /// The settled pass in flight's first live iteration and the pixels it was charged for
+    /// (`DispatchState::inflight_lo`, `inflight_px`; 0 = unknown), and where the view's escape-onset
+    /// region starts (`walk_onset_start`; 0 = unknown or `WALK_ONSET` 0): a completed pass that
+    /// started in the region prices its licence too (`WalkLedger::onset_work`). Recordings made
+    /// before them read 0, which prices nothing there.
+    #[serde(default)]
+    pub(crate) inflight_lo: u32,
+    #[serde(default)]
+    pub(crate) inflight_px: u64,
+    #[serde(default)]
+    pub(crate) onset_start: u32,
     pub(crate) ledger: WalkLedger,
     /// The overridable tunables it reads, and this adapter's per-pass fixed cost (see
     /// `MovingInputs::pass_fixed_ms`).
@@ -1259,6 +1297,8 @@ fn feed_pin_price(led: &mut WalkLedger, band: u8, size: u32, price: f64, target_
     let lane = super::pin_fast_lane(price, target_ms);
     for (b, len) in super::span_band_lengths(band, size) {
         super::chunk_band_update_with_lane(&mut led.bands, b, len, price, target_ms, lane);
+        // A pin's price is not a settled pass's: its pixels are not remembered.
+        led.band_px[b.min(crate::tunables::CHUNK_BANDS - 1)] = 0;
     }
 }
 
@@ -1389,12 +1429,14 @@ pub(crate) fn decide_walk_price(i: &WalkPriceInputs) -> WalkPriceDecision {
     };
     // ---- PRICE-SERIALIZED WALKING, pricing half (design/mode2-chunking.md §12) ----
     // The settled walk holds AT MOST ONE unpriced pass in flight. The in-flight pass
-    // accumulates every following frame interval until a frame comes back quicker than
-    // CHUNK_DRAIN_DT_MS — with one pass in flight, a quick present is PROOF the queue
-    // drained — and that sum is the pass's wall price (conservative: it includes present
-    // overhead, which is the safe direction). This is the signal a saturated queue
-    // cannot silence; the fatal sessions' timestamps were silent precisely because
-    // saturation never let them arm.
+    // accumulates every following frame interval until its GPU completion is seen
+    // (`walk_done`, `WALK_SERIALIZE`) — and that sum is the pass's wall price (conservative:
+    // it includes present overhead and the completion's latency, the safe direction). This
+    // is the signal a saturated queue cannot silence; the fatal sessions' timestamps were
+    // silent precisely because saturation never let them arm.
+    // ⛔It used to be released by the first frame quicker than CHUNK_DRAIN_DT_MS, taken as
+    // proof the queue had drained. It is not: the swap chain hides a pass's cost for two
+    // frames (see the release below), and passes stacked four deep (2026-10-20).
     // A PIN is priced and serialized exactly like the settled walk (design/live-zoom-
     // smoothing.md P-A, second round), against the smoothness target rather than the
     // TDR one: its passes are what the viewer's cadence is made of.
@@ -1494,6 +1536,7 @@ pub(crate) fn decide_walk_price(i: &WalkPriceInputs) -> WalkPriceDecision {
                 i.tdr_lethal_ms,
             ) {
                 chunk_band_retreat(&mut led.bands);
+                led.onset_work = 0;
                 // What the shed REACHED (W3 gate 2): the next pass opens no lower than the
                 // walk's floor, so it is smaller than this one only if the floor is.
                 let outcome = super::retreat_outcome(size as u64, floor as u64);
@@ -1531,7 +1574,13 @@ pub(crate) fn decide_walk_price(i: &WalkPriceInputs) -> WalkPriceDecision {
                     i.pin_inflight,
                 )
             } else {
-                i.last_dt_ms < crate::tunables::CHUNK_DRAIN_DT_MS
+                // ⭐A SETTLED pass is released by its COMPLETION (`WALK_SERIALIZE`, `walk_done`), for
+                // the reason a pin is: the swap chain hides a pass's cost for two frames, so the
+                // quick interval after it proves nothing. Read "drained" at ~10 ms, passes went out
+                // one a frame and up to four stood in the queue at the 2^704 view's dense band
+                // (947 and 1,011 ms frames, 2026-10-20). Its price is still the wall it accumulated
+                // in flight: the completion is seen a frame or two late, the safe direction.
+                i.walk_done.unwrap_or(i.last_dt_ms < crate::tunables::CHUNK_DRAIN_DT_MS)
             }) || acc > target_ms * 60.0
             {
                 // Drained (or the absolute backstop, so a machine whose presents never
@@ -1585,6 +1634,25 @@ pub(crate) fn decide_walk_price(i: &WalkPriceInputs) -> WalkPriceDecision {
                 } else {
                     led.pass_dt = price;
                     chunk_band_update_with_lane(&mut led.bands, band as usize, size, price, target_ms, 2);
+                    // …over the pixels it was charged for (`WalkLedger::band_px`), when a completion
+                    // priced it and they are known.
+                    led.band_px[(band as usize).min(crate::tunables::CHUNK_BANDS - 1)] =
+                        if i.walk_done.is_some() { u32::try_from(i.inflight_px).unwrap_or(u32::MAX) } else { 0 };
+                    // ...and a pass that started in the escape-onset region earns that region's
+                    // licence. Only a completion's price can (a quick frame's is ~10 ms whatever the
+                    // pass cost).
+                    // In work: the licence at the pass's own pixels, updated, and back. Against HALF
+                    // the target (`WALK_ONSET_TARGET_SHARE`): the region is where the dear work is,
+                    // and its cost per iteration still varies ~2× from stretch to stretch, so a
+                    // licence doubled at the full target's rule ran a pass at 909 ms (2026-10-21).
+                    let onset = i.onset_start;
+                    if i.walk_done.is_some() && onset > 0 && i.inflight_lo >= onset && i.inflight_px > 0 {
+                        let px = i.inflight_px;
+                        let cur = (led.onset_work / px).min(u64::from(u32::MAX)) as u32;
+                        let aim = target_ms * super::WALK_ONSET_TARGET_SHARE;
+                        let next = super::licence_update(cur, size, price, aim, 2);
+                        led.onset_work = u64::from(next).saturating_mul(px);
+                    }
                 }
                 led.inflight = None;
             } else if pin_frame && !i.no_timestamps && i.pin_inflight < i.pin_inflight_max {
@@ -1995,6 +2063,24 @@ pub(crate) struct DispatchState {
     pub(crate) tail_retries: u32,
     pub(crate) probe_nonce: u32,
     pub(crate) norm_complete_submit: bool,
+    /// The settled pass in flight's first live iteration and the pixels it was charged for
+    /// (`WalkPriceInputs::inflight_lo`, `inflight_px`), kept when the view's escape-onset region is
+    /// known (`WalkDispatchInputs::onset_start`). Recordings made before them read 0, and a 0 is left
+    /// out, so they replay as recorded.
+    #[serde(default, skip_serializing_if = "zero_u32")]
+    pub(crate) inflight_lo: u32,
+    #[serde(default, skip_serializing_if = "zero_u64")]
+    pub(crate) inflight_px: u64,
+}
+
+/// A zero left out of a recording (`DispatchState::inflight_lo`).
+fn zero_u32(v: &u32) -> bool {
+    *v == 0
+}
+
+/// A zero left out of a recording (`DispatchState::inflight_px`, `WalkLedger::onset_work`).
+fn zero_u64(v: &u64) -> bool {
+    *v == 0
 }
 
 /// What [`decide_walk_dispatch`] reads: the chunk walk's dispatch inputs (`bp_chunk_tiling`), one view,
@@ -2053,6 +2139,17 @@ pub(crate) struct WalkDispatchInputs {
     pub(crate) band_ms_len: [u32; crate::tunables::CHUNK_BANDS],
     #[serde(default, skip_serializing_if = "no_cost_len")]
     pub(crate) band_ms_px: [u32; crate::tunables::CHUNK_BANDS],
+    /// Where the view's escape-onset region starts, and the settled walk's licence past it, in work
+    /// (`WalkPriceInputs::onset_start`, `WalkLedger::onset_work`, `WALK_ONSET`). Recordings made
+    /// before them read 0: no region.
+    #[serde(default)]
+    pub(crate) onset_start: u32,
+    #[serde(default)]
+    pub(crate) onset_work: u64,
+    /// The pixels each band's licence was earned over by a settled pass (`WalkLedger::band_px`;
+    /// none in recordings made before it, which scale nothing).
+    #[serde(default, skip_serializing_if = "no_cost_len")]
+    pub(crate) band_px: [u32; crate::tunables::CHUNK_BANDS],
     /// The overridable tunables it reads.
     pub(crate) pin_timeout_scaled: u64,
     pub(crate) chunk_charge: u64,
@@ -2071,6 +2168,12 @@ pub(crate) struct WalkDispatchDecision {
     /// A pin pass went out: the caller stamps its dispatch time.
     pub(crate) pin_dispatched: bool,
     pub(crate) events: Vec<DispatchEvent>,
+    /// A settled pass in a view with an escape-onset region (`WALK_ONSET`): the iterations each of
+    /// its bounds allowed — the budget's step (over the pixels charged), the start band's licence
+    /// (scaled by `band_px`), the onset region's licence (0 = not in it) — and the pixels charged,
+    /// for the `tile` trace. (Absent otherwise, and in recordings made before it.)
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub(crate) bounds: Option<(u32, u32, u32, u64)>,
 }
 
 /// What the dispatch did, for the caller's log and trace.
@@ -2106,6 +2209,7 @@ pub(crate) fn decide_walk_dispatch(i: &WalkDispatchInputs) -> WalkDispatchDecisi
     let mut chunk_pass = false;
     let mut pin_dispatched = false;
     let mut events = Vec::new();
+    let mut bounds = None;
     if cur < walk_end {
         // ---- PRICE-SERIALIZED WALKING, dispatch half ----
         // A settled pass may only launch when the previous one has been PRICED
@@ -2243,7 +2347,35 @@ pub(crate) fn decide_walk_dispatch(i: &WalkDispatchInputs) -> WalkDispatchDecisi
             } else {
                 budget_step
             };
+            // A settled pass charged for more pixels than its band's licence was earned over takes
+            // the licence scaled down to the same work (`WalkLedger::band_px`): a count of iterations
+            // holds only at the pixels it was priced at. Never scaled up.
+            let licence = {
+                let b = (band as usize).min(crate::tunables::CHUNK_BANDS - 1);
+                let (earned, at) = (u64::from(i.bands[b]), u64::from(i.band_px[b]));
+                if !interacting && !pin_frame && earned > 0 && at > 0 && charged > at {
+                    let scaled = ((earned * at) / charged).max(1) as u32;
+                    licence.min(scaled.max(pin_floor))
+                } else {
+                    licence
+                }
+            };
             let step = budget_step.min(licence);
+            // ⭐…and, settled, past the view's ESCAPE ONSET no more than that region's own licence
+            // (`WALK_ONSET`, `WalkLedger::onset_licence`; the floor while unvisited): an octave band
+            // is one licence, and its cost is not uniform where the pixels begin to escape.
+            let onset = i.onset_start;
+            let onset_licence = if !interacting && !pin_frame && onset > 0 && real_lo >= onset {
+                // The licence's work over the pixels this pass is charged for.
+                let licence = (i.onset_work / charged.max(1)).min(u64::from(u32::MAX)) as u32;
+                chunk_band_license(&[licence; crate::tunables::CHUNK_BANDS], 0, pin_floor)
+            } else {
+                0
+            };
+            if !interacting && !pin_frame && onset > 0 {
+                bounds = Some((budget_step, licence, onset_licence, charged));
+            }
+            let step = if onset_licence > 0 { step.min(onset_licence) } else { step };
             let step = if i.chunk_shuffle == 1 && !interacting && !pin_frame {
                 // Test hook (`CHUNK_SHUFFLE`): an uneven window, the same every run.
                 let h = (st.idx as u64 + 1).wrapping_mul(0x9E37_79B9_7F4A_7C15) >> 60;
@@ -2253,6 +2385,9 @@ pub(crate) fn decide_walk_dispatch(i: &WalkDispatchInputs) -> WalkDispatchDecisi
             };
             let step = if pin_frame { step.max(pin_floor.min(gpu_iter.max(1))) } else { step };
             let end = real_lo.saturating_add(step).min(walk_end);
+            // …and a settled pass that starts short of the onset region stops at its edge, so the
+            // region is entered under its own licence.
+            let end = if !interacting && !pin_frame && onset > 0 && real_lo < onset { end.min(onset) } else { end };
             // A PIN pass stops at the end of the band it started in. The licence is the
             // START band's, and a pass that runs on into unvisited bands carries it there
             // — traced: a 21,480-iteration pass licensed in [8k,16k) ran through the
@@ -2337,6 +2472,10 @@ pub(crate) fn decide_walk_dispatch(i: &WalkDispatchInputs) -> WalkDispatchDecisi
             if !interacting || pin_frame {
                 st.inflight =
                     Some((end.saturating_sub(real_lo), band, 0.0, false));
+                if i.onset_start > 0 {
+                    st.inflight_lo = real_lo;
+                    st.inflight_px = charged;
+                }
             }
             if pin_frame {
                 // One pin pass in the queue: the completion callback (armed next frame,
@@ -2398,7 +2537,7 @@ pub(crate) fn decide_walk_dispatch(i: &WalkDispatchInputs) -> WalkDispatchDecisi
     // turned into a rhythmic "breathing" of every colour on screen.
     st.norm_complete_submit = (interacting && !pin_frame)
         || chunk_range.is_none_or(|[_, end]| end >= walk_end);
-    WalkDispatchDecision { chunk_range, chunk_idx, pass: chunk_pass, state: st, pin_dispatched, events }
+    WalkDispatchDecision { chunk_range, chunk_idx, pass: chunk_pass, state: st, pin_dispatched, events, bounds }
 }
 
 /// The recording's format version: bumped whenever an inputs or decision struct changes shape, and a

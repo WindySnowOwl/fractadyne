@@ -23,6 +23,17 @@ fn a_fold_needs_a_real_complete_frame_at_the_run_ss() {
     assert!(!accum_fold_clean(0, false, false, false, false, false, 3, 1, 2));
 }
 
+/// The time cap ends a costly run (the 2^704 view at 5120×2054: 4–6 s a sample, 24 of them ~2
+/// minutes), but only on a run that already holds `ACCUM_MIN_SAMPLES`; 0 turns it off.
+#[test]
+fn the_time_cap_ends_a_costly_run_once_it_holds_enough_samples() {
+    let min = crate::tunables::ACCUM_MIN_SAMPLES;
+    assert!(!accum_time_capped(min + 5, 19_999, 20_000), "inside the cap");
+    assert!(accum_time_capped(min, 20_000, 20_000));
+    assert!(!accum_time_capped(min - 1, 60_000, 20_000), "too few samples to stop on");
+    assert!(!accum_time_capped(23, 600_000, 0), "off");
+}
+
 /// Sample 0 is the pixel centre (so the hand-off from the ordinary settle is seamless); every
 /// later sample stays inside the pixel.
 #[test]

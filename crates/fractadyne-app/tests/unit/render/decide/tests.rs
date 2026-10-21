@@ -618,6 +618,10 @@ fn walk() -> WalkPriceInputs {
         pin_growth_lane: false,
         span_priced: false,
         orbit_len: 0,
+        walk_done: None,
+        inflight_lo: 0,
+        inflight_px: 0,
+        onset_start: 0,
         ledger: WalkLedger {
             inflight: Some((1024, 3, 50.0, false)),
             bands: [0; crate::tunables::CHUNK_BANDS],
@@ -630,6 +634,8 @@ fn walk() -> WalkPriceInputs {
             band_ms_len: [0; crate::tunables::CHUNK_BANDS],
             band_ms_px: [0; crate::tunables::CHUNK_BANDS],
             late_px: [0; LATE_MAX],
+            onset_work: 0,
+            band_px: [0; crate::tunables::CHUNK_BANDS],
         },
         tdr_budget_ms: c.tdr_budget_ms,
         tdr_explicit_budget_ms: c.tdr_explicit_budget_ms,
@@ -642,14 +648,131 @@ fn walk() -> WalkPriceInputs {
 
 #[test]
 fn a_quick_frame_prices_the_pass_in_flight() {
-    // With one pass in flight, a quick present proves the queue drained: the pass is priced at
-    // the wall it accumulated (50 + this frame's 16.7 ms), its band earns a licence, and the next
-    // dispatch is released.
+    // The rule before `WALK_SERIALIZE` (and every recording made before it, `walk_done: None`): a
+    // quick present was taken as proof the queue drained, and the pass priced at the wall it
+    // accumulated (50 + this frame's 16.7 ms), its band earning a licence, the next released.
     let d = decide_walk_price(&walk());
     assert_eq!(d.ledger.inflight, None);
     assert!((d.ledger.pass_dt - 66.7).abs() < 1e-9, "{}", d.ledger.pass_dt);
     assert_eq!(d.ledger.bands[3], 2048, "well under half the target: the fast lane doubles the licence");
     assert!(d.events.is_empty() && d.retreat.is_none());
+    assert_eq!(d.ledger.onset_work, 0, "nothing earned past an onset");
+}
+
+/// The settled pass of `walk()` over all 800,000 pixels, released (or not) by its completion, in an
+/// escape-onset region from 850, at 1,024 where it started.
+fn completed(done: bool) -> WalkPriceInputs {
+    WalkPriceInputs { walk_done: Some(done), inflight_lo: 1024, inflight_px: 800_000, onset_start: 850, ..walk() }
+}
+
+#[test]
+fn a_settled_pass_waits_for_its_completion_not_a_quick_frame() {
+    // The 2^704 view (2026-10-20): the frame after a pass read ~10 ms while the pass was still in
+    // the queue, and four of them stacked. Not complete: it stays in flight, its wall growing.
+    let d = decide_walk_price(&completed(false));
+    let (size, band, acc, shed) = d.ledger.inflight.expect("still in flight");
+    assert_eq!((size, band, shed), (1024, 3, false));
+    assert!((acc - 66.7).abs() < 1e-9, "{acc}");
+    assert_eq!((d.ledger.bands[3], d.ledger.onset_work), (0, 0), "nothing priced");
+    // Complete: priced at all the wall it accumulated, and released.
+    let e = decide_walk_price(&WalkPriceInputs { ledger: d.ledger, last_dt_ms: 300.0, ..completed(true) });
+    assert_eq!(e.ledger.inflight, None);
+    assert!((e.ledger.pass_dt - 366.7).abs() < 1e-9, "{}", e.ledger.pass_dt);
+    assert_eq!(e.ledger.bands[3], 1024 + 256, "near the target: the licence grows by a quarter");
+}
+
+#[test]
+fn a_completed_pass_past_the_onset_earns_the_onset_licence_in_work() {
+    // Cheap (66.7 ms against 400): the onset licence takes the fast lane with its band's, as work.
+    let d = decide_walk_price(&completed(true));
+    assert_eq!((d.ledger.bands[3], d.ledger.onset_work), (2048, 2048 * 800_000));
+    // 150 ms: under half the 400 ms target, the band's licence doubles; the onset region's, priced
+    // against half the target (`WALK_ONSET_TARGET_SHARE`: its cost still varies ~2× inside it),
+    // grows by a quarter.
+    let mid = WalkLedger { inflight: Some((1024, 3, 133.3, false)), ..walk().ledger };
+    let m = decide_walk_price(&WalkPriceInputs { ledger: mid, ..completed(true) });
+    assert_eq!((m.ledger.bands[3], m.ledger.onset_work), (2048, 1280 * 800_000));
+    // A cliff (900 ms): both are quartered.
+    let led = WalkLedger { inflight: Some((1024, 3, 883.3, false)), ..d.ledger };
+    let e = decide_walk_price(&WalkPriceInputs { ledger: led, ..completed(true) });
+    assert_eq!((e.ledger.bands[3], e.ledger.onset_work), (256, 256 * 800_000));
+    // In the tail a few pixels run, and a cheap pass there carries many iterations. At the 2^704
+    // view a tail pixel-iteration cost ~28x a cliff one (0.12 against 0.0042 ms per iteration per
+    // million pixels), so the cliff's licence is the larger work: 12,000 iterations over all
+    // 800,000 pixels, against a cheap tail pass of 20,000 over 100,000 (doubled, 4e9). It raises
+    // nothing. In iterations the tail would have taken it to 40,000 — and the next sample's first
+    // dear pass with it.
+    let tail = WalkLedger { inflight: Some((20_000, 11, 50.0, false)), onset_work: 12_000 * 800_000, ..e.ledger };
+    let t = decide_walk_price(&WalkPriceInputs { inflight_lo: 270_000, inflight_px: 100_000, ledger: tail, ..completed(true) });
+    assert_eq!(t.ledger.onset_work, 12_000 * 800_000);
+    // A pass that started short of the region (at 800 < 850) earns its band only.
+    let f = decide_walk_price(&WalkPriceInputs { inflight_lo: 800, ..completed(true) });
+    assert_eq!((f.ledger.bands[3], f.ledger.onset_work), (2048, 0));
+    // No onset known (or `WALK_ONSET` 0), its pixels unknown, or a quick frame's price: nothing.
+    for i in [
+        WalkPriceInputs { onset_start: 0, ..completed(true) },
+        WalkPriceInputs { inflight_px: 0, ..completed(true) },
+        WalkPriceInputs { walk_done: None, ..completed(true) },
+    ] {
+        assert_eq!(decide_walk_price(&i).ledger.onset_work, 0);
+    }
+}
+
+#[test]
+fn a_settled_price_remembers_the_pixels_its_band_licence_was_earned_over() {
+    let d = decide_walk_price(&completed(true));
+    assert_eq!((d.ledger.bands[3], d.ledger.band_px[3]), (2048, 800_000));
+    // A quick frame's price (`walk_done: None`) does not know them.
+    let e = decide_walk_price(&WalkPriceInputs { walk_done: None, ..completed(true) });
+    assert_eq!(e.ledger.band_px[3], 0);
+    // A pin's price over a band forgets them: its pixels are not a settled pass's.
+    let mut px = [0; crate::tunables::CHUNK_BANDS];
+    px[0] = 800_000;
+    let p = decide_walk_price(&WalkPriceInputs {
+        ledger: WalkLedger { band_px: px, ..released_pin_pass().ledger },
+        no_timestamps: true,
+        ..released_pin_pass()
+    });
+    assert_eq!(p.ledger.band_px[0], 0);
+}
+
+#[test]
+fn the_lethal_shed_sheds_the_onset_licence_with_the_bands() {
+    let led = WalkLedger {
+        inflight: Some((1024, 3, 950.0, false)),
+        bands: [4096; crate::tunables::CHUNK_BANDS],
+        onset_work: 8192 * 800_000,
+        ..walk().ledger
+    };
+    let d = decide_walk_price(&WalkPriceInputs { ledger: led, ..completed(false) });
+    assert!(matches!(d.events[..], [WalkPriceEvent::LethalShed { .. }]), "{:?}", d.events);
+    assert_eq!((d.ledger.bands, d.ledger.onset_work), ([0; crate::tunables::CHUNK_BANDS], 0));
+}
+
+#[test]
+fn a_walk_recorded_before_completion_pricing_replays_as_recorded() {
+    // A recording made before `walk_done`, the window and the onset: none of their keys.
+    let i = walk();
+    let mut v: serde_json::Value = serde_json::to_value(&i).unwrap();
+    let o = v.as_object_mut().unwrap();
+    for k in ["walk_done", "inflight_lo", "inflight_px", "onset_start"] {
+        assert!(o.remove(k).is_some(), "{k} is recorded");
+    }
+    assert!(o["ledger"].get("onset_work").is_none(), "an unvisited onset licence is left out");
+    let back: WalkPriceInputs = serde_json::from_value(v).unwrap();
+    assert_eq!(back, i);
+    assert_eq!(decide_walk_price(&back), decide_walk_price(&i));
+    let j = dispatch();
+    let mut v: serde_json::Value = serde_json::to_value(&j).unwrap();
+    let o = v.as_object_mut().unwrap();
+    o.remove("onset_start");
+    o.remove("onset_work");
+    assert!(o["state"].get("inflight_lo").is_none() && o["state"].get("inflight_px").is_none(), "a zero is left out");
+    let back: WalkDispatchInputs = serde_json::from_value(v).unwrap();
+    assert_eq!(decide_walk_dispatch(&back), decide_walk_dispatch(&j));
+    // …and with no onset known the dispatch leaves it out of its decision too.
+    let d = serde_json::to_value(decide_walk_dispatch(&j)).unwrap();
+    assert!(d["state"].get("inflight_lo").is_none() && d["state"].get("inflight_px").is_none());
 }
 
 /// The RTX 3080 trace at 1x on the (49,3) spiral (2026-10-14): a 545-iteration pin opening
@@ -1112,6 +1235,9 @@ fn dispatch() -> WalkDispatchInputs {
         band_ms_iters: [0; crate::tunables::CHUNK_BANDS],
         band_ms_len: [0; crate::tunables::CHUNK_BANDS],
         band_ms_px: [0; crate::tunables::CHUNK_BANDS],
+        onset_start: 0,
+        onset_work: 0,
+        band_px: [0; crate::tunables::CHUNK_BANDS],
         pin_timeout_scaled: 1,
         chunk_charge: 1,
         chunk_shuffle: 0,
@@ -1133,6 +1259,8 @@ fn dispatch() -> WalkDispatchInputs {
             tail_retries: 0,
             probe_nonce: 0,
             norm_complete_submit: true,
+            inflight_lo: 0,
+            inflight_px: 0,
         },
     }
 }
@@ -1148,6 +1276,69 @@ fn a_settled_pass_goes_out_at_its_band_licence_and_waits_to_be_priced() {
     assert_eq!(d.state.last_range, d.chunk_range);
     assert_eq!(d.state.fe_steps_last, 800_000 * 256, "the measurement pairs with the work done");
     assert!(!d.state.norm_complete_submit, "a part of the walk is not the picture");
+}
+
+#[test]
+fn a_settled_pass_enters_the_escape_onset_region_under_its_own_licence() {
+    // Licensed to 10,000 in bands 4 and 5, the budget's step 5,000: [3,000, 8,000) with no onset known.
+    let mut i = dispatch();
+    i.bands[4] = 10_000;
+    i.bands[5] = 10_000;
+    assert_eq!(decide_walk_dispatch(&i).chunk_range, Some([3_000, 8_000]));
+    // The region starts at 4,250: the pass stops there.
+    i.onset_start = 4_250;
+    let d = decide_walk_dispatch(&i);
+    assert_eq!(d.chunk_range, Some([3_000, 4_250]));
+    assert_eq!((d.state.inflight_lo, d.state.inflight_px), (3_000, 800_000), "its price will know where it started, over what");
+    // From inside the region, unvisited: the floor; earned: its licence, under the band's.
+    let inside = WalkDispatchInputs { cur: 4_250, ..i.clone() };
+    assert_eq!(decide_walk_dispatch(&inside).chunk_range, Some([4_250, 4_506]));
+    // Earned as work: 2,000 iterations over these 800,000 pixels.
+    let earned = WalkDispatchInputs { onset_work: 2_000 * 800_000, ..inside.clone() };
+    assert_eq!(decide_walk_dispatch(&earned).chunk_range, Some([4_250, 6_250]));
+    let big = WalkDispatchInputs { onset_work: 50_000 * 800_000, ..inside };
+    assert_eq!(decide_walk_dispatch(&big).chunk_range, Some([4_250, 9_250]), "the band's licence and budget still bound it");
+    // A moving frame is not a settled pass.
+    let moving = decide_walk_dispatch(&WalkDispatchInputs { interacting: true, ..i });
+    assert_eq!(moving.chunk_range, Some([3_000, 8_000]));
+}
+
+#[test]
+fn a_band_licence_earned_over_fewer_pixels_is_scaled_down_to_the_same_work() {
+    // Band 4 licensed to 10,000 iterations by a pass over 200,000 pixels; this pass is charged for
+    // all 800,000: the same work is 2,500 iterations.
+    let mut i = dispatch();
+    i.bands[4] = 10_000;
+    i.band_px[4] = 200_000;
+    assert_eq!(decide_walk_dispatch(&i).chunk_range, Some([3_000, 5_500]));
+    // Earned over MORE pixels than this pass's: never scaled up.
+    i.band_px[4] = 1_600_000;
+    assert_eq!(decide_walk_dispatch(&i).chunk_range, Some([3_000, 8_000]));
+    // Not below the floor; and not for a moving frame or a pin, whose passes the ledger does not
+    // price in pixels.
+    i.band_px[4] = 1_000;
+    assert_eq!(decide_walk_dispatch(&i).chunk_range, Some([3_000, 3_256]));
+    let moving = decide_walk_dispatch(&WalkDispatchInputs { interacting: true, ..i });
+    assert_eq!(moving.chunk_range, Some([3_000, 8_000]));
+}
+
+#[test]
+fn the_onset_region_starts_at_the_first_escape_and_short_of_a_guessed_one() {
+    // The 2^704 view (2026-10-21): a pass over [204,279, 220,663) cost 12 ms and one from 220,663
+    // cost 508; its lowest escape read ~221,354. From 0.85 of it, the region held a cheap stretch
+    // where its licence doubled to 24,672 and a pass from 211,281 ran into the cliff for 1 s.
+    let seen = super::super::walk_onset_start(221_354, 0);
+    assert!(seen > 211_281 && seen <= 220_663, "{seen}");
+    // Before any escape is seen, the escaped reference's end (247,533) stands in, further short:
+    // the first walk enters the cliff from inside the region.
+    let guessed = super::super::walk_onset_start(0, 247_533);
+    assert!(guessed < 220_663, "{guessed}");
+    // Once an escape is seen the guess steps aside — kept, it would put [210k, 221k) back in the
+    // region — unless the reference ends first (past its end every pixel rebases): the earlier
+    // of the two, at the measured share. None without either.
+    assert_eq!(super::super::walk_onset_start(221_354, 247_533), seen);
+    assert_eq!(super::super::walk_onset_start(260_000, 247_533), super::super::walk_onset_start(247_533, 0));
+    assert_eq!(super::super::walk_onset_start(0, 0), 0);
 }
 
 #[test]
