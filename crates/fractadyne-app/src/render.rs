@@ -6699,6 +6699,9 @@ impl FractadyneApp {
             content_tag,
             content_out: Some(self.perf.content_sink[vs.min(1)].clone()),
             chunk_walk: self.perf.chunk_count_walk[vs.min(1)],
+            // The window shows a walk's every pass, so it cuts iteration windows; only a worker
+            // GPU's walks are step-bounded (`LiveTwin::walk`).
+            step_cap: 0,
             tile,
             chunk_range,
             chunk_idx,

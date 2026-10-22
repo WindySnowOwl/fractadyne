@@ -15,7 +15,7 @@ fn an_opening_pass_prices_the_next_opening_at_once_and_forgets_slowly() {
     let ns = 3.0 + 0.2 * (1.0 - 3.0);
     assert_eq!(p.open(area), (budget / ns / area as f64) as u32);
     // A cheap card's opening is bounded by pixel-steps; a big frame's is floored at 256.
-    assert_eq!(WalkPricer { open_ns: 1.0e-6, pass_ms: WALK_PASS_MS }.open(1), WALK_OPEN_MAX_PX_STEPS as u32);
+    assert_eq!(WalkPricer { open_ns: 1.0e-6, pass_ms: WALK_PASS_MS, ..WalkPricer::default() }.open(1), WALK_OPEN_MAX_PX_STEPS as u32);
     assert_eq!(WalkPricer::default().open(4_000_000), WALK_MIN_ITERS);
 }
 
@@ -37,6 +37,26 @@ fn a_window_follows_its_wall_grows_at_most_twofold_and_stays_under_the_ceiling()
     assert_eq!(short.open(4_000), (10.0e6 / 1.5 / 4_000.0) as u32);
     assert_eq!(short.next(area, 4000, 10.0), 4000);
     assert_eq!(short.next(area, 4000, 40.0), 1000);
+}
+
+#[test]
+fn a_step_bounded_walk_is_priced_under_the_pass_target_and_follows_its_last_wall() {
+    // A worker's mode-2 walks run the export's step-bounded passes, priced by its `StepPricer`
+    // under the worker's pass target (`LiveTwin::walk_steps`).
+    let area = 1_000_000u64;
+    let p = WalkPricer::default();
+    // Unmeasured, a walk's first pass runs every sample at the export's prior, 1.5 ns a step…
+    assert_eq!(p.steps.cap_for(area, area, true), (WALK_PASS_MS * 1.0e6 / 1.5 / area as f64) as u32);
+    // …sized for the target the worker sets.
+    let wide = WalkPricer::default().with_pass_ms(4.0 * WALK_PASS_MS);
+    assert_eq!(wide.steps.cap_for(area, area, true), (4.0 * WALK_PASS_MS * 1.0e6 / 1.5 / area as f64) as u32);
+    // A later pass follows the last one's wall, at most doubling: the pixels still running ran
+    // the whole last cap, so it does at most twice their work however dear their iterations.
+    let mut q = WalkPricer::default();
+    q.steps.observe(1.0, area, 100);
+    assert_eq!(q.steps.cap_for(area, 1_000, false), 200);
+    q.steps.observe(4.0 * WALK_PASS_MS, 1_000, 200);
+    assert_eq!(q.steps.cap_for(area, 900, false), 50);
 }
 
 /// `headless` must drop EVERY sink a frame's params carry: a twin (the second GPU's motion

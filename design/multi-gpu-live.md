@@ -793,3 +793,77 @@ Decision (maintainer, 2026-10-16): supersession is the design working, so A4 rep
 gates the rest. `WORKER_YIELD` stays as an experiment, default 0: a ~5% gain on a shared card from
 n = 3 is not a default, and with two physical cards the window's work cannot slow the other card
 while yielding would hide its sharper refreshes.
+
+### 9.2 Step-bounded worker walks (2026-10-22)
+
+Why: the crash report of the 2026-10-21 Home-glide device loss (crash-1792627197, RTX 3080) has
+about a second of GPU work before the fatal frame that its record cannot attribute, and the worker
+GPU, on the same card, was the main suspect. A repro of that glide (`--zoomtest-home` from 2^236,
+`--worker-gpu same`, the user's settings copied) logged worker passes of 134, 189 and 308 ms against
+the 8 ms pass target, each right after a pass of about 1 ms.
+
+What the trace showed (`FRACTADYNE_TRACE=tile`, every pass of every walk): the cost of an iteration
+is far from uniform along a walk. Per sample-iteration it ran 3e-5 ns where the BLA skips, and rose
+25–400× within a pass or two where it stops skipping for a set of the pixels still running (up to
+3.7e-2 ns). A window walk sizes each pass from the one before (`window × target / wall`, at most
+doubling), so a window grown on the cheap stretch crossed into the dear one whole. Three fixes on
+iteration windows were measured and dropped:
+
+- **Octave bands** (each pass cut at a power of two, entered at that band's last price): long passes
+  remained (167, 134 ms). The cliffs fall inside bands.
+- **The reference's end** (a pass cut there, the tail priced from the last walk): the cliffs are
+  not there; one sat at 65,536 against a reference 298,416 long.
+- **A cap from the dearest rate seen** (no pass past 4 targets at it): the longest pass fell to
+  36–44 ms, but the worker fell to 278 passes and 1.2 s a frame at resolution 0.25. One dear reading
+  (the pass after the series skip, where pixels pass the reference's end) capped the whole walk,
+  and short passes, mostly fixed cost, kept reading dear. The cliffs also move between walks: in
+  one consecutive pair, from about 159,000 to about 92,000 iterations.
+
+What was built: a mode-2 walk runs the export's STEP-BOUNDED passes (`LiveTwin::walk_steps`;
+`MandelbrotParams::step_cap` into the uniform's tail word; the running count read back after each
+pass). A step costs about the same with or without the BLA, and the pixels still running ran the
+whole last cap, so a pass that follows the last one's wall (the export's `StepPricer` under the
+pass target) does at most twice their work. Two traps: `prepare` reruns the iterate only when its
+key or the chunk range changes, so the resume passes alternate start 1 and 2 (the shader reads any
+start above 0 as "resume"); and a walk stops with an error past `max_iter` passes rather than spin
+on a count that does not fall.
+
+Measured on the same repro: of 1,441 passes after each walk's first, p50 3.3 ms, p90 7.9, p99
+11.1, max 16.5 (before: up to 308). Each walk's FIRST pass costs 30–50 ms whatever its cap (98
+cold): a fixed cost the window walks' first pass had too (9–60 ms for 256 iterations), probably
+the state textures made again as the worker's resolution changes every frame. Not addressed here.
+Worker frames: zoom-in 151 ms each, 9.0 passes (24–27 before), resolution 0.77 (0.68–0.69); Home
+glide 275 ms, 20.6 passes, resolution 0.48 (222–266 ms and 0.43–0.69 before, run to run). The
+self-test row "a worker's step-bounded walk is the chunked walk's frame, bit-identical" holds it
+to 0 differing channels and at least 3 passes; with the step cap dropped from the uniform it fails
+(1 pass). Mode 0/1 walks still cut iteration windows.
+
+The first pass's fixed cost, measured: a walk at the size of the walk before it opened in a median
+7.3 ms (5 walks), at a new size 41.5 ms (142): the state textures made again. `live_res_next` moved
+the size on nearly every frame (the area follows the time, continuously). Now it moves on a ladder
+of eighth-octave rungs (`LIVE_RES_RUNGS`), only when the time asks for a whole rung (frames within
+126–178 ms keep their size), and `live_res_after` judges a frame at a new size without its first
+pass's excess over `LIVE_FIRST_PASS_MS` (15). Without that subtraction the sizes cycled (2.1M, 3.0M,
+2.5M, 2.5M, 3.6M samples: a rebuilt frame read slow, the next one fast); with new-size frames not
+judged at all, the controller shrank half as fast into the Home glide (443 ms frames against 275).
+One run each on the repro: walks at the size before 5 → 83 of 140, samples rendered 311M → 399M,
+zoom-in resolution 0.77 → 0.84, Home-glide frames 275 → 283 ms.
+
+PLUTO (2026-10-22), the worker on the RX 6800 XT, which draws the desktop, and the window on the
+RTX 3070 (`--zoomtest 20 --zoomtest-rate 4 --zoomtest-start-log2 200 --window 2400x1300`,
+`FRACTADYNE_TRACE=tile`). Every walk there is a single pass at the floor cap of 2 steps (a 317-sample
+escaped reference with a skip of 315: every pixel finishes at once), so step-bounding cannot split
+it; its cost is the per-pixel fixed cost. Three runs a side, interleaved:
+
+| | dev.41 (`f34e0938`) | dev.42 (`612f0712`) |
+|---|---|---|
+| walks at the size before | 1, 1, 0 of 52 | 27 of 34, 79 of 84, 79 of 84 |
+| first pass, median ms | 78, 79, 79 | 15, 14, 14 |
+| samples rendered | 111M, 115M, 113M | 80M, 214M, 212M |
+| worker frames adopted | 47, 47, 48 | 28, 79, 78 |
+| window frame gaps over 100 ms (max) | 1 (641), 0 (34), 1 (330) | 0 (52), 1 (144), 0 (38) |
+
+The first dev.42 run settled at a smaller size early and is the weak one; n is 3 a side. dev.41's
+641 and 330 ms gaps are on the WINDOW's card, not traced further. The worker group passes 13/13 on
+both cards (the step-bounded row: 20 passes on the RX 6800 XT, 8 on the RTX 3070) and the cross-card
+motiontests pass both ways on dev.41 and with the worker on the RX 6800 XT on dev.42.

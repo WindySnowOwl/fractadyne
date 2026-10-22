@@ -111,17 +111,76 @@ pub(crate) fn adopt_target(real: bool, display_hold: bool, hold_copy: bool) -> A
     }
 }
 
+/// A worker pass at least this long is logged (`pump_live`): a single draw the card does not
+/// interrupt, against a pass target of a few milliseconds.
+pub(crate) const WORKER_LONG_PASS_MS: f64 = 100.0;
+
+/// The always-on line for a worker pass of at least [`WORKER_LONG_PASS_MS`], out of a walk of
+/// `passes`: what it ran, and what the pass before it took (what sized it).
+pub(crate) fn long_pass_line(lp: &fractadyne_gpu::LongestPass, passes: u32) -> String {
+    let what = if lp.cap > 0 {
+        format!("up to {} steps for each of {} running samples", lp.cap, lp.samples)
+    } else {
+        format!("iterations [{}, {}) over {} samples", lp.range[0], lp.range[1], lp.samples)
+    };
+    let before = match (lp.index, lp.cap) {
+        (0, _) => "the first of its walk".to_string(),
+        (_, 0) => format!("the pass before it took {:.1} ms over {} iterations", lp.prev_ms, lp.prev_work),
+        _ => format!("the pass before it took {:.1} ms for {} sample-steps", lp.prev_ms, lp.prev_work),
+    };
+    format!("⚠long worker pass: {:.0} ms, {what} (pass {} of {passes}); {before}", lp.ms, lp.index + 1)
+}
+
 /// A worker frame is aimed at this long from offer to answer.
 pub(crate) const LIVE_TARGET_MS: f64 = 150.0;
 /// The worker's resolution, as a fraction of the panel's, stays within this.
 pub(crate) const LIVE_RES_MIN: f64 = 0.25;
 pub(crate) const LIVE_RES_START: f64 = 0.5;
 
+/// The worker's resolution moves on a ladder of this many rungs an octave of the panel's width
+/// (`live_res_next`), each ~9% a side.
+pub(crate) const LIVE_RES_RUNGS: f64 = 8.0;
+
 /// The worker's next resolution fraction after a frame at `s` took `ms`: the area follows the
-/// time (`√(target / ms)` on each side), at most a quarter either way per frame.
+/// time (`√(target / ms)` on each side, at most a quarter either way per frame), on a ladder of
+/// [`LIVE_RES_RUNGS`] rungs an octave, moving only when the time asks for a whole rung or more —
+/// a frame within ~19% of the target (126–178 ms) keeps its size. A frame at a new size makes its
+/// walk's state textures again: its first pass took a median 41.5 ms on the RTX 3080 against 7.3
+/// at the size before (a Home-glide repro, 142 walks against 5, 2026-10-22), and following the
+/// time continuously changed the size on nearly every frame.
 pub(crate) fn live_res_next(s: f64, ms: f64) -> f64 {
-    let f = if ms.is_finite() && ms > 0.0 { (LIVE_TARGET_MS / ms).sqrt().clamp(0.8, 1.25) } else { 1.0 };
-    (s * f).clamp(LIVE_RES_MIN, 1.0)
+    if !(ms.is_finite() && ms > 0.0) {
+        return s;
+    }
+    let f = (LIVE_TARGET_MS / ms).sqrt().clamp(0.8, 1.25);
+    let rung = |x: f64| x.log2() * LIVE_RES_RUNGS;
+    let k = rung(s).round();
+    let want = rung((s * f).clamp(LIVE_RES_MIN, 1.0));
+    let k = if want >= k + 1.0 {
+        want.floor()
+    } else if want <= k - 1.0 {
+        want.ceil()
+    } else {
+        k
+    };
+    2f64.powf(k / LIVE_RES_RUNGS).clamp(LIVE_RES_MIN, 1.0)
+}
+
+/// A walk's first pass at the size before it took at most about this long (a median 7–14 ms on
+/// the RTX 3080, 2026-10-22); at a new size, what it took beyond this was the state textures made
+/// again ([`live_res_after`]).
+pub(crate) const LIVE_FIRST_PASS_MS: f64 = 15.0;
+
+/// The worker's resolution after a delivered frame at `res` texels took `ms`, its walk's first
+/// pass `first_ms`, the frame delivered before it having been at `last` ([`live_res_next`]). A
+/// frame at a new size is judged without what its first pass spent making the walk's state
+/// textures again: judged with it, the controller shrank after every change and grew back after
+/// every frame that kept its size (the sizes cycling 2.1M, 3.0M, 2.5M, 2.5M, 3.6M samples, RTX
+/// 3080, 2026-10-22); not judged at all, it shrank half as fast into a costly view (443 ms frames
+/// against 275 in a Home glide).
+pub(crate) fn live_res_after(s: f64, ms: f64, first_ms: f64, res: [u32; 2], last: Option<[u32; 2]>) -> f64 {
+    let rebuild = if last != Some(res) && first_ms.is_finite() { (first_ms - LIVE_FIRST_PASS_MS).max(0.0) } else { 0.0 };
+    live_res_next(s, ms - rebuild)
 }
 
 /// How well a frame rendered at magnification `2^l2_frame`, with `2^res_log2` texels across the
@@ -278,7 +337,13 @@ impl FractadyneApp {
                     st.ms_sum += ms;
                     st.passes += d.walk.passes;
                     st.max_pass_ms = st.max_pass_ms.max(d.walk.max_pass_ms);
-                    self.perf.live_res[v] = live_res_next(self.perf.live_res[v], ms);
+                    // A worker pass this long held up the card: on a same-card worker, every frame
+                    // the window draws waits behind it. Always logged, with what sized it.
+                    if let Some(lp) = d.walk.longest.filter(|lp| lp.ms >= WORKER_LONG_PASS_MS) {
+                        crate::diag::log_line("worker", &long_pass_line(&lp, d.walk.passes));
+                    }
+                    self.perf.live_res[v] = live_res_after(self.perf.live_res[v], ms, d.walk.first_ms, ticket.res, self.perf.live_res_size[v]);
+                    self.perf.live_res_size[v] = Some(ticket.res);
                     // The worker GPU's time on this frame (its walk), for the panel's engine room.
                     crate::blinken::events::emit(
                         v,

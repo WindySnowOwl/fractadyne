@@ -59,6 +59,26 @@ published as the pre-releases `v0.2.41-beta.1` to `v0.2.41-beta.150`, and a "bet
 
 Changes after 0.3.0-beta.1:
 
+- **A second graphics device no longer runs long passes in deep zooms (0.3.0-beta.21).** With a
+  second device rendering motion frames (Advanced ▸ Second graphics card), each of its frames is a
+  series of passes, each sized from the one before it to take about 8 ms. Deep zooms counted those
+  passes in iterations, and the cost of an iteration is far from uniform: where the series of
+  shortcuts (the BLA) stops working for some of the pixels still running, it rose 25 to 400 times
+  within one pass. A pass sized on the cheap stretch before took 134 to 308 ms in a Home glide from
+  2^236 on an RTX 3080 with the second device on the same card, and at the costliest rate measured
+  there the per-pass limit allowed about 2 s, near the point where Windows resets the driver.
+  Deep frames on the second device now run the export's step-limited passes: each pass stops every
+  pixel after a number of calculation steps, a step costs about the same with or without the
+  shortcut, and each pass follows the time of the last. In the same glide, the passes after each
+  frame's first took 3 ms at the median and 17 ms at most, and its frames are the same pixels as
+  before. The log names any second-device pass over 100 ms and what sized it, and a crash report
+  says how many steps the second device's last pass allowed. The second device's resolution also
+  changes less often: each change made its frame build its working textures again (about 35 ms on
+  an RTX 3080), and the resolution changed on nearly every frame. It now moves in steps of about
+  9%, only when a frame is more than about 19% off its target time, and a frame's own texture
+  building no longer counts against it. In the same test the second device rendered about a quarter
+  more pixels.
+
 - **Zooming out of a deep exterior view no longer overruns the graphics card (0.3.0-beta.20).** A
   graphics device was lost a few seconds into a Home glide from 2^248. Deep outside the set, the
   reference orbit can escape before half the iteration count, and a series approximation then skips
