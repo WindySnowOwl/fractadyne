@@ -137,6 +137,12 @@ impl FractadyneApp {
                     )
                 })
                 .on_hover_text("Speed of hold-Space continuous zoom (1× ≈ 2× per 1.5 s).");
+                ui.checkbox(&mut self.render_cfg.snap_zoom, "Snap zoom to features").on_hover_text(
+                    "While zooming in with the mouse wheel or Space, pull the zoom toward a minibrot \
+                     (or the real axis) close to the cursor, so it slides under the cursor and the \
+                     zoom lands on it. The nearer the feature, the stronger the pull. Mandelbrot \
+                     only, single view.",
+                );
 
                 // Click-to-zoom tool: arm a click to dive into the point by a fixed factor. Off by
                 // default; drag still pans and Shift/right-drag still box-zoom. Works in the dual

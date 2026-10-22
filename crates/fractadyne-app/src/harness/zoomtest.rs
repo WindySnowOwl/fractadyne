@@ -233,6 +233,9 @@ pub(crate) struct ZoomTest {
     home: Option<(HomeLeg, f64)>,
     /// `--zoomtest-quiet S`: how long the start view rests before the zoom (default `QUIET_S`).
     quiet_s: f64,
+    /// `--zoomtest-snap`: the glide snaps to features as a person's zoom does (`zoom_snap`; a
+    /// harness's zoom does not otherwise), about the view's centre.
+    pub(crate) snap: bool,
 }
 
 /// Where a `--zoomtest-home` run is.
@@ -306,6 +309,12 @@ impl ZoomTest {
         self
     }
 
+    /// `--zoomtest-snap` (see `ZoomTest::snap`).
+    pub(crate) fn with_snap(mut self, snap: bool) -> Self {
+        self.snap = snap;
+        self
+    }
+
     /// `--zoomtest-gate` (see [`ZoomGate`]).
     pub(crate) fn with_gate(mut self, gate: Option<ZoomGate>) -> Self {
         self.gate = gate;
@@ -358,6 +367,7 @@ impl ZoomTest {
             gate: None,
             home: None,
             quiet_s: QUIET_S,
+            snap: false,
             rate: rate.clamp(0.25, 4.0),
             location,
             start_log2,

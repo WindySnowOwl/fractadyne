@@ -499,7 +499,8 @@ impl Windowed {
                 super::zoomtest::ZoomTest::new(octaves, rate, location, start_log2, taps, hold_s)
                     .with_then(then_log2)
                     .with_gate(gate)
-                    .with_home(home, quiet_s),
+                    .with_home(home, quiet_s)
+                    .with_snap(args.iter().any(|a| a == "--zoomtest-snap")),
             )
         } else {
             None
