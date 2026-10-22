@@ -111,7 +111,8 @@ Changes after 0.3.0-beta.1:
   with legends that read on every part of it. Nixie tubes read the depth, the iteration count, the
   frame time and the clock. A radar dial sweeps through each deep refresh's iteration bands, and
   through a still view's settling and each supersampling sample, a meter shows how far the picture
-  on screen lags the view, a plane shows the tiles and the iteration band each frame's pass covers,
+  on screen lags the view, a plane shows the tiles and the iteration band each frame's pass covers
+  (and, on a deep view, how much of the picture is still iterating),
   a scope plots the graphics card's time per frame, and a tuning dial shows the depth with the
   reference builds racing it. A bank of lamps lights for the renderer's events. At full size an
   engine room adds steps per second, the two graphics devices (a second device's supersampling

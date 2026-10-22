@@ -78,24 +78,55 @@ pub(crate) mod face {
 
 /// The hammertone tile's side, texels; one texel is one panel unit at scale 1.
 pub(crate) const HAMMER_TILE: usize = 512;
-/// The dents' mean radius, texels, and how many times over their discs cover the tile.
-const HAMMER_DENT_R: f32 = 6.5;
-const HAMMER_COVER: f32 = 1.6;
-/// Height to slope: how strongly a dent's walls tilt toward the light.
-const HAMMER_RELIEF: f32 = 0.45;
-/// The light's share of brightness, and the metal flake's glint.
+/// The cells' spacing, texels (about their mean width), and how far each cell's weight may push its
+/// border out, as a share of the spacing (cells of varied size, as in the paint).
+const HAMMER_CELL: f32 = 16.0;
+const HAMMER_WEIGHT: f32 = 0.8;
+/// A slow periodic warp of the cells' plane, texels, and its highest frequency over the cell count:
+/// borders that wander a little instead of running dead straight.
+const HAMMER_WARP: f32 = 1.5;
+const HAMMER_WARP_K: f32 = 0.4;
+/// The blur that rounds every cell's corners (on the border-distance field), texels, and how far the
+/// outline sits inside the blurred border.
+const HAMMER_ROUND: f32 = 1.5;
+const HAMMER_ROUND_OFF: f32 = 0.9;
+/// Each cell's dome: its height over the cell's half-width, and the share of that half-width it
+/// rolls over into the crease; the relief's blur, texels.
+const HAMMER_DOME: f32 = 0.4;
+const HAMMER_DOME_ROLL: f32 = 0.35;
+const HAMMER_SOFTEN: f32 = 0.8;
+/// The bubbles: how many times over their discs cover a sixth of the tile, their mean radius and
+/// its spread (texels, a share), their dome's height over their radius, how near a cell's outline
+/// they come (in radii, plus a margin) and how dark their own outline is.
+const HAMMER_BUB_COVER: f32 = 4.0;
+const HAMMER_BUB_R: f32 = 2.4;
+const HAMMER_BUB_SPREAD: f32 = 1.2;
+const HAMMER_BUB_DOME: f32 = 0.55;
+const HAMMER_BUB_EDGE: f32 = 0.4;
+const HAMMER_BUB_MARGIN: f32 = 0.5;
+const HAMMER_BUB_RING: f32 = 0.3;
+/// The cells' outline: its darkness and width, texels.
+const HAMMER_LINE: f32 = 0.6;
+const HAMMER_LINE_W: f32 = 0.55;
+/// Height to slope; the light's share of brightness; the glint's strength and tightness; the metal
+/// flake's speckle.
+const HAMMER_RELIEF: f32 = 0.55;
 const HAMMER_GAIN: f32 = 0.5;
-const HAMMER_SHEEN: f32 = 20.0;
+const HAMMER_SHEEN: f32 = 70.0;
+const HAMMER_SPEC: i32 = 24;
+const HAMMER_FLAKE: f32 = 0.05;
 
 /// A seamless square tile of hammertone paint, `n` texels a side: the hammered, faintly metallic
-/// finish of a period instrument case. Small round dents of varied size, each a cap with a defined
-/// rim (`(1 − d²/r²)²` inside its radius), are pressed into a flat height field round the tile's
-/// edges so opposite edges meet; the result is lit from the
-/// top left, with a glint where a dent's wall faces the light, and a fine speckle of metal flake.
-/// Tuned in a prototype against the panel's legends (2026-10-20; soft Gaussian dents read as smoke
-/// at 1:1, not as hammered paint): every legend on the case keeps
-/// at least 4.5:1 against the tile's brightest texels once its halo ([`draw_galley`]) darkens
-/// them, and the tile's seam is no rougher than its interior.
+/// finish of a period instrument case. Modelled on a photograph of the paint (2026-10-21, the
+/// maintainer's reference): irregular rounded cells parted by thin dark creases, each gently domed,
+/// with small round bubbles crowding inside them, each bubble outlined and catching the light.
+/// Built on the torus so opposite edges meet: weighted Voronoi cells (`d − w`, a little warped)
+/// give the cells and their border-distance field, blurred so every corner turns an arc; a dome per
+/// cell and a hemisphere per bubble make the relief, which is lit from the top left with a glint and
+/// a fine speckle of metal flake; the creases and the bubbles' rims are darkened on top.
+/// Tuned in a NumPy prototype beside the photograph, then held to the panel's legends: every legend
+/// on the case keeps at least 4.5:1 against the tile's median texel and against its brightest under
+/// the legend's halo ([`draw_galley`]), and the tile's seam is no rougher than its interior.
 pub(crate) fn hammertone(n: usize, seed: u64) -> egui::ColorImage {
     let mut rng = seed ^ 0x9e37_79b9_7f4a_7c15;
     let mut next = move || {
@@ -105,26 +136,97 @@ pub(crate) fn hammertone(n: usize, seed: u64) -> egui::ColorImage {
         (rng.wrapping_mul(0x2545_f491_4f6c_dd1d) >> 11) as f32 / (1u64 << 53) as f32
     };
     let nf = n as f32;
-    let mut height = vec![0.0f32; n * n];
-    let count = (HAMMER_COVER * nf * nf / (std::f32::consts::PI * HAMMER_DENT_R * HAMMER_DENT_R)) as usize;
-    for _ in 0..count {
-        let (cx, cy) = (next() * nf, next() * nf);
-        let r = HAMMER_DENT_R * (0.7 + 0.6 * next());
-        let depth = r * (0.7 + 0.6 * next());
-        let reach = r as i64 + 1;
-        let inv = 1.0 / (r * r);
-        for yi in cy as i64 - reach..=cy as i64 + reach {
+    let wrap = |v: i64| v.rem_euclid(n as i64) as usize;
+    // The shortest way round the torus from one coordinate to another.
+    let around = |d: f32| d - nf * (d / nf).round();
+
+    // ---- the cells: one weighted, jittered point per grid square ----
+    let m = ((nf / HAMMER_CELL).round() as usize).max(2);
+    let gs = nf / m as f32;
+    let points: Vec<(f32, f32, f32)> = (0..m * m)
+        .map(|i| {
+            let (gy, gx) = ((i / m) as f32, (i % m) as f32);
+            ((gy + next()) * gs, (gx + next()) * gs, next() * HAMMER_WEIGHT * gs)
+        })
+        .collect();
+    // A smooth periodic warp: a few sinusoids with whole periods over the tile.
+    let kmax = ((nf / HAMMER_CELL * HAMMER_WARP_K) as i64).max(1);
+    let mut waves = |count: usize| -> Vec<(f32, f32, f32)> {
+        (0..count)
+            .map(|_| {
+                let mut k = || (next() * (2 * kmax + 1) as f32).floor() as i64 - kmax;
+                let (mut kx, ky) = (k(), k());
+                if kx == 0 && ky == 0 {
+                    kx = 1;
+                }
+                (kx as f32, ky as f32, next() * std::f32::consts::TAU)
+            })
+            .collect()
+    };
+    let (warp_y, warp_x) = (waves(12), waves(12));
+    let norm = (12.0f32 / 2.0).sqrt();
+    let field = |w: &[(f32, f32, f32)], x: f32, y: f32| {
+        w.iter().map(|&(kx, ky, ph)| (TAU * (kx * x + ky * y) / nf + ph).cos()).sum::<f32>() / norm
+    };
+    // F2 − F1 per texel: twice, near enough, its distance to its cell's border.
+    let mut edge = vec![0.0f32; n * n];
+    for y in 0..n {
+        for x in 0..n {
+            let (fx, fy) = (x as f32, y as f32);
+            let py = (fy + 0.5 + HAMMER_WARP * field(&warp_y, fx, fy)).rem_euclid(nf);
+            let px = (fx + 0.5 + HAMMER_WARP * field(&warp_x, fx, fy)).rem_euclid(nf);
+            let (ci, cj) = ((py / gs) as i64, (px / gs) as i64);
+            let (mut f1, mut f2) = (f32::INFINITY, f32::INFINITY);
+            for di in -2..=2 {
+                for dj in -2..=2 {
+                    let (pi, pj) = ((ci + di).rem_euclid(m as i64) as usize, (cj + dj).rem_euclid(m as i64) as usize);
+                    let (qy, qx, w) = points[pi * m + pj];
+                    let (dy, dx) = (around(py - qy), around(px - qx));
+                    let d = (dx * dx + dy * dy).sqrt() - w;
+                    if d < f1 {
+                        f2 = f1;
+                        f1 = d;
+                    } else if d < f2 {
+                        f2 = d;
+                    }
+                }
+            }
+            edge[y * n + x] = f2 - f1;
+        }
+    }
+    // Round the corners: blur the border field, whose level lines then turn arcs at every corner.
+    let edge: Vec<f32> = blur_torus(&edge, n, HAMMER_ROUND).into_iter().map(|e| e - HAMMER_ROUND_OFF).collect();
+
+    // ---- the relief: a gentle dome per cell, then the bubbles ----
+    let r = HAMMER_CELL * 0.5;
+    let dome: Vec<f32> = edge.iter().map(|&e| HAMMER_DOME * r * (1.0 - (-e.max(0.0) / (HAMMER_DOME_ROLL * r)).exp())).collect();
+    let mut height = blur_torus(&dome, n, HAMMER_SOFTEN);
+    let mut rim = vec![0.0f32; n * n];
+    let bubbles = (HAMMER_BUB_COVER * nf * nf / (std::f32::consts::PI * HAMMER_BUB_R * HAMMER_BUB_R) / 6.0) as usize;
+    for _ in 0..bubbles {
+        let (cy, cx) = (next() * nf, next() * nf);
+        let rb = HAMMER_BUB_R * (1.0 - HAMMER_BUB_SPREAD / 2.0 + HAMMER_BUB_SPREAD * next());
+        let span = (rb * 1.5 + 3.0) as i64;
+        for yi in cy as i64 - span..=cy as i64 + span {
             let dy = yi as f32 + 0.5 - cy;
-            let row = yi.rem_euclid(n as i64) as usize * n;
-            for xi in cx as i64 - reach..=cx as i64 + reach {
+            for xi in cx as i64 - span..=cx as i64 + span {
                 let dx = xi as f32 + 0.5 - cx;
-                let cap = (1.0 - (dx * dx + dy * dy) * inv).max(0.0);
-                height[row + xi.rem_euclid(n as i64) as usize] -= depth * cap * cap;
+                let i = wrap(yi) * n + wrap(xi);
+                // Kept off the cells' outlines: none on a crease, crowding right up to it.
+                let keep = ((edge[i] - HAMMER_BUB_EDGE * rb - HAMMER_BUB_MARGIN) / HAMMER_BUB_MARGIN).clamp(0.0, 1.0);
+                if keep <= 0.0 {
+                    continue;
+                }
+                let t = (dx * dx + dy * dy).sqrt() / rb;
+                height[i] += HAMMER_BUB_DOME * rb * (1.0 - t * t).max(0.0).sqrt() * keep;
+                let ring = (-((t - 1.0) / (0.9 / rb)).powi(2)).exp() * keep;
+                rim[i] = rim[i].max(ring);
             }
         }
     }
+
+    // ---- lit from the top left (egui's y runs down), the viewer straight on ----
     let h = |x: usize, y: usize| height[(y % n) * n + (x % n)];
-    // Lit from the top left (egui's y runs down), with the viewer straight on.
     let unit = |x: f32, y: f32, z: f32| {
         let l = (x * x + y * y + z * z).sqrt();
         (x / l, y / l, z / l)
@@ -139,15 +241,42 @@ pub(crate) fn hammertone(n: usize, seed: u64) -> egui::ColorImage {
             let gy = (h(x, y + 1) - h(x, y + n - 1)) * 0.5 * HAMMER_RELIEF;
             let nrm = unit(-gx, -gy, 1.0);
             let diffuse = (nrm.0 * light.0 + nrm.1 * light.1 + nrm.2 * light.2).max(0.0);
-            let glint = (nrm.0 * half.0 + nrm.1 * half.1 + nrm.2 * half.2).max(0.0).powi(28);
-            let flake = (next() - 0.5) * 0.05;
-            // A flat texel's diffuse is `light.2`: the base colour, as specified.
-            let k = 1.0 + HAMMER_GAIN * (diffuse - light.2) + flake;
+            let glint = (nrm.0 * half.0 + nrm.1 * half.1 + nrm.2 * half.2).max(0.0).powi(HAMMER_SPEC);
+            let flake = (next() - 0.5) * HAMMER_FLAKE;
+            let i = y * n + x;
+            // A flat texel's diffuse is `light.2`: the base colour, as specified; the creases and
+            // the bubbles' rims are darkened on top.
+            let k = (1.0 + HAMMER_GAIN * (diffuse - light.2) + flake)
+                * (1.0 - HAMMER_LINE * (-edge[i].max(0.0) / HAMMER_LINE_W).exp())
+                * (1.0 - HAMMER_BUB_RING * rim[i]);
             let c = |v: u8, tint: f32| (v as f32 * k + HAMMER_SHEEN * glint * tint).round().clamp(0.0, 255.0) as u8;
             pixels.push(Color32::from_rgb(c(base[0], 0.95), c(base[1], 1.0), c(base[2], 1.08)));
         }
     }
     egui::ColorImage { size: [n, n], pixels }
+}
+
+/// A Gaussian blur of an `n`×`n` field on the torus (rows, then columns, wrapping), `sigma` texels.
+fn blur_torus(src: &[f32], n: usize, sigma: f32) -> Vec<f32> {
+    let reach = (3.0 * sigma).ceil() as i64;
+    let taps: Vec<f32> = (-reach..=reach).map(|d| (-(d * d) as f32 / (2.0 * sigma * sigma)).exp()).collect();
+    let total: f32 = taps.iter().sum();
+    let pass = |from: &[f32], along_x: bool| -> Vec<f32> {
+        let mut out = vec![0.0f32; n * n];
+        for y in 0..n {
+            for x in 0..n {
+                let mut acc = 0.0;
+                for (k, w) in taps.iter().enumerate() {
+                    let d = k as i64 - reach;
+                    let (sx, sy) = if along_x { ((x as i64 + d).rem_euclid(n as i64) as usize, y) } else { (x, (y as i64 + d).rem_euclid(n as i64) as usize) };
+                    acc += from[sy * n + sx] * w;
+                }
+                out[y * n + x] = acc / total;
+            }
+        }
+        out
+    };
+    pass(&pass(src, true), false)
 }
 
 /// `c` with its alpha scaled by `k` (0..1), unmultiplied, so a dimmer lamp is more transparent.

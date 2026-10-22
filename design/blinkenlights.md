@@ -179,7 +179,7 @@ three ways, and the plane draws each one the way it happens:
 
 | how the frame is split | in the code | the plane shows | tile size · tiles a frame |
 |---|---|---|---|
-| **The whole frame in one pass:** a moving frame, a priced live refresh, each pass of a pinned walk or of a still view's walk (the settle's, or a supersampling sample's) | one full-screen draw | the whole plane flashes on each pass; for a walk, the band (e.g. 4,096–8,192) captions it, named PIN PASS, SETTLE PASS, or SSAA with the samples done | the resolution · 1 |
+| **The whole frame in one pass:** a moving frame, a priced live refresh, each pass of a pinned walk or of a still view's walk (the settle's, or a supersampling sample's) | one full-screen draw | the whole plane flashes on each pass; for a walk, the band (e.g. 4,096–8,192) captions it, named PIN PASS, SETTLE PASS, or SSAA with the samples done. *(2026-10-21, the maintainer: "Tiles instrument seems to always look like a single rectangle".)* A still view's walk pass covers the whole frame but iterates only the pixels not yet escaped: the plane fills from the bottom to that share (`Perf::chunk_running` over the walk's texels, log scale, 0.01% at the floor) and reads it ("RUNNING 1.5%"), so it drains as the walk goes deeper | the resolution · 1 |
 | **A split refresh:** a live refresh priced dearer than one frame's share goes out in `k` passes, one a frame, each about `LIVE_REFRESH_MS` (4.5 ms), up to `LIVE_SPLIT_MAX` (8) | `LiveRefresh::Split(k)`, `PinnedRefresh::split`; set `j` = the 16-texel tiles with (x + y) mod k = j (`SPLIT_TILE`, `vs_split_tiles`) | the interleaved sets fill pass by pass (a checkerboard at k = 2, diagonals above), this frame's set brightest | 16 px · tiles ÷ k (about 2,100 at 1455×1102, k = 3) |
 | **The settle grid:** a settled frame too dear for one dispatch | `TileGrid`: side √(admission ÷ (iterations × ss²)), at least 16 px, frozen for the grid; 16 to 512 tiles (`TDR_MAX_TILES`, `TDR_TILES_CEIL`); one a frame, centre-out; a tile over the admission goes out as strips (`settle_strip`) | lamps fill from the centre out, the next tile outlined, a stripped tile filling row by row; then SSAA samples pulse the whole plane | the side · 1 (or 1/strips) |
 
@@ -294,6 +294,17 @@ What the implementation settled, where it differs from or adds to the above:
   (`ENGRAVE_DIM` #8f8875 → #ccc2a8), and a unit test holds each at 4.5:1 or better against the
   tile's median texel and against its p99.5 glint under the halo; the maker's mark moved onto a
   dark enamel badge (red on the hammertone itself would read at 1.5–2:1).
+- **Hammertone, second pattern (2026-10-21, from the maintainer's photograph of the paint):** the
+  round dents became the paint's own structure: irregular rounded cells parted by thin dark
+  creases, each gently domed, with small round bubbles crowding inside them. Weighted Voronoi
+  cells (`d − w`, a slow periodic warp) on the torus give the cells and their border-distance
+  field; blurring that field turns every corner an arc; a dome per cell and a hemisphere per
+  bubble make the relief, lit as before; the creases and the bubbles' rims are darkened on top.
+  Fifteen rounds in a NumPy prototype beside the photograph (rendered in silver to compare the
+  pattern, in the case's slate to ship it): high-relief cells read as stone, a strong warp as
+  worms, a morphological opening erased the small cells. The case keeps its slate colour, since
+  the legends are light, and the same unit tests hold (in the prototype the dimmer legend read
+  7.2:1 against the median texel and 5.6:1 against the halo-darkened glint; no seam).
 - **Review fixes (2026-10-20):** supersampling passes are lavender on the scope, with their own
   legend entry (they were a green the eye could not tell from moving frames), and the HELD card
   says it is lit steadily while a still view sharpens under Prefer detail (it had called that a

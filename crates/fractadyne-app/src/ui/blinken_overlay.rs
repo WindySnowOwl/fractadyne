@@ -56,6 +56,12 @@ impl FractadyneApp {
                 let w = self.perf.timer_states[v].load(std::sync::atomic::Ordering::Relaxed);
                 [(w & 3) as u8, ((w >> 2) & 3) as u8, ((w >> 4) & 3) as u8]
             },
+            // The current walk's reading only (an older walk's count describes another picture).
+            running: self.perf.chunk_running[v].filter(|&(walk, _, _)| walk == self.perf.chunk_walk_epoch[v]).map(|(_, _, n)| {
+                let ss = rec.ss.max(1) as u64;
+                let all = (rec.res_w as u64 * rec.res_h as u64 * ss * ss).max(1);
+                (n as f64 / all as f64).clamp(0.0, 1.0) as f32
+            }),
         };
         if planned {
             self.blinken_last_iter = rec.gpu_iter;

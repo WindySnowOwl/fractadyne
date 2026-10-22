@@ -365,3 +365,35 @@ fn the_plane_keeps_the_pictures_aspect_and_fits_above_the_captions() {
         assert!((plane.width() - res.0 as f32 * sc).abs() < 0.01);
     }
 }
+
+#[test]
+fn a_walks_pass_fills_the_plane_to_the_share_of_pixels_still_running() {
+    // At a deep still view every walk pass covers the whole frame; what it actually iterates is the
+    // pixels that have not escaped. The plane fills from the bottom to that share, log-scaled.
+    for (share, want) in [(1.0f32, 1.0f32), (0.01, 0.5), (0.0001, 0.0)] {
+        let mut m = model(Plane::Whole { res: RES, band: Some((236_071, 246_355)), settled: true, glow: 0.0 });
+        m.snap.running = Some(share);
+        let (c, r) = render(&m, SIZE, 1.0);
+        let (plane, _) = plane_rect(r, 1.0, RES);
+        let line = between(LEVEL_DONE, LEVEL_PASS);
+        // The lit fraction of a column clear of the corner's readout.
+        let x = plane.left() + plane.width() * 0.25;
+        let rows = (plane.top() as usize + 1)..(plane.bottom() as usize - 1);
+        let lit = rows.clone().filter(|&y| c.lum(pos2(x, y as f32 + 0.5)) > line).count() as f32 / rows.len() as f32;
+        assert!((lit - want).abs() < 0.03, "share {share}: lit {lit:.3} of the plane, want {want}");
+        assert!((running_level(share) - want).abs() < 1e-6);
+    }
+    // Without a reading (or not a walk's pass) the plane is the plain whole-frame fill.
+    let m = model(Plane::Whole { res: RES, band: None, settled: false, glow: 1.0 });
+    let (c, r) = render(&m, SIZE, 1.0);
+    let (plane, _) = plane_rect(r, 1.0, RES);
+    assert!(c.lum(plane.center()) > between(LEVEL_DONE, LEVEL_PASS));
+}
+
+#[test]
+fn the_running_readout_keeps_two_figures() {
+    assert_eq!(running_text(1.0), "RUNNING 100%");
+    assert_eq!(running_text(0.54), "RUNNING 54%");
+    assert_eq!(running_text(0.015), "RUNNING 1.5%");
+    assert_eq!(running_text(0.0002), "RUNNING 0.02%");
+}
