@@ -181,8 +181,19 @@ impl LiveTwin {
         let sd = ScreenDescriptor { size_in_pixels: [p.resolution[0].max(1), p.resolution[1].max(1)], pixels_per_point: 1.0 };
         let mut cbs = p.prepare(device, queue, &sd, &mut enc, &mut self.resources);
         cbs.push(enc.finish());
+        let ss = p.ss.max(1) as u64;
+        let pass = TwinPass {
+            started: std::time::Instant::now(),
+            range: p.chunk_range.unwrap_or([0, p.max_iter]),
+            skip: p.sa_skip,
+            samples: p.resolution[0].max(1) as u64 * p.resolution[1].max(1) as u64 * ss * ss,
+            ms: None,
+        };
+        note_pass(pass);
         queue.submit(cbs);
-        crate::export::await_submitted(device, queue, None, None).into_result()
+        let done = crate::export::await_submitted(device, queue, None, None).into_result();
+        note_pass(TwinPass { ms: Some(pass.started.elapsed().as_secs_f64() * 1000.0), ..pass });
+        done
     }
 
     /// Render `base` (a whole frame: [`MandelbrotParams::headless`], no tile, chunk window, split
@@ -255,6 +266,35 @@ impl LiveTwin {
         let r = self.resources.get::<Renderer>().ok_or_else(|| GpuError::Readback("the twin has no renderer".into()))?;
         r.read_gbuffer(device, queue, view_id, with_aux)
     }
+}
+
+/// A twin's pass in flight, or its last one, for a crash report ([`last_twin_pass`]). One pass is
+/// one draw the GPU does not interrupt, so on a card that also draws the window a device loss there
+/// ran it too — and a pass that never returns cannot report itself any other way.
+#[derive(Clone, Copy, Debug)]
+pub struct TwinPass {
+    pub started: std::time::Instant,
+    /// The iteration window, `[lo, hi)`, and the series skip it was seeded with.
+    pub range: [u32; 2],
+    pub skip: u32,
+    /// Samples (pixels × ss²).
+    pub samples: u64,
+    /// `None` while in flight, else how long it took, ms.
+    pub ms: Option<f64>,
+}
+
+static LAST_TWIN_PASS: std::sync::Mutex<Option<TwinPass>> = std::sync::Mutex::new(None);
+
+fn note_pass(p: TwinPass) {
+    if let Ok(mut g) = LAST_TWIN_PASS.lock() {
+        *g = Some(p);
+    }
+}
+
+/// The last twin pass this process submitted (see [`TwinPass`]); `None` if none, or if the note is
+/// being written this instant (a crash handler must not wait on it).
+pub fn last_twin_pass() -> Option<TwinPass> {
+    LAST_TWIN_PASS.try_lock().ok().and_then(|g| *g)
 }
 
 /// What one [`LiveTwin::walk`] took.

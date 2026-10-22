@@ -1186,6 +1186,10 @@ struct Perf {
     /// travels with the REFERENCE and so holds still across those frames. The chunk WINDOW does
     /// not — it advances every frame — which is why it is deliberately not recorded here.
     last_sa_skip_v: [u32; 2],
+    /// The [`render::series_share`] of the last frame that dispatched a perturbation iterate with a
+    /// reference, per view (`None`: none since a direct frame or the session's start). A frame whose
+    /// share is a [`render::series_collapse`] from it holds and leaves the budget unmeasured.
+    series_share: [Option<f32>; 2],
     /// Render resolution of the last DISPATCHING frame, per view, for the same line. Added
     /// 2026-08-24: the 2026-08-22 field loss could not be checked against the odd-render-height
     /// defect (a ~20x per-pass cost fixed in beta.137) because the only resolution anywhere in
@@ -2342,6 +2346,7 @@ impl Default for Perf {
             last_orbit_len: 0,
             last_sa_skip: 0,
             last_sa_skip_v: [0; 2],
+            series_share: [None; 2],
             last_res_v: [[0; 2]; 2],
             frame_idx: 0,
             aa_probe: [None, None],

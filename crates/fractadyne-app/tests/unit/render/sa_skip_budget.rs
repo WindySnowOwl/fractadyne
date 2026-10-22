@@ -74,4 +74,10 @@ fn sa_skip_rescue_applies_a_giant_skip_the_throttle_inverted() {
     assert_eq!(sa_skip_rescue(100, 7_452_444, 7_452_445), 100);
     // - not an inversion (budget already above the skip):
     assert_eq!(sa_skip_rescue(9_000_000, 7_452_443, 7_452_445), 9_000_000);
+    // - …but a budget EQUAL to the skip is one: `usable_sa_skip` refuses a skip that reaches the
+    //   count. The 2026-10-21 Home glide repro's first moving frame asked exactly 298,406 against a
+    //   298,406 skip on a 298,416-sample escaped reference, and went from zero unrescued.
+    assert_eq!(usable_sa_skip(298_406, 298_406), 0, "equal is refused");
+    assert_eq!(sa_skip_rescue(298_406, 298_406, 298_416), 298_415);
+    assert_eq!(usable_sa_skip(298_406, sa_skip_rescue(298_406, 298_406, 298_416)), 298_406, "so it is rescued");
 }
