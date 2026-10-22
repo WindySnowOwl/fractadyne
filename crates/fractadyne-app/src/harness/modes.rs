@@ -488,10 +488,18 @@ impl Windowed {
                     crate::exit(2)
                 })
             });
+            // `--zoomtest-home [REST_S]`: after the zoom, rest and click Home (default rest 2 s);
+            // `--zoomtest-quiet S`: the start view's rest before the zoom.
+            let home = args
+                .iter()
+                .any(|a| a == "--zoomtest-home")
+                .then(|| num("--zoomtest-home", "a number of seconds", 2.0));
+            let quiet_s = val("--zoomtest-quiet").map(|_| num("--zoomtest-quiet", "a number of seconds", 2.0));
             Some(
                 super::zoomtest::ZoomTest::new(octaves, rate, location, start_log2, taps, hold_s)
                     .with_then(then_log2)
-                    .with_gate(gate),
+                    .with_gate(gate)
+                    .with_home(home, quiet_s),
             )
         } else {
             None

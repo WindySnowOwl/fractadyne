@@ -225,6 +225,25 @@ pub(crate) struct ZoomTest {
     then_log2: Option<f64>,
     /// W8: the criteria a P-G matrix row holds this glide to (`--zoomtest-gate`); `None` reports only.
     gate: Option<ZoomGate>,
+    /// `--zoomtest-home [REST_S]`: after the zoom (none without OCTAVES), rest REST_S seconds and
+    /// click the toolbar's Home button (`zoom_home`, animated out to 1×); the run's zoom ends when
+    /// that animation does. The user's crash-1792627197 (2026-10-21) was a Home click at 2^248 a few
+    /// seconds after zooming in there: the zoom-in raises the iteration ask with the depth, and the
+    /// Home glide lowers it again, which no zoom IN does.
+    home: Option<(HomeLeg, f64)>,
+    /// `--zoomtest-quiet S`: how long the start view rests before the zoom (default `QUIET_S`).
+    quiet_s: f64,
+}
+
+/// Where a `--zoomtest-home` run is.
+#[derive(Clone, Copy, Debug)]
+enum HomeLeg {
+    /// The Space glide before the rest.
+    Zoom,
+    /// Resting since this instant before the Home click.
+    Rest(Instant),
+    /// The Home animation is running.
+    Glide,
 }
 
 /// The criteria of design/live-zoom-smoothing.md's P-G matrix (W8): `Smooth` for its continuous,
@@ -293,6 +312,13 @@ impl ZoomTest {
         self
     }
 
+    /// `--zoomtest-home [REST_S]` and `--zoomtest-quiet S` (see `ZoomTest::home`, `ZoomTest::quiet_s`).
+    pub(crate) fn with_home(mut self, home_rest_s: Option<f64>, quiet_s: Option<f64>) -> Self {
+        self.home = home_rest_s.map(|r| (HomeLeg::Zoom, r.clamp(0.0, 600.0)));
+        self.quiet_s = quiet_s.unwrap_or(QUIET_S).clamp(0.0, 600.0);
+        self
+    }
+
     pub(crate) fn new(
         octaves: Option<f64>,
         rate: f32,
@@ -330,6 +356,8 @@ impl ZoomTest {
             hold_s: hold_s.clamp(0.0, 600.0),
             then_log2: None,
             gate: None,
+            home: None,
+            quiet_s: QUIET_S,
             rate: rate.clamp(0.25, 4.0),
             location,
             start_log2,
@@ -548,7 +576,7 @@ impl FractadyneApp {
                 }
             }
             Phase::Quiet => {
-                if in_phase > QUIET_S {
+                if in_phase > zt.quiet_s {
                     zt.start_l2 = self.viewport.log2_magnification();
                     crate::diag::log_line(
                         "zoomtest",
@@ -561,7 +589,11 @@ impl FractadyneApp {
                     );
                     zt.prev_l2 = zt.start_l2;
                     zt.last_frame = None;
-                    zt.driving = true; // the virtual key goes down THIS frame
+                    match zt.home {
+                        // No OCTAVES before a Home click: straight to the rest at the start view.
+                        Some((HomeLeg::Zoom, rest)) if !zt.octaves_given => zt.home = Some((HomeLeg::Rest(now), rest)),
+                        _ => zt.driving = true, // the virtual key goes down THIS frame
+                    }
                     if let Some((n, _, _)) = zt.taps {
                         zt.taps_left = n;
                         zt.tap_start_l2 = zt.start_l2;
@@ -629,7 +661,30 @@ impl FractadyneApp {
                 };
                 // Taps stop at N taps or OCTAVES, whichever comes first.
                 let arrived = l2 - zt.start_l2 >= zt.octaves;
-                if let Some((n, oct, pause)) = zt.taps {
+                if let Some((leg, rest)) = zt.home {
+                    // `--zoomtest-home`: the Space glide (if any), the rest, the Home click, and the
+                    // run's zoom ends with the Home animation.
+                    match leg {
+                        HomeLeg::Zoom if arrived || in_phase > GLIDE_MAX_S => {
+                            zt.driving = false;
+                            zt.home = Some((HomeLeg::Rest(now), rest));
+                            crate::diag::log_line("zoomtest", &format!("arrived at 2^{l2:.2}; resting {rest:.1} s before Home"));
+                        }
+                        HomeLeg::Rest(since) if now.duration_since(since).as_secs_f64() >= rest => {
+                            crate::diag::log_line("zoomtest", &format!("Home clicked at 2^{l2:.2}"));
+                            self.zoom_home(ctx.input(|i| i.time));
+                            zt.home = Some((HomeLeg::Glide, rest));
+                        }
+                        HomeLeg::Glide if self.home_anim.is_none() || in_phase > GLIDE_MAX_S => {
+                            crate::diag::log_line("zoomtest", &format!("Home glide ended at 2^{l2:.2}"));
+                            match after {
+                                Some(p) => advance(&mut zt, p),
+                                None => self.zoomtest_report(zt), // exits
+                            }
+                        }
+                        _ => {}
+                    }
+                } else if let Some((n, oct, pause)) = zt.taps {
                     if let Some(until) = zt.pause_until {
                         if now >= until {
                             zt.pause_until = None;
