@@ -228,6 +228,13 @@ Changes after 0.3.0-beta.1:
   that cannot be drawn is replaced by the last one that could, a running autopilot or zoom glide
   stops, and the log names the step and what the frame knew, so the next occurrence identifies
   the cause.
+- **After a crash, a heavy iteration setting is set aside for one launch (0.3.0-beta.20).** A
+  relaunch after a session that lost its graphics device or did not end cleanly already opened at
+  Home, but it kept the iteration setting, and a large one (an explicit 10,000,000, or automatic
+  iterations from a base that large) is half of what ended the session: at Home every pixel of the
+  main cardioid iterates to it. Now, when that setting asks more of a pixel than the default would
+  at the depth where the session ended, the new session starts on the default and says so in a
+  notice, with the old setting one click away.
 - **A second graphics card no longer muddles the live view's timing (0.3.0-beta.20).** With
   Advanced > Second graphics card on, every motion frame the second card rendered also reported
   itself as a pass of the window's own card. It overwrote the window's record of which passes its
