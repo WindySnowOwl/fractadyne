@@ -848,3 +848,22 @@ pass's excess over `LIVE_FIRST_PASS_MS` (15). Without that subtraction the sizes
 judged at all, the controller shrank half as fast into the Home glide (443 ms frames against 275).
 One run each on the repro: walks at the size before 5 → 83 of 140, samples rendered 311M → 399M,
 zoom-in resolution 0.77 → 0.84, Home-glide frames 275 → 283 ms.
+
+PLUTO (2026-10-22), the worker on the RX 6800 XT, which draws the desktop, and the window on the
+RTX 3070 (`--zoomtest 20 --zoomtest-rate 4 --zoomtest-start-log2 200 --window 2400x1300`,
+`FRACTADYNE_TRACE=tile`). Every walk there is a single pass at the floor cap of 2 steps (a 317-sample
+escaped reference with a skip of 315: every pixel finishes at once), so step-bounding cannot split
+it; its cost is the per-pixel fixed cost. Three runs a side, interleaved:
+
+| | dev.41 (`f34e0938`) | dev.42 (`612f0712`) |
+|---|---|---|
+| walks at the size before | 1, 1, 0 of 52 | 27 of 34, 79 of 84, 79 of 84 |
+| first pass, median ms | 78, 79, 79 | 15, 14, 14 |
+| samples rendered | 111M, 115M, 113M | 80M, 214M, 212M |
+| worker frames adopted | 47, 47, 48 | 28, 79, 78 |
+| window frame gaps over 100 ms (max) | 1 (641), 0 (34), 1 (330) | 0 (52), 1 (144), 0 (38) |
+
+The first dev.42 run settled at a smaller size early and is the weak one; n is 3 a side. dev.41's
+641 and 330 ms gaps are on the WINDOW's card, not traced further. The worker group passes 13/13 on
+both cards (the step-bounded row: 20 passes on the RX 6800 XT, 8 on the RTX 3070) and the cross-card
+motiontests pass both ways on dev.41 and with the worker on the RX 6800 XT on dev.42.
