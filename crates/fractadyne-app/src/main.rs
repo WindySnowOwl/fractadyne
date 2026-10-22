@@ -1809,6 +1809,8 @@ struct Perf {
     live_ready: [Option<motion_worker::LiveDelivery>; 2],
     live_gen: u64,
     live_res: [f64; 2],
+    /// The size of the last worker frame delivered (`motion_worker::live_res_after`).
+    live_res_size: [Option<[u32; 2]>; 2],
     live_stats: [motion_worker::LiveStats; 2],
     /// Worker frames adopted since the start (`--zoomtest` reads it).
     live_adopted_total: [u64; 2],
@@ -2489,6 +2491,7 @@ impl Default for Perf {
             live_ready: [None, None],
             live_gen: 0,
             live_res: [motion_worker::LIVE_RES_START; 2],
+            live_res_size: [None; 2],
             live_stats: Default::default(),
             live_adopted_total: [0, 0],
             accum_cmd: [AccumCmd::default(), AccumCmd::default()],

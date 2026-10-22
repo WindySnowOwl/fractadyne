@@ -299,6 +299,9 @@ impl LiveTwin {
             if stats.passes == 0 {
                 pricer.observe_open(area, looped, ms);
             }
+            if stats.passes == 0 {
+                stats.first_ms = ms;
+            }
             stats.note(LongestPass { range: [start, end], cap: 0, samples: area, ms, prev_ms: prev.0, prev_work: prev.1, index: stats.passes });
             prev = (ms, looped as u64);
             stats.passes += 1;
@@ -367,6 +370,9 @@ impl LiveTwin {
             let ms = tp.elapsed().as_secs_f64() * 1000.0;
             walk_trace(t0, stats.passes, area, range, cap, Some((active, running)), ms, base);
             pricer.steps.observe(ms, active, cap);
+            if fresh {
+                stats.first_ms = ms;
+            }
             stats.note(LongestPass { range, cap, samples: active, ms, prev_ms: prev.0, prev_work: prev.1, index: stats.passes });
             prev = (ms, active * cap as u64);
             stats.passes += 1;
@@ -424,6 +430,8 @@ pub struct WalkStats {
     pub passes: u32,
     pub ms: f64,
     pub max_pass_ms: f64,
+    /// The first pass's wall: at a new size it includes making the walk's state textures again.
+    pub first_ms: f64,
     /// The longest pass, with the one before it: the evidence for why it ran long.
     pub longest: Option<LongestPass>,
 }

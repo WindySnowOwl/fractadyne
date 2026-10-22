@@ -72,7 +72,12 @@ Changes after 0.3.0-beta.1:
   shortcut, and each pass follows the time of the last. In the same glide, the passes after each
   frame's first took 3 ms at the median and 17 ms at most, and its frames are the same pixels as
   before. The log names any second-device pass over 100 ms and what sized it, and a crash report
-  says how many steps the second device's last pass allowed.
+  says how many steps the second device's last pass allowed. The second device's resolution also
+  changes less often: each change made its frame build its working textures again (about 35 ms on
+  an RTX 3080), and the resolution changed on nearly every frame. It now moves in steps of about
+  9%, only when a frame is more than about 19% off its target time, and a frame's own texture
+  building no longer counts against it. In the same test the second device rendered about a quarter
+  more pixels.
 
 - **Zooming out of a deep exterior view no longer overruns the graphics card (0.3.0-beta.20).** A
   graphics device was lost a few seconds into a Home glide from 2^248. Deep outside the set, the

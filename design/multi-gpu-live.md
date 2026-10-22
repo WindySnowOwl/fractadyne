@@ -837,3 +837,14 @@ glide 275 ms, 20.6 passes, resolution 0.48 (222–266 ms and 0.43–0.69 before,
 self-test row "a worker's step-bounded walk is the chunked walk's frame, bit-identical" holds it
 to 0 differing channels and at least 3 passes; with the step cap dropped from the uniform it fails
 (1 pass). Mode 0/1 walks still cut iteration windows.
+
+The first pass's fixed cost, measured: a walk at the size of the walk before it opened in a median
+7.3 ms (5 walks), at a new size 41.5 ms (142): the state textures made again. `live_res_next` moved
+the size on nearly every frame (the area follows the time, continuously). Now it moves on a ladder
+of eighth-octave rungs (`LIVE_RES_RUNGS`), only when the time asks for a whole rung (frames within
+126–178 ms keep their size), and `live_res_after` judges a frame at a new size without its first
+pass's excess over `LIVE_FIRST_PASS_MS` (15). Without that subtraction the sizes cycled (2.1M, 3.0M,
+2.5M, 2.5M, 3.6M samples: a rebuilt frame read slow, the next one fast); with new-size frames not
+judged at all, the controller shrank half as fast into the Home glide (443 ms frames against 275).
+One run each on the repro: walks at the size before 5 → 83 of 140, samples rendered 311M → 399M,
+zoom-in resolution 0.77 → 0.84, Home-glide frames 275 → 283 ms.
