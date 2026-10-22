@@ -85,6 +85,13 @@ Changes after 0.3.0-beta.1:
   colours now dissolve from one to the other over 0.4 s instead of changing in one frame. And while
   a deep refresh composes behind the picture on screen, or the picture is stretched to follow the
   zoom, it is no longer blurred by a filter meant for a lower-resolution frame.
+- **The mouse wheel zooms faster, and faster still when turned quickly (0.3.0-beta.20).** A notch
+  of the wheel zoomed ×1.06, so doubling the magnification took about 11 notches. A notch now
+  zooms ×1.11 (about 7 notches to double), and a wheel turned faster than 4 notches a second zooms
+  further per notch, up to three times as far at 12 notches a second: a quick spin covers 5
+  doublings a second where it covered 1. A slow turn and a single click keep the small step, and
+  turning back the other way drops the acceleration at once. The main view, the dual view and the
+  minimap all respond the same way.
 - **A deep view settles without overrunning the graphics card, and stops sooner (0.3.0-beta.20).**
   After a deep view settles, it renders each pixel again at sub-pixel offsets and averages them
   (supersampling), up to 24 times. At a 2^704 view in a 5120×2054 window each of those renders took
