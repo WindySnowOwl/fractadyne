@@ -5419,3 +5419,16 @@ from a settled 2^248 logged two collapses (the equal-ask frame, then the first m
 without a series), each holding a frame and re-opening the budget at the bootstrap. The re-climb's
 readings priced the from-zero regime's early bands at 6–28 ms per Gstep at 3021×1668. At that rate
 the crash frame's pass was 1–4 s on its own.
+
+*A series past its radius (2026-10-22).* `live_series` keeps a reference's series for the
+reference's life, and a reference's series is computed for the view it was built at
+(`sa_log2_max_dc`): a fast zoom out renders with it at views wider than its validity radius, as the
+crash glide's frames already did before the fix (orbit 443's series, built at ~2^247, at ~2^225).
+The truth there, computed apart (320-bit reference at the crash centre, 35 pixels per view in
+double perturbation, `truth_escape.py` in the session scratchpad): every pixel escapes within ~100
+iterations of the reference at 2^247 down to 2^225 (2^230: 298,387–298,426; the skip was 298,404),
+so those frames were coloured ~20 iterations off, not garbage, and their cheap readings were honest
+(the escape-fast regime is real at this location). It also leaves the second of GPU work before the
+crash frame unexplained by it. Open: a validity check that drops the series once the view outgrows
+its radius — safe now that a collapse re-measures the budget, a picture-correctness change rather
+than a safety one.
