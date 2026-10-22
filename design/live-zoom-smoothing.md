@@ -758,3 +758,46 @@ refresh sizing (`decide_moving`, the measured cap) assumes a walk's frames grow 
 the cap climbs to full resolution and meets a harder region there. What would fix it is a cap from
 the band costs themselves (the frames a walk at that size is predicted to take) — and that code's
 own history says a pessimistic model became a permanent ceiling once, so it is a design of its own.
+
+### 7.11 Step-limited pins for the switch: measured before building, not built (2026-10-22)
+
+The user chose (2026-10-22) to design step-limited pins for the 2^93 switch: a pin's passes after its
+opening stopped per pixel after a number of executed steps (`MandelbrotParams::step_cap`), as a worker
+GPU's floatexp walks now are (design/multi-gpu-live.md 9.2), instead of iteration windows sized from
+the frame budget, the growth limiter and the band ledger. The premise was measured first.
+
+**The baseline (main `4f7c913d`, RTX 3080, `jump-4` row, six runs, `FRACTADYNE_TRACE=tile`).** Frames
+from the first floatexp frame to the next adoption: 9, 10, 10, 11, 15, 17. The first floatexp pin asks
+~20,800 iterations and walks 7–14 frames. At 147×110 its windows double each frame (380, 693, 1,386,
+2,154, 4,308, 8,202, 9,226: the growth limiter); at 184×137 and 261×194 they hold one size for 3–5
+frames and step ×1.5 (799, 1,192, 1,285 ×3, 1,928 ×4, 2,892 ×4, 4,339: the frame budget's re-climb
+from the bootstrap, one ×1.5 a reading — the switch's safeguard).
+
+**What a step pin would need (a worker GPU's step walks at the same asks, `--worker-gpu same`).**
+78–85% of the pixels finish within the first ~50 steps; the slowest need at most ~1,600–3,500 (the sum
+of a walk's caps). Sized at the export's prior (1.5 ns a pixel-step, under the 20 ms pin target) a
+147×110 step pin would finish in 2–3 passes.
+
+**Why it does not pay.**
+- A step pin knows it has finished only from a GPU reading of a pass that left no pixel running,
+  2–3 frames after that pass. A window pin knows on the CPU when its last window is dispatched and
+  adopts on an earlier reading's detail: in the baseline, the frame after its last pass.
+- Its passes would be sized from its own per-step price, not the frame budget. In worst-case work
+  that is a bolder opening (1.3e7 pixel-steps a pass against the bootstrap's 4e6), which is what it
+  would gain on the 184×137 and 261×194 pins — the option the user did not choose.
+- Net: ~4 passes saved on a ~7-pass pin, ~2 frames given back waiting for the reading; 1–3 frames of
+  9–17, for a change to the controller's most guarded path. Everything there keys off a pass's window
+  end: completion, convergence and the final reading (`ContentReading::cursor` is the pass's chunk
+  end), the MAXITER fraction (published only at `cursor >= max_iter`), normalization's completeness,
+  readings paired with passes by nominal step count, and the rate models in pixel-iterations, which a
+  pixel-step reading would corrupt (a step with the BLA covers many iterations).
+
+**`PIN_GROWTH_LANE` re-measured** (§7.8 found it no help when the opening budget bound; the pre-switch
+probe has since moved that): three runs interleaved with the baseline, 10, 16, 10 frames against 9–17.
+No help: where the limiter binds the pin is small and quick either way, and where it is large the
+budget's re-climb binds.
+
+What would shorten the switch is the re-climb itself (×1.5 a reading from the bootstrap, `TDR_GROW_MAX`)
+or the opening it starts from — the safeguard of the six device losses at this crossing, so a decision
+of its own, with RX 6800 XT runs before it ships.
+
