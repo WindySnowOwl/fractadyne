@@ -5732,6 +5732,11 @@ struct PointerState {
     /// so a build too quick to notice never flashes the spinner. Not persisted; `[0.0; 2]` = idle.
     spin_since: [f64; 2],
     spin_last: [f64; 2],
+    /// The mouse wheel's recent rate in notches a second, signed by direction (`wheel_rate_step`),
+    /// and the app-time it was last advanced: the wheel zooms further per notch the faster it turns
+    /// (`wheel_gain`).
+    wheel_rate: f64,
+    wheel_t: f64,
 }
 
 /// How the fractal is *computed* (not colored): iteration budget + auto-scale, the perturbation
@@ -9530,7 +9535,8 @@ impl FractadyneApp {
         if scroll != 0.0 {
             if let Some(p) = resp.hover_pos() {
                 let l = p - rect.min;
-                let f = (-0.0015 * scroll).exp();
+                // `scroll` arrives gain-scaled (`draw_dual` → `wheel_points`).
+                let f = crate::ui::central::wheel_zoom_factor(scroll);
                 vp.zoom_at(l.x as f64 * ppp, l.y as f64 * ppp, f);
             }
         }

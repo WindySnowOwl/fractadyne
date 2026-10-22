@@ -200,7 +200,7 @@ pub(crate) fn help_navigation(ui: &mut egui::Ui) {
     help_h(ui, "Navigation");
     help_sub(ui, "Mouse");
     help_kv(ui, "Left-drag", "Pan the view.");
-    help_kv(ui, "Mouse wheel", "Zoom in/out toward the cursor.");
+    help_kv(ui, "Mouse wheel", "Zoom in/out toward the cursor; turn it faster to zoom further per notch.");
     help_kv(ui, "Shift+drag", "Box zoom — drag a rectangle and it zooms to fill the view.");
     help_kv(
         ui,

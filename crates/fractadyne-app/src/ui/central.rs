@@ -6,6 +6,41 @@ use crate::*;
 /// Width of the draggable separator between the dual view's two panels.
 const DUAL_HANDLE_W: f32 = 6.0;
 
+/// One wheel notch as egui reports it on the desktop: a line of scroll is 40 points
+/// (`Options::line_scroll_speed`). Trackpads and free-spinning wheels report points directly.
+pub(crate) const WHEEL_POINTS_PER_NOTCH: f64 = 40.0;
+/// Octaves a wheel notch zooms at rest (×1.11). It was 0.087 (`exp(−0.0015 × 40)`, ×1.06): 11.5
+/// notches for one doubling, which the maintainer found slow (2026-10-21).
+pub(crate) const WHEEL_OCT_PER_NOTCH: f64 = 0.15;
+/// The wheel's acceleration: turned faster than `WHEEL_ACCEL_FROM` notches a second, each notch
+/// zooms further, up to `WHEEL_ACCEL_MAX`× at `WHEEL_ACCEL_FROM + WHEEL_ACCEL_SPAN`. A single click
+/// or a slow turn stays at the resting step, so a small adjustment stays small.
+pub(crate) const WHEEL_ACCEL_FROM: f64 = 4.0;
+pub(crate) const WHEEL_ACCEL_SPAN: f64 = 8.0;
+pub(crate) const WHEEL_ACCEL_MAX: f64 = 3.0;
+/// How long the wheel's rate remembers a notch, seconds (the weight decays as `exp(−t/τ)`).
+pub(crate) const WHEEL_RATE_TAU: f64 = 0.3;
+
+/// The wheel's rate (notches a second, signed by direction) after `dt` seconds in which it turned
+/// `notches` (signed): an exponentially weighted count, so a steady N notches a second reads N.
+/// Turning the other way starts the count over — a reversal is a correction, not more speed.
+pub(crate) fn wheel_rate_step(rate: f64, dt: f64, notches: f64) -> f64 {
+    let reversed = notches != 0.0 && rate != 0.0 && notches.signum() != rate.signum();
+    let kept = if reversed { 0.0 } else { rate * (-dt.max(0.0) / WHEEL_RATE_TAU).exp() };
+    kept + notches / WHEEL_RATE_TAU
+}
+
+/// How much further than the resting step a notch zooms at `rate` notches a second.
+pub(crate) fn wheel_gain(rate: f64) -> f64 {
+    1.0 + (WHEEL_ACCEL_MAX - 1.0) * ((rate.abs() - WHEEL_ACCEL_FROM) / WHEEL_ACCEL_SPAN).clamp(0.0, 1.0)
+}
+
+/// The zoom factor `zoom_at` takes for `points` of (smoothed, gain-scaled) wheel scroll: up (+)
+/// zooms in, by [`WHEEL_OCT_PER_NOTCH`] octaves a notch.
+pub(crate) fn wheel_zoom_factor(points: f64) -> f64 {
+    (-(points / WHEEL_POINTS_PER_NOTCH) * WHEEL_OCT_PER_NOTCH * std::f64::consts::LN_2).exp()
+}
+
 /// The dual view's two panel rectangles: the parameter plane on the left, its Julia on the right,
 /// with [`DUAL_HANDLE_W`] of separator between them.
 ///
@@ -81,13 +116,29 @@ impl FractadyneApp {
 
     /// Dual linked view: Mandelbrot (left) ↔ Julia (right). Hovering the Mandelbrot
     /// sets the Julia parameter `c`.
+    /// Advance the wheel's rate by this frame's raw notches (`wheel_rate_step`), counting only a
+    /// wheel turned over the canvas (`over`): scrolling a panel or a menu is not zooming.
+    pub(crate) fn wheel_tick(&mut self, ctx: &egui::Context, over: bool) {
+        let (raw, now) = ctx.input(|i| (i.raw_scroll_delta.y as f64, i.time));
+        let notches = if over { raw / WHEEL_POINTS_PER_NOTCH } else { 0.0 };
+        let dt = (now - self.pointer.wheel_t).clamp(0.0, 1.0);
+        self.pointer.wheel_rate = wheel_rate_step(self.pointer.wheel_rate, dt, notches);
+        self.pointer.wheel_t = now;
+    }
+
+    /// This frame's smoothed wheel scroll, scaled by the wheel's acceleration (`wheel_gain`): what
+    /// [`wheel_zoom_factor`] turns into a zoom.
+    pub(crate) fn wheel_points(&self, smooth: f64) -> f64 {
+        smooth * wheel_gain(self.pointer.wheel_rate)
+    }
+
     pub(crate) fn draw_dual(&mut self, ui: &mut egui::Ui, ctx: &egui::Context) {
         let ppp = ctx.pixels_per_point() as f64;
         let full = ui.max_rect();
         // Split position from the persisted fraction; a small gap between the panels holds the
         // draggable separator (handled at the end of this fn, so it draws on top).
         let (left, right) = dual_panel_rects(full, self.dual_split);
-        let scroll = ctx.input(|i| i.smooth_scroll_delta.y) as f64;
+        let scroll = self.wheel_points(ctx.input(|i| i.smooth_scroll_delta.y) as f64);
 
         // Continuous zoom (hold Space / Shift+Space) toward the cursor, on the panel
         // it is over. Applied before drawing so this frame reflects it.
@@ -850,7 +901,7 @@ impl FractadyneApp {
                         if resp.hovered() {
                             let sy = ui.input(|i| i.smooth_scroll_delta.y) as f64;
                             if sy != 0.0 {
-                                zoom = Some((-0.0015 * sy).exp());
+                                zoom = Some(wheel_zoom_factor(self.wheel_points(sy)));
                             }
                         }
                         // HIDE the pointer for the duration of the drag rather than showing a
@@ -953,6 +1004,9 @@ impl FractadyneApp {
                         (rect.height() as f64 * ppp) as u32,
                     ];
                 }
+                // The wheel's acceleration, once a frame for every view the wheel zooms.
+                let over = ctx.input(|i| i.pointer.hover_pos()).is_some_and(|p| ui.max_rect().contains(p));
+                self.wheel_tick(ctx, over);
                 if self.dual {
                     self.draw_dual(ui, ctx);
                     return;
@@ -1107,7 +1161,7 @@ impl FractadyneApp {
                 if scroll_y != 0.0 {
                     if let Some(pos) = response.hover_pos() {
                         let local = pos - rect.min;
-                        let factor = (-0.0015 * scroll_y).exp();
+                        let factor = wheel_zoom_factor(self.wheel_points(scroll_y));
                         self.viewport
                             .zoom_at(local.x as f64 * ppp, local.y as f64 * ppp, factor);
                     }
@@ -1474,3 +1528,7 @@ mod tests;
 #[cfg(test)]
 #[path = "../../tests/unit/ui/central/decor_layer_tests.rs"]
 mod decor_layer_tests;
+
+#[cfg(test)]
+#[path = "../../tests/unit/ui/central/wheel_tests.rs"]
+mod wheel_tests;
