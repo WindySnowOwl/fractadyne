@@ -71,6 +71,15 @@ Changes after 0.3.0-beta.1:
   colours now dissolve from one to the other over 0.4 s instead of changing in one frame. And while
   a deep refresh composes behind the picture on screen, or the picture is stretched to follow the
   zoom, it is no longer blurred by a filter meant for a lower-resolution frame.
+- **Zooming in snaps to a nearby minibrot (0.3.0-beta.20).** With Navigate ▸ Snap zoom to
+  features (on by default), zooming in with the mouse wheel or Space near a minibrot pulls the zoom
+  toward it: the minibrot slides under the cursor and the zoom lands on it rather than beside it.
+  A minibrot within 1/24 of the view's height of the cursor attracts the zoom, the more strongly the
+  nearer it is; right beside the cursor, each doubling of the magnification halves its distance, so
+  after a few doublings it sits under the cursor and stays there. Near the real axis the zoom is
+  pulled onto the axis instead. The minibrot is found in the background, from the view's own
+  reference orbit, a fraction of a second after the cursor or the view moves, at any depth.
+  Mandelbrot only, in the single view. (The behaviour follows Imagina's.)
 - **The mouse wheel zooms faster, and faster still when turned quickly (0.3.0-beta.20).** A notch
   of the wheel zoomed ×1.06, so doubling the magnification took about 11 notches. A notch now
   zooms ×1.11 (about 7 notches to double), and a wheel turned faster than 4 notches a second zooms

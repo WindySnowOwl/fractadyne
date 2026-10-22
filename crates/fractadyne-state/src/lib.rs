@@ -114,6 +114,11 @@ pub struct SessionState {
     /// jumps immediately and corrects itself when the answer lands.
     #[serde(default)]
     pub click_zoom_snap: bool,
+    /// While zooming in with the wheel or Space, pull the zoom toward a nearby minibrot nucleus
+    /// (or the real axis) found near the cursor, so it lands on it. On by default; `serde(default)`
+    /// turns it on for older session files too.
+    #[serde(default = "default_snap_zoom")]
+    pub snap_zoom: bool,
     /// Auto-zoom (autopilot) dive limit as log2(magnification); the depth at which the hands-free
     /// dive stops. Default 900 (≈1e271×). Past the smooth regime the autopilot switches to a
     /// stepped dive to reach this depth.
@@ -479,6 +484,10 @@ fn default_click_zoom_factor() -> f32 {
     10.0
 }
 
+fn default_snap_zoom() -> bool {
+    true
+}
+
 fn default_finish_sound() -> bool {
     true
 }
@@ -615,6 +624,7 @@ impl Default for SessionState {
             click_zoom: false,
             click_zoom_factor: default_click_zoom_factor(),
             click_zoom_snap: false,
+            snap_zoom: default_snap_zoom(),
             autopilot_dive_log2: default_autopilot_dive_log2(),
             autopilot_priority: default_autopilot_priority(),
             autopilot_target: default_autopilot_target(),

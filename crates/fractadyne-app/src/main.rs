@@ -95,6 +95,7 @@ mod calibration;
 mod timing_witness;
 mod tunables;
 mod ui;
+mod zoom_snap;
 
 // ⭐The tunables live in ONE module now (a user requirement — see `tunables.rs`), and are
 // re-exported from here and from `render` so that every existing `crate::NAME` /
@@ -5756,6 +5757,8 @@ struct RenderConfig {
     use_bla: bool,
     /// Continuous-zoom speed multiplier (1.0 = default `ZOOM_RATE`).
     zoom_rate: f32,
+    /// Snap zooming in (wheel and Space) toward a nearby feature (`zoom_snap`). Default on.
+    snap_zoom: bool,
     /// Magnification applied per click-to-zoom click (the `click_zoom` tool). 2–100×.
     click_zoom_factor: f32,
     /// Live-render work-budget multiplier (× `WORK_BUDGET`); persisted. Higher = crisper live deep
@@ -6182,6 +6185,8 @@ struct FractadyneApp {
     julia_viewport: Viewport,
     /// Pointer / zoom / pan interaction state (zoom box, pan reprojection, eased zoom, settle timers).
     pointer: PointerState,
+    /// Snap zoom: the feature a zoom in is pulled toward, and the search for it (`zoom_snap`).
+    zoom_snap: zoom_snap::ZoomSnap,
     /// Active smooth "zoom out to home" animation (Home button); `None` when idle.
     home_anim: Option<HomeAnim>,
     /// Auto-zoom autopilot state.
@@ -7110,6 +7115,7 @@ impl FractadyneApp {
                 v
             },
             pointer: PointerState::default(),
+            zoom_snap: zoom_snap::ZoomSnap::default(),
             home_anim: None,
             autopilot: AutopilotState {
                 active: false,
@@ -7479,6 +7485,7 @@ impl FractadyneApp {
                 glitch_correct: s.glitch_correct,
                 use_bla: s.use_bla,
                 zoom_rate: s.zoom_rate,
+                snap_zoom: s.snap_zoom,
                 click_zoom_factor: s.click_zoom_factor.clamp(1.5, 1000.0),
                 work_budget_scale: s.work_budget_scale.clamp(0.25, 8.0),
                 min_motion_res: s.min_motion_res.clamp(0.30, 1.0),
@@ -8166,6 +8173,7 @@ impl FractadyneApp {
             normalize_fit: self.coloring.normalize_fit,
             log_palette: self.coloring.log_palette,
             zoom_rate: self.render_cfg.zoom_rate,
+            snap_zoom: self.render_cfg.snap_zoom,
             click_zoom: self.click_zoom,
             click_zoom_snap: self.click_zoom_snap,
             click_zoom_factor: self.render_cfg.click_zoom_factor,

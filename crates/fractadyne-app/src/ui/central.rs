@@ -1158,12 +1158,23 @@ impl FractadyneApp {
                 } else {
                     0.0
                 };
+                // Snap zoom (`zoom_snap`): look for a feature near the cursor (off the UI thread),
+                // so a zoom in below can be pulled toward it. Where the cursor last was when it is
+                // off the canvas, as the Space zoom does.
+                // A harness's glide is about the centre (as its zoom below is), whatever a real
+                // pointer resting over its window does.
+                let snap_pos = if self.harness_holds_space() { Some(rect.center()) } else { response.hover_pos().or(self.pointer.last_cursor) };
+                let snap_cursor = snap_pos.map(|p| {
+                    let l = p - rect.min;
+                    [l.x as f64 * ppp, l.y as f64 * ppp]
+                });
+                self.snap_update(snap_cursor);
                 if scroll_y != 0.0 {
                     if let Some(pos) = response.hover_pos() {
                         let local = pos - rect.min;
                         let factor = wheel_zoom_factor(self.wheel_points(scroll_y));
-                        self.viewport
-                            .zoom_at(local.x as f64 * ppp, local.y as f64 * ppp, factor);
+                        let [ax, ay] = self.snap_zoom_anchor([local.x as f64 * ppp, local.y as f64 * ppp], factor);
+                        self.viewport.zoom_at(ax, ay, factor);
                     }
                 }
 
@@ -1201,8 +1212,8 @@ impl FractadyneApp {
                     };
                     let local = anchor - rect.min;
                     let factor = (-self.paced_zoom_vel() * dt).exp(); // vel>0 → factor<1 → zoom in
-                    self.viewport
-                        .zoom_at(local.x as f64 * ppp, local.y as f64 * ppp, factor);
+                    let [ax, ay] = self.snap_zoom_anchor([local.x as f64 * ppp, local.y as f64 * ppp], factor);
+                    self.viewport.zoom_at(ax, ay, factor);
                 }
 
                 // Box-zoom with right-drag: record the start, apply on release.

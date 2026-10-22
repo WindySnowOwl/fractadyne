@@ -225,6 +225,9 @@ pub(crate) struct ZoomTest {
     then_log2: Option<f64>,
     /// W8: the criteria a P-G matrix row holds this glide to (`--zoomtest-gate`); `None` reports only.
     gate: Option<ZoomGate>,
+    /// `--zoomtest-snap`: the glide snaps to features as a person's zoom does (`zoom_snap`; a
+    /// harness's zoom does not otherwise), about the view's centre.
+    pub(crate) snap: bool,
 }
 
 /// The criteria of design/live-zoom-smoothing.md's P-G matrix (W8): `Smooth` for its continuous,
@@ -287,6 +290,12 @@ impl ZoomTest {
         self
     }
 
+    /// `--zoomtest-snap` (see `ZoomTest::snap`).
+    pub(crate) fn with_snap(mut self, snap: bool) -> Self {
+        self.snap = snap;
+        self
+    }
+
     /// `--zoomtest-gate` (see [`ZoomGate`]).
     pub(crate) fn with_gate(mut self, gate: Option<ZoomGate>) -> Self {
         self.gate = gate;
@@ -330,6 +339,7 @@ impl ZoomTest {
             hold_s: hold_s.clamp(0.0, 600.0),
             then_log2: None,
             gate: None,
+            snap: false,
             rate: rate.clamp(0.25, 4.0),
             location,
             start_log2,
