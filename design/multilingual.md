@@ -1,10 +1,12 @@
 # Multilingual support — design
 
-Status: **design (2026-10-22). Nothing built.** Line references are to `main` at `5f9193d1`.
+Status: **design, decisions recorded (2026-10-22). Nothing built.** Line references are to
+`main` at `5f9193d1`.
 
-The goal: Fractadyne's interface in more languages than English, with each language held in **one
-file that is easy to distribute and to update** — shipped with a release, installable by hand,
-refreshable without a new app release, and editable by a translator with a text editor.
+The goal: Fractadyne's interface and Help in eight languages to start — English, Spanish, French,
+German, Japanese, Chinese, Khmer and Ukrainian — with each language held in **one file that is easy
+to distribute and to update**: shipped with a release, installable by hand, refreshable without a
+new app release, and editable by a translator with a text editor.
 
 In short:
 
@@ -15,11 +17,18 @@ In short:
   is usable, and an old file keeps working after an app update (§4).
 - **Three ways in** (§5): the release package, a file installed from Settings, and an opt-in
   online update that verifies a signature before installing anything.
+- **The language follows the system on the first run, and can always be changed from the top bar**
+  (§8): a menu that is never hidden and names every language in its own script, so nobody is stuck
+  in a language they cannot read.
 - **English stays the language of everything that is data or diagnostics** (§2): coordinates,
   magnifications, `.fdn` files, the command line, logs and crash reports.
 
 Most of the work is not the loader. It is moving about 2,700 inline English strings into the
-English file, and first untangling the places where English text is also an identifier (§7).
+English file, and first untangling the places where English text is also an identifier (§7). One
+language needs more: **Khmer must be shaped** (vowels drawn before the consonant they follow,
+consonants stacked), which egui does from version 0.35, and this build is on 0.31 (§9).
+
+The decisions taken are in §12.
 
 ## 1. What exists today
 
@@ -68,8 +77,8 @@ errors (`core/bignum.rs`), formula parse errors (`core/ir/parse.rs:46`), palette
 **Fonts.** The interface fonts (Spline Sans, Spline Sans Mono, the live panel's Routed Gothic,
 Barlow Condensed and Share Tech Mono; `theme.rs:254`, `blinken/paint.rs:516`) cover Latin
 scripts. Greek and Cyrillic draw through egui's Ubuntu/Hack fallback, in a different typeface.
-Nothing covers Chinese, Japanese, Korean, Arabic, Hebrew, Devanagari or Thai, and egui 0.31 does
-no complex shaping and no bidirectional layout.
+Nothing covers Chinese, Japanese, Khmer, Korean, Arabic, Hebrew, Devanagari or Thai, and this
+build's egui (0.31) does no complex shaping and no bidirectional layout (§9).
 
 **Network.** One opt-in path: the update check (`update.rs`, ureq + rustls, to
 `api.github.com`), off by default (`update_check_on_launch`), with links vetted by
@@ -180,7 +189,7 @@ and the runtime reads compiled `.mo` files, a second artefact to distribute. **W
 support is monolingual and has no plural editor**
 ([Weblate: Fluent](https://docs.weblate.org/en/latest/formats/fluent.html)), so translators there
 type the `{ $count -> … }` selector as text; Weblate does check its syntax. That cost is real but
-small for an interface with a few dozen plural messages. **Recommendation: Fluent.** (Decision 1.)
+small for an interface with a few dozen plural messages. **Decided: Fluent.**
 
 **Numbers.** The app formats numbers itself, with the separators the file declares
 (`number-decimal`, `number-group`), and hands the result to Fluent. Plural selection still sees the
@@ -190,7 +199,7 @@ on. Grouping is in threes; languages that group otherwise (Hindi's 2-2-3) are a 
 
 **Bidirectional isolation off.** Fluent wraps arguments in Unicode isolation marks (FSI/PDI) by
 default; egui would draw them as boxes. The loader turns that off (`set_use_isolating(false)`)
-until right-to-left scripts are supported (§8).
+until right-to-left scripts are supported (§9).
 
 ## 4. The language file
 
@@ -285,15 +294,16 @@ index's `sha256`. A file that fails is not installed. The `minisign` signature f
 verify-only crate (`minisign-verify`) are enough. With signatures the host only has to be
 available, not trusted.
 
-**The host** (decision 3): either GitHub — the files as assets of a standing `languages` release,
-on the same host the update check already talks to — or fractadyne.org, which deploys with one
-`git push`. A publish script builds the stamped files and the signed index from `i18n/` and pushes
-them; it runs when translations change, independent of app releases.
+**The host**: GitHub — the files as assets of a standing `languages` release, on the host the
+update check already talks to (`api.github.com`), so the app trusts no new domain. (fractadyne.org,
+which deploys with one `git push`, would serve as well; §12.) A publish script builds the stamped
+files and the signed index from `i18n/` and uploads them; it runs when translations change,
+independent of app releases.
 
-**Translations coming in** (decision 2): either Weblate (hosted, free for libre projects; component
-file mask `i18n/*/fractadyne.ftl`, base file `i18n/en/fractadyne.ftl`, format "Fluent"), which
-commits to the repository, or pull requests on GitHub. Both end as commits to `i18n/`, checked by
-CI (§9).
+**Translations come in by pull request** (decided, for now): each file is reviewed like code and
+checked by CI (§10). Weblate can be added later without changing anything here (component file mask
+`i18n/*/fractadyne.ftl`, base file `i18n/en/fractadyne.ftl`, format "Fluent"); it commits to the
+same files.
 
 ## 6. Checks on every file the app reads
 
@@ -305,7 +315,8 @@ file's messages are used:
   embedding and override controls (U+202A–U+202E) and isolates (U+2066–U+2069) are removed: the
   interface draws left-to-right only, and these are the characters that make text display in
   another order than it reads (the "Trojan Source" trick). Typographic quotes, dashes, non-breaking
-  and narrow no-break spaces, and ZWJ/ZWNJ are kept: they are language, not paste damage.
+  and narrow no-break spaces, ZWJ/ZWNJ, and the zero-width space (U+200B, which marks where a Khmer
+  line may break, §9) are kept: they are language, not paste damage.
   `fractadyne_text::clean` is not used for translations.
 - **Per message:**
   - it parses (Fluent recovers per message; a message that does not parse is dropped);
@@ -349,11 +360,7 @@ arguments are formatted at the call, as `format!` is today.
 behind one shared pointer, and a generation counter tells the caches that hold laid-out text (the
 live panel's tessellated static layer, measured label widths) to redo it.
 
-**Choosing a language.** A new setting, `language` in `session.toml`: `"auto"` (the default) or a
-tag. `auto` follows the system's preferred languages (`GetUserPreferredUILanguages` on Windows,
-`LANGUAGE`/`LANG` on Linux), matched against the installed files with `fluent-langneg`: `fr-CA`
-takes `fr`, `zh-Hant-TW` takes `zh-Hant`, and anything without a match takes English. Settings ▸
-Language lists every installed language in its own name with its coverage and source.
+**Choosing a language** is §8.
 
 **Groundwork before any translation** (no visible change in English):
 
@@ -374,31 +381,113 @@ Language lists every installed language in its own name with its coverage and so
    `to_uppercase` (which mishandles Turkish ı/İ and German ß); their width estimate
    (`chars().count() * 6.4`, `panel.rs:1161`) becomes a measured width.
 
-## 8. Fonts and scripts
+## 8. Choosing and switching the language
 
-- **Latin-script languages** (German, French, Spanish, Italian, Portuguese, Dutch, Polish, Czech,
-  Turkish, Vietnamese…) draw with today's fonts; Spline Sans lacks a few Latin Extended letters,
-  which fall back to Ubuntu. A test (extending `icons_coverage.rs`) checks every character of every
-  shipped file against the interface fonts.
-- **Greek and Cyrillic** draw today through the Ubuntu fallback. Before a Greek or Cyrillic
-  language ships, add a sans with those scripts that sits well beside Spline Sans (a Noto Sans
-  subset, OFL).
-- **Chinese, Japanese and Korean** need a font the package does not have, and a full CJK font is
-  5–30 MB. The plan: load the system's font when the language needs it (`language-script` in the
-  file says which), and only then. Windows 10 and 11 ship Microsoft YaHei, Microsoft JhengHei, Yu
-  Gothic and Malgun Gothic (to confirm on a clean install of each); Linux finds Noto CJK through
-  fontconfig. egui reads font collections (`.ttc`) by index. Where no font is found, the language
-  is listed as unavailable with the reason, rather than shown as boxes. A subset font published
-  with the language file (only the characters it uses, made with the same fontTools subsetter the
-  icons use) is the fallback if system fonts prove unreliable.
-- **Right-to-left and complex scripts** (Arabic, Hebrew, Persian, Hindi, Thai) are out of scope:
-  egui does no shaping and no bidirectional layout. The file format does not shut them out; the
-  app lists such a file as unavailable, with the reason.
-- The math font (formula editor) and the live panel's display fonts are Latin-only; translated
-  text in them falls back to the interface fonts, so a front panel in Japanese loses its period
-  typeface but stays legible.
+**First run.** The app reads the system's preferred languages (`GetUserPreferredUILanguages` on
+Windows; `LANGUAGE`, `LC_ALL`, `LC_MESSAGES`, `LANG` on Linux) and takes the first one it has a
+file for, matched with `fluent-langneg` (`fr-CA` takes `fr`; `zh-CN` and `zh-Hans-SG` take
+`zh-Hans`); with no match, English. The first-run Welcome dialog (`ui/dialogs.rs`, beside the
+update-check box at :285) opens with a **language selector at its top**, set to that choice;
+changing it redraws the dialog in the new language at once.
 
-## 9. Testing
+**The language menu, always visible.** The top bar (`draw_menu_bar`, `menus.rs:236`) gets a
+language menu at its right end: a globe icon (Lucide's `languages`, added through
+`scripts/subset_lucide.py`) and the current language's own name. It lists every installed
+language **in its own name and script, with its English name beside it**:
+
+```text
+English
+Español — Spanish
+Français — French
+Deutsch — German
+日本語 — Japanese
+简体中文 — Chinese (Simplified)
+ខ្មែរ — Khmer
+Українська — Ukrainian
+```
+
+The list is never translated, so it reads the same from any language, and the icon is the one
+thing on the bar that needs no reading. Below the list: **More languages…** (Settings ▸ Language:
+coverage, install a file, check for updates). The top bar is drawn in every mode — fullscreen hides
+the right panel, not the bar (`main.rs:16904`) — and **no mode may hide this menu**: a future
+"hide the interface" mode keeps it, or leaves by Esc.
+
+To draw every name before its language's font is loaded, the package carries a tiny font with only
+the glyphs of these names (made with the fontTools subsetter the icons use; a few tens of KB, its
+shaping tables kept for the Khmer name). A language added later adds its name's glyphs to it. The
+Khmer name, like Khmer itself, needs egui's shaping, so it joins the list with Khmer (P5, §11).
+
+**When the system's language changes.** The setting `language` holds the chosen tag (set on the
+first run, and by the menu), and `language_system_seen` the system language found at the last
+launch. When a launch finds a new system language that has a file and is not the one in use, the
+app asks once, in both languages:
+
+```text
+Your system language is now Français. Use it in Fractadyne?
+La langue de votre système est maintenant le français. L'utiliser dans Fractadyne ?
+[Use Français]   [Keep English]
+```
+
+Either answer records the new system language, so the question comes once per change. A system
+language with no file changes nothing.
+
+**Ways back from any language** besides the menu: `--language en` on the command line, or
+`FRACTADYNE_LANG=en` in the environment, sets the language for that run (both documented in the
+English README); and a language file that fails to load leaves the app in English with a notice.
+
+## 9. The eight languages: fonts and scripts
+
+| Language | Tag | Script | Font | Shaping | Line breaks |
+|---|---|---|---|---|---|
+| English, Spanish, French, German | `en` `es` `fr` `de` | Latin | today's interface fonts | not needed | at spaces |
+| Ukrainian | `uk` | Cyrillic | a Cyrillic face beside Spline Sans (Noto Sans subset, OFL) | not needed | at spaces |
+| Japanese | `ja` | kanji and kana | a Japanese font: the system's, else a published subset | not needed | between characters (egui 0.31 does it) |
+| Chinese (Simplified) | `zh-Hans` | Simplified Han | a Simplified Chinese font, likewise | not needed | between characters |
+| Khmer | `km` | Khmer | Noto Sans Khmer, bundled (OFL) | **required: egui ≥ 0.35** | at zero-width spaces: egui must honour them |
+
+- **Latin.** Spline Sans covers Latin-1 and Latin Extended-A: every Spanish, French and German
+  letter. Punctuation to confirm with the coverage test: „ “ « » and the narrow no-break space
+  French puts before ; : ! ? (U+202F). A character Spline Sans lacks falls back to Ubuntu, in a
+  different face; the test lists every fallback per language, and a translator can use a plain
+  no-break space instead.
+- **Ukrainian** draws today through egui's Ubuntu fallback (ґ, є, і, ї included), in a face unlike
+  Spline Sans. A Cyrillic subset of Noto Sans keeps it consistent.
+- **Japanese and Chinese share code points but not glyphs.** The same Han character is drawn
+  differently in Japanese and in Chinese typography (Han unification), so each language loads its
+  own font — a Japanese one for `ja`, a Simplified Chinese one for `zh-Hans` — never one CJK font for
+  both. A full font is 5–30 MB, so neither is bundled: the app loads the system's when the language
+  is chosen (Windows 10 and 11: Yu Gothic UI or Meiryo UI for Japanese, Microsoft YaHei UI for
+  Chinese, to confirm on clean installs; Linux: Noto Sans CJK through fontconfig). Where none is
+  found, the language is listed with the reason. A subset font published beside the language file
+  (only the characters its translation uses) is the fallback if system fonts prove unreliable.
+  egui 0.31 already breaks lines between Chinese and Japanese characters (`is_cjk`, epaint
+  `text/text_layout.rs:1018–1037`).
+- **Khmer needs shaping.** Some Khmer vowels are written after the consonant they are drawn before,
+  and a consonant can stack under another (after the coeng sign, U+17D2). A font does this with
+  OpenType rules that a shaping engine applies. egui 0.31 maps each character to a glyph on its own,
+  so Khmer would show its vowels in the wrong place and no stacked consonants: unreadable to a Khmer
+  reader. **egui 0.35.0 (2026-06-25) shapes text with harfrust**, a Rust port of HarfBuzz ("Use
+  `harfrust` for better kerning and ligatures", egui's changelog), which carries HarfBuzz's Khmer
+  shaper. So Khmer waits for egui 0.35 or later, and for a prototype that draws real Khmer interface
+  text and is checked by a Khmer reader against a browser's rendering of the same strings.
+- **Khmer line breaks.** Khmer puts no spaces between words; translators mark where a line may break
+  with a zero-width space (U+200B). egui breaks lines at whitespace and between CJK characters, and
+  U+200B is not whitespace, so long Khmer text would not wrap. Either egui learns to break at U+200B
+  (a small change upstream, or a local patch to the text layout) or the app substitutes a breakable
+  character when it loads a Khmer file. The prototype decides which.
+- **Khmer's font**, Noto Sans Khmer, is bundled rather than relying on Windows's Khmer UI: it is
+  small, the same on every system, and its shaping tables are known.
+- **The egui upgrade** (0.31 to 0.36 or later) is a project of its own. egui-wgpu moves with it, and
+  the GPU crate takes its `wgpu` (24.0.5 today) through egui-wgpu (`use egui_wgpu::wgpu`), so the
+  renderer moves to a newer `wgpu` as well. Nothing else in this design depends on it; Khmer does.
+- **Out of scope:** right-to-left scripts (egui has no bidirectional layout) and scripts not chosen.
+  The file format does not shut them out; the app lists a file it cannot draw as unavailable, with
+  the reason.
+- The math font (formula editor) and the live panel's display fonts are Latin-only. Translated text
+  in them falls back to the interface fonts, so a front panel in Japanese loses its period typeface
+  but stays legible.
+
+## 10. Testing
 
 - **A pseudo-language.** `en-XA`, generated from English at build time: accented letters, text
   40% longer, and brackets around every message — `[Ŝñåþšĥöţ ~~~]`. Anything on screen without
@@ -415,27 +504,39 @@ Language lists every installed language in its own name with its coverage and so
 - **Harnesses stay in English.** uitest's readout prefixes, `logcheck` rules and test assertions
   keep matching English, because the harnesses run with `language = "en"`.
 
-## 10. Plan
+## 11. Plan
 
 | Phase | What | Visible |
 |---|---|---|
 | P0 groundwork | §7's seven items; the number-formatting module | nothing (English as before) |
-| P1 loader | `fluent-bundle`, the generated IDs and `tr!`, the English file with the menus moved into it, the `language` setting, `en-XA`, live switching, §6's checks | Settings ▸ Language with English and the pseudo-language |
-| P2 extraction | the remaining ~2,700 strings, area by area (menus, panels, dialogs, notices, status bar, live panel, then Help); plurals and word order fixed as each moves; the lint switched on | nothing in English |
-| P3 distribution | `languages/` in the packages; Install / Reload / Check now; the publish script, signed index and host; CI checks; Weblate if chosen | language files installable and updatable |
-| P4 first languages | the first translations (decision 4), then system-font loading for CJK | the first languages |
+| P1 loader and choosing | `fluent-bundle`, the generated IDs and `tr!`, the English file with the menus moved into it; `language` and `language_system_seen`; the first-run selector, the top-bar language menu and its names font, `--language`; `en-XA`; live switching; §6's checks | the language menu, with English and the pseudo-language |
+| P2 extraction | the remaining ~2,700 strings, interface and Help, area by area (menus, panels, dialogs, notices, status bar, live panel, then Help); plurals and word order fixed as each moves; the lint switched on | nothing in English |
+| P3 distribution | `languages/` in the packages; Install, Reload and Check now; the publish script and signed index on GitHub; CI checks | language files installable and updatable |
+| P4 seven languages | Spanish, French, German, Ukrainian (fonts only), Japanese and Chinese (system fonts loaded on demand) | seven languages |
+| P5 Khmer | the egui upgrade (with `wgpu`); the Khmer prototype (shaping, line breaks) checked by a Khmer reader; Noto Sans Khmer; the Khmer file | Khmer |
 
-P2 is most of the work, and it parallelizes by file. P0 and P1 are small and can land behind no
-switch at all, since English output does not change.
+P2 is most of the work, and it parallelizes by file. P0 and P1 can land without a switch, since
+English output does not change. The egui upgrade can run on its own branch alongside P0–P4; it must
+land before P5.
 
-## 11. Decisions needed
+## 12. Decisions
 
-1. **Format:** Fluent (recommended, §3) or gettext PO.
-2. **How translations come in:** Weblate (hosted, translators need no git) or pull requests only.
-3. **Online language updates:** the opt-in, signed update of §5 (recommended), or files by hand
-   only. And the host: GitHub (the update check's host) or fractadyne.org.
-4. **First languages**, and whether Chinese, Japanese or Korean is among them (that brings §8's
-   font work into the first round).
-5. **Scope of the first round:** all of Help (~450 strings, the manual) and the live panel, or the
-   interface first and Help after.
-6. **First run:** follow the system language (recommended), or English until the user picks one.
+Made by the maintainer, 2026-10-22:
+
+1. **Format:** Fluent (§3).
+2. **Translations:** by pull request, for now (§5).
+3. **Online updates:** opt-in and signed (§5).
+4. **First languages:** English, Spanish, French, German, Japanese, Chinese, Khmer, Ukrainian (§9).
+5. **Scope:** the interface and Help.
+6. **Choosing:** follow the system on the first run when it has a language the app has, with a
+   selector in the first-run options; ask when the system's language changes; a language menu in
+   the top bar that is always visible, so nobody is locked in a language they cannot read (§8).
+
+Still open:
+
+- **Chinese:** Simplified (`zh-Hans`) is assumed. Traditional (`zh-Hant`, Taiwan and Hong Kong)
+  would be a second file and a second font.
+- **The host** of the published files: GitHub is assumed (§5); fractadyne.org would serve as well.
+- **Who translates.** Pull requests need translators. A file can carry `language-status = draft`,
+  shown in the language menu, until a native speaker has reviewed it.
+- **When to upgrade egui** (§9): Khmer waits for it.
