@@ -894,6 +894,26 @@ pub(crate) fn device_loss_hint(msg: &str) -> &'static str {
 ///
 /// `frames` is the pre-rendered `frames:` section ([`frame_record::crash_section`]): the live
 /// ring's for a crash in this process, the recovered `frames.bin`'s for a previous session's.
+/// The worker GPU's walk pass in flight at the crash, or its last one (`fractadyne_gpu::TwinPass`).
+/// crash-1792627197 (2026-10-21) lost the device after ~1 s of GPU work its frame record could not
+/// attribute, with a worker on the same card — whose passes report nothing until they return.
+fn worker_pass_line() -> String {
+    match fractadyne_gpu::last_twin_pass() {
+        None => "no worker pass this session".to_string(),
+        Some(p) => {
+            let what = format!(
+                "iterations [{}, {}) over {} samples, skip {}",
+                p.range[0], p.range[1], p.samples, p.skip
+            );
+            let age = p.started.elapsed().as_secs_f64() * 1000.0;
+            match p.ms {
+                None => format!("a pass IN FLIGHT for {age:.0} ms: {what}"),
+                Some(ms) => format!("the last pass took {ms:.1} ms, started {age:.0} ms ago: {what}"),
+            }
+        }
+    }
+}
+
 fn compose_crash_report(msg: &str, loc: &str, frames: &str) -> String {
     let gpu_hint = device_loss_hint(msg);
     format!(
@@ -910,6 +930,7 @@ fn compose_crash_report(msg: &str, loc: &str, frames: &str) -> String {
          tunables: {}\n\
          bignum  : {}\n\
          thread  : {}\n\
+         worker  : {}\n\
          {}{frames}{}\n\
          backtrace (debug symbols are disabled in this build; addresses only):\n{}\n",
         crate::sysinfo::version_string(),
@@ -928,6 +949,7 @@ fn compose_crash_report(msg: &str, loc: &str, frames: &str) -> String {
         // any other report, and `none` is itself informative (nothing had iterated yet).
         fractadyne_core::backend_status_line(),
         std::thread::current().name().unwrap_or("<unnamed>"),
+        worker_pass_line(),
         // The frame-budget decisions leading up to this, oldest first. On a device loss this is
         // the section to read first: it says whether the controller was handed a slow reading and
         // ignored it, or was never handed one at all.

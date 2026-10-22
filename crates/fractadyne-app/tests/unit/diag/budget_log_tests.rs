@@ -65,6 +65,9 @@ fn the_crash_report_carries_the_frames_section_and_the_session() {
     // The section sits after the budget block and before the backtrace.
     let (b, f, t) = (r.find("budget  :").unwrap(), r.find("frames  :").unwrap(), r.find("backtrace").unwrap());
     assert!(b < f && f < t, "{r}");
+    // …and the worker GPU's pass gets a line of its own, said either way (a test process has
+    // submitted none): a pass that hangs the device never reports itself anywhere else.
+    assert!(r.contains("worker  : no worker pass this session"), "{r}");
 }
 
 /// Nothing recorded must read as "nothing recorded", not as an empty section a reader could

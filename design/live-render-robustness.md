@@ -5384,3 +5384,38 @@ landed on one side (0.92–1.35 across eleven runs on an RTX 3080, main as often
 measures seven back-to-back pairs, the first of each pair alternating, and takes the median of their
 ratios: eight runs read 1.02–1.17 (single pairs still 0.83–1.41: per-pass jitter, which the median
 absorbs). The gate stands at 1.3.
+
+**2026-10-21 — a Home glide from 2^248 loses the device: the series skip dropped mid-glide**
+(`fix/zoomout-skip-flip`; the maintainer's crash-1792627197, build gc7d590e, nvlddmkm Event 153).
+The frame record says it outright. An escaped reference of 298,416 samples carried a
+298,404-iteration skip (the short-escaper series, `sa_short_escaper`); every pixel escaped ~70
+iterations past it, readings priced 2e11 steps at 0.2–0.5 ms, and the budget re-climbed to its 3e11
+ceiling in 1.5 s at the still view. The live readback decided the series per FRAME, from
+`orbit_len × 2 < ref_build_iter`, and a moving frame's `ref_build_iter` is its ask, which a Home
+glide lowers: frame 27939 (ask 490,875) dropped the skip that frame 27938 (592,562) kept, and went
+out as one 1.545e11-step pass from iteration 0. The DEAD-MAN cut came a frame later; the reset
+followed. A GPU-second of work before that frame is still unattributed (its readings never
+returned); the same-card worker GPU is the suspect, and a crash report now names the worker's pass
+in flight (`fractadyne_gpu::last_twin_pass`, the `worker  :` line).
+
+Three changes. (1) `live_series`: the series a live frame applies is the reference's, decided from
+the ask it was built for (`orbit_iter`, the `finish_reference` rule), not the frame's. A per-frame
+check could only switch it off, and the series stays valid at any ask. (2) `series_collapse`: a
+frame whose `series_share` (iterations from the skip to the reference's end, over the shader's
+count) is more than twice the last real frame's plus 0.02 is treated as an arithmetic-mode switch:
+budget unmeasured, pacer and moving scale reset, and the frame holds, because its dispatch was sized
+on the old budget before this frame's reference install. (3) `sa_skip_rescue` fires at
+`skip == count` too: `usable_sa_skip` refuses a skip that reaches the count, and the repro's first
+moving frame (ask 298,406 against a 298,406 skip) went from zero unrescued. `shader_series` now
+holds the count and skip rules once, for the dispatch and for the check.
+
+Reproduction (`--zoomtest --zoomtest-home [REST] --zoomtest-quiet S`, a scratch config seeded with
+copies of the maintainer's settings and orbit cache, which give the same 298,416-sample reference;
+`TDR_STEPS_CEIL=2e9` so no pass could reach the band). The maintainer's exact state did not come
+back: their boost of 10.63, built over a long session, put the moving ask at 696k, while every
+cold or zoom-in start here climbed to 7.7 at most (ask ≤ 501k, under the 588,640 flip), and the
+climb re-derives a boost set at the start (tried; not kept). What did come back: with the fix, a Home glide
+from a settled 2^248 logged two collapses (the equal-ask frame, then the first moving reference built
+without a series), each holding a frame and re-opening the budget at the bootstrap. The re-climb's
+readings priced the from-zero regime's early bands at 6–28 ms per Gstep at 3021×1668. At that rate
+the crash frame's pass was 1–4 s on its own.

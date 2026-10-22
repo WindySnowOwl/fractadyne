@@ -1447,7 +1447,7 @@ fn sa_short_escaper(inp: &RecomputeInputs, len: u32, partial: bool) -> bool {
     inp.bla_dc_max.is_some()
         && fractadyne_core::formula::caps(inp.formula).series_approximation
         && !partial
-        && (len as u64).saturating_mul(2) < inp.gpu_iter.max(1) as u64
+        && short_escaper_ask(len, inp.gpu_iter)
 }
 
 /// Assemble a `RecomputeResult` from an already-built (fresh or extended) orbit: derive the
@@ -3484,6 +3484,54 @@ impl FractadyneApp {
             && !julia
             && self.fractal.caps().bla
             && (!method.blocks_iter_skip() || aux_bla_ok)
+    }
+
+    /// The series approximation view `vi`'s live frames apply: the reference's own, when the view
+    /// runs the series (`do_sa`) or the reference is a SHORT ESCAPER — the deep-exterior case a BLA
+    /// view runs it for anyway (`sa_short_escaper`: it seeds δz past an early-iteration glitch) —
+    /// else none.
+    ///
+    /// ⭐Decided by the REFERENCE: from the ask it was built for (`orbit_iter`), as `finish_reference`
+    /// decided whether to compute the series at all, not from this frame's ask. The live rule read
+    /// the frame's `ref_build_iter`, which falls with the depth on a zoom out — crash-1792627197
+    /// (2026-10-21), a Home glide from 2^248: the escaped 298,416-sample reference carried a
+    /// 298,404-iteration skip, the moving ask fell below twice the orbit (592,562 → 490,875), the
+    /// rule dropped the skip, and every pixel went from ~70 iterations to ~300,000 in one pass sized
+    /// on the skip's budget. A per-frame check could only ever turn the series OFF (a reference
+    /// built without it carries none) and the series stays valid at any ask (`shader_series`
+    /// handles an ask below the skip), so it bought nothing but the flip.
+    pub(crate) fn live_series(&self, vi: usize, mode: RenderMode, julia: bool, do_sa: bool) -> fractadyne_core::SeriesSkip {
+        let rc = &self.ref_cache[vi];
+        let short_escaper = self.bla_eligible(mode, julia)
+            && self.fractal.caps().series_approximation
+            && !rc.partial
+            && short_escaper_ask(rc.orbit_len, rc.orbit_iter);
+        if do_sa || short_escaper { rc.sa } else { fractadyne_core::SeriesSkip::NONE }
+    }
+
+    /// A [`series_collapse`] on view `vi`: its budget becomes unmeasured, as at an arithmetic-mode
+    /// switch (the pacer's memory and the moving scale with it), and `share` becomes the regime the
+    /// next readings measure. Always logged: a collapse is a near miss of the lethal band.
+    fn series_collapse_reset(&mut self, vi: usize, share: f32, skip: u32) {
+        let vb = vi.min(1);
+        let (cur, was, skip_was) = (self.perf.fe_budget[vb], self.perf.series_share[vb], self.perf.last_sa_skip_v[vb]);
+        self.perf.fe_budget[vb] = 0;
+        self.perf.fe_budget_ok[vb] = false; // tiling re-arms once re-converged
+        self.perf.motion_step_last[vb] = 0;
+        self.perf.motion_work_last[vb] = 0;
+        self.reset_moving_scale(vb);
+        self.perf.pin_frames_last[vb] = 0;
+        self.perf.series_share[vb] = Some(share);
+        crate::diag::log_line(
+            "render",
+            &format!(
+                "series collapse v{vi}: skip {skip_was} → {skip}, the pixels' share of the iterations {:.2e} → {share:.2e} \
+                 — budget {:.3e} → unmeasured (bootstrap {:.3e}); this frame holds",
+                was.unwrap_or(0.0),
+                cur as f64,
+                self.perf.bootstrap_steps(vb) as f64,
+            ),
+        );
     }
 
     /// Conservative worst-case `|δc|` (absolute, `·2^delta_exp`) for any pixel a reference serves:
@@ -6348,55 +6396,22 @@ impl FractadyneApp {
         // `tile_work`); whether it dispatches is decided below, after the freeze verdict.
         planned_pass: bool,
     ) -> MandelbrotParams {
-        // Never submit a full-length perturbation iterate without a reference. During the async
-        // cold-start (`ref_pt` None) a FRESH view can't reproject the placeholder — there is no
-        // frozen frame to reproject — so the shader falls through to a real iterate, but with an
-        // empty orbit every pixel runs to `max_iter` against a null reference. At deep zoom with a
-        // large `max_iter` (e.g. 500k) that single GPU frame overruns the Windows GPU-watchdog (TDR)
-        // timeout → the device is lost → wgpu treats it as fatal and the process aborts. Cap the
-        // placeholder to a trivially cheap iterate (a flat interior fill) until the reference lands.
-        // Direct mode has no reference by design, so it keeps its full iteration count.
-        const PLACEHOLDER_ITER_CAP: u32 = 256;
-        let shader_iter = if mode.is_direct() {
-            gpu_iter
-        } else if self.ref_cache[vi].ref_pt.is_none() {
-            gpu_iter.min(PLACEHOLDER_ITER_CAP) // no reference yet → cheap flat placeholder (TDR-safe)
-        } else if self.ref_cache[vi].partial {
-            // Coarse (truncated) reference from a progressive cold start: cap at orbit_len-1 so the
-            // shader never rebases past the short reference into df32-inaccurate territory (which
-            // speckles at extreme depth) — a clean partial image (fast escapers correct, the rest
-            // interior) until the full reference lands and refines it. (Do NOT cap escaped-short
-            // references: those pixels ESCAPE, they don't rebase-glitch — the deep-exterior "tiles"
-            // were the BLA/SA issue, fixed in `finish_reference`. Capping an escaped-short reference
-            // instead collapses every late-escaping BOUNDARY pixel to interior → a hard black border
-            // with no filament detail around a deep minibrot.)
-            gpu_iter.min(self.ref_cache[vi].orbit_len.saturating_sub(1))
-        } else {
-            gpu_iter
-        };
-        // ⭐Rescue the SA-skip INVERSION (device loss crash-1789092955, 2026-09-11): if the throttle
-        // sized this dispatch's budget below the reference's SA skip, `usable_sa_skip` would refuse it
-        // and the shader would grind from iteration ZERO — the lethal frame. `sa_skip_rescue` raises
-        // the budget above the skip so it stays applied, but only when that is the cheaper path (an
-        // ordinary small-skip frame is untouched). Self-correcting: the cheap frame lets the throttle
-        // grow the budget past the skip, after which normal skip-applied rendering resumes.
-        let shader_iter = if !mode.is_direct() && self.ref_cache[vi].ref_pt.is_some() {
-            let raised = sa_skip_rescue(shader_iter, sa.skip, self.ref_cache[vi].orbit_len);
-            if raised != shader_iter && crate::diag::trace_on("tile") {
-                crate::diag::trace(
-                    "tile",
-                    format!(
-                        "sa-skip inversion averted: budget {shader_iter} < sa_skip {} ⇒ raised to \
-                         {raised} (post-skip window {} iters)",
-                        sa.skip,
-                        raised.saturating_sub(sa.skip),
-                    ),
-                );
-            }
-            raised
-        } else {
-            shader_iter
-        };
+        // The shader's count and the skip it applies (`shader_series`: the no-reference placeholder,
+        // the partial-reference cap, the inversion rescue).
+        let rc = &self.ref_cache[vi];
+        let (base_iter, shader_iter, sa_skip_eff) =
+            shader_series(mode.is_direct(), rc.ref_pt.is_some(), rc.partial, gpu_iter, rc.orbit_len, sa.skip);
+        if shader_iter != base_iter && crate::diag::trace_on("tile") {
+            crate::diag::trace(
+                "tile",
+                format!(
+                    "sa-skip inversion averted: budget {base_iter} < sa_skip {} ⇒ raised to \
+                     {shader_iter} (post-skip window {} iters)",
+                    sa.skip,
+                    shader_iter.saturating_sub(sa.skip),
+                ),
+            );
+        }
 
         // LIVE MANIFEST. A frame that re-iterates is the only thing here that can lose the device,
         // and until now the crash report's `manifest:` line was EMPTY for every live crash — it is
@@ -6412,7 +6427,6 @@ impl FractadyneApp {
         // or real ones, and that is the open question in the field device-loss item. `bla_on=0` is
         // the other silent multiplier: the e100 crash was a pass running an empty tree at 0.04
         // Gsteps/s beside a 174 Gsteps/s pass in the SAME frame.
-        let sa_skip_eff = usable_sa_skip(sa.skip, shader_iter);
         // A chunked frame's real dispatch is its RANGE, not the full-frame nominal — the
         // same honesty rule the fe_steps stamp follows. The 985x735 "steps=1.810e11 vs
         // budget=6.000e10" manifest in crash-1787275348-0 read as a frame that ignored its
@@ -6445,6 +6459,13 @@ impl FractadyneApp {
             // `sa_skip=266796` on a frame whose shader was handed 0, which is exactly the question
             // this line exists to answer. Effective first, raw in parentheses.
             self.perf.last_sa_skip_v[vs.min(1)] = sa_skip_eff;
+            // The regime the budget's next readings will measure (`series_collapse`): only a frame
+            // that really iterates, since a held one prices nothing.
+            if reproject.is_none() {
+                let rc = &self.ref_cache[vi];
+                self.perf.series_share[vs.min(1)] = (!mode.is_direct() && rc.ref_pt.is_some())
+                    .then(|| series_share(shader_iter, rc.orbit_len, sa_skip_eff));
+            }
             // The ask this view was planned at, for the complete-walk test at the reading drain.
             self.perf.planned_ask[vs.min(1)] = gpu_iter;
             self.perf.last_res_v[vs.min(1)] = [resolution[0], resolution[1]];
@@ -8846,6 +8867,23 @@ impl FractadyneApp {
             //    reference lands and the view snaps to full sharpness. (`is_direct`, mode 1 <1e4×,
             //    re-renders every frame — cheap, sharp, no frozen texture to reproject.)
             too_stale = too_stale || reuse_hold || depth_lag > DEEP_LAG_HOLD;
+            // ⭐SERIES COLLAPSE (`series_collapse`, crash-1792627197): the series this frame applies
+            // leaves its pixels far more of the reference to iterate than the last real frame's did
+            // — a cost the NOMINAL budget cannot see. Treated as an arithmetic-mode switch is: the
+            // budget is unmeasured again (the next frame opens at the bootstrap and re-climbs on
+            // readings of THIS regime), and this frame, whose dispatch was sized above on the old
+            // regime's budget, holds the last good frame instead of iterating. Decided here, after
+            // this frame's reference install, so a reference that brings no series is caught too.
+            let series = self.live_series(vi, mode, julia, do_sa);
+            if !offscreen && self.ref_cache[vi].ref_pt.is_some() {
+                let rc = &self.ref_cache[vi];
+                let (_, shader_iter, skip) = shader_series(false, true, rc.partial, gpu_iter, rc.orbit_len, series.skip);
+                let share = series_share(shader_iter, rc.orbit_len, skip);
+                if series_collapse(self.perf.series_share[vi.min(1)], share) {
+                    self.series_collapse_reset(vi, share, skip);
+                    too_stale = true;
+                }
+            }
             // ⚠"Prefer detail" does NOT add a freeze here. Its first cut did — every interacting
             // frame froze — which disabled the reuse-hold's REFRESH_OCTAVES cadence entirely, so a
             // continuous dive just magnified the frozen frame into ever-larger blocks (field
@@ -9313,19 +9351,9 @@ impl FractadyneApp {
                 let dy = fractadyne_core::ref_offset_mantissa(&center_bf[1], &rp[1], delta_exp, precision);
                 ref_offset = RefOffset::from_df32(dx, dy);
             }
-            // SHORT ESCAPED reference (deep EXTERIOR): mirror `finish_reference` — the BLA turned SA
-            // off ("BLA subsumes SA"), which exposed an early-iteration perturbation glitch as tiles.
-            // The BLA is kept (speed), but SA must be read back so it seeds δz past the glitch. Under
-            // BLA eligibility `do_sa` is false, so without this the (off-thread-computed) SA would sit
-            // unused. Same predicate as `finish_reference` keeps the two paths in lock-step.
-            let short_escaper = self.bla_eligible(mode, julia)
-                && self.fractal.caps().series_approximation
-                && !self.ref_cache[vi].partial
-                && (self.ref_cache[vi].orbit_len as u64).saturating_mul(2) < ref_build_iter.max(1) as u64;
-            // Series approximation travels with the reference (computed off-thread); read it back.
-            if do_sa || short_escaper {
-                sa = self.ref_cache[vi].sa;
-            }
+            // Series approximation travels with the reference (computed off-thread); read it back —
+            // the one decided above for the series-collapse check (`live_series`).
+            sa = series;
             // BLA tree, cached per reference: reused across frames (and pans — the conservative
             // `dc_max` is offset-independent) and rebuilt only when the orbit changes or the view
             // zooms out enough to need a larger `dc_max`. Removes the ~20 ms/frame rebuild while
@@ -11385,6 +11413,82 @@ pub(crate) fn usable_sa_skip(skip: u32, max_iter: u32) -> u32 {
     if skip >= max_iter { 0 } else { skip }
 }
 
+/// A SHORT ESCAPER: a reference that escaped (`!partial`, checked by the callers) well short of the
+/// iteration ask it was built for — under half of it. A BLA view runs the series for one anyway
+/// (see `sa_short_escaper`).
+pub(crate) fn short_escaper_ask(orbit_len: u32, ask: u32) -> bool {
+    (orbit_len as u64).saturating_mul(2) < ask.max(1) as u64
+}
+
+/// The iteration a frame's shader runs to and the series skip it applies, from the view's reference
+/// state: `(base, shader_iter, skip)`, `base` being the count before the inversion rescue. One rule
+/// for the dispatch (`bp_finish_params`) and the series-collapse check that has to predict it
+/// (`build_params`), so the two cannot disagree.
+pub(crate) fn shader_series(direct: bool, has_ref: bool, partial: bool, gpu_iter: u32, orbit_len: u32, sa_skip: u32) -> (u32, u32, u32) {
+    // Never submit a full-length perturbation iterate without a reference. During the async
+    // cold-start (`ref_pt` None) a FRESH view can't reproject the placeholder — there is no
+    // frozen frame to reproject — so the shader falls through to a real iterate, but with an
+    // empty orbit every pixel runs to `max_iter` against a null reference. At deep zoom with a
+    // large `max_iter` (e.g. 500k) that single GPU frame overruns the Windows GPU-watchdog (TDR)
+    // timeout → the device is lost → wgpu treats it as fatal and the process aborts. Cap the
+    // placeholder to a trivially cheap iterate (a flat interior fill) until the reference lands.
+    // Direct mode has no reference by design, so it keeps its full iteration count.
+    const PLACEHOLDER_ITER_CAP: u32 = 256;
+    let base = if direct {
+        gpu_iter
+    } else if !has_ref {
+        gpu_iter.min(PLACEHOLDER_ITER_CAP) // no reference yet → cheap flat placeholder (TDR-safe)
+    } else if partial {
+        // Coarse (truncated) reference from a progressive cold start: cap at orbit_len-1 so the
+        // shader never rebases past the short reference into df32-inaccurate territory (which
+        // speckles at extreme depth) — a clean partial image (fast escapers correct, the rest
+        // interior) until the full reference lands and refines it. (Do NOT cap escaped-short
+        // references: those pixels ESCAPE, they don't rebase-glitch — the deep-exterior "tiles"
+        // were the BLA/SA issue, fixed in `finish_reference`. Capping an escaped-short reference
+        // instead collapses every late-escaping BOUNDARY pixel to interior → a hard black border
+        // with no filament detail around a deep minibrot.)
+        gpu_iter.min(orbit_len.saturating_sub(1))
+    } else {
+        gpu_iter
+    };
+    // ⭐Rescue the SA-skip INVERSION (device loss crash-1789092955, 2026-09-11): if the throttle
+    // sized this dispatch's budget below the reference's SA skip, `usable_sa_skip` would refuse it
+    // and the shader would grind from iteration ZERO — the lethal frame. `sa_skip_rescue` raises
+    // the budget above the skip so it stays applied, but only when that is the cheaper path (an
+    // ordinary small-skip frame is untouched). Self-correcting: the cheap frame lets the throttle
+    // grow the budget past the skip, after which normal skip-applied rendering resumes.
+    let shader_iter = if !direct && has_ref { sa_skip_rescue(base, sa_skip, orbit_len) } else { base };
+    (base, shader_iter, usable_sa_skip(sa_skip, shader_iter))
+}
+
+/// The share of a frame's nominal iterations its pixels can really run past the series skip: the
+/// span from the skip to the end of the reference (or of the shader's count, if that is sooner),
+/// over the shader's count. Near 1 without a skip; tiny when the skip lands just short of an
+/// escaped reference's end, where every pixel escapes within a few iterations of it.
+pub(crate) fn series_share(shader_iter: u32, orbit_len: u32, skip: u32) -> f32 {
+    let reach = shader_iter.min(orbit_len.max(1));
+    reach.saturating_sub(skip) as f32 / shader_iter.max(1) as f32
+}
+
+/// Added to twice the last share before a rise counts as a [`series_collapse`] (a share, 0..1).
+pub(crate) const SERIES_COLLAPSE_SLACK: f32 = 0.02;
+
+/// A SERIES COLLAPSE: this frame's [`series_share`] is more than twice the last real frame's (plus
+/// [`SERIES_COLLAPSE_SLACK`]), so its pixels iterate many times more of the reference than the
+/// frames the budget was measured on — a cost the budget cannot see, being NOMINAL (pixels × the
+/// iteration range, the skip's region included). crash-1792627197 (2026-10-21): a Home glide from
+/// 2^248 rendered with a 298,404-iteration skip on a 298,416-sample escaped reference (share
+/// 2e-5): every pixel escaped ~70 iterations later, readings said 0.2 ms for 2e11 steps, and the
+/// budget sat at its 3e11 ceiling. The skip then went (share 0.61) and one 1.5e11-step pass sized
+/// on that budget lost the device. `prev` is the last real frame's share (`None`: none to compare).
+pub(crate) fn series_collapse(prev: Option<f32>, now: f32) -> bool {
+    prev.is_some_and(|p| now > 2.0 * p + SERIES_COLLAPSE_SLACK)
+}
+
+#[cfg(test)]
+#[path = "../tests/unit/render/series_collapse_tests.rs"]
+mod series_collapse_tests;
+
 /// Rescue a dispatch from the SA-skip INVERSION that lost the device on 2026-09-11
 /// (`crash-1789092955-0`, a beta.96 parabolic bulb-root exact point). A non-escaping view pins its
 /// reference at the cap, so SA computes a skip covering nearly the whole orbit; when the frame-cost
@@ -11403,7 +11507,10 @@ pub(crate) fn usable_sa_skip(skip: u32, max_iter: u32) -> u32 {
 /// (no window past it) or was not going to be refused at all. Pinned by `render::sa_skip_budget`.
 pub(crate) fn sa_skip_rescue(shader_iter: u32, sa_skip: u32, orbit_len: u32) -> u32 {
     let post_skip_cap = orbit_len.saturating_sub(1);
-    let inverted = sa_skip > shader_iter // the throttle put this budget below the skip ⇒ refusal
+    // ⚠`>=`: `usable_sa_skip` refuses a skip that REACHES the count, not only one past it. With `>`
+    // a moving ask that fell exactly onto the skip (298,406 = 298,406 at the 2026-10-21 Home glide
+    // repro's first frame) was refused unrescued and iterated from zero.
+    let inverted = sa_skip >= shader_iter // the budget is at or below the skip ⇒ refusal
         && post_skip_cap > sa_skip // there is a window past the skip inside the reference
         && post_skip_cap - sa_skip < shader_iter; // and applying the skip is the cheaper path
     if inverted { post_skip_cap } else { shader_iter }

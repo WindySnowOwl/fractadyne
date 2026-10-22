@@ -59,6 +59,20 @@ published as the pre-releases `v0.2.41-beta.1` to `v0.2.41-beta.150`, and a "bet
 
 Changes after 0.3.0-beta.1:
 
+- **Zooming out of a deep exterior view no longer overruns the graphics card (0.3.0-beta.20).** A
+  graphics device was lost a few seconds into a Home glide from 2^248. Deep outside the set, the
+  reference orbit can escape before half the iteration count, and a series approximation then skips
+  each pixel to within a few iterations of where it escapes. While that skip is in use, a frame
+  costs a tiny fraction of its nominal size, so the frame budget measured on such frames climbs to
+  its ceiling. The live view decided frame by frame whether to use the skip, from the iteration
+  count of that frame, and that count falls as the view zooms out. When it fell below twice the
+  orbit, the skip was dropped and every pixel went from about 70 iterations to about 300,000, in one
+  pass sized on the old budget. The skip is now decided once for each reference, as the reference
+  was built. And a frame whose skip leaves its pixels many times more of the orbit than the last
+  frame's (a new reference without one, for example) holds the picture on screen for that frame and
+  measures the budget afresh, as a change of arithmetic already did. A skip exactly equal to the
+  iteration count is also used, no longer refused into a full recount. A crash report now also says
+  what the second graphics device's last pass was doing.
 - **Deep zooms no longer shake, and their colours no longer jump (0.3.0-beta.20).** While zooming
   deep, the view shows a mix of fresh frames and held ones, and frames rendered below full resolution
   were drawn a few pixels down and to the right of where they belong: up to 6 pixels for a
