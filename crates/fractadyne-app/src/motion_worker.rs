@@ -111,6 +111,26 @@ pub(crate) fn adopt_target(real: bool, display_hold: bool, hold_copy: bool) -> A
     }
 }
 
+/// A worker pass at least this long is logged (`pump_live`): a single draw the card does not
+/// interrupt, against a pass target of a few milliseconds.
+pub(crate) const WORKER_LONG_PASS_MS: f64 = 100.0;
+
+/// The always-on line for a worker pass of at least [`WORKER_LONG_PASS_MS`], out of a walk of
+/// `passes`: what it ran, and what the pass before it took (what sized it).
+pub(crate) fn long_pass_line(lp: &fractadyne_gpu::LongestPass, passes: u32) -> String {
+    let what = if lp.cap > 0 {
+        format!("up to {} steps for each of {} running samples", lp.cap, lp.samples)
+    } else {
+        format!("iterations [{}, {}) over {} samples", lp.range[0], lp.range[1], lp.samples)
+    };
+    let before = match (lp.index, lp.cap) {
+        (0, _) => "the first of its walk".to_string(),
+        (_, 0) => format!("the pass before it took {:.1} ms over {} iterations", lp.prev_ms, lp.prev_work),
+        _ => format!("the pass before it took {:.1} ms for {} sample-steps", lp.prev_ms, lp.prev_work),
+    };
+    format!("⚠long worker pass: {:.0} ms, {what} (pass {} of {passes}); {before}", lp.ms, lp.index + 1)
+}
+
 /// A worker frame is aimed at this long from offer to answer.
 pub(crate) const LIVE_TARGET_MS: f64 = 150.0;
 /// The worker's resolution, as a fraction of the panel's, stays within this.
@@ -278,6 +298,11 @@ impl FractadyneApp {
                     st.ms_sum += ms;
                     st.passes += d.walk.passes;
                     st.max_pass_ms = st.max_pass_ms.max(d.walk.max_pass_ms);
+                    // A worker pass this long held up the card: on a same-card worker, every frame
+                    // the window draws waits behind it. Always logged, with what sized it.
+                    if let Some(lp) = d.walk.longest.filter(|lp| lp.ms >= WORKER_LONG_PASS_MS) {
+                        crate::diag::log_line("worker", &long_pass_line(&lp, d.walk.passes));
+                    }
                     self.perf.live_res[v] = live_res_next(self.perf.live_res[v], ms);
                     // The worker GPU's time on this frame (its walk), for the panel's engine room.
                     crate::blinken::events::emit(

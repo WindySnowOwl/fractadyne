@@ -1797,6 +1797,45 @@ impl FractadyneApp {
                     });
                 }
 
+                // The worker's own walk (`LiveTwin::walk`): a mode-2 walk runs STEP-BOUNDED passes,
+                // each pixel stopped after a number of steps rather than at an iteration, so its
+                // pixels pause at different iterations, unlike any window walk. It must still be the
+                // chunked walk's frame bit for bit. A 1 ms pass target makes the first pass's cap a
+                // few dozen steps here, so the walk takes many passes and pauses pixels in each.
+                let stepped = twin.as_ref().map_err(|e| e.clone()).and_then(|t| {
+                    let mut lt = fractadyne_gpu::LiveTwin::new(&t.device, &t.queue);
+                    let mut pricer = fractadyne_gpu::WalkPricer::default().with_pass_ms(1.0);
+                    let stats = lt.walk(&t.device, &t.queue, &base, &mut pricer, &|| false).map_err(|e| e.to_string())?;
+                    let g = lt.gbuffer(&t.device, &t.queue, base.view_id, true).map_err(|e| e.to_string())?;
+                    Ok((g, stats))
+                });
+                let (pass, result) = match (&here_walk, &stepped) {
+                    (Ok(a), Ok((b, stats))) => match differ(a, b) {
+                        Some(d) => (
+                            d == 0 && have_ref && base.mode == 2 && stats.passes >= 3,
+                            format!(
+                                "{d} of {} channels differ from the chunked walk; {} passes, longest {:.1} ms; {} of {} texels escaped",
+                                a.iter.len() * 2,
+                                stats.passes,
+                                stats.max_pass_ms,
+                                escaped(b),
+                                b.iter.len() / 4
+                            ),
+                        ),
+                        None => (false, format!("sizes differ: {}×{} and {}×{}", a.width, a.height, b.width, b.height)),
+                    },
+                    (Err(e), _) => (false, format!("this device: {e}")),
+                    (_, Err(e)) => (false, format!("the twin: {e}")),
+                };
+                push_check(&mut checks, &mut last_check_t, SelfCheck {
+                    category: "Worker",
+                    name: "a worker's step-bounded walk is the chunked walk's frame, bit-identical".into(),
+                    params: format!("corpus07 1.3e30x, {max_iter} iter, {LW}×{LH}, mode {}; LiveTwin::walk at a 1 ms pass target", base.mode),
+                    result: if have_ref { result } else { format!("{result}; the reference never arrived") },
+                    threshold: "0 channels differ (iter + aux planes), mode 2; at least 3 passes",
+                    pass,
+                });
+
                 // Control: the frame is this view's — escaped texels, and a whole-pixel jitter moves it.
                 let mut shifted = base.clone();
                 shifted.jitter = [1.0, 0.0];

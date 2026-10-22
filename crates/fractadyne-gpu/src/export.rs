@@ -571,7 +571,8 @@ const STEP_PRICE_MIN_ACTIVE: u64 = 131_072;
 /// pixel-step (it only rises), and the cap that puts a pass at [`STEP_TARGET_MS`] at that cost.
 /// Priced per pixel-step rather than per pass so a new tile, whose pixels are all active again,
 /// opens at the cost the last busy pass showed instead of at whatever its nearly-finished tail
-/// happened to allow.
+/// happened to allow. A worker GPU's mode-2 walks are priced by one too (`LiveTwin::walk`).
+#[derive(Clone, Debug)]
 pub(crate) struct StepPricer {
     worst_ns: f64,
     measured: bool,
@@ -602,6 +603,16 @@ impl StepPricer {
         let target = pass_ms.filter(|m| m.is_finite() && *m > 0.0);
         let target_ms = target.map_or(STEP_TARGET_MS, |m| m.min(STEP_TARGET_MS));
         Self { worst_ns: STEP_PRIOR_NS, measured: false, target_ms, recent: target.map(|_| Vec::new()), last: None }
+    }
+    /// Size passes for `pass_ms` from here on (as [`Self::for_pass`]; a garbage target changes
+    /// nothing).
+    pub(crate) fn set_pass_ms(&mut self, pass_ms: f64) {
+        if pass_ms.is_finite() && pass_ms > 0.0 {
+            self.target_ms = pass_ms.min(STEP_TARGET_MS);
+            if self.recent.is_none() {
+                self.recent = Some(Vec::new());
+            }
+        }
     }
     /// The cost a pass is priced at, ns per active pixel-step.
     fn price_ns(&self) -> f64 {
@@ -639,7 +650,7 @@ impl StepPricer {
     /// longer. Following cannot run away: the pixels still running ran the whole last cap, so a
     /// pass that doubles it does at most twice their work. Under a target the floor is
     /// [`STEP_MIN_CAP_TARGET`].
-    fn cap_for(&self, area: u64, active: u64, fresh: bool) -> u32 {
+    pub(crate) fn cap_for(&self, area: u64, active: u64, fresh: bool) -> u32 {
         if self.recent.is_none() {
             return match self.last {
                 Some((cap, wall)) if !fresh && active < STEP_PRICE_MIN_ACTIVE && wall.is_finite() && wall > 0.0 => {
@@ -663,7 +674,7 @@ impl StepPricer {
     }
     /// Record a pass: `active` pixels ran up to `cap` steps in `wall_ms`. The first measurement
     /// REPLACES the prior (the prior is a guess, not evidence); later ones can only raise it.
-    fn observe(&mut self, wall_ms: f64, active: u64, cap: u32) {
+    pub(crate) fn observe(&mut self, wall_ms: f64, active: u64, cap: u32) {
         if wall_ms.is_finite() && wall_ms > 0.0 && cap > 0 {
             self.last = Some((cap, wall_ms)); // any pass, busy or a tail (`cap_for`)
         }

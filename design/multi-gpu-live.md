@@ -793,3 +793,47 @@ Decision (maintainer, 2026-10-16): supersession is the design working, so A4 rep
 gates the rest. `WORKER_YIELD` stays as an experiment, default 0: a ~5% gain on a shared card from
 n = 3 is not a default, and with two physical cards the window's work cannot slow the other card
 while yielding would hide its sharper refreshes.
+
+### 9.2 Step-bounded worker walks (2026-10-22)
+
+Why: the crash report of the 2026-10-21 Home-glide device loss (crash-1792627197, RTX 3080) has
+about a second of GPU work before the fatal frame that its record cannot attribute, and the worker
+GPU, on the same card, was the main suspect. A repro of that glide (`--zoomtest-home` from 2^236,
+`--worker-gpu same`, the user's settings copied) logged worker passes of 134, 189 and 308 ms against
+the 8 ms pass target, each right after a pass of about 1 ms.
+
+What the trace showed (`FRACTADYNE_TRACE=tile`, every pass of every walk): the cost of an iteration
+is far from uniform along a walk. Per sample-iteration it ran 3e-5 ns where the BLA skips, and rose
+25–400× within a pass or two where it stops skipping for a set of the pixels still running (up to
+3.7e-2 ns). A window walk sizes each pass from the one before (`window × target / wall`, at most
+doubling), so a window grown on the cheap stretch crossed into the dear one whole. Three fixes on
+iteration windows were measured and dropped:
+
+- **Octave bands** (each pass cut at a power of two, entered at that band's last price): long passes
+  remained (167, 134 ms). The cliffs fall inside bands.
+- **The reference's end** (a pass cut there, the tail priced from the last walk): the cliffs are
+  not there; one sat at 65,536 against a reference 298,416 long.
+- **A cap from the dearest rate seen** (no pass past 4 targets at it): the longest pass fell to
+  36–44 ms, but the worker fell to 278 passes and 1.2 s a frame at resolution 0.25. One dear reading
+  (the pass after the series skip, where pixels pass the reference's end) capped the whole walk,
+  and short passes, mostly fixed cost, kept reading dear. The cliffs also move between walks: in
+  one consecutive pair, from about 159,000 to about 92,000 iterations.
+
+What was built: a mode-2 walk runs the export's STEP-BOUNDED passes (`LiveTwin::walk_steps`;
+`MandelbrotParams::step_cap` into the uniform's tail word; the running count read back after each
+pass). A step costs about the same with or without the BLA, and the pixels still running ran the
+whole last cap, so a pass that follows the last one's wall (the export's `StepPricer` under the
+pass target) does at most twice their work. Two traps: `prepare` reruns the iterate only when its
+key or the chunk range changes, so the resume passes alternate start 1 and 2 (the shader reads any
+start above 0 as "resume"); and a walk stops with an error past `max_iter` passes rather than spin
+on a count that does not fall.
+
+Measured on the same repro: of 1,441 passes after each walk's first, p50 3.3 ms, p90 7.9, p99
+11.1, max 16.5 (before: up to 308). Each walk's FIRST pass costs 30–50 ms whatever its cap (98
+cold): a fixed cost the window walks' first pass had too (9–60 ms for 256 iterations), probably
+the state textures made again as the worker's resolution changes every frame. Not addressed here.
+Worker frames: zoom-in 151 ms each, 9.0 passes (24–27 before), resolution 0.77 (0.68–0.69); Home
+glide 275 ms, 20.6 passes, resolution 0.48 (222–266 ms and 0.43–0.69 before, run to run). The
+self-test row "a worker's step-bounded walk is the chunked walk's frame, bit-identical" holds it
+to 0 differing channels and at least 3 passes; with the step cap dropped from the uniform it fails
+(1 pass). Mode 0/1 walks still cut iteration windows.

@@ -2938,6 +2938,11 @@ pub struct MandelbrotParams {
     /// the app can tell it from another walk's (a new walk starts with every pixel running). 0 =
     /// no count.
     pub chunk_walk: u64,
+    /// A mode-2 chunk pass with this > 0 stops each pixel after that many executed steps instead
+    /// of at its window's end: the export's STEP-BOUNDED passes (`IterUniforms::tail`), which a
+    /// worker GPU's walks run (`LiveTwin::walk`). Its pixels then stop at different iterations, so
+    /// the window, which shows a walk's every pass, never sets it. 0 = off.
+    pub step_cap: u32,
     /// The accumulator's own sample count, stored after every fold: what the average really holds,
     /// for the app to check against what it counted.
     pub accum_folds: Option<Arc<std::sync::atomic::AtomicU32>>,
@@ -3120,6 +3125,7 @@ impl Default for MandelbrotParams {
             accum_external: None,
             accum_folds: None,
             chunk_walk: 0,
+            step_cap: 0,
             adopt: None,
             adopt_hold: false,
         }
@@ -3681,6 +3687,10 @@ impl CallbackTrait for MandelbrotParams {
             if let Some([cs, ce]) = chunk {
                 iu.start_iter = cs;
                 iu.end_iter = ce;
+                // Only the four-target (mode 2) chunk pipelines stop on a step cap.
+                if chunk_targets == 4 {
+                    iu.tail[1] = self.step_cap;
+                }
             }
             // THE RUNNING COUNT (`MandelbrotParams::chunk_walk`): a live mode-2 chunk pass that
             // iterates something counts the pixels it leaves running; its readback carries the walk.

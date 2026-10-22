@@ -901,10 +901,11 @@ fn worker_pass_line() -> String {
     match fractadyne_gpu::last_twin_pass() {
         None => "no worker pass this session".to_string(),
         Some(p) => {
-            let what = format!(
-                "iterations [{}, {}) over {} samples, skip {}",
-                p.range[0], p.range[1], p.samples, p.skip
-            );
+            let what = if p.step_cap > 0 {
+                format!("up to {} steps a sample over {} samples, skip {}", p.step_cap, p.samples, p.skip)
+            } else {
+                format!("iterations [{}, {}) over {} samples, skip {}", p.range[0], p.range[1], p.samples, p.skip)
+            };
             let age = p.started.elapsed().as_secs_f64() * 1000.0;
             match p.ms {
                 None => format!("a pass IN FLIGHT for {age:.0} ms: {what}"),

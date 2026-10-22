@@ -165,6 +165,8 @@ impl AdoptFrame {
 /// frame's `prepare` (the iterate and resolve passes the params ask for), submitted and waited for.
 pub struct LiveTwin {
     resources: CallbackResources,
+    /// Where a step-bounded pass's running count is read back ([`Self::walk`]); made on first use.
+    running_read: Option<wgpu::Buffer>,
 }
 
 impl LiveTwin {
@@ -172,35 +174,78 @@ impl LiveTwin {
         let mut resources = CallbackResources::default();
         // The target format only shapes the present/accumulate pipelines, which a twin never runs.
         resources.insert(Renderer::new(device, queue, wgpu::TextureFormat::Rgba8Unorm));
-        Self { resources }
+        Self { resources, running_read: None }
     }
 
     /// Prepare one frame for `p` and wait for its passes. `p` should be [`MandelbrotParams::headless`].
     pub fn frame(&mut self, device: &wgpu::Device, queue: &wgpu::Queue, p: &MandelbrotParams) -> Result<(), GpuError> {
+        self.pass(device, queue, p, false).map(|_| ())
+    }
+
+    /// [`Self::frame`], and with `count` the samples its chunk pass left running
+    /// (`CTR_CHUNK_RUNNING`; a step-bounded pass always counts them), read back after it.
+    fn pass(&mut self, device: &wgpu::Device, queue: &wgpu::Queue, p: &MandelbrotParams, count: bool) -> Result<Option<u32>, GpuError> {
         let mut enc = device.create_command_encoder(&wgpu::CommandEncoderDescriptor { label: Some("fractadyne.twin.frame") });
         let sd = ScreenDescriptor { size_in_pixels: [p.resolution[0].max(1), p.resolution[1].max(1)], pixels_per_point: 1.0 };
         let mut cbs = p.prepare(device, queue, &sd, &mut enc, &mut self.resources);
+        let read = if count {
+            let read = self.running_read.get_or_insert_with(|| {
+                device.create_buffer(&wgpu::BufferDescriptor {
+                    label: Some("fractadyne.twin.running_read"),
+                    size: 4,
+                    usage: wgpu::BufferUsages::MAP_READ | wgpu::BufferUsages::COPY_DST,
+                    mapped_at_creation: false,
+                })
+            });
+            let r = self.resources.get::<Renderer>().ok_or_else(|| GpuError::Readback("the twin has no renderer".into()))?;
+            let view = r.views.get(&p.view_id).ok_or_else(|| GpuError::Readback(format!("the twin has no view {}", p.view_id)))?;
+            enc.copy_buffer_to_buffer(&view.counters_buf, (crate::CTR_CHUNK_RUNNING * 4) as u64, read, 0, 4);
+            Some(read.clone())
+        } else {
+            None
+        };
         cbs.push(enc.finish());
         let ss = p.ss.max(1) as u64;
         let pass = TwinPass {
             started: std::time::Instant::now(),
             range: p.chunk_range.unwrap_or([0, p.max_iter]),
             skip: p.sa_skip,
+            step_cap: p.step_cap,
             samples: p.resolution[0].max(1) as u64 * p.resolution[1].max(1) as u64 * ss * ss,
             ms: None,
         };
         note_pass(pass);
         queue.submit(cbs);
-        let done = crate::export::await_submitted(device, queue, None, None).into_result();
+        let done = match &read {
+            None => crate::export::await_submitted(device, queue, None, None).into_result(),
+            Some(read) => {
+                let (tx, rx) = std::sync::mpsc::channel();
+                read.slice(..).map_async(wgpu::MapMode::Read, move |r| {
+                    let _ = tx.send(r);
+                });
+                crate::export::await_readback(device, &rx, None, None).into_result()
+            }
+        };
         note_pass(TwinPass { ms: Some(pass.started.elapsed().as_secs_f64() * 1000.0), ..pass });
-        done
+        done?;
+        Ok(read.map(|read| {
+            let running = {
+                let m = read.slice(..).get_mapped_range();
+                u32::from_le_bytes([m[0], m[1], m[2], m[3]])
+            };
+            read.unmap();
+            running
+        }))
     }
 
     /// Render `base` (a whole frame: [`MandelbrotParams::headless`], no tile, chunk window, split
-    /// or reprojection) as a walk of chunk windows priced by `pricer`, as the live view's chunked
-    /// refreshes are (the chunked iterate is bit-identical for any windows). `cancel` is asked
-    /// before every pass. A device or formula that cannot walk renders one pass, and only when
-    /// that pass fits the opening budget.
+    /// or reprojection) as a walk of chunk passes priced by `pricer`, as the live view's chunked
+    /// refreshes are (the chunked iterate is bit-identical however its passes are cut). `cancel` is
+    /// asked before every pass. A device or formula that cannot walk renders one pass, and only
+    /// when that pass fits the opening budget.
+    ///
+    /// A floatexp (mode 2) walk runs the export's STEP-BOUNDED passes ([`Self::walk_steps`]); any
+    /// other cuts iteration windows.
     pub fn walk(
         &mut self,
         device: &wgpu::Device,
@@ -229,8 +274,12 @@ impl LiveTwin {
             stats.ms = t0.elapsed().as_secs_f64() * 1000.0;
             return Ok(stats);
         }
+        if base.mode == 2 {
+            return self.walk_steps(device, queue, base, pricer, cancel, t0, area);
+        }
         let mut start = 0u32;
         let mut window = pricer.open(area);
+        let mut prev = (0.0f64, 0u64);
         loop {
             if cancel() {
                 return Err(GpuError::Canceled);
@@ -245,10 +294,13 @@ impl LiveTwin {
             let tp = std::time::Instant::now();
             self.frame(device, queue, &p)?;
             let ms = tp.elapsed().as_secs_f64() * 1000.0;
+            walk_trace(t0, stats.passes, area, [start, end], 0, None, ms, base);
             let looped = end - skip;
             if stats.passes == 0 {
                 pricer.observe_open(area, looped, ms);
             }
+            stats.note(LongestPass { range: [start, end], cap: 0, samples: area, ms, prev_ms: prev.0, prev_work: prev.1, index: stats.passes });
+            prev = (ms, looped as u64);
             stats.passes += 1;
             stats.max_pass_ms = stats.max_pass_ms.max(ms);
             start = end;
@@ -256,6 +308,73 @@ impl LiveTwin {
                 break;
             }
             window = pricer.next(area, looped.max(1), ms);
+        }
+        stats.ms = t0.elapsed().as_secs_f64() * 1000.0;
+        Ok(stats)
+    }
+
+    /// A mode-2 walk as STEP-BOUNDED passes, the export's (`run_tile_steps`): every pass runs the
+    /// whole `[0, max_iter)`, stops each pixel after `step_cap` executed steps, and counts the
+    /// pixels it leaves running; the walk ends when none is. Its passes are sized by the export's
+    /// `StepPricer` under the pass target: the first of a walk over every sample at the recent
+    /// price per running pixel-step, each later one following the last's wall, at most doubling.
+    ///
+    /// Not iteration windows, whose cost is far from uniform along a walk: where the BLA stops
+    /// skipping for a set of pixels the cost of an iteration rose 25–400× within a pass or two,
+    /// and a window grown on the cheap stretch before ran 134–308 ms against an 8 ms target (RTX
+    /// 3080, Home glides from 2^236 with a same-card worker, 2026-10-22; the nominal ceiling allows
+    /// ~2 s at the dearest price seen there). A STEP costs about the same skipping or not, and the
+    /// pixels still running ran the whole last cap, so a pass that follows the last one's wall
+    /// does at most twice their work.
+    #[allow(clippy::too_many_arguments)]
+    fn walk_steps(
+        &mut self,
+        device: &wgpu::Device,
+        queue: &wgpu::Queue,
+        base: &MandelbrotParams,
+        pricer: &mut WalkPricer,
+        cancel: &dyn Fn() -> bool,
+        t0: std::time::Instant,
+        area: u64,
+    ) -> Result<WalkStats, GpuError> {
+        let max_iter = base.max_iter.max(1);
+        let mut stats = WalkStats::default();
+        // Samples still running when a pass starts: all of them at the first.
+        let mut active = area;
+        let mut prev = (0.0f64, 0u64);
+        loop {
+            if cancel() {
+                return Err(GpuError::Canceled);
+            }
+            let fresh = stats.passes == 0;
+            let cap = pricer.steps.cap_for(area, active, fresh);
+            // Every running pixel advances at least an iteration a pass, so a walk that has not
+            // finished in this many passes is counting wrong: stop rather than spin.
+            if stats.passes > max_iter {
+                return Err(GpuError::Readback(format!("a step-bounded walk was still running after {} passes", stats.passes)));
+            }
+            let mut p = base.clone();
+            // The first pass starts from scratch (the series seeds it); to a step-bounded pass any
+            // later start means only "resume from the state" (the shader tests `start_iter > 0`).
+            // It alternates 1 and 2 because `prepare` runs an iterate only when something in its key
+            // or the chunk range changed, and every resume pass would otherwise ask the same range.
+            let range = [if fresh { 0 } else { 1 + (stats.passes & 1) }, max_iter];
+            p.chunk_range = Some(range);
+            p.chunk_idx = stats.passes;
+            p.step_cap = cap;
+            let tp = std::time::Instant::now();
+            let running = self.pass(device, queue, &p, true)?.unwrap_or(0);
+            let ms = tp.elapsed().as_secs_f64() * 1000.0;
+            walk_trace(t0, stats.passes, area, range, cap, Some((active, running)), ms, base);
+            pricer.steps.observe(ms, active, cap);
+            stats.note(LongestPass { range, cap, samples: active, ms, prev_ms: prev.0, prev_work: prev.1, index: stats.passes });
+            prev = (ms, active * cap as u64);
+            stats.passes += 1;
+            stats.max_pass_ms = stats.max_pass_ms.max(ms);
+            active = running as u64;
+            if running == 0 {
+                break;
+            }
         }
         stats.ms = t0.elapsed().as_secs_f64() * 1000.0;
         Ok(stats)
@@ -277,6 +396,8 @@ pub struct TwinPass {
     /// The iteration window, `[lo, hi)`, and the series skip it was seeded with.
     pub range: [u32; 2],
     pub skip: u32,
+    /// A step-bounded pass's steps per pixel ([`MandelbrotParams::step_cap`]); 0 = a window pass.
+    pub step_cap: u32,
     /// Samples (pixels × ss²).
     pub samples: u64,
     /// `None` while in flight, else how long it took, ms.
@@ -303,6 +424,52 @@ pub struct WalkStats {
     pub passes: u32,
     pub ms: f64,
     pub max_pass_ms: f64,
+    /// The longest pass, with the one before it: the evidence for why it ran long.
+    pub longest: Option<LongestPass>,
+}
+
+impl WalkStats {
+    fn note(&mut self, pass: LongestPass) {
+        if self.longest.is_none_or(|l| pass.ms > l.ms) {
+            self.longest = Some(pass);
+        }
+    }
+}
+
+/// A walk's longest pass ([`WalkStats::longest`]).
+#[derive(Clone, Copy, Debug, Default, PartialEq)]
+pub struct LongestPass {
+    /// Its iteration window, `[lo, hi)` (a step-bounded pass's runs `[0 or 1, max_iter)`).
+    pub range: [u32; 2],
+    /// A step-bounded pass's steps per pixel; 0 = a window pass.
+    pub cap: u32,
+    /// Samples it ran: the frame's for a window pass, those still running for a step-bounded one.
+    pub samples: u64,
+    pub ms: f64,
+    /// The pass before it: its wall, and its work — iterations in its window, or running samples ×
+    /// steps for a step-bounded pass (0 = none before).
+    pub prev_ms: f64,
+    pub prev_work: u64,
+    /// Its index in the walk (0 = the first pass).
+    pub index: u32,
+}
+
+/// `FRACTADYNE_TRACE=tile`: one line per worker pass — its window or step cap, the samples
+/// running before and after it (a window pass does not count them: -1), its wall.
+#[allow(clippy::too_many_arguments)]
+fn walk_trace(t0: std::time::Instant, pass: u32, area: u64, range: [u32; 2], cap: u32, running: Option<(u64, u32)>, ms: f64, base: &MandelbrotParams) {
+    if !crate::export::tile_trace_on() {
+        return;
+    }
+    let (before, after) = running.map_or((area, -1), |(b, a)| (b, a as i64));
+    eprintln!(
+        "[fd-worker] walk pass {pass} at {:.1} ms: [{}, {}) cap={cap} samples={area} active={before} running={after} wall={ms:.2}ms skip={} ref_len={}",
+        t0.elapsed().as_secs_f64() * 1000.0,
+        range[0],
+        range[1],
+        base.sa_skip,
+        base.orbit_len,
+    );
 }
 
 /// A walk pass is sized for this wall by default ([`WalkPricer::with_pass_ms`] sets another): half
@@ -325,22 +492,24 @@ const WALK_MIN_ITERS: u32 = 256;
 /// A window at most doubles from one pass to the next.
 const WALK_GROW: f64 = 2.0;
 
-/// Pass sizing for a worker's walks. A walk's OPENING pass has every pixel running, so its cost
-/// per pixel-step prices the next walk's opening; later passes are priced from the one before
-/// within the walk (`window × target / wall`), because pixels only stop running as a walk goes on,
-/// so a pass costs no more than the last one did per iteration — and they are NOT carried to the
-/// next opening, which they would underprice by the fraction that had escaped.
+/// Pass sizing for a worker's walks. A window walk's OPENING pass has every pixel running, so its
+/// cost per pixel-step prices the next walk's opening; later passes are priced from the one before
+/// within the walk (`window × target / wall`), because pixels only stop running as a walk goes on
+/// — and they are NOT carried to the next opening, which they would underprice by the fraction that
+/// had escaped. A step-bounded walk (mode 2, [`LiveTwin::walk`]) is priced by `steps`.
 #[derive(Clone, Debug)]
 pub struct WalkPricer {
     /// ns per pixel-step of the opening passes: rises at once, falls a fifth of the way per walk.
     open_ns: f64,
     /// The wall a pass is sized for, ms.
     pass_ms: f64,
+    /// The step-bounded walks' pricing: the export's, under `pass_ms`, kept across walks.
+    steps: crate::export::StepPricer,
 }
 
 impl Default for WalkPricer {
     fn default() -> Self {
-        Self { open_ns: WALK_PRIOR_NS, pass_ms: WALK_PASS_MS }
+        Self { open_ns: WALK_PRIOR_NS, pass_ms: WALK_PASS_MS, steps: crate::export::StepPricer::for_pass(Some(WALK_PASS_MS)) }
     }
 }
 
@@ -353,6 +522,7 @@ impl WalkPricer {
 
     pub fn set_pass_ms(&mut self, ms: f64) {
         self.pass_ms = if ms.is_finite() { ms.max(1.0) } else { WALK_PASS_MS };
+        self.steps.set_pass_ms(self.pass_ms);
     }
 
     /// Pixel-steps an opening pass may take.
