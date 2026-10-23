@@ -881,7 +881,7 @@ app-gradient-nothing-to-save = Belum ada gradien kustom untuk disimpan.
 # $file: the saved file's name.
 app-gradient-ggr-saved = “{ $file }” disimpan — titik tengah, kurva paduan, dan ruang warna semuanya utuh.
 # $file: the saved file's name; $count: the segments whose curve could not be kept.
-app-gradient-ggr-saved-lossy = “{ $file }” disimpan — tetapi { $count } segmen menggunakan kurva Bézier, yang tidak dapat dinyatakan oleh format .ggr. Segmen-segmen itu ditulis sebagai paduan lurus; salinan di pustaka Anda tetap menyimpan kurvanya.
+app-gradient-ggr-saved-lossy = “{ $file }” disimpan, tetapi { $count } segmen menggunakan kurva Bézier yang tidak dapat direpresentasikan oleh format .ggr. Segmen terkait ditulis dengan interpolasi linear; salinan di pustaka Anda tetap mempertahankan kurvanya.
 # $path: the file; $error: the system's reason (often in English).
 app-gradient-write-failed = Tidak dapat menulis { $path }: { $error }
 # $name: the gradient's name; $count: its segments.

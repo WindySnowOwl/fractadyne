@@ -881,7 +881,7 @@ app-gradient-nothing-to-save = 아직 저장할 사용자 정의 그라데이션
 # $file: the saved file's name.
 app-gradient-ggr-saved = “{ $file }”을(를) 저장했습니다 — 중간점, 혼합 곡선, 색 공간이 모두 그대로입니다.
 # $file: the saved file's name; $count: the segments whose curve could not be kept.
-app-gradient-ggr-saved-lossy = “{ $file }”을(를) 저장했습니다 — 하지만 세그먼트 { $count }개가 .ggr 형식으로 표현할 수 없는 베지어 곡선을 사용합니다. 그 세그먼트는 직선 혼합으로 기록했으며, 라이브러리의 사본에는 곡선이 그대로 남아 있습니다.
+app-gradient-ggr-saved-lossy = “{ $file }”을(를) 저장했지만, { $count }개의 세그먼트에서 사용하는 베지어 곡선은 .ggr 형식으로 표현할 수 없습니다. 해당 세그먼트는 선형 혼합으로 기록했으며, 라이브러리의 사본에는 원래 곡선이 그대로 보존됩니다.
 # $path: the file; $error: the system's reason (often in English).
 app-gradient-write-failed = { $path }에 쓸 수 없습니다: { $error }
 # $name: the gradient's name; $count: its segments.

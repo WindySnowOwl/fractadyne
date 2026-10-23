@@ -882,7 +882,7 @@ app-gradient-nothing-to-save = 保存するカスタムグラデーションは�
 # $file: the saved file's name.
 app-gradient-ggr-saved = 「{ $file }」を保存しました。中間点、ブレンドカーブ、色空間はすべてそのままです。
 # $file: the saved file's name; $count: the segments whose curve could not be kept.
-app-gradient-ggr-saved-lossy = 「{ $file }」を保存しました。ただし、{ $count }個のセグメントが.ggr形式では表現できないベジェ曲線を使っています。それらは直線的なブレンドとして書き出しました。ライブラリ内のコピーには曲線が残っています。
+app-gradient-ggr-saved-lossy = 「{ $file }」を保存しました。ただし、{ $count }個のセグメントで使われているベジェ曲線は.ggr形式では表現できません。該当するセグメントは線形補間として書き出されましたが、ライブラリ内のコピーには元の曲線が保持されています。
 # $path: the file; $error: the system's reason (often in English).
 app-gradient-write-failed = { $path }に書き込めませんでした：{ $error }
 # $name: the gradient's name; $count: its segments.

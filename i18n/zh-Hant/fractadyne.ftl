@@ -881,7 +881,7 @@ app-gradient-nothing-to-save = 還沒有可儲存的自訂漸層。
 # $file: the saved file's name.
 app-gradient-ggr-saved = 已儲存「{ $file }」：中點、混合曲線與色彩空間全部完整保留。
 # $file: the saved file's name; $count: the segments whose curve could not be kept.
-app-gradient-ggr-saved-lossy = 已儲存「{ $file }」，但有 { $count } 個區段使用 Bézier 曲線，而 .ggr 格式無法表達這種曲線。這些區段已寫成直線混合；你漸層庫中的那一份仍保留曲線。
+app-gradient-ggr-saved-lossy = 已儲存「{ $file }」，但有 { $count } 個區段使用 .ggr 格式無法表達的 Bézier 曲線。相關區段已改以線性混合方式寫入；漸層庫中的副本仍保留原曲線。
 # $path: the file; $error: the system's reason (often in English).
 app-gradient-write-failed = 無法寫入 { $path }：{ $error }
 # $name: the gradient's name; $count: its segments.

@@ -915,7 +915,13 @@ app-gradient-nothing-to-save = Nie ma jeszcze własnego gradientu do zapisania.
 # $file: the saved file's name.
 app-gradient-ggr-saved = Zapisano „{ $file }” — punkty środkowe, krzywe przejścia i przestrzenie barw pozostały nienaruszone.
 # $file: the saved file's name; $count: the segments whose curve could not be kept.
-app-gradient-ggr-saved-lossy = Zapisano „{ $file }” — ale segmenty z krzywą Béziera, której format .ggr nie potrafi wyrazić: { $count }. Zapisano je jako proste przejścia; kopia w bibliotece zachowuje krzywe.
+app-gradient-ggr-saved-lossy =
+    { $count ->
+        [one] Zapisano „{ $file }”, ale { $count } segment wykorzystuje krzywą Béziera, której format .ggr nie obsługuje. Segment zapisano jako przejście liniowe; kopia w bibliotece zachowuje tę krzywą.
+        [few] Zapisano „{ $file }”, ale { $count } segmenty wykorzystują krzywe Béziera, których format .ggr nie obsługuje. Zapisano je jako przejścia liniowe; kopia w bibliotece zachowuje te krzywe.
+        [many] Zapisano „{ $file }”, ale { $count } segmentów wykorzystuje krzywe Béziera, których format .ggr nie obsługuje. Zapisano je jako przejścia liniowe; kopia w bibliotece zachowuje te krzywe.
+       *[other] Zapisano „{ $file }”, ale liczba segmentów używających krzywych Béziera, których format .ggr nie obsługuje, wynosi { $count }. Zapisano je jako przejścia liniowe; kopia w bibliotece zachowuje oryginalne krzywe.
+    }
 # $path: the file; $error: the system's reason (often in English).
 app-gradient-write-failed = Nie udało się zapisać { $path }: { $error }
 # $name: the gradient's name; $count: its segments.

@@ -887,8 +887,8 @@ app-gradient-ggr-saved = Salvato «{ $file }» — punti medi, curve di fusione 
 # $file: the saved file's name; $count: the segments whose curve could not be kept.
 app-gradient-ggr-saved-lossy =
     { $count ->
-        [one] Salvato «{ $file }» — ma un segmento usa una curva di Bézier, che il formato .ggr non può esprimere. È stato scritto come fusione rettilinea; la copia nella tua libreria conserva le curve.
-       *[other] Salvato «{ $file }» — ma { $count } segmenti usano una curva di Bézier, che il formato .ggr non può esprimere. Sono stati scritti come fusioni rettilinee; la copia nella tua libreria conserva le curve.
+        [one] Salvato «{ $file }» — ma { $count } segmento usa una curva di Bézier che il formato .ggr non può rappresentare. Il segmento è stato salvato come sfumatura lineare; la copia nella tua libreria conserva la curva.
+       *[other] Salvato «{ $file }» — ma { $count } segmenti usano curve di Bézier che il formato .ggr non può rappresentare. I segmenti sono stati salvati come sfumature lineari; la copia nella tua libreria conserva le curve.
     }
 # $path: the file; $error: the system's reason (often in English).
 app-gradient-write-failed = Impossibile scrivere { $path }: { $error }
