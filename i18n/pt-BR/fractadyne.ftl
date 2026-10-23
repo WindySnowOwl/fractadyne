@@ -885,7 +885,11 @@ app-gradient-nothing-to-save = Ainda não há gradiente personalizado para salva
 # $file: the saved file's name.
 app-gradient-ggr-saved = “{ $file }” salvo — pontos médios, curvas de mistura e espaços de cor, tudo intacto.
 # $file: the saved file's name; $count: the segments whose curve could not be kept.
-app-gradient-ggr-saved-lossy = “{ $file }” salvo — mas { $count } segmento(s) usam uma curva de Bézier, que o formato .ggr não consegue expressar. Eles foram gravados como misturas retas; a cópia na sua biblioteca mantém as curvas.
+app-gradient-ggr-saved-lossy =
+    { $count ->
+        [one] “{ $file }” salvo, mas { $count } segmento usa uma curva de Bézier que o formato .ggr não consegue representar. O segmento foi gravado como uma transição linear; a cópia na biblioteca mantém a curva.
+       *[other] “{ $file }” salvo, mas { $count } segmentos usam curvas de Bézier que o formato .ggr não consegue representar. Eles foram gravados como transições lineares; a cópia na biblioteca mantém as curvas.
+    }
 # $path: the file; $error: the system's reason (often in English).
 app-gradient-write-failed = Não foi possível gravar { $path }: { $error }
 # $name: the gradient's name; $count: its segments.

@@ -886,7 +886,11 @@ app-gradient-nothing-to-save = Aucun dégradé personnalisé à enregistrer pour
 # $file: the saved file's name.
 app-gradient-ggr-saved = « { $file } » enregistré — points médians, courbes de fondu et espaces de couleur, tout est intact.
 # $file: the saved file's name; $count: the segments whose curve could not be kept.
-app-gradient-ggr-saved-lossy = « { $file } » enregistré — mais { $count } segment(s) utilisent une courbe de Bézier, que le format .ggr ne peut pas exprimer. Ils ont été écrits en fondus linéaires ; la copie dans votre bibliothèque conserve les courbes.
+app-gradient-ggr-saved-lossy =
+    { $count ->
+        [one] « { $file } » a été enregistré, mais { $count } segment utilise une courbe de Bézier que le format .ggr ne peut pas représenter. Le segment a été enregistré en interpolation linéaire ; la copie dans votre bibliothèque conserve la courbe.
+       *[other] « { $file } » a été enregistré, mais { $count } segments utilisent des courbes de Bézier que le format .ggr ne peut pas représenter. Ils ont été enregistrés en interpolation linéaire ; la copie dans votre bibliothèque conserve les courbes.
+    }
 # $path: the file; $error: the system's reason (often in English).
 app-gradient-write-failed = Impossible d’écrire { $path } : { $error }
 # $name: the gradient's name; $count: its segments.

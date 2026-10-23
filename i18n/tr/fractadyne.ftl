@@ -885,7 +885,11 @@ app-gradient-nothing-to-save = Henüz kaydedilecek özel gradyan yok.
 # $file: the saved file's name.
 app-gradient-ggr-saved = Kaydedildi: “{ $file }” — orta noktalar, karışım eğrileri ve renk uzaylarının tümü korundu.
 # $file: the saved file's name; $count: the segments whose curve could not be kept.
-app-gradient-ggr-saved-lossy = Kaydedildi: “{ $file }” — ancak { $count } segment, .ggr biçiminin ifade edemediği bir Bézier eğrisi kullanıyor. Bunlar düz karışımlar olarak yazıldı; kitaplığınızdaki kopya eğrileri korur.
+app-gradient-ggr-saved-lossy =
+    { $count ->
+        [one] “{ $file }” kaydedildi, ancak { $count } segment .ggr biçiminin ifade edemediği bir Bézier eğrisi kullanıyor. Segment doğrusal bir karışım olarak kaydedildi; kitaplıktaki kopya eğriyi koruyor.
+       *[other] “{ $file }” kaydedildi, ancak { $count } segment .ggr biçiminin ifade edemediği Bézier eğrileri kullanıyor. Segmentler doğrusal karışımlar olarak kaydedildi; kitaplıktaki kopya eğrileri koruyor.
+    }
 # $path: the file; $error: the system's reason (often in English).
 app-gradient-write-failed = { $path } yazılamadı: { $error }
 # $name: the gradient's name; $count: its segments.

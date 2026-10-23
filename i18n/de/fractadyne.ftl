@@ -886,7 +886,11 @@ app-gradient-nothing-to-save = Noch kein eigener Farbverlauf zum Speichern.
 # $file: the saved file's name.
 app-gradient-ggr-saved = „{ $file }“ gespeichert — Mittelpunkte, Überblendkurven und Farbräume vollständig erhalten.
 # $file: the saved file's name; $count: the segments whose curve could not be kept.
-app-gradient-ggr-saved-lossy = „{ $file }“ gespeichert — aber { $count } Segment(e) verwenden eine Bézierkurve, die das .ggr-Format nicht ausdrücken kann. Diese wurden als gerade Überblendungen geschrieben; die Kopie in der Bibliothek behält die Kurven.
+app-gradient-ggr-saved-lossy =
+    { $count ->
+        [one] „{ $file }“ gespeichert — aber { $count } Segment verwendet eine Bézierkurve, die sich im .ggr-Format nicht darstellen lässt. Das Segment wurde als lineare Überblendung gespeichert; die Kopie in der Bibliothek behält die Kurve.
+       *[other] „{ $file }“ gespeichert — aber { $count } Segmente verwenden Bézierkurven, die sich im .ggr-Format nicht darstellen lassen. Sie wurden als lineare Überblendungen gespeichert; die Kopie in der Bibliothek behält die Kurven.
+    }
 # $path: the file; $error: the system's reason (often in English).
 app-gradient-write-failed = { $path } konnte nicht geschrieben werden: { $error }
 # $name: the gradient's name; $count: its segments.

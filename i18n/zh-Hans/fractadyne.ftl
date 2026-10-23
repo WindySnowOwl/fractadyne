@@ -882,7 +882,7 @@ app-gradient-nothing-to-save = 还没有可保存的自定义渐变。
 # $file: the saved file's name.
 app-gradient-ggr-saved = 已保存“{ $file }”——中点、混合曲线和色彩空间均完整保留。
 # $file: the saved file's name; $count: the segments whose curve could not be kept.
-app-gradient-ggr-saved-lossy = 已保存“{ $file }”——但有 { $count } 个分段使用了贝塞尔曲线，而 .ggr 格式无法表达这种曲线。这些分段已写为直线混合；你的库中的副本保留了曲线。
+app-gradient-ggr-saved-lossy = 已保存“{ $file }”，但有 { $count } 个分段使用了 .ggr 格式无法表示的贝塞尔曲线。相关分段已按线性混合方式写入；库中的副本仍保留原曲线。
 # $path: the file; $error: the system's reason (often in English).
 app-gradient-write-failed = 无法写入 { $path }：{ $error }
 # $name: the gradient's name; $count: its segments.
