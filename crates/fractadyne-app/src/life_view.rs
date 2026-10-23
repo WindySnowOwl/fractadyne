@@ -43,11 +43,6 @@ enum Change {
     Fill { x: i64, y: i64, w: u32, h: u32, density: f64, seed: u64 },
 }
 
-/// What the Draw tool does, for its hover texts.
-const DRAW_HINT: &str = "click a cell to flip it; drag to paint — a stroke that starts on a dead cell \
-                         draws, one that starts on a live cell erases. A running universe pauses while \
-                         you draw and runs on when you let go.";
-
 /// Strokes undo at most this far back, and only universes up to `UNDO_MAX_TILES` tiles keep a copy.
 const UNDO_DEPTH: usize = 64;
 const UNDO_MAX_TILES: usize = 4096;
@@ -343,8 +338,8 @@ impl FractadyneApp {
         if let Some(u) = self.life.take_download() {
             if let Some(path) = self.life.save_to.take() {
                 self.life.message = Some(match write_pattern(&path, &u) {
-                    Ok(()) => format!("Saved {}", path.display()),
-                    Err(e) => format!("Save failed: {e}"),
+                    Ok(()) => tr!(life_saved, path = path.display().to_string()),
+                    Err(e) => tr!(life_save_failed, error = e),
                 });
             }
             if !self.life.pending.is_empty() {
@@ -354,7 +349,7 @@ impl FractadyneApp {
         let status = self.life.status();
         if let Some(e) = status.error.clone() {
             self.life.pause();
-            self.life.message = Some(format!("Stopped: {e}"));
+            self.life.message = Some(tr!(life_stopped, error = e.to_string()));
             if let Ok(mut s) = self.life.status.lock() {
                 s.error = None;
             }
@@ -497,7 +492,7 @@ impl FractadyneApp {
         let rule = match rule.map(Rule::parse) {
             Some(Ok(r)) => r,
             Some(Err(e)) => {
-                self.life.message = Some(format!("The pattern's rule was not understood ({e}); kept {}", self.life.loaded.rule()));
+                self.life.message = Some(tr!(life_rule_not_understood, error = e.to_string(), rule = self.life.loaded.rule().to_string()));
                 self.life.loaded.rule().clone()
             }
             None => self.life.loaded.rule().clone(),
@@ -541,7 +536,7 @@ impl FractadyneApp {
     /// File > Open pattern…: RLE, plaintext, Life 1.05 / 1.06.
     pub(crate) fn life_open_file(&mut self) {
         let Some(path) = rfd::FileDialog::new()
-            .add_filter("Life patterns", &["rle", "cells", "lif", "life", "txt"])
+            .add_filter(tr!(life_filter_patterns), &["rle", "cells", "lif", "life", "txt"])
             .set_directory(self.dialog_dir_default())
             .pick_file()
         else {
@@ -555,7 +550,7 @@ impl FractadyneApp {
                 let name = p.name.clone().unwrap_or(name);
                 self.life_open(p, rule.as_deref(), name);
             }
-            Err(e) => self.life.message = Some(format!("Could not open {}: {e}", path.display())),
+            Err(e) => self.life.message = Some(tr!(life_open_failed, path = path.display().to_string(), error = e)),
         }
     }
 
@@ -576,7 +571,7 @@ impl FractadyneApp {
     /// File > Save pattern…: the universe as it is now, as RLE.
     pub(crate) fn life_save_file(&mut self) {
         let Some(path) = rfd::FileDialog::new()
-            .add_filter("Run-length encoded pattern", &["rle"])
+            .add_filter(tr!(life_filter_rle), &["rle"])
             .set_directory(self.dialog_dir_default())
             .set_file_name(format!("{}.rle", self.life.pattern_name))
             .save_file()
@@ -587,8 +582,8 @@ impl FractadyneApp {
         if self.life.in_sync() {
             let u = (*self.life.loaded).clone();
             self.life.message = Some(match write_pattern(&path, &u) {
-                Ok(()) => format!("Saved {}", path.display()),
-                Err(e) => format!("Save failed: {e}"),
+                Ok(()) => tr!(life_saved, path = path.display().to_string()),
+                Err(e) => tr!(life_save_failed, error = e),
             });
         } else {
             self.life.save_to = Some(path);
@@ -601,10 +596,10 @@ impl FractadyneApp {
     pub(crate) fn life_panel(&mut self, ui: &mut egui::Ui) {
         let status = self.life.status();
         if !status.available && status.load_id != 0 {
-            ui.colored_label(egui::Color32::from_rgb(0xE0, 0x80, 0x40), "This graphics adapter cannot run Life (no compute shaders).");
+            ui.colored_label(egui::Color32::from_rgb(0xE0, 0x80, 0x40), tr!(life_no_compute));
         }
         // Pattern: the library, a file, pasted text.
-        crate::ui::labelled(ui, "Pattern", |ui| {
+        crate::ui::labelled(ui, &tr!(life_pattern), |ui| {
             let mut pick = None;
             let r = egui::ComboBox::from_id_salt("life_pattern")
                 .selected_text(self.life.pattern_name.clone())
@@ -623,25 +618,25 @@ impl FractadyneApp {
             r
         });
         ui.horizontal(|ui| {
-            if ui.button("Open…").on_hover_text("Open an RLE, .cells or Life 1.05/1.06 pattern file.").clicked() {
+            if ui.button(tr!(life_open)).on_hover_text(tr!(life_open_hover)).clicked() {
                 self.life_open_file();
             }
-            if ui.button("Pattern text…").on_hover_text("Paste a pattern (RLE as LifeWiki gives it, or plaintext).").clicked() {
+            if ui.button(tr!(life_pattern_text)).on_hover_text(tr!(life_pattern_text_hover)).clicked() {
                 self.life.text_open = true;
             }
-            if ui.button("Save…").on_hover_text("Save the universe as it is now, as RLE.").clicked() {
+            if ui.button(tr!(life_save)).on_hover_text(tr!(life_save_hover)).clicked() {
                 self.life_save_file();
             }
         });
         // Rule: the library or typed.
-        crate::ui::labelled(ui, "Rule", |ui| {
+        crate::ui::labelled(ui, &tr!(life_rule), |ui| {
             let mut pick = None;
             let r = egui::ComboBox::from_id_salt("life_rule")
                 .selected_text(
                     life::library::RULES
                         .iter()
                         .find(|r| r.rule == self.life.loaded.rule().canonical())
-                        .map_or("custom", |r| r.name),
+                        .map_or_else(|| tr!(life_rule_custom), |r| r.name.to_string()),
                 )
                 .width(150.0)
                 .show_ui(ui, |ui| {
@@ -660,7 +655,7 @@ impl FractadyneApp {
         });
         ui.horizontal(|ui| {
             let r = ui.add(egui::TextEdit::singleline(&mut self.life.rule_text).desired_width(150.0).hint_text("B3/S23"));
-            if r.lost_focus() && ui.input(|i| i.key_pressed(egui::Key::Enter)) || ui.button("Apply").clicked() {
+            if r.lost_focus() && ui.input(|i| i.key_pressed(egui::Key::Enter)) || ui.button(tr!(life_apply)).clicked() {
                 self.life_apply_rule();
             }
         });
@@ -670,37 +665,37 @@ impl FractadyneApp {
         ui.separator();
         // Transport.
         ui.horizontal(|ui| {
-            let label = if self.life.playing { "\u{23F8} Pause" } else { "\u{25B6} Play" };
-            if ui.button(label).on_hover_text("Run the universe (Enter).").clicked() {
+            let label = if self.life.playing { format!("\u{23F8} {}", tr!(life_pause)) } else { format!("\u{25B6} {}", tr!(life_play)) };
+            if ui.button(label).on_hover_text(tr!(life_play_hover)).clicked() {
                 self.life_toggle_play();
             }
-            if ui.button("Step").on_hover_text("Advance one generation (N).").clicked() {
+            if ui.button(tr!(life_step)).on_hover_text(tr!(life_step_hover)).clicked() {
                 self.life.step(1);
             }
             let stride = 1u64 << self.life.stride_log2;
-            if ui.button(format!("+{}", grouped(stride))).on_hover_text("Advance this many generations (Shift+N).").clicked() {
+            if ui.button(format!("+{}", grouped(stride))).on_hover_text(tr!(life_stride_hover)).clicked() {
                 self.life.step(stride);
             }
-            if ui.button("Reset").on_hover_text("Back to the pattern as opened (generation 0).").clicked() {
+            if ui.button(tr!(life_reset)).on_hover_text(tr!(life_reset_hover)).clicked() {
                 self.life_reset();
             }
         });
-        crate::ui::labelled(ui, "Speed", |ui| {
-            ui.add(egui::Slider::new(&mut self.life.speed, 1.0..=10_000.0).logarithmic(true).suffix(" gen/s"))
+        crate::ui::labelled(ui, &tr!(life_speed), |ui| {
+            ui.add(egui::Slider::new(&mut self.life.speed, 1.0..=10_000.0).logarithmic(true).suffix(format!(" {}", tr!(life_speed_unit))))
         });
-        crate::ui::labelled(ui, "Stride", |ui| {
+        crate::ui::labelled(ui, &tr!(life_stride), |ui| {
             ui.add(egui::Slider::new(&mut self.life.stride_log2, 1..=16).custom_formatter(|v, _| grouped(1u64 << v as u32)))
         });
         egui::Grid::new("life_status").num_columns(2).show(ui, |ui| {
-            ui.label("Generation");
+            ui.label(tr!(life_generation));
             ui.label(grouped(self.life.generation()));
             ui.end_row();
-            ui.label("Population");
+            ui.label(tr!(life_population));
             ui.label(grouped(self.life.population()));
             ui.end_row();
-            ui.label("Tiles");
-            ui.label(format!("{} of {}", grouped(status.tiles as u64), grouped(u64::from(status.capacity))))
-                .on_hover_text("Stored 64×64-cell tiles (4 KiB each) and the GPU pool's capacity.");
+            ui.label(tr!(life_tiles));
+            ui.label(tr!(life_tiles_of, count = status.tiles as u64, capacity = status.capacity))
+                .on_hover_text(tr!(life_tiles_hover));
             ui.end_row();
         });
         if let Some(m) = &self.life.message {
@@ -709,29 +704,29 @@ impl FractadyneApp {
         ui.separator();
         // Editing.
         ui.horizontal(|ui| {
-            ui.label("Mouse");
-            ui.selectable_value(&mut self.life.tool, LifeTool::Pan, "Pan").on_hover_text("Drag to move the view.");
-            ui.selectable_value(&mut self.life.tool, LifeTool::Draw, "Draw").on_hover_text(DRAW_HINT);
+            ui.label(tr!(life_mouse));
+            ui.selectable_value(&mut self.life.tool, LifeTool::Pan, tr!(life_pan)).on_hover_text(tr!(life_pan_hover));
+            ui.selectable_value(&mut self.life.tool, LifeTool::Draw, tr!(life_draw)).on_hover_text(tr!(life_draw_hint));
             if ui
-                .add_enabled(self.life.can_undo(), egui::Button::new("Undo"))
-                .on_hover_text("Back to the universe before the last edit, fill, clear or rule change (Ctrl+Z while drawing).")
+                .add_enabled(self.life.can_undo(), egui::Button::new(tr!(life_undo)))
+                .on_hover_text(tr!(life_undo_hover))
                 .clicked()
             {
                 self.life.undo_edit();
             }
         });
-        ui.checkbox(&mut self.life.grid, "Grid lines").on_hover_text("Cell borders when zoomed in to 8 pixels a cell or more.");
+        ui.checkbox(&mut self.life.grid, tr!(life_grid)).on_hover_text(tr!(life_grid_hover));
         ui.horizontal(|ui| {
-            ui.label("Random");
+            ui.label(tr!(life_random));
             ui.add(egui::DragValue::new(&mut self.life.density).range(0.01..=1.0).speed(0.01).fixed_decimals(2))
-                .on_hover_text("The fraction of cells a fill sets alive.");
-            ui.label("seed");
+                .on_hover_text(tr!(life_density_hover));
+            ui.label(tr!(life_seed));
             ui.add(egui::DragValue::new(&mut self.life.seed).range(0..=u64::MAX >> 11));
-            if ui.button("Fill view").on_hover_text("Fill the visible area (up to 2,048 × 2,048 cells about its centre) at random.").clicked() {
+            if ui.button(tr!(life_fill_view)).on_hover_text(tr!(life_fill_view_hover, cells = 2048)).clicked() {
                 self.life_fill_view();
             }
         });
-        if ui.button("Clear").on_hover_text("Kill every cell (Undo brings them back).").clicked() {
+        if ui.button(tr!(life_clear)).on_hover_text(tr!(life_clear_hover)).clicked() {
             self.life.pause();
             self.life.change(Change::Clear);
         }
@@ -741,9 +736,9 @@ impl FractadyneApp {
     /// family (neither applies to a universe): run / pause, step, back to the start, draw.
     pub(crate) fn life_toolbar(&mut self, ui: &mut egui::Ui) {
         let (icon, hint) = if self.life.playing {
-            (crate::icons::PAUSE, "Pause the universe (Enter)")
+            (crate::icons::PAUSE, tr!(life_toolbar_pause_hover))
         } else {
-            (crate::icons::PLAY, "Run the universe (Enter)")
+            (crate::icons::PLAY, tr!(life_toolbar_play_hover))
         };
         if ui.button(icon).on_hover_text(hint).clicked() {
             self.life_toggle_play();
@@ -751,18 +746,18 @@ impl FractadyneApp {
         let stride = 1u64 << self.life.stride_log2;
         if ui
             .button(crate::icons::FORWARD)
-            .on_hover_text(format!("Step one generation (N); Shift+click or Shift+N steps {}", grouped(stride)))
+            .on_hover_text(tr!(life_toolbar_step_hover, stride = stride))
             .clicked()
         {
             let n = if ui.input(|i| i.modifiers.shift) { stride } else { 1 };
             self.life.step(n);
         }
-        if ui.button(crate::icons::SKIP_BACK).on_hover_text("Back to the pattern as opened (generation 0)").clicked() {
+        if ui.button(crate::icons::SKIP_BACK).on_hover_text(tr!(life_toolbar_reset_hover)).clicked() {
             self.life_reset();
         }
         if ui
             .add(egui::SelectableLabel::new(self.life.tool == LifeTool::Draw, crate::icons::EDIT))
-            .on_hover_text(format!("Draw (D): {DRAW_HINT}"))
+            .on_hover_text(tr!(life_toolbar_draw_hover, hint = tr!(life_draw_hint)))
             .clicked()
         {
             self.life_toggle_draw();
@@ -894,8 +889,8 @@ impl FractadyneApp {
             return;
         }
         let mut open = true;
-        egui::Window::new("Pattern text").open(&mut open).default_width(420.0).show(ctx, |ui| {
-            ui.label("Paste a pattern: RLE (as LifeWiki and Golly give it), plaintext .cells, or Life 1.05 / 1.06.");
+        egui::Window::new(tr!(life_text_title)).id(egui::Id::new("fractadyne.life-pattern-text")).open(&mut open).default_width(420.0).show(ctx, |ui| {
+            ui.label(tr!(life_text_intro));
             egui::ScrollArea::vertical().max_height(260.0).show(ui, |ui| {
                 ui.add(egui::TextEdit::multiline(&mut self.life.text).code_editor().desired_rows(10).desired_width(f32::INFINITY));
             });
@@ -903,10 +898,10 @@ impl FractadyneApp {
                 ui.colored_label(egui::Color32::from_rgb(0xE0, 0x60, 0x60), e);
             }
             ui.horizontal(|ui| {
-                if ui.button("Load").clicked() {
+                if ui.button(tr!(life_text_load)).clicked() {
                     self.life_open_text();
                 }
-                if ui.button("Current as RLE").on_hover_text("Fill the box with the universe as last loaded.").clicked() {
+                if ui.button(tr!(life_text_current)).on_hover_text(tr!(life_text_current_hover)).clicked() {
                     let u = &self.life.loaded;
                     self.life.text = life::write_rle(&u.cells(), &u.rule().canonical(), u.rule().states() > 2, Some(&self.life.pattern_name), Some(u.generation()));
                 }
@@ -923,20 +918,26 @@ impl FractadyneApp {
 /// resizes the canvas, which reads as an interaction).
 pub(crate) fn status_readouts(cells_per_px: f64, generation: u64, population: u64) -> (String, String, String) {
     // Counts up to 999,999,999,999 grouped (15 characters), past that in scientific notation; a
-    // scale is at most `1 px = 9.99e300 cells` (21).
+    // scale is at most `1 px = 9.99e300 cells` in English (21), and as wide as its widest form in
+    // another language: one width per language, whatever the value.
     const COUNT_W: usize = 15;
-    const SCALE_W: usize = 21;
-    let count = |n: u64| if n < 1_000_000_000_000 { grouped(n) } else { format!("{:.3e}", n as f64) };
+    let widest = "9.99e300";
+    let scale_w = [tr!(life_scale_cells, value = widest), tr!(life_scale_pixels, value = widest)]
+        .iter()
+        .map(|s| s.chars().count())
+        .max()
+        .unwrap_or(21);
+    let count = |n: u64| if n < 1_000_000_000_000 { crate::status_count(n) } else { format!("{:.3e}", n as f64) };
     let sig = |v: f64| if (0.01..10_000.0).contains(&v) { format!("{:.3}", v).trim_end_matches('0').trim_end_matches('.').to_string() } else { format!("{v:.2e}") };
     let scale = if cells_per_px >= 1.0 {
-        format!("1 px = {} cells", sig(cells_per_px))
+        tr!(life_scale_cells, value = sig(cells_per_px))
     } else {
-        format!("{} px / cell", sig(1.0 / cells_per_px.max(1e-300)))
+        tr!(life_scale_pixels, value = sig(1.0 / cells_per_px.max(1e-300)))
     };
     (
-        format!("scale {scale:>SCALE_W$}"),
-        format!("gen {:>COUNT_W$}", count(generation)),
-        format!("pop {:>COUNT_W$}", count(population)),
+        format!("{} {scale:>scale_w$}", tr!(status_scale)),
+        format!("{} {:>COUNT_W$}", tr!(status_generation), count(generation)),
+        format!("{} {:>COUNT_W$}", tr!(status_population), count(population)),
     )
 }
 

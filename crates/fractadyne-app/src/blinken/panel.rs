@@ -59,9 +59,9 @@ impl Size {
 pub(crate) const HELP_KEYS: &[&str] =
     &["walk", "age", "tiles", "scope", "timers", "dial", "bank", "depth", "iter", "ms", "clock", "tach", "engines", "memory", "cores", "pixels"];
 
+/// A lamp on the bank. Its engraved label is [`lamp_label`], in the language in use.
 struct LampSpec {
     lamp: Lamp,
-    label: &'static str,
     key: &'static str,
     hue: Color32,
     /// A separator goes before this lamp.
@@ -69,26 +69,52 @@ struct LampSpec {
 }
 
 const LAMP_SPECS: [LampSpec; 19] = [
-    LampSpec { lamp: Lamp::Plan, label: "PLAN", key: "lamp:plan", hue: ink::AMBER, group: false },
-    LampSpec { lamp: Lamp::Dispatch, label: "DISPATCH", key: "lamp:dispatch", hue: ink::AMBER, group: false },
-    LampSpec { lamp: Lamp::Live, label: "LIVE", key: "lamp:live", hue: ink::LAMP_GREEN, group: false },
-    LampSpec { lamp: Lamp::Held, label: "HELD", key: "lamp:held", hue: ink::AMBER, group: false },
-    LampSpec { lamp: Lamp::Reproj, label: "REPROJ", key: "lamp:reproj", hue: ink::AMBER, group: false },
-    LampSpec { lamp: Lamp::Reading, label: "READING", key: "lamp:reading", hue: ink::LAMP_GREEN, group: false },
-    LampSpec { lamp: Lamp::PinPass, label: "PIN PASS", key: "lamp:pass", hue: ink::AMBER, group: true },
-    LampSpec { lamp: Lamp::Split, label: "SPLIT", key: "lamp:split", hue: ink::AMBER, group: false },
-    LampSpec { lamp: Lamp::Adopt, label: "ADOPT", key: "lamp:adopt", hue: ink::LAMP_WHITE, group: false },
-    LampSpec { lamp: Lamp::Abandon, label: "ABANDON", key: "lamp:abandon", hue: ink::RED, group: false },
-    LampSpec { lamp: Lamp::RefLive, label: "REF LIVE", key: "lamp:refLive", hue: ink::LAMP_GREEN, group: true },
-    LampSpec { lamp: Lamp::RefAhead, label: "REF AHEAD", key: "lamp:refAhead", hue: ink::AMBER, group: false },
-    LampSpec { lamp: Lamp::RefHold, label: "REF HOLD", key: "lamp:refHold", hue: ink::LAMP_BLUE, group: false },
-    LampSpec { lamp: Lamp::Series, label: "SERIES", key: "lamp:series", hue: ink::AMBER, group: false },
-    LampSpec { lamp: Lamp::Worker, label: "WORKER", key: "lamp:worker", hue: ink::LAMP_BLUE, group: true },
-    LampSpec { lamp: Lamp::Tile, label: "TILE", key: "lamp:tile", hue: ink::AMBER, group: false },
-    LampSpec { lamp: Lamp::Ssaa, label: "SSAA", key: "lamp:ssaa", hue: ink::LAMP_GREEN, group: false },
-    LampSpec { lamp: Lamp::Palette, label: "PALETTE", key: "lamp:palette", hue: ink::AMBER, group: false },
-    LampSpec { lamp: Lamp::Mode, label: "MODE", key: "lamp:mode", hue: ink::RED, group: false },
+    LampSpec { lamp: Lamp::Plan, key: "lamp:plan", hue: ink::AMBER, group: false },
+    LampSpec { lamp: Lamp::Dispatch, key: "lamp:dispatch", hue: ink::AMBER, group: false },
+    LampSpec { lamp: Lamp::Live, key: "lamp:live", hue: ink::LAMP_GREEN, group: false },
+    LampSpec { lamp: Lamp::Held, key: "lamp:held", hue: ink::AMBER, group: false },
+    LampSpec { lamp: Lamp::Reproj, key: "lamp:reproj", hue: ink::AMBER, group: false },
+    LampSpec { lamp: Lamp::Reading, key: "lamp:reading", hue: ink::LAMP_GREEN, group: false },
+    LampSpec { lamp: Lamp::PinPass, key: "lamp:pass", hue: ink::AMBER, group: true },
+    LampSpec { lamp: Lamp::Split, key: "lamp:split", hue: ink::AMBER, group: false },
+    LampSpec { lamp: Lamp::Adopt, key: "lamp:adopt", hue: ink::LAMP_WHITE, group: false },
+    LampSpec { lamp: Lamp::Abandon, key: "lamp:abandon", hue: ink::RED, group: false },
+    LampSpec { lamp: Lamp::RefLive, key: "lamp:refLive", hue: ink::LAMP_GREEN, group: true },
+    LampSpec { lamp: Lamp::RefAhead, key: "lamp:refAhead", hue: ink::AMBER, group: false },
+    LampSpec { lamp: Lamp::RefHold, key: "lamp:refHold", hue: ink::LAMP_BLUE, group: false },
+    LampSpec { lamp: Lamp::Series, key: "lamp:series", hue: ink::AMBER, group: false },
+    LampSpec { lamp: Lamp::Worker, key: "lamp:worker", hue: ink::LAMP_BLUE, group: true },
+    LampSpec { lamp: Lamp::Tile, key: "lamp:tile", hue: ink::AMBER, group: false },
+    LampSpec { lamp: Lamp::Ssaa, key: "lamp:ssaa", hue: ink::LAMP_GREEN, group: false },
+    LampSpec { lamp: Lamp::Palette, key: "lamp:palette", hue: ink::AMBER, group: false },
+    LampSpec { lamp: Lamp::Mode, key: "lamp:mode", hue: ink::RED, group: false },
 ];
+
+/// A lamp's engraved label, in capitals as the message holds it (the same message titles the lamp's
+/// help card).
+fn lamp_label(lamp: Lamp) -> String {
+    match lamp {
+        Lamp::Plan => tr!(live_lamp_plan),
+        Lamp::Dispatch => tr!(live_lamp_dispatch),
+        Lamp::Live => tr!(live_lamp_live),
+        Lamp::Held => tr!(live_lamp_held),
+        Lamp::Reproj => tr!(live_lamp_reproj),
+        Lamp::Reading => tr!(live_lamp_reading),
+        Lamp::PinPass => tr!(live_lamp_pin_pass),
+        Lamp::Split => tr!(live_lamp_split),
+        Lamp::Adopt => tr!(live_lamp_adopt),
+        Lamp::Abandon => tr!(live_lamp_abandon),
+        Lamp::RefLive => tr!(live_lamp_ref_live),
+        Lamp::RefAhead => tr!(live_lamp_ref_ahead),
+        Lamp::RefHold => tr!(live_lamp_ref_hold),
+        Lamp::Series => tr!(live_lamp_series),
+        Lamp::Worker => tr!(live_lamp_worker),
+        Lamp::Tile => tr!(live_lamp_tile),
+        Lamp::Ssaa => tr!(live_lamp_ssaa),
+        Lamp::Palette => tr!(live_lamp_palette),
+        Lamp::Mode => tr!(live_lamp_mode),
+    }
+}
 
 /// Help-card keys of the lamps, left to right.
 pub(crate) const LAMP_KEYS: &[&str] = &[
@@ -147,6 +173,9 @@ struct StaticKey {
     /// normalized to the atlas, so a grown atlas must re-tessellate them.
     atlas: [usize; 2],
     pixels_per_point: f32,
+    /// The interface language's generation (`i18n::generation`): the legends are text in the
+    /// language in use, so a change of language redraws them.
+    language: u64,
 }
 
 /// The static layer, tessellated, kept between frames.
@@ -307,6 +336,7 @@ pub(crate) fn draw(
         nixies: std::array::from_fn(|i| tube_pattern(&texts[i])),
         atlas: ctx.fonts(|f| f.texture_atlas().lock().size()),
         pixels_per_point: ctx.pixels_per_point(),
+        language: crate::i18n::generation(),
     };
     let mut t = std::time::Instant::now();
     let layer = p.layer_id();
@@ -378,7 +408,7 @@ fn layout(p: &Painter, layer: Layer, rect: Rect, width: f32, s: f32, size: Size,
         let dial = Rect::from_min_size(pos2(inner_l, y), vec2(inner_w, (TITLE_H + DIAL_H) * s));
         let face = Rect::from_min_max(pos2(dial.left(), dial.top() + TITLE_H * s), dial.right_bottom());
         if layer == Layer::Static {
-            title(p, dial.left_top(), s, "Depth · references · arithmetic");
+            title(p, dial.left_top(), s, &tr!(live_title_dial), dial.width());
         } else {
             hits.push(Hit { rect: dial, key: "dial" });
         }
@@ -457,20 +487,59 @@ fn screw(p: &Painter, c: Pos2, r: f32) {
     p.line_segment([c - d, c + d], Stroke::new(1.2_f32, Color32::from_rgb(0x2a, 0x2c, 0x2f)));
 }
 
-/// An instrument's engraved title: tracked small caps.
-fn title(p: &Painter, at: Pos2, s: f32, text: &str) -> Rect {
-    paint::tracked(p, at, Align2::LEFT_TOP, &text.to_uppercase(), face::engrave(12.0 * s), ink::ENGRAVE_DIM, 1.9 * s, true)
+/// A tracked legend's size as [`paint::tracked`] lays it out, without drawing it.
+fn tracked_size(p: &Painter, text: &str, font: egui::FontId, spacing: f32) -> egui::Vec2 {
+    let mut job = egui::text::LayoutJob::default();
+    job.append(text, 0.0, egui::TextFormat { font_id: font, extra_letter_spacing: spacing, ..Default::default() });
+    p.layout_job(job).size()
+}
+
+/// The scale a legend is drawn at to fit `room`, `width(k)` being its width at scale `k`: 1 when it
+/// fits (every English legend does), else smaller, down to 0.6, so a longer translation shrinks
+/// rather than running into the next instrument. egui sets type in whole pixels, so the first guess
+/// is measured and stepped down until it fits.
+fn fit_scale(room: f32, width: impl Fn(f32) -> f32) -> f32 {
+    let w = width(1.0);
+    if w <= room {
+        return 1.0;
+    }
+    let mut k = (room / w.max(1.0)).max(0.6);
+    for _ in 0..4 {
+        if k <= 0.6 || width(k) <= room {
+            break;
+        }
+        k = (k * 0.95).max(0.6);
+    }
+    k
+}
+
+/// An instrument title's type at scale `k` of its own size (`s` the panel's scale).
+fn title_type(s: f32, k: f32) -> (egui::FontId, f32) {
+    (face::engrave(12.0 * s * k), 1.9 * s * k)
+}
+
+/// The scale an instrument title is drawn at to fit `room`.
+fn title_scale(p: &Painter, s: f32, text: &str, room: f32) -> f32 {
+    fit_scale(room, |k| {
+        let (font, track) = title_type(s, k);
+        tracked_size(p, text, font, track).x
+    })
+}
+
+/// An instrument's engraved title: tracked capitals, `room` wide at most. The message holds the
+/// capitals (uppercasing a translation gets Turkish i and German ß wrong).
+fn title(p: &Painter, at: Pos2, s: f32, text: &str, room: f32) -> Rect {
+    let (font, track) = title_type(s, title_scale(p, s, text, room));
+    paint::tracked(p, at, Align2::LEFT_TOP, text, font, ink::ENGRAVE_DIM, track, true)
 }
 
 /// An instrument title's rect, without drawing it (the dynamic layer's help regions).
-fn title_rect(p: &Painter, at: Pos2, s: f32, text: &str) -> Rect {
-    let mut job = egui::text::LayoutJob::default();
-    job.append(&text.to_uppercase(), 0.0, egui::TextFormat { font_id: face::engrave(12.0 * s), extra_letter_spacing: 1.9 * s, ..Default::default() });
-    Rect::from_min_size(at, p.layout_job(job).size())
+fn title_rect(p: &Painter, at: Pos2, s: f32, text: &str, room: f32) -> Rect {
+    let (font, track) = title_type(s, title_scale(p, s, text, room));
+    Rect::from_min_size(at, tracked_size(p, text, font, track))
 }
 
 fn draw_plate(p: &Painter, r: Rect, s: f32, inp: &Inputs) {
-    paint::tracked(p, pos2(r.left() + 4.0 * s, r.center().y), Align2::LEFT_CENTER, "LIVE RENDER · FRONT PANEL", face::engrave(14.0 * s), ink::ENGRAVE, 4.2 * s, true);
     let tag = format!("MODEL FD-B · {}", inp.version.to_uppercase());
     let tr = paint::tracked(p, pos2(r.right() - 4.0 * s, r.center().y), Align2::RIGHT_CENTER, &tag, face::engrave(11.0 * s), ink::ENGRAVE_DIM, 1.8 * s, true);
     // The maker's mark on its own enamelled badge: red on the hammertone itself would read at
@@ -482,6 +551,11 @@ fn draw_plate(p: &Painter, r: Rect, s: f32, inp: &Inputs) {
     p.rect_filled(badge, 4.0 * s, ink::FACE_DARK);
     p.rect_stroke(badge, 4.0 * s, Stroke::new(1.0_f32, Color32::from_rgb(0x55, 0x5a, 0x60)), egui::StrokeKind::Inside);
     p.text(mark, Align2::RIGHT_CENTER, "Fractadyne", face::maker(19.0 * s), ink::MAKER_RED);
+    // The plate's legend, left, clear of the badge.
+    let legend = tr!(live_plate);
+    let left = r.left() + 4.0 * s;
+    let k = fit_scale(badge.left() - 16.0 * s - left, |k| tracked_size(p, &legend, face::engrave(14.0 * s * k), 4.2 * s * k).x);
+    paint::tracked(p, pos2(left, r.center().y), Align2::LEFT_CENTER, &legend, face::engrave(14.0 * s * k), ink::ENGRAVE, 4.2 * s * k, true);
 }
 
 /// A nixie readout's tube widths: ' ' an unlit tube, '_' a gap, and - : . small neon separators.
@@ -526,15 +600,16 @@ fn nixies(p: &Painter, layer: Layer, at: Pos2, s: f32, text: &str) -> Rect {
 
 fn draw_nixie_row(p: &Painter, layer: Layer, r: Rect, s: f32, texts: &[String; 4], hits: &mut Vec<Hit>) {
     let mut x = r.left();
+    // A readout's label sets its cell's width (the row flows), so it needs no room of its own.
     let label = |p: &Painter, at: Pos2, text: &str| {
         if layer == Layer::Static {
-            title(p, at, s, text)
+            title(p, at, s, text, f32::INFINITY)
         } else {
-            title_rect(p, at, s, text)
+            title_rect(p, at, s, text, f32::INFINITY)
         }
     };
-    for (i, (name, key)) in [("DEPTH 2^", "depth"), ("ITERATIONS", "iter"), ("FRAME MS", "ms")].into_iter().enumerate() {
-        let lt = label(p, pos2(x, r.top()), name);
+    for (i, (name, key)) in [(tr!(live_title_depth), "depth"), (tr!(live_title_iterations), "iter"), (tr!(live_title_frame_ms), "ms")].into_iter().enumerate() {
+        let lt = label(p, pos2(x, r.top()), name.as_str());
         let case = nixies(p, layer, pos2(x + 2.0 * s, r.top() + TITLE_H * s), s, &texts[i]);
         let cell = lt.union(case);
         if layer == Layer::Dynamic {
@@ -546,7 +621,7 @@ fn draw_nixie_row(p: &Painter, layer: Layer, r: Rect, s: f32, texts: &[String; 4
     let widths = tube_widths(&texts[3], s);
     let clock_w = widths.iter().sum::<f32>() + 2.0 * s * (widths.len().saturating_sub(1)) as f32 + 10.0 * s;
     let cx = (r.right() - clock_w - 2.0 * s).max(x);
-    let lt = label(p, pos2(cx, r.top()), "DATE · TIME");
+    let lt = label(p, pos2(cx, r.top()), tr!(live_title_clock).as_str());
     let case = nixies(p, layer, pos2(cx, r.top() + TITLE_H * s), s, &texts[3]);
     if layer == Layer::Dynamic {
         hits.push(Hit { rect: lt.union(case), key: "clock" });
@@ -573,11 +648,17 @@ fn draw_row1(p: &Painter, layer: Layer, r: Rect, s: f32, inp: &Inputs, hits: &mu
     let vu = cell(vu_w);
     let tiles = cell(tiles_w);
     let scope = cell(scope_w);
-    for (face_rect, name, key) in [(radar, "Walk · bands", "walk"), (vu, "Picture age", "age"), (tiles, "Tiles", "tiles"), (scope, "GPU passes · ms", "scope")] {
-        if layer == Layer::Static {
-            title(p, pos2(face_rect.left(), r.top()), s, name);
-            paint::bezel(p, face_rect);
-        } else {
+    let faces = [(radar, "walk"), (vu, "age"), (tiles, "tiles"), (scope, "scope")];
+    if layer == Layer::Static {
+        let names = [tr!(live_title_walk), tr!(live_title_age), tr!(live_title_tiles), tr!(live_title_scope)];
+        for (i, ((face_rect, _), name)) in faces.iter().zip(names).enumerate() {
+            // The scope's title shares its line with the timer lamps (about 90 units at its right).
+            let room = face_rect.width() - if i == 3 { 100.0 * s } else { 0.0 };
+            title(p, pos2(face_rect.left(), r.top()), s, &name, room);
+            paint::bezel(p, *face_rect);
+        }
+    } else {
+        for (face_rect, key) in faces {
             hits.push(Hit { rect: Rect::from_min_max(pos2(face_rect.left(), r.top()), face_rect.right_bottom()), key });
         }
     }
@@ -642,7 +723,7 @@ fn draw_radar(p: &Painter, layer: Layer, r: Rect, s: f32, m: &Model) {
         flash(p, c, rr, m.flash);
         let plate = fade(ink::SCREEN_LO, 0.85);
         paint::plated(p, c + vec2(0.0, -2.0 * s), Align2::CENTER_BOTTOM, &format!("{}×{}", w.res.0, w.res.1), text_font.clone(), ink::PHOSPHOR_TEXT, plate, 3.0 * s);
-        paint::plated(p, c + vec2(0.0, 1.0 * s), Align2::CENTER_TOP, &format!("SPLIT {done}/{k}"), text_font, ink::PHOSPHOR_TEXT, plate, 3.0 * s);
+        paint::plated(p, c + vec2(0.0, 1.0 * s), Align2::CENTER_TOP, &tr!(live_walk_split, done = done, passes = k), text_font, ink::PHOSPHOR_TEXT, plate, 3.0 * s);
         return;
     }
     let ask = w.ask.max(512) as f32;
@@ -689,14 +770,14 @@ fn draw_radar(p: &Painter, layer: Layer, r: Rect, s: f32, m: &Model) {
     // A still view's walk names itself above the resolution: the same sweep, a slower budget.
     let tag = match w.kind {
         WalkKind::Pin => None,
-        WalkKind::Settle => Some("SETTLE"),
-        WalkKind::Ssaa => Some("SSAA"),
+        WalkKind::Settle => Some(tr!(live_kind_settle)),
+        WalkKind::Ssaa => Some(tr!(live_kind_ssaa)),
     };
     // The readouts sit on plates, so the beam sweeping through the middle never swallows them.
     let plate = fade(ink::SCREEN_LO, 0.85);
     if let Some(tag) = tag {
         let at = c + vec2(0.0, -2.0 * s - text_font.size * 1.15);
-        paint::plated(p, at, Align2::CENTER_BOTTOM, tag, text_font.clone(), fade(ink::PHOSPHOR_TEXT, 0.8), plate, 3.0 * s);
+        paint::plated(p, at, Align2::CENTER_BOTTOM, &tag, text_font.clone(), fade(ink::PHOSPHOR_TEXT, 0.8), plate, 3.0 * s);
     }
     paint::plated(p, c + vec2(0.0, -2.0 * s), Align2::CENTER_BOTTOM, &format!("{}×{}", w.res.0, w.res.1), text_font.clone(), ink::PHOSPHOR_TEXT, plate, 3.0 * s);
     paint::plated(p, c + vec2(0.0, 1.0 * s), Align2::CENTER_TOP, &format!("{} / {}", group(w.cursor.min(w.ask) as u64), group(w.ask as u64)), text_font, ink::PHOSPHOR_TEXT, plate, 3.0 * s);
@@ -750,7 +831,7 @@ fn draw_vu(p: &Painter, layer: Layer, r: Rect, s: f32, m: &Model) {
             }
         }
         p.circle_filled(polar(c, rr - 20.0 * s, ang(0.5)), 2.6 * s, Color32::from_rgb(0x2f, 0x6b, 0x2f));
-        p.text(pos2(r.center().x, r.top() + h * 0.5), Align2::CENTER_CENTER, "OCTAVES BEHIND", face::dial(11.0 * s), Color32::from_rgb(0x5a, 0x54, 0x44));
+        p.text(pos2(r.center().x, r.top() + h * 0.5), Align2::CENTER_CENTER, tr!(live_age_scale), face::dial(11.0 * s), Color32::from_rgb(0x5a, 0x54, 0x44));
         p.rect_filled(strip, 0.0_f32, Color32::from_rgb(0x06, 0x14, 0x0c));
         dashed(p, pos2(strip.left(), strip.center().y), pos2(strip.right(), strip.center().y), Stroke::new(1.0_f32, fade(ink::RED, 0.6)), 2.0 * s);
         return;
@@ -843,55 +924,74 @@ fn split_display(plane: Rect, res: (u32, u32)) -> (u32, u32) {
 }
 
 /// The tiles instrument's captions: the line under the plane, then the tile size and the tiles a
-/// frame (or a sample).
+/// frame (or a sample). Iteration bands and tile counts are numbers in the language's grouping; a
+/// resolution, a grid's shape and a tile's side are data, written as they are.
 fn tile_labels(plane: &Plane, res: (u32, u32)) -> (String, String, String) {
+    let tile_res = |res: (u32, u32)| tr!(live_tiles_tile_res, res = format!("{}×{}", res.0, res.1));
     match plane {
         Plane::Whole { res, band, settled, .. } => (
             match band {
-                Some((lo, hi)) => format!("{} · BAND {}–{}", if *settled { "SETTLE PASS" } else { "PIN PASS" }, group(*lo as u64), group(*hi as u64)),
-                None if *settled => "SETTLED FRAME · WHOLE PICTURE".to_owned(),
-                None => "MOVING FRAME · WHOLE PICTURE".to_owned(),
+                Some((lo, hi)) if *settled => tr!(live_tiles_settle_band, lo = *lo, hi = *hi),
+                Some((lo, hi)) => tr!(live_tiles_pin_band, lo = *lo, hi = *hi),
+                None if *settled => tr!(live_tiles_settled_whole),
+                None => tr!(live_tiles_moving_whole),
             },
-            format!("TILE {}×{}", res.0, res.1),
-            "1 TILE/FRAME".to_owned(),
+            tile_res(*res),
+            tr!(live_tiles_rate_one),
         ),
         Plane::Split { k, j, .. } => {
             let k = (*k).max(1);
             let (cols, rows) = split_cells(res);
             (
-                format!("SPLIT REFRESH · PASS {} OF {}", j + 1, k),
-                format!("TILE {SPLIT_TILE_PX} PX"),
-                format!("{}/FRAME", group(((cols * rows) as f32 / k as f32).ceil() as u64)),
+                tr!(live_tiles_split_pass, pass = j + 1, passes = k),
+                tr!(live_tiles_tile_px, px = SPLIT_TILE_PX.to_string()),
+                tr!(live_tiles_rate_count, count = ((cols * rows) as f32 / k as f32).ceil() as u64),
             )
         }
         Plane::Grid(g) => {
             let done = g.done.iter().filter(|d| **d).count();
             // A tile dearer than the admission goes out in strips: this frame sends part of one.
             let part = g.last.filter(|&(_, _, rows, piece)| !g.complete && piece < rows).map(|(_, _, rows, piece)| piece as f32 / rows as f32);
+            let grid = format!("{}×{}", g.cols, g.rows);
             (
                 if g.complete {
-                    format!("SETTLE GRID {}×{} · DONE", g.cols, g.rows)
+                    tr!(live_tiles_grid_done, grid = &grid)
+                } else if part.is_some() {
+                    tr!(live_tiles_grid_strips, grid = &grid, done = done, total = g.done.len())
                 } else {
-                    format!("SETTLE GRID {}×{} · {} OF {} DONE{}", g.cols, g.rows, done, g.done.len(), if part.is_some() { " · IN STRIPS" } else { "" })
+                    tr!(live_tiles_grid_progress, grid = &grid, done = done, total = g.done.len())
                 },
-                format!("TILE {} PX", g.side),
+                tr!(live_tiles_tile_px, px = g.side.to_string()),
                 match part {
-                    _ if g.complete => "0/FRAME".to_owned(),
-                    Some(f) => format!("{f:.2} TILE/FRAME"),
-                    None => "1 TILE/FRAME".to_owned(),
+                    _ if g.complete => tr!(live_tiles_rate_count, count = 0u32),
+                    Some(f) => tr!(live_tiles_rate_part, share = crate::i18n::decimal(f, 2)),
+                    None => tr!(live_tiles_rate_one),
                 },
             )
         }
         Plane::Ssaa { res, samples, band, .. } => (
             match band {
                 // The next sample walks: its pass's band (the samples folded so far stay counted).
-                Some((lo, hi)) => format!("SSAA · {samples} DONE · BAND {}–{}", group(*lo as u64), group(*hi as u64)),
-                None => format!("SSAA SAMPLE {samples} · WHOLE FRAME"),
+                Some((lo, hi)) => tr!(live_tiles_ssaa_band, samples = *samples, lo = *lo, hi = *hi),
+                None => tr!(live_tiles_ssaa_whole, sample = *samples),
             },
-            format!("TILE {}×{}", res.0, res.1),
-            "1 TILE/SAMPLE".to_owned(),
+            tile_res(*res),
+            tr!(live_tiles_rate_sample),
         ),
-        Plane::Idle(why) => ((*why).to_owned(), "NO PASS".to_owned(), "0/FRAME".to_owned()),
+        Plane::Idle(why) => (idle_caption(why), tr!(live_tiles_no_pass), tr!(live_tiles_rate_count, count = 0u32)),
+    }
+}
+
+/// An idle plane's caption: the model's word for what is on screen (an id, `Plane::Idle`), in the
+/// language in use.
+fn idle_caption(why: &str) -> String {
+    match why {
+        "STARTING" => tr!(live_tiles_idle_starting),
+        "HELD" => tr!(live_tiles_idle_held),
+        "REPROJECTED" => tr!(live_tiles_idle_reprojected),
+        "LIVE" => tr!(live_tiles_idle_live),
+        "IDLE" => tr!(live_tiles_idle_none),
+        other => other.to_owned(),
     }
 }
 
@@ -974,13 +1074,14 @@ pub(crate) fn running_level(share: f32) -> f32 {
 /// A share as the readout prints it: two significant figures down to a hundredth of a percent.
 pub(crate) fn running_text(share: f32) -> String {
     let pc = share * 100.0;
-    if pc >= 10.0 {
-        format!("RUNNING {pc:.0}%")
+    let percent = if pc >= 10.0 {
+        format!("{pc:.0}")
     } else if pc >= 1.0 {
-        format!("RUNNING {pc:.1}%")
+        format!("{pc:.1}")
     } else {
-        format!("RUNNING {pc:.2}%")
-    }
+        format!("{pc:.2}")
+    };
+    tr!(live_tiles_running, percent = percent)
 }
 
 /// A walk's pass on the plane: the whole picture lit as done, filled from the bottom to the share
@@ -1037,7 +1138,14 @@ fn draw_scope(p: &Painter, layer: Layer, r: Rect, s: f32, m: &Model) {
         }
         let f = face::narrow(10.0 * s);
         let mut x = r.left() + 6.0 * s;
-        for (label, col) in [("MOVING", fade(ink::PHOSPHOR_TEXT, 0.8)), ("PIN", Color32::from_rgb(0xff, 0xc8, 0x78)), ("WORKER", ink::LAMP_BLUE), ("SETTLE", Color32::from_rgb(0xff, 0xec, 0xc8)), ("SSAA", ink::SSAA)] {
+        let legend = [
+            (tr!(live_kind_moving), fade(ink::PHOSPHOR_TEXT, 0.8)),
+            (tr!(live_kind_pin), Color32::from_rgb(0xff, 0xc8, 0x78)),
+            (tr!(live_kind_worker), ink::LAMP_BLUE),
+            (tr!(live_kind_settle), Color32::from_rgb(0xff, 0xec, 0xc8)),
+            (tr!(live_kind_ssaa), ink::SSAA),
+        ];
+        for (label, col) in legend {
             let lr = p.text(pos2(x, r.top() + 4.0 * s), Align2::LEFT_TOP, label, f.clone(), col);
             x = lr.right() + 8.0 * s;
         }
@@ -1096,10 +1204,11 @@ fn draw_dial(p: &Painter, layer: Layer, r: Rect, s: f32, inp: &Inputs) {
         paint::vgradient(p, Rect::from_min_max(r.left_top(), pos2(r.right(), mid)), Color32::from_rgb(0x2a, 0x1a, 0x07), Color32::from_rgb(0x5a, 0x3a, 0x10));
         paint::vgradient(p, Rect::from_min_max(pos2(r.left(), mid), r.right_bottom()), Color32::from_rgb(0x5a, 0x3a, 0x10), Color32::from_rgb(0x2a, 0x1a, 0x07));
         paint::radial_disc(p, r.center(), r.width() * 0.45, fade(Color32::from_rgb(0xff, 0xbe, 0x5a), 0.16), fade(Color32::from_rgb(0xff, 0xbe, 0x5a), 0.0));
+        // DF32 and FLOATEXP are the arithmetic's names; "direct" is a word.
         for (a, b, col, label) in [
-            (0.0, inp.df32_from, Color32::from_rgba_unmultiplied(120, 200, 220, 115), "DIRECT"),
-            (inp.df32_from, inp.fe_from, Color32::from_rgba_unmultiplied(255, 190, 90, 128), "DF32"),
-            (inp.fe_from, f32::MAX, Color32::from_rgba_unmultiplied(255, 110, 60, 140), "FLOATEXP"),
+            (0.0, inp.df32_from, Color32::from_rgba_unmultiplied(120, 200, 220, 115), tr!(live_dial_direct)),
+            (inp.df32_from, inp.fe_from, Color32::from_rgba_unmultiplied(255, 190, 90, 128), "DF32".to_owned()),
+            (inp.fe_from, f32::MAX, Color32::from_rgba_unmultiplied(255, 110, 60, 140), "FLOATEXP".to_owned()),
         ] {
             let (a, b) = (a.max(lo), b.min(hi));
             if b <= a {
@@ -1164,12 +1273,37 @@ fn draw_dial(p: &Painter, layer: Layer, r: Rect, s: f32, inp: &Inputs) {
     }
 }
 
+/// The lamp labels' type at scale 1: Routed Gothic Narrow, its size and tracking.
+const LAMP_LABEL_PT: f32 = 10.5;
+const LAMP_LABEL_TRACK: f32 = 0.8;
+
+/// A lamp label's lines and the scale its type is drawn at. Measured at scale 1 in the label's own
+/// type, so a label breaks the same way at every panel size: one line when it fits the cell with
+/// room either side, else two at the space that keeps the longer line shortest; a line still wider
+/// than the cell is drawn smaller to fit it. The English labels keep the look they had when their
+/// width was reckoned from their letter count: only REF AHEAD breaks (52.3 units at least, at 1 to 4
+/// pixels a point, against 50 at most for REF HOLD, the widest kept whole), and none shrinks.
+fn lamp_label_lines(p: &Painter, label: &str) -> (Vec<String>, f32) {
+    let width = |t: &str, k: f32| tracked_size(p, t, face::narrow(LAMP_LABEL_PT * k), LAMP_LABEL_TRACK * k).x;
+    let widest = |lines: &Vec<String>, k: f32| lines.iter().map(|t| width(t.as_str(), k)).fold(0.0, f32::max);
+    let words: Vec<&str> = label.split(' ').collect();
+    let lines = if words.len() == 1 || width(label, 1.0) <= LAMP_CELL_W - 7.0 {
+        vec![label.to_owned()]
+    } else {
+        (1..words.len())
+            .map(|i| vec![words[..i].join(" "), words[i..].join(" ")])
+            .min_by(|a, b| widest(a, 1.0).total_cmp(&widest(b, 1.0)))
+            .unwrap_or_else(|| vec![label.to_owned()])
+    };
+    let k = fit_scale(LAMP_CELL_W - 2.0, |k| widest(&lines, k));
+    (lines, k)
+}
+
 /// The light bank: lamps under engraved labels, wrapping, with separators between groups.
 fn draw_bank(p: &Painter, layer: Layer, r: Rect, s: f32, m: &Model, hits: &mut Vec<Hit>) {
     let mut x = r.left();
     let mut y = r.top();
     let cell = LAMP_CELL_W * s;
-    let font = face::narrow(10.5 * s);
     for spec in LAMP_SPECS.iter() {
         if spec.group && x > r.left() && x + LAMP_SEP_W * s + cell <= r.right() + 0.5 {
             if layer == Layer::Static {
@@ -1185,15 +1319,11 @@ fn draw_bank(p: &Painter, layer: Layer, r: Rect, s: f32, m: &Model, hits: &mut V
         let c = pos2(x + cell * 0.5, y + 12.0 * s);
         if layer == Layer::Static {
             paint::lamp_bezel(p, c, 7.5 * s);
-            let words: Vec<&str> = spec.label.split(' ').collect();
-            // Routed Gothic Narrow at 10.5 is about 5.6 units a letter with its tracking: a label
-            // longer than the cell holds goes on two lines at its space.
-            let one_line_w = spec.label.chars().count() as f32 * 6.4 * s;
-            if one_line_w <= cell - 4.0 * s || words.len() == 1 {
-                paint::tracked(p, pos2(c.x, y + 24.0 * s), Align2::CENTER_TOP, spec.label, font.clone(), ink::ENGRAVE_DIM, 0.8 * s, true);
-            } else {
-                paint::tracked(p, pos2(c.x, y + 24.0 * s), Align2::CENTER_TOP, words[0], font.clone(), ink::ENGRAVE_DIM, 0.8 * s, true);
-                paint::tracked(p, pos2(c.x, y + 35.0 * s), Align2::CENTER_TOP, &words[1..].join(" "), font.clone(), ink::ENGRAVE_DIM, 0.8 * s, true);
+            let (lines, k) = lamp_label_lines(p, &lamp_label(spec.lamp));
+            let font = face::narrow(LAMP_LABEL_PT * s * k);
+            for (i, line) in lines.iter().enumerate() {
+                let at = pos2(c.x, y + (24.0 + 11.0 * i as f32) * s);
+                paint::tracked(p, at, Align2::CENTER_TOP, line, font.clone(), ink::ENGRAVE_DIM, LAMP_LABEL_TRACK * s * k, true);
             }
         } else {
             paint::lamp_glass(p, c, 7.5 * s, spec.hue, m.lamp(spec.lamp));
@@ -1212,12 +1342,19 @@ fn draw_engine_room(p: &Painter, layer: Layer, r: Rect, s: f32, inp: &Inputs, hi
     let w = (r.width() - gap * (n - 1.0)) / n;
     let top = r.top() + TITLE_H * s;
     let h = ENGINE_H * s;
-    let names = [("Steps / s", "tach"), ("Two engines", "engines"), ("Memory", "memory"), ("Cores · threads", "cores"), ("Pixel stream", "pixels")];
-    for (i, (name, key)) in names.iter().enumerate() {
+    let keys = ["tach", "engines", "memory", "cores", "pixels"];
+    for (i, key) in keys.iter().enumerate() {
         let x = r.left() + i as f32 * (w + gap);
         let face_rect = Rect::from_min_size(pos2(x, top), vec2(w, h));
         if layer == Layer::Static {
-            title(p, pos2(x, r.top()), s, name);
+            let name = match i {
+                0 => tr!(live_title_steps),
+                1 => tr!(live_title_engines),
+                2 => tr!(live_title_memory),
+                3 => tr!(live_title_cores),
+                _ => tr!(live_title_pixels),
+            };
+            title(p, pos2(x, r.top()), s, &name, w);
             paint::bezel(p, face_rect);
         } else {
             hits.push(Hit { rect: Rect::from_min_max(pos2(x, r.top()), face_rect.right_bottom()), key });
@@ -1301,10 +1438,11 @@ fn draw_engines(p: &Painter, layer: Layer, r: Rect, s: f32, inp: &Inputs) {
         let ay = r.top() + h * 0.5;
         pos2(ax + (screen.x - ax) * t, ay + (screen.y - ay) * (t * PI / 2.0).sin())
     };
-    let gauges = [(w * 0.25, e.gpu_busy[0], "GPU 0 · WINDOW", ink::AMBER, true), (w * 0.75, e.gpu_busy[1], if e.worker { "GPU 1 · WORKER" } else { "NO WORKER" }, ink::LAMP_BLUE, e.worker)];
+    let gauges = [(w * 0.25, e.gpu_busy[0], ink::AMBER, true), (w * 0.75, e.gpu_busy[1], ink::LAMP_BLUE, e.worker)];
     if layer == Layer::Static {
         p.rect_filled(r, 6.0 * s, ink::FACE_DARK);
-        for (cx, _, label, _, _) in gauges {
+        let labels = [tr!(live_engines_gpu_window), if e.worker { tr!(live_engines_gpu_worker) } else { tr!(live_engines_no_worker) }];
+        for ((cx, _, _, _), label) in gauges.into_iter().zip(labels) {
             let c = centre(cx);
             paint::arc(p, c, gr, PI, TAU, Stroke::new(6.0 * s, Color32::from_rgb(0x2c, 0x2f, 0x33)));
             p.text(c + vec2(0.0, 6.0 * s), Align2::CENTER_TOP, label, face::dial(10.0 * s), Color32::from_rgb(0xd8, 0xcf, 0xb6));
@@ -1318,7 +1456,7 @@ fn draw_engines(p: &Painter, layer: Layer, r: Rect, s: f32, inp: &Inputs) {
         p.rect_stroke(glyph, 0.0_f32, Stroke::new(1.2_f32, Color32::from_rgb(0x6a, 0x6f, 0x75)), egui::StrokeKind::Inside);
         return;
     }
-    for (cx, v, _, col, live) in gauges {
+    for (cx, v, col, live) in gauges {
         let c = centre(cx);
         if live {
             paint::arc(p, c, gr, PI, PI + PI * v.clamp(0.0, 1.0), Stroke::new(6.0 * s, col));
@@ -1335,7 +1473,11 @@ fn draw_engines(p: &Painter, layer: Layer, r: Rect, s: f32, inp: &Inputs) {
         }
     }
     let (a, b) = m.shown_share();
-    let label = if m.shown.is_empty() { "ON SCREEN —".to_owned() } else { format!("ON SCREEN {} : {}", (a * 100.0).round() as u32, (b * 100.0).round() as u32) };
+    let label = if m.shown.is_empty() {
+        tr!(live_engines_on_screen_none)
+    } else {
+        tr!(live_engines_on_screen, window = (a * 100.0).round() as u32, worker = (b * 100.0).round() as u32)
+    };
     paint::tabular(p, pos2(r.center().x, r.bottom() - 4.0 * s), Align2::CENTER_BOTTOM, &label, face::dial(11.0 * s), Color32::from_rgb(0xd8, 0xcf, 0xb6));
 }
 
@@ -1350,8 +1492,14 @@ fn draw_tanks(p: &Painter, layer: Layer, r: Rect, s: f32, e: &Engine) {
             p.rect_filled(Rect::from_min_max(pos2(left, top), pos2(left + tw, bot)), 0.0_f32, Color32::from_rgb(6, 7, 7));
         }
         let f = face::dial(9.0 * s);
-        for (i, (label, col)) in [("G-BUF", ink::PHOSPHOR), ("HOLD+SSAA", Color32::from_rgb(0x4f, 0xbf, 0x74)), ("ORBIT+BLA", ink::AMBER), ("WORKER REF", ink::LAMP_BLUE)].iter().enumerate() {
-            p.text(pos2(r.left() + w * 0.76, r.top() + (10.0 + i as f32 * 12.0) * s), Align2::LEFT_TOP, *label, f.clone(), *col);
+        let legend = [
+            (tr!(live_memory_gbuf), ink::PHOSPHOR),
+            (tr!(live_memory_hold), Color32::from_rgb(0x4f, 0xbf, 0x74)),
+            (tr!(live_memory_orbit), ink::AMBER),
+            (tr!(live_memory_worker), ink::LAMP_BLUE),
+        ];
+        for (i, (label, col)) in legend.into_iter().enumerate() {
+            p.text(pos2(r.left() + w * 0.76, r.top() + (10.0 + i as f32 * 12.0) * s), Align2::LEFT_TOP, label, f.clone(), col);
         }
         return;
     }
@@ -1393,8 +1541,9 @@ fn draw_cores(p: &Painter, layer: Layer, r: Rect, s: f32, inp: &Inputs) {
     let hue = |k: usize| if k >= 6 { ink::RED } else if k >= 4 { ink::AMBER } else { ink::LAMP_GREEN };
     let c = pos2(r.left() + r.width() * 0.78, r.top() + r.height() * 0.45);
     let rr = (r.width() * 0.2).min(r.height() * 0.38);
-    let roles = [("REF", 0usize), ("POOL", 1), ("WRK", 2), ("PRB", 3), ("EXP", 4)];
-    let centre = |k: usize| polar(c, rr * 0.5, -PI / 2.0 + k as f32 * TAU / roles.len() as f32);
+    // The thread roles, in `registry::Role` order (their labels are in the static layer below).
+    let roles = super::registry::ROLES;
+    let centre = |k: usize| polar(c, rr * 0.5, -PI / 2.0 + k as f32 * TAU / roles as f32);
     if layer == Layer::Static {
         p.rect_filled(r, 6.0 * s, ink::FACE_DARK);
         // Every LED, dark: the dynamic layer lights the ones in use over them.
@@ -1405,9 +1554,10 @@ fn draw_cores(p: &Painter, layer: Layer, r: Rect, s: f32, inp: &Inputs) {
             }
         }
         p.add(Shape::mesh(mesh));
-        p.text(pos2(r.left() + 6.0 * s, r.bottom() - 5.0 * s), Align2::LEFT_BOTTOM, format!("{} CORES", e.cores.len()), face::narrow(11.0 * s), Color32::from_rgb(0xd8, 0xcf, 0xb6));
+        p.text(pos2(r.left() + 6.0 * s, r.bottom() - 5.0 * s), Align2::LEFT_BOTTOM, tr!(live_cores_count, count = e.cores.len()), face::narrow(11.0 * s), Color32::from_rgb(0xd8, 0xcf, 0xb6));
         paint::phosphor_disc(p, c, rr);
-        for (label, k) in roles {
+        let labels = [tr!(live_cores_role_ref), tr!(live_cores_role_pool), tr!(live_cores_role_worker), tr!(live_cores_role_probe), tr!(live_cores_role_export)];
+        for (k, label) in labels.into_iter().enumerate() {
             p.text(centre(k), Align2::CENTER_CENTER, label, face::narrow(8.0 * s), fade(ink::PHOSPHOR, 0.35));
         }
         return;
@@ -1431,7 +1581,7 @@ fn draw_cores(p: &Painter, layer: Layer, r: Rect, s: f32, inp: &Inputs) {
         }
         total += count;
     }
-    paint::tabular(p, pos2(c.x, r.bottom() - 5.0 * s), Align2::CENTER_BOTTOM, &format!("THREADS {}", total + 1), face::narrow(11.0 * s), Color32::from_rgb(0xd8, 0xcf, 0xb6));
+    paint::tabular(p, pos2(c.x, r.bottom() - 5.0 * s), Align2::CENTER_BOTTOM, &tr!(live_cores_threads, count = total + 1), face::narrow(11.0 * s), Color32::from_rgb(0xd8, 0xcf, 0xb6));
 }
 
 /// Pixels falling into the picture: dim while a walk computes them, bright when they finish.

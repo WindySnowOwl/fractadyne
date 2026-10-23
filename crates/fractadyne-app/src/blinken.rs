@@ -310,7 +310,7 @@ impl Overlay {
                 let hit = Rect::from_center_size(c, vec2(18.0, 18.0) * s.max(0.8));
                 let close = ui.interact(hit, Id::new("fractadyne.blinken.close"), Sense::click());
                 panel::draw_close(&p, c, s, close.hovered(), close.is_pointer_button_down_on());
-                let closed = close.on_hover_text("Close the live-render panel (B)").clicked();
+                let closed = close.on_hover_text(format!("{} (B)", tr!(live_close_hover))).clicked();
                 (resp, closed)
             });
         let (resp, closed) = area.inner;
@@ -361,6 +361,7 @@ impl Overlay {
         if !panel::HELP_KEYS.contains(&key) && !panel::LAMP_KEYS.contains(&key) {
             return;
         }
+        // Built in the language in use each frame it shows: a language change applies at once.
         let Some(card) = help::card(key) else { return };
         let screen = ctx.screen_rect();
         let w = 350.0f32.min(screen.width() - 24.0);
@@ -373,11 +374,13 @@ impl Overlay {
             .fixed_pos(pivot.0)
             .pivot(pivot.1)
             .interactable(false)
-            .show(ctx, |ui| help_card(ui, card, w));
+            .show(ctx, |ui| help_card(ui, &card, w));
     }
 }
 
-/// A help card: the operator's manual, cream paper and dark ink.
+/// A help card: the operator's manual, cream paper and dark ink. Its title is shown as the message
+/// holds it (in capitals, like the panel's legends: uppercasing a translation gets Turkish i and
+/// German ß wrong).
 fn help_card(ui: &mut egui::Ui, card: &help::Card, width: f32) {
     let ink = paint::ink::INK;
     egui::Frame::new()
@@ -389,14 +392,18 @@ fn help_card(ui: &mut egui::Ui, card: &help::Card, width: f32) {
         .show(ui, |ui| {
             ui.set_width(width - 28.0);
             ui.spacing_mut().item_spacing.y = 4.0;
-            ui.label(egui::RichText::new(card.title.to_uppercase()).font(paint::face::engrave(13.0)).color(Color32::from_rgb(0x3b, 0x37, 0x2d)));
+            ui.label(egui::RichText::new(card.title.as_str()).font(paint::face::engrave(13.0)).color(Color32::from_rgb(0x3b, 0x37, 0x2d)));
             ui.separator();
             let body = |t: &str| egui::RichText::new(t).size(13.5).color(ink);
-            ui.label(body(card.what));
-            if let Some(n) = card.note {
-                ui.label(body(n));
+            ui.label(body(card.what.as_str()));
+            if let Some(n) = &card.note {
+                ui.label(body(n.as_str()));
             }
-            for (label, items, dot) in [("HEALTHY", card.good, Color32::from_rgb(0x3d, 0x9a, 0x3d)), ("TROUBLE", card.bad, Color32::from_rgb(0xc4, 0x36, 0x1c))] {
+            let lists = [
+                (tr!(live_card_healthy), &card.good, Color32::from_rgb(0x3d, 0x9a, 0x3d)),
+                (tr!(live_card_trouble), &card.bad, Color32::from_rgb(0xc4, 0x36, 0x1c)),
+            ];
+            for (label, items, dot) in lists {
                 if items.is_empty() {
                     continue;
                 }
@@ -407,7 +414,7 @@ fn help_card(ui: &mut egui::Ui, card: &help::Card, width: f32) {
                         let (r, _) = ui.allocate_exact_size(vec2(12.0, 16.0), Sense::hover());
                         ui.painter().circle_filled(r.center() + vec2(0.0, 1.0), 4.0, dot);
                         // A label in a row extends unless told to wrap: the card keeps its width.
-                        ui.add(egui::Label::new(body(it)).wrap());
+                        ui.add(egui::Label::new(body(it.as_str())).wrap());
                     });
                 }
             }

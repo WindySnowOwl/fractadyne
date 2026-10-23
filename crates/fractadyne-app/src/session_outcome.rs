@@ -52,8 +52,17 @@ impl Ask {
         }
     }
 
-    /// The setting as the Controls panel would name it.
+    /// The setting as the Controls panel would name it, in the language in use.
     pub(crate) fn describe(self) -> String {
+        if self.auto_iter {
+            tr!(quarantine_setting_auto, base = self.max_iter)
+        } else {
+            tr!(quarantine_setting_fixed, count = self.max_iter)
+        }
+    }
+
+    /// The same in English, for the log.
+    pub(crate) fn log_describe(self) -> String {
         let n = crate::grouped_count(self.max_iter as f64);
         if self.auto_iter {
             format!("automatic iterations from a base of {n}")
@@ -100,6 +109,7 @@ pub(crate) fn quarantine(o: &SessionOutcome, default: Ask) -> Option<Quarantine>
 }
 
 impl Quarantine {
+    /// How the session ended, in English, for the log.
     fn ended(&self) -> &'static str {
         match self.outcome.end {
             SessionEnd::DeviceLost => "lost its graphics device",
@@ -115,9 +125,9 @@ impl Quarantine {
              ({} a pixel there), and offers it back{}",
             self.ended(),
             crate::fmt_log2_count(o.at_log2mag),
-            o.ask.describe(),
+            o.ask.log_describe(),
             crate::grouped_count(o.ask.at(o.at_log2mag.max(0.0)) as f64),
-            self.restored.describe(),
+            self.restored.log_describe(),
             crate::grouped_count(self.restored.at(o.at_log2mag.max(0.0)) as f64),
             match (o.admitted_budget, o.mode_rate) {
                 (Some(b), Some(r)) if r > 0.0 =>
@@ -130,13 +140,16 @@ impl Quarantine {
 
     /// What the notice says.
     pub(crate) fn notice(&self) -> String {
-        format!(
-            "The previous session {} at {}× while set to {}. This session started with {} instead, \
-             so it cannot walk straight back into the same load.",
-            self.ended(),
-            crate::fmt_log2_count(self.outcome.at_log2mag),
-            self.outcome.ask.describe(),
-            self.restored.describe(),
+        let end = match self.outcome.end {
+            SessionEnd::DeviceLost => "device",
+            _ => "unclean",
+        };
+        tr!(
+            quarantine_notice,
+            end = end,
+            depth = crate::fmt_log2_count(self.outcome.at_log2mag),
+            setting = self.outcome.ask.describe(),
+            restored = self.restored.describe()
         )
     }
 }

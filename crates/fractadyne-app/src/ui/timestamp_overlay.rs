@@ -25,7 +25,8 @@ pub(crate) fn overlay_text(elapsed_s: f64, frame: u64) -> (String, String) {
     // ⚠`{:.3}` and a leading `+`, to match `diag::stamp`'s `[+{:9.3}s]`. A reader lining a video
     // up against the log compares these two strings by eye; if the precision here were different
     // they would have to do arithmetic on every comparison.
-    (format!("+{elapsed_s:.3}s"), format!("frame {frame}"))
+    // The frame number goes in as TEXT: ungrouped, as the log's `f=` writes it.
+    (format!("+{elapsed_s:.3}s"), tr!(overlay_timestamp_frame, frame = frame.to_string()))
 }
 
 /// Draw the overlay into `rect` (the view's own rectangle) on the decoration layer — above the

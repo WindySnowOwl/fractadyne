@@ -214,8 +214,9 @@ fn vocabulary() -> Vec<Candidate> {
                 _ => continue,
             };
             if !out.iter().any(|c| c.name == name) {
-                let hint = if k.hint.is_empty() { k.label } else { k.hint };
-                out.push(Candidate { name, insert, hint: hint.to_string() });
+                let hint = (k.hint)();
+                let hint = if hint.is_empty() { k.label.to_string() } else { hint };
+                out.push(Candidate { name, insert, hint });
             }
         }
     }
@@ -270,7 +271,7 @@ pub(crate) fn candidates(src: &str, prefix: &str) -> Vec<Candidate> {
     let known = vocabulary();
     let mut out: Vec<Candidate> = variables(src, &known)
         .into_iter()
-        .map(|name| Candidate { insert: name.clone(), name, hint: "A variable this formula sets".into() })
+        .map(|name| Candidate { insert: name.clone(), name, hint: tr!(formula_completion_variable) })
         .chain(known)
         .filter(|c| c.name.starts_with(&p))
         .collect();
@@ -278,7 +279,7 @@ pub(crate) fn candidates(src: &str, prefix: &str) -> Vec<Candidate> {
     // `log(`. The language itself keeps one name per function.
     for (other, ours, what) in OTHER_SPELLINGS {
         if other.starts_with(&p) && !out.iter().any(|c| c.name == ours) {
-            let hint = format!("{} — {other} is written {ours} here", capitalised(what));
+            let hint = tr!(formula_completion_other_spelling, what = capitalised(what), other = other, ours = ours);
             out.push(Candidate { name: ours.into(), insert: format!("{ours}("), hint });
         }
     }
@@ -385,9 +386,9 @@ pub(crate) fn completion_list(ctx: &egui::Context, id: egui::Id, at: egui::Pos2,
                 }
             }
             if cs.len() > MAX_SHOWN {
-                ui.label(egui::RichText::new(format!("… {} more", cs.len() - MAX_SHOWN)).weak().small());
+                ui.label(egui::RichText::new(tr!(formula_completion_more, count = cs.len() - MAX_SHOWN)).weak().small());
             }
-            ui.label(egui::RichText::new("Tab or Enter to complete, Esc to close").weak().small());
+            ui.label(egui::RichText::new(tr!(formula_completion_keys)).weak().small());
         });
     });
     pressed

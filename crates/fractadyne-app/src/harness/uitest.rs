@@ -288,6 +288,9 @@ struct StepResult {
     /// assume it. Written because the minimap-pan check first passed at meanD 0.0 on a view that
     /// never tiled at all — a clean, confident, meaningless zero.
     tiled: bool,
+    /// In the pseudo-language: the text on screen that is not the English file's (no brackets),
+    /// for `untranslated.txt`.
+    untranslated: Vec<String>,
 }
 
 /// A 16x16 luma thumbnail of the left ~45% of the frame, vertically inset past the toolbar and
@@ -380,6 +383,11 @@ pub(crate) struct UiTest {
     crashes_at_start: Vec<String>,
     /// Control-panel width measured during the toggle step's OPEN phase (`None` until then).
     panel_w: Option<f32>,
+    /// A screenshot was requested this frame: read the text it shows once the frame is drawn
+    /// (`uitest_note_text`, at the end of `update`).
+    capture_text: bool,
+    /// The text the captured frame painted, and the screen it was painted on.
+    text_items: Option<(egui::Rect, Vec<crate::harness::text_layout::TextItem>)>,
     /// The longest gap between two harness ticks (= frames) in the current step, and the last
     /// tick — a frozen frame shows here whatever froze it.
     max_gap_ms: f64,
@@ -441,6 +449,8 @@ impl UiTest {
             quiet_since: Instant::now(),
             crashes_at_start: crate::diag::crash_report_names(),
             panel_w: None,
+            capture_text: false,
+            text_items: None,
             max_gap_ms: 0.0,
             last_tick: Instant::now(),
             prev_unclean: crate::diag::previous_session_unclean(),
@@ -1070,6 +1080,9 @@ impl FractadyneApp {
                     ctx.send_viewport_cmd(egui::ViewportCommand::Screenshot(egui::UserData::default()));
                     ut.hard_until = now + std::time::Duration::from_millis(2_000); // screenshot-reply timeout
                     ut.phase = Phase::Shot;
+                    // The screenshot shows THIS frame: its text is read once it is drawn.
+                    ut.capture_text = true;
+                    ut.text_items = None;
                 }
             }
             Phase::Shot => {
@@ -2081,18 +2094,24 @@ impl FractadyneApp {
         // re-derives the strings it is validating agrees with itself whatever the bar shows.
         let texts = &self.perf.status_bar_texts;
         let find = |prefix: &str| texts.iter().find(|t| t.trim_start().starts_with(prefix));
+        // The readouts' words as the language in use writes them (the walk may run translated).
+        let spaced = |word: String| format!("{word} ");
+        let (center, cursor, zoom, iter, period) =
+            (spaced(tr!(status_center)), spaced(tr!(status_cursor)), tr!(status_zoom), spaced(tr!(status_iter)), spaced(tr!(status_period)));
+        let (scale, gen, pop, order, drawn) =
+            (spaced(tr!(status_scale)), spaced(tr!(status_generation)), spaced(tr!(status_population)), spaced(tr!(status_order)), spaced(tr!(status_drawn)));
         let mut sb_problems: Vec<String> = Vec::new();
         // `period ` is the ambient minibrot-period slot: always drawn (transparent when no period
         // applies), so its RESERVED presence is itself the reflow invariant to assert — the harness
         // has no pointer or M-key, so it is exercised in exactly that empty-but-present state.
         // A Life universe has its own three readouts in the zoom / iteration / period slots.
         let life_bar = self.fractal == crate::FractalKind::Life;
-        let wants: &[&str] = if life_bar {
-            &["center ", "cursor ", "scale ", "gen ", "pop "]
+        let wants: [&str; 5] = if life_bar {
+            [&center, &cursor, &scale, &gen, &pop]
         } else if self.fractal == crate::FractalKind::LSystem {
-            &["center ", "cursor ", "zoom", "order ", "drawn "]
+            [&center, &cursor, &zoom, &order, &drawn]
         } else {
-            &["center ", "cursor ", "zoom", "iter ", "period "]
+            [&center, &cursor, &zoom, &iter, &period]
         };
         for want in wants {
             if find(want).is_none() {
@@ -2103,12 +2122,12 @@ impl FractadyneApp {
         // when the pointer is off the canvas, and legitimately does here (the harness has no
         // pointer): what matters for that one is that its RESERVED FIELD is still drawn, since
         // the field appearing and disappearing is what wrapped the bar in the field report.
-        if let Some(c) = find("center ") {
+        if let Some(c) = find(&center) {
             if !c.contains(',') || c.trim_end().ends_with(',') {
                 sb_problems.push(format!("centre readout is incomplete: {c:?}"));
             }
         }
-        if let Some(c) = find("cursor ") {
+        if let Some(c) = find(&cursor) {
             if c.len() < 40 {
                 sb_problems.push(format!("cursor field is not reserved at its full width: {c:?}"));
             }
@@ -2124,24 +2143,24 @@ impl FractadyneApp {
             digits.parse().ok()
         };
         if life_bar {
-            for want in ["gen ", "pop "] {
+            for want in [&gen, &pop] {
                 if find(want).and_then(|t| num(t)).is_none() {
                     sb_problems.push(format!("{want:?} does not read as a number"));
                 }
             }
         } else if self.fractal == crate::FractalKind::LSystem {
             // A drawing has no iteration count: its zoom, order and what it drew.
-            for want in ["zoom", "order ", "drawn "] {
+            for want in [&zoom, &order, &drawn] {
                 if find(want).and_then(|t| num(t)).is_none() {
                     sb_problems.push(format!("{want:?} does not read as a number"));
                 }
             }
         } else {
-            match find("zoom").and_then(|t| num(t)) {
+            match find(&zoom).and_then(|t| num(t)) {
                 Some(z) if z > 0.0 => {}
                 other => sb_problems.push(format!("zoom does not read as a number: {other:?}")),
             }
-            match find("iter ").and_then(|t| num(t)) {
+            match find(&iter).and_then(|t| num(t)) {
                 Some(i) if i >= 1.0 => {}
                 other => sb_problems.push(format!("iteration count does not read as a number: {other:?}")),
             }
@@ -2429,6 +2448,11 @@ impl FractadyneApp {
             }
         }
 
+        let untranslated = match &ut.text_items {
+            Some((screen, items)) => text_layout_checks(*screen, items, &mut checks),
+            None => Vec::new(),
+        };
+
         StepResult {
             name: step.name.clone(),
             kind: match step.kind {
@@ -2452,6 +2476,18 @@ impl FractadyneApp {
             left_fp,
             mid_fp,
             tiled,
+            untranslated,
+        }
+    }
+
+    /// End of `update`: when this frame is the one a screenshot was requested for, read the text
+    /// it painted (`harness::text_layout`). A pass egui will discard is not the one shown.
+    pub(crate) fn uitest_note_text(&mut self, ctx: &egui::Context) {
+        if let Some(ut) = self.harness.uitest.as_mut() {
+            if ut.capture_text && !ctx.will_discard() {
+                ut.text_items = Some((ctx.screen_rect(), crate::harness::text_layout::collect(ctx)));
+                ut.capture_text = false;
+            }
         }
     }
 
@@ -2530,6 +2566,7 @@ impl FractadyneApp {
             left_fp: Vec::new(),
             mid_fp: Vec::new(),
             tiled: false,
+            untranslated: Vec::new(),
         }
     }
 
@@ -2606,6 +2643,17 @@ impl FractadyneApp {
             log.push('\n');
         }
         let _ = std::fs::write(ut.out_dir.join("log.txt"), &log);
+        // In the pseudo-language: what each screen showed that the English file does not hold.
+        if crate::i18n::active().tag == crate::i18n::pseudo::TAG {
+            let mut u = String::from("Text on screen without the pseudo-language's brackets: not from the English file\n(data, names, or text still written in the code).\n\n");
+            for r in ut.results.iter().filter(|r| !r.untranslated.is_empty()) {
+                u.push_str(&format!("{} ({})\n", r.name, r.file));
+                for t in &r.untranslated {
+                    u.push_str(&format!("    {t}\n"));
+                }
+            }
+            let _ = std::fs::write(ut.out_dir.join("untranslated.txt"), u);
+        }
         let _ = std::fs::write(ut.out_dir.join("report.md"), render_md(ut, version, &plat, &gpu, pass_n, warn_n, fail_n));
         let _ = std::fs::write(ut.out_dir.join("report.json"), render_json(ut, version, &plat, &gpu));
 
@@ -2670,7 +2718,57 @@ fn timeout_result(step: &Step) -> StepResult {
         left_fp: Vec::new(),
         mid_fp: Vec::new(),
         tiled: false,
+        untranslated: Vec::new(),
     }
+}
+
+/// The step's text-layout checks (design/multilingual.md §10), from the text its frame painted.
+/// In the pseudo-language a fault on the interface's own (bracketed) text FAILS: a translation that
+/// long will not fit. In English a fault WARNS, since a field holding data longer than itself (a
+/// coordinate, a path) is cut on purpose. Returns the unbracketed text the pseudo-language run saw.
+fn text_layout_checks(screen: egui::Rect, items: &[crate::harness::text_layout::TextItem], checks: &mut Vec<Check>) -> Vec<String> {
+    use crate::harness::text_layout::{analyse, describe, is_pseudo, Fault};
+    let pseudo = crate::i18n::active().tag == crate::i18n::pseudo::TAG;
+    let findings = analyse(screen, items);
+    let (shortened, faults): (Vec<_>, Vec<_>) = findings
+        .iter()
+        .filter(|f| !pseudo || is_pseudo(&f.text))
+        .partition(|f| f.fault == Fault::Elided);
+    if faults.is_empty() {
+        checks.push(pass("text fits", format!("{} texts, none cut off, off screen or overlapping", items.len())));
+    } else {
+        let mut lines: Vec<String> = faults.iter().map(|f| describe(f)).collect();
+        lines.dedup();
+        checks.push(Check {
+            name: "text fits".into(),
+            verdict: if pseudo { Verdict::Fail } else { Verdict::Warn },
+            detail: format!("{} of {} texts: {}", faults.len(), items.len(), lines.join("; ")),
+        });
+    }
+    if pseudo {
+        if shortened.is_empty() {
+            checks.push(pass("text not shortened", "no translated text shortened to fit".into()));
+        } else {
+            let lines: Vec<String> = shortened.iter().map(|f| describe(f)).collect();
+            checks.push(Check {
+                name: "text not shortened".into(),
+                verdict: Verdict::Warn,
+                detail: format!("{}: {}", lines.len(), lines.join("; ")),
+            });
+        }
+    }
+    if !pseudo {
+        return Vec::new();
+    }
+    // Words, not data: two or more letters in a row, and not inside brackets.
+    let mut out: Vec<String> = items
+        .iter()
+        .filter(|t| !is_pseudo(&t.text) && t.text.split(|c: char| !c.is_ascii_alphabetic()).any(|w| w.len() >= 3))
+        .map(|t| t.text.chars().take(80).collect())
+        .collect();
+    out.sort();
+    out.dedup();
+    out
 }
 
 /// Luma statistics over the central 60% of the image (crops out menu/status-bar chrome), so a

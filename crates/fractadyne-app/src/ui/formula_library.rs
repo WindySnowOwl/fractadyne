@@ -64,7 +64,7 @@ fn formula_body(ui: &mut egui::Ui, f: &SavedFormula, reads: &Result<(), String>,
         clipped(ui, egui::RichText::new(ps.join("   ")).weak().small());
     }
     if let Err(e) = reads {
-        let why = format!("Doesn't read in this version: {e}");
+        let why = tr!(formula_library_unread, why = e);
         clipped(ui, egui::RichText::new(&why).small().color(danger)).on_hover_text(why);
     }
 }
@@ -83,7 +83,7 @@ impl FractadyneApp {
         match lib::save(&self.saved_formulas) {
             Ok(()) => true,
             Err(e) => {
-                self.pending_toast = Some(format!("Couldn't save the formula library: {e}"));
+                self.pending_toast = Some(tr!(formula_library_save_failed, why = e));
                 false
             }
         }
@@ -92,16 +92,16 @@ impl FractadyneApp {
     /// Save `entry` under its name, replacing an entry of that name, and say which it did.
     pub(crate) fn save_to_formula_library(&mut self, entry: SavedFormula) {
         let Some(replaced) = lib::upsert(&mut self.saved_formulas, entry.clone()) else {
-            self.pending_toast = Some("Nothing to save: the formula is empty.".to_string());
+            self.pending_toast = Some(tr!(formula_library_nothing_to_save));
             return;
         };
         // The name as stored (tidied; a blank one named after the formula).
         let name = entry.tidy().map(|e| e.name).unwrap_or_default();
         if self.save_formula_library() {
             self.pending_toast = Some(if replaced {
-                format!("Updated \"{name}\" in the formula library.")
+                tr!(formula_library_updated, name = &name)
             } else {
-                format!("Saved \"{name}\" to the formula library.")
+                tr!(formula_library_saved, name = &name)
             });
         }
         self.formula_dialog.save_name = name;
@@ -202,7 +202,7 @@ impl FractadyneApp {
             Ok(c) => self.apply_custom_formula_async(c, e.view.clone()),
             Err(why) => {
                 self.formula_dialog.error = Some(why.clone());
-                self.pending_toast = Some(format!("\"{}\" can't be applied: {why}", e.name));
+                self.pending_toast = Some(tr!(formula_library_apply_failed, name = &e.name, why = why));
             }
         }
     }
@@ -212,10 +212,10 @@ impl FractadyneApp {
     /// was added, skipped and renamed, and for a `.frm` how many did not read and why, most often.
     fn import_formula_file(&mut self) {
         let Some(path) = rfd::FileDialog::new()
-            .add_filter("Formula files", &["toml", "frm"])
-            .add_filter("Fractadyne formulas", &["toml"])
-            .add_filter("Fractint formulas", &["frm"])
-            .add_filter("All files", &["*"])
+            .add_filter(tr!(formula_filter_formula_files), &["toml", "frm"])
+            .add_filter(tr!(formula_filter_fractadyne), &["toml"])
+            .add_filter(tr!(formula_filter_fractint), &["frm"])
+            .add_filter(tr!(formula_filter_all_files), &["*"])
             .set_directory(self.dialog_dir_default())
             .pick_file()
         else {
@@ -225,7 +225,7 @@ impl FractadyneApp {
         let file = path.file_name().map_or_else(String::new, |f| f.to_string_lossy().into_owned());
         let read = match std::fs::metadata(&path) {
             Ok(m) if m.len() <= lib::FILE_MAX => std::fs::read(&path).map_err(|e| e.to_string()),
-            Ok(_) => Err("far too large to be a formula file".to_string()),
+            Ok(_) => Err(tr!(formula_import_too_large)),
             Err(e) => Err(e.to_string()),
         };
         let frm_named = path.extension().is_some_and(|x| x.eq_ignore_ascii_case("frm"));
@@ -234,7 +234,7 @@ impl FractadyneApp {
             let ours = if frm_named {
                 None
             } else {
-                Some(String::from_utf8(bytes.clone()).map_err(|_| "not a text file".to_string()).and_then(|t| lib::parse_file(&t)))
+                Some(String::from_utf8(bytes.clone()).map_err(|_| tr!(formula_import_not_text)).and_then(|t| lib::parse_file(&t)))
             };
             match ours {
                 Some(Ok(list)) => Ok((list, None)),
@@ -242,7 +242,7 @@ impl FractadyneApp {
                     let frm = lib::from_frm(&bytes, &file);
                     match ours {
                         Some(Err(why)) if frm.formulas.is_empty() => Err(why),
-                        _ if frm.formulas.is_empty() && frm.unread.is_empty() => Err("no formulas in it".to_string()),
+                        _ if frm.formulas.is_empty() && frm.unread.is_empty() => Err(tr!(formula_import_no_formulas)),
                         _ => {
                             let unread = frm.sentence();
                             crate::diag::log_line("formula", &format!("frm import of {file}: unread {:?}", frm.unread));
@@ -265,7 +265,7 @@ impl FractadyneApp {
                     self.pending_toast = Some(s);
                 }
             }
-            Err(why) => self.pending_toast = Some(format!("Couldn't import \"{file}\": {why}.")),
+            Err(why) => self.pending_toast = Some(tr!(formula_import_failed, file = &file, why = why)),
         }
     }
 
@@ -275,7 +275,7 @@ impl FractadyneApp {
             return;
         }
         let Some(path) = rfd::FileDialog::new()
-            .add_filter("Fractadyne formulas", &["toml"])
+            .add_filter(tr!(formula_filter_fractadyne), &["toml"])
             .set_file_name(format!("{}.toml", file_stem(suggested)))
             .set_directory(self.dialog_dir_default())
             .save_file()
@@ -285,9 +285,9 @@ impl FractadyneApp {
         self.remember_dir(&path);
         let file = path.file_name().map_or_else(String::new, |f| f.to_string_lossy().into_owned());
         self.pending_toast = Some(match std::fs::write(&path, lib::file_text(&list)) {
-            Ok(()) if list.len() == 1 => format!("Exported \"{}\" to \"{file}\".", list[0].name),
-            Ok(()) => format!("Exported {} formulas to \"{file}\".", list.len()),
-            Err(e) => format!("Couldn't write \"{file}\": {e}"),
+            Ok(()) if list.len() == 1 => tr!(formula_export_one, name = &list[0].name, file = &file),
+            Ok(()) => tr!(formula_export_many, count = list.len(), file = &file),
+            Err(e) => tr!(formula_export_failed, file = &file, why = e.to_string()),
         });
     }
 
@@ -322,15 +322,16 @@ impl FractadyneApp {
             Shelf::Mine
         });
         let mut picked = shelf;
-        egui::Window::new("Formula library")
+        egui::Window::new(tr!(formula_library_title))
+            .id(egui::Id::new("fractadyne.formula-library"))
             .open(&mut open)
             .default_size([480.0, 460.0])
             .show(ctx, |ui| {
                 ui.horizontal(|ui| {
-                    ui.selectable_value(&mut picked, Shelf::Mine, format!("My formulas ({})", self.saved_formulas.len()))
-                        .on_hover_text("The formulas you saved or imported");
-                    ui.selectable_value(&mut picked, Shelf::Collection, format!("Collection ({})", shipped.len()))
-                        .on_hover_text("Formulas that come with Fractadyne, each with a view to start from");
+                    ui.selectable_value(&mut picked, Shelf::Mine, tr!(formula_library_mine, count = self.saved_formulas.len()))
+                        .on_hover_text(tr!(formula_library_mine_hover));
+                    ui.selectable_value(&mut picked, Shelf::Collection, tr!(formula_library_collection, count = shipped.len()))
+                        .on_hover_text(tr!(formula_library_collection_hover));
                 });
                 ui.separator();
                 if shelf == Shelf::Collection {
@@ -344,26 +345,30 @@ impl FractadyneApp {
                             }
                             ui.horizontal(|ui| {
                                 if live_shipped == Some(i) {
-                                    ui.label(egui::RichText::new("showing").small().color(ui.visuals().hyperlink_color));
+                                    let link = ui.visuals().hyperlink_color;
+                                    ui.label(egui::RichText::new(tr!(formula_library_showing)).small().color(link));
                                 }
                                 clipped(ui, egui::RichText::new(&f.name).strong()).on_hover_text(&f.name);
                             });
                             formula_body(ui, f, &Ok(()), textbook, danger);
                             ui.label(egui::RichText::new(&f.about).weak().small());
                             ui.horizontal(|ui| {
-                                if crate::theme::confirm_button(ui, "Apply").on_hover_text("Show it, at its starting view").clicked() {
+                                if crate::theme::confirm_button(ui, &tr!(formula_apply))
+                                    .on_hover_text(tr!(formula_library_apply_shipped_hover))
+                                    .clicked()
+                                {
                                     act = Some(Act::ApplyShipped(i));
                                 }
                                 if ui
-                                    .button(format!("{} Edit", crate::icons::EDIT))
-                                    .on_hover_text("Open it in the Custom formula dialog, without applying it")
+                                    .button(format!("{} {}", crate::icons::EDIT, tr!(formula_library_edit)))
+                                    .on_hover_text(tr!(formula_library_edit_hover))
                                     .clicked()
                                 {
                                     act = Some(Act::EditShipped(i));
                                 }
                                 if ui
-                                    .button(format!("{} Copy to mine", crate::icons::ADD))
-                                    .on_hover_text("Add it to your formulas, to keep or change")
+                                    .button(format!("{} {}", crate::icons::ADD, tr!(formula_library_copy_to_mine)))
+                                    .on_hover_text(tr!(formula_library_copy_to_mine_hover))
                                     .clicked()
                                 {
                                     act = Some(Act::CopyShipped(i));
@@ -374,7 +379,7 @@ impl FractadyneApp {
                     });
                     ui.separator();
                     crate::theme::action_row(ui, |ui| {
-                        if crate::theme::cancel_button(ui, "Close").clicked() {
+                        if crate::theme::cancel_button(ui, &tr!(formula_library_close)).clicked() {
                             close = true;
                         }
                     });
@@ -383,45 +388,42 @@ impl FractadyneApp {
                 ui.horizontal(|ui| {
                     ui.add(
                         egui::TextEdit::singleline(&mut self.formula_library.name)
-                            .hint_text("name (optional)")
+                            .hint_text(tr!(formula_name_hint))
                             .desired_width(220.0),
                     );
                     add = ui
                         .add_enabled(
                             self.custom.is_some(),
-                            egui::Button::new(format!("{} Add current formula", crate::icons::ADD)),
+                            egui::Button::new(format!("{} {}", crate::icons::ADD, tr!(formula_library_add_current))),
                         )
-                        .on_hover_text("Save the formula the view shows")
-                        .on_disabled_hover_text("Apply a custom formula first (Fractal > Custom formula…)")
+                        .on_hover_text(tr!(formula_library_add_current_hover))
+                        .on_disabled_hover_text(tr!(formula_library_add_current_disabled_hover))
                         .clicked();
                 });
                 ui.horizontal(|ui| {
                     import = ui
-                        .button(format!("{} Import…", crate::icons::IMPORT))
-                        .on_hover_text("Add the formulas in a formula file; nothing here is replaced")
+                        .button(format!("{} {}", crate::icons::IMPORT, tr!(formula_library_import)))
+                        .on_hover_text(tr!(formula_library_import_hover))
                         .clicked();
                     export_all = ui
                         .add_enabled(
                             !self.saved_formulas.is_empty(),
-                            egui::Button::new(format!("{} Export all…", crate::icons::SAVE)),
+                            egui::Button::new(format!("{} {}", crate::icons::SAVE, tr!(formula_library_export_all))),
                         )
-                        .on_hover_text("Write every formula here to one file, to share or keep")
+                        .on_hover_text(tr!(formula_library_export_all_hover))
                         .clicked();
                 });
                 ui.horizontal(|ui| {
-                    ui.label("Filter");
+                    ui.label(tr!(formula_library_filter));
                     ui.add(
                         egui::TextEdit::singleline(&mut self.formula_library.filter)
-                            .hint_text("filter by name or text")
+                            .hint_text(tr!(formula_library_filter_hint))
                             .desired_width(220.0),
                     );
                 });
                 ui.separator();
                 if self.saved_formulas.is_empty() {
-                    ui.label(
-                        "No saved formulas yet. Save one from the Custom formula dialog, add the one \
-                         the view shows, or import a file (ours, or Fractint's .frm).",
-                    );
+                    ui.label(tr!(formula_library_empty));
                 }
                 let needle = self.formula_library.filter.trim().to_lowercase();
                 let shown: Vec<usize> = (0..self.saved_formulas.len())
@@ -442,7 +444,8 @@ impl FractadyneApp {
                         ui.horizontal(|ui| {
                             // The marker first: a truncated name takes the rest of the row.
                             if live == Some(i) {
-                                ui.label(egui::RichText::new("showing").small().color(ui.visuals().hyperlink_color));
+                                let link = ui.visuals().hyperlink_color;
+                                ui.label(egui::RichText::new(tr!(formula_library_showing)).small().color(link));
                             }
                             clipped(ui, egui::RichText::new(&f.name).strong()).on_hover_text(&f.name);
                         });
@@ -452,50 +455,49 @@ impl FractadyneApp {
                         }
                         ui.horizontal(|ui| {
                             let apply = ui
-                                .add_enabled_ui(reads.is_ok(), |ui| crate::theme::confirm_button(ui, "Apply"))
+                                .add_enabled_ui(reads.is_ok(), |ui| crate::theme::confirm_button(ui, &tr!(formula_apply)))
                                 .inner
                                 .on_hover_text(if f.view.is_some() {
-                                    "Show this formula, at the view saved with it"
+                                    tr!(formula_library_apply_view_hover)
                                 } else {
-                                    "Show this formula"
+                                    tr!(formula_library_apply_hover)
                                 });
                             if apply.clicked() {
                                 act = Some(Act::Apply(i));
                             }
                             if ui
-                                .button(format!("{} Edit", crate::icons::EDIT))
-                                .on_hover_text("Open it in the Custom formula dialog, without applying it")
+                                .button(format!("{} {}", crate::icons::EDIT, tr!(formula_library_edit)))
+                                .on_hover_text(tr!(formula_library_edit_hover))
                                 .clicked()
                             {
                                 act = Some(Act::Edit(i));
                             }
-                            if ui.button(crate::icons::SAVE).on_hover_text("Export this formula to a file").clicked() {
+                            if ui.button(crate::icons::SAVE).on_hover_text(tr!(formula_library_export_one_hover)).clicked() {
                                 act = Some(Act::Export(i));
                             }
                             if self.formula_library.confirm_delete.as_deref() == Some(f.name.as_str()) {
-                                ui.label(egui::RichText::new("Delete it?").color(danger));
-                                if ui.button("Delete").clicked() {
+                                ui.label(egui::RichText::new(tr!(formula_library_delete_ask)).color(danger));
+                                if ui.button(tr!(formula_library_delete)).clicked() {
                                     act = Some(Act::Delete(i));
                                 }
-                                if ui.button("Keep").clicked() {
+                                if ui.button(tr!(formula_library_keep)).clicked() {
                                     act = Some(Act::KeepIt);
                                 }
-                            } else if ui.button(crate::icons::DELETE).on_hover_text("Delete").clicked() {
+                            } else if ui.button(crate::icons::DELETE).on_hover_text(tr!(formula_library_delete)).clicked() {
                                 act = Some(Act::AskDelete(f.name.clone()));
                             }
                         });
                         ui.separator();
                     }
                     if shown.len() > ROWS_MAX {
-                        let more = crate::commas(&(shown.len() - ROWS_MAX).to_string());
-                        ui.label(egui::RichText::new(format!("…and {more} more: type in the filter to find one.")).weak());
+                        ui.label(egui::RichText::new(tr!(formula_library_more, count = shown.len() - ROWS_MAX)).weak());
                     } else if shown.is_empty() && !self.saved_formulas.is_empty() {
-                        ui.label(egui::RichText::new("None match the filter.").weak());
+                        ui.label(egui::RichText::new(tr!(formula_library_no_match)).weak());
                     }
                 });
                 ui.separator();
                 crate::theme::action_row(ui, |ui| {
-                    if crate::theme::cancel_button(ui, "Close").clicked() {
+                    if crate::theme::cancel_button(ui, &tr!(formula_library_close)).clicked() {
                         close = true;
                     }
                 });
@@ -542,10 +544,10 @@ impl FractadyneApp {
                     let name = e.name.clone();
                     let report = lib::merge(&mut self.saved_formulas, vec![e]);
                     if report.added == 0 {
-                        self.pending_toast = Some(format!("\"{name}\" is already in your formulas."));
+                        self.pending_toast = Some(tr!(formula_library_copy_exists, name = &name));
                     } else if self.save_formula_library() {
                         let as_named = report.renamed.first().map_or(name.clone(), |(_, to)| to.clone());
-                        self.pending_toast = Some(format!("Copied \"{name}\" to your formulas as \"{as_named}\"."));
+                        self.pending_toast = Some(tr!(formula_library_copied, name = &name, as_named = as_named));
                     }
                 }
             }
@@ -562,7 +564,7 @@ impl FractadyneApp {
                 if i < self.saved_formulas.len() {
                     let gone = self.saved_formulas.remove(i);
                     if self.save_formula_library() {
-                        self.pending_toast = Some(format!("Deleted \"{}\" from the formula library.", gone.name));
+                        self.pending_toast = Some(tr!(formula_library_deleted, name = &gone.name));
                     }
                 }
             }

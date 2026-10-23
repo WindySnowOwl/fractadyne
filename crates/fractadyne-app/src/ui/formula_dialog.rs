@@ -102,7 +102,7 @@ impl FormulaDialog {
                 let num = |s: &str| s.trim().parse::<f64>().ok().filter(|v| v.is_finite());
                 match (num(re), num(im)) {
                     (Some(re), Some(im)) => Ok((re, im)),
-                    _ => Err(format!("p{} is not a pair of numbers", i + 1)),
+                    _ => Err(tr!(formula_param_not_numbers, name = format!("p{}", i + 1))),
                 }
             })
             .collect()
@@ -220,25 +220,27 @@ impl FractadyneApp {
         // message that describes the text on screen can never be stale.
         let check = parse(&self.formula_dialog.source);
         let used = check.as_ref().map(|f| f.param_count()).unwrap_or(0);
-        egui::Window::new("Custom formula")
+        egui::Window::new(tr!(formula_dialog_title))
+            .id(egui::Id::new("fractadyne.formula-dialog"))
             .open(&mut open)
             .resizable(true)
             .default_width(460.0)
             .show(ctx, |ui| {
                 let was_textbook = self.formula_dialog.textbook;
                 ui.horizontal(|ui| {
-                    ui.label(egui::RichText::new("The step, in Fractint-style expressions").weak().small());
+                    // The controls first, from the right; the intro then takes the room left and
+                    // wraps in it. Laid out before them, a longer translation ran under them.
                     ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
                         // Laid out right to left: Textbook | Text appear as Text | Textbook.
-                        ui.selectable_value(&mut self.formula_dialog.textbook, true, "Textbook")
-                            .on_hover_text("Show the formula typeset, as a textbook would set it, and edit it so");
-                        ui.selectable_value(&mut self.formula_dialog.textbook, false, "Text")
-                            .on_hover_text("Edit the formula as text");
+                        ui.selectable_value(&mut self.formula_dialog.textbook, true, tr!(formula_dialog_textbook))
+                            .on_hover_text(tr!(formula_dialog_textbook_hover));
+                        ui.selectable_value(&mut self.formula_dialog.textbook, false, tr!(formula_dialog_text))
+                            .on_hover_text(tr!(formula_dialog_text_hover));
                         ui.separator();
                         if self.formula_dialog.textbook
                             && ui
                                 .small_button("LaTeX")
-                                .on_hover_text("Copy the formula as LaTeX, as it is typeset here")
+                                .on_hover_text(tr!(formula_dialog_latex_hover))
                                 .clicked()
                         {
                             ui.ctx().copy_text(crate::ui::textbook::latex::latex(&self.formula_dialog.source));
@@ -246,7 +248,7 @@ impl FractadyneApp {
                         // The collection, by category: picking one loads it (and its view, which
                         // Apply goes to while the text is unchanged).
                         egui::ComboBox::from_id_salt("formula_examples")
-                            .selected_text("Examples")
+                            .selected_text(tr!(formula_dialog_examples))
                             .height(420.0)
                             .show_ui(ui, |ui| {
                                 let mut heading = "";
@@ -261,6 +263,9 @@ impl FractadyneApp {
                                     }
                                 }
                             });
+                        ui.with_layout(egui::Layout::top_down(egui::Align::Min), |ui| {
+                            ui.add(egui::Label::new(egui::RichText::new(tr!(formula_dialog_intro)).weak().small()).wrap());
+                        });
                     });
                 });
                 let text_id = egui::Id::new("formula_source");
@@ -313,13 +318,9 @@ impl FractadyneApp {
                 }
                 ui.label(
                     egui::RichText::new(if self.formula_dialog.textbook {
-                        "Type as in the text: / makes a fraction of the term before it, ^ an exponent, \
-                         ( parentheses. The arrows move through the formula; Tab goes to the next empty \
-                         box. A line in red does not read: click it to edit it as text."
+                        tr!(formula_dialog_help_textbook)
                     } else {
-                        "Type, or use the keypad — it holds every name the formula language knows. \
-                         Names complete as you type (Tab). Statements are separated by a new line or a \
-                         comma; ; starts a comment."
+                        tr!(formula_dialog_help_text)
                     })
                     .weak()
                     .small(),
@@ -351,14 +352,14 @@ impl FractadyneApp {
                 match &check {
                     Ok(_) => {
                         // Plain words: the UI font has no check-mark glyph (it drew a box).
-                        ui.label(egui::RichText::new("Reads correctly.").small().color(ui.visuals().hyperlink_color));
+                        ui.label(egui::RichText::new(tr!(formula_dialog_reads)).small().color(ui.visuals().hyperlink_color));
                     }
                     Err(e) => {
                         // Typeset, the text's columns are nowhere to be seen: the line is underlined,
                         // and an empty box (which prints as `()`) is named as what it is.
                         let msg = match self.formula_dialog.textbook {
-                            true if self.formula_dialog.editor.has_empty_box() => "Fill the empty box.".to_string(),
-                            true => format!("Line {}: {}", e.line, e.message),
+                            true if self.formula_dialog.editor.has_empty_box() => tr!(formula_dialog_empty_box),
+                            true => tr!(formula_dialog_error_line, line = e.line, message = e.message.as_str()),
                             false => e.to_string(),
                         };
                         ui.colored_label(egui::Color32::from_rgb(0xE0, 0x6C, 0x60), msg);
@@ -366,10 +367,11 @@ impl FractadyneApp {
                         // language's (`log`) in every such call. The language keeps one name each.
                         let fixes = crate::ui::formula_editor::other_spellings(&self.formula_dialog.source);
                         if !fixes.is_empty() {
-                            let what: Vec<String> = fixes.iter().map(|(name, ours)| format!("{name} to {ours}")).collect();
+                            let what: Vec<String> =
+                                fixes.iter().map(|(name, ours)| tr!(formula_respell_pair, from = name, to = *ours)).collect();
                             if ui
-                                .button(format!("Change {}", what.join(", ")))
-                                .on_hover_text("Write these functions as the formula language names them")
+                                .button(tr!(formula_respell, changes = what.join(", ")))
+                                .on_hover_text(tr!(formula_respell_hover))
                                 .clicked()
                             {
                                 self.formula_dialog.source = crate::ui::formula_editor::respell(&self.formula_dialog.source);
@@ -399,36 +401,36 @@ impl FractadyneApp {
                 let compiling = self.formula_dialog.pending.is_some();
                 ui.horizontal(|ui| {
                     apply = ui
-                        .add_enabled(check.is_ok(), egui::Button::new("Apply"))
-                        .on_hover_text("Compile the formula and show it")
+                        .add_enabled(check.is_ok(), egui::Button::new(tr!(formula_apply)))
+                        .on_hover_text(tr!(formula_dialog_apply_hover))
                         .clicked();
                     // Always laid out, blank when idle, so the row does not reflow as it comes and
                     // goes.
-                    let note = if compiling { "Compiling the formula for the GPU…" } else { "" };
+                    let note = if compiling { tr!(formula_dialog_compiling) } else { String::new() };
                     ui.label(egui::RichText::new(note).weak().small());
                 });
                 ui.separator();
                 ui.horizontal(|ui| {
                     ui.add(
                         egui::TextEdit::singleline(&mut self.formula_dialog.save_name)
-                            .hint_text("name (optional)")
+                            .hint_text(tr!(formula_name_hint))
                             .desired_width(180.0),
                     );
                     // Saving under a name the library holds UPDATES that entry, and says so first.
                     let name = self.formula_dialog.save_name.trim();
                     let label = if !name.is_empty() && self.saved_formulas.iter().any(|f| f.name == name) {
-                        "Update in library"
+                        tr!(formula_dialog_update_in_library)
                     } else {
-                        "Save to library"
+                        tr!(formula_dialog_save_to_library)
                     };
                     save = ui
                         .add_enabled(check.is_ok(), egui::Button::new(format!("{} {label}", crate::icons::SAVE)))
-                        .on_hover_text("Keep this formula and its parameters in the formula library")
-                        .on_disabled_hover_text("Only a formula that reads correctly can be saved")
+                        .on_hover_text(tr!(formula_dialog_save_hover))
+                        .on_disabled_hover_text(tr!(formula_dialog_save_disabled_hover))
                         .clicked();
                     library = ui
-                        .button("Library…")
-                        .on_hover_text("The saved formulas: apply, edit, import and export them")
+                        .button(tr!(formula_dialog_library))
+                        .on_hover_text(tr!(formula_dialog_library_hover))
                         .clicked();
                 });
             });

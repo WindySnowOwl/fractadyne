@@ -131,14 +131,15 @@ impl FractadyneApp {
     fn family_list(&self, ui: &mut egui::Ui) -> Option<FractalKind> {
         let mut picked = None;
         for kind in FractalKind::ALL.into_iter().filter(|k| k.power_family().is_none()) {
-            if ui.selectable_label(self.fractal == kind, kind.name()).on_hover_text(kind.menu_hint()).clicked() {
+            if ui.selectable_label(self.fractal == kind, kind.display_name()).on_hover_text(kind.menu_hint()).clicked() {
                 picked = Some(kind);
             }
         }
         ui.separator();
         ui.label(egui::RichText::new(tr!(menu_family_powers)).weak().small());
         egui::Grid::new(ui.next_auto_id()).num_columns(2).spacing([10.0, 2.0]).show(ui, |ui| {
-            for (label, kinds) in FractalKind::POWER_GROUPS {
+            for (_, kinds) in FractalKind::POWER_GROUPS {
+                let label = kinds[0].family_name();
                 let showing = kinds.contains(&self.fractal);
                 ui.label(if showing { egui::RichText::new(label).strong() } else { egui::RichText::new(label) });
                 ui.horizontal(|ui| {
@@ -156,7 +157,7 @@ impl FractadyneApp {
         ui.separator();
         ui.label(egui::RichText::new(tr!(menu_family_automata)).weak().small());
         for kind in FractalKind::AUTOMATA {
-            if ui.selectable_label(self.fractal == kind, kind.name()).on_hover_text(kind.menu_hint()).clicked() {
+            if ui.selectable_label(self.fractal == kind, kind.display_name()).on_hover_text(kind.menu_hint()).clicked() {
                 picked = Some(kind);
             }
         }
@@ -164,7 +165,7 @@ impl FractadyneApp {
         ui.separator();
         ui.label(egui::RichText::new(tr!(menu_family_lsystems)).weak().small());
         for kind in FractalKind::LSYSTEMS {
-            if ui.selectable_label(self.fractal == kind, kind.name()).on_hover_text(kind.menu_hint()).clicked() {
+            if ui.selectable_label(self.fractal == kind, kind.display_name()).on_hover_text(kind.menu_hint()).clicked() {
                 picked = Some(kind);
             }
         }
@@ -173,7 +174,8 @@ impl FractadyneApp {
 
     pub(crate) fn show_mode_group(&mut self, ui: &mut egui::Ui) {
         let can_julia = self.fractal.supports_julia();
-        let name = self.fractal.name();
+        let name = self.fractal.display_name();
+        let name = name.as_str();
         let cur = self.show_mode();
         let mut pick: Option<crate::ShowMode> = None;
 
@@ -895,7 +897,7 @@ impl FractadyneApp {
                         }
                         if ui
                             .button(tr!(menu_help_check_updates))
-                            .on_hover_text(tr!(menu_help_check_updates_hover, track = self.update_track.label()))
+                            .on_hover_text(tr!(menu_help_check_updates_hover, track = self.update_track.as_str()))
                             .clicked()
                         {
                             self.start_update_check(true);
@@ -930,7 +932,7 @@ impl FractadyneApp {
                         ui.label(egui::RichText::new(tr!(menu_help_tagline)).weak().small());
                         ui.separator();
                         ui.label(egui::RichText::new(tr!(menu_help_license)).weak().small());
-                        ui.label("MIT OR Apache-2.0");
+                        ui.label("MIT OR Apache-2.0"); // i18n: keep (the license's SPDX expression)
                         ui.label(
                             egui::RichText::new(tr!(menu_help_copyright, year = "2026", holder = "Rithea Hong"))
                                 .weak()
@@ -988,7 +990,7 @@ impl FractadyneApp {
                 // instead (the pseudo-language's longer menu titles did that at 1020 px, as a
                 // translation's can). So the row is ended by hand when the room left is too small.
                 let combo_w = ui.fonts(|f| {
-                    f.layout_no_wrap(self.fractal.name().to_owned(), egui::TextStyle::Button.resolve(ui.style()), egui::Color32::WHITE).size().x
+                    f.layout_no_wrap(self.fractal.display_name(), egui::TextStyle::Button.resolve(ui.style()), egui::Color32::WHITE).size().x
                 }) + ui.spacing().icon_width
                     + 3.0 * ui.spacing().button_padding.x
                     + ui.spacing().item_spacing.x;
@@ -997,7 +999,7 @@ impl FractadyneApp {
                 }
                 egui::ComboBox::from_id_salt("fractal_dropdown")
                     .height(popup_h)
-                    .selected_text(self.fractal.name())
+                    .selected_text(self.fractal.display_name())
                     .show_ui(ui, |ui| {
                         if let Some(k) = self.family_list(ui) {
                             sel = k;
@@ -1245,14 +1247,10 @@ impl FractadyneApp {
         let blocks = step / upp;
         Some((
             "⚠ depth limit",
-            format!(
-                "This view renders directly on the GPU in single precision, where one step of the \
-                 coordinates is {} pixels wide here: neighbouring pixels compute the same point, \
-                 so the image breaks into blocks. At this location it is sharp to about {}×. This \
-                 formula has no deep-zoom (perturbation) path yet, so zooming further shows no \
-                 more detail.",
-                commas(&format!("{blocks:.0}")),
-                commas(&format!("{:.0}", mag / blocks))
+            tr!(
+                status_limit_direct_detail,
+                pixels = crate::i18n::decimal(blocks, 0),
+                sharp_to = crate::i18n::decimal(mag / blocks, 0)
             ),
             true,
         ))
@@ -1261,7 +1259,9 @@ impl FractadyneApp {
     /// Bottom status bar — center coordinate, cursor, zoom, effective iteration count, and the
     /// live script / benchmark playback progress.
     /// Classify which rendering limit (if any) is binding, for the status-bar diagnostic.
-    /// Returns `(label, hover detail, severe)` — severe = red (a hard wall), else amber.
+    /// Returns `(label, hover detail, severe)` — severe = red (a hard wall), else amber. The label
+    /// is an English token (`--livetest` grades by it); the bar shows it through [`limit_label`],
+    /// and the detail is in the language in use.
     ///
     /// Deliberately quiet during ordinary dives: a motion-capped partial reference (≤
     /// `LIVE_REF_CAP`, nothing refused) is transient machinery, not a limit the user needs to
@@ -1293,14 +1293,7 @@ impl FractadyneApp {
         if partial && orbit_len >= dev_cap {
             return Some((
                 "⚠ depth limit",
-                format!(
-                    "The reference orbit reached the GPU buffer cap ({} samples) without \
-                     escaping, so pixels here are limited to ~{} iterations and finer detail \
-                     cannot be computed at this view — live or exported. This is the current \
-                     depth limit for this location family.",
-                    commas(&dev_cap.to_string()),
-                    commas(&clamp_px.to_string())
-                ),
+                tr!(status_limit_depth_detail, samples = dev_cap, iterations = clamp_px),
                 true,
             ));
         }
@@ -1317,40 +1310,20 @@ impl FractadyneApp {
         // indistinguishable, and saying "raise iterations" when they are already at the maximum
         // would be worse than saying nothing.
         if exhausted {
-            return Some((
-                "⚠ iter exhausted",
-                format!(
-                    "Every pixel still ran out of iterations at the largest budget this view can \
-                     be given ({}). Either the view is inside the set here (normal at depth), or \
-                     it needs more iterations than the app can currently provide — the image is \
-                     the same either way, so the budget was returned to a cheap one.",
-                    commas(&eff_iter.to_string())
-                ),
-                false,
-            ));
+            return Some(("⚠ iter exhausted", tr!(status_limit_exhausted_detail, budget = eff_iter), false));
         }
         if !plateau && budget_maxed {
             if let Some(frac) = capped {
                 let pressing = frac > 0.98
                     || esc_max.is_some_and(|mx| mx >= 0.9 * budget_measured.max(1) as f64);
                 if frac > 0.02 && pressing {
-                    let hint = if eff_iter >= crate::MAX_ITER_LIMIT {
-                        "Iterations is already at the maximum, so this view needs more than the \
-                         app can currently give."
+                    let percent = crate::i18n::decimal(frac * 100.0, 0);
+                    let detail = if eff_iter >= crate::MAX_ITER_LIMIT {
+                        tr!(status_limit_capped_max, percent = percent, budget = budget_measured)
                     } else {
-                        "Raise Iterations (Rendering panel) to resolve it."
+                        tr!(status_limit_capped_raise, percent = percent, budget = budget_measured)
                     };
-                    return Some((
-                        "⚠ iter capped",
-                        format!(
-                            "{:.0}% of pixels ran out of iterations at the {} budget, and the \
-                             escaping ones are finishing right at that ceiling — the view is \
-                             under-resolved. {hint}",
-                            frac * 100.0,
-                            commas(&budget_measured.to_string())
-                        ),
-                        false,
-                    ));
+                    return Some(("⚠ iter capped", detail, false));
                 }
             }
         }
@@ -1401,7 +1374,8 @@ impl FractadyneApp {
                 };
                 let l2 = self.viewport.log2_magnification();
                 mono(ui, format!(
-                    "center {}, {}",
+                    "{} {}, {}",
+                    tr!(status_center),
                     fmt_coord_deep(&self.viewport.center_x, l2),
                     fmt_coord_deep(&self.viewport.center_y, l2),
                 ));
@@ -1425,7 +1399,7 @@ impl FractadyneApp {
                     Some((mx, my)) => (fmt_coord(mx), fmt_coord(my)),
                     None => ("—".to_string(), "—".to_string()),
                 };
-                mono(ui, format!("cursor {cx_s:>21}, {cy_s:>21}"));
+                mono(ui, format!("{} {cx_s:>21}, {cy_s:>21}", tr!(status_cursor)));
                 ui.separator();
                 // ⭐⭐**RESERVED WIDTH, for the same reason the cursor readout above is.** These
                 // two fields CHANGE WIDTH as the view changes — `fmt_zoom_log2` grows an exponent,
@@ -1514,11 +1488,7 @@ impl FractadyneApp {
                             .wrap_mode(egui::TextWrapMode::Extend),
                     );
                     if period_now.is_some() {
-                        r.on_hover_text(
-                            "Period of the minibrot you jumped to (press M, or Go to location ▸ Go \
-                             to feature). It stays while the view sits on the feature and clears \
-                             when you move away.",
-                        );
+                        r.on_hover_text(tr!(status_period_hover));
                     }
                 }
                 } // not a Life view
@@ -1565,13 +1535,22 @@ impl FractadyneApp {
                 // padded to the widest variant's length when a diagnostic binds, and the widest
                 // variant drawn fully TRANSPARENT when none does. Same glyph count, same ⚠, same
                 // row metrics: the bar's layout is invariant by construction.
-                const SLOT: &str = "⚠ iter exhausted"; // the widest label variant
+                // ⭐The slot is as wide as the widest label AS THIS LANGUAGE WRITES IT, measured:
+                // padding to the widest by character count kept English constant only because the
+                // bar is monospace, and a translation's glyphs (CJK's above all) need not share the
+                // monospace cell. Allocated at that width in both states, with the widest label
+                // drawn transparent when none applies — the same widget, the same metrics.
                 if !life_bar {
                     ui.separator();
                 }
+                let variants = LIMIT_TOKENS.map(limit_label);
+                let font = egui::TextStyle::Monospace.resolve(ui.style());
+                let sizes = variants.clone().map(|v| ui.fonts(|f| f.layout_no_wrap(v, font.clone(), egui::Color32::WHITE).size()));
+                let widest = (0..sizes.len()).max_by(|a, b| sizes[*a].x.total_cmp(&sizes[*b].x)).unwrap_or(0);
+                let slot = egui::vec2(sizes[widest].x, sizes.iter().map(|s| s.y).fold(0.0, f32::max));
                 let (text, color, detail) = match limit {
                     Some((label, detail, severe)) => (
-                        format!("{label:<width$}", width = SLOT.chars().count()),
+                        limit_label(label),
                         if severe {
                             egui::Color32::from_rgb(0xE0, 0x6C, 0x60)
                         } else {
@@ -1579,7 +1558,7 @@ impl FractadyneApp {
                         },
                         Some(detail),
                     ),
-                    None => (SLOT.to_string(), egui::Color32::TRANSPARENT, None),
+                    None => (variants[widest].clone(), egui::Color32::TRANSPARENT, None),
                 };
                 // Extend, not wrap: a Label in a wrapped layout otherwise breaks its own text at
                 // the panel edge — the ⚠ stranded at the end of one line, "iter capped" on the
@@ -1589,10 +1568,14 @@ impl FractadyneApp {
                 // (A Life view never shows a diagnostic, so it reserves no slot for one.)
                 if !life_bar {
                     drawn.push(text.clone());
-                    let r = ui.add(
-                        egui::Label::new(egui::RichText::new(text).monospace().color(color))
-                            .wrap_mode(egui::TextWrapMode::Extend),
-                    );
+                    let r = ui
+                        .allocate_ui_with_layout(slot, egui::Layout::left_to_right(egui::Align::Center), |ui| {
+                            ui.add(
+                                egui::Label::new(egui::RichText::new(text).monospace().color(color))
+                                    .wrap_mode(egui::TextWrapMode::Extend),
+                            )
+                        })
+                        .inner;
                     if let Some(detail) = detail {
                         r.on_hover_text(detail);
                     }
@@ -1678,7 +1661,7 @@ impl FractadyneApp {
                             const GLYPH: [f32; 2] = [18.0, 18.0];
                             if finished {
                                 ui.add_sized(GLYPH, egui::Label::new(egui::RichText::new(crate::icons::STOP).size(13.0)))
-                                    .on_hover_text(format!("Finished — scrub back in, or {} to close", crate::icons::CLOSE));
+                                    .on_hover_text(tr!(play_finished_hover, close = crate::icons::CLOSE));
                             } else if paused {
                                 ui.add_sized(GLYPH, egui::Label::new(egui::RichText::new(crate::icons::PAUSE).size(13.0)));
                             } else {
@@ -1692,7 +1675,7 @@ impl FractadyneApp {
                             // must occupy the same space, or the whole transport jumps left once a
                             // tour passes ten minutes.
                             let tot = mmss(total);
-                            let tag = if is_bench { "benchmark" } else { "script" };
+                            let kind = if is_bench { "benchmark" } else { "script" };
                             const NAME_MAX: usize = 16;
                             let short = if name.chars().count() > NAME_MAX {
                                 let s: String = name.chars().take(NAME_MAX - 1).collect();
@@ -1708,7 +1691,7 @@ impl FractadyneApp {
                                 ))
                                 .monospace(),
                             )
-                            .on_hover_text(format!("Playing {tag} \"{name}\""));
+                            .on_hover_text(tr!(play_playing_hover, kind = kind, name = name.as_str()));
                             ui.separator();
                             // Media glyphs, NOT monospace: they live in egui's bundled emoji font,
                             // and forcing the monospace family drops them to tofu boxes.
@@ -1724,23 +1707,23 @@ impl FractadyneApp {
                                 .on_hover_text(tip)
                                 .clicked()
                             };
-                            if btn(ui, crate::icons::SKIP_BACK, "Restart from the beginning") {
+                            if btn(ui, crate::icons::SKIP_BACK, &tr!(play_restart)) {
                                 seek = Some(0.0);
                             }
-                            if btn(ui, crate::icons::REWIND, "Back 10 seconds") {
+                            if btn(ui, crate::icons::REWIND, &tr!(play_back)) {
                                 seek = Some((cur_t - 10.0).max(0.0));
                             }
                             if btn(ui, if paused { crate::icons::PLAY } else { crate::icons::PAUSE },
-                                   if finished { "Play again from the beginning" }
-                                   else if paused { "Resume" } else { "Pause" }) {
+                                   &if finished { tr!(play_again) }
+                                   else if paused { tr!(play_resume) } else { tr!(play_pause) }) {
                                 toggle_pause = true;
                             }
                             // Stop = rewind and park, as on any media player. It no longer tears
                             // the player down — that is ✖ — so the tour stays scrubable.
-                            if btn(ui, crate::icons::STOP, "Stop and rewind to the start") {
+                            if btn(ui, crate::icons::STOP, &tr!(play_stop)) {
                                 stop = true;
                             }
-                            if btn(ui, crate::icons::FORWARD, "Forward 10 seconds") {
+                            if btn(ui, crate::icons::FORWARD, &tr!(play_forward)) {
                                 seek = Some((cur_t + 10.0).min(total));
                             }
                             // Speed cycles rather than opening a menu: one control, one glance,
@@ -1756,7 +1739,7 @@ impl FractadyneApp {
                                     )
                                     .small(),
                                 )
-                                .on_hover_text("Playback speed (click to cycle 0.5× / 1× / 2× / 4×)")
+                                .on_hover_text(tr!(play_speed_hover))
                                 .clicked()
                             {
                                 cycle_speed = true;
@@ -1773,9 +1756,9 @@ impl FractadyneApp {
                                             .small(),
                                     )
                                     .on_hover_text(if has_source {
-                                        "Render this script to a frame sequence…"
+                                        tr!(play_render)
                                     } else {
-                                        "The built-in benchmark has no script file to render"
+                                        tr!(play_render_none)
                                     })
                                     .clicked()
                                 {
@@ -1784,7 +1767,7 @@ impl FractadyneApp {
                             });
                             // Change the script without leaving the player: same picker as
                             // Tools → Play script, starting in the current script's folder.
-                            if btn(ui, crate::icons::OPEN, "Play a different script…") {
+                            if btn(ui, crate::icons::OPEN, &tr!(play_open)) {
                                 pick_script = true;
                             }
                             let loop_fill = if looping {
@@ -1799,7 +1782,7 @@ impl FractadyneApp {
                                         .small()
                                         .fill(loop_fill),
                                 )
-                                .on_hover_text("Repeat the tour when it reaches the end")
+                                .on_hover_text(tr!(play_loop))
                                 .clicked()
                             {
                                 toggle_loop = true;
@@ -1809,7 +1792,7 @@ impl FractadyneApp {
                             // right-to-left layout claims the remaining available width, which
                             // inside an `Area` is unbounded — that pushed the button off-screen.
                             ui.separator();
-                            if btn(ui, crate::icons::CLOSE, "Close the player and restore your own view settings") {
+                            if btn(ui, crate::icons::CLOSE, &tr!(play_close)) {
                                 close = true;
                             }
                         });
@@ -1827,14 +1810,10 @@ impl FractadyneApp {
                                 } else {
                                     egui::Color32::TRANSPARENT
                                 },
-                                egui::RichText::new("waiting for detail").monospace(),
+                                egui::RichText::new(tr!(play_waiting)).monospace(),
                             );
                             if held {
-                                notice.clone().on_hover_text(
-                                    "The tour clock is paused while the renderer resolves this \
-                                     view (reference build / iteration budget climbing). Playback \
-                                     resumes by itself; see [playback] pace in the script.",
-                                );
+                                notice.clone().on_hover_text(tr!(play_waiting_hover));
                             }
                             // Fill out the button row's width. Safe to measure BECAUSE the row
                             // above cannot contain this slider — sizing the slider from the width
@@ -1848,15 +1827,9 @@ impl FractadyneApp {
                             let drift = wall_t - cur_t;
                             let hover = if drift > 0.05 {
                                 let d = drift.max(0.0) as u64;
-                                format!(
-                                    "Drag to scrub through the tour\nScript clock is {}:{:02} behind \
-                                     real time (the pacer slowed the tour to let the renderer keep \
-                                     up). The upper tick marks where wall-clock playback would be.",
-                                    d / 60,
-                                    d % 60
-                                )
+                                tr!(play_scrub_behind, behind = format!("{}:{:02}", d / 60, d % 60))
                             } else {
-                                "Drag to scrub through the tour".to_string()
+                                tr!(play_scrub)
                             };
                             let sr = ui
                                 .add(
@@ -1957,6 +1930,23 @@ impl FractadyneApp {
             }
         }
     }
+}
+
+/// The limit diagnostic's labels as [`FractadyneApp::limit_status`] and
+/// [`FractadyneApp::direct_precision_status`] return them: English tokens, which `--livetest`
+/// grades by.
+pub(crate) const LIMIT_TOKENS: [&str; 3] = ["⚠ depth limit", "⚠ iter exhausted", "⚠ iter capped"];
+
+/// A limit token as the status bar shows it, in the language in use (a token it does not know shows
+/// as it came).
+pub(crate) fn limit_label(token: &str) -> String {
+    let word = match token {
+        "⚠ depth limit" => tr!(status_limit_depth),
+        "⚠ iter exhausted" => tr!(status_limit_exhausted),
+        "⚠ iter capped" => tr!(status_limit_capped),
+        other => return other.to_string(),
+    };
+    format!("⚠ {word}")
 }
 
 #[cfg(test)]

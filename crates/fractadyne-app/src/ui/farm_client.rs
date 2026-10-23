@@ -129,7 +129,7 @@ pub(crate) fn merged(sessions: &[ClientStatus]) -> Option<ClientStatus> {
     // The machine's words, not one card's run.
     let rendering = sessions.iter().filter(|s| s.phase == ClientPhase::Rendering).count();
     if rendering > 0 {
-        m.detail = format!("Rendering on {rendering} of {} graphics cards", sessions.len());
+        m.detail = tr!(farm_client_rendering_on_cards, rendering = rendering, total = sessions.len());
     }
     if sessions.iter().all(|s| s.phase == ClientPhase::Ended) {
         m.exit_code = sessions.iter().filter_map(|s| s.exit_code).find(|&c| c != 0).or(Some(0));
@@ -173,31 +173,31 @@ pub(crate) fn list_cards(log: &str) -> Vec<(usize, String)> {
 fn gpu_combo(ui: &mut egui::Ui, value: &mut String, cards: Option<&[(usize, String)]>) {
     let current = value.trim().to_string();
     let text = match current.as_str() {
-        "" => "The system's choice".to_string(),
-        "all" => format!("Every graphics card{}", cards.map_or(String::new(), |c| format!(" ({})", c.len()))),
-        v => cards.and_then(|c| c.iter().find(|(n, _)| n.to_string() == v)).map_or_else(|| format!("Adapter {v}"), |(n, name)| format!("{n} · {name}")),
+        "" => tr!(farm_client_gpu_system),
+        "all" => cards.map_or_else(|| tr!(farm_client_gpu_every), |c| tr!(farm_client_gpu_every_n, count = c.len())),
+        v => cards.and_then(|c| c.iter().find(|(n, _)| n.to_string() == v)).map_or_else(|| tr!(farm_client_gpu_adapter, number = v), |(n, name)| format!("{n} · {name}")),
     };
     egui::ComboBox::from_id_salt("farm_client_gpu")
         .width(220.0)
         .selected_text(text)
         .show_ui(ui, |ui| {
-            ui.selectable_value(value, String::new(), "The system's choice");
+            ui.selectable_value(value, String::new(), tr!(farm_client_gpu_system));
             match cards {
                 None => {
-                    ui.label(egui::RichText::new("Finding this machine's graphics cards…").weak());
+                    ui.label(egui::RichText::new(tr!(farm_client_gpu_finding)).weak());
                 }
                 Some(cs) => {
                     for (n, name) in cs {
                         ui.selectable_value(value, n.to_string(), format!("{n} · {name}"));
                     }
                     if cs.len() >= 2 {
-                        ui.selectable_value(value, "all".to_string(), format!("Every graphics card ({}) — one session each", cs.len()));
+                        ui.selectable_value(value, "all".to_string(), tr!(farm_client_gpu_every_each, count = cs.len()));
                     }
                 }
             }
         })
         .response
-        .on_hover_text("Which graphics card renders the farm's frames. With every card, each joins the farm as its own machine — \"NAME · GPU 1\", \"NAME · GPU 2\" — and Pause and Disconnect act on all of them.");
+        .on_hover_text(tr!(farm_client_gpu_hover));
 }
 
 fn settings_path() -> Option<std::path::PathBuf> {
@@ -213,10 +213,10 @@ pub(crate) fn validate(s: &ClientSettings, key: &str) -> Result<(), String> {
     let c = s.controller.trim();
     match c.rsplit_once(':') {
         Some((host, port)) if !host.is_empty() && port.parse::<u16>().is_ok_and(|p| p > 0) => {}
-        _ => return Err("Enter the controller's address as HOST:PORT, as its window shows it (for example 192.168.1.20:46733).".into()),
+        _ => return Err(tr!(farm_client_bad_address)),
     }
-    fractadyne_farm::key::FarmKey::from_text(key.trim()).map_err(|e| format!("The farm key: {e}"))?;
-    fractadyne_farm::names::check_display_name(s.name.trim()).map_err(|e| format!("The name: {e}"))?;
+    fractadyne_farm::key::FarmKey::from_text(key.trim()).map_err(|e| tr!(farm_client_bad_key, why = e.to_string()))?;
+    fractadyne_farm::names::check_display_name(s.name.trim()).map_err(|e| tr!(farm_client_bad_name, why = e.to_string()))?;
     Ok(())
 }
 
@@ -256,16 +256,73 @@ pub(crate) fn client_args(s: &ClientSettings, key_file: &std::path::Path) -> Vec
 /// The phase in words, and whether it is a good (green), working (accent) or bad (red) state.
 fn phase_words(st: &ClientStatus) -> (String, i8) {
     match st.phase {
-        ClientPhase::Connecting => ("Connecting…".into(), 0),
-        ClientPhase::Checking => ("Running the self-check…".into(), 0),
-        ClientPhase::Idle => ("Connected — waiting for work".into(), 1),
-        ClientPhase::Rendering => ("Rendering".into(), 1),
-        ClientPhase::Paused if st.in_use && !st.paused => ("Waiting — someone is using this machine".into(), 0),
-        ClientPhase::Paused => ("Paused".into(), 0),
-        ClientPhase::Retrying => (format!("Controller unreachable — retrying{}", st.retry_in_s.map_or(String::new(), |s| format!(" in {s} s"))), -1),
-        ClientPhase::Ended if st.exit_code == Some(0) => ("Disconnected".into(), 0),
-        ClientPhase::Ended => ("Ended".into(), -1),
+        ClientPhase::Connecting => (tr!(farm_client_phase_connecting), 0),
+        ClientPhase::Checking => (tr!(farm_client_phase_checking), 0),
+        ClientPhase::Idle => (tr!(farm_client_phase_idle), 1),
+        ClientPhase::Rendering => (tr!(farm_client_phase_rendering), 1),
+        ClientPhase::Paused if st.in_use && !st.paused => (tr!(farm_client_phase_in_use), 0),
+        ClientPhase::Paused => (tr!(farm_client_phase_paused), 0),
+        ClientPhase::Retrying => (st.retry_in_s.map_or_else(|| tr!(farm_client_phase_retrying), |s| tr!(farm_client_phase_retrying_in, seconds = s)), -1),
+        ClientPhase::Ended if st.exit_code == Some(0) => (tr!(farm_client_phase_disconnected), 0),
+        ClientPhase::Ended => (tr!(farm_client_phase_ended), -1),
     }
+}
+
+/// The line under the phase (`ClientStatus::detail`) in the language in use. The client process
+/// writes it in English — the same words are its log and its `--render-client` output, and that
+/// process never loads a language — so the window translates the lines it knows where it draws
+/// them (the words are `farm::client`'s), and shows any other line, such as a reason from the
+/// controller or the network, as it came.
+fn detail_words(d: &str) -> String {
+    let between = |pre: &str, post: &str| d.strip_prefix(pre).and_then(|r| r.strip_suffix(post));
+    match d {
+        "Disconnected" => return tr!(farm_client_phase_disconnected),
+        "The job is over" => return tr!(farm_client_detail_job_over),
+        "Paused — the controller has been told" => return tr!(farm_client_detail_paused),
+        "Pausing — finishing the frame in progress" => return tr!(farm_client_detail_pausing),
+        "Cancelled the frame in progress; paused" => return tr!(farm_client_detail_cancelled),
+        _ => {}
+    }
+    if let Some(a) = between("Connecting to ", "…") {
+        return tr!(farm_client_detail_connecting, address = a);
+    }
+    if let Some(n) = between("Connected to \"", "\" — running the self-check") {
+        return tr!(farm_client_detail_checking, controller = n);
+    }
+    if let Some(n) = between("Connected to \"", "\" — waiting for its user to approve this machine") {
+        return tr!(farm_client_detail_approval, controller = n);
+    }
+    if let Some(n) = between("Connected to \"", "\" — idle") {
+        return tr!(farm_client_detail_idle, controller = n);
+    }
+    if let Some(n) = between("Job \"", "\" — receiving its bundle") {
+        return tr!(farm_client_detail_bundle, job = n);
+    }
+    if let Some(n) = between("Job \"", "\" — waiting for frames to render") {
+        return tr!(farm_client_detail_job_waiting, job = n);
+    }
+    if let Some((a, b)) = d.strip_prefix("Rendering frames ").and_then(|r| r.split_once('–')) {
+        return tr!(farm_client_detail_rendering, first = a, last = b);
+    }
+    if let Some(t) = d.strip_prefix("Waiting — someone is using this machine; work resumes once nobody has for ") {
+        return tr!(farm_client_detail_in_use, time = t);
+    }
+    if let Some(r) = d.strip_prefix("The self-check failed — ") {
+        return tr!(farm_client_detail_check_failed, why = r);
+    }
+    if let Some(r) = d.strip_prefix("Refused by the controller: ") {
+        return tr!(farm_client_detail_refused, why = r);
+    }
+    if let Some(r) = d.strip_prefix("Refused this job: ") {
+        return tr!(farm_client_detail_job_refused, why = r);
+    }
+    if let Some(r) = d.strip_prefix("The controller closed the connection: ") {
+        return tr!(farm_client_detail_closed, why = r);
+    }
+    if let Some(r) = d.strip_prefix("The controller ended the connection: ") {
+        return tr!(farm_client_detail_ended, why = r);
+    }
+    d.to_string()
 }
 
 /// Under the Controller field: what Find found, one line each to pick (the farm key is still
@@ -280,35 +337,33 @@ fn found_list(ui: &mut egui::Ui, finding: bool, found: Option<&[fractadyne_farm:
         if finding {
             ui.horizontal(|ui| {
                 ui.add(egui::Spinner::new().size(10.0));
-                ui.label(egui::RichText::new("Looking for controllers on this network…").weak().small());
+                ui.label(egui::RichText::new(tr!(farm_client_finding)).weak().small());
             });
         }
         match found {
             Some([]) if !finding => {
                 ui.label(
-                    egui::RichText::new(format!(
-                        "No controller answered. One answers while its farm is listening; its firewall must let UDP {} in.",
-                        fractadyne_farm::discovery::DISCOVERY_PORT
-                    ))
+                    egui::RichText::new(tr!(farm_client_found_none, port = fractadyne_farm::discovery::DISCOVERY_PORT.to_string()))
                     .weak()
                     .small(),
                 );
             }
             Some(list) => {
                 if !list.is_empty() {
-                    ui.label(egui::RichText::new("On this network — click one to use it:").weak().small());
+                    ui.label(egui::RichText::new(tr!(farm_client_found_pick)).weak().small());
                 }
                 let (ver, git) = crate::farm::build_identity();
                 for f in list {
                     let same = f.beacon.app_version == ver && f.beacon.git == git;
                     let text = format!("\"{}\" · {} · {} {}", f.beacon.name, f.address(), f.beacon.app_version, f.beacon.git);
                     let r = ui.add(egui::SelectableLabel::new(f.address() == current, egui::RichText::new(text).small()));
-                    let r = r.on_hover_text(format!("Identity {} — use this controller (its farm key is still needed)", f.beacon.identity));
+                    let r = r.on_hover_text(tr!(farm_client_found_hover, identity = &f.beacon.identity));
                     if r.clicked() {
                         pick = Some(f.address());
                     }
                     if !same {
-                        ui.label(egui::RichText::new(format!("⚠ A different build from this one ({ver} {git}): it would refuse this machine.")).color(ui.visuals().warn_fg_color).small());
+                        let warning = tr!(farm_client_found_other_build, version = ver, git = git);
+                        ui.label(egui::RichText::new(format!("⚠ {warning}")).color(ui.visuals().warn_fg_color).small());
                     }
                 }
             }
@@ -321,10 +376,15 @@ fn found_list(ui: &mut egui::Ui, finding: bool, found: Option<&[fractadyne_farm:
 
 /// "frames 120–135 · frame 123 (4 of 16) · 2.1 s on this frame".
 fn run_words(st: &ClientStatus, a: u64, b: u64) -> String {
-    let at = st.frame.map_or(String::new(), |f| {
-        format!(" · frame {f} ({} of {}){}", f.saturating_sub(a) + 1, b - a, st.frame_ms.map_or(String::new(), |ms| format!(" · {} on this frame", secs(ms as f64))))
-    });
-    format!("frames {a}–{}{at}", b - 1)
+    // Frame numbers go in as text: they name frames (and their files), they are not amounts.
+    let mut parts = vec![tr!(farm_client_run_frames, first = a.to_string(), last = (b - 1).to_string())];
+    if let Some(f) = st.frame {
+        parts.push(tr!(farm_client_run_frame, frame = f.to_string(), index = f.saturating_sub(a) + 1, count = b - a));
+        if let Some(ms) = st.frame_ms {
+            parts.push(tr!(farm_client_run_frame_time, time = secs(ms as f64)));
+        }
+    }
+    parts.join(" · ")
 }
 
 fn secs(ms: f64) -> String {
@@ -395,7 +455,7 @@ impl FractadyneApp {
         }
         // The key goes to a file the client reads (never onto a command line).
         let (Some(kp), Some(sp)) = (key_path(), settings_path()) else {
-            c.error = Some("There is no configuration folder to keep the farm key in.".into());
+            c.error = Some(tr!(farm_client_no_config));
             return;
         };
         let write = |p: &std::path::Path, text: &str| -> Result<(), String> {
@@ -423,7 +483,7 @@ impl FractadyneApp {
                 c.last = None;
                 c.thumb = None;
             }
-            Err(e) => c.error = Some(format!("Could not start the render client: {e}")),
+            Err(e) => c.error = Some(tr!(farm_client_start_failed, why = e.to_string())),
         }
     }
 
@@ -466,7 +526,8 @@ impl FractadyneApp {
                 }
             }
         }
-        egui::Window::new("Render client")
+        egui::Window::new(tr!(farm_client_title))
+            .id(egui::Id::new("fractadyne.farm-client"))
             .open(&mut open)
             .resizable(false)
             .default_width(440.0)
@@ -475,23 +536,16 @@ impl FractadyneApp {
                 let max_h = (ctx.screen_rect().height() - 160.0).max(200.0);
                 egui::ScrollArea::vertical().max_height(max_h).auto_shrink([false, true]).show(ui, |ui| {
                     ui.set_max_width(420.0);
-                    ui.label(
-                        egui::RichText::new(
-                            "Render frames for a render farm. The controller — Tools ▸ Render on farm… on another \
-                             machine — shows its address and farm key. This machine opens no port: it connects to the controller.",
-                        )
-                        .weak()
-                        .small(),
-                    );
+                    ui.label(egui::RichText::new(tr!(farm_client_intro)).weak().small());
                     ui.add_space(4.0);
                     let c = &mut self.farm_client;
                     ui.add_enabled_ui(!active, |ui| {
                         egui::Grid::new("farm_client_grid").num_columns(2).spacing([8.0, 6.0]).show(ui, |ui| {
-                            ui.label("Controller");
+                            ui.label(tr!(farm_client_controller));
                             ui.horizontal(|ui| {
                                 ui.add(egui::TextEdit::singleline(&mut c.settings.controller).hint_text("192.168.1.20:46733").desired_width(220.0));
                                 let finding = c.found_rx.is_some();
-                                if ui.add_enabled(!finding, egui::Button::new("Find")).on_hover_text("Look for controllers on this network (a controller answers while its farm is listening)").clicked() {
+                                if ui.add_enabled(!finding, egui::Button::new(tr!(farm_client_find))).on_hover_text(tr!(farm_client_find_hover)).clicked() {
                                     c.find();
                                 }
                             });
@@ -501,47 +555,52 @@ impl FractadyneApp {
                                     c.settings.controller = pick;
                                 }
                             }
-                            ui.label("Farm key");
+                            ui.label(tr!(farm_client_key));
                             ui.horizontal(|ui| {
                                 ui.add(egui::TextEdit::singleline(&mut c.key).password(!c.show_key).hint_text("fdn1-…").desired_width(220.0));
-                                ui.checkbox(&mut c.show_key, "Show");
+                                ui.checkbox(&mut c.show_key, tr!(farm_client_show_key));
                             });
                             ui.end_row();
-                            ui.label("This machine");
-                            ui.add(egui::TextEdit::singleline(&mut c.settings.name).desired_width(220.0)).on_hover_text("The name the controller shows for this machine.");
+                            ui.label(tr!(farm_client_machine));
+                            ui.add(egui::TextEdit::singleline(&mut c.settings.name).desired_width(220.0)).on_hover_text(tr!(farm_client_machine_hover));
                             ui.end_row();
-                            ui.label("Shared drive");
-                            ui.add(egui::TextEdit::singleline(&mut c.settings.share_root).hint_text("optional — e.g. \\\\fileserver\\share").desired_width(220.0)).on_hover_text(
-                                "This machine's path to the shared drive the controller uses (share mode): frames are written there instead of sent over the connection. Leave empty to send every frame.",
-                            );
+                            ui.label(tr!(farm_client_share));
+                            let hint = tr!(farm_client_share_hint);
+                            let (w, fits) = crate::theme::hinted_width(ui, &hint, 220.0);
+                            let field = egui::TextEdit::singleline(&mut c.settings.share_root).desired_width(w);
+                            if fits {
+                                ui.add(field.hint_text(hint)).on_hover_text(tr!(farm_client_share_hover));
+                            } else {
+                                ui.add(field).on_hover_text(format!("{hint}\n\n{}", tr!(farm_client_share_hover)));
+                            }
                             ui.end_row();
-                            ui.label("Graphics card");
+                            ui.label(tr!(farm_client_gpu));
                             gpu_combo(ui, &mut c.settings.adapters, c.cards.as_deref());
                             ui.end_row();
                             if cfg!(windows) {
-                                ui.label("When");
+                                ui.label(tr!(farm_client_when));
                                 ui.horizontal(|ui| {
-                                    let help = "Take work only once nobody has touched this machine's keyboard or mouse for this long, or while its screen is locked. When someone starts using it, the frame in progress stops at once and goes back to the farm.";
-                                    ui.checkbox(&mut c.settings.when_idle, "Only when idle for").on_hover_text(help);
+                                    let help = tr!(farm_client_when_idle_hover);
+                                    ui.checkbox(&mut c.settings.when_idle, tr!(farm_client_when_idle)).on_hover_text(help.as_str());
                                     ui.add_enabled(c.settings.when_idle, egui::DragValue::new(&mut c.settings.idle_minutes).range(1..=1440).suffix(" min")).on_hover_text(help);
                                 });
                                 ui.end_row();
                             }
                         });
-                        egui::CollapsingHeader::new("Limits").id_salt("farm_client_limits").show(ui, |ui| {
-                            ui.label(egui::RichText::new("A job asking for more than these is refused, never cut down.").weak().small());
+                        egui::CollapsingHeader::new(tr!(farm_client_limits)).id_salt("farm_client_limits").show(ui, |ui| {
+                            ui.label(egui::RichText::new(tr!(farm_client_limits_note)).weak().small());
                             egui::Grid::new("farm_client_limits_grid").num_columns(2).spacing([8.0, 4.0]).show(ui, |ui| {
-                                ui.label("Largest frame");
+                                ui.label(tr!(farm_client_limit_size));
                                 ui.horizontal(|ui| {
                                     ui.add(egui::DragValue::new(&mut c.settings.max_width).range(16..=16384));
                                     ui.label("×");
                                     ui.add(egui::DragValue::new(&mut c.settings.max_height).range(16..=16384));
                                 });
                                 ui.end_row();
-                                ui.label("Most supersampling");
+                                ui.label(tr!(farm_client_limit_ss));
                                 ui.add(egui::DragValue::new(&mut c.settings.max_ss).range(1..=8).suffix("×"));
                                 ui.end_row();
-                                ui.label("Most iterations");
+                                ui.label(tr!(farm_client_limit_iter));
                                 ui.add(
                                     egui::DragValue::new(&mut c.settings.max_iter)
                                         .range(1..=u32::MAX)
@@ -569,7 +628,7 @@ impl FractadyneApp {
                             ui.label(egui::RichText::new(words).strong().color(colour));
                         });
                         if !st.detail.is_empty() {
-                            ui.label(egui::RichText::new(&st.detail).small());
+                            ui.label(egui::RichText::new(detail_words(&st.detail)).small());
                         }
                         egui::Grid::new("farm_client_status").num_columns(2).spacing([8.0, 3.0]).show(ui, |ui| {
                             let row = |ui: &mut egui::Ui, k: &str, v: String| {
@@ -578,53 +637,67 @@ impl FractadyneApp {
                                 ui.end_row();
                             };
                             if !st.controller_name.is_empty() {
-                                row(ui, "Controller", format!("\"{}\" · {} · identity {}", st.controller_name, st.controller, st.controller_fingerprint));
+                                row(
+                                    ui,
+                                    &tr!(farm_client_controller),
+                                    tr!(farm_client_row_controller_value, name = &st.controller_name, address = &st.controller, identity = &st.controller_fingerprint),
+                                );
                             } else if !st.controller.is_empty() {
-                                row(ui, "Controller", st.controller.clone());
+                                row(ui, &tr!(farm_client_controller), st.controller.clone());
                             }
                             if !st.identity.is_empty() {
-                                row(ui, "This machine", format!("\"{}\" · identity {}", st.name, st.identity));
+                                row(ui, &tr!(farm_client_machine), tr!(farm_client_row_machine_value, name = &st.name, identity = &st.identity));
                             }
                             if let Some(g) = st.gpu.as_ref().filter(|_| sessions.is_empty()) {
-                                row(ui, "GPU", g.clone());
+                                row(ui, &tr!(farm_client_row_gpu), g.clone());
                             }
                             if let Some(j) = &st.job {
-                                row(ui, "Job", match &st.job_detail {
+                                row(ui, &tr!(farm_client_row_job), match &st.job_detail {
                                     Some(d) => format!("{j} — {d}"),
                                     None => j.clone(),
                                 });
                             }
                             if let Some((a, b)) = st.run {
-                                row(ui, "Run", run_words(st, a, b));
+                                row(ui, &tr!(farm_client_row_run), run_words(st, a, b));
                             }
                             // One session per graphics card: what each is doing.
+                            let no_card = tr!(farm_client_session_no_card);
                             for s in &sessions {
                                 // "NVIDIA GeForce RTX 4090 — frame 123 of 120–135"; the rest on hover, the counts on Sent.
-                                let card = s.gpu.as_deref().and_then(|g| g.split(" · ").next()).unwrap_or("graphics card not known yet");
+                                let card = s.gpu.as_deref().and_then(|g| g.split(" · ").next()).unwrap_or(no_card.as_str());
                                 let (what, more) = match s.run {
-                                    Some((a, b)) if s.phase == ClientPhase::Rendering => (format!("frame {} of {a}–{}", s.frame.unwrap_or(a), b - 1), run_words(s, a, b)),
-                                    _ => (phase_words(s).0, s.detail.clone()),
+                                    Some((a, b)) if s.phase == ClientPhase::Rendering => (
+                                        tr!(farm_client_session_frame, frame = s.frame.unwrap_or(a).to_string(), first = a.to_string(), last = (b - 1).to_string()),
+                                        run_words(s, a, b),
+                                    ),
+                                    _ => (phase_words(s).0, detail_words(&s.detail)),
                                 };
-                                ui.label(egui::RichText::new(format!("GPU {}", s.slot.unwrap_or(0))).weak());
+                                ui.label(egui::RichText::new(tr!(farm_client_row_gpu_n, slot = s.slot.unwrap_or(0).to_string())).weak());
                                 ui.add(egui::Label::new(format!("{card} — {what}")).truncate()).on_hover_text(format!("{}
 {more}", s.gpu.as_deref().unwrap_or(card)));
                                 ui.end_row();
                             }
                             if st.frames_done > 0 {
                                 // With one session per card, each card's share: "1,234 frames (812 + 422)".
-                                let split = if sessions.is_empty() { String::new() } else { format!(" ({})", sessions.iter().map(|s| crate::grouped_count(s.frames_done as f64)).collect::<Vec<_>>().join(" + ")) };
-                                row(ui, "Sent", format!("{} frame{}{split} · {} a frame", crate::grouped_count(st.frames_done as f64), if st.frames_done == 1 { "" } else { "s" }, st.mean_ms.map_or("—".into(), secs)));
+                                let time: String = st.mean_ms.map_or("—".into(), secs);
+                                let sent = if sessions.is_empty() {
+                                    tr!(farm_client_sent, count = st.frames_done, time = time)
+                                } else {
+                                    let split = sessions.iter().map(|s| crate::i18n::count(s.frames_done)).collect::<Vec<_>>().join(" + ");
+                                    tr!(farm_client_sent_split, count = st.frames_done, split = split, time = time)
+                                };
+                                row(ui, &tr!(farm_client_row_sent), sent);
                             }
                         });
                         if let Some(n) = &st.gpu_note {
                             ui.label(
-                                egui::RichText::new(format!("⚠ This machine has {n}. Its frames will differ slightly from the controller's, which can show in a held shot."))
+                                egui::RichText::new(format!("⚠ {}", tr!(farm_client_gpu_note, note = n)))
                                     .color(ui.visuals().warn_fg_color)
                                     .small(),
                             );
                         }
                         if !st.self_check.is_empty() {
-                            egui::CollapsingHeader::new("Self-check").id_salt("farm_client_check").show(ui, |ui| {
+                            egui::CollapsingHeader::new(tr!(farm_client_self_check)).id_salt("farm_client_check").show(ui, |ui| {
                                 for l in &st.self_check {
                                     ui.label(egui::RichText::new(l).monospace().small());
                                 }
@@ -633,25 +706,25 @@ impl FractadyneApp {
                         if let Some((_, tex)) = &c.thumb {
                             let sz = tex.size_vec2();
                             let scale = (240.0 / sz.x.max(1.0)).min(1.0);
-                            ui.add(egui::Image::new(tex).fit_to_exact_size(sz * scale)).on_hover_text("The last frame this machine sent");
+                            ui.add(egui::Image::new(tex).fit_to_exact_size(sz * scale)).on_hover_text(tr!(farm_client_thumb_hover));
                         }
                         if active && matches!(st.phase, ClientPhase::Idle | ClientPhase::Rendering | ClientPhase::Paused) {
                             ui.horizontal(|ui| {
                                 if st.paused {
-                                    if ui.button(format!("{}  Resume", crate::icons::PLAY)).on_hover_text("Take work again").clicked() {
+                                    if ui.button(format!("{}  {}", crate::icons::PLAY, tr!(farm_client_resume))).on_hover_text(tr!(farm_client_resume_hover)).clicked() {
                                         command = Some(ClientCommand::Resume);
                                     }
                                 } else if ui
-                                    .button(format!("{}  Pause", crate::icons::PAUSE))
-                                    .on_hover_text("Finish the frame in progress, then take no more work. The controller hands this machine's frames to the others.")
+                                    .button(format!("{}  {}", crate::icons::PAUSE, tr!(farm_client_pause)))
+                                    .on_hover_text(tr!(farm_client_pause_hover))
                                     .clicked()
                                 {
                                     command = Some(ClientCommand::Pause);
                                 }
                                 if st.phase == ClientPhase::Rendering
                                     && ui
-                                        .button(format!("{}  Cancel frame", crate::icons::STOP))
-                                        .on_hover_text("Stop the frame in progress now and pause; the controller renders it elsewhere.")
+                                        .button(format!("{}  {}", crate::icons::STOP, tr!(farm_client_cancel_frame)))
+                                        .on_hover_text(tr!(farm_client_cancel_frame_hover))
                                         .clicked()
                                 {
                                     command = Some(ClientCommand::CancelFrame);
@@ -659,7 +732,7 @@ impl FractadyneApp {
                             });
                         }
                         if active && st.phase == ClientPhase::Rendering {
-                            ui.label(egui::RichText::new("Live view paused while this machine renders farm frames.").weak().small());
+                            ui.label(egui::RichText::new(tr!(farm_client_live_paused)).weak().small());
                         }
                     }
                     if let Some(e) = &c.error {
@@ -668,17 +741,17 @@ impl FractadyneApp {
                 });
                 ui.separator();
                 crate::theme::action_row(ui, |ui| {
-                    if crate::theme::cancel_button(ui, "Close")
-                        .on_hover_text(if active { "Close the window; this machine stays in the farm (reopen it from the File menu)" } else { "Close the window" })
+                    if crate::theme::cancel_button(ui, &tr!(farm_client_close))
+                        .on_hover_text(if active { tr!(farm_client_close_active_hover) } else { tr!(farm_client_close_hover) })
                         .clicked()
                     {
                         close = true;
                     }
                     if active {
-                        if ui.button("Disconnect").on_hover_text("Leave the farm: the frame in progress is handed back").clicked() {
+                        if ui.button(tr!(farm_client_disconnect)).on_hover_text(tr!(farm_client_disconnect_hover)).clicked() {
                             disconnect = true;
                         }
-                    } else if crate::theme::confirm_button(ui, "Connect").on_hover_text("Connect to the controller and render frames for it").clicked() {
+                    } else if crate::theme::confirm_button(ui, &tr!(farm_client_connect)).on_hover_text(tr!(farm_client_connect_hover)).clicked() {
                         connect = true;
                     }
                 });

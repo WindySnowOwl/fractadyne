@@ -124,7 +124,7 @@ pub(crate) fn read_line(raw: &str, at: usize) -> Line {
         Ok(s) if raw.split(';').next().unwrap_or("").contains(':') || s.statements.iter().any(|st| fractint_only(&st.body)) => {
             Line::Unread {
                 text: raw.trim_end_matches('\r').to_string(),
-                error: "Fractint's sections (an init's ':', comparisons, a = b = …) are edited as text".into(),
+                error: tr!(formula_textbook_fractint_sections),
             }
         }
         Ok(s) => Line::Read {

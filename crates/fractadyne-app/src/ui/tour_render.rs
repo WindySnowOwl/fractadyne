@@ -141,14 +141,14 @@ impl FractadyneApp {
                 crate::tone::play_finish_sound(false);
             }
             self.tour_render.status = Some(if ok {
-                format!("Render finished → {}", self.tour_render.out)
+                tr!(tour_render_finished, folder = &self.tour_render.out)
             } else {
                 // Quote the child's OWN reason when it gave one — it is the only thing here that
                 // says WHY. Falling back to the last progress line (all this used to do) reports
                 // where it stopped and leaves the cause in a log file.
                 match self.tour_render.error.take() {
-                    Some(e) => format!("Render failed: {e}"),
-                    None => format!("Render failed or was stopped. {}", self.tour_render.progress),
+                    Some(e) => tr!(tour_render_failed, why = e),
+                    None => tr!(tour_render_failed_or_stopped, last = &self.tour_render.progress),
                 }
             });
             ctx.request_repaint();
@@ -180,7 +180,8 @@ impl FractadyneApp {
         // caption drew straight over this dialog. `Order::Foreground` puts the dialog where a
         // dialog belongs: above the content it is about. (The playback transport is already
         // Foreground for the same reason.)
-        egui::Window::new("Render tour")
+        egui::Window::new(tr!(tour_render_title))
+            .id(egui::Id::new("fractadyne.tour-render"))
             .open(&mut open)
             .resizable(false)
             .default_width(460.0)
@@ -194,14 +195,14 @@ impl FractadyneApp {
                 ui.add_space(4.0);
                 ui.add_enabled_ui(!running, |ui| {
                     egui::Grid::new("tour_render_grid").num_columns(2).spacing([8.0, 6.0]).show(ui, |ui| {
-                        ui.label("Output folder");
+                        ui.label(tr!(tour_render_out));
                         ui.vertical(|ui| {
                             ui.horizontal(|ui| {
                                 ui.add(
                                     egui::TextEdit::singleline(&mut self.tour_render.out)
                                         .desired_width(250.0),
                                 );
-                                if ui.button("Browse…").clicked() {
+                                if ui.button(tr!(tour_render_browse)).clicked() {
                                     browse = true;
                                 }
                             });
@@ -218,19 +219,19 @@ impl FractadyneApp {
                             ui.label(
                                 egui::RichText::new(abs.display().to_string()).weak().small(),
                             )
-                            .on_hover_text("Full path the frames are written to.");
+                            .on_hover_text(tr!(tour_render_out_hover));
                         });
                         ui.end_row();
 
-                        ui.label("Frame prefix");
+                        ui.label(tr!(tour_render_prefix));
                         ui.add(
                             egui::TextEdit::singleline(&mut self.tour_render.prefix)
                                 .desired_width(160.0),
                         )
-                        .on_hover_text("Frames are written <prefix>_00000.png");
+                        .on_hover_text(tr!(tour_render_prefix_hover));
                         ui.end_row();
 
-                        ui.label("Size");
+                        ui.label(tr!(tour_render_size));
                         ui.vertical(|ui| {
                             // Same preset table as the image export dialog (`STANDARD_SIZES`).
                             // This dialog stores width AND height, so a preset sets them directly
@@ -245,19 +246,19 @@ impl FractadyneApp {
                                 .width(210.0)
                                 .height(460.0) // see the export dialog: fit every preset
                                 .selected_text(if custom {
-                                    format!("Custom — {w}×{h}")
+                                    tr!(tour_render_size_custom_value, width = w.to_string(), height = h.to_string())
                                 } else {
-                                    cur.unwrap_or_default().to_string()
+                                    crate::size_preset_label(cur.unwrap_or_default())
                                 })
                                 .show_ui(ui, |ui| {
                                     // Custom first — see the export dialog.
-                                    if ui.selectable_label(custom, "Custom…").clicked() {
+                                    if ui.selectable_label(custom, tr!(tour_render_size_custom)).clicked() {
                                         self.tour_render.custom_size = true;
                                     }
                                     ui.separator();
                                     for (label, pw, ph) in crate::STANDARD_SIZES {
                                         let on = !custom && cur == Some(*label);
-                                        if ui.selectable_label(on, *label).clicked() {
+                                        if ui.selectable_label(on, crate::size_preset_label(label)).clicked() {
                                             self.tour_render.width = *pw;
                                             self.tour_render.height = *ph;
                                             self.tour_render.custom_size = false;
@@ -280,19 +281,16 @@ impl FractadyneApp {
                         });
                         ui.end_row();
 
-                        ui.label("Frames / second");
+                        ui.label(tr!(tour_render_fps));
                         ui.add(
                             egui::DragValue::new(&mut self.tour_render.fps)
                                 .range(0.01..=240.0)
                                 .speed(0.25),
                         )
-                        .on_hover_text(
-                            "Sub-1 fps is legitimate: sampling a long dive at 0.25 fps is how the \
-                             deep regression holds get inspected without rendering thousands of frames.",
-                        );
+                        .on_hover_text(tr!(tour_render_fps_hover));
                         ui.end_row();
 
-                        ui.label("Supersampling");
+                        ui.label(tr!(tour_render_ss));
                         egui::ComboBox::from_id_salt("tour_render_ss")
                             .selected_text(format!("{}×", self.tour_render.ss))
                             .width(70.0)
@@ -303,16 +301,16 @@ impl FractadyneApp {
                             });
                         ui.end_row();
 
-                        ui.label("Chapter");
+                        ui.label(tr!(tour_render_chapter));
                         // All graphics cards render the whole tour (a farm job has no chapters).
                         ui.add_enabled_ui(!self.tour_render.all_gpus, |ui| egui::ComboBox::from_id_salt("tour_render_segment")
                             .selected_text(match self.tour_render.segment {
-                                0 => "Whole tour".to_string(),
+                                0 => tr!(tour_render_whole),
                                 i => chapters.get(i - 1).map(|c| c.0.clone()).unwrap_or_default(),
                             })
                             .width(240.0)
                             .show_ui(ui, |ui| {
-                                ui.selectable_value(&mut self.tour_render.segment, 0, "Whole tour");
+                                ui.selectable_value(&mut self.tour_render.segment, 0, tr!(tour_render_whole));
                                 for (i, (title, start, end)) in chapters.iter().enumerate() {
                                     ui.selectable_value(
                                         &mut self.tour_render.segment,
@@ -322,26 +320,17 @@ impl FractadyneApp {
                                 }
                             })
                             .response
-                            .on_hover_text(
-                                "Rendering one chapter keeps the GLOBAL frame numbering, so its \
-                                 frames drop straight back into a full sequence.",
-                            ));
+                            .on_hover_text(tr!(tour_render_chapter_hover)));
                         ui.end_row();
                     });
                     ui.horizontal(|ui| {
-                        ui.checkbox(&mut self.tour_render.mp4, "Assemble mp4")
-                            .on_hover_text("Runs ffmpeg afterwards (must be on PATH). The PNG frames are kept.");
-                        ui.checkbox(&mut self.tour_render.overwrite, "Overwrite existing frames")
-                            .on_hover_text("Off: the render stops to ask, which it cannot do from here.");
+                        ui.checkbox(&mut self.tour_render.mp4, tr!(tour_render_mp4))
+                            .on_hover_text(tr!(tour_render_mp4_hover));
+                        ui.checkbox(&mut self.tour_render.overwrite, tr!(tour_render_overwrite))
+                            .on_hover_text(tr!(tour_render_overwrite_hover));
                     });
-                    ui.checkbox(&mut self.tour_render.resume, "Resume an interrupted render")
-                        .on_hover_text(
-                            "Keep the frames already in the output folder and render only the \
-                             missing ones. The newest frame is checked first and discarded if it \
-                             is incomplete (the frame a render dies on is the one it was writing), \
-                             stepping back until a good one is found; a folder holding frames at a \
-                             different size is refused rather than mixed into this sequence.",
-                        );
+                    ui.checkbox(&mut self.tour_render.resume, tr!(tour_render_resume))
+                        .on_hover_text(tr!(tour_render_resume_hover));
                     if let Some(rx) = &self.tour_render.cards_rx {
                         if let Ok(n) = rx.try_recv() {
                             self.tour_render.cards = Some(n);
@@ -350,14 +339,8 @@ impl FractadyneApp {
                     }
                     if let Some(n) = self.tour_render.cards.filter(|&n| n >= 2) {
                         if ui
-                            .checkbox(&mut self.tour_render.all_gpus, format!("Use all graphics cards ({n})"))
-                            .on_hover_text(
-                                "Render on every graphics card of this machine at once, through a \
-                                 render farm on this computer (--gpus all). The frames, their names, \
-                                 Resume and the mp4 are as for one card; the whole tour renders, in \
-                                 the farm's own order. Different card models draw a few pixels \
-                                 slightly differently: a held shot and a dissolve stay on one card.",
-                            )
+                            .checkbox(&mut self.tour_render.all_gpus, tr!(tour_render_all_gpus, count = n))
+                            .on_hover_text(tr!(tour_render_all_gpus_hover))
                             .changed()
                             && self.tour_render.all_gpus
                         {
@@ -366,34 +349,27 @@ impl FractadyneApp {
                         }
                     }
                     ui.add_enabled_ui(!self.tour_render.all_gpus, |ui| ui.horizontal(|ui| {
-                        ui.label("Render order");
+                        ui.label(tr!(tour_render_order));
                         egui::ComboBox::from_id_salt("tour_render_order")
                             .selected_text(if self.tour_render.progressive {
-                                "Progressive"
+                                tr!(tour_render_progressive)
                             } else {
-                                "Sequential"
+                                tr!(tour_render_sequential)
                             })
                             .width(140.0)
                             .show_ui(ui, |ui| {
                                 ui.selectable_value(
                                     &mut self.tour_render.progressive,
                                     false,
-                                    "Sequential",
+                                    tr!(tour_render_sequential),
                                 )
-                                .on_hover_text("Frame 0, 1, 2, … in order (the default).");
+                                .on_hover_text(tr!(tour_render_sequential_hover));
                                 ui.selectable_value(
                                     &mut self.tour_render.progressive,
                                     true,
-                                    "Progressive",
+                                    tr!(tour_render_progressive),
                                 )
-                                .on_hover_text(
-                                    "Preview the whole tour first, refine to full detail: the \
-                                     keyframes render first, then the largest temporal gaps are \
-                                     bisected until every frame exists. Frames land at their \
-                                     correct indices either way, so Resume and the mp4 work \
-                                     unchanged — you can stop early, eyeball the coarse \
-                                     flip-book, and restart with Resume in either order.",
-                                );
+                                .on_hover_text(tr!(tour_render_progressive_hover));
                             });
                     }));
                 });
@@ -406,13 +382,13 @@ impl FractadyneApp {
                 let frames = (((t_to - t_from) * self.tour_render.fps).round() as i64 + 1).max(1);
                 ui.add_space(6.0);
                 ui.label(
-                    egui::RichText::new(format!(
-                        "{} frames · {:.0}s of tour · {}×{} ss{}",
-                        crate::grouped_count(frames as f64),
-                        t_to - t_from,
-                        self.tour_render.width,
-                        self.tour_render.height,
-                        self.tour_render.ss
+                    egui::RichText::new(tr!(
+                        tour_render_summary,
+                        count = frames,
+                        seconds = crate::i18n::decimal(t_to - t_from, 0),
+                        width = self.tour_render.width.to_string(),
+                        height = self.tour_render.height.to_string(),
+                        ss = self.tour_render.ss.to_string()
                     ))
                     .monospace(),
                 );
@@ -431,29 +407,22 @@ impl FractadyneApp {
                     / 100;
                 let gb = |b: u64| b as f64 / (1u64 << 30) as f64;
                 let free = crate::sysinfo::free_disk_bytes(std::path::Path::new(&self.tour_render.out));
+                let size = format!("{:.1} GB", gb(est_bytes));
                 let disk = match free {
-                    Some(f) => format!("≈{:.1} GB of frames · {:.1} GB free", gb(est_bytes), gb(f)),
-                    None => format!("≈{:.1} GB of frames", gb(est_bytes)),
+                    Some(f) => tr!(tour_render_disk_free, size = size, free = format!("{} GB", crate::i18n::decimal(gb(f), 1))),
+                    None => tr!(tour_render_disk, size = size),
                 };
                 // Warn on a genuine shortfall only. The estimate is rough, so a 1.2× margin keeps
                 // this quiet when it is merely close and loud when the render cannot finish.
                 let short = free.is_some_and(|f| (f as f64) < gb(est_bytes) * 1.2 * (1u64 << 30) as f64);
                 ui.label(if short {
-                    egui::RichText::new(format!("⚠ {disk} — not enough room for the whole sequence"))
+                    egui::RichText::new(format!("⚠ {}", tr!(tour_render_disk_short, disk = disk)))
                         .monospace()
                         .color(egui::Color32::from_rgb(0xE0, 0xA0, 0x30))
                 } else {
                     egui::RichText::new(disk).monospace().weak()
                 });
-                ui.label(
-                    egui::RichText::new(
-                        "Renders the script FROM DISK in a separate process, so unsaved edits \
-                         aren't included — and a lost GPU device there can't take this session \
-                         with it.",
-                    )
-                    .weak()
-                    .small(),
-                );
+                ui.label(egui::RichText::new(tr!(tour_render_separate)).weak().small());
 
                 if running || !self.tour_render.progress.is_empty() {
                     ui.add_space(4.0);
@@ -467,7 +436,7 @@ impl FractadyneApp {
                             egui::ProgressBar::new((done as f32 / planned as f32).clamp(0.0, 1.0))
                                 .desired_height(14.0)
                                 .text(
-                                    egui::RichText::new(format!("{done} / {planned} frames"))
+                                    egui::RichText::new(tr!(tour_render_progress, done = done, total = planned))
                                         .monospace()
                                         .small(),
                                 ),
@@ -479,7 +448,7 @@ impl FractadyneApp {
                         }
                         ui.label(
                             egui::RichText::new(if self.tour_render.progress.is_empty() {
-                                "starting…".to_string()
+                                tr!(tour_render_starting)
                             } else {
                                 self.tour_render.progress.clone()
                             })
@@ -492,14 +461,7 @@ impl FractadyneApp {
                 // the moment a render starts and reads as the app having frozen — the same
                 // ambiguity that makes an unexplained black screen a support ticket.
                 if running {
-                    ui.label(
-                        egui::RichText::new(
-                            "Live view paused — the render has the GPU to itself, so it \
-                             finishes sooner and measures its own frame costs accurately.",
-                        )
-                        .small()
-                        .weak(),
-                    );
+                    ui.label(egui::RichText::new(tr!(tour_render_live_paused)).small().weak());
                 }
                 if let Some(st) = &self.tour_render.status {
                     ui.colored_label(crate::theme::BRAND_ACCENT, egui::RichText::new(st).small());
@@ -513,25 +475,25 @@ impl FractadyneApp {
                     // ⚠Only when idle: while a render runs, "Stop render" IS the abandon action
                     // and a second one beside it would be two words for one thing.
                     if !running
-                        && crate::theme::cancel_button(ui, "Cancel")
-                            .on_hover_text("Close without rendering")
+                        && crate::theme::cancel_button(ui, &tr!(tour_render_cancel))
+                            .on_hover_text(tr!(tour_render_cancel_hover))
                             .clicked()
                     {
                         close_dialog = true;
                     }
                     if ui
-                        .button(format!("{} Copy command", crate::icons::COPY))
-                        .on_hover_text("Copy the equivalent command line to the clipboard")
+                        .button(format!("{} {}", crate::icons::COPY, tr!(tour_render_copy_command)))
+                        .on_hover_text(tr!(tour_render_copy_command_hover))
                         .clicked()
                     {
                         copy_cmd = true;
                     }
                     if running {
-                        if ui.button("Stop render").clicked() {
+                        if ui.button(tr!(tour_render_stop)).clicked() {
                             stop = true;
                         }
-                    } else if crate::theme::confirm_button(ui, "Render")
-                        .on_hover_text("Start rendering the frame sequence")
+                    } else if crate::theme::confirm_button(ui, &tr!(tour_render_render))
+                        .on_hover_text(tr!(tour_render_render_hover))
                         .clicked()
                     {
                         go = true;
@@ -619,7 +581,7 @@ impl FractadyneApp {
         let exe = match std::env::current_exe() {
             Ok(e) => e,
             Err(e) => {
-                self.tour_render.status = Some(format!("Cannot find the executable: {e}"));
+                self.tour_render.status = Some(tr!(tour_render_no_exe, why = e.to_string()));
                 return;
             }
         };
@@ -677,7 +639,7 @@ impl FractadyneApp {
                 crate::diag::breadcrumb(format!("GUI tour render → {}", self.tour_render.out));
                 self.tour_render.child = Some(c);
             }
-            Err(e) => self.tour_render.status = Some(format!("Could not start the render: {e}")),
+            Err(e) => self.tour_render.status = Some(tr!(tour_render_start_failed, why = e.to_string())),
         }
     }
 }

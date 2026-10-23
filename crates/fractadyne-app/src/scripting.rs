@@ -3063,7 +3063,7 @@ impl FractadyneApp {
     /// Menu / picker entry: choose a script file and play it. The picker opens in the last
     /// script's directory when there is one.
     pub(crate) fn load_script(&mut self) {
-        let mut dialog = rfd::FileDialog::new().add_filter("Fractadyne script (TOML)", &["toml"]);
+        let mut dialog = rfd::FileDialog::new().add_filter(tr!(script_file_filter), &["toml"]);
         // Prefer the last script's own directory; otherwise the shared last-used directory.
         let seed = self
             .last_script
@@ -3114,7 +3114,7 @@ impl FractadyneApp {
             }
             Err(e) => {
                 self.dialogs.notice = Some((
-                    "Could not load script".to_string(),
+                    tr!(script_load_failed),
                     format!("{}\n\n{e}", path.display()),
                 ));
             }
@@ -4125,7 +4125,7 @@ impl FractadyneApp {
             PlaybackTick::Idle => false,
             PlaybackTick::Playing => true,
             PlaybackTick::Finished(Some(name)) => {
-                self.set_toast(format!("Script finished — \"{name}\""), ctx);
+                self.set_toast(tr!(script_finished, name = name.as_str()), ctx);
                 false
             }
             PlaybackTick::Finished(None) => false, // benchmark → report dialog already queued
@@ -4583,10 +4583,19 @@ impl BenchDepth {
         }
     }
 
+    /// The depth in English, as the command line and the benchmark report name it.
     pub(crate) fn label(self) -> &'static str {
         match self {
             BenchDepth::Standard => "Standard (1e32×)",
             BenchDepth::Ultra => "Ultra deep (1e48×)",
+        }
+    }
+
+    /// The same in the language in use, for the benchmark window.
+    pub(crate) fn ui_label(self) -> String {
+        match self {
+            BenchDepth::Standard => tr!(bench_depth_standard, zoom = "1e32"),
+            BenchDepth::Ultra => tr!(bench_depth_ultra, zoom = "1e48"),
         }
     }
 

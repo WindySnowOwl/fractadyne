@@ -5,7 +5,7 @@
 use crate::FractadyneApp;
 use crate::i18n::catalog::Catalog;
 use crate::i18n::langs::{self, Installed};
-use crate::i18n::{self, Arg, Source, id, pseudo};
+use crate::i18n::{self, Arg, DecimalMark, Source, id, pseudo};
 use std::sync::Arc;
 
 /// The language in use, the setting, and what the language menu lists.
@@ -17,6 +17,8 @@ pub(crate) struct LanguageState {
     pub(crate) saved: String,
     /// The system language found at the last launch (`SessionState::language_system_seen`).
     pub(crate) system_seen: String,
+    /// The decimal mark the user prefers (`SessionState::decimal_mark`), over the language's own.
+    pub(crate) decimal_mark: DecimalMark,
     /// The installed languages, as discovered at launch and on Reload.
     pub(crate) installed: Vec<Installed>,
     pub(crate) window_open: bool,
@@ -31,10 +33,11 @@ pub(crate) struct LanguageState {
 }
 
 impl LanguageState {
-    /// The language for this launch. `saved` and `system_seen` are the session's; `run` a language
-    /// for this run only. On the first run (`saved` empty) the system's languages decide; on a
-    /// later launch whose system language has changed to one the app has, the question is queued.
-    pub(crate) fn start(saved: &str, system_seen: &str, run: Option<String>) -> LanguageState {
+    /// The language for this launch. `saved`, `system_seen` and `decimal` are the session's; `run`
+    /// a language for this run only. On the first run (`saved` empty) the system's languages decide;
+    /// on a later launch whose system language has changed to one the app has, the question is
+    /// queued.
+    pub(crate) fn start(saved: &str, system_seen: &str, decimal: &str, run: Option<String>) -> LanguageState {
         let installed = langs::discover();
         let system = langs::system_languages();
         let system_top = system.first().cloned().unwrap_or_default();
@@ -43,6 +46,7 @@ impl LanguageState {
             tag: "en".into(),
             saved: saved.to_owned(),
             system_seen: system_seen.to_owned(),
+            decimal_mark: DecimalMark::from_key(decimal),
             installed,
             window_open: false,
             coverage: None,
@@ -65,7 +69,14 @@ impl LanguageState {
         }
         let want = run.unwrap_or_else(|| st.saved.clone());
         st.activate(&want);
+        i18n::set_decimal_mark(st.decimal_mark);
         st
+    }
+
+    /// The user chose the decimal mark `m`: numbers take it from the next frame on, and it is kept.
+    pub(crate) fn choose_decimal_mark(&mut self, m: DecimalMark) {
+        self.decimal_mark = m;
+        i18n::set_decimal_mark(m);
     }
 
     /// Use the language `tag` (or the installed one that best matches it). Falls back to English,
@@ -146,6 +157,25 @@ pub(crate) fn run_language(args: &[String]) -> Option<String> {
         .or_else(|| crate::is_task_invocation(args).then(|| "en".to_owned()))
 }
 
+/// The decimal-mark choice: its heading, then one line per choice showing what a number looks like
+/// with it (`1,234.5` / `1.234,5`), the language's own first. Returns the one clicked.
+fn decimal_mark_choice(ui: &mut egui::Ui, current: DecimalMark) -> Option<DecimalMark> {
+    let mut chosen = None;
+    ui.label(egui::RichText::new(tr!(language_decimal_mark)).weak());
+    for m in DecimalMark::ALL {
+        let sample = i18n::decimal_with(1234.5, 1, false, i18n::punctuation_with(m));
+        let label = match m {
+            DecimalMark::Language => tr!(language_decimal_language, sample = sample),
+            DecimalMark::Point => tr!(language_decimal_point, sample = sample),
+            DecimalMark::Comma => tr!(language_decimal_comma, sample = sample),
+        };
+        if ui.selectable_label(current == m, label).on_hover_text(tr!(language_decimal_mark_hover)).clicked() {
+            chosen = Some(m);
+        }
+    }
+    chosen
+}
+
 /// How the Languages window names where a language comes from.
 fn source_text(s: &Source) -> String {
     match s {
@@ -162,6 +192,7 @@ impl FractadyneApp {
     /// language, and the icon is the one thing on the bar that needs no reading.
     pub(crate) fn draw_language_menu(&mut self, ui: &mut egui::Ui) {
         let mut pick = None;
+        let mut mark = None;
         let mut more = false;
         let current = self.language.current_name();
         ui.menu_button(format!("{}  {}", crate::icons::LANGUAGES, current), |ui| {
@@ -172,6 +203,10 @@ impl FractadyneApp {
                 }
             }
             ui.separator();
+            if let Some(m) = decimal_mark_choice(ui, self.language.decimal_mark) {
+                mark = Some(m);
+            }
+            ui.separator();
             if ui.button(tr!(language_more)).clicked() {
                 more = true;
                 ui.close_menu();
@@ -179,6 +214,9 @@ impl FractadyneApp {
         });
         if let Some(t) = pick {
             self.language.choose(&t);
+        }
+        if let Some(m) = mark {
+            self.language.choose_decimal_mark(m);
         }
         if more {
             self.language.window_open = true;
@@ -193,6 +231,7 @@ impl FractadyneApp {
         }
         let mut open = true;
         let mut pick = None;
+        let mut mark = None;
         let (mut install, mut reload, mut folder) = (false, false, false);
         let rows: Vec<(Installed, (u32, usize))> = {
             let cov = self.language.coverage().to_vec();
@@ -230,6 +269,10 @@ impl FractadyneApp {
                     }
                 });
                 ui.add_space(8.0);
+                if let Some(m) = decimal_mark_choice(ui, self.language.decimal_mark) {
+                    mark = Some(m);
+                }
+                ui.add_space(8.0);
                 ui.horizontal(|ui| {
                     install = ui.button(tr!(language_install)).on_hover_text(tr!(language_install_hover)).clicked();
                     folder = ui.button(tr!(language_open_folder)).clicked();
@@ -239,6 +282,9 @@ impl FractadyneApp {
         self.language.window_open = open;
         if let Some(t) = pick {
             self.language.choose(&t);
+        }
+        if let Some(m) = mark {
+            self.language.choose_decimal_mark(m);
         }
         if reload {
             self.language.reload();
@@ -250,7 +296,7 @@ impl FractadyneApp {
             }
         }
         if install {
-            if let Some(path) = rfd::FileDialog::new().add_filter("Fractadyne language", &["ftl"]).pick_file() {
+            if let Some(path) = rfd::FileDialog::new().add_filter(tr!(language_file_filter), &["ftl"]).pick_file() {
                 let msg = self.install_language_file(&path);
                 self.set_toast(msg, ctx);
             }
@@ -264,9 +310,9 @@ impl FractadyneApp {
         let text = match std::fs::read(path) {
             Ok(b) if b.len() <= i18n::catalog::MAX_FILE_BYTES => match String::from_utf8(b) {
                 Ok(t) => t,
-                Err(_) => return fail("not UTF-8 text".into()),
+                Err(_) => return fail(tr!(language_install_not_utf8)),
             },
-            Ok(_) => return fail("too large".into()),
+            Ok(_) => return fail(tr!(language_install_too_large)),
             Err(e) => return fail(e.to_string()),
         };
         let stamp = i18n::catalog::Stamp::read(&i18n::catalog::clean_text(&text));
@@ -275,19 +321,19 @@ impl FractadyneApp {
             Some(stem.strip_prefix("fractadyne-").unwrap_or(&stem).to_owned())
         });
         let Some(tag) = hint.as_deref().and_then(langs::canonical_tag) else {
-            return fail("it does not say which language it is (name it fractadyne-<language>.ftl)".into());
+            return fail(tr!(language_install_no_tag));
         };
         if tag == "en" || tag == pseudo::TAG {
-            return fail("English is built in".into());
+            return fail(tr!(language_install_english));
         }
         let c = match Catalog::from_text(&text, &tag) {
             Ok(c) => c,
             Err(why) => return fail(why),
         };
         if c.translated == 0 {
-            return fail("it translates no message of this version".into());
+            return fail(tr!(language_install_empty));
         }
-        let Some(dir) = langs::user_dir() else { return fail("there is no settings folder".into()) };
+        let Some(dir) = langs::user_dir() else { return fail(tr!(language_install_no_folder)) };
         let dest = dir.join(format!("fractadyne-{tag}.ftl"));
         let tmp = dir.join(format!("fractadyne-{tag}.ftl.tmp"));
         let wrote = std::fs::create_dir_all(&dir).and_then(|_| std::fs::write(&tmp, &text)).and_then(|_| std::fs::rename(&tmp, &dest));

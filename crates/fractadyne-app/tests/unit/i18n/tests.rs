@@ -23,6 +23,44 @@ fn numbers_take_the_languages_decimal_mark() {
     assert_eq!(number_with(f64::NAN, de), "NaN");
 }
 
+/// The user's decimal mark wins over the language's, and the digit groups move out of its way only
+/// when they would use the same character.
+#[test]
+fn the_users_decimal_mark_overrides_the_languages() {
+    let en = Punctuation::default();
+    let de = Punctuation { decimal: ',', group: '.' };
+    let fr = Punctuation { decimal: ',', group: '\u{202F}' };
+    assert_eq!(DecimalMark::Language.apply(de), de);
+    assert_eq!(DecimalMark::Point.apply(en), en);
+    assert_eq!(DecimalMark::Comma.apply(en), Punctuation { decimal: ',', group: '.' });
+    assert_eq!(DecimalMark::Point.apply(de), Punctuation { decimal: '.', group: ',' });
+    assert_eq!(DecimalMark::Point.apply(fr), Punctuation { decimal: '.', group: '\u{202F}' });
+    assert_eq!(DecimalMark::Comma.apply(fr), fr);
+    for m in DecimalMark::ALL {
+        assert_eq!(DecimalMark::from_key(m.key()), m);
+        let p = m.apply(en);
+        assert_ne!(p.decimal, p.group, "{m:?}");
+    }
+    assert_eq!(DecimalMark::from_key("?"), DecimalMark::Language);
+}
+
+/// A measurement rounds exactly as `format!` would, then takes the punctuation.
+#[test]
+fn a_measurement_rounds_as_format_does_and_takes_the_punctuation() {
+    let en = Punctuation::default();
+    let de = Punctuation { decimal: ',', group: '.' };
+    for (x, places) in [(0.0, 1), (7.52, 1), (1234.56, 2), (-0.04, 1), (2.5, 0), (99999.95, 1), (-1234567.891, 3)] {
+        assert_eq!(decimal_with(x, places, false, en).replace(',', ""), format!("{x:.places$}"), "{x}");
+        assert_eq!(decimal_with(x, places, true, en).replace(',', ""), format!("{x:+.places$}"), "{x}");
+    }
+    assert_eq!(decimal_with(1234.56, 1, false, en), "1,234.6");
+    assert_eq!(decimal_with(1234.56, 1, false, de), "1.234,6");
+    assert_eq!(decimal_with(-1234.56, 1, true, de), "-1.234,6");
+    assert_eq!(decimal_with(12.5, 1, true, de), "+12,5");
+    assert_eq!(decimal_with(7.0, 0, false, de), "7");
+    assert_eq!(decimal_with(f64::INFINITY, 1, false, de), "inf");
+}
+
 /// build.rs scans the English file line by line for the message IDs and their `$variables`; Fluent's
 /// own parser must agree, message for message, or the generated constants point at the wrong text.
 #[test]
@@ -53,7 +91,8 @@ fn the_generated_ids_are_the_english_files_messages_in_order() {
     }
 }
 
-/// Every English message formats with the arguments it declares: no error, no raw placeholder.
+/// Every English message formats with the arguments it declares: no error, no raw placeholder (a
+/// literal brace is text: "a .l file holds `Name { … }` entries").
 #[test]
 fn every_english_message_formats() {
     let en = english();
@@ -62,7 +101,7 @@ fn every_english_message_formats() {
         let s = en.format(Msg(i as u16), &args);
         assert_ne!(s, *name, "{name} did not format");
         assert!(!s.is_empty(), "{name} is empty");
-        assert!(!s.contains('{') && !s.contains('}'), "{name}: {s}");
+        assert!(!s.contains("{$") && !s.contains("{ $"), "{name}: {s}");
     }
 }
 

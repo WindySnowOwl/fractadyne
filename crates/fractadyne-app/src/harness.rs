@@ -91,6 +91,7 @@ pub(crate) mod reusetest;
 pub(crate) mod selftest;
 pub(crate) mod shot;
 pub(crate) mod soak;
+pub(crate) mod text_layout;
 pub(crate) mod torture;
 pub(crate) mod uitest;
 pub(crate) mod validate_deep;

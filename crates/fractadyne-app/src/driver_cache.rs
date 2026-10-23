@@ -85,38 +85,23 @@ pub(crate) fn notice(
     vendor: u32,
     nvidia: Option<(&Path, u64)>,
 ) -> (String, String) {
-    let mut body = format!(
-        concat!(
-            "Your graphics driver compiled {} of Fractadyne's shaders again this\n",
-            "session, though it had compiled each of them earlier (the slowest:\n",
-            "{}, {:.1} s). Its shader cache is not keeping compiled shaders, most\n",
-            "often because the cache is full. Until that changes, exports, deep\n",
-            "views and starting Fractadyne can each spend seconds compiling.\n\n",
-        ),
-        r.count,
-        r.pipeline,
-        r.ms as f64 / 1000.0
+    let said = tr!(
+        driver_cache_body,
+        count = r.count,
+        pipeline = r.pipeline.as_str(),
+        seconds = crate::i18n::decimal(r.ms as f64 / 1000.0, 1)
     );
-    match (vendor, nvidia) {
-        (NVIDIA, Some((dir, bytes))) => body.push_str(&format!(
-            concat!(
-                "To fix it: close Fractadyne, then delete the contents of\n  {}   ({} MB)\n",
-                "The driver rebuilds the cache. To keep it from filling again, raise\n",
-                "NVIDIA Control Panel > Manage 3D settings > Shader Cache Size.",
-            ),
-            dir.display(),
-            bytes >> 20
-        )),
-        (NVIDIA, None) => body.push_str(concat!(
-            "To fix it: raise NVIDIA Control Panel > Manage 3D settings > Shader Cache\n",
-            "Size, or clear the driver's shader cache.",
-        )),
-        (AMD, _) => body.push_str(
-            "To fix it: AMD Software > Graphics > Advanced > Reset Shader Cache.",
+    let fix = match (vendor, nvidia) {
+        (NVIDIA, Some((dir, bytes))) => tr!(
+            driver_cache_fix_nvidia_folder,
+            folder = dir.display().to_string(),
+            size = (bytes >> 20).to_string()
         ),
-        _ => body.push_str("To fix it: clear the graphics driver's shader cache."),
-    }
-    ("Graphics driver not keeping shaders".to_string(), body)
+        (NVIDIA, None) => tr!(driver_cache_fix_nvidia),
+        (AMD, _) => tr!(driver_cache_fix_amd),
+        _ => tr!(driver_cache_fix_other),
+    };
+    (tr!(driver_cache_title), format!("{said}\n\n{fix}"))
 }
 
 impl FractadyneApp {

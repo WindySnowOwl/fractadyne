@@ -48,6 +48,7 @@ impl DiagTest {
     /// The three tests, in the order they appear in the dialog.
     pub(crate) const ALL: [DiagTest; 3] = [DiagTest::SelfTest, DiagTest::UiTest, DiagTest::GpuTest];
 
+    /// The test's name in English, as the report the window writes names it.
     pub(crate) fn label(self) -> &'static str {
         match self {
             DiagTest::SelfTest => "Self-test",
@@ -56,33 +57,31 @@ impl DiagTest {
         }
     }
 
-    /// Button text. Spelled out rather than derived from `label()` — lowercasing that gave
-    /// "Run ui test", which reads as a typo.
-    pub(crate) fn button(self) -> &'static str {
+    /// The same in the language in use, for the window.
+    pub(crate) fn ui_label(self) -> String {
         match self {
-            DiagTest::SelfTest => "Run self-test",
-            DiagTest::UiTest => "Run UI test",
-            DiagTest::GpuTest => "Run GPU arithmetic check",
+            DiagTest::SelfTest => tr!(diag_test_selftest),
+            DiagTest::UiTest => tr!(diag_test_uitest),
+            DiagTest::GpuTest => tr!(diag_test_gputest),
         }
     }
 
-    /// One sentence a non-developer can act on.
-    pub(crate) fn blurb(self) -> &'static str {
+    /// Button text, in the language in use. Spelled out rather than derived from `label()` —
+    /// lowercasing that gave "Run ui test", which reads as a typo.
+    pub(crate) fn button(self) -> String {
         match self {
-            DiagTest::SelfTest => {
-                "Checks the maths and rendering on your GPU against known-correct results. \
-                 Takes about 15 seconds."
-            }
-            DiagTest::UiTest => {
-                "Walks the interface and the live view, capturing screenshots at several zoom \
-                 depths. Takes a minute or two and opens windows while it runs."
-            }
-            DiagTest::GpuTest => {
-                "Checks the shader's double-float arithmetic against known-correct values on every \
-                 graphics backend your machine offers. Takes a few seconds, opens no window. If it \
-                 reports a failure, that is a genuine finding we would like to see — please attach \
-                 it to a report."
-            }
+            DiagTest::SelfTest => tr!(diag_run_selftest),
+            DiagTest::UiTest => tr!(diag_run_uitest),
+            DiagTest::GpuTest => tr!(diag_run_gputest),
+        }
+    }
+
+    /// One sentence a non-developer can act on, in the language in use.
+    pub(crate) fn blurb(self) -> String {
+        match self {
+            DiagTest::SelfTest => tr!(diag_blurb_selftest),
+            DiagTest::UiTest => tr!(diag_blurb_uitest),
+            DiagTest::GpuTest => tr!(diag_blurb_gputest),
         }
     }
 
@@ -247,13 +246,14 @@ impl FractadyneApp {
         let exe = match std::env::current_exe() {
             Ok(e) => e,
             Err(e) => {
-                self.diagnostics.error = Some(format!("Cannot find the executable: {e}"));
+                self.diagnostics.error = Some(tr!(diag_error_no_exe, why = e.to_string()));
                 return;
             }
         };
         let dir = self.diagnostics_dir();
         if let Err(e) = std::fs::create_dir_all(&dir) {
-            self.diagnostics.error = Some(format!("Cannot create {}: {e}", dir.display()));
+            self.diagnostics.error =
+                Some(tr!(diag_error_create_dir, dir = dir.display().to_string(), why = e.to_string()));
             return;
         }
         let stamp = crate::FractadyneApp::file_stamp(
@@ -335,7 +335,7 @@ impl FractadyneApp {
                 self.diagnostics.child = Some(c);
                 self.diagnostics.running = Some(test);
             }
-            Err(e) => self.diagnostics.error = Some(format!("Could not start the test: {e}")),
+            Err(e) => self.diagnostics.error = Some(tr!(diag_error_start, why = e.to_string())),
         }
     }
 
@@ -437,24 +437,17 @@ impl FractadyneApp {
         let mut open_artifact: Option<PathBuf> = None;
         let mut attach = false;
 
-        egui::Window::new("Diagnostics")
+        egui::Window::new(tr!(diag_title))
+            .id(egui::Id::new("fractadyne.diagnostics"))
             .open(&mut open)
             .resizable(true)
             .default_width(520.0)
             .show(ctx, |ui| {
+                ui.label(egui::RichText::new(tr!(diag_intro)).weak().small());
                 ui.label(
-                    egui::RichText::new(
-                        "Run a test to check that Fractadyne works correctly on your hardware. \
-                         Results are saved on your machine and can be attached to an issue \
-                         report — nothing is sent anywhere on its own.",
-                    )
-                    .weak()
-                    .small(),
-                );
-                ui.label(
-                    egui::RichText::new(format!(
-                        "Deep-zoom arithmetic: {}",
-                        fractadyne_core::backend_status_line()
+                    egui::RichText::new(tr!(
+                        diag_arithmetic,
+                        status = fractadyne_core::backend_status_line(),
                     ))
                     .weak()
                     .small(),
@@ -480,7 +473,7 @@ impl FractadyneApp {
                     ui.separator();
                     ui.horizontal(|ui| {
                         ui.spinner();
-                        ui.label(format!("{} checks done", self.diagnostics.seen));
+                        ui.label(tr!(diag_checks_done, count = self.diagnostics.seen));
                     });
                     if !self.diagnostics.progress.is_empty() {
                         ui.label(
@@ -495,53 +488,30 @@ impl FractadyneApp {
                     ui.separator();
                     // An informational test is neutral — never green/red — because its "failure"
                     // is the datum, not a fault (see DiagTest::is_informational).
-                    let (colour, word) = if v.test.is_informational() {
-                        (egui::Color32::from_rgb(0x9a, 0x9d, 0xa6), "result captured")
+                    // The report block (`test_result_block`) keeps its own English words.
+                    let (colour, verdict) = if v.test.is_informational() {
+                        (egui::Color32::from_rgb(0x9a, 0x9d, 0xa6), tr!(diag_verdict_captured, test = v.test.ui_label()))
                     } else if v.ok {
-                        (egui::Color32::from_rgb(0x4c, 0xaf, 0x50), "passed")
+                        (egui::Color32::from_rgb(0x4c, 0xaf, 0x50), tr!(diag_verdict_passed, test = v.test.ui_label()))
                     } else {
-                        (egui::Color32::from_rgb(0xe5, 0x73, 0x73), "reported problems")
+                        (egui::Color32::from_rgb(0xe5, 0x73, 0x73), tr!(diag_verdict_problems, test = v.test.ui_label()))
                     };
-                    ui.label(
-                        egui::RichText::new(format!("{} — {word}", v.test.label()))
-                            .color(colour)
-                            .strong(),
-                    );
+                    ui.label(egui::RichText::new(verdict).color(colour).strong());
                     ui.label(egui::RichText::new(&v.headline).monospace().small());
                     if v.test.is_informational() {
-                        ui.label(
-                            egui::RichText::new(
-                                "This one has no pass or fail: it records how your GPU computes, \
-                                 and a reported failure is a real finding rather than a fault in \
-                                 your machine. Either way, attaching it to a report is the most \
-                                 useful thing you can do with it.",
-                            )
-                            .weak()
-                            .small(),
-                        );
+                        ui.label(egui::RichText::new(tr!(diag_informational_note)).weak().small());
                     } else if !v.ok {
-                        ui.label(
-                            egui::RichText::new(
-                                "Some differences are expected on hardware other than the \
-                                 reference GPU — image comparisons in particular. Attaching this \
-                                 to an issue report is the most useful thing you can do with it.",
-                            )
-                            .weak()
-                            .small(),
-                        );
+                        ui.label(egui::RichText::new(tr!(diag_problems_note)).weak().small());
                     }
                     ui.horizontal(|ui| {
                         if let Some(p) = &v.artifact {
-                            if p.exists() && ui.button("Open results").clicked() {
+                            if p.exists() && ui.button(tr!(diag_open_results)).clicked() {
                                 open_artifact = Some(p.clone());
                             }
                         }
                         if ui
-                            .button("Attach to an issue report…")
-                            .on_hover_text(
-                                "Opens the report dialog with this result included, so the issue \
-                                 carries a machine-validated test rather than just a description",
-                            )
+                            .button(tr!(diag_attach))
+                            .on_hover_text(tr!(diag_attach_hover))
                             .clicked()
                         {
                             attach = true;
@@ -561,14 +531,8 @@ impl FractadyneApp {
                 ui.separator();
                 let mut console = crate::diag::console_on();
                 if ui
-                    .checkbox(&mut console, "Print diagnostics to the console")
-                    .on_hover_text(
-                        "Show the [fd-…] lines on stderr from now on. Off by default when \
-                         Fractadyne is launched without arguments. This changes nothing about what \
-                         is RECORDED — the log file always gets every line — so leave it off unless \
-                         you are watching a terminal. Persists for this session only; use the \
-                         --console flag or FRACTADYNE_CONSOLE=1 to catch startup too.",
-                    )
+                    .checkbox(&mut console, tr!(diag_console))
+                    .on_hover_text(tr!(diag_console_hover))
                     .changed()
                 {
                     crate::diag::set_console(console);
@@ -583,7 +547,7 @@ impl FractadyneApp {
 
                 ui.separator();
                 crate::theme::action_row(ui, |ui| {
-                    if crate::theme::cancel_button(ui, "Close").clicked() {
+                    if crate::theme::cancel_button(ui, &tr!(diag_close)).clicked() {
                         close = true;
                     }
                 });

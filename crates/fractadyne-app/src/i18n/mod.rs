@@ -10,7 +10,7 @@ pub(crate) mod catalog;
 pub(crate) mod langs;
 pub(crate) mod pseudo;
 
-use std::sync::atomic::{AtomicU64, Ordering};
+use std::sync::atomic::{AtomicU64, AtomicU8, Ordering};
 use std::sync::{Arc, OnceLock, RwLock};
 
 pub(crate) use catalog::{Catalog, Source};
@@ -98,9 +98,8 @@ pub(crate) fn set_active(c: Arc<Catalog>) {
     GENERATION.fetch_add(1, Ordering::Relaxed);
 }
 
-/// Bumped by every `set_active`: a cache of laid-out text (the live panel's static layer) redoes
-/// itself when this moves.
-#[allow(dead_code)] // its first reader is the live panel, once its legends move into the file
+/// Bumped by every `set_active` and `set_decimal_mark`: a cache of laid-out text (the live panel's
+/// static layer) redoes itself when this moves.
 pub(crate) fn generation() -> u64 {
     GENERATION.load(Ordering::Relaxed)
 }
@@ -132,19 +131,95 @@ impl Default for Punctuation {
 /// which is a plain function and cannot carry it.
 static PUNCT: AtomicU64 = AtomicU64::new((('.' as u64) << 32) | ',' as u64);
 
+/// The user's decimal mark ([`DecimalMark`] as its index): over the language's own.
+static MARK: AtomicU8 = AtomicU8::new(0);
+
 fn set_punctuation(p: Punctuation) {
     PUNCT.store(((p.decimal as u64) << 32) | p.group as u64, Ordering::Relaxed);
 }
 
-/// The punctuation of the language in use.
-pub(crate) fn punctuation() -> Punctuation {
+/// The language in use's own punctuation, before the user's decimal mark.
+fn language_punctuation() -> Punctuation {
     let v = PUNCT.load(Ordering::Relaxed);
     let ch = |c: u64| char::from_u32(c as u32).unwrap_or('?');
     Punctuation { decimal: ch(v >> 32), group: ch(v & 0xFFFF_FFFF) }
 }
 
+/// The punctuation numbers are written with: the language's, with the user's decimal mark.
+pub(crate) fn punctuation() -> Punctuation {
+    decimal_mark().apply(language_punctuation())
+}
+
+/// Which decimal mark numbers take (Language menu ▸ Decimal mark): the language's own, or the one
+/// the user prefers, whatever the language.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Default)]
+pub(crate) enum DecimalMark {
+    #[default]
+    Language,
+    Point,
+    Comma,
+}
+
+impl DecimalMark {
+    pub(crate) const ALL: [DecimalMark; 3] = [DecimalMark::Language, DecimalMark::Point, DecimalMark::Comma];
+
+    /// The persisted token (`SessionState::decimal_mark`): empty for the language's own.
+    pub(crate) fn key(self) -> &'static str {
+        match self {
+            DecimalMark::Language => "",
+            DecimalMark::Point => ".",
+            DecimalMark::Comma => ",",
+        }
+    }
+
+    /// The token read back; anything else is the language's own.
+    pub(crate) fn from_key(s: &str) -> DecimalMark {
+        match s {
+            "." => DecimalMark::Point,
+            "," => DecimalMark::Comma,
+            _ => DecimalMark::Language,
+        }
+    }
+
+    /// `p` with this decimal mark. The digit groups keep the language's separator unless it is the
+    /// chosen mark itself, which would make `1.234.5` unreadable: then they take the other one.
+    pub(crate) fn apply(self, p: Punctuation) -> Punctuation {
+        let (decimal, other) = match self {
+            DecimalMark::Language => return p,
+            DecimalMark::Point => ('.', ','),
+            DecimalMark::Comma => (',', '.'),
+        };
+        Punctuation { decimal, group: if p.group == decimal { other } else { p.group } }
+    }
+}
+
+/// The user's decimal mark.
+pub(crate) fn decimal_mark() -> DecimalMark {
+    match MARK.load(Ordering::Relaxed) {
+        1 => DecimalMark::Point,
+        2 => DecimalMark::Comma,
+        _ => DecimalMark::Language,
+    }
+}
+
+/// Write numbers with `m` from the next message on.
+pub(crate) fn set_decimal_mark(m: DecimalMark) {
+    let i = match m {
+        DecimalMark::Language => 0,
+        DecimalMark::Point => 1,
+        DecimalMark::Comma => 2,
+    };
+    if MARK.swap(i, Ordering::Relaxed) != i {
+        GENERATION.fetch_add(1, Ordering::Relaxed);
+    }
+}
+
+/// The language's own punctuation with `m`, for showing what each choice looks like.
+pub(crate) fn punctuation_with(m: DecimalMark) -> Punctuation {
+    m.apply(language_punctuation())
+}
+
 /// A count as the language in use writes it: `1,234,567`, `1.234.567`, `1 234 567`.
-#[allow(dead_code)] // the counts formatted today (`commas`, main.rs) move onto it with their areas (§7)
 pub(crate) fn count(n: u64) -> String {
     group_digits(&n.to_string(), punctuation().group)
 }
@@ -163,6 +238,38 @@ pub(crate) fn number_with(v: f64, p: Punctuation) -> String {
     let (sign, body) = s.strip_prefix('-').map_or(("", s.as_str()), |b| ("-", b));
     let (int, frac) = body.split_once('.').map_or((body, None), |(i, f)| (i, Some(f)));
     let mut out = String::from(sign);
+    out += &group_digits(int, p.group);
+    if let Some(f) = frac {
+        out.push(p.decimal);
+        out += f;
+    }
+    out
+}
+
+/// A measurement with `places` decimals, as numbers are written in the interface: the whole part
+/// grouped, the user's decimal mark (`1,234.5 ms`, `1.234,5 ms`). For what the interface measures
+/// and says (times, sizes, ratios, rates), never for coordinates or magnifications, which keep `.`
+/// (§2). Rounds as `format!("{:.N}")` does, `-0.0` included.
+pub(crate) fn decimal(x: impl Into<f64>, places: usize) -> String {
+    decimal_with(x.into(), places, false, punctuation())
+}
+
+/// [`decimal`] with a sign always written: `+12.5`, `-3.0`.
+pub(crate) fn decimal_signed(x: impl Into<f64>, places: usize) -> String {
+    decimal_with(x.into(), places, true, punctuation())
+}
+
+pub(crate) fn decimal_with(x: f64, places: usize, plus: bool, p: Punctuation) -> String {
+    if !x.is_finite() {
+        return x.to_string();
+    }
+    let s = if plus { format!("{x:+.places$}") } else { format!("{x:.places$}") };
+    let (sign, body) = match s.chars().next() {
+        Some(c @ ('-' | '+')) => (c.to_string(), &s[1..]),
+        _ => (String::new(), s.as_str()),
+    };
+    let (int, frac) = body.split_once('.').map_or((body, None), |(i, f)| (i, Some(f)));
+    let mut out = sign;
     out += &group_digits(int, p.group);
     if let Some(f) = frac {
         out.push(p.decimal);

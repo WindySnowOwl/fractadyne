@@ -82,12 +82,26 @@ impl ThemeMode {
             ThemeMode::Dark
         }
     }
-    pub(crate) fn label(self) -> &'static str {
+    /// The theme's name in the language in use.
+    pub(crate) fn label(self) -> String {
         match self {
-            ThemeMode::Dark => "Dark",
-            ThemeMode::Light => "Light",
+            ThemeMode::Dark => tr!(theme_dark),
+            ThemeMode::Light => tr!(theme_light),
         }
     }
+}
+
+/// The width for a single-line field `width` wide whose hint is `hint`, and whether the hint fits
+/// it. A hint wider than the field (a translation runs longer than English) widens the field to it,
+/// up to the room left on the row; when even that cuts it, the caller drops the hint from the field
+/// and offers it as the field's tooltip instead, rather than show it cut off at the edge.
+pub(crate) fn hinted_width(ui: &egui::Ui, hint: &str, width: f32) -> (f32, bool) {
+    let font = egui::TextStyle::Body.resolve(ui.style());
+    let text_w = ui.fonts(|f| f.layout_no_wrap(hint.to_owned(), font, egui::Color32::WHITE).size().x);
+    // The field's own inner margin, both sides, and a point of slack.
+    let need = text_w + 2.0 * ui.spacing().button_padding.x + 2.0;
+    let w = width.max(need).min(ui.available_width().max(width));
+    (w, w >= need)
 }
 
 const fn rgb(r: u8, g: u8, b: u8) -> egui::Color32 {

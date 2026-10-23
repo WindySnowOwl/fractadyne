@@ -41,6 +41,11 @@ const SOURCES: &[(&str, &str)] = &[
     ("main.rs", include_str!(concat!(env!("CARGO_MANIFEST_DIR"), "/src/main.rs"))),
 ];
 
+/// The interface's text itself (design/multilingual.md): most of what the windows draw is here,
+/// not in the sources above. Every line but a comment is text, so every line is scanned.
+const LANGUAGE_FILES: &[(&str, &str)] =
+    &[("i18n/en/fractadyne.ftl", include_str!(concat!(env!("CARGO_MANIFEST_DIR"), "/../../i18n/en/fractadyne.ftl")))];
+
 fn covered() -> BTreeSet<u32> {
     let mut set = BTreeSet::new();
     for (name, bytes) in FONTS {
@@ -62,15 +67,24 @@ fn covered() -> BTreeSet<u32> {
 fn used() -> Vec<(u32, &'static str, usize)> {
     let mut out = Vec::new();
     let mut seen = BTreeSet::new();
+    let mut scan = |file: &'static str, n: usize, line: &str| {
+        for ch in line.chars().filter(|c| !c.is_ascii()) {
+            if seen.insert(ch as u32) {
+                out.push((ch as u32, file, n + 1));
+            }
+        }
+    };
     for (file, src) in SOURCES {
         for (n, line) in src.lines().enumerate() {
-            if line.trim_start().starts_with("//") || !line.contains('"') {
-                continue;
+            if !line.trim_start().starts_with("//") && line.contains('"') {
+                scan(file, n, line);
             }
-            for ch in line.chars().filter(|c| !c.is_ascii()) {
-                if seen.insert(ch as u32) {
-                    out.push((ch as u32, *file, n + 1));
-                }
+        }
+    }
+    for (file, src) in LANGUAGE_FILES {
+        for (n, line) in src.lines().enumerate() {
+            if !line.starts_with('#') {
+                scan(file, n, line);
             }
         }
     }

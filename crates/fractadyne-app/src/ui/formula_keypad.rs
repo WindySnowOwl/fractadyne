@@ -21,11 +21,18 @@ pub(crate) enum Action {
 pub(crate) struct Key {
     pub(crate) label: &'static str,
     pub(crate) action: Action,
-    pub(crate) hint: &'static str,
+    /// The key's tooltip in the language in use (empty: none). A function, as the tables are
+    /// constants and the text is looked up where it is drawn.
+    pub(crate) hint: fn() -> String,
 }
 
-const fn key(label: &'static str, action: Action, hint: &'static str) -> Key {
+const fn key(label: &'static str, action: Action, hint: fn() -> String) -> Key {
     Key { label, action, hint }
+}
+
+/// A key without a tooltip (a digit, a parenthesis).
+fn none() -> String {
+    String::new()
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Default)]
@@ -38,18 +45,18 @@ pub(crate) enum Tab {
 
 impl Tab {
     pub(crate) const ALL: [Tab; 3] = [Tab::Basic, Tab::Functions, Tab::Names];
-    pub(crate) fn label(self) -> &'static str {
+    pub(crate) fn label(self) -> String {
         match self {
-            Tab::Basic => "123",
-            Tab::Functions => "f(z)",
-            Tab::Names => "names",
+            Tab::Basic => "123".to_string(),
+            Tab::Functions => "f(z)".to_string(),
+            Tab::Names => tr!(formula_keypad_tab_names),
         }
     }
-    pub(crate) fn hint(self) -> &'static str {
+    pub(crate) fn hint(self) -> String {
         match self {
-            Tab::Basic => "Numbers, operators and the most used names",
-            Tab::Functions => "Functions",
-            Tab::Names => "Every variable, parameter and constant, and statement syntax",
+            Tab::Basic => tr!(formula_keypad_tab_basic_hint),
+            Tab::Functions => tr!(formula_keypad_tab_functions_hint),
+            Tab::Names => tr!(formula_keypad_tab_names_hint),
         }
     }
 }
@@ -60,53 +67,53 @@ use Action::*;
 /// on the right. Rows are laid out left to right, `None` a gap between the blocks.
 const BASIC: [[Option<Key>; 10]; 4] = [
     [
-        Some(key("z", Insert("z"), "The iterate")),
-        Some(key("c", Insert("c"), "The pixel (the Julia constant in Julia mode)")),
-        Some(key("p1", Insert("p1"), "Parameter 1 — set in the fields below")),
-        Some(key("p2", Insert("p2"), "Parameter 2")),
+        Some(key("z", Insert("z"), || tr!(formula_key_z))),
+        Some(key("c", Insert("c"), || tr!(formula_key_c))),
+        Some(key("p1", Insert("p1"), || tr!(formula_key_p1_below))),
+        Some(key("p2", Insert("p2"), || tr!(formula_key_param, n = 2))),
         None,
-        Some(key("7", Insert("7"), "")),
-        Some(key("8", Insert("8"), "")),
-        Some(key("9", Insert("9"), "")),
-        Some(key("×", Insert("*"), "Multiply")),
-        Some(key("÷", Insert("/"), "Divide")),
+        Some(key("7", Insert("7"), none)),
+        Some(key("8", Insert("8"), none)),
+        Some(key("9", Insert("9"), none)),
+        Some(key("×", Insert("*"), || tr!(formula_key_multiply))),
+        Some(key("÷", Insert("/"), || tr!(formula_key_divide))),
     ],
     [
-        Some(key("□²", Insert("^2"), "Square (after a value: z^2)")),
+        Some(key("□²", Insert("^2"), || tr!(formula_key_square_after))),
         // Not "□ⁿ": the UI font has no superscript n (it drew a box).
-        Some(key("□^", Insert("^"), "Power: an integer, real or complex exponent")),
-        Some(key("√", Wrap("sqrt(", ")"), "Square root")),
-        Some(key("|□|", Wrap("|", "|"), "SQUARED modulus |z|² — as in Fractint")),
+        Some(key("□^", Insert("^"), || tr!(formula_key_power))),
+        Some(key("√", Wrap("sqrt(", ")"), || tr!(formula_key_square_root))),
+        Some(key("|□|", Wrap("|", "|"), || tr!(formula_key_squared_modulus))),
         None,
-        Some(key("4", Insert("4"), "")),
-        Some(key("5", Insert("5"), "")),
-        Some(key("6", Insert("6"), "")),
-        Some(key("+", Insert(" + "), "Add")),
-        Some(key("−", Insert(" - "), "Subtract (or negate)")),
+        Some(key("4", Insert("4"), none)),
+        Some(key("5", Insert("5"), none)),
+        Some(key("6", Insert("6"), none)),
+        Some(key("+", Insert(" + "), || tr!(formula_key_add))),
+        Some(key("−", Insert(" - "), || tr!(formula_key_subtract))),
     ],
     [
-        Some(key("(", Insert("("), "")),
-        Some(key(")", Insert(")"), "")),
-        Some(key("=", Insert(" = "), "Assign: z = …, or a temporary t = …")),
-        Some(key("↵", Insert("\n"), "Next statement (a comma works too)")),
+        Some(key("(", Insert("("), none)),
+        Some(key(")", Insert(")"), none)),
+        Some(key("=", Insert(" = "), || tr!(formula_key_assign))),
+        Some(key("↵", Insert("\n"), || tr!(formula_key_next_statement_comma))),
         None,
-        Some(key("1", Insert("1"), "")),
-        Some(key("2", Insert("2"), "")),
-        Some(key("3", Insert("3"), "")),
+        Some(key("1", Insert("1"), none)),
+        Some(key("2", Insert("2"), none)),
+        Some(key("3", Insert("3"), none)),
         // Not "⌫": the UI font has no erase glyph (it drew a box), and the icon font's DELETE is a bin.
-        Some(key("del", Backspace, "Delete the character before the cursor (or the selection)")),
+        Some(key("del", Backspace, || tr!(formula_key_backspace))),
         None,
     ],
     [
-        Some(key("π", Insert("pi"), "π")),
-        Some(key("e", Insert("e"), "Euler's number")),
-        Some(key("(a, b)", Insert("(0.5, 0.5)"), "A complex constant: (real, imaginary)")),
-        Some(key(",", Insert(", "), "Separates statements, or a complex constant's parts")),
+        Some(key("π", Insert("pi"), || "π".to_string())),
+        Some(key("e", Insert("e"), || tr!(formula_key_euler))),
+        Some(key("(a, b)", Insert("(0.5, 0.5)"), || tr!(formula_key_complex_constant))),
+        Some(key(",", Insert(", "), || tr!(formula_key_comma))),
         None,
-        Some(key("0", Insert("0"), "")),
-        Some(key(".", Insert("."), "")),
-        Some(key("◀", Left, "Cursor left")),
-        Some(key("▶", Right, "Cursor right")),
+        Some(key("0", Insert("0"), none)),
+        Some(key(".", Insert("."), none)),
+        Some(key("◀", Left, || tr!(formula_key_left))),
+        Some(key("▶", Right, || tr!(formula_key_right))),
         None,
     ],
 ];
@@ -114,57 +121,57 @@ const BASIC: [[Option<Key>; 10]; 4] = [
 /// `f(z)`: every named function, by family.
 const FUNCTIONS: [[Option<Key>; 5]; 4] = [
     [
-        Some(key("sin", Wrap("sin(", ")"), "Sine")),
-        Some(key("cos", Wrap("cos(", ")"), "Cosine")),
-        Some(key("tan", Wrap("tan(", ")"), "Tangent")),
-        Some(key("cotan", Wrap("cotan(", ")"), "Cotangent")),
-        Some(key("exp", Wrap("exp(", ")"), "Exponential eᶻ")),
+        Some(key("sin", Wrap("sin(", ")"), || tr!(formula_key_sin))),
+        Some(key("cos", Wrap("cos(", ")"), || tr!(formula_key_cos))),
+        Some(key("tan", Wrap("tan(", ")"), || tr!(formula_key_tan))),
+        Some(key("cotan", Wrap("cotan(", ")"), || tr!(formula_key_cotan))),
+        Some(key("exp", Wrap("exp(", ")"), || tr!(formula_key_exp))),
     ],
     [
-        Some(key("sinh", Wrap("sinh(", ")"), "Hyperbolic sine")),
-        Some(key("cosh", Wrap("cosh(", ")"), "Hyperbolic cosine")),
-        Some(key("tanh", Wrap("tanh(", ")"), "Hyperbolic tangent")),
-        Some(key("cotanh", Wrap("cotanh(", ")"), "Hyperbolic cotangent")),
-        Some(key("log", Wrap("log(", ")"), "Natural logarithm, ln (principal branch)")),
+        Some(key("sinh", Wrap("sinh(", ")"), || tr!(formula_key_sinh))),
+        Some(key("cosh", Wrap("cosh(", ")"), || tr!(formula_key_cosh))),
+        Some(key("tanh", Wrap("tanh(", ")"), || tr!(formula_key_tanh))),
+        Some(key("cotanh", Wrap("cotanh(", ")"), || tr!(formula_key_cotanh))),
+        Some(key("log", Wrap("log(", ")"), || tr!(formula_key_log))),
     ],
     [
-        Some(key("sqr", Wrap("sqr(", ")"), "Square: sqr(z) = z²")),
-        Some(key("sqrt", Wrap("sqrt(", ")"), "Square root (principal)")),
-        Some(key("recip", Wrap("recip(", ")"), "Reciprocal 1/z")),
-        Some(key("conj", Wrap("conj(", ")"), "Complex conjugate")),
-        Some(key("flip", Wrap("flip(", ")"), "Swap real and imaginary parts")),
+        Some(key("sqr", Wrap("sqr(", ")"), || tr!(formula_key_sqr))),
+        Some(key("sqrt", Wrap("sqrt(", ")"), || tr!(formula_key_sqrt))),
+        Some(key("recip", Wrap("recip(", ")"), || tr!(formula_key_recip))),
+        Some(key("conj", Wrap("conj(", ")"), || tr!(formula_key_conj))),
+        Some(key("flip", Wrap("flip(", ")"), || tr!(formula_key_flip))),
     ],
     [
-        Some(key("abs", Wrap("abs(", ")"), "Absolute value of BOTH parts: |x| + i|y|")),
-        Some(key("cabs", Wrap("cabs(", ")"), "Modulus |z| (a real number)")),
-        Some(key("real", Wrap("real(", ")"), "Real part")),
-        Some(key("imag", Wrap("imag(", ")"), "Imaginary part, as a real number")),
-        Some(key("ident", Wrap("ident(", ")"), "Identity (Fractint's fn placeholder)")),
+        Some(key("abs", Wrap("abs(", ")"), || tr!(formula_key_abs))),
+        Some(key("cabs", Wrap("cabs(", ")"), || tr!(formula_key_cabs))),
+        Some(key("real", Wrap("real(", ")"), || tr!(formula_key_real))),
+        Some(key("imag", Wrap("imag(", ")"), || tr!(formula_key_imag))),
+        Some(key("ident", Wrap("ident(", ")"), || tr!(formula_key_ident))),
     ],
 ];
 
 /// `z c p`: every variable, parameter and constant, and the statement helpers.
 const NAMES: [[Option<Key>; 5]; 3] = [
     [
-        Some(key("z", Insert("z"), "The iterate")),
-        Some(key("c", Insert("c"), "The pixel (the Julia constant in Julia mode)")),
-        Some(key("pixel", Insert("pixel"), "The same as c (Fractint's name)")),
-        Some(key("π", Insert("pi"), "π")),
-        Some(key("e", Insert("e"), "Euler's number")),
+        Some(key("z", Insert("z"), || tr!(formula_key_z))),
+        Some(key("c", Insert("c"), || tr!(formula_key_c))),
+        Some(key("pixel", Insert("pixel"), || tr!(formula_key_pixel))),
+        Some(key("π", Insert("pi"), || "π".to_string())),
+        Some(key("e", Insert("e"), || tr!(formula_key_euler))),
     ],
     [
-        Some(key("p1", Insert("p1"), "Parameter 1")),
-        Some(key("p2", Insert("p2"), "Parameter 2")),
-        Some(key("p3", Insert("p3"), "Parameter 3")),
-        Some(key("p4", Insert("p4"), "Parameter 4")),
-        Some(key("p5", Insert("p5"), "Parameter 5")),
+        Some(key("p1", Insert("p1"), || tr!(formula_key_param, n = 1))),
+        Some(key("p2", Insert("p2"), || tr!(formula_key_param, n = 2))),
+        Some(key("p3", Insert("p3"), || tr!(formula_key_param, n = 3))),
+        Some(key("p4", Insert("p4"), || tr!(formula_key_param, n = 4))),
+        Some(key("p5", Insert("p5"), || tr!(formula_key_param, n = 5))),
     ],
     [
-        Some(key("z =", Insert("z = "), "Start a statement setting z")),
-        Some(key("t =", Insert("t = "), "A temporary: any new name works (t, w, a2, …)")),
-        Some(key("; …", Insert(" ; "), "A comment, to the end of the line")),
-        Some(key("↵", Insert("\n"), "Next statement")),
-        Some(key("del", Backspace, "Delete the character before the cursor (or the selection)")),
+        Some(key("z =", Insert("z = "), || tr!(formula_key_set_z))),
+        Some(key("t =", Insert("t = "), || tr!(formula_key_temporary))),
+        Some(key("; …", Insert(" ; "), || tr!(formula_key_comment))),
+        Some(key("↵", Insert("\n"), || tr!(formula_key_next_statement))),
+        Some(key("del", Backspace, || tr!(formula_key_backspace))),
     ],
 ];
 
@@ -250,7 +257,8 @@ pub(crate) fn show(ui: &mut egui::Ui, tab: &mut Tab) -> Option<Action> {
                     Some(k) => {
                         let text = egui::RichText::new(k.label).monospace();
                         let b = ui.add_sized(size, egui::Button::new(text));
-                        let b = if k.hint.is_empty() { b } else { b.on_hover_text(k.hint) };
+                        let hint = (k.hint)();
+                        let b = if hint.is_empty() { b } else { b.on_hover_text(hint) };
                         if b.clicked() {
                             pressed = Some(k.action);
                         }

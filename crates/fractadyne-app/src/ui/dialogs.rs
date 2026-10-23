@@ -73,30 +73,31 @@ impl FractadyneApp {
             return;
         }
         let mut open = true;
-        egui::Window::new("Fractadyne didn't shut down cleanly")
+        egui::Window::new(tr!(dlg_crash_title))
+            .id(egui::Id::new("fractadyne.dlg.crash-prompt"))
             .collapsible(false)
             .resizable(false)
             .open(&mut open)
             .anchor(egui::Align2::CENTER_CENTER, [0.0, 0.0])
             .show(ctx, |ui| {
-                ui.label("The previous session ended unexpectedly. A report has been saved on this machine — would you like to send it?");
+                ui.label(tr!(dlg_crash_intro));
                 ui.add_space(6.0);
                 ui.label(
-                    egui::RichText::new("Nothing is sent until you review it: the next screen shows exactly what would be included, and system information is one checkbox to exclude.")
+                    egui::RichText::new(tr!(dlg_crash_review))
                         .weak()
                         .small(),
                 );
                 ui.add_space(10.0);
                 ui.horizontal(|ui| {
                     if ui
-                        .button(egui::RichText::new("Report it…").strong())
-                        .on_hover_text("Opens Report an issue, with the crash report and the location that crashed attached.")
+                        .button(egui::RichText::new(tr!(dlg_crash_report)).strong())
+                        .on_hover_text(tr!(dlg_crash_report_hover))
                         .clicked()
                     {
                         self.report.open = true;
                         self.dialogs.crash_prompt_open = false;
                     }
-                    if ui.button("Not now").clicked() {
+                    if ui.button(tr!(dlg_crash_not_now)).clicked() {
                         self.dialogs.crash_prompt_open = false;
                     }
                 });
@@ -105,8 +106,8 @@ impl FractadyneApp {
                 // implementation ("suppress prompt").
                 let mut dont_ask = self.crash_prompt_disabled;
                 if ui
-                    .checkbox(&mut dont_ask, "Don't ask again after a crash")
-                    .on_hover_text("Reports are still saved locally, and Help ▸ Report an issue always works.")
+                    .checkbox(&mut dont_ask, tr!(dlg_crash_dont_ask))
+                    .on_hover_text(tr!(dlg_crash_dont_ask_hover))
                     .changed()
                 {
                     self.crash_prompt_disabled = dont_ask;
@@ -125,31 +126,28 @@ impl FractadyneApp {
         let Some(desc) = self.dialogs.second_device_prompt.clone() else { return };
         let mut open = true;
         let below = if self.dialogs.crash_prompt_open { 170.0 } else { 0.0 };
-        egui::Window::new("Turn off the second graphics device?")
+        egui::Window::new(tr!(dlg_second_device_title))
+            .id(egui::Id::new("fractadyne.dlg.second-device"))
             .collapsible(false)
             .resizable(false)
             .open(&mut open)
             .anchor(egui::Align2::CENTER_CENTER, [0.0, below])
             .show(ctx, |ui| {
-                ui.label(format!(
-                    "The previous session ended unexpectedly while a second graphics device was in use ({desc}). It may be the cause."
-                ));
+                ui.label(tr!(dlg_second_device_intro, device = &desc));
                 ui.add_space(6.0);
                 ui.label(
-                    egui::RichText::new(
-                        "With it off, the card drawing the window renders everything, as before. You can turn it back on in Advanced ▸ Second graphics card.",
-                    )
-                    .weak()
-                    .small(),
+                    egui::RichText::new(tr!(dlg_second_device_note))
+                        .weak()
+                        .small(),
                 );
                 ui.add_space(10.0);
                 ui.horizontal(|ui| {
-                    if ui.button(egui::RichText::new("Turn it off").strong()).clicked() {
+                    if ui.button(egui::RichText::new(tr!(dlg_second_device_off)).strong()).clicked() {
                         self.render_cfg.worker_gpu = crate::gpu_worker::OFF.to_string();
                         self.dialogs.second_device_prompt = None;
                         crate::diag::log_line("worker", &format!("second graphics device turned off after the previous session ended unexpectedly with it in use ({desc})"));
                     }
-                    if ui.button("Keep it on").clicked() {
+                    if ui.button(tr!(dlg_second_device_keep)).clicked() {
                         self.dialogs.second_device_prompt = None;
                         crate::diag::log_line("worker", &format!("second graphics device kept on after the previous session ended unexpectedly with it in use ({desc})"));
                     }
@@ -170,7 +168,8 @@ impl FractadyneApp {
         let mut open = true;
         let below = if self.dialogs.crash_prompt_open { 200.0 } else { 0.0 }
             + if self.dialogs.second_device_prompt.is_some() { 150.0 } else { 0.0 };
-        egui::Window::new("Iteration setting set aside")
+        egui::Window::new(tr!(dlg_quarantine_title))
+            .id(egui::Id::new("fractadyne.dlg.iteration-quarantine"))
             .collapsible(false)
             .resizable(false)
             .open(&mut open)
@@ -180,19 +179,19 @@ impl FractadyneApp {
                 ui.label(q.notice());
                 ui.add_space(6.0);
                 ui.label(
-                    egui::RichText::new("You can change it any time in Controls ▸ Quality.").weak().small(),
+                    egui::RichText::new(tr!(dlg_quarantine_change)).weak().small(),
                 );
                 ui.add_space(10.0);
                 ui.horizontal(|ui| {
-                    if ui.button(egui::RichText::new("Keep the default").strong()).clicked() {
+                    if ui.button(egui::RichText::new(tr!(dlg_quarantine_keep)).strong()).clicked() {
                         self.dialogs.iteration_quarantine = None;
-                        crate::diag::log_line("start", &format!("kept {} after the set-aside notice", q.restored.describe()));
+                        crate::diag::log_line("start", &format!("kept {} after the set-aside notice", q.restored.log_describe()));
                     }
-                    if ui.button(format!("Restore {}", q.outcome.ask.describe())).clicked() {
+                    if ui.button(tr!(dlg_quarantine_restore, setting = q.outcome.ask.describe())).clicked() {
                         self.render_cfg.max_iter = q.outcome.ask.max_iter;
                         self.render_cfg.auto_iter = q.outcome.ask.auto_iter;
                         self.dialogs.iteration_quarantine = None;
-                        crate::diag::log_line("start", &format!("restored {} from the set-aside notice", q.outcome.ask.describe()));
+                        crate::diag::log_line("start", &format!("restored {} from the set-aside notice", q.outcome.ask.log_describe()));
                     }
                 });
             });
@@ -369,7 +368,8 @@ impl FractadyneApp {
         let mut find_feat = false;
         let mut cancel_feat = false;
         let mut help_expr = false;
-        egui::Window::new("Go to location")
+        egui::Window::new(tr!(dlg_goto_title))
+            .id(egui::Id::new("fractadyne.dlg.goto"))
             .open(&mut open)
             .resizable(false)
             .default_width(420.0)
@@ -378,18 +378,15 @@ impl FractadyneApp {
                 // composes `x0 + r·cos θ`, `y0 + r·sin θ` (see `compose_polar`) on Go — the
                 // discoverable half of the coordinate-expression feature, no new grammar.
                 ui.horizontal(|ui| {
-                    ui.label(egui::RichText::new("Enter as:").weak().small());
+                    ui.label(egui::RichText::new(tr!(dlg_goto_enter_as)).weak().small());
                     ui.selectable_value(&mut self.goto.polar, false, "x, y");
-                    ui.selectable_value(&mut self.goto.polar, true, "offset + r ∠ θ");
+                    ui.selectable_value(&mut self.goto.polar, true, tr!(dlg_goto_polar));
                     // The fields accept a whole grammar (fractions, functions, constants); the
                     // reference for it is one click away rather than something to remember.
                     ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
                         if ui
                             .small_button("?")
-                            .on_hover_text(
-                                "What the fields accept: fractions, powers, sqrt/sin/cos…, pi and \
-                                 other constants — opens Help → Coordinate expressions",
-                            )
+                            .on_hover_text(tr!(dlg_goto_help_hover))
                             .clicked()
                         {
                             help_expr = true;
@@ -398,13 +395,13 @@ impl FractadyneApp {
                 });
                 let mut fields_changed = false;
                 if self.goto.polar {
-                    ui.label(egui::RichText::new("Offset centre  (x0, y0 — leave 0 for a pure polar point)").weak().small());
+                    ui.label(egui::RichText::new(tr!(dlg_goto_polar_offset)).weak().small());
                     ui.horizontal(|ui| {
                         let w = (ui.available_width() - 8.0) * 0.5;
                         fields_changed |= ui.add(egui::TextEdit::singleline(&mut self.goto.polar_x0).desired_width(w).hint_text("x0")).changed();
                         fields_changed |= ui.add(egui::TextEdit::singleline(&mut self.goto.polar_y0).desired_width(f32::INFINITY).hint_text("y0")).changed();
                     });
-                    ui.label(egui::RichText::new("Radius r, angle θ").weak().small());
+                    ui.label(egui::RichText::new(tr!(dlg_goto_polar_radius)).weak().small());
                     ui.horizontal(|ui| {
                         fields_changed |= ui.add(egui::TextEdit::singleline(&mut self.goto.polar_r).desired_width(150.0).hint_text("r")).changed();
                         fields_changed |= ui.add(egui::TextEdit::singleline(&mut self.goto.polar_theta).desired_width(120.0).hint_text("θ")).changed();
@@ -419,12 +416,12 @@ impl FractadyneApp {
                             });
                     });
                 } else {
-                    ui.label(egui::RichText::new("Center — real (Re)").weak().small());
+                    ui.label(egui::RichText::new(tr!(dlg_goto_re)).weak().small());
                     fields_changed |= ui.add(egui::TextEdit::singleline(&mut self.goto.x).desired_width(f32::INFINITY)).changed();
-                    ui.label(egui::RichText::new("Center — imaginary (Im)").weak().small());
+                    ui.label(egui::RichText::new(tr!(dlg_goto_im)).weak().small());
                     fields_changed |= ui.add(egui::TextEdit::singleline(&mut self.goto.y).desired_width(f32::INFINITY)).changed();
                 }
-                ui.label(egui::RichText::new("Zoom (magnification)").weak().small());
+                ui.label(egui::RichText::new(tr!(dlg_goto_zoom)).weak().small());
                 let rz = ui.add(egui::TextEdit::singleline(&mut self.goto.zoom).desired_width(220.0));
                 // Live warning for the flat-frame trap BEFORE the jump is made: the solver
                 // reaches depths the renderer's fixed iteration count cannot resolve, and a
@@ -441,7 +438,8 @@ impl FractadyneApp {
                 {
                     ui.label(
                         egui::RichText::new(format!(
-                            "⚠ Iterations is fixed at {have}; this depth typically needs                              ~{typical}. The view will render flat until it is raised — or                              enable auto-iterations (Rendering panel), which adapts by itself."
+                            "⚠ {}",
+                            tr!(dlg_goto_iter_warning, have = have, typical = typical)
                         ))
                         .small()
                         .color(ui.visuals().warn_fg_color),
@@ -457,11 +455,11 @@ impl FractadyneApp {
                 }
                 ui.add_space(4.0);
                 ui.horizontal(|ui| {
-                    go = crate::theme::confirm_button(ui, "Go").clicked();
-                    if ui.button(format!("{} Copy", crate::icons::COPY)).on_hover_text("Copy this location to the clipboard").clicked() {
+                    go = crate::theme::confirm_button(ui, &tr!(dlg_go)).clicked();
+                    if ui.button(format!("{} {}", crate::icons::COPY, tr!(dlg_copy))).on_hover_text(tr!(dlg_goto_copy_hover)).clicked() {
                         copy = true;
                     }
-                    if ui.button("Use current").clicked() {
+                    if ui.button(tr!(dlg_use_current)).clicked() {
                         self.goto.x = fractadyne_core::to_decimal_string(&self.viewport.center_x);
                         self.goto.y = fractadyne_core::to_decimal_string(&self.viewport.center_y);
                         self.goto.zoom = fmt_zoom_field(self.viewport.log2_magnification());
@@ -477,32 +475,27 @@ impl FractadyneApp {
                     // on, so pushing Go below the feature section would separate it from its own
                     // inputs. `UI-DESIGN.md` §8.2 records this as the one place the bottom rule
                     // does not apply, rather than pretending it does.
-                    if crate::theme::cancel_button(ui, "Cancel")
-                        .on_hover_text("Close without going anywhere")
+                    if crate::theme::cancel_button(ui, &tr!(dlg_cancel))
+                        .on_hover_text(tr!(dlg_goto_cancel_hover))
                         .clicked()
                     {
                         close_goto = true;
                     }
                 });
                 ui.label(
-                    egui::RichText::new(
-                        "Paste a center/zoom from someone else, or Copy to share. Coordinates \
-                         accept expressions: exact fractions (-3/4), functions and constants \
-                         (-0.5 + 0.25*cos(pi/4), sqrt, root(x,n), ^; angles in radians), and \
-                         the real field accepts a whole complex value ((37+16i)/100), which \
-                         fills both.",
-                    )
-                    .weak()
-                    .small(),
+                    egui::RichText::new(tr!(dlg_goto_paste_note))
+                        .weak()
+                        .small(),
                 );
 
                 ui.separator();
-                egui::CollapsingHeader::new("Go to feature (Mandelbrot)")
+                egui::CollapsingHeader::new(tr!(dlg_goto_feature))
+                    .id_salt("fractadyne.dlg.goto.feature")
                     .default_open(false)
                     .show(ui, |ui| {
-                        ui.label(egui::RichText::new("Well-known points:").weak().small());
+                        ui.label(egui::RichText::new(tr!(dlg_goto_feature_poi)).weak().small());
                         egui::ComboBox::from_id_salt("goto_poi")
-                            .selected_text("Jump to a point of interest…")
+                            .selected_text(tr!(dlg_goto_feature_poi_pick))
                             .width(260.0)
                             .show_ui(ui, |ui| {
                                 for (i, (name, ..)) in crate::MISIUREWICZ_POI.iter().enumerate() {
@@ -513,7 +506,7 @@ impl FractadyneApp {
                             });
                         ui.add_space(6.0);
                         ui.label(
-                            egui::RichText::new("Or solve for a feature near the current view:")
+                            egui::RichText::new(tr!(dlg_goto_feature_solve))
                                 .weak()
                                 .small(),
                         );
@@ -521,27 +514,27 @@ impl FractadyneApp {
                             ui.selectable_value(
                                 &mut self.goto.feat_kind,
                                 crate::FeatureKind::Misiurewicz,
-                                "Misiurewicz",
+                                tr!(dlg_goto_feature_misiurewicz),
                             );
                             ui.selectable_value(
                                 &mut self.goto.feat_kind,
                                 crate::FeatureKind::Minibrot,
-                                "Nearest minibrot",
+                                tr!(dlg_goto_feature_minibrot),
                             );
                         });
                         if self.goto.feat_kind == crate::FeatureKind::Misiurewicz {
                             ui.horizontal(|ui| {
-                                ui.label("Preperiod k");
+                                ui.label(tr!(dlg_goto_feature_preperiod));
                                 let rk = ui.add(
                                     egui::TextEdit::singleline(&mut self.goto.feat_k)
-                                        .hint_text("auto")
+                                        .hint_text(tr!(dlg_goto_feature_auto_hint))
                                         .desired_width(48.0),
                                 );
                                 ui.add_space(8.0);
-                                ui.label("Period p");
+                                ui.label(tr!(dlg_goto_feature_period));
                                 let rp = ui.add(
                                     egui::TextEdit::singleline(&mut self.goto.feat_p)
-                                        .hint_text("auto")
+                                        .hint_text(tr!(dlg_goto_feature_auto_hint))
                                         .desired_width(48.0),
                                 );
                                 // ⚠A message names the (k,p) it was about. Editing either field
@@ -561,10 +554,8 @@ impl FractadyneApp {
                                 if !self.goto.feat_k.is_empty() || !self.goto.feat_p.is_empty() {
                                     ui.add_space(6.0);
                                     if ui
-                                        .small_button("Auto")
-                                        .on_hover_text(
-                                            "Clear both boxes so the next search detects the                                              preperiod and period from the orbit at the view                                              centre.",
-                                        )
+                                        .small_button(tr!(dlg_goto_feature_auto))
+                                        .on_hover_text(tr!(dlg_goto_feature_auto_hover))
                                         .clicked()
                                     {
                                         self.goto.feat_k.clear();
@@ -574,12 +565,7 @@ impl FractadyneApp {
                                 }
                             })
                             .response
-                            .on_hover_text(
-                                "Leave both blank to detect them from the orbit at the view \
-                                 centre; the values found are filled in here. Nobody looking at a \
-                                 spiral knows its preperiod, and having to supply one is what made \
-                                 this solver unusable in practice.",
-                            );
+                            .on_hover_text(tr!(dlg_goto_feature_kp_hover));
                         }
                         // While a solve runs: a spinner, its elapsed time, and no second button
                         // press. The work is off-thread now (see `goto_feature`), so the window
@@ -587,7 +573,7 @@ impl FractadyneApp {
                         if let Some(elapsed) = self.feature_solve.as_ref().map(|f| f.started.elapsed()) {
                             ui.horizontal(|ui| {
                                 ui.add(egui::Spinner::new().size(16.0));
-                                ui.label(egui::RichText::new("Solving…").weak());
+                                ui.label(egui::RichText::new(tr!(dlg_goto_feature_solving)).weak());
                                 // The ticking number is MONOSPACE and right-aligned in a
                                 // reserved width, so the line doesn't bounce as digits change —
                                 // the status-bar reflow rule (any element whose width follows a
@@ -601,10 +587,8 @@ impl FractadyneApp {
                                     .monospace(),
                                 );
                                 ui.label(
-                                    egui::RichText::new(
-                                        "(arbitrary precision; deep views take longer)",
-                                    )
-                                    .weak(),
+                                    egui::RichText::new(tr!(dlg_goto_feature_solving_note))
+                                        .weak(),
                                 );
                                 // ⭐A VISIBLE way out. Closing the dialog already abandons the
                                 // search (see `poll_feature_solve`), but nothing said so, and now
@@ -614,12 +598,8 @@ impl FractadyneApp {
                                 // longer (k, p) scales that again. Abandoning is enough: the
                                 // worker owns no shared state, so dropping its channel lets it
                                 // finish into nothing.
-                                if crate::theme::cancel_button(ui, "Cancel")
-                                    .on_hover_text(
-                                        "Stop waiting. The solve itself runs to completion in the \
-                                         background and its answer is discarded — nothing is left \
-                                         in a half-finished state.",
-                                    )
+                                if crate::theme::cancel_button(ui, &tr!(dlg_cancel))
+                                    .on_hover_text(tr!(dlg_goto_feature_cancel_hover))
                                     .clicked()
                                 {
                                     cancel_feat = true;
@@ -627,15 +607,8 @@ impl FractadyneApp {
                             });
                         } else {
                             find_feat = ui
-                                .button("Find near view")
-                                .on_hover_text(
-                                    "Newton-solve from the current center onto the exact feature \
-                                     (arbitrary precision). Navigate near the feature first.\n\n\
-                                     Set the Zoom field above to the depth you WANT before solving: \
-                                     the point is computed to the precision that depth needs, and \
-                                     the view jumps straight there. That is one solve instead of a \
-                                     long sequence of manual zoom steps.",
-                                )
+                                .button(tr!(dlg_goto_feature_find))
+                                .on_hover_text(tr!(dlg_goto_feature_find_hover))
                                 .clicked();
                         }
                     });
@@ -651,7 +624,7 @@ impl FractadyneApp {
         if cancel_feat {
             // Drop the receiver: the worker's `send` then fails and its result is discarded.
             self.feature_solve = None;
-            self.goto.msg = Some("Solve cancelled.".into());
+            self.goto.msg = Some(tr!(dlg_goto_solve_cancelled));
         }
         if copy {
             ctx.copy_text(format!(
@@ -698,12 +671,13 @@ impl FractadyneApp {
     }
 
     /// The Snapshot button's hover text: says what it WILL do, since that now depends on a setting.
-    pub(crate) fn snapshot_hover_text(&self) -> &'static str {
-        match self.snapshot_mode {
-            crate::SnapshotMode::Ask => "Snapshot — save the view as shown, or a full render; the first press asks (Ctrl+S)",
-            crate::SnapshotMode::Screen => "Snapshot — save the view exactly as shown, to the last export folder (Ctrl+S)",
-            crate::SnapshotMode::Render => "Snapshot — full render at the Export settings, to the last export folder (Ctrl+S)",
-        }
+    pub(crate) fn snapshot_hover_text(&self) -> String {
+        let what = match self.snapshot_mode {
+            crate::SnapshotMode::Ask => tr!(dlg_snapshot_hover_ask),
+            crate::SnapshotMode::Screen => tr!(dlg_snapshot_hover_screen),
+            crate::SnapshotMode::Render => tr!(dlg_snapshot_hover_render),
+        };
+        format!("{what} (Ctrl+S)")
     }
 
     /// The first-press Snapshot choice. Two accept buttons (screen capture / full render) and a
@@ -723,56 +697,55 @@ impl FractadyneApp {
             crate::ExportFormat::Png => "PNG",
             crate::ExportFormat::Exr => "EXR",
         };
-        egui::Window::new("Snapshot")
+        egui::Window::new(tr!(dlg_snapshot_title))
+            .id(egui::Id::new("fractadyne.dlg.snapshot-choice"))
             .open(&mut open)
             .collapsible(false)
             .resizable(false)
             .default_width(480.0)
             .anchor(egui::Align2::CENTER_CENTER, [0.0, 0.0])
             .show(ctx, |ui| {
-                ui.label("What should Snapshot (the camera button, Ctrl+S) save?");
+                ui.label(tr!(dlg_snapshot_question));
                 ui.add_space(6.0);
                 egui::Frame::group(ui.style()).show(ui, |ui| {
                     ui.set_width(ui.available_width());
                     ui.horizontal(|ui| {
-                        if crate::theme::confirm_button(ui, "Screen capture").clicked() {
+                        if crate::theme::confirm_button(ui, &tr!(dlg_snapshot_screen)).clicked() {
                             choice = Some(crate::SnapshotMode::Screen);
                         }
-                        ui.label(egui::RichText::new("instant").weak().small());
+                        ui.label(egui::RichText::new(tr!(dlg_snapshot_screen_tag)).weak().small());
                     });
-                    ui.label(
-                        "Saves the view exactly as it appears on screen, at screen resolution, as a \
-                         PNG in the last export folder. What you see is what you get.",
-                    );
+                    ui.label(tr!(dlg_snapshot_screen_note));
                 });
                 ui.add_space(4.0);
                 egui::Frame::group(ui.style()).show(ui, |ui| {
                     ui.set_width(ui.available_width());
                     ui.horizontal(|ui| {
-                        if ui.button("Full render").clicked() {
+                        if ui.button(tr!(dlg_snapshot_render)).clicked() {
                             choice = Some(crate::SnapshotMode::Render);
                         }
-                        ui.label(egui::RichText::new("may take a long time").weak().small());
+                        ui.label(egui::RichText::new(tr!(dlg_snapshot_render_tag)).weak().small());
                     });
-                    ui.label(format!(
-                        "Renders at the Export settings — {w}×{h}, {ss}× supersampling, {fmt}. Best \
-                         quality, but a deep view can take minutes to hours. It runs in the \
-                         background; File → Export image… shows progress and can cancel it."
+                    ui.label(tr!(
+                        dlg_snapshot_render_note,
+                        size = format!("{w}×{h}"),
+                        ss = ss,
+                        format = fmt,
                     ));
                 });
                 ui.add_space(6.0);
                 ui.checkbox(
                     &mut self.dialogs.snapshot_choice_remember,
-                    "Remember my choice and don't ask again",
+                    tr!(dlg_snapshot_remember),
                 );
                 ui.label(
-                    egui::RichText::new("You can change it any time in File → Settings → Snapshot.")
+                    egui::RichText::new(tr!(dlg_snapshot_change))
                         .weak()
                         .small(),
                 );
                 ui.add_space(4.0);
                 crate::theme::action_row(ui, |ui| {
-                    if crate::theme::cancel_button(ui, "Cancel").clicked() {
+                    if crate::theme::cancel_button(ui, &tr!(dlg_cancel)).clicked() {
                         cancel = true;
                     }
                 });
@@ -788,7 +761,7 @@ impl FractadyneApp {
                     if let Some((dev, q)) = self.gpu.clone() {
                         self.quick_export(ctx, dev, q);
                     } else {
-                        self.set_toast("GPU not available", ctx);
+                        self.set_toast(tr!(dlg_gpu_not_available), ctx);
                     }
                 }
                 crate::SnapshotMode::Ask => {}
@@ -806,18 +779,16 @@ impl FractadyneApp {
         let mut open = self.share.open;
         let (mut copy, mut apply, mut save, mut load) = (false, false, false, false);
         let mut close = false;
-        egui::Window::new("Share location")
+        egui::Window::new(tr!(dlg_share_title))
+            .id(egui::Id::new("fractadyne.dlg.share"))
             .open(&mut open)
             .resizable(true)
             .default_width(460.0)
             .show(ctx, |ui| {
                 ui.label(
-                    egui::RichText::new(
-                        "A self-contained location (fractal, full-precision center, zoom, \
-                         coloring). Copy it to share, or paste/load one and Apply.",
-                    )
-                    .weak()
-                    .small(),
+                    egui::RichText::new(tr!(dlg_share_intro))
+                        .weak()
+                        .small(),
                 );
                 ui.add_space(4.0);
                 // ⭐⭐The thumbnail is what turns a folder of `.fdn` files into a catalogue: deep
@@ -825,13 +796,9 @@ impl FractadyneApp {
                 // is most of the file size — a deep fractal is close to incompressible.
                 ui.checkbox(
                     &mut self.share.include_thumb,
-                    "Include a thumbnail in the saved file",
+                    tr!(dlg_share_thumb),
                 )
-                .on_hover_text(
-                    "Save .fdn embeds a small picture of this view so the file can be \
-                     recognized in the gallery. Adds roughly 55 KB, and is not part of the \
-                     text above.",
-                );
+                .on_hover_text(tr!(dlg_share_thumb_hover));
                 ui.add_space(4.0);
                 egui::ScrollArea::vertical().max_height(220.0).show(ui, |ui| {
                     ui.add(
@@ -848,26 +815,26 @@ impl FractadyneApp {
                 // The tools that act ON the text box stay with it; the window's own actions are
                 // the row below.
                 ui.horizontal(|ui| {
-                    copy = ui.button(format!("{} Copy", crate::icons::COPY)).on_hover_text("Copy the text to the clipboard").clicked();
-                    if ui.button("Use current").clicked() {
+                    copy = ui.button(format!("{} {}", crate::icons::COPY, tr!(dlg_copy))).on_hover_text(tr!(dlg_share_copy_hover)).clicked();
+                    if ui.button(tr!(dlg_use_current)).clicked() {
                         self.share.text = self.view_metadata();
                         self.share.msg = None;
                     }
-                    save = ui.button(format!("{} Save .fdn…", crate::icons::SAVE)).clicked();
-                    load = ui.button("Load .fdn…").clicked();
+                    save = ui.button(format!("{} {}", crate::icons::SAVE, tr!(dlg_share_save))).clicked();
+                    load = ui.button(tr!(dlg_share_load)).clicked();
                 });
                 ui.add_space(6.0);
                 ui.separator();
                 crate::theme::action_row(ui, |ui| {
-                    if crate::theme::cancel_button(ui, "Close").clicked() {
+                    if crate::theme::cancel_button(ui, &tr!(dlg_close)).clicked() {
                         close = true;
                     }
-                    apply = crate::theme::confirm_button(ui, "Apply").on_hover_text("Jump to the location in the box").clicked();
+                    apply = crate::theme::confirm_button(ui, &tr!(dlg_share_apply)).on_hover_text(tr!(dlg_share_apply_hover)).clicked();
                 });
             });
         if copy {
             ctx.copy_text(self.share.text.clone());
-            self.share.msg = Some("Copied to clipboard.".into());
+            self.share.msg = Some(tr!(dlg_share_copied));
         }
         if save {
             self.save_share_file();
@@ -895,75 +862,70 @@ impl FractadyneApp {
         let has_crash_view = crate::diag::latest_crash_view().is_some();
         let (mut copy, mut save, mut email, mut gmail, mut github) =
             (false, false, false, false, false);
-        egui::Window::new("Report an issue")
+        egui::Window::new(tr!(dlg_report_title))
+            .id(egui::Id::new("fractadyne.dlg.report"))
             .open(&mut open)
             .resizable(true)
             .default_width(560.0)
             .show(ctx, |ui| {
                 ui.label(
-                    egui::RichText::new(
-                        "The best place to report is a GitHub issue — it's public and searchable, \
-                         and you'll see when it's fixed. Email works too. Review everything below \
-                         first: nothing leaves your machine until you act.",
-                    )
-                    .weak()
-                    .small(),
+                    egui::RichText::new(tr!(dlg_report_intro))
+                        .weak()
+                        .small(),
                 );
                 ui.add_space(6.0);
                 egui::Grid::new("report_classify")
                     .num_columns(2)
                     .spacing([8.0, 4.0])
                     .show(ui, |ui| {
-                        ui.label("Type:");
+                        ui.label(tr!(dlg_report_type));
                         egui::ComboBox::from_id_salt("report_kind")
-                            .selected_text(self.report.kind.label())
+                            .selected_text(self.report.kind.ui_label())
                             .show_ui(ui, |ui| {
                                 for k in crate::IssueKind::ALL {
-                                    ui.selectable_value(&mut self.report.kind, k, k.label());
+                                    ui.selectable_value(&mut self.report.kind, k, k.ui_label());
                                 }
                             });
                         ui.end_row();
-                        ui.label("Severity:");
+                        ui.label(tr!(dlg_report_severity));
                         ui.horizontal(|ui| {
                             egui::ComboBox::from_id_salt("report_sev")
-                                .selected_text(self.report.severity.label())
+                                .selected_text(self.report.severity.ui_label())
                                 .show_ui(ui, |ui| {
                                     for s in crate::Severity::ALL {
-                                        ui.selectable_value(&mut self.report.severity, s, s.label());
+                                        ui.selectable_value(&mut self.report.severity, s, s.ui_label());
                                     }
                                 });
                             ui.add_space(16.0);
-                            ui.label("Reproducible:");
+                            ui.label(tr!(dlg_report_repro));
                             egui::ComboBox::from_id_salt("report_repro")
-                                .selected_text(self.report.repro.label())
+                                .selected_text(self.report.repro.ui_label())
                                 .show_ui(ui, |ui| {
                                     for r in crate::Repro::ALL {
-                                        ui.selectable_value(&mut self.report.repro, r, r.label());
+                                        ui.selectable_value(&mut self.report.repro, r, r.ui_label());
                                     }
                                 });
                         });
                         ui.end_row();
                     });
                 ui.add_space(6.0);
-                ui.label("Describe what happened:");
+                ui.label(tr!(dlg_report_describe));
                 ui.add(
                     egui::TextEdit::multiline(&mut self.report.description)
                         .desired_width(f32::INFINITY)
                         .desired_rows(5)
-                        .hint_text(
-                            "What happened, the steps to reproduce it, and what you expected instead.",
-                        ),
+                        .hint_text(tr!(dlg_report_describe_hint)),
                 );
                 ui.add_space(6.0);
-                ui.label(egui::RichText::new("Include:").weak().small());
-                ui.checkbox(&mut self.report.include_sysinfo, "System info (version, OS, CPU, GPU, VRAM)");
-                ui.checkbox(&mut self.report.include_location, "Current location (.fdn)");
-                ui.checkbox(&mut self.report.include_log, "Recent log");
-                ui.checkbox(&mut self.report.include_frames, "Frame record (the last minute, and the last 40 frames)");
+                ui.label(egui::RichText::new(tr!(dlg_report_include)).weak().small());
+                ui.checkbox(&mut self.report.include_sysinfo, tr!(dlg_report_sysinfo));
+                ui.checkbox(&mut self.report.include_location, tr!(dlg_report_location));
+                ui.checkbox(&mut self.report.include_log, tr!(dlg_report_log));
+                ui.checkbox(&mut self.report.include_frames, tr!(dlg_report_frames));
                 ui.add_enabled_ui(has_crash, |ui| {
                     ui.checkbox(
                         &mut self.report.include_crash,
-                        if has_crash { "Latest crash report" } else { "Latest crash report (none found)" },
+                        if has_crash { tr!(dlg_report_crash) } else { tr!(dlg_report_crash_none) },
                     );
                 });
                 // The location a crash happened at, recorded as a `.fdn` beside the crash report.
@@ -973,15 +935,12 @@ impl FractadyneApp {
                     ui.checkbox(
                         &mut self.report.include_crash_view,
                         if has_crash_view {
-                            "Location that crashed (.fdn)"
+                            tr!(dlg_report_crash_view)
                         } else {
-                            "Location that crashed (.fdn) (none found)"
+                            tr!(dlg_report_crash_view_none)
                         },
                     )
-                    .on_hover_text(
-                        "The exact view a crash or graphics-device loss happened at — the one thing \
-                         that lets a maintainer reproduce it. Recorded automatically.",
-                    );
+                    .on_hover_text(tr!(dlg_report_crash_view_hover));
                 });
                 // Only offered once a test has actually been run — an issue that claims a test
                 // result it does not have is worse than one that claims nothing. Help →
@@ -991,20 +950,18 @@ impl FractadyneApp {
                     ui.checkbox(
                         &mut self.report.include_test,
                         if has_test {
-                            "Diagnostics test result"
+                            tr!(dlg_report_test)
                         } else {
-                            "Diagnostics test result (run one from Help → Diagnostics…)"
+                            tr!(dlg_report_test_none)
                         },
                     )
-                    .on_hover_text(
-                        "A machine-validated pass/fail from your own hardware — far more useful \
-                         to a maintainer than a description alone",
-                    );
+                    .on_hover_text(tr!(dlg_report_test_hover));
                 });
 
                 let report = self.build_report();
                 ui.add_space(4.0);
-                egui::CollapsingHeader::new(format!("Preview what will be sent  ({} KB)", report.len() / 1024))
+                egui::CollapsingHeader::new(tr!(dlg_report_preview, size = format!("{} KB", report.len() / 1024)))
+                    .id_salt("fractadyne.dlg.report.preview")
                     .default_open(false)
                     .show(ui, |ui| {
                         egui::ScrollArea::vertical()
@@ -1025,41 +982,30 @@ impl FractadyneApp {
                 ui.add_space(4.0);
                 ui.horizontal(|ui| {
                     github = ui
-                        .button(egui::RichText::new("Open a GitHub issue").strong())
-                        .on_hover_text(
-                            "Open a new-issue page with the title filled in; the report is copied \
-                             to your clipboard — paste it into the issue body (Ctrl+V).",
-                        )
+                        .button(egui::RichText::new(tr!(dlg_report_github)).strong())
+                        .on_hover_text(tr!(dlg_report_github_hover))
                         .clicked();
                     copy = ui
-                        .button(format!("{} Copy report", crate::icons::COPY))
-                        .on_hover_text("Copy everything to the clipboard")
+                        .button(format!("{} {}", crate::icons::COPY, tr!(dlg_report_copy)))
+                        .on_hover_text(tr!(dlg_report_copy_hover))
                         .clicked();
-                    save = ui.button(format!("{} Save report…", crate::icons::SAVE)).on_hover_text("Save as a .txt to attach").clicked();
+                    save = ui.button(format!("{} {}", crate::icons::SAVE, tr!(dlg_report_save))).on_hover_text(tr!(dlg_report_save_hover)).clicked();
                 });
                 ui.horizontal(|ui| {
-                    ui.label(egui::RichText::new("Or by email:").weak().small());
+                    ui.label(egui::RichText::new(tr!(dlg_report_by_email)).weak().small());
                     gmail = ui
-                        .button("Compose in Gmail")
-                        .on_hover_text(format!(
-                            "Open a Gmail compose window to {} with the subject filled; paste the copied report",
-                            crate::REPORT_EMAIL
-                        ))
+                        .button(tr!(dlg_report_gmail))
+                        .on_hover_text(tr!(dlg_report_gmail_hover, address = crate::REPORT_EMAIL))
                         .clicked();
                     email = ui
-                        .button("Email app…")
-                        .on_hover_text("Open your default mail app (mailto) — needs an email handler configured")
+                        .button(tr!(dlg_report_email))
+                        .on_hover_text(tr!(dlg_report_email_hover))
                         .clicked();
                 });
                 ui.label(
-                    egui::RichText::new(
-                        "Tip: the report is copied to your clipboard on any of these — paste it into \
-                         the issue or message body (Ctrl+V). Please also attach a screenshot or \
-                         sample image if you can (drag it in); it helps a lot for rendering and UI \
-                         problems.",
-                    )
-                    .weak()
-                    .small(),
+                    egui::RichText::new(tr!(dlg_report_tip))
+                        .weak()
+                        .small(),
                 );
                 ui.add_space(6.0);
                 ui.separator();
@@ -1067,7 +1013,7 @@ impl FractadyneApp {
                 // immediately (opens a browser, writes a file, fills the clipboard) — so there is
                 // nothing to abandon; this only dismisses the window.
                 crate::theme::action_row(ui, |ui| {
-                    if crate::theme::cancel_button(ui, "Close").clicked() {
+                    if crate::theme::cancel_button(ui, &tr!(dlg_close)).clicked() {
                         self.report.open = false;
                     }
                 });
@@ -1077,32 +1023,30 @@ impl FractadyneApp {
             // The report itself can't ride the URL (length limits) — it's on the clipboard; the
             // new-issue page opens with the title prefilled and a paste hint as the body.
             ctx.open_url(egui::OpenUrl::new_tab(crate::issue_new_url(&self.report_subject())));
-            self.report.msg =
-                Some("Opened GitHub — the report is on the clipboard; paste it into the issue.".into());
+            self.report.msg = Some(tr!(dlg_report_opened_github));
         }
         if copy {
             ctx.copy_text(self.build_report());
-            self.report.msg = Some("Report copied to the clipboard.".into());
+            self.report.msg = Some(tr!(dlg_report_copied));
         }
         if save {
             if let Some(path) = rfd::FileDialog::new()
                 .set_directory(self.dialog_dir_default())
                 .set_file_name("fractadyne-report.txt")
-                .add_filter("Text", &["txt"])
+                .add_filter(tr!(dlg_filter_text), &["txt"])
                 .save_file()
             {
                 self.remember_dir(&path);
                 match std::fs::write(&path, self.build_report().as_bytes()) {
-                    Ok(()) => self.report.msg = Some(format!("Saved to {}", path.display())),
-                    Err(e) => self.report.msg = Some(format!("Save failed: {e}")),
+                    Ok(()) => self.report.msg = Some(tr!(dlg_report_saved, path = path.display().to_string())),
+                    Err(e) => self.report.msg = Some(tr!(dlg_save_failed, error = e.to_string())),
                 }
             }
         }
         if email {
             ctx.copy_text(self.build_report());
             ctx.open_url(egui::OpenUrl::same_tab(crate::issue_mailto_url(&self.report_subject())));
-            self.report.msg =
-                Some("Opened your email app — the report is on the clipboard; paste it in.".into());
+            self.report.msg = Some(tr!(dlg_report_opened_email));
         }
         if gmail {
             ctx.copy_text(self.build_report());
@@ -1114,8 +1058,7 @@ impl FractadyneApp {
                 crate::mailto_encode(&self.report_subject()),
             );
             ctx.open_url(egui::OpenUrl::new_tab(url));
-            self.report.msg =
-                Some("Opened Gmail compose — paste the copied report into the body (Ctrl+V).".into());
+            self.report.msg = Some(tr!(dlg_report_opened_gmail));
         }
         self.report.open = open && self.report.open;
     }
@@ -1138,7 +1081,8 @@ impl FractadyneApp {
         let (source, found, computed) = (p.source.clone(), p.found.clone(), p.computed.clone());
         let mut open = true;
         let (mut load_anyway, mut cancel) = (false, false);
-        egui::Window::new("This location may be damaged")
+        egui::Window::new(tr!(dlg_checksum_title))
+            .id(egui::Id::new("fractadyne.dlg.checksum"))
             .open(&mut open)
             .resizable(false)
             .collapsible(false)
@@ -1147,42 +1091,36 @@ impl FractadyneApp {
             .show(ctx, |ui| {
                 ui.colored_label(
                     egui::Color32::from_rgb(0xE0, 0x9C, 0x40),
-                    "⚠  Its checksum does not match the data beside it.",
+                    format!("⚠  {}", tr!(dlg_checksum_mismatch)),
                 );
                 ui.add_space(4.0);
-                ui.label(
-                    "That usually means the text was cut short or altered on the way here — \
-                     a partial copy out of a chat window or a forum post is the common cause.",
-                );
+                ui.label(tr!(dlg_checksum_why));
                 ui.add_space(6.0);
-                ui.label(egui::RichText::new("Source").weak().small());
+                ui.label(egui::RichText::new(tr!(dlg_checksum_source)).weak().small());
                 ui.label(egui::RichText::new(&source).monospace().small());
                 ui.add_space(4.0);
                 egui::Grid::new("checksum-compare").num_columns(2).show(ui, |ui| {
-                    ui.label(egui::RichText::new("in the file").weak().small());
+                    ui.label(egui::RichText::new(tr!(dlg_checksum_in_file)).weak().small());
                     ui.label(egui::RichText::new(&found).monospace().small());
                     ui.end_row();
-                    ui.label(egui::RichText::new("from the data").weak().small());
+                    ui.label(egui::RichText::new(tr!(dlg_checksum_from_data)).weak().small());
                     ui.label(egui::RichText::new(&computed).monospace().small());
                     ui.end_row();
                 });
                 ui.add_space(6.0);
                 ui.label(
-                    egui::RichText::new(
-                        "You can load it anyway — the coordinates may still be fine, and \
-                         nothing is overwritten. Anything unreadable is reported after loading.",
-                    )
-                    .weak()
-                    .small(),
+                    egui::RichText::new(tr!(dlg_checksum_load_note))
+                        .weak()
+                        .small(),
                 );
                 ui.add_space(8.0);
                 ui.separator();
                 // Added right-to-left: Cancel first so it lands rightmost.
                 crate::theme::action_row(ui, |ui| {
-                    cancel = crate::theme::cancel_button(ui, "Cancel").clicked();
+                    cancel = crate::theme::cancel_button(ui, &tr!(dlg_cancel)).clicked();
                     if ui
-                        .button("Load anyway")
-                        .on_hover_text("Jump to it despite the mismatch")
+                        .button(tr!(dlg_checksum_load))
+                        .on_hover_text(tr!(dlg_checksum_load_hover))
                         .clicked()
                     {
                         load_anyway = true;
@@ -1197,15 +1135,15 @@ impl FractadyneApp {
                 // the report says WHAT, and after a mismatch that is the more useful half.
                 self.set_toast(
                     match report.note() {
-                        None => format!("Loaded @ {zoom}× despite the checksum mismatch"),
-                        Some(n) => format!("Loaded @ {zoom}× — {n}"),
+                        None => tr!(dlg_checksum_loaded, zoom = &zoom),
+                        Some(n) => tr!(dlg_checksum_loaded_note, zoom = &zoom, note = n),
                     },
                     ctx,
                 );
             }
         } else if cancel || !open {
             self.dialogs.pending_view = None;
-            self.set_toast("Not loaded.", ctx);
+            self.set_toast(tr!(dlg_checksum_not_loaded), ctx);
         }
     }
 
@@ -1216,7 +1154,8 @@ impl FractadyneApp {
         }
         let mut open = self.dialogs.reset_confirm_open;
         let (mut confirm, mut cancel) = (false, false);
-        egui::Window::new("Reset application state")
+        egui::Window::new(tr!(dlg_reset_title))
+            .id(egui::Id::new("fractadyne.dlg.reset-confirm"))
             .open(&mut open)
             .resizable(false)
             .collapsible(false)
@@ -1225,14 +1164,14 @@ impl FractadyneApp {
             .show(ctx, |ui| {
                 ui.colored_label(
                     egui::Color32::from_rgb(0xE0, 0x6C, 0x60),
-                    "⚠  This permanently deletes all saved Fractadyne data:",
+                    format!("⚠  {}", tr!(dlg_reset_warning)),
                 );
                 ui.add_space(2.0);
-                ui.label("• the saved session (current view, coloring, preferences)");
-                ui.label("• all bookmarks and their thumbnails");
-                ui.label("• the reference-orbit cache (rebuilt as you revisit locations)");
+                ui.label(format!("• {}", tr!(dlg_reset_session)));
+                ui.label(format!("• {}", tr!(dlg_reset_bookmarks)));
+                ui.label(format!("• {}", tr!(dlg_reset_refcache)));
                 ui.add_space(6.0);
-                ui.label(egui::RichText::new("Location").weak().small());
+                ui.label(egui::RichText::new(tr!(dlg_reset_location)).weak().small());
                 ui.label(
                     egui::RichText::new(fractadyne_state::state_location_display())
                         .monospace()
@@ -1240,12 +1179,9 @@ impl FractadyneApp {
                 );
                 ui.add_space(6.0);
                 ui.label(
-                    egui::RichText::new(
-                        "This can't be undone. The current session won't be re-saved on exit, \
-                         so defaults load on the next launch.",
-                    )
-                    .weak()
-                    .small(),
+                    egui::RichText::new(tr!(dlg_reset_note))
+                        .weak()
+                        .small(),
                 );
                 ui.add_space(8.0);
                 ui.separator();
@@ -1256,13 +1192,13 @@ impl FractadyneApp {
                 crate::theme::action_row(ui, |ui| {
                     if ui
                         .add(egui::Button::new(
-                            egui::RichText::new("Reset everything").color(egui::Color32::WHITE),
+                            egui::RichText::new(tr!(dlg_reset_confirm)).color(egui::Color32::WHITE),
                         ).fill(egui::Color32::from_rgb(0xB0, 0x3A, 0x30)))
                         .clicked()
                     {
                         confirm = true;
                     }
-                    cancel = crate::theme::cancel_button(ui, "Cancel").clicked();
+                    cancel = crate::theme::cancel_button(ui, &tr!(dlg_cancel)).clicked();
                 });
             });
         if confirm {
@@ -1274,12 +1210,9 @@ impl FractadyneApp {
                     // The orbit cache lived in that directory too: drop its index so a later
                     // lookup does not hand out paths that no longer exist.
                     crate::refcache_persist::set_dir_override(None);
-                    self.set_toast(
-                        "Application state reset — defaults will load on the next launch.",
-                        ctx,
-                    );
+                    self.set_toast(tr!(dlg_reset_done), ctx);
                 }
-                Err(e) => self.set_toast(format!("Reset failed: {e}"), ctx),
+                Err(e) => self.set_toast(tr!(dlg_reset_failed, error = e.to_string()), ctx),
             }
             self.dialogs.reset_confirm_open = false;
         } else if cancel {
@@ -1308,26 +1241,22 @@ impl FractadyneApp {
         let log10mag = log2mag / std::f64::consts::LOG2_10;
         let mut open = self.dialogs.script_export_open;
         let mut save = false;
-        egui::Window::new("Tour from current view")
+        egui::Window::new(tr!(dlg_tour_title))
+            .id(egui::Id::new("fractadyne.dlg.tour-from-view"))
             .open(&mut open)
             .resizable(false)
             .collapsible(false)
             .default_width(440.0)
             .anchor(egui::Align2::CENTER_CENTER, [0.0, 0.0])
             .show(ctx, |ui| {
-                ui.label(
-                    egui::RichText::new(
-                        "Creates a tour that zooms from the full view down to where you are now.",
-                    )
-                    .weak(),
-                );
+                ui.label(egui::RichText::new(tr!(dlg_tour_intro)).weak());
                 ui.add_space(6.0);
                 ui.horizontal(|ui| {
-                    ui.label(egui::RichText::new("Destination").weak().small());
+                    ui.label(egui::RichText::new(tr!(dlg_tour_destination)).weak().small());
                     ui.label(
                         egui::RichText::new(format!(
                             "{} · {}×",
-                            self.fractal.name(),
+                            self.fractal.display_name(),
                             crate::fmt_zoom_field(log2mag)
                         ))
                         .monospace()
@@ -1336,17 +1265,17 @@ impl FractadyneApp {
                 });
                 ui.add_space(8.0);
 
-                ui.label("Notation (optional caption shown during the dive)");
+                ui.label(tr!(dlg_tour_notation));
                 ui.add(
                     egui::TextEdit::multiline(&mut self.dialogs.script_export_note)
                         .desired_rows(2)
                         .desired_width(f32::INFINITY)
-                        .hint_text("e.g. Diving to the Misiurewicz three-spar…"),
+                        .hint_text(tr!(dlg_tour_notation_hint)),
                 );
                 ui.add_space(8.0);
 
                 ui.horizontal(|ui| {
-                    ui.label("Zoom duration");
+                    ui.label(tr!(dlg_tour_duration));
                     ui.add(
                         egui::DragValue::new(&mut self.dialogs.script_export_secs)
                             .speed(0.5)
@@ -1359,33 +1288,30 @@ impl FractadyneApp {
                         0.0
                     };
                     ui.label(
-                        egui::RichText::new(format!("≈ {rate:.1} decades/s"))
+                        egui::RichText::new(tr!(dlg_tour_rate, rate = crate::i18n::decimal(rate, 1)))
                             .weak()
                             .small(),
                     );
                     if ui
-                        .small_button("Reset")
-                        .on_hover_text("Depth-based default")
+                        .small_button(tr!(dlg_tour_reset))
+                        .on_hover_text(tr!(dlg_tour_reset_hover))
                         .clicked()
                     {
                         self.dialogs.script_export_secs = default_dive_secs(log10mag);
                     }
                 });
                 ui.label(
-                    egui::RichText::new(
-                        "Default scales with depth so the dive stays watchable. Faster dives can \
-                         flash single-color frames at extreme zoom.",
-                    )
-                    .weak()
-                    .small(),
+                    egui::RichText::new(tr!(dlg_tour_duration_note))
+                        .weak()
+                        .small(),
                 );
                 ui.add_space(10.0);
                 ui.separator();
                 crate::theme::action_row(ui, |ui| {
-                    if crate::theme::cancel_button(ui, "Cancel").clicked() {
+                    if crate::theme::cancel_button(ui, &tr!(dlg_cancel)).clicked() {
                         self.dialogs.script_export_open = false;
                     }
-                    if ui.button(format!("{} Save tour…", crate::icons::SAVE)).clicked() {
+                    if ui.button(format!("{} {}", crate::icons::SAVE, tr!(dlg_tour_save))).clicked() {
                         save = true;
                     }
                 });
@@ -1402,19 +1328,18 @@ impl FractadyneApp {
         let note = self.dialogs.script_export_note.trim().to_string();
         let toml = self.build_dive_script(&note, secs);
         if let Some(path) = rfd::FileDialog::new()
-            .add_filter("Fractadyne script (TOML)", &["toml"])
+            .add_filter(tr!(dlg_tour_filter), &["toml"])
             .set_directory(self.dialog_dir_default())
             .set_file_name("dive-to-view.toml")
             .save_file()
         {
             self.remember_dir(&path);
             let ctx_msg = match std::fs::write(&path, toml.as_bytes()) {
-                Ok(()) => format!(
-                    "Saved tour → {}. Play it via Tools → Play tour, or render with \
-                     --render-tour.",
-                    path.file_name().and_then(|n| n.to_str()).unwrap_or("script.toml")
+                Ok(()) => tr!(
+                    dlg_tour_saved,
+                    file = path.file_name().and_then(|n| n.to_str()).unwrap_or("script.toml"),
                 ),
-                Err(e) => format!("Save failed: {e}"),
+                Err(e) => tr!(dlg_save_failed, error = e.to_string()),
             };
             self.pending_toast = Some(ctx_msg);
             self.dialogs.script_export_open = false;
@@ -1611,17 +1536,18 @@ impl FractadyneApp {
         for id in &thumb_ids {
             let _ = self.bookmark_thumb_texture(ctx, id);
         }
-        egui::Window::new("Bookmarks")
+        egui::Window::new(tr!(dlg_bookmarks_title))
+            .id(egui::Id::new("fractadyne.dlg.bookmarks"))
             .open(&mut open)
             .default_size([440.0, 480.0])
             .show(ctx, |ui| {
                 ui.horizontal(|ui| {
                     ui.add(
                         egui::TextEdit::singleline(&mut self.bookmark_name)
-                            .hint_text("name (optional)")
+                            .hint_text(tr!(dlg_bookmarks_name_hint))
                             .desired_width(240.0),
                     );
-                    if ui.button(format!("{} Add current view", crate::icons::BOOKMARK)).clicked() {
+                    if ui.button(format!("{} {}", crate::icons::BOOKMARK, tr!(dlg_bookmarks_add))).clicked() {
                         let name = self.bookmark_name.clone();
                         self.add_bookmark(&name);
                         self.bookmark_name.clear();
@@ -1629,7 +1555,7 @@ impl FractadyneApp {
                 });
                 ui.separator();
                 if self.bookmarks.is_empty() {
-                    ui.label("No bookmarks yet. Add one from the current view.");
+                    ui.label(tr!(dlg_bookmarks_empty));
                 }
                 egui::ScrollArea::vertical().show(ui, |ui| {
                     for (i, b) in self.bookmarks.iter().enumerate() {
@@ -1660,10 +1586,10 @@ impl FractadyneApp {
                                     ui.label(egui::RichText::new(format!("{zoom}×")).weak().small());
                                 }
                                 ui.horizontal(|ui| {
-                                    if crate::theme::confirm_button(ui, "Go").clicked() {
+                                    if crate::theme::confirm_button(ui, &tr!(dlg_go)).clicked() {
                                         jump = Some(i);
                                     }
-                                    if ui.button(crate::icons::DELETE).on_hover_text("Delete").clicked() {
+                                    if ui.button(crate::icons::DELETE).on_hover_text(tr!(dlg_bookmarks_delete_hover)).clicked() {
                                         delete = Some(i);
                                     }
                                 });
@@ -1674,7 +1600,7 @@ impl FractadyneApp {
                 });
                 ui.separator();
                 crate::theme::action_row(ui, |ui| {
-                    if crate::theme::cancel_button(ui, "Close").clicked() {
+                    if crate::theme::cancel_button(ui, &tr!(dlg_close)).clicked() {
                         close = true;
                     }
                 });
@@ -1706,19 +1632,20 @@ impl FractadyneApp {
         }
         let mut open = self.dialogs.bench_dialog_open;
         let mut run_now = false;
-        egui::Window::new("Benchmark")
+        egui::Window::new(tr!(dlg_bench_title))
+            .id(egui::Id::new("fractadyne.dlg.bench-config"))
             .open(&mut open)
             .resizable(false)
             .collapsible(false)
             .show(ctx, |ui| {
-                ui.label("Mode");
-                ui.radio_value(&mut self.bench.cfg.standard, false, "Current settings")
-                    .on_hover_text("Play the fixed deep-zoom tour into the live view using your current resolution and settings.");
-                ui.radio_value(&mut self.bench.cfg.standard, true, "Standardized")
-                    .on_hover_text("Pin resolution + all render settings so the score is comparable across machines.");
+                ui.label(tr!(dlg_bench_mode));
+                ui.radio_value(&mut self.bench.cfg.standard, false, tr!(dlg_bench_current))
+                    .on_hover_text(tr!(dlg_bench_current_hover));
+                ui.radio_value(&mut self.bench.cfg.standard, true, tr!(dlg_bench_standard))
+                    .on_hover_text(tr!(dlg_bench_standard_hover));
                 ui.add_enabled_ui(self.bench.cfg.standard, |ui| {
                     ui.separator();
-                    ui.label("Resolution");
+                    ui.label(tr!(dlg_bench_resolution));
                     egui::ComboBox::from_id_salt("bench_res")
                         .selected_text(self.bench.cfg.res.label())
                         .show_ui(ui, |ui| {
@@ -1727,25 +1654,21 @@ impl FractadyneApp {
                             }
                         });
                     ui.add_space(4.0);
-                    ui.label("Depth");
+                    ui.label(tr!(dlg_bench_depth));
                     egui::ComboBox::from_id_salt("bench_depth")
-                        .selected_text(self.bench.cfg.depth.label())
+                        .selected_text(self.bench.cfg.depth.ui_label())
                         .show_ui(ui, |ui| {
                             for d in BenchDepth::ALL {
-                                ui.selectable_value(&mut self.bench.cfg.depth, d, d.label());
+                                ui.selectable_value(&mut self.bench.cfg.depth, d, d.ui_label());
                             }
                         })
                         .response
-                        .on_hover_text(
-                            "Both dives cross into the deep floatexp/BLA path; Ultra \
-                             (1e48×) spends far longer there than Standard (1e32×), and \
-                             takes correspondingly longer to run.",
-                        );
+                        .on_hover_text(tr!(dlg_bench_depth_hover));
                     ui.add_space(4.0);
-                    ui.checkbox(&mut self.bench.cfg.burnin, "Burn-in (repeat)")
-                        .on_hover_text("Run the benchmark repeatedly to reveal stability and thermal throttling.");
+                    ui.checkbox(&mut self.bench.cfg.burnin, tr!(dlg_bench_burnin))
+                        .on_hover_text(tr!(dlg_bench_burnin_hover));
                     ui.add_enabled_ui(self.bench.cfg.burnin, |ui| {
-                        ui.add(egui::Slider::new(&mut self.bench.cfg.passes, 2..=200).text("passes"));
+                        ui.add(egui::Slider::new(&mut self.bench.cfg.passes, 2..=200).text(tr!(dlg_bench_passes)));
                     });
                 });
                 // ⚠**Above the action row, not below it.** This sentence describes what Run is
@@ -1757,18 +1680,19 @@ impl FractadyneApp {
                 if self.bench.cfg.standard {
                     let (w, h) = self.bench.cfg.res.dims();
                     ui.add_space(2.0);
-                    ui.weak(format!(
-                        "Renders offscreen at {w}×{h}, {}× SS, Mandelbrot/smooth, 60-frame dive to 1e{:.0}×.",
-                        scripting::STD_AA,
-                        self.bench.cfg.depth.zoom_log10(),
+                    ui.weak(tr!(
+                        dlg_bench_std_summary,
+                        size = format!("{w}×{h}"),
+                        ss = scripting::STD_AA,
+                        depth = format!("1e{:.0}", self.bench.cfg.depth.zoom_log10()),
                     ));
                 }
                 ui.separator();
                 crate::theme::action_row(ui, |ui| {
-                    if crate::theme::cancel_button(ui, "Cancel").clicked() {
+                    if crate::theme::cancel_button(ui, &tr!(dlg_cancel)).clicked() {
                         self.dialogs.bench_dialog_open = false;
                     }
-                    if crate::theme::confirm_button(ui, "Run").clicked() {
+                    if crate::theme::confirm_button(ui, &tr!(dlg_bench_run)).clicked() {
                         run_now = true;
                     }
                 });
@@ -1797,26 +1721,27 @@ impl FractadyneApp {
             return;
         };
         let mut cancel = false;
-        egui::Window::new("Running benchmark…")
+        egui::Window::new(tr!(dlg_bench_progress_title))
+            .id(egui::Id::new("fractadyne.dlg.bench-progress"))
             .resizable(false)
             .collapsible(false)
             .show(ctx, |ui| {
                 ui.horizontal(|ui| {
                     ui.spinner();
-                    ui.label(format!("Standardized · {label}"));
+                    ui.label(tr!(dlg_bench_progress_mode, resolution = label));
                 });
                 if total > 1 {
-                    ui.label(format!("Burn-in pass {}/{}", (done + 1).min(total), total));
+                    ui.label(tr!(dlg_bench_progress_pass, pass = (done + 1).min(total), total = total));
                 } else {
-                    ui.label("Rendering the fixed dive…");
+                    ui.label(tr!(dlg_bench_progress_dive));
                 }
                 // Per-pass frame progress so it's visibly advancing (not hung) even mid-pass.
                 ui.add(
                     egui::ProgressBar::new(fdone as f32 / ftotal.max(1) as f32)
-                        .text(format!("frame {fdone}/{ftotal}")),
+                        .text(tr!(dlg_bench_progress_frame, done = fdone, total = ftotal)),
                 );
                 if let Some(f) = last_fps {
-                    ui.label(format!("last pass: {f:.1} fps"));
+                    ui.label(tr!(dlg_bench_progress_last, fps = crate::i18n::decimal(f, 1)));
                 }
                 ui.add_space(4.0);
                 // ⚠**This window has no title-bar ✕** (no `.open()`), by design: dismissing a run
@@ -1824,7 +1749,7 @@ impl FractadyneApp {
                 // second, quieter way to do something that deserves saying. Cancel is the only exit,
                 // which is exactly why it belongs where every other dialog's actions are.
                 crate::theme::action_row(ui, |ui| {
-                    if crate::theme::cancel_button(ui, "Cancel").clicked() {
+                    if crate::theme::cancel_button(ui, &tr!(dlg_cancel)).clicked() {
                         cancel = true;
                     }
                 });
@@ -1852,6 +1777,8 @@ impl FractadyneApp {
         let mut open = true; // the window's own [x] close button
         let mut close_clicked = false; // the explicit Close button inside the body
         egui::Window::new(&title)
+            // Keyed by the title, as before: each notice sizes itself, not the previous one's size.
+            .id(egui::Id::new(("fractadyne.notice", &title)))
             .collapsible(false)
             .resizable(false)
             .open(&mut open)
@@ -1863,10 +1790,10 @@ impl FractadyneApp {
                 crate::theme::action_row(ui, |ui| {
                     // The notice's only way out, so it carries the same X as every Cancel — it is
                     // the dismiss gesture whatever the word on it says.
-                    if crate::theme::cancel_button(ui, "Close").clicked() {
+                    if crate::theme::cancel_button(ui, &tr!(dlg_close)).clicked() {
                         close_clicked = true;
                     }
-                    if ui.button(format!("{} Copy", crate::icons::COPY)).clicked() {
+                    if ui.button(format!("{} {}", crate::icons::COPY, tr!(dlg_copy))).clicked() {
                         ui.ctx().copy_text(body.clone());
                     }
                 });
@@ -1886,7 +1813,8 @@ impl FractadyneApp {
         };
         let mut open = true;
         let mut close_clicked = false;
-        egui::Window::new("Accelerated build — using built-in arithmetic")
+        egui::Window::new(tr!(dlg_backend_title))
+            .id(egui::Id::new("fractadyne.dlg.backend-notice"))
             .collapsible(false)
             .resizable(false)
             .open(&mut open)
@@ -1897,13 +1825,13 @@ impl FractadyneApp {
                 ui.style_mut().wrap_mode = Some(egui::TextWrapMode::Wrap);
                 ui.label(&body);
                 ui.add_space(6.0);
-                ui.checkbox(&mut self.dialogs.backend_notice_suppress, "Don't show this again");
+                ui.checkbox(&mut self.dialogs.backend_notice_suppress, tr!(dlg_backend_dont_show));
                 ui.separator();
                 crate::theme::action_row(ui, |ui| {
-                    if crate::theme::cancel_button(ui, "Close").clicked() {
+                    if crate::theme::cancel_button(ui, &tr!(dlg_close)).clicked() {
                         close_clicked = true;
                     }
-                    if ui.button(format!("{} Copy", crate::icons::COPY)).clicked() {
+                    if ui.button(format!("{} {}", crate::icons::COPY, tr!(dlg_copy))).clicked() {
                         ui.ctx().copy_text(body.clone());
                     }
                 });
@@ -1929,7 +1857,8 @@ impl FractadyneApp {
         let mut bench_save: Option<std::io::Result<()>> = None;
         let mut bench_save_dir: Option<std::path::PathBuf> = None;
         let start_dir = self.dialog_dir_default();
-        egui::Window::new("Benchmark results")
+        egui::Window::new(tr!(dlg_bench_results_title))
+            .id(egui::Id::new("fractadyne.dlg.bench-results"))
             .open(&mut open)
             .resizable(false)
             .show(ctx, |ui| {
@@ -1941,16 +1870,16 @@ impl FractadyneApp {
                     // rightmost. Visually it comes out Copy · Save… · Run again… · Close — the
                     // dismiss last, the way every other dialog ends (`UI-DESIGN.md` §8.2).
                     crate::theme::action_row(ui, |ui| {
-                        if ui.button(format!("{} Close", crate::icons::CLOSE)).clicked() {
+                        if ui.button(format!("{} {}", crate::icons::CLOSE, tr!(dlg_close))).clicked() {
                             close = true;
                         }
-                        if ui.button(format!("{} Run again…", crate::icons::REFRESH)).clicked() {
+                        if ui.button(format!("{} {}", crate::icons::REFRESH, tr!(dlg_bench_results_run_again))).clicked() {
                             run_again = true;
                         }
                         // ⭐SAVE, not CONFIRM: §8.1 gives an established task verb its own glyph.
-                        if ui.button(format!("{} Save…", crate::icons::SAVE)).clicked() {
+                        if ui.button(format!("{} {}", crate::icons::SAVE, tr!(dlg_bench_results_save))).clicked() {
                             if let Some(path) = rfd::FileDialog::new()
-                                .add_filter("Text", &["txt"])
+                                .add_filter(tr!(dlg_filter_text), &["txt"])
                                 .set_directory(&start_dir)
                                 .set_file_name("fractadyne_benchmark.txt")
                                 .save_file()
@@ -1959,15 +1888,15 @@ impl FractadyneApp {
                                 bench_save = Some(std::fs::write(path, &r));
                             }
                         }
-                        if ui.button(format!("{} Copy", crate::icons::COPY)).clicked() {
+                        if ui.button(format!("{} {}", crate::icons::COPY, tr!(dlg_copy))).clicked() {
                             ui.ctx().copy_text(r.clone());
                         }
                     });
                 } else {
-                    ui.label("No benchmark has been run yet.");
+                    ui.label(tr!(dlg_bench_results_none));
                     ui.separator();
                     crate::theme::action_row(ui, |ui| {
-                        if ui.button(format!("{} Close", crate::icons::CLOSE)).clicked() {
+                        if ui.button(format!("{} {}", crate::icons::CLOSE, tr!(dlg_close))).clicked() {
                             close = true;
                         }
                     });
@@ -1980,8 +1909,8 @@ impl FractadyneApp {
         if let Some(res) = bench_save {
             self.set_toast(
                 match res {
-                    Ok(()) => "Benchmark saved.".to_string(),
-                    Err(e) => format!("Save failed: {e}"),
+                    Ok(()) => tr!(dlg_bench_results_saved),
+                    Err(e) => tr!(dlg_save_failed, error = e.to_string()),
                 },
                 ctx,
             );
@@ -2002,12 +1931,13 @@ impl FractadyneApp {
         let mut to_open: Option<String> = None;
         let mut do_rescan = false;
         let mut close = false;
-        egui::Window::new("Gallery")
+        egui::Window::new(tr!(dlg_gallery_title))
+            .id(egui::Id::new("fractadyne.dlg.gallery"))
             .open(&mut open)
             .default_size([540.0, 620.0])
             .show(ctx, |ui| {
                 ui.horizontal(|ui| {
-                    if ui.button("Folder…").clicked() {
+                    if ui.button(tr!(dlg_gallery_folder)).clicked() {
                         if let Some(d) = rfd::FileDialog::new()
                             .set_directory(&self.gallery.dir)
                             .pick_folder()
@@ -2017,7 +1947,7 @@ impl FractadyneApp {
                             do_rescan = true;
                         }
                     }
-                    if ui.button(format!("{} Refresh", crate::icons::REFRESH)).clicked() {
+                    if ui.button(format!("{} {}", crate::icons::REFRESH, tr!(dlg_gallery_refresh))).clicked() {
                         do_rescan = true;
                     }
                     ui.label(
@@ -2028,7 +1958,7 @@ impl FractadyneApp {
                 });
                 ui.separator();
                 if self.gallery.entries.is_empty() {
-                    ui.label("No Fractadyne images in this folder.");
+                    ui.label(tr!(dlg_gallery_empty));
                 }
                 egui::ScrollArea::vertical().show(ui, |ui| {
                     for entry in &self.gallery.entries {
@@ -2050,17 +1980,17 @@ impl FractadyneApp {
                             }
                             ui.vertical(|ui| {
                                 let title = if entry.fractal.is_empty() {
-                                    "Fractadyne image"
+                                    tr!(dlg_gallery_untitled)
                                 } else {
-                                    &entry.fractal
+                                    entry.fractal.clone()
                                 };
                                 ui.strong(title);
-                                ui.label(format!("zoom {}   {}", entry.zoom, entry.saved));
+                                ui.label(tr!(dlg_gallery_zoom, zoom = &entry.zoom, saved = &entry.saved));
                                 if !entry.notes.is_empty() {
-                                    ui.label(format!("\u{201c}{}\u{201d}", entry.notes));
+                                    ui.label(tr!(dlg_gallery_notes, notes = &entry.notes));
                                 }
                                 ui.label(egui::RichText::new(&entry.app_version).weak().small());
-                                if ui.button("Open this view").clicked() {
+                                if ui.button(tr!(dlg_gallery_open)).clicked() {
                                     to_open = Some(entry.meta.clone());
                                 }
                             });
@@ -2070,7 +2000,7 @@ impl FractadyneApp {
                 });
                 ui.separator();
                 crate::theme::action_row(ui, |ui| {
-                    if crate::theme::cancel_button(ui, "Close").clicked() {
+                    if crate::theme::cancel_button(ui, &tr!(dlg_close)).clicked() {
                         close = true;
                     }
                 });
@@ -2081,7 +2011,7 @@ impl FractadyneApp {
         }
         if let Some(meta) = to_open {
             self.load_view_metadata(&meta);
-            self.export.status = Some("Loaded view from gallery.".to_string());
+            self.export.status = Some(tr!(dlg_gallery_loaded));
         }
         // Lazily decode one thumbnail per frame so scanning a folder never freezes.
         if let Some(entry) = self.gallery.entries.iter_mut().find(|e| !e.thumb_tried) {
@@ -2122,7 +2052,8 @@ impl FractadyneApp {
         let mut do_export = false;
         let mut do_export_as = false;
         let mut close_export = false;
-        egui::Window::new("Export image")
+        egui::Window::new(tr!(dlg_export_title))
+            .id(egui::Id::new("fractadyne.dlg.export"))
             .open(&mut open)
             .resizable(false)
             .show(ctx, |ui| {
@@ -2136,24 +2067,24 @@ impl FractadyneApp {
                     .find(|(_, w, h)| *w == self.export.width && *h == cur_h)
                     .map(|(l, _, _)| *l);
                 let custom = self.export.custom_size || cur_preset.is_none();
-                egui::ComboBox::from_label("Size")
+                egui::ComboBox::new("fractadyne.dlg.export.size", tr!(dlg_export_size))
                     .width(210.0)
                     // Tall enough for every preset plus Custom: egui's default popup height
                     // showed only the first ten, which hid the ultrawide/DCI entries AND put
                     // "Custom…" behind a scroll nobody would look for.
                     .height(460.0)
                     .selected_text(if custom {
-                        format!("Custom — {}×{}", self.export.width, cur_h)
+                        tr!(dlg_export_size_custom_current, size = format!("{}×{}", self.export.width, cur_h))
                     } else {
-                        cur_preset.unwrap_or_default().to_string()
+                        crate::size_preset_label(cur_preset.unwrap_or_default())
                     })
                     .show_ui(ui, |ui| {
                         // Custom FIRST, not last: the preset list is long enough to overflow the
                         // popup and scroll, and a "Custom…" below the fold is one nobody finds.
                         // Ordering it first is robust to the list growing; a taller popup is not.
                         if ui
-                            .selectable_label(custom, "Custom…")
-                            .on_hover_text("Set the width yourself; height follows the Aspect below.")
+                            .selectable_label(custom, tr!(dlg_export_size_custom))
+                            .on_hover_text(tr!(dlg_export_size_custom_hover))
                             .clicked()
                         {
                             self.export.custom_size = true;
@@ -2161,7 +2092,7 @@ impl FractadyneApp {
                         ui.separator();
                         for (label, w, h) in crate::STANDARD_SIZES {
                             let on = !custom && cur_preset == Some(*label);
-                            if ui.selectable_label(on, *label).clicked() {
+                            if ui.selectable_label(on, crate::size_preset_label(label)).clicked() {
                                 self.export.width = *w;
                                 if let Some(k) = crate::aspect_key_for(*w, *h) {
                                     self.export.aspect = k.to_string();
@@ -2172,23 +2103,23 @@ impl FractadyneApp {
                     });
                 if custom {
                     ui.horizontal(|ui| {
-                        ui.label("Width (px)");
+                        ui.label(tr!(dlg_export_width));
                         ui.add(
                             egui::DragValue::new(&mut self.export.width).range(16..=32768).speed(8),
                         );
-                        ui.label(format!("× {cur_h} (from Aspect)"));
+                        ui.label(tr!(dlg_export_height_from_aspect, height = cur_h.to_string()));
                     });
                 }
-                egui::ComboBox::from_label("Supersampling")
+                egui::ComboBox::new("fractadyne.dlg.export.ss", tr!(dlg_export_ss))
                     .selected_text(format!("{}×", self.export.ss))
                     .show_ui(ui, |ui| {
                         for s in [1u32, 2, 3, 4] {
                             ui.selectable_value(&mut self.export.ss, s, format!("{s}×"));
                         }
                     });
-                egui::ComboBox::from_label("Aspect")
+                egui::ComboBox::new("fractadyne.dlg.export.aspect", tr!(dlg_export_aspect))
                     .selected_text(if self.export.aspect == "window" {
-                        "Match window".to_string()
+                        tr!(dlg_export_aspect_window)
                     } else {
                         self.export.aspect.clone()
                     })
@@ -2196,106 +2127,95 @@ impl FractadyneApp {
                         ui.selectable_value(
                             &mut self.export.aspect,
                             "window".to_string(),
-                            "Match window",
+                            tr!(dlg_export_aspect_window),
                         );
                         for (k, _) in EXPORT_ASPECTS {
                             ui.selectable_value(&mut self.export.aspect, k.to_string(), k);
                         }
                     });
                 ui.horizontal(|ui| {
-                    ui.label("Format:");
+                    ui.label(tr!(dlg_export_format));
                     ui.radio_value(&mut self.export.format, ExportFormat::Png, "PNG");
                     ui.radio_value(&mut self.export.format, ExportFormat::Exr, "OpenEXR");
                 });
-                ui.checkbox(&mut self.show_location, "Location HUD")
-                    .on_hover_text(
-                        "Burn a zoom-level + coordinate panel into the top-left of the exported \
-                         image (scales with the output; shows the map/Mandelbrot view's zoom + \
-                         center).",
-                    );
-                ui.checkbox(&mut self.render_cfg.glitch_correct, "Glitch correction")
-                    .on_hover_text(
-                        "Multi-reference correction of perturbation glitches. Automatically \
-                         skipped for very deep (floatexp) single-view exports so the reference \
-                         build + render run off-thread and the app stays responsive. Never used \
-                         for Mandelbrot or Multibrot views (outside Julia mode): checked against \
-                         an exact calculation, it fixed nothing there and cost up to 5x the \
-                         export time.",
-                    );
+                ui.checkbox(&mut self.show_location, tr!(dlg_export_hud))
+                    .on_hover_text(tr!(dlg_export_hud_hover));
+                ui.checkbox(&mut self.render_cfg.glitch_correct, tr!(dlg_export_glitch))
+                    .on_hover_text(tr!(dlg_export_glitch_hover));
                 if self.viewport.magnification() >= PERT_FE_THRESHOLD {
                     ui.label(
-                        egui::RichText::new(
-                            "Deep export: the reference builds off-thread (UI stays live); \
-                             glitch correction is skipped at this depth.",
-                        )
-                        .weak()
-                        .small(),
+                        egui::RichText::new(tr!(dlg_export_deep_note))
+                            .weak()
+                            .small(),
                     );
                 }
                 if self.dual {
-                    egui::ComboBox::from_label("Dual layout")
+                    egui::ComboBox::new("fractadyne.dlg.export.dual", tr!(dlg_export_dual))
                         .selected_text(match self.export.dual_mode {
-                            DualExport::SideBySide => "Side by side",
-                            DualExport::Separate => "Separate files",
-                            DualExport::ActiveOnly => "Map only",
+                            DualExport::SideBySide => tr!(dlg_export_dual_side),
+                            DualExport::Separate => tr!(dlg_export_dual_separate),
+                            DualExport::ActiveOnly => tr!(dlg_export_dual_map),
                         })
                         .show_ui(ui, |ui| {
                             ui.selectable_value(
                                 &mut self.export.dual_mode,
                                 DualExport::SideBySide,
-                                "Side by side",
+                                tr!(dlg_export_dual_side),
                             );
                             ui.selectable_value(
                                 &mut self.export.dual_mode,
                                 DualExport::Separate,
-                                "Separate files",
+                                tr!(dlg_export_dual_separate),
                             );
                             ui.selectable_value(
                                 &mut self.export.dual_mode,
                                 DualExport::ActiveOnly,
-                                "Map only",
+                                tr!(dlg_export_dual_map),
                             );
                         });
                 }
                 ui.horizontal(|ui| {
-                    ui.label("Notes:");
-                    let resp = ui.add(
-                        egui::TextEdit::singleline(&mut self.export.notes)
-                            .char_limit(120)
-                            .desired_width(220.0)
-                            .hint_text("saved with the image (≤120 chars)"),
-                    );
+                    ui.label(tr!(dlg_export_notes));
+                    let hint = tr!(dlg_export_notes_hint);
+                    let (w, fits) = crate::theme::hinted_width(ui, &hint, 220.0);
+                    let field = egui::TextEdit::singleline(&mut self.export.notes).char_limit(120).desired_width(w);
+                    let resp = if fits {
+                        ui.add(field.hint_text(hint))
+                    } else {
+                        ui.add(field).on_hover_text(hint)
+                    };
                     if resp.changed() && self.export.notes.chars().count() > 120 {
                         self.export.notes = self.export.notes.chars().take(120).collect();
                     }
                 });
-                ui.label(format!(
-                    "Output: {} × {} px   ({} chars left)",
-                    self.export.width,
-                    self.export_height(),
-                    120usize.saturating_sub(self.export.notes.chars().count()),
+                ui.label(tr!(
+                    dlg_export_output,
+                    width = self.export.width.to_string(),
+                    height = self.export_height().to_string(),
+                    left = 120usize.saturating_sub(self.export.notes.chars().count()),
                 ));
                 // ⭐**Say what a different aspect does to the framing.** The export CONTAINS the
                 // window view, so a mismatched aspect always reveals more plane on one axis and
                 // never crops — but "you will see more than you composed" is exactly the kind of
                 // thing that should not be discovered in Photoshop.
                 if let Some((axis, pct)) = self.export_extra_view() {
+                    // `axis` is the token "width" or "height" (`export_extra_view`), matched
+                    // here so each case is a whole sentence of its own.
+                    let percent = format!("{pct:.0}");
                     ui.label(
-                        egui::RichText::new(format!(
-                            "Shows {pct:.0}% more {axis} than the window (nothing is cropped)"
-                        ))
+                        egui::RichText::new(if axis == "width" {
+                            tr!(dlg_export_extra_width, percent = percent)
+                        } else {
+                            tr!(dlg_export_extra_height, percent = percent)
+                        })
                         .weak()
                         .small(),
                     );
                 }
                 ui.label(
-                    egui::RichText::new(
-                        "Rendered in tiles (no size cap) on a background thread. The \
-                         file embeds the view + notes so it can be reopened via \
-                         File ▸ Open view.",
-                    )
-                    .weak()
-                    .small(),
+                    egui::RichText::new(tr!(dlg_export_tiles_note))
+                        .weak()
+                        .small(),
                 );
                 // Target directory: a persistent folder that "Export" saves into (auto name).
                 let target_dir = self
@@ -2304,10 +2224,10 @@ impl FractadyneApp {
                     .filter(|d| d.is_dir())
                     .unwrap_or_else(Self::pictures_dir);
                 ui.horizontal(|ui| {
-                    ui.label("Folder:");
+                    ui.label(tr!(dlg_export_folder));
                     if ui
-                        .button("Choose…")
-                        .on_hover_text("Pick the target directory for exports")
+                        .button(tr!(dlg_export_choose))
+                        .on_hover_text(tr!(dlg_export_choose_hover))
                         .clicked()
                     {
                         if let Some(d) = rfd::FileDialog::new().set_directory(&target_dir).pick_folder() {
@@ -2321,22 +2241,13 @@ impl FractadyneApp {
                         .weak()
                         .small(),
                 );
-                ui.checkbox(&mut self.export.open_after, "Open when done")
-                    .on_hover_text(
-                        "Hand the finished image to the system viewer as soon as it is written.",
-                    );
+                ui.checkbox(&mut self.export.open_after, tr!(dlg_export_open_after))
+                    .on_hover_text(tr!(dlg_export_open_after_hover));
                 // Every graphics card of this machine renders the image (design/multi-gpu.md
                 // Phase 2), offered when there are two or more.
                 if let Some(n) = self.card_list().map(<[_]>::len).filter(|&n| n >= 2) {
-                    ui.checkbox(&mut self.export.all_gpus, format!("Use all graphics cards ({n})"))
-                        .on_hover_text(
-                            "Split the image by tile across every graphics card of this machine, \
-                             each with its own copy of the deep reference. Identical cards give \
-                             exactly the image one renders alone; different models draw a few \
-                             pixels slightly differently, tile by tile (measured: no visible seam). \
-                             If a card fails, its tiles go to the others. Images the split cannot \
-                             take (some colouring methods and formulas) use this window's card.",
-                        );
+                    ui.checkbox(&mut self.export.all_gpus, tr!(dlg_export_all_gpus, count = n))
+                        .on_hover_text(tr!(dlg_export_all_gpus_hover));
                 }
                 ui.add_space(6.0);
                 let busy = self.export.task.is_some() || self.export.prep.is_some();
@@ -2347,7 +2258,7 @@ impl FractadyneApp {
                     // Deep export: the bignum reference is building off-thread (UI stays live).
                     ui.horizontal(|ui| {
                         ui.add(egui::Spinner::new());
-                        ui.label("Preparing (building reference)…");
+                        ui.label(tr!(dlg_export_preparing));
                     });
                 } else if busy {
                     let p = self.export.progress.load(std::sync::atomic::Ordering::Relaxed);
@@ -2355,12 +2266,12 @@ impl FractadyneApp {
                         // Rendering done; encoding/writing the file (not cancelable).
                         ui.horizontal(|ui| {
                             ui.add(egui::Spinner::new());
-                            ui.label("Saving…");
+                            ui.label(tr!(dlg_export_saving));
                         });
                     } else {
-                        ui.label("Rendering…");
+                        ui.label(tr!(dlg_export_rendering));
                         ui.add(egui::ProgressBar::new(p as f32 / 1000.0).show_percentage());
-                        if crate::theme::cancel_button(ui, "Cancel").clicked() {
+                        if crate::theme::cancel_button(ui, &tr!(dlg_cancel)).clicked() {
                             self.export.cancel
                                 .store(true, std::sync::atomic::Ordering::Relaxed);
                         }
@@ -2371,28 +2282,28 @@ impl FractadyneApp {
                 // status line on completion.
                 if busy {
                     if let Some(t) = &elapsed {
-                        ui.label(egui::RichText::new(format!("Elapsed: {t}")).weak().small());
+                        ui.label(egui::RichText::new(tr!(dlg_export_elapsed, time = t)).weak().small());
                     }
                 } else {
                     ui.separator();
                     // ⚠Added right-to-left, so this reads BACKWARDS: Cancel first to
                     // land rightmost, giving "Export · Save as… · Cancel".
                     crate::theme::action_row(ui, |ui| {
-                        if crate::theme::cancel_button(ui, "Cancel")
-                            .on_hover_text("Close without exporting")
+                        if crate::theme::cancel_button(ui, &tr!(dlg_cancel))
+                            .on_hover_text(tr!(dlg_export_cancel_hover))
                             .clicked()
                         {
                             close_export = true;
                         }
                         if ui
-                            .button(format!("{} Save as…", crate::icons::SAVE))
-                            .on_hover_text("Choose the file name and location")
+                            .button(format!("{} {}", crate::icons::SAVE, tr!(dlg_export_save_as)))
+                            .on_hover_text(tr!(dlg_export_save_as_hover))
                             .clicked()
                         {
                             do_export_as = true;
                         }
-                        if crate::theme::confirm_button(ui, "Export")
-                            .on_hover_text("Render and save into the folder above (auto-named)")
+                        if crate::theme::confirm_button(ui, &tr!(dlg_export_export))
+                            .on_hover_text(tr!(dlg_export_export_hover))
                             .clicked()
                         {
                             do_export = true;
@@ -2416,14 +2327,14 @@ impl FractadyneApp {
                 let path = dir.join(self.export_default_name());
                 self.start_export_to(ctx, dev.clone(), q.clone(), path);
             } else {
-                self.export.status = Some("GPU not available".to_string());
+                self.export.status = Some(tr!(dlg_gpu_not_available));
             }
         }
         if do_export_as {
             if let Some((dev, q)) = gpu {
                 self.start_export(ctx, dev.clone(), q.clone());
             } else {
-                self.export.status = Some("GPU not available".to_string());
+                self.export.status = Some(tr!(dlg_gpu_not_available));
             }
         }
     }

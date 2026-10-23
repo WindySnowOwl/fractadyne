@@ -67,14 +67,25 @@ impl CustomFormula {
 /// whatever the formula's precision tier.
 pub(crate) fn depth_note_for(formula: &ir::Formula) -> String {
     match ir::perturb::perturbed_formula(formula) {
-        Ok(_) => "Deep zoom by perturbation, extended range past 1e28x as for the built-in fractals \
-                  (every step iterated: no series approximation or BLA for custom formulas yet)."
-            .to_string(),
-        Err(why) => format!(
-            "Direct rendering ({} has no deep-zoom form yet): sharp until one single-precision step \
-             of c spans a pixel — about 1e4x to 1e5x, less far from the origin.",
-            why.0
-        ),
+        Ok(_) => tr!(formula_depth_deep),
+        Err(why) => tr!(formula_depth_direct, why = not_perturbable(why.0)),
+    }
+}
+
+/// What keeps a formula off the deep-zoom path, in the language in use: the core names it in
+/// English (`ir::perturb::NotPerturbable`), and a reason this list does not know shows as written.
+fn not_perturbable(why: &'static str) -> String {
+    match why {
+        "an init section" => tr!(formula_depth_why_init),
+        "a bailout of its own" => tr!(formula_depth_why_bailout),
+        "a variable kept from step to step" => tr!(formula_depth_why_variable),
+        "the previous iterate" => tr!(formula_depth_why_previous),
+        "a comparison or an if block" => tr!(formula_depth_why_comparison),
+        "rounding (floor, ceil, trunc, round)" => tr!(formula_depth_why_rounding),
+        "maxit" => tr!(formula_depth_why_maxit),
+        "a power whose exponent varies" => tr!(formula_depth_why_power),
+        "an already perturbed program" => tr!(formula_depth_why_perturbed),
+        other => other.to_string(),
     }
 }
 

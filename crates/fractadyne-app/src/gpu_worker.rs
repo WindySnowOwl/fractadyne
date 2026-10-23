@@ -414,16 +414,14 @@ impl WorkerState {
     /// The setting's status line. `pinned`: `--worker-gpu` chose the card, not the setting.
     pub(crate) fn text(&self, pinned: bool) -> String {
         let s = match self {
-            WorkerState::Off => "Off: this window's graphics card renders everything.".to_string(),
-            WorkerState::Starting => "Starting…".to_string(),
-            WorkerState::Running(name) => format!("In use: {name}"),
-            WorkerState::Failed(e) => format!("Could not start: {e}"),
-            WorkerState::Lost(name) => {
-                format!("Stopped: {name} was lost. One card from here; choose it again to retry.")
-            }
+            WorkerState::Off => tr!(gpu2_state_off),
+            WorkerState::Starting => tr!(gpu2_state_starting),
+            WorkerState::Running(name) => tr!(gpu2_state_running, name = name.as_str()),
+            WorkerState::Failed(e) => tr!(gpu2_state_failed, why = e.as_str()),
+            WorkerState::Lost(name) => tr!(gpu2_state_lost, name = name.as_str()),
         };
         if pinned {
-            format!("{s} (set by --worker-gpu)")
+            tr!(gpu2_state_pinned, state = s)
         } else {
             s
         }

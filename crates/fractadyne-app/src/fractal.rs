@@ -1,6 +1,6 @@
 //! The [`FractalKind`] domain enum — the escape-time families the app offers — and a single
 //! per-family metadata table ([`FractalKind::SPECS`]) holding each one's display name, shader
-//! formula id, default view, deep-zoom support, and human description.
+//! formula id, default view and deep-zoom support; [`FractalKind::about`] gives its description.
 //!
 //! # Adding a new formula
 //!
@@ -26,11 +26,12 @@
 //!    passes, the finders and the export glitch-correction policy. Code asks [`FractalKind::caps`],
 //!    never the id, so a new family only needs its row there.
 
-/// Per-family description shown in the info panel and Help.
+/// Per-family facts the info panel shows. The description is translated text
+/// ([`FractalKind::about`]); `formula` is written in the formula language and stays as it is, and
+/// is empty for the families whose "formula" is a sentence ([`FractalKind::formula`]).
 #[derive(Clone, Copy)]
 pub(crate) struct FractalInfo {
     pub(crate) formula: &'static str,
-    pub(crate) about: &'static str,
     pub(crate) reference: &'static str,
 }
 
@@ -123,7 +124,6 @@ const fn power_spec(
     formula_id: u32,
     default_center: (f64, f64),
     formula: &'static str,
-    about: &'static str,
     reference: &'static str,
 ) -> FractalSpec {
     FractalSpec {
@@ -134,7 +134,7 @@ const fn power_spec(
         supports_julia: true,
         supports_perturbation: true,
         class: FractalClass::EscapeTime,
-        info: FractalInfo { formula, about, reference },
+        info: FractalInfo { formula, reference },
     }
 }
 
@@ -183,8 +183,6 @@ impl FractalKind {
             class: FractalClass::EscapeTime,
             info: FractalInfo {
                 formula: "z -> z^2 + c    (z0 = 0)",
-                about: "The canonical escape-time fractal: the set of c for which the \
-                        orbit of 0 stays bounded. Its boundary is infinitely intricate.",
                 reference: "https://en.wikipedia.org/wiki/Mandelbrot_set",
             },
         },
@@ -198,8 +196,6 @@ impl FractalKind {
             class: FractalClass::EscapeTime,
             info: FractalInfo {
                 formula: "z -> z^3 + c",
-                about: "A Multibrot set - the Mandelbrot construction at a higher power. \
-                        Power d gives (d-1)-fold rotational symmetry.",
                 reference: "https://en.wikipedia.org/wiki/Multibrot_set",
             },
         },
@@ -213,7 +209,6 @@ impl FractalKind {
             class: FractalClass::EscapeTime,
             info: FractalInfo {
                 formula: "z -> z^4 + c",
-                about: "Multibrot at power 4: threefold symmetry, broad bulbs.",
                 reference: "https://en.wikipedia.org/wiki/Multibrot_set",
             },
         },
@@ -227,7 +222,6 @@ impl FractalKind {
             class: FractalClass::EscapeTime,
             info: FractalInfo {
                 formula: "z -> z^5 + c",
-                about: "Multibrot at power 5: fourfold symmetry.",
                 reference: "https://en.wikipedia.org/wiki/Multibrot_set",
             },
         },
@@ -241,8 +235,6 @@ impl FractalKind {
             class: FractalClass::EscapeTime,
             info: FractalInfo {
                 formula: "z -> conj(z)^2 + c",
-                about: "The Tricorn (Mandelbar): conjugates z each step. This \
-                        anti-holomorphic map yields a three-cornered shape.",
                 reference: "https://en.wikipedia.org/wiki/Tricorn_(mathematics)",
             },
         },
@@ -256,8 +248,6 @@ impl FractalKind {
             class: FractalClass::EscapeTime,
             info: FractalInfo {
                 formula: "z -> (|Re z| + i|Im z|)^2 + c",
-                about: "Absolute values of z's parts are taken before squaring; the \
-                        result resembles a ship in flames.",
                 reference: "https://en.wikipedia.org/wiki/Burning_Ship_fractal",
             },
         },
@@ -271,8 +261,6 @@ impl FractalKind {
             class: FractalClass::EscapeTime,
             info: FractalInfo {
                 formula: "Re -> |Re(z^2)| + cx;  Im -> Im(z^2) + cy",
-                about: "A Burning-Ship relative that takes the absolute value of only \
-                        the real part of z^2, producing celtic-knot / heart motifs.",
                 reference: "https://paulbourke.net/fractals/burnship/",
             },
         },
@@ -286,7 +274,6 @@ impl FractalKind {
             class: FractalClass::EscapeTime,
             info: FractalInfo {
                 formula: "Re -> |Re(z^2)| + cx;  Im -> |Im(z^2)| + cy",
-                about: "An abs-variant taking absolute values of both components of z^2.",
                 reference: "https://paulbourke.net/fractals/burnship/",
             },
         },
@@ -300,8 +287,6 @@ impl FractalKind {
             class: FractalClass::EscapeTime,
             info: FractalInfo {
                 formula: "z' = z^2 + c + p*z_prev    (p = -0.5)",
-                about: "The Phoenix uses the previous iterate too, giving flame-like \
-                        filaments. Try its Julia form via Julia mode.",
                 reference: "https://paulbourke.net/fractals/phoenix/",
             },
         },
@@ -315,42 +300,25 @@ impl FractalKind {
             class: FractalClass::EscapeTime,
             info: FractalInfo {
                 formula: "z -> z - (z^3 - 1)/(3 z^2)",
-                about: "Newton's root-finding iteration for z^3 = 1, colored by how fast \
-                        each point converges. A convergence (not escape) fractal.",
                 reference: "https://en.wikipedia.org/wiki/Newton_fractal",
             },
         },
         // The power families (design/power-families.md): every one deep-zooms and has a Julia form.
-        power_spec(FractalKind::Multibrot6, "Multibrot 6", 10, (0.0, 0.0), "z -> z^6 + c",
-            "Multibrot at power 6: fivefold symmetry.", MULTIBROT_REF),
-        power_spec(FractalKind::Multibrot7, "Multibrot 7", 11, (0.0, 0.0), "z -> z^7 + c",
-            "Multibrot at power 7: sixfold symmetry, the bulbs thinning towards a circle.", MULTIBROT_REF),
-        power_spec(FractalKind::Multibrot8, "Multibrot 8", 12, (0.0, 0.0), "z -> z^8 + c",
-            "Multibrot at power 8: sevenfold symmetry.", MULTIBROT_REF),
-        power_spec(FractalKind::BurningShip3, "Burning Ship 3", 13, (0.0, 0.0), "z -> (|Re z| + i|Im z|)^3 + c",
-            "The Burning Ship at power 3: the absolute values are taken, then cubed.", SHIP_REF),
-        power_spec(FractalKind::BurningShip4, "Burning Ship 4", 14, (0.0, 0.0), "z -> (|Re z| + i|Im z|)^4 + c",
-            "The Burning Ship at power 4.", SHIP_REF),
-        power_spec(FractalKind::BurningShip5, "Burning Ship 5", 15, (0.0, 0.0), "z -> (|Re z| + i|Im z|)^5 + c",
-            "The Burning Ship at power 5.", SHIP_REF),
-        power_spec(FractalKind::Tricorn3, "Tricorn 3", 16, (0.0, 0.0), "z -> conj(z)^3 + c",
-            "The Tricorn (Mandelbar) at power 3: fourfold symmetry.", TRICORN_REF),
-        power_spec(FractalKind::Tricorn4, "Tricorn 4", 17, (0.0, 0.0), "z -> conj(z)^4 + c",
-            "The Tricorn at power 4: fivefold symmetry.", TRICORN_REF),
-        power_spec(FractalKind::Tricorn5, "Tricorn 5", 18, (0.0, 0.0), "z -> conj(z)^5 + c",
-            "The Tricorn at power 5: sixfold symmetry.", TRICORN_REF),
-        power_spec(FractalKind::Celtic3, "Celtic 3", 19, (0.0, 0.0), "Re -> |Re(z^3)| + cx;  Im -> Im(z^3) + cy",
-            "The Celtic fold at power 3: the absolute value of the real part of z^3.", CELTIC_REF),
-        power_spec(FractalKind::Celtic4, "Celtic 4", 20, (0.0, 0.0), "Re -> |Re(z^4)| + cx;  Im -> Im(z^4) + cy",
-            "The Celtic fold at power 4.", CELTIC_REF),
-        power_spec(FractalKind::Celtic5, "Celtic 5", 21, (0.0, 0.0), "Re -> |Re(z^5)| + cx;  Im -> Im(z^5) + cy",
-            "The Celtic fold at power 5.", CELTIC_REF),
-        power_spec(FractalKind::Buffalo3, "Buffalo 3", 22, (0.0, 0.0), "Re -> |Re(z^3)| + cx;  Im -> |Im(z^3)| + cy",
-            "The Buffalo at power 3: the absolute values of both parts of z^3.", CELTIC_REF),
-        power_spec(FractalKind::Buffalo4, "Buffalo 4", 23, (0.0, 0.0), "Re -> |Re(z^4)| + cx;  Im -> |Im(z^4)| + cy",
-            "The Buffalo at power 4.", CELTIC_REF),
-        power_spec(FractalKind::Buffalo5, "Buffalo 5", 24, (0.0, 0.0), "Re -> |Re(z^5)| + cx;  Im -> |Im(z^5)| + cy",
-            "The Buffalo at power 5.", CELTIC_REF),
+        power_spec(FractalKind::Multibrot6, "Multibrot 6", 10, (0.0, 0.0), "z -> z^6 + c", MULTIBROT_REF),
+        power_spec(FractalKind::Multibrot7, "Multibrot 7", 11, (0.0, 0.0), "z -> z^7 + c", MULTIBROT_REF),
+        power_spec(FractalKind::Multibrot8, "Multibrot 8", 12, (0.0, 0.0), "z -> z^8 + c", MULTIBROT_REF),
+        power_spec(FractalKind::BurningShip3, "Burning Ship 3", 13, (0.0, 0.0), "z -> (|Re z| + i|Im z|)^3 + c", SHIP_REF),
+        power_spec(FractalKind::BurningShip4, "Burning Ship 4", 14, (0.0, 0.0), "z -> (|Re z| + i|Im z|)^4 + c", SHIP_REF),
+        power_spec(FractalKind::BurningShip5, "Burning Ship 5", 15, (0.0, 0.0), "z -> (|Re z| + i|Im z|)^5 + c", SHIP_REF),
+        power_spec(FractalKind::Tricorn3, "Tricorn 3", 16, (0.0, 0.0), "z -> conj(z)^3 + c", TRICORN_REF),
+        power_spec(FractalKind::Tricorn4, "Tricorn 4", 17, (0.0, 0.0), "z -> conj(z)^4 + c", TRICORN_REF),
+        power_spec(FractalKind::Tricorn5, "Tricorn 5", 18, (0.0, 0.0), "z -> conj(z)^5 + c", TRICORN_REF),
+        power_spec(FractalKind::Celtic3, "Celtic 3", 19, (0.0, 0.0), "Re -> |Re(z^3)| + cx;  Im -> Im(z^3) + cy", CELTIC_REF),
+        power_spec(FractalKind::Celtic4, "Celtic 4", 20, (0.0, 0.0), "Re -> |Re(z^4)| + cx;  Im -> Im(z^4) + cy", CELTIC_REF),
+        power_spec(FractalKind::Celtic5, "Celtic 5", 21, (0.0, 0.0), "Re -> |Re(z^5)| + cx;  Im -> Im(z^5) + cy", CELTIC_REF),
+        power_spec(FractalKind::Buffalo3, "Buffalo 3", 22, (0.0, 0.0), "Re -> |Re(z^3)| + cx;  Im -> |Im(z^3)| + cy", CELTIC_REF),
+        power_spec(FractalKind::Buffalo4, "Buffalo 4", 23, (0.0, 0.0), "Re -> |Re(z^4)| + cx;  Im -> |Im(z^4)| + cy", CELTIC_REF),
+        power_spec(FractalKind::Buffalo5, "Buffalo 5", 24, (0.0, 0.0), "Re -> |Re(z^5)| + cx;  Im -> |Im(z^5)| + cy", CELTIC_REF),
         // The one row whose id is not its index: a custom formula renders under
         // `formula::CUSTOM`, which no built-in branch of the shader matches.
         FractalSpec {
@@ -362,9 +330,7 @@ impl FractalKind {
             supports_perturbation: false,
             class: FractalClass::EscapeTime,
             info: FractalInfo {
-                formula: "z -> the formula you write",
-                about: "A formula written in Fractint-style expressions (Fractal > Custom \
-                        formula...). It renders on the direct path, so it has no deep zoom yet.",
+                formula: "",
                 reference: "",
             },
         },
@@ -379,9 +345,7 @@ impl FractalKind {
             supports_perturbation: false,
             class: FractalClass::Life,
             info: FractalInfo {
-                formula: "B3/S23: born with 3 live neighbours, survives with 2 or 3",
-                about: "Conway's Game of Life and its relatives on an unbounded plane: Generations \
-                        rules, non-totalistic (Hensel) rules, pattern files. Play, step, draw.",
+                formula: "",
                 reference: "https://en.wikipedia.org/wiki/Conway%27s_Game_of_Life",
             },
         },
@@ -395,10 +359,7 @@ impl FractalKind {
             supports_perturbation: false,
             class: FractalClass::LSystem,
             info: FractalInfo {
-                formula: "F = F+F--F+F: each symbol rewritten, then drawn by a turtle",
-                about: "Lindenmayer systems: curves, space-filling curves, islands and plants drawn \
-                        by a turtle from a rewriting grammar. The order follows the zoom, so the \
-                        detail never runs out. Fractint .l files open directly.",
+                formula: "",
                 reference: "https://en.wikipedia.org/wiki/L-system",
             },
         },
@@ -425,8 +386,51 @@ impl FractalKind {
         self.class() == FractalClass::EscapeTime
     }
 
+    /// The family's TOKEN: what sessions, view files, scripts, logs and file names hold. English,
+    /// and never translated: the interface shows [`Self::display_name`].
     pub(crate) fn name(self) -> &'static str {
         self.spec().name
+    }
+
+    /// The family's name as the interface shows it, in the language in use: "Burning Ship 4".
+    pub(crate) fn display_name(self) -> String {
+        match self.shown_power() {
+            Some(d) => tr!(fractal_with_power, family = self.family_name(), power = d.to_string()),
+            None => self.family_name(),
+        }
+    }
+
+    /// The family without its power ("Burning Ship"), in the language in use: the pickers' row for
+    /// a power family, whose powers follow it as buttons.
+    pub(crate) fn family_name(self) -> String {
+        use FractalKind::*;
+        match self {
+            Mandelbrot => tr!(fractal_family_mandelbrot),
+            Multibrot3 | Multibrot4 | Multibrot5 | Multibrot6 | Multibrot7 | Multibrot8 => tr!(fractal_family_multibrot),
+            Tricorn | Tricorn3 | Tricorn4 | Tricorn5 => tr!(fractal_family_tricorn),
+            BurningShip | BurningShip3 | BurningShip4 | BurningShip5 => tr!(fractal_family_burning_ship),
+            Celtic | Celtic3 | Celtic4 | Celtic5 => tr!(fractal_family_celtic),
+            Buffalo | Buffalo3 | Buffalo4 | Buffalo5 => tr!(fractal_family_buffalo),
+            Phoenix => tr!(fractal_family_phoenix),
+            Newton => tr!(fractal_family_newton),
+            Custom => tr!(fractal_family_custom),
+            Life => tr!(fractal_family_life),
+            LSystem => tr!(fractal_family_lsystem),
+        }
+    }
+
+    /// The power the name carries ("Multibrot 3"), as the token writes it.
+    fn shown_power(self) -> Option<u32> {
+        use FractalKind::*;
+        match self {
+            Multibrot3 | BurningShip3 | Tricorn3 | Celtic3 | Buffalo3 => Some(3),
+            Multibrot4 | BurningShip4 | Tricorn4 | Celtic4 | Buffalo4 => Some(4),
+            Multibrot5 | BurningShip5 | Tricorn5 | Celtic5 | Buffalo5 => Some(5),
+            Multibrot6 => Some(6),
+            Multibrot7 => Some(7),
+            Multibrot8 => Some(8),
+            _ => None,
+        }
     }
 
     pub(crate) fn from_name(name: &str) -> Option<FractalKind> {
@@ -486,13 +490,58 @@ impl FractalKind {
     /// than written out again, so a new family gets its tooltip from its `SPECS` row and
     /// the two can never disagree.
     pub(crate) fn menu_hint(self) -> String {
-        let info = self.info();
-        let mut s = format!("{}\n\n{}", info.formula, info.about);
+        let mut s = format!("{}\n\n{}", self.formula(), self.about());
         if !self.supports_perturbation() {
             // The one difference a picker cannot show but a user feels immediately.
-            s.push_str("\n\nDirect rendering only - this family has no deep zoom.");
+            s.push_str("\n\n");
+            s.push_str(&tr!(fractal_no_deep_zoom));
         }
         s
+    }
+
+    /// The iteration as the info panel and the pickers show it: written in the formula language,
+    /// or, for the families whose "formula" is a sentence, that sentence in the language in use.
+    pub(crate) fn formula(self) -> String {
+        match self {
+            FractalKind::Custom => tr!(fractal_custom_formula),
+            FractalKind::Life => tr!(fractal_life_formula),
+            FractalKind::LSystem => tr!(fractal_lsystem_formula),
+            _ => self.info().formula.to_string(),
+        }
+    }
+
+    /// What the family is, in a sentence or two, in the language in use.
+    pub(crate) fn about(self) -> String {
+        match self {
+            FractalKind::Mandelbrot => tr!(fractal_mandelbrot_about),
+            FractalKind::Multibrot3 => tr!(fractal_multibrot3_about),
+            FractalKind::Multibrot4 => tr!(fractal_multibrot4_about),
+            FractalKind::Multibrot5 => tr!(fractal_multibrot5_about),
+            FractalKind::Tricorn => tr!(fractal_tricorn_about),
+            FractalKind::BurningShip => tr!(fractal_burning_ship_about),
+            FractalKind::Celtic => tr!(fractal_celtic_about),
+            FractalKind::Buffalo => tr!(fractal_buffalo_about),
+            FractalKind::Phoenix => tr!(fractal_phoenix_about),
+            FractalKind::Newton => tr!(fractal_newton_about),
+            FractalKind::Multibrot6 => tr!(fractal_multibrot6_about),
+            FractalKind::Multibrot7 => tr!(fractal_multibrot7_about),
+            FractalKind::Multibrot8 => tr!(fractal_multibrot8_about),
+            FractalKind::BurningShip3 => tr!(fractal_burning_ship3_about),
+            FractalKind::BurningShip4 => tr!(fractal_burning_ship4_about),
+            FractalKind::BurningShip5 => tr!(fractal_burning_ship5_about),
+            FractalKind::Tricorn3 => tr!(fractal_tricorn3_about),
+            FractalKind::Tricorn4 => tr!(fractal_tricorn4_about),
+            FractalKind::Tricorn5 => tr!(fractal_tricorn5_about),
+            FractalKind::Celtic3 => tr!(fractal_celtic3_about),
+            FractalKind::Celtic4 => tr!(fractal_celtic4_about),
+            FractalKind::Celtic5 => tr!(fractal_celtic5_about),
+            FractalKind::Buffalo3 => tr!(fractal_buffalo3_about),
+            FractalKind::Buffalo4 => tr!(fractal_buffalo4_about),
+            FractalKind::Buffalo5 => tr!(fractal_buffalo5_about),
+            FractalKind::Custom => tr!(fractal_custom_about),
+            FractalKind::Life => tr!(fractal_life_about),
+            FractalKind::LSystem => tr!(fractal_lsystem_about),
+        }
     }
 }
 

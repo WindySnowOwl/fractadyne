@@ -142,10 +142,59 @@ pub(crate) struct MisiTarget {
 /// Go-to dialog's "Find near view": detection at the view's scale, then Newton at the target
 /// depth). The dive holds still until it answers.
 pub(crate) struct MisiSolve {
-    pub(crate) rx: std::sync::mpsc::Receiver<Result<MisiTarget, String>>,
+    pub(crate) rx: std::sync::mpsc::Receiver<Result<MisiTarget, MisiMiss>>,
     pub(crate) started: std::time::Instant,
     /// When the waiting toast was last refreshed (app time).
     pub(crate) toast_t: f64,
+}
+
+/// Why the Misiurewicz target could not be had. The user is told in a toast, in the language in
+/// use; the log gets the same in English.
+pub(crate) enum MisiMiss {
+    /// The detector found no preperiodic point near the view.
+    NotFound,
+    /// The nearest point is this many (log2) view widths away.
+    OffScreen { preperiod: u32, period: u32, log2_view_widths: f64 },
+    /// The point was found but did not solve.
+    NotSolved { preperiod: u32, period: u32 },
+    /// The solver refused the pair.
+    Refused,
+}
+
+impl MisiMiss {
+    /// The toast: two deliberate lines, the verdict and then what to do about it.
+    fn toast(&self) -> String {
+        match *self {
+            MisiMiss::NotFound => tr!(autopilot_misi_not_found),
+            MisiMiss::OffScreen { preperiod, period, log2_view_widths } => tr!(
+                autopilot_misi_off_screen,
+                preperiod = preperiod.to_string(),
+                period = period.to_string(),
+                widths = format!("{log2_view_widths:.0}")
+            ),
+            MisiMiss::NotSolved { preperiod, period } => tr!(
+                autopilot_misi_not_solved,
+                preperiod = preperiod.to_string(),
+                period = period.to_string()
+            ),
+            MisiMiss::Refused => tr!(autopilot_misi_refused),
+        }
+    }
+
+    /// The same, for the log.
+    fn log_text(&self) -> String {
+        match *self {
+            MisiMiss::NotFound => "no Misiurewicz point found near this view".to_string(),
+            MisiMiss::OffScreen { preperiod, period, log2_view_widths } => format!(
+                "the nearest Misiurewicz point ({preperiod},{period}) is off screen, \
+                 ~2^{log2_view_widths:.0} screen widths away"
+            ),
+            MisiMiss::NotSolved { preperiod, period } => {
+                format!("the Misiurewicz point ({preperiod},{period}) near this view did not solve")
+            }
+            MisiMiss::Refused => "Misiurewicz solve refused (bad pair)".to_string(),
+        }
+    }
 }
 
 /// Where a fixed fractal coordinate sits on screen, as the fraction the autopilot steers in.
@@ -250,13 +299,13 @@ impl FractadyneApp {
             if self.autopilot.target == AutopilotTarget::Misiurewicz {
                 self.start_misi_target_solve(ctx);
             } else {
-                self.set_toast("Autopilot on — diving toward detail (any input stops)", ctx);
+                self.set_toast(tr!(autopilot_on_detail), ctx);
             }
         } else {
             self.pointer.zoom_vel = 0.0;
             self.autopilot.stepping = false;
             self.autopilot.misi_solve = None;
-            self.set_toast("Autopilot off", ctx);
+            self.set_toast(tr!(autopilot_off), ctx);
         }
     }
 
@@ -266,10 +315,7 @@ impl FractadyneApp {
     /// toward detail instead and says so.
     fn start_misi_target_solve(&mut self, ctx: &egui::Context) {
         if !self.fractal.caps().feature_solvers || self.julia_mode {
-            self.set_toast(
-                "Autopilot: a Misiurewicz target needs the Mandelbrot set\nDiving toward detail instead",
-                ctx,
-            );
+            self.set_toast(tr!(autopilot_misi_needs_mandelbrot), ctx);
             return;
         }
         let center = [self.viewport.center_x.clone(), self.viewport.center_y.clone()];
@@ -295,11 +341,8 @@ impl FractadyneApp {
                 precision,
                 Some(span_log2),
             );
-            // Toast text, two deliberate lines: the verdict, then what to do about it.
             let msg = match found {
-                None => Err("Autopilot: no Misiurewicz point found near this view\n\
-                             The finder may not reach this depth — try the Detail target"
-                    .to_string()),
+                None => Err(MisiMiss::NotFound),
                 Some((k, p)) => match fractadyne_core::find_misiurewicz(
                     &center,
                     k,
@@ -322,18 +365,14 @@ impl FractadyneApp {
                             solved_l2: solve_l2,
                         })
                     }
-                    Err(fractadyne_core::MisiurewiczMiss::TooFar { log2_view_widths }) => Err(format!(
-                        "Autopilot: the nearest Misiurewicz point ({k},{p}) is off screen\n\
-                         ~2^{log2_view_widths:.0} screen widths away — move closer to a spiral centre"
-                    )),
-                    Err(fractadyne_core::MisiurewiczMiss::NotPreperiodic { .. })
-                    | Err(fractadyne_core::MisiurewiczMiss::NotConverged) => Err(format!(
-                        "Autopilot: the Misiurewicz point ({k},{p}) near this view did not solve\n\
-                         Try the Detail target"
-                    )),
-                    Err(fractadyne_core::MisiurewiczMiss::BadRequest) => {
-                        Err("Autopilot: Misiurewicz solve refused (bad pair)".to_string())
+                    Err(fractadyne_core::MisiurewiczMiss::TooFar { log2_view_widths }) => {
+                        Err(MisiMiss::OffScreen { preperiod: k, period: p, log2_view_widths })
                     }
+                    Err(fractadyne_core::MisiurewiczMiss::NotPreperiodic { .. })
+                    | Err(fractadyne_core::MisiurewiczMiss::NotConverged) => {
+                        Err(MisiMiss::NotSolved { preperiod: k, period: p })
+                    }
+                    Err(fractadyne_core::MisiurewiczMiss::BadRequest) => Err(MisiMiss::Refused),
                 },
             };
             let _ = tx.send(msg);
@@ -343,7 +382,7 @@ impl FractadyneApp {
             started: std::time::Instant::now(),
             toast_t: f64::NEG_INFINITY,
         });
-        self.set_toast("Autopilot on — finding the nearest Misiurewicz point…\nAny input stops", ctx);
+        self.set_toast(tr!(autopilot_on_misi), ctx);
         crate::diag::log_line(
             "autopilot",
             &format!("misiurewicz target: detecting from 2^{cur_l2:.4}, solving to 2^{solve_l2:.1}"),
@@ -357,16 +396,16 @@ impl FractadyneApp {
         match solve.rx.try_recv() {
             Ok(Ok(m)) => {
                 let took = solve.started.elapsed().as_secs_f64();
+                let (preperiod, period) = (m.preperiod.to_string(), m.period.to_string());
                 let label = match (m.repeat_oct, m.twist_deg) {
-                    (Some(r), Some(t)) => format!(
-                        "Autopilot: diving into Misiurewicz ({},{})\n\
-                         Structure repeats every {r:.2} octaves, twist {t:+.1}° · any input stops",
-                        m.preperiod, m.period
+                    (Some(r), Some(t)) => tr!(
+                        autopilot_misi_diving_repeat,
+                        preperiod = preperiod,
+                        period = period,
+                        octaves = crate::i18n::decimal(r, 2),
+                        twist = crate::i18n::decimal_signed(t, 1)
                     ),
-                    _ => format!(
-                        "Autopilot: diving into Misiurewicz ({},{})\nAny input stops",
-                        m.preperiod, m.period
-                    ),
+                    _ => tr!(autopilot_misi_diving, preperiod = preperiod, period = period),
                 };
                 crate::diag::log_line(
                     "autopilot",
@@ -381,25 +420,19 @@ impl FractadyneApp {
                 self.set_toast(label, ctx);
             }
             Ok(Err(why)) => {
-                crate::diag::log_line(
-                    "autopilot",
-                    &format!("misiurewicz target: {}", why.replace('\n', " — ")),
-                );
+                crate::diag::log_line("autopilot", &format!("misiurewicz target: {}", why.log_text()));
                 self.autopilot.misi_solve = None;
                 self.autopilot.active = false;
                 self.autopilot.stepping = false;
                 self.pointer.zoom_vel = 0.0;
-                self.set_toast(why, ctx);
+                self.set_toast(why.toast(), ctx);
             }
             Err(std::sync::mpsc::TryRecvError::Empty) => {
                 // A deep detect can take a minute; keep the toast alive with the elapsed time.
                 if now - solve.toast_t > 2.0 {
                     solve.toast_t = now;
                     let s = solve.started.elapsed().as_secs_f64();
-                    self.set_toast(
-                        format!("Autopilot: finding the nearest Misiurewicz point…\n{s:.0} s · any input stops"),
-                        ctx,
-                    );
+                    self.set_toast(tr!(autopilot_misi_finding, seconds = crate::i18n::decimal(s, 0)), ctx);
                 }
             }
             Err(std::sync::mpsc::TryRecvError::Disconnected) => {
@@ -407,7 +440,7 @@ impl FractadyneApp {
                 self.autopilot.active = false;
                 self.autopilot.stepping = false;
                 self.pointer.zoom_vel = 0.0;
-                self.set_toast("Autopilot: the Misiurewicz solver stopped unexpectedly", ctx);
+                self.set_toast(tr!(autopilot_misi_stopped), ctx);
             }
         }
     }
@@ -443,13 +476,8 @@ impl FractadyneApp {
             self.autopilot.active = false;
             self.autopilot.stepping = false;
             self.pointer.zoom_vel = 0.0;
-            self.set_toast(
-                format!(
-                    "Autopilot: dive limit reached (~1e{:.0}×)",
-                    self.autopilot.dive_log2 / std::f64::consts::LOG2_10
-                ),
-                ctx,
-            );
+            let limit = format!("1e{:.0}", self.autopilot.dive_log2 / std::f64::consts::LOG2_10);
+            self.set_toast(tr!(autopilot_dive_limit, limit = limit), ctx);
             return;
         }
         // Refreshes that complete with no escaped pixel: the view has nothing at this iteration
@@ -1092,18 +1120,9 @@ pub(crate) fn dead_end_message(l2: f64, max_iter: u32, auto_iter: bool, range_hi
     match crate::deep_jump_iter_shortfall(l2, max_iter, auto_iter) {
         // Two deliberate lines: the verdict, then the fix (a toast wraps a long line wherever
         // the width falls, which broke mid-parenthesis).
-        Some((have, typical)) => format!(
-            "Autopilot stopped: nothing left to aim at — iterations are fixed at {} and this \
-             depth typically needs ~{}\nEnable auto-iterations or raise the count",
-            crate::commas(&have.to_string()),
-            crate::commas(&typical.to_string()),
-        ),
-        None if at_cap => format!(
-            "Autopilot stopped: nothing left to aim at — everything in view runs to the fixed \
-             iteration limit of {}\nEnable auto-iterations or raise the count",
-            crate::commas(&max_iter.to_string()),
-        ),
-        None => "Autopilot: no detail ahead (stopped)".to_string(),
+        Some((have, typical)) => tr!(autopilot_dead_end_short, have = have, typical = typical),
+        None if at_cap => tr!(autopilot_dead_end_cap, limit = max_iter),
+        None => tr!(autopilot_dead_end),
     }
 }
 

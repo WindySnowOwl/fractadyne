@@ -25,7 +25,10 @@ use fractadyne_color::segment::{hsv_to_rgb, rgb_to_hsv};
 /// all three are editable.
 /// ⚠The labels stay in the user's vocabulary, not the implementation's: egui's stock picker calls
 /// these `U8` and `F`, which are exactly right and mean nothing without its source.
-pub(crate) const ROW_LABELS: [&str; 3] = ["0–255", "0–1", "Hex"];
+/// (A function, not a table: "Hex" is a word, in the language in use; the ranges are notation.)
+pub(crate) fn row_labels() -> [String; 3] {
+    ["0–255".to_string(), "0–1".to_string(), tr!(picker_row_hex)]
+}
 
 /// What one frame of the popup decided.
 #[derive(Clone, Copy, PartialEq, Debug)]
@@ -183,6 +186,7 @@ pub(crate) fn picker_body(ui: &mut egui::Ui, id: egui::Id, rgb: &mut [f32; 3]) -
         );
     };
 
+    let [range_255, range_1, hex] = row_labels();
     ui.horizontal(|ui| {
         ui.add_sized([LABEL_W, 14.0], egui::Label::new(""));
         for name in ["R", "G", "B"] {
@@ -190,7 +194,7 @@ pub(crate) fn picker_body(ui: &mut egui::Ui, id: egui::Id, rgb: &mut [f32; 3]) -
         }
     });
     ui.horizontal(|ui| {
-        row_label(ui, ROW_LABELS[0]);
+        row_label(ui, range_255.as_str());
         for i in 0..3 {
             let mut b = (rgb[i].clamp(0.0, 1.0) * 255.0 + 0.5) as i32;
             if ui
@@ -202,7 +206,7 @@ pub(crate) fn picker_body(ui: &mut egui::Ui, id: egui::Id, rgb: &mut [f32; 3]) -
         }
     });
     ui.horizontal(|ui| {
-        row_label(ui, ROW_LABELS[1]);
+        row_label(ui, range_1.as_str());
         for i in 0..3 {
             let mut f = rgb[i];
             if ui
@@ -225,7 +229,7 @@ pub(crate) fn picker_body(ui: &mut egui::Ui, id: egui::Id, rgb: &mut [f32; 3]) -
     let focus_id = id.with("hexfocus");
     let editing = ui.data_mut(|d| d.get_temp::<bool>(editing_id).unwrap_or(false));
     ui.horizontal(|ui| {
-        row_label(ui, ROW_LABELS[2]);
+        row_label(ui, hex.as_str());
         if editing {
             let hid = id.with("hex");
             let mut text =
@@ -263,7 +267,7 @@ pub(crate) fn picker_body(ui: &mut egui::Ui, id: egui::Id, rgb: &mut [f32; 3]) -
                         egui::Label::new(egui::RichText::new(format!("{b:02x}")).monospace())
                             .sense(egui::Sense::click()),
                     )
-                    .on_hover_text("Click to type a hex value")
+                    .on_hover_text(tr!(picker_hex_hover))
                     .clicked();
             }
             if clicked {
@@ -287,13 +291,13 @@ pub(crate) fn picker_body(ui: &mut egui::Ui, id: egui::Id, rgb: &mut [f32; 3]) -
     ui.separator();
     let mut out = PickerOutcome::Open;
     crate::theme::action_row(ui, |ui| {
-        if crate::theme::cancel_button(ui, "Cancel")
-            .on_hover_text("Put back the colour this picker opened with")
+        if crate::theme::cancel_button(ui, &tr!(picker_cancel))
+            .on_hover_text(tr!(picker_cancel_hover))
             .clicked()
         {
             out = PickerOutcome::Cancel;
         }
-        if crate::theme::confirm_button(ui, "OK").on_hover_text("Keep this colour").clicked() {
+        if crate::theme::confirm_button(ui, &tr!(picker_ok)).on_hover_text(tr!(picker_ok_hover)).clicked() {
             out = PickerOutcome::Accept;
         }
         // ⚠On the far LEFT of the row: it is not a commit, and sitting beside OK it would be read
@@ -302,9 +306,9 @@ pub(crate) fn picker_body(ui: &mut egui::Ui, id: egui::Id, rgb: &mut [f32; 3]) -
             if ui
                 .add_enabled(
                     crate::eyedropper::supported(),
-                    egui::Button::new(format!("{} Pick", crate::icons::PICK)),
+                    egui::Button::new(format!("{} {}", crate::icons::PICK, tr!(picker_pick))),
                 )
-                .on_hover_text("Take a colour from anywhere on screen")
+                .on_hover_text(tr!(picker_pick_hover))
                 .clicked()
             {
                 out = PickerOutcome::Pick;

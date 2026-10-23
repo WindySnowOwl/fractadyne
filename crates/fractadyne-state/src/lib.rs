@@ -429,6 +429,9 @@ pub struct SessionState {
     /// that the app has, it asks once whether to switch.
     #[serde(default)]
     pub language_system_seen: String,
+    /// The decimal mark numbers take: `"."` or `","`, or empty for the language's own.
+    #[serde(default)]
+    pub decimal_mark: String,
     /// Draw the "Fd" brand mark on the live view and exports. Default ON; the first-run overlay
     /// offers the opt-out, because someone publishing frames wants that choice up front rather than
     /// after discovering it in a menu.
@@ -713,6 +716,7 @@ impl Default for SessionState {
             update_check_on_launch: false,
             language: String::new(),
             language_system_seen: String::new(),
+            decimal_mark: String::new(),
             show_watermark: true,
             crash_prompt_disabled: false,
             show_orbits: false,

@@ -2922,15 +2922,15 @@ impl ColorMethod {
             ColorMethod::Decomposition => "decomposition",
         }
     }
-    /// Human label for the UI combo box.
-    pub(crate) fn label(self) -> &'static str {
+    /// Human label for the UI combo box, in the language in use.
+    pub(crate) fn label(self) -> String {
         match self {
-            ColorMethod::Smooth => "Smooth iteration",
-            ColorMethod::Stripe => "Stripe average",
-            ColorMethod::TriangleIneq => "Triangle inequality",
-            ColorMethod::OrbitTrap => "Orbit trap",
-            ColorMethod::Distance => "Distance estimate",
-            ColorMethod::Decomposition => "Decomposition",
+            ColorMethod::Smooth => tr!(color_method_smooth),
+            ColorMethod::Stripe => tr!(color_method_stripe),
+            ColorMethod::TriangleIneq => tr!(color_method_triangle),
+            ColorMethod::OrbitTrap => tr!(color_method_trap),
+            ColorMethod::Distance => tr!(color_method_distance),
+            ColorMethod::Decomposition => tr!(color_method_decomposition),
         }
     }
     pub(crate) fn from_key(s: &str) -> ColorMethod {
@@ -2987,11 +2987,12 @@ impl TrapType {
             TrapType::Circle => "circle",
         }
     }
-    pub(crate) fn label(self) -> &'static str {
+    /// The trap's name in the language in use.
+    pub(crate) fn label(self) -> String {
         match self {
-            TrapType::Point => "Point",
-            TrapType::Cross => "Cross",
-            TrapType::Circle => "Circle",
+            TrapType::Point => tr!(trap_point),
+            TrapType::Cross => tr!(trap_cross),
+            TrapType::Circle => tr!(trap_circle),
         }
     }
     pub(crate) fn from_key(s: &str) -> TrapType {
@@ -3017,13 +3018,14 @@ impl PaletteAnim {
         PaletteAnim::PingPong,
         PaletteAnim::Random,
     ];
-    fn name(self) -> &'static str {
+    /// The mode's name in the language in use.
+    fn name(self) -> String {
         match self {
-            PaletteAnim::Off => "Off",
-            PaletteAnim::Forward => "Forward",
-            PaletteAnim::Reverse => "Reverse",
-            PaletteAnim::PingPong => "Ping-pong",
-            PaletteAnim::Random => "Random gradients",
+            PaletteAnim::Off => tr!(palette_anim_off),
+            PaletteAnim::Forward => tr!(palette_anim_forward),
+            PaletteAnim::Reverse => tr!(palette_anim_reverse),
+            PaletteAnim::PingPong => tr!(palette_anim_pingpong),
+            PaletteAnim::Random => tr!(palette_anim_random),
         }
     }
     pub(crate) fn key(self) -> &'static str {
@@ -3074,14 +3076,14 @@ const PASTE_MAX_COLORS: usize = 256;
 
 /// Short UI names for the blend kinds. ⚠The NUMBERS are a file format (GIMP's `.ggr` numbering,
 /// also written into sessions); these labels are not, and may be reworded freely.
-fn blend_label(k: u8) -> &'static str {
+fn blend_label(k: u8) -> String {
     match k {
-        1 => "Curved",
-        2 => "Sine",
-        3 => "Sphere ↑",
-        4 => "Sphere ↓",
-        5 => "Bézier",
-        _ => "Linear",
+        1 => tr!(app_gradient_blend_curved),
+        2 => tr!(app_gradient_blend_sine),
+        3 => tr!(app_gradient_blend_sphere_increasing),
+        4 => tr!(app_gradient_blend_sphere_decreasing),
+        5 => tr!(app_gradient_blend_bezier),
+        _ => tr!(app_gradient_blend_linear),
     }
 }
 
@@ -3894,23 +3896,32 @@ pub(crate) fn zoom_slot_width() -> usize {
 /// report). `status_readouts_never_change_width` sweeps the whole supported range against it.
 pub(crate) fn zoom_readout(dual: bool, m_log2: f64, j_log2: f64) -> String {
     let zw = zoom_slot_width();
+    let word = tr!(status_zoom);
     if dual {
-        format!("zoom  M {:>zw$}×   J {:>zw$}×", fmt_zoom_log2(m_log2), fmt_zoom_log2(j_log2))
+        format!("{word}  M {:>zw$}×   J {:>zw$}×", fmt_zoom_log2(m_log2), fmt_zoom_log2(j_log2))
     } else {
-        format!("zoom {:>zw$}×", fmt_zoom_log2(m_log2))
+        format!("{word} {:>zw$}×", fmt_zoom_log2(m_log2))
     }
 }
 
 /// The status bar's iteration readout — same width contract as [`zoom_readout`], and the field
 /// the beta.149 report actually wrapped on (`iter 1,395,703` alone on a second line).
 pub(crate) fn iter_readout(eff_iter: u32) -> String {
-    format!("iter {:>w$}", commas(&eff_iter.to_string()), w = iter_slot_width())
+    format!("{} {:>w$}", tr!(status_iter), status_count(eff_iter as u64), w = iter_slot_width())
 }
 
 /// Character slot for the status bar's grouped iteration count — `MAX_ITER_LIMIT` is the widest
 /// value it can ever show. Same reflow reasoning as [`zoom_slot_width`].
 pub(crate) fn iter_slot_width() -> usize {
-    commas(&MAX_ITER_LIMIT.to_string()).chars().count()
+    status_count(MAX_ITER_LIMIT as u64).chars().count()
+}
+
+/// A count in a status-bar slot: grouped as the interface writes numbers (`1,234` / `1.234`),
+/// except that a separator outside ASCII (French's narrow no-break space) becomes a space: the
+/// slot is reserved in monospace cells, and only ASCII is sure to take exactly one.
+pub(crate) fn status_count(n: u64) -> String {
+    let sep = crate::i18n::punctuation().group;
+    crate::i18n::group_digits(&n.to_string(), if sep.is_ascii() { sep } else { ' ' })
 }
 
 /// The status bar's ambient minibrot-period readout. `Some(p)` renders `period p`; `None` renders
@@ -3919,10 +3930,11 @@ pub(crate) fn iter_slot_width() -> usize {
 /// slot below. The field is pinned to grouped `100,000`, the finder's `max_period` clamp, which is
 /// the widest period either solve path can report.
 pub(crate) fn period_readout(period: Option<u32>) -> String {
-    let w = commas(&100_000u32.to_string()).chars().count(); // "100,000" → 7
+    let w = status_count(100_000).chars().count(); // "100,000" → 7
+    let word = tr!(status_period);
     match period {
-        Some(p) => format!("period {:>w$}", commas(&p.to_string())),
-        None => format!("period {:>w$}", "—"),
+        Some(p) => format!("{word} {:>w$}", status_count(p as u64)),
+        None => format!("{word} {:>w$}", "—"),
     }
 }
 
@@ -4246,13 +4258,13 @@ pub(crate) fn random_boundary_location(seed: u64) -> (f64, f64, f64) {
 /// hand-edited down to just the coordinates is still a location. What it excludes is arbitrary
 /// text, which `load_view_metadata` would silently accept as "no recognised keys" and apply as a
 /// no-op jump, leaving the user staring at an unchanged view with no error.
-pub(crate) fn location_text_verdict(t: &str) -> Result<(), &'static str> {
+pub(crate) fn location_text_verdict(t: &str) -> Result<(), String> {
     let t = t.trim();
     if t.is_empty() || t.len() > SHARE_MAX {
-        return Err("Nothing to load (or text too large).");
+        return Err(tr!(app_location_empty));
     }
     if meta_get(t, "app") != "Fractadyne" && meta_get(t, "center_re").is_empty() {
-        return Err("Not a Fractadyne location.");
+        return Err(tr!(app_location_not_fractadyne));
     }
     Ok(())
 }
@@ -4340,6 +4352,18 @@ pub(crate) const STANDARD_SIZES: &[(&str, u32, u32)] = &[
     ("DCI 2K — 2048×1080", 2048, 1080),
     ("DCI 4K — 4096×2160", 4096, 2160),
 ];
+
+/// A [`STANDARD_SIZES`] label as the pickers show it: the format's standard name (HD 720p, WUXGA,
+/// DCI 4K) stays as it is, and the three that are described in words are in the language in use.
+/// The table's own labels are keys (the selftest names them) and stay English.
+pub(crate) fn size_preset_label(label: &str) -> String {
+    match label {
+        "Square — 2048×2048" => tr!(size_preset_square, size = "2048×2048"),
+        "Portrait 9:16 — 1080×1920" => tr!(size_preset_portrait, ratio = "9:16", size = "1080×1920"),
+        "Super ultrawide 32:9 — 5120×1440" => tr!(size_preset_super_ultrawide, ratio = "32:9", size = "5120×1440"),
+        other => other.to_string(),
+    }
+}
 
 /// The [`EXPORT_ASPECTS`] key matching `w × h`, or `None` when no listed ratio reproduces it.
 /// The tolerance is half a pixel of height at this width: that is exactly the condition for the
@@ -4550,6 +4574,18 @@ impl IssueKind {
         IssueKind::Feature,
         IssueKind::Other,
     ];
+    /// The kind in the language in use, for the report window.
+    pub(crate) fn ui_label(self) -> String {
+        match self {
+            IssueKind::Crash => tr!(issue_kind_crash),
+            IssueKind::Rendering => tr!(issue_kind_rendering),
+            IssueKind::Performance => tr!(issue_kind_performance),
+            IssueKind::Ui => tr!(issue_kind_ui),
+            IssueKind::Feature => tr!(issue_kind_feature),
+            IssueKind::Other => tr!(issue_kind_other),
+        }
+    }
+    /// The kind in English, as the report sent to the maintainer names it.
     pub(crate) fn label(self) -> &'static str {
         match self {
             IssueKind::Crash => "Application crash / freeze",
@@ -4580,6 +4616,17 @@ impl Severity {
         Severity::High,
         Severity::Blocking,
     ];
+    /// The severity in the language in use, for the report window.
+    pub(crate) fn ui_label(self) -> String {
+        match self {
+            Severity::Unspecified => "—".to_string(),
+            Severity::Low => tr!(severity_low),
+            Severity::Medium => tr!(severity_medium),
+            Severity::High => tr!(severity_high),
+            Severity::Blocking => tr!(severity_blocking),
+        }
+    }
+    /// The severity in English, as the report names it.
     pub(crate) fn label(self) -> &'static str {
         match self {
             Severity::Unspecified => "—",
@@ -4604,6 +4651,17 @@ pub(crate) enum Repro {
 impl Repro {
     pub(crate) const ALL: [Repro; 5] =
         [Repro::Unspecified, Repro::Always, Repro::Sometimes, Repro::Once, Repro::Cannot];
+    /// How reproducible, in the language in use, for the report window.
+    pub(crate) fn ui_label(self) -> String {
+        match self {
+            Repro::Unspecified => "—".to_string(),
+            Repro::Always => tr!(repro_always),
+            Repro::Sometimes => tr!(repro_sometimes),
+            Repro::Once => tr!(repro_once),
+            Repro::Cannot => tr!(repro_cannot),
+        }
+    }
+    /// The same in English, as the report names it.
     pub(crate) fn label(self) -> &'static str {
         match self {
             Repro::Unspecified => "—",
@@ -4859,11 +4917,12 @@ pub(crate) enum AngleUnit {
 }
 
 impl AngleUnit {
-    fn label(self) -> &'static str {
+    /// The unit's name in the language in use.
+    fn label(self) -> String {
         match self {
-            AngleUnit::Degrees => "degrees",
-            AngleUnit::Radians => "radians",
-            AngleUnit::Turns => "turns",
+            AngleUnit::Degrees => tr!(angle_degrees),
+            AngleUnit::Radians => tr!(angle_radians),
+            AngleUnit::Turns => tr!(angle_turns),
         }
     }
     pub(crate) const ALL: [AngleUnit; 3] = [AngleUnit::Degrees, AngleUnit::Radians, AngleUnit::Turns];
@@ -4908,11 +4967,12 @@ impl SnapshotMode {
             _ => SnapshotMode::Ask,
         }
     }
-    pub(crate) fn label(self) -> &'static str {
+    /// The choice's name in the language in use.
+    pub(crate) fn label(self) -> String {
         match self {
-            SnapshotMode::Ask => "Ask each time",
-            SnapshotMode::Screen => "Screen capture",
-            SnapshotMode::Render => "Full render",
+            SnapshotMode::Ask => tr!(snapshot_mode_ask),
+            SnapshotMode::Screen => tr!(snapshot_mode_screen),
+            SnapshotMode::Render => tr!(snapshot_mode_render),
         }
     }
 }
@@ -4967,29 +5027,29 @@ fn goto_error_message(
 ) -> String {
     let mut lines = Vec::new();
     if let Some(e) = re {
-        lines.push(format!("Re: {e}"));
+        lines.push(tr!(app_goto_error_re, error = e.to_string()));
     }
     if let Some(e) = im {
         // Only Im can be refused for HAVING an imaginary part (a complex value in Re is the
         // whole-value form and is accepted), so the fix is specific and worth stating.
         if e.pos.is_none() && e.reason.contains("imaginary part") {
-            lines.push(format!("Im: {e} — type the imaginary part as a real number, without the i"));
+            lines.push(tr!(app_goto_error_im_real, error = e.to_string()));
         } else {
-            lines.push(format!("Im: {e}"));
+            lines.push(tr!(app_goto_error_im, error = e.to_string()));
         }
     }
     if let Some(z) = zoom {
         let z = z.trim();
         lines.push(if z.is_empty() {
-            "Zoom: enter a magnification, e.g. 1e50 or 250000".to_string()
+            tr!(app_goto_error_zoom_empty)
         } else {
-            format!("Zoom: cannot read {z:?} — enter a positive magnification such as 1e50 or 250000")
+            tr!(app_goto_error_zoom, zoom = format!("{z:?}"))
         });
     }
     if lines.is_empty() {
         // Unreachable by construction (a failed jump has at least one failed input); kept so the
         // dialog can never show an empty verdict.
-        return "Invalid input — check the coordinates and zoom.".to_string();
+        return tr!(app_goto_error_invalid);
     }
     lines.join("\n")
 }
@@ -5626,7 +5686,8 @@ struct ExportState {
     notes: String,
     status: Option<String>,
     /// In-flight background export; receives the final status message when done.
-    task: Option<std::sync::mpsc::Receiver<String>>,
+    /// A background export's outcome: the notice to show, as `Ok` when the file was written.
+    task: Option<std::sync::mpsc::Receiver<Result<String, String>>>,
     /// Deep single-view export whose reference orbit is building off-thread (before the render).
     prep: Option<crate::export::ExportPrep>,
     /// Progress in permille (0–1000) and a cooperative cancel flag.
@@ -7020,13 +7081,10 @@ impl FractadyneApp {
             }
         }
         // Surface a warning (once the UI is up) if the session file was written by a newer build
-        // than this one can fully account for.
-        let pending_state_warning = match state_load {
-            fractadyne_state::StateLoad::Newer(v) => Some(format!(
-                "This session was saved by a newer Fractadyne (state v{v}; this build handles v{}). \
-                 Some settings may not apply, and saving will rewrite it in this build's format.",
-                fractadyne_state::STATE_FORMAT_VERSION
-            )),
+        // than this one can fully account for. Worded once `app` is built (below), because the
+        // interface's language is chosen while it is.
+        let state_newer = match state_load {
+            fractadyne_state::StateLoad::Newer(v) => Some(v),
             _ => None,
         };
         let theme = ThemeMode::from_key(&s.theme);
@@ -7301,13 +7359,9 @@ impl FractadyneApp {
                 // The MPFR-missing warning has its own dialog (`backend_notice`, above). The generic
                 // notice is borrowed here for the opposite transition: the libraries being PRESENT
                 // again after a previous run fell back — announced even if the missing warning was
-                // silenced, because the state changed.
-                notice: (mpfr_changed_to_present && !launched_for_a_task).then(|| {
-                    (
-                        "Accelerated arithmetic restored".to_string(),
-                        fractadyne_core::mpfr_restored_message(),
-                    )
-                }),
+                // silenced, because the state changed. Set once `app` is built (below), because
+                // the interface's language is chosen while it is.
+                notice: None,
             },
             // The adapter facts (and the VRAM probe that needs the adapter's name) are filled in by
             // `attach_gpu`; no frame runs before it.
@@ -7396,12 +7450,8 @@ impl FractadyneApp {
             // AND why they are at Home rather than where they were: the crash-loop guard reopens at
             // Home instead of the view that lost the device, so the restart cannot immediately
             // reproduce the loss. Without this the restart (and the moved view) is a mystery.
-            pending_toast: (std::env::var_os("FRACTADYNE_RESTARTED_AFTER_GPU_LOSS").is_some())
-                .then(|| {
-                    "Recovered from a graphics device reset — reopened at the home view, since the \
-                     previous location was too demanding to render."
-                        .to_string()
-                }),
+            // Set once `app` is built (below), because the interface's language is chosen while it is.
+            pending_toast: None,
             max_texture_dim: 0, // the device's, set by `attach_gpu`
             last_window_geom: None,
             last_good_view: [None, None],
@@ -7410,7 +7460,7 @@ impl FractadyneApp {
             driver_cache_told: false,
             dpi_hold: None,
             suppress_autosave: false,
-            pending_state_warning,
+            pending_state_warning: None, // set once `app` is built (below)
             minimap_tex: None,
             minimap_key: None,
             reticle_want: None,
@@ -7532,6 +7582,8 @@ impl FractadyneApp {
             language: crate::ui::language::LanguageState::start(
                 &s.language,
                 &s.language_system_seen,
+                // A harness or offline job writes numbers as English does: its checks read them.
+                if crate::is_task_invocation(args) { "" } else { &s.decimal_mark },
                 crate::ui::language::run_language(args),
             ),
             attach_bytes_per_sample: (0, 0), // (granted, available) — filled on the first frame
@@ -7556,6 +7608,22 @@ impl FractadyneApp {
             last_state: s,
             dirty_since: None,
         };
+        // The notices worded at startup, now that `language` above has chosen the interface's
+        // language: worded inside the struct, they would always have come out in English.
+        if std::env::var_os("FRACTADYNE_RESTARTED_AFTER_GPU_LOSS").is_some() {
+            app.pending_toast = Some(tr!(app_toast_gpu_recovered));
+        }
+        app.pending_state_warning = state_newer.map(|v| {
+            tr!(
+                app_state_newer,
+                saved = v.to_string(),
+                handled = fractadyne_state::STATE_FORMAT_VERSION.to_string()
+            )
+        });
+        if mpfr_changed_to_present && !launched_for_a_task {
+            app.dialogs.notice =
+                Some((tr!(app_notice_mpfr_restored_title), fractadyne_core::mpfr_restored_message()));
+        }
         if !life_text.trim().is_empty() {
             // Not shown here: the session's own `fractal` and view say what is on screen.
             if let Err(e) = app.apply_life_lines(&life_text, false) {
@@ -8133,7 +8201,7 @@ impl FractadyneApp {
             if self.autopilot.active {
                 self.autopilot.active = false;
                 self.autopilot.stepping = false;
-                self.set_toast("Autopilot stopped: the view became unusable and was put back (logged)".to_string(), ctx);
+                self.set_toast(tr!(app_toast_autopilot_view_restored), ctx);
             }
             self.schedule_repaint(ctx);
         }
@@ -8289,6 +8357,7 @@ impl FractadyneApp {
             update_check_on_launch: self.update_check_on_launch,
             language: self.language.saved.clone(),
             language_system_seen: self.language.system_seen.clone(),
+            decimal_mark: self.language.decimal_mark.key().to_string(),
             show_watermark: self.show_watermark,
             crash_prompt_disabled: self.crash_prompt_disabled,
             show_orbits: self.anim.show_orbits,
@@ -8361,8 +8430,12 @@ impl FractadyneApp {
         let file = GradientFile { gradient: self.saved_gradients.clone() };
         match toml::to_string_pretty(&file).map(|t| std::fs::write(&path, t)) {
             Ok(Ok(())) => {}
-            Ok(Err(e)) => self.pending_toast = Some(format!("Couldn't save gradients: {e}")),
-            Err(e) => self.pending_toast = Some(format!("Couldn't serialize gradients: {e}")),
+            Ok(Err(e)) => {
+                self.pending_toast = Some(tr!(app_toast_gradients_save_failed, error = e.to_string()))
+            }
+            Err(e) => {
+                self.pending_toast = Some(tr!(app_toast_gradients_serialize_failed, error = e.to_string()))
+            }
         }
     }
 
@@ -8383,7 +8456,7 @@ impl FractadyneApp {
         }
         self.saved_gradients.sort_by(|a, b| a.name.to_lowercase().cmp(&b.name.to_lowercase()));
         self.save_gradient_library();
-        self.pending_toast = Some(format!("Saved gradient \"{name}\"."));
+        self.pending_toast = Some(tr!(app_toast_gradient_saved, name = name));
     }
 
     /// Make saved gradient `i` the live palette.
@@ -8515,12 +8588,12 @@ impl FractadyneApp {
         let result = match toml::to_string_pretty(&file) {
             Ok(text) => std::fs::write(&path, text),
             Err(e) => {
-                self.pending_toast = Some(format!("Couldn't serialize bookmarks: {e}"));
+                self.pending_toast = Some(tr!(app_toast_bookmarks_serialize_failed, error = e.to_string()));
                 return;
             }
         };
         if let Err(e) = result {
-            self.pending_toast = Some(format!("Couldn't save bookmarks: {e}"));
+            self.pending_toast = Some(tr!(app_toast_bookmarks_save_failed, error = e.to_string()));
         }
     }
 
@@ -9234,7 +9307,7 @@ impl FractadyneApp {
         let (Some(x), Some(y)) =
             (fractadyne_core::parse_bf_prec(re, prec), fractadyne_core::parse_bf_prec(im, prec))
         else {
-            self.set_toast(format!("{name}: could not evaluate the coordinates"), ctx);
+            self.set_toast(tr!(app_toast_coordinates_failed, name = name), ctx);
             return;
         };
         self.fractal = FractalKind::Mandelbrot;
@@ -9274,7 +9347,7 @@ impl FractadyneApp {
         self.pointer.zoom_vel = 0.0;
         self.invalidate_refs();
         self.record_nav();
-        self.set_toast(format!("Random location · {}×", fmt_zoom(mag)), ctx);
+        self.set_toast(tr!(app_toast_random_location, zoom = fmt_zoom(mag)), ctx);
     }
 
     /// Open the go-to-location dialog, pre-filled with the current view. When the centre is still
@@ -9789,21 +9862,15 @@ impl FractadyneApp {
     fn find_minibrot(&mut self, ctx: &egui::Context) {
         let formula = self.fractal.formula_id();
         if !self.fractal.caps().nucleus_finder {
-            self.set_toast(
-                "Minibrot finder needs a holomorphic family (Mandelbrot / Multibrot).",
-                ctx,
-            );
+            self.set_toast(tr!(app_feature_needs_holomorphic), ctx);
             return;
         }
         if self.julia_mode {
-            self.set_toast(
-                "The minibrot finder searches the Mandelbrot set — switch off Julia mode to use it.",
-                ctx,
-            );
+            self.set_toast(tr!(app_feature_not_in_julia), ctx);
             return;
         }
         if self.feature_solve.is_some() {
-            self.set_toast("Already looking for a feature — one at a time.", ctx);
+            self.set_toast(tr!(app_feature_busy), ctx);
             return;
         }
         let mag_l2 = self.viewport.log2_magnification();
@@ -9830,7 +9897,7 @@ impl FractadyneApp {
             "view",
             &format!("minibrot: searching from 2^{mag_l2:.4}, max period {max_period}"),
         );
-        self.set_toast("Looking for the nearest minibrot…", ctx);
+        self.set_toast(tr!(app_feature_searching), ctx);
         self.schedule_repaint(ctx);
     }
 
@@ -9902,7 +9969,7 @@ impl FractadyneApp {
     /// [`poll_feature_solve`](Self::poll_feature_solve).
     fn goto_feature(&mut self, ctx: &egui::Context) {
         if !self.fractal.caps().feature_solvers {
-            self.goto.msg = Some("Feature finding is Mandelbrot-only.".into());
+            self.goto.msg = Some(tr!(app_feature_mandelbrot_only));
             return;
         }
         if self.feature_solve.is_some() {
@@ -10228,7 +10295,8 @@ impl FractadyneApp {
         // Misiurewicz, and reading the dialog there would report the wrong failure.
         let mut outcome_kind = FeatureKind::Minibrot;
 
-        let (found, label) = match outcome {
+        // `label` names the feature in the log (English); `shown` names it to the user.
+        let (found, label, shown) = match outcome {
             FeatureOutcome::Nucleus(Some(n)) => {
                 let period = n.period;
                 minibrot_period = Some(period);
@@ -10237,21 +10305,20 @@ impl FractadyneApp {
                 // with the quadratic estimate if the two ever disagreed.
                 let (cx, cy, t) = self.newton_raphson_target(n.cx, n.cy, period, solve.formula);
                 zoom_to = t.filter(|t| *t > cur_l2);
-                (Some((cx, cy)), format!("period-{period} minibrot"))
+                (
+                    Some((cx, cy)),
+                    format!("period-{period} minibrot"),
+                    tr!(app_feature_minibrot, period = period.to_string()),
+                )
             }
-            FeatureOutcome::Nucleus(None) => (None, String::new()),
+            FeatureOutcome::Nucleus(None) => (None, String::new(), String::new()),
             FeatureOutcome::NoPairDetected => {
                 // Deliberately hedged: the detector searches the critical orbit within a cost
                 // budget, so `None` means EITHER the centre is not near pre-periodic structure OR
                 // the organizing point is deeper than the walk reached here — not necessarily
                 // that the view is mis-centred (the old text wrongly blamed centring, which
                 // misled a user already sitting exactly on a deep spiral).
-                self.goto.msg = Some(
-                    "No Misiurewicz point found within the search budget — the point may be \
-                     deeper than the finder reaches at this view, or the centre may not be near a \
-                     spiral or branch point."
-                        .into(),
-                );
+                self.goto.msg = Some(tr!(app_feature_no_pair));
                 return;
             }
             FeatureOutcome::Misiurewicz { k, p, detected, outcome } => {
@@ -10275,21 +10342,41 @@ impl FractadyneApp {
                             0,
                             self.viewport.precision,
                         );
-                        let label = match lam {
-                            Some(l) => format!(
-                                "Misiurewicz ({},{}) — repeats every {:.2} octaves, twist {:.1}°",
-                                m.preperiod,
-                                m.period,
-                                l.log2_abs,
-                                l.arg.to_degrees()
+                        let (label, shown) = match lam {
+                            Some(l) => (
+                                format!(
+                                    "Misiurewicz ({},{}) — repeats every {:.2} octaves, twist {:.1}°",
+                                    m.preperiod,
+                                    m.period,
+                                    l.log2_abs,
+                                    l.arg.to_degrees()
+                                ),
+                                tr!(
+                                    app_feature_misiurewicz_lambda,
+                                    preperiod = m.preperiod.to_string(),
+                                    period = m.period.to_string(),
+                                    octaves = crate::i18n::decimal(l.log2_abs, 2),
+                                    twist = crate::i18n::decimal(l.arg.to_degrees(), 1)
+                                ),
                             ),
-                            None => format!("Misiurewicz ({},{})", m.preperiod, m.period),
+                            None => (
+                                format!("Misiurewicz ({},{})", m.preperiod, m.period),
+                                tr!(
+                                    app_feature_misiurewicz,
+                                    preperiod = m.preperiod.to_string(),
+                                    period = m.period.to_string()
+                                ),
+                            ),
                         };
-                        (Some((m.cx, m.cy)), label)
+                        (Some((m.cx, m.cy)), label, shown)
                     }
                     Err(why) => {
                         misi_miss = Some(why);
-                        (None, format!("Misiurewicz ({k},{p})"))
+                        (
+                            None,
+                            format!("Misiurewicz ({k},{p})"),
+                            tr!(app_feature_misiurewicz, preperiod = k.to_string(), period = p.to_string()),
+                        )
                     }
                 }
             }
@@ -10323,9 +10410,7 @@ impl FractadyneApp {
                         )
                     })
                     .map(|(have, typical)| {
-                        format!(
-                            " ⚠ Iterations is fixed at {have}; this depth typically needs                              ~{typical} — raise it (or enable auto-iterations) if the view                              renders flat."
-                        )
+                        format!(" {}", tr!(app_feature_iter_note, have = have, typical = typical))
                     })
                     .unwrap_or_default();
                 self.set_toast(
@@ -10333,28 +10418,37 @@ impl FractadyneApp {
                         // Landing short of what was asked, and saying so: the alternative is a
                         // centre that is wrong by tens of thousands of digits and a flat frame.
                         (Some(asked), _) => format!(
-                            "Zoomed to the {label} — {}×. Solving is capped at {} octaves, so it \
-                             stopped there rather than {}×.{iter_note}",
-                            fmt_zoom_field(l2),
-                            MAX_SOLVE_OCTAVES as u64,
-                            fmt_zoom_field(asked)
-                        ),
-                        (None, Some(t)) => {
-                            format!(
-                                "Zoomed to the {label} — {}× ({took:.1}s){iter_note}",
-                                fmt_zoom_field(t)
+                            "{}{iter_note}",
+                            tr!(
+                                app_feature_zoomed_capped,
+                                feature = shown.as_str(),
+                                zoom = fmt_zoom_field(l2),
+                                octaves = MAX_SOLVE_OCTAVES as u64,
+                                asked = fmt_zoom_field(asked)
                             )
-                        }
-                        (None, None) => format!("Snapped to {label} center ({took:.1}s)"),
+                        ),
+                        (None, Some(t)) => format!(
+                            "{}{iter_note}",
+                            tr!(
+                                app_feature_zoomed,
+                                feature = shown.as_str(),
+                                zoom = fmt_zoom_field(t),
+                                seconds = crate::i18n::decimal(took, 1)
+                            )
+                        ),
+                        (None, None) => tr!(
+                            app_feature_snapped,
+                            feature = shown.as_str(),
+                            seconds = crate::i18n::decimal(took, 1)
+                        ),
                     },
                     ctx,
                 );
             }
             None => {
+                // ⚠Worded for the user, so the log line below carries it in the language in use.
                 let why = match outcome_kind {
-                    FeatureKind::Minibrot => {
-                        "No minibrot center found near the view — zoom closer to one.".to_string()
-                    }
+                    FeatureKind::Minibrot => tr!(app_feature_no_minibrot),
                     FeatureKind::Misiurewicz => match misi_miss {
                         // The one worth spelling out: a REAL point was found, just not here. The
                         // distance is the actionable part — it says how far out to zoom.
@@ -10368,31 +10462,31 @@ impl FractadyneApp {
                             let widths = fmt_log2_count(log2_view_widths);
                             let octaves = log2_view_widths.max(0.0).ceil();
                             if log2_view_widths < 12.0 {
-                                format!(
-                                    "Found a {label} point just outside this view — {widths} \
-                                     view-widths away. Zoom out about {octaves:.0} octaves to \
-                                     bring it on screen, or set a larger preperiod for a feature \
-                                     at this scale."
+                                tr!(
+                                    app_feature_just_outside,
+                                    feature = shown.as_str(),
+                                    widths = widths,
+                                    octaves = octaves
                                 )
                             } else {
-                                format!(
-                                    "Found a {label} point, but it is {widths} view-widths away — \
-                                     that feature is far COARSER than this view. Zoom OUT by about \
-                                     {octaves:.0} octaves to reach it, or try a larger preperiod \
-                                     for a feature at this scale."
+                                tr!(
+                                    app_feature_far,
+                                    feature = shown.as_str(),
+                                    widths = widths,
+                                    octaves = octaves
                                 )
                             }
                         }
-                        Some(fractadyne_core::MisiurewiczMiss::NotPreperiodic { residual }) => format!(
-                            "{label} does not fit the orbit here (residual {residual:.1e}) — \
-                             clear both boxes to detect the pair from the view."
+                        Some(fractadyne_core::MisiurewiczMiss::NotPreperiodic { residual }) => tr!(
+                            app_feature_not_preperiodic,
+                            feature = shown.as_str(),
+                            residual = format!("{residual:.1e}")
                         ),
-                        Some(fractadyne_core::MisiurewiczMiss::NotConverged) | None => format!(
-                            "No {label} point converged near the view — navigate closer, or try \
-                             different k/p."
-                        ),
+                        Some(fractadyne_core::MisiurewiczMiss::NotConverged) | None => {
+                            tr!(app_feature_not_converged, feature = shown.as_str())
+                        }
                         Some(fractadyne_core::MisiurewiczMiss::BadRequest) => {
-                            "Preperiod and period must both be positive.".to_string()
+                            tr!(app_feature_bad_request)
                         }
                     },
                 };
@@ -10485,7 +10579,7 @@ impl FractadyneApp {
     /// File-dialog import of a Kalles Fraktaler `.kfr` location.
     fn import_kfr(&mut self, ctx: &egui::Context) {
         let Some(path) = rfd::FileDialog::new()
-            .add_filter("Kalles Fraktaler location", &["kfr"])
+            .add_filter(tr!(app_filter_kfr), &["kfr"])
             .set_directory(self.dialog_dir_default())
             .pick_file()
         else {
@@ -10494,7 +10588,7 @@ impl FractadyneApp {
         self.remember_dir(&path);
         match self.load_kfr_file(&path) {
             Ok(m) => self.set_toast(m, ctx),
-            Err(e) => self.set_toast(format!("Import failed: {e}"), ctx),
+            Err(e) => self.set_toast(tr!(app_toast_import_failed, error = e.to_string()), ctx),
         }
     }
 
@@ -10532,12 +10626,12 @@ impl FractadyneApp {
         let zoom = fmt_zoom_log2(self.viewport.log2_magnification());
         match report.note() {
             None => {
-                self.set_toast(format!("Loaded location @ {zoom}×"), ctx);
+                self.set_toast(tr!(app_toast_location_loaded, zoom = zoom), ctx);
                 self.share.open = false;
             }
             // Keep the dialog open and surface the report rather than silently jumping.
             Some(n) => {
-                self.share.msg = Some(format!("Loaded @ {zoom}× — {n}."));
+                self.share.msg = Some(tr!(app_share_loaded_note, zoom = zoom, note = n));
             }
         }
     }
@@ -10545,7 +10639,7 @@ impl FractadyneApp {
     /// Save the Share dialog's text to a `.fdn` file.
     fn save_share_file(&mut self) {
         let Some(path) = rfd::FileDialog::new()
-            .add_filter("Fractadyne location", &["fdn"])
+            .add_filter(tr!(app_filter_fdn), &["fdn"])
             .set_directory(self.dialog_dir_default())
             .set_file_name("location.fdn")
             .save_file()
@@ -10564,25 +10658,24 @@ impl FractadyneApp {
         // "(Not Responding)" on Save and nothing reached disk at all.
         let located = crate::export::wrap_view_text(&self.view_metadata());
         if let Err(e) = std::fs::write(&path, located.as_bytes()) {
-            self.share.msg = Some(format!("Save failed: {e}"));
+            self.share.msg = Some(tr!(app_share_save_failed, error = e.to_string()));
             return;
         }
         if !self.share.include_thumb {
-            self.share.msg = Some("Saved.".into());
+            self.share.msg = Some(tr!(app_share_saved));
             return;
         }
 
         // ⭐Now the picture, as a SECOND pass over a file that is already safe. A failure here
         // costs the thumbnail and nothing else, and says so rather than looking like a failed
         // save.
-        self.share.msg = Some("Saved. Rendering the thumbnail…".into());
+        self.share.msg = Some(tr!(app_share_saved_rendering_thumb));
         let thumb = self
             .gpu
             .clone()
             .and_then(|(d, q)| self.render_view_thumbnail(&d, &q));
         let Some(b64) = thumb else {
-            self.share.msg =
-                Some("Saved — without a thumbnail (none could be rendered for this view).".into());
+            self.share.msg = Some(tr!(app_share_saved_no_thumb));
             return;
         };
         // ⚠Rebuilt through the writer, not patched: the checksum covers the field list, so a
@@ -10592,9 +10685,9 @@ impl FractadyneApp {
             self.view_metadata()
         ));
         self.share.msg = Some(match std::fs::write(&path, with_thumb.as_bytes()) {
-            Ok(()) => "Saved, with a thumbnail.".to_string(),
+            Ok(()) => tr!(app_share_saved_with_thumb),
             // The location is still on disk from the first write — say so, precisely.
-            Err(e) => format!("Saved, but the thumbnail could not be added: {e}"),
+            Err(e) => tr!(app_share_saved_thumb_failed, error = e.to_string()),
         });
     }
 
@@ -10602,7 +10695,7 @@ impl FractadyneApp {
     /// so the user can review before jumping).
     fn load_share_file(&mut self) {
         let Some(path) = rfd::FileDialog::new()
-            .add_filter("Fractadyne location", &["fdn"])
+            .add_filter(tr!(app_filter_fdn), &["fdn"])
             .set_directory(self.dialog_dir_default())
             .pick_file()
         else {
@@ -10613,12 +10706,12 @@ impl FractadyneApp {
             Ok(m) if (m.len() as usize) <= SHARE_MAX => match std::fs::read_to_string(&path) {
                 Ok(t) => {
                     self.share.text = t;
-                    self.share.msg = Some("Loaded into the box — review, then Apply.".into());
+                    self.share.msg = Some(tr!(app_share_loaded_into_box));
                 }
-                Err(e) => self.share.msg = Some(format!("Read failed: {e}")),
+                Err(e) => self.share.msg = Some(tr!(app_read_failed, error = e.to_string())),
             },
-            Ok(_) => self.share.msg = Some("File too large (not a .fdn location?).".into()),
-            Err(e) => self.share.msg = Some(format!("Read failed: {e}")),
+            Ok(_) => self.share.msg = Some(tr!(app_share_too_large)),
+            Err(e) => self.share.msg = Some(tr!(app_read_failed, error = e.to_string())),
         }
     }
 
@@ -10820,8 +10913,8 @@ impl FractadyneApp {
     /// See `fractadyne_color::import::MapPalette`.
     fn import_map_palette(&mut self) -> bool {
         let Some(path) = rfd::FileDialog::new()
-            .add_filter("Fractint / KF palette", &["map"])
-            .add_filter("All files", &["*"])
+            .add_filter(tr!(app_filter_map), &["map"])
+            .add_filter(tr!(app_filter_all), &["*"])
             .set_directory(self.dialog_dir_default())
             .pick_file()
         else {
@@ -10833,13 +10926,13 @@ impl FractadyneApp {
         const MAP_MAX: u64 = 64 * 1024;
         let read = match std::fs::metadata(&path) {
             Ok(m) if m.len() <= MAP_MAX => std::fs::read_to_string(&path),
-            Ok(_) => Err(std::io::Error::other("far too large to be a .map palette")),
+            Ok(_) => Err(std::io::Error::other(tr!(app_gradient_map_too_large))),
             Err(e) => Err(e),
         };
         let text = match read {
             Ok(t) => t,
             Err(e) => {
-                self.coloring.paste_msg = Some(format!("Read failed: {e}"));
+                self.coloring.paste_msg = Some(tr!(app_read_failed, error = e.to_string()));
                 self.coloring.paste_open = true;
                 return false;
             }
@@ -10864,15 +10957,15 @@ impl FractadyneApp {
                 let name =
                     path.file_name().map_or_else(String::new, |f| f.to_string_lossy().into_owned());
                 self.coloring.paste_msg = Some(if m.vga_6bit {
-                    format!("Imported {n} entries from {name} - a 6-bit VGA table (white is 252, not 255), kept as written so it matches Fractint's own output.")
+                    tr!(app_gradient_map_imported_vga, count = n, file = name)
                 } else {
-                    format!("Imported {n} entries from {name}, as hard bands.")
+                    tr!(app_gradient_map_imported, count = n, file = name)
                 });
                 self.coloring.paste_open = true;
                 true
             }
             Err(e) => {
-                self.coloring.paste_msg = Some(format!("Not a .map palette: {e}"));
+                self.coloring.paste_msg = Some(tr!(app_gradient_map_invalid, error = e.to_string()));
                 self.coloring.paste_open = true;
                 false
             }
@@ -10886,8 +10979,8 @@ impl FractadyneApp {
     /// silently choose one of dozens.
     fn import_ugr_palette(&mut self) -> bool {
         let Some(path) = rfd::FileDialog::new()
-            .add_filter("Ultra Fractal gradient", &["ugr"])
-            .add_filter("All files", &["*"])
+            .add_filter(tr!(app_filter_ugr), &["ugr"])
+            .add_filter(tr!(app_filter_all), &["*"])
             .set_directory(self.dialog_dir_default())
             .pick_file()
         else {
@@ -10898,7 +10991,7 @@ impl FractadyneApp {
         const UGR_MAX: u64 = 4 * 1024 * 1024;
         let read = match std::fs::metadata(&path) {
             Ok(m) if m.len() <= UGR_MAX => std::fs::read_to_string(&path),
-            Ok(_) => Err(std::io::Error::other("far too large to be a .ugr palette file")),
+            Ok(_) => Err(std::io::Error::other(tr!(app_gradient_ugr_too_large))),
             Err(e) => Err(e),
         };
         self.coloring.paste_open = true;
@@ -10906,7 +10999,7 @@ impl FractadyneApp {
         let text = match read {
             Ok(t) => t,
             Err(e) => {
-                self.coloring.paste_msg = Some(format!("Read failed: {e}"));
+                self.coloring.paste_msg = Some(tr!(app_read_failed, error = e.to_string()));
                 return false;
             }
         };
@@ -10917,20 +11010,24 @@ impl FractadyneApp {
                 let n = gs.len();
                 if n == 1 {
                     self.apply_ugr_gradient(&gs[0]);
-                    self.coloring.paste_msg =
-                        Some(format!("Imported \"{}\" from {}.", gs[0].name, self.coloring.ugr_file));
+                    self.coloring.paste_msg = Some(tr!(
+                        app_gradient_ugr_imported,
+                        name = gs[0].name.as_str(),
+                        file = self.coloring.ugr_file.as_str()
+                    ));
                     true
                 } else {
                     self.coloring.ugr_choices = gs;
-                    self.coloring.paste_msg = Some(format!(
-                        "{} contains {n} gradients — pick one below.",
-                        self.coloring.ugr_file
+                    self.coloring.paste_msg = Some(tr!(
+                        app_gradient_ugr_pick,
+                        file = self.coloring.ugr_file.as_str(),
+                        count = n
                     ));
                     false
                 }
             }
             Err(e) => {
-                self.coloring.paste_msg = Some(format!("Not a .ugr palette file: {e}"));
+                self.coloring.paste_msg = Some(tr!(app_gradient_ugr_invalid, error = e.to_string()));
                 false
             }
         }
@@ -10962,8 +11059,8 @@ impl FractadyneApp {
     /// ⚠Binary, and read as bytes: `read_to_string` would reject it as invalid UTF-8.
     fn import_ase_palette(&mut self) -> bool {
         let Some(path) = rfd::FileDialog::new()
-            .add_filter("Adobe swatch exchange", &["ase"])
-            .add_filter("All files", &["*"])
+            .add_filter(tr!(app_filter_ase), &["ase"])
+            .add_filter(tr!(app_filter_all), &["*"])
             .set_directory(self.dialog_dir_default())
             .pick_file()
         else {
@@ -10973,14 +11070,14 @@ impl FractadyneApp {
         const ASE_MAX: u64 = 4 * 1024 * 1024;
         let read = match std::fs::metadata(&path) {
             Ok(m) if m.len() <= ASE_MAX => std::fs::read(&path),
-            Ok(_) => Err(std::io::Error::other("far too large to be a .ase swatch list")),
+            Ok(_) => Err(std::io::Error::other(tr!(app_gradient_ase_too_large))),
             Err(e) => Err(e),
         };
         self.coloring.paste_open = true;
         let bytes = match read {
             Ok(b) => b,
             Err(e) => {
-                self.coloring.paste_msg = Some(format!("Read failed: {e}"));
+                self.coloring.paste_msg = Some(tr!(app_read_failed, error = e.to_string()));
                 return false;
             }
         };
@@ -11001,14 +11098,14 @@ impl FractadyneApp {
                 self.rebuild_segments_from_palette();
                 self.coloring.use_custom_palette = true;
                 self.coloring.paste_msg = Some(if n > m {
-                    format!("Imported {m} of {n} swatches, evenly spaced.")
+                    tr!(app_gradient_ase_imported_some, used = m, total = n)
                 } else {
-                    format!("Imported {n} swatches, evenly spaced and blended.")
+                    tr!(app_gradient_ase_imported, count = n)
                 });
                 true
             }
             Err(e) => {
-                self.coloring.paste_msg = Some(format!("Not a .ase swatch list: {e}"));
+                self.coloring.paste_msg = Some(tr!(app_gradient_ase_invalid, error = e.to_string()));
                 false
             }
         }
@@ -11024,7 +11121,7 @@ impl FractadyneApp {
     /// failure this whole area was designed to avoid.
     fn export_ggr_palette(&mut self) -> bool {
         let Some(g) = self.editable_gradient() else {
-            self.coloring.paste_msg = Some("No custom gradient to save yet.".to_string());
+            self.coloring.paste_msg = Some(tr!(app_gradient_nothing_to_save));
             self.coloring.paste_open = true;
             return false;
         };
@@ -11039,7 +11136,7 @@ impl FractadyneApp {
                 .collect()
         };
         let Some(path) = rfd::FileDialog::new()
-            .add_filter("GIMP gradient", &["ggr"])
+            .add_filter(tr!(app_filter_ggr), &["ggr"])
             .set_file_name(format!("{stem}.ggr"))
             .set_directory(self.dialog_dir_default())
             .save_file()
@@ -11060,16 +11157,18 @@ impl FractadyneApp {
             Ok(()) => {
                 let where_ = path.file_name().map_or_else(String::new, |f| f.to_string_lossy().into_owned());
                 self.coloring.paste_msg = Some(if lossy == 0 {
-                    format!("Saved \"{where_}\" — midpoints, blend curves and colour spaces all intact.")
+                    tr!(app_gradient_ggr_saved, file = where_)
                 } else {
-                    format!(
-                        "Saved \"{where_}\" — but {lossy} segment(s) use a Bézier curve, which the .ggr format cannot express. Those were written as straight blends; the copy in your library keeps the curves."
-                    )
+                    tr!(app_gradient_ggr_saved_lossy, file = where_, count = lossy)
                 });
                 true
             }
             Err(e) => {
-                self.coloring.paste_msg = Some(format!("Couldn't write {}: {e}", path.display()));
+                self.coloring.paste_msg = Some(tr!(
+                    app_gradient_write_failed,
+                    path = path.display().to_string(),
+                    error = e.to_string()
+                ));
                 false
             }
         }
@@ -11083,8 +11182,8 @@ impl FractadyneApp {
     /// the three, and persisting it as stops would flatten every one on the first restart.
     fn import_ggr_palette(&mut self) -> bool {
         let Some(path) = rfd::FileDialog::new()
-            .add_filter("GIMP gradient", &["ggr"])
-            .add_filter("All files", &["*"])
+            .add_filter(tr!(app_filter_ggr), &["ggr"])
+            .add_filter(tr!(app_filter_all), &["*"])
             .set_directory(self.dialog_dir_default())
             .pick_file()
         else {
@@ -11094,14 +11193,14 @@ impl FractadyneApp {
         const GGR_MAX: u64 = 1024 * 1024;
         let read = match std::fs::metadata(&path) {
             Ok(m) if m.len() <= GGR_MAX => std::fs::read_to_string(&path),
-            Ok(_) => Err(std::io::Error::other("far too large to be a .ggr gradient")),
+            Ok(_) => Err(std::io::Error::other(tr!(app_gradient_ggr_too_large))),
             Err(e) => Err(e),
         };
         self.coloring.paste_open = true;
         let text = match read {
             Ok(t) => t,
             Err(e) => {
-                self.coloring.paste_msg = Some(format!("Read failed: {e}"));
+                self.coloring.paste_msg = Some(tr!(app_read_failed, error = e.to_string()));
                 return false;
             }
         };
@@ -11115,11 +11214,11 @@ impl FractadyneApp {
                 };
                 self.set_custom_segments(&g);
                 self.coloring.paste_msg =
-                    Some(format!("Imported \"{name}\" - {n} segments, with their midpoints, blend curves and colour spaces."));
+                    Some(tr!(app_gradient_ggr_imported, name = name, count = n));
                 true
             }
             Err(e) => {
-                self.coloring.paste_msg = Some(format!("Not a .ggr gradient: {e}"));
+                self.coloring.paste_msg = Some(tr!(app_gradient_ggr_invalid, error = e.to_string()));
                 false
             }
         }
@@ -11398,8 +11497,8 @@ impl FractadyneApp {
                         // would cover the very pixel being sampled.
                         let pr = ui.painter();
                         let text = match p.preview {
-                            Some(c) => format!("Picking a colour  ·  {}  ·  click to take it, Esc to cancel", hex_of(c)),
-                            None => "Picking a colour  ·  click to take it, Esc to cancel".to_string(),
+                            Some(c) => tr!(app_eyedropper_banner_color, hex = hex_of(c)),
+                            None => tr!(app_eyedropper_banner),
                         };
                         let galley = pr.layout_no_wrap(
                             text,
@@ -11520,7 +11619,8 @@ impl FractadyneApp {
         let mut changed = false;
         let mut cancelled = false;
         let mut close_after = false;
-        egui::Window::new("Gradient editor")
+        egui::Window::new(tr!(app_gradient_title))
+            .id(egui::Id::new("fractadyne.gradient_editor"))
             .open(&mut open)
             .resizable(false)
             .default_width(520.0)
@@ -11593,21 +11693,19 @@ impl FractadyneApp {
                 }
 
                 ui.horizontal(|ui| {
-                    ui.label(egui::RichText::new("View").weak().small());
+                    ui.label(egui::RichText::new(tr!(app_gradient_view)).weak().small());
                     ui.selectable_value(
                         &mut self.coloring.ring_view,
                         false,
-                        format!("{} Bar", crate::icons::VIEW_BAR),
+                        format!("{} {}", crate::icons::VIEW_BAR, tr!(app_gradient_view_bar)),
                     )
-                        .on_hover_text("A straight strip — best for placing stops precisely");
+                        .on_hover_text(tr!(app_gradient_view_bar_hover));
                     ui.selectable_value(
                         &mut self.coloring.ring_view,
                         true,
-                        format!("{} Ring", crate::icons::VIEW_RING),
+                        format!("{} {}", crate::icons::VIEW_RING, tr!(app_gradient_view_ring)),
                     )
-                        .on_hover_text(
-                            "A ring, because the palette is CYCLED: the join at the top is the seam the renderer crosses on every sweep, and a gradient that looks fine on a bar can have a hard edge there.",
-                        );
+                        .on_hover_text(tr!(app_gradient_view_ring_hover));
                 });
                 ui.add_space(3.0);
 
@@ -11711,9 +11809,7 @@ impl FractadyneApp {
                             }
                         }
                     }
-                    resp.clone().on_hover_text(
-                        "Click anywhere on this line to add a stop there. The + adds one in the widest gap.",
-                    );
+                    resp.clone().on_hover_text(tr!(app_gradient_add_lane_hover));
                 }
 
                 // ── Interaction: the marker lane ────────────────────────────────────────────
@@ -11817,9 +11913,7 @@ impl FractadyneApp {
                             ui.ctx().set_cursor_icon(egui::CursorIcon::Grab);
                         }
                     }
-                    resp.clone().on_hover_text(
-                        "Drag a marker to move its stop · drag the strip itself to ROTATE the whole gradient, wrapping at the seam · double-click to add a stop, right-click a marker to remove it · arrow keys nudge the selection (Shift for fine).",
-                    );
+                    resp.clone().on_hover_text(tr!(app_gradient_strip_hover));
                 }
 
                 // ── Interaction: the remove lane (a ⊖ under the selection) ──────────────────
@@ -11847,7 +11941,7 @@ impl FractadyneApp {
                         }
                     }
                     if removable {
-                        resp.clone().on_hover_text("Remove the selected stop");
+                        resp.clone().on_hover_text(tr!(app_gradient_remove_selected_hover));
                     }
                 }
 
@@ -12033,9 +12127,7 @@ impl FractadyneApp {
                             ui.ctx().set_cursor_icon(egui::CursorIcon::Grab);
                         }
                     }
-                    resp.clone().on_hover_text(
-                        "Drag the ring itself to ROTATE the whole gradient — what passes the seam comes back round the other side · drag a marker to move its stop · click the outer track to add a stop there, or ⊕ in the middle to add one in the widest gap · ⊖ removes the selected stop. The hollow mark at the top is the seam, where a cycled palette wraps; it stays put because it IS the join, and the colours turn under it.",
-                    );
+                    resp.clone().on_hover_text(tr!(app_gradient_ring_hover));
                 }
 
                 // ── Interaction: the ribbon ─────────────────────────────────────────────────
@@ -12499,15 +12591,11 @@ impl FractadyneApp {
                     // Saying so beats an empty window — the editor otherwise shows a preview of
                     // the PRESET and no controls, which reads as broken rather than as "you have
                     // not started one yet".
-                    ui.label(
-                        egui::RichText::new("No custom gradient yet — \"Copy preset…\", an import or a saved gradient below starts one, and its stops and per-segment curves appear here.")
-                            .weak()
-                            .small(),
-                    );
+                    ui.label(egui::RichText::new(tr!(app_gradient_empty)).weak().small());
                 }
                 if count > EDITOR_MAX_STOPS {
                     ui.label(
-                        egui::RichText::new(format!("{count} imported entries - too many to edit stop by stop. Use the preview above, or Copy preset to start over."))
+                        egui::RichText::new(tr!(app_gradient_too_many, count = count))
                             .weak()
                             .small(),
                     );
@@ -12528,12 +12616,12 @@ impl FractadyneApp {
                     // curve is the thing being shaped, so it gets the width.
                         ui.vertical(|ui| {
                             ui.label(
-                                egui::RichText::new(format!(
-                                    "Segment {} of {}  ·  {:.3} → {:.3}",
-                                    si + 1,
-                                    g.segments.len(),
-                                    seg.left,
-                                    seg.right
+                                egui::RichText::new(tr!(
+                                    app_gradient_segment_heading,
+                                    index = si + 1,
+                                    total = g.segments.len(),
+                                    left = crate::i18n::decimal(seg.left, 3),
+                                    right = crate::i18n::decimal(seg.right, 3)
                                 ))
                                 .strong(),
                             );
@@ -12543,9 +12631,8 @@ impl FractadyneApp {
                                 // ln mid)`, so at a CENTRED midpoint it is exactly linear and the
                                 // canvas draws it lying on the identity line. Without the note
                                 // that reads as the picker being broken.
-                                ui.label("Curve").on_hover_text(
-                                    "How fast the colour travels across this segment. \"Curved\" is shaped by the midpoint — at midpoint 0.50 it is exactly linear.",
-                                );
+                                ui.label(tr!(app_gradient_curve))
+                                    .on_hover_text(tr!(app_gradient_curve_hover));
                                 let mut blend = seg.blend.as_u8();
                                 // The segment's curve as a function of `0..1`, which is the shape
                                 // `fit_to` samples.
@@ -12573,10 +12660,13 @@ impl FractadyneApp {
                                             if k == 5 && seg.blend.as_u8() != 5 {
                                                 let (_, err) =
                                                     fractadyne_color::segment::Blend::fit_with_error(shape);
+                                                let err_text = format!("{err:.2}");
                                                 r.on_hover_text(if err < 0.005 {
-                                                    "Two control points you can drag in both directions. This curve is already a cubic, so converting it changes nothing.".to_string()
+                                                    tr!(app_gradient_bezier_exact_hover)
+                                                } else if err > 0.05 {
+                                                    tr!(app_gradient_bezier_visible_hover, error = err_text)
                                                 } else {
-                                                    format!("Two control points you can drag in both directions. Converting APPROXIMATES the current curve — this one to within {err:.2}, which is {}.", if err > 0.05 { "clearly visible" } else { "barely visible" })
+                                                    tr!(app_gradient_bezier_barely_hover, error = err_text)
                                                 });
                                             }
                                         }
@@ -12603,7 +12693,7 @@ impl FractadyneApp {
                                 // ONE line. Three half-empty rows above a full-width canvas
                                 // wasted the height the canvas wanted.
                                 ui.add_space(6.0);
-                                ui.label("Space");
+                                ui.label(tr!(app_gradient_space));
                                 let mut space = seg.space.as_u8();
                                 egui::ComboBox::from_id_salt("seg_space")
                                     .width(96.0)
@@ -12627,14 +12717,13 @@ impl FractadyneApp {
                             // already been bitten by twice. The stored value is untouched, so
                             // switching back to kinds 0–4 restores it.
                             if let fractadyne_color::segment::Blend::Bezier(p) = seg.blend {
-                                    ui.label("Ease").on_hover_text(
-                                        "Presets write the two control points; drag them on the curve for anything else. A Bézier has no midpoint — its handles say where it reaches halfway.",
-                                    );
+                                    ui.label(tr!(app_gradient_ease))
+                                        .on_hover_text(tr!(app_gradient_ease_hover));
                                     for (name, np) in [
-                                        ("Linear", fractadyne_color::segment::BEZIER_IDENTITY),
-                                        ("In", [0.42, 0.0, 1.0, 1.0]),
-                                        ("Out", [0.0, 0.0, 0.58, 1.0]),
-                                        ("In-out", [0.42, 0.0, 0.58, 1.0]),
+                                        (tr!(app_gradient_ease_linear), fractadyne_color::segment::BEZIER_IDENTITY),
+                                        (tr!(app_gradient_ease_in), [0.42, 0.0, 1.0, 1.0]),
+                                        (tr!(app_gradient_ease_out), [0.0, 0.0, 0.58, 1.0]),
+                                        (tr!(app_gradient_ease_in_out), [0.42, 0.0, 0.58, 1.0]),
                                     ] {
                                         if ui.selectable_label(p == np, name).clicked() {
                                             let mut g2 = edit.clone().unwrap_or_else(|| g.clone());
@@ -12644,7 +12733,7 @@ impl FractadyneApp {
                                         }
                                     }
                             } else {
-                                ui.label("Midpoint");
+                                ui.label(tr!(app_gradient_midpoint));
                                 // ⚠A FRACTION of the segment (GIMP semantics), not an absolute
                                 // position — the same number the ring on the canvas moves.
                                 let mut frac = ((seg.mid - seg.left) / span).clamp(0.0, 1.0);
@@ -12655,9 +12744,7 @@ impl FractadyneApp {
                                             .range(0.02..=0.98)
                                             .fixed_decimals(2),
                                     )
-                                    .on_hover_text(
-                                        "Where the blend reaches halfway, as a fraction of this segment. 0.50 is centred.",
-                                    )
+                                    .on_hover_text(tr!(app_gradient_midpoint_hover))
                                     .changed()
                                 {
                                     let mut g2 = edit.clone().unwrap_or_else(|| g.clone());
@@ -12665,7 +12752,11 @@ impl FractadyneApp {
                                         seg.left + frac.clamp(0.02, 0.98) * span;
                                     edit = Some(g2);
                                 }
-                                if ui.button("Centre").on_hover_text("Back to 0.50").clicked() {
+                                if ui
+                                    .button(tr!(app_gradient_centre))
+                                    .on_hover_text(tr!(app_gradient_centre_hover))
+                                    .clicked()
+                                {
                                     let mut g2 = edit.clone().unwrap_or_else(|| g.clone());
                                     g2.segments[si].mid = seg.left + 0.5 * span;
                                     edit = Some(g2);
@@ -12677,13 +12768,11 @@ impl FractadyneApp {
                             // hue to start from. Measured: black → red goes through green.
                             if seg.hue_undefined_endpoint() {
                                 ui.label(
-                                    egui::RichText::new("⚠ one end of this segment has no hue")
+                                    egui::RichText::new(tr!(app_gradient_no_hue))
                                         .color(ui.visuals().warn_fg_color)
                                         .small(),
                                 )
-                                .on_hover_text(
-                                    "One end is black, white or grey, so the sweep starts from red and travels the whole colour wheel. That is legal and sometimes wanted \u{2014} but it is why the middle can be a colour neither end contains. The strip under the curve shows what it does.",
-                                );
+                                .on_hover_text(tr!(app_gradient_no_hue_hover));
                             }
                         });
                     ui.add_space(4.0);
@@ -12847,8 +12936,8 @@ impl FractadyneApp {
                         // Stacked, each end is ~200 px and both fit with room between them.
                         ui.horizontal_top(|ui| {
                             for (k, tip, right) in [
-                                (si, "Colour at the START of this segment", false),
-                                (si + 1, "Colour at the END of this segment", true),
+                                (si, tr!(app_gradient_segment_start_hover), false),
+                                (si + 1, tr!(app_gradient_segment_end_hover), true),
                             ] {
                                 // The second column is pushed to the far edge, so the gap between
                                 // them is the segment, not a spacing constant.
@@ -12865,7 +12954,7 @@ impl FractadyneApp {
                                         } else {
                                             "seg_end_lo"
                                         });
-                                        out = color_field(ui, id, rgb, tip, 74.0);
+                                        out = color_field(ui, id, rgb, &tip, 74.0);
                                     });
                                     let b = rgb_bytes(rgb);
                                     ui.label(
@@ -12877,7 +12966,7 @@ impl FractadyneApp {
                                         .weak()
                                         .small(),
                                     )
-                                    .on_hover_text("Red, green and blue as 0–255");
+                                    .on_hover_text(tr!(app_gradient_bytes_hover));
                                     ui.label(
                                         egui::RichText::new(format!(
                                             "{:.3} {:.3} {:.3}",
@@ -12887,7 +12976,7 @@ impl FractadyneApp {
                                         .weak()
                                         .small(),
                                     )
-                                    .on_hover_text("The same colour as 0–1, which is what the renderer stores");
+                                    .on_hover_text(tr!(app_gradient_floats_hover));
                                 });
                                 if let Some(c) = out {
                                     let mut g2 = edit.clone().unwrap_or_else(|| g.clone());
@@ -12897,9 +12986,9 @@ impl FractadyneApp {
                             }
                         });
                         cresp.on_hover_text(if bez.is_some() {
-                            "The blend curve for the selected segment. Drag either control point — in x AND y — to reshape it. The faint lines are 0 and 1; a curve may pass outside them, and the colour is clamped rather than the curve."
+                            tr!(app_gradient_canvas_bezier_hover)
                         } else {
-                            "The blend curve for the selected segment: how fast the colour travels from the left stop to the right one. Drag the ring to move the midpoint, or switch the curve to Bézier for a control point that moves in both directions."
+                            tr!(app_gradient_canvas_hover)
                         });
                       });
 
@@ -12907,7 +12996,10 @@ impl FractadyneApp {
                     ui.add_space(4.0);
                     ui.horizontal(|ui| {
                         let i = self.coloring.sel_stop.min(count - 1);
-                        ui.label(egui::RichText::new(format!("Stop {} of {}", i + 1, count)).strong());
+                        ui.label(
+                            egui::RichText::new(tr!(app_gradient_stop_heading, index = i + 1, total = count))
+                                .strong(),
+                        );
                         let Some((pos0, rgb0)) = g.stop(i) else { return };
                         // ⭐Through the same helper the segment's two ends use, so all three
                         // colour editors in this window share one picker and one hex field.
@@ -12917,7 +13009,7 @@ impl FractadyneApp {
                             ui,
                             egui::Id::new("stop_color"),
                             rgb0,
-                            "The colour at this stop — click the swatch to pick, or type a hex value beside it",
+                            &tr!(app_gradient_stop_color_hover),
                             72.0,
                         ) {
                             let mut g2 = edit.clone().unwrap_or_else(|| g.clone());
@@ -12931,7 +13023,7 @@ impl FractadyneApp {
                         ui.label(
                             egui::RichText::new(format!("{r8:>3} {g8:>3} {b8:>3}")).monospace(),
                         )
-                        .on_hover_text("Red, green and blue as 0–255 — the bytes this colour is written as");
+                        .on_hover_text(tr!(app_gradient_stop_bytes_hover));
                         // ⭐**The eyedropper reaches the WHOLE SCREEN, not just this window.** The
                         // colours people want in a fractal palette come from a photograph, another
                         // fractal program, a palette on a web page — restricting it to our own
@@ -12939,13 +13031,13 @@ impl FractadyneApp {
                         let can_pick = crate::eyedropper::supported();
                         let pick_btn = ui.add_enabled(
                             can_pick,
-                            egui::Button::new(format!("{} Pick", crate::icons::PICK)),
+                            egui::Button::new(format!("{} {}", crate::icons::PICK, tr!(app_gradient_pick))),
                         );
                         if let Some(why) = crate::eyedropper::unsupported_reason() {
                             pick_btn.clone().on_disabled_hover_text(why);
                         }
                         if pick_btn
-                            .on_hover_text("Eyedropper — take a colour from anywhere on screen. Move the pointer to the colour you want and click; Esc cancels.")
+                            .on_hover_text(tr!(app_gradient_pick_hover))
                             .clicked()
                         {
                             self.coloring.eyedrop = Some(crate::eyedropper::Pick::default());
@@ -12962,7 +13054,7 @@ impl FractadyneApp {
                                     .speed(0.002)
                                     .range(0.0..=1.0)
                                     .fixed_decimals(3)
-                                    .prefix("pos "),
+                                    .prefix(format!("{} ", tr!(app_gradient_stop_pos))),
                             )
                             .changed()
                         {
@@ -12977,7 +13069,7 @@ impl FractadyneApp {
                         for (label, dir) in [("◂", -1.0_f32), ("▸", 1.0_f32)] {
                             if ui
                                 .add_enabled(movable, egui::Button::new(label))
-                                .on_hover_text("Nudge this stop (hold Shift for a finer step)")
+                                .on_hover_text(tr!(app_gradient_nudge_hover))
                                 .clicked()
                             {
                                 let mut g2 = edit.clone().unwrap_or_else(|| g.clone());
@@ -12988,9 +13080,9 @@ impl FractadyneApp {
                         if ui
                             .add_enabled(
                                 movable,
-                                egui::Button::new(format!("{} Remove", crate::icons::CLOSE)),
+                                egui::Button::new(format!("{} {}", crate::icons::CLOSE, tr!(app_gradient_remove))),
                             )
-                            .on_hover_text("Remove this stop (or click the ⊖ under it)")
+                            .on_hover_text(tr!(app_gradient_remove_hover))
                             .clicked()
                         {
                             let mut g2 = edit.clone().unwrap_or_else(|| g.clone());
@@ -13013,8 +13105,8 @@ impl FractadyneApp {
                     if editable
                         && count < EDITOR_MAX_STOPS
                         && ui
-                            .button(format!("{} Add stop", crate::icons::ADD))
-                            .on_hover_text("Split the widest segment (or click the line above the gradient)")
+                            .button(format!("{} {}", crate::icons::ADD, tr!(app_gradient_add_stop)))
+                            .on_hover_text(tr!(app_gradient_add_stop_hover))
                             .clicked()
                     {
                         // ⭐Through the SEGMENT op: splitting preserves the blend and colour space
@@ -13043,14 +13135,14 @@ impl FractadyneApp {
                     if !editable && count == 0 {
                         // No custom gradient yet — seed one exactly as the old editor did, so
                         // "Add stop" on a fresh session still starts a palette.
-                        if ui.button(format!("{} Add stop", crate::icons::ADD)).clicked() {
+                        if ui.button(format!("{} {}", crate::icons::ADD, tr!(app_gradient_add_stop))).clicked() {
                             self.coloring.custom_palette.push([0.5, 1.0, 1.0, 1.0]);
                             self.coloring.custom_palette_flat = false;
                             self.rebuild_segments_from_palette();
                             changed = true;
                         }
                     }
-                    ui.menu_button(format!("{} Copy preset…", crate::icons::COPY), |ui| {
+                    ui.menu_button(format!("{} {}", crate::icons::COPY, tr!(app_gradient_copy_preset)), |ui| {
                         for (i, p) in fractadyne_color::PRESETS.iter().enumerate() {
                             if ui.button(p.name).clicked() {
                                 self.coloring.custom_palette = self.preset_as_stops(i);
@@ -13063,8 +13155,11 @@ impl FractadyneApp {
                             }
                         }
                     });
-                    ui.toggle_value(&mut self.coloring.paste_open, format!("{} Paste…", crate::icons::PASTE))
-                        .on_hover_text("Import a palette from hex colours or 0–255 RGB triples");
+                    ui.toggle_value(
+                        &mut self.coloring.paste_open,
+                        format!("{} {}", crate::icons::PASTE, tr!(app_gradient_paste)),
+                    )
+                    .on_hover_text(tr!(app_gradient_paste_hover));
                     // ⭐Four import buttons in a row used to set the window's width all by
                     // themselves. They are file tasks, not editing tasks, so they collapse behind
                     // one menu the way "Copy preset…" already does.
@@ -13072,16 +13167,16 @@ impl FractadyneApp {
                     // this machine; a `.ggr` is the copy you can send someone, back up, or open in
                     // GIMP. Both are "save", so they sit together.
                     if ui
-                        .button(format!("{} Save .ggr…", crate::icons::SAVE))
-                        .on_hover_text("Write this gradient to a GIMP .ggr file — readable by GIMP, Krita and Inkscape, and by this editor")
+                        .button(format!("{} {}", crate::icons::SAVE, tr!(app_gradient_save_ggr)))
+                        .on_hover_text(tr!(app_gradient_save_ggr_hover))
                         .clicked()
                     {
                         changed |= self.export_ggr_palette();
                     }
-                    ui.menu_button(format!("{} Import ▾", crate::icons::IMPORT), |ui| {
+                    ui.menu_button(format!("{} {} ▾", crate::icons::IMPORT, tr!(app_gradient_import)), |ui| {
                         if ui
                             .button(format!("{} .map…", crate::icons::IMPORT))
-                            .on_hover_text("Load a Fractint / Kalles Fraktaler .map palette file (R G B lines, one per entry)")
+                            .on_hover_text(tr!(app_gradient_import_map_hover))
                             .clicked()
                         {
                             changed |= self.import_map_palette();
@@ -13089,7 +13184,7 @@ impl FractadyneApp {
                         }
                         if ui
                             .button(format!("{} .ugr…", crate::icons::IMPORT))
-                            .on_hover_text("Load an Ultra Fractal .ugr gradient file (a .ugr usually holds many gradients — you pick one)")
+                            .on_hover_text(tr!(app_gradient_import_ugr_hover))
                             .clicked()
                         {
                             changed |= self.import_ugr_palette();
@@ -13097,7 +13192,7 @@ impl FractadyneApp {
                         }
                         if ui
                             .button(format!("{} .ggr…", crate::icons::IMPORT))
-                            .on_hover_text("Load a GIMP .ggr gradient, with its midpoints, blend curves and colour spaces intact")
+                            .on_hover_text(tr!(app_gradient_import_ggr_hover))
                             .clicked()
                         {
                             changed |= self.import_ggr_palette();
@@ -13105,7 +13200,7 @@ impl FractadyneApp {
                         }
                         if ui
                             .button(format!("{} .ase…", crate::icons::IMPORT))
-                            .on_hover_text("Load an Adobe swatch list (.ase). Swatches have no positions, so they arrive evenly spaced and blended.")
+                            .on_hover_text(tr!(app_gradient_import_ase_hover))
                             .clicked()
                         {
                             changed |= self.import_ase_palette();
@@ -13122,29 +13217,37 @@ impl FractadyneApp {
                 ui.add_space(4.0);
                 ui.separator();
                 ui.horizontal(|ui| {
-                    ui.label("Name");
+                    ui.label(tr!(app_gradient_name));
                     ui.add(
                         egui::TextEdit::singleline(&mut self.coloring.gradient_name)
                             .desired_width(150.0)
-                            .hint_text("my gradient"),
+                            .hint_text(tr!(app_gradient_name_hint)),
                     );
                     let name = self.coloring.gradient_name.trim().to_string();
                     let can_save = !name.is_empty() && !self.coloring.custom_segments.is_empty();
                     let overwrites = self.saved_gradients.iter().any(|g| g.name == name);
                     if ui
-                        .add_enabled(can_save, egui::Button::new(if overwrites { "Update" } else { "Save" }))
+                        .add_enabled(
+                            can_save,
+                            egui::Button::new(if overwrites {
+                                tr!(app_gradient_update)
+                            } else {
+                                tr!(app_gradient_save)
+                            }),
+                        )
                         .on_hover_text(if can_save {
-                            "Save this gradient to your library, with its curves and colour spaces intact"
+                            tr!(app_gradient_save_hover)
                         } else {
-                            "Give the gradient a name first"
+                            tr!(app_gradient_save_needs_name_hover)
                         })
                         .clicked()
                     {
                         self.save_gradient_as(&name);
                     }
-                    ui.menu_button(format!("Saved ({}) ▾", self.saved_gradients.len()), |ui| {
+                    let saved_label = tr!(app_gradient_saved_menu, count = self.saved_gradients.len());
+                    ui.menu_button(format!("{saved_label} ▾"), |ui| {
                         if self.saved_gradients.is_empty() {
-                            ui.label(egui::RichText::new("Nothing saved yet").weak().small());
+                            ui.label(egui::RichText::new(tr!(app_gradient_nothing_saved)).weak().small());
                         }
                         let mut load: Option<usize> = None;
                         let mut drop: Option<usize> = None;
@@ -13169,7 +13272,7 @@ impl FractadyneApp {
                                     }
                                     if ui
                                         .small_button(crate::icons::CLOSE)
-                                        .on_hover_text("Delete this saved gradient")
+                                        .on_hover_text(tr!(app_gradient_delete_saved_hover))
                                         .clicked()
                                     {
                                         drop = Some(i);
@@ -13203,16 +13306,16 @@ impl FractadyneApp {
                     // wider, which is how a single sentence of copy came to set the editor's width
                     // despite the cap above.
                     ui.label(
-                        egui::RichText::new(format!(
-                            "Rich gradient: {} segments carry midpoints, blend curves or colour spaces — more than a plain stop list can hold.",
-                            self.coloring.custom_segments.len()
+                        egui::RichText::new(tr!(
+                            app_gradient_rich,
+                            count = self.coloring.custom_segments.len()
                         ))
                         .weak()
                         .small(),
                     );
                     if ui
-                        .button("Convert to editable stops")
-                        .on_hover_text("Replace it with a plain stop list. This DISCARDS the midpoints, blend curves and hue sweeps a stop list cannot hold.")
+                        .button(tr!(app_gradient_convert))
+                        .on_hover_text(tr!(app_gradient_convert_hover))
                         .clicked()
                     {
                         // ⚠Flatten to a plain stop list and rebuild: after P1 the segments ARE the
@@ -13231,15 +13334,15 @@ impl FractadyneApp {
                     ui.add_space(4.0);
                     ui.horizontal(|ui| {
                         ui.label(
-                            egui::RichText::new(format!(
-                                "{} gradients in {}",
-                                self.coloring.ugr_choices.len(),
-                                self.coloring.ugr_file
+                            egui::RichText::new(tr!(
+                                app_gradient_ugr_list,
+                                count = self.coloring.ugr_choices.len(),
+                                file = self.coloring.ugr_file.as_str()
                             ))
                             .weak()
                             .small(),
                         );
-                        if crate::theme::cancel_button(ui, "Close list").clicked() {
+                        if crate::theme::cancel_button(ui, &tr!(app_gradient_close_list)).clicked() {
                             self.coloring.ugr_choices.clear();
                         }
                     });
@@ -13266,10 +13369,10 @@ impl FractadyneApp {
                     if let Some(i) = pick {
                         let g = self.coloring.ugr_choices[i].clone();
                         self.apply_ugr_gradient(&g);
-                        self.coloring.paste_msg = Some(format!(
-                            "Imported \"{}\" from {}.",
-                            g.title.as_deref().unwrap_or(&g.name),
-                            self.coloring.ugr_file
+                        self.coloring.paste_msg = Some(tr!(
+                            app_gradient_ugr_imported,
+                            name = g.title.as_deref().unwrap_or(&g.name),
+                            file = self.coloring.ugr_file.as_str()
                         ));
                         self.coloring.ugr_choices.clear();
                         changed = true;
@@ -13282,22 +13385,18 @@ impl FractadyneApp {
                 if let Some(g) = self.editable_gradient() {
                     let was = self.coloring.seamless;
                     ui.horizontal(|ui| {
-                        ui.checkbox(&mut self.coloring.seamless, "Seamless (end matches start)")
-                            .on_hover_text(
-                                "A palette is cycled, so position 1 and position 0 are next to each other on screen. With this on, the last stop's colour is held equal to the first — the ring view shows the join at the top.",
-                            );
+                        ui.checkbox(&mut self.coloring.seamless, tr!(app_gradient_seamless))
+                            .on_hover_text(tr!(app_gradient_seamless_hover));
                         // ⚠Only when it is OFF and there is a seam: with the box ticked there is
                         // nothing to report, and reporting it anyway would train the eye to ignore
                         // the line.
                         if !self.coloring.seamless && !g.is_seamless() {
                             ui.label(
-                                egui::RichText::new("⚠ ends differ")
+                                egui::RichText::new(tr!(app_gradient_ends_differ))
                                     .color(ui.visuals().warn_fg_color)
                                     .small(),
                             )
-                            .on_hover_text(
-                                "The colour at the end of the gradient is not the colour at the start, so a cycled palette shows a hard edge where it wraps.",
-                            );
+                            .on_hover_text(tr!(app_gradient_ends_differ_hover));
                         }
                     });
                     // Applied on the frame it is switched on AND on every frame after, since an
@@ -13314,8 +13413,8 @@ impl FractadyneApp {
                 // entries, and the hard steps that produces are the classic look - so import sets
                 // this, and clearing it is a deliberate choice to smooth the same colours instead.
                 if ui
-                    .checkbox(&mut self.coloring.custom_palette_flat, "Hard bands (no blending between entries)")
-                    .on_hover_text("Fractint / .map semantics: every entry is a flat colour. Off blends them into a smooth gradient.")
+                    .checkbox(&mut self.coloring.custom_palette_flat, tr!(app_gradient_hard_bands))
+                    .on_hover_text(tr!(app_gradient_hard_bands_hover))
                     .changed()
                 {
                     // ⚠**Must REBUILD.** Since P1 the segments are what renders, so flipping the
@@ -13330,22 +13429,16 @@ impl FractadyneApp {
                 // web" as well as pasting the body of a Fractint/KF `.map`.
                 if self.coloring.paste_open {
                     ui.add_space(4.0);
-                    ui.label(
-                        egui::RichText::new(
-                            "Paste hex colours (#ff8800) or 0–255 triples (255 136 0), separated \
-                             by commas, spaces or new lines:",
-                        )
-                        .weak()
-                        .small(),
-                    );
+                    ui.label(egui::RichText::new(tr!(app_gradient_paste_intro)).weak().small());
                     ui.add(
                         egui::TextEdit::multiline(&mut self.coloring.paste_text)
                             .desired_rows(3)
                             .desired_width(f32::INFINITY)
+                            // i18n: keep (colours in hex, an example of what to paste)
                             .hint_text("#000000, #8b1a1a, #ff8800, #ffe6b3"),
                     );
                     ui.horizontal(|ui| {
-                        if crate::theme::confirm_button(ui, "Apply").clicked() {
+                        if crate::theme::confirm_button(ui, &tr!(app_gradient_apply)).clicked() {
                             match fractadyne_color::parse_palette_text(&self.coloring.paste_text) {
                                 Ok(colors) => {
                                     let got = colors.len();
@@ -13373,16 +13466,24 @@ impl FractadyneApp {
                                     self.coloring.custom_palette_flat = false;
                                     self.rebuild_segments_from_palette();
                                     self.coloring.paste_msg = Some(if got > n {
-                                        format!("Imported {n} of {got} colours, sampled evenly across your list ({PASTE_MAX_COLORS} is the limit).")
+                                        tr!(
+                                            app_gradient_paste_imported_some,
+                                            used = n,
+                                            total = got,
+                                            limit = PASTE_MAX_COLORS
+                                        )
                                     } else {
-                                        format!("Imported {n} colours.")
+                                        tr!(app_gradient_paste_imported, count = n)
                                     });
                                     changed = true;
                                 }
-                                Err(e) => self.coloring.paste_msg = Some(format!("Couldn't read that: {e}")),
+                                Err(e) => {
+                                    self.coloring.paste_msg =
+                                        Some(tr!(app_gradient_paste_unreadable, error = e.to_string()))
+                                }
                             }
                         }
-                        if ui.button("Clear").clicked() {
+                        if ui.button(tr!(app_gradient_clear)).clicked() {
                             self.coloring.paste_text.clear();
                             self.coloring.paste_msg = None;
                         }
@@ -13394,7 +13495,7 @@ impl FractadyneApp {
                 let n = self.coloring.custom_palette.len();
                 ui.label(
                     egui::RichText::new(if self.coloring.custom_palette_flat {
-                        format!("{n} bands · taken in file order; positions are ignored while bands are on.")
+                        tr!(app_gradient_bands_hint, count = n)
                     } else {
                         // ⚠The old copy here said positions "may overlap; they're sorted
                         // automatically", which described the flat stop list the editor used to
@@ -13404,9 +13505,9 @@ impl FractadyneApp {
                         // and those differ between the two views, so the hint has to as well
                         // rather than telling a ring user to click a strip that is not there.
                         if self.coloring.ring_view {
-                            format!("{n} stops · click the outer track to add one there · ⊕ adds in the widest gap, ⊖ removes the selected stop · drag a marker to move it · the mark at the top is the seam")
+                            tr!(app_gradient_ring_hint, count = n)
                         } else {
-                            format!("{n} stops · click the line above the gradient to add one there · drag a marker to move it · ⊖ or right-click removes")
+                            tr!(app_gradient_bar_hint, count = n)
                         }
                     })
                     .weak()
@@ -13431,8 +13532,8 @@ impl FractadyneApp {
                     // not a statement about the work in it, and every edit here is
                     // already live in the view — so silently undoing on ✕ would throw
                     // away work the user watched themselves make.
-                    if crate::theme::cancel_button(ui, "Cancel")
-                        .on_hover_text("Discard every change made since this window was opened, and close it")
+                    if crate::theme::cancel_button(ui, &tr!(app_gradient_cancel))
+                        .on_hover_text(tr!(app_gradient_cancel_hover))
                         .clicked()
                     {
                         cancelled = true;
@@ -13448,8 +13549,8 @@ impl FractadyneApp {
                     // ⚠It does exactly what ✕ does — close, keep, drop the Cancel
                     // baseline — and that is the point: the safe exit should be the
                     // obvious one.
-                    if crate::theme::confirm_button(ui, "OK")
-                        .on_hover_text("Keep these changes and close the editor")
+                    if crate::theme::confirm_button(ui, &tr!(app_gradient_ok))
+                        .on_hover_text(tr!(app_gradient_ok_hover))
                         .clicked()
                     {
                         close_after = true;
@@ -13619,7 +13720,8 @@ impl FractadyneApp {
         // so the fell-back branch can offer to un-silence it, and applied after the closure.
         let warning_suppressed = self.mpfr_warning_suppressed;
         let mut unsuppress_warning = false;
-        egui::Window::new("Faster deep zoom")
+        egui::Window::new(tr!(app_accel_title))
+            .id(egui::Id::new("fractadyne.accelerated_build"))
             .open(&mut open)
             .collapsible(false)
             .resizable(false)
@@ -13628,16 +13730,12 @@ impl FractadyneApp {
             .show(ctx, |ui| {
                 ui.spacing_mut().item_spacing.y = 8.0;
                 if have_build && mpfr_active {
-                    ui.heading("You are running the accelerated build");
+                    ui.heading(tr!(app_accel_active_heading));
+                    ui.label(tr!(app_accel_active_body));
                     ui.label(
-                        "Deep-zoom reference orbits are being computed with MPFR/GMP, which is \
-                         2.5-6.4x faster than the standard build at that step - the pause before \
-                         a deep view starts resolving.",
-                    );
-                    ui.label(
-                        egui::RichText::new(format!(
-                            "Arithmetic in use: {}",
-                            fractadyne_core::backend_status_line()
+                        egui::RichText::new(tr!(
+                            app_accel_in_use,
+                            status = fractadyne_core::backend_status_line()
                         ))
                         .monospace()
                         .small(),
@@ -13645,27 +13743,19 @@ impl FractadyneApp {
                 } else if have_build {
                     // Accelerated binary, but the MPFR libraries were not found at startup, so it
                     // fell back to the built-in arithmetic. Say so plainly and where to fix it.
-                    ui.heading("Accelerated build — using built-in arithmetic");
-                    ui.label(
-                        "This is the accelerated (MPFR) build, but its math libraries could not be \
-                         found, so it is using the built-in arithmetic (astro-float). The images \
-                         are identical; only the pause before a deep view resolves is slower.",
-                    );
+                    ui.heading(tr!(app_accel_fallback_heading));
+                    ui.label(tr!(app_accel_fallback_body));
                     if let Some(dir) = std::env::current_exe()
                         .ok()
                         .and_then(|p| p.parent().map(|d| d.display().to_string()))
                     {
-                        ui.label(
-                            "To use the faster path, put libmpfr-6.dll and libgmp-10.dll (and \
-                             libgcc_s_seh-1.dll, libwinpthread-1.dll) beside fractadyne.exe, then \
-                             restart:",
-                        );
+                        ui.label(tr!(app_accel_fallback_dlls));
                         ui.label(egui::RichText::new(dir).monospace().small());
                     }
                     ui.label(
-                        egui::RichText::new(format!(
-                            "Arithmetic in use: {}",
-                            fractadyne_core::backend_status_line()
+                        egui::RichText::new(tr!(
+                            app_accel_in_use,
+                            status = fractadyne_core::backend_status_line()
                         ))
                         .monospace()
                         .small(),
@@ -13673,45 +13763,30 @@ impl FractadyneApp {
                     if warning_suppressed {
                         ui.horizontal(|ui| {
                             ui.label(
-                                egui::RichText::new("The startup warning about this is hidden.")
+                                egui::RichText::new(tr!(app_accel_warning_hidden))
                                     .small()
                                     .weak(),
                             );
-                            if ui.small_button("Show it again").clicked() {
+                            if ui.small_button(tr!(app_accel_show_again)).clicked() {
                                 unsuppress_warning = true;
                             }
                         });
                     }
                 } else {
-                    ui.heading("An optional build is 2.5-6.4x faster at depth");
-                    ui.label(
-                        "Deep zoom spends much of its time computing reference orbits on the CPU \
-                         - the pause before a deep view starts resolving. An optional build does \
-                         that with the MPFR/GMP libraries instead, which is 2.5 to 6.4 times \
-                         faster, and more so the deeper you go. Everything else is the same.",
-                    );
+                    ui.heading(tr!(app_accel_offer_heading));
+                    ui.label(tr!(app_accel_offer_body));
                     ui.separator();
-                    ui.label(
-                        "The images are BYTE-IDENTICAL - it is the same mathematics computed by a \
-                         faster library, checked across every fractal formula and the whole \
-                         deep-zoom comparison corpus.",
-                    );
-                    ui.label(
-                        "Your settings, saved session and locations are shared between the two, \
-                         so you can switch freely and nothing needs importing.",
-                    );
+                    ui.label(tr!(app_accel_offer_identical));
+                    ui.label(tr!(app_accel_offer_shared));
                     // The REASON it is separate differs by platform, and only one half travels:
                     // the toolchain obstacle is Windows-only (MSVC cannot build MPFR), while the
                     // licence difference applies everywhere. Saying "the compiler the standard
                     // Windows build uses" to a Linux user is simply false there.
                     ui.label(
                         egui::RichText::new(if cfg!(target_os = "windows") {
-                            "It is a separate download because the libraries it uses cannot be \
-                             built with the compiler the standard Windows build uses, and they \
-                             carry a different licence (GNU LGPL v3) from Fractadyne's own."
+                            tr!(app_accel_separate_windows)
                         } else {
-                            "It is a separate download because the libraries it uses carry a \
-                             different licence (GNU LGPL v3) from Fractadyne's own."
+                            tr!(app_accel_separate)
                         })
                         .small(),
                     );
@@ -13721,18 +13796,15 @@ impl FractadyneApp {
                         // would hand the user a link that 404s by construction.
                         if accelerated_package_exists_for_platform()
                             && ui
-                                .button("Download for this version")
+                                .button(tr!(app_accel_download))
                                 .on_hover_text(&asset)
                                 .clicked()
                         {
                             ctx.open_url(egui::OpenUrl::new_tab(&asset));
                         }
                         if ui
-                            .button("All releases")
-                            .on_hover_text(
-                                "If the direct link 404s, this version has no accelerated build \
-                                 yet - pick the nearest one here.",
-                            )
+                            .button(tr!(app_accel_all_releases))
+                            .on_hover_text(tr!(app_accel_all_releases_hover))
                             .clicked()
                         {
                             ctx.open_url(egui::OpenUrl::new_tab(releases));
@@ -13740,15 +13812,11 @@ impl FractadyneApp {
                     });
                     ui.label(
                         egui::RichText::new(if cfg!(target_os = "windows") {
-                            "Extract it and run fractadyne.exe from that folder, keeping the .dll \
-                             files beside it."
+                            tr!(app_accel_install_windows)
                         } else if cfg!(target_os = "linux") {
-                            "Extract it and run ./fractadyne from that folder. It uses your \
-                             system's GMP and MPFR (libgmp10 / libmpfr6), which nearly every \
-                             desktop already has - see README-ACCELERATED.txt in the package."
+                            tr!(app_accel_install_linux)
                         } else {
-                            "No accelerated package is built for this platform yet; it can be \
-                             built from source with --features fractadyne-core/rug."
+                            tr!(app_accel_install_other)
                         })
                         .small(),
                     );
@@ -13756,7 +13824,7 @@ impl FractadyneApp {
                 ui.add_space(6.0);
                 ui.separator();
                 crate::theme::action_row(ui, |ui| {
-                    if crate::theme::cancel_button(ui, "Close").clicked() {
+                    if crate::theme::cancel_button(ui, &tr!(app_close)).clicked() {
                         close = true;
                     }
                 });
@@ -13780,7 +13848,8 @@ impl FractadyneApp {
         let max_h = (ctx.screen_rect().height() - 80.0).max(360.0);
         let max_w = (ctx.screen_rect().width() - 40.0).max(480.0);
         let mut close = false;
-        egui::Window::new("Fractadyne Help")
+        egui::Window::new(tr!(app_help_title))
+            .id(egui::Id::new("fractadyne.help"))
             .open(&mut open)
             .default_size([800.0, 560.0])
             .min_width(480.0) // keep room for the content beside the fixed-width contents list
@@ -13805,8 +13874,12 @@ impl FractadyneApp {
                             ui.set_min_width(toc_w);
                             ui.set_max_width(toc_w);
                             ui.add_space(4.0);
-                            for (i, name) in SECTIONS.iter().enumerate() {
-                                ui.selectable_value(&mut self.dialogs.help_section, i, *name);
+                            for i in 0..SECTIONS.len() {
+                                ui.selectable_value(
+                                    &mut self.dialogs.help_section,
+                                    i,
+                                    help::section_title(i),
+                                );
                             }
                         },
                     );
@@ -13846,7 +13919,7 @@ impl FractadyneApp {
                 // the same reason the gradient editor's OK/Cancel sit outside its ScrollArea.
                 ui.separator();
                 crate::theme::action_row(ui, |ui| {
-                    if crate::theme::cancel_button(ui, "Close").clicked() {
+                    if crate::theme::cancel_button(ui, &tr!(app_close)).clicked() {
                         close = true;
                     }
                 });
@@ -13927,10 +14000,10 @@ impl FractadyneApp {
                     self.update_prompt_open = true;
                 }
                 update::UpdateStatus::UpToDate if self.update_manual => {
-                    self.set_toast("You're on the latest version.", ctx);
+                    self.set_toast(tr!(app_toast_up_to_date), ctx);
                 }
                 update::UpdateStatus::Error(e) if self.update_manual => {
-                    self.set_toast(format!("Update check failed: {e}"), ctx);
+                    self.set_toast(tr!(app_toast_update_failed, error = e.to_string()), ctx);
                 }
                 _ => {}
             }
@@ -13958,7 +14031,8 @@ impl FractadyneApp {
         let green = egui::Color32::from_rgb(0x5C, 0xC0, 0x6C);
         let mut open = true;
         let (mut download, mut later) = (false, false);
-        egui::Window::new("Update available")
+        egui::Window::new(tr!(app_update_title))
+            .id(egui::Id::new("fractadyne.update_available"))
             .open(&mut open)
             .resizable(false)
             .collapsible(false)
@@ -13970,14 +14044,18 @@ impl FractadyneApp {
                     ui.label(egui::RichText::new("\u{2B06}").size(22.0).color(green));
                     ui.vertical(|ui| {
                         ui.label(
-                            egui::RichText::new(format!(
-                                "Fractadyne {version} ({channel}) is available"
+                            egui::RichText::new(tr!(
+                                app_update_version,
+                                version = version.as_str(),
+                                channel = channel
                             ))
                             .strong(),
                         );
                         ui.label(
-                            egui::RichText::new(format!(
-                                "You're running {current}  ·  {track}"
+                            egui::RichText::new(tr!(
+                                app_update_running,
+                                current = current.as_str(),
+                                track = track.as_str()
                             ))
                             .weak()
                             .small(),
@@ -13985,13 +14063,13 @@ impl FractadyneApp {
                     });
                 });
                 ui.add_space(10.0);
-                ui.label("Download the latest release from GitHub:");
+                ui.label(tr!(app_update_download_intro));
                 ui.add_space(6.0);
                 ui.horizontal(|ui| {
                     if ui
                         .add(
                             egui::Button::new(
-                                egui::RichText::new("\u{2B07}  Download from GitHub")
+                                egui::RichText::new(format!("\u{2B07}  {}", tr!(app_update_download)))
                                     .color(egui::Color32::WHITE),
                             )
                             .fill(green),
@@ -14011,7 +14089,7 @@ impl FractadyneApp {
                 ui.add_space(6.0);
                 ui.separator();
                 crate::theme::action_row(ui, |ui| {
-                    if ui.button("Remind me later").clicked() {
+                    if ui.button(tr!(app_update_later)).clicked() {
                         later = true;
                     }
                 });
@@ -14155,22 +14233,22 @@ impl FractadyneApp {
                     let total = gres[0].div_ceil(side).max(1) * gres[1].div_ceil(side).max(1);
                     let done = g.next.min(total);
                     let eta = (total.saturating_sub(done)) as f64 * p.frame_ms / 1000.0;
-                    format!("refining {done}/{total} (~{})", mmss(eta))
+                    tr!(app_perf_refining_tiles, done = done, total = total, eta = mmss(eta))
                 }
-                None => "refining (arming)".to_string(),
+                None => tr!(app_perf_refining_arming),
             }
         } else if p.chunk_pending[0] {
             let ask = p.chunk_sig[0].ask().max(1);
             let pct = 100.0 * p.chunk_cursor[0].min(ask) as f64 / ask as f64;
-            format!("refining {pct:.1}%")
+            tr!(app_perf_refining_percent, percent = crate::i18n::decimal(pct, 1))
         } else if self.recompute_rx[0].is_some() {
-            "building reference".to_string()
+            tr!(app_perf_building_reference)
         } else if self.render_quiescent() {
             // Nothing left that could change the picture — and this is the SAME test that stands
             // the heartbeat down below, so "idle" now means the GPU is idle too, not that the
             // overlay is busy redrawing the word. Note it reads BOTH views: with the second panel
             // still walking its chunks, this falls through to a real framerate.
-            "idle".to_string()
+            tr!(app_perf_idle)
         } else {
             format!("{fps:.1}")
         };
@@ -14189,46 +14267,59 @@ impl FractadyneApp {
                 _ => egui::RichText::new(text),
             }
         };
-        Self::metric_row(ui, "FPS", line, "Frames presented per second, from the smoothed interval between \
-             frames. While a view is settling this reports refinement progress instead - a \
-             settling view is not running at the rate a number here would imply.");
+        Self::metric_row(ui, &tr!(app_perf_fps), line, tr!(app_perf_fps_hover));
         // ⭐Every number in this section is comma-grouped (`commas` touches only the integer part),
         // and the Julia parameter below is grouped in fives like the status bar's centre. Values
         // here swing across orders of magnitude — an idle frame reads tens of thousands of ms, an
         // orbit millions of samples — and ungrouped digits are where a factor of ten gets misread.
-        Self::metric_row(ui, "frame", format!("{} ms", commas(&format!("{:.2}", p.frame_ms))), "Smoothed wall-clock time between \
-             frames - not a sum of the rows below it. It includes waiting to present, so on a \
-             settled idle view it reflects the repaint cadence rather than any work.");
-        Self::metric_row(ui, "cpu", format!("{} ms", commas(&format!("{:.2}", p.cpu_ms))), "Main-thread time inside one update: \
-             parameter setup and reference-cache management. This is the row that spikes when \
-             a reference rebuilds, and a spike here is the stutter you feel.");
-        Self::metric_row(ui, "gpu/idle", format!("{} ms", commas(&format!("{gpu_idle:.2}"))), "Frame time minus main-thread CPU \
-             time. That is GPU work while the view is rendering, but on a settled view it is \
-             mostly idle waiting - the name says both because the panel cannot tell them \
-             apart from this subtraction alone.");
+        Self::metric_row(
+            ui,
+            &tr!(app_perf_frame),
+            format!("{} ms", commas(&format!("{:.2}", p.frame_ms))),
+            tr!(app_perf_frame_hover),
+        );
+        Self::metric_row(
+            ui,
+            &tr!(app_perf_cpu),
+            format!("{} ms", commas(&format!("{:.2}", p.cpu_ms))),
+            tr!(app_perf_cpu_hover),
+        );
+        Self::metric_row(
+            ui,
+            &tr!(app_perf_gpu_idle),
+            format!("{} ms", commas(&format!("{gpu_idle:.2}"))),
+            tr!(app_perf_gpu_idle_hover),
+        );
         // The cost controller's measurement source. Wall-clock FALLBACK is the danger state:
         // the budget is pricing frames without GPU timings, which is exactly how both fatal
         // 2026-08-19 sessions ran ~1 s frames with the budget still growing.
         let (timing_lvl, timing_txt) = if p.wall_fallback {
-            (2u8, "wall clock (timestamps starved)")
+            (2u8, tr!(app_perf_timing_starved))
         } else if p.ts_supported {
-            (0, "GPU timestamps")
+            (0, tr!(app_perf_timing_gpu))
         } else {
-            (1, "wall clock (no TIMESTAMP_QUERY)")
+            (1, tr!(app_perf_timing_no_query))
         };
-        Self::metric_row(ui, "timing", level_value(timing_lvl, timing_txt.to_string()),
-            "How frame cost is measured. GPU timestamps are the precise source; the wall-clock              fallback engages when timings stop arriving, and a budget priced by wall clock has              repeatedly mis-sized deep frames — treat red here as 'the safety margins are              estimates right now'.",
+        Self::metric_row(
+            ui,
+            &tr!(app_perf_timing),
+            level_value(timing_lvl, timing_txt),
+            tr!(app_perf_timing_hover),
         );
         ui.separator();
-        Self::metric_row(ui, "mode", mode, "Arithmetic path the last frame rendered with: direct (no \
-             reference orbit), df32 perturbation, or floatexp - the extended-range path used \
-             past about 1e28x, and the only one on which BLA runs.");
-        Self::metric_row(ui, "eff iter", commas(&p.last_eff_iter.to_string()), "Iterations the last frame \
-             actually used, after depth scaling and any cap applied while moving - not the \
-             base setting in Quality, which is only the starting point.");
-        Self::metric_row(ui, "precision", format!("{} bit", commas(&p.last_precision.to_string())), "Mantissa bits the reference \
-             orbit is computed at. It grows with depth; 64 bits is the shallow floor, not a \
-             limit you are hitting.");
+        Self::metric_row(ui, &tr!(app_perf_mode), mode, tr!(app_perf_mode_hover));
+        Self::metric_row(
+            ui,
+            &tr!(app_perf_eff_iter),
+            commas(&p.last_eff_iter.to_string()),
+            tr!(app_perf_eff_iter_hover),
+        );
+        Self::metric_row(
+            ui,
+            &tr!(app_perf_precision),
+            format!("{} bit", commas(&p.last_precision.to_string())),
+            tr!(app_perf_precision_hover),
+        );
         {
             // The device's orbit ceiling (storage-binding limit): past it the live view cannot
             // resolve deeper — the documented ~1e95 depth wall. Announce the approach.
@@ -14240,25 +14331,36 @@ impl FractadyneApp {
             } else {
                 0
             };
-            Self::metric_row(ui, "orbit len", level_value(lvl, commas(&p.last_orbit_len.to_string())),
-                format!(
-                    "Reference orbit samples. This GPU holds at most {} — approaching it is the                      practical depth wall: past it the live view cannot resolve deeper locations                      that need a longer orbit.",
-                    if cap == u32::MAX { "(uncapped)".to_string() } else { commas(&cap.to_string()) }
-                ),
+            let cap_text =
+                if cap == u32::MAX { tr!(app_perf_uncapped) } else { commas(&cap.to_string()) };
+            Self::metric_row(
+                ui,
+                &tr!(app_perf_orbit_len),
+                level_value(lvl, commas(&p.last_orbit_len.to_string())),
+                tr!(app_perf_orbit_len_hover, cap = cap_text),
             );
         }
         if p.last_sa_skip > 0 {
-            Self::metric_row(ui, "SA skip", commas(&p.last_sa_skip.to_string()), "Iterations the series \
-                 approximation skipped before per-pixel work began. Higher is faster and \
-                 changes nothing about the image; the row is absent when it skipped none.");
+            Self::metric_row(
+                ui,
+                &tr!(app_perf_sa_skip),
+                commas(&p.last_sa_skip.to_string()),
+                tr!(app_perf_sa_skip_hover),
+            );
         }
-        Self::metric_row(ui, "aa", format!("{}x", self.render_cfg.aa), "Supersampling: each pixel is \
-             rendered from this many samples per axis, so 2x costs four times the work.");
-        Self::metric_row(ui, "dual", format!("{}", self.dual), "Whether the split Mandelbrot/Julia view is \
-             running. When true, every cost on this panel covers BOTH panes.");
-        Self::metric_row(ui, "zoom", format!("{}×", fmt_zoom_log2(self.viewport.log2_magnification())),
-            "Magnification relative to the full view. The arithmetic mode above changes at \
-             about 1e4x and again at about 1e28x.");
+        Self::metric_row(
+            ui,
+            &tr!(app_perf_aa),
+            format!("{}x", self.render_cfg.aa),
+            tr!(app_perf_aa_hover),
+        );
+        Self::metric_row(ui, &tr!(app_perf_dual), format!("{}", self.dual), tr!(app_perf_dual_hover));
+        Self::metric_row(
+            ui,
+            &tr!(app_perf_zoom),
+            format!("{}×", fmt_zoom_log2(self.viewport.log2_magnification())),
+            tr!(app_perf_zoom_hover),
+        );
         // Deep-zoom budget telemetry (D3.5): the measured live iterate + the adaptive step
         // budget it feeds. Only meaningful in floatexp mode (mode 2), where the budget runs.
         if p.last_mode == 2 && p.last_iterate_ms[0] > 0.0 {
@@ -14280,31 +14382,37 @@ impl FractadyneApp {
             } else {
                 0
             };
-            Self::metric_row(ui, "iterate", level_value(it_lvl, format!("{} ms (GPU)", commas(&format!("{:.1}", p.last_iterate_ms[0])))),
-                format!(
-                    "Measured GPU time of the last iterate dispatch. The controller aims at                      {target:.0} ms; sustained readings near {:.0} ms are the band where this                      hardware class has lost the device.",
-                    c.tdr_lethal_ms
-                ));
-            Self::metric_row(ui, "steps/s", format!("{gsps:.2} G"), "Iteration steps per second on the GPU, \
-                 in billions. Interior-heavy views run slower per step than the count alone \
-                 suggests, so this is a throughput reading rather than a score.");
+            Self::metric_row(
+                ui,
+                &tr!(app_perf_iterate),
+                level_value(it_lvl, format!("{} ms (GPU)", commas(&format!("{:.1}", p.last_iterate_ms[0])))),
+                tr!(
+                    app_perf_iterate_hover,
+                    target = crate::i18n::decimal(target, 0),
+                    lethal = crate::i18n::decimal(c.tdr_lethal_ms, 0)
+                ),
+            );
+            Self::metric_row(
+                ui,
+                &tr!(app_perf_steps),
+                format!("{gsps:.2} G"),
+                tr!(app_perf_steps_hover),
+            );
             // Amber while the budget is still CLIMBING: an unconverged budget is priced from
             // sparse readings, and every mis-sized settled dispatch this cycle happened in
             // exactly this state.
             Self::metric_row(
                 ui,
-                "budget",
+                &tr!(app_perf_budget),
                 level_value(
                     if p.fe_budget_ok[0] { 0 } else { 1 },
                     format!(
-                        "{:.2e}{}",
+                        "{:.2e} {}",
                         p.fe_budget[0] as f64,
-                        if p.fe_budget_ok[0] { " ✔" } else { " (settling)" }
+                        if p.fe_budget_ok[0] { "✔".to_string() } else { tr!(app_perf_budget_settling) }
                     ),
                 ),
-                "Adaptive per-dispatch step budget, the controller's guard against a frame \
-                 long enough for the driver to reset the GPU. \"settling\" means it is still \
-                 converging from sparse readings and is not yet a trustworthy ceiling.",
+                tr!(app_perf_budget_hover),
             );
         }
 
@@ -14317,18 +14425,16 @@ impl FractadyneApp {
         };
         Self::metric_row(
             ui,
-            "rss",
+            &tr!(app_perf_rss),
             level_value(
                 rss_lvl,
-                format!(
-                    "{} MB (peak {})",
-                    commas(&(p.mem_rss >> 20).to_string()),
-                    commas(&(p.mem_peak >> 20).to_string())
+                tr!(
+                    app_perf_rss_value,
+                    mb = commas(&(p.mem_rss >> 20).to_string()),
+                    peak = commas(&(p.mem_peak >> 20).to_string())
                 ),
             ),
-            "Resident memory of the process, and the highest it has reached this session. \
-             Deep reference builds have peaked past 2 GB in the field with nothing else on \
-             screen saying so; amber past three quarters of system RAM.",
+            tr!(app_perf_rss_hover),
         );
         // Estimated GPU-resident bytes, assembled from the allocation sizes the app knows:
         // reference orbits + BLA trees (both views), the iteration G-buffer pair, the
@@ -14354,8 +14460,11 @@ impl FractadyneApp {
             }
             b
         };
-        Self::metric_row(ui, "gpu est.", format!("{} MB", commas(&(gpu_est >> 20).to_string())),
-            "Estimated GPU-resident memory: reference orbits, BLA trees, iteration textures,              the chunk-state ping-pong while a refinement runs, and the present-gate snapshot.              Assembled from known allocation sizes; the driver's true figure is not portably              readable.",
+        Self::metric_row(
+            ui,
+            &tr!(app_perf_gpu_est),
+            format!("{} MB", commas(&(gpu_est >> 20).to_string())),
+            tr!(app_perf_gpu_est_hover),
         );
 
         // Julia parameter the Julia / dual view renders, plus how much c-space the
@@ -14367,38 +14476,50 @@ impl FractadyneApp {
             let (jr, ji) = self.julia_c;
             // Grouped in fives exactly as the status bar's centre and cursor are (`fmt_coord`:
             // `+0.16318 15194 00248`), so the same number reads the same in both places.
-            Self::metric_row(ui, "julia c.re", fmt_coord(jr), "Real part of the parameter c the \
-                 Julia pane is rendering - the point the cursor is over, unless pinned.");
-            Self::metric_row(ui, "julia c.im", fmt_coord(ji), "Imaginary part of the parameter c \
-                 the Julia pane is rendering.");
+            Self::metric_row(ui, &tr!(app_perf_julia_re), fmt_coord(jr), tr!(app_perf_julia_re_hover));
+            Self::metric_row(ui, &tr!(app_perf_julia_im), fmt_coord(ji), tr!(app_perf_julia_im_hover));
             if self.julia_pin.is_some() {
-                Self::metric_row(ui, "julia c", "pinned", "The parameter is held at a fixed point, so \
-                     moving the cursor no longer changes the Julia pane.");
+                Self::metric_row(
+                    ui,
+                    &tr!(app_perf_julia_c),
+                    tr!(app_perf_pinned),
+                    tr!(app_perf_pinned_hover),
+                );
             }
             let c_per_panel = self.viewport.width_px * self.viewport.units_per_pixel.to_f64();
-            Self::metric_row(ui, "c/panel", format!("{c_per_panel:.3e}"),
-                    "Width of c-space spanned by the whole Mandelbrot panel. When this \
-                     is far below one Julia pixel, hovering changes c but the Julia \
-                     looks unchanged — expected at deep zoom, not a freeze.",
-                );
+            Self::metric_row(
+                ui,
+                &tr!(app_perf_c_panel),
+                format!("{c_per_panel:.3e}"),
+                tr!(app_perf_c_panel_hover),
+            );
         }
 
         ui.separator();
-        Self::metric_row(ui, "ref recompute", format!("{} ms", commas(&format!("{:.2}", p.recompute_ms))), "Duration of the most \
-             recent reference-orbit recompute. This is the pause before a deep view starts \
-             resolving, and the step the optional accelerated build speeds up.");
-        Self::metric_row(ui, "recompute/s", commas(&format!("{:.0}", p.recompute_per_s)), "Reference orbits \
-             INSTALLED per second - ones whose result was actually used. Compare it with the \
-             row below: they differ by the work that was thrown away.");
-        Self::metric_row(ui, "ref builds/s", commas(&format!("{:.0}", p.builds_per_s)), "Reference builds SPAWNED \
-             per second, including ones whose result is discarded - a lookahead slot the dive \
-             never reaches, or a refused extension. Those cost full CPU and appear nowhere \
-             else: a prefetch spin once ran about 400 builds a second for six minutes while \
-             recompute/s read 2. Single digits is normal; a large gap between these two rows \
-             means work is being thrown away.");
-        Self::metric_row(ui, "recompute tot", commas(&p.recompute_total.to_string()), "Reference recomputes since \
-             launch. Useful as a rate over a known interval; a number climbing while nothing \
-             moves is the signal worth chasing.");
+        Self::metric_row(
+            ui,
+            &tr!(app_perf_ref_recompute),
+            format!("{} ms", commas(&format!("{:.2}", p.recompute_ms))),
+            tr!(app_perf_ref_recompute_hover),
+        );
+        Self::metric_row(
+            ui,
+            &tr!(app_perf_recompute_rate),
+            commas(&format!("{:.0}", p.recompute_per_s)),
+            tr!(app_perf_recompute_rate_hover),
+        );
+        Self::metric_row(
+            ui,
+            &tr!(app_perf_builds_rate),
+            commas(&format!("{:.0}", p.builds_per_s)),
+            tr!(app_perf_builds_rate_hover),
+        );
+        Self::metric_row(
+            ui,
+            &tr!(app_perf_recompute_total),
+            commas(&p.recompute_total.to_string()),
+            tr!(app_perf_recompute_total_hover),
+        );
     }
 }
 
@@ -14972,14 +15093,19 @@ impl FractadyneApp {
         if let Some(rx) = &self.worker_start_rx {
             match rx.try_recv() {
                 Ok(Ok(w)) => {
-                    let name = if self.worker_for.as_deref() == Some(gpu_worker::SAME_CARD) {
-                        format!("same card, {}", w.name)
+                    let same_card = self.worker_for.as_deref() == Some(gpu_worker::SAME_CARD);
+                    // The diagnostics name it in English; the Second GPU window in the language in use.
+                    let (name, shown) = if same_card {
+                        (
+                            format!("same card, {}", w.name),
+                            tr!(app_worker_same_card, name = w.name.as_str()),
+                        )
                     } else {
-                        w.name.clone()
+                        (w.name.clone(), w.name.clone())
                     };
                     diag::set_second_device(Some(&name));
-                    self.worker_ref_budget = Self::worker_budget_for(&w, self.worker_for.as_deref() == Some(gpu_worker::SAME_CARD));
-                    self.worker_state = gpu_worker::WorkerState::Running(name);
+                    self.worker_ref_budget = Self::worker_budget_for(&w, same_card);
+                    self.worker_state = gpu_worker::WorkerState::Running(shown);
                     self.gpu_worker = Some(w);
                     self.worker_start_rx = None;
                 }
@@ -14992,7 +15118,7 @@ impl FractadyneApp {
                 Err(std::sync::mpsc::TryRecvError::Empty) => {}
                 Err(std::sync::mpsc::TryRecvError::Disconnected) => {
                     diag::set_second_device(None);
-                    self.worker_state = gpu_worker::WorkerState::Failed("the device thread stopped".into());
+                    self.worker_state = gpu_worker::WorkerState::Failed(tr!(app_worker_thread_stopped));
                     self.worker_start_rx = None;
                 }
             }
@@ -16787,7 +16913,7 @@ impl eframe::App for FractadyneApp {
                     if let Some((dev, q)) = &gpu {
                         self.spawn_export_worker(dev.clone(), q.clone(), job, prep.path, hud);
                     } else {
-                        self.export.status = Some("GPU not available".to_string());
+                        self.export.status = Some(tr!(app_export_gpu_unavailable));
                     }
                 }
                 Err(std::sync::mpsc::TryRecvError::Empty) => {
@@ -16795,7 +16921,7 @@ impl eframe::App for FractadyneApp {
                     ctx.request_repaint();
                 }
                 Err(std::sync::mpsc::TryRecvError::Disconnected) => {
-                    self.export.status = Some("Export failed: reference build aborted.".to_string());
+                    self.export.status = Some(tr!(app_export_reference_aborted));
                     self.export.started = None;
                 }
             }
@@ -17266,6 +17392,8 @@ impl eframe::App for FractadyneApp {
                 diag::sync_to_disk();
             }
         }
+        // --uitest: the frame a screenshot shows is drawn now; its text is read for the layout check.
+        self.uitest_note_text(ctx);
         self.emit_frame_records(ctx, body_ms);
         self.perf.prev_body_ms = body_ms;
         self.perf.prev_offscreen_ms = self.perf.offscreen_ms;
