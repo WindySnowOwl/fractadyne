@@ -58,6 +58,39 @@ def languages(lang_dir):
     return ['en'] + [t for t in tags if t != 'en']
 
 
+def read_values(lang_dir, tag, parse=None):
+    """{message id: value} of one language's file, the values as a CSV cell holds them."""
+    parse = parse or checker().parse
+    with open(os.path.join(lang_dir, tag, FILE), encoding='utf-8', newline='') as f:
+        text = f.read().replace('\r\n', '\n')
+    errors = []
+    msgs = parse(text, f'{tag}/{FILE}', errors)
+    if errors:
+        print(f'{tag}: {len(errors)} parse problem(s); run scripts/check_i18n.py for them', file=sys.stderr)
+    return {mid: value(m.lines) for mid, m in msgs.items()}
+
+
+def export(lang_dir, output, bom=True):
+    """Writes the table to `output`; returns {tag: {message id: value}}, English first."""
+    parse = checker().parse
+    tags = languages(lang_dir)
+    table = {tag: read_values(lang_dir, tag, parse) for tag in tags}
+    keys = list(table['en'])
+    seen = set(keys)
+    for tag in tags[1:]:
+        for mid in table[tag]:
+            if mid not in seen:
+                keys.append(mid)
+                seen.add(mid)
+    os.makedirs(os.path.dirname(os.path.abspath(output)), exist_ok=True)
+    with open(output, 'w', encoding='utf-8-sig' if bom else 'utf-8', newline='') as f:
+        w = csv.writer(f)
+        w.writerow(['key'] + tags)
+        for mid in keys:
+            w.writerow([mid] + [table[tag].get(mid, '') for tag in tags])
+    return table
+
+
 def main():
     sys.stdout.reconfigure(encoding='utf-8')
     ap = argparse.ArgumentParser(description=__doc__.split('\n\n')[0])
@@ -66,34 +99,9 @@ def main():
     ap.add_argument('--no-bom', action='store_true', help='write UTF-8 without a byte-order mark')
     args = ap.parse_args()
 
-    parse = checker().parse
-    tags = languages(args.lang_dir)
-    table = {}
-    for tag in tags:
-        path = os.path.join(args.lang_dir, tag, FILE)
-        with open(path, encoding='utf-8', newline='') as f:
-            text = f.read().replace('\r\n', '\n')
-        errors = []
-        msgs = parse(text, f'{tag}/{FILE}', errors)
-        if errors:
-            print(f'{tag}: {len(errors)} parse problem(s); run scripts/check_i18n.py for them', file=sys.stderr)
-        table[tag] = {mid: value(m.lines) for mid, m in msgs.items()}
-
-    keys = list(table['en'])
-    seen = set(keys)
-    for tag in tags[1:]:
-        for mid in table[tag]:
-            if mid not in seen:
-                keys.append(mid)
-                seen.add(mid)
-
-    os.makedirs(os.path.dirname(os.path.abspath(args.output)), exist_ok=True)
-    with open(args.output, 'w', encoding='utf-8' if args.no_bom else 'utf-8-sig', newline='') as f:
-        w = csv.writer(f)
-        w.writerow(['key'] + tags)
-        for mid in keys:
-            w.writerow([mid] + [table[tag].get(mid, '') for tag in tags])
-
+    table = export(args.lang_dir, args.output, bom=not args.no_bom)
+    tags = list(table)
+    keys = {mid for t in table.values() for mid in t}
     print(f'{args.output}: {len(keys)} messages x {len(tags)} languages ({", ".join(tags)})')
     for tag in tags[1:]:
         missing = sum(1 for mid in table['en'] if mid not in table[tag])

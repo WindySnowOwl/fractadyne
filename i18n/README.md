@@ -103,3 +103,22 @@ A file marked `language-status = draft` was not written by a native speaker, or 
 Reading it next to the English file, correcting what reads wrong, and changing the status to
 `reviewed` when the whole file has been read is the most useful contribution a speaker of the
 language can make.
+
+## Reviewing in a spreadsheet
+
+Every message of every language can go out as one table and come back:
+
+```sh
+python scripts/i18n_to_csv.py                        # local/fractadyne-translations.csv
+python scripts/i18n_from_csv.py reviewed.csv --dry-run
+python scripts/i18n_from_csv.py reviewed.csv --fix-conventions
+```
+
+The table has a `key` column and one column per language; a cell holds the message as its file
+writes it, selectors and all. Save it as "CSV UTF-8" (a spreadsheet's plain CSV can lose every
+character outside its code page). The import writes each changed cell into its language's file,
+leaves English alone (edit `i18n/en/fractadyne.ftl` itself), never deletes a translation for an
+empty cell, and checks each language's file as `check_i18n.py` does before writing it: a language
+with an error is not written. It reports a changed message that breaks the file's own habits (the
+dash, the space before `;` `:` `!` `?` and inside « », spaces between CJK text and Latin text or a
+placeable); `--fix-conventions` writes the file's way instead. Look at `git diff` before committing.
