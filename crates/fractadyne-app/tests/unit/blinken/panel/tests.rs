@@ -69,3 +69,18 @@ fn a_walk_pass_caption_names_its_walk_and_its_band() {
     assert_eq!(ssaa(None).0, "SSAA SAMPLE 3 · WHOLE FRAME");
     assert_eq!(ssaa(Some((0, 65_536))).2, "1 TILE/SAMPLE");
 }
+
+#[test]
+fn the_close_button_sits_in_the_case_margin_at_every_size() {
+    for size in [Size::Strip, Size::Panel, Size::Full] {
+        for s in [0.35f32, 0.7, 1.0] {
+            let r = Rect::from_min_size(pos2(100.0, 50.0), vec2(DESIGN_W, height(size, DESIGN_W)) * s);
+            let c = close_center(r, s);
+            let rad = 6.5 * s;
+            // Inside the case, clear of its rounded corner and its edges...
+            assert!(r.shrink(2.0 * s).contains(c - vec2(rad, rad)) && r.shrink(2.0 * s).contains(c + vec2(rad, rad)), "{size:?} at {s}");
+            // ...and in the right-hand margin, where no instrument is drawn.
+            assert!(c.x - rad >= r.right() - PAD_X * s, "{size:?} at {s}: {} vs {}", c.x - rad, r.right() - PAD_X * s);
+        }
+    }
+}

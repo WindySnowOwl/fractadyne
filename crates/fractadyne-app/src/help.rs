@@ -870,7 +870,7 @@ pub(crate) fn help_shortcuts(ui: &mut egui::Ui) {
     help_kv(ui, "Shift+Backspace / Ctrl+Y", "Redo view");
     help_kv(ui, "M", "Find minibrot + zoom to it (Newton-Raphson)");
     help_kv(ui, "A", "Auto-zoom autopilot (dive toward detail; any input stops)");
-    help_kv(ui, "B", "Live-render panel: off / strip / panel / full (hover an instrument for what it means)");
+    help_kv(ui, "B", "Live-render panel: off / strip / panel / full (hover an instrument for what it means; its × closes it)");
     help_kv(ui, "Esc", "Stop autopilot / a playing tour, or exit fullscreen");
     help_kv(
         ui,

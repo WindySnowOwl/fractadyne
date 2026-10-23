@@ -59,6 +59,9 @@ published as the pre-releases `v0.2.41-beta.1` to `v0.2.41-beta.150`, and a "bet
 
 Changes after 0.3.0-beta.1:
 
+- **The live-render panel has a close button (0.3.0-beta.21).** A small × in its top-right corner,
+  where a screw was, closes it; `B` or View ▸ Live render panel opens it again. Until now it could
+  be closed only by cycling `B` through its sizes or from the View menu.
 - **A second graphics device no longer runs long passes in deep zooms (0.3.0-beta.21).** With a
   second device rendering motion frames (Advanced ▸ Second graphics card), each of its frames is a
   series of passes, each sized from the one before it to take about 8 ms. Deep zooms counted those

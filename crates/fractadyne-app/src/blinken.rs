@@ -177,6 +177,13 @@ impl Overlay {
         self.size = self.size.next();
     }
 
+    /// Close the panel, as its × does: `B` or View ▸ Live render panel opens it again.
+    pub(crate) fn close(&mut self) {
+        self.size = Size::Off;
+        self.drag = egui::Vec2::ZERO;
+        self.hover = None;
+    }
+
     pub(crate) fn is_open(&self) -> bool {
         self.size != Size::Off
     }
@@ -296,9 +303,21 @@ impl Overlay {
                 let mut p = ui.painter_at(rect.expand(8.0));
                 p.multiply_opacity(opacity);
                 panel::draw(&p, rect.min, width, s, self.size, opacity, &inp, &mut hits, &mut sections, &mut self.statics);
-                resp
+                // The close button, in the top-right screw's place. Interacted after the panel, so it
+                // is on top of the panel's own click-and-drag; a drag that starts on it still moves the
+                // panel.
+                let c = panel::close_center(rect, s);
+                let hit = Rect::from_center_size(c, vec2(18.0, 18.0) * s.max(0.8));
+                let close = ui.interact(hit, Id::new("fractadyne.blinken.close"), Sense::click());
+                panel::draw_close(&p, c, s, close.hovered(), close.is_pointer_button_down_on());
+                let closed = close.on_hover_text("Close the live-render panel (B)").clicked();
+                (resp, closed)
             });
-        let resp = area.inner;
+        let (resp, closed) = area.inner;
+        if closed {
+            self.close();
+            return;
+        }
         for (a, b) in self.sections.iter_mut().zip(sections) {
             *a += b;
         }
