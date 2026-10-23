@@ -66,11 +66,11 @@ impl FractadyneApp {
     /// than two copies on purpose: they are the same menu, and a second copy is a second
     /// thing to forget when bookmarks gain a field.
     pub(crate) fn bookmarks_menu(&mut self, ui: &mut egui::Ui, ctx: &egui::Context) {
-        if ui.button(format!("{}  Add current view", crate::icons::BOOKMARK)).clicked() {
+        if ui.button(format!("{}  {}", crate::icons::BOOKMARK, tr!(menu_bookmarks_add))).clicked() {
             self.add_bookmark("");
             ui.close_menu();
         }
-        if ui.button("Manage…").clicked() {
+        if ui.button(tr!(menu_bookmarks_manage)).clicked() {
             self.dialogs.bookmarks_open = true;
             ui.close_menu();
         }
@@ -136,7 +136,7 @@ impl FractadyneApp {
             }
         }
         ui.separator();
-        ui.label(egui::RichText::new("Higher powers").weak().small());
+        ui.label(egui::RichText::new(tr!(menu_family_powers)).weak().small());
         egui::Grid::new(ui.next_auto_id()).num_columns(2).spacing([10.0, 2.0]).show(ui, |ui| {
             for (label, kinds) in FractalKind::POWER_GROUPS {
                 let showing = kinds.contains(&self.fractal);
@@ -154,7 +154,7 @@ impl FractadyneApp {
         });
         // The automata: not escape-time formulas, but pictures of the same app (design/automata.md).
         ui.separator();
-        ui.label(egui::RichText::new("Automata").weak().small());
+        ui.label(egui::RichText::new(tr!(menu_family_automata)).weak().small());
         for kind in FractalKind::AUTOMATA {
             if ui.selectable_label(self.fractal == kind, kind.name()).on_hover_text(kind.menu_hint()).clicked() {
                 picked = Some(kind);
@@ -162,7 +162,7 @@ impl FractadyneApp {
         }
         // L-systems: turtle drawings from a grammar (design/lsystems.md).
         ui.separator();
-        ui.label(egui::RichText::new("L-systems").weak().small());
+        ui.label(egui::RichText::new(tr!(menu_family_lsystems)).weak().small());
         for kind in FractalKind::LSYSTEMS {
             if ui.selectable_label(self.fractal == kind, kind.name()).on_hover_text(kind.menu_hint()).clicked() {
                 picked = Some(kind);
@@ -177,13 +177,10 @@ impl FractadyneApp {
         let cur = self.show_mode();
         let mut pick: Option<crate::ShowMode> = None;
 
-        ui.label(egui::RichText::new("Show").weak().small());
+        ui.label(egui::RichText::new(tr!(menu_show)).weak().small());
         if ui
-            .radio(cur == crate::ShowMode::Set, format!("{name} set"))
-            .on_hover_text(format!(
-                "The parameter plane — the {name} set itself.\n\nEvery point of it is a \
-                 different Julia set; this is the map of all of them."
-            ))
+            .radio(cur == crate::ShowMode::Set, tr!(menu_show_set, name = name))
+            .on_hover_text(tr!(menu_show_set_hover, name = name))
             .clicked()
         {
             pick = Some(crate::ShowMode::Set);
@@ -193,30 +190,22 @@ impl FractadyneApp {
         // move through it is harder to learn than one where something is greyed with a reason.
         ui.add_enabled_ui(can_julia, |ui| {
             if ui
-                .radio(cur == crate::ShowMode::Julia, "Julia set")
+                .radio(cur == crate::ShowMode::Julia, tr!(menu_show_julia))
                 .on_hover_text(if can_julia {
-                    format!(
-                        "One point of the {name} set, drawn as its own picture — the shape you \
-                         get by holding that point fixed.\n\nPick the point by hovering the map \
-                         in \"Both, linked\", or with Fractal ▸ Julia c."
-                    )
+                    tr!(menu_show_julia_hover, name = name)
                 } else {
-                    format!("{name} has no free parameter, so it has no Julia set.")
+                    tr!(menu_show_julia_none, name = name)
                 })
                 .clicked()
             {
                 pick = Some(crate::ShowMode::Julia);
             }
             if ui
-                .radio(cur == crate::ShowMode::Both, "Both, linked")
+                .radio(cur == crate::ShowMode::Both, tr!(menu_show_both))
                 .on_hover_text(if can_julia {
-                    format!(
-                        "The {name} set on the left, and on the right the Julia set of whatever \
-                         point your cursor is over.\n\nMove the cursor across the map and watch \
-                         the Julia change — this is the quickest way to see how the two relate."
-                    )
+                    tr!(menu_show_both_hover, name = name)
                 } else {
-                    format!("{name} has no Julia set to pair with.")
+                    tr!(menu_show_both_none, name = name)
                 })
                 .clicked()
             {
@@ -240,22 +229,22 @@ impl FractadyneApp {
                     self.menu_bar_id = Some(ui.id());
                     brand_wordmark(ui);
                     ui.separator();
-                    ui.menu_button("File", |ui| {
-                        if ui.button(format!("{}  Open view or location…", crate::icons::OPEN)).clicked() {
+                    ui.menu_button(tr!(menu_file), |ui| {
+                        if ui.button(format!("{}  {}", crate::icons::OPEN, tr!(menu_file_open_view))).clicked() {
                             self.open_view(ctx);
                             ui.close_menu();
                         }
-                        if ui.button(format!("{}  Gallery…", crate::icons::GALLERY)).clicked() {
+                        if ui.button(format!("{}  {}", crate::icons::GALLERY, tr!(menu_file_gallery))).clicked() {
                             self.gallery.open = true;
                             self.scan_gallery();
                             ui.close_menu();
                         }
-                        if ui.button(format!("{}  Export image…", crate::icons::SAVE)).clicked() {
+                        if ui.button(format!("{}  {}", crate::icons::SAVE, tr!(menu_file_export))).clicked() {
                             self.export.open = true;
                             ui.close_menu();
                         }
                         if ui
-                            .button(format!("{}  Snapshot  (Ctrl+S)", crate::icons::SNAPSHOT))
+                            .button(format!("{}  {}  (Ctrl+S)", crate::icons::SNAPSHOT, tr!(menu_file_snapshot)))
                             .on_hover_text(self.snapshot_hover_text())
                             .clicked()
                         {
@@ -265,16 +254,16 @@ impl FractadyneApp {
                         ui.separator();
                         // Life patterns (design/automata.md): opening one shows it as a universe.
                         if ui
-                            .button(format!("{}  Open Life pattern…", crate::icons::IMPORT))
-                            .on_hover_text("An RLE, .cells or Life 1.05/1.06 file, shown as a Life universe.")
+                            .button(format!("{}  {}", crate::icons::IMPORT, tr!(menu_file_open_life)))
+                            .on_hover_text(tr!(menu_file_open_life_hover))
                             .clicked()
                         {
                             self.life_open_file();
                             ui.close_menu();
                         }
                         if ui
-                            .button(format!("{}  Life pattern text…", crate::icons::PASTE))
-                            .on_hover_text("Paste a pattern as text (RLE as LifeWiki gives it).")
+                            .button(format!("{}  {}", crate::icons::PASTE, tr!(menu_file_life_text)))
+                            .on_hover_text(tr!(menu_file_life_text_hover))
                             .clicked()
                         {
                             self.life.text_open = true;
@@ -282,8 +271,8 @@ impl FractadyneApp {
                         }
                         if self.fractal == FractalKind::Life
                             && ui
-                                .button(format!("{}  Save Life pattern…", crate::icons::SAVE))
-                                .on_hover_text("The universe as it is now, as RLE.")
+                                .button(format!("{}  {}", crate::icons::SAVE, tr!(menu_file_save_life)))
+                                .on_hover_text(tr!(menu_file_save_life_hover))
                                 .clicked()
                         {
                             self.life_save_file();
@@ -292,8 +281,8 @@ impl FractadyneApp {
                         ui.separator();
                         // L-systems (design/lsystems.md): a Fractint .l file opens directly.
                         if ui
-                            .button(format!("{}  Open L-system…", crate::icons::IMPORT))
-                            .on_hover_text("A Fractint .l file (its entries to pick from) or a .lsys system.")
+                            .button(format!("{}  {}", crate::icons::IMPORT, tr!(menu_file_open_lsystem)))
+                            .on_hover_text(tr!(menu_file_open_lsystem_hover))
                             .clicked()
                         {
                             self.lsystem_open_file();
@@ -301,8 +290,8 @@ impl FractadyneApp {
                         }
                         if self.fractal == FractalKind::LSystem
                             && ui
-                                .button(format!("{}  Save L-system…", crate::icons::SAVE))
-                                .on_hover_text("The system's text, as a .lsys file.")
+                                .button(format!("{}  {}", crate::icons::SAVE, tr!(menu_file_save_lsystem)))
+                                .on_hover_text(tr!(menu_file_save_lsystem_hover))
                                 .clicked()
                         {
                             self.lsystem_save_file();
@@ -310,8 +299,8 @@ impl FractadyneApp {
                         }
                         if self.fractal == FractalKind::LSystem
                             && ui
-                                .button(format!("{}  Export SVG…", crate::icons::SAVE))
-                                .on_hover_text("The view as an SVG drawing: its lines and shapes as vectors, in its colours.")
+                                .button(format!("{}  {}", crate::icons::SAVE, tr!(menu_file_export_svg)))
+                                .on_hover_text(tr!(menu_file_export_svg_hover))
                                 .clicked()
                         {
                             self.lsystem_export_svg();
@@ -319,11 +308,12 @@ impl FractadyneApp {
                         }
                         ui.separator();
                         if ui
-                            .button(if self.farm_client.active() { "Render client…  (connected)" } else { "Render client…" })
-                            .on_hover_text(
-                                "Lend this machine's GPU to a render farm: connect to a controller \
-                                 (Tools ▸ Render on farm… on another machine) and render frames for it.",
-                            )
+                            .button(if self.farm_client.active() {
+                                format!("{}  ({})", tr!(menu_file_render_client), tr!(menu_state_connected))
+                            } else {
+                                tr!(menu_file_render_client)
+                            })
+                            .on_hover_text(tr!(menu_file_render_client_hover))
                             .clicked()
                         {
                             self.open_farm_client();
@@ -333,13 +323,13 @@ impl FractadyneApp {
                         // Settings live under File — the conventional home users reach for first
                         // (File → Preferences/Settings); they sat under View until 2026-08-13,
                         // where only display TOGGLES belong.
-                        ui.menu_button(format!("{}  Settings", crate::icons::SETTINGS), |ui| {
-                            menu_section(ui, "Frame-rate cap", |ui| {
+                        ui.menu_button(format!("{}  {}", crate::icons::SETTINGS, tr!(menu_file_settings)), |ui| {
+                            menu_section(ui, &tr!(menu_settings_fps), |ui| {
                                 for (label, val) in [
-                                    ("Uncapped", None),
-                                    ("30 FPS", Some(30.0)),
-                                    ("60 FPS", Some(60.0)),
-                                    ("120 FPS", Some(120.0)),
+                                    (tr!(menu_settings_fps_uncapped), None),
+                                    (tr!(menu_settings_fps_n, fps = 30), Some(30.0)),
+                                    (tr!(menu_settings_fps_n, fps = 60), Some(60.0)),
+                                    (tr!(menu_settings_fps_n, fps = 120), Some(120.0)),
                                 ] {
                                     if ui.selectable_label(self.fps_cap == val, label).clicked() {
                                         self.fps_cap = val;
@@ -347,15 +337,9 @@ impl FractadyneApp {
                                 }
                             });
                             ui.separator();
-                            menu_section(ui, "UI scale (font size)", |ui| {
-                                for (label, val) in [
-                                    ("80%", 0.8_f32),
-                                    ("90%", 0.9),
-                                    ("100%", 1.0),
-                                    ("110%", 1.1),
-                                    ("125%", 1.25),
-                                    ("150%", 1.5),
-                                ] {
+                            menu_section(ui, &tr!(menu_settings_ui_scale), |ui| {
+                                for (pct, val) in [(80, 0.8_f32), (90, 0.9), (100, 1.0), (110, 1.1), (125, 1.25), (150, 1.5)] {
+                                    let label = tr!(common_percent, value = pct);
                                     if ui
                                         .selectable_label((self.ui_scale - val).abs() < 0.01, label)
                                         .clicked()
@@ -365,7 +349,7 @@ impl FractadyneApp {
                                 }
                             });
                             ui.separator();
-                            menu_section(ui, "Theme", |ui| {
+                            menu_section(ui, &tr!(menu_settings_theme), |ui| {
                                 for m in [ThemeMode::Dark, ThemeMode::Light] {
                                     if ui.selectable_label(self.theme == m, m.label()).clicked() {
                                         self.theme = m;
@@ -374,33 +358,33 @@ impl FractadyneApp {
                                 }
                             });
                             ui.separator();
-                            menu_section(ui, "Updates", |ui| {
+                            menu_section(ui, &tr!(menu_settings_updates), |ui| {
                                 ui.horizontal(|ui| {
                                     for t in crate::update::UpdateTrack::ALL {
                                         ui.selectable_value(&mut self.update_track, t, t.label())
                                             .on_hover_text(match t {
-                                                crate::update::UpdateTrack::Stable => "Latest stable release",
-                                                crate::update::UpdateTrack::Beta => "Latest build including pre-releases",
+                                                crate::update::UpdateTrack::Stable => tr!(menu_settings_updates_stable_hover),
+                                                crate::update::UpdateTrack::Beta => tr!(menu_settings_updates_beta_hover),
                                             });
                                     }
                                 });
                                 ui.checkbox(
                                     &mut self.update_check_on_launch,
-                                    "Check for updates on launch",
+                                    tr!(menu_settings_updates_on_launch),
                                 )
-                                .on_hover_text("Otherwise, check manually via Help → Check for updates.");
+                                .on_hover_text(tr!(menu_settings_updates_on_launch_hover));
                             });
                             ui.separator();
                             // What the camera button does. The first press asks; this is where the
                             // answer lives afterwards, so "don't ask again" is never a trap.
-                            menu_section(ui, "Snapshot (Ctrl+S)", |ui| {
+                            menu_section(ui, &format!("{} (Ctrl+S)", tr!(menu_settings_snapshot)), |ui| {
                                 ui.horizontal(|ui| {
                                     for m in crate::SnapshotMode::ALL {
                                         ui.selectable_value(&mut self.snapshot_mode, m, m.label())
                                             .on_hover_text(match m {
-                                                crate::SnapshotMode::Ask => "Offer the choice on every press",
-                                                crate::SnapshotMode::Screen => "Save the view exactly as it appears on screen (instant, PNG)",
-                                                crate::SnapshotMode::Render => "A full render at the Export settings, in the background (can take a long time on deep views)",
+                                                crate::SnapshotMode::Ask => tr!(menu_settings_snapshot_ask_hover),
+                                                crate::SnapshotMode::Screen => tr!(menu_settings_snapshot_screen_hover),
+                                                crate::SnapshotMode::Render => tr!(menu_settings_snapshot_render_hover),
                                             });
                                     }
                                 });
@@ -408,12 +392,8 @@ impl FractadyneApp {
                             ui.separator();
                             // Opens another surface, so no verb of its own and no icon (§8.1).
                             if ui
-                                .button("Reference cache…")
-                                .on_hover_text(
-                                    "Deep-zoom reference orbits kept on disk, so a location you \
-                                     return to renders in seconds. Where it is, how big, the \
-                                     limit, and a way to clear it.",
-                                )
+                                .button(tr!(menu_settings_refcache))
+                                .on_hover_text(tr!(menu_settings_refcache_hover))
                                 .clicked()
                             {
                                 self.dialogs.orbit_cache_open = true;
@@ -422,21 +402,18 @@ impl FractadyneApp {
                         });
                         ui.separator();
                         if ui
-                            .button(format!("{}  Reset application state…", crate::icons::RESET_APP))
-                            .on_hover_text(
-                                "Delete all saved state (session, bookmarks, thumbnails) and \
-                                 start fresh. Asks for confirmation first.",
-                            )
+                            .button(format!("{}  {}", crate::icons::RESET_APP, tr!(menu_file_reset)))
+                            .on_hover_text(tr!(menu_file_reset_hover))
                             .clicked()
                         {
                             self.dialogs.reset_confirm_open = true;
                             ui.close_menu();
                         }
-                        if ui.button(format!("{}  Quit", crate::icons::QUIT)).clicked() {
+                        if ui.button(format!("{}  {}", crate::icons::QUIT, tr!(menu_file_quit))).clicked() {
                             ctx.send_viewport_cmd(egui::ViewportCommand::Close);
                         }
                     });
-                    ui.menu_button("Fractal", |ui| {
+                    ui.menu_button(tr!(menu_fractal), |ui| {
                         // This list and the toolbar's dropdown are deliberately both here:
                         // the dropdown is the fast way to switch once you know what you
                         // want, and this is where you find that out. Hence the hints -
@@ -447,7 +424,7 @@ impl FractadyneApp {
                         }
                         ui.separator();
                         if ui
-                            .selectable_label(self.fractal == FractalKind::Custom, "Custom formula…")
+                            .selectable_label(self.fractal == FractalKind::Custom, tr!(menu_fractal_custom))
                             .on_hover_text(FractalKind::Custom.menu_hint())
                             .clicked()
                         {
@@ -455,8 +432,8 @@ impl FractadyneApp {
                             ui.close_menu();
                         }
                         if ui
-                            .button("Formula library…")
-                            .on_hover_text("Saved custom formulas: apply, edit, import and export them")
+                            .button(tr!(menu_fractal_library))
+                            .on_hover_text(tr!(menu_fractal_library_hover))
                             .clicked()
                         {
                             self.formula_library.open = true;
@@ -469,86 +446,67 @@ impl FractadyneApp {
                         // to explain what a Julia set IS. Same widget as the dropdown's.
                         self.show_mode_group(ui);
                     });
-                    ui.menu_button("View", |ui| {
+                    ui.menu_button(tr!(menu_view), |ui| {
                         let now = ui.ctx().input(|i| i.time);
                         // "Home view" vs "Reset view" were near-synonyms distinguishable only by
                         // tooltip (2026-08-13 UI review) — the labels now say what each does.
                         if ui
-                            .button(format!("{}  Zoom out to full view", crate::icons::HOME))
-                            .on_hover_text("Zoom out to the full home view (animated)")
+                            .button(format!("{}  {}", crate::icons::HOME, tr!(menu_view_zoom_home)))
+                            .on_hover_text(tr!(menu_view_zoom_home_hover))
                             .clicked()
                         {
                             self.zoom_home(now);
                             ui.close_menu();
                         }
                         if ui
-                            .button(format!("{}  Reset to default view", crate::icons::RESET_VIEW))
-                            .on_hover_text("Reset to the fractal's default view (instant)")
+                            .button(format!("{}  {}", crate::icons::RESET_VIEW, tr!(menu_view_reset)))
+                            .on_hover_text(tr!(menu_view_reset_hover))
                             .clicked()
                         {
                             self.reset_view();
                             ui.close_menu();
                         }
                         ui.add_enabled_ui(self.nav.undo.len() > 1, |ui| {
-                            if ui.button("Undo view  (Ctrl+Z / Backspace)").clicked() {
+                            if ui.button(format!("{}  (Ctrl+Z / Backspace)", tr!(menu_view_undo))).clicked() {
                                 self.undo_view();
                                 ui.close_menu();
                             }
                         });
                         ui.add_enabled_ui(!self.nav.redo.is_empty(), |ui| {
-                            if ui.button("Redo view  (Ctrl+Y / Shift+Backspace)").clicked() {
+                            if ui.button(format!("{}  (Ctrl+Y / Shift+Backspace)", tr!(menu_view_redo))).clicked() {
                                 self.redo_view();
                                 ui.close_menu();
                             }
                         });
                         ui.separator();
-                        ui.checkbox(&mut self.dialogs.right_panel_open, "Control panel")
-                            .on_hover_text("Show/hide the right-hand control panel.");
-                        ui.checkbox(&mut self.dialogs.minimap, "Minimap overview")
-                            .on_hover_text(
-                                "Show a small home-view overview with a \"you are here\" \
-                                 marker and the zoom depth. Click it to jump to a region.",
-                            );
-                        ui.checkbox(&mut self.perf.enabled, "Performance panel");
-                        ui.checkbox(&mut self.render_cfg.show_timestamp, "Show timestamp")
-                            .on_hover_text(
-                                "Draw a large elapsed-time clock over the view. It reads the same \
-                                 \"+12.345s\" the log stamps every line with, so a screen recording \
-                                 of a problem that only shows itself in motion can be lined up \
-                                 against the log frame by frame. Off by default.",
-                            );
-                        ui.checkbox(&mut self.render_cfg.show_zoom_target, "Show auto-zoom target")
-                            .on_hover_text(
-                                "While the auto-zoom runs, outline the region of the view it is \
-                                 zooming into — the part that will fill the screen after a few \
-                                 more magnifications — with lines from its corners to the corners \
-                                 of the screen, and a ring on the point it is steering toward. Off \
-                                 by default.",
-                            );
-                        ui.menu_button("Live render panel", |ui| {
+                        ui.checkbox(&mut self.dialogs.right_panel_open, tr!(menu_view_control_panel))
+                            .on_hover_text(tr!(menu_view_control_panel_hover));
+                        ui.checkbox(&mut self.dialogs.minimap, tr!(menu_view_minimap))
+                            .on_hover_text(tr!(menu_view_minimap_hover));
+                        ui.checkbox(&mut self.perf.enabled, tr!(menu_view_perf_panel));
+                        ui.checkbox(&mut self.render_cfg.show_timestamp, tr!(menu_view_timestamp))
+                            .on_hover_text(tr!(menu_view_timestamp_hover));
+                        ui.checkbox(&mut self.render_cfg.show_zoom_target, tr!(menu_view_zoom_target))
+                            .on_hover_text(tr!(menu_view_zoom_target_hover));
+                        ui.menu_button(tr!(menu_view_live_panel), |ui| {
                             use crate::blinken::Size;
                             for (size, label, tip) in [
-                                (Size::Off, "Off", "No panel."),
-                                (Size::Strip, "Strip", "The nixie readouts and the light bank."),
-                                (Size::Panel, "Panel", "The instruments: walk dial, picture age, tiles, GPU passes, depth dial, lamps."),
-                                (Size::Full, "Full", "The panel and the engine room: steps, GPUs, memory, cores, pixels."),
+                                (Size::Off, tr!(menu_view_live_off), tr!(menu_view_live_off_hover)),
+                                (Size::Strip, tr!(menu_view_live_strip), tr!(menu_view_live_strip_hover)),
+                                (Size::Panel, tr!(menu_view_live_panel_size), tr!(menu_view_live_panel_size_hover)),
+                                (Size::Full, tr!(menu_view_live_full), tr!(menu_view_live_full_hover)),
                             ] {
                                 if ui.radio(self.blinken.size == size, label).on_hover_text(tip).clicked() {
                                     self.blinken.size = size;
                                 }
                             }
                             ui.separator();
-                            ui.add(egui::Slider::new(&mut self.blinken.opacity, 0.3..=1.0).text("Opacity"));
+                            ui.add(egui::Slider::new(&mut self.blinken.opacity, 0.3..=1.0).text(tr!(menu_view_live_opacity)));
                         })
                         .response
-                        .on_hover_text(
-                            "A front panel over the view that shows the live renderer at work: what                              each frame dispatched, how old the picture on screen is, the walk                              through the iteration bands, the reference builders, and the machine                              underneath. B cycles it, and the × in its corner closes it; drag it to any corner; hover an instrument for                              what it means and what healthy and troubled look like.",
-                        );
-                        ui.checkbox(&mut self.watermark, "Show \"Fd\" watermark")
-                            .on_hover_text(
-                                "Draw a discreet \"Fd\" brand mark in the lower-right corner of the \
-                                 live view and exported images. On by default.",
-                            );
+                        .on_hover_text(tr!(menu_view_live_panel_hover));
+                        ui.checkbox(&mut self.watermark, tr!(menu_view_watermark))
+                            .on_hover_text(tr!(menu_view_watermark_hover));
                         // Dual view moved to Fractal (it selects WHAT renders, like Julia mode);
                         // the orbit overlay's toggle lives in Tools, with Normalize beside it
                         // and the animation controls in the control panel's Overlays section
@@ -558,8 +516,8 @@ impl FractadyneApp {
                     // bar said nothing about it (UI review). This mirrors the control panel's
                     // essentials; the sliders (cycle/offset/animation) stay in the panel, where
                     // continuous adjustment belongs.
-                    ui.menu_button("Color", |ui| {
-                        ui.menu_button("Method", |ui| {
+                    ui.menu_button(tr!(menu_color), |ui| {
+                        ui.menu_button(tr!(menu_color_method), |ui| {
                             for m in crate::ColorMethod::ALL {
                                 if ui
                                     .selectable_label(self.coloring.color_method == m, m.label())
@@ -570,7 +528,7 @@ impl FractadyneApp {
                                 }
                             }
                         });
-                        ui.menu_button("Palette", |ui| {
+                        ui.menu_button(tr!(menu_color_palette), |ui| {
                             let is_preset = !self.coloring.use_custom_palette
                                 && !self.coloring.use_duotone
                                 && !self.coloring.use_binary;
@@ -627,7 +585,7 @@ impl FractadyneApp {
                             // two rows, since a saved gradient IS the custom palette. "Custom" here
                             // means the unsaved one.
                             if ui
-                                .selectable_label(self.coloring.use_custom_palette && live_saved.is_none(), format!("Custom {}", crate::icons::EDIT))
+                                .selectable_label(self.coloring.use_custom_palette && live_saved.is_none(), format!("{} {}", tr!(menu_color_custom), crate::icons::EDIT))
                                 .clicked()
                             {
                                 if self.coloring.custom_palette.is_empty() {
@@ -640,7 +598,7 @@ impl FractadyneApp {
                                 ui.close_menu();
                             }
                             if ui
-                                .selectable_label(self.coloring.use_duotone, "Duotone")
+                                .selectable_label(self.coloring.use_duotone, tr!(menu_color_duotone))
                                 .clicked()
                             {
                                 self.coloring.use_duotone = true;
@@ -649,8 +607,8 @@ impl FractadyneApp {
                                 ui.close_menu();
                             }
                             if ui
-                                .selectable_label(self.coloring.use_binary, "Binary (set)")
-                                .on_hover_text("Flat two-color: in-set vs out-of-set, no gradient.")
+                                .selectable_label(self.coloring.use_binary, tr!(menu_color_binary))
+                                .on_hover_text(tr!(menu_color_binary_hover))
                                 .clicked()
                             {
                                 self.coloring.use_binary = true;
@@ -659,7 +617,7 @@ impl FractadyneApp {
                                 ui.close_menu();
                             }
                         });
-                        if ui.button("Edit gradient…").clicked() {
+                        if ui.button(tr!(menu_color_edit_gradient)).clicked() {
                             if self.coloring.custom_palette.is_empty() {
                                 self.coloring.custom_palette =
                                     self.preset_as_stops(self.coloring.palette_idx);
@@ -669,50 +627,33 @@ impl FractadyneApp {
                             ui.close_menu();
                         }
                         ui.separator();
-                        ui.checkbox(&mut self.coloring.normalize_live, "Normalize deep colors")
-                            .on_hover_text(
-                                "Remap the palette to the view's measured escape range when a dense \
-                                 field would otherwise read as speckle. A view that does not alias \
-                                 is left alone — tick 'Always fit range' to remap regardless. \
-                                 Smooth method only.",
-                            );
+                        ui.checkbox(&mut self.coloring.normalize_live, tr!(menu_color_normalize))
+                            .on_hover_text(tr!(menu_color_normalize_hover));
                         self.fit_range_checkbox(ui);
                         self.log_scale_checkbox(ui);
                         ui.label(
-                            egui::RichText::new(
-                                "Cycle, offset, animation and effects: Controls panel ▸ Coloring",
-                            )
+                            egui::RichText::new(tr!(menu_color_more))
                             .weak()
                             .small(),
                         );
                     });
-                    ui.menu_button("Tools", |ui| {
+                    ui.menu_button(tr!(menu_tools), |ui| {
                         let ctx = ui.ctx().clone();
                         // The mathematical tools lead: they are what distinguishes this app from
                         // every other deep-zoom explorer, and until 2026-08-13 they were filed
                         // under Locations / buried in a dialog tooltip (UI review).
                         ui.add_enabled_ui(self.fractal.caps().nucleus_finder, |ui| {
                             if ui
-                                .button("Find minibrot + zoom to it  (M)")
-                                .on_hover_text(
-                                    "Newton-snap the view center to the nearby minibrot's exact \
-                                     center, report its period, and zoom to the minibrot's own \
-                                     scale — often many orders of magnitude in one step. Already \
-                                     deeper than it? Only the center moves.",
-                                )
+                                .button(format!("{}  (M)", tr!(menu_tools_find_minibrot)))
+                                .on_hover_text(tr!(menu_tools_find_minibrot_hover))
                                 .clicked()
                             {
                                 self.find_minibrot(&ctx);
                                 ui.close_menu();
                             }
                             if ui
-                                .button("Newton / Misiurewicz solver…")
-                                .on_hover_text(
-                                    "Solve for the exact minibrot center (period + size) or the \
-                                     Misiurewicz point nearest the view — Newton's method at full \
-                                     precision, with the repelling multiplier λ. Opens the \
-                                     location dialog, which hosts the solvers.",
-                                )
+                                .button(tr!(menu_tools_solver))
+                                .on_hover_text(tr!(menu_tools_solver_hover))
                                 .clicked()
                             {
                                 self.open_goto();
@@ -720,18 +661,10 @@ impl FractadyneApp {
                             }
                         });
                         ui.add_enabled_ui(!self.dual, |ui| {
-                            let label = if self.autopilot.active {
-                                "Stop autopilot  (A)"
-                            } else {
-                                "Auto-zoom (autopilot)  (A)"
-                            };
+                            let label = if self.autopilot.active { tr!(menu_tools_autopilot_stop) } else { tr!(menu_tools_autopilot) };
                             if ui
-                                .button(label)
-                                .on_hover_text(
-                                    "Hands-free continuous deep zoom: dives toward the \
-                                     detail-richest region, re-steering as it goes. Any \
-                                     navigation input stops it.",
-                                )
+                                .button(format!("{label}  (A)"))
+                                .on_hover_text(tr!(menu_tools_autopilot_hover))
                                 .clicked()
                             {
                                 self.toggle_autopilot(&ctx);
@@ -740,27 +673,24 @@ impl FractadyneApp {
                             ui.horizontal(|ui| {
                                 use crate::autopilot::AutopilotPriority as P;
                                 ui.add_space(12.0);
-                                ui.label("Priority:");
-                                ui.radio_value(&mut self.autopilot.priority, P::Speed, "Speed")
-                                    .on_hover_text("Zoom at the set speed; refresh with the first frame that has detail.");
-                                ui.radio_value(&mut self.autopilot.priority, P::Quality, "Quality")
-                                    .on_hover_text("Fully resolved frames only; the zoom waits for them.");
+                                ui.label(tr!(menu_tools_priority));
+                                ui.radio_value(&mut self.autopilot.priority, P::Speed, tr!(menu_tools_priority_speed))
+                                    .on_hover_text(tr!(menu_tools_priority_speed_hover));
+                                ui.radio_value(&mut self.autopilot.priority, P::Quality, tr!(menu_tools_priority_quality))
+                                    .on_hover_text(tr!(menu_tools_priority_quality_hover));
                             });
                             ui.horizontal(|ui| {
                                 use crate::autopilot::AutopilotTarget as T;
                                 ui.add_space(12.0);
-                                ui.label("Target:");
-                                ui.radio_value(&mut self.autopilot.target, T::Detail, "Detail")
-                                    .on_hover_text("The richest edge in view, re-chosen as the dive goes.");
-                                ui.radio_value(&mut self.autopilot.target, T::Misiurewicz, "Misiurewicz point")
-                                    .on_hover_text("The nearest Misiurewicz point, solved once and dived into exactly (Mandelbrot only).");
+                                ui.label(tr!(menu_tools_target));
+                                ui.radio_value(&mut self.autopilot.target, T::Detail, tr!(menu_tools_target_detail))
+                                    .on_hover_text(tr!(menu_tools_target_detail_hover));
+                                ui.radio_value(&mut self.autopilot.target, T::Misiurewicz, tr!(menu_tools_target_misiurewicz))
+                                    .on_hover_text(tr!(menu_tools_target_misiurewicz_hover));
                             });
                         });
-                        ui.checkbox(&mut self.anim.show_orbits, "Orbit overlay")
-                            .on_hover_text(
-                                "Draw the iteration path of the point under the cursor. \
-                                 Animation options: Controls panel ▸ Overlays.",
-                            );
+                        ui.checkbox(&mut self.anim.show_orbits, tr!(menu_tools_orbits))
+                            .on_hover_text(tr!(menu_tools_orbits_hover));
                         // Normalize sits here, unlike the rest of the overlay options, because
                         // it is a MODE rather than a continuous adjustment - without it the
                         // orbit flies off-screen at depth, so it is the one setting you reach
@@ -771,34 +701,23 @@ impl FractadyneApp {
                             ui.indent("tools_orbit_opts", |ui| {
                                 ui.checkbox(
                                     &mut self.anim.orbit_normalize,
-                                    "Normalize (fit to view)",
+                                    tr!(menu_tools_orbits_normalize),
                                 )
-                                .on_hover_text(
-                                    "Fit the orbit to the whole view so it stays well-framed \
-                                     at any zoom (instead of mapped through the viewport, \
-                                     where it flies off-screen when deep).",
-                                );
+                                .on_hover_text(tr!(menu_tools_orbits_normalize_hover));
                             });
                         });
                         ui.separator();
                         if ui
-                            .button("Play tour…")
-                            .on_hover_text(
-                                "Pick a tour script to play. The toolbar ▶ replays the last one \
-                                 with a single click.",
-                            )
+                            .button(tr!(menu_tools_play_tour))
+                            .on_hover_text(tr!(menu_tools_play_tour_hover))
                             .clicked()
                         {
                             self.load_script();
                             ui.close_menu();
                         }
                         if ui
-                            .button("Tour from current view…")
-                            .on_hover_text(
-                                "Create a tour that zooms from the full view down to the current \
-                                 view — add a caption and set the dive duration. Saved as a tour \
-                                 script (.toml) you can edit, play, or render.",
-                            )
+                            .button(tr!(menu_tools_tour_from_view))
+                            .on_hover_text(tr!(menu_tools_tour_from_view_hover))
                             .clicked()
                         {
                             self.open_script_export();
@@ -807,11 +726,12 @@ impl FractadyneApp {
                         // Enabled while a render runs too: it is how to get back to its progress.
                         ui.add_enabled_ui(self.playback.is_some() || self.tour_render.child.is_some(), |ui| {
                             if ui
-                                .button(if self.tour_render.child.is_some() { "Render tour…  (rendering)" } else { "Render tour…" })
-                                .on_hover_text(
-                                    "Render the loaded tour to a PNG frame sequence (and \
-                                     optionally an mp4) in a separate process.",
-                                )
+                                .button(if self.tour_render.child.is_some() {
+                                    format!("{}  ({})", tr!(menu_tools_render_tour), tr!(menu_state_rendering))
+                                } else {
+                                    tr!(menu_tools_render_tour)
+                                })
+                                .on_hover_text(tr!(menu_tools_render_tour_hover))
                                 .clicked()
                             {
                                 self.open_tour_render();
@@ -821,11 +741,8 @@ impl FractadyneApp {
                         ui.add_enabled_ui(self.playback.is_some(), |ui| {
                             // Same thing the player's ✖ does — the transport's own ⏹ only rewinds.
                             if ui
-                                .button("Close tour player")
-                                .on_hover_text(
-                                    "Stop the tour, close its player, and restore your own \
-                                     iteration and coloring settings",
-                                )
+                                .button(tr!(menu_tools_close_player))
+                                .on_hover_text(tr!(menu_tools_close_player_hover))
                                 .clicked()
                             {
                                 self.stop_playback();
@@ -835,11 +752,12 @@ impl FractadyneApp {
                         // Enabled while a job runs even with no tour loaded: it is how to reach it.
                         ui.add_enabled_ui(self.playback.is_some() || self.farm_controller.active(), |ui| {
                             if ui
-                                .button(if self.farm_controller.active() { "Render on farm…  (running)" } else { "Render on farm…" })
-                                .on_hover_text(
-                                    "Render the loaded tour on several machines: this one controls the \
-                                     job, others join with File ▸ Render client….",
-                                )
+                                .button(if self.farm_controller.active() {
+                                    format!("{}  ({})", tr!(menu_tools_render_farm), tr!(menu_state_running))
+                                } else {
+                                    tr!(menu_tools_render_farm)
+                                })
+                                .on_hover_text(tr!(menu_tools_render_farm_hover))
                                 .clicked()
                             {
                                 self.open_farm_controller();
@@ -848,19 +766,15 @@ impl FractadyneApp {
                         });
                         ui.separator();
                         if ui
-                            .button("Benchmark…")
-                            .on_hover_text(
-                                "Measure rendering speed — current settings, or a standardized \
-                                 run (fixed resolution + settings) comparable across machines. \
-                                 Burn-in repeats it to check stability / thermal throttling.",
-                            )
+                            .button(tr!(menu_tools_benchmark))
+                            .on_hover_text(tr!(menu_tools_benchmark_hover))
                             .clicked()
                         {
                             self.dialogs.bench_dialog_open = true;
                             ui.close_menu();
                         }
                         if self.bench.report.is_some()
-                            && ui.button("Show last benchmark").clicked()
+                            && ui.button(tr!(menu_tools_last_benchmark)).clicked()
                         {
                             self.dialogs.bench_open = true;
                             ui.close_menu();
@@ -869,24 +783,19 @@ impl FractadyneApp {
                     // "Where can I go?" is ONE question: the canonical places (famous points,
                     // random, .kfr import) and the personal ones (bookmarks) were split across
                     // two menus until 2026-08-13 (UI review). Merged; bookmarks are the submenu.
-                    ui.menu_button("Navigate", |ui| {
+                    ui.menu_button(tr!(menu_navigate), |ui| {
                         let ctx = ui.ctx().clone();
                         if ui
-                            .button("Go to location…")
-                            .on_hover_text(
-                                "Enter a center/zoom, jump to a well-known point, or Newton-solve \
-                                 a Misiurewicz / minibrot feature near the view.",
-                            )
+                            .button(tr!(menu_navigate_goto))
+                            .on_hover_text(tr!(menu_navigate_goto_hover))
                             .clicked()
                         {
                             self.open_goto();
                             ui.close_menu();
                         }
                         if ui
-                            .button("Misiurewicz explorer…")
-                            .on_hover_text(
-                                "Browse what the small Misiurewicz types look like — thumbnails                                  with each point's zoom period and twist — and Newton-solve any                                  of them to an arbitrary depth. (Mandelbrot.)",
-                            )
+                            .button(tr!(menu_navigate_misiurewicz))
+                            .on_hover_text(tr!(menu_navigate_misiurewicz_hover))
                             .clicked()
                         {
                             self.open_misiurewicz_explorer();
@@ -899,13 +808,9 @@ impl FractadyneApp {
                                 ui.close_menu();
                             }
                         }
-                        ui.menu_button("Exact points (expressions)", |ui| {
+                        ui.menu_button(tr!(menu_navigate_exact), |ui| {
                             ui.label(
-                                egui::RichText::new(
-                                    "Roots of the main-cardioid bulbs, given as exact expressions \
-                                     (cos/sin of a fraction of 2π). The coordinate is kept as its \
-                                     expression, so zooming in stays exactly on the point.",
-                                )
+                                egui::RichText::new(tr!(menu_navigate_exact_note))
                                 .weak()
                                 .small(),
                             );
@@ -919,16 +824,16 @@ impl FractadyneApp {
                         });
                         ui.separator();
                         if ui
-                            .button(format!("{}  Random location", crate::icons::RANDOM))
-                            .on_hover_text("Jump to a random detail-rich boundary point")
+                            .button(format!("{}  {}", crate::icons::RANDOM, tr!(menu_navigate_random)))
+                            .on_hover_text(tr!(menu_navigate_random_hover))
                             .clicked()
                         {
                             self.random_location(&ctx);
                             ui.close_menu();
                         }
                         if ui
-                            .button(format!("{} Import .kfr…", crate::icons::IMPORT))
-                            .on_hover_text("Load a Kalles Fraktaler location file")
+                            .button(format!("{}  {}", crate::icons::IMPORT, tr!(menu_navigate_import_kfr)))
+                            .on_hover_text(tr!(menu_navigate_import_kfr_hover))
                             .clicked()
                         {
                             self.import_kfr(&ctx);
@@ -937,51 +842,42 @@ impl FractadyneApp {
                         // Sharing a location is a PLACES concern (moved from File 2026-08-13):
                         // it shares where you are, like the .kfr import shares where someone was.
                         if ui
-                            .button(format!("{}  Share location…", crate::icons::SHARE))
-                            .on_hover_text(
-                                "Copy / paste / save / load a self-contained location \
-                                 (.fdn): fractal, full-precision center, zoom, coloring.",
-                            )
+                            .button(format!("{}  {}", crate::icons::SHARE, tr!(menu_navigate_share)))
+                            .on_hover_text(tr!(menu_navigate_share_hover))
                             .clicked()
                         {
                             self.open_share();
                             ui.close_menu();
                         }
                         ui.separator();
-                        ui.menu_button(format!("{}  Bookmarks", crate::icons::BOOKMARK), |ui| {
+                        ui.menu_button(format!("{}  {}", crate::icons::BOOKMARK, tr!(menu_bookmarks)), |ui| {
                             self.bookmarks_menu(ui, &ctx);
                         });
                     });
-                    ui.menu_button("Help", |ui| {
-                        if ui.button("Help & reference…  (F1)").clicked() {
+                    ui.menu_button(tr!(menu_help), |ui| {
+                        if ui.button(format!("{}  (F1)", tr!(menu_help_reference))).clicked() {
                             self.dialogs.help_open = true;
                             ui.close_menu();
                         }
                         if ui
-                            .button("Welcome / quick start…")
-                            .on_hover_text("The first-run overview: the essential controls and a few landmarks.")
+                            .button(tr!(menu_help_welcome))
+                            .on_hover_text(tr!(menu_help_welcome_hover))
                             .clicked()
                         {
                             self.dialogs.welcome_open = true;
                             ui.close_menu();
                         }
                         if ui
-                            .button("Diagnostics…")
-                            .on_hover_text(
-                                "Check that Fractadyne works correctly on your hardware, and \
-                                 attach the result to an issue report",
-                            )
+                            .button(tr!(menu_help_diagnostics))
+                            .on_hover_text(tr!(menu_help_diagnostics_hover))
                             .clicked()
                         {
                             self.diagnostics.open = true;
                             ui.close_menu();
                         }
                         if ui
-                            .button("Report an issue…")
-                            .on_hover_text(
-                                "File a GitHub issue (or email) with a crash report, log, and \
-                                 location attached",
-                            )
+                            .button(tr!(menu_help_report))
+                            .on_hover_text(tr!(menu_help_report_hover))
                             .clicked()
                         {
                             self.report.open = true;
@@ -990,22 +886,16 @@ impl FractadyneApp {
                         // Named for the BENEFIT, not the implementation: nobody is looking for
                         // "MPFR". The dialog itself explains what it actually is.
                         if ui
-                            .button("Faster deep zoom\u{2026}")
-                            .on_hover_text(
-                                "An optional build that computes deep-zoom reference orbits \
-                                 2.5-6.4x faster. Identical images; your settings carry over.",
-                            )
+                            .button(tr!(menu_help_accelerated))
+                            .on_hover_text(tr!(menu_help_accelerated_hover))
                             .clicked()
                         {
                             self.dialogs.accelerated_open = true;
                             ui.close_menu();
                         }
                         if ui
-                            .button("Check for updates")
-                            .on_hover_text(format!(
-                                "Check GitHub for a newer {} build",
-                                self.update_track.label()
-                            ))
+                            .button(tr!(menu_help_check_updates))
+                            .on_hover_text(tr!(menu_help_check_updates_hover, track = self.update_track.label()))
                             .clicked()
                         {
                             self.start_update_check(true);
@@ -1017,7 +907,7 @@ impl FractadyneApp {
                                 let channel = crate::update::channel_word(*prerelease);
                                 if ui
                                     .button(
-                                        egui::RichText::new(format!("\u{2B06} {version} ({channel}) available — download"))
+                                        egui::RichText::new(format!("\u{2B06} {}", tr!(menu_help_update_available, version = version.as_str(), channel = channel)))
                                             .color(egui::Color32::from_rgb(0x5C, 0xC0, 0x6C)),
                                     )
                                     .clicked()
@@ -1031,24 +921,23 @@ impl FractadyneApp {
                                 }
                             }
                             Some(crate::update::UpdateStatus::UpToDate) => {
-                                ui.label(egui::RichText::new("Up to date").weak().small());
+                                ui.label(egui::RichText::new(tr!(menu_help_up_to_date)).weak().small());
                             }
                             _ => {}
                         }
                         ui.separator();
                         ui.label(format!("Fractadyne v{}", version_string()));
-                        ui.label(egui::RichText::new("Native fractal explorer").weak().small());
+                        ui.label(egui::RichText::new(tr!(menu_help_tagline)).weak().small());
                         ui.separator();
-                        ui.label(egui::RichText::new("License").weak().small());
+                        ui.label(egui::RichText::new(tr!(menu_help_license)).weak().small());
                         ui.label("MIT OR Apache-2.0");
                         ui.label(
-                            egui::RichText::new("© 2026 Rithea Hong. Dual-licensed; use \
-                                 under either license at your option.")
+                            egui::RichText::new(tr!(menu_help_copyright, year = "2026", holder = "Rithea Hong"))
                                 .weak()
                                 .small(),
                         );
                         ui.hyperlink_to(
-                            "Source \u{2197}",
+                            format!("{} \u{2197}", tr!(menu_help_source)),
                             "https://github.com/WindySnowOwl/fractadyne",
                         );
                     });
@@ -1094,6 +983,18 @@ impl FractadyneApp {
                     let popup = ui.make_persistent_id(egui::Id::new("fractal_dropdown")).with("popup");
                     ui.memory_mut(|m| m.open_popup(popup));
                 }
+                // A combo box is a nested `Ui`, which the wrapping row places as one unit and cannot
+                // move to the next line: where it no longer fits it is clipped at the window's edge
+                // instead (the pseudo-language's longer menu titles did that at 1020 px, as a
+                // translation's can). So the row is ended by hand when the room left is too small.
+                let combo_w = ui.fonts(|f| {
+                    f.layout_no_wrap(self.fractal.name().to_owned(), egui::TextStyle::Button.resolve(ui.style()), egui::Color32::WHITE).size().x
+                }) + ui.spacing().icon_width
+                    + 3.0 * ui.spacing().button_padding.x
+                    + ui.spacing().item_spacing.x;
+                if ui.available_size_before_wrap().x < combo_w {
+                    ui.end_row();
+                }
                 egui::ComboBox::from_id_salt("fractal_dropdown")
                     .height(popup_h)
                     .selected_text(self.fractal.name())
@@ -1103,7 +1004,7 @@ impl FractadyneApp {
                         }
                         ui.separator();
                         if ui
-                            .selectable_label(self.fractal == FractalKind::Custom, "Custom formula…")
+                            .selectable_label(self.fractal == FractalKind::Custom, tr!(menu_fractal_custom))
                             .on_hover_text(FractalKind::Custom.menu_hint())
                             .clicked()
                         {
@@ -1145,9 +1046,9 @@ impl FractadyneApp {
                 if ui
                     .add_enabled(
                         self.fractal.supports_julia(),
-                        egui::SelectableLabel::new(self.julia_mode, "Julia"),
+                        egui::SelectableLabel::new(self.julia_mode, tr!(menu_toolbar_julia)),
                     )
-                    .on_hover_text("Show the Julia set of this formula, filling the window")
+                    .on_hover_text(tr!(menu_toolbar_julia_hover))
                     .clicked()
                 {
                     let m = if self.julia_mode { crate::ShowMode::Set } else { crate::ShowMode::Julia };
@@ -1160,7 +1061,7 @@ impl FractadyneApp {
                         self.fractal.supports_julia(),
                         egui::SelectableLabel::new(self.dual, crate::icons::DUAL),
                     )
-                    .on_hover_text("Both, linked: the set on the left, the Julia of the cursor's point on the right")
+                    .on_hover_text(tr!(menu_toolbar_dual_hover))
                     .clicked()
                 {
                     let m = if self.dual { crate::ShowMode::Set } else { crate::ShowMode::Both };
@@ -1169,14 +1070,14 @@ impl FractadyneApp {
                 }
                 ui.separator();
                 // ── File / I-O: open & browse, then save ──────────────────────────────
-                if ui.button(crate::icons::OPEN).on_hover_text("Open a view or location (PNG / EXR, .fdn, .kfr)").clicked() {
+                if ui.button(crate::icons::OPEN).on_hover_text(tr!(menu_toolbar_open_hover)).clicked() {
                     self.open_view(ctx);
                 }
-                if ui.button(crate::icons::GALLERY).on_hover_text("Gallery").clicked() {
+                if ui.button(crate::icons::GALLERY).on_hover_text(tr!(menu_toolbar_gallery_hover)).clicked() {
                     self.gallery.open = true;
                     self.scan_gallery();
                 }
-                if ui.button(crate::icons::SAVE).on_hover_text("Export image…").clicked() {
+                if ui.button(crate::icons::SAVE).on_hover_text(tr!(menu_toolbar_export_hover)).clicked() {
                     self.export.open = true;
                 }
                 if ui.button(crate::icons::SNAPSHOT).on_hover_text(self.snapshot_hover_text()).clicked() {
@@ -1188,36 +1089,28 @@ impl FractadyneApp {
                 // fourth of those — it writes and reads a `.fdn`.
                 if ui
                     .button(crate::icons::SHARE)
-                    .on_hover_text(
-                        "Share location — copy, paste, save or load a self-contained \
-                         .fdn (fractal, full-precision center, zoom, coloring)",
-                    )
+                    .on_hover_text(tr!(menu_toolbar_share_hover))
                     .clicked()
                 {
                     self.open_share();
                 }
                 ui.separator();
                 // ── Navigation / location: zoom, reset/home, bookmark ─────────────────
-                if ui.button(crate::icons::ZOOM_IN).on_hover_text("Zoom in").clicked() {
+                if ui.button(crate::icons::ZOOM_IN).on_hover_text(tr!(menu_toolbar_zoom_in_hover)).clicked() {
                     self.zoom_center(crate::TOOLBAR_ZOOM_IN_FACTOR);
                 }
-                if ui.button(crate::icons::ZOOM_OUT).on_hover_text("Zoom out").clicked() {
+                if ui.button(crate::icons::ZOOM_OUT).on_hover_text(tr!(menu_toolbar_zoom_out_hover)).clicked() {
                     self.zoom_center(crate::TOOLBAR_ZOOM_OUT_FACTOR);
                 }
                 // Click-to-zoom tool (single view): arm left-click = dive into the point,
                 // right-click = back out; drag still pans. Factor set in Settings ▸ Navigation.
                 if ui
                     .add(egui::SelectableLabel::new(self.click_zoom, crate::icons::CLICK_ZOOM))
-                    .on_hover_text(format!(
-                        "Click-to-zoom ({:.0}×): left-click dives into the point, \
-                         right-click backs out (drag still pans). Factor in Settings ▸ Navigation.{}",
-                        self.render_cfg.click_zoom_factor,
-                        if self.dual {
-                            " Pin the Julia c with Ctrl+click while this is on."
-                        } else {
-                            ""
-                        }
-                    ))
+                    .on_hover_text({
+                        let factor = format!("{:.0}", self.render_cfg.click_zoom_factor);
+                        let base = tr!(menu_toolbar_click_zoom_hover, factor = factor);
+                        if self.dual { format!("{base} {}", tr!(menu_toolbar_click_zoom_dual)) } else { base }
+                    })
                     .clicked()
                 {
                     self.click_zoom = !self.click_zoom;
@@ -1229,21 +1122,17 @@ impl FractadyneApp {
                         !self.dual,
                         egui::SelectableLabel::new(running, crate::icons::AUTOPILOT),
                     )
-                    .on_hover_text(if running {
-                        "Auto-zoom is running — click to stop"
-                    } else {
-                        "Auto-zoom: dive toward detail (A)"
-                    })
+                    .on_hover_text(if running { tr!(menu_toolbar_autopilot_running_hover) } else { tr!(menu_toolbar_autopilot_hover) })
                     .clicked()
                 {
                     self.toggle_autopilot(ctx);
                 }
-                if ui.button(crate::icons::RESET_VIEW).on_hover_text("Reset view (instant)").clicked() {
+                if ui.button(crate::icons::RESET_VIEW).on_hover_text(tr!(menu_toolbar_reset_hover)).clicked() {
                     self.reset_view();
                 }
                 if ui
                     .button(crate::icons::HOME)
-                    .on_hover_text("Zoom out to the home view (animated)")
+                    .on_hover_text(tr!(menu_toolbar_home_hover))
                     .clicked()
                 {
                     let now = ctx.input(|i| i.time);
@@ -1256,22 +1145,19 @@ impl FractadyneApp {
                     self.bookmarks_menu(ui, ctx);
                 })
                 .response
-                .on_hover_text("Bookmarks: save this view, or jump to a saved one");
+                .on_hover_text(tr!(menu_toolbar_bookmarks_hover));
                 ui.separator();
                 // ── Appearance / display ──────────────────────────────────────────────
                 if ui
                     .button(crate::icons::PALETTE)
-                    .on_hover_text(format!(
-                        "Next palette ({})",
-                        fractadyne_color::PRESETS[self.coloring.palette_idx].name
-                    ))
+                    .on_hover_text(tr!(menu_toolbar_next_palette_hover, name = fractadyne_color::PRESETS[self.coloring.palette_idx].name))
                     .clicked()
                 {
                     self.coloring.palette_idx = (self.coloring.palette_idx + 1) % fractadyne_color::PRESETS.len();
                 }
                 if ui
                     .selectable_label(self.perf.enabled, crate::icons::PERF)
-                    .on_hover_text("Performance panel")
+                    .on_hover_text(tr!(menu_view_perf_panel))
                     .clicked()
                 {
                     self.perf.enabled = !self.perf.enabled;
@@ -1282,11 +1168,8 @@ impl FractadyneApp {
                 // suggest they exist. ▶ replays the last script in one click (falling back to the
                 // picker); the hover names it.
                 let play_hover = match self.last_script.as_ref() {
-                    Some(p) => format!(
-                        "Play tour — {} (click) · replays the last tour; pick another via Tools ▸ Play tour…",
-                        p.file_name().map(|n| n.to_string_lossy().into_owned()).unwrap_or_default()
-                    ),
-                    None => "Play a tour… (Tools ▸ Play tour)".to_string(),
+                    Some(p) => tr!(menu_toolbar_play_last_hover, file = p.file_name().map(|n| n.to_string_lossy().into_owned()).unwrap_or_default()),
+                    None => tr!(menu_toolbar_play_hover),
                 };
                 if ui
                     .add_enabled(!self.tour_playing(), egui::Button::new(crate::icons::PLAY))
@@ -1308,11 +1191,11 @@ impl FractadyneApp {
                             }
                         })
                         .response
-                        .on_hover_text("Playback speed");
+                        .on_hover_text(tr!(menu_toolbar_speed_hover));
                 }
                 if ui
                     .selectable_label(self.fullscreen, crate::icons::FULLSCREEN)
-                    .on_hover_text("Toggle fullscreen")
+                    .on_hover_text(tr!(menu_toolbar_fullscreen_hover))
                     .clicked()
                 {
                     self.fullscreen = !self.fullscreen;

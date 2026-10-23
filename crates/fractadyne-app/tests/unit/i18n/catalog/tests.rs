@@ -20,10 +20,8 @@ fn a_language_file_translates_what_it_has_and_english_answers_the_rest() {
     assert_eq!(c.revision, 7);
     assert_eq!(c.number, Punctuation { decimal: ',', group: '.' });
     assert_eq!(c.text(id::welcome_title), "Willkommen bei Fractadyne");
-    assert!(c.translates(id::welcome_title));
     // Not in the file: English.
     assert_eq!(c.text(id::welcome_get_started), "Get started");
-    assert!(!c.translates(id::welcome_get_started));
     assert_eq!(c.translated, 2);
     assert!(c.dropped.is_empty());
     assert_eq!(c.parse_errors, 0);

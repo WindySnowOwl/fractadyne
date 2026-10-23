@@ -235,11 +235,6 @@ impl Catalog {
         if self.pseudo { pseudo::transform(&s) } else { s }
     }
 
-    /// Whether the file's own message answers `m` (else English does).
-    pub(crate) fn translates(&self, m: Msg) -> bool {
-        self.usable.get(m.0 as usize).copied().unwrap_or(false) && self.own.is_some()
-    }
-
     /// The share of the interface this catalog translates, 0–100.
     pub(crate) fn coverage(&self) -> u32 {
         let n = interface_messages().max(1);

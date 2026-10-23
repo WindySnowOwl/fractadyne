@@ -91,3 +91,10 @@ fn a_missing_argument_shows_as_a_gap_never_as_a_bare_id() {
     assert_ne!(s, "language-coverage");
     assert!(s.ends_with('%'), "{s}");
 }
+
+/// A blank line inside a message is a paragraph break, as the tooltips' "\n\n" were.
+#[test]
+fn a_blank_line_in_a_message_is_a_paragraph_break() {
+    let s = english().format(id::menu_show_set_hover, &[("name", Arg::from("Mandelbrot"))]);
+    assert_eq!(s, "The parameter plane — the Mandelbrot set itself.\n\nEvery point of it is a different Julia set; this is the map of all of them.");
+}

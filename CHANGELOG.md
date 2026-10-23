@@ -59,6 +59,18 @@ published as the pre-releases `v0.2.41-beta.1` to `v0.2.41-beta.150`, and a "bet
 
 Changes after 0.3.0-beta.1:
 
+- **A language menu, ready for translations (0.3.0-beta.21).** The interface's text is moving into
+  one file per language (design/multilingual.md); the menus and the welcome window have moved, the
+  rest follows area by area, and the first translations (Spanish, French, German, Ukrainian,
+  Japanese, Chinese, then Khmer) come after. The menu at the end of the top bar lists every
+  installed language in its own name with its English name beside it, and is shown in every mode,
+  so nobody is left in a language they cannot read. Behind it, the Languages window shows how much
+  of each language is translated and installs a language file. The first run follows the system's
+  language when Fractadyne has it, with a choice at the top of the welcome window, and a later
+  change of the system's language is asked about once. `--language` (or `FRACTADYNE_LANG`) picks a
+  language for one run; `en-XA` is a pseudo-language that shows any text still hard-coded in
+  English and any label too narrow for a longer translation. Coordinates, files, the command line
+  and logs stay in English. Also: an icon in the welcome window's key list drew as a box.
 - **The live-render panel has a close button (0.3.0-beta.21).** A small × in its top-right corner,
   where a screw was, closes it; `B` or View ▸ Live render panel opens it again. Until now it could
   be closed only by cycling `B` through its sizes or from the View menu.
