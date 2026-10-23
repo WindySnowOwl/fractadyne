@@ -2,6 +2,10 @@
 //!
 //! Pure presentation: each `help_*` section renders into an `egui::Ui`. The window chrome and
 //! table-of-contents live in `FractadyneApp::help_window`; this module is just the text.
+//!
+//! The text is in the language in use (`tr!`, the `help-*` messages of `i18n/en/fractadyne.ftl`):
+//! one message per paragraph, list item or heading. The command-line reference ([`CLI_REFERENCE`])
+//! stays English, as the command line does; names, formulas and expressions stay as written.
 
 use crate::version_string;
 use eframe::egui;
@@ -48,38 +52,21 @@ fn help_kv(ui: &mut egui::Ui, k: &str, v: &str) {
 }
 
 pub(crate) fn help_overview(ui: &mut egui::Ui) {
-    help_h(ui, "Overview");
-    help_p(
-        ui,
-        "Fractadyne is a native fractal explorer built for ultra-deep zooming and speed. \
-         It draws \"escape-time\" fractals — images created by repeating one simple formula \
-         at every pixel.",
-    );
-    help_sub(ui, "What is an escape-time fractal?");
-    help_p(
-        ui,
-        "For each pixel the program runs a formula such as z → z² + c over and over, starting \
-         from zero. If the running value stays small forever, the pixel belongs to the set and \
-         is drawn dark. If it eventually grows without bound (\"escapes\"), the pixel is outside \
-         the set, and its color records how many steps that took. The infinitely detailed \
-         border between \"stays\" and \"escapes\" is the fractal.",
-    );
-    help_sub(ui, "What you can do");
-    help_bullet(ui, "Pan and zoom essentially without limit (position is exact at any depth).");
-    help_bullet(ui, "Switch between ten fractal families, and view any (except Newton) as a Julia set.");
-    help_bullet(ui, "Recolor with preset or custom gradients and several coloring methods.");
-    help_bullet(ui, "Add 3D relief lighting and glowing boundary contours.");
-    help_bullet(ui, "Snap to minibrots, bookmark spots, and export high-resolution images.");
-    help_bullet(ui, "Let the auto-zoom autopilot dive toward detail on its own.");
-    help_bullet(ui, "Share any spot as a small \".fdn\" text snippet or file.");
-    help_bullet(ui, "Run scripted tours and a hardware benchmark.");
-    help_sub(ui, "First steps");
-    help_p(
-        ui,
-        "Open the Navigate menu and pick \"Seahorse Valley\", then roll the mouse wheel to \
-         zoom in. Drag to pan. Or just press A and let the autopilot dive for you. Press F1 \
-         at any time to return to this help.",
-    );
+    help_h(ui, &tr!(help_section_overview));
+    help_p(ui, &tr!(help_overview_intro));
+    help_sub(ui, &tr!(help_overview_what_is));
+    help_p(ui, &tr!(help_overview_what_is_text));
+    help_sub(ui, &tr!(help_overview_can_do));
+    help_bullet(ui, &tr!(help_overview_can_pan));
+    help_bullet(ui, &tr!(help_overview_can_families));
+    help_bullet(ui, &tr!(help_overview_can_recolor));
+    help_bullet(ui, &tr!(help_overview_can_lighting));
+    help_bullet(ui, &tr!(help_overview_can_minibrots));
+    help_bullet(ui, &tr!(help_overview_can_autopilot));
+    help_bullet(ui, &tr!(help_overview_can_share));
+    help_bullet(ui, &tr!(help_overview_can_tours));
+    help_sub(ui, &tr!(help_overview_first_steps));
+    help_p(ui, &tr!(help_overview_first_steps_text));
 }
 
 /// The reference for the coordinate grammar. The function and constant tables are rendered from
@@ -87,575 +74,155 @@ pub(crate) fn help_overview(ui: &mut egui::Ui) {
 /// messages quote and a core test holds equal to what it accepts — so this page cannot list a
 /// function the parser refuses or omit one it takes. Only the prose and examples live here.
 pub(crate) fn help_expressions(ui: &mut egui::Ui) {
-    help_h(ui, EXPRESSIONS_SECTION);
-    help_p(
-        ui,
-        "Wherever Fractadyne takes a coordinate you can type an expression instead of a decimal: \
-         the Re / Im fields of Navigate → \"Go to location…\" (and each field of its polar mode), \
-         the center_re / center_im lines of a .fdn location, a tour script's re / im, and --center \
-         on the command line. The expression is evaluated with as many digits as the zoom needs, \
-         and the Go-to dialog keeps it with the view — so a point you enter as 1/3, or as \
-         -0.5 + 0.25*cos(pi/4), stays exactly on that point however deep you zoom, where a decimal \
-         would drift once its digits ran out.",
-    );
+    help_h(ui, &tr!(help_section_expressions));
+    help_p(ui, &tr!(help_expr_intro));
 
-    help_sub(ui, "Examples");
-    help_kv(ui, "1/3", "An exact third. More digits appear as you zoom in.");
-    help_kv(ui, "-3/4", "The neck of Seahorse Valley — the root of the period-2 bulb.");
-    help_kv(
-        ui,
-        "-0.5 + 0.25*cos(pi/4)",
-        "A point on the circle of radius 1/4 around -0.5 (the polar mode composes this for you).",
-    );
-    help_kv(
-        ui,
-        "cos(2*pi/3)/2 - cos(4*pi/3)/4",
-        "Re of the period-3 bulb root; its Im is sin(2*pi/3)/2 - sin(4*pi/3)/4. Navigate → \
-         \"Exact points (expressions)\" has these built in.",
-    );
-    help_kv(ui, "(37+16i)/100", "A whole complex value typed in the Re field fills both Re and Im.");
-    help_kv(ui, "sqrt(2)/2", "Functions and constants combine freely.");
-    help_kv(
-        ui,
-        "2^-20",
-        "Powers: 2^-20 is 1/1048576. -2^2 is -4 — the minus is applied after the power.",
-    );
-    help_kv(
-        ui,
-        "root(-8, 3)",
-        "-2, the real cube root. Even roots of a negative are refused; sqrt(-1) gives i.",
-    );
-    help_kv(ui, "1e-30", "Scientific notation works inside expressions too.");
+    help_sub(ui, &tr!(help_expr_examples));
+    help_kv(ui, "1/3", &tr!(help_expr_ex_third));
+    help_kv(ui, "-3/4", &tr!(help_expr_ex_neck));
+    help_kv(ui, "-0.5 + 0.25*cos(pi/4)", &tr!(help_expr_ex_circle));
+    help_kv(ui, "cos(2*pi/3)/2 - cos(4*pi/3)/4", &tr!(help_expr_ex_bulb));
+    help_kv(ui, "(37+16i)/100", &tr!(help_expr_ex_complex));
+    help_kv(ui, "sqrt(2)/2", &tr!(help_expr_ex_combine));
+    help_kv(ui, "2^-20", &tr!(help_expr_ex_powers));
+    help_kv(ui, "root(-8, 3)", &tr!(help_expr_ex_root));
+    help_kv(ui, "1e-30", &tr!(help_expr_ex_scientific));
 
-    help_sub(ui, "Numbers and operators");
-    help_bullet(
-        ui,
-        "Decimals with an optional exponent: 0.25, -1.5e-30, .5. Digits only — no spaces or \
-         grouping commas inside a number, and the decimal point is always '.'.",
-    );
-    help_bullet(ui, "Add an i suffix for an imaginary number (0.25i), or use i by itself: 3 + 4*i.");
-    help_bullet(
-        ui,
-        "+  -  *  /  and ^ (power; evaluated right to left, so 2^3^2 = 2^9). Parentheses group. \
-         There is no implicit multiplication: write 2*pi, not 2pi.",
-    );
-    help_bullet(ui, "Names are case-insensitive: PI, Pi and pi are the same constant.");
+    help_sub(ui, &tr!(help_expr_numbers));
+    help_bullet(ui, &tr!(help_expr_numbers_decimals));
+    help_bullet(ui, &tr!(help_expr_numbers_imaginary));
+    help_bullet(ui, &tr!(help_expr_numbers_operators));
+    help_bullet(ui, &tr!(help_expr_numbers_case));
 
-    help_sub(ui, "Constants");
+    help_sub(ui, &tr!(help_expr_constants));
     for (name, what) in fractadyne_core::EXPR_CONSTANTS {
         help_kv(ui, name, what);
     }
 
-    help_sub(ui, "Functions");
-    help_p(
-        ui,
-        "Angles are in radians. For degrees, multiply by pi/180 — cos(45*pi/180) — or switch the \
-         Go-to dialog to its polar mode and pick the degrees unit.",
-    );
+    help_sub(ui, &tr!(help_expr_functions));
+    help_p(ui, &tr!(help_expr_functions_angles));
     for (_, sig, what) in fractadyne_core::EXPR_FUNCTIONS {
         help_kv(ui, sig, what);
     }
 
-    help_sub(ui, "What is refused, and why");
-    help_bullet(
-        ui,
-        "A negative number to a fractional power, such as (-2)^(1/2): the result is complex and \
-         there are several roots to choose from. Use root(x, n) or cbrt(x) for a real root, or \
-         sqrt(x) for the principal complex one.",
-    );
-    help_bullet(
-        ui,
-        "A complex argument to a real-valued function (sin(i), ln(1+i)). Only sqrt and abs accept \
-         a complex argument; the arithmetic operators and integer powers work on complex values.",
-    );
-    help_bullet(
-        ui,
-        "Domain errors: ln or log of a number that is not positive, asin or acos outside -1…1, \
-         0 to a negative power, division by zero.",
-    );
-    help_bullet(
-        ui,
-        "Arguments to sin, cos, tan, exp or ^ beyond ±2^32, and nesting deeper than 32 levels: a \
-         pasted coordinate is untrusted input, and those would take unbounded time.",
-    );
-    help_bullet(
-        ui,
-        "No variables, user-defined functions, comparisons or conditionals. The grammar is kept \
-         deliberately small so a saved location means the same thing in every version.",
-    );
+    help_sub(ui, &tr!(help_expr_refused));
+    help_bullet(ui, &tr!(help_expr_refused_fractional));
+    help_bullet(ui, &tr!(help_expr_refused_complex));
+    help_bullet(ui, &tr!(help_expr_refused_domain));
+    help_bullet(ui, &tr!(help_expr_refused_bounds));
+    help_bullet(ui, &tr!(help_expr_refused_grammar));
 
-    help_sub(ui, "If it does not parse");
-    help_p(
-        ui,
-        "The message names the field, says what was found and at which character, and — for the \
-         usual slips — what to type instead: a typographic minus sign (−) pasted from a document, \
-         × or ÷, a decimal comma, a missing * between a number and a name, an unclosed \
-         parenthesis, or a function written without its parentheses. Nothing is ever half-read: \
-         if any part of the text cannot be understood, the whole coordinate is refused rather than \
-         silently shortened.",
-    );
+    help_sub(ui, &tr!(help_expr_no_parse));
+    help_p(ui, &tr!(help_expr_no_parse_text));
 }
 
 pub(crate) fn help_navigation(ui: &mut egui::Ui) {
-    help_h(ui, "Navigation");
-    help_sub(ui, "Mouse");
-    help_kv(ui, "Left-drag", "Pan the view.");
-    help_kv(ui, "Mouse wheel", "Zoom in/out toward the cursor; turn it faster to zoom further per notch. With Snap zoom to features on, zooming in near a minibrot pulls the zoom onto it.");
-    help_kv(ui, "Shift+drag", "Box zoom — drag a rectangle and it zooms to fill the view.");
-    help_kv(
-        ui,
-        "Click-to-zoom (🎯)",
-        "Toggle the target button in the toolbar (single view): a left-click then dives into the \
-         point by a set factor, right-click backs out. Drag still pans; pick the factor (2–100×) \
-         under Navigation in the right panel. Backspace undoes a click.",
-    );
-    help_sub(ui, "Continuous zoom & home");
-    help_kv(ui, "Hold Space", "Smoothly zoom in, anchored at the cursor.");
-    help_kv(ui, "Hold Shift+Space", "Smoothly zoom out.");
-    help_p(
-        ui,
-        "The Zoom-home button animates a gentle fly-back to the full view. \"Zoom speed\" in the \
-         right panel sets the continuous-zoom rate.",
-    );
-    help_sub(ui, "Autopilot");
-    help_p(
-        ui,
-        "Press A (or Tools → \"Auto-zoom (autopilot)\") for a hands-free dive: it picks a point on \
-         the fractal's edge where the detail is densest, preferring the middle of the view, and \
-         glides into it while easing it to the centre of the screen. It keeps that target while it \
-         stays interesting and turns smoothly toward richer structure when some appears. Any \
-         navigation input — or Esc — stops it. \"Auto-zoom priority\" in the right panel (or \
-         under Tools) chooses what it puts first: Speed zooms at the set rate and refreshes the \
-         screen as soon as a frame with detail is ready; Quality shows only fully resolved \
-         full-resolution frames and slows the zoom as needed so the picture never magnifies far \
-         before the next one lands. Either way the screen never shows a blank or single-colour \
-         frame: a refresh that has not yet resolved any detail stays hidden behind the last one. \
-         \"Auto-zoom target\" chooses what it aims at: Detail (the richest edge in view, re-chosen \
-         as it goes) or Misiurewicz point — it finds the nearest Misiurewicz point, solves it to \
-         the dive limit's depth while holding still, then dives exactly into it; the structure \
-         around such a point repeats every few octaves forever, so that dive never dead-ends \
-         (Mandelbrot set only).",
-    );
-    help_sub(ui, "History & precise moves");
-    help_kv(ui, "Ctrl+Z / Backspace", "Undo the previous view.");
-    help_kv(ui, "Ctrl+Y / Shift+Backspace", "Redo.");
-    help_p(
-        ui,
-        "Navigate → \"Go to location…\" lets you read, type, paste, or copy the exact center and zoom \
-         (full precision, any depth). The center fields accept more than plain numbers: fractions \
-         like \"1/3\" and expressions built from pi, tau, e, sqrt and sin/cos/tan — so \
-         \"-0.5 + 0.25*cos(pi/4)\" is a valid coordinate. An expression is kept with the view and \
-         re-evaluated at the precision each depth needs, so a point entered that way stays exact no \
-         matter how far you zoom in (a rounded decimal eventually would not). A polar mode \
-         (offset + r ∠ θ, in degrees / radians / turns) composes one of these expressions for you. \
-         The full list of functions and constants, with examples, is the \"Coordinate expressions\" \
-         section of this help (the ? button in the dialog opens it). \
-         Navigate → Bookmarks saves and recalls locations.",
-    );
-    help_p(
-        ui,
-        "Navigate → \"Exact points (expressions)\" jumps to points defined exactly rather than by a \
-         rounded decimal — the roots of the main-cardioid bulbs, where each period-q bud attaches, \
-         written as cos/sin expressions. Because the expression travels with the view, you can zoom \
-         into one without it ever drifting off the point.",
-    );
-    help_p(
-        ui,
-        "Navigate → \"Share location…\" captures the whole view — fractal, full-precision center, zoom, \
-         and coloring — as a compact \".fdn\" snippet you can Copy, paste back and Apply, or \
-         Save/Load as a file, to reproduce a spot exactly (or send it to someone).",
-    );
-    help_p(
-        ui,
-        "File → \"Open view or location…\" opens any of these directly: an exported PNG/EXR (its \
-         embedded view is restored), a \".fdn\" location file, or a Kalles Fraktaler \".kfr\".",
-    );
-    help_sub(ui, "Finding detail");
-    help_p(
-        ui,
-        "Minibrots are tiny copies of the whole set hidden along the boundary. Center one roughly \
-         and press M (or Tools → \"Find minibrot + zoom to it\") to Newton-snap exactly onto its center, \
-         read its period, and zoom straight to its own scale — often many orders of magnitude in \
-         one step. If you are already deeper than the minibrot, only the center moves.",
-    );
-    help_p(
-        ui,
-        "View → \"Minimap overview\" shows a small map of the whole set with a \"you are here\" \
-         marker and the current zoom depth; click the map to jump to a region.",
-    );
+    help_h(ui, &tr!(help_section_navigation));
+    help_sub(ui, &tr!(help_mouse));
+    help_kv(ui, &tr!(help_key_left_drag), &tr!(help_nav_left_drag));
+    help_kv(ui, &tr!(help_key_mouse_wheel), &tr!(help_nav_wheel));
+    help_kv(ui, &tr!(help_key_shift_drag), &tr!(help_nav_shift_drag));
+    help_kv(ui, &tr!(help_key_click_zoom, icon = "🎯"), &tr!(help_nav_click_zoom));
+    help_sub(ui, &tr!(help_nav_continuous));
+    help_kv(ui, &tr!(help_key_hold_space), &tr!(help_nav_hold_space));
+    help_kv(ui, &tr!(help_key_hold_shift_space), &tr!(help_nav_hold_shift_space));
+    help_p(ui, &tr!(help_nav_continuous_text));
+    help_sub(ui, &tr!(help_nav_autopilot));
+    help_p(ui, &tr!(help_nav_autopilot_text));
+    help_sub(ui, &tr!(help_nav_history));
+    help_kv(ui, "Ctrl+Z / Backspace", &tr!(help_nav_undo));
+    help_kv(ui, "Ctrl+Y / Shift+Backspace", &tr!(help_nav_redo));
+    help_p(ui, &tr!(help_nav_goto));
+    help_p(ui, &tr!(help_nav_exact_points));
+    help_p(ui, &tr!(help_nav_share));
+    help_p(ui, &tr!(help_nav_open));
+    help_sub(ui, &tr!(help_nav_finding));
+    help_p(ui, &tr!(help_nav_minibrots));
+    help_p(ui, &tr!(help_nav_minimap));
 }
 
 pub(crate) fn help_options(ui: &mut egui::Ui) {
-    help_h(ui, "Coloring & options");
-    help_p(ui, "All of these live in the right-hand panel (and persist between sessions).");
-    help_sub(ui, "Palette");
-    help_p(
-        ui,
-        "Palette chooses a preset gradient, your Custom one, or a two-color mode. \"Edit \
-         gradient…\" opens an editor where each color stop has a color and a position (0–1); add \
-         stops, copy a preset to start from, or import a palette file.",
-    );
-    help_p(
-        ui,
-        "\"Paste…\" in the gradient editor imports a palette you found elsewhere. It accepts hex \
-         colors with or without a leading # (#ff8800, ff8800, or the short #f80) and plain 0–255 \
-         RGB triples such as \"255 136 0\" — the format Fractint and Kalles Fraktaler .map files \
-         use — separated by commas, spaces or new lines. Up to 256 colors are kept; a longer \
-         list is sampled evenly down to 256, keeping the first and last so the gradient's shape \
-         survives.",
-    );
-    help_p(
-        ui,
-        "\"Import .map…\" beside it loads a Fractint or Kalles Fraktaler .map palette file. Those \
-         are lookup tables indexed by iteration count with no blending between entries, and the \
-         hard color steps that produces are what the classic Fractint look is made of — so that \
-         is how they import, with a \"Hard bands\" checkbox to blend the same colors into a \
-         smooth gradient instead. Fractint's own files store 6-bit color values multiplied by \
-         four, so their white is 252 rather than 255; Fractadyne says so when it imports one and \
-         leaves the values exactly as written, because Fractint's own saved images carry the \
-         same 252.",
-    );
-    help_p(
-        ui,
-        "Duotone maps the value to a smooth two-color ramp (Shadow → Highlight). Binary (set) \
-         is a flat two-color view — one solid color for points inside the set and another for \
-         outside, with no gradient — the clearest way to see the set's shape.",
-    );
-    help_p(
-        ui,
-        "Cycle sets how many times the gradient repeats across the iteration range (tighter or \
-         looser bands). Offset rotates the whole gradient.",
-    );
-    help_p(
-        ui,
-        "\"Normalize deep colors\" fits the palette to the range of escape values actually present \
-         in the view. Deep views span hundreds of thousands of iterations, and without this a \
-         fixed cycle wraps the gradient thousands of times between neighboring pixels, turning \
-         correct detail into speckle.",
-    );
-    help_p(
-        ui,
-        "\"Log color scale\" spreads the palette by the logarithm of the escape value instead of \
-         linearly. Escape counts crowd toward the high end as you go deeper, so a linear fit \
-         spends most of the gradient on a thin shell hugging the boundary and leaves the rest \
-         nearly flat; the log scale opens that out, and keeps colors steadier through a zoom \
-         video as the range grows.",
-    );
-    help_p(
-        ui,
-        "Animate cycles the colors over time — Forward, Reverse, or Ping-pong shift the offset; \
-         Random continuously synthesizes smoothly morphing, harmonious gradients. Speed controls \
-         cycles (or morphs) per second; \"Shuffle gradient\" rolls a new one in Random mode.",
-    );
-    help_sub(ui, "Coloring method — how the data becomes color");
-    help_kv(ui, "Smooth iteration", "Classic continuous bands by escape time.");
-    help_kv(ui, "Stripe average", "Flowing bands from the orbit's angle (Stripe density slider).");
-    help_kv(ui, "Triangle inequality", "Fine texture from where each step lands between bounds.");
-    help_kv(ui, "Orbit trap", "Distance of the orbit to a shape (point/cross/circle); colors interior too.");
-    help_kv(ui, "Distance estimate", "Shades by nearness to the boundary.");
-    help_kv(ui, "Decomposition", "Cells from the final escape angle.");
-    help_sub(ui, "3D relief lighting");
-    help_p(
-        ui,
-        "Shades the surface from the boundary's slope (the derivative) for an embossed, lit look. \
-         Light angle sets the direction; Relief sets strength (lower = sharper); \"Rotate light\" \
-         animates it. Holomorphic families only (Mandelbrot / Multibrot).",
-    );
-    help_sub(ui, "Distance glow");
-    help_p(
-        ui,
-        "Bright contour bands that densify into glowing filaments near the boundary. Glow is the \
-         blend amount, Band width the spacing, and \"Animate glow\" flows them.",
-    );
-    help_sub(ui, "Quality & iterations");
-    help_p(
-        ui,
-        "Iterations is the maximum number of steps before a pixel is treated as inside the set; \
-         \"Auto-scale\" raises it automatically as you zoom (deeper detail needs more). Anti-alias \
-         supersamples still images (2×–8×) once the view settles, taming the fine exterior \"dust\".",
-    );
-    help_sub(ui, "Other");
-    help_p(
-        ui,
-        "Zoom speed sets the continuous-zoom rate; the FPS cap limits frame rate; Dual view shows a \
-         Mandelbrot set and its Julia set side by side (the cursor sets the Julia parameter live).",
-    );
+    help_h(ui, &tr!(help_section_options));
+    help_p(ui, &tr!(help_options_intro));
+    help_sub(ui, &tr!(help_options_palette));
+    help_p(ui, &tr!(help_options_palette_text));
+    help_p(ui, &tr!(help_options_paste));
+    help_p(ui, &tr!(help_options_import_map));
+    help_p(ui, &tr!(help_options_duotone));
+    help_p(ui, &tr!(help_options_cycle));
+    help_p(ui, &tr!(help_options_normalize));
+    help_p(ui, &tr!(help_options_log_scale));
+    help_p(ui, &tr!(help_options_animate));
+    help_sub(ui, &tr!(help_options_method));
+    help_kv(ui, &tr!(help_method_smooth), &tr!(help_method_smooth_text));
+    help_kv(ui, &tr!(help_method_stripe), &tr!(help_method_stripe_text));
+    help_kv(ui, &tr!(help_method_triangle), &tr!(help_method_triangle_text));
+    help_kv(ui, &tr!(help_method_trap), &tr!(help_method_trap_text));
+    help_kv(ui, &tr!(help_method_distance), &tr!(help_method_distance_text));
+    help_kv(ui, &tr!(help_method_decomposition), &tr!(help_method_decomposition_text));
+    help_sub(ui, &tr!(help_options_relief));
+    help_p(ui, &tr!(help_options_relief_text));
+    help_sub(ui, &tr!(help_options_glow));
+    help_p(ui, &tr!(help_options_glow_text));
+    help_sub(ui, &tr!(help_options_quality));
+    help_p(ui, &tr!(help_options_quality_text));
+    help_sub(ui, &tr!(help_options_other));
+    help_p(ui, &tr!(help_options_other_text));
 }
 
 pub(crate) fn help_fractals(ui: &mut egui::Ui) {
-    help_h(ui, "Fractals");
-    help_p(
-        ui,
-        "Every family iterates a formula with z starting at 0 and c set by the pixel (escape-time), \
-         unless noted. z = x + iy is a complex number.",
-    );
+    help_h(ui, &tr!(help_section_fractals));
+    help_p(ui, &tr!(help_fractals_intro));
     help_sub(ui, "Mandelbrot");
-    help_p(
-        ui,
-        "z → z² + c. The original. The set is every c whose orbit stays bounded; it is connected, \
-         and its boundary is so crinkled it has Hausdorff dimension 2.",
-    );
+    help_p(ui, &tr!(help_fractals_mandelbrot));
     help_sub(ui, "Multibrot 3 / 4 / 5");
-    help_p(
-        ui,
-        "z → z^d + c for power d = 3, 4, 5. Higher powers add lobes: the set has (d−1)-fold \
-         rotational symmetry (Multibrot 3 is 2-fold, 4 is 3-fold, 5 is 4-fold).",
-    );
+    help_p(ui, &tr!(help_fractals_multibrot));
     help_sub(ui, "Tricorn (Mandelbar)");
-    help_p(
-        ui,
-        "z → conj(z)² + c, where conj(x + iy) = x − iy. The conjugation makes it anti-holomorphic, \
-         giving 3-fold symmetry and characteristic curved \"claws\".",
-    );
+    help_p(ui, &tr!(help_fractals_tricorn));
     help_sub(ui, "Burning Ship");
-    help_p(
-        ui,
-        "z → (|x| + i|y|)² + c — take absolute values before squaring (real = x²−y²+cx, \
-         imag = 2|xy|+cy). Non-analytic; deep zooms reveal ship-like structures (traditionally \
-         viewed upside-down).",
-    );
+    help_p(ui, &tr!(help_fractals_burning_ship));
     help_sub(ui, "Celtic");
-    help_p(
-        ui,
-        "Like Mandelbrot but with the absolute value of the real part: real = |x²−y²| + cx, \
-         imag = 2xy + cy. Produces heart- and shield-shaped motifs.",
-    );
+    help_p(ui, &tr!(help_fractals_celtic));
     help_sub(ui, "Buffalo");
-    help_p(
-        ui,
-        "Absolute value of both parts of z²: real = |x²−y²| + cx, imag = |2xy| + cy — a cross \
-         between Celtic and Burning Ship.",
-    );
-    help_sub(ui, "Higher powers");
-    help_p(
-        ui,
-        "Multibrot 6, 7 and 8 (z^d + c), and Burning Ship, Tricorn, Celtic and Buffalo at powers \
-         3, 4 and 5: the same folds at a higher power. Burning Ship d takes the absolute values of \
-         z's parts and then the power; Tricorn d conjugates first; Celtic d and Buffalo d fold the \
-         real part (and, for Buffalo, the imaginary part) of z^d. The Fractal menu and the \
-         dropdown list them one family to a row (\"Burning Ship  3 4 5\"). Each deep-zooms as its \
-         power-2 sibling does, and Multibrot 6, 7 and 8 also take series approximation and the \
-         minibrot finder (M), as Multibrot 3–5 do. Multibrot 8 escapes at radius 128 instead of \
-         256, where its next step would leave single-precision range.",
-    );
+    help_p(ui, &tr!(help_fractals_buffalo));
+    help_sub(ui, &tr!(help_fractals_powers));
+    help_p(ui, &tr!(help_fractals_powers_text));
     help_sub(ui, "Phoenix");
-    help_p(
-        ui,
-        "z → z² + c + p·z(n-1), where z(n-1) is the previous iterate and p is a constant (p = -0.5). \
-         The memory term produces flame-like filaments.",
-    );
+    help_p(ui, &tr!(help_fractals_phoenix));
     help_sub(ui, "Newton");
-    help_p(
-        ui,
-        "Newton's method for the roots of z³ − 1 = 0: z → z − (z³−1)/(3z²). Rather than escape time, \
-         pixels are colored by which of the three cube roots of unity the iteration converges to \
-         (the basins of attraction) and how quickly; the tangled basin boundaries are the fractal.",
-    );
-    help_sub(ui, "Julia mode");
-    help_p(
-        ui,
-        "For every family except Newton you can switch to a Julia set: instead of starting z at 0 \
-         with c = pixel, you fix c (a parameter) and let z start at the pixel. The Julia set is the \
-         boundary between starting points that stay bounded and those that escape, for that fixed c. \
-         In Dual view, moving the cursor over the Mandelbrot panel sets c live.",
-    );
-    help_sub(ui, "Deep-zoom support");
-    help_p(
-        ui,
-        "Mandelbrot, Multibrot 3/4/5 and Tricorn support extreme-depth (floatexp) perturbation deep \
-         zoom. Burning Ship, Celtic and Buffalo are non-analytic (they take absolute values), so \
-         they use a sign-aware perturbation; this now runs at floatexp range too, deep-zooming far \
-         past the old ~1e28× df32 limit (rare speckle near the abs folds awaits multi-reference \
-         glitch correction). Phoenix uses a two-term perturbation and also deep-zooms at floatexp \
-         range (without SA/BLA, so heavier than Mandelbrot). The higher powers deep-zoom the same \
-         way, each power's perturbation following its own chain of squarings; Multibrot 3–8 also \
-         take series approximation and BLA, as Mandelbrot does, and Tricorn, Burning Ship, Celtic \
-         and Buffalo at every power take BLA (no series), which carries a deep view's interior \
-         instead of iterating it step by step. Only Newton uses the direct path, \
-         sharp to ~1e6×; custom \
-         formulas deep-zoom unless the Custom formulas section below says otherwise.",
-    );
-    help_sub(ui, "Custom formulas");
-    help_p(
-        ui,
-        "Fractal > Custom formula... takes a formula's step in Fractint-style expressions: \
-         z = z^3 - p1*z + c, or several statements (t = sqr(z), then z = t*t + c). z is the \
-         iterate, c the pixel (the Julia constant in Julia mode), p1-p5 parameters; |z| is the \
-         squared modulus, as in Fractint, and the usual functions are available (sqr, abs, conj, \
-         real, imag, cabs, flip, recip, ident, exp, log, sqrt, sin, cos, tan, cotan, sinh, cosh, \
-         tanh, cotanh, asin, acos, atan, asinh, acosh, atanh, cosxx, and floor, ceil, trunc and \
-         round, which round each part). log is the natural logarithm, as in Fractint and in complex analysis: \
-         what many textbooks write ln (there is no base-10 logarithm). A formula written with \
-         ln, cot, coth, Re or Im does not read; the syntax check names the function to use, a \
-         button rewrites it, and typing ln offers log. Every \
-         step deep-zooms by perturbation, with the same extended-range arithmetic past 1e28x as \
-         the built-in fractals, except one with a power whose exponent varies with z or c (such \
-         as z^c): that renders on the direct path, sharp until one single-precision step of c \
-         spans a pixel, about 1e4x to 1e5x, less far from the origin. The formula dialog says \
-         which applies. log, sqrt and non-integer powers take their principal values, which jump \
-         across the negative real axis. Perturbation follows the jump exactly, but a pixel whose \
-         orbit crosses where the reference's does not is carried on at about single precision \
-         from then on, so deep views whose orbits straddle a cut show noise there (measured: \
-         clean at 1e5x on the real axis for sqrt(z^4 + c), noisy for log formulas even at \
-         1e4x). Every step is iterated in full (no series approximation), so a deep view \
-         with a high iteration count renders more slowly than a built-in fractal's. Near its \
-         boundary a formula with functions orbits chaotically, and a long orbit there is followed \
-         only loosely in single precision: at 2,000 iterations a third of sin(z) + c's pixels \
-         differ from the exact orbit's, at 60 almost none. Views, sessions and exported images \
-         keep the formula's text.",
-    );
-    help_p(
-        ui,
-        "Fractint's sections work too. Statements before a ':' are the init section, run once \
-         per pixel; a comparison as the last statement is the formula's own bailout test, \
-         iterating while it holds (|z| <= 100 && |z - 1| > 0.000001 stops an orbit that escapes \
-         or settles on 1); if (...), elseif (...), else and endif choose statements; and a \
-         variable read before it is set in a step has its value from the step before (from the \
-         init section, or 0). Comparisons compare real parts and give 1 or 0, && and || combine \
-         them, and an assignment is a value too (a = b = pixel). pixel, p1-p5, pi and e may be \
-         assigned, keeping their own value until they are; maxit is the iteration count and \
-         ismand is 1 (the formula's Mandelbrot form). A formula with any of these, or with \
-         rounding, renders on the direct path, without deep zoom. Formula library > Import reads \
-         Fractint .frm files as well. Each entry that reads becomes a formula, and its row says \
-         what the reading changed: fn1-fn4 take Fractint's defaults (sin, sqr, sinh, cosh); \
-         Fractint's variable c is renamed c_, as c is the pixel here; a name nothing sets is 0, \
-         as in Fractint; blanks inside a name are dropped (end if is endif), as Fractint drops \
-         them. The import's message counts the entries that do not read and gives the commonest \
-         reason: the screen and view variables (whitesq, scrnpix, scrnmax, center, magxmag, \
-         rotskew), lastsqr and random numbers are not supported. The Collection's Fractint \
-         classics (Magnet, Nova, Spider, Manowar and others) are written with these sections.",
-    );
-    help_p(
-        ui,
-        "In the formula field, parentheses take a colour per nesting level; the pair next to the \
-         cursor is highlighted, and one without a partner is shown in red (a comment's do not \
-         count, as the parser ignores them). Names complete as you type: after two letters a \
-         list offers the functions, names and your own variables that begin so. Up and Down \
-         choose, Tab or Enter takes one (a function comes with its opening parenthesis), Esc \
-         closes the list, and Enter after a name typed in full still starts a new line.",
-    );
-    help_p(
-        ui,
-        "Textbook (the switch above the formula) shows it typeset as a textbook sets it, and edits \
-         it in place. Type as in the text: / makes a fraction of the term before it, ^ an \
-         exponent (+, - or = typed at an exponent's end steps out of it), ( parentheses, or a \
-         call after a function's name, | bars, and a comma inside parentheses a complex constant. \
-         The arrows move through the formula, Up and Down between a numerator and its \
-         denominator, Tab to the next empty box; Backspace at the start of a fraction or a pair of \
-         parentheses selects it, and a second press removes it and keeps what it held. Copy, \
-         paste and undo work as in a text field, names complete as they do there, and the keypad \
-         types into the typeset formula (□² squares what is before the caret, a function key \
-         wraps the selection). Every edit is written back to the text, so the two views always \
-         hold the same formula; a line you have not edited keeps its spacing and comment. The \
-         notation never changes what is computed: |z| is the squared modulus and shows as |z|², \
-         cabs(z) shows as |z|, and exp(z) stays exp(z). A line that does not read shows in red; \
-         click it to edit it as text. LaTeX copies the formula as LaTeX source, as it is typeset, \
-         and while Textbook is on the formula library shows its formulas typeset too.",
-    );
-    help_p(
-        ui,
-        "Numbers in a formula (0.1, 1/3, pi, the parameters) are read as double-precision values, \
-         about 16 digits, and the deep reference orbit iterates with exactly those values. Two \
-         formulas that are equal on paper can therefore differ deep down: 0.1*z multiplies by the \
-         double nearest 0.1, while z/10 divides by an exact 10, and the two pictures part past \
-         about 1e15x (measured: 5% of pixels at 1e15x, a third at 1e17x, all of them at 1e20x). \
-         Either picture is correct for its own formula; write the one you mean to share.",
-    );
-    help_p(
-        ui,
-        "The dialog's Save to library keeps a formula and its parameters under a name (saving under \
-         a name the library has updates that entry). Fractal > Formula library... lists them to \
-         apply, edit, export or delete; Import adds the formulas in a formula file without \
-         replacing any: one the library already has is skipped, and a new one whose name is taken \
-         becomes \"name (2)\". The library is formulas.toml in the folder named under Files & \
-         data (About), itself a formula file. A tour keyframe carries a formula as \
-         formula = \"...\" with formula_params = [[re, im], ...], and Tools > Tour from current \
-         view writes them for a custom view.",
-    );
-    help_p(
-        ui,
-        "A collection of 45 formulas comes with Fractadyne, written for it: higher powers and the \
-         folded variants of the Burning Ship and Celtic families, blends and two-step hybrids, the \
-         Mandelbrot set seen through another map (inverted, log-polar, through sine), \
-         transcendental and rational formulas, and Julia sets. They are the dialog's Examples and \
-         the Collection tab of the formula library, where Copy to mine adds one to your formulas. \
-         Each has a starting view, and Apply goes there: a formula opened on the home view is \
-         often not where its picture is. A formula you save while it is showing keeps the view you \
-         are at in the same way, and Apply returns to it.",
-    );
+    help_p(ui, &tr!(help_fractals_newton));
+    help_sub(ui, &tr!(help_fractals_julia));
+    help_p(ui, &tr!(help_fractals_julia_text));
+    help_sub(ui, &tr!(help_fractals_deep));
+    help_p(ui, &tr!(help_fractals_deep_text));
+    help_sub(ui, &tr!(help_fractals_custom));
+    help_p(ui, &tr!(help_fractals_custom_text));
+    help_p(ui, &tr!(help_fractals_custom_sections));
+    help_p(ui, &tr!(help_fractals_custom_editor));
+    help_p(ui, &tr!(help_fractals_custom_textbook));
+    help_p(ui, &tr!(help_fractals_custom_numbers));
+    help_p(ui, &tr!(help_fractals_custom_library));
+    help_p(ui, &tr!(help_fractals_custom_collection));
 }
 
 pub(crate) fn help_methodology(ui: &mut egui::Ui) {
-    help_h(ui, "How it works");
-    help_sub(ui, "Escape-time & smooth color");
-    help_p(
-        ui,
-        "Each pixel iterates the formula until its magnitude exceeds a bailout radius or it hits the \
-         iteration cap. The raw step count alone makes hard bands; adding a fractional part derived \
-         from the final magnitude gives continuous, bandless color.",
-    );
-    help_sub(ui, "Arbitrary-precision position");
-    help_p(
-        ui,
-        "Ordinary 64-bit numbers run out of digits near 1e15× zoom. Fractadyne keeps the view center \
-         in arbitrary precision, with the number of digits growing as you zoom, so the location never \
-         degrades. The pixel scale is likewise held with an extended exponent, so it doesn't stall at \
-         64-bit's ~1e308× limit either — depth is bounded only by patience, not by any fixed number \
-         range.",
-    );
-    help_sub(ui, "Perturbation");
-    help_p(
-        ui,
-        "Iterating every pixel in high precision would be far too slow. Instead one reference pixel \
-         is iterated in high precision on the CPU (the \"reference orbit\"), and every other pixel is \
-         computed on the GPU as a tiny difference δ from it in fast low precision: \
-         δz → 2·Z·δz + δz² + δc.",
-    );
-    help_sub(ui, "Extreme depth (floatexp)");
-    help_p(
-        ui,
-        "Past about 1e28× even that tiny difference underflows 32-bit range, so it is stored as a \
-         mantissa plus a separate integer exponent (\"floatexp\"), lifting the 32-bit depth wall. \
-         The engine switches automatically: direct math when shallow, perturbation when deep, and \
-         floatexp when deepest. Depth is then bounded by coordinate precision and the iteration \
-         budget rather than a fixed limit — cross-checked against Fraktaler-3 across a 39-location \
-         reference corpus, the deepest at 5.63e18003× (the 38 non-extreme rows are the routine \
-         gate, to 6.13e1105×), with an internal precision self-consistency battery to \
-         1e1000000×; the bundled tour reaches ~1.3e420×.",
-    );
-    help_sub(ui, "Reference choice & rebasing");
-    help_p(
-        ui,
-        "The reference is chosen (scored in high precision) so its orbit stays within the view as \
-         long as possible. When the difference grows too large it is \"rebased\" back onto the \
-         reference to stay accurate.",
-    );
-    help_sub(ui, "Series approximation");
-    help_p(
-        ui,
-        "At deep zoom the early iterations barely move δ from the reference, so they can be \
-         computed all at once: δz is approximated by a short polynomial in δc (order 3), whose \
-         coefficients are iterated along the reference. The renderer skips ahead to the last \
-         iteration where that polynomial is still accurate for the whole view, then iterates \
-         normally — saving the skipped steps with no change to the image (toggle in View). \
-         Mandelbrot and Multibrot 3/4/5, deepest range; not with stripe / triangle-inequality / \
-         orbit-trap / decomposition coloring (those need every iteration). Where the BLA is active \
-         it already subsumes this early skip.",
-    );
-    help_sub(ui, "Distance estimation & lighting");
-    help_p(
-        ui,
-        "Tracking the derivative dz/dc yields each pixel's distance to the boundary. That powers the \
-         3D relief lighting, the distance glow, and the \"distance\" coloring method — all valid at \
-         any zoom depth.",
-    );
-    help_sub(ui, "Anti-aliasing & safety");
-    help_p(
-        ui,
-        "Still images are supersampled (2–8× per axis) once the view settles. A work budget keeps a \
-         single GPU draw within the driver's watchdog limit by reducing resolution (never the \
-         iteration count) at extreme settings, so deep views stay detailed instead of going blank.",
-    );
+    help_h(ui, &tr!(help_section_how_it_works));
+    help_sub(ui, &tr!(help_how_escape));
+    help_p(ui, &tr!(help_how_escape_text));
+    help_sub(ui, &tr!(help_how_precision));
+    help_p(ui, &tr!(help_how_precision_text));
+    help_sub(ui, &tr!(help_how_perturbation));
+    help_p(ui, &tr!(help_how_perturbation_text));
+    help_sub(ui, &tr!(help_how_floatexp));
+    help_p(ui, &tr!(help_how_floatexp_text));
+    help_sub(ui, &tr!(help_how_reference));
+    help_p(ui, &tr!(help_how_reference_text));
+    help_sub(ui, &tr!(help_how_series));
+    help_p(ui, &tr!(help_how_series_text));
+    help_sub(ui, &tr!(help_how_distance));
+    help_p(ui, &tr!(help_how_distance_text));
+    help_sub(ui, &tr!(help_how_safety));
+    help_p(ui, &tr!(help_how_safety_text));
 }
 
 /// One entry in the shared command-line reference. Rendered both in the in-app Help window
@@ -757,6 +324,8 @@ pub(crate) const CLI_REFERENCE: &[CliRef] = {
         Flag("--show-zoom-target / --no-show-zoom-target", "Force the auto-zoom target overlay on / off (View > Show auto-zoom target; overrides the saved preference). While the auto-zoom runs, outlines the region of the view it is zooming into with lines from its corners to the corners of the screen, and rings the point it is steering toward."),
         Flag("--autopilot-priority speed|quality", "What the auto-zoom puts first (the \"Auto-zoom priority\" switch in the right panel; overrides the saved preference). speed: zoom at the set rate and refresh the screen as soon as a frame with detail is ready. quality: only fully resolved full-resolution frames reach the screen, and the zoom slows as needed so the picture never magnifies far before the next one lands."),
         Flag("--autopilot-target detail|misiurewicz", "What the auto-zoom aims at (the \"Auto-zoom target\" switch; overrides the saved preference). detail: the richest edge in view, re-chosen as the dive goes. misiurewicz: the nearest Misiurewicz point, solved to the dive limit's depth first (the dive holds still meanwhile), then dived into exactly — Mandelbrot set only."),
+        Flag("--check-language FILE", "Load a language file (i18n/<tag>/fractadyne.ftl, or fractadyne-<tag>.ftl) exactly as the program loads one, print its name, script, status and how much it translates, and list every message it would set aside and why (those show in English). Exit 0 when nothing is set aside, 1 otherwise. For translators: see i18n/README.md."),
+        Flag("--language TAG", "The interface's language for this run only (en, es, fr, de, ja, zh-Hans, km, uk, or en-XA, the pseudo-language that shows hard-coded text and overflowing labels); the saved choice is unchanged. FRACTADYNE_LANG=TAG does the same. Harness and offline runs use English unless told otherwise."),
         Flag("--live-panel off|strip|panel|full", "Open the live-render front panel at this size (View > Live render panel, key B; overrides the saved preference): a 1970s-style instrument panel over the view showing what each frame dispatched, how old the picture on screen is, the walk through the iteration bands, the reference builders, and the machine underneath."),
         Flag("--show-timestamp / --no-show-timestamp", "Force the elapsed-time overlay on / off (View > Show timestamp; overrides the saved preference). Draws a large clock over the view reading the same \"+12.345s\" the log stamps every line with, plus the frame number, so a screen recording of a problem that only appears in motion can be lined up against the log frame by frame."),
         Flag("--bla / --no-bla", "Force bilinear approximation (BLA) on / off for deep floatexp Mandelbrot, Multibrot and the fold families (Tricorn, Burning Ship, Celtic, Buffalo)."),
@@ -826,8 +395,11 @@ pub(crate) const CLI_REFERENCE: &[CliRef] = {
 };
 
 pub(crate) fn help_command_line(ui: &mut egui::Ui) {
-    help_h(ui, "Command line");
-    help_p(ui, CLI_INTRO);
+    help_h(ui, &tr!(help_section_command_line));
+    // The intro is prose, so the window shows it in the language in use (`help-cli-intro`, the
+    // same English as CLI_INTRO); the flags below are the command line itself, which is English
+    // in every language (design/multilingual.md §2), as is `--help`.
+    help_p(ui, &tr!(help_cli_intro));
     for entry in CLI_REFERENCE {
         match entry {
             CliRef::Section(s) => help_sub(ui, s),
@@ -858,39 +430,28 @@ pub(crate) fn cli_help_text() -> String {
 }
 
 pub(crate) fn help_shortcuts(ui: &mut egui::Ui) {
-    help_h(ui, "Shortcuts");
-    help_sub(ui, "Mouse");
-    help_kv(ui, "Left-drag", "Pan");
-    help_kv(ui, "Wheel", "Zoom at cursor");
-    help_kv(ui, "Shift+drag", "Box zoom (drag a rectangle to zoom to it)");
-    help_kv(ui, "Click (🎯 tool on)", "Dive into the point; right-click backs out");
-    help_sub(ui, "Keyboard");
-    help_kv(ui, "Space / Shift+Space", "Continuous zoom in / out");
-    help_kv(ui, "Backspace", "Undo view");
-    help_kv(ui, "Shift+Backspace / Ctrl+Y", "Redo view");
-    help_kv(ui, "M", "Find minibrot + zoom to it (Newton-Raphson)");
-    help_kv(ui, "A", "Auto-zoom autopilot (dive toward detail; any input stops)");
-    help_kv(ui, "B", "Live-render panel: off / strip / panel / full (hover an instrument for what it means; its × closes it)");
-    help_kv(ui, "Esc", "Stop autopilot / a playing tour, or exit fullscreen");
-    help_kv(
-        ui,
-        "Ctrl+S",
-        "Snapshot to the last export folder — a screen capture of the view as shown, or a full \
-         render at the export settings; the first press asks which, and File → Settings → Snapshot \
-         changes it.",
-    );
-    help_kv(ui, "F1 / ?", "Open this help");
-    help_sub(ui, "Life (Fractal → Automata → Life)");
-    help_kv(ui, "Enter", "Run / pause the universe");
-    help_kv(ui, "N / Shift+N", "Step one generation / step the stride (set in the Life panel)");
-    help_kv(ui, "D", "Draw tool on / off (the pencil on the toolbar)");
-    help_kv(
-        ui,
-        "Click / drag (Draw on)",
-        "Flip a cell / paint: a stroke that starts on a dead cell draws, one that starts on a live \
-         cell erases. A running universe pauses while you draw and runs on when you let go.",
-    );
-    help_kv(ui, "Ctrl+Z (Draw on)", "Undo the last edit, fill, clear or rule change");
+    help_h(ui, &tr!(help_section_shortcuts));
+    help_sub(ui, &tr!(help_mouse));
+    help_kv(ui, &tr!(help_key_left_drag), &tr!(help_shortcuts_pan));
+    help_kv(ui, &tr!(help_key_wheel), &tr!(help_shortcuts_wheel));
+    help_kv(ui, &tr!(help_key_shift_drag), &tr!(help_shortcuts_box_zoom));
+    help_kv(ui, &tr!(help_key_click_tool, icon = "🎯"), &tr!(help_shortcuts_click));
+    help_sub(ui, &tr!(help_shortcuts_keyboard));
+    help_kv(ui, "Space / Shift+Space", &tr!(help_shortcuts_space));
+    help_kv(ui, "Backspace", &tr!(help_shortcuts_undo));
+    help_kv(ui, "Shift+Backspace / Ctrl+Y", &tr!(help_shortcuts_redo));
+    help_kv(ui, "M", &tr!(help_shortcuts_minibrot));
+    help_kv(ui, "A", &tr!(help_shortcuts_autopilot));
+    help_kv(ui, "B", &tr!(help_shortcuts_live_panel));
+    help_kv(ui, "Esc", &tr!(help_shortcuts_esc));
+    help_kv(ui, "Ctrl+S", &tr!(help_shortcuts_snapshot));
+    help_kv(ui, "F1 / ?", &tr!(help_shortcuts_help));
+    help_sub(ui, &tr!(help_shortcuts_life));
+    help_kv(ui, "Enter", &tr!(help_shortcuts_life_run));
+    help_kv(ui, "N / Shift+N", &tr!(help_shortcuts_life_step));
+    help_kv(ui, "D", &tr!(help_shortcuts_life_draw));
+    help_kv(ui, &tr!(help_key_click_drag_draw), &tr!(help_shortcuts_life_paint));
+    help_kv(ui, &tr!(help_key_when_drawing, key = "Ctrl+Z"), &tr!(help_shortcuts_life_undo));
 }
 
 /// A cited entry: bold title, a wrapped description, and a source link.
@@ -910,227 +471,134 @@ fn help_cite_unlinked(ui: &mut egui::Ui, title: &str, body: &str) {
 }
 
 pub(crate) fn help_hardware(ui: &mut egui::Ui) {
-    help_h(ui, "Recommended hardware");
-    help_p(
-        ui,
-        "Fractadyne splits its work between the GPU (per-pixel iteration + coloring) and the CPU \
-         (the arbitrary-precision reference orbit that deep zoom is built on). Both matter, but \
-         for different things.",
-    );
+    help_h(ui, &tr!(help_section_hardware));
+    help_p(ui, &tr!(help_hardware_intro));
 
-    help_sub(ui, "GPU (most important)");
-    help_p(
-        ui,
-        "Every pixel is iterated and colored on the GPU, so GPU speed sets the frame rate and \
-         export time. A discrete GPU with strong 32-bit (single-precision) throughput gives the \
-         smoothest deep zooming. Integrated GPUs work fine — just slower, and they reach the \
-         per-frame work budget sooner (at which point the renderer trims resolution, not \
-         detail). Requires a modern graphics API: Vulkan, Direct3D 12, Metal, or OpenGL via \
-         wgpu.",
-    );
-    help_kv(ui, "Minimum", "Any GPU with Vulkan / DX12 / Metal / GL 3.3.");
-    help_kv(ui, "Recommended", "A discrete GPU (last ~5 years); >= 2 GB VRAM.");
-    help_kv(ui, "For big exports", ">= 4 GB VRAM (tiled, so it degrades gracefully).");
+    help_sub(ui, &tr!(help_hardware_gpu));
+    help_p(ui, &tr!(help_hardware_gpu_text));
+    help_kv(ui, &tr!(help_hardware_minimum), &tr!(help_hardware_gpu_minimum));
+    help_kv(ui, &tr!(help_hardware_recommended), &tr!(help_hardware_gpu_recommended));
+    help_kv(ui, &tr!(help_hardware_big_exports), &tr!(help_hardware_gpu_big_exports));
 
-    help_sub(ui, "CPU");
-    help_p(
-        ui,
-        "The high-precision reference orbit (and BLA tables) are computed on the CPU and are \
-         largely single-threaded, so fast per-core performance matters most — it drives how \
-         quickly a deep view resolves after you move. Extra cores mainly help background export \
-         encoding. A 64-bit CPU is required.",
-    );
-    help_kv(ui, "Recommended", "A modern 64-bit CPU with good single-core speed.");
+    help_sub(ui, &tr!(help_hardware_cpu));
+    help_p(ui, &tr!(help_hardware_cpu_text));
+    help_kv(ui, &tr!(help_hardware_recommended), &tr!(help_hardware_cpu_recommended));
 
-    help_sub(ui, "Memory");
-    help_p(
-        ui,
-        "Deep references grow with depth (many iterations at high precision); huge exports hold \
-         tiles in RAM. 8 GB is comfortable for everyday exploring; 16 GB+ suits extreme depth \
-         and very large exports.",
-    );
+    help_sub(ui, &tr!(help_hardware_memory));
+    help_p(ui, &tr!(help_hardware_memory_text));
 
-    help_sub(ui, "Checking your hardware");
-    help_p(
-        ui,
-        "Help → \"Diagnostics…\" runs the same tests the developers do, on your machine. \"Run \
-         self-test\" checks the mathematics and rendering against known-correct results in about \
-         fifteen seconds; \"Run UI test\" walks the interface and the live view at several zoom \
-         depths, capturing screenshots; \"Run GPU arithmetic check\" verifies the shader's \
-         double-float arithmetic on every graphics backend your machine offers, in a few seconds \
-         and with no window. Each runs as a separate process, so a test that upsets the graphics \
-         driver takes the test down rather than your session.",
-    );
-    help_p(
-        ui,
-        "The GPU arithmetic check has no pass or fail — it records how your particular GPU and \
-         driver compute, and on some hardware (every NVIDIA card tried so far) it reports that the \
-         shader compiler discards part of the extended-precision arithmetic. That is a genuine \
-         finding we are trying to map across vendors, not a fault in your machine, so whatever it \
-         says, attaching it to a report genuinely helps.",
-    );
-    help_p(
-        ui,
-        "If something looks wrong, run the self-test and use \"Attach to an issue report…\": the \
-         report then carries a machine-validated result from your own hardware, which is far more \
-         useful than a description alone. One caveat worth knowing — the reference images were \
-         produced on one particular graphics card, and different GPUs legitimately compute \
-         slightly different pixels, so image comparisons are checked against a wider tolerance on \
-         other hardware and small differences there are expected rather than faults.",
-    );
+    help_sub(ui, &tr!(help_hardware_checking));
+    help_p(ui, &tr!(help_hardware_diagnostics));
+    help_p(ui, &tr!(help_hardware_gpu_check));
+    help_p(ui, &tr!(help_hardware_report));
 
-    help_sub(ui, "Notes");
-    help_bullet(ui, "A capable GPU avoids the watchdog work-budget kicking in at extreme settings.");
-    help_bullet(ui, "The build is single-binary and self-contained — no runtime install needed.");
-    help_bullet(ui, "Run the built-in benchmark (Tools -> Benchmark) to gauge your machine.");
+    help_sub(ui, &tr!(help_hardware_notes));
+    help_bullet(ui, &tr!(help_hardware_note_watchdog));
+    help_bullet(ui, &tr!(help_hardware_note_binary));
+    help_bullet(ui, &tr!(help_hardware_note_benchmark));
 }
 
 pub(crate) fn help_acknowledgments(ui: &mut egui::Ui) {
-    help_h(ui, "Acknowledgments & citations");
+    help_h(ui, &tr!(help_ack_title));
     // Dedication.
     let accent = crate::theme::ui_accent(ui.ctx());
-    ui.label(
-        egui::RichText::new(
-            "Dedicated to the Stone Soup Group — the volunteers behind Fractint (from 1988).",
-        )
-        .italics()
-        .color(accent),
-    );
-    help_p(
-        ui,
-        "Their freely shared code and spirit of open, collaborative fractal exploration are the \
-         reason so many of us fell in love with this art. Fractadyne is built in that tradition.",
-    );
-    help_p(
-        ui,
-        "Fractadyne stands on decades of work by the fractal community. Techniques and prior art \
-         it builds on — verified against the sources below:",
-    );
+    ui.label(egui::RichText::new(tr!(help_ack_dedication)).italics().color(accent));
+    help_p(ui, &tr!(help_ack_dedication_text));
+    help_p(ui, &tr!(help_ack_intro));
 
-    help_sub(ui, "Deep-zoom algorithms");
+    help_sub(ui, &tr!(help_ack_deep_zoom));
     help_cite_unlinked(
         ui,
-        "Perturbation & series approximation — K. I. Martin",
-        "The reference-orbit + low-precision-delta method (δz → 2Z·δz + δz² + δc) and the order-n \
-         series that skips early iterations, introduced in SuperFractalThing and its note \
-         “SuperFractalThing Maths” (sft_maths.pdf, 2013).",
+        &tr!(help_ack_martin_title, who = "K. I. Martin"),
+        &tr!(help_ack_martin),
     );
     help_cite(
         ui,
-        "Bivariate Linear Approximation (BLA) & rebasing — Zhuoran",
-        "Skipping runs of iterations via merged linear maps, and rebasing to a single reference to \
-         avoid glitches; developed on fractalforums.org (2021).",
-        "BLA explained — Phil Thompson",
+        &tr!(help_ack_bla_title, who = "Zhuoran"),
+        &tr!(help_ack_bla),
+        &tr!(help_ack_bla_link, who = "Phil Thompson"),
         "https://philthompson.me/2023/Faster-Mandelbrot-Set-Rendering-with-BLA-Bivariate-Linear-Approximation.html",
     );
     help_cite(
         ui,
-        "Glitch-detection criterion — Pauldelbrot",
-        "The |Z + z| << |Z| test for when a pixel needs a different reference — the basis of \
-         glitch-free perturbation (fractalforums).",
+        &tr!(help_ack_glitch_title, who = "Pauldelbrot"),
+        &tr!(help_ack_glitch),
         "Deep zoom theory & practice — mathr",
         "https://mathr.co.uk/blog/2021-05-14_deep_zoom_theory_and_practice.html",
     );
     help_cite(
         ui,
-        "Non-analytic (Burning Ship) perturbation — laser blaster",
-        "The absolute-value “diffabs” case analysis that makes perturbation work for the \
-         abs-based families (Burning Ship / Celtic / Buffalo), on fractalforums.",
+        &tr!(help_ack_diffabs_title, who = "laser blaster"),
+        &tr!(help_ack_diffabs),
         "Deep zoom theory & practice — mathr",
         "https://mathr.co.uk/blog/2021-05-14_deep_zoom_theory_and_practice.html",
     );
     help_cite(
         ui,
-        "Reference implementations & cross-checks — Claude Heiland-Allen (mathr)",
-        "Fraktaler-3 and Kalles Fraktaler 2+ (originally by Karl Runmo) — whose write-ups guided \
-         this engine, and whose EXR output Fractadyne cross-checks its renderer against.",
+        &tr!(help_ack_mathr_title, who = "Claude Heiland-Allen (mathr)"),
+        &tr!(help_ack_mathr),
         "Fraktaler-3",
         "https://fraktaler.mathr.co.uk/",
     );
 
-    help_sub(ui, "Coloring");
+    help_sub(ui, &tr!(help_ack_coloring));
     help_cite(
         ui,
-        "Smooth iteration count & Stripe Average — Jussi Härkönen",
-        "The continuous (normalized) escape-time coloring and the Stripe Average method, from \
-         “On Smooth Fractal Coloring Techniques” (M.Sc. thesis, 2007), which also analyzes the \
-         Triangle Inequality / branching-average colorings.",
+        &tr!(help_ack_harkonen_title, who = "Jussi Härkönen"),
+        &tr!(help_ack_harkonen),
         "On Smooth Fractal Coloring Techniques (2007)",
         "https://archive.org/details/j-harkonen-on-smooth-fractal-coloring-techniques-masters-thesis-2007-hi-res",
     );
     help_cite(
         ui,
-        "Triangle Inequality Average — Kerry Mitchell",
-        "Averaging where each z² + c lands within the triangle-inequality bounds, for smooth \
-         flame-like exterior texture.",
-        "Kerry Mitchell — tutorials",
+        &tr!(help_ack_mitchell_title, who = "Kerry Mitchell"),
+        &tr!(help_ack_mitchell),
+        &tr!(help_ack_mitchell_link, who = "Kerry Mitchell"),
         "http://www.kerrymitchellart.com/tutorials/formulas2/uf2-2.htm",
     );
-    help_p(
-        ui,
-        "The distance-estimate coloring/lighting uses the classic dz/dc boundary-distance method \
-         (see Peitgen & Saupe, “The Science of Fractal Images”, 1988).",
-    );
+    help_p(ui, &tr!(help_ack_distance));
 
-    help_sub(ui, "L-systems & the Game of Life");
+    help_sub(ui, &tr!(help_ack_lsystems_life));
     help_cite_unlinked(
         ui,
-        "L-systems — Aristid Lindenmayer",
-        "Parallel string rewriting, introduced in 1968 to model how plants and algae grow \
-         (“Mathematical models for cellular interactions in development”, Journal of Theoretical \
-         Biology).",
+        &tr!(help_ack_lindenmayer_title, who = "Aristid Lindenmayer"),
+        &tr!(help_ack_lindenmayer),
     );
     help_cite(
         ui,
         "The Algorithmic Beauty of Plants — Przemysław Prusinkiewicz & Aristid Lindenmayer",
-        "The book (1990) whose turtle interpretation and notation for stochastic, \
-         context-sensitive and parametric systems the L-system reader follows; the built-in \
-         systems marked ABOP are entered from its figures.",
-        "The book, free from Algorithmic Botany",
+        &tr!(help_ack_abop),
+        &tr!(help_ack_abop_link, site = "Algorithmic Botany"),
         "https://algorithmicbotany.org/papers/#abop",
     );
     help_cite(
         ui,
-        "L-system collection — Paul Bourke",
-        "Many of the built-in systems come from his L-system pages, among them Chris Wallace's \
-         rules for Sierpinski's curve and Dietmar Saupe's bush. Fractint's .l files, which open \
-         directly, are in the Stone Soup Group's format.",
+        &tr!(help_ack_bourke_title, who = "Paul Bourke"),
+        &tr!(help_ack_bourke),
         "L-system user notes — Paul Bourke",
         "https://paulbourke.net/fractals/lsys/",
     );
     help_cite_unlinked(
         ui,
-        "The Game of Life — John Horton Conway",
-        "The cellular automaton B3/S23 (1970), which reached the world through Martin Gardner's \
-         “Mathematical Games” column in Scientific American (October 1970).",
+        &tr!(help_ack_conway_title, who = "John Horton Conway"),
+        &tr!(help_ack_conway),
     );
     help_cite(
         ui,
-        "LifeWiki — the ConwayLife.com community",
-        "The reference for the rule notations the app reads (B/S, von Neumann, Generations, Alan \
-         Hensel's letters for non-totalistic rules, and MAP), for the RLE pattern format it shares \
-         with Golly, and for the built-in rules and patterns, whose discoverers it records.",
+        &tr!(help_ack_lifewiki_title, site = "LifeWiki"),
+        &tr!(help_ack_lifewiki),
         "LifeWiki",
         "https://conwaylife.com/wiki/",
     );
 
-    help_sub(ui, "Foundations & tools");
+    help_sub(ui, &tr!(help_ack_foundations));
     help_cite_unlinked(
         ui,
-        "The Mandelbrot set — Benoit B. Mandelbrot",
-        "The object at the heart of it all.",
+        &tr!(help_ack_mandelbrot_title, who = "Benoit B. Mandelbrot"),
+        &tr!(help_ack_mandelbrot),
     );
-    help_p(
-        ui,
-        "Built with Rust, egui/eframe (emilk) and wgpu (gfx-rs); arbitrary precision via \
-         astro-float, double-word floats via twofloat; PNG/OpenEXR, rfd, serde. Thanks to their \
-         authors and maintainers.",
-    );
-    help_p(
-        ui,
-        "Any errors in attribution are the author's; corrections are welcome on the project's \
-         issue tracker.",
-    );
+    help_p(ui, &tr!(help_ack_built_with));
+    help_p(ui, &tr!(help_ack_errors));
 }
 
 /// Full third-party dependency license notices — reproduced verbatim (the MIT / BSD / Apache /
@@ -1139,17 +607,17 @@ pub(crate) fn help_acknowledgments(ui: &mut egui::Ui) {
 pub(crate) fn help_licenses(ui: &mut egui::Ui) {
     // Notices generated at the repo root (see about.toml / about.hbs).
     const NOTICES: &str = include_str!(concat!(env!("CARGO_MANIFEST_DIR"), "/../../THIRD-PARTY-NOTICES.md"));
-    help_h(ui, "Third-party licenses");
+    help_h(ui, &tr!(help_licenses_title));
     help_p(
         ui,
-        "Fractadyne is distributed as a statically-linked binary that includes the open-source \
-         crates and bundled fonts below. The full license texts (also in THIRD-PARTY-NOTICES.md, \
-         included with the download) follow. Fractadyne's own code is dual-licensed MIT OR \
-         Apache-2.0. `option-ext` is MPL-2.0 — its unmodified source is at \
-         https://crates.io/crates/option-ext.",
+        &tr!(
+            help_licenses_intro,
+            licenses = "MIT OR Apache-2.0",
+            url = "https://crates.io/crates/option-ext"
+        ),
     );
     ui.add_space(6.0);
-    if ui.button(format!("{} Copy all notices", crate::icons::COPY)).clicked() {
+    if ui.button(format!("{} {}", crate::icons::COPY, tr!(help_licenses_copy_all))).clicked() {
         ui.ctx().copy_text(NOTICES.to_string());
     }
     ui.add_space(6.0);
@@ -1187,6 +655,9 @@ pub(crate) fn section_index(name: &str) -> usize {
 /// It replaced a `match` whose `_` arm fell through to About: a section added to the list and not
 /// to the match rendered the About text under its own heading, which is invisible unless someone
 /// clicks that exact entry. Paired here, and pinned by `help_sections_all_render`.
+///
+/// These English names are the sections' KEYS ([`section_index`], the Go-to dialog, the UI walk):
+/// they never change with the language. What the window draws is [`section_title`].
 pub(crate) const SECTION_NAMES: [&str; 12] = [
     "Overview",
     "Navigation",
@@ -1218,6 +689,27 @@ pub(crate) const SECTION_BODIES: [fn(&mut egui::Ui); SECTION_NAMES.len()] = [
     help_about,
 ];
 
+/// The title the Help window's contents list draws for entry `i` of [`SECTION_NAMES`], in the
+/// language in use. Sized by `SECTION_NAMES.len()`, so a section added to the list without a title
+/// does not compile; an index past the end is clamped to About, as the window clamps it.
+pub(crate) fn section_title(i: usize) -> String {
+    let titles: [fn() -> String; SECTION_NAMES.len()] = [
+        || tr!(help_section_overview),
+        || tr!(help_section_navigation),
+        || tr!(help_section_expressions),
+        || tr!(help_section_options),
+        || tr!(help_section_fractals),
+        || tr!(help_section_how_it_works),
+        || tr!(help_section_command_line),
+        || tr!(help_section_shortcuts),
+        || tr!(help_section_hardware),
+        || tr!(help_section_acknowledgments),
+        || tr!(help_section_licenses),
+        || tr!(help_section_about),
+    ];
+    titles[i.min(SECTION_NAMES.len() - 1)]()
+}
+
 /// About's "Deep-zoom arithmetic" line: what has actually RUN, and what this binary contains.
 ///
 /// The two halves answer different questions, and both matter. The first cannot name a backend
@@ -1226,48 +718,40 @@ pub(crate) const SECTION_BODIES: [fn(&mut egui::Ui); SECTION_NAMES.len()] = [
 /// tells an accelerated build apart from the standard one. Split out of the panel so checklist
 /// steps 89 and 95 can be checked without drawing it.
 pub(crate) fn about_arithmetic_line() -> String {
-    format!(
-        "Deep-zoom arithmetic: {} (this build contains: {}).",
-        fractadyne_core::backend_status_line(),
-        fractadyne_core::built_in_backends()
+    tr!(
+        help_about_arithmetic,
+        ran = fractadyne_core::backend_status_line(),
+        built = fractadyne_core::built_in_backends()
     )
 }
 
 pub(crate) fn help_about(ui: &mut egui::Ui) {
-    help_h(ui, "About");
+    help_h(ui, &tr!(help_section_about));
     help_p(ui, &format!("Fractadyne v{}", version_string()));
-    help_p(ui, "A native fractal explorer built in Rust with wgpu.");
+    help_p(ui, &tr!(help_about_tagline));
     help_p(ui, &about_arithmetic_line());
 
-    help_sub(ui, "Files & data");
-    help_p(
-        ui,
-        "Your session (current view, coloring, and preferences), bookmarks and their \
-         thumbnails, saved gradients and saved formulas are stored in this per-user folder, and \
-         reloaded on the next launch:",
-    );
+    help_sub(ui, &tr!(help_about_files));
+    help_p(ui, &tr!(help_about_files_text));
     ui.horizontal(|ui| {
         ui.label(
             egui::RichText::new(fractadyne_state::state_location_display())
                 .monospace()
                 .small(),
         );
-        if ui.small_button(crate::icons::COPY).on_hover_text("Copy path").clicked() {
+        if ui.small_button(crate::icons::COPY).on_hover_text(tr!(help_about_copy_path)).clicked() {
             ui.ctx().copy_text(fractadyne_state::state_location_display());
         }
     });
-    help_p(
-        ui,
-        "The session file is versioned; if it was written by a newer Fractadyne than can fully \
-         read it, the app loads it best-effort and warns you. To start completely fresh, use \
-         File ▸ Reset application state… (asks first), or run `fractadyne --reset-state` from a \
-         terminal.",
-    );
+    help_p(ui, &tr!(help_about_session, command = "fractadyne --reset-state"));
 
-    help_sub(ui, "License");
-    help_p(ui, "MIT OR Apache-2.0 — use under either license, at your option.");
+    help_sub(ui, &tr!(help_about_license));
+    help_p(ui, &tr!(help_about_license_text, licenses = "MIT OR Apache-2.0"));
     help_p(ui, "© 2026 Rithea Hong.");
-    ui.hyperlink_to("Source on GitHub \u{2197}", "https://github.com/WindySnowOwl/fractadyne");
+    ui.hyperlink_to(
+        format!("{} \u{2197}", tr!(help_about_source)),
+        "https://github.com/WindySnowOwl/fractadyne",
+    );
 }
 
 #[cfg(test)]

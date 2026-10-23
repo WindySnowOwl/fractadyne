@@ -299,8 +299,7 @@ impl FrmImport {
     pub(crate) fn sentence(&self) -> Option<String> {
         let n = self.unread_total();
         let (why, _) = self.unread.first()?;
-        let some = if n == 1 { "1 entry doesn't".to_string() } else { format!("{} entries don't", crate::commas(&n.to_string())) };
-        Some(format!("{some} read in this version (most often: {why})."))
+        Some(tr!(formula_import_frm_unread, count = n, why = why))
     }
 }
 
@@ -344,37 +343,28 @@ pub(crate) fn from_frm(bytes: &[u8], file: &str) -> FrmImport {
 }
 
 impl MergeReport {
-    /// One sentence (or two) for the toast. `file` is the file's name.
+    /// One sentence for the toast: what was added, then what else happened (each a clause of its
+    /// own, joined with "; "). `file` is the file's name.
     pub(crate) fn sentence(&self, file: &str) -> String {
-        let plural = |n: usize, one: &str, many: &str| if n == 1 { format!("1 {one}") } else { format!("{n} {many}") };
-        let mut s = if self.added == 0 {
-            format!("Nothing new in \"{file}\"")
-        } else {
-            format!("Imported {} from \"{file}\"", plural(self.added, "formula", "formulas"))
-        };
         let mut notes = Vec::new();
         if self.duplicates > 0 {
-            notes.push(format!(
-                "{} already in the library",
-                plural(self.duplicates, "formula was", "formulas were")
-            ));
+            notes.push(tr!(formula_import_note_duplicates, count = self.duplicates));
         }
         match self.renamed.as_slice() {
             [] => {}
-            [(from, to)] => notes.push(format!("\"{from}\" was taken, so it is \"{to}\"")),
-            many => notes.push(format!("{} renamed where the name was taken", many.len())),
+            [(from, to)] => notes.push(tr!(formula_import_note_renamed_one, from = from, to = to)),
+            many => notes.push(tr!(formula_import_note_renamed, count = many.len())),
         }
         if self.skipped > 0 {
-            notes.push(format!("{} empty or too long, skipped", plural(self.skipped, "entry was", "entries were")));
+            notes.push(tr!(formula_import_note_skipped, count = self.skipped));
         }
-        if notes.is_empty() {
-            s.push('.');
-        } else {
-            s.push_str(": ");
-            s.push_str(&notes.join("; "));
-            s.push('.');
+        let notes = notes.join("; ");
+        match (self.added, notes.is_empty()) {
+            (0, true) => tr!(formula_import_nothing_new, file = file),
+            (0, false) => tr!(formula_import_nothing_new_notes, file = file, notes = notes),
+            (n, true) => tr!(formula_import_added, count = n, file = file),
+            (n, false) => tr!(formula_import_added_notes, count = n, file = file, notes = notes),
         }
-        s
     }
 }
 
@@ -383,13 +373,13 @@ pub(crate) fn parse_file(text: &str) -> Result<Vec<SavedFormula>, String> {
     let file: FormulaFile = toml::from_str(text).map_err(|e| {
         // The toml crate's message carries a source snippet over several lines; the first says it.
         let e = e.to_string();
-        format!("not a formula file ({})", e.lines().next().unwrap_or("unreadable").trim())
+        tr!(formula_file_not_formulas, why = e.lines().next().unwrap_or("unreadable").trim())
     })?;
     if !file.format.is_empty() && file.format != FORMAT {
-        return Err(format!("a \"{}\" file, not a formula file", file.format));
+        return Err(tr!(formula_file_other_format, format = &file.format));
     }
     if file.formula.is_empty() {
-        return Err("no formulas in it (a formula file lists them as [[formula]] tables)".to_string());
+        return Err(tr!(formula_file_no_formulas));
     }
     Ok(file.formula)
 }
@@ -439,24 +429,31 @@ pub(crate) fn load_from(path: &Path) -> (Vec<SavedFormula>, Option<String>) {
         })
         .find(|p| !p.exists());
     let moved = aside.as_ref().filter(|a| std::fs::rename(path, a).is_ok());
-    let note = match moved {
-        Some(a) => format!(
-            "The formula library could not be read ({problem}). It was kept as {} and a new, empty library started.",
-            a.display()
+    // The log says it in English; the user is told in the language in use.
+    let (log, note) = match moved {
+        Some(a) => (
+            format!(
+                "The formula library could not be read ({problem}). It was kept as {} and a new, empty library started.",
+                a.display()
+            ),
+            tr!(formula_library_unreadable_kept, why = &problem, path = a.display().to_string()),
         ),
-        None => format!(
-            "The formula library could not be read ({problem}), nor moved aside: copy {} somewhere safe \
-             before saving a formula, which replaces it.",
-            path.display()
+        None => (
+            format!(
+                "The formula library could not be read ({problem}), nor moved aside: copy {} somewhere safe \
+                 before saving a formula, which replaces it.",
+                path.display()
+            ),
+            tr!(formula_library_unreadable_stuck, why = &problem, path = path.display().to_string()),
         ),
     };
-    crate::diag::log_line("formula", &note);
+    crate::diag::log_line("formula", &log);
     (Vec::new(), Some(note))
 }
 
 /// Write the library to [`library_path`].
 pub(crate) fn save(list: &[SavedFormula]) -> Result<(), String> {
-    let path = library_path().ok_or("no config directory")?;
+    let path = library_path().ok_or_else(|| tr!(formula_library_no_config_dir))?;
     save_to(&path, list)
 }
 

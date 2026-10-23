@@ -38,13 +38,9 @@ pub(crate) fn supported() -> bool {
     cfg!(windows)
 }
 
-/// Why not, for the disabled button's tooltip. `None` when it is supported.
-pub(crate) fn unsupported_reason() -> Option<&'static str> {
-    (!supported()).then_some(
-        "Picking a colour from elsewhere on screen needs a platform screen-capture API. \
-         Only the Windows build has one; on Linux this would need an X11 dependency, and \
-         Wayland requires a portal with its own permission prompt.",
-    )
+/// Why not, for the disabled button's tooltip, in the language in use. `None` when it is supported.
+pub(crate) fn unsupported_reason() -> Option<String> {
+    (!supported()).then(|| tr!(picker_eyedropper_unsupported))
 }
 
 /// The colour of the screen pixel under the OS cursor right now.

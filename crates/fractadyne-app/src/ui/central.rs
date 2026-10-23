@@ -258,12 +258,7 @@ impl FractadyneApp {
                                 cc.1
                             ),
                         );
-                        self.set_toast(
-                            "Pinned Julia c — but it is held in double precision, so at this depth \
-                             the whole panel rounds to a single value and the pin lands on the view \
-                             centre. Zoom out to aim it.",
-                            ctx,
-                        );
+                        self.set_toast(tr!(canvas_julia_pin_quantized), ctx);
                     }
                 }
             }
@@ -496,7 +491,7 @@ impl FractadyneApp {
             painter.text(
                 rect.min + egui::vec2(8.0, 6.0),
                 egui::Align2::LEFT_TOP,
-                "orbit (normalized)",
+                tr!(canvas_orbit_normalized),
                 egui::FontId::monospace(11.0),
                 egui::Color32::from_rgba_unmultiplied(255, 255, 255, 140),
             );
@@ -921,11 +916,7 @@ impl FractadyneApp {
                         } else {
                             resp.on_hover_cursor(egui::CursorIcon::Grab)
                         };
-                        resp.on_hover_text(
-                            "Overview / you-are-here. Drag to pan at the current zoom, \
-                             scroll to zoom in and out, click to jump to that region \
-                             (home zoom).",
-                        );
+                        resp.on_hover_text(tr!(canvas_minimap_hover));
                     });
             });
         if grabbed {
@@ -1526,6 +1517,11 @@ impl FractadyneApp {
         self.accelerated_window(ctx);
         self.help_window(ctx);
         self.draw_welcome_dialog(ctx);
+        self.draw_language_window(ctx);
+        self.draw_language_prompt(ctx);
+        if let Some(n) = self.language.notice.take() {
+            self.set_toast(n, ctx);
+        }
         self.draw_crash_prompt(ctx);
         self.draw_second_device_prompt(ctx);
         self.draw_iteration_quarantine(ctx);

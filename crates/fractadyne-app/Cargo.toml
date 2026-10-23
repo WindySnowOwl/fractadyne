@@ -39,6 +39,13 @@ ring = { version = "0.17", default-features = false }
 # stretchy-glyph variants). Already in the tree under egui's font stack (ab_glyph), so this adds no
 # third-party code; its default `opentype-layout` feature is what exposes the MATH table.
 ttf-parser = "0.25"
+# The interface's languages (design/multilingual.md): Fluent files, language matching, the
+# system's preferred languages.
+fluent-bundle = "0.16"
+fluent-syntax = "0.12"
+fluent-langneg = "0.13"
+unic-langid = "0.9"
+sys-locale = "0.3"
 
 # Compile in the DX12 backend so `--gputest` can grade the HLSL/FXC-DXC shader compiler too.
 # eframe asks wgpu for only ["metal", "webgpu"], so on Windows this binary could reach Vulkan and

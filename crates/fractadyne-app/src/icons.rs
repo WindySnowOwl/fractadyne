@@ -134,3 +134,6 @@ pub(crate) const VIEW_BAR: &str = "\u{e376}";
 
 /// Lucide `circle` - gradient editor: ring view
 pub(crate) const VIEW_RING: &str = "\u{e076}";
+
+/// Lucide `languages` - top bar: the language menu, always visible (design/multilingual.md)
+pub(crate) const LANGUAGES: &str = "\u{e0fe}";

@@ -14,6 +14,10 @@
 //! of one version were indistinguishable before this, and a field run once measured the previous
 //! build without anyone being able to tell (design/live-render-robustness.md §6.1).
 //!
+//! And it turns the English interface file, `i18n/en/fractadyne.ftl`, into one constant per message
+//! (`$OUT_DIR/i18n_ids.rs`, included by `src/i18n/mod.rs`), so code that asks for a message the file
+//! does not have fails to compile (design/multilingual.md §7).
+//!
 //! ⚠Emitting ANY `rerun-if-changed` switches Cargo off its default of re-running when any file in
 //! the package changes, so the default set is listed explicitly — otherwise the build counter would
 //! silently stop moving on ordinary edits. The set is the whole of `WATCHED`, which is also the
@@ -27,9 +31,9 @@ use std::{
 
 /// Everything the binary is compiled from, relative to the workspace root: every crate (a change
 /// to a dependency crate changes this binary as much as a change here), the manifests and lockfile,
-/// Cargo's config, and the two trees the app embeds from outside `crates/` — `tours/*.toml`
-/// (the selftest) and `THIRD-PARTY-NOTICES.md` (Help ▸ About). A new `include_str!` of a file
-/// outside this list belongs in it.
+/// Cargo's config, and the trees the app embeds from outside `crates/` — `tours/*.toml` (the
+/// selftest), `THIRD-PARTY-NOTICES.md` (Help ▸ About) and `i18n/` (the English interface file). A
+/// new `include_str!` of a file outside this list belongs in it.
 const WATCHED: &[&str] = &[
     "crates",
     "Cargo.toml",
@@ -37,7 +41,11 @@ const WATCHED: &[&str] = &[
     ".cargo",
     "tours",
     "THIRD-PARTY-NOTICES.md",
+    "i18n",
 ];
+
+/// The English interface file, relative to the workspace root.
+const ENGLISH_FTL: &str = "i18n/en/fractadyne.ftl";
 
 /// Written into the source tarball by `publish-share.ps1` (`git archive --add-file`), never
 /// committed: line 1 the full sha, line 2 the short one.
@@ -76,6 +84,14 @@ fn main() {
     rerun(&root.join(ARCHIVE_STAMP));
     println!("cargo:rerun-if-env-changed=FRACTADYNE_GIT");
 
+    let ftl = fs::read_to_string(root.join(ENGLISH_FTL)).unwrap_or_else(|e| panic!("{ENGLISH_FTL}: {e}"));
+    let out = PathBuf::from(env::var("OUT_DIR").expect("OUT_DIR")).join("i18n_ids.rs");
+    let code = i18n_ids(&ftl).unwrap_or_else(|e| panic!("{ENGLISH_FTL}: {e}"));
+    // Written only when it changes, so an unrelated edit does not touch it.
+    if fs::read_to_string(&out).ok().as_deref() != Some(code.as_str()) {
+        fs::write(&out, code).expect("write i18n_ids.rs");
+    }
+
     let git = match git_identity(&root) {
         Some((ident, watch)) => {
             for p in &watch {
@@ -86,6 +102,77 @@ fn main() {
         None => archive_identity(&root).unwrap_or_else(|| "unknown".to_string()),
     };
     println!("cargo:rustc-env=FRACT_GIT={git}");
+}
+
+/// The Rust source of `i18n_ids.rs` from the English Fluent file: `COUNT`, the IDs in file order
+/// (`NAMES`), the variables each message uses (`VARS`), and one `Msg` constant per message named
+/// after its ID (`menu-file-open` → `menu_file_open`).
+///
+/// A Fluent message starts at the beginning of a line with its identifier and `=`; its other lines
+/// are indented (continuations, variants, attributes), terms start with `-` and comments with `#`.
+/// So an entry is a line whose first character is a lowercase letter, and every `$name` until the
+/// next entry is one of its variables. A unit test holds this scan to `fluent-syntax`'s own parse of
+/// the same file.
+fn i18n_ids(src: &str) -> Result<String, String> {
+    let mut msgs: Vec<(String, Vec<String>)> = Vec::new();
+    for (n, line) in src.lines().enumerate() {
+        let first = line.chars().next();
+        if first.is_some_and(|c| c.is_ascii_lowercase()) {
+            let Some(eq) = line.find('=') else {
+                return Err(format!("line {}: an entry without '='", n + 1));
+            };
+            let id = line[..eq].trim_end();
+            if !id.chars().all(|c| c.is_ascii_lowercase() || c.is_ascii_digit() || c == '-') {
+                return Err(format!("line {}: message ID {id:?} is not lowercase kebab-case", n + 1));
+            }
+            if msgs.iter().any(|(m, _)| m == id) {
+                return Err(format!("line {}: message {id:?} is defined twice", n + 1));
+            }
+            msgs.push((id.to_string(), Vec::new()));
+        } else if first.is_some_and(|c| c == '-' || c == '#') {
+            // A term or a comment ends the message before it.
+            if first == Some('-') {
+                msgs.push((String::new(), Vec::new()));
+            }
+            continue;
+        }
+        if let Some((_, vars)) = msgs.last_mut() {
+            let b = line.as_bytes();
+            let mut i = 0;
+            while i < b.len() {
+                if b[i] == b'$' && b.get(i + 1).is_some_and(|c| c.is_ascii_alphabetic()) {
+                    let start = i + 1;
+                    let mut j = start;
+                    while j < b.len() && (b[j].is_ascii_alphanumeric() || b[j] == b'_' || b[j] == b'-') {
+                        j += 1;
+                    }
+                    let v = &line[start..j];
+                    if !vars.iter().any(|x| x == v) {
+                        vars.push(v.to_string());
+                    }
+                    i = j;
+                } else {
+                    i += 1;
+                }
+            }
+        }
+    }
+    msgs.retain(|(id, _)| !id.is_empty());
+    let mut code = String::from("// Generated by build.rs from i18n/en/fractadyne.ftl. Do not edit.\n\n");
+    code += &format!("/// Messages in the English file.\npub(crate) const COUNT: usize = {};\n\n", msgs.len());
+    code += "/// Each message's ID, by `Msg` index.\npub(crate) static NAMES: [&str; COUNT] = [\n";
+    for (id, _) in &msgs {
+        code += &format!("    {id:?},\n");
+    }
+    code += "];\n\n/// The variables each English message uses, by `Msg` index.\npub(crate) static VARS: [&[&str]; COUNT] = [\n";
+    for (_, vars) in &msgs {
+        code += &format!("    &{vars:?},\n");
+    }
+    code += "];\n\n";
+    for (i, (id, _)) in msgs.iter().enumerate() {
+        code += &format!("#[allow(non_upper_case_globals, dead_code)]\npub(crate) const {}: super::Msg = super::Msg({i});\n", id.replace('-', "_"));
+    }
+    Ok(code)
 }
 
 /// `(identity, files to watch)` from the work tree, or `None` outside one (or without git).

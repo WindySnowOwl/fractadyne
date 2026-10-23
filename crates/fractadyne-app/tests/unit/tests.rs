@@ -421,13 +421,13 @@ fn share_string_round_trip() {
     );
     assert_eq!(
         location_text_verdict(&huge),
-        Err("Nothing to load (or text too large)."),
+        Err("Nothing to load (or text too large).".to_string()),
         "oversized text accepted"
     );
     // ...and the two refusals stay distinguishable, so a caller can say which happened.
     assert_eq!(
         location_text_verdict("hello"),
-        Err("Not a Fractadyne location.")
+        Err("Not a Fractadyne location.".to_string())
     );
     // The centre survives the trip at full precision - a share string that rounded the
     // coordinate to f64 would still parse, look right, and land somewhere else entirely.
@@ -1391,5 +1391,17 @@ fn every_package_ships_the_replay_fixtures() {
         let n = text.matches("validation/replays/*.jsonl").count() + text.matches("validation\\replays\\*.jsonl").count();
         let jobs = if recipe.ends_with(".yml") { 2 } else { 1 }; // the windows and the linux job
         assert_eq!(n, jobs, "{recipe} copies the replay fixtures {n} time(s), expected {jobs}");
+    }
+}
+
+/// The pickers translate three size presets by their table label (`size_preset_label`): each must
+/// still be in the table, and in English every preset reads exactly as the table writes it.
+#[test]
+fn the_worded_size_presets_are_the_tables() {
+    for l in ["Square — 2048×2048", "Portrait 9:16 — 1080×1920", "Super ultrawide 32:9 — 5120×1440"] {
+        assert!(STANDARD_SIZES.iter().any(|(t, _, _)| *t == l), "{l} is no longer in STANDARD_SIZES");
+    }
+    for (l, _, _) in STANDARD_SIZES {
+        assert_eq!(size_preset_label(l), *l);
     }
 }

@@ -33,3 +33,40 @@ fn the_copied_command_is_the_one_that_runs() {
     assert!(!a.iter().any(|x| x == FLAG), "the copied command is for a terminal: no --ui-status");
     assert_eq!(quote("C:/tours/grand tour.toml"), "\"C:/tours/grand tour.toml\"");
 }
+
+/// The window translates the controller's status and each client's state by matching the English
+/// the controller process writes (`detail_words`, `state_words`). This pins every phrase they know to
+/// `farm::controller`, so rewording one there fails here rather than turning the window English.
+#[test]
+fn every_status_phrase_the_window_translates_is_one_the_controller_writes() {
+    const CONTROLLER: &str = include_str!(concat!(env!("CARGO_MANIFEST_DIR"), "/src/farm/controller.rs"));
+    const WINDOW: &str = include_str!(concat!(env!("CARGO_MANIFEST_DIR"), "/src/ui/farm_controller.rs"));
+    for phrase in [
+        "Measuring the normalize anchors on this machine, once for every client",
+        r#""Rendering""#,
+        "Waiting for space in the output folder",
+        "Paused: no new work is handed out",
+        r#""Complete""#,
+        "Finished with frames not rendered — run again on the same folder to resume",
+        "Stopped — run again on the same folder to resume",
+        r#""Finishing""#,
+        "Ended (exit ",
+        "Waiting for render clients: ",
+        "removed by you",
+        "removing — collecting its diagnostics",
+        r#""gone""#,
+        r#""leaving""#,
+        "checking (self-check)",
+        "paused by its user",
+        "parked: crashed twice — rejoins when it reconnects",
+        "refused this job (its own limits)",
+        "starting a run",
+        r#""idle""#,
+        "admitted — waiting for the job",
+        "removed: ",
+        r#""rendering "#,
+    ] {
+        assert!(CONTROLLER.contains(phrase), "farm::controller no longer writes {phrase:?}: update the window's matcher");
+        assert!(WINDOW.contains(phrase), "the window no longer matches {phrase:?}");
+    }
+}

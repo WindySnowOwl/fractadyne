@@ -31,67 +31,55 @@ impl FractadyneApp {
         let mut confirm = self.dialogs.orbit_cache_confirm;
         let mut limit_mb = self.orbit_cache_mb;
 
-        egui::Window::new("Reference cache")
+        egui::Window::new(tr!(cache_title))
+            .id(egui::Id::new("fractadyne.orbit_cache"))
             .open(&mut open)
             .resizable(false)
             .default_width(480.0)
             .show(ctx, |ui| {
-                ui.label(
-                    egui::RichText::new(
-                        "At extreme depth the slow part of a view is its reference orbit — up to \
-                         an hour of arbitrary-precision arithmetic. Fractadyne keeps finished \
-                         orbits here, so returning to a location you have visited, or zooming \
-                         somewhere near it, takes seconds instead. One orbit is about 4 MB.",
-                    )
-                    .weak()
-                    .small(),
-                );
+                ui.label(egui::RichText::new(tr!(cache_intro)).weak().small());
                 if !enabled {
                     ui.add_space(4.0);
                     ui.label(
-                        egui::RichText::new(
-                            "Off for this run (a task invocation, or --no-orbit-cache). Nothing is \
-                             read or written until the next ordinary launch.",
-                        )
-                        .color(crate::theme::danger_color(ui.ctx()))
-                        .small(),
+                        egui::RichText::new(tr!(cache_off))
+                            .color(crate::theme::danger_color(ui.ctx()))
+                            .small(),
                     );
                 }
                 ui.add_space(8.0);
 
-                ui.label(egui::RichText::new("Location").weak().small());
+                ui.label(egui::RichText::new(tr!(cache_location)).weak().small());
                 ui.horizontal(|ui| {
                     ui.label(
                         egui::RichText::new(
                             dir.as_ref()
                                 .map(|d| d.display().to_string())
-                                .unwrap_or_else(|| "(no config directory available)".into()),
+                                .unwrap_or_else(|| tr!(cache_no_config)),
                         )
                         .monospace()
                         .small(),
                     );
-                    if dir.as_ref().is_some_and(|d| d.exists()) && ui.small_button("Open folder").clicked() {
+                    if dir.as_ref().is_some_and(|d| d.exists()) && ui.small_button(tr!(cache_open_folder)).clicked() {
                         open_dir = true;
                     }
                 });
                 ui.add_space(8.0);
 
-                ui.label(egui::RichText::new("Usage").weak().small());
+                ui.label(egui::RichText::new(tr!(cache_usage)).weak().small());
                 let frac = if limit > 0 { (usage.bytes as f64 / limit as f64).min(1.0) as f32 } else { 0.0 };
                 ui.add(
                     egui::ProgressBar::new(frac)
-                        .text(format!(
-                            "{} of {} — {} orbit{}",
-                            cache::fmt_bytes(usage.bytes),
-                            cache::fmt_bytes(limit),
-                            usage.entries,
-                            if usage.entries == 1 { "" } else { "s" }
+                        .text(tr!(
+                            cache_usage_bar,
+                            used = cache::fmt_bytes(usage.bytes),
+                            limit = cache::fmt_bytes(limit),
+                            count = usage.entries,
                         ))
                         .desired_width(ui.available_width()),
                 );
                 ui.add_space(8.0);
 
-                ui.label(egui::RichText::new("Limit").weak().small());
+                ui.label(egui::RichText::new(tr!(cache_limit)).weak().small());
                 ui.horizontal(|ui| {
                     ui.add(
                         egui::DragValue::new(&mut limit_mb)
@@ -99,15 +87,11 @@ impl FractadyneApp {
                             .speed(16.0)
                             .suffix(" MB"),
                     )
-                    .on_hover_text(
-                        "When the cache grows past this, the orbits that were CHEAPEST to build \
-                         are removed first — a deep orbit that took an hour outlives any number of \
-                         quick ones, however recently those were used.",
-                    );
+                    .on_hover_text(tr!(cache_limit_hover));
                     ui.label(
-                        egui::RichText::new(format!(
-                            "≈ {} orbits at the live cap",
-                            (limit_mb as u64 * 1024 * 1024) / (crate::LIVE_REF_CAP as u64 * 16)
+                        egui::RichText::new(tr!(
+                            cache_limit_estimate,
+                            count = (limit_mb as u64 * 1024 * 1024) / (crate::LIVE_REF_CAP as u64 * 16),
                         ))
                         .weak()
                         .small(),
@@ -119,22 +103,22 @@ impl FractadyneApp {
                 // them. A handful of rows says more than a count.
                 let rows = cache::entries_summary();
                 if !rows.is_empty() {
-                    ui.label(egui::RichText::new("Kept (most valuable first)").weak().small());
+                    ui.label(egui::RichText::new(tr!(cache_kept)).weak().small());
                     egui::Grid::new("orbit-cache-rows").num_columns(4).spacing([14.0, 2.0]).show(ui, |ui| {
-                        ui.label(egui::RichText::new("iterations").weak().small());
-                        ui.label(egui::RichText::new("precision").weak().small());
-                        ui.label(egui::RichText::new("size").weak().small());
-                        ui.label(egui::RichText::new("last used").weak().small());
+                        ui.label(egui::RichText::new(tr!(cache_col_iterations)).weak().small());
+                        ui.label(egui::RichText::new(tr!(cache_col_precision)).weak().small());
+                        ui.label(egui::RichText::new(tr!(cache_col_size)).weak().small());
+                        ui.label(egui::RichText::new(tr!(cache_col_last_used)).weak().small());
                         ui.end_row();
                         for (len, prec, bytes, when) in rows.iter().rev().take(6) {
                             ui.label(egui::RichText::new(format!("{len}")).monospace().small());
-                            ui.label(egui::RichText::new(format!("{prec} bits")).monospace().small());
+                            ui.label(egui::RichText::new(tr!(cache_row_bits, bits = *prec)).monospace().small());
                             ui.label(egui::RichText::new(cache::fmt_bytes(*bytes)).monospace().small());
                             ui.label(egui::RichText::new(ago(*when)).small());
                             ui.end_row();
                         }
                         if rows.len() > 6 {
-                            ui.label(egui::RichText::new(format!("… and {} more", rows.len() - 6)).weak().small());
+                            ui.label(egui::RichText::new(tr!(cache_rows_more, count = rows.len() - 6)).weak().small());
                             ui.end_row();
                         }
                     });
@@ -143,25 +127,24 @@ impl FractadyneApp {
 
                 ui.separator();
                 if confirm {
-                    ui.label(format!(
-                        "Delete {} orbit{} ({})? Rebuilding them costs time, not data.",
-                        usage.entries,
-                        if usage.entries == 1 { "" } else { "s" },
-                        cache::fmt_bytes(usage.bytes)
+                    ui.label(tr!(
+                        cache_confirm,
+                        count = usage.entries,
+                        size = cache::fmt_bytes(usage.bytes),
                     ));
                     // Cancel first, the red action second — the reversed order every destructive
                     // confirm in the app uses (`UI-DESIGN.md` §8.2).
                     crate::theme::action_row(ui, |ui| {
                         if ui
                             .add(
-                                egui::Button::new(egui::RichText::new("Delete").color(egui::Color32::WHITE))
+                                egui::Button::new(egui::RichText::new(tr!(cache_delete)).color(egui::Color32::WHITE))
                                     .fill(egui::Color32::from_rgb(0xB0, 0x3A, 0x30)),
                             )
                             .clicked()
                         {
                             clear_now = true;
                         }
-                        if crate::theme::cancel_button(ui, "Cancel").clicked() {
+                        if crate::theme::cancel_button(ui, &tr!(cache_cancel)).clicked() {
                             confirm = false;
                         }
                     });
@@ -174,15 +157,15 @@ impl FractadyneApp {
                         if ui
                             .add_enabled(
                                 can_clear,
-                                egui::Button::new(egui::RichText::new("Clear cache…").color(egui::Color32::WHITE))
+                                egui::Button::new(egui::RichText::new(tr!(cache_clear)).color(egui::Color32::WHITE))
                                     .fill(egui::Color32::from_rgb(0xB0, 0x3A, 0x30)),
                             )
-                            .on_hover_text("Deletes every stored orbit. Asks first.")
+                            .on_hover_text(tr!(cache_clear_hover))
                             .clicked()
                         {
                             confirm = true;
                         }
-                        if crate::theme::cancel_button(ui, "Close").clicked() {
+                        if crate::theme::cancel_button(ui, &tr!(cache_close)).clicked() {
                             close = true;
                         }
                     });
@@ -204,8 +187,8 @@ impl FractadyneApp {
         if clear_now {
             self.dialogs.orbit_cache_confirm = false;
             match cache::clear() {
-                Ok(n) => self.set_toast(format!("Reference cache cleared — {n} orbit{} removed.", if n == 1 { "" } else { "s" }), ctx),
-                Err(e) => self.set_toast(format!("Could not clear the reference cache: {e}"), ctx),
+                Ok(n) => self.set_toast(tr!(cache_cleared, count = n), ctx),
+                Err(e) => self.set_toast(tr!(cache_clear_failed, why = e.to_string()), ctx),
             }
         }
     }
@@ -215,12 +198,12 @@ impl FractadyneApp {
 fn ago(t: std::time::SystemTime) -> String {
     let s = std::time::SystemTime::now().duration_since(t).map(|d| d.as_secs()).unwrap_or(0);
     if s < 60 {
-        "just now".into()
+        tr!(cache_ago_now)
     } else if s < 3600 {
-        format!("{} min ago", s / 60)
+        tr!(cache_ago_minutes, count = s / 60)
     } else if s < 86_400 {
-        format!("{} h ago", s / 3600)
+        tr!(cache_ago_hours, count = s / 3600)
     } else {
-        format!("{} d ago", s / 86_400)
+        tr!(cache_ago_days, count = s / 86_400)
     }
 }

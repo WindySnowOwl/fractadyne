@@ -92,6 +92,10 @@ enum Screen {
     /// one real entry first, so the usage bar, the rows and the Clear button all render
     /// populated: a screenshot of the empty state would photograph chrome around no data.
     OrbitCache,
+    /// Languages ▸ More languages…: every installed language in its own name, with its English name,
+    /// coverage and source. Run with `FRACTADYNE_LANG_DIR=i18n` to list the repository's files: the
+    /// names of Japanese and Chinese draw from the bundled names fonts in any interface language.
+    Languages,
     Notice,
     PaletteEditor,
     /// The same editor in RING view. ⭐A palette is cycled, so the ring is the only place the
@@ -288,6 +292,9 @@ struct StepResult {
     /// assume it. Written because the minimap-pan check first passed at meanD 0.0 on a view that
     /// never tiled at all — a clean, confident, meaningless zero.
     tiled: bool,
+    /// In the pseudo-language: the text on screen that is not the English file's (no brackets),
+    /// for `untranslated.txt`.
+    untranslated: Vec<String>,
 }
 
 /// A 16x16 luma thumbnail of the left ~45% of the frame, vertically inset past the toolbar and
@@ -380,6 +387,11 @@ pub(crate) struct UiTest {
     crashes_at_start: Vec<String>,
     /// Control-panel width measured during the toggle step's OPEN phase (`None` until then).
     panel_w: Option<f32>,
+    /// A screenshot was requested this frame: read the text it shows once the frame is drawn
+    /// (`uitest_note_text`, at the end of `update`).
+    capture_text: bool,
+    /// The text the captured frame painted, and the screen it was painted on.
+    text_items: Option<(egui::Rect, Vec<crate::harness::text_layout::TextItem>)>,
     /// The longest gap between two harness ticks (= frames) in the current step, and the last
     /// tick — a frozen frame shows here whatever froze it.
     max_gap_ms: f64,
@@ -419,14 +431,25 @@ impl UiTest {
         let stamp = crate::FractadyneApp::file_stamp(secs);
         let base = out_base.unwrap_or_else(default_out_base);
         let out_dir = base.join(format!("uitest-{stamp}"));
+        // Every message text handed out from here on, so the text-layout check knows the
+        // interface's own text in any language.
+        crate::i18n::record_texts();
         // Create it up front — screenshots are written during the walk, long before `uitest_finish`.
         if let Err(e) = std::fs::create_dir_all(&out_dir) {
             eprintln!("--uitest: could not create {}: {e}", out_dir.display());
         }
 
+        // `FRACTADYNE_UITEST_ONLY=formula,welcome`: only the steps whose names contain one of these
+        // (a quick re-run of the screens a change touches; the full walk is the gate).
+        let mut steps = build_steps();
+        if let Some(only) = std::env::var("FRACTADYNE_UITEST_ONLY").ok().filter(|v| !v.trim().is_empty()) {
+            let wanted: Vec<String> = only.split(',').map(|w| w.trim().to_owned()).filter(|w| !w.is_empty()).collect();
+            steps.retain(|s| wanted.iter().any(|w| s.name.contains(w.as_str())));
+        }
+
         Self {
             out_dir,
-            steps: build_steps(),
+            steps,
             idx: 0,
             phase: Phase::Setup,
             results: Vec::new(),
@@ -441,6 +464,8 @@ impl UiTest {
             quiet_since: Instant::now(),
             crashes_at_start: crate::diag::crash_report_names(),
             panel_w: None,
+            capture_text: false,
+            text_items: None,
             max_gap_ms: 0.0,
             last_tick: Instant::now(),
             prev_unclean: crate::diag::previous_session_unclean(),
@@ -793,6 +818,7 @@ fn build_steps() -> Vec<Step> {
         screen("farm-controller", Screen::FarmController),
         screen("reset-confirm", Screen::ResetConfirm),
         screen("reference-cache", Screen::OrbitCache),
+        screen("languages", Screen::Languages),
         screen("notice", Screen::Notice),
         screen("palette-editor", Screen::PaletteEditor),
         screen("palette-editor-ring", Screen::PaletteEditorRing),
@@ -1070,6 +1096,9 @@ impl FractadyneApp {
                     ctx.send_viewport_cmd(egui::ViewportCommand::Screenshot(egui::UserData::default()));
                     ut.hard_until = now + std::time::Duration::from_millis(2_000); // screenshot-reply timeout
                     ut.phase = Phase::Shot;
+                    // The screenshot shows THIS frame: its text is read once it is drawn.
+                    ut.capture_text = true;
+                    ut.text_items = None;
                 }
             }
             Phase::Shot => {
@@ -1202,6 +1231,7 @@ impl FractadyneApp {
         // screen replaced its two cards (the Export screen photographed no "Use all graphics cards").
         self.worker_cards_rx = None;
         self.update_prompt_open = false;
+        self.language.window_open = false;
         self.coloring.palette_editor_open = false;
         // ⚠**Three windows this list had missed**, found by narrowing the gradient editor in P3′:
         // the Diagnostics window opened at step 14 was still standing behind every screenshot from
@@ -1262,7 +1292,7 @@ impl FractadyneApp {
                 // The same-card choice (the one every one-card machine can take), as the setting shows it in use.
                 self.render_cfg.worker_gpu = crate::gpu_worker::SAME_CARD.into();
                 self.worker_state =
-                    crate::gpu_worker::WorkerState::Running(format!("same card, {} · Vulkan", self.gpu_name));
+                    crate::gpu_worker::WorkerState::Running(tr!(app_worker_same_card, name = format!("{} · Vulkan", self.gpu_name)));
             }
             Screen::Minimap => self.dialogs.minimap = true,
             Screen::LivePanelStrip | Screen::LivePanel | Screen::LivePanelFull | Screen::LivePanelHelp => {
@@ -1290,7 +1320,7 @@ impl FractadyneApp {
             }
             Screen::Welcome => self.dialogs.welcome_open = true,
             Screen::SecondDevicePrompt => {
-                self.dialogs.second_device_prompt = Some(format!("same card, {} · Vulkan", self.gpu_name));
+                self.dialogs.second_device_prompt = Some(tr!(app_worker_same_card, name = format!("{} · Vulkan", self.gpu_name)));
             }
             Screen::IterationQuarantine => {
                 // The 2026-09-10 shape: auto-iterations from a base of 10,000,000 at a deep minibrot.
@@ -1386,6 +1416,7 @@ impl FractadyneApp {
             Screen::FarmClientFind => self.uitest_seed_farm_client_find(),
             Screen::FarmController => self.uitest_seed_farm_controller(),
             Screen::ResetConfirm => self.dialogs.reset_confirm_open = true,
+            Screen::Languages => self.language.window_open = true,
             Screen::OrbitCache => {
                 // The walk runs as a task invocation, so the cache is OFF and empty. Point it at
                 // a scratch directory holding one real (shallow) orbit for the duration, so the
@@ -2081,18 +2112,24 @@ impl FractadyneApp {
         // re-derives the strings it is validating agrees with itself whatever the bar shows.
         let texts = &self.perf.status_bar_texts;
         let find = |prefix: &str| texts.iter().find(|t| t.trim_start().starts_with(prefix));
+        // The readouts' words as the language in use writes them (the walk may run translated).
+        let spaced = |word: String| format!("{word} ");
+        let (center, cursor, zoom, iter, period) =
+            (spaced(tr!(status_center)), spaced(tr!(status_cursor)), tr!(status_zoom), spaced(tr!(status_iter)), spaced(tr!(status_period)));
+        let (scale, gen, pop, order, drawn) =
+            (spaced(tr!(status_scale)), spaced(tr!(status_generation)), spaced(tr!(status_population)), spaced(tr!(status_order)), spaced(tr!(status_drawn)));
         let mut sb_problems: Vec<String> = Vec::new();
         // `period ` is the ambient minibrot-period slot: always drawn (transparent when no period
         // applies), so its RESERVED presence is itself the reflow invariant to assert — the harness
         // has no pointer or M-key, so it is exercised in exactly that empty-but-present state.
         // A Life universe has its own three readouts in the zoom / iteration / period slots.
         let life_bar = self.fractal == crate::FractalKind::Life;
-        let wants: &[&str] = if life_bar {
-            &["center ", "cursor ", "scale ", "gen ", "pop "]
+        let wants: [&str; 5] = if life_bar {
+            [&center, &cursor, &scale, &gen, &pop]
         } else if self.fractal == crate::FractalKind::LSystem {
-            &["center ", "cursor ", "zoom", "order ", "drawn "]
+            [&center, &cursor, &zoom, &order, &drawn]
         } else {
-            &["center ", "cursor ", "zoom", "iter ", "period "]
+            [&center, &cursor, &zoom, &iter, &period]
         };
         for want in wants {
             if find(want).is_none() {
@@ -2103,12 +2140,12 @@ impl FractadyneApp {
         // when the pointer is off the canvas, and legitimately does here (the harness has no
         // pointer): what matters for that one is that its RESERVED FIELD is still drawn, since
         // the field appearing and disappearing is what wrapped the bar in the field report.
-        if let Some(c) = find("center ") {
+        if let Some(c) = find(&center) {
             if !c.contains(',') || c.trim_end().ends_with(',') {
                 sb_problems.push(format!("centre readout is incomplete: {c:?}"));
             }
         }
-        if let Some(c) = find("cursor ") {
+        if let Some(c) = find(&cursor) {
             if c.len() < 40 {
                 sb_problems.push(format!("cursor field is not reserved at its full width: {c:?}"));
             }
@@ -2124,24 +2161,24 @@ impl FractadyneApp {
             digits.parse().ok()
         };
         if life_bar {
-            for want in ["gen ", "pop "] {
+            for want in [&gen, &pop] {
                 if find(want).and_then(|t| num(t)).is_none() {
                     sb_problems.push(format!("{want:?} does not read as a number"));
                 }
             }
         } else if self.fractal == crate::FractalKind::LSystem {
             // A drawing has no iteration count: its zoom, order and what it drew.
-            for want in ["zoom", "order ", "drawn "] {
+            for want in [&zoom, &order, &drawn] {
                 if find(want).and_then(|t| num(t)).is_none() {
                     sb_problems.push(format!("{want:?} does not read as a number"));
                 }
             }
         } else {
-            match find("zoom").and_then(|t| num(t)) {
+            match find(&zoom).and_then(|t| num(t)) {
                 Some(z) if z > 0.0 => {}
                 other => sb_problems.push(format!("zoom does not read as a number: {other:?}")),
             }
-            match find("iter ").and_then(|t| num(t)) {
+            match find(&iter).and_then(|t| num(t)) {
                 Some(i) if i >= 1.0 => {}
                 other => sb_problems.push(format!("iteration count does not read as a number: {other:?}")),
             }
@@ -2429,6 +2466,11 @@ impl FractadyneApp {
             }
         }
 
+        let untranslated = match &ut.text_items {
+            Some((screen, items)) => text_layout_checks(*screen, items, &mut checks),
+            None => Vec::new(),
+        };
+
         StepResult {
             name: step.name.clone(),
             kind: match step.kind {
@@ -2452,6 +2494,21 @@ impl FractadyneApp {
             left_fp,
             mid_fp,
             tiled,
+            untranslated,
+        }
+    }
+
+    /// End of `update`: while a screenshot is on its way, read the text each frame painted
+    /// (`harness::text_layout`), so the last one read before the reply is the frame the screenshot
+    /// shows. ⚠Not only the frame that asked: the screenshot is of a LATER frame, and a window still
+    /// growing to fit its content was 40 pt narrower in the asking frame than in the picture, which
+    /// read as text cut off at its edge. A pass egui will discard is not the one shown.
+    pub(crate) fn uitest_note_text(&mut self, ctx: &egui::Context) {
+        if let Some(ut) = self.harness.uitest.as_mut() {
+            if (ut.capture_text || matches!(ut.phase, Phase::Shot)) && !ctx.will_discard() {
+                ut.text_items = Some((ctx.screen_rect(), crate::harness::text_layout::collect(ctx)));
+                ut.capture_text = false;
+            }
         }
     }
 
@@ -2530,6 +2587,7 @@ impl FractadyneApp {
             left_fp: Vec::new(),
             mid_fp: Vec::new(),
             tiled: false,
+            untranslated: Vec::new(),
         }
     }
 
@@ -2606,6 +2664,17 @@ impl FractadyneApp {
             log.push('\n');
         }
         let _ = std::fs::write(ut.out_dir.join("log.txt"), &log);
+        // In a language other than English: what each screen showed that no message holds.
+        if crate::i18n::active().tag != "en" {
+            let mut u = String::from("Text on screen that holds no message the walk handed out: data, names, or text still\nwritten in the code.\n\n");
+            for r in ut.results.iter().filter(|r| !r.untranslated.is_empty()) {
+                u.push_str(&format!("{} ({})\n", r.name, r.file));
+                for t in &r.untranslated {
+                    u.push_str(&format!("    {t}\n"));
+                }
+            }
+            let _ = std::fs::write(ut.out_dir.join("untranslated.txt"), u);
+        }
         let _ = std::fs::write(ut.out_dir.join("report.md"), render_md(ut, version, &plat, &gpu, pass_n, warn_n, fail_n));
         let _ = std::fs::write(ut.out_dir.join("report.json"), render_json(ut, version, &plat, &gpu));
 
@@ -2670,7 +2739,66 @@ fn timeout_result(step: &Step) -> StepResult {
         left_fp: Vec::new(),
         mid_fp: Vec::new(),
         tiled: false,
+        untranslated: Vec::new(),
     }
+}
+
+/// The step's text-layout checks (design/multilingual.md §10), from the text its frame painted.
+/// A fault on the interface's own text FAILS, in any language: it is a message the walk handed out
+/// (`text_layout::Messages`), or the pseudo-language's bracketed text. A fault on other text WARNS,
+/// since a field holding data longer than itself (a coordinate, a path) is cut on purpose.
+/// Shortening to "…" WARNS. Returns, in a language other than English, the text on screen that
+/// holds words but no message: text still written in the code, or data.
+fn text_layout_checks(screen: egui::Rect, items: &[crate::harness::text_layout::TextItem], checks: &mut Vec<Check>) -> Vec<String> {
+    use crate::harness::text_layout::{analyse, describe, is_pseudo, Fault, Messages};
+    let english = crate::i18n::active().tag == "en";
+    let messages = Messages::new(crate::i18n::recorded_texts());
+    let ours = |t: &str| is_pseudo(t) || messages.holds(t);
+    let findings = analyse(screen, items);
+    let (shortened, faults): (Vec<_>, Vec<_>) = findings.iter().partition(|f| f.fault == Fault::Elided);
+    let (mine, data): (Vec<_>, Vec<_>) = faults.into_iter().partition(|f| ours(&f.text));
+    let list = |v: &[&crate::harness::text_layout::Finding]| {
+        let mut lines: Vec<String> = v.iter().map(|f| describe(f)).collect();
+        lines.dedup();
+        lines.join("; ")
+    };
+    if mine.is_empty() && data.is_empty() {
+        checks.push(pass("text fits", format!("{} texts, none cut off, off screen or overlapping", items.len())));
+    } else if !mine.is_empty() {
+        checks.push(Check {
+            name: "text fits".into(),
+            verdict: Verdict::Fail,
+            detail: format!("{} of {} texts: {}", mine.len(), items.len(), list(&mine)),
+        });
+    } else {
+        checks.push(Check {
+            name: "text fits".into(),
+            verdict: Verdict::Warn,
+            detail: format!("only data cut, {} of {} texts: {}", data.len(), items.len(), list(&data)),
+        });
+    }
+    let shortened: Vec<_> = shortened.into_iter().filter(|f| ours(&f.text)).collect();
+    if shortened.is_empty() {
+        checks.push(pass("text not shortened", "no interface text shortened to fit".into()));
+    } else {
+        checks.push(Check {
+            name: "text not shortened".into(),
+            verdict: Verdict::Warn,
+            detail: format!("{}: {}", shortened.len(), list(&shortened)),
+        });
+    }
+    if english {
+        return Vec::new();
+    }
+    // Words, not data: three or more letters in a row, and no message in it.
+    let mut out: Vec<String> = items
+        .iter()
+        .filter(|t| !ours(&t.text) && t.text.split(|c: char| !c.is_ascii_alphabetic()).any(|w| w.len() >= 3))
+        .map(|t| t.text.chars().take(80).collect())
+        .collect();
+    out.sort();
+    out.dedup();
+    out
 }
 
 /// Luma statistics over the central 60% of the image (crops out menu/status-bar chrome), so a

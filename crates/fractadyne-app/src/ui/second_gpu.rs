@@ -7,9 +7,6 @@
 use crate::gpu_worker::{second_card_choices, WorkerState, OFF, SAME_CARD};
 use crate::FractadyneApp;
 
-/// The choice that opens a second device on the window's own card.
-const SAME_CARD_LABEL: &str = "Same card";
-
 impl FractadyneApp {
     /// The setting's row and its status line. The cards come from a `--list-adapters` child process
     /// the first time the row is drawn (`farm_client::list_cards`), never from this process.
@@ -41,15 +38,17 @@ impl FractadyneApp {
         let effective = if stored.trim().is_empty() { SAME_CARD.to_string() } else { stored.trim().to_string() };
         let mut shown = effective.clone();
         let value = &mut shown;
+        // The choice that opens a second device on the window's own card.
+        let same_card_label = tr!(gpu2_same_card);
         let selected = match value.trim() {
-            OFF => "Off".to_string(),
-            SAME_CARD => SAME_CARD_LABEL.to_string(),
+            OFF => tr!(gpu2_off),
+            SAME_CARD => same_card_label.clone(),
             v => choices
                 .as_deref()
                 .and_then(|c| c.iter().find(|(n, _)| n.to_string() == v))
-                .map_or_else(|| format!("Card {v}"), |(_, name)| name.clone()), // the list shows the numbers
+                .map_or_else(|| tr!(gpu2_card_n, number = v), |(_, name)| name.clone()), // the list shows the numbers
         };
-        let row = crate::ui::labelled(ui, "Second graphics card", |ui| {
+        let row = crate::ui::labelled(ui, &tr!(gpu2_label), |ui| {
             // The label is wider than the panel's label column, so size to what is left of the row
             // (a fixed width ran past the panel's edge) and let a long card name end in an ellipsis.
             egui::ComboBox::from_id_salt("second_gpu")
@@ -57,14 +56,14 @@ impl FractadyneApp {
                 .truncate()
                 .selected_text(selected)
                 .show_ui(ui, |ui| {
-                    ui.selectable_value(value, OFF.to_string(), "Off");
-                    ui.selectable_value(value, SAME_CARD.to_string(), SAME_CARD_LABEL);
+                    ui.selectable_value(value, OFF.to_string(), tr!(gpu2_off));
+                    ui.selectable_value(value, SAME_CARD.to_string(), same_card_label);
                     match choices.as_deref() {
                         None => {
-                            ui.label(egui::RichText::new("Finding this machine's graphics cards…").weak());
+                            ui.label(egui::RichText::new(tr!(gpu2_finding)).weak());
                         }
                         Some([]) => {
-                            ui.label(egui::RichText::new("This machine has no other graphics card.").weak());
+                            ui.label(egui::RichText::new(tr!(gpu2_none)).weak());
                         }
                         Some(cs) => {
                             for (n, name) in cs {
@@ -75,17 +74,7 @@ impl FractadyneApp {
                 })
                 .response
         })
-        .on_hover_text(
-            "Another graphics device renders frames of a deep view while it moves, and some of the \
-             extra samples that sharpen it after it stops, so the picture keeps up with a zoom and \
-             reaches its final quality sooner. The card drawing the window still draws everything.\n\n\
-             Another card adds its own speed. Two different card models draw a few pixels slightly \
-             differently; if the second card fails, the view carries on with one.\n\n\
-             \"Same card\" (the default) opens a second device on this card. It adds no speed but \
-             renders without waiting for the screen's frames. It shares the card: a failure that \
-             resets the card ends the app, as a failure of the window's own rendering does, and the \
-             next start offers to turn it off.",
-        );
+        .on_hover_text(tr!(gpu2_hover));
         if shown != effective {
             self.render_cfg.worker_gpu = shown;
         }

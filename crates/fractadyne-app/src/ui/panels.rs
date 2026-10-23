@@ -62,15 +62,8 @@ impl FractadyneApp {
     pub(crate) fn fit_range_checkbox(&mut self, ui: &mut egui::Ui) {
         ui.horizontal(|ui| {
             ui.add_space(ui.spacing().indent * 0.5);
-            ui.checkbox(&mut self.coloring.normalize_fit, "Always fit range")
-                .on_hover_text(
-                    "Remap the palette to the view's measured escape range even when the view does \
-                     not alias — the checkbox above only remaps when a dense field would otherwise \
-                     read as speckle.\n\nUse this when you want the palette to span what is on \
-                     screen rather than to fix noise. It still needs a measurement, so it does \
-                     nothing for the moment or two before the view settles, and nothing at all on \
-                     a view with no escaped pixels.",
-                );
+            ui.checkbox(&mut self.coloring.normalize_fit, tr!(panel_fit_range))
+                .on_hover_text(tr!(panel_fit_range_hover));
         });
     }
 
@@ -84,20 +77,11 @@ impl FractadyneApp {
         ui.add_enabled_ui(live, |ui| {
             ui.horizontal(|ui| {
                 ui.add_space(ui.spacing().indent * 0.5);
-                ui.checkbox(&mut self.coloring.log_palette, "Log color scale")
+                ui.checkbox(&mut self.coloring.log_palette, tr!(panel_log_scale))
                     .on_hover_text(if live {
-                        "Spread the palette by the LOGARITHM of the escape value rather than \
-                         linearly. Escape counts crowd towards the high end at depth, so a linear \
-                         map spends most of the palette on a thin shell near the boundary and \
-                         flattens everything else.\n\nApplies to the normalized mapping — which is \
-                         what 'Normalize deep colors' (or --normalize on an export) turns on. A \
-                         heavily skewed range takes the log mapping anyway, whether or not this \
-                         is ticked."
+                        tr!(panel_log_scale_hover)
                     } else {
-                        "Requires normalization: this chooses HOW the palette is mapped to the \
-                         measured escape range, so with 'Normalize deep colors' off (and no \
-                         --normalize export) there is no mapping for it to change and it would \
-                         not alter a single pixel.\n\nTurn on 'Normalize deep colors' to use it."
+                        tr!(panel_log_scale_off_hover)
                     });
             });
         });
@@ -113,54 +97,49 @@ impl FractadyneApp {
                 ui.add_space(4.0);
                 ui.horizontal(|ui| {
                     // ▶ points toward the right edge the panel collapses to (it's docked right).
-                    if ui.small_button("\u{23F5}").on_hover_text("Hide control panel").clicked() {
+                    if ui.small_button("\u{23F5}").on_hover_text(tr!(panel_hide_hover)).clicked() {
                         self.dialogs.right_panel_open = false;
                     }
-                    ui.label(egui::RichText::new("Controls").strong());
+                    ui.label(egui::RichText::new(tr!(panel_title)).strong());
                 });
                 ui.separator();
                 // Scroll the sections when they don't fit the window height (header stays pinned).
                 egui::ScrollArea::vertical().auto_shrink([false, false]).show(ui, |ui| {
 
                 if self.fractal == FractalKind::Life {
-                    egui::CollapsingHeader::new("Life").default_open(true).show(ui, |ui| self.life_panel(ui));
+                    // The family's own name (`FractalKind::name`), as the heading always read.
+                    egui::CollapsingHeader::new(FractalKind::Life.display_name())
+                        .id_salt("fractadyne.panel.life")
+                        .default_open(true)
+                        .show(ui, |ui| self.life_panel(ui));
                 }
                 if self.fractal == FractalKind::LSystem {
-                    egui::CollapsingHeader::new("L-system").default_open(true).show(ui, |ui| self.lsystem_panel(ui));
+                    egui::CollapsingHeader::new(FractalKind::LSystem.display_name())
+                        .id_salt("fractadyne.panel.lsystem")
+                        .default_open(true)
+                        .show(ui, |ui| self.lsystem_panel(ui));
                 }
-                egui::CollapsingHeader::new("Navigate").default_open(true).show(ui, |ui| {
-                labelled(ui, "Zoom speed", |ui| {
+                egui::CollapsingHeader::new(tr!(panel_section_navigate)).id_salt("fractadyne.panel.navigate").default_open(true).show(ui, |ui| {
+                labelled(ui, &tr!(panel_zoom_speed), |ui| {
                     ui.add(
                         egui::Slider::new(&mut self.render_cfg.zoom_rate, 0.25..=4.0)
                             .suffix("×")
                             .logarithmic(true),
                     )
                 })
-                .on_hover_text("Speed of hold-Space continuous zoom (1× ≈ 2× per 1.5 s).");
-                ui.checkbox(&mut self.render_cfg.snap_zoom, "Snap zoom to features").on_hover_text(
-                    "While zooming in with the mouse wheel or Space, pull the zoom toward a minibrot \
-                     (or the real axis) close to the cursor, so it slides under the cursor and the \
-                     zoom lands on it. The nearer the feature, the stronger the pull. Mandelbrot \
-                     only, single view.",
-                );
+                .on_hover_text(tr!(panel_zoom_speed_hover));
+                ui.checkbox(&mut self.render_cfg.snap_zoom, tr!(panel_snap_zoom))
+                    .on_hover_text(tr!(panel_snap_zoom_hover));
 
                 // Click-to-zoom tool: arm a click to dive into the point by a fixed factor. Off by
                 // default; drag still pans and Shift/right-drag still box-zoom. Works in the dual
                 // view too, on whichever panel the click lands in — where it takes the plain click
                 // and Julia pinning moves to Ctrl+click for as long as the tool is armed.
-                ui.checkbox(&mut self.click_zoom, "Click to zoom")
-                    .on_hover_text(
-                        "When on, a left-click in the view dives in by the factor below \
-                         (right-click backs out), recentered on the clicked point. Drag still pans; \
-                         Shift+drag / right-drag still box-zoom. Backspace undoes a click. \
-                         In the dual view it works on either panel, and pinning the Julia c \
-                         moves to Ctrl+click while this is on. Hold Shift to raise a magnifier \
-                         under the cursor showing the view the click would land you in, and click \
-                         while holding it to take that point; Shift+DRAG still box-zooms.",
-                    );
+                ui.checkbox(&mut self.click_zoom, tr!(panel_click_zoom))
+                    .on_hover_text(tr!(panel_click_zoom_hover));
                 ui.add_enabled_ui(self.click_zoom, |ui| {
                     ui.horizontal(|ui| {
-                        ui.label("    Factor");
+                        ui.label(format!("    {}", tr!(panel_click_zoom_factor)));
                         for f in crate::CLICK_ZOOM_FACTORS {
                             ui.selectable_value(
                                 &mut self.render_cfg.click_zoom_factor,
@@ -175,22 +154,15 @@ impl FractadyneApp {
                     // aim out of it.
                     ui.horizontal(|ui| {
                         ui.add_space(16.0);
-                        ui.checkbox(&mut self.click_zoom_snap, "Snap to nearest center")
-                            .on_hover_text(
-                                "After the jump, solve for the nearest minibrot nucleus and \
-                                 settle exactly onto it, so you land on the feature rather than \
-                                 near it. The zoom is not changed — the click chose that. \
-                                 Mandelbrot only. The solve runs in the background: the view \
-                                 jumps at once and corrects itself when the answer arrives, which \
-                                 at extreme depth can take a few seconds.",
-                            );
+                        ui.checkbox(&mut self.click_zoom_snap, tr!(panel_click_zoom_snap))
+                            .on_hover_text(tr!(panel_click_zoom_snap_hover));
                     });
                 });
 
 
                 });
-                egui::CollapsingHeader::new("Coloring").default_open(true).show(ui, |ui| {
-                labelled(ui, "Method", |ui| {
+                egui::CollapsingHeader::new(tr!(panel_section_coloring)).id_salt("fractadyne.panel.coloring").default_open(true).show(ui, |ui| {
+                labelled(ui, &tr!(panel_method), |ui| {
                     egui::ComboBox::from_id_salt("panel_method")
                         .selected_text(self.coloring.color_method.label())
                         .show_ui(ui, |ui| {
@@ -199,47 +171,32 @@ impl FractadyneApp {
                             }
                         })
                         .response
-                        .on_hover_text(
-                            "How escape data maps to color. Stripe / triangle-inequality / \
-                             orbit-trap / decomposition reveal orbit structure; distance \
-                             shades by proximity to the boundary.",
-                        );
+                        .on_hover_text(tr!(panel_method_hover));
                 });
                 if self.coloring.color_method == ColorMethod::Stripe {
-                    labelled(ui, "Stripe density", |ui| {
+                    labelled(ui, &tr!(panel_stripe_density), |ui| {
                         ui.add(
                             egui::Slider::new(&mut self.coloring.stripe_freq, 1.0..=24.0)
                                 .logarithmic(true),
                         )
                     });
-                    ui.checkbox(&mut self.coloring.stripe_tail, "Tail only (deep zoom)")
-                        .on_hover_text(
-                            "Average the stripe term over the last N iterations of each orbit \
-                             (an exponential window) instead of the whole orbit. At extreme depth \
-                             every orbit shadows the reference for all but its last few hundred \
-                             iterations, so the full-orbit average is one colour for the whole view; \
-                             the tail keeps the contrast. Orbits shorter than the window are \
-                             unaffected. Also --stripe-tail N for --render.",
-                        );
+                    ui.checkbox(&mut self.coloring.stripe_tail, tr!(panel_stripe_tail))
+                        .on_hover_text(tr!(panel_stripe_tail_hover));
                     if self.coloring.stripe_tail {
-                        labelled(ui, "Tail length", |ui| {
+                        labelled(ui, &tr!(panel_tail_length), |ui| {
                             ui.add(
                                 egui::Slider::new(&mut self.coloring.stripe_tail_len, 4..=1024)
                                     .logarithmic(true)
-                                    .suffix(" it")
+                                    .suffix(format!(" {}", tr!(panel_tail_length_unit)))
                                     .custom_formatter(|n, _| crate::grouped_count(n))
                                     .custom_parser(crate::parse_grouped_number),
                             )
-                            .on_hover_text(
-                                "Window length in iterations. Short windows (8–32) give the classic \
-                                 bold banding at any depth; longer ones average toward a flat colour \
-                                 again, since the stripe term of a long chaotic orbit averages out.",
-                            )
+                            .on_hover_text(tr!(panel_tail_length_hover))
                         });
                     }
                 }
                 if self.coloring.color_method == ColorMethod::OrbitTrap {
-                    labelled(ui, "Trap shape", |ui| {
+                    labelled(ui, &tr!(panel_trap_shape), |ui| {
                         egui::ComboBox::from_id_salt("panel_trap_shape")
                             .selected_text(self.coloring.trap_type.label())
                             .show_ui(ui, |ui| {
@@ -253,19 +210,18 @@ impl FractadyneApp {
                 // whole reason to save one is to refer to it later; a control that can only report
                 // the slot it occupies makes the library invisible from here.
                 let live_saved = self.live_saved_gradient();
-                let pal_name = if self.coloring.use_binary {
-                    "Binary (set)"
+                let pal_name: String = if self.coloring.use_binary {
+                    tr!(menu_color_binary)
                 } else if self.coloring.use_duotone {
-                    "Duotone"
+                    tr!(menu_color_duotone)
                 } else if let Some(i) = live_saved {
-                    self.saved_gradients[i].name.as_str()
+                    self.saved_gradients[i].name.clone()
                 } else if self.coloring.use_custom_palette {
-                    "Custom"
+                    tr!(menu_color_custom)
                 } else {
-                    fractadyne_color::PRESETS[self.coloring.palette_idx].name
+                    fractadyne_color::PRESETS[self.coloring.palette_idx].name.to_string()
                 };
-                let pal_name = pal_name.to_string();
-                labelled(ui, "Palette", |ui| {
+                labelled(ui, &tr!(panel_palette), |ui| {
                     egui::ComboBox::from_id_salt("panel_palette")
                         .selected_text(pal_name)
                         .show_ui(ui, |ui| {
@@ -296,7 +252,7 @@ impl FractadyneApp {
                             }
                             // ⚠Ticked only when the custom palette is not one of the saved entries
                             // above, or picking a saved gradient would check two rows at once.
-                            if ui.selectable_label(self.coloring.use_custom_palette && live_saved.is_none(), format!("Custom {}", crate::icons::EDIT)).clicked() {
+                            if ui.selectable_label(self.coloring.use_custom_palette && live_saved.is_none(), format!("{} {}", tr!(menu_color_custom), crate::icons::EDIT)).clicked() {
                                 if self.coloring.custom_palette.is_empty() {
                                     self.coloring.custom_palette = self.preset_as_stops(self.coloring.palette_idx);
                                 }
@@ -304,14 +260,14 @@ impl FractadyneApp {
                                 self.coloring.use_duotone = false;
                                 self.coloring.use_binary = false;
                             }
-                            if ui.selectable_label(self.coloring.use_duotone, "Duotone").clicked() {
+                            if ui.selectable_label(self.coloring.use_duotone, tr!(menu_color_duotone)).clicked() {
                                 self.coloring.use_duotone = true;
                                 self.coloring.use_custom_palette = false;
                                 self.coloring.use_binary = false;
                             }
                             if ui
-                                .selectable_label(self.coloring.use_binary, "Binary (set)")
-                                .on_hover_text("Flat two-color: in-set vs out-of-set, no gradient.")
+                                .selectable_label(self.coloring.use_binary, tr!(menu_color_binary))
+                                .on_hover_text(tr!(menu_color_binary_hover))
                                 .clicked()
                             {
                                 self.coloring.use_binary = true;
@@ -323,9 +279,9 @@ impl FractadyneApp {
                 if self.coloring.use_duotone || self.coloring.use_binary {
                     // Two shared colors. (Binary: interior/exterior; duotone: shadow/highlight.)
                     let (lo_lbl, hi_lbl) = if self.coloring.use_binary {
-                        ("In-set", "Out-of-set")
+                        (tr!(panel_in_set), tr!(panel_out_of_set))
                     } else {
-                        ("Shadow", "Highlight")
+                        (tr!(panel_shadow), tr!(panel_highlight))
                     };
                     // ⭐The hex sits under each swatch rather than beside it: the panel is 298 px
                     // and two swatches with their labels already fill the row, so an inline value
@@ -349,35 +305,27 @@ impl FractadyneApp {
                             );
                         }
                     });
-                } else if ui.button("Edit gradient…").clicked() {
+                } else if ui.button(tr!(menu_color_edit_gradient)).clicked() {
                     if self.coloring.custom_palette.is_empty() {
                         self.coloring.custom_palette = self.preset_as_stops(self.coloring.palette_idx);
                     }
                     self.coloring.use_custom_palette = true;
                     self.coloring.palette_editor_open = true;
                 }
-                labelled(ui, "Cycle", |ui| {
+                labelled(ui, &tr!(panel_cycle), |ui| {
                     ui.add(egui::Slider::new(&mut self.coloring.cycle, 0.0..=1.0))
                 });
-                labelled(ui, "Offset", |ui| {
+                labelled(ui, &tr!(panel_offset), |ui| {
                     ui.add(egui::Slider::new(&mut self.coloring.offset, 0.0..=1.0))
                 });
                 // ⭐Normalization FIRST, then the mapping it selects. `log_palette` is read only
                 // inside the normalized path, so with normalization off it changed nothing — and
                 // it sat ABOVE the switch that gives it meaning.
-                ui.checkbox(&mut self.coloring.normalize_live, "Normalize deep colors")
-                    .on_hover_text(
-                        "At extreme depth, escape counts span hundreds of thousands and a fixed \
-                         Cycle wraps the palette thousands of times between neighboring pixels — a \
-                         correct dense field reads as speckle noise. This remaps the palette to the \
-                         view's measured escape range (Cycle then sets how many palette sweeps span \
-                         it) WHEN the view actually aliases — a smooth view is left alone, because \
-                         remapping it would change the picture for nothing. Tick 'Always fit range' \
-                         below to remap regardless. Smooth method only; matches --normalize.",
-                    );
+                ui.checkbox(&mut self.coloring.normalize_live, tr!(menu_color_normalize))
+                    .on_hover_text(tr!(panel_normalize_hover));
                 self.fit_range_checkbox(ui);
                 self.log_scale_checkbox(ui);
-                labelled(ui, "Animate", |ui| {
+                labelled(ui, &tr!(panel_animate), |ui| {
                     egui::ComboBox::from_id_salt("panel_animate")
                         .selected_text(self.anim.palette_anim.name())
                         .show_ui(ui, |ui| {
@@ -386,7 +334,7 @@ impl FractadyneApp {
                             }
                         });
                 });
-                labelled(ui, "Speed", |ui| {
+                labelled(ui, &tr!(panel_anim_speed), |ui| {
                     ui.add_enabled(
                         self.anim.palette_anim != PaletteAnim::Off,
                         egui::Slider::new(&mut self.anim.palette_anim_speed, 0.01..=2.0)
@@ -394,11 +342,8 @@ impl FractadyneApp {
                             .logarithmic(true),
                     )
                 })
-                .on_hover_text(
-                    "Cycle speed: color-offset cycles/sec, or (Random) gradient \
-                     changes/sec.",
-                );
-                if self.anim.palette_anim == PaletteAnim::Random && ui.button("Shuffle gradient").clicked()
+                .on_hover_text(tr!(panel_anim_speed_hover));
+                if self.anim.palette_anim == PaletteAnim::Random && ui.button(tr!(panel_shuffle_gradient)).clicked()
                 {
                     self.anim.random_palette.reshuffle();
                 }
@@ -406,10 +351,10 @@ impl FractadyneApp {
                 // Iterations, supersampling, relief and glow are escape-time settings: a Life
                 // universe has none of them.
                 if self.fractal.is_escape_time() {
-                egui::CollapsingHeader::new("Quality").default_open(true).show(ui, |ui| {
-                ui.checkbox(&mut self.render_cfg.auto_iter, "Auto-scale iterations with zoom");
-                let label = if self.render_cfg.auto_iter { "Iterations (base)" } else { "Iterations" };
-                labelled(ui, label, |ui| {
+                egui::CollapsingHeader::new(tr!(panel_section_quality)).id_salt("fractadyne.panel.quality").default_open(true).show(ui, |ui| {
+                ui.checkbox(&mut self.render_cfg.auto_iter, tr!(panel_auto_iter));
+                let label = if self.render_cfg.auto_iter { tr!(panel_iterations_base) } else { tr!(panel_iterations) };
+                labelled(ui, &label, |ui| {
                     ui.add(
                         egui::Slider::new(
                             &mut self.render_cfg.max_iter,
@@ -422,13 +367,7 @@ impl FractadyneApp {
                         .custom_parser(crate::parse_grouped_number),
                     )
                 })
-                .on_hover_text(
-                    "Base iteration count. With Auto-scale on, the effective count climbs \
-                     with zoom depth. While you're moving, the preview caps iterations low \
-                     (50,000) for responsiveness, then sharpens to the full count when the \
-                     view settles — so deep edges look smooth during motion and resolve when \
-                     you stop.",
-                );
+                .on_hover_text(tr!(panel_iterations_hover));
                 // Detail note: the coarse count only applies while moving. If the view is
                 // settled and still resolution-limited (huge window at extreme depth), an
                 // export renders at full resolution — otherwise the settled preview already
@@ -449,101 +388,85 @@ impl FractadyneApp {
                     let accent = theme::ui_accent(ui.ctx());
                     ui.label(
                         egui::RichText::new(format!(
-                            "⚠ At this depth the settled preview renders {} iterations at \
-                             reduced resolution to stay responsive. Export for full-resolution \
-                             detail.",
-                            commas(&settled_iter.to_string()),
+                            "⚠ {}",
+                            tr!(panel_res_limited, count = settled_iter),
                         ))
                         .small()
                         .color(accent),
                     );
                 }
                 ui.separator();
-                labelled(ui, "Anti-alias", |ui| {
+                labelled(ui, &tr!(panel_anti_alias), |ui| {
                     egui::ComboBox::from_id_salt("panel_anti_alias")
                         .selected_text(match self.render_cfg.aa {
-                            1 => "Off",
-                            2 => "2×",
-                            3 => "3×",
-                            4 => "4×",
-                            _ => "8×",
+                            1 => tr!(panel_anti_alias_off),
+                            2 => "2×".to_string(),
+                            3 => "3×".to_string(),
+                            4 => "4×".to_string(),
+                            _ => "8×".to_string(),
                         })
                         .show_ui(ui, |ui| {
-                            ui.selectable_value(&mut self.render_cfg.aa, 1, "Off");
+                            ui.selectable_value(&mut self.render_cfg.aa, 1, tr!(panel_anti_alias_off));
                             ui.selectable_value(&mut self.render_cfg.aa, 2, "2×");
                             ui.selectable_value(&mut self.render_cfg.aa, 3, "3×");
                             ui.selectable_value(&mut self.render_cfg.aa, 4, "4×");
                             ui.selectable_value(&mut self.render_cfg.aa, 8, "8×");
                         })
                         .response
-                        .on_hover_text(
-                            "Supersampling for still images (applied when the view settles). \
-                             Higher tames the fine exterior 'dust' at the cost of render time.",
-                        );
+                        .on_hover_text(tr!(panel_anti_alias_hover));
                 });
 
                 });
-                egui::CollapsingHeader::new("Effects").default_open(false).show(ui, |ui| {
-                ui.checkbox(&mut self.effects.light, "3D relief lighting")
-                    .on_hover_text(
-                        "Shade the surface using the distance-estimate slope — an \
-                         embossed, lit look. (Holomorphic families: Mandelbrot / \
-                         Multibrot.)",
-                    );
+                egui::CollapsingHeader::new(tr!(panel_section_effects)).id_salt("fractadyne.panel.effects").default_open(false).show(ui, |ui| {
+                ui.checkbox(&mut self.effects.light, tr!(panel_relief_lighting))
+                    .on_hover_text(tr!(panel_relief_lighting_hover));
                 ui.add_enabled_ui(self.effects.light, |ui| {
-                    labelled(ui, "Light angle", |ui| {
+                    labelled(ui, &tr!(panel_light_angle), |ui| {
                         ui.add(
                             egui::Slider::new(&mut self.effects.light_angle, 0.0..=std::f32::consts::TAU)
                                 .suffix(" rad"),
                         )
                     });
-                    labelled(ui, "Relief", |ui| {
+                    labelled(ui, &tr!(panel_relief), |ui| {
                         ui.add(
                             egui::Slider::new(&mut self.effects.light_height, 0.2..=4.0)
                                 .logarithmic(true),
                         )
                     })
-                    .on_hover_text("Lower = sharper relief; higher = softer/flatter.");
-                    ui.checkbox(&mut self.effects.light_anim, "Rotate light")
-                        .on_hover_text("Spin the light direction over time (uses the Speed slider).");
+                    .on_hover_text(tr!(panel_relief_hover));
+                    ui.checkbox(&mut self.effects.light_anim, tr!(panel_rotate_light))
+                        .on_hover_text(tr!(panel_rotate_light_hover));
                 });
-                ui.checkbox(&mut self.effects.de, "Distance glow")
-                    .on_hover_text(
-                        "Bright distance-estimate contour bands that densify into glowing \
-                         filaments near the boundary. (Holomorphic families.)",
-                    );
+                ui.checkbox(&mut self.effects.de, tr!(panel_distance_glow))
+                    .on_hover_text(tr!(panel_distance_glow_hover));
                 ui.add_enabled_ui(self.effects.de, |ui| {
-                    labelled(ui, "Glow", |ui| {
+                    labelled(ui, &tr!(panel_glow), |ui| {
                         ui.add(egui::Slider::new(&mut self.effects.de_strength, 0.0..=1.0))
                     });
-                    labelled(ui, "Band width", |ui| {
+                    labelled(ui, &tr!(panel_band_width), |ui| {
                         ui.add(
                             egui::Slider::new(&mut self.effects.de_width, 0.15..=4.0)
                                 .logarithmic(true),
                         )
                     })
-                    .on_hover_text("Spacing of the distance contours (octaves per band).");
-                    ui.checkbox(&mut self.effects.de_anim, "Animate glow")
-                        .on_hover_text("Flow the glow bands over time (uses the Speed slider).");
+                    .on_hover_text(tr!(panel_band_width_hover));
+                    ui.checkbox(&mut self.effects.de_anim, tr!(panel_animate_glow))
+                        .on_hover_text(tr!(panel_animate_glow_hover));
                 });
                 });
                 } // escape-time sections
                 // The orbit overlay's options lived as an indented block inside the View MENU
                 // until 2026-08-13 (UI review: a panel's worth of controls in a dropdown). The
                 // toggle is mirrored in Tools ▸ Orbit overlay.
-                egui::CollapsingHeader::new("Overlays").default_open(false).show(ui, |ui| {
-                ui.checkbox(&mut self.anim.show_orbits, "Orbit overlay")
-                    .on_hover_text("Draw the iteration path of the point under the cursor.");
+                egui::CollapsingHeader::new(tr!(panel_section_overlays)).id_salt("fractadyne.panel.overlays").default_open(false).show(ui, |ui| {
+                ui.checkbox(&mut self.anim.show_orbits, tr!(menu_tools_orbits))
+                    .on_hover_text(tr!(panel_orbits_hover));
                 ui.add_enabled_ui(self.anim.show_orbits, |ui| {
-                    ui.checkbox(&mut self.anim.orbit_normalize, "Normalize (fit to view)")
-                        .on_hover_text(
-                            "Fit the orbit to the whole view so it stays well-framed at any zoom \
-                             (instead of mapped through the viewport, where it flies off-screen \
-                             when deep).",
-                        );
-                    ui.checkbox(&mut self.anim.orbit_anim, "Animate (racing dot)")
-                        .on_hover_text("Send a color-cycling dot racing out along the orbit.");
-                    labelled(ui, "Orbit speed", |ui| {
+                    ui.checkbox(&mut self.anim.orbit_normalize, tr!(menu_tools_orbits_normalize))
+                        .on_hover_text(tr!(menu_tools_orbits_normalize_hover));
+                    ui.checkbox(&mut self.anim.orbit_anim, tr!(panel_orbit_anim))
+                        .on_hover_text(tr!(panel_orbit_anim_hover));
+                    labelled(ui, &tr!(panel_orbit_speed), |ui| {
                         ui.add_enabled(
                             self.anim.orbit_anim,
                             egui::Slider::new(&mut self.anim.orbit_anim_speed, 1.0..=40.0)
@@ -551,10 +474,8 @@ impl FractadyneApp {
                         )
                     });
                 });
-                ui.checkbox(&mut self.dialogs.minimap, "Minimap overview").on_hover_text(
-                    "A small home-view overview with a \"you are here\" marker and the zoom \
-                     depth. Click it to jump to a region.",
-                );
+                ui.checkbox(&mut self.dialogs.minimap, tr!(menu_view_minimap))
+                    .on_hover_text(tr!(panel_minimap_hover));
                 });
                 // ADVANCED, closed by default. Everything a first-time user should not meet
                 // while looking for how to zoom: the accelerators (whose names - BLA, series
@@ -562,111 +483,68 @@ impl FractadyneApp {
                 // performance-tuning sliders that used to sit inside Navigation. "Live render
                 // budget" and "Min motion resolution" are arguably MORE obscure than BLA: BLA can
                 // be ignored safely, whereas a mis-set budget changes behaviour with no clue why.
-                egui::CollapsingHeader::new("Advanced")
+                egui::CollapsingHeader::new(tr!(panel_section_advanced))
+                    .id_salt("fractadyne.panel.advanced")
                     .default_open(false)
                     .open(self.dialogs.uitest_advanced_open)
                     .show(ui, |ui| {
-                ui.label(egui::RichText::new("Accelerators").weak().small());
-                ui.checkbox(&mut self.render_cfg.use_bla, "BLA acceleration (deep zoom)")
-                    .on_hover_text(
-                        "Bilinear approximation: skip iterations throughout the orbit at extreme \
-                         depth (floatexp Mandelbrot, ≥1e28×) — ~5× faster GPU render, identical \
-                         output (verified by the self-test). On by default; turn off to compare \
-                         or if you hit an artifact.",
-                    );
-                ui.checkbox(&mut self.render_cfg.series_approx, "Series approximation")
-                    .on_hover_text(
-                        "Seed the perturbation from a polynomial to skip early iterations, where \
-                         BLA isn't active (df32 depths, Multibrot, BLA off). Identical output; \
-                         turn off to compare.",
-                    );
-                ui.checkbox(&mut self.render_cfg.glitch_correct, "Glitch correction (export)")
-                    .on_hover_text(
-                        "Multi-reference glitch correction for exported images: detects \
-                         perturbation glitches and re-renders those pixels against extra \
-                         references until clean. On by default. Exports up to ~32 MP (non-aux \
-                         coloring); larger images and the live view use the plain path. \
-                         Never used for Mandelbrot or Multibrot views (outside Julia mode): \
-                         checked against an exact calculation, it fixed nothing there and \
-                         cost up to 5x the export time.",
-                    );
+                ui.label(egui::RichText::new(tr!(panel_accelerators)).weak().small());
+                ui.checkbox(&mut self.render_cfg.use_bla, tr!(panel_bla))
+                    .on_hover_text(tr!(panel_bla_hover));
+                ui.checkbox(&mut self.render_cfg.series_approx, tr!(panel_series_approx))
+                    .on_hover_text(tr!(panel_series_approx_hover));
+                ui.checkbox(&mut self.render_cfg.glitch_correct, tr!(panel_glitch_correct))
+                    .on_hover_text(tr!(panel_glitch_correct_hover));
                 ui.separator();
-                ui.label(egui::RichText::new("Performance tuning").weak().small());
+                ui.label(egui::RichText::new(tr!(panel_performance_tuning)).weak().small());
                 // Auto-zoom (autopilot) dive limit, edited in decimal orders (1eN×) but stored as log2.
                 let mut dive_log10 = self.autopilot.dive_log2 / std::f64::consts::LOG2_10;
-                if labelled(ui, "Auto-zoom dive limit", |ui| {
+                if labelled(ui, &tr!(panel_dive_limit), |ui| {
                     ui.add(
                         egui::Slider::new(&mut dive_log10, 30.0..=5000.0)
                             .logarithmic(true)
                             .custom_formatter(|n, _| format!("1e{n:.0}×")),
                     )
                 })
-                    .on_hover_text(
-                        "Depth where auto-zoom (A key) stops. Up to ~1e271× it glides smoothly; \
-                         deeper, it switches to a choppy stepped dive to reach extreme depth quickly.",
-                    )
+                    .on_hover_text(tr!(panel_dive_limit_hover))
                     .changed()
                 {
                     self.autopilot.dive_log2 = dive_log10 * std::f64::consts::LOG2_10;
                 }
                 // What the auto-zoom puts first. Either way the screen never shows a frame that
                 // has not been proven to hold a picture (design/verified-present.md).
-                labelled(ui, "Auto-zoom priority", |ui| {
+                labelled(ui, &tr!(panel_autopilot_priority), |ui| {
                     use crate::autopilot::AutopilotPriority as P;
                     ui.horizontal(|ui| {
-                        ui.selectable_value(&mut self.autopilot.priority, P::Speed, "Speed")
-                            .on_hover_text(
-                                "Zoom at the set speed. The screen refreshes as soon as a frame \
-                                 with detail is ready, at whatever resolution keeps refreshes \
-                                 coming (below the Min motion resolution floor if the zoom \
-                                 outruns the render); between refreshes the last frame follows \
-                                 the zoom and softens.",
-                            );
-                        ui.selectable_value(&mut self.autopilot.priority, P::Quality, "Quality")
-                            .on_hover_text(
-                                "Every refresh is a fully resolved full-resolution frame, and the \
-                                 zoom slows down as needed so the frame on screen never magnifies \
-                                 far before the next one lands. A slower dive that is crisp at \
-                                 every moment.",
-                            );
+                        ui.selectable_value(&mut self.autopilot.priority, P::Speed, tr!(menu_tools_priority_speed))
+                            .on_hover_text(tr!(panel_priority_speed_hover));
+                        ui.selectable_value(&mut self.autopilot.priority, P::Quality, tr!(menu_tools_priority_quality))
+                            .on_hover_text(tr!(panel_priority_quality_hover));
                     });
                 });
                 // What the auto-zoom aims at.
-                labelled(ui, "Auto-zoom target", |ui| {
+                labelled(ui, &tr!(panel_autopilot_target), |ui| {
                     use crate::autopilot::AutopilotTarget as T;
                     ui.horizontal(|ui| {
-                        ui.selectable_value(&mut self.autopilot.target, T::Detail, "Detail")
-                            .on_hover_text(
-                                "Dive toward the richest structure on the fractal's edge in view, \
-                                 re-choosing the target as the dive goes.",
-                            );
-                        ui.selectable_value(&mut self.autopilot.target, T::Misiurewicz, "Misiurewicz point")
-                            .on_hover_text(
-                                "Find the nearest Misiurewicz point (a spiral centre whose structure \
-                                 repeats forever) and dive exactly into it. The dive first holds \
-                                 still while the point is solved to the dive limit's depth — a \
-                                 moment at ordinary depths, longer past 1e1000×. Mandelbrot set only.",
-                            );
+                        ui.selectable_value(&mut self.autopilot.target, T::Detail, tr!(menu_tools_target_detail))
+                            .on_hover_text(tr!(panel_target_detail_hover));
+                        ui.selectable_value(&mut self.autopilot.target, T::Misiurewicz, tr!(menu_tools_target_misiurewicz))
+                            .on_hover_text(tr!(panel_target_misiurewicz_hover));
                     });
                 });
 
                 // Live-render work budget: detail-vs-speed for the deep-zoom preview.
-                labelled(ui, "Live render budget", |ui| {
+                labelled(ui, &tr!(panel_work_budget), |ui| {
                     ui.add(
                         egui::Slider::new(&mut self.render_cfg.work_budget_scale, 0.25..=8.0)
                             .suffix("×")
                             .logarithmic(true),
                     )
                 })
-                .on_hover_text(
-                    "Detail vs. speed for the live view at deep zoom. Higher renders at fuller \
-                     resolution (crisper — less of the \"soft\" upscaled look) but lowers frame-rate, \
-                     and very high values risk a brief GPU stall on the heaviest frames. Exports are \
-                     always full resolution regardless of this.",
-                );
+                .on_hover_text(tr!(panel_work_budget_hover));
 
                 // Motion sharpness floor: cap how pixelated a continuous deep zoom is allowed to get.
-                labelled(ui, "Min motion resolution", |ui| {
+                labelled(ui, &tr!(panel_min_motion_res), |ui| {
                     ui.add(
                         egui::Slider::new(&mut self.render_cfg.min_motion_res, 0.30..=1.0)
                             .custom_formatter(|v, _| format!("{:.0}%", v * 100.0))
@@ -677,36 +555,17 @@ impl FractadyneApp {
                             }),
                     )
                 })
-                .on_hover_text(
-                    "The lowest resolution the live view may drop to while continuously zooming or \
-                     panning at deep zoom. Higher stops a fast dive from getting blocky/pixelated \
-                     (sharper) at the cost of frame-rate — at 100% deep-dive detail refreshes must \
-                     render at full cost, which can make deep zooming visibly step/stutter. If a \
-                     deep dive feels jerky, lower this. Default 30%; doesn't affect the settled \
-                     image or exports.",
-                );
+                .on_hover_text(tr!(panel_min_motion_res_hover));
 
                 // Another graphics card for the settle's supersampling (design/multi-gpu-live.md L2).
                 self.second_gpu_row(ui);
 
                 // KF-style stepping: hold the last detailed frame (geometrically tracked) through
                 // motion instead of rendering coarse intermediate frames.
-                ui.checkbox(&mut self.render_cfg.finish_sound, "Sound when a render finishes")
-                    .on_hover_text(
-                        "Play FRACTINT's completion tune when an export or tour render finishes: \
-                         three rising notes (1047, 1109, 1175 Hz for 100 ms each), exactly as the \
-                         DOS original encoded them — synthesized as a band-limited square and \
-                         high-passed to sound like the little PC-speaker cone that played it.",
-                    );
-                ui.checkbox(&mut self.render_cfg.prefer_detail, "Prefer detail while zooming")
-                    .on_hover_text(
-                        "While zooming or panning, keep showing the last fully detailed frame — \
-                         scaled and tracked to follow the motion — instead of re-rendering at \
-                         reduced quality every frame. The view renders in full when the motion \
-                         pauses. Off: motion renders live at reduced resolution (smoother, \
-                         coarser). Shallow views (direct mode) always render live — they are \
-                         cheap and sharp every frame either way.",
-                    );
+                ui.checkbox(&mut self.render_cfg.finish_sound, tr!(panel_finish_sound))
+                    .on_hover_text(tr!(panel_finish_sound_hover));
+                ui.checkbox(&mut self.render_cfg.prefer_detail, tr!(panel_prefer_detail))
+                    .on_hover_text(tr!(panel_prefer_detail_hover));
                 });
                 if self.dialogs.uitest_advanced_open == Some(false) {
                     self.dialogs.uitest_advanced_open = None; // closed now; clicks rule it again
@@ -720,24 +579,27 @@ impl FractadyneApp {
                 let custom_src = (self.fractal == FractalKind::Custom)
                     .then(|| self.custom.as_ref().map(|c| c.source.clone()))
                     .flatten();
-                egui::CollapsingHeader::new(format!("About {}", self.fractal.name()))
+                egui::CollapsingHeader::new(tr!(panel_section_about, name = self.fractal.display_name()))
+                    // Keyed by the family, as the header's text used to key it: each remembers its own state.
+                    .id_salt(("fractadyne.panel.about", self.fractal.name()))
                     .default_open(false)
                     .show(ui, |ui| {
                         match &custom_src {
                             Some(src) => ui.monospace(src),
-                            None => ui.monospace(info.formula),
+                            None => ui.monospace(self.fractal.formula()),
                         };
                         ui.add_space(4.0);
-                        ui.label(info.about);
+                        ui.label(self.fractal.about());
                         if !info.reference.is_empty() {
                             ui.add_space(4.0);
-                            ui.hyperlink_to("Reference \u{2197}", info.reference);
+                            ui.hyperlink_to(format!("{} \u{2197}", tr!(panel_about_reference)), info.reference);
                         }
                     });
                 // Performance section, docked at the bottom of this same panel
                 // (toggle via the Perf button or the View menu).
                 if self.perf.enabled {
-                    egui::CollapsingHeader::new("Performance")
+                    egui::CollapsingHeader::new(tr!(panel_section_performance))
+                        .id_salt("fractadyne.panel.performance")
                         .default_open(true)
                         .show(ui, |ui| {
                             self.perf_section(ui);
@@ -755,7 +617,7 @@ impl FractadyneApp {
             egui::Area::new(egui::Id::new("panel_reopen"))
                 .anchor(egui::Align2::RIGHT_TOP, egui::vec2(-8.0, 36.0))
                 .show(ctx, |ui| {
-                    if ui.button("\u{2630}").on_hover_text("Show control panel").clicked() {
+                    if ui.button("\u{2630}").on_hover_text(tr!(panel_show_hover)).clicked() {
                         self.dialogs.right_panel_open = true;
                     }
                 });

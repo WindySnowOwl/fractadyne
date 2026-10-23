@@ -17,8 +17,8 @@ use fractadyne_gpu::lsystem::{LSystemFrame, SegmentInstance, TriangleInstance};
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, Mutex};
 
-/// The most segments a walk hands over (the GPU pass's cap is above it).
-const BUDGET: u64 = 4_000_000;
+/// The most segments a walk hands over (the GPU pass's cap is above it). An export's notice names it.
+pub(crate) const BUDGET: u64 = 4_000_000;
 /// The order that follows the zoom puts a step of the curve at most this many pixels — or
 /// [`STEP_WIDTHS`] line widths, if more: a space-filling curve drawn at a step no wider than its
 /// lines is a solid block (the Hilbert curve's first screenshot), so the step leaves room
@@ -729,7 +729,7 @@ impl FractadyneApp {
             let entries = lsystem::parse_l_file(text);
             let good: Vec<&LEntry> = entries.iter().filter(|e| e.system.is_ok()).collect();
             match (entries.len(), good.len()) {
-                (0, _) => return Err("no entries (a .l file holds `Name { … }` entries)".into()),
+                (0, _) => return Err(tr!(lsys_no_entries)),
                 (1, 1) => {
                     let s = good[0].system.clone().expect("checked");
                     self.lsystem_open(s);
@@ -753,7 +753,7 @@ impl FractadyneApp {
     /// File > Open L-system…: a Fractint `.l` file or the native format.
     pub(crate) fn lsystem_open_file(&mut self) {
         let Some(path) = rfd::FileDialog::new()
-            .add_filter("L-systems", &["l", "lsys", "txt"])
+            .add_filter(tr!(lsys_filter_systems), &["l", "lsys", "txt"])
             .set_directory(self.dialog_dir_default())
             .pick_file()
         else {
@@ -763,12 +763,12 @@ impl FractadyneApp {
         let name = path.file_stem().map_or_else(|| "L-system".into(), |s| s.to_string_lossy().into_owned());
         let read = std::fs::metadata(&path)
             .map_err(|e| e.to_string())
-            .and_then(|m| if m.len() > 4 << 20 { Err("larger than 4 MiB".into()) } else { Ok(()) })
+            .and_then(|m| if m.len() > 4 << 20 { Err(tr!(lsys_file_too_large)) } else { Ok(()) })
             .and_then(|()| std::fs::read(&path).map_err(|e| e.to_string()))
             .map(|b| String::from_utf8_lossy(&b).into_owned());
         let result = read.and_then(|t| self.lsystem_open_text(&t, &name));
         if let Err(e) = result {
-            self.lsystem.message = Some(format!("Could not open {}: {e}", path.display()));
+            self.lsystem.message = Some(tr!(lsys_open_failed, path = path.display().to_string(), error = e));
         }
     }
 
@@ -777,7 +777,7 @@ impl FractadyneApp {
         let s = self.lsystem.system.clone();
         let stem: String = s.name.chars().map(|c| if c.is_alphanumeric() || c == ' ' || c == '-' { c } else { '_' }).collect();
         let Some(path) = rfd::FileDialog::new()
-            .add_filter("L-system", &["lsys"])
+            .add_filter(tr!(lsys_filter_system), &["lsys"])
             .set_directory(self.dialog_dir_default())
             .set_file_name(format!("{}.lsys", if stem.trim().is_empty() { "L-system" } else { stem.trim() }))
             .save_file()
@@ -786,8 +786,8 @@ impl FractadyneApp {
         };
         self.remember_dir(&path);
         self.lsystem.message = Some(match std::fs::write(&path, s.to_text()) {
-            Ok(()) => format!("Saved {}", path.display()),
-            Err(e) => format!("Save failed: {e}"),
+            Ok(()) => tr!(lsys_saved, path = path.display().to_string()),
+            Err(e) => tr!(lsys_save_failed, error = e.to_string()),
         });
     }
 
@@ -807,8 +807,8 @@ impl FractadyneApp {
         };
         self.remember_dir(&path);
         self.lsystem.message = Some(match std::fs::write(&path, svg) {
-            Ok(()) => format!("Exported {}", path.display()),
-            Err(e) => format!("Export failed: {e}"),
+            Ok(()) => tr!(lsys_svg_exported, path = path.display().to_string()),
+            Err(e) => tr!(lsys_svg_failed, error = e.to_string()),
         });
     }
 
@@ -848,7 +848,7 @@ impl FractadyneApp {
 
     /// The side panel's L-system section.
     pub(crate) fn lsystem_panel(&mut self, ui: &mut egui::Ui) {
-        crate::ui::labelled(ui, "System", |ui| {
+        crate::ui::labelled(ui, &tr!(lsys_system), |ui| {
             let mut pick = None;
             let r = egui::ComboBox::from_id_salt("lsystem_pick")
                 .selected_text(self.lsystem.system.name.clone())
@@ -871,18 +871,18 @@ impl FractadyneApp {
             r
         });
         ui.horizontal(|ui| {
-            if ui.button("Open…").on_hover_text("Open a Fractint .l file or a .lsys system.").clicked() {
+            if ui.button(tr!(lsys_open)).on_hover_text(tr!(lsys_open_hover)).clicked() {
                 self.lsystem_open_file();
             }
-            if ui.button("Edit…").on_hover_text("The system's text: axiom, productions, angle — edit and apply.").clicked() {
+            if ui.button(tr!(lsys_edit)).on_hover_text(tr!(lsys_edit_hover)).clicked() {
                 self.lsystem.editor_text = self.lsystem.system.to_text();
                 self.lsystem.editor_error = None;
                 self.lsystem.editor_open = true;
             }
-            if ui.button("Save…").on_hover_text("Save the system as a .lsys text file.").clicked() {
+            if ui.button(tr!(lsys_save)).on_hover_text(tr!(lsys_save_hover)).clicked() {
                 self.lsystem_save_file();
             }
-            if ui.button("SVG…").on_hover_text("Export the view as an SVG drawing: its lines and shapes as vectors, in its colours.").clicked() {
+            if ui.button("SVG…").on_hover_text(tr!(lsys_svg_hover)).clicked() {
                 self.lsystem_export_svg();
             }
         });
@@ -892,16 +892,12 @@ impl FractadyneApp {
         let grows = self.lsystem.tables.grows();
         ui.horizontal(|ui| {
             let mut follow = self.lsystem.fixed_order.is_none();
-            let hint = if grows {
-                "The order rises as you zoom in, so the detail never runs out."
-            } else {
-                "This system does not grow by a factor each order, so it is drawn at a fixed order."
-            };
-            if ui.checkbox(&mut follow, "Order follows zoom").on_hover_text(hint).changed() {
+            let hint = if grows { tr!(lsys_follow_hover) } else { tr!(lsys_follow_fixed_hover) };
+            if ui.checkbox(&mut follow, tr!(lsys_follow)).on_hover_text(hint).changed() {
                 self.lsystem.fixed_order = if follow { None } else { Some(now) };
             }
         });
-        crate::ui::labelled(ui, "Order", |ui| {
+        crate::ui::labelled(ui, &tr!(lsys_order), |ui| {
             // (A parametric system has no tables; its word's budget bounds its order.)
             let max = if self.lsystem.system.expanded.is_some() { 64 } else { self.lsystem.tables.max_depth };
             match self.lsystem.fixed_order.as_mut() {
@@ -909,7 +905,7 @@ impl FractadyneApp {
                 None => ui.label(format!("{now}")),
             }
         });
-        crate::ui::labelled(ui, "Angle", |ui| {
+        crate::ui::labelled(ui, &tr!(lsys_angle), |ui| {
             let own = self.lsystem.system.angle.degrees();
             let mut a = self.lsystem.angle.unwrap_or(own);
             let r = ui.add(egui::Slider::new(&mut a, 0.0..=180.0).suffix("°").max_decimals(2));
@@ -918,45 +914,45 @@ impl FractadyneApp {
             }
             let sweeping = self.lsystem.angle_anim.is_some();
             let icon = if sweeping { crate::icons::PAUSE } else { crate::icons::PLAY };
-            if ui.button(icon).on_hover_text("Sweep the angle, there and back: the curve morphing as it turns").clicked() {
+            if ui.button(icon).on_hover_text(tr!(lsys_sweep_hover)).clicked() {
                 self.lsystem.toggle_angle_sweep();
             }
             r
         });
-        if self.lsystem.angle.is_some() && ui.small_button("System's angle").clicked() {
+        if self.lsystem.angle.is_some() && ui.small_button(tr!(lsys_system_angle)).clicked() {
             self.lsystem.set_angle(None);
         }
         if self.lsystem.system.is_stochastic() {
-            crate::ui::labelled(ui, "Seed", |ui| {
+            crate::ui::labelled(ui, &tr!(lsys_seed), |ui| {
                 let mut seed = self.lsystem.system.seed;
-                if ui.add(egui::DragValue::new(&mut seed)).on_hover_text("What the random choices follow: the same seed, the same plant.").changed() {
+                if ui.add(egui::DragValue::new(&mut seed)).on_hover_text(tr!(lsys_seed_hover)).changed() {
                     self.lsystem.set_seed(seed);
                 }
-                if ui.button("New").on_hover_text("Another plant: a new seed.").clicked() {
+                if ui.button(tr!(lsys_seed_new)).on_hover_text(tr!(lsys_seed_new_hover)).clicked() {
                     self.lsystem.set_seed(fresh_seed());
                 }
             });
         }
-        crate::ui::labelled(ui, "Line width", |ui| ui.add(egui::Slider::new(&mut self.lsystem.width, 0.5..=8.0).suffix(" px")));
-        crate::ui::labelled(ui, "Draw on", |ui| {
+        crate::ui::labelled(ui, &tr!(lsys_line_width), |ui| ui.add(egui::Slider::new(&mut self.lsystem.width, 0.5..=8.0).suffix(" px")));
+        crate::ui::labelled(ui, &tr!(lsys_draw_on), |ui| {
             let mut pct = f64::from(self.lsystem.progress) * 100.0;
-            if ui.add(egui::Slider::new(&mut pct, 0.0..=100.0).suffix("%").max_decimals(0)).on_hover_text("How much of the curve is drawn, in the order the turtle draws it").changed() {
+            if ui.add(egui::Slider::new(&mut pct, 0.0..=100.0).suffix("%").max_decimals(0)).on_hover_text(tr!(lsys_draw_on_hover)).changed() {
                 self.lsystem.progress = (pct / 100.0) as f32;
                 self.lsystem.draw_anim = None;
             }
             let drawing = self.lsystem.draw_anim.is_some();
             let icon = if drawing { crate::icons::PAUSE } else { crate::icons::PLAY };
-            if ui.button(icon).on_hover_text("The curve drawing itself on").clicked() {
+            if ui.button(icon).on_hover_text(tr!(lsys_draw_on_play_hover)).clicked() {
                 self.lsystem.toggle_draw_on();
             }
         });
-        crate::ui::labelled(ui, "Colour by", |ui| {
+        crate::ui::labelled(ui, &tr!(lsys_colour_by), |ui| {
             let label = |c: Colouring| match c {
-                Colouring::Position => "position along the curve",
-                Colouring::Depth => "branch depth",
-                Colouring::Heading => "heading",
-                Colouring::Index => "colour index (C, <, >)",
-                Colouring::Plain => "one colour",
+                Colouring::Position => tr!(lsys_colour_position),
+                Colouring::Depth => tr!(lsys_colour_depth),
+                Colouring::Heading => tr!(lsys_colour_heading),
+                Colouring::Index => tr!(lsys_colour_index),
+                Colouring::Plain => tr!(lsys_colour_plain),
             };
             let current = self.lsystem.colouring();
             let mut pick = None;
@@ -979,39 +975,47 @@ impl FractadyneApp {
         egui::Grid::new("lsystem_status").num_columns(2).show(ui, |ui| {
             let t = &self.lsystem.tables;
             let built = self.lsystem.system.expanded.is_some();
-            ui.label("Growth");
+            ui.label(tr!(lsys_growth));
             if built {
-                ui.label("built as a word, at its order").on_hover_text(
-                    "Parametric or context-sensitive: a module's rewrite depends on its numbers or its neighbours, \
-                     so the word is built a generation at a time (up to two million modules) and drawn in double \
-                     precision — the order does not follow the zoom.",
-                );
+                ui.label(tr!(lsys_growth_built)).on_hover_text(tr!(lsys_growth_built_hover));
             } else {
                 ui.label(if t.grows() {
-                    format!("×{:.4} an order{}", t.growth, if t.period == 2 { " (orders step by 2)" } else { "" })
+                    let factor = format!("{:.4}", t.growth);
+                    if t.period == 2 {
+                        tr!(lsys_growth_factor_period_2, factor = factor)
+                    } else {
+                        tr!(lsys_growth_factor, factor = factor)
+                    }
                 } else {
-                    "none (fixed order)".into()
+                    tr!(lsys_growth_none)
                 });
             }
             ui.end_row();
             if let Some(w) = self.lsystem.last_walk() {
-                ui.label("Drawn");
+                ui.label(tr!(lsys_drawn));
+                // (Orders go in as text: an order is a level, written ungrouped like the status bar's.)
                 let order = match w.built {
                     Some((got, _)) => got,
                     None => w.order,
-                };
-                ui.label(format!("{} at order {order}{}", drawn_text(w.segments, w.polygons), if w.stopped { " (budget)" } else { "" }))
-                    .on_hover_text(format!("walked in {:.1} ms; subtrees off the view are skipped, those under a pixel drawn as one segment", w.ms));
+                }
+                .to_string();
+                let drawn = drawn_text(w.segments, w.polygons);
+                ui.label(if w.stopped {
+                    tr!(lsys_drawn_at_order_budget, drawn = drawn, order = order)
+                } else {
+                    tr!(lsys_drawn_at_order, drawn = drawn, order = order)
+                })
+                .on_hover_text(tr!(lsys_drawn_hover, ms = crate::i18n::decimal(w.ms, 1)));
                 ui.end_row();
                 if let Some((got, want)) = w.built {
                     ui.label("");
-                    ui.label(egui::RichText::new(format!("Order {want}'s word is over two million modules: drawn at {got}.")).small());
+                    ui.label(egui::RichText::new(tr!(lsys_drawn_short, wanted = want.to_string(), built = got.to_string())).small());
                     ui.end_row();
                 }
             }
         });
         if now >= lsystem::MAX_ORDER && grows {
-            ui.label(egui::RichText::new(format!("At the deepest order drawn ({}): zooming further adds no detail.", lsystem::MAX_ORDER)).small());
+            ui.label(egui::RichText::new(tr!(lsys_deepest_order, order = lsystem::MAX_ORDER.to_string())).small());
         }
         if let Some(m) = &self.lsystem.message {
             ui.label(egui::RichText::new(m).small());
@@ -1023,22 +1027,22 @@ impl FractadyneApp {
     pub(crate) fn lsystem_toolbar(&mut self, ui: &mut egui::Ui) {
         let now = self.lsystem.order_at(&self.viewport);
         let max = if self.lsystem.system.expanded.is_some() { lsystem::MAX_ORDER } else { self.lsystem.tables.max_depth.max(now) };
-        if ui.button("−").on_hover_text("Lower the order (fixes it)").clicked() {
+        if ui.button("−").on_hover_text(tr!(lsys_toolbar_lower_hover)).clicked() {
             self.lsystem.fixed_order = Some(now.saturating_sub(1));
         }
-        ui.label(egui::RichText::new(format!("order {now:>3}")).monospace());
-        if ui.button("+").on_hover_text("Raise the order (fixes it)").clicked() {
+        ui.label(egui::RichText::new(tr!(lsys_toolbar_order, order = format!("{now:>3}"))).monospace());
+        if ui.button("+").on_hover_text(tr!(lsys_toolbar_raise_hover)).clicked() {
             self.lsystem.fixed_order = Some((now + 1).min(max));
         }
         let follow = self.lsystem.fixed_order.is_none();
         if ui
-            .add(egui::SelectableLabel::new(follow, "auto"))
-            .on_hover_text("The order follows the zoom")
+            .add(egui::SelectableLabel::new(follow, tr!(lsys_toolbar_auto)))
+            .on_hover_text(tr!(lsys_toolbar_auto_hover))
             .clicked()
         {
             self.lsystem.fixed_order = if follow { Some(now) } else { None };
         }
-        if ui.button(crate::icons::EDIT).on_hover_text("Edit the system's text").clicked() {
+        if ui.button(crate::icons::EDIT).on_hover_text(tr!(lsys_toolbar_edit_hover)).clicked() {
             self.lsystem.editor_text = self.lsystem.system.to_text();
             self.lsystem.editor_error = None;
             self.lsystem.editor_open = true;
@@ -1049,17 +1053,8 @@ impl FractadyneApp {
     pub(crate) fn lsystem_windows(&mut self, ctx: &egui::Context) {
         if self.lsystem.editor_open {
             let mut open = true;
-            egui::Window::new("L-system").open(&mut open).default_width(460.0).show(ctx, |ui| {
-                ui.label(
-                    "One key a line: angle (degrees, or /n for a division of the circle), axiom, \
-                     productions 'X = word', and optionally heading, draw / move / variables, colour, \
-                     order. A symbol with alternatives chosen at random has one line for each, with \
-                     its weight: 'X (0.3) = word'; 'seed n' picks the plant. In a word, { } fills the \
-                     turtle's path and . adds a vertex. Parametric and context-sensitive productions \
-                     (The Algorithmic Beauty of Plants): 'A(s) : s > 1 = F(s)[+A(s/2)]', 'b < a > c = b', \
-                     with 'define R 1.456' and 'ignore +-F'; F(l) steps l, +(a) turns a degrees. A Fractint \
-                     .l entry can be pasted as it is.",
-                );
+            egui::Window::new(tr!(lsys_editor_title)).id(egui::Id::new("fractadyne.lsystem-editor")).open(&mut open).default_width(460.0).show(ctx, |ui| {
+                ui.label(tr!(lsys_editor_help));
                 egui::ScrollArea::vertical().max_height(300.0).show(ui, |ui| {
                     ui.add(egui::TextEdit::multiline(&mut self.lsystem.editor_text).code_editor().desired_rows(12).desired_width(f32::INFINITY));
                 });
@@ -1067,7 +1062,7 @@ impl FractadyneApp {
                     ui.colored_label(egui::Color32::from_rgb(0xE0, 0x60, 0x60), e);
                 }
                 ui.horizontal(|ui| {
-                    if ui.button("Apply").clicked() {
+                    if ui.button(tr!(lsys_editor_apply)).clicked() {
                         let text = self.lsystem.editor_text.clone();
                         let name = self.lsystem.system.name.clone();
                         match self.lsystem_open_text(&text, &name) {
@@ -1075,7 +1070,7 @@ impl FractadyneApp {
                             Err(e) => self.lsystem.editor_error = Some(e),
                         }
                     }
-                    if ui.button("Revert").on_hover_text("The text of the system shown.").clicked() {
+                    if ui.button(tr!(lsys_editor_revert)).on_hover_text(tr!(lsys_editor_revert_hover)).clicked() {
                         self.lsystem.editor_text = self.lsystem.system.to_text();
                         self.lsystem.editor_error = None;
                     }
@@ -1088,7 +1083,7 @@ impl FractadyneApp {
         if let Some((file, entries)) = &self.lsystem.entries {
             let mut open = true;
             let mut pick = None;
-            egui::Window::new(format!("{file} — entries")).open(&mut open).default_width(320.0).show(ctx, |ui| {
+            egui::Window::new(tr!(lsys_entries_title, file = file)).id(egui::Id::new("fractadyne.lsystem-entries")).open(&mut open).default_width(320.0).show(ctx, |ui| {
                 egui::ScrollArea::vertical().max_height(360.0).show(ui, |ui| {
                     for (k, e) in entries.iter().enumerate() {
                         match &e.system {
@@ -1098,7 +1093,7 @@ impl FractadyneApp {
                                 }
                             }
                             Err(err) => {
-                                ui.label(egui::RichText::new(format!("{} — {err}", e.name)).weak()).on_hover_text("This entry does not read.");
+                                ui.label(egui::RichText::new(format!("{} — {err}", e.name)).weak()).on_hover_text(tr!(lsys_entry_unreadable_hover));
                             }
                         }
                     }
@@ -1176,11 +1171,10 @@ fn fresh_seed() -> u64 {
 /// The panel's count of what a walk drew: "12 segments", "1 filled shape", "8 segments, 3 filled
 /// shapes".
 fn drawn_text(segments: u64, polygons: u64) -> String {
-    let n = |k: u64, one: &str, many: &str| format!("{} {}", crate::life_view::grouped(k), if k == 1 { one } else { many });
     match (segments, polygons) {
-        (_, 0) => n(segments, "segment", "segments"),
-        (0, _) => n(polygons, "filled shape", "filled shapes"),
-        _ => format!("{}, {}", n(segments, "segment", "segments"), n(polygons, "filled shape", "filled shapes")),
+        (_, 0) => tr!(lsys_drawn_segments, segments = segments),
+        (0, _) => tr!(lsys_drawn_shapes, shapes = polygons),
+        _ => tr!(lsys_drawn_segments_shapes, segments = segments, shapes = polygons),
     }
 }
 
@@ -1189,8 +1183,8 @@ fn drawn_text(segments: u64, polygons: u64) -> String {
 pub(crate) fn status_readouts(order: u32, drawn: Option<u64>) -> (String, String) {
     // Up to 999,999,999 grouped (11 characters); the walk's budget keeps it there.
     const COUNT_W: usize = 11;
-    let count = drawn.map_or_else(|| "…".to_string(), |n| if n < 1_000_000_000 { crate::life_view::grouped(n) } else { format!("{:.3e}", n as f64) });
-    (format!("order {order:>4}"), format!("drawn {count:>COUNT_W$}"))
+    let count = drawn.map_or_else(|| "…".to_string(), |n| if n < 1_000_000_000 { crate::status_count(n) } else { format!("{:.3e}", n as f64) });
+    (format!("{} {order:>4}", tr!(status_order)), format!("{} {count:>COUNT_W$}", tr!(status_drawn)))
 }
 
 pub(crate) mod export;

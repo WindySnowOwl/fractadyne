@@ -415,7 +415,7 @@ pub(crate) fn show(
             }
             let hover = frame.unread_at((response.hover_pos().unwrap_or_default() - origin).y);
             let response = match hover {
-                Some((_, why, _)) => response.on_hover_text(format!("Does not read: {why}. Click to edit it as text.")),
+                Some((_, why, _)) => response.on_hover_text(tr!(formula_textbook_unread_hover, why = why)),
                 None => response,
             };
             // For a screen reader, the formula is its text.

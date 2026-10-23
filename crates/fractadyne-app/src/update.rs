@@ -51,10 +51,11 @@ pub(crate) enum UpdateTrack {
 }
 impl UpdateTrack {
     pub(crate) const ALL: [UpdateTrack; 2] = [UpdateTrack::Stable, UpdateTrack::Beta];
-    pub(crate) fn label(self) -> &'static str {
+    /// The track's name in the language in use.
+    pub(crate) fn label(self) -> String {
         match self {
-            UpdateTrack::Stable => "Stable",
-            UpdateTrack::Beta => "Beta (pre-releases)",
+            UpdateTrack::Stable => tr!(update_track_stable),
+            UpdateTrack::Beta => tr!(update_track_beta),
         }
     }
     /// Persisted token in `SessionState`.
@@ -83,7 +84,8 @@ pub(crate) enum UpdateStatus {
     Error(String),
 }
 
-/// UI word for the channel a release came from ("beta" for a pre-release, "stable" otherwise).
+/// The channel a release came from ("beta" for a pre-release, "stable" otherwise): a token, which
+/// the command line prints and the interface's messages choose their wording by.
 pub(crate) fn channel_word(prerelease: bool) -> &'static str {
     if prerelease {
         "beta"

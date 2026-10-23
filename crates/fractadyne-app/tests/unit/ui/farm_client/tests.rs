@@ -48,3 +48,37 @@ fn every_phase_has_words() {
     }
     assert!(phase_words(&ClientStatus { phase: ClientPhase::Retrying, retry_in_s: Some(8), ..Default::default() }).0.contains("in 8 s"));
 }
+
+/// The window translates the client's status line by matching the English the client process
+/// writes (`detail_words`): that process never loads a language. Reword a line in `farm::client`
+/// and the window would quietly show it in English again; this pins every phrase the matcher knows
+/// to both sides, so the reword fails here instead.
+#[test]
+fn every_status_phrase_the_window_translates_is_one_the_client_writes() {
+    const CLIENT: &str = include_str!(concat!(env!("CARGO_MANIFEST_DIR"), "/src/farm/client.rs"));
+    const WINDOW: &str = include_str!(concat!(env!("CARGO_MANIFEST_DIR"), "/src/ui/farm_client.rs"));
+    // As the sources spell them (a quote inside a string is `\"`).
+    for phrase in [
+        r#""Disconnected""#,
+        "The job is over",
+        "Paused — the controller has been told",
+        "Pausing — finishing the frame in progress",
+        "Cancelled the frame in progress; paused",
+        "Connecting to ",
+        r#"\" — running the self-check"#,
+        r#"\" — waiting for its user to approve this machine"#,
+        r#"\" — idle"#,
+        r#"\" — receiving its bundle"#,
+        r#"\" — waiting for frames to render"#,
+        "Rendering frames ",
+        "Waiting — someone is using this machine; work resumes once nobody has for ",
+        "The self-check failed — ",
+        "Refused by the controller: ",
+        "Refused this job: ",
+        "The controller closed the connection: ",
+        "The controller ended the connection: ",
+    ] {
+        assert!(CLIENT.contains(phrase), "farm::client no longer writes {phrase:?}: update detail_words");
+        assert!(WINDOW.contains(phrase), "detail_words no longer matches {phrase:?}");
+    }
+}

@@ -42,13 +42,14 @@ fn specs_cover_all_kinds_in_order() {
 /// menu rather than a missing sentence. Guard the whole table at once.
 #[test]
 fn every_family_has_a_hint_worth_showing() {
-    for kind in FractalKind::ALL {
-        let info = kind.info();
-        assert!(!info.formula.trim().is_empty(), "{}: no formula", kind.name());
-        assert!(!info.about.trim().is_empty(), "{}: no description", kind.name());
+    let others = [FractalKind::Custom].into_iter().chain(FractalKind::AUTOMATA).chain(FractalKind::LSYSTEMS);
+    for kind in FractalKind::ALL.into_iter().chain(others) {
+        let (formula, about) = (kind.formula(), kind.about());
+        assert!(!formula.trim().is_empty(), "{}: no formula", kind.name());
+        assert!(!about.trim().is_empty(), "{}: no description", kind.name());
         let hint = kind.menu_hint();
-        assert!(hint.contains(info.formula), "{}: hint drops the formula", kind.name());
-        assert!(hint.contains(info.about), "{}: hint drops the description", kind.name());
+        assert!(hint.contains(&formula), "{}: hint drops the formula", kind.name());
+        assert!(hint.contains(&about), "{}: hint drops the description", kind.name());
     }
 }
 
@@ -90,4 +91,19 @@ fn names_round_trip_and_are_unique() {
     let n = names.len();
     names.dedup();
     assert_eq!(names.len(), n, "duplicate fractal name");
+}
+
+/// In English the name a family shows is its token, word for word: translating the interface must
+/// not change what an English user reads, and the token is what files and scripts hold.
+#[test]
+fn in_english_each_family_shows_its_token() {
+    let all = FractalKind::ALL.into_iter().chain([FractalKind::Custom]).chain(FractalKind::AUTOMATA).chain(FractalKind::LSYSTEMS);
+    for kind in all {
+        assert_eq!(kind.display_name(), kind.name());
+    }
+    for (label, kinds) in FractalKind::POWER_GROUPS {
+        for k in kinds {
+            assert_eq!(k.family_name(), label, "{}", k.name());
+        }
+    }
 }

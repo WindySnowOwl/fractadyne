@@ -1220,9 +1220,9 @@ impl FractadyneApp {
 
     pub(crate) fn open_view(&mut self, ctx: &egui::Context) {
         let path = rfd::FileDialog::new()
-            .add_filter("Fractadyne view or location", &["png", "exr", "fdn", "kfr"])
-            .add_filter("Image (PNG / EXR)", &["png", "exr"])
-            .add_filter("Location (.fdn / .kfr)", &["fdn", "kfr"])
+            .add_filter(tr!(export_filter_view), &["png", "exr", "fdn", "kfr"])
+            .add_filter(tr!(export_filter_image), &["png", "exr"])
+            .add_filter(tr!(export_filter_location), &["fdn", "kfr"])
             .set_directory(self.dialog_dir(Self::pictures_dir))
             .pick_file();
         let Some(path) = path else { return };
@@ -1245,25 +1245,25 @@ impl FractadyneApp {
                                 crate::fmt_zoom_log2(self.viewport.log2_magnification());
                             self.set_toast(
                                 match report.note() {
-                                    None => format!("Loaded location @ {zoom}×"),
-                                    Some(n) => format!("Loaded @ {zoom}× — {n}"),
+                                    None => tr!(export_loaded_location, zoom = zoom),
+                                    Some(n) => tr!(export_loaded_location_note, zoom = zoom, note = n),
                                 },
                                 ctx,
                             );
                         }
                     }
                     _ => self.set_toast(
-                        format!("{} isn't a Fractadyne location.", path.display()),
+                        tr!(export_not_location, path = path.display().to_string()),
                         ctx,
                     ),
                 },
-                Ok(_) => self.set_toast("File too large (not a .fdn location?).", ctx),
-                Err(e) => self.set_toast(format!("Couldn't read {}: {e}", path.display()), ctx),
+                Ok(_) => self.set_toast(tr!(export_file_too_large), ctx),
+                Err(e) => self.set_toast(tr!(export_read_failed, path = path.display().to_string(), error = e.to_string()), ctx),
             },
             // Kalles Fraktaler location import.
             "kfr" => match self.load_kfr_file(&path) {
                 Ok(m) => self.set_toast(m, ctx),
-                Err(e) => self.set_toast(format!("Import failed: {e}"), ctx),
+                Err(e) => self.set_toast(tr!(export_import_failed, error = e.to_string()), ctx),
             },
             // Exported image: restore the view from its embedded metadata (EXR or PNG).
             _ => {
@@ -1277,7 +1277,7 @@ impl FractadyneApp {
                     // repro command line under it. Say so, rather than complaining that a
                     // location which never claimed to be one is missing its centre.
                     Ok(Some(m)) if !looks_like_a_view(&m) => self.set_toast(
-                        format!("{} has Fractadyne metadata, but not a view.", path.display()),
+                        tr!(export_not_view, path = path.display().to_string()),
                         ctx,
                     ),
                     Ok(Some(m)) => {
@@ -1286,9 +1286,9 @@ impl FractadyneApp {
                         {
                             self.set_toast(
                                 match report.note() {
-                                    None => format!("Loaded view from {}", path.display()),
+                                    None => tr!(export_loaded_view, path = path.display().to_string()),
                                     Some(n) => {
-                                        format!("Loaded view from {} — {n}", path.display())
+                                        tr!(export_loaded_view_note, path = path.display().to_string(), note = n)
                                     }
                                 },
                                 ctx,
@@ -1296,11 +1296,11 @@ impl FractadyneApp {
                         }
                     }
                     Ok(None) => self.set_toast(
-                        "That file has no embedded Fractadyne view metadata.".to_string(),
+                        tr!(export_no_metadata),
                         ctx,
                     ),
                     Err(e) => {
-                        self.set_toast(format!("Couldn't read {}: {e}", path.display()), ctx)
+                        self.set_toast(tr!(export_read_failed, path = path.display().to_string(), error = e.to_string()), ctx)
                     }
                 }
             }
@@ -1345,7 +1345,7 @@ impl FractadyneApp {
             .add_filter(ext.to_uppercase(), &[ext])
             .save_file();
         let Some(path) = path else {
-            self.export.status = Some("Export canceled.".to_string());
+            self.export.status = Some(tr!(export_canceled));
             return;
         };
         self.start_export_to(ctx, device, queue, path);
@@ -1357,7 +1357,7 @@ impl FractadyneApp {
     /// not open; a synchronous one toasts its result.
     pub(crate) fn quick_export(&mut self, ctx: &egui::Context, device: eframe::wgpu::Device, queue: eframe::wgpu::Queue) {
         if self.export.task.is_some() || self.export.prep.is_some() {
-            self.set_toast("An export is already running — File → Export image… shows its progress.", ctx);
+            self.set_toast(tr!(export_already_running), ctx);
             return;
         }
         let dir = self
@@ -1368,10 +1368,9 @@ impl FractadyneApp {
         let path = dir.join(self.export_default_name());
         self.start_export_to(ctx, device, queue, path);
         let msg = if self.export.task.is_some() || self.export.prep.is_some() {
-            format!(
-                "Snapshot: rendering {}×{} in the background — File → Export image… shows progress and can cancel it.",
-                self.export.width.max(1),
-                self.export_height()
+            tr!(
+                export_snapshot_background,
+                size = format!("{}×{}", self.export.width.max(1), self.export_height())
             )
         } else {
             self.export.status.clone().unwrap_or_default()
@@ -1391,7 +1390,7 @@ impl FractadyneApp {
                 if let Some((dev, q)) = self.gpu.clone() {
                     self.quick_export(ctx, dev, q);
                 } else {
-                    self.set_toast("GPU not available", ctx);
+                    self.set_toast(tr!(export_no_gpu), ctx);
                 }
             }
         }
@@ -1447,17 +1446,21 @@ impl FractadyneApp {
                 let _ = std::fs::create_dir_all(parent);
             }
             let meta = self.view_metadata();
-            let msg = match fractadyne_export::write_png_rgba8(&path, cw, chh, &rgba, Some(&meta)) {
+            // The breadcrumb stays English (it goes into a crash report); the notice is translated.
+            let (crumb, msg) = match fractadyne_export::write_png_rgba8(&path, cw, chh, &rgba, Some(&meta)) {
                 Ok(()) => {
                     self.remember_dir(&path);
                     if let Some(parent) = path.parent() {
                         self.export.last_dir = Some(parent.to_path_buf());
                     }
-                    format!("Saved screen snapshot {cw}×{chh} → {}", path.display())
+                    (
+                        format!("Saved screen snapshot {cw}×{chh} → {}", path.display()),
+                        tr!(export_snapshot_saved, size = format!("{cw}×{chh}"), path = path.display().to_string()),
+                    )
                 }
-                Err(e) => format!("Snapshot failed: {e}"),
+                Err(e) => (format!("Snapshot failed: {e}"), tr!(export_snapshot_failed, error = e.to_string())),
             };
-            crate::diag::breadcrumb(msg.clone());
+            crate::diag::breadcrumb(crumb);
             self.export.status = Some(msg.clone());
             self.set_toast(msg, ctx);
             return;
@@ -1862,7 +1865,7 @@ impl FractadyneApp {
         path: &std::path::Path,
         job: &ExportJob,
         hud: Option<&crate::scripting::HudOverlay>,
-    ) -> Option<String> {
+    ) -> Option<Result<String, String>> {
         let meta = self.view_metadata();
         let correct = |vp: &fractadyne_core::Viewport, julia: bool, req: &fractadyne_gpu::ExportRequest| {
             let budget = crate::render::CorrectionBudget::standard();
@@ -1883,20 +1886,26 @@ impl FractadyneApp {
             }
         };
         let status = |res: Result<(), fractadyne_export::ExportError>, ok: String| match res {
-            Ok(_) => ok,
-            Err(e) => format!("Export failed: {e}"),
+            Ok(_) => Ok(ok),
+            Err(e) => Err(tr!(export_failed, error = e.to_string())),
         };
         match job {
             ExportJob::Single(req) => {
                 let r = correct(&self.viewport, self.julia_mode, req)?;
                 let (w, h) = (r.width, r.height);
-                Some(status(write(path, w, h, r.pixels), format!("Saved {w}×{h} (glitch-corrected) → {}", path.display())))
+                Some(status(
+                    write(path, w, h, r.pixels),
+                    tr!(export_saved_corrected, size = format!("{w}×{h}"), path = path.display().to_string()),
+                ))
             }
             ExportJob::SideBySide(a, b) => {
                 let ra = correct(&self.viewport, false, a)?;
                 let rb = correct(&self.julia_viewport, true, b)?;
                 let (w, h, px) = stitch_side_by_side(&ra, &rb);
-                Some(status(write(path, w, h, px), format!("Saved {w}×{h} (glitch-corrected) → {}", path.display())))
+                Some(status(
+                    write(path, w, h, px),
+                    tr!(export_saved_corrected, size = format!("{w}×{h}"), path = path.display().to_string()),
+                ))
             }
             ExportJob::Separate(a, b) => {
                 let ra = correct(&self.viewport, false, a)?;
@@ -1904,7 +1913,7 @@ impl FractadyneApp {
                 let (pmap, pjul) = separate_paths(path);
                 let w1 = write(&pmap, ra.width, ra.height, ra.pixels);
                 let w2 = write(&pjul, rb.width, rb.height, rb.pixels);
-                Some(status(w1.and(w2), format!("Saved 2 files (glitch-corrected) → {}", pmap.display())))
+                Some(status(w1.and(w2), tr!(export_saved_two_corrected, path = pmap.display().to_string())))
             }
         }
     }
@@ -1925,8 +1934,7 @@ impl FractadyneApp {
         // display pass, which the export path does not have yet (design/automata.md, phase 2).
         // Refused in words rather than rendered as some formula under Life's name.
         if !self.fractal.is_escape_time() && self.fractal != FractalKind::LSystem {
-            let msg = "Image export of a Life view is not available yet — use a screenshot, or File ▸ Save Life pattern.";
-            self.set_toast(msg.to_string(), ctx);
+            self.set_toast(tr!(export_life_unavailable), ctx);
             return;
         }
         // Start the export clock now — for a deep export this includes the (long) off-thread
@@ -1981,12 +1989,9 @@ impl FractadyneApp {
                     path,
                 });
                 self.export.status = Some(if heavy {
-                    format!(
-                        "Large export ({ew}×{eh}, {ess}× supersampling, {eiter} iterations) — \
-                         rendering in the background; glitch correction is skipped for exports this size…"
-                    )
+                    tr!(export_large, size = format!("{ew}×{eh}"), ss = ess, iterations = eiter)
                 } else {
-                    "Preparing deep export — building reference (this can take a while)…".to_string()
+                    tr!(export_preparing_deep)
                 });
                 return;
             }
@@ -2031,12 +2036,15 @@ impl FractadyneApp {
 
     /// Finalize an export status line: on success append the total elapsed time; either way clear
     /// the timer. Cancel/failure messages pass through unchanged (no time — the run didn't finish).
-    pub(crate) fn finish_export_status(&mut self, msg: String) -> String {
+    pub(crate) fn finish_export_status(&mut self, outcome: Result<String, String>) -> String {
         // ⭐⭐Every finished export funnels through here — both the synchronous glitch-corrected
         // path and the background worker — which is why the "open when done" hook lives here and
         // not at the two call sites.
         let dest = self.export.dest.take();
-        let ok = msg.starts_with("Saved");
+        // ⚠Success is the outcome's, never read from the wording: the wording is translated, and a
+        // message in another language does not start with "Saved".
+        let ok = outcome.is_ok();
+        let msg = outcome.unwrap_or_else(|e| e);
         // ⚠Never during the scripted UI walk, which exports for real — the same exemption the
         // finish tone carries, and for the same reason: a gate must not spray the machine with
         // viewer windows.
@@ -2049,7 +2057,7 @@ impl FractadyneApp {
             }
         }
         match self.export.started.take() {
-            Some(t) if ok => format!("{msg}  (in {})", Self::fmt_export_duration(t.elapsed())),
+            Some(t) if ok => format!("{msg}  {}", tr!(export_elapsed, duration = Self::fmt_export_duration(t.elapsed()))),
             _ => msg,
         }
     }
@@ -2077,12 +2085,12 @@ impl FractadyneApp {
         let wm = self.watermark.then(|| self.watermark_overlay.clone()).flatten();
         let (tx, rx) = std::sync::mpsc::channel();
         self.export.task = Some(rx);
-        self.export.status = Some("Rendering…".to_string());
+        self.export.status = Some(tr!(export_rendering));
         crate::diag::breadcrumb(format!("GUI L-system export → {}", path.display()));
         std::thread::spawn(move || {
             let msg = match job.render(&device, &queue, &progress, &cancel) {
-                Err(_) if cancel.load(Relaxed) => "Export canceled.".to_string(),
-                Err(e) => format!("Export failed: {e}"),
+                Err(_) if cancel.load(Relaxed) => Err(tr!(export_canceled)),
+                Err(e) => Err(tr!(export_failed, error = e.to_string())),
                 Ok(mut r) => {
                     progress.store(2000, Relaxed);
                     if let Some(ov) = &wm {
@@ -2096,8 +2104,15 @@ impl FractadyneApp {
                         ExportFormat::Exr => fractadyne_export::write_exr(&path, r.width, r.height, &r.pixels, Some(&meta)),
                     };
                     match written {
-                        Ok(()) => format!("Saved {}×{}{} → {}", r.width, r.height, lsystem_export_note(r.stopped), path.display()),
-                        Err(e) => format!("Export failed: {e}"),
+                        Ok(()) => {
+                            let (size, path) = (format!("{}×{}", r.width, r.height), path.display().to_string());
+                            Ok(if r.stopped {
+                                tr!(export_saved_incomplete, size = size, segments = crate::lsystem_view::BUDGET, path = path)
+                            } else {
+                                tr!(export_saved, size = size, path = path)
+                            })
+                        }
+                        Err(e) => Err(tr!(export_failed, error = e.to_string())),
                     }
                 }
             };
@@ -2126,7 +2141,7 @@ impl FractadyneApp {
         let window_name = self.gpu_name.clone();
         let (tx, rx) = std::sync::mpsc::channel();
         self.export.task = Some(rx);
-        self.export.status = Some("Rendering…".to_string());
+        self.export.status = Some(tr!(export_rendering));
         crate::diag::breadcrumb(format!("GUI export → {}", path.display()));
         std::thread::spawn(move || {
             let extra = window.as_ref().map(crate::gpu_worker::open_other_cards).unwrap_or_default();
@@ -2157,7 +2172,7 @@ impl FractadyneApp {
                         progress.store(2000, Relaxed);
                         let (rw, rh) = (r.width, r.height);
                         write(&path, rw, rh, r.pixels)?;
-                        Ok(format!("Saved {}×{} → {}", rw, rh, path.display()))
+                        Ok(tr!(export_saved, size = format!("{rw}×{rh}"), path = path.display().to_string()))
                     }
                     ExportJob::SideBySide(a, b) => {
                         let ra = render(&a)?;
@@ -2165,7 +2180,7 @@ impl FractadyneApp {
                         progress.store(2000, Relaxed);
                         let (w, h, px) = stitch_side_by_side(&ra, &rb);
                         write(&path, w, h, px)?;
-                        Ok(format!("Saved {w}×{h} → {}", path.display()))
+                        Ok(tr!(export_saved, size = format!("{w}×{h}"), path = path.display().to_string()))
                     }
                     ExportJob::Separate(a, b) => {
                         let (pmap, pjul) = separate_paths(&path);
@@ -2174,16 +2189,14 @@ impl FractadyneApp {
                         let rb = render(&b)?;
                         progress.store(2000, Relaxed);
                         write(&pjul, rb.width, rb.height, rb.pixels)?;
-                        Ok(format!("Saved 2 files → {}", pmap.display()))
+                        Ok(tr!(export_saved_two, path = pmap.display().to_string()))
                     }
                 }
             })();
             let _ = tx.send(match msg {
-                Ok(m) => m,
-                Err(crate::error::AppError::Gpu(fractadyne_gpu::GpuError::Canceled)) => {
-                    "Export canceled.".to_string()
-                }
-                Err(e) => format!("Export failed: {e}"),
+                Ok(m) => Ok(m),
+                Err(crate::error::AppError::Gpu(fractadyne_gpu::GpuError::Canceled)) => Err(tr!(export_canceled)),
+                Err(e) => Err(tr!(export_failed, error = e.to_string())),
             });
         });
     }
@@ -2197,7 +2210,8 @@ pub(crate) fn correction_applies(setting: bool, formula_id: u32, julia: bool) ->
     setting && (julia || fractadyne_core::formula::caps(formula_id).export_glitch_correction)
 }
 
-/// What an L-system export's status adds when its walk stopped at the segment budget.
+/// What an L-system export's command-line line adds when its walk stopped at the segment budget
+/// (English, like all command-line output; the window's notice is `export-saved-incomplete`).
 fn lsystem_export_note(stopped: bool) -> &'static str {
     if stopped {
         " (incomplete: past the 4,000,000-segment budget — lower the order)"

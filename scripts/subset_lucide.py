@@ -52,6 +52,7 @@ ICONS = [
     ("PICK",        "pipette",      "gradient editor: eyedropper, and the picking cursor"),
     ("VIEW_BAR",    "rectangle-horizontal", "gradient editor: bar view"),
     ("VIEW_RING",   "circle",       "gradient editor: ring view"),
+    ("LANGUAGES",   "languages",    "top bar: the language menu, always visible (design/multilingual.md)"),
 ]
 
 info = json.load(io.open(os.path.join(TMP, "info.json"), encoding="utf-8"))

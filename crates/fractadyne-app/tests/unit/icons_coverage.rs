@@ -19,6 +19,9 @@ const FONTS: &[(&str, &[u8])] = &[
     ("NotoEmoji", epaint_default_fonts::NOTO_EMOJI_REGULAR),
     ("emoji-icon-font", epaint_default_fonts::EMOJI_ICON),
     ("Hack", epaint_default_fonts::HACK_REGULAR),
+    // The language menu's own names of Japanese and Chinese (`scripts/subset_names_font.py`).
+    ("NamesJP", include_bytes!(concat!(env!("CARGO_MANIFEST_DIR"), "/assets/fonts/NamesJP.otf"))),
+    ("NamesSC", include_bytes!(concat!(env!("CARGO_MANIFEST_DIR"), "/assets/fonts/NamesSC.otf"))),
 ];
 
 /// `include_str!` rather than a directory walk, so this works from any working directory and
@@ -41,6 +44,11 @@ const SOURCES: &[(&str, &str)] = &[
     ("main.rs", include_str!(concat!(env!("CARGO_MANIFEST_DIR"), "/src/main.rs"))),
 ];
 
+/// The interface's text itself (design/multilingual.md): most of what the windows draw is here,
+/// not in the sources above. Every line but a comment is text, so every line is scanned.
+const LANGUAGE_FILES: &[(&str, &str)] =
+    &[("i18n/en/fractadyne.ftl", include_str!(concat!(env!("CARGO_MANIFEST_DIR"), "/../../i18n/en/fractadyne.ftl")))];
+
 fn covered() -> BTreeSet<u32> {
     let mut set = BTreeSet::new();
     for (name, bytes) in FONTS {
@@ -62,15 +70,24 @@ fn covered() -> BTreeSet<u32> {
 fn used() -> Vec<(u32, &'static str, usize)> {
     let mut out = Vec::new();
     let mut seen = BTreeSet::new();
+    let mut scan = |file: &'static str, n: usize, line: &str| {
+        for ch in line.chars().filter(|c| !c.is_ascii()) {
+            if seen.insert(ch as u32) {
+                out.push((ch as u32, file, n + 1));
+            }
+        }
+    };
     for (file, src) in SOURCES {
         for (n, line) in src.lines().enumerate() {
-            if line.trim_start().starts_with("//") || !line.contains('"') {
-                continue;
+            if !line.trim_start().starts_with("//") && line.contains('"') {
+                scan(file, n, line);
             }
-            for ch in line.chars().filter(|c| !c.is_ascii()) {
-                if seen.insert(ch as u32) {
-                    out.push((ch as u32, *file, n + 1));
-                }
+        }
+    }
+    for (file, src) in LANGUAGE_FILES {
+        for (n, line) in src.lines().enumerate() {
+            if !line.starts_with('#') {
+                scan(file, n, line);
             }
         }
     }
@@ -120,4 +137,55 @@ fn the_coverage_check_can_actually_fail() {
     // in the UI and the test above would still pass.
     let helm = crate::icons::AUTOPILOT.chars().next().unwrap() as u32;
     assert!(have.contains(&helm), "the Lucide subset is missing (U+{helm:04X})");
+}
+
+/// Han, kana and the full-width forms: what a Japanese or Chinese interface draws with the system's
+/// font for its language (`i18n::fonts`), which no bundled font provides.
+fn drawn_by_a_system_font(c: char) -> bool {
+    matches!(c as u32, 0x2E80..=0x2FDF | 0x3000..=0x30FF | 0x3100..=0x312F | 0x31F0..=0x31FF | 0x3200..=0x9FFF | 0xF900..=0xFAFF | 0xFE30..=0xFE4F | 0xFF00..=0xFFEF | 0x20000..=0x3134F)
+}
+
+/// Every language file shipped beside the English one draws with the fonts its script has: the
+/// bundled fonts for every character, except that a Japanese or Chinese file's Han, kana and
+/// full-width characters come from the system's font for it. Its own name, though, must be in the
+/// bundled names fonts: the language menu shows it in every interface language. Read at test time,
+/// so a new file is checked without a change here.
+#[test]
+fn every_language_file_draws_with_the_fonts_its_script_has() {
+    let have = covered();
+    let dir = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../../i18n");
+    let mut missing = Vec::new();
+    let mut files = 0;
+    for entry in std::fs::read_dir(&dir).expect("i18n/").flatten() {
+        let tag = entry.file_name().to_string_lossy().into_owned();
+        let path = entry.path().join("fractadyne.ftl");
+        if tag == "en" || !path.is_file() {
+            continue;
+        }
+        files += 1;
+        let text = std::fs::read_to_string(&path).expect("UTF-8");
+        let script = text.lines().find_map(|l| l.strip_prefix("language-script")).and_then(|v| v.split('=').nth(1)).map(str::trim).unwrap_or("Latn").to_owned();
+        let system = matches!(script.as_str(), "Jpan" | "Hans");
+        for (n, line) in text.lines().enumerate() {
+            if line.starts_with('#') {
+                continue;
+            }
+            let own_name = line.starts_with("language-name");
+            for c in line.chars().filter(|c| !c.is_ascii()) {
+                if system && !own_name && drawn_by_a_system_font(c) {
+                    continue;
+                }
+                if !have.contains(&(c as u32)) {
+                    missing.push(format!("  U+{:04X} {c:?} at i18n/{tag}/fractadyne.ftl:{}", c as u32, n + 1));
+                }
+            }
+        }
+    }
+    missing.dedup();
+    assert!(
+        missing.is_empty(),
+        "{} character(s) in {files} language file(s) that no font of their script can draw:\n{}",
+        missing.len(),
+        missing.join("\n")
+    );
 }

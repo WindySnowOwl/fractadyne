@@ -222,7 +222,12 @@ fn generate_entries() -> Vec<MisiEntry> {
                             continue;
                         }
                         entries.push(MisiEntry {
-                            name: format!("({},{}) at {fx:.4}{fy:+.4}i", ckp.0, ckp.1),
+                            // In the language in use when the gallery is built (once a session).
+                            name: tr!(
+                                misi_entry_name,
+                                kind = format!("({},{})", ckp.0, ckp.1),
+                                point = format!("{fx:.4}{fy:+.4}i"),
+                            ),
                             kp: ckp,
                             cx: cxs.clone(),
                             cy: cys.clone(),
@@ -332,28 +337,27 @@ impl crate::FractadyneApp {
                             self.render_cfg.auto_iter,
                         )
                         .map(|(have, typical)| {
-                            format!(
-                                " ⚠ Iterations is fixed at {have}; this depth typically needs \
-                                 ~{typical} — raise it (or enable auto-iterations) if the view \
-                                 renders flat."
-                            )
+                            format!(" ⚠ {}", tr!(misi_iter_note, have = have, typical = typical))
                         })
                         .unwrap_or_default();
                         self.set_toast(
                             format!(
-                                "Zoomed to {} — {}× ({:.1}s){iter_note}",
-                                j.label,
-                                crate::fmt_zoom_field(j.target_l2),
-                                j.started.elapsed().as_secs_f64()
+                                "{}{iter_note}",
+                                tr!(
+                                    misi_zoomed,
+                                    name = &j.label,
+                                    zoom = crate::fmt_zoom_field(j.target_l2),
+                                    seconds = crate::i18n::decimal(j.started.elapsed().as_secs_f64(), 1),
+                                )
                             ),
                             ctx,
                         );
                     }
                     Err(why) => {
-                        self.misi.msg = Some(format!(
-                            "The deep solve did not land on {}: {why:?}. The stored point is \
-                             still exact at its own depth — try a shallower target.",
-                            j.label
+                        self.misi.msg = Some(tr!(
+                            misi_solve_missed,
+                            name = &j.label,
+                            why = format!("{why:?}"),
                         ));
                     }
                 }
@@ -452,35 +456,35 @@ impl crate::FractadyneApp {
         let mut clicked: Option<usize> = None;
         let mut do_jump = false;
         let mut cancel_jump = false;
-        egui::Window::new("Misiurewicz explorer")
+        egui::Window::new(tr!(misi_title))
+            .id(egui::Id::new("fractadyne.misiurewicz_explorer"))
             .open(&mut open)
             .default_width(620.0)
             .default_height(460.0)
             .resizable(true)
             .show(ctx, |ui| {
                 if !self.fractal.caps().feature_solvers {
-                    ui.label("Misiurewicz browsing is Mandelbrot-only — switch the fractal to use it.");
+                    ui.label(tr!(misi_mandelbrot_only));
                     return;
                 }
                 ui.horizontal(|ui| {
                     if self.misi.gen_rx.is_some() {
                         ui.add(egui::Spinner::new().size(14.0));
                         ui.label(
-                            egui::RichText::new(format!(
-                                "Solving the small-type families ({:.0}s)…",
-                                self.misi.gen_started.map_or(0.0, |t| t.elapsed().as_secs_f64())
+                            egui::RichText::new(tr!(
+                                misi_solving,
+                                seconds = crate::i18n::decimal(self.misi.gen_started.map_or(0.0, |t| t.elapsed().as_secs_f64()), 0),
                             ))
                             .weak(),
                         );
                     } else {
                         let gen = self.misi.entries.iter().filter(|e| !e.curated).count();
                         ui.label(
-                            egui::RichText::new(format!(
-                                "{} points — {} curated, {gen} found by a seeded Newton sweep of \
-                                 the small types (upper half-plane; a coarse grid finds most \
-                                 basins, not provably all).",
-                                self.misi.entries.len(),
-                                self.misi.entries.iter().filter(|e| e.curated).count(),
+                            egui::RichText::new(tr!(
+                                misi_summary,
+                                total = self.misi.entries.len(),
+                                curated = self.misi.entries.iter().filter(|e| e.curated).count(),
+                                found = gen,
                             ))
                             .weak()
                             .small(),
@@ -537,9 +541,11 @@ impl crate::FractadyneApp {
                                     );
                                     ui.label(
                                         egui::RichText::new(match e.mult {
-                                            Some((l2, deg)) => format!(
-                                                "({},{}) · {l2:.2} oct/repeat · {deg:+.1}°",
-                                                e.kp.0, e.kp.1
+                                            Some((l2, deg)) => tr!(
+                                                misi_entry_readout,
+                                                kind = format!("({},{})", e.kp.0, e.kp.1),
+                                                octaves = crate::i18n::decimal(l2, 2),
+                                                twist = crate::i18n::decimal_signed(deg, 1),
                                             ),
                                             None => format!("({},{})", e.kp.0, e.kp.1),
                                         })
@@ -558,7 +564,7 @@ impl crate::FractadyneApp {
                         ui.horizontal(|ui| {
                             ui.label(egui::RichText::new(&e.name).strong());
                             ui.add_space(10.0);
-                            ui.label("Zoom to");
+                            ui.label(tr!(misi_zoom_to));
                             ui.add(
                                 egui::TextEdit::singleline(&mut self.misi.zoom)
                                     .desired_width(90.0)
@@ -576,16 +582,11 @@ impl crate::FractadyneApp {
                                     .weak()
                                     .monospace(),
                                 );
-                                if crate::theme::cancel_button(ui, "Cancel").clicked() {
+                                if crate::theme::cancel_button(ui, &tr!(misi_cancel)).clicked() {
                                     cancel_jump = true;
                                 }
-                            } else if crate::theme::confirm_button(ui, "Solve & jump")
-                                .on_hover_text(
-                                    "Newton-solve this exact point to the precision the asked \
-                                     depth needs (from its stored coordinate as the seed), then \
-                                     jump straight there. Deep asks take longer — the solve is \
-                                     arbitrary-precision.",
-                                )
+                            } else if crate::theme::confirm_button(ui, &tr!(misi_solve_jump))
+                                .on_hover_text(tr!(misi_solve_jump_hover))
                                 .clicked()
                             {
                                 do_jump = true;
@@ -593,16 +594,7 @@ impl crate::FractadyneApp {
                         });
                     }
                     None => {
-                        ui.label(
-                            egui::RichText::new(
-                                "Select a point, name a depth, and jump — the multiplier line \
-                                 under each thumbnail is what a dive there will look like: how \
-                                 many octaves before the view repeats, and how far it twists \
-                                 per repeat.",
-                            )
-                            .weak()
-                            .small(),
-                        );
+                        ui.label(egui::RichText::new(tr!(misi_select_hint)).weak().small());
                     }
                 }
                 if let Some(m) = &self.misi.msg {
@@ -618,7 +610,7 @@ impl crate::FractadyneApp {
         }
         if cancel_jump {
             self.misi.jump = None;
-            self.misi.msg = Some("Solve cancelled.".into());
+            self.misi.msg = Some(tr!(misi_cancelled));
         }
         self.misi.open = open && self.misi.open;
     }
@@ -635,15 +627,12 @@ impl crate::FractadyneApp {
         };
         let Some(target_l2) = crate::parse_zoom_to_log2(&self.misi.zoom).filter(|t| t.is_finite())
         else {
-            self.misi.msg = Some(format!(
-                "Cannot read \"{}\" as a magnification (write 1e50, 3.2e120, …).",
-                self.misi.zoom
-            ));
+            self.misi.msg = Some(tr!(misi_bad_zoom, text = &self.misi.zoom));
             return;
         };
         let target_l2 = target_l2.min(crate::MAX_SOLVE_OCTAVES);
         if e.kp.0 == 0 {
-            self.misi.msg = Some("This entry has no detected (k,p) to solve with.".into());
+            self.misi.msg = Some(tr!(misi_no_kp));
             return;
         }
         let prec = fractadyne_core::precision_for_octaves(target_l2.max(1.0).ceil() as u64) as usize;
@@ -651,7 +640,7 @@ impl crate::FractadyneApp {
             fractadyne_core::parse_bf_prec(&e.cx, prec),
             fractadyne_core::parse_bf_prec(&e.cy, prec),
         ) else {
-            self.misi.msg = Some("Stored coordinate failed to parse.".into());
+            self.misi.msg = Some(tr!(misi_parse_failed));
             return;
         };
         let (k, p) = e.kp;

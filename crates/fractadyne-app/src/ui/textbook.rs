@@ -83,6 +83,7 @@ pub(crate) fn specimen() -> Vec<Vec<Node>> {
 
 /// A window showing [`specimen`] (the uitest opens it; nothing in the app does).
 pub(crate) fn specimen_window(ctx: &egui::Context, open: &mut bool) {
+    // i18n: keep (only the UI test opens it)
     egui::Window::new("Textbook specimen").open(open).default_pos([40.0, 60.0]).show(ctx, |ui| {
         let laid = layout::rows(&specimen(), &Ctx { size_pt: 20.0, ppp: ctx.pixels_per_point() });
         let (rect, _) = ui.allocate_exact_size(laid.size + egui::vec2(16.0, 16.0), egui::Sense::hover());

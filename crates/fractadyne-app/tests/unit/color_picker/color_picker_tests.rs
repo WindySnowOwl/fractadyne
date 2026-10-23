@@ -4,17 +4,19 @@
 //! drag-driven in this app does. What does not is the naming the user reads and the HSV round trip
 //! the two of them ride on.
 
-use super::ROW_LABELS;
+use super::row_labels;
 use fractadyne_color::segment::{hsv_to_rgb, rgb_to_hsv};
 
 /// ⭐⭐**The whole reason this picker exists.** egui's stock one labels its two numeric modes `U8`
 /// and `F` — the internal names for "gamma byte" and "linear float" — which are precise and mean
 /// nothing to someone who has not read egui's source. These names have to say what the numbers
 /// ARE, and a test is the only thing that stops them drifting back toward jargon.
+/// (In English: "Hex" comes from the English file, the language tests run in.)
 #[test]
 fn the_row_labels_are_in_the_users_vocabulary_not_the_implementations() {
-    assert_eq!(ROW_LABELS, ["0–255", "0–1", "Hex"]);
-    for l in ROW_LABELS {
+    let labels = row_labels();
+    assert_eq!(labels, ["0–255", "0–1", "Hex"]);
+    for l in &labels {
         assert!(!l.is_empty());
         // ⛔The specific jargon that was replaced, plus the family it came from.
         for banned in ["U8", "u8", "F32", "f32", "linear", "gamma", "sRGB"] {
@@ -22,7 +24,7 @@ fn the_row_labels_are_in_the_users_vocabulary_not_the_implementations() {
         }
     }
     // ⭐All three are on screen at once — there is no mode to be in the wrong one of.
-    assert_eq!(ROW_LABELS.len(), 3);
+    assert_eq!(labels.len(), 3);
 }
 
 /// The square and the strip both round-trip through HSV, so a colour dragged and left alone has to

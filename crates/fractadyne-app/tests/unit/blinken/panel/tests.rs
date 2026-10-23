@@ -34,8 +34,54 @@ fn every_lamp_on_the_bank_has_its_key_in_order() {
     let keys: Vec<&str> = LAMP_SPECS.iter().map(|l| l.key).collect();
     assert_eq!(keys, LAMP_KEYS);
     for (i, spec) in LAMP_SPECS.iter().enumerate() {
-        assert_eq!(spec.lamp as usize, i, "lamp {} out of order", spec.label);
+        assert_eq!(spec.lamp as usize, i, "lamp {} out of order", spec.key);
     }
+}
+
+/// Runs `f` with a painter that has the panel's typefaces, as the app installs them.
+fn with_panel_fonts(mut f: impl FnMut(&Painter)) {
+    let ctx = egui::Context::default();
+    let mut fonts = egui::FontDefinitions::default();
+    paint::install_fonts(&mut fonts);
+    ctx.set_fonts(fonts);
+    let raw = || egui::RawInput { screen_rect: Some(Rect::from_min_size(Pos2::ZERO, vec2(400.0, 300.0))), ..Default::default() };
+    // The fonts take effect on the next frame.
+    let _ = ctx.run(raw(), |_| {});
+    let _ = ctx.run(raw(), |ctx| f(&ctx.layer_painter(egui::LayerId::background())));
+}
+
+#[test]
+fn the_english_lamp_labels_break_as_they_always_did_and_a_long_translation_fits_its_cell() {
+    with_panel_fonts(|p| {
+        // Measured rather than reckoned from the letter count, the English labels keep their look:
+        // only REF AHEAD goes on two lines, and none is drawn smaller.
+        for spec in LAMP_SPECS.iter() {
+            let label = lamp_label(spec.lamp);
+            let (lines, k) = lamp_label_lines(p, &label);
+            let want: Vec<String> = if spec.lamp == Lamp::RefAhead { vec!["REF".into(), "AHEAD".into()] } else { vec![label.clone()] };
+            assert_eq!(lines, want, "{label}");
+            assert_eq!(k, 1.0, "{label} drawn smaller");
+        }
+        // A longer label breaks at the space that keeps its longer line shortest...
+        assert_eq!(lamp_label_lines(p, "REF EN AVANCE").0, ["REF EN", "AVANCE"]);
+        // ...and a word wider than the cell is drawn smaller, not over its neighbours.
+        let (lines, k) = lamp_label_lines(p, "ÜBERSCHREIBUNGEN");
+        assert_eq!(lines.len(), 1);
+        assert!((0.6..1.0).contains(&k), "{k}");
+    });
+}
+
+#[test]
+fn a_title_wider_than_its_room_is_drawn_smaller_and_an_english_one_is_not() {
+    with_panel_fonts(|p| {
+        let at = Pos2::ZERO;
+        let full = title_rect(p, at, 1.0, "PICTURE AGE", f32::INFINITY);
+        assert_eq!(title_rect(p, at, 1.0, "PICTURE AGE", 220.0), full, "the age meter's title fits its face");
+        // Type is set in whole pixels: the scale is measured and stepped down until the title fits.
+        let room = full.width() * 0.8;
+        let squeezed = title_rect(p, at, 1.0, "PICTURE AGE", room);
+        assert!(squeezed.width() <= room && squeezed.width() > full.width() * 0.6, "{squeezed:?} in {room} vs {full:?}");
+    });
 }
 
 #[test]
