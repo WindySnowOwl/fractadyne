@@ -20,8 +20,9 @@ no message set aside:
 - `length`: longer than four times the English plus 64 characters (set aside: a guard against a
   file that floods a window).
 - `url`: an address in a message (set aside: a language file must not carry links).
-- `character`: a control character, a byte-order mark, a carriage return, or a bidirectional
-  control (U+202A-202E, U+2066-2069), all of which the app removes.
+- `character`: a control character, a byte-order mark, a carriage return inside a line, or a
+  bidirectional control (U+202A-202E, U+2066-2069), all of which the app removes. A CRLF line ending
+  is fine: git on Windows checks the files out that way.
 - `data`: the language-data messages (language-name, language-english-name, language-script,
   number-decimal, number-group, language-status) are present and well formed.
 - `empty`: a message with no text.
@@ -47,10 +48,17 @@ PLURALS = {
     'ja': {'other'},
     'zh': {'other'},
     'km': {'other'},
+    'pt': {'one', 'other'},
+    'it': {'one', 'other'},
+    'tr': {'one', 'other'},
+    'ru': {'one', 'few', 'many', 'other'},
+    'pl': {'one', 'few', 'many', 'other'},
+    'ko': {'other'},
+    'id': {'other'},
 }
 ALL_PLURALS = {'zero', 'one', 'two', 'few', 'many', 'other'}
 DATA = ['language-name', 'language-english-name', 'language-script', 'number-decimal', 'number-group', 'language-status']
-SCRIPTS = {'Latn', 'Cyrl', 'Jpan', 'Hans', 'Hant', 'Khmr', 'Grek', 'Arab', 'Hebr'}
+SCRIPTS = {'Latn', 'Cyrl', 'Jpan', 'Hans', 'Hant', 'Kore', 'Khmr', 'Grek', 'Arab', 'Hebr'}
 BAD_CHARS = re.compile('[\u0000-\u0008\u000b\u000c\u000e-\u001f\u007f‎‏‪-‮⁦-⁩﻿\r]')
 URL = re.compile(r'(?i)\b(?:https?://|www\.)')
 
@@ -180,7 +188,9 @@ def check_file(path, eng, eng_plural_vars, quiet=False):
     tag = os.path.basename(os.path.dirname(path))
     lang = tag.split('-')[0]
     for n, line in enumerate(raw.split('\n'), 1):
-        for c in BAD_CHARS.findall(line):
+        # A CRLF line ending is how git checks the files out on Windows (`core.autocrlf`): only a
+        # carriage return inside a line is a fault.
+        for c in BAD_CHARS.findall(line.removesuffix('\r')):
             errors.append((n, 'character', f'U+{ord(c):04X} (the app removes it)'))
     text = raw.replace('\r\n', '\n')
     msgs = parse(text, rel, errors)
@@ -280,6 +290,7 @@ plain = Plain text
         'url': 'plain = See https://example.com\n',
         'length': 'plain = ' + 'x' * 200 + '\n',
         'character': 'plain = Te‮xt\n',
+        'character/cr': 'plain = Te\rxt\n',
         'empty': 'plain = { "" }\n',
     }
     import tempfile
@@ -299,7 +310,7 @@ plain = Plain text
             _, _, n_err, _ = check_file(p, eng, pv)
         finally:
             sys.stdout = old
-        hit = f'[{rule}]' in buf.getvalue() and n_err > 0
+        hit = f'[{rule.split("/")[0]}]' in buf.getvalue() and n_err > 0
         if rule == 'empty':
             hit = n_err > 0
         if not hit:
@@ -307,7 +318,8 @@ plain = Plain text
             ok = False
     good = 'things =\n    { $count ->\n        [one] Ein Ding\n       *[other] { $count } Dinge\n    }\nkind =\n    { $kind ->\n        [a] Art A\n       *[other] Andere Art\n    }\nplain = Schlichter Text\n'
     p = os.path.join(d, 'de', 'fractadyne.ftl')
-    io.open(p, 'w', encoding='utf-8', newline='\n').write('language-name = Deutsch\nlanguage-english-name = German\nlanguage-script = Latn\nnumber-decimal = ,\nnumber-group = .\nlanguage-status = draft\n' + good)
+    # Written with CRLF endings, as git checks the files out on Windows.
+    io.open(p, 'w', encoding='utf-8', newline='\r\n').write('language-name = Deutsch\nlanguage-english-name = German\nlanguage-script = Latn\nnumber-decimal = ,\nnumber-group = .\nlanguage-status = draft\n' + good)
     buf = io.StringIO()
     old = sys.stdout
     sys.stdout = buf

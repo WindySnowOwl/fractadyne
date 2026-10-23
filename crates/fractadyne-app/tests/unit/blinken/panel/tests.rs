@@ -117,6 +117,33 @@ fn a_walk_pass_caption_names_its_walk_and_its_band() {
 }
 
 #[test]
+fn the_tiles_captions_keep_their_english_size_and_a_longer_translation_shrinks_to_fit() {
+    with_panel_fonts(|p| {
+        // The tiles window at the panel's design width (`draw_row1`: 215 units).
+        let (w, s) = (215.0, 1.0);
+        let res = (2400, 1300);
+        let planes = [
+            Plane::Whole { res, band: Some((147_000, 200_000)), settled: true, glow: 1.0 },
+            Plane::Whole { res, band: None, settled: false, glow: 1.0 },
+            Plane::Ssaa { res, samples: 3, band: Some((0, 65_536)), glow: 1.0 },
+            Plane::Ssaa { res, samples: 3, band: None, glow: 1.0 },
+        ];
+        for plane in &planes {
+            let (line, left, right) = tile_labels(plane, res);
+            let (lf, pf) = tile_caption_type(p, w, s, &line, &left, &right);
+            assert_eq!((lf.size, pf.size), (10.0, 12.0), "{line} / {left} / {right} drawn smaller");
+        }
+        // Italian's pair, as the walk caught it running into each other.
+        let (left, right) = ("RIQUADRO 1920×1071", "1 RIQUADRO/FOTOGRAMMA");
+        let pair = |f: &egui::FontId| paint::tabular_width(p, left, f.clone()) + paint::tabular_width(p, right, f.clone());
+        let room = w - 12.0 * s - 10.0 * s;
+        assert!(pair(&face::narrow(12.0)) > room, "the control: at full size the pair overruns its room");
+        let (_, pf) = tile_caption_type(p, w, s, "", left, right);
+        assert!(pf.size < 12.0 && pair(&pf) <= room, "{} wide at {} in {room}", pair(&pf), pf.size);
+    });
+}
+
+#[test]
 fn the_close_button_sits_in_the_case_margin_at_every_size() {
     for size in [Size::Strip, Size::Panel, Size::Full] {
         for s in [0.35f32, 0.7, 1.0] {

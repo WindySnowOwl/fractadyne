@@ -24,10 +24,10 @@ hand. Keep this section in step with `crates/fractadyne-app/assets/fonts/`.
   1.1 (text below), unmodified. Upstream: <https://github.com/jpt/barlow>.
 * **Share Tech Mono** (the panel's nixie readouts) - SIL Open Font License 1.1 (text below),
   unmodified. Upstream: <https://fonts.google.com/specimen/Share+Tech+Mono>.
-* **Noto Sans JP** and **Noto Sans SC** (the language menu's names of Japanese and Chinese) - SIL
-  Open Font License 1.1 (text below). The bundled `NamesJP.otf` and `NamesSC.otf` are SUBSETS
-  holding only the characters of those names, produced by `scripts/subset_names_font.py` from the
-  upstream fonts; the glyphs are unmodified. Upstream: <https://github.com/notofonts/noto-cjk>.
+* **Noto Sans JP**, **SC**, **TC** and **KR** (the language menu's names of Japanese, Chinese and
+  Korean) - SIL Open Font License 1.1 (text below). The bundled `NamesJP.otf`, `NamesSC.otf`,
+  `NamesTC.otf` and `NamesKR.otf` are SUBSETS holding only the characters of those names, produced
+  by `scripts/subset_names_font.py` from the upstream fonts; the glyphs are unmodified. Upstream: <https://github.com/notofonts/noto-cjk>.
 * **Lucide** icons - ISC (text below). The bundled `Lucide.ttf` is a SUBSET containing only the
   icons the UI uses, produced by `scripts/subset_lucide.py` from the upstream font; the icon
   artwork is unmodified. Upstream: <https://lucide.dev/>.
@@ -38,14 +38,14 @@ hand. Keep this section in step with `crates/fractadyne-app/assets/fonts/`.
   Area code points, OpenType layout tables and hinting removed, renamed as the licence asks. The
   unmodified original: <https://ctan.org/pkg/lm-math>.
 
-### SIL Open Font License 1.1 - Spline Sans, Spline Sans Mono, Routed Gothic, Barlow Condensed, Share Tech Mono, Noto Sans JP, Noto Sans SC
+### SIL Open Font License 1.1 - Spline Sans, Spline Sans Mono, Routed Gothic, Barlow Condensed, Share Tech Mono, Noto Sans JP, SC, TC, KR
 
 ```
 Copyright 2021 The Spline Sans Project Authors (https://github.com/SorkinType/SplineSans)
 Copyright (c) 2017, Darren Embry (<https://webonastick.com/>), with Reserved Font Name Routed Gothic.
 Copyright 2017 The Barlow Project Authors (https://github.com/jpt/barlow)
 Copyright (c) 2012, Carrois Type Design, Ralph du Carrois (post@carrois.com www.carrois.com), with Reserved Font Name 'Share'
-Copyright 2014-2021 Adobe (http://www.adobe.com/) (Noto Sans JP, Noto Sans SC)
+Copyright 2014-2021 Adobe (http://www.adobe.com/) (Noto Sans JP, SC, TC, KR)
 
 This Font Software is licensed under the SIL Open Font License, Version 1.1.
 This license is copied below, and is also available with a FAQ at:

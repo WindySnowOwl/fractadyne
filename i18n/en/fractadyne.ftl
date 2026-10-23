@@ -152,7 +152,7 @@ menu-show-set-hover = The parameter plane — the { $name } set itself.
 menu-show-julia = Julia set
 menu-show-julia-hover = One point of the { $name } set, drawn as its own picture — the shape you get by holding that point fixed.
 
-    Pick the point by hovering the map in "Both, linked", or with Fractal ▸ Julia c.
+    Pick the point by hovering the map in "Both, linked"; a click there pins it.
 menu-show-julia-none = { $name } has no free parameter, so it has no Julia set.
 menu-show-both = Both, linked
 menu-show-both-hover = The { $name } set on the left, and on the right the Julia set of whatever point your cursor is over.
@@ -327,7 +327,7 @@ menu-help-diagnostics-hover = Check that Fractadyne works correctly on your hard
 menu-help-report = Report an issue…
 menu-help-report-hover = File a GitHub issue (or email) with a crash report, log, and location attached
 menu-help-accelerated = Faster deep zoom…
-menu-help-accelerated-hover = An optional build that computes deep-zoom reference orbits 2.5-6.4x faster. Identical images; your settings carry over.
+menu-help-accelerated-hover = An optional build that computes deep-zoom reference orbits 2.5–6.4× faster. Identical images; your settings carry over.
 menu-help-check-updates = Check for updates
 # $track: "stable" or "beta", the update track in use (the variants hold the wording).
 menu-help-check-updates-hover =
@@ -730,7 +730,7 @@ dlg-export-output = Output: { $width } × { $height } px   ({ $left } chars left
 dlg-export-extra-width = Shows { $percent }% more width than the window (nothing is cropped)
 # The same, when the export is taller than the window. $percent: how much more, as 25.
 dlg-export-extra-height = Shows { $percent }% more height than the window (nothing is cropped)
-dlg-export-tiles-note = Rendered in tiles (no size cap) on a background thread. The file embeds the view + notes so it can be reopened via File ▸ Open view.
+dlg-export-tiles-note = Rendered in tiles (no size cap) on a background thread. The file embeds the view + notes so it can be reopened with File ▸ Open view or location…
 # A label before the button that picks the folder exports go to.
 dlg-export-folder = Folder:
 dlg-export-choose = Choose…
@@ -890,7 +890,11 @@ app-gradient-nothing-to-save = No custom gradient to save yet.
 # $file: the saved file's name.
 app-gradient-ggr-saved = Saved "{ $file }" — midpoints, blend curves and colour spaces all intact.
 # $file: the saved file's name; $count: the segments whose curve could not be kept.
-app-gradient-ggr-saved-lossy = Saved "{ $file }" — but { $count } segment(s) use a Bézier curve, which the .ggr format cannot express. Those were written as straight blends; the copy in your library keeps the curves.
+app-gradient-ggr-saved-lossy =
+    { $count ->
+        [one] Saved "{ $file }" — but { $count } segment uses a Bézier curve, which the .ggr format cannot express. It was written as a straight blend; the copy in your library keeps the curve.
+       *[other] Saved "{ $file }" — but { $count } segments use a Bézier curve, which the .ggr format cannot express. Those were written as straight blends; the copy in your library keeps the curves.
+    }
 # $path: the file; $error: the system's reason (often in English).
 app-gradient-write-failed = Couldn't write { $path }: { $error }
 # $name: the gradient's name; $count: its segments.
@@ -1044,7 +1048,7 @@ app-close = Close
 
 app-accel-title = Faster deep zoom
 app-accel-active-heading = You are running the accelerated build
-app-accel-active-body = Deep-zoom reference orbits are being computed with MPFR/GMP, which is 2.5-6.4x faster than the standard build at that step - the pause before a deep view starts resolving.
+app-accel-active-body = Deep-zoom reference orbits are being computed with MPFR/GMP, which is 2.5–6.4× faster than the standard build at that step — the pause before a deep view starts resolving.
 # $status: which arithmetic library is in use and its version (in English).
 app-accel-in-use = Arithmetic in use: { $status }
 app-accel-fallback-heading = Accelerated build — using built-in arithmetic
@@ -1053,7 +1057,7 @@ app-accel-fallback-body = This is the accelerated (MPFR) build, but its math lib
 app-accel-fallback-dlls = To use the faster path, put libmpfr-6.dll and libgmp-10.dll (and libgcc_s_seh-1.dll, libwinpthread-1.dll) beside fractadyne.exe, then restart:
 app-accel-warning-hidden = The startup warning about this is hidden.
 app-accel-show-again = Show it again
-app-accel-offer-heading = An optional build is 2.5-6.4x faster at depth
+app-accel-offer-heading = An optional build is 2.5–6.4× faster at depth
 app-accel-offer-body = Deep zoom spends much of its time computing reference orbits on the CPU - the pause before a deep view starts resolving. An optional build does that with the MPFR/GMP libraries instead, which is 2.5 to 6.4 times faster, and more so the deeper you go. Everything else is the same.
 app-accel-offer-identical = The images are BYTE-IDENTICAL - it is the same mathematics computed by a faster library, checked across every fractal formula and the whole deep-zoom comparison corpus.
 app-accel-offer-shared = Your settings, saved session and locations are shared between the two, so you can switch freely and nothing needs importing.
@@ -1263,7 +1267,7 @@ help-key-shift-drag = Shift+drag
 help-nav-shift-drag = Box zoom — drag a rectangle and it zooms to fill the view.
 # $icon: the click-to-zoom toolbar button's symbol.
 help-key-click-zoom = Click-to-zoom ({ $icon })
-help-nav-click-zoom = Toggle the target button in the toolbar (single view): a left-click then dives into the point by a set factor, right-click backs out. Drag still pans; pick the factor (2–100×) under Navigation in the right panel. Backspace undoes a click.
+help-nav-click-zoom = Toggle the target button in the toolbar (single view): a left-click then dives into the point by a set factor, right-click backs out. Drag still pans; pick the factor (2–100×) under Controls ▸ Navigate. Backspace undoes a click.
 help-nav-continuous = Continuous zoom & home
 help-key-hold-space = Hold Space
 help-nav-hold-space = Smoothly zoom in, anchored at the cursor.
@@ -1315,9 +1319,9 @@ help-options-relief-text = Shades the surface from the boundary's slope (the der
 help-options-glow = Distance glow
 help-options-glow-text = Bright contour bands that densify into glowing filaments near the boundary. Glow is the blend amount, Band width the spacing, and "Animate glow" flows them.
 help-options-quality = Quality & iterations
-help-options-quality-text = Iterations is the maximum number of steps before a pixel is treated as inside the set; "Auto-scale" raises it automatically as you zoom (deeper detail needs more). Anti-alias supersamples still images (2×–8×) once the view settles, taming the fine exterior "dust".
+help-options-quality-text = Iterations is the maximum number of steps before a pixel is treated as inside the set; "Auto-scale iterations with zoom" raises it automatically as you zoom (deeper detail needs more). Anti-alias supersamples still images (2×–8×) once the view settles, taming the fine exterior "dust".
 help-options-other = Other
-help-options-other-text = Zoom speed sets the continuous-zoom rate; the FPS cap limits frame rate; Dual view shows a Mandelbrot set and its Julia set side by side (the cursor sets the Julia parameter live).
+help-options-other-text = Zoom speed sets the continuous-zoom rate; the FPS cap limits frame rate; "Both, linked" shows a Mandelbrot set and its Julia set side by side (the cursor sets the Julia parameter live).
 
 ## Help ▸ Fractals
 ## Fractal family names (Mandelbrot, Multibrot, Tricorn, Burning Ship, Celtic, Buffalo,
@@ -1338,16 +1342,16 @@ help-fractals-powers-text = Multibrot 6, 7 and 8 (z^d + c), and Burning Ship, Tr
 help-fractals-phoenix = z → z² + c + p·z(n-1), where z(n-1) is the previous iterate and p is a constant (p = -0.5). The memory term produces flame-like filaments.
 help-fractals-newton = Newton's method for the roots of z³ − 1 = 0: z → z − (z³−1)/(3z²). Rather than escape time, pixels are colored by which of the three cube roots of unity the iteration converges to (the basins of attraction) and how quickly; the tangled basin boundaries are the fractal.
 help-fractals-julia = Julia mode
-help-fractals-julia-text = For every family except Newton you can switch to a Julia set: instead of starting z at 0 with c = pixel, you fix c (a parameter) and let z start at the pixel. The Julia set is the boundary between starting points that stay bounded and those that escape, for that fixed c. In Dual view, moving the cursor over the Mandelbrot panel sets c live.
+help-fractals-julia-text = For every family except Newton you can switch to a Julia set: instead of starting z at 0 with c = pixel, you fix c (a parameter) and let z start at the pixel. The Julia set is the boundary between starting points that stay bounded and those that escape, for that fixed c. In "Both, linked", moving the cursor over the Mandelbrot panel sets c live.
 help-fractals-deep = Deep-zoom support
 help-fractals-deep-text = Mandelbrot, Multibrot 3/4/5 and Tricorn support extreme-depth (floatexp) perturbation deep zoom. Burning Ship, Celtic and Buffalo are non-analytic (they take absolute values), so they use a sign-aware perturbation; this now runs at floatexp range too, deep-zooming far past the old ~1e28× df32 limit (rare speckle near the abs folds awaits multi-reference glitch correction). Phoenix uses a two-term perturbation and also deep-zooms at floatexp range (without SA/BLA, so heavier than Mandelbrot). The higher powers deep-zoom the same way, each power's perturbation following its own chain of squarings; Multibrot 3–8 also take series approximation and BLA, as Mandelbrot does, and Tricorn, Burning Ship, Celtic and Buffalo at every power take BLA (no series), which carries a deep view's interior instead of iterating it step by step. Only Newton uses the direct path, sharp to ~1e6×; custom formulas deep-zoom unless the Custom formulas section below says otherwise.
 help-fractals-custom = Custom formulas
 help-fractals-custom-text = Fractal ▸ Custom formula… takes a formula's step in Fractint-style expressions: z = z^3 - p1*z + c, or several statements (t = sqr(z), then z = t*t + c). z is the iterate, c the pixel (the Julia constant in Julia mode), p1-p5 parameters; |z| is the squared modulus, as in Fractint, and the usual functions are available (sqr, abs, conj, real, imag, cabs, flip, recip, ident, exp, log, sqrt, sin, cos, tan, cotan, sinh, cosh, tanh, cotanh, asin, acos, atan, asinh, acosh, atanh, cosxx, and floor, ceil, trunc and round, which round each part). log is the natural logarithm, as in Fractint and in complex analysis: what many textbooks write ln (there is no base-10 logarithm). A formula written with ln, cot, coth, Re or Im does not read; the syntax check names the function to use, a button rewrites it, and typing ln offers log. Every step deep-zooms by perturbation, with the same extended-range arithmetic past 1e28x as the built-in fractals, except one with a power whose exponent varies with z or c (such as z^c): that renders on the direct path, sharp until one single-precision step of c spans a pixel, about 1e4x to 1e5x, and less deep away from the origin. The formula dialog says which applies. log, sqrt and non-integer powers take their principal values, which jump across the negative real axis. Perturbation follows the jump exactly, but a pixel whose orbit crosses where the reference's does not is carried on at about single precision from then on, so deep views whose orbits straddle a cut show noise there (measured: clean at 1e5x on the real axis for sqrt(z^4 + c), noisy for log formulas even at 1e4x). Every step is iterated in full (no series approximation), so a deep view with a high iteration count renders more slowly than a built-in fractal's. Near its boundary a formula with functions orbits chaotically, and a long orbit there is followed only loosely in single precision: at 2,000 iterations a third of sin(z) + c's pixels differ from the exact orbit's, at 60 almost none. Views, sessions and exported images keep the formula's text.
-help-fractals-custom-sections = Fractint's sections work too. Statements before a ':' are the init section, run once per pixel; a comparison as the last statement is the formula's own bailout test, iterating while it holds (|z| <= 100 && |z - 1| > 0.000001 stops an orbit that escapes or settles on 1); if (...), elseif (...), else and endif choose statements; and a variable read before it is set in a step has its value from the step before (from the init section, or 0). Comparisons compare real parts and give 1 or 0, && and || combine them, and an assignment is a value too (a = b = pixel). pixel, p1-p5, pi and e may be assigned, keeping their own value until they are; maxit is the iteration count and ismand is 1 (the formula's Mandelbrot form). A formula with any of these, or with rounding, renders on the direct path, without deep zoom. Formula library > Import reads Fractint .frm files as well. Each entry that reads becomes a formula, and its row says what the reading changed: fn1-fn4 take Fractint's defaults (sin, sqr, sinh, cosh); Fractint's variable c is renamed c_, as c is the pixel here; a name nothing sets is 0, as in Fractint; blanks inside a name are dropped (end if is endif), as Fractint drops them. The import's message counts the entries that do not read and gives the commonest reason: the screen and view variables (whitesq, scrnpix, scrnmax, center, magxmag, rotskew), lastsqr and random numbers are not supported. The Collection's Fractint classics (Magnet, Nova, Spider, Manowar and others) are written with these sections.
+help-fractals-custom-sections = Fractint's sections work too. Statements before a ':' are the init section, run once per pixel; a comparison as the last statement is the formula's own bailout test, iterating while it holds (|z| <= 100 && |z - 1| > 0.000001 stops an orbit that escapes or settles on 1); if (...), elseif (...), else and endif choose statements; and a variable read before it is set in a step has its value from the step before (from the init section, or 0). Comparisons compare real parts and give 1 or 0, && and || combine them, and an assignment is a value too (a = b = pixel). pixel, p1-p5, pi and e may be assigned, keeping their own value until they are; maxit is the iteration count and ismand is 1 (the formula's Mandelbrot form). A formula with any of these, or with rounding, renders on the direct path, without deep zoom. Formula library ▸ Import reads Fractint .frm files as well. Each entry that reads becomes a formula, and its row says what the reading changed: fn1-fn4 take Fractint's defaults (sin, sqr, sinh, cosh); Fractint's variable c is renamed c_, as c is the pixel here; a name nothing sets is 0, as in Fractint; blanks inside a name are dropped (end if is endif), as Fractint drops them. The import's message counts the entries that do not read and gives the commonest reason: the screen and view variables (whitesq, scrnpix, scrnmax, center, magxmag, rotskew), lastsqr and random numbers are not supported. The Collection's Fractint classics (Magnet, Nova, Spider, Manowar and others) are written with these sections.
 help-fractals-custom-editor = In the formula field, parentheses take a colour per nesting level; the pair next to the cursor is highlighted, and one without a partner is shown in red (a comment's do not count, as the parser ignores them). Names complete as you type: after two letters a list offers the functions, names and your own variables that begin so. Up and Down choose, Tab or Enter takes one (a function comes with its opening parenthesis), Esc closes the list, and Enter after a name typed in full still starts a new line.
 help-fractals-custom-textbook = Textbook (the switch above the formula) shows it typeset as a textbook sets it, and edits it in place. Type as in the text: / makes a fraction of the term before it, ^ an exponent (+, - or = typed at an exponent's end steps out of it), ( parentheses, or a call after a function's name, | bars, and a comma inside parentheses a complex constant. The arrows move through the formula, Up and Down between a numerator and its denominator, Tab to the next empty box; Backspace at the start of a fraction or a pair of parentheses selects it, and a second press removes it and keeps what it held. Copy, paste and undo work as in a text field, names complete as they do there, and the keypad types into the typeset formula (□² squares what is before the caret, a function key wraps the selection). Every edit is written back to the text, so the two views always hold the same formula; a line you have not edited keeps its spacing and comment. The notation never changes what is computed: |z| is the squared modulus and shows as |z|², cabs(z) shows as |z|, and exp(z) stays exp(z). A line that does not read shows in red; click it to edit it as text. LaTeX copies the formula as LaTeX source, as it is typeset, and while Textbook is on the formula library shows its formulas typeset too.
 help-fractals-custom-numbers = Numbers in a formula (0.1, 1/3, pi, the parameters) are read as double-precision values, about 16 digits, and the deep reference orbit iterates with exactly those values. Two formulas that are equal on paper can therefore differ deep down: 0.1*z multiplies by the double nearest 0.1, while z/10 divides by an exact 10, and the two pictures part past about 1e15x (measured: 5% of pixels at 1e15x, a third at 1e17x, all of them at 1e20x). Either picture is correct for its own formula; write the one you mean to share.
-help-fractals-custom-library = The dialog's Save to library keeps a formula and its parameters under a name (saving under a name the library has updates that entry). Fractal ▸ Formula library… lists them to apply, edit, export or delete; Import adds the formulas in a formula file without replacing any: one the library already has is skipped, and a new one whose name is taken becomes "name (2)". The library is formulas.toml in the folder named under Files & data (About), itself a formula file. A tour keyframe carries a formula as formula = "..." with formula_params = [[re, im], ...], and Tools > Tour from current view writes them for a custom view.
+help-fractals-custom-library = The dialog's Save to library keeps a formula and its parameters under a name (saving under a name the library has updates that entry). Fractal ▸ Formula library… lists them to apply, edit, export or delete; Import adds the formulas in a formula file without replacing any: one the library already has is skipped, and a new one whose name is taken becomes "name (2)". The library is formulas.toml in the folder named under Files & data (About), itself a formula file. A tour keyframe carries a formula as formula = "..." with formula_params = [[re, im], ...], and Tools ▸ Tour from current view… writes them for a custom view.
 help-fractals-custom-collection = A collection of 45 formulas comes with Fractadyne, written for it: higher powers and the folded variants of the Burning Ship and Celtic families, blends and two-step hybrids, the Mandelbrot set seen through another map (inverted, log-polar, through sine), transcendental and rational formulas, and Julia sets. They are the dialog's Examples and the Collection tab of the formula library, where Copy to mine adds one to your formulas. Each has a starting view, and Apply goes there: a formula opened on the home view is often not where its picture is. A formula you save while it is showing keeps the view you are at in the same way, and Apply returns to it.
 
 ## Help ▸ How it works
@@ -1363,7 +1367,7 @@ help-how-floatexp-text = Past about 1e28× even that tiny difference underflows 
 help-how-reference = Reference choice & rebasing
 help-how-reference-text = The reference is chosen (scored in high precision) so its orbit stays within the view as long as possible. When the difference grows too large it is "rebased" back onto the reference to stay accurate.
 help-how-series = Series approximation
-help-how-series-text = At deep zoom the early iterations barely move δ from the reference, so they can be computed all at once: δz is approximated by a short polynomial in δc (order 3), whose coefficients are iterated along the reference. The renderer skips ahead to the last iteration where that polynomial is still accurate for the whole view, then iterates normally — saving the skipped steps with no change to the image (toggle in Controls ▸ Advanced). Mandelbrot and Multibrot 3/4/5, deepest range; not with stripe / triangle-inequality / orbit-trap / decomposition coloring (those need every iteration). Where the BLA is active it already subsumes this early skip.
+help-how-series-text = At deep zoom the early iterations barely move δ from the reference, so they can be computed all at once: δz is approximated by a short polynomial in δc (order 3), whose coefficients are iterated along the reference. The renderer skips ahead to the last iteration where that polynomial is still accurate for the whole view, then iterates normally — saving the skipped steps with no change to the image (toggle in Controls ▸ Advanced). Mandelbrot and Multibrot 3–8, deepest range; not with stripe / triangle-inequality / orbit-trap / decomposition coloring (those need every iteration). Where the BLA is active it already subsumes this early skip.
 help-how-distance = Distance estimation & lighting
 help-how-distance-text = Tracking the derivative dz/dc yields each pixel's distance to the boundary. That powers the 3D relief lighting, the distance glow, and the "distance" coloring method — all valid at any zoom depth.
 help-how-safety = Anti-aliasing & safety
@@ -1434,7 +1438,7 @@ help-hardware-report = If something looks wrong, run the self-test and use "Atta
 help-hardware-notes = Notes
 help-hardware-note-watchdog = A capable GPU avoids the watchdog work-budget kicking in at extreme settings.
 help-hardware-note-binary = The build is single-binary and self-contained — no runtime install needed.
-help-hardware-note-benchmark = Run the built-in benchmark (Tools -> Benchmark) to gauge your machine.
+help-hardware-note-benchmark = Run the built-in benchmark (Tools ▸ Benchmark…) to gauge your machine.
 
 ## Help ▸ Acknowledgments & citations
 ## Names of people, programs, papers, books and websites stay as written, and so do the
@@ -2493,8 +2497,8 @@ formula-library-close = Close
 # Saves the formula the view shows, under the name typed beside it.
 formula-library-add-current = Add current formula
 formula-library-add-current-hover = Save the formula the view shows
-# "Fractal > Custom formula…" is the menu path: write it as the menus are named.
-formula-library-add-current-disabled-hover = Apply a custom formula first (Fractal > Custom formula…)
+# "Fractal ▸ Custom formula…" is the menu path: write it as the menus are named.
+formula-library-add-current-disabled-hover = Apply a custom formula first (Fractal ▸ Custom formula…)
 formula-library-import = Import…
 formula-library-import-hover = Add the formulas in a formula file; nothing here is replaced
 formula-library-export-all = Export all…
@@ -3129,7 +3133,7 @@ lsys-toolbar-edit-hover = Edit the system's text
 ## L-systems: the editor window, and a .l file's entries
 
 lsys-editor-title = L-system
-# The editor's help. The quoted examples ('X = word', 'seed n', 'define R 1.456'…), the commands and "The Algorithmic Beauty of Plants" (a book's title) are the system's syntax and names: keep them as they are.
+# The editor's help. The line keys (angle, axiom, heading, draw / move / variables, colour, order), the quoted examples ('X = word', 'seed n', 'define R 1.456'…), the commands and "The Algorithmic Beauty of Plants" (a book's title) are the system's syntax and names: keep them as they are.
 lsys-editor-help = One key a line: angle (degrees, or /n for a division of the circle), axiom, productions 'X = word', and optionally heading, draw / move / variables, colour, order. A symbol with alternatives chosen at random has one line for each, with its weight: 'X (0.3) = word'; 'seed n' picks the plant. In a word, {"{"} {"}"} fills the turtle's path and . adds a vertex. Parametric and context-sensitive productions (The Algorithmic Beauty of Plants): 'A(s) : s > 1 = F(s)[+A(s/2)]', 'b < a > c = b', with 'define R 1.456' and 'ignore +-F'; F(l) steps l, +(a) turns a degrees. A Fractint .l entry can be pasted as it is.
 lsys-editor-apply = Apply
 lsys-editor-revert = Revert
@@ -3187,7 +3191,7 @@ export-elapsed = (in { $duration })
 export-preparing-deep = Preparing deep export — building reference (this can take a while)…
 # $size: pixels (5120×4035); $ss: the supersampling factor; $iterations: the iteration count.
 export-large = Large export ({ $size }, { $ss }× supersampling, { $iterations } iterations) — rendering in the background; glitch correction is skipped for exports this size…
-export-life-unavailable = Image export of a Life view is not available yet — use a screenshot, or File ▸ Save Life pattern.
+export-life-unavailable = Image export of a Life view is not available yet — use a screenshot, or File ▸ Save Life pattern…
 export-already-running = An export is already running — File → Export image… shows its progress.
 # $size: the image's size in pixels.
 export-snapshot-background = Snapshot: rendering { $size } in the background — File → Export image… shows progress and can cancel it.

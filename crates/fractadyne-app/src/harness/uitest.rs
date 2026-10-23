@@ -1121,8 +1121,12 @@ impl FractadyneApp {
                 }
             }
             Phase::Done => {
-                let probe = self.uitest_thumb_probe_result();
-                ut.results.push(probe);
+                // The probe reads the bookmark the dual-formula-a step adds: a walk filtered by
+                // FRACTADYNE_UITEST_ONLY without that step has nothing for it to read.
+                if ut.steps.iter().any(|s| s.name == "dual-formula-a") {
+                    let probe = self.uitest_thumb_probe_result();
+                    ut.results.push(probe);
+                }
                 let code = self.uitest_finish(&ut);
                 crate::exit(code);
             }

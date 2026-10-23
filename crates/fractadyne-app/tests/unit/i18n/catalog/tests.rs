@@ -120,7 +120,7 @@ fn every_shipped_language_loads_with_nothing_set_aside() {
 {}", dropped.join("
 "));
         assert_ne!(c.name, tag, "{tag}: no language-name");
-        assert!(["Latn", "Cyrl", "Jpan", "Hans"].contains(&c.script.as_str()), "{tag}: script {}", c.script);
+        assert!(["Latn", "Cyrl", "Jpan", "Hans", "Hant", "Kore"].contains(&c.script.as_str()), "{tag}: script {}", c.script);
         assert!(["draft", "reviewed"].contains(&c.status.as_str()), "{tag}: language-status {:?}", c.status);
         assert!(c.translated * 2 > interface_messages(), "{tag}: {} translated", c.translated);
     }

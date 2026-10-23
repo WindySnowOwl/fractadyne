@@ -458,6 +458,11 @@ pub(crate) fn tabular(p: &Painter, pos: Pos2, anchor: Align2, text: &str, font: 
     rect
 }
 
+/// The width [`tabular`] lays `text` out at, without drawing it.
+pub(crate) fn tabular_width(p: &Painter, text: &str, font: FontId) -> f32 {
+    p.layout_job(tabular_job(p, text, &font, Color32::WHITE)).size().x
+}
+
 /// [`tabular`] on a plate of `plate` reaching `pad` px past it either side: a readout on a scope's
 /// screen that the beam or a bright trace passing under it cannot swallow (a radar's data block).
 pub(crate) fn plated(p: &Painter, pos: Pos2, anchor: Align2, text: &str, font: FontId, color: Color32, plate: Color32, pad: f32) -> Rect {

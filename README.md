@@ -95,10 +95,11 @@ A fractal explorer for Windows and Linux in Rust (wgpu + egui/eframe), built for
   and a Beta user is always offered the newest of either channel) and a direct download link —
   no auto-install. **Help → "Report an issue…"** pre-fills an email
   (type picker, optional system info, log/`.fdn`/screenshot attach notes).
-- **Seven languages** — the interface and Help in English, Spanish, French, German, Ukrainian,
-  Japanese and Simplified Chinese, chosen from the language menu at the end of the toolbar (each
-  language listed in its own name); the first run follows the system's language. The six
-  translations are machine-made drafts awaiting review by native speakers, and marked so:
+- **Fifteen languages** — the interface and Help in English, Spanish, French, German, Italian,
+  Portuguese (Brazil), Polish, Turkish, Indonesian, Ukrainian, Russian, Japanese, Korean and
+  Chinese (Simplified and Traditional), chosen from the language menu at the end of the toolbar
+  (each language listed in its own name); the first run follows the system's language. The
+  fourteen translations are machine-made drafts awaiting review by native speakers, and marked so:
   corrections are welcome — see `i18n/README.md`. A decimal-mark setting (the language's own, a
   point or a comma) sits in the same menu.
 - **Open-source notices** — the bundled dependency licenses are reproduced in

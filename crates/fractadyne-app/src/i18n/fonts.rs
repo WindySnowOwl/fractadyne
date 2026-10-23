@@ -1,11 +1,11 @@
 //! Fonts for the writing systems the interface fonts lack (design/multilingual.md §9).
 //!
-//! Latin and Cyrillic draw with the bundled fonts. Japanese and Chinese need a font of their own,
-//! and a whole one is 5–30 MB, so none is bundled: the system's is found and read when the
-//! language is chosen, and kept for the session. The two are never one "CJK" font: the same Han
-//! character is drawn differently in Japanese and in Chinese typography (Han unification), so each
-//! language gets a font of its own. (The language menu's own names, 日本語 and 简体中文, come from
-//! tiny bundled subsets instead: see `theme::install_fonts`.)
+//! Latin and Cyrillic draw with the bundled fonts. Japanese, Chinese and Korean need a font of
+//! their own, and a whole one is 5–30 MB, so none is bundled: the system's is found and read when
+//! the language is chosen, and kept for the session. They are never one "CJK" font: the same Han
+//! character is drawn differently in Japanese, Simplified and Traditional Chinese typography (Han
+//! unification), so each language gets a font of its own. (The language menu's own names, 日本語,
+//! 简体中文, 繁體中文 and 한국어, come from tiny bundled subsets instead: see `theme::install_fonts`.)
 
 use std::path::PathBuf;
 use std::sync::{Arc, OnceLock};
@@ -15,6 +15,8 @@ use std::sync::{Arc, OnceLock};
 pub(crate) enum Need {
     Japanese,
     ChineseSimplified,
+    ChineseTraditional,
+    Korean,
 }
 
 impl Need {
@@ -23,6 +25,8 @@ impl Need {
         match script {
             "Jpan" | "Hira" | "Kana" => Some(Need::Japanese),
             "Hans" | "Hani" => Some(Need::ChineseSimplified),
+            "Hant" => Some(Need::ChineseTraditional),
+            "Kore" | "Hang" => Some(Need::Korean),
             _ => None,
         }
     }
@@ -32,6 +36,18 @@ impl Need {
         match self {
             Need::Japanese => "system-ja",
             Need::ChineseSimplified => "system-zh-Hans",
+            Need::ChineseTraditional => "system-zh-Hant",
+            Need::Korean => "system-ko",
+        }
+    }
+
+    /// A character the font must hold to draw the language.
+    fn probe(self) -> char {
+        match self {
+            Need::Japanese => 'あ',
+            Need::ChineseSimplified => '简',
+            Need::ChineseTraditional => '體',
+            Need::Korean => '한',
         }
     }
 
@@ -54,12 +70,22 @@ impl Need {
                     ("Deng.ttf", &["DengXian"]),
                     ("simsun.ttc", &["SimSun"]),
                 ],
+                Need::ChineseTraditional => &[
+                    ("msjh.ttc", &["Microsoft JhengHei UI", "Microsoft JhengHei"]),
+                    ("mingliu.ttc", &["PMingLiU", "MingLiU"]),
+                ],
+                Need::Korean => &[
+                    ("malgun.ttf", &["Malgun Gothic"]),
+                    ("gulim.ttc", &["Gulim", "Dotum"]),
+                ],
             };
             out.extend(list.iter().map(|(f, faces)| (fonts.join(f), *faces)));
         } else {
             let faces: &'static [&'static str] = match self {
                 Need::Japanese => &["Noto Sans CJK JP", "Noto Sans JP", "Source Han Sans JP", "IPAexGothic", "IPAGothic"],
                 Need::ChineseSimplified => &["Noto Sans CJK SC", "Noto Sans SC", "Source Han Sans SC", "WenQuanYi Micro Hei"],
+                Need::ChineseTraditional => &["Noto Sans CJK TC", "Noto Sans TC", "Source Han Sans TC", "AR PL UMing TW"],
+                Need::Korean => &["Noto Sans CJK KR", "Noto Sans KR", "Source Han Sans K", "NanumGothic", "UnDotum"],
             };
             for dir in ["/usr/share/fonts", "/usr/local/share/fonts"] {
                 for f in [
@@ -77,6 +103,8 @@ impl Need {
             let lang = match self {
                 Need::Japanese => "ja",
                 Need::ChineseSimplified => "zh-cn",
+                Need::ChineseTraditional => "zh-tw",
+                Need::Korean => "ko",
             };
             // (Any face of it that draws the language: fontconfig chose the file for the language.)
             if let Ok(o) = std::process::Command::new("fc-match").args(["-f", "%{file}", &format!("sans:lang={lang}")]).output() {
@@ -100,12 +128,8 @@ pub(crate) struct SystemFont {
 /// The system font `need` asks for, found and read once (`None` when the system has none that can
 /// draw it). Reading one costs its size in memory (Microsoft YaHei: 19 MB) for the session.
 pub(crate) fn system_font(need: Need) -> Option<&'static SystemFont> {
-    static JA: OnceLock<Option<SystemFont>> = OnceLock::new();
-    static ZH: OnceLock<Option<SystemFont>> = OnceLock::new();
-    let cell = match need {
-        Need::Japanese => &JA,
-        Need::ChineseSimplified => &ZH,
-    };
+    static FOUND: [OnceLock<Option<SystemFont>>; 4] = [OnceLock::new(), OnceLock::new(), OnceLock::new(), OnceLock::new()];
+    let cell = &FOUND[need as usize];
     cell.get_or_init(|| {
         let found = need.candidates().into_iter().find_map(|(path, faces)| read_face(&path, faces, need));
         match &found {
@@ -123,10 +147,7 @@ pub(crate) fn system_font(need: Need) -> Option<&'static SystemFont> {
 fn read_face(path: &std::path::Path, faces: &[&str], need: Need) -> Option<SystemFont> {
     let bytes = std::fs::read(path).ok()?;
     let count = ttf_parser::fonts_in_collection(&bytes).unwrap_or(1);
-    let probe = match need {
-        Need::Japanese => 'あ',
-        Need::ChineseSimplified => '简',
-    };
+    let probe = need.probe();
     let mut named: Vec<(usize, u32, String)> = Vec::new();
     for i in 0..count {
         let Ok(face) = ttf_parser::Face::parse(&bytes, i) else { continue };

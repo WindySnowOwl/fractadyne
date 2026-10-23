@@ -48,10 +48,10 @@ The design behind this is `design/multilingual.md`.
       }
   ```
 
-  Use your language's categories (CLDR): German, Spanish: `one`, `other`; French: `one` (0 and 1),
-  `other`; Ukrainian: `one`, `few`, `many`, `other`; Japanese, Chinese: `other` only (write the
-  sentence once, without a selector, or keep a selector with `*[other]` alone). Exactly one variant
-  is the default, marked `*`.
+  Use your language's categories (CLDR): German, Spanish, Italian, Turkish: `one`, `other`; French,
+  Portuguese: `one` (0 and 1), `other`; Ukrainian, Russian, Polish: `one`, `few`, `many`, `other`;
+  Japanese, Chinese, Korean, Indonesian: `other` only (write the sentence once, without a selector,
+  or keep a selector with `*[other]` alone). Exactly one variant is the default, marked `*`.
 - **Selectors on a word.** Some selectors choose by a token, not a number (`$kind`, `$channel`,
   `$track`, `$end`): keep their variant keys exactly as in English (`[beta]`, `[device]`) and
   translate the text of each variant.
@@ -65,7 +65,8 @@ The design behind this is `design/multilingual.md`.
   mathematicians in your language use (often the original, or its transliteration).
 - **Short where the comment says so.** The status bar's words sit in fixed slots; the live-render
   panel's legends are engraved in capitals and must stay short (write them in capitals, as the
-  English file does); menu items and buttons should stay close to the English length.
+  English file does: the program never uppercases a translation, so Turkish İ and ı and German ß
+  come out as you write them); menu items and buttons should stay close to the English length.
 - **Special characters.** A literal `{` or `}` is written `{"{"}` / `{"}"}`. An indented line that
   begins with `[`, `*` or `.` must begin with a literal instead: `{"["}Ctrl]`, `{"."}fdn`. A blank
   line inside a value is a paragraph break.

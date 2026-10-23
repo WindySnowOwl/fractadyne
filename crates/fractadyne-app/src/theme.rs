@@ -347,12 +347,14 @@ fn font_definitions(script: &str) -> egui::FontDefinitions {
             }
         }
     }
-    // The language menu's own names (日本語, 简体中文), in every interface language: tiny subsets of
-    // Noto Sans JP and SC (`scripts/subset_names_font.py`), last, so they only ever supply the
-    // characters of those names when no font of the language is loaded.
+    // The language menu's own names (日本語, 简体中文, 繁體中文, 한국어), in every interface language:
+    // tiny subsets of Noto Sans JP, SC, TC and KR (`scripts/subset_names_font.py`), last, so they
+    // only ever supply the characters of those names when no font of the language is loaded.
     for (name, bytes) in [
         ("NamesJP", &include_bytes!("../assets/fonts/NamesJP.otf")[..]),
         ("NamesSC", &include_bytes!("../assets/fonts/NamesSC.otf")[..]),
+        ("NamesTC", &include_bytes!("../assets/fonts/NamesTC.otf")[..]),
+        ("NamesKR", &include_bytes!("../assets/fonts/NamesKR.otf")[..]),
     ] {
         fonts.font_data.insert(name.to_owned(), Arc::new(egui::FontData::from_static(bytes)));
         for family in [egui::FontFamily::Proportional, egui::FontFamily::Monospace] {

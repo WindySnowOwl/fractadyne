@@ -32,6 +32,25 @@ fn the_pseudo_language_is_never_matched_from_the_system() {
     assert_eq!(best_match(&["en-XA".to_string()], &have).as_deref(), Some("en"));
 }
 
+/// The second batch's languages: the regions a system names find them, Portugal's Portuguese takes
+/// Brazil's (the one there is), Taiwan and Hong Kong take Traditional Chinese, mainland Simplified.
+#[test]
+fn the_second_batch_is_found_from_the_systems_regions() {
+    let have = installed(&["en", "es", "pt-BR", "ru", "ko", "id", "tr", "it", "pl", "zh-Hans", "zh-Hant"]);
+    let best = |req: &[&str]| best_match(&req.iter().map(|s| s.to_string()).collect::<Vec<_>>(), &have);
+    assert_eq!(best(&["pt-BR"]).as_deref(), Some("pt-BR"));
+    assert_eq!(best(&["pt-PT"]).as_deref(), Some("pt-BR"));
+    assert_eq!(best(&["ru-RU"]).as_deref(), Some("ru"));
+    assert_eq!(best(&["ko-KR"]).as_deref(), Some("ko"));
+    assert_eq!(best(&["id-ID"]).as_deref(), Some("id"));
+    assert_eq!(best(&["tr-TR"]).as_deref(), Some("tr"));
+    assert_eq!(best(&["it-IT"]).as_deref(), Some("it"));
+    assert_eq!(best(&["pl-PL"]).as_deref(), Some("pl"));
+    assert_eq!(best(&["zh-TW"]).as_deref(), Some("zh-Hant"));
+    assert_eq!(best(&["zh-HK"]).as_deref(), Some("zh-Hant"));
+    assert_eq!(best(&["zh-CN"]).as_deref(), Some("zh-Hans"));
+}
+
 #[test]
 fn tags_are_canonical() {
     assert_eq!(canonical_tag("zh-hans").as_deref(), Some("zh-Hans"));
