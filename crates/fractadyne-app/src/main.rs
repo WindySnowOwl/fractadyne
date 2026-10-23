@@ -56,6 +56,9 @@ use eframe::egui;
 use fractadyne_core::Viewport;
 use fractadyne_gpu::{add_mandelbrot, install_renderer};
 
+// First: `tr!`, the interface's messages in the language in use, is used by the modules below.
+#[macro_use]
+mod i18n;
 mod alloc;
 mod autopilot;
 mod blinken;
@@ -6404,6 +6407,9 @@ struct FractadyneApp {
     /// Update-check track (Stable / Beta) + whether to check on launch; both persisted.
     update_track: update::UpdateTrack,
     update_check_on_launch: bool,
+    /// The interface's language: the one in use, the saved choice, the installed languages
+    /// (design/multilingual.md §8).
+    language: crate::ui::language::LanguageState,
     /// `max_color_attachment_bytes_per_sample`: (granted, adapter-available).
     ///
     /// ⚠These differ and the difference matters. We REQUEST `min(adapter, 48)` — 48 = the three
@@ -7523,6 +7529,11 @@ impl FractadyneApp {
             theme,
             update_track: update::UpdateTrack::from_str(&s.update_track),
             update_check_on_launch: s.update_check_on_launch,
+            language: crate::ui::language::LanguageState::start(
+                &s.language,
+                &s.language_system_seen,
+                crate::ui::language::run_language(args),
+            ),
             attach_bytes_per_sample: (0, 0), // (granted, available) — filled on the first frame
             show_watermark: s.show_watermark,
             blinken: crate::blinken::Overlay::from_session(&s.live_panel, &s.live_panel_corner, s.live_panel_opacity),
@@ -8276,6 +8287,8 @@ impl FractadyneApp {
             mpfr_warning_suppressed: self.mpfr_warning_suppressed,
             mpfr_present_last: self.mpfr_present_last,
             update_check_on_launch: self.update_check_on_launch,
+            language: self.language.saved.clone(),
+            language_system_seen: self.language.system_seen.clone(),
             show_watermark: self.show_watermark,
             crash_prompt_disabled: self.crash_prompt_disabled,
             show_orbits: self.anim.show_orbits,

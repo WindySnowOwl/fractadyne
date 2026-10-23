@@ -30,7 +30,7 @@ fn elide_middle(s: &str, max: usize) -> String {
 /// Reveal a directory in the platform file manager. Best-effort and deliberately silent on
 /// failure: this is a convenience next to a path that is already displayed in full, so the user
 /// can always copy it by hand if the launch does not work.
-fn open_in_file_manager(dir: &std::path::Path) -> std::io::Result<()> {
+pub(crate) fn open_in_file_manager(dir: &std::path::Path) -> std::io::Result<()> {
     #[cfg(windows)]
     let mut cmd = {
         let mut c = std::process::Command::new("explorer");
@@ -214,17 +214,18 @@ impl FractadyneApp {
         let mut open = self.dialogs.welcome_open;
         let (mut dismiss, mut open_help) = (false, false);
         let mut goto: Option<(&str, &str, &str, f64)> = None;
-        egui::Window::new("Welcome to Fractadyne")
+        egui::Window::new(tr!(welcome_title))
+            .id(egui::Id::new("fractadyne.welcome"))
             .open(&mut open)
             .resizable(false)
             .collapsible(false)
             .default_width(460.0)
             .anchor(egui::Align2::CENTER_CENTER, [0.0, 0.0])
             .show(ctx, |ui| {
-                ui.label(
-                    "A deep-zoom explorer for the Mandelbrot set and its relatives. \
-                     A few controls to get you moving:",
-                );
+                // The language first: everything below is in it (design/multilingual.md §8).
+                self.welcome_language_row(ui);
+                ui.add_space(4.0);
+                ui.label(tr!(welcome_intro));
                 ui.add_space(6.0);
                 let row = |ui: &mut egui::Ui, k: &str, d: &str| {
                     ui.horizontal(|ui| {
@@ -236,13 +237,13 @@ impl FractadyneApp {
                         ui.label(d);
                     });
                 };
-                row(ui, "drag", "pan the view");
-                row(ui, "scroll", "zoom in / out toward the cursor");
-                row(ui, "hold Space", "smooth continuous zoom (Shift+Space out)");
-                row(ui, &format!("{} then click", crate::icons::CLICK_ZOOM), "dive into the clicked point (toolbar)");
-                row(ui, "M", "jump to the nearest minibrot at its own scale");
+                row(ui, &tr!(welcome_key_drag), &tr!(welcome_key_drag_does));
+                row(ui, &tr!(welcome_key_scroll), &tr!(welcome_key_scroll_does));
+                row(ui, &tr!(welcome_key_space), &tr!(welcome_key_space_does));
+                row(ui, &format!("{} {}", crate::icons::CLICK_ZOOM, tr!(welcome_key_click)), &tr!(welcome_key_click_does));
+                row(ui, "M", &tr!(welcome_key_m_does));
                 ui.add_space(6.0);
-                ui.label(egui::RichText::new("Jump to a landmark to start:").weak().small());
+                ui.label(egui::RichText::new(tr!(welcome_landmarks)).weak().small());
                 ui.horizontal_wrapped(|ui| {
                     // A few shallow, striking destinations (see `FAMOUS`).
                     for entry in &[FAMOUS[0], FAMOUS[1], FAMOUS[6]] {
@@ -264,7 +265,7 @@ impl FractadyneApp {
                 // They are surfaced because first run is when people want them and least know
                 // where to look. The other two rows are orientation, not settings.
                 ui.horizontal(|ui| {
-                    ui.label(egui::RichText::new("Theme").weak().small());
+                    ui.label(egui::RichText::new(tr!(welcome_theme)).weak().small());
                     for m in [crate::theme::ThemeMode::Dark, crate::theme::ThemeMode::Light] {
                         if ui.selectable_label(self.theme == m, m.label()).clicked() {
                             self.theme = m;
@@ -275,18 +276,14 @@ impl FractadyneApp {
                     // The brand-mark opt-out belongs at first run, not in a menu: someone who is
                     // going to publish frames wants that choice BEFORE they render, not after
                     // finding it later. Applies to the live view and to exports.
-                    ui.checkbox(&mut self.show_watermark, "Show \"Fd\" mark")
-                        .on_hover_text("The small brand mark in the lower-right of the view. Off removes it from the live view and from exported images.");
+                    ui.checkbox(&mut self.show_watermark, tr!(welcome_watermark)).on_hover_text(tr!(welcome_watermark_hover));
                 });
                 ui.horizontal(|ui| {
-                    ui.label(egui::RichText::new("Updates").weak().small());
+                    ui.label(egui::RichText::new(tr!(welcome_updates)).weak().small());
                     // ⚠The one CONSENT item on this screen: a network request the app makes on the
                     // user's behalf. That belongs at first run rather than buried in a menu.
-                    ui.checkbox(&mut self.update_check_on_launch, "Check for updates")
-                        .on_hover_text(
-                            "Asks GitHub for the latest release when the app starts. \
-                             Nothing is uploaded.",
-                        );
+                    ui.checkbox(&mut self.update_check_on_launch, tr!(welcome_check_updates))
+                        .on_hover_text(tr!(welcome_check_updates_hover));
                     if self.update_check_on_launch {
                         for t in crate::update::UpdateTrack::ALL {
                             ui.selectable_value(&mut self.update_track, t, t.label());
@@ -296,18 +293,18 @@ impl FractadyneApp {
                 ui.add_space(4.0);
                 // Where things go — answers "where did my screenshot end up?" before it is asked.
                 ui.horizontal(|ui| {
-                    ui.label(egui::RichText::new("Files").weak().small());
+                    ui.label(egui::RichText::new(tr!(welcome_files)).weak().small());
                     let dir = fractadyne_state::config_dir();
                     let shown = dir
                         .as_ref()
                         .map(|d| d.display().to_string())
-                        .unwrap_or_else(|| "(no config directory)".to_string());
+                        .unwrap_or_else(|| tr!(welcome_no_config));
                     ui.label(
                         egui::RichText::new(elide_middle(&shown, 46)).monospace().small(),
                     )
                     .on_hover_text(&shown);
                     if let Some(d) = dir {
-                        if ui.small_button("Open").clicked() {
+                        if ui.small_button(tr!(welcome_open)).clicked() {
                             let _ = open_in_file_manager(&d);
                         }
                     }
@@ -317,26 +314,26 @@ impl FractadyneApp {
                 // screen writes a far better bug report. It also confirms which card was picked,
                 // which is not obvious on a dual-GPU laptop.
                 ui.horizontal(|ui| {
-                    ui.label(egui::RichText::new("Rendering on").weak().small());
+                    ui.label(egui::RichText::new(tr!(welcome_rendering_on)).weak().small());
                     ui.label(egui::RichText::new(&self.gpu_name).small());
                 });
                 ui.add_space(8.0);
                 ui.separator();
                 ui.horizontal(|ui| {
-                    if ui.button("Open full help  (F1)").clicked() {
+                    if ui.button(tr!(welcome_open_help)).clicked() {
                         open_help = true;
                     }
                     // A pointer, not a button: Settings is a submenu, so a button here could not
                     // actually open it, and a control that cannot deliver is worse than none.
                     ui.label(
-                        egui::RichText::new(format!("More in File → {} Settings", crate::icons::SETTINGS))
+                        egui::RichText::new(tr!(welcome_more_in_settings, icon = crate::icons::SETTINGS))
                             .weak()
                             .small(),
                     );
                     crate::theme::action_row(ui, |ui| {
                         if ui
                             .add(egui::Button::new(
-                                egui::RichText::new("Get started").color(egui::Color32::WHITE),
+                                egui::RichText::new(tr!(welcome_get_started)).color(egui::Color32::WHITE),
                             ).fill(egui::Color32::from_rgb(0x3A, 0x7A, 0xB0)))
                             .clicked()
                         {

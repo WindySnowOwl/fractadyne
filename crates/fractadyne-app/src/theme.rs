@@ -283,9 +283,12 @@ pub(crate) fn install_fonts(ctx: &egui::Context) {
         // Last: it only ever resolves Private Use Area codepoints nothing ahead of it defines.
         prop.push("Lucide".to_owned());
     }
-    // Monospace (the numeric read-outs): Spline Sans Mono first, Hack behind it for fallbacks.
+    // Monospace (the numeric read-outs): Spline Sans Mono first, Hack behind it for fallbacks, and
+    // Lucide last, as above: an icon in a monospace label (the welcome window's "⌖ then click")
+    // drew as a box without it.
     if let Some(mono) = fonts.families.get_mut(&egui::FontFamily::Monospace) {
         mono.insert(0, "SplineSansMono".to_owned());
+        mono.push("Lucide".to_owned());
     }
     // The formula editor's textbook mode: Fractadyne Math (a subset of Latin Modern Math), a family
     // of its own with NO fallback — the layout reads every glyph's metrics from this font, so a

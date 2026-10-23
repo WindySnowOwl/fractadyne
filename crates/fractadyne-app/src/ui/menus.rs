@@ -1318,6 +1318,10 @@ impl FractadyneApp {
                     self.fullscreen = !self.fullscreen;
                     ctx.send_viewport_cmd(egui::ViewportCommand::Fullscreen(self.fullscreen));
                 }
+                // The language menu ends the bar, in every mode: nobody is stuck in a language they
+                // cannot read (design/multilingual.md §8). No mode may hide it.
+                ui.separator();
+                self.draw_language_menu(ui);
             });
         });
         self.perf.layout.top_bar = Some(top.response.rect);

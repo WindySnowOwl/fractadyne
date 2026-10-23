@@ -420,6 +420,15 @@ pub struct SessionState {
     /// Automatically check for updates on launch (off by default — no network calls unless enabled).
     #[serde(default)]
     pub update_check_on_launch: bool,
+    /// The interface's language, a BCP 47 tag (`de`, `zh-Hans`): set on the first run from the
+    /// system's languages, and by the language menu. Empty = not chosen yet, i.e. the first run
+    /// (design/multilingual.md §8).
+    #[serde(default)]
+    pub language: String,
+    /// The system's preferred language found at the last launch. When a launch finds another one
+    /// that the app has, it asks once whether to switch.
+    #[serde(default)]
+    pub language_system_seen: String,
     /// Draw the "Fd" brand mark on the live view and exports. Default ON; the first-run overlay
     /// offers the opt-out, because someone publishing frames wants that choice up front rather than
     /// after discovering it in a menu.
@@ -702,6 +711,8 @@ impl Default for SessionState {
             theme: default_theme(),
             update_track: default_update_track(),
             update_check_on_launch: false,
+            language: String::new(),
+            language_system_seen: String::new(),
             show_watermark: true,
             crash_prompt_disabled: false,
             show_orbits: false,

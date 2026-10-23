@@ -1526,6 +1526,11 @@ impl FractadyneApp {
         self.accelerated_window(ctx);
         self.help_window(ctx);
         self.draw_welcome_dialog(ctx);
+        self.draw_language_window(ctx);
+        self.draw_language_prompt(ctx);
+        if let Some(n) = self.language.notice.take() {
+            self.set_toast(n, ctx);
+        }
         self.draw_crash_prompt(ctx);
         self.draw_second_device_prompt(ctx);
         self.draw_iteration_quarantine(ctx);
