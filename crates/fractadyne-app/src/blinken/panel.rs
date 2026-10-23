@@ -418,9 +418,36 @@ fn draw_case(p: &Painter, r: Rect, s: f32, hammer: egui::TextureId) {
     paint::vgradient(p, Rect::from_min_max(pos2(r.left() + 1.0, mid), pos2(r.right() - 1.0, bot)), Color32::TRANSPARENT, Color32::from_black_alpha(55));
     p.rect_stroke(r, 7.0 * s, Stroke::new(1.0_f32, Color32::from_rgb(0x4a, 0x50, 0x57)), egui::StrokeKind::Inside);
     p.line_segment([r.left_top() + vec2(8.0, 1.5), r.right_top() + vec2(-8.0, 1.5)], Stroke::new(1.0_f32, Color32::from_white_alpha(16)));
-    for c in [r.left_top() + vec2(11.0, 11.0) * s, r.right_top() + vec2(-11.0, 11.0) * s, r.left_bottom() + vec2(11.0, -11.0) * s, r.right_bottom() + vec2(-11.0, -11.0) * s] {
+    // Three screws: the top-right corner holds the close button (`close_center`, `draw_close`).
+    for c in [r.left_top() + vec2(11.0, 11.0) * s, r.left_bottom() + vec2(11.0, -11.0) * s, r.right_bottom() + vec2(-11.0, -11.0) * s] {
         screw(p, c, 5.5 * s);
     }
+}
+
+/// Where the close button sits on a case drawn at `r` and scale `s`: in the top-right screw's place,
+/// in the case's margin at every size (clear of the plate, the nixies and the bank).
+pub(crate) fn close_center(r: Rect, s: f32) -> Pos2 {
+    r.right_top() + vec2(-11.0, 11.0) * s
+}
+
+/// The close button: a small dark push-button with an engraved ×, red while the pointer is on it
+/// (`hot`) and pressed in while held (`down`).
+pub(crate) fn draw_close(p: &Painter, c: Pos2, s: f32, hot: bool, down: bool) {
+    let r = 6.5 * s;
+    p.circle_filled(c + vec2(0.0, 1.0 * s), r, Color32::from_black_alpha(120));
+    let c = if down { c + vec2(0.0, 0.6 * s) } else { c };
+    let (rim, dome, hi) = if hot {
+        (Color32::from_rgb(0x5c, 0x14, 0x0b), Color32::from_rgb(0x9e, 0x24, 0x14), Color32::from_rgb(0xe0, 0x58, 0x3a))
+    } else {
+        (Color32::from_rgb(0x1e, 0x20, 0x22), Color32::from_rgb(0x34, 0x37, 0x3b), Color32::from_rgb(0x6c, 0x70, 0x76))
+    };
+    p.circle_filled(c, r, rim);
+    paint::radial_disc(p, c + vec2(-0.25, -0.3) * r, r * 0.8, hi, dome);
+    p.circle_stroke(c, r, Stroke::new(1.0_f32, Color32::from_rgb(0x2a, 0x2c, 0x2f)));
+    let d = 2.4 * s;
+    let x = Stroke::new((1.5 * s).max(1.0), if hot { Color32::WHITE } else { Color32::from_rgb(0xd2, 0xd5, 0xd8) });
+    p.line_segment([c + vec2(-d, -d), c + vec2(d, d)], x);
+    p.line_segment([c + vec2(-d, d), c + vec2(d, -d)], x);
 }
 
 fn screw(p: &Painter, c: Pos2, r: f32) {

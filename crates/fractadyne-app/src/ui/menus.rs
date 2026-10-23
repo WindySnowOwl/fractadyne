@@ -542,7 +542,7 @@ impl FractadyneApp {
                         })
                         .response
                         .on_hover_text(
-                            "A front panel over the view that shows the live renderer at work: what                              each frame dispatched, how old the picture on screen is, the walk                              through the iteration bands, the reference builders, and the machine                              underneath. B cycles it; drag it to any corner; hover an instrument for                              what it means and what healthy and troubled look like.",
+                            "A front panel over the view that shows the live renderer at work: what                              each frame dispatched, how old the picture on screen is, the walk                              through the iteration bands, the reference builders, and the machine                              underneath. B cycles it, and the × in its corner closes it; drag it to any corner; hover an instrument for                              what it means and what healthy and troubled look like.",
                         );
                         ui.checkbox(&mut self.watermark, "Show \"Fd\" watermark")
                             .on_hover_text(
