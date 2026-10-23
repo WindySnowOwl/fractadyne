@@ -68,6 +68,16 @@ pub(crate) fn collect(ctx: &egui::Context) -> Vec<TextItem> {
     out
 }
 
+/// The text among `shapes`, painted on `layer`: shapes kept out of the paint lists (the live
+/// panel's static layer, replayed as meshes), read as `collect` reads the lists.
+pub(crate) fn collect_shapes(layer: LayerId, shapes: &[egui::epaint::ClippedShape]) -> Vec<TextItem> {
+    let mut out = Vec::new();
+    for cs in shapes {
+        walk(layer, cs.clip_rect, &cs.shape, &mut out);
+    }
+    out
+}
+
 fn walk(layer: LayerId, clip: Rect, shape: &Shape, out: &mut Vec<TextItem>) {
     match shape {
         Shape::Vec(v) => {

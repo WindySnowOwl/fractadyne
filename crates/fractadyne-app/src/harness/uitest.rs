@@ -35,6 +35,11 @@ enum Screen {
     LivePanelFull,
     /// The panel with a help card held open (the picture-age meter's).
     LivePanelHelp,
+    /// The full panel after the interface changes to a language of another script under it
+    /// (Japanese; English when the walk is in Japanese): the new fonts rebuild egui's font atlas,
+    /// and the panel's kept static layer must be redrawn against it (a user's Japanese panel
+    /// showed garbage glyphs). The next step switches back.
+    LivePanelLanguage,
     Help,
     /// Help opened AT the coordinate-expression reference — the section the Go-to dialog's `?`
     /// jumps to, and the one page whose tables are rendered from core data rather than prose.
@@ -392,6 +397,10 @@ pub(crate) struct UiTest {
     capture_text: bool,
     /// The text the captured frame painted, and the screen it was painted on.
     text_items: Option<(egui::Rect, Vec<crate::harness::text_layout::TextItem>)>,
+    /// On the captured frame, whether the live panel's kept static layer belonged to the font
+    /// atlas in use (`None`: the panel was closed). Its text is meshes, not text shapes, so the
+    /// text checks cannot see it.
+    panel_atlas: Option<bool>,
     /// The longest gap between two harness ticks (= frames) in the current step, and the last
     /// tick — a frozen frame shows here whatever froze it.
     max_gap_ms: f64,
@@ -408,6 +417,9 @@ pub(crate) struct UiTest {
     /// there is no session file to tell the two apart either. A marker owned by the harness is
     /// unambiguous — and it is the only way a harness can testify about its OWN exit.
     prev_walk_clean: Option<bool>,
+    /// The language the walk was in before the live-panel-language step switched it: the next
+    /// step's setup switches back.
+    restore_language: Option<String>,
 }
 
 /// Where a walk records that it started, and then that it finished.
@@ -466,6 +478,7 @@ impl UiTest {
             panel_w: None,
             capture_text: false,
             text_items: None,
+            panel_atlas: None,
             max_gap_ms: 0.0,
             last_tick: Instant::now(),
             prev_unclean: crate::diag::previous_session_unclean(),
@@ -482,6 +495,7 @@ impl UiTest {
                 }
                 prev
             },
+            restore_language: None,
         }
     }
 }
@@ -853,6 +867,7 @@ fn build_steps() -> Vec<Step> {
         screen("live-panel", Screen::LivePanel),
         screen("live-panel-full", Screen::LivePanelFull),
         screen("live-panel-help", Screen::LivePanelHelp),
+        screen("live-panel-language", Screen::LivePanelLanguage),
         live("live-direct-1e2", 2.0),
         live("live-df32-1e6", 6.0),
         live("live-df32-1e12", 12.0),
@@ -929,8 +944,18 @@ impl FractadyneApp {
 
         match ut.phase {
             Phase::Setup => {
+                if let Some(tag) = ut.restore_language.take() {
+                    self.language.choose(&tag);
+                }
                 let step = ut.steps[ut.idx].clone();
                 self.uitest_apply(ctx, &step);
+                // Under the panel the previous step left drawn: Japanese, whose system font
+                // rebuilds the font atlas (English when the walk is in Japanese).
+                if matches!(step.kind, StepKind::Screen(Screen::LivePanelLanguage)) {
+                    ut.restore_language = Some(self.language.tag.clone());
+                    let other = if crate::i18n::active().script == "Jpan" { "en" } else { "ja" };
+                    self.language.choose(other);
+                }
                 // Screens settle fast; a live view must build its reference + settle its tiles; a
                 // window resize needs a few frames for winit to apply the new size and egui to
                 // re-lay-out. Hard caps keep a wedged build from ever hanging the harness.
@@ -1099,6 +1124,7 @@ impl FractadyneApp {
                     // The screenshot shows THIS frame: its text is read once it is drawn.
                     ut.capture_text = true;
                     ut.text_items = None;
+                    ut.panel_atlas = None;
                 }
             }
             Phase::Shot => {
@@ -1299,7 +1325,7 @@ impl FractadyneApp {
                     crate::gpu_worker::WorkerState::Running(tr!(app_worker_same_card, name = format!("{} · Vulkan", self.gpu_name)));
             }
             Screen::Minimap => self.dialogs.minimap = true,
-            Screen::LivePanelStrip | Screen::LivePanel | Screen::LivePanelFull | Screen::LivePanelHelp => {
+            Screen::LivePanelStrip | Screen::LivePanel | Screen::LivePanelFull | Screen::LivePanelHelp | Screen::LivePanelLanguage => {
                 self.uitest_set_live(ctx, 30.0);
                 self.blinken.size = match s {
                     Screen::LivePanelStrip => crate::blinken::Size::Strip,
@@ -2474,6 +2500,17 @@ impl FractadyneApp {
             Some((screen, items)) => text_layout_checks(*screen, items, &mut checks),
             None => Vec::new(),
         };
+        match ut.panel_atlas {
+            Some(true) => checks.push(pass("panel glyphs", "the live panel's kept text is of the font atlas in use".into())),
+            Some(false) => checks.push(Check {
+                name: "panel glyphs".into(),
+                verdict: Verdict::Fail,
+                detail: "the live panel replays text tessellated against a font atlas egui has replaced: its titles, \
+                         labels and numerals draw as other glyphs"
+                    .into(),
+            }),
+            None => {}
+        }
 
         StepResult {
             name: step.name.clone(),
@@ -2510,7 +2547,18 @@ impl FractadyneApp {
     pub(crate) fn uitest_note_text(&mut self, ctx: &egui::Context) {
         if let Some(ut) = self.harness.uitest.as_mut() {
             if (ut.capture_text || matches!(ut.phase, Phase::Shot)) && !ctx.will_discard() {
-                ut.text_items = Some((ctx.screen_rect(), crate::harness::text_layout::collect(ctx)));
+                let mut items = crate::harness::text_layout::collect(ctx);
+                // The live panel's static text is replayed as meshes on all but the frame it is
+                // drawn: read it as it was laid out (a copy already in the lists is not added).
+                if let Some((layer, shapes)) = self.blinken.static_texts() {
+                    for k in crate::harness::text_layout::collect_shapes(layer, shapes) {
+                        if !items.iter().any(|i| i.layer == k.layer && i.text == k.text && i.rect == k.rect) {
+                            items.push(k);
+                        }
+                    }
+                }
+                ut.text_items = Some((ctx.screen_rect(), items));
+                ut.panel_atlas = self.blinken.static_layer_of_atlas_in_use(ctx);
                 ut.capture_text = false;
             }
         }
