@@ -143,7 +143,7 @@ menu-show-set-hover = パラメーター平面、つまり{ $name }集合その�
 menu-show-julia = Julia集合
 menu-show-julia-hover = { $name }集合の1点を、それ自体の絵として描いたものです。その点を固定したときに得られる形です。
 
-    点は「両方（連動）」で地図にポインターを合わせるか、フラクタル ▸ Julia cで選びます。
+    点は「両方（連動）」で地図にポインターを合わせて選びます。そこでクリックすると固定されます。
 menu-show-julia-none = { $name }には自由なパラメーターがないため、Julia集合はありません。
 menu-show-both = 両方（連動）
 menu-show-both-hover = 左に{ $name }集合を、右にカーソルが指している点のJulia集合を表示します。
@@ -1313,7 +1313,7 @@ help-options-glow-text = 境界の近くで密になり、光る糸のように�
 help-options-quality = 品質と反復回数
 help-options-quality-text = 「反復回数」は、ピクセルを集合の内側とみなすまでの最大ステップ数です。「自動調整」はズームに合わせて自動的に上げます（深い細部ほど多く必要です）。「アンチエイリアス」は、ビューが仕上がると静止画をスーパーサンプリングし（2×～8×）、外側の細かい「ちり」を抑えます。
 help-options-other = その他
-help-options-other-text = 「ズーム速度」は連続ズームの速さを、FPS上限はフレームレートの上限を設定します。デュアルビューは、Mandelbrot集合とそのJulia集合を並べて表示します（カーソルでJuliaのパラメーターがリアルタイムに決まります）。
+help-options-other-text = 「ズーム速度」は連続ズームの速さを、FPS上限はフレームレートの上限を設定します。「両方（連動）」は、Mandelbrot集合とそのJulia集合を並べて表示します（カーソルでJuliaのパラメーターがリアルタイムに決まります）。
 
 ## Help ▸ Fractals
 ## Fractal family names (Mandelbrot, Multibrot, Tricorn, Burning Ship, Celtic, Buffalo,
@@ -1334,7 +1334,7 @@ help-fractals-powers-text = Multibrot 6、7、8（z^d + c）と、べき3、4、
 help-fractals-phoenix = z → z² + c + p·z(n-1)。ここでz(n-1)は1つ前の反復値、pは定数（p = -0.5）です。この記憶項が炎のような糸状の模様を生みます。
 help-fractals-newton = z³ − 1 = 0 の根を求めるニュートン法：z → z − (z³−1)/(3z²)。脱出時間ではなく、反復が1の3つの立方根のどれに収束するか（引き込み領域）と、どれだけ速く収束するかでピクセルに色を付けます。入り組んだ引き込み領域の境界がフラクタルです。
 help-fractals-julia = Juliaモード
-help-fractals-julia-text = Newtonを除くすべての族で、Julia集合に切り替えられます：zを0から始めてc = ピクセルとする代わりに、c（パラメーター）を固定し、zをピクセルから始めます。Julia集合は、その固定したcについて、有界にとどまる出発点と脱出する出発点の境界です。デュアルビューでは、Mandelbrotパネル上でカーソルを動かすと、cがリアルタイムに決まります。
+help-fractals-julia-text = Newtonを除くすべての族で、Julia集合に切り替えられます：zを0から始めてc = ピクセルとする代わりに、c（パラメーター）を固定し、zをピクセルから始めます。Julia集合は、その固定したcについて、有界にとどまる出発点と脱出する出発点の境界です。「両方（連動）」では、Mandelbrotパネル上でカーソルを動かすと、cがリアルタイムに決まります。
 help-fractals-deep = ディープズームへの対応
 help-fractals-deep-text = Mandelbrot、Multibrot 3/4/5、Tricornは、超深度（floatexp）の摂動によるディープズームに対応しています。Burning Ship、Celtic、Buffaloは解析的ではない（絶対値を取る）ため、符号を考慮した摂動を使います。これも現在はfloatexpの範囲で動作し、以前のdf32での約1e28×の限界をはるかに超えてディープズームできます（絶対値の折り目付近でまれに出る斑点は、複数参照によるグリッチ補正の実装待ちです）。Phoenixは2項の摂動を使い、これもfloatexpの範囲でディープズームします（SA/BLAなしなので、Mandelbrotより重くなります）。高次のべきも同じようにディープズームし、各べきの摂動はそれぞれの2乗の連鎖に従います。Multibrot 3～8はMandelbrotと同様に級数近似とBLAにも対応し、すべてのべきのTricorn、Burning Ship、Celtic、BuffaloはBLAに対応しています（級数近似なし）。BLAは深いビューの内部を1ステップずつ反復する代わりに、まとめて進めます。directの方式を使うのはNewtonだけで、約1e6×まで鮮明です。カスタム数式は、下のカスタム数式のセクションに別の記載がない限りディープズームできます。
 help-fractals-custom = カスタム数式
@@ -1359,7 +1359,7 @@ help-how-floatexp-text = 約1e28×を超えると、そのごく小さな差で�
 help-how-reference = 参照点の選択とリベース
 help-how-reference-text = 参照点は、その軌道ができるだけ長くビュー内にとどまるように選ばれます（高精度でスコアを付けます）。差が大きくなりすぎると、精度を保つために参照軌道へ「リベース」されます。
 help-how-series = 級数近似
-help-how-series-text = ディープズームでは、最初のほうの反復はδを参照軌道からほとんど動かさないため、まとめて計算できます：δzをδcの短い多項式（3次）で近似し、その係数を参照軌道に沿って反復します。レンダラーは、その多項式がビュー全体でまだ正確な最後の反復まで先に飛ばし、そこから通常どおり反復します。飛ばしたステップの分だけ時間が節約され、画像は何も変わりません（コントロール ▸ 詳細設定で切り替え）。対象はMandelbrotとMultibrot 3/4/5の最も深い範囲で、ストライプ/三角不等式/軌道トラップ/分解の着色では使われません（すべての反復が必要なため）。BLAが有効な場合は、BLAがこの初期のスキップをすでに含んでいます。
+help-how-series-text = ディープズームでは、最初のほうの反復はδを参照軌道からほとんど動かさないため、まとめて計算できます：δzをδcの短い多項式（3次）で近似し、その係数を参照軌道に沿って反復します。レンダラーは、その多項式がビュー全体でまだ正確な最後の反復まで先に飛ばし、そこから通常どおり反復します。飛ばしたステップの分だけ時間が節約され、画像は何も変わりません（コントロール ▸ 詳細設定で切り替え）。対象はMandelbrotとMultibrot 3–8の最も深い範囲で、ストライプ/三角不等式/軌道トラップ/分解の着色では使われません（すべての反復が必要なため）。BLAが有効な場合は、BLAがこの初期のスキップをすでに含んでいます。
 help-how-distance = 距離推定と照明
 help-how-distance-text = 導関数dz/dcを追跡すると、各ピクセルの境界までの距離が得られます。これが3Dレリーフ照明、距離グロー、「距離推定」の着色方法を支えており、どれもどのズーム深度でも有効です。
 help-how-safety = アンチエイリアスと安全性
@@ -1430,7 +1430,7 @@ help-hardware-report = 何かおかしいと感じたら、セルフテストを
 help-hardware-notes = 注意事項
 help-hardware-note-watchdog = 高性能なGPUなら、極端な設定でもウォッチドッグの作業予算が働かずに済みます。
 help-hardware-note-binary = ビルドは単一のバイナリで自己完結しており、ランタイムのインストールは不要です。
-help-hardware-note-benchmark = 組み込みのベンチマーク（ツール -> ベンチマーク）を実行して、マシンの性能を測ってください。
+help-hardware-note-benchmark = 組み込みのベンチマーク（ツール ▸ ベンチマーク）を実行して、マシンの性能を測ってください。
 
 ## Help ▸ Acknowledgments & citations
 ## Names of people, programs, papers, books and websites stay as written, and so do the

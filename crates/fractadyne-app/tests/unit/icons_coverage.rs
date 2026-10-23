@@ -22,6 +22,8 @@ const FONTS: &[(&str, &[u8])] = &[
     // The language menu's own names of Japanese and Chinese (`scripts/subset_names_font.py`).
     ("NamesJP", include_bytes!(concat!(env!("CARGO_MANIFEST_DIR"), "/assets/fonts/NamesJP.otf"))),
     ("NamesSC", include_bytes!(concat!(env!("CARGO_MANIFEST_DIR"), "/assets/fonts/NamesSC.otf"))),
+    ("NamesTC", include_bytes!(concat!(env!("CARGO_MANIFEST_DIR"), "/assets/fonts/NamesTC.otf"))),
+    ("NamesKR", include_bytes!(concat!(env!("CARGO_MANIFEST_DIR"), "/assets/fonts/NamesKR.otf"))),
 ];
 
 /// `include_str!` rather than a directory walk, so this works from any working directory and
@@ -139,15 +141,15 @@ fn the_coverage_check_can_actually_fail() {
     assert!(have.contains(&helm), "the Lucide subset is missing (U+{helm:04X})");
 }
 
-/// Han, kana and the full-width forms: what a Japanese or Chinese interface draws with the system's
-/// font for its language (`i18n::fonts`), which no bundled font provides.
+/// Han, kana, Hangul and the full-width forms: what a Japanese, Chinese or Korean interface draws
+/// with the system's font for its language (`i18n::fonts`), which no bundled font provides.
 fn drawn_by_a_system_font(c: char) -> bool {
-    matches!(c as u32, 0x2E80..=0x2FDF | 0x3000..=0x30FF | 0x3100..=0x312F | 0x31F0..=0x31FF | 0x3200..=0x9FFF | 0xF900..=0xFAFF | 0xFE30..=0xFE4F | 0xFF00..=0xFFEF | 0x20000..=0x3134F)
+    matches!(c as u32, 0x1100..=0x11FF | 0x2E80..=0x2FDF | 0x3000..=0x30FF | 0x3100..=0x318F | 0x31F0..=0x31FF | 0x3200..=0x9FFF | 0xA960..=0xA97F | 0xAC00..=0xD7FF | 0xF900..=0xFAFF | 0xFE30..=0xFE4F | 0xFF00..=0xFFEF | 0x20000..=0x3134F)
 }
 
 /// Every language file shipped beside the English one draws with the fonts its script has: the
-/// bundled fonts for every character, except that a Japanese or Chinese file's Han, kana and
-/// full-width characters come from the system's font for it. Its own name, though, must be in the
+/// bundled fonts for every character, except that a Japanese, Chinese or Korean file's Han, kana,
+/// Hangul and full-width characters come from the system's font for it. Its own name, though, must be in the
 /// bundled names fonts: the language menu shows it in every interface language. Read at test time,
 /// so a new file is checked without a change here.
 #[test]
@@ -165,7 +167,7 @@ fn every_language_file_draws_with_the_fonts_its_script_has() {
         files += 1;
         let text = std::fs::read_to_string(&path).expect("UTF-8");
         let script = text.lines().find_map(|l| l.strip_prefix("language-script")).and_then(|v| v.split('=').nth(1)).map(str::trim).unwrap_or("Latn").to_owned();
-        let system = matches!(script.as_str(), "Jpan" | "Hans");
+        let system = matches!(script.as_str(), "Jpan" | "Hans" | "Hant" | "Kore");
         for (n, line) in text.lines().enumerate() {
             if line.starts_with('#') {
                 continue;

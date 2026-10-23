@@ -1055,14 +1055,26 @@ fn draw_tiles(p: &Painter, layer: Layer, r: Rect, s: f32, m: &Model) {
     }
     let (l1, tl, tr) = tile_labels(&m.plane, res);
     p.rect_stroke(plane.expand(0.5), 0.0_f32, Stroke::new(1.0_f32, amber(0.3)), egui::StrokeKind::Outside);
-    p.text(pos2(r.center().x, r.bottom() - 17.0 * s), Align2::CENTER_BOTTOM, &l1, face::narrow(10.0 * s), Color32::from_rgb(0xa8, 0x9f, 0x88));
-    let f = face::narrow(12.0 * s);
+    let (line, f) = tile_caption_type(p, r.width(), s, &l1, &tl, &tr);
+    p.text(pos2(r.center().x, r.bottom() - 17.0 * s), Align2::CENTER_BOTTOM, &l1, line, Color32::from_rgb(0xa8, 0x9f, 0x88));
     let glow = fade(ink::NIXIE_GLOW, 0.35);
     let lit = Color32::from_rgb(0xff, 0xb5, 0x5c);
     paint::tabular(p, pos2(r.left() + 6.6 * s, r.bottom() - 4.0 * s), Align2::LEFT_BOTTOM, &tl, f.clone(), glow);
     paint::tabular(p, pos2(r.right() - 5.4 * s, r.bottom() - 4.0 * s), Align2::RIGHT_BOTTOM, &tr, f.clone(), glow);
     paint::tabular(p, pos2(r.left() + 6.0 * s, r.bottom() - 4.0 * s), Align2::LEFT_BOTTOM, &tl, f.clone(), lit);
     paint::tabular(p, pos2(r.right() - 6.0 * s, r.bottom() - 4.0 * s), Align2::RIGHT_BOTTOM, &tr, f, lit);
+}
+
+/// The tiles instrument's caption type in a window `width` wide: the line under the plane, then
+/// the pair at its foot (tile size left, tiles a frame right). They were sized for English; a
+/// translation can run longer (Italian's "RIQUADRO 1920×1071" and "1 RIQUADRO/FOTOGRAMMA" met
+/// mid-window), so each line shrinks to fit (`fit_scale`), the pair keeping a gap between its two.
+fn tile_caption_type(p: &Painter, width: f32, s: f32, line: &str, left: &str, right: &str) -> (egui::FontId, egui::FontId) {
+    let room = width - 12.0 * s;
+    let wide = |texts: &[&str], size: f32| texts.iter().map(|t| paint::tabular_width(p, t, face::narrow(size))).sum::<f32>();
+    let k_line = fit_scale(room, |k| wide(&[line], 10.0 * s * k));
+    let k_pair = fit_scale(room - 10.0 * s, |k| wide(&[left, right], 12.0 * s * k));
+    (face::narrow(10.0 * s * k_line), face::narrow(12.0 * s * k_pair))
 }
 
 /// Where a walk's plane fills to for `share` of its texels still running: a log scale, from 1 in

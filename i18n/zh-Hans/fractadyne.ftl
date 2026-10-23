@@ -143,7 +143,7 @@ menu-show-set-hover = 参数平面——即 { $name } 集本身。
 menu-show-julia = Julia 集
 menu-show-julia-hover = { $name } 集中的一个点，单独绘制成一幅图像——即固定该点时得到的形状。
 
-    在“两者联动”中将鼠标悬停在地图上来选取该点，或使用“分形 ▸ Julia c”。
+    在“两者联动”中将鼠标悬停在地图上来选取该点；在那里单击即可固定。
 menu-show-julia-none = { $name } 没有自由参数，因此没有 Julia 集。
 menu-show-both = 两者联动
 menu-show-both-hover = 左侧为 { $name } 集，右侧为光标所在点的 Julia 集。
@@ -1313,7 +1313,7 @@ help-options-glow-text = 明亮的轮廓色带，在边界附近变密，形成�
 help-options-quality = 质量与迭代
 help-options-quality-text = “迭代次数”是将像素视为在集合内部之前的最大步数；“自动调整”会在你缩放时自动提高它（更深的细节需要更多迭代）。视图稳定后，“抗锯齿”会对静态图像进行超采样（2×–8×），消除外部细碎的“尘点”。
 help-options-other = 其他
-help-options-other-text = “缩放速度”设置连续缩放的速率；帧率上限限制帧率；“双视图”并排显示 Mandelbrot 集及其 Julia 集（光标实时设置 Julia 参数）。
+help-options-other-text = “缩放速度”设置连续缩放的速率；帧率上限限制帧率；“两者联动”并排显示 Mandelbrot 集及其 Julia 集（光标实时设置 Julia 参数）。
 
 ## Help ▸ Fractals
 ## Fractal family names (Mandelbrot, Multibrot, Tricorn, Burning Ship, Celtic, Buffalo,
@@ -1334,7 +1334,7 @@ help-fractals-powers-text = Multibrot 6、7 和 8（z^d + c），以及幂次为
 help-fractals-phoenix = z → z² + c + p·z(n-1)，其中 z(n-1) 是上一次的迭代值，p 是常数（p = -0.5）。这个记忆项会产生火焰般的细丝。
 help-fractals-newton = 用牛顿法求 z³ − 1 = 0 的根：z → z − (z³−1)/(3z²)。像素不按逃逸时间着色，而是按迭代收敛到三个单位立方根中的哪一个（吸引域）以及收敛的快慢着色；纠缠在一起的吸引域边界就是分形。
 help-fractals-julia = Julia 模式
-help-fractals-julia-text = 除 Newton 之外的每个分形族都可以切换到 Julia 集：不再让 z 从 0 开始、c = 像素，而是固定 c（一个参数），让 z 从像素开始。对于这个固定的 c，Julia 集就是保持有界的起点与逃逸的起点之间的边界。在“双视图”中，将光标移过 Mandelbrot 面板可实时设置 c。
+help-fractals-julia-text = 除 Newton 之外的每个分形族都可以切换到 Julia 集：不再让 z 从 0 开始、c = 像素，而是固定 c（一个参数），让 z 从像素开始。对于这个固定的 c，Julia 集就是保持有界的起点与逃逸的起点之间的边界。在“两者联动”中，将光标移过 Mandelbrot 面板可实时设置 c。
 help-fractals-deep = 深度缩放支持
 help-fractals-deep-text = Mandelbrot、Multibrot 3/4/5 和 Tricorn 支持极深（floatexp）微扰深度缩放。Burning Ship、Celtic 和 Buffalo 是非解析的（它们要取绝对值），因此使用考虑符号的微扰；它现在也能在 floatexp 范围内运行，深度缩放远远超出旧的约 1e28× df32 上限（绝对值折叠附近偶尔出现的噪点，有待多参考点失真校正来解决）。Phoenix 使用双项微扰，也能在 floatexp 范围内深度缩放（不带 SA/BLA，因此比 Mandelbrot 更吃力）。高次幂以同样的方式深度缩放，每个幂次的微扰遵循它自己的平方链；Multibrot 3–8 也和 Mandelbrot 一样支持级数近似和 BLA，而各幂次的 Tricorn、Burning Ship、Celtic 和 Buffalo 支持 BLA（无级数近似），由 BLA 跨过深度视图的内部，而不是一步一步地迭代。只有 Newton 使用直接路径，清晰度可达约 1e6×；自定义公式可以深度缩放，除非下文“自定义公式”一节另有说明。
 help-fractals-custom = 自定义公式
@@ -1359,7 +1359,7 @@ help-how-floatexp-text = 大约超过 1e28× 之后，即使是那个微小的�
 help-how-reference = 参考点选择与重定基
 help-how-reference-text = 选择参考点（以高精度评分）时，会让它的轨道尽可能长时间地留在视图之内。当差值变得过大时，它会被“重定基”回参考轨道上，以保持准确。
 help-how-series = 级数近似
-help-how-series-text = 在深度缩放时，最初的迭代几乎不会让 δ 偏离参考轨道，因此可以一次性算出：δz 用一个关于 δc 的短多项式（3 阶）来近似，其系数沿参考轨道迭代得出。渲染器会直接跳到该多项式对整个视图仍然准确的最后一次迭代，然后再正常迭代——省下跳过的步骤，图像毫无变化（在“控制面板 ▸ 高级”中切换）。适用于 Mandelbrot 和 Multibrot 3/4/5，最深的范围；不适用于条纹 / 三角不等式 / 轨道陷阱 / 分解着色（它们需要每一次迭代）。在 BLA 生效的地方，它已经包含了这种早期跳过。
+help-how-series-text = 在深度缩放时，最初的迭代几乎不会让 δ 偏离参考轨道，因此可以一次性算出：δz 用一个关于 δc 的短多项式（3 阶）来近似，其系数沿参考轨道迭代得出。渲染器会直接跳到该多项式对整个视图仍然准确的最后一次迭代，然后再正常迭代——省下跳过的步骤，图像毫无变化（在“控制面板 ▸ 高级”中切换）。适用于 Mandelbrot 和 Multibrot 3–8，最深的范围；不适用于条纹 / 三角不等式 / 轨道陷阱 / 分解着色（它们需要每一次迭代）。在 BLA 生效的地方，它已经包含了这种早期跳过。
 help-how-distance = 距离估计与光照
 help-how-distance-text = 跟踪导数 dz/dc 可以得到每个像素到边界的距离。3D 浮雕光照、距离辉光和“距离”着色方法都由它驱动——在任何缩放深度下都有效。
 help-how-safety = 抗锯齿与安全
@@ -1430,7 +1430,7 @@ help-hardware-report = 如果看起来有什么不对，请运行自检并使用
 help-hardware-notes = 说明
 help-hardware-note-watchdog = 性能足够的 GPU 可以避免在极端设置下触发看门狗工作预算。
 help-hardware-note-binary = 本程序是单一的独立可执行文件——无需安装任何运行时。
-help-hardware-note-benchmark = 运行内置的基准测试（“工具 -> 基准测试”）来评估你的计算机。
+help-hardware-note-benchmark = 运行内置的基准测试（“工具 ▸ 基准测试”）来评估你的计算机。
 
 ## Help ▸ Acknowledgments & citations
 ## Names of people, programs, papers, books and websites stay as written, and so do the

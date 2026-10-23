@@ -147,7 +147,7 @@ menu-show-set-hover = Die Parameterebene — die { $name }-Menge selbst.
 menu-show-julia = Julia-Menge
 menu-show-julia-hover = Ein Punkt der { $name }-Menge, als eigenes Bild gezeichnet — die Form, die entsteht, wenn dieser Punkt festgehalten wird.
 
-    Den Punkt wählen: mit dem Mauszeiger über der Karte in „Beide, verknüpft“ oder mit Fraktal ▸ Julia c.
+    Den Punkt wählen: mit dem Mauszeiger über der Karte in „Beide, verknüpft“; ein Klick dort hält ihn fest.
 menu-show-julia-none = { $name } hat keinen freien Parameter und daher keine Julia-Menge.
 menu-show-both = Beide, verknüpft
 menu-show-both-hover = Links die { $name }-Menge, rechts die Julia-Menge des Punktes, über dem gerade der Mauszeiger steht.
@@ -1317,7 +1317,7 @@ help-options-glow-text = Helle Konturbänder, die sich nahe dem Rand zu leuchten
 help-options-quality = Qualität & Iterationen
 help-options-quality-text = Iterationen ist die Höchstzahl an Schritten, bevor ein Pixel als in der Menge liegend gilt; die „Auto-Skalierung“ erhöht sie beim Zoomen automatisch (tiefere Details brauchen mehr). Kantenglättung tastet Standbilder mehrfach ab (2×–8×), sobald die Ansicht zur Ruhe kommt, und bändigt den feinen „Staub“ im Äußeren.
 help-options-other = Sonstiges
-help-options-other-text = Zoomtempo legt die Geschwindigkeit des Dauerzooms fest; die FPS-Obergrenze begrenzt die Bildrate; die Doppelansicht zeigt eine Mandelbrot-Menge und ihre Julia-Menge nebeneinander (der Mauszeiger setzt den Julia-Parameter live).
+help-options-other-text = Zoomtempo legt die Geschwindigkeit des Dauerzooms fest; die FPS-Obergrenze begrenzt die Bildrate; „Beide, verknüpft“ zeigt eine Mandelbrot-Menge und ihre Julia-Menge nebeneinander (der Mauszeiger setzt den Julia-Parameter live).
 
 ## Help ▸ Fractals
 ## Fractal family names (Mandelbrot, Multibrot, Tricorn, Burning Ship, Celtic, Buffalo,
@@ -1338,7 +1338,7 @@ help-fractals-powers-text = Multibrot 6, 7 und 8 (z^d + c) sowie Burning Ship, T
 help-fractals-phoenix = z → z² + c + p·z(n-1), wobei z(n-1) der vorige Iterationswert ist und p eine Konstante (p = -0.5). Der Gedächtnisterm erzeugt flammenartige Filamente.
 help-fractals-newton = Das Newton-Verfahren für die Nullstellen von z³ − 1 = 0: z → z − (z³−1)/(3z²). Statt nach Fluchtzeit werden Pixel danach gefärbt, gegen welche der drei dritten Einheitswurzeln die Iteration konvergiert (die Einzugsgebiete) und wie schnell; die verschlungenen Grenzen der Einzugsgebiete sind das Fraktal.
 help-fractals-julia = Julia-Modus
-help-fractals-julia-text = Für jede Familie außer Newton lässt sich zu einer Julia-Menge wechseln: Statt z bei 0 mit c = Pixel zu beginnen, wird c (ein Parameter) festgehalten, und z beginnt beim Pixel. Die Julia-Menge ist für dieses feste c die Grenze zwischen Startpunkten, die beschränkt bleiben, und solchen, die entkommen. In der Doppelansicht setzt die Bewegung des Mauszeigers über der Mandelbrot-Hälfte c live.
+help-fractals-julia-text = Für jede Familie außer Newton lässt sich zu einer Julia-Menge wechseln: Statt z bei 0 mit c = Pixel zu beginnen, wird c (ein Parameter) festgehalten, und z beginnt beim Pixel. Die Julia-Menge ist für dieses feste c die Grenze zwischen Startpunkten, die beschränkt bleiben, und solchen, die entkommen. In „Beide, verknüpft“ setzt die Bewegung des Mauszeigers über der Mandelbrot-Hälfte c live.
 help-fractals-deep = Tiefenzoom-Unterstützung
 help-fractals-deep-text = Mandelbrot, Multibrot 3/4/5 und Tricorn unterstützen Tiefenzoom per Störungsrechnung in extremer Tiefe (floatexp). Burning Ship, Celtic und Buffalo sind nicht analytisch (sie nehmen Beträge), daher verwenden sie eine vorzeichenbewusste Störungsrechnung; diese läuft jetzt ebenfalls im floatexp-Bereich und zoomt weit über die alte df32-Grenze von ~1e28× hinaus (seltenes Gesprenkel nahe den Betragsfaltungen wartet noch auf die Glitch-Korrektur mit mehreren Referenzen). Phoenix verwendet eine zweigliedrige Störungsrechnung und zoomt ebenfalls im floatexp-Bereich tief (ohne SA/BLA, daher aufwendiger als Mandelbrot). Die höheren Potenzen zoomen auf dieselbe Weise tief, wobei die Störungsrechnung jeder Potenz ihrer eigenen Kette von Quadrierungen folgt; Multibrot 3–8 nutzen außerdem Reihennäherung und BLA wie Mandelbrot, und Tricorn, Burning Ship, Celtic und Buffalo nutzen bei jeder Potenz BLA (ohne Reihe), das das Innere einer tiefen Ansicht trägt, statt es Schritt für Schritt zu iterieren. Nur Newton verwendet den direkten Pfad, scharf bis ~1e6×; eigene Formeln zoomen tief, sofern der Abschnitt „Eigene Formeln“ unten nichts anderes sagt.
 help-fractals-custom = Eigene Formeln
@@ -1363,7 +1363,7 @@ help-how-floatexp-text = Ab etwa 1e28× unterschreitet selbst diese winzige Diff
 help-how-reference = Referenzwahl & Rebasing
 help-how-reference-text = Die Referenz wird so gewählt (mit hoher Genauigkeit bewertet), dass ihr Orbit möglichst lange innerhalb der Ansicht bleibt. Wird die Differenz zu groß, wird sie auf die Referenz „zurückgesetzt“ (Rebasing), um genau zu bleiben.
 help-how-series = Reihennäherung
-help-how-series-text = Bei tiefem Zoom bewegen die frühen Iterationen δ kaum von der Referenz weg, daher lassen sie sich auf einmal berechnen: δz wird durch ein kurzes Polynom in δc (Ordnung 3) angenähert, dessen Koeffizienten entlang der Referenz iteriert werden. Der Renderer springt bis zur letzten Iteration vor, bei der dieses Polynom für die ganze Ansicht noch genau ist, und iteriert dann normal weiter — die übersprungenen Schritte werden gespart, ohne das Bild zu verändern (umschaltbar unter Bedienfeld ▸ Erweitert). Mandelbrot und Multibrot 3/4/5, tiefster Bereich; nicht mit der Färbung Streifenmittel / Dreiecksungleichung / Orbitfalle / Zerlegung (diese brauchen jede Iteration). Wo BLA aktiv ist, schließt es dieses frühe Überspringen bereits ein.
+help-how-series-text = Bei tiefem Zoom bewegen die frühen Iterationen δ kaum von der Referenz weg, daher lassen sie sich auf einmal berechnen: δz wird durch ein kurzes Polynom in δc (Ordnung 3) angenähert, dessen Koeffizienten entlang der Referenz iteriert werden. Der Renderer springt bis zur letzten Iteration vor, bei der dieses Polynom für die ganze Ansicht noch genau ist, und iteriert dann normal weiter — die übersprungenen Schritte werden gespart, ohne das Bild zu verändern (umschaltbar unter Bedienfeld ▸ Erweitert). Mandelbrot und Multibrot 3–8, tiefster Bereich; nicht mit der Färbung Streifenmittel / Dreiecksungleichung / Orbitfalle / Zerlegung (diese brauchen jede Iteration). Wo BLA aktiv ist, schließt es dieses frühe Überspringen bereits ein.
 help-how-distance = Distanzschätzung & Beleuchtung
 help-how-distance-text = Die Verfolgung der Ableitung dz/dc liefert für jedes Pixel den Abstand zum Rand. Darauf beruhen die 3D-Reliefbeleuchtung, das Distanzleuchten und die Färbemethode „Distanzschätzung“ — alle in jeder Zoomtiefe gültig.
 help-how-safety = Kantenglättung & Sicherheit
@@ -1434,7 +1434,7 @@ help-hardware-report = Sieht etwas falsch aus, den Selbsttest ausführen und „
 help-hardware-notes = Hinweise
 help-hardware-note-watchdog = Eine leistungsfähige GPU vermeidet, dass bei extremen Einstellungen das Watchdog-Arbeitsbudget eingreift.
 help-hardware-note-binary = Das Programm ist eine einzige, eigenständige Binärdatei — keine Laufzeitinstallation nötig.
-help-hardware-note-benchmark = Den eingebauten Benchmark ausführen (Extras -> Benchmark), um den eigenen Rechner einzuschätzen.
+help-hardware-note-benchmark = Den eingebauten Benchmark ausführen (Extras ▸ Benchmark), um den eigenen Rechner einzuschätzen.
 
 ## Help ▸ Acknowledgments & citations
 ## Names of people, programs, papers, books and websites stay as written, and so do the

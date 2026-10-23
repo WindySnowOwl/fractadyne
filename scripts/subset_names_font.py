@@ -5,8 +5,9 @@ the language menu (design/multilingual.md section 8, "the names font").
 The language menu lists every language in its own name, in every interface language, so a reader
 of Japanese can find 日本語 in an English interface. The interface fonts have no Han characters,
 and a whole CJK font is 5-30 MB, so the names are drawn from subsets of Noto Sans JP and Noto Sans
-SC holding only the characters of those names (a few kilobytes). Japanese and Chinese each get the
-font of their own typography (Han unification: the same character is drawn differently).
+SC holding only the characters of those names (a few kilobytes). Japanese, Simplified and
+Traditional Chinese and Korean each get the font of their own typography (Han unification: the
+same character is drawn differently).
 
 Reads `language-name` and `language-script` from every i18n/<tag>/fractadyne.ftl (and always
 includes 日本語 and 简体中文), downloads the two Noto fonts (SIL Open Font License 1.1) into a cache
@@ -14,6 +15,8 @@ folder once, and writes:
 
     crates/fractadyne-app/assets/fonts/NamesJP.otf   (script Jpan)
     crates/fractadyne-app/assets/fonts/NamesSC.otf   (script Hans)
+    crates/fractadyne-app/assets/fonts/NamesTC.otf   (script Hant)
+    crates/fractadyne-app/assets/fonts/NamesKR.otf   (script Kore)
 
 Run it after a language with one of those scripts is added or renamed; the font-coverage test
 fails until then. Needs fontTools (pip install fonttools).
@@ -30,6 +33,8 @@ BASE = 'https://cdn.jsdelivr.net/gh/notofonts/noto-cjk@main/Sans/SubsetOTF'
 SOURCES = {
     'Jpan': ('JP', 'NamesJP.otf', '日本語'),
     'Hans': ('SC', 'NamesSC.otf', '简体中文'),
+    'Hant': ('TC', 'NamesTC.otf', '繁體中文'),
+    'Kore': ('KR', 'NamesKR.otf', '한국어'),
 }
 
 
@@ -44,7 +49,7 @@ def names_by_script():
         name = re.search(r'^language-name\s*=\s*(.+)$', text, re.M)
         script = re.search(r'^language-script\s*=\s*(\S+)', text, re.M)
         if name and script and script.group(1) in out:
-            out[script.group(1)] |= {c for c in name.group(1).strip() if ord(c) > 0x2E7F}
+            out[script.group(1)] |= {c for c in name.group(1).strip() if ord(c) > 0x10FF}
     return out
 
 
@@ -75,7 +80,8 @@ def main():
         opts.name_IDs = ['*']
         opts.notdef_outline = True
         opts.drop_tables += ['DSIG', 'vhea', 'vmtx', 'VORG', 'BASE']
-        font = TTFont(src)
+        # The source's own timestamp, not today's: the same names give the same bytes on every run.
+        font = TTFont(src, recalcTimestamp=False)
         s = subset.Subsetter(options=opts)
         s.populate(unicodes=[ord(c) for c in sorted(chars)])
         s.subset(font)

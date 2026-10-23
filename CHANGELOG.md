@@ -59,17 +59,19 @@ published as the pre-releases `v0.2.41-beta.1` to `v0.2.41-beta.150`, and a "bet
 
 Changes after 0.3.0-beta.1:
 
-- **Fractadyne in seven languages (0.3.0-beta.21).** All of the interface's text (menus, panels,
+- **Fractadyne in fifteen languages (0.3.0-beta.21).** All of the interface's text (menus, panels,
   dialogs, Help, the status bar, the live-render panel, the formula and render-farm windows) is now
   in one file per language (design/multilingual.md), and the packages carry Spanish, French,
-  German, Ukrainian, Japanese and Simplified Chinese beside English (Khmer follows an upgrade of the
-  interface library, which must learn to shape Khmer text). The six are DRAFTS, machine-translated
+  German, Italian, Portuguese (Brazil), Polish, Turkish, Indonesian, Ukrainian, Russian, Japanese,
+  Korean and Chinese (Simplified and Traditional) beside English (Khmer follows an upgrade of the
+  interface library, which must learn to shape Khmer text). The fourteen are DRAFTS, machine-translated
   and marked "(draft)" in the language menu until a native speaker has reviewed each:
   corrections are welcome as pull requests, and `i18n/README.md` says how (`--check-language FILE`
-  checks a file as the program loads it). Japanese and Chinese use the system's own font for the
-  language (Yu Gothic or Meiryo, Microsoft YaHei; Noto Sans CJK on Linux), loaded only while that
-  language is in use; their names in the language menu come from tiny bundled subsets of Noto Sans
-  JP and SC, so they read correctly in every interface language. The
+  checks a file as the program loads it). Japanese, Chinese and Korean use the system's own font
+  for the language (Yu Gothic or Meiryo; Microsoft YaHei; Microsoft JhengHei; Malgun Gothic; Noto
+  Sans CJK on Linux), loaded only while that language is in use; their names in the language menu
+  come from tiny bundled subsets of Noto Sans JP, SC, TC and KR, so they read correctly in every
+  interface language. The
   menu at the end of the top bar lists every installed language in its own name with its English
   name beside it, and is shown in every mode, so nobody is left in a language they cannot read.
   Behind it, the Languages window shows how much of each language is translated and installs a
