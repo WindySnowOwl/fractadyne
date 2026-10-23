@@ -188,6 +188,17 @@ impl Overlay {
         self.size != Size::Off
     }
 
+    /// Whether the open panel's kept static layer belongs to the font atlas in use
+    /// (`panel::Statics::of_atlas_in_use`); `None` when the panel is closed or keeps none.
+    pub(crate) fn static_layer_of_atlas_in_use(&self, ctx: &egui::Context) -> Option<bool> {
+        self.is_open().then(|| self.statics.of_atlas_in_use(ctx)).flatten()
+    }
+
+    /// The open panel's static text (`panel::Statics::texts`).
+    pub(crate) fn static_texts(&self) -> Option<(egui::LayerId, &[egui::epaint::ClippedShape])> {
+        self.is_open().then(|| self.statics.texts()).flatten()
+    }
+
     /// Records one frame's panel cost (UI thread, ms) and logs the mean and worst every
     /// [`COST_LOG_FRAMES`] frames the panel is open.
     pub(crate) fn note_cost(&mut self, ms: f64) {

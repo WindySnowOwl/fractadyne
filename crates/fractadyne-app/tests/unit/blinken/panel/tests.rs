@@ -143,6 +143,47 @@ fn the_tiles_captions_keep_their_english_size_and_a_longer_translation_shrinks_t
     });
 }
 
+/// The kept static layer's glyphs point into the font atlas it was tessellated against. egui builds
+/// a new atlas when the fonts change (a language that brings in its system font) or when one is
+/// nearly full (thousands of kanji fill it), and the new one grows back to the old size as the
+/// interface lays its text out again: the size alone said "unchanged", and the kept meshes drew
+/// whatever glyphs now sat at their old places (a user's Japanese panel: titles, lamp labels and
+/// dial numerals as garbage, the text drawn each frame fine).
+#[test]
+fn the_kept_static_layer_is_redrawn_against_a_rebuilt_font_atlas_of_the_same_size() {
+    let ctx = egui::Context::default();
+    let mut fonts = egui::FontDefinitions::default();
+    paint::install_fonts(&mut fonts);
+    ctx.set_fonts(fonts.clone());
+    let raw = || egui::RawInput { screen_rect: Some(Rect::from_min_size(Pos2::ZERO, vec2(1200.0, 900.0))), ..Default::default() };
+    let (model, engine) = (Model::default(), Engine::default());
+    let inp = Inputs { model: &model, engine: &engine, clock: "2026-10-23_15:50:50.3", version: "v0.3.0", fe_from: 300.0, df32_from: 60.0, hammer: egui::TextureId::default() };
+    let draw_into = |ctx: &egui::Context, statics: &mut Statics| {
+        let p = ctx.layer_painter(egui::LayerId::background());
+        draw(&p, Pos2::ZERO, DESIGN_W, 1.0, Size::Full, 1.0, &inp, &mut Vec::new(), &mut [0.0; 11], statics);
+    };
+    let atlas = || ctx.fonts(|f| f.texture_atlas().lock().size());
+    let (mut a, mut b) = (Statics::default(), Statics::default());
+    let _ = ctx.run(raw(), |_| {});
+    for _ in 0..4 {
+        let _ = ctx.run(raw(), |ctx| draw_into(ctx, &mut a));
+    }
+    let drawn = a.drawn;
+    let _ = ctx.run(raw(), |ctx| draw_into(ctx, &mut a));
+    assert_eq!(a.drawn, drawn, "kept while nothing changed");
+    let before = atlas();
+    // New fonts (an extra family changes the definitions, so egui takes them): a new atlas. The
+    // other panel lays its text out first, as the rest of the interface does, regrowing it.
+    fonts.families.insert(egui::FontFamily::Name("unused".into()), vec!["Hack".into()]);
+    ctx.set_fonts(fonts);
+    let _ = ctx.run(raw(), |ctx| {
+        draw_into(ctx, &mut b);
+        assert_eq!(atlas(), before, "the control: the rebuilt atlas has grown back to the old size");
+        draw_into(ctx, &mut a);
+    });
+    assert_eq!(a.drawn, drawn + 1, "the static layer was replayed against a different atlas");
+}
+
 #[test]
 fn the_close_button_sits_in_the_case_margin_at_every_size() {
     for size in [Size::Strip, Size::Panel, Size::Full] {

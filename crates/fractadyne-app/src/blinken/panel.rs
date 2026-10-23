@@ -169,8 +169,12 @@ struct StaticKey {
     worker: bool,
     /// Each nixie readout's length and where its separators sit (they set the tubes).
     nixies: [(usize, u64); 4],
-    /// The font atlas's size and the display's scale: the kept meshes' glyph coordinates are
-    /// normalized to the atlas, so a grown atlas must re-tessellate them.
+    /// The font atlas (its address: `Statics::atlas` holds a weak reference to it, which keeps the
+    /// address from being reused without keeping the atlas's image), its size, and the display's scale. The kept meshes' glyph coordinates are places in
+    /// that atlas, normalized to its size: a grown atlas must re-tessellate them, and so must a new
+    /// one, which egui builds when the fonts change or the old one is nearly full, and which grows
+    /// back to the old size as the interface lays its text out again.
+    atlas_id: usize,
     atlas: [usize; 2],
     pixels_per_point: f32,
     /// The interface language's generation (`i18n::generation`): the legends are text in the
@@ -183,8 +187,29 @@ struct StaticKey {
 pub(crate) struct Statics {
     key: Option<StaticKey>,
     shapes: Vec<ClippedShape>,
+    /// The atlas `shapes` were tessellated against (`StaticKey::atlas_id`), weakly: a replaced atlas
+    /// is freed, but its allocation, and so its address, stays this one's.
+    atlas: Option<std::sync::Weak<egui::mutex::Mutex<egui::epaint::TextureAtlas>>>,
+    /// The text among the static layer's shapes, as laid out before tessellation: replayed as
+    /// meshes it is no longer text, and the UI walk's layout check reads it from here.
+    texts: Vec<ClippedShape>,
     /// How many times the static layer was drawn (rather than replayed), for the cost line.
     pub(crate) drawn: u64,
+}
+
+impl Statics {
+    /// Whether the kept layer was tessellated against the font atlas `ctx` draws with (`None` when
+    /// none is kept). A kept layer of another atlas draws its text as whatever glyphs now sit at
+    /// its old places.
+    pub(crate) fn of_atlas_in_use(&self, ctx: &egui::Context) -> Option<bool> {
+        let kept = self.atlas.as_ref()?;
+        Some(ctx.fonts(|f| std::ptr::eq(kept.as_ptr(), std::sync::Arc::as_ptr(&f.texture_atlas()))))
+    }
+
+    /// The kept layer's text shapes and the layer they were drawn on (`None` when none is kept).
+    pub(crate) fn texts(&self) -> Option<(egui::LayerId, &[ClippedShape])> {
+        self.key.map(|k| (k.layer, self.texts.as_slice()))
+    }
 }
 
 // Layout at scale 1, in panel units.
@@ -334,6 +359,7 @@ pub(crate) fn draw(
         cores: inp.engine.cores.len(),
         worker: inp.engine.worker,
         nixies: std::array::from_fn(|i| tube_pattern(&texts[i])),
+        atlas_id: ctx.fonts(|f| std::sync::Arc::as_ptr(&f.texture_atlas()) as usize),
         atlas: ctx.fonts(|f| f.texture_atlas().lock().size()),
         pixels_per_point: ctx.pixels_per_point(),
         language: crate::i18n::generation(),
@@ -346,8 +372,10 @@ pub(crate) fn draw(
         let shapes: Vec<ClippedShape> = ctx.graphics(|g| g.get(layer).map(|l| l.all_entries().skip(start).cloned().collect()).unwrap_or_default());
         // Drawn (and tessellated by egui) as shapes this frame; kept as meshes for the next ones.
         // The atlas is read after drawing: laying the text out may have grown it.
+        statics.texts = shapes.iter().filter(|cs| matches!(cs.shape, Shape::Text(_))).cloned().collect();
         statics.shapes = tessellate(ctx, shapes);
         statics.key = Some(StaticKey { atlas: ctx.fonts(|f| f.texture_atlas().lock().size()), ..key });
+        statics.atlas = Some(ctx.fonts(|f| std::sync::Arc::downgrade(&f.texture_atlas())));
         statics.drawn += 1;
     } else {
         ctx.graphics_mut(|g| {
@@ -1065,6 +1093,11 @@ fn draw_tiles(p: &Painter, layer: Layer, r: Rect, s: f32, m: &Model) {
     paint::tabular(p, pos2(r.right() - 6.0 * s, r.bottom() - 4.0 * s), Align2::RIGHT_BOTTOM, &tr, f, lit);
 }
 
+/// The widest of `texts` laid out in `font`, in points.
+fn widest_text<'a>(p: &Painter, texts: impl Iterator<Item = &'a str>, font: egui::FontId) -> f32 {
+    texts.map(|t| p.layout_no_wrap(t.to_owned(), font.clone(), Color32::WHITE).size().x).fold(0.0, f32::max)
+}
+
 /// The tiles instrument's caption type in a window `width` wide: the line under the plane, then
 /// the pair at its foot (tile size left, tiles a frame right). They were sized for English; a
 /// translation can run longer (Italian's "RIQUADRO 1920×1071" and "1 RIQUADRO/FOTOGRAMMA" met
@@ -1503,15 +1536,19 @@ fn draw_tanks(p: &Painter, layer: Layer, r: Rect, s: f32, e: &Engine) {
         for left in tanks {
             p.rect_filled(Rect::from_min_max(pos2(left, top), pos2(left + tw, bot)), 0.0_f32, Color32::from_rgb(6, 7, 7));
         }
-        let f = face::dial(9.0 * s);
         let legend = [
             (tr!(live_memory_gbuf), ink::PHOSPHOR),
             (tr!(live_memory_hold), Color32::from_rgb(0x4f, 0xbf, 0x74)),
             (tr!(live_memory_orbit), ink::AMBER),
             (tr!(live_memory_worker), ink::LAMP_BLUE),
         ];
+        // One size for the four, the longest fitting the column to the window's edge (Russian's
+        // "КОПИЯ ОРБ.", Japanese's "ワーカー参照" ran past it).
+        let x = r.left() + w * 0.76;
+        let k = fit_scale(r.right() - 4.0 * s - x, |k| widest_text(p, legend.iter().map(|(l, _)| l.as_str()), face::dial(9.0 * s * k)));
+        let f = face::dial(9.0 * s * k);
         for (i, (label, col)) in legend.into_iter().enumerate() {
-            p.text(pos2(r.left() + w * 0.76, r.top() + (10.0 + i as f32 * 12.0) * s), Align2::LEFT_TOP, label, f.clone(), col);
+            p.text(pos2(x, r.top() + (10.0 + i as f32 * 12.0) * s), Align2::LEFT_TOP, label, f.clone(), col);
         }
         return;
     }
@@ -1569,8 +1606,12 @@ fn draw_cores(p: &Painter, layer: Layer, r: Rect, s: f32, inp: &Inputs) {
         p.text(pos2(r.left() + 6.0 * s, r.bottom() - 5.0 * s), Align2::LEFT_BOTTOM, tr!(live_cores_count, count = e.cores.len()), face::narrow(11.0 * s), Color32::from_rgb(0xd8, 0xcf, 0xb6));
         paint::phosphor_disc(p, c, rr);
         let labels = [tr!(live_cores_role_ref), tr!(live_cores_role_pool), tr!(live_cores_role_worker), tr!(live_cores_role_probe), tr!(live_cores_role_export)];
+        // One size for all, the longest no wider than the chord between two neighbours (the two at
+        // the bottom sit side by side; the pseudo-language's ran together).
+        let chord = 2.0 * rr * 0.5 * (PI / roles as f32).sin();
+        let fit = fit_scale(chord - 3.0 * s, |k| widest_text(p, labels.iter().map(String::as_str), face::narrow(8.0 * s * k)));
         for (k, label) in labels.into_iter().enumerate() {
-            p.text(centre(k), Align2::CENTER_CENTER, label, face::narrow(8.0 * s), fade(ink::PHOSPHOR, 0.35));
+            p.text(centre(k), Align2::CENTER_CENTER, label, face::narrow(8.0 * s * fit), fade(ink::PHOSPHOR, 0.35));
         }
         return;
     }
