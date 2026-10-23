@@ -23,6 +23,8 @@ pub(crate) struct Installed {
     pub(crate) name: String,
     pub(crate) english_name: String,
     pub(crate) revision: u64,
+    /// `language-status = draft`: no native speaker has reviewed it yet.
+    pub(crate) draft: bool,
     pub(crate) source: Source,
 }
 
@@ -73,6 +75,7 @@ pub(crate) fn discover_in(package: Option<&Path>, user: Option<&Path>, dev: Opti
         name: en.name.clone(),
         english_name: en.english_name.clone(),
         revision: 0,
+        draft: false,
         source: Source::Builtin,
     }];
     #[derive(Clone, Copy, PartialEq)]
@@ -151,6 +154,7 @@ fn peek(path: &Path, tag_hint: &str) -> Option<Installed> {
     Some(Installed {
         name: field("language-name").unwrap_or_else(|| tag.clone()),
         english_name: field("language-english-name").unwrap_or_default(),
+        draft: field("language-status").as_deref() == Some("draft"),
         tag,
         revision: stamp.revision,
         source: Source::Builtin,
@@ -176,6 +180,46 @@ pub(crate) fn load(i: &Installed) -> Result<Catalog, String> {
             Catalog::from_text(&text, &i.tag)
         }
     }
+}
+
+/// `--check-language FILE`: the file loaded exactly as the program loads one, and what it would
+/// set aside (English, like all command-line output). The tag comes from the file's stamp, else its
+/// name: `fractadyne-<tag>.ftl`, or `<tag>/fractadyne.ftl` as in the repository. Returns the report
+/// and whether the file loads with nothing set aside.
+pub(crate) fn check_report(path: &Path) -> (String, bool) {
+    let shown = path.display();
+    let name = path.file_name().map(|n| n.to_string_lossy().into_owned()).unwrap_or_default();
+    let hint = match name.strip_prefix("fractadyne-").and_then(|n| n.strip_suffix(".ftl")) {
+        Some(tag) => tag.to_owned(),
+        None => path.parent().and_then(|p| p.file_name()).map(|n| n.to_string_lossy().into_owned()).unwrap_or_default(),
+    };
+    let Some(info) = peek(path, &hint) else {
+        return (format!("{shown}: not a language file this program can name (no tag in its stamp or its name)\n"), false);
+    };
+    let catalog = match load(&Installed { source: Source::User(path.to_path_buf()), ..info }) {
+        Ok(c) => c,
+        Err(e) => return (format!("{e}\n"), false),
+    };
+    let total = super::catalog::interface_messages();
+    let mut out = format!(
+        "{shown}: {} ({}), tag {}, script {}, status {}\n{} of {total} messages translated ({}%)\n",
+        catalog.name,
+        catalog.english_name,
+        catalog.tag,
+        catalog.script,
+        if catalog.status.is_empty() { "(none)" } else { &catalog.status },
+        catalog.translated,
+        catalog.translated * 100 / total.max(1),
+    );
+    if catalog.parse_errors > 0 {
+        out += &format!("{} entries could not be read (each skipped)\n", catalog.parse_errors);
+    }
+    for d in &catalog.dropped {
+        out += &format!("set aside: {}: {}\n", d.id, d.why);
+    }
+    let ok = catalog.parse_errors == 0 && catalog.dropped.is_empty();
+    out += if ok { "OK: nothing set aside\n" } else { "NOT OK: the messages above show in English\n" };
+    (out, ok)
 }
 
 /// The system's preferred languages, most preferred first (`fr-CA`, `en-US`…).

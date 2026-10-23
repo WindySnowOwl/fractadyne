@@ -252,6 +252,16 @@ pub(crate) fn run_headless(args: &[String]) -> bool {
         print!("{}", crate::gpu_choice::listing(&crate::gpu_choice::list()));
         crate::exit(0);
     }
+    // --check-language FILE: load a language file as the program does; list what it would set aside.
+    if let Some(i) = args.iter().position(|a| a == "--check-language") {
+        let Some(file) = args.get(i + 1).filter(|v| !v.starts_with('-')) else {
+            eprintln!("fractadyne: --check-language needs a language file, e.g. --check-language i18n/de/fractadyne.ftl");
+            crate::exit(2);
+        };
+        let (report, ok) = crate::i18n::langs::check_report(std::path::Path::new(file));
+        print!("{report}");
+        crate::exit(if ok { 0 } else { 1 });
+    }
 
     // A bad option must never silently launch the GUI — report it and exit non-zero (like a
     // conventional CLI). The single-dash case gets a targeted one-liner instead of the full

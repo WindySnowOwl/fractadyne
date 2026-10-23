@@ -16,7 +16,8 @@ use std::sync::{Arc, OnceLock};
 pub(crate) const MAX_FILE_BYTES: usize = 2 * 1024 * 1024;
 
 /// The messages that describe the language rather than the interface (the file's "language data").
-pub(crate) const DATA_IDS: &[&str] = &["language-name", "language-english-name", "language-script", "number-decimal", "number-group"];
+pub(crate) const DATA_IDS: &[&str] =
+    &["language-name", "language-english-name", "language-script", "number-decimal", "number-group", "language-status"];
 
 /// Where a catalog came from: the language window shows it, and the highest revision of a language
 /// wins (a translator's working folder always).
@@ -50,6 +51,8 @@ pub(crate) struct Catalog {
     pub(crate) script: String,
     /// The publish stamp's revision; 0 when unstamped.
     pub(crate) revision: u64,
+    /// `draft` until a native speaker has reviewed it, then `reviewed` (`source` for English).
+    pub(crate) status: String,
     /// Interface messages (not language data) this file translates and that passed the checks.
     pub(crate) translated: usize,
     /// Messages set aside by the checks.
@@ -84,7 +87,7 @@ impl Catalog {
     /// The pseudo-language `en-XA`: English, accented, 40% longer and bracketed, so text still
     /// hard-coded in English and text cut off by its box both show (§10).
     pub(crate) fn pseudo() -> Catalog {
-        let mut c = Catalog::bare(pseudo::TAG, english_bundle());
+        let mut c = Catalog::bare(pseudo::TAG, pseudo_bundle());
         c.pseudo = true;
         c.translated = interface_messages();
         c.finish();
@@ -151,6 +154,7 @@ impl Catalog {
             english_name: String::new(),
             script: String::new(),
             revision: 0,
+            status: String::new(),
             translated: 0,
             dropped: Vec::new(),
             parse_errors: 0,
@@ -179,8 +183,10 @@ impl Catalog {
             })
             .unwrap_or(d)
         };
-        let decimal = one(self.data("number-decimal"), '.');
-        let group = one(self.data("number-group"), ',');
+        self.status = self.data("language-status").unwrap_or_default();
+        // Not trimmed: a no-break space is a separator, not padding around one.
+        let decimal = one(self.data_raw("number-decimal"), '.');
+        let group = one(self.data_raw("number-group"), ',');
         self.number = if decimal == group { Punctuation::default() } else { Punctuation { decimal, group } };
         for i in 0..id::COUNT {
             if id::VARS[i].is_empty() {
@@ -190,15 +196,20 @@ impl Catalog {
         }
     }
 
-    /// A language-data message's text: the file's own (English's for a catalog with no file).
+    /// A language-data message's text, trimmed: the file's own (English's for a catalog with no file).
     fn data(&self, name: &str) -> Option<String> {
+        self.data_raw(name).map(|s| s.trim().to_owned()).filter(|s| !s.is_empty())
+    }
+
+    /// The same, as written.
+    fn data_raw(&self, name: &str) -> Option<String> {
         let idx = id::NAMES.iter().position(|n| *n == name)?;
-        let s = match &self.own {
+        match &self.own {
             Some(b) => self.usable[idx].then(|| format_in(b, name, None)).flatten(),
             None => format_in(&self.english, name, None),
-        };
-        s.map(|s| s.trim().to_owned()).filter(|s| !s.is_empty())
+        }
     }
+
 
     /// The message `m`.
     pub(crate) fn text(&self, m: Msg) -> String {
@@ -232,7 +243,7 @@ impl Catalog {
         // missing (Fluent shows the gap as `{$name}`), so a message is never its bare ID.
         let own = self.own.as_ref().filter(|_| self.usable[i]).and_then(|b| format_in(b, name, args));
         let s = own.or_else(|| format_lenient(&self.english, name, args)).unwrap_or_else(|| (*name).to_owned());
-        if self.pseudo { pseudo::transform(&s) } else { s }
+        if self.pseudo { pseudo::wrap(&s) } else { s }
     }
 
     /// The share of the interface this catalog translates, 0–100.
@@ -261,6 +272,18 @@ fn format_lenient(b: &FluentBundle<FluentResource>, name: &str, args: Option<&Fl
 }
 
 /// The English bundle, built once and shared by every catalog as its fallback.
+/// The English file with the pseudo-language's accents on each message's own text (Fluent's
+/// transform: the arguments are not touched).
+fn pseudo_bundle() -> Arc<FluentBundle<FluentResource>> {
+    let r = FluentResource::try_new(super::ENGLISH.to_owned()).unwrap_or_else(|(r, _)| r);
+    let en: unic_langid::LanguageIdentifier = "en".parse().expect("en is a language tag");
+    let mut b = FluentBundle::new_concurrent(vec![en]);
+    configure(&mut b);
+    b.set_transform(Some(pseudo::accent_text));
+    let _ = b.add_resource(r);
+    Arc::new(b)
+}
+
 fn english_bundle() -> Arc<FluentBundle<FluentResource>> {
     static B: OnceLock<Arc<FluentBundle<FluentResource>>> = OnceLock::new();
     B.get_or_init(|| {

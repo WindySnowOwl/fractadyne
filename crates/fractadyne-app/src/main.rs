@@ -16099,6 +16099,8 @@ impl eframe::App for FractadyneApp {
         self.stash_crash_view();
         // Advanced ▸ Second graphics card: start, stop or replace the worker as the setting says.
         self.drive_worker_setting();
+        // The fonts follow the language: Japanese and Chinese bring in the system's font for them.
+        crate::theme::ensure_fonts(ctx, &crate::i18n::active().script);
         // The driver's shader cache stopped keeping compiled shaders: say so once (`driver_cache`).
         self.check_driver_shader_cache();
         // While the centre still sits exactly on a coordinate expression, top its precision up to

@@ -6,17 +6,25 @@ pub(crate) const TAG: &str = "en-XA";
 pub(crate) const NAME: &str = "[Pšéüðö-Éñĝłîšħ]";
 pub(crate) const ENGLISH_NAME: &str = "Pseudo-language (tests layouts)";
 
-/// `s` as the pseudo-language shows it.
-pub(crate) fn transform(s: &str) -> String {
+/// A message's literal text accented: the bundle's transform, which Fluent applies to the text a
+/// message writes and not to its arguments, so a path or a name passed in shows as it is.
+pub(crate) fn accent_text(s: &str) -> std::borrow::Cow<'_, str> {
+    if s.chars().any(|c| accent(c) != c) {
+        std::borrow::Cow::Owned(s.chars().map(accent).collect())
+    } else {
+        std::borrow::Cow::Borrowed(s)
+    }
+}
+
+/// A formatted message bracketed and 40% longer.
+pub(crate) fn wrap(s: &str) -> String {
     if s.is_empty() {
         return String::new();
     }
     let letters = s.chars().filter(|c| c.is_alphabetic()).count();
     let mut out = String::with_capacity(s.len() * 2 + 8);
     out.push('[');
-    for c in s.chars() {
-        out.push(accent(c));
-    }
+    out.push_str(s);
     // Translations run longer than English: German and French by 20–40%.
     let pad = (letters * 2).div_ceil(5);
     if pad > 0 {

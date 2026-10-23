@@ -99,3 +99,53 @@ fn the_pseudo_language_brackets_and_lengthens_every_message() {
     assert!(s.chars().count() > "Get started".len() + 2);
     assert_eq!(c.coverage(), 100);
 }
+
+/// Every language file in the repository loads as the program loads it: nothing unreadable, no
+/// message set aside, its own name and a script. The gate a translation's pull request passes (the
+/// CLI's `--check-language` prints the same report for one file).
+#[test]
+fn every_shipped_language_loads_with_nothing_set_aside() {
+    let dir = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../../i18n");
+    for entry in std::fs::read_dir(&dir).expect("i18n/").flatten() {
+        let tag = entry.file_name().to_string_lossy().into_owned();
+        let path = entry.path().join("fractadyne.ftl");
+        if tag == "en" || !path.is_file() {
+            continue;
+        }
+        let text = std::fs::read_to_string(&path).expect("UTF-8");
+        let c = Catalog::from_text(&text, &tag).unwrap_or_else(|e| panic!("{tag}: {e}"));
+        assert_eq!(c.parse_errors, 0, "{tag}: entries that do not read");
+        let dropped: Vec<String> = c.dropped.iter().map(|d| format!("{}: {}", d.id, d.why)).collect();
+        assert!(dropped.is_empty(), "{tag}: set aside:
+{}", dropped.join("
+"));
+        assert_ne!(c.name, tag, "{tag}: no language-name");
+        assert!(["Latn", "Cyrl", "Jpan", "Hans"].contains(&c.script.as_str()), "{tag}: script {}", c.script);
+        assert!(["draft", "reviewed"].contains(&c.status.as_str()), "{tag}: language-status {:?}", c.status);
+        assert!(c.translated * 2 > interface_messages(), "{tag}: {} translated", c.translated);
+    }
+}
+
+/// A space as the digit-group separator survives loading: it IS the separator (French's narrow
+/// no-break space, Ukrainian's no-break space), not padding to trim away. And the status a draft
+/// declares is read.
+#[test]
+fn a_space_group_separator_is_kept() {
+    let fr = "language-name = Français\nlanguage-script = Latn\nnumber-decimal = ,\nnumber-group = { \"\\u202F\" }\nlanguage-status = draft\n";
+    let c = Catalog::from_text(fr, "fr").unwrap();
+    assert_eq!(c.number, Punctuation { decimal: ',', group: '\u{202F}' });
+    assert_eq!(c.status, "draft");
+    let uk = "language-name = Українська\nlanguage-script = Cyrl\nnumber-decimal = ,\nnumber-group = \u{00A0}\n";
+    assert_eq!(Catalog::from_text(uk, "uk").unwrap().number.group, '\u{00A0}');
+}
+
+/// The pseudo-language accents what a message writes, not what it is given: a path or a size passed
+/// in shows as it is, inside the brackets.
+#[test]
+fn the_pseudo_language_leaves_arguments_as_they_are() {
+    let c = Catalog::pseudo();
+    let s = c.format(id::export_saved, &[("size", Arg::from("1920×1080")), ("path", Arg::from("C:/pictures/a.png"))]);
+    assert!(s.starts_with('[') && s.ends_with(']'), "{s}");
+    assert!(s.contains("C:/pictures/a.png"), "the path was changed: {s}");
+    assert!(s.contains('é') || s.contains('å'), "the message's own text is not accented: {s}");
+}

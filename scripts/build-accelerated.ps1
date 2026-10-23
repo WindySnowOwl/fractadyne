@@ -253,6 +253,10 @@ Copy-Item (Join-Path $root "README.md"), (Join-Path $root "CHANGELOG.md"), (Join
           (Join-Path $root "DIAGNOSTICS.md"), (Join-Path $root "THIRD-PARTY-NOTICES.md") -Destination $dir
 New-Item -ItemType Directory -Force (Join-Path $dir "tours") | Out-Null
 Copy-Item (Join-Path $root "tours\*.toml") -Destination (Join-Path $dir "tours")
+# The interface's languages besides English (compiled in), found beside the binary.
+New-Item -ItemType Directory -Force (Join-Path $dir "languages") | Out-Null
+Get-ChildItem (Join-Path $root "i18n") -Directory | Where-Object { $_.Name -ne 'en' -and (Test-Path (Join-Path $_.FullName "fractadyne.ftl")) } | `
+    ForEach-Object { Copy-Item (Join-Path $_.FullName "fractadyne.ftl") (Join-Path $dir "languages\fractadyne-$($_.Name).ftl") }
 New-Item -ItemType Directory -Force (Join-Path $dir "scripts") | Out-Null
 Copy-Item (Join-Path $root "scripts\*.example.toml") -Destination (Join-Path $dir "scripts")
 Copy-Item (Join-Path $root "scripts\deep-sample.fdn") -Destination (Join-Path $dir "scripts")
@@ -278,7 +282,7 @@ Copy-Item (Join-Path $root "benchmarks\bench-matrix-baseline*.json") -Destinatio
 $goldenCount = @(Get-ChildItem (Join-Path $dir "validation\golden") -Filter *.png -ErrorAction SilentlyContinue).Count
 if ($goldenCount -lt 15) { Fail "package staged only $goldenCount golden PNGs (< 15) - validation data is incomplete" }
 foreach ($req in @("validation\catalog.toml", "benchmarks\bench-matrix-baseline.json", "DIAGNOSTICS.md",
-                   "tours", "scripts\deep-sample.fdn")) {
+                   "tours", "scripts\deep-sample.fdn", "languages")) {
     if (-not (Test-Path (Join-Path $dir $req))) { Fail "package is missing '$req' - the accelerated payload is incomplete" }
 }
 Write-Host "  staged $goldenCount goldens + validation/tours/scripts/benchmarks (matches the standard package)"

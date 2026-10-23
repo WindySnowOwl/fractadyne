@@ -76,6 +76,21 @@ fn the_pseudo_languages_text_is_recognised() {
     assert!(!is_pseudo("Mandelbrot"));
     assert!(!is_pseudo("[x]"));
     assert!(!is_pseudo("-0.743643887 + 0.131825904i"));
-    assert_eq!(crate::i18n::pseudo::transform("Save image"), "[Šåvé îmåĝé ~~~~]");
-    assert!(is_pseudo(&crate::i18n::pseudo::transform("Close")));
+    assert_eq!(crate::i18n::pseudo::wrap(&crate::i18n::pseudo::accent_text("Save image")), "[Šåvé îmåĝé ~~~~]");
+    assert!(is_pseudo(&crate::i18n::pseudo::wrap(&crate::i18n::pseudo::accent_text("Close"))));
+}
+
+/// The interface's own text is known by the messages the walk handed out, in any language: a label
+/// with an icon before it, a message with its arguments filled in, a piece of a label a painter
+/// broke in two. A path, a number or a one-letter text is not.
+#[test]
+fn the_interfaces_text_is_known_by_its_messages() {
+    let m = Messages::new(vec!["Open folder".into(), "Saved 1920×1080 → C:/x.png".into(), "x".into(), "REF AHEAD".into()]);
+    assert!(m.holds("\u{e0fe}  Open folder"));
+    assert!(m.holds("Saved 1920×1080 → C:/x.png"));
+    assert!(m.holds("AHEAD"));
+    assert!(!m.holds("C:/Users/robin/Pictures"));
+    assert!(!m.holds("0.3125008988"));
+    assert!(!m.holds("x"));
+    assert!(!Messages::new(Vec::new()).holds("Open folder"));
 }

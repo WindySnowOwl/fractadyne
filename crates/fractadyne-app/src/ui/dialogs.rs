@@ -318,26 +318,34 @@ impl FractadyneApp {
                 });
                 ui.add_space(8.0);
                 ui.separator();
-                ui.horizontal(|ui| {
-                    if ui.button(tr!(welcome_open_help)).clicked() {
-                        open_help = true;
+                // The start button first, from the right; Help and the pointer to Settings then take
+                // the room left, the pointer wrapping in it. Laid out before the button, a longer
+                // translation ran under it.
+                crate::theme::action_row(ui, |ui| {
+                    if ui
+                        .add(egui::Button::new(
+                            egui::RichText::new(tr!(welcome_get_started)).color(egui::Color32::WHITE),
+                        ).fill(egui::Color32::from_rgb(0x3A, 0x7A, 0xB0)))
+                        .clicked()
+                    {
+                        dismiss = true;
                     }
-                    // A pointer, not a button: Settings is a submenu, so a button here could not
-                    // actually open it, and a control that cannot deliver is worse than none.
-                    ui.label(
-                        egui::RichText::new(tr!(welcome_more_in_settings, icon = crate::icons::SETTINGS))
-                            .weak()
-                            .small(),
-                    );
-                    crate::theme::action_row(ui, |ui| {
-                        if ui
-                            .add(egui::Button::new(
-                                egui::RichText::new(tr!(welcome_get_started)).color(egui::Color32::WHITE),
-                            ).fill(egui::Color32::from_rgb(0x3A, 0x7A, 0xB0)))
-                            .clicked()
-                        {
-                            dismiss = true;
+                    ui.with_layout(egui::Layout::left_to_right(egui::Align::Center), |ui| {
+                        if ui.button(tr!(welcome_open_help)).clicked() {
+                            open_help = true;
                         }
+                        // A pointer, not a button: Settings is a submenu, so a button here could not
+                        // actually open it, and a control that cannot deliver is worse than none.
+                        ui.with_layout(egui::Layout::top_down(egui::Align::Min), |ui| {
+                            ui.add(
+                                egui::Label::new(
+                                    egui::RichText::new(tr!(welcome_more_in_settings, icon = crate::icons::SETTINGS))
+                                        .weak()
+                                        .small(),
+                                )
+                                .wrap(),
+                            );
+                        });
                     });
                 });
             });

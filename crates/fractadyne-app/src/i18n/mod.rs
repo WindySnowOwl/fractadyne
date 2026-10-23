@@ -7,11 +7,12 @@
 //! English (§2).
 
 pub(crate) mod catalog;
+pub(crate) mod fonts;
 pub(crate) mod langs;
 pub(crate) mod pseudo;
 
-use std::sync::atomic::{AtomicU64, AtomicU8, Ordering};
-use std::sync::{Arc, OnceLock, RwLock};
+use std::sync::atomic::{AtomicBool, AtomicU64, AtomicU8, Ordering};
+use std::sync::{Arc, Mutex, OnceLock, RwLock};
 
 pub(crate) use catalog::{Catalog, Source};
 
@@ -106,12 +107,44 @@ pub(crate) fn generation() -> u64 {
 
 /// The message `m` in the language in use (`tr!(id)`).
 pub(crate) fn text(m: Msg) -> String {
-    active().text(m)
+    noted(active().text(m))
 }
 
 /// The message `m` with its arguments, in the language in use (`tr!(id, k = v, …)`).
 pub(crate) fn format(m: Msg, args: &[(&'static str, Arg)]) -> String {
-    active().format(m, args)
+    noted(active().format(m, args))
+}
+
+/// Whether every message text handed out is kept (`--uitest`, see [`record_texts`]).
+static RECORD: AtomicBool = AtomicBool::new(false);
+static RECORDED: Mutex<Vec<String>> = Mutex::new(Vec::new());
+
+/// `--uitest`: keep every message text handed out from now on, so its text-layout check can tell
+/// the interface's own text from data on the screen, in any language (its text-layout check).
+pub(crate) fn record_texts() {
+    RECORD.store(true, Ordering::Relaxed);
+}
+
+/// Every distinct message text handed out since [`record_texts`].
+pub(crate) fn recorded_texts() -> Vec<String> {
+    let mut v = RECORDED.lock().map(|g| g.clone()).unwrap_or_default();
+    v.sort();
+    v.dedup();
+    v
+}
+
+fn noted(s: String) -> String {
+    if RECORD.load(Ordering::Relaxed) {
+        if let Ok(mut g) = RECORDED.lock() {
+            // Deduplicated in bulk: a frame hands out the same texts again, and a sort per call costs.
+            if g.len() > 50_000 {
+                g.sort();
+                g.dedup();
+            }
+            g.push(s.clone());
+        }
+    }
+    s
 }
 
 /// How the language in use writes numbers: its decimal mark and its digit-group separator.

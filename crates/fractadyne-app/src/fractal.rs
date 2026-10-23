@@ -491,7 +491,8 @@ impl FractalKind {
     /// the two can never disagree.
     pub(crate) fn menu_hint(self) -> String {
         let mut s = format!("{}\n\n{}", self.formula(), self.about());
-        if !self.supports_perturbation() {
+        // Not for Custom: whether a formula deep-zooms depends on the formula (the dialog says).
+        if !self.supports_perturbation() && self != FractalKind::Custom {
             // The one difference a picker cannot show but a user feels immediately.
             s.push_str("\n\n");
             s.push_str(&tr!(fractal_no_deep_zoom));

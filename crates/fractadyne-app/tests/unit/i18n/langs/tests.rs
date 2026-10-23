@@ -2,7 +2,7 @@ use super::*;
 
 fn installed(tags: &[&str]) -> Vec<Installed> {
     tags.iter()
-        .map(|t| Installed { tag: (*t).into(), name: (*t).into(), english_name: String::new(), revision: 0, source: Source::Builtin })
+        .map(|t| Installed { tag: (*t).into(), name: (*t).into(), english_name: String::new(), revision: 0, draft: false, source: Source::Builtin })
         .collect()
 }
 

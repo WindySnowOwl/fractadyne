@@ -134,6 +134,9 @@ jobs:
           # Example guided-tour scripts (play in-app, or render headless with --render-tour).
           New-Item -ItemType Directory -Force -Path "$dir/tours" | Out-Null
           Copy-Item tours/*.toml -Destination "$dir/tours/"
+          # The interface's languages besides English (compiled in), found beside the binary.
+          New-Item -ItemType Directory -Force -Path "$dir/languages" | Out-Null
+          Get-ChildItem i18n -Directory | Where-Object { $_.Name -ne 'en' -and (Test-Path "$($_.FullName)/fractadyne.ftl") } | ForEach-Object { Copy-Item "$($_.FullName)/fractadyne.ftl" "$dir/languages/fractadyne-$($_.Name).ftl" }
           # Example scripting / profiling-region files.
           New-Item -ItemType Directory -Force -Path "$dir/scripts" | Out-Null
           Copy-Item scripts/*.example.toml -Destination "$dir/scripts/"
@@ -228,6 +231,9 @@ jobs:
           cp tours/*.toml "$dir/tours/"
           cp scripts/*.example.toml "$dir/scripts/"
           cp scripts/deep-sample.fdn "$dir/scripts/"
+          # The interface's languages besides English (compiled in), found beside the binary.
+          mkdir -p "$dir/languages"
+          for f in i18n/*/fractadyne.ftl; do t="$(basename "$(dirname "$f")")"; [ "$t" = en ] || cp "$f" "$dir/languages/fractadyne-$t.ftl"; done
           # Validation data so `--selftest` / `--bench-matrix` work from the extracted install:
           # `anchored()` walks up from the binary and finds this `validation/` tree beside it.
           # (Goldens are blessed on the dev RTX 3080 — an exact match confirms identical GPU

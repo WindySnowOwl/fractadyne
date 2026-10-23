@@ -266,6 +266,26 @@ pub(crate) fn action_row<R>(
 /// egui's defaults as fallbacks for glyphs they lack (math arrows like →, emoji). Call once at
 /// startup, before [`apply_theme`].
 pub(crate) fn install_fonts(ctx: &egui::Context) {
+    ensure_fonts(ctx, "Latn");
+    install_text_styles(ctx);
+}
+
+/// The fonts for an interface written in `script` (ISO 15924), set when they change: called every
+/// frame with the language in use's script, so choosing Japanese or Chinese brings in the system's
+/// font for it (`i18n::fonts`), and choosing another language lets it go. Cheap when nothing changed.
+pub(crate) fn ensure_fonts(ctx: &egui::Context, script: &str) {
+    // Remembered in the context's own memory: each context (the window's, a test's) gets its fonts.
+    let id = egui::Id::new("fractadyne.fonts.installed");
+    let want = crate::i18n::fonts::Need::for_script(script).map_or("", |n| n.key()).to_owned();
+    if ctx.data(|d| d.get_temp::<String>(id)).as_deref() == Some(want.as_str()) {
+        return;
+    }
+    ctx.data_mut(|d| d.insert_temp(id, want));
+    ctx.set_fonts(font_definitions(script));
+}
+
+/// The font families for an interface written in `script`.
+fn font_definitions(script: &str) -> egui::FontDefinitions {
     use std::sync::Arc;
     let mut fonts = egui::FontDefinitions::default();
     fonts.font_data.insert(
@@ -315,11 +335,40 @@ pub(crate) fn install_fonts(ctx: &egui::Context) {
         crate::ui::textbook::font::family(),
         vec![crate::ui::textbook::font::FONT_NAME.to_owned()],
     );
+    // Japanese or Chinese: the system's font for the language, right after the interface's own, so
+    // Latin stays in Spline Sans and every Han, kana and full-width character comes from a font of
+    // that language's typography.
+    if let Some(sys) = crate::i18n::fonts::Need::for_script(script).and_then(crate::i18n::fonts::system_font) {
+        let key = crate::i18n::fonts::Need::for_script(script).map_or("system", |n| n.key()).to_owned();
+        fonts.font_data.insert(key.clone(), sys.data.clone());
+        for family in [egui::FontFamily::Proportional, egui::FontFamily::Monospace] {
+            if let Some(list) = fonts.families.get_mut(&family) {
+                list.insert(1, key.clone());
+            }
+        }
+    }
+    // The language menu's own names (日本語, 简体中文), in every interface language: tiny subsets of
+    // Noto Sans JP and SC (`scripts/subset_names_font.py`), last, so they only ever supply the
+    // characters of those names when no font of the language is loaded.
+    for (name, bytes) in [
+        ("NamesJP", &include_bytes!("../assets/fonts/NamesJP.otf")[..]),
+        ("NamesSC", &include_bytes!("../assets/fonts/NamesSC.otf")[..]),
+    ] {
+        fonts.font_data.insert(name.to_owned(), Arc::new(egui::FontData::from_static(bytes)));
+        for family in [egui::FontFamily::Proportional, egui::FontFamily::Monospace] {
+            if let Some(list) = fonts.families.get_mut(&family) {
+                list.push(name.to_owned());
+            }
+        }
+    }
     // The live-render panel's machinist typefaces (design/blinkenlights.md, "Type"); each falls
     // back to the proportional list for glyphs it lacks.
     crate::blinken::paint::install_fonts(&mut fonts);
-    ctx.set_fonts(fonts);
+    fonts
+}
 
+/// The text styles: egui's, with the small print one step up.
+fn install_text_styles(ctx: &egui::Context) {
     // Secondary text, one step up from egui's default.
     //
     // egui ships `Small` at 9.0 against a 12.5 body — 72%. That is fine on a laptop panel and at

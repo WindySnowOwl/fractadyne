@@ -88,6 +88,7 @@ impl LanguageState {
                 name: pseudo::NAME.into(),
                 english_name: pseudo::ENGLISH_NAME.into(),
                 revision: 0,
+                draft: false,
                 source: Source::Builtin,
             })
         } else {
@@ -103,6 +104,12 @@ impl LanguageState {
             return tag == "en";
         };
         match langs::load(&i) {
+            // A writing system the interface fonts lack, and no font of it on this computer: its
+            // text would draw as boxes, so it is not switched to.
+            Ok(c) if i18n::fonts::Need::for_script(&c.script).is_some_and(|n| i18n::fonts::system_font(n).is_none()) => {
+                self.notice = Some(tr!(language_font_missing, name = c.name.as_str()));
+                false
+            }
             Ok(c) => {
                 i18n::set_active(Arc::new(c));
                 self.tag = i.tag;
@@ -197,7 +204,10 @@ impl FractadyneApp {
         let current = self.language.current_name();
         ui.menu_button(format!("{}  {}", crate::icons::LANGUAGES, current), |ui| {
             for i in &self.language.installed {
-                if ui.selectable_label(i.tag == self.language.tag, i.menu_label()).clicked() {
+                let label = if i.draft { format!("{}  ({})", i.menu_label(), tr!(language_draft)) } else { i.menu_label() };
+                let r = ui.selectable_label(i.tag == self.language.tag, label);
+                let r = if i.draft { r.on_hover_text(tr!(language_draft_hover)) } else { r };
+                if r.clicked() {
                     pick = Some(i.tag.clone());
                     ui.close_menu();
                 }
@@ -252,8 +262,12 @@ impl FractadyneApp {
                     ui.label(egui::RichText::new(tr!(language_col_from)).weak());
                     ui.end_row();
                     for (i, (pct, dropped)) in &rows {
-                        let label = egui::RichText::new(i.menu_label());
-                        ui.label(if i.tag == self.language.tag { label.strong() } else { label });
+                        let text = if i.draft { format!("{}  ({})", i.menu_label(), tr!(language_draft)) } else { i.menu_label() };
+                        let label = egui::RichText::new(text);
+                        let shown = ui.label(if i.tag == self.language.tag { label.strong() } else { label });
+                        if i.draft {
+                            shown.on_hover_text(tr!(language_draft_hover));
+                        }
                         let cov = ui.label(tr!(language_coverage, percent = *pct));
                         if *dropped > 0 {
                             cov.on_hover_text(tr!(language_dropped, count = *dropped));

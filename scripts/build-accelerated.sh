@@ -105,6 +105,9 @@ cp README.md CHANGELOG.md TOURS.md DIAGNOSTICS.md THIRD-PARTY-NOTICES.md \
 cp tours/*.toml "$dir/tours/"
 cp scripts/*.example.toml "$dir/scripts/"
 cp scripts/deep-sample.fdn "$dir/scripts/"
+# The interface's languages besides English (compiled in), found beside the binary.
+mkdir -p "$dir/languages"
+for f in i18n/*/fractadyne.ftl; do t="$(basename "$(dirname "$f")")"; [ "$t" = en ] || cp "$f" "$dir/languages/fractadyne-$t.ftl"; done
 # Validation data so `--selftest` / `--bench-matrix` work from the extracted install; `anchored()`
 # walks up from the binary and finds this tree beside it. BLESSED-GPU.txt records which card
 # produced the goldens — without it a tester's self-test falls back to the STRICT tolerance and
