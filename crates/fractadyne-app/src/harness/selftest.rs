@@ -66,7 +66,7 @@ const GOLDEN_MEAN_CROSS_GPU: f64 = 24.0;
 /// Groups that run ONLY when named. ⛔Kept out of `GROUPS` so a bare `--selftest` never pays for
 /// them — each costs minutes, not milliseconds. Which means a full run never runs them either: it
 /// says so at its end (`opt_in_not_run`), and the release checklist requires each to have been run
-/// once per release (its Release gates rows, `run:--selftest-filter NAME`). Every `opt_in("…")` in
+/// once per release (its Release gates rows, `run:--selftest --selftest-filter NAME`). Every `opt_in("…")` in
 /// this file must be named here (`every_opt_in_group_is_registered`).
 pub(crate) const OPT_IN_GROUPS: &[(&str, &str)] = &[
     (
