@@ -131,7 +131,7 @@ Residue, stated rather than hidden:
 
   Moving the reference takes both keys.
 - **The opt-in groups are named when they do not run.** A full `--selftest` never runs its opt-in
-  groups (`deep-location`, about 9 hours; `fe-df32-probe`, about a minute), so its "ALL CHECKS
+  groups (`deep-location`, about 2 hours on an RTX 3080; `fe-df32-probe`, seconds), so its "ALL CHECKS
   PASSED" says nothing about them. The run now ends by naming them, in its console summary and in
   `report.md`. Rows 146–147 require each to have run once per release. A unit test keeps the
   registry (`OPT_IN_GROUPS`) and the `opt_in("…")` calls in step.
@@ -354,7 +354,7 @@ declared but cannot gate yet.
 | # | class | enforcer |
 |---|---|---|
 | 145 | R | `run:--livetest tours/grand-tour.toml`: the live view against an offline render at the ask and, where it is black, at 4× the ask (W8): exit 0 = no drift from the blessed baseline. A STARVED checkpoint (the bigger budget resolves black the app does not explain) fails it. |
-| 146–147 | R | `run:--selftest-filter deep-location` and `run:--selftest-filter fe-df32-probe`: the self-test's two OPT-IN groups, which a full `--selftest` never runs (they cost minutes). Without these rows nothing ever required them to run. |
+| 146–147 | R | `run:--selftest --selftest-filter deep-location` and `run:--selftest --selftest-filter fe-df32-probe`: the self-test's two OPT-IN groups, which a full `--selftest` never runs (`deep-location` took 6,709 s on an RTX 3080 on 2026-10-24, nearly all of it the 1,645,896-iteration reference at 200,065 bits; `fe-df32-probe` seconds). ⚠Open: that reference is built on the frame loop's thread, so the watchdog logs "possible hang" every 30 s for the whole build (224 lines) and the log check fails the run although its check passes; beta.21's row is recorded as exit 1 for that reason. Without these rows nothing ever required them to run. The rows once read `run:--selftest-filter NAME`, and that command alone opened the app as an ordinary window that waited for input (a gate waited 2.5 h on it, 2026-10-24); the app now refuses `--selftest-filter` without `--selftest` and prints the full command. |
 | 148 | R | `run:--motiontest --worker-gpu same`: the motion test with a second device, the window's own card as the worker. Every other gate keeps one GPU, which is how the worker's frames writing into the window's timings and provenance went unseen until a field log (2026-10-16, `1c818810`). Exit 0 needs A7 provenance 0; pins the worker's frames supersede are reported under A4, not gated (design/multi-gpu-live.md §9.1). |
 | 149 | planned | The `--zoomtest-gate` P-G matrix (design/live-zoom-smoothing.md). The gate exists (W8 rung 1), but the held-picture bound fails on every Smooth row, on beta.19 too. That is open sizing work, and a row that can never go green teaches people to skip it. |
 | 150 | planned | The torture ladder's increment 2: the no-BLA regime that actually loses the RX 6800 XT. The rung (`live/regime/*`, W9) passed three runs running on the RX 6800 XT (2026-10-16) and runs in every full field battery (step 09); not a checklist gate because the checklist cannot read a field battery's result. |

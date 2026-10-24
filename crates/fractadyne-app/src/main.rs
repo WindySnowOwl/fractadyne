@@ -281,6 +281,15 @@ fn main() -> eframe::Result<()> {
         return Ok(());
     }
 
+    // `--selftest-filter NAME` only narrows `--selftest`. Alone it was ignored, and the app opened
+    // as an ordinary window that waited for input: a release gate sat 2.5 h on one (2026-10-24),
+    // its watchdog logging "no activity". Say what was meant instead, before any window opens.
+    if args.iter().any(|a| a == "--selftest-filter") && !args.iter().any(|a| a == "--selftest" || a == "--selftest-list") {
+        let name = args.iter().position(|a| a == "--selftest-filter").and_then(|i| args.get(i + 1)).map_or("NAME", String::as_str);
+        eprintln!("fractadyne: --selftest-filter narrows the self-test, so it needs --selftest: fractadyne --selftest --selftest-filter {name}");
+        crate::exit(2);
+    }
+
     // `--window WxH`: the window's starting inner size in logical POINTS (the `[fd-dpi]` line's
     // `pt` column; physical pixels are that times the display scale). For a harness that has to
     // reproduce a field window: the 2026-09-21 RX 6800 XT loss rendered 1676x1295 px, and
