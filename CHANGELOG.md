@@ -71,9 +71,9 @@ Changes after 0.3.0-beta.1:
   for the language (Yu Gothic or Meiryo; Microsoft YaHei; Microsoft JhengHei; Malgun Gothic; Noto
   Sans CJK on Linux), loaded only while that language is in use; their names in the language menu
   come from tiny bundled subsets of Noto Sans JP, SC, TC and KR, so they read correctly in every
-  interface language. The
-  menu at the end of the top bar lists every installed language in its own name with its English
-  name beside it, and is shown in every mode, so nobody is left in a language they cannot read.
+  interface language. The menu at the end of the top bar lists every installed language in its own
+  name with its English name beside it, and is shown in every mode, so nobody is left in a
+  language they cannot read.
   Behind it, the Languages window shows how much of each language is translated and installs a
   language file. The first run follows the system's language when Fractadyne has it, with a choice
   at the top of the welcome window, and a later change of the system's language is asked about
@@ -83,7 +83,12 @@ Changes after 0.3.0-beta.1:
   one run; `en-XA` is a pseudo-language that shows any text still hard-coded in English, and
   `--uitest` run in it fails a screen where text that long is cut off, runs off the screen or is
   drawn over other text. Coordinates, files, the command line, logs and the issue report stay in
-  English. Also: an icon in the welcome window's key list, and the "eᶻ" in the formula keypad's
+  English. The live-render panel redraws its titles, lamp labels and dial numbers whenever the
+  interface's fonts change: after a change of language they could come out as other characters,
+  and its captions now shrink to fit their windows in every language. For reviewers,
+  `scripts/i18n_to_csv.py` puts every language in one spreadsheet table and
+  `scripts/i18n_from_csv.py` brings a reviewed table back, checking each file before writing it.
+  Also: an icon in the welcome window's key list, and the "eᶻ" in the formula keypad's
   Exponential tooltip (now "e^z"), drew as boxes.
 - **The live-render panel has a close button (0.3.0-beta.21).** A small × in its top-right corner,
   where a screw was, closes it; `B` or View ▸ Live render panel opens it again. Until now it could
