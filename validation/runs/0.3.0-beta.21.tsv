@@ -1,0 +1,6 @@
+utc	version	identity	exit	verdict	config	command
+2026-10-24 16:15:15	0.3.0-beta.21	repo gea08f18a	0	-	-	python scripts/dive-capture/screengate.py D:/share/Fractadyne/field/results/20261023-215747-y8ju/validate-beta21-release-20261023-215815/screen/run1 D:/share/Fractadyne/field/results/20261023-215747-y8ju/validate-beta21-release-20261023-215815/screen/run2 D:/share/Fractadyne/field/results/20261023-215747-y8ju/validate-beta21-release-20261023-215815/screen/run3
+2026-10-24 18:50:59	0.3.0-beta.21	build 5586, gea08f18	0	selftest exit 0; logcheck PASS	fresh	fractadyne --selftest --selftest-filter fe-df32-probe
+2026-10-24 18:58:02	0.3.0-beta.21	build 5586, gea08f18	0	livetest exit 0; logcheck PASS	fresh	fractadyne --livetest tours/grand-tour.toml --size 480x270
+2026-10-24 18:58:54	0.3.0-beta.21	build 5586, gea08f18	0	motiontest exit 0; logcheck PASS	fresh	fractadyne --motiontest --worker-gpu same
+2026-10-24 19:08:02	0.3.0-beta.21	build 5586, gea08f18	3	autodive exit 3; logcheck PASS	fresh	fractadyne --autodive 32 --autodive-timeout 900 --autodive-home 3
