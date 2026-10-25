@@ -59,6 +59,16 @@ published as the pre-releases `v0.2.41-beta.1` to `v0.2.41-beta.150`, and a "bet
 
 Changes after 0.3.0-beta.1:
 
+- **"Normalize deep colors" no longer strobes, goes dark or jumps while you zoom
+  (0.3.0-beta.22).** The palette's range used to end at the slowest-escaping pixel, which beside a
+  small copy of the set is the iteration limit itself, so a few pixels decided the colours of the
+  whole picture: on a zoom to 2^127 the picture sank into the palette's first eighth (black to dark
+  red) and swept through the palette several times a second whenever the limit rose. The range now
+  ends where 98% of the picture has escaped (the pixels above it keep cycling through the palette),
+  for frames from the second graphics card too. Colours drift at most 1.5 palette cycles a second;
+  a bigger change dissolves instead of sweeping; and while you zoom, each colour stays with its
+  feature, as with a fixed palette, settling within a second of stopping to the view's own
+  colours. On that zoom, from 10 palette cycles in the fastest second to 2, with no frame jumping.
 - **The Tiles window shows more of what a pass does (0.3.0-beta.22).** On the live-render panel, a
   bar under the picture's plane shows the range of iterations the pass covers on a log scale: a
   walk's band lit, with what it has already finished below it. A whole frame is drawn as a checker

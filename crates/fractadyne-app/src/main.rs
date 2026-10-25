@@ -1994,8 +1994,20 @@ struct Perf {
     /// high as the walk has reached, so it may widen the palette window but never narrow it, and it
     /// may never decide a settled view's mapping — see the drain in render.rs.
     norm_complete_sink: [std::sync::Arc<std::sync::atomic::AtomicBool>; 2],
+    /// Live sink for the FINE escape histogram (`fractadyne_gpu::CTR_NORM_HIST`) per view,
+    /// published with the range in `norm_sink`: the palette window's top is a quantile of it.
+    norm_hist_sink: [fractadyne_gpu::NormHistSink; 2],
+    /// The base the next frame's fine escape histogram is measured from: the bottom of the view's
+    /// last escape-range reading (0 before the first), so its buckets are finest where the picture is.
+    norm_base: [f32; 2],
     /// EMA-smoothed escaped smooth-iter range per view — the live auto-normalization input.
     norm_range: [Option<(f32, f32)>; 2],
+    /// The PALETTE's window per view: fed by the same readings under the same rules as
+    /// `norm_range`, with the top taken where most of the picture has escaped
+    /// (`render::norm_palette_top`) rather than at its slowest pixel. The colours follow this one
+    /// (`norm_shown` glides to it); `norm_range` keeps the true top for what it sizes — a moving
+    /// frame's walk, a refresh's end, the autopilot.
+    norm_pal: [Option<(f32, f32)>; 2],
     /// The view signature `norm_range`/`norm_grad` were DECIDED for, and whether that decision
     /// is locked. The live mapping is decided once per view and held while the view refines —
     /// see `norm_feed_decision` (render.rs) for the whole story.
@@ -2036,10 +2048,9 @@ struct Perf {
     /// around"; gliding turns the same information into a continuous drift. See
     /// `render::norm_glide_step`.
     norm_shown: [Option<(f32, f32)>; 2],
-    /// W6 (U43): the palette window the LIVE texture was last drawn with, and the one a hold
-    /// snapshot was taken under (with the user's colouring then, `norm_user_sig`) — the window the
-    /// held frame keeps while it is served. `None` inside: drawn in the classic colouring.
-    shown_norm: [Option<(f32, f32)>; 2],
+    /// W6 (U43): the palette window a hold snapshot keeps while it is served — the live window when
+    /// it was copied, or a worker frame's own — with the user's colouring then (`norm_user_sig`).
+    /// `None` inside: drawn in the classic colouring.
     hold_norm: [Option<(Option<(f32, f32)>, u64)>; 2],
     /// The palette window each view was last DRAWN with, gliding from one picture's window to the
     /// next's (`render::drawn_norm_step`).
@@ -2051,6 +2062,9 @@ struct Perf {
     /// The palette map each view was last drawn under, and any dissolve from a map of another kind
     /// (`render::palette_fade_step`).
     palette_fade: [render::PaletteFadeState; 2],
+    /// The palette phase each view carries so a sliding window keeps the picture's colours
+    /// (`render::phase_carry_step`).
+    palette_phase: [render::PhaseCarry; 2],
     /// This view's frames are currently chunk-governed (`chunk_over`), stamped every
     /// `build_params`. The norm drain keys on THIS, not on the cursor: escape readings lag their
     /// dispatches by 2-3 frames, so a completed walk's LAST band lands with the cursor already at
@@ -2634,7 +2648,13 @@ impl Default for Perf {
                 std::sync::Arc::new(std::sync::atomic::AtomicBool::new(true)),
                 std::sync::Arc::new(std::sync::atomic::AtomicBool::new(true)),
             ],
+            norm_hist_sink: [
+                std::sync::Arc::new(std::sync::Mutex::new(None)),
+                std::sync::Arc::new(std::sync::Mutex::new(None)),
+            ],
+            norm_base: [0.0; 2],
             norm_range: [None, None],
+            norm_pal: [None, None],
             norm_sig: [0, 0],
             norm_locked: [false, false],
             norm_grad: [None, None],
@@ -2645,12 +2665,12 @@ impl Default for Perf {
             vis_sizing: [[0.0; 3]; 2],
             reading_pool: [render::ReadingPool::default(); 2],
             norm_shown: [None, None],
-            shown_norm: [None, None],
             hold_norm: [None, None],
             norm_drawn: [None, None],
             shown_aa: [None, None],
             hold_aa: [None, None],
             palette_fade: Default::default(),
+            palette_phase: Default::default(),
             chunk_governed: [false, false],
             motion_res: [0.6, 0.6],
             visible_res: [1.0, 1.0],
@@ -8888,6 +8908,7 @@ impl FractadyneApp {
         self.perf.capped_frac = [None, None];
         self.perf.iter_exhausted = [false, false];
         self.perf.norm_range = [None, None];
+        self.perf.norm_pal = [None, None];
         self.perf.esc_hist = [None, None];
         self.perf.esc_top = [None, None];
         self.perf.reading_pool = [render::ReadingPool::default(); 2];
@@ -14190,8 +14211,9 @@ impl FractadyneApp {
     pub(crate) fn palette_moving(&self, v: usize) -> bool {
         let p = &self.perf;
         p.palette_fade[v].weight() > 0.0
+            || p.palette_phase[v].debt() != 0.0
             || p.norm_drawn[v].is_some_and(|d| !d.arrived())
-            || (p.norm_shown[v].is_some() && p.norm_shown[v] != p.norm_range[v])
+            || (p.norm_shown[v].is_some() && p.norm_shown[v] != p.norm_pal[v])
     }
 
     /// Nothing rendering, refining, building or animating in EITHER view — see
@@ -14715,7 +14737,7 @@ impl FractadyneApp {
                         format!(
                             "the normalization range moved (now {})",
                             self.perf.norm_shown[view]
-                                .or(self.perf.norm_range[view])
+                                .or(self.perf.norm_pal[view])
                                 .map_or("unset".to_string(), |(lo, hi)| format!("{lo:.2}..{hi:.2}"))
                         )
                     } else {
@@ -15453,12 +15475,12 @@ impl FractadyneApp {
         e.de_width.to_bits().hash(&mut h);
         e.de_phase.to_bits().hash(&mut h);
         self.render_cfg.aa.hash(&mut h);
-        if let Some((lo, hi)) = self.perf.norm_range[view] {
+        if let Some((lo, hi)) = self.perf.norm_pal[view] {
             lo.to_bits().hash(&mut h);
             hi.to_bits().hash(&mut h);
         }
         // ⭐W6 (U58): and the window actually MAPPED — the shown one, which glides toward the fed
-        // `norm_range` above over many frames. Without it an average begun mid-glide went on
+        // `norm_pal` above over many frames. Without it an average begun mid-glide went on
         // folding frames coloured under a moving window and was presented under a signature that
         // said nothing had changed. The glide lands exactly (`render::norm_glide_step`), so this
         // settles.
@@ -15471,6 +15493,7 @@ impl FractadyneApp {
         // (`render::palette_fade_step`): both land exactly, so this settles too.
         self.perf.norm_drawn[view].map(|d| (d.win.0.to_bits(), d.win.1.to_bits())).hash(&mut h);
         self.perf.palette_fade[view].weight().to_bits().hash(&mut h);
+        self.perf.palette_phase[view].debt().to_bits().hash(&mut h);
         self.perf.norm_sig[view].hash(&mut h);
         self.perf.norm_locked[view].hash(&mut h);
         h.finish()
@@ -15483,10 +15506,11 @@ impl FractadyneApp {
         use std::hash::{Hash, Hasher};
         let mut h = std::collections::hash_map::DefaultHasher::new();
         // …and the window drawn: a palette still gliding to the view's own is not its colours yet.
-        for r in [self.perf.norm_range[view], self.perf.norm_shown[view], self.perf.norm_drawn[view].map(|d| d.win)] {
+        for r in [self.perf.norm_pal[view], self.perf.norm_shown[view], self.perf.norm_drawn[view].map(|d| d.win)] {
             r.map(|(lo, hi)| (lo.to_bits(), hi.to_bits())).hash(&mut h);
         }
         self.perf.palette_fade[view].weight().to_bits().hash(&mut h);
+        self.perf.palette_phase[view].debt().to_bits().hash(&mut h);
         self.perf.norm_sig[view].hash(&mut h);
         self.perf.norm_locked[view].hash(&mut h);
         h.finish()

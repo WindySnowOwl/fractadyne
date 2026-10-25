@@ -729,7 +729,10 @@ struct IterU {
     // the app sizes the walk's later passes by it). `Renorm::pad[0]` in lib.rs; a padding word, so no
     // field moved.
     count_running: u32,
-    rn_pad2: u32,
+    // The base the fine escape histogram is measured from (`CTR_NORM_HIST`; `Renorm::pad[1]` in
+    // lib.rs, f32 bits): the bottom of the view's last escape-range reading. A padding word, so no
+    // field moved.
+    norm_base: f32,
     rn_pad3: u32,
 };
 @group(0) @binding(0) var<uniform> iu: IterU;
@@ -777,6 +780,21 @@ fn esc_hist_commit(sm: f32) {
     if (sm >= 0.0) {
         let b = u32(clamp(floor(log2(max(sm, 1.0))), 0.0, 23.0));
         atomicAdd(&counters[CTR_ESC_HIST + b], 1u);
+    }
+}
+// First of 416 buckets of a FINE histogram of the escaped pixels' smooth-iteration count, for the
+// live palette window (keep in sync with lib.rs `CTR_NORM_HIST` / `NORM_HIST_BUCKETS` /
+// `norm_hist_bucket`): 16 buckets per doubling of `v − norm_base + 1`, the last open-ended. The
+// app takes the window's top from a quantile of it, so a few pixels escaping just under the
+// iteration ask beside a minibrot no longer set the colours of the whole picture.
+const CTR_NORM_HIST: u32 = 57u;
+// On the 4x4 grid of the escape-range commit; called where a whole frame's escapes are seen once
+// each: `fs_resolve` on a chunked frame, the single-pass iterates' escape otherwise.
+fn norm_hist_commit(sm: f32, p: vec2<i32>) {
+    if (sm >= 0.0 && (p.x & 3) == 0 && (p.y & 3) == 0) {
+        let x = max(sm - iu.norm_base, 0.0) + 1.0;
+        let b = u32(clamp(floor(log2(x) * 16.0), 0.0, 415.0));
+        atomicAdd(&counters[CTR_NORM_HIST + b], 1u);
     }
 }
 
@@ -1378,6 +1396,7 @@ fn iterate_at(gx: f32, gy: f32) -> FragOut {
             // Color by convergence speed (iteration count).
             esc_range_commit(f32(iter));
             esc_count_commit(vec2<i32>(i32(gx), i32(gy)));
+            norm_hist_commit(f32(iter), vec2<i32>(i32(gx), i32(gy)));
             return FragOut(vec4<f32>(f32(iter), 0.0, 0.0, 1.0e30), AUX_NONE);
         }
         let mag2 = dot(zf, zf);
@@ -1394,6 +1413,7 @@ fn iterate_at(gx: f32, gy: f32) -> FragOut {
         let aux_out = select(AUX_NONE, aux_pack(aux, fract(smit), zf), (iu.aux_on & 1u) == 1u);
         esc_range_commit(smit);
         esc_count_commit(vec2<i32>(i32(gx), i32(gy)));
+        norm_hist_commit(smit, vec2<i32>(i32(gx), i32(gy)));
         return FragOut(vec4<f32>(smit, nrm.x, nrm.y, de), aux_out);
     }
     // @@CUSTOM_FE_BEGIN — a custom formula's module replaces mode 2 from here to the matching END
@@ -1863,6 +1883,7 @@ fn iterate_at(gx: f32, gy: f32) -> FragOut {
         let aux_out = select(AUX_NONE, aux_pack(aux, fract(smit), zf), (iu.aux_on & 1u) == 1u);
         esc_range_commit(smit);
         esc_count_commit(vec2<i32>(i32(gx), i32(gy)));
+        norm_hist_commit(smit, vec2<i32>(i32(gx), i32(gy)));
         return FragOut(vec4<f32>(smit, nrm.x, nrm.y, de), aux_out);
     }
     // @@CUSTOM_FE_END
@@ -2061,6 +2082,7 @@ fn iterate_at(gx: f32, gy: f32) -> FragOut {
         let aux_out = select(AUX_NONE, aux_pack(aux, fract(smit), zf), (iu.aux_on & 1u) == 1u);
         esc_range_commit(smit);
         esc_count_commit(vec2<i32>(i32(gx), i32(gy)));
+        norm_hist_commit(smit, vec2<i32>(i32(gx), i32(gy)));
         return FragOut(vec4<f32>(smit, nrm.x, nrm.y, de), aux_out);
     }
 }
@@ -3210,6 +3232,7 @@ fn fs_resolve(in: VsOut) -> FragOut {
     if ((p.x & 3) == 0 && (p.y & 3) == 0) {
         esc_range_commit(sm.z);
         esc_hist_commit(sm.z);
+        norm_hist_commit(sm.z, p);
         // Local gradient against the RIGHT neighbour, same subsample. Bounds-checked rather than
         // relying on out-of-range textureLoad returning zero: a zeroed meta decodes to a status
         // that is not ST_ESCAPED today, but that is a coincidence to depend on.

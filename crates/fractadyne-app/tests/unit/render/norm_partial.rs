@@ -1,4 +1,7 @@
-use super::{norm_glide_step, norm_reading_bound, norm_window_feed};
+use super::{norm_glide_step, norm_reading_bound, norm_window_feed, NormPace, NormShape};
+
+/// 60 fps, the cycle slider at its default, glide cuts allowed.
+const PACE: NormPace = NormPace { dt_s: 1.0 / 60.0, shape: NormShape { sweeps: 0.5 + 0.27 * 6.0, log_palette: false }, can_cut: true };
 
 /// The readings of one field walk, as measured on the 2026-09-19 2e13 autopilot dive: every pass
 /// reports the floor exactly and a top no higher than the walk has reached, and only the last pass
@@ -29,29 +32,35 @@ fn with_nothing_fed_a_mid_walk_reading_is_the_best_there_is() {
 #[test]
 fn a_moving_view_whose_walk_restarts_no_longer_breathes() {
     // Six walks of the recorded sawtooth fed through the motion path (EMA + per-frame glide, three
-    // frames per reading), before and after the fix. What the eye sees is the SHOWN window; the
-    // measure is how far its width swings once it has settled onto the walks.
+    // frames per reading), before and after the fix. Measured on the FED window, which follows the
+    // readings, and on the SHOWN one the eye sees: how far each one's width swings once settled.
     let run = |bounded: bool| {
         let (mut fed, mut shown): (Option<(f32, f32)>, Option<(f32, f32)>) = (Some(WALK[3].0), None);
-        let mut widths = Vec::new();
+        let (mut fed_w, mut shown_w) = (Vec::new(), Vec::new());
         for walk in 0..6 {
             for &(reading, complete) in &WALK {
                 let r = if bounded { norm_reading_bound(reading, complete, fed) } else { reading };
                 fed = norm_window_feed(None, r, false, fed).1;
                 for _ in 0..3 {
-                    shown = Some(norm_glide_step(shown, fed.unwrap(), false));
+                    shown = Some(norm_glide_step(shown, fed.unwrap(), false, PACE));
                     if walk >= 2 {
-                        widths.push(shown.unwrap().1 - shown.unwrap().0);
+                        fed_w.push(fed.unwrap().1 - fed.unwrap().0);
+                        shown_w.push(shown.unwrap().1 - shown.unwrap().0);
                     }
                 }
             }
         }
-        let (lo, hi) = widths.iter().fold((f32::MAX, f32::MIN), |(a, b), &w| (a.min(w), b.max(w)));
-        hi / lo
+        let swing = |w: &[f32]| {
+            let (lo, hi) = w.iter().fold((f32::MAX, f32::MIN), |(a, b), &x| (a.min(x), b.max(x)));
+            hi / lo
+        };
+        (swing(&fed_w), swing(&shown_w))
     };
-    let before = run(false);
-    let after = run(true);
-    // Modelled: a 1.20× swing of the whole palette's scale, repeating with every walk.
+    let (before, _) = run(false);
+    let (after_fed, after_shown) = run(true);
+    // Modelled: the readings swing the fed window's scale by over a fifth, repeating every walk
+    // (the time-paced glide now damps most of that on screen, but the fix is upstream of it).
     assert!(before > 1.15, "the recorded sawtooth should reproduce the swing ({before:.3}×)");
-    assert!(after < 1.001, "the window still swings {after:.4}× with partial readings bounded");
+    assert!(after_fed < 1.001, "the fed window still swings {after_fed:.4}× with partial readings bounded");
+    assert!(after_shown < 1.001, "the shown window still swings {after_shown:.4}×");
 }
