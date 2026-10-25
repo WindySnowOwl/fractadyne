@@ -136,6 +136,42 @@ fn opt_in_not_run(filter: Option<&str>) -> Vec<&'static str> {
         .collect()
 }
 
+/// Runs `work` on a thread of its own (`name`) and waits for it here, stamping liveness (`alive`)
+/// only when `steps()` has moved since the last look, every `poll`: progress is life, a stall is
+/// not, so a build that wedges still lets the watchdog's stall clock run out (the export progress
+/// pump's rule, `diag::progress_pump`). `note` hears the count every 30 s while it moves. `None`
+/// when the thread could not start or panicked.
+///
+/// The self-test is one call on the frame loop's thread, so that thread still waits; what changes
+/// is that it waits alive. The deep-location reference was built ON that thread, which stamped
+/// nothing for 6,707 s: the watchdog's 224 `possible hang` lines failed the run's log check though
+/// its check passed (release gate step 146 on beta.21, 2026-10-24).
+fn wait_alive<T: Send + 'static>(
+    name: &str,
+    work: impl FnOnce() -> T + Send + 'static,
+    steps: impl Fn() -> u64,
+    mut alive: impl FnMut(),
+    mut note: impl FnMut(u64),
+    poll: std::time::Duration,
+) -> Option<T> {
+    let handle = std::thread::Builder::new().name(name.to_owned()).spawn(work).ok()?;
+    let mut last = steps();
+    let mut noted = std::time::Instant::now();
+    while !handle.is_finished() {
+        std::thread::sleep(poll);
+        let now = steps();
+        if now != last {
+            last = now;
+            alive();
+            if noted.elapsed() >= std::time::Duration::from_secs(30) {
+                noted = std::time::Instant::now();
+                note(now);
+            }
+        }
+    }
+    handle.join().ok()
+}
+
 /// Per-channel 8-bit image difference: `(max abs, mean abs)`. Mismatched sizes → worst.
 fn img_diff(a: &[u8], b: &[u8]) -> (u32, f64) {
     if a.len() != b.len() || a.is_empty() {
@@ -2431,8 +2467,8 @@ impl FractadyneApp {
         // ⭐⭐**THE DEEPEST LOCATION WE TRACK — 9.98e60205×, and OPT-IN.**
         //
         // ⛔Not in the default sweep, deliberately. `--selftest` is the gate run constantly;
-        // a 60,231-digit centre needs a ~200,000-bit reference orbit (measured: ~9 hours to a
-        // 2,000,000 ask), and paying for that on every run would make the gate something people
+        // a 60,231-digit centre needs a ~200,000-bit reference orbit (measured to a 2,000,000 ask:
+        // 8.8 h on 2026-09-08, 1.9 h on 2026-10-24), and paying for that on every run would make the gate something people
         // skip. Run it with `--selftest-filter deep-location` when the deep pipeline is what
         // changed.
         //
@@ -2490,24 +2526,37 @@ impl FractadyneApp {
                         // 1,645,896) + BLA 2 s = **8.8 hours** on the author's machine.
                         eprintln!(
                             "[selftest] deep-location: building a ~200,000-bit reference orbit at \
-                             9.98e60205x ({} iterations). EXPECT ~9 HOURS (measured: pick 5.8 h + \
-                             orbit 3.0 h).",
+                             9.98e60205x ({} iterations). EXPECT HOURS (measured on an RTX 3080 \
+                             machine: 8.8 h on 2026-09-08, 1.9 h on 2026-10-24).",
                             self.render_cfg.max_iter
                         );
                         let t0 = std::time::Instant::now();
+                        // On a thread of its own, waited on alive (`wait_alive`): built on this
+                        // thread it stamped nothing for 6,707 s, and the watchdog's lines failed
+                        // the run's log check (2026-10-24).
                         let built = self
                             .export_reference_inputs_for(
                                 &vp_now,
                                 false,
                                 crate::render::IterBudget::current(self),
                             )
-                            .map(crate::render::recompute_worker);
+                            .map(|inputs| {
+                                wait_alive(
+                                    "selftest-deep-reference",
+                                    move || crate::render::recompute_worker(inputs),
+                                    fractadyne_core::reference_steps,
+                                    crate::diag::alive,
+                                    |s| crate::diag::log_line("ref", &format!("deep-location: the reference build has taken {s} steps")),
+                                    std::time::Duration::from_millis(500),
+                                )
+                            });
                         let build_ms = t0.elapsed().as_secs_f64() * 1000.0;
                         let (mut a, mut b) = (None, None);
                         let mut orbit_len = 0u32;
                         match built {
                             None => why = Some("no reference inputs for this view".into()),
-                            Some(res) => {
+                            Some(None) => why = Some("the reference build's thread did not start, or panicked".into()),
+                            Some(Some(res)) => {
                                 orbit_len = res.orbit_len;
                                 self.install_recompute_for_selftest(0, res);
                                 // Both renders BORROW that orbit, so the time below is the
@@ -10794,3 +10843,7 @@ zoom = \"1e94\"
 #[cfg(test)]
 #[path = "../../tests/unit/harness/selftest/opt_in_tests.rs"]
 mod opt_in_tests;
+
+#[cfg(test)]
+#[path = "../../tests/unit/harness/selftest/wait_alive_tests.rs"]
+mod wait_alive_tests;
