@@ -313,15 +313,19 @@ fn presets_convert_to_contiguous_gradients() {
         }
         let lut = g.bake(LUT_SIZE);
         assert_eq!(lut.entries.len(), LUT_SIZE);
-        assert!(lut.smooth, "{}: presets are gradients, not bands", p.name);
+        // A banded preset (every segment flat: Mondrian, Mosaic, Stained Glass) bakes for the
+        // nearest fetch, like a `.map`'s bands; every other preset is a gradient.
+        assert_eq!(lut.smooth, !g.is_flat(), "{}: smooth unless banded", p.name);
         assert!(
             lut.entries.iter().all(|e| e.iter().all(|v| v.is_finite() && (0.0..=1.0).contains(v))),
             "{}: baked outside 0..1",
             p.name
         );
-        // The baked table must agree with the stop walk it replaces, away from the kinks.
+        // The baked table must agree with the stop walk it replaces, away from the kinks and the
+        // hard edges (two stops at one position: either colour is right exactly there).
         for (pos, c) in p.stops {
-            if *pos > 0.02 && *pos < 0.98 {
+            let edge = p.stops.iter().filter(|(q, _)| q == pos).count() > 1;
+            if *pos > 0.02 && *pos < 0.98 && !edge {
                 let got = lut.sample(*pos);
                 for ch in 0..3 {
                     assert!(

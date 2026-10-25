@@ -59,6 +59,14 @@ published as the pre-releases `v0.2.41-beta.1` to `v0.2.41-beta.150`, and a "bet
 
 Changes after 0.3.0-beta.1:
 
+- **Twenty-six new palettes (0.3.0-beta.22).** Four Seasons, Royalty, Rave, Emerald Isle,
+  Seventies, Eighties, Mondrian, Dragon Scales, Machine Age, Bronze Age, Unity, Spice, Veggies,
+  Mosaic, Coral Reef, Aurora, Desert, Candy, Blueprint, Sepia, Thermal, Stained Glass, Noir, Cherry
+  Blossom, Black Opal and Lavender Fields join Ember, Ice, Nebula and Grayscale. Mondrian, Mosaic
+  and Stained Glass are hard-edged bands (black lines between fields of colour, tiles in grout,
+  jewel tones in lead); the rest are smooth rings. The right panel's palette list now shows each
+  palette's swatch beside its name, as Color ▸ Palette does, and both lists scroll. Saved views
+  keep their palettes: the new ones come after the old four.
 - **"Normalize deep colors" no longer strobes, goes dark or jumps while you zoom
   (0.3.0-beta.22).** The palette's range used to end at the slowest-escaping pixel, which beside a
   small copy of the set is the iteration limit itself, so a few pixels decided the colours of the

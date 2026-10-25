@@ -222,12 +222,22 @@ impl FractadyneApp {
                     fractadyne_color::PRESETS[self.coloring.palette_idx].name.to_string()
                 };
                 labelled(ui, &tr!(panel_palette), |ui| {
+                    if std::mem::take(&mut self.dialogs.open_palette_dropdown) {
+                        // The combo box's own id rule (see the fractal dropdown in menus.rs).
+                        let popup = ui.make_persistent_id(egui::Id::new("panel_palette")).with("popup");
+                        ui.memory_mut(|m| m.open_popup(popup));
+                    }
                     egui::ComboBox::from_id_salt("panel_palette")
                         .selected_text(pal_name)
+                        // Tall enough for a good run of the thirty presets; it scrolls past that.
+                        .height(430.0)
                         .show_ui(ui, |ui| {
                             let is_preset = !self.coloring.use_custom_palette && !self.coloring.use_duotone && !self.coloring.use_binary;
+                            // Each with its swatch, as Color ▸ Palette shows them: the same
+                            // control on two surfaces (`palette_menu_row`).
                             for (i, p) in fractadyne_color::PRESETS.iter().enumerate() {
-                                if ui.selectable_label(is_preset && self.coloring.palette_idx == i, p.name).clicked() {
+                                let g = fractadyne_color::segment::Gradient::from_stops(p.name, p.stops);
+                                if Self::palette_menu_row(ui, &g, p.name, is_preset && self.coloring.palette_idx == i) {
                                     self.coloring.palette_idx = i;
                                     self.coloring.use_custom_palette = false;
                                     self.coloring.use_duotone = false;
@@ -241,7 +251,8 @@ impl FractadyneApp {
                                 ui.separator();
                                 let mut apply = None;
                                 for (i, sg) in self.saved_gradients.iter().enumerate() {
-                                    if ui.selectable_label(live_saved == Some(i), &sg.name).clicked() {
+                                    let g = crate::segments_to_gradient(&sg.name, &sg.segment);
+                                    if Self::palette_menu_row(ui, &g, &sg.name, live_saved == Some(i)) {
                                         apply = Some(i);
                                     }
                                 }

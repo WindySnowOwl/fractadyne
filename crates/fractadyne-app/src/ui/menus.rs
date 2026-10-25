@@ -37,7 +37,7 @@ impl FractadyneApp {
     /// picker both arrived at independently: a name like "blatte10" says nothing about what the
     /// gradient looks like, and a user's library is full of names only they chose. The presets draw
     /// the same swatch so the submenu does not read as two different kinds of list.
-    fn palette_menu_row(
+    pub(crate) fn palette_menu_row(
         ui: &mut egui::Ui,
         g: &fractadyne_color::segment::Gradient,
         name: &str,
@@ -535,22 +535,31 @@ impl FractadyneApp {
                                 && !self.coloring.use_duotone
                                 && !self.coloring.use_binary;
                             let live_saved = self.live_saved_gradient();
-                            for (i, p) in fractadyne_color::PRESETS.iter().enumerate() {
-                                let g = fractadyne_color::segment::Gradient::from_stops(
-                                    p.name, p.stops,
-                                );
-                                if Self::palette_menu_row(
-                                    ui,
-                                    &g,
-                                    p.name,
-                                    is_preset && self.coloring.palette_idx == i,
-                                ) {
-                                    self.coloring.palette_idx = i;
-                                    self.coloring.use_custom_palette = false;
-                                    self.coloring.use_duotone = false;
-                                    self.coloring.use_binary = false;
-                                    ui.close_menu();
+                            // Thirty presets are taller than a small window: the list scrolls, as
+                            // the saved gradients' below does (egui clips a menu that does not fit
+                            // rather than scrolling it).
+                            let mut pick = None;
+                            egui::ScrollArea::vertical().id_salt("palette_presets").max_height(430.0).show(ui, |ui| {
+                                for (i, p) in fractadyne_color::PRESETS.iter().enumerate() {
+                                    let g = fractadyne_color::segment::Gradient::from_stops(
+                                        p.name, p.stops,
+                                    );
+                                    if Self::palette_menu_row(
+                                        ui,
+                                        &g,
+                                        p.name,
+                                        is_preset && self.coloring.palette_idx == i,
+                                    ) {
+                                        pick = Some(i);
+                                    }
                                 }
+                            });
+                            if let Some(i) = pick {
+                                self.coloring.palette_idx = i;
+                                self.coloring.use_custom_palette = false;
+                                self.coloring.use_duotone = false;
+                                self.coloring.use_binary = false;
+                                ui.close_menu();
                             }
                             // ⭐**The user's own gradients belong beside the built-in ones.** A
                             // gradient saved in the editor used to be reachable only from inside

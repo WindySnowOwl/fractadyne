@@ -6180,6 +6180,9 @@ struct DialogState {
     /// Open the toolbar's family dropdown on its next draw (the UI test's `fractal-dropdown`
     /// step: a combo box's popup id comes from its parent `Ui`, so it can only be opened there).
     open_fractal_dropdown: bool,
+    /// Open the right panel's palette dropdown on its next draw (the UI test's `palette-dropdown`
+    /// step), for the same reason.
+    open_palette_dropdown: bool,
     /// Keyboard/help overlay window open.
     help_open: bool,
     /// Selected Help section index.
@@ -7368,6 +7371,7 @@ impl FractadyneApp {
                 iteration_quarantine: None, // `apply_session_outcome`, once the app is built
                 accelerated_open: false,
                 open_fractal_dropdown: false,
+                open_palette_dropdown: false,
                 help_open: false,
                 help_section: 0,
                 help_scroll_to_end: false,

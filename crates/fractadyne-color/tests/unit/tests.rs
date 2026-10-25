@@ -140,15 +140,46 @@ fn count_clamps_to_max_stops() {
     assert_eq!(out[MAX_STOPS - 1], [7.0, 7.0, 7.0, 0.7]);
 }
 
-/// Every shipped preset packs within bounds, fits in `MAX_STOPS`, and keeps its first stop.
+/// A preset short enough for the packed form packs exactly; a longer one (a banded preset needs
+/// two stops per edge) is no longer held to it — nothing but the tests packs a preset.
 #[test]
 fn presets_pack_within_bounds() {
-    for p in PRESETS {
+    for p in PRESETS.iter().filter(|p| p.stops.len() <= MAX_STOPS) {
         let (out, n) = p.packed();
-        assert!((1..=MAX_STOPS as u32).contains(&n), "{}: count {n} out of range", p.name);
-        assert_eq!(n as usize, p.stops.len(), "{}: all presets must fit in MAX_STOPS", p.name);
+        assert_eq!(n as usize, p.stops.len(), "{}: a short preset packs every stop", p.name);
         let (pos, c) = p.stops[0];
         assert_eq!(out[0], [c[0], c[1], c[2], pos], "{}: first slot", p.name);
+    }
+}
+
+/// Every shipped preset is a ring the app can draw and the gradient editor can open: it starts at
+/// 0 and ends at 1 with positions ascending, two stops at most share a position (a hard edge), its
+/// colours are display values in 0..1, it fits the editor (32 stops, `EDITOR_MAX_STOPS` in the
+/// app), its name is its own, and it loops: a smooth preset ends on the colour it starts with (a
+/// mismatched pair is a hard seam every palette cycle), a banded one meets the seam at a hard edge
+/// between two flat bands, like each of its other edges.
+#[test]
+fn presets_are_well_formed_rings() {
+    let mut names = std::collections::HashSet::new();
+    for p in PRESETS {
+        let s = p.stops;
+        assert!(names.insert(p.name), "{}: two presets share a name", p.name);
+        assert!(!p.name.trim().is_empty() && p.name.trim() == p.name, "{:?}: name", p.name);
+        assert!((2..=32).contains(&s.len()), "{}: {} stops", p.name, s.len());
+        assert_eq!(s[0].0, 0.0, "{}: starts at 0", p.name);
+        assert_eq!(s[s.len() - 1].0, 1.0, "{}: ends at 1", p.name);
+        for w in s.windows(2) {
+            assert!(w[1].0 >= w[0].0, "{}: positions descend at {}", p.name, w[1].0);
+        }
+        for w in s.windows(3) {
+            assert!(!(w[0].0 == w[1].0 && w[1].0 == w[2].0), "{}: three stops at {}", p.name, w[0].0);
+        }
+        for (pos, c) in s {
+            assert!(c.iter().all(|v| (0.0..=1.0).contains(v)), "{}: colour at {pos} outside 0..1", p.name);
+        }
+        let seamless = s[0].1 == s[s.len() - 1].1;
+        let banded_seam = s[0].1 == s[1].1 && s[s.len() - 1].1 == s[s.len() - 2].1;
+        assert!(seamless || banded_seam, "{}: a smooth preset must end on the colour it starts with", p.name);
     }
 }
 

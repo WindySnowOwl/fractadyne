@@ -172,6 +172,9 @@ enum Screen {
     /// The toolbar's family dropdown open, Burning Ship 4 showing: the power families one family to
     /// a row ("Burning Ship  3 4 5"), the showing family's label strong and its power selected.
     FractalDropdown,
+    /// The right panel's palette dropdown open: every preset and saved gradient beside its swatch,
+    /// as Color ▸ Palette shows them, scrolling past the popup's height.
+    PaletteDropdown,
     /// The formula library window, seeded in memory: a parameterized formula SHOWING (its row
     /// marked), a two-statement one, one that does not read in this version (its reason in red), and
     /// a name long enough to need truncating.
@@ -420,6 +423,9 @@ pub(crate) struct UiTest {
     /// The language the walk was in before the live-panel-language step switched it: the next
     /// step's setup switches back.
     restore_language: Option<String>,
+    /// The palette the walk showed before the palette-dropdown step picked one to show selected:
+    /// the next step's setup puts it back, so no later screenshot is in that step's colours.
+    restore_palette: Option<usize>,
 }
 
 /// Where a walk records that it started, and then that it finished.
@@ -496,6 +502,7 @@ impl UiTest {
                 prev
             },
             restore_language: None,
+            restore_palette: None,
         }
     }
 }
@@ -857,6 +864,7 @@ fn build_steps() -> Vec<Step> {
         screen("formula-library-frm", Screen::FormulaLibraryFrm),
         screen("formula-library-filtered", Screen::FormulaLibraryFiltered),
         screen("fractal-dropdown", Screen::FractalDropdown),
+        screen("palette-dropdown", Screen::PaletteDropdown),
         screen("life-draw", Screen::LifeDraw),
         screen("lsystem", Screen::LSystem),
         screen("lsystem-draw-on", Screen::LSystemDrawOn),
@@ -947,8 +955,15 @@ impl FractadyneApp {
                 if let Some(tag) = ut.restore_language.take() {
                     self.language.choose(&tag);
                 }
+                if let Some(i) = ut.restore_palette.take() {
+                    self.coloring.palette_idx = i;
+                }
                 let step = ut.steps[ut.idx].clone();
+                let palette_before = self.coloring.palette_idx;
                 self.uitest_apply(ctx, &step);
+                if matches!(step.kind, StepKind::Screen(Screen::PaletteDropdown)) {
+                    ut.restore_palette = Some(palette_before);
+                }
                 // Under the panel the previous step left drawn: Japanese, whose system font
                 // rebuilds the font atlas (English when the walk is in Japanese).
                 if matches!(step.kind, StepKind::Screen(Screen::LivePanelLanguage)) {
@@ -1796,6 +1811,14 @@ impl FractadyneApp {
             Screen::FractalDropdown => {
                 self.set_fractal(crate::FractalKind::BurningShip4);
                 self.dialogs.open_fractal_dropdown = true;
+            }
+            Screen::PaletteDropdown => {
+                self.dialogs.right_panel_open = true;
+                self.coloring.palette_idx = 10; // Mondrian: a banded swatch, part way down the list
+                self.coloring.use_custom_palette = false;
+                self.coloring.use_duotone = false;
+                self.coloring.use_binary = false;
+                self.dialogs.open_palette_dropdown = true;
             }
             Screen::LifeDraw => {
                 // The gun at generation 0, 12 px a cell, the Draw tool on, the panel open.
