@@ -52,6 +52,10 @@ impl FractadyneApp {
             planned,
             dispatched,
             res: (rec.res_w, rec.res_h),
+            display: {
+                let ppp = ctx.pixels_per_point();
+                ((view.width() * ppp).round() as u32, (view.height() * ppp).round() as u32)
+            },
             timers: {
                 let w = self.perf.timer_states[v].load(std::sync::atomic::Ordering::Relaxed);
                 [(w & 3) as u8, ((w >> 2) & 3) as u8, ((w >> 4) & 3) as u8]
