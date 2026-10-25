@@ -719,6 +719,8 @@ impl MandelbrotParams {
         p.step_out = None;
         p.norm_sig_out = None;
         p.norm_complete_out = None;
+        // The window's fine escape histogram: the twin's frame reports its own (`GBuffer::escape_hist`).
+        p.norm_hist_out = None;
         p.content_out = None;
         p.content_stamp_out = None;
         p.pixels_stamp_out = None;
