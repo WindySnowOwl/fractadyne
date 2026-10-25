@@ -22,6 +22,16 @@ pub(crate) const WALK_AFTERGLOW_S: f32 = 0.6;
 pub(crate) const PUCK_AFTERGLOW_S: f32 = 0.6;
 /// Frames kept for the scope and the age strip.
 pub(crate) const HISTORY_FRAMES: usize = 400;
+/// The scope legend's names, in its order, and the kinds of pass each stands for: moving frames
+/// (and the probe), pin passes (a split refresh is one), the worker GPU's frames, a still view's
+/// settle (tiles and walk passes), supersampling samples.
+pub(crate) const LEGEND: [&[Pass]; 5] =
+    [&[Pass::Moving, Pass::Probe], &[Pass::Pin, Pass::Split], &[Pass::Worker], &[Pass::Tile, Pass::Walk], &[Pass::Ssaa]];
+
+/// The legend name that stands for `kind`.
+pub(crate) fn legend_of(kind: Pass) -> usize {
+    LEGEND.iter().position(|ks| ks.contains(&kind)).unwrap_or(0)
+}
 /// A pass whose timing has not come back this many frames after it ran is drawn as never timed
 /// (and, for a pass sized for longer than a few frames, not before twice its target has passed).
 pub(crate) const UNTIMED_AFTER_FRAMES: u64 = 8;
@@ -277,6 +287,9 @@ pub(crate) struct Model {
     pub(crate) walk: Option<Walk>,
     pub(crate) plane: Plane,
     pub(crate) columns: VecDeque<Column>,
+    /// Each scope legend name's glow ([`LEGEND`]): lit when a pass of its kind is first heard of,
+    /// fading as a lamp does.
+    pub(crate) legend: [f32; LEGEND.len()],
     pub(crate) timers: [f32; 3],
     pub(crate) pucks: Vec<Puck>,
     pub(crate) series_running: u32,
@@ -305,6 +318,7 @@ impl Default for Model {
             walk: None,
             plane: Plane::Idle("STARTING"),
             columns: VecDeque::with_capacity(HISTORY_FRAMES),
+            legend: [0.0; LEGEND.len()],
             timers: [0.0; 3],
             pucks: Vec::new(),
             series_running: 0,
@@ -331,6 +345,19 @@ impl Model {
         self.lamps[i] = self.lamps[i].max(v);
     }
 
+    /// Records that a pass of `kind` ran in `frame` (in its column, while the scope has one), and
+    /// lights its legend name the first time it is heard of: when it is dispatched, or for a kind
+    /// first known from its reading (the worker's frames), when that arrives. A reading of a pass
+    /// already recorded does not light it again.
+    fn mark(&mut self, frame: u64, kind: Pass) {
+        let Some(c) = self.column(frame) else { return };
+        let new = !c.ran[kind as usize];
+        c.ran[kind as usize] = true;
+        if new {
+            self.legend[legend_of(kind)] = 1.0;
+        }
+    }
+
     /// The scope's column for `frame`: opened when it is newer than every column, else the one
     /// already there; `None` for a frame the scope never had or has scrolled off (a reading for a
     /// frame before the panel opened), which is dropped.
@@ -354,7 +381,7 @@ impl Model {
         for v in self.lamps.iter_mut() {
             *v = decay(*v, dt, LAMP_TAU_S);
         }
-        for v in self.timers.iter_mut() {
+        for v in self.timers.iter_mut().chain(self.legend.iter_mut()) {
             *v = decay(*v, dt, LAMP_TAU_S);
         }
         self.flash = decay(self.flash, dt, FLASH_TAU_S);
@@ -394,11 +421,10 @@ impl Model {
             PuckState::Building | PuckState::Built => p.age_s < PUCK_LOST_S,
         });
 
-        // This frame's column and its own pass.
-        if let Some(c) = self.column(snap.frame) {
-            if let Some(k) = snap.dispatched {
-                c.ran[k as usize] = true;
-            }
+        // This frame's column (opened whether or not a pass ran) and its own pass.
+        let _ = self.column(snap.frame);
+        if let Some(k) = snap.dispatched {
+            self.mark(snap.frame, k);
         }
         self.apply_snapshot(&snap);
         for e in events {
@@ -502,9 +528,7 @@ impl Model {
                 w.idle_s = 0.0;
                 let res = w.res;
                 self.plane = Plane::Whole { res, band: Some((e.a, e.b)), settled: false, glow: 1.0 };
-                if let Some(c) = self.column(e.frame) {
-                    c.ran[Pass::Pin as usize] = true;
-                }
+                self.mark(e.frame, Pass::Pin);
             }
             Kind::SplitPass => {
                 self.light(Lamp::Split, 1.0);
@@ -515,9 +539,7 @@ impl Model {
                 w.passes.push(WalkPass { lo: 0, hi: w.ask, frame: e.frame, ms: None, untimed: false, target_ms: PIN_TARGET_MS, age_s: 0.0 });
                 let res = w.res;
                 self.plane = Plane::Split { res, k: e.b.max(1), j: e.a, glow: 1.0 };
-                if let Some(c) = self.column(e.frame) {
-                    c.ran[Pass::Split as usize] = true;
-                }
+                self.mark(e.frame, Pass::Split);
             }
             Kind::WalkStart => {
                 let res = (e.b >> 16, e.b & 0xffff);
@@ -543,9 +565,7 @@ impl Model {
                     _ => Plane::Whole { res, band, settled: true, glow: 1.0 },
                 };
                 let pass = if kind == WalkKind::Ssaa { Pass::Ssaa } else { Pass::Walk };
-                if let Some(c) = self.column(e.frame) {
-                    c.ran[pass as usize] = true;
-                }
+                self.mark(e.frame, pass);
             }
             Kind::PinVerify => {
                 if let Some(w) = &mut self.walk {
@@ -583,8 +603,8 @@ impl Model {
                 };
                 if let Some(c) = self.column(frame) {
                     c.ms[kind as usize] += e.f.max(0.0);
-                    c.ran[kind as usize] = true;
                 }
+                self.mark(frame, kind);
                 if matches!(kind, Pass::Pin | Pass::Split | Pass::Walk | Pass::Ssaa) {
                     if let Some(w) = &mut self.walk {
                         if let Some(p) = w.passes.iter_mut().rev().find(|p| p.frame == frame) {
@@ -745,13 +765,14 @@ impl Model {
         x
     }
 
-    /// Something on the panel is still moving: a lamp or flash decaying, a walk or builder on its
+    /// Something on the panel is still moving: a lamp, legend name or flash decaying, a walk or builder on its
     /// instrument, a glow on the tile plane, pixels in the stream. When nothing is, the panel can
     /// stop asking for frames and an idle app idles.
     pub(crate) fn active(&self) -> bool {
         let lit = |v: f32| v > 0.02;
         self.lamps.iter().copied().any(lit)
             || self.timers.iter().copied().any(lit)
+            || self.legend.iter().copied().any(lit)
             || lit(self.flash)
             || self.walk.is_some()
             || !self.pucks.is_empty()
