@@ -1181,18 +1181,9 @@ fn draw_scope(p: &Painter, layer: Layer, r: Rect, s: f32, m: &Model) {
             dashed(p, pos2(r.left(), y(ms)), pos2(r.right(), y(ms)), Stroke::new(1.0_f32, col), 3.0 * s);
             p.text(pos2(r.right() - 4.0 * s, y(ms) - 2.0 * s), Align2::RIGHT_BOTTOM, label, face::narrow(10.0 * s), col);
         }
-        let f = face::narrow(10.0 * s);
-        let mut x = r.left() + 6.0 * s;
-        let legend = [
-            (tr!(live_kind_moving), fade(ink::PHOSPHOR_TEXT, 0.8)),
-            (tr!(live_kind_pin), Color32::from_rgb(0xff, 0xc8, 0x78)),
-            (tr!(live_kind_worker), ink::LAMP_BLUE),
-            (tr!(live_kind_settle), Color32::from_rgb(0xff, 0xec, 0xc8)),
-            (tr!(live_kind_ssaa), ink::SSAA),
-        ];
-        for (label, col) in legend {
-            let lr = p.text(pos2(x, r.top() + 4.0 * s), Align2::LEFT_TOP, label, f.clone(), col);
-            x = lr.right() + 8.0 * s;
+        // The legend, unlit: the dynamic layer lights each name as its kind of pass runs.
+        for (label, col, at) in scope_legend(p, r, s) {
+            p.text(at, Align2::LEFT_TOP, label, face::narrow(10.0 * s), fade(col, LEGEND_UNLIT));
         }
         return;
     }
@@ -1232,6 +1223,45 @@ fn draw_scope(p: &Painter, layer: Layer, r: Rect, s: f32, m: &Model) {
     for h in hollow {
         p.rect_stroke(h, 0.0_f32, Stroke::new(1.0_f32, fade(ink::PHOSPHOR, 0.6)), egui::StrokeKind::Inside);
     }
+    // Each legend name lights, with a soft glow, as a pass of its kind runs, and fades as a lamp
+    // does (`Model::legend`), over the unlit name the static layer drew.
+    let f = face::narrow(10.0 * s);
+    for ((label, col, at), &g) in scope_legend(p, r, s).into_iter().zip(m.legend.iter()) {
+        if g <= 0.02 {
+            continue;
+        }
+        for d in [vec2(-1.0, 0.0), vec2(1.0, 0.0), vec2(0.0, -1.0), vec2(0.0, 1.0)] {
+            p.text(at + d * s, Align2::LEFT_TOP, &label, f.clone(), fade(col, 0.25 * g));
+        }
+        p.text(at, Align2::LEFT_TOP, &label, f.clone(), fade(col, LEGEND_UNLIT + (1.0 - LEGEND_UNLIT) * g));
+    }
+}
+
+/// How bright a scope legend name is while no pass of its kind runs, of its full colour: still
+/// legible on the screen (3.2:1 for SSAA's lavender to 5.3:1 for SETTLE's cream against its glow,
+/// where 0.4 left 2.2 to 3.2), while lit names reach 6.5 to 12:1, and their glow.
+const LEGEND_UNLIT: f32 = 0.6;
+
+/// The scope legend's names (in [`super::model::LEGEND`]'s order), colours and top-left corners,
+/// left to right. Both layers lay it out here, so the lit names land on the unlit ones.
+fn scope_legend(p: &Painter, r: Rect, s: f32) -> Vec<(String, Color32, Pos2)> {
+    let f = face::narrow(10.0 * s);
+    let names = [
+        (tr!(live_kind_moving), fade(ink::PHOSPHOR_TEXT, 0.8)),
+        (tr!(live_kind_pin), Color32::from_rgb(0xff, 0xc8, 0x78)),
+        (tr!(live_kind_worker), ink::LAMP_BLUE),
+        (tr!(live_kind_settle), Color32::from_rgb(0xff, 0xec, 0xc8)),
+        (tr!(live_kind_ssaa), ink::SSAA),
+    ];
+    let mut x = r.left() + 6.0 * s;
+    names
+        .into_iter()
+        .map(|(label, col)| {
+            let at = pos2(x, r.top() + 4.0 * s);
+            x += p.layout_no_wrap(label.clone(), f.clone(), col).size().x + 8.0 * s;
+            (label, col, at)
+        })
+        .collect()
 }
 
 /// The depth dial: a radio tuning dial in log2 magnification, a window 200 octaves wide that

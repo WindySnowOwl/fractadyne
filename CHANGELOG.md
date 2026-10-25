@@ -59,6 +59,10 @@ published as the pre-releases `v0.2.41-beta.1` to `v0.2.41-beta.150`, and a "bet
 
 Changes after 0.3.0-beta.1:
 
+- **The GPU scope's legend lights as its passes run (0.3.0-beta.22).** On the live-render panel,
+  each name over the scope (MOVING, PIN, WORKER, SETTLE, SSAA) now glows when a pass of its kind
+  runs and fades as the lamps do, and rests dimmed otherwise, so what the card is doing reads at a
+  glance before its column lands.
 - **Fractadyne in fifteen languages (0.3.0-beta.21).** All of the interface's text (menus, panels,
   dialogs, Help, the status bar, the live-render panel, the formula and render-farm windows) is now
   in one file per language (design/multilingual.md), and the packages carry Spanish, French,

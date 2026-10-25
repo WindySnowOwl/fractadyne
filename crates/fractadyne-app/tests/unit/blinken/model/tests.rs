@@ -183,6 +183,39 @@ fn the_engines_share_counts_adoptions_by_source() {
 }
 
 #[test]
+fn a_legend_name_lights_when_its_kind_runs_and_fades_like_a_lamp() {
+    let name = |k: Pass| legend_of(k);
+    let mut m = Model::default();
+    // A pin pass dispatched lights PIN at once, and nothing else.
+    m.update(&[ev(1, Kind::PinStart, 30_000, 436 << 16 | 330, 0.0), ev(1, Kind::PinPass, 256, 512, 0.0)], snap(1));
+    assert_eq!(m.legend[name(Pass::Pin)], 1.0);
+    for k in [Pass::Moving, Pass::Worker, Pass::Walk, Pass::Ssaa] {
+        assert_eq!(m.legend[name(k)], 0.0, "{k:?}");
+    }
+    assert!(m.active(), "a lit name keeps the panel drawing while it fades");
+    // Its reading two frames later is not news: the name keeps fading rather than lighting again.
+    let mut s = snap(3);
+    s.dt_s = LAMP_TAU_S;
+    m.update(&[ev(3, Kind::PassTimed, Pass::Pin as u32, 1, 4.0)], s);
+    assert!((m.legend[name(Pass::Pin)] - (-1.0f32).exp()).abs() < 1e-4, "{}", m.legend[name(Pass::Pin)]);
+    // A kind first heard of from its reading (the worker's frames) lights when it arrives (for a
+    // frame the scope still has; every frame opens one).
+    m.update(&[ev(4, Kind::PassTimed, Pass::Worker as u32, 3, 6.0)], snap(4));
+    assert_eq!(m.legend[name(Pass::Worker)], 1.0);
+    // The frame's own pass: a moving frame and a settle tile light MOVING and SETTLE.
+    let mut s = snap(5);
+    s.dispatched = Some(Pass::Moving);
+    m.update(&[], s);
+    assert_eq!(m.legend[name(Pass::Moving)], 1.0);
+    let mut s = snap(6);
+    s.dispatched = Some(Pass::Tile);
+    m.update(&[], s);
+    assert_eq!(m.legend[name(Pass::Tile)], 1.0);
+    assert_eq!(name(Pass::Tile), name(Pass::Walk));
+    assert_eq!(name(Pass::Split), name(Pass::Pin));
+}
+
+#[test]
 fn a_reading_of_the_frames_own_pass_is_filed_under_the_kind_that_frame_ran() {
     let mut m = Model::default();
     let mut s = snap(20);
