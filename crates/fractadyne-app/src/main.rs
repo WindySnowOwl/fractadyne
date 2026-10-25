@@ -2048,10 +2048,9 @@ struct Perf {
     /// around"; gliding turns the same information into a continuous drift. See
     /// `render::norm_glide_step`.
     norm_shown: [Option<(f32, f32)>; 2],
-    /// W6 (U43): the palette window the LIVE texture was last drawn with, and the one a hold
-    /// snapshot was taken under (with the user's colouring then, `norm_user_sig`) — the window the
-    /// held frame keeps while it is served. `None` inside: drawn in the classic colouring.
-    shown_norm: [Option<(f32, f32)>; 2],
+    /// W6 (U43): the palette window a hold snapshot keeps while it is served — the live window when
+    /// it was copied, or a worker frame's own — with the user's colouring then (`norm_user_sig`).
+    /// `None` inside: drawn in the classic colouring.
     hold_norm: [Option<(Option<(f32, f32)>, u64)>; 2],
     /// The palette window each view was last DRAWN with, gliding from one picture's window to the
     /// next's (`render::drawn_norm_step`).
@@ -2063,6 +2062,9 @@ struct Perf {
     /// The palette map each view was last drawn under, and any dissolve from a map of another kind
     /// (`render::palette_fade_step`).
     palette_fade: [render::PaletteFadeState; 2],
+    /// The palette phase each view carries so a sliding window keeps the picture's colours
+    /// (`render::phase_carry_step`).
+    palette_phase: [render::PhaseCarry; 2],
     /// This view's frames are currently chunk-governed (`chunk_over`), stamped every
     /// `build_params`. The norm drain keys on THIS, not on the cursor: escape readings lag their
     /// dispatches by 2-3 frames, so a completed walk's LAST band lands with the cursor already at
@@ -2663,12 +2665,12 @@ impl Default for Perf {
             vis_sizing: [[0.0; 3]; 2],
             reading_pool: [render::ReadingPool::default(); 2],
             norm_shown: [None, None],
-            shown_norm: [None, None],
             hold_norm: [None, None],
             norm_drawn: [None, None],
             shown_aa: [None, None],
             hold_aa: [None, None],
             palette_fade: Default::default(),
+            palette_phase: Default::default(),
             chunk_governed: [false, false],
             motion_res: [0.6, 0.6],
             visible_res: [1.0, 1.0],
@@ -14209,6 +14211,7 @@ impl FractadyneApp {
     pub(crate) fn palette_moving(&self, v: usize) -> bool {
         let p = &self.perf;
         p.palette_fade[v].weight() > 0.0
+            || p.palette_phase[v].debt() != 0.0
             || p.norm_drawn[v].is_some_and(|d| !d.arrived())
             || (p.norm_shown[v].is_some() && p.norm_shown[v] != p.norm_pal[v])
     }
@@ -15490,6 +15493,7 @@ impl FractadyneApp {
         // (`render::palette_fade_step`): both land exactly, so this settles too.
         self.perf.norm_drawn[view].map(|d| (d.win.0.to_bits(), d.win.1.to_bits())).hash(&mut h);
         self.perf.palette_fade[view].weight().to_bits().hash(&mut h);
+        self.perf.palette_phase[view].debt().to_bits().hash(&mut h);
         self.perf.norm_sig[view].hash(&mut h);
         self.perf.norm_locked[view].hash(&mut h);
         h.finish()
@@ -15506,6 +15510,7 @@ impl FractadyneApp {
             r.map(|(lo, hi)| (lo.to_bits(), hi.to_bits())).hash(&mut h);
         }
         self.perf.palette_fade[view].weight().to_bits().hash(&mut h);
+        self.perf.palette_phase[view].debt().to_bits().hash(&mut h);
         self.perf.norm_sig[view].hash(&mut h);
         self.perf.norm_locked[view].hash(&mut h);
         h.finish()

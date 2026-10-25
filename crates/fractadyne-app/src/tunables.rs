@@ -1214,10 +1214,16 @@ pub(crate) const MOTION_NEED_QUANTILE_DEFAULT: f64 = 1.0;
 
 /// How far up the picture's escape values the live palette window's TOP reaches, as the fraction
 /// of the view's escaped pixels below it (`render::norm_palette_top`, from the fine histogram
-/// `fractadyne_gpu::CTR_NORM_HIST`). 1.0 = the top of the escape range, the shipped behaviour.
-/// Only the colours follow it: the escape RANGE (`Perf::norm_range`) keeps its true top for what
-/// it sizes — a moving frame's walk, a refresh's end, the autopilot.
-pub(crate) const NORM_TOP_QUANTILE_DEFAULT: f64 = 1.0;
+/// `fractadyne_gpu::CTR_NORM_HIST`). 1.0 = the top of the escape range, as shipped until
+/// 2026-10-25. Only the colours follow it: the escape RANGE (`Perf::norm_range`) keeps its true top
+/// for what it sizes — a moving frame's walk, a refresh's end, the autopilot.
+///
+/// ⭐0.98, measured on the user's 2026-10-25 path (2^80 → 2^127): where a minibrot's fringe sets
+/// the maximum the picture escapes far below it — at 2^92.9, 98% by 2,538 and 99% by 2,636 against
+/// a maximum of 32,634 — and where none does the quantile is near the top anyway (2^100.5: 12,414
+/// against 14,010). Moving frames there sample only ~600-1,000 pixels on the grid, and the 98th
+/// percentile leaves a dozen above it where the 99.5th would rest on three.
+pub(crate) const NORM_TOP_QUANTILE_DEFAULT: f64 = 0.98;
 
 /// Where the escape TOP a moving frame is sized to reach comes from (`render::motion_need`; U24,
 /// design/live-render-robustness.md §3.3). 0: the palette normalisation window's top, which the

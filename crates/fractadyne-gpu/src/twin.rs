@@ -56,6 +56,21 @@ impl GBuffer {
         }
         r
     }
+
+    /// The same texels in the fine escape histogram the window's own frames report
+    /// ([`crate::CTR_NORM_HIST`], buckets measured from `base`): the palette window's top is a
+    /// quantile of it. Every escaped texel, where the window's shader samples a 4x4 grid — the
+    /// quantiles are the same, from more samples.
+    pub fn escape_hist(&self, base: f32) -> crate::NormHist {
+        let mut counts = vec![0u32; crate::NORM_HIST_BUCKETS];
+        for t in self.iter.chunks_exact(4) {
+            let v = t[0];
+            if v > 0.0 && v.is_finite() {
+                counts[crate::norm_hist_bucket(v, base)] += 1;
+            }
+        }
+        crate::NormHist { base, counts }
+    }
 }
 
 /// A G-buffer handed to the device that will show it, ready to install (`MandelbrotParams::adopt`).

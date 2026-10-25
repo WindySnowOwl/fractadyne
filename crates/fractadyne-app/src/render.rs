@@ -2140,6 +2140,16 @@ impl FractadyneApp {
         }
     }
 
+    /// How the palette windows of view `vb` may move this frame (`norm_glide_step`): the frame's
+    /// time step, the user's colouring, and whether a cut may be taken (no dissolve under way).
+    pub(crate) fn norm_pace(&self, vb: usize) -> NormPace {
+        NormPace {
+            dt_s: (self.perf.last_dt_ms / 1000.0) as f32,
+            shape: NormShape { sweeps: 0.5 + self.coloring.cycle * 6.0, log_palette: self.coloring.log_palette },
+            can_cut: self.perf.palette_fade[vb.min(1)].weight() == 0.0,
+        }
+    }
+
     /// The normalized colour map for an escape range `[mn, mx]` under the user's colouring (the
     /// mapping half of [`Self::live_norm_cycle_offset`], whose predicate decides whether to map at
     /// all): log for a heavy-tailed range or when asked, linear otherwise.
@@ -5615,7 +5625,7 @@ impl FractadyneApp {
             self.perf.norm_shown[vb] = self
                 .perf
                 .norm_pal[vb]
-                .map(|target| norm_glide_step(self.perf.norm_shown[vb], target, norm_snap));
+                .map(|target| norm_glide_step(self.perf.norm_shown[vb], target, norm_snap, self.norm_pace(vb)));
         }
         for e in climb.events.iter().filter(|e| !e.before_drains()) {
             e.trace();
@@ -6566,29 +6576,46 @@ impl FractadyneApp {
         // — a picture nobody sees yet — so the snapshot was recoloured every frame under another
         // picture's window; under the log map every value below the new `norm_lo` collapsed to one
         // colour. The snapshot is of the frame the screen last showed live (`hold_copy` fires only
-        // with no hold up), so its map is the one that frame used (`Perf::shown_norm`). The user's
-        // own colouring still applies at once: a change to it un-freezes (`norm_user_sig`).
+        // with no hold up), so its map is frozen at the copy. The user's own colouring still applies
+        // at once: a change to it un-freezes (`norm_user_sig`).
         let user_sig = self.norm_user_sig();
+        // ⭐…the window ITS PICTURE wants — the live one at the moment of the copy, which describes
+        // the texture just copied — not the window the screen was last drawn under. While the drawn
+        // window is still gliding after a change of picture, that is part of the way back to an
+        // older picture's, and the next hold froze it again: on the 2026-10-25 path the run's first
+        // window (1,210..1,415) came back at 2^88.8 for a picture escaping at 1,580..1,840, every
+        // pixel wrapped several palette cycles. Drawn, the change of want glides like any other
+        // (`drawn_norm_step`).
         if hold_copy {
-            self.perf.hold_norm[vs] = Some((self.perf.shown_norm[vs], user_sig));
+            self.perf.hold_norm[vs] = Some((live_win, user_sig));
         }
         // The held picture's own window, while one is served (inside, `None`: classic colours).
         let held_map = self.perf.hold_norm[vs].filter(|&(_, u)| display_hold && u == user_sig).map(|(w, _)| w);
         // ⭐…REACHED BY GLIDING: a picture of another source wants another window, and drawing it at
         // once snapped the palette (`drawn_norm_step`).
-        self.perf.norm_drawn[vs] = drawn_norm_step(self.perf.norm_drawn[vs], held_map.unwrap_or(live_win), held_map.is_some());
+        self.perf.norm_drawn[vs] = drawn_norm_step(
+            self.perf.norm_drawn[vs],
+            held_map.unwrap_or(live_win),
+            held_map.is_some(),
+            self.norm_pace(vs),
+        );
         let drawn = self.perf.norm_drawn[vs].map(|d| d.win);
         let nm = drawn.map_or(NormMap { cycle: self.color_cycle(), offset: self.coloring.offset, mode: 0, lo: 0.0 }, |(mn, mx)| {
             self.norm_map_for(mn, mx)
         });
+        // ⭐…with its PHASE CARRIED: a window that slides with the zoom keeps every colour where it
+        // was, and a view at rest gives the carried phase back (`phase_carry_step`).
+        let (carry, phase) =
+            phase_carry_step(self.perf.palette_phase[vs], nm, drawn, user_sig, !interacting, (self.perf.last_dt_ms / 1000.0) as f32);
+        self.perf.palette_phase[vs] = carry;
+        let nm = NormMap { offset: nm.offset + phase, ..nm };
         // ⭐…and a change of map KIND (the normalization on or off, linear or log) DISSOLVES from the
         // last frame's map: no window glides from one kind to the other (`palette_fade_step`).
         let (fade_state, palette_fade) =
-            palette_fade_step(self.perf.palette_fade[vs], nm, drawn.is_some(), user_sig, (self.perf.last_dt_ms / 1000.0) as f32);
+            palette_fade_step(self.perf.palette_fade[vs], nm, drawn.is_some(), user_sig, (self.perf.last_dt_ms / 1000.0) as f32, drawn);
         self.perf.palette_fade[vs] = fade_state;
         if !display_hold {
             self.perf.hold_norm[vs] = None;
-            self.perf.shown_norm[vs] = drawn;
         }
         // ⭐THE COLOUR BOX IS THE SHOWN PICTURE'S, NOT THIS FRAME'S PASS'S. The decision sizes
         // `aa_filter` for the pass this frame renders, before the pin and freeze verdicts, and the
@@ -6622,7 +6649,7 @@ impl FractadyneApp {
                 "palette",
                 format!(
                     "map v={vs} f={} interacting={interacting} held={} mode={} cycle={:.6e} offset={:.6} lo={:.3} shown={:?} fade={:.3} box={aa_filter} \
-                     l2={:.4} drawn={:?} from=[{:.6e} {:.6} {} {:.3}]",
+                     l2={:.4} drawn={:?} from=[{:.6e} {:.6} {} {:.3}] carry={:.4}",
                     self.perf.frame_idx,
                     u8::from(held_map.is_some()),
                     nm.mode,
@@ -6639,6 +6666,7 @@ impl FractadyneApp {
                     palette_fade.offset,
                     palette_fade.mode,
                     palette_fade.lo,
+                    phase,
                 ),
             );
         }
@@ -9250,11 +9278,20 @@ impl FractadyneApp {
                 if let Some((mn, mx)) = d.esc_range {
                     use std::sync::atomic::Ordering::SeqCst;
                     let vb = vi.min(1);
+                    // ⭐…WITH ITS HISTOGRAM, so the palette's top is taken from where this frame's
+                    // picture escapes, as for the window's own frames (`norm_palette_top`). Without
+                    // it every worker reading fell back to the frame's maximum, which the worker's
+                    // full walks put at the ask beside a minibrot: 106 of 253 readings on the
+                    // 2026-10-25 path, every one past 2^93.
+                    if let Ok(mut h) = self.perf.norm_hist_sink[vb].lock() {
+                        *h = d.esc_hist.clone();
+                    }
                     self.perf.norm_sink[vb].store((u64::from(mn.to_bits()) << 32) | u64::from(mx.to_bits()), SeqCst);
                     self.perf.norm_complete_sink[vb].store(true, SeqCst);
                     self.perf.norm_sig_sink[vb].store(self.perf.norm_sig_submit[vb], SeqCst);
-                    if into_hold && mx > mn && self.live_norm_window(vi).is_some() {
-                        self.perf.hold_norm[vb] = Some((Some((mn, mx)), self.norm_user_sig()));
+                    let top = norm_palette_top(mn, mx, d.esc_hist.as_ref(), crate::tunables::cost().norm_top_quantile);
+                    if into_hold && top > mn && self.live_norm_window(vi).is_some() {
+                        self.perf.hold_norm[vb] = Some((Some((mn, top)), self.norm_user_sig()));
                     }
                     if into_hold {
                         self.perf.hold_aa[vb] = Some(1);
@@ -11075,27 +11112,13 @@ mod norm_hold;
 #[path = "../tests/unit/render/norm_attribution.rs"]
 mod norm_attribution;
 
-/// One frame's step of the SHOWN palette window toward the fed target.
+/// Is `target` another PICTURE rather than this one drifting? Then the glide takes it outright.
 ///
-/// The target is updated in steps — one per escape-range reading, which arrive every few frames —
-/// and each step repaints the whole picture in different colours. Measured on an 8-octave dual-view
-/// glide (2026-09-17): a single frame moved the window by **109% of its own width**, which is the
-/// "the colours bounce around on zoom" half of that day's report. The information is right; its
-/// delivery is not. Gliding a fixed fraction of the remaining gap per frame turns each step into a
-/// continuous drift, reaching the target in about a dozen frames (~0.2 s) — fast enough to track a
-/// 4.0× zoom, whose range genuinely doubles about once a second, and slow enough that no single
-/// frame is a visible snap.
-///
-/// ⚠**What snaps instead of gliding is decided by the FEED, not by how far the numbers moved.**
-/// The range feed already classifies its own readings (`norm_feed_decision`): `Adopt` is a settled
-/// view deciding a mapping for a picture that has stopped moving, a hold-break is recovery from a
-/// mapping measured somewhere else, and `Chase` is a moving view tracking its own drift. The first
-/// two are discontinuities the eye expects; the third is exactly what must be smooth. ⛔Two
-/// distance-based rules were tried first and both snapped on ordinary zoom drift, making the worst
-/// frame WORSE than no glide at all (449% of the window for `norm_hold_break`'s four-widths, 103%
-/// for a factor-of-eight ratio): at shallow depth a window 150 iterations wide legitimately
-/// changes by a factor of ten across a few octaves. `JUMP_RATIO` survives only as a backstop for
-/// a discontinuity the feed did not classify, and is set far beyond any drift measured here.
+/// ⛔Two distance-based rules were tried first and both fired on ordinary zoom drift, making the
+/// worst frame WORSE than no glide at all (449% of the window for `norm_hold_break`'s four widths,
+/// 103% for a factor-of-eight ratio): at shallow depth a window 150 iterations wide legitimately
+/// changes by a factor of ten across a few octaves. So only a midpoint moved by `JUMP_RATIO`, far
+/// beyond any drift measured, counts — a backstop for a discontinuity the feed did not classify.
 pub(crate) fn norm_glide_is_reacquire(shown: (f32, f32), target: (f32, f32)) -> bool {
     /// How many times the midpoint must move before this is another picture rather than this one
     /// drifting. Measured drift over an 8-octave glide at 4.0×: a factor of ten.
@@ -11105,17 +11128,31 @@ pub(crate) fn norm_glide_is_reacquire(shown: (f32, f32), target: (f32, f32)) -> 
     (mid_t / mid_s).max(mid_s / mid_t) > JUMP_RATIO
 }
 
+/// One frame's step of the SHOWN palette window toward the fed target.
 ///
-/// Two terms, and both are needed: the gap is closed geometrically (so a moving target is TRACKED
-/// with little lag — a 4.0× zoom grows the range about 1% a frame), while every frame's step is
-/// also capped at a fraction of the window's own WIDTH (so however far the target jumps, no single
-/// frame is a visible snap). Geometric alone lags a moving target or lurches toward a far one,
-/// depending on the rate; the cap alone crawls.
-pub(crate) fn norm_glide_step(shown: Option<(f32, f32)>, target: (f32, f32), snap: bool) -> (f32, f32) {
-    /// Fraction of the remaining gap closed per frame.
-    const GLIDE: f32 = 0.15;
-    /// Hard cap on one frame's movement of either edge, as a fraction of the window's width.
-    const MAX_STEP: f32 = 0.06;
+/// The target moves in steps — one per escape-range reading, every few frames — and each step
+/// recolours the whole picture. Gliding turns a step into a drift. ⭐**How fast colours may drift is
+/// a question about the EYE, so it is paced in TIME and measured in PALETTE CYCLES**
+/// ([`window_change`]): the window closes on its target with a time constant of [`GLIDE_TAU_S`],
+/// and no colour anywhere in it moves faster than [`PALETTE_MAX_SPEED`] cycles a second.
+///
+/// ⛔**The glide this replaces was paced per FRAME in window WIDTHS** (15% of the gap, at most 6%
+/// of the width, per frame). Six percent of the width is ~0.2 palette cycles at the window's ends
+/// at the user's cycle, every frame: on the 2026-10-25 zoom, when the top leapt from 4,650 to
+/// 77,527 in 0.8 s, the glide swept the picture through palette cycles at that rate — 6 cycles in
+/// the worst second, the strobe in the user's video — and at 120 fps it ran twice as fast as at 60.
+///
+/// ⭐**A gap of more than [`GLIDE_CUT`] cycles is not glided at all**: sweeping it would pass the
+/// picture through every colour of the palette. It is taken outright, and the drawn map's change is
+/// DISSOLVED (`palette_fade_step`), which passes through blends of two colours instead. Not while a
+/// dissolve is still running (`pace.can_cut`), which a cut would cut short: then the glide crawls
+/// at the speed limit until it ends.
+///
+/// ⚠**What snaps is decided by the FEED, not by how far the numbers moved.** The feed classifies
+/// its own readings (`norm_feed_decision`): `Adopt` is a settled view deciding its mapping and a
+/// hold-break is recovery from a mapping measured somewhere else (`snap`); `Chase` is a moving view
+/// tracking its own drift. A snap arrives outright, and is dissolved downstream like a cut.
+pub(crate) fn norm_glide_step(shown: Option<(f32, f32)>, target: (f32, f32), snap: bool, pace: NormPace) -> (f32, f32) {
     let Some((slo, shi)) = shown else { return target };
     if snap || !slo.is_finite() || !shi.is_finite() {
         return target;
@@ -11123,18 +11160,96 @@ pub(crate) fn norm_glide_step(shown: Option<(f32, f32)>, target: (f32, f32), sna
     if norm_glide_is_reacquire((slo, shi), target) {
         return target; // another picture, not this one drifting
     }
+    let shown = (slo, shi);
+    if pace.can_cut && window_change(shown, target, pace.shape) > GLIDE_CUT {
+        return target; // swept, this would pass through the palette: cut, and dissolve the map
+    }
     /// W6 (U58): the residual, as a fraction of the window's width, under which the glide lands
-    /// exactly. Geometric alone only approaches, an f32 ulp at a time for ~100 frames, and the SSAA
-    /// average — whose colour signature now includes this window — could not begin until it stopped.
+    /// exactly. Geometric alone only approaches, an f32 ulp at a time, and the SSAA average —
+    /// whose colour signature includes this window — could not begin until it stopped.
     const ARRIVE: f32 = 0.005;
+    // A slow frame advances the glide no more than a tenth of a second.
+    let dt = pace.dt_s.clamp(0.0, 0.1);
+    let a = 1.0 - (-dt / GLIDE_TAU_S).exp();
+    let mut next = (slo + (target.0 - slo) * a, shi + (target.1 - shi) * a);
+    // The speed limit, in the map's own terms: scale the step down until no colour in the window
+    // moves faster (the change is nearly linear in a small step; three passes make it so).
+    let budget = PALETTE_MAX_SPEED * dt;
+    for _ in 0..3 {
+        let moved = window_change(shown, next, pace.shape);
+        if moved <= budget || moved <= 0.0 {
+            break;
+        }
+        let k = budget / moved * 0.999;
+        next = (slo + (next.0 - slo) * k, shi + (next.1 - shi) * k);
+    }
     let width = (shi - slo).max(1.0);
-    let cap = width * MAX_STEP;
-    let step = |cur: f32, tgt: f32| cur + ((tgt - cur) * GLIDE).clamp(-cap, cap);
-    let next = (step(slo, target.0), step(shi, target.1));
     if (target.0 - next.0).abs() <= width * ARRIVE && (target.1 - next.1).abs() <= width * ARRIVE {
         return target;
     }
     next
+}
+
+/// Time constant of the palette window's glide, seconds: a reading's step is two-thirds closed in
+/// this long. Short enough to track a zoom's own drift within a few percent of the window (the
+/// user's 2026-10-25 dive grew its window ~8% a second), long enough that a step reads as a drift.
+pub(crate) const GLIDE_TAU_S: f32 = 0.2;
+/// The fastest the glide may move any colour in the window, palette cycles per second. The user's
+/// strobe moved them six times faster; a zoom's own drift moved them well under one.
+pub(crate) const PALETTE_MAX_SPEED: f32 = 1.5;
+/// A gap between the shown window and its target, in palette cycles, past which the glide cuts
+/// (and the drawn map dissolves) rather than sweeping the picture through the palette.
+pub(crate) const GLIDE_CUT: f32 = 1.0;
+
+/// What a palette window's colours depend on besides the window: how many palette sweeps span it
+/// (`0.5 + cycle·6`, as [`FractadyneApp::norm_map_for`]) and whether the log form is asked for.
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub(crate) struct NormShape {
+    pub(crate) sweeps: f32,
+    pub(crate) log_palette: bool,
+}
+
+/// How one frame may move a palette window: its time step, the colouring, and whether it may cut
+/// (no dissolve under way).
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub(crate) struct NormPace {
+    pub(crate) dt_s: f32,
+    pub(crate) shape: NormShape,
+    pub(crate) can_cut: bool,
+}
+
+/// The palette coordinate (cycles, without the user's offset) of escape value `v` under window `w`
+/// — the map [`FractadyneApp::norm_map_for`] builds, linear or log.
+pub(crate) fn window_phase(w: (f32, f32), v: f32, s: NormShape) -> f32 {
+    let (mn, mx) = (w.0 as f64, w.1 as f64);
+    let v = v as f64;
+    let p = if norm_map_is_log(w.0, w.1, s.log_palette) {
+        let span = ((mx - mn) + 1.0).ln().max(1.0e-6);
+        s.sweeps as f64 / span * ((v - mn).max(0.0) + 1.0).ln()
+    } else {
+        s.sweeps as f64 * (v - mn) / (mx - mn).max(1.0e-6)
+    };
+    p as f32
+}
+
+/// How far, in palette cycles, changing window `a` to `b` moves the colour of the escape values
+/// both describe, as the screen shows it: the phase is carried (`phase_carry_step`), so the change
+/// at `b`'s middle value is not seen, and a window that only SLIDES moves no colour at all. The
+/// largest change relative to the middle's, over both windows' ends and points between, spaced
+/// finely near the floor, where a log map is steepest.
+pub(crate) fn window_change(a: (f32, f32), b: (f32, f32), s: NormShape) -> f32 {
+    if a == b {
+        return 0.0;
+    }
+    let (lo, hi) = (a.0.min(b.0), a.1.max(b.1));
+    let mid = (b.0 + b.1) * 0.5;
+    let at_mid = window_phase(b, mid, s) - window_phase(a, mid, s);
+    const AT: [f32; 9] = [0.001, 0.003, 0.01, 0.03, 0.1, 0.25, 0.5, 0.75, 0.9];
+    [a.0, a.1, b.0, b.1]
+        .into_iter()
+        .chain(AT.iter().map(|x| lo + (hi - lo) * x))
+        .map(|v| (window_phase(b, v, s) - window_phase(a, v, s) - at_mid).abs())
+        .fold(0.0, f32::max)
 }
 
 #[cfg(test)]
@@ -11167,9 +11282,10 @@ impl DrawnNorm {
 /// same-card worker, 12 frame-to-frame phase steps of more than 0.05 of a palette cycle (to 0.11),
 /// each a worker frame entering the hold; without the worker, one of 0.25 where a held picture gave
 /// way to a live one (2026-10-21, the `palette` trace). So a change of source glides at the live
-/// window's own pace (`norm_glide_step`) until it arrives, and only then tracks the wanted window
-/// exactly: a live view gains no lag. `None` wanted (classic colouring) draws no window.
-pub(crate) fn drawn_norm_step(prev: Option<DrawnNorm>, want: Option<(f32, f32)>, held: bool) -> Option<DrawnNorm> {
+/// window's own pace (`norm_glide_step`, `pace`) until it arrives — or, more than a palette cycle
+/// away, is cut, and the drawn map dissolves (`palette_fade_step`) — and only then tracks the wanted
+/// window exactly: a live view gains no lag. `None` wanted (classic colouring) draws no window.
+pub(crate) fn drawn_norm_step(prev: Option<DrawnNorm>, want: Option<(f32, f32)>, held: bool, pace: NormPace) -> Option<DrawnNorm> {
     let want = want?;
     let Some(p) = prev else { return Some(DrawnNorm { win: want, want, held, tracking: true }) };
     // Another source: held for live or the other way, or a new held picture (a held one's window
@@ -11178,7 +11294,7 @@ pub(crate) fn drawn_norm_step(prev: Option<DrawnNorm>, want: Option<(f32, f32)>,
     if p.tracking && !switched {
         return Some(DrawnNorm { win: want, want, held, tracking: true });
     }
-    let win = norm_glide_step(Some(p.win), want, false);
+    let win = norm_glide_step(Some(p.win), want, false, pace);
     Some(DrawnNorm { win, want, held, tracking: win == want })
 }
 
@@ -11208,12 +11324,20 @@ pub(crate) struct PaletteFadeState {
 /// kind starts a dissolve from the last frame's map, which the colour pass blends in with a weight
 /// falling from 1 to 0 over [`PALETTE_FADE_S`]. The user's own colouring changing snaps instead, as
 /// every colour control does. Returns the new state and the fade this frame draws.
+///
+/// ⭐**So does a JUMP within one kind.** A normalised map whose window is cut (`norm_glide_step`
+/// past [`GLIDE_CUT`], a settled view adopting its mapping, a hold broken, a held picture far from
+/// the live one) recolours the picture by up to several palette cycles in one frame — the cut the
+/// glide exists to avoid. Any frame whose map moves a colour of the drawn window `win` by more than
+/// [`PALETTE_JUMP`] cycles ([`map_change`]) dissolves from the last frame's map, unless a dissolve
+/// more than half done is still running: restarting it then would drop most of ITS old map at once.
 pub(crate) fn palette_fade_step(
     st: PaletteFadeState,
     map: NormMap,
     normalized: bool,
     user_sig: u64,
     dt_s: f32,
+    win: Option<(f32, f32)>,
 ) -> (PaletteFadeState, fractadyne_gpu::PaletteFade) {
     // A slow frame advances the dissolve no more than a tenth of a second.
     let dt = dt_s.clamp(0.0, 0.1);
@@ -11225,6 +11349,11 @@ pub(crate) fn palette_fade_step(
         if sig != user_sig {
             fade = None;
         } else if was_normalized != normalized || prev.mode != map.mode {
+            fade = Some((prev, 1.0));
+        } else if normalized
+            && fade.is_none_or(|(_, w)| w < 0.5)
+            && win.is_some_and(|w| map_change(&prev, &map, w) > PALETTE_JUMP)
+        {
             fade = Some((prev, 1.0));
         }
     }
@@ -11243,6 +11372,99 @@ impl PaletteFadeState {
     pub(crate) fn weight(&self) -> f32 {
         self.fade.map_or(0.0, |(_, w)| w)
     }
+}
+
+/// A frame-to-frame change of map, in palette cycles, past which the change is dissolved rather
+/// than drawn: well above what the glide moves in a frame ([`PALETTE_MAX_SPEED`] × 1/60 s ≈ 0.025;
+/// at 10 fps, 0.15), well below the cuts it exists for (the 2026-10-25 settle snapped 0.67).
+pub(crate) const PALETTE_JUMP: f32 = 0.2;
+
+/// A view's palette PHASE carried from frame to frame (`Perf::palette_phase`).
+#[derive(Clone, Copy, Debug, Default, PartialEq)]
+pub(crate) struct PhaseCarry {
+    /// The last frame's map before the carry, its window, and the user's colouring then.
+    last: Option<(NormMap, (f32, f32), u64)>,
+    /// Palette cycles added to the map's offset, within half a cycle either way.
+    debt: f32,
+}
+
+impl PhaseCarry {
+    /// The phase this view carries now, cycles.
+    pub(crate) fn debt(&self) -> f32 {
+        self.debt
+    }
+}
+
+/// How fast a view at rest gives back the phase it carried while moving, palette cycles a second:
+/// at most half a cycle, so a stop settles within a second.
+pub(crate) const PHASE_SETTLE_SPEED: f32 = 0.6;
+
+/// ⭐One frame of the carried palette PHASE. A normalised map pins the palette to its window's floor
+/// (`norm_map_for`: the floor is palette position 0), so while a zoom slides the window up, every
+/// colour in the picture rotates through the palette even when nothing else about the picture
+/// changes: on the 2026-10-25 path, two palette cycles a second of the drift were the window
+/// SLIDING, a tenth of one its WIDENING. Only the window's width matters to what normalisation is
+/// for — the palette's DENSITY, cycles per iteration — and the palette repeats, so its phase is
+/// free. So the phase is carried: each frame adds to the map's offset whatever keeps the colour of
+/// the window's middle value where the last frame drew it. A slide then recolours nothing (each
+/// escape value keeps its colour as its feature moves across the screen, as under a fixed palette);
+/// a widening recolours values in proportion to their distance from the middle.
+///
+/// The carry is kept within half a cycle (a whole cycle is invisible), and a view at rest gives it
+/// back at [`PHASE_SETTLE_SPEED`], so a still picture is coloured by its view alone, the same
+/// however it was reached — a uniform rotation of at most half a cycle after a stop. Classic
+/// colouring, a change of map kind (dissolved by `palette_fade_step`) and the user's own colouring
+/// changing carry nothing. Returns the new state and the phase to add to this frame's offset.
+pub(crate) fn phase_carry_step(
+    st: PhaseCarry,
+    map: NormMap,
+    win: Option<(f32, f32)>,
+    user_sig: u64,
+    at_rest: bool,
+    dt_s: f32,
+) -> (PhaseCarry, f32) {
+    let Some(w) = win else { return (PhaseCarry::default(), 0.0) };
+    let coord = |m: &NormMap, v: f64| {
+        let x = if m.mode == 1 { ((v - m.lo as f64).max(0.0) + 1.0).ln() } else { v };
+        x * m.cycle as f64 + m.offset as f64
+    };
+    let mut debt = match st.last {
+        Some((prev, _, sig)) if sig == user_sig && prev.mode == map.mode => {
+            let mid = (w.0 as f64 + w.1 as f64) * 0.5;
+            let d = coord(&prev, mid) + st.debt as f64 - coord(&map, mid);
+            (d - d.round()) as f32
+        }
+        _ => 0.0,
+    };
+    if at_rest {
+        let step = PHASE_SETTLE_SPEED * dt_s.clamp(0.0, 0.1);
+        debt = if debt.abs() <= step { 0.0 } else { debt - step.copysign(debt) };
+    }
+    (PhaseCarry { last: Some((map, w, user_sig)), debt }, debt)
+}
+
+#[cfg(test)]
+#[path = "../tests/unit/render/phase_carry.rs"]
+mod phase_carry;
+
+/// How far, in palette cycles, changing map `a` to `b` moves the colour of the escape values in
+/// window `w`: the largest change over its ends and points between, spaced finely near the floor.
+/// Whole cycles are no change — the palette repeats, and the carried phase (`phase_carry_step`)
+/// wraps by exactly one — so the change at the window's middle counts only to its nearest whole
+/// cycle's distance.
+pub(crate) fn map_change(a: &NormMap, b: &NormMap, w: (f32, f32)) -> f32 {
+    let coord = |m: &NormMap, v: f64| {
+        let x = if m.mode == 1 { ((v - m.lo as f64).max(0.0) + 1.0).ln() } else { v };
+        x * m.cycle as f64 + m.offset as f64
+    };
+    let (lo, hi) = (w.0 as f64, w.1 as f64);
+    let mid = (lo + hi) * 0.5;
+    let whole = (coord(b, mid) - coord(a, mid)).round();
+    const AT: [f64; 11] = [0.0, 0.001, 0.003, 0.01, 0.03, 0.1, 0.25, 0.5, 0.75, 0.9, 1.0];
+    AT.iter()
+        .map(|x| lo + (hi - lo) * x)
+        .map(|v| (coord(b, v) - coord(a, v) - whole).abs())
+        .fold(0.0, f64::max) as f32
 }
 
 #[cfg(test)]
