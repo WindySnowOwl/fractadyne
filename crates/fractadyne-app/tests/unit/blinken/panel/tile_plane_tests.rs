@@ -397,3 +397,103 @@ fn the_running_readout_keeps_two_figures() {
     assert_eq!(running_text(0.015), "RUNNING 1.5%");
     assert_eq!(running_text(0.0002), "RUNNING 0.02%");
 }
+
+/// Brightness changes along a row of the plane: the edges between a checker's squares.
+fn edges_along(c: &Canvas, plane: Rect, y: f32) -> usize {
+    let xs = (plane.left() as usize + 1)..(plane.right() as usize - 1);
+    let lums: Vec<f32> = xs.map(|x| c.lum(pos2(x as f32 + 0.5, y))).collect();
+    lums.windows(2).filter(|w| (w[0] - w[1]).abs() > 6.0).count()
+}
+
+#[test]
+fn a_whole_frame_shows_its_resolution_as_grain_and_says_it_in_the_corner() {
+    // A moving frame at a quarter of the screen's width is a checker of 8 squares across; at the
+    // screen's own, 32. The squares are a diagram: at the plane's size a picture's pixel is a
+    // fraction of a panel pixel.
+    for (render_w, cols) in [(480u32, 8usize), (960, 16), (1920, 32)] {
+        let mut m = model(Plane::Whole { res: (render_w, render_w * 1102 / 1920), band: None, settled: false, glow: 1.0 });
+        m.snap.display = (1920, 1102);
+        let (c, r) = render(&m, SIZE, 1.0);
+        c.dump(&format!("grain-{render_w}"));
+        let (plane, _) = plane_rect(r, 1.0, (render_w, render_w * 1102 / 1920));
+        // Along a row clear of the corner's readout.
+        let edges = edges_along(&c, plane, plane.top() + plane.height() * 0.6);
+        assert_eq!(edges, cols - 1, "{render_w} px of 1920: {edges} edges, want {cols} squares");
+    }
+    assert_eq!(grain_cols(1.0), 32);
+    assert_eq!(grain_cols(0.25), 8);
+    assert_eq!(grain_cols(0.001), 1);
+    assert_eq!(scale_text(1.0), None);
+    assert_eq!(scale_text(0.25).as_deref(), Some("1/4"));
+    assert_eq!(scale_text(0.5).as_deref(), Some("1/2"));
+    assert_eq!(scale_text(0.62).as_deref(), Some("62%"));
+}
+
+#[test]
+fn the_ruler_lights_a_walks_band_with_what_it_finished_below_it() {
+    let ask = 1_000_000u32;
+    let mut m = model(Plane::Whole { res: RES, band: Some((10_000, 100_000)), settled: true, glow: 1.0 });
+    m.snap.iterations = ask;
+    let (c, r) = render(&m, SIZE, 1.0);
+    c.dump("ruler-walk");
+    let bar = ruler_rect(r, 1.0);
+    let y = bar.center().y;
+    let x = |it: u32| bar.left() + bar.width() * ruler_pos(it, ask);
+    let lum = |it: u32| c.lum(pos2(x(it), y));
+    // Below the band: done. In it: lit. Past it: dark.
+    let (done, lit, dark) = (lum(300), lum(31_623), lum(316_228));
+    assert!(lit > done + 20.0 && done > dark + 20.0, "done {done:.0}, lit {lit:.0}, dark {dark:.0}");
+    // On a log scale, 10,000 of a million sits two thirds of the way along.
+    assert!((ruler_pos(10_000, ask) - 0.6667).abs() < 0.001);
+    assert_eq!(ruler_pos(0, ask), 0.0);
+    assert_eq!(ruler_pos(ask, ask), 1.0);
+    // A moving frame iterates to its ask in one go: all of the ruler lit; no pass, none of it.
+    let mut m = model(Plane::Whole { res: RES, band: None, settled: false, glow: 1.0 });
+    m.snap.iterations = ask;
+    let (c, r) = render(&m, SIZE, 1.0);
+    let bar = ruler_rect(r, 1.0);
+    let ends = [c.lum(pos2(bar.left() + 3.0, bar.center().y)), c.lum(pos2(bar.right() - 3.0, bar.center().y))];
+    let mut m = model(Plane::Idle("HELD"));
+    m.snap.iterations = ask;
+    let (c, _) = render(&m, SIZE, 1.0);
+    let idle = c.lum(pos2(bar.center().x, bar.center().y));
+    assert!(ends.iter().all(|&l| l > idle + 40.0), "moving frame {ends:?} against idle {idle:.0}");
+}
+
+#[test]
+fn the_sample_chart_puts_a_dot_where_each_sample_landed() {
+    let m = model(Plane::Ssaa { res: RES, samples: 6, band: Some((1_024, 2_048)), glow: 0.0 });
+    let (c, r) = render(&m, SIZE, 1.0);
+    c.dump("samples");
+    let (plane, _) = plane_rect(r, 1.0, RES);
+    let side = plane.width().min(plane.height()) * 0.62;
+    let at = |i: u32| {
+        let [jx, jy] = crate::accum_jitter_seq(i);
+        plane.center() + vec2(jx, jy) * (side - 6.0)
+    };
+    // Every sample folded so far: a lavender dot (blue well above red) at its place in the jitter
+    // sequence, the first at the pixel's centre; the newest one near white.
+    for i in 0..5 {
+        let [r_, _, b, _] = c.at(at(i));
+        assert!(b > r_ + 20.0 && b > 150.0, "sample {i} at {:?}: rgb {:?}", at(i), c.at(at(i)));
+    }
+    assert!(c.lum(at(5)) > 220.0, "the newest sample at {:?}: rgb {:?}", at(5), c.at(at(5)));
+    // Between the dots the magnified pixel is dark.
+    let gap = plane.center() + vec2(side * 0.21, side * -0.31);
+    assert!(c.lum(gap) < 60.0, "between the dots: {:.0}", c.lum(gap));
+}
+
+#[test]
+fn a_late_band_is_never_a_sliver_on_the_ruler() {
+    // At the instrument's own size, 21,000-21,504 of 22,180 is 0.24% of the log scale, under one
+    // panel pixel: still lit across a few.
+    let mut m = model(Plane::Whole { res: RES, band: Some((21_000, 21_504)), settled: true, glow: 1.0 });
+    m.snap.iterations = 22_180;
+    let (c, r) = render(&m, REAL, 1.0);
+    let bar = ruler_rect(r, 1.0);
+    assert!((ruler_pos(21_504, 22_180) - ruler_pos(21_000, 22_180)) * bar.width() < 1.0, "the control: under a pixel wide");
+    let lit = between(LEVEL_DONE, LEVEL_PASS);
+    let xs = (bar.left() as usize)..(bar.right() as usize);
+    let n = xs.filter(|&x| c.lum(pos2(x as f32 + 0.5, bar.center().y)) > lit).count();
+    assert!(n >= 3, "the band is lit across {n} px");
+}

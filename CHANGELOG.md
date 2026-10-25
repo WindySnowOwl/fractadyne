@@ -59,6 +59,13 @@ published as the pre-releases `v0.2.41-beta.1` to `v0.2.41-beta.150`, and a "bet
 
 Changes after 0.3.0-beta.1:
 
+- **The Tiles window shows more of what a pass does (0.3.0-beta.22).** On the live-render panel, a
+  bar under the picture's plane shows the range of iterations the pass covers on a log scale: a
+  walk's band lit, with what it has already finished below it. A whole frame is drawn as a checker
+  whose squares grow as it renders below the screen's resolution, with the fraction (1/4, 1/2) in
+  the corner. While supersampling, a magnified pixel shows where each sample landed, the newest
+  brightest, and a ring where the next one will land. The window's help card says so in every
+  language.
 - **The GPU scope's legend lights as its passes run (0.3.0-beta.22).** On the live-render panel,
   each name over the scope (MOVING, PIN, WORKER, SETTLE, SSAA) now glows when a pass of its kind
   runs and fades as the lamps do, and rests dimmed otherwise, so what the card is doing reads at a

@@ -910,10 +910,10 @@ fn level(t: f32) -> Color32 {
 }
 
 /// Where the picture's plane sits in the tiles instrument `r` (its aspect, scaled to fit above the
-/// captions), and the scale from picture px to panel px.
+/// iteration ruler and the captions), and the scale from picture px to panel px.
 fn plane_rect(r: Rect, s: f32, res: (u32, u32)) -> (Rect, f32) {
     let (rw, rh) = (res.0.max(1) as f32, res.1.max(1) as f32);
-    let cap = 30.0 * s;
+    let cap = (30.0 + RULER_ROOM) * s;
     let sc = ((r.width() - 12.0 * s) / rw).min((r.height() - cap - 8.0 * s) / rh);
     let (pw, ph) = (rw * sc, rh * sc);
     (Rect::from_min_size(pos2(r.center().x - pw / 2.0, r.top() + 6.0 * s), vec2(pw, ph)), sc)
@@ -1042,7 +1042,9 @@ fn draw_tiles(p: &Painter, layer: Layer, r: Rect, s: f32, m: &Model) {
             draw_running(p, plane, s, running.unwrap_or(1.0), level(LEVEL_DONE + (1.0 - LEVEL_DONE) * 0.6 * glow))
         }
         Plane::Whole { glow, .. } => {
-            p.rect_filled(plane, 0.0_f32, pass(*glow));
+            let (w, sw) = (res.0 as f32, m.snap.display.0 as f32);
+            let scale = if sw > 0.0 { w / sw } else { 1.0 };
+            draw_grain(p, plane, s, scale, LEVEL_PASS + (1.0 - LEVEL_PASS) * glow);
         }
         Plane::Split { k, j, glow, .. } => {
             let (cols, rows) = split_display(plane, res);
@@ -1081,8 +1083,17 @@ fn draw_tiles(p: &Painter, layer: Layer, r: Rect, s: f32, m: &Model) {
         }
         Plane::Idle(_) => {}
     }
+    if let Plane::Ssaa { samples, band, .. } = &m.plane {
+        draw_samples(p, plane, s, *samples, band.is_some(), m.clock_s);
+    }
     let (l1, tl, tr) = tile_labels(&m.plane, res);
     p.rect_stroke(plane.expand(0.5), 0.0_f32, Stroke::new(1.0_f32, amber(0.3)), egui::StrokeKind::Outside);
+    let glow = match &m.plane {
+        Plane::Whole { glow, .. } | Plane::Split { glow, .. } | Plane::Ssaa { glow, .. } => *glow,
+        Plane::Grid(_) => 1.0,
+        Plane::Idle(_) => 0.0,
+    };
+    draw_ruler(p, ruler_rect(r, s), s, &m.plane, plane_ask(m), pass(glow));
     let (line, f) = tile_caption_type(p, r.width(), s, &l1, &tl, &tr);
     p.text(pos2(r.center().x, r.bottom() - 17.0 * s), Align2::CENTER_BOTTOM, &l1, line, Color32::from_rgb(0xa8, 0x9f, 0x88));
     let glow = fade(ink::NIXIE_GLOW, 0.35);
@@ -1091,6 +1102,140 @@ fn draw_tiles(p: &Painter, layer: Layer, r: Rect, s: f32, m: &Model) {
     paint::tabular(p, pos2(r.right() - 5.4 * s, r.bottom() - 4.0 * s), Align2::RIGHT_BOTTOM, &tr, f.clone(), glow);
     paint::tabular(p, pos2(r.left() + 6.0 * s, r.bottom() - 4.0 * s), Align2::LEFT_BOTTOM, &tl, f.clone(), lit);
     paint::tabular(p, pos2(r.right() - 6.0 * s, r.bottom() - 4.0 * s), Align2::RIGHT_BOTTOM, &tr, f, lit);
+}
+
+/// Panel units the iteration ruler takes between the plane and the captions.
+const RULER_ROOM: f32 = 9.0;
+
+/// The iteration ruler's bar in the tiles instrument `r`: across its width, just above the captions.
+fn ruler_rect(r: Rect, s: f32) -> Rect {
+    Rect::from_min_max(pos2(r.left() + 8.0 * s, r.bottom() - 37.0 * s), pos2(r.right() - 8.0 * s, r.bottom() - 32.0 * s))
+}
+
+/// The iteration count the ruler runs to: the walk's ask while one walks, else the frame's.
+fn plane_ask(m: &Model) -> u32 {
+    let walk = m.walk.as_ref().map(|w| w.ask).filter(|&a| a > 0);
+    let hi = match &m.plane {
+        Plane::Whole { band: Some((_, hi)), .. } | Plane::Ssaa { band: Some((_, hi)), .. } => *hi,
+        _ => 0,
+    };
+    walk.unwrap_or(m.snap.iterations).max(hi).max(1)
+}
+
+/// Where iteration `it` sits on the ruler, 0 to 1: log-scaled to `ask` (`ln(1 + it) / ln(1 + ask)`),
+/// so a walk's first bands and its last ones both have room.
+pub(crate) fn ruler_pos(it: u32, ask: u32) -> f32 {
+    ((1.0 + it as f32).ln() / (1.0 + ask.max(1) as f32).ln()).clamp(0.0, 1.0)
+}
+
+/// The iteration ruler: the range this frame's pass iterates, 0 to the ask, log-scaled, with a tick
+/// at each power of ten. A walk's pass lights its band, what the walk finished below it done; a
+/// pass that iterates every pixel to the ask in one go lights all of it; no pass, none of it.
+fn draw_ruler(p: &Painter, r: Rect, s: f32, plane: &Plane, ask: u32, lit: Color32) {
+    p.rect_filled(r, 0.0_f32, level(LEVEL_PLANE));
+    let x = |it: u32| r.left() + r.width() * ruler_pos(it, ask);
+    // A span at least `min_w` wide, kept inside the bar.
+    let span = |a: u32, b: u32, c: Color32, min_w: f32| {
+        if b > a {
+            let x1 = x(b).max(x(a) + min_w).min(r.right());
+            p.rect_filled(Rect::from_min_max(pos2((x1 - min_w).min(x(a)), r.top()), pos2(x1, r.bottom())), 0.0_f32, c);
+        }
+    };
+    match plane {
+        Plane::Whole { band: Some((lo, hi)), .. } | Plane::Ssaa { band: Some((lo, hi)), .. } => {
+            span(0, *lo, level(LEVEL_DONE), 0.0);
+            // A late band is a sliver on the log scale (19,456-21,504 of 22,180 is 1% of it):
+            // never narrower than a few panel units, so the pass always shows.
+            span(*lo, (*hi).max(lo + 1), lit, 3.0 * s);
+        }
+        Plane::Idle(_) => {}
+        _ => span(0, ask, lit, 0.0),
+    }
+    let tick = Stroke::new(1.0_f32, fade(ink::AMBER, 0.35));
+    let mut d = 10u64;
+    while d < ask as u64 {
+        let xx = x(d as u32);
+        p.line_segment([pos2(xx, r.bottom()), pos2(xx, r.bottom() + 2.0 * s)], tick);
+        d *= 10;
+    }
+    p.rect_stroke(r.expand(0.5), 0.0_f32, Stroke::new(1.0_f32, fade(ink::AMBER, 0.3)), egui::StrokeKind::Outside);
+}
+
+/// Squares across a frame's plane at full resolution.
+const GRAIN_COLS: u32 = 32;
+
+/// The squares across a whole frame's plane at `scale` (its render width over the screen's): 32 at
+/// full resolution and fewer as it drops (16 at a half, 8 at a quarter), so a coarse frame looks it.
+/// A diagram, not its pixels: a picture's pixel on the plane is a fraction of a panel pixel.
+pub(crate) fn grain_cols(scale: f32) -> u32 {
+    ((GRAIN_COLS as f32 * scale.clamp(0.0, 1.0)).round() as u32).clamp(1, GRAIN_COLS)
+}
+
+/// A render scale as the plane's corner reads it: `1/n` when it is one, else a percentage; nothing
+/// at full resolution.
+pub(crate) fn scale_text(scale: f32) -> Option<String> {
+    if !(scale > 0.0) || scale >= 0.99 {
+        return None;
+    }
+    let n = (1.0 / scale).round();
+    if n >= 2.0 && (1.0 / n - scale).abs() < 0.02 {
+        Some(format!("1/{}", n as u32))
+    } else {
+        Some(format!("{}%", (scale * 100.0).round() as u32))
+    }
+}
+
+/// A whole frame on the plane: a checker of [`grain_cols`] squares at the pass's level `lv`, its
+/// render scale in the corner when below the screen's.
+fn draw_grain(p: &Painter, plane: Rect, s: f32, scale: f32, lv: f32) {
+    let cols = grain_cols(scale);
+    let cw = plane.width() / cols as f32;
+    let rows = (plane.height() / cw).ceil().max(1.0) as u32;
+    // Squares a tenth apart: enough to see the grain, quiet enough that a full-resolution frame
+    // reads as fine rather than as a chessboard (0.82 did).
+    let (a, b) = (level(lv), level(lv * 0.9));
+    let mut mesh = Mesh::default();
+    for y in 0..rows {
+        for x in 0..cols {
+            let min = pos2(plane.left() + x as f32 * cw, plane.top() + y as f32 * cw);
+            let max = pos2((min.x + cw).min(plane.right()), (min.y + cw).min(plane.bottom()));
+            mesh.add_colored_rect(Rect::from_min_max(min, max), if (x + y) % 2 == 0 { a } else { b });
+        }
+    }
+    p.add(Shape::mesh(mesh));
+    if let Some(t) = scale_text(scale) {
+        paint::tabular(p, plane.right_top() + vec2(-4.0 * s, 3.0 * s), Align2::RIGHT_TOP, &t, face::narrow(10.0 * s), Color32::from_rgb(0xff, 0xec, 0xc8));
+    }
+}
+
+/// Dots the sample chart draws at most (a long supersampling run folds hundreds).
+const MAX_SAMPLE_DOTS: u32 = 256;
+
+/// The supersampling chart: one pixel of the picture magnified in the plane's middle, a dot where
+/// each sample folded so far landed in it (the jitter sequence, `crate::accum_jitter_seq`; the
+/// first at the centre), the newest brightest, and while the next sample walks, a pulsing ring
+/// where it will land.
+fn draw_samples(p: &Painter, plane: Rect, s: f32, samples: u32, walking: bool, clock_s: f32) {
+    let side = plane.width().min(plane.height()) * 0.62;
+    let cell = Rect::from_center_size(plane.center(), vec2(side, side));
+    p.rect_filled(cell, 0.0_f32, level(LEVEL_TO_COME));
+    let hair = Stroke::new(1.0_f32, fade(ink::SSAA, 0.18));
+    p.line_segment([pos2(cell.center().x, cell.top()), pos2(cell.center().x, cell.bottom())], hair);
+    p.line_segment([pos2(cell.left(), cell.center().y), pos2(cell.right(), cell.center().y)], hair);
+    p.rect_stroke(cell, 0.0_f32, Stroke::new(1.0 * s, fade(ink::AMBER, 0.6)), egui::StrokeKind::Inside);
+    let at = |i: u32| {
+        let [jx, jy] = crate::accum_jitter_seq(i);
+        cell.center() + vec2(jx, jy) * (side - 6.0 * s)
+    };
+    for i in 0..samples.min(MAX_SAMPLE_DOTS) {
+        let newest = i + 1 == samples;
+        let (radius, col) = if newest { (2.6, Color32::from_rgb(0xf0, 0xe4, 0xff)) } else { (1.8, fade(ink::SSAA, 0.85)) };
+        p.circle_filled(at(i), radius * s, col);
+    }
+    if walking {
+        let pulse = 0.5 + 0.5 * (clock_s * 8.0).sin();
+        p.circle_stroke(at(samples), 3.4 * s, Stroke::new(1.2 * s, fade(ink::SSAA, 0.35 + 0.65 * pulse)));
+    }
 }
 
 /// The widest of `texts` laid out in `font`, in points.

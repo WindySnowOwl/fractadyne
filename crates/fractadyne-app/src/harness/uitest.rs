@@ -33,7 +33,7 @@ enum Screen {
     LivePanelStrip,
     LivePanel,
     LivePanelFull,
-    /// The panel with a help card held open (the picture-age meter's).
+    /// The panel with a help card held open (the tiles instrument's, the longest card).
     LivePanelHelp,
     /// The full panel after the interface changes to a language of another script under it
     /// (Japanese; English when the walk is in Japanese): the new fonts rebuild egui's font atlas,
@@ -1333,7 +1333,9 @@ impl FractadyneApp {
                     _ => crate::blinken::Size::Full,
                 };
                 if matches!(s, Screen::LivePanelHelp) {
-                    self.blinken.pinned_help = Some("age");
+                    // The longest card (1,478 characters in English, 1,838 in German): the one that
+                    // could run off the screen in some language, which the text check would catch.
+                    self.blinken.pinned_help = Some("tiles");
                 }
             }
             Screen::Help => self.dialogs.help_open = true,

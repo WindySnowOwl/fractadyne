@@ -105,6 +105,8 @@ pub(crate) struct Snapshot {
     pub(crate) dispatched: Option<Pass>,
     /// The resolution the pass (or the frame) rendered at.
     pub(crate) res: (u32, u32),
+    /// The view's size on screen, px: what `res` is drawn over (a moving frame below it is coarse).
+    pub(crate) display: (u32, u32),
     /// The GPU timer ring's slots: 0 idle, else a timing in flight (recorded, mapping, ready).
     pub(crate) timers: [u8; 3],
     /// The walk under way: the share of its texels still iterating after its last counted pass

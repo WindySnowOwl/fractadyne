@@ -375,7 +375,14 @@ impl Overlay {
         // Built in the language in use each frame it shows: a language change applies at once.
         let Some(card) = help::card(key) else { return };
         let screen = ctx.screen_rect();
-        let w = 350.0f32.min(screen.width() - 24.0);
+        // A long card goes wider rather than taller: the tiles card ran to about 790 pt in German at
+        // 350 wide, the height of the screen. Its length in Latin letters' widths (a Japanese,
+        // Chinese or Korean character, three bytes in UTF-8, is about two).
+        let width_of = |t: &str| t.chars().map(|c| if c.len_utf8() >= 3 { 2 } else { 1 }).sum::<usize>();
+        let length = width_of(&card.what)
+            + card.note.as_deref().map_or(0, width_of)
+            + card.good.iter().chain(&card.bad).map(|t| width_of(t)).sum::<usize>();
+        let w = (if length > 900 { 500.0f32 } else { 350.0 }).min(screen.width() - 24.0);
         let x = (pointer.map_or(rect.left(), |p| p.x) - 30.0).clamp(screen.left() + 12.0, screen.right() - w - 12.0);
         let below = rect.bottom() + 8.0;
         // Below the region if a typical card fits, else above it.
