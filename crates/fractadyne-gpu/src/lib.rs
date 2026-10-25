@@ -128,7 +128,9 @@ pub struct Renorm {
     /// The u-steps the tree covers, `K = (orbit_len − 1)/len`.
     pub bla_k: u32,
     /// `pad[0]` is the shader's `count_running`: set by the live `prepare` for a counted mode-2
-    /// chunk pass (see [`MandelbrotParams::chunk_walk`]), never by a caller. The rest is padding.
+    /// chunk pass (see [`MandelbrotParams::chunk_walk`]), never by a caller. `pad[1]` is the
+    /// shader's `norm_base` (f32 bits; [`MandelbrotParams::norm_base`]), also set by `prepare`. The
+    /// rest is padding.
     pub pad: [u32; 3],
 }
 
@@ -810,6 +812,9 @@ struct CounterRead {
     norm_sig: u64,
     /// The submitting frame's `MandelbrotParams::norm_complete`, recorded with `norm_sig`.
     norm_complete: bool,
+    /// The submitting frame's `MandelbrotParams::norm_base`, recorded with `norm_sig`: what its
+    /// fine escape histogram's buckets were measured from.
+    norm_base: f32,
     /// The submitting frame's `MandelbrotParams::content_tag` and the end of its chunk range —
     /// stamped at copy time like `norm_sig`, published in the [`ContentReading`].
     content_tag: u64,
@@ -836,6 +841,7 @@ impl CounterRead {
             max_iter: 0,
             norm_sig: 0,
             norm_complete: true,
+            norm_base: 0.0,
             content_tag: 0,
             content_cursor: 0,
             walk: 0,
@@ -861,6 +867,7 @@ impl CounterRead {
         norm_complete_out: Option<&Arc<std::sync::atomic::AtomicBool>>,
         content_out: Option<&ContentSink>,
         step_out: Option<&StepSink>,
+        norm_hist_out: Option<&NormHistSink>,
     ) {
         use std::sync::atomic::Ordering::SeqCst;
         match self.state {
@@ -894,6 +901,13 @@ impl CounterRead {
                             // tag against the CURRENT budget and discards stale readings.
                             let packed = ((frac.to_bits() as u64) << 32) | self.max_iter as u64;
                             o.store(packed, SeqCst);
+                        }
+                        // The fine escape histogram first: a drain that sees the range below is
+                        // then guaranteed to find the histogram measured with it.
+                        if let Some(o) = norm_hist_out {
+                            if let Ok(mut g) = o.lock() {
+                                *g = Some(NormHist::from_slots(&slots, self.norm_base));
+                            }
                         }
                         if let Some(o) = norm_out {
                             let packed = ((slots[CTR_ESC_MIN] as u64) << 32)
@@ -1336,7 +1350,7 @@ pub(crate) fn make_iter_bg(
 /// atomics per pixel — negligible next to the iteration loop. This is the "did the code
 /// path actually execute?" detector (the F4 dead-NaN-marker lesson): a render that claims
 /// to exercise rebasing/extended samples/BLA must show nonzero counts.
-pub const COUNTER_SLOTS: usize = CTR_RENORM + 1;
+pub const COUNTER_SLOTS: usize = CTR_NORM_HIST + NORM_HIST_BUCKETS;
 /// Slot indices (keep in sync with mandelbrot.wgsl's `CTR_*` constants).
 pub const CTR_REBASE: usize = 0; // Zhuoran rebases taken (mode 2)
 pub const CTR_EXT_SAMPLE: usize = 1; // extended-range orbit samples decoded (mode 2)
@@ -1421,6 +1435,87 @@ pub const CTR_CHUNK_RUNNING: usize = CTR_STEP_BIG + 2;
 /// Pixels that took THE RENORMALIZED STEP ([`Renorm`]), counted on the step-accounting grid — the
 /// proof it ran, comparable with `CTR_STEP_PX`.
 pub const CTR_RENORM: usize = CTR_CHUNK_RUNNING + 1;
+
+/// First of [`NORM_HIST_BUCKETS`] slots: a FINE histogram of the escaped pixels' smooth iteration
+/// counts, for the live palette window (the shader's `norm_hist_commit`, on the 4x4 grid of the
+/// escape-range commit, in `fs_resolve` and the single-pass iterates). Bucket `b` holds the values
+/// `v` with `floor(NORM_HIST_PER_OCTAVE · log₂(max(v − base, 0) + 1)) = b`, the last open-ended,
+/// where `base` is the frame's [`MandelbrotParams::norm_base`]: the app passes the bottom of the
+/// view's last reading, so the buckets are finest where the picture is and a narrow deep band
+/// (`[181573, 182297]`) still spans a hundred of them.
+///
+/// ⭐**Why.** The window's top was the frame's MAXIMUM escape, and with any interior in view the
+/// slowest escaping pixels sit just under the iteration ask. A user's zoom to 2^127 (2026-10-25)
+/// had the top at 91-100% of the ask from 2^93 on while 99% of the picture escaped within ~2,500
+/// iterations of the bottom of a 77,000-wide window: the picture went near-black, and every move
+/// of the ask re-spread the palette. A quantile of this histogram is the top MOST of the picture
+/// reaches ([`NormHist::quantile`]).
+pub const CTR_NORM_HIST: usize = CTR_RENORM + 1;
+/// Buckets per doubling of `v − base + 1` in the [`CTR_NORM_HIST`] histogram: 4.4% of the distance
+/// from the base per bucket, interpolated inside it.
+pub const NORM_HIST_PER_OCTAVE: usize = 16;
+/// Buckets in the [`CTR_NORM_HIST`] histogram: 26 doublings, up to 2^26 (67M) iterations above the base.
+pub const NORM_HIST_BUCKETS: usize = NORM_HIST_PER_OCTAVE * 26;
+
+/// One frame's [`CTR_NORM_HIST`] histogram, with the base its buckets were measured from.
+#[derive(Clone, Debug, PartialEq)]
+pub struct NormHist {
+    /// The frame's [`MandelbrotParams::norm_base`].
+    pub base: f32,
+    /// [`NORM_HIST_BUCKETS`] counts.
+    pub counts: Vec<u32>,
+}
+
+/// Where the live path publishes a [`NormHist`] (`MandelbrotParams::norm_hist_out`).
+pub type NormHistSink = Arc<std::sync::Mutex<Option<NormHist>>>;
+
+/// The [`CTR_NORM_HIST`] bucket of escape value `v` measured from `base` — the shader's
+/// `norm_hist_commit`, for the reader and its tests.
+pub fn norm_hist_bucket(v: f32, base: f32) -> usize {
+    let x = (v - base).max(0.0) + 1.0;
+    (x.log2() * NORM_HIST_PER_OCTAVE as f32).floor().clamp(0.0, (NORM_HIST_BUCKETS - 1) as f32) as usize
+}
+
+impl NormHist {
+    /// From a counter readback.
+    pub fn from_slots(slots: &[u32; COUNTER_SLOTS], base: f32) -> Self {
+        NormHist { base, counts: slots[CTR_NORM_HIST..CTR_NORM_HIST + NORM_HIST_BUCKETS].to_vec() }
+    }
+
+    /// Samples counted.
+    pub fn total(&self) -> u64 {
+        self.counts.iter().map(|&c| c as u64).sum()
+    }
+
+    /// The escape value by which fraction `q` of the sampled pixels had escaped, interpolated
+    /// log-linearly inside its bucket (the buckets are log-spaced). `None` for an empty histogram
+    /// or a `q` outside `(0, 1]`.
+    pub fn quantile(&self, q: f64) -> Option<f64> {
+        if !(q > 0.0 && q <= 1.0) {
+            return None;
+        }
+        let total = self.total();
+        if total == 0 {
+            return None;
+        }
+        let want = q * total as f64;
+        let mut cum = 0.0;
+        let per = NORM_HIST_PER_OCTAVE as f64;
+        for (b, &c) in self.counts.iter().enumerate() {
+            let next = cum + c as f64;
+            if c > 0 && next >= want {
+                let frac = ((want - cum) / c as f64).clamp(0.0, 1.0);
+                return Some(self.base as f64 + ((b as f64 + frac) / per).exp2() - 1.0);
+            }
+            cum = next;
+        }
+        Some(self.base as f64 + (self.counts.len() as f64 / per).exp2() - 1.0)
+    }
+}
+
+#[cfg(test)]
+#[path = "../tests/unit/norm_hist_tests.rs"]
+mod norm_hist_tests;
 
 /// Where a frame's [`StepStats`] are published for the app (`MandelbrotParams::step_out`).
 pub type StepSink = Arc<std::sync::Mutex<Option<StepStats>>>;
@@ -2749,6 +2844,12 @@ pub struct MandelbrotParams {
     /// Sink for the `norm_complete` of the frame that submitted the norm/gradient readings, stored
     /// before them exactly like `norm_sig_out`. `None` disables it.
     pub norm_complete_out: Option<Arc<std::sync::atomic::AtomicBool>>,
+    /// The base the frame's fine escape histogram is measured from ([`CTR_NORM_HIST`]): the app
+    /// passes the bottom of the view's last escape-range reading. Handed back with the histogram.
+    pub norm_base: f32,
+    /// Sink for the fine escape histogram ([`NormHist`]) of the frame that submitted the
+    /// norm/gradient readings, published with them. `None` disables it.
+    pub norm_hist_out: Option<NormHistSink>,
     /// Opaque identity of the RENDER this frame's pixels belong to (a pinned refresh's passes all
     /// carry the pin's tag; any other frame its own). Handed back with the frame's
     /// [`ContentReading`] so the app can tell which render a reading describes, the way
@@ -3045,6 +3146,8 @@ impl Default for MandelbrotParams {
             norm_sig: 0,
             norm_complete: true,
             norm_complete_out: None,
+            norm_base: 0.0,
+            norm_hist_out: None,
             content_tag: 0,
             content_out: None,
             view_stamp: 0,
@@ -3280,6 +3383,7 @@ impl CallbackTrait for MandelbrotParams {
             self.norm_complete_out.as_ref(),
             self.content_out.as_ref(),
             self.step_out.as_ref(),
+            self.norm_hist_out.as_ref(),
         );
 
         // The offscreen iteration texture is (resolution × ss). It must not exceed
@@ -3701,6 +3805,8 @@ impl CallbackTrait for MandelbrotParams {
                 _ => 0,
             };
             iu.rn.pad[0] = (count_walk != 0) as u32;
+            // The fine escape histogram's base (`CTR_NORM_HIST`; the shader's `norm_base`).
+            iu.rn.pad[1] = self.norm_base.to_bits();
             queue.write_buffer(&view.iter_uniform, 0, bytemuck::bytes_of(&iu));
             // Bracket the iterate with GPU timestamps when nothing is already in flight. This is the
             // only measurement of the deep iterate that isn't contaminated by vsync, repaint
@@ -4041,6 +4147,7 @@ impl CallbackTrait for MandelbrotParams {
                 view.counter_read.max_iter = self.max_iter;
                 view.counter_read.norm_sig = self.norm_sig;
                 view.counter_read.norm_complete = self.norm_complete;
+                view.counter_read.norm_base = self.norm_base;
                 view.counter_read.content_tag = self.content_tag;
                 view.counter_read.content_cursor =
                     self.chunk_range.map_or(self.max_iter, |[_, e]| e);

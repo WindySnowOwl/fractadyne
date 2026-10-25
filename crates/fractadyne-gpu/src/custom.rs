@@ -1110,6 +1110,7 @@ fn fe_branch() -> String {
         let aux_out = select(AUX_NONE, aux_pack(aux, fract(smit), zf), (iu.aux_on & 1u) == 1u);
         esc_range_commit(smit);
         esc_count_commit(vec2<i32>(i32(gx), i32(gy)));
+        norm_hist_commit(smit, vec2<i32>(i32(gx), i32(gy)));
         return FragOut(vec4<f32>(smit, 0.0, 0.0, 1.0e30), aux_out);
     }}
 ",

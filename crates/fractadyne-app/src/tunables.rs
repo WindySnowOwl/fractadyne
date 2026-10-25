@@ -87,6 +87,8 @@ pub(crate) struct Cost {
     pub motion_need_quantile: f64,
     /// Where a moving frame's escape top comes from (`MOTION_NEED_SOURCE_DEFAULT`; U24).
     pub motion_need_source: u64,
+    /// Fraction of the picture the live palette window's top reaches (`NORM_TOP_QUANTILE_DEFAULT`).
+    pub norm_top_quantile: f64,
     /// Pool discarded budget readings (`READING_POOL_DEFAULT`; 0 = off, 1 = on).
     pub reading_pool: u64,
     /// The wall-clock dead-man (`DEAD_MAN_DEFAULT`; 0 = off, 1 = on).
@@ -191,6 +193,7 @@ impl Default for Cost {
             pass_fixed_ms: PASS_FIXED_MS_DEFAULT,
             motion_need_quantile: MOTION_NEED_QUANTILE_DEFAULT,
             motion_need_source: MOTION_NEED_SOURCE_DEFAULT,
+            norm_top_quantile: NORM_TOP_QUANTILE_DEFAULT,
             reading_pool: READING_POOL_DEFAULT,
             dead_man: DEAD_MAN_DEFAULT,
             dispatch_ceiling: DISPATCH_CEILING_DEFAULT,
@@ -712,6 +715,15 @@ pub(crate) fn apply_overrides(pairs: &[(String, String)]) -> Result<(), String> 
                 c.orbit_len_cap = parse_orbit_len_cap(raw)?;
                 p.to_string()
             }
+            "NORM_TOP_QUANTILE" => {
+                let p = c.norm_top_quantile;
+                let v = f()?;
+                if !(v > 0.0 && v <= 1.0) {
+                    return Err(format!("--set NORM_TOP_QUANTILE={v}: a fraction above 0, at most 1 (1 = the top of the range)"));
+                }
+                c.norm_top_quantile = v;
+                p.to_string()
+            }
             "MOTION_NEED_QUANTILE" => {
                 let p = c.motion_need_quantile;
                 let v = f()?;
@@ -763,7 +775,7 @@ pub(crate) const OVERRIDABLE: &str = "TDR_BUDGET_MS, TDR_EXPLICIT_BUDGET_MS, \
     DEAD_MAN, DISPATCH_CEILING, SETTLE_SERIALIZE, ADMISSION, PIN_TIMEOUT_SCALED, TAIL_DF32, REF_OVERLAP, EARLY_REF, TILE_OCCUPANCY, LIVE_REFRESH, \
     ORBIT_LEN_CAP, RENORM, TILE_PACK, RENORM_BLA, ORBIT_SCHEDULE, SA_TRACE, CHUNK_CHARGE, \
     CHUNK_SHUFFLE, WORKER_MOTION, WORKER_YIELD, WORKER_PASS_MS, RECORD_COST_PPM, REUSE_MAX_WRAPS, PIN_BAND_SPAN, REF_OVERTAKEN_DROP, SA_TRACE_LIVE_STEPS, GROWTH_IN_WORK, PIN_GROWTH_LANE, PRE_SWITCH_PROBE, PIN_SPAN_PRICED, TIMER_SLOTS, \
-    WALK_SERIALIZE, WALK_ONSET, ACCUM_TIME_CAP_MS";
+    WALK_SERIALIZE, WALK_ONSET, ACCUM_TIME_CAP_MS, NORM_TOP_QUANTILE";
 
 #[cfg(test)]
 #[path = "../tests/unit/tunables/override_tests.rs"]
@@ -1199,6 +1211,13 @@ pub(crate) const PASS_FIXED_MS_DEFAULT: f64 = 0.2;
 /// stayed at 0.10). ⚠The pixels past the quantile are unfinished in the moving frame — the
 /// blank-frame lesson is why this is a measured setting, not a default: the screen gate decides.
 pub(crate) const MOTION_NEED_QUANTILE_DEFAULT: f64 = 1.0;
+
+/// How far up the picture's escape values the live palette window's TOP reaches, as the fraction
+/// of the view's escaped pixels below it (`render::norm_palette_top`, from the fine histogram
+/// `fractadyne_gpu::CTR_NORM_HIST`). 1.0 = the top of the escape range, the shipped behaviour.
+/// Only the colours follow it: the escape RANGE (`Perf::norm_range`) keeps its true top for what
+/// it sizes — a moving frame's walk, a refresh's end, the autopilot.
+pub(crate) const NORM_TOP_QUANTILE_DEFAULT: f64 = 1.0;
 
 /// Where the escape TOP a moving frame is sized to reach comes from (`render::motion_need`; U24,
 /// design/live-render-robustness.md §3.3). 0: the palette normalisation window's top, which the

@@ -3,7 +3,7 @@
 use crate::{
     grad_hist_from_slots, StepStats, COUNTER_SLOTS, CTR_CHUNK_RUNNING, CTR_ESC_HIST, CTR_RENORM,
     CTR_GRAD_HIST, CTR_GRAD_N, CTR_STEP_BIG, CTR_STEP_EXEC, CTR_STEP_FULL, CTR_STEP_ITER,
-    CTR_STEP_PX, ESC_HIST_BUCKETS, GRAD_HIST_BUCKETS,
+    CTR_STEP_PX, ESC_HIST_BUCKETS, GRAD_HIST_BUCKETS, CTR_NORM_HIST, NORM_HIST_BUCKETS,
 };
 
 #[test]
@@ -54,7 +54,9 @@ fn the_histogram_fits_the_counter_buffer() {
     assert_eq!(CTR_STEP_BIG + 2, CTR_CHUNK_RUNNING);
     // ...and the renormalized step's one-word count after it.
     assert_eq!(CTR_CHUNK_RUNNING + 1, CTR_RENORM);
-    assert_eq!(CTR_RENORM + 1, COUNTER_SLOTS);
+    // ...and the fine escape histogram after that, to the end of the buffer (norm_hist_tests).
+    assert_eq!(CTR_RENORM + 1, CTR_NORM_HIST);
+    assert_eq!(CTR_NORM_HIST + NORM_HIST_BUCKETS, COUNTER_SLOTS);
     assert!(CTR_GRAD_HIST > CTR_GRAD_N, "the histogram must not overlap the gradient sum/count");
 }
 

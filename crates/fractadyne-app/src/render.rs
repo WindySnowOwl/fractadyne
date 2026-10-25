@@ -2098,7 +2098,7 @@ impl FractadyneApp {
         // shown window glides between them (`norm_glide_step`). Before the first reading has
         // glided anywhere there is nothing shown yet, so fall back to the fed value — otherwise
         // the very first settled frame would paint unnormalized and then correct itself.
-        let window = self.perf.norm_shown[vi.min(1)].or(self.perf.norm_range[vi.min(1)]);
+        let window = self.perf.norm_shown[vi.min(1)].or(self.perf.norm_pal[vi.min(1)]);
         match (window, self.perf.norm_grad[vi.min(1)]) {
             (Some((mn, mx)), Some(_))
                 if (self.coloring.normalize_live || self.coloring.normalize_fit)
@@ -5319,6 +5319,9 @@ impl FractadyneApp {
                 if let Ok(mut h) = self.perf.hist_sink[vb].lock() {
                     *h = None; // same reading, same verdict: it was measured somewhere else
                 }
+                if let Ok(mut h) = self.perf.norm_hist_sink[vb].lock() {
+                    *h = None;
+                }
                 crate::diag::trace(
                     "req",
                     format!("norm reading discarded: view={vb} measured at a different view (sig {read_sig:016x} != {nsig:016x})"),
@@ -5473,6 +5476,9 @@ impl FractadyneApp {
                 }
             }
             let nr = self.perf.norm_sink[vb].swap(u64::MAX, SeqCst);
+            // The fine escape histogram measured with that range (published just before it by the
+            // same readback, which never runs while this does), taken with it either way.
+            let nhist = self.perf.norm_hist_sink[vb].lock().ok().and_then(|mut g| g.take());
             // A reading of the WHOLE WALK at the view on screen, escapes or none: the one the range
             // locks on and the climb decides on. Supersampling waits for it, and a finished walk
             // re-sends its tail until it lands (`walk_read_sig`).
@@ -5528,66 +5534,64 @@ impl FractadyneApp {
                         // the exterior aliased into speckle. Measured before the fix: consecutive
                         // frames read [46422,54614] then [54614,63736] — adjacent windows, never a
                         // frame range. After: [45075,63736] on the first reading.
-                        let fed_before = self.perf.norm_range[vb];
-                        match nfeed {
-                            NormFeed::Hold => {
-                                // Held — unless the reading proves the hold wrong (see
-                                // `norm_hold_break`): then re-adopt instead of freezing a
-                                // mapping for a picture that is not on screen.
-                                if let Some(held) = self.perf.norm_range[vb] {
-                                    if norm_hold_break(held, (mn, mx)) {
-                                        crate::diag::trace(
-                                            "gpu",
-                                            format!(
-                                                "norm hold BROKEN: held [{:.0},{:.0}] vs frame [{mn:.0},{mx:.0}] — re-adopting",
-                                                held.0, held.1
-                                            ),
-                                        );
-                                        self.perf.norm_range[vb] = Some((mn, mx));
-                                        norm_snap = true; // recovery: show the right mapping now
-                                    }
-                                }
-                            }
-                            NormFeed::Adopt if read_complete => {
-                                self.perf.norm_range[vb] = Some((mn, mx));
-                                self.perf.norm_locked[vb] = true;
-                                norm_snap = true; // a settled view decides its mapping outright
-                            }
-                            // ⭐A settled view's walk still in progress may NOT decide the mapping:
-                            // the first pass of a deep walk reported [734,766] for a view whose
-                            // whole range was [734,10238], and it was adopted and then HELD while
-                            // every later reading widened. Take it as the view's range so far — no
-                            // lock, no snap — and let the completing pass decide.
-                            // Widened against the window in force when that window describes this
-                            // picture — the same view, or the one a zoom just came to rest on,
-                            // whose signature can differ by its iteration ask alone — and taken as
-                            // it is after a jump to somewhere else.
-                            NormFeed::Adopt => {
-                                let fed = self.perf.norm_range[vb].filter(|&f| {
-                                    same_view || !norm_glide_is_reacquire(f, (mn, mx))
-                                });
-                                self.perf.norm_range[vb] =
-                                    Some(norm_reading_bound((mn, mx), false, fed));
-                            }
-                            NormFeed::Chase => {
-                                let reading =
-                                    norm_reading_bound((mn, mx), read_complete, self.perf.norm_range[vb]);
-                                let (_, ema) =
-                                    norm_window_feed(None, reading, false, self.perf.norm_range[vb]);
-                                if let Some(e) = ema {
-                                    self.perf.norm_range[vb] = Some(e);
-                                }
-                            }
+                        // ⭐TWO WINDOWS, ONE FEED. The escape RANGE keeps the frame's true top: it
+                        // sizes a moving frame's walk, says when a refresh has reached its picture
+                        // and feeds the autopilot. The PALETTE's window takes its top where most of
+                        // the picture has escaped (`norm_palette_top`), so a few pixels escaping
+                        // just under the ask beside a minibrot do not set every colour on screen.
+                        // Both are fed under the same decision, so they lock, hold and re-adopt
+                        // together.
+                        let top = norm_palette_top(mn, mx, nhist.as_ref(), crate::tunables::cost().norm_top_quantile);
+                        // Held — unless the reading proves the hold wrong (see `norm_hold_break`):
+                        // then re-adopt instead of freezing a mapping for a picture that is not on
+                        // screen.
+                        let hold_broken = nfeed == NormFeed::Hold
+                            && self.perf.norm_range[vb].is_some_and(|held| norm_hold_break(held, (mn, mx)));
+                        if hold_broken {
+                            let held = self.perf.norm_range[vb].unwrap_or_default();
+                            crate::diag::trace(
+                                "gpu",
+                                format!(
+                                    "norm hold BROKEN: held [{:.0},{:.0}] vs frame [{mn:.0},{mx:.0}] — re-adopting",
+                                    held.0, held.1
+                                ),
+                            );
+                            norm_snap = true; // recovery: show the right mapping now
                         }
-                        if let Some((lo, hi)) = self.perf.norm_range[vb].filter(|_| self.perf.norm_range[vb] != fed_before) {
+                        if nfeed == NormFeed::Adopt && read_complete {
+                            self.perf.norm_locked[vb] = true;
+                            norm_snap = true; // a settled view decides its mapping outright
+                        }
+                        let fed_before = self.perf.norm_pal[vb];
+                        self.perf.norm_range[vb] = norm_feed_window(
+                            self.perf.norm_range[vb],
+                            (mn, mx),
+                            nfeed,
+                            read_complete,
+                            same_view,
+                            hold_broken,
+                        );
+                        self.perf.norm_pal[vb] = norm_feed_window(
+                            self.perf.norm_pal[vb],
+                            (mn, top),
+                            nfeed,
+                            read_complete,
+                            same_view,
+                            hold_broken,
+                        );
+                        // The next frame's fine histogram is measured from this reading's floor.
+                        self.perf.norm_base[vb] = mn.max(0.0);
+                        if let Some((lo, hi)) = self.perf.norm_pal[vb].filter(|_| self.perf.norm_pal[vb] != fed_before) {
                             bl::emit(vb, bl::Kind::PaletteFeed, lo.max(0.0) as u32, hi.max(0.0) as u32, 0.0);
                         }
                         crate::diag::trace(
                             "gpu",
                             format!(
-                                "norm range: view={vb} frame [{mn:.0},{mx:.0}] complete={read_complete} {nfeed:?} governed={} ema {:?} grad {:?} phase/px {:.3} alias={} engaged={}",
+                                "norm range: view={vb} frame [{mn:.0},{mx:.0}] top {top:.0} {} complete={read_complete} {nfeed:?} governed={} ema {:?} pal {:?} grad {:?} phase/px {:.3} alias={} engaged={}",
+                                norm_hist_summary(nhist.as_ref()),
                                 self.perf.chunk_governed[vb],
                                 self.perf.norm_range[vb],
+                                self.perf.norm_pal[vb],
                                 self.perf.norm_grad[vb],
                                 // The MEAN phase per pixel, kept for comparison with older logs —
                                 // it no longer decides anything. (Printing it with `coloring.cycle`
@@ -5610,7 +5614,7 @@ impl FractadyneApp {
             // is one frame's worth however sparsely the readings arrive.
             self.perf.norm_shown[vb] = self
                 .perf
-                .norm_range[vb]
+                .norm_pal[vb]
                 .map(|target| norm_glide_step(self.perf.norm_shown[vb], target, norm_snap));
         }
         for e in climb.events.iter().filter(|e| !e.before_drains()) {
@@ -6617,7 +6621,8 @@ impl FractadyneApp {
             crate::diag::trace(
                 "palette",
                 format!(
-                    "map v={vs} f={} interacting={interacting} held={} mode={} cycle={:.6e} offset={:.6} lo={:.3} shown={:?} fade={:.3} box={aa_filter}",
+                    "map v={vs} f={} interacting={interacting} held={} mode={} cycle={:.6e} offset={:.6} lo={:.3} shown={:?} fade={:.3} box={aa_filter} \
+                     l2={:.4} drawn={:?} from=[{:.6e} {:.6} {} {:.3}]",
                     self.perf.frame_idx,
                     u8::from(held_map.is_some()),
                     nm.mode,
@@ -6626,6 +6631,14 @@ impl FractadyneApp {
                     nm.lo,
                     self.perf.norm_shown[vs.min(1)],
                     palette_fade.weight,
+                    // The depth, and the map a dissolve under way fades from (cycle, offset, mode,
+                    // lo), so a reader can colour any escape value exactly as this frame drew it.
+                    if julia { &self.julia_viewport } else { &self.viewport }.log2_magnification(),
+                    drawn,
+                    palette_fade.cycle,
+                    palette_fade.offset,
+                    palette_fade.mode,
+                    palette_fade.lo,
                 ),
             );
         }
@@ -6696,6 +6709,8 @@ impl FractadyneApp {
             norm_sig: self.perf.norm_sig_submit[vs.min(1)],
             norm_complete: self.perf.norm_complete_submit[vs.min(1)],
             norm_complete_out: Some(self.perf.norm_complete_sink[vs.min(1)].clone()),
+            norm_base: self.perf.norm_base[vs.min(1)],
+            norm_hist_out: Some(self.perf.norm_hist_sink[vs.min(1)].clone()),
             content_tag,
             content_out: Some(self.perf.content_sink[vs.min(1)].clone()),
             chunk_walk: self.perf.chunk_count_walk[vs.min(1)],
@@ -11358,6 +11373,88 @@ pub(crate) fn norm_reading_bound(
 #[cfg(test)]
 #[path = "../tests/unit/render/norm_partial.rs"]
 mod norm_partial;
+
+/// One escape-range reading fed to a window under the feed's decision ([`NormFeed`]): the rules
+/// the escape range has always followed, shared by the palette's window (`Perf::norm_pal`) so the
+/// two lock, hold and re-adopt together.
+/// - `Hold`: unchanged, unless the reading broke the hold (`hold_broken`, judged on the escape
+///   range by [`norm_hold_break`]): then the reading, outright.
+/// - `Adopt` of a reading covering the whole picture: the reading, outright.
+/// - `Adopt` mid-walk: the view's range so far, widened against the window in force when that
+///   window describes this picture ([`norm_reading_bound`]) — the same view, or one a zoom just
+///   came to rest on — and taken as it is after a jump to somewhere else.
+/// - `Chase`: the 0.3 EMA ([`norm_window_feed`]) of the reading, a mid-walk one only raising the top.
+pub(crate) fn norm_feed_window(
+    win: Option<(f32, f32)>,
+    reading: (f32, f32),
+    nfeed: NormFeed,
+    complete: bool,
+    same_view: bool,
+    hold_broken: bool,
+) -> Option<(f32, f32)> {
+    match nfeed {
+        NormFeed::Hold if hold_broken => Some(reading),
+        NormFeed::Hold => win,
+        NormFeed::Adopt if complete => Some(reading),
+        NormFeed::Adopt => {
+            let fed = win.filter(|&f| same_view || !norm_glide_is_reacquire(f, reading));
+            Some(norm_reading_bound(reading, false, fed))
+        }
+        NormFeed::Chase => {
+            let reading = norm_reading_bound(reading, complete, win);
+            norm_window_feed(None, reading, false, win).1.or(win)
+        }
+    }
+}
+
+/// The palette window's TOP for a reading `[mn, mx]`: the escape value by which fraction `q`
+/// (`NORM_TOP_QUANTILE`) of the frame's sampled pixels had escaped, from its fine histogram
+/// (`fractadyne_gpu::CTR_NORM_HIST`), kept inside the reading. `q` = 1, no histogram, or too few
+/// samples to be a statistic: `mx`, the top of the range.
+///
+/// ⭐⭐**The top was the slowest pixel, and with any interior in view the slowest pixels escape
+/// just under the iteration ask.** A user's zoom to 2^127 (2026-10-25): from 2^93, where a minibrot
+/// entered the view, the window's top sat at 91-100% of the ask while 99% of the picture escaped
+/// within ~2,500 iterations of its bottom — 77,000 wide, so the picture sat in the first 12% of the
+/// palette (black to dark red) and every rise of the ask re-spread it; the jump from 4,650 to 77,527
+/// in 0.8 s is the strobe the user saw. The pixels above the quantile keep cycling through the
+/// palette at the same density, as every value above a window always has.
+pub(crate) fn norm_palette_top(mn: f32, mx: f32, hist: Option<&fractadyne_gpu::NormHist>, q: f64) -> f32 {
+    /// Fewer samples than this and a quantile is not a statistic.
+    const MIN_SAMPLES: u64 = 64;
+    if !(q < 1.0) {
+        return mx;
+    }
+    match hist.filter(|h| h.total() >= MIN_SAMPLES).and_then(|h| h.quantile(q)) {
+        Some(t) if t.is_finite() => (t as f32).clamp(mn, mx),
+        _ => mx,
+    }
+}
+
+/// The fine escape histogram's quantiles for the `norm range` trace: where the picture escapes,
+/// which the palette window's top is taken from.
+pub(crate) fn norm_hist_summary(hist: Option<&fractadyne_gpu::NormHist>) -> String {
+    match hist.filter(|h| h.total() > 0) {
+        Some(h) => {
+            let q = |p: f64| h.quantile(p).unwrap_or(0.0);
+            format!(
+                "q50 {:.0} q90 {:.0} q98 {:.0} q99 {:.0} q995 {:.0} n {} base {:.0}",
+                q(0.5),
+                q(0.9),
+                q(0.98),
+                q(0.99),
+                q(0.995),
+                h.total(),
+                h.base
+            )
+        }
+        None => "q none".to_string(),
+    }
+}
+
+#[cfg(test)]
+#[path = "../tests/unit/render/norm_palette_top.rs"]
+mod norm_palette_top;
 
 /// The regional license: how many iterations one settled pass may cover in this cursor BAND.
 /// A priced band licenses ×1.25 growth on its best accepted size; an unpriced band inherits HALF
