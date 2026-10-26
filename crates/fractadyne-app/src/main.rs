@@ -1203,6 +1203,9 @@ struct Perf {
     /// reference, per view (`None`: none since a direct frame or the session's start). A frame whose
     /// share is a [`render::series_collapse`] from it holds and leaves the budget unmeasured.
     series_share: [Option<f32>; 2],
+    /// Series dropped past their radius (`render::series_fits`), per view, this session: the log
+    /// line goes out on the 1st, 2nd, 4th, 8th... (a long zoom-out drops one per landing reference).
+    series_drops: [u64; 2],
     /// Render resolution of the last DISPATCHING frame, per view, for the same line. Added
     /// 2026-08-24: the 2026-08-22 field loss could not be checked against the odd-render-height
     /// defect (a ~20x per-pass cost fixed in beta.137) because the only resolution anywhere in
@@ -2376,6 +2379,7 @@ impl Default for Perf {
             last_sa_skip: 0,
             last_sa_skip_v: [0; 2],
             series_share: [None; 2],
+            series_drops: [0; 2],
             last_res_v: [[0; 2]; 2],
             frame_idx: 0,
             aa_probe: [None, None],
@@ -5467,6 +5471,10 @@ struct RefCache {
     /// `(orbit_id, eff_iter)` it was computed for (recompute only when that changes — the
     /// bignum coefficient iteration is as costly as the reference orbit itself).
     sa: fractadyne_core::SeriesSkip,
+    /// The worst-case log₂ |δc| `sa` was validated for at its build (`render::sa_log2_max_dc`:
+    /// the reference's offset from the build view's centre plus its half-diagonal); `NEG_INFINITY`
+    /// without a series. A view that asks more of it is refused it (`render::series_fits`).
+    sa_log2_dc: f64,
     sa_key: (u64, u32),
     /// THE RENORMALIZED STEP for this orbit (set with it at install; `None` = off).
     rn: Option<fractadyne_core::RenormStep>,
@@ -5531,6 +5539,7 @@ impl Default for RefCache {
             orbit_tail: None,
             last_recompute: None,
             sa: fractadyne_core::SeriesSkip::NONE,
+            sa_log2_dc: f64::NEG_INFINITY,
             rn: None,
             sa_key: (u64::MAX, u32::MAX),
             bla: std::sync::Arc::new(Vec::new()),
