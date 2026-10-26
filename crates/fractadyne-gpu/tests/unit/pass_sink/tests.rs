@@ -46,3 +46,13 @@ fn a_nested_scope_restores_the_outer_sink_and_drops_its_own_on_the_way_out() {
     });
     assert_eq!((outer.get(), inner.get()), (5.0, 2.0));
 }
+
+#[test]
+fn every_report_counts_a_finished_pass_with_or_without_a_sink_or_a_reading() {
+    // Other tests report on their own threads at the same time, so the count only bounds from below.
+    let before = passes();
+    report(2.0); // no sink
+    report(f64::NAN); // no reading: the pass still finished
+    with(|_| {}, || report(0.0));
+    assert!(passes() >= before + 3, "{before} -> {}", passes());
+}

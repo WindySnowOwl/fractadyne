@@ -1413,6 +1413,7 @@ pub(crate) fn progress_pump(
             let mut printed = false;
             let mut last_p = u32::MAX;
             let mut last_ref = fractadyne_core::reference_steps();
+            let mut last_pass = fractadyne_gpu::pass_sink::passes();
             let mut last_ref_line = std::time::Instant::now();
             'outer: while !stop2.load(Ordering::Relaxed) {
                 // ~2 s cadence, but check `stop` every 100 ms so Drop never stalls.
@@ -1436,6 +1437,11 @@ pub(crate) fn progress_pump(
                 // they happen, so an advancing count is work, and a frozen one still lets the stall
                 // clock run out exactly as a frozen `p` does.
                 let r = fractadyne_core::reference_steps();
+                // …and so is a GPU pass finishing (`pass_sink::PASSES`): a deep export's tile can
+                // take seconds as many bounded passes, and its thousandths of progress minutes.
+                let n = fractadyne_gpu::pass_sink::passes();
+                let passed = n != last_pass;
+                last_pass = n;
                 if p != last_p {
                     alive();
                     last_p = p;
@@ -1450,6 +1456,9 @@ pub(crate) fn progress_pump(
                     }
                 }
                 last_ref = r;
+                if passed {
+                    alive();
+                }
                 let _ = write!(std::io::stderr(), "\r[fd-progress] {} {label} {:3}%", stamp(), p / 10);
                 let _ = std::io::stderr().flush();
                 printed = true;
