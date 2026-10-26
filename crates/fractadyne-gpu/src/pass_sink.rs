@@ -6,6 +6,23 @@
 //! [`with`], and the passes report through [`report`]. Outside [`with`] a report goes nowhere.
 
 use std::cell::RefCell;
+use std::sync::atomic::{AtomicU64, Ordering};
+
+/// Offscreen passes this process has finished, on any thread, whether or not a sink is listening.
+///
+/// ⭐**An export's sign of life between tiles.** Its progress moves in thousandths of the image, and
+/// a deep export runs many thousands of tiles: at 4.37e21× (5120×4035, ss 4, 80,960 tiles) one 16 px
+/// tile near the set's interior took 3.6–4.3 s as fourteen bounded passes, so a thousandth took
+/// minutes to move and the watchdog logged `possible hang` 170 times over a healthy render that
+/// finished (RTX 3070, 2026-10-25). Every pass reports after it has been read back, so an advancing
+/// count is work finished, and a wedged dispatch freezes it exactly as it freezes the progress —
+/// the headless progress pump reads it as it reads the reference build's step count.
+pub static PASSES: AtomicU64 = AtomicU64::new(0);
+
+/// [`PASSES`]' current value.
+pub fn passes() -> u64 {
+    PASSES.load(Ordering::Relaxed)
+}
 
 type Sink = Box<dyn FnMut(f64)>;
 
@@ -33,6 +50,8 @@ pub fn with<R>(sink: impl FnMut(f64) + 'static, f: impl FnOnce() -> R) -> R {
 
 /// One pass's GPU time, ms, to this thread's sink if it has one.
 pub(crate) fn report(ms: f64) {
+    // A finished pass whatever its reading: a pass that measured nothing still finished.
+    PASSES.fetch_add(1, Ordering::Relaxed);
     if !(ms > 0.0 && ms.is_finite()) {
         return;
     }

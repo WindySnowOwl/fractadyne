@@ -59,6 +59,13 @@ published as the pre-releases `v0.2.41-beta.1` to `v0.2.41-beta.150`, and a "bet
 
 Changes after 0.3.0-beta.1:
 
+- **A long, deep export is no longer logged as a hang (0.3.0-beta.22).** An export's progress
+  moves in thousandths of the image, and near the set's interior a deep export can spend a minute
+  on one thousandth while its graphics card finishes several pieces of work a second. The watchdog
+  counted only the progress, so it wrote "possible hang" to the log over renders that were fine:
+  170 times in a 4.4e21× export at 5120×4035 that finished in 1 h 53 min on an RTX 3070. Each
+  piece of finished GPU work now counts as activity; one that never finishes still stops the
+  count, so a real hang is still reported.
 - **Twenty-six new palettes (0.3.0-beta.22).** Four Seasons, Royalty, Rave, Emerald Isle,
   Seventies, Eighties, Mondrian, Dragon Scales, Machine Age, Bronze Age, Unity, Spice, Veggies,
   Mosaic, Coral Reef, Aurora, Desert, Candy, Blueprint, Sepia, Thermal, Stained Glass, Noir, Cherry
