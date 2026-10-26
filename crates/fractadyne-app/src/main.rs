@@ -4885,6 +4885,22 @@ fn aspect_zoom_box(start: egui::Pos2, end: egui::Pos2, rect: egui::Rect) -> egui
 /// shallow view still glides and an extreme one doesn't take forever.
 const HOME_SECONDS_PER_LOGMAG: f64 = 0.45;
 
+/// The natural-log magnification a Home glide starts from, taken in LOG space. `magnification()`
+/// is an `f64` and overflows to ∞ past ~1e308× (2^1024); from `ln(∞)` every frame of the glide
+/// set the scale to 2^(−∞), which `mul_pow2` makes NaN, while the centre stayed finite
+/// (1 − e^(−∞) = 1). The view guard restored the last view and the glide poisoned it again, every
+/// frame for its whole 9 s, then the view jumped to Home: the user's 2026-10-25 session, Home
+/// clicked at 2^1214 during an auto-zoom dive; reproduced from 2^1663. Never below Home (0), and 0
+/// for an unusable view, which Home then simply resets.
+pub(crate) fn home_start_logmag(vp: &fractadyne_core::Viewport) -> f64 {
+    let l2 = vp.log2_magnification();
+    if l2.is_finite() { l2.max(0.0) * std::f64::consts::LN_2 } else { 0.0 }
+}
+
+#[cfg(test)]
+#[path = "../tests/unit/home_glide.rs"]
+mod home_glide;
+
 const HOME_MIN_SECONDS: f64 = 1.5;
 
 const HOME_MAX_SECONDS: f64 = 9.0;
@@ -9183,12 +9199,8 @@ impl FractadyneApp {
             self.reset_view();
             return;
         }
-        let m_logmag = self.viewport.magnification().max(1.0).ln();
-        let j_logmag = if self.dual {
-            self.julia_viewport.magnification().max(1.0).ln()
-        } else {
-            0.0
-        };
+        let m_logmag = home_start_logmag(&self.viewport);
+        let j_logmag = if self.dual { home_start_logmag(&self.julia_viewport) } else { 0.0 };
         let deepest = m_logmag.max(j_logmag);
         if deepest < 0.02 {
             self.reset_view();
