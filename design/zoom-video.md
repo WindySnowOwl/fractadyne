@@ -1,6 +1,7 @@
 # Zoom videos from exponential maps — design
 
-Status: **design (2026-10-19). Nothing built.** Line references are to `main` at `cc43741f`.
+Status: **design (2026-10-19); decisions taken 2026-10-27 (§9); E0 in progress.** Line
+references are to `main` at `cc43741f`.
 
 This covers two things a deep-zoom video maker would use, in the order they should be built:
 
@@ -262,6 +263,17 @@ coloured strip. Two things need care:
 E0 + E1 alone deliver the zoomasm workflow; E2 is where Fractadyne stops needing zoomasm.
 
 ## 9. Decisions for you
+
+**Decided 2026-10-27 (the user):**
+
+1. **Order: as recommended.** E0 → E1 (strips zoomasm can assemble) first, then E2.
+2. **The non-goal is retired** (`TODO.md`, the M6 non-goals line).
+3. **Audio: none in the app for now.** The user adds audio to the finished video with their own
+   tools; E2's `-i audio … -shortest` mux is out of scope until asked for.
+4. **Iteration cap: both, as an option; the default is the rising (non-decreasing per-strip) cap.**
+   One cap for the whole dive stays available for a dive where a step in the cap shows.
+
+The questions as they were put:
 
 1. **Order.** Recommended: E0 → E1 first (small, immediately useful to zoomasm users, and F3 and
    zoomasm give outside validation of the geometry), then E2. Alternative: E0 → E2, skipping KF
