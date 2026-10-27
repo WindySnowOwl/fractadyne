@@ -556,6 +556,11 @@ fn cos_sin_turns(t: f32) -> vec2<f32> {
 // flushed as a denormal), the smooth count's fraction `1 − nu`, and the final z's angle in turns —
 // zoomasm's N, NF and T (`design/zoom-video.md` §5.1). The main target keeps the smooth count as
 // one f32 as everywhere, which past ~2^20 iterations has lost most of its fraction.
+//
+// ⛔Written by `fs_resolve` ONLY: a strip always renders on the chunked path. The same branch at
+// `iterate_at`'s escapes — never taken outside a strip — changed how the compiler rounded the
+// smooth count there by one ulp, and `fs_iterate` stopped matching the chunked render bit for bit
+// (the selftest's `iter-chunk` group: 46 checks red, every mode).
 fn strip_aux(iter: u32, frac: f32, zf: vec2<f32>) -> vec4<f32> {
     return vec4<f32>(f32(iter >> 12u), f32(iter & 4095u), frac, atan2(zf.y, zf.x) * 0.15915494 + 0.5);
 }
@@ -1491,8 +1496,7 @@ fn iterate_at(gx: f32, gy: f32) -> FragOut {
             nrm = slope_normal(zf, vec2<f32>(dz.re.x, dz.im.x));
             de = de_log2(mag2, dz.re.x * dz.re.x + dz.im.x * dz.im.x, 0.0, texel_step_log2(gy));
         }
-        var aux_out = select(AUX_NONE, aux_pack(aux, fract(smit), zf), (iu.aux_on & 1u) == 1u);
-        if (iu.map_mode == MAP_STRIP) { aux_out = strip_aux(iter, 1.0 - nu, zf); }
+        let aux_out = select(AUX_NONE, aux_pack(aux, fract(smit), zf), (iu.aux_on & 1u) == 1u);
         esc_range_commit(smit);
         esc_count_commit(vec2<i32>(i32(gx), i32(gy)));
         norm_hist_commit(smit, vec2<i32>(i32(gx), i32(gy)));
@@ -1962,8 +1966,7 @@ fn iterate_at(gx: f32, gy: f32) -> FragOut {
             nrm = slope_normal(zf, vec2<f32>(D.m.re.x, D.m.im.x));
             de = de_log2(mag2, D.m.re.x * D.m.re.x + D.m.im.x * D.m.im.x, f32(D.e), texel_step_log2(gy));
         }
-        var aux_out = select(AUX_NONE, aux_pack(aux, fract(smit), zf), (iu.aux_on & 1u) == 1u);
-        if (iu.map_mode == MAP_STRIP) { aux_out = strip_aux(iter, 1.0 - nu, zf); }
+        let aux_out = select(AUX_NONE, aux_pack(aux, fract(smit), zf), (iu.aux_on & 1u) == 1u);
         esc_range_commit(smit);
         esc_count_commit(vec2<i32>(i32(gx), i32(gy)));
         norm_hist_commit(smit, vec2<i32>(i32(gx), i32(gy)));
@@ -2162,8 +2165,7 @@ fn iterate_at(gx: f32, gy: f32) -> FragOut {
             nrm = slope_normal(zf, vec2<f32>(D.m.re.x, D.m.im.x));
             de = de_log2(mag2, D.m.re.x * D.m.re.x + D.m.im.x * D.m.im.x, f32(D.e), texel_step_log2(gy));
         }
-        var aux_out = select(AUX_NONE, aux_pack(aux, fract(smit), zf), (iu.aux_on & 1u) == 1u);
-        if (iu.map_mode == MAP_STRIP) { aux_out = strip_aux(iter, 1.0 - nu, zf); }
+        let aux_out = select(AUX_NONE, aux_pack(aux, fract(smit), zf), (iu.aux_on & 1u) == 1u);
         esc_range_commit(smit);
         esc_count_commit(vec2<i32>(i32(gx), i32(gy)));
         norm_hist_commit(smit, vec2<i32>(i32(gx), i32(gy)));

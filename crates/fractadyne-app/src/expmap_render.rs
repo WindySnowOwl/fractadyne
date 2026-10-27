@@ -214,6 +214,14 @@ impl crate::FractadyneApp {
         if r.aux.len() != r.pixels.len() {
             return Err(format!("strip {k}: the renderer returned no strip data (aux {} of {})", r.aux.len(), r.pixels.len()));
         }
+        // A strip's count, fraction and angle are written by the chunked path's resolve only (the
+        // shader's `strip_aux`); a tile that took the single pass would carry none of them.
+        if r.tiles_total == 0 || r.tiles_chunked != r.tiles_total {
+            return Err(format!(
+                "strip {k}: {} of {} tiles took the chunked path this GPU needs for a strip",
+                r.tiles_chunked, r.tiles_total
+            ));
+        }
         Ok((r, req))
     }
 

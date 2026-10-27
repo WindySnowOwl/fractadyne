@@ -262,6 +262,38 @@ coloured strip. Two things need care:
 
 E0 + E1 alone deliver the zoomasm workflow; E2 is where Fractadyne stops needing zoomasm.
 
+### 8.1 E0 as built (2026-10-27, branch `feat/zoom-video`)
+
+- **Geometry:** `fractadyne_core::ExpMap` (`core/src/expmap.rs`), §3 exactly; overlap 1 row (rows =
+  ⌈W·ln2/2π⌉ + 1). Texel offsets are exact at any depth (the octave count is an integer exponent).
+- **Renderer:** one `pixel_offset` in the shader replaces the four copies of the affine mapping the
+  note did not know about (`iterate_at`, `fs_iterate_chunk`, `chunk_fe_at`, the custom module's
+  `chunk_fe_at`); `fs_resolve` places the texel for its distance estimate too. The angle uses the
+  shader's own cos/sin (WGSL's built-ins are promised only to 2^-11, half a strip texel). In a strip
+  the AUX target carries N (as `iter>>12`, `iter&4095`), NF = 1−nu and T; the main target is as
+  everywhere. A strip always chunks from its first tile (the two entry points differ bit for bit),
+  and only the chunked path's `fs_resolve` writes the strip AUX: the same never-taken branch at
+  `iterate_at`'s escapes moved the single pass's smooth count by an ulp and broke the selftest's
+  chunked-equals-single-pass gate (measured, 46 checks).
+- **The raw strip:** `strip_NNNNNN.exr` with channels `N` (uint32; 0xFFFFFFFF capped, 0 glitched),
+  `NF`, `T`, `DE` (log2 texels of the strip), `NX`, `NY`, PIZ, written atomically; `expmap.json`
+  (the dive's identity, which a rerun must match; strips present are kept). NF is `1 − nu` with the
+  renderer's bailout of 256, so it lies around −2 to −3, not in [0, 1): E1 converts.
+- **Reference, SA, BLA:** each strip renders as an export of a VIEW sized to the strip's disk (its
+  half diagonal is the strip's outer radius), so the pick, the series radius and the BLA radius
+  follow without new code. ⚠Each strip still builds its own reference (the centre wins the pick);
+  the series walk is recorded once and replayed per strip (`set_sa_trace_cache`, as tours do). One
+  orbit for the whole dive is the next step for deep dives.
+- **Caps:** `--expmap-cap rising` (default) = the app's depth rule at each strip's inner edge, never
+  falling; `fixed` = the deepest strip's (or `--iter`'s N).
+- **The gate that replaced "strip = gather render":** the selftest's `expmap` group compares a strip
+  in each arithmetic mode with the arbitrary-precision oracle at the points the CPU geometry gives,
+  with a quarter-turn control and a ±1e-3-texel stencil for points where the oracle itself does not
+  settle — independent of the renderer, where a gather pass would share its `iterate_at`.
+  Mutation-checked. Frames rebuilt from strips by nearest texel matched flat renders of the same
+  frames (a scratch tool; LOOKED at).
+- **Not yet:** Julia, custom formulas, the other escape-time families (refused with a message).
+
 ## 9. Decisions for you
 
 **Decided 2026-10-27 (the user):**
