@@ -82,7 +82,7 @@ fn a_strip_is_as_wide_as_the_circle_through_a_frames_corners() {
 #[test]
 fn neighbouring_strips_overlap_by_the_shared_rows_and_no_more() {
     for width in [1000u32, 6921, 13_842, 12_288] {
-        let m = ExpMap { width, rows: expmap_rows(width), r0_log2: 1.0 };
+        let m = ExpMap { width, rows: expmap_rows(width), r0_log2: 1.0, layout: StripRows::Conformal };
         let octave_rows = m.rows_per_octave();
         // Strip k's last row reaches past strip k+1's first: the octave is covered with no gap.
         assert!(m.rows as f64 > octave_rows + (EXPMAP_OVERLAP_ROWS as f64) - 1.0 + 1e-9, "width {width}");
@@ -90,6 +90,54 @@ fn neighbouring_strips_overlap_by_the_shared_rows_and_no_more() {
         let (inner, _) = m.texel_polar(3, 0.0, m.rows as f64 - 0.5);
         assert!(inner < m.outer_log2(4), "width {width}: a gap between strips 3 and 4");
     }
+}
+
+/// Kalles Fraktaler's layout (zoomasm's input), as measured from KF 2.15.5's own strips: texel
+/// `(i, j)` sampled at its corner, `θ = 2πi/W`, `r = R₀·2^-k·2^(−j/rows)`, computed here in 256-bit
+/// from that definition.
+fn published_octave(r0_log2: f64, width: u32, rows: u32, k: u64, i: f64, j: f64) -> (BigFloat, BigFloat, i64) {
+    let mut cc = Consts::new().unwrap();
+    let bf = |x: f64| BigFloat::from_f64(x, P);
+    let two = bf(2.0);
+    // 2^(r0_log2 - j/rows) through exp(ln2 · x): r0_log2 is not an integer.
+    let x = bf(r0_log2).sub(&bf(j).div(&bf(rows as f64), P, RM), P, RM);
+    let r = cc.ln_2(P, RM).mul(&x, P, RM).exp(P, RM, &mut cc);
+    let theta = cc.pi(P, RM).mul(&two, P, RM).mul(&bf(i), P, RM).div(&bf(width as f64), P, RM);
+    (r.mul(&theta.cos(P, RM, &mut cc), P, RM), r.mul(&theta.sin(P, RM, &mut cc), P, RM), -(k as i64))
+}
+
+#[test]
+fn an_octave_strip_samples_where_kalles_fraktaler_does_and_tiles_without_overlap() {
+    let m = ExpMap::for_frames(640.0, 360.0, 1.0, 3.0).with_octave_rows();
+    assert_eq!(m.layout, StripRows::Octave);
+    assert_eq!(m.width, 2307, "the width is the conformal strip's");
+    // The whole number of rows nearest one conformal octave (2307·ln2/2π = 254.503): texels square
+    // to within half a row.
+    assert_eq!(m.rows, 255);
+    assert!(((m.width as f64 * LN_2 / TAU) - m.rows as f64).abs() <= 0.5);
+    assert_eq!(m.rows_per_octave(), m.rows as f64);
+    for &k in &[0u64, 1, 13, 50_000] {
+        for &(i, j) in &[(0.0, 0.0), (1234.0, 17.0), (m.width as f64 - 1.0, m.rows as f64 - 1.0), (577.0, 101.25)] {
+            let (re, im) = m.texel_offset(k, i, j);
+            let (want_re, want_im, shift) = published_octave(m.r0_log2, m.width, m.rows, k, i, j);
+            for (got, want, axis) in [(re, &want_re, "re"), (im, &want_im, "im")] {
+                if to_f64(want).abs() < 1e-3 * 2f64.powf(m.r0_log2) {
+                    continue;
+                }
+                let err = rel_err(got, want, shift);
+                assert!(err < 1e-12, "strip {k}, texel ({i}, {j}) {axis}: relative error {err:e}");
+            }
+        }
+    }
+    // Strip k's row `rows` (one past its last) is strip k+1's row 0: an octave exactly, no overlap.
+    let (past_last, _) = m.texel_polar(3, 0.0, m.rows as f64);
+    let (next_first, _) = m.texel_polar(4, 0.0, 0.0);
+    assert!((past_last - next_first).abs() < 1e-12, "{past_last} vs {next_first}");
+    // Row 0 sits ON the outer radius (KF samples a texel's corner); a conformal strip's row 0 is
+    // half a row inside it.
+    assert!((m.texel_polar(3, 0.0, 0.0).0 - m.outer_log2(3)).abs() < 1e-15);
+    let c = ExpMap::for_frames(640.0, 360.0, 1.0, 3.0);
+    assert!(c.texel_polar(3, 0.0, 0.0).0 < c.outer_log2(3) - 1e-4);
 }
 
 #[test]

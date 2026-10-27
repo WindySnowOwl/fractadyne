@@ -277,6 +277,7 @@ pub(crate) const CLI_REFERENCE: &[CliRef] = {
         Flag("--expmap-oversample Q", "Strip texels per frame pixel at the frame's corners (default 1; more everywhere else). The strip's width is ceil(Q x pi x the frame's diagonal)."),
         Flag("--expmap-cap rising|fixed", "The iteration cap over the dive: rising (the default) gives each strip what its depth wants, never less than the strip before; fixed gives every strip the deepest strip's cap. With --iter N, the cap is N for every strip (fixed) or the base the rising caps grow from (rising)."),
         Flag("--expmap-strips A-B", "Render only strips A to B (0 is the outermost)."),
+        Flag("--expmap-format fractadyne|zoomasm", "fractadyne (the default) writes Fractadyne's own strips. zoomasm writes Kalles Fraktaler's EXR strips (N, NF, T, DEX, DEY; one octave each), which zoomasm assembles into a video: open DIR as zoomasm's input, with Reverse and Flip unticked (strip 0 is the outermost)."),
         Section("Tour options (with --render-tour)"),
         Flag("(defaults)", "Every option below falls back to the script's [render] block, so a tour renders as authored with no flags at all; a flag given here overrides it."),
         Flag("--fps N", "Frames per second (default 30)."),

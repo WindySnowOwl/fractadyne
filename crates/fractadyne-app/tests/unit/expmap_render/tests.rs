@@ -47,7 +47,7 @@ fn a_strips_view_has_the_strips_disk_as_its_half_diagonal() {
         // The shader's radius over 2^delta_exp stays O(1), as its f32 offset needs.
         let scale = vp.gpu_scale();
         let (m, e) = map.outer_scale(k);
-        let r = fractadyne_gpu::StripMap::strip(map.width, m, e, scale.delta_exp).r;
+        let r = fractadyne_gpu::StripMap::strip(map.row_step(), 0.0, m, e, scale.delta_exp).r;
         assert!(r > 0.4 && r <= 1.0, "strip {k}: map r {r}");
     }
 }

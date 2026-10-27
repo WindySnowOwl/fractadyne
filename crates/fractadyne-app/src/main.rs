@@ -67,6 +67,7 @@ mod diag;
 mod color_picker;
 mod error;
 mod exec_resolve;
+mod expmap_kf;
 mod expmap_render;
 mod eyedropper;
 mod export;

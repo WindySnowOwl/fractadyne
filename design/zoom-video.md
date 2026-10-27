@@ -145,6 +145,13 @@ its supported platform, Windows builds are cross-compiled and untested by its au
 
 ### 5.3 Conventions to settle by experiment (not by reading code)
 
+**Settled 2026-10-27 by running Kalles Fraktaler 2.15.5.2** (its batch mode, `kf -s S.kfs -l L.kfr
+-x out.exr`, with Derivatives, ExponentialMap and every EXR channel on) and reading its files
+against an independent double-precision orbit; §8.2 has the result and `app/src/expmap_kf.rs` the
+rules. Fraktaler-3 3.1's batch mode wrote RGB only on this machine, so it could not settle the raw
+channels; its strips gave the angle's origin and direction (the same as ours) and showed its rows
+run the other way up from KF's (zoomasm's Flip box).
+
 The documentation leaves open: which edge of a strip is outermost, where the angle starts and which
 way it runs, the file numbering order (zoomasm has **Reverse** and **Flip** toggles for exactly
 these), and an apparent disagreement about the fraction (the format text gives `N + NF − bias`,
@@ -307,6 +314,47 @@ E0 + E1 alone deliver the zoomasm workflow; E2 is where Fractadyne stops needing
   Mutation-checked. Frames rebuilt from strips by nearest texel matched flat renders of the same
   frames (a scratch tool; LOOKED at).
 - **Not yet:** Julia, custom formulas, the other escape-time families (refused with a message).
+
+### 8.2 E1 as built (2026-10-27, branch `feat/zoom-video-e1`)
+
+`--render-expmap DIR --expmap-format zoomasm` writes Kalles Fraktaler's strips. **KF's conventions,
+measured** from KF 2.15.5.2's own EXRs (flat and exponential-map, powers 2, 3 and 8) against a
+double-precision orbit — each rule below fits KF's every texel to f32 rounding:
+
+| | KF 2.15.5.2 | Our strips (§3) |
+|---|---|---|
+| Rows | exactly one octave in `H` rows (KF's "zoom size 2"); `H` free | conformal + 1 overlap row |
+| Texel `(x, y)` | `θ = 2πx/W`, `r = top·2^(−y/H)`: sampled at its CORNER; row 0 outermost; angle anticlockwise from +re | `θ = 2π(x+½)/W`, centre |
+| `top` | the half diagonal of a flat `W×H` image at KF's zoom (`2/zoom·hypot(W,H)/H`; zoom = our magnification) | `R₀·2^-k` |
+| Escape | `\|zₙ\| > 10^(4/p)` (100, 21.5 … 3.16), `z₁ = c` | `\|z\| > 256` |
+| `N` | `n + 1024` (`IterationsBias`); interior `0xFFFFFFFF`, every other channel 0 | — |
+| `NF` | `1 − log_p(ln\|zₙ\| / ln ER)` | `1 − log_p(log2\|z\|)` |
+| `T` | `fract(p·arg zₙ / 2π)` — p times the angle, not the angle | `atan2/2π + ½` |
+| `DEX, DEY` | `\|z\|ln\|z\|/\|dz/dc\|` over a pixel, along `(Re u, −Im u)`, `u = z/(dz/dc)`: the plane's vector, imaginary DOWN (KF's default `ImagPointsUp: 0`), NOT rotated into the strip; a strip's pixel is `r·2/hypot(W,H)` | log2 DE over the texel, unit normal (plane, imaginary up) |
+| Header | layer attributes `Iterations`, `IterationsBias` (i32) | — |
+
+Because `ER^p = 10^4 > 256` at every power, the renderer's escape iterate is KF's or the one after;
+`zₙ₋₁^p = zₙ − c` makes the step back EXACT (carrying the smooth count across instead was off by
+2.4e-5 at low counts, the `+ c`). Octave strips are `ExpMap::with_octave_rows()` (`StripRows::Octave`:
+rows = the whole number nearest `W·ln2/2π`, sampled at texel corners); the shader takes the sample
+offset in the strip uniform's spare word (`bitcast<f32>(map_pad)`, so the shared module's text is
+unchanged) and its row step as `map_s`.
+
+**Gates:**
+- **Against KF itself**, the same strips rendered by both programs (640x360 frames, `W×H` = 2307x255):
+  at 0.3+0.1i, strips 0–5 agree on the interior to 99.9%+ and on the count, fraction, phase and DE
+  vector to ~1e-6 on the median texel. Strip 6's (85% equal counts) and the seahorse dive's at
+  2^28–2^33 (84–94%) disagreements were refereed by a 120-bit orbit: at 0.3+0.1i KF was right and our
+  f32 direct mode off — and a flat `--render-iter` at the same pixel size is off the same way (65%
+  of its escaped pixels within 1e-3, strip 6 64%), so a strip is as exact as a frame; at depth both
+  programs are equally exact (within 1e-3 of the orbit: ours 72% / 81%, KF 70% / 85%).
+- **Unit tests:** the conversion against KF's definitions on real f64 orbits at powers 2–8 (both
+  escape relations exercised hundreds of times; mutation-checked: the step back, the escape radius,
+  DEY's sign); the octave layout against a 256-bit computation; the EXR integer attributes round trip.
+- **Selftest `expmap`:** a fourth case, a zoomasm-layout df32 strip against the oracle (34/48 exact,
+  0 wrong); sampling it at texel centres instead fails it (0/48 exact, 31 wrong).
+- **Not yet:** zoomasm itself assembling our strips (needs a saved zoomasm session for `--record`);
+  RGB channels (KF writes its colouring as half R, G, B; zoomasm's rgb-passthrough preset reads them).
 
 ## 9. Decisions for you
 

@@ -59,6 +59,14 @@ published as the pre-releases `v0.2.41-beta.1` to `v0.2.41-beta.150`, and a "bet
 
 Changes after 0.3.0-beta.1:
 
+- **Zoom videos: strips in zoomasm's format (0.3.0-beta.22).** `--render-expmap DIR
+  --expmap-format zoomasm` writes the strips in Kalles Fraktaler's EXR layout (`N`, `NF`, `T`,
+  `DEX`, `DEY`, one octave a strip), the input zoomasm assembles into a video with its own
+  colouring presets: open DIR as zoomasm's input with Reverse and Flip unticked. Every convention
+  was measured from KF 2.15.5's own files, not taken from its source, and strips rendered by both
+  programs at the same places agree texel for texel: count, fraction, phase and distance estimate
+  to about one part in a million on the median texel. No RGB channels yet, so zoomasm's
+  rgb-passthrough preset has nothing to show.
 - **Zoom videos, the first step: exponential-map strips (0.3.0-beta.22).** `--render-expmap DIR`
   renders a straight dive into the view as strips, each covering one octave of depth around the
   centre, from which a zoom video's frames can be assembled. Each part of the plane is computed

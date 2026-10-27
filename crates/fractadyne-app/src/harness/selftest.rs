@@ -7729,15 +7729,19 @@ impl FractadyneApp {
             );
             self.fractal = crate::fractal::FractalKind::Mandelbrot;
             self.julia_mode = false;
-            // (regime, centre, strip, cap, the mode the strip must render in). Frames of 160×90 from
-            // 1×: 577-texel strips, so each strip is quick and the oracle samples a whole one.
+            // (regime, centre, layout, strip, cap, the mode the strip must render in). Frames of
+            // 160×90 from 1×: 577-texel strips, so each strip is quick and the oracle samples a whole
+            // one. The zoomasm format's octave strips sample texel CORNERS (Kalles Fraktaler's
+            // convention): the last case judges that placement.
+            use fractadyne_core::StripRows::{Conformal, Octave};
             let cases = [
-                ("direct", SX, SY, 6u64, 3_000u32, 1u32),
-                ("df32 perturbation", SX, SY, 40, 12_000, 0),
-                ("floatexp", CRX, CRY, 93, 30_000, 2),
+                ("direct", SX, SY, Conformal, 6u64, 3_000u32, 1u32),
+                ("df32 perturbation", SX, SY, Conformal, 40, 12_000, 0),
+                ("floatexp", CRX, CRY, Conformal, 93, 30_000, 2),
+                ("zoomasm-layout df32 perturbation", SX, SY, Octave, 40, 12_000, 0),
             ];
-            for (regime, cx, cy, k, cap, want_mode) in cases {
-                let got = self.expmap_strip_check(device, queue, cx, cy, (160.0, 90.0), k, cap, 48);
+            for (regime, cx, cy, layout, k, cap, want_mode) in cases {
+                let got = self.expmap_strip_check(device, queue, cx, cy, (160.0, 90.0), layout, k, cap, 48);
                 let (result, pass) = match &got {
                     Ok(c) => (
                         format!(
@@ -7758,7 +7762,10 @@ impl FractadyneApp {
                 push_check(&mut checks, &mut last_check_t, SelfCheck {
                     category: "Zoom video",
                     name: format!("a {regime} strip matches the oracle where the geometry puts it"),
-                    params: format!("strip {k} of a dive into ({cx}, {cy}), 160x90 frames from 1x, cap {cap}"),
+                    params: format!(
+                        "strip {k} of a dive into ({cx}, {cy}), 160x90 frames from 1x, cap {cap}, {} strips",
+                        if layout == Octave { "octave (texel corners)" } else { "conformal (texel centres)" }
+                    ),
                     result,
                     threshold: "rendered in the named mode, a perturbation strip on the dive's reference (built 4 strips \
                                 deeper); every sampled texel's count exact and fraction within 0.05, \

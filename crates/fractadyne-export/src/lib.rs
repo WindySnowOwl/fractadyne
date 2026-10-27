@@ -956,6 +956,19 @@ pub fn write_exr_channels(
     channels: Vec<ExrChannel>,
     metadata: Option<&str>,
 ) -> Result<(), ExportError> {
+    write_exr_channels_with(path, width, height, channels, metadata, &[])
+}
+
+/// [`write_exr_channels`] with integer header attributes too — Kalles Fraktaler's `Iterations` and
+/// `IterationsBias`, which zoomasm reads beside a KF-format strip's channels.
+pub fn write_exr_channels_with(
+    path: &Path,
+    width: u32,
+    height: u32,
+    channels: Vec<ExrChannel>,
+    metadata: Option<&str>,
+    int_attributes: &[(&str, i32)],
+) -> Result<(), ExportError> {
     use exr::prelude::*;
     let expected = width as usize * height as usize;
     let mut list: SmallVec<[AnyChannel<FlatSamples>; 4]> = SmallVec::new();
@@ -976,12 +989,12 @@ pub fn write_exr_channels(
         };
         list.push(AnyChannel::new(c.name, samples));
     }
-    let layer = Layer::new(
-        (width as usize, height as usize),
-        LayerAttributes::default(),
-        Encoding::SMALL_FAST_LOSSLESS,
-        AnyChannels::sort(list),
-    );
+    // In the layer's own header, where Kalles Fraktaler writes them.
+    let mut attributes = LayerAttributes::default();
+    for (name, v) in int_attributes {
+        attributes.other.insert(Text::from(*name), AttributeValue::I32(*v));
+    }
+    let layer = Layer::new((width as usize, height as usize), attributes, Encoding::SMALL_FAST_LOSSLESS, AnyChannels::sort(list));
     let mut image = Image::from_layer(layer);
     if let Some(meta) = metadata {
         image.attributes.other.insert(Text::from(META_KEYWORD), AttributeValue::Text(exr_meta_text(meta)?));
@@ -1010,6 +1023,21 @@ pub fn read_exr_metadata(path: &Path) -> Result<Option<String>, ExportError> {
         for other in [&h.shared_attributes.other, &h.own_attributes.other] {
             if let Some(AttributeValue::Text(t)) = other.get(&key) {
                 return Ok(Some(t.to_string()));
+            }
+        }
+    }
+    Ok(None)
+}
+
+/// Read an integer header attribute (`Iterations`, `IterationsBias`) from an OpenEXR, if present.
+pub fn read_exr_int_attribute(path: &Path, name: &str) -> Result<Option<i32>, ExportError> {
+    use exr::prelude::*;
+    let meta = exr::meta::MetaData::read_from_file(path, false)?;
+    let key = Text::from(name);
+    for h in &meta.headers {
+        for other in [&h.shared_attributes.other, &h.own_attributes.other] {
+            if let Some(AttributeValue::I32(v)) = other.get(&key) {
+                return Ok(Some(*v));
             }
         }
     }
