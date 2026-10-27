@@ -59,6 +59,17 @@ published as the pre-releases `v0.2.41-beta.1` to `v0.2.41-beta.150`, and a "bet
 
 Changes after 0.3.0-beta.1:
 
+- **Zoom videos, the first step: exponential-map strips (0.3.0-beta.22).** `--render-expmap DIR`
+  renders a straight dive into the view as strips, each covering one octave of depth around the
+  centre, from which a zoom video's frames can be assembled. Each part of the plane is computed
+  once instead of once for every frame it appears in: at 60 frames a second and an octave a second,
+  about 23 times less work. The strips hold raw data (escape count, its fraction, the final angle,
+  distance estimate and normals) in OpenEXR files, with a manifest; turning them into a video, with
+  zoomasm and in the app itself, comes next. The iteration count rises with depth by default
+  (`--expmap-cap fixed` gives every strip the deepest one's), the whole dive shares one reference,
+  and a rerun into the same folder renders only the strips that are missing. Mandelbrot and
+  Multibrot 3–8 for now. Ordinary renders are unaffected (measured on two cards). See
+  `design/zoom-video.md`.
 - **The window no longer freezes while the log file is busy (0.3.0-beta.22).** Every log line was
   written by the thread that logged it, most often the one that draws the window, and when the
   disk or another program (an antivirus scanner, an indexer) held the log file, the window waited
