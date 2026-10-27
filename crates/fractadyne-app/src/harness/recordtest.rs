@@ -397,8 +397,7 @@ impl crate::FractadyneApp {
             Some(b) => {
                 let warned = v0.iter().find(|r| r.frame >= b && r.blind_warned);
                 let peak = v0.iter().filter(|r| r.frame >= b).map(|r| r.blind_slow_frames).max().unwrap_or(0);
-                let logged = crate::diag::logs_dir()
-                    .and_then(|d| std::fs::read_to_string(d.join("fractadyne.log")).ok())
+                let logged = crate::diag::own_log_text()
                     .is_some_and(|l| l.contains("⚠FRAME BUDGET IS BLIND: view=0"));
                 match (warned, logged) {
                     (Some(w), true) => notes.push(format!(
@@ -418,8 +417,7 @@ impl crate::FractadyneApp {
                 // budget must drop to the bootstrap, no reading may grow it while latched, and the
                 // latch must clear once frames are quick again — engaged, bounded, and released.
                 if let Some(w) = warned.filter(|_| crate::tunables::cost().dead_man == 1) {
-                    let log = crate::diag::logs_dir()
-                        .and_then(|d| std::fs::read_to_string(d.join("fractadyne.log")).ok())
+                    let log = crate::diag::own_log_text()
                         .unwrap_or_default();
                     let cap = crate::tunables::cost().tdr_bootstrap_steps;
                     let before = v0.iter().rev().find(|r| r.frame < w.frame).map_or(0, |r| r.fe_budget);
@@ -458,8 +456,7 @@ impl crate::FractadyneApp {
         // interval lands in — and the dead-man engage a second time. On PLUTO the card hung after
         // two slow frames; a trigger that needs eight is no trigger there.
         if let Some(wf) = t.wedged_at.filter(|_| crate::tunables::cost().dead_man == 1) {
-            let log = crate::diag::logs_dir()
-                .and_then(|d| std::fs::read_to_string(d.join("fractadyne.log")).ok())
+            let log = crate::diag::own_log_text()
                 .unwrap_or_default();
             let fired = v0.iter().find(|r| r.frame > wf && r.frame <= wf + 3 && r.blind_warned);
             let engaged = log.matches("DEAD-MAN: view=0").count();
@@ -564,7 +561,7 @@ impl crate::FractadyneApp {
         // (Accumulation is off under harnesses, so that particular flood is pinned by the
         // `LineLimiter` unit test; this guards against the next one.)
         const LOG_RATE_LIMIT: f64 = 10.0; // lines per second, over any 5 s window
-        if let Some(text) = crate::diag::logs_dir().and_then(|d| std::fs::read_to_string(d.join("fractadyne.log")).ok()) {
+        if let Some(text) = crate::diag::own_log_text() {
             let lines: Vec<&str> = text.lines().collect();
             // This session only: from its own start banner.
             let from = lines

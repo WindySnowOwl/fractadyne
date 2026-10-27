@@ -17644,7 +17644,8 @@ impl eframe::App for FractadyneApp {
             // leaves behind, and the OS cache does not survive one: on PLUTO (2026-09-27, the
             // dead-man BEFORE arm) the machine hung after a 2,017 ms frame, and `fractadyne.log`,
             // `frames.bin` and `frames.jsonl` all came back as zeros — the artefacts built to
-            // explain exactly that failure. Slow frames are ≥200 ms apart, so this is bounded.
+            // explain exactly that failure. Slow frames are ≥200 ms apart, so this is bounded. The
+            // log's writer thread does the syncing; this frame waits for it at most 100 ms.
             if body_ms > 200.0 || self.perf.last_dt_ms > 200.0 {
                 diag::sync_to_disk();
             }

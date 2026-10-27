@@ -59,6 +59,14 @@ published as the pre-releases `v0.2.41-beta.1` to `v0.2.41-beta.150`, and a "bet
 
 Changes after 0.3.0-beta.1:
 
+- **The window no longer freezes while the log file is busy (0.3.0-beta.22).** Every log line was
+  written by the thread that logged it, most often the one that draws the window, and when the
+  disk or another program (an antivirus scanner, an indexer) held the log file, the window waited
+  for it. On a test machine one line took 12 s to write and the window froze for all of it. The
+  frozen frame also looked to the graphics-card safety checks like a pass running far too long, so
+  they cut the card's work for no reason. The log now has its own thread, and the app never waits for
+  the disk to log a line. Reproduced by holding the log file for 6 s: the window froze for 6.0 s
+  before, and not at all after.
 - **Home from extreme depth shows pictures on the way out (0.3.0-beta.22).** From deeper than
   about 1e19×, the glide Home passed through depths far faster than any of them could render, and
   most of it showed solid panels of a single colour: from 1.5e4850×, nine seconds of them on an

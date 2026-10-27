@@ -7684,6 +7684,8 @@ impl FractadyneApp {
             self.perf.retreat_last[0] = None;
             self.apply_iterate_measurement(0, lethal_ms, floor, "wall_iterate", crate::ReadShape::default());
             let at_floor = self.perf.retreat_last[0];
+            // The line was handed to the log's writer thread a moment ago: wait for it to land.
+            crate::diag::flush_log();
             let logged = crate::diag::recent_log(256 * 1024)
                 .is_some_and(|l| l.contains("RETREAT REACHED NOTHING"));
             let big: u64 = 10_000_000_000;

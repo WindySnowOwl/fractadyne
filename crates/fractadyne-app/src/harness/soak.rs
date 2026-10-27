@@ -100,7 +100,9 @@ fn spawn_watchdog(duration: Duration) {
                 ));
                 // Not `crate::exit`: that path wants the UI thread, which is the thread that has
                 // stopped responding. Leave the unclean-exit marker armed — the session really
-                // did die, and the next launch should say so.
+                // did die, and the next launch should say so. The verdict above goes to the log by
+                // its writer thread, which is not the stuck one: wait for it, boundedly.
+                crate::diag::flush_log_within(std::time::Duration::from_secs(2));
                 std::process::exit(1);
             }
             last = now;
