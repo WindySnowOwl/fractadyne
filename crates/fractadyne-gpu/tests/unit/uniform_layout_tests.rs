@@ -150,6 +150,24 @@ fn the_built_in_shader_validates() {
         .unwrap_or_else(|e| panic!("{e:?}"));
 }
 
+/// The exponential-map strip module (`strip.rs`): all six of the built-in module's STRIP_* slots are
+/// filled, in order, and the result validates. A slot renamed or moved in `mandelbrot.wgsl` would
+/// otherwise surface only when a strip is rendered.
+#[test]
+fn the_strip_module_splices_and_validates() {
+    use egui_wgpu::wgpu::naga;
+    let src = crate::strip::source().unwrap_or_else(|e| panic!("{e}"));
+    assert!(!src.contains("@@STRIP_"), "a STRIP_* slot was left unfilled");
+    assert!(src.contains("strip_offset(gx, gy)") && src.contains("strip_aux(info_iter(sm)"));
+    let module = naga::front::wgsl::parse_str(&src).unwrap_or_else(|e| panic!("{}", e.emit_to_string(&src)));
+    naga::valid::Validator::new(naga::valid::ValidationFlags::all(), naga::valid::Capabilities::all())
+        .validate(&module)
+        .unwrap_or_else(|e| panic!("{e:?}"));
+    // The built-in module itself has no strip code at all, only the slots' comments.
+    let fixed = include_str!(concat!(env!("CARGO_MANIFEST_DIR"), "/src/mandelbrot.wgsl"));
+    assert!(!fixed.contains("strip_offset") && !fixed.contains("cos_sin_turns"));
+}
+
 /// The same gate for the ITERATE uniform, which every iterate pipeline binds: `IterU` (WGSL) and
 /// `IterUniforms` (Rust) must agree on size, and on where the renormalized step's block starts
 /// (a field added on one side only would shift it, and the step would read garbage).

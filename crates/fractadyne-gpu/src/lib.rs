@@ -30,6 +30,8 @@ pub mod life;
 pub mod lsystem;
 /// What compiling pipelines costs, for the app's watchdog and the self-test.
 pub mod pipeline_compile;
+/// The exponential-map strip module (`--render-expmap`).
+mod strip;
 
 /// The Rust/WGSL uniform-layout gate — see the module's own docs.
 #[cfg(test)]
@@ -96,12 +98,13 @@ pub(crate) struct IterUniforms {
     pub(crate) map: StripMap,
 }
 
-/// Where an iterate pass puts its texels (the shader's `map_*`, `pixel_offset`): `mode` 0, the
-/// default, is the affine grid every render uses; `mode` 1 renders an EXPONENTIAL-MAP STRIP
-/// (`design/zoom-video.md` §4), texel `(gx, gy)` at `r·exp(−s·gy)·(cos, sin)(s·gx)` from the view
-/// centre in units of `2^delta_exp`, with `s = 2π/W` and `W` the pass's full width. In a strip the
-/// distance estimate is over each texel's own size and the aux target carries the exact count,
-/// its fraction and the final z's angle (the shader's `strip_aux`). See
+/// Where an iterate pass puts its texels (the shader's `map_*`): `mode` 0, the default, is the
+/// affine grid every render uses; `mode` 1 renders an EXPONENTIAL-MAP STRIP (`design/zoom-video.md`
+/// §4), texel `(gx, gy)` at `r·exp(−s·gy)·(cos, sin)(s·gx)` from the view centre in units of
+/// `2^delta_exp`, with `s = 2π/W` and `W` the pass's full width. In a strip the distance estimate
+/// is over each texel's own size and the aux target carries the exact count, its fraction and the
+/// final z's angle. Only the strip module reads it (`strip.rs`, `strip.wgsl`): a request with
+/// `mode` 1 renders with that module, every other with the built-in one. See
 /// [`fractadyne_core::ExpMap`] for the geometry.
 #[repr(C)]
 #[derive(Clone, Copy, Debug, Default, PartialEq, bytemuck::Pod, bytemuck::Zeroable)]
@@ -1827,23 +1830,15 @@ pub(crate) fn fullscreen_pipeline_c(
 /// The iterate pipelines' overridable constants: `RN_BLA` compiles the renormalized step's u-space
 /// BLA in (only for a render whose request carries a tree). Off is the shader's default, so the
 /// empty map — the pipelines every other render builds — is unchanged.
-pub(crate) fn iter_constants(rn_bla: bool, strip: bool) -> &'static std::collections::HashMap<String, f64> {
+pub(crate) fn iter_constants(rn_bla: bool) -> &'static std::collections::HashMap<String, f64> {
     use std::collections::HashMap;
-    // `STRIP_MAP`: an exponential-map strip's placement, distance-estimate texel size and aux
-    // (`pixel_offset`, `texel_step_log2`, `fs_resolve`), compiled in for a strip's own pipelines
-    // only — present but never taken, it cost every other render 1-2% (both of PLUTO's cards).
-    static SETS: [std::sync::OnceLock<HashMap<String, f64>>; 4] =
-        [const { std::sync::OnceLock::new() }; 4];
-    SETS[usize::from(rn_bla) | usize::from(strip) << 1].get_or_init(|| {
-        let mut m = HashMap::new();
-        if rn_bla {
-            m.insert("RN_BLA".to_string(), 1.0);
-        }
-        if strip {
-            m.insert("STRIP_MAP".to_string(), 1.0);
-        }
-        m
-    })
+    static ON: std::sync::OnceLock<HashMap<String, f64>> = std::sync::OnceLock::new();
+    static OFF: std::sync::OnceLock<HashMap<String, f64>> = std::sync::OnceLock::new();
+    if rn_bla {
+        ON.get_or_init(|| HashMap::from([("RN_BLA".to_string(), 1.0)]))
+    } else {
+        OFF.get_or_init(HashMap::new)
+    }
 }
 
 /// [`fullscreen_pipeline`] with its own vertex stage (`vs_split_tiles`: a split refresh's tiles).
@@ -1856,7 +1851,7 @@ pub(crate) fn raster_pipeline(
     formats: &[wgpu::TextureFormat],
     label: &str,
 ) -> wgpu::RenderPipeline {
-    raster_pipeline_c(device, shader, layout, vs_entry, fs_entry, formats, label, iter_constants(false, false))
+    raster_pipeline_c(device, shader, layout, vs_entry, fs_entry, formats, label, iter_constants(false))
 }
 
 /// [`raster_pipeline`] with its fragment stage specialized by `constants`.

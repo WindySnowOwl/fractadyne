@@ -862,7 +862,6 @@ impl Packer {
         state_bgl: &wgpu::BindGroupLayout,
         tile_size: [u32; 2],
         rn_bla: bool,
-        strip: bool,
     ) -> Self {
         let storage = |binding, read_only| wgpu::BindGroupLayoutEntry {
             binding,
@@ -899,7 +898,7 @@ impl Packer {
         let formats = [ITER_FORMAT; 4];
         let pass_pipeline = crate::fullscreen_pipeline_c(
             device, shader, &layout, "fs_iterate_chunk_fe_packed", &formats, "export.pack_pass",
-            crate::iter_constants(rn_bla, strip),
+            crate::iter_constants(rn_bla),
         );
         let gather_pipeline =
             fullscreen_pipeline(device, shader, &layout, "fs_pack_gather", &formats, "export.pack_gather");
@@ -1127,7 +1126,6 @@ impl TileChunker {
         max_size: [u32; 2],
         steps: bool,
         rn_bla: bool,
-        strip: bool,
     ) -> Self {
         let targets: usize = if fe { 4 } else { 3 };
         let state_bgl = crate::state_bind_group_layout_n(device, targets as u32);
@@ -1144,12 +1142,11 @@ impl TileChunker {
             if fe { "fs_iterate_chunk_fe" } else { "fs_iterate_chunk" },
             &chunk_formats[..targets],
             "export.tilechunk_pipeline",
-            crate::iter_constants(rn_bla, strip),
+            crate::iter_constants(rn_bla),
         );
-        // A strip's resolve writes its count, fraction and angle (`STRIP_MAP`, `strip_aux`).
-        let resolve_pipeline = crate::fullscreen_pipeline_c(
+        let resolve_pipeline = fullscreen_pipeline(
             device, shader, &layout, "fs_resolve", &[ITER_FORMAT, ITER_FORMAT],
-            "export.tilechunk_resolve", crate::iter_constants(false, strip),
+            "export.tilechunk_resolve",
         );
         let state = [
             crate::make_state_textures(device, max_size, targets),
@@ -1163,7 +1160,7 @@ impl TileChunker {
             && steps
             && crate::tile_pack_on()
             && max_size[0] as u64 * max_size[1] as u64 <= PACK_MAX_TILE_AREA)
-            .then(|| Packer::new(device, shader, iter_bgl, &state_bgl, max_size, rn_bla, strip));
+            .then(|| Packer::new(device, shader, iter_bgl, &state_bgl, max_size, rn_bla));
         Self { chunk_pipeline, resolve_pipeline, state, state_bg, pack }
     }
 
@@ -1618,7 +1615,7 @@ impl<'a> TileRenderer<'a> {
         // tree — the single-pass control included, so the two agree as they do without one.
         let iter_pipeline = crate::fullscreen_pipeline_c(
             device, &shader, &iter_layout, "fs_iterate", &[ITER_FORMAT, ITER_FORMAT],
-            "export.iter_pipeline", crate::iter_constants(plan.rn_bla, false),
+            "export.iter_pipeline", crate::iter_constants(plan.rn_bla),
         );
         let color_pipeline = fullscreen_pipeline(
             device, &shader, &color_layout, "fs_color", &[EXPORT_FORMAT], "export.color_pipeline",
@@ -1646,7 +1643,7 @@ impl<'a> TileRenderer<'a> {
         // in up to 64 times per render, where that setup was measured at ~7 s (bench scene 04,
         // 14.3 s -> 21.7 s).
         let chunker: Option<TileChunker> = if plan.chunk_scope {
-            Some(TileChunker::new(device, &shader, &iter_bgl, plan.fe, plan.state_size, plan.occupancy, plan.rn_bla, false))
+            Some(TileChunker::new(device, &shader, &iter_bgl, plan.fe, plan.state_size, plan.occupancy, plan.rn_bla))
         } else {
             None
         };
@@ -2476,7 +2473,16 @@ impl IterScaffold {
 
     /// For a custom formula's module (`None` = the fixed one).
     fn new_for(device: &wgpu::Device, custom: Option<&crate::custom::CustomShader>) -> Self {
-        let shader = crate::shader_module_for(device, custom);
+        Self::from_shader(device, crate::shader_module_for(device, custom))
+    }
+
+    /// For an exponential-map strip: the strip module ([`crate::strip`]), which every pipeline of a
+    /// strip's render — its chunk passes, packed passes and resolve — is built from.
+    fn new_strip(device: &wgpu::Device) -> Self {
+        Self::from_shader(device, crate::strip::module(device))
+    }
+
+    fn from_shader(device: &wgpu::Device, shader: wgpu::ShaderModule) -> Self {
         let iter_bgl = iter_bind_group_layout(device);
         let iter_layout = device.create_pipeline_layout(&wgpu::PipelineLayoutDescriptor {
             label: Some("itertiled.layout"),
@@ -2537,10 +2543,11 @@ pub fn render_iter_tiled(
     // agree bit for bit. Not for the corrector's ROI passes, whose wanted pixels are scattered and
     // whose tile size was measured on its own (the note above).
     let occupancy = chunk_scope && req.mode == 2 && roi.is_none() && crate::tile_occupancy_on();
-    // An exponential-map STRIP reads its aux target back too, and chunks from its FIRST tile:
-    // the lazy chunker below could otherwise leave a strip's first tiles on `fs_iterate`, whose
-    // arithmetic is not the chunk path's bit for bit (`tiles_chunked`), and a seam would follow
-    // wherever the switch happened.
+    // An exponential-map STRIP renders with the strip module ([`crate::strip`]: every pipeline below,
+    // the chunk passes and the resolve included), reads its aux target back too, and chunks from
+    // its FIRST tile: the lazy chunker below could otherwise leave a strip's first tiles on
+    // `fs_iterate`, whose arithmetic is not the chunk path's bit for bit (`tiles_chunked`), and
+    // only the chunked resolve writes a strip's count, fraction and angle.
     let strip = req.map.mode != 0;
     let tile_work = if occupancy { occupancy_tile(by_work, 1) } else { by_work };
     let tile = by_tex
@@ -2554,10 +2561,14 @@ pub fn render_iter_tiled(
     // private one — same shader/layout/pipeline either way, so output is byte-identical. A caller's
     // scaffold holds the FIXED module, so a custom formula always builds its own.
     let local_scaffold;
-    let sc = match scaffold.filter(|_| req.custom.is_none()) {
+    let sc = match scaffold.filter(|_| req.custom.is_none() && !strip) {
         Some(s) => s,
         None => {
-            local_scaffold = IterScaffold::new_for(device, req.custom.as_deref());
+            local_scaffold = if strip {
+                IterScaffold::new_strip(device)
+            } else {
+                IterScaffold::new_for(device, req.custom.as_deref())
+            };
             &local_scaffold
         }
     };
@@ -2751,7 +2762,7 @@ pub fn render_iter_tiled(
                 chunker =
                     Some(TileChunker::new(
                         device, shader, iter_bgl, req.mode == 2, state_size, occupancy,
-                        occupancy && req.rn_bla_k() > 0, strip,
+                        occupancy && req.rn_bla_k() > 0,
                     ));
             }
             // Chunked tiles iterate BEFORE the main encoder, one polled submission per window;

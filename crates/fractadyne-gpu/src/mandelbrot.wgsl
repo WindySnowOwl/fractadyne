@@ -484,99 +484,16 @@ fn fe_mul_c(a: Fe, zr: f32, zi: f32) -> Fe {
     return fe_norm(cset(re, im), a.e);
 }
 // log2 of the distance estimate in *pixels*: de = |z|·ln|z| / |dz/dc|, then / step.
-//   |D| = sqrt(dmag2)·2^dexp ;  `steplog` = log2 of the texel's side (`texel_step_log2`).
+//   |D| = sqrt(dmag2)·2^dexp ;  pixel step = |iu.step.x|·2^iu.delta_exp.
 // Returned as a log so the color pass can build animated distance contours cheaply.
-fn de_log2(z2: f32, dmag2: f32, dexp: f32, steplog: f32) -> f32 {
+fn de_log2(z2: f32, dmag2: f32, dexp: f32) -> f32 {
     let zm = sqrt(max(z2, 1.0));
     let num = zm * log(zm); // |z|·ln|z|
     let dlog2 = 0.5 * log2(max(dmag2, 1.0e-30)) + dexp;
+    // @@STRIP_STEPLOG_BEGIN — a strip's module puts each texel's own size here (`strip.rs`).
+    let steplog = log2(max(abs(iu.step.x), 1.0e-30)) + f32(iu.delta_exp);
+    // @@STRIP_STEPLOG_END
     return log2(max(num, 1.0e-30)) - dlog2 - steplog;
-}
-
-// ---------------- where a texel is (the affine grid, or an exponential-map strip) ----------------
-const MAP_STRIP: u32 = 1u;
-// Strips are compiled in only for a strip's own pipelines (`iter_constants` in lib.rs): present but
-// never taken, this code cost every other render 1-2% (37 of 43 bench-matrix segments slower on
-// both of PLUTO's cards, 2026-10-27), and compiled out, the pipelines are the affine grid's alone.
-override STRIP_MAP: bool = false;
-
-// A texel's offset from the view centre, as df32 mantissas scaled by 2^-delta_exp. (gx, gy) is the
-// texel's position in the FULL grid: integer + 0.5 at its centre, plus any SSAA jitter.
-//
-// The affine grid: `step × (gx − w/2, h/2 − gy)`.
-//
-// A STRIP (`map_mode` 1, `design/zoom-video.md` §3-4; `fractadyne_core::ExpMap` is the CPU side):
-// column gx is the angle `2π·gx/W` anticlockwise from the positive real axis, row gy the radius
-// `map_r·exp(−map_s·gy)`, `map_s = 2π/W`, row 0 outermost. The offset is formed in f32: a strip
-// texel is ~1e-3 of its radius, so f32's 6e-8 places a sample to ~1e-4 of a texel — it moves the
-// sample, never the arithmetic that follows from it.
-struct PixOff {
-    re: vec2<f32>,
-    im: vec2<f32>,
-}
-fn pixel_offset(gx: f32, gy: f32) -> PixOff {
-    if (STRIP_MAP && iu.map_mode == MAP_STRIP) {
-        let r = iu.map_r * exp(-iu.map_s * gy);
-        let cs = cos_sin_turns(gx / iu.res.x);
-        return PixOff(vec2<f32>(r * cs.x, 0.0), vec2<f32>(r * cs.y, 0.0));
-    }
-    let coord_re = gx - iu.res.x * 0.5;
-    let coord_im = iu.res.y * 0.5 - gy;
-    return PixOff(df_mul_f32(iu.step.xy, coord_re), df_mul_f32(iu.step.zw, coord_im));
-}
-
-// log2 of a texel's side in the plane, for the distance estimate: the frame's step on the affine
-// grid; in a strip, the texel's own size `r·map_s`, which halves every `W·ln2/2π` rows.
-fn texel_step_log2(gy: f32) -> f32 {
-    if (STRIP_MAP && iu.map_mode == MAP_STRIP) {
-        return log2(iu.map_r * iu.map_s) - iu.map_s * gy * 1.4426950 + f32(iu.delta_exp);
-    }
-    return log2(max(abs(iu.step.x), 1.0e-30)) + f32(iu.delta_exp);
-}
-
-// (cos, sin) of `t` turns, to ~1e-7. ⚠Not the built-in cos/sin: WGSL promises those only to 2^-11
-// absolute, which on a 6,921-texel strip could move a sample by half a texel. The angle is reduced
-// to the nearest quarter turn EXACTLY (in turns, before any π: `4t` and its rounding are exact), so
-// the polynomials see |x| ≤ π/4, where the cos series to x⁸ and the sin series to x⁹ are good to
-// 3e-8.
-fn cos_sin_turns(t: f32) -> vec2<f32> {
-    let u = t - floor(t);
-    let q = u * 4.0;
-    let qi = floor(q + 0.5);
-    let x = (q - qi) * 1.5707963;
-    let x2 = x * x;
-    let c = 1.0 + x2 * (-0.5 + x2 * (0.041666668 + x2 * (-0.0013888889 + x2 * 0.0000248016)));
-    let s = x * (1.0 + x2 * (-0.16666667 + x2 * (0.008333334 + x2 * (-0.00019841270 + x2 * 0.0000027557319))));
-    switch (u32(qi) & 3u) {
-        case 1u: { return vec2<f32>(-s, c); }
-        case 2u: { return vec2<f32>(-c, -s); }
-        case 3u: { return vec2<f32>(s, -c); }
-        default: { return vec2<f32>(c, s); }
-    }
-}
-
-// A strip's aux target (`map_mode` 1), replacing the colouring statistics: the EXACT iteration
-// count as two small integers (as the chunk state keeps it, `info_pack`: a u32 bitcast could be
-// flushed as a denormal), the smooth count's fraction `1 − nu`, and the final z's angle in turns —
-// zoomasm's N, NF and T (`design/zoom-video.md` §5.1). The main target keeps the smooth count as
-// one f32 as everywhere, which past ~2^20 iterations has lost most of its fraction.
-//
-// ⛔Written by `fs_resolve` ONLY: a strip always renders on the chunked path. The same branch at
-// `iterate_at`'s escapes — never taken outside a strip — changed how the compiler rounded the
-// smooth count there by one ulp, and `fs_iterate` stopped matching the chunked render bit for bit
-// (the selftest's `iter-chunk` group: 46 checks red, every mode).
-fn strip_aux(iter: u32, frac: f32, zf: vec2<f32>) -> vec4<f32> {
-    return vec4<f32>(f32(iter >> 12u), f32(iter & 4095u), frac, atan2(zf.y, zf.x) * 0.15915494 + 0.5);
-}
-
-// The escape-time power of the built-in formula, as the chunk passes choose it (for `fs_resolve`,
-// which recomputes a strip's fraction from the stored z).
-fn chunk_power() -> f32 {
-    if (iu.formula == 1u) { return 3.0; }
-    if (iu.formula == 2u) { return 4.0; }
-    if (iu.formula == 3u) { return 5.0; }
-    if (fam_holo(iu.formula)) { return f32(fam_power(iu.formula)); }
-    return 2.0;
 }
 
 // Derivative factor f'(z) = p·z^(p-1) for the holomorphic families (0..3), plain f32.
@@ -819,10 +736,10 @@ struct IterU {
     // field moved.
     norm_base: f32,
     rn_pad3: u32,
-    // EXPONENTIAL-MAP STRIPS (`design/zoom-video.md` §4; `StripMap` in lib.rs): `map_mode` 1 places
-    // texel (gx, gy) at `map_r·exp(−map_s·gy)·(cos, sin)(map_s·gx)` from the centre, in units of
-    // 2^delta_exp (`pixel_offset`); 0 = the affine grid every other render uses. A row of its own
-    // after the renormalized step's, so no field moved.
+    // EXPONENTIAL-MAP STRIPS (`design/zoom-video.md` §4; `StripMap` in lib.rs): read only by a strip's
+    // own module (`strip.rs`, which splices `strip.wgsl` into the STRIP_* slots below): `map_s` = 2π/W,
+    // `map_r` = the strip's outer radius over 2^delta_exp; `map_mode` 1 marks a strip. A row of its
+    // own after the renormalized step's, so no field moved.
     map_mode: u32,
     map_s: f32,
     map_r: f32,
@@ -1325,11 +1242,16 @@ const GLITCH_SENTINEL: vec4<f32> = vec4<f32>(-2.0, 0.0, 0.0, 1.0e30);
 // every one of its pipelines is built against a group-0-only layout, the live view included.
 fn iterate_at(gx: f32, gy: f32) -> FragOut {
     // Pixel offset from the view center, from the *exact integer* texel coordinate
-    // (the texel center = integer + 0.5, exact in f32 up to 2^24): the affine grid's df32 step, or
-    // a strip's polar placement (`pixel_offset`).
-    let po = pixel_offset(gx, gy);
-    let off_re = po.re;
-    let off_im = po.im;
+    // (the texel center = integer + 0.5, exact in f32 up to 2^24) times
+    // the df32 per-texel step.
+    // @@STRIP_AT_BEGIN — a strip's module places the texel on its polar grid here (`strip.rs`).
+    let step_re = iu.step.xy;
+    let step_im = iu.step.zw;
+    let coord_re = gx - iu.res.x * 0.5;
+    let coord_im = iu.res.y * 0.5 - gy;
+    let off_re = df_mul_f32(step_re, coord_re);
+    let off_im = df_mul_f32(step_im, coord_im);
+    // @@STRIP_AT_END
 
     let bail2 = bail2_of(iu.formula);
     var iter: u32 = 0u;  // true iteration count
@@ -1498,7 +1420,7 @@ fn iterate_at(gx: f32, gy: f32) -> FragOut {
         var de = 1.0e30;
         if (iu.formula <= 3u || iu.formula == 8u || fam_holo(iu.formula)) {
             nrm = slope_normal(zf, vec2<f32>(dz.re.x, dz.im.x));
-            de = de_log2(mag2, dz.re.x * dz.re.x + dz.im.x * dz.im.x, 0.0, texel_step_log2(gy));
+            de = de_log2(mag2, dz.re.x * dz.re.x + dz.im.x * dz.im.x, 0.0);
         }
         let aux_out = select(AUX_NONE, aux_pack(aux, fract(smit), zf), (iu.aux_on & 1u) == 1u);
         esc_range_commit(smit);
@@ -1968,7 +1890,7 @@ fn iterate_at(gx: f32, gy: f32) -> FragOut {
         var de = 1.0e30;
         if (iu.formula <= 3u || iu.formula == 8u || fam_holo(iu.formula)) {
             nrm = slope_normal(zf, vec2<f32>(D.m.re.x, D.m.im.x));
-            de = de_log2(mag2, D.m.re.x * D.m.re.x + D.m.im.x * D.m.im.x, f32(D.e), texel_step_log2(gy));
+            de = de_log2(mag2, D.m.re.x * D.m.re.x + D.m.im.x * D.m.im.x, f32(D.e));
         }
         let aux_out = select(AUX_NONE, aux_pack(aux, fract(smit), zf), (iu.aux_on & 1u) == 1u);
         esc_range_commit(smit);
@@ -2167,7 +2089,7 @@ fn iterate_at(gx: f32, gy: f32) -> FragOut {
         var de = 1.0e30;
         if (iu.formula <= 3u || iu.formula == 8u || fam_holo(iu.formula)) {
             nrm = slope_normal(zf, vec2<f32>(D.m.re.x, D.m.im.x));
-            de = de_log2(mag2, D.m.re.x * D.m.re.x + D.m.im.x * D.m.im.x, f32(D.e), texel_step_log2(gy));
+            de = de_log2(mag2, D.m.re.x * D.m.re.x + D.m.im.x * D.m.im.x, f32(D.e));
         }
         let aux_out = select(AUX_NONE, aux_pack(aux, fract(smit), zf), (iu.aux_on & 1u) == 1u);
         esc_range_commit(smit);
@@ -2335,11 +2257,16 @@ fn info_pack(iter: u32, status: f32, ch2: f32, dexp: f32) -> vec4<f32> {
 @fragment
 fn fs_iterate_chunk(in: VsOut) -> ChunkOut {
     // Pixel coordinate mapping — identical to fs_iterate's prologue.
+    // @@STRIP_CHUNK_BEGIN
+    let step_re = iu.step.xy;
+    let step_im = iu.step.zw;
     let gx = iu.px_offset.x + in.pos.x;
     let gy = iu.px_offset.y + in.pos.y;
-    let po = pixel_offset(gx, gy);
-    let off_re = po.re;
-    let off_im = po.im;
+    let coord_re = gx - iu.res.x * 0.5;
+    let coord_im = iu.res.y * 0.5 - gy;
+    let off_re = df_mul_f32(step_re, coord_re);
+    let off_im = df_mul_f32(step_im, coord_im);
+    // @@STRIP_CHUNK_END
 
     let bail2 = bail2_of(iu.formula);
     let zero = vec2<f32>(0.0, 0.0);
@@ -2692,11 +2619,16 @@ fn fs_iterate_chunk(in: VsOut) -> ChunkOut {
 fn chunk_fe_at(pos: vec2<f32>, p: vec2<i32>) -> ChunkOut4 {
     chunk_slot = NO_SLOT;
     // Pixel coordinate mapping — identical to fs_iterate's prologue.
+    // @@STRIP_FE_BEGIN
+    let step_re = iu.step.xy;
+    let step_im = iu.step.zw;
     let gx = iu.px_offset.x + pos.x;
     let gy = iu.px_offset.y + pos.y;
-    let po = pixel_offset(gx, gy);
-    let off_re = po.re;
-    let off_im = po.im;
+    let coord_re = gx - iu.res.x * 0.5;
+    let coord_im = iu.res.y * 0.5 - gy;
+    let off_re = df_mul_f32(step_re, coord_re);
+    let off_im = df_mul_f32(step_im, coord_im);
+    // @@STRIP_FE_END
 
     let bail2 = bail2_of(iu.formula);
     let stop = min(iu.end_iter, iu.max_iter);
@@ -3290,10 +3222,12 @@ fn fs_resolve(in: VsOut) -> FragOut {
     let zf = vec2<f32>(sz.x, sz.z);
     let d = vec2<f32>(sdz.x, sdz.z);
     let mag2 = dot(zf, zf);
+    // @@STRIP_RESOLVE_AT_BEGIN — a strip's module sizes this texel for its distance estimate here.
+    // @@STRIP_RESOLVE_AT_END
     // @@CUSTOM_RESOLVE_DE_BEGIN — a custom module has no derivative (st_dz carries z_{n-1}), so
     // it writes fs_iterate's no-DE values here instead.
     let nrm = slope_normal(zf, d);
-    let de = de_log2(mag2, d.x * d.x + d.y * d.y, sm.w, texel_step_log2(iu.px_offset.y + in.pos.y));
+    let de = de_log2(mag2, d.x * d.x + d.y * d.y, sm.w);
     // @@CUSTOM_RESOLVE_DE_END
     // ⭐⭐WHOLE-FRAME ESCAPE RANGE FOR LIVE AUTO-NORMALIZATION. The iterate passes commit the range
     // at each pixel's SETTLE TRANSITION, which on a chunked walk means only the pixels that
@@ -3350,14 +3284,9 @@ fn fs_resolve(in: VsOut) -> FragOut {
             }
         }
     }
-    // A strip's N/NF/T (`strip_aux`): the exact count from the state, the fraction recomputed from the
-    // stored z exactly as the chunk pass computed it.
-    var aux_out = AUX_NONE;
-    if (STRIP_MAP && iu.map_mode == MAP_STRIP) {
-        let nu = log(log(mag2) * 0.5 / log(2.0)) / log(chunk_power());
-        aux_out = strip_aux(info_iter(sm), 1.0 - nu, zf);
-    }
-    return FragOut(vec4<f32>(sm.z, nrm.x, nrm.y, de), aux_out);
+    // @@STRIP_RESOLVE_OUT_BEGIN — a strip's module writes its count, fraction and angle here.
+    return FragOut(vec4<f32>(sm.z, nrm.x, nrm.y, de), AUX_NONE);
+    // @@STRIP_RESOLVE_OUT_END
 }
 
 // ---------------- coloring pass (samples the iteration texture) ----------------
