@@ -245,7 +245,9 @@ pub(crate) struct RecomputeResult {
 /// A cached reference the worker may EXTEND instead of rebuilding from scratch: the prior orbit's
 /// point, df32 samples, full-precision tail, and the precision it was built at. Supplied by
 /// `build_params` when the current recompute is a deeper zoom at a still-in-view reference, and
-/// by the on-disk orbit cache (`refcache_persist`) for a location visited in an earlier session.
+/// by the on-disk orbit cache (`refcache_persist`) for a location visited in an earlier session,
+/// and by `--render-expmap`, whose strips all share the dive's one reference.
+#[derive(Clone)]
 pub(crate) struct ReuseRef {
     pub(crate) point: [fractadyne_core::BigFloat; 2],
     pub(crate) prefix: std::sync::Arc<Vec<[f32; 4]>>,
@@ -466,6 +468,33 @@ pub(crate) struct RecomputeInputs {
     /// in-flight reactive build landed 2,008,236 samples on top of it and threw it away. See
     /// `install_recompute`, which drops exactly that: older stamp AND shorter orbit.
     spawn_orbit_id: u64,
+}
+
+impl RecomputeInputs {
+    /// Hand the worker `r` to reuse — extend, or take as it is — instead of picking and building
+    /// afresh. `try_reuse_reference` still checks its precision and its drift against this view,
+    /// and a reference that fails either is replaced by a fresh pick.
+    pub(crate) fn with_reuse(mut self, r: ReuseRef) -> Self {
+        self.reuse = Some(r);
+        self
+    }
+}
+
+impl RecomputeResult {
+    /// This reference, for another view's build to reuse (`None` when it kept no tail to extend).
+    pub(crate) fn reuse_ref(&self) -> Option<ReuseRef> {
+        self.orbit_tail.clone().map(|tail| ReuseRef {
+            point: self.rp.clone(),
+            prefix: self.orbit.clone(),
+            tail,
+            prec: self.prec,
+        })
+    }
+
+    /// Whether this result reused a reference rather than picking and building one.
+    pub(crate) fn was_reused(&self) -> bool {
+        self.reused
+    }
 }
 
 /// Aux coloring aggregates for the BLA tree, derived from a reference orbit. Triangle-inequality
@@ -1030,7 +1059,7 @@ fn wait_reference_watching(
 /// Build `inputs`' reference on a worker thread and wait for it ([`wait_reference_watching`],
 /// with `watch`, the same request). The worker's own lookup has just looked in the cache, so the
 /// first look here is a [`WATCH_EVERY`] later.
-fn build_reference_watching(name: &'static str, inputs: RecomputeInputs, watch: Option<RecomputeInputs>) -> RecomputeResult {
+pub(crate) fn build_reference_watching(name: &'static str, inputs: RecomputeInputs, watch: Option<RecomputeInputs>) -> RecomputeResult {
     let known = cache_best(&inputs);
     let (tx, rx) = std::sync::mpsc::channel();
     spawn_named(name, move || {
@@ -1131,6 +1160,7 @@ impl FractadyneApp {
         if crate::tunables::cost().early_ref != 1
             || !rc.run
             || rc.iter_mode
+            || rc.expmap.is_some()
             || rc.audit.is_some()
             || rc.tour.is_some()
             || self.dual
@@ -4153,6 +4183,7 @@ impl FractadyneApp {
             sa_c_exp: sa.c_exp,
             rn: renorm_uniform(rn.as_ref()),
             rn_bla,
+            map: fractadyne_gpu::StripMap::default(), // the affine grid; `--render-expmap` sets a strip
             julia_c,
             orbit,
             orbit_len,
@@ -4237,6 +4268,7 @@ pub(crate) fn params_to_request(p: &fractadyne_gpu::MandelbrotParams) -> fractad
         sa_c_exp: p.sa_c_exp,
         rn: p.rn,
         rn_bla: p.rn_bla.clone(),
+        map: fractadyne_gpu::StripMap::default(),
         julia_c: p.julia_c,
         orbit: p.orbit.clone(),
         orbit_len: p.orbit_len,

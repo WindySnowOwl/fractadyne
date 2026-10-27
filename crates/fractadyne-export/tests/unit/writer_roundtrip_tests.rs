@@ -267,3 +267,41 @@ fn corrupt_input_is_an_error_not_a_panic() {
     assert!(read_exr_rgba_f32(&q).is_err());
     assert!(read_exr_metadata(&q).is_err());
 }
+
+/// The exponential-map strip writer (`--render-expmap`): named data channels round-trip EXACTLY —
+/// a `uint32` escape count past what an f32 holds, the capped sentinel, floats verbatim — the
+/// metadata survives, and the write is atomic (no partial file is left beside the strip). Until
+/// this test the writer had never run on Windows, where its first flush reopened the partial file
+/// read-only and every strip failed with "Access is denied".
+#[test]
+fn data_channels_roundtrip_exactly_and_leave_no_partial_file() {
+    let t = Tmp::new("channels");
+    let (w, h) = (5u32, 3u32);
+    let n: Vec<u32> = (0..w * h).map(|i| if i == 0 { u32::MAX } else { 123_456_789 + i }).collect();
+    let f: Vec<f32> = (0..w * h).map(|i| -2.5 + i as f32 * 0.03125).collect();
+    let p = t.path("strip_000007.exr");
+    write_exr_channels(
+        &p,
+        w,
+        h,
+        vec![
+            ExrChannel { name: "N", data: ExrChannelData::U32(n.clone()) },
+            ExrChannel { name: "NF", data: ExrChannelData::F32(f.clone()) },
+        ],
+        Some("expmap_strip=7\nmax_iter=9056\n"),
+    )
+    .expect("write");
+    assert!(!partial_path(&p).exists(), "the partial file was left beside the strip");
+    let (rw, rh, rn) = read_exr_channel_u32(&p, "N").expect("read N");
+    assert_eq!((rw, rh), (w, h));
+    assert_eq!(rn, n, "uint32 counts changed in the round trip");
+    let (_, _, rf) = read_exr_channel_f32(&p, "NF").expect("read NF");
+    assert_eq!(rf, f, "floats changed in the round trip");
+    assert!(read_exr_channel_u32(&p, "NF").is_err(), "a float channel read as uint32");
+    assert_eq!(read_exr_metadata(&p).expect("meta").as_deref(), Some("expmap_strip=7\nmax_iter=9056\n"));
+    // A channel of the wrong length is refused and writes nothing.
+    let q = t.path("short.exr");
+    let short = vec![ExrChannel { name: "N", data: ExrChannelData::U32(vec![1, 2]) }];
+    assert!(write_exr_channels(&q, w, h, short, None).is_err());
+    assert!(!q.exists() && !partial_path(&q).exists());
+}

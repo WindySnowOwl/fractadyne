@@ -1,6 +1,7 @@
 # Zoom videos from exponential maps — design
 
-Status: **design (2026-10-19). Nothing built.** Line references are to `main` at `cc43741f`.
+Status: **design (2026-10-19); decisions taken 2026-10-27 (§9); E0 in progress.** Line
+references are to `main` at `cc43741f`.
 
 This covers two things a deep-zoom video maker would use, in the order they should be built:
 
@@ -261,7 +262,64 @@ coloured strip. Two things need care:
 
 E0 + E1 alone deliver the zoomasm workflow; E2 is where Fractadyne stops needing zoomasm.
 
+### 8.1 E0 as built (2026-10-27, branch `feat/zoom-video`): every gate passed
+
+- **Geometry:** `fractadyne_core::ExpMap` (`core/src/expmap.rs`), §3 exactly; overlap 1 row (rows =
+  ⌈W·ln2/2π⌉ + 1). Texel offsets are exact at any depth (the octave count is an integer exponent).
+- **Renderer: a module of its own.** The affine mapping is written out in more places than the note
+  knew (`iterate_at`, `fs_iterate_chunk`, `chunk_fe_at`, and a copy in the custom module), and
+  `fs_resolve` needs the texel's size for its distance estimate. `mandelbrot.wgsl` marks six
+  STRIP_* slots (the three prologues, `de_log2`'s texel size, `fs_resolve`'s texel size and
+  output); `strip.rs` fills them with calls into `strip.wgsl` for a strip's own pipelines, and
+  every other pipeline compiles `mandelbrot.wgsl` as it is — main's text plus the uniform row and
+  the slots' comments. ⛔Measured on the way: (1) the strip branch at `iterate_at`'s escapes, never
+  taken, moved the single pass's smooth count by an ulp and broke the chunked-equals-single-pass
+  gate (46 selftest checks); (2) one shared `pixel_offset` with a runtime branch cost every render
+  1-2% (dev.51 against main: 37/43 bench-matrix segments slower on both of PLUTO's cards); (3) so
+  did the same code with the branch compiled out by an `override` (dev.52: 38/43 and 32/43), while
+  an A/A control of main against itself read 24/43 and 16/43. With strips in a module of their own
+  (dev.54) the gate passes: 17/43 slower on the RTX 3070 (sign test p 0.22, run totals within
+  0.7%) and 9/43 on the RX 6800 XT (about 1% FASTER), every algorithm signature identical; 5
+  interleaved runs a build a card, PLUTO, 2026-10-27. The angle uses the strip module's own
+  cos/sin (WGSL's built-ins are promised only to 2^-11, half a strip texel). In a strip the AUX
+  target carries N (as `iter>>12`, `iter&4095`), NF = 1−nu and T, written by the chunked path's
+  `fs_resolve` only; a strip always chunks from its first tile.
+- **The raw strip:** `strip_NNNNNN.exr` with channels `N` (uint32; 0xFFFFFFFF capped, 0 glitched),
+  `NF`, `T`, `DE` (log2 texels of the strip), `NX`, `NY`, PIZ, written atomically; `expmap.json`
+  (the dive's identity, which a rerun must match; strips present are kept). NF is `1 − nu` with the
+  renderer's bailout of 256, so it lies around −2 to −3, not in [0, 1): E1 converts.
+- **Reference, SA, BLA:** each strip renders as an export of a VIEW sized to the strip's disk (its
+  half diagonal is the strip's outer radius), so the pick, the series radius and the BLA radius
+  follow without new code. ⭐ONE orbit for the whole dive: built for its deepest strip, at that
+  strip's cap and precision, and handed to every strip as a `ReuseRef`; each strip works out only its
+  own series (the walk is recorded once and replayed, `set_sa_trace_cache`) and BLA. A 130-octave
+  dive at 320×180 (corpus 07's point): 22.6 s with a reference per strip, 17.7 s with one; the
+  strips differ at 4.4% of texels, and the oracle judges strip 17 equally right both ways (37 and
+  36 of 48 exact, 0 wrong — the rest are texels where the oracle itself does not settle, ~1/4 of
+  this point's). The selftest's `expmap` group renders its perturbation strips on a reference built
+  four strips deeper and requires that the reuse happened.
+- **Caps:** `--expmap-cap rising` (default) = the app's depth rule at each strip's inner edge, never
+  falling; `fixed` = the deepest strip's (or `--iter`'s N).
+- **The gate that replaced "strip = gather render":** the selftest's `expmap` group compares a strip
+  in each arithmetic mode with the arbitrary-precision oracle at the points the CPU geometry gives,
+  with a quarter-turn control and a ±1e-3-texel stencil for points where the oracle itself does not
+  settle — independent of the renderer, where a gather pass would share its `iterate_at`.
+  Mutation-checked. Frames rebuilt from strips by nearest texel matched flat renders of the same
+  frames (a scratch tool; LOOKED at).
+- **Not yet:** Julia, custom formulas, the other escape-time families (refused with a message).
+
 ## 9. Decisions for you
+
+**Decided 2026-10-27 (the user):**
+
+1. **Order: as recommended.** E0 → E1 (strips zoomasm can assemble) first, then E2.
+2. **The non-goal is retired** (`TODO.md`, the M6 non-goals line).
+3. **Audio: none in the app for now.** The user adds audio to the finished video with their own
+   tools; E2's `-i audio … -shortest` mux is out of scope until asked for.
+4. **Iteration cap: both, as an option; the default is the rising (non-decreasing per-strip) cap.**
+   One cap for the whole dive stays available for a dive where a step in the cap shows.
+
+The questions as they were put:
 
 1. **Order.** Recommended: E0 → E1 first (small, immediately useful to zoomasm users, and F3 and
    zoomasm give outside validation of the geometry), then E2. Alternative: E0 → E2, skipping KF

@@ -611,7 +611,7 @@ impl FractadyneApp {
             "consistency", "counters", "iter-budget", "iter-chunk", "renorm", "live-split", "worker", "nr-zoom", "coords",
             "curated-poi", "ref-pick", "ref-reuse", "ref-overlap", "orbit-cache", "script", "metadata",
             "display", "catalog", "goldens", "bench-matrix", "live-res", "appearance",
-            "checklist", "replay", "settings-quarantine",
+            "checklist", "replay", "settings-quarantine", "expmap",
         ];
         if self.selftest.list {
             println!("selftest groups (use with --selftest-filter <substr>):");
@@ -7714,6 +7714,61 @@ impl FractadyneApp {
                             smaller budget above it",
                 pass: floor_ok && logged && control_ok,
             });
+        }
+
+        // ⭐EXPONENTIAL-MAP STRIPS (`design/zoom-video.md` §7, phase E0's gate; `harness/expmap_check`):
+        // a strip's texels against the arbitrary-precision oracle at the points the CPU geometry
+        // puts them, in each arithmetic mode a strip renders in, with a quarter-turn control.
+        if want("expmap") {
+            let saved = (
+                self.fractal,
+                self.julia_mode,
+                self.render_cfg.max_iter,
+                self.render_cfg.auto_iter,
+                self.export.width,
+            );
+            self.fractal = crate::fractal::FractalKind::Mandelbrot;
+            self.julia_mode = false;
+            // (regime, centre, strip, cap, the mode the strip must render in). Frames of 160×90 from
+            // 1×: 577-texel strips, so each strip is quick and the oracle samples a whole one.
+            let cases = [
+                ("direct", SX, SY, 6u64, 3_000u32, 1u32),
+                ("df32 perturbation", SX, SY, 40, 12_000, 0),
+                ("floatexp", CRX, CRY, 93, 30_000, 2),
+            ];
+            for (regime, cx, cy, k, cap, want_mode) in cases {
+                let got = self.expmap_strip_check(device, queue, cx, cy, (160.0, 90.0), k, cap, 48);
+                let (result, pass) = match &got {
+                    Ok(c) => (
+                        format!(
+                            "mode {}{}, {}x{}: {}/{} exact, {} sensitive, {} wrong{}; interior {}/{} agree; NF err {:.4} \
+                             [{}]; normals off {} [{}], {} deep in a boundary; control differs {}/{}; chunked {}",
+                            c.mode,
+                            if c.mode == 1 { "" } else if c.reused { " on the dive's reference" } else { " on ITS OWN reference" },
+                            c.width, c.rows, c.matched, c.sampled, c.sensitive, c.wrong.len(),
+                            if c.wrong.is_empty() { String::new() } else { format!(" ({})", c.wrong[0]) },
+                            c.interior - c.interior_wrong, c.interior, c.nf_err, c.nf_worst, c.normals_bad,
+                            c.normal_worst, c.derivative_overflow,
+                            c.control_differ, c.sampled, c.chunked_all,
+                        ),
+                        c.pass() && c.mode == want_mode,
+                    ),
+                    Err(e) => (format!("could not render: {e}"), false),
+                };
+                push_check(&mut checks, &mut last_check_t, SelfCheck {
+                    category: "Zoom video",
+                    name: format!("a {regime} strip matches the oracle where the geometry puts it"),
+                    params: format!("strip {k} of a dive into ({cx}, {cy}), 160x90 frames from 1x, cap {cap}"),
+                    result,
+                    threshold: "rendered in the named mode, a perturbation strip on the dive's reference (built 4 strips \
+                                deeper); every sampled texel's count exact and fraction within 0.05, \
+                                or its smooth count the oracle's within 1e-3 texel; at least 60% exact; interior agrees; \
+                                unit normals where the derivative is finite; every tile chunked; the quarter-turn \
+                                control differs on at least 30%",
+                    pass,
+                });
+            }
+            (self.fractal, self.julia_mode, self.render_cfg.max_iter, self.render_cfg.auto_iter, self.export.width) = saved;
         }
 
         // ⭐design/live-render-robustness.md §7.7 (W7): a relaunch after a session that did not end

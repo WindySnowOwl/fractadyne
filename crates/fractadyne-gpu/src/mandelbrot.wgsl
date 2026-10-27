@@ -490,7 +490,9 @@ fn de_log2(z2: f32, dmag2: f32, dexp: f32) -> f32 {
     let zm = sqrt(max(z2, 1.0));
     let num = zm * log(zm); // |z|·ln|z|
     let dlog2 = 0.5 * log2(max(dmag2, 1.0e-30)) + dexp;
+    // @@STRIP_STEPLOG_BEGIN — a strip's module puts each texel's own size here (`strip.rs`).
     let steplog = log2(max(abs(iu.step.x), 1.0e-30)) + f32(iu.delta_exp);
+    // @@STRIP_STEPLOG_END
     return log2(max(num, 1.0e-30)) - dlog2 - steplog;
 }
 
@@ -734,6 +736,14 @@ struct IterU {
     // field moved.
     norm_base: f32,
     rn_pad3: u32,
+    // EXPONENTIAL-MAP STRIPS (`design/zoom-video.md` §4; `StripMap` in lib.rs): read only by a strip's
+    // own module (`strip.rs`, which splices `strip.wgsl` into the STRIP_* slots below): `map_s` = 2π/W,
+    // `map_r` = the strip's outer radius over 2^delta_exp; `map_mode` 1 marks a strip. A row of its
+    // own after the renormalized step's, so no field moved.
+    map_mode: u32,
+    map_s: f32,
+    map_r: f32,
+    map_pad: u32,
 };
 @group(0) @binding(0) var<uniform> iu: IterU;
 // Reference orbit as double-single: each Z_n = (re.hi, im.hi, re.lo, im.lo). When BLA is on,
@@ -1234,12 +1244,14 @@ fn iterate_at(gx: f32, gy: f32) -> FragOut {
     // Pixel offset from the view center, from the *exact integer* texel coordinate
     // (the texel center = integer + 0.5, exact in f32 up to 2^24) times
     // the df32 per-texel step.
+    // @@STRIP_AT_BEGIN — a strip's module places the texel on its polar grid here (`strip.rs`).
     let step_re = iu.step.xy;
     let step_im = iu.step.zw;
     let coord_re = gx - iu.res.x * 0.5;
     let coord_im = iu.res.y * 0.5 - gy;
     let off_re = df_mul_f32(step_re, coord_re);
     let off_im = df_mul_f32(step_im, coord_im);
+    // @@STRIP_AT_END
 
     let bail2 = bail2_of(iu.formula);
     var iter: u32 = 0u;  // true iteration count
@@ -2245,6 +2257,7 @@ fn info_pack(iter: u32, status: f32, ch2: f32, dexp: f32) -> vec4<f32> {
 @fragment
 fn fs_iterate_chunk(in: VsOut) -> ChunkOut {
     // Pixel coordinate mapping — identical to fs_iterate's prologue.
+    // @@STRIP_CHUNK_BEGIN
     let step_re = iu.step.xy;
     let step_im = iu.step.zw;
     let gx = iu.px_offset.x + in.pos.x;
@@ -2253,6 +2266,7 @@ fn fs_iterate_chunk(in: VsOut) -> ChunkOut {
     let coord_im = iu.res.y * 0.5 - gy;
     let off_re = df_mul_f32(step_re, coord_re);
     let off_im = df_mul_f32(step_im, coord_im);
+    // @@STRIP_CHUNK_END
 
     let bail2 = bail2_of(iu.formula);
     let zero = vec2<f32>(0.0, 0.0);
@@ -2605,6 +2619,7 @@ fn fs_iterate_chunk(in: VsOut) -> ChunkOut {
 fn chunk_fe_at(pos: vec2<f32>, p: vec2<i32>) -> ChunkOut4 {
     chunk_slot = NO_SLOT;
     // Pixel coordinate mapping — identical to fs_iterate's prologue.
+    // @@STRIP_FE_BEGIN
     let step_re = iu.step.xy;
     let step_im = iu.step.zw;
     let gx = iu.px_offset.x + pos.x;
@@ -2613,6 +2628,7 @@ fn chunk_fe_at(pos: vec2<f32>, p: vec2<i32>) -> ChunkOut4 {
     let coord_im = iu.res.y * 0.5 - gy;
     let off_re = df_mul_f32(step_re, coord_re);
     let off_im = df_mul_f32(step_im, coord_im);
+    // @@STRIP_FE_END
 
     let bail2 = bail2_of(iu.formula);
     let stop = min(iu.end_iter, iu.max_iter);
@@ -3206,6 +3222,8 @@ fn fs_resolve(in: VsOut) -> FragOut {
     let zf = vec2<f32>(sz.x, sz.z);
     let d = vec2<f32>(sdz.x, sdz.z);
     let mag2 = dot(zf, zf);
+    // @@STRIP_RESOLVE_AT_BEGIN — a strip's module sizes this texel for its distance estimate here.
+    // @@STRIP_RESOLVE_AT_END
     // @@CUSTOM_RESOLVE_DE_BEGIN — a custom module has no derivative (st_dz carries z_{n-1}), so
     // it writes fs_iterate's no-DE values here instead.
     let nrm = slope_normal(zf, d);
@@ -3266,7 +3284,9 @@ fn fs_resolve(in: VsOut) -> FragOut {
             }
         }
     }
+    // @@STRIP_RESOLVE_OUT_BEGIN — a strip's module writes its count, fraction and angle here.
     return FragOut(vec4<f32>(sm.z, nrm.x, nrm.y, de), AUX_NONE);
+    // @@STRIP_RESOLVE_OUT_END
 }
 
 // ---------------- coloring pass (samples the iteration texture) ----------------

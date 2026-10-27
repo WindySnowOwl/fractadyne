@@ -235,6 +235,9 @@ pub struct ExportRequest {
     pub rn: crate::Renorm,
     /// The u-space BLA ([`fractadyne_core::renorm_bla_gpu`]) for `rn`; empty = plain u-steps.
     pub rn_bla: Arc<Vec<[f32; 4]>>,
+    /// Where the texels go: the affine grid (default), or an exponential-map strip
+    /// ([`crate::StripMap`]; `--render-expmap`).
+    pub map: crate::StripMap,
     pub julia_c: [f32; 4],
     pub orbit: Arc<Vec<[f32; 4]>>,
     pub orbit_len: u32,
@@ -408,6 +411,10 @@ pub struct ExportResult {
     /// tiles; a tile that packs twice has written its first grid back and packed again. The proof
     /// the selftest's packed-against-unpacked gate asserts. 0 = none.
     pub packs: u32,
+    /// The AUX target, `width*height*4` floats like `pixels`: read back only by
+    /// [`render_iter_tiled`] for an exponential-map strip (`req.map`), where it holds the exact
+    /// count, its fraction and the final z's angle (`StripMap`). Empty otherwise.
+    pub aux: Vec<f32>,
 }
 
 /// Render `req` offscreen and read the colored image back to the CPU. Synchronous
@@ -1779,6 +1786,7 @@ impl<'a> TileRenderer<'a> {
             gather: [0; 2],
             tail: crate::tail_word(),
             rn: req.rn_uniform(),
+            map: req.map,
         };
         queue.write_buffer(&self.iter_uniform, 0, bytemuck::bytes_of(&iu));
 
@@ -2122,6 +2130,7 @@ impl TileSum {
             tiles_total: self.tiles_total,
             tiles_chunked: self.tiles_chunked,
             packs: self.packs,
+            aux: Vec::new(),
         }
     }
 }
@@ -2464,7 +2473,16 @@ impl IterScaffold {
 
     /// For a custom formula's module (`None` = the fixed one).
     fn new_for(device: &wgpu::Device, custom: Option<&crate::custom::CustomShader>) -> Self {
-        let shader = crate::shader_module_for(device, custom);
+        Self::from_shader(device, crate::shader_module_for(device, custom))
+    }
+
+    /// For an exponential-map strip: the strip module ([`crate::strip`]), which every pipeline of a
+    /// strip's render — its chunk passes, packed passes and resolve — is built from.
+    fn new_strip(device: &wgpu::Device) -> Self {
+        Self::from_shader(device, crate::strip::module(device))
+    }
+
+    fn from_shader(device: &wgpu::Device, shader: wgpu::ShaderModule) -> Self {
         let iter_bgl = iter_bind_group_layout(device);
         let iter_layout = device.create_pipeline_layout(&wgpu::PipelineLayoutDescriptor {
             label: Some("itertiled.layout"),
@@ -2525,6 +2543,12 @@ pub fn render_iter_tiled(
     // agree bit for bit. Not for the corrector's ROI passes, whose wanted pixels are scattered and
     // whose tile size was measured on its own (the note above).
     let occupancy = chunk_scope && req.mode == 2 && roi.is_none() && crate::tile_occupancy_on();
+    // An exponential-map STRIP renders with the strip module ([`crate::strip`]: every pipeline below,
+    // the chunk passes and the resolve included), reads its aux target back too, and chunks from
+    // its FIRST tile: the lazy chunker below could otherwise leave a strip's first tiles on
+    // `fs_iterate`, whose arithmetic is not the chunk path's bit for bit (`tiles_chunked`), and
+    // only the chunked resolve writes a strip's count, fraction and angle.
+    let strip = req.map.mode != 0;
     let tile_work = if occupancy { occupancy_tile(by_work, 1) } else { by_work };
     let tile = by_tex
         .min(by_buf)
@@ -2537,10 +2561,14 @@ pub fn render_iter_tiled(
     // private one — same shader/layout/pipeline either way, so output is byte-identical. A caller's
     // scaffold holds the FIXED module, so a custom formula always builds its own.
     let local_scaffold;
-    let sc = match scaffold.filter(|_| req.custom.is_none()) {
+    let sc = match scaffold.filter(|_| req.custom.is_none() && !strip) {
         Some(s) => s,
         None => {
-            local_scaffold = IterScaffold::new_for(device, req.custom.as_deref());
+            local_scaffold = if strip {
+                IterScaffold::new_strip(device)
+            } else {
+                IterScaffold::new_for(device, req.custom.as_deref())
+            };
             &local_scaffold
         }
     };
@@ -2621,6 +2649,7 @@ pub fn render_iter_tiled(
     let bpp = 16u32;
     let align = wgpu::COPY_BYTES_PER_ROW_ALIGNMENT;
     let mut pixels = vec![0.0_f32; (w as usize) * (h as usize) * 4];
+    let mut aux_pixels = if strip { vec![0.0_f32; (w as usize) * (h as usize) * 4] } else { Vec::new() };
     let mut ctr_sum = [0u64; crate::COUNTER_SLOTS];
 
     // Wall-adaptive cap, same rule as `render_export` (see `export_tile_cap`): the correction
@@ -2686,6 +2715,7 @@ pub fn render_iter_tiled(
                 gather: [0; 2],
                 tail: crate::tail_word(),
                 rn: req.rn_uniform(),
+                map: req.map,
             };
             queue.write_buffer(&iter_uniform, 0, bytemuck::bytes_of(&iu));
 
@@ -2714,11 +2744,20 @@ pub fn render_iter_tiled(
                 usage: wgpu::BufferUsages::MAP_READ | wgpu::BufferUsages::COPY_DST,
                 mapped_at_creation: false,
             });
+            let aux_buf = strip.then(|| {
+                device.create_buffer(&wgpu::BufferDescriptor {
+                    label: Some("itertiled.readback_aux"),
+                    size: (padded_bpr * th) as u64,
+                    usage: wgpu::BufferUsages::MAP_READ | wgpu::BufferUsages::COPY_DST,
+                    mapped_at_creation: false,
+                })
+            });
 
-            // Same lazy trigger as `render_export`; step-bounded tiles chunk from the first tile.
+            // Same lazy trigger as `render_export`; step-bounded tiles and strips chunk from the
+            // first tile.
             if chunk_scope
                 && chunker.is_none()
-                && (occupancy || pricer.open(req.max_iter) < req.max_iter)
+                && (occupancy || strip || pricer.open(req.max_iter) < req.max_iter)
             {
                 chunker =
                     Some(TileChunker::new(
@@ -2820,12 +2859,38 @@ pub fn render_iter_tiled(
                 },
                 wgpu::Extent3d { width: tw, height: th, depth_or_array_layers: 1 },
             );
+            if let Some(ab) = &aux_buf {
+                enc.copy_texture_to_buffer(
+                    wgpu::TexelCopyTextureInfo {
+                        texture: &aux_tex,
+                        mip_level: 0,
+                        origin: wgpu::Origin3d::ZERO,
+                        aspect: wgpu::TextureAspect::All,
+                    },
+                    wgpu::TexelCopyBufferInfo {
+                        buffer: ab,
+                        layout: wgpu::TexelCopyBufferLayout {
+                            offset: 0,
+                            bytes_per_row: Some(padded_bpr),
+                            rows_per_image: Some(th),
+                        },
+                    },
+                    wgpu::Extent3d { width: tw, height: th, depth_or_array_layers: 1 },
+                );
+            }
             queue.submit(std::iter::once(enc.finish()));
 
             let slice = out_buf.slice(..);
             let (tx, rx) = std::sync::mpsc::channel();
             slice.map_async(wgpu::MapMode::Read, move |r| {
                 let _ = tx.send(r);
+            });
+            let aux_rx = aux_buf.as_ref().map(|ab| {
+                let (atx, arx) = std::sync::mpsc::channel();
+                ab.slice(..).map_async(wgpu::MapMode::Read, move |r| {
+                    let _ = atx.send(r);
+                });
+                arx
             });
             let (ctx_, ctr_rx) = std::sync::mpsc::channel();
             counters_read.slice(..).map_async(wgpu::MapMode::Read, move |r| {
@@ -2875,6 +2940,21 @@ pub fn render_iter_tiled(
             }
             drop(data);
             out_buf.unmap();
+            // The aux copy shares the submission the main readback just awaited.
+            if let (Some(ab), Some(arx)) = (&aux_buf, &aux_rx) {
+                if !arx.recv().map(|r| r.is_ok()).unwrap_or(false) {
+                    return Err(GpuError::Readback("the strip's aux target".into()));
+                }
+                let adata = ab.slice(..).get_mapped_range();
+                for r in 0..th {
+                    let src = (r * padded_bpr) as usize;
+                    let src_row: &[f32] = bytemuck::cast_slice(&adata[src..src + unpadded_bpr as usize]);
+                    let dst = (((ty0 + r) * w + tx0) * 4) as usize;
+                    aux_pixels[dst..dst + row_floats].copy_from_slice(src_row);
+                }
+                drop(adata);
+                ab.unmap();
+            }
             let wall_ms = t_tile.elapsed().as_secs_f64() * 1000.0;
             let chunk_passes = chunked.map_or(0, |(p, _)| p);
             if chunked.is_none() {
@@ -2917,6 +2997,7 @@ chunks={chunk_passes} steps={occupancy}"
         tiles_total,
         tiles_chunked,
         packs,
+        aux: aux_pixels,
     })
 }
 
@@ -3188,6 +3269,7 @@ impl GatherPass {
                 gather: [gw, n as u32],
                 tail: crate::tail_word(),
                 rn: req.rn_uniform(),
+                map: req.map,
             };
             queue.write_buffer(&self.iter_uniform, 0, bytemuck::bytes_of(&iu));
 
@@ -3475,6 +3557,7 @@ fn render_iter_passes(
         gather: [0; 2],
         tail: crate::tail_word(),
         rn: req.rn_uniform(),
+        map: req.map,
     };
     queue.write_buffer(&iter_uniform, 0, bytemuck::bytes_of(&iu));
 
@@ -3748,6 +3831,7 @@ fn render_iter_passes(
         width: w, height: h, ss: 1, pixels, iterate_ms, color_ms: 0.0, counters,
         max_dispatch_ms: 0.0, max_dispatch_work: 0, chunk_passes: 0, tiles_total: 0, tiles_chunked: 0,
         packs: 0,
+        aux: Vec::new(),
     })
 }
 
@@ -4030,5 +4114,6 @@ pub fn color_iter_buffer_ss(
         tiles_total: 0,
         tiles_chunked: 0,
         packs: 0,
+        aux: Vec::new(),
     })
 }

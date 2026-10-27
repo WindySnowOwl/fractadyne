@@ -9136,8 +9136,9 @@ item 4 reuses item 1's engine, item 3 is self-contained, item 5 is an architectu
   locations to 4.6e1105×, `generate_corpus.py --check` gate) compares in the image domain; raw
   EXR channel export would allow numeric per-channel tolerance.
 
-Non-goals restated from the proposal: 3D/DE fractals, flame fractals, built-in video encoding
-(export exponential-map EXR and let zoomasm own assembly).
+Non-goals restated from the proposal: 3D/DE fractals, flame fractals. (Built-in video encoding was
+one, "export exponential-map EXR and let zoomasm own assembly"; RETIRED 2026-10-27 by the user's
+decision on `design/zoom-video.md` §9: both are planned, the zoomasm export first.)
 
 ## Performance & throughput (M7)
 

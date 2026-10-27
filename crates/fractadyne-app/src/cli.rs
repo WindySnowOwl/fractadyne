@@ -538,6 +538,11 @@ pub(crate) struct RenderCli {
     pub(crate) done: bool,
     /// `--render-iter`: write the raw iteration texture as EXR instead of a colored image.
     pub(crate) iter_mode: bool,
+    /// `--render-expmap DIR`: render the dive into the view as exponential-map strips in DIR
+    /// (`expmap_render`, `design/zoom-video.md` phase E0).
+    pub(crate) expmap: Option<std::path::PathBuf>,
+    /// The `--expmap-*` options (read whether or not `expmap` is set; only it uses them).
+    pub(crate) expmap_opts: crate::expmap_render::ExpmapCli,
     /// `--glitch-audit [N]` / `--tail-audit [N]`: instead of writing an image, check N of the pixels
     /// where two renders differ (and N controls) against the arbitrary-precision oracle
     /// (`glitchaudit`); `audit_kind` says which two.
@@ -636,12 +641,14 @@ impl crate::FractadyneApp {
         if self.render_cli.run && !self.render_cli.done {
             if let Some((dev, q)) = gpu {
                 self.render_cli.done = true;
-                if !self.watermark && !self.render_cli.iter_mode {
+                if !self.watermark && !self.render_cli.iter_mode && self.render_cli.expmap.is_none() {
                     println!("Note: Fd watermark is off (saved preference) — pass --watermark to include it.");
                 }
                 let t0 = std::time::Instant::now();
                 let result = if let Some(n) = self.render_cli.audit {
                     self.run_glitch_audit(dev, q, n, self.render_cli.audit_kind)
+                } else if let Some(dir) = self.render_cli.expmap.clone() {
+                    self.render_expmap_to_dir(dev, q, &dir).map_err(crate::error::AppError::Message)
                 } else if self.render_cli.iter_mode {
                     let out = self
                         .render_cli.out
