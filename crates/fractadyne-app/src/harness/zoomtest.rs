@@ -53,6 +53,8 @@ const GLIDE_MAX_S: f64 = 900.0;
 const DEADLINE_S: f64 = 1200.0;
 /// A glide that produced fewer frames than this measured nothing.
 const MIN_FRAMES: usize = 120;
+/// How long `--zoomtest-click` records after its click.
+const CLICK_WATCH_S: f64 = 8.0;
 
 /// Cap on the settle tail (`FRACTADYNE_ZOOMTEST_SETTLE`): the on-settle supersampling at a deep
 /// view is 24 samples of a full re-render each, seconds apiece at depth.
@@ -172,6 +174,19 @@ pub(crate) fn parse_taps(s: &str) -> Option<(u32, f64, f64)> {
         .then_some((n, oct, pause))
 }
 
+/// `FACTOR[,X,Y]` — a click-zoom factor above 1, and optionally the complex point to click on.
+/// `None` for anything else.
+pub(crate) fn parse_click(s: &str) -> Option<(f32, Option<(f64, f64)>)> {
+    let parts: Vec<&str> = s.split(',').map(str::trim).collect();
+    let factor = parts.first()?.parse::<f32>().ok().filter(|f| f.is_finite() && *f > 1.0)?;
+    let num = |p: &str| p.parse::<f64>().ok().filter(|v| v.is_finite());
+    match parts.as_slice() {
+        [_] => Some((factor, None)),
+        [_, x, y] => Some((factor, Some((num(x)?, num(y)?)))),
+        _ => None,
+    }
+}
+
 pub(crate) struct ZoomTest {
     octaves: f64,
     rate: f32,
@@ -236,6 +251,21 @@ pub(crate) struct ZoomTest {
     /// `--zoomtest-snap`: the glide snaps to features as a person's zoom does (`zoom_snap`; a
     /// harness's zoom does not otherwise), about the view's centre.
     pub(crate) snap: bool,
+    /// `--zoomtest-click FACTOR[,X,Y]`: instead of a glide, ONE click-to-zoom by FACTOR through the
+    /// real actuator (`click_zoom_at`), on the pixel where the point (X, Y) sits in the settled
+    /// start view (else its centre), then `CLICK_WATCH_S` of recorded frames. The user's
+    /// 2026-10-25 video: a 100× click from Home, auto iterations at a 4,000,000 base, showed one
+    /// EMPTY frame while the iteration climb raised the ask.
+    click: Option<(f32, Option<(f64, f64)>)>,
+    /// `FRACTADYNE_ZOOMTEST_CLICK_SHOTS=N`: capture the window on each of the N frames after the
+    /// click (`click-shot-<n>-f<frame>.png` in the working directory, encoded off the UI thread).
+    /// The app's own record cannot see a frame that drew a texture holding nothing; the screen can.
+    click_shots_left: u32,
+    click_shots_taken: u32,
+    /// When the click is due (the leg's first frame, or a rest after `--zoomtest-home`'s glide), and
+    /// when it was made: the watch runs `CLICK_WATCH_S` from then.
+    click_at: Option<Instant>,
+    click_t0: Option<Instant>,
 }
 
 /// Where a `--zoomtest-home` run is.
@@ -328,6 +358,11 @@ impl ZoomTest {
         self
     }
 
+    pub(crate) fn with_click(mut self, click: Option<(f32, Option<(f64, f64)>)>) -> Self {
+        self.click = click;
+        self
+    }
+
     pub(crate) fn new(
         octaves: Option<f64>,
         rate: f32,
@@ -368,6 +403,15 @@ impl ZoomTest {
             home: None,
             quiet_s: QUIET_S,
             snap: false,
+            click: None,
+            click_shots_left: std::env::var("FRACTADYNE_ZOOMTEST_CLICK_SHOTS")
+                .ok()
+                .and_then(|s| s.parse::<u32>().ok())
+                .unwrap_or(0)
+                .min(600),
+            click_shots_taken: 0,
+            click_at: None,
+            click_t0: None,
             rate: rate.clamp(0.25, 4.0),
             location,
             start_log2,
@@ -429,6 +473,36 @@ fn json_str(s: &str) -> String {
 }
 
 impl FractadyneApp {
+    /// `--zoomtest-click`'s click, through the UI's own actuator: physical pixels within the view's
+    /// rect, which is what `complex_to_pixel` returns. False when the point is not in the view.
+    fn zoomtest_click(&mut self, factor: f32, at: Option<(f64, f64)>, ctx: &egui::Context) -> bool {
+        let (w, h) = (self.viewport.width_px, self.viewport.height_px);
+        let (px, py) = match at {
+            Some((x, y)) => {
+                let p = self.viewport.precision;
+                self.viewport.complex_to_pixel(
+                    &fractadyne_core::BigFloat::from_f64(x, p),
+                    &fractadyne_core::BigFloat::from_f64(y, p),
+                )
+            }
+            None => (w * 0.5, h * 0.5),
+        };
+        if !(0.0..w).contains(&px) || !(0.0..h).contains(&py) {
+            return false;
+        }
+        let before = self.viewport.log2_magnification();
+        self.render_cfg.click_zoom_factor = factor;
+        self.click_zoom_at(px, py, false, ctx.input(|i| i.time));
+        crate::diag::log_line(
+            "zoomtest",
+            &format!(
+                "clicked {factor}x at pixel ({px:.1}, {py:.1}) of {w:.0}x{h:.0}: 2^{before:.2} -> 2^{:.2}",
+                self.viewport.log2_magnification()
+            ),
+        );
+        true
+    }
+
     /// The harness's virtual Space key: `draw_central` and the interactive lookahead pump read it
     /// exactly where they read the real key, so the driven glide eases in, runs and eases out
     /// through the production path — pacer and prefetch included.
@@ -602,6 +676,8 @@ impl FractadyneApp {
                     match zt.home {
                         // No OCTAVES before a Home click: straight to the rest at the start view.
                         Some((HomeLeg::Zoom, rest)) if !zt.octaves_given => zt.home = Some((HomeLeg::Rest(now), rest)),
+                        // `--zoomtest-click` alone: the click is made on this leg's first frame.
+                        None if zt.click.is_some() => zt.click_at = Some(now),
                         _ => zt.driving = true, // the virtual key goes down THIS frame
                     }
                     if let Some((n, _, _)) = zt.taps {
@@ -682,17 +758,72 @@ impl FractadyneApp {
                         }
                         HomeLeg::Rest(since) if now.duration_since(since).as_secs_f64() >= rest => {
                             crate::diag::log_line("zoomtest", &format!("Home clicked at 2^{l2:.2}"));
-                            self.zoom_home(ctx.input(|i| i.time));
+                            if std::env::var_os("FRACTADYNE_ZOOMTEST_HOME_SNAP").is_some() {
+                                // The path `zoom_home` takes when it judges the view already home,
+                                // which a NaN scale makes it do from any depth (the user's
+                                // 2026-10-25 session: an unusable view at 2^1214, then Home).
+                                self.reset_view();
+                            } else {
+                                self.zoom_home(ctx.input(|i| i.time));
+                            }
                             zt.home = Some((HomeLeg::Glide, rest));
                         }
                         HomeLeg::Glide if self.home_anim.is_none() || in_phase > GLIDE_MAX_S => {
                             crate::diag::log_line("zoomtest", &format!("Home glide ended at 2^{l2:.2}"));
-                            match after {
-                                Some(p) => advance(&mut zt, p),
-                                None => self.zoomtest_report(zt), // exits
+                            if zt.click.is_some() {
+                                // `--zoomtest-click` after Home: rest as long again, then click.
+                                zt.home = None;
+                                zt.click_at = Some(now + std::time::Duration::from_secs_f64(rest));
+                            } else {
+                                match after {
+                                    Some(p) => advance(&mut zt, p),
+                                    None => self.zoomtest_report(zt), // exits
+                                }
                             }
                         }
                         _ => {}
+                    }
+                } else if let Some((factor, at)) = zt.click {
+                    if zt.click_at.is_some_and(|due| now >= due) {
+                        zt.click_at = None;
+                        if !self.zoomtest_click(factor, at, ctx) {
+                            self.zoomtest_abort(zt, "the click target is outside the view");
+                        }
+                        zt.click_t0 = Some(now);
+                    }
+                    // The window captures: a reply lands a frame after its request, as `--shot`'s
+                    // does, so each frame harvests the previous one's and asks for its own.
+                    let shot = ctx.input(|i| {
+                        i.events.iter().find_map(|e| match e {
+                            egui::Event::Screenshot { image, .. } => Some(image.clone()),
+                            _ => None,
+                        })
+                    });
+                    if let Some(image) = shot {
+                        let name = format!("click-shot-{:03}-f{}.png", zt.click_shots_taken, self.perf.frame_idx);
+                        zt.click_shots_taken += 1;
+                        std::thread::spawn(move || {
+                            let (w, h) = (image.size[0] as u32, image.size[1] as u32);
+                            let mut bytes = Vec::with_capacity(image.pixels.len() * 4);
+                            for px in &image.pixels {
+                                bytes.extend_from_slice(&[px.r(), px.g(), px.b(), px.a()]);
+                            }
+                            if let Err(e) = fractadyne_export::write_png_rgba8(std::path::Path::new(&name), w, h, &bytes, None) {
+                                eprintln!("--zoomtest: write {name}: {e}");
+                            }
+                        });
+                    }
+                    if zt.click_t0.is_some() && zt.click_shots_left > 0 {
+                        zt.click_shots_left -= 1;
+                        ctx.send_viewport_cmd(egui::ViewportCommand::Screenshot(egui::UserData::default()));
+                    }
+                    let watched = zt.click_t0.map_or(0.0, |t0| now.duration_since(t0).as_secs_f64());
+                    if watched >= CLICK_WATCH_S {
+                        crate::diag::log_line("zoomtest", &format!("click watched {watched:.1} s, at 2^{l2:.2}"));
+                        match after {
+                            Some(p) => advance(&mut zt, p),
+                            None => self.zoomtest_report(zt), // exits
+                        }
                     }
                 } else if let Some((n, oct, pause)) = zt.taps {
                     if let Some(until) = zt.pause_until {

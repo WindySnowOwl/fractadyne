@@ -174,6 +174,20 @@ fn an_explicit_iteration_count_is_honoured_verbatim() {
 }
 
 #[test]
+fn only_this_views_installed_perturbation_reference_seeds_the_climb() {
+    use crate::render::seed_evidence;
+    assert!(seed_evidence(true, true, false, true), "an installed, escaped reference on a perturbation view");
+    // A replaced view: `invalidate_refs` dropped `ref_pt`, the old orbit's length is still cached.
+    // (A Home reached from 2^1663 ran at that reference's 116,901 iterations instead of 2,000.)
+    assert!(!seed_evidence(true, false, false, true));
+    // A direct view renders without a reference; one still in the cache is another view's.
+    assert!(!seed_evidence(false, true, false, true));
+    // …and, as before, a truncated or non-escaping orbit measures the ask, not the location.
+    assert!(!seed_evidence(true, true, true, true));
+    assert!(!seed_evidence(true, true, false, false));
+}
+
+#[test]
 fn the_boost_seed_reaches_the_reference_length_and_only_ever_raises() {
     use crate::render::boost_seed_from_reference;
     // The reported minibrot: zoom_iter_cap ≈ 69,157 at ~262 octaves, a settled reference ≈ 256,001

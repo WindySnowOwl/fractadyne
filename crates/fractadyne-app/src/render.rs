@@ -5205,7 +5205,12 @@ impl FractadyneApp {
                 iter_cap,
                 reading: Some(p.maxiter_sink[vb].swap(u64::MAX, SeqCst)).filter(|&r| r != u64::MAX),
                 ref_len: rc.orbit_len,
-                ref_escaped: !rc.partial && rc.orbit_tail.as_ref().is_some_and(|t| t.escaped),
+                ref_escaped: seed_evidence(
+                    is_pert,
+                    rc.ref_pt.is_some(),
+                    rc.partial,
+                    rc.orbit_tail.as_ref().is_some_and(|t| t.escaped),
+                ),
                 recompute_in_flight: self.recompute_rx[vb].is_some(),
                 state: decide::IterState {
                     boost: p.iter_boost[vb],
@@ -9617,6 +9622,17 @@ pub(crate) fn live_iter_budget(eff_iter: u32, log2mag: f64, boost: f64, explicit
         return capped;
     }
     capped.min(((zoom_iter_cap(log2mag).max(256) as f64) * boost) as u32)
+}
+
+/// Is the view's cached reference evidence for the iteration climb's seed
+/// (`decide::IterInputs::ref_escaped`)? Only an INSTALLED reference (`ref_pt`), on a PERTURBATION
+/// view, whose orbit ended on its own. `invalidate_refs` drops `ref_pt` when the view is replaced but
+/// leaves the orbit's length and tail in the cache, and a direct view renders without a reference at
+/// all, so either way the cache describes somewhere else. Measured 2026-10-26: a Home reached from
+/// 2^1663 ran at 116,901 iterations (that reference's length) instead of 2,000, and the user's Home,
+/// reached from an unusable view at 2^1214, at 6,330 — which the next 100× click carried as ×3.2.
+pub(crate) fn seed_evidence(perturbation: bool, installed: bool, partial: bool, escaped: bool) -> bool {
+    perturbation && installed && !partial && escaped
 }
 
 /// The adaptive-boost value that makes `zoom_iter_cap × boost` reach the reference-orbit length —

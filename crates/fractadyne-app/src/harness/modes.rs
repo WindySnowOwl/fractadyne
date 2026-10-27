@@ -495,12 +495,20 @@ impl Windowed {
                 .any(|a| a == "--zoomtest-home")
                 .then(|| num("--zoomtest-home", "a number of seconds", 2.0));
             let quiet_s = val("--zoomtest-quiet").map(|_| num("--zoomtest-quiet", "a number of seconds", 2.0));
+            // `--zoomtest-click FACTOR[,X,Y]`: one click-to-zoom instead of a glide.
+            let click = val("--zoomtest-click").map(|s| {
+                super::zoomtest::parse_click(s).unwrap_or_else(|| {
+                    eprintln!("fractadyne: --zoomtest-click: expected FACTOR or FACTOR,X,Y (e.g. 100,0.3569,0.0834), got \"{s}\"");
+                    crate::exit(2)
+                })
+            });
             Some(
                 super::zoomtest::ZoomTest::new(octaves, rate, location, start_log2, taps, hold_s)
                     .with_then(then_log2)
                     .with_gate(gate)
                     .with_home(home, quiet_s)
-                    .with_snap(args.iter().any(|a| a == "--zoomtest-snap")),
+                    .with_snap(args.iter().any(|a| a == "--zoomtest-snap"))
+                    .with_click(click),
             )
         } else {
             None
