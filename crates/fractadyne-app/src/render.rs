@@ -5738,7 +5738,15 @@ impl FractadyneApp {
             e.trace();
         }
         self.record_decision("iter", vb, &climb_in, &climb);
-        BudgetPlan { px, is_pert, budget, iter_cap, gpu_iter: climb.gpu_iter }
+        // A stepped Home's stop asks only what its depth wants (`home_stop_iter`), after the recorded
+        // climb so its replay is untouched.
+        let gpu_iter = crate::render::frame_plan::home_stop_iter(
+            climb.gpu_iter,
+            log2mag,
+            interacting,
+            self.perf.hold_home_step[vb],
+        );
+        BudgetPlan { px, is_pert, budget, iter_cap, gpu_iter }
     }
 
     /// `build_params` stage: the iteration-range (chunked) walk — price-serialized pass
@@ -7173,6 +7181,12 @@ impl FractadyneApp {
             r.walk_sig = if chunk_range.is_some() { self.perf.chunk_sig[vs].word() } else { 0 };
         }
         params
+    }
+
+    /// The held frame's translation factor on view `v` (its offset times this): the scale, except
+    /// during a stepped Home, whose held frame is shown centred (`frame_plan::home_step_hold_shift`).
+    fn hold_shift_for(&self, v: usize, scale: f32) -> f32 {
+        crate::render::frame_plan::home_step_hold_shift(scale, self.perf.hold_home_step[v.min(1)])
     }
 
     /// The held frame's reprojection scale on view `v` for `gap_oct` octaves of zoom since it was
@@ -9105,12 +9119,13 @@ impl FractadyneApp {
                         // the act at 2^174 on 2026-09-18). A dive, by contrast, must keep its true
                         // scale or the held frame slides. `hold_scale_floor` owns that split.
                         let scale = self.hold_scale_for(vi, self.ref_cache[vi].frozen_l2 - log2mag);
+                        let shift = self.hold_shift_for(vi, scale);
                         let px = fractadyne_core::ref_offset_mantissa(&center_bf[0], &fc[0], delta_exp, precision)
                             / span_mantissa.x;
                         let py = fractadyne_core::ref_offset_mantissa(&center_bf[1], &fc[1], delta_exp, precision)
                             / span_mantissa.y;
                         reproject_scale = scale;
-                        reproject = Some([(-px as f32) * scale, (py as f32) * scale]);
+                        reproject = Some([(-px as f32) * shift, (py as f32) * shift]);
                     }
                     None => reproject = Some([0.0, 0.0]), // nothing rendered yet → static hold
                 }
@@ -9365,12 +9380,13 @@ impl FractadyneApp {
                         // this frame's transform is taken from the worker frame's view.
                         self.perf.chunk_dirty[vsub] = false;
                         let scale = self.hold_scale_for(vi, t.log2mag - log2mag);
+                        let shift = self.hold_shift_for(vi, scale);
                         let px = fractadyne_core::ref_offset_mantissa(&center_bf[0], &t.center_bf[0], delta_exp, precision)
                             / span_mantissa.x;
                         let py = fractadyne_core::ref_offset_mantissa(&center_bf[1], &t.center_bf[1], delta_exp, precision)
                             / span_mantissa.y;
                         reproject_scale = scale;
-                        reproject = Some([(-px as f32) * scale, (py as f32) * scale]);
+                        reproject = Some([(-px as f32) * shift, (py as f32) * shift]);
                     }
                 }
                 if crate::diag::trace_on("live") {
@@ -9430,13 +9446,14 @@ impl FractadyneApp {
                 self.perf.hold_uv[vs] = match self.ref_cache[vi].frozen_center.clone() {
                     Some(fc) => {
                         let scale = self.hold_scale_for(vi, self.ref_cache[vi].frozen_l2 - log2mag);
+                        let shift = self.hold_shift_for(vi, scale);
                         let px = fractadyne_core::ref_offset_mantissa(
                             &center_bf[0], &fc[0], delta_exp, precision,
                         ) / span_mantissa.x;
                         let py = fractadyne_core::ref_offset_mantissa(
                             &center_bf[1], &fc[1], delta_exp, precision,
                         ) / span_mantissa.y;
-                        [(-px as f32) * scale, (py as f32) * scale, scale]
+                        [(-px as f32) * shift, (py as f32) * shift, scale]
                     }
                     // Nothing frozen (e.g. the very first render): the snapshot IS this view — 1:1.
                     None => [0.0, 0.0, 1.0],
@@ -9459,11 +9476,12 @@ impl FractadyneApp {
                             (delta_exp, span_mantissa.x, span_mantissa.y, precision)
                         };
                         let scale = self.hold_scale_for(vi, self.ref_cache[vi].frozen_l2 - l2);
+                        let shift = self.hold_shift_for(vi, scale);
                         let px =
                             fractadyne_core::ref_offset_mantissa(&cbf[0], &fc[0], de, prec) / smx;
                         let py =
                             fractadyne_core::ref_offset_mantissa(&cbf[1], &fc[1], de, prec) / smy;
-                        [(-px as f32) * scale, (py as f32) * scale, scale]
+                        [(-px as f32) * shift, (py as f32) * shift, scale]
                     }
                     None => [0.0, 0.0, 1.0],
                 };

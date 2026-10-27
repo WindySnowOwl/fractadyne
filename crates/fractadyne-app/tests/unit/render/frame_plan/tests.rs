@@ -291,6 +291,9 @@ fn a_stepped_homes_held_frame_is_never_shrunk() {
     assert_eq!(home_step_hold_scale(shrunk, false), shrunk);
     assert_eq!(home_step_hold_scale(0.25, true), 0.25);
     assert_eq!(home_step_hold_scale(1.0, true), 1.0);
+    // ...and centred: a stop's offset from the held picture places nothing at that scale.
+    assert_eq!(home_step_hold_shift(4.0, true), 0.0);
+    assert_eq!(home_step_hold_shift(4.0, false), 4.0);
 }
 
 #[test]
@@ -301,4 +304,18 @@ fn a_stepped_homes_stop_renders_small_and_nothing_else_does() {
     // Moving (the glide after the stops), or no stepped Home: the frame's own scale.
     assert_eq!(home_stop_res_scale(1.0, true, true), 1.0);
     assert_eq!(home_stop_res_scale(1.0, false, false), 1.0);
+}
+
+#[test]
+fn a_stepped_homes_stop_asks_only_what_its_depth_wants() {
+    // e4000 (auto iterations off, 2,008,192): the 2^12 stop asks ~4.6k, the 2^98 one ~23.6k.
+    let fixed = 2_008_192;
+    let at12 = home_stop_iter(fixed, 12.0, false, true);
+    assert_eq!(at12, HOME_STOP_ITER_BASE + 12 * 220);
+    assert_eq!(home_stop_iter(fixed, 98.3, false, true), HOME_STOP_ITER_BASE + (98.3 * 220.0) as u32);
+    // A deep stop's own ask is already below what its depth wants: untouched.
+    assert_eq!(home_stop_iter(256_000, 6592.0, false, true), 256_000);
+    // Moving, or no stepped Home: the frame's ask.
+    assert_eq!(home_stop_iter(fixed, 12.0, true, true), fixed);
+    assert_eq!(home_stop_iter(fixed, 12.0, false, false), fixed);
 }

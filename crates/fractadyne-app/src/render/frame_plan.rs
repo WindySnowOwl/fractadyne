@@ -287,6 +287,14 @@ pub(crate) fn home_step_hold_scale(scale: f32, stepping: bool) -> f32 {
     if stepping { scale.min(1.0) } else { scale }
 }
 
+/// The held frame's translation factor during a stepped Home: 0, the picture centred. The stops'
+/// centres move toward Home's (`home_lerp`), and at the clamped scale ([`home_step_hold_scale`]) the
+/// offset in the stop's view places nothing truly: it slid the picture off-centre and the gap filled
+/// with its average colour (2^262 to 2^12, 2026-10-27). Otherwise the scale, as before.
+pub(crate) fn home_step_hold_shift(scale: f32, stepping: bool) -> f32 {
+    if stepping { 0.0 } else { scale }
+}
+
 /// The share of the panel's width a stepped Home's stop renders at ([`home_stop_res_scale`]).
 pub(crate) const HOME_STOP_RES_SCALE: f64 = 0.25;
 
@@ -298,6 +306,23 @@ pub(crate) const HOME_STOP_RES_SCALE: f64 = 0.25;
 /// A moving frame, and any frame outside a stepped Home, keeps its own scale.
 pub(crate) fn home_stop_res_scale(scale: f64, interacting: bool, stepping: bool) -> f64 {
     if stepping && !interacting { scale.min(HOME_STOP_RES_SCALE) } else { scale }
+}
+
+/// The base of a stepped Home stop's iteration ask ([`home_stop_iter`]).
+pub(crate) const HOME_STOP_ITER_BASE: u32 = 2_000;
+
+/// The iteration ask at a stepped Home's stop: at most what the stop's DEPTH wants
+/// (`recommended_iterations` over [`HOME_STOP_ITER_BASE`], ~220 an octave), not the user's own
+/// count. A stop completes when its walk reaches the ask, and a still view's interior pixels walk
+/// all of it: a fixed 2,008,192 (e4000, auto iterations off) made the four shallowest stops, 2^98 to
+/// 2^12, give way after their 3 s each (PLUTO, dev.47) — 12 s of one held picture. The stop is a
+/// preview; a pixel that would escape past the cap reads as interior there.
+pub(crate) fn home_stop_iter(ask: u32, log2mag: f64, interacting: bool, stepping: bool) -> u32 {
+    if stepping && !interacting {
+        ask.min(fractadyne_core::recommended_iterations(HOME_STOP_ITER_BASE, log2mag))
+    } else {
+        ask
+    }
 }
 
 /// The moving frame's scale, as `build_params` sizes it: before the visible-frame ladder (the scale a
