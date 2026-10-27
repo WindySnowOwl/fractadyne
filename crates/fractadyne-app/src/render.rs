@@ -165,6 +165,9 @@ pub(crate) struct RecomputeResult {
     pub(crate) orbit_len: u32,
     rp: [fractadyne_core::BigFloat; 2],
     sa: fractadyne_core::SeriesSkip,
+    /// The worst-case log₂ |δc| `sa` was validated for (`NEG_INFINITY` without one): see
+    /// `RefCache::sa_log2_dc`.
+    sa_log2_dc: f64,
     /// THE RENORMALIZED STEP for this reference (`fractadyne_core::RenormStep`); `None` unless the
     /// orbit is periodic, Mandelbrot, not Julia, and a step holds near it.
     rn: Option<fractadyne_core::RenormStep>,
@@ -769,11 +772,12 @@ fn pick_and_build(inp: &RecomputeInputs, overlap: bool) -> RecomputeResult {
         let sa = sa_may_run.then(|| {
             s.spawn(move || {
                 let t = Instant::now();
+                let log2_dc = sa_log2_max_dc(inp, centre);
                 let skip = fc::series_skip_in_cancellable(
                     fc::selected_backend(),
                     &centre[0],
                     &centre[1],
-                    sa_log2_max_dc(inp, centre),
+                    log2_dc,
                     inp.gpu_iter,
                     // An UPPER BOUND on the orbit length: the build stores at most cap + 1 samples.
                     build_cap(inp.gpu_iter, inp).saturating_add(1),
@@ -781,7 +785,7 @@ fn pick_and_build(inp: &RecomputeInputs, overlap: bool) -> RecomputeResult {
                     inp.precision,
                     Some(cancel),
                 );
-                SaPre { skip, max_iter: inp.gpu_iter, ms: t.elapsed().as_secs_f64() * 1000.0 }
+                SaPre { skip, max_iter: inp.gpu_iter, ms: t.elapsed().as_secs_f64() * 1000.0, log2_dc }
             })
         });
         let built: std::cell::RefCell<Option<BuiltOrbit>> = std::cell::RefCell::new(None);
@@ -1416,18 +1420,33 @@ struct SaPre {
     skip: fractadyne_core::SeriesSkip,
     max_iter: u32,
     ms: f64,
+    /// The radius it was walked for ([`sa_log2_max_dc`] about the centre).
+    log2_dc: f64,
 }
 
 /// log₂ of the series approximation's worst-case |δc| for reference `rp`: its offset from the
 /// view centre plus the half-diagonal, in the view's delta exponent.
 fn sa_log2_max_dc(inp: &RecomputeInputs, rp: &[fractadyne_core::BigFloat; 2]) -> f64 {
+    series_log2_dc(&inp.center_bf, rp, inp.delta_exp, inp.precision, inp.span_mantissa)
+}
+
+/// log₂ of the worst-case |δc| a view asks of a series about reference `rp`: the reference's offset
+/// from the view's `centre` plus the half-diagonal of a view `span_mantissa` × 2^`delta_exp` across.
+/// What a build validates its series for ([`sa_log2_max_dc`]), and what each frame asks of it
+/// ([`series_fits`]).
+pub(crate) fn series_log2_dc(
+    centre: &[fractadyne_core::BigFloat; 2],
+    rp: &[fractadyne_core::BigFloat; 2],
+    delta_exp: i32,
+    precision: usize,
+    span_mantissa: fractadyne_core::SpanMantissa,
+) -> f64 {
     use fractadyne_core as fc;
-    let dx = fc::ref_offset_mantissa(&inp.center_bf[0], &rp[0], inp.delta_exp, inp.precision);
-    let dy = fc::ref_offset_mantissa(&inp.center_bf[1], &rp[1], inp.delta_exp, inp.precision);
+    let dx = fc::ref_offset_mantissa(&centre[0], &rp[0], delta_exp, precision);
+    let dy = fc::ref_offset_mantissa(&centre[1], &rp[1], delta_exp, precision);
     let roff = (dx * dx + dy * dy).sqrt();
-    let half_diag = 0.5
-        * (inp.span_mantissa.x * inp.span_mantissa.x + inp.span_mantissa.y * inp.span_mantissa.y).sqrt();
-    inp.delta_exp as f64 + (roff + half_diag).max(1e-300).log2()
+    let half_diag = 0.5 * (span_mantissa.x * span_mantissa.x + span_mantissa.y * span_mantissa.y).sqrt();
+    delta_exp as f64 + (roff + half_diag).max(1e-300).log2()
 }
 
 /// A SHORT ESCAPED reference (deep EXTERIOR): the orbit escapes early (e.g. ~3.3k iters at 1e261×)
@@ -1502,21 +1521,23 @@ fn finish_reference(
     // before its first step. Without it a nucleus view's skip came out one short (997 for period
     // 998) and every pixel past it differed from the full-length render.
     let sa_len = if period.is_some() { len + 1 } else { len };
-    let sa = if do_sa || short_escaper {
+    // The radius the series is validated for travels with it (`RefCache::sa_log2_dc`).
+    let (sa, sa_log2_dc) = if do_sa || short_escaper {
         match sa_pre.filter(|pre| pre.max_iter == orbit_iter && fc::series_skip_holds_for(&pre.skip, sa_len)) {
             Some(pre) => {
                 sa_from = "overlap";
                 pre_ms = Some(pre.ms);
-                pre.skip
+                (pre.skip, pre.log2_dc)
             }
             None => {
                 sa_from = "walk";
                 let log2_max_dc = sa_log2_max_dc(inp, &rp);
-                fc::series_skip(&rp[0], &rp[1], log2_max_dc, orbit_iter, sa_len, inp.formula, inp.precision)
+                let skip = fc::series_skip(&rp[0], &rp[1], log2_max_dc, orbit_iter, sa_len, inp.formula, inp.precision);
+                (skip, log2_max_dc)
             }
         }
     } else {
-        fc::SeriesSkip::NONE
+        (fc::SeriesSkip::NONE, f64::NEG_INFINITY)
     };
     let series_ms = pre_ms.unwrap_or_else(|| t_sa.elapsed().as_secs_f64() * 1000.0);
     if shows && (do_sa || short_escaper) {
@@ -1604,6 +1625,7 @@ fn finish_reference(
         orbit_len: len,
         rp,
         sa,
+        sa_log2_dc,
         rn,
         rn_bla,
         bla,
@@ -2363,6 +2385,7 @@ impl FractadyneApp {
             res.rn_bla = std::sync::Arc::new(Vec::new());
             if !keep_sa {
                 res.sa = fractadyne_core::SeriesSkip::NONE;
+                res.sa_log2_dc = f64::NEG_INFINITY;
             }
             instrument_truncated = true;
             crate::diag::log_line(
@@ -2385,12 +2408,29 @@ impl FractadyneApp {
         // plus everything the shader reads off the build; a result that is not at least as
         // precise as what is installed is a downgrade and also dropped.
         if same_reference(&self.ref_cache[vi], &res) {
+            // ...except its SERIES, when it was validated for a wider view than the installed one
+            // (`series_fits`): a zoom-out's rebuild of the same orbit brings the series for the
+            // radius the view asks now, and dropping it with the orbit left the view a series
+            // walked for a deeper one. Taken in place; the orbit and its id stay.
+            let wider_series = res.sa_log2_dc > self.ref_cache[vi].sa_log2_dc;
+            if wider_series {
+                let vc = &mut self.ref_cache[vi];
+                vc.sa = res.sa;
+                vc.sa_log2_dc = res.sa_log2_dc;
+            }
             if crate::diag::trace_on("ref") {
                 crate::diag::trace(
                     "ref",
                     format!(
-                        "no-op install SKIPPED v{vi}: len={} prec={} — identical to the installed reference (orbit_id {} kept)",
-                        res.orbit_len, res.prec, self.ref_cache[vi].orbit_id
+                        "no-op install SKIPPED v{vi}: len={} prec={} — identical to the installed reference (orbit_id {} kept){}",
+                        res.orbit_len,
+                        res.prec,
+                        self.ref_cache[vi].orbit_id,
+                        if wider_series {
+                            format!("; its series taken (skip {}, validated to 2^{:.2})", res.sa.skip, res.sa_log2_dc)
+                        } else {
+                            String::new()
+                        },
                     ),
                 );
             }
@@ -2549,6 +2589,7 @@ impl FractadyneApp {
         vc.orbit_id = vc.orbit_id.wrapping_add(1);
         vc.last_recompute = Some(Instant::now());
         vc.sa = res.sa;
+        vc.sa_log2_dc = res.sa_log2_dc;
         vc.sa_key = (vc.orbit_id, res.iter);
         vc.rn = res.rn;
         vc.bla = res.bla;
@@ -3414,8 +3455,9 @@ impl FractadyneApp {
     ///   (rebuilding is the cost we came here to avoid). Same staleness tests as the live path: a
     ///   tree built for this orbit, for a `dc_max` at least as large as this view needs, and — when
     ///   the active coloring bakes a parameter into the aggregate lane — for the current parameter.
-    /// - SA is carried as-is: its coefficients were computed at the BUILD-time span, which is wider
-    ///   than a dived-in view's, so reusing it is conservative.
+    /// - SA is carried while this view is inside the radius its build validated it for
+    ///   ([`series_fits`]): a dived-in view is, and a wider one is refused it, as the live frame is
+    ///   ([`Self::drop_series_past_radius`]).
     fn live_ref_fields(
         &self,
         vp: &Viewport,
@@ -3456,12 +3498,16 @@ impl FractadyneApp {
         } else {
             (std::sync::Arc::new(Vec::new()), 0)
         };
+        let sa_fits = vc.sa.skip == 0 || {
+            let centre = [vp.center_x.clone(), vp.center_y.clone()];
+            series_fits(vc.sa_log2_dc, series_log2_dc(&centre, rp, delta_exp, precision, vp.gpu_scale().span_mantissa))
+        };
         Some((
             RefFields {
                 ref_offset: RefOffset::from_df32(dx, dy),
                 orbit: vc.orbit.clone(),
                 orbit_len: vc.orbit_len,
-                sa: vc.sa,
+                sa: if sa_fits { vc.sa } else { fractadyne_core::SeriesSkip::NONE },
                 rn: vc.rn,
                 rn_bla: std::sync::Arc::new(Vec::new()),
                 bla,
@@ -3510,6 +3556,10 @@ impl FractadyneApp {
     /// on the skip's budget. A per-frame check could only ever turn the series OFF (a reference
     /// built without it carries none) and the series stays valid at any ask (`shader_series`
     /// handles an ask below the skip), so it bought nothing but the flip.
+    ///
+    /// ⚠Valid at any ASK, not at any RADIUS: a view wider than the one its build validated it for
+    /// is refused it before this is asked ([`Self::drop_series_past_radius`]), and the flip that
+    /// makes is caught by [`series_collapse`] like any other.
     pub(crate) fn live_series(&self, vi: usize, mode: RenderMode, julia: bool, do_sa: bool) -> fractadyne_core::SeriesSkip {
         let rc = &self.ref_cache[vi];
         let short_escaper = self.bla_eligible(mode, julia)
@@ -3517,6 +3567,58 @@ impl FractadyneApp {
             && !rc.partial
             && short_escaper_ask(rc.orbit_len, rc.orbit_iter);
         if do_sa || short_escaper { rc.sa } else { fractadyne_core::SeriesSkip::NONE }
+    }
+
+    /// ⭐THE SERIES RADIUS. Drops view `vi`'s series when this view (`centre`, `span_mantissa` ×
+    /// 2^`delta_exp`) asks more of it than its build validated ([`series_fits`]), and says whether
+    /// it did. A series is walked for one radius (`sa_log2_max_dc`: the reference's offset plus the
+    /// half-diagonal) and travels with its reference; the BLA tree is rebuilt when a zoom-out
+    /// outgrows it, but nothing re-checked the series, and one rebuild at a time cannot keep up with
+    /// a fast zoom-out at depth (~1.1 s a reference at 2^1663: 40 octaves of a Home glide).
+    ///
+    /// 2026-10-26, the Home glide from 2^1663 on the RTX 3080 (nvlddmkm 153): every frame applied
+    /// the 2^1663 series (skip 115,914 of 116,901) to views up to 38 octaves wider. Outside its
+    /// radius the seed is wrong: every pixel escaped, each walk read 0.9 ms for 3.46e10 nominal
+    /// steps, and the budget sat at its ceiling on a picture that was wrong. Near 2^1625 one
+    /// 68,758-iteration tail pass on that budget ran past a second, and the device was lost 3 s
+    /// later. The share the budget was measured on never moved (the series never left), so
+    /// [`series_collapse`] could not see it. Dropped, the series' share
+    /// jumps and the collapse holds this frame and sends the budget back to the bootstrap, where
+    /// the honest readings re-climb it. A fresh series comes with the next reference (the zoom-out
+    /// rebuild, `bla_out_of_range`) or, for the same orbit, through its no-op install.
+    fn drop_series_past_radius(
+        &mut self,
+        vi: usize,
+        centre: &[fractadyne_core::BigFloat; 2],
+        delta_exp: i32,
+        precision: usize,
+        span_mantissa: fractadyne_core::SpanMantissa,
+    ) -> bool {
+        let vc = &self.ref_cache[vi];
+        let Some(rp) = vc.ref_pt.as_ref().filter(|_| vc.sa.skip > 0) else {
+            return false;
+        };
+        let asks = series_log2_dc(centre, rp, delta_exp, precision, span_mantissa);
+        let (skip, built) = (vc.sa.skip, vc.sa_log2_dc);
+        if series_fits(built, asks) {
+            return false;
+        }
+        let vc = &mut self.ref_cache[vi];
+        vc.sa = fractadyne_core::SeriesSkip::NONE;
+        vc.sa_log2_dc = f64::NEG_INFINITY;
+        let n = &mut self.perf.series_drops[vi.min(1)];
+        *n += 1;
+        let line = format!(
+            "series past its radius v{vi}: skip {skip} validated to |δc| 2^{built:.2}, this view asks 2^{asks:.2} \
+             ({:+.2} octaves) — dropped (drop {n} this session)",
+            asks - built,
+        );
+        if n.is_power_of_two() {
+            crate::diag::log_line("render", &line);
+        } else if crate::diag::trace_on("ref") {
+            crate::diag::trace("ref", line);
+        }
+        true
     }
 
     /// A [`series_collapse`] on view `vi`: its budget becomes unmeasured, as at an arithmetic-mode
@@ -8492,6 +8594,16 @@ impl FractadyneApp {
                 self.perf.tile_pending[vidx] = false;
             }
         }
+        // ⭐THE SERIES RADIUS (`drop_series_past_radius`), before the walk below is planned on the
+        // series' skip: a first pass priced from the skip on and then run unseeded would iterate
+        // every pixel through the skipped range on a price that never counted it.
+        self.drop_series_past_radius(
+            vidx,
+            &center_bf,
+            delta_exp,
+            fractadyne_core::precision_for_octaves(log2mag.max(0.0).ceil() as u64),
+            span_mantissa,
+        );
         // The view's EXACT position for the chunk walk's signature: its offset from the reference
         // point as the render sees it (a 2^-delta_exp mantissa, exact to f64 at any depth), the
         // span's exponent and mantissa. The f64 centre alone cannot tell nearby views apart once
@@ -8924,7 +9036,11 @@ impl FractadyneApp {
             // budget is unmeasured again (the next frame opens at the bootstrap and re-climbs on
             // readings of THIS regime), and this frame, whose dispatch was sized above on the old
             // regime's budget, holds the last good frame instead of iterating. Decided here, after
-            // this frame's reference install, so a reference that brings no series is caught too.
+            // this frame's reference install, so a reference that brings no series is caught too —
+            // and one that brings a series walked for a view this one has outgrown (`drop_series_past_radius`:
+            // a reference built during a fast zoom-out lands with the series of the view it was
+            // spawned at).
+            self.drop_series_past_radius(vi, &center_bf, delta_exp, precision, span_mantissa);
             let series = self.live_series(vi, mode, julia, do_sa);
             if !offscreen && self.ref_cache[vi].ref_pt.is_some() {
                 let rc = &self.ref_cache[vi];
@@ -11808,6 +11924,20 @@ pub(crate) fn series_share(shader_iter: u32, orbit_len: u32, skip: u32) -> f32 {
     reach.saturating_sub(skip) as f32 / shader_iter.max(1) as f32
 }
 
+/// Octaves past the radius its build validated a series for that a view may still apply it
+/// ([`series_fits`]): the BLA tree's own zoom-out headroom (it is built at twice the `dc_max` the
+/// view needs). The build keeps a skip while |C|·|δc|² < 2^`SA_EPS_LOG2` (−16) · |A|, so one octave
+/// out costs two of those sixteen bits.
+pub(crate) const SERIES_RADIUS_SLACK_LOG2: f64 = 1.0;
+
+/// Whether a series validated out to |δc| = 2^`built_log2_dc` may seed the pixels of a view that
+/// asks 2^`view_log2_dc` of it ([`series_log2_dc`]). A series is valid inside its radius, so any
+/// zoom in or nearby pan keeps it; a view wider by more than [`SERIES_RADIUS_SLACK_LOG2`] — or
+/// either side not a number, or no radius recorded (`NEG_INFINITY`) — is refused it.
+pub(crate) fn series_fits(built_log2_dc: f64, view_log2_dc: f64) -> bool {
+    view_log2_dc <= built_log2_dc + SERIES_RADIUS_SLACK_LOG2
+}
+
 /// Added to twice the last share before a rise counts as a [`series_collapse`] (a share, 0..1).
 pub(crate) const SERIES_COLLAPSE_SLACK: f32 = 0.02;
 
@@ -11826,6 +11956,10 @@ pub(crate) fn series_collapse(prev: Option<f32>, now: f32) -> bool {
 #[cfg(test)]
 #[path = "../tests/unit/render/series_collapse_tests.rs"]
 mod series_collapse_tests;
+
+#[cfg(test)]
+#[path = "../tests/unit/render/series_radius_tests.rs"]
+mod series_radius_tests;
 
 /// Rescue a dispatch from the SA-skip INVERSION that lost the device on 2026-09-11
 /// (`crash-1789092955-0`, a beta.96 parabolic bulb-root exact point). A non-escaping view pins its
