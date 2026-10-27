@@ -1129,14 +1129,11 @@ fn chunk_fe_entry() -> String {
     format!(
         "fn chunk_fe_at(pos: vec2<f32>, p: vec2<i32>) -> ChunkOut4 {{
     chunk_slot = NO_SLOT;
-    let step_re = iu.step.xy;
-    let step_im = iu.step.zw;
     let gx = iu.px_offset.x + pos.x;
     let gy = iu.px_offset.y + pos.y;
-    let coord_re = gx - iu.res.x * 0.5;
-    let coord_im = iu.res.y * 0.5 - gy;
-    let off_re = df_mul_f32(step_re, coord_re);
-    let off_im = df_mul_f32(step_im, coord_im);
+    let po = pixel_offset(gx, gy);
+    let off_re = po.re;
+    let off_im = po.im;
     let bail2 = 256.0 * 256.0;
     let stop = min(iu.end_iter, iu.max_iter);
     var sz = vec4<f32>(0.0);

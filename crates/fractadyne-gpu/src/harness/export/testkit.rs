@@ -237,6 +237,7 @@ pub fn render_iter_chunked_timed(
         gather: [0; 2],
         tail: crate::tail_word(),
         rn: req.rn_uniform(),
+        map: crate::StripMap::default(),
     };
 
     // One bounded submission per iteration range; poll-wait between them so each stays a short,
@@ -381,6 +382,7 @@ pub fn render_iter_chunked_timed(
         width: w, height: h, ss: 1, pixels, iterate_ms: 0.0, color_ms: 0.0, counters,
         max_dispatch_ms, max_dispatch_work: 0, chunk_passes: 0, tiles_total: 0, tiles_chunked: 0,
         packs: 0,
+        aux: Vec::new(),
     })
 }
 

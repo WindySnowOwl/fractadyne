@@ -34,6 +34,9 @@ pub use bignum::*;
 mod viewport;
 pub use viewport::*;
 
+mod expmap;
+pub use expmap::*;
+
 /// A nucleus near a point, found in perturbation space fast enough to steer a live zoom.
 pub mod feature;
 

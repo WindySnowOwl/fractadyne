@@ -67,6 +67,7 @@ mod diag;
 mod color_picker;
 mod error;
 mod exec_resolve;
+mod expmap_render;
 mod eyedropper;
 mod export;
 mod farm;
@@ -248,9 +249,11 @@ fn main() -> eframe::Result<()> {
         fractadyne_gpu::set_tile_pack(tunables::cost().tile_pack == 1);
         fractadyne_core::set_orbit_schedule(tunables::cost().orbit_schedule == 1);
         // A tour renders hundreds of frames against one reference: its series walk once, not each.
-        // Anything else records only short walks (`SA_TRACE_LIVE_STEPS`): a live dive rebuilds
-        // one point's reference many times, and a long orbit's record would be large.
-        let tour = args.iter().any(|a| a == "--render-tour");
+        // So does a strip dive (`--render-expmap`): every strip's reference is the dive's centre,
+        // and each replays the one walk for its own radius. Anything else records only short
+        // walks (`SA_TRACE_LIVE_STEPS`): a live dive rebuilds one point's reference many times,
+        // and a long orbit's record would be large.
+        let tour = args.iter().any(|a| a == "--render-tour" || a == "--render-expmap");
         if tour {
             fractadyne_core::set_sa_trace_cache(tunables::cost().sa_trace == 1);
         } else {
@@ -762,7 +765,7 @@ const TASK_FLAGS: &[&str] = &[
     "--selftest", "--livetest", "--divetest", "--uitest", "--juliadive", "--dualsettle",
     "--play-tour",
     "--bench-matrix", "--benchmark", "--profile", "--reusetest", "--resizetest", "--frametest",
-    "--render", "--render-tour", "--torture", "--gputest", "--oomtest", "--refdiag",
+    "--render", "--render-tour", "--render-expmap", "--torture", "--gputest", "--oomtest", "--refdiag",
     "--find-minibrot", "--check-updates", "--crosscheck-f3", "--autodive", "--motiontest",
     "--zoomtest",
     "--chunk-sweep", "--deviceloss-repro", "--bench-bignum", "--shot", "--soak", "--pickcheck",
@@ -6935,7 +6938,17 @@ impl FractadyneApp {
             Some(&(n, k)) => (Some(n), k),
             None => (None, crate::harness::glitchaudit::AuditKind::Correction),
         };
-        let auto_render = args.iter().any(|a| a == "--render") || render_iter_mode || glitch_audit.is_some();
+        // `--render-expmap DIR`: a dive as exponential-map strips (`expmap_render`). It takes the
+        // same view options as `--render`, read by `apply_cli_render`, so it rides on `run`.
+        let render_expmap = args
+            .iter()
+            .position(|a| a == "--render-expmap")
+            .and_then(|i| args.get(i + 1))
+            .map(std::path::PathBuf::from);
+        let auto_render = args.iter().any(|a| a == "--render")
+            || render_iter_mode
+            || glitch_audit.is_some()
+            || render_expmap.is_some();
         let selftest = args.iter().any(|a| a == "--selftest" || a == "--selftest-list");
         let profile = args.iter().any(|a| a == "--profile");
         let bench_matrix = args.iter().any(|a| a == "--bench-matrix");
@@ -7423,6 +7436,12 @@ impl FractadyneApp {
                 out: auto_render_out,
                 done: false,
                 iter_mode: render_iter_mode,
+                expmap_opts: if render_expmap.is_some() {
+                    expmap_render::ExpmapCli::from_args(args)
+                } else {
+                    expmap_render::ExpmapCli::default()
+                },
+                expmap: render_expmap,
                 audit: glitch_audit,
                 audit_kind,
                 tour: render_tour,

@@ -1131,6 +1131,7 @@ impl FractadyneApp {
         if crate::tunables::cost().early_ref != 1
             || !rc.run
             || rc.iter_mode
+            || rc.expmap.is_some()
             || rc.audit.is_some()
             || rc.tour.is_some()
             || self.dual
@@ -4153,6 +4154,7 @@ impl FractadyneApp {
             sa_c_exp: sa.c_exp,
             rn: renorm_uniform(rn.as_ref()),
             rn_bla,
+            map: fractadyne_gpu::StripMap::default(), // the affine grid; `--render-expmap` sets a strip
             julia_c,
             orbit,
             orbit_len,
@@ -4237,6 +4239,7 @@ pub(crate) fn params_to_request(p: &fractadyne_gpu::MandelbrotParams) -> fractad
         sa_c_exp: p.sa_c_exp,
         rn: p.rn,
         rn_bla: p.rn_bla.clone(),
+        map: fractadyne_gpu::StripMap::default(),
         julia_c: p.julia_c,
         orbit: p.orbit.clone(),
         orbit_len: p.orbit_len,

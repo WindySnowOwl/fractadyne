@@ -137,6 +137,19 @@ fn wgsl_field_offset(fields: &[(String, String)], field: &str) -> usize {
     panic!("no field `{field}` in the struct");
 }
 
+/// The built-in module parses and validates as naga would at pipeline creation. A custom formula's
+/// module is validated as it is generated (`custom::validate`), but it replaces whole slots of this
+/// one (mode 2, the floatexp chunk body), so an error inside them reached no test before the app.
+#[test]
+fn the_built_in_shader_validates() {
+    use egui_wgpu::wgpu::naga;
+    let src = include_str!(concat!(env!("CARGO_MANIFEST_DIR"), "/src/mandelbrot.wgsl"));
+    let module = naga::front::wgsl::parse_str(src).unwrap_or_else(|e| panic!("{}", e.emit_to_string(src)));
+    naga::valid::Validator::new(naga::valid::ValidationFlags::all(), naga::valid::Capabilities::all())
+        .validate(&module)
+        .unwrap_or_else(|e| panic!("{e:?}"));
+}
+
 /// The same gate for the ITERATE uniform, which every iterate pipeline binds: `IterU` (WGSL) and
 /// `IterUniforms` (Rust) must agree on size, and on where the renormalized step's block starts
 /// (a field added on one side only would shift it, and the step would read garbage).
@@ -156,4 +169,10 @@ fn iter_uniform_matches_the_shader() {
         "IterU.rn_a and IterUniforms.rn start at different offsets",
     );
     assert_eq!(std::mem::size_of::<super::Renorm>(), 128, "Renorm is the shader's 32 words");
+    assert_eq!(
+        wgsl_field_offset(&fields, "map_mode"),
+        std::mem::offset_of!(super::IterUniforms, map),
+        "IterU.map_mode and IterUniforms.map start at different offsets",
+    );
+    assert_eq!(std::mem::size_of::<super::StripMap>(), 16, "StripMap is the shader's 4 words");
 }

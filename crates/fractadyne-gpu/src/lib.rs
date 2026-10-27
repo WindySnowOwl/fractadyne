@@ -92,6 +92,39 @@ pub(crate) struct IterUniforms {
     pub(crate) tail: [u32; 4],
     /// THE RENORMALIZED STEP (the shader's `rn_*`); `len` 0 = off.
     pub(crate) rn: Renorm,
+    /// EXPONENTIAL-MAP STRIPS (the shader's `map_*`); `mode` 0 = the affine grid.
+    pub(crate) map: StripMap,
+}
+
+/// Where an iterate pass puts its texels (the shader's `map_*`, `pixel_offset`): `mode` 0, the
+/// default, is the affine grid every render uses; `mode` 1 renders an EXPONENTIAL-MAP STRIP
+/// (`design/zoom-video.md` §4), texel `(gx, gy)` at `r·exp(−s·gy)·(cos, sin)(s·gx)` from the view
+/// centre in units of `2^delta_exp`, with `s = 2π/W` and `W` the pass's full width. In a strip the
+/// distance estimate is over each texel's own size and the aux target carries the exact count,
+/// its fraction and the final z's angle (the shader's `strip_aux`). See
+/// [`fractadyne_core::ExpMap`] for the geometry.
+#[repr(C)]
+#[derive(Clone, Copy, Debug, Default, PartialEq, bytemuck::Pod, bytemuck::Zeroable)]
+pub struct StripMap {
+    pub mode: u32,
+    /// `2π/W`.
+    pub s: f32,
+    /// The strip's outer radius over `2^delta_exp`.
+    pub r: f32,
+    pub pad: u32,
+}
+
+impl StripMap {
+    /// The strip whose outer radius is `outer_mantissa · 2^outer_exp`, `width` texels around, in a
+    /// pass whose offsets are in units of `2^delta_exp`.
+    pub fn strip(width: u32, outer_mantissa: f64, outer_exp: i32, delta_exp: i32) -> Self {
+        StripMap {
+            mode: 1,
+            s: (std::f64::consts::TAU / width as f64) as f32,
+            r: (outer_mantissa * 2f64.powi(outer_exp - delta_exp)) as f32,
+            pad: 0,
+        }
+    }
 }
 
 /// THE RENORMALIZED STEP's uniform (the shader's `rn_*`; `rn_enter`'s note): a pixel near the
@@ -3769,6 +3802,7 @@ impl CallbackTrait for MandelbrotParams {
                 gather: [0; 2],
                 tail: tail_word(),
                 rn: self.rn_uniform(),
+                map: StripMap::default(),
             };
             // A split pass is a single full-frame pass by definition (`MandelbrotParams::split`).
             let split_on = self.split[0] > 1 && self.chunk_range.is_none() && self.tile.is_none();

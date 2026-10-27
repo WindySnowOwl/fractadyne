@@ -328,6 +328,34 @@ pub fn read_exr_rgba_f32(path: &Path) -> Result<(u32, u32, Vec<f32>), ExportErro
 /// Used for cross-renderer validation against **Fraktaler-3**, whose raw EXR stores the
 /// integer escape count in a UINT channel named `"N"` (exterior `n + 1024`, interior
 /// `0xFFFFFFFF`) and the smooth fraction in float channel `"NF"`.
+/// [`read_exr_channel_f32`] for a `uint32` channel, EXACTLY (an f32 holds integers only to 2^24,
+/// and an escape count passes that). Any other sample type is refused, not converted.
+pub fn read_exr_channel_u32(path: &Path, name: &str) -> Result<(u32, u32, Vec<u32>), ExportError> {
+    use exr::prelude::*;
+    check_file_bytes(path)?;
+    check_exr_dims(path)?;
+    let image = read()
+        .no_deep_data()
+        .largest_resolution_level()
+        .all_channels()
+        .first_valid_layer()
+        .all_attributes()
+        .from_file(path)?;
+    let layer = &image.layer_data;
+    let (w, h) = (layer.size.0, layer.size.1);
+    let chan = layer
+        .channel_data
+        .list
+        .iter()
+        .find(|c| c.name.to_string() == name)
+        .ok_or_else(|| ExportError::ChannelNotFound(name.to_string()))?;
+    match &chan.sample_data {
+        FlatSamples::U32(v) if v.len() == w * h => Ok((w as u32, h as u32, v.clone())),
+        FlatSamples::U32(v) => Err(ExportError::SizeMismatch { expected: w * h, got: v.len() }),
+        _ => Err(ExportError::ChannelNotFound(format!("{name} (as uint32)"))),
+    }
+}
+
 pub fn read_exr_channel_f32(path: &Path, name: &str) -> Result<(u32, u32, Vec<f32>), ExportError> {
     use exr::prelude::*;
     check_file_bytes(path)?;
@@ -904,6 +932,73 @@ pub fn write_exr_raw(
     }
     image.write().to_file(path)?;
     Ok(())
+}
+
+/// One named channel of a data EXR ([`write_exr_channels`]), `width × height` samples row-major.
+pub enum ExrChannelData {
+    U32(Vec<u32>),
+    F32(Vec<f32>),
+}
+
+pub struct ExrChannel {
+    pub name: &'static str,
+    pub data: ExrChannelData,
+}
+
+/// Write named DATA channels to an OpenEXR verbatim (as [`write_exr_raw`]: no clamp, no transfer
+/// curve), PIZ-compressed, and ATOMICALLY: written beside `path` as a partial file, synced, then
+/// renamed into place, as [`write_png`] does. For exponential-map strips (`--render-expmap`), where
+/// a strip that is present must be a strip that is complete — a resumed dive skips what it finds.
+pub fn write_exr_channels(
+    path: &Path,
+    width: u32,
+    height: u32,
+    channels: Vec<ExrChannel>,
+    metadata: Option<&str>,
+) -> Result<(), ExportError> {
+    use exr::prelude::*;
+    let expected = width as usize * height as usize;
+    let mut list: SmallVec<[AnyChannel<FlatSamples>; 4]> = SmallVec::new();
+    for c in channels {
+        let samples = match c.data {
+            ExrChannelData::U32(v) => {
+                if v.len() != expected {
+                    return Err(ExportError::SizeMismatch { expected, got: v.len() });
+                }
+                FlatSamples::U32(v)
+            }
+            ExrChannelData::F32(v) => {
+                if v.len() != expected {
+                    return Err(ExportError::SizeMismatch { expected, got: v.len() });
+                }
+                FlatSamples::F32(v)
+            }
+        };
+        list.push(AnyChannel::new(c.name, samples));
+    }
+    let layer = Layer::new(
+        (width as usize, height as usize),
+        LayerAttributes::default(),
+        Encoding::SMALL_FAST_LOSSLESS,
+        AnyChannels::sort(list),
+    );
+    let mut image = Image::from_layer(layer);
+    if let Some(meta) = metadata {
+        image.attributes.other.insert(Text::from(META_KEYWORD), AttributeValue::Text(exr_meta_text(meta)?));
+    }
+    let part = partial_path(path);
+    let written = (|| -> std::result::Result<(), ExportError> {
+        image.write().to_file(&part)?;
+        // ⚠Opened for WRITING: Windows flushes a file only through a handle that may write to
+        // it, and a read-only one fails with "Access is denied".
+        std::fs::OpenOptions::new().write(true).open(&part)?.sync_all()?;
+        std::fs::rename(&part, path)?;
+        Ok(())
+    })();
+    if written.is_err() {
+        let _ = std::fs::remove_file(&part);
+    }
+    written
 }
 
 /// Read the embedded Fractadyne view-state metadata from an OpenEXR, if present.
