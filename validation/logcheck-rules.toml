@@ -109,6 +109,13 @@ max_per_min = 20.0
 why = "supersampling runs restarting over and over (the 2026-09-21 field session logged about 720 a minute)"
 
 [[rule]]
+name = "log-lines-dropped"
+token = "[fd-log]"
+also = "dropped here"
+max = 0
+why = "the log's writer fell a full queue behind a stuck disk and dropped lines: a log with a hole in it cannot be checked"
+
+[[rule]]
 name = "panic"
 token = "[fd-panic]"
 max = 0

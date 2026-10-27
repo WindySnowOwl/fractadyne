@@ -687,11 +687,17 @@ fn open_bin(path: &Path) -> std::io::Result<std::fs::File> {
 /// Flush `frames.bin` and `frames.jsonl` to the disk (see `diag::sync_to_disk`). The ring is written
 /// in place with no fsync by design — cheap every frame — and survives a PROCESS crash through the
 /// OS cache, but not a MACHINE hang; this is called on slow frames, the prelude to one.
+///
+/// Run by the log's writer thread (`diag::log_writer`). ⚠The sync goes through a DUPLICATE handle,
+/// outside `BIN`: the UI thread records every frame under that lock, and a sync held inside it would
+/// make the next frame wait for the disk after all.
 pub(crate) fn sync_to_disk() {
-    if let Ok(g) = BIN.lock() {
-        if let Some(Ok(f)) = g.as_ref() {
-            let _ = f.sync_data();
-        }
+    let bin = BIN.lock().ok().and_then(|g| match g.as_ref() {
+        Some(Ok(f)) => f.try_clone().ok(),
+        _ => None,
+    });
+    if let Some(f) = bin {
+        let _ = f.sync_data();
     }
     if let Some(p) = jsonl_file() {
         if let Ok(f) = std::fs::OpenOptions::new().append(true).open(&p) {

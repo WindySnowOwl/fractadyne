@@ -505,6 +505,8 @@ pub(crate) fn at_exit(code: i32) -> i32 {
     }
     crate::diag::log_line("exit", &format!("{mode} exit {code}"));
     let Some(path) = crate::diag::log_path() else { return code };
+    // Every line this run logged, the one just above included, is in the file before it is read.
+    crate::diag::flush_log();
     let rules = match Rules::parse(BUILTIN_RULES) {
         Ok(r) => r,
         Err(e) => {
@@ -581,6 +583,9 @@ pub(crate) fn run_cli(args: &[String]) -> i32 {
             }
         },
     };
+    if own_log {
+        crate::diag::flush_log();
+    }
     let text = match read_log(&path, own_log) {
         Ok(t) => t,
         Err(e) => {

@@ -6,7 +6,9 @@
 //! own record. The pieces:
 //!
 //! - **Log file** — every diagnostic line is teed to `<config>/logs/fractadyne.log`
-//!   (rotated once past ~5 MB). Disable with `FRACTADYNE_LOG=0`.
+//!   (rotated once past ~5 MB). Disable with `FRACTADYNE_LOG=0`. Written by its own thread
+//!   ([`log_writer`]): the thread that logs only stamps the line and hands it over, because one
+//!   write that waited 12 s for PLUTO's disk froze the window for all of it.
 //! - **Console gate** — the same lines reach stderr only when [`console_on`]. ON whenever there is
 //!   any command-line argument (so every headless mode, harness and validation script keeps its
 //!   output), OFF for a bare GUI launch, and overridable by `--console` / `--no-console`,
@@ -39,8 +41,17 @@ use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 static START: OnceLock<Instant> = OnceLock::new();
 /// `<config>/logs` once resolved (None = file logging unavailable/disabled).
 static LOG_DIR: OnceLock<Option<PathBuf>> = OnceLock::new();
-/// Serializes file appends; holds the resolved log-file path.
+/// The resolved log-file path; also serializes the direct appends made when there is no writer.
 static LOG_FILE: Mutex<Option<PathBuf>> = Mutex::new(None);
+/// The log file's writer thread, started by [`init`] once the file is chosen ([`log_writer`]).
+static WRITER: OnceLock<log_writer::LogWriter> = OnceLock::new();
+/// Set once a line found the writer thread stopped (so that is said once, not per line).
+static WRITER_GONE: AtomicBool = AtomicBool::new(false);
+/// How long a slow frame waits for the log and the frame record to reach the disk
+/// ([`sync_to_disk`]). A sync of the log measured 1.3 ms median, 3.6 ms worst of 100 on the
+/// development machine's SSD (2026-10-27); a disk that has not answered in this long is stuck, and
+/// the frame goes on without it.
+const SYNC_WAIT: Duration = Duration::from_millis(100);
 /// The "current activity" cell: what the process is doing right now.
 static BREADCRUMB: Mutex<String> = Mutex::new(String::new());
 /// Last render manifest ([`set_manifest`]) — the request a crash was working on.
@@ -65,7 +76,8 @@ const BUDGET_LOG_CAP: usize = 24;
 /// (measured on the development machine's own log), and overwrite its own head the next launch.
 const LOG_ROTATE_BYTES: u64 = 5_000_000;
 const LOG_SLOTS: u32 = 4;
-/// Bytes appended since the log's size was last checked — checked every ~256 KB, not every line.
+/// Bytes appended directly ([`write_direct`]) since the log's size was last checked — checked every
+/// ~256 KB, not every line. The writer thread counts its own ([`log_writer::FileSink`]).
 static LOG_SINCE_CHECK: AtomicU64 = AtomicU64::new(0);
 /// This startup rotated the previous session's log into `.1`, so that is where the unclean-exit
 /// report must look for the dead session's last lines. ⚠It used to read the NEW, empty file: a
@@ -146,6 +158,8 @@ pub(crate) fn on_alloc_fail(bytes: usize) {
     );
     write_crash_report_at(&msg, "<allocator>");
     log_line("oom", &msg);
+    // The runtime aborts as this returns: give the log's writer a moment to write the line.
+    flush_log_within(Duration::from_secs(1));
 }
 
 /// Seconds since process start (0.0 before [`init`]).
@@ -235,13 +249,22 @@ pub(crate) fn init(args: &[String]) {
             rotate_log(&dir);
             ROTATED_AT_START.store(true, Ordering::Relaxed);
         }
-        *LOG_FILE.lock().unwrap() = Some(path);
+        *LOG_FILE.lock().unwrap() = Some(path.clone());
+        if let Some(w) = log_writer::LogWriter::start(
+            log_writer::FileSink::new(path, LOG_ROTATE_BYTES),
+            log_writer::Config::log_file(),
+        ) {
+            let _ = WRITER.set(w);
+        }
+    }
+    // BEFORE this process logs anything, so the "last log lines" it quotes belong to the dead
+    // session. (With the start notes written first, they were quoted as the dead session's.)
+    report_unclean_previous_session();
+    if log_path().is_some() {
         for n in &start_notes {
             log_line("start", n);
         }
     }
-    // BEFORE the start line, so the "last log lines" it quotes belong to the dead session.
-    report_unclean_previous_session();
     arm_oom_reserve();
     log_line(
         "start",
@@ -284,7 +307,16 @@ fn rotate_log(dir: &std::path::Path) {
 /// moments before a possible machine hang (called on every slow frame). A process crash leaves the
 /// OS cache to write them; a machine hang does not, and on 2026-09-27 PLUTO's log, `frames.bin` and
 /// `frames.jsonl` came back as zeros after one. Never panics; errors are ignored (best effort).
+///
+/// The log's writer thread does the syncing; the caller (the UI thread, on a slow frame) waits for
+/// it at most [`SYNC_WAIT`], and not at all while an earlier sync is unfinished or the writer is
+/// stuck. Only a writer thread that has STOPPED leaves it to this thread.
 pub(crate) fn sync_to_disk() {
+    if let Some(w) = WRITER.get() {
+        if w.sync_within(SYNC_WAIT) != log_writer::Synced::Gone {
+            return;
+        }
+    }
     let path = LOG_FILE.lock().ok().and_then(|g| g.clone());
     if let Some(p) = path {
         if let Ok(f) = std::fs::OpenOptions::new().append(true).open(&p) {
@@ -294,19 +326,57 @@ pub(crate) fn sync_to_disk() {
     frame_record::sync_to_disk();
 }
 
-/// Append one line to the log file (no-op when file logging is off). Never panics.
+/// Wait up to `limit` for every line logged so far to reach the log file: for a reader in this
+/// process, a clean exit and the panic hook. `true` when there is no writer thread (every line was
+/// written as it was logged).
+pub(crate) fn flush_log_within(limit: Duration) -> bool {
+    WRITER.get().is_none_or(|w| w.flush_within(limit))
+}
+
+/// [`flush_log_within`] with room for a slow disk. Not for the UI thread.
+pub(crate) fn flush_log() -> bool {
+    flush_log_within(Duration::from_secs(5))
+}
+
+/// This session's `fractadyne.log` with every line logged so far: for a harness checking its own
+/// log. Waits for the writer ([`flush_log`]), so not for the UI thread.
+pub(crate) fn own_log_text() -> Option<String> {
+    flush_log();
+    std::fs::read_to_string(logs_dir()?.join("fractadyne.log")).ok()
+}
+
+/// Append one line to the log file (no-op when file logging is off). Never panics, and never waits
+/// for the disk: the writer thread writes it ([`log_writer`]).
 fn file_line(text: &str) {
+    match WRITER.get().map(|w| w.send(text)) {
+        Some(log_writer::Sent::Queued | log_writer::Sent::Dropped) => {}
+        Some(log_writer::Sent::Gone(line)) => {
+            if !WRITER_GONE.swap(true, Ordering::Relaxed) {
+                write_direct(&format!(
+                    "{} [fd-log] the log's writer thread has stopped; lines are written as they are logged from here on\n",
+                    stamp()
+                ));
+            }
+            write_direct(&line);
+        }
+        None => write_direct(&format!("{} {text}\n", stamp())),
+    }
+}
+
+/// Open the log, append `line` (stamped, with its newline) and close it, on the calling thread:
+/// only when there is no writer thread.
+fn write_direct(line: &str) {
     let guard = match LOG_FILE.lock() {
         Ok(g) => g,
         Err(_) => return,
     };
     if let Some(path) = guard.as_ref() {
         if let Ok(mut f) = std::fs::OpenOptions::new().create(true).append(true).open(path) {
-            let _ = writeln!(f, "{} {}", stamp(), text);
+            let _ = f.write_all(line.as_bytes());
         }
         // Mid-run rotation, under the same lock as every write, so no line lands in a file being
         // renamed. The next write reopens `fractadyne.log` fresh.
-        let since = LOG_SINCE_CHECK.fetch_add(text.len() as u64 + 16, Ordering::Relaxed);
+        let since = LOG_SINCE_CHECK.fetch_add(line.len() as u64, Ordering::Relaxed);
         if since > 256 * 1024 {
             LOG_SINCE_CHECK.store(0, Ordering::Relaxed);
             if std::fs::metadata(path).map(|m| m.len() > LOG_ROTATE_BYTES).unwrap_or(false) {
@@ -510,6 +580,9 @@ mod device_loss_hint_tests;
 /// The always-on per-frame record (design/live-render-robustness.md W1).
 pub(crate) mod frame_record;
 
+/// `fractadyne.log`'s own thread.
+pub(crate) mod log_writer;
+
 /// Replace the user's home directory with `~` everywhere in `s` — for anything that leaves the
 /// machine (the issue report). Issues are public, and on every desktop OS the home path contains
 /// the account name.
@@ -621,7 +694,9 @@ fn drive_is_remote(s: &str) -> bool {
 }
 
 /// The tail of the current log file (up to `max_bytes`, trimmed to a line boundary), for issue
-/// reports. `None` if logging is off or the file can't be read.
+/// reports. `None` if logging is off or the file can't be read. ⚠Does not wait for the writer
+/// thread (the issue report's preview calls this every frame), so a line logged a moment ago may
+/// not be in it yet: a caller that needs it calls [`flush_log`] first.
 pub(crate) fn recent_log(max_bytes: usize) -> Option<String> {
     let data = std::fs::read(logs_dir()?.join("fractadyne.log")).ok()?;
     let start = data.len().saturating_sub(max_bytes);
@@ -1161,6 +1236,9 @@ pub(crate) fn end_session() {
     // `frames.jsonl` is written by its own thread, which `process::exit` does not wait for: give
     // the rows already queued a moment to land. Bounded — a dead share must not hang a quit.
     frame_record::flush_jsonl_within(std::time::Duration::from_millis(500));
+    // So is `fractadyne.log`, whose last lines (the exit code, a harness's verdict) are the ones a
+    // reader looks for first. Longer, for the same reason, and still bounded.
+    flush_log_within(std::time::Duration::from_secs(2));
 }
 
 /// If the previous GUI session left its marker behind, it never shut down cleanly. Report it,
@@ -1313,8 +1391,16 @@ fn install_panic_hook() {
         write_crash_report_at(&msg, &loc);
         // Then let the `frames.jsonl` writer catch up (bounded: the panic may be ON that thread).
         frame_record::flush_jsonl_within(std::time::Duration::from_millis(250));
-        // Then the log line (non-panicking stderr; also teed to the log file).
-        log_line("panic", &format!("{msg} at {loc} — activity: {}", current_breadcrumb()));
+        // Then the log line (non-panicking stderr; also teed to the log file), and a bounded wait for
+        // the log's writer to write it: a panic on the main thread ends the process, writer and all.
+        let line = format!("{msg} at {loc} — activity: {}", current_breadcrumb());
+        log_line("panic", &line);
+        if std::thread::current().name() == Some(log_writer::THREAD) {
+            // The writer is the thread that panicked: nothing will write what it was just handed.
+            write_direct(&format!("{} [fd-panic] {line}\n", stamp()));
+        } else {
+            flush_log_within(std::time::Duration::from_secs(1));
+        }
         default(info);
     }));
 }
