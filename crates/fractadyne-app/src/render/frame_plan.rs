@@ -317,6 +317,11 @@ pub(crate) const HOME_STOP_ITER_BASE: u32 = 2_000;
 /// all of it: a fixed 2,008,192 (e4000, auto iterations off) made the four shallowest stops, 2^98 to
 /// 2^12, give way after their 3 s each (PLUTO, dev.47) — 12 s of one held picture. The stop is a
 /// preview; a pixel that would escape past the cap reads as interior there.
+///
+/// ⚠Applied to the climb's APPETITE (`IterInputs::eff_iter`), never to its output: the climb judges
+/// a MAXITER reading only when it was armed at its own budget, and a cap on the ask it planned had
+/// every reading at a stop discarded as taken at another budget — `climb-starved` in all four PLUTO
+/// runs of dev.48 (a probe whose readings are all discarded never terminates).
 pub(crate) fn home_stop_iter(ask: u32, log2mag: f64, interacting: bool, stepping: bool) -> u32 {
     if stepping && !interacting {
         ask.min(fractadyne_core::recommended_iterations(HOME_STOP_ITER_BASE, log2mag))

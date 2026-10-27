@@ -5295,6 +5295,9 @@ impl FractadyneApp {
         // here: the MAXITER reading drained this frame, the reference's evidence for the boost seed,
         // whether a reference build is in flight, and the view's climb state.
         let vb = (view_id as usize).min(1);
+        // A stepped Home's stop wants only what its depth wants (`home_stop_iter`): the climb's
+        // APPETITE, so its budget is the ask the pass runs at and its readings are judged.
+        let eff_iter = crate::render::frame_plan::home_stop_iter(eff_iter, log2mag, interacting, self.perf.hold_home_step[vb]);
         let climb_in = {
             use std::sync::atomic::Ordering::SeqCst;
             let rc = &self.ref_cache[vb];
@@ -5738,15 +5741,7 @@ impl FractadyneApp {
             e.trace();
         }
         self.record_decision("iter", vb, &climb_in, &climb);
-        // A stepped Home's stop asks only what its depth wants (`home_stop_iter`), after the recorded
-        // climb so its replay is untouched.
-        let gpu_iter = crate::render::frame_plan::home_stop_iter(
-            climb.gpu_iter,
-            log2mag,
-            interacting,
-            self.perf.hold_home_step[vb],
-        );
-        BudgetPlan { px, is_pert, budget, iter_cap, gpu_iter }
+        BudgetPlan { px, is_pert, budget, iter_cap, gpu_iter: climb.gpu_iter }
     }
 
     /// `build_params` stage: the iteration-range (chunked) walk — price-serialized pass
