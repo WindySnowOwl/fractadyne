@@ -59,6 +59,17 @@ published as the pre-releases `v0.2.41-beta.1` to `v0.2.41-beta.150`, and a "bet
 
 Changes after 0.3.0-beta.1:
 
+- **Gliding Home from extreme depth no longer risks losing the graphics card (0.3.0-beta.22).**
+  The series approximation, which lets every pixel skip most of its iterations, holds only within
+  the area it was worked out for. A fast zoom out kept using it on views far wider than that: the
+  picture was wrong, the work looked almost free, and the app handed the graphics card ever larger
+  pieces of it, until one ran for over a second and an RTX 3080 was lost on the way Home from
+  1e500×. A view now stops using the series once it is more than twice as wide as the area it was
+  worked out for, and the app measures the work afresh. On an RTX 3070 and an RX 6800 XT, the same
+  glide's longest piece of work took 4 ms and 33 ms.
+- **Home works from beyond 1e308× (0.3.0-beta.22).** Clicking Home that deep set the view's scale
+  to an invalid number: the view jumped back where it was, again and again for nine seconds, and
+  then snapped to Home. It now glides out from any depth.
 - **The view no longer goes blank for a frame when auto-iterations raise the count
   (0.3.0-beta.22).** At shallow depths (below about 10,000×), on a still view that needed more
   iterations than one frame can afford, the raised count's new pass was shown from its start, when
