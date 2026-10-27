@@ -1381,12 +1381,11 @@ impl FractadyneApp {
                             .wrap_mode(egui::TextWrapMode::Extend),
                     )
                 };
-                let l2 = self.viewport.log2_magnification();
-                mono(ui, format!(
-                    "{} {}, {}",
-                    tr!(status_center),
-                    fmt_coord_deep(&self.viewport.center_x, l2),
-                    fmt_coord_deep(&self.viewport.center_y, l2),
+                // At a fixed width, as the readouts below are (`center_readout`).
+                mono(ui, crate::center_readout(
+                    &self.viewport.center_x,
+                    &self.viewport.center_y,
+                    self.viewport.log2_magnification(),
                 ));
                 ui.separator();
                 // ⭐The cursor readout is reserved at a CONSTANT width. It only appears when the

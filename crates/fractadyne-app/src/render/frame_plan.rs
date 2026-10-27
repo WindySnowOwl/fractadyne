@@ -293,7 +293,8 @@ pub(crate) const HOME_STOP_RES_SCALE: f64 = 0.25;
 /// A frame's scale (`bp_moving_scale`) at a stepped Home's stop: a still view rendered to be SEEN on
 /// the way out, not settled on, so at most [`HOME_STOP_RES_SCALE`] of the panel. At full size a stop
 /// past 2^1000 was 1.6 million pixels of ~116,000 iterations each, and no stop there finished in
-/// its 1.5 s (2^1663 on the RTX 3080, 2026-10-26: the start picture stayed up through five stops).
+/// the 1.5 s a stop then had (2^1663 on the RTX 3080, 2026-10-26: the start picture stayed up
+/// through five stops).
 /// A moving frame, and any frame outside a stepped Home, keeps its own scale.
 pub(crate) fn home_stop_res_scale(scale: f64, interacting: bool, stepping: bool) -> f64 {
     if stepping && !interacting { scale.min(HOME_STOP_RES_SCALE) } else { scale }

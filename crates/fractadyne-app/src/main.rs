@@ -3941,6 +3941,25 @@ pub(crate) fn zoom_readout(dual: bool, m_log2: f64, j_log2: f64) -> String {
     }
 }
 
+/// Character slot for each coordinate of the status bar's centre readout ([`center_readout`]): the
+/// widest [`fmt_coord_deep`] writes for a one-digit integer part — 25 grouped fractional digits,
+/// just before it elides to `head ... tail` (sign, digit, point, 25 digits, 4 group spaces).
+pub(crate) fn center_slot_width() -> usize {
+    32
+}
+
+/// The status bar's centre readout — same width contract as [`zoom_readout`]. The digits shown grow
+/// with the depth ([`fmt_coord_deep`]: 15 at Home, 25 near 2^63, then `head ... tail`), and the
+/// field moving by a group wrapped the bar differently at different depths: the canvas went from
+/// 1102 to 1104 px at the 2^24 stop of a stepped Home (1280×800 window, 2026-10-26), the
+/// resize-detector read that as interaction, and the stop showed a black frame. ASCII `...`, not
+/// `…`: only ASCII is sure to take exactly one monospace cell (see [`status_count`]).
+pub(crate) fn center_readout(x: &fractadyne_core::BigFloat, y: &fractadyne_core::BigFloat, log2mag: f64) -> String {
+    let w = center_slot_width();
+    let coord = |v| fmt_coord_deep(v, log2mag).replace('…', "...");
+    format!("{} {:>w$}, {:>w$}", tr!(status_center), coord(x), coord(y))
+}
+
 /// The status bar's iteration readout — same width contract as [`zoom_readout`], and the field
 /// the beta.149 report actually wrapped on (`iter 1,395,703` alone on a second line).
 pub(crate) fn iter_readout(eff_iter: u32) -> String {
@@ -4918,32 +4937,39 @@ fn home_glide_seconds(logmag: f64) -> f64 {
     (logmag * HOME_SECONDS_PER_LOGMAG).clamp(HOME_MIN_SECONDS, HOME_MAX_SECONDS)
 }
 
-/// ⭐A STEPPED HOME. Deeper than this (log₂ of the magnification, ≈3.4e38×) Home makes stops on
-/// the way out ([`home_stops`]) and glides only from here. A glide is at most
+/// ⭐A STEPPED HOME. Deeper than this (log₂ of the magnification, ≈1.8e19×) Home makes stops on
+/// the way out ([`home_stops`]) and glides only from [`HOME_SMOOTH_LOG2`]. A glide is at most
 /// [`HOME_MAX_SECONDS`], and from 1e4850× that is ~1,800 octaves a second: every frame is a new
 /// view whose walk has just begun, shown with no pixel finished, and the held picture shrinks to a
 /// speck in its average colour — 9 s of solid panels of colour (the user's recording, 2026-10-26).
 /// No renderer draws that depth at that rate; a stop is a still view, which renders.
-pub(crate) const HOME_SMOOTH_LOG2: f64 = 128.0;
+pub(crate) const HOME_STEP_FROM_LOG2: f64 = 64.0;
 
-/// The most stops a stepped Home makes, and the fewest octaves between two of them.
-pub(crate) const HOME_MAX_STOPS: usize = 8;
-pub(crate) const HOME_STOP_MIN_OCT: f64 = 64.0;
+/// Where the stops end and the glide takes over (≈4,096×). Measured on PLUTO's RTX 3070 (dev.46,
+/// 2^1663 at 4M auto iterations): a glide from 2^128 showed no live frame and finished no refresh
+/// until ~2^13 — 7 s of the last stop's picture shrinking into its average colour.
+pub(crate) const HOME_SMOOTH_LOG2: f64 = 12.0;
 
-/// The longest a stop waits for its picture, and how long a finished one stays on screen.
-pub(crate) const HOME_STOP_MAX_SECONDS: f64 = 1.5;
+/// The most stops a stepped Home makes.
+pub(crate) const HOME_MAX_STOPS: usize = 12;
+
+/// The longest a stop waits for its picture, and how long a finished one stays on screen. On PLUTO
+/// uncapped, stops between 2^1088 and 2^128 took 0.9–1.5 s; deeper ones need longer.
+pub(crate) const HOME_STOP_MAX_SECONDS: f64 = 3.0;
 pub(crate) const HOME_STOP_SHOW_SECONDS: f64 = 0.5;
 
 /// The depths (log₂ magnification) a Home from `start_l2` stops at on the way out, deepest first:
-/// evenly spaced, at least [`HOME_STOP_MIN_OCT`] apart, at most [`HOME_MAX_STOPS`], the last at
-/// [`HOME_SMOOTH_LOG2`] where the glide takes over. None at or above it (or for no number).
+/// evenly spaced in the LOG of the depth — each about half the last, so few stops where they are
+/// costly and more where they are cheap — at most [`HOME_MAX_STOPS`], the last at
+/// [`HOME_SMOOTH_LOG2`] where the glide takes over. None from [`HOME_STEP_FROM_LOG2`] or shallower
+/// (or for no number): those glide as before.
 pub(crate) fn home_stops(start_l2: f64) -> Vec<f64> {
-    if !(start_l2 > HOME_SMOOTH_LOG2) {
+    if !(start_l2 > HOME_STEP_FROM_LOG2) {
         return Vec::new();
     }
-    let span = start_l2 - HOME_SMOOTH_LOG2;
-    let n = ((span / HOME_STOP_MIN_OCT).floor() as usize).clamp(1, HOME_MAX_STOPS);
-    (1..=n).map(|k| if k == n { HOME_SMOOTH_LOG2 } else { start_l2 - span * k as f64 / n as f64 }).collect()
+    let n = ((start_l2 / HOME_SMOOTH_LOG2).log2().round() as usize).clamp(1, HOME_MAX_STOPS);
+    let r = (HOME_SMOOTH_LOG2 / start_l2).powf(1.0 / n as f64);
+    (1..=n).map(|k| if k == n { HOME_SMOOTH_LOG2 } else { start_l2 * r.powi(k as i32) }).collect()
 }
 
 /// Whether a stop reached at `arrived` is done at `now`: its picture (finished at `finished`) has
@@ -9316,15 +9342,27 @@ impl FractadyneApp {
     }
 
     /// The stop's own picture is on screen: each view's live texture holds a render complete for
-    /// its ask (`ContentTrack::live_complete`), captured at or after the frame the view reached the
-    /// stop and at its depth (`RefCache::frozen_frame` / `frozen_l2`: a device render's own frame, or
-    /// a worker frame's ticket). ⚠Not `live_tag`: a worker frame's tag carries `LIVE_TAG_BIT` and
-    /// out-ranks every frame index, so a worker frame of the view BEFORE the jump, adopted just
-    /// after it, passed for the stop's picture (stop 1 "finished" in 0.07 s, the start view held).
+    /// its ask (`ContentTrack::live_complete`) that is the stop's — this device's own render, tagged
+    /// at or after the frame the view reached the stop, or a frame captured then at its depth
+    /// (`RefCache::frozen_frame` / `frozen_l2`: a worker frame's ticket). ⚠A worker frame's tag
+    /// carries `LIVE_TAG_BIT` and out-ranks every frame index, so a worker frame of the view BEFORE
+    /// the jump, adopted just after it, passed for the stop's picture (stop 1 "finished" in 0.07 s,
+    /// the start view held). ⚠The frozen latch is perturbation-only, so a DIRECT stop (2^12) never
+    /// moved it and gave way with its picture on screen: the device's own render counts too —
+    /// checked against the GPU's own account of the pixels (`ContentTrack::live_pixels_ok`) and the
+    /// view this frame asked for, because a frame that dispatches nothing still stamps its tag, and
+    /// the jump frame stamped the start view's complete picture as the stop's (stop 1 in 0.05 s).
     fn home_stop_pictured(&self, since_frame: u64, dual: bool) -> bool {
         let done = |v: usize, l2: f64| {
+            let c = &self.perf.content[v];
             let r = &self.ref_cache[v];
-            self.perf.content[v].live_complete && r.frozen_frame >= since_frame && (r.frozen_l2 - l2).abs() < 0.5
+            let reported = self.perf.pixels_stamp[v].load(std::sync::atomic::Ordering::SeqCst);
+            let own = c.live_tag & crate::motion_worker::LIVE_TAG_BIT == 0
+                && c.live_tag >= since_frame
+                && c.live_stamp == self.perf.content_stamp_asked[v]
+                && c.live_pixels_ok(reported);
+            let latched = r.frozen_frame >= since_frame && (r.frozen_l2 - l2).abs() < 0.5;
+            c.live_complete && (own || latched)
         };
         done(0, self.viewport.log2_magnification())
             && (!dual || done(1, self.julia_viewport.log2_magnification()))
