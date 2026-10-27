@@ -480,10 +480,17 @@ pub(crate) fn decide_present(i: &PresentInputs) -> PresentDecision {
     // honest progressive-plus-spinner. Non-chunked tiled settles keep their progressive
     // default — each landed tile is complete content, which reads as sharpening, not as a
     // hang.
+    // ⭐A direct view's chunked walk holds too. The direct exclusion was written for the
+    // prefer-detail tiles (cheap, and each tile complete), and it caught the walks direct mode
+    // later gained: when the iteration climb raised the ask on a settled direct view, the new walk
+    // was shown from its first pass — 7 iterations, every pixel still pending — and the screen
+    // went EMPTY for a frame (the user's 2026-10-25 video at 99.78×, ask 29,970 → 47,953;
+    // reproduced with `--zoomtest-click`, ask 9,469 → 15,151). The hold machinery is the same in
+    // both modes (`ContentTrack` verifies direct frames; the GPU copy is mode-blind).
     let gate_capable = (i.prefer_detail || chunk_over)
         && !offscreen
         && !interacting
-        && !i.direct;
+        && (!i.direct || chunk_over);
     // ⚠`tile_work`, NOT `tile.is_some()`. A COMPLETED grid goes on emitting its final rect
     // every frame by design, so `tile.is_some()` is true forever after the first grid finishes
     // — the gate never dropped, the display kept serving the snapshot it took when the grid

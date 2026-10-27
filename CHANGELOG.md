@@ -59,6 +59,17 @@ published as the pre-releases `v0.2.41-beta.1` to `v0.2.41-beta.150`, and a "bet
 
 Changes after 0.3.0-beta.1:
 
+- **The view no longer goes blank for a frame when auto-iterations raise the count
+  (0.3.0-beta.22).** At shallow depths (below about 10,000×), on a still view that needed more
+  iterations than one frame can afford, the raised count's new pass was shown from its start, when
+  no pixel has finished, so the view showed nothing for a frame before the picture returned. The
+  previous picture now stays on screen until the new pass finishes, as it already did at deeper
+  views. Seen in a recording right after a 100× click from Home, and reproduced with the same click.
+- **Auto-iterations no longer take their count from a view you have left (0.3.0-beta.22).** The
+  count is raised to the length of the view's reference orbit, and after an instant jump from a
+  deep view to a shallow one the orbit used could be the deep view's: Home reached that way from
+  1e500× ran at 116,901 iterations instead of 2,000, and the next click carried the excess along.
+  Only the current view's own reference counts now.
 - **A long, deep export is no longer logged as a hang (0.3.0-beta.22).** An export's progress
   moves in thousandths of the image, and near the set's interior a deep export can spend a minute
   on one thousandth while its graphics card finishes several pieces of work a second. The watchdog

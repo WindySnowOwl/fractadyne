@@ -500,6 +500,27 @@ fn a_settled_compose_snapshots_a_verified_texture() {
 }
 
 #[test]
+fn a_direct_views_chunked_walk_holds_but_its_tiles_show_live() {
+    // The climb raising the ask on a settled direct view restarts its walk; shown from its first
+    // pass, the screen was empty for a frame. The walk holds, as a perturbation view's does…
+    let d = decide_present(&PresentInputs { direct: true, prefer_detail: false, ..composing() });
+    assert!(d.display_hold && d.hold_copy && !d.pin_gate);
+    // …while a direct view's prefer-detail tiles keep their live, sharpening display.
+    let tiles = PresentInputs {
+        direct: true,
+        chunk_over: false,
+        chunk_range: None,
+        tile_work: true,
+        ..composing()
+    };
+    let d = decide_present(&tiles);
+    assert!(!d.display_hold && !d.hold_copy);
+    // …and a walk that finished (`[iter, iter]`) composes nothing, so the frame reveals whole.
+    let done = decide_present(&PresentInputs { direct: true, chunk_range: Some([50_000, 50_000]), ..composing() });
+    assert!(!done.display_hold);
+}
+
+#[test]
 fn a_settled_compose_never_snapshots_an_unverified_texture() {
     // U42: it took the snapshot of whatever the texture held and served it for the whole
     // compose. Now it takes none — the display shows the compose live — and says nothing new
