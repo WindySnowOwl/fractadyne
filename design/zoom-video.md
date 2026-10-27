@@ -281,9 +281,14 @@ E0 + E1 alone deliver the zoomasm workflow; E2 is where Fractadyne stops needing
   renderer's bailout of 256, so it lies around −2 to −3, not in [0, 1): E1 converts.
 - **Reference, SA, BLA:** each strip renders as an export of a VIEW sized to the strip's disk (its
   half diagonal is the strip's outer radius), so the pick, the series radius and the BLA radius
-  follow without new code. ⚠Each strip still builds its own reference (the centre wins the pick);
-  the series walk is recorded once and replayed per strip (`set_sa_trace_cache`, as tours do). One
-  orbit for the whole dive is the next step for deep dives.
+  follow without new code. ⭐ONE orbit for the whole dive: built for its deepest strip, at that
+  strip's cap and precision, and handed to every strip as a `ReuseRef`; each strip works out only its
+  own series (the walk is recorded once and replayed, `set_sa_trace_cache`) and BLA. A 130-octave
+  dive at 320×180 (corpus 07's point): 22.6 s with a reference per strip, 17.7 s with one; the
+  strips differ at 4.4% of texels, and the oracle judges strip 17 equally right both ways (37 and
+  36 of 48 exact, 0 wrong — the rest are texels where the oracle itself does not settle, ~1/4 of
+  this point's). The selftest's `expmap` group renders its perturbation strips on a reference built
+  four strips deeper and requires that the reuse happened.
 - **Caps:** `--expmap-cap rising` (default) = the app's depth rule at each strip's inner edge, never
   falling; `fixed` = the deepest strip's (or `--iter`'s N).
 - **The gate that replaced "strip = gather render":** the selftest's `expmap` group compares a strip

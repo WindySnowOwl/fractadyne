@@ -31,6 +31,8 @@ const DEEP_BOUNDARY_DE_LOG2: f32 = -30.0;
 pub(crate) struct StripCheck {
     /// The request's arithmetic mode (1 direct, 0 df32 perturbation, 2 floatexp).
     pub(crate) mode: u32,
+    /// The strip rendered on the dive's reference (a perturbation strip must: it is what a dive does).
+    pub(crate) reused: bool,
     pub(crate) width: u32,
     pub(crate) rows: u32,
     /// Escaped texels compared, and how many agreed exactly (count and fraction).
@@ -61,6 +63,7 @@ pub(crate) struct StripCheck {
 impl StripCheck {
     pub(crate) fn pass(&self) -> bool {
         self.sampled >= 16
+            && (self.mode == 1 || self.reused)
             && self.matched as f64 >= MATCHED_MIN * self.sampled as f64
             && self.wrong.is_empty()
             && self.interior_wrong == 0
@@ -91,7 +94,12 @@ impl crate::FractadyneApp {
         let cxb = fractadyne_core::parse_bf_prec(cx, p0).ok_or("unreadable centre")?;
         let cyb = fractadyne_core::parse_bf_prec(cy, p0).ok_or("unreadable centre")?;
         let map = ExpMap::for_frames(frame.0, frame.1, 1.0, 0.0);
-        let (r, req) = self.render_strip(device, queue, &map, k, &cxb, &cyb, cap)?;
+        // As a dive renders it: on the dive's one reference, built here four strips deeper (finer
+        // precision, a radius 16× smaller) — so the reuse, and the series and BLA worked out again
+        // for THIS strip's radius, are what the oracle judges.
+        let dive_ref = self.dive_reference(&map, k + 4, &cxb, &cyb, cap);
+        let s = self.render_strip(device, queue, &map, k, &cxb, &cyb, cap, dive_ref.as_ref())?;
+        let (r, req) = (s.result, s.req);
         let p = crate::expmap_render::strip_view(&map, k, &cxb, &cyb).precision + 64;
         let w = map.width as usize;
         let at = |i: f64, j: f64| -> Option<(u32, f32)> {
@@ -102,6 +110,7 @@ impl crate::FractadyneApp {
         let stride = ((w * map.rows as usize) / (samples * 6)).max(1);
         let mut c = StripCheck {
             mode: req.mode,
+            reused: s.reused,
             width: map.width,
             rows: map.rows,
             sampled: 0,

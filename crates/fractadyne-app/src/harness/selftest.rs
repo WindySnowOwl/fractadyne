@@ -7741,9 +7741,11 @@ impl FractadyneApp {
                 let (result, pass) = match &got {
                     Ok(c) => (
                         format!(
-                            "mode {}, {}x{}: {}/{} exact, {} sensitive, {} wrong{}; interior {}/{} agree; NF err {:.4} \
+                            "mode {}{}, {}x{}: {}/{} exact, {} sensitive, {} wrong{}; interior {}/{} agree; NF err {:.4} \
                              [{}]; normals off {} [{}], {} deep in a boundary; control differs {}/{}; chunked {}",
-                            c.mode, c.width, c.rows, c.matched, c.sampled, c.sensitive, c.wrong.len(),
+                            c.mode,
+                            if c.mode == 1 { "" } else if c.reused { " on the dive's reference" } else { " on ITS OWN reference" },
+                            c.width, c.rows, c.matched, c.sampled, c.sensitive, c.wrong.len(),
                             if c.wrong.is_empty() { String::new() } else { format!(" ({})", c.wrong[0]) },
                             c.interior - c.interior_wrong, c.interior, c.nf_err, c.nf_worst, c.normals_bad,
                             c.normal_worst, c.derivative_overflow,
@@ -7758,7 +7760,8 @@ impl FractadyneApp {
                     name: format!("a {regime} strip matches the oracle where the geometry puts it"),
                     params: format!("strip {k} of a dive into ({cx}, {cy}), 160x90 frames from 1x, cap {cap}"),
                     result,
-                    threshold: "rendered in the named mode; every sampled texel's count exact and fraction within 0.05, \
+                    threshold: "rendered in the named mode, a perturbation strip on the dive's reference (built 4 strips \
+                                deeper); every sampled texel's count exact and fraction within 0.05, \
                                 or its smooth count the oracle's within 1e-3 texel; at least 60% exact; interior agrees; \
                                 unit normals where the derivative is finite; every tile chunked; the quarter-turn \
                                 control differs on at least 30%",

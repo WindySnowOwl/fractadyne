@@ -125,6 +125,13 @@ pub(crate) fn strip_caps(map: &ExpMap, strips: u64, width_px: f64, height_px: f6
     caps
 }
 
+/// One rendered strip: the raw targets, the request, and whether it reused the dive's reference.
+pub(crate) struct StripRender {
+    pub(crate) result: fractadyne_gpu::ExportResult,
+    pub(crate) req: fractadyne_gpu::ExportRequest,
+    pub(crate) reused: bool,
+}
+
 /// Strip `k`'s file name.
 pub(crate) fn strip_file(k: u64) -> String {
     format!("strip_{k:06}.exr")
@@ -184,6 +191,8 @@ impl crate::FractadyneApp {
     /// Render strip `k` of `map` around `(cx, cy)` at `cap` iterations: the raw main target and
     /// the strip aux target (`ExportResult::aux`), with the request it was rendered from. The one
     /// way a strip is rendered — `--render-expmap` and the selftest's `expmap` group both call it.
+    /// With `dive_ref` ([`Self::dive_reference`]) the strip REUSES the dive's one orbit and only its
+    /// series and BLA are worked out for this strip's radius; without, it picks and builds its own.
     /// Leaves `render_cfg.max_iter`/`auto_iter` and `export.width` changed: the caller restores
     /// them.
     #[allow(clippy::too_many_arguments)]
@@ -196,14 +205,25 @@ impl crate::FractadyneApp {
         cx: &fractadyne_core::BigFloat,
         cy: &fractadyne_core::BigFloat,
         cap: u32,
-    ) -> Result<(fractadyne_gpu::ExportResult, fractadyne_gpu::ExportRequest), String> {
+        dive_ref: Option<&crate::render::ReuseRef>,
+    ) -> Result<StripRender, String> {
         let vp = strip_view(map, k, cx, cy);
         // The cap is explicit per strip: auto-iterations would read the strip view's own depth
         // rule, which is not the dive's.
         self.render_cfg.max_iter = cap;
         self.render_cfg.auto_iter = false;
         self.export.width = map.width;
-        let mut req = self.current_export_request_for(&vp, false);
+        let budget = crate::render::IterBudget { max_iter: cap, auto_iter: false };
+        let mut reused = false;
+        let mut req = match (dive_ref, self.export_reference_inputs_for(&vp, false, budget)) {
+            (Some(dr), Some(inputs)) => {
+                let res = crate::render::build_reference_watching("fd-ref-expmap", inputs.with_reuse(dr.clone()), None);
+                reused = res.was_reused();
+                self.current_export_request_with_ref(&vp, false, Some(res))
+            }
+            // The direct path (no reference at all), or no dive reference: build as an export does.
+            _ => self.current_export_request_for(&vp, false),
+        };
         req.width = map.width;
         req.height = map.rows;
         req.ss = 1;
@@ -222,7 +242,25 @@ impl crate::FractadyneApp {
                 r.tiles_chunked, r.tiles_total
             ));
         }
-        Ok((r, req))
+        Ok(StripRender { result: r, req, reused })
+    }
+
+    /// The dive's ONE reference: built once for its deepest strip `k`, at that strip's cap and
+    /// precision, which every shallower strip's view accepts (its precision is lower and the point
+    /// is at its centre). `None` when that strip renders on the direct path, which needs none.
+    pub(crate) fn dive_reference(
+        &mut self,
+        map: &ExpMap,
+        k: u64,
+        cx: &fractadyne_core::BigFloat,
+        cy: &fractadyne_core::BigFloat,
+        cap: u32,
+    ) -> Option<crate::render::ReuseRef> {
+        let vp = strip_view(map, k, cx, cy);
+        self.render_cfg.max_iter = cap;
+        self.render_cfg.auto_iter = false;
+        let inputs = self.export_reference_inputs_for(&vp, false, crate::render::IterBudget { max_iter: cap, auto_iter: false })?;
+        crate::render::build_reference_watching("fd-ref-expmap", inputs, None).reuse_ref()
     }
 
     /// `--render-expmap DIR`. Returns the summary line, or why it could not render.
@@ -296,6 +334,30 @@ impl crate::FractadyneApp {
         let saved = (self.render_cfg.max_iter, self.render_cfg.auto_iter, self.export.width);
         let result = (|| -> Result<(u64, u64), String> {
             let (mut rendered, mut kept) = (0u64, 0u64);
+            // ⭐ONE reference for the whole dive, built for its deepest strip (that strip's cap and
+            // precision serve every shallower one); each strip then works out only its own series
+            // and BLA. A strip that cannot take it (the direct path, or a refusal) builds its own.
+            let todo: Vec<u64> = (from..=to).filter(|&k| !dir.join(strip_file(k)).exists()).collect();
+            let dive_ref = match todo.last() {
+                Some(&deepest) => {
+                    let t = std::time::Instant::now();
+                    let r = self.dive_reference(&map, deepest, &cx, &cy, caps[deepest as usize]);
+                    crate::diag::log_line(
+                        "expmap",
+                        &match &r {
+                            Some(d) => format!(
+                                "one reference for the dive, from strip {deepest}: {} samples at {} bits in {:.0} ms",
+                                d.prefix.len(),
+                                d.prec,
+                                t.elapsed().as_secs_f64() * 1000.0
+                            ),
+                            None => "no dive reference: the deepest strip renders directly".into(),
+                        },
+                    );
+                    r
+                }
+                None => None,
+            };
             for k in from..=to {
                 let path = dir.join(strip_file(k));
                 if path.exists() {
@@ -303,7 +365,8 @@ impl crate::FractadyneApp {
                     continue;
                 }
                 let t0 = std::time::Instant::now();
-                let (r, req) = self.render_strip(device, queue, &map, k, &cx, &cy, caps[k as usize])?;
+                let s = self.render_strip(device, queue, &map, k, &cx, &cy, caps[k as usize], dive_ref.as_ref())?;
+                let (r, req) = (&s.result, &s.req);
                 let meta = format!(
                     "expmap_strip={k}\nouter_log2={}\nmax_iter={}\nmode={}\nwidth={}\nrows={}\n",
                     map.outer_log2(k), req.max_iter, req.mode, map.width, map.rows,
@@ -314,8 +377,9 @@ impl crate::FractadyneApp {
                 crate::diag::log_line(
                     "expmap",
                     &format!(
-                        "strip {k}/{n}: 2^{:.2}, cap {}, mode {}, {:.1}% escaped, {:.0} ms",
+                        "strip {k}/{n}: 2^{:.2}, cap {}, mode {}, {}, {:.1}% escaped, {:.0} ms",
                         map.frame_log2mag(k, fw, fh), req.max_iter, req.mode,
+                        if req.mode == 1 { "direct" } else if s.reused { "the dive's reference" } else { "its own reference" },
                         100.0 * escaped as f64 / (r.pixels.len() / 4).max(1) as f64,
                         t0.elapsed().as_secs_f64() * 1000.0,
                     ),
