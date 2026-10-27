@@ -862,6 +862,7 @@ impl Packer {
         state_bgl: &wgpu::BindGroupLayout,
         tile_size: [u32; 2],
         rn_bla: bool,
+        strip: bool,
     ) -> Self {
         let storage = |binding, read_only| wgpu::BindGroupLayoutEntry {
             binding,
@@ -898,7 +899,7 @@ impl Packer {
         let formats = [ITER_FORMAT; 4];
         let pass_pipeline = crate::fullscreen_pipeline_c(
             device, shader, &layout, "fs_iterate_chunk_fe_packed", &formats, "export.pack_pass",
-            crate::iter_constants(rn_bla),
+            crate::iter_constants(rn_bla, strip),
         );
         let gather_pipeline =
             fullscreen_pipeline(device, shader, &layout, "fs_pack_gather", &formats, "export.pack_gather");
@@ -1126,6 +1127,7 @@ impl TileChunker {
         max_size: [u32; 2],
         steps: bool,
         rn_bla: bool,
+        strip: bool,
     ) -> Self {
         let targets: usize = if fe { 4 } else { 3 };
         let state_bgl = crate::state_bind_group_layout_n(device, targets as u32);
@@ -1142,11 +1144,12 @@ impl TileChunker {
             if fe { "fs_iterate_chunk_fe" } else { "fs_iterate_chunk" },
             &chunk_formats[..targets],
             "export.tilechunk_pipeline",
-            crate::iter_constants(rn_bla),
+            crate::iter_constants(rn_bla, strip),
         );
-        let resolve_pipeline = fullscreen_pipeline(
+        // A strip's resolve writes its count, fraction and angle (`STRIP_MAP`, `strip_aux`).
+        let resolve_pipeline = crate::fullscreen_pipeline_c(
             device, shader, &layout, "fs_resolve", &[ITER_FORMAT, ITER_FORMAT],
-            "export.tilechunk_resolve",
+            "export.tilechunk_resolve", crate::iter_constants(false, strip),
         );
         let state = [
             crate::make_state_textures(device, max_size, targets),
@@ -1160,7 +1163,7 @@ impl TileChunker {
             && steps
             && crate::tile_pack_on()
             && max_size[0] as u64 * max_size[1] as u64 <= PACK_MAX_TILE_AREA)
-            .then(|| Packer::new(device, shader, iter_bgl, &state_bgl, max_size, rn_bla));
+            .then(|| Packer::new(device, shader, iter_bgl, &state_bgl, max_size, rn_bla, strip));
         Self { chunk_pipeline, resolve_pipeline, state, state_bg, pack }
     }
 
@@ -1615,7 +1618,7 @@ impl<'a> TileRenderer<'a> {
         // tree — the single-pass control included, so the two agree as they do without one.
         let iter_pipeline = crate::fullscreen_pipeline_c(
             device, &shader, &iter_layout, "fs_iterate", &[ITER_FORMAT, ITER_FORMAT],
-            "export.iter_pipeline", crate::iter_constants(plan.rn_bla),
+            "export.iter_pipeline", crate::iter_constants(plan.rn_bla, false),
         );
         let color_pipeline = fullscreen_pipeline(
             device, &shader, &color_layout, "fs_color", &[EXPORT_FORMAT], "export.color_pipeline",
@@ -1643,7 +1646,7 @@ impl<'a> TileRenderer<'a> {
         // in up to 64 times per render, where that setup was measured at ~7 s (bench scene 04,
         // 14.3 s -> 21.7 s).
         let chunker: Option<TileChunker> = if plan.chunk_scope {
-            Some(TileChunker::new(device, &shader, &iter_bgl, plan.fe, plan.state_size, plan.occupancy, plan.rn_bla))
+            Some(TileChunker::new(device, &shader, &iter_bgl, plan.fe, plan.state_size, plan.occupancy, plan.rn_bla, false))
         } else {
             None
         };
@@ -2748,7 +2751,7 @@ pub fn render_iter_tiled(
                 chunker =
                     Some(TileChunker::new(
                         device, shader, iter_bgl, req.mode == 2, state_size, occupancy,
-                        occupancy && req.rn_bla_k() > 0,
+                        occupancy && req.rn_bla_k() > 0, strip,
                     ));
             }
             // Chunked tiles iterate BEFORE the main encoder, one polled submission per window;

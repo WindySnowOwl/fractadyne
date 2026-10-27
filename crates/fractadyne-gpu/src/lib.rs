@@ -1827,15 +1827,23 @@ pub(crate) fn fullscreen_pipeline_c(
 /// The iterate pipelines' overridable constants: `RN_BLA` compiles the renormalized step's u-space
 /// BLA in (only for a render whose request carries a tree). Off is the shader's default, so the
 /// empty map — the pipelines every other render builds — is unchanged.
-pub(crate) fn iter_constants(rn_bla: bool) -> &'static std::collections::HashMap<String, f64> {
+pub(crate) fn iter_constants(rn_bla: bool, strip: bool) -> &'static std::collections::HashMap<String, f64> {
     use std::collections::HashMap;
-    static ON: std::sync::OnceLock<HashMap<String, f64>> = std::sync::OnceLock::new();
-    static OFF: std::sync::OnceLock<HashMap<String, f64>> = std::sync::OnceLock::new();
-    if rn_bla {
-        ON.get_or_init(|| HashMap::from([("RN_BLA".to_string(), 1.0)]))
-    } else {
-        OFF.get_or_init(HashMap::new)
-    }
+    // `STRIP_MAP`: an exponential-map strip's placement, distance-estimate texel size and aux
+    // (`pixel_offset`, `texel_step_log2`, `fs_resolve`), compiled in for a strip's own pipelines
+    // only — present but never taken, it cost every other render 1-2% (both of PLUTO's cards).
+    static SETS: [std::sync::OnceLock<HashMap<String, f64>>; 4] =
+        [const { std::sync::OnceLock::new() }; 4];
+    SETS[usize::from(rn_bla) | usize::from(strip) << 1].get_or_init(|| {
+        let mut m = HashMap::new();
+        if rn_bla {
+            m.insert("RN_BLA".to_string(), 1.0);
+        }
+        if strip {
+            m.insert("STRIP_MAP".to_string(), 1.0);
+        }
+        m
+    })
 }
 
 /// [`fullscreen_pipeline`] with its own vertex stage (`vs_split_tiles`: a split refresh's tiles).
@@ -1848,7 +1856,7 @@ pub(crate) fn raster_pipeline(
     formats: &[wgpu::TextureFormat],
     label: &str,
 ) -> wgpu::RenderPipeline {
-    raster_pipeline_c(device, shader, layout, vs_entry, fs_entry, formats, label, iter_constants(false))
+    raster_pipeline_c(device, shader, layout, vs_entry, fs_entry, formats, label, iter_constants(false, false))
 }
 
 /// [`raster_pipeline`] with its fragment stage specialized by `constants`.

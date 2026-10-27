@@ -495,6 +495,10 @@ fn de_log2(z2: f32, dmag2: f32, dexp: f32, steplog: f32) -> f32 {
 
 // ---------------- where a texel is (the affine grid, or an exponential-map strip) ----------------
 const MAP_STRIP: u32 = 1u;
+// Strips are compiled in only for a strip's own pipelines (`iter_constants` in lib.rs): present but
+// never taken, this code cost every other render 1-2% (37 of 43 bench-matrix segments slower on
+// both of PLUTO's cards, 2026-10-27), and compiled out, the pipelines are the affine grid's alone.
+override STRIP_MAP: bool = false;
 
 // A texel's offset from the view centre, as df32 mantissas scaled by 2^-delta_exp. (gx, gy) is the
 // texel's position in the FULL grid: integer + 0.5 at its centre, plus any SSAA jitter.
@@ -511,7 +515,7 @@ struct PixOff {
     im: vec2<f32>,
 }
 fn pixel_offset(gx: f32, gy: f32) -> PixOff {
-    if (iu.map_mode == MAP_STRIP) {
+    if (STRIP_MAP && iu.map_mode == MAP_STRIP) {
         let r = iu.map_r * exp(-iu.map_s * gy);
         let cs = cos_sin_turns(gx / iu.res.x);
         return PixOff(vec2<f32>(r * cs.x, 0.0), vec2<f32>(r * cs.y, 0.0));
@@ -524,7 +528,7 @@ fn pixel_offset(gx: f32, gy: f32) -> PixOff {
 // log2 of a texel's side in the plane, for the distance estimate: the frame's step on the affine
 // grid; in a strip, the texel's own size `r·map_s`, which halves every `W·ln2/2π` rows.
 fn texel_step_log2(gy: f32) -> f32 {
-    if (iu.map_mode == MAP_STRIP) {
+    if (STRIP_MAP && iu.map_mode == MAP_STRIP) {
         return log2(iu.map_r * iu.map_s) - iu.map_s * gy * 1.4426950 + f32(iu.delta_exp);
     }
     return log2(max(abs(iu.step.x), 1.0e-30)) + f32(iu.delta_exp);
@@ -3349,7 +3353,7 @@ fn fs_resolve(in: VsOut) -> FragOut {
     // A strip's N/NF/T (`strip_aux`): the exact count from the state, the fraction recomputed from the
     // stored z exactly as the chunk pass computed it.
     var aux_out = AUX_NONE;
-    if (iu.map_mode == MAP_STRIP) {
+    if (STRIP_MAP && iu.map_mode == MAP_STRIP) {
         let nu = log(log(mag2) * 0.5 / log(2.0)) / log(chunk_power());
         aux_out = strip_aux(info_iter(sm), 1.0 - nu, zf);
     }
