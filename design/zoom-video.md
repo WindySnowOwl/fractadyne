@@ -262,7 +262,7 @@ coloured strip. Two things need care:
 
 E0 + E1 alone deliver the zoomasm workflow; E2 is where Fractadyne stops needing zoomasm.
 
-### 8.1 E0 as built (2026-10-27, branch `feat/zoom-video`)
+### 8.1 E0 as built (2026-10-27, branch `feat/zoom-video`): every gate passed
 
 - **Geometry:** `fractadyne_core::ExpMap` (`core/src/expmap.rs`), §3 exactly; overlap 1 row (rows =
   ⌈W·ln2/2π⌉ + 1). Texel offsets are exact at any depth (the octave count is an integer exponent).
@@ -277,7 +277,10 @@ E0 + E1 alone deliver the zoomasm workflow; E2 is where Fractadyne stops needing
   gate (46 selftest checks); (2) one shared `pixel_offset` with a runtime branch cost every render
   1-2% (dev.51 against main: 37/43 bench-matrix segments slower on both of PLUTO's cards); (3) so
   did the same code with the branch compiled out by an `override` (dev.52: 38/43 and 32/43), while
-  an A/A control of main against itself read 24/43 and 16/43. The angle uses the strip module's own
+  an A/A control of main against itself read 24/43 and 16/43. With strips in a module of their own
+  (dev.54) the gate passes: 17/43 slower on the RTX 3070 (sign test p 0.22, run totals within
+  0.7%) and 9/43 on the RX 6800 XT (about 1% FASTER), every algorithm signature identical; 5
+  interleaved runs a build a card, PLUTO, 2026-10-27. The angle uses the strip module's own
   cos/sin (WGSL's built-ins are promised only to 2^-11, half a strip texel). In a strip the AUX
   target carries N (as `iter>>12`, `iter&4095`), NF = 1−nu and T, written by the chunked path's
   `fs_resolve` only; a strip always chunks from its first tile.
