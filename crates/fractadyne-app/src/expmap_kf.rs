@@ -5,19 +5,26 @@
 //! exponential maps at powers 2, 3 and 8, against an independent double-precision orbit, 2026-10-27
 //! — never read from its source (AGPL, design §2):
 //!
-//! - **Geometry:** texel `(x, y)` at `θ = 2πx/W` anticlockwise from the positive real axis and
-//!   `r = top·2^(−y/H)`: one octave a strip, the outer edge on row 0, each texel sampled at its
-//!   corner ([`fractadyne_core::StripRows::Octave`]). Zoom-in order is ours; KF's own sequence
-//!   counts the other way, which is what zoomasm's Reverse box is for.
+//! - **Geometry:** texel `(x, y)` at `r = top·2^(−y/H)`: one octave a strip, the outer edge on row
+//!   0, each texel sampled at its corner ([`fractadyne_core::StripRows::Octave`]). Zoom-in order is
+//!   ours; KF's own sequence counts the other way, which is what zoomasm's Reverse box is for.
+//! - **Orientation:** KF's default (`ImagPointsUp: 0`) puts texel `x` at `θ = 2πx/W` ANTICLOCKWISE
+//!   from the positive real axis, and zoomasm then shows the plane with the imaginary axis pointing
+//!   DOWN — a dive upside down from what Fractadyne showed. We write KF's other orientation,
+//!   `ImagPointsUp: 1`: the same strip mirrored in angle (texel `x` holds default texel
+//!   `(W − x) mod W`, so `θ = −2πx/W`, CLOCKWISE) with `DEY` negated and every other value
+//!   unchanged — measured on KF's own pair of strips, 99.9% of texels identical after the mirror —
+//!   and zoomasm shows the dive the right way up, as Fractadyne does (`design/zoom-video.md`
+//!   §8.2). zoomasm's Flip box cannot do this: it reverses each strip's ROWS.
 //! - **`N`** (uint32) = `n + IterationsBias`, `n` the first iteration (`z₁ = c`) with `|zₙ| > ER`,
 //!   `ER = 10^(4/p)` (100 at power 2, 21.5 at 3, 3.16 at 8); `0xFFFFFFFF` never escaped, 0 not
 //!   computed. `N0`/`N1` (low and high words) replace it when a biased count passes `0xFFFFFFFE`.
 //! - **`NF`** = `1 − log_p(ln|zₙ| / ln ER)`, in `[0, 1)`.
 //! - **`T`** = `fract(p·arg zₙ / 2π)`.
-//! - **`DEX`, `DEY`** = `|zₙ|·ln|zₙ| / |dzₙ/dc|` over a pixel, along `(Re u, −Im u)`, `u` the unit
-//!   `zₙ/(dzₙ/dc)`: the plane's vector with the imaginary axis pointing DOWN, as in KF's default
-//!   images (`ImagPointsUp: 0`). In a strip KF's pixel is `r·2/hypot(W, H)` — its flat image's
-//!   pixel scaled by `r/top` — not the strip's own texel.
+//! - **`DEX`, `DEY`** = `|zₙ|·ln|zₙ| / |dzₙ/dc|` over a pixel, along `(Re u, Im u)`, `u` the unit
+//!   `zₙ/(dzₙ/dc)`: the plane's vector, not rotated into the strip, with the imaginary axis up
+//!   (`ImagPointsUp: 1`; KF's default writes `(Re u, −Im u)`). In a strip KF's pixel is
+//!   `r·2/hypot(W, H)` — its flat image's pixel scaled by `r/top` — not the strip's own texel.
 //! - **Interior:** `N = 0xFFFFFFFF` and every other channel 0.
 //! - **Header:** `Iterations` (the cap) and `IterationsBias`, i32, in the layer's header.
 //!
@@ -82,18 +89,26 @@ pub(crate) struct KfStrip<'a> {
 
 /// KF's `DEX`, `DEY` from the renderer's distance estimate (`de_log2`, log2 over the strip's radial
 /// texel `r·row_step`) and unit normal (`(nx, ny)` = `z/(dz/dc)` in the plane, imaginary up): the
-/// magnitude over KF's strip pixel `r·2/hypot(W, H)`, so `r` cancels.
+/// magnitude over KF's strip pixel `r·2/hypot(W, H)`, so `r` cancels; the direction as it is, KF's
+/// `ImagPointsUp: 1`.
 pub(crate) fn kf_de(de_log2: f32, nx: f32, ny: f32, row_step: f64, width: u32, rows: u32) -> (f32, f32) {
     if !de_log2.is_finite() || de_log2 >= 1.0e29 || !(nx.is_finite() && ny.is_finite()) {
         return (0.0, 0.0);
     }
     let mag = 2f64.powf(de_log2 as f64) * row_step * (width as f64).hypot(rows as f64) / 2.0;
-    ((mag * nx as f64) as f32, (-mag * ny as f64) as f32)
+    ((mag * nx as f64) as f32, (mag * ny as f64) as f32)
 }
 
-/// A strip's channels in KF's layout from the renderer's main target (`smooth, nx, ny, de_log2`)
-/// and strip aux target (`iter >> 12, iter & 4095, fraction, angle`), as
-/// [`crate::expmap_render::strip_channels`] reads them.
+/// The column a rendered texel goes to in KF's `ImagPointsUp: 1` strip. The renderer lays a strip
+/// out anticlockwise (column `i` at `+2πi/W`); KF's upright strip runs clockwise, column `x` at
+/// `−2πx/W`, which is the rendered column `(W − x) mod W` — and the mirror is its own inverse.
+pub(crate) fn kf_column(i: usize, width: usize) -> usize {
+    (width - i) % width
+}
+
+/// A strip's channels in KF's upright layout (`ImagPointsUp: 1`, [`kf_column`]) from the renderer's
+/// main target (`smooth, nx, ny, de_log2`) and strip aux target (`iter >> 12, iter & 4095,
+/// fraction, angle`), as [`crate::expmap_render::strip_channels`] reads them.
 pub(crate) fn kf_channels(main: &[f32], aux: &[f32], s: &KfStrip) -> Vec<ExrChannel> {
     let (w, h) = (s.map.width as usize, s.map.rows as usize);
     let n = main.len() / 4;
@@ -106,21 +121,24 @@ pub(crate) fn kf_channels(main: &[f32], aux: &[f32], s: &KfStrip) -> Vec<ExrChan
     let (mut nf, mut t, mut dex, mut dey) = (vec![0f32; n], vec![0f32; n], vec![0f32; n], vec![0f32; n]);
     let mut wide = false;
     for idx in 0..n {
+        // `idx` is the rendered texel; `out` is where KF's upright strip keeps it.
+        let (i, j) = (idx % w, idx / w);
+        let out = j * w + kf_column(i, w);
         let sm = main[idx * 4];
         if sm >= 0.0 {
             let it = (aux[idx * 4] as u32) << 12 | aux[idx * 4 + 1] as u32;
-            let (cs, sn) = cols[idx % w];
-            let r = radii[idx / w];
+            let (cs, sn) = cols[i];
+            let r = radii[j];
             let c = (s.centre.0 + r * cs, s.centre.1 + r * sn);
             let (whole, f, ph) = kf_count(it, aux[idx * 4 + 2], aux[idx * 4 + 3], s.power, c);
             let biased = (whole as i64 + KF_ITERATIONS_BIAS as i64).max(1) as u64;
             wide |= biased > 0xFFFF_FFFE;
-            count[idx] = biased;
-            nf[idx] = f;
-            t[idx] = ph;
-            (dex[idx], dey[idx]) = kf_de(main[idx * 4 + 3], main[idx * 4 + 1], main[idx * 4 + 2], row_step, s.map.width, s.map.rows);
+            count[out] = biased;
+            nf[out] = f;
+            t[out] = ph;
+            (dex[out], dey[out]) = kf_de(main[idx * 4 + 3], main[idx * 4 + 1], main[idx * 4 + 2], row_step, s.map.width, s.map.rows);
         } else if sm > -1.5 {
-            count[idx] = u64::MAX; // never escaped: the cap was reached
+            count[out] = u64::MAX; // never escaped: the cap was reached
         } // else glitched (-2): N stays 0, as KF writes a texel it did not compute
     }
     let mut out = Vec::with_capacity(6);

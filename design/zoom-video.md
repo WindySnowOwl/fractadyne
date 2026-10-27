@@ -167,6 +167,8 @@ the shader API's `getN` reads as `N + (1 − NF)`). To settle them:
    `rgb-passthrough` and `binary-decomposition` presets, and compare its frames with frames
    rendered flat at the same zooms. Pass = the same structure everywhere (LOOK at the frames; then
    count differing pixels in the binary-decomposition frames, which have no palette to hide behind).
+   **Done 2026-10-28** with probe colourings of our own instead of the presets (§8.2): it found
+   that KF's default orientation shows our dives upside down.
 
 Disk cost is the workflow's, not ours: KF's channels are ~26 bytes a texel, ~140 MB a 1080p strip
 before EXR compression, so a 3,000-octave dive is on the order of 100–400 GB. Users of this
@@ -324,7 +326,8 @@ double-precision orbit — each rule below fits KF's every texel to f32 rounding
 | | KF 2.15.5.2 | Our strips (§3) |
 |---|---|---|
 | Rows | exactly one octave in `H` rows (KF's "zoom size 2"); `H` free | conformal + 1 overlap row |
-| Texel `(x, y)` | `θ = 2πx/W`, `r = top·2^(−y/H)`: sampled at its CORNER; row 0 outermost; angle anticlockwise from +re | `θ = 2π(x+½)/W`, centre |
+| Texel `(x, y)` | `θ = 2πx/W`, `r = top·2^(−y/H)`: sampled at its CORNER; row 0 outermost; angle anticlockwise from +re (`ImagPointsUp: 0`, its default) | `θ = 2π(x+½)/W`, centre |
+| Orientation | `ImagPointsUp: 1` writes the same strip mirrored in angle (texel `x` = default texel `(W − x) mod W`, so clockwise) with `DEY` negated, every other value equal (99.9% of texels identical after the mirror). **We write this one**: zoomasm then shows the dive the right way up | imaginary up |
 | `top` | the half diagonal of a flat `W×H` image at KF's zoom (`2/zoom·hypot(W,H)/H`; zoom = our magnification) | `R₀·2^-k` |
 | Escape | `\|zₙ\| > 10^(4/p)` (100, 21.5 … 3.16), `z₁ = c` | `\|z\| > 256` |
 | `N` | `n + 1024` (`IterationsBias`); interior `0xFFFFFFFF`, every other channel 0 | — |
@@ -353,8 +356,34 @@ unchanged) and its row step as `map_s`.
   DEY's sign); the octave layout against a 256-bit computation; the EXR integer attributes round trip.
 - **Selftest `expmap`:** a fourth case, a zoomasm-layout df32 strip against the oracle (34/48 exact,
   0 wrong); sampling it at texel centres instead fails it (0/48 exact, 31 wrong).
-- **Not yet:** zoomasm itself assembling our strips (needs a saved zoomasm session for `--record`);
-  RGB channels (KF writes its colouring as half R, G, B; zoomasm's rgb-passthrough preset reads them).
+- **zoomasm 3.4 assembling the strips (2026-10-28).** A 30-strip seahorse dive (−0.7436…+0.1318…i
+  to 2^20, 640x360, fixed cap 20,000) recorded to lossless PPM frames, one an octave, with probe
+  colourings of our own written from the manual's GLSL API (binary decomposition of `T`, bands of
+  `getN()`, the DE's length and its direction); KF rendered the same 30 strips for comparison.
+  - **Geometry exact:** with Shutter 0, zoomasm's frame at depth `Z` is Fractadyne's flat render at
+    magnification `2^Z` (interior IoU 0.97 / 0.99 / 0.94 at `Z` 0 / 5 / 19, fitted scale 1.000–1.005).
+  - **Orientation:** strips in KF's default layout came out upside down (IoU flipped 0.97 / 0.99 /
+    0.94, as is 0.54 / 0.74 / 0.41); zoomasm's Flip box reverses each strip's ROWS (broken rings),
+    so it cannot help. Fixed by writing `ImagPointsUp: 1` (`expmap_kf::kf_column`, `DEY` sign):
+    as is 0.97 / 0.99 / 0.94. KF's own `ImagPointsUp: 1` strips come out the same, so zoomasm
+    goes by the data, not KF's header.
+  - **Ours vs KF's, frame for frame:** interior within 0.05% every frame, the DE's length all but
+    identical, no glitch texels in either; `T` and count bands differ on 0.1–1.7% of pixels over
+    the first 5 octaves, up to 14% at `Z` 9, 4–8% deeper. Refereed: strip 9 (direct mode) 42% of
+    texels differ by > 1e-3 and a 120-bit orbit sides with KF (ours 0% / KF 94% of 150 sampled),
+    all within a texel of the set (median 0.009 texel); strip 13 (perturbation) a tie (24% / 27%,
+    neither 50%). Like for like (the same area, texels weighted by area), strip 9 is exactly as
+    exact as a flat `--render-iter` at 2^9 (61.6% / 61.1% within 1e-3 of an f64 orbit): the
+    shallow gap to KF is the renderer's single-precision direct mode, flat frames included.
+  - **zoomasm facts, measured:** a session loads only with its input and colour paths filled in
+    (else "load settings error", even for one zoomasm saved itself); a waypoint's `t` is a FRACTION
+    of the soundtrack (the last is 1.0); `--record` needs the GUI (with `--no-gui` it sits idle);
+    Shutter 50% at one sample a pixel samples each pixel at its own moment (two recordings of the
+    same strips differ) and a quarter of a frame's depth later. A 20 s 720p video (31 strips,
+    default rising cap) took 17 s to render and 16 s for zoomasm to encode.
+- **Not yet:** RGB channels (KF writes its colouring as half R, G, B; zoomasm's rgb-passthrough
+  preset reads them). Shallow strips by perturbation or double-single, for KF's precision near the
+  set (cost to measure).
 
 ## 9. Decisions for you
 

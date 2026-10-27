@@ -65,8 +65,11 @@ Changes after 0.3.0-beta.1:
   colouring presets: open DIR as zoomasm's input with Reverse and Flip unticked. Every convention
   was measured from KF 2.15.5's own files, not taken from its source, and strips rendered by both
   programs at the same places agree texel for texel: count, fraction, phase and distance estimate
-  to about one part in a million on the median texel. No RGB channels yet, so zoomasm's
-  rgb-passthrough preset has nothing to show.
+  to about one part in a million on the median texel. The strips use KF's "imaginary axis up"
+  layout, so the video shows the dive the way Fractadyne does; KF's default layout would show it
+  upside down. Checked in zoomasm 3.4 itself: along a 20-octave dive its frames match Fractadyne's
+  own renders at the same depths, and they match the frames it makes from KF's strips. No RGB
+  channels yet, so zoomasm's rgb-passthrough preset has nothing to show.
 - **Zoom videos, the first step: exponential-map strips (0.3.0-beta.22).** `--render-expmap DIR`
   renders a straight dive into the view as strips, each covering one octave of depth around the
   centre, from which a zoom video's frames can be assembled. Each part of the plane is computed

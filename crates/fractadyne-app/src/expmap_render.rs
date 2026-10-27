@@ -466,22 +466,11 @@ impl crate::FractadyneApp {
     }
 }
 
-/// Write the manifest, or check that the one already in `dir` describes the same dive: a strip
-/// from another dive must never be taken for one of this dive's.
+/// Write the manifest, or check that the one already in `dir` describes the same dive in the same
+/// layout: a strip from another dive, or laid out another way, must never be taken for one of
+/// this dive's.
 fn write_or_check_manifest(dir: &Path, map: &ExpMap, format: StripFormat, dive: &serde_json::Value) -> Result<(), String> {
     let path: PathBuf = dir.join(MANIFEST);
-    if let Ok(text) = std::fs::read_to_string(&path) {
-        let old: serde_json::Value =
-            serde_json::from_str(&text).map_err(|e| format!("{} is not a manifest this app can read: {e}", path.display()))?;
-        if old.get("dive") != Some(dive) {
-            return Err(format!(
-                "{} holds the strips of another dive (its {} differs); use an empty directory",
-                dir.display(),
-                MANIFEST
-            ));
-        }
-        return Ok(());
-    }
     let (convention, channels) = match format {
         StripFormat::Fractadyne => (
             "texel (i, j) of strip k is at angle 2*pi*(i + 0.5)/width anticlockwise from the positive real axis and radius 2^(r0_log2 - k) * exp(-2*pi*(j + 0.5)/width) from the centre; row 0 is outermost; strip k's last rows overlap strip k+1's first",
@@ -495,16 +484,28 @@ fn write_or_check_manifest(dir: &Path, map: &ExpMap, format: StripFormat, dive: 
             }),
         ),
         StripFormat::Zoomasm => (
-            "Kalles Fraktaler's exponential map, for zoomasm: texel (i, j) of strip k is sampled at angle 2*pi*i/width anticlockwise from the positive real axis and radius 2^(r0_log2 - k - j/rows) from the centre; row 0 is outermost; one octave a strip, no overlap; strip 0 is the outermost (zoom-in order: leave zoomasm's Reverse box unticked)",
+            "Kalles Fraktaler's exponential map with the imaginary axis up (its ImagPointsUp: 1), for zoomasm: texel (i, j) of strip k is sampled at angle 2*pi*i/width CLOCKWISE from the positive real axis and radius 2^(r0_log2 - k - j/rows) from the centre; row 0 is outermost; one octave a strip, no overlap; strip 0 is the outermost (zoom-in order: leave zoomasm's Reverse and Flip boxes unticked)",
             serde_json::json!({
                 "N": "escape count + IterationsBias (uint32), escaping at |z| > 10^(4/power); 4294967295 = never escaped, 0 = not computed (N0 and N1 instead, low and high words, when a count passes 4294967294)",
                 "NF": "1 - log_power(ln|z| / ln 10^(4/power)), in [0, 1); the smooth count is N - IterationsBias + NF",
                 "T": "fract(power * arg z / 2pi)",
                 "DEX": "distance estimate over KF's pixel (r * 2 / hypot(width, rows)), along the real axis",
-                "DEY": "the same along the imaginary axis pointing DOWN (Kalles Fraktaler's default orientation)",
+                "DEY": "the same along the imaginary axis, pointing up",
             }),
         ),
     };
+    if let Ok(text) = std::fs::read_to_string(&path) {
+        let old: serde_json::Value =
+            serde_json::from_str(&text).map_err(|e| format!("{} is not a manifest this app can read: {e}", path.display()))?;
+        if old.get("dive") != Some(dive) || old.get("convention").and_then(|c| c.as_str()) != Some(convention) {
+            return Err(format!(
+                "{} holds the strips of another dive, or laid out another way (its {} differs); use an empty directory",
+                dir.display(),
+                MANIFEST
+            ));
+        }
+        return Ok(());
+    }
     let manifest = serde_json::json!({
         "format": match format { StripFormat::Fractadyne => "fractadyne-expmap", StripFormat::Zoomasm => "kf-expmap" },
         "version": 1,

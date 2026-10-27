@@ -69,7 +69,7 @@ fn a_count_fraction_and_phase_come_out_as_kalles_fraktaler_writes_them() {
 }
 
 #[test]
-fn the_distance_estimate_is_the_planes_vector_with_imaginary_down_over_kfs_strip_pixel() {
+fn the_distance_estimate_is_the_planes_vector_with_imaginary_up_over_kfs_strip_pixel() {
     let (w, h) = (2304u32, 256u32);
     let row_step = std::f64::consts::LN_2 / h as f64;
     // 8 radial texels (r·row_step each) along (0.6, 0.8), imaginary up.
@@ -77,7 +77,8 @@ fn the_distance_estimate_is_the_planes_vector_with_imaginary_down_over_kfs_strip
     // KF's pixel in a strip is r·2/hypot(W, H): 8·row_step/(2/hypot) of them.
     let mag = 8.0 * row_step * (w as f64).hypot(h as f64) / 2.0;
     assert!((dx as f64 - 0.6 * mag).abs() < 1e-4 * mag, "{dx}");
-    assert!((dy as f64 + 0.8 * mag).abs() < 1e-4 * mag, "{dy}: imaginary points down");
+    // KF's ImagPointsUp: 1 keeps the plane's direction (its default, 0, negates DEY).
+    assert!((dy as f64 - 0.8 * mag).abs() < 1e-4 * mag, "{dy}: imaginary points up");
     // No distance estimate (the renderer's sentinel, or not a number): KF's "missing", (0, 0).
     assert_eq!(kf_de(1.0e30, 0.6, 0.8, row_step, w, h), (0.0, 0.0));
     assert_eq!(kf_de(f32::NAN, 0.6, 0.8, row_step, w, h), (0.0, 0.0));
@@ -112,11 +113,13 @@ fn interior_and_glitched_texels_are_marked_and_a_wide_count_splits_into_n0_and_n
         _ => panic!("{name} is not f32"),
     };
     let (whole, _, _) = kf_count(iter, nf, 0.75, 2.0, (0.0, 0.0));
-    assert_eq!(u("N"), vec![whole as u32 + KF_ITERATIONS_BIAS as u32, u32::MAX, 0]);
+    // Rendered columns 0, 1, 2 (anticlockwise) are written at 0, 2, 1 (clockwise): the capped
+    // texel lands in the last column and the glitched one in the middle.
+    assert_eq!(u("N"), vec![whole as u32 + KF_ITERATIONS_BIAS as u32, 0, u32::MAX]);
     for name in ["NF", "T", "DEX", "DEY"] {
         assert_eq!(&f(name)[1..], &[0.0, 0.0], "{name}: interior and glitched texels are 0, as KF writes them");
     }
-    assert!(f("DEX")[0] > 0.0 && f("DEY")[0] < 0.0);
+    assert!(f("DEX")[0] > 0.0 && f("DEY")[0] > 0.0);
 
     // A count past 0xFFFFFFFE once biased: KF's N0 (low word) and N1 (high word).
     let big: u32 = u32::MAX - 10;
@@ -130,6 +133,42 @@ fn interior_and_glitched_texels_are_marked_and_a_wide_count_splits_into_n0_and_n
     };
     let (whole, _, _) = kf_count(big, nf, 0.75, 2.0, (0.0, 0.0));
     let biased = whole + KF_ITERATIONS_BIAS as u64;
-    assert_eq!(get("N0"), vec![biased as u32, u32::MAX, 0]);
-    assert_eq!(get("N1"), vec![(biased >> 32) as u32, u32::MAX, 0]);
+    assert_eq!(get("N0"), vec![biased as u32, 0, u32::MAX]);
+    assert_eq!(get("N1"), vec![(biased >> 32) as u32, 0, u32::MAX]);
+}
+
+/// zoomasm shows a KF strip's column `x` at angle `2πx/W` ANTICLOCKWISE on screen with the
+/// imaginary axis down (KF's default), so for the dive to come out the right way up, as Fractadyne
+/// shows it, column `x` must hold the plane's point at `−2πx/W`: CLOCKWISE (measured 2026-10-28 by
+/// assembling strips in zoomasm 3.4 against Fractadyne's flat renders, and against KF's own
+/// `ImagPointsUp: 1` strips). Each rendered texel carries its own column and row in its count, and
+/// the angle it is written at is worked out here from the geometry, not from `kf_column`.
+#[test]
+fn each_texel_is_written_where_the_plane_comes_out_upright_in_zoomasm() {
+    let (w, h) = (8usize, 2usize);
+    let map = ExpMap { width: w as u32, rows: h as u32, r0_log2: 0.0, layout: StripRows::Octave };
+    let strip = KfStrip { map: &map, k: 0, power: 2.0, centre: (-0.75, 0.1) };
+    let tag = |i: usize, j: usize| 1000 + 100 * j as u32 + i as u32;
+    let nf = (1.0 - 10f64.log2()) as f32; // |z| = 2^10: KF read the same z
+    let (mut main, mut aux) = (Vec::new(), Vec::new());
+    for j in 0..h {
+        for i in 0..w {
+            let it = tag(i, j);
+            main.extend([it as f32, 0.6, 0.8, 2.5]);
+            aux.extend([(it >> 12) as f32, (it & 4095) as f32, nf, 0.75]);
+        }
+    }
+    let ch = kf_channels(&main, &aux, &strip);
+    let ExrChannelData::U32(n) = &ch.iter().find(|c| c.name == "N").unwrap().data else { panic!("N is not uint32") };
+    let step = TAU / w as f64;
+    for j in 0..h {
+        for x in 0..w {
+            // The rendered column at the plane angle −2πx/W (renderer: column i at +2πi/W).
+            let i = ((-(x as f64) * step).rem_euclid(TAU) / step).round() as usize % w;
+            let (whole, _, _) = kf_count(tag(i, j), nf, 0.75, 2.0, (0.0, 0.0));
+            assert_eq!(n[j * w + x], whole as u32 + KF_ITERATIONS_BIAS as u32, "column {x}, row {j}: wants the rendered texel ({i}, {j})");
+        }
+    }
+    // Column 2 of 8 is a quarter turn clockwise: BELOW the centre in the plane, rendered at 270°.
+    assert_eq!(n[2] as u64, kf_count(tag(6, 0), nf, 0.75, 2.0, (0.0, 0.0)).0 + KF_ITERATIONS_BIAS as u64);
 }
