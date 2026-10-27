@@ -277,6 +277,59 @@ pub(crate) fn hold_scale(gap_oct: f64, jumped: bool) -> (f32, u8) {
     (scale, code)
 }
 
+/// A held frame's scale while a stepped Home is under way (`HomeSteps`, `stepping`): never smaller
+/// than full size. Each stop is up to thousands of octaves out from the frame on screen, and at its
+/// true scale (up to the 2^40 the hold allows) that frame shrinks to a speck and the rest of the
+/// view fills with its average colour (`fs_color`): a solid panel, the 2026-10-26 recording. At
+/// full size the last finished picture stays until the stop's own replaces it. A zoom in (scale
+/// below 1) is not touched.
+pub(crate) fn home_step_hold_scale(scale: f32, stepping: bool) -> f32 {
+    if stepping { scale.min(1.0) } else { scale }
+}
+
+/// The held frame's translation factor during a stepped Home: 0, the picture centred. The stops'
+/// centres move toward Home's (`home_lerp`), and at the clamped scale ([`home_step_hold_scale`]) the
+/// offset in the stop's view places nothing truly: it slid the picture off-centre and the gap filled
+/// with its average colour (2^262 to 2^12, 2026-10-27). Otherwise the scale, as before.
+pub(crate) fn home_step_hold_shift(scale: f32, stepping: bool) -> f32 {
+    if stepping { 0.0 } else { scale }
+}
+
+/// The share of the panel's width a stepped Home's stop renders at ([`home_stop_res_scale`]).
+pub(crate) const HOME_STOP_RES_SCALE: f64 = 0.25;
+
+/// A frame's scale (`bp_moving_scale`) at a stepped Home's stop: a still view rendered to be SEEN on
+/// the way out, not settled on, so at most [`HOME_STOP_RES_SCALE`] of the panel. At full size a stop
+/// past 2^1000 was 1.6 million pixels of ~116,000 iterations each, and no stop there finished in
+/// the 1.5 s a stop then had (2^1663 on the RTX 3080, 2026-10-26: the start picture stayed up
+/// through five stops).
+/// A moving frame, and any frame outside a stepped Home, keeps its own scale.
+pub(crate) fn home_stop_res_scale(scale: f64, interacting: bool, stepping: bool) -> f64 {
+    if stepping && !interacting { scale.min(HOME_STOP_RES_SCALE) } else { scale }
+}
+
+/// The base of a stepped Home stop's iteration ask ([`home_stop_iter`]).
+pub(crate) const HOME_STOP_ITER_BASE: u32 = 2_000;
+
+/// The iteration ask at a stepped Home's stop: at most what the stop's DEPTH wants
+/// (`recommended_iterations` over [`HOME_STOP_ITER_BASE`], ~220 an octave), not the user's own
+/// count. A stop completes when its walk reaches the ask, and a still view's interior pixels walk
+/// all of it: a fixed 2,008,192 (e4000, auto iterations off) made the four shallowest stops, 2^98 to
+/// 2^12, give way after their 3 s each (PLUTO, dev.47) — 12 s of one held picture. The stop is a
+/// preview; a pixel that would escape past the cap reads as interior there.
+///
+/// ⚠Applied to the climb's APPETITE (`IterInputs::eff_iter`), never to its output: the climb judges
+/// a MAXITER reading only when it was armed at its own budget, and a cap on the ask it planned had
+/// every reading at a stop discarded as taken at another budget — `climb-starved` in all four PLUTO
+/// runs of dev.48 (a probe whose readings are all discarded never terminates).
+pub(crate) fn home_stop_iter(ask: u32, log2mag: f64, interacting: bool, stepping: bool) -> u32 {
+    if stepping && !interacting {
+        ask.min(fractadyne_core::recommended_iterations(HOME_STOP_ITER_BASE, log2mag))
+    } else {
+        ask
+    }
+}
+
 /// The moving frame's scale, as `build_params` sizes it: before the visible-frame ladder (the scale a
 /// live refresh renders at) and after it.
 pub(crate) struct MovingScale {
@@ -402,7 +455,13 @@ impl crate::FractadyneApp {
         self.perf.visible_res[vb] = d.visible_res;
         self.perf.vis_sizing[vb] = d.vis_sizing;
         self.record_decision("moving", vb, &inputs, &d);
-        MovingScale { motion_scale: d.motion_scale, res_scale: d.res_scale }
+        // A stepped Home's stop renders small (`home_stop_res_scale`), after the recorded decision
+        // so its replay is untouched.
+        let stop = self.perf.hold_home_step[vb];
+        MovingScale {
+            motion_scale: home_stop_res_scale(d.motion_scale, interacting, stop),
+            res_scale: home_stop_res_scale(d.res_scale, interacting, stop),
+        }
     }
 
     /// A mode switch's reset of the moving scale (`build_params`): the AIMD's measured flag, the

@@ -1,7 +1,24 @@
 use super::{
-    commas, fmt_zoom_log2, iter_readout, iter_slot_width, period_readout, zoom_readout,
+    center_readout, commas, fmt_zoom_log2, iter_readout, iter_slot_width, period_readout, zoom_readout,
     zoom_slot_width, MAX_ITER_LIMIT,
 };
+
+/// The centre readout's digits grow with the depth; unpadded, the bar wrapped differently at the
+/// 2^49 and 2^24 stops of a stepped Home (canvas 1102 → 1104 px on a 1280×800 window, read as an
+/// interaction: a black frame, 2026-10-26). One length at every depth, and ASCII only (one
+/// monospace cell each: the elision is `...`, not `…`).
+#[test]
+fn the_centre_readout_never_changes_width_with_depth() {
+    let x = fractadyne_core::BigFloat::from_f64(-0.08351966078548609, 4096);
+    let y = fractadyne_core::BigFloat::from_f64(0.6563392665142136, 4096);
+    let w0 = center_readout(&x, &y, 0.0).chars().count();
+    let depths = (0..=20_000).step_by(7).map(f64::from).chain([-3.0, 24.3, 49.1, 62.9, 63.0, 83.0, 1663.37]);
+    for l2 in depths {
+        let s = center_readout(&x, &y, l2);
+        assert_eq!(s.chars().count(), w0, "at 2^{l2}: {s:?}");
+        assert!(s.is_ascii(), "at 2^{l2}: {s:?}");
+    }
+}
 
 /// ⭐⭐**THE REGRESSION NET THE beta.149 REFLOW LOOP NEVER HAD.** The uitest height check passed
 /// 26/26 on BOTH the broken and the fixed build, because it held the window width fixed and

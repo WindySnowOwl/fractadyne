@@ -170,6 +170,8 @@ switch ($Action) {
             foreach ($pair in ($Instrument -split ',' | Where-Object { $_ })) {
                 # NAME=N, or FRACTADYNE_TRACE=<one category> (agent v13; it checks the category).
                 if ($pair -cmatch '^\s*(FRACTADYNE_TRACE)=([a-z]+)\s*$') { $req.env[$Matches[1]] = $Matches[2]; continue }
+                # Seconds between a Home's window captures (agent v32), a decimal: kept as text.
+                if ($pair -cmatch '^\s*(FRACTADYNE_ZOOMTEST_HOME_SHOTS)=([0-9]{1,3}(\.[0-9]{1,3})?)\s*$') { $req.env[$Matches[1]] = $Matches[2]; continue }
                 if ($pair -notmatch '^\s*([A-Z_]+)=([0-9]+)\s*$') { throw "bad -Instrument entry '$pair' (NAME=N, or FRACTADYNE_TRACE=category)" }
                 $req.env[$Matches[1]] = [int]$Matches[2]
             }

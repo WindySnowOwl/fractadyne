@@ -59,6 +59,21 @@ published as the pre-releases `v0.2.41-beta.1` to `v0.2.41-beta.150`, and a "bet
 
 Changes after 0.3.0-beta.1:
 
+- **Home from extreme depth shows pictures on the way out (0.3.0-beta.22).** From deeper than
+  about 1e19×, the glide Home passed through depths far faster than any of them could render, and
+  most of it showed solid panels of a single colour: from 1.5e4850×, nine seconds of them on an
+  RTX 3080. Home now makes stops on the way out, each at about half the previous depth's exponent
+  (from 1e4000×: about 1e2000×, then 1e1000×, and so on), down to about 4,000×. At each stop it
+  waits for that depth's picture, rendered at a quarter of the resolution and with only the
+  iterations the depth needs, and shows it for half a second; a stop with no picture after 3
+  seconds gives way. The last stretch is the usual glide. On an RTX 3070, Home from 1e4000× took
+  14 s with a picture at each of its ten stops, and from 4e500× took 12 s over seven. Home from
+  shallower than 1e19× is unchanged.
+- **The view no longer goes black for a frame when the centre coordinates lengthen
+  (0.3.0-beta.22).** The centre readout in the status bar grew wider with depth, and when it no
+  longer fitted, the bar re-wrapped and the view changed size by a few pixels. A view that changes
+  size starts its picture again, so it showed nothing for a frame; seen at about 1.7e7× on the way
+  Home. The readout now keeps one width at every depth.
 - **Gliding Home from extreme depth no longer risks losing the graphics card (0.3.0-beta.22).**
   The series approximation, which lets every pixel skip most of its iterations, holds only within
   the area it was worked out for. A fast zoom out kept using it on views far wider than that: the
