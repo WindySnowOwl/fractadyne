@@ -266,6 +266,12 @@ pub(crate) struct ZoomTest {
     /// when it was made: the watch runs `CLICK_WATCH_S` from then.
     click_at: Option<Instant>,
     click_t0: Option<Instant>,
+    /// `FRACTADYNE_ZOOMTEST_HOME_SHOTS=SECONDS`: capture the window every SECONDS while
+    /// `--zoomtest-home`'s Home runs (`home-shot-<n>-f<frame>.png` in the working directory) — what
+    /// a stepped Home's stops put on the screen, which the frame record cannot show.
+    home_shot_every: Option<f64>,
+    home_shot_next: Option<Instant>,
+    home_shots_taken: u32,
 }
 
 /// Where a `--zoomtest-home` run is.
@@ -412,6 +418,12 @@ impl ZoomTest {
             click_shots_taken: 0,
             click_at: None,
             click_t0: None,
+            home_shot_every: std::env::var("FRACTADYNE_ZOOMTEST_HOME_SHOTS")
+                .ok()
+                .and_then(|s| s.parse::<f64>().ok())
+                .filter(|s| s.is_finite() && *s >= 0.02),
+            home_shot_next: None,
+            home_shots_taken: 0,
             rate: rate.clamp(0.25, 4.0),
             location,
             start_log2,
@@ -442,6 +454,31 @@ impl ZoomTest {
 }
 
 /// Nearest-rank percentile over a SORTED slice (no interpolation — matches `--divetest`).
+/// A window capture asked for on the previous frame (a reply lands a frame after its request, as
+/// `--shot`'s does), written as `<prefix>-<n>-f<frame>.png` in the working directory, encoded off
+/// the UI thread. Whether one arrived.
+fn harvest_window_shot(ctx: &egui::Context, prefix: &str, n: u32, frame: u64) -> bool {
+    let shot = ctx.input(|i| {
+        i.events.iter().find_map(|e| match e {
+            egui::Event::Screenshot { image, .. } => Some(image.clone()),
+            _ => None,
+        })
+    });
+    let Some(image) = shot else { return false };
+    let name = format!("{prefix}-{n:03}-f{frame}.png");
+    std::thread::spawn(move || {
+        let (w, h) = (image.size[0] as u32, image.size[1] as u32);
+        let mut bytes = Vec::with_capacity(image.pixels.len() * 4);
+        for px in &image.pixels {
+            bytes.extend_from_slice(&[px.r(), px.g(), px.b(), px.a()]);
+        }
+        if let Err(e) = fractadyne_export::write_png_rgba8(std::path::Path::new(&name), w, h, &bytes, None) {
+            eprintln!("--zoomtest: write {name}: {e}");
+        }
+    });
+    true
+}
+
 fn pct(sorted: &[f64], q: f64) -> f64 {
     if sorted.is_empty() {
         return 0.0;
@@ -750,6 +787,15 @@ impl FractadyneApp {
                 if let Some((leg, rest)) = zt.home {
                     // `--zoomtest-home`: the Space glide (if any), the rest, the Home click, and the
                     // run's zoom ends with the Home animation.
+                    if let (HomeLeg::Glide, Some(every)) = (leg, zt.home_shot_every) {
+                        if harvest_window_shot(ctx, "home-shot", zt.home_shots_taken, self.perf.frame_idx) {
+                            zt.home_shots_taken += 1;
+                        }
+                        if zt.home_shot_next.is_none_or(|t| now >= t) {
+                            zt.home_shot_next = Some(now + std::time::Duration::from_secs_f64(every));
+                            ctx.send_viewport_cmd(egui::ViewportCommand::Screenshot(egui::UserData::default()));
+                        }
+                    }
                     match leg {
                         HomeLeg::Zoom if arrived || in_phase > GLIDE_MAX_S => {
                             zt.driving = false;
@@ -793,25 +839,8 @@ impl FractadyneApp {
                     }
                     // The window captures: a reply lands a frame after its request, as `--shot`'s
                     // does, so each frame harvests the previous one's and asks for its own.
-                    let shot = ctx.input(|i| {
-                        i.events.iter().find_map(|e| match e {
-                            egui::Event::Screenshot { image, .. } => Some(image.clone()),
-                            _ => None,
-                        })
-                    });
-                    if let Some(image) = shot {
-                        let name = format!("click-shot-{:03}-f{}.png", zt.click_shots_taken, self.perf.frame_idx);
+                    if harvest_window_shot(ctx, "click-shot", zt.click_shots_taken, self.perf.frame_idx) {
                         zt.click_shots_taken += 1;
-                        std::thread::spawn(move || {
-                            let (w, h) = (image.size[0] as u32, image.size[1] as u32);
-                            let mut bytes = Vec::with_capacity(image.pixels.len() * 4);
-                            for px in &image.pixels {
-                                bytes.extend_from_slice(&[px.r(), px.g(), px.b(), px.a()]);
-                            }
-                            if let Err(e) = fractadyne_export::write_png_rgba8(std::path::Path::new(&name), w, h, &bytes, None) {
-                                eprintln!("--zoomtest: write {name}: {e}");
-                            }
-                        });
                     }
                     if zt.click_t0.is_some() && zt.click_shots_left > 0 {
                         zt.click_shots_left -= 1;

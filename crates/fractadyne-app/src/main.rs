@@ -1621,6 +1621,9 @@ struct Perf {
     hold_step_last: [f64; 2],
     hold_seen_frame: [u64; 2],
     hold_jump: [bool; 2],
+    /// A stepped Home is under way (`HomeSteps`): a held frame is shown no smaller than full size
+    /// (`frame_plan::home_step_hold_scale`), not shrunk by the thousands of octaves to the stop.
+    hold_home_step: [bool; 2],
     /// Frames since start by the bound their held frame's magnification took (indexed by
     /// `frame_plan::hold_floor` code; 0 = no hold transform), and the frames the jump floor BOUND
     /// while the view was moving — U39's failure, a clamped transform sliding against the view.
@@ -2555,6 +2558,7 @@ impl Default for Perf {
             hold_step_last: [f64::NAN; 2],
             hold_seen_frame: [u64::MAX; 2],
             hold_jump: [false, false],
+            hold_home_step: [false, false],
             hold_floor_frames: [[0; 5]; 2],
             hold_bound_moving: [0, 0],
             chunk_walk_epoch: [0, 0],
@@ -4909,7 +4913,51 @@ const HOME_MIN_SECONDS: f64 = 1.5;
 
 const HOME_MAX_SECONDS: f64 = 9.0;
 
-/// An in-progress smooth zoom-out to the home view (started by the Home button).
+/// How long a Home glide over `logmag` (natural log of the magnification) takes.
+fn home_glide_seconds(logmag: f64) -> f64 {
+    (logmag * HOME_SECONDS_PER_LOGMAG).clamp(HOME_MIN_SECONDS, HOME_MAX_SECONDS)
+}
+
+/// ⭐A STEPPED HOME. Deeper than this (log₂ of the magnification, ≈3.4e38×) Home makes stops on
+/// the way out ([`home_stops`]) and glides only from here. A glide is at most
+/// [`HOME_MAX_SECONDS`], and from 1e4850× that is ~1,800 octaves a second: every frame is a new
+/// view whose walk has just begun, shown with no pixel finished, and the held picture shrinks to a
+/// speck in its average colour — 9 s of solid panels of colour (the user's recording, 2026-10-26).
+/// No renderer draws that depth at that rate; a stop is a still view, which renders.
+pub(crate) const HOME_SMOOTH_LOG2: f64 = 128.0;
+
+/// The most stops a stepped Home makes, and the fewest octaves between two of them.
+pub(crate) const HOME_MAX_STOPS: usize = 8;
+pub(crate) const HOME_STOP_MIN_OCT: f64 = 64.0;
+
+/// The longest a stop waits for its picture, and how long a finished one stays on screen.
+pub(crate) const HOME_STOP_MAX_SECONDS: f64 = 1.5;
+pub(crate) const HOME_STOP_SHOW_SECONDS: f64 = 0.5;
+
+/// The depths (log₂ magnification) a Home from `start_l2` stops at on the way out, deepest first:
+/// evenly spaced, at least [`HOME_STOP_MIN_OCT`] apart, at most [`HOME_MAX_STOPS`], the last at
+/// [`HOME_SMOOTH_LOG2`] where the glide takes over. None at or above it (or for no number).
+pub(crate) fn home_stops(start_l2: f64) -> Vec<f64> {
+    if !(start_l2 > HOME_SMOOTH_LOG2) {
+        return Vec::new();
+    }
+    let span = start_l2 - HOME_SMOOTH_LOG2;
+    let n = ((span / HOME_STOP_MIN_OCT).floor() as usize).clamp(1, HOME_MAX_STOPS);
+    (1..=n).map(|k| if k == n { HOME_SMOOTH_LOG2 } else { start_l2 - span * k as f64 / n as f64 }).collect()
+}
+
+/// Whether a stop reached at `arrived` is done at `now`: its picture (finished at `finished`) has
+/// been on screen [`HOME_STOP_SHOW_SECONDS`], or none came in [`HOME_STOP_MAX_SECONDS`] and the
+/// previous one, still held, gives way.
+pub(crate) fn home_stop_done(now: f64, arrived: f64, finished: Option<f64>) -> bool {
+    match finished {
+        Some(f) => now - f >= HOME_STOP_SHOW_SECONDS,
+        None => now - arrived >= HOME_STOP_MAX_SECONDS,
+    }
+}
+
+/// An in-progress zoom-out to the home view (started by the Home button): the stops of a stepped
+/// Home, if any, then a smooth glide.
 struct HomeAnim {
     start_time: f64,
     duration: f64,
@@ -4920,6 +4968,26 @@ struct HomeAnim {
     j_start_center: (fractadyne_core::BigFloat, fractadyne_core::BigFloat),
     j_start_logmag: f64,
     dual: bool,
+    /// The share of the start's log magnification the glide starts from: 1, or the last stop's
+    /// after a stepped Home (the centre still lerps from the start's, so the two phases join).
+    glide_from: f64,
+    /// A stepped Home's stops still to make (`None` once the glide has begun).
+    steps: Option<HomeSteps>,
+}
+
+/// The stops of a stepped Home ([`home_stops`]): each a still view the app renders before the next.
+struct HomeSteps {
+    /// The deepest of the two views' log₂ magnifications at the start, and the stops (log₂, deepest
+    /// first); each view stops at its own share of the start's depth.
+    deepest_l2: f64,
+    stops: Vec<f64>,
+    /// The stop on screen, or next.
+    next: usize,
+    /// When the view reached it and the frame that rendered it first: a picture of the stop is a
+    /// render tagged at or after that frame.
+    arrived: Option<(f64, u64)>,
+    /// When that picture was complete.
+    finished: Option<f64>,
 }
 
 /// Cache key for the interactive orbit (recompute only when these change).
@@ -9215,11 +9283,14 @@ impl FractadyneApp {
             self.reset_view();
             return;
         }
-        let duration =
-            (deepest * HOME_SECONDS_PER_LOGMAG).clamp(HOME_MIN_SECONDS, HOME_MAX_SECONDS);
+        let deepest_l2 = deepest / std::f64::consts::LN_2;
+        let stops = home_stops(deepest_l2);
+        let steps = (!stops.is_empty()).then(|| HomeSteps { deepest_l2, stops, next: 0, arrived: None, finished: None });
+        // The glide after the stops covers what is left from the last one (`glide_from`).
+        let glide_from = steps.as_ref().map_or(1.0, |s| HOME_SMOOTH_LOG2 / s.deepest_l2);
         self.home_anim = Some(HomeAnim {
             start_time: now,
-            duration,
+            duration: home_glide_seconds(deepest * glide_from),
             m_start_center: (self.viewport.center_x.clone(), self.viewport.center_y.clone()),
             m_start_logmag: m_logmag,
             j_start_center: (
@@ -9228,15 +9299,96 @@ impl FractadyneApp {
             ),
             j_start_logmag: j_logmag,
             dual: self.dual,
+            glide_from,
+            steps,
         });
         self.center_expr = None; // heading home leaves the anchor behind
         self.pointer.zoom_vel = 0.0;
     }
 
+    /// Put both views at the share `f` of their start depth on the Home path (the centre lerps
+    /// toward Home as the glide's does).
+    fn home_place(&mut self, anim: &HomeAnim, f: f64) {
+        self.viewport.home_lerp(self.fractal.default_center(), &anim.m_start_center, anim.m_start_logmag * f);
+        if anim.dual {
+            self.julia_viewport.home_lerp((0.0, 0.0), &anim.j_start_center, anim.j_start_logmag * f);
+        }
+    }
+
+    /// The stop's own picture is on screen: each view's live texture holds a render complete for
+    /// its ask (`ContentTrack::live_complete`), captured at or after the frame the view reached the
+    /// stop and at its depth (`RefCache::frozen_frame` / `frozen_l2`: a device render's own frame, or
+    /// a worker frame's ticket). ⚠Not `live_tag`: a worker frame's tag carries `LIVE_TAG_BIT` and
+    /// out-ranks every frame index, so a worker frame of the view BEFORE the jump, adopted just
+    /// after it, passed for the stop's picture (stop 1 "finished" in 0.07 s, the start view held).
+    fn home_stop_pictured(&self, since_frame: u64, dual: bool) -> bool {
+        let done = |v: usize, l2: f64| {
+            let r = &self.ref_cache[v];
+            self.perf.content[v].live_complete && r.frozen_frame >= since_frame && (r.frozen_l2 - l2).abs() < 0.5
+        };
+        done(0, self.viewport.log2_magnification())
+            && (!dual || done(1, self.julia_viewport.log2_magnification()))
+    }
+
+    /// A stepped Home's frame (`advance_home_anim`): reach the next stop, or wait at this one for its
+    /// picture, show it, and move on; after the last, hand over to the glide. The views stand still
+    /// at a stop — no interaction is stamped — so the app renders them as settled views and holds
+    /// the last finished picture (at full size, `Perf::hold_home_step`) until the stop's own is.
+    fn advance_home_steps(&mut self, anim: &mut HomeAnim, now: f64) {
+        let Some(steps) = anim.steps.as_mut() else { return };
+        match steps.arrived {
+            None => {
+                let f = steps.stops[steps.next] / steps.deepest_l2;
+                steps.arrived = Some((now, self.perf.frame_idx));
+                steps.finished = None;
+                self.perf.hold_home_step = [true; 2];
+                crate::diag::log_line(
+                    "home",
+                    &format!(
+                        "stepped Home: stop {} of {} at 2^{:.1} (from 2^{:.1})",
+                        steps.next + 1,
+                        steps.stops.len(),
+                        steps.stops[steps.next],
+                        steps.deepest_l2,
+                    ),
+                );
+                self.home_place(anim, f);
+            }
+            Some((at, since)) => {
+                if steps.finished.is_none() && self.home_stop_pictured(since, anim.dual) {
+                    steps.finished = Some(now);
+                    crate::diag::log_line(
+                        "home",
+                        &format!("stepped Home: stop {} pictured after {:.2} s", steps.next + 1, now - at),
+                    );
+                }
+                if home_stop_done(now, at, steps.finished) {
+                    if steps.finished.is_none() {
+                        crate::diag::log_line(
+                            "home",
+                            &format!(
+                                "stepped Home: stop {} gave way after {HOME_STOP_MAX_SECONDS} s with no finished picture",
+                                steps.next + 1
+                            ),
+                        );
+                    }
+                    steps.next += 1;
+                    steps.arrived = None;
+                    if steps.next >= steps.stops.len() {
+                        // The last stop is the glide's start: from here, as an ordinary Home.
+                        anim.steps = None;
+                        anim.start_time = now;
+                        self.perf.hold_home_step = [false; 2];
+                    }
+                }
+            }
+        }
+    }
+
     /// Advance the active zoom-home animation by one frame. Returns true while it is
     /// still running (so the caller can keep requesting repaints).
     fn advance_home_anim(&mut self, ctx: &egui::Context) -> bool {
-        let Some(anim) = self.home_anim.take() else {
+        let Some(mut anim) = self.home_anim.take() else {
             return false;
         };
         // Let the user grab control: any pan/zoom input cancels the glide in place.
@@ -9246,9 +9398,21 @@ impl FractadyneApp {
                 || i.smooth_scroll_delta.y != 0.0
         });
         if interrupted {
+            self.perf.hold_home_step = [false; 2];
             return false;
         }
         let now = ctx.input(|i| i.time);
+        if anim.steps.is_some() {
+            self.advance_home_steps(&mut anim, now);
+            if anim.steps.is_some() {
+                self.home_anim = Some(anim);
+                return true;
+            }
+            // The last stop is done: the glide starts on THIS frame, from the stop's own view
+            // (u = 0), so no settled frame comes between them. One did: no longer a stop, it began a
+            // full-size walk, and the glide's hold served that walk's first pass — a black frame
+            // between the last stop's picture and the glide (2^1663, 2026-10-26).
+        }
         let u = ((now - anim.start_time) / anim.duration).clamp(0.0, 1.0);
         if u >= 1.0 {
             self.reset_view(); // exact home (center + zoom), invalidates references
@@ -9257,12 +9421,7 @@ impl FractadyneApp {
         // Ease in/out (smoothstep) on the remaining log-magnification.
         let e = u * u * (3.0 - 2.0 * u);
         let remain = 1.0 - e;
-        self.viewport
-            .home_lerp(self.fractal.default_center(), &anim.m_start_center, anim.m_start_logmag * remain);
-        if anim.dual {
-            self.julia_viewport
-                .home_lerp((0.0, 0.0), &anim.j_start_center, anim.j_start_logmag * remain);
-        }
+        self.home_place(&anim, anim.glide_from * remain);
         // Treat the glide as interaction so AA stays off and references aren't
         // recomputed every frame (rebasing covers the motion; quality on settle).
         self.pointer.settle_t = [now; 2];

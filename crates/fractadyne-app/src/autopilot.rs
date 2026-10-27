@@ -295,6 +295,7 @@ impl FractadyneApp {
             ct.refresh_period_s = 0.0;
             ct.blank_walks = 0;
             self.home_anim = None;
+            self.perf.hold_home_step = [false; 2];
             self.stop_playback();
             if self.autopilot.target == AutopilotTarget::Misiurewicz {
                 self.start_misi_target_solve(ctx);

@@ -279,3 +279,26 @@ fn the_hold_floor_code_says_whether_the_jump_bound_moved_the_picture() {
     // Zooming out is never floored.
     assert_eq!(hold_scale(2.0, true), (4.0, hold_floor::JUMP));
 }
+
+#[test]
+fn a_stepped_homes_held_frame_is_never_shrunk() {
+    // A stop 2,000 octaves out: at its true scale (the hold's 2^40 cap) the held picture is a speck
+    // in its average colour; during a stepped Home it stays at full size.
+    let (shrunk, _) = hold_scale(2000.0, false);
+    assert!(shrunk > 1.0e12, "{shrunk}");
+    assert_eq!(home_step_hold_scale(shrunk, true), 1.0);
+    // Otherwise untouched, and a zoom in (scale below 1) is never touched.
+    assert_eq!(home_step_hold_scale(shrunk, false), shrunk);
+    assert_eq!(home_step_hold_scale(0.25, true), 0.25);
+    assert_eq!(home_step_hold_scale(1.0, true), 1.0);
+}
+
+#[test]
+fn a_stepped_homes_stop_renders_small_and_nothing_else_does() {
+    // A still stop: a quarter of the panel's width, or less if the frame was smaller already.
+    assert_eq!(home_stop_res_scale(1.0, false, true), HOME_STOP_RES_SCALE);
+    assert_eq!(home_stop_res_scale(0.1, false, true), 0.1);
+    // Moving (the glide after the stops), or no stepped Home: the frame's own scale.
+    assert_eq!(home_stop_res_scale(1.0, true, true), 1.0);
+    assert_eq!(home_stop_res_scale(1.0, false, false), 1.0);
+}

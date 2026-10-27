@@ -7187,7 +7187,7 @@ impl FractadyneApp {
         let (scale, code) = crate::render::frame_plan::hold_scale(gap_oct, jumped);
         let p = &mut self.perf.hold_floor_pending[v.min(1)];
         *p = (*p).max(code);
-        scale
+        crate::render::frame_plan::home_step_hold_scale(scale, self.perf.hold_home_step[v.min(1)])
     }
 
     /// A moving df32 frame of view `lr` did not render live, for `why`: remember it, and under
