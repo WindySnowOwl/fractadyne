@@ -9505,16 +9505,21 @@ zoom = \"1e94\"
             self.coloring.color_method = crate::ColorMethod::from_u32(0);
 
             // --- palettes, step 54 ---
+            // ⚠A breadcrumb per palette and per row of the comparison: the whole check runs 22-26 s,
+            // and with no activity for that long the watchdog may log a "possible hang" (it did on
+            // 2026-10-28, failing a run's logcheck with every check passing).
             let mut pal: Vec<(String, Vec<u8>)> = Vec::new();
             for (i, name) in fractadyne_color::PRESETS.iter().enumerate() {
                 self.coloring.palette_idx = i;
                 if let Some(px) = render(self, device, queue) {
                     pal.push((name.name.to_string(), px));
                 }
+                crate::diag::breadcrumb(format!("selftest: palette {}/{} rendered", i + 1, fractadyne_color::PRESETS.len()));
             }
             let mut pworst = (f64::INFINITY, String::new());
             let mut pcoherent = true;
             for i in 0..pal.len() {
+                crate::diag::breadcrumb(format!("selftest: palette {}/{} compared", i + 1, pal.len()));
                 pcoherent &= frame::coherent(&pal[i].1);
                 for j in (i + 1)..pal.len() {
                     let d = frame::distance(&pal[i].1, &pal[j].1);
