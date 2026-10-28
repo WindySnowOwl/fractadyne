@@ -27,7 +27,13 @@ pub(crate) fn run_headless(args: &[String]) -> Option<i32> {
     if args.iter().any(|a| a == "--farmtest") {
         return Some(farmtest::run(args));
     }
-    if args.iter().any(|a| a == "--farm-render") {
+    if args.iter().any(|a| a == "--farmtest-strips") {
+        return Some(farmtest::run_strips(args));
+    }
+    // A tour's frames (`--farm-render TOUR`), or a zoom video's strips (`--render-zoom-video F …
+    // --farm`, `design/zoom-video.md` §8.5).
+    let zoom_farm = args.iter().any(|a| a == "--render-zoom-video") && args.iter().any(|a| a == "--farm");
+    if args.iter().any(|a| a == "--farm-render") || zoom_farm {
         return Some(controller::run(args));
     }
     if args.iter().any(|a| a == "--render-client") {
@@ -166,17 +172,157 @@ pub(crate) struct Bundle {
     /// reference orbits between machines. Off: every machine builds its own.
     #[serde(default)]
     pub(crate) sharing: bool,
+    /// A zoom video's strips instead of a tour's frames (`design/zoom-video.md` §8.5): unit K is
+    /// strip K of this dive, `width`/`height` a strip's size, `script` and `anchors` empty.
+    #[serde(default)]
+    pub(crate) strips: Option<StripJob>,
+}
+
+/// The dive a strip job renders: what `--render-zoom-video … --farm` was given, as typed fields
+/// (a client builds its render's command line from them — never from argument text off the wire).
+#[derive(Serialize, Deserialize, Debug, Clone, PartialEq)]
+#[serde(deny_unknown_fields)]
+pub(crate) struct StripJob {
+    /// The dive's manifest (`expmap.json`) as the controller's plan wrote it. A client writes it
+    /// into its render folder first, so a client whose own plan differs is refused by the renderer
+    /// (`write_or_check_manifest`) instead of rendering another dive.
+    pub(crate) manifest: String,
+    /// The dive's centre, as the viewport's text.
+    pub(crate) center_re: String,
+    pub(crate) center_im: String,
+    /// Where it ends (`--zoom-log2`) and starts (`--expmap-start`), log2 magnification.
+    pub(crate) zoom_log2: f64,
+    pub(crate) start_log2: f64,
+    /// The video's frame size (`--size`): the strips are sized for it.
+    pub(crate) frame_width: u32,
+    pub(crate) frame_height: u32,
+    /// `--expmap-oversample`.
+    pub(crate) oversample: f64,
+    /// `--expmap-cap fixed` (else rising).
+    pub(crate) cap_fixed: bool,
+    /// `--iter N`, when given.
+    pub(crate) iter: Option<u32>,
+    /// `--bla` / `--no-bla`.
+    pub(crate) bla: bool,
+}
+
+/// A number as the command line writes one (`-1.19e-2`): what a centre may be.
+fn plain_number(s: &str) -> bool {
+    !s.is_empty() && s.len() <= 100_000 && s.chars().all(|c| c.is_ascii_digit() || matches!(c, '.' | 'e' | 'E' | '+' | '-')) && s.chars().any(|c| c.is_ascii_digit())
+}
+
+impl StripJob {
+    /// The strip job's own checks (beside [`Bundle::check`]'s): a centre that is a number, depths,
+    /// a frame size and oversampling the app accepts, an iteration count the policy allows, and a
+    /// manifest that is a manifest.
+    fn check(&self, policy: &fractadyne_farm::proto::Policy) -> Result<(), String> {
+        if !plain_number(&self.center_re) || !plain_number(&self.center_im) {
+            return Err("the dive's centre is not a number".into());
+        }
+        if !(self.zoom_log2.is_finite() && self.start_log2.is_finite() && self.start_log2 >= 0.0 && self.zoom_log2 > self.start_log2 && self.zoom_log2 <= 1e7) {
+            return Err("the dive's depths are out of range".into());
+        }
+        if !(16..=16384).contains(&self.frame_width) || !(16..=16384).contains(&self.frame_height) {
+            return Err(format!("{}×{} video frames are out of range", self.frame_width, self.frame_height));
+        }
+        if !(self.oversample.is_finite() && (1.0..=8.0).contains(&self.oversample)) {
+            return Err("the strips' oversampling is out of range".into());
+        }
+        if self.iter.is_some_and(|n| n == 0 || n > policy.max_iter) {
+            return Err(format!("an iteration count of {} is more than this machine allows ({})", self.iter.unwrap_or(0), policy.max_iter));
+        }
+        if self.manifest.len() > 1 << 20 || serde_json::from_str::<serde_json::Value>(&self.manifest).is_err() {
+            return Err("the dive's manifest is not one".into());
+        }
+        Ok(())
+    }
+
+    /// The render of strips `start..end` (half-open, as `Assign` gives them) into `out`:
+    /// `--render-expmap OUT --expmap-strips A-B` and the dive's flags. The caller adds what every
+    /// farm render gets (`--set ORBIT_LEN_CAP`, `--orbit-cache`, `--adapter`).
+    pub(crate) fn child_args(&self, out: &Path, start: u64, end: u64) -> Vec<String> {
+        let mut a: Vec<String> = vec![
+            "--render-expmap".into(),
+            out.to_string_lossy().into_owned(),
+            "--expmap-strips".into(),
+            format!("{start}-{}", end.saturating_sub(1).max(start)),
+            "--farm-child".into(),
+        ];
+        a.extend(self.dive_args());
+        a
+    }
+
+    /// The controller's plan of the dive (`--expmap-plan`): the manifest written into `out` (or
+    /// the one there checked), nothing rendered.
+    pub(crate) fn plan_args(&self, out: &Path) -> Vec<String> {
+        let mut a: Vec<String> = vec!["--render-expmap".into(), out.to_string_lossy().into_owned(), "--expmap-plan".into()];
+        a.extend(self.dive_args());
+        a
+    }
+
+    /// The dive's own flags.
+    fn dive_args(&self) -> Vec<String> {
+        let mut a: Vec<String> = vec![
+            "--center".into(),
+            self.center_re.clone(),
+            self.center_im.clone(),
+            "--zoom-log2".into(),
+            format!("{}", self.zoom_log2),
+            "--size".into(),
+            format!("{}x{}", self.frame_width, self.frame_height),
+            "--expmap-oversample".into(),
+            format!("{}", self.oversample),
+            if self.bla { "--bla" } else { "--no-bla" }.into(),
+        ];
+        if self.start_log2 != 0.0 {
+            a.extend(["--expmap-start".into(), format!("{}", self.start_log2)]);
+        }
+        if self.cap_fixed {
+            a.extend(["--expmap-cap".into(), "fixed".into()]);
+        }
+        if let Some(n) = self.iter {
+            a.extend(["--iter".into(), n.to_string()]);
+        }
+        a
+    }
 }
 
 impl Bundle {
+    /// What the job's units are.
+    pub(crate) fn kind(&self) -> fractadyne_farm::names::UnitKind {
+        if self.strips.is_some() {
+            fractadyne_farm::names::UnitKind::Strip
+        } else {
+            fractadyne_farm::names::UnitKind::Frame
+        }
+    }
+
+    /// The file unit `index` is written under.
+    pub(crate) fn unit_file_name(&self, index: u64) -> String {
+        fractadyne_farm::names::unit_file_name(self.kind(), &self.prefix, index)
+    }
+
     /// Checks a client runs on arrival, against its own policy. `Err` = the job is refused.
     pub(crate) fn check(&self, policy: &fractadyne_farm::proto::Policy, gpu_cap: Option<u64>) -> Result<(), String> {
         fractadyne_farm::names::check_file_part("frame prefix", &self.prefix)?;
+        if let Some(s) = &self.strips {
+            s.check(policy)?;
+            if self.prefix != "strip" || !self.script.is_empty() || self.anchors.is_some() {
+                return Err("a zoom video's strip job carries a script, anchors or another file prefix".into());
+            }
+        }
         if self.script.len() > 1 << 20 || self.anchors.as_ref().is_some_and(|a| a.len() > 1 << 20) {
             return Err("the job's script or anchors are too large".into());
         }
-        if self.width == 0 || self.height == 0 || self.width > policy.max_width || self.height > policy.max_height {
-            return Err(format!("{}×{} frames are larger than this machine allows ({}×{})", self.width, self.height, policy.max_width, policy.max_height));
+        // A strip is long and thin (a 1080p one at 3x is 20763×2294): its texels against the
+        // policy's frame, not its sides.
+        let too_big = match &self.strips {
+            Some(_) => self.width as u64 * self.height as u64 > policy.max_width as u64 * policy.max_height as u64,
+            None => self.width > policy.max_width || self.height > policy.max_height,
+        };
+        if self.width == 0 || self.height == 0 || too_big {
+            let what = if self.strips.is_some() { "strips" } else { "frames" };
+            return Err(format!("{}×{} {what} are larger than this machine allows ({}×{})", self.width, self.height, policy.max_width, policy.max_height));
         }
         if self.ss == 0 || self.ss > policy.max_ss {
             return Err(format!("supersampling {} is more than this machine allows ({})", self.ss, policy.max_ss));
@@ -307,14 +453,26 @@ pub(crate) fn gpu_text(g: &fractadyne_farm::proto::GpuInfo) -> String {
 /// Start a render child of this executable: `args`, with `config_dir` as its configuration folder,
 /// stdout and stderr piped, no console window, no sound.
 pub(crate) fn spawn_child(args: &[String], config_dir: &Path) -> Result<std::process::Child, String> {
+    std::fs::create_dir_all(config_dir).map_err(|e| format!("{}: {e}", config_dir.display()))?;
+    spawn_in(args, Some(config_dir))
+}
+
+/// [`spawn_child`] in THIS process's own configuration (its session, so its colouring): a
+/// controller's own step, such as assembling a zoom video once its strips are in.
+pub(crate) fn spawn_child_here(args: &[String]) -> Result<std::process::Child, String> {
+    spawn_in(args, None)
+}
+
+fn spawn_in(args: &[String], config_dir: Option<&Path>) -> Result<std::process::Child, String> {
     if args.is_empty() {
         return Err("refusing to start a render process with no arguments (that opens the app's window)".into());
     }
     let exe = std::env::current_exe().map_err(|e| format!("cannot find this executable: {e}"))?;
-    std::fs::create_dir_all(config_dir).map_err(|e| format!("{}: {e}", config_dir.display()))?;
     let mut cmd = std::process::Command::new(exe);
+    if let Some(d) = config_dir {
+        cmd.env("FRACTADYNE_CONFIG_DIR", d);
+    }
     cmd.args(args)
-        .env("FRACTADYNE_CONFIG_DIR", config_dir)
         .env("FRACTADYNE_NO_SOUND", "1")
         .stdin(std::process::Stdio::null())
         .stdout(std::process::Stdio::piped())

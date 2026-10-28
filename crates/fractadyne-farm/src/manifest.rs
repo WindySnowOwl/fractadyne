@@ -44,9 +44,24 @@ pub struct JobIdentity {
     pub prefix: String,
     pub frames: u64,
     pub created_unix: u64,
+    /// A tour's frames (the default, and what a `job.toml` from before strips holds) or a zoom
+    /// video's strips.
+    #[serde(default)]
+    pub kind: crate::names::UnitKind,
 }
 
 impl JobIdentity {
+    /// The identity of a zoom video's strips: `dive` (the dive's manifest) where a tour has its
+    /// script, `strips` units, `prefix` "strip". Its id covers the kind too, so a strip job and a
+    /// tour can never be taken for each other.
+    #[allow(clippy::too_many_arguments)]
+    pub fn strips(name: &str, dive: &str, settings_json: &str, app_version: &str, git: &str, (width, rows): (u32, u32), strips: u64, created_unix: u64) -> Self {
+        let mut j = Self::new(name, "(zoom video dive)", dive, settings_json, None, app_version, git, (width, rows), 0.0, 1, "strip", strips, created_unix);
+        j.job_id = crate::sha256_hex(format!("{}|strips", j.job_id).as_bytes())[..16].to_string();
+        j.kind = crate::names::UnitKind::Strip;
+        j
+    }
+
     /// The identity, with its id derived from everything that decides the pictures.
     #[allow(clippy::too_many_arguments)]
     pub fn new(
@@ -90,6 +105,7 @@ impl JobIdentity {
             prefix: prefix.into(),
             frames,
             created_unix,
+            kind: crate::names::UnitKind::Frame,
         }
     }
 }
@@ -177,17 +193,19 @@ impl Manifest {
             }
         }
         let prefix = &self.job.prefix;
+        let ext = format!(".{}", self.job.kind.ext());
+        let part = format!("{ext}.part");
         if let Ok(rd) = std::fs::read_dir(&self.out) {
             for e in rd.flatten() {
                 let name = e.file_name().to_string_lossy().into_owned();
                 let Some(rest) = name.strip_prefix(&format!("{prefix}_")) else { continue };
-                if let Some(num) = rest.strip_suffix(".png.part") {
+                if let Some(num) = rest.strip_suffix(part.as_str()) {
                     if num.parse::<u64>().is_ok() && std::fs::remove_file(e.path()).is_ok() {
                         r.partials_removed += 1;
                     }
                     continue;
                 }
-                let Some(num) = rest.strip_suffix(".png") else { continue };
+                let Some(num) = rest.strip_suffix(ext.as_str()) else { continue };
                 let Ok(i) = num.parse::<u64>() else { continue };
                 if i >= self.job.frames {
                     continue;
@@ -218,9 +236,9 @@ impl Manifest {
         &self.dir
     }
 
-    /// Where frame `index` lives.
+    /// Where frame (or strip) `index` lives.
     pub fn frame_path(&self, index: u64) -> PathBuf {
-        self.out.join(crate::names::frame_file_name(&self.job.prefix, index))
+        self.out.join(crate::names::unit_file_name(self.job.kind, &self.job.prefix, index))
     }
 
     /// Where a verified frame waits until the scheduler accepts it.
@@ -232,7 +250,7 @@ impl Manifest {
 
     /// Where a frame that failed verification is kept for inspection.
     pub fn quarantine_path(&self, index: u64, machine: &str) -> PathBuf {
-        self.dir.join("bad").join(format!("{}_{index:05}.{}.png", self.job.prefix, safe_name(machine)))
+        self.dir.join("bad").join(format!("{}_{index:05}.{}.{}", self.job.prefix, safe_name(machine), self.job.kind.ext()))
     }
 
     /// A diagnostics bundle's folder for `machine`.

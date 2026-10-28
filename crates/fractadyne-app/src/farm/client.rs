@@ -414,10 +414,24 @@ fn connect_once(cfg: &Cfg, pins: &Mutex<PinStore>, ui: &Arc<Ui>) -> Ended {
         let tx = ev_tx.clone();
         std::thread::spawn(move || {
             let mut w = writer;
-            for o in out_rx {
+            // What arrived while a blob was going out, in order — except heartbeats, which go out
+            // between its chunks (`send_blob_with`): the controller drops a client it has not heard
+            // from in 10 s, and a zoom video's strip takes several seconds to send.
+            let mut held: std::collections::VecDeque<Out> = Default::default();
+            loop {
+                let Some(o) = held.pop_front().or_else(|| out_rx.recv().ok()) else { break };
                 let r = match o {
                     Out::Msg(m) => w.send(&m),
-                    Out::Blob(id, b) => w.send_blob(id, &b),
+                    Out::Blob(id, b) => w.send_blob_with(id, &b, |w| {
+                        let mut sent = 0;
+                        while let Ok(o) = out_rx.try_recv() {
+                            match o {
+                                Out::Msg(m @ Msg::Heartbeat(_)) => sent += w.send(&m)?,
+                                other => held.push_back(other),
+                            }
+                        }
+                        Ok(sent)
+                    }),
                 };
                 if let Err(e) = r {
                     let _ = tx.send(Ev::NetDown(e));
@@ -955,7 +969,22 @@ impl Session<'_> {
                 Err(e) => say!("  the shared drive is not writable from here ({e}); streaming the frames instead"),
             }
         }
-        let detail = format!("{}×{} ss{} at {} fps, {} frames", bundle.width, bundle.height, bundle.ss, bundle.fps, bundle.frames);
+        // A zoom video's strips: the dive's manifest goes where the strips will be written, so
+        // the renderer refuses to render if this machine's plan of the dive differs from it.
+        let refusal = match (&refusal, &bundle.strips) {
+            (None, Some(s)) => std::fs::create_dir_all(&frames)
+                .and_then(|()| std::fs::write(frames.join(crate::expmap_render::MANIFEST), &s.manifest))
+                .err()
+                .map(|e| format!("could not prepare the strips' folder: {e}")),
+            _ => refusal,
+        };
+        let detail = match &bundle.strips {
+            Some(s) => format!(
+                "{} strips of {}×{} (a {}×{} zoom video to 2^{:.1})",
+                bundle.frames, bundle.width, bundle.height, s.frame_width, s.frame_height, s.zoom_log2
+            ),
+            None => format!("{}×{} ss{} at {} fps, {} frames", bundle.width, bundle.height, bundle.ss, bundle.fps, bundle.frames),
+        };
         say!("  job \"{}\": {detail}", bundle.name);
         self.ui.update(|s| {
             s.job_detail = Some(detail);
@@ -975,24 +1004,29 @@ impl Session<'_> {
         let Some(a) = self.queue.pop_front() else { return };
         let Some(job) = self.jobs.get(&a.job_id) else { return };
         let b = &job.bundle;
-        let mut args: Vec<String> = vec![
-            "--render-tour".into(),
-            job.dir.join("script.toml").to_string_lossy().into_owned(),
-            "--out".into(),
-            job.frames.to_string_lossy().into_owned(),
-            "--frames".into(),
-            format!("{}..{}", a.start, a.end),
-            "--size".into(),
-            format!("{}x{}", b.width, b.height),
-            "--fps".into(),
-            format!("{}", b.fps),
-            "--ss".into(),
-            b.ss.to_string(),
-            "--prefix".into(),
-            b.prefix.clone(),
-            "--farm-child".into(),
-            "-y".into(),
-        ];
+        let mut args: Vec<String> = match &b.strips {
+            // A zoom video's strips: `--render-expmap` of the dive, strips A-B.
+            Some(s) => s.child_args(&job.frames, a.start, a.end),
+            None => vec![
+                "--render-tour".into(),
+                job.dir.join("script.toml").to_string_lossy().into_owned(),
+                "--out".into(),
+                job.frames.to_string_lossy().into_owned(),
+                "--frames".into(),
+                format!("{}..{}", a.start, a.end),
+                "--size".into(),
+                format!("{}x{}", b.width, b.height),
+                "--fps".into(),
+                format!("{}", b.fps),
+                "--ss".into(),
+                b.ss.to_string(),
+                "--prefix".into(),
+                b.prefix.clone(),
+                "--farm-child".into(),
+                "-y".into(),
+            ],
+        };
+        let word = b.kind().word();
         if b.anchors.is_some() {
             args.push("--norm-anchors".into());
             args.push(job.dir.join("anchors.toml").to_string_lossy().into_owned());
@@ -1029,12 +1063,13 @@ impl Session<'_> {
                     });
                 }
                 pump_child(&mut child, |_| {}, self.child_tail.clone(), 400);
-                say!("  rendering frames {}..{} (run {})", a.start, a.end, a.run_id);
+                say!("  rendering {word}s {}..{} (run {})", a.start, a.end, a.run_id);
                 self.ui.update(|s| {
                     s.phase = ClientPhase::Rendering;
                     s.run = Some((a.start, a.end));
                     s.frame = Some(a.start);
-                    s.detail = format!("Rendering frames {}–{}", a.start, a.end - 1);
+                    // Spelled out: the window translates these phrases as written (`detail_words`).
+                    s.detail = if word == "strip" { format!("Rendering strips {}–{}", a.start, a.end - 1) } else { format!("Rendering frames {}–{}", a.start, a.end - 1) };
                 });
                 self.first_frame_at.get_or_insert(Instant::now());
                 self.running = Some(Running { assign: a, child, reported: HashSet::new(), last_done: None, frame_started: Instant::now(), stop: None, pause_after_frame: false, stop_from: None });
@@ -1064,7 +1099,8 @@ impl Session<'_> {
                 // taken by the render as it read the file back. Announce it; the controller reads
                 // and checks it there.
                 let job = &self.jobs[&r.assign.job_id];
-                let path = job.frames.join(fractadyne_farm::names::frame_file_name(&job.bundle.prefix, index));
+                let path = job.frames.join(job.bundle.unit_file_name(index));
+                let (word, picture) = (job.bundle.kind().word(), job.bundle.strips.is_none());
                 if self.corrupt_left > 0 {
                     self.corrupt_left -= 1;
                     if let Ok(mut data) = std::fs::read(&path) {
@@ -1082,15 +1118,18 @@ impl Session<'_> {
                 r.frame_started = Instant::now();
                 self.frames_done += 1;
                 self.ms_total += ms;
-                say!("  frame {index} on the shared drive ({} KB, {ms} ms)", bytes / 1024);
+                say!("  {word} {index} on the shared drive ({} KB, {ms} ms)", bytes / 1024);
                 let (done, mean) = (self.frames_done, self.ms_total as f64 / self.frames_done as f64);
                 let end = r.assign.end;
                 self.ui.update(|s| {
                     s.frames_done = done;
                     s.mean_ms = Some(mean);
                     s.frame = (index + 1 < end).then_some(index + 1);
-                    s.last_frame = Some(path.to_string_lossy().into_owned());
-                    s.last_frame_seq += 1;
+                    // A strip is data, not a picture: no thumbnail.
+                    if picture {
+                        s.last_frame = Some(path.to_string_lossy().into_owned());
+                        s.last_frame_seq += 1;
+                    }
                 });
                 if r.pause_after_frame {
                     r.stop = Some(AbortReason::Paused);
@@ -1102,7 +1141,8 @@ impl Session<'_> {
             }
             ChildLine::Done { index, bytes, sha256, ms, reference } => {
                 let job = &self.jobs[&r.assign.job_id];
-                let path = job.frames.join(fractadyne_farm::names::frame_file_name(&job.bundle.prefix, index));
+                let path = job.frames.join(job.bundle.unit_file_name(index));
+                let (word, picture) = (job.bundle.kind().word(), job.bundle.strips.is_none());
                 match std::fs::read(&path) {
                     Ok(mut data) if data.len() as u64 == bytes && fractadyne_farm::sha256_hex(&data) == sha256 => {
                         let id = self.next_blob;
@@ -1117,8 +1157,9 @@ impl Session<'_> {
                         let _ = self.out.send(Out::Msg(Msg::FrameDone(FrameDone { job_id: r.assign.job_id.clone(), run_id: run, index, render_ms: ms, blob: announce, on_share: false, reference })));
                         let _ = self.out.send(Out::Blob(id, data));
                         // Kept as the window's thumbnail of the latest frame (the next replaces it).
+                        // A strip is data, not a picture: removed once it is on its way.
                         let last = self.cfg.control.join(self.cfg.slot.map_or_else(|| "last-frame.png".into(), |k| format!("last-frame-gpu{k}.png")));
-                        if std::fs::rename(&path, &last).is_err() {
+                        if !picture || std::fs::rename(&path, &last).is_err() {
                             let _ = std::fs::remove_file(&path);
                         }
                         r.reported.insert(index);
@@ -1126,15 +1167,17 @@ impl Session<'_> {
                         r.frame_started = Instant::now();
                         self.frames_done += 1;
                         self.ms_total += ms;
-                        say!("  frame {index} sent ({} KB, {ms} ms)", bytes / 1024);
+                        say!("  {word} {index} sent ({} KB, {ms} ms)", bytes / 1024);
                         let (done, mean) = (self.frames_done, self.ms_total as f64 / self.frames_done as f64);
                         let end = r.assign.end;
                         self.ui.update(|s| {
                             s.frames_done = done;
                             s.mean_ms = Some(mean);
                             s.frame = (index + 1 < end).then_some(index + 1);
-                            s.last_frame = Some(last.to_string_lossy().into_owned());
-                            s.last_frame_seq += 1;
+                            if picture {
+                                s.last_frame = Some(last.to_string_lossy().into_owned());
+                                s.last_frame_seq += 1;
+                            }
                         });
                         if r.pause_after_frame {
                             r.stop = Some(AbortReason::Paused);

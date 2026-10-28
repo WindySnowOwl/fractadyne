@@ -17,6 +17,8 @@ impl FractadyneApp {
         z.out = "C:/Users/robin/Videos/star-e98-dive.mp4".into();
         (z.width, z.height, z.custom_size, z.fps, z.speed, z.start_log2, z.rotate, z.ss) = (1920, 1080, false, 60.0, 1.0, 0.0, 0.0, 1);
         z.normalize = true;
+        // A two-card machine, so the walk photographs "Use all graphics cards".
+        (z.cards, z.cards_rx, z.all_gpus) = (Some(2), None, false);
         z.keep = true;
         z.keep_dir = "C:/Users/robin/Videos/star-e98-strips".into();
         z.progress = "frame 6624/19867  (11m02s elapsed, 22m04s left, 10.0 fps)".into();

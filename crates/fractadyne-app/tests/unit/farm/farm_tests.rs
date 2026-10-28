@@ -88,7 +88,108 @@ fn bundle() -> Bundle {
         frames: 1801,
         share: false,
         sharing: true,
+        strips: None,
     }
+}
+
+/// A zoom video's strip job: the user's 1080p dive at 2x (`design/zoom-video.md` §8.5).
+fn strip_bundle() -> Bundle {
+    Bundle {
+        name: "zoom-video".into(),
+        script: String::new(),
+        width: 13842,
+        height: 1529,
+        fps: 1.0,
+        ss: 1,
+        prefix: "strip".into(),
+        frames: 132,
+        strips: Some(StripJob {
+            manifest: r#"{"format":"fractadyne-expmap","dive":{"strips":132}}"#.into(),
+            center_re: "-1.193675944325418439658220453810454026977217510559150868117e-2".into(),
+            center_im: "7.986812295926137389257603042692185301076332131668760934277e-1".into(),
+            zoom_log2: 120.74482993798824,
+            start_log2: 0.0,
+            frame_width: 1920,
+            frame_height: 1080,
+            oversample: 2.0,
+            cap_fixed: false,
+            iter: None,
+            bla: true,
+        }),
+        ..bundle()
+    }
+}
+
+/// A strip job is checked as a dive: a centre that is a number, depths and sizes the app takes,
+/// a manifest that is one, the `strip` prefix and no script — and a strip's TEXELS against the
+/// policy, not its long side (a 1080p strip at 3x is 20763 wide, under a 16384×16384 policy).
+#[test]
+fn a_strip_job_is_checked_as_a_dive() {
+    let wide = Policy { max_width: 16384, max_height: 16384, ..policy() };
+    assert!(strip_bundle().check(&wide, None).is_ok());
+    assert!(Bundle { width: 20763, height: 2294, ..strip_bundle() }.check(&wide, None).is_ok(), "a long strip is not a large one");
+    assert!(strip_bundle().check(&Policy { max_width: 1920, max_height: 1080, ..policy() }, None).unwrap_err().contains("strips are larger"));
+    let with = |f: &dyn Fn(&mut StripJob)| {
+        let mut b = strip_bundle();
+        f(b.strips.as_mut().unwrap());
+        b
+    };
+    let cases: Vec<(Bundle, &str)> = vec![
+        (with(&|s| s.center_re = "1; del *".into()), "centre"),
+        (with(&|s| s.center_im = String::new()), "centre"),
+        (with(&|s| s.zoom_log2 = f64::NAN), "depths"),
+        (with(&|s| s.start_log2 = 200.0), "depths"),
+        (with(&|s| s.frame_width = 0), "video frames"),
+        (with(&|s| s.oversample = 9.0), "oversampling"),
+        (with(&|s| s.iter = Some(20_000_000)), "iteration count"),
+        (with(&|s| s.manifest = "not json".into()), "manifest"),
+        (Bundle { script: "format_version = 2".into(), ..strip_bundle() }, "script"),
+        (Bundle { prefix: "frame".into(), ..strip_bundle() }, "prefix"),
+    ];
+    for (b, needle) in cases {
+        let e = b.check(&wide, None).expect_err(needle);
+        assert!(e.contains(needle), "{needle}: {e}");
+    }
+}
+
+/// A client renders its strips as `--render-expmap` of the dive, A-B inclusive from the half-open
+/// run; the controller plans the dive with the same flags and no range.
+#[test]
+fn a_strip_run_is_the_dives_render_expmap() {
+    let s = strip_bundle().strips.unwrap();
+    let out = std::path::Path::new("C:/work/strips");
+    let a = s.child_args(out, 40, 44);
+    let pair = |a: &[String], k: &str| a.iter().position(|x| x == k).map(|i| a[i + 1].clone());
+    assert_eq!(a[0], "--render-expmap");
+    assert_eq!(pair(&a, "--expmap-strips").as_deref(), Some("40-43"), "Assign's [40, 44) is strips 40 to 43");
+    let i = a.iter().position(|x| x == "--center").unwrap();
+    assert_eq!((a[i + 1].as_str(), a[i + 2].as_str()), (s.center_re.as_str(), s.center_im.as_str()));
+    assert_eq!(pair(&a, "--zoom-log2").as_deref(), Some("120.74482993798824"), "the depth round-trips exactly");
+    assert_eq!(pair(&a, "--size").as_deref(), Some("1920x1080"));
+    assert_eq!(pair(&a, "--expmap-oversample").as_deref(), Some("2"));
+    assert!(a.contains(&"--bla".to_string()) && a.contains(&"--farm-child".to_string()));
+    for absent in ["--expmap-start", "--expmap-cap", "--iter", "--no-bla", "--expmap-plan"] {
+        assert!(!a.iter().any(|x| x == absent), "{absent}");
+    }
+    let s2 = StripJob { start_log2: 3.5, cap_fixed: true, iter: Some(50_000), bla: false, ..s.clone() };
+    let a = s2.child_args(out, 7, 8);
+    assert_eq!(pair(&a, "--expmap-strips").as_deref(), Some("7-7"));
+    assert_eq!(pair(&a, "--expmap-start").as_deref(), Some("3.5"));
+    assert_eq!(pair(&a, "--expmap-cap").as_deref(), Some("fixed"));
+    assert_eq!(pair(&a, "--iter").as_deref(), Some("50000"));
+    assert!(a.contains(&"--no-bla".to_string()) && !a.contains(&"--bla".to_string()));
+    let p = s.plan_args(out);
+    assert!(p.contains(&"--expmap-plan".to_string()));
+    for absent in ["--expmap-strips", "--farm-child"] {
+        assert!(!p.iter().any(|x| x == absent), "the plan renders no strip: {absent}");
+    }
+    // Every flag either line uses is one the command line knows.
+    let known = crate::cli::known_long_flags();
+    for f in a.iter().chain(p.iter()).filter(|x| x.starts_with("--")) {
+        assert!(known.contains(f.as_str()), "{f} is not in the command-line reference");
+    }
+    assert_eq!(strip_bundle().unit_file_name(45), "strip_000045.exr", "the name --render-expmap writes");
+    assert_eq!(bundle().unit_file_name(45), "gate_00045.png");
 }
 
 fn policy() -> Policy {

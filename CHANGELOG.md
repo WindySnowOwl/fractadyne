@@ -59,6 +59,21 @@ published as the pre-releases `v0.2.41-beta.1` to `v0.2.41-beta.150`, and a "bet
 
 Changes after 0.3.0-beta.1:
 
+- **Zoom videos on several machines (0.3.0-beta.22).** The Render zoom video window has "Render on
+  farm…", which opens Tools ▸ Render on farm… with the video as its job: the strips, which are
+  most of a deep dive's time, are handed out to the machines that join from File ▸ Render
+  client…, as a tour's frames are, and this machine assembles the video once every strip is in.
+  With two or more graphics cards it also offers "Use all graphics cards". On the command line:
+  `--render-zoom-video F … --farm` (with the farm's own options, `--local`, `--share-root`, …)
+  and `--render-zoom-video F … --gpus all`. The dive is planned once and every machine checks its
+  own plan against it; every strip a machine returns is checked whole before it is kept (its
+  SHA-256, every channel, its own strip number and iteration cap), and a machine that sends bad
+  ones is removed. A stopped job resumes from its folder. On one graphics card the strips a farm
+  renders are identical in every channel to the strips one machine renders: every run now uses the
+  dive's one reference, built for its deepest strip, whichever strips it renders
+  (`--expmap-strips` used to build its own for the deepest strip of the range). Also fixed for
+  every farm job: a client sending a large file could not send its heartbeat until the file was
+  done, and a controller that heard nothing for 10 seconds dropped it.
 - **Zoom videos: deep dives several times faster, and the graphics card checked before Render
   (0.3.0-beta.22).** Strips between 1e4× and 1e28× render on the floatexp path, whose tiles keep
   the graphics card busy, and BLA now skips iterations there too: the dialog's new BLA acceleration

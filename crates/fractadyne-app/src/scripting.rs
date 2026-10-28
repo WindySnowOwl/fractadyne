@@ -408,7 +408,7 @@ struct EncodeJob {
 /// process can forward it and the controller can verify the file it receives against the digest.
 /// The digest is of the file as READ BACK, not of the bytes meant to be written, so it vouches for
 /// what is actually there. A file that cannot be read back is reported as `frame-failed` instead.
-fn frame_done_line(path: &std::path::Path, fi: u64, render_ms: u64, ref_src: &str) -> String {
+pub(crate) fn frame_done_line(path: &std::path::Path, fi: u64, render_ms: u64, ref_src: &str) -> String {
     match std::fs::read(path) {
         Ok(bytes) => {
             let d = ring::digest::digest(&ring::digest::SHA256, &bytes);

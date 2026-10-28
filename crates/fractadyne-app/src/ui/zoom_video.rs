@@ -46,6 +46,12 @@ pub(crate) struct ZoomVideoUi {
     /// Keep the strips (`--keep-strips`), in `keep_dir`, to recolour later.
     pub(crate) keep: bool,
     pub(crate) keep_dir: String,
+    /// Render the strips on every graphics card of this machine (`--gpus all`, a farm on loopback).
+    pub(crate) all_gpus: bool,
+    /// This machine's graphics cards, counted once in a child process (as the Render tour window
+    /// does): the box is offered only for two or more.
+    pub(crate) cards: Option<usize>,
+    pub(crate) cards_rx: Option<std::sync::mpsc::Receiver<usize>>,
     /// The child's latest progress line and its `frame K/N`.
     pub(crate) progress: String,
     pub(crate) progress_frames: Option<(u64, u64)>,
@@ -77,6 +83,9 @@ impl Default for ZoomVideoUi {
             normalize: false,
             keep: false,
             keep_dir: String::new(),
+            all_gpus: false,
+            cards: None,
+            cards_rx: None,
             progress: String::new(),
             progress_frames: None,
             error: None,
@@ -179,7 +188,20 @@ pub(crate) fn zoom_video_args(z: &ZoomVideoUi) -> Vec<String> {
     if z.keep {
         a.extend(["--keep-strips".to_string(), z.keep_dir.clone()]);
     }
+    if z.all_gpus && z.cards.is_some_and(|n| n >= 2) {
+        a.extend(["--gpus".to_string(), "all".to_string()]);
+    }
     a
+}
+
+/// The video as a render farm's job (`design/zoom-video.md` §8.5): this window's command line —
+/// every machine's cards are the farm's, so not `--gpus` — and its summary.
+pub(crate) fn zoom_video_farm_job(z: &ZoomVideoUi, summary: String) -> crate::ui::farm_controller::ZoomFarmJob {
+    let mut a = zoom_video_args(z);
+    if let Some(i) = a.iter().position(|x| x == "--gpus") {
+        a.drain(i..(i + 2).min(a.len()));
+    }
+    crate::ui::farm_controller::ZoomFarmJob { args: a, summary, video: z.out.clone() }
 }
 
 impl FractadyneApp {
@@ -225,11 +247,25 @@ impl FractadyneApp {
         z.progress_frames = None;
         z.status = None;
         z.open = true;
+        // This machine's graphics cards, once, from a child process (the app never enumerates
+        // beside its own device): "Use all graphics cards" is offered only for two or more.
+        if z.cards.is_none() && z.cards_rx.is_none() && self.harness.uitest.is_none() {
+            let (tx, rx) = std::sync::mpsc::channel();
+            z.cards_rx = Some(rx);
+            crate::render::spawn_named("fd-list-cards", move || {
+                let _ = tx.send(crate::ui::farm_client::list_cards("zoom-video").len());
+            });
+        }
     }
 
     /// Drain the child's lines and reap it when it exits; every frame, so the dialog stays live
     /// when it is closed and reopened.
     pub(crate) fn poll_zoom_video(&mut self, ctx: &egui::Context) {
+        if let Some(n) = self.zoom_video.cards_rx.as_ref().and_then(|rx| rx.try_recv().ok()) {
+            self.zoom_video.cards = Some(n);
+            self.zoom_video.cards_rx = None;
+            ctx.request_repaint();
+        }
         if let Some(rx) = &self.zoom_video.rx {
             while let Ok(line) = rx.try_recv() {
                 match line {
@@ -285,6 +321,7 @@ impl FractadyneApp {
         let card = (self.max_texture_dim, self.sysinfo.vram_mb << 20);
         let mut open = self.zoom_video.open;
         let (mut go, mut stop, mut browse, mut browse_keep, mut copy_cmd, mut close_dialog) = (false, false, false, false, false, false);
+        let mut to_farm: Option<String> = None;
         egui::Window::new(tr!(zoom_video_title))
             .id(egui::Id::new("fractadyne.zoom-video"))
             .open(&mut open)
@@ -407,22 +444,23 @@ impl FractadyneApp {
                             });
                         });
                     });
+                    if let Some(n) = z.cards.filter(|&n| n >= 2) {
+                        ui.checkbox(&mut z.all_gpus, tr!(zoom_video_all_gpus, count = n)).on_hover_text(tr!(zoom_video_all_gpus_hover));
+                    }
                 });
 
                 // What this costs, before committing to it.
                 let (frames, seconds, strips, sw, sh, gpu) = zoom_video_plan(z);
                 ui.add_space(6.0);
-                ui.label(
-                    egui::RichText::new(tr!(
-                        zoom_video_summary,
-                        frames = frames,
-                        seconds = crate::i18n::decimal(seconds, 0),
-                        strips = strips,
-                        width = sw.to_string(),
-                        rows = sh.to_string()
-                    ))
-                    .monospace(),
+                let summary = tr!(
+                    zoom_video_summary,
+                    frames = frames,
+                    seconds = crate::i18n::decimal(seconds, 0),
+                    strips = strips,
+                    width = sw.to_string(),
+                    rows = sh.to_string()
                 );
+                ui.label(egui::RichText::new(&summary).monospace());
                 let gb = |b: u64| crate::i18n::decimal(b as f64 / (1u64 << 30) as f64, 1);
                 ui.label(egui::RichText::new(tr!(zoom_video_memory, size = gb(gpu))).monospace().weak());
                 if z.keep {
@@ -481,12 +519,13 @@ impl FractadyneApp {
                         if ui.button(tr!(zoom_video_stop)).clicked() {
                             stop = true;
                         }
-                    } else if ui
-                        .add_enabled(can, egui::Button::new(tr!(zoom_video_render)))
-                        .on_hover_text(tr!(zoom_video_render_hover))
-                        .clicked()
-                    {
-                        go = true;
+                    } else {
+                        if ui.add_enabled(can, egui::Button::new(tr!(zoom_video_farm))).on_hover_text(tr!(zoom_video_farm_hover)).clicked() {
+                            to_farm = Some(summary.clone());
+                        }
+                        if ui.add_enabled(can, egui::Button::new(tr!(zoom_video_render))).on_hover_text(tr!(zoom_video_render_hover)).clicked() {
+                            go = true;
+                        }
                     }
                 });
             });
@@ -528,6 +567,11 @@ impl FractadyneApp {
         }
         if go {
             self.start_zoom_video(ctx);
+        }
+        if let Some(summary) = to_farm {
+            let job = zoom_video_farm_job(&self.zoom_video, summary);
+            self.zoom_video.open = false;
+            self.open_farm_for_zoom_video(job);
         }
     }
 

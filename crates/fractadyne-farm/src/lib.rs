@@ -28,7 +28,8 @@ pub mod settings;
 /// controller's own GPU in its verdict (so each side can say when the other's differs). 4: a
 /// cancel can cut a run at a frame (stealing). 5: a frame can arrive through a shared folder. 6: a
 /// frame says where its reference came from, and reference orbits travel (OrbitOffer, OrbitPush).
-pub const PROTOCOL_VERSION: u32 = 6;
+/// 7: a job can be a zoom video's strips (the bundle's `strips`), and a unit may be up to 1 GiB.
+pub const PROTOCOL_VERSION: u32 = 7;
 
 /// The controller's default listening port (design §13.9). Any unassigned high port works; this one
 /// is shown in the controller and typed into each client.

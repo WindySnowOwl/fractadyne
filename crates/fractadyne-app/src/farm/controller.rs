@@ -32,6 +32,18 @@ use std::time::{Duration, Instant};
 /// Bytes the link-speed sample asks each client for at the handshake.
 const LINK_SAMPLE: u64 = 1 << 20;
 
+/// The flags of a farm's zoom video that are its assembly's (`assemble::AssembleCli`, and
+/// `--normalize`), passed on to it as given; whether each takes a value.
+const ASSEMBLY_FLAGS: [(&str, bool); 7] = [
+    ("--assemble-fps", true),
+    ("--assemble-speed", true),
+    ("--assemble-ss", true),
+    ("--assemble-rotate", true),
+    ("--assemble-crf", true),
+    ("--assemble-tour", true),
+    ("--normalize", false),
+];
+
 enum COut {
     Msg(Msg),
     Blob(u64, Arc<Vec<u8>>),
@@ -114,6 +126,205 @@ struct Job {
     frame_bytes_ewma: Option<f64>,
 }
 
+/// What the job is — a tour's frames, or a zoom video's strips: the parts of the controller that
+/// differ between the two.
+struct JobSpec {
+    /// The tour script (a tour's pre-build renders from it), or the video file.
+    tour: PathBuf,
+    script_text: String,
+    tour_name: String,
+    normalize: bool,
+    /// Mid-dissolve frames and held shots (a tour's; none for strips).
+    layout: (Vec<bool>, Vec<(u64, u64)>),
+    /// The deepest keyframe: frame and zoom (log10), for the pre-build (a tour's).
+    deepest: Option<(u64, f64)>,
+    /// (width, height, fps, ss, prefix, units).
+    res: (u32, u32, f64, u32, String, u64),
+    out: PathBuf,
+    check: UnitCheck,
+    strips: Option<StripCtl>,
+}
+
+/// A zoom video's strips (`--render-zoom-video F … --farm`, `design/zoom-video.md` §8.5).
+struct StripCtl {
+    /// The video, assembled here once every strip is in.
+    video: PathBuf,
+    /// The strips' folder was made for this job (`<stem>-strips`): emptied once the video is made.
+    /// Otherwise it is `--keep-strips`, and stays.
+    temporary: bool,
+    /// The dive, as clients are sent it (its manifest included).
+    job: StripJob,
+}
+
+/// How a unit a client returned is checked once its SHA-256 matches (`serve`, `share_frame`).
+#[derive(Clone)]
+enum UnitCheck {
+    /// A tour's frame: a complete PNG of the job's size.
+    Png((u32, u32)),
+    /// A zoom video's strip: `expmap_render::check_strip_file` against the dive's plan.
+    Strip(Arc<StripPlan>),
+}
+
+/// The dive's strips as its plan has them: their size and each one's iteration cap.
+struct StripPlan {
+    map: fractadyne_core::ExpMap,
+    caps: Vec<u32>,
+}
+
+/// One strip decoded at a time: a 1080p strip at 2x is about half a gigabyte decoded.
+static STRIP_CHECK: std::sync::Mutex<()> = std::sync::Mutex::new(());
+
+impl UnitCheck {
+    fn check(&self, path: &Path, index: u64) -> Result<(), String> {
+        match self {
+            UnitCheck::Png(dims) => match crate::scripting::png_frame_size(path) {
+                Some(d) if d == *dims => Ok(()),
+                Some((w, h)) => Err(format!("a {w}×{h} image where the job is {}×{}", dims.0, dims.1)),
+                None => Err("not a complete PNG".into()),
+            },
+            UnitCheck::Strip(p) => {
+                let cap = *p.caps.get(index as usize).ok_or_else(|| format!("strip {index} is not one of this dive's {}", p.caps.len()))?;
+                let _one = STRIP_CHECK.lock().unwrap_or_else(|e| e.into_inner());
+                crate::expmap_render::check_strip_file(path, index, &p.map, cap)
+            }
+        }
+    }
+
+    /// Strips take seconds to decode: checked on a thread of their own, so the connection that
+    /// brought one keeps reading (its heartbeats among it).
+    fn slow(&self) -> bool {
+        matches!(self, UnitCheck::Strip(_))
+    }
+}
+
+/// The tour exactly as `--render-tour` resolves it (`--farm-render TOUR --out DIR`).
+fn tour_spec(args: &[String]) -> Result<JobSpec, String> {
+    let tour = PathBuf::from(value(args, "--farm-render").ok_or("--farm-render needs a tour script")?);
+    let out = PathBuf::from(value(args, "--out").or_else(|| value(args, "-o")).ok_or("--farm-render needs --out DIR for the frames")?);
+    let script_text = std::fs::read_to_string(&tour).map_err(|e| format!("{}: {e}", tour.display()))?;
+    let pb = crate::scripting::parse_tour_text(&script_text).map_err(|e| format!("{}: {e}", tour.display()))?;
+    let (sw, sh) = value(args, "--size").map(|s| crate::arg_size("--size", s)).unwrap_or((None, None));
+    let cli = crate::scripting::TourRenderConfig {
+        fps: number(args, "--fps"),
+        width: sw,
+        height: number(args, "--height").or(sh),
+        ss: number(args, "--ss"),
+        prefix: value(args, "--prefix").map(str::to_string),
+        out: Some(out.clone()),
+        ..Default::default()
+    };
+    let r = cli.resolve(&pb.render, &tour);
+    let frames = crate::scripting::tour_frame_count(pb.total, r.fps);
+    // Dissolves and held shots, for the scheduler (design §5); the deepest keyframe, for the
+    // pre-build.
+    let layout = pb.farm_layout(r.fps, frames);
+    let deepest = pb.deepest_keyframe(r.fps, frames);
+    fractadyne_farm::names::check_file_part("frame prefix", &r.prefix)?;
+    Ok(JobSpec {
+        tour,
+        script_text,
+        tour_name: pb.name.clone(),
+        normalize: pb.render.normalize,
+        layout,
+        deepest,
+        check: UnitCheck::Png((r.width, r.height)),
+        res: (r.width, r.height, r.fps, r.ss, r.prefix.clone(), frames),
+        out,
+        strips: None,
+    })
+}
+
+/// Where a farm's zoom video keeps its strips: `--keep-strips DIR`, or `<the video's stem>-strips`
+/// beside the video, which is emptied once the video is made (`true`).
+pub(crate) fn zoom_strips_dir(args: &[String], video: &Path) -> (PathBuf, bool) {
+    match value(args, "--keep-strips") {
+        Some(d) => (PathBuf::from(d), false),
+        None => {
+            let stem = video.file_stem().map(|s| s.to_string_lossy().into_owned()).filter(|s| !s.is_empty()).unwrap_or_else(|| "zoom-video".into());
+            (video.with_file_name(format!("{stem}-strips")), true)
+        }
+    }
+}
+
+/// A zoom video's dive as the job (`--render-zoom-video F … --farm`, `design/zoom-video.md` §8.5):
+/// its flags as typed fields, and its plan — the manifest — from a child of this machine given
+/// exactly what each client is given (`settings` as its session, the same flags). The plan writes
+/// the manifest into the strips' folder, or checks the one a previous run left there.
+fn strips_spec(args: &[String], settings: &RenderSettings) -> Result<JobSpec, String> {
+    let video = PathBuf::from(value(args, "--render-zoom-video").ok_or("--render-zoom-video needs the video file")?);
+    for (f, why) in [
+        ("--expmap-format", "a farm renders Fractadyne's own strips, which it assembles"),
+        ("--expmap-strips", "a farm renders the whole dive"),
+        ("--assemble-at", "a farm makes a video; render the strips, then --assemble DIR --assemble-at"),
+    ] {
+        if args.iter().any(|a| a == f) {
+            return Err(format!("{f} cannot be used with a farm's zoom video: {why}"));
+        }
+    }
+    let i = args.iter().position(|a| a == "--center").ok_or("a farm's zoom video needs the dive's centre (--center RE IM)")?;
+    let (Some(re), Some(im)) = (args.get(i + 1), args.get(i + 2)) else {
+        return Err("--center needs two numbers".into());
+    };
+    let zoom_log2: f64 = number(args, "--zoom-log2").ok_or("a farm's zoom video needs its depth as --zoom-log2 L")?;
+    let Some((Some(fw), Some(fh))) = value(args, "--size").map(|s| crate::arg_size("--size", s)) else {
+        return Err("a farm's zoom video needs its frame size (--size WxH)".into());
+    };
+    let job = StripJob {
+        manifest: String::new(),
+        center_re: re.clone(),
+        center_im: im.clone(),
+        zoom_log2,
+        start_log2: number(args, "--expmap-start").unwrap_or(0.0),
+        frame_width: fw,
+        frame_height: fh,
+        oversample: number(args, "--expmap-oversample").unwrap_or(1.0),
+        cap_fixed: value(args, "--expmap-cap") == Some("fixed"),
+        iter: number(args, "--iter"),
+        // As the command says, else as this machine's session does (a single machine's render reads
+        // the same session).
+        bla: if args.iter().any(|a| a == "--no-bla") {
+            false
+        } else {
+            args.iter().any(|a| a == "--bla") || settings.use_bla
+        },
+    };
+    let stem = video.file_stem().map(|s| s.to_string_lossy().into_owned()).filter(|s| !s.is_empty()).unwrap_or_else(|| "zoom-video".into());
+    let (out, temporary) = zoom_strips_dir(args, &video);
+    std::fs::create_dir_all(out.join("farm")).map_err(|e| format!("{}: {e}", out.display()))?;
+    let cfg = out.join("farm").join("plan-cfg");
+    let _ = std::fs::remove_dir_all(&cfg);
+    write_session(&cfg, settings)?;
+    println!("Planning the dive on this machine…");
+    let mut child = spawn_child(&job.plan_args(&out), &cfg)?;
+    let tail = Arc::new(std::sync::Mutex::new(VecDeque::new()));
+    pump_child(&mut child, |_| {}, tail.clone(), 40);
+    let st = child.wait().map_err(|e| e.to_string())?;
+    std::thread::sleep(Duration::from_millis(100)); // let the pumps drain
+    if !st.success() {
+        let t: Vec<String> = tail.lock().unwrap_or_else(|e| e.into_inner()).iter().cloned().collect();
+        return Err(format!("planning the dive failed: {}", fractadyne_farm::proto::tail(&t.join(" | "), 600)));
+    }
+    let manifest = std::fs::read_to_string(out.join(crate::expmap_render::MANIFEST)).map_err(|e| format!("the dive's plan: {e}"))?;
+    let dive = crate::assemble::read_dive(&out)?;
+    let caps: Vec<u32> = serde_json::from_str::<serde_json::Value>(&manifest)
+        .ok()
+        .and_then(|m| m["dive"]["caps"].as_array().map(|a| a.iter().filter_map(|c| c.as_u64().map(|c| c as u32)).collect::<Vec<u32>>()))
+        .filter(|c| c.len() as u64 == dive.strips)
+        .ok_or("the dive's plan has no iteration cap for every strip")?;
+    Ok(JobSpec {
+        tour: video.clone(),
+        script_text: String::new(),
+        tour_name: stem,
+        normalize: false,
+        layout: Default::default(),
+        deepest: None,
+        res: (dive.map.width, dive.map.rows, 1.0, 1, "strip".into(), dive.strips),
+        out,
+        check: UnitCheck::Strip(Arc::new(StripPlan { map: dive.map, caps })),
+        strips: Some(StripCtl { video, temporary, job: StripJob { manifest, ..job } }),
+    })
+}
+
 pub(crate) fn run(args: &[String]) -> i32 {
     match run_inner(args) {
         Ok(code) => code,
@@ -129,8 +340,6 @@ pub(crate) fn run(args: &[String]) -> i32 {
 
 
 fn run_inner(args: &[String]) -> Result<i32, String> {
-    let tour = PathBuf::from(value(args, "--farm-render").ok_or("--farm-render needs a tour script")?);
-    let out = PathBuf::from(value(args, "--out").or_else(|| value(args, "-o")).ok_or("--farm-render needs --out DIR for the frames")?);
     let listen = value(args, "--listen").map(str::to_string).unwrap_or_else(|| format!("0.0.0.0:{}", fractadyne_farm::DEFAULT_PORT));
     let min_clients: usize = number(args, "--min-clients").unwrap_or(1usize).max(1);
     let allow_dirty = args.iter().any(|a| a == "--farm-allow-dirty");
@@ -140,45 +349,35 @@ fn run_inner(args: &[String]) -> Result<i32, String> {
         return Err(format!("this build ({git}) has uncommitted changes, and a farm refuses one — start with --farm-allow-dirty only to develop the farm itself"));
     }
 
-    // The tour, resolved exactly as `--render-tour` resolves it.
-    let script_text = std::fs::read_to_string(&tour).map_err(|e| format!("{}: {e}", tour.display()))?;
-    let pb = crate::scripting::parse_tour_text(&script_text).map_err(|e| format!("{}: {e}", tour.display()))?;
-    let (sw, sh) = value(args, "--size").map(|s| crate::arg_size("--size", s)).unwrap_or((None, None));
-    let cli = crate::scripting::TourRenderConfig {
-        fps: number(args, "--fps"),
-        width: sw,
-        height: number(args, "--height").or(sh),
-        ss: number(args, "--ss"),
-        prefix: value(args, "--prefix").map(str::to_string),
-        out: Some(out.clone()),
-        ..Default::default()
-    };
-    let r = cli.resolve(&pb.render, &tour);
+    // This machine's render settings: what every client's render processes will use.
+    let (session, _) = fractadyne_state::load_with_status();
+    let settings = RenderSettings::from_session(&session);
+    settings.validate().map_err(|e| format!("this machine's render settings: {e}"))?;
+
     // Share mode (design §7): this machine's path to the shared drive the clients write to.
     let share_root = value(args, "--share-root").map(PathBuf::from);
     if let Some(root) = &share_root {
         let d = root.join("fractadyne-farm");
         std::fs::create_dir_all(&d).map_err(|e| format!("the shared drive {}: {e}", root.display()))?;
     }
-    // Dissolves and held shots, for the scheduler (design §5).
-    let layout = pb.farm_layout(r.fps, crate::scripting::tour_frame_count(pb.total, r.fps));
     // Shared computation (design §8): on unless `--sharing off`.
     let sharing = match value(args, "--sharing") {
         None | Some("neighbourhood") | Some("neighborhood") => true,
         Some("off") => false,
         Some(other) => return Err(format!("--sharing takes neighbourhood or off, not {other:?}")),
     };
+
+    // What the job is: a tour's frames (`--farm-render TOUR`), resolved exactly as `--render-tour`
+    // resolves it, or a zoom video's strips (`--render-zoom-video F … --farm`).
+    let spec = if args.iter().any(|a| a == "--render-zoom-video") { strips_spec(args, &settings)? } else { tour_spec(args)? };
     // Pre-build the deepest keyframe's reference: on by default for tours past 1e300× (where a
     // reference costs minutes to hours), with sharing on.
-    let deepest = pb.deepest_keyframe(r.fps, crate::scripting::tour_frame_count(pb.total, r.fps));
-    let prebuild = sharing && !args.iter().any(|a| a == "--no-prebuild") && (args.iter().any(|a| a == "--prebuild") || deepest.is_some_and(|(_, z)| z >= 300.0));
-    fractadyne_farm::names::check_file_part("frame prefix", &r.prefix)?;
-    let frames = crate::scripting::tour_frame_count(pb.total, r.fps);
-
-    // This machine's render settings: what every client's render processes will use.
-    let (session, _) = fractadyne_state::load_with_status();
-    let settings = RenderSettings::from_session(&session);
-    settings.validate().map_err(|e| format!("this machine's render settings: {e}"))?;
+    let prebuild = sharing
+        && spec.strips.is_none()
+        && !args.iter().any(|a| a == "--no-prebuild")
+        && (args.iter().any(|a| a == "--prebuild") || spec.deepest.is_some_and(|(_, z)| z >= 300.0));
+    let out = spec.out.clone();
+    let (rw, rh, rfps, rss, _, frames) = spec.res.clone();
 
     let (key, key_path, created) = load_key(args, true)?;
     let me = Arc::new(identity()?);
@@ -187,7 +386,15 @@ fn run_inner(args: &[String]) -> Result<i32, String> {
     let listener = std::net::TcpListener::bind(&listen).map_err(|e| format!("cannot listen on {listen}: {e}"))?;
     let local_addr = listener.local_addr().map_err(|e| e.to_string())?;
     println!("Render farm controller \"{name}\" (identity {}) — {ver} {git}", me.fingerprint());
-    println!("Tour \"{}\": {frames} frames at {}×{} ss{} {} fps → {}", pb.name, r.width, r.height, r.ss, r.fps, out.display());
+    match &spec.strips {
+        Some(s) => println!(
+            "Zoom video \"{}\": {frames} strips of {rw}×{rh} → {}, assembled into {} once every strip is in",
+            spec.tour_name,
+            out.display(),
+            s.video.display()
+        ),
+        None => println!("Tour \"{}\": {frames} frames at {rw}×{rh} ss{rss} {rfps} fps → {}", spec.tour_name, out.display()),
+    }
     if created {
         println!("Generated a farm key — give it to each render client (saved in {}):\n  {}", key_path.display(), key.to_text());
     } else {
@@ -239,7 +446,7 @@ fn run_inner(args: &[String]) -> Result<i32, String> {
         });
     }
     let key = Arc::new(key);
-    spawn_listener(listener, key.clone(), me.clone(), ev_tx.clone(), (r.width, r.height), out.join("farm").join("incoming"));
+    spawn_listener(listener, key.clone(), me.clone(), ev_tx.clone(), spec.check.clone(), out.join("farm").join("incoming"));
 
     let mut local_child = None;
     if args.iter().any(|a| a == "--local") {
@@ -256,7 +463,10 @@ fn run_inner(args: &[String]) -> Result<i32, String> {
 
     let mut ctl = Controller {
         args: args.to_vec(),
-        layout,
+        layout: spec.layout,
+        check: spec.check,
+        strips: spec.strips,
+        assembling: None,
         share_root,
         ev_tx: ev_tx.clone(),
         ui,
@@ -276,7 +486,7 @@ fn run_inner(args: &[String]) -> Result<i32, String> {
         own_gpu: None,
         sharing,
         prebuild,
-        deepest,
+        deepest: spec.deepest,
         pool: Vec::new(),
         refs: HashMap::new(),
         push_pool_after: Vec::new(),
@@ -284,11 +494,11 @@ fn run_inner(args: &[String]) -> Result<i32, String> {
         probes: HashMap::new(),
         gpus: HashMap::new(),
         name,
-        tour,
-        script_text,
-        tour_name: pb.name.clone(),
-        normalize: pb.render.normalize,
-        res: (r.width, r.height, r.fps, r.ss, r.prefix.clone(), frames),
+        tour: spec.tour,
+        script_text: spec.script_text,
+        tour_name: spec.tour_name,
+        normalize: spec.normalize,
+        res: spec.res,
         out,
         settings,
         allow_dirty,
@@ -305,9 +515,13 @@ fn run_inner(args: &[String]) -> Result<i32, String> {
         metrics_prev: (0, 0, 0, Instant::now()),
         storage_low: false,
     };
-    let code = ctl.main_loop(&ev_rx);
+    let mut code = ctl.main_loop(&ev_rx);
     if let Some(mut c) = local_child {
         let _ = c.kill();
+    }
+    // A zoom video: every strip is in — the video is made here.
+    if code == 0 && ctl.strips.is_some() {
+        code = ctl.assemble(&ev_rx);
     }
     ctl.print_status(Some(code));
     Ok(code)
@@ -337,7 +551,7 @@ fn class_key(digest: &str, adapter: &str, driver: &str) -> String {
     format!("{digest} | {adapter} | {driver}")
 }
 
-fn spawn_listener(listener: std::net::TcpListener, key: Arc<FarmKey>, me: Arc<Identity>, ev: mpsc::Sender<CEv>, dims: (u32, u32), incoming: PathBuf) {
+fn spawn_listener(listener: std::net::TcpListener, key: Arc<FarmKey>, me: Arc<Identity>, ev: mpsc::Sender<CEv>, check: UnitCheck, incoming: PathBuf) {
     std::thread::spawn(move || {
         // Counts FAILED handshakes only (see `RateLimiter`): shared with the connection threads,
         // which report a failure; this thread refuses an address while it cools down.
@@ -351,8 +565,8 @@ fn spawn_listener(listener: std::net::TcpListener, key: Arc<FarmKey>, me: Arc<Id
             }
             let id = next;
             next += 1;
-            let (key, me, ev, incoming, limiter) = (key.clone(), me.clone(), ev.clone(), incoming.clone(), limiter.clone());
-            std::thread::spawn(move || serve(id, stream, &key, &me, ev, dims, &incoming, &limiter));
+            let (key, me, ev, incoming, limiter, check) = (key.clone(), me.clone(), ev.clone(), incoming.clone(), limiter.clone(), check.clone());
+            std::thread::spawn(move || serve(id, stream, &key, &me, ev, &check, &incoming, &limiter));
         }
     });
 }
@@ -360,7 +574,7 @@ fn spawn_listener(listener: std::net::TcpListener, key: Arc<FarmKey>, me: Arc<Id
 /// One connection: the handshake, then every message it sends, with frames received to disk and
 /// verified here, off the main loop.
 #[allow(clippy::too_many_arguments)]
-fn serve(conn: ClientId, stream: std::net::TcpStream, key: &FarmKey, me: &Identity, ev: mpsc::Sender<CEv>, dims: (u32, u32), incoming: &Path, limiter: &std::sync::Mutex<RateLimiter>) {
+fn serve(conn: ClientId, stream: std::net::TcpStream, key: &FarmKey, me: &Identity, ev: mpsc::Sender<CEv>, check: &UnitCheck, incoming: &Path, limiter: &std::sync::Mutex<RateLimiter>) {
     let addr = stream.peer_addr().map(|a| a.to_string()).unwrap_or_default();
     let ip = stream.peer_addr().map(|a| a.ip()).ok();
     let sess = match channel::respond(stream, key, me) {
@@ -447,7 +661,7 @@ fn serve(conn: ClientId, stream: std::net::TcpStream, key: &FarmKey, me: &Identi
                         if pending.len() >= 4 || pending.contains_key(&f.blob.id) {
                             break close("protocol error: too many frames in flight".into());
                         }
-                        let path = incoming.join(format!("{conn}-{}.png.part", f.blob.id));
+                        let path = incoming.join(format!("{conn}-{}.part", f.blob.id));
                         match std::fs::File::create(&path) {
                             Ok(file) => {
                                 let sink = BlobSink::new(f.blob.clone(), std::io::BufWriter::new(file));
@@ -499,18 +713,21 @@ fn serve(conn: ClientId, stream: std::net::TcpStream, key: &FarmKey, me: &Identi
                     }
                     (Ok(BlobProgress::Complete), Pending::Frame { f, sink, path }) => {
                         drop(sink.into_inner());
-                        // Structure and dimensions: a PNG of THIS job's size, complete to its IEND.
-                        match crate::scripting::png_frame_size(&path) {
-                            Some(d) if d == dims => {
-                                let _ = ev.send(CEv::FrameIn { conn, run: f.run_id, index: f.index, render_ms: f.render_ms, tmp: path, bytes: f.blob.len, sha256: f.blob.sha256, reference: f.reference });
+                        // Structure and dimensions: a PNG of THIS job's size, complete to its IEND;
+                        // or the strip asked for, whole (`UnitCheck`).
+                        let verdict = {
+                            let (check, ev) = (check.clone(), ev.clone());
+                            move || {
+                                let _ = ev.send(match check.check(&path, f.index) {
+                                    Ok(()) => CEv::FrameIn { conn, run: f.run_id, index: f.index, render_ms: f.render_ms, tmp: path, bytes: f.blob.len, sha256: f.blob.sha256, reference: f.reference },
+                                    Err(why) => CEv::FrameBad { conn, run: f.run_id, index: f.index, why, tmp: Some(path) },
+                                });
                             }
-                            got => {
-                                let why = match got {
-                                    Some((w, h)) => format!("a {w}×{h} image where the job is {}×{}", dims.0, dims.1),
-                                    None => "not a complete PNG".into(),
-                                };
-                                let _ = ev.send(CEv::FrameBad { conn, run: f.run_id, index: f.index, why, tmp: Some(path) });
-                            }
+                        };
+                        if check.slow() {
+                            std::thread::spawn(verdict);
+                        } else {
+                            verdict();
                         }
                     }
                     (Err(BlobError::Digest(why)), Pending::Frame { f, sink, path }) => {
@@ -562,6 +779,12 @@ struct Controller<'a> {
     ev_tx: mpsc::Sender<CEv>,
     /// The tour's mid-dissolve frames and held shots (`Playback::farm_layout`).
     layout: (Vec<bool>, Vec<(u64, u64)>),
+    /// How a returned frame or strip is checked.
+    check: UnitCheck,
+    /// A zoom video's strips (`None`: a tour's frames).
+    strips: Option<StripCtl>,
+    /// While the video is assembled (every strip in): its latest progress line.
+    assembling: Option<String>,
     /// `--ui-status`: print status lines, take commands.
     ui: bool,
     identity: String,
@@ -986,8 +1209,8 @@ impl Controller<'_> {
         if first {
             self.note(&format!("{name} writes its frames to the shared drive ({})", dir.display()));
         }
-        let path = dir.join(fractadyne_farm::names::frame_file_name(&self.res.4, f.index));
-        let dims = (self.res.0, self.res.1);
+        let path = dir.join(fractadyne_farm::names::unit_file_name(j.manifest.job.kind, &self.res.4, f.index));
+        let unit = self.check.clone();
         let tx = self.ev_tx.clone();
         std::thread::spawn(move || {
             let check = || -> Result<(), String> {
@@ -998,11 +1221,8 @@ impl Controller<'_> {
                 if fractadyne_farm::sha256_hex(&data) != f.blob.sha256 {
                     return Err("its SHA-256 on the shared drive does not match what the client announced".into());
                 }
-                match crate::scripting::png_frame_size(&path) {
-                    Some(d) if d == dims => Ok(()),
-                    Some((w, h)) => Err(format!("a {w}×{h} image where the job is {}×{}", dims.0, dims.1)),
-                    None => Err("not a complete PNG".into()),
-                }
+                drop(data);
+                unit.check(&path, f.index)
             };
             let ev = match check() {
                 Ok(()) => CEv::FrameIn { conn, run: f.run_id, index: f.index, render_ms: f.render_ms, tmp: path, bytes: f.blob.len, sha256: f.blob.sha256, reference: f.reference },
@@ -1277,7 +1497,7 @@ impl Controller<'_> {
 
     /// Start the job once enough clients are admitted: the orbit cap, the anchors, the bundle, the
     /// manifest (resume), the scheduler.
-    fn start_job(&mut self) -> Result<(), String> {
+    fn start_job(&mut self) -> Result<Option<i32>, String> {
         let (w, h, fps, ss, prefix, frames) = self.res.clone();
         let admitted: Vec<ClientId> = self.conns.iter().filter(|(_, c)| c.state == ConnState::Admitted).map(|(&id, _)| id).collect();
         let cap = admitted.iter().filter_map(|id| self.conns[id].gpu_cap).min();
@@ -1339,40 +1559,59 @@ impl Controller<'_> {
             frames,
             share: self.share_root.is_some(),
             sharing: self.sharing,
+            strips: self.strips.as_ref().map(|s| s.job.clone()),
         };
         let bundle_bytes = serde_json::to_vec(&bundle).map_err(|e| e.to_string())?;
         let settings_key = format!("{}|cap={}", serde_json::to_string(&self.settings).map_err(|e| e.to_string())?, cap.map_or("-".into(), |c| c.to_string()));
         let (ver, git) = build_identity();
-        let ident = JobIdentity::new(
-            &self.tour_name,
-            &self.tour.to_string_lossy(),
-            &self.script_text,
-            &settings_key,
-            anchors.as_deref(),
-            ver,
-            git,
-            (w, h),
-            fps,
-            ss,
-            &prefix,
-            frames,
-            unix_ms() / 1000,
-        );
+        let ident = match &self.strips {
+            // A zoom video's strips: the dive (its manifest) where a tour has its script. The
+            // assembly's options are not part of it — another speed or frame rate reuses the strips.
+            Some(s) => JobIdentity::strips(&self.tour_name, &s.job.manifest, &settings_key, ver, git, (w, h), frames, unix_ms() / 1000),
+            None => JobIdentity::new(
+                &self.tour_name,
+                &self.tour.to_string_lossy(),
+                &self.script_text,
+                &settings_key,
+                anchors.as_deref(),
+                ver,
+                git,
+                (w, h),
+                fps,
+                ss,
+                &prefix,
+                frames,
+                unix_ms() / 1000,
+            ),
+        };
         let job_id = ident.job_id.clone();
-        let (manifest, resume) = Manifest::open(&self.out, ident, &|p: &Path| crate::scripting::png_frame_size(p) == Some((w, h)))?;
+        // A unit on disk with no record (a strip a single machine's `--keep-strips` render left in
+        // the folder, a frame of a plain `--render-tour --resume`) is kept if it passes its check.
+        let (unit, kind) = (self.check.clone(), ident.kind);
+        let adopt = move |p: &Path| {
+            let index = p.file_name().and_then(|n| n.to_str()).and_then(|n| n.rsplit_once('_')).and_then(|(_, r)| r.split('.').next()?.parse::<u64>().ok());
+            index.is_some_and(|i| p.extension().is_some_and(|e| e == kind.ext()) && unit.check(p, i).is_ok())
+        };
+        let (manifest, resume) = Manifest::open(&self.out, ident, &adopt)?;
         for (at, s) in self.early_notes.borrow_mut().drain(..) {
             let _ = manifest.record_event(at, &s);
         }
         if !resume.done.is_empty() || !resume.lost.is_empty() || resume.partials_removed > 0 {
             self.note(&format!(
-                "resuming job {job_id}: {} of {frames} frames already done ({} adopted), {} to render again, {} unfinished write(s) removed",
+                "resuming job {job_id}: {} of {frames} {}s already done ({} adopted), {} to render again, {} unfinished write(s) removed",
                 resume.done.len(),
+                if self.strips.is_some() { "strip" } else { "frame" },
                 resume.adopted.len(),
                 resume.lost.len(),
                 resume.partials_removed
             ));
         }
         let mut cfg = sched::Config::new(frames);
+        // A deep strip is minutes of work (and a run's first pays the dive's reference): a strip
+        // run is reassigned only after 15 minutes without one, unless `--stall` says otherwise.
+        if self.strips.is_some() {
+            cfg.stall_floor = cfg.stall_floor.max(Duration::from_secs(900));
+        }
         if let Some(s) = number::<u32>(&self.args, "--strikes") {
             cfg.strikes_to_remove = s.max(1);
         }
@@ -1403,10 +1642,9 @@ impl Controller<'_> {
         if self.prebuild {
             self.start_prebuild(&cfg_dir);
         }
-        if self.exec(cmds).is_some() {
-            // Already finished (a resume of a complete job); `periodic` reports it.
-        }
-        Ok(())
+        // `Some(code)`: already finished — a resume of a complete job, which `exec` has finished
+        // (once: `periodic` used to finish it a second time, printing "complete" twice).
+        Ok(self.exec(cmds))
     }
 
     /// Carry out the scheduler's commands. `Some(code)` = the job is over.
@@ -1509,9 +1747,10 @@ impl Controller<'_> {
         let bad = j.manifest.farm_dir().join("bad");
         if let Ok(rd) = std::fs::read_dir(&bad) {
             let safe: String = c.name.chars().map(|ch| if ch.is_ascii_alphanumeric() || ch == '-' || ch == '_' { ch } else { '_' }).collect();
+            let mine = format!(".{safe}.{}", j.manifest.job.kind.ext());
             for e in rd.flatten() {
                 let n = e.file_name().to_string_lossy().into_owned();
-                if n.contains(&format!(".{safe}.png")) {
+                if n.contains(&mine) {
                     let _ = std::fs::copy(e.path(), dir.join(&n));
                 }
             }
@@ -1529,11 +1768,14 @@ impl Controller<'_> {
                     // What a client folder still holds is not a frame of the deliverable — those
                     // were moved out — but the render's status file, and copies never accepted (a
                     // removed client's last frame, a late duplicate): this job's scratch space.
+                    // (A strip job's client folder also holds the dive's manifest.)
                     let prefix = format!("{}_", self.res.4);
+                    let ext = format!(".{}", j.manifest.job.kind.ext());
                     if let Ok(files) = std::fs::read_dir(e.path()) {
                         for f in files.flatten() {
                             let n = f.file_name().to_string_lossy().into_owned();
-                            if n == "render-status.txt" || n == ".write-test" || (n.starts_with(&prefix) && (n.ends_with(".png") || n.ends_with(".part"))) {
+                            let scratch = n == "render-status.txt" || n == ".write-test" || (self.strips.is_some() && n == crate::expmap_render::MANIFEST);
+                            if scratch || (n.starts_with(&prefix) && (n.ends_with(ext.as_str()) || n.ends_with(".part"))) {
                                 let _ = std::fs::remove_file(f.path());
                             }
                         }
@@ -1559,13 +1801,14 @@ impl Controller<'_> {
             r("none"),
             self.pool.len()
         ));
+        let word = j.manifest.job.kind.word();
         let msg = if failed.is_empty() {
-            format!("Farm render complete: {} frames in {:.1}s → {}", snap.frames, elapsed, self.out.display())
+            format!("Farm render complete: {} {word}s in {:.1}s → {}", snap.frames, elapsed, self.out.display())
         } else if self.stopped {
-            format!("Stopped: {} of {} frames done — run again on the same folder to resume", snap.done, snap.frames)
+            format!("Stopped: {} of {} {word}s done — run again on the same folder to resume", snap.done, snap.frames)
         } else {
             format!(
-                "Farm render finished with {} frame(s) not rendered ({:?}{}) — run again on the same folder to resume",
+                "Farm render finished with {} {word}(s) not rendered ({:?}{}) — run again on the same folder to resume",
                 failed.len(),
                 &failed[..failed.len().min(10)],
                 if failed.len() > 10 { ", …" } else { "" }
@@ -1583,6 +1826,106 @@ impl Controller<'_> {
         }
     }
 
+    /// Every strip of a zoom video is in: assemble the video on this machine — `--assemble DIR
+    /// --out F` with the command's own assembly options, as a child in this machine's OWN
+    /// configuration, so it is coloured as the session is (a single machine's render reads the same
+    /// session) — and pass its progress on. Then the strips go, unless they were to be kept. Exit 0;
+    /// 1 when the video could not be made (the strips stay, and `--assemble DIR` makes it from them);
+    /// 4 when the window stopped it.
+    fn assemble(&mut self, ev: &mpsc::Receiver<CEv>) -> i32 {
+        let Some(s) = &self.strips else { return 0 };
+        let (video, temporary) = (s.video.clone(), s.temporary);
+        let mut a: Vec<String> = vec!["--assemble".into(), self.out.to_string_lossy().into_owned(), "--out".into(), video.to_string_lossy().into_owned()];
+        for (flag, takes_value) in ASSEMBLY_FLAGS {
+            if let Some(i) = self.args.iter().position(|x| x == flag) {
+                a.push(flag.to_string());
+                if takes_value {
+                    if let Some(v) = self.args.get(i + 1) {
+                        a.push(v.clone());
+                    }
+                }
+            }
+        }
+        self.note(&format!("every strip is in — assembling {} on this machine", video.display()));
+        self.assembling = Some(String::new());
+        self.print_status(None);
+        let mut child = match spawn_child_here(&a) {
+            Ok(c) => c,
+            Err(e) => {
+                self.assembling = None;
+                self.note(&format!("the video could not be assembled: {e}"));
+                return 1;
+            }
+        };
+        let (tx, rx) = mpsc::channel::<String>();
+        let tail = Arc::new(std::sync::Mutex::new(VecDeque::new()));
+        pump_child(&mut child, move |l| { let _ = tx.send(l); }, tail.clone(), 40);
+        let relay = |me: &mut Self| {
+            for l in rx.try_iter() {
+                // The assembly's own lines, as a single machine's render prints them (the Render
+                // zoom video window reads `frame K/N`).
+                println!("{l}");
+                if l.trim_start().starts_with("frame ") {
+                    me.assembling = Some(l.trim().to_string());
+                }
+            }
+        };
+        let status = loop {
+            relay(self);
+            // The window's stop (or its going away) stops the assembly too.
+            for e in ev.try_iter() {
+                if let CEv::Cmd(c) = e {
+                    if matches!(c.as_deref().map(ControllerCommand::parse), None | Some(Some(ControllerCommand::Stop))) && !self.stopped {
+                        self.stopped = true;
+                        let _ = child.kill();
+                    }
+                }
+            }
+            match child.try_wait() {
+                Ok(Some(st)) => break Some(st),
+                Ok(None) => {}
+                Err(_) => break None,
+            }
+            if self.last_ui.elapsed() >= Duration::from_secs(1) {
+                self.print_status(None);
+            }
+            std::thread::sleep(Duration::from_millis(100));
+        };
+        std::thread::sleep(Duration::from_millis(100)); // let the pumps drain
+        relay(self);
+        self.assembling = None;
+        if self.stopped {
+            self.note(&format!("stopped while assembling — the strips are kept in {}: run again to make the video", self.out.display()));
+            return 4;
+        }
+        if !status.is_some_and(|st| st.success()) {
+            let t: Vec<String> = tail.lock().unwrap_or_else(|e| e.into_inner()).iter().cloned().collect();
+            self.note(&format!(
+                "the video could not be assembled ({}) — the strips are in {}: `fractadyne --assemble {} --out {}` makes it from them",
+                fractadyne_farm::proto::tail(&t.join(" | "), 400),
+                self.out.display(),
+                self.out.display(),
+                video.display()
+            ));
+            return 1;
+        }
+        if temporary {
+            // Only what this job put there: its strips, the manifest, its farm state.
+            if let Ok(rd) = std::fs::read_dir(&self.out) {
+                for e in rd.flatten() {
+                    let n = e.file_name().to_string_lossy().into_owned();
+                    if (n.starts_with("strip_") && n.ends_with(".exr")) || n == crate::expmap_render::MANIFEST {
+                        let _ = std::fs::remove_file(e.path());
+                    }
+                }
+            }
+            let _ = std::fs::remove_dir_all(self.out.join("farm"));
+            let _ = std::fs::remove_dir(&self.out);
+        }
+        self.note(&format!("Zoom video complete → {}", video.display()));
+        0
+    }
+
     /// Ticks, keepalives, status, metrics, the storage monitor, diagnostics timeouts, job start.
     fn periodic(&mut self) -> Option<i32> {
         let now = Instant::now();
@@ -1592,9 +1935,13 @@ impl Controller<'_> {
         if self.job.is_none() {
             let admitted = self.conns.values().filter(|c| c.state == ConnState::Admitted).count();
             if admitted >= self.min_clients {
-                if let Err(e) = self.start_job() {
-                    eprintln!("fractadyne: farm: {e}");
-                    return Some(2);
+                match self.start_job() {
+                    Err(e) => {
+                        eprintln!("fractadyne: farm: {e}");
+                        return Some(2);
+                    }
+                    Ok(Some(code)) => return Some(code),
+                    Ok(None) => {}
                 }
                 if self.job.as_ref().is_some_and(|j| j.sched.is_finished()) {
                     return Some(self.finish(&[]));
@@ -1780,6 +2127,9 @@ impl Controller<'_> {
     }
 
     fn phase(&self) -> ControllerPhase {
+        if self.assembling.is_some() {
+            return ControllerPhase::Assembling;
+        }
         match &self.job {
             None if self.preparing => ControllerPhase::Preparing,
             None => ControllerPhase::Waiting,
@@ -1822,9 +2172,12 @@ impl Controller<'_> {
             ControllerPhase::Rendering => "Rendering".into(),
             ControllerPhase::Paused if snap.as_ref().is_some_and(|s| s.storage_low) => "Waiting for space in the output folder".into(),
             ControllerPhase::Paused => "Paused: no new work is handed out".into(),
+            ControllerPhase::Assembling => "Every strip is in: assembling the video on this machine".into(),
             ControllerPhase::Finished => match exit {
                 Some(0) => "Complete".into(),
+                Some(3) if self.strips.is_some() => "Finished with strips not rendered — run again on the same folder to resume".into(),
                 Some(3) => "Finished with frames not rendered — run again on the same folder to resume".into(),
+                Some(1) if self.strips.is_some() => "The strips are done, but the video could not be assembled from them".into(),
                 Some(4) => "Stopped — run again on the same folder to resume".into(),
                 Some(c) => format!("Ended (exit {c})"),
                 None => "Finishing".into(),
@@ -1879,6 +2232,8 @@ impl Controller<'_> {
             key_file: self.key_file.to_string_lossy().into_owned(),
             tour: self.tour.to_string_lossy().into_owned(),
             out: self.out.to_string_lossy().into_owned(),
+            strips: self.strips.is_some(),
+            assembling: self.assembling.clone(),
             min_clients: self.min_clients,
             job_id: self.job.as_ref().map(|j| j.job_id.clone()),
             frames,

@@ -1,5 +1,16 @@
 use super::*;
 
+/// A unit's file is named as the render that wrote it names it: a tour's frame as `--render-tour`
+/// does, a zoom video's strip as `--render-expmap` does.
+#[test]
+fn a_unit_is_named_as_its_render_names_it() {
+    assert_eq!(unit_file_name(UnitKind::Frame, "dive", 42), "dive_00042.png");
+    assert_eq!(unit_file_name(UnitKind::Frame, "dive", 42), frame_file_name("dive", 42));
+    assert_eq!(unit_file_name(UnitKind::Strip, "strip", 42), "strip_000042.exr");
+    assert_eq!((UnitKind::Frame.ext(), UnitKind::Strip.ext()), ("png", "exr"));
+    assert_eq!(UnitKind::default(), UnitKind::Frame, "a job that does not say is a tour's");
+}
+
 #[test]
 fn ordinary_job_ids_and_prefixes_pass() {
     for ok in ["tour", "grand-tour", "a1b2c3d4e5f60718", "frame_2026", "X"] {

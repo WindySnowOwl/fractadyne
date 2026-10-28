@@ -7098,13 +7098,20 @@ impl FractadyneApp {
         // Flags that only mean something to a tour render are refused without one, not ignored:
         // `--frames 0..10` on a plain launch opening the GUI would look like it had worked.
         if render_tour.is_none() {
+            // A zoom video's strip run is a farm child too (`--render-expmap DIR --farm-child`).
+            let strip_run = args.iter().any(|a| a == "--render-expmap");
             let stray = ["--frames", "--norm-anchors", "--dump-norm-anchors", "--farm-child"]
                 .into_iter()
+                .filter(|f| !(strip_run && *f == "--farm-child"))
                 .find(|f| args.iter().any(|a| a == f));
             if let Some(f) = stray {
                 eprintln!("fractadyne: {f} only applies to --render-tour FILE.");
                 crate::exit(2);
             }
+        }
+        if args.iter().any(|a| a == "--expmap-plan") && !args.iter().any(|a| a == "--render-expmap") {
+            eprintln!("fractadyne: --expmap-plan only applies to --render-expmap DIR.");
+            crate::exit(2);
         }
         let profile_reps = val("--reps").and_then(|s| s.parse().ok()).unwrap_or(5u32);
         let profile_regions = val("--regions").cloned();

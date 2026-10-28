@@ -6,14 +6,32 @@
 //! The tour is captured when the window opens: a farm job can run for hours and must not end
 //! because the tour player was closed. Closing the window leaves the job running; quitting the app
 //! ends stdin, and the controller stops the job (it resumes from the output folder later).
+//!
+//! Its job can instead be a zoom video's strips (the Render zoom video window's "Render on farm…",
+//! `design/zoom-video.md` §8.5): the controller is that window's command with `--farm`, and this
+//! machine assembles the video once every strip is in.
 
 use crate::farm::status::{ClientRow, ControllerCommand, ControllerPhase, ControllerStatus, Link, FLAG};
 use crate::FractadyneApp;
 use std::path::PathBuf;
 use std::time::{Duration, Instant};
 
+/// A zoom video as the farm's job: what the Render zoom video window would run here, and what it
+/// said of it.
+#[derive(Clone, Debug, Default)]
+pub(crate) struct ZoomFarmJob {
+    /// `--render-zoom-video F …`, as that window builds it.
+    pub(crate) args: Vec<String>,
+    /// That window's summary (frames, length, strips).
+    pub(crate) summary: String,
+    /// The video file.
+    pub(crate) video: String,
+}
+
 pub(crate) struct FarmControllerUi {
     pub(crate) open: bool,
+    /// A zoom video's strips instead of the tour's frames.
+    pub(crate) zoom: Option<ZoomFarmJob>,
     pub(crate) script: Option<PathBuf>,
     pub(crate) tour_name: String,
     pub(crate) total_s: f64,
@@ -47,6 +65,7 @@ impl Default for FarmControllerUi {
     fn default() -> Self {
         Self {
             open: false,
+            zoom: None,
             script: None,
             tour_name: String::new(),
             total_s: 0.0,
@@ -78,34 +97,42 @@ impl FarmControllerUi {
         self.link.as_ref().is_some_and(|l| l.running())
     }
 
-    /// This machine's GPU is busy with the job (its own client, or measuring the anchors).
+    /// This machine's GPU is busy with the job (its own client, measuring the anchors, or
+    /// assembling a zoom video).
     pub(crate) fn rendering_here(&self) -> bool {
         self.active()
-            && self.link.as_ref().and_then(|l| l.status.as_ref()).is_some_and(|s| s.phase == ControllerPhase::Preparing || (self.local && s.phase == ControllerPhase::Rendering))
+            && self.link.as_ref().and_then(|l| l.status.as_ref()).is_some_and(|s| {
+                matches!(s.phase, ControllerPhase::Preparing | ControllerPhase::Assembling) || (self.local && s.phase == ControllerPhase::Rendering)
+            })
     }
 
     fn status(&self) -> Option<&ControllerStatus> {
         self.link.as_ref().and_then(|l| l.status.as_ref()).or(self.last.as_ref())
     }
 
-    /// The `--farm-render` line this window describes — shared by Render and Copy command.
-    fn args(&self) -> Vec<String> {
-        let mut a = vec![
-            "--farm-render".to_string(),
-            self.script.as_ref().map(|p| p.to_string_lossy().into_owned()).unwrap_or_default(),
-            "--out".to_string(),
-            absolute(&self.out).to_string_lossy().into_owned(),
-            "--size".to_string(),
-            format!("{}x{}", self.width, self.height),
-            "--fps".to_string(),
-            format!("{}", self.fps),
-            "--ss".to_string(),
-            self.ss.to_string(),
-            "--listen".to_string(),
-            format!("0.0.0.0:{}", self.port),
-            "--min-clients".to_string(),
-            self.min_clients.to_string(),
-        ];
+    /// The `--farm-render` line this window describes (a zoom video's: `--render-zoom-video … --farm`)
+    /// — shared by Render and Copy command.
+    pub(crate) fn args(&self) -> Vec<String> {
+        let mut a = match &self.zoom {
+            Some(z) => {
+                let mut a = z.args.clone();
+                a.push("--farm".to_string());
+                a
+            }
+            None => vec![
+                "--farm-render".to_string(),
+                self.script.as_ref().map(|p| p.to_string_lossy().into_owned()).unwrap_or_default(),
+                "--out".to_string(),
+                absolute(&self.out).to_string_lossy().into_owned(),
+                "--size".to_string(),
+                format!("{}x{}", self.width, self.height),
+                "--fps".to_string(),
+                format!("{}", self.fps),
+                "--ss".to_string(),
+                self.ss.to_string(),
+            ],
+        };
+        a.extend(["--listen".to_string(), format!("0.0.0.0:{}", self.port), "--min-clients".to_string(), self.min_clients.to_string()]);
         if self.local {
             a.push("--local".into());
         }
@@ -174,6 +201,7 @@ fn phase_words(st: &ControllerStatus) -> (String, i8) {
         ControllerPhase::Preparing => (tr!(farm_ctl_phase_preparing), 0),
         ControllerPhase::Rendering => (tr!(farm_ctl_phase_rendering), 1),
         ControllerPhase::Paused => (tr!(farm_ctl_phase_paused), 0),
+        ControllerPhase::Assembling => (tr!(farm_ctl_phase_assembling), 1),
         ControllerPhase::Finished if st.exit_code == Some(0) => (tr!(farm_ctl_phase_complete), 1),
         ControllerPhase::Finished if st.exit_code == Some(4) => (tr!(farm_ctl_phase_stopped), 0),
         ControllerPhase::Finished => (tr!(farm_ctl_phase_ended), -1),
@@ -193,6 +221,9 @@ fn detail_words(d: &str) -> String {
         "Paused: no new work is handed out" => return tr!(farm_ctl_detail_paused),
         "Complete" => return tr!(farm_ctl_phase_complete),
         "Finished with frames not rendered — run again on the same folder to resume" => return tr!(farm_ctl_detail_not_rendered),
+        "Finished with strips not rendered — run again on the same folder to resume" => return tr!(farm_ctl_detail_strips_not_rendered),
+        "Every strip is in: assembling the video on this machine" => return tr!(farm_ctl_detail_assembling),
+        "The strips are done, but the video could not be assembled from them" => return tr!(farm_ctl_detail_not_assembled),
         "Stopped — run again on the same folder to resume" => return tr!(farm_ctl_detail_stopped),
         "Finishing" => return tr!(farm_ctl_detail_finishing),
         _ => {}
@@ -270,6 +301,7 @@ impl FractadyneApp {
         }
         let Some(pb) = &self.playback else { return };
         let Some(script) = pb.source.clone() else { return };
+        f.zoom = None;
         let r = &pb.render;
         (f.width, f.height) = match (r.width, r.height) {
             (Some(w), Some(h)) => (w, h),
@@ -288,6 +320,19 @@ impl FractadyneApp {
         }
         f.script = Some(script);
         f.error = None;
+        f.open = true;
+    }
+
+    /// Open the farm window with a zoom video as its job (the Render zoom video window's "Render on
+    /// farm…"), or as it is while a job runs.
+    pub(crate) fn open_farm_for_zoom_video(&mut self, job: ZoomFarmJob) {
+        let f = &mut self.farm_controller;
+        f.reload_key();
+        if !f.active() {
+            f.tour_name = std::path::Path::new(&job.video).file_stem().map(|s| s.to_string_lossy().into_owned()).unwrap_or_default();
+            f.zoom = Some(job);
+            f.error = None;
+        }
         f.open = true;
     }
 
@@ -318,16 +363,33 @@ impl FractadyneApp {
         }
     }
 
-    fn start_farm_controller(&mut self) {
+    fn start_farm_controller(&mut self, ctx: &egui::Context) {
+        if self.farm_controller.zoom.is_some() {
+            // The controller plans the dive from the session, and the video is coloured from it:
+            // saved first, as the Render zoom video window does.
+            self.autosave(ctx);
+        }
         let f = &mut self.farm_controller;
         f.error = None;
-        if f.script.is_none() {
-            f.error = Some(tr!(farm_ctl_no_tour));
-            return;
-        }
-        if let Err(e) = std::fs::create_dir_all(absolute(&f.out)) {
-            f.error = Some(tr!(farm_ctl_out_error, folder = &f.out, why = e.to_string()));
-            return;
+        match &f.zoom {
+            Some(z) => {
+                if let Some(d) = std::path::Path::new(&z.video).parent().filter(|d| !d.as_os_str().is_empty()) {
+                    if let Err(e) = std::fs::create_dir_all(d) {
+                        f.error = Some(tr!(farm_ctl_out_error, folder = d.display().to_string(), why = e.to_string()));
+                        return;
+                    }
+                }
+            }
+            None => {
+                if f.script.is_none() {
+                    f.error = Some(tr!(farm_ctl_no_tour));
+                    return;
+                }
+                if let Err(e) = std::fs::create_dir_all(absolute(&f.out)) {
+                    f.error = Some(tr!(farm_ctl_out_error, folder = &f.out, why = e.to_string()));
+                    return;
+                }
+            }
         }
         let mut args = f.args();
         args.push(FLAG.into());
@@ -338,7 +400,7 @@ impl FractadyneApp {
         }
         match Link::spawn(&args, &env) {
             Ok(l) => {
-                crate::diag::breadcrumb(format!("render farm → {}", f.out));
+                crate::diag::breadcrumb(format!("render farm → {}", f.zoom.as_ref().map_or(&f.out, |z| &z.video)));
                 f.link = Some(l);
                 f.last = None;
                 f.last_log.clear();
@@ -367,17 +429,17 @@ impl FractadyneApp {
                 egui::ScrollArea::vertical().max_height(max_h).auto_shrink([false, true]).show(ui, |ui| {
                     ui.set_max_width(600.0);
                     let f = &mut self.farm_controller;
-                    ui.add(
-                        egui::Label::new(
-                            egui::RichText::new(format!("{}  ·  {}", f.tour_name, f.script.as_ref().map(|p| p.display().to_string()).unwrap_or_default()))
-                                .weak()
-                                .small(),
-                        )
-                        .truncate(),
-                    );
+                    let what = match &f.zoom {
+                        Some(z) => z.video.clone(),
+                        None => f.script.as_ref().map(|p| p.display().to_string()).unwrap_or_default(),
+                    };
+                    ui.add(egui::Label::new(egui::RichText::new(format!("{}  ·  {what}", f.tour_name)).weak().small()).truncate());
                     ui.add_space(4.0);
+                    let zoom = f.zoom.is_some();
                     ui.add_enabled_ui(!active, |ui| {
                         egui::Grid::new("farm_ctl_grid").num_columns(2).spacing([8.0, 6.0]).show(ui, |ui| {
+                            // A zoom video's file, size and frames are its own window's.
+                            if !zoom {
                             ui.label(tr!(farm_ctl_out));
                             ui.vertical(|ui| {
                                 ui.horizontal(|ui| {
@@ -433,6 +495,7 @@ impl FractadyneApp {
                                 });
                             });
                             ui.end_row();
+                            }
 
                             ui.label(tr!(farm_ctl_port));
                             ui.add(egui::DragValue::new(&mut f.port).range(1024..=65535)).on_hover_text(tr!(farm_ctl_port_hover));
@@ -488,14 +551,17 @@ impl FractadyneApp {
 
                     let frames = ((f.total_s * f.fps).round() as i64 + 1).max(1);
                     ui.add_space(4.0);
-                    let summary = tr!(
-                        farm_ctl_summary,
-                        count = frames,
-                        seconds = crate::i18n::decimal(f.total_s, 0),
-                        width = f.width.to_string(),
-                        height = f.height.to_string(),
-                        ss = f.ss.to_string()
-                    );
+                    let summary = match &f.zoom {
+                        Some(z) => z.summary.clone(),
+                        None => tr!(
+                            farm_ctl_summary,
+                            count = frames,
+                            seconds = crate::i18n::decimal(f.total_s, 0),
+                            width = f.width.to_string(),
+                            height = f.height.to_string(),
+                            ss = f.ss.to_string()
+                        ),
+                    };
                     ui.label(egui::RichText::new(summary).monospace());
 
                     let st = f.link.as_ref().and_then(|l| l.status.as_ref()).or(f.last.as_ref()).cloned();
@@ -509,21 +575,45 @@ impl FractadyneApp {
                             _ => crate::theme::ui_accent(ui.ctx()),
                         };
                         ui.horizontal(|ui| {
-                            if active && matches!(st.phase, ControllerPhase::Waiting | ControllerPhase::Preparing | ControllerPhase::Rendering) {
+                            if active && matches!(st.phase, ControllerPhase::Waiting | ControllerPhase::Preparing | ControllerPhase::Rendering | ControllerPhase::Assembling) {
                                 ui.add(egui::Spinner::new().size(12.0));
                             }
                             ui.label(egui::RichText::new(words).strong().color(colour));
-                            if !st.detail.is_empty() && !matches!(st.phase, ControllerPhase::Rendering | ControllerPhase::Waiting) {
+                            if !st.detail.is_empty() && !matches!(st.phase, ControllerPhase::Rendering | ControllerPhase::Waiting | ControllerPhase::Assembling) {
                                 ui.add(egui::Label::new(egui::RichText::new(format!("— {}", detail_words(&st.detail))).small()).truncate());
                             }
                         });
+                        // A zoom video's assembly: its own `frame K/N` line, as a bar.
+                        if let Some(line) = st.assembling.as_deref().filter(|_| st.phase == ControllerPhase::Assembling) {
+                            match crate::ui::tour_render::parse_frame_progress(line) {
+                                Some((done, total)) => {
+                                    ui.add(
+                                        egui::ProgressBar::new((done as f32 / total as f32).clamp(0.0, 1.0))
+                                            .desired_height(14.0)
+                                            .text(egui::RichText::new(tr!(zoom_video_progress, done = done, total = total)).monospace().small()),
+                                    );
+                                    ui.add(egui::Label::new(egui::RichText::new(line).monospace().small().weak()).truncate());
+                                }
+                                None => {
+                                    ui.label(egui::RichText::new(tr!(farm_ctl_detail_assembling)).small().weak());
+                                }
+                            }
+                        }
                         if st.frames > 0 && st.phase != ControllerPhase::Waiting {
                             let frac = st.done as f32 / st.frames as f32;
-                            let mut text = tr!(farm_ctl_progress, done = st.done, total = st.frames);
-                            if st.frames_per_s > 0.0 && active {
-                                text += &format!(" · {}", tr!(farm_ctl_progress_rate, rate = crate::i18n::decimal(st.frames_per_s, 2)));
+                            let mut text = if st.strips { tr!(farm_ctl_progress_strips, done = st.done, total = st.frames) } else { tr!(farm_ctl_progress, done = st.done, total = st.frames) };
+                            if st.frames_per_s > 0.0 && active && st.phase != ControllerPhase::Assembling {
+                                // Strips take seconds to minutes each: their pace as time a strip.
+                                text += &format!(
+                                    " · {}",
+                                    if st.strips {
+                                        tr!(farm_ctl_progress_strip_time, time = duration(1.0 / st.frames_per_s))
+                                    } else {
+                                        tr!(farm_ctl_progress_rate, rate = crate::i18n::decimal(st.frames_per_s, 2))
+                                    }
+                                );
                             }
-                            if let (Some(eta), true) = (st.eta_s, active) {
+                            if let (Some(eta), true) = (st.eta_s, active && st.phase != ControllerPhase::Assembling) {
                                 text += &format!(" · {}", tr!(farm_ctl_progress_eta, time = duration(eta)));
                             }
                             ui.add(egui::ProgressBar::new(frac.clamp(0.0, 1.0)).desired_height(14.0).text(egui::RichText::new(text).monospace().small()));
@@ -550,7 +640,12 @@ impl FractadyneApp {
                         let differing: Vec<&ClientRow> = st.clients.iter().filter(|r| r.gpu_note.is_some()).collect();
                         if !differing.is_empty() || st.gpu_classes > 1 {
                             let warn = ui.visuals().warn_fg_color;
-                            let differ = if st.gpu_classes > 1 { tr!(farm_ctl_gpus_differ_classes, count = st.gpu_classes) } else { tr!(farm_ctl_gpus_differ) };
+                            let differ = match (st.gpu_classes > 1, st.strips) {
+                                (true, false) => tr!(farm_ctl_gpus_differ_classes, count = st.gpu_classes),
+                                (false, false) => tr!(farm_ctl_gpus_differ),
+                                (true, true) => tr!(farm_ctl_gpus_differ_classes_strips, count = st.gpu_classes),
+                                (false, true) => tr!(farm_ctl_gpus_differ_strips),
+                            };
                             ui.label(egui::RichText::new(format!("⚠ {differ}")).color(warn).small());
                             if let Some(g) = &st.this_gpu {
                                 ui.label(egui::RichText::new(format!("    {}", tr!(farm_ctl_this_gpu, gpu = g))).weak().small());
@@ -572,8 +667,8 @@ impl FractadyneApp {
                                     tr!(farm_ctl_col_machine),
                                     tr!(farm_ctl_col_state),
                                     tr!(farm_ctl_col_gpu),
-                                    tr!(farm_ctl_col_frames),
-                                    tr!(farm_ctl_col_per_frame),
+                                    if st.strips { tr!(farm_ctl_col_strips) } else { tr!(farm_ctl_col_frames) },
+                                    if st.strips { tr!(farm_ctl_col_per_strip) } else { tr!(farm_ctl_col_per_frame) },
                                     tr!(farm_ctl_col_link),
                                     tr!(farm_ctl_col_heard),
                                     String::new(),
@@ -712,7 +807,7 @@ impl FractadyneApp {
             }
         }
         if go {
-            self.start_farm_controller();
+            self.start_farm_controller(ctx);
         }
     }
 }

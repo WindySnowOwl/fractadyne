@@ -696,7 +696,10 @@ impl crate::FractadyneApp {
                 // frame and one more, and those are LIVE frames — at 4.6e1105× they spawned a
                 // 258k-iteration live reference build the exit then abandoned — before eframe's
                 // teardown (0.2 s at 4K). Nothing on that path matters to a CLI render: autosave
-                // is off for it (the gate at the end of `update`) and so is the orbit cache.
+                // is off for it (the gate at the end of `update`), and the orbit cache is off
+                // unless asked for — when it is (`--orbit-cache`: a farm's strip run keeps the
+                // dive's reference for its next run and the farm), its writes finish first.
+                crate::refcache_persist::drain();
                 crate::exit(0);
             }
         }

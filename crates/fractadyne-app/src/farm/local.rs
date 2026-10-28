@@ -69,18 +69,79 @@ pub(crate) fn parse_gpus(spec: &str) -> Result<Gpus, String> {
     }
 }
 
-/// Run it, if `--gpus` is on the command line of a `--render-tour`. `None`: not asked for, or only
-/// one card, so the ordinary single-GPU render goes ahead. `Some(code)` otherwise.
+/// Run it, if `--gpus` is on the command line of a `--render-tour` or a `--render-zoom-video`.
+/// `None`: not asked for, or only one card, so the ordinary single-GPU render goes ahead.
+/// `Some(code)` otherwise.
 pub(crate) fn run(args: &[String]) -> Option<i32> {
-    if !args.iter().any(|a| a == FLAG) || !args.iter().any(|a| a == "--render-tour") {
+    let zoom = args.iter().any(|a| a == "--render-zoom-video");
+    if !args.iter().any(|a| a == FLAG) || !(zoom || args.iter().any(|a| a == "--render-tour")) {
         return None;
     }
     let spec = value(args, FLAG)?;
-    match run_inner(args, spec) {
+    match if zoom { run_zoom(args, spec) } else { run_inner(args, spec) } {
         Ok(code) => code,
         Err(e) => {
             eprintln!("fractadyne: {e}");
             Some(2)
+        }
+    }
+}
+
+/// `--gpus` as cards: `(the --adapters value, how many sessions)`, or `None` with one card.
+fn cards(spec: &str) -> Result<Option<(String, usize)>, String> {
+    Ok(match parse_gpus(spec)? {
+        Gpus::All => {
+            let cards = crate::ui::farm_client::list_cards("local-gpus");
+            if cards.len() < 2 {
+                say(&format!("--gpus all: this machine has {} graphics card(s) — rendering on one, as usual.", cards.len()));
+                return Ok(None);
+            }
+            Some(("all".to_string(), cards.len()))
+        }
+        Gpus::List(v) if v.len() < 2 => {
+            say(&format!("--gpus {spec} names one graphics card — rendering on it, as usual."));
+            None
+        }
+        Gpus::List(v) => Some((v.iter().map(|k| k.to_string()).collect::<Vec<_>>().join(","), v.len())),
+    })
+}
+
+/// `--render-zoom-video F … --gpus`: the zoom video's strips on this machine's cards, through a
+/// farm on loopback (`design/zoom-video.md` §8.5), then the video assembled here — the
+/// controller's command is this one with `--farm` for `--gpus`. A farm takes its render settings
+/// from this machine's session, but a zoom video's `--bla` / `--no-bla` is part of the dive (the
+/// Render zoom video window always says which), so it is kept.
+fn run_zoom(args: &[String], spec: &str) -> Result<Option<i32>, String> {
+    if let Some((f, why)) = REFUSED.iter().filter(|(f, _)| !["--bla", "--no-bla"].contains(f)).find(|(f, _)| args.iter().any(|a| a == f)) {
+        return Err(format!("{f} cannot be used with --gpus: {why}."));
+    }
+    let Some((adapters, n)) = cards(spec)? else { return Ok(None) };
+    let video = PathBuf::from(value(args, "--render-zoom-video").ok_or("--gpus needs --render-zoom-video FILE")?);
+    // The command as given, less `--gpus …`, as the controller's.
+    let mut ca: Vec<String> = Vec::new();
+    let mut skip = false;
+    for a in args.iter().skip(1) {
+        if std::mem::take(&mut skip) {
+            continue;
+        }
+        if a == FLAG {
+            skip = true;
+            continue;
+        }
+        ca.push(a.clone());
+    }
+    ca.push("--farm".into());
+    let started = Instant::now();
+    say(&format!("Rendering the zoom video {} on {n} graphics cards ({adapters}) through a render farm on this machine…", video.display()));
+    let (out, _) = super::controller::zoom_strips_dir(args, &video);
+    match drive(ca, args, &adapters, n, "strip", &out) {
+        Ok(()) => {
+            say(&format!("Rendered {} in {} on {n} graphics cards", video.display(), crate::scripting::fmt_hms(started.elapsed().as_secs_f64())));
+            Ok(Some(0))
+        }
+        Err(e) => {
+            eprintln!("fractadyne: render FAILED: {e}");
+            Ok(Some(1))
         }
     }
 }
@@ -90,21 +151,7 @@ fn run_inner(args: &[String], spec: &str) -> Result<Option<i32>, String> {
         return Err(format!("{f} cannot be used with --gpus: {why}."));
     }
     let tour = PathBuf::from(value(args, "--render-tour").ok_or("--gpus needs --render-tour FILE")?);
-    let (adapters, n) = match parse_gpus(spec)? {
-        Gpus::All => {
-            let cards = crate::ui::farm_client::list_cards("local-gpus");
-            if cards.len() < 2 {
-                say(&format!("--gpus all: this machine has {} graphics card(s) — rendering on one, as usual.", cards.len()));
-                return Ok(None);
-            }
-            ("all".to_string(), cards.len())
-        }
-        Gpus::List(v) if v.len() < 2 => {
-            say(&format!("--gpus {spec} names one graphics card — rendering on it, as usual."));
-            return Ok(None);
-        }
-        Gpus::List(v) => (v.iter().map(|k| k.to_string()).collect::<Vec<_>>().join(","), v.len()),
-    };
+    let Some((adapters, n)) = cards(spec)? else { return Ok(None) };
 
     // The tour exactly as `--render-tour` resolves it: the folder, the names, the mp4.
     let text = std::fs::read_to_string(&tour).map_err(|e| format!("{}: {e}", tour.display()))?;
@@ -176,8 +223,7 @@ fn run_inner(args: &[String], spec: &str) -> Result<Option<i32>, String> {
     }
 }
 
-/// The farm itself: start the controller, then the client once it listens; relay progress; end
-/// both.
+/// The farm itself, for a tour: its controller's command, then [`drive`].
 fn render(
     args: &[String],
     tour: &Path,
@@ -185,6 +231,37 @@ fn render(
     adapters: &str,
     n: usize,
 ) -> Result<(), String> {
+    let mut ca: Vec<String> = vec![
+        "--farm-render".into(),
+        tour.to_string_lossy().into_owned(),
+        "--out".into(),
+        r.out.to_string_lossy().into_owned(),
+        "--size".into(),
+        format!("{}x{}", r.width, r.height),
+        "--fps".into(),
+        r.fps.to_string(),
+        "--ss".into(),
+        r.ss.to_string(),
+        "--prefix".into(),
+        r.prefix.clone(),
+    ];
+    if let Some(v) = value(args, "--sharing") {
+        ca.extend(["--sharing".into(), v.to_string()]);
+    }
+    for f in ["--prebuild", "--no-prebuild"] {
+        if args.iter().any(|a| a == f) {
+            ca.push(f.into());
+        }
+    }
+    say(&format!("Rendering \"{}\" on {n} graphics cards ({adapters}) through a render farm on this machine…", tour.display()));
+    drive(ca, args, adapters, n, "frame", &r.out)
+}
+
+/// Start the controller (`ca`, the job's own command; the loopback, key and status flags are added
+/// here), then the client once it listens; relay progress as a single render prints it (`frame
+/// K/N`, or for a zoom video's strips `strip K/N` and then its assembly's own lines); end both.
+/// `out` is the folder the error messages point at.
+fn drive(mut ca: Vec<String>, args: &[String], adapters: &str, n: usize, word: &str, out: &Path) -> Result<(), String> {
     // A key and a client of their own, kept between runs: the controller pins the client's name to
     // its identity (`known-clients.toml`), so a client made afresh each time would be refused the
     // second time. The user's own farm key is neither read nor made.
@@ -199,12 +276,7 @@ fn render(
     // client stops when the job closes then left its "still running" marker where the next run's
     // client reported it as a crash. Started beside this process, each logs as a guest
     // (`logs/guests/…`), and the client's render processes in their job folders, as in any farm.
-
-    let mut ca: Vec<String> = vec![
-        "--farm-render".into(),
-        tour.to_string_lossy().into_owned(),
-        "--out".into(),
-        r.out.to_string_lossy().into_owned(),
+    ca.extend([
         "--listen".into(),
         "127.0.0.1:0".into(),
         "--no-discovery".into(),
@@ -214,28 +286,11 @@ fn render(
         key.clone(),
         "--name".into(),
         name.clone(),
-        "--size".into(),
-        format!("{}x{}", r.width, r.height),
-        "--fps".into(),
-        r.fps.to_string(),
-        "--ss".into(),
-        r.ss.to_string(),
-        "--prefix".into(),
-        r.prefix.clone(),
         super::status::FLAG.into(),
-    ];
-    if let Some(v) = value(args, "--sharing") {
-        ca.extend(["--sharing".into(), v.to_string()]);
-    }
-    for f in ["--prebuild", "--no-prebuild"] {
-        if args.iter().any(|a| a == f) {
-            ca.push(f.into());
-        }
-    }
+    ]);
     if dirty {
         ca.push("--farm-allow-dirty".into());
     }
-    say(&format!("Rendering \"{}\" on {n} graphics cards ({adapters}) through a render farm on this machine…", tour.display()));
     let mut ctl = Link::<ControllerStatus>::spawn(&ca, &[])?;
 
     // The controller's port, from its first status line.
@@ -284,20 +339,31 @@ fn render(
     loop {
         ctl.poll();
         cl.poll();
+        // A zoom video's assembly prints `frame K/N` lines of its own: passed on as they are (the
+        // Render zoom video window's bar reads them), not as the controller's chatter.
+        ctl.log.retain(|l| {
+            let frame_line = crate::ui::tour_render::parse_frame_progress(l).is_some();
+            if frame_line {
+                say(l.trim_end());
+            }
+            !frame_line
+        });
         relay(&mut ctl.log);
         // The client's own lines are mostly its sessions' chatter; keep what explains a failure.
         cl.log.retain(|l| l.starts_with("! "));
         relay(&mut cl.log);
         if let Some(s) = &ctl.status {
-            // `frame K/N` as a single render prints it: what the Render tour window's bar reads.
-            if s.done != last.0 && (last.1.elapsed() >= Duration::from_secs(1) || s.done >= s.frames) && s.frames > 0 {
+            // `frame K/N` as a single render prints it: what the Render tour window's bar reads
+            // (a zoom video's strips: `strip K/N`, before its frames).
+            if s.done != last.0 && (last.1.elapsed() >= Duration::from_secs(1) || s.done >= s.frames) && s.frames > 0 && s.phase != ControllerPhase::Assembling {
                 let rate = s.frames_per_s;
                 say(&format!(
-                    "  frame {}/{}  ({} elapsed, {} left, {rate:.2} fps)",
+                    "  {word} {}/{}  ({} elapsed, {} left, {rate:.2} {})",
                     s.done,
                     s.frames,
                     crate::scripting::fmt_hms(begun.elapsed().as_secs_f64()),
                     crate::scripting::fmt_hms(s.eta_s.unwrap_or(0.0)),
+                    if word == "frame" { "fps" } else { "strips/s" },
                 ));
                 last = (s.done, Instant::now());
             }
@@ -340,11 +406,14 @@ fn render(
     match (why_stopped, ctl.exit.flatten()) {
         (Some(why), _) => Err(why),
         (None, Some(0)) => Ok(()),
+        // A tour resumes with `--resume`; a zoom video's strips resume by running it again.
         (None, Some(3)) => Err(format!(
-            "some frames could not be rendered — see {} (--resume renders them again)",
-            r.out.join("farm").join("events.jsonl").display()
+            "some {word}s could not be rendered — see {} ({})",
+            out.join("farm").join("events.jsonl").display(),
+            if word == "frame" { "--resume renders them again" } else { "running it again renders them" }
         )),
-        (None, Some(4)) => Err("stopped before the end (--resume continues it)".into()),
+        (None, Some(4)) if word == "frame" => Err("stopped before the end (--resume continues it)".into()),
+        (None, Some(4)) => Err("stopped before the end (running it again continues it)".into()),
         (None, code) => Err(format!("the farm controller exited with {code:?}: {}", tail(&ctl.log))),
     }
 }

@@ -219,7 +219,11 @@ unknown fields are refused rather than ignored. K = client, C = controller; the 
 speaks first. 15 kinds in Phase 1; Phase 3 added the two orbit messages (protocol 6 — 2 to 5
 carried the probe, the driver, `Cancel.from` and `FrameDone.on_share`). The orbit query designed
 here was not needed: a render finds an admissible orbit in its own cache, so the controller pushes
-its pool instead of answering for one view:
+its pool instead of answering for one view. Protocol 7 (2026-10-28, `design/zoom-video.md` §8.5):
+a job can be a zoom video's strips (the bundle's `strips`, a unit = a strip, `strip_NNNNNN.exr`,
+checked whole at the controller), a unit may be up to 1 GiB, and a client sends its heartbeat
+between a blob's chunks (it used to wait behind the whole blob, and the controller drops a client
+silent for 10 s):
 
 | direction | kind | payload (all fields validated) | cap |
 |---|---|---|---|
