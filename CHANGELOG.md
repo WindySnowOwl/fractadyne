@@ -68,7 +68,10 @@ Changes after 0.3.0-beta.1:
   at about 200 frames a second. Checked: every sample reads the texel the geometry says, and an
   assembled frame agrees with an ordinary render of the same view at least as well as that render
   moved by a third of a pixel does. Smooth, distance, relief and glow colourings (not stripe, TIA,
-  trap or decomposition, whose per-orbit statistics a strip does not keep).
+  trap or decomposition, whose per-orbit statistics a strip does not keep). With `--normalize`, or
+  the session's Normalize deep colors, the palette follows the escape range as the live view's
+  does (its top where 98% of the picture has escaped, log for a wide range), measured once an
+  octave from the strips and blended between, so it moves smoothly through the dive.
 - **Zoom videos: strips in zoomasm's format (0.3.0-beta.22).** `--render-expmap DIR
   --expmap-format zoomasm` writes the strips in Kalles Fraktaler's EXR layout (`N`, `NF`, `T`,
   `DEX`, `DEY`, one octave a strip), the input zoomasm assembles into a video with its own

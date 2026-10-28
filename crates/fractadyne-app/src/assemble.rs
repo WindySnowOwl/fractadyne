@@ -193,37 +193,228 @@ pub(crate) fn dive_frames(start: f64, end: f64, speed: f64, fps: f64) -> Vec<f64
     (0..n).map(|f| start + (end - start) * f as f64 / (n - 1) as f64).collect()
 }
 
+/// Texels a side of the blocks a strip's escape values are summarized in ([`StripRange`]).
+pub(crate) const RANGE_BLOCK: usize = 8;
+
+/// A strip's escape values in blocks of [`RANGE_BLOCK`]² texels: each block's least, greatest and
+/// mean smooth count among its escaped texels, and how many escaped (`+∞`, `−∞`, 0, 0 when none
+/// did). A frame's escape range, and where most of its picture escapes, follow to within a block,
+/// from a sixteenth of the strip — what normalizing a video's palette reads ([`frame_range`]).
+#[derive(Debug)]
+pub(crate) struct StripRange {
+    pub(crate) bw: usize,
+    pub(crate) bh: usize,
+    pub(crate) lo: Vec<f32>,
+    pub(crate) hi: Vec<f32>,
+    pub(crate) mean: Vec<f32>,
+    pub(crate) n: Vec<u32>,
+}
+
+/// A `w × h` strip's main target summarized ([`StripRange`]).
+pub(crate) fn strip_range(main: &[f32], w: usize, h: usize) -> StripRange {
+    let (bw, bh) = (w.div_ceil(RANGE_BLOCK), h.div_ceil(RANGE_BLOCK));
+    let (mut lo, mut hi) = (vec![f32::INFINITY; bw * bh], vec![f32::NEG_INFINITY; bw * bh]);
+    let (mut sum, mut n) = (vec![0f64; bw * bh], vec![0u32; bw * bh]);
+    for j in 0..h {
+        let row = (j / RANGE_BLOCK) * bw;
+        for i in 0..w {
+            let v = main[(j * w + i) * 4];
+            if v >= 0.0 {
+                let b = row + i / RANGE_BLOCK;
+                lo[b] = lo[b].min(v);
+                hi[b] = hi[b].max(v);
+                sum[b] += v as f64;
+                n[b] += 1;
+            }
+        }
+    }
+    let mean = sum.iter().zip(&n).map(|(&s, &c)| if c > 0 { (s / c as f64) as f32 } else { 0.0 }).collect();
+    StripRange { bw, bh, lo, hi, mean, n }
+}
+
+/// The palette window of the frame at magnification `2^l` (`fw × fh` pixels), as the live view takes
+/// it: from the least smooth count in the frame to the value by which fraction `q` of its AREA had
+/// escaped (`norm_palette_top`'s quantile: the slowest pixels, just under the cap wherever interior
+/// is in view, would otherwise squash the picture into the bottom of the palette). Read from the
+/// blocks of every strip the frame shows whose centre texel lies inside it, each weighted by its
+/// escaped texels' area in the frame (a deep strip's texels are tiny there). `None` when nothing in
+/// the frame escaped. `ranges` must hold its strips.
+pub(crate) fn frame_range(
+    map: &ExpMap,
+    ranges: &HashMap<u64, Arc<StripRange>>,
+    strips: u64,
+    l: f64,
+    fw: f64,
+    fh: f64,
+    q: f64,
+) -> Result<Option<(f32, f32)>, String> {
+    let place = placement(map, l, fh, 1, 0.0);
+    let Some((first, last)) = fractadyne_gpu::strips_for_frame(&place, fw as u32, fh as u32, strips) else {
+        return Ok(None);
+    };
+    let (o, rpo, step) = (map.sample_offset(), map.rows_per_octave(), map.step());
+    let (hw, hh) = (fw / 2.0, fh / 2.0);
+    let (mut lo, mut hi) = (f32::INFINITY, f32::NEG_INFINITY);
+    let mut blocks: Vec<(f32, f64)> = Vec::new();
+    for k in first..=last {
+        let r = ranges.get(&k).ok_or_else(|| format!("strip {k}'s escape range has not been read"))?;
+        // A texel of row j lies 2^(D − k − (j + o)/rpo) pixels from the centre, D the placement's
+        // depth (r0_log2 − log2 pixel), kept exact as the placement keeps it.
+        let dk = (place.depth_whole - k as i64) as f64 + place.depth_frac;
+        let centre = |b: usize, n: u32| ((b * RANGE_BLOCK + RANGE_BLOCK / 2).min(n as usize - 1)) as f64 + o;
+        let cols: Vec<(f64, f64)> = (0..r.bw).map(|bx| (step * centre(bx, map.width)).sin_cos()).collect();
+        for by in 0..r.bh {
+            let rad = (dk - centre(by, map.rows) / rpo).exp2();
+            for (bx, &(s, c)) in cols.iter().enumerate() {
+                let b = by * r.bw + bx;
+                if r.n[b] > 0 && (rad * c).abs() <= hw && (rad * s).abs() <= hh {
+                    lo = lo.min(r.lo[b]);
+                    hi = hi.max(r.hi[b]);
+                    // A texel's area in the frame goes as the square of its radius (pixels).
+                    blocks.push((r.mean[b], r.n[b] as f64 * rad * rad));
+                }
+            }
+        }
+    }
+    if hi < lo {
+        return Ok(None);
+    }
+    let top = weighted_quantile(&mut blocks, q).map_or(hi, |v| v.clamp(lo, hi));
+    Ok(Some((lo, top)))
+}
+
+/// The value below which fraction `q` of the total weight lies (`(value, weight)` pairs, reordered).
+pub(crate) fn weighted_quantile(v: &mut [(f32, f64)], q: f64) -> Option<f32> {
+    v.sort_by(|a, b| a.0.total_cmp(&b.0));
+    let total: f64 = v.iter().map(|p| p.1).sum();
+    if !(total > 0.0) {
+        return None;
+    }
+    let want = q.clamp(0.0, 1.0) * total;
+    let mut acc = 0.0;
+    for &(x, w) in v.iter() {
+        acc += w;
+        if acc >= want {
+            return Some(x);
+        }
+    }
+    v.last().map(|p| p.0)
+}
+
+/// How much of a video frame's palette map is the LOG form, for the window `[lo, top]`: all of it
+/// when the user asked for log; otherwise a smooth step from none to all across a factor of two
+/// either side of the window ratio where the live view switches (`NORM_LOG_AUTO_RATIO`), so a dive
+/// whose window crosses that ratio dissolves from one form to the other instead of jumping.
+pub(crate) fn log_weight(lo: f32, top: f32, log_palette: bool) -> f32 {
+    if log_palette {
+        return 1.0;
+    }
+    let x = (top / lo.max(1.0)).max(1.0e-30).log2() - crate::render::NORM_LOG_AUTO_RATIO.log2();
+    let t = ((x + 1.0) / 2.0).clamp(0.0, 1.0);
+    t * t * (3.0 - 2.0 * t)
+}
+
+/// A video's palette ranges for `--normalize`: measured at every whole octave of the dive (and its
+/// end) by [`frame_range`], and interpolated between in depth, so each frame's mapping is a
+/// function of its depth alone — as a tour's time-keyed anchors are — never of the frames before it.
+/// GEOMETRICALLY: a window grows by factors (11 to 54 over the first octave of a dive from 1×), and
+/// interpolated linearly it moved 13% in the first frame of the octave and 3% in the last.
+/// An anchor with nothing escaped takes its neighbour's range; with none on either side the last
+/// range given carries on.
+pub(crate) struct NormAnchors {
+    start: f64,
+    end: f64,
+    at: HashMap<i64, Option<(f32, f32)>>,
+    last: Option<(f32, f32)>,
+}
+
+impl NormAnchors {
+    pub(crate) fn new(start: f64, end: f64) -> Self {
+        NormAnchors { start, end, at: HashMap::new(), last: None }
+    }
+
+    /// The depth of anchor `n`: `n` octaves into the dive, the last one at its end.
+    pub(crate) fn depth(&self, n: i64) -> f64 {
+        (self.start + n as f64).min(self.end)
+    }
+
+    /// The anchors frame depth `l` lies between.
+    pub(crate) fn around(&self, l: f64) -> (i64, i64) {
+        let n = ((l - self.start).floor() as i64).max(0);
+        (n, if self.depth(n + 1) > self.depth(n) { n + 1 } else { n })
+    }
+
+    /// The range at depth `l`, measuring the anchors around it with `measure` (a depth's range) the
+    /// first time they are needed.
+    pub(crate) fn range(
+        &mut self,
+        l: f64,
+        mut measure: impl FnMut(f64) -> Result<Option<(f32, f32)>, String>,
+    ) -> Result<Option<(f32, f32)>, String> {
+        let (a, b) = self.around(l);
+        for n in [a, b] {
+            if !self.at.contains_key(&n) {
+                let r = measure(self.depth(n))?;
+                self.at.insert(n, r);
+            }
+        }
+        let (la, lb) = (self.depth(a), self.depth(b));
+        let t = if lb > la { ((l - la) / (lb - la)).clamp(0.0, 1.0) as f32 } else { 0.0 };
+        // Exactly the anchor's window at an anchor; geometric between (linear if either end is not
+        // positive, which only a window starting at 0 can be).
+        let lerp = |p: f32, q: f32| match t {
+            t if t <= 0.0 => p,
+            t if t >= 1.0 => q,
+            t if p > 0.0 && q > 0.0 => (p.ln() + t * (q.ln() - p.ln())).exp(),
+            t => p + t * (q - p),
+        };
+        let r = match (self.at[&a], self.at[&b]) {
+            (Some(x), Some(y)) => Some((lerp(x.0, y.0), lerp(x.1, y.1))),
+            (Some(x), None) | (None, Some(x)) => Some(x),
+            (None, None) => self.last,
+        };
+        if r.is_some() {
+            self.last = r;
+        }
+        Ok(r)
+    }
+}
+
 /// Strips read from a dive's folder on threads of their own, a few ahead of the frames that need
 /// them: an 85 MB strip takes a good part of a second to decode, and a frame needs a new one only
-/// every octave.
+/// every octave. Each strip's escape range ([`StripRange`]) is kept after its texels have gone to the
+/// GPU, for `--normalize`.
 pub(crate) struct StripReader {
     dive: Arc<Dive>,
-    pending: HashMap<u64, JoinHandle<Result<Vec<f32>, String>>>,
+    pending: HashMap<u64, JoinHandle<Result<(Vec<f32>, StripRange), String>>>,
+    /// Read, not yet taken (a strip read early for an anchor's range).
+    ready: HashMap<u64, Vec<f32>>,
+    pub(crate) ranges: HashMap<u64, Arc<StripRange>>,
 }
 
 impl StripReader {
     pub(crate) fn new(dive: Arc<Dive>) -> Self {
-        StripReader { dive, pending: HashMap::new() }
+        StripReader { dive, pending: HashMap::new(), ready: HashMap::new(), ranges: HashMap::new() }
     }
 
-    /// Start reading strip `k` if it is in the dive and not already on its way.
+    /// Start reading strip `k` if it is in the dive and not already read or on its way.
     pub(crate) fn ask(&mut self, k: u64) {
-        if k >= self.dive.strips || self.pending.contains_key(&k) {
+        if k >= self.dive.strips || self.pending.contains_key(&k) || self.ready.contains_key(&k) {
             return;
         }
         let dive = self.dive.clone();
-        let h = std::thread::Builder::new()
-            .name(format!("strip-read-{k}"))
-            .spawn(move || {
-                let path = dive.dir.join(strip_file(k));
-                if !path.exists() {
-                    return Err(format!(
-                        "strip {k} is not in {} (render it: --render-expmap with --expmap-strips {k})",
-                        dive.dir.display()
-                    ));
-                }
-                strip_main(&path, &dive.map)
-            });
+        let h = std::thread::Builder::new().name(format!("strip-read-{k}")).spawn(move || {
+            let path = dive.dir.join(strip_file(k));
+            if !path.exists() {
+                return Err(format!(
+                    "strip {k} is not in {} (render it: --render-expmap with --expmap-strips {k})",
+                    dive.dir.display()
+                ));
+            }
+            let main = strip_main(&path, &dive.map)?;
+            let range = strip_range(&main, dive.map.width as usize, dive.map.rows as usize);
+            Ok((main, range))
+        });
         match h {
             Ok(h) => {
                 self.pending.insert(k, h);
@@ -232,11 +423,38 @@ impl StripReader {
         }
     }
 
-    /// Strip `k`, reading it now if nobody asked for it.
-    pub(crate) fn take(&mut self, k: u64) -> Result<Vec<f32>, String> {
+    /// Finish reading strip `k` (starting now if nobody asked), into `ready` and `ranges`.
+    fn read(&mut self, k: u64) -> Result<(), String> {
+        if self.ready.contains_key(&k) {
+            return Ok(());
+        }
         self.ask(k);
         let h = self.pending.remove(&k).ok_or_else(|| format!("strip {k} could not be read"))?;
-        h.join().map_err(|_| format!("reading strip {k} panicked"))?
+        let (main, range) = h.join().map_err(|_| format!("reading strip {k} panicked"))??;
+        self.ready.insert(k, main);
+        self.ranges.insert(k, Arc::new(range));
+        Ok(())
+    }
+
+    /// Strip `k`'s texels, for the GPU.
+    pub(crate) fn take(&mut self, k: u64) -> Result<Vec<f32>, String> {
+        self.read(k)?;
+        self.ready.remove(&k).ok_or_else(|| format!("strip {k} could not be read"))
+    }
+
+    /// Make sure strips `first..=last` have their ranges (reading any that have none yet).
+    pub(crate) fn ensure_ranges(&mut self, first: u64, last: u64) -> Result<(), String> {
+        for k in first..=last.min(self.dive.strips.saturating_sub(1)) {
+            if !self.ranges.contains_key(&k) {
+                self.read(k)?;
+            }
+        }
+        Ok(())
+    }
+
+    /// Forget the ranges of strips shallower than `k` (a dive only goes deeper).
+    pub(crate) fn forget_before(&mut self, k: u64) {
+        self.ranges.retain(|&s, _| s >= k);
     }
 }
 
@@ -251,7 +469,9 @@ pub(crate) fn fill_window(
 ) -> Result<(), String> {
     let (first, last) = asm.strips_for(place).ok_or("the frame is shallower than the dive's first strip")?;
     for k in first..=last + ahead {
-        reader.ask(k);
+        if !asm.has_strip(k) {
+            reader.ask(k);
+        }
     }
     for k in first..=last {
         if !asm.has_strip(k) {
@@ -262,7 +482,35 @@ pub(crate) fn fill_window(
     Ok(())
 }
 
+/// The range of the frame at depth `l` (`fw × fh` pixels), reading the strips it shows first.
+pub(crate) fn measured_range(dive: &Dive, reader: &mut StripReader, l: f64) -> Result<Option<(f32, f32)>, String> {
+    let (fw, fh) = dive.frame;
+    let place = placement(&dive.map, l, fh, 1, 0.0);
+    if let Some((first, last)) = fractadyne_gpu::strips_for_frame(&place, fw as u32, fh as u32, dive.strips) {
+        reader.ensure_ranges(first, last)?;
+    }
+    frame_range(&dive.map, &reader.ranges, dive.strips, l, fw, fh, crate::tunables::cost().norm_top_quantile)
+}
+
 impl crate::FractadyneApp {
+    /// Map the palette onto a video frame's window `[lo, top]` in `req`: the live view's map
+    /// (`norm_map_for`), with its linear-to-log switch made a dissolve ([`log_weight`]) through the
+    /// colour pass's palette fade.
+    pub(crate) fn apply_video_norm(&self, req: &mut fractadyne_gpu::ExportRequest, lo: f32, top: f32) {
+        let w = log_weight(lo, top, self.coloring.log_palette);
+        let (lin, log) = (self.norm_map_linear(lo, top), self.norm_map_log(lo, top));
+        let main = if w >= 1.0 { &log } else { &lin };
+        req.cycle = main.cycle;
+        req.offset = main.offset;
+        req.norm_mode = main.mode;
+        req.norm_lo = main.lo;
+        req.palette_fade = if w > 0.0 && w < 1.0 {
+            fractadyne_gpu::PaletteFade { weight: w, cycle: log.cycle, offset: log.offset, mode: log.mode, lo: log.lo }
+        } else {
+            fractadyne_gpu::PaletteFade::default()
+        };
+    }
+
     /// The colouring an assembled frame gets: the session's (palette, method, cycle, effects), as an
     /// export of the dive's first frame would carry it. Built at 1×, where Mandelbrot renders
     /// directly, so no reference orbit is computed for what is only a colouring.
@@ -296,6 +544,10 @@ impl crate::FractadyneApp {
         let layers = fractadyne_gpu::layers_for_frame(fw * ss, fh * ss);
         let mut asm = Assembler::new(device, shape_of(&dive), [fw, fh], ss, layers).map_err(|e| e.to_string())?;
         let mut reader = StripReader::new(dive.clone());
+        // The palette follows the escape range when asked (`--normalize`, or the session's
+        // "Normalize deep colors"): past ~1e50× a fixed cycle aliases the escape field into confetti.
+        let normalize = self.coloring.normalize || self.coloring.normalize_live;
+        let mut anchors = NormAnchors::new(dive.start_log2mag, dive.end_log2mag);
         crate::diag::log_line(
             "assemble",
             &format!(
@@ -340,7 +592,14 @@ impl crate::FractadyneApp {
                     fractadyne_export::write_exr_raw(&path, fw * ss, fh * ss, &main, Some(&meta))
                         .map_err(|e| format!("{}: {e}", path.display()))?;
                 } else {
-                    let mut rgba = asm.frame(device, queue, &place, &colour).map_err(|e| e.to_string())?;
+                    // A single frame normalizes to its own range.
+                    let mut c = colour.clone();
+                    if normalize {
+                        if let Some((lo, hi)) = measured_range(&dive, &mut reader, l)? {
+                            self.apply_video_norm(&mut c, lo, hi);
+                        }
+                    }
+                    let mut rgba = asm.frame(device, queue, &place, &c).map_err(|e| e.to_string())?;
                     self.apply_watermark(&mut rgba, fw, fh);
                     fractadyne_export::write_png(&path, fw, fh, &rgba, Some(&meta)).map_err(|e| format!("{}: {e}", path.display()))?;
                 }
@@ -369,11 +628,36 @@ impl crate::FractadyneApp {
         let _pump = crate::diag::progress_pump("assemble", progress.clone());
         let t0 = std::time::Instant::now();
         let mut gpu_s = 0.0f64;
+        let mut range_seen: Option<(f32, f32)> = None;
         for (f, &l) in frames.iter().enumerate() {
             let place = placement(&dive.map, l, dive.frame.1, ss, 0.0);
             fill_window(&mut asm, queue, &mut reader, &place, 2)?;
+            let mut c = colour.clone();
+            if normalize {
+                let r = anchors.range(l, |la| {
+                    let r = measured_range(&dive, &mut reader, la)?;
+                    crate::diag::log_line(
+                        "assemble",
+                        &match r {
+                            Some((lo, top)) => format!(
+                                "palette anchor at 2^{la:.2}: window {lo:.1} to {top:.1} ({:.0}% log)",
+                                100.0 * log_weight(lo, top, self.coloring.log_palette)
+                            ),
+                            None => format!("palette anchor at 2^{la:.2}: nothing escaped"),
+                        },
+                    );
+                    Ok(r)
+                })?;
+                if let Some((lo, hi)) = r {
+                    self.apply_video_norm(&mut c, lo, hi);
+                    range_seen = Some(range_seen.map_or((lo, hi), |(a, b)| (a.min(lo), b.max(hi))));
+                }
+                if let Some((first, _)) = asm.strips_for(&place) {
+                    reader.forget_before(first.saturating_sub(1));
+                }
+            }
             let tf = std::time::Instant::now();
-            let mut rgba = asm.frame(device, queue, &place, &colour).map_err(|e| e.to_string())?;
+            let mut rgba = asm.frame(device, queue, &place, &c).map_err(|e| e.to_string())?;
             gpu_s += tf.elapsed().as_secs_f64();
             self.apply_watermark(&mut rgba, fw, fh);
             pipe.push(rgba)?;
@@ -387,13 +671,20 @@ impl crate::FractadyneApp {
         }
         let written = pipe.finish()?;
         let secs = t0.elapsed().as_secs_f64();
+        if let Some((lo, hi)) = range_seen {
+            crate::diag::log_line(
+                "assemble",
+                &format!("normalized: the palette followed escape ranges from {lo:.1} to {hi:.1} over the dive, {} anchors", anchors.at.len()),
+            );
+        }
         Ok(format!(
-            "{written} frames assembled from {} into {} ({:.1} s of video; {:.1} fps, the GPU {:.1} ms a frame)",
+            "{written} frames assembled from {} into {} ({:.1} s of video; {:.1} fps, the GPU {:.1} ms a frame){}",
             dir.display(),
             out.display(),
             written as f64 / fps,
             written as f64 / secs,
             1000.0 * gpu_s / written.max(1) as f64,
+            if normalize { ", palette normalized" } else { "" },
         ))
     }
 }

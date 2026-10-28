@@ -424,9 +424,22 @@ unchanged) and its row step as `map_s`.
   - The same comparison at 640x360 by hand (the seahorse dive, fixed cap 5000) gave the same
     ordering at all six depths.
 - **Speed:** a 640x360 dive assembles at ~200 frames a second (601 frames in 3 s on the 3080).
+- **Palette normalization over a dive** (`--normalize`, or the session's `normalize_live`), §6.3's
+  "computed per frame from the strips it samples": each strip, as it is read, is summarized in 8×8
+  blocks (least, greatest and mean escaped value, escaped count). An ANCHOR at every whole octave
+  (and the dive's end) is the frame's window as the live view takes it: from the least value to the
+  98% AREA quantile (`norm_top_quantile`; blocks weighted by escaped texels × radius²), because the
+  slowest pixels sit just under the cap wherever interior is in view — min/max put the whole
+  picture in the bottom 20% of the palette (measured: top 4998 vs 1689 at the same view). Frames
+  interpolate the anchors GEOMETRICALLY (the window grows by factors: linear moved it 13% in an
+  octave's first frame and 3% in its last; the first frame step of the 2^20 dive's mean colour
+  went 11.1 → 4.4, below the un-normalized video's 4.6). The live view switches linear→log at a
+  window ratio of 1000; a video DISSOLVES between the two across a factor of 2 either side
+  (`log_weight`, through the colour pass's palette fade), so a dive across it never jumps. Each
+  anchor is logged (`[fd-assemble] palette anchor at 2^L: window LO to TOP (W% log)`).
 - **Not yet:** rotation and tours on the command line, the sliding window that renders strips and
-  assembles in one step (no strips on disk), palette normalization over a dive, captions, the
-  §8 gate run (a 1e100 dive at 1080p60 timed against `--render-tour`).
+  assembles in one step (no strips on disk), captions, the §8 gate run (a 1e100 dive at 1080p60
+  timed against `--render-tour`).
 
 ## 9. Decisions for you
 
