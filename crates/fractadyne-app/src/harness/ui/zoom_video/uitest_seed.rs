@@ -25,4 +25,15 @@ impl FractadyneApp {
         z.error = None;
         z.open = true;
     }
+
+    /// The user's first try (2026-10-28): 5K at 2x, whose strips are wider than any card's textures
+    /// — the dialog must say so and disable Render. No render, no progress.
+    pub(crate) fn uitest_seed_zoom_video_refused(&mut self) {
+        self.uitest_seed_zoom_video();
+        let z = &mut self.zoom_video;
+        (z.width, z.height, z.custom_size, z.ss) = (5120, 2880, false, 2);
+        z.keep = false;
+        z.progress.clear();
+        z.progress_frames = None;
+    }
 }

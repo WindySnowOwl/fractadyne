@@ -7726,28 +7726,34 @@ impl FractadyneApp {
                 self.render_cfg.max_iter,
                 self.render_cfg.auto_iter,
                 self.export.width,
+                self.render_cfg.use_bla,
             );
             self.fractal = crate::fractal::FractalKind::Mandelbrot;
             self.julia_mode = false;
-            // (regime, centre, layout, strip, cap, the mode the strip must render in). Frames of
-            // 160×90 from 1×: 577-texel strips, so each strip is quick and the oracle samples a whole
-            // one. The zoomasm format's octave strips sample texel CORNERS (Kalles Fraktaler's
-            // convention): the last case judges that placement.
+            // (regime, centre, layout, strip, cap, the mode the strip must render in, BLA asked for
+            // (`--bla` / `--no-bla`), and BLA where it is the point). Frames of 160×90 from 1×:
+            // 577-texel strips, so each strip is quick and the oracle samples a whole one. A strip in
+            // the df32 band renders as floatexp, BLA as asked (`with_strip_arithmetic`): the oracle
+            // judges it without BLA, and the check after these the BLA strip against that one. The
+            // zoomasm format's octave strips sample texel CORNERS (Kalles Fraktaler's convention):
+            // the last case judges that placement.
             use fractadyne_core::StripRows::{Conformal, Octave};
             let cases = [
-                ("direct", SX, SY, Conformal, 6u64, 3_000u32, 1u32),
-                ("df32 perturbation", SX, SY, Conformal, 40, 12_000, 0),
-                ("floatexp", CRX, CRY, Conformal, 93, 30_000, 2),
-                ("zoomasm-layout df32 perturbation", SX, SY, Octave, 40, 12_000, 0),
+                ("direct", SX, SY, Conformal, 6u64, 3_000u32, 1u32, true, Some(false)),
+                ("df32-band (floatexp, BLA off)", SX, SY, Conformal, 40, 12_000, 2, false, Some(false)),
+                ("floatexp", CRX, CRY, Conformal, 93, 30_000, 2, true, None),
+                ("zoomasm-layout df32-band", SX, SY, Octave, 40, 12_000, 2, false, Some(false)),
             ];
-            for (regime, cx, cy, layout, k, cap, want_mode) in cases {
+            for (regime, cx, cy, layout, k, cap, want_mode, use_bla, want_bla) in cases {
+                self.render_cfg.use_bla = use_bla;
                 let got = self.expmap_strip_check(device, queue, cx, cy, (160.0, 90.0), layout, k, cap, 48);
                 let (result, pass) = match &got {
                     Ok(c) => (
                         format!(
-                            "mode {}{}, {}x{}: {}/{} exact, {} sensitive, {} wrong{}; interior {}/{} agree; NF err {:.4} \
+                            "mode {}, BLA {}{}, {}x{}: {}/{} exact, {} sensitive, {} wrong{}; interior {}/{} agree; NF err {:.4} \
                              [{}]; normals off {} [{}], {} deep in a boundary; control differs {}/{}; chunked {}",
                             c.mode,
+                            if c.bla { "on" } else { "off" },
                             if c.mode == 1 { "" } else if c.reused { " on the dive's reference" } else { " on ITS OWN reference" },
                             c.width, c.rows, c.matched, c.sampled, c.sensitive, c.wrong.len(),
                             if c.wrong.is_empty() { String::new() } else { format!(" ({})", c.wrong[0]) },
@@ -7755,7 +7761,7 @@ impl FractadyneApp {
                             c.normal_worst, c.derivative_overflow,
                             c.control_differ, c.sampled, c.chunked_all,
                         ),
-                        c.pass() && c.mode == want_mode,
+                        c.pass() && c.mode == want_mode && want_bla.is_none_or(|b| c.bla == b),
                     ),
                     Err(e) => (format!("could not render: {e}"), false),
                 };
@@ -7767,7 +7773,7 @@ impl FractadyneApp {
                         if layout == Octave { "octave (texel corners)" } else { "conformal (texel centres)" }
                     ),
                     result,
-                    threshold: "rendered in the named mode, a perturbation strip on the dive's reference (built 4 strips \
+                    threshold: "rendered in the named mode and BLA state, a perturbation strip on the dive's reference (built 4 strips \
                                 deeper); every sampled texel's count exact and fraction within 0.05, \
                                 or its smooth count the oracle's within 1e-3 texel; at least 60% exact; interior agrees; \
                                 unit normals where the derivative is finite; every tile chunked; the quarter-turn \
@@ -7775,7 +7781,43 @@ impl FractadyneApp {
                     pass,
                 });
             }
-            (self.fractal, self.julia_mode, self.render_cfg.max_iter, self.render_cfg.auto_iter, self.export.width) = saved;
+            // BLA on a df32-band strip (the dialog's default): the BLA-off strip judged above, with
+            // BLA, by the rule the BLA group holds every BLA render to.
+            let (k, cap) = (40u64, 12_000u32);
+            let (result, pass) = match self.expmap_bla_check(device, queue, SX, SY, (160.0, 90.0), k, cap) {
+                Ok(c) => (
+                    format!(
+                        "tables {:?}, mode {}, {} iterations skipped; {} texels compared ({} steep left out): {} mismatch{}",
+                        c.tables,
+                        c.mode,
+                        c.skipped,
+                        c.compared,
+                        c.steep,
+                        c.mismatch,
+                        if c.first.is_empty() { String::new() } else { format!(", first {}", c.first) }
+                    ),
+                    c.pass(),
+                ),
+                Err(e) => (format!("could not render: {e}"), false),
+            };
+            push_check(&mut checks, &mut last_check_t, SelfCheck {
+                category: "Zoom video",
+                name: "a df32-band strip with BLA is the strip without it".into(),
+                params: format!("strip {k} of a dive into ({SX}, {SY}), 160x90 frames from 1x, cap {cap}, on the dive's reference"),
+                result,
+                threshold: "a BLA table in the BLA strip only, floatexp, BLA skips iterations; at least 1000 texels off the steep \
+                            ones (a neighbour across the boundary or 2+ iterations away), each both interior or both escaped \
+                            within 0.5 iteration (the BLA group's rule)",
+                pass,
+            });
+            (
+                self.fractal,
+                self.julia_mode,
+                self.render_cfg.max_iter,
+                self.render_cfg.auto_iter,
+                self.export.width,
+                self.render_cfg.use_bla,
+            ) = saved;
         }
 
         // ⭐ZOOM-VIDEO ASSEMBLY (`design/zoom-video.md` §7, phase E2's gate; `harness/assemble_check`):
@@ -7843,6 +7885,48 @@ impl FractadyneApp {
                     pass: false,
                 }),
             }
+            // ⭐A strip window the card cannot hold is an ERROR, not a crash: the user's 3840x2160 at
+            // 2x (2026-10-28), ~17.6 GB on a 10 GB card, panicked in the uncaptured-error handler one
+            // second in. Asked for twice the card's memory, `Assembler::new` must say so and name
+            // the remedy, and the device must still assemble afterwards.
+            let vram = self.sysinfo.vram_mb << 20;
+            let lim = device.limits();
+            let (w, rows) = (lim.max_texture_dimension_2d.min(32768), lim.max_texture_dimension_2d.min(4096));
+            let shape = fractadyne_gpu::StripShape { width: w, rows, rows_per_octave: 400.0, sample_offset: 0.5, row_step: 1.7e-3, strips: 64 };
+            let layers = (((2 * vram).div_ceil(fractadyne_gpu::window_bytes(shape, 1)) + 1) as u32)
+                .clamp(fractadyne_gpu::layers_for_frame(160, 90), lim.max_texture_array_layers);
+            let (result, pass) = if vram == 0 {
+                ("not exercised: this card's memory is unknown".to_string(), true)
+            } else {
+                let big = fractadyne_gpu::Assembler::new(device, shape, [160, 90], 1, layers).map(|_| ());
+                let after = self.assemble_geometry_check(device, queue).map(|c| c.pass());
+                let named = matches!(&big, Err(e) if e.to_string().contains("lower the size or the anti-aliasing"));
+                (
+                    format!(
+                        "{:.1} GB asked of a {:.1} GB card: {}; then a 96x54 assembly {}",
+                        fractadyne_gpu::window_bytes(shape, layers) as f64 / 1e9,
+                        vram as f64 / 1e9,
+                        match &big {
+                            Ok(()) => "ALLOCATED".to_string(),
+                            Err(e) => e.to_string(),
+                        },
+                        match &after {
+                            Ok(true) => "passed".to_string(),
+                            Ok(false) => "FAILED".to_string(),
+                            Err(e) => format!("could not run: {e}"),
+                        }
+                    ),
+                    named && after == Ok(true),
+                )
+            };
+            push_check(&mut checks, &mut last_check_t, SelfCheck {
+                category: "Zoom video",
+                name: "a strip window the card cannot hold is an error, not a crash".into(),
+                params: format!("{layers} strips of {w}x{rows} (twice the card's memory)"),
+                result,
+                threshold: "Assembler::new returns the error naming the remedy; the geometry check passes after it".into(),
+                pass,
+            });
             (self.fractal, self.julia_mode) = saved;
         }
 

@@ -209,13 +209,18 @@ pub(crate) fn placement(map: &ExpMap, l: f64, height_px: f64, ss: u32, turns: f6
 
 /// The strip shape the GPU needs, for `dive`.
 pub(crate) fn shape_of(dive: &Dive) -> StripShape {
+    shape_of_map(&dive.map, dive.strips)
+}
+
+/// The shape of `strips` strips of `map`.
+pub(crate) fn shape_of_map(map: &ExpMap, strips: u64) -> StripShape {
     StripShape {
-        width: dive.map.width,
-        rows: dive.map.rows,
-        rows_per_octave: dive.map.rows_per_octave(),
-        sample_offset: dive.map.sample_offset(),
-        row_step: dive.map.row_step(),
-        strips: dive.strips,
+        width: map.width,
+        rows: map.rows,
+        rows_per_octave: map.rows_per_octave(),
+        sample_offset: map.sample_offset(),
+        row_step: map.row_step(),
+        strips,
     }
 }
 
@@ -505,6 +510,29 @@ pub(crate) struct StripRenderer {
     keep: Option<PathBuf>,
     /// Seconds spent rendering strips.
     pub(crate) render_s: f64,
+    /// The last few strips' seconds: the pace the time left is estimated at.
+    recent: std::collections::VecDeque<f64>,
+}
+
+/// How many recent strips the time-left estimate averages.
+const RECENT_STRIPS: usize = 3;
+
+impl StripRenderer {
+    /// `(strips rendered, strips in the dive, seconds a strip at the recent pace)`.
+    fn pace(&self) -> (u64, u64, f64) {
+        let recent = if self.recent.is_empty() { 0.0 } else { self.recent.iter().sum::<f64>() / self.recent.len() as f64 };
+        (self.next, self.plan.strips, recent)
+    }
+}
+
+/// The time left of a video whose strips are rendered as it goes (`--render-zoom-video`): every
+/// frame waits on the strips it reads, so what remains is the strips not yet rendered, at the
+/// recent strips' pace, and the frames' own time at theirs. The frames' average rate, which the
+/// estimate was before, read the cheap shallow strips as the pace of the deep ones: a 1080p dive at
+/// 2x said 1h14m left with 78 strips to go at 3.5 min and rising (2026-10-28). Deeper strips
+/// usually cost more still, so this is a floor, not a promise.
+pub(crate) fn time_left(strips_left: u64, strip_s: f64, frames_left: u64, frame_s: f64) -> f64 {
+    strips_left as f64 * strip_s + frames_left as f64 * frame_s
 }
 
 /// Where a video's strips come from.
@@ -560,6 +588,18 @@ impl crate::FractadyneApp {
             }
             let secs = t.elapsed().as_secs_f64();
             src.render_s += secs;
+            src.recent.push_back(secs);
+            if src.recent.len() > RECENT_STRIPS {
+                src.recent.pop_front();
+            }
+            // On stdout too, so the Render zoom video dialog moves while a deep strip takes minutes.
+            crate::scripting::say(&format!(
+                "  strip {}/{} in {}  (2^{:.2})",
+                j + 1,
+                p.strips,
+                crate::scripting::fmt_hms(secs),
+                p.map.frame_log2mag(j, p.frame.0, p.frame.1)
+            ));
             crate::diag::log_line(
                 "assemble",
                 &format!(
@@ -708,7 +748,7 @@ impl crate::FractadyneApp {
                 dive.strips,
                 dive.map.width,
                 dive.map.rows,
-                layers as f64 * dive.map.width as f64 * dive.map.rows as f64 * 16.0 / 1.0e6,
+                fractadyne_gpu::window_bytes(shape_of(dive), layers) as f64 / 1.0e6,
             ),
         );
         if ss as f64 > dive.oversample + 1e-9 {
@@ -862,6 +902,7 @@ impl crate::FractadyneApp {
                 ranges: HashMap::new(),
                 keep,
                 render_s: 0.0,
+                recent: Default::default(),
             }));
             let summary = self.assemble_video(device, queue, &dive, &mut src, &mut asm, ss, &colour, out)?;
             let strips_s = match &src {
@@ -995,7 +1036,15 @@ impl crate::FractadyneApp {
             if (f + 1) % 30 == 0 || f + 1 == frames.len() {
                 let el = t0.elapsed().as_secs_f64();
                 let rate = (f + 1) as f64 / el.max(1e-9);
-                let left = (frames.len() - f - 1) as f64 / rate.max(1e-9);
+                let frames_left = (frames.len() - f - 1) as u64;
+                let left = match src {
+                    StripSource::Render(r) => {
+                        let (done, total, strip_s) = r.pace();
+                        let frame_s = (el - r.render_s).max(0.0) / (f + 1) as f64;
+                        time_left(total.saturating_sub(done), strip_s, frames_left, frame_s)
+                    }
+                    StripSource::Folder(_) => frames_left as f64 / rate.max(1e-9),
+                };
                 crate::scripting::say(&format!(
                     "  frame {}/{}  ({} elapsed, {} left, {rate:.1} fps, 2^{l:.2})",
                     f + 1,

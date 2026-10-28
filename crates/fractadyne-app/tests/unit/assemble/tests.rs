@@ -121,6 +121,23 @@ fn a_straight_dive_runs_from_its_first_frame_to_its_last_at_a_constant_speed() {
     assert_eq!(dive_frames(5.0, 5.001, 1.0, 30.0), vec![5.0, 5.001]);
 }
 
+/// The user's 1080p dive at 2x (2026-10-28), at frame 2460 of 7246 after 38m18s: 53 of 132 strips
+/// rendered, the last three in 168, 176 and 186 s. The frames' average rate said 1h14m30s left;
+/// the strips still to render alone take hours at the recent pace.
+#[test]
+fn a_videos_time_left_is_the_strips_still_to_render_at_their_recent_pace() {
+    let (el, frames_done, frames_left) = (38.0 * 60.0 + 18.0, 2460u64, 7246u64 - 2460);
+    let old = frames_left as f64 / (frames_done as f64 / el);
+    assert!((old - (74.0 * 60.0 + 30.0)).abs() < 60.0, "the old estimate, reproduced: {old:.0} s");
+    let strip_s = (168.0 + 176.0 + 186.0) / 3.0;
+    let strips_s = 2100.0; // the strips' share of the 38 minutes
+    let frame_s = (el - strips_s) / frames_done as f64;
+    let left = time_left(132 - 53, strip_s, frames_left, frame_s);
+    // 79 strips at ~177 s and the frames' own time: about four hours (3.98 h), not 1h14m.
+    assert!((left - 14_342.0).abs() < 60.0, "the strips still to render set the time left: {left:.0} s");
+    assert!(left > 3.0 * old);
+}
+
 #[test]
 fn a_strips_blocks_keep_the_least_and_greatest_escape_value_of_their_texels() {
     let (w, h) = (20usize, 11usize);

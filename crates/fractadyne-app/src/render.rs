@@ -6510,7 +6510,11 @@ impl FractadyneApp {
     /// mode its generated module lacks: one without a perturbed step renders direct at any depth;
     /// one with it has both perturbation paths (df32, and floatexp past `PERT_FE_THRESHOLD`).
     pub(crate) fn render_mode(&self, fractal: FractalKind, julia: bool, mag: f64) -> RenderMode {
-        RenderMode::select(self.perturbs(fractal), julia, mag)
+        match RenderMode::select(self.perturbs(fractal), julia, mag) {
+            // A zoom-video strip in the df32 band (`render_strip` sets the flag).
+            RenderMode::Df32Pert if self.strip_floatexp => RenderMode::Floatexp,
+            m => m,
+        }
     }
 
     /// Whether `fractal`'s frames may be spread over chunked passes: the family's capability, and

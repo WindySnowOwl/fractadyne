@@ -486,8 +486,8 @@ tested path), its stdout progress (`frame K/N (…)`, now printed every 30 frame
 its stderr's first error is quoted on failure, and the live view holds while it runs. The view
 goes on the command line exactly (the centre as the viewport's text, `--zoom-log2`); the colouring
 comes from the SESSION, saved just before the child starts. Options: file, size, fps, octaves a
-second, start depth, turns an octave, anti-aliasing (strips oversampled to match), normalize,
-keep strips (folder). Before Render it shows the frames, length, strips, the window's GPU memory
+second, start depth, turns an octave, anti-aliasing (strips oversampled to match), BLA (on by
+default, below), normalize, keep strips (folder). Before Render it shows the frames, length, strips, the window's GPU memory
 and, keeping strips, their disk (~11 bytes a texel, measured). It refuses Julia, other fractals and
 aux colourings up front, with the reason. `--uitest` step `zoom-video` (seeded mid-render): text
 fits, no overlap — after the strips folder moved to its own line (a 200-pt field beside the
@@ -495,6 +495,52 @@ checkbox cut the path). The command it builds was run as is (strips kept, 2x ant
 rotation, normalize): 181 frames, progress on stdout, 21 strips + manifest kept.
 - **Not yet in E3:** preview/scrub in the view, recolour from kept strips in the app, farm and
   `--gpus` distribution by strips.
+
+**The user's first real render (2026-10-28, RTX 3080, 10 GB)** — a dive to 2.2e36× (120.7 octaves),
+their session's 150,000 base iterations (caps 150,220 to 179,040), 2x anti-aliasing:
+- 5120x2880: the child refused after 13 s (a 36911-texel strip, past 32768); 3840x2160: it PANICKED
+  allocating a 13-layer window of 27684x3058 (~17.6 GB) — the uncaptured-error handler. Now the
+  dialog refuses both before Render (`zoom_video_fit`: the strip and the sample grid against the
+  device's texture limit; the window against the card's memory, refused above 90%, warned above
+  60%), and `Assembler::new` makes its allocations inside error scopes, so running out is an error
+  that names the remedy.
+- 1920x1080 ran (a 4.4 GB window), but its strips slowed from seconds to 1-3.5 minutes each (strip
+  53 of 132: 213 s) while "left" (frames left / the average frame rate) said 1h14m with hours to go.
+  Now each strip prints a line, and "left" is the strips still to render at the last three strips'
+  pace plus the frames' own time (`assemble::time_left`) — still a floor when deeper strips cost more.
+- **Why the strips were slow** (each strip now logs its `[perf]` line: GPU time, tiles, BLA skips,
+  iterations a step). Strip 53 (21.2 M texels, mean escape 68,637): mode 0 (df32 perturbation, the
+  1e4-1e28× band) has NO BLA (`bla_eligible` needs floatexp) — 1.1 iterations a loop trip — and ran
+  on the corrector's tiles, sized `sqrt(CORRECT_WORK_BUDGET / cap)` ≈ 111 px: 1,786 tiles of a few
+  percent of the GPU each. A bigger budget alone (2e10: 123 s; 2e11: 73 s) is bit-identical but put
+  a 3.1 s dispatch on the desktop's card. The floatexp path's occupancy-sized, step-bounded tiles do
+  it in 7 tiles at ≤240 ms a dispatch, and its full steps are df32 too:
+
+  | strip (cap) | mode 0, today | floatexp, BLA off | floatexp + BLA |
+  |---|---|---|---|
+  | 13 (153,080) | 3.1 s | — | 2.0 s |
+  | 34 (157,700) | 81 s | 26 s | 64 s |
+  | 45 (160,120) | 110 s | 29 s | 17 s |
+  | 53 (161,880) | 209 s | 41 s | 27 s |
+  | 70 (165,620) | 195 s | 45 s | 17 s |
+
+  Judged against the bignum oracle (`naive_dwell_bf`, 237-294 bits, 300 texels a strip, the
+  selftest's exact / sensitive / wrong; 75-80% of texels at 2^45-2^70 are SENSITIVE — the oracle's
+  own count changes within 1e-3 texel): floatexp with BLA off scored exactly as mode 0 on every strip
+  and matches it on 99.997-99.998% of all texels. With BLA it is a different picture (8-73% of texels
+  off by more than 2 iterations): fewer wrong than mode 0 at 2^45-2^70 (strip 53: 6.9% exact / 12.9%
+  wrong against 1.7% / 20.3% on 1,000 texels) but 15 of 300 wrong by up to 10 iterations near the
+  minibrot at 2^34, where mode 0 had none (and BLA was slower there). So strips in the df32 band now
+  render as floatexp (`with_strip_arithmetic`), with BLA as the user chose (§9, decided 2026-10-28):
+  an option, the dialog's "BLA acceleration" box, ON by default; the dialog always passes `--bla`
+  or `--no-bla`, so the session's own setting never decides a video. Warm wall times, BLA off / on,
+  interleaved: strip 34 27 / 66 s, 45 29 / 17 s, 70 47 / 17 s (the table's GPU times hold; the
+  first run of a new build pays its shaders' compile once, ~17 s). The selftest's `expmap` group
+  judges the BLA-off strip against the oracle and the BLA strip against THAT by the BLA group's
+  rule (off the steep texels, within 0.5 iteration): 0 of 10,120 texels off, and 3,835 off with
+  `BLA_EPS` loosened to 1e-2 (the control). Against the oracle directly a BLA strip misses the
+  exact-arithmetic bar (27 of 48 exact against 60%; one texel 0.09 iterations outside the stencil).
+- ⚠The LIVE view runs the same band the same way (mode 0, no BLA). Not changed here.
 
 ## 9. Decisions for you
 
@@ -506,6 +552,11 @@ rotation, normalize): 181 frames, progress on stdout, 21 strips + manifest kept.
    tools; E2's `-i audio … -shortest` mux is out of scope until asked for.
 4. **Iteration cap: both, as an option; the default is the rising (non-decreasing per-strip) cap.**
    One cap for the whole dive stays available for a dive where a step in the cap shows.
+
+**Decided 2026-10-28 (the user):**
+
+- **BLA on the df32-band strips: an option, ON by default** (§8.4): the dialog's "BLA
+  acceleration" box, passed to the render as `--bla` / `--no-bla`.
 
 The questions as they were put:
 

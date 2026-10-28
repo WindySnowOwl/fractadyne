@@ -2358,6 +2358,8 @@ zoom-video-rotate = Turns / octave
 zoom-video-rotate-hover = Turn the picture as it dives: turns for every doubling of the magnification (0 for none). Relief lighting stays fixed to the screen.
 zoom-video-ss = Anti-aliasing
 zoom-video-ss-hover = Samples a pixel along each side. The strips are rendered as much finer, so 2× costs about four times as long.
+zoom-video-bla = BLA acceleration
+zoom-video-bla-hover = Skip iterations with bilinear approximation (BLA) in strips deeper than 1e4×. Deep strips usually render faster with it, but the picture changes slightly: near a minibrot a few points can come out several iterations off. Off computes every iteration.
 zoom-video-normalize = Palette follows the depth (normalize)
 zoom-video-normalize-hover = Spread the palette over each moment's escape range, as Normalize deep colors does on screen, changing smoothly through the dive. Deep dives need it: past ~1e50× a fixed palette cycle turns to confetti.
 zoom-video-keep = Keep the strips
@@ -2372,6 +2374,14 @@ zoom-video-summary =
 zoom-video-memory = ≈{ $size } GB of graphics memory for the strips in view
 # The disk space the kept strips take (an estimate). $size: a number of gigabytes.
 zoom-video-disk = ≈{ $size } GB of strips on disk
+# $width: texels around a strip; $limit: the graphics card's largest texture side.
+zoom-video-too-wide = A strip would be { $width } texels around, more than this graphics card's { $limit }: lower the size or the anti-aliasing.
+# $width × $height: the frame's samples; $limit: the graphics card's largest texture side.
+zoom-video-grid-too-big = The frames' samples ({ $width }×{ $height }) are more than this graphics card's { $limit }-texel textures hold: lower the size or the anti-aliasing.
+# $need, $have: gigabytes ("17.6", "10.0").
+zoom-video-too-much-memory = The strips in view need ≈{ $need } GB of graphics memory, more than this card's { $have } GB can spare: lower the size or the anti-aliasing.
+# $have: the card's gigabytes ("10.0").
+zoom-video-memory-tight = That is most of this card's { $have } GB, and the picture behind this dialog holds some too: if the render runs out, it stops and says so.
 zoom-video-separate = Renders in a separate process, coloured as the view is now (the session is saved first) — a lost GPU device there cannot take this session with it.
 # $done, $total: frames.
 zoom-video-progress = { $done } / { $total } frames

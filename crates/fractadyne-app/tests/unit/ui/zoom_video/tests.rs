@@ -28,10 +28,12 @@ fn the_command_line_carries_the_view_exactly_and_only_the_options_set() {
     assert_eq!(pair("--size").as_deref(), Some("640x360"));
     assert_eq!(pair("--assemble-fps").as_deref(), Some("30"));
     assert_eq!(pair("--assemble-speed").as_deref(), Some("2"));
-    for absent in ["--expmap-start", "--assemble-rotate", "--expmap-oversample", "--assemble-ss", "--normalize", "--keep-strips"] {
+    for absent in ["--expmap-start", "--assemble-rotate", "--expmap-oversample", "--assemble-ss", "--normalize", "--keep-strips", "--no-bla"] {
         assert!(!a.iter().any(|x| x == absent), "{absent} was not asked for");
     }
-    let z = ZoomVideoUi { start_log2: 3.5, rotate: -0.25, ss: 2, normalize: true, keep: true, keep_dir: "D:/strips".into(), ..dialog() };
+    // BLA is said either way (on by default), so the session's own setting never decides it.
+    assert!(a.iter().any(|x| x == "--bla"), "BLA on by default, on the command line");
+    let z = ZoomVideoUi { start_log2: 3.5, rotate: -0.25, ss: 2, bla: false, normalize: true, keep: true, keep_dir: "D:/strips".into(), ..dialog() };
     let a = zoom_video_args(&z);
     let pair = |k: &str| a.iter().position(|x| x == k).map(|i| a[i + 1].clone());
     assert_eq!(pair("--expmap-start").as_deref(), Some("3.5"));
@@ -40,6 +42,7 @@ fn the_command_line_carries_the_view_exactly_and_only_the_options_set() {
     assert_eq!(pair("--assemble-ss").as_deref(), Some("2"));
     assert_eq!(pair("--keep-strips").as_deref(), Some("D:/strips"));
     assert!(a.iter().any(|x| x == "--normalize"));
+    assert!(a.iter().any(|x| x == "--no-bla") && !a.iter().any(|x| x == "--bla"), "BLA off is said as --no-bla, alone");
     // Every flag the dialog writes is one the command line knows.
     let known = crate::cli::known_long_flags();
     for f in a.iter().filter(|x| x.starts_with("--")) {
@@ -60,4 +63,27 @@ fn the_summary_is_the_dive_the_command_line_will_render() {
     // Anti-aliasing widens the strips and the window.
     let (_, _, _, w2, _, gpu2) = zoom_video_plan(&ZoomVideoUi { ss: 2, ..dialog() });
     assert!(w2 > w * 2 - 2 && gpu2 > gpu * 4);
+}
+
+/// The user's three tries on a 10 GB RTX 3080 (2026-10-28), at 2× anti-aliasing: 5120x2880 was
+/// refused by the render after 13 s (a strip wider than the card's 32768-texel textures),
+/// 3840x2160 crashed allocating a ~17.6 GB window, 1920x1080 ran with a 4.4 GB one. The dialog
+/// must say the first two before Render, and let the third go.
+#[test]
+fn the_dialog_refuses_what_the_card_cannot_hold_before_render() {
+    const DIM: u32 = 32768;
+    const VRAM: u64 = 10 << 30;
+    let at = |width, height| ZoomVideoUi { width, height, ss: 2, end_log2: 120.7, ..dialog() };
+    let five_k = at(5120, 2880);
+    let (_, _, _, sw, _, _) = zoom_video_plan(&five_k);
+    assert!(sw > DIM, "the 5K strip is {sw} texels around");
+    assert!(matches!(zoom_video_fit(&five_k, DIM, VRAM), CardFit::Refused(_)), "5K at 2x: a strip wider than the textures");
+    let four_k = at(3840, 2160);
+    let (_, _, _, sw, _, gpu) = zoom_video_plan(&four_k);
+    assert!(sw <= DIM && gpu > VRAM, "4K at 2x fits the textures but not the memory ({gpu} bytes)");
+    assert!(matches!(zoom_video_fit(&four_k, DIM, VRAM), CardFit::Refused(_)), "4K at 2x: the window exceeds the card");
+    assert_eq!(zoom_video_fit(&at(1920, 1080), DIM, VRAM), CardFit::Fits, "1080p at 2x ran on this card");
+    // A smaller card warns at the same video; an unknown one is not judged.
+    assert!(matches!(zoom_video_fit(&at(1920, 1080), DIM, 6 << 30), CardFit::Tight(_)));
+    assert_eq!(zoom_video_fit(&four_k, 0, 0), CardFit::Fits, "nothing known, nothing refused");
 }

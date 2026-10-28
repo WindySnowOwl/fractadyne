@@ -116,6 +116,24 @@ pub fn layers_for_frame(w: u32, h: u32) -> u32 {
     (hi - lo + 2.0 * SPAN_MARGIN).floor() as u32 + 2
 }
 
+/// The GPU memory a window of `layers` strips of `shape` takes: one 16-byte texel (four f32) each.
+pub fn window_bytes(shape: StripShape, layers: u32) -> u64 {
+    layers as u64 * shape.width as u64 * shape.rows as u64 * 16
+}
+
+/// Wait on a wgpu future. On native every one this module awaits (an error scope's pop) is ready
+/// at once, so a poll with a no-op waker is enough and the crate needs no async runtime.
+fn block_on<F: std::future::Future>(fut: F) -> F::Output {
+    let mut fut = std::pin::pin!(fut);
+    let mut cx = std::task::Context::from_waker(std::task::Waker::noop());
+    loop {
+        if let std::task::Poll::Ready(v) = fut.as_mut().poll(&mut cx) {
+            return v;
+        }
+        std::thread::yield_now();
+    }
+}
+
 /// The GPU side of assembly: the strip window, the two pipelines, and the frame's targets.
 pub struct Assembler {
     shape: StripShape,
@@ -162,6 +180,30 @@ impl Assembler {
         if sw > limits.max_texture_dimension_2d || sh > limits.max_texture_dimension_2d {
             return Err(GpuError::Assembly(format!("a {sw}x{sh} sample grid is larger than this GPU's textures")));
         }
+        // ⭐The window is the one large allocation a zoom video makes — gigabytes at 4K or with
+        // anti-aliasing — and a card without room for it must say so as an error. Outside an error
+        // scope the failure reaches the app's uncaptured-error handler, which panics (measured: 3840x2160
+        // at 2x, 13 strips of 27684x3058 ≈ 17.6 GB on a 10 GB card, a crash report one second in).
+        device.push_error_scope(wgpu::ErrorFilter::OutOfMemory);
+        device.push_error_scope(wgpu::ErrorFilter::Validation);
+        let made = Self::build(device, shape, frame, ss, layers);
+        let invalid = block_on(device.pop_error_scope());
+        let oom = block_on(device.pop_error_scope());
+        match oom.or(invalid) {
+            None => Ok(made),
+            Some(e) => Err(GpuError::Assembly(format!(
+                "the GPU could not hold the strip window ({layers} strips of {}x{}, {:.1} GB) — lower the size or the \
+                 anti-aliasing: {e}",
+                shape.width,
+                shape.rows,
+                window_bytes(shape, layers) as f64 / 1e9,
+            ))),
+        }
+    }
+
+    /// [`Self::new`]'s allocations, once its checks have passed (inside its error scopes).
+    fn build(device: &wgpu::Device, shape: StripShape, frame: [u32; 2], ss: u32, layers: u32) -> Self {
+        let (sw, sh) = (frame[0] * ss, frame[1] * ss);
         let strips_tex = device.create_texture(&wgpu::TextureDescriptor {
             label: Some("assemble.strips"),
             size: wgpu::Extent3d { width: shape.width, height: shape.rows, depth_or_array_layers: layers },
@@ -288,7 +330,7 @@ impl Assembler {
             view_formats: &[],
         });
         let out_view = out_tex.create_view(&wgpu::TextureViewDescriptor::default());
-        Ok(Assembler {
+        Assembler {
             shape,
             frame,
             ss,
@@ -306,7 +348,7 @@ impl Assembler {
             lut_buf,
             out_tex,
             out_view,
-        })
+        }
     }
 
     /// The window's layers.
