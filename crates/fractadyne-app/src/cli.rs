@@ -546,8 +546,11 @@ pub(crate) struct RenderCli {
     /// `--assemble DIR`: a zoom video, or frames of one, from the strips in DIR (`assemble`,
     /// `design/zoom-video.md` phase E2).
     pub(crate) assemble: Option<std::path::PathBuf>,
-    /// The `--assemble-*` options.
+    /// The `--assemble-*` options (and `--keep-strips`).
     pub(crate) assemble_opts: crate::assemble::AssembleCli,
+    /// `--render-zoom-video F`: render the dive into the view as strips and assemble them into the
+    /// video F in one run (`assemble`).
+    pub(crate) zoom_video: Option<std::path::PathBuf>,
     /// `--glitch-audit [N]` / `--tail-audit [N]`: instead of writing an image, check N of the pixels
     /// where two renders differ (and N controls) against the arbitrary-precision oracle
     /// (`glitchaudit`); `audit_kind` says which two.
@@ -656,6 +659,8 @@ impl crate::FractadyneApp {
                     self.render_expmap_to_dir(dev, q, &dir).map_err(crate::error::AppError::Message)
                 } else if let Some(dir) = self.render_cli.assemble.clone() {
                     self.assemble_from_dir(ctx, dev, q, &dir).map_err(crate::error::AppError::Message)
+                } else if let Some(out) = self.render_cli.zoom_video.clone() {
+                    self.render_zoom_video(ctx, dev, q, &out).map_err(crate::error::AppError::Message)
                 } else if self.render_cli.iter_mode {
                     let out = self
                         .render_cli.out

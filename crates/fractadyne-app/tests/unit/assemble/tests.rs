@@ -249,3 +249,20 @@ fn a_videos_palette_ranges_are_measured_once_an_octave_and_interpolated_between(
     assert_eq!(b.range(1.5, &mut empty_at_2).unwrap(), Some((1.0, 2.0)));
     assert_eq!(b.range(2.5, &mut empty_at_2).unwrap(), Some((1.0, 2.0)), "carried over");
 }
+
+#[test]
+fn the_assembly_options_read_as_given() {
+    let args: Vec<String> = [
+        "--assemble", "d", "--assemble-at", "0, 2.5,20", "--assemble-fps", "60", "--assemble-speed", "0.5",
+        "--assemble-ss", "2", "--keep-strips", "k", "--assemble-crf", "0",
+    ]
+    .iter()
+    .map(|s| s.to_string())
+    .collect();
+    let o = AssembleCli::from_args(&args);
+    assert_eq!(o.at, vec![0.0, 2.5, 20.0]);
+    assert_eq!((o.fps, o.speed, o.ss, o.crf), (Some(60.0), Some(0.5), Some(2), Some(0)));
+    assert_eq!(o.keep, Some(PathBuf::from("k")));
+    let none = AssembleCli::from_args(&["--assemble".to_string(), "d".to_string()]);
+    assert!(none.at.is_empty() && none.fps.is_none() && none.keep.is_none() && none.crf.is_none());
+}

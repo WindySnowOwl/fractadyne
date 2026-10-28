@@ -31,6 +31,10 @@ pub(crate) struct AssembleCli {
     pub(crate) speed: Option<f64>,
     /// `--assemble-ss N`: samples a pixel along each axis (default: the strips' oversampling).
     pub(crate) ss: Option<u32>,
+    /// `--keep-strips DIR` (with `--render-zoom-video`): write the strips there too.
+    pub(crate) keep: Option<PathBuf>,
+    /// `--assemble-crf N`: H.264 quality, 0 (lossless) to 51 (default 18, the tour export's).
+    pub(crate) crf: Option<u32>,
 }
 
 impl AssembleCli {
@@ -59,6 +63,15 @@ impl AssembleCli {
                 crate::exit(2)
             }
             o.speed = Some(v);
+        }
+        o.keep = val("--keep-strips").map(PathBuf::from);
+        if let Some(s) = val("--assemble-crf") {
+            let q: u32 = crate::arg_parse("--assemble-crf", s, "an H.264 quality, 0 (lossless) to 51");
+            if q > 51 {
+                eprintln!("fractadyne: --assemble-crf: {q} is outside 0 to 51.");
+                crate::exit(2)
+            }
+            o.crf = Some(q);
         }
         if let Some(s) = val("--assemble-ss") {
             let q: u32 = crate::arg_parse("--assemble-ss", s, "samples a pixel along each axis");
@@ -458,38 +471,161 @@ impl StripReader {
     }
 }
 
-/// Put the strips a frame at `place` reads into the assembler's window (and ask for the next
-/// `ahead` beyond them).
-pub(crate) fn fill_window(
-    asm: &mut Assembler,
-    queue: &eframe::wgpu::Queue,
-    reader: &mut StripReader,
-    place: &FramePlacement,
-    ahead: u64,
-) -> Result<(), String> {
-    let (first, last) = asm.strips_for(place).ok_or("the frame is shallower than the dive's first strip")?;
-    for k in first..=last + ahead {
-        if !asm.has_strip(k) {
-            reader.ask(k);
-        }
-    }
-    for k in first..=last {
-        if !asm.has_strip(k) {
-            let main = reader.take(k)?;
-            asm.put_strip(queue, k, &main).map_err(|e| e.to_string())?;
-        }
-    }
-    Ok(())
+/// Strips rendered as a video's frames need them (`--render-zoom-video`), in dive order, on the
+/// dive's one reference, and written to a folder as well when one is given (`--keep-strips`, in
+/// Fractadyne's own format, for `--assemble` to recolour later). A strip's texels wait in `ready`
+/// until the window takes them; its escape range stays for `--normalize`.
+pub(crate) struct StripRenderer {
+    pub(crate) plan: crate::expmap_render::DivePlan,
+    dive_ref: Option<crate::render::ReuseRef>,
+    next: u64,
+    ready: HashMap<u64, Vec<f32>>,
+    pub(crate) ranges: HashMap<u64, Arc<StripRange>>,
+    keep: Option<PathBuf>,
+    /// Seconds spent rendering strips.
+    pub(crate) render_s: f64,
 }
 
-/// The range of the frame at depth `l` (`fw × fh` pixels), reading the strips it shows first.
-pub(crate) fn measured_range(dive: &Dive, reader: &mut StripReader, l: f64) -> Result<Option<(f32, f32)>, String> {
-    let (fw, fh) = dive.frame;
-    let place = placement(&dive.map, l, fh, 1, 0.0);
-    if let Some((first, last)) = fractadyne_gpu::strips_for_frame(&place, fw as u32, fh as u32, dive.strips) {
-        reader.ensure_ranges(first, last)?;
+/// Where a video's strips come from.
+pub(crate) enum StripSource {
+    /// A dive's folder (`--assemble DIR`).
+    Folder(StripReader),
+    /// Rendered on demand (`--render-zoom-video`).
+    Render(Box<StripRenderer>),
+}
+
+impl StripSource {
+    fn ranges(&self) -> &HashMap<u64, Arc<StripRange>> {
+        match self {
+            StripSource::Folder(r) => &r.ranges,
+            StripSource::Render(r) => &r.ranges,
+        }
     }
-    frame_range(&dive.map, &reader.ranges, dive.strips, l, fw, fh, crate::tunables::cost().norm_top_quantile)
+
+    fn forget_before(&mut self, k: u64) {
+        match self {
+            StripSource::Folder(r) => r.forget_before(k),
+            StripSource::Render(r) => r.ranges.retain(|&s, _| s >= k),
+        }
+    }
+}
+
+impl crate::FractadyneApp {
+    /// Render strips `src.next..=k` (those not rendered yet) into `src.ready`.
+    fn render_strips_through(
+        &mut self,
+        src: &mut StripRenderer,
+        device: &eframe::wgpu::Device,
+        queue: &eframe::wgpu::Queue,
+        k: u64,
+    ) -> Result<(), String> {
+        let last = k.min(src.plan.strips.saturating_sub(1));
+        while src.next <= last {
+            let j = src.next;
+            let t = std::time::Instant::now();
+            let p = &src.plan;
+            let s = self.render_strip(device, queue, &p.map, j, &p.cx, &p.cy, p.caps[j as usize], src.dive_ref.as_ref())?;
+            if let Some(dir) = &src.keep {
+                crate::expmap_render::write_strip_file(
+                    &dir.join(strip_file(j)),
+                    &p.map,
+                    j,
+                    StripFormat::Fractadyne,
+                    p.power,
+                    (&p.cx, &p.cy),
+                    &s.result,
+                    &s.req,
+                )?;
+            }
+            let secs = t.elapsed().as_secs_f64();
+            src.render_s += secs;
+            crate::diag::log_line(
+                "assemble",
+                &format!(
+                    "strip {j}/{}: 2^{:.2}, cap {}, mode {}, {}, {:.0} ms",
+                    p.strips,
+                    p.map.frame_log2mag(j, p.frame.0, p.frame.1),
+                    s.req.max_iter,
+                    s.req.mode,
+                    if s.req.mode == 1 { "direct" } else if s.reused { "the dive's reference" } else { "its own reference" },
+                    secs * 1000.0
+                ),
+            );
+            let main = s.result.pixels;
+            src.ranges.insert(j, Arc::new(strip_range(&main, p.map.width as usize, p.map.rows as usize)));
+            src.ready.insert(j, main);
+            src.next += 1;
+        }
+        Ok(())
+    }
+
+    /// Strip `k`'s texels, for the GPU: read, or rendered (with any strips before it not yet rendered).
+    fn take_strip(
+        &mut self,
+        src: &mut StripSource,
+        device: &eframe::wgpu::Device,
+        queue: &eframe::wgpu::Queue,
+        k: u64,
+    ) -> Result<Vec<f32>, String> {
+        match src {
+            StripSource::Folder(r) => r.take(k),
+            StripSource::Render(r) => {
+                self.render_strips_through(r, device, queue, k)?;
+                r.ready.remove(&k).ok_or_else(|| format!("strip {k} was rendered and has left the window; a dive only goes deeper"))
+            }
+        }
+    }
+
+    /// Put the strips a frame at `place` reads into the assembler's window (asking a folder for the
+    /// next `ahead` beyond them).
+    fn fill_window(
+        &mut self,
+        asm: &mut Assembler,
+        src: &mut StripSource,
+        device: &eframe::wgpu::Device,
+        queue: &eframe::wgpu::Queue,
+        place: &FramePlacement,
+        ahead: u64,
+    ) -> Result<(), String> {
+        let (first, last) = asm.strips_for(place).ok_or("the frame is shallower than the dive's first strip")?;
+        if let StripSource::Folder(r) = src {
+            for k in first..=last + ahead {
+                if !asm.has_strip(k) {
+                    r.ask(k);
+                }
+            }
+        }
+        for k in first..=last {
+            if !asm.has_strip(k) {
+                let main = self.take_strip(src, device, queue, k)?;
+                asm.put_strip(queue, k, &main).map_err(|e| e.to_string())?;
+            }
+        }
+        Ok(())
+    }
+
+    /// The palette window of the frame at depth `l`, reading or rendering the strips it shows first.
+    fn measured_range(
+        &mut self,
+        dive: &Dive,
+        src: &mut StripSource,
+        device: &eframe::wgpu::Device,
+        queue: &eframe::wgpu::Queue,
+        l: f64,
+    ) -> Result<Option<(f32, f32)>, String> {
+        let (fw, fh) = dive.frame;
+        let place = placement(&dive.map, l, fh, 1, 0.0);
+        if let Some((first, last)) = fractadyne_gpu::strips_for_frame(&place, fw as u32, fh as u32, dive.strips) {
+            match src {
+                StripSource::Folder(r) => r.ensure_ranges(first, last)?,
+                StripSource::Render(r) => {
+                    // Strips are rendered in order, so a range not rendered yet is one ahead.
+                    self.render_strips_through(r, device, queue, last)?;
+                }
+            }
+        }
+        frame_range(&dive.map, src.ranges(), dive.strips, l, fw, fh, crate::tunables::cost().norm_top_quantile)
+    }
 }
 
 impl crate::FractadyneApp {
@@ -519,40 +655,34 @@ impl crate::FractadyneApp {
         self.current_export_request_for(&vp, false)
     }
 
-    /// `--assemble DIR`. Returns the summary line, or why it could not assemble.
-    pub(crate) fn assemble_from_dir(
+    /// What every assembly sets up: the "Fd" mark, the samples a pixel, the colouring (refusing one a
+    /// strip cannot give), and the GPU window for the dive's frames. `source` names where the strips
+    /// come from, for the log.
+    fn begin_assembly(
         &mut self,
         ctx: &egui::Context,
         device: &eframe::wgpu::Device,
-        queue: &eframe::wgpu::Queue,
-        dir: &Path,
-    ) -> Result<String, String> {
-        let dive = Arc::new(read_dive(dir)?);
-        let opts = self.render_cli.assemble_opts.clone();
+        dive: &Dive,
+        source: &str,
+    ) -> Result<(Assembler, u32, fractadyne_gpu::ExportRequest), String> {
         // The "Fd" mark goes on every frame, as on a tour's (rasterized once, from the font atlas).
         if self.watermark && self.watermark_overlay.is_none() {
             self.watermark_overlay = self.show_watermark.then(|| crate::export::build_watermark_overlay(ctx)).flatten();
         }
-        let ss = opts.ss.unwrap_or_else(|| (dive.oversample.round() as u32).clamp(1, 8));
+        let ss = self.render_cli.assemble_opts.ss.unwrap_or_else(|| (dive.oversample.round() as u32).clamp(1, 8));
         let (fw, fh) = (dive.frame.0 as u32, dive.frame.1 as u32);
-        let colour = self.assembly_colour_request(&dive);
+        let colour = self.assembly_colour_request(dive);
         if fractadyne_gpu::method_needs_aux(colour.color_method) {
             return Err("this colouring reads per-orbit statistics (stripe, TIA, trap or decomposition) that strips do not keep; \
                         assemble with smooth, distance, relief or glow"
                 .into());
         }
         let layers = fractadyne_gpu::layers_for_frame(fw * ss, fh * ss);
-        let mut asm = Assembler::new(device, shape_of(&dive), [fw, fh], ss, layers).map_err(|e| e.to_string())?;
-        let mut reader = StripReader::new(dive.clone());
-        // The palette follows the escape range when asked (`--normalize`, or the session's
-        // "Normalize deep colors"): past ~1e50× a fixed cycle aliases the escape field into confetti.
-        let normalize = self.coloring.normalize || self.coloring.normalize_live;
-        let mut anchors = NormAnchors::new(dive.start_log2mag, dive.end_log2mag);
+        let asm = Assembler::new(device, shape_of(dive), [fw, fh], ss, layers).map_err(|e| e.to_string())?;
         crate::diag::log_line(
             "assemble",
             &format!(
-                "{}: a {} dive in {} strips of {}x{}, frames {fw}x{fh} at {ss}x{ss} samples, a window of {layers} strips ({:.0} MB)",
-                dir.display(),
+                "{source}: a {} dive in {} strips of {}x{}, frames {fw}x{fh} at {ss}x{ss} samples, a window of {layers} strips ({:.0} MB)",
                 dive.fractal,
                 dive.strips,
                 dive.map.width,
@@ -570,6 +700,28 @@ impl crate::FractadyneApp {
                 ),
             );
         }
+        Ok((asm, ss, colour))
+    }
+
+    /// The palette follows the escape range when asked (`--normalize`, or the session's "Normalize
+    /// deep colors"): past ~1e50× a fixed cycle aliases the escape field into confetti.
+    fn assembly_normalizes(&self) -> bool {
+        self.coloring.normalize || self.coloring.normalize_live
+    }
+
+    /// `--assemble DIR`. Returns the summary line, or why it could not assemble.
+    pub(crate) fn assemble_from_dir(
+        &mut self,
+        ctx: &egui::Context,
+        device: &eframe::wgpu::Device,
+        queue: &eframe::wgpu::Queue,
+        dir: &Path,
+    ) -> Result<String, String> {
+        let dive = Arc::new(read_dive(dir)?);
+        let opts = self.render_cli.assemble_opts.clone();
+        let (mut asm, ss, colour) = self.begin_assembly(ctx, device, &dive, &dir.display().to_string())?;
+        let mut src = StripSource::Folder(StripReader::new(dive.clone()));
+        let (fw, fh) = (dive.frame.0 as u32, dive.frame.1 as u32);
 
         if !opts.at.is_empty() {
             // Single frames, as PNGs: into --out (a folder when there are several, or a file).
@@ -583,7 +735,7 @@ impl crate::FractadyneApp {
             let raw = self.render_cli.iter_mode;
             for &l in &opts.at {
                 let place = placement(&dive.map, l, dive.frame.1, ss, 0.0);
-                fill_window(&mut asm, queue, &mut reader, &place, 0)?;
+                self.fill_window(&mut asm, &mut src, device, queue, &place, 0)?;
                 let ext = if raw { "exr" } else { "png" };
                 let path = if several { out.join(format!("frame_{l:.3}.{ext}")) } else { out.clone() };
                 let meta = format!("app=Fractadyne\nassembled_from={}\nlog2mag={l}\nss={ss}\n", dir.display());
@@ -592,11 +744,11 @@ impl crate::FractadyneApp {
                     fractadyne_export::write_exr_raw(&path, fw * ss, fh * ss, &main, Some(&meta))
                         .map_err(|e| format!("{}: {e}", path.display()))?;
                 } else {
-                    // A single frame normalizes to its own range.
+                    // A single frame normalizes to its own window.
                     let mut c = colour.clone();
-                    if normalize {
-                        if let Some((lo, hi)) = measured_range(&dive, &mut reader, l)? {
-                            self.apply_video_norm(&mut c, lo, hi);
+                    if self.assembly_normalizes() {
+                        if let Some((lo, top)) = self.measured_range(&dive, &mut src, device, queue, l)? {
+                            self.apply_video_norm(&mut c, lo, top);
                         }
                     }
                     let mut rgba = asm.frame(device, queue, &place, &c).map_err(|e| e.to_string())?;
@@ -607,12 +759,110 @@ impl crate::FractadyneApp {
             return Ok(format!("{} frame(s) assembled from {} into {}", opts.at.len(), dir.display(), out.display()));
         }
 
-        // A video: the whole dive, at a constant zoom speed.
         let out = self.render_cli.out.clone().ok_or("--assemble makes a video: give its file with --out (e.g. dive.mp4)")?;
+        let summary = self.assemble_video(device, queue, &dive, &mut src, &mut asm, ss, &colour, &out)?;
+        Ok(format!("{summary}, from the strips in {}", dir.display()))
+    }
+
+    /// `--render-zoom-video F`: the dive into the view, rendered as strips and assembled into a video
+    /// in one run — a strip is rendered just before the first frame that shows it and leaves the GPU
+    /// with the last, so the dive never needs its strips on disk (`--keep-strips DIR` writes them
+    /// too, for `--assemble` to recolour later).
+    pub(crate) fn render_zoom_video(
+        &mut self,
+        ctx: &egui::Context,
+        device: &eframe::wgpu::Device,
+        queue: &eframe::wgpu::Queue,
+        out: &Path,
+    ) -> Result<String, String> {
+        let plan = self.plan_dive(StripFormat::Fractadyne, "--render-zoom-video")?;
+        let keep = self.render_cli.assemble_opts.keep.clone();
+        if let Some(dir) = &keep {
+            std::fs::create_dir_all(dir).map_err(|e| format!("cannot create {}: {e}", dir.display()))?;
+            crate::expmap_render::write_or_check_manifest(dir, &plan.map, StripFormat::Fractadyne, &plan.dive)?;
+        }
+        let dive = Dive {
+            dir: keep.clone().unwrap_or_default(),
+            map: plan.map,
+            strips: plan.strips,
+            frame: plan.frame,
+            oversample: plan.oversample,
+            start_log2mag: plan.start_log2mag,
+            end_log2mag: plan.end_log2mag,
+            fractal: self.fractal.name().to_string(),
+        };
+        let (mut asm, ss, colour) = self.begin_assembly(ctx, device, &dive, "rendering")?;
+        crate::diag::log_line(
+            "assemble",
+            &format!(
+                "the dive {} → 2^{:.2} into the view, caps {}..{}{}",
+                plan.start_log2mag,
+                plan.end_log2mag,
+                plan.caps.first().copied().unwrap_or(0),
+                plan.caps.last().copied().unwrap_or(0),
+                keep.as_ref().map(|d| format!(", strips kept in {}", d.display())).unwrap_or_default(),
+            ),
+        );
+        let saved = (self.render_cfg.max_iter, self.render_cfg.auto_iter, self.export.width);
+        let result = (|| -> Result<String, String> {
+            // ⭐ONE reference for the whole dive, built for its deepest strip, as `--render-expmap`.
+            let deepest = plan.strips - 1;
+            let t = std::time::Instant::now();
+            let dive_ref = self.dive_reference(&plan.map, deepest, &plan.cx, &plan.cy, plan.caps[deepest as usize]);
+            crate::diag::log_line(
+                "assemble",
+                &match &dive_ref {
+                    Some(d) => format!(
+                        "one reference for the dive, from strip {deepest}: {} samples at {} bits in {:.0} ms",
+                        d.prefix.len(),
+                        d.prec,
+                        t.elapsed().as_secs_f64() * 1000.0
+                    ),
+                    None => "no dive reference: the deepest strip renders directly".into(),
+                },
+            );
+            let mut src = StripSource::Render(Box::new(StripRenderer {
+                plan,
+                dive_ref,
+                next: 0,
+                ready: HashMap::new(),
+                ranges: HashMap::new(),
+                keep,
+                render_s: 0.0,
+            }));
+            let summary = self.assemble_video(device, queue, &dive, &mut src, &mut asm, ss, &colour, out)?;
+            let strips_s = match &src {
+                StripSource::Render(r) => r.render_s,
+                StripSource::Folder(_) => 0.0,
+            };
+            Ok(format!("{summary}; {} strips rendered in {:.1} s", dive.strips, strips_s))
+        })();
+        (self.render_cfg.max_iter, self.render_cfg.auto_iter, self.export.width) = saved;
+        result
+    }
+
+    /// The whole dive as a video at a constant zoom speed (`--assemble-speed`, `--assemble-fps`),
+    /// piped to ffmpeg as each frame is made; the palette normalized over it when asked.
+    #[allow(clippy::too_many_arguments)]
+    fn assemble_video(
+        &mut self,
+        device: &eframe::wgpu::Device,
+        queue: &eframe::wgpu::Queue,
+        dive: &Dive,
+        src: &mut StripSource,
+        asm: &mut Assembler,
+        ss: u32,
+        colour: &fractadyne_gpu::ExportRequest,
+        out: &Path,
+    ) -> Result<String, String> {
+        let opts = self.render_cli.assemble_opts.clone();
+        let (fw, fh) = (dive.frame.0 as u32, dive.frame.1 as u32);
+        let normalize = self.assembly_normalizes();
+        let mut anchors = NormAnchors::new(dive.start_log2mag, dive.end_log2mag);
         let fps = opts.fps.unwrap_or(30.0);
         let speed = opts.speed.unwrap_or(1.0);
         let frames = dive_frames(dive.start_log2mag, dive.end_log2mag, speed, fps);
-        let pipe = crate::video_pipe::VideoPipe::start(&out, fw, fh, fps, 18)?;
+        let pipe = crate::video_pipe::VideoPipe::start(out, fw, fh, fps, opts.crf.unwrap_or(18))?;
         crate::diag::log_line(
             "assemble",
             &format!(
@@ -631,29 +881,30 @@ impl crate::FractadyneApp {
         let mut range_seen: Option<(f32, f32)> = None;
         for (f, &l) in frames.iter().enumerate() {
             let place = placement(&dive.map, l, dive.frame.1, ss, 0.0);
-            fill_window(&mut asm, queue, &mut reader, &place, 2)?;
+            self.fill_window(asm, src, device, queue, &place, 2)?;
             let mut c = colour.clone();
             if normalize {
+                let log_palette = self.coloring.log_palette;
                 let r = anchors.range(l, |la| {
-                    let r = measured_range(&dive, &mut reader, la)?;
+                    let r = self.measured_range(dive, src, device, queue, la)?;
                     crate::diag::log_line(
                         "assemble",
                         &match r {
                             Some((lo, top)) => format!(
                                 "palette anchor at 2^{la:.2}: window {lo:.1} to {top:.1} ({:.0}% log)",
-                                100.0 * log_weight(lo, top, self.coloring.log_palette)
+                                100.0 * log_weight(lo, top, log_palette)
                             ),
                             None => format!("palette anchor at 2^{la:.2}: nothing escaped"),
                         },
                     );
                     Ok(r)
                 })?;
-                if let Some((lo, hi)) = r {
-                    self.apply_video_norm(&mut c, lo, hi);
-                    range_seen = Some(range_seen.map_or((lo, hi), |(a, b)| (a.min(lo), b.max(hi))));
+                if let Some((lo, top)) = r {
+                    self.apply_video_norm(&mut c, lo, top);
+                    range_seen = Some(range_seen.map_or((lo, top), |(a, b)| (a.min(lo), b.max(top))));
                 }
                 if let Some((first, _)) = asm.strips_for(&place) {
-                    reader.forget_before(first.saturating_sub(1));
+                    src.forget_before(first.saturating_sub(2));
                 }
             }
             let tf = std::time::Instant::now();
@@ -671,18 +922,17 @@ impl crate::FractadyneApp {
         }
         let written = pipe.finish()?;
         let secs = t0.elapsed().as_secs_f64();
-        if let Some((lo, hi)) = range_seen {
+        if let Some((lo, top)) = range_seen {
             crate::diag::log_line(
                 "assemble",
-                &format!("normalized: the palette followed escape ranges from {lo:.1} to {hi:.1} over the dive, {} anchors", anchors.at.len()),
+                &format!("normalized: the palette followed windows from {lo:.1} to {top:.1} over the dive, {} anchors", anchors.at.len()),
             );
         }
         Ok(format!(
-            "{written} frames assembled from {} into {} ({:.1} s of video; {:.1} fps, the GPU {:.1} ms a frame){}",
-            dir.display(),
+            "{written} frames into {} ({:.1} s of video in {:.1} s; the GPU {:.1} ms a frame){}",
             out.display(),
             written as f64 / fps,
-            written as f64 / secs,
+            secs,
             1000.0 * gpu_s / written.max(1) as f64,
             if normalize { ", palette normalized" } else { "" },
         ))

@@ -437,9 +437,20 @@ unchanged) and its row step as `map_s`.
   window ratio of 1000; a video DISSOLVES between the two across a factor of 2 either side
   (`log_weight`, through the colour pass's palette fade), so a dive across it never jumps. Each
   anchor is logged (`[fd-assemble] palette anchor at 2^L: window LO to TOP (W% log)`).
-- **Not yet:** rotation and tours on the command line, the sliding window that renders strips and
-  assembles in one step (no strips on disk), captions, the §8 gate run (a 1e100 dive at 1080p60
-  timed against `--render-tour`).
+- **One step, no strips on disk** (`--render-zoom-video F`, §6.1's sliding window): the dive is
+  planned as `--render-expmap` plans it (`plan_dive`, shared), its one reference built for the
+  deepest strip, and each strip rendered (`render_strip`, the same path) just before the first frame
+  that reads it — or the first palette anchor that does — straight into the GPU window
+  (`StripSource::Render`; `StripSource::Folder` is `--assemble`'s read-ahead). `--keep-strips DIR`
+  also writes them (Fractadyne format, with a manifest) for a later `--assemble DIR`. The 2^20
+  seahorse dive at 640x360: 30 strips and 601 frames in 7.5 s; assembling the kept strips again,
+  2.8 s. ⛔**Compare videos LOSSLESSLY**: the two videos at crf 18 "differed" on 24% of pixels by
+  up to 94 levels — x264's decisions cascade from any input difference until the next keyframe
+  (whole stretches matched exactly, others not) — while the same two at `--assemble-crf 0` match
+  on 563 of 601 frames exactly and differ on 0.00009% of pixels by at most 3 levels (the smooth
+  count: the in-memory strip carries the renderer's `sm.z`, a file `N + NF` rounded once).
+- **Not yet:** rotation and tours on the command line, captions, the §8 gate run (a 1e100 dive at
+  1080p60 timed against `--render-tour`).
 
 ## 9. Decisions for you
 

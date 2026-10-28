@@ -162,6 +162,63 @@ pub(crate) fn strip_caps(map: &ExpMap, strips: u64, width_px: f64, height_px: f6
     caps
 }
 
+/// Write strip `k` (rendered `r` from `req`) to `path` in `format`, atomically.
+#[allow(clippy::too_many_arguments)]
+pub(crate) fn write_strip_file(
+    path: &Path,
+    map: &ExpMap,
+    k: u64,
+    format: StripFormat,
+    power: f64,
+    centre: (&fractadyne_core::BigFloat, &fractadyne_core::BigFloat),
+    r: &fractadyne_gpu::ExportResult,
+    req: &fractadyne_gpu::ExportRequest,
+) -> Result<(), String> {
+    let meta = format!(
+        "expmap_strip={k}\nouter_log2={}\nmax_iter={}\nmode={}\nwidth={}\nrows={}\nformat={}\n",
+        map.outer_log2(k),
+        req.max_iter,
+        req.mode,
+        map.width,
+        map.rows,
+        format.name(),
+    );
+    let written = match format {
+        StripFormat::Fractadyne => {
+            fractadyne_export::write_exr_channels(path, map.width, map.rows, strip_channels(&r.pixels, &r.aux), Some(&meta))
+        }
+        StripFormat::Zoomasm => {
+            let centre = (fractadyne_core::to_f64(centre.0), fractadyne_core::to_f64(centre.1));
+            let s = crate::expmap_kf::KfStrip { map, k, power, centre };
+            let attrs = [
+                ("Iterations", req.max_iter.min(i32::MAX as u32) as i32),
+                ("IterationsBias", crate::expmap_kf::KF_ITERATIONS_BIAS),
+            ];
+            let ch = crate::expmap_kf::kf_channels(&r.pixels, &r.aux, &s);
+            fractadyne_export::write_exr_channels_with(path, map.width, map.rows, ch, Some(&meta), &attrs)
+        }
+    };
+    written.map_err(|e| format!("strip {k}: cannot write {}: {e}", path.display()))
+}
+
+/// A dive into the view as strips: what `plan_dive` works out once for every strip.
+pub(crate) struct DivePlan {
+    pub(crate) map: ExpMap,
+    /// The formula's power (2 for Mandelbrot, 3-8 for Multibrot 3-8).
+    pub(crate) power: f64,
+    pub(crate) strips: u64,
+    pub(crate) caps: Vec<u32>,
+    pub(crate) cx: fractadyne_core::BigFloat,
+    pub(crate) cy: fractadyne_core::BigFloat,
+    /// The frames the strips are for, in pixels.
+    pub(crate) frame: (f64, f64),
+    pub(crate) start_log2mag: f64,
+    pub(crate) end_log2mag: f64,
+    pub(crate) oversample: f64,
+    /// The manifest's `dive` object.
+    pub(crate) dive: serde_json::Value,
+}
+
 /// One rendered strip: the raw targets, the request, and whether it reused the dive's reference.
 pub(crate) struct StripRender {
     pub(crate) result: fractadyne_gpu::ExportResult,
@@ -301,25 +358,19 @@ impl crate::FractadyneApp {
         crate::render::build_reference_watching("fd-ref-expmap", inputs, None).reuse_ref()
     }
 
-    /// `--render-expmap DIR`. Returns the summary line, or why it could not render.
-    pub(crate) fn render_expmap_to_dir(
-        &mut self,
-        device: &eframe::wgpu::Device,
-        queue: &eframe::wgpu::Queue,
-        dir: &Path,
-    ) -> Result<String, String> {
+    /// The dive into the view, as `--render-expmap` and `--render-zoom-video` render it: the strips'
+    /// map, their count and caps, the centre and the manifest's description of the dive. Refuses
+    /// what the strip path cannot render (`what` names the flag in the message).
+    pub(crate) fn plan_dive(&self, format: StripFormat, what: &str) -> Result<DivePlan, String> {
         use crate::fractal::FractalKind as F;
         if self.julia_mode {
-            return Err("--render-expmap does not render Julia sets yet (zoom-video phase E0)".into());
+            return Err(format!("{what} does not render Julia sets yet (zoom video)"));
         }
         if !matches!(
             self.fractal,
             F::Mandelbrot | F::Multibrot3 | F::Multibrot4 | F::Multibrot5 | F::Multibrot6 | F::Multibrot7 | F::Multibrot8
         ) {
-            return Err(format!(
-                "--render-expmap renders Mandelbrot and Multibrot 3-8 only for now, not {} (zoom-video phase E0)",
-                self.fractal.name()
-            ));
+            return Err(format!("{what} renders Mandelbrot and Multibrot 3-8 only for now, not {} (zoom video)", self.fractal.name()));
         }
         let opts = self.render_cli.expmap_opts.clone();
         let (fw, fh) = (self.viewport.width_px, self.viewport.height_px);
@@ -330,7 +381,7 @@ impl crate::FractadyneApp {
                 opts.start_log2mag
             ));
         }
-        let map = match opts.format {
+        let map = match format {
             StripFormat::Fractadyne => ExpMap::for_frames(fw, fh, opts.oversample, opts.start_log2mag),
             StripFormat::Zoomasm => ExpMap::for_frames(fw, fh, opts.oversample, opts.start_log2mag).with_octave_rows(),
         };
@@ -344,21 +395,14 @@ impl crate::FractadyneApp {
             _ => 2.0,
         };
         let n = map.strips_to(end, fh);
-        let base = self.render_cfg.max_iter;
-        let caps = strip_caps(&map, n, fw, fh, base, opts.cap, opts.iter_given);
-        let (from, to) = opts.strips.unwrap_or((0, n - 1));
-        if from >= n {
-            return Err(format!("--expmap-strips starts at {from}, but this dive has {n} strips (0 to {})", n - 1));
-        }
-        let to = to.min(n - 1);
-        std::fs::create_dir_all(dir).map_err(|e| format!("cannot create {}: {e}", dir.display()))?;
+        let caps = strip_caps(&map, n, fw, fh, self.render_cfg.max_iter, opts.cap, opts.iter_given);
         let (cx, cy) = (self.viewport.center_x.clone(), self.viewport.center_y.clone());
         let dive = serde_json::json!({
             "fractal": self.fractal.name(),
             "center_re": fractadyne_core::to_decimal_string(&cx),
             "center_im": fractadyne_core::to_decimal_string(&cy),
             "frame": [fw, fh],
-            "format": opts.format.name(),
+            "format": format.name(),
             "oversample": opts.oversample,
             "start_log2mag": opts.start_log2mag,
             "end_log2mag": end,
@@ -369,6 +413,27 @@ impl crate::FractadyneApp {
             "cap_mode": match opts.cap { CapMode::Rising => "rising", CapMode::Fixed => "fixed" },
             "caps": caps,
         });
+        Ok(DivePlan { map, power, strips: n, caps, cx, cy, frame: (fw, fh), start_log2mag: opts.start_log2mag, end_log2mag: end, oversample: opts.oversample, dive })
+    }
+
+    /// `--render-expmap DIR`. Returns the summary line, or why it could not render.
+    pub(crate) fn render_expmap_to_dir(
+        &mut self,
+        device: &eframe::wgpu::Device,
+        queue: &eframe::wgpu::Queue,
+        dir: &Path,
+    ) -> Result<String, String> {
+        let opts = self.render_cli.expmap_opts.clone();
+        let plan = self.plan_dive(opts.format, "--render-expmap")?;
+        let (map, power, n, caps, cx, cy, dive) = (plan.map, plan.power, plan.strips, plan.caps, plan.cx, plan.cy, plan.dive);
+        let (fw, fh) = plan.frame;
+        let end = plan.end_log2mag;
+        let (from, to) = opts.strips.unwrap_or((0, n - 1));
+        if from >= n {
+            return Err(format!("--expmap-strips starts at {from}, but this dive has {n} strips (0 to {})", n - 1));
+        }
+        let to = to.min(n - 1);
+        std::fs::create_dir_all(dir).map_err(|e| format!("cannot create {}: {e}", dir.display()))?;
         write_or_check_manifest(dir, &map, opts.format, &dive)?;
         crate::diag::log_line(
             "expmap",
@@ -418,26 +483,7 @@ impl crate::FractadyneApp {
                 let t0 = std::time::Instant::now();
                 let s = self.render_strip(device, queue, &map, k, &cx, &cy, caps[k as usize], dive_ref.as_ref())?;
                 let (r, req) = (&s.result, &s.req);
-                let meta = format!(
-                    "expmap_strip={k}\nouter_log2={}\nmax_iter={}\nmode={}\nwidth={}\nrows={}\nformat={}\n",
-                    map.outer_log2(k), req.max_iter, req.mode, map.width, map.rows, opts.format.name(),
-                );
-                let written = match opts.format {
-                    StripFormat::Fractadyne => {
-                        fractadyne_export::write_exr_channels(&path, map.width, map.rows, strip_channels(&r.pixels, &r.aux), Some(&meta))
-                    }
-                    StripFormat::Zoomasm => {
-                        let centre = (fractadyne_core::to_f64(&cx), fractadyne_core::to_f64(&cy));
-                        let s = crate::expmap_kf::KfStrip { map: &map, k, power, centre };
-                        let attrs = [
-                            ("Iterations", req.max_iter.min(i32::MAX as u32) as i32),
-                            ("IterationsBias", crate::expmap_kf::KF_ITERATIONS_BIAS),
-                        ];
-                        let ch = crate::expmap_kf::kf_channels(&r.pixels, &r.aux, &s);
-                        fractadyne_export::write_exr_channels_with(&path, map.width, map.rows, ch, Some(&meta), &attrs)
-                    }
-                };
-                written.map_err(|e| format!("strip {k}: cannot write {}: {e}", path.display()))?;
+                write_strip_file(&path, &map, k, opts.format, power, (&cx, &cy), r, req)?;
                 let escaped = r.pixels.chunks_exact(4).filter(|p| p[0] >= 0.0).count();
                 crate::diag::log_line(
                     "expmap",
@@ -469,7 +515,7 @@ impl crate::FractadyneApp {
 /// Write the manifest, or check that the one already in `dir` describes the same dive in the same
 /// layout: a strip from another dive, or laid out another way, must never be taken for one of
 /// this dive's.
-fn write_or_check_manifest(dir: &Path, map: &ExpMap, format: StripFormat, dive: &serde_json::Value) -> Result<(), String> {
+pub(crate) fn write_or_check_manifest(dir: &Path, map: &ExpMap, format: StripFormat, dive: &serde_json::Value) -> Result<(), String> {
     let path: PathBuf = dir.join(MANIFEST);
     let (convention, channels) = manifest_convention(format);
     if let Ok(text) = std::fs::read_to_string(&path) {

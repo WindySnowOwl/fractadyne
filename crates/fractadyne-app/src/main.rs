@@ -256,7 +256,7 @@ fn main() -> eframe::Result<()> {
         // and each replays the one walk for its own radius. Anything else records only short
         // walks (`SA_TRACE_LIVE_STEPS`): a live dive rebuilds one point's reference many times,
         // and a long orbit's record would be large.
-        let tour = args.iter().any(|a| a == "--render-tour" || a == "--render-expmap");
+        let tour = args.iter().any(|a| a == "--render-tour" || a == "--render-expmap" || a == "--render-zoom-video");
         if tour {
             fractadyne_core::set_sa_trace_cache(tunables::cost().sa_trace == 1);
         } else {
@@ -768,7 +768,7 @@ const TASK_FLAGS: &[&str] = &[
     "--selftest", "--livetest", "--divetest", "--uitest", "--juliadive", "--dualsettle",
     "--play-tour",
     "--bench-matrix", "--benchmark", "--profile", "--reusetest", "--resizetest", "--frametest",
-    "--render", "--render-tour", "--render-expmap", "--assemble", "--torture", "--gputest", "--oomtest", "--refdiag",
+    "--render", "--render-tour", "--render-expmap", "--assemble", "--render-zoom-video", "--torture", "--gputest", "--oomtest", "--refdiag",
     "--find-minibrot", "--check-updates", "--crosscheck-f3", "--autodive", "--motiontest",
     "--zoomtest",
     "--chunk-sweep", "--deviceloss-repro", "--bench-bignum", "--shot", "--soak", "--pickcheck",
@@ -6954,11 +6954,18 @@ impl FractadyneApp {
             .position(|a| a == "--assemble")
             .and_then(|i| args.get(i + 1))
             .map(std::path::PathBuf::from);
+        // `--render-zoom-video F`: the dive into the view, as strips assembled into a video in one run.
+        let zoom_video = args
+            .iter()
+            .position(|a| a == "--render-zoom-video")
+            .and_then(|i| args.get(i + 1))
+            .map(std::path::PathBuf::from);
         let auto_render = args.iter().any(|a| a == "--render")
             || render_iter_mode
             || glitch_audit.is_some()
             || render_expmap.is_some()
-            || assemble_dir.is_some();
+            || assemble_dir.is_some()
+            || zoom_video.is_some();
         let selftest = args.iter().any(|a| a == "--selftest" || a == "--selftest-list");
         let profile = args.iter().any(|a| a == "--profile");
         let bench_matrix = args.iter().any(|a| a == "--bench-matrix");
@@ -7446,18 +7453,19 @@ impl FractadyneApp {
                 out: auto_render_out,
                 done: false,
                 iter_mode: render_iter_mode,
-                expmap_opts: if render_expmap.is_some() {
+                expmap_opts: if render_expmap.is_some() || zoom_video.is_some() {
                     expmap_render::ExpmapCli::from_args(args)
                 } else {
                     expmap_render::ExpmapCli::default()
                 },
                 expmap: render_expmap,
-                assemble_opts: if assemble_dir.is_some() {
+                assemble_opts: if assemble_dir.is_some() || zoom_video.is_some() {
                     assemble::AssembleCli::from_args(args)
                 } else {
                     assemble::AssembleCli::default()
                 },
                 assemble: assemble_dir,
+                zoom_video,
                 audit: glitch_audit,
                 audit_kind,
                 tour: render_tour,

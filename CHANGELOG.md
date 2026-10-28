@@ -63,7 +63,11 @@ Changes after 0.3.0-beta.1:
   strips `--render-expmap DIR` rendered into a video of the whole dive at a constant zoom speed
   (`--assemble-speed`, octaves a second; `--assemble-fps`), coloured with the current colouring and
   encoded by ffmpeg as the frames are made, with no folder of images in between. `--assemble-at L`
-  writes single frames instead. Each frame is assembled on the GPU from the nearest strip texel of
+  writes single frames instead. `--render-zoom-video dive.mp4` does it all in one run from the view
+  (`--center`, `--zoom`, `--size`): each strip is rendered just before the first frame that shows
+  it, so the dive needs no strips on disk (`--keep-strips DIR` keeps them, to recolour later with
+  `--assemble`); a 640x360 dive to 2^20 took 7.5 s, strips included. `--assemble-crf` sets the
+  video's quality (0 is lossless). Each frame is assembled on the GPU from the nearest strip texel of
   every sample and coloured by the same colour pass as an exported image; a 640x360 dive assembles
   at about 200 frames a second. Checked: every sample reads the texel the geometry says, and an
   assembled frame agrees with an ordinary render of the same view at least as well as that render
