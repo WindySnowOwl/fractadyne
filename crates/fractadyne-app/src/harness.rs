@@ -75,6 +75,7 @@ pub(crate) mod chunksweep;
 pub(crate) mod compare;
 pub(crate) mod crosscheck_f3;
 pub(crate) mod deviceloss_repro;
+pub(crate) mod assemble_check;
 pub(crate) mod expmap_check;
 pub(crate) mod glitchaudit;
 pub(crate) mod gputest;

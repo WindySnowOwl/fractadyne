@@ -611,7 +611,7 @@ impl FractadyneApp {
             "consistency", "counters", "iter-budget", "iter-chunk", "renorm", "live-split", "worker", "nr-zoom", "coords",
             "curated-poi", "ref-pick", "ref-reuse", "ref-overlap", "orbit-cache", "script", "metadata",
             "display", "catalog", "goldens", "bench-matrix", "live-res", "appearance",
-            "checklist", "replay", "settings-quarantine", "expmap",
+            "checklist", "replay", "settings-quarantine", "expmap", "assemble",
         ];
         if self.selftest.list {
             println!("selftest groups (use with --selftest-filter <substr>):");
@@ -7776,6 +7776,74 @@ impl FractadyneApp {
                 });
             }
             (self.fractal, self.julia_mode, self.render_cfg.max_iter, self.render_cfg.auto_iter, self.export.width) = saved;
+        }
+
+        // ⭐ZOOM-VIDEO ASSEMBLY (`design/zoom-video.md` §7, phase E2's gate; `harness/assemble_check`):
+        // every sample of an assembled frame reads the texel the CPU geometry names, and a real dive's
+        // assembled frames agree with flat renders at least as well as a third-of-a-pixel shift does.
+        if want("assemble") {
+            let saved = (self.fractal, self.julia_mode);
+            self.fractal = crate::fractal::FractalKind::Mandelbrot;
+            self.julia_mode = false;
+            let (result, pass) = match self.assemble_geometry_check(device, queue) {
+                Ok(c) => (
+                    format!(
+                        "{} frames, {} samples: {} wrong{}, {} excused at a texel's edge; DE err {:.2e}, normal err {:.2e}",
+                        c.frames,
+                        c.samples,
+                        c.wrong.len(),
+                        c.wrong.first().map(|w| format!(" ({w})")).unwrap_or_default(),
+                        c.excused,
+                        c.de_err,
+                        c.normal_err
+                    ),
+                    c.pass(),
+                ),
+                Err(e) => (format!("could not assemble: {e}"), false),
+            };
+            push_check(&mut checks, &mut last_check_t, SelfCheck {
+                category: "Zoom video",
+                name: "an assembled frame reads the texel the geometry names".into(),
+                params: "synthetic strips (each texel holds its own number) of a 96x54 dive, 24 strips; frames at 2^0, 2^2.37, 2^7.5, 2^11.91 turned 0.137, 2^18.25 and past the end, each at 1x1 and 2x2 samples"
+                    .into(),
+                result,
+                threshold: "every sample the texel ExpMap::locate names (within 1e-3 texel of an edge either); DE rescaled to the sample spacing within 1e-3 (log2); the normal turned with the frame within 1e-5"
+                    .into(),
+                pass,
+            });
+            let depths = [0.0, 4.5, 10.0, 15.5, 20.0];
+            match self.assemble_flat_check(device, queue, SX, SY, (160, 90), 20.0, 3_000, &depths) {
+                Ok(v) => {
+                    for c in v {
+                        push_check(&mut checks, &mut last_check_t, SelfCheck {
+                            category: "Zoom video",
+                            name: format!("an assembled frame at 2^{} is the flat render's picture", c.log2mag),
+                            params: format!("a dive into ({SX}, {SY}), 160x90 frames from 1x to 2^20, cap 3000, 1x1 samples"),
+                            result: format!(
+                                "interior agrees {:.2}% (control {:.2}%); within 0.1 iteration {:.1}% (control {:.1}%); DE bias {:+.4}; colour vs the export pass {}",
+                                100.0 * c.interior_agree,
+                                100.0 * c.control_interior_agree,
+                                100.0 * c.close,
+                                100.0 * c.control_close,
+                                c.de_bias,
+                                c.colour_diff
+                            ),
+                            threshold: "agrees with the flat render at least as well as the flat render moved (0.3, 0.2) px does (interior within 0.2 points, within-0.1 share within 1 point); log2 DE bias under 0.01; coloured identically to color_iter_buffer_ss"
+                                .into(),
+                            pass: c.pass(),
+                        });
+                    }
+                }
+                Err(e) => push_check(&mut checks, &mut last_check_t, SelfCheck {
+                    category: "Zoom video",
+                    name: "an assembled frame is the flat render's picture".into(),
+                    params: format!("a dive into ({SX}, {SY}), 160x90 frames from 1x to 2^20"),
+                    result: format!("could not assemble: {e}"),
+                    threshold: "assembles".into(),
+                    pass: false,
+                }),
+            }
+            (self.fractal, self.julia_mode) = saved;
         }
 
         // ⭐design/live-render-robustness.md §7.7 (W7): a relaunch after a session that did not end

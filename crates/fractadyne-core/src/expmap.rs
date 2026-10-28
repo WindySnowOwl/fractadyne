@@ -163,6 +163,36 @@ impl ExpMap {
         let diag = width_px.hypot(height_px);
         (Viewport::REFERENCE_HEIGHT * diag / (2.0 * height_px)).log2() - self.outer_log2(k)
     }
+
+    /// The texel nearest a point of the plane, for assembling frames from strips: the point is
+    /// `depth` octaves inside strip 0's outer radius (`r0_log2 − log2 r`, so the caller keeps the
+    /// large part of a deep radius exact) at `turns` of a full circle anticlockwise from the
+    /// positive real axis (any real; it wraps). Returns `(k, i, j)`: strip, column, row. `None`
+    /// outside strip 0 (`depth < 0`) or for a non-finite input.
+    ///
+    /// Nearest, not interpolated: a texel holds an iteration count, which must not be blended
+    /// (`design/zoom-video.md` §6.2). The texel whose sample point is nearest along each axis is
+    /// `floor(position + ½ − sample_offset)`: the one the position falls in for centre-sampled
+    /// texels, the nearer corner for corner-sampled ones (where a position in an octave strip's
+    /// last half row goes to the next strip's row 0, which samples the same circle). A conformal
+    /// strip's octave ends inside its overlap rows, so its rows never run out.
+    pub fn locate(&self, depth: f64, turns: f64) -> Option<(u64, u32, u32)> {
+        if !(depth >= 0.0) || !turns.is_finite() || depth > 1.0e15 {
+            return None;
+        }
+        let o = self.sample_offset();
+        let mut k = depth.floor();
+        let v = (depth - k) * self.rows_per_octave();
+        let mut j = (v + 0.5 - o).floor();
+        if j >= self.rows as f64 {
+            // Only an octave strip gets here: its last half row is the next strip's row 0.
+            k += 1.0;
+            j = 0.0;
+        }
+        let w = self.width as f64;
+        let i = (turns.rem_euclid(1.0) * w + 0.5 - o).floor().rem_euclid(w);
+        Some((k as u64, i as u32, j.max(0.0) as u32))
+    }
 }
 
 #[cfg(test)]

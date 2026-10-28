@@ -543,6 +543,11 @@ pub(crate) struct RenderCli {
     pub(crate) expmap: Option<std::path::PathBuf>,
     /// The `--expmap-*` options (read whether or not `expmap` is set; only it uses them).
     pub(crate) expmap_opts: crate::expmap_render::ExpmapCli,
+    /// `--assemble DIR`: a zoom video, or frames of one, from the strips in DIR (`assemble`,
+    /// `design/zoom-video.md` phase E2).
+    pub(crate) assemble: Option<std::path::PathBuf>,
+    /// The `--assemble-*` options.
+    pub(crate) assemble_opts: crate::assemble::AssembleCli,
     /// `--glitch-audit [N]` / `--tail-audit [N]`: instead of writing an image, check N of the pixels
     /// where two renders differ (and N controls) against the arbitrary-precision oracle
     /// (`glitchaudit`); `audit_kind` says which two.
@@ -649,6 +654,8 @@ impl crate::FractadyneApp {
                     self.run_glitch_audit(dev, q, n, self.render_cli.audit_kind)
                 } else if let Some(dir) = self.render_cli.expmap.clone() {
                     self.render_expmap_to_dir(dev, q, &dir).map_err(crate::error::AppError::Message)
+                } else if let Some(dir) = self.render_cli.assemble.clone() {
+                    self.assemble_from_dir(ctx, dev, q, &dir).map_err(crate::error::AppError::Message)
                 } else if self.render_cli.iter_mode {
                     let out = self
                         .render_cli.out

@@ -13,6 +13,8 @@ use egui_wgpu::wgpu;
 use egui_wgpu::{CallbackResources, CallbackTrait, ScreenDescriptor};
 use std::sync::Arc;
 
+mod assemble;
+pub use assemble::*;
 mod export;
 pub use export::*;
 /// The live renderer on a second device (design/multi-gpu-live.md L3).

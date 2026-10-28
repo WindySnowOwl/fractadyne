@@ -471,29 +471,7 @@ impl crate::FractadyneApp {
 /// this dive's.
 fn write_or_check_manifest(dir: &Path, map: &ExpMap, format: StripFormat, dive: &serde_json::Value) -> Result<(), String> {
     let path: PathBuf = dir.join(MANIFEST);
-    let (convention, channels) = match format {
-        StripFormat::Fractadyne => (
-            "texel (i, j) of strip k is at angle 2*pi*(i + 0.5)/width anticlockwise from the positive real axis and radius 2^(r0_log2 - k) * exp(-2*pi*(j + 0.5)/width) from the centre; row 0 is outermost; strip k's last rows overlap strip k+1's first",
-            serde_json::json!({
-                "N": "escape count (uint32); 4294967295 = never escaped (the cap was reached), 0 = glitched",
-                "NF": "fraction of the smooth count, 1 - nu; the smooth count is N + NF",
-                "T": "angle of the final z, in turns [0, 1)",
-                "DE": "log2 of the distance estimate in texels of this strip",
-                "NX": "slope normal, real part (the plane's frame)",
-                "NY": "slope normal, imaginary part",
-            }),
-        ),
-        StripFormat::Zoomasm => (
-            "Kalles Fraktaler's exponential map with the imaginary axis up (its ImagPointsUp: 1), for zoomasm: texel (i, j) of strip k is sampled at angle 2*pi*i/width CLOCKWISE from the positive real axis and radius 2^(r0_log2 - k - j/rows) from the centre; row 0 is outermost; one octave a strip, no overlap; strip 0 is the outermost (zoom-in order: leave zoomasm's Reverse and Flip boxes unticked)",
-            serde_json::json!({
-                "N": "escape count + IterationsBias (uint32), escaping at |z| > 10^(4/power); 4294967295 = never escaped, 0 = not computed (N0 and N1 instead, low and high words, when a count passes 4294967294)",
-                "NF": "1 - log_power(ln|z| / ln 10^(4/power)), in [0, 1); the smooth count is N - IterationsBias + NF",
-                "T": "fract(power * arg z / 2pi)",
-                "DEX": "distance estimate over KF's pixel (r * 2 / hypot(width, rows)), along the real axis",
-                "DEY": "the same along the imaginary axis, pointing up",
-            }),
-        ),
-    };
+    let (convention, channels) = manifest_convention(format);
     if let Ok(text) = std::fs::read_to_string(&path) {
         let old: serde_json::Value =
             serde_json::from_str(&text).map_err(|e| format!("{} is not a manifest this app can read: {e}", path.display()))?;
@@ -518,6 +496,34 @@ fn write_or_check_manifest(dir: &Path, map: &ExpMap, format: StripFormat, dive: 
     });
     let text = serde_json::to_string_pretty(&manifest).map_err(|e| e.to_string())? + "\n";
     std::fs::write(&path, text).map_err(|e| format!("cannot write {}: {e}", path.display()))
+}
+
+/// What a manifest says of a format's layout (`convention`, checked when a folder is reused and
+/// when one is assembled) and its channels.
+pub(crate) fn manifest_convention(format: StripFormat) -> (&'static str, serde_json::Value) {
+    match format {
+        StripFormat::Fractadyne => (
+            "texel (i, j) of strip k is at angle 2*pi*(i + 0.5)/width anticlockwise from the positive real axis and radius 2^(r0_log2 - k) * exp(-2*pi*(j + 0.5)/width) from the centre; row 0 is outermost; strip k's last rows overlap strip k+1's first",
+            serde_json::json!({
+                "N": "escape count (uint32); 4294967295 = never escaped (the cap was reached), 0 = glitched",
+                "NF": "fraction of the smooth count, 1 - nu; the smooth count is N + NF",
+                "T": "angle of the final z, in turns [0, 1)",
+                "DE": "log2 of the distance estimate in texels of this strip",
+                "NX": "slope normal, real part (the plane's frame)",
+                "NY": "slope normal, imaginary part",
+            }),
+        ),
+        StripFormat::Zoomasm => (
+            "Kalles Fraktaler's exponential map with the imaginary axis up (its ImagPointsUp: 1), for zoomasm: texel (i, j) of strip k is sampled at angle 2*pi*i/width CLOCKWISE from the positive real axis and radius 2^(r0_log2 - k - j/rows) from the centre; row 0 is outermost; one octave a strip, no overlap; strip 0 is the outermost (zoom-in order: leave zoomasm's Reverse and Flip boxes unticked)",
+            serde_json::json!({
+                "N": "escape count + IterationsBias (uint32), escaping at |z| > 10^(4/power); 4294967295 = never escaped, 0 = not computed (N0 and N1 instead, low and high words, when a count passes 4294967294)",
+                "NF": "1 - log_power(ln|z| / ln 10^(4/power)), in [0, 1); the smooth count is N - IterationsBias + NF",
+                "T": "fract(power * arg z / 2pi)",
+                "DEX": "distance estimate over KF's pixel (r * 2 / hypot(width, rows)), along the real axis",
+                "DEY": "the same along the imaginary axis, pointing up",
+            }),
+        ),
+    }
 }
 
 #[cfg(test)]

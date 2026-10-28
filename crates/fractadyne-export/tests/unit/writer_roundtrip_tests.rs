@@ -298,6 +298,19 @@ fn data_channels_roundtrip_exactly_and_leave_no_partial_file() {
     let (_, _, rf) = read_exr_channel_f32(&p, "NF").expect("read NF");
     assert_eq!(rf, f, "floats changed in the round trip");
     assert!(read_exr_channel_u32(&p, "NF").is_err(), "a float channel read as uint32");
+    // Every channel in one read, each in its own type: what assembly reads a strip with.
+    let (aw, ah, all) = read_exr_all_channels(&p).expect("read all");
+    assert_eq!((aw, ah), (w, h));
+    let mut names: Vec<&str> = all.iter().map(|(n, _)| n.as_str()).collect();
+    names.sort();
+    assert_eq!(names, ["N", "NF"]);
+    for (name, data) in &all {
+        match (name.as_str(), data) {
+            ("N", ExrChannelData::U32(v)) => assert_eq!(v, &n, "uint32 counts changed in the one-read path"),
+            ("NF", ExrChannelData::F32(v)) => assert_eq!(v, &f, "floats changed in the one-read path"),
+            _ => panic!("{name} came back in the wrong type"),
+        }
+    }
     assert_eq!(read_exr_metadata(&p).expect("meta").as_deref(), Some("expmap_strip=7\nmax_iter=9056\n"));
     assert_eq!(read_exr_int_attribute(&p, "Iterations").expect("attr"), None, "no attribute was asked for");
     // Kalles Fraktaler's integer header attributes, which zoomasm reads beside the channels.

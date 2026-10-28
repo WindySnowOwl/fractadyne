@@ -389,6 +389,45 @@ pub fn read_exr_channel_f32(path: &Path, name: &str) -> Result<(u32, u32, Vec<f3
     Ok((w as u32, h as u32, data))
 }
 
+/// Decode EVERY channel of an EXR's first valid layer in one read: `(width, height, [(name,
+/// data)])`, uint32 channels exactly and f16 widened to f32. For exponential-map strips, which
+/// assembly reads whole: [`read_exr_channel_f32`] decodes the entire file for each channel it is
+/// asked for.
+pub fn read_exr_all_channels(path: &Path) -> Result<(u32, u32, Vec<(String, ExrChannelData)>), ExportError> {
+    use exr::prelude::*;
+    check_file_bytes(path)?;
+    check_exr_dims(path)?;
+    let image = read()
+        .no_deep_data()
+        .largest_resolution_level()
+        .all_channels()
+        .first_valid_layer()
+        .all_attributes()
+        .from_file(path)?;
+    let layer = image.layer_data;
+    let (w, h) = (layer.size.0, layer.size.1);
+    if w == 0 || h == 0 {
+        return Err(ExportError::EmptyImage);
+    }
+    let mut out = Vec::with_capacity(layer.channel_data.list.len());
+    for c in layer.channel_data.list {
+        let data = match c.sample_data {
+            FlatSamples::F16(v) => ExrChannelData::F32(v.iter().map(|x| x.to_f32()).collect()),
+            FlatSamples::F32(v) => ExrChannelData::F32(v),
+            FlatSamples::U32(v) => ExrChannelData::U32(v),
+        };
+        let len = match &data {
+            ExrChannelData::F32(v) => v.len(),
+            ExrChannelData::U32(v) => v.len(),
+        };
+        if len != w * h {
+            return Err(ExportError::SizeMismatch { expected: w * h, got: len });
+        }
+        out.push((c.name.to_string(), data));
+    }
+    Ok((w as u32, h as u32, out))
+}
+
 /// List the channel names present in an EXR's first valid layer (diagnostics / discovery).
 pub fn list_exr_channels(path: &Path) -> Result<Vec<String>, ExportError> {
     use exr::prelude::*;

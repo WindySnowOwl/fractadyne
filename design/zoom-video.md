@@ -385,6 +385,49 @@ unchanged) and its row step as `map_s`.
   preset reads them). Shallow strips by perturbation or double-single, for KF's precision near the
   set (cost to measure).
 
+### 8.3 E2 as built so far (2026-10-28, branch `feat/zoom-video-e2`)
+
+`--assemble DIR --out F.mp4` (video) and `--assemble DIR --assemble-at L[,L…]` (PNG frames; with
+`--render-iter`, each frame's raw main target as an EXR), from Fractadyne-format strips on disk.
+
+- **Frame = reprojected main target + the app's colour pass.** `fs_color` knows nothing of the
+  plane: it reads a main target and assumes `ss×ss` texels a pixel. So the assembler fills a
+  FRAME-SHAPED main target, `(w·ss)×(h·ss)`, from the strips (`gpu/src/assemble.wgsl`, a module of
+  its own, nothing in `mandelbrot.wgsl` changed), and colours it with `fs_color` from the unchanged
+  iterate module, with the uniform `color_iter_buffer_ss` builds (`color_uniforms_for`, shared). §6.3's
+  "colour each strip once, then reproject colours" is NOT what was built: colouring after
+  reprojection gets every neighbourhood operation (relief's 3×3, the palette AA footprint) and the
+  distance estimate in frame samples for free, exactly as a flat render has them.
+- **Each sample takes its nearest texel** (`ExpMap::locate` is the CPU definition; the shader
+  mirrors it with its own atan, WGSL's is only promised to 4096 ULP). The distance estimate is
+  rescaled from the texel's radial size to the sample spacing; the normal is turned by −φ on a
+  rotated frame (rotation is in the GPU path, not yet on the command line).
+- **Depth is split** into whole octaves (i64, CPU) and a fraction, so a sample's own part stays an
+  f32 good to ~1e-3 of a row at any depth. The window is a ring of array layers (strip `k` in layer
+  `k mod layers`), `layers_for_frame` deep (11 at 640x360), with a 1e-4-octave margin each side
+  so a sample on an octave boundary always finds its strip.
+- **Strips are read ahead** on threads of their own (two beyond the window); frames go to ffmpeg
+  through a writer thread (`app/src/video_pipe.rs`: raw RGBA on stdin, the PNG path's ordered
+  dither, a `.partial` file renamed into place).
+- **Gates** (selftest group `assemble`; mutation-checked):
+  - synthetic strips whose every texel holds its own number: 155,520 samples over 12 frames (1x1
+    and 2x2 samples, a rotated frame, past the dive's end) read the texel `locate` names, 0 wrong
+    (9 within 1e-3 texel of an edge); DE rescale exact to 6e-7, normals to 2e-8. A half-texel
+    column shift: 77,593 wrong; the row step left out of the DE rescale: DE error 5.8.
+  - a real dive (160x90, cap 3000) at 2^0, 4.5, 10, 15.5, 20 against `render_iter` of the same frame,
+    with a CONTROL (the same flat render moved (0.3, 0.2) px): the assembled frame agrees with the
+    flat one at least as well as the control at every depth (within 0.1 iteration: 97.0/51.9/63.7/
+    63.8/8.2% vs the control's 93.2/33.6/56.3/51.2/4.5%), DE bias ≤ 0.0065 (the left-out row step:
+    +6.52), and the coloured frame is identical (max difference 0) to `color_iter_buffer_ss` on the
+    same samples. Sample-for-sample differences are large wherever pixels are chaotic, which is
+    why the check is relative to the control, not absolute.
+  - The same comparison at 640x360 by hand (the seahorse dive, fixed cap 5000) gave the same
+    ordering at all six depths.
+- **Speed:** a 640x360 dive assembles at ~200 frames a second (601 frames in 3 s on the 3080).
+- **Not yet:** rotation and tours on the command line, the sliding window that renders strips and
+  assembles in one step (no strips on disk), palette normalization over a dive, captions, the
+  §8 gate run (a 1e100 dive at 1080p60 timed against `--render-tour`).
+
 ## 9. Decisions for you
 
 **Decided 2026-10-27 (the user):**

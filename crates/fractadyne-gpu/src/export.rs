@@ -47,6 +47,10 @@ pub enum GpuError {
     /// signal — would wrongly abort honest work).
     #[error("GPU readback exceeded its deadline")]
     Deadline,
+    /// Zoom-video assembly could not make a frame: a strip missing from the window, or a window
+    /// this GPU cannot hold (`assemble.rs`).
+    #[error("zoom-video assembly: {0}")]
+    Assembly(String),
 }
 
 /// Guard the reference-orbit storage binding against the GPU's max binding size. The orbit and its
@@ -3835,6 +3839,48 @@ fn render_iter_passes(
     })
 }
 
+/// The colour pass's uniform for colouring a `w × h` image from an `ss`-supersampled main target
+/// with `req`'s colouring and an uploaded LUT of `lut_len` entries: no reprojection, the
+/// one-tap filter. [`color_iter_buffer_ss`]'s, and the zoom-video assembler's, so a frame
+/// assembled from strips is coloured exactly as a buffer handed to it would be.
+pub(crate) fn color_uniforms_for(req: &ExportRequest, ss: u32, w: u32, h: u32, lut_len: u32, lut_smooth: u32) -> ColorUniforms {
+    ColorUniforms {
+        lut_len,
+        cycle: req.cycle,
+        offset: req.offset,
+        ss,
+        light: req.light,
+        light_angle: req.light_angle,
+        light_height: req.light_height,
+        de_on: req.de_on,
+        de_strength: req.de_strength,
+        de_width: req.de_width,
+        de_phase: req.de_phase,
+        color_method: req.color_method,
+        aa_filter: 1,
+        reproject: 0,
+        uv_offset: [0.0, 0.0],
+        uv_scale: 1.0,
+        vig_on: req.vignette.on,
+        vig_dim: req.vignette.dim,
+        vig_soft: req.vignette.soft,
+        vig_center: req.vignette.center,
+        vig_radius: req.vignette.radius,
+        lut_smooth,
+        interior_col: req.interior_col,
+        out_res: [w as f32, h as f32],
+        norm_mode: req.norm_mode,
+        norm_lo: req.norm_lo,
+        aa_palette: req.aa_palette as u32,
+        fade_weight: req.palette_fade.weight,
+        fade_mode: req.palette_fade.mode,
+        fade_lo: req.palette_fade.lo,
+        fade_cycle: req.palette_fade.cycle,
+        fade_offset: req.palette_fade.offset,
+        _pad_fade: [0; 2],
+    }
+}
+
 /// Color an already-computed iteration buffer (main target, `w*h*4` floats: smooth-iter, normal.x,
 /// normal.y, DE) into a linear-RGBA image. The multi-reference glitch corrector merges several
 /// `render_iter` passes into one glitch-free buffer, then hands it here to be colored. Supports the
@@ -3891,41 +3937,7 @@ pub fn color_iter_buffer_ss(
     });
     let lut_buf = crate::make_lut_buffer(device);
     let (lut_len, lut_smooth) = crate::write_lut(queue, &lut_buf, &req.lut, req.lut_smooth);
-    let cu = ColorUniforms {
-        lut_len,
-        cycle: req.cycle,
-        offset: req.offset,
-        ss,
-        light: req.light,
-        light_angle: req.light_angle,
-        light_height: req.light_height,
-        de_on: req.de_on,
-        de_strength: req.de_strength,
-        de_width: req.de_width,
-        de_phase: req.de_phase,
-        color_method: req.color_method,
-        aa_filter: 1,
-        reproject: 0,
-        uv_offset: [0.0, 0.0],
-        uv_scale: 1.0,
-        vig_on: req.vignette.on,
-        vig_dim: req.vignette.dim,
-        vig_soft: req.vignette.soft,
-        vig_center: req.vignette.center,
-        vig_radius: req.vignette.radius,
-        lut_smooth,
-        interior_col: req.interior_col,
-        out_res: [w as f32, h as f32],
-        norm_mode: req.norm_mode,
-        norm_lo: req.norm_lo,
-        aa_palette: req.aa_palette as u32,
-        fade_weight: req.palette_fade.weight,
-        fade_mode: req.palette_fade.mode,
-        fade_lo: req.palette_fade.lo,
-        fade_cycle: req.palette_fade.cycle,
-        fade_offset: req.palette_fade.offset,
-        _pad_fade: [0; 2],
-    };
+    let cu = color_uniforms_for(req, ss, w, h, lut_len, lut_smooth);
     queue.write_buffer(&color_uniform, 0, bytemuck::bytes_of(&cu));
 
     // Upload the merged iteration buffer into a sampled texture; a zeroed aux (unused for the

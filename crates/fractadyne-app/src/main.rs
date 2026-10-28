@@ -67,6 +67,7 @@ mod diag;
 mod color_picker;
 mod error;
 mod exec_resolve;
+mod assemble;
 mod expmap_kf;
 mod expmap_render;
 mod eyedropper;
@@ -91,6 +92,7 @@ mod icons_coverage;
 mod refcache_persist;
 mod render;
 mod update;
+mod video_pipe;
 mod scripting;
 mod session_outcome;
 mod sysinfo;
@@ -766,7 +768,7 @@ const TASK_FLAGS: &[&str] = &[
     "--selftest", "--livetest", "--divetest", "--uitest", "--juliadive", "--dualsettle",
     "--play-tour",
     "--bench-matrix", "--benchmark", "--profile", "--reusetest", "--resizetest", "--frametest",
-    "--render", "--render-tour", "--render-expmap", "--torture", "--gputest", "--oomtest", "--refdiag",
+    "--render", "--render-tour", "--render-expmap", "--assemble", "--torture", "--gputest", "--oomtest", "--refdiag",
     "--find-minibrot", "--check-updates", "--crosscheck-f3", "--autodive", "--motiontest",
     "--zoomtest",
     "--chunk-sweep", "--deviceloss-repro", "--bench-bignum", "--shot", "--soak", "--pickcheck",
@@ -6946,10 +6948,17 @@ impl FractadyneApp {
             .position(|a| a == "--render-expmap")
             .and_then(|i| args.get(i + 1))
             .map(std::path::PathBuf::from);
+        // `--assemble DIR`: a zoom video (or frames) from a dive's strips (`assemble`).
+        let assemble_dir = args
+            .iter()
+            .position(|a| a == "--assemble")
+            .and_then(|i| args.get(i + 1))
+            .map(std::path::PathBuf::from);
         let auto_render = args.iter().any(|a| a == "--render")
             || render_iter_mode
             || glitch_audit.is_some()
-            || render_expmap.is_some();
+            || render_expmap.is_some()
+            || assemble_dir.is_some();
         let selftest = args.iter().any(|a| a == "--selftest" || a == "--selftest-list");
         let profile = args.iter().any(|a| a == "--profile");
         let bench_matrix = args.iter().any(|a| a == "--bench-matrix");
@@ -7443,6 +7452,12 @@ impl FractadyneApp {
                     expmap_render::ExpmapCli::default()
                 },
                 expmap: render_expmap,
+                assemble_opts: if assemble_dir.is_some() {
+                    assemble::AssembleCli::from_args(args)
+                } else {
+                    assemble::AssembleCli::default()
+                },
+                assemble: assemble_dir,
                 audit: glitch_audit,
                 audit_kind,
                 tour: render_tour,

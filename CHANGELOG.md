@@ -59,6 +59,16 @@ published as the pre-releases `v0.2.41-beta.1` to `v0.2.41-beta.150`, and a "bet
 
 Changes after 0.3.0-beta.1:
 
+- **Zoom videos made in the app (0.3.0-beta.22).** `--assemble DIR --out dive.mp4` turns the
+  strips `--render-expmap DIR` rendered into a video of the whole dive at a constant zoom speed
+  (`--assemble-speed`, octaves a second; `--assemble-fps`), coloured with the current colouring and
+  encoded by ffmpeg as the frames are made, with no folder of images in between. `--assemble-at L`
+  writes single frames instead. Each frame is assembled on the GPU from the nearest strip texel of
+  every sample and coloured by the same colour pass as an exported image; a 640x360 dive assembles
+  at about 200 frames a second. Checked: every sample reads the texel the geometry says, and an
+  assembled frame agrees with an ordinary render of the same view at least as well as that render
+  moved by a third of a pixel does. Smooth, distance, relief and glow colourings (not stripe, TIA,
+  trap or decomposition, whose per-orbit statistics a strip does not keep).
 - **Zoom videos: strips in zoomasm's format (0.3.0-beta.22).** `--render-expmap DIR
   --expmap-format zoomasm` writes the strips in Kalles Fraktaler's EXR layout (`N`, `NF`, `T`,
   `DEX`, `DEY`, one octave a strip), the input zoomasm assembles into a video with its own
