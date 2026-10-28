@@ -735,6 +735,19 @@ impl FractadyneApp {
                             ui.close_menu();
                         }
                         // Enabled while a render runs too: it is how to get back to its progress.
+                        if ui
+                            .button(if self.zoom_video.child.is_some() {
+                                format!("{}  ({})", tr!(menu_tools_render_zoom_video), tr!(menu_state_rendering))
+                            } else {
+                                tr!(menu_tools_render_zoom_video)
+                            })
+                            .on_hover_text(tr!(menu_tools_render_zoom_video_hover))
+                            .clicked()
+                        {
+                            self.open_zoom_video();
+                            ui.close_menu();
+                        }
+                        // Enabled while a render runs too: it is how to get back to its progress.
                         ui.add_enabled_ui(self.playback.is_some() || self.tour_render.child.is_some(), |ui| {
                             if ui
                                 .button(if self.tour_render.child.is_some() {

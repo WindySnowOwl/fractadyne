@@ -24,6 +24,7 @@ pub(crate) mod blinken_overlay;
 pub(crate) mod misiurewicz_explorer;
 pub(crate) mod timestamp_overlay;
 pub(crate) mod tour_render;
+pub(crate) mod zoom_video;
 pub(crate) mod farm_client;
 pub(crate) mod farm_controller;
 mod second_gpu;
