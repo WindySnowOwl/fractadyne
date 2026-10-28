@@ -35,6 +35,12 @@ pub(crate) struct AssembleCli {
     pub(crate) keep: Option<PathBuf>,
     /// `--assemble-crf N`: H.264 quality, 0 (lossless) to 51 (default 18, the tour export's).
     pub(crate) crf: Option<u32>,
+    /// `--assemble-tour T`: the video follows tour T's timeline (its keyframes' zooms, times, holds
+    /// and easing; every frame on the dive's centre).
+    pub(crate) tour: Option<PathBuf>,
+    /// `--assemble-rotate R`: the frame turns R turns an octave of zoom (the plane turns clockwise on
+    /// screen when R is positive).
+    pub(crate) rotate: Option<f64>,
 }
 
 impl AssembleCli {
@@ -65,6 +71,15 @@ impl AssembleCli {
             o.speed = Some(v);
         }
         o.keep = val("--keep-strips").map(PathBuf::from);
+        o.tour = val("--assemble-tour").map(PathBuf::from);
+        if let Some(s) = val("--assemble-rotate") {
+            let r: f64 = crate::arg_parse("--assemble-rotate", s, "turns an octave");
+            if !r.is_finite() || r.abs() > 100.0 {
+                eprintln!("fractadyne: --assemble-rotate: {r} is outside -100 to 100 turns an octave.");
+                crate::exit(2)
+            }
+            o.rotate = Some(r);
+        }
         if let Some(s) = val("--assemble-crf") {
             let q: u32 = crate::arg_parse("--assemble-crf", s, "an H.264 quality, 0 (lossless) to 51");
             if q > 51 {
@@ -97,6 +112,8 @@ pub(crate) struct Dive {
     pub(crate) start_log2mag: f64,
     pub(crate) end_log2mag: f64,
     pub(crate) fractal: String,
+    /// The dive's centre, as the manifest writes it (decimal).
+    pub(crate) centre: (String, String),
 }
 
 /// Read `dir`'s manifest: a dive of Fractadyne's own strips, in the layout this app reads.
@@ -132,6 +149,10 @@ pub(crate) fn read_dive(dir: &Path) -> Result<Dive, String> {
         start_log2mag: num("start_log2mag")?,
         end_log2mag: num("end_log2mag")?,
         fractal: d.get("fractal").and_then(|v| v.as_str()).unwrap_or("Mandelbrot").to_string(),
+        centre: (
+            d.get("center_re").and_then(|v| v.as_str()).ok_or_else(|| format!("{} has no center_re", path.display()))?.to_string(),
+            d.get("center_im").and_then(|v| v.as_str()).ok_or_else(|| format!("{} has no center_im", path.display()))?.to_string(),
+        ),
     })
 }
 
@@ -734,7 +755,7 @@ impl crate::FractadyneApp {
             // EXR, as `--render-iter` writes a flat render's: the two compare sample for sample.
             let raw = self.render_cli.iter_mode;
             for &l in &opts.at {
-                let place = placement(&dive.map, l, dive.frame.1, ss, 0.0);
+                let place = placement(&dive.map, l, dive.frame.1, ss, opts.rotate.unwrap_or(0.0) * (l - dive.start_log2mag));
                 self.fill_window(&mut asm, &mut src, device, queue, &place, 0)?;
                 let ext = if raw { "exr" } else { "png" };
                 let path = if several { out.join(format!("frame_{l:.3}.{ext}")) } else { out.clone() };
@@ -775,6 +796,17 @@ impl crate::FractadyneApp {
         queue: &eframe::wgpu::Queue,
         out: &Path,
     ) -> Result<String, String> {
+        // Options a one-step video cannot honour are refused, never silently ignored.
+        let eo = &self.render_cli.expmap_opts;
+        if eo.format != StripFormat::Fractadyne {
+            return Err("--render-zoom-video assembles Fractadyne's own strips; --expmap-format zoomasm is for --render-expmap".into());
+        }
+        if eo.strips.is_some() {
+            return Err("--render-zoom-video renders the whole dive; --expmap-strips is for --render-expmap".into());
+        }
+        if !self.render_cli.assemble_opts.at.is_empty() {
+            return Err("--render-zoom-video makes a video; for single frames render the strips (--render-expmap DIR), then --assemble DIR --assemble-at".into());
+        }
         let plan = self.plan_dive(StripFormat::Fractadyne, "--render-zoom-video")?;
         let keep = self.render_cli.assemble_opts.keep.clone();
         if let Some(dir) = &keep {
@@ -790,6 +822,7 @@ impl crate::FractadyneApp {
             start_log2mag: plan.start_log2mag,
             end_log2mag: plan.end_log2mag,
             fractal: self.fractal.name().to_string(),
+            centre: (fractadyne_core::to_decimal_string(&plan.cx), fractadyne_core::to_decimal_string(&plan.cy)),
         };
         let (mut asm, ss, colour) = self.begin_assembly(ctx, device, &dive, "rendering")?;
         crate::diag::log_line(
@@ -841,6 +874,59 @@ impl crate::FractadyneApp {
         result
     }
 
+    /// The video's frames, as `(log2 magnification, turns)`, its frame rate, and a description for
+    /// the log: the whole dive at a constant zoom speed (`--assemble-speed`), or tour T's timeline
+    /// (`--assemble-tour`: its keyframes' zooms, times, holds and easing, at its own frame rate unless
+    /// `--assemble-fps` says otherwise), turning `--assemble-rotate` turns an octave either way.
+    /// A tour must stay on the dive's centre and inside its depths: a strip video cannot pan.
+    pub(crate) fn video_frames(opts: &AssembleCli, dive: &Dive) -> Result<(Vec<(f64, f64)>, f64, String), String> {
+        let spin = opts.rotate.unwrap_or(0.0);
+        let turns = |l: f64| spin * (l - dive.start_log2mag);
+        let Some(path) = &opts.tour else {
+            let fps = opts.fps.unwrap_or(30.0);
+            let speed = opts.speed.unwrap_or(1.0);
+            let frames = dive_frames(dive.start_log2mag, dive.end_log2mag, speed, fps).into_iter().map(|l| (l, turns(l))).collect();
+            return Ok((
+                frames,
+                fps,
+                format!("{speed} octaves a second (2^{:.2} to 2^{:.2})", dive.start_log2mag, dive.end_log2mag),
+            ));
+        };
+        let pb = crate::scripting::parse_tour_file(path)?;
+        let fps = opts.fps.or(pb.render.fps).unwrap_or(30.0);
+        let n = crate::scripting::tour_frame_count(pb.total, fps);
+        let p = fractadyne_core::precision_for_octaves(dive.end_log2mag.max(0.0) as u64 + 64);
+        let parse = |s: &str| fractadyne_core::parse_bf_prec(s, p).ok_or_else(|| format!("the dive's centre {s} is unreadable"));
+        let (cx, cy) = (parse(&dive.centre.0)?, parse(&dive.centre.1)?);
+        let mut frames = Vec::with_capacity(n as usize);
+        for f in 0..n {
+            let t = (f as f64 / fps).min(pb.total);
+            let s = pb.sample(t);
+            let l = s.logmag / std::f64::consts::LN_2;
+            if l < dive.start_log2mag - 1e-6 || l > dive.end_log2mag + 1e-6 {
+                return Err(format!(
+                    "{} reaches 2^{l:.2} at {t:.2} s, outside the dive's 2^{:.2} to 2^{:.2}",
+                    path.display(),
+                    dive.start_log2mag,
+                    dive.end_log2mag
+                ));
+            }
+            // On the centre to within a thousandth of a pixel of the frame it is at.
+            let pixel_log2 = (Viewport::REFERENCE_HEIGHT / dive.frame.1).log2() - l;
+            let off = fractadyne_core::log2_abs(&fractadyne_core::bf_sub(&s.cx, &cx, p))
+                .max(fractadyne_core::log2_abs(&fractadyne_core::bf_sub(&s.cy, &cy, p)));
+            if off > pixel_log2 - 10.0 {
+                return Err(format!(
+                    "{} is off the dive's centre at {t:.2} s (by 2^{off:.1}; a pixel there is 2^{pixel_log2:.1}): a zoom video \
+                     from strips dives into one point, so start the tour where its last pan ends",
+                    path.display()
+                ));
+            }
+            frames.push((l, turns(l)));
+        }
+        Ok((frames, fps, format!("the timeline of {} ({:.1} s)", path.display(), pb.total)))
+    }
+
     /// The whole dive as a video at a constant zoom speed (`--assemble-speed`, `--assemble-fps`),
     /// piped to ffmpeg as each frame is made; the palette normalized over it when asked.
     #[allow(clippy::too_many_arguments)]
@@ -859,28 +945,19 @@ impl crate::FractadyneApp {
         let (fw, fh) = (dive.frame.0 as u32, dive.frame.1 as u32);
         let normalize = self.assembly_normalizes();
         let mut anchors = NormAnchors::new(dive.start_log2mag, dive.end_log2mag);
-        let fps = opts.fps.unwrap_or(30.0);
-        let speed = opts.speed.unwrap_or(1.0);
-        let frames = dive_frames(dive.start_log2mag, dive.end_log2mag, speed, fps);
+        let (frames, fps, how) = Self::video_frames(&opts, dive)?;
         let pipe = crate::video_pipe::VideoPipe::start(out, fw, fh, fps, opts.crf.unwrap_or(18))?;
         crate::diag::log_line(
             "assemble",
-            &format!(
-                "{} frames at {fps} fps, {speed} octaves a second (2^{:.2} to 2^{:.2}) → {} (ffmpeg: {})",
-                frames.len(),
-                dive.start_log2mag,
-                dive.end_log2mag,
-                out.display(),
-                pipe.ffmpeg.display()
-            ),
+            &format!("{} frames at {fps} fps, {how} → {} (ffmpeg: {})", frames.len(), out.display(), pipe.ffmpeg.display()),
         );
         let progress = Arc::new(AtomicU32::new(0));
         let _pump = crate::diag::progress_pump("assemble", progress.clone());
         let t0 = std::time::Instant::now();
         let mut gpu_s = 0.0f64;
         let mut range_seen: Option<(f32, f32)> = None;
-        for (f, &l) in frames.iter().enumerate() {
-            let place = placement(&dive.map, l, dive.frame.1, ss, 0.0);
+        for (f, &(l, turns)) in frames.iter().enumerate() {
+            let place = placement(&dive.map, l, dive.frame.1, ss, turns);
             self.fill_window(asm, src, device, queue, &place, 2)?;
             let mut c = colour.clone();
             if normalize {

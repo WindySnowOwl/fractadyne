@@ -19,6 +19,8 @@ fn manifest(map: &ExpMap, format: &str, convention: &str, rows: u32) -> String {
         "convention": convention,
         "dive": {
             "fractal": "Mandelbrot",
+            "center_re": "-0.75",
+            "center_im": "0.1",
             "format": format,
             "frame": [640.0, 360.0],
             "oversample": 1.0,
@@ -41,6 +43,7 @@ fn a_dive_is_read_only_in_the_layout_assembly_reads() {
     std::fs::write(d.join(MANIFEST), manifest(&map, "fractadyne", ours, map.rows)).unwrap();
     let dive = read_dive(&d).expect("our own strips");
     assert_eq!(dive.map, map);
+    assert_eq!(dive.centre, ("-0.75".to_string(), "0.1".to_string()));
     assert_eq!((dive.strips, dive.frame, dive.end_log2mag), (30, (640.0, 360.0), 20.0));
 
     std::fs::write(d.join(MANIFEST), manifest(&map, "zoomasm", ours, map.rows)).unwrap();
@@ -265,4 +268,71 @@ fn the_assembly_options_read_as_given() {
     assert_eq!(o.keep, Some(PathBuf::from("k")));
     let none = AssembleCli::from_args(&["--assemble".to_string(), "d".to_string()]);
     assert!(none.at.is_empty() && none.fps.is_none() && none.keep.is_none() && none.crf.is_none());
+}
+
+/// A dive whose strips run from 1× to 2^12 at a centre written as the manifest writes it.
+fn dive_at(centre: (&str, &str)) -> Dive {
+    let map = ExpMap::for_frames(64.0, 36.0, 1.0, 0.0);
+    Dive {
+        dir: PathBuf::new(),
+        map,
+        strips: map.strips_to(12.0, 36.0),
+        frame: (64.0, 36.0),
+        oversample: 1.0,
+        start_log2mag: 0.0,
+        end_log2mag: 12.0,
+        fractal: "Mandelbrot".into(),
+        centre: (centre.0.into(), centre.1.into()),
+    }
+}
+
+/// A two-keyframe tour on `(re, im)`: 1× held 1 s, then to `zoom` arriving at `t` with `ease`.
+fn tour_file(tag: &str, re: &str, im: &str, zoom: &str, t: f64, ease: &str) -> PathBuf {
+    let d = tmp(tag);
+    let p = d.join("tour.toml");
+    let text = format!(
+        "format_version = 2\nname = \"t\"\n[render]\nfps = 10\n[[keyframe]]\nt = 0.0\nfractal = \"Mandelbrot\"\nre = \"{re}\"\nim = \"{im}\"\nzoom = 1.0\nhold = 1.0\n[[keyframe]]\nt = {t}\nzoom = \"{zoom}\"\nease = \"{ease}\"\n"
+    );
+    std::fs::write(&p, text).unwrap();
+    p
+}
+
+#[test]
+fn a_straight_dive_turns_as_asked_and_a_tour_sets_the_depth_of_every_frame() {
+    let dive = dive_at(("-0.75", "0.1"));
+    // A straight dive, half a turn an octave.
+    let opts = AssembleCli { fps: Some(10.0), speed: Some(2.0), rotate: Some(0.5), ..Default::default() };
+    let (frames, fps, _) = crate::FractadyneApp::video_frames(&opts, &dive).unwrap();
+    assert_eq!((frames.len(), fps), (61, 10.0));
+    assert_eq!(frames[0], (0.0, 0.0));
+    assert_eq!(frames[60], (12.0, 6.0));
+    assert!(frames.iter().all(|&(l, t)| (t - 0.5 * l).abs() < 1e-12));
+
+    // A tour: held at 1× for a second, then a linear zoom to 2^10 arriving at 6 s, at its own 10 fps.
+    let path = tour_file("tour", "-0.75", "0.1", "1024", 6.0, "linear");
+    let opts = AssembleCli { tour: Some(path.clone()), ..Default::default() };
+    let (frames, fps, how) = crate::FractadyneApp::video_frames(&opts, &dive).unwrap();
+    assert_eq!((frames.len(), fps), (61, 10.0), "{how}");
+    assert!(frames[..=10].iter().all(|&(l, _)| l.abs() < 1e-9), "the hold: 1x for the first second");
+    assert!((frames[35].0 - 5.0).abs() < 1e-9, "halfway through the move: 2^5, {}", frames[35].0);
+    assert!((frames[60].0 - 10.0).abs() < 1e-9);
+    // --assemble-fps overrides the tour's rate.
+    let opts = AssembleCli { tour: Some(path), fps: Some(20.0), ..Default::default() };
+    assert_eq!(crate::FractadyneApp::video_frames(&opts, &dive).unwrap().0.len(), 121);
+}
+
+#[test]
+fn a_tour_that_pans_or_dives_past_the_strips_is_refused() {
+    let dive = dive_at(("-0.75", "0.1"));
+    // Off the centre by 1e-5: a ten-thousandth of a pixel at 1x, a tenth of one at 2^10.
+    let off = tour_file("off", "-0.74999", "0.1", "1024", 6.0, "linear");
+    let err = crate::FractadyneApp::video_frames(&AssembleCli { tour: Some(off), ..Default::default() }, &dive).unwrap_err();
+    assert!(err.contains("off the dive's centre"), "{err}");
+    // Deeper than the dive's strips go.
+    let deep = tour_file("deep", "-0.75", "0.1", "1e6", 6.0, "linear");
+    let err = crate::FractadyneApp::video_frames(&AssembleCli { tour: Some(deep), ..Default::default() }, &dive).unwrap_err();
+    assert!(err.contains("outside the dive"), "{err}");
+    // The same centre written to more digits is the same point.
+    let same = tour_file("same", "-0.750000000000000000000", "0.10000000000000000000", "1024", 6.0, "linear");
+    assert!(crate::FractadyneApp::video_frames(&AssembleCli { tour: Some(same), ..Default::default() }, &dive).is_ok());
 }

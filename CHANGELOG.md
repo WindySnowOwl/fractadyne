@@ -67,7 +67,11 @@ Changes after 0.3.0-beta.1:
   (`--center`, `--zoom`, `--size`): each strip is rendered just before the first frame that shows
   it, so the dive needs no strips on disk (`--keep-strips DIR` keeps them, to recolour later with
   `--assemble`); a 640x360 dive to 2^20 took 7.5 s, strips included. `--assemble-crf` sets the
-  video's quality (0 is lossless). Each frame is assembled on the GPU from the nearest strip texel of
+  video's quality (0 is lossless). `--assemble-tour T.toml` follows a tour's timeline (its zooms,
+  holds and easing) instead of a constant speed, as long as the tour stays on the dive's centre, and
+  `--assemble-rotate R` turns the picture R turns an octave as it dives. Measured on a dive to
+  4.7e99× at 320x180 and 30 frames a second: 62 s from nothing to the finished video, against 15
+  minutes for rendering its frames one by one as a tour. Each frame is assembled on the GPU from the nearest strip texel of
   every sample and coloured by the same colour pass as an exported image; a 640x360 dive assembles
   at about 200 frames a second. Checked: every sample reads the texel the geometry says, and an
   assembled frame agrees with an ordinary render of the same view at least as well as that render

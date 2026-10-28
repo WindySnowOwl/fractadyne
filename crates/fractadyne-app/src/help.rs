@@ -284,6 +284,8 @@ pub(crate) const CLI_REFERENCE: &[CliRef] = {
         Flag("--assemble-at L[,L...]", "Instead of a video, assemble single frames at these log2 magnifications, as PNGs: into --out (a file for one frame, a folder for several)."),
         Flag("--assemble-fps N", "Frames a second (default 30)."),
         Flag("--assemble-speed X", "Octaves of zoom a second (default 1): the video lasts (end - start) / X seconds."),
+        Flag("--assemble-tour T.toml", "Follow tour T's timeline instead of a constant speed: its keyframes' zooms, times, holds and easing, at its frame rate (unless --assemble-fps). Every frame must be on the dive's centre and inside its depths: a strip video cannot pan, so start the tour where its last pan ends."),
+        Flag("--assemble-rotate R", "Turn the picture R turns an octave of zoom as the video dives (the plane turns clockwise on screen for positive R; relief lighting stays fixed to the screen)."),
         Flag("--assemble-crf N", "H.264 quality, 0-51 (default 18, visually near-lossless; 0 is lossless, and large). Lower is better and bigger; 6 more halves the size, roughly."),
         Flag("--keep-strips DIR", "With --render-zoom-video: write the strips to DIR as well (Fractadyne's format), so --assemble DIR can recolour the video later without rendering again."),
         Flag("--assemble-ss N", "Samples a pixel along each axis, 1-8 (default: the strips' --expmap-oversample). More than the strips were oversampled repeats texels near the frame's corners."),

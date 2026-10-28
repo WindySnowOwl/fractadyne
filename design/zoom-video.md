@@ -449,8 +449,23 @@ unchanged) and its row step as `map_s`.
   (whole stretches matched exactly, others not) — while the same two at `--assemble-crf 0` match
   on 563 of 601 frames exactly and differ on 0.00009% of pixels by at most 3 levels (the smooth
   count: the in-memory strip carries the renderer's `sm.z`, a file `N + NF` rounded once).
-- **Not yet:** rotation and tours on the command line, captions, the §8 gate run (a 1e100 dive at
-  1080p60 timed against `--render-tour`).
+- **Tours and rotation** (§6.4): `--assemble-tour T` takes each frame's depth from the tour's own
+  playback (`Playback::sample`: keyframe zooms, times, holds, easing; the tour's fps unless
+  `--assemble-fps`), and REFUSES a tour that leaves the dive's centre by more than a thousandth of a
+  pixel of the frame it is at, or goes outside the strips' depths — a strip video cannot pan (start
+  the tour where its last pan ends). `--assemble-rotate R`: R turns an octave (the GPU path had
+  rotation from the start; normals turn with the frame, so relief light stays fixed to the screen).
+  Captions, callouts and the tour's palettes are not applied yet.
+- **§8's gate at reduced size (2026-10-28, the 3080):** the 1e100 dive into the target of
+  `tours/dive-to-view-star-e98.toml` (4.70e99×, 331.1 octaves) at 320x180, 30 fps, 1 octave a
+  second, a fixed cap of 20,000, normalized. `--render-zoom-video`: **62.5 s** in all — 340 strips
+  in 33.8 s (12 direct, 79 df32 perturbation, 249 floatexp; median 107 ms a floatexp strip) and
+  9,934 frames assembled (2.7 ms of GPU a frame) and encoded. `--render-tour` of the same dive (a
+  two-keyframe tour on the same centre, linear zoom, the same cap and size, ss 1): **919 s** for its
+  9,935 PNG frames, without encoding — **14.7× slower**. The frames LOOKED right at every depth (the
+  e98 stars, the palette anchored once an octave from 190–239 at 2^40 to 2229–2280 at 2^320).
+- **Not yet:** captions/callouts/palettes from a tour; the gate at full size (1080p60: strips 36×
+  the texels; the first heavy run of deep strips at that size — PLUTO, or with the user's go-ahead).
 
 ## 9. Decisions for you
 
