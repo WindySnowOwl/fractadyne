@@ -68,10 +68,14 @@ Changes after 0.3.0-beta.1:
   and `--render-zoom-video F … --gpus all`. The dive is planned once and every machine checks its
   own plan against it; every strip a machine returns is checked whole before it is kept (its
   SHA-256, every channel, its own strip number and iteration cap), and a machine that sends bad
-  ones is removed. A stopped job resumes from its folder. On one graphics card the strips a farm
+  ones is removed. A stopped job resumes from its folder. The deepest strips, the slowest, are
+  handed out first, so the cheap shallow ones fill the end. On one graphics card the strips a farm
   renders are identical in every channel to the strips one machine renders: every run now uses the
   dive's one reference, built for its deepest strip, whichever strips it renders
-  (`--expmap-strips` used to build its own for the deepest strip of the range). Also fixed for
+  (`--expmap-strips` used to build its own for the deepest strip of the range). Measured with a
+  second machine and its two graphics cards: a dive to 2^60 at 720p, 71 strips in 104 s on three
+  cards; the strips from the NVIDIA cards had this machine's iteration counts on every point, and
+  in the video the AMD card's strips differed in scattered single pixels of fine detail. Also fixed for
   every farm job: a client sending a large file could not send its heartbeat until the file was
   done, and a controller that heard nothing for 10 seconds dropped it.
 - **Zoom videos: deep dives several times faster, and the graphics card checked before Render

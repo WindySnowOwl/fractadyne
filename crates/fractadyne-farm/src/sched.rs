@@ -65,6 +65,12 @@ pub struct Config {
     /// A run's unrendered tail is stolen only when at least this many frames would remain after the
     /// frame being rendered.
     pub steal_min: u64,
+    /// Hand the job out from its END: each new run takes the highest frames still free. For a zoom
+    /// video's strips, the deepest — the slowest — go first, so the cheap shallow ones fill the end
+    /// and no machine is left on a long strip while the others wait. A run is still rendered in
+    /// ascending order, so stealing its second half works as for any run. Not for tours: runs are
+    /// not kept off dissolves.
+    pub from_end: bool,
 }
 
 impl Config {
@@ -87,6 +93,7 @@ impl Config {
             no_start: Vec::new(),
             holds: Vec::new(),
             steal_min: 4,
+            from_end: false,
         }
     }
 }
@@ -720,21 +727,36 @@ impl Scheduler {
     }
 
     /// Give client `id` its next run, if there is one it may take — at `at` when that is free.
+    /// How many frames client `id`'s next run should cover: its first runs' length, then what its
+    /// measured pace fits in the run target — smaller toward the end, so the last frames spread.
+    fn run_len(&self, id: ClientId, active: usize) -> u64 {
+        let pending = self.frames.iter().filter(|f| **f == FrameState::Pending).count() as u64;
+        let len = match self.clients[&id].ewma_ms {
+            None => self.cfg.first_run,
+            Some(ms) => ((self.cfg.run_target.as_millis() as f64 / ms.max(1.0)) as u64).clamp(self.cfg.min_run, self.cfg.max_run),
+        };
+        len.min((pending / (2 * active.max(1) as u64)).max(1))
+    }
+
     fn assign_one(&mut self, id: ClientId, active: usize, now: Instant, out: &mut Vec<Command>, at: Option<u64>) -> bool {
+        // From the end (`Config::from_end`): the highest frames still free, a run reaching down from
+        // them. A steal (`at`) still takes the run's tail it was given.
+        if self.cfg.from_end && at.is_none() {
+            let Some(top) = (0..self.cfg.frames).rev().find(|&i| self.assignable(i, id)) else { return false };
+            let (end, len) = (top + 1, self.run_len(id, active));
+            let mut first = end;
+            while first > 0 && end - first < len && self.assignable(first - 1, id) {
+                first -= 1;
+            }
+            return self.commit_run(id, first, first, end, now, out);
+        }
         let Some(first) = at.filter(|&a| self.assignable(a, id)).or_else(|| self.pick_start(id)) else { return false };
         // No run starts on a dissolve frame: lead in from the frame the dissolve rises through.
         let mut lead = first;
         while lead > 0 && self.no_start(lead) {
             lead -= 1;
         }
-        let pending = self.frames.iter().filter(|f| **f == FrameState::Pending).count() as u64;
-        let c = &self.clients[&id];
-        let mut len = match c.ewma_ms {
-            None => self.cfg.first_run,
-            Some(ms) => ((self.cfg.run_target.as_millis() as f64 / ms.max(1.0)) as u64).clamp(self.cfg.min_run, self.cfg.max_run),
-        };
-        // Toward the end, smaller runs so the last frames spread across machines.
-        len = len.min((pending / (2 * active.max(1) as u64)).max(1));
+        let len = self.run_len(id, active);
         let mut end = first;
         while end < self.cfg.frames && end - first < len && self.assignable(end, id) {
             end += 1;
@@ -743,6 +765,11 @@ impl Scheduler {
         while end < self.cfg.frames && self.no_start(end) && self.assignable(end, id) {
             end += 1;
         }
+        self.commit_run(id, first, lead, end, now, out)
+    }
+
+    /// Give client `id` frames `[first, end)` as a run (rendered from `lead`), and say so.
+    fn commit_run(&mut self, id: ClientId, first: u64, lead: u64, end: u64, now: Instant, out: &mut Vec<Command>) -> bool {
         if end == first {
             return false;
         }

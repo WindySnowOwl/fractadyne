@@ -598,6 +598,20 @@ frames, and this machine assembles the video when the last one is in.
     finished. The tour `--farmtest` passes unchanged after the controller's refactor.
   - Fixed on the way: a resume of an already complete job (tour or strips) printed "complete"
     twice — `periodic` finished it again after `start_job` had.
+- **Two machines (2026-10-28, dev.55):** this machine (RTX 3080, controller + a local client) and
+  PLUTO through the field agent (RX 6800 XT on AMD 26.10.1, RTX 3070 on NVIDIA 617.14, a session
+  each): the user's view to 2^60 at 1280x720, 50,000 iterations — 71 strips of 4614×511 in 104 s
+  (43 here, 16 on the 3070, 12 on the 6800 XT), then the 1,801-frame video here. Against this
+  machine alone: the 3080's and the 3070's strips identical in N on every texel; the 6800 XT's
+  differ on 13% (31% in its worst strip). In the VIDEO, frames assembled where its strips show
+  (2^28–2^40): 14–38% of pixels differ at all, 0.6–3.1% by more than 8/255, 0.2–1.7% by more than
+  32/255 (mean 0.65–1.98/255); frames where none show (2^12, 2^44, 2^50) identical. ⭐LOOKED at
+  2^31 side by side with a difference map: scattered single pixels in the filaments and on the
+  minibrot's edge, no ring where its strips meet the others. Motion not judged.
+- **Deepest strips first** (`sched::Config::from_end`, after the user's ask the same day): each new
+  run takes the highest strips still free, so the slowest go out first and the cheap shallow ones
+  fill the end; a run is still rendered ascending, so stealing its tail works unchanged. The
+  scheduler's chaos test runs both ways.
 - **Not in E4:** assembly pipelined with strips arriving (the frames wait for the last strip);
   a pre-build of a very deep dive's reference on the controller, and picking up a shared orbit
   mid-build (tours have both); keeping a dive on one GPU class (strips from two classes meet at a

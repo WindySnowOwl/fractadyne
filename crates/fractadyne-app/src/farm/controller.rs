@@ -1611,6 +1611,10 @@ impl Controller<'_> {
         // run is reassigned only after 15 minutes without one, unless `--stall` says otherwise.
         if self.strips.is_some() {
             cfg.stall_floor = cfg.stall_floor.max(Duration::from_secs(900));
+            // The deepest strips, the slowest, first: the cheap shallow ones fill the end, and no
+            // machine is left on a long strip while the others wait (the video waits for every
+            // strip whatever the order).
+            cfg.from_end = true;
         }
         if let Some(s) = number::<u32>(&self.args, "--strikes") {
             cfg.strikes_to_remove = s.max(1);
