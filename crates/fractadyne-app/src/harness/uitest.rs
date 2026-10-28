@@ -86,6 +86,9 @@ enum Screen {
     /// Tools ▸ Render zoom video…, ⚠SEEDED with a deep view and a render in progress, so the walk
     /// photographs the summary and the progress bar (it starts no render).
     ZoomVideo,
+    /// The same dialog SEEDED with a video no card can hold (5120x2880 at 2x: a strip wider than
+    /// 32768 texels), so the walk photographs the refusal and the disabled Render.
+    ZoomVideoRefused,
     /// File ▸ Render client… and Tools ▸ Render on farm…, ⚠SEEDED with a sample status (a client
     /// mid-job; a job with machines of two GPU classes and one removed): no farm is started in the
     /// walk, and the empty windows would photograph forms around no data.
@@ -837,6 +840,7 @@ fn build_steps() -> Vec<Step> {
         screen("script-to-view", Screen::ScriptExport),
         screen("tour-render", Screen::TourRender),
         screen("zoom-video", Screen::ZoomVideo),
+        screen("zoom-video-refused", Screen::ZoomVideoRefused),
         screen("farm-client", Screen::FarmClient),
         screen("farm-client-gpus", Screen::FarmClientGpus),
         screen("farm-client-find", Screen::FarmClientFind),
@@ -1464,6 +1468,7 @@ impl FractadyneApp {
             // dialog read its tour from the player, and the walk plays none (found 2026-10-04).
             Screen::TourRender => self.uitest_seed_tour_render(),
             Screen::ZoomVideo => self.uitest_seed_zoom_video(),
+            Screen::ZoomVideoRefused => self.uitest_seed_zoom_video_refused(),
             Screen::FarmClient => self.uitest_seed_farm_client(),
             Screen::FarmClientGpus => self.uitest_seed_farm_client_gpus(),
             Screen::FarmClientFind => self.uitest_seed_farm_client_find(),

@@ -1577,8 +1577,8 @@ impl FractadyneApp {
     /// nominal steps/s figure the Fraktaler-3 throughput gap is measured in, and the shader
     /// event counters (execution proof — a zero counter on a path the render claims to
     /// exercise means dead code). Logged un-gated per export (exports are rare) and appended
-    /// to logs/perf.jsonl under FRACTADYNE_PERF=1.
-    fn log_export_perf(
+    /// to logs/perf.jsonl under FRACTADYNE_PERF=1. Each zoom-video strip logs one too.
+    pub(crate) fn log_export_perf(
         kind: &str,
         req: &fractadyne_gpu::ExportRequest,
         r: &fractadyne_gpu::ExportResult,

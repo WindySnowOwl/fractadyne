@@ -2372,6 +2372,14 @@ zoom-video-summary =
 zoom-video-memory = ≈{ $size } GB of graphics memory for the strips in view
 # The disk space the kept strips take (an estimate). $size: a number of gigabytes.
 zoom-video-disk = ≈{ $size } GB of strips on disk
+# $width: texels around a strip; $limit: the graphics card's largest texture side.
+zoom-video-too-wide = A strip would be { $width } texels around, more than this graphics card's { $limit }: lower the size or the anti-aliasing.
+# $width × $height: the frame's samples; $limit: the graphics card's largest texture side.
+zoom-video-grid-too-big = The frames' samples ({ $width }×{ $height }) are more than this graphics card's { $limit }-texel textures hold: lower the size or the anti-aliasing.
+# $need, $have: gigabytes ("17.6", "10.0").
+zoom-video-too-much-memory = The strips in view need ≈{ $need } GB of graphics memory, more than this card's { $have } GB can spare: lower the size or the anti-aliasing.
+# $have: the card's gigabytes ("10.0").
+zoom-video-memory-tight = That is most of this card's { $have } GB, and the picture behind this dialog holds some too: if the render runs out, it stops and says so.
 zoom-video-separate = Renders in a separate process, coloured as the view is now (the session is saved first) — a lost GPU device there cannot take this session with it.
 # $done, $total: frames.
 zoom-video-progress = { $done } / { $total } frames

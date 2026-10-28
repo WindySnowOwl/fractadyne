@@ -6585,6 +6585,10 @@ struct FractadyneApp {
     /// `max_texture_dimension_2d` this device was created with — the ceiling a window's surface
     /// must stay under. 0 means "unknown".
     max_texture_dim: u32,
+    /// While a zoom-video strip renders: the df32 perturbation band (`1e4×` to `PERT_FE_THRESHOLD`)
+    /// renders as FLOATEXP perturbation with BLA off (see `render_strip`). Set and cleared there
+    /// only; every other render leaves it false.
+    strip_floatexp: bool,
     /// Last logged `(width_pt, height_pt, pixels_per_point)`, so the size log records CHANGES
     /// rather than a line per frame.
     last_window_geom: Option<(f32, f32, f32)>,
@@ -7651,6 +7655,7 @@ impl FractadyneApp {
             // Set once `app` is built (below), because the interface's language is chosen while it is.
             pending_toast: None,
             max_texture_dim: 0, // the device's, set by `attach_gpu`
+            strip_floatexp: false,
             last_window_geom: None,
             last_good_view: [None, None],
             view_guard_trips: 0,

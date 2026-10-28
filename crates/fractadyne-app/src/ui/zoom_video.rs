@@ -89,9 +89,54 @@ pub(crate) fn zoom_video_plan(z: &ZoomVideoUi) -> (u64, f64, u64, u32, u32, u64)
     let strips = map.strips_to(z.end_log2, z.height as f64);
     let seconds = (z.end_log2 - z.start_log2).max(0.0) / z.speed.max(1e-9);
     let frames = crate::assemble::dive_frames(z.start_log2, z.end_log2.max(z.start_log2 + 1e-9), z.speed.max(1e-9), z.fps).len() as u64;
-    let layers = fractadyne_gpu::layers_for_frame(z.width * z.ss, z.height * z.ss) as u64;
-    let gpu = layers * map.width as u64 * map.rows as u64 * 16;
+    let layers = fractadyne_gpu::layers_for_frame(z.width * z.ss, z.height * z.ss);
+    let gpu = fractadyne_gpu::window_bytes(crate::assemble::shape_of_map(&map, strips), layers);
     (frames, seconds, strips, map.width, map.rows, gpu)
+}
+
+/// Whether this graphics card can render the video the dialog describes.
+#[derive(Debug, PartialEq)]
+pub(crate) enum CardFit {
+    Fits,
+    /// It may: the strip window takes most of the card's memory (the reason, to show).
+    Tight(String),
+    /// It cannot (the reason, to show): Render is disabled.
+    Refused(String),
+}
+
+/// Of the window's share of the card's memory: above `TIGHT` the dialog warns, above `REFUSE` it
+/// refuses. The render needs more than the window (a strip's tiles, the frame, the orbit) and the
+/// app's own picture holds memory too. Measured on a 10 GB RTX 3080: a 4.4 GB window ran; a
+/// 17.6 GB one failed its allocation.
+const TIGHT: f64 = 0.6;
+const REFUSE: f64 = 0.9;
+
+/// Checks the video against this card before Render: a strip or the frames' sample grid larger
+/// than its textures (`max_dim`; 0 = unknown, not checked) — `--render-zoom-video` would refuse it
+/// only after building its reference — and the strip window against its memory (`vram` bytes; 0 =
+/// unknown, not checked), which would otherwise fail its allocation one second in.
+pub(crate) fn zoom_video_fit(z: &ZoomVideoUi, max_dim: u32, vram: u64) -> CardFit {
+    let (_, _, _, sw, rows, gpu) = zoom_video_plan(z);
+    let gb = |b: u64| crate::i18n::decimal(b as f64 / (1u64 << 30) as f64, 1);
+    if max_dim > 0 {
+        if sw > max_dim || rows > max_dim {
+            return CardFit::Refused(tr!(zoom_video_too_wide, width = sw.to_string(), limit = max_dim.to_string()));
+        }
+        let (gw, gh) = (z.width * z.ss.max(1), z.height * z.ss.max(1));
+        if gw > max_dim || gh > max_dim {
+            return CardFit::Refused(tr!(zoom_video_grid_too_big, width = gw.to_string(), height = gh.to_string(), limit = max_dim.to_string()));
+        }
+    }
+    if vram > 0 {
+        let share = gpu as f64 / vram as f64;
+        if share > REFUSE {
+            return CardFit::Refused(tr!(zoom_video_too_much_memory, need = gb(gpu), have = gb(vram)));
+        }
+        if share > TIGHT {
+            return CardFit::Tight(tr!(zoom_video_memory_tight, have = gb(vram)));
+        }
+    }
+    CardFit::Fits
 }
 
 /// The `--render-zoom-video` argument list this dialog describes, shared by "Render" and "Copy
@@ -230,6 +275,7 @@ impl FractadyneApp {
             return;
         }
         let running = self.zoom_video.child.is_some();
+        let card = (self.max_texture_dim, self.sysinfo.vram_mb << 20);
         let mut open = self.zoom_video.open;
         let (mut go, mut stop, mut browse, mut browse_keep, mut copy_cmd, mut close_dialog) = (false, false, false, false, false, false);
         egui::Window::new(tr!(zoom_video_title))
@@ -376,6 +422,10 @@ impl FractadyneApp {
                     let disk = strips * sw as u64 * sh as u64 * 11;
                     ui.label(egui::RichText::new(tr!(zoom_video_disk, size = gb(disk))).monospace().weak());
                 }
+                let fit = zoom_video_fit(z, card.0, card.1);
+                if let CardFit::Tight(why) | CardFit::Refused(why) = &fit {
+                    ui.colored_label(egui::Color32::from_rgb(0xE0, 0xA0, 0x30), egui::RichText::new(format!("⚠ {why}")).small());
+                }
                 ui.label(egui::RichText::new(tr!(zoom_video_separate)).weak().small());
 
                 if running || !z.progress.is_empty() {
@@ -407,7 +457,7 @@ impl FractadyneApp {
                 }
 
                 ui.separator();
-                let can = z.unsupported.is_none() && !z.out.trim().is_empty();
+                let can = z.unsupported.is_none() && !z.out.trim().is_empty() && !matches!(fit, CardFit::Refused(_));
                 crate::theme::action_row(ui, |ui| {
                     if !running && crate::theme::cancel_button(ui, &tr!(zoom_video_cancel)).clicked() {
                         close_dialog = true;

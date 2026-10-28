@@ -61,3 +61,26 @@ fn the_summary_is_the_dive_the_command_line_will_render() {
     let (_, _, _, w2, _, gpu2) = zoom_video_plan(&ZoomVideoUi { ss: 2, ..dialog() });
     assert!(w2 > w * 2 - 2 && gpu2 > gpu * 4);
 }
+
+/// The user's three tries on a 10 GB RTX 3080 (2026-10-28), at 2× anti-aliasing: 5120x2880 was
+/// refused by the render after 13 s (a strip wider than the card's 32768-texel textures),
+/// 3840x2160 crashed allocating a ~17.6 GB window, 1920x1080 ran with a 4.4 GB one. The dialog
+/// must say the first two before Render, and let the third go.
+#[test]
+fn the_dialog_refuses_what_the_card_cannot_hold_before_render() {
+    const DIM: u32 = 32768;
+    const VRAM: u64 = 10 << 30;
+    let at = |width, height| ZoomVideoUi { width, height, ss: 2, end_log2: 120.7, ..dialog() };
+    let five_k = at(5120, 2880);
+    let (_, _, _, sw, _, _) = zoom_video_plan(&five_k);
+    assert!(sw > DIM, "the 5K strip is {sw} texels around");
+    assert!(matches!(zoom_video_fit(&five_k, DIM, VRAM), CardFit::Refused(_)), "5K at 2x: a strip wider than the textures");
+    let four_k = at(3840, 2160);
+    let (_, _, _, sw, _, gpu) = zoom_video_plan(&four_k);
+    assert!(sw <= DIM && gpu > VRAM, "4K at 2x fits the textures but not the memory ({gpu} bytes)");
+    assert!(matches!(zoom_video_fit(&four_k, DIM, VRAM), CardFit::Refused(_)), "4K at 2x: the window exceeds the card");
+    assert_eq!(zoom_video_fit(&at(1920, 1080), DIM, VRAM), CardFit::Fits, "1080p at 2x ran on this card");
+    // A smaller card warns at the same video; an unknown one is not judged.
+    assert!(matches!(zoom_video_fit(&at(1920, 1080), DIM, 6 << 30), CardFit::Tight(_)));
+    assert_eq!(zoom_video_fit(&four_k, 0, 0), CardFit::Fits, "nothing known, nothing refused");
+}

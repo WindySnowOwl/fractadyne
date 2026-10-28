@@ -34,6 +34,8 @@ const DEEP_BOUNDARY_DE_LOG2: f32 = -30.0;
 pub(crate) struct StripCheck {
     /// The request's arithmetic mode (1 direct, 0 df32 perturbation, 2 floatexp).
     pub(crate) mode: u32,
+    /// The request had a BLA table (the df32 band's strips render as floatexp with it off).
+    pub(crate) bla: bool,
     /// The strip rendered on the dive's reference (a perturbation strip must: it is what a dive does).
     pub(crate) reused: bool,
     pub(crate) width: u32,
@@ -117,6 +119,7 @@ impl crate::FractadyneApp {
         let stride = ((w * map.rows as usize) / (samples * 6)).max(1);
         let mut c = StripCheck {
             mode: req.mode,
+            bla: req.bla_on != 0,
             reused: s.reused,
             width: map.width,
             rows: map.rows,

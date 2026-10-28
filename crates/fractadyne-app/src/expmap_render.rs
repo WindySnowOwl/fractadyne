@@ -309,15 +309,16 @@ impl crate::FractadyneApp {
         self.export.width = map.width;
         let budget = crate::render::IterBudget { max_iter: cap, auto_iter: false };
         let mut reused = false;
-        let mut req = match (dive_ref, self.export_reference_inputs_for(&vp, false, budget)) {
+        let floatexp_chunks = device.limits().max_color_attachment_bytes_per_sample >= 64;
+        let mut req = self.with_strip_arithmetic(&vp, floatexp_chunks, |app| match (dive_ref, app.export_reference_inputs_for(&vp, false, budget)) {
             (Some(dr), Some(inputs)) => {
                 let res = crate::render::build_reference_watching("fd-ref-expmap", inputs.with_reuse(dr.clone()), None);
                 reused = res.was_reused();
-                self.current_export_request_with_ref(&vp, false, Some(res))
+                app.current_export_request_with_ref(&vp, false, Some(res))
             }
             // The direct path (no reference at all), or no dive reference: build as an export does.
-            _ => self.current_export_request_for(&vp, false),
-        };
+            _ => app.current_export_request_for(&vp, false),
+        });
         req.width = map.width;
         req.height = map.rows;
         req.ss = 1;
@@ -337,6 +338,9 @@ impl crate::FractadyneApp {
                 r.tiles_chunked, r.tiles_total
             ));
         }
+        // Where a strip's time goes (GPU time, passes, BLA skips, rebases, capped texels and
+        // iterations a loop trip): a deep dive's strips cost minutes each, and this says why.
+        Self::log_export_perf(&format!("strip {k}"), &req, &r);
         Ok(StripRender { result: r, req, reused })
     }
 
@@ -356,6 +360,34 @@ impl crate::FractadyneApp {
         self.render_cfg.auto_iter = false;
         let inputs = self.export_reference_inputs_for(&vp, false, crate::render::IterBudget { max_iter: cap, auto_iter: false })?;
         crate::render::build_reference_watching("fd-ref-expmap", inputs, None).reuse_ref()
+    }
+
+    /// Run `f` (which builds a strip's request) with a STRIP'S ARITHMETIC in force: a strip in the
+    /// df32 perturbation band (`1e4×` to `PERT_FE_THRESHOLD`) renders as floatexp perturbation with
+    /// BLA off; any other strip as an export at its depth would.
+    ///
+    /// ⭐Measured 2026-10-28, a user's 1080p dive at 2x (strips of 13842x1529, ~160,000 iterations):
+    /// df32 strips ran on the corrector's iteration-sized tiles (`CORRECT_WORK_BUDGET` / cap: ~111 px,
+    /// 1,800 tiles a strip, a few percent of the GPU each), 81-209 s a strip at depths 2^34-2^70.
+    /// The floatexp path's occupancy-sized, step-bounded tiles (7 a strip, ≤240 ms a dispatch) take
+    /// 26-45 s — 3-5x — and its full steps are df32 too: 99.998% of texels came out identical, and
+    /// against the bignum oracle every judged texel scored as the df32 strip's did. BLA is off
+    /// because the df32 band never had it, and with it a strip is a different picture: up to 2.7x
+    /// faster again on the deepest of those strips, but off by up to 10 iterations on 5% of the
+    /// texels near a minibrot (2^34) where df32 matched the oracle.
+    ///
+    /// `floatexp_chunks`: the device holds the floatexp chunk state (64 bytes a sample against
+    /// df32's 48); without it the strip stays df32, which a strip must chunk in.
+    pub(crate) fn with_strip_arithmetic<T>(&mut self, vp: &Viewport, floatexp_chunks: bool, f: impl FnOnce(&mut Self) -> T) -> T {
+        let as_floatexp = floatexp_chunks && self.render_mode(self.fractal, false, vp.magnification()) == crate::RenderMode::Df32Pert;
+        let saved = (self.strip_floatexp, self.render_cfg.use_bla);
+        if as_floatexp {
+            self.strip_floatexp = true;
+            self.render_cfg.use_bla = false;
+        }
+        let r = f(self);
+        (self.strip_floatexp, self.render_cfg.use_bla) = saved;
+        r
     }
 
     /// The dive into the view, as `--render-expmap` and `--render-zoom-video` render it: the strips'
