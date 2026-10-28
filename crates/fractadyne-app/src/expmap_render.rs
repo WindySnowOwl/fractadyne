@@ -363,30 +363,28 @@ impl crate::FractadyneApp {
     }
 
     /// Run `f` (which builds a strip's request) with a STRIP'S ARITHMETIC in force: a strip in the
-    /// df32 perturbation band (`1e4×` to `PERT_FE_THRESHOLD`) renders as floatexp perturbation with
-    /// BLA off; any other strip as an export at its depth would.
+    /// df32 perturbation band (`1e4×` to `PERT_FE_THRESHOLD`) renders as floatexp perturbation, with
+    /// BLA as `render_cfg.use_bla` says (`--bla` / `--no-bla`; the dialog's box, on by default); any
+    /// other strip as an export at its depth would.
     ///
     /// ⭐Measured 2026-10-28, a user's 1080p dive at 2x (strips of 13842x1529, ~160,000 iterations):
     /// df32 strips ran on the corrector's iteration-sized tiles (`CORRECT_WORK_BUDGET` / cap: ~111 px,
     /// 1,800 tiles a strip, a few percent of the GPU each), 81-209 s a strip at depths 2^34-2^70.
     /// The floatexp path's occupancy-sized, step-bounded tiles (7 a strip, ≤240 ms a dispatch) take
-    /// 26-45 s — 3-5x — and its full steps are df32 too: 99.998% of texels came out identical, and
-    /// against the bignum oracle every judged texel scored as the df32 strip's did. BLA is off
-    /// because the df32 band never had it, and with it a strip is a different picture: up to 2.7x
-    /// faster again on the deepest of those strips, but off by up to 10 iterations on 5% of the
-    /// texels near a minibrot (2^34) where df32 matched the oracle.
+    /// 26-45 s with BLA off — 3-5x — and its full steps are df32 too: 99.998% of texels came out
+    /// identical, and against the bignum oracle every judged texel scored as the df32 strip's did.
+    /// With BLA a strip is a different picture: 17-27 s at 2^45-2^70 (closer to the oracle than df32
+    /// there), but 64 s at 2^34, off by up to 10 iterations on 5% of the texels near a minibrot
+    /// where df32 matched the oracle. The user chose BLA on by default, as an option.
     ///
     /// `floatexp_chunks`: the device holds the floatexp chunk state (64 bytes a sample against
     /// df32's 48); without it the strip stays df32, which a strip must chunk in.
     pub(crate) fn with_strip_arithmetic<T>(&mut self, vp: &Viewport, floatexp_chunks: bool, f: impl FnOnce(&mut Self) -> T) -> T {
         let as_floatexp = floatexp_chunks && self.render_mode(self.fractal, false, vp.magnification()) == crate::RenderMode::Df32Pert;
-        let saved = (self.strip_floatexp, self.render_cfg.use_bla);
-        if as_floatexp {
-            self.strip_floatexp = true;
-            self.render_cfg.use_bla = false;
-        }
+        let saved = self.strip_floatexp;
+        self.strip_floatexp |= as_floatexp;
         let r = f(self);
-        (self.strip_floatexp, self.render_cfg.use_bla) = saved;
+        self.strip_floatexp = saved;
         r
     }
 

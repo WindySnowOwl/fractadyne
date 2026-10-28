@@ -7726,22 +7726,26 @@ impl FractadyneApp {
                 self.render_cfg.max_iter,
                 self.render_cfg.auto_iter,
                 self.export.width,
+                self.render_cfg.use_bla,
             );
             self.fractal = crate::fractal::FractalKind::Mandelbrot;
             self.julia_mode = false;
-            // (regime, centre, layout, strip, cap, the mode the strip must render in, and BLA where
-            // it is the point). Frames of 160×90 from 1×: 577-texel strips, so each strip is quick and the
-            // oracle samples a whole one. A strip in the df32 band renders as floatexp with BLA off
-            // (`with_strip_arithmetic`). The zoomasm format's octave strips sample texel CORNERS
-            // (Kalles Fraktaler's convention): the last case judges that placement.
+            // (regime, centre, layout, strip, cap, the mode the strip must render in, BLA asked for
+            // (`--bla` / `--no-bla`), and BLA where it is the point). Frames of 160×90 from 1×:
+            // 577-texel strips, so each strip is quick and the oracle samples a whole one. A strip in
+            // the df32 band renders as floatexp, BLA as asked (`with_strip_arithmetic`): the oracle
+            // judges it without BLA, and the check after these the BLA strip against that one. The
+            // zoomasm format's octave strips sample texel CORNERS (Kalles Fraktaler's convention):
+            // the last case judges that placement.
             use fractadyne_core::StripRows::{Conformal, Octave};
             let cases = [
-                ("direct", SX, SY, Conformal, 6u64, 3_000u32, 1u32, Some(false)),
-                ("df32-band (floatexp, BLA off)", SX, SY, Conformal, 40, 12_000, 2, Some(false)),
-                ("floatexp", CRX, CRY, Conformal, 93, 30_000, 2, None),
-                ("zoomasm-layout df32-band", SX, SY, Octave, 40, 12_000, 2, Some(false)),
+                ("direct", SX, SY, Conformal, 6u64, 3_000u32, 1u32, true, Some(false)),
+                ("df32-band (floatexp, BLA off)", SX, SY, Conformal, 40, 12_000, 2, false, Some(false)),
+                ("floatexp", CRX, CRY, Conformal, 93, 30_000, 2, true, None),
+                ("zoomasm-layout df32-band", SX, SY, Octave, 40, 12_000, 2, false, Some(false)),
             ];
-            for (regime, cx, cy, layout, k, cap, want_mode, want_bla) in cases {
+            for (regime, cx, cy, layout, k, cap, want_mode, use_bla, want_bla) in cases {
+                self.render_cfg.use_bla = use_bla;
                 let got = self.expmap_strip_check(device, queue, cx, cy, (160.0, 90.0), layout, k, cap, 48);
                 let (result, pass) = match &got {
                     Ok(c) => (
@@ -7777,7 +7781,43 @@ impl FractadyneApp {
                     pass,
                 });
             }
-            (self.fractal, self.julia_mode, self.render_cfg.max_iter, self.render_cfg.auto_iter, self.export.width) = saved;
+            // BLA on a df32-band strip (the dialog's default): the BLA-off strip judged above, with
+            // BLA, by the rule the BLA group holds every BLA render to.
+            let (k, cap) = (40u64, 12_000u32);
+            let (result, pass) = match self.expmap_bla_check(device, queue, SX, SY, (160.0, 90.0), k, cap) {
+                Ok(c) => (
+                    format!(
+                        "tables {:?}, mode {}, {} iterations skipped; {} texels compared ({} steep left out): {} mismatch{}",
+                        c.tables,
+                        c.mode,
+                        c.skipped,
+                        c.compared,
+                        c.steep,
+                        c.mismatch,
+                        if c.first.is_empty() { String::new() } else { format!(", first {}", c.first) }
+                    ),
+                    c.pass(),
+                ),
+                Err(e) => (format!("could not render: {e}"), false),
+            };
+            push_check(&mut checks, &mut last_check_t, SelfCheck {
+                category: "Zoom video",
+                name: "a df32-band strip with BLA is the strip without it".into(),
+                params: format!("strip {k} of a dive into ({SX}, {SY}), 160x90 frames from 1x, cap {cap}, on the dive's reference"),
+                result,
+                threshold: "a BLA table in the BLA strip only, floatexp, BLA skips iterations; at least 1000 texels off the steep \
+                            ones (a neighbour across the boundary or 2+ iterations away), each both interior or both escaped \
+                            within 0.5 iteration (the BLA group's rule)",
+                pass,
+            });
+            (
+                self.fractal,
+                self.julia_mode,
+                self.render_cfg.max_iter,
+                self.render_cfg.auto_iter,
+                self.export.width,
+                self.render_cfg.use_bla,
+            ) = saved;
         }
 
         // ⭐ZOOM-VIDEO ASSEMBLY (`design/zoom-video.md` §7, phase E2's gate; `harness/assemble_check`):

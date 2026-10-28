@@ -486,8 +486,8 @@ tested path), its stdout progress (`frame K/N (…)`, now printed every 30 frame
 its stderr's first error is quoted on failure, and the live view holds while it runs. The view
 goes on the command line exactly (the centre as the viewport's text, `--zoom-log2`); the colouring
 comes from the SESSION, saved just before the child starts. Options: file, size, fps, octaves a
-second, start depth, turns an octave, anti-aliasing (strips oversampled to match), normalize,
-keep strips (folder). Before Render it shows the frames, length, strips, the window's GPU memory
+second, start depth, turns an octave, anti-aliasing (strips oversampled to match), BLA (on by
+default, below), normalize, keep strips (folder). Before Render it shows the frames, length, strips, the window's GPU memory
 and, keeping strips, their disk (~11 bytes a texel, measured). It refuses Julia, other fractals and
 aux colourings up front, with the reason. `--uitest` step `zoom-video` (seeded mid-render): text
 fits, no overlap — after the strips folder moved to its own line (a 200-pt field beside the
@@ -531,7 +531,15 @@ their session's 150,000 base iterations (caps 150,220 to 179,040), 2x anti-alias
   off by more than 2 iterations): fewer wrong than mode 0 at 2^45-2^70 (strip 53: 6.9% exact / 12.9%
   wrong against 1.7% / 20.3% on 1,000 texels) but 15 of 300 wrong by up to 10 iterations near the
   minibrot at 2^34, where mode 0 had none (and BLA was slower there). So strips in the df32 band now
-  render as floatexp with BLA off (`with_strip_arithmetic`); BLA on them is a decision for the user.
+  render as floatexp (`with_strip_arithmetic`), with BLA as the user chose (§9, decided 2026-10-28):
+  an option, the dialog's "BLA acceleration" box, ON by default; the dialog always passes `--bla`
+  or `--no-bla`, so the session's own setting never decides a video. Warm wall times, BLA off / on,
+  interleaved: strip 34 27 / 66 s, 45 29 / 17 s, 70 47 / 17 s (the table's GPU times hold; the
+  first run of a new build pays its shaders' compile once, ~17 s). The selftest's `expmap` group
+  judges the BLA-off strip against the oracle and the BLA strip against THAT by the BLA group's
+  rule (off the steep texels, within 0.5 iteration): 0 of 10,120 texels off, and 3,835 off with
+  `BLA_EPS` loosened to 1e-2 (the control). Against the oracle directly a BLA strip misses the
+  exact-arithmetic bar (27 of 48 exact against 60%; one texel 0.09 iterations outside the stencil).
 - ⚠The LIVE view runs the same band the same way (mode 0, no BLA). Not changed here.
 
 ## 9. Decisions for you
@@ -544,6 +552,11 @@ their session's 150,000 base iterations (caps 150,220 to 179,040), 2x anti-alias
    tools; E2's `-i audio … -shortest` mux is out of scope until asked for.
 4. **Iteration cap: both, as an option; the default is the rising (non-decreasing per-strip) cap.**
    One cap for the whole dive stays available for a dive where a step in the cap shows.
+
+**Decided 2026-10-28 (the user):**
+
+- **BLA on the df32-band strips: an option, ON by default** (§8.4): the dialog's "BLA
+  acceleration" box, passed to the render as `--bla` / `--no-bla`.
 
 The questions as they were put:
 

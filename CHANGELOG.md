@@ -60,10 +60,13 @@ published as the pre-releases `v0.2.41-beta.1` to `v0.2.41-beta.150`, and a "bet
 Changes after 0.3.0-beta.1:
 
 - **Zoom videos: deep dives several times faster, and the graphics card checked before Render
-  (0.3.0-beta.22).** Strips between 1e4× and 1e28× render on the floatexp path, with BLA off,
-  whose tiles keep the graphics card busy. In a 1080p dive at 2× anti-aliasing and about 160,000
-  iterations, a strip at 2^45 to 2^70 takes 29 to 45 s instead of 110 to 209 s, with 99.998% of its
-  points unchanged. The dialog refuses a size or anti-aliasing the card cannot hold (a strip wider
+  (0.3.0-beta.22).** Strips between 1e4× and 1e28× render on the floatexp path, whose tiles keep
+  the graphics card busy, and BLA now skips iterations there too: the dialog's new BLA acceleration
+  box, on by default (`--bla` / `--no-bla` on the command line). In a 1080p dive at 2×
+  anti-aliasing and about 160,000 iterations, a strip at 2^45 to 2^70 takes 17 to 27 s with BLA
+  instead of 110 to 209 s. BLA changes the picture slightly: near a minibrot at 2^34, 5% of points
+  came out up to 10 iterations off, and that strip was slower with it (66 s against 27 s). With the
+  box off, strips take 26 to 45 s and 99.998% of their points match the old renders. The dialog refuses a size or anti-aliasing the card cannot hold (a strip wider
   than its textures, or strips needing more memory than it has) and warns when it is close; a render
   that still runs out of graphics memory stops with that message instead of crashing. The time left
   counts the strips still to render, which set a deep dive's pace: it used to divide the frames left

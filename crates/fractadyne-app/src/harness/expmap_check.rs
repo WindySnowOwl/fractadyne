@@ -213,4 +213,110 @@ impl crate::FractadyneApp {
         }
         Ok(c)
     }
+
+    /// Render strip `k` of a dive into `(cx, cy)` (frames of `frame` pixels from 1×, conformal
+    /// strips) at `cap` iterations twice on the dive's one reference, with BLA and without, and
+    /// compare them texel by texel ([`BlaStripCheck`]).
+    #[allow(clippy::too_many_arguments)]
+    pub(crate) fn expmap_bla_check(
+        &mut self,
+        device: &eframe::wgpu::Device,
+        queue: &eframe::wgpu::Queue,
+        cx: &str,
+        cy: &str,
+        frame: (f64, f64),
+        k: u64,
+        cap: u32,
+    ) -> Result<BlaStripCheck, String> {
+        let p0 = fractadyne_core::precision_for_octaves(k + 64);
+        let cxb = fractadyne_core::parse_bf_prec(cx, p0).ok_or("unreadable centre")?;
+        let cyb = fractadyne_core::parse_bf_prec(cy, p0).ok_or("unreadable centre")?;
+        let map = ExpMap::for_frames(frame.0, frame.1, 1.0, 0.0);
+        let dive_ref = self.dive_reference(&map, k + 4, &cxb, &cyb, cap);
+        let saved = self.render_cfg.use_bla;
+        self.render_cfg.use_bla = true;
+        let with = self.render_strip(device, queue, &map, k, &cxb, &cyb, cap, dive_ref.as_ref());
+        self.render_cfg.use_bla = false;
+        let without = self.render_strip(device, queue, &map, k, &cxb, &cyb, cap, dive_ref.as_ref());
+        self.render_cfg.use_bla = saved;
+        let (with, without) = (with?, without?);
+        let (a, b) = (&with.result.pixels, &without.result.pixels);
+        let (w, h) = (map.width as usize, map.rows as usize);
+        let at = |px: &[f32], i: usize, j: usize| px[(j * w + i) * 4];
+        // A strip's columns go round the circle, so its left and right edges are neighbours.
+        let steep = |px: &[f32], i: usize, j: usize| -> bool {
+            let g = at(px, i, j);
+            let mut ns = vec![(i + 1) % w, (i + w - 1) % w].into_iter().map(|ni| (ni, j)).collect::<Vec<_>>();
+            if j > 0 {
+                ns.push((i, j - 1));
+            }
+            if j + 1 < h {
+                ns.push((i, j + 1));
+            }
+            ns.into_iter().any(|(ni, nj)| {
+                let gn = at(px, ni, nj);
+                (g < 0.0) != (gn < 0.0) || (g >= 0.0 && gn >= 0.0 && (g - gn).abs() > 2.0)
+            })
+        };
+        let mut c = BlaStripCheck {
+            tables: (with.req.bla_on != 0, without.req.bla_on != 0),
+            mode: with.req.mode,
+            skipped: with.result.counters[fractadyne_gpu::CTR_BLA_SKIP],
+            compared: 0,
+            steep: 0,
+            mismatch: 0,
+            first: String::new(),
+        };
+        for j in 0..h {
+            for i in 0..w {
+                if steep(a, i, j) || steep(b, i, j) {
+                    c.steep += 1;
+                    continue;
+                }
+                c.compared += 1;
+                let (ga, gb) = (at(a, i, j), at(b, i, j));
+                let agree = match (ga < 0.0, gb < 0.0) {
+                    (true, true) => true,
+                    (false, false) => (ga - gb).abs() <= 0.5,
+                    _ => false,
+                };
+                if !agree {
+                    if c.mismatch == 0 {
+                        c.first = format!("({i}, {j}): with BLA {ga:.4}, without {gb:.4}");
+                    }
+                    c.mismatch += 1;
+                }
+            }
+        }
+        Ok(c)
+    }
+}
+
+/// What BLA changes in a strip (`--bla`, the Render zoom video dialog's default): the strip
+/// rendered with BLA and without, on the dive's one reference, compared by the rule the selftest's
+/// other BLA checks use ("BLA render == non-BLA @1e30×"): away from steep texels (a neighbour
+/// across the boundary or more than 2 iterations away, in either strip), both interior, or both
+/// escaped within half an iteration. The strip without BLA is the one the oracle judges
+/// ([`crate::FractadyneApp::expmap_strip_check`]); against the oracle directly, BLA's approximation moves
+/// texels further than its 1e-3-texel stencil excuses (measured 2026-10-28: at strip 40, 27 of 48
+/// exact, and one texel 0.09 iterations outside), as it is an approximation.
+pub(crate) struct BlaStripCheck {
+    /// Each strip's request had a BLA table, `(with, without)`: `(true, false)` is the point.
+    pub(crate) tables: (bool, bool),
+    /// The BLA strip's arithmetic mode.
+    pub(crate) mode: u32,
+    /// Iterations BLA skipped in the BLA strip (the GPU's counter): it engaged, not only loaded.
+    pub(crate) skipped: u64,
+    /// Texels compared, and those left out as steep.
+    pub(crate) compared: usize,
+    pub(crate) steep: usize,
+    /// Compared texels that disagree, and the first described.
+    pub(crate) mismatch: usize,
+    pub(crate) first: String,
+}
+
+impl BlaStripCheck {
+    pub(crate) fn pass(&self) -> bool {
+        self.tables == (true, false) && self.mode == 2 && self.skipped > 0 && self.compared >= 1000 && self.mismatch == 0
+    }
 }

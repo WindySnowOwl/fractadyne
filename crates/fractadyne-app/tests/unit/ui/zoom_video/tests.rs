@@ -28,10 +28,12 @@ fn the_command_line_carries_the_view_exactly_and_only_the_options_set() {
     assert_eq!(pair("--size").as_deref(), Some("640x360"));
     assert_eq!(pair("--assemble-fps").as_deref(), Some("30"));
     assert_eq!(pair("--assemble-speed").as_deref(), Some("2"));
-    for absent in ["--expmap-start", "--assemble-rotate", "--expmap-oversample", "--assemble-ss", "--normalize", "--keep-strips"] {
+    for absent in ["--expmap-start", "--assemble-rotate", "--expmap-oversample", "--assemble-ss", "--normalize", "--keep-strips", "--no-bla"] {
         assert!(!a.iter().any(|x| x == absent), "{absent} was not asked for");
     }
-    let z = ZoomVideoUi { start_log2: 3.5, rotate: -0.25, ss: 2, normalize: true, keep: true, keep_dir: "D:/strips".into(), ..dialog() };
+    // BLA is said either way (on by default), so the session's own setting never decides it.
+    assert!(a.iter().any(|x| x == "--bla"), "BLA on by default, on the command line");
+    let z = ZoomVideoUi { start_log2: 3.5, rotate: -0.25, ss: 2, bla: false, normalize: true, keep: true, keep_dir: "D:/strips".into(), ..dialog() };
     let a = zoom_video_args(&z);
     let pair = |k: &str| a.iter().position(|x| x == k).map(|i| a[i + 1].clone());
     assert_eq!(pair("--expmap-start").as_deref(), Some("3.5"));
@@ -40,6 +42,7 @@ fn the_command_line_carries_the_view_exactly_and_only_the_options_set() {
     assert_eq!(pair("--assemble-ss").as_deref(), Some("2"));
     assert_eq!(pair("--keep-strips").as_deref(), Some("D:/strips"));
     assert!(a.iter().any(|x| x == "--normalize"));
+    assert!(a.iter().any(|x| x == "--no-bla") && !a.iter().any(|x| x == "--bla"), "BLA off is said as --no-bla, alone");
     // Every flag the dialog writes is one the command line knows.
     let known = crate::cli::known_long_flags();
     for f in a.iter().filter(|x| x.starts_with("--")) {

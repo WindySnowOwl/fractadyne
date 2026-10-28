@@ -37,6 +37,10 @@ pub(crate) struct ZoomVideoUi {
     pub(crate) rotate: f64,
     /// Samples a pixel along each axis; the strips are oversampled as much.
     pub(crate) ss: u32,
+    /// BLA skips iterations in the strips that can take it (`--bla`; `--no-bla` when off). On by
+    /// default (the user's choice, 2026-10-28): most deep strips render faster with it, though a
+    /// few texels near a minibrot can come out several iterations off (`design/zoom-video.md` §8.4).
+    pub(crate) bla: bool,
     /// The palette follows the escape range (`--normalize`).
     pub(crate) normalize: bool,
     /// Keep the strips (`--keep-strips`), in `keep_dir`, to recolour later.
@@ -69,6 +73,7 @@ impl Default for ZoomVideoUi {
             start_log2: 0.0,
             rotate: 0.0,
             ss: 1,
+            bla: true,
             normalize: false,
             keep: false,
             keep_dir: String::new(),
@@ -166,6 +171,8 @@ pub(crate) fn zoom_video_args(z: &ZoomVideoUi) -> Vec<String> {
     if z.ss > 1 {
         a.extend(["--expmap-oversample".to_string(), z.ss.to_string(), "--assemble-ss".to_string(), z.ss.to_string()]);
     }
+    // Always said, either way: without it the child would take the session's own BLA setting.
+    a.push(if z.bla { "--bla" } else { "--no-bla" }.to_string());
     if z.normalize {
         a.push("--normalize".to_string());
     }
@@ -385,6 +392,7 @@ impl FractadyneApp {
                             .on_hover_text(tr!(zoom_video_ss_hover));
                         ui.end_row();
                     });
+                    ui.checkbox(&mut z.bla, tr!(zoom_video_bla)).on_hover_text(tr!(zoom_video_bla_hover));
                     ui.checkbox(&mut z.normalize, tr!(zoom_video_normalize)).on_hover_text(tr!(zoom_video_normalize_hover));
                     ui.checkbox(&mut z.keep, tr!(zoom_video_keep)).on_hover_text(tr!(zoom_video_keep_hover));
                     // The folder on a line of its own, as wide as the video file's: a path is the
