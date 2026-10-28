@@ -402,10 +402,17 @@ fn run_inner(args: &[String]) -> Result<i32, String> {
     check(records == FRAMES as usize && idx.len() == FRAMES as usize, format!("done.jsonl records each frame once ({records} records, {} distinct)", idx.len()));
     // Every kept frame says where its reference came from (design §8's measure).
     let sources: Vec<Option<String>> = done.lines().filter_map(|l| serde_json::from_str::<fractadyne_farm::manifest::DoneRecord>(l).ok()).map(|d| d.reference).collect();
+    // A reference is built for a frame, or (since 2026-10-28) the tour's deepest frame's is reused
+    // (`scripting::DeepReference`); either way some frame must have needed one.
     let fresh = sources.iter().filter(|r| r.as_deref() == Some("fresh")).count();
+    let reused = sources.iter().filter(|r| r.as_deref() == Some("reused")).count();
     check(
-        !sources.is_empty() && sources.iter().all(|r| r.is_some()) && fresh >= 1,
-        format!("every frame says where its reference came from ({} of {}, {fresh} built fresh)", sources.iter().filter(|r| r.is_some()).count(), sources.len()),
+        !sources.is_empty() && sources.iter().all(|r| r.is_some()) && fresh + reused >= 1,
+        format!(
+            "every frame says where its reference came from ({} of {}, {fresh} built fresh, {reused} reused)",
+            sources.iter().filter(|r| r.is_some()).count(),
+            sources.len()
+        ),
     );
     let bad: Vec<String> = std::fs::read_dir(out.join("farm").join("bad")).map(|rd| rd.flatten().map(|e| e.file_name().to_string_lossy().into_owned()).collect()).unwrap_or_default();
     let bad_a = bad.iter().filter(|n| n.contains("farmtest-A")).count();

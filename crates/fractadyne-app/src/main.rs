@@ -7094,6 +7094,7 @@ impl FractadyneApp {
             norm_anchors: required_value("--norm-anchors").map(std::path::PathBuf::from),
             dump_norm_anchors: required_value("--dump-norm-anchors").map(std::path::PathBuf::from),
             farm_child: args.iter().any(|a| a == "--farm-child"),
+            no_reference_reuse: args.iter().any(|a| a == "--no-reference-reuse"),
         };
         // Flags that only mean something to a tour render are refused without one, not ignored:
         // `--frames 0..10` on a plain launch opening the GUI would look like it had worked.

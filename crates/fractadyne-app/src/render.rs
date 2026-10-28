@@ -3946,38 +3946,50 @@ impl FractadyneApp {
         julia: bool,
         budget: IterBudget,
     ) -> Option<std::sync::mpsc::Receiver<RecomputeResult>> {
-        let inputs = self.export_reference_inputs_for(vp, julia, budget)?;
-        let (tx, rx) = std::sync::mpsc::channel();
-        // Fire-and-forget deep-export reference build (see the live-path note above): if the caller
-        // drops the returned `rx` (export canceled) the worker finishes and its send is discarded —
-        // bounded, self-terminating, not a leak. NOTE for a future `fractadyne-render` extraction:
-        // this raw `Receiver` + the `pub` `ExportPrep.rx` should be wrapped behind a method API
-        // before crossing a crate boundary.
-        spawn_named("fd-ref-export", move || {
-            let _busy = crate::blinken::registry::busy(crate::blinken::registry::Role::Export);
-            let origin = inputs.origin;
-            let tag = inputs.blinken;
-            let res = recompute_worker(inputs);
-            let cost = res.ref_ms + res.series_ms + res.bla_ms;
-            if tx.send(res).is_err() {
-                refwaste_log(origin, "DROPPED-prefetch", cost);
-                if tag.0 != bl::NO_PANEL_ROLE {
-                    bl::emit(0, bl::Kind::RefDropped, tag.0, tag.1, 0.0);
-                }
-            }
-        });
-        Some(rx)
+        Some(spawn_reference_build(self.export_reference_inputs_for(vp, julia, budget)?))
     }
 
     /// [`Self::spawn_export_reference`], keeping the request to watch the orbit cache with while it
-    /// builds ([`PendingReference::wait`]). A tour's lookahead.
-    pub(crate) fn spawn_export_reference_watched(&self, vp: &Viewport, julia: bool, budget: IterBudget) -> Option<PendingReference> {
+    /// builds ([`PendingReference::wait`]) — a tour's lookahead — and handed `reuse`, the tour's
+    /// deepest frame's reference (`scripting::DeepReference`): taken where the reuse gates admit it for this view
+    /// ([`try_reuse_reference`]: its point in the view, its precision enough) and extended where the
+    /// view wants more iterations; built fresh where they do not.
+    pub(crate) fn spawn_export_reference_reusing(&self, vp: &Viewport, julia: bool, budget: IterBudget, reuse: Option<&ReuseRef>) -> Option<PendingReference> {
         let watch = self.export_reference_inputs_for(vp, julia, budget);
         let known = watch.as_ref().and_then(cache_best);
-        let rx = self.spawn_export_reference(vp, julia, budget)?;
-        Some(PendingReference { rx, watch, known })
+        let mut inputs = self.export_reference_inputs_for(vp, julia, budget)?;
+        if let Some(r) = reuse {
+            inputs = inputs.with_reuse(r.clone());
+        }
+        Some(PendingReference { rx: spawn_reference_build(inputs), watch, known })
     }
+}
 
+/// An export reference build on a worker thread ([`FractadyneApp::spawn_export_reference`]).
+fn spawn_reference_build(inputs: RecomputeInputs) -> std::sync::mpsc::Receiver<RecomputeResult> {
+    let (tx, rx) = std::sync::mpsc::channel();
+    // Fire-and-forget deep-export reference build (see the live-path note above): if the caller
+    // drops the returned `rx` (export canceled) the worker finishes and its send is discarded —
+    // bounded, self-terminating, not a leak. NOTE for a future `fractadyne-render` extraction:
+    // this raw `Receiver` + the `pub` `ExportPrep.rx` should be wrapped behind a method API
+    // before crossing a crate boundary.
+    spawn_named("fd-ref-export", move || {
+        let _busy = crate::blinken::registry::busy(crate::blinken::registry::Role::Export);
+        let origin = inputs.origin;
+        let tag = inputs.blinken;
+        let res = recompute_worker(inputs);
+        let cost = res.ref_ms + res.series_ms + res.bla_ms;
+        if tx.send(res).is_err() {
+            refwaste_log(origin, "DROPPED-prefetch", cost);
+            if tag.0 != bl::NO_PANEL_ROLE {
+                bl::emit(0, bl::Kind::RefDropped, tag.0, tag.1, 0.0);
+            }
+        }
+    });
+    rx
+}
+
+impl FractadyneApp {
     /// Build an export request for a given viewport + Julia flag at the export
     /// resolution. Recomputes a fresh reference orbit (deep) without touching the live
     /// cache. Height is derived from the viewport's aspect (square pixels).
