@@ -299,6 +299,13 @@ fn data_channels_roundtrip_exactly_and_leave_no_partial_file() {
     assert_eq!(rf, f, "floats changed in the round trip");
     assert!(read_exr_channel_u32(&p, "NF").is_err(), "a float channel read as uint32");
     assert_eq!(read_exr_metadata(&p).expect("meta").as_deref(), Some("expmap_strip=7\nmax_iter=9056\n"));
+    assert_eq!(read_exr_int_attribute(&p, "Iterations").expect("attr"), None, "no attribute was asked for");
+    // Kalles Fraktaler's integer header attributes, which zoomasm reads beside the channels.
+    let k = t.path("strip_000008.exr");
+    let one = vec![ExrChannel { name: "N", data: ExrChannelData::U32(n.clone()) }];
+    write_exr_channels_with(&k, w, h, one, None, &[("Iterations", 9056), ("IterationsBias", -3)]).expect("write");
+    assert_eq!(read_exr_int_attribute(&k, "Iterations").expect("attr"), Some(9056));
+    assert_eq!(read_exr_int_attribute(&k, "IterationsBias").expect("attr"), Some(-3), "a negative bias is allowed");
     // A channel of the wrong length is refused and writes nothing.
     let q = t.path("short.exr");
     let short = vec![ExrChannel { name: "N", data: ExrChannelData::U32(vec![1, 2]) }];

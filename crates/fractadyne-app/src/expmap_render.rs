@@ -31,6 +31,25 @@ pub(crate) enum CapMode {
     Fixed,
 }
 
+/// What the strips are written as (`--expmap-format`).
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub(crate) enum StripFormat {
+    /// Fractadyne's own strips: conformal rows with an overlap, the renderer's raw channels.
+    #[default]
+    Fractadyne,
+    /// Kalles Fraktaler's EXR layout, which zoomasm assembles (`expmap_kf.rs`).
+    Zoomasm,
+}
+
+impl StripFormat {
+    pub(crate) fn name(self) -> &'static str {
+        match self {
+            StripFormat::Fractadyne => "fractadyne",
+            StripFormat::Zoomasm => "zoomasm",
+        }
+    }
+}
+
 /// The `--expmap-*` options as given.
 #[derive(Clone, Debug)]
 pub(crate) struct ExpmapCli {
@@ -41,11 +60,19 @@ pub(crate) struct ExpmapCli {
     pub(crate) strips: Option<(u64, u64)>,
     /// `--iter N` was given: N is the cap (fixed) or the base the caps grow from (rising).
     pub(crate) iter_given: bool,
+    pub(crate) format: StripFormat,
 }
 
 impl Default for ExpmapCli {
     fn default() -> Self {
-        ExpmapCli { start_log2mag: 0.0, oversample: 1.0, cap: CapMode::Rising, strips: None, iter_given: false }
+        ExpmapCli {
+            start_log2mag: 0.0,
+            oversample: 1.0,
+            cap: CapMode::Rising,
+            strips: None,
+            iter_given: false,
+            format: StripFormat::Fractadyne,
+        }
     }
 }
 
@@ -71,6 +98,16 @@ impl ExpmapCli {
                 "fixed" => CapMode::Fixed,
                 _ => {
                     eprintln!("fractadyne: --expmap-cap: \"{s}\" is neither rising nor fixed.");
+                    crate::exit(2)
+                }
+            };
+        }
+        if let Some(s) = val("--expmap-format") {
+            o.format = match s.as_str() {
+                "fractadyne" => StripFormat::Fractadyne,
+                "zoomasm" => StripFormat::Zoomasm,
+                _ => {
+                    eprintln!("fractadyne: --expmap-format: \"{s}\" is neither fractadyne nor zoomasm.");
                     crate::exit(2)
                 }
             };
@@ -228,7 +265,8 @@ impl crate::FractadyneApp {
         req.height = map.rows;
         req.ss = 1;
         let (m, e) = map.outer_scale(k);
-        req.map = fractadyne_gpu::StripMap::strip(map.width, m, e, req.delta_exp);
+        // The shader's texel centre is at +0.5; the layout says where in the texel to sample.
+        req.map = fractadyne_gpu::StripMap::strip(map.row_step(), map.sample_offset() - 0.5, m, e, req.delta_exp);
         let r = fractadyne_gpu::render_iter_tiled(device, queue, &req, crate::tunables::CORRECT_WORK_BUDGET, None, None, None)
             .map_err(|e| format!("strip {k}: {e}"))?;
         if r.aux.len() != r.pixels.len() {
@@ -292,7 +330,19 @@ impl crate::FractadyneApp {
                 opts.start_log2mag
             ));
         }
-        let map = ExpMap::for_frames(fw, fh, opts.oversample, opts.start_log2mag);
+        let map = match opts.format {
+            StripFormat::Fractadyne => ExpMap::for_frames(fw, fh, opts.oversample, opts.start_log2mag),
+            StripFormat::Zoomasm => ExpMap::for_frames(fw, fh, opts.oversample, opts.start_log2mag).with_octave_rows(),
+        };
+        let power = match self.fractal {
+            F::Multibrot3 => 3.0,
+            F::Multibrot4 => 4.0,
+            F::Multibrot5 => 5.0,
+            F::Multibrot6 => 6.0,
+            F::Multibrot7 => 7.0,
+            F::Multibrot8 => 8.0,
+            _ => 2.0,
+        };
         let n = map.strips_to(end, fh);
         let base = self.render_cfg.max_iter;
         let caps = strip_caps(&map, n, fw, fh, base, opts.cap, opts.iter_given);
@@ -308,6 +358,7 @@ impl crate::FractadyneApp {
             "center_re": fractadyne_core::to_decimal_string(&cx),
             "center_im": fractadyne_core::to_decimal_string(&cy),
             "frame": [fw, fh],
+            "format": opts.format.name(),
             "oversample": opts.oversample,
             "start_log2mag": opts.start_log2mag,
             "end_log2mag": end,
@@ -318,12 +369,12 @@ impl crate::FractadyneApp {
             "cap_mode": match opts.cap { CapMode::Rising => "rising", CapMode::Fixed => "fixed" },
             "caps": caps,
         });
-        write_or_check_manifest(dir, &map, &dive)?;
+        write_or_check_manifest(dir, &map, opts.format, &dive)?;
         crate::diag::log_line(
             "expmap",
             &format!(
-                "dive {} → 2^{end:.2} in {n} strips of {}x{} (r0 2^{:.3}, {:.2} rows an octave); strips {from}-{to}; caps {} {}..{}",
-                opts.start_log2mag, map.width, map.rows, map.r0_log2, map.rows_per_octave(),
+                "dive {} → 2^{end:.2} in {n} {} strips of {}x{} (r0 2^{:.3}, {:.2} rows an octave); strips {from}-{to}; caps {} {}..{}",
+                opts.start_log2mag, opts.format.name(), map.width, map.rows, map.r0_log2, map.rows_per_octave(),
                 match opts.cap { CapMode::Rising => "rising", CapMode::Fixed => "fixed" },
                 caps[from as usize], caps[to as usize],
             ),
@@ -368,11 +419,25 @@ impl crate::FractadyneApp {
                 let s = self.render_strip(device, queue, &map, k, &cx, &cy, caps[k as usize], dive_ref.as_ref())?;
                 let (r, req) = (&s.result, &s.req);
                 let meta = format!(
-                    "expmap_strip={k}\nouter_log2={}\nmax_iter={}\nmode={}\nwidth={}\nrows={}\n",
-                    map.outer_log2(k), req.max_iter, req.mode, map.width, map.rows,
+                    "expmap_strip={k}\nouter_log2={}\nmax_iter={}\nmode={}\nwidth={}\nrows={}\nformat={}\n",
+                    map.outer_log2(k), req.max_iter, req.mode, map.width, map.rows, opts.format.name(),
                 );
-                fractadyne_export::write_exr_channels(&path, map.width, map.rows, strip_channels(&r.pixels, &r.aux), Some(&meta))
-                    .map_err(|e| format!("strip {k}: cannot write {}: {e}", path.display()))?;
+                let written = match opts.format {
+                    StripFormat::Fractadyne => {
+                        fractadyne_export::write_exr_channels(&path, map.width, map.rows, strip_channels(&r.pixels, &r.aux), Some(&meta))
+                    }
+                    StripFormat::Zoomasm => {
+                        let centre = (fractadyne_core::to_f64(&cx), fractadyne_core::to_f64(&cy));
+                        let s = crate::expmap_kf::KfStrip { map: &map, k, power, centre };
+                        let attrs = [
+                            ("Iterations", req.max_iter.min(i32::MAX as u32) as i32),
+                            ("IterationsBias", crate::expmap_kf::KF_ITERATIONS_BIAS),
+                        ];
+                        let ch = crate::expmap_kf::kf_channels(&r.pixels, &r.aux, &s);
+                        fractadyne_export::write_exr_channels_with(&path, map.width, map.rows, ch, Some(&meta), &attrs)
+                    }
+                };
+                written.map_err(|e| format!("strip {k}: cannot write {}: {e}", path.display()))?;
                 let escaped = r.pixels.chunks_exact(4).filter(|p| p[0] >= 0.0).count();
                 crate::diag::log_line(
                     "expmap",
@@ -401,16 +466,40 @@ impl crate::FractadyneApp {
     }
 }
 
-/// Write the manifest, or check that the one already in `dir` describes the same dive: a strip
-/// from another dive must never be taken for one of this dive's.
-fn write_or_check_manifest(dir: &Path, map: &ExpMap, dive: &serde_json::Value) -> Result<(), String> {
+/// Write the manifest, or check that the one already in `dir` describes the same dive in the same
+/// layout: a strip from another dive, or laid out another way, must never be taken for one of
+/// this dive's.
+fn write_or_check_manifest(dir: &Path, map: &ExpMap, format: StripFormat, dive: &serde_json::Value) -> Result<(), String> {
     let path: PathBuf = dir.join(MANIFEST);
+    let (convention, channels) = match format {
+        StripFormat::Fractadyne => (
+            "texel (i, j) of strip k is at angle 2*pi*(i + 0.5)/width anticlockwise from the positive real axis and radius 2^(r0_log2 - k) * exp(-2*pi*(j + 0.5)/width) from the centre; row 0 is outermost; strip k's last rows overlap strip k+1's first",
+            serde_json::json!({
+                "N": "escape count (uint32); 4294967295 = never escaped (the cap was reached), 0 = glitched",
+                "NF": "fraction of the smooth count, 1 - nu; the smooth count is N + NF",
+                "T": "angle of the final z, in turns [0, 1)",
+                "DE": "log2 of the distance estimate in texels of this strip",
+                "NX": "slope normal, real part (the plane's frame)",
+                "NY": "slope normal, imaginary part",
+            }),
+        ),
+        StripFormat::Zoomasm => (
+            "Kalles Fraktaler's exponential map with the imaginary axis up (its ImagPointsUp: 1), for zoomasm: texel (i, j) of strip k is sampled at angle 2*pi*i/width CLOCKWISE from the positive real axis and radius 2^(r0_log2 - k - j/rows) from the centre; row 0 is outermost; one octave a strip, no overlap; strip 0 is the outermost (zoom-in order: leave zoomasm's Reverse and Flip boxes unticked)",
+            serde_json::json!({
+                "N": "escape count + IterationsBias (uint32), escaping at |z| > 10^(4/power); 4294967295 = never escaped, 0 = not computed (N0 and N1 instead, low and high words, when a count passes 4294967294)",
+                "NF": "1 - log_power(ln|z| / ln 10^(4/power)), in [0, 1); the smooth count is N - IterationsBias + NF",
+                "T": "fract(power * arg z / 2pi)",
+                "DEX": "distance estimate over KF's pixel (r * 2 / hypot(width, rows)), along the real axis",
+                "DEY": "the same along the imaginary axis, pointing up",
+            }),
+        ),
+    };
     if let Ok(text) = std::fs::read_to_string(&path) {
         let old: serde_json::Value =
             serde_json::from_str(&text).map_err(|e| format!("{} is not a manifest this app can read: {e}", path.display()))?;
-        if old.get("dive") != Some(dive) {
+        if old.get("dive") != Some(dive) || old.get("convention").and_then(|c| c.as_str()) != Some(convention) {
             return Err(format!(
-                "{} holds the strips of another dive (its {} differs); use an empty directory",
+                "{} holds the strips of another dive, or laid out another way (its {} differs); use an empty directory",
                 dir.display(),
                 MANIFEST
             ));
@@ -418,19 +507,12 @@ fn write_or_check_manifest(dir: &Path, map: &ExpMap, dive: &serde_json::Value) -
         return Ok(());
     }
     let manifest = serde_json::json!({
-        "format": "fractadyne-expmap",
+        "format": match format { StripFormat::Fractadyne => "fractadyne-expmap", StripFormat::Zoomasm => "kf-expmap" },
         "version": 1,
         "app": crate::sysinfo::version_string(),
-        "convention": "texel (i, j) of strip k is at angle 2*pi*(i + 0.5)/width anticlockwise from the positive real axis and radius 2^(r0_log2 - k) * exp(-2*pi*(j + 0.5)/width) from the centre; row 0 is outermost; strip k's last rows overlap strip k+1's first",
+        "convention": convention,
         "rows_per_octave": map.rows_per_octave(),
-        "channels": {
-            "N": "escape count (uint32); 4294967295 = never escaped (the cap was reached), 0 = glitched",
-            "NF": "fraction of the smooth count, 1 - nu; the smooth count is N + NF",
-            "T": "angle of the final z, in turns [0, 1)",
-            "DE": "log2 of the distance estimate in texels of this strip",
-            "NX": "slope normal, real part (the plane's frame)",
-            "NY": "slope normal, imaginary part",
-        },
+        "channels": channels,
         "files": "strip_NNNNNN.exr, one per strip, NNNNNN = k",
         "dive": dive,
     });

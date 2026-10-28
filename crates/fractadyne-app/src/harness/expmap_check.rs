@@ -10,8 +10,11 @@
 //! the check vacuous, and it says so rather than passing.
 //! ⭐A mismatch is excused only when the oracle's own answer changes within ±`STENCIL_TEXEL` of the
 //! texel: the GPU places a strip sample to ~1e-4 of a texel (f32), so there either answer is right.
+//! Both layouts are judged: Fractadyne's conformal strips (sampled at texel centres) and the
+//! octave strips the zoomasm format writes (sampled at texel corners, as Kalles Fraktaler does) —
+//! a sample half a texel from where the geometry says is a wrong texel, not an excused one.
 
-use fractadyne_core::{add_floatexp, naive_dwell_bf, ExpMap};
+use fractadyne_core::{add_floatexp, naive_dwell_bf, ExpMap, StripRows};
 
 /// The oracle stencil, in texels: well above the GPU's placement error, well below a texel.
 const STENCIL_TEXEL: f64 = 1.0e-3;
@@ -75,9 +78,9 @@ impl StripCheck {
 }
 
 impl crate::FractadyneApp {
-    /// Render strip `k` of a dive into `(cx, cy)` (frames of `frame` pixels starting at 1×) at
-    /// `cap` iterations, and compare up to `samples` escaped texels (and a few interior ones) with
-    /// the oracle. Mandelbrot: the caller sets the fractal.
+    /// Render strip `k` of a dive into `(cx, cy)` (frames of `frame` pixels starting at 1×, strips
+    /// in `layout`) at `cap` iterations, and compare up to `samples` escaped texels (and a few
+    /// interior ones) with the oracle. Mandelbrot: the caller sets the fractal.
     #[allow(clippy::too_many_arguments)]
     pub(crate) fn expmap_strip_check(
         &mut self,
@@ -86,6 +89,7 @@ impl crate::FractadyneApp {
         cx: &str,
         cy: &str,
         frame: (f64, f64),
+        layout: StripRows,
         k: u64,
         cap: u32,
         samples: usize,
@@ -93,7 +97,10 @@ impl crate::FractadyneApp {
         let p0 = fractadyne_core::precision_for_octaves(k + 64);
         let cxb = fractadyne_core::parse_bf_prec(cx, p0).ok_or("unreadable centre")?;
         let cyb = fractadyne_core::parse_bf_prec(cy, p0).ok_or("unreadable centre")?;
-        let map = ExpMap::for_frames(frame.0, frame.1, 1.0, 0.0);
+        let map = match layout {
+            StripRows::Conformal => ExpMap::for_frames(frame.0, frame.1, 1.0, 0.0),
+            StripRows::Octave => ExpMap::for_frames(frame.0, frame.1, 1.0, 0.0).with_octave_rows(),
+        };
         // As a dive renders it: on the dive's one reference, built here four strips deeper (finer
         // precision, a radius 16× smaller) — so the reuse, and the series and BLA worked out again
         // for THIS strip's radius, are what the oracle judges.

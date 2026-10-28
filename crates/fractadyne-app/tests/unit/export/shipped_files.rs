@@ -28,9 +28,11 @@ fn find(dir: &Path, ext: &str, out: &mut Vec<PathBuf>) {
     for e in rd.flatten() {
         let p = e.path();
         let name = p.file_name().and_then(|n| n.to_str()).unwrap_or("");
-        // `target` is build output and `local`/`archive` are gitignored scratch — neither ships,
-        // and both can contain deliberately broken files from debugging sessions.
-        if p.is_dir() && !matches!(name, "target" | ".git" | "local" | "archive") {
+        // `target` is build output and `local`/`archive`/`diag` are gitignored scratch — none of
+        // them ships, and they hold deliberately broken files from debugging sessions and other
+        // programs' own files (`diag/kf/` unpacks Kalles Fraktaler, whose formula `.kfr`s are not
+        // locations).
+        if p.is_dir() && !matches!(name, "target" | ".git" | "local" | "archive" | "diag") {
             find(&p, ext, out);
         } else if p.extension().and_then(|x| x.to_str()) == Some(ext) {
             out.push(p);

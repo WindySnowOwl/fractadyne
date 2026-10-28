@@ -100,32 +100,37 @@ pub(crate) struct IterUniforms {
 
 /// Where an iterate pass puts its texels (the shader's `map_*`): `mode` 0, the default, is the
 /// affine grid every render uses; `mode` 1 renders an EXPONENTIAL-MAP STRIP (`design/zoom-video.md`
-/// §4), texel `(gx, gy)` at `r·exp(−s·gy)·(cos, sin)(s·gx)` from the view centre in units of
-/// `2^delta_exp`, with `s = 2π/W` and `W` the pass's full width. In a strip the distance estimate
-/// is over each texel's own size and the aux target carries the exact count, its fraction and the
-/// final z's angle. Only the strip module reads it (`strip.rs`, `strip.wgsl`): a request with
-/// `mode` 1 renders with that module, every other with the built-in one. See
-/// [`fractadyne_core::ExpMap`] for the geometry.
+/// §4), texel `(gx, gy)` (its centre at `+ 0.5`) sampled at `u = gx + o`, `v = gy + o` and placed
+/// at `r·exp(−s·v)·(cos, sin)(2π·u/W)` from the view centre in units of `2^delta_exp`, `W` the
+/// pass's full width. In a strip the distance estimate is over each texel's own size and the aux
+/// target carries the exact count, its fraction and the final z's angle. Only the strip module
+/// reads it (`strip.rs`, `strip.wgsl`): a request with `mode` 1 renders with that module, every
+/// other with the built-in one. See [`fractadyne_core::ExpMap`] for the geometry.
 #[repr(C)]
 #[derive(Clone, Copy, Debug, Default, PartialEq, bytemuck::Pod, bytemuck::Zeroable)]
 pub struct StripMap {
     pub mode: u32,
-    /// `2π/W`.
+    /// The natural-log radius step of one row: `2π/W` (a conformal strip) or `ln2/rows` (an
+    /// octave strip, `fractadyne_core::StripRows`).
     pub s: f32,
     /// The strip's outer radius over `2^delta_exp`.
     pub r: f32,
-    pub pad: u32,
+    /// `o`: where a texel is sampled, from its centre — 0 (the centre) or −½ (its corner, as Kalles
+    /// Fraktaler samples). The shader declares this word `map_pad: u32` and reads it with
+    /// `bitcast<f32>`: the shared module's text stays as it was measured (`strip.wgsl`'s note).
+    pub offset: f32,
 }
 
 impl StripMap {
-    /// The strip whose outer radius is `outer_mantissa · 2^outer_exp`, `width` texels around, in a
-    /// pass whose offsets are in units of `2^delta_exp`.
-    pub fn strip(width: u32, outer_mantissa: f64, outer_exp: i32, delta_exp: i32) -> Self {
+    /// The strip whose outer radius is `outer_mantissa · 2^outer_exp`, its rows `row_step` apart
+    /// in `ln r`, sampled `offset` texels from each texel's centre, in a pass whose offsets are in
+    /// units of `2^delta_exp`.
+    pub fn strip(row_step: f64, offset: f64, outer_mantissa: f64, outer_exp: i32, delta_exp: i32) -> Self {
         StripMap {
             mode: 1,
-            s: (std::f64::consts::TAU / width as f64) as f32,
+            s: row_step as f32,
             r: (outer_mantissa * 2f64.powi(outer_exp - delta_exp)) as f32,
-            pad: 0,
+            offset: offset as f32,
         }
     }
 }

@@ -47,7 +47,7 @@ fn a_strips_view_has_the_strips_disk_as_its_half_diagonal() {
         // The shader's radius over 2^delta_exp stays O(1), as its f32 offset needs.
         let scale = vp.gpu_scale();
         let (m, e) = map.outer_scale(k);
-        let r = fractadyne_gpu::StripMap::strip(map.width, m, e, scale.delta_exp).r;
+        let r = fractadyne_gpu::StripMap::strip(map.row_step(), 0.0, m, e, scale.delta_exp).r;
         assert!(r > 0.4 && r <= 1.0, "strip {k}: map r {r}");
     }
 }
@@ -86,4 +86,28 @@ fn a_strips_channels_keep_the_exact_count_and_mark_capped_and_glitched_texels() 
     }
     let names: Vec<_> = ch.iter().map(|c| c.name).collect();
     assert_eq!(names, ["N", "NF", "T", "DE", "NX", "NY"]);
+}
+
+/// A directory's strips are kept only for the same dive in the same layout. Strips the app laid
+/// out another way (the zoomasm strips were upside down before 2026-10-28) must not be mixed in.
+#[test]
+fn a_directory_keeps_its_strips_only_for_the_same_dive_in_the_same_layout() {
+    let dir = std::env::temp_dir().join(format!("fractadyne_expmap_manifest_{}", std::process::id()));
+    let _ = std::fs::remove_dir_all(&dir);
+    std::fs::create_dir_all(&dir).expect("temp dir");
+    let map = ExpMap::for_frames(640.0, 360.0, 1.0, 0.0).with_octave_rows();
+    let dive = serde_json::json!({ "format": "zoomasm", "center_re": "-0.75", "strips": 30 });
+    write_or_check_manifest(&dir, &map, StripFormat::Zoomasm, &dive).expect("an empty directory takes any dive");
+    write_or_check_manifest(&dir, &map, StripFormat::Zoomasm, &dive).expect("the same dive, the same layout");
+
+    let other = serde_json::json!({ "format": "zoomasm", "center_re": "-0.76", "strips": 30 });
+    assert!(write_or_check_manifest(&dir, &map, StripFormat::Zoomasm, &other).is_err(), "another dive");
+
+    // The same dive written in an older layout: its manifest says so in "convention".
+    let path = dir.join(MANIFEST);
+    let mut old: serde_json::Value = serde_json::from_str(&std::fs::read_to_string(&path).unwrap()).unwrap();
+    old["convention"] = serde_json::json!("Kalles Fraktaler's exponential map, for zoomasm: ... anticlockwise ...");
+    std::fs::write(&path, serde_json::to_string(&old).unwrap()).unwrap();
+    assert!(write_or_check_manifest(&dir, &map, StripFormat::Zoomasm, &dive).is_err(), "the same dive laid out another way");
+    let _ = std::fs::remove_dir_all(&dir);
 }
