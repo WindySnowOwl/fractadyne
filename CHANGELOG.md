@@ -59,6 +59,15 @@ published as the pre-releases `v0.2.41-beta.1` to `v0.2.41-beta.150`, and a "bet
 
 Changes after 0.3.0-beta.1:
 
+- **Tools ▸ Render zoom video… (0.3.0-beta.22).** A dive from the whole set into the current view
+  as a video, from the app: choose the file, size, frame rate, zoom speed, where the dive starts,
+  rotation, anti-aliasing, whether the palette follows the depth, and whether to keep the strips to
+  recolour later. Before it starts, the dialog shows the frames, the length, the strips and the
+  graphics memory and disk they take; while it runs, a progress bar. The video is coloured as the
+  view is (the session is saved first), and it renders in a separate process, so a lost graphics
+  device ends the render, not the session. A dive to 4.7e99× at 1080p and 60 frames a second, 331 s
+  of video, took 12 minutes on an RTX 3080, about five times faster than rendering its frames one by
+  one as a tour.
 - **Zoom videos made in the app (0.3.0-beta.22).** `--assemble DIR --out dive.mp4` turns the
   strips `--render-expmap DIR` rendered into a video of the whole dive at a constant zoom speed
   (`--assemble-speed`, octaves a second; `--assemble-fps`), coloured with the current colouring and

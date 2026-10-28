@@ -990,11 +990,19 @@ impl crate::FractadyneApp {
             self.apply_watermark(&mut rgba, fw, fh);
             pipe.push(rgba)?;
             progress.store(((f + 1) * 1000 / frames.len()) as u32, Ordering::Relaxed);
-            if (f + 1) % 300 == 0 {
-                crate::diag::log_line(
-                    "assemble",
-                    &format!("frame {}/{} (2^{l:.2}), {:.1} fps", f + 1, frames.len(), (f + 1) as f64 / t0.elapsed().as_secs_f64()),
-                );
+            // On stdout in the tour render's form, which the Render zoom video dialog reads for its
+            // progress bar (`parse_frame_progress`), and in the log.
+            if (f + 1) % 30 == 0 || f + 1 == frames.len() {
+                let el = t0.elapsed().as_secs_f64();
+                let rate = (f + 1) as f64 / el.max(1e-9);
+                let left = (frames.len() - f - 1) as f64 / rate.max(1e-9);
+                crate::scripting::say(&format!(
+                    "  frame {}/{}  ({} elapsed, {} left, {rate:.1} fps, 2^{l:.2})",
+                    f + 1,
+                    frames.len(),
+                    crate::scripting::fmt_hms(el),
+                    crate::scripting::fmt_hms(left),
+                ));
             }
         }
         let written = pipe.finish()?;

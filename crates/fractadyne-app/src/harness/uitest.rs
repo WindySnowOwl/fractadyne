@@ -83,6 +83,9 @@ enum Screen {
     Export,
     ScriptExport,
     TourRender,
+    /// Tools ▸ Render zoom video…, ⚠SEEDED with a deep view and a render in progress, so the walk
+    /// photographs the summary and the progress bar (it starts no render).
+    ZoomVideo,
     /// File ▸ Render client… and Tools ▸ Render on farm…, ⚠SEEDED with a sample status (a client
     /// mid-job; a job with machines of two GPU classes and one removed): no farm is started in the
     /// walk, and the empty windows would photograph forms around no data.
@@ -833,6 +836,7 @@ fn build_steps() -> Vec<Step> {
         screen("export", Screen::Export),
         screen("script-to-view", Screen::ScriptExport),
         screen("tour-render", Screen::TourRender),
+        screen("zoom-video", Screen::ZoomVideo),
         screen("farm-client", Screen::FarmClient),
         screen("farm-client-gpus", Screen::FarmClientGpus),
         screen("farm-client-find", Screen::FarmClientFind),
@@ -1259,6 +1263,7 @@ impl FractadyneApp {
         self.report.open = false;
         self.export.open = false;
         self.tour_render.open = false;
+        self.zoom_video.open = false;
         self.farm_client.open = false;
         self.farm_controller.open = false;
         self.farm_client.uitest_live = false;
@@ -1458,6 +1463,7 @@ impl FractadyneApp {
             // ⚠⚠Seeded: opening the flag alone photographed an EMPTY screen and passed — the
             // dialog read its tour from the player, and the walk plays none (found 2026-10-04).
             Screen::TourRender => self.uitest_seed_tour_render(),
+            Screen::ZoomVideo => self.uitest_seed_zoom_video(),
             Screen::FarmClient => self.uitest_seed_farm_client(),
             Screen::FarmClientGpus => self.uitest_seed_farm_client_gpus(),
             Screen::FarmClientFind => self.uitest_seed_farm_client_find(),

@@ -464,8 +464,37 @@ unchanged) and its row step as `map_s`.
   two-keyframe tour on the same centre, linear zoom, the same cap and size, ss 1): **919 s** for its
   9,935 PNG frames, without encoding — **14.7× slower**. The frames LOOKED right at every depth (the
   e98 stars, the palette anchored once an octave from 190–239 at 2^40 to 2229–2280 at 2^320).
-- **Not yet:** captions/callouts/palettes from a tour; the gate at full size (1080p60: strips 36×
-  the texels; the first heavy run of deep strips at that size — PLUTO, or with the user's go-ahead).
+- **§8's gate at full size (2026-10-28, the 3080, the user's go-ahead):** the same dive at 1920x1080,
+  60 fps, cap 20,000, normalized: `--render-zoom-video` **738 s** (12.3 min) for 19,867 frames
+  (331.1 s of video): 343 strips of 6921x765 in 118.9 s (median 326 ms a floatexp strip, 422 ms a
+  df32 one, the largest 599 ms — no device trouble), a 12-strip window (1.0 GB), 22.1 ms of GPU a
+  frame. `--render-tour` of one-second slices of the same dive (61 frames each, 1080p60, same cap)
+  ran at 5.34 / 5.56 / 5.29 / 5.20 fps at 2^20 / 2^100 / 2^200 / 2^320 — flat with depth — so the
+  whole tour is ≈ 19,867 / 5.3 ≈ **3,750 s (62 min)** of PNG frames before any encoding: the strip
+  path is **~5× faster** here, against 14.7× at 320x180. ⭐At 1080p the STRIPS are cheap (16% of
+  the run); the frames are the cost: 22 ms of GPU each (a 33 MB RGBA32F readback among it) plus the
+  CPU dither and x264 — the next speed-up is there (quantize on the GPU, pipeline the readback,
+  a hardware encoder), not in the strips.
+- **Not yet:** captions/callouts/palettes from a tour; the per-frame cost above.
+
+### 8.4 E3 so far (2026-10-28): the app dialog
+
+Tools ▸ "Render zoom video…" (`app/src/ui/zoom_video.rs`; in Tools beside "Tour from current
+view…" rather than File, where the app's other video tools are). Modelled on "Render tour…": the
+render is a CHILD `--render-zoom-video` (a lost device ends the render, not the session; the
+tested path), its stdout progress (`frame K/N (…)`, now printed every 30 frames) drives a bar,
+its stderr's first error is quoted on failure, and the live view holds while it runs. The view
+goes on the command line exactly (the centre as the viewport's text, `--zoom-log2`); the colouring
+comes from the SESSION, saved just before the child starts. Options: file, size, fps, octaves a
+second, start depth, turns an octave, anti-aliasing (strips oversampled to match), normalize,
+keep strips (folder). Before Render it shows the frames, length, strips, the window's GPU memory
+and, keeping strips, their disk (~11 bytes a texel, measured). It refuses Julia, other fractals and
+aux colourings up front, with the reason. `--uitest` step `zoom-video` (seeded mid-render): text
+fits, no overlap — after the strips folder moved to its own line (a 200-pt field beside the
+checkbox cut the path). The command it builds was run as is (strips kept, 2x anti-aliasing,
+rotation, normalize): 181 frames, progress on stdout, 21 strips + manifest kept.
+- **Not yet in E3:** preview/scrub in the view, recolour from kept strips in the app, farm and
+  `--gpus` distribution by strips.
 
 ## 9. Decisions for you
 

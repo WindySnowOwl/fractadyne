@@ -16,7 +16,7 @@ pub(crate) const FARM_PIXELS_PER_POINT: f32 = 2.0;
 /// The set of known long options (`--xxx`), harvested from the shared CLI reference so it can never
 /// drift from what `--help` documents (scans both the flag column and descriptions, so options only
 /// mentioned in a parenthetical — e.g. `--zoom-f3`, `--er` — are still recognized).
-fn known_long_flags() -> std::collections::HashSet<String> {
+pub(crate) fn known_long_flags() -> std::collections::HashSet<String> {
     let mut set = std::collections::HashSet::new();
     for entry in crate::help::CLI_REFERENCE {
         let (a, b) = match entry {

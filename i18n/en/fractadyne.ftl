@@ -291,6 +291,8 @@ menu-tools-tour-from-view = Tour from current view…
 menu-tools-tour-from-view-hover = Create a tour that zooms from the full view down to the current view — add a caption and set the dive duration. Saved as a tour script (.toml) you can edit, play, or render.
 menu-tools-render-tour = Render tour…
 menu-tools-render-tour-hover = Render the loaded tour to a PNG frame sequence (and optionally an mp4) in a separate process.
+menu-tools-render-zoom-video = Render zoom video…
+menu-tools-render-zoom-video-hover = Render a dive from the whole set into the current view as a video, from exponential-map strips: much faster than rendering every frame.
 menu-tools-close-player = Close tour player
 menu-tools-close-player-hover = Stop the tour, close its player, and restore your own iteration and coloring settings
 menu-tools-render-farm = Render on farm…
@@ -2327,6 +2329,70 @@ tour-render-failed-or-stopped = Render failed or was stopped. { $last }
 tour-render-no-exe = Cannot find the executable: { $why }
 # $why: the system's reason.
 tour-render-start-failed = Could not start the render: { $why }
+
+## The Render zoom video dialog (Tools ▸ Render zoom video…): a dive into the current view as a
+## video, rendered from exponential-map strips in a separate process.
+
+# The window's title.
+zoom-video-title = Render zoom video
+# What the video dives into. $fractal: the fractal's name; $magnification: "2.2e99×"; $octaves: a number.
+zoom-video-view = { $fractal } · into the current view at { $magnification } ({ $octaves } octaves)
+zoom-video-no-julia = Zoom videos dive into the Mandelbrot set and Multibrot 3–8, not Julia sets yet.
+# $fractal: the fractal's name.
+zoom-video-no-fractal = Zoom videos dive into the Mandelbrot set and Multibrot 3–8 for now, not { $fractal }.
+zoom-video-no-method = This colouring reads statistics a zoom video's strips do not keep (stripe, triangle inequality, orbit trap, decomposition): choose smooth, distance estimate, relief or glow.
+zoom-video-too-shallow = Zoom in first: the video dives from its start into the current view.
+zoom-video-out = Video file
+zoom-video-browse = Browse…
+# The file dialog's filter: video files.
+zoom-video-filter = Video
+zoom-video-size = Size
+zoom-video-size-custom = Custom…
+zoom-video-size-custom-value = Custom — { $width }×{ $height }
+zoom-video-fps = Frames / second
+zoom-video-speed = Octaves / second
+zoom-video-speed-hover = How fast the video zooms: one octave doubles the magnification. One a second is a steady dive; the video lasts the dive's octaves divided by this.
+zoom-video-start = Starts at
+zoom-video-start-hover = The magnification the video starts from (2^0 is the whole set). It ends at the current view.
+zoom-video-rotate = Turns / octave
+zoom-video-rotate-hover = Turn the picture as it dives: turns for every doubling of the magnification (0 for none). Relief lighting stays fixed to the screen.
+zoom-video-ss = Anti-aliasing
+zoom-video-ss-hover = Samples a pixel along each side. The strips are rendered as much finer, so 2× costs about four times as long.
+zoom-video-normalize = Palette follows the depth (normalize)
+zoom-video-normalize-hover = Spread the palette over each moment's escape range, as Normalize deep colors does on screen, changing smoothly through the dive. Deep dives need it: past ~1e50× a fixed palette cycle turns to confetti.
+zoom-video-keep = Keep the strips
+zoom-video-keep-hover = Also write the strips to this folder, so the video can be coloured again later without rendering (fractadyne --assemble FOLDER). They take a lot of space.
+# $frames: the number of frames; $seconds: the video's length; $strips: strips to render, each $width × $rows texels.
+zoom-video-summary =
+    { $frames ->
+        [one] { $frames } frame · { $seconds }s of video · { $strips } strips of { $width }×{ $rows }
+       *[other] { $frames } frames · { $seconds }s of video · { $strips } strips of { $width }×{ $rows }
+    }
+# The graphics memory the strips the frames read take. $size: a number of gigabytes ("1.0").
+zoom-video-memory = ≈{ $size } GB of graphics memory for the strips in view
+# The disk space the kept strips take (an estimate). $size: a number of gigabytes.
+zoom-video-disk = ≈{ $size } GB of strips on disk
+zoom-video-separate = Renders in a separate process, coloured as the view is now (the session is saved first) — a lost GPU device there cannot take this session with it.
+# $done, $total: frames.
+zoom-video-progress = { $done } / { $total } frames
+zoom-video-starting = starting…
+zoom-video-live-paused = Live view paused — the video has the GPU to itself.
+zoom-video-cancel = Cancel
+zoom-video-copy-command = Copy command
+zoom-video-copy-command-hover = Copy the equivalent command line to the clipboard
+zoom-video-stop = Stop render
+zoom-video-render = Render
+zoom-video-render-hover = Render the strips and assemble the video
+# $file: the video file.
+zoom-video-finished = Video finished → { $file }
+# $why: the reason, as the render gave it.
+zoom-video-failed = Render failed: { $why }
+# $last: the render's last progress line.
+zoom-video-failed-or-stopped = Render failed or was stopped. { $last }
+# $why: the operating system's reason.
+zoom-video-no-exe = Cannot find the executable: { $why }
+# $why: the operating system's reason.
+zoom-video-start-failed = Could not start the render: { $why }
 
 ## The Custom formula dialog (Fractal ▸ Custom formula…)
 ## The formula language itself stays as it is in every language: function names (sin, cosh, conj…),

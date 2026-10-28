@@ -6440,6 +6440,8 @@ struct FractadyneApp {
     last_dir: Option<std::path::PathBuf>,
     /// "Render script…" dialog + the child process doing the work (see `TourRenderUi`).
     tour_render: TourRenderUi,
+    /// Tools ▸ Render zoom video… (`ui::zoom_video`).
+    zoom_video: crate::ui::zoom_video::ZoomVideoUi,
     /// Where the references used since the last tour frame came from (`render::note_ref_source`):
     /// 3 fresh (picked and built), 2 from the on-disk orbit cache, 1 reused (extended from one in
     /// memory), 0 none — the costliest wins. Atomic because the export path that builds a tour
@@ -7409,6 +7411,7 @@ impl FractadyneApp {
             last_dir: s.last_dir.clone().map(std::path::PathBuf::from),
             playback_restore: None,
             tour_render: TourRenderUi::default(),
+            zoom_video: Default::default(),
             ref_source: std::sync::atomic::AtomicU8::new(0),
             farm_client: Default::default(),
             farm_controller: Default::default(),
@@ -10065,7 +10068,10 @@ impl FractadyneApp {
         // iterate dispatch. Checked FIRST so it also wins over pan/zoom interaction.
         // The same holds for farm frames rendered on this machine: a render client mid-frame, or a
         // farm controller measuring its anchors or rendering through its own local client.
-        let render_child_busy = self.tour_render.child.is_some() || self.farm_client.rendering() || self.farm_controller.rendering_here();
+        let render_child_busy = self.tour_render.child.is_some()
+            || self.zoom_video.child.is_some()
+            || self.farm_client.rendering()
+            || self.farm_controller.rendering_here();
         let reproject = if render_child_busy {
             Some([0.0, 0.0])
         } else if self.pointer.pan_view == Some(view_id) && interacting {
@@ -14465,6 +14471,7 @@ impl FractadyneApp {
             || self.playback.is_some()
             || self.autopilot.active
             || self.tour_render.child.is_some()
+            || self.zoom_video.child.is_some()
     }
 
     /// The palette of view `v` is still moving toward its colours: the shown window gliding to the
@@ -17333,6 +17340,8 @@ impl eframe::App for FractadyneApp {
         self.draw_playback_transport(ctx);
         self.poll_tour_render(ctx);
         self.draw_tour_render_dialog(ctx);
+        self.poll_zoom_video(ctx);
+        self.draw_zoom_video_dialog(ctx);
         // The farm windows' processes are polled with the windows closed too: a job outlives them.
         self.poll_farm_client(ctx);
         self.draw_farm_client_window(ctx);
