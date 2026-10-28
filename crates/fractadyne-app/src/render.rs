@@ -2206,18 +2206,28 @@ impl FractadyneApp {
     /// mapping half of [`Self::live_norm_cycle_offset`], whose predicate decides whether to map at
     /// all): log for a heavy-tailed range or when asked, linear otherwise.
     pub(crate) fn norm_map_for(&self, mn: f32, mx: f32) -> NormMap {
-        let sweeps = 0.5 + self.coloring.cycle * 6.0;
         if norm_map_is_log(mn, mx, self.coloring.log_palette) {
-            // LOG mapping: the shader compresses to log(v − mn + 1), so the range spans
-            // log(mx − mn + 1) and the palette is spread over the values as the eye reads
-            // them. The shader subtracts `mn` itself, so the offset here is the user's
-            // phase alone — no `−mn·cycle` term as in the linear case.
-            let span = ((mx - mn) + 1.0).ln().max(1.0e-6);
-            NormMap { cycle: sweeps / span, offset: self.coloring.offset, mode: 1, lo: mn }
+            self.norm_map_log(mn, mx)
         } else {
-            let c = sweeps / (mx - mn).max(1.0e-6);
-            NormMap { cycle: c, offset: self.coloring.offset - mn * c, mode: 0, lo: 0.0 }
+            self.norm_map_linear(mn, mx)
         }
+    }
+
+    /// [`Self::norm_map_for`]'s LOG mapping of `[mn, mx]`: the shader compresses to
+    /// log(v − mn + 1), so the range spans log(mx − mn + 1) and the palette is spread over the
+    /// values as the eye reads them. The shader subtracts `mn` itself, so the offset here is the
+    /// user's phase alone — no `−mn·cycle` term as in the linear case.
+    pub(crate) fn norm_map_log(&self, mn: f32, mx: f32) -> NormMap {
+        let sweeps = 0.5 + self.coloring.cycle * 6.0;
+        let span = ((mx - mn) + 1.0).ln().max(1.0e-6);
+        NormMap { cycle: sweeps / span, offset: self.coloring.offset, mode: 1, lo: mn }
+    }
+
+    /// [`Self::norm_map_for`]'s LINEAR mapping of `[mn, mx]`.
+    pub(crate) fn norm_map_linear(&self, mn: f32, mx: f32) -> NormMap {
+        let sweeps = 0.5 + self.coloring.cycle * 6.0;
+        let c = sweeps / (mx - mn).max(1.0e-6);
+        NormMap { cycle: c, offset: self.coloring.offset - mn * c, mode: 0, lo: 0.0 }
     }
 }
 
@@ -4749,6 +4759,26 @@ impl FractadyneApp {
         Some(res)
     }
 
+    /// Map the palette onto the escape range `[clo, chi]` in `req`, as a normalized export does: with
+    /// normalize on, the `cycle` slider means palette SWEEPS across the range; log only when the
+    /// user asked for it (`log_palette`) — never switched by the range itself, so a sequence of frames
+    /// whose range crosses a threshold keeps one mapping. Shared with zoom-video assembly.
+    pub(crate) fn apply_norm_range(&self, req: &mut fractadyne_gpu::ExportRequest, clo: f32, chi: f32) {
+        let range = (chi - clo).max(1.0);
+        let sweeps = 0.5 + self.coloring.cycle * 6.0;
+        if self.coloring.log_palette {
+            // Log mapping — the shader compresses to log(v − lo + 1), so the span is measured in
+            // log space and it subtracts `lo` itself (hence no −clo·cycle term here).
+            req.norm_mode = 1;
+            req.norm_lo = clo;
+            req.cycle = sweeps / (range + 1.0).ln().max(1.0e-6);
+            req.offset = self.coloring.offset;
+        } else {
+            req.cycle = sweeps / range;
+            req.offset = -clo * req.cycle + self.coloring.offset;
+        }
+    }
+
     /// **Auto-normalized** export: color the smooth-iter field with the palette CYCLE mapped to the
     /// frame's actual escape-value range, instead of the fixed `cycle`. At extreme depth the
     /// smooth-iter counts are ~1e5–1e6 and vary steeply, so a fixed cycle aliases a correct escape
@@ -4840,20 +4870,7 @@ impl FractadyneApp {
                 }
             }
         };
-        let range = (chi - clo).max(1.0);
-        // With normalize on, the `cycle` slider means palette SWEEPS across the escape range.
-        let sweeps = 0.5 + self.coloring.cycle * 6.0;
-        if self.coloring.log_palette {
-            // Log mapping — the shader compresses to log(v − lo + 1), so the span is measured in
-            // log space and it subtracts `lo` itself (hence no −clo·cycle term here).
-            req.norm_mode = 1;
-            req.norm_lo = clo;
-            req.cycle = sweeps / (range + 1.0).ln().max(1.0e-6);
-            req.offset = self.coloring.offset;
-        } else {
-            req.cycle = sweeps / range;
-            req.offset = -clo * req.cycle + self.coloring.offset;
-        }
+        self.apply_norm_range(&mut req, clo, chi);
         // Pass 2 — color the buffer with the normalized cycle.
         let mut res = fractadyne_gpu::color_iter_buffer(device, queue, &req, &iter.pixels).ok()?;
         // Box-downsample the supersampled colored buffer to the output resolution.
@@ -11889,9 +11906,12 @@ mod norm_palette_top;
 /// ⭐**Ratio, not span.** `[45075, 63736]` is wide in absolute terms and must stay LINEAR;
 /// `[1, 7925]` is narrower in absolute terms and must not. Only the ratio separates them.
 pub(crate) fn norm_map_is_log(mn: f32, mx: f32, log_palette: bool) -> bool {
-    const LOG_AUTO_RATIO: f32 = 1000.0;
-    log_palette || mx > mn.max(1.0) * LOG_AUTO_RATIO
+    log_palette || mx > mn.max(1.0) * NORM_LOG_AUTO_RATIO
 }
+
+/// The window ratio (`mx / max(mn, 1)`) past which the normalized map takes the LOG form
+/// ([`norm_map_is_log`]); zoom-video assembly dissolves between the two forms around it.
+pub(crate) const NORM_LOG_AUTO_RATIO: f32 = 1000.0;
 
 #[cfg(test)]
 #[path = "../tests/unit/render/norm_map_choice.rs"]

@@ -385,6 +385,88 @@ unchanged) and its row step as `map_s`.
   preset reads them). Shallow strips by perturbation or double-single, for KF's precision near the
   set (cost to measure).
 
+### 8.3 E2 as built so far (2026-10-28, branch `feat/zoom-video-e2`)
+
+`--assemble DIR --out F.mp4` (video) and `--assemble DIR --assemble-at L[,L…]` (PNG frames; with
+`--render-iter`, each frame's raw main target as an EXR), from Fractadyne-format strips on disk.
+
+- **Frame = reprojected main target + the app's colour pass.** `fs_color` knows nothing of the
+  plane: it reads a main target and assumes `ss×ss` texels a pixel. So the assembler fills a
+  FRAME-SHAPED main target, `(w·ss)×(h·ss)`, from the strips (`gpu/src/assemble.wgsl`, a module of
+  its own, nothing in `mandelbrot.wgsl` changed), and colours it with `fs_color` from the unchanged
+  iterate module, with the uniform `color_iter_buffer_ss` builds (`color_uniforms_for`, shared). §6.3's
+  "colour each strip once, then reproject colours" is NOT what was built: colouring after
+  reprojection gets every neighbourhood operation (relief's 3×3, the palette AA footprint) and the
+  distance estimate in frame samples for free, exactly as a flat render has them.
+- **Each sample takes its nearest texel** (`ExpMap::locate` is the CPU definition; the shader
+  mirrors it with its own atan, WGSL's is only promised to 4096 ULP). The distance estimate is
+  rescaled from the texel's radial size to the sample spacing; the normal is turned by −φ on a
+  rotated frame (rotation is in the GPU path, not yet on the command line).
+- **Depth is split** into whole octaves (i64, CPU) and a fraction, so a sample's own part stays an
+  f32 good to ~1e-3 of a row at any depth. The window is a ring of array layers (strip `k` in layer
+  `k mod layers`), `layers_for_frame` deep (11 at 640x360), with a 1e-4-octave margin each side
+  so a sample on an octave boundary always finds its strip.
+- **Strips are read ahead** on threads of their own (two beyond the window); frames go to ffmpeg
+  through a writer thread (`app/src/video_pipe.rs`: raw RGBA on stdin, the PNG path's ordered
+  dither, a `.partial` file renamed into place).
+- **Gates** (selftest group `assemble`; mutation-checked):
+  - synthetic strips whose every texel holds its own number: 155,520 samples over 12 frames (1x1
+    and 2x2 samples, a rotated frame, past the dive's end) read the texel `locate` names, 0 wrong
+    (9 within 1e-3 texel of an edge); DE rescale exact to 6e-7, normals to 2e-8. A half-texel
+    column shift: 77,593 wrong; the row step left out of the DE rescale: DE error 5.8.
+  - a real dive (160x90, cap 3000) at 2^0, 4.5, 10, 15.5, 20 against `render_iter` of the same frame,
+    with a CONTROL (the same flat render moved (0.3, 0.2) px): the assembled frame agrees with the
+    flat one at least as well as the control at every depth (within 0.1 iteration: 97.0/51.9/63.7/
+    63.8/8.2% vs the control's 93.2/33.6/56.3/51.2/4.5%), DE bias ≤ 0.0065 (the left-out row step:
+    +6.52), and the coloured frame is identical (max difference 0) to `color_iter_buffer_ss` on the
+    same samples. Sample-for-sample differences are large wherever pixels are chaotic, which is
+    why the check is relative to the control, not absolute.
+  - The same comparison at 640x360 by hand (the seahorse dive, fixed cap 5000) gave the same
+    ordering at all six depths.
+- **Speed:** a 640x360 dive assembles at ~200 frames a second (601 frames in 3 s on the 3080).
+- **Palette normalization over a dive** (`--normalize`, or the session's `normalize_live`), §6.3's
+  "computed per frame from the strips it samples": each strip, as it is read, is summarized in 8×8
+  blocks (least, greatest and mean escaped value, escaped count). An ANCHOR at every whole octave
+  (and the dive's end) is the frame's window as the live view takes it: from the least value to the
+  98% AREA quantile (`norm_top_quantile`; blocks weighted by escaped texels × radius²), because the
+  slowest pixels sit just under the cap wherever interior is in view — min/max put the whole
+  picture in the bottom 20% of the palette (measured: top 4998 vs 1689 at the same view). Frames
+  interpolate the anchors GEOMETRICALLY (the window grows by factors: linear moved it 13% in an
+  octave's first frame and 3% in its last; the first frame step of the 2^20 dive's mean colour
+  went 11.1 → 4.4, below the un-normalized video's 4.6). The live view switches linear→log at a
+  window ratio of 1000; a video DISSOLVES between the two across a factor of 2 either side
+  (`log_weight`, through the colour pass's palette fade), so a dive across it never jumps. Each
+  anchor is logged (`[fd-assemble] palette anchor at 2^L: window LO to TOP (W% log)`).
+- **One step, no strips on disk** (`--render-zoom-video F`, §6.1's sliding window): the dive is
+  planned as `--render-expmap` plans it (`plan_dive`, shared), its one reference built for the
+  deepest strip, and each strip rendered (`render_strip`, the same path) just before the first frame
+  that reads it — or the first palette anchor that does — straight into the GPU window
+  (`StripSource::Render`; `StripSource::Folder` is `--assemble`'s read-ahead). `--keep-strips DIR`
+  also writes them (Fractadyne format, with a manifest) for a later `--assemble DIR`. The 2^20
+  seahorse dive at 640x360: 30 strips and 601 frames in 7.5 s; assembling the kept strips again,
+  2.8 s. ⛔**Compare videos LOSSLESSLY**: the two videos at crf 18 "differed" on 24% of pixels by
+  up to 94 levels — x264's decisions cascade from any input difference until the next keyframe
+  (whole stretches matched exactly, others not) — while the same two at `--assemble-crf 0` match
+  on 563 of 601 frames exactly and differ on 0.00009% of pixels by at most 3 levels (the smooth
+  count: the in-memory strip carries the renderer's `sm.z`, a file `N + NF` rounded once).
+- **Tours and rotation** (§6.4): `--assemble-tour T` takes each frame's depth from the tour's own
+  playback (`Playback::sample`: keyframe zooms, times, holds, easing; the tour's fps unless
+  `--assemble-fps`), and REFUSES a tour that leaves the dive's centre by more than a thousandth of a
+  pixel of the frame it is at, or goes outside the strips' depths — a strip video cannot pan (start
+  the tour where its last pan ends). `--assemble-rotate R`: R turns an octave (the GPU path had
+  rotation from the start; normals turn with the frame, so relief light stays fixed to the screen).
+  Captions, callouts and the tour's palettes are not applied yet.
+- **§8's gate at reduced size (2026-10-28, the 3080):** the 1e100 dive into the target of
+  `tours/dive-to-view-star-e98.toml` (4.70e99×, 331.1 octaves) at 320x180, 30 fps, 1 octave a
+  second, a fixed cap of 20,000, normalized. `--render-zoom-video`: **62.5 s** in all — 340 strips
+  in 33.8 s (12 direct, 79 df32 perturbation, 249 floatexp; median 107 ms a floatexp strip) and
+  9,934 frames assembled (2.7 ms of GPU a frame) and encoded. `--render-tour` of the same dive (a
+  two-keyframe tour on the same centre, linear zoom, the same cap and size, ss 1): **919 s** for its
+  9,935 PNG frames, without encoding — **14.7× slower**. The frames LOOKED right at every depth (the
+  e98 stars, the palette anchored once an octave from 190–239 at 2^40 to 2229–2280 at 2^320).
+- **Not yet:** captions/callouts/palettes from a tour; the gate at full size (1080p60: strips 36×
+  the texels; the first heavy run of deep strips at that size — PLUTO, or with the user's go-ahead).
+
 ## 9. Decisions for you
 
 **Decided 2026-10-27 (the user):**

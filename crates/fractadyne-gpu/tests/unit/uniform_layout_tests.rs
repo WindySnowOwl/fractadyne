@@ -194,3 +194,41 @@ fn iter_uniform_matches_the_shader() {
     );
     assert_eq!(std::mem::size_of::<super::StripMap>(), 16, "StripMap is the shader's 4 words");
 }
+
+/// The zoom-video assembly module (`assemble.wgsl`) validates, and its uniform `AssembleU` lines up
+/// with `AssembleUniforms` field for field: a field on one side only would place every sample of
+/// every assembled frame from the wrong numbers.
+#[test]
+fn the_assembly_module_validates_and_its_uniform_lines_up() {
+    use crate::assemble::AssembleUniforms as A;
+    use egui_wgpu::wgpu::naga;
+    let src = include_str!(concat!(env!("CARGO_MANIFEST_DIR"), "/src/assemble.wgsl"));
+    let module = naga::front::wgsl::parse_str(src).unwrap_or_else(|e| panic!("{}", e.emit_to_string(src)));
+    naga::valid::Validator::new(naga::valid::ValidationFlags::all(), naga::valid::Capabilities::all())
+        .validate(&module)
+        .unwrap_or_else(|e| panic!("{e:?}"));
+    let fields = wgsl_struct_fields(src, "AssembleU");
+    assert_eq!(wgsl_struct_size(&fields), std::mem::size_of::<A>(), "AssembleU and AssembleUniforms disagree on size");
+    let rust = [
+        ("res", std::mem::offset_of!(A, res)),
+        ("width", std::mem::offset_of!(A, width)),
+        ("rows", std::mem::offset_of!(A, rows)),
+        ("rows_per_octave", std::mem::offset_of!(A, rows_per_octave)),
+        ("sample_offset", std::mem::offset_of!(A, sample_offset)),
+        ("depth_frac", std::mem::offset_of!(A, depth_frac)),
+        ("rel_base", std::mem::offset_of!(A, rel_base)),
+        ("first_layer", std::mem::offset_of!(A, first_layer)),
+        ("layers", std::mem::offset_of!(A, layers)),
+        ("rel_last", std::mem::offset_of!(A, rel_last)),
+        ("turns", std::mem::offset_of!(A, turns)),
+        ("rot_cos", std::mem::offset_of!(A, rot_cos)),
+        ("rot_sin", std::mem::offset_of!(A, rot_sin)),
+        ("log2_row_step", std::mem::offset_of!(A, log2_row_step)),
+    ];
+    assert_eq!(fields.len(), rust.len() + 1, "a field was added on one side only (the +1 is the padding)");
+    for (name, off) in rust {
+        assert_eq!(wgsl_field_offset(&fields, name), off, "`{name}` is at another offset in AssembleU than in AssembleUniforms");
+    }
+    // The assembly module carries no iterate code: it is a module of its own.
+    assert!(!src.contains("fn iterate_at") && !src.contains("fn fs_color"));
+}

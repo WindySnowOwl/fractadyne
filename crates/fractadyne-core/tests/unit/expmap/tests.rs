@@ -162,3 +162,57 @@ fn the_outer_scale_is_exact_at_any_depth() {
         assert!((back - m.outer_log2(k)).abs() < 1e-9, "strip {k}: 2^{back} for 2^{}", m.outer_log2(k));
     }
 }
+
+/// Assembly reads each frame sample from the texel `locate` names, so `locate` must invert the
+/// texel placement: any point within half a texel of texel `(k, i, j)`'s sample point, along both
+/// axes, comes back as that texel. The point is formed from `texel_polar`'s own placement (which
+/// the tests above pin against 256-bit arithmetic), at random sub-texel offsets, in both layouts,
+/// across the column wrap and the octave boundaries, and deep in the dive.
+#[test]
+fn locate_names_the_texel_whose_sample_point_is_nearest() {
+    let mut seed = 0x9e37_79b9_7f4a_7c15u64;
+    let mut rnd = || {
+        seed ^= seed << 13;
+        seed ^= seed >> 7;
+        seed ^= seed << 17;
+        (seed >> 11) as f64 / (1u64 << 53) as f64
+    };
+    for map in [ExpMap::for_frames(1920.0, 1080.0, 1.0, 0.0), ExpMap::for_frames(640.0, 360.0, 1.0, 3.0).with_octave_rows()] {
+        // A conformal strip's rows past its octave are the next strip's first rows: `locate` names
+        // the next strip for them, so only the rows inside the octave invert.
+        let own_rows = match map.layout {
+            StripRows::Conformal => (map.rows_per_octave() - 0.5).floor() as u32,
+            StripRows::Octave => map.rows,
+        };
+        let (mut checked, mut wrapped, mut crossed) = (0, 0, 0);
+        for n in 0..20_000 {
+            let k = [0u64, 1, 7, 49_999][n % 4];
+            let i = match n % 5 {
+                0 => 0,
+                1 => map.width - 1,
+                _ => (rnd() * map.width as f64) as u32 % map.width,
+            };
+            let j = match n % 3 {
+                0 => 0,
+                1 => own_rows - 1,
+                _ => (rnd() * own_rows as f64) as u32 % own_rows,
+            };
+            let (du, dv) = (rnd() * 0.98 - 0.49, rnd() * 0.98 - 0.49);
+            if k == 0 && j == 0 && dv < 0.0 && map.layout == StripRows::Octave {
+                continue; // a corner-sampled row 0's outer half is outside the dive
+            }
+            let (r_log2, angle) = map.texel_polar(k, i as f64 + du, j as f64 + dv);
+            let depth = (map.r0_log2 - k as f64) - r_log2 + k as f64; // the large part kept exact
+            let got = map.locate(depth, angle / TAU);
+            assert_eq!(got, Some((k, i, j)), "{:?} layout: texel ({k}, {i}, {j}) offset ({du:.3}, {dv:.3})", map.layout);
+            checked += 1;
+            wrapped += ((i == 0 && du < 0.0) || (i == map.width - 1 && du > 0.0)) as u32;
+            crossed += (j == 0 && dv < 0.0) as u32;
+        }
+        assert!(checked > 15_000 && wrapped > 500 && crossed > 500, "{:?}: {checked} checked, {wrapped} across the wrap, {crossed} across an octave", map.layout);
+    }
+    let map = ExpMap::for_frames(640.0, 360.0, 1.0, 0.0);
+    assert_eq!(map.locate(-1e-9, 0.25), None, "outside strip 0");
+    assert_eq!(map.locate(f64::NAN, 0.25), None);
+    assert_eq!(map.locate(1.0, f64::INFINITY), None);
+}
