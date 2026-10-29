@@ -48,6 +48,9 @@ pub(crate) struct FarmControllerUi {
     pub(crate) share_root: String,
     /// Pass reference orbits between machines (design §8); off: each builds its own.
     pub(crate) sharing: bool,
+    /// A tour's deepest frames handed out first (`--order deepest`). A zoom video's strips always
+    /// are.
+    pub(crate) deepest: bool,
     pub(crate) link: Option<Link<ControllerStatus>>,
     /// The last status (and output) of a controller that has ended — or the UI walk's sample.
     pub(crate) last: Option<ControllerStatus>,
@@ -80,6 +83,7 @@ impl Default for FarmControllerUi {
             local: true,
             share_root: String::new(),
             sharing: true,
+            deepest: false,
             link: None,
             last: None,
             last_log: Vec::new(),
@@ -139,6 +143,9 @@ impl FarmControllerUi {
         if !self.share_root.trim().is_empty() {
             a.push("--share-root".into());
             a.push(self.share_root.trim().to_string());
+        }
+        if self.deepest && self.zoom.is_none() {
+            a.extend(["--order".to_string(), "deepest".to_string()]);
         }
         if !self.sharing {
             a.push("--sharing".into());
@@ -515,6 +522,12 @@ impl FractadyneApp {
                                 ui.checkbox(&mut f.sharing, tr!(farm_ctl_sharing)).on_hover_text(tr!(farm_ctl_sharing_hover));
                             });
                             ui.end_row();
+                            // A tour's order; a zoom video's strips always go deepest first.
+                            if f.zoom.is_none() {
+                                ui.label("");
+                                ui.checkbox(&mut f.deepest, tr!(farm_ctl_deepest)).on_hover_text(tr!(farm_ctl_deepest_hover));
+                                ui.end_row();
+                            }
                         });
                     });
 

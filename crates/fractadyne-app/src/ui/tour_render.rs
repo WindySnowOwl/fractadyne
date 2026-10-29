@@ -17,6 +17,7 @@
 //! editor are not rendered, and settings that live in the session rather than the script (e.g. a
 //! manually chosen palette) do not carry over. The dialog says so.
 
+use crate::scripting::FrameOrder;
 use crate::FractadyneApp;
 
 /// A line from the render child, tagged by which stream it came from. Progress lines overwrite the
@@ -348,33 +349,37 @@ impl FractadyneApp {
                             && self.tour_render.all_gpus
                         {
                             self.tour_render.segment = 0;
-                            self.tour_render.progressive = false;
+                            // A farm hands out runs of frames, in order or deepest first.
+                            if self.tour_render.order == FrameOrder::Progressive {
+                                self.tour_render.order = FrameOrder::Sequential;
+                            }
                         }
                     }
-                    ui.add_enabled_ui(!self.tour_render.all_gpus, |ui| ui.horizontal(|ui| {
+                    ui.horizontal(|ui| {
                         ui.label(tr!(tour_render_order));
+                        let farm = self.tour_render.all_gpus;
+                        let name = |o: FrameOrder| match o {
+                            FrameOrder::Sequential => tr!(tour_render_sequential),
+                            FrameOrder::Progressive => tr!(tour_render_progressive),
+                            FrameOrder::Deepest => tr!(tour_render_deepest),
+                        };
                         egui::ComboBox::from_id_salt("tour_render_order")
-                            .selected_text(if self.tour_render.progressive {
-                                tr!(tour_render_progressive)
-                            } else {
-                                tr!(tour_render_sequential)
-                            })
+                            .selected_text(name(self.tour_render.order))
                             .width(140.0)
                             .show_ui(ui, |ui| {
-                                ui.selectable_value(
-                                    &mut self.tour_render.progressive,
-                                    false,
-                                    tr!(tour_render_sequential),
-                                )
-                                .on_hover_text(tr!(tour_render_sequential_hover));
-                                ui.selectable_value(
-                                    &mut self.tour_render.progressive,
-                                    true,
-                                    tr!(tour_render_progressive),
-                                )
-                                .on_hover_text(tr!(tour_render_progressive_hover));
+                                for (o, hover) in [
+                                    (FrameOrder::Sequential, tr!(tour_render_sequential_hover)),
+                                    (FrameOrder::Progressive, tr!(tour_render_progressive_hover)),
+                                    (FrameOrder::Deepest, tr!(tour_render_deepest_hover)),
+                                ] {
+                                    let on = self.tour_render.order == o;
+                                    let enabled = !(farm && o == FrameOrder::Progressive);
+                                    if ui.add_enabled(enabled, egui::SelectableLabel::new(on, name(o))).on_hover_text(hover).clicked() {
+                                        self.tour_render.order = o;
+                                    }
+                                }
                             });
-                    }));
+                    });
                 });
 
                 // What this is about to cost, before committing to it.
@@ -561,9 +566,9 @@ impl FractadyneApp {
         if t.mp4 {
             a.push("--mp4".to_string());
         }
-        if t.progressive {
+        if t.order != FrameOrder::Sequential {
             a.push("--order".to_string());
-            a.push("progressive".to_string());
+            a.push(t.order.word().to_string());
         }
         if t.resume {
             a.push("--resume".to_string());

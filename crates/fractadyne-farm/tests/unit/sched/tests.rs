@@ -37,14 +37,14 @@ fn the_first_client_starts_at_frame_zero_and_the_second_mid_gap() {
     assert_eq!(bb.len(), 2);
 }
 
-/// From the end (`Config::from_end`, a zoom video's strips): the first runs take the highest
+/// By index (`Config::priority`, a zoom video's strips): the first runs take the highest
 /// frames — the deepest, slowest strips — and each machine joining takes the highest still free,
 /// not the middle of a gap.
 #[test]
 fn from_the_end_the_highest_frames_go_first() {
     let b = t0();
     let mut cfg = Config::new(100);
-    cfg.from_end = true;
+    cfg.priority = (0..100).map(|i| i as f64).collect();
     let mut s = Scheduler::new(cfg, &[]);
     let a = assigns(&s.step(b, Event::Joined { client: 1, name: "A".into() }));
     assert_eq!(a, vec![(1, 1, 92, 100), (1, 2, 84, 92)], "the highest first, then the next below");
@@ -53,6 +53,32 @@ fn from_the_end_the_highest_frames_go_first() {
     // A finishes its first run: its next is again the highest free, below everyone's.
     let next = assigns(&verify(&mut s, secs(b, 8), 1, 1, 92..100));
     assert_eq!(next.first().map(|r| (r.2 < 68, r.3)), Some((true, 68)), "{next:?}");
+}
+
+/// By depth (`Config::priority`, a tour rendered deepest first): a tour of two dives, one in to depth
+/// 30 at frame 59 and one out from depth 50 at frame 60. The first run is the deepest dive's start
+/// and grows over its next-deepest frames (forward, the dive going out), the next machine takes the
+/// next-deepest stretch — which is the first dive's end once the second's depths fall below it —
+/// and no run starts on a dissolve frame.
+#[test]
+fn by_depth_a_run_grows_over_the_deepest_frames_still_free() {
+    let b = t0();
+    let mut cfg = Config::new(100);
+    // Frames 0-59 dive in to depth 30; 60-99 come out from 50 to 10.
+    cfg.priority = (0..100).map(|i| if i < 60 { i as f64 / 2.0 } else { 50.0 - (i - 60) as f64 }).collect();
+    let mut s = Scheduler::new(cfg.clone(), &[]);
+    let a = assigns(&s.step(b, Event::Joined { client: 1, name: "A".into() }));
+    assert_eq!(a, vec![(1, 1, 60, 68), (1, 2, 68, 76)], "the deepest frame, 60, and the frames after it, going out");
+    let bb = assigns(&s.step(b, Event::Joined { client: 2, name: "B".into() }));
+    // Left free: 0-59 (depths 0-29.5) and 76-99 (34 down to 10). Next: 76-83 (34-27), then the first
+    // dive's end, 52-59 (26-29.5), is deeper than 84-91 (26-19).
+    assert_eq!(bb, vec![(2, 3, 76, 84), (2, 4, 52, 60)], "{bb:?}");
+    // A dissolve at frames 52-55: the run over 52-59 leads in from 51, the frame it rises through.
+    cfg.no_start = (0..100).map(|i| (52..56).contains(&i)).collect();
+    let mut s = Scheduler::new(cfg, &[]);
+    s.step(b, Event::Joined { client: 1, name: "A".into() });
+    let c = assigns(&s.step(b, Event::Joined { client: 2, name: "B".into() }));
+    assert_eq!(c, vec![(2, 3, 76, 84), (2, 4, 51, 60)], "led in from 51: {c:?}");
 }
 
 #[test]
@@ -303,10 +329,19 @@ fn stop_cancels_everything_and_ends_the_job() {
 #[test]
 fn every_frame_exactly_once_under_random_chaos() {
     for seed in 1..=60u64 {
-        chaos(seed, false);
+        chaos(seed, Priority::InOrder);
         // Handed out from the end, as a zoom video's strips are.
-        chaos(seed, true);
+        chaos(seed, Priority::ByIndex);
+        // By depth, as a tour rendered deepest first: dives in and out, holds and dissolves.
+        chaos(seed, Priority::ByDepth);
     }
+}
+
+#[derive(Clone, Copy, PartialEq)]
+enum Priority {
+    InOrder,
+    ByIndex,
+    ByDepth,
 }
 
 struct SimClient {
@@ -319,7 +354,7 @@ struct SimClient {
     steady: bool,
 }
 
-fn chaos(seed: u64, from_end: bool) {
+fn chaos(seed: u64, mode: Priority) {
     let mut rng = seed.wrapping_mul(0x9e37_79b9_7f4a_7c15) | 1;
     let mut rand = move |m: u64| {
         rng ^= rng << 13;
@@ -331,11 +366,24 @@ fn chaos(seed: u64, from_end: bool) {
     let mut cfg = Config::new(frames);
     cfg.first_run = 1 + rand(8);
     cfg.stall_floor = Duration::from_secs(40);
-    cfg.from_end = from_end;
-    // Dissolves (windows of frames no run may start at; a tour's, so none from the end) and held
+    cfg.priority = match mode {
+        Priority::InOrder => Vec::new(),
+        Priority::ByIndex => (0..frames).map(|i| i as f64).collect(),
+        // A tour's depth: a random walk of dives in and out, with flat stretches (holds) and ties.
+        Priority::ByDepth => {
+            let mut d = 0.0f64;
+            (0..frames)
+                .map(|_| {
+                    d = (d + rand(5) as f64 - 2.0).max(0.0);
+                    d
+                })
+                .collect()
+        }
+    };
+    // Dissolves (windows of frames no run may start at; a tour's, so none for strips) and held
     // shots.
     let mut no_start = vec![false; frames as usize];
-    for _ in 0..if from_end { 0 } else { rand(4) } {
+    for _ in 0..if mode == Priority::ByIndex { 0 } else { rand(4) } {
         let a = 1 + rand(frames - 1);
         for i in a..(a + 1 + rand(6)).min(frames) {
             no_start[i as usize] = true;

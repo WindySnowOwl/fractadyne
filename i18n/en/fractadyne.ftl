@@ -2090,6 +2090,8 @@ farm-ctl-local = Also render on this machine
 farm-ctl-local-hover = This machine counts as one client.
 farm-ctl-sharing = Share references
 farm-ctl-sharing-hover = A deep frame's reference orbit can take minutes to hours to build. Shared, it is built once and passed to the other machines. A shared reference is a different, equally valid one: at extreme depth a handful of pixels can differ from a frame that built its own.
+farm-ctl-deepest = Deepest frames first
+farm-ctl-deepest-hover = Hand out the deepest frames first: the slowest go out while every machine is busy, the cheap shallow frames fill the end, and the first frames to arrive show the hardest part of the tour. Each machine still renders its frames in order.
 farm-ctl-key = Farm key
 # A checkbox beside the shortened farm key: show all of it.
 farm-ctl-show-key = Show
@@ -2309,12 +2311,14 @@ tour-render-resume = Resume an interrupted render
 tour-render-resume-hover = Keep the frames already in the output folder and render only the missing ones. The newest frame is checked first and discarded if it is incomplete (the frame a render dies on is the one it was writing), stepping back until a good one is found; a folder holding frames at a different size is refused rather than mixed into this sequence.
 # $count: this machine's graphics cards.
 tour-render-all-gpus = Use all graphics cards ({ $count })
-tour-render-all-gpus-hover = Render on every graphics card of this machine at once, through a render farm on this computer (--gpus all). The frames, their names, Resume and the mp4 are as for one card; the whole tour renders, in the farm's own order. Different card models draw a few pixels slightly differently: a held shot and a dissolve stay on one card.
+tour-render-all-gpus-hover = Render on every graphics card of this machine at once, through a render farm on this computer (--gpus all). The frames, their names, Resume and the mp4 are as for one card; the whole tour renders, in order or deepest first (the farm hands out runs of frames; Progressive is not offered). Different card models draw a few pixels slightly differently: a held shot and a dissolve stay on one card.
 tour-render-order = Render order
 tour-render-sequential = Sequential
 tour-render-sequential-hover = Frame 0, 1, 2, … in order (the default).
 tour-render-progressive = Progressive
 tour-render-progressive-hover = Preview the whole tour first, refine to full detail: the keyframes render first, then the largest temporal gaps are bisected until every frame exists. Frames land at their correct indices either way, so Resume and the mp4 work unchanged — you can stop early, eyeball the coarse flip-book, and restart with Resume in either order.
+tour-render-deepest = Deepest first
+tour-render-deepest-hover = Render the deepest frames first and work back up: the slowest frames, and the ones most likely to go wrong, come first, and each frame reuses the reference orbit of a deeper frame already rendered, so each dive in the tour builds one reference instead of one a frame. Frames land at their correct indices, so Resume and the mp4 work unchanged. A dissolve becomes a cut in this order.
 # The cost of the render. $count: frames; $seconds: the tour's length in seconds; $width × $height: the frame size in pixels; $ss: the supersampling factor.
 tour-render-summary =
     { $count ->

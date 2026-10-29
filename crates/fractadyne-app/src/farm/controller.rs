@@ -136,6 +136,9 @@ struct JobSpec {
     normalize: bool,
     /// Mid-dissolve frames and held shots (a tour's; none for strips).
     layout: (Vec<bool>, Vec<(u64, u64)>),
+    /// The order runs are handed out in (`sched::Config::priority`): a strip's index, so the deepest
+    /// go first; a tour's depth with `--order deepest`; empty, in order.
+    priority: Vec<f64>,
     /// The deepest keyframe: frame and zoom (log10), for the pre-build (a tour's).
     deepest: Option<(u64, f64)>,
     /// (width, height, fps, ss, prefix, units).
@@ -215,6 +218,16 @@ fn tour_spec(args: &[String]) -> Result<JobSpec, String> {
     };
     let r = cli.resolve(&pb.render, &tour);
     let frames = crate::scripting::tour_frame_count(pb.total, r.fps);
+    // `--order deepest`: the deepest runs first (each still rendered in order, so a run's tail can
+    // be stolen). A progressive order has no meaning here: a farm hands out its own runs.
+    let priority = match value(args, "--order").map(|w| (w, crate::scripting::FrameOrder::parse(w))) {
+        None | Some((_, Some(crate::scripting::FrameOrder::Sequential))) => Vec::new(),
+        Some((_, Some(crate::scripting::FrameOrder::Deepest))) => {
+            let t_of = |i: u64| if pb.total <= 0.0 { 0.0 } else { (i as f64 / r.fps).min(pb.total) };
+            (0..frames).map(|i| pb.logmag_at(t_of(i))).collect()
+        }
+        Some((w, _)) => return Err(format!("--order {w}: a farm hands out its own runs of frames — in order, or `deepest` first")),
+    };
     // Dissolves and held shots, for the scheduler (design §5); the deepest keyframe, for the
     // pre-build.
     let layout = pb.farm_layout(r.fps, frames);
@@ -226,6 +239,7 @@ fn tour_spec(args: &[String]) -> Result<JobSpec, String> {
         tour_name: pb.name.clone(),
         normalize: pb.render.normalize,
         layout,
+        priority,
         deepest,
         check: UnitCheck::Png((r.width, r.height)),
         res: (r.width, r.height, r.fps, r.ss, r.prefix.clone(), frames),
@@ -317,6 +331,10 @@ fn strips_spec(args: &[String], settings: &RenderSettings) -> Result<JobSpec, St
         tour_name: stem,
         normalize: false,
         layout: Default::default(),
+        // The deepest strips, the slowest, first: the cheap shallow ones fill the end, and no
+        // machine is left on a long strip while the others wait (the video waits for every strip
+        // whatever the order).
+        priority: (0..dive.strips).map(|k| k as f64).collect(),
         deepest: None,
         res: (dive.map.width, dive.map.rows, 1.0, 1, "strip".into(), dive.strips),
         out,
@@ -464,6 +482,7 @@ fn run_inner(args: &[String]) -> Result<i32, String> {
     let mut ctl = Controller {
         args: args.to_vec(),
         layout: spec.layout,
+        priority: spec.priority,
         check: spec.check,
         strips: spec.strips,
         assembling: None,
@@ -779,6 +798,8 @@ struct Controller<'a> {
     ev_tx: mpsc::Sender<CEv>,
     /// The tour's mid-dissolve frames and held shots (`Playback::farm_layout`).
     layout: (Vec<bool>, Vec<(u64, u64)>),
+    /// The order runs are handed out in ([`JobSpec::priority`]).
+    priority: Vec<f64>,
     /// How a returned frame or strip is checked.
     check: UnitCheck,
     /// A zoom video's strips (`None`: a tour's frames).
@@ -1611,10 +1632,10 @@ impl Controller<'_> {
         // run is reassigned only after 15 minutes without one, unless `--stall` says otherwise.
         if self.strips.is_some() {
             cfg.stall_floor = cfg.stall_floor.max(Duration::from_secs(900));
-            // The deepest strips, the slowest, first: the cheap shallow ones fill the end, and no
-            // machine is left on a long strip while the others wait (the video waits for every
-            // strip whatever the order).
-            cfg.from_end = true;
+        }
+        cfg.priority = self.priority.clone();
+        if self.strips.is_none() && !cfg.priority.is_empty() {
+            self.note("deepest frames first: each run is a stretch of one dive around its deepest frames still free");
         }
         if let Some(s) = number::<u32>(&self.args, "--strikes") {
             cfg.strikes_to_remove = s.max(1);
