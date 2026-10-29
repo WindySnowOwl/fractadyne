@@ -1995,6 +1995,8 @@ farm-client-detail-job-refused = Refused this job: { $why }
 farm-client-detail-job-over = The job is over
 # $first and $last: frame numbers.
 farm-client-detail-rendering = Rendering frames { $first }–{ $last }
+# A zoom video's strips (one octave of the dive each). $first and $last: strip numbers.
+farm-client-detail-rendering-strips = Rendering strips { $first }–{ $last }
 # $time: how long nobody must use the machine ("90 s", "5 min").
 farm-client-detail-in-use = Waiting — someone is using this machine; work resumes once nobody has for { $time }
 farm-client-detail-paused = Paused — the controller has been told
@@ -2126,6 +2128,8 @@ farm-ctl-phase-paused = Paused
 farm-ctl-phase-complete = Complete
 farm-ctl-phase-stopped = Stopped
 farm-ctl-phase-ended = Ended
+# A zoom video's strips are all in: this machine makes the video from them.
+farm-ctl-phase-assembling = Assembling the video
 
 ## Render on farm: the words after the status heading
 
@@ -2135,6 +2139,10 @@ farm-ctl-detail-preparing = Measuring the normalize anchors on this machine, onc
 farm-ctl-detail-no-space = Waiting for space in the output folder
 farm-ctl-detail-paused = Paused: no new work is handed out
 farm-ctl-detail-not-rendered = Finished with frames not rendered — run again on the same folder to resume
+# A zoom video's strips (one octave of the dive each).
+farm-ctl-detail-strips-not-rendered = Finished with strips not rendered — run again to resume
+farm-ctl-detail-assembling = Every strip is in: assembling the video on this machine
+farm-ctl-detail-not-assembled = The strips are done, but the video could not be assembled from them
 farm-ctl-detail-stopped = Stopped — run again on the same folder to resume
 # $code: the controller process's exit code.
 farm-ctl-detail-ended = Ended (exit { $code })
@@ -2150,6 +2158,14 @@ farm-ctl-progress =
     }
 # Added to the progress bar. $rate: frames per second, with decimals.
 farm-ctl-progress-rate = { $rate } frames/s
+# A zoom video's strips (one octave of the dive each), on the progress bar.
+farm-ctl-progress-strips =
+    { $total ->
+        [one] { $done } / { $total } strip
+       *[other] { $done } / { $total } strips
+    }
+# Added to a zoom video's strip bar. $time: the mean time a strip took ("48 s").
+farm-ctl-progress-strip-time = { $time } a strip
 # Added to the progress bar. $time: the time still to go ("38m 10s").
 farm-ctl-progress-eta = about { $time } left
 # Facts under the progress bar, joined with " · ". $received and $sent: kilobytes per second.
@@ -2168,6 +2184,10 @@ farm-ctl-storage-low = The output folder is nearly full: no new work is handed o
 farm-ctl-gpus-differ = GPUs differ in this farm. Their frames differ slightly, which can show in a held shot.
 # After a warning sign. $count: the GPU classes in the farm.
 farm-ctl-gpus-differ-classes = GPUs differ in this farm ({ $count } GPU classes: different GPUs, drivers or probe renders). Their frames differ slightly, which can show in a held shot.
+# The same two warnings for a zoom video's strips.
+farm-ctl-gpus-differ-strips = GPUs differ in this farm. Their strips differ slightly from one another in fine detail.
+# $count: the GPU classes in the farm.
+farm-ctl-gpus-differ-classes-strips = GPUs differ in this farm ({ $count } GPU classes: different GPUs, drivers or probe renders). Their strips differ slightly from one another in fine detail.
 # $gpu: this machine's GPU, API and driver.
 farm-ctl-this-gpu = This machine: { $gpu }
 # A machine whose GPU differs. $name: the machine; $note: how its GPU differs (in English); $adapter: its GPU.
@@ -2183,6 +2203,9 @@ farm-ctl-col-state = State
 farm-ctl-col-gpu = GPU
 farm-ctl-col-frames = Frames
 farm-ctl-col-per-frame = Per frame
+# The same columns for a zoom video's strips.
+farm-ctl-col-strips = Strips
+farm-ctl-col-per-strip = Per strip
 # How the machine delivers its frames (a speed, or "shared drive").
 farm-ctl-col-link = Link
 # When the controller last heard from the machine.
@@ -2393,6 +2416,11 @@ zoom-video-copy-command-hover = Copy the equivalent command line to the clipboar
 zoom-video-stop = Stop render
 zoom-video-render = Render
 zoom-video-render-hover = Render the strips and assemble the video
+# $count: the graphics cards in this machine (2 or more).
+zoom-video-all-gpus = Use all graphics cards ({ $count })
+zoom-video-all-gpus-hover = Render the strips on every graphics card of this machine at once, through a render farm on this computer (--gpus all), then assemble the video here. Different card models draw a few points slightly differently.
+zoom-video-farm = Render on farm…
+zoom-video-farm-hover = Render the strips on several machines: opens Tools ▸ Render on farm… with this video as its job. The machines join from File ▸ Render client…; this machine assembles the video once every strip is in.
 # $file: the video file.
 zoom-video-finished = Video finished → { $file }
 # $why: the reason, as the render gave it.

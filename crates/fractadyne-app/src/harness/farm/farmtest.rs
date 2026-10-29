@@ -402,10 +402,17 @@ fn run_inner(args: &[String]) -> Result<i32, String> {
     check(records == FRAMES as usize && idx.len() == FRAMES as usize, format!("done.jsonl records each frame once ({records} records, {} distinct)", idx.len()));
     // Every kept frame says where its reference came from (design §8's measure).
     let sources: Vec<Option<String>> = done.lines().filter_map(|l| serde_json::from_str::<fractadyne_farm::manifest::DoneRecord>(l).ok()).map(|d| d.reference).collect();
+    // A reference is built for a frame, or (since 2026-10-28) the tour's deepest frame's is reused
+    // (`scripting::DeepReference`); either way some frame must have needed one.
     let fresh = sources.iter().filter(|r| r.as_deref() == Some("fresh")).count();
+    let reused = sources.iter().filter(|r| r.as_deref() == Some("reused")).count();
     check(
-        !sources.is_empty() && sources.iter().all(|r| r.is_some()) && fresh >= 1,
-        format!("every frame says where its reference came from ({} of {}, {fresh} built fresh)", sources.iter().filter(|r| r.is_some()).count(), sources.len()),
+        !sources.is_empty() && sources.iter().all(|r| r.is_some()) && fresh + reused >= 1,
+        format!(
+            "every frame says where its reference came from ({} of {}, {fresh} built fresh, {reused} reused)",
+            sources.iter().filter(|r| r.is_some()).count(),
+            sources.len()
+        ),
     );
     let bad: Vec<String> = std::fs::read_dir(out.join("farm").join("bad")).map(|rd| rd.flatten().map(|e| e.file_name().to_string_lossy().into_owned()).collect()).unwrap_or_default();
     let bad_a = bad.iter().filter(|n| n.contains("farmtest-A")).count();
@@ -525,6 +532,229 @@ fn run_inner(args: &[String]) -> Result<i32, String> {
         Ok(0)
     } else {
         println!("farmtest: FAIL ({} check(s))", fails.len());
+        Ok(1)
+    }
+}
+
+/// `--farmtest-strips [DIR]`: a zoom video's strips on a render farm on this machine, with a fault,
+/// against an independent reference (`design/zoom-video.md` §8.5).
+///
+/// 1. The reference: the dive's strips from one plain `--render-expmap` process.
+/// 2. The controller: `--render-zoom-video … --farm`, the strips kept, waiting for three clients.
+/// 3. A sends its first two strips corrupted and must be removed; B streams its strips; C delivers
+///    through the shared drive, started as the app's Render client window starts it.
+/// 4. The verdict: the controller exits 0 with the video made; the folder holds exactly the dive's
+///    strips, each identical in EVERY CHANNEL to the reference's (one reference per dive, whatever
+///    machine or run renders a strip), each recorded once; A's strips are quarantined and A is
+///    removed; C's went through the shared drive and the job's folders there are gone; the status
+///    lines say strips, then assembling, then finished.
+///
+/// Exit 0 pass, 1 fail, 2 VACUOUS (A never sent a corrupted strip: verification was not exercised).
+pub(crate) fn run_strips(args: &[String]) -> i32 {
+    match run_strips_inner(args) {
+        Ok(code) => code,
+        Err(e) => {
+            eprintln!("farmtest-strips: {e}");
+            1
+        }
+    }
+}
+
+/// Two strip files hold the same values in every channel, bit for bit (their bytes may not: the
+/// EXR writer orders its compressed blocks as they finish).
+fn same_strip(a: &Path, b: &Path) -> Result<bool, String> {
+    use fractadyne_export::ExrChannelData as D;
+    let (wa, ha, ca) = fractadyne_export::read_exr_all_channels(a).map_err(|e| format!("{}: {e}", a.display()))?;
+    let (wb, hb, cb) = fractadyne_export::read_exr_all_channels(b).map_err(|e| format!("{}: {e}", b.display()))?;
+    if (wa, ha) != (wb, hb) || ca.len() != cb.len() {
+        return Ok(false);
+    }
+    Ok(ca.iter().all(|(name, x)| {
+        cb.iter().any(|(n, y)| {
+            n == name
+                && match (x, y) {
+                    (D::U32(p), D::U32(q)) => p == q,
+                    (D::F32(p), D::F32(q)) => p.len() == q.len() && p.iter().zip(q).all(|(s, t)| s.to_bits() == t.to_bits()),
+                    _ => false,
+                }
+        })
+    }))
+}
+
+fn run_strips_inner(args: &[String]) -> Result<i32, String> {
+    let base = match args.iter().position(|a| a == "--farmtest-strips").and_then(|i| args.get(i + 1)).filter(|v| !v.starts_with("--")) {
+        Some(d) => PathBuf::from(d),
+        None => std::env::temp_dir().join(format!("fractadyne-farmtest-strips-{}", std::process::id())),
+    };
+    let _ = std::fs::remove_dir_all(&base);
+    std::fs::create_dir_all(&base).map_err(|e| format!("{}: {e}", base.display()))?;
+    let key_file = base.join("farm-key.txt");
+    std::fs::write(&key_file, format!("{}\n", FarmKey::generate()?.to_text())).map_err(|e| e.to_string())?;
+    let s = |v: &str| v.to_string();
+    let p = |v: &Path| v.to_string_lossy().into_owned();
+    println!("Fractadyne farmtest-strips — {}", base.display());
+    let t0 = Instant::now();
+    // The gate tour's target (its `[[location]]`, the tour's first `re`/`im`), 2^24 deep at 160x90:
+    // some thirty small strips.
+    let first = |key: &str| TOUR.lines().find_map(|l| l.trim().strip_prefix(key)).map(|v| v.trim().trim_matches('"').to_string()).ok_or(format!("the gate tour has no {key}"));
+    let dive = vec![s("--center"), first("re = ")?, first("im = ")?, s("--zoom-log2"), s("24"), s("--size"), s("160x90")];
+
+    // 1. The reference.
+    println!("  reference strips…");
+    let refdir = base.join("reference");
+    let mut a: Vec<String> = vec![s("--render-expmap"), p(&refdir)];
+    a.extend(dive.iter().cloned());
+    let mut r = Proc::spawn("reference", &a, &base.join("cfg-reference"), &[])?;
+    let st = r.child.wait().map_err(|e| e.to_string())?;
+    r.drain("");
+    if !st.success() {
+        return Err(format!("the reference render failed ({st})"));
+    }
+    let n = crate::assemble::read_dive(&refdir)?.strips;
+
+    // 2. The controller.
+    let out = base.join("strips");
+    let video = base.join("dive.mp4");
+    let mut a: Vec<String> = vec![s("--render-zoom-video"), p(&video)];
+    a.extend(dive.iter().cloned());
+    a.extend([
+        s("--keep-strips"),
+        p(&out),
+        s("--assemble-fps"),
+        s("10"),
+        s("--farm"),
+        s("--listen"),
+        s("127.0.0.1:0"),
+        s("--no-discovery"),
+        s("--min-clients"),
+        s("3"),
+        s("--farm-key-file"),
+        p(&key_file),
+        s("--first-run"),
+        s("2"),
+        s("--strikes"),
+        s("2"),
+        s("--farm-allow-dirty"),
+        s(super::status::FLAG),
+        s("--share-root"),
+        p(&base.join("share")),
+    ]);
+    let mut ctl = Proc::spawn("controller", &a, &base.join("cfg-controller"), &[])?;
+    let port = {
+        let deadline = Instant::now() + Duration::from_secs(60);
+        loop {
+            if let Ok(l) = ctl.lines.recv_timeout(Duration::from_millis(200)) {
+                println!("    [controller] {l}");
+                ctl.log.push(l.clone());
+                if let Some(rest) = l.strip_prefix("listening on ") {
+                    break rest.rsplit(':').next().and_then(|p| p.trim().parse::<u16>().ok()).ok_or("no port in the listening line")?;
+                }
+            }
+            if !ctl.running() || Instant::now() > deadline {
+                return Err("the controller never started listening".into());
+            }
+        }
+    };
+    let addr = format!("127.0.0.1:{port}");
+
+    // 3. The clients.
+    let plain = |name: &str| vec![s("--render-client"), addr.clone(), s("--farm-key-file"), p(&key_file), s("--name"), format!("farmtest-{name}"), s("--farm-allow-dirty")];
+    let mut ca = Proc::spawn("A", &plain("A"), &base.join("cfg-A"), &[(super::client::CORRUPT_INSTRUMENT, "2")])?;
+    let mut cb = Proc::spawn("B", &plain("B"), &base.join("cfg-B"), &[])?;
+    let mut c_args = crate::ui::farm_client::client_args(
+        &crate::ui::farm_client::ClientSettings { controller: addr.clone(), name: s("farmtest-C"), share_root: p(&base.join("share")), ..Default::default() },
+        &key_file,
+    );
+    c_args.push(s("--farm-allow-dirty"));
+    let mut cc = Proc::spawn("C", &c_args, &base.join("cfg-C"), &[])?;
+
+    // 4. Run.
+    let deadline = Instant::now() + Duration::from_secs(600);
+    let code = loop {
+        ctl.drain("");
+        ca.drain("");
+        cb.drain("");
+        cc.drain("");
+        if let Ok(Some(st)) = ctl.child.try_wait() {
+            std::thread::sleep(Duration::from_millis(300));
+            ctl.drain("");
+            break st.code().unwrap_or(-1);
+        }
+        if Instant::now() > deadline {
+            let _ = ctl.child.kill();
+            break -2;
+        }
+        std::thread::sleep(Duration::from_millis(100));
+    };
+    cc.send("leave");
+    std::thread::sleep(Duration::from_millis(500));
+    for pr in [&mut ca, &mut cb, &mut cc] {
+        if pr.running() {
+            let _ = pr.child.kill();
+        }
+        let _ = pr.child.wait();
+        pr.drain("");
+    }
+
+    // 5. The verdict.
+    let mut fails: Vec<String> = Vec::new();
+    let mut check = |ok: bool, what: String| {
+        println!("  [{}] {what}", if ok { "PASS" } else { "FAIL" });
+        if !ok {
+            fails.push(what);
+        }
+    };
+    check(code == 0, format!("the controller finished the job and the video (exit {code})"));
+    let video_bytes = std::fs::metadata(&video).map(|m| m.len()).unwrap_or(0);
+    check(video_bytes > 1000, format!("the video was assembled here ({video_bytes} bytes)"));
+    let mut written: Vec<u64> = std::fs::read_dir(&out)
+        .map(|rd| rd.flatten().filter_map(|e| e.file_name().to_string_lossy().strip_prefix("strip_")?.strip_suffix(".exr")?.parse().ok()).collect())
+        .unwrap_or_default();
+    written.sort_unstable();
+    check(written == (0..n).collect::<Vec<_>>(), format!("exactly the dive's {n} strips were kept ({} files)", written.len()));
+    let mut same = 0;
+    for k in 0..n {
+        let name = crate::expmap_render::strip_file(k);
+        if same_strip(&out.join(&name), &refdir.join(&name)).unwrap_or(false) {
+            same += 1;
+        }
+    }
+    check(same == n, format!("{same} of {n} strips are identical in every channel to the single-machine reference"));
+    let done = std::fs::read_to_string(out.join("farm").join("done.jsonl")).unwrap_or_default();
+    let recs: Vec<fractadyne_farm::manifest::DoneRecord> = done.lines().filter_map(|l| serde_json::from_str(l).ok()).collect();
+    let mut idx: Vec<u64> = recs.iter().map(|d| d.index).collect();
+    idx.sort_unstable();
+    idx.dedup();
+    check(recs.len() as u64 == n && idx.len() as u64 == n, format!("done.jsonl records each strip once ({} records, {} distinct)", recs.len(), idx.len()));
+    check(recs.iter().all(|d| d.reference.is_some()), "every strip says where its reference came from".into());
+    let bad: Vec<String> = std::fs::read_dir(out.join("farm").join("bad")).map(|rd| rd.flatten().map(|e| e.file_name().to_string_lossy().into_owned()).collect()).unwrap_or_default();
+    let bad_a = bad.iter().filter(|n| n.contains("farmtest-A") && n.ends_with(".exr")).count();
+    check(bad_a >= 2, format!("client A's corrupted strips were caught and quarantined ({bad_a} in farm/bad)"));
+    let events = std::fs::read_to_string(out.join("farm").join("events.jsonl")).unwrap_or_default();
+    check(events.contains("REMOVED farmtest-A"), "the event log records A's removal".into());
+    let c_shared = ctl.log.iter().any(|l| !l.starts_with("! ") && l.contains("farmtest-C writes its frames to the shared drive"));
+    let leftovers: Vec<String> = std::fs::read_dir(base.join("share").join("fractadyne-farm")).map(|rd| rd.flatten().map(|e| e.file_name().to_string_lossy().into_owned()).collect()).unwrap_or_default();
+    check(c_shared && leftovers.is_empty(), format!("client C delivered through the shared drive, and the job's folders there were removed (left: {leftovers:?})"));
+    let statuses: Vec<super::status::ControllerStatus> = ctl.log.iter().filter_map(|l| super::status::parse(l)).collect();
+    let assembled = statuses.iter().any(|s| s.phase == super::status::ControllerPhase::Assembling);
+    let last = statuses.last();
+    check(
+        statuses.iter().all(|s| s.strips) && assembled && last.is_some_and(|s| s.phase == super::status::ControllerPhase::Finished && s.exit_code == Some(0) && s.done == n),
+        format!("the status lines say strips, then assembling ({assembled}), then finished with exit {:?}, {} of {n} done", last.and_then(|s| s.exit_code), last.map_or(0, |s| s.done)),
+    );
+    let frames = ctl.log.iter().filter(|l| crate::ui::tour_render::parse_frame_progress(l).is_some()).count();
+    check(frames > 0, format!("the assembly's frame lines came through the controller ({frames})"));
+    let a_corrupted = ca.log.iter().any(|l| l.contains("corrupted on purpose"));
+    println!("farmtest-strips: {:.1}s", t0.elapsed().as_secs_f64());
+    if !a_corrupted {
+        println!("farmtest-strips: VACUOUS — client A never sent a corrupted strip, so verification was never exercised");
+        return Ok(2);
+    }
+    if fails.is_empty() {
+        println!("farmtest-strips: PASS");
+        Ok(0)
+    } else {
+        println!("farmtest-strips: FAIL ({} check(s))", fails.len());
         Ok(1)
     }
 }

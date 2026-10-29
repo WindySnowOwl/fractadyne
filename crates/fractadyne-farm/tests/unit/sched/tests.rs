@@ -37,6 +37,24 @@ fn the_first_client_starts_at_frame_zero_and_the_second_mid_gap() {
     assert_eq!(bb.len(), 2);
 }
 
+/// From the end (`Config::from_end`, a zoom video's strips): the first runs take the highest
+/// frames — the deepest, slowest strips — and each machine joining takes the highest still free,
+/// not the middle of a gap.
+#[test]
+fn from_the_end_the_highest_frames_go_first() {
+    let b = t0();
+    let mut cfg = Config::new(100);
+    cfg.from_end = true;
+    let mut s = Scheduler::new(cfg, &[]);
+    let a = assigns(&s.step(b, Event::Joined { client: 1, name: "A".into() }));
+    assert_eq!(a, vec![(1, 1, 92, 100), (1, 2, 84, 92)], "the highest first, then the next below");
+    let bb = assigns(&s.step(b, Event::Joined { client: 2, name: "B".into() }));
+    assert_eq!(bb, vec![(2, 3, 76, 84), (2, 4, 68, 76)], "the next machine takes the highest still free");
+    // A finishes its first run: its next is again the highest free, below everyone's.
+    let next = assigns(&verify(&mut s, secs(b, 8), 1, 1, 92..100));
+    assert_eq!(next.first().map(|r| (r.2 < 68, r.3)), Some((true, 68)), "{next:?}");
+}
+
 #[test]
 fn a_finished_run_is_followed_by_the_next_at_the_measured_pace() {
     let b = t0();
@@ -285,7 +303,9 @@ fn stop_cancels_everything_and_ends_the_job() {
 #[test]
 fn every_frame_exactly_once_under_random_chaos() {
     for seed in 1..=60u64 {
-        chaos(seed);
+        chaos(seed, false);
+        // Handed out from the end, as a zoom video's strips are.
+        chaos(seed, true);
     }
 }
 
@@ -299,7 +319,7 @@ struct SimClient {
     steady: bool,
 }
 
-fn chaos(seed: u64) {
+fn chaos(seed: u64, from_end: bool) {
     let mut rng = seed.wrapping_mul(0x9e37_79b9_7f4a_7c15) | 1;
     let mut rand = move |m: u64| {
         rng ^= rng << 13;
@@ -311,9 +331,11 @@ fn chaos(seed: u64) {
     let mut cfg = Config::new(frames);
     cfg.first_run = 1 + rand(8);
     cfg.stall_floor = Duration::from_secs(40);
-    // Dissolves (windows of frames no run may start at) and held shots.
+    cfg.from_end = from_end;
+    // Dissolves (windows of frames no run may start at; a tour's, so none from the end) and held
+    // shots.
     let mut no_start = vec![false; frames as usize];
-    for _ in 0..rand(4) {
+    for _ in 0..if from_end { 0 } else { rand(4) } {
         let a = 1 + rand(frames - 1);
         for i in a..(a + 1 + rand(6)).min(frames) {
             no_start[i as usize] = true;

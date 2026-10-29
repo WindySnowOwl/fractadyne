@@ -542,6 +542,81 @@ their session's 150,000 base iterations (caps 150,220 to 179,040), 2x anti-alias
   exact-arithmetic bar (27 of 48 exact against 60%; one texel 0.09 iterations outside the stencil).
 - ⚠The LIVE view runs the same band the same way (mode 0, no BLA). Not changed here.
 
+### 8.5 E4 (2026-10-28, branch `feat/zoom-video-farm`): strips on several machines
+
+The user: "Update the zoom video to use multiple machines like the render script functionality."
+A deep dive's time is its STRIPS (the user's 2.2e36 dive at 2x: 132 strips of 2 s to 66 s each;
+its 7,246 frames assemble in minutes), and strips are independent once the dive's one reference is
+known: the render farm (`design/remote-rendering.md`) hands them out as it hands out a tour's
+frames, and this machine assembles the video when the last one is in.
+
+- **The command:** `--render-zoom-video F … --farm` is the controller (the same line plus a flag;
+  farm options as `--farm-render`'s: `--listen`, `--min-clients`, `--local`, `--share-root`,
+  `--sharing`, …), and `--render-zoom-video F … --gpus all|N,M` a farm of this machine's cards,
+  as `--render-tour --gpus` is. The strips go to `--keep-strips DIR`, else to `<F's stem>-strips/`
+  beside the video (deleted once the video is made); the job's state is in that folder's `farm/`,
+  so a stopped job resumes from it like a tour's.
+- **One plan, checked everywhere:** the controller asks a child of its own for the dive's manifest
+  (`--render-expmap DIR --expmap-plan`: the plan only, no strip), sends it in the job's bundle with
+  the dive's flags (typed fields, never a raw argument list), and every client writes it into its
+  render folder before its first run: a client whose own plan differs (another session, another
+  build) is refused by `write_or_check_manifest`, loudly, instead of rendering another dive's
+  strips.
+- **One reference per dive, whatever the run:** a run of strips `A-B` now builds the dive's
+  reference for the dive's DEEPEST strip, not its own deepest (it used to), so strips rendered in
+  pieces, on any machine, are the strips one machine renders in one go — bit for bit on one GPU
+  class. Orbit sharing passes it on (the cache is flushed before a strip child exits, which the
+  `--render` exit path did not do).
+- **Units:** a strip is a farm unit (`UnitKind::Strip`, named `strip_NNNNNN.exr`); the scheduler is
+  unchanged (it was already generic over an index). A `--farm-child` strip run prints
+  `frame-done index=K …` per strip; a strip already in its folder is reported, not skipped.
+- **Verification:** SHA-256 as for frames, then the whole file read as assembly reads it
+  (`assemble::strip_main`: every channel, `width × rows`) and its own metadata naming strip K at the
+  plan's cap. A strip that fails is quarantined and counts a strike, as a frame does.
+- **Transport:** a strip is 26 MB (720p) to ~520 MB (1080p at 3x); the per-unit cap goes from
+  256 MiB to 1 GiB (protocol 7). ⛔A client sent a blob's chunks back to back, so its 2 s heartbeat
+  waited behind a whole file and the controller dropped it after 10 s silent (a 233 MB strip over a
+  290 Mb/s link takes ~6.5 s; a 256 MiB orbit had the same exposure): heartbeats now go out between
+  chunks; every other message keeps its order.
+- **The end:** the controller assembles the video here (`--assemble DIR --out F` with the command's
+  assembly options, as a child in this machine's own configuration, so the colouring is the
+  session's), relays its `frame K/N` lines, then deletes the strips unless they were kept.
+- **In the app:** the Render zoom video dialog offers "Use all graphics cards" (two or more) and
+  "Render on farm…", which opens Tools ▸ Render on farm… with this video as its job.
+- **As built, measured on this machine (RTX 3080):**
+  - A loopback farm (controller + `--local`), the user's view to 2^30 at 320x180: 39 strips in 50 s,
+    the video assembled; every strip identical IN EVERY CHANNEL to `--render-expmap`'s on one
+    machine. ⛔Not byte-identical, and that is not a difference: the EXR writer orders its
+    compressed blocks as they finish — two single-machine runs differ as bytes on 29 of 39 files.
+    Compare decoded channels, never file hashes.
+  - `--gpus 1,1` (two sessions on the one card): 43 strips split 32/11, all identical, the
+    assembly's `frame K/N` lines reaching the dialog unprefixed.
+  - Stopped at 10 of 54 strips (the window's `stop`), then the same command: "10 of 54 strips
+    already done", 44 rendered, all 54 identical, the video made.
+  - `--farmtest-strips` (new): A's two corrupted strips quarantined and A removed, C through the
+    shared drive (its folders cleaned up), 32 of 32 strips identical, status strips → assembling →
+    finished. The tour `--farmtest` passes unchanged after the controller's refactor.
+  - Fixed on the way: a resume of an already complete job (tour or strips) printed "complete"
+    twice — `periodic` finished it again after `start_job` had.
+- **Two machines (2026-10-28, dev.55):** this machine (RTX 3080, controller + a local client) and
+  PLUTO through the field agent (RX 6800 XT on AMD 26.10.1, RTX 3070 on NVIDIA 617.14, a session
+  each): the user's view to 2^60 at 1280x720, 50,000 iterations — 71 strips of 4614×511 in 104 s
+  (43 here, 16 on the 3070, 12 on the 6800 XT), then the 1,801-frame video here. Against this
+  machine alone: the 3080's and the 3070's strips identical in N on every texel; the 6800 XT's
+  differ on 13% (31% in its worst strip). In the VIDEO, frames assembled where its strips show
+  (2^28–2^40): 14–38% of pixels differ at all, 0.6–3.1% by more than 8/255, 0.2–1.7% by more than
+  32/255 (mean 0.65–1.98/255); frames where none show (2^12, 2^44, 2^50) identical. ⭐LOOKED at
+  2^31 side by side with a difference map: scattered single pixels in the filaments and on the
+  minibrot's edge, no ring where its strips meet the others. Motion not judged.
+- **Deepest strips first** (`sched::Config::from_end`, after the user's ask the same day): each new
+  run takes the highest strips still free, so the slowest go out first and the cheap shallow ones
+  fill the end; a run is still rendered ascending, so stealing its tail works unchanged. The
+  scheduler's chaos test runs both ways.
+- **Not in E4:** assembly pipelined with strips arriving (the frames wait for the last strip);
+  a pre-build of a very deep dive's reference on the controller, and picking up a shared orbit
+  mid-build (tours have both); keeping a dive on one GPU class (strips from two classes meet at a
+  ring; measured on PLUTO before deciding).
+
 ## 9. Decisions for you
 
 **Decided 2026-10-27 (the user):**

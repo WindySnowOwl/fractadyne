@@ -59,6 +59,35 @@ published as the pre-releases `v0.2.41-beta.1` to `v0.2.41-beta.150`, and a "bet
 
 Changes after 0.3.0-beta.1:
 
+- **Tour renders build the deepest frame's reference once and reuse it (0.3.0-beta.22).** Every
+  frame of a rendered tour used to build its own reference orbit, the bignum work that dominates a
+  deep frame. Now the tour's deepest frame's reference is built first and every frame it can serve
+  reuses it (the same fractal and Julia setting, its point still in the frame's view at enough
+  precision), extended where a frame wants more iterations. The frames keep their order, so
+  dissolves, the progressive order and resume are unchanged. Measured on an RTX 3080: a five-frame
+  dive at 1e4000× 1m44s → 22.9 s, every frame pixel-identical; the grand tour at 320×180 4m37s →
+  1m37s. A reused reference draws a few pixels of fine detail differently from one built for the
+  frame (on those two tours about 1% of all pixels, scattered single points); `--no-reference-reuse`
+  builds every frame's own, as before.
+- **Zoom videos on several machines (0.3.0-beta.22).** The Render zoom video window has "Render on
+  farm…", which opens Tools ▸ Render on farm… with the video as its job: the strips, which are
+  most of a deep dive's time, are handed out to the machines that join from File ▸ Render
+  client…, as a tour's frames are, and this machine assembles the video once every strip is in.
+  With two or more graphics cards it also offers "Use all graphics cards". On the command line:
+  `--render-zoom-video F … --farm` (with the farm's own options, `--local`, `--share-root`, …)
+  and `--render-zoom-video F … --gpus all`. The dive is planned once and every machine checks its
+  own plan against it; every strip a machine returns is checked whole before it is kept (its
+  SHA-256, every channel, its own strip number and iteration cap), and a machine that sends bad
+  ones is removed. A stopped job resumes from its folder. The deepest strips, the slowest, are
+  handed out first, so the cheap shallow ones fill the end. On one graphics card the strips a farm
+  renders are identical in every channel to the strips one machine renders: every run now uses the
+  dive's one reference, built for its deepest strip, whichever strips it renders
+  (`--expmap-strips` used to build its own for the deepest strip of the range). Measured with a
+  second machine and its two graphics cards: a dive to 2^60 at 720p, 71 strips in 104 s on three
+  cards; the strips from the NVIDIA cards had this machine's iteration counts on every point, and
+  in the video the AMD card's strips differed in scattered single pixels of fine detail. Also fixed for
+  every farm job: a client sending a large file could not send its heartbeat until the file was
+  done, and a controller that heard nothing for 10 seconds dropped it.
 - **Zoom videos: deep dives several times faster, and the graphics card checked before Render
   (0.3.0-beta.22).** Strips between 1e4× and 1e28× render on the floatexp path, whose tiles keep
   the graphics card busy, and BLA now skips iterations there too: the dialog's new BLA acceleration

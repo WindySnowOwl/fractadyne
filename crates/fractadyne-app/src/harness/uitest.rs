@@ -98,6 +98,10 @@ enum Screen {
     /// The Render client before connecting, after Find answered (seeded: two controllers).
     FarmClientFind,
     FarmController,
+    /// Tools ▸ Render on farm… with a zoom video as its job (seeded): strips mid-render on two
+    /// machines, then the video being assembled here.
+    FarmControllerZoom,
+    FarmControllerZoomAssembling,
     ResetConfirm,
     /// File ▸ Settings ▸ Reference cache… — the on-disk orbit cache's controls. ⚠Seeded with
     /// one real entry first, so the usage bar, the rows and the Clear button all render
@@ -845,6 +849,8 @@ fn build_steps() -> Vec<Step> {
         screen("farm-client-gpus", Screen::FarmClientGpus),
         screen("farm-client-find", Screen::FarmClientFind),
         screen("farm-controller", Screen::FarmController),
+        screen("farm-controller-zoom", Screen::FarmControllerZoom),
+        screen("farm-controller-zoom-assembling", Screen::FarmControllerZoomAssembling),
         screen("reset-confirm", Screen::ResetConfirm),
         screen("reference-cache", Screen::OrbitCache),
         screen("languages", Screen::Languages),
@@ -1473,6 +1479,8 @@ impl FractadyneApp {
             Screen::FarmClientGpus => self.uitest_seed_farm_client_gpus(),
             Screen::FarmClientFind => self.uitest_seed_farm_client_find(),
             Screen::FarmController => self.uitest_seed_farm_controller(),
+            Screen::FarmControllerZoom => self.uitest_seed_farm_controller_zoom(false),
+            Screen::FarmControllerZoomAssembling => self.uitest_seed_farm_controller_zoom(true),
             Screen::ResetConfirm => self.dialogs.reset_confirm_open = true,
             Screen::Languages => self.language.window_open = true,
             Screen::OrbitCache => {

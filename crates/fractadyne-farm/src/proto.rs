@@ -18,8 +18,9 @@ use serde::{Deserialize, Serialize};
 
 /// Largest control message, encoded.
 pub const MAX_CONTROL_BYTES: usize = 64 * 1024;
-/// Largest frame a client may send.
-pub const MAX_FRAME_BYTES: u64 = 256 << 20;
+/// Largest unit a client may send: a frame, or a zoom video's strip (`names::UnitKind`) — a
+/// 1080p strip at 2x is ~233 MB, at 3x ~520 MB.
+pub const MAX_FRAME_BYTES: u64 = 1 << 30;
 /// Largest job bundle (script, settings, anchors).
 pub const MAX_BUNDLE_BYTES: u64 = 16 << 20;
 /// Largest link-speed sample.

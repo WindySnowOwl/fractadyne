@@ -50,6 +50,24 @@ fn the_command_line_carries_the_view_exactly_and_only_the_options_set() {
     }
 }
 
+/// "Use all graphics cards" adds `--gpus all` only when this machine has two or more; a farm job
+/// is the same command without it (every machine's cards are the farm's), its summary and file
+/// carried with it (`design/zoom-video.md` §8.5).
+#[test]
+fn several_cards_and_a_farm_take_the_same_command() {
+    let one_card = ZoomVideoUi { all_gpus: true, cards: Some(1), ..dialog() };
+    assert!(!zoom_video_args(&one_card).iter().any(|x| x == "--gpus"), "one card renders as usual");
+    let two = ZoomVideoUi { all_gpus: true, cards: Some(2), ..dialog() };
+    let a = zoom_video_args(&two);
+    let i = a.iter().position(|x| x == "--gpus").expect("--gpus with two cards");
+    assert_eq!(a[i + 1], "all");
+    assert!(!zoom_video_args(&ZoomVideoUi { cards: Some(2), ..dialog() }).iter().any(|x| x == "--gpus"), "only when ticked");
+    let job = zoom_video_farm_job(&two, "1,201 frames".into());
+    assert!(!job.args.iter().any(|x| x == "--gpus" || x == "all"), "a farm job without --gpus: {:?}", job.args);
+    assert_eq!(job.args, zoom_video_args(&ZoomVideoUi { cards: Some(2), ..dialog() }), "otherwise the very command this window runs");
+    assert_eq!((job.summary.as_str(), job.video.as_str()), ("1,201 frames", "C:/videos/my dive.mp4"));
+}
+
 #[test]
 fn the_summary_is_the_dive_the_command_line_will_render() {
     let z = dialog();

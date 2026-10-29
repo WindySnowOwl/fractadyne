@@ -168,6 +168,8 @@ pub(crate) enum ControllerPhase {
     Rendering,
     /// No new work handed out (by the user, or the output folder is nearly full).
     Paused,
+    /// A zoom video's strips are all in; this machine assembles the video (`assembling` says how far).
+    Assembling,
     /// Over: `exit_code` says how.
     Finished,
 }
@@ -181,8 +183,15 @@ pub(crate) struct ControllerStatus {
     pub(crate) listen: String,
     pub(crate) port: u16,
     pub(crate) key_file: String,
+    /// The tour script, or (a zoom video's strips) the video file.
     pub(crate) tour: String,
     pub(crate) out: String,
+    /// The units are a zoom video's strips (`frames`, `done`, … count strips), not a tour's frames.
+    #[serde(default)]
+    pub(crate) strips: bool,
+    /// While the video is assembled: its latest progress line (`frame K/N (…)`).
+    #[serde(default)]
+    pub(crate) assembling: Option<String>,
     /// This machine's GPU, "adapter, driver …" (from its probe render).
     pub(crate) this_gpu: Option<String>,
     pub(crate) min_clients: usize,

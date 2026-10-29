@@ -216,9 +216,18 @@ impl Writer {
 
     /// Send a whole blob as chunks, after its announcement has been sent.
     pub fn send_blob(&mut self, id: u64, bytes: &[u8]) -> Result<u64, String> {
+        self.send_blob_with(id, bytes, |_| Ok(0))
+    }
+
+    /// [`Self::send_blob`], calling `between` after every chunk, which may send messages of its
+    /// own (it returns the bytes it put on the wire). ⛔A client's heartbeat must not wait behind a
+    /// whole blob: the controller drops a client it has not heard a heartbeat from in 10 s, and a
+    /// zoom video's strip takes several seconds on a fast link (233 MB over 290 Mb/s ≈ 6.5 s).
+    pub fn send_blob_with(&mut self, id: u64, bytes: &[u8], mut between: impl FnMut(&mut Self) -> Result<u64, String>) -> Result<u64, String> {
         let mut total = 0;
         for (off, c) in proto::chunks(bytes) {
             total += self.send_payload(&proto::encode_chunk(id, off, c))?;
+            total += between(self)?;
         }
         Ok(total)
     }

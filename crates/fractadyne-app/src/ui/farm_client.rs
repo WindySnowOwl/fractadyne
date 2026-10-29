@@ -304,6 +304,9 @@ fn detail_words(d: &str) -> String {
     if let Some((a, b)) = d.strip_prefix("Rendering frames ").and_then(|r| r.split_once('–')) {
         return tr!(farm_client_detail_rendering, first = a, last = b);
     }
+    if let Some((a, b)) = d.strip_prefix("Rendering strips ").and_then(|r| r.split_once('–')) {
+        return tr!(farm_client_detail_rendering_strips, first = a, last = b);
+    }
     if let Some(t) = d.strip_prefix("Waiting — someone is using this machine; work resumes once nobody has for ") {
         return tr!(farm_client_detail_in_use, time = t);
     }

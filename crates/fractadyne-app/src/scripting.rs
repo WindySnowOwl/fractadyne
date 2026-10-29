@@ -408,7 +408,7 @@ struct EncodeJob {
 /// process can forward it and the controller can verify the file it receives against the digest.
 /// The digest is of the file as READ BACK, not of the bytes meant to be written, so it vouches for
 /// what is actually there. A file that cannot be read back is reported as `frame-failed` instead.
-fn frame_done_line(path: &std::path::Path, fi: u64, render_ms: u64, ref_src: &str) -> String {
+pub(crate) fn frame_done_line(path: &std::path::Path, fi: u64, render_ms: u64, ref_src: &str) -> String {
     match std::fs::read(path) {
         Ok(bytes) => {
             let d = ring::digest::digest(&ring::digest::SHA256, &bytes);
@@ -1113,7 +1113,49 @@ pub(crate) struct TourRenderConfig {
     /// `--farm-child`: this render is one run of a render farm — print a `frame-done` line per
     /// written frame (index, bytes, SHA-256, milliseconds) for the client process to report.
     pub(crate) farm_child: bool,
+    /// `--no-reference-reuse`: every frame builds its own reference, as before 2026-10-28, instead
+    /// of reusing the deepest frame's where it can ([`DeepReference`]) — to measure the difference.
+    pub(crate) no_reference_reuse: bool,
 }
+
+/// ⭐A tour's DEEPEST FRAME'S REFERENCE, reused by every frame it can serve (the user's "render the
+/// deepest frame first and work backwards", 2026-08-18; built 2026-10-28). The orbit depends only on
+/// the point and the precision, so the deepest frame's — the most precise — serves every shallower
+/// frame whose view still holds its point, truncated (free) or extended where a frame wants more
+/// iterations (`render::try_reuse_reference` decides, with the gates the live view and the disk
+/// cache use). One bignum build and cheap reuses replace a build per frame, with NO reordering: the
+/// reference is simply built first, so dissolves, `--order progressive` and `--resume` see the
+/// frames in their own order. The farm already shared its deepest keyframe's this way (`--prebuild`).
+///
+/// Only frames of the same fractal, Julia state and c take it (`key`): a reference is the orbit of
+/// one formula. A dual view, an L-system or a custom formula takes none.
+pub(crate) struct DeepReference {
+    pub(crate) reuse: crate::render::ReuseRef,
+    key: (FractalKind, bool, Option<(u64, u64)>),
+}
+
+impl DeepReference {
+    /// What a reference depends on besides its point: the fractal, the Julia flag and c (as bits,
+    /// so equal means identical).
+    fn key(s: &Sampled) -> (FractalKind, bool, Option<(u64, u64)>) {
+        (s.fractal, s.julia && s.fractal.supports_julia(), s.julia_c.map(|(a, b)| (a.to_bits(), b.to_bits())))
+    }
+
+    /// Whether the frame sampled as `s` may take it.
+    pub(crate) fn serves(&self, s: &Sampled) -> bool {
+        Self::may_take(&self.key, s)
+    }
+
+    /// Whether a frame sampled as `s` may take a reference built for `key`: a single view of an
+    /// escape-time fractal, no custom formula, the same fractal, Julia flag and c.
+    fn may_take(key: &(FractalKind, bool, Option<(u64, u64)>), s: &Sampled) -> bool {
+        !s.dual && s.custom.is_none() && s.fractal.is_escape_time() && Self::key(s) == *key
+    }
+}
+
+#[cfg(test)]
+#[path = "../tests/unit/scripting/deep_reference_tests.rs"]
+mod deep_reference_tests;
 
 /// The half-open frame range `[start, end)` of shard `k` of `n` over `frames` total frames:
 /// `[⌊k·F/N⌋, ⌊(k+1)·F/N⌋)`. This exact formula is what guarantees the shards TILE: consecutive
@@ -3359,6 +3401,47 @@ impl FractadyneApp {
     }
 
     /// Render a keyframe-tour script (TOML) to a numbered PNG frame sequence — the headless
+    /// Build a tour's deepest frame's reference ([`DeepReference`]): its deepest keyframe's, at
+    /// `width × height`, with that keyframe's fractal, Julia state and iteration budget — the tour
+    /// alone decides it, so every process rendering part of the tour builds the same one. `None`
+    /// when that frame takes none (the direct path, a dual view, an L-system, a custom formula).
+    #[allow(clippy::too_many_arguments)]
+    fn tour_deep_reference(&mut self, pb: &Playback, fps: f64, frames: u64, width: u32, height: u32, base_iter: u32, base_auto: bool) -> Option<DeepReference> {
+        let (fi, zoom10) = pb.deepest_keyframe(fps, frames)?;
+        let t = if pb.total <= 0.0 { 0.0 } else { (fi as f64 / fps).min(pb.total) };
+        let s = pb.sample(t);
+        if s.dual || s.custom.is_some() || !s.fractal.is_escape_time() {
+            return None;
+        }
+        let key = DeepReference::key(&s);
+        // Its state, as the frame loop sets it (the reference reads the fractal and Julia c) —
+        // and back afterwards: it is built inside the loop, for the first frame that renders.
+        let saved = (self.fractal, self.julia_mode, self.julia_c);
+        self.fractal = s.fractal;
+        self.julia_mode = s.julia && s.fractal.supports_julia();
+        if let Some(c) = s.julia_c {
+            self.julia_c = c;
+        }
+        let budget = Self::sampled_iter_budget(&s, base_iter, base_auto);
+        let mut vp = fractadyne_core::Viewport::new(width as f64, height as f64);
+        vp.set_center_log2mag(s.cx, s.cy, s.logmag / std::f64::consts::LN_2);
+        let inputs = self.export_reference_inputs_for(&vp, self.julia_mode, budget);
+        // Watched: in a farm's run, the same orbit shared by another machine (or the controller's
+        // pre-build) is taken the moment it lands in the cache, mid-build.
+        let watch = self.export_reference_inputs_for(&vp, self.julia_mode, budget);
+        let t0 = std::time::Instant::now();
+        let built = inputs.map(|i| crate::render::build_reference_watching("fd-ref-tour-deep", i, watch));
+        (self.fractal, self.julia_mode, self.julia_c) = saved;
+        let reuse = built?.reuse_ref()?;
+        say(&format!(
+            "reference: the deepest frame's (frame {fi}, 1e{zoom10:.0}×), {} iterations at {} bits in {} — every frame it serves reuses it",
+            reuse.prefix.len(),
+            reuse.prec,
+            fmt_hms(t0.elapsed().as_secs_f64())
+        ));
+        Some(DeepReference { reuse, key })
+    }
+
     /// `--render-tour` mode for producing a deep-zoom dive video. Steps the timeline at a
     /// fixed `fps`, rendering each frame at `width×height` (× `ss` supersampling) via the
     /// offscreen export path. Blocking; assemble the frames afterward (e.g. with ffmpeg).
@@ -3780,6 +3863,20 @@ impl FractadyneApp {
                 ));
             }
         }
+        // The deepest frame's reference, reused by every frame it serves ([`DeepReference`]):
+        // built for the first frame that renders AND shows the deepest keyframe's centre — a
+        // resume with nothing left, or a run of another chapter's frames, never pays for it. That
+        // rule reads the tour alone, so every process rendering part of it decides the same.
+        // `--no-reference-reuse` builds each frame's own.
+        let mut deep_state: Option<Option<DeepReference>> = cli.no_reference_reuse.then_some(None);
+        let deep_target = match &deep_state {
+            Some(_) => None,
+            None => pb.deepest_keyframe(fps, frames).map(|(fi, _)| {
+                let s = pb.sample(if pb.total <= 0.0 { 0.0 } else { (fi as f64 / fps).min(pb.total) });
+                (DeepReference::key(&s), s.cx, s.cy)
+            }),
+        };
+        let (mut refs_reused, mut refs_own) = (0u64, 0u64);
         // The last frame that is not itself mid-dissolve: what a dissolve rises through.
         let mut frozen_frame: Option<(u32, u32, Vec<f32>)> = None;
         let started = std::time::Instant::now();
@@ -3828,6 +3925,18 @@ impl FractadyneApp {
                 }
             }
             let frame_t0 = std::time::Instant::now();
+            if deep_state.is_none() {
+                let shows = deep_target.as_ref().is_some_and(|(key, dcx, dcy)| {
+                    let mut vp = fractadyne_core::Viewport::new(width as f64, height as f64);
+                    vp.set_center_log2mag(s.cx.clone(), s.cy.clone(), s.logmag / std::f64::consts::LN_2);
+                    let (x, y) = vp.complex_to_pixel(dcx, dcy);
+                    DeepReference::key(&s) == *key && x >= 0.0 && y >= 0.0 && x < width as f64 && y < height as f64
+                });
+                if shows {
+                    deep_state = Some(self.tour_deep_reference(&pb, fps, frames, width, height, base_iter, base_auto));
+                }
+            }
+            let deep = deep_state.as_ref().and_then(|d| d.as_ref());
             // Claim frame `fi`'s precomputed reference if the previous iteration started one for it.
             let mut this_ref = match pending_ref.take() {
                 // A deep build can take minutes: waited for with liveness stamped — and an orbit
@@ -3835,6 +3944,22 @@ impl FractadyneApp {
                 Some((idx, p)) if idx == fi => p.wait(),
                 _ => None,
             };
+            // None started (the first frame, or a lookahead skipped): this frame's own, here — from
+            // the deepest frame's where it serves.
+            if this_ref.is_none() && !self.dual {
+                if let Some(d) = deep.filter(|d| d.serves(&s)) {
+                    let mut vp = fractadyne_core::Viewport::new(width as f64, height as f64);
+                    vp.set_center_log2mag(s.cx.clone(), s.cy.clone(), s.logmag / std::f64::consts::LN_2);
+                    if let Some(inp) = self.export_reference_inputs_for(&vp, self.julia_mode, frame_budget) {
+                        this_ref = Some(crate::render::build_reference_watching("fd-ref-tour", inp.with_reuse(d.reuse.clone()), None));
+                    }
+                }
+            }
+            match &this_ref {
+                Some(r) if r.was_reused() => refs_reused += 1,
+                Some(_) => refs_own += 1,
+                None => {}
+            }
             // Kick off the NEXT frame's reference now (overlaps this frame's render + encode) —
             // the next frame IN RENDER ORDER, which under `--order progressive` is not `fi + 1`.
             // Only when both this frame and its successor are single-view with the same
@@ -3853,6 +3978,8 @@ impl FractadyneApp {
                     // consumer reject the prefetch and rebuild it synchronously instead.
                     // (Taken before `s2`'s bignum centre is moved into the viewport below.)
                     let budget2 = Self::sampled_iter_budget(&s2, base_iter, base_auto);
+                    // The deepest frame's reference, when it serves the successor.
+                    let deep2 = deep.filter(|d| d.serves(&s2)).map(|d| &d.reuse);
                     let mut vp2 = fractadyne_core::Viewport::new(width as f64, height as f64);
                     vp2.set_center_log2mag(s2.cx, s2.cy, s2.logmag / std::f64::consts::LN_2);
                     // Only prefetch the NEXT reference if it will fit alongside the one still
@@ -3864,7 +3991,7 @@ impl FractadyneApp {
                     let room = crate::sysinfo::available_memory()
                         .map_or(true, |avail| est.saturating_add(TOUR_MEM_MARGIN) < avail);
                     if room {
-                        if let Some(p) = self.spawn_export_reference_watched(&vp2, self.julia_mode, budget2) {
+                        if let Some(p) = self.spawn_export_reference_reusing(&vp2, self.julia_mode, budget2, deep2) {
                             pending_ref = Some((nfi, p));
                         }
                     } else if !low_mem_warned {
@@ -4105,6 +4232,9 @@ impl FractadyneApp {
             fmt_hms(render_secs),
             out_dir.display()
         ));
+        if deep_state.as_ref().is_some_and(|d| d.is_some()) {
+            say(&format!("references: {refs_reused} frame(s) reused the deepest frame's; {refs_own} took one of their own"));
+        }
 
         Ok(assemble_mp4(&out_dir, &prefix, fps, mp4.as_deref()))
         })();

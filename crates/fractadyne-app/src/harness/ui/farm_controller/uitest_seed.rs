@@ -87,6 +87,56 @@ impl FractadyneApp {
             "⚠⚠ REMOVED OLD-LAPTOP: 2 frames failed verification — its diagnostics are being collected".into(),
             "  5712/9931 frames · 1.84 frames/s · in 2310 KB/s · out 14 KB/s · 3 machine(s) · about 38m10s left".into(),
         ];
+        f.zoom = None;
         f.open = true;
+    }
+
+    /// The UI walk's view of a zoom video on the farm (`design/zoom-video.md` §8.5): a 1080p dive
+    /// at 2x, its strips mid-render on two machines — or, `assembling`, every strip in and the video
+    /// being made here.
+    pub(crate) fn uitest_seed_farm_controller_zoom(&mut self, assembling: bool) {
+        self.uitest_seed_farm_controller();
+        let f = &mut self.farm_controller;
+        f.zoom = Some(ZoomFarmJob {
+            args: vec!["--render-zoom-video".into(), "C:/Users/robin/Videos/spiral-dive.mp4".into()],
+            summary: "7,246 frames · 121s of video · 132 strips of 13842×1529".into(),
+            video: "C:/Users/robin/Videos/spiral-dive.mp4".into(),
+        });
+        f.tour_name = "spiral-dive".into();
+        let strip: String = (0..132).map(|i| if assembling || i < 61 { 'd' } else if i == 61 || i == 98 { 'a' } else { '.' }).collect();
+        if let Some(st) = f.last.as_mut() {
+            st.strips = true;
+            st.frames = 132;
+            st.done = if assembling { 132 } else { 61 };
+            st.assigned = if assembling { 0 } else { 2 };
+            st.pending = if assembling { 0 } else { 69 };
+            st.failed = 0;
+            st.frames_per_s = 1.0 / 38.0;
+            st.eta_s = (!assembling).then_some(2640.0);
+            st.strip = strip;
+            st.refs_fresh = 2;
+            st.refs_cache = 3;
+            st.refs_reused = if assembling { 127 } else { 56 };
+            st.orbits_shared = 1;
+            st.gpu_classes = 2;
+            st.clients.retain(|r| r.id == 1 || r.id == 3);
+            for r in st.clients.iter_mut() {
+                (r.frames_done, r.ms_per_frame) = if r.id == 1 { (40, Some(31_200.0)) } else { (21, Some(58_900.0)) };
+                r.state = if assembling { "idle".into() } else if r.id == 1 { "rendering 61 (1/4)".into() } else { "rendering 98 (2/3)".into() };
+            }
+            if assembling {
+                st.phase = ControllerPhase::Assembling;
+                st.detail = "Every strip is in: assembling the video on this machine".into();
+                st.assembling = Some("frame 2460/7246  (2m51s elapsed, 5m33s left, 14.4 fps, 2^41.03)".into());
+            }
+        }
+        f.last_log = vec![
+            "Zoom video \"spiral-dive\": 132 strips of 13842×1529 → C:/Users/robin/Videos/spiral-dive-strips, assembled into C:/Users/robin/Videos/spiral-dive.mp4 once every strip is in".into(),
+            "PLUTO admitted (link 906 Mb/s)".into(),
+            "PLUTO shared a reference orbit: 179040 iterations at 240 bits (2.9 MB)".into(),
+        ];
+        if assembling {
+            f.last_log.push("every strip is in — assembling C:/Users/robin/Videos/spiral-dive.mp4 on this machine".into());
+        }
     }
 }

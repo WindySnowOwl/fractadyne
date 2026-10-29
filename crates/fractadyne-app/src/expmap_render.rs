@@ -61,6 +61,12 @@ pub(crate) struct ExpmapCli {
     /// `--iter N` was given: N is the cap (fixed) or the base the caps grow from (rising).
     pub(crate) iter_given: bool,
     pub(crate) format: StripFormat,
+    /// `--farm-child`: one run of a render farm's zoom video. Each strip is reported on stdout once
+    /// it is on disk (`frame-done index=K …`), one already there included.
+    pub(crate) farm_child: bool,
+    /// `--expmap-plan`: write the dive's manifest and stop, rendering nothing (what a farm's
+    /// controller sends every machine, `design/zoom-video.md` §8.5).
+    pub(crate) plan_only: bool,
 }
 
 impl Default for ExpmapCli {
@@ -72,6 +78,8 @@ impl Default for ExpmapCli {
             strips: None,
             iter_given: false,
             format: StripFormat::Fractadyne,
+            farm_child: false,
+            plan_only: false,
         }
     }
 }
@@ -80,7 +88,8 @@ impl ExpmapCli {
     /// Read the options from the command line; an unreadable one is fatal, never a default.
     pub(crate) fn from_args(args: &[String]) -> Self {
         let val = |name: &str| args.iter().position(|a| a == name).and_then(|i| args.get(i + 1));
-        let mut o = ExpmapCli { iter_given: args.iter().any(|a| a == "--iter"), ..Default::default() };
+        let flag = |name: &str| args.iter().any(|a| a == name);
+        let mut o = ExpmapCli { iter_given: flag("--iter"), farm_child: flag("--farm-child"), plan_only: flag("--expmap-plan"), ..Default::default() };
         if let Some(s) = val("--expmap-start") {
             o.start_log2mag = crate::arg_parse("--expmap-start", s, "a log2 magnification");
         }
@@ -162,6 +171,18 @@ pub(crate) fn strip_caps(map: &ExpMap, strips: u64, width_px: f64, height_px: f6
     caps
 }
 
+/// What a strip file says of itself (its EXR metadata): which strip of which size, at what cap, in
+/// which arithmetic mode and format. A farm's controller reads it back (`check_strip_file`).
+pub(crate) fn strip_meta(map: &ExpMap, k: u64, max_iter: u32, mode: u32, format: StripFormat) -> String {
+    format!(
+        "expmap_strip={k}\nouter_log2={}\nmax_iter={max_iter}\nmode={mode}\nwidth={}\nrows={}\nformat={}\n",
+        map.outer_log2(k),
+        map.width,
+        map.rows,
+        format.name(),
+    )
+}
+
 /// Write strip `k` (rendered `r` from `req`) to `path` in `format`, atomically.
 #[allow(clippy::too_many_arguments)]
 pub(crate) fn write_strip_file(
@@ -174,15 +195,7 @@ pub(crate) fn write_strip_file(
     r: &fractadyne_gpu::ExportResult,
     req: &fractadyne_gpu::ExportRequest,
 ) -> Result<(), String> {
-    let meta = format!(
-        "expmap_strip={k}\nouter_log2={}\nmax_iter={}\nmode={}\nwidth={}\nrows={}\nformat={}\n",
-        map.outer_log2(k),
-        req.max_iter,
-        req.mode,
-        map.width,
-        map.rows,
-        format.name(),
-    );
+    let meta = strip_meta(map, k, req.max_iter, req.mode, format);
     let written = match format {
         StripFormat::Fractadyne => {
             fractadyne_export::write_exr_channels(path, map.width, map.rows, strip_channels(&r.pixels, &r.aux), Some(&meta))
@@ -199,6 +212,48 @@ pub(crate) fn write_strip_file(
         }
     };
     written.map_err(|e| format!("strip {k}: cannot write {}: {e}", path.display()))
+}
+
+/// A strip a render-farm machine returned (`design/zoom-video.md` §8.5), checked before it is
+/// kept: its own metadata (`write_strip_file`'s) names strip `k`, the dive's strip size and the
+/// plan's `cap` in Fractadyne's format, and the whole file decodes with every channel assembly reads
+/// (`N` exactly, the rest as floats), each a full strip. The SHA-256 has already shown the file is
+/// what its machine wrote; this shows that machine wrote the strip asked for.
+pub(crate) fn check_strip_file(path: &Path, k: u64, map: &ExpMap, cap: u32) -> Result<(), String> {
+    use fractadyne_export::ExrChannelData as D;
+    let meta = fractadyne_export::read_exr_metadata(path).map_err(|e| format!("not a readable EXR: {e}"))?.ok_or("an EXR without a strip's description")?;
+    let field = |key: &str| meta.lines().find_map(|l| l.strip_prefix(key)?.strip_prefix('=')).map(str::trim);
+    let num = |key: &str| field(key).and_then(|v| v.parse::<u64>().ok());
+    if num("expmap_strip") != Some(k) {
+        return Err(format!("it says it is strip {}, where strip {k} was asked for", field("expmap_strip").unwrap_or("(none)")));
+    }
+    if (num("width"), num("rows")) != (Some(map.width as u64), Some(map.rows as u64)) {
+        return Err(format!("a {}x{} strip, where the dive's are {}x{}", field("width").unwrap_or("?"), field("rows").unwrap_or("?"), map.width, map.rows));
+    }
+    if num("max_iter") != Some(cap as u64) {
+        return Err(format!("rendered at {} iterations, where the plan gives strip {k} {cap}", field("max_iter").unwrap_or("?")));
+    }
+    if field("format") != Some(StripFormat::Fractadyne.name()) {
+        return Err(format!("a {} strip, where the job's are {}", field("format").unwrap_or("?"), StripFormat::Fractadyne.name()));
+    }
+    let (w, h, channels) = fractadyne_export::read_exr_all_channels(path).map_err(|e| format!("it does not decode: {e}"))?;
+    if (w, h) != (map.width, map.rows) {
+        return Err(format!("its pixels are {w}x{h}, where the dive's strips are {}x{}", map.width, map.rows));
+    }
+    let texels = w as usize * h as usize;
+    for want in ["N", "NF", "T", "DE", "NX", "NY"] {
+        let ok = channels.iter().any(|(name, d)| {
+            name == want
+                && match d {
+                    D::U32(v) => want == "N" && v.len() == texels,
+                    D::F32(v) => want != "N" && v.len() == texels,
+                }
+        });
+        if !ok {
+            return Err(format!("its {want} channel is missing or not a whole strip of the right type"));
+        }
+    }
+    Ok(())
 }
 
 /// A dive into the view as strips: what `plan_dive` works out once for every strip.
@@ -465,6 +520,9 @@ impl crate::FractadyneApp {
         let to = to.min(n - 1);
         std::fs::create_dir_all(dir).map_err(|e| format!("cannot create {}: {e}", dir.display()))?;
         write_or_check_manifest(dir, &map, opts.format, &dive)?;
+        if opts.plan_only {
+            return Ok(format!("the plan of a dive in {n} strips of {}x{} → {}", map.width, map.rows, dir.join(MANIFEST).display()));
+        }
         crate::diag::log_line(
             "expmap",
             &format!(
@@ -483,9 +541,15 @@ impl crate::FractadyneApp {
             // ⭐ONE reference for the whole dive, built for its deepest strip (that strip's cap and
             // precision serve every shallower one); each strip then works out only its own series
             // and BLA. A strip that cannot take it (the direct path, or a refusal) builds its own.
+            // The DIVE's deepest strip, whatever range this run renders: a run of strips A-B built
+            // its reference for B, so strips rendered in pieces (a farm's runs) were not quite the
+            // strips one run renders. Now they are, bit for bit on one GPU (`design/zoom-video.md`
+            // §8.5); a shallow range of a very deep dive pays the deep reference (the orbit cache
+            // keeps it for the next run).
             let todo: Vec<u64> = (from..=to).filter(|&k| !dir.join(strip_file(k)).exists()).collect();
             let dive_ref = match todo.last() {
-                Some(&deepest) => {
+                Some(_) => {
+                    let deepest = n - 1;
                     let t = std::time::Instant::now();
                     let r = self.dive_reference(&map, deepest, &cx, &cy, caps[deepest as usize]);
                     crate::diag::log_line(
@@ -504,16 +568,33 @@ impl crate::FractadyneApp {
                 }
                 None => None,
             };
+            // A farm child says what became of each strip (`farm::parse_child_line`), a failure
+            // included, so its client can tell the controller.
+            let failed = |k: u64, e: String| {
+                if opts.farm_child {
+                    println!("frame-failed index={k} reason=\"{}\"", e.replace('"', "'"));
+                }
+                e
+            };
             for k in from..=to {
                 let path = dir.join(strip_file(k));
                 if path.exists() {
+                    // A farm run reports a strip it finds (a run cut short before its client sent
+                    // it): skipping it silently would leave the run looking unfinished.
+                    if opts.farm_child {
+                        println!("{}", crate::scripting::frame_done_line(&path, k, 0, "none"));
+                    }
                     kept += 1;
                     continue;
                 }
                 let t0 = std::time::Instant::now();
-                let s = self.render_strip(device, queue, &map, k, &cx, &cy, caps[k as usize], dive_ref.as_ref())?;
+                let s = self.render_strip(device, queue, &map, k, &cx, &cy, caps[k as usize], dive_ref.as_ref()).map_err(|e| failed(k, e))?;
                 let (r, req) = (&s.result, &s.req);
-                write_strip_file(&path, &map, k, opts.format, power, (&cx, &cy), r, req)?;
+                write_strip_file(&path, &map, k, opts.format, power, (&cx, &cy), r, req).map_err(|e| failed(k, e))?;
+                if opts.farm_child {
+                    let src = if req.mode == 1 { "none" } else if s.reused { "reused" } else { "fresh" };
+                    println!("{}", crate::scripting::frame_done_line(&path, k, t0.elapsed().as_millis() as u64, src));
+                }
                 let escaped = r.pixels.chunks_exact(4).filter(|p| p[0] >= 0.0).count();
                 crate::diag::log_line(
                     "expmap",

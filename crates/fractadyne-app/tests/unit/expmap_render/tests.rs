@@ -88,6 +88,42 @@ fn a_strips_channels_keep_the_exact_count_and_mark_capped_and_glitched_texels() 
     assert_eq!(names, ["N", "NF", "T", "DE", "NX", "NY"]);
 }
 
+/// A farm keeps a strip a machine sent only if it is the strip asked for, whole
+/// (`check_strip_file`, `design/zoom-video.md` §8.5): its own description names that strip, the
+/// dive's size and the plan's cap; every channel decodes to a whole strip. Files written as the
+/// renderer writes them.
+#[test]
+fn a_farm_strip_is_kept_only_if_it_is_the_strip_asked_for_whole() {
+    let dir = std::env::temp_dir().join(format!("fractadyne_strip_check_{}", std::process::id()));
+    let _ = std::fs::remove_dir_all(&dir);
+    std::fs::create_dir_all(&dir).expect("temp dir");
+    let map = ExpMap { width: 6, rows: 2, r0_log2: 2.0, layout: fractadyne_core::StripRows::Conformal };
+    let main: Vec<f32> = (0..12).flat_map(|i| [100.0 + i as f32 + 0.5, 0.6, 0.8, 2.5]).collect();
+    let aux: Vec<f32> = (0..12).flat_map(|i| [0.0, (100 + i) as f32, 0.5, 0.25]).collect();
+    let write = |name: &str, meta: Option<String>| {
+        let p = dir.join(name);
+        fractadyne_export::write_exr_channels(&p, 6, 2, strip_channels(&main, &aux), meta.as_deref()).expect("write");
+        p
+    };
+    let good = write("good.exr", Some(strip_meta(&map, 5, 1000, 2, StripFormat::Fractadyne)));
+    check_strip_file(&good, 5, &map, 1000).expect("the strip asked for");
+    let e = check_strip_file(&good, 6, &map, 1000).unwrap_err();
+    assert!(e.contains("strip 5") && e.contains("strip 6"), "another strip: {e}");
+    assert!(check_strip_file(&good, 5, &map, 999).unwrap_err().contains("iterations"), "another cap");
+    let wider = ExpMap { width: 8, ..map };
+    assert!(check_strip_file(&good, 5, &wider, 1000).unwrap_err().contains("6x2"), "another dive's size");
+    let kf = write("kf.exr", Some(strip_meta(&map, 5, 1000, 2, StripFormat::Zoomasm)));
+    assert!(check_strip_file(&kf, 5, &map, 1000).unwrap_err().contains("zoomasm"), "another format");
+    let plain = write("plain.exr", None);
+    assert!(check_strip_file(&plain, 5, &map, 1000).unwrap_err().contains("description"), "an EXR that is not a strip");
+    // Cut short: the description is whole, the pixels are not.
+    let bytes = std::fs::read(&good).unwrap();
+    let cut = dir.join("cut.exr");
+    std::fs::write(&cut, &bytes[..bytes.len() - 24]).unwrap();
+    assert!(check_strip_file(&cut, 5, &map, 1000).is_err(), "a strip cut short was kept");
+    let _ = std::fs::remove_dir_all(&dir);
+}
+
 /// A directory's strips are kept only for the same dive in the same layout. Strips the app laid
 /// out another way (the zoomasm strips were upside down before 2026-10-28) must not be mixed in.
 #[test]

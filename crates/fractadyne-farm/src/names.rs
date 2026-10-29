@@ -61,6 +61,43 @@ pub fn frame_file_name(prefix: &str, index: u64) -> String {
     format!("{prefix}_{index:05}.png")
 }
 
+/// What a job's units are: a tour's frames, or a zoom video's strips.
+#[derive(serde::Serialize, serde::Deserialize, Debug, Clone, Copy, PartialEq, Eq, Default)]
+#[serde(rename_all = "lowercase")]
+pub enum UnitKind {
+    #[default]
+    Frame,
+    /// An exponential-map strip of a dive (`--render-expmap`): unit K is strip K.
+    Strip,
+}
+
+impl UnitKind {
+    /// The units' file extension.
+    pub fn ext(self) -> &'static str {
+        match self {
+            UnitKind::Frame => "png",
+            UnitKind::Strip => "exr",
+        }
+    }
+
+    /// "frame" / "strip", for messages.
+    pub fn word(self) -> &'static str {
+        match self {
+            UnitKind::Frame => "frame",
+            UnitKind::Strip => "strip",
+        }
+    }
+}
+
+/// The file unit `index` of a job is written under: a frame as [`frame_file_name`] names it, a
+/// strip as `--render-expmap` does (`<prefix>_NNNNNN.exr`; the prefix is `strip`).
+pub fn unit_file_name(kind: UnitKind, prefix: &str, index: u64) -> String {
+    match kind {
+        UnitKind::Frame => frame_file_name(prefix, index),
+        UnitKind::Strip => format!("{prefix}_{index:06}.exr"),
+    }
+}
+
 #[cfg(test)]
 #[path = "../tests/unit/names/tests.rs"]
 mod tests;

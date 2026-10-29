@@ -67,6 +67,50 @@ fn blob_ref() -> Vec<u8> {
     (0..200_000u32).map(|i| (i * 7) as u8).collect()
 }
 
+/// ⛔A heartbeat must not wait behind a whole blob (a zoom video's strip takes seconds to send, and
+/// the controller drops a client silent for 10 s): `send_blob_with` lets the sender put messages
+/// BETWEEN chunks, and they arrive there, the blob intact around them.
+#[test]
+fn messages_can_go_out_between_a_blobs_chunks() {
+    let key = FarmKey::generate().unwrap();
+    let k2 = key.clone();
+    let (ctrl_id, client_id) = (Identity::generate().unwrap(), Identity::generate().unwrap());
+    let blob = blob_ref(); // 4 chunks of 60 KiB
+    let (seen, _) = pair(
+        move |s| {
+            let sess = respond(s, &k2, &ctrl_id).expect("respond");
+            let (mut r, _w) = sess.split(Some(Duration::from_secs(5)), Duration::from_secs(5)).unwrap();
+            let (mut got, mut order) = (Vec::new(), Vec::new());
+            while got.len() < blob_ref().len() {
+                match r.recv().expect("message") {
+                    Incoming::Chunk { offset, data, .. } => {
+                        assert_eq!(offset as usize, got.len(), "a chunk out of order");
+                        got.extend(data);
+                        order.push('c');
+                    }
+                    Incoming::Control(Msg::Keepalive) => order.push('k'),
+                    other => panic!("{other:?}"),
+                }
+            }
+            assert_eq!(got, blob_ref(), "the blob arrived altered");
+            order.into_iter().collect::<String>()
+        },
+        move |s| {
+            let sess = initiate(s, &key, &client_id).expect("initiate");
+            let (_r, mut w) = sess.split(Some(Duration::from_secs(5)), Duration::from_secs(5)).unwrap();
+            let mut calls = 0;
+            w.send_blob_with(9, &blob, |w| {
+                calls += 1;
+                // One message after the first chunk, as a heartbeat due then would go.
+                if calls == 1 { w.send(&Msg::Keepalive) } else { Ok(0) }
+            })
+            .unwrap();
+            calls
+        },
+    );
+    assert_eq!(seen, "ckccc", "the message did not go out between the chunks");
+}
+
 /// ⛔A client with a different farm key never gets a session; the controller says why.
 #[test]
 fn a_different_key_is_refused_at_the_handshake() {
