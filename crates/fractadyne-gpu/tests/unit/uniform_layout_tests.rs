@@ -224,8 +224,11 @@ fn the_assembly_module_validates_and_its_uniform_lines_up() {
         ("rot_cos", std::mem::offset_of!(A, rot_cos)),
         ("rot_sin", std::mem::offset_of!(A, rot_sin)),
         ("log2_row_step", std::mem::offset_of!(A, log2_row_step)),
+        ("piece_width", std::mem::offset_of!(A, piece_width)),
+        ("pieces", std::mem::offset_of!(A, pieces)),
+        ("texels", std::mem::offset_of!(A, texels)),
     ];
-    assert_eq!(fields.len(), rust.len() + 1, "a field was added on one side only (the +1 is the padding)");
+    assert_eq!(fields.len(), rust.len() + 2, "a field was added on one side only (the +2 is the padding)");
     for (name, off) in rust {
         assert_eq!(wgsl_field_offset(&fields, name), off, "`{name}` is at another offset in AssembleU than in AssembleUniforms");
     }

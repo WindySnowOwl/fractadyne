@@ -37,6 +37,13 @@ pub(crate) struct ZoomVideoUi {
     pub(crate) rotate: f64,
     /// Samples a pixel along each axis; the strips are oversampled as much.
     pub(crate) ss: u32,
+    /// What the strip window will hold of each texel: what the session's colouring reads
+    /// (`fractadyne_gpu::WindowTexels`), refreshed every time the dialog draws, as the colouring
+    /// can change while it is open. It sets the memory the dialog asks of the card.
+    pub(crate) texels: fractadyne_gpu::WindowTexels,
+    /// Opens (or closes) the "How it works" section once, the next time the dialog draws: the
+    /// `--uitest` walk photographs it open. `None` leaves it as the user left it.
+    pub(crate) about_open: Option<bool>,
     /// BLA skips iterations in the strips that can take it (`--bla`; `--no-bla` when off). On by
     /// default (the user's choice, 2026-10-28): most deep strips render faster with it, though a
     /// few texels near a minibrot can come out several iterations off (`design/zoom-video.md` §8.4).
@@ -79,6 +86,8 @@ impl Default for ZoomVideoUi {
             start_log2: 0.0,
             rotate: 0.0,
             ss: 1,
+            texels: fractadyne_gpu::WindowTexels::All,
+            about_open: None,
             bla: true,
             normalize: false,
             keep: false,
@@ -96,16 +105,42 @@ impl Default for ZoomVideoUi {
     }
 }
 
-/// The video this dialog describes, in numbers: `(frames, seconds, strips, strip width, strip rows,
-/// bytes of GPU memory the strip window takes)`. The same geometry `--render-zoom-video` will use.
-pub(crate) fn zoom_video_plan(z: &ZoomVideoUi) -> (u64, f64, u64, u32, u32, u64) {
+/// The video this dialog describes, in numbers. The same geometry `--render-zoom-video` will use.
+#[derive(Debug)]
+pub(crate) struct ZoomPlan {
+    pub(crate) frames: u64,
+    pub(crate) seconds: f64,
+    pub(crate) strips: u64,
+    /// A strip's texels around and rows.
+    pub(crate) width: u32,
+    pub(crate) rows: u32,
+    /// The strips a frame reads at once: the window's.
+    pub(crate) layers: u32,
+    /// Bytes of graphics memory assembly takes: the window, held as the colouring needs
+    /// (`ZoomVideoUi::texels`) in pieces no wider than the card's textures, and the frame.
+    pub(crate) gpu: u64,
+}
+
+/// [`ZoomPlan`] for the dialog's video on a card whose textures are `max_dim` texels (0 = unknown).
+pub(crate) fn zoom_video_plan(z: &ZoomVideoUi, max_dim: u32) -> ZoomPlan {
     let map = fractadyne_core::ExpMap::for_frames(z.width as f64, z.height as f64, z.ss as f64, z.start_log2);
     let strips = map.strips_to(z.end_log2, z.height as f64);
     let seconds = (z.end_log2 - z.start_log2).max(0.0) / z.speed.max(1e-9);
     let frames = crate::assemble::dive_frames(z.start_log2, z.end_log2.max(z.start_log2 + 1e-9), z.speed.max(1e-9), z.fps).len() as u64;
     let layers = fractadyne_gpu::layers_for_frame(z.width * z.ss, z.height * z.ss);
-    let gpu = fractadyne_gpu::window_bytes(crate::assemble::shape_of_map(&map, strips), layers);
-    (frames, seconds, strips, map.width, map.rows, gpu)
+    let layout = fractadyne_gpu::WindowLayout { texels: z.texels, piece_max: 0 };
+    let gpu = fractadyne_gpu::window_bytes(crate::assemble::shape_of_map(&map, strips), layers, layout, max_dim)
+        + fractadyne_gpu::frame_bytes([z.width, z.height], z.ss);
+    ZoomPlan { frames, seconds, strips, width: map.width, rows: map.rows, layers, gpu }
+}
+
+/// The word the dialog's messages choose by (`$held`): what the window keeps of a texel.
+fn held_word(t: fractadyne_gpu::WindowTexels) -> &'static str {
+    match t {
+        fractadyne_gpu::WindowTexels::Count => "count",
+        fractadyne_gpu::WindowTexels::CountDe => "distance",
+        fractadyne_gpu::WindowTexels::All => "all",
+    }
 }
 
 /// Whether this graphics card can render the video the dialog describes.
@@ -118,24 +153,22 @@ pub(crate) enum CardFit {
     Refused(String),
 }
 
-/// Of the window's share of the card's memory: above `TIGHT` the dialog warns, above `REFUSE` it
-/// refuses. The render needs more than the window (a strip's tiles, the frame, the orbit) and the
-/// app's own picture holds memory too. Measured on a 10 GB RTX 3080: a 4.4 GB window ran; a
+/// Of assembly's share of the card's memory (the window and the frame): above `TIGHT` the dialog
+/// warns, above `REFUSE` it refuses. The render needs more than that (a strip's tiles, the orbit)
+/// and the app's own picture holds memory too. Measured on a 10 GB RTX 3080: a 4.4 GB window ran; a
 /// 17.6 GB one failed its allocation.
 const TIGHT: f64 = 0.6;
 const REFUSE: f64 = 0.9;
 
-/// Checks the video against this card before Render: a strip or the frames' sample grid larger
-/// than its textures (`max_dim`; 0 = unknown, not checked) — `--render-zoom-video` would refuse it
-/// only after building its reference — and the strip window against its memory (`vram` bytes; 0 =
-/// unknown, not checked), which would otherwise fail its allocation one second in.
+/// Checks the video against this card before Render: the frames' sample grid larger than its
+/// textures (`max_dim`; 0 = unknown, not checked) — `--render-zoom-video` would refuse it only after
+/// building its reference — and assembly against its memory (`vram` bytes; 0 = unknown, not
+/// checked), which would otherwise fail its allocation one second in. A strip wider than the
+/// textures is no reason: the window holds it in pieces (`design/zoom-video.md` §8.6).
 pub(crate) fn zoom_video_fit(z: &ZoomVideoUi, max_dim: u32, vram: u64) -> CardFit {
-    let (_, _, _, sw, rows, gpu) = zoom_video_plan(z);
+    let gpu = zoom_video_plan(z, max_dim).gpu;
     let gb = |b: u64| crate::i18n::decimal(b as f64 / (1u64 << 30) as f64, 1);
     if max_dim > 0 {
-        if sw > max_dim || rows > max_dim {
-            return CardFit::Refused(tr!(zoom_video_too_wide, width = sw.to_string(), limit = max_dim.to_string()));
-        }
         let (gw, gh) = (z.width * z.ss.max(1), z.height * z.ss.max(1));
         if gw > max_dim || gh > max_dim {
             return CardFit::Refused(tr!(zoom_video_grid_too_big, width = gw.to_string(), height = gh.to_string(), limit = max_dim.to_string()));
@@ -144,7 +177,7 @@ pub(crate) fn zoom_video_fit(z: &ZoomVideoUi, max_dim: u32, vram: u64) -> CardFi
     if vram > 0 {
         let share = gpu as f64 / vram as f64;
         if share > REFUSE {
-            return CardFit::Refused(tr!(zoom_video_too_much_memory, need = gb(gpu), have = gb(vram)));
+            return CardFit::Refused(tr!(zoom_video_too_much_memory, need = gb(gpu), have = gb(vram), held = held_word(z.texels)));
         }
         if share > TIGHT {
             return CardFit::Tight(tr!(zoom_video_memory_tight, have = gb(vram)));
@@ -319,6 +352,9 @@ impl FractadyneApp {
         }
         let running = self.zoom_video.child.is_some();
         let card = (self.max_texture_dim, self.sysinfo.vram_mb << 20);
+        // The window holds what the session's colouring reads, which can change while this is open.
+        self.zoom_video.texels =
+            fractadyne_gpu::WindowTexels::for_colour(self.coloring.color_method.to_u32(), self.effects.light, self.effects.de);
         let mut open = self.zoom_video.open;
         let (mut go, mut stop, mut browse, mut browse_keep, mut copy_cmd, mut close_dialog) = (false, false, false, false, false, false);
         let mut to_farm: Option<String> = None;
@@ -343,6 +379,26 @@ impl FractadyneApp {
                 if let Some(why) = &z.unsupported {
                     ui.colored_label(egui::Color32::from_rgb(0xE0, 0xA0, 0x30), egui::RichText::new(format!("⚠ {why}")).small());
                 }
+                // What this window makes, and how it differs from Render tour, which looks like the
+                // same tool: the difference in a line, the reasons and limits one click away.
+                ui.add_space(2.0);
+                ui.label(egui::RichText::new(tr!(zoom_video_intro)).small());
+                egui::CollapsingHeader::new(egui::RichText::new(tr!(zoom_video_about)).small())
+                    .id_salt("zoom_video_about")
+                    .open(z.about_open.take())
+                    .show(ui, |ui| {
+                        for p in [
+                            tr!(zoom_video_about_how),
+                            tr!(zoom_video_about_can),
+                            tr!(zoom_video_about_limits),
+                            tr!(zoom_video_about_tour),
+                        ] {
+                            ui.label(egui::RichText::new(p).small());
+                            ui.add_space(3.0);
+                        }
+                        // The answer the section is for, set apart.
+                        ui.label(egui::RichText::new(tr!(zoom_video_about_choose)).small().strong());
+                    });
                 ui.add_space(4.0);
                 ui.add_enabled_ui(!running, |ui| {
                     egui::Grid::new("zoom_video_grid").num_columns(2).spacing([8.0, 6.0]).show(ui, |ui| {
@@ -450,22 +506,23 @@ impl FractadyneApp {
                 });
 
                 // What this costs, before committing to it.
-                let (frames, seconds, strips, sw, sh, gpu) = zoom_video_plan(z);
+                let plan = zoom_video_plan(z, card.0);
                 ui.add_space(6.0);
                 let summary = tr!(
                     zoom_video_summary,
-                    frames = frames,
-                    seconds = crate::i18n::decimal(seconds, 0),
-                    strips = strips,
-                    width = sw.to_string(),
-                    rows = sh.to_string()
+                    frames = plan.frames,
+                    seconds = crate::i18n::decimal(plan.seconds, 0),
+                    strips = plan.strips,
+                    width = plan.width.to_string(),
+                    rows = plan.rows.to_string()
                 );
                 ui.label(egui::RichText::new(&summary).monospace());
                 let gb = |b: u64| crate::i18n::decimal(b as f64 / (1u64 << 30) as f64, 1);
-                ui.label(egui::RichText::new(tr!(zoom_video_memory, size = gb(gpu))).monospace().weak());
+                ui.label(egui::RichText::new(tr!(zoom_video_memory, size = gb(plan.gpu))).monospace().weak())
+                    .on_hover_text(tr!(zoom_video_memory_hover, layers = plan.layers, held = held_word(z.texels)));
                 if z.keep {
                     // ~11 bytes a texel: measured on a 720p dive's strips (31 strips, 805 MB).
-                    let disk = strips * sw as u64 * sh as u64 * 11;
+                    let disk = plan.strips * plan.width as u64 * plan.rows as u64 * 11;
                     ui.label(egui::RichText::new(tr!(zoom_video_disk, size = gb(disk))).monospace().weak());
                 }
                 let fit = zoom_video_fit(z, card.0, card.1);

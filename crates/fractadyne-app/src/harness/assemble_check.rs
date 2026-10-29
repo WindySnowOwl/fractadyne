@@ -8,6 +8,16 @@
 //! turned with the frame. A sample is excused only within 1e-3 of a texel of a texel's edge, where
 //! the shader's f32 and the CPU's f64 may fall either side.
 //!
+//! **In pieces.** The geometry check runs again with each strip held in three pieces around its
+//! circle (`fractadyne_gpu::strip_pieces`, as a strip wider than the card's textures is held): every
+//! sample must read the very texel it read before.
+//!
+//! **Only what the colouring reads** (`design/zoom-video.md` §8.6). A real dive's frames, coloured
+//! six ways (smooth and distance colouring, each with and without glow and relief), from the whole
+//! window and from one holding only what that colouring reads, in pieces: byte for byte the same.
+//! The CONTROL: the count-only window's samples differ from the whole window's in the normal and
+//! distance estimate it leaves out, and a colouring that reads them is refused on it.
+//!
 //! **Pictures, against a flat render, scored against a CONTROL.** A real dive's strips assembled at
 //! several depths, against `render_iter` of the same frame. Sample for sample they differ wherever a
 //! pixel is chaotic — a sample snapped to its texel's point moves by up to half a texel — so the
@@ -22,9 +32,16 @@ use fractadyne_gpu::{Assembler, StripShape};
 /// A sample this close to a texel's edge (in texels) may fall either side of it.
 const EDGE_TEXEL: f64 = 1.0e-3;
 
+/// The widest piece the pieced geometry check holds its 346-texel strips in: three pieces, the last
+/// narrower (116, 116, 114).
+const GEOMETRY_PIECE_MAX: u32 = 120;
+const GEOMETRY_PIECES: u32 = 3;
+
 /// What the synthetic-strip check found.
 pub(crate) struct GeometryCheck {
     pub(crate) frames: usize,
+    /// The most pieces a strip was held in (3 for the pieced windows).
+    pub(crate) pieces: u32,
     pub(crate) samples: usize,
     /// Within [`EDGE_TEXEL`] of an edge: either texel is right.
     pub(crate) excused: usize,
@@ -37,7 +54,12 @@ pub(crate) struct GeometryCheck {
 
 impl GeometryCheck {
     pub(crate) fn pass(&self) -> bool {
-        self.frames >= 8 && self.samples > 10_000 && self.wrong.is_empty() && self.de_err < 1.0e-3 && self.normal_err < 1.0e-5
+        self.frames >= 16
+            && self.pieces == GEOMETRY_PIECES
+            && self.samples > 10_000
+            && self.wrong.is_empty()
+            && self.de_err < 1.0e-3
+            && self.normal_err < 1.0e-5
     }
 }
 
@@ -104,10 +126,13 @@ impl crate::FractadyneApp {
         };
         let o = map.sample_offset();
         let rpo = map.rows_per_octave();
-        let mut c = GeometryCheck { frames: 0, samples: 0, excused: 0, wrong: Vec::new(), de_err: 0.0, normal_err: 0.0 };
-        for ss in [1u32, 2] {
+        let mut c = GeometryCheck { frames: 0, pieces: 0, samples: 0, excused: 0, wrong: Vec::new(), de_err: 0.0, normal_err: 0.0 };
+        for (ss, piece_max) in [(1u32, 0u32), (2, 0), (1, GEOMETRY_PIECE_MAX), (2, GEOMETRY_PIECE_MAX)] {
             let (sw, sh) = (fw * ss, fh * ss);
-            let mut asm = Assembler::new(device, shape, [fw, fh], ss, fractadyne_gpu::layers_for_frame(sw, sh)).map_err(|e| e.to_string())?;
+            let layout = fractadyne_gpu::WindowLayout { texels: fractadyne_gpu::WindowTexels::All, piece_max };
+            let mut asm = Assembler::with_layout(device, shape, [fw, fh], ss, fractadyne_gpu::layers_for_frame(sw, sh), layout)
+                .map_err(|e| e.to_string())?;
+            c.pieces = c.pieces.max(asm.held().1);
             // The first frame (strip 0's corners), fractional depths, a frame past the dive's end
             // (clamped to its last strip), and a rotated frame.
             for (l, turns) in [(0.0, 0.0), (2.37, 0.0), (7.5, 0.0), (11.91, 0.137), (18.25, 0.0), (21.0, 0.0)] {
@@ -257,5 +282,130 @@ impl crate::FractadyneApp {
         })();
         (self.render_cfg.max_iter, self.render_cfg.auto_iter, self.export.width, self.export.ss) = saved;
         result
+    }
+
+    /// The window check (see the module note): a real dive into `(cx, cy)`, 160x90 frames from 1x
+    /// to 2^12 at `cap`, assembled at four depths (one turned) and coloured six ways.
+    pub(crate) fn assemble_window_check(
+        &mut self,
+        device: &eframe::wgpu::Device,
+        queue: &eframe::wgpu::Queue,
+        cx: &str,
+        cy: &str,
+        cap: u32,
+    ) -> Result<WindowCheck, String> {
+        use fractadyne_gpu::{WindowLayout, WindowTexels};
+        let (fw, fh) = (160u32, 90u32);
+        let map = ExpMap::for_frames(fw as f64, fh as f64, 1.0, 0.0);
+        let strips = map.strips_to(12.0, fh as f64);
+        let p0 = fractadyne_core::precision_for_octaves(strips + 64);
+        let cxb = fractadyne_core::parse_bf_prec(cx, p0).ok_or("unreadable centre")?;
+        let cyb = fractadyne_core::parse_bf_prec(cy, p0).ok_or("unreadable centre")?;
+        let saved = (self.render_cfg.max_iter, self.render_cfg.auto_iter, self.export.width);
+        let result = (|| -> Result<WindowCheck, String> {
+            let dive_ref = self.dive_reference(&map, strips - 1, &cxb, &cyb, cap);
+            let mut rendered = Vec::with_capacity(strips as usize);
+            for k in 0..strips {
+                rendered.push(self.render_strip(device, queue, &map, k, &cxb, &cyb, cap, dive_ref.as_ref())?.result.pixels);
+            }
+            let shape = StripShape {
+                width: map.width,
+                rows: map.rows,
+                rows_per_octave: map.rows_per_octave(),
+                sample_offset: map.sample_offset(),
+                row_step: map.row_step(),
+                strips,
+            };
+            let layers = fractadyne_gpu::layers_for_frame(fw, fh);
+            let make = |layout: WindowLayout| Assembler::with_layout(device, shape, [fw, fh], 1, layers, layout).map_err(|e| e.to_string());
+            let fill = |asm: &mut Assembler, place: &fractadyne_gpu::FramePlacement| -> Result<(), String> {
+                let (first, last) = asm.strips_for(place).ok_or("a frame outside the dive")?;
+                for k in first..=last {
+                    if !asm.has_strip(k) {
+                        asm.put_strip(queue, k, &rendered[k as usize]).map_err(|e| e.to_string())?;
+                    }
+                }
+                Ok(())
+            };
+            let places: Vec<_> = [(0.0, 0.0), (3.3, 0.0), (7.9, 0.21), (12.0, 0.0)]
+                .iter()
+                .map(|&(l, turns)| placement(&map, l, fh as f64, 1, turns))
+                .collect();
+            let base_colour = self.current_export_request_for(&Viewport::new(fw as f64, fh as f64), false);
+            let mut c = WindowCheck { frames: 0, pixels: 0, differ: Vec::new(), pieces: 0, left_out_differ: 0, count_differ: 0, refused: false };
+            let mut whole = make(WindowLayout::default())?;
+            // Smooth (0) and distance (4) colouring, with and without glow and relief.
+            for (method, light, glow) in [(0u32, false, false), (0, false, true), (0, true, false), (4, false, false), (4, false, true), (4, true, true)] {
+                let mut colour = base_colour.clone();
+                (colour.color_method, colour.light, colour.de_on) = (method, light as u32, glow as u32);
+                // A glow that shows, so a wrong distance estimate would.
+                colour.de_strength = 0.8;
+                let texels = WindowTexels::for_colour(method, light, glow);
+                let mut held = make(WindowLayout { texels, piece_max: WINDOW_PIECE_MAX })?;
+                c.pieces = c.pieces.max(held.held().1);
+                let mut differ = 0usize;
+                for place in &places {
+                    fill(&mut whole, place)?;
+                    fill(&mut held, place)?;
+                    let a = whole.frame(device, queue, place, &colour).map_err(|e| e.to_string())?;
+                    let b = held.frame(device, queue, place, &colour).map_err(|e| e.to_string())?;
+                    differ += a.chunks_exact(4).zip(b.chunks_exact(4)).filter(|(x, y)| x.iter().zip(y.iter()).any(|(p, q)| p.to_bits() != q.to_bits())).count();
+                    c.frames += 1;
+                    c.pixels += a.len() / 4;
+                }
+                if differ > 0 {
+                    c.differ.push(format!("method {method}, relief {light}, glow {glow} ({texels:?}): {differ} pixels"));
+                }
+            }
+            // The control: the count-only window really leaves the rest out, and a colouring that
+            // reads it is refused there.
+            let mut count = make(WindowLayout { texels: WindowTexels::Count, piece_max: WINDOW_PIECE_MAX })?;
+            for place in &places {
+                fill(&mut whole, place)?;
+                fill(&mut count, place)?;
+                let a = whole.reprojected(device, queue, place).map_err(|e| e.to_string())?;
+                let b = count.reprojected(device, queue, place).map_err(|e| e.to_string())?;
+                for (x, y) in a.chunks_exact(4).zip(b.chunks_exact(4)) {
+                    c.count_differ += (x[0].to_bits() != y[0].to_bits()) as usize;
+                    c.left_out_differ += (x[0] >= 0.0 && x[1..].iter().zip(&y[1..]).any(|(p, q)| p.to_bits() != q.to_bits())) as usize;
+                }
+            }
+            let mut relief = base_colour.clone();
+            relief.light = 1;
+            c.refused = count.frame(device, queue, &places[1], &relief).is_err();
+            Ok(c)
+        })();
+        (self.render_cfg.max_iter, self.render_cfg.auto_iter, self.export.width) = saved;
+        result
+    }
+}
+
+/// The widest piece the window check holds its 577-texel strips in: three pieces (193, 193, 191).
+const WINDOW_PIECE_MAX: u32 = 200;
+
+/// What the window check found.
+pub(crate) struct WindowCheck {
+    pub(crate) frames: usize,
+    pub(crate) pixels: usize,
+    /// Each colouring whose frames differed between the windows, described (none may).
+    pub(crate) differ: Vec<String>,
+    /// The most pieces a strip was held in.
+    pub(crate) pieces: u32,
+    /// The control: escaped samples whose normal or distance estimate differ between the whole and
+    /// the count-only window (must be many), and samples whose count does (must be none).
+    pub(crate) left_out_differ: usize,
+    pub(crate) count_differ: usize,
+    /// A relief colouring was refused on the count-only window.
+    pub(crate) refused: bool,
+}
+
+impl WindowCheck {
+    pub(crate) fn pass(&self) -> bool {
+        self.frames == 24
+            && self.differ.is_empty()
+            && self.pieces == 3
+            && self.left_out_differ > 1_000
+            && self.count_differ == 0
+            && self.refused
     }
 }

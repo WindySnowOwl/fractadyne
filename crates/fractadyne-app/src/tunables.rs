@@ -163,6 +163,9 @@ pub(crate) struct Cost {
     /// The on-settle supersampling stops after this much wall time, ms, once it holds
     /// `ACCUM_MIN_SAMPLES` (`ACCUM_TIME_CAP_MS_DEFAULT`; 0 = only the sample count ends it).
     pub accum_time_cap_ms: u64,
+    /// The widest piece of a strip a zoom video's assembly window holds, texels
+    /// (`ASSEMBLE_PIECE_MAX_DEFAULT`; 0 = the card's texture limit).
+    pub assemble_piece_max: u64,
     /// BLA per-step linear tolerance. The one non-frame-cost member, and it is here rather than in a
     /// second override channel because duplicating the machinery for a single value would be worse.
     /// See the note above on what earns a place in this set.
@@ -227,6 +230,7 @@ impl Default for Cost {
             walk_serialize: WALK_SERIALIZE_DEFAULT,
             walk_onset: WALK_ONSET_DEFAULT,
             accum_time_cap_ms: ACCUM_TIME_CAP_MS_DEFAULT,
+            assemble_piece_max: ASSEMBLE_PIECE_MAX_DEFAULT,
             bla_eps: BLA_EPS,
         }
     }
@@ -594,6 +598,14 @@ pub(crate) fn apply_overrides(pairs: &[(String, String)]) -> Result<(), String> 
                 };
                 p.to_string()
             }
+            "ASSEMBLE_PIECE_MAX" => {
+                let p = c.assemble_piece_max;
+                c.assemble_piece_max = match raw.parse::<u64>() {
+                    Ok(v) if v == 0 || (16..=u32::MAX as u64).contains(&v) => v,
+                    _ => return Err(format!("--set ASSEMBLE_PIECE_MAX: '{raw}' is not a width in texels of at least 16 (0 = the card's limit)")),
+                };
+                p.to_string()
+            }
             "ACCUM_TIME_CAP_MS" => {
                 let p = c.accum_time_cap_ms;
                 c.accum_time_cap_ms = raw
@@ -775,7 +787,7 @@ pub(crate) const OVERRIDABLE: &str = "TDR_BUDGET_MS, TDR_EXPLICIT_BUDGET_MS, \
     DEAD_MAN, DISPATCH_CEILING, SETTLE_SERIALIZE, ADMISSION, PIN_TIMEOUT_SCALED, TAIL_DF32, REF_OVERLAP, EARLY_REF, TILE_OCCUPANCY, LIVE_REFRESH, \
     ORBIT_LEN_CAP, RENORM, TILE_PACK, RENORM_BLA, ORBIT_SCHEDULE, SA_TRACE, CHUNK_CHARGE, \
     CHUNK_SHUFFLE, WORKER_MOTION, WORKER_YIELD, WORKER_PASS_MS, RECORD_COST_PPM, REUSE_MAX_WRAPS, PIN_BAND_SPAN, REF_OVERTAKEN_DROP, SA_TRACE_LIVE_STEPS, GROWTH_IN_WORK, PIN_GROWTH_LANE, PRE_SWITCH_PROBE, PIN_SPAN_PRICED, TIMER_SLOTS, \
-    WALK_SERIALIZE, WALK_ONSET, ACCUM_TIME_CAP_MS, NORM_TOP_QUANTILE";
+    WALK_SERIALIZE, WALK_ONSET, ACCUM_TIME_CAP_MS, NORM_TOP_QUANTILE, ASSEMBLE_PIECE_MAX";
 
 #[cfg(test)]
 #[path = "../tests/unit/tunables/override_tests.rs"]
@@ -1705,6 +1717,12 @@ pub(crate) const WALK_ONSET_DEFAULT: u64 = 1;
 /// 2026-10-20, the user: "It seems to continue working after settling for a while"). 0 = only the
 /// sample count (`accum_target`) ends the run.
 pub(crate) const ACCUM_TIME_CAP_MS_DEFAULT: u64 = 20_000;
+
+/// The widest piece of a strip a zoom video's assembly window holds (`fractadyne_gpu::strip_pieces`),
+/// texels: 0 = the card's texture limit, the only reason a strip is held in pieces. A smaller value
+/// puts a small dive's strips in pieces, to compare its frames with the whole strips' (they are the
+/// same, sample for sample: the selftest's assemble group and `design/zoom-video.md` §8.6).
+pub(crate) const ASSEMBLE_PIECE_MAX_DEFAULT: u64 = 0;
 
 /// The least a supersampling run holds before its time cap may end it ([`ACCUM_TIME_CAP_MS_DEFAULT`]):
 /// a costly view still gets some de-speckle.

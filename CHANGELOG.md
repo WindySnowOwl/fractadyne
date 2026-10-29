@@ -59,6 +59,19 @@ published as the pre-releases `v0.2.41-beta.1` to `v0.2.41-beta.150`, and a "bet
 
 Changes after 0.3.0-beta.1:
 
+- **Zoom videos at higher resolutions (0.3.0-beta.22).** To make a frame, a zoom video holds every
+  strip the frame shows on the graphics card at once, and that limited its size: on a 10 GB RTX
+  3080, 4K at 2× anti-aliasing needed about 20 GB, and 5K at 2× was refused because a strip was
+  wider than the card's largest texture. A strip that wide is now held in pieces, and the card keeps
+  only what the colouring reads of each strip: the iteration count alone for smooth colouring, a
+  quarter of before, or the count and distance estimate for distance colouring or glow, half.
+  Relief lighting reads everything and needs as much as before. 4K at 2× with smooth colouring now
+  needs about 5.5 GB; the frames are the same as before, bit for bit. The memory estimate in the
+  Render zoom video window now includes the frame itself, and its hover says what the strips keep
+  for the colouring chosen. The window also says what a zoom video is and how it differs from
+  Render tour: one line under the view, and a section that opens with how it works, what it can
+  and cannot make, and when to use Render tour instead. The Render tour window says the same from
+  its side, and so do both Tools menu entries' hovers.
 - **Tour renders build the deepest frame's reference once and reuse it (0.3.0-beta.22).** Every
   frame of a rendered tour used to build its own reference orbit, the bignum work that dominates a
   deep frame. Now the tour's deepest frame's reference is built first and every frame it can serve
@@ -95,8 +108,8 @@ Changes after 0.3.0-beta.1:
   anti-aliasing and about 160,000 iterations, a strip at 2^45 to 2^70 takes 17 to 27 s with BLA
   instead of 110 to 209 s. BLA changes the picture slightly: near a minibrot at 2^34, 5% of points
   came out up to 10 iterations off, and that strip was slower with it (66 s against 27 s). With the
-  box off, strips take 26 to 45 s and 99.998% of their points match the old renders. The dialog refuses a size or anti-aliasing the card cannot hold (a strip wider
-  than its textures, or strips needing more memory than it has) and warns when it is close; a render
+  box off, strips take 26 to 45 s and 99.998% of their points match the old renders. The dialog refuses a size or anti-aliasing the card cannot hold (strips needing more
+  memory than it has) and warns when it is close; a render
   that still runs out of graphics memory stops with that message instead of crashing. The time left
   counts the strips still to render, which set a deep dive's pace: it used to divide the frames left
   by the average rate, and said 1h14m for a render with hours to go. Each strip's GPU time, BLA

@@ -617,6 +617,76 @@ frames, and this machine assembles the video when the last one is in.
   mid-build (tours have both); keeping a dive on one GPU class (strips from two classes meet at a
   ring; measured on PLUTO before deciding).
 
+### 8.6 Higher resolutions (2026-10-28, branch `feat/zoom-video-hires`)
+
+The user asked what would make strips work at higher resolutions, then: "proceed as suggested",
+with a note in the dialog on how it works and how it differs from Render tour. Two walls, both in
+ASSEMBLY (§8.4's first render hit both):
+
+- **The strip's width.** A strip is `q·π·diagonal` texels around: 36,911 at 5K with 2x
+  anti-aliasing, past the 3080's 32,768-texel textures. ⭐Only the assembler's window was limited:
+  a strip RENDERS in tiles of at most 2,048 (`render_iter_tiled`) and is read back into memory, so
+  its width never met a texture. Now the window holds a strip wider than the card's textures in
+  PIECES around its circle (`strip_pieces`: the fewest pieces, as equal as whole texels allow,
+  each a layer of the window's array; the shader reads piece `i / piece_width` of slot `s` at layer
+  `s·pieces + piece`). A sample reads the very texel it read before.
+- **The window's memory.** A frame reads every strip from its corners to its centre at once:
+  `layers_for_frame` = 13-15 strips, each `W × 0.11W` texels at 16 bytes (count, normal, DE) —
+  ~19 GB at 4K 2x. The colour pass reads the count always, the distance estimate only for the
+  distance colouring and the glow, and the normal only for relief (`fs_color`; the aux colourings
+  are refused), so the window now holds only what the frames' colouring reads
+  (`WindowTexels::for_colour`): 4 bytes for smooth colouring, 8 with the distance estimate or glow,
+  16 with relief. What it leaves out is zero in the reprojected sample and never read. A frame whose
+  colouring reads more than the window holds is refused (`Assembler::frame`), and `--assemble-at`
+  with `--render-iter` (raw samples to a file) keeps everything. The aux target beside the frame's
+  sample grid, which no allowed colouring reads, is one texel instead of 16 bytes a sample.
+
+Graphics memory for assembly (the window and the frame, 10^9 bytes), before → after, smooth
+colouring (the window's strips: 12 at 720p, 13-15 above):
+
+| video | strip | before | now | |
+|---|---|---|---|---|
+| 720p, 1x | 4614 × 511 | 0.5 GB | 0.2 GB | (measured: 113 MB window + 44 MB frame) |
+| 1080p, 2x | 13842 × 1529 | 4.7 GB | 1.3 GB | |
+| 4K, 2x | 27683 × 3055 | 20.3 GB (crashed, then refused) | 5.5 GB | fits the 10 GB 3080 |
+| 8K, 1x | 27683 × 3055 | 21.1 GB | 6.3 GB | |
+| 5K, 2x | 36911 × 4073 | refused: strip too wide | 10.4 GB, 2 pieces | needs a ~12 GB card |
+| 8K, 2x | 55366 × 6109 | refused: strip too wide | 23.5 GB, 2 pieces | |
+
+With relief the window is as before (it reads everything); with distance colouring or glow, half.
+The dialog now counts the frame too and warns or refuses on the total.
+
+- **Checked:** the selftest's geometry check runs again with every strip in three pieces (346
+  texels as 116 + 116 + 114) — every sample the texel `ExpMap::locate` names; a new check renders a
+  dive's strips and colours its frames six ways (smooth and distance, with and without glow and
+  relief), from the whole window and from one holding only what each colouring reads, in three
+  pieces: bit-identical. Its CONTROL: the count-only window's samples differ from the whole
+  window's in the normal and DE it leaves out, never in the count, and relief is refused on it.
+- **Measured end to end (RTX 3080, a copy of the user's session: smooth colouring, `--iter 3000`):**
+  - Through the real path: a 720p dive's kept strips (35 of 4614×511) assembled at five depths
+    with the strips whole and in five pieces (`--set ASSEMBLE_PIECE_MAX=1000`): the PNGs
+    byte-identical. The window held the count: 113 MB, and the frame 44 MB.
+  - One 5K-at-2x strip, 36,911 × 4,073 texels (wider than the card's textures), rendered by
+    `--render-expmap` in 14.7 s and written whole (1.2 GB EXR).
+  - The user's 4K at 2x, a dive to 2^16 at two octaves a second and 30 fps: 29 strips of
+    27683×3055 in 72 s, 241 frames, 141 s in all, no error; the window 4,736 MB holding the count
+    and the frame 796 MB (the same video crashed at ~17.6 GB before §8.4's fix, then was refused).
+    Frames looked at, a 1:1 crop of the centre included: clean.
+- **The dialog's note** (the user: a user "would be confused by the two apparently similar
+  functions"): one line under the view says what a zoom video is and how it differs from Render
+  tour (faster, straight zoom only); a section that opens says how it works, what it makes, its
+  limits, what Render tour does instead and which to choose (that line set apart). The Render tour
+  dialog says the same from its side in one line, and the Tools menu's hovers in a sentence each.
+  The memory line's hover says what the strips keep for the colouring chosen. `--uitest` step
+  `zoom-video-about` photographs the section open: text fits.
+- **Not done (the third fix, larger):** holding the inner strips coarser. Toward a frame's centre
+  each octave inward is twice as fine as the frame reads it, so a window held at the resolution
+  frames read would take ~2.3 strips' worth instead of 13-15 (about 6x less), at the cost of
+  samples landing up to half a sample from where they land now and the full strips waiting in
+  system memory or on disk until frames need them whole. 8K at 2x, or relief at 4K 2x, needs it.
+  The farm's disk (every strip kept until assembly, ~11 bytes a texel: ~0.9 GB a strip at 4K 2x)
+  is unchanged.
+
 ## 9. Decisions for you
 
 **Decided 2026-10-27 (the user):**

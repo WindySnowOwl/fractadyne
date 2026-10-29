@@ -76,3 +76,42 @@ fn a_placement_splits_its_depth_exactly() {
     let p = FramePlacement::new(-2.25, 0.0);
     assert_eq!((p.depth_whole, p.depth_frac), (-3, 0.75));
 }
+#[test]
+fn a_strip_is_held_in_pieces_no_wider_than_asked_covering_it_once() {
+    // (width, widest piece) -> pieces, as equal as whole texels allow.
+    for (w, max) in [(36_911u32, 32_768u32), (27_683, 32_768), (55_366, 16_384), (10, 3), (7, 3), (9, 2), (1, 5), (100, 0), (13_842, 4_096)] {
+        let (n, piece) = strip_pieces(w, max);
+        let limit = if max == 0 { w } else { max };
+        assert!(piece <= limit && piece >= 1, "{w} by {max}: a piece of {piece}");
+        assert_eq!(n, w.div_ceil(limit.min(w)), "{w} by {max}: {n} pieces, not the fewest");
+        // Every column in exactly one piece, the last one not empty.
+        assert!((n - 1) * piece < w && n * piece >= w, "{w} by {max}: {n} pieces of {piece}");
+    }
+    assert_eq!(strip_pieces(36_911, 32_768), (2, 18_456));
+    assert_eq!(strip_pieces(27_683, 32_768), (1, 27_683));
+}
+
+#[test]
+fn a_window_holds_what_the_colouring_reads() {
+    // Smooth: the count alone; distance colouring or glow: and the DE; relief: everything.
+    assert_eq!(WindowTexels::for_colour(0, false, false), WindowTexels::Count);
+    assert_eq!(WindowTexels::for_colour(0, false, true), WindowTexels::CountDe);
+    assert_eq!(WindowTexels::for_colour(4, false, false), WindowTexels::CountDe);
+    assert_eq!(WindowTexels::for_colour(4, false, true), WindowTexels::CountDe);
+    for (m, g) in [(0, false), (0, true), (4, false), (4, true)] {
+        assert_eq!(WindowTexels::for_colour(m, true, g), WindowTexels::All);
+    }
+    // A method it does not know (the aux ones, or one added later) keeps everything.
+    for m in [1, 2, 3, 5, 6, 99] {
+        assert_eq!(WindowTexels::for_colour(m, false, false), WindowTexels::All);
+    }
+    let shape = StripShape { width: 27_683, rows: 3_059, rows_per_octave: 3_054.0, sample_offset: 0.5, row_step: 2.27e-4, strips: 130 };
+    let whole = window_bytes(shape, 14, WindowLayout::default(), 32_768);
+    assert_eq!(whole, 14 * 27_683 * 3_059 * 16);
+    let count = WindowLayout { texels: WindowTexels::Count, piece_max: 0 };
+    assert_eq!(window_bytes(shape, 14, count, 32_768) * 4, whole);
+    // In pieces: whole pieces, the last one's spare columns too.
+    let wide = StripShape { width: 36_911, ..shape };
+    assert_eq!(window_bytes(wide, 15, count, 32_768), 15 * 2 * 18_456 * 3_059 * 4);
+    assert_eq!(window_bytes(wide, 15, WindowLayout { piece_max: 10_000, ..count }, 32_768), 15 * 4 * 9_228 * 3_059 * 4);
+}

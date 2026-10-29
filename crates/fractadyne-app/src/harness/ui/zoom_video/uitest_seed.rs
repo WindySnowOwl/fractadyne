@@ -25,17 +25,32 @@ impl FractadyneApp {
         z.progress_frames = Some((6624, 19867));
         z.status = None;
         z.error = None;
+        z.about_open = Some(false);
         z.open = true;
     }
 
-    /// The user's first try (2026-10-28): 5K at 2x, whose strips are wider than any card's textures
-    /// — the dialog must say so and disable Render. No render, no progress.
+    /// A video no card holds: 8K at 3x, ~50 GB even for smooth colouring — the dialog must say so
+    /// and disable Render. (The user's first try, 5K at 2x, was refused for its strip's width until
+    /// the window held strips in pieces; it now needs ~10 GB, so whether it is refused depends on the
+    /// card the walk runs on.) No render, no progress.
     pub(crate) fn uitest_seed_zoom_video_refused(&mut self) {
         self.uitest_seed_zoom_video();
         let z = &mut self.zoom_video;
-        (z.width, z.height, z.custom_size, z.ss) = (5120, 2880, false, 2);
+        (z.width, z.height, z.custom_size, z.ss) = (7680, 4320, false, 3);
         z.keep = false;
         z.progress.clear();
         z.progress_frames = None;
+    }
+
+    /// The dialog with its "How it works, and when to use Render tour instead" section open, before
+    /// any render: the walk checks the section's paragraphs fit the window. The section is closed
+    /// again by the next seed (`about_open`), so later steps photograph the dialog as it opens.
+    pub(crate) fn uitest_seed_zoom_video_about(&mut self) {
+        self.uitest_seed_zoom_video();
+        let z = &mut self.zoom_video;
+        z.keep = false;
+        z.progress.clear();
+        z.progress_frames = None;
+        z.about_open = Some(true);
     }
 }
