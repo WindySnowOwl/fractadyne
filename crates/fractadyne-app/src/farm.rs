@@ -349,7 +349,61 @@ pub(crate) enum ChildLine {
     /// `reference`: where the frame's reference came from (`fresh`, `cache`, `reused`, `none`).
     Done { index: u64, bytes: u64, sha256: String, ms: u64, reference: Option<String> },
     Failed { index: u64, reason: String },
+    /// Its reference build has advanced ([`reference_work_lines`]); `steps` is the process's count.
+    ReferenceWork { steps: u64 },
     Other(String),
+}
+
+/// How often a farm render says its reference build has advanced.
+const REFERENCE_WORK_EVERY: std::time::Duration = std::time::Duration::from_secs(5);
+
+/// While a farm child renders: a `reference-work steps=N` line on stdout for every
+/// [`REFERENCE_WORK_EVERY`] in which its reference build advanced
+/// ([`fractadyne_core::reference_steps`], counted as a build runs), for its client to pass on
+/// ([`fractadyne_farm::proto::Heartbeat::reference_work_ms`]). A deep reference finishes no frame
+/// for many minutes, and the controller's stall rule took that for a hang: at 9.98e60205× every
+/// client's 7–8 minute build was cancelled at 300 s and started again (2026-10-29). Only the
+/// reference build counts, not a GPU pass: frame times are what the stall rule already measures,
+/// and a frame that loops on passes forever must still look stalled. Stops when dropped.
+pub(crate) struct ReferenceWorkLines {
+    stop: std::sync::Arc<std::sync::atomic::AtomicBool>,
+    thread: Option<std::thread::JoinHandle<()>>,
+}
+
+pub(crate) fn reference_work_lines() -> ReferenceWorkLines {
+    use std::sync::atomic::Ordering::Relaxed;
+    let stop = std::sync::Arc::new(std::sync::atomic::AtomicBool::new(false));
+    let stop2 = stop.clone();
+    let thread = std::thread::Builder::new()
+        .name("fd-ref-work".into())
+        .spawn(move || {
+            let mut last = fractadyne_core::reference_steps();
+            let mut next = std::time::Instant::now() + REFERENCE_WORK_EVERY;
+            // Checks `stop` every 100 ms, so dropping the guard never waits long.
+            while !stop2.load(Relaxed) {
+                std::thread::sleep(std::time::Duration::from_millis(100));
+                if std::time::Instant::now() < next {
+                    continue;
+                }
+                next = std::time::Instant::now() + REFERENCE_WORK_EVERY;
+                let n = fractadyne_core::reference_steps();
+                if n != last {
+                    last = n;
+                    println!("reference-work steps={n}");
+                }
+            }
+        })
+        .ok();
+    ReferenceWorkLines { stop, thread }
+}
+
+impl Drop for ReferenceWorkLines {
+    fn drop(&mut self) {
+        self.stop.store(true, std::sync::atomic::Ordering::Relaxed);
+        if let Some(t) = self.thread.take() {
+            let _ = t.join();
+        }
+    }
 }
 
 /// Parse one stdout line of a farm child (`scripting::frame_done_line`'s format).
@@ -370,6 +424,10 @@ pub(crate) fn parse_child_line(line: &str) -> ChildLine {
         if let Some(Ok(index)) = field("index=").map(|i| i.parse()) {
             let reason = l.split_once("reason=").map(|(_, r)| r.trim_matches('"').to_string()).unwrap_or_default();
             return ChildLine::Failed { index, reason };
+        }
+    } else if l.starts_with("reference-work ") {
+        if let Some(Ok(steps)) = field("steps=").map(|s| s.parse()) {
+            return ChildLine::ReferenceWork { steps };
         }
     }
     ChildLine::Other(l.to_string())

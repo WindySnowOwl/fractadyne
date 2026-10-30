@@ -721,6 +721,8 @@ struct Running {
     reported: HashSet<u64>,
     last_done: Option<u64>,
     frame_started: Instant,
+    /// When the child last said its reference build had advanced (`ChildLine::ReferenceWork`).
+    reference_work_at: Option<Instant>,
     stop: Option<AbortReason>,
     pause_after_frame: bool,
     /// Cut here (stealing): stop once the frame before it is done.
@@ -1072,7 +1074,17 @@ impl Session<'_> {
                     s.detail = if word == "strip" { format!("Rendering strips {}–{}", a.start, a.end - 1) } else { format!("Rendering frames {}–{}", a.start, a.end - 1) };
                 });
                 self.first_frame_at.get_or_insert(Instant::now());
-                self.running = Some(Running { assign: a, child, reported: HashSet::new(), last_done: None, frame_started: Instant::now(), stop: None, pause_after_frame: false, stop_from: None });
+                self.running = Some(Running {
+                    assign: a,
+                    child,
+                    reported: HashSet::new(),
+                    last_done: None,
+                    frame_started: Instant::now(),
+                    reference_work_at: None,
+                    stop: None,
+                    pause_after_frame: false,
+                    stop_from: None,
+                });
             }
             Err(e) => {
                 eprintln!("fractadyne: {e}");
@@ -1199,6 +1211,8 @@ impl Session<'_> {
             ChildLine::Failed { index, reason } => {
                 let _ = self.out.send(Out::Msg(Msg::FrameFailed(FrameFailed { job_id: r.assign.job_id.clone(), run_id: run, index, class: FailClass::Other, message: tail_of(&reason, 500) })));
             }
+            // Said in the next heartbeat (`reference_work_ms`): progress for the stall rule.
+            ChildLine::ReferenceWork { .. } => r.reference_work_at = Some(Instant::now()),
             ChildLine::Other(_) => {}
         }
     }
@@ -1402,6 +1416,7 @@ impl Session<'_> {
                 run_id: self.running.as_ref().map(|r| r.assign.run_id),
                 frame: self.running.as_ref().map(|r| r.last_done.map_or(r.assign.start, |d| d + 1)),
                 frame_ms: self.running.as_ref().map(|r| r.frame_started.elapsed().as_millis() as u64),
+                reference_work_ms: self.running.as_ref().and_then(|r| r.reference_work_at).map(|t| t.elapsed().as_millis() as u64),
                 frames_done: self.frames_done,
                 free_bytes: crate::sysinfo::free_disk_bytes(&self.cfg.work),
             };

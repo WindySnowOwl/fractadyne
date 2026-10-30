@@ -1164,7 +1164,13 @@ impl Controller<'_> {
                     c.last_hb_at = Some(Instant::now());
                 }
                 if let Some(j) = self.job.as_mut() {
-                    let cmds = j.sched.step(Instant::now(), sched::Event::Heartbeat { client: conn, paused: h.activity == ClientActivity::Paused, frame: h.frame, frame_ms: h.frame_ms });
+                    let now = Instant::now();
+                    let mut cmds = j.sched.step(now, sched::Event::Heartbeat { client: conn, paused: h.activity == ClientActivity::Paused, frame: h.frame, frame_ms: h.frame_ms });
+                    // Its run's reference build advanced: progress for the stall rule (this job's
+                    // runs only; run numbers start again with each job).
+                    if let (true, Some(run), Some(ms)) = (h.job_id.as_deref() == Some(j.job_id.as_str()), h.run_id, h.reference_work_ms) {
+                        cmds.extend(j.sched.step(now, sched::Event::ReferenceWork { client: conn, run, ago: Duration::from_millis(ms) }));
+                    }
                     return self.exec(cmds);
                 }
             }

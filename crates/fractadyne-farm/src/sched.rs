@@ -14,7 +14,11 @@
 //!   queue at once.
 //! - **Stall** (the client's current run has finished no frame for the stall timeout, which is
 //!   `max(stall_floor, stall_factor × median frame time)`): cancelled and re-queued. A fixed
-//!   per-frame deadline is optional, because a deep frame can honestly take an hour.
+//!   per-frame deadline is optional, because a deep frame can honestly take an hour. A reference
+//!   build that is still advancing (`Event::ReferenceWork`) is progress too: before a job's first
+//!   frame only the floor applies, and at 9.98e60205× every client's 7–8 minute build was cancelled
+//!   at 300 s and started again from nothing (measured 2026-10-29). A build that stops advancing
+//!   still lets the stall clock run out.
 //! - **Bad frames** (failed verification): re-queued away from the sender, and a strike against
 //!   it. At `strikes_to_remove` the client is removed — by NAME, so reconnecting does not undo it;
 //!   only the user re-admits.
@@ -127,6 +131,9 @@ pub enum Event {
     Joined { client: ClientId, name: String },
     Left { client: ClientId, why: LeaveKind },
     Heartbeat { client: ClientId, paused: bool, frame: Option<u64>, frame_ms: Option<u64> },
+    /// The client's render process for `run` said its reference build had advanced, `ago` before
+    /// now (a heartbeat's `reference_work_ms`). Counts as the run's progress for the stall rule.
+    ReferenceWork { client: ClientId, run: RunId, ago: Duration },
     /// A frame arrived and passed verification; the app holds it as `<frame>.part` until told.
     FrameVerified { client: ClientId, run: RunId, index: u64, render_ms: u64 },
     /// A frame arrived and FAILED verification (the app quarantined it).
@@ -215,7 +222,10 @@ struct Run {
     start: u64,
     lead: u64,
     end: u64,
+    /// When it last finished a frame (or was assigned).
     last_progress: Instant,
+    /// When its render process last said its reference build had advanced.
+    last_reference_work: Option<Instant>,
 }
 
 /// What the panel and `status.toml` show.
@@ -397,6 +407,13 @@ impl Scheduler {
                     }
                 }
             }
+            Event::ReferenceWork { client, run, ago } => {
+                // Only the run's own client, still on the job, speaks for it.
+                let live = self.clients.get(&client).is_some_and(|c| !matches!(c.state, ClientState::Removed | ClientState::Gone));
+                if let (true, Some(r), Some(at)) = (live, self.runs.get_mut(&run).filter(|r| r.client == client), now.checked_sub(ago)) {
+                    r.last_reference_work = Some(r.last_reference_work.map_or(at, |t| t.max(at)));
+                }
+            }
             Event::FrameVerified { client, run, index, render_ms } => {
                 let Some(state) = self.frames.get(index as usize).cloned() else {
                     out.push(Command::Discard { index });
@@ -563,7 +580,7 @@ impl Scheduler {
             .filter_map(|(&id, c)| {
                 let run = *c.runs.front()?;
                 let r = self.runs.get(&run)?;
-                let since = r.last_progress.max(c.front_since);
+                let since = r.last_progress.max(c.front_since).max(r.last_reference_work.unwrap_or(r.last_progress));
                 (now.duration_since(since) > stall).then_some((id, run))
             })
             .collect();
@@ -810,7 +827,7 @@ impl Scheduler {
                 }
             }
         }
-        self.runs.insert(run, Run { client: id, start: first, lead, end, last_progress: now });
+        self.runs.insert(run, Run { client: id, start: first, lead, end, last_progress: now, last_reference_work: None });
         let c = self.clients.get_mut(&id).unwrap();
         if c.runs.is_empty() {
             c.front_since = now;

@@ -245,6 +245,10 @@ pub struct Heartbeat {
     /// The frame being rendered, and how long it has been.
     pub frame: Option<u64>,
     pub frame_ms: Option<u64>,
+    /// How long ago the run's render process last said its reference build had advanced (`None`:
+    /// it has not said so in this run). The stall rule counts it as progress: a deep reference
+    /// finishes no frame for many minutes.
+    pub reference_work_ms: Option<u64>,
     pub frames_done: u64,
     pub free_bytes: Option<u64>,
 }

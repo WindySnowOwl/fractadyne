@@ -142,6 +142,58 @@ fn a_stalled_run_is_cancelled_and_requeued() {
     assert!(out.contains(&Command::Cancel { client: 1, run: Some(1), reason: CancelReason::Stalled }), "{out:?}");
 }
 
+/// ⭐A run building a deep reference finishes no frame for minutes, and before the job's first frame
+/// only the 300 s floor applies: at 9.98e60205× every client's 7–8 minute build was cancelled at
+/// 300 s and started again from nothing (2026-10-29). A build that keeps advancing is progress; one
+/// that stops lets the stall clock run out from its last step, heartbeats or not. The control, the
+/// same run with no reports, is cancelled at 300 s (`a_stalled_run_is_cancelled_and_requeued`).
+#[test]
+fn a_run_whose_reference_build_advances_is_not_stalled() {
+    let b = t0();
+    let mut s = Scheduler::new(Config::new(30), &[]);
+    assert_eq!(s.stall_timeout(), Duration::from_secs(300), "no frame yet: the floor");
+    s.step(b, Event::Joined { client: 1, name: "A".into() });
+    let beat = |s: &mut Scheduler, t: u64, last_step: u64| {
+        s.step(secs(b, t), Event::Heartbeat { client: 1, paused: false, frame: Some(0), frame_ms: Some(t * 1000) });
+        s.step(secs(b, t), Event::ReferenceWork { client: 1, run: 1, ago: Duration::from_secs(t - last_step) });
+        s.step(secs(b, t), Event::Tick)
+    };
+    // Eight minutes of building, each heartbeat saying the build advanced a second ago.
+    for t in (2..=480).step_by(2) {
+        let out = beat(&mut s, t, t - 1);
+        assert!(!out.iter().any(|c| matches!(c, Command::Cancel { .. })), "cancelled at {t} s while its reference advanced: {out:?}");
+    }
+    // The build stops at 479 s; the heartbeats go on, saying so.
+    for t in (482..=778).step_by(2) {
+        let out = beat(&mut s, t, 479);
+        assert!(!out.iter().any(|c| matches!(c, Command::Cancel { .. })), "cancelled at {t} s, under 300 s after its last step: {out:?}");
+    }
+    let out = beat(&mut s, 780, 479);
+    assert!(out.contains(&Command::Cancel { client: 1, run: Some(1), reason: CancelReason::Stalled }), "{out:?}");
+}
+
+/// Only the run's own client speaks for it: a report naming another client's run leaves that run's
+/// stall clock alone.
+#[test]
+fn reference_work_counts_only_for_the_senders_own_run() {
+    let b = t0();
+    let mut s = Scheduler::new(Config::new(100), &[]);
+    s.step(b, Event::Joined { client: 1, name: "A".into() });
+    let b_runs = assigns(&s.step(b, Event::Joined { client: 2, name: "B".into() }));
+    let b_front = b_runs[0].1;
+    assert_ne!(b_front, 1, "A's first run is run 1");
+    for t in (2..=310).step_by(2) {
+        for c in [1, 2] {
+            s.step(secs(b, t), Event::Heartbeat { client: c, paused: false, frame: None, frame_ms: None });
+        }
+        s.step(secs(b, t), Event::ReferenceWork { client: 2, run: 1, ago: Duration::from_secs(1) });
+        s.step(secs(b, t), Event::ReferenceWork { client: 2, run: b_front, ago: Duration::from_secs(1) });
+    }
+    let out = s.step(secs(b, 310), Event::Tick);
+    assert!(out.contains(&Command::Cancel { client: 1, run: Some(1), reason: CancelReason::Stalled }), "A's run kept alive by B: {out:?}");
+    assert!(!out.contains(&Command::Cancel { client: 2, run: Some(b_front), reason: CancelReason::Stalled }), "B's own run cancelled: {out:?}");
+}
+
 /// A long frame is not a stall once frames have shown how long they take.
 #[test]
 fn the_stall_timeout_grows_with_the_jobs_frame_time() {
@@ -537,6 +589,14 @@ fn chaos(seed: u64, mode: Priority) {
                 let paused = clients[&id].paused;
                 let out = s.step(secs(base, t), Event::Heartbeat { client: id, paused, frame: None, frame_ms: None });
                 apply(out, &mut clients, &mut accepted, &mut failed, &mut done);
+                // Now and then its render says its reference build advanced; rarely it names a run
+                // that may be another client's (late, or after a reassignment).
+                let front = clients[&id].queue.front().map(|q| q.0);
+                let run = if rand(20) == 0 { Some(1 + rand(200)) } else { front.filter(|_| rand(3) == 0) };
+                if let Some(run) = run {
+                    let out = s.step(secs(base, t), Event::ReferenceWork { client: id, run, ago: Duration::from_secs(rand(5)) });
+                    apply(out, &mut clients, &mut accepted, &mut failed, &mut done);
+                }
             }
             let out = s.step(secs(base, t), Event::Tick);
             apply(out, &mut clients, &mut accepted, &mut failed, &mut done);
