@@ -465,32 +465,37 @@ fn tail_step_ok(Z: Cdf, dz: Fe, dzd: Cdf, d_now: bool) -> bool {
 // ⚠The DIRECT path's derivative is plain f32 and reaches 2^127 near the boundary: once |z|·|dz|
 // passes 2^64, `ur² + ui²` overflows, m is inf, and the normal came out (0, 0) — an unlit pixel
 // with a good derivative (a direct strip on the RX 6800 XT, 2026-10-30; `--gputest` row 18 has
-// every card return it). Past 2^62 both factors are first scaled to about 1 by exact powers of
-// two: the direction is the same, and so is each rounding. The perturbation paths pass a
-// floatexp mantissa (|d| near 1) and never take the branch.
-// ⛔A shift is at most 126: DX12 and OpenGL compile `ldexp(x, -e)` as x·exp2(-e), and 2^-127 is
-// a subnormal they flush to zero, which zeroed a derivative of 2^127 (row 18, RTX 3080). Scaled
-// by 2^-126 it lands in [2, 4), still far from any overflow.
-fn slope_normal(z0: vec2<f32>, d0: vec2<f32>) -> vec2<f32> {
-    var z = z0;
-    var d = d0;
-    let mz = max(abs(z0.x), abs(z0.y));
-    let md = max(abs(d0.x), abs(d0.y));
-    if (mz * md >= 4.611686e18) { // 2^62: |u|² < 4·(mz·md)² stays under f32's 2^128 below it
-        // An infinite derivative has no direction (all exponent bits set; a bit test, which no
-        // fast-math rule can fold away): unlit, as before.
-        if ((bitcast<u32>(md) & 0x7F800000u) == 0x7F800000u) {
-            return vec2<f32>(0.0, 0.0);
-        }
-        let ez = min(frexp(mz).exp, 126);
-        let ed = min(frexp(md).exp, 126);
-        z = vec2<f32>(ldexp(z0.x, -ez), ldexp(z0.y, -ez));
-        d = vec2<f32>(ldexp(d0.x, -ed), ldexp(d0.y, -ed));
-    }
+// every card return it). So the sum is formed as before and only an overflowed one (inf, or NaN
+// from an inf product: all exponent bits set, a bit test no fast-math rule can fold away) is
+// formed again from z and the derivative each scaled by the power of two that puts its larger
+// part in [2, 4), built from that part's exponent bits (`pow2_down`). Only a pixel that came out
+// with no normal takes that branch: every other keeps its bits. An infinite derivative scales by
+// 0 to NaN there and stays unlit, as before.
+// ⛔Neither `ldexp` nor a division to scale them: DX12 and OpenGL compile `ldexp(x, -e)` as
+// x·exp2(-e), and a GPU divides by multiplying with the reciprocal; 2^-127, and the reciprocal of
+// a part past 2^126, are subnormals the GPU flushes to zero, which zeroed a derivative of 2^127
+// (row 18 on the RTX 3080, 2026-10-30: both ways, on all three APIs). And not a test of
+// every pixel's operands BEFORE the sum: that version read +1.1% on the RTX 3070's bench matrix
+// (six rounds; the folds, which never call this, included) and nothing on the RX 6800 XT.
+// 2^(1 − e) for a positive finite x of exponent e (x in [2^e, 2^(e+1))): x times it is in [2, 4).
+// Exact, and a normal number for every normal x up to f32's top; 0 for inf or NaN. Built from
+// the exponent bits: (255 − biased e) as a biased exponent.
+fn pow2_down(x: f32) -> f32 {
+    return bitcast<f32>(0x7F800000u - (bitcast<u32>(x) & 0x7F800000u));
+}
+fn slope_normal(z: vec2<f32>, d: vec2<f32>) -> vec2<f32> {
     // u = z · conj(d)  (same direction as z/d)
-    let ur = z.x * d.x + z.y * d.y;
-    let ui = z.y * d.x - z.x * d.y;
-    let m = sqrt(ur * ur + ui * ui);
+    var ur = z.x * d.x + z.y * d.y;
+    var ui = z.y * d.x - z.x * d.y;
+    var m2 = ur * ur + ui * ui;
+    if ((bitcast<u32>(m2) & 0x7F800000u) == 0x7F800000u) {
+        let zs = z * pow2_down(max(abs(z.x), abs(z.y)));
+        let ds = d * pow2_down(max(abs(d.x), abs(d.y)));
+        ur = zs.x * ds.x + zs.y * ds.y;
+        ui = zs.y * ds.x - zs.x * ds.y;
+        m2 = ur * ur + ui * ui;
+    }
+    let m = sqrt(m2);
     if (m > 1.0e-30) {
         return vec2<f32>(ur / m, ui / m);
     }
