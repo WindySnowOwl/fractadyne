@@ -740,7 +740,11 @@ impl crate::FractadyneApp {
                     }
                     let cfg = self.render_cli.tour_cfg.clone();
                     let t0 = std::time::Instant::now();
+                    // A farm child tells its client when its reference build advances (the stall
+                    // rule's other progress, `farm::reference_work_lines`).
+                    let work_lines = cfg.farm_child.then(crate::farm::reference_work_lines);
                     let result = self.render_tour_to_dir(ctx, dev, q, &script, &cfg);
+                    drop(work_lines);
                     // Synchronous offscreen work (see `render::tripwire_dt`).
                     self.perf.offscreen_ms += t0.elapsed().as_secs_f64() * 1000.0;
                     match result {

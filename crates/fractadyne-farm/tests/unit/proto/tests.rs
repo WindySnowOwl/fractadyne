@@ -55,6 +55,7 @@ fn samples() -> Vec<Msg> {
             run_id: Some(7),
             frame: Some(123),
             frame_ms: Some(14_000),
+            reference_work_ms: Some(1_500),
             frames_done: 3,
             free_bytes: None,
         }),

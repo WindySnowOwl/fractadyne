@@ -223,7 +223,9 @@ its pool instead of answering for one view. Protocol 7 (2026-10-28, `design/zoom
 a job can be a zoom video's strips (the bundle's `strips`, a unit = a strip, `strip_NNNNNN.exr`,
 checked whole at the controller), a unit may be up to 1 GiB, and a client sends its heartbeat
 between a blob's chunks (it used to wait behind the whole blob, and the controller drops a client
-silent for 10 s):
+silent for 10 s). Protocol 8 (2026-10-29): a heartbeat says how long ago the run's reference build
+last advanced (`reference_work_ms`, from the render's `reference-work steps=N` lines), which the
+stall rule counts as progress (§5):
 
 | direction | kind | payload (all fields validated) | cap |
 |---|---|---|---|
@@ -328,7 +330,12 @@ offered work; frames it says it finished while away (share mode) are accepted af
 takes an hour on the reference alone, so a fixed per-frame deadline would reassign honest work
 forever. (a) **Stall**: a run whose `FrameDone` count has not advanced within `stall_timeout_s`
 (default `max(300, 8 × median frame time seen on this job)`) is cancelled and reassigned, and the
-client is marked *suspect*. (b) **Hard deadline** per frame (`deadline_s`, default none): the
+client is marked *suspect*. A reference build that is still advancing counts as progress too
+(protocol 8): before a job's first frame there is no median, and at 9.98e60205× (2026-10-29) every
+client's 7–8 minute build was cancelled at 300 s and began again from nothing. The render prints
+`reference-work steps=N` every 5 s in which `fractadyne_core::reference_steps` moved; a build that
+stops advancing lets the stall clock run out from its last step. GPU passes do not count: frame
+times measure them already, and a frame that loops on passes must still look stalled. (b) **Hard deadline** per frame (`deadline_s`, default none): the
 explicit "not returned within the timeout" rule the user asked for, for farms that want it. Both
 are shown in the panel with their defaults. A **late result** for a frame already completed
 elsewhere is verified and discarded with a log line; the first completed frame wins.

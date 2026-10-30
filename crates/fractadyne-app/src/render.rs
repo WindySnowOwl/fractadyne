@@ -973,6 +973,39 @@ fn cache_fit(inp: &RecomputeInputs, h: &orbit_blob::Header) -> Option<f64> {
     reuse_drift(inp, &h.point, h.prec)
 }
 
+/// What one look does with an orbit that arrived in the cache while its build runs.
+#[derive(Debug, PartialEq, Eq)]
+enum PickupLook {
+    /// Read it and take it.
+    Take,
+    /// No room for it yet: look again at the next look, and `say` so the first time only.
+    Short { say: bool },
+}
+
+/// Whether an orbit of `orbit_len` samples has room beside the build it would abandon (which keeps
+/// its memory until it ends): a few times the orbit's own 16 bytes a sample, plus
+/// [`REF_MEM_MARGIN`]; `available` unknown counts as room. Judged from the cache entry's length,
+/// before the orbit is read. ⚠Not `est_ref_bytes` — that sizes a second BIGNUM build at `max_iter`:
+/// 13.6 GB at the e4000 gate, whose build peaked at 0.47 GB, and it refused every pickup on a
+/// machine with 1.9 GB free.
+///
+/// ⭐Asked at EVERY look, not once: memory is often short only while something else ends. On a render
+/// farm at 9.98e60205× (2026-10-29) the controller's own pre-build was finishing as its orbit
+/// arrived; the watch ended at that first refusal, the build went on for 100 s more until the stall
+/// rule cancelled it, and the next run took the same orbit at once.
+fn pickup_look(orbit_len: u32, available: Option<u64>, short_said: bool) -> PickupLook {
+    let need = (orbit_len as u64).saturating_mul(16 * 4);
+    if available.is_none_or(|a| need.saturating_add(REF_MEM_MARGIN) < a) {
+        PickupLook::Take
+    } else {
+        PickupLook::Short { say: !short_said }
+    }
+}
+
+#[cfg(test)]
+#[path = "../tests/unit/render/pickup_tests.rs"]
+mod pickup_tests;
+
 /// Wait for a reference building on another thread, stamping liveness once a second (`diag::alive`):
 /// a deep build takes minutes, and that is not a hang. ⚠Without the stamp, a tour render that waited
 /// 46–90 s on a 2.37e4000× reference logged "possible hang" lines, and its log check turned a
@@ -985,7 +1018,7 @@ fn cache_fit(inp: &RecomputeInputs, h: &orbit_blob::Header) -> Option<f64> {
 /// orbit taken here is a cache hit like any other (`from_disk`, `ref=cache`). The abandoned build
 /// is not stopped — reference builds have no cooperative cancel — so it runs to its end on its
 /// own, offers its orbit to the cache, and is discarded; and an orbit is taken only with room in
-/// memory for it beside that build.
+/// memory for it beside that build, asked again at every look ([`pickup_look`]).
 fn wait_reference_watching(
     rx: &std::sync::mpsc::Receiver<RecomputeResult>,
     watch: Option<RecomputeInputs>,
@@ -999,6 +1032,8 @@ fn wait_reference_watching(
     let key = watch.as_ref().map(orbit_key_for);
     let started = Instant::now();
     let mut next = started + first_look;
+    // An orbit arrived with no room for it yet, and the log has said so.
+    let mut short_said = false;
     loop {
         match rx.try_recv() {
             Ok(v) => return Some(v),
@@ -1008,40 +1043,35 @@ fn wait_reference_watching(
         if let (Some(w), Some(key)) = (watch.as_mut(), key) {
             if Instant::now() >= next {
                 next = Instant::now() + WATCH_EVERY;
-                // Room for the orbit and its BLA table beside the build it abandons (which keeps
-                // its memory until it ends): a few times the orbit's own 16 bytes a sample. ⚠Not
-                // `est_ref_bytes` — that sizes a second BIGNUM build at `max_iter`: 13.6 GB at
-                // the e4000 gate, whose build peaked at 0.47 GB, and it refused every pickup on a
-                // machine with 1.9 GB free.
-                let fits = |r: &ReuseRef| {
-                    let need = (r.prefix.len() as u64).saturating_mul(16 * 4);
-                    crate::sysinfo::available_memory().is_none_or(|a| need.saturating_add(REF_MEM_MARGIN) < a)
-                };
                 // ⚠Only an orbit that ARRIVED: one the cache already held when the build began is
                 // the build's own cache hit, being prepared on the worker — taking it again here
                 // did that work twice, side by side (frames of the e4000 gate went 6.7 → 10.5 s).
                 let arrived = cache_best(w).filter(|now| known.as_ref() != Some(now));
-                match arrived.and_then(|_| orbit_cache_lookup(w, key)) {
-                    // Said once, and the watch ends: looking again would only log the hit again.
-                    Some(reuse) if !fits(&reuse) => {
-                        crate::diag::log_line("ref", "an orbit for this view arrived in the cache, but there is no memory for it beside the build — the build continues");
-                        watch = None;
+                match arrived.map(|(_, len)| pickup_look(len, crate::sysinfo::available_memory(), short_said)) {
+                    Some(PickupLook::Short { say }) => {
+                        if say {
+                            crate::diag::log_line("ref", "an orbit for this view arrived in the cache, but there is no memory for it beside the build yet — the build continues, and the orbit is taken once there is");
+                            short_said = true;
+                        }
                     }
-                    Some(reuse) => {
-                        w.reuse = Some(reuse);
-                        match try_reuse_reference(w) {
-                            Some(mut res) => {
-                                res.from_disk = true;
-                                crate::diag::log_line(
-                                    "ref",
-                                    &format!(
-                                        "an orbit for this view arrived in the cache {:.1} s into the wait for its build — taken; the build is abandoned and finishes on its own",
-                                        started.elapsed().as_secs_f64()
-                                    ),
-                                );
-                                return Some(res);
+                    Some(PickupLook::Take) => {
+                        if let Some(reuse) = orbit_cache_lookup(w, key) {
+                            w.reuse = Some(reuse);
+                            match try_reuse_reference(w) {
+                                Some(mut res) => {
+                                    res.from_disk = true;
+                                    crate::diag::log_line(
+                                        "ref",
+                                        &format!(
+                                            "an orbit for this view arrived in the cache {:.1} s into the wait for its build{} — taken; the build is abandoned and finishes on its own",
+                                            started.elapsed().as_secs_f64(),
+                                            if short_said { ", once there was memory for it" } else { "" },
+                                        ),
+                                    );
+                                    return Some(res);
+                                }
+                                None => w.reuse = None,
                             }
-                            None => w.reuse = None,
                         }
                     }
                     None => {}

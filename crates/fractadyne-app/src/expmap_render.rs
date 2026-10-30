@@ -535,6 +535,9 @@ impl crate::FractadyneApp {
 
         let progress = Arc::new(AtomicU32::new(0));
         let _pump = crate::diag::progress_pump("expmap", progress.clone());
+        // A farm child tells its client when its reference build advances: the dive's reference,
+        // built before the first strip, takes minutes when deep (`farm::reference_work_lines`).
+        let _work_lines = opts.farm_child.then(crate::farm::reference_work_lines);
         let saved = (self.render_cfg.max_iter, self.render_cfg.auto_iter, self.export.width);
         let result = (|| -> Result<(u64, u64), String> {
             let (mut rendered, mut kept) = (0u64, 0u64);

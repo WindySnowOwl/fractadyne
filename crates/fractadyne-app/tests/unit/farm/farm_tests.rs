@@ -40,8 +40,17 @@ fn frame_done_lines_parse_exactly_as_the_renderer_prints_them() {
         parse_child_line("frame-failed index=3 reason=\"read back: denied\""),
         ChildLine::Failed { index: 3, reason: "read back: denied".into() }
     );
+    // The reference build advancing (`reference_work_lines`' format).
+    assert_eq!(parse_child_line("reference-work steps=1645846"), ChildLine::ReferenceWork { steps: 1_645_846 });
     // Anything else — progress, a damaged line, a short digest — is not a frame report.
-    for other in ["  frame 10/19  (1s elapsed)", "frame-done index=x bytes=1 sha256=00 ms=1", "frame-done index=1 bytes=2 ms=3", &format!("frame-done index=1 bytes=2 sha256={} ms=3", &sha[..10])] {
+    for other in [
+        "  frame 10/19  (1s elapsed)",
+        "frame-done index=x bytes=1 sha256=00 ms=1",
+        "frame-done index=1 bytes=2 ms=3",
+        &format!("frame-done index=1 bytes=2 sha256={} ms=3", &sha[..10]),
+        "reference-work steps=-4",
+        "reference-work",
+    ] {
         assert!(matches!(parse_child_line(other), ChildLine::Other(_)), "{other}");
     }
 }
