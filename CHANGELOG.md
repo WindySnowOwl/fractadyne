@@ -65,7 +65,10 @@ Changes after 0.3.0-beta.1:
   extreme depth the reference orbit takes longer than that to build: on a 1000-octave dive to
   9.98e60205× every machine's 7 to 8 minute build was cancelled at 5 minutes and started again from
   nothing. A farm render now says while its reference build is advancing, and that counts as
-  progress; a build that stops advancing is still cancelled 5 minutes after its last step. Also
+  progress; a build that stops advancing is still cancelled 5 minutes after its last step. On that
+  dive, rendered deepest first on three graphics cards in two machines, no run is cancelled now
+  (before, all three were), and the job takes the same 11.5 minutes: the reference the controller
+  builds and shares set its pace both times. Also
   fixed: when another machine's reference arrived while memory was short, a render kept building
   its own for the rest of the run instead of taking it once there was room. Every machine of a farm
   needs this version (farm protocol 8).
