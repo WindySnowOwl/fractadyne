@@ -59,6 +59,19 @@ published as the pre-releases `v0.2.41-beta.1` to `v0.2.41-beta.150`, and a "bet
 
 Changes after 0.3.0-beta.1:
 
+- **Tours can render deepest first (0.3.0-beta.22).** Render tour has a third order, "Deepest first"
+  (`--order deepest`): the deepest frames render first and the tour works back up, so the slowest
+  frames, and the ones most likely to go wrong, are done first. Each frame reuses the reference
+  orbit of a deeper frame already rendered, so in a tour of several dives every dive builds one
+  reference, not only the dive to the deepest keyframe. On several graphics cards (`--gpus`) or a
+  render farm (Render on farm's "Deepest frames first", `--farm-render … --order deepest`) the
+  deepest frames are handed out first, each machine still rendering its frames in order: on two
+  sessions of one RTX 3080 a 165-frame dive took 26 s instead of 46 s. A dissolve needs sequential
+  order and becomes a cut in this one, as in progressive order. Also fixed: a tour's frames repeated
+  the series approximation's walk when they came after a deeper frame of the same precision, which
+  is every frame of a dive rendered from the deep end (about 7 s a frame at 1e4000×) and the first
+  frame of one rendered in order. A five-frame dive to 1e4000× now renders in 16.5 s in order (it
+  took 24.6 s) and 17.7 s deepest first, the pictures unchanged.
 - **Zoom videos at higher resolutions (0.3.0-beta.22).** To make a frame, a zoom video holds every
   strip the frame shows on the graphics card at once, and that limited its size: on a 10 GB RTX
   3080, 4K at 2× anti-aliasing needed about 20 GB, and 5K at 2× was refused because a strip was

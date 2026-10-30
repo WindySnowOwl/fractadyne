@@ -1220,6 +1220,19 @@ fn reuse_drift(inp: &RecomputeInputs, point: &[fractadyne_core::BigFloat; 2], pr
     Some(dx.abs().max(dy.abs()))
 }
 
+/// Of `candidates`, the reference a build of `inp` should reuse: one the reuse test admits
+/// ([`reuse_drift`]: its precision enough for this view, its point inside it), the nearest the
+/// view's centre; `None` when none is. A tour rendered deepest first offers each frame the deeper
+/// frames' references it has seen (`scripting::RefChain`) and the tour's deepest frame's.
+pub(crate) fn pick_reuse<'a>(inp: &RecomputeInputs, candidates: &[&'a ReuseRef]) -> Option<&'a ReuseRef> {
+    candidates
+        .iter()
+        .filter(|r| !r.prefix.is_empty())
+        .filter_map(|r| reuse_drift(inp, &r.point, r.prec).map(|d| (d, *r)))
+        .min_by(|a, b| a.0.total_cmp(&b.0))
+        .map(|(_, r)| r)
+}
+
 /// §5.8 REFERENCE FITNESS: may an orbit of `orbit_len` samples serve an iteration `ask`? An ESCAPED
 /// orbit ends where the reference escaped, so every pixel the ask runs past it rebases off it again
 /// and again; past `max_wraps` (`REUSE_MAX_WRAPS`, 0 = off) it is refused and a fresh pick replaces
@@ -3950,15 +3963,17 @@ impl FractadyneApp {
     }
 
     /// [`Self::spawn_export_reference`], keeping the request to watch the orbit cache with while it
-    /// builds ([`PendingReference::wait`]) — a tour's lookahead — and handed `reuse`, the tour's
-    /// deepest frame's reference (`scripting::DeepReference`): taken where the reuse gates admit it for this view
+    /// builds ([`PendingReference::wait`]) — a tour's lookahead — and handed `reuse`, references it
+    /// may take instead of building (the tour's deepest frame's, `scripting::DeepReference`, and in
+    /// deepest-first order the deeper frames' already rendered, `scripting::RefChain`): the one
+    /// [`pick_reuse`] chooses is taken where the reuse gates admit it for this view
     /// ([`try_reuse_reference`]: its point in the view, its precision enough) and extended where the
-    /// view wants more iterations; built fresh where they do not.
-    pub(crate) fn spawn_export_reference_reusing(&self, vp: &Viewport, julia: bool, budget: IterBudget, reuse: Option<&ReuseRef>) -> Option<PendingReference> {
+    /// view wants more iterations; a fresh one is built where none is admitted.
+    pub(crate) fn spawn_export_reference_reusing(&self, vp: &Viewport, julia: bool, budget: IterBudget, reuse: &[&ReuseRef]) -> Option<PendingReference> {
         let watch = self.export_reference_inputs_for(vp, julia, budget);
         let known = watch.as_ref().and_then(cache_best);
         let mut inputs = self.export_reference_inputs_for(vp, julia, budget)?;
-        if let Some(r) = reuse {
+        if let Some(r) = pick_reuse(&inputs, reuse) {
             inputs = inputs.with_reuse(r.clone());
         }
         Some(PendingReference { rx: spawn_reference_build(inputs), watch, known })

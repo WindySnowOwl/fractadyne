@@ -1094,11 +1094,9 @@ pub(crate) struct TourRenderConfig {
     /// range — and exit without rendering, so a farm script can verify shards tile before
     /// committing hours of GPU.
     pub(crate) dry_run: bool,
-    /// `--order progressive`: render the keyframes first, then repeatedly bisect the largest
-    /// unrendered temporal gap — a coarse flip-book of the WHOLE tour within minutes, refining
-    /// to full frame rate. Every frame still lands at its correct global index; only the ORDER
-    /// changes, so `--resume` and mp4 assembly work unchanged.
-    pub(crate) progressive: bool,
+    /// `--order`: which ORDER the frames render in ([`FrameOrder`]). Every frame still lands at its
+    /// correct global index; only the order changes, so `--resume` and mp4 assembly work unchanged.
+    pub(crate) order: FrameOrder,
     pub(crate) overwrite: bool,
     pub(crate) resume: bool,
     /// `--frames A..B`: render only the global frames `[A, B)` (intersected with any `--segment`
@@ -1116,6 +1114,87 @@ pub(crate) struct TourRenderConfig {
     /// `--no-reference-reuse`: every frame builds its own reference, as before 2026-10-28, instead
     /// of reusing the deepest frame's where it can ([`DeepReference`]) — to measure the difference.
     pub(crate) no_reference_reuse: bool,
+}
+
+/// The order a tour's frames render in (`--order`). The frames land at their own indices whatever
+/// the order, so `--resume` and the mp4 are order-blind.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub(crate) enum FrameOrder {
+    /// Frame by frame from the first (the default; dissolves need it).
+    #[default]
+    Sequential,
+    /// `progressive`: the keyframes first, then the largest unrendered gap bisected, again and
+    /// again ([`progressive_frame_order`]) — a coarse flip-book of the WHOLE tour within minutes,
+    /// refining to full frame rate.
+    Progressive,
+    /// `deepest`: the deepest frames first, by magnification ([`deepest_frame_order`]) — the user's
+    /// "render the deepest frame first and work backwards" (2026-08-18). The slowest and most
+    /// failure-prone frames come first, and each frame may reuse the reference of a deeper frame
+    /// already rendered ([`RefChain`]), so every dive of a tour builds one, not only the deepest.
+    Deepest,
+}
+
+impl FrameOrder {
+    /// `--order`'s word for each.
+    pub(crate) const WORDS: [(&'static str, FrameOrder); 3] =
+        [("sequential", FrameOrder::Sequential), ("progressive", FrameOrder::Progressive), ("deepest", FrameOrder::Deepest)];
+
+    /// The order `--order WORD` names (case-insensitive), or `None`.
+    pub(crate) fn parse(word: &str) -> Option<Self> {
+        let w = word.to_ascii_lowercase();
+        Self::WORDS.iter().find(|(n, _)| *n == w).map(|&(_, o)| o)
+    }
+
+    /// The word `--order` takes for it.
+    pub(crate) fn word(self) -> &'static str {
+        Self::WORDS.iter().find(|&&(_, o)| o == self).map(|&(n, _)| n).unwrap_or("sequential")
+    }
+}
+
+/// The DEEPEST-FIRST render order over `[first, last]` (`--order deepest`): every frame once, by
+/// decreasing depth (`depth(i)`, any monotonic measure of magnification), frames of equal depth
+/// (a held shot) in time order. Within a zoom-in dive this is the dive backwards; across a tour
+/// of several dives their frames interleave by depth, which [`RefChain`] is sized for. Pure, so the
+/// unit test pins the permutation property `--resume` and the mp4 rest on.
+pub(crate) fn deepest_frame_order(first: u64, last: u64, depth: impl Fn(u64) -> f64) -> Vec<u64> {
+    let (first, last) = (first.min(last), first.max(last));
+    let mut v: Vec<(f64, u64)> = (first..=last).map(|i| (depth(i), i)).collect();
+    v.sort_by(|a, b| b.0.total_cmp(&a.0).then(a.1.cmp(&b.1)));
+    v.into_iter().map(|(_, i)| i).collect()
+}
+
+/// The references of the deeper frames a deepest-first render has already rendered, the most
+/// recent first: what each next frame may reuse instead of building its own (`render::pick_reuse`
+/// chooses, with the reuse gates: precision enough, point in the view). Zooming OUT from a frame
+/// keeps its reference's point in view at more precision than the shallower frame needs, so within
+/// a dive every frame after the deepest takes the one before it, extended where it asks more
+/// iterations. ⛔Not in sequential order: a shallower frame's reference carried DOWN a dive is
+/// picked for a wider view, so it is kept to this order, where references only ever go up.
+///
+/// Holds [`RefChain::KEEP`]: frames of several dives interleave by depth, and each dive keeps its
+/// own line. A reference that was reused comes back extended under the same point and replaces
+/// itself, so a dive holds one entry.
+#[derive(Default)]
+pub(crate) struct RefChain {
+    refs: Vec<((FractalKind, bool, Option<(u64, u64)>), crate::render::ReuseRef)>,
+}
+
+impl RefChain {
+    /// The dives a chain follows at once.
+    pub(crate) const KEEP: usize = 4;
+
+    /// The references frame `s` may take: those of its fractal, Julia state and c (as
+    /// [`DeepReference::serves`]), the most recent first.
+    pub(crate) fn candidates(&self, s: &Sampled) -> Vec<&crate::render::ReuseRef> {
+        self.refs.iter().filter(|(k, _)| DeepReference::may_take(k, s)).map(|(_, r)| r).collect()
+    }
+
+    /// Frame `s` rendered with reference `r`: it goes first, replacing any held for the same point.
+    pub(crate) fn remember(&mut self, s: &Sampled, r: crate::render::ReuseRef) {
+        self.refs.retain(|(_, h)| h.point != r.point);
+        self.refs.insert(0, (DeepReference::key(s), r));
+        self.refs.truncate(Self::KEEP);
+    }
 }
 
 /// ⭐A tour's DEEPEST FRAME'S REFERENCE, reused by every frame it can serve (the user's "render the
@@ -1148,7 +1227,7 @@ impl DeepReference {
 
     /// Whether a frame sampled as `s` may take a reference built for `key`: a single view of an
     /// escape-time fractal, no custom formula, the same fractal, Julia flag and c.
-    fn may_take(key: &(FractalKind, bool, Option<(u64, u64)>), s: &Sampled) -> bool {
+    pub(crate) fn may_take(key: &(FractalKind, bool, Option<(u64, u64)>), s: &Sampled) -> bool {
         !s.dual && s.custom.is_none() && s.fractal.is_escape_time() && Self::key(s) == *key
     }
 }
@@ -1156,6 +1235,10 @@ impl DeepReference {
 #[cfg(test)]
 #[path = "../tests/unit/scripting/deep_reference_tests.rs"]
 mod deep_reference_tests;
+
+#[cfg(test)]
+#[path = "../tests/unit/scripting/deepest_order_tests.rs"]
+mod deepest_order_tests;
 
 /// The half-open frame range `[start, end)` of shard `k` of `n` over `frames` total frames:
 /// `[⌊k·F/N⌋, ⌊(k+1)·F/N⌋)`. This exact formula is what guarantees the shards TILE: consecutive
@@ -1834,6 +1917,23 @@ impl Playback {
         self.kfs
             .iter()
             .any(|k| k.transition == TransitionKind::Dissolve && k.transition_secs > 0.0)
+    }
+
+    /// The camera's depth at time `e` (natural log of the magnification) exactly as [`Self::sample`]
+    /// computes it, without the rest of the state — its bignum centre above all — for ordering a
+    /// render by depth ([`deepest_frame_order`]). A unit test holds it to `sample(e).logmag`.
+    pub(crate) fn logmag_at(&self, e: f64) -> f64 {
+        let n = self.kfs.len();
+        let i = (0..n).take_while(|&j| self.kfs[j].at <= e).last().unwrap_or(0);
+        let Some(a) = self.kfs.get(i) else { return 0.0 };
+        if e <= a.at + a.hold || i + 1 >= n {
+            return a.logmag;
+        }
+        let b = &self.kfs[i + 1];
+        let move_start = a.at + a.hold;
+        let seg = (b.at - move_start).max(1.0e-9);
+        let ease = b.ease.apply((e - move_start) / seg);
+        a.logmag + (b.logmag - a.logmag) * ease
     }
 
     pub(crate) fn sample(&self, e: f64) -> Sampled {
@@ -3796,9 +3896,17 @@ impl FractadyneApp {
         let mut low_mem_warned = false;
         let mut ls_budget_warned = false;
         // Render ORDER. Sequential is the plain range; progressive is the temporal bisection
-        // (keyframes first, then the largest gaps) — every frame still lands at its correct
-        // `frame_%05d` index, so `--resume` and the final mp4 assembly are order-blind.
-        let order: Vec<u64> = if cli.progressive {
+        // (keyframes first, then the largest gaps); deepest is by decreasing magnification — every
+        // frame still lands at its correct `frame_%05d` index, so `--resume` and the final mp4
+        // assembly are order-blind.
+        let order: Vec<u64> = if cli.order == FrameOrder::Deepest {
+            say(
+                "Render order: deepest first — the deepest frames render first, and each frame \
+                 reuses the reference of a deeper frame already rendered where it can",
+            );
+            let t_of = |i: u64| if pb.total <= 0.0 { 0.0 } else { (i as f64 / fps).min(pb.total) };
+            deepest_frame_order(first_frame, last_frame, |i| pb.logmag_at(t_of(i)))
+        } else if cli.order == FrameOrder::Progressive {
             let kf_frames: Vec<u64> = pb
                 .kfs
                 .iter()
@@ -3817,18 +3925,20 @@ impl FractadyneApp {
         };
         // ── Dissolve support ───────────────────────────────────────────────────────────────────
         // A dissolve blends against the frame that PRECEDED it, so it needs the frames to arrive in
-        // temporal order. Under `progressive` (bisecting order) or a `--segment`/shard whose first
-        // frame is already mid-dissolve, that predecessor has not been rendered in this run, so the
-        // dissolve degrades to a cut. Say so ONCE, up front: a dissolve that silently became a cut
-        // is a wrong deliverable, and the failure is invisible in any individual frame.
-        let sequential = !cli.progressive;
+        // temporal order. Under `progressive` (bisecting order), `deepest` (by depth) or a
+        // `--segment`/shard whose first frame is already mid-dissolve, that predecessor has not been
+        // rendered in this run, so the dissolve degrades to a cut. Say so ONCE, up front: a dissolve
+        // that silently became a cut is a wrong deliverable, and the failure is invisible in any
+        // individual frame.
+        let sequential = cli.order == FrameOrder::Sequential;
         let dissolve_used = pb.has_dissolve() && sequential;
         if pb.has_dissolve() && !sequential {
-            say(
-                "⚠ dissolve + progressive: a dissolve mixes each frame with the one before it, \
-                 which bisecting order does not render first — dissolves will appear as hard cuts. \
+            say(&format!(
+                "⚠ dissolve + {} order: a dissolve mixes each frame with the one before it, \
+                 which this order does not render first — dissolves will appear as hard cuts. \
                  Use the default sequential order for delivery.",
-            );
+                cli.order.word()
+            ));
         }
         // ⭐Time-keyed normalize ranges (the "palette mapping moves" fix, sequence half): the
         // range a frame APPLIES is decided by the tour's own time axis, never by render
@@ -3877,6 +3987,11 @@ impl FractadyneApp {
             }),
         };
         let (mut refs_reused, mut refs_own) = (0u64, 0u64);
+        // Deepest first: the references of the deeper frames already rendered, for the next frames
+        // to reuse ([`RefChain`]). Every frame's reference is then built HERE, before it renders,
+        // so the next frame's lookahead can be handed it. Empty in the other orders.
+        let chained = cli.order == FrameOrder::Deepest && !cli.no_reference_reuse;
+        let mut chain = RefChain::default();
         // The last frame that is not itself mid-dissolve: what a dissolve rises through.
         let mut frozen_frame: Option<(u32, u32, Vec<f32>)> = None;
         let started = std::time::Instant::now();
@@ -3945,14 +4060,26 @@ impl FractadyneApp {
                 _ => None,
             };
             // None started (the first frame, or a lookahead skipped): this frame's own, here — from
-            // the deepest frame's where it serves.
+            // the deepest frame's, or (deepest first) a deeper frame's, where one serves. Deepest
+            // first builds it here in any case, for the next frame to be handed.
             if this_ref.is_none() && !self.dual {
-                if let Some(d) = deep.filter(|d| d.serves(&s)) {
+                let mut cands = chain.candidates(&s);
+                cands.extend(deep.filter(|d| d.serves(&s)).map(|d| &d.reuse));
+                if chained || !cands.is_empty() {
                     let mut vp = fractadyne_core::Viewport::new(width as f64, height as f64);
                     vp.set_center_log2mag(s.cx.clone(), s.cy.clone(), s.logmag / std::f64::consts::LN_2);
                     if let Some(inp) = self.export_reference_inputs_for(&vp, self.julia_mode, frame_budget) {
-                        this_ref = Some(crate::render::build_reference_watching("fd-ref-tour", inp.with_reuse(d.reuse.clone()), None));
+                        let inp = match crate::render::pick_reuse(&inp, &cands) {
+                            Some(r) => inp.with_reuse(r.clone()),
+                            None => inp,
+                        };
+                        this_ref = Some(crate::render::build_reference_watching("fd-ref-tour", inp, None));
                     }
+                }
+            }
+            if chained {
+                if let Some(r) = this_ref.as_ref().and_then(|r| r.reuse_ref()) {
+                    chain.remember(&s, r);
                 }
             }
             match &this_ref {
@@ -3978,8 +4105,10 @@ impl FractadyneApp {
                     // consumer reject the prefetch and rebuild it synchronously instead.
                     // (Taken before `s2`'s bignum centre is moved into the viewport below.)
                     let budget2 = Self::sampled_iter_budget(&s2, base_iter, base_auto);
-                    // The deepest frame's reference, when it serves the successor.
-                    let deep2 = deep.filter(|d| d.serves(&s2)).map(|d| &d.reuse);
+                    // The references the successor may take: deeper frames' (deepest first) and the
+                    // deepest frame's, where they serve it.
+                    let mut cands2 = chain.candidates(&s2);
+                    cands2.extend(deep.filter(|d| d.serves(&s2)).map(|d| &d.reuse));
                     let mut vp2 = fractadyne_core::Viewport::new(width as f64, height as f64);
                     vp2.set_center_log2mag(s2.cx, s2.cy, s2.logmag / std::f64::consts::LN_2);
                     // Only prefetch the NEXT reference if it will fit alongside the one still
@@ -3991,7 +4120,7 @@ impl FractadyneApp {
                     let room = crate::sysinfo::available_memory()
                         .map_or(true, |avail| est.saturating_add(TOUR_MEM_MARGIN) < avail);
                     if room {
-                        if let Some(p) = self.spawn_export_reference_reusing(&vp2, self.julia_mode, budget2, deep2) {
+                        if let Some(p) = self.spawn_export_reference_reusing(&vp2, self.julia_mode, budget2, &cands2) {
                             pending_ref = Some((nfi, p));
                         }
                     } else if !low_mem_warned {
@@ -4233,7 +4362,10 @@ impl FractadyneApp {
             out_dir.display()
         ));
         if deep_state.as_ref().is_some_and(|d| d.is_some()) {
-            say(&format!("references: {refs_reused} frame(s) reused the deepest frame's; {refs_own} took one of their own"));
+            say(&format!(
+                "references: {refs_reused} frame(s) reused {}; {refs_own} took one of their own",
+                if chained { "a deeper frame's" } else { "the deepest frame's" }
+            ));
         }
 
         Ok(assemble_mp4(&out_dir, &prefix, fps, mp4.as_deref()))

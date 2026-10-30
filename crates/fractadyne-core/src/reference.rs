@@ -1516,20 +1516,22 @@ impl SaTraces {
         }
         // A record longer than the session allows (`set_sa_trace_cache_limited`) is not made: the
         // frame walks as it would with the cache off.
-        let record_len = orbit_len.saturating_sub(2).min(sa_step_budget(p));
+        let record_len = sa_record_len(orbit_len, p);
         if record_len > self.max_steps.load(std::sync::atomic::Ordering::Relaxed) {
             return series_skip_walk(backend, cx, cy, log2_max_dc, max_iter, orbit_len, formula, p, cancel, None);
         }
         // Record to the limit the orbit and the budget allow, not the frame's `max_iter`: the
-        // steps do not depend on the limit, so a longer record serves the deeper frames too. A
-        // speculative walk (`cancel`, beside the pick) records too; cancelled, its record is partial
-        // and goes, and the answer is NONE, as the plain walk's is.
+        // steps do not depend on the limit, so a longer record serves the deeper frames too — and at
+        // the least precision of `p`'s word ([`sa_record_precision`]): the same steps, as far as any
+        // frame of this key may ask. A speculative walk (`cancel`, beside the pick) records too;
+        // cancelled, its record is partial and goes, and the answer is NONE, as the plain walk's is.
         let mut steps = Vec::new();
-        series_skip_walk(backend, cx, cy, SA_TRACE_LOG2_DC, u32::MAX, orbit_len, formula, p, cancel, Some(&mut steps));
+        let pw = sa_record_precision(p);
+        series_skip_walk(backend, cx, cy, SA_TRACE_LOG2_DC, u32::MAX, orbit_len, formula, pw, cancel, Some(&mut steps));
         if cancel.is_some_and(|c| c.load(std::sync::atomic::Ordering::Relaxed)) {
             return SeriesSkip::NONE;
         }
-        let walked = orbit_len.saturating_sub(2).min(sa_step_budget(p)) as usize;
+        let walked = record_len as usize;
         let ended = steps.len() < walked
             || steps.last().is_some_and(|st| st.stops(steps.len() as u32, SA_TRACE_LOG2_DC));
         let trace = SaTrace {
@@ -2865,8 +2867,31 @@ const REF_SCORE_SCAN: u32 = 4096;
 /// uncapped render, which is why the line sits above the fixtures rather than at the knee.
 const SA_COST_BUDGET: u64 = 15_000_000_000_000;
 
+/// The precision a series walk for `p` is RECORDED at ([`SaTraces`]): the least precision of `p`'s
+/// 64-bit word with `p`'s coefficient precision — so the very key [`SaTrace::is_for`] matches it by,
+/// and the same walk, step for step (both arithmetics round to whole words,
+/// `sa_walks_agree_within_a_precision_word`) — whose step budget is the longest any precision of
+/// that key has ([`sa_step_budget`] falls as `p` rises). One record then covers every frame its key
+/// matches, in any order. ⭐Before (2026-10-29), a record made at `p` was walked to `p`'s own budget,
+/// and the next frame of a dive rendered DEEPEST FIRST — a few bits less precise, so a few steps more
+/// budget — found it short and walked again: ~7 s a frame at 1e4000, where sequential order replayed.
+pub(crate) fn sa_record_precision(p: usize) -> usize {
+    let floor = (p.div_ceil(64).max(1) - 1) * 64 + 1;
+    if floor.min(SA_COEFF_BITS) == p.min(SA_COEFF_BITS) {
+        floor
+    } else {
+        p
+    }
+}
+
+/// The steps a record for precision `p` and an orbit of `orbit_len` is walked to: as far as the
+/// orbit allows and [`sa_record_precision`]'s budget buys.
+pub(crate) fn sa_record_len(orbit_len: u32, p: usize) -> u32 {
+    orbit_len.saturating_sub(2).min(sa_step_budget(sa_record_precision(p)))
+}
+
 /// The SA walk length [`SA_COST_BUDGET`] buys at working precision `p`.
-fn sa_step_budget(p: usize) -> u32 {
+pub(crate) fn sa_step_budget(p: usize) -> u32 {
     let bits2 = (p as u64).saturating_mul(p as u64).max(1);
     (SA_COST_BUDGET / bits2).min(u32::MAX as u64) as u32
 }

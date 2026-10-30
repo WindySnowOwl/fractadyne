@@ -608,7 +608,8 @@ frames, and this machine assembles the video when the last one is in.
   32/255 (mean 0.65–1.98/255); frames where none show (2^12, 2^44, 2^50) identical. ⭐LOOKED at
   2^31 side by side with a difference map: scattered single pixels in the filaments and on the
   minibrot's edge, no ring where its strips meet the others. Motion not judged.
-- **Deepest strips first** (`sched::Config::from_end`, after the user's ask the same day): each new
+- **Deepest strips first** (`sched::Config::priority` by index; built as `from_end`, generalised
+  2026-10-29 for tours rendered deepest first; after the user's ask the same day): each new
   run takes the highest strips still free, so the slowest go out first and the cheap shallow ones
   fill the end; a run is still rendered ascending, so stealing its tail works unchanged. The
   scheduler's chaos test runs both ways.

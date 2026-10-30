@@ -33,7 +33,7 @@ const REFUSED: [(&str, &str); 16] = [
     ("--segments", "a farm renders the whole tour"),
     ("--segment-index", "a farm renders the whole tour"),
     ("--frames", "a farm renders the whole tour"),
-    ("--order", "a farm hands out its own runs of frames"),
+    ("--order", "a farm hands out its own runs of frames — in order, or with `--order deepest` the deepest first"),
     ("--dry-run", "a farm has no dry run"),
     ("--norm-anchors", "a farm measures the normalize ranges itself"),
     ("--dump-norm-anchors", "a farm measures the normalize ranges itself"),
@@ -147,7 +147,11 @@ fn run_zoom(args: &[String], spec: &str) -> Result<Option<i32>, String> {
 }
 
 fn run_inner(args: &[String], spec: &str) -> Result<Option<i32>, String> {
-    if let Some((f, why)) = REFUSED.iter().find(|(f, _)| args.iter().any(|a| a == f)) {
+    // A tour's `--order deepest` (or `sequential`) is the farm's own: its deepest runs first.
+    use crate::scripting::FrameOrder;
+    let order = value(args, "--order").map(FrameOrder::parse);
+    let order_ok = matches!(order, None | Some(Some(FrameOrder::Sequential | FrameOrder::Deepest)));
+    if let Some((f, why)) = REFUSED.iter().filter(|(f, _)| !(order_ok && *f == "--order")).find(|(f, _)| args.iter().any(|a| a == f)) {
         return Err(format!("{f} cannot be used with --gpus: {why}."));
     }
     let tour = PathBuf::from(value(args, "--render-tour").ok_or("--gpus needs --render-tour FILE")?);
@@ -252,6 +256,9 @@ fn render(
         if args.iter().any(|a| a == f) {
             ca.push(f.into());
         }
+    }
+    if value(args, "--order").and_then(crate::scripting::FrameOrder::parse) == Some(crate::scripting::FrameOrder::Deepest) {
+        ca.extend(["--order".into(), "deepest".into()]);
     }
     say(&format!("Rendering \"{}\" on {n} graphics cards ({adapters}) through a render farm on this machine…", tour.display()));
     drive(ca, args, adapters, n, "frame", &r.out)

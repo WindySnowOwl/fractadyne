@@ -972,6 +972,34 @@ fn sa_walks_agree_within_a_precision_word() {
     }
 }
 
+// A trace RECORD covers every frame its key matches, whatever order they ask in (2026-10-29). The
+// key is the precision's 64-bit word and the coefficient precision; a record is walked at the
+// least precision of that key (`sa_record_precision`: the same walk, as the test above pins), to
+// that precision's step budget, which is the longest of the key's. Before, a record made at `p`
+// stopped at `p`'s budget, and a dive rendered deepest first — each next frame a few bits less
+// precise, so a few steps more budget — walked again on every frame. Control: recorded at `p`'s own
+// budget (the old rule), a less precise frame of the same key asks past the record.
+#[test]
+fn an_sa_record_covers_every_frame_of_its_key() {
+    use crate::reference::{sa_record_len, sa_record_precision, sa_step_budget, SA_COEFF_BITS};
+    let mut old_rule_short = 0;
+    for p in [1usize, 64, 65, 100, 128, 129, 150, 192, 961, 1000, 1024, 13_441, 13_481, 13_504, 70_000, 70_016] {
+        let pw = sa_record_precision(p);
+        assert_eq!((pw.div_ceil(64), pw.min(SA_COEFF_BITS)), (p.div_ceil(64), p.min(SA_COEFF_BITS)), "p={p}: recorded under another key ({pw})");
+        assert!(pw <= p, "p={p}: recorded above it ({pw})");
+        for orbit_len in [0u32, 3, 3_002, 90_000, 500_000, u32::MAX] {
+            let rec = sa_record_len(orbit_len, p);
+            let word = (p.div_ceil(64).max(1) - 1) * 64 + 1..=p.div_ceil(64).max(1) * 64;
+            for q in word.filter(|&q| q.min(SA_COEFF_BITS) == p.min(SA_COEFF_BITS)) {
+                let limit = orbit_len.saturating_sub(2).min(sa_step_budget(q));
+                assert!(limit <= rec, "p={p}, orbit {orbit_len}: a frame at {q} asks {limit} steps of a record of {rec}");
+                old_rule_short += u32::from(limit > orbit_len.saturating_sub(2).min(sa_step_budget(p)));
+            }
+        }
+    }
+    assert!(old_rule_short > 0, "no frame asked past the old record: the case the fix is for never arose");
+}
+
 // `series_skip_holds_for`: a skip walked against an UPPER BOUND on the reference length is the
 // skip for the actual length whenever the rule says so — byte for byte. Both verdicts must occur
 // (and "holds" with a real skip), or the rule was never tested where it can fail.

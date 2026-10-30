@@ -65,12 +65,15 @@ pub struct Config {
     /// A run's unrendered tail is stolen only when at least this many frames would remain after the
     /// frame being rendered.
     pub steal_min: u64,
-    /// Hand the job out from its END: each new run takes the highest frames still free. For a zoom
-    /// video's strips, the deepest — the slowest — go first, so the cheap shallow ones fill the end
-    /// and no machine is left on a long strip while the others wait. A run is still rendered in
-    /// ascending order, so stealing its second half works as for any run. Not for tours: runs are
-    /// not kept off dissolves.
-    pub from_end: bool,
+    /// Hand the job out by PRIORITY, one number a frame (empty: in order, from the first frame): each
+    /// new run starts at the free frame first in priority (the later on a tie) and grows over the
+    /// free frames beside it, always toward the higher of its two neighbours. A zoom video's strips
+    /// give their index (the deepest — the slowest — first, so the cheap shallow ones fill the end
+    /// and no machine is left on a long strip while the others wait); a tour rendered deepest first
+    /// gives each frame's depth, so a run is a stretch of one dive around its deepest frames still
+    /// free. A run is still rendered in ascending order, so stealing its second half works as for
+    /// any run, and as in order no run starts on a dissolve frame or ends where the next would have to.
+    pub priority: Vec<f64>,
 }
 
 impl Config {
@@ -93,7 +96,7 @@ impl Config {
             no_start: Vec::new(),
             holds: Vec::new(),
             steal_min: 4,
-            from_end: false,
+            priority: Vec::new(),
         }
     }
 }
@@ -739,16 +742,37 @@ impl Scheduler {
     }
 
     fn assign_one(&mut self, id: ClientId, active: usize, now: Instant, out: &mut Vec<Command>, at: Option<u64>) -> bool {
-        // From the end (`Config::from_end`): the highest frames still free, a run reaching down from
-        // them. A steal (`at`) still takes the run's tail it was given.
-        if self.cfg.from_end && at.is_none() {
-            let Some(top) = (0..self.cfg.frames).rev().find(|&i| self.assignable(i, id)) else { return false };
-            let (end, len) = (top + 1, self.run_len(id, active));
-            let mut first = end;
-            while first > 0 && end - first < len && self.assignable(first - 1, id) {
-                first -= 1;
+        // By priority (`Config::priority`): from the free frame first in priority, growing toward the
+        // higher neighbour. A steal (`at`) still takes the run's tail it was given.
+        if !self.cfg.priority.is_empty() && at.is_none() {
+            let pr = |i: u64| self.cfg.priority.get(i as usize).copied().unwrap_or(f64::NEG_INFINITY);
+            let Some(top) = (0..self.cfg.frames).filter(|&i| self.assignable(i, id)).max_by(|&a, &b| pr(a).total_cmp(&pr(b)).then(a.cmp(&b)))
+            else {
+                return false;
+            };
+            let len = self.run_len(id, active);
+            let (mut first, mut end) = (top, top + 1);
+            while end - first < len {
+                let down = first > 0 && self.assignable(first - 1, id);
+                let up = end < self.cfg.frames && self.assignable(end, id);
+                match (down, up) {
+                    (false, false) => break,
+                    (true, false) => first -= 1,
+                    (false, true) => end += 1,
+                    (true, true) if pr(first - 1) >= pr(end) => first -= 1,
+                    (true, true) => end += 1,
+                }
             }
-            return self.commit_run(id, first, first, end, now, out);
+            // As in order: lead in from the frame a dissolve rises through, and never end where the
+            // next run would have to start on a dissolve frame.
+            let mut lead = first;
+            while lead > 0 && self.no_start(lead) {
+                lead -= 1;
+            }
+            while end < self.cfg.frames && self.no_start(end) && self.assignable(end, id) {
+                end += 1;
+            }
+            return self.commit_run(id, first, lead, end, now, out);
         }
         let Some(first) = at.filter(|&a| self.assignable(a, id)).or_else(|| self.pick_start(id)) else { return false };
         // No run starts on a dissolve frame: lead in from the frame the dissolve rises through.

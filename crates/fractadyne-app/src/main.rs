@@ -5487,9 +5487,9 @@ pub(crate) struct TourRenderUi {
     pub(crate) overwrite: bool,
     /// Keep frames already on disk and render only what's missing (`--resume`).
     pub(crate) resume: bool,
-    /// Render order: progressive (keyframes first, then bisect the largest gaps — preview the
-    /// whole tour early) vs the default sequential. Maps to `--order progressive`.
-    pub(crate) progressive: bool,
+    /// Render order (`--order`): sequential (the default), progressive (keyframes first, then the
+    /// largest gaps bisected — the whole tour previewed early) or deepest first.
+    pub(crate) order: crate::scripting::FrameOrder,
     /// Render on every graphics card of this machine (`--gpus all`, `farm::local`). Offered only
     /// when `cards` (counted by a `--list-adapters` child when the dialog opens) is two or more.
     pub(crate) all_gpus: bool,
@@ -5527,7 +5527,7 @@ impl Default for TourRenderUi {
             mp4: false,
             overwrite: true,
             resume: false,
-            progressive: false,
+            order: crate::scripting::FrameOrder::Sequential,
             all_gpus: false,
             cards: None,
             cards_rx: None,
@@ -7064,18 +7064,15 @@ impl FractadyneApp {
                 .map(|s| arg_parse::<u32>("--segment-index", s, "a whole number")),
             // --dry-run: print the resolved frame plan and exit without rendering.
             dry_run: args.iter().any(|a| a == "--dry-run"),
-            // --order sequential|progressive: which ORDER frames render in (indices unchanged).
-            // A typo must not silently fall back to sequential — a farm script would then lose
-            // the preview it asked for without a trace.
-            progressive: match val("--order").map(|s| s.to_ascii_lowercase()).as_deref() {
-                None | Some("sequential") => false,
-                Some("progressive") => true,
-                Some(other) => {
-                    eprintln!(
-                        "--order must be `sequential` or `progressive` (got \"{other}\")"
-                    );
+            // --order sequential|progressive|deepest: which ORDER frames render in (indices
+            // unchanged). A typo must not silently fall back to sequential — a farm script would
+            // then lose the preview it asked for without a trace.
+            order: match val("--order") {
+                None => crate::scripting::FrameOrder::Sequential,
+                Some(w) => crate::scripting::FrameOrder::parse(w).unwrap_or_else(|| {
+                    eprintln!("--order must be `sequential`, `progressive` or `deepest` (got \"{w}\")");
                     crate::exit(2);
-                }
+                }),
             },
             // --overwrite / -y: replace existing frames without prompting.
             overwrite: args.iter().any(|a| a == "--overwrite" || a == "-y"),

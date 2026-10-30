@@ -302,6 +302,19 @@ holding the largest in-flight run — the child finishes its *current* frame and
 lets a run be cut at any index), the tail is reassigned. Run boundaries are moved off dissolve
 windows (computed from the script's `transition`/`transition_secs` per keyframe).
 
+**By priority (2026-10-29).** `sched::Config::priority`, one number a frame, hands the job out
+deepest first: each new run starts at the free frame first in priority (the later on a tie) and
+grows over the free frames beside it, always toward the higher neighbour, then — as in order —
+leads in off a dissolve and never ends where the next run would have to start on one. A zoom
+video's strips give their index (the deepest, slowest strips first; `zoom-video.md` §8.5); a tour
+asked for `--order deepest` (`--farm-render`, `--gpus`, the Render on farm window's "Deepest frames
+first") gives each frame's depth (`Playback::logmag_at`), so a run is a stretch of one dive around
+its deepest frames still free. Runs are still rendered in ascending order, so stealing a run's
+tail is unchanged; the chaos test runs in order, by index and by a random depth profile with
+dissolves and holds. (A run's child renders its frames in order: the reference CHAIN a standalone
+`--order deepest` uses, `scripting::RefChain`, is not used inside a farm run, whose frames already
+share the deepest keyframe's reference through the pre-build and the orbit cache.)
+
 **Depth-1 prefetch.** The next run is assigned while the current one renders, so a client never
 idles on the round trip; at most two runs are ever outstanding per client.
 
