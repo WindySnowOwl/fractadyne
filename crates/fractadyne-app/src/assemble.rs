@@ -739,16 +739,24 @@ impl crate::FractadyneApp {
                 .into());
         }
         let layers = fractadyne_gpu::layers_for_frame(fw * ss, fh * ss);
-        let asm = Assembler::new(device, shape_of(dive), [fw, fh], ss, layers).map_err(|e| e.to_string())?;
+        let layout = self.assembly_window(&colour);
+        let asm = Assembler::with_layout(device, shape_of(dive), [fw, fh], ss, layers, layout).map_err(|e| e.to_string())?;
+        let (held, pieces) = asm.held();
+        let max_dim = device.limits().max_texture_dimension_2d;
         crate::diag::log_line(
             "assemble",
             &format!(
-                "{source}: a {} dive in {} strips of {}x{}, frames {fw}x{fh} at {ss}x{ss} samples, a window of {layers} strips ({:.0} MB)",
+                "{source}: a {} dive in {} strips of {}x{}, frames {fw}x{fh} at {ss}x{ss} samples, a window of {layers} strips \
+                 holding {} ({} piece{} a strip, {:.0} MB) and the frame ({:.0} MB)",
                 dive.fractal,
                 dive.strips,
                 dive.map.width,
                 dive.map.rows,
-                fractadyne_gpu::window_bytes(shape_of(dive), layers) as f64 / 1.0e6,
+                held.describe(),
+                pieces,
+                if pieces == 1 { "" } else { "s" },
+                fractadyne_gpu::window_bytes(shape_of(dive), layers, layout, max_dim) as f64 / 1.0e6,
+                fractadyne_gpu::frame_bytes([fw, fh], ss) as f64 / 1.0e6,
             ),
         );
         if ss as f64 > dive.oversample + 1e-9 {
@@ -762,6 +770,18 @@ impl crate::FractadyneApp {
             );
         }
         Ok((asm, ss, colour))
+    }
+
+    /// How the strip window is held for frames coloured as `colour` (`design/zoom-video.md` §8.6):
+    /// only what that colouring reads of each texel — everything when the frames are written raw,
+    /// before colouring (`--assemble-at` with `--render-iter`) — in pieces no wider than the card's
+    /// textures (`--set ASSEMBLE_PIECE_MAX` narrower, to test).
+    pub(crate) fn assembly_window(&self, colour: &fractadyne_gpu::ExportRequest) -> fractadyne_gpu::WindowLayout {
+        let raw = self.render_cli.iter_mode && !self.render_cli.assemble_opts.at.is_empty();
+        fractadyne_gpu::WindowLayout {
+            texels: if raw { fractadyne_gpu::WindowTexels::All } else { fractadyne_gpu::WindowTexels::for_request(colour) },
+            piece_max: crate::tunables::cost().assemble_piece_max.min(u32::MAX as u64) as u32,
+        }
     }
 
     /// The palette follows the escape range when asked (`--normalize`, or the session's "Normalize

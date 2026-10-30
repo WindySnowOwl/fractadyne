@@ -192,6 +192,9 @@ impl FractadyneApp {
                         .weak()
                         .small(),
                 );
+                // How this differs from Render zoom video, which looks like the same tool: the
+                // other dialog says the same from its side (`zoom_video.rs`).
+                ui.label(egui::RichText::new(tr!(tour_render_vs_zoom_video)).small());
                 ui.add_space(4.0);
                 ui.add_enabled_ui(!running, |ui| {
                     egui::Grid::new("tour_render_grid").num_columns(2).spacing([8.0, 6.0]).show(ui, |ui| {

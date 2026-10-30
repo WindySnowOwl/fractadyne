@@ -52,7 +52,11 @@ struct AssembleU {
     rot_cos: f32,            // cos φ, sin φ: a plane vector seen on the screen is R(−φ) of it
     rot_sin: f32,
     log2_row_step: f32,      // log2 of a row's step in ln r (2π/W for a conformal strip)
-    _pad: f32,
+    piece_width: i32,        // a strip is held in pieces this wide around its circle (W: one piece)
+    pieces: i32,             // pieces a strip: strip slot s, piece p is the array's layer s·pieces + p
+    texels: u32,             // floats a texel holds: 1 the count, 2 the count and log2 DE, 4 all
+    _pad0: u32,
+    _pad1: u32,
 };
 
 @group(0) @binding(0) var<uniform> au: AssembleU;
@@ -111,8 +115,18 @@ fn fs_assemble(in: VsOut) -> @location(0) vec4<f32> {
     var i = i32(floor(fract(t) * au.width + 0.5 - au.sample_offset));
     if (i >= w) { i = i - w; }
     if (i < 0) { i = i + w; }
-    let layer = (au.first_layer + rel) % au.layers;
-    let q = textureLoad(strips, vec2<i32>(i, j), layer, 0);
+    let slot = (au.first_layer + rel) % au.layers;
+    // A strip wider than the card's textures is held in pieces around its circle (`strip_pieces`).
+    let piece = i / au.piece_width;
+    let held = textureLoad(strips, vec2<i32>(i - piece * au.piece_width, j), slot * au.pieces + piece, 0);
+    // The window holds only what the colouring reads (`WindowTexels`): what it leaves out is zero
+    // here and never read by the colour pass.
+    var q = held;
+    if (au.texels == 1u) {
+        q = vec4<f32>(held.x, 0.0, 0.0, 0.0);
+    } else if (au.texels == 2u) {
+        q = vec4<f32>(held.x, 0.0, 0.0, held.y);
+    }
     if (q.x < 0.0) {
         return q; // interior (-1) or glitched (-2): as rendered
     }

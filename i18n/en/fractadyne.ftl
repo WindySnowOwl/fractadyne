@@ -290,9 +290,9 @@ menu-tools-play-tour-hover = Pick a tour script to play. The toolbar ▶ replays
 menu-tools-tour-from-view = Tour from current view…
 menu-tools-tour-from-view-hover = Create a tour that zooms from the full view down to the current view — add a caption and set the dive duration. Saved as a tour script (.toml) you can edit, play, or render.
 menu-tools-render-tour = Render tour…
-menu-tools-render-tour-hover = Render the loaded tour to a PNG frame sequence (and optionally an mp4) in a separate process.
+menu-tools-render-tour-hover = Render the loaded tour to a PNG frame sequence (and optionally an mp4) in a separate process. Every frame is rendered on its own, so a tour can pan, follow keyframes and use any fractal and colouring.
 menu-tools-render-zoom-video = Render zoom video…
-menu-tools-render-zoom-video-hover = Render a dive from the whole set into the current view as a video, from exponential-map strips: much faster than rendering every frame.
+menu-tools-render-zoom-video-hover = Render a straight dive from the whole set into the current view as a video. The dive is computed once and every frame is built from it, so it is usually several times faster than Render tour, but it can only zoom straight in.
 menu-tools-close-player = Close tour player
 menu-tools-close-player-hover = Stop the tour, close its player, and restore your own iteration and coloring settings
 menu-tools-render-farm = Render on farm…
@@ -2283,6 +2283,8 @@ farm-ctl-render-hover = Start listening for clients and render the tour on them
 ## The Render tour window (Tools ▸ Render tour…)
 
 tour-render-title = Render tour
+# Under the tour's name: how this differs from Tools ▸ Render zoom video…, which looks like the same tool.
+tour-render-vs-zoom-video = Renders every frame of the tour on its own, so a tour can pan, follow keyframes and use any fractal and colouring. For a straight dive into one point, Tools ▸ Render zoom video… is usually several times faster.
 tour-render-out = Output folder
 tour-render-browse = Browse…
 tour-render-out-hover = Full path the frames are written to.
@@ -2360,6 +2362,16 @@ tour-render-start-failed = Could not start the render: { $why }
 zoom-video-title = Render zoom video
 # What the video dives into. $fractal: the fractal's name; $magnification: "2.2e99×"; $octaves: a number.
 zoom-video-view = { $fractal } · into the current view at { $magnification } ({ $octaves } octaves)
+# Under the view line, always shown: what this window makes and how it differs from Render tour (Tools ▸ Render tour…).
+zoom-video-intro = A straight dive into the centre of this view. The dive is computed once, as rings, and every frame is built from them, so it is usually several times faster than Render tour, but it can only zoom straight in.
+# The heading of a section that opens: how a zoom video is made, its limits, and when to use Render tour instead.
+zoom-video-about = How it works, and when to use Render tour instead
+# The section's paragraphs. Each starts with a short heading word or two and a colon.
+zoom-video-about-how = How it works: the dive is computed once as a stack of rings ("strips") around the centre, one for each doubling of the magnification. Each frame is cut from the rings it shows, then coloured, so frames are cheap: a higher frame rate or a slower zoom makes a longer video in about the same time.
+zoom-video-about-can = What it makes: a steady zoom into this view's centre, turning if you like, into the Mandelbrot set or Multibrot 3–8, with smooth, distance estimate, relief or glow colouring.
+zoom-video-about-limits = Limits: no panning, no keyframes, no Julia sets or other fractals, and no stripe, triangle inequality, orbit trap or decomposition colouring. The graphics card holds every ring a frame shows at once, so a large size or anti-aliasing needs a lot of its memory (the estimate below says whether this card has enough). Fine detail can differ very slightly from a frame rendered on its own.
+zoom-video-about-tour = Render tour (Tools ▸ Render tour…) renders every frame of a tour on its own: it can pan, follow keyframes, change the fractal and use any colouring, and its memory need is one frame's. Each frame is a full render, so a long, deep dive takes much longer. Tools ▸ Tour from current view… makes a dive into this view as a tour.
+zoom-video-about-choose = Use this window for a straight dive into one point, and Render tour for anything else.
 zoom-video-no-julia = Zoom videos dive into the Mandelbrot set and Multibrot 3–8, not Julia sets yet.
 # $fractal: the fractal's name.
 zoom-video-no-fractal = Zoom videos dive into the Mandelbrot set and Multibrot 3–8 for now, not { $fractal }.
@@ -2393,16 +2405,26 @@ zoom-video-summary =
         [one] { $frames } frame · { $seconds }s of video · { $strips } strips of { $width }×{ $rows }
        *[other] { $frames } frames · { $seconds }s of video · { $strips } strips of { $width }×{ $rows }
     }
-# The graphics memory the strips the frames read take. $size: a number of gigabytes ("1.0").
-zoom-video-memory = ≈{ $size } GB of graphics memory for the strips in view
+# The graphics memory the video takes: the strips a frame reads, and the frame. $size: a number of gigabytes ("1.0").
+zoom-video-memory = ≈{ $size } GB of graphics memory (the strips in view and the frame)
+# Hover text on the memory line. $layers: how many strips a frame shows at once (a number, 10–16). $held: what each
+# strip keeps for the colouring chosen: count (smooth colouring), distance (distance estimate or glow), all (relief).
+zoom-video-memory-hover =
+    { $held ->
+        [count] The card holds the { $layers } strips a frame shows at once. Each keeps only the iteration count, which is all smooth colouring reads; distance estimate or glow would need twice as much, relief lighting four times.
+        [distance] The card holds the { $layers } strips a frame shows at once. Each keeps the iteration count and the distance estimate, which this colouring reads: twice what smooth colouring needs.
+       *[all] The card holds the { $layers } strips a frame shows at once. Each keeps everything relief lighting reads: four times what smooth colouring needs.
+    }
 # The disk space the kept strips take (an estimate). $size: a number of gigabytes.
 zoom-video-disk = ≈{ $size } GB of strips on disk
-# $width: texels around a strip; $limit: the graphics card's largest texture side.
-zoom-video-too-wide = A strip would be { $width } texels around, more than this graphics card's { $limit }: lower the size or the anti-aliasing.
 # $width × $height: the frame's samples; $limit: the graphics card's largest texture side.
 zoom-video-grid-too-big = The frames' samples ({ $width }×{ $height }) are more than this graphics card's { $limit }-texel textures hold: lower the size or the anti-aliasing.
-# $need, $have: gigabytes ("17.6", "10.0").
-zoom-video-too-much-memory = The strips in view need ≈{ $need } GB of graphics memory, more than this card's { $have } GB can spare: lower the size or the anti-aliasing.
+# $need, $have: gigabytes ("17.6", "10.0"). $held: as in zoom-video-memory-hover (count, distance, all).
+zoom-video-too-much-memory =
+    { $held ->
+        [count] The video needs ≈{ $need } GB of graphics memory, more than this card's { $have } GB can spare: lower the size or the anti-aliasing.
+       *[other] The video needs ≈{ $need } GB of graphics memory, more than this card's { $have } GB can spare: lower the size or the anti-aliasing, or colour without relief, distance estimate or glow, which needs less.
+    }
 # $have: the card's gigabytes ("10.0").
 zoom-video-memory-tight = That is most of this card's { $have } GB, and the picture behind this dialog holds some too: if the render runs out, it stops and says so.
 zoom-video-separate = Renders in a separate process, coloured as the view is now (the session is saved first) — a lost GPU device there cannot take this session with it.

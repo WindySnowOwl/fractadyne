@@ -7830,8 +7830,9 @@ impl FractadyneApp {
             let (result, pass) = match self.assemble_geometry_check(device, queue) {
                 Ok(c) => (
                     format!(
-                        "{} frames, {} samples: {} wrong{}, {} excused at a texel's edge; DE err {:.2e}, normal err {:.2e}",
+                        "{} frames ({} pieces a strip at most), {} samples: {} wrong{}, {} excused at a texel's edge; DE err {:.2e}, normal err {:.2e}",
                         c.frames,
+                        c.pieces,
                         c.samples,
                         c.wrong.len(),
                         c.wrong.first().map(|w| format!(" ({w})")).unwrap_or_default(),
@@ -7846,10 +7847,38 @@ impl FractadyneApp {
             push_check(&mut checks, &mut last_check_t, SelfCheck {
                 category: "Zoom video",
                 name: "an assembled frame reads the texel the geometry names".into(),
-                params: "synthetic strips (each texel holds its own number) of a 96x54 dive, 24 strips; frames at 2^0, 2^2.37, 2^7.5, 2^11.91 turned 0.137, 2^18.25 and past the end, each at 1x1 and 2x2 samples"
+                params: "synthetic strips (each texel holds its own number) of a 96x54 dive, 24 strips; frames at 2^0, 2^2.37, 2^7.5, 2^11.91 turned 0.137, 2^18.25 and past the end, each at 1x1 and 2x2 samples, the window's strips whole and in 3 pieces (116, 116, 114 texels)"
                     .into(),
                 result,
-                threshold: "every sample the texel ExpMap::locate names (within 1e-3 texel of an edge either); DE rescaled to the sample spacing within 1e-3 (log2); the normal turned with the frame within 1e-5"
+                threshold: "every sample the texel ExpMap::locate names (within 1e-3 texel of an edge either), in pieces as whole; DE rescaled to the sample spacing within 1e-3 (log2); the normal turned with the frame within 1e-5"
+                    .into(),
+                pass,
+            });
+            // ⭐design/zoom-video.md §8.6: a window holding only what the colouring reads, its strips
+            // in pieces, makes the very frames the whole window makes.
+            let (result, pass) = match self.assemble_window_check(device, queue, SX, SY, 2_000) {
+                Ok(c) => (
+                    format!(
+                        "{} frames, {} pixels: {} colouring(s) differ{}; {} pieces a strip; control: {} escaped samples of the count-only window differ in the normal or DE it leaves out, {} in the count; relief on it {}",
+                        c.frames,
+                        c.pixels,
+                        c.differ.len(),
+                        c.differ.first().map(|d| format!(" ({d})")).unwrap_or_default(),
+                        c.pieces,
+                        c.left_out_differ,
+                        c.count_differ,
+                        if c.refused { "refused" } else { "NOT refused" }
+                    ),
+                    c.pass(),
+                ),
+                Err(e) => (format!("could not assemble: {e}"), false),
+            };
+            push_check(&mut checks, &mut last_check_t, SelfCheck {
+                category: "Zoom video",
+                name: "a window holding only what the colouring reads, in pieces, makes the same frames".into(),
+                params: format!("a dive into ({SX}, {SY}), 160x90 frames from 1x to 2^12, cap 2000; frames at 2^0, 2^3.3, 2^7.9 turned 0.21 and 2^12, smooth and distance colouring with and without glow and relief; strips in 3 pieces (193, 193, 191)"),
+                result,
+                threshold: "every pixel bit-identical to the whole window's for all 6 colourings; the control: over 1000 escaped samples differ in what the count-only window leaves out and none in the count, and a relief colouring is refused on it"
                     .into(),
                 pass,
             });
@@ -7893,7 +7922,8 @@ impl FractadyneApp {
             let lim = device.limits();
             let (w, rows) = (lim.max_texture_dimension_2d.min(32768), lim.max_texture_dimension_2d.min(4096));
             let shape = fractadyne_gpu::StripShape { width: w, rows, rows_per_octave: 400.0, sample_offset: 0.5, row_step: 1.7e-3, strips: 64 };
-            let layers = (((2 * vram).div_ceil(fractadyne_gpu::window_bytes(shape, 1)) + 1) as u32)
+            let whole = fractadyne_gpu::WindowLayout::default();
+            let layers = (((2 * vram).div_ceil(fractadyne_gpu::window_bytes(shape, 1, whole, lim.max_texture_dimension_2d)) + 1) as u32)
                 .clamp(fractadyne_gpu::layers_for_frame(160, 90), lim.max_texture_array_layers);
             let (result, pass) = if vram == 0 {
                 ("not exercised: this card's memory is unknown".to_string(), true)
@@ -7904,7 +7934,7 @@ impl FractadyneApp {
                 (
                     format!(
                         "{:.1} GB asked of a {:.1} GB card: {}; then a 96x54 assembly {}",
-                        fractadyne_gpu::window_bytes(shape, layers) as f64 / 1e9,
+                        fractadyne_gpu::window_bytes(shape, layers, whole, lim.max_texture_dimension_2d) as f64 / 1e9,
                         vram as f64 / 1e9,
                         match &big {
                             Ok(()) => "ALLOCATED".to_string(),
