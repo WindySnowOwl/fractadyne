@@ -2071,9 +2071,10 @@ pub(crate) struct DispatchState {
     pub(crate) probe_nonce: u32,
     pub(crate) norm_complete_submit: bool,
     /// The settled pass in flight's first live iteration and the pixels it was charged for
-    /// (`WalkPriceInputs::inflight_lo`, `inflight_px`), kept when the view's escape-onset region is
-    /// known (`WalkDispatchInputs::onset_start`). Recordings made before them read 0, and a 0 is left
-    /// out, so they replay as recorded.
+    /// (`WalkPriceInputs::inflight_lo`, `inflight_px`), written for every pass and 0 while the view's
+    /// escape-onset region is unknown (`WalkDispatchInputs::onset_start`): its price records the pixels
+    /// in its band's `band_px`, and the onset region's price reads both. Recordings made before them
+    /// read 0, and a 0 is left out, so they replay as recorded.
     #[serde(default, skip_serializing_if = "zero_u32")]
     pub(crate) inflight_lo: u32,
     #[serde(default, skip_serializing_if = "zero_u64")]
@@ -2479,10 +2480,17 @@ pub(crate) fn decide_walk_dispatch(i: &WalkDispatchInputs) -> WalkDispatchDecisi
             if !interacting || pin_frame {
                 st.inflight =
                     Some((end.saturating_sub(real_lo), band, 0.0, false));
-                if i.onset_start > 0 {
-                    st.inflight_lo = real_lo;
-                    st.inflight_px = charged;
-                }
+                // ⚠Written for EVERY pass, never left from an earlier one: its price writes these
+                // pixels into its band's `band_px`. Set only with an onset known, a walk before its
+                // first escape priced the pixels an EARLIER pass had left (a pin's, a fraction of the
+                // panel), and each doubled licence was scaled straight back to the floor: 256-iteration
+                // passes for 9.5 s at the user's 2^70 view (2026-10-30,
+                // `a_settled_walk_earns_its_licence_before_the_escape_onset_is_known`). With no onset
+                // known they are 0, unknown: before its first escape every pixel of a walk runs, so a
+                // pass is charged them all and no later pass can be charged more.
+                let known = i.onset_start > 0;
+                st.inflight_lo = if known { real_lo } else { 0 };
+                st.inflight_px = if known { charged } else { 0 };
             }
             if pin_frame {
                 // One pin pass in the queue: the completion callback (armed next frame,
