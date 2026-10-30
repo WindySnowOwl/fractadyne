@@ -59,6 +59,13 @@ published as the pre-releases `v0.2.41-beta.1` to `v0.2.41-beta.150`, and a "bet
 
 Changes after 0.3.0-beta.1:
 
+- **A deep view finishes sooner after a zoom (0.3.0-beta.22).** When a zoom stops, the view is
+  finished in passes on the graphics card, each sized by what the earlier passes at that depth
+  cost. Until the first pixels escaped, every pass was cut back to the smallest size by a
+  bookkeeping error: the price of each pass was put against the pixel count left over from a
+  pass made while zooming, at a fraction of the window's resolution. On a dive at 2^70 (about
+  1e21×) with 165,000 iterations, the view took 8 to 10 s to finish in some 250 small passes; it
+  now takes 4 s in about 27.
 - **Render farm: a deep reference is no longer cancelled as a stall (0.3.0-beta.22).** A farm
   cancels and hands out again a run that finishes no frame for 5 minutes (or 8 times the job's
   typical frame time, when longer), and before the first frame only the 5 minutes applies. At

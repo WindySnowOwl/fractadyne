@@ -1343,6 +1343,45 @@ fn a_band_licence_earned_over_fewer_pixels_is_scaled_down_to_the_same_work() {
     assert_eq!(moving.chunk_range, Some([3_000, 8_000]));
 }
 
+/// ⭐A settled walk whose escape onset is not known yet still earns its band licences. Found
+/// 2026-10-30 on the user's dive at 2^70 (df32 band, their session's 165k ask): the pass's pixels were
+/// recorded only once an onset was known, so its price wrote the pixels LEFT BY AN EARLIER PASS (a
+/// pin's, a fraction of the panel) into `band_px`, and the next pass scaled its doubled licence by
+/// that fraction straight back to the 256 floor: 278 passes of 256 iterations, 9.5 s to settle a view
+/// whose passes each cost 12 ms on the GPU. Driven through both halves as the app drives them.
+#[test]
+fn a_settled_walk_earns_its_licence_before_the_escape_onset_is_known() {
+    let mut di = dispatch();
+    di.state.inflight_px = 25_000; // left by a pin pass at a fraction of the 800,000-pixel panel
+    let mut sizes = Vec::new();
+    for _ in 0..4 {
+        let d = decide_walk_dispatch(&di);
+        let [lo, hi] = d.chunk_range.expect("a pass");
+        sizes.push(hi - lo);
+        // It completes in 30 ms, well under half the 400 ms target.
+        let (size, band, _, shed) = d.state.inflight.expect("in flight");
+        let p = decide_walk_price(&WalkPriceInputs {
+            walk_done: Some(true),
+            inflight_lo: d.state.inflight_lo,
+            inflight_px: d.state.inflight_px,
+            onset_start: 0,
+            last_dt_ms: 30.0,
+            ledger: WalkLedger { inflight: Some((size, band, 0.0, shed)), bands: di.bands, band_px: di.band_px, ..walk().ledger },
+            ..walk()
+        });
+        assert_eq!(p.ledger.inflight, None, "priced and released");
+        di.bands = p.ledger.bands;
+        di.band_px = p.ledger.band_px;
+        // Back to the same cursor, so every pass is in band 4.
+        di.state = DispatchState { inflight: None, cursor: 3_000, ..d.state };
+    }
+    assert_eq!(sizes, [256, 512, 1024, 2048], "each cheap price doubles the band's licence");
+    assert_eq!(di.band_px[4], 0, "its pixels unknown, not the pin's: nothing scales it down");
+    // Once the onset is known a pass's own pixels are recorded, whatever an earlier one left.
+    let onset = decide_walk_dispatch(&WalkDispatchInputs { onset_start: 20_000, ..di });
+    assert_eq!((onset.state.inflight_lo, onset.state.inflight_px), (3_000, 800_000));
+}
+
 #[test]
 fn the_onset_region_starts_at_the_first_escape_and_short_of_a_guessed_one() {
     // The 2^704 view (2026-10-21): a pass over [204,279, 220,663) cost 12 ms and one from 220,663
