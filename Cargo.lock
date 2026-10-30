@@ -1492,7 +1492,7 @@ dependencies = [
 
 [[package]]
 name = "fractadyne-app"
-version = "0.3.0-beta.21.dev.61"
+version = "0.3.0-beta.21"
 dependencies = [
  "directories",
  "eframe",
@@ -1526,14 +1526,14 @@ dependencies = [
 
 [[package]]
 name = "fractadyne-color"
-version = "0.3.0-beta.21.dev.61"
+version = "0.3.0-beta.21"
 dependencies = [
  "fractadyne-text",
 ]
 
 [[package]]
 name = "fractadyne-core"
-version = "0.3.0-beta.21.dev.61"
+version = "0.3.0-beta.21"
 dependencies = [
  "astro-float",
  "fractadyne-text",
@@ -1543,7 +1543,7 @@ dependencies = [
 
 [[package]]
 name = "fractadyne-export"
-version = "0.3.0-beta.21.dev.61"
+version = "0.3.0-beta.21"
 dependencies = [
  "exr",
  "png 0.17.16",
@@ -1552,7 +1552,7 @@ dependencies = [
 
 [[package]]
 name = "fractadyne-farm"
-version = "0.3.0-beta.21.dev.61"
+version = "0.3.0-beta.21"
 dependencies = [
  "fractadyne-state",
  "ring",
@@ -1565,7 +1565,7 @@ dependencies = [
 
 [[package]]
 name = "fractadyne-gpu"
-version = "0.3.0-beta.21.dev.61"
+version = "0.3.0-beta.21"
 dependencies = [
  "bytemuck",
  "egui",
@@ -1577,7 +1577,7 @@ dependencies = [
 
 [[package]]
 name = "fractadyne-state"
-version = "0.3.0-beta.21.dev.61"
+version = "0.3.0-beta.21"
 dependencies = [
  "directories",
  "serde",
@@ -1586,7 +1586,7 @@ dependencies = [
 
 [[package]]
 name = "fractadyne-text"
-version = "0.3.0-beta.21.dev.61"
+version = "0.3.0-beta.21"
 
 [[package]]
 name = "futures-channel"
