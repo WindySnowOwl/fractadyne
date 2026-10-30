@@ -457,6 +457,13 @@ fn tail_step_ok(Z: Cdf, dz: Fe, dzd: Cdf, d_now: bool) -> bool {
         && select(dz.e >= TAIL_DF32_MIN_E, df_max_abs(dzd) >= TAIL_DF32_MIN, d_now);
 }
 
+// 2^(1 − e) for a positive finite x of exponent e (x in [2^e, 2^(e+1))): x times it is in [2, 4).
+// Exact, and a normal number for every normal x up to f32's top; 0 for inf or NaN. Built from
+// the exponent bits: (255 − biased e) as a biased exponent.
+fn pow2_down(x: f32) -> f32 {
+    return bitcast<f32>(0x7F800000u - (bitcast<u32>(x) & 0x7F800000u));
+}
+
 // Slope normal for distance-estimate lighting: direction of u = z / (dz/dc).
 // Only the *direction* matters (the magnitude is normalized away), so any positive
 // real scale on the derivative — e.g. a floatexp exponent — cancels and we can pass
@@ -474,15 +481,10 @@ fn tail_step_ok(Z: Cdf, dz: Fe, dzd: Cdf, d_now: bool) -> bool {
 // ⛔Neither `ldexp` nor a division to scale them: DX12 and OpenGL compile `ldexp(x, -e)` as
 // x·exp2(-e), and a GPU divides by multiplying with the reciprocal; 2^-127, and the reciprocal of
 // a part past 2^126, are subnormals the GPU flushes to zero, which zeroed a derivative of 2^127
-// (row 18 on the RTX 3080, 2026-10-30: both ways, on all three APIs). And not a test of
-// every pixel's operands BEFORE the sum: that version read +1.1% on the RTX 3070's bench matrix
-// (six rounds; the folds, which never call this, included) and nothing on the RX 6800 XT.
-// 2^(1 − e) for a positive finite x of exponent e (x in [2^e, 2^(e+1))): x times it is in [2, 4).
-// Exact, and a normal number for every normal x up to f32's top; 0 for inf or NaN. Built from
-// the exponent bits: (255 − biased e) as a biased exponent.
-fn pow2_down(x: f32) -> f32 {
-    return bitcast<f32>(0x7F800000u - (bitcast<u32>(x) & 0x7F800000u));
-}
+// (row 18 on the RTX 3080, 2026-10-30: both ways, on all three APIs). The test is on the sum,
+// after it, so only a pixel with no normal pays for the branch. (A first version tested every
+// pixel's operands before the sum. PLUTO's bench matrix told neither version from the old code:
+// fitted as a·old + k, a was 0.99-1.02 against a run-to-run spread of 0.03-0.05, 2026-10-30.)
 fn slope_normal(z: vec2<f32>, d: vec2<f32>) -> vec2<f32> {
     // u = z · conj(d)  (same direction as z/d)
     var ur = z.x * d.x + z.y * d.y;
