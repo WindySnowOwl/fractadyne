@@ -7751,7 +7751,7 @@ impl FractadyneApp {
                     Ok(c) => (
                         format!(
                             "mode {}, BLA {}{}, {}x{}: {}/{} exact, {} sensitive, {} wrong{}; interior {}/{} agree; NF err {:.4} \
-                             [{}]; normals off {} [{}], {} deep in a boundary; control differs {}/{}; chunked {}",
+                             [{}]; normals off {} [{}], {} with no finite DE; control differs {}/{}; chunked {}",
                             c.mode,
                             if c.bla { "on" } else { "off" },
                             if c.mode == 1 { "" } else if c.reused { " on the dive's reference" } else { " on ITS OWN reference" },

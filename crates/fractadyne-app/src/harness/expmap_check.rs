@@ -26,9 +26,6 @@ pub(crate) const CONTROL_MIN: f64 = 0.3;
 /// And at least this share must agree outright: a strip whose samples all landed where the oracle
 /// cannot settle (and are excused) has not been checked.
 pub(crate) const MATCHED_MIN: f64 = 0.6;
-/// A distance estimate at or below this (log2 texels) is deep in a boundary, where the direct
-/// path's f32 derivative cannot give a normal (see the normal check).
-const DEEP_BOUNDARY_DE_LOG2: f32 = -30.0;
 
 /// What one strip's comparison found.
 pub(crate) struct StripCheck {
@@ -56,8 +53,9 @@ pub(crate) struct StripCheck {
     /// Escaped texels whose normal is not unit length, and the first described.
     pub(crate) normals_bad: usize,
     pub(crate) normal_worst: String,
-    /// Escaped texels deep in a boundary (a distance estimate of 2^-30 texels or less), where the
-    /// direct path's f32 derivative gives no normal. Counted, not failed.
+    /// Escaped texels with no finite distance estimate: the direct path's f32 derivative, squared,
+    /// overflowed (|dz| of 2^64 and more), and from 2^128 it has no direction either. Counted, not
+    /// failed.
     pub(crate) derivative_overflow: usize,
     /// Of `sampled`, how many the quarter-turn control disagreed on.
     pub(crate) control_differ: usize,
@@ -151,10 +149,13 @@ impl crate::FractadyneApp {
                 let n_gpu = (a[0] as u32) << 12 | a[1] as u32;
                 let nf_gpu = a[2] as f64;
                 // The normal is a unit vector wherever the derivative is representable. The direct
-                // path's derivative is an f32 pair: deep in a boundary (a distance estimate of 2^-30
-                // texels and less) it, or the product the normal is formed from, overflows and the
-                // normal has no direction — as in any direct render; the floatexp paths keep it.
-                if !(m[3] > DEEP_BOUNDARY_DE_LOG2) {
+                // path's derivative is an f32 pair: deep in a boundary it overflows, and its square
+                // in the distance estimate does first (no finite estimate) — excused there, as in
+                // any direct render; the floatexp paths keep it. ⚠This excused every estimate under
+                // 2^-30 texels until 2026-10-30, a cut-off read off one card: the normal's own
+                // product |z|·|dz| overflowed sooner, at an estimate that moves with |z| at escape,
+                // and came out (0, 0) on the RX 6800 XT at 2^-27.9 (fixed in `slope_normal`).
+                if !m[3].is_finite() {
                     c.derivative_overflow += 1;
                 } else if ((m[1] * m[1] + m[2] * m[2]) - 1.0).abs() > 1e-3 {
                     if c.normals_bad == 0 {

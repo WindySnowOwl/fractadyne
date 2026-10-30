@@ -393,7 +393,7 @@ pub fn render_iter_chunked_timed(
 /// device and reads it back.
 pub fn gputest(device: &wgpu::Device, queue: &wgpu::Queue) -> Result<(u32, u32, Vec<f32>), GpuError> {
     const W: u32 = 256;
-    const H: u32 = 18; // rows 0–17 of `fs_gputest`
+    const H: u32 = 19; // rows 0–18 of `fs_gputest`
     let shader = shader_module(device);
     let layout = device.create_pipeline_layout(&wgpu::PipelineLayoutDescriptor {
         label: Some("gputest.layout"),

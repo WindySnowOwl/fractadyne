@@ -462,7 +462,31 @@ fn tail_step_ok(Z: Cdf, dz: Fe, dzd: Cdf, d_now: bool) -> bool {
 // real scale on the derivative — e.g. a floatexp exponent — cancels and we can pass
 // just the derivative's mantissa. Returns (0,0) when the derivative is unavailable
 // (→ the color pass leaves the pixel unlit).
-fn slope_normal(z: vec2<f32>, d: vec2<f32>) -> vec2<f32> {
+// ⚠The DIRECT path's derivative is plain f32 and reaches 2^127 near the boundary: once |z|·|dz|
+// passes 2^64, `ur² + ui²` overflows, m is inf, and the normal came out (0, 0) — an unlit pixel
+// with a good derivative (a direct strip on the RX 6800 XT, 2026-10-30; `--gputest` row 18 has
+// every card return it). Past 2^62 both factors are first scaled to about 1 by exact powers of
+// two: the direction is the same, and so is each rounding. The perturbation paths pass a
+// floatexp mantissa (|d| near 1) and never take the branch.
+// ⛔A shift is at most 126: DX12 and OpenGL compile `ldexp(x, -e)` as x·exp2(-e), and 2^-127 is
+// a subnormal they flush to zero, which zeroed a derivative of 2^127 (row 18, RTX 3080). Scaled
+// by 2^-126 it lands in [2, 4), still far from any overflow.
+fn slope_normal(z0: vec2<f32>, d0: vec2<f32>) -> vec2<f32> {
+    var z = z0;
+    var d = d0;
+    let mz = max(abs(z0.x), abs(z0.y));
+    let md = max(abs(d0.x), abs(d0.y));
+    if (mz * md >= 4.611686e18) { // 2^62: |u|² < 4·(mz·md)² stays under f32's 2^128 below it
+        // An infinite derivative has no direction (all exponent bits set; a bit test, which no
+        // fast-math rule can fold away): unlit, as before.
+        if ((bitcast<u32>(md) & 0x7F800000u) == 0x7F800000u) {
+            return vec2<f32>(0.0, 0.0);
+        }
+        let ez = min(frexp(mz).exp, 126);
+        let ed = min(frexp(md).exp, 126);
+        z = vec2<f32>(ldexp(z0.x, -ez), ldexp(z0.y, -ez));
+        d = vec2<f32>(ldexp(d0.x, -ed), ldexp(d0.y, -ed));
+    }
     // u = z · conj(d)  (same direction as z/d)
     let ur = z.x * d.x + z.y * d.y;
     let ui = z.y * d.x - z.x * d.y;
@@ -3864,6 +3888,16 @@ fn gt_row17(t: u32) -> f32 {
     if ((t & 1u) == 1u) { dzd = gt_cdf(vec2<f32>(other, m)); }
     return select(0.0, 1.0, tail_no_skip(dzd, vec4<f32>(0.0, 0.0, f32(kk), r)));
 }
+// Row 18 — `slope_normal`, the unit normal an escaped pixel is lit by, over the range the DIRECT
+// path's derivative reaches: plain f32, up to 2^127. z's parts lie in [2^-6, 2^18), the derivative
+// is scaled to 2^e with e in [-4, 127), so |z|·|dz| runs from about 2^-10 past f32's top, about half
+// of it over 2^64, where `ur² + ui²` overflows (2026-10-30: a (0, 0) normal on a direct strip).
+fn gt_normal_case(t: u32) -> vec2<f32> {
+    let e = i32(gt_hash(t ^ 0x3C6EF372u) % 131u) - 4;
+    let z = vec2<f32>(gt_f32(t * 4u + 1u, -6, 24u), gt_f32(t * 4u + 2u, -6, 24u));
+    let d = vec2<f32>(gt_f32(t * 4u + 3u, e - 8, 9u), gt_f32(t * 4u + 4u, e - 8, 9u));
+    return slope_normal(z, d);
+}
 @fragment
 fn fs_gputest(@builtin(position) pos: vec4<f32>) -> @location(0) vec4<f32> {
     let ix = u32(pos.x);
@@ -3964,6 +3998,11 @@ fn fs_gputest(@builtin(position) pos: vec4<f32>) -> @location(0) vec4<f32> {
         case 15u: { return vec4<f32>(gt_row15(s * 4u), gt_row15(s * 4u + 1u), gt_row15(s * 4u + 2u), gt_row15(s * 4u + 3u)); }
         case 16u: { return vec4<f32>(gt_row16(s * 4u), gt_row16(s * 4u + 1u), gt_row16(s * 4u + 2u), gt_row16(s * 4u + 3u)); }
         case 17u: { return vec4<f32>(gt_row17(s * 4u), gt_row17(s * 4u + 1u), gt_row17(s * 4u + 2u), gt_row17(s * 4u + 3u)); }
+        case 18u: {
+            let a = gt_normal_case(s * 2u);
+            let b = gt_normal_case(s * 2u + 1u);
+            return vec4<f32>(a.x, a.y, b.x, b.y);
+        }
         default: { return vec4<f32>(0.0, 0.0, 0.0, 0.0); }
     }
 }
