@@ -44,9 +44,9 @@ fn every_model_is_right_on_the_decisive_inputs() {
 /// with another would let a new failure of the longer one pass as the shorter's known one.
 #[test]
 fn ids_are_prefix_free() {
-    let px = vec![0f32; (GT_W * 18 * 4) as usize];
-    let ids: Vec<&str> = check_rows(GT_W, 18, &px).iter().map(|c| c.id).collect();
-    assert_eq!(ids.len(), 18, "one id per row of fs_gputest");
+    let px = vec![0f32; (GT_W * 19 * 4) as usize];
+    let ids: Vec<&str> = check_rows(GT_W, 19, &px).iter().map(|c| c.id).collect();
+    assert_eq!(ids.len(), 19, "one id per row of fs_gputest");
     for a in &ids {
         assert!(a.is_ascii(), "{a}");
         for b in &ids {

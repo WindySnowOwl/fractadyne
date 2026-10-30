@@ -59,6 +59,14 @@ published as the pre-releases `v0.2.41-beta.1` to `v0.2.41-beta.150`, and a "bet
 
 Changes after 0.3.0-beta.1:
 
+- **Lighting no longer drops out at pixels right on the edge of the set (0.3.0-beta.22).** At
+  shallow depth (below about 10,000×, and in a zoom video's first strips) each pixel's lighting
+  direction is worked out in single precision from the final z and its derivative. Within a hair
+  of the set the derivative grows so large that their product overflowed, and the pixel came out
+  unlit, with no direction, although its derivative was fine: on every graphics card, at different
+  pixels on each. The zoom video's self-test caught one such pixel on the Radeon RX 6800 XT. The
+  lighting direction is now worked out from scaled values there, and `--gputest` has a row for it,
+  which the old code failed on all three graphics APIs of an RTX 3080 (293 of 512 cases).
 - **A deep view finishes sooner after a zoom (0.3.0-beta.22).** When a zoom stops, the view is
   finished in passes on the graphics card, each sized by what the earlier passes at that depth
   cost. Until the first pixels escaped, every pass was cut back to the smallest size by a

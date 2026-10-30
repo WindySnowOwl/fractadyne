@@ -283,7 +283,76 @@ fn check_rows(w: u32, h: u32, px: &[f32]) -> Vec<OpCheck> {
         });
     }
     out.extend(decision_rows(&texel));
+    out.push(normal_row(w, &texel));
     out
+}
+
+// ---- Row 18: the lighting normal --------------------------------------------------------------
+
+/// How far each part of a unit normal may sit from the f64 one: the shader's is f32 throughout, a
+/// few roundings of 2^-24 relative to |z|·|dz| (cancellation in `ur` is bounded by that too) and the
+/// GPU's sqrt and division within a few ulps. A missing normal, (0, 0), is off by ~1.
+const NORMAL_TOL: f64 = 1.0 / 65_536.0;
+
+/// Mirrors WGSL `gt_normal_case`'s inputs: (z, the derivative).
+fn gt_normal_case(t: u32) -> ([f32; 2], [f32; 2]) {
+    let e = (gt_hash(t ^ 0x3C6E_F372) % 131) as i32 - 4;
+    let z = [gt_f32(t * 4 + 1, -6, 24), gt_f32(t * 4 + 2, -6, 24)];
+    let d = [gt_f32(t * 4 + 3, e - 8, 9), gt_f32(t * 4 + 4, e - 8, 9)];
+    (z, d)
+}
+
+/// The unit vector along z·conj(d) in f64, where neither the products (exact: 24-bit mantissas)
+/// nor the sum of squares can overflow.
+fn normal_oracle(z: [f32; 2], d: [f32; 2]) -> (f64, f64) {
+    let (zx, zy, dx, dy) = (z[0] as f64, z[1] as f64, d[0] as f64, d[1] as f64);
+    let (ur, ui) = (zx * dx + zy * dy, zy * dx - zx * dy);
+    let m = ur.hypot(ui);
+    (ur / m, ui / m)
+}
+
+/// Row 18: `slope_normal` against [`normal_oracle`], two input sets per texel.
+fn normal_row(w: u32, texel: &dyn Fn(u32, u32) -> [f32; 4]) -> OpCheck {
+    let (mut max_err, mut fails, mut detail) = (0f64, 0u32, String::new());
+    for ix in 0..w {
+        let s = ix + 100003 * 18;
+        let got = texel(ix, 18);
+        for k in 0..2usize {
+            let (z, d) = gt_normal_case(s * 2 + k as u32);
+            let want = normal_oracle(z, d);
+            let g = (got[2 * k] as f64, got[2 * k + 1] as f64);
+            let e = (g.0 - want.0).abs().max((g.1 - want.1).abs());
+            // A NaN part is as wrong as a missing normal.
+            let err = if e.is_nan() || g.0.is_nan() || g.1.is_nan() { f64::INFINITY } else { e };
+            if err > NORMAL_TOL {
+                if fails == 0 {
+                    let zd = (z[0] as f64).hypot(z[1] as f64) * (d[0] as f64).hypot(d[1] as f64);
+                    detail = format!(
+                        "first ix={ix}: |z|·|dz| 2^{:.1}, want ({:.6}, {:.6}) got ({}, {})",
+                        zd.log2(),
+                        want.0,
+                        want.1,
+                        g.0,
+                        g.1
+                    );
+                }
+                fails += 1;
+            }
+            max_err = max_err.max(err);
+        }
+    }
+    if fails > 0 {
+        detail = format!("{fails} of {} sets: {detail}", 2 * w);
+    }
+    OpCheck {
+        id: "slope_normal",
+        name: "slope_normal (lighting normal, |z|·|dz| past 2^64)",
+        max_err,
+        tol: NORMAL_TOL,
+        fails,
+        detail,
+        tag: String::new(),
+    }
 }
 
 // ---- Rows 13–17: the counters' decisions (U26) ------------------------------------------------
@@ -579,6 +648,10 @@ fn decision_rows(texel: &dyn Fn(u32, u32) -> [f32; 4]) -> Vec<OpCheck> {
 #[cfg(test)]
 #[path = "../../tests/unit/harness/gputest/decision_row_tests.rs"]
 mod decision_row_tests;
+
+#[cfg(test)]
+#[path = "../../tests/unit/harness/gputest/normal_row_tests.rs"]
+mod normal_row_tests;
 
 /// A tee: every line goes to stdout (so a terminal and the Diagnostics dialog's stream see it as
 /// it happens) and, when a report file was asked for, is also retained VERBATIM for that file —

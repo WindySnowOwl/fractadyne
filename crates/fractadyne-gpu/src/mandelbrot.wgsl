@@ -457,16 +457,47 @@ fn tail_step_ok(Z: Cdf, dz: Fe, dzd: Cdf, d_now: bool) -> bool {
         && select(dz.e >= TAIL_DF32_MIN_E, df_max_abs(dzd) >= TAIL_DF32_MIN, d_now);
 }
 
+// 2^(1 − e) for a positive finite x of exponent e (x in [2^e, 2^(e+1))): x times it is in [2, 4).
+// Exact, and a normal number for every normal x up to f32's top; 0 for inf or NaN. Built from
+// the exponent bits: (255 − biased e) as a biased exponent.
+fn pow2_down(x: f32) -> f32 {
+    return bitcast<f32>(0x7F800000u - (bitcast<u32>(x) & 0x7F800000u));
+}
+
 // Slope normal for distance-estimate lighting: direction of u = z / (dz/dc).
 // Only the *direction* matters (the magnitude is normalized away), so any positive
 // real scale on the derivative — e.g. a floatexp exponent — cancels and we can pass
 // just the derivative's mantissa. Returns (0,0) when the derivative is unavailable
 // (→ the color pass leaves the pixel unlit).
+// ⚠The DIRECT path's derivative is plain f32 and reaches 2^127 near the boundary: once |z|·|dz|
+// passes 2^64, `ur² + ui²` overflows, m is inf, and the normal came out (0, 0) — an unlit pixel
+// with a good derivative (a direct strip on the RX 6800 XT, 2026-10-30; `--gputest` row 18 has
+// every card return it). So the sum is formed as before and only an overflowed one (inf, or NaN
+// from an inf product: all exponent bits set, a bit test no fast-math rule can fold away) is
+// formed again from z and the derivative each scaled by the power of two that puts its larger
+// part in [2, 4), built from that part's exponent bits (`pow2_down`). Only a pixel that came out
+// with no normal takes that branch: every other keeps its bits. An infinite derivative scales by
+// 0 to NaN there and stays unlit, as before.
+// ⛔Neither `ldexp` nor a division to scale them: DX12 and OpenGL compile `ldexp(x, -e)` as
+// x·exp2(-e), and a GPU divides by multiplying with the reciprocal; 2^-127, and the reciprocal of
+// a part past 2^126, are subnormals the GPU flushes to zero, which zeroed a derivative of 2^127
+// (row 18 on the RTX 3080, 2026-10-30: both ways, on all three APIs). The test is on the sum,
+// after it, so only a pixel with no normal pays for the branch. (A first version tested every
+// pixel's operands before the sum. PLUTO's bench matrix told neither version from the old code:
+// fitted as a·old + k, a was 0.99-1.02 against a run-to-run spread of 0.03-0.05, 2026-10-30.)
 fn slope_normal(z: vec2<f32>, d: vec2<f32>) -> vec2<f32> {
     // u = z · conj(d)  (same direction as z/d)
-    let ur = z.x * d.x + z.y * d.y;
-    let ui = z.y * d.x - z.x * d.y;
-    let m = sqrt(ur * ur + ui * ui);
+    var ur = z.x * d.x + z.y * d.y;
+    var ui = z.y * d.x - z.x * d.y;
+    var m2 = ur * ur + ui * ui;
+    if ((bitcast<u32>(m2) & 0x7F800000u) == 0x7F800000u) {
+        let zs = z * pow2_down(max(abs(z.x), abs(z.y)));
+        let ds = d * pow2_down(max(abs(d.x), abs(d.y)));
+        ur = zs.x * ds.x + zs.y * ds.y;
+        ui = zs.y * ds.x - zs.x * ds.y;
+        m2 = ur * ur + ui * ui;
+    }
+    let m = sqrt(m2);
     if (m > 1.0e-30) {
         return vec2<f32>(ur / m, ui / m);
     }
@@ -3864,6 +3895,16 @@ fn gt_row17(t: u32) -> f32 {
     if ((t & 1u) == 1u) { dzd = gt_cdf(vec2<f32>(other, m)); }
     return select(0.0, 1.0, tail_no_skip(dzd, vec4<f32>(0.0, 0.0, f32(kk), r)));
 }
+// Row 18 — `slope_normal`, the unit normal an escaped pixel is lit by, over the range the DIRECT
+// path's derivative reaches: plain f32, up to 2^127. z's parts lie in [2^-6, 2^18), the derivative
+// is scaled to 2^e with e in [-4, 127), so |z|·|dz| runs from about 2^-10 past f32's top, about half
+// of it over 2^64, where `ur² + ui²` overflows (2026-10-30: a (0, 0) normal on a direct strip).
+fn gt_normal_case(t: u32) -> vec2<f32> {
+    let e = i32(gt_hash(t ^ 0x3C6EF372u) % 131u) - 4;
+    let z = vec2<f32>(gt_f32(t * 4u + 1u, -6, 24u), gt_f32(t * 4u + 2u, -6, 24u));
+    let d = vec2<f32>(gt_f32(t * 4u + 3u, e - 8, 9u), gt_f32(t * 4u + 4u, e - 8, 9u));
+    return slope_normal(z, d);
+}
 @fragment
 fn fs_gputest(@builtin(position) pos: vec4<f32>) -> @location(0) vec4<f32> {
     let ix = u32(pos.x);
@@ -3964,6 +4005,11 @@ fn fs_gputest(@builtin(position) pos: vec4<f32>) -> @location(0) vec4<f32> {
         case 15u: { return vec4<f32>(gt_row15(s * 4u), gt_row15(s * 4u + 1u), gt_row15(s * 4u + 2u), gt_row15(s * 4u + 3u)); }
         case 16u: { return vec4<f32>(gt_row16(s * 4u), gt_row16(s * 4u + 1u), gt_row16(s * 4u + 2u), gt_row16(s * 4u + 3u)); }
         case 17u: { return vec4<f32>(gt_row17(s * 4u), gt_row17(s * 4u + 1u), gt_row17(s * 4u + 2u), gt_row17(s * 4u + 3u)); }
+        case 18u: {
+            let a = gt_normal_case(s * 2u);
+            let b = gt_normal_case(s * 2u + 1u);
+            return vec4<f32>(a.x, a.y, b.x, b.y);
+        }
         default: { return vec4<f32>(0.0, 0.0, 0.0, 0.0); }
     }
 }
