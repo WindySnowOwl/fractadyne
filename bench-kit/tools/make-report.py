@@ -19,7 +19,7 @@ So this report puts the three together per scene: what was run, what came out, a
 took - with the images inline, because the fastest way to catch a wrong render is to look at it.
 
 It reads run-manifest.json (written by run-all.ps1), results.csv, and, when present, the
-view-check files (fs-, im-, fz- and f3-view-check.json), sysinfo.txt and zoomseq/results.csv. Nothing here is required: a missing
+view-check files (fs-, im-, fz-, f3- and ff-view-check.json), sysinfo.txt and zoomseq/results.csv. Nothing here is required: a missing
 input costs you that section, not the report.
 """
 import argparse
@@ -110,7 +110,7 @@ def derive_findings(scenes, rows_by, views, meta, zs_rows):
     # Wins per scene, among rows that are 'ok'. A DNF is not a slow result, so it never competes.
     # Per CLOCK: a lane timed by its own figure competes only with other own figures (see
     # REPORTED_LANES), and that comparison is reported only when there is something to compare.
-    lanes = ("fractadyne", "fraktaler3", "fractalshark", "imagina", OWN_FD, "fractalzoomer")
+    lanes = ("fractadyne", "fraktaler3", "fractalshark", "imagina", "fracturingfog", OWN_FD, "fractalzoomer")
     for clock, group in (("", [r for r in lanes if r not in REPORTED_LANES]),
                          (", own clocks", [r for r in lanes if r in REPORTED_LANES])):
         if clock and sum(any((r, s) in rows_by for s in scenes) for r in group) < 2:
@@ -180,7 +180,7 @@ def derive_findings(scenes, rows_by, views, meta, zs_rows):
         if not vv:
             continue
         name = {"fractalshark": "FractalShark", "imagina": "Imagina", "fractalzoomer": "Fractal Zoomer",
-                "fraktaler3": "Fraktaler-3"}.get(ren, ren)
+                "fraktaler3": "Fraktaler-3", "fracturingfog": "Fracturing Fog"}.get(ren, ren)
         wrong = [k for k, v in vv.items() if not v.get("magnification_ok", True)]
         unconf = [k for k, v in vv.items()
                   if v.get("magnification_ok", True) and not v.get("same_view")]
@@ -288,6 +288,7 @@ def fmt_mag(l10):
 # One colour per lane, reused by the chart and its legend.
 LANE_COLOR = {"fractadyne": "#79b8ff", "fraktaler3": "#e3b341",
               "fractalshark": "#5fd08a", "imagina": "#d48bff", "fractalzoomer": "#ff8a65",
+              "fracturingfog": "#4dd0c8",
               "fractadyne-own": "#79b8ff"}
 
 
@@ -452,6 +453,7 @@ def guess_output(d, renderer, scene):
         "fractalshark": ["fs-%s-r1.png" % p, "fs-%s.png" % p, "fs-%s.png" % scene],
         "imagina": ["im-%s.png" % scene, "%s-imagina.png" % scene],
         "fractalzoomer": ["fz-%s.png" % scene],
+        "fracturingfog": ["ff-%s.png" % scene],
     }.get(renderer, [])
     for c in cands:
         if os.path.exists(os.path.join(d, c)):
@@ -694,7 +696,8 @@ def main():
     views = {"fractalshark": load_json(os.path.join(d, "fs-view-check.json"), {}) or {},
              "imagina": load_json(os.path.join(d, "im-view-check.json"), {}) or {},
              "fractalzoomer": load_json(os.path.join(d, "fz-view-check.json"), {}) or {},
-             "fraktaler3": load_json(os.path.join(d, "f3-view-check.json"), {}) or {}}
+             "fraktaler3": load_json(os.path.join(d, "f3-view-check.json"), {}) or {},
+             "fracturingfog": load_json(os.path.join(d, "ff-view-check.json"), {}) or {}}
     view = views["fractalshark"]
     sysinfo = load_text(os.path.join(d, "sysinfo.txt"))
     zs_rows = load_csv(os.path.join(d, "zoomseq", "results.csv"))
@@ -740,9 +743,9 @@ def main():
         scenes = sorted(scenes, key=lambda s: (mags[s], s))
 
     thumbs = os.path.join(d, "thumbs")
-    renderers = ["fractadyne", "fraktaler3", "fractalshark", "imagina", OWN_FD, "fractalzoomer"]
+    renderers = ["fractadyne", "fraktaler3", "fractalshark", "imagina", "fracturingfog", OWN_FD, "fractalzoomer"]
     label = {"fractadyne": "Fractadyne", "fraktaler3": "Fraktaler-3",
-             "fractalshark": "FractalShark", "imagina": "Imagina",
+             "fractalshark": "FractalShark", "imagina": "Imagina", "fracturingfog": "Fracturing Fog",
              OWN_FD: "Fractadyne (reported)", "fractalzoomer": "Fractal Zoomer (reported)"}
 
     # Folders written before the manifest existed still carry host and timestamp in their NAME
@@ -1015,7 +1018,8 @@ def main():
     # Only link what is actually there: a report that offers a dead link is claiming evidence it
     # does not have.
     raw = [f for f in ("results.csv", "run-manifest.json", "fs-view-check.json", "im-view-check.json",
-                       "fz-view-check.json", "f3-view-check.json", "f3-interior.json", "summary.md",
+                       "fz-view-check.json", "f3-view-check.json", "f3-interior.json", "ff-view-check.json",
+                       "summary.md",
                        "sysinfo.txt", "f3-wisdom.toml")
            if os.path.exists(os.path.join(d, f))]
     if raw:

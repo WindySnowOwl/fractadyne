@@ -34,8 +34,10 @@ try {
     New-Item -ItemType Directory -Force (Join-Path $stage 'tools') | Out-Null
     # make-fsloc.py: the FractalShark lane writes a locations file with it for a centre too long
     # for a command line (the 1e30000x ladder scenes). exr-interior.py: the Fraktaler-3 view check
-    # reads the never-escaped share from that renderer's raw counts with it.
-    foreach ($t in 'verify-views.py', 'make-report.py', 'redact-home.py', 'ppm-to-png.py', 'make-fsloc.py', 'exr-interior.py') {
+    # reads the never-escaped share from that renderer's raw counts with it. ff-view.py: the
+    # Fracturing Fog lane converts every scene's view with it.
+    foreach ($t in 'verify-views.py', 'make-report.py', 'redact-home.py', 'ppm-to-png.py', 'make-fsloc.py', 'exr-interior.py',
+                   'ff-view.py') {
         Copy-Item (Join-Path $kit ('tools\' + $t)) (Join-Path $stage 'tools')
     }
     New-Item -ItemType Directory -Force (Join-Path $stage 'scenes') | Out-Null
