@@ -1,0 +1,7 @@
+utc	version	identity	exit	verdict	config	command
+2026-10-31 19:45:10	0.3.0-beta.22	repo g13e8aa49	0	-	-	python scripts/dive-capture/screengate.py D:/share/Fractadyne/field/results/20261031-120247-hkzl/validate-beta22-release-20261031-120316/screen/run1 D:/share/Fractadyne/field/results/20261031-120247-hkzl/validate-beta22-release-20261031-120316/screen/run2 D:/share/Fractadyne/field/results/20261031-120247-hkzl/validate-beta22-release-20261031-120316/screen/run3
+2026-10-31 19:45:19	0.3.0-beta.22	build 1, g13e8aa4	0	selftest exit 0; logcheck PASS	fresh	fractadyne --selftest --selftest-filter fe-df32-probe
+2026-10-31 19:52:02	0.3.0-beta.22	build 1, g13e8aa4	0	livetest exit 0; logcheck PASS	fresh	fractadyne --livetest tours/grand-tour.toml --size 480x270
+2026-10-31 19:53:02	0.3.0-beta.22	build 1, g13e8aa4	0	motiontest exit 0; logcheck PASS	fresh	fractadyne --motiontest --worker-gpu same
+2026-10-31 20:01:34	0.3.0-beta.22	build 1, g13e8aa4	3	autodive exit 3; logcheck PASS	fresh	fractadyne --autodive 32 --autodive-timeout 900 --autodive-home 3
+2026-10-31 21:54:24	0.3.0-beta.22	build 1, g13e8aa4	0	selftest exit 0; logcheck PASS	fresh	fractadyne --selftest --selftest-filter deep-location
