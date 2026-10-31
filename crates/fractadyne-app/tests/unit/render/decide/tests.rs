@@ -657,6 +657,8 @@ fn walk() -> WalkPriceInputs {
             late_px: [0; LATE_MAX],
             onset_work: 0,
             band_px: [0; crate::tunables::CHUNK_BANDS],
+            step_cap_last: 0,
+            step_wall_last: 0.0,
         },
         tdr_budget_ms: c.tdr_budget_ms,
         tdr_explicit_budget_ms: c.tdr_explicit_budget_ms,
@@ -1122,6 +1124,7 @@ fn walk_id() -> WalkIdInputs {
         sa_skip: 5_000,
         partial: false,
         chunk_charge: 1,
+        step_walk: false,
         state: WalkState {
             sig: super::super::WalkSig::NONE,
             walk_view: super::super::WalkSig::NONE,
@@ -1262,6 +1265,10 @@ fn dispatch() -> WalkDispatchInputs {
         pin_timeout_scaled: 1,
         chunk_charge: 1,
         chunk_shuffle: 0,
+        step_walk: false,
+        step_target_ms: 0.0,
+        step_cap_last: 0,
+        step_wall_last: 0.0,
         state: DispatchState {
             pin_inflight: 0,
             pin_reg_pending: 0,
@@ -1282,6 +1289,7 @@ fn dispatch() -> WalkDispatchInputs {
             norm_complete_submit: true,
             inflight_lo: 0,
             inflight_px: 0,
+            step_cap: 0,
         },
     }
 }
@@ -1507,4 +1515,137 @@ fn a_spanned_pass_shares_its_price_out_by_what_its_bands_cost_before() {
     before[3] = 0.0;
     let d = decide_walk_price(&WalkPriceInputs { ledger: WalkLedger { band_ms: before, ..pass.ledger }, ..pass.clone() });
     assert_eq!(d.ledger.band_ms[1..=5], [5.0; 5]);
+}
+
+/// A STEP-BOUNDED settled walk (`WALK_STEPS`): the cursor-3,000 dispatch fixture as a fresh mode-2 walk.
+fn step_dispatch() -> WalkDispatchInputs {
+    let mut i = dispatch();
+    i.fe_walk = true;
+    i.step_walk = true;
+    i.step_target_ms = 200.0;
+    i.cur = 0;
+    i.state.cursor = 0;
+    i.state.idx = 0;
+    i.state.last_range = None;
+    i
+}
+
+#[test]
+fn a_step_walk_opens_over_every_pixel_and_waits_to_be_priced() {
+    let d = decide_walk_dispatch(&step_dispatch());
+    // 200 ms at the 1.5 ns prior over 800,000 pixels: 166 steps each, over the whole walk.
+    let cap = crate::render::walk_step_cap(true, 800_000, (0, 0.0), 200.0);
+    assert_eq!(cap, 166);
+    assert_eq!((d.chunk_range, d.step_cap, d.pass), (Some([0, 20_000]), cap, true));
+    assert_eq!(d.state.inflight, Some((cap, STEP_PASS_BAND, 0.0, false)), "in flight, priced as a step pass");
+    assert_eq!((d.state.cursor, d.state.idx, d.state.pending), (1, 1, true), "under way, not done");
+    assert_eq!(d.state.fe_steps_last, 800_000 * u64::from(cap), "its work is the most it can execute");
+    assert!(!d.state.norm_complete_submit, "a step pass ends at walk_end with pixels still running");
+    // Off, or on a moving frame, a pin, or a df32 walk: the window walk, unchanged.
+    for i in [
+        WalkDispatchInputs { step_walk: false, ..step_dispatch() },
+        WalkDispatchInputs { fe_walk: false, ..step_dispatch() },
+        WalkDispatchInputs { interacting: true, ..step_dispatch() },
+    ] {
+        assert_eq!(decide_walk_dispatch(&i).step_cap, 0);
+    }
+}
+
+#[test]
+fn a_step_walk_follows_the_last_wall_and_alternates_its_start() {
+    let mut i = step_dispatch();
+    (i.cur, i.state.cursor, i.state.idx, i.state.last_range) = (1, 1, 3, Some([2, 20_000]));
+    // A 1,000-step pass priced at 100 ms against 200: doubles, no more.
+    (i.step_cap_last, i.step_wall_last) = (1_000, 100.0);
+    let d = decide_walk_dispatch(&i);
+    assert_eq!((d.chunk_range, d.step_cap), (Some([2, 20_000]), 2_000));
+    let next = WalkDispatchInputs { state: DispatchState { idx: 4, ..i.state }, ..i.clone() };
+    assert_eq!(decide_walk_dispatch(&next).chunk_range, Some([1, 20_000]), "never the same range twice running");
+    // Priced at 50 ms: still only doubles. At 400 ms: halves.
+    assert_eq!(decide_walk_dispatch(&WalkDispatchInputs { step_wall_last: 50.0, ..i.clone() }).step_cap, 2_000);
+    assert_eq!(decide_walk_dispatch(&WalkDispatchInputs { step_wall_last: 400.0, ..i.clone() }).step_cap, 500);
+    // The running count of THIS walk charges the pass; another walk's does not.
+    let counted = WalkDispatchInputs { running: Some((7, 20_000, 40_000)), ..i.clone() };
+    assert_eq!(decide_walk_dispatch(&counted).state.charged_px, 40_000);
+    let other = WalkDispatchInputs { running: Some((6, 20_000, 40_000)), ..i };
+    assert_eq!(decide_walk_dispatch(&other).state.charged_px, 800_000);
+}
+
+#[test]
+fn a_step_walk_holds_its_pass_in_flight_and_ends_when_nothing_runs() {
+    let mut i = step_dispatch();
+    (i.cur, i.state.cursor, i.state.idx) = (1, 1, 5);
+    i.state.last_range = Some([1, 20_000]);
+    i.state.step_cap = 3_000;
+    i.state.inflight = Some((3_000, STEP_PASS_BAND, 40.0, false));
+    let held = decide_walk_dispatch(&i);
+    assert_eq!((held.chunk_range, held.step_cap, held.pass), (Some([1, 20_000]), 3_000, false), "re-sent, deduped");
+    // A reading of this walk with nothing running ends it: the empty tail, a complete reading.
+    let done = WalkDispatchInputs { running: Some((7, 20_000, 0)), ..i.clone() };
+    let d = decide_walk_dispatch(&done);
+    assert_eq!((d.chunk_range, d.step_cap, d.state.cursor), (Some([20_000, 20_000]), 0, 20_000));
+    assert!(d.state.norm_complete_submit);
+    // Another walk's zero says nothing.
+    assert_eq!(decide_walk_dispatch(&WalkDispatchInputs { running: Some((6, 20_000, 0)), ..i.clone() }).state.cursor, 1);
+    // A walk counting wrong ends rather than spins.
+    let stuck = WalkDispatchInputs {
+        state: DispatchState { idx: crate::render::STEP_WALK_MAX_PASSES + 1, inflight: None, ..i.state },
+        ..i
+    };
+    assert_eq!(decide_walk_dispatch(&stuck).state.cursor, 20_000);
+}
+
+#[test]
+fn every_step_walk_opens_at_the_prior_whatever_the_last_one_did() {
+    // The 2^704 view (2026-10-30): an opening pass learned a step's cost as its wall over every pixel
+    // times its cap, ~20x under where most pixels finish inside the cap, and the next walk opened at
+    // 32,768 steps over 3.1M pixels (2.2 s). The last walk's passes, cheap or dear, size nothing.
+    let cheap = WalkDispatchInputs { step_cap_last: 32_768, step_wall_last: 5.0, ..step_dispatch() };
+    let dear = WalkDispatchInputs { step_cap_last: 64, step_wall_last: 900.0, ..step_dispatch() };
+    for i in [step_dispatch(), cheap, dear] {
+        assert_eq!(decide_walk_dispatch(&i).step_cap, 166);
+    }
+}
+
+#[test]
+fn a_step_pass_feeds_its_own_ledger_and_no_band() {
+    let i = WalkPriceInputs {
+        walk_done: Some(true),
+        ledger: WalkLedger { inflight: Some((2_000, STEP_PASS_BAND, 133.3, false)), ..walk().ledger },
+        ..walk()
+    };
+    let d = decide_walk_price(&i);
+    assert_eq!(d.ledger.inflight, None, "priced and released");
+    assert_eq!((d.ledger.step_cap_last, d.ledger.step_wall_last), (2_000, 133.3 + 16.7));
+    assert_eq!(d.ledger.bands, walk().ledger.bands, "no band learns from a step pass");
+}
+
+#[test]
+fn a_step_walks_readings_ahead_of_its_cursor_are_its_own() {
+    // Every step pass ends at walk_end, so this walk's reading is ahead of its cursor of 1.
+    let mut i = walk_id();
+    i.state.cursor = 1;
+    i.state.running = Some((7, 20_000, 1234));
+    i.state.last_range = Some([1, 20_000]);
+    i.state.idx = 3;
+    let window = decide_walk_id(&i);
+    assert_eq!(window.state.running, None, "a window walk drops a reading ahead of it");
+    let stepped = decide_walk_id(&WalkIdInputs { step_walk: true, chunk_charge: 0, ..i });
+    assert_eq!(stepped.state.running, Some((7, 20_000, 1234)));
+    assert_eq!(stepped.state.count_walk, stepped.state.epoch, "and it always counts");
+}
+
+#[test]
+fn a_step_cap_opens_at_the_prior_and_follows_within_bounds() {
+    use crate::render::{walk_step_cap, STEP_WALK_MAX_CAP, STEP_WALK_MIN_CAP};
+    // Opening: the target at the prior over every pixel; floored.
+    assert_eq!(walk_step_cap(true, 1_000_000, (0, 0.0), 200.0), 133);
+    assert_eq!(walk_step_cap(true, 100_000_000, (0, 0.0), 200.0), STEP_WALK_MIN_CAP);
+    // Following: at most doubling, down in proportion, never past the cap's ceiling; a fresh walk
+    // ignores the last walk's pass, and a pass with no price opens instead.
+    assert_eq!(walk_step_cap(false, 1_000_000, (900, 10.0), 200.0), 1_800);
+    assert_eq!(walk_step_cap(false, 1_000_000, (900, 600.0), 200.0), 300);
+    assert_eq!(walk_step_cap(false, 1_000, (30_000, 1.0), 200.0), STEP_WALK_MAX_CAP);
+    assert_eq!(walk_step_cap(true, 1_000_000, (900, 10.0), 200.0), 133);
+    assert_eq!(walk_step_cap(false, 1_000_000, (900, 0.0), 200.0), 133);
 }

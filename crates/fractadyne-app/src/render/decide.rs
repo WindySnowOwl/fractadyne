@@ -1169,7 +1169,23 @@ pub(crate) struct WalkLedger {
     /// (Absent when empty.)
     #[serde(default, skip_serializing_if = "no_cost_len")]
     pub(crate) band_px: [u32; crate::tunables::CHUNK_BANDS],
+    /// A STEP-BOUNDED settled walk's last priced pass (`WALK_STEPS`): its step cap and its wall
+    /// price, ms, which size the next pass (`walk_step_cap`). 0 = none. (Absent when 0, as in every
+    /// recording made before it.)
+    #[serde(default, skip_serializing_if = "zero_u32")]
+    pub(crate) step_cap_last: u32,
+    #[serde(default, skip_serializing_if = "zero_f64")]
+    pub(crate) step_wall_last: f64,
 }
+
+/// A zero left out of a recording (`WalkLedger::step_wall_last`).
+fn zero_f64(v: &f64) -> bool {
+    *v == 0.0
+}
+
+/// The `band` a step-bounded pass in flight is recorded under (`WalkLedger::inflight`): not an
+/// iteration band, so its price feeds `step_cap_last` / `step_wall_last` and no band's licence.
+pub(crate) const STEP_PASS_BAND: u8 = u8::MAX;
 
 /// What [`decide_walk_price`] reads: `bp_chunk_tiling`'s pricing and sizing inputs, one view, one frame
 /// of a chunk-governed compose.
@@ -1638,6 +1654,11 @@ pub(crate) fn decide_walk_price(i: &WalkPriceInputs) -> WalkPriceDecision {
                     feed_pin_price(&mut led, band, size, price, target_ms);
                     // Traced by the caller under `tile` (`WalkPriceEvent::PinPriced`).
                     events.push(WalkPriceEvent::PinPriced { band, size, price, acc });
+                } else if band == STEP_PASS_BAND {
+                    // A step-bounded pass (`WALK_STEPS`): `size` is its step cap. Its price sizes the
+                    // next pass of the walk, and no iteration band learns anything from it.
+                    led.step_cap_last = size;
+                    led.step_wall_last = price;
                 } else {
                     led.pass_dt = price;
                     chunk_band_update_with_lane(&mut led.bands, band as usize, size, price, target_ms, 2);
@@ -1844,6 +1865,11 @@ pub(crate) struct WalkIdInputs {
     pub(crate) partial: bool,
     /// The overridable `CHUNK_CHARGE`.
     pub(crate) chunk_charge: u64,
+    /// A settled mode-2 walk runs STEP-BOUNDED passes (`WALK_STEPS`): it always counts its running
+    /// pixels, and its readings' cursor (every pass ends at `walk_end`) is ahead of its own until it
+    /// completes. Recordings made before it read false.
+    #[serde(default)]
+    pub(crate) step_walk: bool,
     pub(crate) state: WalkState,
 }
 
@@ -1983,12 +2009,16 @@ pub(crate) fn decide_walk_id(i: &WalkIdInputs) -> WalkIdDecision {
     }
     let cur = st.cursor;
     // A walk is never behind its own reading: a cursor that went back was reset somewhere
-    // this stage did not see, so its bound describes another walk — drop it.
-    if st.running.is_some_and(|(_, at, _)| cur < at) {
+    // this stage did not see, so its bound describes another walk — drop it. (A step-bounded walk's
+    // passes all end at `walk_end`, so its readings are ahead of it by design; the walk number alone
+    // says whose they are.)
+    let step_walk = i.step_walk && fe_walk && !interacting && !pin_frame;
+    if !step_walk && st.running.is_some_and(|(_, at, _)| cur < at) {
         st.running = None;
     }
-    // A settled mode-2 walk counts its running pixels (`walk_charged_px` sizes by them).
-    if fe_walk && !interacting && !pin_frame && i.chunk_charge == 1 {
+    // A settled mode-2 walk counts its running pixels (`walk_charged_px` sizes by them; a
+    // step-bounded walk ends on that count).
+    if fe_walk && !interacting && !pin_frame && (i.chunk_charge == 1 || step_walk) {
         st.count_walk = st.epoch;
     }
     if interacting && !pin_frame {
@@ -2079,6 +2109,10 @@ pub(crate) struct DispatchState {
     pub(crate) inflight_lo: u32,
     #[serde(default, skip_serializing_if = "zero_u64")]
     pub(crate) inflight_px: u64,
+    /// A step-bounded settled walk (`WALK_STEPS`): the step cap of its last pass, which a held frame
+    /// re-sends. Absent when 0, as in every recording made before it.
+    #[serde(default, skip_serializing_if = "zero_u32")]
+    pub(crate) step_cap: u32,
 }
 
 /// A zero left out of a recording (`DispatchState::inflight_lo`).
@@ -2162,6 +2196,17 @@ pub(crate) struct WalkDispatchInputs {
     pub(crate) pin_timeout_scaled: u64,
     pub(crate) chunk_charge: u64,
     pub(crate) chunk_shuffle: u64,
+    /// A settled mode-2 walk runs STEP-BOUNDED passes (`WALK_STEPS`), each sized for
+    /// `step_target_ms` from the walk's last priced pass (`WalkLedger::step_cap_last`,
+    /// `step_wall_last`). Recordings made before it read false and nothing.
+    #[serde(default)]
+    pub(crate) step_walk: bool,
+    #[serde(default)]
+    pub(crate) step_target_ms: f64,
+    #[serde(default)]
+    pub(crate) step_cap_last: u32,
+    #[serde(default)]
+    pub(crate) step_wall_last: f64,
     pub(crate) state: DispatchState,
 }
 
@@ -2182,6 +2227,10 @@ pub(crate) struct WalkDispatchDecision {
     /// for the `tile` trace. (Absent otherwise, and in recordings made before it.)
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub(crate) bounds: Option<(u32, u32, u32, u64)>,
+    /// A step-bounded pass's steps per pixel (`WALK_STEPS`; `MandelbrotParams::step_cap`); 0 = an
+    /// iteration window. (Absent when 0.)
+    #[serde(default, skip_serializing_if = "zero_u32")]
+    pub(crate) step_cap: u32,
 }
 
 /// What the dispatch did, for the caller's log and trace.
@@ -2218,7 +2267,66 @@ pub(crate) fn decide_walk_dispatch(i: &WalkDispatchInputs) -> WalkDispatchDecisi
     let mut pin_dispatched = false;
     let mut events = Vec::new();
     let mut bounds = None;
-    if cur < walk_end {
+    // ⭐A STEP-BOUNDED SETTLED WALK (`WALK_STEPS`, mode 2): every pass runs the whole `[·, walk_end)`
+    // and stops each pixel after `step_cap` executed steps, the export's and a worker's passes
+    // (`LiveTwin::walk_steps`). An iteration window cannot be priced where the BLA skips: a window
+    // grown on a cheap stretch crossed into one where nothing skipped whole (978 ms after ~150 ms
+    // at the user's 2^60 view, `BAND_FLOATEXP`, 2026-10-30). A step costs about the same skipping or
+    // not, and every pixel still running ran the whole last cap, so a pass that follows the last
+    // one's wall does at most twice their work.
+    let step_walk = i.step_walk && fe_walk && !interacting && !pin_frame && walk_end > 2;
+    let mut step_cap = 0u32;
+    // It ends when a reading of it says no pixel runs (a pixel never restarts within a walk, so any
+    // pass's zero is the walk's)…
+    let cur = if step_walk && cur < walk_end && st.idx > 0 && i.running.is_some_and(|(w, _, n)| w == i.epoch && n == 0) {
+        st.cursor = walk_end;
+        walk_end
+    } else {
+        cur
+    };
+    // …and one that has not in this many passes is counting wrong: ended rather than left spinning.
+    let cur = if step_walk && cur < walk_end && st.idx > super::STEP_WALK_MAX_PASSES {
+        st.cursor = walk_end;
+        walk_end
+    } else {
+        cur
+    };
+    if cur < walk_end && step_walk {
+        // Price-serialized like the window walk: one unpriced pass in flight, a held frame re-sends it.
+        if st.inflight.is_some() && st.last_range.is_some() {
+            chunk_range = st.last_range;
+            chunk_idx = st.idx;
+            step_cap = st.step_cap;
+            st.pending = true;
+        } else {
+            let all_px = spx.saturating_mul(ss2).max(1);
+            let fresh = st.idx == 0;
+            let active = if fresh {
+                all_px
+            } else {
+                i.running.filter(|&(w, _, _)| w == i.epoch).map_or(all_px, |(_, _, n)| u64::from(n).max(1))
+            };
+            let cap = super::walk_step_cap(fresh, all_px, (i.step_cap_last, i.step_wall_last), i.step_target_ms);
+            // The opening pass starts from scratch (the series seeds it); to a later one any start
+            // above 0 means "resume from the state", alternating so the GPU's dedupe never mistakes
+            // the next pass for the last.
+            let lo = if fresh { 0 } else { 1 + (st.idx & 1) };
+            chunk_range = Some([lo, walk_end]);
+            chunk_idx = st.idx;
+            st.cursor = cur.max(1);
+            st.idx = chunk_idx.wrapping_add(1);
+            st.pending = true;
+            st.last_range = chunk_range;
+            st.inflight = Some((cap, STEP_PASS_BAND, 0.0, false));
+            st.inflight_lo = 0;
+            st.inflight_px = 0;
+            st.charged_px = active;
+            st.fe_steps_last = active.saturating_mul(u64::from(cap));
+            st.step_cap = cap;
+            step_cap = cap;
+            chunk_pass = true;
+        }
+    } else if cur < walk_end {
         // ---- PRICE-SERIALIZED WALKING, dispatch half ----
         // A settled pass may only launch when the previous one has been PRICED
         // (chunk_inflight is None). While one is in flight, hold the LAST DISPATCHED
@@ -2550,9 +2658,10 @@ pub(crate) fn decide_walk_dispatch(i: &WalkDispatchInputs) -> WalkDispatchDecisi
     // measured 2026-09-19 on a 2e13 autopilot dive: tops of 1,758 → 3,150 → 6,582 →
     // 10,238 and back to 1,758, about 2.5 times a second, which the EMA and the glide
     // turned into a rhythmic "breathing" of every colour on screen.
+    // (A step-bounded pass ends at `walk_end` with pixels still running: a partial like a window's.)
     st.norm_complete_submit = (interacting && !pin_frame)
-        || chunk_range.is_none_or(|[_, end]| end >= walk_end);
-    WalkDispatchDecision { chunk_range, chunk_idx, pass: chunk_pass, state: st, pin_dispatched, events, bounds }
+        || (step_cap == 0 && chunk_range.is_none_or(|[_, end]| end >= walk_end));
+    WalkDispatchDecision { chunk_range, chunk_idx, pass: chunk_pass, state: st, pin_dispatched, events, bounds, step_cap }
 }
 
 /// The recording's format version: bumped whenever an inputs or decision struct changes shape, and a

@@ -133,6 +133,11 @@ pub(crate) struct Cost {
     pub pin_growth_lane: u64,
     /// Floatexp measured before a dive reaches it (`PRE_SWITCH_PROBE_DEFAULT`; 0 = off).
     pub pre_switch_probe: u64,
+    /// The df32 perturbation band renders floatexp, BLA as configured (`BAND_FLOATEXP_DEFAULT`;
+    /// 0 = df32, 1 = floatexp).
+    pub band_floatexp: u64,
+    /// A settled mode-2 walk runs step-bounded passes (`WALK_STEPS_DEFAULT`; 0 = iteration windows).
+    pub walk_steps: u64,
     /// A settled mode-2 walk charges the pixels still running (`CHUNK_CHARGE_DEFAULT`; 0 = off).
     pub chunk_charge: u64,
     /// Test hook: deterministic uneven settled-walk windows (`CHUNK_SHUFFLE_DEFAULT`; 0 = off).
@@ -218,6 +223,8 @@ impl Default for Cost {
             growth_in_work: GROWTH_IN_WORK_DEFAULT,
             pin_growth_lane: PIN_GROWTH_LANE_DEFAULT,
             pre_switch_probe: PRE_SWITCH_PROBE_DEFAULT,
+            band_floatexp: BAND_FLOATEXP_DEFAULT,
+            walk_steps: WALK_STEPS_DEFAULT,
             chunk_charge: CHUNK_CHARGE_DEFAULT,
             chunk_shuffle: CHUNK_SHUFFLE_DEFAULT,
             worker_motion: WORKER_MOTION_DEFAULT,
@@ -544,6 +551,24 @@ pub(crate) fn apply_overrides(pairs: &[(String, String)]) -> Result<(), String> 
                 };
                 p.to_string()
             }
+            "BAND_FLOATEXP" => {
+                let p = c.band_floatexp;
+                c.band_floatexp = match raw.as_str() {
+                    "0" => 0,
+                    "1" => 1,
+                    _ => return Err(format!("--set BAND_FLOATEXP: '{raw}' is not 0 (df32) or 1 (floatexp)")),
+                };
+                p.to_string()
+            }
+            "WALK_STEPS" => {
+                let p = c.walk_steps;
+                c.walk_steps = match raw.as_str() {
+                    "0" => 0,
+                    "1" => 1,
+                    _ => return Err(format!("--set WALK_STEPS: '{raw}' is not 0 (iteration windows) or 1 (step-bounded)")),
+                };
+                p.to_string()
+            }
             "GROWTH_IN_WORK" => {
                 let p = c.growth_in_work;
                 c.growth_in_work = match raw.as_str() {
@@ -786,7 +811,7 @@ pub(crate) const OVERRIDABLE: &str = "TDR_BUDGET_MS, TDR_EXPLICIT_BUDGET_MS, \
     EXPLICIT_DISPATCH_CAP, TDR_MAX_TILES, TDR_TILES_CEIL, BLA_EPS, PASS_FIXED_MS, MOTION_NEED_QUANTILE, MOTION_NEED_SOURCE, READING_POOL, \
     DEAD_MAN, DISPATCH_CEILING, SETTLE_SERIALIZE, ADMISSION, PIN_TIMEOUT_SCALED, TAIL_DF32, REF_OVERLAP, EARLY_REF, TILE_OCCUPANCY, LIVE_REFRESH, \
     ORBIT_LEN_CAP, RENORM, TILE_PACK, RENORM_BLA, ORBIT_SCHEDULE, SA_TRACE, CHUNK_CHARGE, \
-    CHUNK_SHUFFLE, WORKER_MOTION, WORKER_YIELD, WORKER_PASS_MS, RECORD_COST_PPM, REUSE_MAX_WRAPS, PIN_BAND_SPAN, REF_OVERTAKEN_DROP, SA_TRACE_LIVE_STEPS, GROWTH_IN_WORK, PIN_GROWTH_LANE, PRE_SWITCH_PROBE, PIN_SPAN_PRICED, TIMER_SLOTS, \
+    CHUNK_SHUFFLE, WORKER_MOTION, WORKER_YIELD, WORKER_PASS_MS, RECORD_COST_PPM, REUSE_MAX_WRAPS, PIN_BAND_SPAN, REF_OVERTAKEN_DROP, SA_TRACE_LIVE_STEPS, GROWTH_IN_WORK, PIN_GROWTH_LANE, PRE_SWITCH_PROBE, BAND_FLOATEXP, WALK_STEPS, PIN_SPAN_PRICED, TIMER_SLOTS, \
     WALK_SERIALIZE, WALK_ONSET, ACCUM_TIME_CAP_MS, NORM_TOP_QUANTILE, ASSEMBLE_PIECE_MAX";
 
 #[cfg(test)]
@@ -1419,6 +1444,25 @@ pub(crate) const PIN_GROWTH_LANE_DEFAULT: u64 = 0;
 /// (`Meter::opening_rate`, the opening only). 0 = the switch opens unmeasured (df32's rate over
 /// `MODE_RATE_UNKNOWN_MARGIN`), as before.
 pub(crate) const PRE_SWITCH_PROBE_DEFAULT: u64 = 1;
+
+/// EXPERIMENT, off by default (2026-10-30). 1 = the df32 perturbation band (`1e4×` to
+/// `PERT_FE_THRESHOLD`) renders as floatexp perturbation, with BLA as configured. Mode 0 has no
+/// BLA, so the band iterates every step: the user's dive at 2^70 settles in ~4 s on the RTX 3080
+/// (~11 s on the RX 6800 XT) doing 103k iterations a pixel.
+pub(crate) const BAND_FLOATEXP_DEFAULT: u64 = 0;
+
+/// EXPERIMENT, off by default (2026-10-30). 1 = a SETTLED mode-2 walk in the window runs
+/// step-bounded passes: each runs the whole rest of the walk and stops every pixel after a step cap
+/// that follows the last pass's wall (`decide_walk_dispatch`, `render::walk_step_cap`), as the
+/// export's and a worker GPU's walks do; the walk ends when a reading says no pixel runs. 0 =
+/// iteration windows, whose cost the BLA makes non-uniform: at the user's 2^60 view under
+/// `BAND_FLOATEXP` a window grown on a cheap stretch ran 978 ms.
+pub(crate) const WALK_STEPS_DEFAULT: u64 = 0;
+
+/// The share of the settled pass target (`TDR_BUDGET_MS`, `TDR_EXPLICIT_BUDGET_MS`) a step-bounded
+/// pass is sized for (`WALK_STEPS`): following the last wall can at most double a pass, so half
+/// keeps the worst case at the target.
+pub(crate) const WALK_STEP_TARGET_SHARE: f64 = 0.5;
 
 /// How far below the floatexp switch (octaves) a dive measures floatexp (`PRE_SWITCH_PROBE`): at
 /// 4× (~2.6 oct/s) about 0.8 s ahead, time for a probe and a retry.

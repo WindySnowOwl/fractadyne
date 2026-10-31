@@ -1758,6 +1758,14 @@ struct Perf {
     /// (`decide::DispatchState::inflight_lo`, `inflight_px`).
     chunk_inflight_lo: [u32; 2],
     chunk_inflight_px: [u64; 2],
+    /// A step-bounded settled walk (`WALK_STEPS`): its last pass's cap (`decide::DispatchState::
+    /// step_cap`); its last priced pass's cap and wall (`decide::WalkLedger::step_cap_last`,
+    /// `step_wall_last`); and THIS frame's pass's cap (0 = an iteration window), which
+    /// `bp_finish_params` hands the GPU.
+    walk_step_cap: [u32; 2],
+    chunk_step_cap_last: [u32; 2],
+    chunk_step_wall_last: [f64; 2],
+    chunk_step_cap_now: [u32; 2],
     /// Budget-climb probe (see `MandelbrotParams::probe_nonce`): bumped on settled frames while
     /// the budget is unconverged so the GPU re-measures — breaks the resolution-floor deadlock
     /// where budget growth is too small to re-key the frame and the climb freezes.
@@ -2605,6 +2613,10 @@ impl Default for Perf {
             walk_onset_from: [0; 2],
             chunk_inflight_lo: [0; 2],
             chunk_inflight_px: [0; 2],
+            walk_step_cap: [0; 2],
+            chunk_step_cap_last: [0; 2],
+            chunk_step_wall_last: [0.0; 2],
+            chunk_step_cap_now: [0; 2],
             probe_nonce: [0, 0],
             hold_active: [false, false],
             hold_uv: [[0.0, 0.0, 1.0], [0.0, 0.0, 1.0]],
