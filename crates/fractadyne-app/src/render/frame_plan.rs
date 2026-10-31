@@ -277,6 +277,29 @@ pub(crate) fn hold_scale(gap_oct: f64, jumped: bool) -> (f32, u8) {
     (scale, code)
 }
 
+/// The held frame's display transform `[uv_off.x, uv_off.y, uv_scale]` (the colour pass's
+/// reprojection, `fs_color`) for `gap_oct` octaves of zoom since it was rendered and the view's
+/// centre `off` from the held frame's centre, in spans of the view now (x right, y up), with the
+/// [`hold_floor`] code of the scale's bound.
+///
+/// ⭐⭐**The scale is bounded; the offset never is.** The shader maps the view's centre to
+/// `0.5 − uv_off` in the held frame, so `uv_off` must be the centre's TRUE place there: `off` times
+/// the true scale. It was `off` times the BOUNDED scale, which a 100× click binds at 8×: the offset
+/// came out 12.5 times too far, and any click more than about 4% of the width from the centre put
+/// the whole held picture outside the frame, which the shader fills with the frame's average colour.
+/// A flat screen for as long as the reference took to build (user, 2026-10-31: "rather than going
+/// to a solid color screen while computing, magnify the image around where it will be zoomed").
+/// Bounded, the held frame shows the clicked place magnified as far as the bound allows, about the
+/// point that becomes the view's centre. Where no bound binds (every glide and dive) the two scales
+/// are the same number, and nothing changes. A stepped Home keeps its own pair
+/// ([`home_step_hold_scale`], [`home_step_hold_shift`]).
+pub(crate) fn hold_transform(gap_oct: f64, jumped: bool, stepping: bool, off: (f64, f64)) -> ([f32; 3], u8) {
+    let (scale, code) = hold_scale(gap_oct, jumped);
+    let (true_scale, _) = hold_scale(gap_oct, false);
+    let shift = home_step_hold_shift(true_scale, stepping);
+    ([(-off.0 as f32) * shift, (off.1 as f32) * shift, home_step_hold_scale(scale, stepping)], code)
+}
+
 /// A held frame's scale while a stepped Home is under way (`HomeSteps`, `stepping`): never smaller
 /// than full size. Each stop is up to thousands of octaves out from the frame on screen, and at its
 /// true scale (up to the 2^40 the hold allows) that frame shrinks to a speck and the rest of the

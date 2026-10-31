@@ -488,7 +488,31 @@ fn composing() -> PresentInputs {
         live_verified: true,
         aa_unmeasured: false,
         frame: 100,
+        await_map: false,
     }
+}
+
+#[test]
+fn a_held_jump_picture_waits_for_the_new_views_palette_window() {
+    // A 100× click: the held picture's compose has just finished (`[ask, ask]`). Revealed now, the
+    // new picture is drawn under the OLD view's window — one pale colour (2026-10-31). Waiting, the
+    // held picture stays up, and no new snapshot is taken over the finished compose.
+    let done = PresentInputs { chunk_range: Some([50_000, 50_000]), hold_active: true, ..composing() };
+    let d = decide_present(&PresentInputs { await_map: true, ..done.clone() });
+    assert!(d.display_hold && d.hold_active && d.awaiting_map, "{d:?}");
+    assert!(!d.hold_copy && !d.pin_gate);
+    // The window adopted (or the wait over): revealed.
+    let d = decide_present(&done);
+    assert!(!d.display_hold && !d.awaiting_map);
+    // It only keeps a hold that is up — it never starts one…
+    let d = decide_present(&PresentInputs { await_map: true, hold_active: false, ..done.clone() });
+    assert!(!d.display_hold && !d.awaiting_map && !d.hold_copy);
+    // …and a moving view is never gated by it.
+    let d = decide_present(&PresentInputs { await_map: true, interacting: true, ..done.clone() });
+    assert!(!d.awaiting_map && !d.display_hold);
+    // While the compose still runs, the wait adds nothing.
+    let d = decide_present(&PresentInputs { await_map: true, hold_active: true, ..composing() });
+    assert!(d.display_hold && !d.awaiting_map);
 }
 
 #[test]

@@ -296,6 +296,60 @@ fn a_stepped_homes_held_frame_is_never_shrunk() {
     assert_eq!(home_step_hold_shift(4.0, false), 4.0);
 }
 
+/// Where `fs_color` samples the held frame for screen point `uv` (x right, y down, 0..1), the
+/// reprojection's own formula with an aspect fit of 1.
+fn held_uv(t: [f32; 3], uv: (f32, f32)) -> (f32, f32) {
+    ((uv.0 - 0.5) * t[2] + 0.5 - t[0], (uv.1 - 0.5) * t[2] + 0.5 - t[1])
+}
+
+/// A click `(fx, fy)` of the old view's width and height off its centre (x right, y up), by
+/// `factor`: the octaves since the held frame and the new centre's offset in spans of the new view.
+fn click(factor: f64, fx: f64, fy: f64) -> (f64, (f64, f64)) {
+    (-factor.log2(), (fx * factor, fy * factor))
+}
+
+#[test]
+fn a_clicks_held_frame_is_magnified_about_the_clicked_point() {
+    // The user's 100× click (2026-10-31: "rather than going to a solid color screen while
+    // computing, magnify the image around where it will be zoomed"), 0.3 of the width right of the
+    // centre and 0.1 of the height up: the screen's centre shows the clicked point of the held frame…
+    let (gap, off) = click(100.0, 0.3, 0.1);
+    let (t, code) = hold_transform(gap, true, false, off);
+    let (cx, cy) = held_uv(t, (0.5, 0.5));
+    assert!((cx - 0.8).abs() < 1.0e-5 && (cy - 0.4).abs() < 1.0e-5, "the centre shows ({cx}, {cy})");
+    // …magnified by the jump's bound, not 100× (a 14-pixel patch is a flat field).
+    assert_eq!(code, hold_floor::JUMP_BOUND);
+    assert_eq!(t[2], super::super::hold_scale_floor(true));
+    // ⛔The regression: the offset taken at the BOUNDED scale put the centre at 0.5 + 0.3 × 100 / 8
+    // = 4.25, far off the held frame, and the whole screen showed the frame's average colour.
+    for (fx, fy) in [(0.3, 0.1), (-0.43, 0.43), (0.05, -0.2), (0.0, 0.0)] {
+        let (gap, off) = click(100.0, fx, fy);
+        let (t, _) = hold_transform(gap, true, false, off);
+        for corner in [(0.0, 0.0), (1.0, 0.0), (0.0, 1.0), (1.0, 1.0), (0.5, 0.5)] {
+            let (u, v) = held_uv(t, corner);
+            assert!(
+                (0.0..=1.0).contains(&u) && (0.0..=1.0).contains(&v),
+                "a click at ({fx}, {fy}): screen {corner:?} samples ({u}, {v}), outside the held frame"
+            );
+        }
+    }
+}
+
+#[test]
+fn a_held_frame_no_bound_binds_keeps_the_transform_it_had() {
+    // Every glide and dive, and a jump within the bound: the scale is the true one, and the offset
+    // is the offset times it — exactly the transform before the bound and the offset were split.
+    for (gap, jumped) in [(-0.4, false), (-6.64, false), (-13.0, false), (-2.5, true), (1.5, true), (3.0, false)] {
+        let off = (3.25, -1.5);
+        let (t, _) = hold_transform(gap, jumped, false, off);
+        let s = (gap as f32).exp2();
+        assert_eq!(t, [-3.25 * s, -1.5 * s, s], "gap {gap} jumped {jumped}");
+    }
+    // A stepped Home: full size at most, and centred.
+    let (t, _) = hold_transform(2000.0, false, true, (40.0, 7.0));
+    assert_eq!(t, [0.0, 0.0, 1.0]);
+}
+
 #[test]
 fn a_stepped_homes_stop_renders_small_and_nothing_else_does() {
     // A still stop: a quarter of the panel's width, or less if the frame was smaller already.

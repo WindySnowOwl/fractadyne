@@ -1627,6 +1627,14 @@ struct Perf {
     hold_step_last: [f64; 2],
     hold_seen_frame: [u64; 2],
     hold_jump: [bool; 2],
+    /// A held picture standing across a jump has been on screen (`hold_transform_for` with the jump
+    /// bound), and the new view's picture has not replaced it yet: it waits for its own palette
+    /// window (`decide::PresentInputs::await_map`, until `jump_map_until`, app micros) and arrives
+    /// as a cut, not a dissolve from the old view's colours. `shown_held`: the last frame showed a
+    /// held picture (a hold snapshot or a reprojection).
+    jump_reveal: [bool; 2],
+    jump_map_until: [Option<u64>; 2],
+    shown_held: [bool; 2],
     /// A stepped Home is under way (`HomeSteps`): a held frame is shown no smaller than full size
     /// (`frame_plan::home_step_hold_scale`), not shrunk by the thousands of octaves to the stop.
     hold_home_step: [bool; 2],
@@ -2573,6 +2581,9 @@ impl Default for Perf {
             hold_step_last: [f64::NAN; 2],
             hold_seen_frame: [u64::MAX; 2],
             hold_jump: [false, false],
+            jump_reveal: [false, false],
+            jump_map_until: [None, None],
+            shown_held: [false, false],
             hold_home_step: [false, false],
             hold_floor_frames: [[0; 5]; 2],
             hold_bound_moving: [0, 0],

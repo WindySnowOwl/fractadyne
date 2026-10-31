@@ -1575,11 +1575,24 @@ pub(crate) const HELD_MAX_OCT: f64 = 0.5;
 /// frame — the reason the continuous floor sits all the way down at 2^-40. A jump is static by
 /// construction, so there is no motion for a clamped transform to slide against.
 ///
+/// ⛔**…but a static offset that is too far is still too far.** Until 2026-10-31 the offset was
+/// taken at the clamped scale too: 12.5 times too far after a 100× click, so a click more than
+/// about 4% of the width off centre put the held picture off the screen, and the screen showed the
+/// frame's average colour until the new picture arrived. The offset is now always the true one
+/// (`frame_plan::hold_transform`): the bound magnifies about the clicked point.
+///
 /// ⚠"A jump" is decided by `frame_plan::hold_jump_next`: some frame since the held one was latched
 /// zoomed in suddenly (`frame_plan::is_jump_in`: a step from rest, not a glide at any speed). It
 /// used to be "no zoom velocity", which only Space writes, so every auto-zoom dive, wheel zoom, Home
 /// glide and tour took this floor and slid (U39).
 pub(crate) const HELD_JUMP_MAX_OCT: f64 = 3.0;
+
+/// The longest a held picture standing across a jump stays up, once the new view's compose is done,
+/// waiting for the new view's palette window (`decide::PresentInputs::await_map`), seconds. The
+/// window comes from the compose's own escape-range reading, back a few frames after its last pass
+/// (3 frames, 48 ms, after a 100× click at 2^429 on the RTX 3080); a reading that never comes must
+/// not keep the new picture off the screen.
+pub(crate) const JUMP_MAP_WAIT_S: f64 = 0.25;
 
 /// The share of a view's neighbouring pixel pairs that must step past Nyquist (see
 /// `render::ALIAS_PHASE_LIMIT`) before "Normalize deep colors" engages on its own. Read against the
