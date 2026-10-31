@@ -47,6 +47,7 @@ max = 0
 instrument_ok = true
 why = "a pass still in flight past the lethal band, with no drain"
 mode.autodive = { max = 100000, why = "the device-loss hammer" }
+mode.recordtest = { max = 1, why = "its 13 s wedge freezes the app with whatever pass is in flight, and the wall it accumulates is the wedge's: a settled step-bounded walk (WALK_STEPS) can still be walking at frame 180, where a window walk had finished (dev.63 on the RX 6800 XT, 2026-10-31)" }
 mode.livetest = { max = 15, known = true, why = "livetest plays each tour segment inside one update(), so a pass's time accumulates with no drain between frames: 8-12 lines a run on BOTH cards since beta.111, a harness artefact (filed with '--livetest records zero frames'). A TDR_LETHAL_MS=1 run sheds far more, and still fails" }
 
 [[rule]]
