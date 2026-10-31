@@ -1627,6 +1627,17 @@ struct Perf {
     hold_step_last: [f64; 2],
     hold_seen_frame: [u64; 2],
     hold_jump: [bool; 2],
+    /// A held picture standing across a jump is on screen (`hold_transform_for` with the jump
+    /// bound), and the new view's picture has not replaced it yet: the palette window it was shown
+    /// under when the jump came (`None` inside: classic colours) and the user's colouring then
+    /// (`norm_user_sig`). It is drawn under that window until it goes — a snap to the nearest
+    /// nucleus (`finish_nav_jump` → `invalidate_refs`) wipes the live one — and the new picture
+    /// waits for its own window (`decide::PresentInputs::await_map`, until `jump_map_until`, app
+    /// micros) and arrives as a cut, not a dissolve from the old view's colours. `shown_held`: the
+    /// last frame showed a held picture (a hold snapshot or a reprojection).
+    jump_win: [Option<(Option<(f32, f32)>, u64)>; 2],
+    jump_map_until: [Option<u64>; 2],
+    shown_held: [bool; 2],
     /// A stepped Home is under way (`HomeSteps`): a held frame is shown no smaller than full size
     /// (`frame_plan::home_step_hold_scale`), not shrunk by the thousands of octaves to the stop.
     hold_home_step: [bool; 2],
@@ -2573,6 +2584,9 @@ impl Default for Perf {
             hold_step_last: [f64::NAN; 2],
             hold_seen_frame: [u64::MAX; 2],
             hold_jump: [false, false],
+            jump_win: [None, None],
+            jump_map_until: [None, None],
+            shown_held: [false, false],
             hold_home_step: [false, false],
             hold_floor_frames: [[0; 5]; 2],
             hold_bound_moving: [0, 0],
@@ -9124,6 +9138,42 @@ impl FractadyneApp {
     /// the view interacting so it settles to full quality afterward. `now` = `ctx.input(|i| i.time)`.
     fn click_zoom_at(&mut self, px: f64, py: f64, out: bool, now: f64) {
         self.click_zoom_at_view(px, py, out, now, false);
+    }
+
+    /// The single view's click, as the user makes it: the jump (`click_zoom_at`), then — with
+    /// "Snap to nearest center" on — the nucleus solve that settles the centre onto the nearest
+    /// minibrot (`start_snap_solve`; it declines a Julia view or a family without the solvers).
+    ///
+    /// ⛔The single view jumped and never snapped. The snap was added to the dual-view panels' click
+    /// (`nav_and_draw`) alone, and `draw_central` called `click_zoom_at`, so the setting did nothing
+    /// in single view from the day it shipped (c1b1fea4) — the 2026-10-31 user report: "fix the
+    /// snap to center so it works if enabled". ⭐One method for the click AND its snap, which the
+    /// click harness (`--zoomtest-click`) calls too, so it cannot drift from the UI's click again.
+    pub(crate) fn click_zoom_and_snap(&mut self, ctx: &egui::Context, px: f64, py: f64, out: bool) {
+        let aim = self.viewport.pixel_to_complex(px, py);
+        self.click_zoom_at(px, py, out, ctx.input(|i| i.time));
+        // The line the dual-view panels write for every click (`nav_and_draw`): how far the clicked
+        // point landed from the centre, which separates a mis-landing from aim error × factor.
+        let vp = &self.viewport;
+        let dx = fractadyne_core::sub_f64(&vp.center_x, &aim.0, vp.precision);
+        let dy = fractadyne_core::sub_f64(&vp.center_y, &aim.1, vp.precision);
+        let dist = (dx * dx + dy * dy).sqrt();
+        let err_px = if dist > 0.0 { (dist.log2() - vp.units_per_pixel.log2()).exp2() } else { 0.0 };
+        let f = self.render_cfg.click_zoom_factor.max(1.01);
+        crate::diag::log_line(
+            "view",
+            &format!(
+                "click-zoom view 0: clicked ({px:.1},{py:.1}) of {:.0}x{:.0} px, factor {}{f:.0}× — the \
+                 clicked point landed {err_px:.2} px from centre (anything near 0 means the click was \
+                 exact and what moved is your aim, magnified {f:.0}×)",
+                vp.width_px,
+                vp.height_px,
+                if out { "1/" } else { "" },
+            ),
+        );
+        if self.click_zoom_snap {
+            self.start_snap_solve(ctx);
+        }
     }
 
     /// Click-to-zoom on a named panel. `px`/`py` are physical pixels within THAT panel's rect, not

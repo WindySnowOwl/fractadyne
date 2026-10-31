@@ -6531,9 +6531,30 @@ impl FractadyneApp {
             live_verified: self.perf.content[vs.min(1)].live_verified(),
             aa_unmeasured: self.perf.aa_measured[vs].is_none() && self.perf.aa_probe[vs].is_none(),
             frame: self.perf.frame_idx,
+            // A held jump picture waits for the new view's palette window: only under normalised
+            // colouring — the held picture's, or the live view's (a snap wipes the live one until
+            // the new view's readings return) — until the view's mapping is adopted, and no longer
+            // than `JUMP_MAP_WAIT_S` once the compose is done.
+            await_map: {
+                let vb = vs.min(1);
+                self.perf.jump_win[vb].is_some_and(|(w, _)| w.is_some() || self.live_norm_window(vb).is_some())
+                    && !self.perf.norm_locked[vb]
+                    && self.perf.jump_map_until[vb].is_none_or(|t| crate::app_micros() < t)
+            },
         };
         let d = crate::render::decide::decide_present(&inputs);
         // The state the decision writes.
+        let vb = vs.min(1);
+        self.perf.jump_map_until[vb] = d.awaiting_map.then(|| {
+            self.perf.jump_map_until[vb]
+                .unwrap_or_else(|| crate::app_micros() + (crate::tunables::JUMP_MAP_WAIT_S * 1.0e6) as u64)
+        });
+        if d.awaiting_map && crate::diag::trace_on("tile") {
+            crate::diag::trace(
+                "tile",
+                format!("hold-for-map v={vs} f={}: the held jump picture waits for the new view's palette window", self.perf.frame_idx),
+            );
+        }
         self.perf.hold_active[vs] = d.hold_active;
         if let Some(v) = d.hold_verified {
             self.perf.content[vs.min(1)].hold_verified = v;
@@ -6863,8 +6884,40 @@ impl FractadyneApp {
         if hold_copy {
             self.perf.hold_norm[vs] = Some((live_win, user_sig));
         }
+        // ⭐A held picture that stood across a JUMP gives way to the new view's as a CUT: the drawn
+        // window, the dissolve and the carried phase start afresh at the new picture's own window.
+        // Each exists to keep ONE picture's colours steady from frame to frame; across a jump the
+        // picture itself changes, and the old view's window drew the new picture as one pale colour
+        // that dissolved into it over 0.4 s (2026-10-31, a 100× click at 2^429). The hold waits for
+        // that window first (`decide::PresentInputs::await_map`).
+        let shown_held = display_hold || reproject.is_some();
+        let vb = vs.min(1);
+        if self.perf.jump_win[vb].is_some() && self.perf.shown_held[vb] && !shown_held {
+            self.perf.jump_win[vb] = None;
+            self.perf.jump_map_until[vb] = None;
+            self.perf.norm_drawn[vs] = None;
+            self.perf.palette_fade[vs] = PaletteFadeState::default();
+            self.perf.palette_phase[vs] = PhaseCarry::default();
+            if crate::diag::trace_on("palette") || crate::diag::trace_on("tile") {
+                crate::diag::trace(
+                    "tile",
+                    format!(
+                        "jump-reveal v={vs} f={}: the new picture arrives as a cut, window {live_win:?} locked={}",
+                        self.perf.frame_idx, self.perf.norm_locked[vb]
+                    ),
+                );
+            }
+        }
+        self.perf.shown_held[vb] = shown_held;
         // The held picture's own window, while one is served (inside, `None`: classic colours).
-        let held_map = self.perf.hold_norm[vs].filter(|&(_, u)| display_hold && u == user_sig).map(|(w, _)| w);
+        // ⭐A picture held across a jump keeps the window it had when the jump came
+        // (`Perf::jump_win`), reprojected or snapshotted alike: a snap to the nearest nucleus wipes
+        // the live window (`invalidate_refs`), and the held picture, its escapes near 190,000 at
+        // 2^40, was drawn under the classic map — the palette wrapping every few iterations, a field
+        // of speckle for the second the snapped view took (2026-10-31).
+        let jump_map = self.perf.jump_win[vb].filter(|&(_, u)| shown_held && u == user_sig).map(|(w, _)| w);
+        let held_map = jump_map
+            .or_else(|| self.perf.hold_norm[vs].filter(|&(_, u)| display_hold && u == user_sig).map(|(w, _)| w));
         // ⭐…REACHED BY GLIDING: a picture of another source wants another window, and drawing it at
         // once snapped the palette (`drawn_norm_step`).
         self.perf.norm_drawn[vs] = drawn_norm_step(
@@ -7346,25 +7399,29 @@ impl FractadyneApp {
         params
     }
 
-    /// The held frame's translation factor on view `v` (its offset times this): the scale, except
-    /// during a stepped Home, whose held frame is shown centred (`frame_plan::home_step_hold_shift`).
-    fn hold_shift_for(&self, v: usize, scale: f32) -> f32 {
-        crate::render::frame_plan::home_step_hold_shift(scale, self.perf.hold_home_step[v.min(1)])
-    }
-
-    /// The held frame's reprojection scale on view `v` for `gap_oct` octaves of zoom since it was
-    /// rendered (`frozen − now`), bounded by `hold_scale_floor`. ⭐The ONE site the four hold
-    /// transforms (the freeze, a worker frame, the two snapshots) take it from, so the bound they
-    /// apply cannot differ — and the bound that applied goes into the frame record (`hold_floor`,
-    /// U39: whether a jump clamp put the held frame on screen at the wrong scale).
-    fn hold_scale_for(&mut self, v: usize, gap_oct: f64) -> f32 {
+    /// The held frame's display transform on view `v` (`frame_plan::hold_transform`):
+    /// `[uv_off.x, uv_off.y, uv_scale]` for `gap_oct` octaves of zoom since it was rendered
+    /// (`frozen − now`) and the view's centre `off` from the held frame's, in spans of the view now.
+    /// ⭐The ONE site the four hold transforms (the freeze, a worker frame, the two snapshots) take
+    /// it from, so the bound they apply cannot differ — and the bound that applied goes into the
+    /// frame record (`hold_floor`, U39: whether a jump clamp put the held frame on screen at a
+    /// smaller magnification than the view's).
+    fn hold_transform_for(&mut self, v: usize, gap_oct: f64, off: (f64, f64)) -> [f32; 3] {
         // U39: the jump floor only where a jump stands between the held frame and the view
         // (`frame_plan::hold_jump_next`), never inferred from a zoom velocity only Space writes.
         let jumped = self.perf.hold_jump[v.min(1)];
-        let (scale, code) = crate::render::frame_plan::hold_scale(gap_oct, jumped);
+        let stepping = self.perf.hold_home_step[v.min(1)];
+        let (t, code) = crate::render::frame_plan::hold_transform(gap_oct, jumped, stepping, off);
+        // The held picture keeps the colours it had when the jump came (`Perf::jump_win`), taken on
+        // the jump's first held frame — before anything at the new view could feed the window — and
+        // kept through a second click or a snap until the new picture replaces it.
+        if jumped && self.perf.jump_win[v.min(1)].is_none() {
+            let win = self.live_norm_window(v.min(1));
+            self.perf.jump_win[v.min(1)] = Some((win, self.norm_user_sig()));
+        }
         let p = &mut self.perf.hold_floor_pending[v.min(1)];
         *p = (*p).max(code);
-        crate::render::frame_plan::home_step_hold_scale(scale, self.perf.hold_home_step[v.min(1)])
+        t
     }
 
     /// A moving df32 frame of view `lr` did not render live, for `why`: remember it, and under
@@ -9280,15 +9337,16 @@ impl FractadyneApp {
                         // leaves an 11-pixel patch covering the panel — flat, and black if the
                         // patch was dark (the 2026-09-17 "sometimes goes black" report, caught in
                         // the act at 2^174 on 2026-09-18). A dive, by contrast, must keep its true
-                        // scale or the held frame slides. `hold_scale_floor` owns that split.
-                        let scale = self.hold_scale_for(vi, self.ref_cache[vi].frozen_l2 - log2mag);
-                        let shift = self.hold_shift_for(vi, scale);
+                        // scale or the held frame slides. `hold_scale_floor` owns that split, and
+                        // `frame_plan::hold_transform` keeps the offset at the true scale either way.
                         let px = fractadyne_core::ref_offset_mantissa(&center_bf[0], &fc[0], delta_exp, precision)
                             / span_mantissa.x;
                         let py = fractadyne_core::ref_offset_mantissa(&center_bf[1], &fc[1], delta_exp, precision)
                             / span_mantissa.y;
+                        let [ox, oy, scale] =
+                            self.hold_transform_for(vi, self.ref_cache[vi].frozen_l2 - log2mag, (px, py));
                         reproject_scale = scale;
-                        reproject = Some([(-px as f32) * shift, (py as f32) * shift]);
+                        reproject = Some([ox, oy]);
                     }
                     None => reproject = Some([0.0, 0.0]), // nothing rendered yet → static hold
                 }
@@ -9542,14 +9600,13 @@ impl FractadyneApp {
                         // Nothing gates the display: the texture it reprojects is now whole, and
                         // this frame's transform is taken from the worker frame's view.
                         self.perf.chunk_dirty[vsub] = false;
-                        let scale = self.hold_scale_for(vi, t.log2mag - log2mag);
-                        let shift = self.hold_shift_for(vi, scale);
                         let px = fractadyne_core::ref_offset_mantissa(&center_bf[0], &t.center_bf[0], delta_exp, precision)
                             / span_mantissa.x;
                         let py = fractadyne_core::ref_offset_mantissa(&center_bf[1], &t.center_bf[1], delta_exp, precision)
                             / span_mantissa.y;
+                        let [ox, oy, scale] = self.hold_transform_for(vi, t.log2mag - log2mag, (px, py));
                         reproject_scale = scale;
-                        reproject = Some([(-px as f32) * shift, (py as f32) * shift]);
+                        reproject = Some([ox, oy]);
                     }
                 }
                 if crate::diag::trace_on("live") {
@@ -9608,15 +9665,13 @@ impl FractadyneApp {
             if hold_copy {
                 self.perf.hold_uv[vs] = match self.ref_cache[vi].frozen_center.clone() {
                     Some(fc) => {
-                        let scale = self.hold_scale_for(vi, self.ref_cache[vi].frozen_l2 - log2mag);
-                        let shift = self.hold_shift_for(vi, scale);
                         let px = fractadyne_core::ref_offset_mantissa(
                             &center_bf[0], &fc[0], delta_exp, precision,
                         ) / span_mantissa.x;
                         let py = fractadyne_core::ref_offset_mantissa(
                             &center_bf[1], &fc[1], delta_exp, precision,
                         ) / span_mantissa.y;
-                        [(-px as f32) * shift, (py as f32) * shift, scale]
+                        self.hold_transform_for(vi, self.ref_cache[vi].frozen_l2 - log2mag, (px, py))
                     }
                     // Nothing frozen (e.g. the very first render): the snapshot IS this view — 1:1.
                     None => [0.0, 0.0, 1.0],
@@ -9638,13 +9693,11 @@ impl FractadyneApp {
                         } else {
                             (delta_exp, span_mantissa.x, span_mantissa.y, precision)
                         };
-                        let scale = self.hold_scale_for(vi, self.ref_cache[vi].frozen_l2 - l2);
-                        let shift = self.hold_shift_for(vi, scale);
                         let px =
                             fractadyne_core::ref_offset_mantissa(&cbf[0], &fc[0], de, prec) / smx;
                         let py =
                             fractadyne_core::ref_offset_mantissa(&cbf[1], &fc[1], de, prec) / smy;
-                        [(-px as f32) * shift, (py as f32) * shift, scale]
+                        self.hold_transform_for(vi, self.ref_cache[vi].frozen_l2 - l2, (px, py))
                     }
                     None => [0.0, 0.0, 1.0],
                 };
@@ -11792,8 +11845,9 @@ mod palette_fade;
 /// ⚠**One definition, one caller.** The freeze path, a worker frame's transform and the two
 /// `hold_uv` snapshots (the settled hold gate and the pinned-refresh display gate) all describe the
 /// SAME transform; if their floors disagreed the display would contradict its own bookkeeping, so
-/// the policy lives here and all four take it through `frame_plan::hold_scale`
-/// (`FractadyneApp::hold_scale_for`), which also says which bound applied.
+/// the policy lives here and all four take it through `frame_plan::hold_transform`
+/// (`FractadyneApp::hold_transform_for`), which also says which bound applied. ⚠It bounds the
+/// SCALE only: the offset stays at the true scale, or the bounded frame lands off the screen.
 pub(crate) fn hold_scale_floor(jumped: bool) -> f32 {
     if jumped {
         (-crate::tunables::HELD_JUMP_MAX_OCT as f32).exp2()

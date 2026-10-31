@@ -59,6 +59,17 @@ published as the pre-releases `v0.2.41-beta.1` to `v0.2.41-beta.150`, and a "bet
 
 Changes after 0.3.0-beta.1:
 
+- **Click-to-zoom keeps a picture on screen while the new view computes (0.3.0-beta.22).** After a
+  click, the old picture is shown magnified around the clicked point until the new view is ready.
+  A click more than a few percent of the width away from the centre used to place that magnified
+  picture off the screen, so the view went to one flat colour for as long as the new view took:
+  1.9 s after a 100× click at 2^40 on an RTX 3080. When the new picture is ready it now appears
+  at once in its own colours; it used to start as an almost uniform pale wash in the old view's
+  colours and fade in over half a second.
+- **"Snap to nearest center" works in the single view (0.3.0-beta.22).** The option only ever
+  acted in the dual view's panels: a click in the single view jumped and never snapped. It now
+  settles the centre onto the nearest minibrot after a click in either, and the picture held while
+  the snapped view computes keeps its colours instead of turning to speckle.
 - **Deep views between 10,000× and 1e28× finish two to three times faster (0.3.0-beta.22).** In
   that range the live view iterated every step; it now skips runs of steps with the same
   approximation (BLA) the views past 1e28× use, and finishes a still view in passes bounded by

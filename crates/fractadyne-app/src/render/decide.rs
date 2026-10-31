@@ -426,6 +426,15 @@ pub(crate) struct PresentInputs {
     pub(crate) aa_unmeasured: bool,
     /// The frame, which an armed probe is stamped with.
     pub(crate) frame: u64,
+    /// The held picture stands across a JUMP and the new view's palette window is not adopted yet
+    /// (the caller: normalised colouring, the view's mapping not locked, within
+    /// `tunables::JUMP_MAP_WAIT_S` of the compose ending).
+    #[serde(default, skip_serializing_if = "is_false")]
+    pub(crate) await_map: bool,
+}
+
+fn is_false(b: &bool) -> bool {
+    !*b
 }
 
 /// What [`decide_present`] decides, and the state it writes.
@@ -443,6 +452,9 @@ pub(crate) struct PresentDecision {
     pub(crate) hold_active: bool,
     pub(crate) hold_verified: Option<bool>,
     pub(crate) aa_probe: Option<AaProbe>,
+    /// The hold stays up with nothing composing, for the new view's palette window (`await_map`).
+    #[serde(default, skip_serializing_if = "is_false")]
+    pub(crate) awaiting_map: bool,
 }
 
 /// A settled-cost probe armed this frame: at this ss, on this frame, pricing these nominal steps.
@@ -507,10 +519,17 @@ pub(crate) fn decide_present(i: &PresentInputs) -> PresentDecision {
         // An armed grid (the coarse arm frame is about to render) or one with tiles left
         // (`PresentInputs::grid_composing`, read from the grid by the caller).
         || i.grid_composing;
+    // ⭐A held picture standing across a JUMP stays up once its compose is done, until the new
+    // view's palette window is adopted (`await_map`). Revealed at once, the new picture was drawn
+    // under the OLD view's window for the frames its reading took to come back, then dissolved
+    // from it: after a 100× click at 2^429 the whole new picture lay in 1% of the old window, one
+    // pale colour that took 0.4 s to fade into the picture (2026-10-31). Only an existing hold is
+    // kept; none is started for it.
+    let awaiting_map = !composing && i.await_map && i.hold_active;
     let mut pin_gate = false;
     let mut hold_active = i.hold_active;
     let mut hold_verified = None;
-    let (hold_copy, display_hold) = if gate_capable && composing {
+    let (hold_copy, display_hold) = if gate_capable && (composing || awaiting_map) {
         // ⭐W6 (U42): a snapshot only of a texture KNOWN to hold a picture, exactly as the pin
         // branch below takes one. This branch took it of whatever the texture held — a cleared
         // texture's blank, an abandoned walk's residue — and served it for the whole compose. With
@@ -581,7 +600,16 @@ pub(crate) fn decide_present(i: &PresentInputs) -> PresentDecision {
     } else {
         1
     };
-    PresentDecision { hold_copy, display_hold, pin_gate, aa_filter, hold_active, hold_verified, aa_probe }
+    PresentDecision {
+        hold_copy,
+        display_hold,
+        pin_gate,
+        aa_filter,
+        hold_active,
+        hold_verified,
+        aa_probe,
+        awaiting_map: awaiting_map && gate_capable,
+    }
 }
 
 /// The adaptive live-iteration climb's state, one view, carried between frames (`Perf::iter_boost`,
