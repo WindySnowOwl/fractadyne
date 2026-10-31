@@ -34,6 +34,9 @@ pub(crate) enum AuditKind {
     Tail,
     /// `--renorm-audit`: the perturbation loop alone (`RENORM=0`) against THE RENORMALIZED STEP.
     Renorm,
+    /// `--band-audit`: a view in the df32 band (`1e4×` to `PERT_FE_THRESHOLD`) as df32 perturbation,
+    /// as an export draws it, against floatexp with BLA, as the live view draws it (`BAND_FLOATEXP`).
+    Band,
 }
 
 impl AuditKind {
@@ -43,6 +46,7 @@ impl AuditKind {
             AuditKind::Correction => ("uncorrected", "corrected"),
             AuditKind::Tail => ("floatexp", "df32 tail"),
             AuditKind::Renorm => ("perturbation", "renormalized"),
+            AuditKind::Band => ("df32", "floatexp+BLA"),
         }
     }
 }
@@ -146,7 +150,7 @@ struct Sample {
 impl crate::FractadyneApp {
     /// Run the audit at the current view and export size; prints its table and returns the summary.
     pub(crate) fn run_glitch_audit(
-        &self,
+        &mut self,
         device: &eframe::wgpu::Device,
         queue: &eframe::wgpu::Queue,
         samples: usize,
@@ -232,6 +236,29 @@ impl crate::FractadyneApp {
                 fractadyne_gpu::set_tail_df32(crate::tunables::cost().tail_df32 == 1);
                 println!("  {la} {first_s:.1} s · {lb} {:.1} s", t1.elapsed().as_secs_f64());
                 (a?.pixels, b?.pixels)
+            }
+            AuditKind::Band => {
+                // The export's own request (df32 in the band), then the same view with a strip's
+                // arithmetic (`with_strip_arithmetic`: floatexp, BLA as configured), whose reference
+                // is built with its BLA tree.
+                if req.mode != crate::RenderMode::Df32Pert.to_u32() {
+                    return Ok(format!("audit: VACUOUS — mode {} is not the df32 band", req.mode));
+                }
+                let a = plain(device, queue)?.pixels;
+                let first_s = t0.elapsed().as_secs_f64();
+                let vp = self.viewport.clone();
+                let b_req = match self.with_strip_arithmetic(&vp, true, |app| app.build_export_job()) {
+                    crate::ExportJob::Single(r) => r,
+                    _ => return Err(AppError::Message("--band-audit needs a single view (not dual)".into())),
+                };
+                let mut b_req = b_req;
+                b_req.ss = 1;
+                b_req.glitch_on = 0;
+                println!("  second request: mode {}, bla_on {}, {} BLA entries", b_req.mode, b_req.bla_on, b_req.bla.len());
+                let t1 = std::time::Instant::now();
+                let b = fractadyne_gpu::render_iter_tiled(device, queue, &b_req, crate::tunables::CORRECT_WORK_BUDGET, None, None, None)?.pixels;
+                println!("  {la} {first_s:.1} s · {lb} {:.1} s", t1.elapsed().as_secs_f64());
+                (a, b)
             }
             AuditKind::Renorm => {
                 // The same plain render without the step, then with the one this view's reference chose.

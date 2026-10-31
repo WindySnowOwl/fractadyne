@@ -55,7 +55,7 @@ HARNESS_HOOKS = {
     # logcheck at start and exit, --oomtest, FractadyneApp's harness fields (the four mode states and
     # the profiler's timings: type, doc, initialiser), --render's --glitch-audit kind, the windowed
     # harnesses' flags (one call to harness::modes::Windowed::from_args) and the banner's policy.
-    'crates/fractadyne-app/src/main.rs': 26,
+    'crates/fractadyne-app/src/main.rs': 22,
     # the headless dispatch: --torture, --logcheck, --gputest, --replay, one call per developer
     # mode, and RenderCli's --glitch-audit kind.
     'crates/fractadyne-app/src/cli.rs': 11,

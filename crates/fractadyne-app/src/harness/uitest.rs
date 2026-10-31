@@ -2100,14 +2100,17 @@ impl FractadyneApp {
             mag_log10 = Some(self.viewport.log2_magnification() / std::f64::consts::LOG2_10);
             frame_ms = Some(self.perf.frame_ms);
 
-            // The mode the app chose must match the mode this depth band exists to exercise.
-            if got == v.expect {
+            // The mode the app chose must match the mode this depth band exists to exercise — in the
+            // df32 band, floatexp wherever the live view runs the band with BLA (`band_bla`,
+            // `BAND_FLOATEXP`). The blank-frame rule above still reads the band as shallow.
+            let want = if v.expect == RenderMode::Df32Pert && self.band_bla(self.fractal, false) { RenderMode::Floatexp } else { v.expect };
+            if got == want {
                 checks.push(pass("render mode matches depth", format!("{got:?}")));
             } else {
                 checks.push(Check {
                     name: "render mode matches depth".into(),
                     verdict: Verdict::Fail,
-                    detail: format!("expected {:?}, got {got:?}", v.expect),
+                    detail: format!("expected {want:?}, got {got:?}"),
                 });
             }
             // A real iterate must have run. Perturbation modes build a reference orbit

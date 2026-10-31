@@ -1758,6 +1758,15 @@ struct Perf {
     /// (`decide::DispatchState::inflight_lo`, `inflight_px`).
     chunk_inflight_lo: [u32; 2],
     chunk_inflight_px: [u64; 2],
+    /// A step-bounded settled walk (`WALK_STEPS`): its last pass's cap and its passes' caps summed
+    /// (`decide::DispatchState::step_cap`, `step_sum`); its last priced pass's cap and wall (`decide::WalkLedger::step_cap_last`,
+    /// `step_wall_last`); and THIS frame's pass's cap (0 = an iteration window), which
+    /// `bp_finish_params` hands the GPU.
+    walk_step_cap: [u32; 2],
+    walk_step_sum: [u64; 2],
+    chunk_step_cap_last: [u32; 2],
+    chunk_step_wall_last: [f64; 2],
+    chunk_step_cap_now: [u32; 2],
     /// Budget-climb probe (see `MandelbrotParams::probe_nonce`): bumped on settled frames while
     /// the budget is unconverged so the GPU re-measures — breaks the resolution-floor deadlock
     /// where budget growth is too small to re-key the frame and the climb freezes.
@@ -2605,6 +2614,11 @@ impl Default for Perf {
             walk_onset_from: [0; 2],
             chunk_inflight_lo: [0; 2],
             chunk_inflight_px: [0; 2],
+            walk_step_cap: [0; 2],
+            walk_step_sum: [0; 2],
+            chunk_step_cap_last: [0; 2],
+            chunk_step_wall_last: [0.0; 2],
+            chunk_step_cap_now: [0; 2],
             probe_nonce: [0, 0],
             hold_active: [false, false],
             hold_uv: [[0.0, 0.0, 1.0], [0.0, 0.0, 1.0]],
@@ -6927,25 +6941,27 @@ impl FractadyneApp {
         let render_iter_mode = args.iter().any(|a| a == "--render-iter");
         // `--glitch-audit [N]`: an optional count. ABSENT (no value, or the next token is a flag)
         // takes the default; PRESENT but unreadable is an error, never a silent default.
+        use crate::harness::glitchaudit::{AuditKind, DEFAULT_SAMPLES};
         let audit_count = |flag: &str| {
             args.iter().position(|a| a == flag).map(|i| match args.get(i + 1).filter(|s| !s.starts_with('-')) {
-                None => crate::harness::glitchaudit::DEFAULT_SAMPLES,
+                None => DEFAULT_SAMPLES,
                 Some(s) => crate::arg_parse::<usize>(flag, s, "a whole number of pixels").max(1),
             })
         };
         let audits = [
-            (audit_count("--glitch-audit"), crate::harness::glitchaudit::AuditKind::Correction),
-            (audit_count("--tail-audit"), crate::harness::glitchaudit::AuditKind::Tail),
-            (audit_count("--renorm-audit"), crate::harness::glitchaudit::AuditKind::Renorm),
+            (audit_count("--glitch-audit"), AuditKind::Correction),
+            (audit_count("--tail-audit"), AuditKind::Tail),
+            (audit_count("--renorm-audit"), AuditKind::Renorm),
+            (audit_count("--band-audit"), AuditKind::Band),
         ];
         let chosen: Vec<_> = audits.iter().filter_map(|(n, k)| n.map(|n| (n, *k))).collect();
         if chosen.len() > 1 {
-            eprintln!("fractadyne: --glitch-audit, --tail-audit and --renorm-audit compare different renders; pass one");
+            eprintln!("fractadyne: --glitch-audit, --tail-audit, --renorm-audit and --band-audit compare different renders; pass one");
             crate::exit(2)
         }
         let (glitch_audit, audit_kind) = match chosen.first() {
             Some(&(n, k)) => (Some(n), k),
-            None => (None, crate::harness::glitchaudit::AuditKind::Correction),
+            None => (None, AuditKind::Correction),
         };
         // `--render-expmap DIR`: a dive as exponential-map strips (`expmap_render`). It takes the
         // same view options as `--render`, read by `apply_cli_render`, so it rides on `run`.
