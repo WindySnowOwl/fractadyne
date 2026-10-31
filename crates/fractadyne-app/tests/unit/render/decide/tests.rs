@@ -1566,11 +1566,17 @@ fn a_step_walk_follows_the_last_wall_and_alternates_its_start() {
     // Priced at 50 ms: still only doubles. At 400 ms: halves.
     assert_eq!(decide_walk_dispatch(&WalkDispatchInputs { step_wall_last: 50.0, ..i.clone() }).step_cap, 2_000);
     assert_eq!(decide_walk_dispatch(&WalkDispatchInputs { step_wall_last: 400.0, ..i.clone() }).step_cap, 500);
-    // The running count of THIS walk charges the pass; another walk's does not.
-    let counted = WalkDispatchInputs { running: Some((7, 20_000, 40_000)), ..i.clone() };
-    assert_eq!(decide_walk_dispatch(&counted).state.charged_px, 40_000);
-    let other = WalkDispatchInputs { running: Some((6, 20_000, 40_000)), ..i };
+    // The running count of THIS walk charges the pass, never below the occupancy knee; another walk's
+    // count does not, and with no knee known the whole frame is charged (`walk_charged_px`).
+    let knee = WalkDispatchInputs { knee_px: 100_000, ..i.clone() };
+    let counted = WalkDispatchInputs { running: Some((7, 20_000, 400_000)), ..knee.clone() };
+    assert_eq!(decide_walk_dispatch(&counted).state.charged_px, 400_000);
+    let thin = WalkDispatchInputs { running: Some((7, 20_000, 2)), ..knee.clone() };
+    assert_eq!(decide_walk_dispatch(&thin).state.charged_px, 100_000, "a thin tail is charged the knee");
+    let other = WalkDispatchInputs { running: Some((6, 20_000, 400_000)), ..knee };
     assert_eq!(decide_walk_dispatch(&other).state.charged_px, 800_000);
+    let unknown = WalkDispatchInputs { running: Some((7, 20_000, 400_000)), ..i };
+    assert_eq!(decide_walk_dispatch(&unknown).state.charged_px, 800_000, "no knee: the whole frame");
 }
 
 #[test]
@@ -1686,11 +1692,12 @@ fn a_step_pass_never_outgrows_the_pass_budget_over_the_pixels_still_running() {
     // The budget allows 4e7 steps: over 800,000 pixels 50 steps each, though the prior says 166.
     let tight = WalkDispatchInputs { pass_steps: 40_000_000, ..step_dispatch() };
     assert_eq!(decide_walk_dispatch(&tight).step_cap, 50);
-    // Following a cheap pass: doubled to 4,000, but 40,000 pixels running and 8e7 steps allow 2,000.
+    // Following a cheap pass: doubled to 4,000, but 40,000 pixels charged (the knee) and 8e7 steps
+    // allow 2,000.
     let mut i = step_dispatch();
     (i.cur, i.state.cursor, i.state.idx, i.state.last_range, i.state.step_sum) = (1, 1, 3, Some([2, 20_000]), 3_000);
-    (i.step_cap_last, i.step_wall_last, i.pass_steps) = (2_000, 50.0, 80_000_000);
-    i.running = Some((7, 20_000, 40_000));
+    (i.step_cap_last, i.step_wall_last, i.pass_steps, i.knee_px) = (2_000, 50.0, 80_000_000, 40_000);
+    i.running = Some((7, 20_000, 30_000));
     let d = decide_walk_dispatch(&i);
     assert_eq!(d.step_cap, 2_000);
     assert!(d.state.fe_steps_last <= i.pass_steps, "{} steps against a budget of {}", d.state.fe_steps_last, i.pass_steps);

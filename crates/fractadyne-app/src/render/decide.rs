@@ -2324,10 +2324,18 @@ pub(crate) fn decide_walk_dispatch(i: &WalkDispatchInputs) -> WalkDispatchDecisi
             } else {
                 i.running.filter(|&(w, _, _)| w == i.epoch).map_or(all_px, |(_, _, n)| u64::from(n).max(1))
             };
+            // A pass is CHARGED for the pixels still running, never fewer than the occupancy knee, and
+            // for the whole frame when the knee is unknown: the window walk's charge
+            // (`walk_charged_px`). Below the knee a pass is latency-bound, not cheaper per step, and its
+            // reading must say so: charged at its running pixels, a thin tail's pass (2 pixels × 8,160
+            // steps in 14 ms) read as a rate a hundred times too slow, dragged the mode's pessimistic
+            // rate down, and with it the opening guess the dead-man falls to — 4e6 steps against
+            // window walks' ~3e8 (`--recordtest`, RX 6800 XT, dev.63/64, 2026-10-31).
+            let charged = if i.knee_px > 0 { active.max(i.knee_px).min(all_px) } else { all_px };
             // …and never past the pass budget (`pass_steps`: the admission, scaled by the last window
-            // pass's price) over the pixels still running, the bound a window pass has over its pixels:
-            // an untrusted budget opens at its guess, a retreat shrinks every pass after it.
-            let budget_cap = u32::try_from(i.pass_steps / active).unwrap_or(u32::MAX).max(super::STEP_WALK_MIN_CAP);
+            // pass's price) over the pixels charged, the bound a window pass has over its pixels: an
+            // untrusted budget opens at its guess, a retreat shrinks every pass after it.
+            let budget_cap = u32::try_from(i.pass_steps / charged.max(1)).unwrap_or(u32::MAX).max(super::STEP_WALK_MIN_CAP);
             let cap = super::walk_step_cap(fresh, all_px, (i.step_cap_last, i.step_wall_last), i.step_target_ms).min(budget_cap);
             // The opening pass starts from scratch (the series seeds it); to a later one any start
             // above 0 means "resume from the state", alternating so the GPU's dedupe never mistakes
@@ -2342,8 +2350,8 @@ pub(crate) fn decide_walk_dispatch(i: &WalkDispatchInputs) -> WalkDispatchDecisi
             st.inflight = Some((cap, STEP_PASS_BAND, 0.0, false));
             st.inflight_lo = 0;
             st.inflight_px = 0;
-            st.charged_px = active;
-            st.fe_steps_last = active.saturating_mul(u64::from(cap));
+            st.charged_px = charged;
+            st.fe_steps_last = charged.saturating_mul(u64::from(cap));
             st.step_cap = cap;
             st.step_sum = if fresh { u64::from(cap) } else { st.step_sum.saturating_add(u64::from(cap)) };
             step_cap = cap;
