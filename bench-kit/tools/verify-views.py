@@ -24,9 +24,10 @@ Palettes differ between renderers, so pixels cannot be compared and a plain gray
 correlation is defeated by a palette inversion alone (it scores a perfect structural match as
 -0.26). Two palette-independent signals are used instead:
 
-  interior fraction  -- the share of pixels that never escaped. Black in every renderer's
-                        palette, and strongly monotonic in magnification, so it catches a wrong
-                        zoom directly. This is the signal that settled the 0.543 case.
+  interior fraction  -- the share of pixels that never escaped. Read as black, which is true of
+                        every renderer here except Fraktaler-3 (below), and strongly monotonic in
+                        magnification, so it catches a wrong zoom directly. This is the signal
+                        that settled the 0.543 case.
   edge correlation   -- correlation of gradient MAGNITUDE, which survives inversion and most
                         remapping, and catches a wrong centre at the same zoom.
 
@@ -34,11 +35,27 @@ THE CONTROL IS NOT OPTIONAL. Each render is also scored against every OTHER scen
 A metric that cannot tell the right scene from the wrong one is measuring nothing, so a match
 must beat the best wrong scene, not merely score highly. That is reported on every line.
 
+BLACK IS NOT ALWAYS INTERIOR
+----------------------------
+Read off an image, the interior fraction is the share of BLACK pixels, which assumes the
+renderer draws only never-escaped pixels black. Fraktaler-3's default colouring does not: it
+shades by distance estimate, so everything close to the boundary is black as well. On scene 59
+its image is 62% black at 4K while 6.6% of its pixels never escaped, and this check called that
+correct render a different magnification. No signal in such an image can stand in: the black
+covers the right scene's interior and the wrong scenes' alike, and its noisy grey shading leaves
+edge correlation negative at every blur tried (2026-10-31).
+
+--interior-json supplies the never-escaped share measured by the renderer itself
+(tools/exr-interior.py, from its raw iteration counts), and the magnification test uses that
+instead of the image's black. For a scene it does not cover, the image's black can only
+OVERSTATE the interior, so only a shortfall counts against the render.
+
 Exit 0 if every pair agrees, 1 if any disagrees, 2 on a usage error.
 """
 import os
 import sys
 import glob
+import json
 import argparse
 
 try:
@@ -126,6 +143,10 @@ def main():
     ap.add_argument("--quiet", action="store_true")
     ap.add_argument("--json", metavar="PATH",
                     help="also write per-scene verdicts here, for the lane to consume")
+    ap.add_argument("--interior-json", metavar="PATH",
+                    help="never-escaped share per scene, measured by the renderer under test from "
+                         "its own raw output (tools/exr-interior.py). For a renderer whose colouring "
+                         "draws escaped pixels black, so its image overstates the interior")
     args = ap.parse_args()
 
     d = args.results_dir
@@ -143,12 +164,16 @@ def main():
         return 2
 
     # The lane spells dots as 'p' in its output names, and may carry a -rN rep suffix.
+    # Fraktaler-3 names its own output from the scene file, with the lane's tag at the END
+    # ("59-iter-p951094-1e68-f3.png"). This check looked only for the prefix spelling, so it
+    # found no Fraktaler-3 render to check and that lane went unchecked in every run.
     tests = {}
     for slug in refs:
         for cand in (
             os.path.join(d, "%s-%s-r1.png" % (args.prefix, slug.replace(".", "p"))),
             os.path.join(d, "%s-%s.png" % (args.prefix, slug.replace(".", "p"))),
             os.path.join(d, "%s-%s.png" % (args.prefix, slug)),
+            os.path.join(d, "%s-%s.png" % (slug, args.prefix)),
         ):
             if os.path.exists(cand):
                 tests[slug] = cand
@@ -158,11 +183,25 @@ def main():
         print("verify-views: no %s-*.png renders to check (lane skipped?)" % args.prefix)
         return 0
 
+    raw_int = None
+    if args.interior_json:
+        try:
+            with open(args.interior_json) as fh:
+                raw_int = json.load(fh)
+        except (OSError, ValueError) as e:
+            sys.stderr.write("verify-views: cannot read %s: %s\n" % (args.interior_json, e))
+            return 2
+
     R = {s: load(p) for s, p in refs.items()}
     Rint = {s: interior_fraction(v) for s, v in R.items()}
     Redge = {s: edge_feature(v) for s, v in R.items()}
     Rorient = {s: orientation_features(v) for s, v in R.items()}
 
+    if raw_int is not None:
+        print("test int: r = never escaped, from the renderer's raw output (%s, %d of %d scenes);"
+              % (os.path.basename(args.interior_json), sum(1 for s in tests if s in raw_int), len(tests)))
+        print("          b = black share of its image, which this renderer's colouring overstates,")
+        print("              so only a SHORTFALL counts against the render")
     print("%-28s %9s %9s %7s %8s %9s  %s"
           % ("scene", "ref int", "test int", "d_int", "edge r", "best wrong", "verdict"))
     print("-" * 96)
@@ -173,8 +212,18 @@ def main():
     verdicts = {}
     for slug in sorted(tests):
         t = load(tests[slug])
-        ti, te = interior_fraction(t), edge_feature(t)
+        black, te = interior_fraction(t), edge_feature(t)
+        # Where the interior comes from decides how far it can be trusted: the renderer's own
+        # count of never-escaped pixels is exact; the black share of its image is exact only if
+        # it draws nothing else black, and an upper bound for a renderer declared not to.
+        if raw_int is not None and slug in raw_int:
+            ti, isrc, mark = float(raw_int[slug]), "raw", "r"
+        elif raw_int is not None:
+            ti, isrc, mark = black, "image black, an upper bound", "b"
+        else:
+            ti, isrc, mark = black, "image black", " "
         dint = ti - Rint[slug]
+        int_ok = (dint >= -INTERIOR_TOL) if mark == "b" else (abs(dint) <= INTERIOR_TOL)
         er = float(np.dot(Redge[slug], te))
         wrong_r, wrong_s = max(
             (float(np.dot(Redge[o], te)), o) for o in R if o != slug
@@ -188,7 +237,7 @@ def main():
         # 0.339 - under the absolute bar, but nineteen times the best WRONG scene. A score that
         # far above the control identifies the scene whatever its absolute value.
         decisive = (er >= EDGE_DECISIVE and er >= wrong_r + EDGE_DECISIVE_MARGIN) or                    (er >= EDGE_CONTROL_MIN and er >= EDGE_CONTROL_FACTOR * max(wrong_r, EDGE_CONTROL_FLOOR))
-        ok = decisive or (abs(dint) <= INTERIOR_TOL
+        ok = decisive or (int_ok
                           and er >= EDGE_MIN
                           and er >= wrong_r + EDGE_MARGIN)
         # TWO DIFFERENT VERDICTS, because the two signals answer different questions and only one
@@ -209,7 +258,7 @@ def main():
         #
         # So a low correlation with a MATCHING interior is "could not confirm", not "wrong", and
         # it must not delete a time or accuse anyone.
-        mag_ok = abs(dint) <= INTERIOR_TOL or decisive
+        mag_ok = int_ok or decisive
 
         # ORIENTATION. If a mirrored or rotated reference matches decisively better than the
         # reference as it stands, the render is the right view drawn the wrong way up. That is a
@@ -236,20 +285,21 @@ def main():
             "orientation_r": round(orient_r, 3),
             "ref_interior": round(Rint[slug], 4),
             "test_interior": round(ti, 4),
+            "test_interior_source": isrc,
+            "test_image_black": round(black, 4),
             "d_interior": round(dint, 4),
             "edge_r": round(er, 3),
             "best_wrong_r": round(wrong_r, 3),
             "best_wrong_scene": wrong_s,
         }
-        print("%-28s %9.4f %9.4f %+7.4f %8.3f %9.3f  %s"
-              % (slug, Rint[slug], ti, dint, er, wrong_r,
+        print("%-28s %9.4f %8.4f%s %+7.4f %8.3f %9.3f  %s"
+              % (slug, Rint[slug], ti, mark, dint, er, wrong_r,
                  "same scene" if ok
                  else ("** %s **" % orient.upper() if mirrored
                        else ("unconfirmed (palette?)" if mag_ok
                              else "** NOT THE SCENE **"))))
 
     if args.json:
-        import json
         with open(args.json, "w") as fh:
             json.dump(verdicts, fh, indent=1, sort_keys=True)
 
@@ -287,10 +337,12 @@ def main():
         if not args.quiet:
             print()
             print("These are the ones whose INTERIOR FRACTION disagrees, which tracks")
-            print("magnification and which no palette choice can move. Check the zoom and centre")
-            print("actually reaching the renderer. A truncated mantissa under-zooms, and an")
-            print("under-zoomed frame is CHEAPER, so this always arrives looking like good news.")
-            print("A time for the wrong view is not slow or fast, it is VOID.")
+            print("magnification. Check the zoom and centre actually reaching the renderer. A")
+            print("truncated mantissa under-zooms, and an under-zoomed frame is CHEAPER, so this")
+            print("always arrives looking like good news. A time for the wrong view is not slow")
+            print("or fast, it is VOID. One exception, read off an image: a renderer whose")
+            print("colouring draws ESCAPED pixels black looks too deep. Look at the image, and")
+            print("give its own never-escaped counts with --interior-json.")
         return 1
 
     if unconfirmed:

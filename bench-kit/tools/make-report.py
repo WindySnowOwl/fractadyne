@@ -18,8 +18,8 @@ shown it.
 So this report puts the three together per scene: what was run, what came out, and how long it
 took - with the images inline, because the fastest way to catch a wrong render is to look at it.
 
-It reads run-manifest.json (written by run-all.ps1), results.csv, and, when present,
-fs-view-check.json, sysinfo.txt and zoomseq/results.csv. Nothing here is required: a missing
+It reads run-manifest.json (written by run-all.ps1), results.csv, and, when present, the
+view-check files (fs-, im-, fz- and f3-view-check.json), sysinfo.txt and zoomseq/results.csv. Nothing here is required: a missing
 input costs you that section, not the report.
 """
 import argparse
@@ -179,7 +179,8 @@ def derive_findings(scenes, rows_by, views, meta, zs_rows):
     for ren, vv in sorted(views.items()):
         if not vv:
             continue
-        name = {"fractalshark": "FractalShark", "imagina": "Imagina", "fractalzoomer": "Fractal Zoomer"}.get(ren, ren)
+        name = {"fractalshark": "FractalShark", "imagina": "Imagina", "fractalzoomer": "Fractal Zoomer",
+                "fraktaler3": "Fraktaler-3"}.get(ren, ren)
         wrong = [k for k, v in vv.items() if not v.get("magnification_ok", True)]
         unconf = [k for k, v in vv.items()
                   if v.get("magnification_ok", True) and not v.get("same_view")]
@@ -692,7 +693,8 @@ def main():
     # the findings read as before; `views` is what the per-scene badges use.
     views = {"fractalshark": load_json(os.path.join(d, "fs-view-check.json"), {}) or {},
              "imagina": load_json(os.path.join(d, "im-view-check.json"), {}) or {},
-             "fractalzoomer": load_json(os.path.join(d, "fz-view-check.json"), {}) or {}}
+             "fractalzoomer": load_json(os.path.join(d, "fz-view-check.json"), {}) or {},
+             "fraktaler3": load_json(os.path.join(d, "f3-view-check.json"), {}) or {}}
     view = views["fractalshark"]
     sysinfo = load_text(os.path.join(d, "sysinfo.txt"))
     zs_rows = load_csv(os.path.join(d, "zoomseq", "results.csv"))
@@ -1012,7 +1014,8 @@ def main():
         a("<details open><summary>sysinfo.txt</summary><pre>%s</pre></details>" % esc(sysinfo))
     # Only link what is actually there: a report that offers a dead link is claiming evidence it
     # does not have.
-    raw = [f for f in ("results.csv", "run-manifest.json", "fs-view-check.json", "summary.md",
+    raw = [f for f in ("results.csv", "run-manifest.json", "fs-view-check.json", "im-view-check.json",
+                       "fz-view-check.json", "f3-view-check.json", "f3-interior.json", "summary.md",
                        "sysinfo.txt", "f3-wisdom.toml")
            if os.path.exists(os.path.join(d, f))]
     if raw:
