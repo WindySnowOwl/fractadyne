@@ -6532,13 +6532,13 @@ impl FractadyneApp {
             aa_unmeasured: self.perf.aa_measured[vs].is_none() && self.perf.aa_probe[vs].is_none(),
             frame: self.perf.frame_idx,
             // A held jump picture waits for the new view's palette window: only under normalised
-            // colouring (otherwise the map does not depend on the picture), until the view's mapping
-            // is adopted, and no longer than `JUMP_MAP_WAIT_S` once the compose is done.
+            // colouring — the held picture's, or the live view's (a snap wipes the live one until
+            // the new view's readings return) — until the view's mapping is adopted, and no longer
+            // than `JUMP_MAP_WAIT_S` once the compose is done.
             await_map: {
                 let vb = vs.min(1);
-                self.perf.jump_reveal[vb]
+                self.perf.jump_win[vb].is_some_and(|(w, _)| w.is_some() || self.live_norm_window(vb).is_some())
                     && !self.perf.norm_locked[vb]
-                    && self.live_norm_window(vb).is_some()
                     && self.perf.jump_map_until[vb].is_none_or(|t| crate::app_micros() < t)
             },
         };
@@ -6884,8 +6884,6 @@ impl FractadyneApp {
         if hold_copy {
             self.perf.hold_norm[vs] = Some((live_win, user_sig));
         }
-        // The held picture's own window, while one is served (inside, `None`: classic colours).
-        let held_map = self.perf.hold_norm[vs].filter(|&(_, u)| display_hold && u == user_sig).map(|(w, _)| w);
         // ⭐A held picture that stood across a JUMP gives way to the new view's as a CUT: the drawn
         // window, the dissolve and the carried phase start afresh at the new picture's own window.
         // Each exists to keep ONE picture's colours steady from frame to frame; across a jump the
@@ -6894,8 +6892,8 @@ impl FractadyneApp {
         // that window first (`decide::PresentInputs::await_map`).
         let shown_held = display_hold || reproject.is_some();
         let vb = vs.min(1);
-        if self.perf.jump_reveal[vb] && self.perf.shown_held[vb] && !shown_held {
-            self.perf.jump_reveal[vb] = false;
+        if self.perf.jump_win[vb].is_some() && self.perf.shown_held[vb] && !shown_held {
+            self.perf.jump_win[vb] = None;
             self.perf.jump_map_until[vb] = None;
             self.perf.norm_drawn[vs] = None;
             self.perf.palette_fade[vs] = PaletteFadeState::default();
@@ -6911,6 +6909,15 @@ impl FractadyneApp {
             }
         }
         self.perf.shown_held[vb] = shown_held;
+        // The held picture's own window, while one is served (inside, `None`: classic colours).
+        // ⭐A picture held across a jump keeps the window it had when the jump came
+        // (`Perf::jump_win`), reprojected or snapshotted alike: a snap to the nearest nucleus wipes
+        // the live window (`invalidate_refs`), and the held picture, its escapes near 190,000 at
+        // 2^40, was drawn under the classic map — the palette wrapping every few iterations, a field
+        // of speckle for the second the snapped view took (2026-10-31).
+        let jump_map = self.perf.jump_win[vb].filter(|&(_, u)| shown_held && u == user_sig).map(|(w, _)| w);
+        let held_map = jump_map
+            .or_else(|| self.perf.hold_norm[vs].filter(|&(_, u)| display_hold && u == user_sig).map(|(w, _)| w));
         // ⭐…REACHED BY GLIDING: a picture of another source wants another window, and drawing it at
         // once snapped the palette (`drawn_norm_step`).
         self.perf.norm_drawn[vs] = drawn_norm_step(
@@ -7405,8 +7412,12 @@ impl FractadyneApp {
         let jumped = self.perf.hold_jump[v.min(1)];
         let stepping = self.perf.hold_home_step[v.min(1)];
         let (t, code) = crate::render::frame_plan::hold_transform(gap_oct, jumped, stepping, off);
-        if jumped {
-            self.perf.jump_reveal[v.min(1)] = true; // the new picture arrives as a cut
+        // The held picture keeps the colours it had when the jump came (`Perf::jump_win`), taken on
+        // the jump's first held frame — before anything at the new view could feed the window — and
+        // kept through a second click or a snap until the new picture replaces it.
+        if jumped && self.perf.jump_win[v.min(1)].is_none() {
+            let win = self.live_norm_window(v.min(1));
+            self.perf.jump_win[v.min(1)] = Some((win, self.norm_user_sig()));
         }
         let p = &mut self.perf.hold_floor_pending[v.min(1)];
         *p = (*p).max(code);

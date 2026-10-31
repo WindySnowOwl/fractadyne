@@ -1245,12 +1245,12 @@ impl FractadyneApp {
                     {
                         if let Some(p) = response.interact_pointer_pos() {
                             let l = p - rect.min;
-                            let now = ctx.input(|i| i.time);
-                            self.click_zoom_at(
+                            // The jump and, if asked, the snap to the nearest nucleus.
+                            self.click_zoom_and_snap(
+                                ctx,
                                 l.x as f64 * ppp,
                                 l.y as f64 * ppp,
                                 response.secondary_clicked(),
-                                now,
                             );
                         }
                     }

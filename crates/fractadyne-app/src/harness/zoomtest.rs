@@ -555,7 +555,8 @@ impl FractadyneApp {
         }
         let before = self.viewport.log2_magnification();
         self.render_cfg.click_zoom_factor = factor;
-        self.click_zoom_at(px, py, false, ctx.input(|i| i.time));
+        // The single view's own click: the jump, and the snap when the session has it on.
+        self.click_zoom_and_snap(ctx, px, py, false);
         crate::diag::log_line(
             "zoomtest",
             &format!(
