@@ -226,6 +226,29 @@ limit stops and is coloured as interior. **Every Fraktaler-3 number this kit pub
 images at all three, in the same time; `58-iter-p121984-1e66` changed 4 pixels between 4096 and 8192
 and none after; `59-iter-p951094-1e68` was black at 4096, 85% black at 8192 and complete at 32768.
 
+**Fraktaler-3's view check reads its own iteration counts, not its image.** Until 2026-10-31 the
+lane was not checked at all: `verify-views.py` looked for `f3-<scene>.png` and Fraktaler-3 writes
+`<scene>-f3.png`. Run by hand, the check then called one correct render the wrong view. It judges
+magnification by the share of pixels that never escaped, read off an image as its black share,
+and Fraktaler-3's default colouring is a distance estimate: everything close to the boundary is
+black too, escaped or not. `59-iter-p951094-1e68` is 62% black at 4K while 6.6% of its pixels never
+escaped; the rest of its black escaped after 4 to 10 million of the scene's 28.5 million
+iterations. Nothing else in such an image can stand in. Its black covers the right scene's
+interior and the wrong scenes' alike, and its grainy shading leaves edge correlation negative at
+every blur tried. So after the timed rounds the lane renders each scene once more, untimed, from
+the same per-run scene file at the check's own 640x360, with `save_exr = true` and
+`exr_channels = ["N0", "N1"]` in place of the PNG (`f3-raw\`). That costs time outside every row:
+458 s for all 31 scenes on the test machine, 278 s of it the reference orbit of
+`55-path-1e30000`, which no smaller image avoids. Fraktaler-3 marks a pixel that
+never escaped with the count 0xFFFFFFFF, and a pixel stopped by either limit counts as one, so a
+limit set too low still shows. `tools/exr-interior.py` writes those shares to `f3-interior.json`,
+and `verify-views.py --interior-json` uses them in place of the black. For a scene without one,
+the black stands as an upper bound, and only a shortfall counts against the render. As for
+Imagina and Fractal Zoomer, the verdict (`f3-view-check.json`) goes to the report and does not
+change a row. The lane now also refuses a missing or uniform image as every other lane does
+(`DNF-no-output`, `DNF-blank`). A Fraktaler-3 whose wisdom file enables the wrong devices can write
+a black frame in a second, and this lane used to record a time for it.
+
 ## The cutoff-crossing lane
 
 Fractadyne switches arithmetic at fixed magnifications — direct→df32 at 1e4, df32→floatexp at 1e28,
@@ -412,7 +435,8 @@ than papering over it:
   Each scene is also scored against every other scene as a control.
   **The two signals carry different authority, and the difference matters.** Interior fraction
   tracks magnification and no palette choice can move it, because whether a pixel escaped is not
-  a colouring decision; when it disagrees, the render is of somewhere else and the row becomes
+  a colouring decision (read off an image it is the black share, which one renderer here breaks;
+  see Fraktaler-3's view check); when it disagrees, the render is of somewhere else and the row becomes
   `DNF-not-the-scene`. Edge correlation compares *pictures*, and two renderers can draw the same
   iteration field so differently that it collapses — see the 1.6e148 note below — so on its own
   it only downgrades a row to `view UNCONFIRMED`, keeping the time. Treating that as a failure
@@ -536,7 +560,7 @@ against a wall-clock column (see "Fairness protocol"); it puts it beside Fractad
 figure instead, which is the render and the PNG save without the process start. Fractal Zoomer does
 not reuse a reference orbit between loads, and every scene of every round is a new process, so the
 reps of a scene are independent. The view check (`fz-view-check.json`) compares each image with Fractadyne's
-render of the same scene, as for FractalShark and Imagina.
+render of the same scene, as for FractalShark, Imagina and Fraktaler-3.
 
 Before the command line existed (Fractal Zoomer 1.0.9.5), the lane drove the Minimal Renderer
 through a driver, FzBench, one Java process per image. Fractal Zoomer writes the `.stats` file

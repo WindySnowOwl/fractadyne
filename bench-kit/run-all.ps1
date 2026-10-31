@@ -384,6 +384,10 @@ if ($have.fractadyne) {
 # file, and under Set-StrictMode an undefined variable is an error, not an empty string.
 if (-not $F3Wisdom) { $F3Wisdom = Join-Path $kit 'f3-wisdom.toml' }
 $wisdom = $F3Wisdom
+# Every automated third-party lane asks the view question, Fraktaler-3's first, so the tool path is
+# script-level. Under StrictMode a variable defined inside a lane that did not run is an ERROR for
+# the lane that did.
+$vv = Join-Path $kit 'tools\verify-views.py'
 # Every Fraktaler-3 launch (wisdom, scenes, zoom sequence) runs with the kit's own profile, Limit
 # Iterations off, so the per-run scene file is what F3 renders - see New-F3Profile in bench-lib.ps1.
 $f3ProfileDir = Join-Path $outDir 'f3-profile'
@@ -498,8 +502,26 @@ if ($have.fraktaler3) {
             }
             Set-Content -Path $toml -Value $tomlTxt -Encoding ASCII
             $argLine = ('-P -w "{0}" -b "{1}"' -f $wisdom, $toml)
+            # The scene file names the image "<scene>-f3". The previous round's copy goes first, so
+            # a round that writes nothing cannot pass on its predecessor's picture.
+            $png = Join-Path $outDir ($s.slug + '-f3.png')
+            Remove-Item -LiteralPath $png -ErrorAction SilentlyContinue
             $r = Invoke-TimedRender $Fraktaler3Exe $argLine $TimeoutS $outDir $f3Env
-            Write-Result $csv 'fraktaler3' $s.slug $rep $r.status $r.wall_s '' ''
+            # The same guard as every other lane: an exit code is not a picture. This lane recorded
+            # a time for whatever it wrote, and a Fraktaler-3 tuned for the wrong devices writes a
+            # black frame in a second (seen 2026-10-31 with a CPU-only wisdom file).
+            $status = $r.status
+            $note = ''
+            if ($status -eq 'ok') {
+                if (-not (Test-Path $png)) {
+                    $status = 'DNF-no-output'
+                    $note = 'exit 0 but no PNG where the scene file names it'
+                } elseif (-not (Test-RenderHasStructure $png)) {
+                    $status = 'DNF-blank'
+                    $note = 'exit 0 but the image is uniform - a time here would be meaningless'
+                }
+            }
+            Write-Result $csv 'fraktaler3' $s.slug $rep $status $r.wall_s '' $note
             # Fraktaler-3 takes its whole view from the .toml, not from flags, so the argument
             # line alone does not say what was rendered. The rewritten toml IS the input and is
             # kept beside the results; the report inlines it.
@@ -514,9 +536,61 @@ if ($have.fraktaler3) {
                             tile = $(if ($F3Tile) { $F3Tile } else { '128x128 (F3 default)' })
                             note = 'view comes from the .toml; width/height/subframes rewritten per run' }
                 output = ($s.slug + '-f3.png')
-                status = $r.status; wall_s = $r.wall_s; reported_s = ''; note = ''
+                status = $status; wall_s = $r.wall_s; reported_s = ''; note = $note
             }
         }
+    }
+    # IS IT THE RIGHT PICTURE? Asked of every other third-party lane, and until 2026-10-31 never of
+    # this one: verify-views.py looked for 'f3-<scene>.png', this lane writes '<scene>-f3.png', and
+    # the check found nothing to check.
+    #
+    # Fraktaler-3 needs one thing more. The check judges magnification by the share of pixels that
+    # never escaped, read off an image as its BLACK share, and Fraktaler-3's default colouring shades
+    # by distance estimate: everything close to the boundary is black too, escaped or not. Scene
+    # 59's image is 62% black at 4K while 6.6% of its pixels never escaped, so read off the image the
+    # check called that correct render a different magnification. Each scene is therefore rendered
+    # once more, UNTIMED, from the same scene file at the check's own 640x360, writing Fraktaler-3's
+    # raw iteration counts instead of a picture. tools/exr-interior.py reads the never-escaped share
+    # from them, and the check uses that in place of the black. Like the Imagina and Fractal Zoomer
+    # lanes, the verdict goes to the report; it does not rewrite a row.
+    if ($PythonExe -and (Test-Path $vv) -and $have.fractadyne) {
+        $rawDir = Join-Path $outDir 'f3-raw'
+        New-Item -ItemType Directory -Force $rawDir | Out-Null
+        Write-Host 'Fraktaler-3: raw iteration counts for the view check (untimed, 640x360)'
+        foreach ($s in $sceneRows) {
+            $rawToml = Join-Path $rawDir ($s.slug + '.f3.toml')
+            $rawTxt = foreach ($line in (Get-Content (Join-Path $outDir ($s.slug + '.bench.f3.toml')))) {
+                if ($line -match '^\s*width\s*=') { 'width = 640' }
+                elseif ($line -match '^\s*height\s*=') { 'height = 360' }
+                elseif ($line -match '^\s*filename\s*=') { 'filename = "' + $s.slug + '"' }
+                # Raw counts need one subframe, which the bench file already sets.
+                elseif ($line -match '^\s*save_png\s*=') { 'save_png = false'; 'save_exr = true'; 'exr_channels = ["N0", "N1"]' }
+                else { $line }
+            }
+            Set-Content -Path $rawToml -Value $rawTxt -Encoding ASCII
+            $argLine = ('-P -w "{0}" -b "{1}"' -f $wisdom, $rawToml)
+            $r = Invoke-TimedRender $Fraktaler3Exe $argLine $TimeoutS $rawDir $f3Env
+            if ($r.status -ne 'ok') { Write-Host ('  ' + $s.slug + ': ' + $r.status + ' - its view check falls back to the image') }
+            Add-RunRecord @{
+                renderer = 'fraktaler3'; scene = ('(view check) ' + $s.slug); rep = 0
+                exe = $Fraktaler3Exe; args = $argLine; cwd = $rawDir
+                source = ('f3-raw\' + $s.slug + '.f3.toml')
+                inputs = @{ size = '640x360'; exr_channels = 'N0 N1' }
+                output = ('f3-raw\' + $s.slug + '.exr')
+                status = $r.status; wall_s = $r.wall_s; reported_s = ''
+                note = 'untimed: raw iteration counts for the view check, not a benchmark row'
+            }
+        }
+        $ij = Join-Path $outDir 'f3-interior.json'
+        & $PythonExe (Join-Path $kit 'tools\exr-interior.py') $rawDir --json $ij 2>&1 | ForEach-Object { '  ' + $_ }
+        # Without the counts, the image's black is still an upper bound on the interior, and an
+        # empty file tells the check to use it as one: only a shortfall counts against a render.
+        if (-not (Test-Path $ij)) { Set-Content -Path $ij -Value '{}' -Encoding ASCII }
+        Write-Host 'Fraktaler-3: checking the renders are the scenes that were ASKED for'
+        & $PythonExe $vv $outDir --prefix f3 --interior-json $ij --json (Join-Path $outDir 'f3-view-check.json') --quiet 2>&1 |
+            ForEach-Object { '  ' + $_ }
+    } else {
+        Write-Host 'Fraktaler-3: view check SKIPPED (needs Python and the fractadyne lane) - times unverified.'
     }
 }
 
@@ -526,9 +600,6 @@ if ($have.fraktaler3) {
 # string. A skipped lane must not be able to take the whole report down with it.
 $fsShape = ''
 $fsStartup = ''
-# Both automated third-party lanes ask the view question, so the tool path is script-level. Under
-# StrictMode a variable defined inside a lane that did not run is an ERROR for the lane that did.
-$vv = Join-Path $kit 'tools\verify-views.py'
 # From 0.541 the GPU lane WORKS on this box (see README "FractalShark, honestly"): the release adds
 # sm_75 code that JITs onto sm_86, so a GPU algorithm now renders real pictures. The default here is
 # a GPU HDR algorithm for that reason. Through 0.54 every GPU algorithm returned a BLANK image
