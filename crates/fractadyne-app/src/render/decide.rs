@@ -2110,9 +2110,12 @@ pub(crate) struct DispatchState {
     #[serde(default, skip_serializing_if = "zero_u64")]
     pub(crate) inflight_px: u64,
     /// A step-bounded settled walk (`WALK_STEPS`): the step cap of its last pass, which a held frame
-    /// re-sends. Absent when 0, as in every recording made before it.
+    /// re-sends, and the caps of all its passes so far, summed. Absent when 0, as in every recording
+    /// made before them.
     #[serde(default, skip_serializing_if = "zero_u32")]
     pub(crate) step_cap: u32,
+    #[serde(default, skip_serializing_if = "zero_u64")]
+    pub(crate) step_sum: u64,
 }
 
 /// A zero left out of a recording (`DispatchState::inflight_lo`).
@@ -2284,6 +2287,21 @@ pub(crate) fn decide_walk_dispatch(i: &WalkDispatchInputs) -> WalkDispatchDecisi
     } else {
         cur
     };
+    // …or once its passes, all run (none in flight), have given every pixel as many steps as the walk
+    // has iterations: a step advances a pixel at least one iteration (a BLA skip 2^l, a renormalized
+    // one a period), so none can still run. A reading that never comes (an unarmed readback, a
+    // harness with no event loop) cannot leave the walk unfinished…
+    let cur = if step_walk
+        && cur < walk_end
+        && st.idx > 0
+        && st.inflight.is_none()
+        && st.step_sum >= u64::from(walk_end.saturating_sub(walk_floor))
+    {
+        st.cursor = walk_end;
+        walk_end
+    } else {
+        cur
+    };
     // …and one that has not in this many passes is counting wrong: ended rather than left spinning.
     let cur = if step_walk && cur < walk_end && st.idx > super::STEP_WALK_MAX_PASSES {
         st.cursor = walk_end;
@@ -2306,7 +2324,11 @@ pub(crate) fn decide_walk_dispatch(i: &WalkDispatchInputs) -> WalkDispatchDecisi
             } else {
                 i.running.filter(|&(w, _, _)| w == i.epoch).map_or(all_px, |(_, _, n)| u64::from(n).max(1))
             };
-            let cap = super::walk_step_cap(fresh, all_px, (i.step_cap_last, i.step_wall_last), i.step_target_ms);
+            // …and never past the pass budget (`pass_steps`: the admission, scaled by the last window
+            // pass's price) over the pixels still running, the bound a window pass has over its pixels:
+            // an untrusted budget opens at its guess, a retreat shrinks every pass after it.
+            let budget_cap = u32::try_from(i.pass_steps / active).unwrap_or(u32::MAX).max(super::STEP_WALK_MIN_CAP);
+            let cap = super::walk_step_cap(fresh, all_px, (i.step_cap_last, i.step_wall_last), i.step_target_ms).min(budget_cap);
             // The opening pass starts from scratch (the series seeds it); to a later one any start
             // above 0 means "resume from the state", alternating so the GPU's dedupe never mistakes
             // the next pass for the last.
@@ -2323,6 +2345,7 @@ pub(crate) fn decide_walk_dispatch(i: &WalkDispatchInputs) -> WalkDispatchDecisi
             st.charged_px = active;
             st.fe_steps_last = active.saturating_mul(u64::from(cap));
             st.step_cap = cap;
+            st.step_sum = if fresh { u64::from(cap) } else { st.step_sum.saturating_add(u64::from(cap)) };
             step_cap = cap;
             chunk_pass = true;
         }

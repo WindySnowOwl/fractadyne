@@ -2717,7 +2717,7 @@ impl FractadyneApp {
         let t0 = Instant::now();
         let floatexp = RenderMode::Floatexp.to_u32();
         let (vp, julia) = (self.viewport.clone(), self.julia_mode);
-        if self.render_mode(self.fractal, julia, vp.magnification()) != RenderMode::Df32Pert
+        if self.live_render_mode(self.fractal, julia, vp.magnification()) != RenderMode::Df32Pert
             || !pre_switch_window(vp.log2_magnification(), PERT_FE_THRESHOLD.log2(), crate::tunables::PRE_SWITCH_OCT)
             || self.perf.zoom_oct_s <= 0.0
             || self.perf.mode_rate_known(0, floatexp)
@@ -3068,7 +3068,7 @@ impl FractadyneApp {
                 fractadyne_core::Viewport::new(self.viewport.width_px, self.viewport.height_px);
             vp.set_center_log2mag(s.cx, s.cy, target_l2);
             let mag = vp.magnification();
-            let mode = self.render_mode(self.fractal, false, mag);
+            let mode = self.live_render_mode(self.fractal, false, mag);
             if mode.is_direct() {
                 break; // shallow frames rebuild in microseconds — nothing to prefetch
             }
@@ -3348,7 +3348,7 @@ impl FractadyneApp {
         let mut vp = fractadyne_core::Viewport::new(self.viewport.width_px, self.viewport.height_px);
         vp.set_center_log2mag(s.cx, s.cy, target_l2);
         let mag = vp.magnification();
-        let mode = self.render_mode(self.fractal, false, mag);
+        let mode = self.live_render_mode(self.fractal, false, mag);
         if mode.is_direct() {
             return;
         }
@@ -5376,7 +5376,7 @@ impl FractadyneApp {
         // two places downstream that mention it do so to explain why they are NOT gated on it.
         let FrameCost { is_pert, budget, iter_cap, .. } = frame_cost(
             self.effective_work_budget(),
-            self.render_mode(fractal, julia, magnification),
+            self.live_render_mode(fractal, julia, magnification),
             interacting,
         );
         // ADAPTIVE LIVE ITERATION BUDGET (settled frames only): the climb is the pure
@@ -6267,6 +6267,7 @@ impl FractadyneApp {
                     inflight_lo: self.perf.chunk_inflight_lo[vs],
                     inflight_px: self.perf.chunk_inflight_px[vs],
                     step_cap: self.perf.walk_step_cap[vs],
+                    step_sum: self.perf.walk_step_sum[vs],
                 },
             };
             let dispatch = decide::decide_walk_dispatch(&dispatch_in);
@@ -6318,6 +6319,7 @@ impl FractadyneApp {
                 p.chunk_inflight_lo[vs] = s.inflight_lo;
                 p.chunk_inflight_px[vs] = s.inflight_px;
                 p.walk_step_cap[vs] = s.step_cap;
+                p.walk_step_sum[vs] = s.step_sum;
                 p.chunk_step_cap_now[vs] = dispatch.step_cap;
             }
             // The live panel's radar follows a still view's walk as it does a pin's: the walk's start
@@ -6587,11 +6589,43 @@ impl FractadyneApp {
     /// one with it has both perturbation paths (df32, and floatexp past `PERT_FE_THRESHOLD`).
     pub(crate) fn render_mode(&self, fractal: FractalKind, julia: bool, mag: f64) -> RenderMode {
         match RenderMode::select(self.perturbs(fractal), julia, mag) {
-            // A zoom-video strip in the df32 band (`render_strip` sets the flag), or any view in it
-            // under `BAND_FLOATEXP`.
-            RenderMode::Df32Pert if self.strip_floatexp || crate::tunables::cost().band_floatexp == 1 => RenderMode::Floatexp,
+            // A zoom-video strip in the df32 band (`render_strip` sets the flag).
+            RenderMode::Df32Pert if self.strip_floatexp => RenderMode::Floatexp,
             m => m,
         }
+    }
+
+    /// ⭐The LIVE VIEW's arithmetic mode: [`Self::render_mode`], except that the df32 perturbation
+    /// band (`1e4×` to `PERT_FE_THRESHOLD`) renders as floatexp with BLA wherever the BLA applies
+    /// (`BAND_FLOATEXP`, [`Self::band_bla`]). Mode 0 has no BLA, so the band iterates every step:
+    /// the user's dive at 2^70 settled in 6.4–7.6 s on the RTX 3070 and 11 s on the RX 6800 XT, against
+    /// 2.0–2.2 and 2.9–3.5 s as floatexp with BLA walked by step-bounded passes (`WALK_STEPS`, PLUTO,
+    /// 2026-10-30). Exports, export references, thumbnails and zoom-video strips keep
+    /// [`Self::render_mode`]: an export is the same picture it was.
+    pub(crate) fn live_render_mode(&self, fractal: FractalKind, julia: bool, mag: f64) -> RenderMode {
+        match self.render_mode(fractal, julia, mag) {
+            RenderMode::Df32Pert if self.band_bla(fractal, julia) => RenderMode::Floatexp,
+            m => m,
+        }
+    }
+
+    /// Does the live view's df32 band render as floatexp with BLA (`BAND_FLOATEXP`)? Only where the BLA
+    /// applies and the floatexp walk can serve the frame: floatexp WITHOUT the BLA iterates every step
+    /// at several times df32's cost. So: a built-in family with BLA and resumable passes (not a custom
+    /// formula, whose floatexp loop has no BLA), not a Julia view (the BLA is Mandelbrot-mode only),
+    /// the BLA on, no colouring that carries orbit statistics (neither walk serves one), and a device
+    /// that granted floatexp's fourth state target — without it a floatexp frame cannot be split, and
+    /// a df32 one can.
+    pub(crate) fn band_bla(&self, fractal: FractalKind, julia: bool) -> bool {
+        let caps = fractal.caps();
+        crate::tunables::cost().band_floatexp == 1
+            && !julia
+            && fractal != FractalKind::Custom
+            && caps.bla
+            && self.resumable(fractal)
+            && self.render_cfg.use_bla
+            && !self.coloring.color_method.needs_aux()
+            && actuators::can_chunk(self.perf.actuators.as_ref(), RenderMode::Floatexp)
     }
 
     /// Whether `fractal`'s frames may be spread over chunked passes: the family's capability, and
@@ -7765,7 +7799,7 @@ impl FractadyneApp {
         // frame's own nominal steps (moving frames run at ss 1), at the resolution the motion scale
         // will give it, fitted under the calibrated dispatch ceiling. df32 only: the shallow
         // perturbation mode, and one with a ceiling to keep (floatexp has none — `calibration`).
-        let live_mode = self.render_mode(fractal, julia, magnification);
+        let live_mode = self.live_render_mode(fractal, julia, magnification);
         let (live_verdict, live_cap, live_probe_cap) = if interacting
             && live_mode == RenderMode::Df32Pert
             && !pin_frame
@@ -8016,7 +8050,7 @@ impl FractadyneApp {
         // overshoot-safe by design, so the cost is one or two coarser frames after the crossover.
         if !offscreen {
             // `mode` itself is selected further down; it is a pure function of these two.
-            let sel = self.render_mode(fractal, julia, magnification);
+            let sel = self.live_render_mode(fractal, julia, magnification);
             let m = sel.to_u32();
             if self.perf.budget_mode[vidx] != m {
                 let prev = self.perf.budget_mode[vidx];
@@ -8168,7 +8202,7 @@ impl FractadyneApp {
             // ceiling-sized dispatch takes ~400 ms there. `resolution` is a LOWER bound on the
             // dispatch's pixels (ss ≥ 1), so its knee term errs on the safe side.
             let ceiling = crate::calibration::ceiling_for(
-                self.render_mode(fractal, julia, magnification),
+                self.live_render_mode(fractal, julia, magnification),
                 fractal,
                 (resolution[0] as u64) * (resolution[1] as u64),
             );
@@ -8510,7 +8544,7 @@ impl FractadyneApp {
         // conservative rather than exact. The error is in the safe direction — a pixel that skips
         // past the requested `end` idles in later passes until the cursor catches up, costing some
         // wasted passes, never an over-budget dispatch.
-        let chunk_mode = self.render_mode(fractal, julia, magnification);
+        let chunk_mode = self.live_render_mode(fractal, julia, magnification);
         let chunk_over = actuators::can_chunk(self.perf.actuators.as_ref(), chunk_mode)
             && self.resumable(fractal)
             && !self.coloring.color_method.needs_aux()
@@ -8825,7 +8859,7 @@ impl FractadyneApp {
         // Render path: 1 = direct df32 (shallow / unsupported formulas), 0 = df32
         // perturbation (fast, common deep range), 2 = floatexp perturbation (past df32's
         // ~1e30× exponent limit → extreme depth, ~1.7× costlier so only when needed).
-        let mode = self.render_mode(fractal, julia, magnification);
+        let mode = self.live_render_mode(fractal, julia, magnification);
         let precision = fractadyne_core::precision_for_octaves(log2mag.max(0.0).ceil() as u64);
         let vi = view_id as usize;
 
@@ -12207,13 +12241,16 @@ pub(crate) const STEP_WALK_MAX_PASSES: u32 = 4_096;
 /// Every later pass FOLLOWS the last one priced (`last`: its cap and wall, ms): `cap × target /
 /// wall`, at most doubling. The pixels still running ran that whole cap, so following it does at
 /// most twice their work, whatever the BLA does (`LiveTwin::walk_steps`, the export's
-/// `StepPricer::cap_for`).
+/// `StepPricer::cap_for`). A wall of 0 is the cheapest pass there is (it completed before a frame's
+/// interval was added to it: only a harness that drives frames with no time between them prices
+/// one so), so it doubles.
 pub(crate) fn walk_step_cap(fresh: bool, all_px: u64, last: (u32, f64), target_ms: f64) -> u32 {
     let (lo, hi) = (f64::from(STEP_WALK_MIN_CAP), f64::from(STEP_WALK_MAX_CAP));
     let target = if target_ms.is_finite() && target_ms > 0.0 { target_ms } else { 1.0 };
     let (cap, wall) = last;
-    if !fresh && cap > 0 && wall.is_finite() && wall > 0.0 {
-        return (f64::from(cap) * (target / wall).min(2.0)).clamp(lo, hi) as u32;
+    if !fresh && cap > 0 && wall.is_finite() && wall >= 0.0 {
+        let grow = if wall > 0.0 { (target / wall).min(2.0) } else { 2.0 };
+        return (f64::from(cap) * grow).clamp(lo, hi) as u32;
     }
     (target * 1.0e6 / STEP_WALK_PRIOR_NS / all_px.max(1) as f64).clamp(lo, hi) as u32
 }

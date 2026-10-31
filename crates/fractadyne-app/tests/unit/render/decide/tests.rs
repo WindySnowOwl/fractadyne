@@ -1290,6 +1290,7 @@ fn dispatch() -> WalkDispatchInputs {
             inflight_lo: 0,
             inflight_px: 0,
             step_cap: 0,
+            step_sum: 0,
         },
     }
 }
@@ -1555,6 +1556,7 @@ fn a_step_walk_opens_over_every_pixel_and_waits_to_be_priced() {
 fn a_step_walk_follows_the_last_wall_and_alternates_its_start() {
     let mut i = step_dispatch();
     (i.cur, i.state.cursor, i.state.idx, i.state.last_range) = (1, 1, 3, Some([2, 20_000]));
+    i.state.step_sum = 3_000;
     // A 1,000-step pass priced at 100 ms against 200: doubles, no more.
     (i.step_cap_last, i.step_wall_last) = (1_000, 100.0);
     let d = decide_walk_dispatch(&i);
@@ -1575,6 +1577,7 @@ fn a_step_walk_follows_the_last_wall_and_alternates_its_start() {
 fn a_step_walk_holds_its_pass_in_flight_and_ends_when_nothing_runs() {
     let mut i = step_dispatch();
     (i.cur, i.state.cursor, i.state.idx) = (1, 1, 5);
+    i.state.step_sum = 9_000;
     i.state.last_range = Some([1, 20_000]);
     i.state.step_cap = 3_000;
     i.state.inflight = Some((3_000, STEP_PASS_BAND, 40.0, false));
@@ -1642,10 +1645,56 @@ fn a_step_cap_opens_at_the_prior_and_follows_within_bounds() {
     assert_eq!(walk_step_cap(true, 1_000_000, (0, 0.0), 200.0), 133);
     assert_eq!(walk_step_cap(true, 100_000_000, (0, 0.0), 200.0), STEP_WALK_MIN_CAP);
     // Following: at most doubling, down in proportion, never past the cap's ceiling; a fresh walk
-    // ignores the last walk's pass, and a pass with no price opens instead.
+    // ignores the last walk's pass; a pass priced at 0 ms is the cheapest (doubles); one with no cap
+    // or an unreadable price opens instead.
     assert_eq!(walk_step_cap(false, 1_000_000, (900, 10.0), 200.0), 1_800);
     assert_eq!(walk_step_cap(false, 1_000_000, (900, 600.0), 200.0), 300);
     assert_eq!(walk_step_cap(false, 1_000, (30_000, 1.0), 200.0), STEP_WALK_MAX_CAP);
     assert_eq!(walk_step_cap(true, 1_000_000, (900, 10.0), 200.0), 133);
-    assert_eq!(walk_step_cap(false, 1_000_000, (900, 0.0), 200.0), 133);
+    assert_eq!(walk_step_cap(false, 1_000_000, (900, 0.0), 200.0), 1_800);
+    assert_eq!(walk_step_cap(false, 1_000_000, (0, 50.0), 200.0), 133);
+    assert_eq!(walk_step_cap(false, 1_000_000, (900, f64::NAN), 200.0), 133);
+}
+
+#[test]
+fn a_step_walk_ends_once_its_passes_gave_every_pixel_the_walks_iterations() {
+    // No reading comes (an unarmed readback, a harness with no event loop): 20,000 iterations over
+    // passes summing 20,000 steps, the last one priced, cannot leave a pixel running.
+    let mut i = step_dispatch();
+    (i.cur, i.state.cursor, i.state.idx, i.state.last_range) = (1, 1, 6, Some([1, 20_000]));
+    i.state.step_sum = 19_999;
+    assert_eq!(decide_walk_dispatch(&i).state.cursor, 1, "one step short: a pixel may still run");
+    i.state.step_sum = 20_000;
+    let d = decide_walk_dispatch(&i);
+    assert_eq!((d.chunk_range, d.state.cursor), (Some([20_000, 20_000]), 20_000));
+    // Not while that pass is still in flight.
+    let flying = WalkDispatchInputs { state: DispatchState { inflight: Some((900, STEP_PASS_BAND, 5.0, false)), ..i.state }, ..i.clone() };
+    assert_eq!(decide_walk_dispatch(&flying).state.cursor, 1);
+    // The series seed covers [0, walk_floor) at the opening: only the rest needs steps.
+    let seeded = WalkDispatchInputs { walk_floor: 5_000, state: DispatchState { step_sum: 15_000, ..i.state }, ..i.clone() };
+    assert_eq!(decide_walk_dispatch(&seeded).state.cursor, 20_000);
+    // Each pass adds its cap.
+    let mut j = step_dispatch();
+    (j.cur, j.state.cursor, j.state.idx, j.state.last_range, j.state.step_sum) = (1, 1, 2, Some([2, 20_000]), 500);
+    (j.step_cap_last, j.step_wall_last) = (250, 100.0);
+    assert_eq!(decide_walk_dispatch(&j).state.step_sum, 1_000);
+    assert_eq!(decide_walk_dispatch(&step_dispatch()).state.step_sum, 166, "a fresh walk starts its sum");
+}
+
+#[test]
+fn a_step_pass_never_outgrows_the_pass_budget_over_the_pixels_still_running() {
+    // The budget allows 4e7 steps: over 800,000 pixels 50 steps each, though the prior says 166.
+    let tight = WalkDispatchInputs { pass_steps: 40_000_000, ..step_dispatch() };
+    assert_eq!(decide_walk_dispatch(&tight).step_cap, 50);
+    // Following a cheap pass: doubled to 4,000, but 40,000 pixels running and 8e7 steps allow 2,000.
+    let mut i = step_dispatch();
+    (i.cur, i.state.cursor, i.state.idx, i.state.last_range, i.state.step_sum) = (1, 1, 3, Some([2, 20_000]), 3_000);
+    (i.step_cap_last, i.step_wall_last, i.pass_steps) = (2_000, 50.0, 80_000_000);
+    i.running = Some((7, 20_000, 40_000));
+    let d = decide_walk_dispatch(&i);
+    assert_eq!(d.step_cap, 2_000);
+    assert!(d.state.fe_steps_last <= i.pass_steps, "{} steps against a budget of {}", d.state.fe_steps_last, i.pass_steps);
+    // Never below the floor, however small the budget.
+    let starved = WalkDispatchInputs { pass_steps: 1, ..step_dispatch() };
+    assert_eq!(decide_walk_dispatch(&starved).step_cap, crate::render::STEP_WALK_MIN_CAP);
 }

@@ -7109,9 +7109,11 @@ impl FractadyneApp {
                 // `start_iter==0` branch), so a first window [0, sa_skip+step) LOOPS only `step`
                 // real iterations — the GPU cost is `e - max(s, sa_skip)`, not the nominal `e - s`.
                 // Measuring the raw range would price the free skip prefix as work (beta.99).
+                // A STEP-BOUNDED pass (`WALK_STEPS`) runs the whole rest of its walk and stops each
+                // pixel after `step_cap` steps: its cap is what it can cost.
                 let disp_iter = pr
                     .chunk_range
-                    .map(|[s, e]| e.saturating_sub(s.max(pr.sa_skip)).max(1))
+                    .map(|[s, e]| if pr.step_cap > 0 { pr.step_cap } else { e.saturating_sub(s.max(pr.sa_skip)).max(1) })
                     .unwrap_or(ITER);
                 (pr.resolution[0], pr.resolution[1], pr.ss, disp_iter)
             };
@@ -7392,8 +7394,13 @@ impl FractadyneApp {
                     if self.perf.chunk_governed[0] {
                         governed_frames += 1;
                         worst_pass_steps = worst_pass_steps.max(self.perf.fe_steps_last[0]);
-                        biggest_step =
-                            biggest_step.max(self.perf.chunk_cursor[0].saturating_sub(before));
+                        // A step-bounded walk (`WALK_STEPS`) grows its step cap where a window walk
+                        // grows its windows; its pass's work is `fe_steps_last` either way.
+                        let grew = match self.perf.chunk_step_cap_now[0] {
+                            0 => self.perf.chunk_cursor[0].saturating_sub(before),
+                            cap => cap,
+                        };
+                        biggest_step = biggest_step.max(grew);
                     }
                 }
                 let within_one_budget = worst_pass_steps <= FIELD_BUDGET;
@@ -7409,7 +7416,7 @@ impl FractadyneApp {
                         worst_pass_steps as f64,
                         worst_pass_steps as f64 / FIELD_BUDGET as f64
                     ),
-                    threshold: "governed, ladder moved past the 256 floor, every pass ≤ one budget",
+                    threshold: "governed, ladder (window or step cap) moved past the 256 floor, every pass ≤ one budget",
                     pass: deep_ref && governed_frames > 0 && biggest_step > 256 && within_one_budget,
                 });
                 if governed_frames == 0 || biggest_step <= 256 {
@@ -7473,11 +7480,12 @@ impl FractadyneApp {
                         );
                         // Real work past the SA seed (see the FIRST-dispatch check): [0, sa_skip)
                         // is a free O(1)/pixel seed, so the pass costs `e - max(s, sa_skip)` loops.
+                        // A step-bounded pass costs at most its cap a pixel (the FIRST-dispatch check).
                         let d = pr.chunk_range.map(|[s, e]| {
                             (pr.resolution[0] as u64)
                                 * (pr.resolution[1] as u64)
                                 * (pr.ss as u64).pow(2)
-                                * (e.saturating_sub(s.max(pr.sa_skip)).max(1) as u64)
+                                * u64::from(if pr.step_cap > 0 { pr.step_cap } else { e.saturating_sub(s.max(pr.sa_skip)).max(1) })
                         });
                         disp = disp.max(d);
                     }
@@ -7551,6 +7559,7 @@ impl FractadyneApp {
                             * (pr.ss as u64).pow(2);
                         // Real work past the SA seed, as in the check above.
                         let out = match (pr.chunk_range, pr.tile) {
+                            (Some(_), _) if pr.step_cap > 0 => per_iter * u64::from(pr.step_cap),
                             (Some([s, e]), _) => per_iter * (e.saturating_sub(s.max(pr.sa_skip)).max(1) as u64),
                             (None, Some(r)) => crate::render::tile_steps(r, pr.ss, DEEP_ITER),
                             (None, None) => per_iter * DEEP_ITER as u64,

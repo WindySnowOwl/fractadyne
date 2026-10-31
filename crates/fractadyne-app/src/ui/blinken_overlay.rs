@@ -102,7 +102,9 @@ impl FractadyneApp {
         };
         self.blinken.update(snap, &ef);
         let df32_from = 1.0e4f64.log2() as f32;
-        let fe_from = crate::PERT_FE_THRESHOLD.log2() as f32;
+        // Floatexp from the band's start where the live view renders the band as floatexp with BLA
+        // (`band_bla`): there is no df32 stretch to show.
+        let fe_from = if self.band_bla(self.fractal, !self.dual && self.julia_mode) { df32_from } else { crate::PERT_FE_THRESHOLD.log2() as f32 };
         self.blinken.show(ctx, view, df32_from, fe_from);
         self.blinken.note_cost(t0.elapsed().as_secs_f64() * 1000.0);
     }

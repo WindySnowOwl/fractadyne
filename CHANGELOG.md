@@ -59,6 +59,18 @@ published as the pre-releases `v0.2.41-beta.1` to `v0.2.41-beta.150`, and a "bet
 
 Changes after 0.3.0-beta.1:
 
+- **Deep views between 10,000× and 1e28× finish two to three times faster (0.3.0-beta.22).** In
+  that range the live view iterated every step; it now skips runs of steps with the same
+  approximation (BLA) the views past 1e28× use, and finishes a still view in passes bounded by
+  the work each pixel does, not by a count of iterations, which the skipping makes unpredictable.
+  On a dive with 165,000 iterations, the still view at 2^70 (about 1e21×) finishes in about 2 s
+  instead of 6.4 to 7.6 s on an RTX 3070, and in about 3 s instead of 11 s on an RX 6800 XT; past
+  1e28×, the 2^704 test view finishes in 2.1 s instead of 4.0 s on the RTX 3070. No pass came near
+  the time at which Windows resets a graphics card. At pixels where the two pictures differ, a
+  check against the exact answer found the new one right wherever the old one was. Julia views,
+  custom formulas, colourings that collect orbit statistics, views with BLA turned off, and
+  exported images keep the previous arithmetic. `--band-audit` compares the two at any view in
+  that range.
 - **Lighting no longer drops out at pixels right on the edge of the set (0.3.0-beta.22).** At
   shallow depth (below about 10,000×, and in a zoom video's first strips) each pixel's lighting
   direction is worked out in single precision from the final z and its derivative. Within a hair

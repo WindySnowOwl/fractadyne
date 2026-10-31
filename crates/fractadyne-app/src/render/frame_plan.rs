@@ -370,7 +370,7 @@ impl crate::FractadyneApp {
         // Only a frame the chunk path can serve is spread over passes (the pin); an aux colouring,
         // a formula past the chunk shaders' scope or a device without the state targets renders
         // each refresh as ONE dispatch, and then one pass is all there is.
-        let chunk_mode = self.render_mode(fractal, julia, magnification);
+        let chunk_mode = self.live_render_mode(fractal, julia, magnification);
         let can_chunk = super::actuators::can_chunk(self.perf.actuators.as_ref(), chunk_mode)
             && self.resumable(fractal)
             && !self.coloring.color_method.needs_aux();

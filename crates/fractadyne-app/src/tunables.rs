@@ -1445,19 +1445,23 @@ pub(crate) const PIN_GROWTH_LANE_DEFAULT: u64 = 0;
 /// `MODE_RATE_UNKNOWN_MARGIN`), as before.
 pub(crate) const PRE_SWITCH_PROBE_DEFAULT: u64 = 1;
 
-/// EXPERIMENT, off by default (2026-10-30). 1 = the df32 perturbation band (`1e4×` to
-/// `PERT_FE_THRESHOLD`) renders as floatexp perturbation, with BLA as configured. Mode 0 has no
-/// BLA, so the band iterates every step: the user's dive at 2^70 settles in ~4 s on the RTX 3080
-/// (~11 s on the RX 6800 XT) doing 103k iterations a pixel.
-pub(crate) const BAND_FLOATEXP_DEFAULT: u64 = 0;
+/// 1 = the LIVE view renders the df32 perturbation band (`1e4×` to `PERT_FE_THRESHOLD`) as floatexp
+/// perturbation with BLA, wherever the BLA applies (`FractadyneApp::live_render_mode`, `band_bla`);
+/// exports keep df32. 0 = df32 as before (mode 0 has no BLA, so the band iterates every step). With
+/// `WALK_STEPS` it settles the user's dive at 2^70 in 2.0–2.2 s on the RTX 3070 against 6.4–7.6, and
+/// in 2.9–3.5 s on the RX 6800 XT against 11 (PLUTO, 2026-10-30). ⛔Not without `WALK_STEPS`: walked by
+/// iteration windows it gained nothing (24.5 / 22.0 s of settled walks against 23.6 on the RTX 3080)
+/// and ran one 978 ms pass where the BLA stopped skipping.
+pub(crate) const BAND_FLOATEXP_DEFAULT: u64 = 1;
 
-/// EXPERIMENT, off by default (2026-10-30). 1 = a SETTLED mode-2 walk in the window runs
-/// step-bounded passes: each runs the whole rest of the walk and stops every pixel after a step cap
-/// that follows the last pass's wall (`decide_walk_dispatch`, `render::walk_step_cap`), as the
-/// export's and a worker GPU's walks do; the walk ends when a reading says no pixel runs. 0 =
-/// iteration windows, whose cost the BLA makes non-uniform: at the user's 2^60 view under
-/// `BAND_FLOATEXP` a window grown on a cheap stretch ran 978 ms.
-pub(crate) const WALK_STEPS_DEFAULT: u64 = 0;
+/// 1 = a SETTLED mode-2 walk in the window runs step-bounded passes: each runs the whole rest of the
+/// walk and stops every pixel after a step cap that follows the last pass's wall
+/// (`decide_walk_dispatch`, `render::walk_step_cap`), as the export's and a worker GPU's walks do;
+/// the walk ends when a reading says no pixel runs. 0 = iteration windows, whose cost the BLA makes
+/// non-uniform: at the user's 2^60 view under `BAND_FLOATEXP` a window grown on a cheap stretch ran
+/// 978 ms. The 2^704 settle view, held: 4.0 → 2.1 s on the RTX 3070, 5.4 → 3.5 on the RX 6800 XT,
+/// passes ≤ 266 ms (PLUTO, 2026-10-30).
+pub(crate) const WALK_STEPS_DEFAULT: u64 = 1;
 
 /// The share of the settled pass target (`TDR_BUDGET_MS`, `TDR_EXPLICIT_BUDGET_MS`) a step-bounded
 /// pass is sized for (`WALK_STEPS`): following the last wall can at most double a pass, so half
