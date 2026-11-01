@@ -3448,6 +3448,26 @@ autopilot-on-misi =
 autopilot-misi-finding =
     Autopilot: finding the nearest Misiurewicz point…
     { $seconds } s · any input stops
+# $percent: how much of the critical orbit the finder has walked; $seconds: how long it has run, in whole seconds.
+autopilot-misi-detecting =
+    Autopilot: finding the nearest Misiurewicz point… { $percent }% of the orbit
+    { $seconds } s · any input stops
+# ($preperiod,$period) names the point: keep the notation. $depth: a magnification as written (1e400×). $step: the Newton step; $percent: how far through it.
+autopilot-misi-solving =
+    Autopilot: solving Misiurewicz ({ $preperiod },{ $period }) to { $depth }
+    Newton step { $step }, { $percent }% · { $seconds } s · any input stops
+# ($preperiod,$period) names the point: keep the notation. $exact, $target: magnifications as written (1e400×). $stage of $stages: the refinement stage; $step: its Newton step; $percent: how far through it.
+autopilot-misi-refining =
+    Autopilot: diving into Misiurewicz ({ $preperiod },{ $period }), exact to { $exact }
+    Refining to { $target }: stage { $stage } of { $stages }, step { $step }, { $percent }% · any input stops
+# ($preperiod,$period) names the point: keep the notation. $exact: a magnification as written (1e400×). $stage of $stages: the refinement stage; $step: its Newton step; $percent: how far through it.
+autopilot-misi-waiting =
+    Autopilot: waiting at { $exact } while Misiurewicz ({ $preperiod },{ $period }) is refined
+    Stage { $stage } of { $stages }, step { $step }, { $percent }% · any input stops
+# ($preperiod,$period) names the point: keep the notation. $exact: a magnification as written (1e400×).
+autopilot-misi-refine-failed =
+    Autopilot: Misiurewicz ({ $preperiod },{ $period }) could not be refined past { $exact }
+    The dive stops here
 autopilot-misi-not-found =
     Autopilot: no Misiurewicz point found near this view
     The finder may not reach this depth — try the Detail target

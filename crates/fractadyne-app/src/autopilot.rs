@@ -194,13 +194,95 @@ pub(crate) struct MisiTarget {
 }
 
 /// The off-thread detect + solve that produces a [`MisiTarget`] (the same worker shape as the
-/// Go-to dialog's "Find near view": detection at the view's scale, then Newton at the target
-/// depth). The dive holds still until it answers.
+/// Go-to dialog's "Find near view": detection at the view's scale, then Newton). ⭐**In STAGES**
+/// ([`misi_stages`]): first a little past the view, so the dive starts in seconds, then deeper,
+/// each stage seeded by the last, while the dive runs. Solving straight for the dive's limit ran
+/// every Newton step at the limit's precision: at 1e5000× (~16,700 bits) and a ~260k-iteration
+/// orbit, the dive sat still for minutes with nothing to show (the user, 2026-11-01).
+///
+/// Dropping it stops the worker (`cancel`): a stopped dive, or a new solve, does not leave a core
+/// busy with the old one.
 pub(crate) struct MisiSolve {
-    pub(crate) rx: std::sync::mpsc::Receiver<Result<MisiTarget, MisiMiss>>,
+    pub(crate) rx: std::sync::mpsc::Receiver<MisiMsg>,
     pub(crate) started: std::time::Instant,
-    /// When the waiting toast was last refreshed (app time).
+    /// When the progress toast was last refreshed (app time).
     pub(crate) toast_t: f64,
+    pub(crate) cancel: std::sync::Arc<std::sync::atomic::AtomicBool>,
+    /// The worker's latest report, for the toasts.
+    pub(crate) progress: std::sync::Arc<std::sync::Mutex<MisiProgress>>,
+    /// The dive has caught up with the solved depth and is waiting (logged once per stage).
+    pub(crate) waiting: Option<u32>,
+}
+
+impl Drop for MisiSolve {
+    fn drop(&mut self) {
+        self.cancel.store(true, std::sync::atomic::Ordering::Relaxed);
+    }
+}
+
+/// What the solve worker sends.
+pub(crate) enum MisiMsg {
+    /// The detector named the point, after `secs`.
+    Detected { preperiod: u32, period: u32, secs: f64 },
+    /// Stage `stage` of `stages` solved: the target, exact to its `solved_l2`.
+    Stage { target: MisiTarget, stage: u32, stages: u32, secs: f64 },
+    /// It failed (at stage `stage`; 0 = before any solved).
+    Failed { why: MisiMiss, stage: u32 },
+}
+
+/// Where the solve worker has got to.
+#[derive(Clone, Debug, Default, PartialEq)]
+pub(crate) struct MisiProgress {
+    /// The point, once detected.
+    pub(crate) kp: Option<(u32, u32)>,
+    /// The stage being solved (from 1; 0 = still detecting), of `stages`, and its depth.
+    pub(crate) stage: u32,
+    pub(crate) stages: u32,
+    pub(crate) stage_l2: f64,
+    /// The core's latest report.
+    pub(crate) last: Option<fractadyne_core::SolveProgress>,
+}
+
+/// The depths a Misiurewicz target is solved to, in order, ending at `target_l2`: `cur_l2` plus
+/// `first_oct` (`tunables::MISI_FIRST_STAGE_OCT_DEFAULT`), then doubling, each stage at least
+/// `first_oct` deeper. Newton seeded from a stage converges at twice its precision in a step or
+/// two, so the schedule costs about two steps at the final precision, where one solve at the
+/// target from the view took five to eight.
+pub(crate) fn misi_stages(cur_l2: f64, target_l2: f64, first_oct: f64) -> Vec<f64> {
+    let cur = cur_l2.max(0.0);
+    let first = first_oct.max(1.0);
+    let mut out = Vec::new();
+    let mut next = (cur + first).min(target_l2);
+    loop {
+        out.push(next);
+        if next >= target_l2 {
+            return out;
+        }
+        next = (next * 2.0).max(next + first).min(target_l2);
+    }
+}
+
+/// The share of the current phase done, 0..=100, from a core report.
+pub(crate) fn misi_percent(p: Option<fractadyne_core::SolveProgress>) -> u32 {
+    use fractadyne_core::SolveProgress as P;
+    let (done, of) = match p {
+        Some(P::Detect { done, of }) | Some(P::Newton { done, of, .. }) | Some(P::Verify { done, of }) => (done, of),
+        None => (0, 1),
+    };
+    ((done as f64 / of.max(1) as f64) * 100.0).clamp(0.0, 100.0) as u32
+}
+
+/// The Newton step a core report is in (1 before any).
+pub(crate) fn misi_step(p: Option<fractadyne_core::SolveProgress>) -> u32 {
+    match p {
+        Some(fractadyne_core::SolveProgress::Newton { step, .. }) => step,
+        _ => 1,
+    }
+}
+
+/// A depth (log2 magnification) as the toasts write it: `1e400×`.
+pub(crate) fn misi_depth(l2: f64) -> String {
+    format!("1e{:.0}×", l2 * std::f64::consts::LOG10_2)
 }
 
 /// Why the Misiurewicz target could not be had. The user is told in a toast, in the language in
@@ -250,6 +332,26 @@ impl MisiMiss {
             MisiMiss::Refused => "Misiurewicz solve refused (bad pair)".to_string(),
         }
     }
+}
+
+/// The dive's label once a Misiurewicz target is in hand.
+fn misi_diving_label(m: &MisiTarget) -> String {
+    let (preperiod, period) = (m.preperiod.to_string(), m.period.to_string());
+    match (m.repeat_oct, m.twist_deg) {
+        (Some(r), Some(t)) => tr!(
+            autopilot_misi_diving_repeat,
+            preperiod = preperiod,
+            period = period,
+            octaves = crate::i18n::decimal(r, 2),
+            twist = crate::i18n::decimal_signed(t, 1)
+        ),
+        _ => tr!(autopilot_misi_diving, preperiod = preperiod, period = period),
+    }
+}
+
+/// The solve in hand (callers have just matched it).
+fn solve_mut(s: &mut Option<MisiSolve>) -> &mut MisiSolve {
+    s.as_mut().expect("the solve the caller matched")
 }
 
 /// Where a fixed fractal coordinate sits on screen, as the fraction the autopilot steers in.
@@ -389,9 +491,24 @@ impl FractadyneApp {
         // Solve for the depth the dive will reach, so the coordinate stays exact all the way down
         // (the solve's precision follows the ask); an octave past the view at the very least.
         let solve_l2 = self.autopilot.dive_log2.max(cur_l2 + 1.0).min(crate::MAX_SOLVE_OCTAVES);
+        let stages = misi_stages(cur_l2, solve_l2, crate::tunables::cost().misi_first_stage_oct);
         let (tx, rx) = std::sync::mpsc::channel();
+        let cancel = std::sync::Arc::new(std::sync::atomic::AtomicBool::new(false));
+        let progress = std::sync::Arc::new(std::sync::Mutex::new(MisiProgress {
+            stages: stages.len() as u32,
+            ..MisiProgress::default()
+        }));
+        let (w_cancel, w_progress) = (cancel.clone(), progress.clone());
         std::thread::spawn(move || {
-            let found = fractadyne_core::detect_misiurewicz_at_scale(
+            let t0 = std::time::Instant::now();
+            let report = |r: fractadyne_core::SolveProgress| {
+                if let Ok(mut g) = w_progress.lock() {
+                    g.last = Some(r);
+                }
+            };
+            let ctl = fractadyne_core::SolveControl { cancel: Some(&w_cancel), progress: Some(&report) };
+            let stopped = || w_cancel.load(std::sync::atomic::Ordering::Relaxed);
+            let found = fractadyne_core::detect_misiurewicz_at_scale_with(
                 &center[0],
                 &center[1],
                 0,
@@ -399,47 +516,82 @@ impl FractadyneApp {
                 1_024,
                 precision,
                 Some(span_log2),
+                &ctl,
             );
-            let msg = match found {
-                None => Err(MisiMiss::NotFound),
-                Some((k, p)) => match fractadyne_core::find_misiurewicz(
-                    &center,
+            if stopped() {
+                return;
+            }
+            let Some((k, p)) = found else {
+                let _ = tx.send(MisiMsg::Failed { why: MisiMiss::NotFound, stage: 0 });
+                return;
+            };
+            let _ = tx.send(MisiMsg::Detected { preperiod: k, period: p, secs: t0.elapsed().as_secs_f64() });
+            let n = stages.len() as u32;
+            // Each stage is seeded by the last; the "is this the point in view?" test stays about
+            // the view the dive started from (`log2_seed`).
+            let mut seed = center;
+            let mut lam: Option<fractadyne_core::Multiplier> = None;
+            for (i, &stage_l2) in stages.iter().enumerate() {
+                let stage = i as u32 + 1;
+                if let Ok(mut g) = w_progress.lock() {
+                    g.kp = Some((k, p));
+                    g.stage = stage;
+                    g.stage_l2 = stage_l2;
+                    g.last = None;
+                }
+                let solved = fractadyne_core::find_misiurewicz_with(
+                    &seed,
                     k,
                     p,
-                    fractadyne_core::SolveScale { log2_seed: cur_l2, log2_target: solve_l2 },
+                    fractadyne_core::SolveScale { log2_seed: cur_l2, log2_target: stage_l2 },
                     0,
-                ) {
+                    &ctl,
+                );
+                let why = match solved {
                     Ok(m) => {
-                        let prec = fractadyne_core::precision_for_octaves(solve_l2.max(0.0).ceil() as u64);
-                        let lam = fractadyne_core::misiurewicz_multiplier(
-                            &m.cx, &m.cy, m.preperiod, m.period, 0, prec,
-                        );
-                        Ok(MisiTarget {
+                        // The multiplier once, at the first stage's precision: the octaves per
+                        // repeat and the twist need only a few digits.
+                        if lam.is_none() {
+                            let prec = fractadyne_core::precision_for_octaves(stage_l2.max(0.0).ceil() as u64);
+                            lam = fractadyne_core::misiurewicz_multiplier(&m.cx, &m.cy, m.preperiod, m.period, 0, prec);
+                        }
+                        seed = [m.cx.clone(), m.cy.clone()];
+                        let target = MisiTarget {
                             cx: m.cx,
                             cy: m.cy,
                             preperiod: m.preperiod,
                             period: m.period,
                             repeat_oct: lam.as_ref().map(|l| l.log2_abs),
                             twist_deg: lam.as_ref().map(|l| l.arg.to_degrees()),
-                            solved_l2: solve_l2,
-                        })
+                            solved_l2: stage_l2,
+                        };
+                        let secs = t0.elapsed().as_secs_f64();
+                        if tx.send(MisiMsg::Stage { target, stage, stages: n, secs }).is_err() {
+                            return;
+                        }
+                        continue;
                     }
+                    Err(fractadyne_core::MisiurewiczMiss::Cancelled) => return,
                     Err(fractadyne_core::MisiurewiczMiss::TooFar { log2_view_widths }) => {
-                        Err(MisiMiss::OffScreen { preperiod: k, period: p, log2_view_widths })
+                        MisiMiss::OffScreen { preperiod: k, period: p, log2_view_widths }
                     }
                     Err(fractadyne_core::MisiurewiczMiss::NotPreperiodic { .. })
                     | Err(fractadyne_core::MisiurewiczMiss::NotConverged) => {
-                        Err(MisiMiss::NotSolved { preperiod: k, period: p })
+                        MisiMiss::NotSolved { preperiod: k, period: p }
                     }
-                    Err(fractadyne_core::MisiurewiczMiss::BadRequest) => Err(MisiMiss::Refused),
-                },
-            };
-            let _ = tx.send(msg);
+                    Err(fractadyne_core::MisiurewiczMiss::BadRequest) => MisiMiss::Refused,
+                };
+                let _ = tx.send(MisiMsg::Failed { why, stage });
+                return;
+            }
         });
         self.autopilot.misi_solve = Some(MisiSolve {
             rx,
             started: std::time::Instant::now(),
             toast_t: f64::NEG_INFINITY,
+            cancel,
+            progress,
+            waiting: None,
         });
         self.set_toast(tr!(autopilot_on_misi), ctx);
         crate::diag::log_line(
@@ -448,59 +600,125 @@ impl FractadyneApp {
         );
     }
 
-    /// Collect the Misiurewicz solve when it lands; keep the user informed while it runs; stop
-    /// the dive, with the reason, when it fails.
+    /// Collect the Misiurewicz solve's stages as they land; keep the user informed while it runs
+    /// (`misi_progress_toast`); stop the dive, with the reason, when it fails before any stage.
     fn poll_misi_target(&mut self, ctx: &egui::Context, now: f64) {
-        let Some(solve) = self.autopilot.misi_solve.as_mut() else { return };
-        match solve.rx.try_recv() {
-            Ok(Ok(m)) => {
-                let took = solve.started.elapsed().as_secs_f64();
-                let (preperiod, period) = (m.preperiod.to_string(), m.period.to_string());
-                let label = match (m.repeat_oct, m.twist_deg) {
-                    (Some(r), Some(t)) => tr!(
-                        autopilot_misi_diving_repeat,
-                        preperiod = preperiod,
-                        period = period,
-                        octaves = crate::i18n::decimal(r, 2),
-                        twist = crate::i18n::decimal_signed(t, 1)
-                    ),
-                    _ => tr!(autopilot_misi_diving, preperiod = preperiod, period = period),
-                };
-                crate::diag::log_line(
-                    "autopilot",
-                    &format!(
-                        "misiurewicz target: ({},{}) solved to 2^{:.1} in {took:.2} s, repeat {:?} oct",
-                        m.preperiod, m.period, m.solved_l2, m.repeat_oct
-                    ),
-                );
-                self.autopilot.misi = Some(m);
-                self.autopilot.misi_solve = None;
-                self.autopilot.eval_t = 0.0;
-                self.set_toast(label, ctx);
-            }
-            Ok(Err(why)) => {
-                crate::diag::log_line("autopilot", &format!("misiurewicz target: {}", why.log_text()));
-                self.autopilot.misi_solve = None;
-                self.autopilot.active = false;
-                self.autopilot.stepping = false;
-                self.pointer.zoom_vel = 0.0;
-                self.set_toast(why.toast(), ctx);
-            }
-            Err(std::sync::mpsc::TryRecvError::Empty) => {
-                // A deep detect can take a minute; keep the toast alive with the elapsed time.
-                if now - solve.toast_t > 2.0 {
-                    solve.toast_t = now;
-                    let s = solve.started.elapsed().as_secs_f64();
-                    self.set_toast(tr!(autopilot_misi_finding, seconds = crate::i18n::decimal(s, 0)), ctx);
+        loop {
+            let Some(solve) = self.autopilot.misi_solve.as_mut() else { return };
+            match solve.rx.try_recv() {
+                Ok(MisiMsg::Detected { preperiod, period, secs }) => {
+                    crate::diag::log_line(
+                        "autopilot",
+                        &format!("misiurewicz target: ({preperiod},{period}) detected in {secs:.1} s"),
+                    );
+                }
+                Ok(MisiMsg::Stage { target: m, stage, stages, secs }) => {
+                    let first = self.autopilot.misi.is_none();
+                    crate::diag::log_line(
+                        "autopilot",
+                        &format!(
+                            "misiurewicz target: ({},{}) solved to 2^{:.1} at {secs:.1} s (stage {stage} of {stages}){}",
+                            m.preperiod,
+                            m.period,
+                            m.solved_l2,
+                            if first { format!(", repeat {:?} oct", m.repeat_oct) } else { String::new() }
+                        ),
+                    );
+                    if first || stage == stages {
+                        self.set_toast(misi_diving_label(&m), ctx);
+                        self.autopilot.eval_t = 0.0;
+                    }
+                    self.autopilot.misi = Some(m);
+                    if stage == stages {
+                        self.autopilot.misi_solve = None;
+                        return;
+                    }
+                    solve_mut(&mut self.autopilot.misi_solve).waiting = None;
+                }
+                Ok(MisiMsg::Failed { why, stage }) => {
+                    crate::diag::log_line(
+                        "autopilot",
+                        &format!("misiurewicz target: {} (stage {stage})", why.log_text()),
+                    );
+                    self.autopilot.misi_solve = None;
+                    if self.autopilot.misi.is_none() {
+                        self.autopilot.active = false;
+                        self.autopilot.stepping = false;
+                        self.pointer.zoom_vel = 0.0;
+                        self.set_toast(why.toast(), ctx);
+                    }
+                    // Past the first stage the dive goes on to the depth it has, and stops there
+                    // (`autopilot_step`).
+                    return;
+                }
+                Err(std::sync::mpsc::TryRecvError::Empty) => {
+                    if now - solve.toast_t > 1.0 {
+                        solve.toast_t = now;
+                        let label = self.misi_progress_toast();
+                        self.set_toast(label, ctx);
+                    }
+                    return;
+                }
+                Err(std::sync::mpsc::TryRecvError::Disconnected) => {
+                    self.autopilot.misi_solve = None;
+                    if self.autopilot.misi.is_none() {
+                        self.autopilot.active = false;
+                        self.autopilot.stepping = false;
+                        self.pointer.zoom_vel = 0.0;
+                        self.set_toast(tr!(autopilot_misi_stopped), ctx);
+                    }
+                    return;
                 }
             }
-            Err(std::sync::mpsc::TryRecvError::Disconnected) => {
-                self.autopilot.misi_solve = None;
-                self.autopilot.active = false;
-                self.autopilot.stepping = false;
-                self.pointer.zoom_vel = 0.0;
-                self.set_toast(tr!(autopilot_misi_stopped), ctx);
-            }
+        }
+    }
+
+    /// The progress toast while the solve runs: finding the point, solving its first stage,
+    /// refining it while the dive goes on, or holding the dive until the refinement catches up.
+    fn misi_progress_toast(&self) -> String {
+        let Some(solve) = self.autopilot.misi_solve.as_ref() else { return String::new() };
+        let pr = solve.progress.lock().map(|g| g.clone()).unwrap_or_default();
+        let seconds = crate::i18n::decimal(solve.started.elapsed().as_secs_f64(), 0);
+        let percent = misi_percent(pr.last).to_string();
+        let step = misi_step(pr.last).to_string();
+        let (Some((k, p)), Some(m)) = (pr.kp, self.autopilot.misi.as_ref()) else {
+            return match pr.kp {
+                None => tr!(autopilot_misi_detecting, percent = percent, seconds = seconds),
+                Some((k, p)) => tr!(
+                    autopilot_misi_solving,
+                    preperiod = k.to_string(),
+                    period = p.to_string(),
+                    depth = misi_depth(pr.stage_l2),
+                    step = step,
+                    percent = percent,
+                    seconds = seconds
+                ),
+            };
+        };
+        let (stage, stages) = (pr.stage.to_string(), pr.stages.to_string());
+        if solve.waiting.is_some() {
+            tr!(
+                autopilot_misi_waiting,
+                preperiod = k.to_string(),
+                period = p.to_string(),
+                exact = misi_depth(m.solved_l2),
+                stage = stage,
+                stages = stages,
+                step = step,
+                percent = percent
+            )
+        } else {
+            tr!(
+                autopilot_misi_refining,
+                preperiod = k.to_string(),
+                period = p.to_string(),
+                exact = misi_depth(m.solved_l2),
+                target = misi_depth(pr.stage_l2),
+                stage = stage,
+                stages = stages,
+                step = step,
+                percent = percent
+            )
         }
     }
 
@@ -514,6 +732,8 @@ impl FractadyneApp {
     ) {
         if !self.autopilot.active {
             self.autopilot.stepping = false;
+            // A stopped dive's solve stops with it (`MisiSolve`'s drop cancels the worker).
+            self.autopilot.misi_solve = None;
             return;
         }
         // Any manual navigation, Esc, or dual view hands control back to the user.
@@ -591,13 +811,62 @@ impl FractadyneApp {
         }
         let dt = (ctx.input(|i| i.stable_dt) as f64).clamp(0.0, 0.1);
 
-        // A Misiurewicz target still being solved: hold the view — no zoom, no probe, and no
-        // interaction stamp, so the picture settles while the solver works.
+        // A Misiurewicz target whose first stage is still being solved: hold the view — no zoom,
+        // no probe, and no interaction stamp, so the picture settles while the solver works.
         if self.autopilot.misi_solve.is_some() {
             self.poll_misi_target(ctx, now);
-            if self.autopilot.misi_solve.is_some() || !self.autopilot.active {
+            if !self.autopilot.active
+                || (self.autopilot.misi_solve.is_some() && self.autopilot.misi.is_none())
+            {
                 self.schedule_repaint(ctx);
                 return;
+            }
+        }
+        // …and one the dive has caught up with: the coordinate is exact only to `solved_l2`, and
+        // past it the dive would steer onto the error. Hold (as a moving view, like `RefWait`)
+        // until the next stage lands; with none coming (a later stage failed), stop here.
+        if let Some(m) = self.autopilot.misi.as_ref() {
+            if l2 >= m.solved_l2 && m.solved_l2 < self.autopilot.dive_log2 {
+                let (exact, kp) = (m.solved_l2, (m.preperiod, m.period));
+                match self.autopilot.misi_solve.as_mut() {
+                    Some(solve) => {
+                        let stage = solve.progress.lock().map(|g| g.stage).unwrap_or(0);
+                        if solve.waiting != Some(stage) {
+                            solve.waiting = Some(stage);
+                            solve.toast_t = f64::NEG_INFINITY;
+                            crate::diag::log_line(
+                                "autopilot",
+                                &format!(
+                                    "misiurewicz target: the dive reached 2^{l2:.1}, where the point is exact; \
+                                     holding for stage {stage}"
+                                ),
+                            );
+                        }
+                        self.autopilot.speed = 0.0;
+                        self.hold_stamp(now);
+                        self.schedule_repaint(ctx);
+                        return;
+                    }
+                    None => {
+                        crate::diag::log_line(
+                            "autopilot",
+                            &format!("misiurewicz target: stopping at 2^{exact:.1}, the depth the point was solved to"),
+                        );
+                        self.autopilot.active = false;
+                        self.autopilot.stepping = false;
+                        self.pointer.zoom_vel = 0.0;
+                        self.set_toast(
+                            tr!(
+                                autopilot_misi_refine_failed,
+                                preperiod = kp.0.to_string(),
+                                period = kp.1.to_string(),
+                                exact = misi_depth(exact)
+                            ),
+                            ctx,
+                        );
+                        return;
+                    }
+                }
             }
         }
         // The goal of a Misiurewicz dive is the point itself, projected exactly every frame.
@@ -1397,3 +1666,7 @@ mod target_tests;
 #[cfg(test)]
 #[path = "../tests/unit/autopilot/ref_wait_tests.rs"]
 mod ref_wait_tests;
+
+#[cfg(test)]
+#[path = "../tests/unit/autopilot/misi_stage_tests.rs"]
+mod misi_stage_tests;

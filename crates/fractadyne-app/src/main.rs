@@ -10877,7 +10877,9 @@ impl FractadyneApp {
                             feature = shown.as_str(),
                             residual = format!("{residual:.1e}")
                         ),
-                        Some(fractadyne_core::MisiurewiczMiss::NotConverged) | None => {
+                        Some(fractadyne_core::MisiurewiczMiss::NotConverged)
+                        | Some(fractadyne_core::MisiurewiczMiss::Cancelled)
+                        | None => {
                             tr!(app_feature_not_converged, feature = shown.as_str())
                         }
                         Some(fractadyne_core::MisiurewiczMiss::BadRequest) => {

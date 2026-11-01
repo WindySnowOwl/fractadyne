@@ -59,6 +59,20 @@ published as the pre-releases `v0.2.41-beta.1` to `v0.2.41-beta.150`, and a "bet
 
 Changes after 0.3.0-beta.1:
 
+- **A Misiurewicz dive starts in seconds, and shows its progress (0.3.0-beta.23).** The autopilot
+  solved its Misiurewicz point straight to the dive's limit before moving: at a 1e5000× limit that is
+  Newton's method at ~16,700 bits over the point's whole orbit, 262,196 iterations in the user's case,
+  and the dive sat still for minutes with only a seconds counter. It now solves in stages: first 256
+  octaves past the view, so the dive can start, then doubling the depth while it dives, each stage
+  starting from the last. The notice shows what it is doing: how much of the orbit the finder has
+  walked, then the Newton step and how far through it, then the depth the point is exact to and the
+  stage being refined. If the dive catches up with the refinement it waits, saying so; if a stage
+  fails, the dive stops at the depth it has. Stopping the autopilot stops the solve, which before
+  carried on in the background. Replaying the user's dive (RTX 3080, accelerated build, from
+  2^1198.7 to a 1e5000× limit): found in 8 s, diving at 24 s, refined to 1e876× and 1e1752× by 48
+  and 92 s (the two deeper stages were still running when the 4-minute test ended), while the dive
+  reached 1e600× in 3 minutes; the session that asked was still solving after 257 s, not yet
+  diving. `--set MISI_FIRST_STAGE_OCT` sets the first stage (default 256).
 - **The autopilot's stepped dive no longer freezes (0.3.0-beta.23).** Past about 1e271× the
   autopilot zooms in steps of 4×, each taken once a picture within an octave of its depth is on
   screen. With the second-GPU worker on, a worker picture two octaves back counted as better than
@@ -71,11 +85,13 @@ Changes after 0.3.0-beta.1:
   than 10 s for its picture is now logged. In 2 of those 10 runs a hold at 2^1034 was followed by
   about 0.3 s of a mostly dark frame: a refresh at a depth the reference did not yet reach, its
   pixels cut off short of their escape. The autopilot now keeps its last valid frame instead: a
-  refresh (or a second-GPU frame) rendered against a cut-off reference in which fewer than half
-  the pixels escaped is treated as blank, and three blank refreshes make the dive hold for the
-  reference. Over 18 more replays, no such frame reached the screen; in the 3 where the case came
-  up, the last picture stayed on screen through it and the dive resumed after a 0.1 s hold. A mostly
-  interior view whose reference reaches it (a minibrot) still shows.
+  refresh (or a second-GPU frame) rendered against a cut-off reference in which more than a tenth
+  of the pixels did not escape is treated as blank, since such a pixel may be the cut-off rather
+  than the set, and three blank refreshes make the dive hold for the reference. (Half, the first
+  threshold tried, let a half-black frame through on a Misiurewicz dive at 2^1512.) Over 23 more
+  replays, no such frame reached the screen; where the case came up, the last picture stayed on
+  screen and the dive resumed after a 0.1 s hold. A mostly interior view whose reference reaches it
+  (a minibrot) still shows.
 - **The self-test no longer resets a slow graphics card (0.3.0-beta.23).** On a GeForce GT 710,
   Help ▸ Diagnostics ▸ self-test lost the GPU in its third check, and Windows reset the driver,
   taking the desktop and the open Fractadyne window with it. Some checks compare against a render

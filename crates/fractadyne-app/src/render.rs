@@ -10264,8 +10264,11 @@ pub(crate) fn ref_clamps(partial: bool, orbit_len: u32, ask: u32) -> bool {
 }
 
 /// The least share of a frame's pixels that must escape for a frame its cut-off reference clamped
-/// to count as a picture while the autopilot dives (`clamped_blackout`).
-pub(crate) const CLAMPED_MIN_ESCAPED_SHARE: f64 = 0.5;
+/// to count as a picture while the autopilot dives (`clamped_blackout`). Under a cut-off reference
+/// an interior pixel may be real or the cut-off, and nothing tells which: at 0.5 a frame about half
+/// black passed, and the stepped dive's next jump magnified its black centre for 0.6 s (a
+/// Misiurewicz dive at 2^1512, 2026-11-01). Holding it back costs a short hold for the reference.
+pub(crate) const CLAMPED_MIN_ESCAPED_SHARE: f64 = 0.9;
 
 /// A frame rendered against a reference cut off short of its ask (`clamped`, `ref_clamps`) in which
 /// most pixels did not escape: its black is as likely the cut-off as the set. The autopilot holds

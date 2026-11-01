@@ -4210,6 +4210,50 @@ fn detect_step_budget(p: usize) -> usize {
     (DETECT_STEP_BUDGET / bits2).min(u32::MAX as u64) as usize
 }
 
+/// How often (in orbit iterations) a long Misiurewicz detect or solve checks [`SolveControl`].
+pub const SOLVE_CHECK_EVERY: u32 = 4_096;
+
+/// What a long Misiurewicz detect or solve reports, and whether it should stop
+/// ([`detect_misiurewicz_at_scale_with`], [`find_misiurewicz_with`]). A deep solve walks hundreds
+/// of thousands of iterations per Newton step at thousands of bits: minutes, with nothing to show
+/// for it until it returns (the user, 2026-11-01: 144 s into one, "is it making progress?").
+#[derive(Clone, Copy, Default)]
+pub struct SolveControl<'a> {
+    /// Set to stop: the detector returns `None` and the solver [`MisiurewiczMiss::Cancelled`] at
+    /// the next check.
+    pub cancel: Option<&'a std::sync::atomic::AtomicBool>,
+    /// Called every [`SOLVE_CHECK_EVERY`] iterations, and as each Newton step ends.
+    pub progress: Option<&'a (dyn Fn(SolveProgress) + Sync)>,
+}
+
+impl SolveControl<'_> {
+    /// No reports, no stopping: the plain functions.
+    pub const NONE: SolveControl<'static> = SolveControl { cancel: None, progress: None };
+
+    fn cancelled(&self) -> bool {
+        self.cancel.is_some_and(|c| c.load(std::sync::atomic::Ordering::Relaxed))
+    }
+
+    fn report(&self, p: SolveProgress) {
+        if let Some(f) = self.progress {
+            f(p);
+        }
+    }
+}
+
+/// Where a long Misiurewicz detect or solve has got to.
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub enum SolveProgress {
+    /// The detector's walk of the critical orbit: `done` of at most `of` iterations.
+    Detect { done: u64, of: u64 },
+    /// Newton step `step` (from 1): `done` of `of` iterations of the orbit. `last_l2` is log2 of
+    /// the previous step's correction (`None` before one has been made); the solve has converged
+    /// when it falls below `tol_l2`.
+    Newton { step: u32, done: u64, of: u64, last_l2: Option<f64>, tol_l2: f64 },
+    /// The final check that the orbit really is pre-periodic: `done` of `of` iterations.
+    Verify { done: u64, of: u64 },
+}
+
 /// Bignum separation `|z_i − z_j|²` between two ring slots (the detector's lazy tie-break).
 fn ring_sep2(rzx: &[BigFloat], rzy: &[BigFloat], i: usize, j: usize, p: usize) -> BigFloat {
     let dx = rzx[i].sub(&rzx[j], p, RM);
@@ -4225,6 +4269,22 @@ pub fn detect_misiurewicz_at_scale(
     max_period: u32,
     p: usize,
     target_span_log2: Option<f64>,
+) -> Option<(u32, u32)> {
+    detect_misiurewicz_at_scale_with(cx, cy, formula, max_iter, max_period, p, target_span_log2, &SolveControl::NONE)
+}
+
+/// [`detect_misiurewicz_at_scale`], reporting its walk and stopping (with `None`) when asked
+/// ([`SolveControl`]). The same answer when it runs to the end.
+#[allow(clippy::too_many_arguments)]
+pub fn detect_misiurewicz_at_scale_with(
+    cx: &BigFloat,
+    cy: &BigFloat,
+    formula: u32,
+    max_iter: u32,
+    max_period: u32,
+    p: usize,
+    target_span_log2: Option<f64>,
+    ctl: &SolveControl<'_>,
 ) -> Option<(u32, u32)> {
     formula_power(formula)?;
     let max_period = max_period.clamp(1, 4_096) as usize;
@@ -4271,7 +4331,13 @@ pub fn detect_misiurewicz_at_scale(
     let mut zx = bf(0.0, p);
     let mut zy = bf(0.0, p);
     let mut count = 0usize; // samples produced so far; `n` is the CURRENT sample's index
-    for _ in 0..walk {
+    for step in 0..walk {
+        if step % SOLVE_CHECK_EVERY as usize == 0 {
+            if ctl.cancelled() {
+                return None;
+            }
+            ctl.report(SolveProgress::Detect { done: step as u64, of: walk as u64 });
+        }
         // The growth factor uses the PRE-step z, matching D_{n+1} = k·z_n^{k-1}·D_n + 1.
         let za = (crate::to_f64(&zx).powi(2) + crate::to_f64(&zy).powi(2)).sqrt();
         if za > 0.0 {
@@ -4414,6 +4480,9 @@ pub fn detect_misiurewicz_at_scale(
         let mut rl2: Vec<f64> = vec![0.0; lag];
         let mut found = bm;
         for n in 0..bm + lag {
+            if n % SOLVE_CHECK_EVERY as usize == 0 && ctl.cancelled() {
+                return None;
+            }
             let za = (crate::to_f64(&zx).powi(2) + crate::to_f64(&zy).powi(2)).sqrt();
             if za > 0.0 {
                 racc += (2.0 * za).log2();
@@ -4516,6 +4585,8 @@ pub enum MisiurewiczMiss {
     /// A root was found but its orbit is not actually pre-periodic with this (k, p) — the pair
     /// does not fit. `residual` is |Z_{k+p} − Z_k|.
     NotPreperiodic { residual: f64 },
+    /// The caller stopped it ([`SolveControl::cancel`]).
+    Cancelled,
 }
 
 /// Newton-solve for the Misiurewicz point of pre-period `k` and period `p` nearest `center`.
@@ -4533,6 +4604,20 @@ pub fn find_misiurewicz(
     period: u32,
     scale: SolveScale,
     formula: u32,
+) -> Result<Misiurewicz, MisiurewiczMiss> {
+    find_misiurewicz_with(center, preperiod, period, scale, formula, &SolveControl::NONE)
+}
+
+/// [`find_misiurewicz`], reporting each Newton step's walk and stopping
+/// ([`MisiurewiczMiss::Cancelled`]) when asked ([`SolveControl`]). The same answer when it runs to
+/// the end.
+pub fn find_misiurewicz_with(
+    center: &[BigFloat; 2],
+    preperiod: u32,
+    period: u32,
+    scale: SolveScale,
+    formula: u32,
+    ctl: &SolveControl<'_>,
 ) -> Result<Misiurewicz, MisiurewiczMiss> {
     if preperiod == 0 || period == 0 {
         return Err(MisiurewiczMiss::BadRequest);
@@ -4561,7 +4646,8 @@ pub fn find_misiurewicz(
     let mut cx = center[0].clone();
     let mut cy = center[1].clone();
     let mut converged = false;
-    for _ in 0..80 {
+    let mut last_l2: Option<f64> = None;
+    for step in 1..=80u32 {
         // Iterate to k+p, capturing (Z_k, D_k) at the pre-period and (Z_{k+p}, D_{k+p}) at the end.
         let mut zx = bf(0.0, p);
         let mut zy = bf(0.0, p);
@@ -4569,6 +4655,12 @@ pub fn find_misiurewicz(
         let mut dy = bf(0.0, p);
         let (mut zkx, mut zky, mut dkx, mut dky) = (bf(0.0, p), bf(0.0, p), bf(0.0, p), bf(0.0, p));
         for i in 0..total {
+            if i % SOLVE_CHECK_EVERY == 0 {
+                if ctl.cancelled() {
+                    return Err(MisiurewiczMiss::Cancelled);
+                }
+                ctl.report(SolveProgress::Newton { step, done: i as u64, of: total as u64, last_l2, tol_l2 });
+            }
             // D_{n+1} = k·Z_n^{k-1}·D_n + 1 ; Z_{n+1} = Z_n^k + c  (Z_n^{k-1} uses the pre-step Z_n).
             let (zk1x, zk1y) = if k == 2 { (zx.clone(), zy.clone()) } else { cpow_bf(&zx, &zy, k - 1, p) };
             let (mzx, mzy) = cmul_bf(&zk1x, &zk1y, &dx, &dy, p);
@@ -4603,7 +4695,10 @@ pub fn find_misiurewicz(
         let stepy = numy.div(&denom, p, RM);
         cx = cx.sub(&stepx, p, RM);
         cy = cy.sub(&stepy, p, RM);
-        if log2_abs_c(&stepx, &stepy) < tol_l2 {
+        let step_l2 = log2_abs_c(&stepx, &stepy);
+        last_l2 = Some(step_l2);
+        ctl.report(SolveProgress::Newton { step, done: total as u64, of: total as u64, last_l2, tol_l2 });
+        if step_l2 < tol_l2 {
             converged = true;
             break;
         }
@@ -4621,6 +4716,12 @@ pub fn find_misiurewicz(
     let (mut zx, mut zy) = (bf(0.0, p), bf(0.0, p));
     let (mut zkx, mut zky) = (bf(0.0, p), bf(0.0, p));
     for i in 0..total {
+        if i % SOLVE_CHECK_EVERY == 0 {
+            if ctl.cancelled() {
+                return Err(MisiurewiczMiss::Cancelled);
+            }
+            ctl.report(SolveProgress::Verify { done: i as u64, of: total as u64 });
+        }
         let (nzx, nzy) = step_bf(&zx, &zy, &cx, &cy, formula, p);
         zx = nzx;
         zy = nzy;

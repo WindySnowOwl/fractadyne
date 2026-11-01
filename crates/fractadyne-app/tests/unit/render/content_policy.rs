@@ -175,9 +175,10 @@ fn a_mostly_interior_frame_under_a_cut_off_reference_is_held_back() {
     assert!(clamped_blackout(true, 6_176, 15_950));
     // The same frame against a reference that reaches the ask: a real, mostly interior view.
     assert!(!clamped_blackout(false, 6_176, 15_950));
-    // Half or more escaped is a picture either way.
-    assert!(!clamped_blackout(true, 7_975, 15_950));
-    assert!(clamped_blackout(true, 7_974, 15_950));
+    // About half escaped is not enough either (the 2^1512 Misiurewicz frame); 90% is a picture.
+    assert!(clamped_blackout(true, 7_975, 15_950));
+    assert!(clamped_blackout(true, 14_354, 15_950));
+    assert!(!clamped_blackout(true, 14_355, 15_950));
     assert!(!clamped_blackout(true, 5, 0), "no pixels, no verdict");
 }
 
