@@ -7522,7 +7522,19 @@ impl FractadyneApp {
             // A worker frame on screen shows the live view at least as well as this pin's frame
             // could (`motion_worker::frame_quality`; their ranking holds for the rest of a dive):
             // the pin's work can never reach the screen.
-            let superseded = self.perf.pin[vsub].as_ref().is_some_and(|p| {
+            // ⛔Not in the autopilot's STEPPED dive while the worker frame is too far back for it.
+            // Between its jumps the view stands still, so the worker renders nothing new (it runs
+            // only while the view moves), and the frame the stepped dive waits for — one within an
+            // octave of its depth (`autopilot::step_frame_ready`) — can then only come from the pin.
+            // A full-resolution worker frame two octaves back still out-ranks a 145-px pin at the
+            // new depth, so every pin was stopped and the dive waited forever (2026-11-01, the
+            // user's dive at 2^1034 and the replay at 2^1032; worker off, the same replay reached
+            // its 1e319x limit). A worker frame the dive can step on still stops the pin.
+            let stepping_dive = vsub == 0
+                && self.autopilot.active
+                && self.autopilot.stepping
+                && !crate::autopilot::step_frame_ready(log2mag, self.ref_cache[vsub].frozen_l2);
+            let superseded = !stepping_dive && self.perf.pin[vsub].as_ref().is_some_and(|p| {
                 let rc = &self.ref_cache[vsub];
                 let pin_res = ((p.resolution[0] * p.ss.max(1)) as f64 / p.panel[0].max(1) as f64).log2();
                 rc.frozen_by_worker

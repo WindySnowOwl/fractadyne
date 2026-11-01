@@ -59,6 +59,17 @@ published as the pre-releases `v0.2.41-beta.1` to `v0.2.41-beta.150`, and a "bet
 
 Changes after 0.3.0-beta.1:
 
+- **The autopilot's stepped dive no longer freezes (0.3.0-beta.23).** Past about 1e271× the
+  autopilot zooms in steps of 4×, each taken once a picture within an octave of its depth is on
+  screen. With the second-GPU worker on, a worker picture two octaves back counted as better than
+  the quick refresh at the new depth, so the refresh was stopped every frame; the worker renders
+  only while the view moves, and between steps it does not, so the picture the dive waited for
+  never came: the screen froze with "refining 0.0%" (seen at 1.95e311×). Now a worker picture stops
+  the refresh only when it is close enough for the dive to step on. Replaying that dive from 2^1010
+  on an RTX 3080 (accelerated build, worker on): before, 2 of 3 runs froze at 2^1032 to 2^1034;
+  after, 10 of 10 reached the test's 1e319× limit in about 16 s. A stepped dive that waits more
+  than 10 s for its picture is now logged. In 2 of those 10 runs a hold at 2^1034 was followed by
+  about 0.3 s of a mostly dark frame (the refresh at a depth the reference does not yet reach).
 - **The self-test no longer resets a slow graphics card (0.3.0-beta.23).** On a GeForce GT 710,
   Help ▸ Diagnostics ▸ self-test lost the GPU in its third check, and Windows reset the driver,
   taking the desktop and the open Fractadyne window with it. Some checks compare against a render

@@ -61,3 +61,21 @@ fn a_probe_with_no_interior_or_no_escape_is_not_called_clamped() {
     // All interior: no escaped cell ran up to the cap (the dead-end path decides this one).
     assert!(!probe([-1.0; 16], 259_136).interior_at_cap());
 }
+
+/// A stepped dive waiting for a frame at its depth is reported once it has waited
+/// `STEP_WAIT_WARN`, and not before (2026-11-01: it waited silently for minutes).
+#[test]
+fn a_stepped_dive_that_waits_too_long_is_reported() {
+    assert!(!step_stalled(None, 100.0));
+    assert!(!step_stalled(Some(100.0), 100.0 + STEP_WAIT_WARN));
+    assert!(step_stalled(Some(100.0), 100.0 + STEP_WAIT_WARN + 0.01));
+}
+
+/// A stepped dive steps on a frame within an octave of its depth, and not on one further back.
+#[test]
+fn a_stepped_dive_steps_only_on_a_frame_near_its_depth() {
+    assert!(step_frame_ready(1032.08, 1032.08));
+    assert!(step_frame_ready(1032.08, 1031.2));
+    assert!(!step_frame_ready(1032.08, 1031.08));
+    assert!(!step_frame_ready(1032.08, 1030.08));
+}

@@ -61,6 +61,20 @@ const BLANK_WALKS_DEAD_END: u32 = 3;
 /// end after all. The settled build at the user's 2^594 stop took 1.1 s; this bounds one that
 /// cannot grow.
 pub(crate) const REF_WAIT_MAX: f64 = 60.0;
+/// A stepped dive that has waited this long for a frame at its depth is logged as stalled (seconds).
+pub(crate) const STEP_WAIT_WARN: f64 = 10.0;
+
+/// Whether the frame on screen, adopted at `2^frozen_l2`, lets a stepped dive at `2^l2` take its
+/// next step: it must be within an octave of the dive's depth. The render path asks the same before
+/// letting a worker frame stop the refresh that would provide one.
+pub(crate) fn step_frame_ready(l2: f64, frozen_l2: f64) -> bool {
+    l2 - frozen_l2 < 1.0
+}
+
+/// Whether a stepped dive waiting since `since` has stalled by `now` ([`STEP_WAIT_WARN`]).
+pub(crate) fn step_stalled(since: Option<f64>, now: f64) -> bool {
+    since.is_some_and(|t0| now - t0 > STEP_WAIT_WARN)
+}
 /// Iterations below a probe's cap at which an escaped cell counts as having run up to it (smooth
 /// counts land within about one iteration of the step a pixel escaped on).
 const CAP_MARGIN: f32 = 4.0;
@@ -330,6 +344,8 @@ impl FractadyneApp {
             self.autopilot.misi = None;
             self.autopilot.misi_solve = None;
             self.autopilot.ref_wait = None;
+            self.autopilot.step_wait = None;
+            self.autopilot.step_wait_logged = false;
             // The Quality pacer measures the time between refreshes from here; a settled view's
             // last adoption may be minutes old and would read as a stalled dive.
             let ct = &mut self.perf.content[0];
@@ -622,7 +638,27 @@ impl FractadyneApp {
         // In stepped mode, only advance once a real (settled) frame has actually rendered at the
         // current depth (frozen_l2 caught up to now) — so each full frame stays on screen while the
         // next one computes, instead of jumping onto blanks faster than the deep reference rebuilds.
-        let ready = !stepping || (l2 - self.ref_cache[0].frozen_l2) < 1.0;
+        let ready = !stepping || step_frame_ready(l2, self.ref_cache[0].frozen_l2);
+        // A stepped dive waits for that frame with nothing on the log; say so once if it waits long
+        // (2026-11-01: it waited forever, a worker frame superseding every refresh, see render.rs).
+        if stepping && !ready {
+            let since = *self.autopilot.step_wait.get_or_insert(now);
+            if step_stalled(Some(since), now) && !self.autopilot.step_wait_logged {
+                self.autopilot.step_wait_logged = true;
+                crate::diag::log_line(
+                    "autopilot",
+                    &format!(
+                        "stepped dive at 2^{l2:.2} has waited {:.0} s for a frame at its depth (the last \
+                         adopted one is at 2^{:.2})",
+                        now - since,
+                        self.ref_cache[0].frozen_l2
+                    ),
+                );
+            }
+        } else {
+            self.autopilot.step_wait = None;
+            self.autopilot.step_wait_logged = false;
+        }
 
         if let Some(g) = misi_goal {
             // Locked on a Misiurewicz point: no probe, no retargets. The goal is the point's
