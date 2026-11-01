@@ -5653,9 +5653,10 @@ struct RefCache {
     /// instead of zooming into an ever-staler reprojection (the deep-dive monocolor blur).
     last_depth_lag: f64,
     /// The reference is truncated (`partial`) below the iterations this view asks for, and only a
-    /// SETTLED view may grow it (`render::live_orbit_cap`): pixels are clamped short of their
-    /// escape, so a frame can read all-interior over real detail. Recomputed each frame beside
-    /// `last_depth_lag`; the autopilot reads it before calling a blank view a dead end.
+    /// SETTLED view may grow it (`render::live_orbit_cap`), or a dive holding still for it
+    /// (`render::holding_for_reference`): pixels are clamped short of their escape, so a frame can
+    /// read all-interior over real detail. Recomputed each frame beside `last_depth_lag`; the
+    /// autopilot reads it before calling a blank view a dead end.
     growth_deferred: bool,
 }
 

@@ -524,12 +524,14 @@ impl FractadyneApp {
             return;
         }
         let now = ctx.input(|i| i.time);
-        // Holding still for the reference (see `RefWait`): no zoom, no probe and no interaction
-        // stamp, so the view settles and its truncated reference grows by the settled path.
+        // Holding still for the reference (see `RefWait`): no zoom and no probe. The view still
+        // counts as MOVING (`hold_stamp`), and the render path lifts the motion cap on a holding
+        // dive's reference (`render::holding_for_reference`), so it grows without the view settling.
         match ref_wait_step(self.autopilot.ref_wait, now, self.ref_cache[0].growth_deferred) {
             RefWait::Steer => {}
             RefWait::Hold => {
                 self.autopilot.speed = 0.0;
+                self.hold_stamp(now);
                 self.schedule_repaint(ctx);
                 return;
             }
@@ -746,6 +748,16 @@ impl FractadyneApp {
         self.set_toast(msg, ctx);
     }
 
+    /// Keep a holding dive's view counted as MOVING. A hold that let the view settle (0.18 s,
+    /// `SETTLE_DELAY`) started a settled render against the truncated reference: shown, its clamped
+    /// interior read as solid black over the picture; abandoned at the resume, its unfinished
+    /// texture was what the next moving frame reprojected, black until a motion refresh landed
+    /// (2026-11-01, the user's recording: 0.17-0.2 s of black after each hold). Moving, the screen
+    /// keeps the last verified picture, as it does through the rest of a dive.
+    fn hold_stamp(&mut self, now: f64) {
+        self.pointer.settle_t = [now; 2];
+    }
+
     /// A view that reads empty while its reference is CLAMPED short of what the view asks for
     /// (`RefCache::growth_deferred`) is not a dead end: start holding still so the reference can
     /// grow (`RefWait`). `true` = holding. `why` = what read empty, for the log.
@@ -765,6 +777,7 @@ impl FractadyneApp {
             self.autopilot.ref_wait = Some(now);
         }
         self.autopilot.speed = 0.0;
+        self.hold_stamp(now);
         true
     }
 

@@ -149,6 +149,22 @@ fn live_orbit_cap_follows_settled_budget() {
 /// rebuild whose reuse was refused built a FRESH 256,001-sample orbit and installed it over the
 /// live 1,208,193 one, and the hold that followed rendered 100% black. A motion build may
 /// decline to GROW the reference; it may never come back SHORTER than the one on screen.
+/// A dive holding still for its truncated reference grows it while its view still counts as moving
+/// (2026-11-01: letting the view settle instead put the clamped settle render, black, on screen).
+#[test]
+fn a_holding_dive_grows_its_reference_while_moving() {
+    let (installed, ask) = (259_428u32, 469_635u32);
+    let holding = holding_for_reference(0, true, true);
+    assert!(holding);
+    assert_eq!(live_orbit_cap(!holding, ask, installed), ask);
+    // Moving without a hold: the motion floor, no growth.
+    assert!(!holding_for_reference(0, true, false));
+    assert_eq!(live_orbit_cap(!holding_for_reference(0, true, false), ask, installed), installed);
+    // Only the dive's own view, and only while the dive runs.
+    assert!(!holding_for_reference(1, true, true));
+    assert!(!holding_for_reference(0, false, true));
+}
+
 #[test]
 fn live_orbit_cap_never_truncates_the_installed_orbit() {
     let installed = 1_208_193u32;

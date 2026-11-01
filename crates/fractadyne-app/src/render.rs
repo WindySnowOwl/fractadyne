@@ -608,6 +608,15 @@ pub(crate) fn live_orbit_cap(interacting: bool, ref_build_iter: u32, have_len: u
     }
 }
 
+/// A dive holding still for its truncated reference (`AutopilotState::ref_wait`, view 0): its
+/// reference may GROW as a settled view's does (`live_orbit_cap` without the motion floor), though
+/// the view still counts as moving. Holding is what the dive does instead of settling: a settled
+/// render at the truncated reference showed its clamped interior, black over the picture, and one
+/// abandoned at the resume left its unfinished texture to be reprojected (2026-11-01).
+pub(crate) fn holding_for_reference(view: usize, autopilot_active: bool, ref_wait: bool) -> bool {
+    view == 0 && autopilot_active && ref_wait
+}
+
 /// Is a reference computed off-thread still the right one for a frame wanting `(eff_iter,
 /// precision)`? Both sides are the build's INPUTS, so this is satisfiable and the accepted result is
 /// the one a synchronous build would have produced — `recompute_worker` is deterministic in its
@@ -8403,8 +8412,7 @@ impl FractadyneApp {
         // resize upscales. Requires a CONVERGED budget (`fe_budget_ok`): grids sized off a
         // still-climbing budget restart at every measurement, and bootstrap-sized tiles would mean
         // hundreds of dispatches.
-        // An autopilot holding still for its reference (`AutopilotState::ref_wait`) is not moving.
-        if interacting || will_reproject || (self.autopilot.active && self.autopilot.ref_wait.is_none()) {
+        if interacting || will_reproject || self.autopilot.active {
             self.perf.view_gen[vidx] = self.perf.frame_idx;
         }
         if interacting {
@@ -9071,8 +9079,11 @@ impl FractadyneApp {
             // forever. Bounding by the CURRENT cap keeps it loop-free: while interacting at such a
             // view, `min(gpu_iter, cap) == orbit_len` and the gate stays quiet; on settle the cap
             // lifts, the gate fires once, and the extended build re-quiets it.
-            let cap_now =
-                live_orbit_cap(interacting, ref_build_iter, self.ref_cache[vi].orbit_len);
+            let cap_now = live_orbit_cap(
+                interacting && !holding_for_reference(vi, self.autopilot.active, self.autopilot.ref_wait.is_some()),
+                ref_build_iter,
+                self.ref_cache[vi].orbit_len,
+            );
             // The device cap bounds what any build can store: without it in the comparison, a
             // budget above the hardware limit (e.g. 2M at extreme depth vs the ~928k binding cap)
             // re-fires forever against an orbit that can never get longer. The extension ask uses
