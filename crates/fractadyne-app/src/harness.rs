@@ -92,6 +92,7 @@ pub(crate) mod replay;
 pub(crate) mod reusetest;
 pub(crate) mod selftest;
 pub(crate) mod shot;
+pub(crate) mod slow_gpu;
 pub(crate) mod soak;
 pub(crate) mod text_layout;
 pub(crate) mod torture;

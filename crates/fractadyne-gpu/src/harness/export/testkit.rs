@@ -140,6 +140,12 @@ pub fn render_iter_chunked_timed(
     let max_dim = device.limits().max_texture_dimension_2d;
     let w = req.width.clamp(1, max_dim);
     let h = req.height.clamp(1, max_dim);
+    // Every window is one pass over the whole frame; the widest is the first.
+    crate::dispatch_guard::admit(
+        req.mode,
+        req.formula,
+        w as u64 * h as u64 * chunk_iters.min(req.max_iter.max(1)) as u64,
+    )?;
 
     // A custom formula chunks through its OWN module's chunk pass: the fixed module's would read
     // formula id 1000 and iterate the Mandelbrot step.

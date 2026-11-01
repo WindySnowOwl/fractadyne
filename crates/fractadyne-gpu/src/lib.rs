@@ -22,6 +22,9 @@ mod twin;
 pub use twin::*;
 #[path = "harness/timing.rs"]
 pub mod timing;
+/// The self-test's cap on one pass's estimated cost, for a card too slow for its renders.
+#[path = "harness/dispatch_guard.rs"]
+pub mod dispatch_guard;
 /// Each offscreen pass's GPU time as it is measured, for a live instrument on the rendering thread.
 pub mod pass_sink;
 /// Custom formulas: WGSL generated from the formula IR and spliced into the fixed shader.

@@ -783,6 +783,8 @@ pub(crate) struct MatrixCheck {
     pub name: String,
     pub pass: bool,
     pub detail: String,
+    /// The self-test's slow-GPU guard refused a pass of this segment (`slow_gpu`): it did not run.
+    pub refused: bool,
 }
 
 impl crate::FractadyneApp {
@@ -806,6 +808,7 @@ impl crate::FractadyneApp {
             Err(e) => {
                 return vec![MatrixCheck {
                     name: "bench-matrix baseline".into(),
+                    refused: false,
                     pass: false,
                     detail: format!("baseline unreadable: {e}"),
                 }]
@@ -817,6 +820,7 @@ impl crate::FractadyneApp {
             Ok(None) => {
                 return vec![MatrixCheck {
                     name: "bench-matrix baseline".into(),
+                    refused: false,
                     pass: true,
                     detail: format!(
                         "no baseline at {} — skipped (bless with `--bench-matrix --bless`)",
@@ -827,6 +831,7 @@ impl crate::FractadyneApp {
             Err(e) => {
                 return vec![MatrixCheck {
                     name: "bench-matrix baseline".into(),
+                    refused: false,
                     pass: false,
                     detail: format!("baseline unreadable: {e}"),
                 }]
@@ -838,6 +843,7 @@ impl crate::FractadyneApp {
         if !strict {
             out.push(MatrixCheck {
                 name: "bench-matrix baseline GPU".into(),
+                refused: false,
                 pass: true,
                 detail: format!(
                     concat!(
@@ -851,7 +857,9 @@ impl crate::FractadyneApp {
             });
         }
         for s in matrix().iter().filter(|s| s.deterministic) {
+            let refused_before = fractadyne_gpu::dispatch_guard::refusals();
             let r = self.measure_segment(s, device, queue, 1);
+            let refused = fractadyne_gpu::dispatch_guard::refusals() > refused_before;
             match baseline.segments.get(&r.name) {
                 Some(b) => {
                     let cur = (r.mode, r.sa_skip, r.orbit_len, r.eff_iter, r.counters);
@@ -873,12 +881,13 @@ impl crate::FractadyneApp {
                             b.counters, r.counters
                         )
                     };
-                    out.push(MatrixCheck { name: r.name, pass, detail });
+                    out.push(MatrixCheck { name: r.name, pass, detail, refused });
                 }
                 None => out.push(MatrixCheck {
                     name: r.name,
                     pass: true,
                     detail: "new segment (not in baseline)".into(),
+                    refused,
                 }),
             }
         }

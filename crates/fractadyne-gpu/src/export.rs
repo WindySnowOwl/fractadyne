@@ -51,6 +51,10 @@ pub enum GpuError {
     /// this GPU cannot hold (`assemble.rs`).
     #[error("zoom-video assembly: {0}")]
     Assembly(String),
+    /// The self-test's slow-GPU guard refused a pass before submitting it (`dispatch_guard`): on
+    /// this card it is priced past the limit one pass may take.
+    #[error("not run: one pass would take up to {est_ms:.0} ms on this GPU, over the {limit_ms:.0} ms the self-test allows a pass")]
+    TooSlowForThisGpu { est_ms: f64, limit_ms: f64 },
 }
 
 /// Guard the reference-orbit storage binding against the GPU's max binding size. The orbit and its
@@ -1209,6 +1213,7 @@ impl TileChunker {
                 return Err(GpuError::Canceled);
             }
             let e = s.saturating_add(window).min(max_iter);
+            crate::dispatch_guard::admit(iu.mode, iu.formula, area * (e - s) as u64)?;
             *max_work = (*max_work).max(area * (e - s) as u64);
             iu.start_iter = s;
             iu.end_iter = e;
@@ -1323,6 +1328,7 @@ impl TileChunker {
                 return Err(GpuError::Canceled);
             }
             let cap = steps.cap_for(area, active, passes == 0);
+            crate::dispatch_guard::admit(iu.mode, iu.formula, active * cap as u64)?;
             *max_work = (*max_work).max(active * cap as u64);
             iu.start_iter = u32::from(passes > 0);
             iu.end_iter = max_iter;
@@ -1870,6 +1876,10 @@ impl<'a> TileRenderer<'a> {
             }
             None => None,
         };
+        if chunked.is_none() {
+            // The classic single-dispatch iterate below runs the whole ask in one pass.
+            crate::dispatch_guard::admit(req.mode, req.formula, iw as u64 * ih as u64 * req.max_iter as u64)?;
+        }
         let mut enc = device.create_command_encoder(&wgpu::CommandEncoderDescriptor {
             label: Some("export.encoder"),
         });
@@ -2795,6 +2805,9 @@ pub fn render_iter_tiled(
             tiles_total += 1;
             tiles_chunked += u32::from(chunked.is_some());
             chunk_passes += chunked.map_or(0, |(p, _)| p);
+            if chunked.is_none() {
+                crate::dispatch_guard::admit(req.mode, req.formula, tw as u64 * th as u64 * req.max_iter as u64)?;
+            }
             let mut enc = device.create_command_encoder(&wgpu::CommandEncoderDescriptor {
                 label: Some("itertiled.enc"),
             });
@@ -3231,6 +3244,7 @@ impl GatherPass {
             }
             let t_batch = std::time::Instant::now();
             let n = (ceiling as usize).min(n_total - done);
+            crate::dispatch_guard::admit(req.mode, req.formula, n as u64 * req.max_iter as u64)?;
             // Square-ish, so neither dimension reaches the texture cap before the other. The last row is
             // padded out; those texels return before iterating (see `fs_iterate_gather`), so they cost
             // nothing and — importantly — do not inflate the shared event counters.
@@ -3488,6 +3502,10 @@ fn render_iter_passes(
     let max_dim = device.limits().max_texture_dimension_2d;
     let w = req.width.clamp(1, max_dim);
     let h = req.height.clamp(1, max_dim);
+    // Every submission here is the whole ask in one pass, or one of `k` split sets (about 1/k of
+    // the tiles) at the whole ask.
+    let per_pass_px = (w as u64 * h as u64).div_ceil(sets.map_or(1, |(k, _)| k.max(1)) as u64);
+    crate::dispatch_guard::admit(req.mode, req.formula, per_pass_px * req.max_iter as u64)?;
 
     let shader = crate::shader_module_for(device, req.custom.as_deref());
     let iter_bgl = iter_bind_group_layout(device);
