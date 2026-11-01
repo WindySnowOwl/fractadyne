@@ -4,7 +4,7 @@
 #
 #   powershell -ExecutionPolicy Bypass -File bench-latest.ps1
 #       [-AppsDir <folder>]      where the apps land (default <kit>\apps); free space verified
-#       [-RequiredGB 2.0]        free-space floor for downloads + extraction + results
+#       [-RequiredGB 3.0]        free-space floor for downloads + extraction + results
 #       [-Reps 1] [-Skip imagina,fractalshark] [-TimeoutS 7200] [-Scenes 03-seahorse-1e6,...]
 #       [-SceneSet standard|ladder|all]  which scene list (see run-all.ps1; the ladder takes hours)
 #       [-SkipDownload]          reuse whatever AppsDir already holds (offline mode)
@@ -23,6 +23,8 @@
 #   FractalShark  github.com/mattsaccount364/FractalShark  newest FractalShark-<v>.zip. CUDA:
 #                 downloaded only when an NVIDIA GPU is present and the lane is not skipped
 #                 (the asset is ~160 MB - no point fetching it for an N/A lane).
+#   Fracturing Fog github.com/AloneButUnsober/FracturingFog  newest FracturingFog-win-x64.zip
+#                 (~200 MB, ~470 MB unpacked), checked against the release's SHA256SUMS.
 #
 # The run itself is exactly run-all.ps1 (sequential lanes, results\<host>-<stamp>\ with
 # sysinfo.txt, results.csv, summary.md); this script resolves the freshly downloaded exes,
@@ -32,7 +34,8 @@
 [CmdletBinding()]
 param(
     [string]$AppsDir = '',
-    [double]$RequiredGB = 2.0,
+    # 3 GB from 2026-10-31: Fracturing Fog's zip and its unpacked app add about 0.7 GB.
+    [double]$RequiredGB = 3.0,
     [int]$Reps = 1,
     [string[]]$Skip = @(),
     [int]$TimeoutS = 7200,
@@ -90,6 +93,8 @@ function Get-GithubAsset($repo, $assetPattern) {
         $asset = $r.assets | Where-Object { $_.name -match $assetPattern } | Select-Object -First 1
         if ($asset) {
             $sha = $r.assets | Where-Object { $_.name -eq ($asset.name + '.sha256') } | Select-Object -First 1
+            # Fracturing Fog publishes one SHA256SUMS for the whole release instead.
+            if (-not $sha) { $sha = $r.assets | Where-Object { $_.name -eq 'SHA256SUMS' } | Select-Object -First 1 }
             return @{ tag = $r.tag_name; name = $asset.name; url = $asset.browser_download_url
                       sha_url = $(if ($sha) { $sha.browser_download_url } else { '' }) }
         }
@@ -109,7 +114,12 @@ function Test-Sha256($file, $shaUrl) {
     # GitHub serves release assets as octet-stream, so .Content arrives as byte[], not string.
     $c = (Invoke-WebRequest -Headers $ua -Uri $shaUrl -UseBasicParsing).Content
     if ($c -is [byte[]]) { $c = [System.Text.Encoding]::ASCII.GetString($c) }
-    $expected = ($c -split '\s+')[0].ToLower()
+    # A side-file can list several files (SHA256SUMS, or Fracturing Fog's .sha256, whose first
+    # line is the .msi). Take the line that names THIS file; a one-line file has only that line.
+    $name = Split-Path -Leaf $file
+    $line = @($c -split "`r?`n" | Where-Object { $_ -match ('[\s*]' + [regex]::Escape($name) + '\s*$') }) | Select-Object -First 1
+    if (-not $line) { $line = $c }
+    $expected = ($line.Trim() -split '\s+')[0].ToLower()
     $actual = (Get-FileHash $file -Algorithm SHA256).Hash.ToLower()
     if ($expected -ne $actual) { throw ('sha256 mismatch for ' + $file) }
     Write-Host '   sha256 verified'
@@ -182,6 +192,7 @@ function Note-App($name, $version, $source, $exe) {
 $skipL = @(); foreach ($k in $Skip) { $skipL += $k.ToLower() }
 $hasNvidia = [bool](Get-CimInstance Win32_VideoController | Where-Object { $_.Name -match 'NVIDIA' })
 $wantImagina = -not ($skipL -contains 'imagina')
+$wantFfog = -not ($skipL -contains 'fracturingfog')
 $wantShark = (-not ($skipL -contains 'fractalshark')) -and $hasNvidia
 if ((-not ($skipL -contains 'fractalshark')) -and -not $hasNvidia) {
     Write-Step 'FractalShark: no NVIDIA GPU - lane will be N/A, release not downloaded.'
@@ -192,6 +203,7 @@ $fraktaler3Exe = ''
 $imaginaExe = ''
 $fractalSharkExe = ''
 $fractalSharkCliExe = ''
+$fracturingFogExe = ''
 
 if ($SkipDownload) {
     Write-Step ('Offline mode: using whatever ' + $AppsDir + ' already holds.')
@@ -205,8 +217,10 @@ if ($SkipDownload) {
     $fractalSharkCliExe = Find-Exe $AppsDir '^FractalSharkCli\.exe$'
     Note-App 'fractadyne' 'offline-reuse' $AppsDir $FractadyneExe
     Note-App 'fraktaler3' 'offline-reuse' $AppsDir $fraktaler3Exe
+    $fracturingFogExe = Find-Exe $AppsDir '^FracturingFog\.App\.exe$'
     Note-App 'imagina' 'offline-reuse' $AppsDir $imaginaExe
     Note-App 'fractalshark' 'offline-reuse' $AppsDir $fractalSharkExe
+    Note-App 'fracturingfog' 'offline-reuse' $AppsDir $fracturingFogExe
 } else {
     # Fractadyne - skipped entirely when the operator points at a local build.
     if ($FractadyneExe) {
@@ -285,6 +299,23 @@ if ($SkipDownload) {
             Note-App 'fractalshark' 'FETCH-FAILED' $_.Exception.Message ''
         }
     }
+
+    # Fracturing Fog - a self-contained Windows zip (~200 MB) holding one FracturingFog.App.exe.
+    if ($wantFfog) {
+        Write-Step 'Fracturing Fog: newest release'
+        try {
+            $a = Get-GithubAsset 'AloneButUnsober/FracturingFog' '^FracturingFog-win-x64\.zip$'
+            $zip = Join-Path $AppsDir $a.name
+            Get-File $a.url $zip
+            Test-Sha256 $zip $a.sha_url
+            $fracturingFogExe = Find-Exe (Expand-Any $zip 'fracturingfog') '^FracturingFog\.App\.exe$'
+            if (-not $fracturingFogExe) { throw 'no FracturingFog.App.exe in the zip' }
+            Note-App 'fracturingfog' $a.tag $a.url $fracturingFogExe
+        } catch {
+            Write-Host ('   FAILED: ' + $_.Exception.Message + ' - lane will be skipped.')
+            Note-App 'fracturingfog' 'FETCH-FAILED' $_.Exception.Message ''
+        }
+    }
 }
 
 $manifestLines | Out-File -FilePath $manifest -Encoding ascii
@@ -297,6 +328,7 @@ if ($fraktaler3Exe) { $runParams.Fraktaler3Exe = $fraktaler3Exe }
 if ($imaginaExe) { $runParams.ImaginaExe = $imaginaExe }
 if ($fractalSharkExe) { $runParams.FractalSharkExe = $fractalSharkExe }
 if ($fractalSharkCliExe) { $runParams.FractalSharkCliExe = $fractalSharkCliExe }
+if ($fracturingFogExe) { $runParams.FracturingFogExe = $fracturingFogExe }
 $effSkip = @($Skip)
 if (-not $imaginaExe) { $effSkip += 'imagina' }
 if ($effSkip.Count) { $runParams.Skip = [string[]]$effSkip }

@@ -9,6 +9,7 @@ A reproducible head-to-head of deep-zoom Mandelbrot renderers on **your** hardwa
 | **Imagina** | automated (`-ImaginaCliExe`) | CPU (MipLA) | upstream is GUI-only; a small headless `imagina-cli` fork enables the automated lane - see "Imagina" below |
 | **FractalShark** | automated (GPU, 0.541+) | GPU (CUDA) | GPU lane works from 0.541 (adds sm_75; runs on RTX 20/30/40/50); earlier releases were CPU-only here - see below |
 | **Fractal Zoomer** | automated (`-FractalZoomerJar`, `-FzsWriterPath`, a JDK) | CPU (Java; perturbation + BLA) | its own command line (1.0.9.6), one batch per round; a small GPL-3.0 writer, FzsWriter, makes its `.fzs` inputs, and the lane competes on Fractal Zoomer's OWN time - see "Fractal Zoomer" below |
+| **Fracturing Fog** | automated (`-FracturingFogExe`) | CPU (.NET; perturbation + BLA, octuple-double reference) | its own batch command line (0.7.1); renders to 1e100, so the deeper scenes are `NA-past-its-ceiling` - see "Fracturing Fog" below |
 
 Ten single-frame scenes from Fractadyne's cross-validated corpus (each verified pixel-for-pixel
 against Fraktaler-3), spanning 1e6× to 4.6e1105× magnification, plus a **zoom sequence** lane
@@ -315,7 +316,7 @@ enough free space first, runs the benchmark sequentially, and writes the summary
 the exact app versions stamped into it:
 
 - **Windows**: `powershell -ExecutionPolicy Bypass -File bench-latest.ps1`
-  (options: `-AppsDir <folder>` where the apps land, `-RequiredGB 2` free-space floor,
+  (options: `-AppsDir <folder>` where the apps land, `-RequiredGB 3` free-space floor,
   `-Reps`, `-Skip`, `-Scenes`, `-TimeoutS`, `-SkipDownload` for offline reuse,
   `-FractadyneExe <path>` to benchmark a local build instead of the release).
 - **Linux**: `./bench-latest.sh` (same options in `--flag` form; `--fraktaler3 <path>` points
@@ -325,7 +326,9 @@ the exact app versions stamped into it:
 Sources: Fractadyne and Imagina from their GitHub releases (prereleases included — that is
 where the current builds live), Fraktaler-3 from `fraktaler.mathr.co.uk/download/latest`,
 FractalShark from its GitHub releases (downloaded only on NVIDIA machines, where its lane can
-actually run). Published sha256 side-files are verified. Each result folder gains an
+actually run), Fracturing Fog's Windows zip from its GitHub releases (Windows only; about 200 MB,
+470 MB unpacked). Published sha256 side-files are verified, including a `SHA256SUMS` that lists
+several files. Each result folder gains an
 `apps-manifest.txt` recording version, source URL, and binary hash per app — a "latest"
 benchmark that doesn't say which latest it measured is not reproducible.
 
@@ -345,6 +348,9 @@ benchmark that doesn't say which latest it measured is not reproducible.
      https://github.com/hrkalona/fzBin) and pass `-FractalZoomerJar <path> -FzsWriterPath <path>
      -JavaExe <a JDK's java.exe>`; see "Fractal Zoomer". `bench-latest` does not run this lane,
      because the writer is not downloadable.
+   - Fracturing Fog: download `FracturingFog-win-x64.zip` from
+     https://github.com/AloneButUnsober/FracturingFog/releases (AGPL-3.0), unzip, and pass
+     `-FracturingFogExe <FracturingFog.App.exe>`; see "Fracturing Fog".
 2. `powershell -ExecutionPolicy Bypass -File run-all.ps1` (add `-Reps 2` for repeats; skip
    lanes with `-Skip imagina,fractalshark`).
 3. Results land in `results\<hostname>-<timestamp>\`: open **`report.html`** first; beside it are
@@ -569,11 +575,62 @@ image off part-way (its times were right); the kit's structure guard could not s
 decoder fills the missing rows. That is why every image is now checked for its PNG end marker.
 Fractal Zoomer's own command line exits only after the image is written.
 
+## Fracturing Fog
+
+Fracturing Fog (from 0.7.1; .NET, AGPL-3.0) renders a view headlessly:
+
+    FracturingFog.App.exe --batch --x "<limbs>" --y "<limbs>" --zoom <z> --iter <cap>
+        --width 3840 --height 2160 --quality Standard --no-taa --no-watermark --out ff-<scene>.png
+
+The lane runs it once per image, a fresh process each, like every other lane. `tools/ff-view.py`
+converts each scene's view once, before any timing. Each conversion was measured against the
+Fractadyne render of the same scene:
+
+- **Its zoom fixes the image's width.** Its pixel size is `3.5 / (max(width, height) · zoom)`, so
+  the width spans 3.5/zoom; the `.kfr` zoom sets the height to 4/zoom. The lane passes the scene's
+  zoom × 3.5 × (height / max(width, height)) / 4, which is 0.4921875 at 3840x2160. Scene 03 then
+  has 42.1% interior against Fractadyne's 42.7%.
+- **Its imaginary axis points down the image.** Given the scene's own centre, scene 03 came out
+  flipped top-to-bottom at the right magnification. The Mandelbrot set is symmetric about the
+  real axis, so the lane passes −Im: the conjugate centre drawn downward is the scene drawn upward.
+- **A deep centre goes in as limbs.** `--x` and `--y` take up to eight doubles, `hi|lo|...`, whose
+  sum is the centre (about 124 digits). The `.kfr` decimal is split exactly, with rational
+  arithmetic, never through a float.
+
+**One sample per pixel.** Its quality presets set the sampling: Draft and Standard take one
+sample per pixel, High 4, Ultra and Extreme 16, plus temporal anti-aliasing on top. The lane
+passes `--quality Standard --no-taa`. In batch mode the preset does not rise with depth, and the
+arithmetic (double-double, quad-double, octuple-double) follows the zoom alone, so Standard
+renders deep views at full precision. `--no-watermark` leaves its caption off the image.
+
+**It runs on the CPU.** Its batch renderer attaches no GPU kernel, whatever the interactive app
+uses, so this is a CPU lane like Imagina's.
+
+**It renders to 1e100.** That is its Extreme preset's limit, octuple-double. Version 0.7.1 still
+exits 0 past it, with one flat colour in a fraction of a second, measured at 1.6e148, 5.5e275 and
+2.3e296. A flat frame of a scene with almost no interior even passes the view check's
+magnification test. So the lane refuses those scenes up front (`NA-past-its-ceiling`), and the
+structure guard stands behind it. Of the kit's 31 scenes, 17 are in range.
+
+**Two clocks, as for every lane.** `wall_s` is its process, from start to exit after writing the
+PNG, and is the column it competes in. `reported_s` is the time it prints, "saved ...
+(3840x2160, N ms)": the render, before the PNG is written. On the test machine the gap was about
+1.9 s per image, which is .NET start-up plus the PNG.
+
+**Its view check runs on its default theme**, HSV, which cycles fast. Around a deep minibrot it
+aliases into grey noise at 4K, so the image test cannot confirm those scenes, while their
+magnification agrees; the shapes match when you look. Its interior is black, so the
+magnification test applies as it stands.
+
+Batch mode left Fracturing Fog's own settings folder (`%APPDATA%\FracturingFog`) unchanged on
+the test machine.
+
 ## Licenses
 
 This kit redistributes Fraktaler-3 (AGPL-3.0) with its corresponding source in
-`fraktaler3\source\`. Imagina (AGPL-3.0), FractalShark (GPL-3.0) and Fractal Zoomer
-(GPL-3.0) are NOT bundled — download them from their own release pages, linked above. The
+`fraktaler3\source\`. Imagina (AGPL-3.0), FractalShark (GPL-3.0), Fractal Zoomer (GPL-3.0) and
+Fracturing Fog (AGPL-3.0) are NOT bundled — download them from their own release pages, linked
+above. The kit only runs Fracturing Fog as a separate program. The
 Fractal Zoomer writer, FzsWriter (and the earlier driver, FzBench), is GPL-3.0 and kept outside
 this kit. Scene files are original to the
 Fractadyne project.

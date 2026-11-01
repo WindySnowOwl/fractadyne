@@ -120,6 +120,9 @@ param(
     # Render an untimed warm-up image before each batch's scenes (see the lane: it can make a scene
     # slower, not faster).
     [switch]$FractalZoomerWarmup,
+    # Fracturing Fog renders from its own batch command line: point at FracturingFog.App.exe from its
+    # Windows release zip (see README "Fracturing Fog").
+    [string]$FracturingFogExe = '',
     # imagina-cli is built with msys2 mingw and needs that toolchain's DLLs on PATH; without them
     # it exits 0xC0000135 (DLL not found) with no message at all, which reads exactly like a
     # crash. Prepended for this lane only, never for the process. Autodetected when left empty.
@@ -173,7 +176,7 @@ $Scenes = @($Scenes | ForEach-Object { $_ -split ',' } | Where-Object { $_ })
 # Every path a child process receives, absolute (see Resolve-KitPath in bench-lib.ps1).
 foreach ($n in 'FractadyneExe', 'Fraktaler3Exe', 'ImaginaExe', 'FractalSharkExe', 'FractalSharkCliExe',
                'ImaginaCliExe', 'ImaginaRuntimeDir', 'ImaginaPaletteMap', 'SharedPalette', 'F3Wisdom',
-               'FractalZoomerJar', 'FzsWriterPath') {
+               'FractalZoomerJar', 'FzsWriterPath', 'FracturingFogExe') {
     Set-Variable -Name $n -Value (Resolve-KitPath (Get-Variable -Name $n -ValueOnly))
 }
 
@@ -194,6 +197,7 @@ if (-not $FractalSharkCliExe -and $FractalSharkExe) {
 $have += @{ fractalsharkcli = ($FractalSharkCliExe -and (Test-Path $FractalSharkCliExe)) }
 $have += @{ imaginacli = ($ImaginaCliExe -and (Test-Path $ImaginaCliExe)) }
 $have += @{ fractalzoomer = ($FractalZoomerJar -and (Test-Path $FractalZoomerJar) -and $FzsWriterPath -and (Test-Path $FzsWriterPath)) }
+$have += @{ fracturingfog = ($FracturingFogExe -and (Test-Path $FracturingFogExe)) }
 # Default Imagina to Fractadyne's own Ember palette, calibrated. Off only if the file is gone.
 if ($have.imaginacli -and -not $ImaginaPaletteMap) {
     $cand = Join-Path $kit 'palettes\ember.map'
@@ -1078,6 +1082,101 @@ if ($have.fractalzoomer) {
     }
 }
 
+# ---- lane: Fracturing Fog (automated, its own batch command line) ----
+# Fracturing Fog renders a view headlessly with `FracturingFog.App.exe --batch`: centre, zoom,
+# iteration cap and size on the command line, a PNG out, its own render time printed. Three things
+# differ from every other lane, each measured against the Fractadyne render (README "Fracturing
+# Fog"): its zoom fixes the image's WIDTH, its imaginary axis points down, and a deep centre goes in
+# as up to eight double limbs. tools/ff-view.py converts each scene once, before any timing.
+# ONE SAMPLE PER PIXEL: --quality Standard. Its High preset takes 4 samples per pixel and Ultra and
+# Extreme 16, with temporal AA on top (off here: --no-taa). Batch mode does not raise the preset
+# with depth, and its precision (double-double, quad-double, octuple-double) follows the zoom alone.
+# Its batch renders run on the CPU: that path attaches no GPU kernel.
+# ITS CEILING is 1e100, its Extreme preset's limit (octuple-double). Past it 0.7.1 still exits 0,
+# with one flat colour in a fraction of a second (measured at 1.6e148, 5.5e275 and 2.3e296), and a
+# flat frame of a scene with almost no interior even passes the view check's magnification test.
+# So the lane refuses those scenes up front, and the structure guard stands behind it.
+$ffMaxZoomLog10 = 100
+if ($have.fracturingfog) {
+    $wh = $Size -split 'x'
+    $ffTool = Join-Path $kit 'tools\ff-view.py'
+    Write-Host ('Fracturing Fog: its batch command line, a fresh process per image (' + $FracturingFogExe + ')')
+    $ffViews = @{}
+    $ffViewErr = @{}
+    if ($PythonExe -and (Test-Path $ffTool)) {
+        foreach ($s in $sceneRows) {
+            # Under 'Stop', PS 5.1 turns a native command's stderr into a terminating error.
+            $eap = $ErrorActionPreference; $ErrorActionPreference = 'Continue'
+            $j = @(& $PythonExe $ffTool (Join-Path $kit ('scenes\' + $s.slug + '.kfr')) --width $wh[0] --height $wh[1] 2>&1)
+            $ok = ($LASTEXITCODE -eq 0)
+            $ErrorActionPreference = $eap
+            $text = (($j | ForEach-Object { [string]$_ }) -join ' ').Trim()
+            if ($ok -and $text) { $ffViews[$s.slug] = ($text | ConvertFrom-Json) }
+            else { $ffViewErr[$s.slug] = $(if ($text) { $text } else { 'tools/ff-view.py exited ' + $LASTEXITCODE }) }
+        }
+    }
+    foreach ($rep in 1..$Reps) {
+        foreach ($s in $sceneRows) {
+            $v = $ffViews[$s.slug]
+            $png = Join-Path $outDir ('ff-' + $s.slug + '.png')
+            $argLine = ''
+            $r = @{ status = ''; wall_s = ''; wall_ms = ''; stdout = ''; stderr = '' }
+            $reported = ''
+            $note = 'Fracturing Fog batch, a fresh process; quality Standard (1 sample per pixel), no temporal AA; CPU; reported = its own render time, without the PNG write'
+            if (-not $v -and $ffViewErr.ContainsKey($s.slug)) {
+                $status = 'NA-view-not-converted'
+                $note = ('tools/ff-view.py could not convert this view: ' + $ffViewErr[$s.slug])
+            } elseif (-not $v) {
+                $status = 'NA-no-python'
+                $note = 'the view is converted for Fracturing Fog by tools/ff-view.py, which needs Python'
+            } elseif ([double]$v.zoom_log10 -gt $ffMaxZoomLog10) {
+                $status = 'NA-past-its-ceiling'
+                $note = ('its zoom here is 1e' + [math]::Round([double]$v.zoom_log10, 1) + '; Fracturing Fog renders to 1e' +
+                         $ffMaxZoomLog10 + ' (octuple-double) and past it writes a flat frame')
+            } else {
+                Remove-Item -LiteralPath $png -ErrorAction SilentlyContinue
+                $argLine = ('--batch --x "{0}" --y "{1}" --zoom {2} --iter {3} --width {4} --height {5} --quality Standard --no-taa --no-watermark --out "{6}"' -f
+                            $v.x, $v.y, $v.zoom, $s.iterations, $wh[0], $wh[1], $png)
+                $r = Invoke-TimedRender $FracturingFogExe $argLine $TimeoutS $outDir
+                $status = $r.status
+                # "saved ff-....png (3840x2160, 1234 ms)": the render, from start to the finished
+                # buffer, before the PNG is written. Carried beside the wall, never instead of it.
+                $m = [regex]::Match([string]$r.stdout, '\((\d+)x(\d+), (\d+) ms\)')
+                if ($m.Success) { $reported = [math]::Round([double]$m.Groups[3].Value / 1000.0, 3) }
+                if ($status -eq 'ok') {
+                    if (-not (Test-Path $png)) {
+                        $status = 'DNF-no-output'; $note = 'exit 0 but no PNG'
+                    } elseif (-not (Test-PngComplete $png)) {
+                        $status = 'DNF-truncated'; $note = 'the PNG is incomplete (no IEND chunk)'
+                    } elseif (-not (Test-RenderHasStructure $png)) {
+                        $status = 'DNF-blank'; $note = 'exit 0 but the image is uniform - a time here would be meaningless'
+                    }
+                }
+                if ($status -ne 'ok') { $reported = '' }
+            }
+            Write-Result $csv 'fracturingfog' $s.slug $rep $status $r.wall_s $reported $note
+            Add-RunRecord @{
+                renderer = 'fracturingfog'; scene = $s.slug; rep = $rep
+                exe = $FracturingFogExe; args = $argLine; cwd = $outDir
+                source = ('scenes\' + $s.slug + '.kfr')
+                inputs = @{ size = $Size; iterations = $s.iterations; quality = 'Standard (1 sample per pixel)'
+                            temporal_aa = 'off'; center_x = $(if ($v) { $v.x } else { '' })
+                            center_y = $(if ($v) { $v.y + ' (Im negated: its imaginary axis points down)' } else { '' })
+                            zoom = $(if ($v) { [string]$v.zoom + ' (the scene''s x 3.5 x (h / max(w, h)) / 4: its zoom fixes the width)' } else { '' }) }
+                output = $(if ($argLine) { 'ff-' + $s.slug + '.png' } else { '' })
+                status = $status; wall_s = $r.wall_s; reported_s = $reported; note = $note
+            }
+        }
+    }
+    if ($PythonExe -and (Test-Path $vv) -and $have.fractadyne) {
+        Write-Host 'Fracturing Fog: checking the renders are the scenes that were ASKED for'
+        & $PythonExe $vv $outDir --prefix ff --json (Join-Path $outDir 'ff-view-check.json') --quiet 2>&1 |
+            ForEach-Object { '  ' + $_ }
+    } else {
+        Write-Host 'Fracturing Fog: view check SKIPPED (needs Python and the fractadyne lane) - times unverified.'
+    }
+}
+
 # ---- lanes: Imagina / FractalShark (operator-assisted; see README "honestly") ----
 if ($have.imagina) {
     $hints = @(
@@ -1199,8 +1298,10 @@ $md = @(('# Benchmark summary - ' + $env:COMPUTERNAME + ' - ' + $stamp), '',
         'that process, start to exit.',
         'The rendering method its author asked for, Successive Refinement, guesses flat regions',
         'instead of iterating every pixel; Fractadyne iterates every pixel.', '',
-        '| Scene | Magnification | fractadyne wall | fraktaler3 wall | fractalshark wall | imagina wall | fractalzoomer reported | fd reported |',
-        '|---|---|---|---|---|---|---|---|')
+        'Fracturing Fog is a wall column: its batch process, start to exit, which writes the PNG and',
+        'exits. It renders to 1e100 (NA-past-its-ceiling beyond), on the CPU, at one sample per pixel.', '',
+        '| Scene | Magnification | fractadyne wall | fraktaler3 wall | fractalshark wall | imagina wall | fracturingfog wall | fractalzoomer reported | fd reported |',
+        '|---|---|---|---|---|---|---|---|---|')
 # Slug is the tiebreak, not decoration: the corpus has two scenes at exactly 5.1e27, PowerShell's
 # sort is not stable for equal keys, and two runs over the same data swapping rows makes a diff
 # between reports look like a change when nothing changed.
@@ -1212,7 +1313,7 @@ foreach ($s in ($sceneRows | Sort-Object @{ e = { [double]$_.mag_log10 } }, @{ e
     if ($mant -ge 9.995) { $mant = $mant / 10; $e = $e + 1 }
     $magStr = ('{0:N1}e{1}' -f $mant, [int]$e)
     $cell = @{}
-    foreach ($ren in 'fractadyne', 'fraktaler3', 'imagina', 'fractalshark', 'fractalzoomer') {
+    foreach ($ren in 'fractadyne', 'fraktaler3', 'imagina', 'fractalshark', 'fracturingfog', 'fractalzoomer') {
         $best = $rows | Where-Object { $_.renderer -eq $ren -and $_.scene -eq $s.slug -and $_.status -eq 'ok' } |
             Sort-Object { if ($ren -eq 'fractalzoomer') { [double]('0' + $_.reported_s) }
                           elseif ($_.wall_s) { [double]$_.wall_s } else { [double]('0' + $_.reported_s) } } |
@@ -1224,7 +1325,7 @@ foreach ($s in ($sceneRows | Sort-Object @{ e = { [double]$_.mag_log10 } }, @{ e
             $cell[$ren] = @{ wall = $(if ($st) { $st.status } else { '-' }); rep = $(if ($st) { $st.status } else { '-' }) }
         }
     }
-    $md += ('| {0} | {1} | {2} | {3} | {4} | {5} | {6} | {7} |' -f $s.slug, $magStr, $cell.fractadyne.wall, $cell.fraktaler3.wall, $cell.fractalshark.wall, $cell.imagina.wall, $cell.fractalzoomer.rep, $cell.fractadyne.rep)
+    $md += ('| {0} | {1} | {2} | {3} | {4} | {5} | {6} | {7} | {8} |' -f $s.slug, $magStr, $cell.fractadyne.wall, $cell.fraktaler3.wall, $cell.fractalshark.wall, $cell.imagina.wall, $cell.fracturingfog.wall, $cell.fractalzoomer.rep, $cell.fractadyne.rep)
 }
 $md += ''
 # WHICH SHAPE produced the FractalShark column is not a footnote: a server number and a
@@ -1246,7 +1347,7 @@ $fmt = { param($v, $f) if ($null -eq $v -or [string]$v -eq '') { '-' } else { [s
 $depthOrder = @($sceneRows | Sort-Object @{ e = { [double]$_.mag_log10 } }, @{ e = { $_.slug } })
 $spread = @()
 foreach ($s in $depthOrder) {
-    foreach ($ren in 'fractadyne', 'fraktaler3', 'imagina', 'fractalshark', 'fractalzoomer') {
+    foreach ($ren in 'fractadyne', 'fraktaler3', 'imagina', 'fractalshark', 'fracturingfog', 'fractalzoomer') {
         # Fractal Zoomer by its own clock, like its column above: its wall is mostly JVM start-up.
         $col = $(if ($ren -eq 'fractalzoomer') { 'reported_s' } else { 'wall_s' })
         $ws = @($rows | Where-Object { $_.renderer -eq $ren -and $_.scene -eq $s.slug -and $_.status -eq 'ok' -and $_.$col } |
@@ -1407,6 +1508,7 @@ $meta = @{
         fraktaler3   = (Get-ExeStamp $Fraktaler3Exe)
         fractalshark = (Get-ExeStamp $FractalSharkCliExe)
         imagina      = (Get-ExeStamp $ImaginaExe)
+        fracturingfog = (Get-ExeStamp $FracturingFogExe)
     }
 }
 $manifest = Join-Path $outDir 'run-manifest.json'
