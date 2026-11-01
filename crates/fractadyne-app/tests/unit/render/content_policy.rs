@@ -166,3 +166,28 @@ fn the_content_bar_sits_in_the_measured_gap() {
     assert!(!content_has_detail(0, px));
     assert!(!content_has_detail(16, px));
 }
+
+/// The autopilot's rule for a frame its cut-off reference made (2026-11-01): mostly interior is
+/// not a picture there, though it is one when the reference reaches the frame's ask.
+#[test]
+fn a_mostly_interior_frame_under_a_cut_off_reference_is_held_back() {
+    // The case: a 145x110 refresh at 2^1034, 6,176 of 15,950 pixels escaped.
+    assert!(clamped_blackout(true, 6_176, 15_950));
+    // The same frame against a reference that reaches the ask: a real, mostly interior view.
+    assert!(!clamped_blackout(false, 6_176, 15_950));
+    // Half or more escaped is a picture either way.
+    assert!(!clamped_blackout(true, 7_975, 15_950));
+    assert!(clamped_blackout(true, 7_974, 15_950));
+    assert!(!clamped_blackout(true, 5, 0), "no pixels, no verdict");
+}
+
+#[test]
+fn a_reference_clamps_only_when_partial_and_shorter_than_the_ask() {
+    // The replay's pin: 261,745 samples against an ask of 267,949.
+    assert!(ref_clamps(true, 261_745, 267_949));
+    // An escaped (complete) reference never clamps: pixels past its end rebase.
+    assert!(!ref_clamps(false, 261_745, 267_949));
+    // Long enough for the ask: orbit_len - 1 iterations serve it.
+    assert!(!ref_clamps(true, 267_950, 267_949));
+    assert!(ref_clamps(true, 267_949, 267_949));
+}

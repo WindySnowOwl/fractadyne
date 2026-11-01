@@ -43,6 +43,17 @@ impl GBuffer {
         self.iter.chunks(4).any(|t| t[0] != 0.0)
     }
 
+    /// The share of the texels that escaped (`r > 0`; interior and glitched read negative, a
+    /// cleared texel 0): what a window asks before adopting a frame its cut-off reference clamped.
+    pub fn escaped_share(&self) -> f64 {
+        let n = self.iter.len() / 4;
+        if n == 0 {
+            return 0.0;
+        }
+        let e = self.iter.chunks_exact(4).filter(|t| t[0] > 0.0 && t[0].is_finite()).count();
+        e as f64 / n as f64
+    }
+
     /// The smooth-iteration range of the escaped texels (`r > 0`; interior and glitched read
     /// negative), as the window's escape-range reading measures its own frames: what a palette
     /// normalized to this picture must span. `None` when nothing escaped.

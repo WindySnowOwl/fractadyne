@@ -69,7 +69,13 @@ Changes after 0.3.0-beta.1:
   on an RTX 3080 (accelerated build, worker on): before, 2 of 3 runs froze at 2^1032 to 2^1034;
   after, 10 of 10 reached the test's 1e319× limit in about 16 s. A stepped dive that waits more
   than 10 s for its picture is now logged. In 2 of those 10 runs a hold at 2^1034 was followed by
-  about 0.3 s of a mostly dark frame (the refresh at a depth the reference does not yet reach).
+  about 0.3 s of a mostly dark frame: a refresh at a depth the reference did not yet reach, its
+  pixels cut off short of their escape. The autopilot now keeps its last valid frame instead: a
+  refresh (or a second-GPU frame) rendered against a cut-off reference in which fewer than half
+  the pixels escaped is treated as blank, and three blank refreshes make the dive hold for the
+  reference. Over 18 more replays, no such frame reached the screen; in the 3 where the case came
+  up, the last picture stayed on screen through it and the dive resumed after a 0.1 s hold. A mostly
+  interior view whose reference reaches it (a minibrot) still shows.
 - **The self-test no longer resets a slow graphics card (0.3.0-beta.23).** On a GeForce GT 710,
   Help ▸ Diagnostics ▸ self-test lost the GPU in its third check, and Windows reset the driver,
   taking the desktop and the open Fractadyne window with it. Some checks compare against a render
