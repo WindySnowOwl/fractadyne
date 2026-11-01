@@ -250,6 +250,37 @@ change a row. The lane now also refuses a missing or uniform image as every othe
 (`DNF-no-output`, `DNF-blank`). A Fraktaler-3 whose wisdom file enables the wrong devices can write
 a black frame in a second, and this lane used to record a time for it.
 
+**The view check's magnification test is strict since 2026-11-01.** It compared each render's
+black share with the Fractadyne reference picture's, within 0.06, and that was loose in two ways.
+Palette 0 draws escaped pixels dark as well, so the reference overstated the interior: scene 59's
+picture is 8.9% black where 5.5% of it is interior, and on every deep minibrot scene the other
+four renderers agreed with each other and not with it. A 2.14x under-zoom of scene 57 passed. And
+most scenes have no interior at all, where the test could say nothing, yet the check reported
+"magnification agrees": re-run on the 2026-09-21 run whose zooms were truncated, it caught 1 of
+the 10 wrong renders. Now:
+
+- The Fractadyne lane renders each scene once more, untimed, through an all-white palette
+  (`fd-interior\`), so the reference's black is its interior and nothing else. On a scene with 1%
+  interior or more, a render may fall at most 20% short of it and exceed it at most 2x (dark
+  palettes add black; FractalShark reached 1.44x), each bound no looser than the old 0.06. At least
+  75% of the scene's interior pixels must be black in it, which palette darkness cannot fake: it
+  only adds black. There an interior contradiction stands against a decisive picture match, which
+  identifies the scene but not its magnification.
+- On a scene with less, a scale search: edge correlation at magnifications from 0.1x to 10x. A
+  render whose best match is a quarter-octave or more away, scores 0.45 there and beats the asked
+  magnification by 0.25 fails, and the check names the factor. It is not used on the minibrot
+  scenes, where correct renders also matched at other scales.
+- Where nothing can check the magnification, the verdict says "magnification unchecked", not
+  "agrees".
+
+Measured: Imagina at 1.26x, 1.41x and 2x too deep and too shallow, 174 renders: 144 fail (the old
+check: 35), including every under-zoom of a scene with interior. The truncated run: 9 of 10, each
+with its factor (scene 04: 3.78x found, 3.90x true). 139 correct renders by five renderers: none
+fail. Still passing: an over-zoom of a minibrot scene under 1.41x, and scenes 17 and 35 where a
+renderer's palette matches ours at no scale (reported as unchecked). Results without the masks
+get the old test, with the old verdicts. Details and every threshold's evidence are in
+`tools/verify-views.py`.
+
 ## The cutoff-crossing lane
 
 Fractadyne switches arithmetic at fixed magnifications — direct→df32 at 1e4, df32→floatexp at 1e28,
@@ -608,8 +639,8 @@ uses, so this is a CPU lane like Imagina's.
 
 **It renders to 1e100.** That is its Extreme preset's limit, octuple-double. Version 0.7.1 still
 exits 0 past it, with one flat colour in a fraction of a second, measured at 1.6e148, 5.5e275 and
-2.3e296. A flat frame of a scene with almost no interior even passes the view check's
-magnification test. So the lane refuses those scenes up front (`NA-past-its-ceiling`), and the
+2.3e296. A flat frame of a scene with almost no interior gives the view check's magnification
+test nothing to contradict. So the lane refuses those scenes up front (`NA-past-its-ceiling`), and the
 structure guard stands behind it. Of the kit's 31 scenes, 17 are in range.
 
 **Two clocks, as for every lane.** `wall_s` is its process, from start to exit after writing the

@@ -184,20 +184,28 @@ def derive_findings(scenes, rows_by, views, meta, zs_rows):
         wrong = [k for k, v in vv.items() if not v.get("magnification_ok", True)]
         unconf = [k for k, v in vv.items()
                   if v.get("magnification_ok", True) and not v.get("same_view")]
+        # magnification_checked is absent from view checks written before 2026-11-01, which
+        # claimed agreement for every unconfirmed render; read those as they were written.
+        unchecked = [k for k in unconf if not vv[k].get("magnification_checked", True)]
         if wrong:
             out.append(("%s: WRONG VIEW" % name,
                         "%d of %d renders are at a different magnification than the scene asks "
                         "for: %s. A time for the wrong picture is void, not slow."
                         % (len(wrong), len(vv), ", ".join(sorted(wrong)))))
         if unconf:
-            agree = len(vv) - len(wrong)
-            out.append(("%s: view" % name,
-                        "magnification agrees with our own render on %d of %d scenes. %d could "
-                        "not be confirmed by image (%s) - that is a limit of comparing two "
-                        "renderers by picture, almost always a palette difference, and NOT a "
-                        "fault in the renderer. The times stand."
-                        % (agree, len(vv), len(unconf),
-                           ", ".join(sorted(unconf)) if len(unconf) < len(vv) else "all of them")))
+            agree = len(vv) - len(wrong) - len(unchecked)
+            text = ("magnification agrees with our own render on %d of %d scenes. %d could "
+                    "not be confirmed by image (%s) - that is a limit of comparing two "
+                    "renderers by picture, almost always a palette difference, and NOT a "
+                    "fault in the renderer. The times stand."
+                    % (agree, len(vv), len(unconf),
+                       ", ".join(sorted(unconf)) if len(unconf) < len(vv) else "all of them"))
+            if unchecked:
+                text += (" On %d of them (%s) nothing could check the magnification either: "
+                         "the scene has no interior to measure it by, and the pictures match at "
+                         "no scale tried. Nothing contradicts them."
+                         % (len(unchecked), ", ".join(sorted(unchecked))))
+            out.append(("%s: view" % name, text))
         if not wrong and not unconf:
             out.append(("%s: view" % name,
                         "all %d renders depict the right scene (checked against the Fractadyne "
@@ -911,6 +919,9 @@ def main():
                 mag_ok = v.get("magnification_ok", True)
                 if ok:
                     word, cls = "depicts this scene", "kv"
+                elif mag_ok and not v.get("magnification_checked", True):
+                    word, cls = ("could not confirm by image, and nothing could check the "
+                                 "magnification (no interior; no match at any scale tried)"), "kv"
                 elif mag_ok:
                     # Say what is actually known: the magnification agrees and the pictures do
                     # not match. Not "does not depict this scene" - that is a different, much
@@ -919,6 +930,10 @@ def main():
                                  "(usually a palette difference, not a fault)"), "kv"
                 else:
                     word, cls = "a DIFFERENT magnification than this scene asks for", "note"
+                    k = v.get("scale_k")
+                    if v.get("scale_judgement") == "contradicts" and k:
+                        word += " (its best match is %.2fx too %s)" % (
+                            k if k >= 1 else 1 / k, "shallow" if k >= 1 else "deep")
                 a("<div class='%s'>view check: %s (edge r %.3f, best wrong %.3f)</div>"
                   % (cls, word, v.get("edge_r", 0.0), v.get("best_wrong_r", 0.0)))
             note = rec.get("note")
