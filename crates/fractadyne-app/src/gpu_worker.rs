@@ -57,6 +57,8 @@ pub(crate) struct LiveDone {
     /// The frame's fine escape histogram from the bottom of that range (`GBuffer::escape_hist`):
     /// the palette window's top is a quantile of it.
     pub(crate) esc_hist: Option<fractadyne_gpu::NormHist>,
+    /// The share of its texels that escaped (`GBuffer::escaped_share`).
+    pub(crate) escaped_share: f64,
     /// From the worker taking the job to its answer, ms.
     pub(crate) ms: f64,
     pub(crate) err: Option<String>,
@@ -526,6 +528,7 @@ fn render_live(
         upload_ms: 0.0,
         esc_range: None,
         esc_hist: None,
+        escaped_share: 0.0,
         ms: 0.0,
         err: None,
     };
@@ -544,6 +547,7 @@ fn render_live(
                         out.read_ms = tr.elapsed().as_secs_f64() * 1000.0;
                         out.esc_range = g.escape_range();
                         out.esc_hist = out.esc_range.map(|(mn, _)| g.escape_hist(mn));
+                        out.escaped_share = g.escaped_share();
                         let tu = std::time::Instant::now();
                         out.frame = fractadyne_gpu::AdoptFrame::upload(&job.window, &g).map(Arc::new);
                         out.upload_ms = tu.elapsed().as_secs_f64() * 1000.0;

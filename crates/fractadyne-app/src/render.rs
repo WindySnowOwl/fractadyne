@@ -7522,7 +7522,19 @@ impl FractadyneApp {
             // A worker frame on screen shows the live view at least as well as this pin's frame
             // could (`motion_worker::frame_quality`; their ranking holds for the rest of a dive):
             // the pin's work can never reach the screen.
-            let superseded = self.perf.pin[vsub].as_ref().is_some_and(|p| {
+            // ⛔Not in the autopilot's STEPPED dive while the worker frame is too far back for it.
+            // Between its jumps the view stands still, so the worker renders nothing new (it runs
+            // only while the view moves), and the frame the stepped dive waits for — one within an
+            // octave of its depth (`autopilot::step_frame_ready`) — can then only come from the pin.
+            // A full-resolution worker frame two octaves back still out-ranks a 145-px pin at the
+            // new depth, so every pin was stopped and the dive waited forever (2026-11-01, the
+            // user's dive at 2^1034 and the replay at 2^1032; worker off, the same replay reached
+            // its 1e319x limit). A worker frame the dive can step on still stops the pin.
+            let stepping_dive = vsub == 0
+                && self.autopilot.active
+                && self.autopilot.stepping
+                && !crate::autopilot::step_frame_ready(log2mag, self.ref_cache[vsub].frozen_l2);
+            let superseded = !stepping_dive && self.perf.pin[vsub].as_ref().is_some_and(|p| {
                 let rc = &self.ref_cache[vsub];
                 let pin_res = ((p.resolution[0] * p.ss.max(1)) as f64 / p.panel[0].max(1) as f64).log2();
                 rc.frozen_by_worker
@@ -7553,6 +7565,11 @@ impl FractadyneApp {
                 // it — see `ContentTrack`.
                 let ct = &self.perf.content[vsub];
                 let tag = pin.started_frame;
+                // The autopilot holds its last valid frame rather than adopt a mostly-interior one
+                // its cut-off reference made (`clamped_blackout`): such a pin finishes as blank.
+                let blackout = vsub == 0
+                    && self.autopilot.active
+                    && ct.reading_for(tag).is_some_and(|r| clamped_blackout(pin.clamped, r.escaped, r.px));
                 let past_range_top = self.perf.norm_range[vsub].is_some_and(|(_, hi)| {
                     hi > 0.0
                         && self.perf.chunk_cursor[vsub] as f64
@@ -7572,7 +7589,7 @@ impl FractadyneApp {
                         frame_idx: self.perf.frame_idx,
                         cursor: self.perf.chunk_cursor[vsub],
                         policy: self.refresh_policy(),
-                        detail: ct.detail_for(tag),
+                        detail: ct.detail_for(tag).map(|d| d && !blackout),
                         reading_final: ct.reading_final_for(tag, pin.gpu_iter),
                         converged: ct.converged_for(tag),
                         past_range_top,
@@ -9474,6 +9491,7 @@ impl FractadyneApp {
                     orbit_id: self.ref_cache[vi].orbit_id,
                     orbit_len: self.ref_cache[vi].orbit_len,
                     ref_pt: self.ref_cache[vi].ref_pt.clone(),
+                    clamped: ref_clamps(self.ref_cache[vi].partial, self.ref_cache[vi].orbit_len, gpu_iter),
                     started_frame: self.perf.frame_idx,
                     split: 0,
                     split_next: 0,
@@ -9555,6 +9573,7 @@ impl FractadyneApp {
                         orbit_id: self.ref_cache[vi].orbit_id,
                         orbit_len: self.ref_cache[vi].orbit_len,
                         ref_pt: self.ref_cache[vi].ref_pt.clone(),
+                        clamped: ref_clamps(self.ref_cache[vi].partial, self.ref_cache[vi].orbit_len, gpu_iter),
                         started_frame: self.perf.frame_idx,
                         split: k,
                         split_next: 1,
@@ -10076,6 +10095,9 @@ pub(crate) struct PinnedRefresh {
     /// instead of abandoning (`pin_verdict`, `same_point`). A different point is another orbit
     /// and still abandons.
     pub(crate) ref_pt: Option<[fractadyne_core::BigFloat; 2]>,
+    /// Its reference was truncated short of its ask when it started (`ref_clamps`): its pixels
+    /// stop at the reference's end, so an interior pixel may be the cut-off rather than the set.
+    pub(crate) clamped: bool,
     pub(crate) started_frame: u64,
     /// ⭐A SPLIT live refresh (`LiveRefresh::Split`, 0.3.0-beta.3) when > 1: this many checkerboard
     /// passes of the WHOLE ask, one per frame (`MandelbrotParams::split`), each an even share of the
@@ -10234,6 +10256,30 @@ pub(crate) fn content_has_detail(escaped: u32, px: u32) -> bool {
     px > 0 && escaped as f64 >= (px as f64 * CONTENT_MIN_ESCAPED).max(1.0)
 }
 
+/// Does a render against this reference stop short of its ask? A `partial` reference ends at
+/// `orbit_len - 1` iterations (`live_ref_fields` clamps the count there), and a pixel still running
+/// at its end is drawn as interior.
+pub(crate) fn ref_clamps(partial: bool, orbit_len: u32, ask: u32) -> bool {
+    partial && orbit_len.saturating_sub(1) < ask
+}
+
+/// The least share of a frame's pixels that must escape for a frame its cut-off reference clamped
+/// to count as a picture while the autopilot dives (`clamped_blackout`). Under a cut-off reference
+/// an interior pixel may be real or the cut-off, and nothing tells which: at 0.5 a frame about half
+/// black passed, and the stepped dive's next jump magnified its black centre for 0.6 s (a
+/// Misiurewicz dive at 2^1512, 2026-11-01). Holding it back costs a short hold for the reference.
+pub(crate) const CLAMPED_MIN_ESCAPED_SHARE: f64 = 0.9;
+
+/// A frame rendered against a reference cut off short of its ask (`clamped`, `ref_clamps`) in which
+/// most pixels did not escape: its black is as likely the cut-off as the set. The autopilot holds
+/// its last valid frame instead (the user, 2026-11-01: "hold on the last valid frame before
+/// drawing a mostly black frame"). The case: a 145-px refresh at 2^1034, 39% escaped, adopted, and
+/// the stepped dive's next jump magnified its interior centre into a black screen for ~0.3 s. A
+/// mostly interior frame whose reference reaches its ask is a real view (a minibrot) and shows.
+pub(crate) fn clamped_blackout(clamped: bool, escaped: u32, px: u32) -> bool {
+    clamped && px > 0 && (escaped as f64) < px as f64 * CLAMPED_MIN_ESCAPED_SHARE
+}
+
 /// Is a render COMPLETE by construction — verified as a picture before its reading lands? Not a
 /// pin's pass or its start (`pinned`), not a walk short of its ask, not a placeholder without a
 /// reference (`has_ref`; direct mode needs none) — and, W6 (U19), not a render the shader ran to a
@@ -10364,6 +10410,11 @@ impl ContentTrack {
             || self
                 .last
                 .is_some_and(|r| r.tag == self.live_tag && content_has_detail(r.escaped, r.px))
+    }
+
+    /// The latest reading of the render tagged `tag`, if one has arrived.
+    pub(crate) fn reading_for(&self, tag: u64) -> Option<ContentReading> {
+        self.last.filter(|r| r.tag == tag)
     }
 
     /// The reading verdict for the render tagged `tag`: `None` = no reading of it has arrived.

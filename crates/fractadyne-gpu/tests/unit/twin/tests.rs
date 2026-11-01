@@ -117,3 +117,18 @@ fn a_gbuffers_escape_range_spans_its_escaped_texels_only() {
     // A non-finite value is no escape.
     assert_eq!(g(&[f32::NAN, 5.0, f32::INFINITY]).escape_range(), Some((5.0, 5.0)));
 }
+
+#[test]
+fn a_gbuffers_escaped_share_counts_only_escaped_texels() {
+    let texel = |r: f32| [r, 0.0, 0.0, 0.0];
+    let g = |rs: &[f32]| GBuffer {
+        width: rs.len() as u32,
+        height: 1,
+        ss: 1,
+        iter: rs.iter().flat_map(|&r| texel(r)).collect(),
+        aux: Vec::new(),
+    };
+    // Interior (-1), glitched (-2), cleared (0) and non-finite are not escapes.
+    assert_eq!(g(&[-1.0, 1_778.5, -2.0, 0.0, f32::NAN, 2_001.0, -1.0, 5.0]).escaped_share(), 3.0 / 8.0);
+    assert_eq!(g(&[]).escaped_share(), 0.0);
+}

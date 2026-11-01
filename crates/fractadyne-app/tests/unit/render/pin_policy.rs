@@ -20,6 +20,7 @@ fn pin() -> PinnedRefresh {
         orbit_id: 7,
         orbit_len: 868,
         ref_pt: None,
+        clamped: false,
         started_frame: 1_000,
         split: 0,
         split_next: 0,

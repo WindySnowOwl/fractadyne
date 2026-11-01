@@ -148,6 +148,9 @@ pub(crate) struct Cost {
     pub worker_yield: u64,
     /// The wall each of the second card's walk passes is sized for, ms (`WORKER_PASS_MS_DEFAULT`).
     pub worker_pass_ms: f64,
+    /// How far past the view the autopilot's first Misiurewicz stage solves, octaves
+    /// (`MISI_FIRST_STAGE_OCT_DEFAULT`).
+    pub misi_first_stage_oct: f64,
     /// The share of one pin pass a pass across several bands may take (`PIN_BAND_SPAN_DEFAULT`;
     /// 0 = off).
     pub pin_band_span: f64,
@@ -230,6 +233,7 @@ impl Default for Cost {
             worker_motion: WORKER_MOTION_DEFAULT,
             worker_yield: WORKER_YIELD_DEFAULT,
             worker_pass_ms: WORKER_PASS_MS_DEFAULT,
+            misi_first_stage_oct: MISI_FIRST_STAGE_OCT_DEFAULT,
             pin_band_span: PIN_BAND_SPAN_DEFAULT,
             pin_span_priced: PIN_SPAN_PRICED_DEFAULT,
             timer_slots: TIMER_SLOTS_DEFAULT,
@@ -542,6 +546,15 @@ pub(crate) fn apply_overrides(pairs: &[(String, String)]) -> Result<(), String> 
                     .ok_or_else(|| format!("--set WORKER_PASS_MS: '{raw}' is not a number of ms from 1 to 400"))?;
                 p.to_string()
             }
+            "MISI_FIRST_STAGE_OCT" => {
+                let p = c.misi_first_stage_oct;
+                c.misi_first_stage_oct = raw
+                    .parse::<f64>()
+                    .ok()
+                    .filter(|v| v.is_finite() && (1.0..=100_000.0).contains(v))
+                    .ok_or_else(|| format!("--set MISI_FIRST_STAGE_OCT: '{raw}' is not a number of octaves from 1 to 100000"))?;
+                p.to_string()
+            }
             "PRE_SWITCH_PROBE" => {
                 let p = c.pre_switch_probe;
                 c.pre_switch_probe = match raw.as_str() {
@@ -811,7 +824,7 @@ pub(crate) const OVERRIDABLE: &str = "TDR_BUDGET_MS, TDR_EXPLICIT_BUDGET_MS, \
     EXPLICIT_DISPATCH_CAP, TDR_MAX_TILES, TDR_TILES_CEIL, BLA_EPS, PASS_FIXED_MS, MOTION_NEED_QUANTILE, MOTION_NEED_SOURCE, READING_POOL, \
     DEAD_MAN, DISPATCH_CEILING, SETTLE_SERIALIZE, ADMISSION, PIN_TIMEOUT_SCALED, TAIL_DF32, REF_OVERLAP, EARLY_REF, TILE_OCCUPANCY, LIVE_REFRESH, \
     ORBIT_LEN_CAP, RENORM, TILE_PACK, RENORM_BLA, ORBIT_SCHEDULE, SA_TRACE, CHUNK_CHARGE, \
-    CHUNK_SHUFFLE, WORKER_MOTION, WORKER_YIELD, WORKER_PASS_MS, RECORD_COST_PPM, REUSE_MAX_WRAPS, PIN_BAND_SPAN, REF_OVERTAKEN_DROP, SA_TRACE_LIVE_STEPS, GROWTH_IN_WORK, PIN_GROWTH_LANE, PRE_SWITCH_PROBE, BAND_FLOATEXP, WALK_STEPS, PIN_SPAN_PRICED, TIMER_SLOTS, \
+    CHUNK_SHUFFLE, WORKER_MOTION, WORKER_YIELD, WORKER_PASS_MS, MISI_FIRST_STAGE_OCT, RECORD_COST_PPM, REUSE_MAX_WRAPS, PIN_BAND_SPAN, REF_OVERTAKEN_DROP, SA_TRACE_LIVE_STEPS, GROWTH_IN_WORK, PIN_GROWTH_LANE, PRE_SWITCH_PROBE, BAND_FLOATEXP, WALK_STEPS, PIN_SPAN_PRICED, TIMER_SLOTS, \
     WALK_SERIALIZE, WALK_ONSET, ACCUM_TIME_CAP_MS, NORM_TOP_QUANTILE, ASSEMBLE_PIECE_MAX";
 
 #[cfg(test)]
@@ -1390,6 +1403,13 @@ pub(crate) const WORKER_YIELD_DEFAULT: u64 = 0;
 /// the measurements are at `fractadyne_gpu::WALK_PASS_MS`). One pass is one draw, which the GPU does
 /// not interrupt: on a card that also draws the desktop, a long pass holds up its composition.
 pub(crate) const WORKER_PASS_MS_DEFAULT: f64 = fractadyne_gpu::WALK_PASS_MS;
+
+/// How far past the view, octaves, the autopilot's FIRST Misiurewicz stage solves
+/// (`autopilot::misi_stages`): the dive starts once it lands, so it is cheap, and later stages
+/// double the depth while the dive runs. At the user's 2^1198.7 dive (a 262,196-iteration orbit) it
+/// solved in 17 s, and the stages after it stayed ahead of the dive. A small value is the way to
+/// make a dive catch its solve up (the hold, `--set MISI_FIRST_STAGE_OCT=16`).
+pub(crate) const MISI_FIRST_STAGE_OCT_DEFAULT: f64 = 256.0;
 
 /// 1 = THE U-SPACE BLA (`fractadyne_core::renorm_bla_gpu`): the renormalized step skips along its
 /// own u-reference by a BLA tree, as the main loop skips along the orbit. An approximation held to

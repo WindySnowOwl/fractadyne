@@ -37,6 +37,8 @@ pub(crate) struct LiveTicket {
     pub(crate) res: [u32; 2],
     /// log2 of its texels across the panel's width (`RefCache::frozen_res`).
     pub(crate) res_log2: f64,
+    /// Its reference stopped short of the frame's ask (`render::ref_clamps`).
+    pub(crate) clamped: bool,
     pub(crate) at: Instant,
 }
 
@@ -85,6 +87,9 @@ pub(crate) struct LiveStats {
     pub(crate) failed: u32,
     /// Pin frames that offered nothing: the live view had left the pinned one.
     pub(crate) outside: u32,
+    /// Mostly interior under a cut-off reference while the autopilot dives: not adopted
+    /// (`render::clamped_blackout`).
+    pub(crate) cut_off: u32,
     pub(crate) ms_sum: f64,
     pub(crate) passes: u32,
     pub(crate) max_pass_ms: f64,
@@ -233,7 +238,7 @@ impl FractadyneApp {
                     &format!(
                         "motion: {} frames from the worker GPU ({} offered, {:.0} ms each, {:.1} passes, longest pass {:.0} ms, \
                          res {:.2}); adopted {} live + {} into the hold; {} no better than the screen, {} overtaken, {} pins superseded, \
-                         {} pin frames outside{}",
+                         {} pin frames outside{}{}",
                         s.delivered,
                         s.offered,
                         s.ms_sum / s.delivered.max(1) as f64,
@@ -246,6 +251,7 @@ impl FractadyneApp {
                         s.overtaken,
                         s.superseded,
                         s.outside,
+                        if s.cut_off > 0 { format!(", {} mostly interior under a cut-off reference (held back)", s.cut_off) } else { String::new() },
                         if s.failed > 0 { format!(", {} failed", s.failed) } else { String::new() },
                     ),
                 );
@@ -316,6 +322,8 @@ impl FractadyneApp {
                 log2mag,
                 res,
                 res_log2: (res[0] as f64 / panel[0].max(1) as f64).log2(),
+                // `live_ref_fields` clamps a partial reference's count to `orbit_len - 1`.
+                clamped: self.ref_cache[v].partial && params.max_iter >= self.ref_cache[v].orbit_len.saturating_sub(1),
                 at: Instant::now(),
             });
             self.perf.live_stats[v].offered += 1;
@@ -373,6 +381,13 @@ impl FractadyneApp {
                                 self.perf.live_res[v],
                             ),
                         );
+                    }
+                    // The autopilot keeps its last valid frame rather than this one, as it does a pin's.
+                    let px = (ticket.res[0] as u64 * ticket.res[1] as u64).min(u32::MAX as u64) as u32;
+                    let escaped = (d.escaped_share * px as f64).round() as u32;
+                    if v == 0 && self.autopilot.active && crate::render::clamped_blackout(ticket.clamped, escaped, px) {
+                        self.perf.live_stats[v].cut_off += 1;
+                        continue;
                     }
                     self.perf.live_ready[v] = Some(LiveDelivery { ticket, frame, esc_range: d.esc_range, esc_hist: d.esc_hist });
                 }

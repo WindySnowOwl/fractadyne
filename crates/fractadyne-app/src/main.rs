@@ -5959,9 +5959,13 @@ struct AutopilotState {
     /// The off-thread search for it, while it runs; the dive holds still meanwhile.
     misi_solve: Option<crate::autopilot::MisiSolve>,
     /// App-time a hold for the reference began (`autopilot::RefWait`): the view read empty while
-    /// its reference was clamped (`RefCache::growth_deferred`), so the dive holds still, letting
-    /// the view settle and the reference grow, instead of calling it a dead end. `None` = diving.
+    /// its reference was clamped (`RefCache::growth_deferred`), so the dive holds still while the
+    /// reference grows, instead of calling it a dead end. `None` = diving.
     ref_wait: Option<f64>,
+    /// App-time a STEPPED dive began waiting for a frame at its depth (`autopilot::step_stalled`),
+    /// and whether that wait has been logged as a stall. `None` = not waiting.
+    step_wait: Option<f64>,
+    step_wait_logged: bool,
 }
 
 /// Transient pointer / zoom / pan interaction state (not persisted): the in-progress zoom-box and
@@ -7442,6 +7446,8 @@ impl FractadyneApp {
                 misi: None,
                 misi_solve: None,
                 ref_wait: None,
+                step_wait: None,
+                step_wait_logged: false,
             },
             anim: AnimationState {
                 show_orbits: s.show_orbits,
@@ -10871,7 +10877,9 @@ impl FractadyneApp {
                             feature = shown.as_str(),
                             residual = format!("{residual:.1e}")
                         ),
-                        Some(fractadyne_core::MisiurewiczMiss::NotConverged) | None => {
+                        Some(fractadyne_core::MisiurewiczMiss::NotConverged)
+                        | Some(fractadyne_core::MisiurewiczMiss::Cancelled)
+                        | None => {
                             tr!(app_feature_not_converged, feature = shown.as_str())
                         }
                         Some(fractadyne_core::MisiurewiczMiss::BadRequest) => {
