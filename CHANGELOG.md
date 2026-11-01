@@ -59,6 +59,17 @@ published as the pre-releases `v0.2.41-beta.1` to `v0.2.41-beta.150`, and a "bet
 
 Changes after 0.3.0-beta.1:
 
+- **The autopilot no longer gives up beside a deep minibrot (0.3.0-beta.23).** Near a minibrot
+  the reference orbit can end a few dozen steps before the view's pixels escape, and a moving
+  view's reference is not extended until the view stops. The autopilot never stops, so every
+  frame and its look ahead were cut off just short of the escapes: the view read as interior and
+  the dive ended with "no detail ahead", twice on one dive at 2^585 and 2^594. Partly cut off,
+  the look ahead also steered toward a straight edge that the cut-off drew across a smooth field.
+  When the view reads empty, or its interior meets the iteration limit, while the reference is
+  short of what the view asks for, the autopilot now holds still until the reference has grown,
+  then dives on. Replaying that dive on an RTX 3080 (standard build), the old autopilot stopped
+  after 10 s at 1e182×; the new one reached the test's 1e215× limit in 108 s, holding 14 or 15
+  times for 1 to 4 s each. A hold that lasts a minute still ends the dive as a dead end.
 - **Click-to-zoom keeps a picture on screen while the new view computes (0.3.0-beta.22).** After a
   click, the old picture is shown magnified around the clicked point until the new view is ready.
   A click more than a few percent of the width away from the centre used to place that magnified
