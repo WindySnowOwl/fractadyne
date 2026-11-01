@@ -380,6 +380,55 @@ if ($have.fractadyne) {
             }
         }
     }
+    # The view check's interior reference: each scene once more, UNTIMED, at the same size, view
+    # and iterations, through an all-white palette, so the only black left is the scene's own
+    # interior (fd-interior\<scene>.png). Palette 0 draws escaped pixels dark as well - scene 59's
+    # picture is 8.9% black where 5.5% of it is interior - and against that picture the check had
+    # to be too loose to see a 2x zoom error on the minibrot scenes. Without a mask, the check falls
+    # back to its old, coarse test for that scene.
+    if ($PythonExe) {
+        $maskDir = Join-Path $outDir 'fd-interior'
+        New-Item -ItemType Directory -Force $maskDir | Out-Null
+        $whiteMap = Join-Path $maskDir 'white.map'
+        [System.IO.File]::WriteAllText($whiteMap, ('255 255 255' + "`n") * 256, [System.Text.Encoding]::ASCII)
+        Write-Host 'Fractadyne: interior masks for the view check (untimed)'
+        foreach ($s in $sceneRows) {
+            if (Test-Path $cfg) { Remove-Item -Recurse -Force $cfg }
+            New-Item -ItemType Directory -Force $cfg | Out-Null
+            $env:FRACTADYNE_CONFIG_DIR = $cfg
+            $kfr = Read-Kfr (Join-Path $kit ('scenes\' + $s.slug + '.kfr'))
+            $mask = Join-Path $maskDir ($s.slug + '.png')
+            $zl2 = [double]$s.mag_log10 * [math]::Log(10.0, 2.0)
+            $argLine = ('--render --out "{0}" --size {5} --center {1} {2} --zoom-log2 {3} --iter {4} --ss 1 --palette-map "{6}"' -f $mask, $kfr['Re'], $kfr['Im'], $zl2, $s.iterations, $Size, $whiteMap)
+            $launch = $argLine
+            $argFile = ''
+            if ($argLine.Length -gt $MaxCommandLine) {
+                $argDir = Join-Path $outDir 'fd-args'
+                New-Item -ItemType Directory -Force $argDir | Out-Null
+                $argFile = Join-Path $argDir ($s.slug + '.mask.args')
+                [System.IO.File]::WriteAllText($argFile, $argLine + "`n", [System.Text.Encoding]::ASCII)
+                $launch = '"@' + $argFile + '"'
+            }
+            $r = Invoke-TimedRender $FractadyneExe $launch $TimeoutS $kit
+            if ($r.status -ne 'ok') {
+                # A mask from a failed render must not be read as the scene's interior.
+                if (Test-Path $mask) { Remove-Item -Force $mask }
+                Write-Host ('  ' + $s.slug + ': ' + $r.status + ' - its view check falls back to the coarse test')
+            }
+            Add-RunRecord @{
+                renderer = 'fractadyne'; scene = ('(view check) ' + $s.slug); rep = 0
+                exe = $FractadyneExe; args = $launch; cwd = $kit
+                args_file = $(if ($argFile) { 'fd-args\' + $s.slug + '.mask.args' } else { '' })
+                source = ('scenes\' + $s.slug + '.kfr')
+                inputs = @{ center_re = $kfr['Re']; center_im = $kfr['Im']; zoom_log2 = $zl2
+                            iterations = $s.iterations; size = $Size; samples_per_pixel = 1
+                            palette_map = 'fd-interior\white.map: 256 entries, all 255 255 255' }
+                output = ('fd-interior\' + $s.slug + '.png')
+                status = $r.status; wall_s = $r.wall_s; reported_s = ''
+                note = 'untimed: the interior mask for the view check, not a benchmark row'
+            }
+        }
+    }
     Remove-Item Env:FRACTADYNE_CONFIG_DIR -ErrorAction SilentlyContinue
     if ($prevTrace) { $env:FRACTADYNE_TRACE = $prevTrace } else { Remove-Item Env:FRACTADYNE_TRACE -ErrorAction SilentlyContinue }
 }
