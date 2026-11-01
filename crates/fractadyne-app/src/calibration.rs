@@ -64,6 +64,8 @@ pub(crate) struct Calibration {
     /// `pass_fixed_ms` was measured on THIS adapter (its own entry has one), so `--chunk-sweep` can
     /// hold a new measurement to it.
     pub(crate) pass_fixed_calibrated: bool,
+    /// The adapter has an entry of its own (it was measured), rather than the default's.
+    pub(crate) own_entry: bool,
 }
 
 const TABLE: &str = include_str!("../../../validation/calibration/ceilings.toml");
@@ -114,6 +116,7 @@ impl Card {
             source,
             pass_fixed_ms: positive(self.pass_fixed_ms),
             pass_fixed_calibrated: false,
+            own_entry: false,
         }
     }
 }
@@ -147,6 +150,7 @@ pub(crate) fn lookup(t: &Table, adapter: &str) -> Calibration {
     match t.adapter.iter().find(|e| e.slug == key) {
         Some(e) => {
             let mut c = e.calibration(format!("calibrated for {key}"));
+            c.own_entry = true;
             c.pass_fixed_calibrated = c.pass_fixed_ms.is_some();
             c.pass_fixed_ms = c.pass_fixed_ms.or(positive(t.default.pass_fixed_ms));
             c
@@ -197,6 +201,7 @@ pub(crate) fn init(adapter: &str) -> &'static Calibration {
                     source: format!("none (calibration table unreadable: {e})"),
                     pass_fixed_ms: None,
                     pass_fixed_calibrated: false,
+                    own_entry: false,
                 },
                 factors: Vec::new(),
                 adapter: adapter.to_string(),
@@ -263,6 +268,24 @@ pub(crate) fn pass_fixed_ms() -> f64 {
 /// gate holds a new measurement to it); `None` for a card on the default.
 pub(crate) fn calibrated_pass_fixed_ms() -> Option<f64> {
     ACTIVE.get().filter(|a| a.cal.pass_fixed_calibrated).and_then(|a| a.cal.pass_fixed_ms)
+}
+
+/// Whether the running adapter has its own entry in the table: a card that was measured, which is
+/// what the release gates run on (`false` before `init`).
+pub(crate) fn own_entry() -> bool {
+    ACTIVE.get().is_some_and(|a| a.cal.own_entry)
+}
+
+/// The cost factor of the formula with GPU id `formula` in `mode` (see [`factor_of`]): an id no
+/// built-in has is the custom formula's. Before `init`, 3.0 for a built-in (above every measured
+/// factor; the largest is 2.85), the custom estimate for the rest.
+pub(crate) fn factor_for_id(formula: u32, mode: RenderMode) -> f64 {
+    let kind = FractalKind::ALL.iter().copied().find(|k| k.formula_id() == formula).unwrap_or(FractalKind::Custom);
+    match ACTIVE.get() {
+        Some(a) => factor_of(&a.factors, kind, mode),
+        None if kind == FractalKind::Custom => custom_factor(),
+        None => 3.0,
+    }
 }
 
 /// The running adapter's occupancy knee, px (0 = unknown, or no knee term).

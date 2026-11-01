@@ -276,24 +276,148 @@ mod frame {
     }
 }
 
+/// A check as it ran: SKIPPED when the slow-GPU guard refused a pass it needed (`slow_gpu`), which
+/// is neither a pass nor a failure of the code under test.
+struct Ran {
+    check: SelfCheck,
+    /// Why it did not run, when it did not.
+    skipped: Option<String>,
+    /// The dearest pass the guard priced while it ran, ms.
+    peak_ms: f64,
+}
+
+/// The guard's refusal count when the last check was pushed: a refusal since then belongs to the
+/// next check pushed, which is the one whose work was refused (the checks run one at a time).
+static GUARD_SEEN: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
+
+/// Catch up with refusals that belong to no check (the goldens keep their own count).
+fn guard_sync() {
+    GUARD_SEEN.store(fractadyne_gpu::dispatch_guard::refusals(), std::sync::atomic::Ordering::Relaxed);
+}
+
+/// The Result column of a skipped check: what was refused.
+fn skip_reason(refused: u64) -> String {
+    let more = if refused > 1 { format!(" ({refused} passes refused)") } else { String::new() };
+    match fractadyne_gpu::dispatch_guard::last_refusal() {
+        Some(r) => format!(
+            "SKIPPED — not run on this GPU: a pass priced at up to {:.0} ms ({:.2e} nominal steps, mode {}), over the {:.0} ms limit{more}",
+            r.est_ms, r.steps as f64, r.mode, r.limit_ms
+        ),
+        None => format!("SKIPPED — a pass was refused on this GPU{more}"),
+    }
+}
+
+/// A check group's dealings with the slow-GPU guard: how many of its passes were refused, and how
+/// many checks it reported (and skipped) meanwhile. ⚠Many checks report only when their render
+/// SUCCEEDS (`if let (Some(a), Some(b)) = …`): on a card the guard refuses, they do not appear at all
+/// (a GT 710-speed simulation reported 351 of 547). The per-check SKIPPED rows cannot count those;
+/// a group with refused passes is reported as INCOMPLETE instead, whatever shape its checks take.
+#[derive(Clone, Debug, Default, PartialEq)]
+struct GroupTally {
+    tag: String,
+    refused: u64,
+    reported: u64,
+    skipped: u64,
+}
+
+/// The group open now: its tag and the refusal / reported / skipped counts when it opened.
+static GROUP_OPEN: std::sync::Mutex<Option<(String, u64, u64, u64)>> = std::sync::Mutex::new(None);
+/// Closed groups, one row per tag (a tag that opens again adds to its row), in first-seen order.
+static GROUP_TALLIES: std::sync::Mutex<Vec<GroupTally>> = std::sync::Mutex::new(Vec::new());
+/// Checks pushed, and of them skipped (`push_ran`).
+static REPORTED: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
+static SKIPPED: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
+
+/// Close the open group, if any, into [`GROUP_TALLIES`].
+fn close_group() {
+    use std::sync::atomic::Ordering::Relaxed;
+    let open = GROUP_OPEN.lock().unwrap_or_else(|e| e.into_inner()).take();
+    if let Some((tag, r0, n0, s0)) = open {
+        let t = GroupTally {
+            tag,
+            refused: fractadyne_gpu::dispatch_guard::refusals() - r0,
+            reported: REPORTED.load(Relaxed) - n0,
+            skipped: SKIPPED.load(Relaxed) - s0,
+        };
+        let mut groups = GROUP_TALLIES.lock().unwrap_or_else(|e| e.into_inner());
+        add_tally(&mut groups, t);
+    }
+}
+
+/// Add `t` to its tag's row, or start one.
+fn add_tally(groups: &mut Vec<GroupTally>, t: GroupTally) {
+    match groups.iter_mut().find(|g| g.tag == t.tag) {
+        Some(g) => {
+            g.refused += t.refused;
+            g.reported += t.reported;
+            g.skipped += t.skipped;
+        }
+        None => groups.push(t),
+    }
+}
+
+/// A group gate (`want` / `opt_in`) let `tag` run: it is the open group from here.
+fn enter_group(tag: &str) {
+    use std::sync::atomic::Ordering::Relaxed;
+    close_group();
+    *GROUP_OPEN.lock().unwrap_or_else(|e| e.into_inner()) = Some((
+        tag.to_string(),
+        fractadyne_gpu::dispatch_guard::refusals(),
+        REPORTED.load(Relaxed),
+        SKIPPED.load(Relaxed),
+    ));
+}
+
+/// The groups the guard refused a pass in, the goldens aside (each golden reports a row whatever
+/// happens to its render).
+fn incomplete_groups(groups: &[GroupTally]) -> Vec<GroupTally> {
+    groups.iter().filter(|g| g.refused > 0 && g.tag != "goldens").cloned().collect()
+}
+
 /// One row of the validation report.
 /// Stream each check result the moment it lands (design/diagnostics.md D2.3): a suite that
 /// buffers everything to the end cannot name its slow or hung check — this one names it live,
 /// with the elapsed time since the previous check (which includes this check's own setup).
-fn push_check(checks: &mut Vec<SelfCheck>, last: &mut std::time::Instant, c: SelfCheck) {
+fn push_check(checks: &mut Vec<Ran>, last: &mut std::time::Instant, c: SelfCheck) {
+    let now = fractadyne_gpu::dispatch_guard::refusals();
+    let prev = GUARD_SEEN.swap(now, std::sync::atomic::Ordering::Relaxed);
+    let skipped = (now > prev).then(|| skip_reason(now - prev));
+    push_ran(checks, last, c, skipped);
+}
+
+/// [`push_check`] for a check computed in a batch before any of it was pushed (bench-matrix): the
+/// caller knows whether a pass of THIS check was refused.
+fn push_judged(checks: &mut Vec<Ran>, last: &mut std::time::Instant, c: SelfCheck, refused: bool) {
+    guard_sync();
+    push_ran(checks, last, c, refused.then(|| skip_reason(1)));
+}
+
+fn push_ran(checks: &mut Vec<Ran>, last: &mut std::time::Instant, c: SelfCheck, skipped: Option<String>) {
     let ms = last.elapsed().as_millis();
     *last = std::time::Instant::now();
+    let peak_ms = fractadyne_gpu::dispatch_guard::take_peak_ms();
     eprintln!(
         "[selftest {:>7}ms] {} {} — {}",
         ms,
-        if c.pass { "PASS" } else { "FAIL" },
+        match (&skipped, c.pass) {
+            (Some(_), _) => "SKIP",
+            (None, true) => "PASS",
+            (None, false) => "FAIL",
+        },
         c.name,
-        c.result
+        skipped.as_deref().unwrap_or(&c.result)
     );
+    if crate::diag::trace_on("guard") {
+        crate::diag::trace("guard", format!("{peak_ms:.1} ms, the dearest pass priced in '{}' ({})", c.name, c.params));
+    }
     // "Last completed check" is what the watchdog/crash report names when the NEXT check
     // wedges — exactly how the 2-hour F10 hog was identified.
     crate::diag::breadcrumb(format!("selftest: after '{}'", c.name));
-    checks.push(c);
+    REPORTED.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+    if skipped.is_some() {
+        SKIPPED.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+    }
+    checks.push(Ran { check: c, skipped, peak_ms });
 }
 
 /// Resolve a repo-relative data path (D2.6/F12): prefer the CWD (the normal repo-root
@@ -497,11 +621,33 @@ fn cpu_family_iter(req: &fractadyne_gpu::ExportRequest, formula: u32, n: u32) ->
     parts.concat()
 }
 
+/// Record the request a check actually sends as the crash report's manifest. The export builder
+/// records its own as it builds (`current_export_request_for`), BEFORE a check overrides the size,
+/// supersampling and iteration count: a GT 710's report (2026-11-01) read `size=3840x3840 ss=2
+/// iter=2106`, the session's export settings, for a 220x220 pass of 50,000 iterations.
+fn note_request(what: &str, req: &fractadyne_gpu::ExportRequest) {
+    crate::diag::set_manifest(format!(
+        "SELFTEST {what}: mode={} iter={} orbit_len={} sa_skip={} bla_on={} delta_exp={} span_m=({:.6e},{:.6e}) size={}x{} ss={}",
+        req.mode,
+        req.max_iter,
+        req.orbit_len,
+        req.sa_skip,
+        req.bla_on,
+        req.delta_exp,
+        req.span_mantissa.x,
+        req.span_mantissa.y,
+        req.width,
+        req.height,
+        req.ss,
+    ));
+}
+
 fn st_render_iter(
     device: &eframe::wgpu::Device,
     queue: &eframe::wgpu::Queue,
     req: &fractadyne_gpu::ExportRequest,
 ) -> Option<Vec<f32>> {
+    note_request("render_iter", req);
     match fractadyne_gpu::render_iter(device, queue, req) {
         Ok(r) => Some(r.pixels),
         Err(e) => {
@@ -641,18 +787,60 @@ impl FractadyneApp {
                 }
             );
         }
+        // ⭐THE CARD'S SPEED FIRST (`slow_gpu`, 2026-11-01): a GT 710 lost its device in this suite's
+        // third check, a single pass sized on an RTX 3080. A card slower than the suite is sized for
+        // gets the dispatch guard; a check whose pass it refuses is SKIPPED instead of resetting the
+        // driver (and the user's desktop with it). On a faster card every pass still runs.
+        let speed = self.measure_direct_step(device, queue);
+        let simulated = match crate::harness::slow_gpu::simulation() {
+            Ok(v) => v,
+            Err(e) => {
+                eprintln!("[selftest] {e}");
+                crate::exit(2);
+            }
+        };
+        let own_entry = crate::calibration::own_entry();
+        let policy = match (&speed, simulated) {
+            (_, Some(sim)) => {
+                let mut p = crate::harness::slow_gpu::Policy::new(sim.ms_per_step, true, own_entry);
+                p.preview = !sim.gate;
+                p
+            }
+            (Ok(m), None) => crate::harness::slow_gpu::Policy::new(m.ms_per_step, false, own_entry),
+            // Unmeasured: every pass is refused (a price that is not a number never admits), so a
+            // card that could not be timed is not driven into the timeout either.
+            (Err(_), None) => crate::harness::slow_gpu::Policy::new(f64::NAN, false, own_entry),
+        };
+        if let Err(e) = &speed {
+            eprintln!("[selftest] GPU speed NOT MEASURED: {e}");
+        }
+        policy.install();
+        guard_sync();
+        let _ = fractadyne_gpu::dispatch_guard::take_peak_ms();
+        let speed_line = policy.describe(speed.as_ref().ok());
+        eprintln!("[selftest] GPU speed: {speed_line}");
+        crate::diag::log_line("selftest", &format!("GPU speed: {speed_line}"));
+
         // (A filter that runs ZERO checks is rejected AFTER the suite — see the guard just
         // before the report is written. Doing it post-hoc matches on what actually ran, so
         // it can't drift from the group/golden name lists the way a pre-flight check would.)
         let want = |tag: &str| -> bool {
-            filter.as_ref().is_none_or(|f| tag.to_ascii_lowercase().contains(f.as_str()))
+            let on = filter.as_ref().is_none_or(|f| tag.to_ascii_lowercase().contains(f.as_str()));
+            if on {
+                enter_group(tag);
+            }
+            on
         };
         // ⛔⭐⭐**OPT-IN groups run ONLY when the filter NAMES them** — the opposite of `want`,
         // which runs everything when there is no filter. For a check whose cost is minutes rather
         // than milliseconds, "on unless excluded" is the wrong default: it would turn the gate
         // people run constantly into one they learn to skip, and a skipped gate is no gate.
         let opt_in = |tag: &str| -> bool {
-            filter.as_ref().is_some_and(|f| tag.to_ascii_lowercase().contains(f.as_str()))
+            let on = filter.as_ref().is_some_and(|f| tag.to_ascii_lowercase().contains(f.as_str()));
+            if on {
+                enter_group(tag);
+            }
+            on
         };
         if let Some(f) = &filter {
             eprintln!("[selftest] FILTERED RUN (--selftest-filter {f}): group state is shared — use full runs for verdicts");
@@ -670,6 +858,7 @@ impl FractadyneApp {
         // more sensitive than comparing final colors. GPU errors are printed, not swallowed
         // (D2.5): a device-level failure must name itself, not shrink the check count.
         let render = |req: &fractadyne_gpu::ExportRequest| -> Option<Vec<f32>> {
+            note_request("render_iter", req);
             match fractadyne_gpu::render_iter(device, queue, req) {
                 Ok(r) => Some(r.pixels),
                 Err(e) => {
@@ -779,7 +968,7 @@ impl FractadyneApp {
             (checked, agree, boundary, mism)
         };
 
-        let mut checks: Vec<SelfCheck> = Vec::new();
+        let mut checks: Vec<Ran> = Vec::new();
         let mut last_check_t = std::time::Instant::now();
 
         // ---- iteration-range tiling: the chunked resumable path must be BIT-IDENTICAL to the
@@ -887,6 +1076,7 @@ impl FractadyneApp {
                     req.bla_on = 0;
                 }
                 let single = render(&req);
+                note_request(&format!("render_iter_chunked, chunk {chunk}"), &req);
                 let chunked = fractadyne_gpu::render_iter_chunked(device, queue, &req, *chunk)
                     .map_err(|e| eprintln!("[selftest] GPU ERROR (render_iter_chunked): {e}"))
                     .ok();
@@ -10753,6 +10943,8 @@ zoom = \"1e94\"
         // compared golden (show maxΔ/meanΔ); otherwise a distinct reason (MISSING / SIZE MISMATCH /
         // RENDER ERROR) so those never masquerade as a pixel-diff failure.
         let mut goldens: Vec<(String, u32, f64, u64, bool, String, &'static str)> = Vec::new();
+        // The dearest pass the guard priced in a golden render, ms, and which (for the summary).
+        let mut golden_peak: (f64, String) = (0.0, String::new());
         // Are we on the card these goldens were blessed on? An ABSENT marker means strict — a
         // missing file must never silently loosen the release gate; it only ever loosens when we
         // positively know the hardware differs. (Goldens blessed before this file existed simply
@@ -10850,7 +11042,18 @@ zoom = \"1e94\"
             );
             let progress = std::sync::atomic::AtomicU32::new(0);
             let cancel = std::sync::atomic::AtomicBool::new(false);
-            match fractadyne_gpu::render_export(device, queue, &req, &progress, &cancel) {
+            let refused_before = fractadyne_gpu::dispatch_guard::refusals();
+            let rendered = fractadyne_gpu::render_export(device, queue, &req, &progress, &cancel);
+            let peak = fractadyne_gpu::dispatch_guard::take_peak_ms();
+            if peak > golden_peak.0 {
+                golden_peak = (peak, name.to_string());
+            }
+            let refused = fractadyne_gpu::dispatch_guard::refusals() - refused_before;
+            match rendered {
+                // The slow-GPU guard refused a pass of it: not run, not a render error.
+                Err(_) if refused > 0 => {
+                    goldens.push((name.to_string(), 0, 0.0, 0, false, skip_reason(refused), "SKIPPED"));
+                }
                 Ok(r) => {
                     // Must match `write_png` exactly (same dither, same width) or every golden
                     // fails on the conversion rather than on the render.
@@ -10907,6 +11110,8 @@ zoom = \"1e94\"
                 Err(e) => goldens.push((name.to_string(), 0, 0.0, 0, false, format!("render failed: {e}"), "RENDER ERROR")),
             }
         }
+        // Their refusals are counted there, not against the next check pushed.
+        guard_sync();
         // The custom goldens leave a custom formula selected; nothing after them should inherit it.
         self.custom = None;
         self.fractal = FractalKind::Mandelbrot;
@@ -10920,15 +11125,17 @@ zoom = \"1e94\"
         if want("bench-matrix") {
             // This card's own baseline when it has one (exact), else the reference card's
             // (informational) — see `bench_matrix_selftest_checks`.
+            // Computed together, then pushed: each says whether a pass of its own was refused.
             for mc in self.bench_matrix_selftest_checks(device, queue) {
-                push_check(&mut checks, &mut last_check_t, SelfCheck {
+                let refused = mc.refused;
+                push_judged(&mut checks, &mut last_check_t, SelfCheck {
                     category: "bench-matrix",
                     name: mc.name,
                     params: "path signature vs baseline".to_string(),
                     result: mc.detail,
                     threshold: "exact",
                     pass: mc.pass,
-                });
+                }, refused);
             }
         }
 
@@ -10948,15 +11155,61 @@ zoom = \"1e94\"
 
         // ---- build the human-readable + verifiable report ----
         let sys = gather_system_info(None);
-        let checks_pass = checks.iter().filter(|c| c.pass).count();
+        // A SKIPPED check (or golden) leaves the counts on a card the suite is not sized for; on a
+        // card with its own calibration entry it counts as a failure (`slow_gpu::skips_fail`).
+        let skips_fail = crate::harness::slow_gpu::skips_fail(policy.own_entry, policy.preview);
+        let checks_skipped = checks.iter().filter(|r| r.skipped.is_some()).count();
+        let gold_skipped = goldens.iter().filter(|g| g.6 == "SKIPPED").count();
+        let checks_pass = checks.iter().filter(|r| r.skipped.is_none() && r.check.pass).count();
+        let checks_total = if skips_fail { checks.len() } else { checks.len() - checks_skipped };
         let gold_pass = goldens.iter().filter(|g| g.4).count();
-        let ok = checks_pass == checks.len() && (bless || gold_pass == goldens.len());
+        let gold_total = if skips_fail { goldens.len() } else { goldens.len() - gold_skipped };
+        let skipped_total = checks_skipped + gold_skipped;
+        let skip_note = if skipped_total == 0 {
+            String::new()
+        } else {
+            format!(
+                ", {skipped_total} skipped (too slow for this GPU{})",
+                if skips_fail { "; counted as failures on this calibrated card" } else { "" }
+            )
+        };
+        // The dearest pass the guard priced: what this run asked of the card at its worst.
+        let dearest = checks
+            .iter()
+            .map(|r| (r.peak_ms, r.check.name.as_str()))
+            .chain(std::iter::once((golden_peak.0, golden_peak.1.as_str())))
+            .fold((0.0f64, ""), |a, b| if b.0 > a.0 { b } else { a });
+        let refused_total = fractadyne_gpu::dispatch_guard::refusals();
+        fractadyne_gpu::dispatch_guard::remove();
+        close_group();
+        let incomplete = incomplete_groups(&GROUP_TALLIES.lock().unwrap_or_else(|e| e.into_inner()));
+        // On a calibrated card ANY refusal fails the run: a refused pass whose check reports only on
+        // success leaves no SKIPPED row behind to count, so each incomplete group counts as one more
+        // failed check there (the Diagnostics panel reads the counts, not the verdict word).
+        let checks_total = if skips_fail { checks_total + incomplete.len() } else { checks_total };
+        let ok = checks_pass == checks_total
+            && (bless || gold_pass == gold_total)
+            && !(skips_fail && refused_total > 0);
+        let skip_note = if incomplete.is_empty() {
+            skip_note
+        } else if skip_note.is_empty() {
+            format!(", {} group(s) incomplete (too slow for this GPU)", incomplete.len())
+        } else {
+            skip_note.replacen(" skipped (", &format!(" skipped, {} group(s) incomplete (", incomplete.len()), 1)
+        };
+        let guard_line = format!(
+            "slow-GPU guard: {refused_total} pass(es) refused; the dearest pass priced was {:.0} ms ({}), against a {:.0} ms limit",
+            dearest.0,
+            if dearest.1.is_empty() { "none" } else { dearest.1 },
+            crate::harness::slow_gpu::LIMIT_MS
+        );
 
         let mut md = String::new();
         md.push_str("# Fractadyne validation report\n\n");
         md.push_str(&format!("- **Version:** {}\n", version_string()));
         md.push_str(&format!("- **Generated:** {} (unix {ts})\n", utc_string(ts)));
         md.push_str(&format!("- **GPU:** {}\n", self.gpu_name));
+        md.push_str(&format!("- **GPU speed:** {speed_line}\n"));
         md.push_str(&format!(
             "- **CPU:** {} ({} cores / {} threads, L2 {} KB, L3 {} KB)\n",
             sys.cpu, sys.physical, sys.logical, sys.l2_kb, sys.l3_kb
@@ -10979,18 +11232,43 @@ zoom = \"1e94\"
         md.push_str("|---|---|---|---|---|---|\n");
         // A `|` in a cell (a formula's `|z|`) would split the row: escape it.
         let cell = |s: &str| s.replace('|', "\\|");
-        for c in &checks {
+        for r in &checks {
+            let c = &r.check;
             md.push_str(&format!(
                 "| {} | {} | {} | {} | {} | {} |\n",
                 cell(c.category),
                 cell(&c.name),
                 cell(&c.params),
-                cell(&c.result),
+                cell(r.skipped.as_deref().unwrap_or(&c.result)),
                 cell(c.threshold),
-                if c.pass { "✅ PASS" } else { "❌ FAIL" }
+                match (&r.skipped, c.pass) {
+                    (Some(_), _) => "⏭ SKIPPED",
+                    (None, true) => "✅ PASS",
+                    (None, false) => "❌ FAIL",
+                }
             ));
         }
-        md.push_str(&format!("\n**{checks_pass}/{} checks passed.**\n\n", checks.len()));
+        md.push_str(&format!("\n**{checks_pass}/{checks_total} checks passed.**"));
+        if checks_skipped > 0 {
+            md.push_str(&format!(
+                " {checks_skipped} skipped: a pass of each would have run too long on this GPU{}.",
+                if skips_fail { ", counted as failures on this calibrated card" } else { "" }
+            ));
+        }
+        md.push_str(&format!("\n\n{guard_line}.\n\n"));
+        if !incomplete.is_empty() {
+            md.push_str(
+                "### Not run in full on this GPU\n\n\
+                 The slow-GPU guard refused passes in these groups. A check that reports only when its \
+                 render succeeds does not appear in the table above, so these groups' lists are \
+                 incomplete on this GPU.\n\n\
+                 | Group | Passes refused | Checks reported | of them skipped |\n|---|---|---|---|\n",
+            );
+            for g in &incomplete {
+                md.push_str(&format!("| {} | {} | {} | {} |\n", g.tag, g.refused, g.reported, g.skipped));
+            }
+            md.push('\n');
+        }
         // 6.5 Documented oracle scope — state plainly what is independently checked, and
         // where it is *not*, so a reviewer knows exactly where to aim scrutiny.
         md.push_str(
@@ -11029,6 +11307,8 @@ zoom = \"1e94\"
                 "✅ within the cross-GPU tolerance"
             } else if g.4 {
                 "✅ match"
+            } else if g.6 == "SKIPPED" {
+                "⏭ SKIPPED"
             } else if !g.6.is_empty() {
                 g.6 // MISSING GOLDEN / SIZE MISMATCH / RENDER ERROR — not a pixel diff
             } else {
@@ -11041,9 +11321,13 @@ zoom = \"1e94\"
         }
         md.push_str(&format!(
             "\n**{}/{} golden images {}.**\n\n## Summary\n\n{}\n",
-            gold_pass, goldens.len(),
+            gold_pass, gold_total,
             if bless { "recorded" } else { "within tolerance" },
-            if ok { "✅ ALL CHECKS PASSED" } else { "❌ FAILURES PRESENT — see table above" }
+            match (ok, skipped_total) {
+                (true, 0) => "✅ ALL CHECKS PASSED".to_string(),
+                (true, n) => format!("✅ NO FAILURES — {n} skipped: this GPU is too slow for them (see GPU speed above)"),
+                (false, _) => "❌ FAILURES PRESENT — see table above".to_string(),
+            }
         ));
         // A full run never runs the opt-in groups, and "ALL CHECKS PASSED" must not read as if it
         // had: name what was not run, and how to run it.
@@ -11067,11 +11351,15 @@ zoom = \"1e94\"
 
         // ---- concise stdout summary ----
         println!("\nFractadyne self-test — {}\n{}", if bless { "BLESS" } else { "VALIDATE" }, "=".repeat(48));
-        for c in &checks {
-            println!("  [{}] {} — {}", if c.pass { "PASS" } else { "FAIL" }, c.name, c.result);
+        for r in &checks {
+            let c = &r.check;
+            match &r.skipped {
+                Some(why) => println!("  [SKIP] {} — {why}", c.name),
+                None => println!("  [{}] {} — {}", if c.pass { "PASS" } else { "FAIL" }, c.name, c.result),
+            }
         }
         for g in &goldens {
-            let label = if bless { "REC " } else if g.4 { "PASS" } else { "FAIL" };
+            let label = if g.6 == "SKIPPED" { "SKIP" } else if bless { "REC " } else if g.4 { "PASS" } else { "FAIL" };
             if g.6.is_empty() {
                 println!("  [{label}] golden {} — maxΔ {} meanΔ {:.2}", g.0, g.1, g.2);
             } else {
@@ -11080,8 +11368,17 @@ zoom = \"1e94\"
             }
         }
         println!("{}", "=".repeat(48));
-        println!("checks {checks_pass}/{}, goldens {gold_pass}/{} — {}", checks.len(), goldens.len(),
+        // ⚠The in-app Diagnostics panel parses this line (`parse_selftest_verdict`): the counts come
+        // first, and anything after the goldens' count is free text.
+        println!("checks {checks_pass}/{checks_total}, goldens {gold_pass}/{gold_total}{skip_note} — {}",
             if ok { "OK" } else { "FAILURES PRESENT" });
+        println!("GPU speed: {speed_line}");
+        println!("{guard_line}");
+        if !incomplete.is_empty() {
+            let list: Vec<String> = incomplete.iter().map(|g| format!("{} ({} refused)", g.tag, g.refused)).collect();
+            println!("groups not run in full on this GPU: {}", list.join(", "));
+        }
+        crate::diag::log_line("selftest", &guard_line);
         if let Some(l) = &not_run_line {
             println!("{l}");
         }
@@ -11103,6 +11400,10 @@ zoom = \"1e94\"
 #[cfg(test)]
 #[path = "../../tests/unit/harness/selftest/opt_in_tests.rs"]
 mod opt_in_tests;
+
+#[cfg(test)]
+#[path = "../../tests/unit/harness/selftest/group_tally_tests.rs"]
+mod group_tally_tests;
 
 #[cfg(test)]
 #[path = "../../tests/unit/harness/selftest/wait_alive_tests.rs"]

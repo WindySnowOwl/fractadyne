@@ -18,6 +18,19 @@ fn selftest_verdict_parses() {
     );
     assert_eq!(parse_selftest_verdict("report → validation/report.md"), None);
     assert_eq!(parse_selftest_verdict("checks 113"), None);
+    // A slow card's run (2026-11-01): the skipped checks are out of both counts, and the note after
+    // the goldens' count is free text, so the panel reads it green.
+    assert_eq!(
+        parse_selftest_verdict("checks 412/412, goldens 20/20, 145 skipped (too slow for this GPU) — OK"),
+        Some((412, 412, 20, 20))
+    );
+    // On a calibrated card a skip stays in the count, so the same run reads red.
+    assert_eq!(
+        parse_selftest_verdict(
+            "checks 412/545, goldens 20/31, 144 skipped (too slow for this GPU; counted as failures on this calibrated card) — FAILURES PRESENT"
+        ),
+        Some((412, 545, 20, 31))
+    );
 }
 
 #[test]

@@ -59,6 +59,25 @@ published as the pre-releases `v0.2.41-beta.1` to `v0.2.41-beta.150`, and a "bet
 
 Changes after 0.3.0-beta.1:
 
+- **The self-test no longer resets a slow graphics card (0.3.0-beta.23).** On a GeForce GT 710,
+  Help ▸ Diagnostics ▸ self-test lost the GPU in its third check, and Windows reset the driver,
+  taking the desktop and the open Fractadyne window with it. Some checks compare against a render
+  done in one GPU pass on purpose, sized on cards like the RTX 3080; that one, 220×220 px at
+  50,000 iterations, ran past Windows' 2-second limit there, and heavier ones follow. The
+  self-test now times the card first, with an all-interior pass that starts at 2 iterations. On a
+  card slower than the one the suite is sized for, every pass is priced before it is sent (its
+  pixels × iterations × the card's cost per step), and a pass priced over 500 ms is not sent: its
+  check is listed as SKIPPED. Groups where that happened are listed as incomplete, because some
+  checks only report when their render succeeds, and the summary line counts both. A price is an
+  upper bound, so a skipped check might have fitted, never the reverse; the dearest pass on the
+  RTX 3080 is priced at 13 s for a check that takes 0.1 s, which is why fast cards price passes
+  without refusing them. On the RTX 3080 nothing changes: 547/547 checks, 31/31 goldens. At the
+  GT 710's speed (simulated with `FRACTADYNE_SELFTEST_SLOW_GPU`), 137 checks run and pass, 214
+  checks and the 31 goldens are skipped, 24 groups are incomplete, and nothing fails; the first
+  two checks still run, which matches what the GT 710 managed. On a card with its own calibration
+  entry any refused pass fails the run, so a release run cannot shrink unnoticed. A crash during
+  the self-test now reports the size and iteration count the check sent, not the session's export
+  settings.
 - **The autopilot no longer gives up beside a deep minibrot (0.3.0-beta.23).** Near a minibrot
   the reference orbit can end a few dozen steps before the view's pixels escape, and a moving
   view's reference is not extended until the view stops. The autopilot never stops, so every
