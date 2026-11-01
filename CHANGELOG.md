@@ -88,7 +88,13 @@ Changes after 0.3.0-beta.1:
   short of what the view asks for, the autopilot now holds still until the reference has grown,
   then dives on. Replaying that dive on an RTX 3080 (standard build), the old autopilot stopped
   after 10 s at 1e182×; the new one reached the test's 1e215× limit in 108 s, holding 14 or 15
-  times for 1 to 4 s each. A hold that lasts a minute still ends the dive as a dead end.
+  times for 1 to 4 s each. A hold that lasts a minute still ends the dive as a dead end. While it
+  holds, the view still counts as moving and its reference is allowed to grow: the first version
+  let the view settle, which showed black for 0.1 to 0.2 s after each hold (the settled render,
+  cut off like the frames before it, was mostly interior, and the resume showed it half done).
+  Recorded on the RTX 3080 at 2^735 to 2^743, every hold on that version was followed by black
+  (4 of 4) and none on this one (0 of 8, standard and accelerated builds), whose holds are also
+  shorter (0.1 s against 0.2 s on the accelerated build).
 - **Click-to-zoom keeps a picture on screen while the new view computes (0.3.0-beta.22).** After a
   click, the old picture is shown magnified around the clicked point until the new view is ready.
   A click more than a few percent of the width away from the centre used to place that magnified
