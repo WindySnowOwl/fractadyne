@@ -8403,7 +8403,8 @@ impl FractadyneApp {
         // resize upscales. Requires a CONVERGED budget (`fe_budget_ok`): grids sized off a
         // still-climbing budget restart at every measurement, and bootstrap-sized tiles would mean
         // hundreds of dispatches.
-        if interacting || will_reproject || self.autopilot.active {
+        // An autopilot holding still for its reference (`AutopilotState::ref_wait`) is not moving.
+        if interacting || will_reproject || (self.autopilot.active && self.autopilot.ref_wait.is_none()) {
             self.perf.view_gen[vidx] = self.perf.frame_idx;
         }
         if interacting {
@@ -8939,6 +8940,9 @@ impl FractadyneApp {
         let mut sa = fractadyne_core::SeriesSkip::NONE;
         let mut bla = std::sync::Arc::new(Vec::new());
         let mut bla_on = 0u32;
+        if mode.is_direct() {
+            self.ref_cache[vi].growth_deferred = false; // no reference to clamp anything
+        }
         if !mode.is_direct() && reproject.is_none() {
             // Install a finished off-thread recompute (if any) before deciding whether another is
             // needed, so the staleness/quality checks below see the fresh reference.
@@ -9079,6 +9083,11 @@ impl FractadyneApp {
                 || (self.ref_cache[vi].partial
                     && ref_build_iter.min(cap_now).min(orbit_len_cap())
                         > self.ref_cache[vi].orbit_len);
+            // Published for the autopilot: the same growth test WITHOUT the motion cap. True while
+            // this view's pixels are clamped short of what it asks for, by a truncated reference
+            // whose growth waits for the view to settle - which a dive never does on its own.
+            self.ref_cache[vi].growth_deferred = self.ref_cache[vi].partial
+                && ref_build_iter.min(orbit_len_cap()) > self.ref_cache[vi].orbit_len;
             // Refresh whenever the reference has left the view or the depth/iters outgrew it. The
             // old motion throttle is gone: the recompute is now off-thread and gated to one job per
             // view (`recompute_rx`), so spawns are naturally paced by the compute itself — no need

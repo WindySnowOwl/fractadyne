@@ -5652,6 +5652,11 @@ struct RefCache {
     /// behind the dive" signal — script playback reads it to DILATE the tour clock (slow the dive)
     /// instead of zooming into an ever-staler reprojection (the deep-dive monocolor blur).
     last_depth_lag: f64,
+    /// The reference is truncated (`partial`) below the iterations this view asks for, and only a
+    /// SETTLED view may grow it (`render::live_orbit_cap`): pixels are clamped short of their
+    /// escape, so a frame can read all-interior over real detail. Recomputed each frame beside
+    /// `last_depth_lag`; the autopilot reads it before calling a blank view a dead end.
+    growth_deferred: bool,
 }
 
 impl Default for RefCache {
@@ -5685,6 +5690,7 @@ impl Default for RefCache {
             local_l2: 0.0,
             local_at: None,
             last_depth_lag: 0.0,
+            growth_deferred: false,
         }
     }
 }
@@ -5951,6 +5957,10 @@ struct AutopilotState {
     misi: Option<crate::autopilot::MisiTarget>,
     /// The off-thread search for it, while it runs; the dive holds still meanwhile.
     misi_solve: Option<crate::autopilot::MisiSolve>,
+    /// App-time a hold for the reference began (`autopilot::RefWait`): the view read empty while
+    /// its reference was clamped (`RefCache::growth_deferred`), so the dive holds still, letting
+    /// the view settle and the reference grow, instead of calling it a dead end. `None` = diving.
+    ref_wait: Option<f64>,
 }
 
 /// Transient pointer / zoom / pan interaction state (not persisted): the in-progress zoom-box and
@@ -7430,6 +7440,7 @@ impl FractadyneApp {
                     .unwrap_or_default(),
                 misi: None,
                 misi_solve: None,
+                ref_wait: None,
             },
             anim: AnimationState {
                 show_orbits: s.show_orbits,

@@ -57,6 +57,47 @@ const RETARGET_COOLDOWN: f64 = 1.5;
 /// Pinned walks that complete with no escaped pixel, in a row, before the dive is called a dead
 /// end: the view has nothing at this iteration count, and diving blind only magnifies the hold.
 const BLANK_WALKS_DEAD_END: u32 = 3;
+/// The longest a dive holds still for its reference (`RefWait`) before calling the view a dead
+/// end after all. The settled build at the user's 2^594 stop took 1.1 s; this bounds one that
+/// cannot grow.
+pub(crate) const REF_WAIT_MAX: f64 = 60.0;
+/// Iterations below a probe's cap at which an escaped cell counts as having run up to it (smooth
+/// counts land within about one iteration of the step a pixel escaped on).
+const CAP_MARGIN: f32 = 4.0;
+
+/// What a dive does about a reference that is clamping its view (`RefCache::growth_deferred`).
+///
+/// ⭐**An empty view under a truncated reference is not a dead end** (2026-11-01, the user's
+/// "it stopped because it couldn't find detail", twice, at 2^585 and 2^594). A reference that
+/// stops at a minibrot's period serves a view exactly while the period's wrap error is small
+/// against it; dive deeper and the same orbit counts as truncated (`partial`). A MOVING view's
+/// reference may not grow (`render::live_orbit_cap`, which bounds motion frames' cost), so every
+/// frame and every steering probe was capped at ~259,050 iterations while the pixels escape at
+/// 259,04x to 259,12x: the probe read all-interior one look after reading every cell escaped,
+/// and the dive stopped. A hand-driven view grows its reference as soon as it stops moving; a
+/// dive never stops, so it holds still until the reference serves the view, then carries on.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(crate) enum RefWait {
+    /// Not holding: steer as usual.
+    Steer,
+    /// Hold still: the view settles and the reference grows by the settled path.
+    Hold,
+    /// The reference no longer clamps the view: dive on.
+    Resume,
+    /// Held `REF_WAIT_MAX` and it still clamps: a dead end after all.
+    GiveUp,
+}
+
+/// The hold's next step, from when it began (`None` = not holding), the app time, and whether the
+/// reference still clamps the view.
+pub(crate) fn ref_wait_step(since: Option<f64>, now: f64, growth_deferred: bool) -> RefWait {
+    match since {
+        None => RefWait::Steer,
+        Some(_) if !growth_deferred => RefWait::Resume,
+        Some(t0) if now - t0 > REF_WAIT_MAX => RefWait::GiveUp,
+        Some(_) => RefWait::Hold,
+    }
+}
 
 /// What the dive puts first (Navigate panel ▸ "Auto-zoom priority"; `--autopilot-priority`).
 ///
@@ -288,6 +329,7 @@ impl FractadyneApp {
             self.autopilot.eval_t = 0.0; // force an evaluation next frame
             self.autopilot.misi = None;
             self.autopilot.misi_solve = None;
+            self.autopilot.ref_wait = None;
             // The Quality pacer measures the time between refreshes from here; a settled view's
             // last adoption may be minutes old and would read as a stalled dive.
             let ct = &mut self.perf.content[0];
@@ -481,19 +523,54 @@ impl FractadyneApp {
             self.set_toast(tr!(autopilot_dive_limit, limit = limit), ctx);
             return;
         }
+        let now = ctx.input(|i| i.time);
+        // Holding still for the reference (see `RefWait`): no zoom, no probe and no interaction
+        // stamp, so the view settles and its truncated reference grows by the settled path.
+        match ref_wait_step(self.autopilot.ref_wait, now, self.ref_cache[0].growth_deferred) {
+            RefWait::Steer => {}
+            RefWait::Hold => {
+                self.autopilot.speed = 0.0;
+                self.schedule_repaint(ctx);
+                return;
+            }
+            RefWait::Resume => {
+                let waited = now - self.autopilot.ref_wait.unwrap_or(now);
+                crate::diag::log_line(
+                    "autopilot",
+                    &format!(
+                        "resuming after {waited:.1} s: the reference now serves this view ({} samples)",
+                        self.ref_cache[0].orbit_len
+                    ),
+                );
+                self.autopilot.ref_wait = None;
+                // Blank refreshes counted under the clamp said nothing about the view.
+                self.perf.content[0].blank_walks = 0;
+                self.autopilot.eval_t = 0.0; // look again at once, with the grown reference
+            }
+            RefWait::GiveUp => {
+                crate::diag::log_line(
+                    "autopilot",
+                    &format!(
+                        "gave up after {REF_WAIT_MAX:.0} s: the reference is still truncated at {} samples",
+                        self.ref_cache[0].orbit_len
+                    ),
+                );
+                self.autopilot.ref_wait = None;
+                self.autopilot_dead_end(l2, ctx);
+                return;
+            }
+        }
         // Refreshes that complete with no escaped pixel: the view has nothing at this iteration
         // count (the verified-present policy keeps those frames off the screen, so without this
         // the dive would carry on magnifying the held frame into a flat colour).
         if self.perf.content[0].blank_walks >= BLANK_WALKS_DEAD_END {
-            self.autopilot.active = false;
-            self.autopilot.stepping = false;
-            self.pointer.zoom_vel = 0.0;
-            let range_hi = self.perf.norm_range[0].map(|(_, hi)| hi as f64);
-            let msg = dead_end_message(l2, self.render_cfg.max_iter, self.render_cfg.auto_iter, range_hi);
-            self.set_toast(msg, ctx);
+            if self.autopilot_hold_for_reference(now, l2, "refreshes came back blank") {
+                self.schedule_repaint(ctx);
+                return;
+            }
+            self.autopilot_dead_end(l2, ctx);
             return;
         }
-        let now = ctx.input(|i| i.time);
         let dt = (ctx.input(|i| i.stable_dt) as f64).clamp(0.0, 0.1);
 
         // A Misiurewicz target still being solved: hold the view — no zoom, no probe, and no
@@ -589,6 +666,14 @@ impl FractadyneApp {
                 let probe_ms = t0.elapsed().as_secs_f64() * 1000.0;
                 self.perf.offscreen_ms += probe_ms;
                 self.perf.probe_ms = self.perf.probe_ms.max(0.0) + probe_ms;
+                // An interior the reference's clamp may have made (`Probe::interior_at_cap`) would
+                // steer the dive onto a contour of the cap: hold for the reference instead.
+                if probe.as_ref().is_some_and(Probe::interior_at_cap)
+                    && self.autopilot_hold_for_reference(now, l2, "the probe's interior meets its iteration cap")
+                {
+                    self.schedule_repaint(ctx);
+                    return;
+                }
                 let aspect = self.viewport.width_px / self.viewport.height_px;
                 let may_retarget = now - self.autopilot.retarget_t > RETARGET_COOLDOWN;
                 let steer = probe.as_ref().and_then(|p| {
@@ -631,17 +716,11 @@ impl FractadyneApp {
                         }
                     }
                     None => {
-                        self.autopilot.active = false;
-                        self.autopilot.stepping = false;
-                        self.pointer.zoom_vel = 0.0;
-                        let range_hi = self.perf.norm_range[0].map(|(_, hi)| hi as f64);
-                        let msg = dead_end_message(
-                            l2,
-                            self.render_cfg.max_iter,
-                            self.render_cfg.auto_iter,
-                            range_hi,
-                        );
-                        self.set_toast(msg, ctx);
+                        if self.autopilot_hold_for_reference(now, l2, "the probe found no boundary in view") {
+                            self.schedule_repaint(ctx);
+                            return;
+                        }
+                        self.autopilot_dead_end(l2, ctx);
                         return;
                     }
                 }
@@ -655,6 +734,38 @@ impl FractadyneApp {
         }
         self.pointer.settle_t = [now; 2]; // treat as interaction (AA off, throttled reference refresh)
         self.schedule_repaint(ctx);
+    }
+
+    /// Stop the dive at a dead end, with the toast worded for its cause (`dead_end_message`).
+    fn autopilot_dead_end(&mut self, l2: f64, ctx: &egui::Context) {
+        self.autopilot.active = false;
+        self.autopilot.stepping = false;
+        self.pointer.zoom_vel = 0.0;
+        let range_hi = self.perf.norm_range[0].map(|(_, hi)| hi as f64);
+        let msg = dead_end_message(l2, self.render_cfg.max_iter, self.render_cfg.auto_iter, range_hi);
+        self.set_toast(msg, ctx);
+    }
+
+    /// A view that reads empty while its reference is CLAMPED short of what the view asks for
+    /// (`RefCache::growth_deferred`) is not a dead end: start holding still so the reference can
+    /// grow (`RefWait`). `true` = holding. `why` = what read empty, for the log.
+    fn autopilot_hold_for_reference(&mut self, now: f64, l2: f64, why: &str) -> bool {
+        if !self.ref_cache[0].growth_deferred {
+            return false;
+        }
+        if self.autopilot.ref_wait.is_none() {
+            crate::diag::log_line(
+                "autopilot",
+                &format!(
+                    "{why} at 2^{l2:.2}, but the reference is truncated at {} samples, short of this \
+                     view's ask: holding still so it can grow, not stopping",
+                    self.ref_cache[0].orbit_len
+                ),
+            );
+            self.autopilot.ref_wait = Some(now);
+        }
+        self.autopilot.speed = 0.0;
+        true
     }
 
     /// One frame of the smooth dive. Every change is eased, so nothing the camera does is a step:
@@ -754,6 +865,8 @@ impl FractadyneApp {
             iter: px.chunks_exact(4).take(w * h).map(|t| t[0]).collect(),
             de_log2: px.chunks_exact(4).take(w * h).map(|t| t[3]).collect(),
             normal: px.chunks_exact(4).take(w * h).map(|t| (t[1], t[2])).collect(),
+            // Already clamped to a truncated reference's length (`live_ref_fields`).
+            cap: req.max_iter,
         })
     }
 }
@@ -815,6 +928,8 @@ pub(crate) struct Probe {
     pub(crate) iter: Vec<f32>,
     pub(crate) de_log2: Vec<f32>,
     pub(crate) normal: Vec<(f32, f32)>,
+    /// The iteration cap the probe was rendered with: a pixel still running there reads interior.
+    pub(crate) cap: u32,
 }
 
 /// What an evaluation decided: the goal (screen fraction) and whether it moved to a different
@@ -828,6 +943,22 @@ pub(crate) struct Steer {
 impl Probe {
     fn interior(&self, k: usize) -> bool {
         self.iter[k] < 0.0
+    }
+
+    /// Whether the probe's interior may be its CAP's rather than the set's: interior cells beside
+    /// escaped cells that ran right up to the cap. A real minibrot's interior does that too when
+    /// the cap is short of its neighbours' escapes, so this says "unproven", never "fake"; the
+    /// caller acts on it only while the reference is known to be clamping (`RefWait`).
+    ///
+    /// ⚠Every escaped cell beside such an interior counts as the set's edge (`boundary_weights`),
+    /// so a clamped probe hands the steering a FAKE edge: a contour of the cap, straight across a
+    /// smooth field. At the user's 2^648 replay (2026-11-01) three probes had a straight diagonal
+    /// "interior" with every escaped cell at 259,134 or 259,135, the dive aimed along it, and one
+    /// look later the grown reference showed a smooth field with no boundary at all: a dead end
+    /// the steering was led into.
+    pub(crate) fn interior_at_cap(&self) -> bool {
+        let at_cap = self.cap as f32 - CAP_MARGIN;
+        self.iter.iter().any(|&s| s < 0.0) && self.iter.iter().any(|&s| s >= at_cap)
     }
 
     fn neighbours(&self, i: usize, j: usize) -> impl Iterator<Item = usize> + '_ {
@@ -1214,3 +1345,6 @@ mod priority_tests;
 #[cfg(test)]
 #[path = "../tests/unit/autopilot/target_tests.rs"]
 mod target_tests;
+#[cfg(test)]
+#[path = "../tests/unit/autopilot/ref_wait_tests.rs"]
+mod ref_wait_tests;

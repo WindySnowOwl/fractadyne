@@ -17,6 +17,7 @@ fn flat(w: usize, h: usize) -> Probe {
         iter: vec![100.0; w * h],
         de_log2: vec![4.0; w * h],
         normal: vec![(0.0, 0.0); w * h],
+        cap: u32::MAX,
     }
 }
 
