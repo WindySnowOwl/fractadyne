@@ -1927,6 +1927,9 @@ struct Perf {
     /// Raw (un-smoothed) last frame interval in ms — the motion-res controller needs the actual
     /// spike a real re-iterate frame caused, which the EMA `frame_ms` smooths away.
     last_dt_ms: f64,
+    /// Whether that interval was owed: the frame before asked for this one (`diag::Frame`). When it
+    /// did not, the interval is the app waiting for input, which says nothing about cost.
+    gap_due: bool,
     /// Consecutive frames that submitted no new GPU work yet took ≥ the chunk-drain threshold —
     /// the present-throttle detector (see `render::present_throttle_step`). Window-wide, not
     /// per-view: presents belong to the window.
@@ -2643,6 +2646,7 @@ impl Default for Perf {
             frozen_budget: [0, 0],
             ceiling_bound: [false, false],
             last_dt_ms: 0.0,
+            gap_due: true,
             present_throttle: 0,
             prev_real: [false, false],
             maxiter_sink: [
@@ -15445,7 +15449,7 @@ impl FractadyneApp {
     /// in a loop. `--worker-gpu` pins the worker, and the setting is then left alone. Off for
     /// tasks other than `--shot`, the same stance as `accumulation_allowed`: harnesses stay on one
     /// GPU whatever the session says.
-    fn drive_worker_setting(&mut self) {
+    fn drive_worker_setting(&mut self, ctx: &egui::Context) {
         if self.worker_pinned {
             return;
         }
@@ -15482,8 +15486,12 @@ impl FractadyneApp {
                 }));
                 let (tx, rx) = std::sync::mpsc::channel();
                 let backends = crate::gpu_choice::backends() & eframe::wgpu::Backends::VULKAN;
+                // The answer is read in a frame: wake one, or an app already waiting for input
+                // reads it only at the next input (55 s in a launch left alone, 2026-11-01).
+                let wake = ctx.clone();
                 render::spawn_named("fd-gpu-worker-open", move || {
                     let _ = tx.send(gpu_worker::Worker::spawn_on(&want, &window, backends));
+                    wake.request_repaint();
                 });
                 self.worker_start_rx = Some(rx);
                 self.worker_state = gpu_worker::WorkerState::Starting;
@@ -15961,7 +15969,9 @@ impl FractadyneApp {
                         .count(),
                 )
             });
-        let repaint = ctx.has_requested_repaint();
+        // Slow-frame readers qualify `last_dt_ms` by this: an interval the app spent waiting for
+        // input (the frame before asked for none, `gap_due`) is not slow.
+        let repaint = ctx.has_requested_repaint() && self.perf.gap_due;
         let t_ms = (diag::elapsed_s() * 1000.0) as u64;
         for v in 0..if self.dual { 2 } else { 1 } {
             let p = &self.perf;
@@ -16494,12 +16504,18 @@ impl eframe::App for FractadyneApp {
 
     fn update(&mut self, ctx: &egui::Context, frame: &mut eframe::Frame) {
         let frame_start = Instant::now();
-        diag::alive(); // heartbeat: a frame loop that stops arriving here is a hang (D1.4)
+        // Heartbeat: a frame loop that stops arriving here is a hang (D1.4), unless the last frame
+        // asked for none (`diag::Frame`: the app was waiting for input). Ends with `update`.
+        let _frame = diag::frame_begin(ctx);
+        // Whether the interval ending now was owed: the last frame asked for this one. (A stalled
+        // frame is still caught: `--recordtest` wedges one and asserts both the watchdog's row and
+        // the tripwire.)
+        self.perf.gap_due = diag::last_frame_asked();
         // Record the on-screen view so a device loss can write it as a loadable `.fdn` beside the
         // crash report (the manifest omits the coordinates). Cheap; must run before the GPU submit.
         self.stash_crash_view();
         // Advanced ▸ Second graphics card: start, stop or replace the worker as the setting says.
-        self.drive_worker_setting();
+        self.drive_worker_setting(ctx);
         // The fonts follow the language: Japanese and Chinese bring in the system's font for them.
         crate::theme::ensure_fonts(ctx, &crate::i18n::active().script);
         // The driver's shader cache stopped keeping compiled shaders: say so once (`driver_cache`).
@@ -17629,10 +17645,13 @@ impl eframe::App for FractadyneApp {
         // counts as wall-slow if we ASKED for a repaint: without one, eframe falls back to its
         // ~1 Hz tick and the interval measures idling, not cost — the same discriminator the
         // slow-frame line below relies on, and the one that produced two wrong diagnoses when it
-        // was missing.
+        // was missing. ⚠The ask that governs the interval is the PREVIOUS frame's (`gap_due`).
+        // This frame's own ask stood in for it, and the first frame after an idle wait asks (its
+        // work resumes): a window left alone for 477 s woke to `FRAME BUDGET IS BLIND` and a
+        // DEAD-MAN reset (the maintainer's log, 2026-10-25).
         {
             let target = crate::tunables::cost().tdr_budget_ms;
-            let busy = ctx.has_requested_repaint();
+            let busy = self.perf.gap_due && ctx.has_requested_repaint();
             // The interval less any synchronous offscreen render inside it: that render is the
             // app's own blocking work, not a live dispatch (see `render::tripwire_dt`).
             let dt_ms = render::tripwire_dt(self.perf.last_dt_ms, self.perf.prev_offscreen_ms);
@@ -17763,7 +17782,7 @@ impl eframe::App for FractadyneApp {
                 "render",
                 &format!(
                     "slow frame {}: dt={:.0}ms = body {:.0}ms + outside(acquire/present/idle) \
-                     {:.0}ms repaint_requested={} — mode={} steps={:.3e} budget={:.3e} \
+                     {:.0}ms repaint_requested={}{} — mode={} steps={:.3e} budget={:.3e} \
                      rebase={} bla_skip={} ref_len={} partial={}{v1}",
                     self.perf.frame_idx,
                     self.perf.last_dt_ms,
@@ -17774,6 +17793,8 @@ impl eframe::App for FractadyneApp {
                     // measures NOTHING about cost — 1018/1016/1017 ms three frames running is a
                     // timer, not GPU work, and the two want opposite fixes.
                     ctx.has_requested_repaint(),
+                    // The interval was the app waiting for input (the frame before asked for none).
+                    if self.perf.gap_due { "" } else { " after an idle wait" },
                     self.perf.last_mode,
                     self.perf.fe_steps_last[0] as f64,
                     self.perf.fe_budget[0] as f64,

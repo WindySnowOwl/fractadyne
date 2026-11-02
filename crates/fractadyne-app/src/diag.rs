@@ -33,7 +33,7 @@
 
 use std::io::Write;
 use std::path::PathBuf;
-use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
+use std::sync::atomic::{AtomicBool, AtomicU8, AtomicU64, Ordering};
 use std::sync::{Mutex, OnceLock};
 use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 
@@ -87,6 +87,11 @@ static ROTATED_AT_START: AtomicBool = AtomicBool::new(false);
 static ALIVE_MS: AtomicU64 = AtomicU64::new(0);
 /// True once the watchdog thread is running (so tests/multiple inits don't double-spawn).
 static WATCHDOG_ON: AtomicBool = AtomicBool::new(false);
+/// Where the window's frame loop is ([`Loop`] as a byte): in a frame (also the state of a run
+/// with no frame loop, so a command-line render is judged as before), or between frames.
+static LOOP: AtomicU8 = AtomicU8::new(Loop::InFrame as u8);
+/// Whether the last frame to end asked for another (`egui::Context::has_requested_repaint`).
+static LAST_FRAME_ASKED: AtomicBool = AtomicBool::new(true);
 /// Monotonic suffix for crash-report filenames (collision-proofs same-second panics).
 static CRASH_SEQ: AtomicU64 = AtomicU64::new(0);
 /// Set once an allocation failure has been reported — the reporting path itself allocates, so a
@@ -796,6 +801,73 @@ pub(crate) fn alive() {
     }
 }
 
+/// Where the window's frame loop is, for the watchdog.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+#[repr(u8)]
+pub(crate) enum Loop {
+    /// Inside a frame (`update`), or no frame loop at all.
+    InFrame = 0,
+    /// Between frames, the last having asked for another: one is due.
+    Due = 1,
+    /// Between frames, the last having asked for none: the app waits for input. An idle window
+    /// is not a hung one (the maintainer's logs, 2026-10-25 to 11-01: 50 `possible hang`
+    /// episodes, up to 1,491 s, each ended by the next input).
+    Idle = 2,
+}
+
+/// A frame of the window's loop, from the start of `update` until this is dropped (at its end,
+/// early returns included): it stamps liveness both ways and records whether the frame asked for
+/// another, which is what the time to the next frame means (work, or waiting for input).
+pub(crate) struct Frame {
+    ctx: eframe::egui::Context,
+}
+
+pub(crate) fn frame_begin(ctx: &eframe::egui::Context) -> Frame {
+    LOOP.store(Loop::InFrame as u8, Ordering::Relaxed);
+    alive();
+    Frame { ctx: ctx.clone() }
+}
+
+impl Drop for Frame {
+    fn drop(&mut self) {
+        let asked = self.ctx.has_requested_repaint();
+        LAST_FRAME_ASKED.store(asked, Ordering::Relaxed);
+        LOOP.store(if asked { Loop::Due } else { Loop::Idle } as u8, Ordering::Relaxed);
+        alive();
+    }
+}
+
+/// Whether the last frame to end asked for another: whether the interval up to the frame now
+/// running was owed (a frame due), rather than spent waiting for input. Read inside a frame, it
+/// is the PREVIOUS frame's request (this one's is recorded when it ends).
+pub(crate) fn last_frame_asked() -> bool {
+    LAST_FRAME_ASKED.load(Ordering::Relaxed)
+}
+
+fn loop_state() -> Loop {
+    match LOOP.load(Ordering::Relaxed) {
+        1 => Loop::Due,
+        2 => Loop::Idle,
+        _ => Loop::InFrame,
+    }
+}
+
+/// The watchdog's verdict after `stale_s` seconds with no liveness stamp, the frame loop at
+/// `state`: `None`, or what the silence is (for the log line). Between frames with none asked for,
+/// the app is waiting for input, however long; in a frame, or with one due and not arriving, it
+/// is stuck.
+pub(crate) fn watch_verdict(stale_s: u64, state: Loop) -> Option<&'static str> {
+    const STALL_S: u64 = 10;
+    if stale_s < STALL_S {
+        return None;
+    }
+    match state {
+        Loop::InFrame => Some(""),
+        Loop::Due => Some(" (between frames, the next one due: blocked presenting, or the window not drawn)"),
+        Loop::Idle => None,
+    }
+}
+
 /// Record what the process is doing right now. Written at phase transitions; read by the
 /// panic hook and watchdog. Also stamps liveness and tees to the log file.
 ///
@@ -1405,11 +1477,13 @@ fn install_panic_hook() {
     }));
 }
 
-/// Watchdog: logs `possible hang` with the breadcrumb when nothing stamped liveness for
-/// >10 s, then re-warns every 30 s while the stall persists. It cannot distinguish a hang
+/// Watchdog: logs `possible hang` with the breadcrumb when nothing stamped liveness for over
+/// 10 s, then re-warns every 30 s while the stall persists. It cannot distinguish a hang
 /// from a long uninstrumented compute — that ambiguity is the point: either way the log
 /// names the phase that went silent. Started once from `FractadyneApp::new` (update()-driven
 /// modes stamp liveness every frame; long phases stamp via breadcrumbs/progress pumps).
+/// Between frames it judges only while one is due (`watch_verdict`): a window waiting for input
+/// stamps nothing, and is not hung.
 pub(crate) fn start_watchdog() {
     if WATCHDOG_ON.swap(true, Ordering::SeqCst) {
         return;
@@ -1417,7 +1491,7 @@ pub(crate) fn start_watchdog() {
     std::thread::Builder::new()
         .name("fd-watchdog".into())
         .spawn(|| {
-            const STALL_S: u64 = 10;
+            // (The stall threshold, 10 s, is `watch_verdict`'s.)
             const REWARN_S: u64 = 30;
             // ⚠`None` until the first warning. It used to start at 0 — i.e. "warned at process
             // start" — so the re-warn spacing suppressed EVERY hang in a process's first 30 s:
@@ -1445,9 +1519,8 @@ pub(crate) fn start_watchdog() {
                 if compiling_ms.is_some_and(|ms| ms < COMPILE_GRACE_S * 1000) {
                     continue;
                 }
-                if stale_s >= STALL_S
-                    && last_warn_ms.is_none_or(|w| now_ms.saturating_sub(w) >= REWARN_S * 1000)
-                {
+                let Some(between) = watch_verdict(stale_s, loop_state()) else { continue };
+                if last_warn_ms.is_none_or(|w| now_ms.saturating_sub(w) >= REWARN_S * 1000) {
                     last_warn_ms = Some(now_ms);
                     // Into the frame record too, from THIS thread: the record's only other writer
                     // is the UI thread, which is the one that has stopped. A wedge becomes a row
@@ -1456,7 +1529,7 @@ pub(crate) fn start_watchdog() {
                     log_line(
                         "watch",
                         &format!(
-                            "possible hang: no activity for {stale_s}s — last activity: {}{}",
+                            "possible hang: no activity for {stale_s}s{between} — last activity: {}{}",
                             {
                                 let b = current_breadcrumb();
                                 if b.is_empty() { "<none recorded>".into() } else { b }
@@ -1585,3 +1658,7 @@ mod network_path_tests;
 #[cfg(test)]
 #[path = "../tests/unit/diag/budget_log_tests.rs"]
 mod budget_log_tests;
+
+#[cfg(test)]
+#[path = "../tests/unit/diag/watch_tests.rs"]
+mod watch_tests;

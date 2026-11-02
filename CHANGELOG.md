@@ -59,6 +59,20 @@ published as the pre-releases `v0.2.41-beta.1` to `v0.2.41-beta.150`, and a "bet
 
 Changes after 0.3.0-beta.1:
 
+- **An app left alone no longer logs hangs or resets its frame budget (0.3.0-beta.23).** With
+  nothing to draw, the app waits for input and draws no frames, and the watchdog, which hears
+  from every frame, logged "possible hang" every 30 s for as long as it waited: 50 episodes in
+  the maintainer's logs from 10-25 to 11-01, up to 1,491 s. The first frame after the wait then
+  counted the whole wait as one slow frame, tripped `⚠FRAME BUDGET IS BLIND`, and reset the frame
+  budget to its starting value. Both now ask whether the frame before had asked for another: if it
+  had not, the time since was the app waiting, not work. The watchdog still reports a frame that
+  stops, and a due frame that does not come (now saying so: "between frames, the next one due");
+  `--recordtest`, which stops the UI thread for 13 s on purpose, still sees both the watchdog and
+  the budget alarm fire. A slow-frame log line after such a wait says "after an idle wait", and the
+  frame record's `repaint_requested` now means both frames asked. Also: the second graphics card's
+  "ready" was read only at the next frame, so in a launch left alone it waited for the next input
+  (55 s in one test); it now wakes the window. On an RTX 3080, a 45-second idle launch logged 2 "possible hang" lines and 2 budget resets
+  before, none after.
 - **A failed Misiurewicz refinement is tested, and a raised dive limit is told apart from it
   (0.3.0-beta.23).** The staged solve's failure handling had never run. A new instrument,
   `FRACTADYNE_MISI_FAIL_STAGE=N`, fails stage N on purpose: with stage 2 failing, the user's dive
