@@ -2780,7 +2780,7 @@ diag-arithmetic = 딥 줌 산술: { $status }
 diag-run-selftest = 자체 테스트 실행
 diag-run-uitest = UI 테스트 실행
 diag-run-gputest = GPU 산술 검사 실행
-diag-blurb-selftest = GPU에서 수학과 렌더링을 알려진 정답과 비교해 확인합니다. 약 15초 걸립니다.
+diag-blurb-selftest = GPU에서 수학과 렌더링을 알려진 정답과 비교해 확인합니다. 몇 분 걸립니다.
 diag-blurb-uitest = 인터페이스와 라이브 뷰를 둘러보며 여러 줌 깊이에서 스크린샷을 찍습니다. 1~2분 걸리며, 실행되는 동안 창이 열립니다.
 diag-blurb-gputest = 컴퓨터가 제공하는 모든 그래픽 백엔드에서 셰이더의 double-float 산술을 알려진 정답과 비교해 확인합니다. 몇 초 걸리며, 창을 열지 않습니다. 실패를 보고하면 그것은 저희가 꼭 보고 싶은 실제 발견입니다 — 보고서에 첨부해 주십시오.
 # While a test runs. $count: the checks finished so far.

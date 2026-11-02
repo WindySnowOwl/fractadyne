@@ -59,6 +59,28 @@ published as the pre-releases `v0.2.41-beta.1` to `v0.2.41-beta.150`, and a "bet
 
 Changes after 0.3.0-beta.1:
 
+- **Diagnostics that answer the next question in the same run (0.3.0-beta.24).** A report from
+  someone else's machine used to take several rounds: the GT 710's needed a second one to learn how
+  fast the card was, and a device-loss report one to learn whether Windows had reset the driver.
+  - The self-test report gains a Machine section: the OS build; the CPU's clock and the
+    instructions the bignum code uses, and how fast it builds a reference orbit; memory and the
+    power plan; every graphics adapter with its IDs, driver package and date, memory, limits and
+    features; Windows' GPU timeout and scheduling settings; and the display-driver resets, GPU reset
+    reports and unclean restarts in the event log over the last 30 days. It also gives the GPU's
+    speed in each arithmetic mode (direct, df32, floatexp) by the wall and by the GPU's own clock,
+    with the calibration table's values beside them and the entry the measurement would make, and
+    the ten slowest checks.
+  - The guard for slow cards prices each mode by its own measurement instead of a ratio estimated on
+    the RTX 3080.
+  - The issue report's System section carries the same profile, and the log's first lines the OS,
+    CPU, memory and GPU timeout settings.
+  - Help ▸ Diagnostics ▸ Save diagnostics bundle… writes one zip: the profile, the last self-test and
+    GPU test, the log and the one before it, the frame record, and the newest crash reports with
+    their views. The home folder reads `~` and the computer's name `<computer>` in every text file,
+    and it stays under GitHub's 25 MB attachment limit.
+  On the RTX 3080 the per-mode speeds agree with the card's calibration (direct 5.10e-9 ms per step,
+  calibrated 5.35e-9; df32 3.06e-8, calibrated 2.76e-8), floatexp costs 16.9 times direct where the
+  guard had assumed 15, and the GPU's own clock is within 3% of the wall.
 - **The self-test runs in full again on the RX 6800 XT (0.3.0-beta.24).** beta.23's guard for
   slow graphics cards switched on there: its probe read the card at 3.6e-8 ms per step, steady over
   four runs, 1.9 times the speed the suite is sized for and 3.75 times the card's own calibrated

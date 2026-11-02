@@ -2868,7 +2868,7 @@ diag-arithmetic = Derin yakınlaştırma aritmetiği: { $status }
 diag-run-selftest = Öz sınamayı çalıştır
 diag-run-uitest = Arayüz testini çalıştır
 diag-run-gputest = GPU aritmetik denetimini çalıştır
-diag-blurb-selftest = GPU’nuzdaki matematiği ve işlemeyi doğruluğu bilinen sonuçlarla karşılaştırarak denetler. Yaklaşık 15 saniye sürer.
+diag-blurb-selftest = GPU’nuzdaki matematiği ve işlemeyi doğruluğu bilinen sonuçlarla karşılaştırarak denetler. Birkaç dakika sürer.
 diag-blurb-uitest = Arayüzü ve canlı görünümü dolaşır, birkaç yakınlaştırma derinliğinde ekran görüntüleri yakalar. Bir iki dakika sürer ve çalışırken pencereler açar.
 diag-blurb-gputest = Gölgelendiricinin çift-float aritmetiğini makinenizin sunduğu her grafik arka ucunda, doğruluğu bilinen değerlerle karşılaştırarak denetler. Birkaç saniye sürer, pencere açmaz. Bir başarısızlık bildirirse bu, görmek istediğimiz gerçek bir bulgudur — lütfen bir rapora ekleyin.
 # While a test runs. $count: the checks finished so far.

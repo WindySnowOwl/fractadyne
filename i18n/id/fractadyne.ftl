@@ -2780,7 +2780,7 @@ diag-arithmetic = Aritmetika zoom dalam: { $status }
 diag-run-selftest = Jalankan uji mandiri
 diag-run-uitest = Jalankan uji UI
 diag-run-gputest = Jalankan pemeriksaan aritmetika GPU
-diag-blurb-selftest = Memeriksa matematika dan render di GPU Anda terhadap hasil yang diketahui benar. Memakan waktu sekitar 15 detik.
+diag-blurb-selftest = Memeriksa matematika dan render di GPU Anda terhadap hasil yang diketahui benar. Memakan waktu beberapa menit.
 diag-blurb-uitest = Menelusuri antarmuka dan tampilan langsung, sambil mengambil tangkapan layar pada beberapa kedalaman zoom. Memakan waktu satu atau dua menit dan membuka jendela selama berjalan.
 diag-blurb-gputest = Memeriksa aritmetika double-float shader terhadap nilai yang diketahui benar pada setiap backend grafis yang tersedia di mesin Anda. Memakan waktu beberapa detik, tidak membuka jendela. Jika pemeriksaan ini melaporkan kegagalan, itu adalah temuan nyata yang ingin kami lihat — harap lampirkan ke laporan.
 # While a test runs. $count: the checks finished so far.

@@ -131,6 +131,8 @@ pub(crate) struct DiagnosticsUi {
     pub(crate) last: Option<DiagVerdict>,
     pub(crate) child: Option<std::process::Child>,
     pub(crate) rx: Option<std::sync::mpsc::Receiver<DiagLine>>,
+    /// What saving the diagnostics bundle did: where it went, or why it did not.
+    pub(crate) bundle_msg: Option<String>,
 }
 
 /// Parse the self-test's final line: `checks 113/113, goldens 17/17 — OK` (or
@@ -436,6 +438,7 @@ impl FractadyneApp {
         let mut start: Option<DiagTest> = None;
         let mut open_artifact: Option<PathBuf> = None;
         let mut attach = false;
+        let mut save_bundle = false;
 
         egui::Window::new(tr!(diag_title))
             .id(egui::Id::new("fractadyne.diagnostics"))
@@ -524,6 +527,19 @@ impl FractadyneApp {
                     ui.colored_label(egui::Color32::from_rgb(0xe5, 0x73, 0x73), e);
                 }
 
+                // Everything a report about this machine needs, in one file (`diag::bundle`).
+                ui.separator();
+                if ui
+                    .add_enabled(running.is_none(), egui::Button::new(tr!(diag_bundle)))
+                    .on_hover_text(tr!(diag_bundle_hover))
+                    .clicked()
+                {
+                    save_bundle = true;
+                }
+                if let Some(m) = &self.diagnostics.bundle_msg {
+                    ui.label(egui::RichText::new(m).weak().small());
+                }
+
                 // ⭐The third of the three ways to reach the console output (flag, env var, here).
                 // It lives in Diagnostics rather than File ▸ Settings because it is not a
                 // preference about how the app looks — it is an instrument, and this is the window
@@ -567,6 +583,39 @@ impl FractadyneApp {
             self.report.open = true;
             self.diagnostics.open = false;
         }
+        if save_bundle {
+            self.save_diagnostics_bundle(ctx);
+        }
+    }
+
+    /// Help ▸ Diagnostics ▸ Save diagnostics bundle…: ask where, then write the zip
+    /// (`diag::bundle`). Gathers the machine profile now (about half a second, most of it the event
+    /// log), so the bundle describes the machine as it is.
+    fn save_diagnostics_bundle(&mut self, ctx: &egui::Context) {
+        let (y, mo, d, h, mi, s, _) = crate::sysinfo::local_now().unwrap_or((1980, 1, 1, 0, 0, 0, 0));
+        let name = format!("fractadyne-diagnostics-{y:04}{mo:02}{d:02}-{h:02}{mi:02}{s:02}.zip");
+        let Some(path) = rfd::FileDialog::new()
+            .set_directory(self.dialog_dir_default())
+            .set_file_name(&name)
+            .add_filter("zip", &["zip"])
+            .save_file()
+        else {
+            return;
+        };
+        self.remember_dir(&path);
+        let profile = crate::machine::profile_text(&self.sysinfo, self.render_state.as_ref(), Some(ctx), crate::machine::EVENT_DAYS);
+        let items = crate::diag::bundle::plan(Some(&self.diagnostics_dir()), crate::diag::logs_dir().as_deref());
+        let bytes = crate::diag::bundle::build(&profile, &items, &crate::sysinfo::version_string(), (y, mo, d, h, mi, s));
+        self.diagnostics.bundle_msg = Some(match std::fs::write(&path, &bytes) {
+            Ok(()) => {
+                crate::diag::log_line(
+                    "diag",
+                    &format!("diagnostics bundle written: {} ({} KB, {} files)", path.display(), bytes.len() / 1024, items.len() + 2),
+                );
+                tr!(diag_bundle_saved, path = path.display().to_string(), size = format!("{} KB", bytes.len() / 1024))
+            }
+            Err(e) => tr!(diag_bundle_failed, why = e.to_string()),
+        });
     }
 
     /// The test-result block for an issue report, when one has been run and the user kept it.

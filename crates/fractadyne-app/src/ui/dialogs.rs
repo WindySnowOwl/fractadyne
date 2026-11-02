@@ -866,6 +866,9 @@ impl FractadyneApp {
             return;
         }
         let mut open = self.report.open;
+        // The machine profile the report's System section carries (`machine::warm`: quick part now,
+        // the event log and the CPU timing on a thread).
+        crate::machine::warm(&self.sysinfo, self.render_state.as_ref(), ctx);
         let has_crash = crate::diag::latest_crash().is_some();
         let has_crash_view = crate::diag::latest_crash_view().is_some();
         let (mut copy, mut save, mut email, mut gmail, mut github) =
