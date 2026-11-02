@@ -9,15 +9,18 @@
 //!
 //! So before the checks, [`FractadyneApp::measure_direct_step`] times one all-interior direct
 //! frame, starting at 2 iterations and growing until a pass is long enough to time: every pixel
-//! walks every step, so the cost per nominal step is the card's WORST in direct mode. A card slower
-//! than the one the suite is sized for gets the GPU crate's dispatch guard
+//! walks every step, so the cost per nominal step is the card's WORST in direct mode. A card with
+//! no calibration entry of its own that is slower than the one the suite is sized for gets the GPU
+//! crate's dispatch guard
 //! (`fractadyne_gpu::dispatch_guard`): every pass is priced at nominal steps x that cost x the
 //! mode's and formula's factors, and one priced over [`LIMIT_MS`] is refused before it is
 //! submitted. The self-test records its check as SKIPPED. On a faster card the guard only PRICES
 //! passes, so a release card's run records what the suite asks of a slow one without changing it.
 //!
-//! A skip on a card with its own calibration entry (a release card) is a FAILURE: the gate must not
-//! shrink quietly because a measurement read slow ([`skips_fail`]).
+//! A card with its own calibration entry (a release card) is never throttled: it has run the whole
+//! suite in a release battery, and the probe misreads some cards (the RX 6800 XT, 3.75x its
+//! calibrated cost; see [`Policy::new`]). Under a `,gate` simulation a skip there is a FAILURE: the
+//! gate must not shrink quietly ([`skips_fail`]).
 //!
 //! `FRACTADYNE_SELFTEST_SLOW_GPU=<ms per direct step>` simulates a card that slow, for trying the
 //! skip path on a fast one: a PREVIEW of that card's run, whose skips are not counted as failures.
@@ -85,9 +88,18 @@ pub(crate) struct Policy {
 
 impl Policy {
     /// The policy for a card whose direct step costs `ms_per_step`.
+    ///
+    /// ⚠A card with its own calibration entry is never throttled (a simulation still is): it has
+    /// run the whole suite in a release battery, and the probe does not measure every card the
+    /// way its calibration did. On the RX 6800 XT it read 3.6e-8 ms per step, steady over four
+    /// runs, 3.75x the card's calibrated direct cost and 1.9x the sizing, so beta.23's guard refused
+    /// 177 passes there (priced 0.5 to 105 s) that beta.22 had run without a reset: 451/548 checks
+    /// where beta.22 passed 545/546 (PLUTO battery 20261101-212811-wn12). The guard is for cards
+    /// nobody has measured, like the GT 710.
     pub(crate) fn new(ms_per_step: f64, simulated: bool, own_entry: bool) -> Self {
-        // A cost that is not a positive number cannot show the card is fast enough.
-        let enforce = simulated || !(ms_per_step > 0.0 && ms_per_step <= SIZED_FOR_MS_PER_STEP);
+        // A cost that is not a positive number cannot show an unknown card is fast enough.
+        let unknown_and_slow = !own_entry && !(ms_per_step > 0.0 && ms_per_step <= SIZED_FOR_MS_PER_STEP);
+        let enforce = simulated || unknown_and_slow;
         Self { ms_per_step, enforce, simulated, preview: simulated, own_entry }
     }
 
@@ -135,6 +147,8 @@ impl Policy {
                     ""
                 }
             )
+        } else if self.own_entry && !(self.ms_per_step > 0.0 && self.ms_per_step <= SIZED_FOR_MS_PER_STEP) {
+            "every pass runs: this card has its own calibration entry (passes are priced, not refused)".to_string()
         } else {
             "every pass runs (passes are priced, not refused)".to_string()
         };
