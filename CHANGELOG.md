@@ -59,6 +59,18 @@ published as the pre-releases `v0.2.41-beta.1` to `v0.2.41-beta.150`, and a "bet
 
 Changes after 0.3.0-beta.1:
 
+- **The live render panel's help cards no longer flicker (0.3.0-beta.23).** Resting the pointer
+  on the TILES instrument made its help card flash on and off. The card is about 450 points tall,
+  and its place was chosen as if every card were 260: where it did not fit, it was moved back onto
+  the screen over the pointer, which took the pointer from the panel, so the card closed, then
+  opened again a quarter-second later. A card now goes where its measured height fits: below the
+  instrument, above it, beside it, or clear of the pointer. In a window too small for any of those
+  it can still cover the pointer, but it stays open while the pointer is on it. The TIMERS card
+  (the T0 to T2 lamps by the scope's title) could never open, as the scope's card took the pointer
+  there; the smallest region under the pointer now wins. Tested through egui's own input with the
+  pointer resting on every card, at both panel sizes, in two corners at 1280 × 720 and, for TILES,
+  in all four corners of six window sizes: before, TILES opened 7 times in 2 s at 1280 × 720 with
+  the panel at the bottom left; now each card opens once and stays.
 - **A Misiurewicz dive starts in seconds, and shows its progress (0.3.0-beta.23).** The autopilot
   solved its Misiurewicz point straight to the dive's limit before moving: at a 1e5000× limit that is
   Newton's method at ~16,700 bits over the point's whole orbit, 262,196 iterations in the user's case,

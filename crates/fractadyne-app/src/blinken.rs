@@ -17,7 +17,7 @@ pub(crate) mod paint;
 pub(crate) mod panel;
 pub(crate) mod registry;
 
-use egui::{Align2, Color32, Id, Pos2, Rect, Sense, vec2};
+use egui::{Color32, Id, Pos2, Rect, Sense, vec2};
 use model::{Engine, Model, Snapshot};
 pub(crate) use panel::Size;
 use std::collections::VecDeque;
@@ -132,6 +132,8 @@ pub(crate) struct Overlay {
     drag: egui::Vec2,
     /// The help card under the pointer: its key, the region, and since when.
     hover: Option<(&'static str, Rect, f64)>,
+    /// Where the help card was drawn last frame, if it was.
+    card: Option<Rect>,
     /// A help card held open whatever the pointer does (the `--uitest` screenshot of one).
     pub(crate) pinned_help: Option<&'static str>,
     /// The static layer's shapes, kept between frames (`panel::Statics`).
@@ -164,6 +166,7 @@ impl Overlay {
             rates: VecDeque::new(),
             drag: egui::Vec2::ZERO,
             hover: None,
+            card: None,
             pinned_help: None,
             cost: (0.0, 0.0, 0),
             sections: [0.0; 11],
@@ -182,6 +185,7 @@ impl Overlay {
         self.size = Size::Off;
         self.drag = egui::Vec2::ZERO;
         self.hover = None;
+        self.card = None;
     }
 
     pub(crate) fn is_open(&self) -> bool {
@@ -286,6 +290,7 @@ impl Overlay {
     /// Draws the panel over `view` (the fractal area) and its help card, and handles dragging.
     pub(crate) fn show(&mut self, ctx: &egui::Context, view: Rect, df32_from: f32, fe_from: f32) {
         if !self.is_open() {
+            self.card = None;
             return;
         }
         let width = panel::DESIGN_W;
@@ -354,10 +359,20 @@ impl Overlay {
     fn show_help(&mut self, ctx: &egui::Context, hits: &[panel::Hit], hovered: bool) {
         let now = ctx.input(|i| i.time);
         let pointer = ctx.pointer_hover_pos();
-        let hit = pointer.filter(|_| hovered).and_then(|p| hits.iter().find(|h| h.rect.contains(p)).copied());
+        // A card drawn over the pointer takes the hover from the panel (egui hit-tests a tooltip's
+        // area even when it is not interactable). `card_place` keeps it off the pointer where the
+        // window has room; where it has none, the card stays while the pointer is on it, or it
+        // would close, hand the hover back, and open again a moment later: it flickered.
+        let on_card = pointer.zip(self.card.take()).is_some_and(|(p, r)| r.contains(p));
+        // The smallest region under the pointer: a lamp in the bank, the timer lamps in the scope's
+        // title line (the scope's region took them, so their card never opened).
+        let hit = pointer
+            .filter(|_| hovered)
+            .and_then(|p| hits.iter().filter(|h| h.rect.contains(p)).min_by(|a, b| a.rect.area().total_cmp(&b.rect.area())).copied());
         match (hit, self.hover) {
             (Some(h), Some((k, _, _))) if k == h.key => {}
             (Some(h), _) => self.hover = Some((h.key, h.rect, now)),
+            (None, Some(_)) if on_card => {}
             (None, _) => self.hover = None,
         }
         if let Some(h) = self.pinned_help.and_then(|k| hits.iter().find(|h| h.key == k)) {
@@ -383,17 +398,52 @@ impl Overlay {
             + card.note.as_deref().map_or(0, width_of)
             + card.good.iter().chain(&card.bad).map(|t| width_of(t)).sum::<usize>();
         let w = (if length > 900 { 500.0f32 } else { 350.0 }).min(screen.width() - 24.0);
-        let x = (pointer.map_or(rect.left(), |p| p.x) - 30.0).clamp(screen.left() + 12.0, screen.right() - w - 12.0);
-        let below = rect.bottom() + 8.0;
-        // Below the region if a typical card fits, else above it.
-        let pivot = if below + 260.0 < screen.bottom() { (Pos2::new(x, below), Align2::LEFT_TOP) } else { (Pos2::new(x, rect.top() - 8.0), Align2::LEFT_BOTTOM) };
-        egui::Area::new(Id::new("fractadyne.blinken.help"))
-            .order(egui::Order::Tooltip)
-            .fixed_pos(pivot.0)
-            .pivot(pivot.1)
-            .interactable(false)
-            .show(ctx, |ui| help_card(ui, &card, w));
+        // Each card has its own area, so its height is known from the last time it was drawn. The
+        // tiles card is about 450 points tall; a guess of a typical card's 260 put it where it did
+        // not fit, and egui moved it back onto the screen, over the pointer.
+        let id = Id::new("fractadyne.blinken.help").with(key);
+        let measured = ctx.memory(|m| m.area_rect(id));
+        let area = egui::Area::new(id).order(egui::Order::Tooltip).interactable(false);
+        let area = match measured {
+            // The first time, egui lays the card out unseen to measure it, standing in a 600 x 400
+            // default meanwhile that can take the pointer: that pass goes off the screen.
+            None => area.fixed_pos(Pos2::new(screen.right() + 1.0, screen.top())).constrain(false),
+            Some(r) => {
+                let pointer = pointer.unwrap_or(Pos2::new(rect.left(), rect.center().y));
+                area.fixed_pos(card_place(rect, pointer, vec2(w, r.height()), screen).min)
+            }
+        };
+        let shown = area.show(ctx, |ui| help_card(ui, &card, w));
+        self.card = measured.map(|_| shown.response.rect);
     }
+}
+
+/// Where a help card of `size` goes, for the panel's `region` it explains and the `pointer` resting
+/// on it: below the region, else above it, else beside it (right, then left), else below or above
+/// the pointer, overlapping the region but not the pointer. A card on the pointer takes the hover
+/// from the panel, so the card would close (`Overlay::show_help`). Below and above, its left edge
+/// sits a little left of the pointer. In a window too small for any of these, below the region
+/// (egui then moves it onto the screen).
+pub(crate) fn card_place(region: Rect, pointer: Pos2, size: egui::Vec2, screen: Rect) -> Rect {
+    const GAP: f32 = 8.0;
+    // The pointer's arrow reaches about this far below its hot spot.
+    const ARROW: f32 = 24.0;
+    let room = Rect::from_min_max(screen.min + vec2(12.0, 4.0), screen.max - vec2(12.0, 4.0));
+    let x = (pointer.x - 30.0).clamp(room.left(), (room.right() - size.x).max(room.left()));
+    let y_beside = region.top().clamp(room.top(), (room.bottom() - size.y).max(room.top()));
+    let places = [
+        Pos2::new(x, region.bottom() + GAP),
+        Pos2::new(x, region.top() - GAP - size.y),
+        Pos2::new(region.right() + GAP, y_beside),
+        Pos2::new(region.left() - GAP - size.x, y_beside),
+        Pos2::new(x, pointer.y + ARROW),
+        Pos2::new(x, pointer.y - GAP - size.y),
+    ];
+    places
+        .iter()
+        .map(|&p| Rect::from_min_size(p, size))
+        .find(|r| room.contains_rect(*r))
+        .unwrap_or(Rect::from_min_size(places[0], size))
 }
 
 /// A help card: the operator's manual, cream paper and dark ink. Its title is shown as the message
@@ -466,3 +516,7 @@ fn utc_now() -> (i32, u32, u32, u32, u32, u32, u32) {
 #[cfg(test)]
 #[path = "../tests/unit/blinken/tests.rs"]
 mod tests;
+
+#[cfg(test)]
+#[path = "../tests/unit/blinken/help_hover_tests.rs"]
+mod help_hover_tests;
