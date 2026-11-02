@@ -31,13 +31,31 @@ fn vs_main(@builtin(vertex_index) vi: u32) -> VsOut {
 // Knuth) — implemented from the math, canonical names — and assume round-to-nearest with
 // a *fused* fma (true on the target GPUs).
 
+//
+// ⭐THE ADD RESIDUALS ARE DROPPED (TODO PR-C2, 2026-11-02): `two_sum` and `quick_two_sum` return a
+// zero error term unless a pipeline sets `EFT_ADD_RESIDUALS`. That is exactly what NVIDIA's shader
+// compiler has always made of them (it reassociates the residual to 0 — `fs_gputest` rows 0 and 11),
+// so every render, golden and corpus check was made at this precision: on the RTX 3080 dropping
+// them changes no pixel and no time. AMD's compilers keep the add residuals, and computing them made
+// the RX 6800 XT 1.7–2.9× slower for precision nothing used. `two_prod` keeps its fma residual (NVIDIA
+// keeps it too). Only `--gputest` sets the constant, so it still tests the exact transforms; making
+// them exact for real takes a uniform-derived barrier as well (rows 19–23), which on NVIDIA costs
+// 1.4–3.4× the GPU time (PR-A1, not adopted).
+override EFT_ADD_RESIDUALS: bool = false;
+
 fn quick_two_sum(a: f32, b: f32) -> vec2<f32> {
     let s = a + b;
+    if (!EFT_ADD_RESIDUALS) {
+        return vec2<f32>(s, 0.0);
+    }
     let e = b - (s - a);
     return vec2<f32>(s, e);
 }
 fn two_sum(a: f32, b: f32) -> vec2<f32> {
     let s = a + b;
+    if (!EFT_ADD_RESIDUALS) {
+        return vec2<f32>(s, 0.0);
+    }
     let v = s - a;
     let e = (a - (s - v)) + (b - v);
     return vec2<f32>(s, e);

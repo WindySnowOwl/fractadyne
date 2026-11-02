@@ -433,8 +433,18 @@ pub fn gputest(device: &wgpu::Device, queue: &wgpu::Queue) -> Result<(u32, u32, 
         bind_group_layouts: &[&gtu_bgl],
         push_constant_ranges: &[],
     });
-    let pipeline =
-        fullscreen_pipeline(device, &shader, &layout, "fs_gputest", &[ITER_FORMAT], "gputest.pipeline");
+    // The renderer drops the add transforms' residuals (WGSL `EFT_ADD_RESIDUALS`, TODO PR-C2); this
+    // pass asks for them, so its rows still test the exact transforms this stack's compiler gives.
+    let exact_adds = std::collections::HashMap::from([("EFT_ADD_RESIDUALS".to_string(), 1.0)]);
+    let pipeline = crate::fullscreen_pipeline_c(
+        device,
+        &shader,
+        &layout,
+        "fs_gputest",
+        &[ITER_FORMAT],
+        "gputest.pipeline",
+        &exact_adds,
+    );
     let tex = device.create_texture(&wgpu::TextureDescriptor {
         label: Some("gputest.out"),
         size: wgpu::Extent3d { width: W, height: H, depth_or_array_layers: 1 },
