@@ -657,6 +657,162 @@ fn decision_rows(texel: &dyn Fn(u32, u32) -> [f32; 4]) -> Vec<OpCheck> {
         .collect()
 }
 
+// ---- The AMD-compiler probe (TODO PR-C2) ------------------------------------------------------
+//
+// Dropping the add transforms' residuals is byte-identical on NVIDIA and broke seven path-agreement
+// checks on the RX 6800 XT. The working hypothesis: NVIDIA's compiler rewrites float expressions
+// into one canonical form (so equivalent formulations compile alike), AMD's evaluates each as
+// written (so they round apart once no residual absorbs the difference). The probe asks the card:
+// it re-runs `fs_gputest` with the residuals dropped, fingerprints every row of both passes (equal
+// fingerprints = bit-identical arithmetic, comparable across machines from the reports alone), and
+// for dropped `df_add` and `df_mul` names the evaluation order — association and fma fusion —
+// that reproduces the card's output. Report lines only: it decides no verdict.
+
+/// FNV-1a over one row's raw output bits.
+fn row_fp(w: u32, px: &[f32], row: u32) -> u32 {
+    let mut h: u32 = 0x811C_9DC5;
+    let base = (row * w * 4) as usize;
+    for v in &px[base..base + (w * 4) as usize] {
+        for b in v.to_bits().to_le_bytes() {
+            h ^= u32::from(b);
+            h = h.wrapping_mul(0x0100_0193);
+        }
+    }
+    h
+}
+
+/// A term of a sum: a value, or a product a compiler may round or fuse into the add consuming it.
+#[derive(Clone, Copy)]
+pub(crate) enum Term {
+    V(f32),
+    P(f32, f32),
+}
+
+/// One evaluation of a subtree: its value, the product it still is (a single product leaf, which
+/// the parent may fuse), and the order as text.
+#[derive(Clone)]
+pub(crate) struct Eval {
+    pub(crate) val: f32,
+    prod: Option<(f32, f32)>,
+    pub(crate) label: String,
+}
+
+/// Every way to evaluate the sum of the terms in `mask`: each association tree (a split puts the
+/// lowest term on the left, so mirror images are not repeated — IEEE addition commutes), and at each
+/// add, a product child either rounded or fused (`fma`).
+pub(crate) fn evals(terms: &[(Term, &str)], mask: u32) -> Vec<Eval> {
+    if mask.count_ones() == 1 {
+        let (t, name) = terms[mask.trailing_zeros() as usize];
+        return vec![match t {
+            Term::V(v) => Eval { val: v, prod: None, label: name.to_string() },
+            Term::P(a, b) => Eval { val: a * b, prod: Some((a, b)), label: name.to_string() },
+        }];
+    }
+    let low = mask & mask.wrapping_neg();
+    let rest = mask & !low;
+    let mut out = Vec::new();
+    let mut s = rest;
+    loop {
+        let left = low | s;
+        let right = mask & !left;
+        if right != 0 {
+            for l in evals(terms, left) {
+                for r in evals(terms, right) {
+                    out.push(Eval { val: l.val + r.val, prod: None, label: format!("({}+{})", l.label, r.label) });
+                    if let Some((a, b)) = l.prod {
+                        out.push(Eval { val: a.mul_add(b, r.val), prod: None, label: format!("fma[{}]({})", l.label, r.label) });
+                    }
+                    if let Some((a, b)) = r.prod {
+                        out.push(Eval { val: a.mul_add(b, l.val), prod: None, label: format!("fma[{}]({})", r.label, l.label) });
+                    }
+                }
+            }
+        }
+        if s == 0 {
+            break;
+        }
+        s = (s - 1) & rest;
+    }
+    out
+}
+
+/// For each input, which evaluation models reproduce the GPU's `hi` bit for bit; the counts per
+/// model over the row's inputs, most first.
+fn rank_models(w: u32, px: &[f32], op: u32, terms_of: &dyn Fn(u32) -> Vec<(Term, &'static str)>) -> Vec<(String, u32)> {
+    let mut counts: std::collections::HashMap<String, u32> = std::collections::HashMap::new();
+    for ix in 0..w {
+        let terms = terms_of(ix + 100003 * op);
+        let got = px[((op * w + ix) * 4) as usize];
+        let all = (1u32 << terms.len()) - 1;
+        for e in evals(&terms, all) {
+            let c = counts.entry(e.label).or_insert(0);
+            if e.val.to_bits() == got.to_bits() {
+                *c += 1;
+            }
+        }
+    }
+    let mut v: Vec<(String, u32)> = counts.into_iter().collect();
+    v.sort_by(|a, b| b.1.cmp(&a.1).then(a.0.cmp(&b.0)));
+    v
+}
+
+/// The probe's report lines for one backend: `exact` is the self-test's pass, `dropped` the same
+/// rows with the residuals dropped.
+fn probe(sink: &mut Sink, w: u32, h: u32, exact: &[f32], dropped: &[f32]) {
+    sink.line("  probe (TODO PR-C2): the same rows with the add residuals dropped, as the renderer would".to_string());
+    for (name, px) in [("exact  ", exact), ("dropped", dropped)] {
+        let fps: Vec<String> = (0..h).map(|r| format!("{r:02}:{:08x}", row_fp(w, px, r))).collect();
+        for chunk in fps.chunks(12) {
+            sink.line(format!("  probe fp {name} {}", chunk.join(" ")));
+        }
+    }
+    let same: Vec<String> = (0..h).filter(|&r| row_fp(w, exact, r) == row_fp(w, dropped, r)).map(|r| r.to_string()).collect();
+    sink.line(format!("  probe rows unchanged by dropping: {}", same.join(" ")));
+    // Rows 2 and 3 (`df_add`, `df_mul`) on their own operands: `ar` (seed +3) and `br` (seed +5).
+    let operands = |s: u32| (gt_df(s * 8 + 3, -4, 8), gt_df(s * 8 + 5, -4, 8));
+    let add_terms = move |s: u32| {
+        let (a, b) = operands(s);
+        vec![(Term::V(a.0), "ax"), (Term::V(b.0), "bx"), (Term::V(a.1), "ay"), (Term::V(b.1), "by")]
+    };
+    let mul_terms = move |s: u32| {
+        let (a, b) = operands(s);
+        let pe = a.0.mul_add(b.0, -(a.0 * b.0));
+        vec![(Term::P(a.0, b.0), "P"), (Term::V(pe), "PE"), (Term::P(a.0, b.1), "X"), (Term::P(a.1, b.0), "Y")]
+    };
+    let mul_terms_no_pe = move |s: u32| {
+        let (a, b) = operands(s);
+        vec![(Term::P(a.0, b.0), "P"), (Term::P(a.0, b.1), "X"), (Term::P(a.1, b.0), "Y")]
+    };
+    type TermsOf<'a> = &'a dyn Fn(u32) -> Vec<(Term, &'static str)>;
+    let rows: [(u32, &str, &str, TermsOf); 3] = [
+        (2, "df_add", "((ax+bx)+(ay+by))", &add_terms),
+        (3, "df_mul", "(P+(PE+(X+Y)))", &mul_terms),
+        (3, "df_mul, PE folded to 0", "(P+(X+Y))", &mul_terms_no_pe),
+    ];
+    for (op, what, written, terms_of) in rows {
+        let ranked = rank_models(w, dropped, op, terms_of);
+        let as_written = ranked.iter().find(|m| m.0 == written).map_or(0, |m| m.1);
+        let top: Vec<String> = ranked.iter().take(4).map(|(l, n)| format!("{l} {n}/{w}")).collect();
+        sink.line(format!(
+            "  probe model {what}: as written {written} {as_written}/{w}; best {} (of {} models)",
+            top.join(", "),
+            ranked.len()
+        ));
+    }
+    // Precision of the dropped pass (the self-test's oracles; for reading, not a verdict).
+    let checks = check_rows(w, h, dropped);
+    let errs: Vec<String> = checks
+        .iter()
+        .filter(|c| c.tol > 0.0 && !c.id.starts_with("ub_"))
+        .map(|c| format!("{} {:.2e}", c.id, c.max_err))
+        .collect();
+    sink.line(format!("  probe dropped max rel err: {}", errs.join(", ")));
+}
+
+#[cfg(test)]
+#[path = "../../tests/unit/harness/gputest/probe_tests.rs"]
+mod probe_tests;
+
 #[cfg(test)]
 #[path = "../../tests/unit/harness/gputest/decision_row_tests.rs"]
 mod decision_row_tests;
@@ -816,11 +972,16 @@ pub(crate) fn run_gputest_sweep(out: Option<&std::path::Path>) -> usize {
             &format!("{:?}", info.backend),
         ));
         let run = fractadyne_gpu::gputest(&device, &queue);
+        let dropped = fractadyne_gpu::gputest_with(&device, &queue, false);
         fractadyne_gpu::pipeline_compile::set_adapter(0);
         match run {
             Ok((w, h, px)) => {
                 if report(&mut sink, label, w, h, &px) > 0 {
                     failed += 1;
+                }
+                match dropped {
+                    Ok((_, _, d)) => probe(&mut sink, w, h, &px, &d),
+                    Err(e) => sink.line(format!("  probe: the dropped-residual pass did not run ({e})")),
                 }
             }
             Err(e) => {
