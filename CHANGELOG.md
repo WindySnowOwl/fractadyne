@@ -59,6 +59,15 @@ published as the pre-releases `v0.2.41-beta.1` to `v0.2.41-beta.150`, and a "bet
 
 Changes after 0.3.0-beta.1:
 
+- **A failed Misiurewicz refinement is tested, and a raised dive limit is told apart from it
+  (0.3.0-beta.23).** The staged solve's failure handling had never run. A new instrument,
+  `FRACTADYNE_MISI_FAIL_STAGE=N`, fails stage N on purpose: with stage 2 failing, the user's dive
+  from 2^1198.7 went on to the depth stage 1 had solved, 2^1214.7, and stopped there with "could not
+  be refined past". Unit tests cover the stages' order and seeding, a first-stage failure, a
+  cancelled solve, and when the dive holds or stops. One case was wrong: raising the dive limit
+  after every stage had landed stopped the dive at the old limit with the "could not be refined"
+  message. It now says the point was solved before the limit was raised, and to start the dive
+  again to go deeper.
 - **The live render panel's help cards no longer flicker (0.3.0-beta.23).** Resting the pointer
   on the TILES instrument made its help card flash on and off. The card is about 450 points tall,
   and its place was chosen as if every card were 260: where it did not fit, it was moved back onto

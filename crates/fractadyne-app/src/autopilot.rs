@@ -191,6 +191,8 @@ pub(crate) struct MisiTarget {
     pub(crate) twist_deg: Option<f64>,
     /// The depth (log₂ magnification) the coordinate is accurate to.
     pub(crate) solved_l2: f64,
+    /// Solved by the last stage planned: to the dive limit the solve started under.
+    pub(crate) complete: bool,
 }
 
 /// The off-thread detect + solve that produces a [`MisiTarget`] (the same worker shape as the
@@ -259,6 +261,110 @@ pub(crate) fn misi_stages(cur_l2: f64, target_l2: f64, first_oct: f64) -> Vec<f6
             return out;
         }
         next = (next * 2.0).max(next + first).min(target_l2);
+    }
+}
+
+/// The solve worker's stages, after detection named `kp`: each of `stages` in order, seeded by the
+/// last stage's point (the first by `center`), sending a `Stage` for each that solves and a
+/// `Failed` for the first that does not; nothing for a cancelled one, or once the dive has dropped
+/// the solve. `solve` is one stage's Newton solve (`find_misiurewicz_with`); the "is this the
+/// point in view?" test stays about the view the dive started from (`log2_seed` = `cur_l2`).
+#[allow(clippy::too_many_arguments)]
+pub(crate) fn run_misi_stages(
+    center: [fractadyne_core::BigFloat; 2],
+    kp: (u32, u32),
+    cur_l2: f64,
+    stages: &[f64],
+    progress: &std::sync::Mutex<MisiProgress>,
+    tx: &std::sync::mpsc::Sender<MisiMsg>,
+    t0: std::time::Instant,
+    mut solve: impl FnMut(
+        &[fractadyne_core::BigFloat; 2],
+        fractadyne_core::SolveScale,
+    ) -> Result<fractadyne_core::Misiurewicz, fractadyne_core::MisiurewiczMiss>,
+) {
+    let (k, p) = kp;
+    let n = stages.len() as u32;
+    let mut seed = center;
+    let mut lam: Option<fractadyne_core::Multiplier> = None;
+    for (i, &stage_l2) in stages.iter().enumerate() {
+        let stage = i as u32 + 1;
+        if let Ok(mut g) = progress.lock() {
+            g.kp = Some(kp);
+            g.stage = stage;
+            g.stage_l2 = stage_l2;
+            g.last = None;
+        }
+        let why = match solve(&seed, fractadyne_core::SolveScale { log2_seed: cur_l2, log2_target: stage_l2 }) {
+            Ok(m) => {
+                // The multiplier once, at the first stage's precision: the octaves per repeat and
+                // the twist need only a few digits.
+                if lam.is_none() {
+                    let prec = fractadyne_core::precision_for_octaves(stage_l2.max(0.0).ceil() as u64);
+                    lam = fractadyne_core::misiurewicz_multiplier(&m.cx, &m.cy, m.preperiod, m.period, 0, prec);
+                }
+                seed = [m.cx.clone(), m.cy.clone()];
+                let target = MisiTarget {
+                    cx: m.cx,
+                    cy: m.cy,
+                    preperiod: m.preperiod,
+                    period: m.period,
+                    repeat_oct: lam.as_ref().map(|l| l.log2_abs),
+                    twist_deg: lam.as_ref().map(|l| l.arg.to_degrees()),
+                    solved_l2: stage_l2,
+                    complete: stage == n,
+                };
+                let secs = t0.elapsed().as_secs_f64();
+                if tx.send(MisiMsg::Stage { target, stage, stages: n, secs }).is_err() {
+                    return;
+                }
+                continue;
+            }
+            Err(fractadyne_core::MisiurewiczMiss::Cancelled) => return,
+            Err(fractadyne_core::MisiurewiczMiss::TooFar { log2_view_widths }) => {
+                MisiMiss::OffScreen { preperiod: k, period: p, log2_view_widths }
+            }
+            Err(fractadyne_core::MisiurewiczMiss::NotPreperiodic { .. }) | Err(fractadyne_core::MisiurewiczMiss::NotConverged) => {
+                MisiMiss::NotSolved { preperiod: k, period: p }
+            }
+            Err(fractadyne_core::MisiurewiczMiss::BadRequest) => MisiMiss::Refused,
+        };
+        let _ = tx.send(MisiMsg::Failed { why, stage });
+        return;
+    }
+}
+
+/// What a Misiurewicz dive does at depth `l2` with a target exact to `solved_l2`.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(crate) enum MisiGate {
+    /// Dive on: short of the solved depth, or the target is solved to the dive's limit.
+    Dive,
+    /// Wait as a moving view: the dive caught up with a refinement still running.
+    Hold,
+    /// Stop here: the coordinate is exact no deeper.
+    Stop(MisiStop),
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(crate) enum MisiStop {
+    /// A later stage failed.
+    RefineFailed,
+    /// Every stage solved, to the limit the dive had when it started; the limit was raised since.
+    LimitRaised,
+}
+
+/// [`MisiGate`] for a target exact to `solved_l2` (`complete`: by the last stage planned), at depth
+/// `l2` of a dive whose limit is now `dive_log2`, while a refinement is (`refining`) or is not
+/// running. Past `solved_l2` the dive would steer onto the coordinate's error.
+pub(crate) fn misi_gate(l2: f64, solved_l2: f64, complete: bool, dive_log2: f64, refining: bool) -> MisiGate {
+    if l2 < solved_l2 || solved_l2 >= dive_log2 {
+        MisiGate::Dive
+    } else if refining {
+        MisiGate::Hold
+    } else if complete {
+        MisiGate::Stop(MisiStop::LimitRaised)
+    } else {
+        MisiGate::Stop(MisiStop::RefineFailed)
     }
 }
 
@@ -526,64 +632,19 @@ impl FractadyneApp {
                 return;
             };
             let _ = tx.send(MisiMsg::Detected { preperiod: k, period: p, secs: t0.elapsed().as_secs_f64() });
-            let n = stages.len() as u32;
-            // Each stage is seeded by the last; the "is this the point in view?" test stays about
-            // the view the dive started from (`log2_seed`).
-            let mut seed = center;
-            let mut lam: Option<fractadyne_core::Multiplier> = None;
-            for (i, &stage_l2) in stages.iter().enumerate() {
-                let stage = i as u32 + 1;
-                if let Ok(mut g) = w_progress.lock() {
-                    g.kp = Some((k, p));
-                    g.stage = stage;
-                    g.stage_l2 = stage_l2;
-                    g.last = None;
+            // `FRACTADYNE_MISI_FAIL_STAGE=N`: stage N fails as if Newton had not converged, so the
+            // dive's handling of a failed refinement can be run on purpose.
+            let fail_stage = crate::tunables::instrument("FRACTADYNE_MISI_FAIL_STAGE");
+            let mut stage = 0;
+            let solve = |seed: &[fractadyne_core::BigFloat; 2], scale: fractadyne_core::SolveScale| {
+                stage += 1;
+                if stage == fail_stage {
+                    crate::diag::log_line("instrument", &format!("MISI_FAIL_STAGE={stage}: the stage to 2^{:.1} fails", scale.log2_target));
+                    return Err(fractadyne_core::MisiurewiczMiss::NotConverged);
                 }
-                let solved = fractadyne_core::find_misiurewicz_with(
-                    &seed,
-                    k,
-                    p,
-                    fractadyne_core::SolveScale { log2_seed: cur_l2, log2_target: stage_l2 },
-                    0,
-                    &ctl,
-                );
-                let why = match solved {
-                    Ok(m) => {
-                        // The multiplier once, at the first stage's precision: the octaves per
-                        // repeat and the twist need only a few digits.
-                        if lam.is_none() {
-                            let prec = fractadyne_core::precision_for_octaves(stage_l2.max(0.0).ceil() as u64);
-                            lam = fractadyne_core::misiurewicz_multiplier(&m.cx, &m.cy, m.preperiod, m.period, 0, prec);
-                        }
-                        seed = [m.cx.clone(), m.cy.clone()];
-                        let target = MisiTarget {
-                            cx: m.cx,
-                            cy: m.cy,
-                            preperiod: m.preperiod,
-                            period: m.period,
-                            repeat_oct: lam.as_ref().map(|l| l.log2_abs),
-                            twist_deg: lam.as_ref().map(|l| l.arg.to_degrees()),
-                            solved_l2: stage_l2,
-                        };
-                        let secs = t0.elapsed().as_secs_f64();
-                        if tx.send(MisiMsg::Stage { target, stage, stages: n, secs }).is_err() {
-                            return;
-                        }
-                        continue;
-                    }
-                    Err(fractadyne_core::MisiurewiczMiss::Cancelled) => return,
-                    Err(fractadyne_core::MisiurewiczMiss::TooFar { log2_view_widths }) => {
-                        MisiMiss::OffScreen { preperiod: k, period: p, log2_view_widths }
-                    }
-                    Err(fractadyne_core::MisiurewiczMiss::NotPreperiodic { .. })
-                    | Err(fractadyne_core::MisiurewiczMiss::NotConverged) => {
-                        MisiMiss::NotSolved { preperiod: k, period: p }
-                    }
-                    Err(fractadyne_core::MisiurewiczMiss::BadRequest) => MisiMiss::Refused,
-                };
-                let _ = tx.send(MisiMsg::Failed { why, stage });
-                return;
-            }
+                fractadyne_core::find_misiurewicz_with(seed, k, p, scale, 0, &ctl)
+            };
+            run_misi_stages(center, (k, p), cur_l2, &stages, &w_progress, &tx, t0, solve);
         });
         self.autopilot.misi_solve = Some(MisiSolve {
             rx,
@@ -660,6 +721,7 @@ impl FractadyneApp {
                     return;
                 }
                 Err(std::sync::mpsc::TryRecvError::Disconnected) => {
+                    crate::diag::log_line("autopilot", "misiurewicz target: the solver stopped without an answer");
                     self.autopilot.misi_solve = None;
                     if self.autopilot.misi.is_none() {
                         self.autopilot.active = false;
@@ -824,48 +886,56 @@ impl FractadyneApp {
         }
         // …and one the dive has caught up with: the coordinate is exact only to `solved_l2`, and
         // past it the dive would steer onto the error. Hold (as a moving view, like `RefWait`)
-        // until the next stage lands; with none coming (a later stage failed), stop here.
+        // until the next stage lands; with none coming, stop here (`misi_gate`).
         if let Some(m) = self.autopilot.misi.as_ref() {
-            if l2 >= m.solved_l2 && m.solved_l2 < self.autopilot.dive_log2 {
-                let (exact, kp) = (m.solved_l2, (m.preperiod, m.period));
-                match self.autopilot.misi_solve.as_mut() {
-                    Some(solve) => {
-                        let stage = solve.progress.lock().map(|g| g.stage).unwrap_or(0);
-                        if solve.waiting != Some(stage) {
-                            solve.waiting = Some(stage);
-                            solve.toast_t = f64::NEG_INFINITY;
-                            crate::diag::log_line(
-                                "autopilot",
-                                &format!(
-                                    "misiurewicz target: the dive reached 2^{l2:.1}, where the point is exact; \
-                                     holding for stage {stage}"
-                                ),
-                            );
-                        }
-                        self.autopilot.speed = 0.0;
-                        self.hold_stamp(now);
-                        self.schedule_repaint(ctx);
-                        return;
-                    }
-                    None => {
+            let (exact, kp) = (m.solved_l2, (m.preperiod, m.period));
+            let refining = self.autopilot.misi_solve.is_some();
+            match misi_gate(l2, m.solved_l2, m.complete, self.autopilot.dive_log2, refining) {
+                MisiGate::Dive => {}
+                MisiGate::Hold => {
+                    let solve = solve_mut(&mut self.autopilot.misi_solve);
+                    let stage = solve.progress.lock().map(|g| g.stage).unwrap_or(0);
+                    if solve.waiting != Some(stage) {
+                        solve.waiting = Some(stage);
+                        solve.toast_t = f64::NEG_INFINITY;
                         crate::diag::log_line(
                             "autopilot",
-                            &format!("misiurewicz target: stopping at 2^{exact:.1}, the depth the point was solved to"),
-                        );
-                        self.autopilot.active = false;
-                        self.autopilot.stepping = false;
-                        self.pointer.zoom_vel = 0.0;
-                        self.set_toast(
-                            tr!(
-                                autopilot_misi_refine_failed,
-                                preperiod = kp.0.to_string(),
-                                period = kp.1.to_string(),
-                                exact = misi_depth(exact)
+                            &format!(
+                                "misiurewicz target: the dive reached 2^{l2:.1}, where the point is exact; \
+                                 holding for stage {stage}"
                             ),
-                            ctx,
                         );
-                        return;
                     }
+                    self.autopilot.speed = 0.0;
+                    self.hold_stamp(now);
+                    self.schedule_repaint(ctx);
+                    return;
+                }
+                MisiGate::Stop(why) => {
+                    crate::diag::log_line(
+                        "autopilot",
+                        &format!(
+                            "misiurewicz target: stopping at 2^{exact:.1}, the depth the point was solved to ({})",
+                            match why {
+                                MisiStop::RefineFailed => "a later stage failed",
+                                MisiStop::LimitRaised => "the dive limit was raised after the solve",
+                            }
+                        ),
+                    );
+                    self.autopilot.active = false;
+                    self.autopilot.stepping = false;
+                    self.pointer.zoom_vel = 0.0;
+                    let (preperiod, period, exact) = (kp.0.to_string(), kp.1.to_string(), misi_depth(exact));
+                    let toast = match why {
+                        MisiStop::RefineFailed => {
+                            tr!(autopilot_misi_refine_failed, preperiod = preperiod, period = period, exact = exact)
+                        }
+                        MisiStop::LimitRaised => {
+                            tr!(autopilot_misi_limit_raised, preperiod = preperiod, period = period, exact = exact)
+                        }
+                    };
+                    self.set_toast(toast, ctx);
+                    return;
                 }
             }
         }

@@ -3468,6 +3468,10 @@ autopilot-misi-waiting =
 autopilot-misi-refine-failed =
     Autopilot: Misiurewicz ({ $preperiod },{ $period }) could not be refined past { $exact }
     The dive stops here
+# ($preperiod,$period) names the point: keep the notation. $exact: a magnification as written (1e400×).
+autopilot-misi-limit-raised =
+    Autopilot: Misiurewicz ({ $preperiod },{ $period }) was solved to { $exact }, before the dive limit was raised
+    The dive stops here · start it again to go deeper
 autopilot-misi-not-found =
     Autopilot: no Misiurewicz point found near this view
     The finder may not reach this depth — try the Detail target
