@@ -74,13 +74,16 @@ fn check_rows(w: u32, h: u32, px: &[f32]) -> Vec<OpCheck> {
         (1u32, "two_prod", "two_prod (exact EFT — fma canary)"),
         (10u32, "armored_two_sum", "two_sum, bitcast-armored (reassociation discriminator)"),
         (11u32, "quick_two_sum", "quick_two_sum (exact EFT — df_mul/df_div depend on it)"),
+        // Rows 19/20: the same EFTs behind the uniform-derived barrier (WGSL `ub`, TODO PR-A1).
+        (19u32, "ub_two_sum", "two_sum, uniform-derived barrier (PR-A1)"),
+        (20u32, "ub_quick_two_sum", "quick_two_sum, uniform-derived barrier (PR-A1)"),
     ] {
         let mut fails = 0u32;
         let mut detail = String::new();
         for ix in 0..w {
             let s = ix + 100003 * op;
             let (mut a, mut b) = (gt_f32(s * 2 + 1, -8, 16), gt_f32(s * 2 + 2, -8, 16));
-            if op == 11 && a.abs() < b.abs() {
+            if (op == 11 || op == 20) && a.abs() < b.abs() {
                 std::mem::swap(&mut a, &mut b); // quick_two_sum requires |a| >= |b|
             }
             let got = texel(ix, op);
@@ -120,6 +123,15 @@ fn check_rows(w: u32, h: u32, px: &[f32]) -> Vec<OpCheck> {
         Rel { op: 7, id: "fe_add", name: "fe_add (floatexp align/renorm)", tol: 2f64.powi(-38) },
         Rel { op: 8, id: "accum_mandelbrot", name: "64-step df32 accumulation (Mandelbrot form)", tol: 2f64.powi(-33) },
         Rel { op: 9, id: "accum_julia", name: "64-step df32 accumulation (Julia form, z0-carried)", tol: 2f64.powi(-33) },
+        // Rows 21–23: rows 2, 3 and 8 behind the uniform-derived barrier (PR-A1).
+        Rel { op: 21, id: "ub_df_add", name: "df_add, uniform-derived barrier (PR-A1)", tol: 2f64.powi(-42) },
+        Rel { op: 22, id: "ub_df_mul", name: "df_mul, uniform-derived barrier (PR-A1)", tol: 2f64.powi(-42) },
+        Rel {
+            op: 23,
+            id: "ub_accum_mandelbrot",
+            name: "64-step accumulation, Mandelbrot form, uniform-derived barrier (PR-A1)",
+            tol: 2f64.powi(-33),
+        },
     ] {
         let mut max_err = 0f64;
         let mut fails = 0u32;
@@ -133,11 +145,11 @@ fn check_rows(w: u32, h: u32, px: &[f32]) -> Vec<OpCheck> {
             let got = texel(ix, r.op);
             // (oracle value(s), got value(s), magnitude scale for the relative error)
             let (checks, scale): (Vec<(f64, f64)>, f64) = match r.op {
-                2 => {
+                2 | 21 => {
                     let v = df64(ar) + df64(br);
                     (vec![(v, got[0] as f64 + got[1] as f64)], df64(ar).abs() + df64(br).abs())
                 }
-                3 => {
+                3 | 22 => {
                     let v = df64(ar) * df64(br);
                     (vec![(v, got[0] as f64 + got[1] as f64)], v.abs())
                 }
@@ -191,11 +203,11 @@ fn check_rows(w: u32, h: u32, px: &[f32]) -> Vec<OpCheck> {
                         mag.max(1e-300),
                     )
                 }
-                8 | 9 => {
+                8 | 9 | 23 => {
                     // Mirror the contracted recurrence z ← z²·2⁻¹ + c in f64.
                     let cr8 = gt_df(s * 8 + 3, -3, 3);
                     let ci8 = gt_df(s * 8 + 4, -3, 3);
-                    let (cre, cim, mut zr, mut zi) = if r.op == 8 {
+                    let (cre, cim, mut zr, mut zi) = if r.op != 9 {
                         (df64(cr8), df64(ci8), 0f64, 0f64)
                     } else {
                         (-0.7436f32 as f64, 0.1318f32 as f64, df64(cr8), df64(ci8))

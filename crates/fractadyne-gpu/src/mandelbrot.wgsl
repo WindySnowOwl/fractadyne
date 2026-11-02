@@ -3813,6 +3813,59 @@ fn gt_two_sum_armored(a: f32, b: f32) -> vec2<f32> {
     let e = gt_opaque(a - gt_opaque(s - v)) + gt_opaque(b - v);
     return vec2<f32>(s, e);
 }
+
+// ---- Rows 19–23: the UNIFORM-DERIVED barrier (experiment, TODO PR-A1) ----
+// `gt_opaque` above is provably the identity, so a compiler may fold through it — and NVIDIA's
+// does. These rows OR in bits derived from a uniform the host sets to 1.0: they are zero at run
+// time, but no compiler can prove it, so the expression stays opaque. Reported to restore
+// double-float precision under DXC fast-math and Metal (October 2026); untested on NVIDIA's and
+// AMD's SPIR-V compilers until these rows. OR rather than XOR, so nested barriers cannot cancel.
+// `gtu` is bound by the gputest pass only (group 0 slot 0 is reused per entry point, as `iu`, `cu`
+// and `au` do).
+@group(0) @binding(0) var<uniform> gtu: vec4<f32>;
+fn ub(x: f32) -> f32 {
+    let zero_bits = bitcast<u32>(gtu.x) ^ 0x3f800000u;
+    return bitcast<f32>(bitcast<u32>(x) | zero_bits);
+}
+fn ub_quick_two_sum(a: f32, b: f32) -> vec2<f32> {
+    let s = ub(a + b);
+    let e = b - ub(s - a);
+    return vec2<f32>(s, e);
+}
+fn ub_two_sum(a: f32, b: f32) -> vec2<f32> {
+    let s = ub(a + b);
+    let v = ub(s - a);
+    let e = ub(a - ub(s - v)) + (b - v);
+    return vec2<f32>(s, e);
+}
+fn ub_two_prod(a: f32, b: f32) -> vec2<f32> {
+    let p = ub(a * b);
+    let e = fma(a, b, -p);
+    return vec2<f32>(p, e);
+}
+fn ub_df_add(a: vec2<f32>, b: vec2<f32>) -> vec2<f32> {
+    let s = ub_two_sum(a.x, b.x);
+    let t = ub_two_sum(a.y, b.y);
+    let c = ub(s.y + t.x);
+    let v = ub_quick_two_sum(s.x, c);
+    let w = ub(t.y + v.y);
+    return ub_quick_two_sum(v.x, w);
+}
+fn ub_df_mul(a: vec2<f32>, b: vec2<f32>) -> vec2<f32> {
+    let p = ub_two_prod(a.x, b.x);
+    let e = ub(p.y + ub(a.x * b.y + a.y * b.x));
+    return ub_quick_two_sum(p.x, e);
+}
+fn ub_df_mul_f32(a: vec2<f32>, b: f32) -> vec2<f32> {
+    let p = ub_two_prod(a.x, b);
+    let e = ub(p.y + a.y * b);
+    return ub_quick_two_sum(p.x, e);
+}
+fn ub_c_sqr(a: Cdf) -> Cdf {
+    let ri = ub_df_mul(a.re, a.im);
+    let im2 = ub_df_mul(a.im, a.im);
+    return cset(ub_df_add(ub_df_mul(a.re, a.re), vec2<f32>(-im2.x, -im2.y)), ub_df_add(ri, ri));
+}
 // An input set for the rebase-test rows (13–15): (z.x, z.y, δz.x, δz.y), hi limbs. By class: one in
 // eight decisive (independent magnitudes), one in eight tiny (components near 2^-68, whose squares
 // fall below f32's normal range: the lift's case in `rebase_df32`), the rest near ties (δz = z's
@@ -4009,6 +4062,27 @@ fn fs_gputest(@builtin(position) pos: vec4<f32>) -> @location(0) vec4<f32> {
             let a = gt_normal_case(s * 2u);
             let b = gt_normal_case(s * 2u + 1u);
             return vec4<f32>(a.x, a.y, b.x, b.y);
+        }
+        // Rows 19–23 mirror rows 0, 11, 2, 3 and 8 with the uniform-derived barrier (see `ub`).
+        case 19u: { let r = ub_two_sum(a, b); return vec4<f32>(r.x, r.y, 0.0, 0.0); }
+        case 20u: {
+            let hi = select(b, a, abs(a) >= abs(b));
+            let lo = select(a, b, abs(a) >= abs(b));
+            let r = ub_quick_two_sum(hi, lo);
+            return vec4<f32>(r.x, r.y, 0.0, 0.0);
+        }
+        case 21u: { let r = ub_df_add(ar, br); return vec4<f32>(r.x, r.y, 0.0, 0.0); }
+        case 22u: { let r = ub_df_mul(ar, br); return vec4<f32>(r.x, r.y, 0.0, 0.0); }
+        case 23u: {
+            let cr = gt_df(s * 8u + 3u, -3, 3u);
+            let ci = gt_df(s * 8u + 4u, -3, 3u);
+            var z = cset(vec2<f32>(0.0, 0.0), vec2<f32>(0.0, 0.0));
+            for (var i = 0; i < 64; i++) {
+                let q = ub_c_sqr(z);
+                let h = cset(ub_df_mul_f32(q.re, 0.5), ub_df_mul_f32(q.im, 0.5));
+                z = cset(ub_df_add(h.re, cr), ub_df_add(h.im, ci));
+            }
+            return vec4<f32>(z.re.x, z.re.y, z.im.x, z.im.y);
         }
         default: { return vec4<f32>(0.0, 0.0, 0.0, 0.0); }
     }

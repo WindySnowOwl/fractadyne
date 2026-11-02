@@ -399,11 +399,38 @@ pub fn render_iter_chunked_timed(
 /// device and reads it back.
 pub fn gputest(device: &wgpu::Device, queue: &wgpu::Queue) -> Result<(u32, u32, Vec<f32>), GpuError> {
     const W: u32 = 256;
-    const H: u32 = 19; // rows 0–18 of `fs_gputest`
+    const H: u32 = 24; // rows 0–23 of `fs_gputest`
     let shader = shader_module(device);
+    // Rows 19–23 read `gtu.x`, which must be 1.0 at run time and unknowable at compile time: the
+    // uniform-derived barrier (WGSL `ub`). Rows 0–18 ignore it.
+    let gtu_bgl = device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
+        label: Some("gputest.gtu_bgl"),
+        entries: &[wgpu::BindGroupLayoutEntry {
+            binding: 0,
+            visibility: wgpu::ShaderStages::FRAGMENT,
+            ty: wgpu::BindingType::Buffer {
+                ty: wgpu::BufferBindingType::Uniform,
+                has_dynamic_offset: false,
+                min_binding_size: None,
+            },
+            count: None,
+        }],
+    });
+    let gtu_buf = device.create_buffer(&wgpu::BufferDescriptor {
+        label: Some("gputest.gtu"),
+        size: 16,
+        usage: wgpu::BufferUsages::UNIFORM | wgpu::BufferUsages::COPY_DST,
+        mapped_at_creation: false,
+    });
+    queue.write_buffer(&gtu_buf, 0, bytemuck::cast_slice(&[1.0_f32, 0.0, 0.0, 0.0]));
+    let gtu_bg = device.create_bind_group(&wgpu::BindGroupDescriptor {
+        label: Some("gputest.gtu_bg"),
+        layout: &gtu_bgl,
+        entries: &[wgpu::BindGroupEntry { binding: 0, resource: gtu_buf.as_entire_binding() }],
+    });
     let layout = device.create_pipeline_layout(&wgpu::PipelineLayoutDescriptor {
         label: Some("gputest.layout"),
-        bind_group_layouts: &[],
+        bind_group_layouts: &[&gtu_bgl],
         push_constant_ranges: &[],
     });
     let pipeline =
@@ -448,6 +475,7 @@ pub fn gputest(device: &wgpu::Device, queue: &wgpu::Queue) -> Result<(u32, u32, 
             occlusion_query_set: None,
         });
         pass.set_pipeline(&pipeline);
+        pass.set_bind_group(0, &gtu_bg, &[]);
         pass.draw(0..3, 0..1);
     }
     enc.copy_texture_to_buffer(
