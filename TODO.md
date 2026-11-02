@@ -38,7 +38,7 @@ most editors; sections are the `##` headings the items live under.
 | - | 1 | PR-B5. Packed live settle walks, then a compute work list. The live renderer still … | Performance & throughput (M7) | 9354 |
 | - | 1 | PR-B6. A live exponential-map cache for autopilot dives and tours. A dive toward a … | Performance & throughput (M7) | 9363 |
 | - | 1 | PR-B7. Julia-mipmap early termination — T3, after PR-B1. PR-B1's step counters will … | Performance & throughput (M7) | 9368 |
-| - | 1 | Attempt a Fractadyne render of an ultradeep minibrot shared by the FractalShark author. | ▶ Render the ultradeep view34 location (someday) (2026-09-12) | 9960 |
+| - | 1 | Attempt a Fractadyne render of an ultradeep minibrot shared by the FractalShark author. | ▶ Render the ultradeep view34 location (someday) (2026-09-12) | 9982 |
 
 ### Unflagged backlog (87)
 
@@ -117,20 +117,20 @@ most editors; sections are the `##` headings the items live under.
 | Per-channel cross-tool differential testing (P2, §5.4 partial) — the F3 corpus (20 … | Proposed feature set — reconciled backlog (2026-08-06) | 9222 |
 | PR-C1. Faster double-word arithmetic (Zhang & Aiken 2025 add; Yang et al. 2024 … | Performance & throughput (M7) | 9373 |
 | Adopt it (user's call). Proposed shape: an `override` constant the iterate pipelines … | Performance & throughput (M7) | 9392 |
-| PR-C3. BLA for Julia views. `bla_eligible` excludes Julia; with δc = 0 the B terms … | Performance & throughput (M7) | 9398 |
-| PR-C4. Certified interior: a per-pixel attracting-cycle test (Tucker & Wilczak 2009) and … | Performance & throughput (M7) | 9401 |
-| PR-C5. Speculative work along the camera path, with camera prediction (L4 in … | Performance & throughput (M7) | 9405 |
-| PR-C6. Split orbit and tree bindings; 8-byte orbit samples. Raises the orbit cap past … | Performance & throughput (M7) | 9408 |
-| PR-C7. Temporal accumulation during slow motion. Needs PR-B4's lattice. M. | Performance & throughput (M7) | 9411 |
-| PR-C8. Second-order BLA. One report: 21× at 2.8e40, from a single pull request … | Performance & throughput (M7) | 9412 |
-| PR-C9. Foveation during motion (the zoom centre as the fovea): a modest gain in motion, … | Performance & throughput (M7) | 9414 |
-| PR-C10. An NTT with transform reuse for the complex square, above ~100k bits. 1.5–3× … | Performance & throughput (M7) | 9416 |
-| PR-C11. The precision cascade (Level 3 below), with the literature's ceiling. The cost … | Performance & throughput (M7) | 9419 |
-| One reference per zoom sequence (offline tours) — a zoom toward a fixed centre uses … | Performance & throughput (M7) | 9461 |
-| Level 3 (research): precision-cascade with parallel residuals — run the serial chain at … | Performance & throughput (M7) | 9484 |
-| By-keyframe distribution once exponential-map export lands — one keyframe per factor … | Performance & throughput (M7) | 9568 |
-| GPU-assisted reference-candidate scoring (the practical "bignum on GPU"). Full GPU bignum … | Performance & throughput (M7) | 9587 |
-| Tile-level export pipeline — overlap tile N+1 iterate with tile N async readback + … | Performance & throughput (M7) | 9717 |
+| PR-C3. BLA for Julia views. `bla_eligible` excludes Julia; with δc = 0 the B terms … | Performance & throughput (M7) | 9420 |
+| PR-C4. Certified interior: a per-pixel attracting-cycle test (Tucker & Wilczak 2009) and … | Performance & throughput (M7) | 9423 |
+| PR-C5. Speculative work along the camera path, with camera prediction (L4 in … | Performance & throughput (M7) | 9427 |
+| PR-C6. Split orbit and tree bindings; 8-byte orbit samples. Raises the orbit cap past … | Performance & throughput (M7) | 9430 |
+| PR-C7. Temporal accumulation during slow motion. Needs PR-B4's lattice. M. | Performance & throughput (M7) | 9433 |
+| PR-C8. Second-order BLA. One report: 21× at 2.8e40, from a single pull request … | Performance & throughput (M7) | 9434 |
+| PR-C9. Foveation during motion (the zoom centre as the fovea): a modest gain in motion, … | Performance & throughput (M7) | 9436 |
+| PR-C10. An NTT with transform reuse for the complex square, above ~100k bits. 1.5–3× … | Performance & throughput (M7) | 9438 |
+| PR-C11. The precision cascade (Level 3 below), with the literature's ceiling. The cost … | Performance & throughput (M7) | 9441 |
+| One reference per zoom sequence (offline tours) — a zoom toward a fixed centre uses … | Performance & throughput (M7) | 9483 |
+| Level 3 (research): precision-cascade with parallel residuals — run the serial chain at … | Performance & throughput (M7) | 9506 |
+| By-keyframe distribution once exponential-map export lands — one keyframe per factor … | Performance & throughput (M7) | 9590 |
+| GPU-assisted reference-candidate scoring (the practical "bignum on GPU"). Full GPU bignum … | Performance & throughput (M7) | 9609 |
+| Tile-level export pipeline — overlap tile N+1 iterate with tile N async readback + … | Performance & throughput (M7) | 9739 |
 <!-- TODO-INDEX:END -->
 
 ## ▶ Offline render path: the fixed cost in the shallow/mid band (2026-08-21)
@@ -9395,6 +9395,28 @@ M = one to three weeks, L = a month or more. "PR-" names keep them apart from T1
     PLUTO and its per-card goldens re-blessed with evidence (LOOK at the diffs); the RX 6800 XT's
     pass pricing then runs conservative (safe) until re-calibrated. Watch: the Linux RADV
     df32-vs-floatexp disagreement item may change with it.
+    - ⛔ **Tried 2026-11-02 (the user: "Adopt and merge") — HELD, NOT merged: on AMD it is not
+      NVIDIA's arithmetic.** Branch `feat/f32-add-residuals` `19de0d3d` (override
+      `EFT_ADD_RESIDUALS`, default off, set only by `--gputest`; CHANGELOG entry drafted there).
+      NVIDIA gates all PASS: `--gputest` identical; selftest 547/547 with every golden's maxΔ,
+      meanΔ and hash identical to the beta.24 report; the kit's 31 scenes at 4K 0 px differ;
+      workspace tests 1,967/0. RX 6800 XT battery (dev.4, PLUTO `20261102-152035-inqt`): live-res,
+      livetest, uitest, recordtest, screen, regime, settle PASS; goldens 0/31 against its own set
+      (expected; LOOKED — same structure, only speckle moved; summed mean difference to the RTX
+      3080's set 94 vs 100 before); bench-matrix 20/43 segments drift (expected); and 7 NEW
+      path-agreement failures: u-space BLA chunked vs single dispatch (3 texels), generated
+      Tricorn 3 / 5 = built-in in direct mode (5,616 / 2,816 px, 0 required), Manowar GPU = CPU
+      (2 early escapes), generated Multibrot 4 and Celtic perturbation = built-in, and Celtic
+      perturbation vs direct at 1e5×: mean Δ 0.66, 3.2% of pixels off by >2 iterations (RTX 3080
+      with the same source 0.18 / 0%; the Radeon before 0.05 / 0%). The known "wider canvas"
+      failure passed. ⇒ Without the residuals, AMD's compiler rounds differently from shader to
+      shader and sometimes less accurately than NVIDIA's fold: the residuals were absorbing it.
+      Narrower variants (PLUTO `20261102-162706-xq0z`): only `two_sum` dropping (dev.5, branch
+      `exp/c2-n1`) and only `quick_two_sum` dropping (dev.6, `exp/c2-n2`) each fail a different
+      set of six (wider canvas, chunked bit-identical, glitch detection, Celtic, …) — neither
+      restores agreement. Left: find what AMD's compiler does to the simplified expressions (an
+      ISA dump with Radeon GPU Analyzer, or the uniform-derived barrier at chosen points only, which
+      cost ~1.0–1.24× on AMD) — a research item, not a quick adoption.
 - [ ] **PR-C3. BLA for Julia views.** `bla_eligible` excludes Julia; with δc = 0 the B terms
   vanish and the tree depends only on the orbit, so it can be cached. Deep Julia views are also
   GitHub #4 (device loss), and BLA shortens exactly those long per-pixel runs. M.
