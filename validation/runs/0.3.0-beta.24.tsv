@@ -1,0 +1,9 @@
+utc	version	identity	exit	verdict	config	command
+2026-11-02 13:46:22	0.3.0-beta.24	repo g3a586c70	0	-	-	python scripts/dive-capture/screengate.py D:/share/Fractadyne/field/results/20261102-072537-vwp0/validate-pluto-v0.3.0-beta.24-standard-20261102-072559/screen/run1 D:/share/Fractadyne/field/results/20261102-072537-vwp0/validate-pluto-v0.3.0-beta.24-standard-20261102-072559/screen/run2 D:/share/Fractadyne/field/results/20261102-072537-vwp0/validate-pluto-v0.3.0-beta.24-standard-20261102-072559/screen/run3
+2026-11-02 13:46:44	0.3.0-beta.24	build 1, g3a586c7	0	selftest exit 0; logcheck PASS	fresh	fractadyne --selftest --selftest-filter fe-df32-probe
+2026-11-02 13:52:59	0.3.0-beta.24	build 1, g3a586c7	0	livetest exit 0; logcheck PASS	fresh	fractadyne --livetest tours/grand-tour.toml --size 480x270
+2026-11-02 13:53:32	0.3.0-beta.24	build 1, g3a586c7	3	motiontest exit 3; logcheck FAIL	fresh	fractadyne --motiontest --worker-gpu same
+2026-11-02 14:08:33	0.3.0-beta.24	build 1, g3a586c7	0	autodive exit 0; logcheck PASS	fresh	fractadyne --autodive 32 --autodive-timeout 900 --autodive-home 3
+2026-11-02 14:18:59	0.3.0-beta.24	build 1, g3a586c7	0	selftest exit 0; logcheck PASS	fresh	fractadyne --selftest --selftest-filter deep-location
+2026-11-02 14:22:38	0.3.0-beta.24	build 1, g3a586c7	3	motiontest exit 3; logcheck FAIL	fresh	fractadyne --motiontest --worker-gpu same
+2026-11-02 19:08:53	0.3.0-beta.24	build 1, g3a586c7	0	motiontest exit 0; logcheck PASS	fresh	fractadyne --motiontest --worker-gpu same
