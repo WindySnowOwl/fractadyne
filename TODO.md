@@ -838,7 +838,12 @@ Mockups: [design/mockups/](design/mockups/).
   and a scratch config, then read `frames.bin` (`scripts/framelog.py decode`) around the climb —
   `present`, `content_tag`, `live_complete`, `blank_walks`.
 
-- [ ] 🟡**AN IDLE APP LOGS "possible hang" EVERY 30 s, AND A FRAME-BUDGET ALARM WHEN IT WAKES**
+- [x] ✅**FIXED 2026-11-01 (`fix/pre-beta23` `9ca818c9`): the watchdog judges only in a frame or
+  while one is due (`diag::watch_verdict`), and the tripwire and the frame record qualify an
+  interval by the PREVIOUS frame's ask (`Perf::gap_due`). 45 s idle on the RTX 3080: 2 hang lines +
+  2 budget resets before, none after; `--recordtest` (13 s wedge) still PASS. The `repaint_requested=true`
+  in the wake frames was that frame's own ask, not evidence a frame was due. Original report:**
+  🟡**AN IDLE APP LOGS "possible hang" EVERY 30 s, AND A FRAME-BUDGET ALARM WHEN IT WAKES**
   (the user's log, 2026-10-25, session started 16:42:57 UTC, lines `+4997`..`+5465` s). After a
   recording the app sat untouched for 477 s with its window out of view: the watchdog logged
   `possible hang: no activity for 10s … 460s` sixteen times, and the first frame after the gap

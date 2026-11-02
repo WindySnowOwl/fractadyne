@@ -423,6 +423,9 @@ frame_record! {
     last_dt_ms: f64,
     body_ms: f64,
     cap_sleep_ms: f64,
+    /// This frame asked for a repaint, and so did the one before: `last_dt_ms` was owed, not the
+    /// app waiting for input (before 2026-11-01, this frame's ask alone, so the first frame after
+    /// an idle wait counted as slow). The qualifier every slow-frame reader uses.
     repaint_requested: bool,
     ts_supported: bool,
     /// Frames since a GPU timing last arrived for this view, and since it last dispatched.

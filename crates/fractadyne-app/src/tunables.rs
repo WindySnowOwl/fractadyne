@@ -307,6 +307,9 @@ pub(crate) const INSTRUMENTS: &[&str] = &[
     // A render-farm client with `--when-idle` counts as in use for the first N seconds of its first
     // frame, so `--farmtest` can prove the frame goes back to the farm (`farm::client::IN_USE_INSTRUMENT`).
     "FRACTADYNE_FARM_IN_USE_FOR",
+    // The autopilot's staged Misiurewicz solve fails stage N, so the dive's handling of a failed
+    // refinement can be run (`autopilot::run_misi_stages`).
+    "FRACTADYNE_MISI_FAIL_STAGE",
 ];
 
 /// The armed instruments and their values: set, parseable and non-zero. Read once — they are
