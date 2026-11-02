@@ -60,8 +60,22 @@ fn two_sum(a: f32, b: f32) -> vec2<f32> {
     let e = (a - (s - v)) + (b - v);
     return vec2<f32>(s, e);
 }
+// ⭐THE PRODUCT IS KEPT OPAQUE (TODO PR-C2 probe, 2026-11-02). The `--gputest` probe found AMD's
+// Vulkan/GL compiler FUSING `p` into the add that consumes it — df_mul's `p.x + e` became
+// `fma(a.x, b.x, e)`, counting the product's own error twice (256/256 inputs; NVIDIA evaluates it as
+// written) — and doing so in some shaders and not others. `ob` ORs in `ob_zero`, 0 at run time but
+// unknowable at compile time wherever an entry point has armed it from a uniform, so `p` is no
+// longer a product to fuse. Unarmed entry points fold it away and compile as before.
+var<private> ob_zero: u32;
+fn ob(x: f32) -> f32 {
+    return bitcast<f32>(bitcast<u32>(x) | ob_zero);
+}
+// `iu.res` is the iteration grid's size: never negative, so this stores 0 — unprovably.
+fn ob_arm() {
+    ob_zero = select(0u, 1u, iu.res.x < 0.0);
+}
 fn two_prod(a: f32, b: f32) -> vec2<f32> {
-    let p = a * b;
+    let p = ob(a * b);
     let e = fma(a, b, -p);
     return vec2<f32>(p, e);
 }
@@ -2150,6 +2164,7 @@ fn iterate_at(gx: f32, gy: f32) -> FragOut {
 
 @fragment
 fn fs_iterate(in: VsOut) -> FragOut {
+    ob_arm(); // keep two_prod's product opaque (see `ob`)
     // Global texel coordinate = this tile's offset + local fragment position.
     return iterate_at(iu.px_offset.x + in.pos.x, iu.px_offset.y + in.pos.y);
 }
@@ -2212,6 +2227,7 @@ fn vs_split_tiles(@builtin(vertex_index) vi: u32, @builtin(instance_index) ii: u
 
 @fragment
 fn fs_iterate_gather(in: VsOut) -> FragOut {
+    ob_arm(); // keep two_prod's product opaque (see `ob`)
     // in.pos is the texel centre (integer + 0.5); truncation recovers the integer texel.
     let idx = u32(in.pos.y) * iu.gather_w + u32(in.pos.x);
     if (idx >= iu.gather_n) {
@@ -2305,6 +2321,7 @@ fn info_pack(iter: u32, status: f32, ch2: f32, dexp: f32) -> vec4<f32> {
 
 @fragment
 fn fs_iterate_chunk(in: VsOut) -> ChunkOut {
+    ob_arm(); // keep two_prod's product opaque (see `ob`)
     // Pixel coordinate mapping — identical to fs_iterate's prologue.
     // @@STRIP_CHUNK_BEGIN
     let step_re = iu.step.xy;
@@ -3125,6 +3142,7 @@ const NO_SLOT: u32 = 0xffffffffu;
 
 @fragment
 fn fs_iterate_chunk_fe(in: VsOut) -> ChunkOut4 {
+    ob_arm(); // keep two_prod's product opaque (see `ob`)
     return chunk_fe_at(in.pos.xy, vec2<i32>(i32(in.pos.x), i32(in.pos.y)));
 }
 
@@ -3160,6 +3178,7 @@ fn pack_pad() -> ChunkOut4 {
 
 @fragment
 fn fs_iterate_chunk_fe_packed(in: VsOut) -> ChunkOut4 {
+    ob_arm(); // keep two_prod's product opaque (see `ob`)
     let p = vec2<i32>(i32(in.pos.x), i32(in.pos.y));
     var c = vec2<u32>(u32(p.x), u32(p.y));
     if (pk.packed == 1u) {
@@ -3978,6 +3997,7 @@ fn gt_normal_case(t: u32) -> vec2<f32> {
 }
 @fragment
 fn fs_gputest(@builtin(position) pos: vec4<f32>) -> @location(0) vec4<f32> {
+    ob_zero = bitcast<u32>(gtu.x) ^ 0x3f800000u; // arm `ob` from this pass's own uniform (1.0)
     let ix = u32(pos.x);
     let op = u32(pos.y);
     let s = ix + 100003u * op; // decorrelate rows
