@@ -2869,7 +2869,7 @@ diag-arithmetic = Arithmétique du zoom profond : { $status }
 diag-run-selftest = Lancer l’autotest
 diag-run-uitest = Lancer le test d’interface
 diag-run-gputest = Lancer la vérification arithmétique GPU
-diag-blurb-selftest = Vérifie les mathématiques et le rendu sur votre GPU par rapport à des résultats connus. Dure environ 15 secondes.
+diag-blurb-selftest = Vérifie les mathématiques et le rendu sur votre GPU par rapport à des résultats connus. Dure quelques minutes.
 diag-blurb-uitest = Parcourt l’interface et la vue en direct, en prenant des captures d’écran à plusieurs profondeurs de zoom. Dure une minute ou deux et ouvre des fenêtres pendant son exécution.
 diag-blurb-gputest = Vérifie l’arithmétique double-float du shader par rapport à des valeurs connues, sur chaque backend graphique que propose votre machine. Dure quelques secondes, n’ouvre aucune fenêtre. Si elle signale un échec, c’est une véritable découverte que nous aimerions voir — merci de la joindre à un signalement.
 # While a test runs. $count: the checks finished so far.

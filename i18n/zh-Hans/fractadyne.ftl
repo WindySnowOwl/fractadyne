@@ -2781,7 +2781,7 @@ diag-arithmetic = 深度缩放算术：{ $status }
 diag-run-selftest = 运行自检
 diag-run-uitest = 运行界面测试
 diag-run-gputest = 运行 GPU 算术检查
-diag-blurb-selftest = 将 GPU 上的数学计算和渲染结果与已知正确的结果对照。大约需要 15 秒。
+diag-blurb-selftest = 将 GPU 上的数学计算和渲染结果与已知正确的结果对照。需要几分钟。
 diag-blurb-uitest = 遍历界面和实时视图，并在几个缩放深度下截取屏幕截图。需要一两分钟，运行期间会打开窗口。
 diag-blurb-gputest = 在你的计算机提供的每一个图形后端上，将着色器的双浮点算术与已知正确的值对照。需要几秒钟，不打开窗口。如果它报告失败，那是我们很想看到的一项真实发现——请将它附加到报告中。
 # While a test runs. $count: the checks finished so far.

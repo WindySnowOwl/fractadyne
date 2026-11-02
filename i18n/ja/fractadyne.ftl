@@ -2781,7 +2781,7 @@ diag-arithmetic = ディープズームの演算：{ $status }
 diag-run-selftest = セルフテストを実行
 diag-run-uitest = UIテストを実行
 diag-run-gputest = GPU演算チェックを実行
-diag-blurb-selftest = お使いのGPUでの数学とレンダリングを、既知の正しい結果と照合します。約15秒かかります。
+diag-blurb-selftest = お使いのGPUでの数学とレンダリングを、既知の正しい結果と照合します。数分かかります。
 diag-blurb-uitest = インターフェースとライブビューを巡回し、複数のズーム深度でスクリーンショットを撮ります。1～2分かかり、実行中はウィンドウが開きます。
 diag-blurb-gputest = マシンで使えるすべてのグラフィックスバックエンドで、シェーダーのdouble-float演算を既知の正しい値と照合します。数秒で終わり、ウィンドウは開きません。失敗が報告された場合、それは私たちがぜひ見たい本物の知見です。レポートに添付してください。
 # While a test runs. $count: the checks finished so far.
