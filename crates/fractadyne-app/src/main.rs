@@ -95,6 +95,7 @@ mod update;
 mod video_pipe;
 mod scripting;
 mod session_outcome;
+mod machine;
 mod sysinfo;
 mod theme;
 mod tone;
@@ -11173,6 +11174,13 @@ impl FractadyneApp {
             s.push_str("== System ==\n");
             s.push_str(&self.system_info_block());
             s.push('\n');
+            // The machine profile (`machine`): OS build, CPU, every GPU with its driver, Windows' GPU
+            // timeout settings, the driver resets in the event log. Names neither user nor computer.
+            if let Some(m) = crate::machine::cached_text() {
+                s.push_str("== Machine ==\n");
+                s.push_str(&m);
+                s.push('\n');
+            }
         }
         if self.report.include_location {
             s.push_str("== Current location (.fdn) ==\n");
@@ -16813,6 +16821,15 @@ impl eframe::App for FractadyneApp {
                 if let Some(rs) = frame.wgpu_render_state() {
                     let i = rs.adapter.get_info();
                     diag::log_line("wgpu", &format!("driver: {}", crate::farm::driver_text(&i.driver, &i.driver_info)));
+                }
+                // The machine, so a log answers the first questions about it on its own (`machine`):
+                // the OS build, the CPU, the memory and Windows' GPU timeout settings (registry reads,
+                // no GPU work). The event log and the timings stay out of startup.
+                diag::log_line("start", &format!("os: {}", crate::machine::os_line()));
+                diag::log_line("start", &format!("cpu: {}", crate::machine::cpu_line(&self.sysinfo)));
+                diag::log_line("start", &format!("memory: {}", crate::machine::memory_line()));
+                if let Some(g) = crate::machine::gpu_settings_line() {
+                    diag::log_line("start", &format!("gpu settings: {g}"));
                 }
                 // The per-adapter DISPATCH CEILING (`calibration`), resolved once by adapter name.
                 let cal = calibration::init(&self.gpu_name);

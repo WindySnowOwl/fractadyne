@@ -7,9 +7,10 @@
 //! per-card ceiling); the self-test's controls are single passes ON PURPOSE (a chunked render is
 //! held bit for bit to one), sized on cards like the RTX 3080, and heavier ones follow.
 //!
-//! So before the checks, [`FractadyneApp::measure_direct_step`] times one all-interior direct
-//! frame, starting at 2 iterations and growing until a pass is long enough to time: every pixel
-//! walks every step, so the cost per nominal step is the card's WORST in direct mode. A card with
+//! So before the checks, [`FractadyneApp::measure_speed_profile`] times one all-interior frame in
+//! each mode (direct, df32, floatexp), starting at 2 iterations and growing until a pass is long
+//! enough to time: every pixel walks every step, so the cost per nominal step is the card's WORST
+//! in that mode, and the guard prices each mode by its own. A card with
 //! no calibration entry of its own that is slower than the one the suite is sized for gets the GPU
 //! crate's dispatch guard
 //! (`fractadyne_gpu::dispatch_guard`): every pass is priced at nominal steps x that cost x the
@@ -50,7 +51,7 @@ pub(crate) fn mode_ratio(mode: u32) -> f64 {
     }
 }
 
-/// The frame [`FractadyneApp::measure_direct_step`] times: past both measured occupancy knees
+/// The frame [`FractadyneApp::measure_mode_step`] times: past both measured occupancy knees
 /// (262,144 px on the RTX 3080, 524,288 on the RX 6800 XT), so a fast card is timed busy.
 const MEASURE_W: u32 = 1024;
 const MEASURE_H: u32 = 768;
@@ -63,11 +64,81 @@ const MEASURE_ITERS: [u32; 5] = [2, 16, 128, 1024, 8192];
 /// One measurement of the card.
 #[derive(Clone, Debug, PartialEq)]
 pub(crate) struct Measured {
-    /// The worst cost of one nominal step in direct mode, ms.
+    /// The worst cost of one nominal step in the mode measured, ms (wall clock).
     pub(crate) ms_per_step: f64,
     /// The pass it was read from: iterations, and its slowest wall time, ms.
     pub(crate) iters: u32,
     pub(crate) pass_ms: f64,
+    /// The same pass by the GPU's own clock (its slowest timed repeat), when the card has
+    /// timestamps. Far below `pass_ms` means the wall clock is measuring something else too.
+    pub(crate) gpu_ms: Option<f64>,
+    /// The first pass's wall time (2 iterations): about the fixed cost of one pass.
+    pub(crate) fixed_ms: f64,
+}
+
+/// The modes the speed profile times: render mode (`RenderMode::to_u32`), name, and the depth
+/// (log2 magnification) where an export picks that mode at the measuring view. Direct's view is
+/// set by its width instead (log2 about 4.3).
+pub(crate) const PROFILE_MODES: [(u32, &str, f64); 3] = [(1, "direct", 4.3), (0, "df32", 60.0), (2, "floatexp", 200.0)];
+
+/// The card's cost per nominal step in each mode, measured.
+#[derive(Clone, Debug, PartialEq)]
+pub(crate) struct SpeedProfile {
+    pub(crate) modes: Vec<(u32, &'static str, Result<Measured, String>)>,
+}
+
+impl SpeedProfile {
+    /// The measured cost per step in `mode`, ms, if it was measured.
+    pub(crate) fn cost(&self, mode: u32) -> Option<f64> {
+        self.modes.iter().find(|m| m.0 == mode).and_then(|m| m.2.as_ref().ok()).map(|m| m.ms_per_step)
+    }
+
+    /// The report's lines: one per mode (wall and GPU clock, ratio to direct, fixed cost), the
+    /// calibration table's values for this card beside them (`(direct, df32, own entry)`), and the
+    /// entry the measurement would make for it in `validation/calibration/ceilings.toml`.
+    pub(crate) fn lines(&self, adapter: &str, calibrated: Option<(f64, f64, bool)>) -> String {
+        use std::fmt::Write as _;
+        let mut s = String::new();
+        let direct = self.cost(1);
+        for (mode, name, r) in &self.modes {
+            match r {
+                Ok(m) => {
+                    let steps = (MEASURE_W * MEASURE_H) as f64 * m.iters as f64;
+                    let gpu = m
+                        .gpu_ms
+                        .map(|g| format!(", GPU clock {:.3e} ({g:.1} ms)", g / steps))
+                        .unwrap_or_else(|| ", no GPU clock".to_string());
+                    let ratio = match direct {
+                        Some(d) if *mode != 1 && d > 0.0 => format!(", {:.2}x direct", m.ms_per_step / d),
+                        _ => String::new(),
+                    };
+                    let _ = writeln!(
+                        s,
+                        "  {name}: {:.3e} ms per step by the wall ({} iterations, {:.1} ms){gpu}{ratio}; a 2-iteration pass {:.2} ms",
+                        m.ms_per_step, m.iters, m.pass_ms, m.fixed_ms
+                    );
+                }
+                Err(e) => {
+                    let _ = writeln!(s, "  {name}: not measured ({e})");
+                }
+            }
+        }
+        if let Some((direct_cal, df32_cal, own)) = calibrated {
+            let _ = writeln!(
+                s,
+                "  calibration table for this card ({}): direct {direct_cal:.3e}, df32 {df32_cal:.3e} ms per step",
+                if own { "its own entry" } else { "the default entry" }
+            );
+        }
+        if let (Some(d), Some(f)) = (self.cost(1), self.cost(0)) {
+            let _ = writeln!(s, "  as a calibration entry (wall clock, all-interior 1024x768, BLA and series off):");
+            let _ = writeln!(s, "    [[adapter]]");
+            let _ = writeln!(s, "    slug = \"{}\"", crate::calibration::slug(adapter));
+            let _ = writeln!(s, "    df32_pert_ms_per_step = {f:.3e}");
+            let _ = writeln!(s, "    direct_ms_per_step = {d:.3e}");
+        }
+        s
+    }
 }
 
 /// What the self-test does about the card's speed.
@@ -84,6 +155,9 @@ pub(crate) struct Policy {
     pub(crate) preview: bool,
     /// The card has its own calibration entry.
     pub(crate) own_entry: bool,
+    /// The measured cost per step in each render mode (index = mode), from the speed profile
+    /// ([`Policy::with_profile`]); a mode not measured is priced from direct by [`mode_ratio`].
+    pub(crate) mode_ms: [Option<f64>; 3],
 }
 
 impl Policy {
@@ -100,14 +174,29 @@ impl Policy {
         // A cost that is not a positive number cannot show an unknown card is fast enough.
         let unknown_and_slow = !own_entry && !(ms_per_step > 0.0 && ms_per_step <= SIZED_FOR_MS_PER_STEP);
         let enforce = simulated || unknown_and_slow;
-        Self { ms_per_step, enforce, simulated, preview: simulated, own_entry }
+        Self { ms_per_step, enforce, simulated, preview: simulated, own_entry, mode_ms: [None; 3] }
+    }
+
+    /// Price each mode by its own measured cost: the speed profile's, unless the speed is a
+    /// simulation (whose card has no profile; its modes are priced from its direct cost).
+    pub(crate) fn with_profile(mut self, profile: &SpeedProfile) -> Self {
+        if !self.simulated {
+            for (mode, slot) in self.mode_ms.iter_mut().enumerate() {
+                *slot = profile.cost(mode as u32).filter(|c| c.is_finite() && *c > 0.0);
+            }
+        }
+        self
     }
 
     /// The price of one nominal step of a pass in `mode` with GPU formula id `formula`, ms.
     pub(crate) fn step_ms(&self, mode: u32, formula: u32) -> f64 {
-        self.ms_per_step
-            * mode_ratio(mode)
-            * crate::calibration::factor_for_id(formula, crate::RenderMode::from_u32(mode))
+        let base = self
+            .mode_ms
+            .get(mode as usize)
+            .copied()
+            .flatten()
+            .unwrap_or(self.ms_per_step * mode_ratio(mode));
+        base * crate::calibration::factor_for_id(formula, crate::RenderMode::from_u32(mode))
     }
 
     /// Install the guard for the rest of the run.
@@ -202,54 +291,97 @@ pub(crate) fn step_cost(walls: &[f64], px: u64, iters: u32) -> Option<(f64, f64)
 }
 
 impl FractadyneApp {
-    /// Time the card in direct mode at an all-interior view (see the module header). Runs before
-    /// the guard is installed, so its own passes are never refused; it starts at 2 iterations so
-    /// they are cheap on any card. `Err` says why there is no measurement.
-    pub(crate) fn measure_direct_step(
+    /// Time the card in each arithmetic mode ([`PROFILE_MODES`], [`Self::measure_mode_step`]): the
+    /// guard's prices and the self-test report's GPU speed profile. Runs before the guard is
+    /// installed, so its own passes are never refused; each mode starts at 2 iterations, so they
+    /// are cheap on any card.
+    pub(crate) fn measure_speed_profile(
         &mut self,
         device: &eframe::wgpu::Device,
         queue: &eframe::wgpu::Queue,
+    ) -> SpeedProfile {
+        SpeedProfile {
+            modes: PROFILE_MODES.iter().map(|&(mode, name, _)| (mode, name, self.measure_mode_step(device, queue, mode))).collect(),
+        }
+    }
+
+    /// Time one nominal step in render `mode` at an all-interior view deep enough for it (inside
+    /// the main cardioid, where no pixel escapes): every pixel walks every step, with the series
+    /// skip, the BLA and the renormalized step switched off, so the cost per nominal step is the
+    /// card's worst in that mode. A deep mode builds an 8,192-iteration reference first (a few ms).
+    pub(crate) fn measure_mode_step(
+        &mut self,
+        device: &eframe::wgpu::Device,
+        queue: &eframe::wgpu::Queue,
+        mode: u32,
     ) -> Result<Measured, String> {
-        let saved = self.fractal;
-        self.fractal = crate::fractal::FractalKind::Mandelbrot;
-        let mut vp = fractadyne_core::Viewport::new(MEASURE_W as f64, MEASURE_H as f64);
-        // Deep inside the main cardioid (the calibration's own all-interior Mandelbrot point): a
-        // 0.2-wide frame here has no escaping pixel.
+        let Some(&(_, name, log2mag)) = PROFILE_MODES.iter().find(|m| m.0 == mode) else {
+            return Err(format!("mode {mode} is not one the profile times"));
+        };
         let (Some(cx), Some(cy)) = (fractadyne_core::parse_bf("-0.1"), fractadyne_core::parse_bf("0.1")) else {
-            self.fractal = saved;
             return Err("the measuring view's centre does not parse".to_string());
         };
-        vp.center_x = cx;
-        vp.center_y = cy;
-        vp.units_per_pixel = fractadyne_core::FloatExp::from_f64(0.2 / MEASURE_W as f64);
+        let mut vp = fractadyne_core::Viewport::new(MEASURE_W as f64, MEASURE_H as f64);
+        if mode == 1 {
+            // Deep inside the main cardioid (the calibration's own all-interior Mandelbrot point):
+            // a 0.2-wide frame here has no escaping pixel.
+            vp.center_x = cx;
+            vp.center_y = cy;
+            vp.units_per_pixel = fractadyne_core::FloatExp::from_f64(0.2 / MEASURE_W as f64);
+        } else {
+            vp.set_center_log2mag(cx, cy, log2mag);
+        }
+        // The request as an export of this view would be, for the Mandelbrot set at an explicit
+        // iteration count (the reference is built for the deepest pass the ramp may ask).
+        let deepest = *MEASURE_ITERS.last().unwrap_or(&8192);
+        let saved = (self.fractal, self.render_cfg.auto_iter, self.render_cfg.max_iter);
+        self.fractal = crate::fractal::FractalKind::Mandelbrot;
+        self.render_cfg.auto_iter = false;
+        self.render_cfg.max_iter = deepest;
         let mut req = self.current_export_request_for(&vp, false);
-        self.fractal = saved;
+        (self.fractal, self.render_cfg.auto_iter, self.render_cfg.max_iter) = saved;
         req.width = MEASURE_W;
         req.height = MEASURE_H;
         req.ss = 1;
-        if req.mode != 1 {
-            return Err(format!("the measuring view rendered in mode {}, not direct", req.mode));
+        req.sa_skip = 0;
+        req.bla_on = 0;
+        req.rn = fractadyne_gpu::Renorm::default();
+        req.glitch_on = 0;
+        req.work_budget = None;
+        req.pass_ms = None;
+        if req.mode != mode {
+            return Err(format!("the {name} measuring view rendered in mode {}, not {mode}", req.mode));
+        }
+        if mode != 1 && req.orbit_len < deepest {
+            return Err(format!("the {name} measuring view's reference has {} samples", req.orbit_len));
         }
         let px = MEASURE_W as u64 * MEASURE_H as u64;
-        let mut last = None;
+        let mut last: Option<Measured> = None;
+        let mut fixed_ms = f64::NAN;
         for iters in MEASURE_ITERS {
             req.max_iter = iters;
             let (r, timed) = fractadyne_gpu::render_iter_timed(device, queue, &req, 2)
-                .map_err(|e| format!("the measuring pass failed: {e}"))?;
+                .map_err(|e| format!("the {name} measuring pass failed: {e}"))?;
             let escaped = r.pixels.iter().step_by(4).filter(|v| **v >= 0.0).count();
             if escaped > 0 {
-                return Err(format!("{escaped} pixels of the measuring view escaped; it must be all interior"));
+                return Err(format!("{escaped} pixels of the {name} measuring view escaped; it must be all interior"));
             }
             let walls: Vec<f64> = timed.iter().map(|t| t[1]).collect();
             let Some((ms_per_step, pass_ms)) = step_cost(&walls, px, iters) else {
-                return Err("the measuring pass reported no time".to_string());
+                return Err(format!("the {name} measuring pass reported no time"));
             };
-            last = Some(Measured { ms_per_step, iters, pass_ms });
+            if fixed_ms.is_nan() {
+                fixed_ms = pass_ms;
+            }
+            let gpu_ms = timed.iter().map(|t| t[0]).filter(|g| g.is_finite() && *g > 0.0).fold(None, |a: Option<f64>, g| {
+                Some(a.map_or(g, |a| a.max(g)))
+            });
+            last = Some(Measured { ms_per_step, iters, pass_ms, gpu_ms, fixed_ms });
             if pass_ms >= MEASURE_ENOUGH_MS {
                 break;
             }
         }
-        last.ok_or_else(|| "no measuring pass ran".to_string())
+        last.ok_or_else(|| format!("no {name} measuring pass ran"))
     }
 }
 

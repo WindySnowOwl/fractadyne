@@ -86,3 +86,48 @@ fn a_step_cost_is_read_from_the_slowest_wall() {
     let (_, worst) = step_cost(&[f64::NAN, 5.0], 1000, 10).unwrap();
     assert_eq!(worst, 5.0);
 }
+
+fn measured(ms_per_step: f64) -> Measured {
+    Measured { ms_per_step, iters: 8192, pass_ms: ms_per_step * 1024.0 * 768.0 * 8192.0, gpu_ms: None, fixed_ms: 0.3 }
+}
+
+#[test]
+fn each_mode_is_priced_by_its_own_measurement_when_it_has_one() {
+    let profile = SpeedProfile {
+        modes: vec![(1, "direct", Ok(measured(1.0e-8))), (0, "df32", Ok(measured(5.0e-8))), (2, "floatexp", Err("no".into()))],
+    };
+    let p = Policy::new(1.0e-8, false, false).with_profile(&profile);
+    assert_eq!(p.mode_ms, [Some(5.0e-8), Some(1.0e-8), None]);
+    // Mandelbrot (formula 0) has the same factor in both modes, so df32 prices at 5x direct, its
+    // measured ratio, not mode_ratio's 5.2.
+    let ratio = p.step_ms(0, 0) / p.step_ms(1, 0);
+    assert!((ratio - 5.0).abs() < 1e-9, "{ratio}");
+    // A mode the profile could not measure falls back to direct x mode_ratio.
+    assert_eq!(p.mode_ms[2], None);
+    // A simulated card has no profile of its own: its modes are priced from its direct cost.
+    let sim = Policy::new(4.2e-6, true, false).with_profile(&profile);
+    assert_eq!(sim.mode_ms, [None; 3]);
+}
+
+#[test]
+fn the_profile_report_shows_every_mode_the_calibration_and_an_entry() {
+    let mut fe = measured(1.5e-7);
+    fe.gpu_ms = Some(900.0);
+    let profile = SpeedProfile {
+        modes: vec![(1, "direct", Ok(measured(3.6e-8))), (0, "df32", Ok(measured(4.9e-8))), (2, "floatexp", Ok(fe))],
+    };
+    let s = profile.lines("AMD Radeon RX 6800 XT", Some((9.6e-9, 4.95e-8, true)));
+    assert!(s.contains("direct: 3.600e-8 ms per step by the wall"), "{s}");
+    assert!(s.contains("df32: 4.900e-8"), "{s}");
+    assert!(s.contains("1.36x direct"), "{s}");
+    assert!(s.contains("no GPU clock"), "{s}");
+    assert!(s.contains("GPU clock 1.397e-7 (900.0 ms)"), "{s}");
+    assert!(s.contains("calibration table for this card (its own entry): direct 9.600e-9, df32 4.950e-8"), "{s}");
+    assert!(s.contains("slug = \"amd-radeon-rx-6800-xt\""), "{s}");
+    assert!(s.contains("direct_ms_per_step = 3.600e-8"), "{s}");
+    // A mode that failed says why, and without direct and df32 there is no entry to propose.
+    let partial = SpeedProfile { modes: vec![(1, "direct", Err("the measuring pass failed: lost".into()))] };
+    let s = partial.lines("x", None);
+    assert!(s.contains("direct: not measured (the measuring pass failed: lost)"), "{s}");
+    assert!(!s.contains("[[adapter]]"), "{s}");
+}

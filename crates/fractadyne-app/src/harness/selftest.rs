@@ -284,6 +284,8 @@ struct Ran {
     skipped: Option<String>,
     /// The dearest pass the guard priced while it ran, ms.
     peak_ms: f64,
+    /// Wall time since the previous check was pushed: this check's own time, setup included.
+    wall_ms: u128,
 }
 
 /// The guard's refusal count when the last check was pushed: a refusal since then belongs to the
@@ -417,7 +419,7 @@ fn push_ran(checks: &mut Vec<Ran>, last: &mut std::time::Instant, c: SelfCheck, 
     if skipped.is_some() {
         SKIPPED.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
     }
-    checks.push(Ran { check: c, skipped, peak_ms });
+    checks.push(Ran { check: c, skipped, peak_ms, wall_ms: ms });
 }
 
 /// Resolve a repo-relative data path (D2.6/F12): prefer the CWD (the normal repo-root
@@ -792,7 +794,16 @@ impl FractadyneApp {
         // own that is slower than the suite is sized for gets the dispatch guard; a check whose pass
         // it refuses is SKIPPED instead of resetting the driver (and the user's desktop with it). On
         // a faster card, or one with its own entry, every pass still runs (`Policy::new`).
-        let speed = self.measure_direct_step(device, queue);
+        // Every mode, not just direct (2026-11-01: one probe of direct mode misjudged the RX 6800 XT,
+        // and the next question would have been the other modes): the guard prices each mode by
+        // its own measurement, and the report carries all three with the GPU's clock beside the wall.
+        let profile = self.measure_speed_profile(device, queue);
+        let speed = profile
+            .modes
+            .iter()
+            .find(|m| m.0 == 1)
+            .map(|m| m.2.clone())
+            .unwrap_or_else(|| Err("direct mode was not measured".to_string()));
         let simulated = match crate::harness::slow_gpu::simulation() {
             Ok(v) => v,
             Err(e) => {
@@ -811,7 +822,17 @@ impl FractadyneApp {
             // Unmeasured: every pass is refused (a price that is not a number never admits), so a
             // card that could not be timed is not driven into the timeout either.
             (Err(_), None) => crate::harness::slow_gpu::Policy::new(f64::NAN, false, own_entry),
+        }
+        .with_profile(&profile);
+        let calibrated = {
+            let c = crate::calibration::init(&self.gpu_name);
+            Some((c.costs.direct, c.costs.df32_pert, c.own_entry))
         };
+        let profile_lines = profile.lines(&self.gpu_name, calibrated);
+        for l in profile_lines.lines() {
+            eprintln!("[selftest] speed {}", l.trim_start());
+            crate::diag::log_line("selftest", &format!("speed {}", l.trim_start()));
+        }
         if let Err(e) = &speed {
             eprintln!("[selftest] GPU speed NOT MEASURED: {e}");
         }
@@ -11215,7 +11236,7 @@ zoom = \"1e94\"
             "- **CPU:** {} ({} cores / {} threads, L2 {} KB, L3 {} KB)\n",
             sys.cpu, sys.physical, sys.logical, sys.l2_kb, sys.l3_kb
         ));
-        md.push_str(&format!("- **OS:** {} / {}\n", std::env::consts::OS, std::env::consts::ARCH));
+        md.push_str(&format!("- **OS:** {}\n", crate::machine::os_line()));
         md.push_str(&format!("- **Config:** {cfg_echo}\n"));
         if let Some(f) = &filter {
             md.push_str(&format!(
@@ -11344,6 +11365,30 @@ zoom = \"1e94\"
         });
         if let Some(l) = &not_run_line {
             md.push_str(&format!("\n{l}\n"));
+        }
+        // The machine, its speed in every mode, and where the run's time went: the next questions
+        // about a tester's run, answered in the same report (2026-11-01). Nothing here names the
+        // user or the computer (`machine` module header).
+        md.push_str("\n## Machine\n\n```text\n");
+        md.push_str(&crate::machine::profile_text(&sys, self.render_state.as_ref(), None, 30));
+        md.push_str("```\n\n## GPU speed by mode\n\n```text\n");
+        md.push_str(&profile_lines);
+        md.push_str("```\n\n## Slowest checks\n\n");
+        let total_ms: u128 = checks.iter().map(|r| r.wall_ms).sum();
+        md.push_str(&format!(
+            "{} checks took {:.1} s in all; the ten slowest:\n\n| Check | Parameters | Time |\n|---|---|---|\n",
+            checks.len(),
+            total_ms as f64 / 1000.0
+        ));
+        let mut slowest: Vec<&Ran> = checks.iter().collect();
+        slowest.sort_by(|a, b| b.wall_ms.cmp(&a.wall_ms));
+        for r in slowest.iter().take(10) {
+            md.push_str(&format!(
+                "| {} | {} | {:.1} s |\n",
+                r.check.name.replace('|', "/"),
+                r.check.params.replace('|', "/"),
+                r.wall_ms as f64 / 1000.0
+            ));
         }
 
         if let Err(e) = std::fs::write(&report_path, &md) {

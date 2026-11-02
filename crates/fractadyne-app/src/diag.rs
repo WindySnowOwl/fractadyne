@@ -588,6 +588,9 @@ pub(crate) mod frame_record;
 /// `fractadyne.log`'s own thread.
 pub(crate) mod log_writer;
 
+/// The diagnostics bundle (Help ▸ Diagnostics ▸ Save diagnostics bundle…).
+pub(crate) mod bundle;
+
 /// Replace the user's home directory with `~` everywhere in `s` — for anything that leaves the
 /// machine (the issue report). Issues are public, and on every desktop OS the home path contains
 /// the account name.

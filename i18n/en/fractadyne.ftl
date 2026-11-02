@@ -3019,6 +3019,11 @@ diag-problems-note = Some differences are expected on hardware other than the re
 diag-open-results = Open results
 diag-attach = Attach to an issue report…
 diag-attach-hover = Opens the report dialog with this result included, so the issue carries a machine-validated test rather than just a description
+diag-bundle = Save diagnostics bundle…
+diag-bundle-hover = One zip with everything a report about this machine needs: the machine (OS, CPU, graphics cards and drivers, recent driver resets), the last self-test and GPU test, the logs and the newest crash reports. Your home folder and computer name are taken out of it. Run the self-test first for the most complete bundle.
+# $path: where the bundle was saved; $size: its size, e.g. "812 KB".
+diag-bundle-saved = Saved { $path } ({ $size })
+diag-bundle-failed = Could not save the bundle: { $why }
 diag-console = Print diagnostics to the console
 diag-console-hover = Show the [fd-…] lines on stderr from now on. Off by default when Fractadyne is launched without arguments. This changes nothing about what is RECORDED — the log file always gets every line — so leave it off unless you are watching a terminal. Persists for this session only; use the --console flag or FRACTADYNE_CONSOLE=1 to catch startup too.
 diag-close = Close
