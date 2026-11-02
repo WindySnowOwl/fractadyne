@@ -65,6 +65,9 @@ fn the_event_log_text_reads_as_events_without_the_computer_name() {
     let nul = parse_wevtutil_text("Event[0]\n  Source: nvlddmkm\n  Event ID: 153\n  Level: Error\u{0}\n  Description: \nx\u{0}\n");
     assert_eq!((nul[0].level.as_str(), nul[0].what.as_str()), ("Error", "x"));
     assert!(!events_block(&Ok(nul), 30).contains('\u{0}'));
+    // PLUTO's Windows 11 22631 (2026-11-02): what follows the NUL is a leftover, not the field.
+    let leftover = parse_wevtutil_text("Event[0]\n  Source: Application Error\n  Event ID: 1000\n  Level: Error\u{0}a\n");
+    assert_eq!(leftover[0].level, "Error");
     assert!(events_block(&Ok(vec![]), 30).contains("none"));
     assert!(events_block(&Err("no".into()), 30).contains("not read (no)"));
 }
@@ -82,6 +85,34 @@ fn a_gpu_reset_report_is_told_from_an_ordinary_crash() {
     assert_eq!(e("Application Error", 1000, "Faulting application name: fractadyne.exe").meaning(), "an application crash or hang");
     assert_eq!(e("Microsoft-Windows-Kernel-Power", 41, "").meaning(), "Windows restarted without shutting down cleanly");
     assert_eq!(e("amdkmdag", 7, "").meaning(), "");
+}
+
+/// PLUTO's list (2026-11-02): 39 of its 40 lines were the app's own crash records from test runs.
+#[test]
+fn the_apps_own_crashes_never_crowd_out_a_driver_reset() {
+    let ev = |day: u32, source: &str, id: u32| DriverEvent {
+        time: format!("2026-10-{day:02}T12:00:00.0000000Z"),
+        source: source.into(),
+        id,
+        level: "Error".into(),
+        what: if source == "Application Error" { "Faulting application name: fractadyne.exe".into() } else { String::new() },
+    };
+    // Fifty crashes on days 11-30 (newest), two driver resets and an unclean restart before them.
+    let mut all: Vec<DriverEvent> = (0..50).map(|i| ev(11 + i % 20, "Application Error", 1000)).collect();
+    all.push(ev(3, "Display", 4101));
+    all.push(ev(2, "amdkmdag", 4101));
+    all.push(ev(1, "Microsoft-Windows-Kernel-Power", 41));
+    let v = pick_events(all);
+    let crashes = v.iter().filter(|e| e.source == "Application Error").count();
+    assert_eq!(crashes, 10, "{v:?}");
+    assert_eq!(v.len(), 13);
+    for kept in ["Display", "amdkmdag", "Microsoft-Windows-Kernel-Power"] {
+        assert!(v.iter().any(|e| e.source == kept), "{kept} missing: {v:?}");
+    }
+    assert!(v.windows(2).all(|w| w[0].time >= w[1].time), "newest first: {v:?}");
+    // With no crashes, the driver events fill the whole list.
+    let resets: Vec<DriverEvent> = (0..60).map(|i| ev(1 + i % 28, "nvlddmkm", 153)).collect();
+    assert_eq!(pick_events(resets).len(), 40);
 }
 
 #[test]
