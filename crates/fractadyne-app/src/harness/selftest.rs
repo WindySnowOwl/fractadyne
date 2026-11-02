@@ -788,9 +788,10 @@ impl FractadyneApp {
             );
         }
         // ⭐THE CARD'S SPEED FIRST (`slow_gpu`, 2026-11-01): a GT 710 lost its device in this suite's
-        // third check, a single pass sized on an RTX 3080. A card slower than the suite is sized for
-        // gets the dispatch guard; a check whose pass it refuses is SKIPPED instead of resetting the
-        // driver (and the user's desktop with it). On a faster card every pass still runs.
+        // third check, a single pass sized on an RTX 3080. A card with no calibration entry of its
+        // own that is slower than the suite is sized for gets the dispatch guard; a check whose pass
+        // it refuses is SKIPPED instead of resetting the driver (and the user's desktop with it). On
+        // a faster card, or one with its own entry, every pass still runs (`Policy::new`).
         let speed = self.measure_direct_step(device, queue);
         let simulated = match crate::harness::slow_gpu::simulation() {
             Ok(v) => v,

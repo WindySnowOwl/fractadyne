@@ -59,6 +59,15 @@ published as the pre-releases `v0.2.41-beta.1` to `v0.2.41-beta.150`, and a "bet
 
 Changes after 0.3.0-beta.1:
 
+- **The self-test runs in full again on the RX 6800 XT (0.3.0-beta.24).** beta.23's guard for
+  slow graphics cards switched on there: its probe read the card at 3.6e-8 ms per step, steady over
+  four runs, 1.9 times the speed the suite is sized for and 3.75 times the card's own calibrated
+  cost. Its prices are deliberately pessimistic, so it refused 177 passes (priced at 0.5 to 105 s)
+  that beta.22 had run on that card without a reset, and since the card has its own calibration
+  entry the skips counted as failures: 451 of 548 checks, where beta.22 passed 545 of 546 (the
+  PLUTO battery on the published beta.23). A card with its own calibration entry is now never
+  throttled, since it has run the whole suite in a release battery; the guard stays for cards
+  nobody has measured, like the GT 710. Nothing but the self-test was affected.
 - **An app left alone no longer logs hangs or resets its frame budget (0.3.0-beta.23).** With
   nothing to draw, the app waits for input and draws no frames, and the watchdog, which hears
   from every frame, logged "possible hang" every 30 s for as long as it waited: 50 episodes in

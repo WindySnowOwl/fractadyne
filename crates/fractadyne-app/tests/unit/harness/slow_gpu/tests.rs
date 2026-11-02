@@ -1,18 +1,32 @@
 use super::*;
 
 #[test]
-fn a_card_slower_than_the_suite_is_sized_for_gets_the_guard() {
+fn an_unknown_card_slower_than_the_suite_is_sized_for_gets_the_guard() {
     // The RTX 3080's table cost and the default card's: priced only.
     assert!(!Policy::new(5.35e-9, false, true).enforce);
     assert!(!Policy::new(SIZED_FOR_MS_PER_STEP, false, false).enforce);
-    // Slower: enforced, with or without an entry of its own.
+    // Slower, with no entry of its own: enforced.
     assert!(Policy::new(SIZED_FOR_MS_PER_STEP * 1.01, false, false).enforce);
-    assert!(Policy::new(4.2e-6, false, true).enforce);
+    assert!(Policy::new(4.2e-6, false, false).enforce);
     // A simulation always enforces.
     assert!(Policy::new(1.0e-9, true, false).enforce);
-    // A cost that is not a positive number cannot show the card is fast enough.
+    assert!(Policy::new(1.0e-9, true, true).enforce);
+    // A cost that is not a positive number cannot show an unknown card is fast enough.
     for bad in [0.0, -1.0, f64::NAN, f64::INFINITY] {
-        assert!(Policy::new(bad, false, true).enforce, "{bad}");
+        assert!(Policy::new(bad, false, false).enforce, "{bad}");
+    }
+}
+
+#[test]
+fn a_card_with_its_own_calibration_entry_is_never_throttled() {
+    // beta.23's battery on the RX 6800 XT: the probe read 3.618e-8 ms per step (1.9x the sizing),
+    // and the guard refused 177 passes that beta.22 had run there.
+    let radeon = Policy::new(3.618e-8, false, true);
+    assert!(!radeon.enforce);
+    assert!(radeon.describe(None).contains("its own calibration entry"), "{}", radeon.describe(None));
+    // Whatever the probe reads, or fails to.
+    for read in [4.2e-6, 0.0, -1.0, f64::NAN, f64::INFINITY] {
+        assert!(!Policy::new(read, false, true).enforce, "{read}");
     }
 }
 
