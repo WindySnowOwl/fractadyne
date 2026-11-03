@@ -188,6 +188,19 @@ enum Screen {
     /// The right panel's palette dropdown open: every preset and saved gradient beside its swatch,
     /// as Color ▸ Palette shows them, scrolling past the popup's height.
     PaletteDropdown,
+    /// The same list open on Mondrian with the pointer resting on Ice, through egui's own input
+    /// (`UiPointer::OnPaletteRow`): the view shows Ice, the hover preview, while Mondrian stays the
+    /// chosen palette.
+    PalettePreview,
+    /// The list closed without a choice (the step's reset closes it, as anything might): the view
+    /// is Mondrian again.
+    PalettePreviewRevert,
+    /// "Edit gradient…" on Ember with an older custom gradient lying unseen (Ice, named "Old ice"):
+    /// the editor opens on EMBER's stops, with an empty name.
+    PaletteEditCurrent,
+    /// The same opening, then the editor's Cancel (`cancel_gradient_edit`, the button's own
+    /// function): Ember chosen again, the old custom gradient and its name back.
+    PaletteEditCancel,
     /// The formula library window, seeded in memory: a parameterized formula SHOWING (its row
     /// marked), a two-statement one, one that does not read in this version (its reason in red), and
     /// a name long enough to need truncating.
@@ -883,6 +896,10 @@ fn build_steps() -> Vec<Step> {
         screen("formula-library-filtered", Screen::FormulaLibraryFiltered),
         screen("fractal-dropdown", Screen::FractalDropdown),
         screen("palette-dropdown", Screen::PaletteDropdown),
+        screen("palette-preview", Screen::PalettePreview),
+        screen("palette-preview-revert", Screen::PalettePreviewRevert),
+        screen("palette-edit-current", Screen::PaletteEditCurrent),
+        screen("palette-edit-cancel", Screen::PaletteEditCancel),
         screen("life-draw", Screen::LifeDraw),
         screen("lsystem", Screen::LSystem),
         screen("lsystem-draw-on", Screen::LSystemDrawOn),
@@ -979,7 +996,16 @@ impl FractadyneApp {
                 let step = ut.steps[ut.idx].clone();
                 let palette_before = self.coloring.palette_idx;
                 self.uitest_apply(ctx, &step);
-                if matches!(step.kind, StepKind::Screen(Screen::PaletteDropdown)) {
+                if matches!(
+                    step.kind,
+                    StepKind::Screen(
+                        Screen::PaletteDropdown
+                            | Screen::PalettePreview
+                            | Screen::PalettePreviewRevert
+                            | Screen::PaletteEditCurrent
+                            | Screen::PaletteEditCancel
+                    )
+                ) {
                     ut.restore_palette = Some(palette_before);
                 }
                 // Under the panel the previous step left drawn: Japanese, whose system font
@@ -1081,6 +1107,17 @@ impl FractadyneApp {
                             ut.settle_until = now + std::time::Duration::from_millis(800);
                         }
                     }
+                }
+                // The gradient editor's Cancel, pressed once the editor has opened and taken its
+                // baseline (its first frame), through the function the button itself calls. Once:
+                // Cancel closes it.
+                if matches!(ut.steps[ut.idx].kind, StepKind::Screen(Screen::PaletteEditCancel))
+                    && self.coloring.palette_editor_open
+                    && self.coloring.editor_baseline.is_some()
+                {
+                    self.cancel_gradient_edit();
+                    ctx.request_repaint();
+                    ut.settle_until = now + std::time::Duration::from_millis(400);
                 }
                 let ref_building = self.recompute_rx[0].is_some();
                 let ref_settled = ol > 0
@@ -1296,7 +1333,9 @@ impl FractadyneApp {
         self.worker_cards_rx = None;
         self.update_prompt_open = false;
         self.language.window_open = false;
-        self.coloring.palette_editor_open = false;
+        // The editor's own close, not just its flag: the flag alone left its Cancel baseline
+        // behind for the next screen that opens it.
+        self.close_gradient_editor();
         // ⚠**Three windows this list had missed**, found by narrowing the gradient editor in P3′:
         // the Diagnostics window opened at step 14 was still standing behind every screenshot from
         // 15 onward, and simply happened to be covered. "Each screenshot shows one screen only" is
@@ -1844,6 +1883,42 @@ impl FractadyneApp {
                 self.coloring.use_binary = false;
                 self.dialogs.open_palette_dropdown = true;
             }
+            Screen::PalettePreview | Screen::PalettePreviewRevert => {
+                self.dialogs.right_panel_open = true;
+                self.coloring.palette_idx = 10; // Mondrian chosen, as the step before
+                self.coloring.use_custom_palette = false;
+                self.coloring.use_duotone = false;
+                self.coloring.use_binary = false;
+                use crate::palette_preview::PaletteRow;
+                use crate::UiPointer::{Gone, OnPaletteRow};
+                if matches!(s, Screen::PalettePreview) {
+                    self.dialogs.open_palette_dropdown = true;
+                    // Onto Ice, the list's second row: a cool ramp against Mondrian's primaries.
+                    // One event a frame, and the first land before the list has drawn and are
+                    // dropped (`life_pointer_event`), hence several; they all put the pointer in
+                    // the same place, and the step's quiet period outlasts the preview's pause.
+                    self.harness.uitest_pointer = std::iter::repeat(OnPaletteRow(PaletteRow::Preset(1))).take(6).collect();
+                } else {
+                    // Nothing open (`uitest_apply` closed the list): the pointer leaves as well.
+                    self.harness.uitest_pointer = [Gone].into_iter().collect();
+                }
+            }
+            Screen::PaletteEditCurrent | Screen::PaletteEditCancel => {
+                // An older custom gradient, NOT on screen: Ice, saved under a name. Ember chosen.
+                let ice = &fractadyne_color::PRESETS[1];
+                self.store_segments(&fractadyne_color::segment::Gradient::from_stops(ice.name, ice.stops));
+                self.coloring.custom_palette_flat = false;
+                self.coloring.gradient_name = "Old ice".into();
+                self.coloring.palette_idx = 0;
+                self.coloring.use_custom_palette = false;
+                self.coloring.use_duotone = false;
+                self.coloring.use_binary = false;
+                self.coloring.palette_rev = self.coloring.palette_rev.wrapping_add(1);
+                self.dialogs.right_panel_open = true;
+                // What both "Edit gradient…" buttons do, and all they do. The Cancel step's Cancel
+                // is pressed by the step driver once the editor has taken its baseline.
+                self.coloring.palette_editor_open = true;
+            }
             Screen::LifeDraw => {
                 // The gun at generation 0, 12 px a cell, the Draw tool on, the panel open.
                 self.life_open_library("Gosper glider gun");
@@ -2013,6 +2088,114 @@ impl FractadyneApp {
                     u.generation(),
                     self.life.playing,
                     self.harness.uitest_pointer.len()
+                ),
+            });
+        }
+
+        // The palette pickers' hover preview and "Edit gradient…", judged on the BAKED palettes —
+        // what the view draws with — not only on the flags that choose them.
+        let preset_lut = |i: usize| {
+            let p = &fractadyne_color::PRESETS[i];
+            fractadyne_color::segment::Gradient::from_stops(p.name, p.stops)
+                .bake(fractadyne_color::segment::LUT_SIZE)
+                .entries
+        };
+        let lut_diff = |a: &[[f32; 4]], b: &[[f32; 4]]| -> f32 {
+            if a.len() != b.len() {
+                return f32::INFINITY;
+            }
+            a.iter().zip(b).flat_map(|(x, y)| x.iter().zip(y).map(|(p, q)| (p - q).abs())).fold(0.0, f32::max)
+        };
+        if let StepKind::Screen(s @ (Screen::PalettePreview | Screen::PalettePreviewRevert)) = step.kind {
+            use crate::palette_preview::PaletteRow;
+            let preview = matches!(s, Screen::PalettePreview);
+            let (view, _) = self.view_lut();
+            let (chosen, _) = self.active_lut();
+            let c = &self.coloring;
+            let mondrian_chosen = c.palette_idx == 10 && !c.use_custom_palette && !c.use_duotone && !c.use_binary;
+            let shown = self.previewed_row();
+            let (ice, mondrian) = (preset_lut(1), preset_lut(10));
+            let view_is = if lut_diff(&view, &ice) == 0.0 {
+                "Ice"
+            } else if lut_diff(&view, &mondrian) == 0.0 {
+                "Mondrian"
+            } else {
+                "neither"
+            };
+            let ok = mondrian_chosen
+                && lut_diff(&chosen, &mondrian) == 0.0
+                && if preview {
+                    shown == Some(PaletteRow::Preset(1)) && view_is == "Ice"
+                } else {
+                    shown.is_none() && view_is == "Mondrian"
+                };
+            checks.push(Check {
+                name: if preview {
+                    "resting on a palette row previews it, and chooses nothing".into()
+                } else {
+                    "closing the list without a choice puts the chosen palette back".into()
+                },
+                verdict: if ok { Verdict::Pass } else { Verdict::Fail },
+                detail: format!(
+                    "previewing {shown:?}; the view draws {view_is}; chosen: preset {} (custom {}, duotone {}, binary {}); {} pointer events left",
+                    c.palette_idx,
+                    c.use_custom_palette,
+                    c.use_duotone,
+                    c.use_binary,
+                    self.harness.uitest_pointer.len()
+                ),
+            });
+        }
+        if matches!(step.kind, StepKind::Screen(Screen::PaletteEditCurrent)) {
+            // Opened on Ember with Ice lying unseen as the custom gradient: the editor must hold
+            // EMBER, and the name that went with Ice must be gone.
+            let c = &self.coloring;
+            let d = lut_diff(&self.custom_gradient().bake(fractadyne_color::segment::LUT_SIZE).entries, &preset_lut(0));
+            let ok = c.palette_editor_open
+                && c.editor_baseline.is_some()
+                && c.use_custom_palette
+                && !c.use_duotone
+                && !c.use_binary
+                && c.gradient_name.is_empty()
+                && d < 1e-5;
+            checks.push(Check {
+                name: "Edit gradient… starts from the gradient on screen".into(),
+                verdict: if ok { Verdict::Pass } else { Verdict::Fail },
+                detail: format!(
+                    "editor open {}, baseline {}; custom {} (duotone {}, binary {}); name {:?}; editing Ember to within {d:.1e}",
+                    c.palette_editor_open,
+                    c.editor_baseline.is_some(),
+                    c.use_custom_palette,
+                    c.use_duotone,
+                    c.use_binary,
+                    c.gradient_name
+                ),
+            });
+        }
+        if matches!(step.kind, StepKind::Screen(Screen::PaletteEditCancel)) {
+            // …and Cancel puts back the moment before it opened: Ember chosen, Ice and its name
+            // back as the (unseen) custom gradient, the editor closed with no baseline left over.
+            let c = &self.coloring;
+            let (chosen, _) = self.active_lut();
+            let d_ice = lut_diff(&self.custom_gradient().bake(fractadyne_color::segment::LUT_SIZE).entries, &preset_lut(1));
+            let d_view = lut_diff(&chosen, &preset_lut(0));
+            let ok = !c.palette_editor_open
+                && c.editor_baseline.is_none()
+                && !c.use_custom_palette
+                && c.palette_idx == 0
+                && c.gradient_name == "Old ice"
+                && d_ice < 1e-5
+                && d_view == 0.0;
+            checks.push(Check {
+                name: "Cancel puts the palette back as it was before Edit gradient…".into(),
+                verdict: if ok { Verdict::Pass } else { Verdict::Fail },
+                detail: format!(
+                    "editor open {}, baseline {}; chosen preset {} (custom {}); view vs Ember {d_view:.1e}; custom vs Ice {d_ice:.1e}; name {:?}",
+                    c.palette_editor_open,
+                    c.editor_baseline.is_some(),
+                    c.palette_idx,
+                    c.use_custom_palette,
+                    c.gradient_name
                 ),
             });
         }

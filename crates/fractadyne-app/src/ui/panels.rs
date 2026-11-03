@@ -233,11 +233,17 @@ impl FractadyneApp {
                         .height(430.0)
                         .show_ui(ui, |ui| {
                             let is_preset = !self.coloring.use_custom_palette && !self.coloring.use_duotone && !self.coloring.use_binary;
+                            // The hover preview, as in Color ▸ Palette: reported from inside the
+                            // open list, so closing it any way at all reverts the view.
+                            use crate::palette_preview::PaletteRow;
+                            self.coloring.palette_preview.picker_open();
                             // Each with its swatch, as Color ▸ Palette shows them: the same
                             // control on two surfaces (`palette_menu_row`).
                             for (i, p) in fractadyne_color::PRESETS.iter().enumerate() {
                                 let g = fractadyne_color::segment::Gradient::from_stops(p.name, p.stops);
-                                if Self::palette_menu_row(ui, &g, p.name, is_preset && self.coloring.palette_idx == i) {
+                                let row = Self::palette_menu_row(ui, &g, p.name, is_preset && self.coloring.palette_idx == i);
+                                self.coloring.palette_preview.row(PaletteRow::Preset(i), row.rect, row.hovered);
+                                if row.clicked {
                                     self.coloring.palette_idx = i;
                                     self.coloring.use_custom_palette = false;
                                     self.coloring.use_duotone = false;
@@ -252,7 +258,9 @@ impl FractadyneApp {
                                 let mut apply = None;
                                 for (i, sg) in self.saved_gradients.iter().enumerate() {
                                     let g = crate::segments_to_gradient(&sg.name, &sg.segment);
-                                    if Self::palette_menu_row(ui, &g, &sg.name, live_saved == Some(i)) {
+                                    let row = Self::palette_menu_row(ui, &g, &sg.name, live_saved == Some(i));
+                                    self.coloring.palette_preview.row(PaletteRow::Saved(i), row.rect, row.hovered);
+                                    if row.clicked {
                                         apply = Some(i);
                                     }
                                 }
@@ -317,10 +325,8 @@ impl FractadyneApp {
                         }
                     });
                 } else if ui.button(tr!(menu_color_edit_gradient)).clicked() {
-                    if self.coloring.custom_palette.is_empty() {
-                        self.coloring.custom_palette = self.preset_as_stops(self.coloring.palette_idx);
-                    }
-                    self.coloring.use_custom_palette = true;
+                    // Only OPENS it: the editor starts from the gradient on screen, and takes its
+                    // Cancel point first (`palette_editor_window`).
                     self.coloring.palette_editor_open = true;
                 }
                 labelled(ui, &tr!(panel_cycle), |ui| {

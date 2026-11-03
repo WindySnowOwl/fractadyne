@@ -59,6 +59,15 @@ published as the pre-releases `v0.2.41-beta.1` to `v0.2.41-beta.150`, and a "bet
 
 Changes after 0.3.0-beta.1:
 
+- **The palette lists preview a gradient before you choose it, and "Edit gradient…" edits the one
+  on screen (0.3.0-beta.25).** Rest the pointer on a gradient in Color ▸ Palette or in the panel's
+  Palette list and, after a moment, the view shows it; choosing it keeps it, and closing the list
+  any other way puts the chosen palette back. A preview is never saved: exports, snapshots and
+  bookmarks use the palette you chose. "Edit gradient…" used to reopen the last custom gradient
+  whenever there was one, so after choosing a preset it put that older gradient back on screen in
+  place of the preset; it now starts from what the view is showing — a preset, a saved gradient,
+  the duotone ramp or Binary's colour — and Cancel puts back the palette as it was before, the
+  preset or two-colour mode included.
 - **AMD graphics cards render up to 2.7× faster, and compute what NVIDIA's do (0.3.0-beta.25).**
   The shader's double-precision helpers computed an error term on every addition that NVIDIA's
   shader compiler has always thrown away, so every NVIDIA render, every reference image and the

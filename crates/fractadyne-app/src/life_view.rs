@@ -21,7 +21,8 @@ pub(crate) enum LifeTool {
     Draw,
 }
 
-/// A pointer event a harness feeds the app (`--uitest`'s life-draw step), at a CELL of the Life view.
+/// A pointer event a harness feeds the app (`--uitest`), at a CELL of the Life view (the
+/// life-draw step) or onto a palette picker's row (the palette-preview step).
 #[derive(Clone, Copy, Debug)]
 pub(crate) enum UiPointer {
     Move(i64, i64),
@@ -29,6 +30,9 @@ pub(crate) enum UiPointer {
     Release(i64, i64),
     /// The pointer leaves the window (as it was before the script: the harness has no pointer).
     Gone,
+    /// The pointer moves onto the middle of this row of an open palette picker, where the last
+    /// frame drew it (`PalettePreview::row_rect`). Nothing when no picker drew it.
+    OnPaletteRow(crate::palette_preview::PaletteRow),
 }
 
 /// A change to the universe, waiting for a current copy to be made to.
@@ -385,7 +389,8 @@ impl FractadyneApp {
             status: self.life.status.clone(),
             download: self.life.want_download,
         };
-        let (lut, lut_smooth) = self.active_lut();
+        // The SCREEN's palette, a picker's hover preview included (`view_lut`).
+        let (lut, lut_smooth) = self.view_lut();
         fractadyne_gpu::MandelbrotParams {
             life: Some(Arc::new(frame)),
             formula: fractadyne_core::formula::LIFE,
@@ -395,7 +400,7 @@ impl FractadyneApp {
             // live cell lands mid-palette, where palettes are bright, rather than at an end.
             cycle: 0.5,
             offset: self.coloring.offset,
-            interior_col: self.interior_color(),
+            interior_col: self.view_interior_color(),
             aa_palette: crate::palette_aa_enabled(),
             resolution,
             ss,
@@ -428,6 +433,15 @@ impl FractadyneApp {
     /// `p` as the egui event a real mouse would send: at the middle of its cell in the view, in
     /// points (the view's rect from the last frame's layout). `None` before there is a layout.
     pub(crate) fn life_pointer_event(&self, ctx: &egui::Context, p: UiPointer) -> Option<egui::Event> {
+        // The two that are not a cell, answered before the Life view's own layout is asked for:
+        // outside a Life view there is none, and `Gone` must still leave.
+        match p {
+            UiPointer::OnPaletteRow(row) => {
+                return self.coloring.palette_preview.row_rect(row).map(|r| egui::Event::PointerMoved(r.center()));
+            }
+            UiPointer::Gone => return Some(egui::Event::PointerGone),
+            _ => {}
+        }
         let rect = self.perf.layout.central?;
         let w = life::cell_window(&self.viewport)?;
         let ppp = f64::from(ctx.pixels_per_point());
@@ -446,7 +460,8 @@ impl FractadyneApp {
             UiPointer::Move(x, y) => egui::Event::PointerMoved(at(x, y)),
             UiPointer::Press(x, y) => button(x, y, true),
             UiPointer::Release(x, y) => button(x, y, false),
-            UiPointer::Gone => egui::Event::PointerGone,
+            // Answered above.
+            UiPointer::Gone | UiPointer::OnPaletteRow(_) => return None,
         })
     }
 

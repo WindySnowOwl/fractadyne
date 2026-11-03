@@ -96,6 +96,7 @@ mod video_pipe;
 mod scripting;
 mod session_outcome;
 mod machine;
+mod palette_preview;
 mod sysinfo;
 mod theme;
 mod tone;
@@ -5790,15 +5791,17 @@ struct GradientFile {
 
 /// Everything **Cancel** puts back — the gradient exactly as it stood when the editor opened.
 ///
-/// ⚠It has to carry `use_custom` too: opening the editor on a preset and then touching anything
-/// switches the palette over to custom, so restoring only the gradient would leave the view on a
-/// custom palette the user had cancelled out of.
+/// ⚠It has to carry the palette MODE too (`use_custom`, `use_duotone`, `use_binary`): opening the
+/// editor on a preset, the duotone ramp or Binary copies it in as a custom gradient, so restoring
+/// only the gradient would leave the view on a custom palette the user had cancelled out of.
 #[derive(Clone)]
 struct GradientBaseline {
     segments: Vec<fractadyne_state::PaletteSegment>,
     palette: Vec<[f32; 4]>,
     flat: bool,
     use_custom: bool,
+    use_duotone: bool,
+    use_binary: bool,
     name: String,
 }
 
@@ -6215,6 +6218,9 @@ struct ColoringConfig {
     ugr_file: String,
     /// Bumps on every gradient/duotone edit so caches (e.g. the minimap thumbnail) refresh (transient).
     palette_rev: u32,
+    /// The gradient a palette picker is previewing, shown in place of the chosen palette while the
+    /// pointer rests on its row (transient). See [`crate::palette_preview`].
+    palette_preview: crate::palette_preview::PalettePreview,
     /// Two-color palette modes sharing the `lo`/`hi` colors (DISPLAY-space RGB), overriding preset/custom:
     /// **duotone** maps the value to a smooth `lo → hi → lo` ramp; **binary** paints a flat `hi`
     /// exterior with a flat `lo` interior (just in-set vs out-of-set).
@@ -7773,6 +7779,7 @@ impl FractadyneApp {
                 ugr_choices: Vec::new(),
                 ugr_file: String::new(),
                 palette_rev: 0,
+                palette_preview: Default::default(),
                 use_duotone: s.use_duotone,
                 use_binary: s.use_binary,
                 duotone_lo: s.duotone_lo,
@@ -11287,7 +11294,17 @@ impl FractadyneApp {
         if self.anim.palette_anim == PaletteAnim::Random {
             let (packed, n) = self.anim.random_palette.current();
             Gradient::from_packed("Random", &packed, n)
-        } else if self.coloring.use_binary {
+        } else {
+            self.chosen_gradient()
+        }
+    }
+
+    /// The palette the user CHOSE — preset, custom, duotone or binary — whatever the random morph
+    /// is doing. What "Edit gradient…" copies in when it opens on something other than a custom
+    /// gradient.
+    fn chosen_gradient(&self) -> fractadyne_color::segment::Gradient {
+        use fractadyne_color::segment::Gradient;
+        if self.coloring.use_binary {
             // Flat exterior: one colour everywhere (interior uses `lo`). A single stop makes a
             // flat gradient, which bakes to a nearest-fetch LUT — no interpolation to smear.
             Gradient::from_stops("Binary", &[(0.0, self.coloring.duotone_hi)])
@@ -11300,6 +11317,47 @@ impl FractadyneApp {
         } else {
             let p = &fractadyne_color::PRESETS[self.coloring.palette_idx];
             Gradient::from_stops(p.name, p.stops)
+        }
+    }
+
+    /// The picker row being previewed, if it still names a gradient (a saved one can go away).
+    fn previewed_row(&self) -> Option<crate::palette_preview::PaletteRow> {
+        use crate::palette_preview::PaletteRow;
+        self.coloring.palette_preview.shown().filter(|r| match *r {
+            PaletteRow::Preset(i) => i < fractadyne_color::PRESETS.len(),
+            PaletteRow::Saved(i) => i < self.saved_gradients.len(),
+        })
+    }
+
+    /// The gradient a palette picker is previewing, built as choosing its row would build it.
+    fn previewed_gradient(&self) -> Option<fractadyne_color::segment::Gradient> {
+        use crate::palette_preview::PaletteRow;
+        Some(match self.previewed_row()? {
+            PaletteRow::Preset(i) => {
+                let p = &fractadyne_color::PRESETS[i];
+                fractadyne_color::segment::Gradient::from_stops(p.name, p.stops)
+            }
+            PaletteRow::Saved(i) => {
+                let sg = &self.saved_gradients[i];
+                segments_to_gradient(&sg.name, &sg.segment)
+            }
+        })
+    }
+
+    /// Settle the palette pickers' hover preview for this frame. Called after the menu bar and the
+    /// panel have drawn (they are where the pickers report from) and BEFORE the central view builds
+    /// its frame, so a preview shows in the frame its pause ran out in.
+    fn settle_palette_preview(&mut self, ctx: &egui::Context) {
+        let now = ctx.input(|i| i.time);
+        let s = self.coloring.palette_preview.end_frame(now);
+        if s.changed {
+            // The view below draws the change this frame (its LUT is baked every frame). The
+            // overview map was refreshed earlier in the frame, so it catches up on the next one
+            // (`update_minimap` keys on the preview too).
+            ctx.request_repaint();
+        }
+        if let Some(t) = s.wake_in {
+            ctx.request_repaint_after(std::time::Duration::from_secs_f64(t.max(0.0)));
         }
     }
 
@@ -11321,6 +11379,34 @@ impl FractadyneApp {
             [self.coloring.duotone_lo[0], self.coloring.duotone_lo[1], self.coloring.duotone_lo[2], 1.0]
         } else {
             [0.02, 0.02, 0.03, 1.0]
+        }
+    }
+
+    /// The palette the SCREEN shows: [`Self::active_lut`], unless a palette picker is previewing a
+    /// row.
+    ///
+    /// ⚠⚠**Only the on-screen views and the overview map read this; exports, snapshots and
+    /// bookmark thumbnails read `active_lut`.** A preview is not a choice: a shortcut pressed while
+    /// the pointer rests on a row would otherwise save a picture in a palette the user never picked,
+    /// beside settings that say otherwise.
+    /// ⚠Below the random morph, as a pick is: a preview shows what choosing the row WOULD show.
+    pub(crate) fn view_lut(&self) -> (std::sync::Arc<Vec<[f32; 4]>>, bool) {
+        match self.previewed_gradient() {
+            Some(g) if self.anim.palette_anim != PaletteAnim::Random => {
+                let lut = g.bake(fractadyne_color::segment::LUT_SIZE);
+                (std::sync::Arc::new(lut.entries), lut.smooth)
+            }
+            _ => self.active_lut(),
+        }
+    }
+
+    /// The interior colour the SCREEN shows: a previewed row is shown as choosing it would show it,
+    /// which leaves Binary/Duotone and their interior colour too. See [`Self::view_lut`].
+    pub(crate) fn view_interior_color(&self) -> [f32; 4] {
+        if self.previewed_row().is_some() {
+            [0.02, 0.02, 0.03, 1.0]
+        } else {
+            self.interior_color()
         }
     }
 
@@ -11992,54 +12078,62 @@ impl FractadyneApp {
             self.coloring.eyedrop = None;
             return;
         }
-        // ⭐**Cancel needs a baseline, and it has to be taken HERE.** The editor is opened from
-        // three places (menu, panel, keyboard); capturing on first-frame-open means none of them
-        // can forget to, and it is always "as it was when you opened it" rather than as of some
-        // earlier edit.
-        // ⭐**Bézier by default, applied where it is observable.** Every plain segment becomes an
-        // unbent Bézier the moment the editor opens, so selecting any of them shows draggable
-        // handles rather than a named curve you must convert first. It renders identically — the
-        // identity ease is answered exactly — and it happens HERE, not in `Segment::linear`,
-        // because doing it in the constructor put it on the goldens' path and drifted the corpus
-        // to 8/38 on a midpoint rounding difference. See `segment::DEFAULT_BLEND`.
-        // ⚠Inside the baseline guard, so it runs once per opening and Cancel can undo it.
-        if self.coloring.editor_baseline.is_none() {
-            if let Some(mut g) = self.editable_gradient() {
-                let before = self.coloring.custom_segments.clone();
-                g.promote_linear_to_bezier();
-                self.store_segments(&g);
-                if self.coloring.custom_segments != before {
-                    self.coloring.palette_rev = self.coloring.palette_rev.wrapping_add(1);
-                }
-            }
-        }
+        // ⭐**Cancel needs a baseline, and it has to be taken HERE, before anything changes.** The
+        // editor is opened from two places (Color ▸ Edit gradient… and the panel's button), and
+        // both only OPEN it: none of them can forget the baseline, or change the palette ahead of
+        // it, and it is always "as it was when you opened it" rather than as of some earlier edit.
         if self.coloring.editor_baseline.is_none() {
             self.coloring.editor_baseline = Some(GradientBaseline {
                 segments: self.coloring.custom_segments.clone(),
                 palette: self.coloring.custom_palette.clone(),
                 flat: self.coloring.custom_palette_flat,
                 use_custom: self.coloring.use_custom_palette,
+                use_duotone: self.coloring.use_duotone,
+                use_binary: self.coloring.use_binary,
                 name: self.coloring.gradient_name.clone(),
             });
-            // ⭐**Opening the editor on a preset starts from THAT preset's stops.** With no custom
-            // gradient the editor had nothing to select: the bar showed a preview and no markers,
-            // the ring view showed nothing at all, and every colour control waited for an "Add
-            // stop" that seeded one cyan stop (field report 2026-09-16). Someone who clicked
-            // "Edit gradient…" on Ember wants Ember's stops in front of them. AFTER the baseline,
-            // so Cancel still restores exactly the pre-open state (preset, no custom gradient).
-            if self.editable_gradient().is_none() && self.coloring.custom_palette.is_empty() {
-                self.coloring.custom_palette = self.preset_as_stops(self.coloring.palette_idx);
-                self.coloring.custom_palette_flat = false;
-                self.coloring.custom_segments.clear(); // a stop-setting path, per the rule above
+            // ⭐⭐**The editor starts from the gradient ON SCREEN.** It used to start from the
+            // custom gradient whenever one existed, however long ago it was last shown: choose
+            // Ember after editing another gradient, click "Edit gradient…", and the editor opened
+            // on the old one and put it back on screen in place of Ember (user, 2026-11-02). So a
+            // preset, the duotone ramp or Binary's flat colour is copied in as the custom gradient;
+            // a custom or saved gradient on screen is edited as it stands.
+            // (Before 2026-09-16 a preset gave the editor nothing at all to select — no markers, an
+            // empty ring, colour controls waiting on an "Add stop" — which is why a preset has to be
+            // copied in rather than shown.)
+            let showing_custom =
+                self.coloring.use_custom_palette && !self.coloring.use_duotone && !self.coloring.use_binary;
+            if showing_custom && self.coloring.custom_segments.is_empty() {
+                // A stop list with no segments (a render-only CLI path): the same gradient, editable.
                 self.rebuild_segments_from_palette();
-                if let Some(mut g) = self.editable_gradient() {
-                    g.promote_linear_to_bezier();
-                    self.store_segments(&g);
-                }
+            }
+            if !showing_custom || self.coloring.custom_segments.is_empty() {
+                let g = self.chosen_gradient();
+                self.coloring.custom_palette_flat = false;
+                // Replaces the segments AND the stop list: a stop-setting path, per the rule on
+                // `custom_segments`.
+                self.store_segments(&g);
+                // ⚠⚠**The name goes with the gradient it named.** Kept, it would make Save read
+                // "Update" and overwrite that saved gradient with this one's edits.
+                self.coloring.gradient_name.clear();
+                self.coloring.use_custom_palette = true;
+                self.coloring.use_duotone = false;
+                self.coloring.use_binary = false;
                 self.coloring.sel_stop = 0;
                 self.coloring.sel_segment = 0;
-                self.coloring.palette_rev = self.coloring.palette_rev.wrapping_add(1);
             }
+            // ⭐**Bézier by default, applied where it is observable.** Every plain segment becomes
+            // an unbent Bézier the moment the editor opens, so selecting any of them shows
+            // draggable handles rather than a named curve you must convert first. It renders
+            // identically — the identity ease is answered exactly — and it happens HERE, not in
+            // `Segment::linear`, because doing it in the constructor put it on the goldens' path and
+            // drifted the corpus to 8/38 on a midpoint rounding difference. See
+            // `segment::DEFAULT_BLEND`. ⚠After the baseline, so Cancel undoes it too.
+            if let Some(mut g) = self.editable_gradient() {
+                g.promote_linear_to_bezier();
+                self.store_segments(&g);
+            }
+            self.coloring.palette_rev = self.coloring.palette_rev.wrapping_add(1);
         }
         let mut open = self.coloring.palette_editor_open;
         let mut changed = false;
@@ -13994,37 +14088,58 @@ impl FractadyneApp {
             // something else happened to cause a repaint. This is the frame they need.
             ctx.request_repaint();
         }
-        // ⭐**Cancel restores the baseline wholesale**, including `use_custom_palette`: opening the
-        // editor on a preset and touching anything switches the palette over to custom, so putting
-        // back only the gradient would strand the view on a custom palette the user cancelled out
-        // of. It runs AFTER the `changed` block above for exactly that reason.
+        // ⚠AFTER the `changed` block above, which switches the palette over to custom.
         if cancelled {
-            if let Some(b) = self.coloring.editor_baseline.clone() {
-                self.coloring.custom_segments = b.segments;
-                self.coloring.custom_palette = b.palette;
-                self.coloring.custom_palette_flat = b.flat;
-                self.coloring.use_custom_palette = b.use_custom;
-                self.coloring.gradient_name = b.name;
-                self.coloring.sel_stop = 0;
-                self.coloring.sel_segment = 0;
-                self.coloring.palette_rev = self.coloring.palette_rev.wrapping_add(1);
-            }
+            self.cancel_gradient_edit();
+            // The restore lands after this frame's paint, like every edit here (see above).
+            ctx.request_repaint();
+            return;
         }
         if close_after {
             open = false;
         }
-        // ⚠Dropped whenever the window closes — by ✕, by Cancel, or by the menu toggle — so the
-        // next open captures the state as it is THEN. A baseline that outlived one session of the
-        // window would make Cancel undo edits the user had already accepted by closing it.
-        if !open {
-            self.coloring.editor_baseline = None;
-            self.coloring.drag_stop = None;
-            self.coloring.drag_handle = None;
-            // ⚠Its `base` is a whole gradient held across frames; a stale one would rotate the NEXT
-            // gradient from the previous one's segments the moment a drag resumed.
-            self.coloring.rot_drag = None;
+        if open {
+            self.coloring.palette_editor_open = true;
+        } else {
+            self.close_gradient_editor();
         }
-        self.coloring.palette_editor_open = open;
+    }
+
+    /// The gradient editor's **Cancel**: put the palette back as it was when the editor opened,
+    /// then close it. One function, so `--uitest` presses the same Cancel the button does.
+    ///
+    /// ⭐**It restores the baseline wholesale**, the palette MODE included: opening the editor on a
+    /// preset, the duotone ramp or Binary copies it in as a custom gradient, so putting back only
+    /// the gradient would strand the view on a custom palette the user cancelled out of.
+    fn cancel_gradient_edit(&mut self) {
+        if let Some(b) = self.coloring.editor_baseline.clone() {
+            self.coloring.custom_segments = b.segments;
+            self.coloring.custom_palette = b.palette;
+            self.coloring.custom_palette_flat = b.flat;
+            self.coloring.use_custom_palette = b.use_custom;
+            self.coloring.use_duotone = b.use_duotone;
+            self.coloring.use_binary = b.use_binary;
+            self.coloring.gradient_name = b.name;
+            self.coloring.sel_stop = 0;
+            self.coloring.sel_segment = 0;
+            self.coloring.palette_rev = self.coloring.palette_rev.wrapping_add(1);
+        }
+        self.close_gradient_editor();
+    }
+
+    /// Close the gradient editor and drop everything that lives only while it is open.
+    ///
+    /// ⚠The baseline is dropped whenever the window closes — by ✕, by Cancel, by OK — so the next
+    /// open captures the state as it is THEN. A baseline that outlived one session of the window
+    /// would make Cancel undo edits the user had already accepted by closing it.
+    fn close_gradient_editor(&mut self) {
+        self.coloring.palette_editor_open = false;
+        self.coloring.editor_baseline = None;
+        self.coloring.drag_stop = None;
+        self.coloring.drag_handle = None;
+        // ⚠Its `base` is a whole gradient held across frames; a stale one would rotate the NEXT
+        // gradient from the previous one's segments the moment a drag resumed.
+        self.coloring.rot_drag = None;
     }
 }
 
@@ -14052,6 +14167,10 @@ impl FractadyneApp {
         req.height = MINIMAP_TH;
         req.ss = 1;
         req.max_iter = req.max_iter.clamp(200, 600);
+        // The map is part of the SCREEN, so it shows a palette picker's hover preview as the view
+        // does; the export request it borrows deliberately does not (`view_lut`).
+        (req.lut, req.lut_smooth) = self.view_lut();
+        req.interior_col = self.view_interior_color();
         let progress = std::sync::atomic::AtomicU32::new(0);
         let cancel = std::sync::atomic::AtomicBool::new(false);
         let res = fractadyne_gpu::render_export(device, queue, &req, &progress, &cancel).ok()?;
@@ -14092,7 +14211,14 @@ impl FractadyneApp {
             .iter()
             .chain(&self.coloring.duotone_hi)
             .fold(0u32, |a, &c| a.wrapping_mul(16_777_619) ^ c.to_bits());
-        let (pal_idx, pal_rev) = if self.coloring.use_binary {
+        // A previewed row first, as `active_gradient` reads it: the map shows what the view shows.
+        // A previewed preset keys exactly as the chosen preset would, since it draws the same.
+        use crate::palette_preview::PaletteRow;
+        let (pal_idx, pal_rev) = if let Some(PaletteRow::Preset(i)) = self.previewed_row() {
+            (i, 0)
+        } else if let Some(PaletteRow::Saved(i)) = self.previewed_row() {
+            (usize::MAX - 3, i as u32)
+        } else if self.coloring.use_binary {
             (usize::MAX - 2, duo_hash)
         } else if self.coloring.use_duotone {
             (usize::MAX - 1, duo_hash)
@@ -17497,6 +17623,10 @@ impl eframe::App for FractadyneApp {
         // Right-hand control panel: fractal info, coloring, navigation, and the
         // optional performance section. Hidden entirely while in fullscreen.
         self.draw_right_panel(ctx);
+
+        // After both palette pickers (the Color menu above, the panel just drawn) have reported,
+        // before the view builds its frame from the palette.
+        self.settle_palette_preview(ctx);
 
         self.draw_central(ctx);
 
