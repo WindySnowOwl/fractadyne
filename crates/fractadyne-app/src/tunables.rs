@@ -125,6 +125,9 @@ pub(crate) struct Cost {
     /// An export's pick may take a nucleus in the view as its reference (`NUCLEUS_REF_DEFAULT`;
     /// 0 = off, 1 = on).
     pub nucleus_ref: u64,
+    /// The live view's pick may too, while `nucleus_ref` is on (`NUCLEUS_REF_LIVE_DEFAULT`;
+    /// 0 = off, 1 = on).
+    pub nucleus_ref_live: u64,
     /// A tour's series walk recorded once per reference (`SA_TRACE_DEFAULT`; 0 = off, 1 = on).
     pub sa_trace: u64,
     /// Outside a tour, the longest series walk recorded for reuse, steps (`SA_TRACE_LIVE_STEPS_DEFAULT`;
@@ -225,6 +228,7 @@ impl Default for Cost {
             renorm_bla: RENORM_BLA_DEFAULT,
             orbit_schedule: ORBIT_SCHEDULE_DEFAULT,
             nucleus_ref: NUCLEUS_REF_DEFAULT,
+            nucleus_ref_live: NUCLEUS_REF_LIVE_DEFAULT,
             sa_trace: SA_TRACE_DEFAULT,
             sa_trace_live_steps: SA_TRACE_LIVE_STEPS_DEFAULT,
             growth_in_work: GROWTH_IN_WORK_DEFAULT,
@@ -523,6 +527,15 @@ pub(crate) fn apply_overrides(pairs: &[(String, String)]) -> Result<(), String> 
                     "0" => 0,
                     "1" => 1,
                     _ => return Err(format!("--set NUCLEUS_REF: '{raw}' is not 0 (off) or 1 (on)")),
+                };
+                p.to_string()
+            }
+            "NUCLEUS_REF_LIVE" => {
+                let p = c.nucleus_ref_live;
+                c.nucleus_ref_live = match raw.as_str() {
+                    "0" => 0,
+                    "1" => 1,
+                    _ => return Err(format!("--set NUCLEUS_REF_LIVE: '{raw}' is not 0 (off) or 1 (on)")),
                 };
                 p.to_string()
             }
@@ -839,7 +852,7 @@ pub(crate) const OVERRIDABLE: &str = "TDR_BUDGET_MS, TDR_EXPLICIT_BUDGET_MS, \
     MODE_RATE_UNKNOWN_MARGIN, TDR_MIN_STEPS, TDR_STEPS_CEIL, EXPLICIT_STEPS_CEIL, \
     EXPLICIT_DISPATCH_CAP, TDR_MAX_TILES, TDR_TILES_CEIL, BLA_EPS, PASS_FIXED_MS, MOTION_NEED_QUANTILE, MOTION_NEED_SOURCE, READING_POOL, \
     DEAD_MAN, DISPATCH_CEILING, SETTLE_SERIALIZE, ADMISSION, PIN_TIMEOUT_SCALED, TAIL_DF32, REF_OVERLAP, EARLY_REF, TILE_OCCUPANCY, LIVE_REFRESH, \
-    ORBIT_LEN_CAP, RENORM, TILE_PACK, RENORM_BLA, ORBIT_SCHEDULE, NUCLEUS_REF, SA_TRACE, CHUNK_CHARGE, \
+    ORBIT_LEN_CAP, RENORM, TILE_PACK, RENORM_BLA, ORBIT_SCHEDULE, NUCLEUS_REF, NUCLEUS_REF_LIVE, SA_TRACE, CHUNK_CHARGE, \
     CHUNK_SHUFFLE, WORKER_MOTION, WORKER_YIELD, WORKER_PASS_MS, MISI_FIRST_STAGE_OCT, RECORD_COST_PPM, REUSE_MAX_WRAPS, PIN_BAND_SPAN, REF_OVERTAKEN_DROP, SA_TRACE_LIVE_STEPS, GROWTH_IN_WORK, PIN_GROWTH_LANE, PRE_SWITCH_PROBE, BAND_FLOATEXP, WALK_STEPS, PIN_SPAN_PRICED, TIMER_SLOTS, \
     WALK_SERIALIZE, WALK_ONSET, ACCUM_TIME_CAP_MS, NORM_TOP_QUANTILE, ASSEMBLE_PIECE_MAX";
 
@@ -1446,6 +1459,13 @@ pub(crate) const ORBIT_SCHEDULE_DEFAULT: u64 = 1;
 /// Cerebral Spin (bench scene 63) took 6.8 s with its centre 52 px from a period-104,572 nucleus.
 /// 0 = the plain pick, for the before/after measurement (`--pick-audit` compares the two).
 pub(crate) const NUCLEUS_REF_DEFAULT: u64 = 1;
+
+/// 1 = THE LIVE VIEW'S PICK MAY TAKE A NUCLEUS TOO, by the same rule as an export's, while
+/// `NUCLEUS_REF` is on (the live, hold and tour-lookahead builds alike, so one may serve another).
+/// 0 = the live view picks as before 2026-11-03, exports unaffected: a switch for the live view
+/// alone, should a nucleus reference misbehave somewhere only the live view goes (motion,
+/// refreshes, reuse across frames).
+pub(crate) const NUCLEUS_REF_LIVE_DEFAULT: u64 = 1;
 
 /// 1 = A TOUR'S SERIES WALK ONCE PER REFERENCE (`fractadyne_core::set_sa_trace_cache`, `--render-tour`
 /// processes only): the walk is recorded once and each frame replays its stop rules over the record

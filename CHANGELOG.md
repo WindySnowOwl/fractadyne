@@ -81,9 +81,9 @@ Changes after 0.3.0-beta.1:
   iterations. The deeper Cerebral Spin benchmark scene (6.7e152×, 2 million iterations) takes
   3.4 s at 4K instead of 7.2 s. A new test set puts four minibrots at 136 places in and around the
   view; its off-centre views of the 6.7e152× minibrot take 1.6 to 1.9 s instead of 3.3 to 4.8 s at
-  1080p. At 1e1000×, the old reference also drew wrong pixels on these views, and one came out
-  entirely black; the new one agrees with the arbitrary-precision check. Exports only (stills,
-  tours, zoom videos); the live view picks its reference as before.
+  1080p. (The wrong pixels and black images the old reference drew at 1e1000× came from a
+  separate fault, fixed in the entry above.) Stills, tours, zoom videos and the live view; the
+  live view's use can be switched off alone with `--set NUCLEUS_REF_LIVE=0`.
 - **A render past the graphics card's reference-orbit limit no longer paints false colour inside
   minibrots (0.3.0-beta.26).** A graphics card holds a reference orbit of limited length
   (7,452,444 iterations on an RTX 3080). An export that asked for more iterations than that, at a
