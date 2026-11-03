@@ -585,7 +585,8 @@ impl FractadyneApp {
                 progress: 1.0,
             },
         };
-        let (lut, lut_smooth) = self.active_lut();
+        // The SCREEN's palette, a picker's hover preview included (`view_lut`).
+        let (lut, lut_smooth) = self.view_lut();
         fractadyne_gpu::MandelbrotParams {
             lsystem: Some(Arc::new(frame)),
             formula: fractadyne_core::formula::LSYSTEM,
@@ -595,7 +596,7 @@ impl FractadyneApp {
             // headings), rotated by the offset.
             cycle: 1.0,
             offset: self.coloring.offset,
-            interior_col: self.interior_color(),
+            interior_col: self.view_interior_color(),
             aa_palette: crate::palette_aa_enabled(),
             resolution,
             ss,

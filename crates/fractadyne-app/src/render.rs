@@ -7138,7 +7138,7 @@ impl FractadyneApp {
             stripe_tail_len: self.coloring.stripe_tail_len,
             trap_type: self.coloring.trap_type.to_u32(),
             aa_filter,
-            interior_col: self.interior_color(),
+            interior_col: self.view_interior_color(),
             resolution,
             ss,
             reproject: reproject.is_some() as u32,
@@ -7780,7 +7780,8 @@ impl FractadyneApp {
             } else {
                 (center_bf, center, span, magnification, log2mag, eff_iter, aa_target, None)
             };
-        let (lut, lut_smooth) = self.active_lut();
+        // The SCREEN's palette: a palette picker's hover preview shows here, never in an export.
+        let (lut, lut_smooth) = self.view_lut();
         let (cx, cy) = center;
         // Extended-range scale → shared base-2 exponent + O(1) span mantissas, so nothing
         // underflows/overflows past ~1e308× (the per-pixel δ stays O(1); the GPU re-applies
