@@ -3550,11 +3550,7 @@ impl FractadyneApp {
             return None; // cold start: nothing resident to borrow
         }
         // Same clamp the live renderer applies to its own dispatch — see the note above.
-        let max_iter = if vc.partial {
-            eff_iter.min(vc.orbit_len.saturating_sub(1))
-        } else {
-            eff_iter
-        };
+        let max_iter = partial_ref_cap(vc.partial, eff_iter, vc.orbit_len);
         if max_iter == 0 {
             return None;
         }
@@ -4092,8 +4088,8 @@ impl FractadyneApp {
         self.build_export_request(vp, julia, RefSource::ProbeOnly(Box::new(res)))
     }
 
-    /// The iteration count an export request for `vp` will carry (before the live-borrow cap,
-    /// which only `RefSource::Live` can apply): the auto-iter zoom cap, or the configured count
+    /// The iteration count an export request for `vp` asks for (before `partial_ref_cap`, which only
+    /// a reference that stops short can apply): the auto-iter zoom cap, or the configured count
     /// verbatim when auto-iter is off. Split out of `build_export_request` so ADMISSION PRICING —
     /// the glitch corrector prices its front reference build with this before paying for it —
     /// can never drift from what the builder actually asks.
@@ -4136,8 +4132,10 @@ impl FractadyneApp {
         // Reference orbit + series-approximation + BLA — the slow bignum bundle, computed via the
         // shared `recompute_worker` (same code the live view + the pipelined tour path use, so all
         // three produce byte-identical references). Split timings recorded for `--profile`.
-        // Iteration ceiling. Only the LIVE-borrowed reference can lower it — see `live_ref_fields`.
+        // Iteration ceiling: lowered only to a PARTIAL reference's last sample (`partial_ref_cap`),
+        // by `live_ref_fields` for a borrowed reference and below for a built one.
         let mut req_max_iter = eff_iter;
+        let probe = matches!(src, RefSource::ProbeOnly(_));
         let RefFields { ref_offset, orbit, orbit_len, sa, rn, rn_bla, bla, bla_on } = if !mode.is_direct() {
             // ⭐Borrowed live reference: no bignum, and no `prof.set` (the probe fires many times a
             // second and would otherwise clobber the `--profile` breakdown of the real render).
@@ -4189,6 +4187,22 @@ impl FractadyneApp {
                     });
                     // The tour's frame line says where this frame's reference came from.
                     self.note_ref_source(&res);
+                    // ⭐A reference that stopped short of the ask without escaping (the card's orbit
+                    // limit, `--set ORBIT_LEN_CAP`) caps the render at its last sample, as the live
+                    // view caps its own (`partial_ref_cap`): past it the shader's rebase drew false
+                    // escapes inside minibrots. The coarse-preview probe is capped by its caller as
+                    // well, and fires too often to log.
+                    req_max_iter = partial_ref_cap(res.partial, eff_iter, res.orbit_len);
+                    if req_max_iter < eff_iter && !probe {
+                        crate::diag::log_line(
+                            "ref",
+                            &format!(
+                                "export: the reference stopped at {} samples without escaping (the orbit \
+                                 length limit) - iterations capped at {req_max_iter} of {eff_iter}",
+                                res.orbit_len
+                            ),
+                        );
+                    }
                     assemble_ref_fields(vp, precision, delta_exp, res)
                 }
             }
@@ -12184,6 +12198,27 @@ pub(crate) fn short_escaper_ask(orbit_len: u32, ask: u32) -> bool {
     (orbit_len as u64).saturating_mul(2) < ask.max(1) as u64
 }
 
+/// The iteration count a render may run against its reference: the ask, or for a PARTIAL reference
+/// (it neither escaped nor repeats: stopped by its build's length cap, the graphics card's orbit
+/// limit or `--set ORBIT_LEN_CAP`, or a progressive cold start's first stage) its last sample,
+/// `orbit_len - 1`. One rule for the live dispatch (`shader_series`), the borrowed live reference
+/// (`live_ref_fields`) and every export (`build_export_request`).
+///
+/// ⛔Never iterate past a partial reference's end. The shader rebases there, and a pixel that
+/// tracked the reference all the way then carries its own O(1) value as δ: its offset from the
+/// reference is lost to rounding, and it can escape where it should not. Exports had no cap
+/// until 2026-11-03: the deeper Cerebral Spin (bench scene 63, 6.7e152x) at 7.5M iterations on the
+/// RTX 3080 (orbit limit 7,452,444) drew an ESCAPED ellipse of 1,828 px inside its central
+/// minibrot; with the orbit cut to 1M at a 2M ask, the false escapes came at iteration 1,000,087.
+/// An escaped reference's end is sound to rebase at, and a periodic one wraps exactly.
+pub(crate) fn partial_ref_cap(partial: bool, ask: u32, orbit_len: u32) -> u32 {
+    if partial {
+        ask.min(orbit_len.saturating_sub(1))
+    } else {
+        ask
+    }
+}
+
 /// The iteration a frame's shader runs to and the series skip it applies, from the view's reference
 /// state: `(base, shader_iter, skip)`, `base` being the count before the inversion rescue. One rule
 /// for the dispatch (`bp_finish_params`) and the series-collapse check that has to predict it
@@ -12211,7 +12246,7 @@ pub(crate) fn shader_series(direct: bool, has_ref: bool, partial: bool, gpu_iter
         // were the BLA/SA issue, fixed in `finish_reference`. Capping an escaped-short reference
         // instead collapses every late-escaping BOUNDARY pixel to interior → a hard black border
         // with no filament detail around a deep minibrot.)
-        gpu_iter.min(orbit_len.saturating_sub(1))
+        partial_ref_cap(true, gpu_iter, orbit_len)
     } else {
         gpu_iter
     };

@@ -59,6 +59,15 @@ published as the pre-releases `v0.2.41-beta.1` to `v0.2.41-beta.150`, and a "bet
 
 Changes after 0.3.0-beta.1:
 
+- **A render past the graphics card's reference-orbit limit no longer paints false colour inside
+  minibrots (0.3.0-beta.26).** A graphics card holds a reference orbit of limited length
+  (7,452,444 iterations on an RTX 3080). An export that asked for more iterations than that, at a
+  view whose reference neither escapes nor repeats, carried on past the reference's end, and the
+  pixels that had followed the reference furthest lost their position there and escaped: the
+  deeper Cerebral Spin at 7.5 million iterations drew an ellipse of 1,828 coloured pixels inside
+  its minibrot, which is all interior. Exports, tours and zoom-video strips now stop at the
+  reference's last sample, as the live view already did (its status bar says "depth limit"), and
+  the log says when they do. Renders that stay within the limit are unchanged.
 - **The palette lists preview a gradient before you choose it, and "Edit gradient…" edits the one
   on screen (0.3.0-beta.25).** Rest the pointer on a gradient in Color ▸ Palette or in the panel's
   Palette list and, after a moment, the view shows it; choosing it keeps it, and closing the list
