@@ -75,6 +75,29 @@ impl OrbitPeriod {
     }
 }
 
+/// A nucleus a walk passed near ([`PeriodProbe`]): at step `period` the view was linear
+/// (`|D|·span ≤ 2^-8`, as for [`OrbitPeriod`]) and Newton's first step towards that period's
+/// nucleus, `step = Z/D`, was no longer than the view's span. `c - step` is the nucleus to first
+/// order. Unlike [`OrbitPeriod`] the walk does not stop: a hint is a CANDIDATE reference, which a
+/// pick refines, checks is inside the view and checks closes ([`nucleus_in_view`]).
+///
+/// Why (2026-11-03): the deeper Cerebral Spin (bench scene 63, 6.7e152×) has its centre in the
+/// edge halo of a period-104,572 minibrot 52 px away at 4K. The centre's orbit escapes at
+/// 1,442,500 of a 2M cap, so the pick scored 100 other points and built a non-periodic 2M orbit:
+/// 4.3 s of a 6.8 s render. The walk saw the nucleus at step 104,572 (|Z| = 2^-256,
+/// |D| = 2^255, so 2^-511 away in a 2^-505 view) and had no way to say so.
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub struct NucleusHint {
+    pub period: u32,
+    pub step: CFloatExp,
+}
+
+/// How many [`NucleusHint`]s a walk keeps: the earliest, so the lowest periods.
+const NUCLEUS_HINT_MAX: usize = 16;
+
+/// A hint needs `|Z| ≤ |D|·span ≤ 2^-8`, so the probe's `f64` fast path rules out anything larger.
+const NUCLEUS_HINT_Z_MAX: f64 = 1.0 / 256.0;
+
 /// Watches a Mandelbrot reference orbit (from `Z_0 = 0`) for the step that closes it, carrying
 /// `D_n = dZ_n/dc` in floatexp beside the bignum walk. Fed each new `Z_n` as the loop's own `f64`
 /// view; it asks for the exact extended-range value only when that view is too small to trust
@@ -87,11 +110,31 @@ pub(crate) struct PeriodProbe<'a> {
     /// A cap that can be LOWERED while the build runs (see [`reference_orbit_periodic_until`]).
     stop_at: Option<&'a std::sync::atomic::AtomicU32>,
     pub(crate) found: Option<OrbitPeriod>,
+    /// Nuclei the walk passed near ([`NucleusHint`]), earliest first. Recording them changes
+    /// nothing about the walk or [`Self::found`].
+    pub(crate) hints: Vec<NucleusHint>,
 }
 
 impl<'a> PeriodProbe<'a> {
     pub(crate) fn new(log2_span: f64) -> Self {
-        PeriodProbe { log2_span, z: CFloatExp::ZERO, d: CFloatExp::ZERO, n: 0, stop_at: None, found: None }
+        PeriodProbe { log2_span, z: CFloatExp::ZERO, d: CFloatExp::ZERO, n: 0, stop_at: None, found: None, hints: Vec::new() }
+    }
+
+    /// Record a [`NucleusHint`] at this step if the view is linear here and the nucleus Newton
+    /// points at is within a span of the walk's point.
+    fn hint(&mut self) {
+        if self.hints.len() >= NUCLEUS_HINT_MAX {
+            return;
+        }
+        let d2 = self.d.re * self.d.re + self.d.im * self.d.im;
+        let log2_d = 0.5 * d2.log2();
+        if log2_d + self.log2_span > -PERIOD_LINEAR_OCTAVES || self.z.abs().log2() - log2_d > self.log2_span {
+            return;
+        }
+        // Z / D = Z · conj(D) / |D|²
+        let num = self.z * CFloatExp { re: self.d.re, im: self.d.im.mul_f64(-1.0) };
+        let inv = d2.recip();
+        self.hints.push(NucleusHint { period: self.n, step: CFloatExp { re: num.re * inv, im: num.im * inv } });
     }
 
     /// One step: `Z_{n+1}` was just computed; `(xv, yv)` is its truncated `f64` view and `exact()`
@@ -111,6 +154,9 @@ impl<'a> PeriodProbe<'a> {
         // is ruled out from the f64 view alone, which keeps the common step to the D update.
         if big > 1e-14 || !big.is_finite() {
             self.z = CFloatExp { re: FloatExp::from_f64(xv), im: FloatExp::from_f64(yv) };
+            if big <= NUCLEUS_HINT_Z_MAX {
+                self.hint();
+            }
             return false;
         }
         // Small: below ~1e-150 the f64 view is denormal or zero, so read the exact value.
@@ -129,8 +175,14 @@ impl<'a> PeriodProbe<'a> {
             self.found = Some(OrbitPeriod { period: self.n, log2_z, log2_d });
             return true;
         }
+        self.hint();
         false
     }
+}
+
+/// What a walk's probe found: the period that closed the orbit, and the nuclei it passed near.
+fn probe_outcome(probe: Option<&mut PeriodProbe<'_>>) -> (Option<OrbitPeriod>, Vec<NucleusHint>) {
+    probe.map_or((None, Vec::new()), |pr| (pr.found, std::mem::take(&mut pr.hints)))
 }
 
 /// Split an `f64` into a `(hi, lo)` `f32` pair (df64, ~14 digits).
@@ -386,6 +438,9 @@ pub struct OrbitTail {
     /// orbit for any view [`OrbitPeriod::valid_for`] accepts. The tail is still the true state at
     /// that step, so a view the period is not valid for extends it like any other.
     pub period: Option<OrbitPeriod>,
+    /// Nuclei the build's walk passed near ([`NucleusHint`]), earliest first; empty when the build
+    /// did not watch for a period. A pick of this centre may take one as its reference.
+    pub hints: Vec<NucleusHint>,
     /// Which [`crate::BackendChoice`] built this tail (its `RefBackend::BIT`).
     ///
     /// `extend_reference_orbit` resumes in THIS backend rather than the currently selected one.
@@ -811,13 +866,15 @@ fn dispatch_orbit(
                     // is normally recorded -- so record it here, after the work, or the backend
                     // stamp silently under-reports whenever the fast path is the one that ran.
                     crate::backend::note_observed::<rug::Float>();
+                    let (period, hints) = probe_outcome(probe);
                     Some(OrbitTail {
                     zx: tzx,
                     zy: tzy,
                     zpx,
                     zpy,
                     escaped,
-                    period: probe.and_then(|pr| pr.found),
+                    period,
+                    hints,
                     backend: <rug::Float as RefBackend>::BIT,
                     sched,
                     })
@@ -866,13 +923,15 @@ fn run_orbit_carrier<B: RefBackend>(
     // Stamp AFTER the work, not before: `crate::backend::status_line` is quoted by the startup
     // log, crash reports and every gate, and must report what ran rather than what was asked for.
     crate::backend::note_observed::<B>();
+    let (period, hints) = probe_outcome(probe);
     OrbitTail {
         zx: zx.to_carrier(ctx),
         zy: zy.to_carrier(ctx),
         zpx: zpx.to_carrier(ctx),
         zpy: zpy.to_carrier(ctx),
         escaped,
-        period: probe.and_then(|pr| pr.found),
+        period,
+        hints,
         backend: B::BIT,
         sched: sched.state(),
     }
@@ -2344,6 +2403,9 @@ pub fn scoring_len_from_build(
 pub struct CentreWalk {
     pub len: u32,
     pub samples: Option<Vec<CFloatExp>>,
+    /// Nuclei the centre's walk passed near ([`NucleusHint`]): the build's
+    /// ([`OrbitTail::hints`]), or the pick's own walk's.
+    pub hints: Vec<NucleusHint>,
 }
 
 /// The centre's deep walk from a finished BUILD of the centre at the walk's precision `p`
@@ -2366,13 +2428,14 @@ pub fn centre_walk_from_build(
     want_samples: bool,
 ) -> Option<CentreWalk> {
     if !want_samples {
-        return scoring_len_from_build(len, tail, cx, cy, formula, max_iter, p).map(|len| CentreWalk { len, samples: None });
+        return scoring_len_from_build(len, tail, cx, cy, formula, max_iter, p)
+            .map(|len| CentreWalk { len, samples: None, hints: tail.hints.clone() });
     }
     let steps = len.checked_sub(1)?;
     let whole = tail.escaped || tail.period.is_some() || steps >= max_iter;
     let samples = fe.filter(|s| whole && s.len() == len as usize)?;
     let len = if tail.period.is_some() { max_iter } else { steps.min(max_iter) };
-    Some(CentreWalk { len, samples: Some(samples) })
+    Some(CentreWalk { len, samples: Some(samples), hints: tail.hints.clone() })
 }
 
 /// Where the pick may take its walks of the centre from ([`best_reference_diag_from_build`]).
@@ -2478,11 +2541,11 @@ fn orbit_length_periodic(
     p: usize,
     log2_span: f64,
     samples: Option<&mut Vec<CFloatExp>>,
-) -> (u32, Option<OrbitPeriod>) {
+) -> (u32, Option<OrbitPeriod>, Vec<NucleusHint>) {
     let zero = bf(0.0, p);
     if formula != formula::MANDELBROT {
         let n = orbit_length_probed(crate::backend::selected(), &zero, &zero, cx, cy, formula, max_iter, p, samples, None, false);
-        return (n, None);
+        return (n, None, Vec::new());
     }
     let mut probe = PeriodProbe::new(log2_span);
     let n = orbit_length_probed(
@@ -2498,7 +2561,7 @@ fn orbit_length_periodic(
         Some(&mut probe),
         false,
     );
-    (n, probe.found)
+    (n, probe.found, probe.hints)
 }
 
 /// The one scoring-walk loop, generic over the arithmetic backend. The body is the historical
@@ -2946,6 +3009,9 @@ pub struct RefPickDiag {
     pub scan_perturb: bool,
     /// Candidates [`perturb_scan`] walked in bignum after all (near the threshold, or untrusted).
     pub scan_rewalked: u32,
+    /// The pick is the nucleus of this period, found from the centre's walk
+    /// ([`best_reference_diag_nucleus`]); `None` for every other pick.
+    pub nucleus: Option<u32>,
 }
 
 /// One selection pass at a fixed precision: phase 1 (cheap rank to `quick`) + phase 2 (deep-rank
@@ -2966,6 +3032,8 @@ enum PickPass {
         centre_from_build: bool,
         scan_perturb: bool,
         scan_rewalked: u32,
+        /// The winner is the nucleus of this period ([`nucleus_in_view`]).
+        nucleus: Option<u32>,
     },
     /// Every candidate escaped within `quick` — the longest escaper and its length.
     NoSurvivor { point: [BigFloat; 2], esc_len: u32 },
@@ -3012,7 +3080,7 @@ pub fn best_reference_diag(
     max_iter: u32,
     p: usize,
 ) -> ([BigFloat; 2], RefPickDiag) {
-    best_reference_diag_forced(center, span, formula, julia, julia_c, max_iter, p, None, None)
+    best_reference_diag_forced(center, span, formula, julia, julia_c, max_iter, p, None, None, false)
 }
 
 /// [`best_reference_diag`] that takes the CENTRE's walks from `centre` instead of walking the
@@ -3040,7 +3108,26 @@ pub fn best_reference_diag_from_build(
     p: usize,
     centre: CentreSource<'_>,
 ) -> ([BigFloat; 2], RefPickDiag) {
-    best_reference_diag_forced(center, span, formula, julia, julia_c, max_iter, p, None, Some(centre))
+    best_reference_diag_forced(center, span, formula, julia, julia_c, max_iter, p, None, Some(centre), false)
+}
+
+/// [`best_reference_diag_from_build`] (or [`best_reference_diag`] without a `centre`) that may
+/// elect a NUCLEUS: when the centre does not survive the render and its walk passed a nucleus
+/// inside the view ([`NucleusHint`]), the refined nucleus is the reference, its orbit closing at
+/// one period, instead of the longest-surviving candidate. [`RefPickDiag::nucleus`] says so.
+/// Otherwise the pick is byte-identical to the plain one. Exports only for now (2026-11-03).
+#[allow(clippy::too_many_arguments)]
+pub fn best_reference_diag_nucleus(
+    center: &[BigFloat; 2],
+    span: [FloatExp; 2],
+    formula: u32,
+    julia: bool,
+    julia_c: [f64; 2],
+    max_iter: u32,
+    p: usize,
+    centre: Option<CentreSource<'_>>,
+) -> ([BigFloat; 2], RefPickDiag) {
+    best_reference_diag_forced(center, span, formula, julia, julia_c, max_iter, p, None, centre, true)
 }
 
 /// [`best_reference_diag`] with the phase-2 engine FORCED (`None` = resolve from the inputs —
@@ -3060,9 +3147,10 @@ fn best_reference_diag_forced(
     p: usize,
     force: Option<RefDeepScore>,
     centre: Option<CentreSource<'_>>,
+    nucleus_ok: bool,
 ) -> ([BigFloat; 2], RefPickDiag) {
-    match pick_pass(center, span, formula, julia, julia_c, max_iter, p, force, centre) {
-        PickPass::Winner { point, deep_len, survivors, deep_perturb, deep_scored, rebases, fallbacks, centre_from_build, scan_perturb, scan_rewalked }
+    match pick_pass(center, span, formula, julia, julia_c, max_iter, p, force, centre, nucleus_ok) {
+        PickPass::Winner { point, deep_len, survivors, deep_perturb, deep_scored, rebases, fallbacks, centre_from_build, scan_perturb, scan_rewalked, nucleus }
             if deep_len >= max_iter =>
         (
             point,
@@ -3079,9 +3167,10 @@ fn best_reference_diag_forced(
                 centre_from_build,
                 scan_perturb,
                 scan_rewalked,
+                nucleus,
             },
         ),
-        PickPass::Winner { point, deep_len, survivors, deep_perturb, deep_scored, rebases, fallbacks, centre_from_build, scan_perturb, scan_rewalked } => {
+        PickPass::Winner { point, deep_len, survivors, deep_perturb, deep_scored, rebases, fallbacks, centre_from_build, scan_perturb, scan_rewalked, nucleus: _ } => {
             // The winner escapes before the render budget — either a genuine boundary/exterior
             // view (every point escapes) or a precision cliff between `quick` and `max_iter`.
             // Rescoring the centre at the BUILD precision separates them: only a cliff un-blinds.
@@ -3113,6 +3202,7 @@ fn best_reference_diag_forced(
                         centre_from_build,
                         scan_perturb,
                         scan_rewalked,
+                        nucleus: None,
                     },
                 )
             } else {
@@ -3131,6 +3221,7 @@ fn best_reference_diag_forced(
                         centre_from_build,
                         scan_perturb,
                         scan_rewalked,
+                        nucleus: None,
                     },
                 )
             }
@@ -3143,8 +3234,8 @@ fn best_reference_diag_forced(
             let p2 = p + REF_RESCUE_EXTRA_BITS;
             // The rescan's centre walk is at `p2 + REF_RESCUE_EXTRA_BITS`, not the build's precision,
             // so `centre` cannot answer it: the pass walks the centre itself.
-            match pick_pass(center, span, formula, julia, julia_c, max_iter, p2, force, None) {
-                PickPass::Winner { point, deep_len, survivors, deep_perturb, deep_scored, rebases, fallbacks, centre_from_build, scan_perturb, scan_rewalked } => (
+            match pick_pass(center, span, formula, julia, julia_c, max_iter, p2, force, None, nucleus_ok) {
+                PickPass::Winner { point, deep_len, survivors, deep_perturb, deep_scored, rebases, fallbacks, centre_from_build, scan_perturb, scan_rewalked, nucleus } => (
                     point,
                     RefPickDiag {
                         scoring_prec: p2,
@@ -3159,6 +3250,7 @@ fn best_reference_diag_forced(
                         centre_from_build,
                         scan_perturb,
                         scan_rewalked,
+                        nucleus,
                     },
                 ),
                 PickPass::NoSurvivor { point, esc_len } => (
@@ -3176,6 +3268,7 @@ fn best_reference_diag_forced(
                         centre_from_build: false,
                         scan_perturb: false,
                         scan_rewalked: 0,
+                        nucleus: None,
                     },
                 ),
             }
@@ -3196,6 +3289,7 @@ fn pick_pass(
     p: usize,
     force: Option<RefDeepScore>,
     centre_src: Option<CentreSource<'_>>,
+    nucleus: bool,
 ) -> PickPass {
     // Score candidates by orbit length in **bignum** (f64 coords collapse to the same value at deep
     // zoom, which broke reference selection on cold jumps). TWO PHASES: rank cheaply to `quick`, then
@@ -3267,17 +3361,18 @@ fn pick_pass(
     // walk costs one period instead of the whole budget.
     let log2_span = span[0].log2().max(span[1].log2());
     let pd = p + REF_RESCUE_EXTRA_BITS;
-    let centre_walk_here = |want_samples: bool| -> (u32, Option<Vec<CFloatExp>>) {
+    let centre_walk_here = |want_samples: bool| -> (u32, Option<Vec<CFloatExp>>, Vec<NucleusHint>) {
         if julia {
             let (jx, jy) = (bf(julia_c[0], pd), bf(julia_c[1], pd));
-            (orbit_length_bf(&cands[0][0], &cands[0][1], &jx, &jy, formula, max_iter, pd, true), None)
+            (orbit_length_bf(&cands[0][0], &cands[0][1], &jx, &jy, formula, max_iter, pd, true), None, Vec::new())
         } else if want_samples {
             let mut samples = Vec::new();
-            let (len, _) =
+            let (len, _, hints) =
                 orbit_length_periodic(&cands[0][0], &cands[0][1], formula, max_iter, pd, log2_span, Some(&mut samples));
-            (len, Some(samples))
+            (len, Some(samples), hints)
         } else {
-            (orbit_length_periodic(&cands[0][0], &cands[0][1], formula, max_iter, pd, log2_span, None).0, None)
+            let (len, _, hints) = orbit_length_periodic(&cands[0][0], &cands[0][1], formula, max_iter, pd, log2_span, None);
+            (len, None, hints)
         }
     };
     // Phase 1's scores: by perturbation against the centre where phase 2 would use it (see
@@ -3319,6 +3414,43 @@ fn pick_pass(
         };
         (survivors, esc_i, esc_len) = rank(&scan.scores);
     }
+    // ⭐THE NUCLEUS (`nucleus`; exports only for now). When the centre's own walk does not
+    // survive the render, everything after this point walks some other candidate's whole orbit,
+    // and the app then builds that orbit again at full length. If the centre's walk passed a
+    // nucleus inside the view ([`NucleusHint`]), that nucleus is the better reference: its orbit
+    // closes, so its build stops at one period and the renormalized step can run. Taken only
+    // when its period fits [`NUCLEUS_MIN_REPEATS`] times into the centre's walk, it refines, lies
+    // inside the view and closes for it ([`nucleus_in_view`]); otherwise the pick goes on exactly
+    // as before. A centre that survives keeps its own walk (already built beside the pick) and is
+    // untouched.
+    let mut centre_from_build = false;
+    if nucleus && !julia {
+        let centre = match &centre_beside {
+            Some((len, _, hints)) => Some((*len, hints.clone())),
+            None => centre_src.and_then(|c| (c.walk)(false)).map(|w| {
+                centre_from_build = true;
+                (w.len, w.hints)
+            }),
+        };
+        if let Some((len, hints)) = centre.filter(|(len, _)| *len < max_iter) {
+            let period_max = len / NUCLEUS_MIN_REPEATS;
+            if let Some((point, period)) = nucleus_in_view(&hints, center, span, formula, period_max, pd, log2_span) {
+                return PickPass::Winner {
+                    point,
+                    deep_len: max_iter,
+                    survivors: survivors.len(),
+                    deep_perturb: false,
+                    deep_scored: 0,
+                    rebases: 0,
+                    fallbacks: 0,
+                    centre_from_build,
+                    scan_perturb: scan.perturb,
+                    scan_rewalked: scan.rewalked,
+                    nucleus: Some(period),
+                };
+            }
+        }
+    }
     if survivors.is_empty() {
         // Deep exterior — or a precision cliff; the caller's rescue pass tells them apart.
         return PickPass::NoSurvivor { point: cands[esc_i].clone(), esc_len };
@@ -3339,18 +3471,17 @@ fn pick_pass(
     // feed the same selection loop; `--pickcheck` asserts they elect the same point.
     let first = survivors[0];
     let rest: Vec<usize> = survivors.iter().skip(1).take(REF_DEEP_MAX - 1).copied().collect();
-    let mut centre_from_build = false;
     let (dl0, ref_orbit) = if first == 0 {
         // The centre's deep walk: run beside phase 1, else from the app's build, else walked now
         // (a build cut short of the whole walk). The recorded and plain walks return the same
         // length, so only the recording's use follows the rule below.
         let want = use_perturb && !rest.is_empty();
-        let (len, samples) = match centre_beside {
+        let (len, samples, _) = match centre_beside {
             Some(walk) => walk,
             None => match centre_src.and_then(|c| (c.walk)(want)).filter(|w| !want || w.samples.is_some()) {
                 Some(w) => {
                     centre_from_build = true;
-                    (w.len, w.samples)
+                    (w.len, w.samples, w.hints)
                 }
                 None => centre_walk_here(want),
             },
@@ -3383,6 +3514,7 @@ fn pick_pass(
             centre_from_build,
             scan_perturb: scan.perturb,
             scan_rewalked: scan.rewalked,
+            nucleus: None,
         };
     }
     let mut rebases = 0u32;
@@ -3449,7 +3581,68 @@ fn pick_pass(
         centre_from_build,
         scan_perturb: scan.perturb,
         scan_rewalked: scan.rewalked,
+        nucleus: None,
     }
+}
+
+/// A nucleus is taken only if its orbit repeats at least this often within the centre's own walk.
+/// A reference that closes pays off by being SHORT (its build stops at one period) and by letting
+/// the renormalized step skip whole periods, and both need the pixels to run through several
+/// periods. Measured on the minibrot-offset set (2026-11-03): the view's own minibrot repeated 6 to
+/// 11 times within the centre's walk and its views ran 1.2 to 2.6x faster; a minibrot of period
+/// 72,080 to 731,742 found near the edge repeated 1 to 3 times, and its views ran up to 64x slower
+/// to pick and up to 1.7x slower on the GPU.
+const NUCLEUS_MIN_REPEATS: u32 = 4;
+
+/// How many in-view hints a pick tries (lowest period first), and how many Newton walks each gets.
+/// Each walk is one period long, so a failed hint costs at most three periods.
+const NUCLEUS_TRIES: usize = 2;
+const NUCLEUS_NEWTON_WALKS: usize = 3;
+
+/// The first of `hints` (lowest period first) whose nucleus lies inside the view and whose orbit
+/// closes for it: `(nucleus, period)`. Only hints of period at most `period_max` count, and only
+/// [`NUCLEUS_TRIES`] of them are tried. Each starts at its first-order position, `centre - Z/D`
+/// (one outside the view's rectangle is skipped before any work), and is refined by Newton WALKS:
+/// the candidate is walked exactly one period with the period probe, which either finds the orbit
+/// closing for a view `2^log2_span` across (the candidate is the nucleus to the view's tolerance,
+/// and that walk was its proof) or records a hint at the period, whose `Z/D` is the next Newton
+/// step. `D` is the probe's floatexp derivative, so a walk costs what the orbit costs.
+///
+/// INSIDE THE VIEW, not merely near it: the reference may sit anywhere the pick's own candidates
+/// do (the grid reaches the view's edges), and the BLA tree's radius is sized for that. A nucleus
+/// past the edge is left alone, and so are the views where it is.
+fn nucleus_in_view(
+    hints: &[NucleusHint],
+    center: &[BigFloat; 2],
+    span: [FloatExp; 2],
+    formula: u32,
+    period_max: u32,
+    p: usize,
+    log2_span: f64,
+) -> Option<([BigFloat; 2], u32)> {
+    if formula != formula::MANDELBROT {
+        return None;
+    }
+    let inside = |dx: FloatExp, dy: FloatExp| dx.log2() <= span[0].log2() - 1.0 && dy.log2() <= span[1].log2() - 1.0;
+    let candidates = hints.iter().filter(|h| h.period <= period_max && inside(h.step.re, h.step.im));
+    for h in candidates.take(NUCLEUS_TRIES) {
+        let mut c = [center[0].sub(&h.step.re.to_bf(p), p, RM), center[1].sub(&h.step.im.to_bf(p), p, RM)];
+        for _ in 0..NUCLEUS_NEWTON_WALKS {
+            let (_, closed, next) = orbit_length_periodic(&c[0], &c[1], formula, h.period, p, log2_span, None);
+            if let Some(per) = closed {
+                let off = (bf_to_floatexp(&c[0].sub(&center[0], p, RM)), bf_to_floatexp(&c[1].sub(&center[1], p, RM)));
+                if inside(off.0, off.1) {
+                    return Some((c, per.period));
+                }
+                break;
+            }
+            let Some(g) = next.iter().rev().find(|g| g.period == h.period) else {
+                break;
+            };
+            c = [c[0].sub(&g.step.re.to_bf(p), p, RM), c[1].sub(&g.step.im.to_bf(p), p, RM)];
+        }
+    }
+    None
 }
 
 /// How long the two [`RefDeepScore`] engines took and what each elected — the dual-run
@@ -3489,12 +3682,12 @@ pub fn best_reference_dual(
     let eq = |a: &BigFloat, b: &BigFloat| a.cmp(b).is_some_and(|o| o == 0);
     let t = std::time::Instant::now();
     let (walk, walk_diag) = best_reference_diag_forced(
-        center, span, formula, julia, julia_c, max_iter, p, Some(RefDeepScore::Walk), None,
+        center, span, formula, julia, julia_c, max_iter, p, Some(RefDeepScore::Walk), None, false,
     );
     let walk_secs = t.elapsed().as_secs_f64();
     let t = std::time::Instant::now();
     let (perturb, perturb_diag) = best_reference_diag_forced(
-        center, span, formula, julia, julia_c, max_iter, p, Some(RefDeepScore::Perturb), None,
+        center, span, formula, julia, julia_c, max_iter, p, Some(RefDeepScore::Perturb), None, false,
     );
     let perturb_secs = t.elapsed().as_secs_f64();
     let identical = eq(&walk[0], &perturb[0]) && eq(&walk[1], &perturb[1]);
@@ -4982,6 +5175,10 @@ pub use renorm::*;
 #[cfg(test)]
 #[path = "../tests/unit/reference/pick_deep_scoring.rs"]
 mod pick_deep_scoring;
+
+#[cfg(test)]
+#[path = "../tests/unit/reference/nucleus_pick.rs"]
+mod nucleus_pick;
 
 #[cfg(test)]
 #[path = "../tests/unit/reference/misiurewicz_detection.rs"]

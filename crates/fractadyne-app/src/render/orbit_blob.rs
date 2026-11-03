@@ -376,7 +376,7 @@ pub(crate) fn decode(buf: &[u8]) -> Option<DecodedOrbit> {
     let reuse = ReuseRef {
         point: header.point.clone(),
         prefix: std::sync::Arc::new(orbit),
-        tail: fractadyne_core::OrbitTail { zx, zy, zpx, zpy, escaped, period: None, backend: tail_backend, sched },
+        tail: fractadyne_core::OrbitTail { zx, zy, zpx, zpy, escaped, period: None, hints: Vec::new(), backend: tail_backend, sched },
         prec: header.prec,
     };
     Some(DecodedOrbit { header, reuse })
