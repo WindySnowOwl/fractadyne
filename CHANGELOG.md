@@ -67,7 +67,9 @@ Changes after 0.3.0-beta.1:
   the difference from the reference that the dip carries and followed the reference out. At
   2.3e999× beside a minibrot of period 14,416, an export using the old reference choice came out
   entirely black, and with BLA off every pixel escaped within 8,000 iterations of the reference.
-  The dips are now stored from the full-precision value. This applies to stills, tours, zoom
+  With that minibrot just outside the frame, every export drew a flat disc or a single flat
+  colour. The dips are now stored from the full-precision value. Those views now take two to three
+  times as long, because the real picture costs more to compute than the broken one did. This applies to stills, tours, zoom
   videos and the live view, typically past about 1e600×; shallower renders are unchanged.
   Reference orbits saved by earlier builds are built again, not reused.
 - **Deep exports render faster when a minibrot is in the view but not at its centre, and at
