@@ -31,6 +31,7 @@ fn inputs_for(cx: &str, cy: &str, log2mag: f64, gpu_iter: u32, reuse: Option<Reu
         reuse,
         stop_at: None,
         spawn_orbit_id: 0,
+        nucleus: false,
     }
 }
 

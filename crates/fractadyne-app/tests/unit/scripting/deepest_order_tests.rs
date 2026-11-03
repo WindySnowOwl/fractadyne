@@ -96,6 +96,7 @@ fn reference(re: &str, prec: usize, len: usize) -> crate::render::ReuseRef {
             zpy: bf("0"),
             escaped: false,
             period: None,
+            hints: Vec::new(),
             backend: 0,
             sched: None,
         },

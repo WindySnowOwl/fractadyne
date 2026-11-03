@@ -453,6 +453,11 @@ pub(crate) struct RecomputeInputs {
     /// in-flight reactive build landed 2,008,236 samples on top of it and threw it away. See
     /// `install_recompute`, which drops exactly that: older stamp AND shorter orbit.
     spawn_orbit_id: u64,
+    /// The pick may take a nucleus in the view as the reference
+    /// (`fractadyne_core::best_reference_diag_nucleus`). Exports only, while the tunable
+    /// `NUCLEUS_REF` is on and no audit has turned it off ([`nucleus_pick_enabled`]); the live
+    /// view keeps the plain pick.
+    nucleus: bool,
 }
 
 impl RecomputeInputs {
@@ -1139,7 +1144,7 @@ fn take_early_reference(inputs: &RecomputeInputs) -> Option<RecomputeResult> {
 /// The first input that differs between two reference requests, by name; `None` = the same
 /// request (every field `recompute_worker` reads, and neither carries a reuse).
 fn early_inputs_differ(a: &RecomputeInputs, b: &RecomputeInputs) -> Option<&'static str> {
-    let fields: [(&'static str, bool); 15] = [
+    let fields: [(&'static str, bool); 16] = [
         ("centre", !same_point(&a.center_bf, &b.center_bf)),
         ("span", a.span != b.span),
         ("span mantissa", a.span_mantissa != b.span_mantissa),
@@ -1155,6 +1160,7 @@ fn early_inputs_differ(a: &RecomputeInputs, b: &RecomputeInputs) -> Option<&'sta
         ("stripe frequency", a.stripe_freq.to_bits() != b.stripe_freq.to_bits()),
         ("trap type", a.trap_type != b.trap_type),
         ("reuse", a.reuse.is_some() || b.reuse.is_some()),
+        ("nucleus pick", a.nucleus != b.nucleus),
     ];
     fields.iter().find(|(_, d)| *d).map(|(what, _)| *what)
 }
@@ -1328,6 +1334,15 @@ fn offer_to_orbit_cache(res: &RecomputeResult, key: orbit_blob::OrbitKey, origin
 /// so this is cheap and deterministic — the SAME point comes back for any iteration budget past the
 /// cap, which is why a coarse and a full stage share it exactly. `centre`: the pick's walks of the
 /// centre, from a build of the centre ([`pick_and_build`]); `None` walks them here.
+/// Set by `--pick-audit` to render a view with the plain pick, for comparison with the nucleus pick.
+pub(crate) static NUCLEUS_PICK_OFF: std::sync::atomic::AtomicBool = std::sync::atomic::AtomicBool::new(false);
+
+/// Whether an export's pick may take a nucleus as its reference: the tunable `NUCLEUS_REF`, unless
+/// an audit has turned it off (`NUCLEUS_PICK_OFF`).
+pub(crate) fn nucleus_pick_enabled() -> bool {
+    crate::tunables::cost().nucleus_ref == 1 && !NUCLEUS_PICK_OFF.load(std::sync::atomic::Ordering::Relaxed)
+}
+
 fn pick_reference(
     inp: &RecomputeInputs,
     centre: Option<fractadyne_core::CentreSource<'_>>,
@@ -1339,6 +1354,9 @@ fn pick_reference(
         std::thread::available_parallelism().map_or(1, |n| n.get()) as u32,
     );
     let (point, diag) = match centre {
+        _ if inp.nucleus => fractadyne_core::best_reference_diag_nucleus(
+            center, span, inp.formula, inp.julia, julia_c, inp.gpu_iter, inp.precision, centre,
+        ),
         Some(centre) => fractadyne_core::best_reference_diag_from_build(
             center, span, inp.formula, inp.julia, julia_c, inp.gpu_iter, inp.precision, centre,
         ),
@@ -1364,7 +1382,7 @@ fn pick_reference(
         crate::diag::trace(
             "ref",
             format!(
-                "pick [{}]: ask={} scored@{}bits survivors={} winner_len={}{}{}{} offset=({dx:.3},{dy:.3}) spans{}{}",
+                "pick [{}]: ask={} scored@{}bits survivors={} winner_len={}{}{}{} offset=({dx:.3},{dy:.3}) spans{}{}{}",
                 inp.origin,
                 inp.gpu_iter,
                 diag.scoring_prec,
@@ -1385,6 +1403,8 @@ fn pick_reference(
                 },
                 // Phase 1 by perturbation (design/precision-schedule.md P0), likewise appended.
                 if diag.scan_perturb { format!(" scan=perturb(rewalked={})", diag.scan_rewalked) } else { String::new() },
+                // The nucleus pick, likewise appended.
+                diag.nucleus.map(|n| format!(" nucleus={n}")).unwrap_or_default(),
             ),
         );
     }
@@ -3138,6 +3158,7 @@ impl FractadyneApp {
                 reuse,
                 stop_at: None,
                 spawn_orbit_id: self.ref_cache[0].orbit_id,
+                nucleus: false,
             };
             let (tx, rx) = std::sync::mpsc::channel();
             spawn_named("fd-ref-lookahead", move || {
@@ -3422,6 +3443,7 @@ impl FractadyneApp {
             reuse,
             stop_at: None,
             spawn_orbit_id: self.ref_cache[0].orbit_id,
+            nucleus: false,
         };
         if crate::diag::trace_on("ref") {
             crate::diag::trace(
@@ -3830,6 +3852,7 @@ impl FractadyneApp {
             reuse: None,
             stop_at: None,
             spawn_orbit_id: 0, // export never installs into a live cache
+            nucleus: nucleus_pick_enabled(),
         }
     }
 
@@ -9228,6 +9251,7 @@ impl FractadyneApp {
                     reuse,
                     stop_at: None,
                     spawn_orbit_id: self.ref_cache[vi].orbit_id,
+                    nucleus: false,
                 };
                 // Anti-churn backstop: never respawn more than ~60×/s (spaced ≥ 16 ms). The wider
                 // `out_of_view` above already keeps refreshes infrequent; this just guards against a

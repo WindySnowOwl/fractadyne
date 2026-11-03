@@ -1947,6 +1947,7 @@ fn run_reference<B: RefBackend + IrField>(
         zpy: m.pool[ZP_IM].to_carrier(ctx),
         escaped,
         period: None,
+        hints: Vec::new(),
         backend: B::BIT,
         sched: None,
     })

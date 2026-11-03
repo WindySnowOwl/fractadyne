@@ -45,6 +45,7 @@ pub(crate) fn blob_at(orbit: &[[f32; 4]], prec: usize, iter: u32, k: OrbitKey, r
         zpy: parse_bf_prec("0", prec).unwrap(),
         escaped: false,
         period: None,
+        hints: Vec::new(),
         backend: k.backend,
         sched: None,
     };

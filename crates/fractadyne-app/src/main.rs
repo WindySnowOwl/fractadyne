@@ -7010,10 +7010,11 @@ impl FractadyneApp {
             (audit_count("--tail-audit"), AuditKind::Tail),
             (audit_count("--renorm-audit"), AuditKind::Renorm),
             (audit_count("--band-audit"), AuditKind::Band),
+            (audit_count("--pick-audit"), AuditKind::Pick),
         ];
         let chosen: Vec<_> = audits.iter().filter_map(|(n, k)| n.map(|n| (n, *k))).collect();
         if chosen.len() > 1 {
-            eprintln!("fractadyne: --glitch-audit, --tail-audit, --renorm-audit and --band-audit compare different renders; pass one");
+            eprintln!("fractadyne: --glitch-audit, --tail-audit, --renorm-audit, --band-audit and --pick-audit compare different renders; pass one");
             crate::exit(2)
         }
         let (glitch_audit, audit_kind) = match chosen.first() {

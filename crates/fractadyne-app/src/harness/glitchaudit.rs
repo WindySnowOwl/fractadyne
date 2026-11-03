@@ -37,6 +37,9 @@ pub(crate) enum AuditKind {
     /// `--band-audit`: a view in the df32 band (`1e4×` to `PERT_FE_THRESHOLD`) as df32 perturbation,
     /// as an export draws it, against floatexp with BLA, as the live view draws it (`BAND_FLOATEXP`).
     Band,
+    /// `--pick-audit`: the export with the plain reference pick against the same export with the
+    /// nucleus pick (`NUCLEUS_REF`), which may take a nucleus in the view as the reference.
+    Pick,
 }
 
 impl AuditKind {
@@ -47,6 +50,7 @@ impl AuditKind {
             AuditKind::Tail => ("floatexp", "df32 tail"),
             AuditKind::Renorm => ("perturbation", "renormalized"),
             AuditKind::Band => ("df32", "floatexp+BLA"),
+            AuditKind::Pick => ("plain pick", "nucleus pick"),
         }
     }
 }
@@ -260,6 +264,36 @@ impl crate::FractadyneApp {
                 println!("  {la} {first_s:.1} s · {lb} {:.1} s", t1.elapsed().as_secs_f64());
                 (a, b)
             }
+            AuditKind::Pick => {
+                // The view's export built twice, the plain pick then the nucleus pick, each picking
+                // and building its own reference; the run's own setting is restored after.
+                use crate::render::NUCLEUS_PICK_OFF;
+                use std::sync::atomic::Ordering::Relaxed;
+                let single = |job| match job {
+                    crate::ExportJob::Single(mut r) => {
+                        r.ss = 1;
+                        r.glitch_on = 0;
+                        Ok(r)
+                    }
+                    _ => Err(AppError::Message("--pick-audit needs a single view (not dual)".into())),
+                };
+                let was = NUCLEUS_PICK_OFF.swap(true, Relaxed);
+                let a_req = single(self.build_export_job());
+                NUCLEUS_PICK_OFF.store(false, Relaxed);
+                let b_req = single(self.build_export_job());
+                NUCLEUS_PICK_OFF.store(was, Relaxed);
+                let (a_req, b_req) = (a_req?, b_req?);
+                println!(
+                    "  {la}: orbit {} samples, renormalized step {} · {lb}: orbit {} samples, renormalized step {}",
+                    a_req.orbit_len, a_req.rn.len, b_req.orbit_len, b_req.rn.len
+                );
+                let a = fractadyne_gpu::render_iter_tiled(device, queue, &a_req, crate::tunables::CORRECT_WORK_BUDGET, None, None, None)?.pixels;
+                let first_s = t0.elapsed().as_secs_f64();
+                let t1 = std::time::Instant::now();
+                let b = fractadyne_gpu::render_iter_tiled(device, queue, &b_req, crate::tunables::CORRECT_WORK_BUDGET, None, None, None)?.pixels;
+                println!("  {la} {first_s:.1} s · {lb} {:.1} s", t1.elapsed().as_secs_f64());
+                (a, b)
+            }
             AuditKind::Renorm => {
                 // The same plain render without the step, then with the one this view's reference chose.
                 if plain_req.rn.len == 0 {
@@ -326,7 +360,17 @@ impl crate::FractadyneApp {
         // The step changes almost every pixel by a little (it is an approximation held to 2^-24 per
         // step), so its audit samples the pixels it changes BEYOND the match tolerance: those are
         // the ones a verdict is about.
-        if kind == AuditKind::Renorm {
+        // ⚠A different REFERENCE (the pick audit) moves every pixel's low bits a little: at a
+        // 1e1000x view no escaped pixel came out bit-identical, so the bitwise control pool was
+        // empty and the audit refused a verdict ("0 of 0 control pixels"). Its controls are the
+        // escaped pixels that agree within MATCH_TOL, and, as for the step, the pixels a verdict is
+        // about are those that differ by more than that.
+        if kind == AuditKind::Pick {
+            agree = (0..w * h)
+                .filter(|&i| first[4 * i] >= 0.0 && Value::from_channel(first[4 * i]).agrees(Value::from_channel(second[4 * i])))
+                .collect();
+        }
+        if kind == AuditKind::Renorm || kind == AuditKind::Pick {
             differ.retain(|&i| !Value::from_channel(first[4 * i]).agrees(Value::from_channel(second[4 * i])));
             println!("  sampling the {} pixels that differ by more than {MATCH_TOL}", differ.len());
             if differ.is_empty() {
