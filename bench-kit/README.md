@@ -101,6 +101,34 @@ most of its field stops early and comes out black, so its row in `scenes-ladder.
 2026-10-10 the kit's Fraktaler-3 ran clamped at 4096 and this scene came out entirely black; see
 "Fraktaler-3's limits" below.
 
+### Suggested locations (`-SceneSet suggested`)
+
+Locations other people proposed for what they stress, in `suggested\` and `scenes-suggested.csv`.
+Like the ladder, they are benchmark scenes, not cross-checked correctness fixtures. Run them with
+`-SceneSet suggested` (or `all`; `--scene-set suggested` on Linux).
+
+| Scene | Magnification | Iterations | What it stresses | Source |
+|---|---|---|---|---|
+| 61-flake-7.8e156 | 7.8e156 | 60,000 | perturbation without rebasing needs many reference points to resolve it | Dinkydau's "Flake", suggested by kaludix |
+| 62-fraqcel-2.3e31 | 2.3e31 | 2,000 | without rebasing, glitch correction is likely to recurse into the regions it corrected | the Fraqcel test location, suggested by kaludix |
+| 63-cerebral-spin-6.7e152 | 6.7e152 | 2,000,000 | BLA far ahead of series approximation (36x in Very Plotter) | a deeper "Cerebral Spin", from [Phil Thompson's BLA article](https://philthompson.me/2023/Faster-Mandelbrot-Set-Rendering-with-BLA-Bivariate-Linear-Approximation.html) |
+| 64-ssss-1.3e694 | 1.3e694 | 350,000 | series approximation ahead of BLA (1.66x in Very Plotter) | Dinkydau's "SSSSSSSSSSSSSSSS", from the same article |
+
+kaludix suggested these in the fractalforums.org thread "Benchmarking deep zoom renderers": the
+first two directly, and one location each from Phil Thompson's article where BLA or series
+approximation wins. The centres and iteration caps are copied from the post and from the article's
+own Very Plotter links. Magnifications are converted to the kit's zoom, where the view is 4 / zoom
+high:
+
+- kaludix's "Plot Scale" is read as the view's half-height (zoom = 2 / scale). That reading frames
+  both of their views as a whole structure; read as the full height, the Fraqcel location runs off
+  the frame.
+- Very Plotter's `mag` makes the shorter side of the view 3 / mag (`magnificationFactor` 3 for the
+  Mandelbrot set), so zoom = 4 × mag / 3.
+
+Scene 63 gives Fractadyne `normalize` = `log`, as the ladder's minibrots do: at 2 million iterations
+its field is otherwise palette noise.
+
 ## Prerequisites & quick start
 
 Prerequisites: **PowerShell** (Windows) or **bash** (Linux), and **Python 3 with Pillow**

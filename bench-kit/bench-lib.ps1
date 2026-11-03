@@ -30,12 +30,14 @@ function Resolve-KitPath($p) {
     $ExecutionContext.SessionState.Path.GetUnresolvedProviderPathFromPSPath($p)
 }
 
-# $set: 'standard' = scenes.csv (the published ten), 'ladder' = scenes-ladder.csv, 'all' = both.
+# $set: 'standard' = scenes.csv (the published ten), 'ladder' = scenes-ladder.csv,
+# 'suggested' = scenes-suggested.csv, 'all' = all three.
 function Read-Scenes($kitRoot, $set = 'standard') {
     $files = switch ($set) {
-        'ladder' { @('scenes-ladder.csv') }
-        'all'    { @('scenes.csv', 'scenes-ladder.csv') }
-        default  { @('scenes.csv') }
+        'ladder'    { @('scenes-ladder.csv') }
+        'suggested' { @('scenes-suggested.csv') }
+        'all'       { @('scenes.csv', 'scenes-ladder.csv', 'scenes-suggested.csv') }
+        default     { @('scenes.csv') }
     }
     foreach ($f in $files) { Import-Csv (Join-Path $kitRoot $f) }
 }

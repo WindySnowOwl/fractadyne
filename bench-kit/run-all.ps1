@@ -6,7 +6,7 @@
 #       [-TimeoutS 7200] [-Size 3840x2160] [-ZoomSeqFrames 8] [-PythonExe python]
 #       [-F3Wisdom path] [-F3Limit 8192] [-FractalSharkCliExe path] [-FractalSharkAlgo NAME]
 #       [-FractalSharkPerturbAlg NAME]
-#       [-SceneSet standard|ladder|all] [-Scenes slug-or-id,...]
+#       [-SceneSet standard|ladder|suggested|all] [-Scenes slug-or-id,...]
 
 [CmdletBinding()]
 param(
@@ -21,8 +21,10 @@ param(
     # Which scene list to run. 'standard' is scenes.csv, the ten scenes every published table
     # uses (minutes). 'ladder' is scenes-ladder.csv: 21 scenes that take depth to 1e30000x and the
     # iteration cap to 28.5 million (hours - two of them alone take several minutes per render in
-    # every lane). 'all' runs both. -Scenes then filters whichever set is chosen.
-    [ValidateSet('standard', 'ladder', 'all')]
+    # every lane). 'suggested' is scenes-suggested.csv: locations other people proposed for
+    # what they stress (glitch correction without rebasing; BLA against series approximation).
+    # 'all' runs all three. -Scenes then filters whichever set is chosen.
+    [ValidateSet('standard', 'ladder', 'suggested', 'all')]
     [string]$SceneSet = 'standard',
     # Render size for EVERY lane. 4K because it is what someone actually renders at, and
     # because a benchmark should be a real load: 3840x2160 is 4x the old Fractadyne size
@@ -254,10 +256,12 @@ if ($sceneFilter.Count) {
     if (-not $sceneRows.Count) { Write-Host ('ERROR: -Scenes matched nothing in the ' + $SceneSet + ' scene set'); exit 1 }
 }
 # IN THE REPOSITORY scenes\ is gitignored, so it cannot drift from the files it copies: the
-# standard ten live in validation\corpus\locations and the ladder in ladder\. Refresh every file
+# standard ten live in validation\corpus\locations, the ladder in ladder\ and the suggested set in
+# suggested\. Refresh every file
 # this run needs from there, overwriting, because a stale copy is exactly how scene 35 went
 # missing (below). A packaged kit has no sources beside it and runs on its scenes\ as shipped.
-$sceneSources = @((Join-Path $kit 'ladder'), (Join-Path (Split-Path -Parent $kit) 'validation\corpus\locations'))
+$sceneSources = @((Join-Path $kit 'ladder'), (Join-Path $kit 'suggested'),
+                  (Join-Path (Split-Path -Parent $kit) 'validation\corpus\locations'))
 $sceneDir = Join-Path $kit 'scenes'
 foreach ($s in $sceneRows) {
     foreach ($ext in '.kfr', '.f3.toml', '.fdn') {
@@ -282,7 +286,7 @@ $missing = @(foreach ($s in $sceneRows) {
     }
 })
 if ($missing.Count) {
-    Write-Host ('ERROR: scene files missing (the standard set comes from validation\corpus\locations and the ladder from ladder\, as package.ps1 copies them):')
+    Write-Host ('ERROR: scene files missing (the standard set comes from validation\corpus\locations, the ladder from ladder\ and the suggested set from suggested\, as package.ps1 copies them):')
     $missing | ForEach-Object { Write-Host ('  ' + $_) }
     exit 1
 }
