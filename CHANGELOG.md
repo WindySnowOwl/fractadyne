@@ -77,6 +77,12 @@ Changes after 0.3.0-beta.1:
   probe's verdict, and compares each row with the error terms dropped; its new rows 19–23 show
   an opaque barrier keeping the arithmetic exact on DX12, Vulkan and OpenGL on both cards, which on
   NVIDIA would cost 1.4–3.4× the GPU time, so the renderer does not do that.
+- **The machine profile's event list reads cleanly and keeps every driver reset (0.3.0-beta.25).**
+  On PLUTO (Windows 11 23H2, the beta.24 release battery), each event's level read "Errora": wevtutil
+  ends the field with a NUL and leaves part of an earlier string after it, so a field now ends at its
+  first NUL. The same list was 40 lines, 39 of them the app's own crash records from test runs, which
+  would have pushed out any older driver reset; the app's own crashes now take at most 10 lines, and
+  driver resets, GPU reset reports and unclean restarts the rest.
 - **Diagnostics that answer the next question in the same run (0.3.0-beta.24).** A report from
   someone else's machine used to take several rounds: the GT 710's needed a second one to learn how
   fast the card was, and a device-loss report one to learn whether Windows had reset the driver.

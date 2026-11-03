@@ -51,9 +51,12 @@ pub(crate) fn parse_wevtutil_text(text: &str) -> Vec<DriverEvent> {
     let mut cur: Option<DriverEvent> = None;
     let mut in_description = false;
     for raw in text.lines() {
-        // wevtutil ends some fields with a NUL (`Level: Error` + NUL on Windows 11 26300): keep no
-        // control character, or a report carrying the line reads as binary.
-        let cleaned: String = raw.chars().filter(|c| !c.is_control() || *c == '\t').collect();
+        // wevtutil ends some fields with a NUL (`Level: Error` + NUL on Windows 11 26300), and on
+        // Windows 11 22631 what follows the NUL is left over from an earlier string (`Level: Error`,
+        // NUL, `a`, read as "Errora" on PLUTO, 2026-11-02): a line ends at its first NUL. Keep no
+        // other control character either, or a report carrying the line reads as binary.
+        let upto_nul = raw.split('\u{0}').next().unwrap_or("");
+        let cleaned: String = upto_nul.chars().filter(|c| !c.is_control() || *c == '\t').collect();
         let line = cleaned.trim_end();
         if line.starts_with("Event[") {
             if let Some(e) = cur.take() {
@@ -110,9 +113,29 @@ fn event_queries(days: u32) -> Vec<(&'static str, String)> {
     ]
 }
 
+/// The most event lines a profile carries, and of them the most that are this app's own crashes.
+const MAX_EVENTS: usize = 40;
+const MAX_APP_CRASHES: usize = 10;
+
+/// The events a profile lists, newest first: every driver reset, GPU reset report and unclean
+/// restart up to [`MAX_EVENTS`] in all, and of this app's own crashes only the newest
+/// [`MAX_APP_CRASHES`]. A test machine crashes the app on purpose many times a day; on PLUTO
+/// (2026-11-02) the app's crash records filled all 40 lines and would have pushed out any older
+/// driver reset, which is what the list is for.
+pub(crate) fn pick_events(mut all: Vec<DriverEvent>) -> Vec<DriverEvent> {
+    all.sort_by(|a, b| b.time.cmp(&a.time));
+    let crash = |e: &DriverEvent| e.meaning() == "an application crash or hang";
+    let crashes: Vec<DriverEvent> = all.iter().filter(|e| crash(e)).take(MAX_APP_CRASHES).cloned().collect();
+    let room = MAX_EVENTS - crashes.len();
+    let mut keep: Vec<DriverEvent> = all.into_iter().filter(|e| !crash(e)).take(room).collect();
+    keep.extend(crashes);
+    keep.sort_by(|a, b| b.time.cmp(&a.time));
+    keep
+}
+
 /// The display-driver resets, GPU reset reports, unclean restarts and this app's crashes in the
-/// last `days` days, newest first, at most 40. Application events are kept only when they are a
-/// GPU reset (LiveKernelEvent) or Fractadyne's own. Windows only.
+/// last `days` days, newest first, as [`pick_events`] chooses them. Application events are kept
+/// only when they are a GPU reset (LiveKernelEvent) or Fractadyne's own. Windows only.
 pub(crate) fn driver_events(days: u32) -> Result<Vec<DriverEvent>, String> {
     if !cfg!(windows) {
         return Err("the event log is read on Windows only".to_string());
@@ -138,9 +161,7 @@ pub(crate) fn driver_events(days: u32) -> Result<Vec<DriverEvent>, String> {
             }
         }
     }
-    all.sort_by(|a, b| b.time.cmp(&a.time));
-    all.truncate(40);
-    Ok(all)
+    Ok(pick_events(all))
 }
 
 /// Take the user's home path and the computer's name out of a line from the event log.
