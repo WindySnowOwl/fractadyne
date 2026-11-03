@@ -1330,9 +1330,11 @@ if ($have.zoomseq) {
 #   3. FractalShark once more with that palette, fs-inspect\<stem>.png (its own client, no server);
 #   4. Imagina once more, its counts encoded in colour, im-inspect\<scene>.ppm (imagina-cli
 #      --iterations and the decode map `prepare` writes);
-#   5. inspect-sheet.py sheet: inspect-sheet.jpg and inspect\inspect.json.
-# Fraktaler-3's raw counts are its view check's (f3-raw\). Fractal Zoomer and Fracturing Fog
-# appear in their own palettes.
+#   5. Fractal Zoomer once more, its counts as its colours, fz-inspect\out\<scene>.png (FzsWriter
+#      --counts: its direct colour mode);
+#   6. inspect-sheet.py sheet: inspect-sheet.jpg and inspect\inspect.json.
+# Fraktaler-3's raw counts are its view check's (f3-raw\). Fracturing Fog appears in its own
+# palette.
 if ($Inspect) {
     $insp = Join-Path $kit 'tools\inspect-sheet.py'
     if (-not ($have.fractadyne -and $PythonExe -and (Test-Path $insp))) {
@@ -1430,6 +1432,38 @@ if ($Inspect) {
                 }
             }
             $env:PATH = $savedPath
+        }
+        # Fractal Zoomer's whole iteration counts AS ITS COLOURS: FzsWriter --counts turns on its
+        # direct colour, where a pixel is 0xFF000000 | count & 0xFFFFFF before any palette (0xFFFFFF
+        # interior). One batch for every scene - untimed, so the shared process does not matter.
+        if ($have.fractalzoomer -and (Test-Path $planPath)) {
+            $plan = Get-Content $planPath -Raw | ConvertFrom-Json
+            $fzi = Join-Path $outDir 'fz-inspect'
+            $fziIn = Join-Path $fzi 'in'; $fziOut = Join-Path $fzi 'out'; $fziCwd = Join-Path $fzi 'cwd'; $fziFzs = Join-Path $fzi 'fzs'
+            foreach ($d in $fziIn, $fziOut, $fziCwd, $fziFzs) { New-Item -ItemType Directory -Force -Path $d | Out-Null }
+            $fzCp = $FractalZoomerJar + ';' + $FzsWriterPath
+            $wrote = 0
+            foreach ($s in $sceneRows) {
+                if (-not $plan.PSObject.Properties[$s.slug]) { continue }
+                $wArgs = ('-cp "{0}" FzsWriter --kfr "{1}" --name {2} --out "{3}" --iter {4} --counts' -f
+                          $fzCp, (Join-Path $kit ('scenes\' + $s.slug + '.kfr')), $s.slug, $fziFzs, $s.iterations)
+                $w = Invoke-TimedRender $JavaExe $wArgs 300 $fziCwd
+                $fzs = Join-Path $fziFzs ($s.slug + '.fzs')
+                if ($w.status -eq 'ok' -and (Test-Path $fzs)) {
+                    Copy-Item -Force $fzs $fziIn
+                    $wrote++
+                } elseif ([string]$w.stderr -match 'unknown argument --counts') {
+                    Write-Host ('  ' + $s.slug + ': Fractal Zoomer counts left off the sheet - this FzsWriter predates --counts (rebuild it)')
+                } else {
+                    Write-Host ('  ' + $s.slug + ': Fractal Zoomer counts left off the sheet - FzsWriter ' + $w.status)
+                }
+            }
+            if ($wrote -gt 0) {
+                $argLine = ('{0} -jar "{1}" --cli_batch_dir "{2}" --cli_width 640 --cli_height 360 --cli_output_dir "{3}"' -f
+                            $FractalZoomerJavaArgs, $FractalZoomerJar, $fziIn, $fziOut)
+                $r = Invoke-TimedRender $JavaExe $argLine ($TimeoutS * ($wrote + 1)) $fziCwd
+                if ($r.status -ne 'ok') { Write-Host ('  Fractal Zoomer counts batch: ' + $r.status) }
+            }
         }
         & $PythonExe $insp sheet $outDir 2>&1 | ForEach-Object { '  ' + $_ }
     }

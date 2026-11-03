@@ -43,11 +43,21 @@ WHO GETS IT
   3 (the median), within 1-2 at the median pixel; Cerebral Spin (63, 2M iterations) spreads far
   wider (p90 445), which is Imagina's own Julia-sampling approximation. imagina-cli is not
   deterministic: two runs of one build differed at 82% of pixels of scene 64.
-- Fractal Zoomer and Fracturing Fog: their own images for now, marked "own palette".
+- Fractal Zoomer: its counts ARE its colours. Its direct colour mode (Settings.useDirectColor)
+  makes a pixel 0xFF000000 | (int) result & 0xFFFFFF before any palette or transfer function, and
+  the default out-colouring (escape time, smoothing off) makes `result` the whole iteration count,
+  so FzsWriter --counts writes .fzs files that render counts (0xFFFFFF interior; exact to 2^24).
+  It also sets the escape radius to 256, Fractadyne's: at Fractal Zoomer's default of 2 its count
+  was the exact radius-2 escape (checked against direct iteration), and the steps from radius 2 to
+  256 vary across a view (4 to 8 on scene 62), which the deviation map flagged as 280 patches no
+  single offset could remove. Measured 2026-11-03 at radius 256 on scenes 61-64: its count is
+  Fractadyne's plus 3 on every scene, within 1-3 at the median pixel; 63 spreads to p90 841.
+  Interior agreed to within 4 px; 0 deviating patches on 61, 62, 64 and 2 (0.01%) on 63.
+- Fracturing Fog: its own image, marked "own palette".
   Fraktaler-3 3.1 has no colour option, which is why its raw counts are used.
 
-THE DEVIATION MAP (Fraktaler-3 and Imagina against Fractadyne)
---------------------------------------------------------------
+THE DEVIATION MAP (Fraktaler-3, Imagina and Fractal Zoomer against Fractadyne)
+------------------------------------------------------------------------------
 Over pixels where both escaped, the median count difference is taken as the two renderers'
 convention offset (they count escapes from different radii) and removed. A pixel then deviates
 when its count lies outside the RANGE of Fractadyne's 3x3 neighbourhood by more than DEV_SLACK
@@ -86,6 +96,8 @@ NEVER_ESCAPED = 0xFFFFFFFF
 # IM_MARK), so a pixel gives floor(count) mod IM_N. The blue lane marks a decodable pixel.
 IM_N = 65536
 IM_MARK = 77
+# Fractal Zoomer's direct colour for a pixel that never escaped: (int) Double.MAX_VALUE & 0xFFFFFF.
+FZ_INTERIOR = 0xFFFFFF
 # A count may sit this far outside the reference's 3x3 range before it deviates (escape-count
 # conventions differ by a step or two even after the median offset).
 DEV_SLACK = 2
@@ -226,13 +238,34 @@ def im_counts(path, ref):
     range. (Scene 63, 2026-11-03: a 2^21-entry map showed Imagina's ring by the minibrot 3,448 to
     91,987 below Fractadyne's - Fraktaler-3 agrees with Fractadyne there - and 929 of its 3,066
     deviating pixels past the IM_N / 2 this map can size; every one was flagged.)"""
-    rgb = np.asarray(Image.open(path).convert("RGB")).astype(np.int64)
-    if rgb.shape[:2] != ref.shape:
-        raise ValueError("Imagina image is %dx%d, Fractadyne's counts %dx%d" % (
-            rgb.shape[1], rgb.shape[0], ref.shape[1], ref.shape[0]))
+    rgb = read_rgb(path, ref, "Imagina")
     interior = rgb.sum(axis=2) == 0
     bad = (rgb[..., 2] != IM_MARK) & ~interior
     dec = rgb[..., 0] + (rgb[..., 1] << 8)
+    return unwrap_counts(dec, IM_N, ref, interior, bad), float(bad.mean())
+
+
+def fz_counts(path, ref):
+    """Fractal Zoomer's whole counts from its direct-colour render (fz-inspect/out/<scene>.png,
+    FzsWriter --counts): the colour IS the count, 0xFFFFFF interior. Exact to 2^24 iterations;
+    past that, unwrapped like Imagina's."""
+    rgb = read_rgb(path, ref, "Fractal Zoomer")
+    v = (rgb[..., 0] << 16) | (rgb[..., 1] << 8) | rgb[..., 2]
+    interior = v == FZ_INTERIOR
+    return unwrap_counts(v, 1 << 24, ref, interior, np.zeros(ref.shape, dtype=bool))
+
+
+def read_rgb(path, ref, who):
+    rgb = np.asarray(Image.open(path).convert("RGB")).astype(np.int64)
+    if rgb.shape[:2] != ref.shape:
+        raise ValueError("%s image is %dx%d, Fractadyne's counts %dx%d" % (
+            who, rgb.shape[1], rgb.shape[0], ref.shape[1], ref.shape[0]))
+    return rgb
+
+
+def unwrap_counts(dec, n, ref, interior, bad):
+    """Counts known mod `n` (`dec`), put back at the value nearest Fractadyne's (see `im_counts`);
+    -1 where `interior` or `bad`."""
     anchor = ref.copy()
     near = np.max(np.stack(neighbours(ref, -1)), axis=0)
     anchor[ref < 0] = near[ref < 0]
@@ -240,14 +273,14 @@ def im_counts(path, ref):
         anchor[anchor < 0] = int(np.median(ref[ref >= 0])) if (ref >= 0).any() else 0
 
     def unwrap(target):
-        return dec + IM_N * np.round((target - dec) / IM_N).astype(np.int64)
+        return dec + n * np.round((target - dec) / n).astype(np.int64)
 
     v = unwrap(anchor)
     both = (ref >= 0) & ~interior & ~bad
     off = int(np.median((v - ref)[both])) if both.any() else 0
     v = unwrap(anchor + off)
     v[interior | bad] = -1
-    return v, float(bad.mean())
+    return v
 
 
 def imagina_decode_lines():
@@ -414,7 +447,7 @@ def sheet(res, out_path):
     with open(os.path.join(res, "inspect", "plan.json")) as f:
         plan = json.load(f)
     cols = ["Fractadyne", "Fraktaler-3", "Fraktaler-3 vs Fractadyne", "FractalShark", "Imagina",
-            "Imagina vs Fractadyne", "Fractal Zoomer", "Fracturing Fog"]
+            "Imagina vs Fractadyne", "Fractal Zoomer", "Fractal Zoomer vs Fractadyne", "Fracturing Fog"]
     TW, TH, PAD, LAB, LEFT = 320, 180, 6, 24, 190
     rows = sorted(plan)
     W = LEFT + len(cols) * (TW + PAD)
@@ -462,27 +495,38 @@ def sheet(res, out_path):
             o = own_image(res, "fs-%s-r1.png" % stem)
             if o is not None:
                 tiles[3] = (o, "own palette")
-        imp = os.path.join(res, "im-inspect", scene + ".ppm")
-        if os.path.exists(imp):
-            try:
-                t, undecodable = im_counts(imp, ref)
-                dimg, s["imagina"] = deviation(ref, t, k)
-                s["imagina"]["undecodable_share"] = round(undecodable, 5)
-                off = s["imagina"]["offset"]
-                tiles[4] = (Image.fromarray(colour(np.where(t >= 0, t - off, -1), k)), "offset %+d removed" % off)
-                ims = s["imagina"]
-                tiles[5] = (Image.fromarray(dimg), "%d deviating patches (%.2f%%), %d escaped-in-one patches" % (
-                    ims["deviating_patches"], 100 * ims["deviating_share"], ims["escaped_in_one_only_patches"]))
-            except Exception as e:
-                print("  %s: Imagina counts unreadable (%s)" % (scene, e))
-        if 4 not in tiles:
-            o = own_image(res, "im-%s.png" % scene)
-            if o is not None:
-                tiles[4] = (o, "own palette")
-        for j, pat in ((6, "fz-%s.png" % scene), (7, "ff-%s.png" % scene)):
-            o = own_image(res, pat)
-            if o is not None:
-                tiles[j] = (o, "own palette")
+        # Renderers whose counts come back through colour: coloured here, with their own deviation
+        # column; otherwise their own image.
+        def im_read(p):
+            t, undecodable = im_counts(p, ref)
+            return t, {"undecodable_share": round(undecodable, 5)}
+
+        counted = (
+            ("imagina", "Imagina", 4, os.path.join("im-inspect", scene + ".ppm"), im_read, "im-%s.png" % scene),
+            ("fractalzoomer", "Fractal Zoomer", 6, os.path.join("fz-inspect", "out", scene + ".png"),
+             lambda p: (fz_counts(p, ref), {}), "fz-%s.png" % scene),
+        )
+        for key, who, j, rel, read, own in counted:
+            p = os.path.join(res, rel)
+            if os.path.exists(p):
+                try:
+                    t, extra = read(p)
+                    dimg, st = deviation(ref, t, k)
+                    st.update(extra)
+                    s[key] = st
+                    off = st["offset"]
+                    tiles[j] = (Image.fromarray(colour(np.where(t >= 0, t - off, -1), k)), "offset %+d removed" % off)
+                    tiles[j + 1] = (Image.fromarray(dimg), "%d deviating patches (%.2f%%), %d escaped-in-one patches" % (
+                        st["deviating_patches"], 100 * st["deviating_share"], st["escaped_in_one_only_patches"]))
+                except Exception as e:
+                    print("  %s: %s counts unreadable (%s)" % (scene, who, e))
+            if j not in tiles:
+                o = own_image(res, own)
+                if o is not None:
+                    tiles[j] = (o, "own palette")
+        o = own_image(res, "ff-%s.png" % scene)
+        if o is not None:
+            tiles[8] = (o, "own palette")
         for j, (tile, note) in tiles.items():
             x = LEFT + j * (TW + PAD)
             # Counts coloured here (and FractalShark's stepped palette) are hard-edged: no blending.

@@ -392,9 +392,13 @@ renderer's own look.
   distance estimate, which lights filaments rather than bands), and with a 65,536-entry decode map
   whose every entry encodes its own index (`inspect\imagina-decode.map`), the tool reads the count
   back and colours it like Fraktaler-3's. On scenes 61 to 64 Imagina counts 1 to 3 more than
-  Fractadyne. Fractal Zoomer and Fracturing Fog appear in their own palettes for now.
-  Fraktaler-3 3.1 has no colour option, which is why its raw counts are used.
-- **The deviation map.** Fraktaler-3's and Imagina's counts, less their median offset from
+  Fractadyne. Fractal Zoomer's counts are its colours: FzsWriter `--counts` turns on its direct
+  colour mode, where a pixel is its escape iteration count written straight into RGB (white is
+  interior), and sets its escape radius to Fractadyne's 256 (at its default of 2, the steps
+  between the two radii vary across a view by more than any one offset can take out); on scenes
+  61 to 64 its count is then Fractadyne's plus 3. Fracturing Fog appears in
+  its own palette. Fraktaler-3 3.1 has no colour option, which is why its raw counts are used.
+- **The deviation map.** Fraktaler-3's, Imagina's and Fractal Zoomer's counts, less their median offset from
   Fractadyne's (for Fraktaler-3, 1024 from its EXR's iteration bias plus about 3 from its escape
   radius), are compared with the RANGE
   of Fractadyne's 3x3 neighbourhood, since a renderer samples a pixel somewhere inside it.
@@ -408,6 +412,8 @@ renderer's own look.
   a band was found where it crossed smooth ground, which is the limit of a test done pixel by
   pixel. A 1-iteration shift of the whole frame was not flagged, as it should not be.
 
+Fractal Zoomer joins the sheet only with an FzsWriter that has `--counts`; an older one refuses the
+switch, and the pass says so and leaves Fractal Zoomer's own image in place.
 Imagina joins the sheet only with an `imagina-cli` that has `--iterations`: an older build ignores
 the flag and draws its distance-estimate value through the decode map, which reads back as
 nonsense, so the pass requires the line the flag prints and otherwise leaves Imagina's own image
