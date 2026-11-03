@@ -398,6 +398,17 @@ pub fn render_iter_chunked_timed(
 /// f64 / exact-EFT oracles); this just executes the very shader code the renderer uses on THIS
 /// device and reads it back.
 pub fn gputest(device: &wgpu::Device, queue: &wgpu::Queue) -> Result<(u32, u32, Vec<f32>), GpuError> {
+    gputest_with(device, queue, true)
+}
+
+/// [`gputest`] with the add transforms' residuals kept (`exact_adds`, the self-test's own setting)
+/// or dropped the way the renderer drops them (WGSL `EFT_ADD_RESIDUALS` off) — the second pass is
+/// the AMD-compiler probe's (TODO PR-C2): what this stack computes when the residuals are gone.
+pub fn gputest_with(
+    device: &wgpu::Device,
+    queue: &wgpu::Queue,
+    exact_adds: bool,
+) -> Result<(u32, u32, Vec<f32>), GpuError> {
     const W: u32 = 256;
     const H: u32 = 24; // rows 0–23 of `fs_gputest`
     let shader = shader_module(device);
@@ -433,8 +444,27 @@ pub fn gputest(device: &wgpu::Device, queue: &wgpu::Queue) -> Result<(u32, u32, 
         bind_group_layouts: &[&gtu_bgl],
         push_constant_ranges: &[],
     });
-    let pipeline =
-        fullscreen_pipeline(device, &shader, &layout, "fs_gputest", &[ITER_FORMAT], "gputest.pipeline");
+    // The renderer drops the add transforms' residuals (WGSL `EFT_ADD_RESIDUALS`, TODO PR-C2); the
+    // self-test's pass asks for them, so its rows still test the exact transforms this stack's
+    // compiler gives. The probe's pass leaves them dropped.
+    // The dropped pass computes what this device's renderer does: with the product barrier where
+    // its compiler was found to fuse (`fusion`, asked by the caller first).
+    let consts = std::collections::HashMap::from([
+        ("EFT_ADD_RESIDUALS".to_string(), if exact_adds { 1.0 } else { 0.0 }),
+        (
+            "PRODUCT_BARRIER".to_string(),
+            if !exact_adds && crate::product_barrier(device) { 1.0 } else { 0.0 },
+        ),
+    ]);
+    let pipeline = crate::fullscreen_pipeline_c(
+        device,
+        &shader,
+        &layout,
+        "fs_gputest",
+        &[ITER_FORMAT],
+        if exact_adds { "gputest.pipeline" } else { "gputest.pipeline.dropped" },
+        &consts,
+    );
     let tex = device.create_texture(&wgpu::TextureDescriptor {
         label: Some("gputest.out"),
         size: wgpu::Extent3d { width: W, height: H, depth_or_array_layers: 1 },

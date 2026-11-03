@@ -31,19 +31,58 @@ fn vs_main(@builtin(vertex_index) vi: u32) -> VsOut {
 // Knuth) — implemented from the math, canonical names — and assume round-to-nearest with
 // a *fused* fma (true on the target GPUs).
 
+//
+// ⭐THE ADD RESIDUALS ARE DROPPED (TODO PR-C2, 2026-11-02): `two_sum` and `quick_two_sum` return a
+// zero error term unless a pipeline sets `EFT_ADD_RESIDUALS`. That is exactly what NVIDIA's shader
+// compiler has always made of them (it reassociates the residual to 0 — `fs_gputest` rows 0 and 11),
+// so every render, golden and corpus check was made at this precision: on the RTX 3080 dropping
+// them changes no pixel and no time. AMD's compilers keep the add residuals, and computing them made
+// the RX 6800 XT 1.7–2.9× slower for precision nothing used. `two_prod` keeps its fma residual (NVIDIA
+// keeps it too). Only `--gputest` sets the constant, so it still tests the exact transforms; making
+// them exact for real takes a uniform-derived barrier as well (rows 19–23), which on NVIDIA costs
+// 1.4–3.4× the GPU time (PR-A1, not adopted).
+override EFT_ADD_RESIDUALS: bool = false;
+
 fn quick_two_sum(a: f32, b: f32) -> vec2<f32> {
     let s = a + b;
+    if (!EFT_ADD_RESIDUALS) {
+        return vec2<f32>(s, 0.0);
+    }
     let e = b - (s - a);
     return vec2<f32>(s, e);
 }
 fn two_sum(a: f32, b: f32) -> vec2<f32> {
     let s = a + b;
+    if (!EFT_ADD_RESIDUALS) {
+        return vec2<f32>(s, 0.0);
+    }
     let v = s - a;
     let e = (a - (s - v)) + (b - v);
     return vec2<f32>(s, e);
 }
+// ⭐THE PRODUCT IS KEPT OPAQUE (TODO PR-C2 probe, 2026-11-02). The `--gputest` probe found AMD's
+// Vulkan/GL compiler FUSING `p` into the add that consumes it — df_mul's `p.x + e` became
+// `fma(a.x, b.x, e)`, counting the product's own error twice (256/256 inputs; NVIDIA evaluates it as
+// written) — and doing so in some shaders and not others. `ob` ORs in `ob_zero`, 0 at run time but
+// unknowable at compile time wherever an entry point has armed it from a uniform, so `p` is no
+// longer a product to fuse. Unarmed entry points fold it away and compile as before.
+// The barrier is compiled in only where this device's compiler was found to fuse
+// (`PRODUCT_BARRIER`, set per device by `fusion::detect_product_fusion` through the iterate
+// pipelines' constants): off, `ob` is the identity and the code is what it was before the barrier.
+override PRODUCT_BARRIER: bool = false;
+var<private> ob_zero: u32;
+fn ob(x: f32) -> f32 {
+    if (!PRODUCT_BARRIER) {
+        return x;
+    }
+    return bitcast<f32>(bitcast<u32>(x) | ob_zero);
+}
+// `iu.res` is the iteration grid's size: never negative, so this stores 0 — unprovably.
+fn ob_arm() {
+    ob_zero = select(0u, 1u, iu.res.x < 0.0);
+}
 fn two_prod(a: f32, b: f32) -> vec2<f32> {
-    let p = a * b;
+    let p = ob(a * b);
     let e = fma(a, b, -p);
     return vec2<f32>(p, e);
 }
@@ -2132,6 +2171,7 @@ fn iterate_at(gx: f32, gy: f32) -> FragOut {
 
 @fragment
 fn fs_iterate(in: VsOut) -> FragOut {
+    ob_arm(); // keep two_prod's product opaque (see `ob`)
     // Global texel coordinate = this tile's offset + local fragment position.
     return iterate_at(iu.px_offset.x + in.pos.x, iu.px_offset.y + in.pos.y);
 }
@@ -2194,6 +2234,7 @@ fn vs_split_tiles(@builtin(vertex_index) vi: u32, @builtin(instance_index) ii: u
 
 @fragment
 fn fs_iterate_gather(in: VsOut) -> FragOut {
+    ob_arm(); // keep two_prod's product opaque (see `ob`)
     // in.pos is the texel centre (integer + 0.5); truncation recovers the integer texel.
     let idx = u32(in.pos.y) * iu.gather_w + u32(in.pos.x);
     if (idx >= iu.gather_n) {
@@ -2287,6 +2328,7 @@ fn info_pack(iter: u32, status: f32, ch2: f32, dexp: f32) -> vec4<f32> {
 
 @fragment
 fn fs_iterate_chunk(in: VsOut) -> ChunkOut {
+    ob_arm(); // keep two_prod's product opaque (see `ob`)
     // Pixel coordinate mapping — identical to fs_iterate's prologue.
     // @@STRIP_CHUNK_BEGIN
     let step_re = iu.step.xy;
@@ -3107,6 +3149,7 @@ const NO_SLOT: u32 = 0xffffffffu;
 
 @fragment
 fn fs_iterate_chunk_fe(in: VsOut) -> ChunkOut4 {
+    ob_arm(); // keep two_prod's product opaque (see `ob`)
     return chunk_fe_at(in.pos.xy, vec2<i32>(i32(in.pos.x), i32(in.pos.y)));
 }
 
@@ -3142,6 +3185,7 @@ fn pack_pad() -> ChunkOut4 {
 
 @fragment
 fn fs_iterate_chunk_fe_packed(in: VsOut) -> ChunkOut4 {
+    ob_arm(); // keep two_prod's product opaque (see `ob`)
     let p = vec2<i32>(i32(in.pos.x), i32(in.pos.y));
     var c = vec2<u32>(u32(p.x), u32(p.y));
     if (pk.packed == 1u) {
@@ -3958,8 +4002,19 @@ fn gt_normal_case(t: u32) -> vec2<f32> {
     let d = vec2<f32>(gt_f32(t * 4u + 3u, e - 8, 9u), gt_f32(t * 4u + 4u, e - 8, 9u));
     return slope_normal(z, d);
 }
+// Does this device's compiler fuse two_prod's product into the add that consumes it (see `ob`)?
+// Each texel is one df_mul of a hashed pair (`fs_gputest` row 3's operands), computed with the add
+// residuals dropped and no barrier; `fusion::detect_product_fusion` compares the results with the
+// code as written and compiles the barrier into this device's iterate pipelines if they differ.
+@fragment
+fn fs_fusion_probe(@builtin(position) pos: vec4<f32>) -> @location(0) vec4<f32> {
+    let s = u32(pos.x) + 100003u * 3u;
+    let r = df_mul(gt_df(s * 8u + 3u, -4, 8u), gt_df(s * 8u + 5u, -4, 8u));
+    return vec4<f32>(r.x, r.y, 0.0, 0.0);
+}
 @fragment
 fn fs_gputest(@builtin(position) pos: vec4<f32>) -> @location(0) vec4<f32> {
+    ob_zero = bitcast<u32>(gtu.x) ^ 0x3f800000u; // arm `ob` from this pass's own uniform (1.0)
     let ix = u32(pos.x);
     let op = u32(pos.y);
     let s = ix + 100003u * op; // decorrelate rows

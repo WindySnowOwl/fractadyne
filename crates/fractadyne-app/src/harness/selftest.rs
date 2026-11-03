@@ -3492,6 +3492,9 @@ impl FractadyneApp {
                 // ⚠The real discriminator is EFT PRESERVATION, not vendor identity — an absent
                 // BLESSED-GPU.txt therefore means STRICT, so a missing file can never silently
                 // loosen a gate (the same safe direction the golden comparison takes).
+                // (Since 2026-11-02 the renderer drops the add residuals on every card — WGSL
+                // `EFT_ADD_RESIDUALS`, TODO PR-C2 — so the AMD measurements above describe the
+                // builds before it; the cross-GPU bound stays for whatever else a card does.)
                 let cross_gpu = std::fs::read_to_string(
                     anchored("validation/golden").join("BLESSED-GPU.txt"),
                 )

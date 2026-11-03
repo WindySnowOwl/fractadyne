@@ -59,6 +59,24 @@ published as the pre-releases `v0.2.41-beta.1` to `v0.2.41-beta.150`, and a "bet
 
 Changes after 0.3.0-beta.1:
 
+- **AMD graphics cards render up to 2.7× faster, and compute what NVIDIA's do (0.3.0-beta.25).**
+  The shader's double-precision helpers computed an error term on every addition that NVIDIA's
+  shader compiler has always thrown away, so every NVIDIA render, every reference image and the
+  Fraktaler-3 comparison were made without it. AMD's compilers kept it, at a large cost and for no
+  visible gain. The renderer now drops it on every card. Dropping it alone was not enough on AMD:
+  its compiler then fused a multiply into the add that followed it, counting the product's error
+  twice, in some shaders and not others, so seven self-test checks that need two code paths to
+  agree failed. A probe now asks each graphics card's compiler, once at startup, whether it does
+  that, and where it does, a barrier keeps the product apart. On an RX 6800 XT at 4K, a 1.3e6×
+  view's GPU time fell from 3.2 s to 1.2 s, 1.2e148× from 9.8 s to 5.8 s, and the
+  28.5-million-iteration minibrot from 14.2 s to 7.3 s; every self-test check that compares two
+  code paths passes, including "a wider canvas contains the narrower one", which had failed on
+  that card under Windows since it was written. Its renders now match an RTX 3080's more closely
+  (the same counts of pixels reaching the iteration cap at two of the measured views). On an RTX
+  3080 nothing changes, pixel for pixel. `--gputest` still tests the exact arithmetic, reports the
+  probe's verdict, and compares each row with the error terms dropped; its new rows 19–23 show
+  an opaque barrier keeping the arithmetic exact on DX12, Vulkan and OpenGL on both cards, which on
+  NVIDIA would cost 1.4–3.4× the GPU time, so the renderer does not do that.
 - **Diagnostics that answer the next question in the same run (0.3.0-beta.24).** A report from
   someone else's machine used to take several rounds: the GT 710's needed a second one to learn how
   fast the card was, and a device-loss report one to learn whether Windows had reset the driver.

@@ -37,6 +37,9 @@ pub mod lsystem;
 pub mod pipeline_compile;
 /// The exponential-map strip module (`--render-expmap`).
 mod strip;
+/// Whether a device's shader compiler fuses `two_prod`'s product (TODO PR-C2): asked once per device.
+mod fusion;
+pub use fusion::{detect_product_fusion, product_barrier, FusionVerdict};
 
 /// The Rust/WGSL uniform-layout gate — see the module's own docs.
 #[cfg(test)]
@@ -1886,6 +1889,18 @@ pub(crate) fn raster_pipeline_c(
             })
         })
         .collect();
+    // An iterate entry point on a device whose compiler fuses `two_prod`'s product gets the WGSL
+    // product barrier (`fusion`, TODO PR-C2). Every module these entry points live in — the built-in
+    // shader and the custom and strip modules made from it — declares `PRODUCT_BARRIER`.
+    let with_barrier;
+    let constants = if fs_entry.starts_with("fs_iterate") && fusion::product_barrier(device) {
+        let mut c = constants.clone();
+        c.insert("PRODUCT_BARRIER".to_string(), 1.0);
+        with_barrier = c;
+        &with_barrier
+    } else {
+        constants
+    };
     // What makes this pipeline the same as an earlier one, so a slow repeat can be recognised
     // (`pipeline_compile::driver_cache_not_keeping`).
     let mut consts: Vec<String> = constants.iter().map(|(k, v)| format!("{k}={v}")).collect();

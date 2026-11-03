@@ -473,9 +473,9 @@ gputest      A failing two_sum/two_prod means this stack's shader compiler folds
 selftest     A card with its OWN golden set (validation\golden\<card>\) and bench-matrix baseline
              is held to them exactly. Any other card is compared with the RTX 3080's goldens at a
              wider, measured tolerance, and its path signatures are reported rather than failed.
-             So a FAILURE here is a real signal. Known, under investigation: the RX 6800 XT fails
-             one check, which depends on the system - "a wider canvas contains the narrower one"
-             under Windows, "floatexp vs df32" under Linux (Mesa RADV). Any other failure is new.
+             So a FAILURE here is a real signal. The RX 6800 XT passes every check under Windows
+             since 0.3.0-beta.25 (the product barrier); under Linux (Mesa RADV) it was known to
+             fail "floatexp vs df32", not yet re-measured. Any other failure is new.
              02-selftest\current\ holds this run's golden renders: this card's would-be set.
 live-res     Must pass everywhere. This is the invariant that a GPU without TIMESTAMP_QUERY still
              settles at native resolution instead of being stuck at ~1/3 forever.
