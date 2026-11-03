@@ -490,6 +490,14 @@ pub(crate) fn run_headless(args: &[String]) -> bool {
         return crate::harness::bench_bignum::run(args);
     }
 
+    // Reference-grade truth for a view (no GPU): every pixel's escape counts with no approximation a
+    // renderer makes, checked against plain arbitrary-precision iteration (`--truth`).
+    //   --truth DIR --center X Y --zoom-log2 L --size WxH --iter N [--truth-name NAME]
+    //           [--truth-stencil] [--truth-check N] [--threads T]
+    if args.iter().any(|a| a == "--truth") {
+        return crate::harness::truth::run(args);
+    }
+
     // Extreme-depth validation battery (no GPU, no external data): exercises the
     // arbitrary-precision arithmetic core at magnifications far beyond f64 range
     // (1e1000 … 1e1000000), via precision-doubling self-consistency + coordinate round-trip.
