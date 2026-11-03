@@ -1,9 +1,9 @@
 # Fractadyne validation report
 
-- **Version:** 0.3.0-beta.24 (build 6034, gabab630)
-- **Generated:** 2026-11-02 12:58:49 UTC (unix 1793624329)
+- **Version:** 0.3.0-beta.25 (build 6099, g4c48f1f)
+- **Generated:** 2026-11-03 04:59:15 UTC (unix 1793681955)
 - **GPU:** NVIDIA GeForce RTX 3080
-- **GPU speed:** 5.213e-9 ms per direct step (an all-interior 1024x768 pass of 8192 iterations took 33.6 ms), 0.27x the slowest card the suite is sized for; every pass runs (passes are priced, not refused)
+- **GPU speed:** 5.045e-9 ms per direct step (an all-interior 1024x768 pass of 8192 iterations took 32.5 ms), 0.26x the slowest card the suite is sized for; every pass runs (passes are priced, not refused)
 - **CPU:** AMD Ryzen 9 3950X 16-Core Processor (16 cores / 32 threads, L2 8192 KB, L3 65536 KB)
 - **OS:** Windows 11 Pro 26H2 (build 26300.9818), x86_64
 - **Config:** fractal=Mandelbrot julia=false auto_iter=true max_iter=4000 sa=true bla=true glitch=true color=Smooth
@@ -53,11 +53,11 @@ All checks use exact mathematics (arbitrary-precision dwell, closed-form propert
 | LiveSplit | one split set writes only its own tiles (df32 1e8x) | 220×220, set 1 of 4 | 12288 texels written of 12288 in set 1 of 4; 0 misplaced | its tiles' texels, equal to one pass; nothing else | ✅ PASS |
 | LiveSplit | split passes compose the frame bit for bit (direct 3e3x) | 220×220 (not a multiple of 16), 20,000 iter, mode 1 | texels differing from one pass — k=2: 0, k=3: 0, k=4: 0, k=8: 0 | 0 at every k, in the named mode | ✅ PASS |
 | LiveSplit | one split set writes only its own tiles (direct 3e3x) | 220×220, set 1 of 4 | 12288 texels written of 12288 in set 1 of 4; 0 misplaced | its tiles' texels, equal to one pass; nothing else | ✅ PASS |
-| LiveSplit | one split set costs about its share of the pass | 1024×1024 df32 1e8x, set 1 of 4, wall, best of 3 | one set 42.35 ms against every tile 99.04 ms = 0.43 | < 0.6 of every tile (0.25 = exactly its share) | ✅ PASS |
-| LiveSplit | GPU timestamps describe their own pass (full-screen triangle) | 1024×1024 df32 1e8x, one pass, median of 3 | timestamp 100.17 ms against wall 101.80 ms = 0.98 | timestamp 0.5–1.05 of the wall | ✅ PASS |
-| LiveSplit | GPU timestamps describe their own pass (split tile geometry) | 1024×1024 df32 1e8x, one pass, median of 3 | timestamp 101.83 ms against wall 103.21 ms = 0.99 | timestamp 0.5–1.05 of the wall | ✅ PASS |
-| LiveSplit | the split tile geometry costs what the full-screen pass does | 1024×1024 df32 1e8x, every tile, wall, median of 7 back-to-back pairs | tiles over the triangle 1.22 (pairs 1.00..1.27; blocks of three: tiles 103.21 ms, triangle 101.80 ms) | ≤ 1.3 | ✅ PASS |
-| IterChunk | tiled chunked export is bit-identical | corpus07 1e30x, 4M iter, 16 tiles, colored | 0 texels differ; 16 tiles; max dispatch 1ms vs control 3ms | 0 texels differ | ✅ PASS |
+| LiveSplit | one split set costs about its share of the pass | 1024×1024 df32 1e8x, set 1 of 4, wall, best of 3 | one set 43.14 ms against every tile 90.45 ms = 0.48 | < 0.6 of every tile (0.25 = exactly its share) | ✅ PASS |
+| LiveSplit | GPU timestamps describe their own pass (full-screen triangle) | 1024×1024 df32 1e8x, one pass, median of 3 | timestamp 85.24 ms against wall 86.92 ms = 0.98 | timestamp 0.5–1.05 of the wall | ✅ PASS |
+| LiveSplit | GPU timestamps describe their own pass (split tile geometry) | 1024×1024 df32 1e8x, one pass, median of 3 | timestamp 101.32 ms against wall 103.15 ms = 0.98 | timestamp 0.5–1.05 of the wall | ✅ PASS |
+| LiveSplit | the split tile geometry costs what the full-screen pass does | 1024×1024 df32 1e8x, every tile, wall, median of 7 back-to-back pairs | tiles over the triangle 1.16 (pairs 1.00..1.32; blocks of three: tiles 103.15 ms, triangle 86.92 ms) | ≤ 1.3 | ✅ PASS |
+| IterChunk | tiled chunked export is bit-identical | corpus07 1e30x, 4M iter, 16 tiles, colored | 0 texels differ; 16 tiles; max dispatch 1ms vs control 2ms | 0 texels differ | ✅ PASS |
 | IterChunk | tiled chunked iter buffer is bit-identical | corpus07 1e30x, 4M iter, 16 tiles, raw | 0 texels differ | 0 texels differ | ✅ PASS |
 | IterChunk | occupancy tile: step-bounded passes resume bit-identically | corpus07 1e30x, 4M iter, 512px in one tile | 0 texels differ; 1 tile(s), 3 passes; largest pass 133169152 pixel-steps (ceiling 600000000) | 0 texels differ, 1 tile, passes > tiles, pass <= ceiling | ✅ PASS |
 | IterChunk | packed tails: a packed tile matches its unpacked twin | corpus07 1e30x, 4M iter, 1024px in one tile, TILE_PACK 1 vs 0 | 0 texels differ; 1 tile(s), 3 passes, packed 2 times (unpacked twin: 0) | 0 texels differ, 1 tile, packed at least twice | ✅ PASS |
@@ -67,24 +67,24 @@ All checks use exact mathematics (arbitrary-precision dwell, closed-form propert
 | Worker | a cancelled run's job answers without a sample; the next run's renders | the twin above, cancel(view 0, run 2) before run 2's job is sent | cancelled run's job: no sample; next run's job: a sample | no sample, then a sample | ✅ PASS |
 | Worker | a still split across this device and a twin is bit-identical, both rendering | corpus07 1e30x, 20k iter, 192×120 ss 2, 48-px tiles, mode 2 | 0 of 92160 channels differ; tiles per device [11, 1] of 12 | 0 channels differ; both devices rendered tiles | ✅ PASS |
 | Worker | a split whose twin fails at its first tile hands it back, bit-identical | corpus07 1e30x, 20k iter, 192×120 ss 2, 48-px tiles, mode 2 | 0 of 92160 channels differ; tiles per device [12, 0] of 12; the twin stopped: GPU device lost or wedged during readback | 0 channels differ; the twin stopped, every tile rendered | ✅ PASS |
-| Worker | a pass target changes no pixel, and shortens the passes (floatexp 1e30x, step-bounded) | 192×120 ss 2, mode 2, pass_ms 1 against the export's own sizing | 0 of 92160 channels differ; 9 passes against 1 (longest 0.9 ms against 3.5) | 0 channels differ; more passes | ✅ PASS |
-| Worker | a pass target changes no pixel, and shortens the passes (df32 1e8x, chunk windows) | 192×120 ss 2, mode 0, pass_ms 1 against the export's own sizing | 0 of 92160 channels differ; 215 passes against 2 (longest 6.0 ms against 171.2) | 0 channels differ; more passes | ✅ PASS |
+| Worker | a pass target changes no pixel, and shortens the passes (floatexp 1e30x, step-bounded) | 192×120 ss 2, mode 2, pass_ms 1 against the export's own sizing | 0 of 92160 channels differ; 11 passes against 1 (longest 1.4 ms against 2.2) | 0 channels differ; more passes | ✅ PASS |
+| Worker | a pass target changes no pixel, and shortens the passes (df32 1e8x, chunk windows) | 192×120 ss 2, mode 0, pass_ms 1 against the export's own sizing | 0 of 92160 channels differ; 338 passes against 2 (longest 6.4 ms against 177.4) | 0 channels differ; more passes | ✅ PASS |
 | Worker | a live frame on a twin device is bit-identical (one pass) | corpus07 1.3e30x, 20000 iter, 192×120, mode 2, the app's params; walk [280, 282, 287, 347, 20000] + tail | 0 of 184320 channels differ; 23040 of 23040 texels escaped | 0 channels differ (iter + aux planes), mode 2; a walk pauses pixels | ✅ PASS |
 | Worker | a live chunked walk on a twin device is bit-identical | corpus07 1.3e30x, 20000 iter, 192×120, mode 2, the app's params; walk [280, 282, 287, 347, 20000] + tail | 0 of 184320 channels differ; 23040 of 23040 texels escaped; 19681 escaped after the first window; the walk and the one pass differ in 0 channels here | 0 channels differ (iter + aux planes), mode 2; a walk pauses pixels | ✅ PASS |
-| Worker | a worker's step-bounded walk is the chunked walk's frame, bit-identical | corpus07 1.3e30x, 20000 iter, 192×120, mode 2; LiveTwin::walk at a 1 ms pass target | 0 of 184320 channels differ from the chunked walk; 8 passes, longest 1.3 ms; 23040 of 23040 texels escaped | 0 channels differ (iter + aux planes), mode 2; at least 3 passes | ✅ PASS |
+| Worker | a worker's step-bounded walk is the chunked walk's frame, bit-identical | corpus07 1.3e30x, 20000 iter, 192×120, mode 2; LiveTwin::walk at a 1 ms pass target | 0 of 184320 channels differ from the chunked walk; 8 passes, longest 1.4 ms; 23040 of 23040 texels escaped | 0 channels differ (iter + aux planes), mode 2; at least 3 passes | ✅ PASS |
 | Worker | the twins drew this view (control) | the one-pass frame above, and it at jitter (1, 0) | 23040 texels escaped; 92158 channels differ from the frame jittered one pixel | some escaped; some differ | ✅ PASS |
 | Worker | a twin's frame adopted here reads back unchanged and is not re-iterated | the twin's walk above; the jittered frame adopted under the unjittered params | adopted walk: 0 channels differ; adopted jittered frame after a frame at its key: 0 | 0 channels differ, both | ✅ PASS |
 | Renorm | renormalized step: chunked export matches its single dispatch | ladder p15248 2.1e57x, 457,440 iter, 192px | 0 texels differ; step 953 its, 576 sampled px took it | step engaged; 0 texels differ | ✅ PASS |
 | Renorm | renormalized step: pixels paused inside it resume bit-identically | ladder p15248 2.1e57x, 40,000-iteration windows, raw | 0 texels differ; 12 windows | 0 texels differ, more than one window | ✅ PASS |
 | Renorm | u-space BLA: chunked export matches its single dispatch, and skips | ladder p121984 1.7e66x, 3,659,520 iter, 1024px in one tile | 0 texels differ; 3 passes; 255 nodes; sampled steps 8514151 with the tree, 23130554 without | 0 texels differ, passes > tiles, steps under half without the tree | ✅ PASS |
-| RefReuse | a reused reference renders the same as a fresh pick | corpus07 1e30x, 200k iter, extend vs fresh pick | extended 20001 to 200001 (fresh 200001); 0 of 193600 texels differ; reference 281ms fresh vs 192ms extend | reuse engaged AND 0 texels differ | ✅ PASS |
-| RefOverlap | overlapped pick + build is byte-identical: bench-10 centre @2^150 (centre, short escaper) | 250000 iter, sequential vs overlapped fresh build | identical; len=9736 sa_skip=4158 sa=walk/overlap centre build=centre pick's centre walk=from the build (146 ms sequential, 29 ms overlapped) | point, orbit, series skip, BLA, precision, tail all identical | ✅ PASS |
-| RefOverlap | overlapped pick + build is byte-identical: bench 6.6e43 (short escaper) | 60000 iter, sequential vs overlapped fresh build | identical; len=1429 sa_skip=1221 sa=walk/walk centre build=discarded pick's centre walk=walked (54 ms sequential, 40 ms overlapped) | point, orbit, series skip, BLA, precision, tail all identical | ✅ PASS |
-| RefOverlap | overlapped pick + build is byte-identical: corpus07 1e30 (survivor) | 200000 iter, sequential vs overlapped fresh build | identical; len=200001 sa_skip=0 sa=none/none centre build=centre pick's centre walk=from the build (600 ms sequential, 318 ms overlapped) | point, orbit, series skip, BLA, precision, tail all identical | ✅ PASS |
+| RefReuse | a reused reference renders the same as a fresh pick | corpus07 1e30x, 200k iter, extend vs fresh pick | extended 20001 to 200001 (fresh 200001); 0 of 193600 texels differ; reference 309ms fresh vs 239ms extend | reuse engaged AND 0 texels differ | ✅ PASS |
+| RefOverlap | overlapped pick + build is byte-identical: bench-10 centre @2^150 (centre, short escaper) | 250000 iter, sequential vs overlapped fresh build | identical; len=9736 sa_skip=4158 sa=walk/overlap centre build=centre pick's centre walk=from the build (149 ms sequential, 27 ms overlapped) | point, orbit, series skip, BLA, precision, tail all identical | ✅ PASS |
+| RefOverlap | overlapped pick + build is byte-identical: bench 6.6e43 (short escaper) | 60000 iter, sequential vs overlapped fresh build | identical; len=1429 sa_skip=1221 sa=walk/walk centre build=discarded pick's centre walk=walked (56 ms sequential, 42 ms overlapped) | point, orbit, series skip, BLA, precision, tail all identical | ✅ PASS |
+| RefOverlap | overlapped pick + build is byte-identical: corpus07 1e30 (survivor) | 200000 iter, sequential vs overlapped fresh build | identical; len=200001 sa_skip=0 sa=none/none centre build=centre pick's centre walk=from the build (653 ms sequential, 375 ms overlapped) | point, orbit, series skip, BLA, precision, tail all identical | ✅ PASS |
 | RefOverlap | the overlap engaged (centre build + parallel series skip used) | across the views above | engaged=true | at least one view took both from the overlap | ✅ PASS |
 | RefOverlap | the pick took its walk of the centre from the centre build | across the views above | taken=true | at least one view's phase 2 read the centre (and its samples) off the build | ✅ PASS |
-| OrbitCache | an orbit from the disk cache renders the same as a fresh pick | corpus07 1e30x, 200k iter; written, found, loaded, extended; then unaided | extended 20001 to 200001 (fresh 200001); 0 of 193600 texels differ; reference 271ms fresh vs 190ms extend; unaided, the worker served len=200001 from disk in 63ms (1 entries, 3.1 MB) | found AND reuse engaged AND 0 texels differ AND the unaided worker hit | ✅ PASS |
-| View format | a thumbnail borrows the live reference, never builds one | 1e30x, 128x96, ss=2; refused with none resident, then borrowed | refused in 0.1ms; borrowed and rendered 128x96 in 140ms; 53.6 KB of base64 | None when nothing is resident; a real 128x96 when it is | ✅ PASS |
+| OrbitCache | an orbit from the disk cache renders the same as a fresh pick | corpus07 1e30x, 200k iter; written, found, loaded, extended; then unaided | extended 20001 to 200001 (fresh 200001); 0 of 193600 texels differ; reference 330ms fresh vs 247ms extend; unaided, the worker served len=200001 from disk in 83ms (1 entries, 3.1 MB) | found AND reuse engaged AND 0 texels differ AND the unaided worker hit | ✅ PASS |
+| View format | a thumbnail borrows the live reference, never builds one | 1e30x, 128x96, ss=2; refused with none resident, then borrowed | refused in 0.1ms; borrowed and rendered 128x96 in 149ms; 53.6 KB of base64 | None when nothing is resident; a real 128x96 when it is | ✅ PASS |
 | Framing | an export CONTAINS the window view at any aspect | window 1200x900 (aspect 1.333), 6 aspects | 6 aspects (3 wider, 2 narrower than the window): contained, tight, isotropic; window = identity | no axis shrinks; binding axis exact; isotropic; BOTH branches tried | ✅ PASS |
 | Framing | a wider canvas contains the narrower one — direct f64 (1e2x) | 160px vs 240px at h=128, 2000 iter, 20480 texels compared | 160px inside 240px at h=128: identical over 20480 texels | 0 texels differ | ✅ PASS |
 | Framing | a wider canvas contains the narrower one — perturbation (1e30x) | 160px vs 240px at h=128, 60000 iter, 20480 texels compared | 160px inside 240px at h=128: identical over 20480 texels | <= 64 texels differ (measured glitch noise; a misframing differs in 10,000s) | ✅ PASS |
@@ -224,7 +224,7 @@ All checks use exact mathematics (arbitrary-precision dwell, closed-form propert
 | Custom formula (GPU) | generated Burning Ship 5 perturbation = built-in | 1e6× at -0.525544780-0.408757051i, mode 0, ref 2001, 67.1% escaped | right only in built-in 3500 / only in generated 3451 px; median \|Δ\| to CPU 0.00137 / 0.00136 over 5322 px | mode 0, ref >100, 10–99% escaped; built-in no worse (3σ; median ×1.25 + 1e-4) | ✅ PASS |
 | Custom formula (GPU) | generated Tricorn 3 perturbation = built-in | 1e6× at -0.438196283-0.340819331i, mode 0, ref 2001, 47.9% escaped | right only in built-in 0 / only in generated 1 px; median \|Δ\| to CPU 0.00035 / 0.00035 over 23186 px | mode 0, ref >100, 10–99% escaped; built-in no worse (3σ; median ×1.25 + 1e-4) | ✅ PASS |
 | Custom formula (GPU) | generated Tricorn 4 perturbation = built-in | 1e6× at -0.373258710-0.290312330i, mode 0, ref 2001, 50.0% escaped | right only in built-in 0 / only in generated 0 px; median \|Δ\| to CPU 0.00046 / 0.00046 over 24200 px | mode 0, ref >100, 10–99% escaped; built-in no worse (3σ; median ×1.25 + 1e-4) | ✅ PASS |
-| Custom formula (GPU) | generated Tricorn 5 perturbation = built-in | 1e6× at -0.629015154-0.489234009i, mode 0, ref 2001, 14.8% escaped | right only in built-in 50 / only in generated 48 px; median \|Δ\| to CPU 0.00048 / 0.00047 over 6791 px | mode 0, ref >100, 10–99% escaped; built-in no worse (3σ; median ×1.25 + 1e-4) | ✅ PASS |
+| Custom formula (GPU) | generated Tricorn 5 perturbation = built-in | 1e6× at -0.629015154-0.489234009i, mode 0, ref 2001, 14.8% escaped | right only in built-in 57 / only in generated 53 px; median \|Δ\| to CPU 0.00050 / 0.00049 over 6793 px | mode 0, ref >100, 10–99% escaped; built-in no worse (3σ; median ×1.25 + 1e-4) | ✅ PASS |
 | Custom formula (GPU) | generated Celtic 3 perturbation = built-in | 1e6× at -0.640611076-0.498253059i, mode 0, ref 2001, 19.0% escaped | right only in built-in 5763 / only in generated 5916 px; median \|Δ\| to CPU 0.00373 / 0.00370 over 232 px | mode 0, ref >100, 10–99% escaped; built-in no worse (3σ; median ×1.25 + 1e-4) | ✅ PASS |
 | Custom formula (GPU) | generated Celtic 4 perturbation = built-in | 1e6× at -0.914410842-0.711208433i, mode 0, ref 2001, 31.9% escaped | right only in built-in 115 / only in generated 126 px; median \|Δ\| to CPU 0.00024 / 0.00025 over 14026 px | mode 0, ref >100, 10–99% escaped; built-in no worse (3σ; median ×1.25 + 1e-4) | ✅ PASS |
 | Custom formula (GPU) | generated Celtic 5 perturbation = built-in | 1e6× at -0.823740505-0.640687060i, mode 0, ref 2001, 23.6% escaped | right only in built-in 5555 / only in generated 5646 px; median \|Δ\| to CPU 0.00138 / 0.00137 over 943 px | mode 0, ref >100, 10–99% escaped; built-in no worse (3σ; median ×1.25 + 1e-4) | ✅ PASS |
@@ -570,7 +570,7 @@ Caused by:
 
 **547/547 checks passed.**
 
-slow-GPU guard: 0 pass(es) refused; the dearest pass priced was 16783 ms (tiled chunked iter buffer is bit-identical), against a 500 ms limit.
+slow-GPU guard: 0 pass(es) refused; the dearest pass priced was 16864 ms (tiled chunked iter buffer is bit-identical), against a 500 ms limit.
 
 ## Coverage & scope
 
@@ -636,14 +636,14 @@ Opt-in groups NOT run: deep-location, fe-df32-probe (each runs only when named: 
 ```text
 OS: Windows 11 Pro 26H2 (build 26300.9818), x86_64
 CPU: AMD Ryzen 9 3950X 16-Core Processor (16 cores / 32 threads, L3 64 MB), 3500 MHz, AVX2 FMA BMI2 ADX
-Memory: 31.9 GB, 2.0 GB free
+Memory: 31.9 GB, 4.1 GB free
 GPU in use: NVIDIA GeForce RTX 3080 [10de:2206] DiscreteGpu, Vulkan, driver NVIDIA 616.92, 10240 MB
   driver package: NVIDIA 32.0.16.1692, dated 9-4-2026
   limits: texture 2D 32768 px, buffer 1024 MB, storage binding 1024 MB, workgroup 256 invocations, bind groups 4
   features: Features(DEPTH_CLIP_CONTROL | DEPTH32FLOAT_STENCIL8 | TEXTURE_COMPRESSION_BC | TEXTURE_COMPRESSION_BC_SLICED_3D | TIMESTAMP_QUERY | INDIRECT_FIRST_INSTANCE | SHADER_F16 | RG11B10UFLOAT_RENDERABLE | BGRA8UNORM_STORAGE | FLOAT32_FILTERABLE | TEXTURE_INT64_ATOMIC | SHADER_FLOAT32_ATOMIC | TEXTURE_FORMAT_16BIT_NORM | TEXTURE_ADAPTER_SPECIFIC_FORMAT_FEATURES | PIPELINE_STATISTICS_QUERY | TIMESTAMP_QUERY_INSIDE_ENCODERS | TIMESTAMP_QUERY_INSIDE_PASSES | MAPPABLE_PRIMARY_BUFFERS | TEXTURE_BINDING_ARRAY | BUFFER_BINDING_ARRAY | STORAGE_RESOURCE_BINDING_ARRAY | SAMPLED_TEXTURE_AND_STORAGE_BUFFER_ARRAY_NON_UNIFORM_INDEXING | UNIFORM_BUFFER_AND_STORAGE_TEXTURE_ARRAY_NON_UNIFORM_INDEXING | PARTIALLY_BOUND_BINDING_ARRAY | MULTI_DRAW_INDIRECT | MULTI_DRAW_INDIRECT_COUNT | PUSH_CONSTANTS | ADDRESS_MODE_CLAMP_TO_ZERO | ADDRESS_MODE_CLAMP_TO_BORDER | POLYGON_MODE_LINE | POLYGON_MODE_POINT | CONSERVATIVE_RASTERIZATION | VERTEX_WRITABLE_STORAGE | CLEAR_TEXTURE | SPIRV_SHADER_PASSTHROUGH | MULTIVIEW | TEXTURE_ATOMIC | TEXTURE_FORMAT_NV12 | EXPERIMENTAL_RAY_TRACING_ACCELERATION_STRUCTURE | EXPERIMENTAL_RAY_QUERY | SHADER_F64 | SHADER_I16 | SHADER_PRIMITIVE_INDEX | DUAL_SOURCE_BLENDING | SHADER_INT64 | SUBGROUP | SUBGROUP_VERTEX | SUBGROUP_BARRIER | PIPELINE_CACHE | SHADER_INT64_ATOMIC_MIN_MAX | SHADER_INT64_ATOMIC_ALL_OPS | VULKAN_EXTERNAL_MEMORY_WIN32)
 Other GPU: NVIDIA GeForce RTX 3080/PCIe/SSE2 [10de:0000] Other, Gl, driver  4.6.0 NVIDIA 616.92
 GPU settings: TdrDelay 2 s (default), TdrDdiDelay 5 s (default), TdrLevel 3 (default) = recover; hardware-accelerated GPU scheduling not set
-CPU reference speed: 0.86 µs per iteration at 164 bits, 7.29 µs per iteration at 3064 bits (astro-float, one core)
+CPU reference speed: 1.15 µs per iteration at 164 bits, 8.16 µs per iteration at 3064 bits (astro-float, one core)
 Power plan: AMD RyzenT Balanced
 Driver resets (30 days): 7 event(s) in the event log, newest first
   2026-10-30T07:03:42.2230000Z Microsoft-Windows-Kernel-Power 41 Critical - Windows restarted without shutting down cleanly | The system has rebooted without cleanly shutting down first. This error could be caused if the system stopped responding, crashed, or lost power unexpectedly.
@@ -658,30 +658,30 @@ Driver resets (30 days): 7 event(s) in the event log, newest first
 ## GPU speed by mode
 
 ```text
-  direct: 5.213e-9 ms per step by the wall (8192 iterations, 33.6 ms), GPU clock 4.988e-9 (32.1 ms); a 2-iteration pass 0.45 ms
-  df32: 3.039e-8 ms per step by the wall (8192 iterations, 195.8 ms), GPU clock 3.021e-8 (194.6 ms), 5.83x direct; a 2-iteration pass 0.38 ms
-  floatexp: 8.669e-8 ms per step by the wall (1024 iterations, 69.8 ms), GPU clock 8.507e-8 (68.5 ms), 16.63x direct; a 2-iteration pass 0.53 ms
+  direct: 5.045e-9 ms per step by the wall (8192 iterations, 32.5 ms), GPU clock 4.935e-9 (31.8 ms); a 2-iteration pass 0.45 ms
+  df32: 3.232e-8 ms per step by the wall (1024 iterations, 26.0 ms), GPU clock 3.148e-8 (25.3 ms), 6.41x direct; a 2-iteration pass 0.41 ms
+  floatexp: 8.711e-8 ms per step by the wall (1024 iterations, 70.2 ms), GPU clock 8.558e-8 (68.9 ms), 17.27x direct; a 2-iteration pass 0.53 ms
   calibration table for this card (its own entry): direct 5.350e-9, df32 2.760e-8 ms per step
   as a calibration entry (wall clock, all-interior 1024x768, BLA and series off):
     [[adapter]]
     slug = "nvidia-geforce-rtx-3080"
-    df32_pert_ms_per_step = 3.039e-8
-    direct_ms_per_step = 5.213e-9
+    df32_pert_ms_per_step = 3.232e-8
+    direct_ms_per_step = 5.045e-9
 ```
 
 ## Slowest checks
 
-547 checks took 213.5 s in all; the ten slowest:
+547 checks took 226.7 s in all; the ten slowest:
 
 | Check | Parameters | Time |
 |---|---|---|
-| palettes are all different and coherent | 30 palettes | 25.3 s |
-| direct-1e2 | path signature vs baseline | 17.3 s |
-| sin z + c, iterated (f32 tier): overflow guard | direct, span 6, F32, 32520 escaped px | 8.3 s |
-| Magnet I (escape or converge): GPU = CPU interpreter | direct, span 4.4, Df32, 38288 escaped px | 4.7 s |
-| the split tile geometry costs what the full-screen pass does | 1024×1024 df32 1e8x, every tile, wall, median of 7 back-to-back pairs | 4.5 s |
-| sin z + cos z·cos z + c: deep app pipeline = bignum at 1e12× | boundary toward 0.9+0.7i, 60 iter, mode 0, ref 61, 855 of 1024 sampled px decidable in f32, 428 of them escaped | 4.2 s |
-| z^2.5 + c: deep app pipeline = bignum at 1e12× | boundary toward -0.9-0.7i, 60 iter, mode 0, ref 61, 930 of 1024 sampled px decidable in f32, 466 of them escaped | 4.2 s |
-| Barnsley M1 (if block): GPU = CPU interpreter | direct, span 4, Df32, 35740 escaped px | 3.8 s |
-| an assembled frame at 2^0 is the flat render's picture | a dive into (-0.743643887037151, 0.131825904205330), 160x90 frames from 1x to 2^20, cap 3000, 1x1 samples | 3.4 s |
-| probe reach resolves a starved spar | 3.3e61× three-spar, cap 54315 → reach 848671 | 2.9 s |
+| palettes are all different and coherent | 30 palettes | 22.6 s |
+| direct-1e2 | path signature vs baseline | 17.1 s |
+| sin z + c, iterated (f32 tier): overflow guard | direct, span 6, F32, 32520 escaped px | 9.6 s |
+| z^2.5 + c: deep app pipeline = bignum at 1e12× | boundary toward -0.9-0.7i, 60 iter, mode 0, ref 61, 930 of 1024 sampled px decidable in f32, 466 of them escaped | 5.2 s |
+| sin z + cos z·cos z + c: deep app pipeline = bignum at 1e12× | boundary toward 0.9+0.7i, 60 iter, mode 0, ref 61, 855 of 1024 sampled px decidable in f32, 428 of them escaped | 5.2 s |
+| the split tile geometry costs what the full-screen pass does | 1024×1024 df32 1e8x, every tile, wall, median of 7 back-to-back pairs | 5.0 s |
+| Magnet I (escape or converge): GPU = CPU interpreter | direct, span 4.4, Df32, 38288 escaped px | 5.0 s |
+| an assembled frame at 2^0 is the flat render's picture | a dive into (-0.743643887037151, 0.131825904205330), 160x90 frames from 1x to 2^20, cap 3000, 1x1 samples | 4.4 s |
+| Barnsley M1 (if block): GPU = CPU interpreter | direct, span 4, Df32, 35740 escaped px | 4.1 s |
+| z² + 0.1·log(z + ½) + c: deep app pipeline = bignum at 1e12× | boundary toward -0.9-0.7i, 60 iter, mode 0, ref 61, 1024 of 1024 sampled px decidable in f32, 509 of them escaped | 3.1 s |
