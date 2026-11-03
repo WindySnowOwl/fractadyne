@@ -827,7 +827,9 @@ pub(crate) fn try_run_orbit_inplace(
             |zx, zy| {
                 let xv = zx.to_f64_trunc();
                 let yv = zy.to_f64_trunc();
-                out.push(crate::reference::pack_sample(xv, yv));
+                out.push(crate::reference::pack_sample_or(xv, yv, || {
+                    (RefBackend::to_floatexp(zx), RefBackend::to_floatexp(zy))
+                }));
                 if let Some(s) = fe.as_deref_mut() {
                     s.push(crate::floatexp::CFloatExp { re: RefBackend::to_floatexp(zx), im: RefBackend::to_floatexp(zy) });
                 }
@@ -934,7 +936,9 @@ pub(crate) fn try_run_orbit_inplace(
 
         let xv = zx.to_f64_trunc();
         let yv = zy.to_f64_trunc();
-        out.push(crate::reference::pack_sample(xv, yv));
+        out.push(crate::reference::pack_sample_or(xv, yv, || {
+            (RefBackend::to_floatexp(&zx), RefBackend::to_floatexp(&zy))
+        }));
         if let Some(s) = fe.as_deref_mut() {
             s.push(crate::floatexp::CFloatExp { re: RefBackend::to_floatexp(&zx), im: RefBackend::to_floatexp(&zy) });
         }

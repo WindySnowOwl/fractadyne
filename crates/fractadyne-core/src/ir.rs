@@ -32,7 +32,7 @@
 
 use crate::backend::RefBackend;
 use crate::fractal::Field;
-use crate::reference::{pack_sample, split_df64, OrbitTail};
+use crate::reference::{pack_sample_or, split_df64, OrbitTail};
 use astro_float::BigFloat;
 
 /// A value in a [`Program`]: the index of the instruction that computes it.
@@ -1825,7 +1825,7 @@ pub fn orbit_points(
 
 /// A reference orbit of `formula` in the session's bignum backend, with
 /// [`crate::reference_orbit_t`]'s contract: the same samples (`Z₀` split exactly, then
-/// [`pack_sample`] per step), the same escape test and the same [`OrbitTail`].
+/// [`pack_sample_or`] per step), the same escape test and the same [`OrbitTail`].
 #[allow(clippy::too_many_arguments)]
 pub fn reference_orbit(
     formula: &Formula,
@@ -1933,7 +1933,7 @@ fn run_reference<B: RefBackend + IrField>(
         crate::reference::count_reference_step(n as u32 + 1);
         let xv = m.pool[Z_RE].to_f64_trunc();
         let yv = m.pool[Z_IM].to_f64_trunc();
-        out.push(pack_sample(xv, yv));
+        out.push(pack_sample_or(xv, yv, || (m.pool[Z_RE].to_floatexp(), m.pool[Z_IM].to_floatexp())));
         if xv * xv + yv * yv > escape2 {
             escaped = true;
             break;

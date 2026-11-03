@@ -244,6 +244,34 @@ pub(crate) fn pack_sample(xv: f64, yv: f64) -> [f32; 4] {
     [xh, yh, xl, yl]
 }
 
+/// [`pack_sample`] for a sample whose `f64` view `(xv, yv)` may have left `f64`'s normal range,
+/// with `exact()` giving it in extended range. Every orbit builder packs through this.
+///
+/// ⭐A dip below 2^-1022 has no faithful `f64`: the truncated view reads it as a subnormal or as 0,
+/// and [`pack_sample`] stored a 0 as a plain zero sample and a subnormal as ∞ (its `2^-k` overflows
+/// past 2^1023). Either one is the dropped `2Z·δz` term its note describes. Found 2026-11-03 at
+/// 1e999× (the minibrot-offset set, `p14416-small-x0.6`, plain pick): a reference passing a
+/// period-14,416 minibrot dips to 2^-1656 … 2^-1040 at every period, the shader read those dips as
+/// 0 and ∞, and the export came out every pixel stuck to the reference — black with BLA, banded
+/// without. The extended form's exponent lane holds any `i32` such a dip needs. Above 2^-1022 the
+/// sample is [`pack_sample`]'s, bit for bit.
+pub(crate) fn pack_sample_or(xv: f64, yv: f64, exact: impl FnOnce() -> (FloatExp, FloatExp)) -> [f32; 4] {
+    if xv.abs().max(yv.abs()) >= f64::MIN_POSITIVE {
+        return pack_sample(xv, yv);
+    }
+    let (x, y) = exact();
+    // `FloatExp` keeps |m| in [1, 2), so `floor(log2 |v|)` is its exponent, and the larger part's is
+    // the sample's `k`. A zero part has no exponent to offer.
+    let k = match (x.m != 0.0, y.m != 0.0) {
+        (false, false) => return pack_sample(0.0, 0.0),
+        (true, false) => x.e,
+        (false, true) => y.e,
+        (true, true) => x.e.max(y.e),
+    };
+    let part = |v: FloatExp| if v.m == 0.0 { 0.0 } else { FloatExp { m: v.m, e: v.e - k }.to_f64() };
+    [0.0, k as f32, part(x) as f32 + 4.0, part(y) as f32]
+}
+
 /// Decode either sample form back to `(re, im)` as `f64` (whose range covers the extended form).
 /// CPU-side consumers (BLA build, aux aggregates, tests) must use this rather than summing the
 /// lanes, or an extended sample's NaN marker poisons the arithmetic.
@@ -981,7 +1009,7 @@ fn run_orbit_gen<B: RefBackend>(
         }
         let xv = zx.to_f64_trunc();
         let yv = zy.to_f64_trunc();
-        out.push(pack_sample(xv, yv));
+        out.push(pack_sample_or(xv, yv, || (zx.to_floatexp(), zy.to_floatexp())));
         if let Some(s) = fe.as_deref_mut() {
             s.push(CFloatExp { re: zx.to_floatexp(), im: zy.to_floatexp() });
         }
@@ -5179,6 +5207,10 @@ mod pick_deep_scoring;
 #[cfg(test)]
 #[path = "../tests/unit/reference/nucleus_pick.rs"]
 mod nucleus_pick;
+
+#[cfg(test)]
+#[path = "../tests/unit/reference/deep_dip_samples.rs"]
+mod deep_dip_samples;
 
 #[cfg(test)]
 #[path = "../tests/unit/reference/misiurewicz_detection.rs"]

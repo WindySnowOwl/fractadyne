@@ -454,9 +454,9 @@ pub(crate) struct RecomputeInputs {
     /// `install_recompute`, which drops exactly that: older stamp AND shorter orbit.
     spawn_orbit_id: u64,
     /// The pick may take a nucleus in the view as the reference
-    /// (`fractadyne_core::best_reference_diag_nucleus`). Exports only, while the tunable
-    /// `NUCLEUS_REF` is on and no audit has turned it off ([`nucleus_pick_enabled`]); the live
-    /// view keeps the plain pick.
+    /// (`fractadyne_core::best_reference_diag_nucleus`): an export while the tunable `NUCLEUS_REF`
+    /// is on and no audit has turned it off ([`nucleus_pick_enabled`]); the live view's builds
+    /// while `NUCLEUS_REF_LIVE` is on as well ([`nucleus_pick_live_enabled`]).
     nucleus: bool,
 }
 
@@ -1330,10 +1330,6 @@ fn offer_to_orbit_cache(res: &RecomputeResult, key: orbit_blob::OrbitKey, origin
     crate::refcache_persist::offer_async(res.clone(), key, origin);
 }
 
-/// Choose the reference point for `inp`. The ranking scan is internally capped (`REF_SCORE_SCAN`),
-/// so this is cheap and deterministic — the SAME point comes back for any iteration budget past the
-/// cap, which is why a coarse and a full stage share it exactly. `centre`: the pick's walks of the
-/// centre, from a build of the centre ([`pick_and_build`]); `None` walks them here.
 /// Set by `--pick-audit` to render a view with the plain pick, for comparison with the nucleus pick.
 pub(crate) static NUCLEUS_PICK_OFF: std::sync::atomic::AtomicBool = std::sync::atomic::AtomicBool::new(false);
 
@@ -1343,6 +1339,17 @@ pub(crate) fn nucleus_pick_enabled() -> bool {
     crate::tunables::cost().nucleus_ref == 1 && !NUCLEUS_PICK_OFF.load(std::sync::atomic::Ordering::Relaxed)
 }
 
+/// Whether the live view's pick may: as an export's, and `NUCLEUS_REF_LIVE` on. One answer for the
+/// live, hold and tour-lookahead builds, since `nucleus` is part of what makes two builds the same
+/// build ([`early_inputs_differ`]): a lookahead picked by another rule could never serve the frame.
+pub(crate) fn nucleus_pick_live_enabled() -> bool {
+    nucleus_pick_enabled() && crate::tunables::cost().nucleus_ref_live == 1
+}
+
+/// Choose the reference point for `inp`. The ranking scan is internally capped (`REF_SCORE_SCAN`),
+/// so this is cheap and deterministic — the SAME point comes back for any iteration budget past the
+/// cap, which is why a coarse and a full stage share it exactly. `centre`: the pick's walks of the
+/// centre, from a build of the centre ([`pick_and_build`]); `None` walks them here.
 fn pick_reference(
     inp: &RecomputeInputs,
     centre: Option<fractadyne_core::CentreSource<'_>>,
@@ -3158,7 +3165,7 @@ impl FractadyneApp {
                 reuse,
                 stop_at: None,
                 spawn_orbit_id: self.ref_cache[0].orbit_id,
-                nucleus: false,
+                nucleus: nucleus_pick_live_enabled(),
             };
             let (tx, rx) = std::sync::mpsc::channel();
             spawn_named("fd-ref-lookahead", move || {
@@ -3443,7 +3450,7 @@ impl FractadyneApp {
             reuse,
             stop_at: None,
             spawn_orbit_id: self.ref_cache[0].orbit_id,
-            nucleus: false,
+            nucleus: nucleus_pick_live_enabled(),
         };
         if crate::diag::trace_on("ref") {
             crate::diag::trace(
@@ -9251,7 +9258,7 @@ impl FractadyneApp {
                     reuse,
                     stop_at: None,
                     spawn_orbit_id: self.ref_cache[vi].orbit_id,
-                    nucleus: false,
+                    nucleus: nucleus_pick_live_enabled(),
                 };
                 // Anti-churn backstop: never respawn more than ~60×/s (spaced ≥ 16 ms). The wider
                 // `out_of_view` above already keeps refreshes infrequent; this just guards against a

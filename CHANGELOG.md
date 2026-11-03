@@ -59,6 +59,19 @@ published as the pre-releases `v0.2.41-beta.1` to `v0.2.41-beta.150`, and a "bet
 
 Changes after 0.3.0-beta.1:
 
+- **Very deep views whose reference passes close to zero no longer come out black or banded
+  (0.3.0-beta.26).** Near a minibrot, the reference orbit returns close to zero once every
+  period. Fractadyne stores those dips in a wider form for the graphics card, but it read each one
+  through an ordinary double first, and a double cannot hold a number much below 1e-308: a
+  deeper dip was stored as zero, or as infinity just above that range. Every pixel then lost
+  the difference from the reference that the dip carries and followed the reference out. At
+  2.3e999× beside a minibrot of period 14,416, an export using the old reference choice came out
+  entirely black, and with BLA off every pixel escaped within 8,000 iterations of the reference.
+  With that minibrot just outside the frame, every export drew a flat disc or a single flat
+  colour. The dips are now stored from the full-precision value. Those views now take two to three
+  times as long, because the real picture costs more to compute than the broken one did. This applies to stills, tours, zoom
+  videos and the live view, typically past about 1e600×; shallower renders are unchanged.
+  Reference orbits saved by earlier builds are built again, not reused.
 - **Deep exports render faster when a minibrot is in the view but not at its centre, and at
   1e1000× they now come out right (0.3.0-beta.26).** An export takes its reference orbit at the
   view's centre when it can. When the centre lies just outside a minibrot, its orbit escapes
@@ -68,9 +81,9 @@ Changes after 0.3.0-beta.1:
   iterations. The deeper Cerebral Spin benchmark scene (6.7e152×, 2 million iterations) takes
   3.4 s at 4K instead of 7.2 s. A new test set puts four minibrots at 136 places in and around the
   view; its off-centre views of the 6.7e152× minibrot take 1.6 to 1.9 s instead of 3.3 to 4.8 s at
-  1080p. At 1e1000×, the old reference also drew wrong pixels on these views, and one came out
-  entirely black; the new one agrees with the arbitrary-precision check. Exports only (stills,
-  tours, zoom videos); the live view picks its reference as before.
+  1080p. (The wrong pixels and black images the old reference drew at 1e1000× came from a
+  separate fault, fixed in the entry above.) Stills, tours, zoom videos and the live view; the
+  live view's use can be switched off alone with `--set NUCLEUS_REF_LIVE=0`.
 - **A render past the graphics card's reference-orbit limit no longer paints false colour inside
   minibrots (0.3.0-beta.26).** A graphics card holds a reference orbit of limited length
   (7,452,444 iterations on an RTX 3080). An export that asked for more iterations than that, at a
