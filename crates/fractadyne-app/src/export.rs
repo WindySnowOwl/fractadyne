@@ -1805,8 +1805,13 @@ impl FractadyneApp {
             &self.cli_render_manifest(self.export.width, self.export_height(), path),
         );
         crate::diag::breadcrumb(format!("CLI iter render → {}", path.display()));
-        let req = self.current_export_request_for(&self.viewport, self.julia_mode);
-        let r = fractadyne_gpu::render_iter(device, queue, &req)?;
+        let mut req = self.current_export_request_for(&self.viewport, self.julia_mode);
+        // Raw counts are taken at pixel centres, one sample each. CHUNKED, as an export and the
+        // audits iterate (2026-11-03): `render_iter` submits the whole ask in one dispatch, which
+        // a heavy view can stretch past the GPU watchdog (the bench ladder's scene 59 runs 28.5M
+        // iterations), and the bench kit's inspection pass asks for every scene's raw counts.
+        req.ss = 1;
+        let r = fractadyne_gpu::render_iter_tiled(device, queue, &req, crate::tunables::CORRECT_WORK_BUDGET, None, None, None)?;
         let meta = format!(
             "{}\n# iteration-data EXR: R=smooth_iter (<0 = interior), G=normal.x, \
              B=normal.y, A=log2(distance_estimate_px)",

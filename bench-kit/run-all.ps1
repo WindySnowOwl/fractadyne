@@ -6,7 +6,7 @@
 #       [-TimeoutS 7200] [-Size 3840x2160] [-ZoomSeqFrames 8] [-PythonExe python]
 #       [-F3Wisdom path] [-F3Limit 8192] [-FractalSharkCliExe path] [-FractalSharkAlgo NAME]
 #       [-FractalSharkPerturbAlg NAME]
-#       [-SceneSet standard|ladder|suggested|all] [-Scenes slug-or-id,...]
+#       [-SceneSet standard|ladder|suggested|all] [-Scenes slug-or-id,...] [-Inspect]
 
 [CmdletBinding()]
 param(
@@ -163,7 +163,12 @@ param(
     # Run the Fractadyne lane WITHOUT FRACTADYNE_TRACE=ref. The trace is what fills the
     # pick/orbit/SA/BLA columns of fd-phases.csv; everything else there comes from lines the
     # app logs anyway. Only for checking that the trace costs nothing.
-    [switch]$NoPhaseTrace
+    [switch]$NoPhaseTrace,
+    # THE INSPECTION SHEET (inspect-sheet.jpg): after the lanes, every renderer that allows it on
+    # ONE stepped high-contrast palette, plus where Fraktaler-3's raw counts disagree with
+    # Fractadyne's. Untimed, at 640x360. For looking at, not for publishing; see
+    # tools/inspect-sheet.py and the README's "Inspection sheet".
+    [switch]$Inspect
 )
 
 $ErrorActionPreference = 'Stop'
@@ -1314,6 +1319,79 @@ if ($have.zoomseq) {
 } else {
     Write-Host ''
     Write-Host 'Zoom-sequence lane: skipped (needs Python and an automated renderer).'
+}
+
+# ---- inspection sheet (-Inspect) -----------------------------------------------------------
+# Every renderer that allows it on ONE stepped palette, and where one that writes its raw counts
+# disagrees with Fractadyne (tools/inspect-sheet.py has the why and the measurements). Untimed,
+# at the view check's 640x360:
+#   1. Fractadyne's raw iteration counts, fd-raw\<scene>.exr (--render-iter);
+#   2. inspect-sheet.py prepare: each scene's band width, and FractalShark's palette file;
+#   3. FractalShark once more with that palette, fs-inspect\<stem>.png (its own client, no server);
+#   4. inspect-sheet.py sheet: inspect-sheet.jpg and inspect\inspect.json.
+# Fraktaler-3's raw counts are its view check's (f3-raw\). Imagina, Fractal Zoomer and Fracturing
+# Fog appear in their own palettes.
+if ($Inspect) {
+    $insp = Join-Path $kit 'tools\inspect-sheet.py'
+    if (-not ($have.fractadyne -and $PythonExe -and (Test-Path $insp))) {
+        Write-Host 'Inspection sheet SKIPPED (needs the fractadyne lane, Python and tools\inspect-sheet.py)'
+    } else {
+        Write-Host 'Inspection sheet: raw counts and one stepped palette (untimed, 640x360)'
+        $rawDir = Join-Path $outDir 'fd-raw'
+        New-Item -ItemType Directory -Force $rawDir | Out-Null
+        $icfg = Join-Path $outDir 'fd-config'
+        foreach ($s in $sceneRows) {
+            if (Test-Path $icfg) { Remove-Item -Recurse -Force $icfg }
+            New-Item -ItemType Directory -Force $icfg | Out-Null
+            $env:FRACTADYNE_CONFIG_DIR = $icfg
+            $kfr = Read-Kfr (Join-Path $kit ('scenes\' + $s.slug + '.kfr'))
+            $raw = Join-Path $rawDir ($s.slug + '.exr')
+            $zl2 = [double]$s.mag_log10 * [math]::Log(10.0, 2.0)
+            $argLine = ('--render-iter --out "{0}" --size 640x360 --center {1} {2} --zoom-log2 {3} --iter {4} --ss 1' -f $raw, $kfr['Re'], $kfr['Im'], $zl2, $s.iterations)
+            $launch = $argLine
+            if ($argLine.Length -gt $MaxCommandLine) {
+                $argDir = Join-Path $outDir 'fd-args'
+                New-Item -ItemType Directory -Force $argDir | Out-Null
+                $argFile = Join-Path $argDir ($s.slug + '.raw.args')
+                [System.IO.File]::WriteAllText($argFile, $argLine + "`n", [System.Text.Encoding]::ASCII)
+                $launch = '"@' + $argFile + '"'
+            }
+            $r = Invoke-TimedRender $FractadyneExe $launch $TimeoutS $kit
+            if ($r.status -ne 'ok') {
+                if (Test-Path $raw) { Remove-Item -Force $raw }
+                Write-Host ('  ' + $s.slug + ': Fractadyne raw counts ' + $r.status + ' - left off the sheet')
+            }
+        }
+        Remove-Item Env:FRACTADYNE_CONFIG_DIR -ErrorAction SilentlyContinue
+        & $PythonExe $insp prepare $outDir 2>&1 | ForEach-Object { '  ' + $_ }
+        $planPath = Join-Path $outDir 'inspect\plan.json'
+        if ($have.fractalsharkcli -and (Test-Path $planPath)) {
+            $plan = Get-Content $planPath -Raw | ConvertFrom-Json
+            $fsDir = Join-Path $outDir 'fs-inspect'
+            New-Item -ItemType Directory -Force $fsDir | Out-Null
+            foreach ($s in $sceneRows) {
+                $pl = $plan.PSObject.Properties[$s.slug]
+                if (-not $pl) { continue }
+                $kfr = Read-Kfr (Join-Path $kit ('scenes\' + $s.slug + '.kfr'))
+                # A dot-free stem: FractalSharkCli appends .png only to a name without a dot.
+                $stem = Join-Path $fsDir ($s.slug -replace '\.', 'p')
+                $map = Join-Path $outDir ('inspect\' + $s.slug + '.fs.map')
+                $tail = (' --iterations {0} --width 640 --height 360 --antialiasing 1 --palette-map "{1}" --palette-depth {2} --quiet --out "{3}"' -f $s.iterations, $map, $pl.Value.fs_depth, $stem)
+                $renderArgs = ('--render-algorithm {0} --center-x {1} --center-y {2} --zoom {3}' -f $FractalSharkAlgo, $kfr['Re'], $kfr['Im'], $kfr['Zoom']) + $tail
+                if ($renderArgs.Length -gt $MaxCommandLine) {
+                    # As the lane: a centre too long for a command line goes in a locations file.
+                    $locDir = Join-Path $outDir 'fs-loc'
+                    New-Item -ItemType Directory -Force $locDir | Out-Null
+                    $fsLoc = Join-Path $locDir ($s.slug + '.inspect.fsloc')
+                    & $PythonExe (Join-Path $kit 'tools\make-fsloc.py') (Join-Path $kit ('scenes\' + $s.slug + '.kfr')) $fsLoc --width 640 --height 360 --iterations $s.iterations --name ($s.slug -replace '\.', 'p') 2>&1 | Out-Null
+                    $renderArgs = ('--render-algorithm {0} --locations "{1}"' -f $FractalSharkAlgo, $fsLoc) + $tail
+                }
+                $r = Invoke-TimedRender $FractalSharkCliExe $renderArgs $TimeoutS $outDir
+                if ($r.status -ne 'ok') { Write-Host ('  ' + $s.slug + ': FractalShark inspection render ' + $r.status) }
+            }
+        }
+        & $PythonExe $insp sheet $outDir 2>&1 | ForEach-Object { '  ' + $_ }
+    }
 }
 
 # ---- summary: fastest run per renderer x scene, ratio vs fractadyne where possible ----
