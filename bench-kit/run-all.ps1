@@ -1328,9 +1328,11 @@ if ($have.zoomseq) {
 #   1. Fractadyne's raw iteration counts, fd-raw\<scene>.exr (--render-iter);
 #   2. inspect-sheet.py prepare: each scene's band width, and FractalShark's palette file;
 #   3. FractalShark once more with that palette, fs-inspect\<stem>.png (its own client, no server);
-#   4. inspect-sheet.py sheet: inspect-sheet.jpg and inspect\inspect.json.
-# Fraktaler-3's raw counts are its view check's (f3-raw\). Imagina, Fractal Zoomer and Fracturing
-# Fog appear in their own palettes.
+#   4. Imagina once more, its counts encoded in colour, im-inspect\<scene>.ppm (imagina-cli
+#      --iterations and the decode map `prepare` writes);
+#   5. inspect-sheet.py sheet: inspect-sheet.jpg and inspect\inspect.json.
+# Fraktaler-3's raw counts are its view check's (f3-raw\). Fractal Zoomer and Fracturing Fog
+# appear in their own palettes.
 if ($Inspect) {
     $insp = Join-Path $kit 'tools\inspect-sheet.py'
     if (-not ($have.fractadyne -and $PythonExe -and (Test-Path $insp))) {
@@ -1389,6 +1391,45 @@ if ($Inspect) {
                 $r = Invoke-TimedRender $FractalSharkCliExe $renderArgs $TimeoutS $outDir
                 if ($r.status -ne 'ok') { Write-Host ('  ' + $s.slug + ': FractalShark inspection render ' + $r.status) }
             }
+        }
+        # Imagina's whole iteration counts, ENCODED IN COLOUR: imagina-cli --iterations stores each
+        # pixel's smooth count (not its default distance-estimate value), and with no
+        # --palette-cycle it colours a pixel with entry floor(count) mod n of the map, unblended.
+        # The decode map gives entry i the colour (i mod 256, i / 256, 77), so the sheet reads the
+        # count back, mod 65,536. An imagina-cli built before --iterations ignores the flag and
+        # draws the DE value through the same map - readable, and meaningless - so its own
+        # confirmation line on stderr is required, not assumed.
+        $decodeMap = Join-Path $outDir 'inspect\imagina-decode.map'
+        if ($have.imaginacli -and (Test-Path $planPath) -and (Test-Path $decodeMap)) {
+            $plan = Get-Content $planPath -Raw | ConvertFrom-Json
+            $imDir = Join-Path $outDir 'im-inspect'
+            New-Item -ItemType Directory -Force $imDir | Out-Null
+            $savedPath = $env:PATH
+            if ($ImaginaRuntimeDir -and (Test-Path $ImaginaRuntimeDir)) { $env:PATH = $ImaginaRuntimeDir + ';' + $env:PATH }
+            foreach ($s in $sceneRows) {
+                if (-not $plan.PSObject.Properties[$s.slug]) { continue }
+                $kfr = Read-Kfr (Join-Path $kit ('scenes\' + $s.slug + '.kfr'))
+                $zoom = ($kfr['Zoom'] -replace 'E', 'e')
+                $digits = ($kfr['Re'] -replace '[^0-9]', '').Length
+                $prec = [Math]::Max(128, [int]($digits * 3.3219) + 96)
+                $ppm = Join-Path $imDir ($s.slug + '.ppm')
+                $argLine = ('--center-x {0} --center-y {1} --precision {2} --zoom {3} --iter {4} --width 640 --height 360 --out "{5}" --palette-map "{6}" --iterations' -f
+                            $kfr['Re'], $kfr['Im'], $prec, $zoom, $s.iterations, $ppm, $decodeMap)
+                if ($argLine.Length -gt $MaxCommandLine) {
+                    Write-Host ('  ' + $s.slug + ': Imagina counts left off the sheet (its centre does not fit a command line)')
+                    continue
+                }
+                $r = Invoke-TimedRender $ImaginaCliExe $argLine $TimeoutS $imDir
+                $why = ''
+                if ($r.status -ne 'ok') { $why = $r.status }
+                elseif (-not ($r.stderr -match 'storing smooth iteration counts')) { $why = 'this imagina-cli predates --iterations (rebuild it)' }
+                elseif (-not (Test-Path $ppm)) { $why = 'no image written' }
+                if ($why) {
+                    if (Test-Path $ppm) { Remove-Item -Force $ppm }
+                    Write-Host ('  ' + $s.slug + ': Imagina counts left off the sheet - ' + $why)
+                }
+            }
+            $env:PATH = $savedPath
         }
         & $PythonExe $insp sheet $outDir 2>&1 | ForEach-Object { '  ' + $_ }
     }
