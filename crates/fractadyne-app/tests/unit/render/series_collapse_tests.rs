@@ -1,4 +1,4 @@
-use super::{series_collapse, series_share, shader_series, short_escaper_ask, SERIES_COLLAPSE_SLACK};
+use super::{partial_ref_cap, series_collapse, series_share, shader_series, short_escaper_ask, SERIES_COLLAPSE_SLACK};
 
 // crash-1792627197 (2026-10-21), from its frame record: an escaped reference of 298,416 samples,
 // built for asks of 636,597–702,557, carrying a 298,404-iteration series skip.
@@ -77,4 +77,19 @@ fn the_shader_series_matches_the_dispatch_rules() {
     assert_eq!(shader_series(false, true, true, 900_000, 256_001, 0), (256_000, 256_000, 0));
     // A skip at or past an ordinary count is refused when the rescue would not be cheaper.
     assert_eq!(shader_series(false, true, false, 1_000, 2_000_000, 1_500), (1_000, 1_000, 0));
+    // The partial cap is the shared rule's, not a copy of it.
+    assert_eq!(shader_series(false, true, true, 900_000, 256_001, 0).0, partial_ref_cap(true, 900_000, 256_001));
+}
+
+#[test]
+fn a_partial_reference_caps_the_count_at_its_last_sample() {
+    // Scene 63 at a 7.5M ask on the RTX 3080: the orbit stopped at the card's limit.
+    assert_eq!(partial_ref_cap(true, 7_500_000, 7_452_445), 7_452_444);
+    // Built all the way to the ask (len = ask + 1): no cap.
+    assert_eq!(partial_ref_cap(true, 7_400_000, 7_400_001), 7_400_000);
+    // Escaped or periodic (`partial` false): the ask stands, however short the orbit. Capping an
+    // escaped reference would turn every late-escaping boundary pixel interior.
+    assert_eq!(partial_ref_cap(false, 7_500_000, 655), 7_500_000);
+    // An empty orbit caps to zero, never wraps.
+    assert_eq!(partial_ref_cap(true, 1_000, 0), 0);
 }

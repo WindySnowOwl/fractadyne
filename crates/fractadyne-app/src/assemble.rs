@@ -582,8 +582,7 @@ impl crate::FractadyneApp {
                     StripFormat::Fractadyne,
                     p.power,
                     (&p.cx, &p.cy),
-                    &s.result,
-                    &s.req,
+                    &s,
                 )?;
             }
             let secs = t.elapsed().as_secs_f64();

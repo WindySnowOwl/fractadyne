@@ -183,8 +183,7 @@ pub(crate) fn strip_meta(map: &ExpMap, k: u64, max_iter: u32, mode: u32, format:
     )
 }
 
-/// Write strip `k` (rendered `r` from `req`) to `path` in `format`, atomically.
-#[allow(clippy::too_many_arguments)]
+/// Write strip `k` (rendered as `s`) to `path` in `format`, atomically.
 pub(crate) fn write_strip_file(
     path: &Path,
     map: &ExpMap,
@@ -192,10 +191,16 @@ pub(crate) fn write_strip_file(
     format: StripFormat,
     power: f64,
     centre: (&fractadyne_core::BigFloat, &fractadyne_core::BigFloat),
-    r: &fractadyne_gpu::ExportResult,
-    req: &fractadyne_gpu::ExportRequest,
+    s: &StripRender,
 ) -> Result<(), String> {
-    let meta = strip_meta(map, k, req.max_iter, req.mode, format);
+    let (r, req) = (&s.result, &s.req);
+    // `max_iter` is the plan's cap, which a farm checks the strip against. A strip past the
+    // dive reference's end, where the reference stopped without escaping, ran only to its last
+    // sample (`partial_ref_cap`), and says so.
+    let mut meta = strip_meta(map, k, s.cap, req.mode, format);
+    if req.max_iter < s.cap {
+        meta.push_str(&format!("rendered_max_iter={}\n", req.max_iter));
+    }
     let written = match format {
         StripFormat::Fractadyne => {
             fractadyne_export::write_exr_channels(path, map.width, map.rows, strip_channels(&r.pixels, &r.aux), Some(&meta))
@@ -279,6 +284,9 @@ pub(crate) struct StripRender {
     pub(crate) result: fractadyne_gpu::ExportResult,
     pub(crate) req: fractadyne_gpu::ExportRequest,
     pub(crate) reused: bool,
+    /// The plan's iteration cap for the strip. `req.max_iter` is lower only where the reference
+    /// stopped short of it without escaping (`partial_ref_cap`).
+    pub(crate) cap: u32,
 }
 
 /// Strip `k`'s file name.
@@ -396,7 +404,7 @@ impl crate::FractadyneApp {
         // Where a strip's time goes (GPU time, passes, BLA skips, rebases, capped texels and
         // iterations a loop trip): a deep dive's strips cost minutes each, and this says why.
         Self::log_export_perf(&format!("strip {k}"), &req, &r);
-        Ok(StripRender { result: r, req, reused })
+        Ok(StripRender { result: r, req, reused, cap })
     }
 
     /// The dive's ONE reference: built once for its deepest strip `k`, at that strip's cap and
@@ -593,7 +601,7 @@ impl crate::FractadyneApp {
                 let t0 = std::time::Instant::now();
                 let s = self.render_strip(device, queue, &map, k, &cx, &cy, caps[k as usize], dive_ref.as_ref()).map_err(|e| failed(k, e))?;
                 let (r, req) = (&s.result, &s.req);
-                write_strip_file(&path, &map, k, opts.format, power, (&cx, &cy), r, req).map_err(|e| failed(k, e))?;
+                write_strip_file(&path, &map, k, opts.format, power, (&cx, &cy), &s).map_err(|e| failed(k, e))?;
                 if opts.farm_child {
                     let src = if req.mode == 1 { "none" } else if s.reused { "reused" } else { "fresh" };
                     println!("{}", crate::scripting::frame_done_line(&path, k, t0.elapsed().as_millis() as u64, src));
