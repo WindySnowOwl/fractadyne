@@ -6,7 +6,7 @@
 #       [-AppsDir <folder>]      where the apps land (default <kit>\apps); free space verified
 #       [-RequiredGB 3.0]        free-space floor for downloads + extraction + results
 #       [-Reps 1] [-Skip imagina,fractalshark] [-TimeoutS 7200] [-Scenes 03-seahorse-1e6,...]
-#       [-SceneSet standard|ladder|all]  which scene list (see run-all.ps1; the ladder takes hours)
+#       [-SceneSet standard|ladder|suggested|all]  which scene list (see run-all.ps1; the ladder takes hours)
 #       [-SkipDownload]          reuse whatever AppsDir already holds (offline mode)
 #       [-FractadyneExe <path>]  benchmark a LOCAL fractadyne build instead of the release
 #
@@ -42,7 +42,7 @@ param(
     [ValidatePattern('^[0-9]+x[0-9]+$')]
     [string]$Size = '3840x2160',
     [string[]]$Scenes = @(),
-    [ValidateSet('standard', 'ladder', 'all')]
+    [ValidateSet('standard', 'ladder', 'suggested', 'all')]
     [string]$SceneSet = 'standard',
     [switch]$SkipDownload,
     [string]$FractadyneExe = ''

@@ -3,7 +3,7 @@
 # benchmarked renderers, run the benchmark sequentially, and produce the summary report.
 #
 #   ./bench-latest.sh [--apps-dir DIR] [--required-gb N] [--reps N] [--timeout S]
-#                     [--scenes slug,slug|id,...] [--scene-set standard|ladder|all]
+#                     [--scenes slug,slug|id,...] [--scene-set standard|ladder|suggested|all]
 #                     [--skip lane,lane] [--skip-download]
 #                     [--fractadyne PATH] [--fraktaler3 PATH] [--f3-limit N]
 #
@@ -233,12 +233,13 @@ result() { # renderer scene rep status wall reported note
     printf '  %-13s %-18s rep%s  %-12s wall=%-8s reported=%s\n' "$1" "$2" "$3" "$4" "$5" "$6"
 }
 
-# ---- scene table (scenes.csv and/or scenes-ladder.csv per --scene-set, then --scenes) ----
+# ---- scene table (scenes.csv, scenes-ladder.csv, scenes-suggested.csv per --scene-set, then --scenes) ----
 case "$SCENE_SET" in
     standard) SCENE_CSVS=("$KIT/scenes.csv") ;;
     ladder) SCENE_CSVS=("$KIT/scenes-ladder.csv") ;;
-    all) SCENE_CSVS=("$KIT/scenes.csv" "$KIT/scenes-ladder.csv") ;;
-    *) echo "ERROR: --scene-set must be standard, ladder or all"; exit 1 ;;
+    suggested) SCENE_CSVS=("$KIT/scenes-suggested.csv") ;;
+    all) SCENE_CSVS=("$KIT/scenes.csv" "$KIT/scenes-ladder.csv" "$KIT/scenes-suggested.csv") ;;
+    *) echo "ERROR: --scene-set must be standard, ladder, suggested or all"; exit 1 ;;
 esac
 SCENES=()
 while IFS=, read -r id slug mag_log10 iterations normalize f3_limit; do
@@ -259,13 +260,14 @@ while IFS=, read -r id slug mag_log10 iterations normalize f3_limit; do
 done < <(cat "${SCENE_CSVS[@]}" | tr -d '\r')
 [ "${#SCENES[@]}" -gt 0 ] || { echo "ERROR: --scenes matched nothing in the $SCENE_SET scene set"; exit 1; }
 # In the repository scenes/ is gitignored; refresh each needed file from where it lives (the
-# ladder in ladder/, the standard ten in validation/corpus/locations), as run-all.ps1 does. A
+# ladder in ladder/, the suggested set in suggested/, the standard ten in
+# validation/corpus/locations), as run-all.ps1 does. A
 # packaged kit has no sources beside it and keeps its scenes/ as shipped. A Linux command line
 # takes a 30,000-digit argument (the per-argument limit is 128 KiB), so no lane needs a file here.
 for row in "${SCENES[@]}"; do
     IFS=, read -r _ slug _ _ _ <<<"$row"
     for ext in .kfr .f3.toml .fdn; do
-        for src in "$KIT/ladder" "$KIT/../validation/corpus/locations"; do
+        for src in "$KIT/ladder" "$KIT/suggested" "$KIT/../validation/corpus/locations"; do
             if [ -f "$src/$slug$ext" ]; then
                 mkdir -p "$KIT/scenes"; cp -f "$src/$slug$ext" "$KIT/scenes/$slug$ext"; break
             fi

@@ -16,13 +16,15 @@ $scenes = (Import-Csv (Join-Path $kit 'scenes.csv')).slug
 # The ladder (scenes-ladder.csv) is the kit's own: its scenes are not corpus fixtures, so they live
 # in bench-kit\ladder\ and ship from there.
 $ladder = (Import-Csv (Join-Path $kit 'scenes-ladder.csv')).slug
+# The suggested set (scenes-suggested.csv) is the kit's own too, in bench-kit\suggested\.
+$suggested = (Import-Csv (Join-Path $kit 'scenes-suggested.csv')).slug
 
 $stage = Join-Path $env:TEMP ('fd-bench-kit-' + [guid]::NewGuid().ToString('N').Substring(0, 8))
 New-Item -ItemType Directory -Force $stage | Out-Null
 try {
     # zoom-seq.py is a LANE, not an extra: run-all.ps1 invokes it by name. Ship it or the
     # kit's sequence lane reports itself missing on every machine that unzips this file.
-    foreach ($f in 'README.md', 'scenes.csv', 'scenes-ladder.csv', 'bench-lib.ps1', 'run-all.ps1',
+    foreach ($f in 'README.md', 'scenes.csv', 'scenes-ladder.csv', 'scenes-suggested.csv', 'bench-lib.ps1', 'run-all.ps1',
                    'bench-latest.ps1', 'bench-latest.sh', 'zoom-seq.py') {
         Copy-Item (Join-Path $kit $f) $stage
     }
@@ -59,9 +61,12 @@ try {
             -replace '^\s*subframes\s*=\s*\d+', 'subframes = 1' |
             Set-Content $toml -Encoding ascii
     }
-    foreach ($s in $ladder) {
+    $kitOwn = @($ladder | ForEach-Object { @{ slug = $_; dir = 'ladder' } }) +
+              @($suggested | ForEach-Object { @{ slug = $_; dir = 'suggested' } })
+    foreach ($k in $kitOwn) {
+        $s = $k.slug
         foreach ($ext in '.kfr', '.f3.toml', '.fdn') {
-            Copy-Item (Join-Path $kit ('ladder\' + $s + $ext)) (Join-Path $stage 'scenes')
+            Copy-Item (Join-Path $kit ($k.dir + '\' + $s + $ext)) (Join-Path $stage 'scenes')
         }
         # The same by-hand default as the standard scenes above; run-all rewrites it per run anyway.
         $toml = Join-Path $stage ('scenes\' + $s + '.f3.toml')
