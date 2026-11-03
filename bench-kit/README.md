@@ -368,6 +368,45 @@ across 1e28, a deep field across 1e308). Two harnesses consume them:
 - A scene a renderer cannot complete (crash, >2 h timeout, unsupported hardware) is recorded
   as `DNF` — a result, not a gap.
 
+## The inspection sheet (`-Inspect`)
+
+Each renderer draws with its own palette, so two correct renders of one scene can look nothing
+alike, and a real difference hides among the colouring differences. `-Inspect` adds an untimed
+pass after the lanes that writes `inspect-sheet.jpg`: the renderers that allow it on ONE stepped
+palette, side by side, and a map of where Fraktaler-3's iteration counts disagree with
+Fractadyne's. It is for looking at, not for publishing; the published images keep each
+renderer's own look.
+
+- **The palette.** Four colours in a fixed order, light and dark alternating (white, blue,
+  yellow, vermillion), never blended, interior black: a pixel's band is floor(n / k) mod 4 for its
+  whole iteration count n. `k` is a power of two chosen per scene from Fractadyne's counts, so
+  bands are about 10 pixels wide at 640x360. Hard edges are the point: a count off by a few
+  iterations moves an edge, which a smooth ramp (grayscale included) would hide.
+- **Who gets it.** Fractadyne (`--render-iter`) and Fraktaler-3 (its view check's raw EXR) write
+  raw counts, which `tools/inspect-sheet.py` colours itself, so their palette is identical by
+  construction. FractalShark 0.545 takes `--palette-map` and `--palette-depth`: it resamples the
+  file to 2^depth entries and advances one entry per iteration (measured on scene 03), so the
+  tool writes each scene a file of exactly 2^depth entries, each colour repeated k times
+  (`inspect\<scene>.fs.map`). Imagina, Fractal Zoomer and Fracturing Fog appear in their own
+  palettes for now. Fraktaler-3 3.1 has no colour option, which is why its raw counts are used.
+- **The deviation map.** Fraktaler-3's counts, less their median offset from Fractadyne's (1024
+  from its EXR's iteration bias plus about 3 from its escape radius), are compared with the RANGE
+  of Fractadyne's 3x3 neighbourhood, since a renderer samples a pixel somewhere inside it.
+  Outside that range by more than 2 iterations is a deviation, counted only in connected patches
+  of 12 pixels or more. Measured on scenes 61 to 64: in smooth areas the two agree to one
+  iteration everywhere, and they disagree only in isolated pixels where the field has structure
+  finer than a pixel (drawn dull purple and reported as speckle). Magenta is a deviating patch,
+  red escaped in one renderer only, grey chaotic (the neighbourhood spans more than a band).
+- **It can go red.** Faults planted in Fraktaler-3's counts were found: a 30x30 block 50
+  iterations out, a 20x20 blank patch and a 4x4 glitch, one patch each; a block shifted by half
+  a band was found where it crossed smooth ground, which is the limit of a test done pixel by
+  pixel. A 1-iteration shift of the whole frame was not flagged, as it should not be.
+
+`run-all.ps1 -Inspect` needs the Fractadyne lane and Python with numpy and Pillow. By hand, with
+`fd-raw\<scene>.exr` in a results folder: `python tools/inspect-sheet.py prepare results\<run>`,
+then `python tools/inspect-sheet.py sheet results\<run>`. Per-scene numbers are in
+`inspect\inspect.json`.
+
 ## One command: fetch the latest apps and run everything
 
 `bench-latest` downloads the newest release of every renderer, verifies the target drive has
