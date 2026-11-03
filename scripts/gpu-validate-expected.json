@@ -137,9 +137,8 @@
         "why": "under Windows the RX 6800 XT keeps the error-free transforms on Vulkan and GL but its df32 compositions reach only f32 accuracy (DX12 folds the transforms too); its rebase sums fuse unlike the RTX 3080's on every backend, and no backend rounds sqrt or log2 correctly (measured 2026-10-16, driver 26.8.1, dev.21: U26). A line not listed is a NEW failure"
       },
       "selftest": {
-        "exit": [0, 1],
-        "known_fails": ["a wider canvas contains the narrower one"],
-        "why": "known: under Windows a few texels at 1e2x differ between a wide and a narrow canvas (under Linux it is floatexp vs df32 instead, which this Windows battery never sees)"
+        "exit": [0],
+        "why": "must pass: since 0.3.0-beta.25 this card's compiler is found to fuse two_prod's product and gets the product barrier, and with it 'a wider canvas contains the narrower one' passes too (it had failed under Windows since it was written); its golden set and bench baseline were re-adopted from the dev.9 battery"
       }
     }
   }
