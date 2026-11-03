@@ -9,7 +9,7 @@ A reproducible head-to-head of deep-zoom Mandelbrot renderers on **your** hardwa
 | **Imagina** | automated (`-ImaginaCliExe`) | CPU (MipLA) | upstream is GUI-only; a small headless `imagina-cli` fork enables the automated lane - see "Imagina" below |
 | **FractalShark** | automated (GPU, 0.541+) | GPU (CUDA) | GPU lane works from 0.541 (adds sm_75; runs on RTX 20/30/40/50); earlier releases were CPU-only here - see below |
 | **Fractal Zoomer** | automated (`-FractalZoomerJar`, `-FzsWriterPath`, a JDK) | CPU (Java; perturbation + BLA) | its own command line (1.0.9.6), one batch per round; a small GPL-3.0 writer, FzsWriter, makes its `.fzs` inputs, and the lane competes on Fractal Zoomer's OWN time - see "Fractal Zoomer" below |
-| **Fracturing Fog** | automated (`-FracturingFogExe`) | CPU (.NET; perturbation + BLA, octuple-double reference) | its own batch command line (0.7.1); renders to 1e100, so the deeper scenes are `NA-past-its-ceiling` - see "Fracturing Fog" below |
+| **Fracturing Fog** | automated (`-FracturingFogExe`) | CPU (.NET; perturbation + series approximation + BLA; double-, quad- or octuple-double reference by depth) | its own batch command line (0.7.1); renders to 1e100, so the deeper scenes are `NA-past-its-ceiling` - see "Fracturing Fog" below |
 
 Ten single-frame scenes from Fractadyne's cross-validated corpus (each verified pixel-for-pixel
 against Fraktaler-3), spanning 1e6× to 4.6e1105× magnification, plus a **zoom sequence** lane
