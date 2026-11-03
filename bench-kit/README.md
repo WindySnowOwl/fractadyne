@@ -387,10 +387,20 @@ renderer's own look.
   construction. FractalShark 0.545 takes `--palette-map` and `--palette-depth`: it resamples the
   file to 2^depth entries and advances one entry per iteration (measured on scene 03), so the
   tool writes each scene a file of exactly 2^depth entries, each colour repeated k times
-  (`inspect\<scene>.fs.map`). Imagina, Fractal Zoomer and Fracturing Fog appear in their own
-  palettes for now. Fraktaler-3 3.1 has no colour option, which is why its raw counts are used.
-- **The deviation map.** Fraktaler-3's counts, less their median offset from Fractadyne's (1024
-  from its EXR's iteration bias plus about 3 from its escape radius), are compared with the RANGE
+  (`inspect\<scene>.fs.map`). Imagina's counts come back encoded in colour: `imagina-cli
+  --iterations` stores each pixel's smooth iteration count (by default it stores a value from its
+  distance estimate, which lights filaments rather than bands), and with a 65,536-entry decode map
+  whose every entry encodes its own index (`inspect\imagina-decode.map`), the tool reads the count
+  back and colours it like Fraktaler-3's. On scenes 61 to 64 Imagina counts 1 to 3 more than
+  Fractadyne. Fractal Zoomer's counts are its colours: FzsWriter `--counts` turns on its direct
+  colour mode, where a pixel is its escape iteration count written straight into RGB (white is
+  interior), and sets its escape radius to Fractadyne's 256 (at its default of 2, the steps
+  between the two radii vary across a view by more than any one offset can take out); on scenes
+  61 to 64 its count is then Fractadyne's plus 3. Fracturing Fog appears in
+  its own palette. Fraktaler-3 3.1 has no colour option, which is why its raw counts are used.
+- **The deviation map.** Fraktaler-3's, Imagina's and Fractal Zoomer's counts, less their median offset from
+  Fractadyne's (for Fraktaler-3, 1024 from its EXR's iteration bias plus about 3 from its escape
+  radius), are compared with the RANGE
   of Fractadyne's 3x3 neighbourhood, since a renderer samples a pixel somewhere inside it.
   Outside that range by more than 2 iterations is a deviation, counted only in connected patches
   of 12 pixels or more. Measured on scenes 61 to 64: in smooth areas the two agree to one
@@ -401,6 +411,15 @@ renderer's own look.
   iterations out, a 20x20 blank patch and a 4x4 glitch, one patch each; a block shifted by half
   a band was found where it crossed smooth ground, which is the limit of a test done pixel by
   pixel. A 1-iteration shift of the whole frame was not flagged, as it should not be.
+
+Fractal Zoomer joins the sheet only with an FzsWriter that has `--counts`; an older one refuses the
+switch, and the pass says so and leaves Fractal Zoomer's own image in place.
+Imagina joins the sheet only with an `imagina-cli` that has `--iterations`: an older build ignores
+the flag and draws its distance-estimate value through the decode map, which reads back as
+nonsense, so the pass requires the line the flag prints and otherwise leaves Imagina's own image
+in place. imagina-cli is not deterministic run to run (two runs of one build differed at 82% of
+the pixels of scene 64), so its deviation patches are worth a second run before reading much
+into them.
 
 `run-all.ps1 -Inspect` needs the Fractadyne lane and Python with numpy and Pillow. By hand, with
 `fd-raw\<scene>.exr` in a results folder: `python tools/inspect-sheet.py prepare results\<run>`,
@@ -593,8 +612,9 @@ Upstream Imagina ships a GUI only — no headless render mode — so it has two 
   lane whenever the CLI is present. Because it is a derivative of Imagina it is **AGPL-3.0**, kept
   in a separate repo and never linked into Fractadyne. Building it needs msys2 mingw-clang and GMP;
   the changes from upstream are a headless entry point, an MPIR→GMP switch, and a Windows LLP64 fix
-  to `FloatExp`'s `mpf` exponent read. Ask us for the fork, or reproduce it from upstream with those
-  notes.
+  to `FloatExp`'s `mpf` exponent read; its `--iterations` switch, used only by the inspection
+  sheet, stores iteration counts in place of the distance-estimate value the timed lane renders.
+  Ask us for the fork, or reproduce it from upstream with those notes.
   Two things the lane has to get right, both of which have bitten this kit before:
   **it needs the msys2 toolchain DLLs on `PATH`** or it exits `0xC0000135` with no message at all,
   which reads exactly like a crash (`-ImaginaRuntimeDir`, autodetected from `C:\msys64`); and
