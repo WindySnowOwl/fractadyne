@@ -340,6 +340,9 @@ pub(crate) fn open_headless(spec: &str, window: &wgpu::AdapterInfo, backends: wg
     } else {
         fractadyne_gpu::pipeline_compile::adapter_tag(&info.name, &format!("{:?}", info.backend))
     };
+    // Before any pipeline exists on this device (TODO PR-C2): its own compiler may fuse where the
+    // window's does not — PLUTO pairs an NVIDIA and an AMD card.
+    crate::log_product_fusion(&name, &fractadyne_gpu::detect_product_fusion(&device, &queue));
     Ok(Headless { device, queue, name, adapter: info.name.clone(), compile_tag, alive })
 }
 

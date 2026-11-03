@@ -971,6 +971,9 @@ pub(crate) fn run_gputest_sweep(out: Option<&std::path::Path>) -> usize {
             &info.name,
             &format!("{:?}", info.backend),
         ));
+        // Asked first, as the app does for its own devices: the dropped pass then carries the
+        // product barrier exactly where this device's renderer would.
+        let fusion = fractadyne_gpu::detect_product_fusion(&device, &queue);
         let run = fractadyne_gpu::gputest(&device, &queue);
         let dropped = fractadyne_gpu::gputest_with(&device, &queue, false);
         fractadyne_gpu::pipeline_compile::set_adapter(0);
@@ -979,6 +982,14 @@ pub(crate) fn run_gputest_sweep(out: Option<&std::path::Path>) -> usize {
                 if report(&mut sink, label, w, h, &px) > 0 {
                     failed += 1;
                 }
+                sink.line(match &fusion {
+                    Ok(v) if v.barrier() => format!(
+                        "  probe product fusion: this compiler FUSES two_prod's product ({} of {} as-written results differ) — the renderer gets the product barrier",
+                        v.differ, v.of
+                    ),
+                    Ok(v) => format!("  probe product fusion: none ({} of {} results as written) — no barrier", v.of, v.of),
+                    Err(e) => format!("  probe product fusion: the probe did not run ({e})"),
+                });
                 match dropped {
                     Ok((_, _, d)) => probe(&mut sink, w, h, &px, &d),
                     Err(e) => sink.line(format!("  probe: the dropped-residual pass did not run ({e})")),

@@ -66,8 +66,15 @@ fn two_sum(a: f32, b: f32) -> vec2<f32> {
 // written) — and doing so in some shaders and not others. `ob` ORs in `ob_zero`, 0 at run time but
 // unknowable at compile time wherever an entry point has armed it from a uniform, so `p` is no
 // longer a product to fuse. Unarmed entry points fold it away and compile as before.
+// The barrier is compiled in only where this device's compiler was found to fuse
+// (`PRODUCT_BARRIER`, set per device by `fusion::detect_product_fusion` through the iterate
+// pipelines' constants): off, `ob` is the identity and the code is what it was before the barrier.
+override PRODUCT_BARRIER: bool = false;
 var<private> ob_zero: u32;
 fn ob(x: f32) -> f32 {
+    if (!PRODUCT_BARRIER) {
+        return x;
+    }
     return bitcast<f32>(bitcast<u32>(x) | ob_zero);
 }
 // `iu.res` is the iteration grid's size: never negative, so this stores 0 — unprovably.
@@ -3994,6 +4001,16 @@ fn gt_normal_case(t: u32) -> vec2<f32> {
     let z = vec2<f32>(gt_f32(t * 4u + 1u, -6, 24u), gt_f32(t * 4u + 2u, -6, 24u));
     let d = vec2<f32>(gt_f32(t * 4u + 3u, e - 8, 9u), gt_f32(t * 4u + 4u, e - 8, 9u));
     return slope_normal(z, d);
+}
+// Does this device's compiler fuse two_prod's product into the add that consumes it (see `ob`)?
+// Each texel is one df_mul of a hashed pair (`fs_gputest` row 3's operands), computed with the add
+// residuals dropped and no barrier; `fusion::detect_product_fusion` compares the results with the
+// code as written and compiles the barrier into this device's iterate pipelines if they differ.
+@fragment
+fn fs_fusion_probe(@builtin(position) pos: vec4<f32>) -> @location(0) vec4<f32> {
+    let s = u32(pos.x) + 100003u * 3u;
+    let r = df_mul(gt_df(s * 8u + 3u, -4, 8u), gt_df(s * 8u + 5u, -4, 8u));
+    return vec4<f32>(r.x, r.y, 0.0, 0.0);
 }
 @fragment
 fn fs_gputest(@builtin(position) pos: vec4<f32>) -> @location(0) vec4<f32> {

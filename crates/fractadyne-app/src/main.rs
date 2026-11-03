@@ -511,6 +511,19 @@ fn main() -> eframe::Result<()> {
 /// this crate goes through here: `exit` runs no destructors and no hooks, so a marker left armed
 /// by a deliberate quit would be reported as a crash on the next launch. One choke point is the
 /// only way to be sure none was missed.
+/// The start log's line for a device's product-fusion verdict (`fractadyne_gpu::detect_product_fusion`).
+pub(crate) fn log_product_fusion(which: &str, fusion: &Result<fractadyne_gpu::FusionVerdict, fractadyne_gpu::GpuError>) {
+    let line = match fusion {
+        Ok(v) if v.barrier() => format!(
+            "{which}: product barrier ON — this compiler fuses two_prod's product ({} of {} probe results differ from the code as written)",
+            v.differ, v.of
+        ),
+        Ok(v) => format!("{which}: product barrier off — no fusion found ({} probe results as written)", v.of),
+        Err(e) => format!("{which}: the product-fusion probe did not run ({e}) — no barrier"),
+    };
+    diag::log_line("gpu", &line);
+}
+
 pub(crate) fn exit(code: i32) -> ! {
     // A task logs its exit code and holds its own log to `validation/logcheck-rules.toml`; a rule
     // it broke turns a 0 into a 1 (`harness::logcheck::at_exit`).
@@ -6794,7 +6807,11 @@ impl FractadyneApp {
                 crate::exit(1);
             }
         };
+        // Before any pipeline exists on this device: does its shader compiler fuse `two_prod`'s
+        // product (TODO PR-C2)? Where it does, the iterate pipelines get the WGSL product barrier.
+        let fusion = fractadyne_gpu::detect_product_fusion(&render_state.device, &render_state.queue);
         install_renderer(render_state);
+        log_product_fusion("main", &fusion);
         // Record the GPU's storage-buffer binding limit as the reference-orbit length ceiling, so
         // the off-thread live recompute can bound a deep-interior orbit to what the buffer holds
         // (a `.fdn` with auto-iter off + a very high max_iter at an interior view would otherwise

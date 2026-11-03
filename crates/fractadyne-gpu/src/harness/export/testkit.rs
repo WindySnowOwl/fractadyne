@@ -447,10 +447,15 @@ pub fn gputest_with(
     // The renderer drops the add transforms' residuals (WGSL `EFT_ADD_RESIDUALS`, TODO PR-C2); the
     // self-test's pass asks for them, so its rows still test the exact transforms this stack's
     // compiler gives. The probe's pass leaves them dropped.
-    let consts = std::collections::HashMap::from([(
-        "EFT_ADD_RESIDUALS".to_string(),
-        if exact_adds { 1.0 } else { 0.0 },
-    )]);
+    // The dropped pass computes what this device's renderer does: with the product barrier where
+    // its compiler was found to fuse (`fusion`, asked by the caller first).
+    let consts = std::collections::HashMap::from([
+        ("EFT_ADD_RESIDUALS".to_string(), if exact_adds { 1.0 } else { 0.0 }),
+        (
+            "PRODUCT_BARRIER".to_string(),
+            if !exact_adds && crate::product_barrier(device) { 1.0 } else { 0.0 },
+        ),
+    ]);
     let pipeline = crate::fullscreen_pipeline_c(
         device,
         &shader,
