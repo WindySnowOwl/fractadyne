@@ -49,7 +49,10 @@ const MAGIC: &[u8; 8] = b"FDNORBIT";
 /// `dZ/dZ_0` (design/precision-schedule.md P2).
 /// v5: a fold family's schedule (P3) — flag 3 (c plane) or 4 (Julia), then its 2×2 Jacobian (four
 /// m/e pairs, row-major) in place of `d`, then `cur`.
-const VERSION: u16 = 5;
+/// v6: an orbit dip below 2^-1022 is a sample in the extended form with its true exponent
+/// (`fractadyne_core`'s `pack_sample_or`); v5 stored it as a zero or as ∞/NaN lanes, which drew a
+/// view whose reference dips that deep with every pixel stuck to the reference.
+const VERSION: u16 = 6;
 
 /// Bytes before the header body: magic, version, header length.
 const PRELUDE: usize = 8 + 2 + 4;

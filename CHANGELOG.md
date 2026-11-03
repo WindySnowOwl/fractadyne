@@ -59,6 +59,17 @@ published as the pre-releases `v0.2.41-beta.1` to `v0.2.41-beta.150`, and a "bet
 
 Changes after 0.3.0-beta.1:
 
+- **Very deep views whose reference passes close to zero no longer come out black or banded
+  (0.3.0-beta.26).** Near a minibrot, the reference orbit returns close to zero once every
+  period. Fractadyne stores those dips in a wider form for the graphics card, but it read each one
+  through an ordinary double first, and a double cannot hold a number much below 1e-308: a
+  deeper dip was stored as zero, or as infinity just above that range. Every pixel then lost
+  the difference from the reference that the dip carries and followed the reference out. At
+  2.3e999× beside a minibrot of period 14,416, an export using the old reference choice came out
+  entirely black, and with BLA off every pixel escaped within 8,000 iterations of the reference.
+  The dips are now stored from the full-precision value. This applies to stills, tours, zoom
+  videos and the live view, typically past about 1e600×; shallower renders are unchanged.
+  Reference orbits saved by earlier builds are built again, not reused.
 - **Deep exports render faster when a minibrot is in the view but not at its centre, and at
   1e1000× they now come out right (0.3.0-beta.26).** An export takes its reference orbit at the
   view's centre when it can. When the centre lies just outside a minibrot, its orbit escapes

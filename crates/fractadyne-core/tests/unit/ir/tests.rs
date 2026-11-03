@@ -194,6 +194,13 @@ fn bignum_cases(p: usize, seed: &mut u64) -> Vec<((BigFloat, BigFloat), (BigFloa
             (bf("0.3141592653589793238462643383279502884", p), bf("-0.2718281828459045235360287471", p)),
             (bf("-0.8", p), bf("0.156", p)),
         ),
+        // Every sample a dip below f64's range (2^-1100) and in its subnormal range (2^-1050):
+        // the extended-range packing (`pack_sample_or`) the same in every walk.
+        (
+            (zero(), zero()),
+            (crate::FloatExp::new(1.5, -1100).to_bf(p), crate::FloatExp::new(-1.25, -1102).to_bf(p)),
+        ),
+        ((zero(), zero()), (zero(), crate::FloatExp::new(1.0, -1050).to_bf(p))),
     ];
     for _ in 0..12 {
         let c = (lcg(seed) * 3.0 - 2.0, lcg(seed) * 3.0 - 1.5);
@@ -330,7 +337,9 @@ fn hybrid_phases_alternate_per_iteration() {
     let (mut zx, mut zy) = (zero.clone(), zero.clone());
     for n in 1..len as usize {
         (zx, zy) = crate::reference::step_bf(&zx, &zy, &cx, &cy, ids[(n - 1) % ids.len()], p);
-        let want = pack_sample(crate::to_f64(&zx), crate::to_f64(&zy));
+        let want = pack_sample_or(crate::to_f64(&zx), crate::to_f64(&zy), || {
+            (crate::bignum::bf_to_floatexp(&zx), crate::bignum::bf_to_floatexp(&zy))
+        });
         assert_eq!(got[n].map(f32::to_bits), want.map(f32::to_bits), "hybrid bignum, iteration {n}");
     }
     assert_eq!(bytes(&tail.zx), bytes(&zx));

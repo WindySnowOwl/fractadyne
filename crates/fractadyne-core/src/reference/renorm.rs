@@ -293,8 +293,12 @@ pub fn renorm_bla_gpu(orbit: &[[f32; 4]], step: &RenormStep, dc_max: FloatExp, e
     let a = Xc::from_cfe(step.a);
     let u: Vec<[f32; 4]> = (0..=k)
         .map(|j| {
-            let (x, y) = a.mul(sample_xc(&orbit[j * l])).to_f64s();
-            super::pack_sample(x, y)
+            let v = a.mul(sample_xc(&orbit[j * l]));
+            let (x, y) = v.to_f64s();
+            super::pack_sample_or(x, y, || {
+                let c = v.to_cfe();
+                (c.re, c.im)
+            })
         })
         .collect();
     let lim = FloatExp::from_f64(1.0).mul_pow2(step.log2_dc_max);
