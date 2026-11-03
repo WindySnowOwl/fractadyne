@@ -21,8 +21,9 @@ fn the_written_orders_and_fusion_are_enumerated() {
     assert!(evals(&add, 0b1111).iter().any(|e| e.label == "((ax+bx)+(ay+by))"));
     let mul = [(Term::P(1.0, 1.0), "P"), (Term::V(0.0), "PE"), (Term::P(1.0, 2.0), "X"), (Term::P(3.0, 1.0), "Y")];
     assert!(evals(&mul, 0b1111).iter().any(|e| e.label == "(P+(PE+(X+Y)))"));
-    // 1 + 2^-24 squared rounds to 1 + 2^-23 as a product but keeps 2^-48 when fused with -1.
-    let x = 1.0f32 + f32::EPSILON / 2.0;
+    // (1 + 2^-12)^2 = 1 + 2^-11 + 2^-24: the rounded product drops the 2^-24 (a tie, to even);
+    // fused with -1 it survives (2^-11 + 2^-24 fits in a mantissa).
+    let x = 1.0f32 + 1.0 / 4096.0;
     let fused = evals(&[(Term::P(x, x), "P"), (Term::V(-1.0), "m")], 0b11);
     let f = fused.iter().find(|e| e.label == "fma[P](m)").unwrap();
     let r = fused.iter().find(|e| e.label == "(P+m)").unwrap();
