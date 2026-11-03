@@ -375,10 +375,11 @@ benchmark that doesn't say which latest it measured is not reproducible.
      (GPL-3.0), pass `-FractalSharkExe <path>`. The lane finds `FractalSharkCli.exe` beside
      it and runs automatically (`-FractalSharkCliExe <path>` to point elsewhere); see
      "FractalShark, honestly" for what it can and cannot render headlessly.
-   - Fractal Zoomer: download `FZMinimalRenderer.jar` 1.0.9.6 or later (GPL-3.0; the beta is at
-     https://github.com/hrkalona/fzBin) and pass `-FractalZoomerJar <path> -FzsWriterPath <path>
-     -JavaExe <a JDK's java.exe>`; see "Fractal Zoomer". `bench-latest` does not run this lane,
-     because the writer is not downloadable.
+   - Fractal Zoomer: download `FZMinimalRenderer.jar` 1.0.9.6 or later from
+     https://github.com/hrkalona/Fractal-Zoomer/releases (GPL-3.0) and pass
+     `-FractalZoomerJar <path> -FzsWriterPath <path> -JavaExe <a JDK's java.exe>`; see
+     "Fractal Zoomer". `bench-latest` does not run this lane, because the writer is not
+     downloadable.
    - Fracturing Fog: download `FracturingFog-win-x64.zip` from
      https://github.com/AloneButUnsober/FracturingFog/releases (AGPL-3.0), unzip, and pass
      `-FracturingFogExe <FracturingFog.App.exe>`; see "Fracturing Fog".
@@ -542,8 +543,8 @@ Upstream Imagina ships a GUI only — no headless render mode — so it has two 
 
 ## Fractal Zoomer
 
-Fractal Zoomer renders from its own command line from 1.0.9.6 (`FZMinimalRenderer.jar`; until
-1.0.9.6 is released, the beta at https://github.com/hrkalona/fzBin). Its inputs are `.fzs` files,
+Fractal Zoomer renders from its own command line from 1.0.9.6 (`FZMinimalRenderer.jar`, from
+https://github.com/hrkalona/Fractal-Zoomer/releases). Its inputs are `.fzs` files,
 which are Java object serialization, so only Fractal Zoomer's own classes can write one: a small
 writer, FzsWriter, does. FzsWriter calls into Fractal Zoomer, so it is GPL-3.0 too, kept in its own
 folder and never part of this kit; ask us for it. Build it with
