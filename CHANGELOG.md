@@ -59,6 +59,16 @@ published as the pre-releases `v0.2.41-beta.1` to `v0.2.41-beta.150`, and a "bet
 
 Changes after 0.3.0-beta.1:
 
+- **Renders with millions of iterations no longer redo thrown-away work that could reset the
+  graphics driver (0.3.0-beta.26).** A long render runs on the graphics card in passes. The card
+  shades pixels in groups of 2×2, so where a piece of the frame had an odd width or height it also
+  ran the pixels just past its edge, and those read state that no pass had written: in every pass
+  they started again from the first iteration. Their results were discarded, so the image was
+  right, but the time was spent: a 17×17 render at 3.1 million iterations made passes longer than
+  Windows' 2-second limit, and the driver reset, twice, on an RTX 3080. Those pixels now stop at
+  once. Images are unchanged. Most renders are no faster, since they seldom need many passes;
+  high-iteration renders whose pieces have an odd side are (a 17×17 test frame at 20 million
+  iterations: 18 s of passes before, 4 ms after).
 - **Very deep views whose reference passes close to zero no longer come out black or banded
   (0.3.0-beta.26).** Near a minibrot, the reference orbit returns close to zero once every
   period. Fractadyne stores those dips in a wider form for the graphics card, but it read each one
