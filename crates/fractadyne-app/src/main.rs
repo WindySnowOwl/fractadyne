@@ -786,7 +786,7 @@ const TASK_FLAGS: &[&str] = &[
     "--render", "--render-tour", "--render-expmap", "--assemble", "--render-zoom-video", "--torture", "--gputest", "--oomtest", "--refdiag",
     "--find-minibrot", "--check-updates", "--crosscheck-f3", "--autodive", "--motiontest",
     "--zoomtest",
-    "--chunk-sweep", "--deviceloss-repro", "--bench-bignum", "--shot", "--soak", "--pickcheck",
+    "--chunk-sweep", "--deviceloss-repro", "--bench-bignum", "--truth", "--shot", "--soak", "--pickcheck",
     "--recordtest", "--farm-render", "--render-client", "--farmtest", "--list-adapters", "--discover",
 ];
 

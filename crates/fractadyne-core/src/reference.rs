@@ -16,6 +16,12 @@ use astro_float::BigFloat;
 mod oracle;
 pub use oracle::*;
 
+/// The reference-grade dwell (`--truth`): full-step perturbation in double-double with no
+/// approximation, checked against the oracle. Harness code, attached and re-exported likewise.
+#[path = "harness/reference/truth.rs"]
+mod truth;
+pub use truth::*;
+
 /// Bignum reference steps this process has taken: every reference-orbit build and every
 /// candidate-length walk adds [`REFERENCE_STEP_BATCH`] per that many steps. A deep build is one
 /// blocking call that finishes no tile for minutes, so this is its only sign of life: a headless
