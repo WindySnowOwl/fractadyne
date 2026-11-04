@@ -1,0 +1,19 @@
+[location]
+real = "-1.99999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999977428284996957633651202706"
+imag = "3.250656140806790049421688411380389688681e-101"
+zoom = "8.7490028991320476975e99"
+[image]
+width = 1280
+height = 720
+subframes = 1
+[bailout]
+iterations = 1664
+maximum_reference_iterations = 1664
+maximum_perturb_iterations = 1664
+maximum_bla_steps = 8192
+escape_radius = 256
+[transform]
+exponential_map = false
+[render]
+filename = "73-tip-1e100-f3"
+save_png = true

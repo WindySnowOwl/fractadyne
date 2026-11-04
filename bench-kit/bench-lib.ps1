@@ -31,11 +31,14 @@ function Resolve-KitPath($p) {
 }
 
 # $set: 'standard' = scenes.csv (the published ten), 'ladder' = scenes-ladder.csv,
-# 'suggested' = scenes-suggested.csv, 'all' = all three.
+# 'suggested' = scenes-suggested.csv, 'all' = all three; 'tip' = scenes-tip.csv and 'pi' =
+# scenes-pi.csv, the validation points (not in 'all').
 function Read-Scenes($kitRoot, $set = 'standard') {
     $files = switch ($set) {
         'ladder'    { @('scenes-ladder.csv') }
         'suggested' { @('scenes-suggested.csv') }
+        'tip'       { @('scenes-tip.csv') }
+        'pi'        { @('scenes-pi.csv') }
         'all'       { @('scenes.csv', 'scenes-ladder.csv', 'scenes-suggested.csv') }
         default     { @('scenes.csv') }
     }

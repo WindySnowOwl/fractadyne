@@ -18,13 +18,15 @@ $scenes = (Import-Csv (Join-Path $kit 'scenes.csv')).slug
 $ladder = (Import-Csv (Join-Path $kit 'scenes-ladder.csv')).slug
 # The suggested set (scenes-suggested.csv) is the kit's own too, in bench-kit\suggested\.
 $suggested = (Import-Csv (Join-Path $kit 'scenes-suggested.csv')).slug
+# The validation points (scenes-tip.csv, scenes-pi.csv) are the kit's own, in bench-kit\points\.
+$points = @((Import-Csv (Join-Path $kit 'scenes-tip.csv')).slug) + @((Import-Csv (Join-Path $kit 'scenes-pi.csv')).slug)
 
 $stage = Join-Path $env:TEMP ('fd-bench-kit-' + [guid]::NewGuid().ToString('N').Substring(0, 8))
 New-Item -ItemType Directory -Force $stage | Out-Null
 try {
     # zoom-seq.py is a LANE, not an extra: run-all.ps1 invokes it by name. Ship it or the
     # kit's sequence lane reports itself missing on every machine that unzips this file.
-    foreach ($f in 'README.md', 'scenes.csv', 'scenes-ladder.csv', 'scenes-suggested.csv', 'bench-lib.ps1', 'run-all.ps1',
+    foreach ($f in 'README.md', 'scenes.csv', 'scenes-ladder.csv', 'scenes-suggested.csv', 'scenes-tip.csv', 'scenes-pi.csv', 'bench-lib.ps1', 'run-all.ps1',
                    'bench-latest.ps1', 'bench-latest.sh', 'zoom-seq.py') {
         Copy-Item (Join-Path $kit $f) $stage
     }
@@ -62,7 +64,8 @@ try {
             Set-Content $toml -Encoding ascii
     }
     $kitOwn = @($ladder | ForEach-Object { @{ slug = $_; dir = 'ladder' } }) +
-              @($suggested | ForEach-Object { @{ slug = $_; dir = 'suggested' } })
+              @($suggested | ForEach-Object { @{ slug = $_; dir = 'suggested' } }) +
+              @($points | ForEach-Object { @{ slug = $_; dir = 'points' } })
     foreach ($k in $kitOwn) {
         $s = $k.slug
         foreach ($ext in '.kfr', '.f3.toml', '.fdn') {
