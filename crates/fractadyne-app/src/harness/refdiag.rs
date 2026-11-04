@@ -4,12 +4,13 @@ pub(crate) fn run(args: &[String]) -> bool {
     use fractadyne_core as fc;
     let val = |name: &str| args.iter().position(|a| a == name).and_then(|i| args.get(i + 1));
     let two = |name: &str| args.iter().position(|a| a == name).and_then(|i| Some((args.get(i + 1)?, args.get(i + 2)?)));
-    let (cx, cy) = two("--center")
-        .map(|(x, y)| crate::arg_center("--center", x, y))
-        .unwrap_or((fc::BigFloat::from_f64(-0.5, 64), fc::BigFloat::from_f64(0.0, 64)));
     let log2mag = val("--zoom-log2")
         .map(|s| crate::arg_parse::<f64>("--zoom-log2", s, "a number"))
         .unwrap_or(133.0);
+    // After the zoom: the centre is parsed at the view's precision (see `arg_center`).
+    let (cx, cy) = two("--center")
+        .map(|(x, y)| crate::arg_center("--center", x, y, log2mag))
+        .unwrap_or((fc::BigFloat::from_f64(-0.5, 64), fc::BigFloat::from_f64(0.0, 64)));
     let max_iter = val("--iter")
         .map(|s| crate::arg_parse::<u32>("--iter", s, "a whole number"))
         .unwrap_or(60_000);

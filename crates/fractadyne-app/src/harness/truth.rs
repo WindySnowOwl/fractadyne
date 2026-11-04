@@ -78,12 +78,13 @@ pub(crate) fn run(args: &[String]) -> bool {
         eprintln!("fractadyne: --truth needs --center X Y.");
         crate::exit(2)
     };
-    let (cx, cy) = crate::arg_center("--center", xs, ys);
     let Some(zl) = val("--zoom-log2") else {
         eprintln!("fractadyne: --truth needs --zoom-log2 L.");
         crate::exit(2)
     };
     let zoom_log2: f64 = crate::arg_parse("--zoom-log2", zl, "a number");
+    // After the zoom: the centre is parsed at the view's precision (see `arg_center`).
+    let (cx, cy) = crate::arg_center("--center", xs, ys, zoom_log2);
     let (w, h) = match val("--size").map(|s| crate::parse_size(s)) {
         Some((Some(w), Some(h))) => (w as usize, h as usize),
         _ => {

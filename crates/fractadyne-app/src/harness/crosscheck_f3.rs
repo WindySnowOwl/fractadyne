@@ -15,16 +15,6 @@ pub(crate) fn run(args: &[String], i: usize) -> bool {
     // bignum dwell computation agree. A silently defaulted coordinate or magnification here
     // does not produce a wrong picture, it produces a wrong VERDICT — and one that reads as
     // "the other renderer disagrees with us" rather than "you mistyped a flag".
-    let center = match two("--center") {
-        Some((x, y)) => {
-            let (cx, cy) = crate::arg_center("--center", x, y);
-            [cx, cy]
-        }
-        None => [
-            fractadyne_core::BigFloat::from_f64(-0.5, 64),
-            fractadyne_core::BigFloat::from_f64(0.0, 64),
-        ],
-    };
     let f3_zoom = val("--zoom-f3")
         .map(|s| {
             let z = crate::arg_parse::<f64>("--zoom-f3", s, "a number");
@@ -43,6 +33,17 @@ pub(crate) fn run(args: &[String], i: usize) -> bool {
             }
         })
         .unwrap_or(1.0);
+    // After the zoom: the centre is parsed at the view's precision (see `arg_center`).
+    let center = match two("--center") {
+        Some((x, y)) => {
+            let (cx, cy) = crate::arg_center("--center", x, y, (0.75 * f3_zoom).log2());
+            [cx, cy]
+        }
+        None => [
+            fractadyne_core::BigFloat::from_f64(-0.5, 64),
+            fractadyne_core::BigFloat::from_f64(0.0, 64),
+        ],
+    };
     let max_iter = val("--iter")
         .map(|s| crate::arg_parse::<u32>("--iter", s, "a whole number"))
         .unwrap_or(10_000);
