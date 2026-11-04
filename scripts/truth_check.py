@@ -2,6 +2,7 @@
 """truth_check.py - grade a renderer's raw iteration counts against a reference-grade truth.
 
     python scripts/truth_check.py score TRUTH_STEM RENDER [--kind fd|f3|imagina|fz] [--png OUT.png]
+                                        [--shift N]
 
 TRUTH_STEM is a `fractadyne --truth` output without its extension (DIR/NAME: NAME.truth.json and
 NAME.truth.bin). RENDER is the renderer's raw counts at the truth's size and view:
@@ -38,6 +39,12 @@ HOW IT JUDGES.
   pixels. Sub-pixel disagreement has no sign; a broad bias does.
 Without a stencil in the truth every range is a single value and every pixel counts as stable.
 
+--shift N adds N to every escaped count of the truth (and its smooth count) before judging: the
+tip ladder (scripts/tip_ladder.py) holds a render at one depth to the truth at another, where
+each 4x of zoom about -2 adds exactly one iteration - at radius 256 and 4096. Not at radius 2:
+every point left of -2 has |c| > 2 and passes radius 2 at the first step at every depth, so a
+shifted truth offers no radius-2 count and a renderer that counts from 2 is not judged by it.
+
 Exit 0 clean, 1 when anything deviates, 2 on a usage error. Needs numpy (and Pillow for images).
 """
 import argparse
@@ -62,7 +69,7 @@ _spec.loader.exec_module(INSP)
 FLAG_PLAIN, FLAG_STENCIL, FLAG_STABLE, FLAG_CHECKED, FLAG_CHECK_OK = 1, 2, 4, 8, 16
 
 
-def load_truth(stem):
+def load_truth(stem, shift=0):
     with open(stem + ".truth.json", encoding="utf-8") as f:
         head = json.load(f)
     w, h = head["width"], head["height"]
@@ -83,6 +90,11 @@ def load_truth(stem):
     for j, name in enumerate(("n2", "n256", "n4096")):
         out[name + "_lo"] = plane(17 * n + 8 * j * n, "<i4").astype(np.int64)
         out[name + "_hi"] = plane(17 * n + (8 * j + 4) * n, "<i4").astype(np.int64)
+    if shift:
+        # Escaped counts move; -1 (never escaped) stays.
+        for k in ("n2", "n256", "n4096", "smooth256") + tuple(
+                a + b for a in ("n2", "n256", "n4096") for b in ("_lo", "_hi")):
+            out[k] = np.where(out[k] >= 0, out[k] + shift, out[k])
     return out
 
 
@@ -118,8 +130,8 @@ def patches(mask, min_px):
     return keep, count
 
 
-def score(stem, render, kind=None, png=None, plant=None):
-    t = load_truth(stem)
+def score(stem, render, kind=None, png=None, plant=None, shift=0):
+    t = load_truth(stem, shift)
     kind = kind or guess_kind(render)
     v, smooth = read_render(render, kind, t)
     if plant is not None:
@@ -137,7 +149,7 @@ def score(stem, render, kind=None, png=None, plant=None):
     best = None
     # A smooth count is Fractadyne's, defined at radius 256 (a shallow view, where the steps
     # between radii barely vary, otherwise lets another plane win the tie).
-    for name in (("n256",) if smooth else ("n2", "n256", "n4096")):
+    for name in (("n256",) if smooth else ("n256", "n4096") if shift else ("n2", "n256", "n4096")):
         p = t[name].astype(np.float64)
         both = t_esc & r_esc & stable
         if not both.any():
@@ -186,6 +198,7 @@ def score(stem, render, kind=None, png=None, plant=None):
 
     out = {
         "truth": os.path.basename(stem),
+        "shift": shift,
         "render": os.path.basename(render),
         "kind": kind,
         "follows": plane_name,
@@ -312,6 +325,7 @@ def main():
     s.add_argument("--kind", choices=("fd", "f3", "imagina", "fz"))
     s.add_argument("--png", help="write a map: grey agrees, blue sensitive, orange a deviating block, "
                                  "magenta a deviating patch (dull purple isolated), red escaped in one only")
+    s.add_argument("--shift", type=int, default=0, help="add N to the truth's escaped counts first")
     s = sub.add_parser("selfcheck", help="plant faults in a copy of a passing render; each must be found")
     s.add_argument("truth")
     s.add_argument("render")
@@ -320,7 +334,7 @@ def main():
     try:
         if a.cmd == "selfcheck":
             return selfcheck(a.truth, a.render, a.kind)
-        out = score(a.truth, a.render, a.kind, a.png)
+        out = score(a.truth, a.render, a.kind, a.png, shift=a.shift)
     except (OSError, ValueError) as e:
         sys.stderr.write("truth_check: %s\n" % e)
         return 2
