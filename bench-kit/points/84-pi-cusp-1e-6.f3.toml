@@ -1,0 +1,19 @@
+[location]
+real = "0.250001000000000000000000000000000000000000000000000000000000"
+imag = "0.000000000000000000000000000000000000000000000000000000000000"
+zoom = "4.0000000000000044727e9"
+[image]
+width = 17
+height = 17
+subframes = 1
+[bailout]
+iterations = 7283
+maximum_reference_iterations = 7283
+maximum_perturb_iterations = 7283
+maximum_bla_steps = 8192
+escape_radius = 256
+[transform]
+exponential_map = false
+[render]
+filename = "84-pi-cusp-1e-6-f3"
+save_png = true

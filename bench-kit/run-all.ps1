@@ -6,7 +6,8 @@
 #       [-TimeoutS 7200] [-Size 3840x2160] [-ZoomSeqFrames 8] [-PythonExe python]
 #       [-F3Wisdom path] [-F3Limit 8192] [-FractalSharkCliExe path] [-FractalSharkAlgo NAME]
 #       [-FractalSharkPerturbAlg NAME]
-#       [-SceneSet standard|ladder|suggested|all] [-Scenes slug-or-id,...] [-Inspect]
+#       [-SceneSet standard|ladder|suggested|all|tip|pi] [-Scenes slug-or-id,...] [-Inspect]
+#       [-InspectSize WxH]
 
 [CmdletBinding()]
 param(
@@ -24,7 +25,12 @@ param(
     # every lane). 'suggested' is scenes-suggested.csv: locations other people proposed for
     # what they stress (glitch correction without rebasing; BLA against series approximation).
     # 'all' runs all three. -Scenes then filters whichever set is chosen.
-    [ValidateSet('standard', 'ladder', 'suggested', 'all')]
+    # 'tip' and 'pi' are the validation points (scenes-tip.csv, scenes-pi.csv; files in points\,
+    # written by tools\make-points.py): the antenna tip at six depths, whose counts one reference
+    # judges at every depth, and frames beside the cardioid's neck and cusp whose centre count pi
+    # predicts. The pi frames are 17x17 views: run them with -Size 17x17 -InspectSize 17x17. Not in
+    # 'all'. Score their counts with tools\points-score.py.
+    [ValidateSet('standard', 'ladder', 'suggested', 'all', 'tip', 'pi')]
     [string]$SceneSet = 'standard',
     # Render size for EVERY lane. 4K because it is what someone actually renders at, and
     # because a benchmark should be a real load: 3840x2160 is 4x the old Fractadyne size
@@ -168,10 +174,16 @@ param(
     # ONE stepped high-contrast palette, plus where Fraktaler-3's raw counts disagree with
     # Fractadyne's. Untimed, at 640x360. For looking at, not for publishing; see
     # tools/inspect-sheet.py and the README's "Inspection sheet".
-    [switch]$Inspect
+    [switch]$Inspect,
+    # The size of the raw counts: the inspection pass and Fraktaler-3's view check. 640x360 unless
+    # a scene set is drawn at a size of its own (the pi frames are 17x17).
+    [ValidatePattern('^[0-9]+x[0-9]+$')]
+    [string]$InspectSize = '640x360'
 )
 
 $ErrorActionPreference = 'Stop'
+$insW = [int]($InspectSize -split 'x')[0]
+$insH = [int]($InspectSize -split 'x')[1]
 $kit = Split-Path -Parent $MyInvocation.MyCommand.Path
 . (Join-Path $kit 'bench-lib.ps1')
 
@@ -265,7 +277,7 @@ if ($sceneFilter.Count) {
 # suggested\. Refresh every file
 # this run needs from there, overwriting, because a stale copy is exactly how scene 35 went
 # missing (below). A packaged kit has no sources beside it and runs on its scenes\ as shipped.
-$sceneSources = @((Join-Path $kit 'ladder'), (Join-Path $kit 'suggested'),
+$sceneSources = @((Join-Path $kit 'ladder'), (Join-Path $kit 'suggested'), (Join-Path $kit 'points'),
                   (Join-Path (Split-Path -Parent $kit) 'validation\corpus\locations'))
 $sceneDir = Join-Path $kit 'scenes'
 foreach ($s in $sceneRows) {
@@ -618,12 +630,12 @@ if ($have.fraktaler3) {
     if ($PythonExe -and (Test-Path $vv) -and $have.fractadyne) {
         $rawDir = Join-Path $outDir 'f3-raw'
         New-Item -ItemType Directory -Force $rawDir | Out-Null
-        Write-Host 'Fraktaler-3: raw iteration counts for the view check (untimed, 640x360)'
+        Write-Host ('Fraktaler-3: raw iteration counts for the view check (untimed, ' + $InspectSize + ')')
         foreach ($s in $sceneRows) {
             $rawToml = Join-Path $rawDir ($s.slug + '.f3.toml')
             $rawTxt = foreach ($line in (Get-Content (Join-Path $outDir ($s.slug + '.bench.f3.toml')))) {
-                if ($line -match '^\s*width\s*=') { 'width = 640' }
-                elseif ($line -match '^\s*height\s*=') { 'height = 360' }
+                if ($line -match '^\s*width\s*=') { 'width = ' + $insW }
+                elseif ($line -match '^\s*height\s*=') { 'height = ' + $insH }
                 elseif ($line -match '^\s*filename\s*=') { 'filename = "' + $s.slug + '"' }
                 # Raw counts need one subframe, which the bench file already sets.
                 elseif ($line -match '^\s*save_png\s*=') { 'save_png = false'; 'save_exr = true'; 'exr_channels = ["N0", "N1"]' }
@@ -637,7 +649,7 @@ if ($have.fraktaler3) {
                 renderer = 'fraktaler3'; scene = ('(view check) ' + $s.slug); rep = 0
                 exe = $Fraktaler3Exe; args = $argLine; cwd = $rawDir
                 source = ('f3-raw\' + $s.slug + '.f3.toml')
-                inputs = @{ size = '640x360'; exr_channels = 'N0 N1' }
+                inputs = @{ size = $InspectSize; exr_channels = 'N0 N1' }
                 output = ('f3-raw\' + $s.slug + '.exr')
                 status = $r.status; wall_s = $r.wall_s; reported_s = ''
                 note = 'untimed: raw iteration counts for the view check, not a benchmark row'
@@ -1340,7 +1352,7 @@ if ($Inspect) {
     if (-not ($have.fractadyne -and $PythonExe -and (Test-Path $insp))) {
         Write-Host 'Inspection sheet SKIPPED (needs the fractadyne lane, Python and tools\inspect-sheet.py)'
     } else {
-        Write-Host 'Inspection sheet: raw counts and one stepped palette (untimed, 640x360)'
+        Write-Host ('Inspection sheet: raw counts and one stepped palette (untimed, ' + $InspectSize + ')')
         $rawDir = Join-Path $outDir 'fd-raw'
         New-Item -ItemType Directory -Force $rawDir | Out-Null
         $icfg = Join-Path $outDir 'fd-config'
@@ -1351,7 +1363,7 @@ if ($Inspect) {
             $kfr = Read-Kfr (Join-Path $kit ('scenes\' + $s.slug + '.kfr'))
             $raw = Join-Path $rawDir ($s.slug + '.exr')
             $zl2 = [double]$s.mag_log10 * [math]::Log(10.0, 2.0)
-            $argLine = ('--render-iter --out "{0}" --size 640x360 --center {1} {2} --zoom-log2 {3} --iter {4} --ss 1' -f $raw, $kfr['Re'], $kfr['Im'], $zl2, $s.iterations)
+            $argLine = ('--render-iter --out "{0}" --size {5} --center {1} {2} --zoom-log2 {3} --iter {4} --ss 1' -f $raw, $kfr['Re'], $kfr['Im'], $zl2, $s.iterations, $InspectSize)
             $launch = $argLine
             if ($argLine.Length -gt $MaxCommandLine) {
                 $argDir = Join-Path $outDir 'fd-args'
@@ -1380,14 +1392,14 @@ if ($Inspect) {
                 # A dot-free stem: FractalSharkCli appends .png only to a name without a dot.
                 $stem = Join-Path $fsDir ($s.slug -replace '\.', 'p')
                 $map = Join-Path $outDir ('inspect\' + $s.slug + '.fs.map')
-                $tail = (' --iterations {0} --width 640 --height 360 --antialiasing 1 --palette-map "{1}" --palette-depth {2} --quiet --out "{3}"' -f $s.iterations, $map, $pl.Value.fs_depth, $stem)
+                $tail = (' --iterations {0} --width {4} --height {5} --antialiasing 1 --palette-map "{1}" --palette-depth {2} --quiet --out "{3}"' -f $s.iterations, $map, $pl.Value.fs_depth, $stem, $insW, $insH)
                 $renderArgs = ('--render-algorithm {0} --center-x {1} --center-y {2} --zoom {3}' -f $FractalSharkAlgo, $kfr['Re'], $kfr['Im'], $kfr['Zoom']) + $tail
                 if ($renderArgs.Length -gt $MaxCommandLine) {
                     # As the lane: a centre too long for a command line goes in a locations file.
                     $locDir = Join-Path $outDir 'fs-loc'
                     New-Item -ItemType Directory -Force $locDir | Out-Null
                     $fsLoc = Join-Path $locDir ($s.slug + '.inspect.fsloc')
-                    & $PythonExe (Join-Path $kit 'tools\make-fsloc.py') (Join-Path $kit ('scenes\' + $s.slug + '.kfr')) $fsLoc --width 640 --height 360 --iterations $s.iterations --name ($s.slug -replace '\.', 'p') 2>&1 | Out-Null
+                    & $PythonExe (Join-Path $kit 'tools\make-fsloc.py') (Join-Path $kit ('scenes\' + $s.slug + '.kfr')) $fsLoc --width $insW --height $insH --iterations $s.iterations --name ($s.slug -replace '\.', 'p') 2>&1 | Out-Null
                     $renderArgs = ('--render-algorithm {0} --locations "{1}"' -f $FractalSharkAlgo, $fsLoc) + $tail
                 }
                 $r = Invoke-TimedRender $FractalSharkCliExe $renderArgs $TimeoutS $outDir
@@ -1415,8 +1427,8 @@ if ($Inspect) {
                 $digits = ($kfr['Re'] -replace '[^0-9]', '').Length
                 $prec = [Math]::Max(128, [int]($digits * 3.3219) + 96)
                 $ppm = Join-Path $imDir ($s.slug + '.ppm')
-                $argLine = ('--center-x {0} --center-y {1} --precision {2} --zoom {3} --iter {4} --width 640 --height 360 --out "{5}" --palette-map "{6}" --iterations' -f
-                            $kfr['Re'], $kfr['Im'], $prec, $zoom, $s.iterations, $ppm, $decodeMap)
+                $argLine = ('--center-x {0} --center-y {1} --precision {2} --zoom {3} --iter {4} --width {7} --height {8} --out "{5}" --palette-map "{6}" --iterations' -f
+                            $kfr['Re'], $kfr['Im'], $prec, $zoom, $s.iterations, $ppm, $decodeMap, $insW, $insH)
                 if ($argLine.Length -gt $MaxCommandLine) {
                     Write-Host ('  ' + $s.slug + ': Imagina counts left off the sheet (its centre does not fit a command line)')
                     continue
@@ -1459,8 +1471,8 @@ if ($Inspect) {
                 }
             }
             if ($wrote -gt 0) {
-                $argLine = ('{0} -jar "{1}" --cli_batch_dir "{2}" --cli_width 640 --cli_height 360 --cli_output_dir "{3}"' -f
-                            $FractalZoomerJavaArgs, $FractalZoomerJar, $fziIn, $fziOut)
+                $argLine = ('{0} -jar "{1}" --cli_batch_dir "{2}" --cli_width {4} --cli_height {5} --cli_output_dir "{3}"' -f
+                            $FractalZoomerJavaArgs, $FractalZoomerJar, $fziIn, $fziOut, $insW, $insH)
                 $r = Invoke-TimedRender $JavaExe $argLine ($TimeoutS * ($wrote + 1)) $fziCwd
                 if ($r.status -ne 'ok') { Write-Host ('  Fractal Zoomer counts batch: ' + $r.status) }
             }

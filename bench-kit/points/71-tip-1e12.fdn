@@ -1,0 +1,18 @@
+app=Fractadyne
+format_version=1
+notes=Validation scene 71: the antenna tip c=-2 at 2^40 (tip ladder: +0 iterations on the 1e12x rung)
+fractal=Mandelbrot
+julia=0
+julia_c_re=-8.00000000000000044e-1
+julia_c_im=1.56000000000000000e-1
+center_re=-1.9999999999982039298629388213157653809
+center_im=2.58660293184220790863037109375e-13
+upp=5.05274834318292538e-15
+upp_log2=-4.74918530963296774e+01
+zoom=1.0995116277760000000e12
+max_iter=1080
+auto_iter=0
+palette=0
+cycle=0.27
+offset=0.1
+aa=2

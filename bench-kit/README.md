@@ -129,6 +129,27 @@ high:
 Scene 63 gives Fractadyne `normalize` = `log`, as the ladder's minibrots do: at 2 million iterations
 its field is otherwise palette noise.
 
+### Validation points (`-SceneSet tip`, `-SceneSet pi`)
+
+Scenes whose correct answer is known without trusting any renderer, in `points\` and
+`scenes-tip.csv` / `scenes-pi.csv`, written by `tools\make-points.py` from the views the
+repository's validation scripts define (`scripts/tip_ladder.py`, `scripts/pi_points.py`). Not in
+`all`. Run with `-Inspect`, then score every renderer's raw counts with
+`python tools/points-score.py results\<run> --exe <a fractadyne.exe with --truth>`.
+
+| Scene | Magnification | Iterations | What is known |
+|---|---|---|---|
+| 71-tip-1e12 to 76-tip-1e10000 | 1.1e12 to 1.6e10000 | 1,080 to 67,440 | the antenna tip c = -2, offset by a fixed fraction of the frame: each 4x of zoom about it adds exactly one iteration to every count (radius 256 and 4096), so one reference at 1e12x judges every depth. 72 sits where Fractadyne's arithmetic changes (1e28x), 74 at the edge of a double's range |
+| 81-pi-neck-1e-3 to 83-pi-neck-1e-6 | 1.1e7 to 1.1e13 | 7,283 to 6,284,185 | beside the neck c = -3/4 + i eps the count is pi/eps plus about 1 (3,143 to 3,141,593) |
+| 84-pi-cusp-1e-6 to 86-pi-cusp-1e-12 | 4.0e9 to 4.0e18 | 7,283 to 6,284,185 | beside the cusp c = 1/4 + eps the count is pi/sqrt(eps) less about 2 |
+
+The pi scenes are 17x17 frames inside the escaping gap: run them with `-Size 17x17 -InspectSize
+17x17` (`-InspectSize` sets the size of the raw counts, 640x360 otherwise). The tip view is
+deliberately plain - a smooth field and the antenna as one thin line - so it tests depth (precision,
+exponent range, the changes of arithmetic) rather than structure. The two deeper pi points (31 million
+iterations) need a reference orbit longer than 7,452,444 samples, more than the cards here can
+hold, so the set stops at 3.1 million.
+
 ## Prerequisites & quick start
 
 Prerequisites: **PowerShell** (Windows) or **bash** (Linux), and **Python 3 with Pillow**

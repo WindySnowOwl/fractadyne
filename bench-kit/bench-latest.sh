@@ -3,7 +3,7 @@
 # benchmarked renderers, run the benchmark sequentially, and produce the summary report.
 #
 #   ./bench-latest.sh [--apps-dir DIR] [--required-gb N] [--reps N] [--timeout S]
-#                     [--scenes slug,slug|id,...] [--scene-set standard|ladder|suggested|all]
+#                     [--scenes slug,slug|id,...] [--scene-set standard|ladder|suggested|all|tip|pi]
 #                     [--skip lane,lane] [--skip-download]
 #                     [--fractadyne PATH] [--fraktaler3 PATH] [--f3-limit N]
 #
@@ -239,7 +239,9 @@ case "$SCENE_SET" in
     ladder) SCENE_CSVS=("$KIT/scenes-ladder.csv") ;;
     suggested) SCENE_CSVS=("$KIT/scenes-suggested.csv") ;;
     all) SCENE_CSVS=("$KIT/scenes.csv" "$KIT/scenes-ladder.csv" "$KIT/scenes-suggested.csv") ;;
-    *) echo "ERROR: --scene-set must be standard, ladder, suggested or all"; exit 1 ;;
+    tip) SCENE_CSVS=("$KIT/scenes-tip.csv") ;;
+    pi) SCENE_CSVS=("$KIT/scenes-pi.csv") ;;
+    *) echo "ERROR: --scene-set must be standard, ladder, suggested, all, tip or pi"; exit 1 ;;
 esac
 SCENES=()
 while IFS=, read -r id slug mag_log10 iterations normalize f3_limit; do
@@ -267,7 +269,7 @@ done < <(cat "${SCENE_CSVS[@]}" | tr -d '\r')
 for row in "${SCENES[@]}"; do
     IFS=, read -r _ slug _ _ _ <<<"$row"
     for ext in .kfr .f3.toml .fdn; do
-        for src in "$KIT/ladder" "$KIT/suggested" "$KIT/../validation/corpus/locations"; do
+        for src in "$KIT/ladder" "$KIT/suggested" "$KIT/points" "$KIT/../validation/corpus/locations"; do
             if [ -f "$src/$slug$ext" ]; then
                 mkdir -p "$KIT/scenes"; cp -f "$src/$slug$ext" "$KIT/scenes/$slug$ext"; break
             fi
