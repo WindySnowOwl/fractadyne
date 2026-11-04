@@ -1144,7 +1144,8 @@ fn chunk_fe_entry() -> String {
     if (iu.start_iter > 0u) {{
         sz = textureLoad(st_z, p, 0);
         sm = textureLoad(st_meta, p, 0);
-        if (info_status(sm) != ST_RUNNING) {{
+        // Stale state (a helper lane of an odd-sized tile): see `fs_iterate_chunk`.
+        if (info_status(sm) != ST_RUNNING || info_iter(sm) < iu.start_iter) {{
             return ChunkOut4(sz, textureLoad(st_dz, p, 0), sm, textureLoad(st_exp, p, 0));
         }}
     }}
