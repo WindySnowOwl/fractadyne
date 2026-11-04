@@ -5,6 +5,11 @@
 //!
 //!   fractadyne --truth DIR --center X Y --zoom-log2 L --size WxH --iter N
 //!              [--truth-name NAME] [--truth-stencil] [--truth-check N] [--threads T]
+//!              [--truth-direct]
+//!
+//! `--truth-direct`: no reference; every pixel by plain double-double iteration
+//! (`fractadyne_core::truth_direct`), for a shallow view whose counts run too long to keep a
+//! reference orbit (the π points, `scripts/pi_points.py`). Refused below a pixel step of 2^-80.
 //!
 //! Writes `DIR/NAME.truth.json` (the view, the reference, timings, the check) and
 //! `DIR/NAME.truth.bin`: little-endian planes over the pixels in row order, top row first —
@@ -93,6 +98,7 @@ pub(crate) fn run(args: &[String]) -> bool {
     let max_iter: u32 = crate::arg_parse("--iter", it, "a whole number");
     let name = val("--truth-name").cloned().unwrap_or_else(|| "view".to_string());
     let stencil = args.iter().any(|a| a == "--truth-stencil");
+    let direct = args.iter().any(|a| a == "--truth-direct");
     let checks: usize = val("--truth-check").map(|s| crate::arg_parse("--truth-check", s, "a whole number")).unwrap_or(200);
     let threads: usize = val("--threads")
         .map(|s| crate::arg_parse("--threads", s, "a whole number"))
@@ -112,40 +118,68 @@ pub(crate) fn run(args: &[String]) -> bool {
         h,
         p,
     };
-    eprintln!("truth: {name}  {w}x{h}  2^{zoom_log2:.3}  iter {max_iter}  {p}-bit  {threads} threads  stencil {}", if stencil { "on" } else { "off" });
+    eprintln!(
+        "truth: {name}  {w}x{h}  2^{zoom_log2:.3}  iter {max_iter}  {p}-bit  {threads} threads  stencil {}{}",
+        if stencil { "on" } else { "off" },
+        if direct { "  direct" } else { "" }
+    );
+    if direct {
+        let step = view.step_x.to_f64().abs().min(view.step_y.to_f64().abs());
+        let far = fractadyne_core::to_f64(&view.cx).abs().max(fractadyne_core::to_f64(&view.cy).abs());
+        if !(step >= fractadyne_core::TRUTH_DIRECT_MIN_STEP && far <= 4.0) {
+            eprintln!("fractadyne: --truth-direct is for shallow views (a pixel step of 2^-80 or more, centre within 4); this one's step is {step:e}.");
+            crate::exit(2)
+        }
+    }
 
     // THE REFERENCE: the longest-lived of the centre and a 3x3 grid a quarter of the view out. The
     // choice is speed only (rebasing makes any reference correct), so lengths are walked first and
-    // only the winner's orbit is kept.
+    // only the winner's orbit is kept. None with --truth-direct.
     let t0 = std::time::Instant::now();
     let offsets: Vec<(f64, f64)> = [0.0, -0.25, 0.25]
         .iter()
         .flat_map(|&fy| [0.0, -0.25, 0.25].iter().map(move |&fx| (fx, fy)))
         .collect();
-    let lens: Vec<usize> = std::thread::scope(|s| {
-        let hs: Vec<_> = offsets
-            .iter()
-            .map(|&(fx, fy)| {
-                let view = &view;
-                s.spawn(move || {
-                    let (x, y) = (w as f64 * (0.5 + fx) - 0.5, h as f64 * (0.5 - fy) - 0.5);
-                    let (px, py) = view.point(x, y);
-                    fractadyne_core::truth_reference(&px, &py, max_iter, p).z.len()
+    let lens: Vec<usize> = if direct {
+        Vec::new()
+    } else {
+        std::thread::scope(|s| {
+            let hs: Vec<_> = offsets
+                .iter()
+                .map(|&(fx, fy)| {
+                    let view = &view;
+                    s.spawn(move || {
+                        let (x, y) = (w as f64 * (0.5 + fx) - 0.5, h as f64 * (0.5 - fy) - 0.5);
+                        let (px, py) = view.point(x, y);
+                        fractadyne_core::truth_reference(&px, &py, max_iter, p).z.len()
+                    })
                 })
-            })
-            .collect();
-        hs.into_iter().map(|h| h.join().expect("a reference walk panicked")).collect()
-    });
-    let best = (0..offsets.len()).max_by_key(|&k| (lens[k], usize::MAX - k)).unwrap_or(0);
+                .collect();
+            hs.into_iter().map(|h| h.join().expect("a reference walk panicked")).collect()
+        })
+    };
+    let best = (0..lens.len()).max_by_key(|&k| (lens[k], usize::MAX - k)).unwrap_or(0);
     let (fx, fy) = offsets[best];
-    let (rx, ry) = view.point(w as f64 * (0.5 + fx) - 0.5, h as f64 * (0.5 - fy) - 0.5);
-    let r = fractadyne_core::truth_reference(&rx, &ry, max_iter, p);
+    let r = (!direct).then(|| {
+        let (rx, ry) = view.point(w as f64 * (0.5 + fx) - 0.5, h as f64 * (0.5 - fy) - 0.5);
+        fractadyne_core::truth_reference(&rx, &ry, max_iter, p)
+    });
     let ref_s = t0.elapsed().as_secs_f64();
-    eprintln!(
-        "truth: reference at ({fx:+.2}, {fy:+.2}) of the view: {} samples, {} ({ref_s:.1} s; candidates {lens:?})",
-        r.z.len(),
-        if r.escaped { "escaped" } else { "reached the cap" }
-    );
+    match &r {
+        Some(r) => eprintln!(
+            "truth: reference at ({fx:+.2}, {fy:+.2}) of the view: {} samples, {} ({ref_s:.1} s; candidates {lens:?})",
+            r.z.len(),
+            if r.escaped { "escaped" } else { "reached the cap" }
+        ),
+        None => eprintln!("truth: no reference: every pixel by plain double-double iteration"),
+    }
+    // One point's counts, by the reference or directly (`true`: plain iteration answered).
+    let eval = |px: &BigFloat, py: &BigFloat| -> (TruthDwell, bool) {
+        match &r {
+            Some(r) => fractadyne_core::truth_at(r, px, py, max_iter, p),
+            None => (fractadyne_core::truth_direct(px, py, max_iter), false),
+        }
+    };
 
     // EVERY PIXEL, rows handed out to the threads in order.
     let t1 = std::time::Instant::now();
@@ -158,7 +192,7 @@ pub(crate) fn run(args: &[String]) -> bool {
     let rows: Vec<(usize, Vec<TruthDwell>, Vec<u8>, Vec<[i64; 6]>)> = std::thread::scope(|s| {
         let hs: Vec<_> = (0..threads)
             .map(|_| {
-                let (view, r, next, done) = (&view, &r, &next, &done);
+                let (view, eval, next, done) = (&view, &eval, &next, &done);
                 s.spawn(move || {
                     let mut out = Vec::new();
                     loop {
@@ -171,7 +205,7 @@ pub(crate) fn run(args: &[String]) -> bool {
                         let mut rg = Vec::with_capacity(w);
                         for x in 0..w {
                             let (px, py) = view.point(x as f64, y as f64);
-                            let (d, plain) = fractadyne_core::truth_at(r, &px, &py, max_iter, p);
+                            let (d, plain) = eval(&px, &py);
                             let mut f = if plain { FLAG_PLAIN } else { 0 };
                             let c = counts(&d);
                             let mut range = [c.0, c.0, c.1, c.1, c.2, c.2];
@@ -182,7 +216,7 @@ pub(crate) fn run(args: &[String]) -> bool {
                                 let mut same = true;
                                 for &(dx, dy) in &[(k, 0.0), (-k, 0.0), (0.0, k), (0.0, -k)] {
                                     let (sx, sy) = view.point(x as f64 + dx, y as f64 + dy);
-                                    let s = counts(&fractadyne_core::truth_at(r, &sx, &sy, max_iter, p).0);
+                                    let s = counts(&eval(&sx, &sy).0);
                                     same &= s == c;
                                     for (j, v) in [s.0, s.1, s.2].into_iter().enumerate() {
                                         range[2 * j] = range[2 * j].min(v);
@@ -283,13 +317,13 @@ pub(crate) fn run(args: &[String]) -> bool {
         "{{\n \"format\": 2,\n \"name\": \"{name}\",\n \"width\": {w},\n \"height\": {h},\n \"zoom_log2\": {zoom_log2},\n \
          \"max_iter\": {max_iter},\n \"precision_bits\": {p},\n \"center_re\": \"{xs}\",\n \"center_im\": \"{ys}\",\n \
          \"planes\": [\"n2 i32\", \"n256 i32\", \"n4096 i32\", \"smooth256 f32\", \"flags u8\", \"n2_lo i32\", \"n2_hi i32\", \"n256_lo i32\", \"n256_hi i32\", \"n4096_lo i32\", \"n4096_hi i32\"],\n \
-         \"reference\": {{\"view_offset\": [{fx}, {fy}], \"samples\": {}, \"escaped\": {}, \"candidate_samples\": {lens:?}}},\n \
+         \"direct\": {direct},\n \"reference\": {{\"view_offset\": [{fx}, {fy}], \"samples\": {}, \"escaped\": {}, \"candidate_samples\": {lens:?}}},\n \
          \"pixels\": {{\"escaped\": {escaped_n}, \"interior\": {}, \"plain_iteration\": {plain_n}, \"stencil\": {stencil}, \"stable\": {stable_n}}},\n \
          \"check\": {{\"pixels\": {}, \"disagree\": {}}},\n \
          \"seconds\": {{\"reference\": {ref_s:.2}, \"pixels\": {px_s:.2}, \"check\": {check_s:.2}}},\n \"threads\": {threads},\n \
          \"build\": \"{}\"\n}}\n",
-        r.z.len(),
-        r.escaped,
+        r.as_ref().map_or(0, |r| r.z.len()),
+        r.as_ref().is_some_and(|r| r.escaped),
         w * h - escaped_n,
         results.len(),
         bad.len(),

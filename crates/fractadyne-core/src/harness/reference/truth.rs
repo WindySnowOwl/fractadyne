@@ -23,6 +23,20 @@
 //! Counts are recorded at three escape radii, since renderers differ: 2 (Fractal Zoomer's
 //! default), 256 (Fractadyne's) and 4096 (Imagina's). The steps between radii vary across a
 //! view (4 to 8 between 2 and 256 on bench scene 62), so no single offset converts one to another.
+//! Each route follows the orbit in its own precision all the way out to radius 4096.
+//! ⛔Both routes used to hand the orbit to f64 at radius 2, on the theory that an orbit past 2
+//! is a handful of steps from 256. Near c = -2 it is not: the orbit hovers just outside |z| = 2
+//! (the fixed point 2 sits ON that circle) for as many steps as the zoom is deep, and f64 cannot
+//! follow it. The tip ladder found it (2026-11-04): its 4x self-similarity (an oracle sharing
+//! nothing with this engine) showed smooth counts off by up to 0.24 and whole counts flipped, and
+//! the plain-iteration check, which shared the f64 step, agreed with the wrong answers.
+//! ⛔And the radius tests themselves are exact where f64 cannot decide: every point left of -2 has
+//! |c| > 2 by as little as the zoom is deep (1e-100 at 1e100x), and the orbit then hovers on the
+//! circle |z| = 2, so "is |z| past 2?" taken in f64 sees 2.0 and says no. At 1e100x the two routes
+//! disagreed by one at radius 2 on 17 of 200 checked pixels (2026-11-04). Within 1e-9 of a radius
+//! each route now decides in its own precision: [`truth_naive`] in arbitrary precision,
+//! [`truth_direct`] in double-double, and [`truth_pixel`] from the reference's own exact
+//! `|Z|² - 4` (kept per sample) plus the delta's terms, or not at all ([`truth_naive`] then).
 
 use super::*;
 
@@ -222,25 +236,44 @@ impl Cdx {
         self.m2() * pow2(2 * d) < o.m2()
     }
 
-    /// `|self|² > 4`: past Fractal Zoomer's radius, where the f64 continuation takes over.
     #[inline(always)]
-    pub fn past_r2(&self) -> bool {
-        if self.is_zero() || self.e <= -1 {
-            return false; // |z| < 2·sqrt(2)·2^-1 < 2
-        }
-        if self.e >= 2 {
-            return true; // |z| >= 4
-        }
-        self.m2() * pow2(2 * self.e) > 4.0
+    fn conj(self) -> Cdx {
+        Cdx { im: self.im.neg(), ..self }
     }
 
-    /// The value as f64s (only where its exponent is small; the continuation past radius 2).
-    pub fn to_f64s(&self) -> (f64, f64) {
+    /// The real part, as a [`Cdx`].
+    #[inline(always)]
+    fn real(self) -> Cdx {
         if self.is_zero() {
-            return (0.0, 0.0);
+            return self;
         }
-        let s = pow2(self.e.clamp(-1022, 1023));
-        ((self.re.hi + self.re.lo) * s, (self.im.hi + self.im.lo) * s)
+        Cdx::norm(self.re, Dd::ZERO, self.e)
+    }
+
+    /// `|self|² > r2`, to double-double precision (`r2` a radius², 4 to 2^24).
+    fn mag2_gt(&self, r2: f64) -> bool {
+        if self.is_zero() || self.e < -500 {
+            return false;
+        }
+        if self.e > 500 {
+            return true;
+        }
+        let m = self.re.mul(self.re).add(self.im.mul(self.im)).scale(pow2(2 * self.e));
+        m.hi > r2 || (m.hi == r2 && m.lo > 0.0)
+    }
+
+    /// `|self|²` as an f64, for the escape radii and the smooth count: 0 below 2^-500, infinite
+    /// above 2^500 (the radii are 2 to 4096).
+    #[inline(always)]
+    pub fn mag2(&self) -> f64 {
+        if self.is_zero() || self.e < -500 {
+            return 0.0;
+        }
+        if self.e > 500 {
+            return f64::INFINITY;
+        }
+        let (x, y) = (self.re.hi + self.re.lo, self.im.hi + self.im.lo);
+        (x * x + y * y) * pow2(2 * self.e)
     }
 
     /// From two arbitrary-precision values, to ~106 bits of the larger.
@@ -273,9 +306,11 @@ impl Cdx {
 /// cancellation; the pixel goes to [`truth_naive`] rather than continue on what is left.
 pub const TRUTH_CANCEL_BITS: i64 = 40;
 
-/// The reference orbit's samples, iterated until `|Z|² > 1e12` or `max_iter`.
+/// The reference orbit's samples, iterated until `|Z|² > 1e12` or `max_iter`, and each sample's
+/// `|Z|² - 4` taken in the orbit's own precision (real, as a [`Cdx`]): the exact radius-2 test.
 pub struct TruthReference {
     pub z: Vec<Cdx>,
+    pub m4: Vec<Cdx>,
     pub escaped: bool,
     pub cx: BigFloat,
     pub cy: BigFloat,
@@ -287,8 +322,10 @@ pub fn truth_reference(cx: &BigFloat, cy: &BigFloat, max_iter: u32, p: usize) ->
     let mut zx = bf(0.0, p);
     let mut zy = bf(0.0, p);
     let mut z = Vec::with_capacity(max_iter as usize / 4 + 2);
+    let mut m4 = Vec::with_capacity(max_iter as usize / 4 + 2);
+    let (zero, two, four) = (bf(0.0, p), bf(2.0, p), bf(4.0, p));
     z.push(Cdx::ZERO);
-    let two = bf(2.0, p);
+    m4.push(Cdx::from_bf(&bf(-4.0, p), &zero));
     let mut escaped = false;
     for _ in 0..max_iter {
         let x2 = zx.mul(&zx, p, RM);
@@ -297,19 +334,20 @@ pub fn truth_reference(cx: &BigFloat, cy: &BigFloat, max_iter: u32, p: usize) ->
         zx = x2.sub(&y2, p, RM).add(cx, p, RM);
         zy = nzy;
         z.push(Cdx::from_bf(&zx, &zy));
+        let m = zx.mul(&zx, p, RM).add(&zy.mul(&zy, p, RM), p, RM).sub(&four, p, RM);
+        m4.push(Cdx::from_bf(&m, &zero));
         let (x, y) = (to_f64(&zx), to_f64(&zy));
         if x * x + y * y > 1.0e12 {
             escaped = true;
             break;
         }
     }
-    TruthReference { z, escaped, cx: cx.clone(), cy: cy.clone() }
+    TruthReference { z, m4, escaped, cx: cx.clone(), cy: cy.clone() }
 }
 
 /// A pixel's escape counts: the first iteration `n` with `|z_n| > R` for R = 2, 256 and 4096
-/// (-1: no escape within the cap), and the smooth count at 256 as Fractadyne computes it,
-/// `n + 1 - log2(log2 |z_n|)`. The two outer radii are reached in f64 past radius 2 (a handful
-/// of steps of an orbit already escaping), so they may run a few iterations past the cap.
+/// (-1: that radius not passed within the cap), and the smooth count at 256 as Fractadyne computes
+/// it, `n + 1 - log2(log2 |z_n|)` (-1 with `n256`).
 #[derive(Clone, Copy, Debug, PartialEq)]
 pub struct TruthDwell {
     pub n2: i64,
@@ -322,66 +360,88 @@ impl TruthDwell {
     pub const INTERIOR: TruthDwell = TruthDwell { n2: -1, n256: -1, n4096: -1, smooth256: -1.0 };
 }
 
-/// From the first sample past radius 2 (iteration `n`), on to 256 and 4096 in f64.
-fn finish(z: (f64, f64), c: (f64, f64), n: i64) -> TruthDwell {
-    let (mut x, mut y) = z;
-    let mut n_at = n;
-    let mut m2 = x * x + y * y;
-    let step = |x: f64, y: f64| (x * x - y * y + c.0, 2.0 * x * y + c.1);
-    let mut guard = 0;
-    while m2 <= 65536.0 && guard < 64 {
-        (x, y) = step(x, y);
-        m2 = x * x + y * y;
-        n_at += 1;
-        guard += 1;
+/// Within this (relative) of a radius², f64 does not decide whether `|z|` is past it.
+const RADIUS_BAND: f64 = 1e-9;
+
+/// The three radii as an orbit passes them, fed `|z_n|²` at each iteration `n`.
+struct Radii(TruthDwell);
+
+impl Radii {
+    fn new() -> Radii {
+        Radii(TruthDwell::INTERIOR)
     }
-    let n256 = n_at;
-    let smooth256 = n256 as f64 + 1.0 - (0.5 * m2.log2()).log2();
-    while m2 <= 4096.0 * 4096.0 && guard < 64 {
-        (x, y) = step(x, y);
-        m2 = x * x + y * y;
-        n_at += 1;
-        guard += 1;
+
+    /// Record iteration `n` from `|z_n|²` as an f64; within [`RADIUS_BAND`] of a radius² the f64
+    /// cannot decide, and `exact(R²)` does, in the route's own precision (None: it cannot either,
+    /// and nor does this). `Some(true)` once past the last radius.
+    #[inline(always)]
+    fn see(&mut self, n: u32, m2: f64, exact: impl Fn(f64) -> Option<bool>) -> Option<bool> {
+        let past = |r2: f64| if (m2 - r2).abs() > RADIUS_BAND * r2 { Some(m2 > r2) } else { exact(r2) };
+        let d = &mut self.0;
+        if d.n2 < 0 && past(4.0)? {
+            d.n2 = i64::from(n);
+        }
+        if d.n256 < 0 && past(65536.0)? {
+            d.n256 = i64::from(n);
+            d.smooth256 = f64::from(n) + 1.0 - (0.5 * m2.log2()).log2();
+        }
+        if past(4096.0 * 4096.0)? {
+            d.n4096 = i64::from(n);
+            return Some(true);
+        }
+        Some(false)
     }
-    TruthDwell { n2: n, n256, n4096: n_at, smooth256 }
 }
 
-/// One pixel by full-step perturbation against `r`: `dc = c - c_ref` as a [`Cdx`], `c` the pixel's
-/// point as f64s (for the continuation past radius 2). `None`: a step lost more than
-/// [`TRUTH_CANCEL_BITS`] to cancellation, so the answer is not to be trusted ([`truth_naive`]).
-pub fn truth_pixel(r: &TruthReference, dc: Cdx, c: (f64, f64), max_iter: u32) -> Option<TruthDwell> {
+/// One pixel by full-step perturbation against `r`, `dc = c - c_ref` as a [`Cdx`]. `None`: a step
+/// lost more than [`TRUTH_CANCEL_BITS`] to cancellation, so the answer is not to be trusted
+/// ([`truth_naive`]).
+pub fn truth_pixel(r: &TruthReference, dc: Cdx, max_iter: u32) -> Option<TruthDwell> {
     let len = r.z.len();
     let mut dz = Cdx::ZERO;
     let mut ref_n = 0usize;
-    let mut iter = 0u32;
-    loop {
-        if iter >= max_iter {
-            return Some(TruthDwell::INTERIOR);
-        }
+    let mut radii = Radii::new();
+    for iter in 1..=max_iter {
         // δz' = 2·Z·δz + δz² + δc
         dz = r.z[ref_n].mul(dz).twice().add(dz.sqr()).add(dc);
         ref_n += 1;
-        iter += 1;
         let zn = r.z[ref_n];
         let z = zn.add(dz);
-        if z.past_r2() {
-            return Some(finish(z.to_f64s(), c, i64::from(iter)));
-        }
         if !z.is_zero() && z.e < zn.e.max(dz.e) - TRUTH_CANCEL_BITS {
             return None;
+        }
+        // Radius 2 exactly: |z|² - 4 = (|Z|² - 4) + 2·Re(conj(Z)·δz) + |δz|², each term to ~106
+        // bits of itself; a sum that cancels below 2^-90 of the largest term decides nothing.
+        let m4 = r.m4[ref_n];
+        let exact = |r2: f64| -> Option<bool> {
+            if r2 != 4.0 {
+                return Some(z.mag2_gt(r2));
+            }
+            let (a, b, c) = (m4, zn.conj().mul(dz).real().twice(), dz.conj().mul(dz).real());
+            let s = a.add(b).add(c);
+            if s.is_zero() || s.e < a.e.max(b.e).max(c.e) - 90 {
+                return None;
+            }
+            Some(s.re.hi > 0.0)
+        };
+        match radii.see(iter, z.mag2(), exact) {
+            None => return None,
+            Some(true) => return Some(radii.0),
+            Some(false) => {}
         }
         if z.mag_lt(&dz) || ref_n + 1 >= len {
             dz = z;
             ref_n = 0;
         }
     }
+    Some(radii.0)
 }
 
 /// A pixel's counts at `(px, py)`: [`truth_pixel`] against `r`, or [`truth_naive`] where it will
 /// not vouch for its answer (`true` in the second place: the plain iteration answered).
 pub fn truth_at(r: &TruthReference, px: &BigFloat, py: &BigFloat, max_iter: u32, p: usize) -> (TruthDwell, bool) {
     let dc = Cdx::from_bf(&px.sub(&r.cx, p, RM), &py.sub(&r.cy, p, RM));
-    match truth_pixel(r, dc, (to_f64(px), to_f64(py)), max_iter) {
+    match truth_pixel(r, dc, max_iter) {
         Some(d) => (d, false),
         None => (truth_naive(px, py, max_iter, p), true),
     }
@@ -392,8 +452,8 @@ pub fn truth_at(r: &TruthReference, px: &BigFloat, py: &BigFloat, max_iter: u32,
 pub fn truth_naive(cx: &BigFloat, cy: &BigFloat, max_iter: u32, p: usize) -> TruthDwell {
     let mut zx = bf(0.0, p);
     let mut zy = bf(0.0, p);
-    let two = bf(2.0, p);
-    let c = (to_f64(cx), to_f64(cy));
+    let (zero, two) = (bf(0.0, p), bf(2.0, p));
+    let mut radii = Radii::new();
     for n in 1..=max_iter {
         let x2 = zx.mul(&zx, p, RM);
         let y2 = zy.mul(&zy, p, RM);
@@ -401,11 +461,62 @@ pub fn truth_naive(cx: &BigFloat, cy: &BigFloat, max_iter: u32, p: usize) -> Tru
         zx = x2.sub(&y2, p, RM).add(cx, p, RM);
         zy = nzy;
         let (x, y) = (to_f64(&zx), to_f64(&zy));
-        if x * x + y * y > 4.0 {
-            return finish((x, y), c, i64::from(n));
+        // In arbitrary precision near a radius (the sign survives any exponent through a Cdx).
+        let exact = |r2: f64| -> Option<bool> {
+            let m = zx.mul(&zx, p, RM).add(&zy.mul(&zy, p, RM), p, RM).sub(&bf(r2, p), p, RM);
+            let s = Cdx::from_bf(&m, &zero);
+            Some(!s.is_zero() && s.re.hi > 0.0)
+        };
+        if radii.see(n, x * x + y * y, exact) == Some(true) {
+            break;
         }
     }
-    TruthDwell::INTERIOR
+    radii.0
+}
+
+/// The deepest pixel step [`truth_direct`] is trusted with: below it the point itself would keep
+/// too few bits under double-double's ~106 (2^-80 leaves 26, against a stencil 2^-10 px away).
+pub const TRUTH_DIRECT_MIN_STEP: f64 = 8.271_806_125_530_277e-25; // 2^-80
+
+/// Plain iteration in double-double (~106 bits; no reference, no perturbation), for a SHALLOW
+/// view (`--truth-direct`) whose escape counts run too long for a reference: every reference
+/// sample is kept (40 bytes), so the π points' 31-million-iteration orbits near c = -3/4 and 1/4
+/// would need over a gigabyte per candidate. Shares no code with the shader, the reference
+/// builder or [`truth_naive`] (the check on it) beyond the radii.
+pub fn truth_direct(cx: &BigFloat, cy: &BigFloat, max_iter: u32) -> TruthDwell {
+    let c = Cdx::from_bf(cx, cy);
+    let (mut cr, mut ci) = (c.re, c.im);
+    if c.is_zero() {
+        (cr, ci) = (Dd::ZERO, Dd::ZERO);
+    } else {
+        let mut e = c.e;
+        while e < -1000 {
+            // Below 2^-1000 a part is far under the orbit's last bit; it may flush to zero.
+            let s = pow2(-1000);
+            (cr, ci) = (cr.scale(s), ci.scale(s));
+            e += 1000;
+        }
+        let s = pow2(e.min(1023));
+        (cr, ci) = (cr.scale(s), ci.scale(s));
+    }
+    let (mut x, mut y) = (Dd::ZERO, Dd::ZERO);
+    let mut radii = Radii::new();
+    for n in 1..=max_iter {
+        let x2 = x.mul(x);
+        let y2 = y.mul(y);
+        let xy = x.mul(y);
+        y = xy.scale(2.0).add(ci);
+        x = x2.sub(y2).add(cr);
+        let (xf, yf) = (x.hi + x.lo, y.hi + y.lo);
+        let exact = |r2: f64| -> Option<bool> {
+            let m = x.mul(x).add(y.mul(y));
+            Some(m.hi > r2 || (m.hi == r2 && m.lo > 0.0))
+        };
+        if radii.see(n, xf * xf + yf * yf, exact) == Some(true) {
+            break;
+        }
+    }
+    radii.0
 }
 
 #[cfg(test)]

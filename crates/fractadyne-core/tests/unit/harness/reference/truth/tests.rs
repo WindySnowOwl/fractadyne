@@ -111,7 +111,7 @@ fn full_step_perturbation_matches_plain_iteration_at_every_pixel() {
             let py = cy.add(&h.mul_f64(0.5 - (gy as f64 + 0.5) / gh as f64).to_bf(p), p, RM);
             let dc = Cdx::from_bf(&px.sub(&r.cx, p, RM), &py.sub(&r.cy, p, RM));
             let want = truth_naive(&px, &py, max_iter, p);
-            match truth_pixel(&r, dc, (to_f64(&px), to_f64(&py)), max_iter) {
+            match truth_pixel(&r, dc, max_iter) {
                 Some(got) => {
                     assert_eq!(
                         (got.n2, got.n256, got.n4096),
@@ -137,7 +137,7 @@ fn full_step_perturbation_matches_plain_iteration_at_every_pixel() {
     // orbit returns to 0 each period, so the perturbation loses everything to cancellation there
     // and says so; the plain iteration answers instead.
     let dc = Cdx::from_bf(&n[0].sub(&r.cx, p, RM), &n[1].sub(&r.cy, p, RM));
-    assert_eq!(truth_pixel(&r, dc, (to_f64(&n[0]), to_f64(&n[1])), max_iter), None);
+    assert_eq!(truth_pixel(&r, dc, max_iter), None);
     assert_eq!(truth_at(&r, &n[0], &n[1], max_iter, p), (TruthDwell::INTERIOR, true));
 }
 
@@ -151,4 +151,128 @@ fn the_radii_are_crossed_in_order() {
     assert!(out.smooth256 >= (out.n256 - 3) as f64 && out.smooth256 < (out.n256 - 2) as f64, "{out:?}");
     let inside = truth_naive(&bfv(-0.1), &bfv(0.1), 5_000, p);
     assert_eq!(inside, TruthDwell::INTERIOR);
+}
+
+/// The tip ladder's view (scripts/tip_ladder.py) as a `gw` x `gh` grid: centre -2 + (0.4937 +
+/// 0.0711i)·height, height 4·2^-level; pixel (x, y)'s point as the shader maps it.
+fn tip_point(level: i64, x: usize, y: usize, gw: usize, gh: usize, p: usize) -> (BigFloat, BigFloat) {
+    let height = FloatExp::from_f64(4.0).mul_pow2(-(level as f64));
+    let (w, h) = (gw as f64, gh as f64);
+    let cx = BigFloat::from_f64(-2.0, p).add(&height.mul_f64(0.4937).to_bf(p), p, RM);
+    let cy = height.mul_f64(0.0711).to_bf(p);
+    (
+        cx.add(&height.mul_f64((x as f64 + 0.5) / h - 0.5 * w / h).to_bf(p), p, RM),
+        cy.add(&height.mul_f64(0.5 - (y as f64 + 0.5) / h).to_bf(p), p, RM),
+    )
+}
+
+#[test]
+fn zooming_4x_about_minus_2_adds_one_to_every_count() {
+    // c = -2 is a Misiurewicz point: its orbit lands on the fixed point z = 2, multiplier 4, so the
+    // set near it is self-similar with factor 4 and each 4x zoom about it adds exactly one
+    // iteration to every count (to within 4^-k; 400-bit mpmath agrees to 6 decimals from L = 40 to
+    // 102). An oracle that shares nothing with this engine.
+    // The fault it caught (2026-11-04): BOTH routes, the perturbation and the plain iteration
+    // that checks it, finished the orbit in f64 from radius 2 on. Near -2 an orbit hovers just
+    // outside |z| = 2 for as many steps as the zoom is deep (every point left of -2 passes radius 2
+    // at the first step), and f64 cannot follow it: smooth counts off by up to 0.24 and whole
+    // counts flipped at L = 42, and the check, sharing the fault, agreed.
+    // Radius 2 itself is not judged: those first-step escapes are the same at every depth.
+    let (gw, gh) = (32usize, 18usize);
+    for &level in &[40i64, 400] {
+        let p = level as usize + 96;
+        let iter = 2 * level as u32 + 1000;
+        let r_a = {
+            let (x, y) = tip_point(level, gw / 2, gh / 2, gw, gh, p);
+            truth_reference(&x, &y, iter, p)
+        };
+        let r_b = {
+            let (x, y) = tip_point(level + 2, gw / 2, gh / 2, gw, gh, p);
+            truth_reference(&x, &y, iter + 4, p)
+        };
+        let mut judged = 0;
+        for y in 0..gh {
+            for x in 0..gw {
+                let (ax, ay) = tip_point(level, x, y, gw, gh, p);
+                let (bx, by) = tip_point(level + 2, x, y, gw, gh, p);
+                let a = truth_at(&r_a, &ax, &ay, iter, p).0;
+                let b = truth_at(&r_b, &bx, &by, iter + 4, p).0;
+                assert!(a.n256 > 0 && b.n256 > 0, "L={level} ({x},{y}): {a:?} {b:?}");
+                let d = b.smooth256 - a.smooth256 - 1.0;
+                assert!(d.abs() < 1e-6, "L={level} ({x},{y}): smooth {} then {} (off by {d:.3e})", a.smooth256, b.smooth256);
+                // A whole count may flip only where the smooth count sits on a whole number.
+                let f = a.smooth256 - a.smooth256.round();
+                if f.abs() > 1e-6 {
+                    assert_eq!(b.n256, a.n256 + 1, "L={level} ({x},{y}) radius 256");
+                }
+                assert_eq!(b.n4096, a.n4096 + 1, "L={level} ({x},{y}) radius 4096");
+                judged += 1;
+            }
+        }
+        assert_eq!(judged, gw * gh);
+    }
+    // And absolutely: the pixel nearest the antenna at the grid's right edge, L = 40, against
+    // 500-bit mpmath (n 31, smooth 28.3358140733629), by both routes.
+    let p = 136;
+    let (x, y) = tip_point(40, 31, 10, gw, gh, p);
+    let r = {
+        let (cx, cy) = tip_point(40, gw / 2, gh / 2, gw, gh, p);
+        truth_reference(&cx, &cy, 1080, p)
+    };
+    for (route, d) in [("perturbation", truth_at(&r, &x, &y, 1080, p).0), ("plain", truth_naive(&x, &y, 1080, p))] {
+        assert_eq!(d.n256, 31, "{route}: {d:?}");
+        assert!((d.smooth256 - 28.335_814_073_362_9).abs() < 1e-9, "{route}: {d:?}");
+    }
+}
+
+#[test]
+fn direct_double_double_matches_plain_iteration_beside_the_pinch_points() {
+    // The pi points (scripts/pi_points.py): beside the neck c = -3/4 the count is pi/eps plus about
+    // 1, beside the cusp c = 1/4 it is pi/sqrt(eps) minus about 2 (Boll 1991, Klebanoff 2001). The
+    // direct route must agree with plain arbitrary-precision iteration exactly, and both with pi.
+    let p = 160;
+    let pi = std::f64::consts::PI;
+    for (re, im, law) in [
+        ("-0.75", "1e-3", pi / 1e-3),
+        ("-0.75", "1e-4", pi / 1e-4),
+        ("0.250001", "0", pi / 1e-3),
+        ("0.25000001", "0", pi / 1e-4),
+    ] {
+        let (x, y) = (parse_bf_prec(re, p).unwrap(), parse_bf_prec(im, p).unwrap());
+        let d = truth_direct(&x, &y, 100_000);
+        let n = truth_naive(&x, &y, 100_000, p);
+        assert_eq!((d.n2, d.n256, d.n4096), (n.n2, n.n256, n.n4096), "{re} + {im}i");
+        assert!((d.smooth256 - n.smooth256).abs() < 1e-9, "{re} + {im}i: {d:?} {n:?}");
+        assert!((d.n2 as f64 - law).abs() <= 3.0, "{re} + {im}i: {} against pi's {law:.1}", d.n2);
+    }
+}
+
+#[test]
+fn radius_2_is_decided_exactly_where_the_orbit_hovers_on_it() {
+    // At the tip every point left of -2 has |c| > 2 by as little as the zoom is deep (1e-100 here),
+    // so it is past radius 2 at the first step; the orbit then hovers on |z| = 2, where an f64 sees
+    // 2.0. Taken in f64 the routes disagreed by one at radius 2 at 1e100x (2026-11-04).
+    let (gw, gh) = (32usize, 18usize);
+    let level = 332i64;
+    let p = level as usize + 96;
+    let iter = 2 * level as u32 + 1000;
+    let r = {
+        let (x, y) = tip_point(level, gw / 2, gh / 2, gw, gh, p);
+        truth_reference(&x, &y, iter, p)
+    };
+    // The tip sits 0.4937 heights left of the centre: grid column 6.6.
+    let tip_col = gw as f64 / 2.0 - 0.5 - 0.4937 * gh as f64;
+    for y in 0..gh {
+        for x in 0..gw {
+            let (px, py) = tip_point(level, x, y, gw, gh, p);
+            let (a, plain) = truth_at(&r, &px, &py, iter, p);
+            let n = truth_naive(&px, &py, iter, p);
+            assert_eq!((a.n2, a.n256, a.n4096), (n.n2, n.n256, n.n4096), "({x},{y}) plain={plain}");
+            if (x as f64) < tip_col {
+                assert_eq!(a.n2, 1, "({x},{y}) is left of -2: |c| > 2");
+            } else {
+                assert!(a.n2 > 1, "({x},{y}) is right of -2: {a:?}");
+            }
+        }
+    }
 }

@@ -493,7 +493,7 @@ pub(crate) fn run_headless(args: &[String]) -> bool {
     // Reference-grade truth for a view (no GPU): every pixel's escape counts with no approximation a
     // renderer makes, checked against plain arbitrary-precision iteration (`--truth`).
     //   --truth DIR --center X Y --zoom-log2 L --size WxH --iter N [--truth-name NAME]
-    //           [--truth-stencil] [--truth-check N] [--threads T]
+    //           [--truth-stencil] [--truth-check N] [--truth-direct] [--threads T]
     if args.iter().any(|a| a == "--truth") {
         return crate::harness::truth::run(args);
     }
