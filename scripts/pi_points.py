@@ -64,9 +64,21 @@ NECK = range(1, 8)          # eps = 1e-1 .. 1e-7: 33 .. 31,415,9xx
 CUSP = range(2, 15, 2)      # eps = 1e-2 .. 1e-14: 30 .. 31,415,9xx
 # ⛔Points above this are skipped unless --max-count says otherwise. The neck at 1e-6 (3.1 million
 # iterations a pixel, 17x17) LOST THE DEVICE on an RTX 3080, twice (2026-11-03: once, then again when
-# Fractadyne's recovery relaunch re-ran the same command-line render). Until that is understood,
-# run the larger points on the field machine, with notice, not on a desktop card.
+# Fractadyne's recovery relaunch re-ran the same command-line render). The cause: an odd-sized
+# tile's helper lanes re-iterated from 0 on every resumed chunk pass (fixed in d9e7443e, branch
+# fix/helper-lane-rewalk). With that fix, --max-count 4e6 ran safely on the RTX 3080 and on PLUTO's
+# RTX 3070 and RX 6800 XT (longest GPU pass 71 ms); a build WITHOUT it can still lose the device.
+# Above 7,452,444 iterations (these cards' reference-orbit limit, 1 GiB of samples) Fractadyne caps
+# the count and says so in its log, so the two 31-million points cannot be rendered there at all.
 SAFE_MAX_COUNT = 4e5
+
+
+def exact(d):
+    """A coordinate as 60 decimal places: `--center` reads a short decimal at the parser's natural
+    precision (~64 bits) whatever the zoom, which put 0.25000000000001 (the cusp at 1e-14) about 40
+    pixels from itself at 2^71.8 and moved its count by 5 (2026-11-03: 31,415,920, padded
+    31,415,925, the law's 31,415,926.5 - 1.5). Padding the text carries the digits."""
+    return format(Decimal(d), '.60f')
 
 
 def points(size):
@@ -74,13 +86,13 @@ def points(size):
     for k in NECK:
         eps = 10.0 ** -k
         half = FILL * 0.75 * eps * eps
-        out.append({"id": "neck-1e-%d" % k, "kind": "neck", "eps": "1e-%d" % k, "re": "-0.75",
-                    "im": "1e-%d" % k, "law": math.pi / eps, "half": half})
+        out.append({"id": "neck-1e-%d" % k, "kind": "neck", "eps": "1e-%d" % k, "re": exact("-0.75"),
+                    "im": exact("1e-%d" % k), "law": math.pi / eps, "half": half})
     for k in CUSP:
         eps = 10.0 ** -k
         half = FILL * 2 * eps ** 1.5
         out.append({"id": "cusp-1e-%d" % k, "kind": "cusp", "eps": "1e-%d" % k,
-                    "re": MO.fmt(Decimal("0.25") + Decimal("1e-%d" % k)), "im": "0",
+                    "re": exact(Decimal("0.25") + Decimal("1e-%d" % k)), "im": exact("0"),
                     "law": math.pi / math.sqrt(eps), "half": half})
     for p in out:
         height = 2 * p["half"]                 # the frame is square: its height spans the gap
