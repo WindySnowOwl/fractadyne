@@ -260,7 +260,7 @@ impl FractadyneApp {
             // A region file that names a coordinate we cannot read used to profile the DEFAULT
             // centre under that region's name, so the report attributed timings from the main
             // cardioid to a deep location. Fatal instead.
-            let (cx, cy) = crate::arg_center(&format!("--regions [[region]] \"{}\"", r.name), &r.cx, &r.cy);
+            let (cx, cy) = crate::arg_center(&format!("--regions [[region]] \"{}\"", r.name), &r.cx, &r.cy, r.zoom_log2);
             vp.set_center_log2mag(cx, cy, r.zoom_log2);
 
             // Build the request once — this records reference/series timings in `self.prof`.
@@ -934,7 +934,8 @@ impl FractadyneApp {
             .frametest.center
             .clone()
             .unwrap_or_else(|| (def_x.to_string(), def_y.to_string()));
-        let (cx, cy) = crate::arg_center("--center", &sx, &sy);
+        // At the dive's DEEPEST point: the one centre serves every depth the dive passes.
+        let (cx, cy) = crate::arg_center("--center", &sx, &sy, target_log10 * std::f64::consts::LOG2_10);
         self.set_fractal(FractalKind::Mandelbrot);
         self.julia_mode = false;
         self.dual = false;

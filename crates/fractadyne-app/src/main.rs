@@ -593,12 +593,22 @@ fn arg_size(name: &str, s: &str) -> (Option<u32>, Option<u32>) {
     parsed
 }
 
-/// A full-precision coordinate pair, fatal when either half is unreadable. `parse_bf` returns
-/// `None` on anything it cannot read and the `?` collapsed the PAIR, so one stray character in a
-/// pasted y ordinate threw the whole location away and rendered the fractal default centre at the
-/// requested depth — solid interior, full cost, exit 0.
-fn arg_center(name: &str, xs: &str, ys: &str) -> (fractadyne_core::BigFloat, fractadyne_core::BigFloat) {
-    let one = |t: &str| match fractadyne_core::parse_real_expr(t, 0) {
+/// A full-precision coordinate pair for a view at magnification `2^log2mag`, fatal when either
+/// half is unreadable. `parse_bf` returns `None` on anything it cannot read and the `?` collapsed
+/// the PAIR, so one stray character in a pasted y ordinate threw the whole location away and
+/// rendered the fractal default centre at the requested depth — solid interior, full cost, exit 0.
+///
+/// ⛔Parsed at the VIEW's precision, `precision_for_octaves(log2mag)` — what the Viewport carries
+/// and the Go-to box parses at. It was `parse_real_expr(text, 0)`, so a decimal kept only the
+/// parser's natural precision for its digits (~64 bits for a short one) at ANY depth: the π points
+/// (scripts/pi_points.py, 2026-11-03) found `0.25000000000001` at 2^71.8 about 40 pixels from
+/// itself — the cusp at 1e-14 counted 31,415,920, the same text padded to 55 digits 31,415,925,
+/// and π's law says 31,415,926.5 less about 2. `--truth` shares this parser, so it agreed with the
+/// shifted render, and only the law could see it. Callers therefore read the zoom FIRST.
+fn arg_center(name: &str, xs: &str, ys: &str, log2mag: f64) -> (fractadyne_core::BigFloat, fractadyne_core::BigFloat) {
+    let octaves = if log2mag.is_finite() { log2mag.max(0.0).ceil() as u64 } else { 0 };
+    let prec = fractadyne_core::precision_for_octaves(octaves);
+    let one = |t: &str| match fractadyne_core::parse_real_expr(t, prec) {
         Ok(v) => v,
         Err(e) => {
             eprintln!("fractadyne: {name}: cannot read \"{t}\" as a coordinate: {e}.");
@@ -607,6 +617,10 @@ fn arg_center(name: &str, xs: &str, ys: &str) -> (fractadyne_core::BigFloat, fra
     };
     (one(xs), one(ys))
 }
+
+#[cfg(test)]
+#[path = "../tests/unit/arg_center_tests.rs"]
+mod arg_center_tests;
 
 /// Tokenize an args (response) file: whitespace-separated tokens, honoring `"…"` / `'…'` quoting so
 /// values with spaces survive, with `#` starting a comment to end of line (outside quotes). One
@@ -8154,15 +8168,6 @@ impl FractadyneApp {
             self.viewport.width_px = w as f64;
             self.viewport.height_px = h as f64;
         }
-        // Center: explicit (full precision) or the fractal's default.
-        let center = two("--center").map(|(xs, ys)| arg_center("--center", xs, ys));
-        let (cx, cy) = center.unwrap_or_else(|| {
-            let (dx, dy) = self.fractal.default_center();
-            (
-                fractadyne_core::BigFloat::from_f64(dx, 64),
-                fractadyne_core::BigFloat::from_f64(dy, 64),
-            )
-        });
         // `--zoom-log2 L` sets magnification = 2^L directly. `--zoom` takes a magnification
         // string and goes through `parse_zoom_to_log2` — the SAME parser the go-to field uses,
         // which accepts grouped digits, a FRACTIONAL exponent ("1.0e23.9") and magnitudes past
@@ -8173,11 +8178,13 @@ impl FractadyneApp {
         // to +inf, which is the blank-frame class fixed in beta.125. A value we cannot read is
         // now FATAL: the alternative is a render that looks perfectly fine and is of somewhere
         // else entirely.
-        if let Some(l) = val("--zoom-log2").map(|s| arg_parse::<f64>("--zoom-log2", s, "a number")) {
-            self.viewport.set_center_log2mag(cx, cy, l);
+        // The zoom is read BEFORE the centre: the centre is parsed at the view's precision (see
+        // `arg_center`).
+        let log2mag: Option<f64> = if let Some(l) = val("--zoom-log2").map(|s| arg_parse::<f64>("--zoom-log2", s, "a number")) {
+            Some(l)
         } else if let Some(z) = val("--zoom") {
             match parse_zoom_to_log2(z) {
-                Some(l2) => self.viewport.set_center_log2mag(cx, cy, l2),
+                Some(l2) => Some(l2),
                 None => {
                     eprintln!(
                         "fractadyne: --zoom: cannot read \"{z}\" as a magnification. Write \
@@ -8188,7 +8195,20 @@ impl FractadyneApp {
                 }
             }
         } else {
-            self.viewport.set_center_mag(cx, cy, 1.0);
+            None
+        };
+        // Center: explicit (at the view's precision) or the fractal's default.
+        let center = two("--center").map(|(xs, ys)| arg_center("--center", xs, ys, log2mag.unwrap_or(0.0)));
+        let (cx, cy) = center.unwrap_or_else(|| {
+            let (dx, dy) = self.fractal.default_center();
+            (
+                fractadyne_core::BigFloat::from_f64(dx, 64),
+                fractadyne_core::BigFloat::from_f64(dy, 64),
+            )
+        });
+        match log2mag {
+            Some(l2) => self.viewport.set_center_log2mag(cx, cy, l2),
+            None => self.viewport.set_center_mag(cx, cy, 1.0),
         }
         if let Some(ss) = val("--ss").map(|s| arg_parse::<u32>("--ss", s, "a whole number")) {
             self.export.ss = ss.clamp(1, 8);

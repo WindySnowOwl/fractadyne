@@ -59,6 +59,12 @@ published as the pre-releases `v0.2.41-beta.1` to `v0.2.41-beta.150`, and a "bet
 
 Changes after 0.3.0-beta.1:
 
+- **A `--center` on the command line is read to the precision its zoom needs (0.3.0-beta.26).** A
+  short decimal such as `0.25000000000001` was read to about 64 bits whatever the zoom, so past
+  about 1e17× the view's centre could land many pixels from the point written: 40 pixels at
+  3.4e21× in the render that found it, a point beside the main cardioid's cusp whose escape count
+  π predicts. The Go-to box and tours already read coordinates this way. Coordinates written out
+  in full, as Fractadyne saves them, were not affected.
 - **Renders with millions of iterations no longer redo thrown-away work that could reset the
   graphics driver (0.3.0-beta.26).** A long render runs on the graphics card in passes. The card
   shades pixels in groups of 2×2, so where a piece of the frame had an odd width or height it also

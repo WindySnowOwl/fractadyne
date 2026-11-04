@@ -364,16 +364,6 @@ pub(crate) fn run_headless(args: &[String]) -> bool {
                 }
             },
         };
-        let center = match two("--center") {
-            Some((x, y)) => {
-                let (cx, cy) = crate::arg_center("--center", x, y);
-                [cx, cy]
-            }
-            None => [
-                fractadyne_core::BigFloat::from_f64(-0.5, 64),
-                fractadyne_core::BigFloat::from_f64(0.0, 64),
-            ],
-        };
         // Same parser as `--render`, and for the same reason: a bare `f64::parse` with
         // `unwrap_or(1.0)` swallowed "1.0e23.9" (a fractional exponent is legal notation and is
         // what a zoom ladder produces) and searched at 1x instead, printing a confident nucleus
@@ -391,6 +381,17 @@ pub(crate) fn run_headless(args: &[String]) -> bool {
                     crate::exit(2);
                 }
             },
+        };
+        // After the zoom: the centre is parsed at the view's precision (see `arg_center`).
+        let center = match two("--center") {
+            Some((x, y)) => {
+                let (cx, cy) = crate::arg_center("--center", x, y, mag_l2);
+                [cx, cy]
+            }
+            None => [
+                fractadyne_core::BigFloat::from_f64(-0.5, 64),
+                fractadyne_core::BigFloat::from_f64(0.0, 64),
+            ],
         };
         let search = match val("--period-search").map(String::as_str) {
             None | Some("closest") => fractadyne_core::PeriodSearch::ClosestApproach,
