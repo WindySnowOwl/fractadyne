@@ -2355,8 +2355,20 @@ fn fs_iterate_chunk(in: VsOut) -> ChunkOut {
         sz = textureLoad(st_z, p, 0);
         sdz = textureLoad(st_dz, p, 0);
         sm = textureLoad(st_meta, p, 0);
-        if (info_status(sm) != ST_RUNNING) {
-            // Already settled (escaped or interior) — pass state through unchanged.
+        // ⛔⛔STALE STATE: a RUNNING pixel always resumes at or past `start_iter` (it ran its last
+        // window to `stop`, or starts at the series skip; in step-bounded passes `start_iter` is 1
+        // and it took at least one step). Anything below that is a texel no pass wrote: the clear
+        // (status RUNNING, iter 0) or an out-of-range read. A tile with an ODD width or height has
+        // 2x2 quads straddling its scissor, and the GPU runs their outside lanes as HELPER
+        // invocations, which read exactly such texels. Without this test they iterated from
+        // iteration 0 to the window's end on EVERY resumed pass (their output discarded, their
+        // counter atomics dropped, so nothing showed but the wall): 17x17 at 1e10 beside the cusp,
+        // 243 ms a pass against 0 ms at 16x16 and 18x18; and at the neck 1e-6 (3.1 million
+        // iterations) the passes grew past the 2 s watchdog - DEVICE LOST twice on the RTX 3080,
+        // 2026-11-03 (scripts/pi_points.py). Shrinking the window cannot help: such a lane starts
+        // from 0 whatever the window.
+        if (info_status(sm) != ST_RUNNING || info_iter(sm) < iu.start_iter) {
+            // Already settled (escaped or interior), or stale — pass state through unchanged.
             return ChunkOut(sz, sdz, sm);
         }
     }
@@ -2716,8 +2728,14 @@ fn chunk_fe_at(pos: vec2<f32>, p: vec2<i32>) -> ChunkOut4 {
         sdz = textureLoad(st_dz, p, 0);
         sm = textureLoad(st_meta, p, 0);
         se = textureLoad(st_exp, p, 0);
-        if (info_status(sm) != ST_RUNNING) {
-            // Already settled (escaped or interior) — pass state through unchanged.
+        // Stale state (a helper lane of an odd-sized tile): see `fs_iterate_chunk`. EXCEPT a pixel
+        // paused inside the renormalized step: it stores iteration k·rn_len, which may lie below
+        // `start_iter`, with `ref_n` = RN_PAUSED (-1) - never the 0 of a texel no pass wrote. (The
+        // first version of this test failed selftest's "pixels paused inside it resume
+        // bit-identically": 131,936 texels differed.)
+        let stale = info_iter(sm) < iu.start_iter && sm.z != RN_PAUSED;
+        if (info_status(sm) != ST_RUNNING || stale) {
+            // Already settled (escaped or interior), or stale — pass state through unchanged.
             return ChunkOut4(sz, sdz, sm, se);
         }
     }
