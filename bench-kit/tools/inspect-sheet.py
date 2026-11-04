@@ -41,8 +41,14 @@ WHO GETS IT
   inspect/imagina-decode.map, entry i = (i mod 256, i / 256, 77), and `im_counts` reads the count
   back mod 65,536. Measured 2026-11-03 on scenes 61-64: its whole count is Fractadyne's plus 1 to
   3 (the median), within 1-2 at the median pixel; Cerebral Spin (63, 2M iterations) spreads far
-  wider (p90 445), which is Imagina's own Julia-sampling approximation. imagina-cli is not
-  deterministic: two runs of one build differed at 82% of pixels of scene 64.
+  wider (p90 445): a ring around the minibrot where Imagina's Julia sampling ("High quality
+  (Experimental)", on by default) counts thousands short. imagina-cli is not deterministic: two
+  runs of one build differed at 82% of pixels of scene 64, and that is the Julia sampling too.
+  Measured 2026-11-04 against `fractadyne --truth` (scene 63, central 128x96): with it off (a
+  -DIMAGINA_STATS build, IMAGINA_NO_JULIA=1) two runs were identical, the ring was gone and
+  Imagina matched the truth at every distance from the minibrot; with it on, Fraktaler-3 and
+  Fractal Zoomer scattered evenly around the truth in that ring while Imagina fell short. Scene 64
+  the same day: off, two runs identical; on, 18% of pixels differed.
 - Fractal Zoomer: its counts ARE its colours. Its direct colour mode (Settings.useDirectColor)
   makes a pixel 0xFF000000 | (int) result & 0xFFFFFF before any palette or transfer function, and
   the default out-colouring (escape time, smoothing off) makes `result` the whole iteration count,
