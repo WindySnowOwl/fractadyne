@@ -59,6 +59,15 @@ published as the pre-releases `v0.2.41-beta.1` to `v0.2.41-beta.150`, and a "bet
 
 Changes after 0.3.0-beta.1:
 
+- **On processors with few cores, the live view no longer stutters while it picks a new reference
+  (0.3.0-beta.26).** At great depth, choosing a reference orbit is seconds of work spread over
+  every core, and during a zoom the view can be choosing two at once. On an 8-thread processor
+  that left the screen waiting for a free core: on a Core i7-9700K with an RX 6800 XT, a zoom to
+  2.3e999× past a minibrot that leaves the frame missed 21 to 27 frames in its last second and a
+  half, every run. The live view's reference work, and every thread it starts, now runs below
+  normal priority, so drawing the screen comes first: the same zoom misses 0 to 5 frames, and
+  references arrive as quickly as before. Exports keep normal priority, and on processors with
+  cores to spare nothing changes.
 - **A `--center` on the command line is read to the precision its zoom needs (0.3.0-beta.26).** A
   short decimal such as `0.25000000000001` was read to about 64 bits whatever the zoom, so past
   about 1e17× the view's centre could land many pixels from the point written: 40 pixels at
