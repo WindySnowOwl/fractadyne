@@ -16,6 +16,7 @@
 
 pub mod import;
 pub mod segment;
+pub mod tags;
 
 /// Width of the packed `[[r, g, b, pos]; N]` stop array.
 ///
