@@ -192,6 +192,11 @@ pub fn resample_colors(colors: &[[f32; 3]], n: usize) -> Vec<[f32; 3]> {
 /// ⚠Display-referred, not linear: the shader writes these values straight into a non-sRGB
 /// framebuffer, so a stop IS the byte shown. See `srgb8_to_stop` for the measurement.
 pub struct Palette {
+    /// The palette's permanent identity: what view files, sessions, tours and the command line save
+    /// and name it by. Lowercase ASCII letters, digits and hyphens, so it survives the Latin-1
+    /// `key=value` lines of a view file and a PNG text chunk. ⛔Never changes once shipped; the
+    /// display name and the list's order are free to.
+    pub id: &'static str,
     pub name: &'static str,
     pub stops: &'static [(f32, [f32; 3])],
 }
@@ -214,12 +219,57 @@ impl Palette {
 /// Year's Eve. The palette lists show them under their own heading.
 pub const HOLIDAY_PRESETS: std::ops::Range<usize> = 30..50;
 
+/// ⛔**Frozen: the palette a saved NUMBER means.** Until 0.3.0-beta.27 a view file's `palette=`, the
+/// session and `--palette` named a preset by its position in [`PRESETS`]. Those numbers are in files
+/// people have, so each keeps meaning the palette it meant: number `n` is the preset with id
+/// `LEGACY_PRESET_ORDER[n]`, wherever that preset now sits. Never reorder or extend this list; a
+/// preset added later has an id and no number.
+pub const LEGACY_PRESET_ORDER: &[&str] = &[
+    "ember", "ice", "nebula", "grayscale", "four-seasons", "royalty", "rave", "emerald-isle",
+    "seventies", "eighties", "mondrian", "dragon-scales", "machine-age", "bronze-age", "unity",
+    "spice", "veggies", "mosaic", "coral-reef", "aurora", "desert", "candy", "blueprint", "sepia",
+    "thermal", "stained-glass", "noir", "cherry-blossom", "black-opal", "lavender-fields",
+    "lunar-new-year", "valentines-day", "mardi-gras", "holi", "nowruz", "eid-al-fitr", "easter",
+    "vesak", "midsummer", "matariki", "mid-autumn", "meskel", "halloween", "day-of-the-dead",
+    "diwali", "thanksgiving", "hanukkah", "christmas", "kwanzaa", "new-years-eve",
+];
+
+/// The preset with this id (ASCII case ignored), as its position in [`PRESETS`].
+pub fn preset_by_id(id: &str) -> Option<usize> {
+    let id = id.trim();
+    PRESETS.iter().position(|p| p.id.eq_ignore_ascii_case(id))
+}
+
+/// The preset a NUMBER saved by an older build means (see [`LEGACY_PRESET_ORDER`]).
+pub fn preset_by_legacy_number(n: usize) -> Option<usize> {
+    LEGACY_PRESET_ORDER.get(n).and_then(|id| preset_by_id(id))
+}
+
+/// The number an older build knows preset `i` by, if it has one: what a file writes for them.
+pub fn legacy_number_of(i: usize) -> Option<usize> {
+    let id = PRESETS.get(i)?.id;
+    LEGACY_PRESET_ORDER.iter().position(|l| *l == id)
+}
+
+/// A preset named the way a person or a file may name it: its id, its display name (ASCII case
+/// ignored either way), or an older build's number for it. What `--palette` and a tour's
+/// `palette =` accept.
+pub fn preset_by_spec(spec: &str) -> Option<usize> {
+    let s = spec.trim();
+    if let Ok(n) = s.parse::<usize>() {
+        return preset_by_legacy_number(n);
+    }
+    preset_by_id(s).or_else(|| PRESETS.iter().position(|p| p.name.eq_ignore_ascii_case(s)))
+}
+
 /// Built-in palettes (names match the design mockups).
 ///
-/// ⛔**Append only.** A view file's `palette=` and the session's palette are saved as an INDEX into
-/// this list, so a preset never moves: a new one goes at the end.
+/// A palette is saved by its [`Palette::id`], so this list's order is only the order the lists show:
+/// a preset can go wherever it reads best. Numbers from older files go through
+/// [`LEGACY_PRESET_ORDER`].
 pub const PRESETS: &[Palette] = &[
     Palette {
+        id: "ember",
         name: "Ember",
         stops: &[
             (0.00, [0.00, 0.00, 0.00]),
@@ -231,6 +281,7 @@ pub const PRESETS: &[Palette] = &[
         ],
     },
     Palette {
+        id: "ice",
         name: "Ice",
         stops: &[
             (0.00, [0.00, 0.02, 0.10]),
@@ -241,6 +292,7 @@ pub const PRESETS: &[Palette] = &[
         ],
     },
     Palette {
+        id: "nebula",
         name: "Nebula",
         stops: &[
             (0.00, [0.05, 0.00, 0.10]),
@@ -252,6 +304,7 @@ pub const PRESETS: &[Palette] = &[
         ],
     },
     Palette {
+        id: "grayscale",
         name: "Grayscale",
         stops: &[
             (0.00, [0.00, 0.00, 0.00]),
@@ -265,6 +318,7 @@ pub const PRESETS: &[Palette] = &[
     // The four seasons round the ring: snow, frost, spring leaf, blossom, summer sun, harvest,
     // autumn russet, a bare winter dusk, and back to snow.
     Palette {
+        id: "four-seasons",
         name: "Four Seasons",
         stops: &[
             (0.00, [0.933, 0.957, 1.000]),
@@ -280,6 +334,7 @@ pub const PRESETS: &[Palette] = &[
     },
     // Blues, purples and crimsons, with the gold of a crown as the highlight.
     Palette {
+        id: "royalty",
         name: "Royalty",
         stops: &[
             (0.00, [0.043, 0.071, 0.251]),
@@ -294,6 +349,7 @@ pub const PRESETS: &[Palette] = &[
     },
     // Black light and neon: each flash comes out of the dark and goes back into it.
     Palette {
+        id: "rave",
         name: "Rave",
         stops: &[
             (0.00, [0.031, 0.000, 0.059]),
@@ -309,6 +365,7 @@ pub const PRESETS: &[Palette] = &[
     },
     // Ireland: deep forest, emerald, shamrock, sea mist, stone walls and the Atlantic.
     Palette {
+        id: "emerald-isle",
         name: "Emerald Isle",
         stops: &[
             (0.00, [0.016, 0.188, 0.102]),
@@ -322,6 +379,7 @@ pub const PRESETS: &[Palette] = &[
     },
     // Harvest gold, avocado, burnt orange and chocolate brown on cream.
     Palette {
+        id: "seventies",
         name: "Seventies",
         stops: &[
             (0.00, [0.239, 0.133, 0.063]),
@@ -336,6 +394,7 @@ pub const PRESETS: &[Palette] = &[
     },
     // Synthwave night: purple, hot pink, a sunset orange and turquoise neon.
     Palette {
+        id: "eighties",
         name: "Eighties",
         stops: &[
             (0.00, [0.071, 0.016, 0.188]),
@@ -350,6 +409,7 @@ pub const PRESETS: &[Palette] = &[
     },
     // Fields of white, red, blue and yellow, each edged by a black line.
     Palette {
+        id: "mondrian",
         name: "Mondrian",
         stops: &[
             (0.0000, [0.957, 0.945, 0.910]),
@@ -376,6 +436,7 @@ pub const PRESETS: &[Palette] = &[
     },
     // Obsidian edges round each scale, deep jade and iridescent teal, glints of gold and ember.
     Palette {
+        id: "dragon-scales",
         name: "Dragon Scales",
         stops: &[
             (0.00, [0.012, 0.039, 0.027]),
@@ -390,6 +451,7 @@ pub const PRESETS: &[Palette] = &[
     },
     // Black enamel, gunmetal, brushed steel, a chrome highlight and brass fittings.
     Palette {
+        id: "machine-age",
         name: "Machine Age",
         stops: &[
             (0.00, [0.047, 0.051, 0.063]),
@@ -404,6 +466,7 @@ pub const PRESETS: &[Palette] = &[
     },
     // Earth, cast bronze, a polished gold edge, copper, and the verdigris of age.
     Palette {
+        id: "bronze-age",
         name: "Bronze Age",
         stops: &[
             (0.00, [0.141, 0.078, 0.039]),
@@ -417,6 +480,7 @@ pub const PRESETS: &[Palette] = &[
     },
     // Every hue in one ring, evenly bright: all the colours together.
     Palette {
+        id: "unity",
         name: "Unity",
         stops: &[
             (0.00, [0.910, 0.200, 0.247]),
@@ -430,6 +494,7 @@ pub const PRESETS: &[Palette] = &[
     },
     // Clove, cinnamon, paprika, saffron, turmeric and cardamom.
     Palette {
+        id: "spice",
         name: "Spice",
         stops: &[
             (0.00, [0.180, 0.078, 0.039]),
@@ -444,6 +509,7 @@ pub const PRESETS: &[Palette] = &[
     },
     // Eggplant, beetroot, tomato, carrot, sweetcorn, broccoli and kale.
     Palette {
+        id: "veggies",
         name: "Veggies",
         stops: &[
             (0.00, [0.180, 0.059, 0.212]),
@@ -458,6 +524,7 @@ pub const PRESETS: &[Palette] = &[
     },
     // Tesserae of lapis, ochre, terracotta, turquoise, cream and wine, set in pale grout.
     Palette {
+        id: "mosaic",
         name: "Mosaic",
         stops: &[
             (0.0000, [0.114, 0.247, 0.561]),
@@ -488,6 +555,7 @@ pub const PRESETS: &[Palette] = &[
     },
     // Deep water, turquoise shallows, sand, coral and a sea-anemone violet.
     Palette {
+        id: "coral-reef",
         name: "Coral Reef",
         stops: &[
             (0.00, [0.024, 0.165, 0.353]),
@@ -501,6 +569,7 @@ pub const PRESETS: &[Palette] = &[
     },
     // The northern lights: green curtains and magenta veils on a night sky.
     Palette {
+        id: "aurora",
         name: "Aurora",
         stops: &[
             (0.00, [0.012, 0.024, 0.086]),
@@ -514,6 +583,7 @@ pub const PRESETS: &[Palette] = &[
     },
     // Dusk violet, red rock, sand, bleached bone, sage brush and desert sky.
     Palette {
+        id: "desert",
         name: "Desert",
         stops: &[
             (0.00, [0.227, 0.141, 0.282]),
@@ -527,6 +597,7 @@ pub const PRESETS: &[Palette] = &[
     },
     // A sweet shop: raspberry, bubblegum, lavender, sky, mint and lemon.
     Palette {
+        id: "candy",
         name: "Candy",
         stops: &[
             (0.00, [0.690, 0.071, 0.306]),
@@ -540,6 +611,7 @@ pub const PRESETS: &[Palette] = &[
     },
     // Engineering blue with thin white lines, like a print from the drawing office.
     Palette {
+        id: "blueprint",
         name: "Blueprint",
         stops: &[
             (0.0000, [0.051, 0.184, 0.400]),
@@ -555,6 +627,7 @@ pub const PRESETS: &[Palette] = &[
     },
     // An old photograph: dark umber through sepia to warm paper.
     Palette {
+        id: "sepia",
         name: "Sepia",
         stops: &[
             (0.00, [0.118, 0.078, 0.047]),
@@ -566,6 +639,7 @@ pub const PRESETS: &[Palette] = &[
     },
     // A thermal camera's ironbow: cold black and blue, through red and orange, to white heat.
     Palette {
+        id: "thermal",
         name: "Thermal",
         stops: &[
             (0.00, [0.000, 0.000, 0.000]),
@@ -580,6 +654,7 @@ pub const PRESETS: &[Palette] = &[
     },
     // Jewel-toned glass held in black lead: ruby, sapphire, emerald, amber, amethyst.
     Palette {
+        id: "stained-glass",
         name: "Stained Glass",
         stops: &[
             (0.0000, [0.710, 0.071, 0.165]),
@@ -606,6 +681,7 @@ pub const PRESETS: &[Palette] = &[
     },
     // Film noir: black, charcoal, smoke and silver, with one red accent.
     Palette {
+        id: "noir",
         name: "Noir",
         stops: &[
             (0.00, [0.020, 0.020, 0.024]),
@@ -619,6 +695,7 @@ pub const PRESETS: &[Palette] = &[
     },
     // Cherry blossom: dark bark, deep pink, sakura, petal white and new leaves.
     Palette {
+        id: "cherry-blossom",
         name: "Cherry Blossom",
         stops: &[
             (0.00, [0.180, 0.102, 0.118]),
@@ -632,6 +709,7 @@ pub const PRESETS: &[Palette] = &[
     },
     // Play of colour on a dark stone: electric blue, green and orange flashes.
     Palette {
+        id: "black-opal",
         name: "Black Opal",
         stops: &[
             (0.00, [0.024, 0.031, 0.094]),
@@ -646,6 +724,7 @@ pub const PRESETS: &[Palette] = &[
     },
     // Provence: lavender rows, sky, sunflowers, sage and a violet dusk.
     Palette {
+        id: "lavender-fields",
         name: "Lavender Fields",
         stops: &[
             (0.00, [0.180, 0.102, 0.322]),
@@ -659,6 +738,7 @@ pub const PRESETS: &[Palette] = &[
     },
     // Lunar New Year: red lanterns and red envelopes, gold, and the pink of plum blossom.
     Palette {
+        id: "lunar-new-year",
         name: "Lunar New Year",
         stops: &[
             (0.00, [0.165, 0.012, 0.024]),
@@ -675,6 +755,7 @@ pub const PRESETS: &[Palette] = &[
     },
     // Valentine's Day: deep wine, rose red, pink, blush and white lace.
     Palette {
+        id: "valentines-day",
         name: "Valentine's Day",
         stops: &[
             (0.00, [0.239, 0.000, 0.067]),
@@ -689,6 +770,7 @@ pub const PRESETS: &[Palette] = &[
     },
     // Mardi Gras: the purple, green and gold of the New Orleans carnival, with a bead's shine.
     Palette {
+        id: "mardi-gras",
         name: "Mardi Gras",
         stops: &[
             (0.00, [0.165, 0.039, 0.290]),
@@ -704,6 +786,7 @@ pub const PRESETS: &[Palette] = &[
     },
     // Holi: clouds of coloured powder, magenta, saffron, yellow, green, blue and violet.
     Palette {
+        id: "holi",
         name: "Holi",
         stops: &[
             (0.00, [1.000, 0.176, 0.541]),
@@ -721,6 +804,7 @@ pub const PRESETS: &[Palette] = &[
     // Nowruz, the Persian new year: the haft-sin table's wheatgrass and hyacinths, a goldfish, and
     // cobalt tiles.
     Palette {
+        id: "nowruz",
         name: "Nowruz",
         stops: &[
             (0.00, [0.122, 0.290, 0.071]),
@@ -736,6 +820,7 @@ pub const PRESETS: &[Palette] = &[
     },
     // Eid al-Fitr: a midnight sky, emerald, lantern gold and the silver of the new crescent.
     Palette {
+        id: "eid-al-fitr",
         name: "Eid al-Fitr",
         stops: &[
             (0.00, [0.024, 0.078, 0.200]),
@@ -752,6 +837,7 @@ pub const PRESETS: &[Palette] = &[
     // Easter: the stripes of dyed eggs, pastel pink, yellow, mint, sky and lilac, between white
     // lines.
     Palette {
+        id: "easter",
         name: "Easter",
         stops: &[
             (0.0000, [0.969, 0.714, 0.784]),
@@ -778,6 +864,7 @@ pub const PRESETS: &[Palette] = &[
     },
     // Vesak: lanterns on a night sky, lotus pink and white, saffron, and the maroon of robes.
     Palette {
+        id: "vesak",
         name: "Vesak",
         stops: &[
             (0.00, [0.051, 0.094, 0.220]),
@@ -793,6 +880,7 @@ pub const PRESETS: &[Palette] = &[
     // Midsummer in the Nordic countries: birch bark, meadow, buttercups, wildflowers, cornflowers
     // and the pale sky of a night that never gets dark.
     Palette {
+        id: "midsummer",
         name: "Midsummer",
         stops: &[
             (0.00, [0.180, 0.478, 0.196]),
@@ -808,6 +896,7 @@ pub const PRESETS: &[Palette] = &[
     },
     // Matariki, the Māori new year: the Pleiades rising in a midwinter sky before the dawn.
     Palette {
+        id: "matariki",
         name: "Matariki",
         stops: &[
             (0.00, [0.008, 0.016, 0.059]),
@@ -824,6 +913,7 @@ pub const PRESETS: &[Palette] = &[
     },
     // The Mid-Autumn Festival: the full moon, osmanthus, mooncakes and red lanterns at night.
     Palette {
+        id: "mid-autumn",
         name: "Mid-Autumn",
         stops: &[
             (0.00, [0.039, 0.071, 0.188]),
@@ -839,6 +929,7 @@ pub const PRESETS: &[Palette] = &[
     },
     // Meskel in Ethiopia: green highlands, yellow Meskel daisies, white shawls and the bonfire.
     Palette {
+        id: "meskel",
         name: "Meskel",
         stops: &[
             (0.00, [0.102, 0.165, 0.039]),
@@ -854,6 +945,7 @@ pub const PRESETS: &[Palette] = &[
     },
     // Halloween: black, a witch's purple, jack-o'-lantern orange and candlelight, and slime green.
     Palette {
+        id: "halloween",
         name: "Halloween",
         stops: &[
             (0.00, [0.020, 0.012, 0.031]),
@@ -870,6 +962,7 @@ pub const PRESETS: &[Palette] = &[
     // The Day of the Dead in Mexico: marigolds, papel picado in magenta and turquoise, sugar-skull
     // white and violet.
     Palette {
+        id: "day-of-the-dead",
         name: "Day of the Dead",
         stops: &[
             (0.00, [0.039, 0.020, 0.063]),
@@ -886,6 +979,7 @@ pub const PRESETS: &[Palette] = &[
     // Diwali, the festival of lights: an indigo night, rangoli magenta and turquoise, marigolds and
     // the flames of the diyas.
     Palette {
+        id: "diwali",
         name: "Diwali",
         stops: &[
             (0.00, [0.071, 0.039, 0.227]),
@@ -902,6 +996,7 @@ pub const PRESETS: &[Palette] = &[
     },
     // Thanksgiving: corn husk and corn, pumpkin, cranberry, an oak leaf's brown, sage and wheat.
     Palette {
+        id: "thanksgiving",
         name: "Thanksgiving",
         stops: &[
             (0.00, [0.957, 0.886, 0.722]),
@@ -917,6 +1012,7 @@ pub const PRESETS: &[Palette] = &[
     },
     // Hanukkah: blue and white, silver, and the gold of the candle flames.
     Palette {
+        id: "hanukkah",
         name: "Hanukkah",
         stops: &[
             (0.00, [0.039, 0.102, 0.290]),
@@ -932,6 +1028,7 @@ pub const PRESETS: &[Palette] = &[
     },
     // Christmas: evergreen, holly red, gold and snow.
     Palette {
+        id: "christmas",
         name: "Christmas",
         stops: &[
             (0.00, [0.039, 0.165, 0.071]),
@@ -947,6 +1044,7 @@ pub const PRESETS: &[Palette] = &[
     },
     // Kwanzaa: the red, black and green of the bendera, and the light of the kinara's candles.
     Palette {
+        id: "kwanzaa",
         name: "Kwanzaa",
         stops: &[
             (0.00, [0.039, 0.039, 0.039]),
@@ -961,6 +1059,7 @@ pub const PRESETS: &[Palette] = &[
     },
     // New Year's Eve: a midnight sky, champagne, silver and fireworks.
     Palette {
+        id: "new-years-eve",
         name: "New Year's Eve",
         stops: &[
             (0.00, [0.020, 0.024, 0.102]),

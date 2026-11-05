@@ -294,7 +294,7 @@ impl ViewLoad {
 pub(crate) const KNOWN_VIEW_KEYS: &[&str] = &[
     "app", "version", "format_version", "saved_unix", "saved", "notes", "fractal", "julia",
     "julia_c_re", "julia_c_im", "center_re", "center_im", "upp", "upp_log2", "zoom", "max_iter",
-    "auto_iter", "palette", "cycle", "offset", "aa", "palette_custom", "thumb", "checksum",
+    "auto_iter", "palette", "palette_id", "cycle", "offset", "aa", "palette_custom", "thumb", "checksum",
     // The centre's source EXPRESSION and its offset from that anchor, when the centre was entered
     // as a re-derivable expression. Optional and written IN ADDITION to `center_re`/`center_im`, so
     // an older reader still lands on the resolved decimal; a newer one re-derives at the view's
@@ -365,6 +365,7 @@ const TYPED_VIEW_KEYS: &[(&str, ValueKind)] = &[
     ("upp_log2", ValueKind::Float),
     ("max_iter", ValueKind::Uint),
     ("palette", ValueKind::Uint),
+    ("palette_id", ValueKind::Id),
     ("cycle", ValueKind::Float),
     ("offset", ValueKind::Float),
     ("aa", ValueKind::Uint),
@@ -382,6 +383,8 @@ enum ValueKind {
     /// `parse_bf` — which also accepts a plain decimal, so this is a strict superset of `BigFloat`
     /// that just reports itself differently when unreadable.
     Expr,
+    /// A palette id (`fractadyne_color::Palette::id`): ASCII letters, digits and hyphens.
+    Id,
 }
 
 impl ValueKind {
@@ -393,6 +396,9 @@ impl ValueKind {
             ValueKind::Float => v.parse::<f64>().is_ok(),
             ValueKind::Flag => v == "0" || v == "1",
             ValueKind::BigFloat | ValueKind::Expr => fractadyne_core::parse_bf(v).is_some(),
+            ValueKind::Id => {
+                !v.is_empty() && v.len() <= 64 && v.bytes().all(|b| b.is_ascii_alphanumeric() || b == b'-')
+            }
         }
     }
 
@@ -403,8 +409,38 @@ impl ValueKind {
             ValueKind::Flag => "0 or 1",
             ValueKind::BigFloat => "a decimal number",
             ValueKind::Expr => "a coordinate expression",
+            ValueKind::Id => "a palette name such as lunar-new-year",
         }
     }
+}
+
+/// What a view's palette fields ask for.
+#[derive(Debug, PartialEq, Eq)]
+pub(crate) enum ViewPalette {
+    /// This preset (its position in `fractadyne_color::PRESETS`).
+    Preset(usize),
+    /// A palette this build does not have: the view keeps the one it has, and says so.
+    NotInThisBuild,
+    /// Neither field: the view keeps its palette, silently.
+    Absent,
+}
+
+/// ⭐**By id when the file has one.** An older file has only `palette=`, a number, read through the
+/// frozen table (`fractadyne_color::LEGACY_PRESET_ORDER`) so it opens the palette it was saved with
+/// wherever that palette now sits in the list. An id this build does not know is a palette from a
+/// newer build, and then the number beside it means nothing here either (it may be a newer palette's
+/// position), so it is not consulted.
+pub(crate) fn view_palette(palette_id: Option<&str>, palette: Option<&str>) -> ViewPalette {
+    let found = match (palette_id, palette) {
+        (Some(id), _) => fractadyne_color::preset_by_id(id),
+        (None, Some(n)) => match n.trim().parse::<usize>() {
+            Ok(n) => fractadyne_color::preset_by_legacy_number(n),
+            // Unreadable: reported by its type (`TYPED_VIEW_KEYS`), not as a missing palette.
+            Err(_) => return ViewPalette::Absent,
+        },
+        (None, None) => return ViewPalette::Absent,
+    };
+    found.map_or(ViewPalette::NotInThisBuild, ViewPalette::Preset)
 }
 
 /// The line that opens a shareable view, and the one that closes it.
@@ -815,7 +851,7 @@ impl FractadyneApp {
             "app=Fractadyne\nversion={}\nformat_version={}\nsaved_unix={}\nsaved={}\n\
              notes={}\nfractal={}\njulia={}\njulia_c_re={:.17e}\njulia_c_im={:.17e}\n\
              center_re={}\ncenter_im={}\nupp={:.17e}\nupp_log2={:.17e}\nzoom={}\nmax_iter={}\nauto_iter={}\n\
-             palette={}\ncycle={}\noffset={}\naa={}\n{}{}{}{}",
+             palette={}\npalette_id={}\ncycle={}\noffset={}\naa={}\n{}{}{}{}",
             version_string(),
             if self.fractal == FractalKind::LSystem {
                 VIEW_FORMAT_VERSION
@@ -845,7 +881,12 @@ impl FractadyneApp {
             crate::fmt_zoom_field(self.viewport.log2_magnification()),
             self.render_cfg.max_iter,
             self.render_cfg.auto_iter as u32,
-            self.coloring.palette_idx,
+            // ⭐The palette twice: `palette_id` is what this build and later ones read; `palette` is
+            // the number an older build knows the same palette by, so a shared view keeps its colours
+            // there too. A preset added after the numbers were frozen has none an older build knows:
+            // it gets its position, and such a build shows a palette of its own (it cannot have this one).
+            fractadyne_color::legacy_number_of(self.coloring.palette_idx).unwrap_or(self.coloring.palette_idx),
+            fractadyne_color::PRESETS[self.coloring.palette_idx.min(fractadyne_color::PRESETS.len() - 1)].id,
             self.coloring.cycle,
             self.coloring.offset,
             self.render_cfg.aa,
@@ -1113,12 +1154,10 @@ impl FractadyneApp {
         } else if get("palette_custom").is_some() {
             report.clamped.push("custom palette");
         }
-        if let Some(p) = get("palette").and_then(|s| s.parse::<usize>().ok()) {
-            if p < fractadyne_color::PRESETS.len() {
-                self.coloring.palette_idx = p;
-            } else {
-                report.clamped.push("palette");
-            }
+        match view_palette(get("palette_id").as_deref(), get("palette").as_deref()) {
+            ViewPalette::Preset(i) => self.coloring.palette_idx = i,
+            ViewPalette::NotInThisBuild => report.clamped.push("palette"),
+            ViewPalette::Absent => {}
         }
         if let Some(c) = get("cycle").and_then(|s| s.parse::<f32>().ok()) {
             if c.is_finite() {

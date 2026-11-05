@@ -816,7 +816,7 @@ const TOUR_SCHEMA: &[SchemaTable] = &[
             SchemaField { name: "im", ty: "string", default: "(inherit)", doc: "Center, imaginary part." },
             SchemaField { name: "zoom", ty: "float | string", default: "(inherit, else 1)", doc: "Magnification here, e.g. 2667 or \"6.5e94\". Strings carry depths past f64's ~1e308 ceiling." },
             SchemaField { name: "max_iter", ty: "int", default: "(inherit, else [render])", doc: "Exact iteration budget at this keyframe, interpolated geometrically along the glide. One script-wide number cannot serve both a 1.33x home view and a 1e94x dive." },
-            SchemaField { name: "palette", ty: "string", default: "(inherit)", doc: "Palette id, preset name, or preset index; interpolated between keyframes." },
+            SchemaField { name: "palette", ty: "string", default: "(inherit)", doc: "Palette id, preset id (`lunar-new-year`) or name, or an older preset number; interpolated between keyframes." },
             SchemaField { name: "fractal", ty: "string", default: "(inherit)", doc: "Fractal family name (e.g. \"Mandelbrot\", \"Burning Ship\"), or \"Custom\" with a formula." },
             SchemaField { name: "formula", ty: "string", default: "(inherit)", doc: "A custom formula's step, as the Custom formula dialog takes it (\"z = z^3 - p1*z + c\"; a multi-line string for several statements). Implies fractal = \"Custom\". Each distinct formula is compiled once, when the script is read." },
             SchemaField { name: "formula_params", ty: "array of [re, im]", default: "(inherit)", doc: "The formula's parameters p1, p2, ... e.g. [[0.5, 0.0]]. Given alone, they re-parameterize the inherited formula. Stepped at the keyframe, not interpolated: each value is its own shader module." },
@@ -2560,13 +2560,9 @@ fn resolve_palette_def(p: &PaletteFile) -> Result<TourPalette, String> {
     Ok(TourPalette::Stops(stops))
 }
 
-/// Built-in preset by name (case-insensitive) or index.
+/// Built-in preset by id, name (ASCII case ignored) or an older build's number for it.
 fn preset_index(spec: &str) -> Option<usize> {
-    let s = spec.trim();
-    s.parse::<usize>()
-        .ok()
-        .filter(|i| *i < fractadyne_color::PRESETS.len())
-        .or_else(|| fractadyne_color::PRESETS.iter().position(|p| p.name.eq_ignore_ascii_case(s)))
+    fractadyne_color::preset_by_spec(spec)
 }
 
 /// `#rrggbb` (or bare `rrggbb`) → linear RGB, matching how the presets store their colors.

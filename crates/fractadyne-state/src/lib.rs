@@ -74,7 +74,14 @@ pub struct SessionState {
     pub units_per_pixel_e: i32,
     pub max_iter: u32,
     pub auto_iter: bool,
+    /// The preset's number in an older build's list (`fractadyne_color::LEGACY_PRESET_ORDER`):
+    /// written so an older build reopening this session keeps the palette, and read only when
+    /// `palette_id` is absent (a session saved before ids).
     pub palette_idx: usize,
+    /// The preset's id (`fractadyne_color::Palette::id`), what a session is read by. Empty in a
+    /// session saved before ids; `serde(default)` keeps those loadable.
+    #[serde(default)]
+    pub palette_id: String,
     pub cycle: f32,
     pub offset: f32,
     /// Log-scaled palette mapping (default off) — applies wherever normalization is active.
@@ -627,6 +634,7 @@ impl Default for SessionState {
             max_iter: 256,
             auto_iter: true,
             palette_idx: 0,
+            palette_id: String::new(),
             cycle: 0.27,
             log_palette: false,
             normalize_live: true,

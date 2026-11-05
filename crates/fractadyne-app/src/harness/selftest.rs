@@ -9122,27 +9122,40 @@ zoom = \"1e94\"
             self.render_cfg.max_iter = 1234;
             self.render_cfg.auto_iter = false;
             self.render_cfg.aa = 3;
+            // A palette with an id and a number, saved by id and read back by it.
+            let pal = fractadyne_color::preset_by_id("matariki").unwrap_or(0);
+            let pal_was = self.coloring.palette_idx;
+            self.coloring.palette_idx = pal;
             let blob = self.view_metadata();
             // Scramble live state, then restore from the blob.
             self.render_cfg.max_iter = 7;
             self.render_cfg.aa = 1;
             self.viewport.units_per_pixel = fractadyne_core::FloatExp::from_f64(1.0);
+            self.coloring.palette_idx = 0;
             let rt = self.load_view_metadata(&blob);
+            let pal_back = self.coloring.palette_idx;
+            self.coloring.palette_idx = pal_was;
             let cx = fractadyne_core::to_f64(&self.viewport.center_x);
             let rt_ok = rt.note().is_none()
                 && self.render_cfg.max_iter == 1234
                 && self.render_cfg.aa == 3
                 && (self.viewport.units_per_pixel.log2() + 120.0).abs() < 1.0e-6
-                && (cx + 0.743643887037151).abs() < 1.0e-12;
+                && (cx + 0.743643887037151).abs() < 1.0e-12
+                && pal_back == pal
+                && blob.contains("\npalette_id=matariki\n");
             push_check(&mut checks, &mut last_check_t, SelfCheck {
                 category: "View format",
                 name: "metadata round-trips a deep view".into(),
                 params: "serialize → scramble → load".into(),
                 result: format!(
-                    "iter {} aa {} upp_log2 {:.3} cx {:.15}",
-                    self.render_cfg.max_iter, self.render_cfg.aa, self.viewport.units_per_pixel.log2(), cx
+                    "iter {} aa {} upp_log2 {:.3} cx {:.15} palette {}",
+                    self.render_cfg.max_iter,
+                    self.render_cfg.aa,
+                    self.viewport.units_per_pixel.log2(),
+                    cx,
+                    fractadyne_color::PRESETS[pal_back.min(fractadyne_color::PRESETS.len() - 1)].id
                 ),
-                threshold: "clean load; fractal/iter/aa/zoom/center preserved",
+                threshold: "clean load; fractal/iter/aa/zoom/center/palette (by id) preserved",
                 pass: rt_ok,
             });
 

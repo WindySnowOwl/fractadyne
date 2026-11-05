@@ -68,6 +68,13 @@ Changes after 0.3.0-beta.1:
   the Day of the Dead's marigolds, papel picado and sugar-skull white. They follow the thirty
   presets, so views and sessions saved with an earlier palette open as before. A palette list now
   opens scrolled to the palette in use, which with fifty presets can be far down the list.
+- **Palettes are saved by name (0.3.0-beta.27).** A view file, an exported image and the session
+  used to name the palette by its position in the list, so the list could only ever grow at its end.
+  Each built-in palette now has a permanent id, such as `lunar-new-year`, and that is what is saved
+  (`palette_id=`), with the old number beside it so an older Fractadyne still opens the same
+  palette. Files saved before this open exactly as they did. `--palette` and a tour's `palette =`
+  take the id, the name or the old number; an unknown palette on the command line now stops with a
+  message instead of quietly using the last one in the list.
 - **On processors with few cores, the live view no longer stutters while it picks a new reference
   (0.3.0-beta.26).** At great depth, choosing a reference orbit is seconds of work spread over
   every core, and during a zoom the view can be choosing two at once. On an 8-thread processor

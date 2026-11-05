@@ -3,7 +3,7 @@ use super::*;
 /// Each packed slot is `[r, g, b, pos]` — the order the GPU uniform expects.
 #[test]
 fn packed_slot_is_rgb_then_pos() {
-    let p = Palette { name: "t", stops: &[(0.0, [0.1, 0.2, 0.3]), (1.0, [0.4, 0.5, 0.6])] };
+    let p = Palette { id: "t", name: "t", stops: &[(0.0, [0.1, 0.2, 0.3]), (1.0, [0.4, 0.5, 0.6])] };
     let (out, n) = p.packed();
     assert_eq!(n, 2);
     assert_eq!(out[0], [0.1, 0.2, 0.3, 0.0]);
@@ -14,7 +14,7 @@ fn packed_slot_is_rgb_then_pos() {
 /// padded array agree — reading past `n` still yields the terminal color, never garbage).
 #[test]
 fn trailing_slots_repeat_last_stop() {
-    let p = Palette { name: "t", stops: &[(0.0, [0.0; 3]), (0.5, [1.0; 3]), (1.0, [0.2; 3])] };
+    let p = Palette { id: "t", name: "t", stops: &[(0.0, [0.0; 3]), (0.5, [1.0; 3]), (1.0, [0.2; 3])] };
     let (out, n) = p.packed();
     assert_eq!(n, 3);
     assert_eq!(out[2], [0.2, 0.2, 0.2, 1.0]);
@@ -117,7 +117,7 @@ fn resample_keeps_endpoints() {
 /// A single-stop palette fills every slot with that stop (count 1, no out-of-bounds).
 #[test]
 fn single_stop_fills_all_slots() {
-    let p = Palette { name: "t", stops: &[(0.3, [0.7, 0.8, 0.9])] };
+    let p = Palette { id: "t", name: "t", stops: &[(0.3, [0.7, 0.8, 0.9])] };
     let (out, n) = p.packed();
     assert_eq!(n, 1);
     assert!(out.iter().all(|s| *s == [0.7, 0.8, 0.9, 0.3]));
@@ -128,6 +128,7 @@ fn single_stop_fills_all_slots() {
 #[test]
 fn count_clamps_to_max_stops() {
     let p = Palette {
+        id: "t",
         name: "t",
         stops: &[
             (0.0, [0.0; 3]), (0.1, [1.0; 3]), (0.2, [2.0; 3]), (0.3, [3.0; 3]),
@@ -183,12 +184,13 @@ fn presets_are_well_formed_rings() {
     }
 }
 
-/// ⛔**A preset's index is saved, so it never moves.** A view file's `palette=` and the session's
-/// palette are indices into [`PRESETS`]: a preset inserted in the middle, or two swapped, would
-/// reopen every saved view after it in another palette. This list may only grow at its end.
+/// ⛔**A number an older build saved opens the palette it always did.** Files and sessions from
+/// before ids name a preset by its old position; [`LEGACY_PRESET_ORDER`] keeps each number on its
+/// palette whatever order [`PRESETS`] is in now. Pinned by NAME, so a renamed id or a reordered
+/// table shows here as the palette that number would now open.
 #[test]
-fn preset_indices_never_move() {
-    const SAVED_ORDER: &[&str] = &[
+fn legacy_numbers_keep_their_palettes() {
+    const BY_NUMBER: &[&str] = &[
         "Ember", "Ice", "Nebula", "Grayscale", "Four Seasons", "Royalty", "Rave", "Emerald Isle",
         "Seventies", "Eighties", "Mondrian", "Dragon Scales", "Machine Age", "Bronze Age", "Unity",
         "Spice", "Veggies", "Mosaic", "Coral Reef", "Aurora", "Desert", "Candy", "Blueprint", "Sepia",
@@ -197,9 +199,48 @@ fn preset_indices_never_move() {
         "Vesak", "Midsummer", "Matariki", "Mid-Autumn", "Meskel", "Halloween", "Day of the Dead",
         "Diwali", "Thanksgiving", "Hanukkah", "Christmas", "Kwanzaa", "New Year's Eve",
     ];
-    assert!(PRESETS.len() >= SAVED_ORDER.len(), "a preset was removed");
-    for (i, want) in SAVED_ORDER.iter().enumerate() {
-        assert_eq!(PRESETS[i].name, *want, "preset {i} moved");
+    assert_eq!(LEGACY_PRESET_ORDER.len(), BY_NUMBER.len(), "the legacy table never grows or shrinks");
+    for (n, want) in BY_NUMBER.iter().enumerate() {
+        let i = preset_by_legacy_number(n).unwrap_or_else(|| panic!("number {n} opens no palette"));
+        assert_eq!(PRESETS[i].name, *want, "number {n}");
+        assert_eq!(legacy_number_of(i), Some(n), "{want} writes its number back");
+    }
+    assert_eq!(preset_by_legacy_number(BY_NUMBER.len()), None, "past the table is no palette");
+}
+
+/// Every id is unique, shaped to survive a view file's Latin-1 `key=value` line and a PNG text
+/// chunk (lowercase ASCII letters, digits, single hyphens), and cannot be mistaken for another
+/// preset's display name — `preset_by_spec` tries ids before names.
+#[test]
+fn preset_ids_are_unique_and_plain() {
+    let mut seen = std::collections::HashSet::new();
+    for p in PRESETS {
+        assert!(seen.insert(p.id), "{}: two presets share the id", p.id);
+        assert!(!p.id.is_empty() && p.id.len() <= 40, "{:?}: length", p.id);
+        assert!(p.id.bytes().all(|b| b.is_ascii_lowercase() || b.is_ascii_digit() || b == b'-'), "{:?}: characters", p.id);
+        assert!(!p.id.starts_with('-') && !p.id.ends_with('-') && !p.id.contains("--"), "{:?}: hyphens", p.id);
+        assert!(p.id.parse::<usize>().is_err(), "{:?}: an id that is a number reads as an old file's number", p.id);
+        for q in PRESETS {
+            assert!(std::ptr::eq(p, q) || !q.name.eq_ignore_ascii_case(p.id), "{}'s id is {}'s name", p.name, q.name);
+        }
+    }
+    for id in LEGACY_PRESET_ORDER {
+        assert!(preset_by_id(id).is_some(), "{id}: an old number points at a palette that is gone");
+    }
+}
+
+/// `--palette` and a tour's `palette =` take an id, a display name or an older build's number, in
+/// any ASCII case, and nothing else.
+#[test]
+fn a_preset_is_found_by_id_name_or_number() {
+    let want = preset_by_id("lunar-new-year").expect("lunar-new-year");
+    for spec in ["lunar-new-year", "LUNAR-NEW-YEAR", "Lunar New Year", " lunar new year ", "30"] {
+        assert_eq!(preset_by_spec(spec), Some(want), "{spec:?}");
+    }
+    assert_eq!(preset_by_spec("valentines-day").map(|i| PRESETS[i].name), Some("Valentine's Day"));
+    assert_eq!(preset_by_spec("Valentine's Day").map(|i| PRESETS[i].id), Some("valentines-day"));
+    for spec in ["", "999", "-1", "lunar", "no-such-palette"] {
+        assert_eq!(preset_by_spec(spec), None, "{spec:?}");
     }
 }
 
