@@ -72,6 +72,25 @@ impl FractadyneApp {
         }
     }
 
+    /// The heading a list of presets shows before preset `i`, if a group starts there: the
+    /// holiday palettes sit under their own. Color ▸ Palette and the panel's Palette list both
+    /// call it, as they both call `palette_menu_row`.
+    pub(crate) fn palette_preset_heading(ui: &mut egui::Ui, i: usize) {
+        if i == fractadyne_color::HOLIDAY_PRESETS.start {
+            ui.separator();
+            ui.label(egui::RichText::new(tr!(menu_color_holidays)).weak());
+        }
+    }
+
+    /// As a palette list opens, scroll the chosen row into view: the presets run past the list's
+    /// height, and a list that opened at its top hid a palette chosen from near its end. Only as far
+    /// as needed (`None`), so a row already in view does not move under the pointer.
+    pub(crate) fn reveal_chosen_palette(&self, ui: &egui::Ui, row: &PaletteRowHit, chosen: bool) {
+        if chosen && self.coloring.palette_preview.opening() {
+            ui.scroll_to_rect(row.rect, None);
+        }
+    }
+
     /// Top menu bar + toolbar (File / Fractal / View / Tools / Bookmarks / Locations / Help)
     /// plus the icon toolbar. Takes the `gpu` handle for the quick-export toolbar action.
     /// The bookmarks menu: add-current first, then Manage, then the recent bookmarks with
@@ -555,21 +574,19 @@ impl FractadyneApp {
                             // from INSIDE the submenu, so it counts only while the submenu is open.
                             use crate::palette_preview::PaletteRow;
                             self.coloring.palette_preview.picker_open();
-                            // Thirty presets are taller than a small window: the list scrolls, as
+                            // The presets are taller than a small window: the list scrolls, as
                             // the saved gradients' below does (egui clips a menu that does not fit
                             // rather than scrolling it).
                             let mut pick = None;
                             egui::ScrollArea::vertical().id_salt("palette_presets").max_height(430.0).show(ui, |ui| {
                                 for (i, p) in fractadyne_color::PRESETS.iter().enumerate() {
+                                    Self::palette_preset_heading(ui, i);
                                     let g = fractadyne_color::segment::Gradient::from_stops(
                                         p.name, p.stops,
                                     );
-                                    let row = Self::palette_menu_row(
-                                        ui,
-                                        &g,
-                                        p.name,
-                                        is_preset && self.coloring.palette_idx == i,
-                                    );
+                                    let chosen = is_preset && self.coloring.palette_idx == i;
+                                    let row = Self::palette_menu_row(ui, &g, p.name, chosen);
+                                    self.reveal_chosen_palette(ui, &row, chosen);
                                     self.coloring.palette_preview.row(PaletteRow::Preset(i), row.rect, row.hovered);
                                     if row.clicked {
                                         pick = Some(i);
@@ -597,12 +614,9 @@ impl FractadyneApp {
                                 egui::ScrollArea::vertical().max_height(260.0).show(ui, |ui| {
                                     for (i, sg) in self.saved_gradients.iter().enumerate() {
                                         let g = crate::segments_to_gradient(&sg.name, &sg.segment);
-                                        let row = Self::palette_menu_row(
-                                            ui,
-                                            &g,
-                                            &sg.name,
-                                            live_saved == Some(i),
-                                        );
+                                        let chosen = live_saved == Some(i);
+                                        let row = Self::palette_menu_row(ui, &g, &sg.name, chosen);
+                                        self.reveal_chosen_palette(ui, &row, chosen);
                                         self.coloring.palette_preview.row(PaletteRow::Saved(i), row.rect, row.hovered);
                                         if row.clicked {
                                             apply = Some(i);
@@ -652,6 +666,14 @@ impl FractadyneApp {
                                 ui.close_menu();
                             }
                         });
+                        if ui
+                            .button(format!("{} {}", crate::icons::GALLERY, tr!(menu_color_browse)))
+                            .on_hover_text(tr!(menu_color_browse_hover))
+                            .clicked()
+                        {
+                            self.palette_browser.open = true;
+                            ui.close_menu();
+                        }
                         if ui.button(tr!(menu_color_edit_gradient)).clicked() {
                             // Only OPENS it: the editor starts from the gradient on screen, and
                             // takes its Cancel point first (`palette_editor_window`).

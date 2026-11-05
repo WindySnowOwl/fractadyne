@@ -243,12 +243,90 @@ menu-color-method = 方法
 menu-color-palette = 调色板
 menu-color-custom = 自定义
 menu-color-duotone = 双色调
+menu-color-holidays = 节日
 menu-color-binary = 二值（集合）
 menu-color-binary-hover = 纯双色：集合内与集合外，无渐变。
 menu-color-edit-gradient = 编辑渐变…
 menu-color-normalize = 归一化深层颜色
 menu-color-normalize-hover = 当密集的区域原本会显得像噪点时，将调色板重新映射到视图实测的逃逸范围。不产生混叠的视图保持不变——勾选“始终适配范围”可无条件重新映射。仅适用于“平滑迭代”方法。
 menu-color-more = 循环、偏移、动画和效果：控制面板 ▸ 着色
+
+## Palette browser and palette tags
+
+# Color ▸ Browse palettes…, and its tooltip.
+menu-color-browse = 浏览调色板…
+menu-color-browse-hover = 在当前视图上并排显示所有调色板：可按标签筛选，并为自己的调色板添加标签。
+
+# The palette browser window.
+palette-browser-title = 调色板
+palette-browser-clear = 清除筛选
+
+# Shown when the chosen filters leave no palette.
+palette-browser-none = 没有调色板同时具有这些标签。
+
+# The row of filters made of the tags the user gave their own gradients.
+palette-browser-yours = 我的标签
+
+# Above the tags of the palette in use. { $name } is the palette's name.
+palette-browser-tags-of = { $name } 的标签
+
+# For a saved gradient: the button that adds what was typed as a tag, and the hint in the field.
+palette-browser-add-tag = 添加标签
+palette-browser-tag-hint = 自定义词语
+
+# For a built-in palette, in place of the field.
+palette-browser-tags-builtin = 内置调色板的标签不可更改。要添加标签，请选择你保存的渐变。
+
+# Before the view has drawn, or for a view thumbnails cannot show (Life, L-systems).
+palette-browser-no-view = 视图尚未绘制：调色板以色带显示。
+
+# Tooltip on a tag the user can remove.
+palette-browser-remove-tag = 移除此标签
+
+# The groups of tags, one row of filters each.
+tag-group-color = 颜色
+tag-group-temperature = 冷暖
+tag-group-energy = 动感
+tag-group-brightness = 明暗
+tag-group-shape = 形态
+tag-group-theme = 主题
+tag-group-purpose = 用途
+
+# Tags measured from a palette's colours: its colour families, warm or cool, how busy it is (calm, lively, frantic), its brightness, and its shape. Plural nouns for the families; the rest describe the palette.
+tag-reds = 红色系
+tag-oranges = 橙色系
+tag-yellows = 黄色系
+tag-greens = 绿色系
+tag-blues = 蓝色系
+tag-purples = 紫色系
+tag-pinks = 粉色系
+tag-browns = 棕色系
+tag-neutrals = 中性色
+tag-warm = 暖色调
+tag-cool = 冷色调
+tag-calm = 平静
+tag-lively = 活泼
+tag-frantic = 狂乱
+tag-dark = 暗色
+tag-light = 亮色
+tag-pastel = 粉彩
+tag-vivid = 鲜艳
+tag-smooth = 平滑
+tag-banded = 条带
+tag-single-hue = 单一色相
+tag-rainbow = 彩虹
+
+# Tags given by hand: a theme, and the purpose (built to read the structure, or chosen for its looks).
+tag-holidays = 节日
+tag-seasons = 季节
+tag-nature = 自然
+tag-retro = 复古
+tag-art = 艺术
+tag-materials = 材质
+tag-science = 科学
+tag-food = 食物
+tag-analytical = 分析用
+tag-aesthetic = 观赏用
 
 ## Tools menu
 
@@ -1285,6 +1363,7 @@ help-nav-minimap = “视图 → 小地图概览”会显示整个集合的小�
 help-options-intro = 以下所有选项都在右侧面板中（并在会话之间保留）。
 help-options-palette = 调色板
 help-options-palette-text = “调色板”用于选择预设渐变、你的自定义渐变或双色模式。“编辑渐变…”会打开一个编辑器，其中每个色标都有颜色和位置（0–1）；可以添加色标、复制一个预设作为起点，或导入调色板文件。
+help-options-palette-browser = 颜色 ▸ 浏览调色板…（或调色板列表旁的按钮）会同时以所有调色板显示当前视图。每个调色板都有标签：它的颜色、暖色调或冷色调、平静、活泼或狂乱、暗色或亮色、平滑或条带（这些由颜色测得），以及手动指定的主题和用途（分析用，便于读出结构；或观赏用）。点击标签可只显示同时具有这些标签的调色板。在缩略图下方，可以为你保存的渐变添加自己的标签。
 help-options-paste = 渐变编辑器中的“粘贴…”可导入你在别处找到的调色板。它接受带或不带前导 # 的十六进制颜色（#ff8800、ff8800 或简写的 #f80），以及“255 136 0”这样的普通 0–255 RGB 三元组——即 Fractint 和 Kalles Fraktaler 的 .map 文件所用的格式——以逗号、空格或换行分隔。最多保留 256 种颜色；更长的列表会均匀采样到 256 种，并保留第一种和最后一种，使渐变的形状得以保留。
 help-options-import-map = 旁边的“导入 ▸ .map…”用于加载 Fractint 或 Kalles Fraktaler 的 .map 调色板文件。这类文件是按迭代次数索引的查找表，条目之间没有混合，由此产生的生硬色阶正是经典 Fractint 风格的由来——因此它们就按这种方式导入，并提供一个“硬色带”复选框，可将同样的颜色混合成平滑的渐变。Fractint 自己的文件存储的是乘以四的 6 位颜色值，因此其白色是 252 而不是 255；Fractadyne 在导入这类文件时会提示这一点，并完全按原样保留这些值，因为 Fractint 自己保存的图像也带有同样的 252。
 help-options-duotone = “双色调”将数值映射到平滑的双色渐变（阴影 → 高光）。“二值（集合）”是平涂的双色视图——集合内的点用一种纯色，集合外用另一种，没有渐变——这是观察集合形状最清楚的方式。

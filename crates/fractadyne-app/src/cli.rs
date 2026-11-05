@@ -156,6 +156,13 @@ pub(crate) fn run_headless(args: &[String]) -> bool {
     if args.iter().any(|a| a == "--logcheck") {
         crate::exit(crate::harness::logcheck::run_cli(args));
     }
+    // Every built-in palette: id (what --palette, a tour and a view file name it by), name, tags.
+    if args.iter().any(|a| a == "--list-palettes") {
+        for (i, p) in fractadyne_color::PRESETS.iter().enumerate() {
+            println!("{:<18} {:<18} {}", p.id, p.name, fractadyne_color::tags::preset_tags(i).join(" "));
+        }
+        return true;
+    }
     // Print the tour-script schema reference (Markdown) and exit — used to (re)generate TOURS.md.
     if args.iter().any(|a| a == "--dump-tour-schema") {
         print!("{}", crate::scripting::tour_schema_markdown());

@@ -226,10 +226,11 @@ impl FractadyneApp {
                         // The combo box's own id rule (see the fractal dropdown in menus.rs).
                         let popup = ui.make_persistent_id(egui::Id::new("panel_palette")).with("popup");
                         ui.memory_mut(|m| m.open_popup(popup));
+                        self.coloring.palette_preview.reopened();
                     }
                     egui::ComboBox::from_id_salt("panel_palette")
                         .selected_text(pal_name)
-                        // Tall enough for a good run of the thirty presets; it scrolls past that.
+                        // Tall enough for a good run of the presets; it scrolls past that.
                         .height(430.0)
                         .show_ui(ui, |ui| {
                             let is_preset = !self.coloring.use_custom_palette && !self.coloring.use_duotone && !self.coloring.use_binary;
@@ -240,8 +241,11 @@ impl FractadyneApp {
                             // Each with its swatch, as Color ▸ Palette shows them: the same
                             // control on two surfaces (`palette_menu_row`).
                             for (i, p) in fractadyne_color::PRESETS.iter().enumerate() {
+                                Self::palette_preset_heading(ui, i);
                                 let g = fractadyne_color::segment::Gradient::from_stops(p.name, p.stops);
-                                let row = Self::palette_menu_row(ui, &g, p.name, is_preset && self.coloring.palette_idx == i);
+                                let chosen = is_preset && self.coloring.palette_idx == i;
+                                let row = Self::palette_menu_row(ui, &g, p.name, chosen);
+                                self.reveal_chosen_palette(ui, &row, chosen);
                                 self.coloring.palette_preview.row(PaletteRow::Preset(i), row.rect, row.hovered);
                                 if row.clicked {
                                     self.coloring.palette_idx = i;
@@ -258,7 +262,9 @@ impl FractadyneApp {
                                 let mut apply = None;
                                 for (i, sg) in self.saved_gradients.iter().enumerate() {
                                     let g = crate::segments_to_gradient(&sg.name, &sg.segment);
-                                    let row = Self::palette_menu_row(ui, &g, &sg.name, live_saved == Some(i));
+                                    let chosen = live_saved == Some(i);
+                                    let row = Self::palette_menu_row(ui, &g, &sg.name, chosen);
+                                    self.reveal_chosen_palette(ui, &row, chosen);
                                     self.coloring.palette_preview.row(PaletteRow::Saved(i), row.rect, row.hovered);
                                     if row.clicked {
                                         apply = Some(i);
@@ -294,6 +300,10 @@ impl FractadyneApp {
                                 self.coloring.use_duotone = false;
                             }
                         });
+                    // The palette browser: every palette over this view, side by side, by tag.
+                    if ui.small_button(crate::icons::GALLERY).on_hover_text(tr!(menu_color_browse_hover)).clicked() {
+                        self.palette_browser.open = true;
+                    }
                 });
                 if self.coloring.use_duotone || self.coloring.use_binary {
                     // Two shared colors. (Binary: interior/exterior; duotone: shadow/highlight.)

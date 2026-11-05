@@ -243,12 +243,90 @@ menu-color-method = 방식
 menu-color-palette = 팔레트
 menu-color-custom = 사용자 정의
 menu-color-duotone = 듀오톤
+menu-color-holidays = 기념일
 menu-color-binary = 이진(집합)
 menu-color-binary-hover = 단순한 두 가지 색: 집합 안과 집합 밖, 그라데이션 없음.
 menu-color-edit-gradient = 그라데이션 편집…
 menu-color-normalize = 깊은 색상 정규화
 menu-color-normalize-hover = 조밀한 필드가 반점처럼 보일 때, 뷰에서 측정한 탈출 범위에 맞게 팔레트를 다시 매핑합니다. 앨리어싱이 없는 뷰는 그대로 둡니다 — 상관없이 다시 매핑하려면 ‘항상 범위에 맞춤’을 선택하십시오. 부드러운 반복 방식에만 적용됩니다.
 menu-color-more = 순환, 오프셋, 애니메이션, 효과: 컨트롤 패널 ▸ 채색
+
+## Palette browser and palette tags
+
+# Color ▸ Browse palettes…, and its tooltip.
+menu-color-browse = 팔레트 둘러보기…
+menu-color-browse-hover = 현재 보기에 모든 팔레트를 나란히 보여 줍니다. 태그로 걸러 보고 내 팔레트에 태그를 붙일 수 있습니다.
+
+# The palette browser window.
+palette-browser-title = 팔레트
+palette-browser-clear = 필터 지우기
+
+# Shown when the chosen filters leave no palette.
+palette-browser-none = 이 태그를 모두 가진 팔레트가 없습니다.
+
+# The row of filters made of the tags the user gave their own gradients.
+palette-browser-yours = 내 태그
+
+# Above the tags of the palette in use. { $name } is the palette's name.
+palette-browser-tags-of = { $name }의 태그
+
+# For a saved gradient: the button that adds what was typed as a tag, and the hint in the field.
+palette-browser-add-tag = 태그 추가
+palette-browser-tag-hint = 나만의 단어
+
+# For a built-in palette, in place of the field.
+palette-browser-tags-builtin = 기본 팔레트의 태그는 바뀌지 않습니다. 태그를 붙이려면 저장한 그라데이션을 고르세요.
+
+# Before the view has drawn, or for a view thumbnails cannot show (Life, L-systems).
+palette-browser-no-view = 보기가 아직 그려지지 않아 팔레트를 띠로 보여 줍니다.
+
+# Tooltip on a tag the user can remove.
+palette-browser-remove-tag = 이 태그 삭제
+
+# The groups of tags, one row of filters each.
+tag-group-color = 색
+tag-group-temperature = 색온도
+tag-group-energy = 움직임
+tag-group-brightness = 밝기
+tag-group-shape = 모양
+tag-group-theme = 주제
+tag-group-purpose = 용도
+
+# Tags measured from a palette's colours: its colour families, warm or cool, how busy it is (calm, lively, frantic), its brightness, and its shape. Plural nouns for the families; the rest describe the palette.
+tag-reds = 빨강 계열
+tag-oranges = 주황 계열
+tag-yellows = 노랑 계열
+tag-greens = 초록 계열
+tag-blues = 파랑 계열
+tag-purples = 보라 계열
+tag-pinks = 분홍 계열
+tag-browns = 갈색 계열
+tag-neutrals = 무채색
+tag-warm = 따뜻함
+tag-cool = 차가움
+tag-calm = 차분함
+tag-lively = 활기참
+tag-frantic = 정신없음
+tag-dark = 어두움
+tag-light = 밝음
+tag-pastel = 파스텔
+tag-vivid = 선명함
+tag-smooth = 매끄러움
+tag-banded = 띠무늬
+tag-single-hue = 단색
+tag-rainbow = 무지개
+
+# Tags given by hand: a theme, and the purpose (built to read the structure, or chosen for its looks).
+tag-holidays = 기념일
+tag-seasons = 계절
+tag-nature = 자연
+tag-retro = 레트로
+tag-art = 예술
+tag-materials = 재질
+tag-science = 과학
+tag-food = 음식
+tag-analytical = 분석용
+tag-aesthetic = 감상용
 
 ## Tools menu
 
@@ -1284,6 +1362,7 @@ help-nav-minimap = 보기 → “미니맵 개요”는 “현재 위치” 표�
 help-options-intro = 이 모든 설정은 오른쪽 패널에 있습니다(세션이 바뀌어도 유지됩니다).
 help-options-palette = 팔레트
 help-options-palette-text = 팔레트는 프리셋 그라데이션, 사용자 정의 그라데이션, 또는 두 가지 색 모드를 고릅니다. “그라데이션 편집…”은 각 색상 정지점에 색과 위치(0–1)가 있는 편집기를 엽니다. 정지점을 추가하거나, 프리셋을 복사해 출발점으로 삼거나, 팔레트 파일을 가져올 수 있습니다.
+help-options-palette-browser = 색상 ▸ 팔레트 둘러보기…(또는 팔레트 목록 옆 버튼)는 현재 보기를 모든 팔레트로 한 번에 보여 줍니다. 팔레트마다 태그가 있습니다. 색, 따뜻함이나 차가움, 차분함·활기참·정신없음, 어두움이나 밝음, 매끄러움이나 띠무늬(색에서 측정)와, 손으로 붙인 주제와 용도(구조를 읽기 위한 분석용 또는 감상용)입니다. 태그를 누르면 그 태그를 모두 가진 팔레트만 보입니다. 미리보기 아래에서 저장한 그라데이션에 나만의 태그를 붙일 수 있습니다.
 help-options-paste = 그라데이션 편집기의 “붙여 넣기…”는 다른 곳에서 찾은 팔레트를 가져옵니다. 앞에 #이 있든 없든 16진수 색(#ff8800, ff8800, 또는 짧은 #f80)과 “255 136 0” 같은 일반 0–255 RGB 세 값 — Fractint와 Kalles Fraktaler .map 파일이 쓰는 형식 — 을 쉼표, 공백 또는 줄 바꿈으로 구분해 받습니다. 최대 256색을 보관하며, 더 긴 목록은 처음과 마지막 색을 유지한 채 256개로 균등하게 추려 그라데이션의 모양이 유지되게 합니다.
 help-options-import-map = 그 옆의 “가져오기 ▸ .map…”은 Fractint나 Kalles Fraktaler .map 팔레트 파일을 불러옵니다. 이 파일은 항목 사이의 혼합 없이 반복 횟수로 색인하는 조회 표이며, 그로 인해 생기는 뚜렷한 색 단계가 바로 고전적인 Fractint 느낌을 만듭니다 — 그래서 그렇게 가져오며, “뚜렷한 띠” 확인란으로 같은 색들을 대신 부드러운 그라데이션으로 혼합할 수 있습니다. Fractint 자체 파일은 6비트 색 값에 4를 곱해 저장하므로 흰색이 255가 아니라 252입니다. Fractadyne은 그런 파일을 가져올 때 그렇다고 알려 주고 값을 기록된 그대로 두는데, Fractint 자체가 저장한 이미지에도 같은 252가 들어 있기 때문입니다.
 help-options-duotone = 듀오톤은 값을 부드러운 두 가지 색 경사(그림자 → 하이라이트)에 매핑합니다. 이진(집합)은 단순한 두 가지 색 보기입니다 — 집합 안의 점은 한 단색, 밖의 점은 다른 단색이며 그라데이션이 없습니다 — 집합의 모양을 가장 분명하게 보는 방법입니다.

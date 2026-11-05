@@ -49,6 +49,8 @@ pub(crate) struct PalettePreview {
     drawing: Vec<(PaletteRow, egui::Rect)>,
     /// Where each row sat on the last frame: what `--uitest` aims its pointer at.
     drawn: Vec<(PaletteRow, egui::Rect)>,
+    /// How many frames running a picker has been open, up to the frame before this one.
+    open_frames: u32,
 }
 
 impl PalettePreview {
@@ -60,6 +62,19 @@ impl PalettePreview {
     /// A picker is open this frame. Call from inside its popup, every frame it draws.
     pub(crate) fn picker_open(&mut self) {
         self.open = true;
+    }
+
+    /// A picker is in its first frames open: the time to bring the chosen row into view. Two
+    /// frames rather than one, because a popup's first frame can be egui's invisible sizing pass.
+    pub(crate) fn opening(&self) -> bool {
+        self.open_frames < 2
+    }
+
+    /// A list is being opened by request (`Dialogs::open_palette_dropdown`): its opening frames start
+    /// again. ⚠Needed because such a request can close a list and open it again in one frame, as
+    /// `--uitest` does between two steps, and then no frame ever saw it closed.
+    pub(crate) fn reopened(&mut self) {
+        self.open_frames = 0;
     }
 
     /// A picker drew `row` at `rect` this frame, with the pointer on it or not.
@@ -92,6 +107,7 @@ impl PalettePreview {
             *self = Self::default();
             return Settle { changed, wake_in: None };
         }
+        self.open_frames = self.open_frames.saturating_add(1);
         if hover != self.target {
             self.target = hover;
             self.since = now;

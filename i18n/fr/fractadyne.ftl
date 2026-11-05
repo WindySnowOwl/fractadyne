@@ -247,12 +247,90 @@ menu-color-method = Méthode
 menu-color-palette = Palette
 menu-color-custom = Personnalisée
 menu-color-duotone = Bichromie
+menu-color-holidays = Fêtes
 menu-color-binary = Binaire (ensemble)
 menu-color-binary-hover = Deux couleurs unies : dans l’ensemble ou hors de l’ensemble, sans dégradé.
 menu-color-edit-gradient = Modifier le dégradé…
 menu-color-normalize = Normaliser les couleurs profondes
 menu-color-normalize-hover = Recaler la palette sur la plage d’échappement mesurée de la vue lorsqu’un champ dense apparaîtrait sinon comme des mouchetures. Une vue sans crénelage est laissée telle quelle — cochez « Toujours ajuster la plage » pour recaler dans tous les cas. Méthode « Itération lissée » uniquement.
 menu-color-more = Cycle, décalage, animation et effets : panneau de contrôle ▸ Coloration
+
+## Palette browser and palette tags
+
+# Color ▸ Browse palettes…, and its tooltip.
+menu-color-browse = Parcourir les palettes…
+menu-color-browse-hover = Toutes les palettes sur la vue actuelle, côte à côte : filtrez-les par étiquette et étiquetez les vôtres.
+
+# The palette browser window.
+palette-browser-title = Palettes
+palette-browser-clear = Effacer les filtres
+
+# Shown when the chosen filters leave no palette.
+palette-browser-none = Aucune palette n’a toutes ces étiquettes.
+
+# The row of filters made of the tags the user gave their own gradients.
+palette-browser-yours = Les vôtres
+
+# Above the tags of the palette in use. { $name } is the palette's name.
+palette-browser-tags-of = Étiquettes de { $name }
+
+# For a saved gradient: the button that adds what was typed as a tag, and the hint in the field.
+palette-browser-add-tag = Ajouter l’étiquette
+palette-browser-tag-hint = un mot à vous
+
+# For a built-in palette, in place of the field.
+palette-browser-tags-builtin = Les palettes intégrées gardent leurs étiquettes. Choisissez l’un de vos dégradés enregistrés pour lui en donner.
+
+# Before the view has drawn, or for a view thumbnails cannot show (Life, L-systems).
+palette-browser-no-view = La vue n’est pas encore dessinée : les palettes sont montrées en bandes.
+
+# Tooltip on a tag the user can remove.
+palette-browser-remove-tag = Retirer cette étiquette
+
+# The groups of tags, one row of filters each.
+tag-group-color = Couleur
+tag-group-temperature = Température
+tag-group-energy = Énergie
+tag-group-brightness = Luminosité
+tag-group-shape = Forme
+tag-group-theme = Thème
+tag-group-purpose = Usage
+
+# Tags measured from a palette's colours: its colour families, warm or cool, how busy it is (calm, lively, frantic), its brightness, and its shape. Plural nouns for the families; the rest describe the palette.
+tag-reds = Rouges
+tag-oranges = Oranges
+tag-yellows = Jaunes
+tag-greens = Verts
+tag-blues = Bleus
+tag-purples = Violets
+tag-pinks = Roses
+tag-browns = Bruns
+tag-neutrals = Neutres
+tag-warm = Chaude
+tag-cool = Froide
+tag-calm = Calme
+tag-lively = Animée
+tag-frantic = Frénétique
+tag-dark = Sombre
+tag-light = Claire
+tag-pastel = Pastel
+tag-vivid = Éclatante
+tag-smooth = Continue
+tag-banded = En bandes
+tag-single-hue = Monochrome
+tag-rainbow = Arc-en-ciel
+
+# Tags given by hand: a theme, and the purpose (built to read the structure, or chosen for its looks).
+tag-holidays = Fêtes
+tag-seasons = Saisons
+tag-nature = Nature
+tag-retro = Rétro
+tag-art = Art
+tag-materials = Matières
+tag-science = Science
+tag-food = Cuisine
+tag-analytical = Analytique
+tag-aesthetic = Esthétique
 
 ## Tools menu
 
@@ -1293,6 +1371,7 @@ help-nav-minimap = Affichage → « Mini-carte » affiche une petite carte de 
 help-options-intro = Tout cela se trouve dans le panneau de droite (et est conservé d’une session à l’autre).
 help-options-palette = Palette
 help-options-palette-text = Palette choisit un dégradé prédéfini, votre dégradé personnalisé, ou un mode à deux couleurs. « Modifier le dégradé… » ouvre un éditeur où chaque point de couleur a une couleur et une position (0–1) ; ajoutez des points, copiez un préréglage comme point de départ, ou importez un fichier de palette.
+help-options-palette-browser = Couleur ▸ Parcourir les palettes… (ou le bouton à côté de la liste des palettes) montre la vue dans toutes les palettes à la fois. Chaque palette a des étiquettes : ses couleurs, chaude ou froide, calme, animée ou frénétique, sombre ou claire, continue ou en bandes — mesurées d’après ses couleurs — ainsi qu’un thème et un usage (analytique, faite pour lire la structure, ou esthétique), donnés à la main. Cliquez sur des étiquettes pour ne voir que les palettes qui les ont toutes. Sous les vignettes, donnez vos propres étiquettes à vos dégradés enregistrés.
 help-options-paste = « Coller… » dans l’éditeur de dégradé importe une palette trouvée ailleurs. Il accepte les couleurs hexadécimales avec ou sans # initial (#ff8800, ff8800, ou la forme courte #f80) et les simples triplets RVB 0–255 comme « 255 136 0 » — le format des fichiers .map de Fractint et de Kalles Fraktaler — séparés par des virgules, des espaces ou des retours à la ligne. Jusqu’à 256 couleurs sont conservées ; une liste plus longue est échantillonnée uniformément jusqu’à 256, en gardant la première et la dernière pour que la forme du dégradé soit préservée.
 help-options-import-map = « Importer ▸ .map… », juste à côté, charge un fichier de palette .map de Fractint ou de Kalles Fraktaler. Ce sont des tables de correspondance indexées par le nombre d’itérations, sans fondu entre les entrées, et les marches de couleur franches qui en résultent font tout le style Fractint classique — c’est donc ainsi qu’elles sont importées, avec une case « Bandes franches » qui permet de fondre plutôt ces mêmes couleurs en un dégradé lisse. Les fichiers de Fractint lui-même stockent des valeurs de couleur sur 6 bits multipliées par quatre : leur blanc vaut donc 252 et non 255 ; Fractadyne le signale quand il en importe un et laisse les valeurs exactement telles qu’elles sont écrites, car les images enregistrées par Fractint lui-même portent le même 252.
 help-options-duotone = Bichromie projette la valeur sur une rampe lisse à deux couleurs (Ombre → Lumière). Binaire (ensemble) est une vue unie à deux couleurs — une couleur pleine pour les points dans l’ensemble et une autre pour l’extérieur, sans dégradé — le moyen le plus clair de voir la forme de l’ensemble.

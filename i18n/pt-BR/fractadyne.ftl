@@ -247,12 +247,90 @@ menu-color-method = Método
 menu-color-palette = Paleta
 menu-color-custom = Personalizada
 menu-color-duotone = Duotom
+menu-color-holidays = Datas festivas
 menu-color-binary = Binária (conjunto)
 menu-color-binary-hover = Duas cores chapadas: dentro vs. fora do conjunto, sem gradiente.
 menu-color-edit-gradient = Editar gradiente…
 menu-color-normalize = Normalizar cores profundas
 menu-color-normalize-hover = Remapear a paleta para a faixa de escape medida na vista quando um campo denso pareceria granulação. Uma vista sem aliasing fica como está — marque “Sempre ajustar a faixa” para remapear mesmo assim. Somente com o método Iteração suave.
 menu-color-more = Ciclo, deslocamento, animação e efeitos: painel Controles ▸ Coloração
+
+## Palette browser and palette tags
+
+# Color ▸ Browse palettes…, and its tooltip.
+menu-color-browse = Explorar paletas…
+menu-color-browse-hover = Todas as paletas sobre a vista atual, lado a lado: filtre-as por etiqueta e etiquete as suas.
+
+# The palette browser window.
+palette-browser-title = Paletas
+palette-browser-clear = Limpar filtros
+
+# Shown when the chosen filters leave no palette.
+palette-browser-none = Nenhuma paleta tem todas essas etiquetas.
+
+# The row of filters made of the tags the user gave their own gradients.
+palette-browser-yours = Suas
+
+# Above the tags of the palette in use. { $name } is the palette's name.
+palette-browser-tags-of = Etiquetas de { $name }
+
+# For a saved gradient: the button that adds what was typed as a tag, and the hint in the field.
+palette-browser-add-tag = Adicionar etiqueta
+palette-browser-tag-hint = uma palavra sua
+
+# For a built-in palette, in place of the field.
+palette-browser-tags-builtin = As paletas embutidas mantêm suas etiquetas. Escolha um dos seus gradientes salvos para etiquetá-lo.
+
+# Before the view has drawn, or for a view thumbnails cannot show (Life, L-systems).
+palette-browser-no-view = A vista ainda não foi desenhada: as paletas aparecem como faixas.
+
+# Tooltip on a tag the user can remove.
+palette-browser-remove-tag = Remover esta etiqueta
+
+# The groups of tags, one row of filters each.
+tag-group-color = Cor
+tag-group-temperature = Temperatura
+tag-group-energy = Energia
+tag-group-brightness = Brilho
+tag-group-shape = Forma
+tag-group-theme = Tema
+tag-group-purpose = Finalidade
+
+# Tags measured from a palette's colours: its colour families, warm or cool, how busy it is (calm, lively, frantic), its brightness, and its shape. Plural nouns for the families; the rest describe the palette.
+tag-reds = Vermelhos
+tag-oranges = Laranjas
+tag-yellows = Amarelos
+tag-greens = Verdes
+tag-blues = Azuis
+tag-purples = Roxos
+tag-pinks = Rosas
+tag-browns = Marrons
+tag-neutrals = Neutros
+tag-warm = Quente
+tag-cool = Fria
+tag-calm = Calma
+tag-lively = Animada
+tag-frantic = Frenética
+tag-dark = Escura
+tag-light = Clara
+tag-pastel = Pastel
+tag-vivid = Intensa
+tag-smooth = Suave
+tag-banded = Em faixas
+tag-single-hue = Um só tom
+tag-rainbow = Arco-íris
+
+# Tags given by hand: a theme, and the purpose (built to read the structure, or chosen for its looks).
+tag-holidays = Datas festivas
+tag-seasons = Estações
+tag-nature = Natureza
+tag-retro = Retrô
+tag-art = Arte
+tag-materials = Materiais
+tag-science = Ciência
+tag-food = Comida
+tag-analytical = Analítica
+tag-aesthetic = Estética
 
 ## Tools menu
 
@@ -1292,6 +1370,7 @@ help-nav-minimap = Exibir → “Minimapa” mostra um pequeno mapa do conjunto 
 help-options-intro = Tudo isto fica no painel da direita (e persiste entre sessões).
 help-options-palette = Paleta
 help-options-palette-text = Paleta escolhe um gradiente predefinido, a sua paleta Personalizada ou um modo de duas cores. “Editar gradiente…” abre um editor em que cada parada de cor tem uma cor e uma posição (0–1); adicione paradas, copie uma predefinição como ponto de partida ou importe um arquivo de paleta.
+help-options-palette-browser = Cor ▸ Explorar paletas… (ou o botão ao lado da lista de paletas) mostra a vista em todas as paletas de uma vez. Cada paleta tem etiquetas: suas cores, quente ou fria, calma, animada ou frenética, escura ou clara, suave ou em faixas — medidas a partir das cores — e um tema e uma finalidade (analítica, feita para ler a estrutura, ou estética), dados à mão. Clique em etiquetas para ver só as paletas que têm todas elas. Abaixo das miniaturas, dê aos seus gradientes salvos etiquetas suas.
 help-options-paste = “Colar…” no editor de gradiente importa uma paleta que você encontrou em outro lugar. Ele aceita cores hexadecimais com ou sem # inicial (#ff8800, ff8800 ou o curto #f80) e triplas RGB 0–255 simples como “255 136 0” — o formato que os arquivos .map do Fractint e do Kalles Fraktaler usam —, separadas por vírgulas, espaços ou quebras de linha. São mantidas até 256 cores; uma lista mais longa é amostrada por igual até 256, mantendo a primeira e a última para que a forma do gradiente sobreviva.
 help-options-import-map = “Importar ▸ .map…” ao lado carrega um arquivo de paleta .map do Fractint ou do Kalles Fraktaler. Esses arquivos são tabelas de consulta indexadas pela contagem de iterações, sem mistura entre as entradas, e os degraus de cor bruscos que isso produz são justamente o visual clássico do Fractint — então é assim que eles são importados, com uma caixa de seleção “Faixas rígidas” para misturar as mesmas cores num gradiente suave. Os próprios arquivos do Fractint guardam valores de cor de 6 bits multiplicados por quatro, então o branco deles é 252 em vez de 255; o Fractadyne avisa isso quando importa um e deixa os valores exatamente como estão escritos, porque as próprias imagens salvas do Fractint têm o mesmo 252.
 help-options-duotone = Duotom mapeia o valor numa rampa suave de duas cores (Sombra → Realce). Binária (conjunto) é uma vista chapada de duas cores — uma cor sólida para os pontos dentro do conjunto e outra para os de fora, sem gradiente — a maneira mais clara de ver a forma do conjunto.

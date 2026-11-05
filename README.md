@@ -181,10 +181,11 @@ fractadyne --benchmark-std [--res 720p|1080p|4k|5k] [--burnin N] [--out report.t
                                              # standardized benchmark: pinned resolution + settings,
                                              # comparable across machines; --burnin N repeats it (stability/throttle)
 fractadyne --render --out img.png [--fractal Mandelbrot --center X Y --zoom M \
-           --zoom-log2 L --size W|WxH --ss N --iter K --julia --julia-c RE IM --palette I \
+           --zoom-log2 L --size W|WxH --ss N --iter K --julia --julia-c RE IM --palette ID \
            --method stripe --stripe-freq N --stripe-tail N --trap point|cross|circle --light --de \
            --show-location]
            # --zoom-log2 L sets magnification 2^L for depths past f64 range (≥ ~1e308×)
+           # --palette ID names a built-in palette: lunar-new-year, "Lunar New Year", or an old number
 fractadyne --render-tour tour.toml --out frames [--fps N --size WxH --height H --ss N \
            --prefix NAME --resume --overwrite --mp4 [out.mp4] --show-location]
            # render a keyframe-tour TOML to a PNG frame sequence (+ optional mp4 via ffmpeg);

@@ -39,6 +39,8 @@ pub mod pipeline_compile;
 mod strip;
 /// Whether a device's shader compiler fuses `two_prod`'s product (TODO PR-C2): asked once per device.
 mod fusion;
+/// The palette browser's thumbnails: the view recoloured through every palette.
+pub mod atlas;
 pub use fusion::{detect_product_fusion, product_barrier, FusionVerdict};
 
 /// The Rust/WGSL uniform-layout gate — see the module's own docs.
@@ -1107,6 +1109,13 @@ struct ViewResources {
     /// Supersampling factor the current iteration texture was rendered at. Needed so a pan
     /// reprojection colors the frozen texture with the ss it was built with (not the live ss).
     last_ss: u32,
+    /// The colouring this view's frame was last drawn with: what the palette browser's
+    /// thumbnails colour the same iteration texture with (`atlas::render_palette_atlas`), so a
+    /// thumbnail differs from the view only in its palette.
+    last_cu: Option<ColorUniforms>,
+    /// How many times a pass has written this view's iteration texture: what tells the palette
+    /// browser its thumbnails are out of date (`atlas::view_writes`).
+    writes: u64,
     /// The iteration texture holds a real render (set after the first iterate, cleared on resize).
     /// Reprojection needs this rather than `last_iter_key.is_some()`: the key is cleared whenever a
     /// new orbit is uploaded, but the texture still holds the last good frame — so a freeze can
@@ -2496,6 +2505,8 @@ impl ViewResources {
             aux_view,
             size,
             last_ss: 1,
+            last_cu: None,
+            writes: 0,
             rendered: false,
             last_orbit_id: u64::MAX,
             last_bla_ptr: 0,
@@ -3496,6 +3507,7 @@ impl CallbackTrait for MandelbrotParams {
                 view.last_tile = None;
                 view.last_ss = f.ss;
                 view.rendered = true;
+                view.writes += 1;
                 // Another view's pixels: nothing may seed from them or average over them.
                 view.content_stamp = None;
                 view.content_foreign = true;
@@ -3688,6 +3700,7 @@ impl CallbackTrait for MandelbrotParams {
             _pad_fade: [0; 2],
         };
         queue.write_buffer(&view.color_uniform, 0, bytemuck::bytes_of(&cu));
+        view.last_cu = Some(cu);
 
         // Upload the reference orbit when it changed (app caches it). The BLA tree (if any) is
         // appended right after it in the same buffer, starting at index `orbit_len`.
@@ -4224,6 +4237,7 @@ impl CallbackTrait for MandelbrotParams {
             view.last_split = self.split;
             view.last_ss = ss; // remember the ss this texture was built at (for reprojection)
             view.rendered = true; // the texture now holds a real frame (survives orbit swaps)
+            view.writes += 1;
             // Provenance of what now sits in the texture. A FULL-frame pass rewrites every pixel,
             // so the texture becomes wholly this view. A TILE rewrites only its rect, so whatever
             // it does not cover is still whatever was there — clean if that was already this view,
@@ -4247,6 +4261,7 @@ impl CallbackTrait for MandelbrotParams {
             view.last_split = self.split;
             view.last_ss = ss;
             view.rendered = true;
+            view.writes += 1;
             // A whole frame of this view.
             view.content_stamp = Some(self.view_stamp);
             view.content_foreign = false;

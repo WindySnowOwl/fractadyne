@@ -247,12 +247,90 @@ menu-color-method = Yöntem
 menu-color-palette = Palet
 menu-color-custom = Özel
 menu-color-duotone = İki ton
+menu-color-holidays = Kutlamalar
 menu-color-binary = İkili (küme)
 menu-color-binary-hover = Düz iki renk: küme içi ve küme dışı, gradyan yok.
 menu-color-edit-gradient = Gradyanı düzenle…
 menu-color-normalize = Derin renkleri normalleştir
 menu-color-normalize-hover = Yoğun bir alan aksi hâlde benekli gürültü gibi görünecekse paleti görünümün ölçülen kaçış aralığına yeniden eşler. Örtüşme (aliasing) olmayan bir görünüme dokunulmaz — her durumda yeniden eşlemek için “Her zaman aralığa sığdır” seçeneğini işaretleyin. Yalnızca yumuşak yineleme yönteminde.
 menu-color-more = Döngü, kaydırma, animasyon ve efektler: Denetimler paneli ▸ Renklendirme
+
+## Palette browser and palette tags
+
+# Color ▸ Browse palettes…, and its tooltip.
+menu-color-browse = Paletlere göz at…
+menu-color-browse-hover = Geçerli görünüm üzerinde tüm paletler yan yana: onları etikete göre süzün ve kendi paletlerinizi etiketleyin.
+
+# The palette browser window.
+palette-browser-title = Paletler
+palette-browser-clear = Süzgeçleri temizle
+
+# Shown when the chosen filters leave no palette.
+palette-browser-none = Bu etiketlerin hepsine sahip palet yok.
+
+# The row of filters made of the tags the user gave their own gradients.
+palette-browser-yours = Sizinkiler
+
+# Above the tags of the palette in use. { $name } is the palette's name.
+palette-browser-tags-of = { $name } etiketleri
+
+# For a saved gradient: the button that adds what was typed as a tag, and the hint in the field.
+palette-browser-add-tag = Etiket ekle
+palette-browser-tag-hint = kendi sözcüğünüz
+
+# For a built-in palette, in place of the field.
+palette-browser-tags-builtin = Yerleşik paletler etiketlerini korur. Etiket vermek için kaydettiğiniz gradyanlardan birini seçin.
+
+# Before the view has drawn, or for a view thumbnails cannot show (Life, L-systems).
+palette-browser-no-view = Görünüm henüz çizilmedi: paletler şerit olarak gösteriliyor.
+
+# Tooltip on a tag the user can remove.
+palette-browser-remove-tag = Bu etiketi kaldır
+
+# The groups of tags, one row of filters each.
+tag-group-color = Renk
+tag-group-temperature = Sıcaklık
+tag-group-energy = Enerji
+tag-group-brightness = Parlaklık
+tag-group-shape = Biçim
+tag-group-theme = Tema
+tag-group-purpose = Amaç
+
+# Tags measured from a palette's colours: its colour families, warm or cool, how busy it is (calm, lively, frantic), its brightness, and its shape. Plural nouns for the families; the rest describe the palette.
+tag-reds = Kırmızılar
+tag-oranges = Turuncular
+tag-yellows = Sarılar
+tag-greens = Yeşiller
+tag-blues = Maviler
+tag-purples = Morlar
+tag-pinks = Pembeler
+tag-browns = Kahverengiler
+tag-neutrals = Nötrler
+tag-warm = Sıcak
+tag-cool = Soğuk
+tag-calm = Sakin
+tag-lively = Canlı
+tag-frantic = Çılgın
+tag-dark = Koyu
+tag-light = Açık
+tag-pastel = Pastel
+tag-vivid = Parlak
+tag-smooth = Yumuşak
+tag-banded = Bantlı
+tag-single-hue = Tek ton
+tag-rainbow = Gökkuşağı
+
+# Tags given by hand: a theme, and the purpose (built to read the structure, or chosen for its looks).
+tag-holidays = Kutlamalar
+tag-seasons = Mevsimler
+tag-nature = Doğa
+tag-retro = Retro
+tag-art = Sanat
+tag-materials = Malzemeler
+tag-science = Bilim
+tag-food = Yiyecek
+tag-analytical = Analitik
+tag-aesthetic = Estetik
 
 ## Tools menu
 
@@ -1292,6 +1370,7 @@ help-nav-minimap = Görünüm → “Mini harita”, tüm kümenin “buradasın
 help-options-intro = Bunların hepsi sağdaki panelde bulunur (ve oturumlar arasında korunur).
 help-options-palette = Palet
 help-options-palette-text = Palet; hazır bir gradyanı, Özel gradyanınızı ya da iki renkli bir modu seçer. “Gradyanı düzenle…”, her renk durağının bir rengi ve bir konumu (0–1) olduğu bir düzenleyici açar; durak ekleyin, başlangıç için bir hazır ayarı kopyalayın ya da bir palet dosyası içe aktarın.
+help-options-palette-browser = Renk ▸ Paletlere göz at… (ya da palet listesinin yanındaki düğme) görünümü tüm paletlerde aynı anda gösterir. Her paletin etiketleri vardır: renkleri, sıcak ya da soğuk, sakin, canlı ya da çılgın, koyu ya da açık, yumuşak ya da bantlı — renklerinden ölçülür — ve elle verilen bir tema ile amaç (yapıyı okumak için analitik ya da estetik). Yalnızca hepsine sahip paletleri görmek için etiketlere tıklayın. Küçük resimlerin altında, kaydettiğiniz gradyanlara kendi etiketlerinizi verin.
 help-options-paste = Gradyan düzenleyicideki “Yapıştır…”, başka bir yerde bulduğunuz bir paleti içe aktarır. Başında # olan ya da olmayan onaltılık renkleri (#ff8800, ff8800 ya da kısa #f80) ve “255 136 0” gibi düz 0–255 RGB üçlülerini — Fractint ve Kalles Fraktaler .map dosyalarının kullandığı biçim — virgül, boşluk ya da yeni satırla ayrılmış olarak kabul eder. En fazla 256 renk tutulur; daha uzun bir liste eşit aralıklarla 256 renge örneklenir ve gradyanın şekli korunsun diye ilk ve son renk tutulur.
 help-options-import-map = Yanındaki “İçe aktar ▸ .map…” bir Fractint ya da Kalles Fraktaler .map palet dosyası yükler. Bunlar, girdiler arasında karışım olmadan yineleme sayısıyla dizinlenen arama tablolarıdır ve bunun ürettiği sert renk basamakları klasik Fractint görünümünün ta kendisidir — bu yüzden öyle içe aktarılırlar; aynı renkleri bunun yerine yumuşak bir gradyana harmanlamak için bir “Keskin bantlar” onay kutusu vardır. Fractint’in kendi dosyaları dörtle çarpılmış 6 bitlik renk değerleri saklar, bu yüzden beyazları 255 değil 252’dir; Fractadyne böyle bir dosyayı içe aktarırken bunu belirtir ve değerleri tam olarak yazıldığı gibi bırakır, çünkü Fractint’in kendi kaydettiği görüntüler de aynı 252 değerini taşır.
 help-options-duotone = İki ton, değeri yumuşak, iki renkli bir geçişe eşler (Gölge → Vurgu). İkili (küme) düz, iki renkli bir görünümdür — kümenin içindeki noktalar için tek bir düz renk, dışındakiler için başka bir renk, gradyan yok — kümenin şeklini görmenin en net yolu.

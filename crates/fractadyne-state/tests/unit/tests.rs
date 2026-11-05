@@ -239,6 +239,7 @@ fn a_setting_survives_save_and_reload() {
         max_iter: 750_000,
         auto_iter: false,
         palette_idx: 3,
+        palette_id: "four-seasons".to_string(),
         minimap: true,
         right_panel_open: false,
         finish_sound: false,
@@ -268,6 +269,7 @@ fn a_setting_survives_save_and_reload() {
     assert_eq!(got.max_iter, 750_000, "max_iter");
     assert!(!got.auto_iter, "auto_iter");
     assert_eq!(got.palette_idx, 3, "palette_idx");
+    assert_eq!(got.palette_id, "four-seasons", "palette_id");
     assert!(got.minimap, "minimap");
     assert!(!got.right_panel_open, "right_panel_open");
     assert!(!got.finish_sound, "finish_sound");

@@ -249,12 +249,90 @@ menu-color-method = Метод
 menu-color-palette = Палітра
 menu-color-custom = Власна
 menu-color-duotone = Двотонна
+menu-color-holidays = Свята
 menu-color-binary = Двійкова (множина)
 menu-color-binary-hover = Пласке двоколірне розфарбування: у множині чи поза нею, без градієнта.
 menu-color-edit-gradient = Редагувати градієнт…
 menu-color-normalize = Нормалізувати глибокі кольори
 menu-color-normalize-hover = Переналаштовувати палітру на виміряний діапазон утечі вигляду, коли щільне поле інакше виглядало б як рябизна. Вигляд без аліасингу лишається без змін — позначте «Завжди підганяти діапазон», щоб переналаштовувати попри все. Лише для плавного методу.
 menu-color-more = Цикл, зсув, анімація й ефекти: Керування ▸ Розфарбування
+
+## Palette browser and palette tags
+
+# Color ▸ Browse palettes…, and its tooltip.
+menu-color-browse = Огляд палітр…
+menu-color-browse-hover = Усі палітри на поточному вигляді, поруч одна з одною: фільтруйте їх за мітками й додавайте мітки своїм.
+
+# The palette browser window.
+palette-browser-title = Палітри
+palette-browser-clear = Скинути фільтри
+
+# Shown when the chosen filters leave no palette.
+palette-browser-none = Жодна палітра не має всіх цих міток.
+
+# The row of filters made of the tags the user gave their own gradients.
+palette-browser-yours = Ваші
+
+# Above the tags of the palette in use. { $name } is the palette's name.
+palette-browser-tags-of = Мітки: { $name }
+
+# For a saved gradient: the button that adds what was typed as a tag, and the hint in the field.
+palette-browser-add-tag = Додати мітку
+palette-browser-tag-hint = своє слово
+
+# For a built-in palette, in place of the field.
+palette-browser-tags-builtin = Вбудовані палітри зберігають свої мітки. Виберіть один зі збережених градієнтів, щоб додати йому мітки.
+
+# Before the view has drawn, or for a view thumbnails cannot show (Life, L-systems).
+palette-browser-no-view = Вигляд ще не намальовано: палітри показано смугами.
+
+# Tooltip on a tag the user can remove.
+palette-browser-remove-tag = Вилучити цю мітку
+
+# The groups of tags, one row of filters each.
+tag-group-color = Колір
+tag-group-temperature = Температура
+tag-group-energy = Енергія
+tag-group-brightness = Яскравість
+tag-group-shape = Форма
+tag-group-theme = Тема
+tag-group-purpose = Призначення
+
+# Tags measured from a palette's colours: its colour families, warm or cool, how busy it is (calm, lively, frantic), its brightness, and its shape. Plural nouns for the families; the rest describe the palette.
+tag-reds = Червоні
+tag-oranges = Помаранчеві
+tag-yellows = Жовті
+tag-greens = Зелені
+tag-blues = Сині
+tag-purples = Фіолетові
+tag-pinks = Рожеві
+tag-browns = Коричневі
+tag-neutrals = Нейтральні
+tag-warm = Тепла
+tag-cool = Холодна
+tag-calm = Спокійна
+tag-lively = Жвава
+tag-frantic = Шалена
+tag-dark = Темна
+tag-light = Світла
+tag-pastel = Пастельна
+tag-vivid = Насичена
+tag-smooth = Плавна
+tag-banded = Смугаста
+tag-single-hue = Один відтінок
+tag-rainbow = Райдужна
+
+# Tags given by hand: a theme, and the purpose (built to read the structure, or chosen for its looks).
+tag-holidays = Свята
+tag-seasons = Пори року
+tag-nature = Природа
+tag-retro = Ретро
+tag-art = Мистецтво
+tag-materials = Матеріали
+tag-science = Наука
+tag-food = Їжа
+tag-analytical = Аналітична
+tag-aesthetic = Естетична
 
 ## Tools menu
 
@@ -1381,6 +1459,7 @@ help-nav-minimap = Вигляд → «Мінікарта» показує нев
 help-options-intro = Усе це розташовано на правій панелі (і зберігається між сеансами).
 help-options-palette = Палітра
 help-options-palette-text = «Палітра» вибирає готовий градієнт, ваш власний («Власна») або двоколірний режим. «Редагувати градієнт…» відкриває редактор, у якому кожен вузол має колір і позицію (0–1); додавайте вузли, скопіюйте шаблон як відправну точку або імпортуйте файл палітри.
+help-options-palette-browser = Колір ▸ Огляд палітр… (або кнопка поруч зі списком палітр) показує вигляд одразу в усіх палітрах. Кожна палітра має мітки: її кольори, тепла чи холодна, спокійна, жвава чи шалена, темна чи світла, плавна чи смугаста — виміряні за її кольорами, — а також тема і призначення (аналітична, щоб читати структуру, або естетична), задані вручну. Натисніть на мітки, щоб бачити лише палітри, які мають їх усі. Під мініатюрами дайте своїм збереженим градієнтам власні мітки.
 help-options-paste = «Вставити…» в редакторі градієнта імпортує палітру, знайдену деінде. Приймаються шістнадцяткові кольори з початковим # або без нього (#ff8800, ff8800 або коротке #f80) і прості трійки RGB 0–255, як-от «255 136 0», — формат файлів .map Fractint і Kalles Fraktaler, — розділені комами, пробілами чи новими рядками. Зберігається до 256 кольорів; довший список рівномірно проріджується до 256 зі збереженням першого й останнього кольору, щоб форма градієнта вціліла.
 help-options-import-map = «Імпорт ▸ .map…» поруч завантажує файл палітри .map Fractint або Kalles Fraktaler. Це таблиці підстановки, індексовані кількістю ітерацій, без змішування між записами, і різкі колірні сходинки, які вони дають, — саме з них складається класичний вигляд Fractint, — тож так вони й імпортуються, а позначка «Чіткі смуги» дає змогу натомість змішати ті самі кольори в плавний градієнт. Власні файли Fractint зберігають 6-бітні значення кольорів, помножені на чотири, тож їхній білий — 252, а не 255; Fractadyne повідомляє про це під час імпорту й лишає значення точно такими, як записано, бо власні збережені зображення Fractint мають ті самі 252.
 help-options-duotone = «Двотонна» відображає значення на плавну двоколірну шкалу («Тінь» → «Світло»). «Двійкова (множина)» — плаский двоколірний вигляд: один суцільний колір для точок усередині множини й інший для точок поза нею, без градієнта, — найнаочніший спосіб побачити форму множини.

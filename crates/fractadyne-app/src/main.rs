@@ -5798,6 +5798,12 @@ struct SavedGradient {
     name: String,
     #[serde(default)]
     segment: Vec<fractadyne_state::PaletteSegment>,
+    /// The tags the user gave it — words from `fractadyne_color::tags::TAGS` or their own — on top
+    /// of the ones its colours earn (`tags::computed_tags`, measured, never stored). Absent in a
+    /// library saved before tags, and in this build's file when there are none, so an older build
+    /// reads the file as it always did.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    tags: Vec<String>,
 }
 
 /// TOML wrapper for the gradient library (`[[gradient]]` array), beside `bookmarks.toml`.
@@ -6129,7 +6135,8 @@ struct RotDrag {
 /// coloring method + its per-method params. `palette_editor_open` / `palette_rev` are the editor's
 /// transient UI + cache-invalidation companions; the rest persist via `SessionState`. (Phase 2a.)
 struct ColoringConfig {
-    /// Selected palette index into `fractadyne_color::PRESETS`.
+    /// Selected palette: its position in `fractadyne_color::PRESETS` in THIS build. A runtime
+    /// handle only; what is saved is the preset's id (`Palette::id`) and its old number.
     palette_idx: usize,
     /// Color cycle density slider (0..1; mapped to a shader multiplier).
     cycle: f32,
@@ -6582,6 +6589,8 @@ struct FractadyneApp {
     /// the renderer from outside the paint callback — compiling a custom formula's pipelines off
     /// the render thread (`fractadyne_gpu::compile_custom_async`).
     render_state: Option<eframe::egui_wgpu::RenderState>,
+    /// Color ▸ Browse palettes… (`ui::palette_browser`).
+    palette_browser: crate::ui::palette_browser::PaletteBrowser,
     /// A second graphics device for the live view (`--worker-gpu`, `design/multi-gpu-live.md`);
     /// `None` = one GPU, as always. Dropped (not fatal) when it is lost.
     gpu_worker: Option<gpu_worker::Worker>,
@@ -7709,6 +7718,7 @@ impl FractadyneApp {
             gallery: GalleryState { dir: Self::pictures_dir(), ..Default::default() },
             gpu: None,
             render_state: None,
+            palette_browser: Default::default(),
             gpu_worker: None,
             export_extra: Vec::new(),
             worker_state: gpu_worker::WorkerState::Off,
@@ -7771,7 +7781,11 @@ impl FractadyneApp {
             reticle_key: None,
             reticle_anchor: None,
             coloring: ColoringConfig {
-                palette_idx: s.palette_idx,
+                // By id; a session saved before ids (or by a newer build, with a palette this one
+                // lacks) falls back to its number, read through the frozen table.
+                palette_idx: fractadyne_color::preset_by_id(&s.palette_id)
+                    .or_else(|| fractadyne_color::preset_by_legacy_number(s.palette_idx))
+                    .unwrap_or(0),
                 cycle: s.cycle,
                 offset: s.offset,
                 custom_palette: s.custom_palette.clone(),
@@ -8224,8 +8238,13 @@ impl FractadyneApp {
             self.render_cfg.max_iter = it.clamp(16, 100_000_000);
             self.render_cfg.auto_iter = false;
         }
-        if let Some(p) = val("--palette").map(|s| arg_parse::<usize>("--palette", s, "a whole number")) {
-            self.coloring.palette_idx = p.min(fractadyne_color::PRESETS.len() - 1);
+        // A palette's id, its name, or an older build's number for it. An unknown one is fatal, as
+        // every option is (`arg_token`): it used to be clamped to the last preset, and a render then
+        // came out in a palette nobody asked for.
+        if let Some(p) = val("--palette").map(|s| {
+            arg_token("--palette", s, fractadyne_color::preset_by_spec, "a palette such as lunar-new-year (or its number)")
+        }) {
+            self.coloring.palette_idx = p;
             // A preset overrides any persisted binary/duotone/custom palette.
             self.coloring.use_binary = false;
             self.coloring.use_duotone = false;
@@ -8563,7 +8582,12 @@ impl FractadyneApp {
             },
             max_iter: self.render_cfg.max_iter,
             auto_iter: self.render_cfg.auto_iter,
-            palette_idx: self.coloring.palette_idx,
+            palette_idx: fractadyne_color::legacy_number_of(self.coloring.palette_idx)
+                .unwrap_or(self.coloring.palette_idx),
+            palette_id: fractadyne_color::PRESETS
+                [self.coloring.palette_idx.min(fractadyne_color::PRESETS.len() - 1)]
+            .id
+            .to_string(),
             cycle: self.coloring.cycle,
             offset: self.coloring.offset,
             normalize_live: self.coloring.normalize_live,
@@ -8758,8 +8782,10 @@ impl FractadyneApp {
         if name.is_empty() || self.coloring.custom_segments.is_empty() {
             return;
         }
-        let entry =
-            SavedGradient { name: name.to_string(), segment: self.coloring.custom_segments.clone() };
+        // Saving over a gradient keeps the tags the user gave it: the colours changed, not what
+        // they chose to call it.
+        let tags = self.saved_gradients.iter().find(|g| g.name == name).map(|g| g.tags.clone()).unwrap_or_default();
+        let entry = SavedGradient { name: name.to_string(), segment: self.coloring.custom_segments.clone(), tags };
         match self.saved_gradients.iter().position(|g| g.name == name) {
             Some(i) => self.saved_gradients[i] = entry,
             None => self.saved_gradients.push(entry),
@@ -17682,6 +17708,7 @@ impl eframe::App for FractadyneApp {
         self.draw_orbit_cache_dialog(ctx);
         self.draw_script_export_dialog(ctx);
         self.draw_bookmarks_dialog(ctx);
+        self.draw_palette_browser(ctx);
 
         // Render a just-added bookmark's thumbnail (deferred here for GPU access; the current
         // view still matches the bookmark, since adding it didn't move the view).

@@ -224,3 +224,28 @@ fn the_writer_never_emits_a_legacy_key() {
         );
     }
 }
+
+// ---------------------------------------------------------------- the palette, by id
+
+/// ⭐**A palette is read by its id, and an older file's number still opens its palette.** The id
+/// wins over the number beside it; a file with only a number goes through the frozen table; an id
+/// this build lacks (a newer build's palette) keeps the view's palette and is reported, without
+/// falling back to the number, which in a newer file may be that palette's position and nothing
+/// this build should trust.
+#[test]
+fn a_view_palette_is_read_by_id_then_by_its_old_number() {
+    use crate::export::{view_palette, ViewPalette};
+    let id = |s: &str| fractadyne_color::preset_by_id(s).expect(s);
+    // A current file: both fields, and the id decides even if the number disagrees.
+    assert_eq!(view_palette(Some("lunar-new-year"), Some("30")), ViewPalette::Preset(id("lunar-new-year")));
+    assert_eq!(view_palette(Some("mondrian"), Some("0")), ViewPalette::Preset(id("mondrian")));
+    // An older file: only the number, through the table.
+    assert_eq!(view_palette(None, Some("10")), ViewPalette::Preset(id("mondrian")));
+    assert_eq!(view_palette(None, Some("0")), ViewPalette::Preset(id("ember")));
+    // A palette from a newer build: kept, reported, the number ignored.
+    assert_eq!(view_palette(Some("no-such-palette"), Some("10")), ViewPalette::NotInThisBuild);
+    assert_eq!(view_palette(None, Some("9999")), ViewPalette::NotInThisBuild);
+    // Nothing, or an unreadable number (reported by its type elsewhere): leave the palette alone.
+    assert_eq!(view_palette(None, None), ViewPalette::Absent);
+    assert_eq!(view_palette(None, Some("ten")), ViewPalette::Absent);
+}

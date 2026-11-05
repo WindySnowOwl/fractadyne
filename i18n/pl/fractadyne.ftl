@@ -249,12 +249,90 @@ menu-color-method = Metoda
 menu-color-palette = Paleta
 menu-color-custom = Własna
 menu-color-duotone = Dwutonowa
+menu-color-holidays = Święta
 menu-color-binary = Binarna (zbiór)
 menu-color-binary-hover = Płaskie dwa kolory: w zbiorze lub poza zbiorem, bez gradientu.
 menu-color-edit-gradient = Edytuj gradient…
 menu-color-normalize = Normalizuj głębokie kolory
 menu-color-normalize-hover = Przemapowuje paletę na zmierzony zakres ucieczki widoku, gdy gęste pole wyglądałoby inaczej jak drobne plamki. Widok bez aliasingu pozostaje bez zmian — zaznacz „Zawsze dopasuj zakres”, aby przemapować mimo to. Tylko metoda gładka.
 menu-color-more = Cykl, przesunięcie, animacja i efekty: panel Sterowanie ▸ Kolorowanie
+
+## Palette browser and palette tags
+
+# Color ▸ Browse palettes…, and its tooltip.
+menu-color-browse = Przeglądaj palety…
+menu-color-browse-hover = Wszystkie palety na bieżącym widoku, obok siebie: filtruj je według tagów i taguj własne.
+
+# The palette browser window.
+palette-browser-title = Palety
+palette-browser-clear = Wyczyść filtry
+
+# Shown when the chosen filters leave no palette.
+palette-browser-none = Żadna paleta nie ma wszystkich tych tagów.
+
+# The row of filters made of the tags the user gave their own gradients.
+palette-browser-yours = Twoje
+
+# Above the tags of the palette in use. { $name } is the palette's name.
+palette-browser-tags-of = Tagi palety { $name }
+
+# For a saved gradient: the button that adds what was typed as a tag, and the hint in the field.
+palette-browser-add-tag = Dodaj tag
+palette-browser-tag-hint = własne słowo
+
+# For a built-in palette, in place of the field.
+palette-browser-tags-builtin = Wbudowane palety zachowują swoje tagi. Wybierz jeden z zapisanych gradientów, aby go otagować.
+
+# Before the view has drawn, or for a view thumbnails cannot show (Life, L-systems).
+palette-browser-no-view = Widok nie został jeszcze narysowany: palety są pokazane jako paski.
+
+# Tooltip on a tag the user can remove.
+palette-browser-remove-tag = Usuń ten tag
+
+# The groups of tags, one row of filters each.
+tag-group-color = Kolor
+tag-group-temperature = Temperatura
+tag-group-energy = Energia
+tag-group-brightness = Jasność
+tag-group-shape = Kształt
+tag-group-theme = Motyw
+tag-group-purpose = Przeznaczenie
+
+# Tags measured from a palette's colours: its colour families, warm or cool, how busy it is (calm, lively, frantic), its brightness, and its shape. Plural nouns for the families; the rest describe the palette.
+tag-reds = Czerwienie
+tag-oranges = Pomarańcze
+tag-yellows = Żółcie
+tag-greens = Zielenie
+tag-blues = Błękity
+tag-purples = Fiolety
+tag-pinks = Róże
+tag-browns = Brązy
+tag-neutrals = Neutralne
+tag-warm = Ciepła
+tag-cool = Chłodna
+tag-calm = Spokojna
+tag-lively = Żywa
+tag-frantic = Szalona
+tag-dark = Ciemna
+tag-light = Jasna
+tag-pastel = Pastelowa
+tag-vivid = Intensywna
+tag-smooth = Płynna
+tag-banded = Pasmowa
+tag-single-hue = Jednobarwna
+tag-rainbow = Tęczowa
+
+# Tags given by hand: a theme, and the purpose (built to read the structure, or chosen for its looks).
+tag-holidays = Święta
+tag-seasons = Pory roku
+tag-nature = Natura
+tag-retro = Retro
+tag-art = Sztuka
+tag-materials = Materiały
+tag-science = Nauka
+tag-food = Jedzenie
+tag-analytical = Analityczna
+tag-aesthetic = Estetyczna
 
 ## Tools menu
 
@@ -1336,6 +1414,7 @@ help-nav-minimap = Widok → „Minimapa” pokazuje małą mapę całego zbioru
 help-options-intro = Wszystkie te ustawienia znajdują się w prawym panelu (i są zachowywane między sesjami).
 help-options-palette = Paleta
 help-options-palette-text = Paleta wybiera gotowy gradient, własny (Własna) lub tryb dwukolorowy. „Edytuj gradient…” otwiera edytor, w którym każdy węzeł ma kolor i pozycję (0–1); można dodawać węzły, skopiować szablon jako punkt wyjścia lub zaimportować plik palety.
+help-options-palette-browser = Kolor ▸ Przeglądaj palety… (lub przycisk obok listy palet) pokazuje widok we wszystkich paletach naraz. Każda paleta ma tagi: swoje kolory, ciepła lub chłodna, spokojna, żywa lub szalona, ciemna lub jasna, płynna lub pasmowa — zmierzone z jej kolorów — oraz motyw i przeznaczenie (analityczna, do odczytywania struktury, lub estetyczna), nadane ręcznie. Kliknij tagi, aby zobaczyć tylko palety, które mają je wszystkie. Pod miniaturami nadaj zapisanym gradientom własne tagi.
 help-options-paste = „Wklej…” w edytorze gradientu importuje paletę znalezioną gdzie indziej. Przyjmuje kolory szesnastkowe z początkowym # lub bez niego (#ff8800, ff8800 lub krótkie #f80) oraz zwykłe trójki RGB 0–255, takie jak „255 136 0” — format plików .map programów Fractint i Kalles Fraktaler — oddzielone przecinkami, spacjami lub nowymi wierszami. Zachowywanych jest do 256 kolorów; dłuższa lista jest równomiernie próbkowana do 256, z zachowaniem pierwszego i ostatniego, aby kształt gradientu przetrwał.
 help-options-import-map = „Importuj ▸ .map…” obok wczytuje plik palety .map programu Fractint lub Kalles Fraktaler. To tablice indeksowane liczbą iteracji, bez przejść między wpisami, a wynikające z tego ostre skoki kolorów tworzą klasyczny wygląd Fractinta — dlatego tak są importowane, z polem wyboru „Twarde pasma”, które zamiast tego łączy te same kolory w płynny gradient. Własne pliki Fractinta przechowują 6-bitowe wartości kolorów pomnożone przez cztery, więc ich biel to 252, a nie 255; Fractadyne informuje o tym przy imporcie i pozostawia wartości dokładnie tak, jak zapisano, bo zapisane obrazy samego Fractinta mają to samo 252.
 help-options-duotone = Dwutonowa odwzorowuje wartość na płynną rampę dwóch kolorów (Cień → Światło). Binarna (zbiór) to płaski widok dwukolorowy — jeden jednolity kolor dla punktów wewnątrz zbioru, drugi dla zewnętrznych, bez gradientu — najczytelniejszy sposób, by zobaczyć kształt zbioru.

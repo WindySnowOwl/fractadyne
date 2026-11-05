@@ -247,12 +247,90 @@ menu-color-method = Methode
 menu-color-palette = Palette
 menu-color-custom = Eigene
 menu-color-duotone = Duoton
+menu-color-holidays = Feiertage
 menu-color-binary = Binär (Menge)
 menu-color-binary-hover = Flach in zwei Farben: in der Menge oder außerhalb, ohne Farbverlauf.
 menu-color-edit-gradient = Farbverlauf bearbeiten…
 menu-color-normalize = Tiefe Farben normalisieren
 menu-color-normalize-hover = Die Palette auf den gemessenen Fluchtbereich der Ansicht umrechnen, wenn ein dichtes Feld sonst als Gesprenkel erscheinen würde. Eine Ansicht ohne Aliasing bleibt unverändert — „Bereich immer anpassen“ ankreuzen, um trotzdem umzurechnen. Nur bei der Methode „Glatte Iteration“.
 menu-color-more = Zyklus, Versatz, Animation und Effekte: Bedienfeld ▸ Färbung
+
+## Palette browser and palette tags
+
+# Color ▸ Browse palettes…, and its tooltip.
+menu-color-browse = Paletten durchsuchen…
+menu-color-browse-hover = Jede Palette über der aktuellen Ansicht, nebeneinander: nach Schlagwort filtern und eigene verschlagworten.
+
+# The palette browser window.
+palette-browser-title = Paletten
+palette-browser-clear = Filter zurücksetzen
+
+# Shown when the chosen filters leave no palette.
+palette-browser-none = Keine Palette hat alle diese Schlagwörter.
+
+# The row of filters made of the tags the user gave their own gradients.
+palette-browser-yours = Eigene
+
+# Above the tags of the palette in use. { $name } is the palette's name.
+palette-browser-tags-of = Schlagwörter von { $name }
+
+# For a saved gradient: the button that adds what was typed as a tag, and the hint in the field.
+palette-browser-add-tag = Schlagwort hinzufügen
+palette-browser-tag-hint = ein eigenes Wort
+
+# For a built-in palette, in place of the field.
+palette-browser-tags-builtin = Eingebaute Paletten behalten ihre Schlagwörter. Wählen Sie einen Ihrer gespeicherten Farbverläufe, um ihn zu verschlagworten.
+
+# Before the view has drawn, or for a view thumbnails cannot show (Life, L-systems).
+palette-browser-no-view = Die Ansicht ist noch nicht gezeichnet: Paletten werden als Streifen gezeigt.
+
+# Tooltip on a tag the user can remove.
+palette-browser-remove-tag = Dieses Schlagwort entfernen
+
+# The groups of tags, one row of filters each.
+tag-group-color = Farbe
+tag-group-temperature = Temperatur
+tag-group-energy = Energie
+tag-group-brightness = Helligkeit
+tag-group-shape = Form
+tag-group-theme = Thema
+tag-group-purpose = Zweck
+
+# Tags measured from a palette's colours: its colour families, warm or cool, how busy it is (calm, lively, frantic), its brightness, and its shape. Plural nouns for the families; the rest describe the palette.
+tag-reds = Rottöne
+tag-oranges = Orangetöne
+tag-yellows = Gelbtöne
+tag-greens = Grüntöne
+tag-blues = Blautöne
+tag-purples = Violetttöne
+tag-pinks = Rosatöne
+tag-browns = Brauntöne
+tag-neutrals = Neutraltöne
+tag-warm = Warm
+tag-cool = Kühl
+tag-calm = Ruhig
+tag-lively = Lebhaft
+tag-frantic = Hektisch
+tag-dark = Dunkel
+tag-light = Hell
+tag-pastel = Pastell
+tag-vivid = Kräftig
+tag-smooth = Fließend
+tag-banded = Gebändert
+tag-single-hue = Einfarbig
+tag-rainbow = Regenbogen
+
+# Tags given by hand: a theme, and the purpose (built to read the structure, or chosen for its looks).
+tag-holidays = Feiertage
+tag-seasons = Jahreszeiten
+tag-nature = Natur
+tag-retro = Retro
+tag-art = Kunst
+tag-materials = Materialien
+tag-science = Wissenschaft
+tag-food = Essen
+tag-analytical = Analytisch
+tag-aesthetic = Ästhetisch
 
 ## Tools menu
 
@@ -1293,6 +1371,7 @@ help-nav-minimap = Ansicht → „Übersichtskarte“ zeigt eine kleine Karte de
 help-options-intro = All dies befindet sich im rechten Bedienfeld (und bleibt zwischen Sitzungen erhalten).
 help-options-palette = Palette
 help-options-palette-text = Palette wählt einen vorgefertigten Farbverlauf, den eigenen (Eigene) oder einen Zweifarbmodus. „Farbverlauf bearbeiten…“ öffnet einen Editor, in dem jeder Farbstopp eine Farbe und eine Position (0–1) hat; Farbstopps hinzufügen, eine Vorlage als Ausgangspunkt kopieren oder eine Palettendatei importieren.
+help-options-palette-browser = Farbe ▸ Paletten durchsuchen… (oder die Schaltfläche neben der Palettenliste) zeigt die Ansicht in allen Paletten zugleich. Jede Palette hat Schlagwörter: ihre Farben, warm oder kühl, ruhig, lebhaft oder hektisch, dunkel oder hell, fließend oder gebändert – aus ihren Farben gemessen – sowie ein Thema und einen Zweck (analytisch, um die Struktur zu lesen, oder ästhetisch), von Hand vergeben. Klicken Sie Schlagwörter an, um nur die Paletten zu sehen, die alle davon haben. Unter den Vorschaubildern geben Sie Ihren gespeicherten Farbverläufen eigene Schlagwörter.
 help-options-paste = „Einfügen…“ im Farbverlaufseditor importiert eine anderswo gefundene Palette. Es nimmt Hex-Farben mit oder ohne vorangestelltes # an (#ff8800, ff8800 oder das kurze #f80) sowie einfache RGB-Tripel 0–255 wie „255 136 0“ — das Format der .map-Dateien von Fractint und Kalles Fraktaler —, getrennt durch Kommas, Leerzeichen oder Zeilenumbrüche. Bis zu 256 Farben werden übernommen; eine längere Liste wird gleichmäßig auf 256 ausgedünnt, wobei die erste und die letzte erhalten bleiben, damit die Form des Farbverlaufs bestehen bleibt.
 help-options-import-map = „Importieren ▸ .map…“ daneben lädt eine .map-Palettendatei von Fractint oder Kalles Fraktaler. Das sind nach Iterationszahl indizierte Nachschlagetabellen ohne Überblendung zwischen den Einträgen, und die harten Farbstufen, die dabei entstehen, machen den klassischen Fractint-Look aus — so werden sie also importiert, mit einem Kästchen „Harte Bänder“, um dieselben Farben stattdessen zu einem glatten Farbverlauf zu überblenden. Fractints eigene Dateien speichern 6-Bit-Farbwerte mal vier, daher ist ihr Weiß 252 statt 255; Fractadyne weist beim Import darauf hin und belässt die Werte genau so, wie sie geschrieben sind, weil Fractints eigene gespeicherte Bilder dasselbe 252 tragen.
 help-options-duotone = Duoton bildet den Wert auf eine glatte Zweifarbrampe ab (Schatten → Lichter). Binär (Menge) ist eine flache Zweifarbansicht — eine Vollfarbe für Punkte in der Menge und eine andere für außerhalb, ohne Farbverlauf — die klarste Art, die Form der Menge zu sehen.

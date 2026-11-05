@@ -188,6 +188,19 @@ enum Screen {
     /// The right panel's palette dropdown open: every preset and saved gradient beside its swatch,
     /// as Color ▸ Palette shows them, scrolling past the popup's height.
     PaletteDropdown,
+    /// Color ▸ Browse palettes…, Diwali chosen: every palette over the view as a thumbnail, the
+    /// tag filters above, Diwali's tags below (a built-in palette's, so none to edit).
+    PaletteBrowser,
+    /// The browser filtered to warm palettes, with the saved gradient the editor steps left in the
+    /// library chosen: its own tags removable, the field to add one, and the theme and purpose tags
+    /// it lacks one click away.
+    PaletteBrowserTags,
+    /// The browser over the deep view the step before left (1e12×, perturbation): its thumbnails are
+    /// THAT view recoloured, so a deep view's structure shows in every palette.
+    PaletteBrowserDeep,
+    /// The same list opened with Holi chosen, a holiday palette below the list's first screenful:
+    /// it opens scrolled to Holi, with the "Holidays" heading above the holiday palettes.
+    PaletteDropdownHolidays,
     /// The same list open on Mondrian with the pointer resting on Ice, through egui's own input
     /// (`UiPointer::OnPaletteRow`): the view shows Ice, the hover preview, while Mondrian stays the
     /// chosen palette.
@@ -900,6 +913,11 @@ fn build_steps() -> Vec<Step> {
         screen("palette-preview-revert", Screen::PalettePreviewRevert),
         screen("palette-edit-current", Screen::PaletteEditCurrent),
         screen("palette-edit-cancel", Screen::PaletteEditCancel),
+        // After the preview steps: it leaves the list scrolled down, egui keeps a list's scroll, and
+        // palette-preview's pointer, aimed at Ice near the top, would find Ice out of view.
+        screen("palette-dropdown-holidays", Screen::PaletteDropdownHolidays),
+        screen("palette-browser", Screen::PaletteBrowser),
+        screen("palette-browser-tags", Screen::PaletteBrowserTags),
         screen("life-draw", Screen::LifeDraw),
         screen("lsystem", Screen::LSystem),
         screen("lsystem-draw-on", Screen::LSystemDrawOn),
@@ -914,6 +932,7 @@ fn build_steps() -> Vec<Step> {
         live("live-direct-1e2", 2.0),
         live("live-df32-1e6", 6.0),
         live("live-df32-1e12", 12.0),
+        screen("palette-browser-deep", Screen::PaletteBrowserDeep),
         live("live-floatexp-1e30", 30.0),
         // --- window sizing: the status bar wraps to a 2nd line when narrow (by design) but must
         //     stay stable at a fixed width (a waver between one and two lines = a repaint storm) ---
@@ -1000,6 +1019,9 @@ impl FractadyneApp {
                     step.kind,
                     StepKind::Screen(
                         Screen::PaletteDropdown
+                            | Screen::PaletteDropdownHolidays
+                            | Screen::PaletteBrowser
+                            | Screen::PaletteBrowserTags
                             | Screen::PalettePreview
                             | Screen::PalettePreviewRevert
                             | Screen::PaletteEditCurrent
@@ -1301,6 +1323,8 @@ impl FractadyneApp {
         self.dialogs.second_device_prompt = None;
         self.dialogs.iteration_quarantine = None;
         self.dialogs.bookmarks_open = false;
+        self.palette_browser.open = false;
+        self.palette_browser.filter.clear();
         self.dialogs.bench_open = false;
         self.dialogs.bench_dialog_open = false;
         self.dialogs.reset_confirm_open = false;
@@ -1704,6 +1728,7 @@ impl FractadyneApp {
                 self.saved_gradients = vec![crate::SavedGradient {
                     name: "Ember rework".to_string(),
                     segment: self.coloring.custom_segments.clone(),
+                    tags: vec!["favourites".to_string(), "aesthetic".to_string()],
                 }];
             }
             // The same seeded gradient, shown as a ring. ⚠The paste box stays SHUT here so the
@@ -1875,9 +1900,30 @@ impl FractadyneApp {
                 self.set_fractal(crate::FractalKind::BurningShip4);
                 self.dialogs.open_fractal_dropdown = true;
             }
-            Screen::PaletteDropdown => {
+            // The view stays as the live step before left it: only the browser opens.
+            Screen::PaletteBrowserDeep => self.palette_browser.open = true,
+            Screen::PaletteBrowser | Screen::PaletteBrowserTags => {
+                self.coloring.use_custom_palette = false;
+                self.coloring.use_duotone = false;
+                self.coloring.use_binary = false;
+                if matches!(s, Screen::PaletteBrowser) {
+                    self.coloring.palette_idx = fractadyne_color::preset_by_id("diwali").unwrap_or(0);
+                } else {
+                    self.palette_browser.filter = vec!["warm".to_string()];
+                    // The editor steps leave one saved gradient, tagged by hand (in memory only).
+                    if !self.saved_gradients.is_empty() {
+                        self.apply_saved_gradient(0);
+                    }
+                }
+                self.palette_browser.open = true;
+            }
+            Screen::PaletteDropdown | Screen::PaletteDropdownHolidays => {
                 self.dialogs.right_panel_open = true;
-                self.coloring.palette_idx = 10; // Mondrian: a banded swatch, part way down the list
+                self.coloring.palette_idx = if matches!(s, Screen::PaletteDropdownHolidays) {
+                    fractadyne_color::HOLIDAY_PRESETS.start + 3 // Holi: past the first screenful
+                } else {
+                    10 // Mondrian: a banded swatch, part way down the list
+                };
                 self.coloring.use_custom_palette = false;
                 self.coloring.use_duotone = false;
                 self.coloring.use_binary = false;

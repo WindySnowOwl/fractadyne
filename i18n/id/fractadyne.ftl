@@ -243,12 +243,90 @@ menu-color-method = Metode
 menu-color-palette = Palet
 menu-color-custom = Kustom
 menu-color-duotone = Dua nada
+menu-color-holidays = Hari raya
 menu-color-binary = Biner (himpunan)
 menu-color-binary-hover = Dua warna datar: di dalam himpunan vs di luar himpunan, tanpa gradien.
 menu-color-edit-gradient = Sunting gradien…
 menu-color-normalize = Normalkan warna dalam
 menu-color-normalize-hover = Petakan ulang palet ke rentang lolos terukur dari tampilan ketika medan yang padat akan tampak seperti bintik-bintik. Tampilan yang tidak mengalami aliasing dibiarkan apa adanya — centang “Selalu sesuaikan rentang” untuk memetakan ulang dalam keadaan apa pun. Hanya untuk metode Iterasi halus.
 menu-color-more = Siklus, pergeseran, animasi, dan efek: panel Kontrol ▸ Pewarnaan
+
+## Palette browser and palette tags
+
+# Color ▸ Browse palettes…, and its tooltip.
+menu-color-browse = Jelajahi palet…
+menu-color-browse-hover = Semua palet di atas tampilan saat ini, berdampingan: saring menurut tag dan beri tag pada milik Anda.
+
+# The palette browser window.
+palette-browser-title = Palet
+palette-browser-clear = Hapus saringan
+
+# Shown when the chosen filters leave no palette.
+palette-browser-none = Tidak ada palet yang memiliki semua tag ini.
+
+# The row of filters made of the tags the user gave their own gradients.
+palette-browser-yours = Milik Anda
+
+# Above the tags of the palette in use. { $name } is the palette's name.
+palette-browser-tags-of = Tag { $name }
+
+# For a saved gradient: the button that adds what was typed as a tag, and the hint in the field.
+palette-browser-add-tag = Tambah tag
+palette-browser-tag-hint = kata Anda sendiri
+
+# For a built-in palette, in place of the field.
+palette-browser-tags-builtin = Palet bawaan mempertahankan tagnya. Pilih salah satu gradien tersimpan Anda untuk memberinya tag.
+
+# Before the view has drawn, or for a view thumbnails cannot show (Life, L-systems).
+palette-browser-no-view = Tampilan belum digambar: palet ditampilkan sebagai strip.
+
+# Tooltip on a tag the user can remove.
+palette-browser-remove-tag = Hapus tag ini
+
+# The groups of tags, one row of filters each.
+tag-group-color = Warna
+tag-group-temperature = Suhu
+tag-group-energy = Energi
+tag-group-brightness = Kecerahan
+tag-group-shape = Bentuk
+tag-group-theme = Tema
+tag-group-purpose = Tujuan
+
+# Tags measured from a palette's colours: its colour families, warm or cool, how busy it is (calm, lively, frantic), its brightness, and its shape. Plural nouns for the families; the rest describe the palette.
+tag-reds = Merah
+tag-oranges = Jingga
+tag-yellows = Kuning
+tag-greens = Hijau
+tag-blues = Biru
+tag-purples = Ungu
+tag-pinks = Merah muda
+tag-browns = Cokelat
+tag-neutrals = Netral
+tag-warm = Hangat
+tag-cool = Sejuk
+tag-calm = Tenang
+tag-lively = Ceria
+tag-frantic = Hiruk-pikuk
+tag-dark = Gelap
+tag-light = Terang
+tag-pastel = Pastel
+tag-vivid = Cerah
+tag-smooth = Halus
+tag-banded = Bergaris
+tag-single-hue = Satu rona
+tag-rainbow = Pelangi
+
+# Tags given by hand: a theme, and the purpose (built to read the structure, or chosen for its looks).
+tag-holidays = Hari raya
+tag-seasons = Musim
+tag-nature = Alam
+tag-retro = Retro
+tag-art = Seni
+tag-materials = Material
+tag-science = Sains
+tag-food = Makanan
+tag-analytical = Analitis
+tag-aesthetic = Estetis
 
 ## Tools menu
 
@@ -1284,6 +1362,7 @@ help-nav-minimap = Tampilan → “Ikhtisar peta mini” menampilkan peta kecil 
 help-options-intro = Semua ini ada di panel kanan (dan tetap tersimpan di antara sesi).
 help-options-palette = Palet
 help-options-palette-text = Palet memilih gradien preset, gradien Kustom Anda, atau mode dua warna. “Sunting gradien…” membuka penyunting tempat setiap titik warna memiliki warna dan posisi (0–1); tambahkan titik warna, salin preset sebagai titik awal, atau impor berkas palet.
+help-options-palette-browser = Warna ▸ Jelajahi palet… (atau tombol di samping daftar palet) menampilkan tampilan dalam semua palet sekaligus. Setiap palet memiliki tag: warnanya, hangat atau sejuk, tenang, ceria atau hiruk-pikuk, gelap atau terang, halus atau bergaris — diukur dari warnanya — serta tema dan tujuan (analitis, dibuat untuk membaca struktur, atau estetis), yang diberikan secara manual. Klik tag untuk melihat hanya palet yang memiliki semuanya. Di bawah gambar mini, beri gradien tersimpan Anda tag milik Anda sendiri.
 help-options-paste = “Tempel…” di penyunting gradien mengimpor palet yang Anda temukan di tempat lain. Fitur ini menerima warna heks dengan atau tanpa # di depan (#ff8800, ff8800, atau bentuk pendek #f80) dan tripel RGB 0–255 biasa seperti “255 136 0” — format yang digunakan berkas .map Fractint dan Kalles Fraktaler — dipisahkan dengan koma, spasi, atau baris baru. Hingga 256 warna disimpan; daftar yang lebih panjang diambil sampelnya secara merata hingga 256, dengan mempertahankan yang pertama dan terakhir agar bentuk gradien tetap terjaga.
 help-options-import-map = “Impor ▸ .map…” di sebelahnya memuat berkas palet .map Fractint atau Kalles Fraktaler. Berkas semacam itu adalah tabel pencarian yang diindeks berdasarkan jumlah iterasi tanpa pembauran antarentri, dan undakan warna tegas yang dihasilkannya itulah yang membentuk tampilan klasik Fractint — maka begitulah berkas itu diimpor, dengan kotak centang “Pita tegas” untuk membaurkan warna-warna yang sama menjadi gradien yang halus. Berkas Fractint sendiri menyimpan nilai warna 6-bit yang dikalikan empat, sehingga putihnya bernilai 252, bukan 255; Fractadyne memberitahukan hal itu saat mengimpornya dan membiarkan nilainya persis seperti yang tertulis, karena gambar yang disimpan Fractint sendiri juga membawa nilai 252 yang sama.
 help-options-duotone = Dua nada memetakan nilai ke gradasi dua warna yang halus (Bayangan → Sorotan). Biner (himpunan) adalah tampilan dua warna datar — satu warna padat untuk titik di dalam himpunan dan warna lain untuk di luarnya, tanpa gradien — cara paling jelas untuk melihat bentuk himpunan.

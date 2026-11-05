@@ -243,12 +243,90 @@ menu-color-method = 着色方法
 menu-color-palette = パレット
 menu-color-custom = カスタム
 menu-color-duotone = デュオトーン
+menu-color-holidays = 祝祭日
 menu-color-binary = 二値（集合）
 menu-color-binary-hover = グラデーションのない2色表示：集合の内側と外側。
 menu-color-edit-gradient = グラデーションを編集…
 menu-color-normalize = 深い色を正規化
 menu-color-normalize-hover = 密集した模様が斑点のように見えてしまうとき、パレットをビューで測定した脱出値の範囲に割り当て直します。エイリアシングが起きていないビューはそのままです。それでも割り当て直すには「常に範囲に合わせる」をオンにします。着色方法が「スムーズ反復」のときのみ。
 menu-color-more = サイクル、オフセット、アニメーション、エフェクト：コントロールパネル ▸ 着色
+
+## Palette browser and palette tags
+
+# Color ▸ Browse palettes…, and its tooltip.
+menu-color-browse = パレットを一覧…
+menu-color-browse-hover = 現在のビューにすべてのパレットを並べて表示します。タグで絞り込み、自分のパレットにタグを付けられます。
+
+# The palette browser window.
+palette-browser-title = パレット
+palette-browser-clear = 絞り込みを解除
+
+# Shown when the chosen filters leave no palette.
+palette-browser-none = これらのタグをすべて持つパレットはありません。
+
+# The row of filters made of the tags the user gave their own gradients.
+palette-browser-yours = 自分のタグ
+
+# Above the tags of the palette in use. { $name } is the palette's name.
+palette-browser-tags-of = { $name } のタグ
+
+# For a saved gradient: the button that adds what was typed as a tag, and the hint in the field.
+palette-browser-add-tag = タグを追加
+palette-browser-tag-hint = 自分の言葉で
+
+# For a built-in palette, in place of the field.
+palette-browser-tags-builtin = 組み込みパレットのタグは変更できません。タグを付けるには、保存したグラデーションを選んでください。
+
+# Before the view has drawn, or for a view thumbnails cannot show (Life, L-systems).
+palette-browser-no-view = ビューがまだ描画されていません。パレットを帯で表示しています。
+
+# Tooltip on a tag the user can remove.
+palette-browser-remove-tag = このタグを削除
+
+# The groups of tags, one row of filters each.
+tag-group-color = 色
+tag-group-temperature = 色温度
+tag-group-energy = 動き
+tag-group-brightness = 明るさ
+tag-group-shape = 形
+tag-group-theme = テーマ
+tag-group-purpose = 用途
+
+# Tags measured from a palette's colours: its colour families, warm or cool, how busy it is (calm, lively, frantic), its brightness, and its shape. Plural nouns for the families; the rest describe the palette.
+tag-reds = 赤系
+tag-oranges = オレンジ系
+tag-yellows = 黄系
+tag-greens = 緑系
+tag-blues = 青系
+tag-purples = 紫系
+tag-pinks = ピンク系
+tag-browns = 茶系
+tag-neutrals = 無彩色
+tag-warm = 暖色
+tag-cool = 寒色
+tag-calm = 穏やか
+tag-lively = 生き生き
+tag-frantic = 目まぐるしい
+tag-dark = 暗い
+tag-light = 明るい
+tag-pastel = パステル
+tag-vivid = 鮮やか
+tag-smooth = なめらか
+tag-banded = 帯状
+tag-single-hue = 単色
+tag-rainbow = 虹色
+
+# Tags given by hand: a theme, and the purpose (built to read the structure, or chosen for its looks).
+tag-holidays = 祝祭日
+tag-seasons = 季節
+tag-nature = 自然
+tag-retro = レトロ
+tag-art = 芸術
+tag-materials = 素材
+tag-science = 科学
+tag-food = 食べ物
+tag-analytical = 分析向け
+tag-aesthetic = 鑑賞向け
 
 ## Tools menu
 
@@ -1285,6 +1363,7 @@ help-nav-minimap = 表示 → 「ミニマップ」は、「現在地」マー�
 help-options-intro = これらはすべて右側のパネルにあります（セッションをまたいで保持されます）。
 help-options-palette = パレット
 help-options-palette-text = 「パレット」では、プリセットのグラデーション、自分のカスタムグラデーション、または2色モードを選びます。「グラデーションを編集…」で開くエディターでは、各カラーストップが色と位置（0～1）を持ちます。ストップを追加したり、プリセットをコピーして出発点にしたり、パレットファイルをインポートしたりできます。
+help-options-palette-browser = カラー ▸ パレットを一覧…（またはパレット一覧の横のボタン）で、現在のビューをすべてのパレットで同時に表示します。各パレットにはタグがあります。色、暖色か寒色か、穏やか・生き生き・目まぐるしい、暗いか明るいか、なめらかか帯状か（これらは色から測定）、そして手で付けたテーマと用途（構造を読むための分析向け、または鑑賞向け）です。タグをクリックすると、それらをすべて持つパレットだけを表示します。サムネイルの下で、保存したグラデーションに自分のタグを付けられます。
 help-options-paste = グラデーションエディターの「貼り付け…」は、ほかで見つけたパレットをインポートします。先頭の#があってもなくてもよい16進の色（#ff8800、ff8800、または短縮形の#f80）と、「255 136 0」のような0～255のRGBの3つ組（FractintとKalles Fraktalerの.mapファイルが使う形式）を、カンマ、スペース、改行で区切って受け付けます。最大256色が保持されます。それより長いリストは、グラデーションの形が保たれるよう最初と最後の色を残して、256色まで均等に間引かれます。
 help-options-import-map = その隣の「インポート ▸ .map…」は、FractintまたはKalles Fraktalerの.mapパレットファイルを読み込みます。これらは反復回数で引く参照テーブルでエントリ間のブレンドがなく、それが生むくっきりした色の段差こそが古典的なFractintの見た目の正体です。そのためそのままの形でインポートされ、「ハードバンド」チェックボックスで、代わりに同じ色をなめらかなグラデーションにブレンドすることもできます。Fractint自身のファイルは6ビットの色の値を4倍して保存しているため、白は255ではなく252です。Fractadyneはそのようなファイルをインポートするときにその旨を表示し、値を書かれたとおりに残します。Fractint自身が保存した画像にも同じ252が使われているからです。
 help-options-duotone = 「デュオトーン」は値をなめらかな2色の階調（シャドウ → ハイライト）に割り当てます。「二値（集合）」は平坦な2色表示で、集合の内側の点に1色、外側にもう1色を使い、グラデーションはありません。集合の形を見るにはいちばんわかりやすい方法です。
