@@ -252,6 +252,7 @@ menu-color-method = Method
 menu-color-palette = Palette
 menu-color-custom = Custom
 menu-color-duotone = Duotone
+menu-color-holidays = Holidays
 menu-color-binary = Binary (set)
 menu-color-binary-hover = Flat two-color: in-set vs out-of-set, no gradient.
 menu-color-edit-gradient = Edit gradient…

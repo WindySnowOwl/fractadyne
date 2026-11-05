@@ -243,6 +243,7 @@ menu-color-method = 方法
 menu-color-palette = 调色板
 menu-color-custom = 自定义
 menu-color-duotone = 双色调
+menu-color-holidays = 节日
 menu-color-binary = 二值（集合）
 menu-color-binary-hover = 纯双色：集合内与集合外，无渐变。
 menu-color-edit-gradient = 编辑渐变…

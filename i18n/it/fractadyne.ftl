@@ -247,6 +247,7 @@ menu-color-method = Metodo
 menu-color-palette = Tavolozza
 menu-color-custom = Personalizzata
 menu-color-duotone = Duotono
+menu-color-holidays = Festività
 menu-color-binary = Binario (insieme)
 menu-color-binary-hover = Due colori piatti: dentro o fuori dall’insieme, senza gradiente.
 menu-color-edit-gradient = Modifica gradiente…

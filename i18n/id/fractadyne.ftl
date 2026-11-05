@@ -243,6 +243,7 @@ menu-color-method = Metode
 menu-color-palette = Palet
 menu-color-custom = Kustom
 menu-color-duotone = Dua nada
+menu-color-holidays = Hari raya
 menu-color-binary = Biner (himpunan)
 menu-color-binary-hover = Dua warna datar: di dalam himpunan vs di luar himpunan, tanpa gradien.
 menu-color-edit-gradient = Sunting gradien…

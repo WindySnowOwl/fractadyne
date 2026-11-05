@@ -247,6 +247,7 @@ menu-color-method = Methode
 menu-color-palette = Palette
 menu-color-custom = Eigene
 menu-color-duotone = Duoton
+menu-color-holidays = Feiertage
 menu-color-binary = Binär (Menge)
 menu-color-binary-hover = Flach in zwei Farben: in der Menge oder außerhalb, ohne Farbverlauf.
 menu-color-edit-gradient = Farbverlauf bearbeiten…

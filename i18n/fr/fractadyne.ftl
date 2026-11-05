@@ -247,6 +247,7 @@ menu-color-method = Méthode
 menu-color-palette = Palette
 menu-color-custom = Personnalisée
 menu-color-duotone = Bichromie
+menu-color-holidays = Fêtes
 menu-color-binary = Binaire (ensemble)
 menu-color-binary-hover = Deux couleurs unies : dans l’ensemble ou hors de l’ensemble, sans dégradé.
 menu-color-edit-gradient = Modifier le dégradé…

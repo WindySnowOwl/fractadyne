@@ -249,6 +249,7 @@ menu-color-method = Метод
 menu-color-palette = Палітра
 menu-color-custom = Власна
 menu-color-duotone = Двотонна
+menu-color-holidays = Свята
 menu-color-binary = Двійкова (множина)
 menu-color-binary-hover = Пласке двоколірне розфарбування: у множині чи поза нею, без градієнта.
 menu-color-edit-gradient = Редагувати градієнт…

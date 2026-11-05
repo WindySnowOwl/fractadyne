@@ -247,6 +247,7 @@ menu-color-method = Yöntem
 menu-color-palette = Palet
 menu-color-custom = Özel
 menu-color-duotone = İki ton
+menu-color-holidays = Kutlamalar
 menu-color-binary = İkili (küme)
 menu-color-binary-hover = Düz iki renk: küme içi ve küme dışı, gradyan yok.
 menu-color-edit-gradient = Gradyanı düzenle…

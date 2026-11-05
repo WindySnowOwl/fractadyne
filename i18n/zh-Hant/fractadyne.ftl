@@ -243,6 +243,7 @@ menu-color-method = 方法
 menu-color-palette = 調色盤
 menu-color-custom = 自訂
 menu-color-duotone = 雙色調
+menu-color-holidays = 節日
 menu-color-binary = 二元（集合）
 menu-color-binary-hover = 平面雙色：集合內與集合外，沒有漸層。
 menu-color-edit-gradient = 編輯漸層…

@@ -243,6 +243,7 @@ menu-color-method = 着色方法
 menu-color-palette = パレット
 menu-color-custom = カスタム
 menu-color-duotone = デュオトーン
+menu-color-holidays = 祝祭日
 menu-color-binary = 二値（集合）
 menu-color-binary-hover = グラデーションのない2色表示：集合の内側と外側。
 menu-color-edit-gradient = グラデーションを編集…

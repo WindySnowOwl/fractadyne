@@ -59,6 +59,15 @@ published as the pre-releases `v0.2.41-beta.1` to `v0.2.41-beta.150`, and a "bet
 
 Changes after 0.3.0-beta.1:
 
+- **Twenty holiday palettes, from Lunar New Year to New Year's Eve (0.3.0-beta.27).** Color ▸
+  Palette and the panel's Palette list gain a "Holidays" group, in the order of the year: Lunar
+  New Year, Valentine's Day, Mardi Gras, Holi, Nowruz, Eid al-Fitr, Easter, Vesak, Midsummer,
+  Matariki, Mid-Autumn, Meskel, Halloween, Day of the Dead, Diwali, Thanksgiving, Hanukkah,
+  Christmas, Kwanzaa and New Year's Eve. Each takes its holiday's own colours: Diwali's diya flames,
+  marigolds and rangoli magenta on an indigo night; Easter's pastel egg stripes between white lines;
+  the Day of the Dead's marigolds, papel picado and sugar-skull white. They follow the thirty
+  presets, so views and sessions saved with an earlier palette open as before. A palette list now
+  opens scrolled to the palette in use, which with fifty presets can be far down the list.
 - **On processors with few cores, the live view no longer stutters while it picks a new reference
   (0.3.0-beta.26).** At great depth, choosing a reference orbit is seconds of work spread over
   every core, and during a zoom the view can be choosing two at once. On an 8-thread processor

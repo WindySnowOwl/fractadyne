@@ -183,6 +183,37 @@ fn presets_are_well_formed_rings() {
     }
 }
 
+/// ⛔**A preset's index is saved, so it never moves.** A view file's `palette=` and the session's
+/// palette are indices into [`PRESETS`]: a preset inserted in the middle, or two swapped, would
+/// reopen every saved view after it in another palette. This list may only grow at its end.
+#[test]
+fn preset_indices_never_move() {
+    const SAVED_ORDER: &[&str] = &[
+        "Ember", "Ice", "Nebula", "Grayscale", "Four Seasons", "Royalty", "Rave", "Emerald Isle",
+        "Seventies", "Eighties", "Mondrian", "Dragon Scales", "Machine Age", "Bronze Age", "Unity",
+        "Spice", "Veggies", "Mosaic", "Coral Reef", "Aurora", "Desert", "Candy", "Blueprint", "Sepia",
+        "Thermal", "Stained Glass", "Noir", "Cherry Blossom", "Black Opal", "Lavender Fields",
+        "Lunar New Year", "Valentine's Day", "Mardi Gras", "Holi", "Nowruz", "Eid al-Fitr", "Easter",
+        "Vesak", "Midsummer", "Matariki", "Mid-Autumn", "Meskel", "Halloween", "Day of the Dead",
+        "Diwali", "Thanksgiving", "Hanukkah", "Christmas", "Kwanzaa", "New Year's Eve",
+    ];
+    assert!(PRESETS.len() >= SAVED_ORDER.len(), "a preset was removed");
+    for (i, want) in SAVED_ORDER.iter().enumerate() {
+        assert_eq!(PRESETS[i].name, *want, "preset {i} moved");
+    }
+}
+
+/// The holiday block the palette lists put under its own heading is the twenty holiday palettes,
+/// Lunar New Year to New Year's Eve, and lies inside [`PRESETS`].
+#[test]
+fn the_holiday_block_holds_the_holiday_palettes() {
+    let r = HOLIDAY_PRESETS;
+    assert!(r.start < r.end && r.end <= PRESETS.len(), "{r:?} is outside the {} presets", PRESETS.len());
+    assert_eq!(PRESETS[r.start].name, "Lunar New Year");
+    assert_eq!(PRESETS[r.end - 1].name, "New Year's Eve");
+    assert_eq!(r.len(), 20);
+}
+
 // ---------------------------------------------------------------- line-ending hygiene
 
 /// ⭐⭐**A palette file must parse the same whatever wrote its line endings.** `str::lines()` does
