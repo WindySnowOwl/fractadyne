@@ -1866,9 +1866,11 @@ pub(crate) fn series_skip_astro_piped(
         // operations in the same order, so the result is the sequential walk's, byte for byte
         // (`the_pipelined_sa_walk_is_the_sequential_one`); the wall-clock is the dearer chain,
         // not their sum. Dropping the receiver stops the Z chain at its next send.
+        let standing = crate::worker_priority::current();
         std::thread::scope(|s| {
             let (tx, rx) = std::sync::mpsc::sync_channel(SA_PIPELINE_DEPTH);
             s.spawn(move || {
+                standing.adopt();
                 for _ in 0..limit {
                     let step = z_step(&mut zx, &mut zy);
                     let escaped = step.2;
@@ -2014,10 +2016,12 @@ fn par_fill<T: Send>(out: &mut [T], par_threshold: usize, f: impl Fn(usize) -> T
     }
     let chunk = n.div_ceil(threads);
     let f = &f;
+    let standing = crate::worker_priority::current();
     std::thread::scope(|s| {
         for (ci, part) in out.chunks_mut(chunk).enumerate() {
             let base = ci * chunk;
             s.spawn(move || {
+                standing.adopt();
                 for (k, slot) in part.iter_mut().enumerate() {
                     *slot = f(base + k);
                 }
@@ -2821,9 +2825,11 @@ fn par_perturb_lengths(samples: &[CFloatExp], dcs: &[CFloatExp], power: u32, max
     let mut per: Vec<(Option<u32>, u32)> = vec![(None, 0); dcs.len()];
     let threads = std::thread::available_parallelism().map_or(1, |n| n.get()).min(dcs.len().max(1));
     let chunk = dcs.len().div_ceil(threads).max(1);
+    let standing = crate::worker_priority::current();
     std::thread::scope(|sc| {
         for (dc_chunk, out_chunk) in dcs.chunks(chunk).zip(per.chunks_mut(chunk)) {
             sc.spawn(move || {
+                standing.adopt();
                 for (dc, out) in dc_chunk.iter().zip(out_chunk.iter_mut()) {
                     let mut rb = 0u32;
                     let len = perturb_orbit_length(samples, *dc, power, max_iter, &mut rb);
@@ -3411,9 +3417,15 @@ fn pick_pass(
     };
     // Phase 1's scores: by perturbation against the centre where phase 2 would use it (see
     // [`perturb_scan`]), else the bignum walks of every candidate.
+    let standing = crate::worker_priority::current();
     let (mut scan, centre_beside) = std::thread::scope(|s| {
         let beside = !centre_src.is_some_and(|c| c.whole);
-        let centre = beside.then(|| s.spawn(|| centre_walk_here(use_perturb)));
+        let centre = beside.then(|| {
+            s.spawn(|| {
+                standing.adopt();
+                centre_walk_here(use_perturb)
+            })
+        });
         let scan = use_perturb
             .then(|| perturb_scan(&cands, quick, julia, &jcx, &jcy, formula, p))
             .flatten()
@@ -3758,9 +3770,11 @@ fn par_orbit_scores(
     }
     let mut out = vec![0u32; idxs.len()];
     let chunk = idxs.len().div_ceil(threads);
+    let standing = crate::worker_priority::current();
     std::thread::scope(|s| {
         for (idx_chunk, out_chunk) in idxs.chunks(chunk).zip(out.chunks_mut(chunk)) {
             s.spawn(|| {
+                standing.adopt();
                 let (jcx, jcy, zero) = (jcx.clone(), jcy.clone(), bf(0.0, p));
                 // The pool fills the machine: each walk keeps its products on its own thread.
                 crate::backend::with_sequential_products(|| {

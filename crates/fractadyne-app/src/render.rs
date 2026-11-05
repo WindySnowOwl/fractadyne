@@ -791,14 +791,17 @@ fn pick_and_build(inp: &RecomputeInputs, overlap: bool) -> RecomputeResult {
         || (inp.bla_dc_max.is_some() && fractadyne_core::formula::caps(inp.formula).series_approximation);
     let cancel_sa = AtomicBool::new(false);
     let record = fc::pick_records_centre(inp.formula, inp.julia, [inp.span.0, inp.span.1]);
+    let standing = fractadyne_core::worker_priority::current();
     std::thread::scope(|s| {
         let (tx, rx) = std::sync::mpsc::channel();
         s.spawn(move || {
+            standing.adopt();
             let _ = tx.send(build_orbit(centre, inp.gpu_iter, inp, record));
         });
         let cancel = &cancel_sa;
         let sa = sa_may_run.then(|| {
             s.spawn(move || {
+                standing.adopt();
                 let t = Instant::now();
                 let log2_dc = sa_log2_max_dc(inp, centre);
                 let skip = fc::series_skip_in_cancellable(
@@ -3169,6 +3172,7 @@ impl FractadyneApp {
             };
             let (tx, rx) = std::sync::mpsc::channel();
             spawn_named("fd-ref-lookahead", move || {
+                fractadyne_core::worker_priority::enter_background();
                 let _busy = crate::blinken::registry::busy(crate::blinken::registry::Role::Reference);
                 let origin = inputs.origin;
                 let tag = inputs.blinken;
@@ -3463,6 +3467,7 @@ impl FractadyneApp {
         }
         let (tx, rx) = std::sync::mpsc::channel();
         spawn_named("fd-ref-hold", move || {
+            fractadyne_core::worker_priority::enter_background();
             let _busy = crate::blinken::registry::busy(crate::blinken::registry::Role::Reference);
             let origin = inputs.origin;
             let tag = inputs.blinken;
@@ -9320,6 +9325,7 @@ impl FractadyneApp {
                     }
                     bl::emit(vi, bl::Kind::RefLaunch, bl::RefRole::Live as u32, bid, log2mag as f32);
                     spawn_named("fd-ref-live", move || {
+                        fractadyne_core::worker_priority::enter_background();
                         let _busy = crate::blinken::registry::busy(crate::blinken::registry::Role::Reference);
                         recompute_worker_staged(inputs, tx, progressive);
                     });
@@ -12216,6 +12222,37 @@ pub(crate) fn spawn_named<F: FnOnce() + Send + 'static>(name: &str, f: F) {
         .name(name.to_string())
         .spawn(f)
         .expect("failed to spawn thread");
+}
+
+/// Lower the calling thread's priority one step: the live view's reference work, so it cannot
+/// starve the UI thread and the driver's present work on a machine with few cores
+/// (`fractadyne_core::worker_priority`, installed at startup). Failure is ignored: the thread then
+/// runs at normal priority, as it did before.
+pub(crate) fn lower_this_thread_priority() {
+    #[cfg(windows)]
+    {
+        const THREAD_PRIORITY_BELOW_NORMAL: i32 = -1;
+        unsafe extern "system" {
+            fn GetCurrentThread() -> *mut std::ffi::c_void;
+            fn SetThreadPriority(thread: *mut std::ffi::c_void, priority: i32) -> i32;
+        }
+        // SAFETY: GetCurrentThread returns a pseudo-handle for the calling thread that needs no
+        // closing; SetThreadPriority only reads it.
+        unsafe {
+            SetThreadPriority(GetCurrentThread(), THREAD_PRIORITY_BELOW_NORMAL);
+        }
+    }
+    #[cfg(target_os = "linux")]
+    {
+        // Linux keeps a nice value per thread, addressed by its thread id. Raising it needs no
+        // privilege; five steps is about a third of the CPU share against a thread at 0.
+        // SAFETY: plain syscalls on the calling thread's own id.
+        unsafe {
+            let tid = libc::gettid() as libc::id_t;
+            let nice = libc::getpriority(libc::PRIO_PROCESS, tid);
+            libc::setpriority(libc::PRIO_PROCESS, tid, (nice + 5).min(19));
+        }
+    }
 }
 
 pub(crate) fn usable_sa_skip(skip: u32, max_iter: u32) -> u32 {

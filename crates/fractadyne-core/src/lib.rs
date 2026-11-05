@@ -43,6 +43,10 @@ pub mod feature;
 mod reference;
 pub use reference::*;
 
+/// Background standing for reference work done on the live view's behalf: below normal priority,
+/// passed on to every thread it spawns.
+pub mod worker_priority;
+
 mod fractal;
 
 /// The formula intermediate representation and its interpreters (design/custom-formulas.md).
