@@ -666,6 +666,14 @@ impl FractadyneApp {
                                 ui.close_menu();
                             }
                         });
+                        if ui
+                            .button(format!("{} {}", crate::icons::GALLERY, tr!(menu_color_browse)))
+                            .on_hover_text(tr!(menu_color_browse_hover))
+                            .clicked()
+                        {
+                            self.palette_browser.open = true;
+                            ui.close_menu();
+                        }
                         if ui.button(tr!(menu_color_edit_gradient)).clicked() {
                             // Only OPENS it: the editor starts from the gradient on screen, and
                             // takes its Cancel point first (`palette_editor_window`).

@@ -255,6 +255,83 @@ menu-color-normalize = Normalizar colores profundos
 menu-color-normalize-hover = Reasignar la paleta al rango de escape medido en la vista cuando un campo denso se vería, si no, como un moteado. Una vista sin aliasing se deja tal cual; marca «Ajustar siempre el rango» para reasignarla de todos modos. Solo con el método suave.
 menu-color-more = Ciclo, desplazamiento, animación y efectos: panel Controles ▸ Coloreado
 
+## Palette browser and palette tags
+
+# Color ▸ Browse palettes…, and its tooltip.
+menu-color-browse = Explorar paletas…
+menu-color-browse-hover = Todas las paletas sobre la vista actual, una junto a otra: fíltralas por etiqueta y etiqueta las tuyas.
+
+# The palette browser window.
+palette-browser-title = Paletas
+palette-browser-clear = Quitar filtros
+
+# Shown when the chosen filters leave no palette.
+palette-browser-none = Ninguna paleta tiene todas estas etiquetas.
+
+# The row of filters made of the tags the user gave their own gradients.
+palette-browser-yours = Tuyas
+
+# Above the tags of the palette in use. { $name } is the palette's name.
+palette-browser-tags-of = Etiquetas de { $name }
+
+# For a saved gradient: the button that adds what was typed as a tag, and the hint in the field.
+palette-browser-add-tag = Añadir etiqueta
+palette-browser-tag-hint = una palabra tuya
+
+# For a built-in palette, in place of the field.
+palette-browser-tags-builtin = Las paletas integradas conservan sus etiquetas. Elige uno de tus degradados guardados para etiquetarlo.
+
+# Before the view has drawn, or for a view thumbnails cannot show (Life, L-systems).
+palette-browser-no-view = La vista aún no se ha dibujado: las paletas se muestran como franjas.
+
+# Tooltip on a tag the user can remove.
+palette-browser-remove-tag = Quitar esta etiqueta
+
+# The groups of tags, one row of filters each.
+tag-group-color = Color
+tag-group-temperature = Temperatura
+tag-group-energy = Energía
+tag-group-brightness = Brillo
+tag-group-shape = Forma
+tag-group-theme = Tema
+tag-group-purpose = Propósito
+
+# Tags measured from a palette's colours: its colour families, warm or cool, how busy it is (calm, lively, frantic), its brightness, and its shape. Plural nouns for the families; the rest describe the palette.
+tag-reds = Rojos
+tag-oranges = Naranjas
+tag-yellows = Amarillos
+tag-greens = Verdes
+tag-blues = Azules
+tag-purples = Morados
+tag-pinks = Rosas
+tag-browns = Marrones
+tag-neutrals = Neutros
+tag-warm = Cálida
+tag-cool = Fría
+tag-calm = Tranquila
+tag-lively = Animada
+tag-frantic = Frenética
+tag-dark = Oscura
+tag-light = Clara
+tag-pastel = Pastel
+tag-vivid = Intensa
+tag-smooth = Suave
+tag-banded = En franjas
+tag-single-hue = Un solo tono
+tag-rainbow = Arcoíris
+
+# Tags given by hand: a theme, and the purpose (built to read the structure, or chosen for its looks).
+tag-holidays = Festividades
+tag-seasons = Estaciones
+tag-nature = Naturaleza
+tag-retro = Retro
+tag-art = Arte
+tag-materials = Materiales
+tag-science = Ciencia
+tag-food = Comida
+tag-analytical = Analítica
+tag-aesthetic = Estética
+
 ## Tools menu
 
 menu-tools = Herramientas
@@ -1294,6 +1371,7 @@ help-nav-minimap = Ver → «Minimapa» muestra un pequeño mapa de todo el conj
 help-options-intro = Todo esto está en el panel derecho (y se conserva entre sesiones).
 help-options-palette = Paleta
 help-options-palette-text = Paleta elige un degradado predefinido, tu paleta Personalizada o un modo de dos colores. «Editar degradado…» abre un editor en el que cada parada de color tiene un color y una posición (0–1); añade paradas, copia un preajuste como punto de partida o importa un archivo de paleta.
+help-options-palette-browser = Color ▸ Explorar paletas… (o el botón junto a la lista de paletas) muestra la vista en todas las paletas a la vez. Cada paleta tiene etiquetas: sus colores, cálida o fría, tranquila, animada o frenética, oscura o clara, suave o en franjas —medidas a partir de sus colores— y un tema y un propósito (analítica, pensada para leer la estructura, o estética), asignados a mano. Pulsa etiquetas para ver solo las paletas que las tienen todas. Debajo de las miniaturas, da a tus degradados guardados etiquetas propias.
 help-options-paste = «Pegar…», en el editor de degradados, importa una paleta que hayas encontrado en otra parte. Acepta colores hexadecimales con o sin # inicial (#ff8800, ff8800, o el corto #f80) y tríos RGB simples de 0 a 255 como «255 136 0» (el formato que usan los archivos .map de Fractint y Kalles Fraktaler), separados por comas, espacios o saltos de línea. Se conservan hasta 256 colores; una lista más larga se muestrea uniformemente hasta dejarla en 256, conservando el primero y el último para que se mantenga la forma del degradado.
 help-options-import-map = «Importar ▸ .map…», a su lado, carga un archivo de paleta .map de Fractint o Kalles Fraktaler. Son tablas de consulta indexadas por número de iteraciones, sin mezcla entre entradas, y los saltos de color bruscos que eso produce son la esencia del aspecto clásico de Fractint; por eso se importan así, con una casilla «Bandas duras» para mezclar esos mismos colores en un degradado suave. Los propios archivos de Fractint guardan valores de color de 6 bits multiplicados por cuatro, así que su blanco es 252 en lugar de 255; Fractadyne lo indica al importar uno y deja los valores exactamente como están escritos, porque las imágenes guardadas por el propio Fractint llevan ese mismo 252.
 help-options-duotone = Bitono asigna el valor a una rampa suave de dos colores (Sombra → Luz). Binario (conjunto) es una vista plana de dos colores (un color sólido para los puntos dentro del conjunto y otro para los de fuera, sin degradado): la forma más clara de ver la silueta del conjunto.

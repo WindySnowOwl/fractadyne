@@ -255,6 +255,83 @@ menu-color-normalize = Normalizza colori profondi
 menu-color-normalize-hover = Rimappare la tavolozza sull’intervallo di fuga misurato della vista quando un campo denso apparirebbe altrimenti come puntinatura. Una vista senza aliasing resta invariata — spuntare «Adatta sempre l’intervallo» per rimappare comunque. Solo con il metodo Iterazione continua.
 menu-color-more = Ciclo, offset, animazione ed effetti: pannello Controlli ▸ Colorazione
 
+## Palette browser and palette tags
+
+# Color ▸ Browse palettes…, and its tooltip.
+menu-color-browse = Sfoglia le tavolozze…
+menu-color-browse-hover = Tutte le tavolozze sulla vista attuale, una accanto all’altra: filtrale per etichetta ed etichetta le tue.
+
+# The palette browser window.
+palette-browser-title = Tavolozze
+palette-browser-clear = Azzera i filtri
+
+# Shown when the chosen filters leave no palette.
+palette-browser-none = Nessuna tavolozza ha tutte queste etichette.
+
+# The row of filters made of the tags the user gave their own gradients.
+palette-browser-yours = Tue
+
+# Above the tags of the palette in use. { $name } is the palette's name.
+palette-browser-tags-of = Etichette di { $name }
+
+# For a saved gradient: the button that adds what was typed as a tag, and the hint in the field.
+palette-browser-add-tag = Aggiungi etichetta
+palette-browser-tag-hint = una parola tua
+
+# For a built-in palette, in place of the field.
+palette-browser-tags-builtin = Le tavolozze integrate mantengono le loro etichette. Scegli uno dei tuoi gradienti salvati per etichettarlo.
+
+# Before the view has drawn, or for a view thumbnails cannot show (Life, L-systems).
+palette-browser-no-view = La vista non è ancora disegnata: le tavolozze sono mostrate come strisce.
+
+# Tooltip on a tag the user can remove.
+palette-browser-remove-tag = Rimuovi questa etichetta
+
+# The groups of tags, one row of filters each.
+tag-group-color = Colore
+tag-group-temperature = Temperatura
+tag-group-energy = Energia
+tag-group-brightness = Luminosità
+tag-group-shape = Forma
+tag-group-theme = Tema
+tag-group-purpose = Scopo
+
+# Tags measured from a palette's colours: its colour families, warm or cool, how busy it is (calm, lively, frantic), its brightness, and its shape. Plural nouns for the families; the rest describe the palette.
+tag-reds = Rossi
+tag-oranges = Arancioni
+tag-yellows = Gialli
+tag-greens = Verdi
+tag-blues = Blu
+tag-purples = Viola
+tag-pinks = Rosa
+tag-browns = Marroni
+tag-neutrals = Neutri
+tag-warm = Calda
+tag-cool = Fredda
+tag-calm = Tranquilla
+tag-lively = Vivace
+tag-frantic = Frenetica
+tag-dark = Scura
+tag-light = Chiara
+tag-pastel = Pastello
+tag-vivid = Intensa
+tag-smooth = Sfumata
+tag-banded = A bande
+tag-single-hue = Monocromatica
+tag-rainbow = Arcobaleno
+
+# Tags given by hand: a theme, and the purpose (built to read the structure, or chosen for its looks).
+tag-holidays = Festività
+tag-seasons = Stagioni
+tag-nature = Natura
+tag-retro = Rétro
+tag-art = Arte
+tag-materials = Materiali
+tag-science = Scienza
+tag-food = Cibo
+tag-analytical = Analitica
+tag-aesthetic = Estetica
+
 ## Tools menu
 
 menu-tools = Strumenti
@@ -1293,6 +1370,7 @@ help-nav-minimap = Visualizza → «Minimappa» mostra una piccola mappa dell’
 help-options-intro = Tutte queste opzioni si trovano nel pannello di destra (e restano da una sessione all’altra).
 help-options-palette = Tavolozza
 help-options-palette-text = Tavolozza sceglie un gradiente predefinito, quello Personalizzato o una modalità a due colori. «Modifica gradiente…» apre un editor in cui ogni punto di colore ha un colore e una posizione (0–1); si possono aggiungere punti, copiare un preset da cui partire, o importare un file di tavolozza.
+help-options-palette-browser = Colore ▸ Sfoglia le tavolozze… (o il pulsante accanto all’elenco delle tavolozze) mostra la vista in tutte le tavolozze insieme. Ogni tavolozza ha delle etichette: i suoi colori, calda o fredda, tranquilla, vivace o frenetica, scura o chiara, sfumata o a bande — misurate dai suoi colori — e un tema e uno scopo (analitica, fatta per leggere la struttura, o estetica), assegnati a mano. Fai clic sulle etichette per vedere solo le tavolozze che le hanno tutte. Sotto le miniature, dai ai tuoi gradienti salvati etichette tue.
 help-options-paste = «Incolla…» nell’editor dei gradienti importa una tavolozza trovata altrove. Accetta colori esadecimali con o senza # iniziale (#ff8800, ff8800, o la forma breve #f80) e semplici terne RGB 0–255 come «255 136 0» — il formato dei file .map di Fractint e di Kalles Fraktaler — separati da virgole, spazi o a capo. Si conservano fino a 256 colori; un elenco più lungo viene campionato uniformemente fino a 256, mantenendo il primo e l’ultimo così la forma del gradiente si conserva.
 help-options-import-map = «Importa ▸ .map…» lì accanto carica un file di tavolozza .map di Fractint o di Kalles Fraktaler. Sono tabelle di consultazione indicizzate dal numero di iterazioni, senza fusione tra le voci, e gli scalini netti di colore che ne risultano sono ciò di cui è fatto il classico aspetto di Fractint — per questo si importano così, con una casella «Fasce nette» per fondere invece gli stessi colori in un gradiente continuo. I file di Fractint memorizzano valori di colore a 6 bit moltiplicati per quattro, quindi il loro bianco è 252 invece di 255; Fractadyne lo segnala quando ne importa uno e lascia i valori esattamente come sono scritti, perché anche le immagini salvate da Fractint riportano lo stesso 252.
 help-options-duotone = Duotono mappa il valore su una rampa continua a due colori (Ombra → Luce). Binario (insieme) è una vista piatta a due colori — un colore pieno per i punti dentro l’insieme e un altro per quelli fuori, senza gradiente — il modo più chiaro per vedere la forma dell’insieme.

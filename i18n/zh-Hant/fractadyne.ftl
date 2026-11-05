@@ -251,6 +251,83 @@ menu-color-normalize = 正規化深層色彩
 menu-color-normalize-hover = 當密集的區域原本會看起來像斑點雜訊時，將調色盤重新對應到畫面量測到的逃逸範圍。不會混疊的畫面則維持原樣；勾選「一律貼合範圍」即可無條件重新對應。僅適用於平滑方法。
 menu-color-more = 循環、位移、動畫與效果：控制面板 ▸ 著色
 
+## Palette browser and palette tags
+
+# Color ▸ Browse palettes…, and its tooltip.
+menu-color-browse = 瀏覽調色盤…
+menu-color-browse-hover = 在目前檢視上並排顯示所有調色盤：可依標籤篩選，並為自己的調色盤加上標籤。
+
+# The palette browser window.
+palette-browser-title = 調色盤
+palette-browser-clear = 清除篩選
+
+# Shown when the chosen filters leave no palette.
+palette-browser-none = 沒有調色盤同時具有這些標籤。
+
+# The row of filters made of the tags the user gave their own gradients.
+palette-browser-yours = 我的標籤
+
+# Above the tags of the palette in use. { $name } is the palette's name.
+palette-browser-tags-of = { $name } 的標籤
+
+# For a saved gradient: the button that adds what was typed as a tag, and the hint in the field.
+palette-browser-add-tag = 新增標籤
+palette-browser-tag-hint = 自訂詞語
+
+# For a built-in palette, in place of the field.
+palette-browser-tags-builtin = 內建調色盤的標籤無法變更。要加上標籤，請選擇你儲存的漸層。
+
+# Before the view has drawn, or for a view thumbnails cannot show (Life, L-systems).
+palette-browser-no-view = 檢視尚未繪製：調色盤以色帶顯示。
+
+# Tooltip on a tag the user can remove.
+palette-browser-remove-tag = 移除此標籤
+
+# The groups of tags, one row of filters each.
+tag-group-color = 顏色
+tag-group-temperature = 冷暖
+tag-group-energy = 動感
+tag-group-brightness = 明暗
+tag-group-shape = 形態
+tag-group-theme = 主題
+tag-group-purpose = 用途
+
+# Tags measured from a palette's colours: its colour families, warm or cool, how busy it is (calm, lively, frantic), its brightness, and its shape. Plural nouns for the families; the rest describe the palette.
+tag-reds = 紅色系
+tag-oranges = 橙色系
+tag-yellows = 黃色系
+tag-greens = 綠色系
+tag-blues = 藍色系
+tag-purples = 紫色系
+tag-pinks = 粉色系
+tag-browns = 棕色系
+tag-neutrals = 中性色
+tag-warm = 暖色調
+tag-cool = 冷色調
+tag-calm = 平靜
+tag-lively = 活潑
+tag-frantic = 狂亂
+tag-dark = 暗色
+tag-light = 亮色
+tag-pastel = 粉彩
+tag-vivid = 鮮豔
+tag-smooth = 平滑
+tag-banded = 條帶
+tag-single-hue = 單一色相
+tag-rainbow = 彩虹
+
+# Tags given by hand: a theme, and the purpose (built to read the structure, or chosen for its looks).
+tag-holidays = 節日
+tag-seasons = 季節
+tag-nature = 自然
+tag-retro = 復古
+tag-art = 藝術
+tag-materials = 材質
+tag-science = 科學
+tag-food = 食物
+tag-analytical = 分析用
+tag-aesthetic = 觀賞用
+
 ## Tools menu
 
 menu-tools = 工具
@@ -1285,6 +1362,7 @@ help-nav-minimap = 「檢視 → 小地圖總覽」會顯示整個集合的小�
 help-options-intro = 這些設定全都在右側面板中（而且會在工作階段之間保留）。
 help-options-palette = 調色盤
 help-options-palette-text = 「調色盤」可選擇預設漸層、你的自訂漸層或雙色模式。「編輯漸層…」會開啟編輯器，其中每個色標都有色彩與位置（0–1）；你可以新增色標、複製一個預設集作為起點，或匯入調色盤檔。
+help-options-palette-browser = 色彩 ▸ 瀏覽調色盤…（或調色盤清單旁的按鈕）會同時以所有調色盤顯示目前檢視。每個調色盤都有標籤：它的顏色、暖色調或冷色調、平靜、活潑或狂亂、暗色或亮色、平滑或條帶（這些由顏色測得），以及手動指定的主題和用途（分析用，便於讀出結構；或觀賞用）。點選標籤可只顯示同時具有這些標籤的調色盤。在縮圖下方，可以為你儲存的漸層加上自己的標籤。
 help-options-paste = 漸層編輯器中的「貼上…」可匯入你在別處找到的調色盤。它接受開頭有或沒有 # 的十六進位色彩（#ff8800、ff8800，或簡寫的 #f80），以及單純的 0–255 RGB 三元組，例如「255 136 0」，也就是 Fractint 與 Kalles Fraktaler .map 檔案所用的格式，以逗號、空格或換行分隔。最多保留 256 個色彩；更長的清單會平均取樣成 256 個，並保留第一個與最後一個，讓漸層的形狀得以保留。
 help-options-import-map = 旁邊的「匯入 ▸ .map…」可載入 Fractint 或 Kalles Fraktaler 的 .map 調色盤檔。這類檔案是以疊代次數為索引的查找表，項目之間不混合，而由此產生的生硬色階，正是經典 Fractint 風格的組成；因此它們就是以這種方式匯入，並附有「硬邊色帶」核取方塊，可改將同樣的色彩混合成平滑的漸層。Fractint 本身的檔案儲存的是乘以四的 6 位元色彩值，因此它們的白色是 252 而不是 255；Fractadyne 在匯入時會說明這一點，並完全依原樣保留數值，因為 Fractint 本身儲存的影像也帶有同樣的 252。
 help-options-duotone = 「雙色調」將數值對應到平滑的雙色漸層（陰影 → 亮部）。「二元（集合）」是平面的雙色畫面：集合內的點用一種純色，集合外用另一種，沒有漸層，這是看清集合形狀最清楚的方式。

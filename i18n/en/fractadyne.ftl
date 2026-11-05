@@ -260,6 +260,83 @@ menu-color-normalize = Normalize deep colors
 menu-color-normalize-hover = Remap the palette to the view's measured escape range when a dense field would otherwise read as speckle. A view that does not alias is left alone — tick 'Always fit range' to remap regardless. Smooth method only.
 menu-color-more = Cycle, offset, animation and effects: Controls panel ▸ Coloring
 
+## Palette browser and palette tags
+
+# Color ▸ Browse palettes…, and its tooltip.
+menu-color-browse = Browse palettes…
+menu-color-browse-hover = Every palette over the current view, side by side: filter them by tag, and tag your own.
+
+# The palette browser window.
+palette-browser-title = Palettes
+palette-browser-clear = Clear filters
+
+# Shown when the chosen filters leave no palette.
+palette-browser-none = No palette has all of these tags.
+
+# The row of filters made of the tags the user gave their own gradients.
+palette-browser-yours = Yours
+
+# Above the tags of the palette in use. { $name } is the palette's name.
+palette-browser-tags-of = Tags of { $name }
+
+# For a saved gradient: the button that adds what was typed as a tag, and the hint in the field.
+palette-browser-add-tag = Add tag
+palette-browser-tag-hint = a word of your own
+
+# For a built-in palette, in place of the field.
+palette-browser-tags-builtin = Built-in palettes keep their tags. Choose one of your saved gradients to give it tags.
+
+# Before the view has drawn, or for a view thumbnails cannot show (Life, L-systems).
+palette-browser-no-view = The view has not drawn yet: palettes are shown as strips.
+
+# Tooltip on a tag the user can remove.
+palette-browser-remove-tag = Remove this tag
+
+# The groups of tags, one row of filters each.
+tag-group-color = Color
+tag-group-temperature = Temperature
+tag-group-energy = Energy
+tag-group-brightness = Brightness
+tag-group-shape = Shape
+tag-group-theme = Theme
+tag-group-purpose = Purpose
+
+# Tags measured from a palette's colours: its colour families, warm or cool, how busy it is (calm, lively, frantic), its brightness, and its shape. Plural nouns for the families; the rest describe the palette.
+tag-reds = Reds
+tag-oranges = Oranges
+tag-yellows = Yellows
+tag-greens = Greens
+tag-blues = Blues
+tag-purples = Purples
+tag-pinks = Pinks
+tag-browns = Browns
+tag-neutrals = Neutrals
+tag-warm = Warm
+tag-cool = Cool
+tag-calm = Calm
+tag-lively = Lively
+tag-frantic = Frantic
+tag-dark = Dark
+tag-light = Light
+tag-pastel = Pastel
+tag-vivid = Vivid
+tag-smooth = Smooth
+tag-banded = Banded
+tag-single-hue = Single hue
+tag-rainbow = Rainbow
+
+# Tags given by hand: a theme, and the purpose (built to read the structure, or chosen for its looks).
+tag-holidays = Holidays
+tag-seasons = Seasons
+tag-nature = Nature
+tag-retro = Retro
+tag-art = Art
+tag-materials = Materials
+tag-science = Science
+tag-food = Food
+tag-analytical = Analytical
+tag-aesthetic = Aesthetic
+
 ## Tools menu
 
 menu-tools = Tools
@@ -1296,6 +1373,7 @@ help-nav-minimap = View → "Minimap overview" shows a small map of the whole se
 help-options-intro = All of these live in the right-hand panel (and persist between sessions).
 help-options-palette = Palette
 help-options-palette-text = Palette chooses a preset gradient, your Custom one, or a two-color mode. Rest the pointer on a gradient in the list and the view shows it after a moment; it stays only if you choose it. "Edit gradient…" opens an editor on the gradient the view is showing, where each color stop has a color and a position (0–1); add stops, copy a preset to start from, or import a palette file. Cancel puts the palette back as it was.
+help-options-palette-browser = Color ▸ Browse palettes… (or the button beside the Palette list) shows the view in every palette at once. Each palette has tags: its colors, warm or cool, calm, lively or frantic, dark or light, smooth or banded — measured from its colors — and a theme and a purpose (analytical, built to read the structure, or aesthetic), given by hand. Click tags to see only the palettes that have all of them. Below the thumbnails, give your own saved gradients tags of their own.
 help-options-paste = "Paste…" in the gradient editor imports a palette you found elsewhere. It accepts hex colors with or without a leading # (#ff8800, ff8800, or the short #f80) and plain 0–255 RGB triples such as "255 136 0" — the format Fractint and Kalles Fraktaler .map files use — separated by commas, spaces or new lines. Up to 256 colors are kept; a longer list is sampled evenly down to 256, keeping the first and last so the gradient's shape survives.
 help-options-import-map = "Import ▸ .map…" beside it loads a Fractint or Kalles Fraktaler .map palette file. Those are lookup tables indexed by iteration count with no blending between entries, and the hard color steps that produces are what the classic Fractint look is made of — so that is how they import, with a "Hard bands" checkbox to blend the same colors into a smooth gradient instead. Fractint's own files store 6-bit color values multiplied by four, so their white is 252 rather than 255; Fractadyne says so when it imports one and leaves the values exactly as written, because Fractint's own saved images carry the same 252.
 help-options-duotone = Duotone maps the value to a smooth two-color ramp (Shadow → Highlight). Binary (set) is a flat two-color view — one solid color for points inside the set and another for outside, with no gradient — the clearest way to see the set's shape.

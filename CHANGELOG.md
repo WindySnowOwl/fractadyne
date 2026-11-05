@@ -68,6 +68,19 @@ Changes after 0.3.0-beta.1:
   the Day of the Dead's marigolds, papel picado and sugar-skull white. They follow the thirty
   presets, so views and sessions saved with an earlier palette open as before. A palette list now
   opens scrolled to the palette in use, which with fifty presets can be far down the list.
+- **A palette browser, and tags to find a palette by (0.3.0-beta.27).** Color ▸ Browse palettes…,
+  or the new button beside the panel's Palette list, shows the current view in every palette at
+  once, the built-in ones and your saved gradients, and opens on the palette in use. Resting the
+  pointer on a thumbnail previews it on the view and clicking chooses it, as in the lists. The
+  thumbnails are the view's own iterations recoloured, not rendered again, so they appear at once
+  at any depth and follow the view as it refines. Every palette has tags: its colours, warm or
+  cool, calm, lively or frantic, dark, light, pastel or vivid, smooth, banded, single-hue or
+  rainbow, all measured from the colours, so a gradient you saved or imported has them too; and a
+  theme (holidays, seasons, nature, retro, art, materials, science, food) and a purpose
+  (analytical, built to read the structure, or aesthetic), given by hand. Click tags to see only
+  the palettes that have all of them. A saved gradient takes tags of your own, typed or chosen,
+  kept in the gradient library. `--list-palettes` prints every built-in palette's id, name and
+  tags.
 - **Palettes are saved by name (0.3.0-beta.27).** A view file, an exported image and the session
   used to name the palette by its position in the list, so the list could only ever grow at its end.
   Each built-in palette now has a permanent id, such as `lunar-new-year`, and that is what is saved

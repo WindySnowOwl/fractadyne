@@ -300,6 +300,10 @@ impl FractadyneApp {
                                 self.coloring.use_duotone = false;
                             }
                         });
+                    // The palette browser: every palette over this view, side by side, by tag.
+                    if ui.small_button(crate::icons::GALLERY).on_hover_text(tr!(menu_color_browse_hover)).clicked() {
+                        self.palette_browser.open = true;
+                    }
                 });
                 if self.coloring.use_duotone || self.coloring.use_binary {
                     // Two shared colors. (Binary: interior/exterior; duotone: shadow/highlight.)

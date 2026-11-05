@@ -67,6 +67,7 @@ fn as_saved(g: &Gradient, name: &str) -> SavedGradient {
                 blend_params: s.blend.params(),
             })
             .collect(),
+        tags: Vec::new(),
     }
 }
 
@@ -98,6 +99,25 @@ fn a_saved_gradient_round_trips_through_toml_without_flattening() {
     assert_eq!(after.segments[1].blend, Blend::SphereIncreasing, "blend curve lost");
     assert_eq!(after.segments[2].space, Space::HsvCw, "hue sweep lost");
     assert!(!after.is_stop_expressible(), "the whole point is that stops could not hold this");
+}
+
+/// A saved gradient's own tags travel with it through the library file; a gradient with none writes
+/// no `tags` key at all, so the file an older build reads is the one it always read; and a library
+/// written before tags loads, with none.
+#[test]
+fn a_saved_gradients_tags_round_trip_and_cost_an_older_build_nothing() {
+    let mut tagged = as_saved(&rich(), "tagged");
+    tagged.tags = vec!["favourites".to_string(), "calm".to_string()];
+    let plain = as_saved(&rich(), "plain");
+    let text = toml::to_string_pretty(&GradientFile { gradient: vec![tagged, plain] }).expect("serialize");
+    let back: GradientFile = toml::from_str(&text).expect("deserialize");
+    assert_eq!(back.gradient[0].tags, ["favourites", "calm"]);
+    assert!(back.gradient[1].tags.is_empty());
+    assert_eq!(text.matches("tags").count(), 1, "only the tagged gradient writes the key:\n{text}");
+
+    let before_tags = "[[gradient]]\nname = \"old\"\n";
+    let old: GradientFile = toml::from_str(before_tags).expect("a library from before tags loads");
+    assert!(old.gradient[0].tags.is_empty());
 }
 
 /// ⚠**The control.** The assertion above is only meaningful if flattening would actually be
