@@ -155,6 +155,10 @@ fn main() -> eframe::Result<()> {
     // Crash/hang visibility (design/diagnostics.md D1): log file, panic hook, watchdog.
     // Before run_headless so even the pre-GUI CLI modes get crash reports.
     diag::init(&args);
+    // The live view's reference work runs below normal priority, and every thread it spawns with
+    // it (`fractadyne_core::worker_priority`): on an 8-thread CPU, two lookahead picks at once left
+    // the frames at the end of a zoom waiting 20-57 ms to present.
+    fractadyne_core::worker_priority::install(render::lower_this_thread_priority);
     // ⭐ARBITRARY-PRECISION BACKEND (`--bignum auto|astro|rug`, or FRACTADYNE_BIGNUM).
     //
     // Chosen here — after logging exists, before ANY mode runs — so a headless `--render`, a

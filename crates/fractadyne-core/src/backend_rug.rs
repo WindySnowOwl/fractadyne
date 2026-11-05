@@ -362,9 +362,13 @@ impl ParProducts {
                 self.0.store(true, std::sync::atomic::Ordering::Release);
             }
         }
+        let standing = crate::worker_priority::current();
         std::thread::scope(|s| {
             for w in 1..self.jobs.len() {
-                s.spawn(move || self.worker(w));
+                s.spawn(move || {
+                    standing.adopt();
+                    self.worker(w)
+                });
             }
             let _stop = Stop(&self.stop);
             f(self)
@@ -707,9 +711,13 @@ impl ParSplit {
                 self.0.store(true, std::sync::atomic::Ordering::Release);
             }
         }
+        let standing = crate::worker_priority::current();
         std::thread::scope(|s| {
             for w in 1..SPLIT_THREADS {
-                s.spawn(move || self.worker(w));
+                s.spawn(move || {
+                    standing.adopt();
+                    self.worker(w)
+                });
             }
             let _stop = Stop(&self.stop);
             f(self)
@@ -1551,9 +1559,11 @@ pub(crate) fn try_series_skip_walk(
     let (mut zx, mut zy) = (zero(ctx), zero(ctx));
     // Pipelined by the astro walk's rule, with its constants (see `series_skip_astro_piped`).
     let best = if narrow && limit >= crate::reference::SA_PIPELINE_MIN_STEPS {
+        let standing = crate::worker_priority::current();
         std::thread::scope(|s| {
             let (tx, rx) = std::sync::mpsc::sync_channel(crate::reference::SA_PIPELINE_DEPTH);
             s.spawn(move || {
+                standing.adopt();
                 for _ in 0..limit {
                     let step = z_step(&mut zx, &mut zy);
                     let escaped = step.2;
