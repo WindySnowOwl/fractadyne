@@ -80,8 +80,14 @@ unaffected. To produce it on Windows:
 
 ```powershell
 .\scripts\build-accelerated.ps1 -Deps    # prints the exact prerequisites
-.\scripts\build-accelerated.ps1          # builds, verifies, and packages it
+.\scripts\build-accelerated.ps1          # builds, verifies, packages and installs it
 ```
+
+The package lands in `dist\` under its version's name, and is then mirrored into one fixed
+folder, `%LOCALAPPDATA%\Programs\Fractadyne` (`-InstallDir` to choose another, `-NoInstall` to
+skip), so the build to run is always in the same place; `installed.txt` there names it. If
+Fractadyne is running from that folder the install is refused (Windows will not replace a running
+exe); close it and run `.\scripts\build-accelerated.ps1 -InstallOnly`.
 
 It needs the **GNU** Rust toolchain plus MSYS2, because MPFR does not build under MSVC —
 which is the whole reason it ships as a separate download rather than a feature flag on the
