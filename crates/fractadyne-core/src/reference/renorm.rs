@@ -25,7 +25,7 @@
 //! holding, and a pixel that never leaves within the cap never escapes.
 //!
 //! **Which `L`.** Any index where the orbit comes back near 0: a new minimum of `|Z_n|`. A
-//! minibrot-centred reference has its own period there (`|Z_p| ≈ 0`, `RefC ≈ 0`), and a tuned
+//! minibrot-centered reference has its own period there (`|Z_p| ≈ 0`, `RefC ≈ 0`), and a tuned
 //! minibrot inside another also has its parent's period (the orbit nearly returns every 953
 //! iterations inside the period-953 minibrot). The longest usable one wins.
 //!

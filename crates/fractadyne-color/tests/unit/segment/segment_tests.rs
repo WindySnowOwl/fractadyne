@@ -7,7 +7,7 @@ fn approx(a: [f32; 4], b: [f32; 4], tol: f32, what: &str) {
     }
 }
 
-/// A two-stop linear gradient is the plain lerp everyone expects, midpoint centred.
+/// A two-stop linear gradient is the plain lerp everyone expects, midpoint centered.
 #[test]
 fn linear_segment_is_a_lerp() {
     let g = Gradient::from_stops("t", &[(0.0, [0.0; 3]), (1.0, [1.0; 3])]);
@@ -18,7 +18,7 @@ fn linear_segment_is_a_lerp() {
 }
 
 /// ⭐The midpoint moves where the blend reaches 50% WITHOUT adding a stop — GIMP's model, and the
-/// thing a plain stop list cannot express. A midpoint at 0.25 must put mid-grey a quarter of the
+/// thing a plain stop list cannot express. A midpoint at 0.25 must put mid-gray a quarter of the
 /// way across, and must still be exactly 0.5 there.
 #[test]
 fn midpoint_shifts_the_halfway_point() {
@@ -152,7 +152,7 @@ fn hsv_segments_sweep_the_hue_wheel() {
     approx(mk(Space::Rgb).eval(1.0 / 3.0), [1.0, 0.0, 0.0, 1.0], 1e-6, "rgb third");
 }
 
-/// Round-tripping RGB through HSV must not move a colour, or every HSV segment endpoint drifts.
+/// Round-tripping RGB through HSV must not move a color, or every HSV segment endpoint drifts.
 #[test]
 fn hsv_round_trips() {
     for c in [
@@ -183,7 +183,7 @@ fn map_bands_survive_the_bake() {
     assert!(g.is_flat(), "a band gradient must report itself flat");
     let lut = g.bake(LUT_SIZE);
     assert!(!lut.smooth, "a flat gradient must bake to a nearest-fetch LUT");
-    // 1024 / 256 = 4 entries per band, and all four carry the band's colour exactly.
+    // 1024 / 256 = 4 entries per band, and all four carry the band's color exactly.
     for band in 0..256usize {
         for k in 0..4usize {
             let e = lut.entries[band * 4 + k];
@@ -199,10 +199,10 @@ fn map_bands_survive_the_bake() {
 
 /// ⭐**Acceptance criterion 2 from `design/palette-import.md` §4, as a test**: the LUT's error
 /// against the gradient it came from must SHRINK as the LUT grows. If it does not, the difference
-/// is a bug in the bake, not quantisation — and re-blessing the goldens would enshrine it.
+/// is a bug in the bake, not quantization — and re-blessing the goldens would enshrine it.
 #[test]
 fn bake_error_shrinks_with_lut_size() {
-    // Kinks at awkward positions, so stop boundaries do NOT land on entry centres. Seamless ends
+    // Kinks at awkward positions, so stop boundaries do NOT land on entry centers. Seamless ends
     // (both black) because the LUT fetch WRAPS: a non-seamless palette gets a legitimate one-entry
     // ramp across the t = 1 / t = 0 seam, which would dominate this metric and hide the thing it
     // is trying to measure.
@@ -239,7 +239,7 @@ fn bake_error_shrinks_with_lut_size() {
 fn smooth_flag_follows_the_segments() {
     assert!(Gradient::from_stops("s", &[(0.0, [0.0; 3]), (1.0, [1.0; 3])]).bake(64).smooth);
     assert!(!Gradient::from_bands("b", &[[0.0; 3], [1.0; 3]]).bake(64).smooth);
-    // A single-colour palette IS flat — binary/duotone-style palettes must not be smoothed.
+    // A single-color palette IS flat — binary/duotone-style palettes must not be smoothed.
     assert!(!Gradient::from_stops("one", &[(0.3, [0.7, 0.8, 0.9])]).bake(64).smooth);
     // Mixed: one band plus one ramp is not flat, so it stays interpolated.
     let mixed = Gradient {
@@ -253,9 +253,9 @@ fn smooth_flag_follows_the_segments() {
     assert!(mixed.bake(64).smooth);
 }
 
-/// ⚠Stops that do not reach the ends clamp to the nearest endpoint colour. The old shader walk
-/// fell back to the FIRST stop's colour past the LAST stop — a wrap no one asked for and the one
-/// behaviour change in this layer that is visible without a LUT.
+/// ⚠Stops that do not reach the ends clamp to the nearest endpoint color. The old shader walk
+/// fell back to the FIRST stop's color past the LAST stop — a wrap no one asked for and the one
+/// behavior change in this layer that is visible without a LUT.
 #[test]
 fn partial_coverage_clamps_to_the_ends() {
     let g = Gradient::from_stops("t", &[(0.25, [1.0, 0.0, 0.0]), (0.75, [0.0, 0.0, 1.0])]);
@@ -284,19 +284,19 @@ fn degenerate_gradients_are_survivable() {
     assert_eq!(s.eval(5.0), [1.0, 1.0, 1.0, 1.0]);
     // A zero-length LUT never panics on sample.
     assert!(Lut { entries: vec![], smooth: true }.sample(0.5).iter().all(|v| v.is_finite()));
-    // Sampling wraps rather than clamping, so a cycled palette has no seam artefact at t = 1.
+    // Sampling wraps rather than clamping, so a cycled palette has no seam artifact at t = 1.
     let lut = s.bake(8);
     assert_eq!(lut.sample(1.25), lut.sample(0.25));
 }
 
-/// A colour list with no positions spreads evenly, ends included.
+/// A color list with no positions spreads evenly, ends included.
 #[test]
 fn colors_spread_evenly() {
     let g = Gradient::from_colors("t", &[[0.0; 3], [0.5; 3], [1.0; 3]]);
     approx(g.eval(0.0), [0.0, 0.0, 0.0, 1.0], 1e-6, "start");
     approx(g.eval(0.5), [0.5, 0.5, 0.5, 1.0], 1e-6, "middle");
     approx(g.eval(1.0), [1.0, 1.0, 1.0, 1.0], 1e-6, "end");
-    // One colour is a flat gradient, not an error.
+    // One color is a flat gradient, not an error.
     approx(Gradient::from_colors("one", &[[0.2, 0.4, 0.6]]).eval(0.9), [0.2, 0.4, 0.6, 1.0], 1e-6, "single");
 }
 
@@ -322,7 +322,7 @@ fn presets_convert_to_contiguous_gradients() {
             p.name
         );
         // The baked table must agree with the stop walk it replaces, away from the kinks and the
-        // hard edges (two stops at one position: either colour is right exactly there).
+        // hard edges (two stops at one position: either color is right exactly there).
         for (pos, c) in p.stops {
             let edge = p.stops.iter().filter(|(q, _)| q == pos).count() > 1;
             if *pos > 0.02 && *pos < 0.98 && !edge {
@@ -343,7 +343,7 @@ fn presets_convert_to_contiguous_gradients() {
 
 /// ⭐**Rotating a gradient rotates a RING, not a strip.** A segment that ends up straddling the
 /// t = 1 / t = 0 seam must be SPLIT and both halves kept: sorting alone would drop the far half and
-/// leave a flat clamp where colour used to be.
+/// leave a flat clamp where color used to be.
 #[test]
 fn rotation_splits_the_straddling_segment() {
     let g = Gradient::from_stops("t", &[(0.0, [0.0; 3]), (1.0, [1.0; 3])]);
@@ -357,7 +357,7 @@ fn rotation_splits_the_straddling_segment() {
     for w in r.segments.windows(2) {
         assert!((w[0].right - w[1].left).abs() < 1e-6, "gap at the split");
     }
-    // The colour that was at 0 is now at 0.25 (probed just past, since black->white is not
+    // The color that was at 0 is now at 0.25 (probed just past, since black->white is not
     // seamless and 0.25 is a genuine discontinuity).
     assert!(r.eval(0.26)[0] < 0.05, "the ramp's dark end did not move to 0.25");
     assert!(r.eval(0.24)[0] > 0.95, "the ramp's bright end did not wrap to just below 0.25");
@@ -389,7 +389,7 @@ fn stops_round_trip_through_segments() {
     for (a, b) in back.iter().zip(&stops) {
         assert!((a.0 - b.0).abs() < 1e-6, "position {a:?} vs {b:?}");
         for ch in 0..3 {
-            assert!((a.1[ch] - b.1[ch]).abs() < 1e-6, "colour {a:?} vs {b:?}");
+            assert!((a.1[ch] - b.1[ch]).abs() < 1e-6, "color {a:?} vs {b:?}");
         }
     }
     // Rebuilding from the round-tripped stops gives the same gradient.
@@ -411,7 +411,7 @@ fn stops_round_trip_through_segments() {
 /// ⭐A hard jump survives the stop round trip as a DUPLICATE POSITION. The app persists a custom
 /// palette as stops, so without this a rotated (or otherwise discontinuous) gradient would come
 /// back from a restart with its edge smoothed into a ramp — silently, and only visible as "the
-/// colours look softer than when I imported them".
+/// colors look softer than when I imported them".
 #[test]
 fn a_hard_jump_round_trips_as_a_duplicate_position() {
     let g = Gradient {
@@ -448,7 +448,7 @@ fn a_hard_jump_round_trips_as_a_duplicate_position() {
 }
 
 /// ⭐**`factor` is the curve the editor's preview draws**, so it must BE the function `eval` uses —
-/// not a second implementation that can drift. Checked by reconstructing a colour from the factor
+/// not a second implementation that can drift. Checked by reconstructing a color from the factor
 /// and requiring it to match what `eval` produced.
 #[test]
 fn the_exposed_factor_is_the_one_eval_uses() {
@@ -461,7 +461,7 @@ fn the_exposed_factor_is_the_one_eval_uses() {
     ] {
         let seg = Segment {
             left: 0.2,
-            mid: 0.45, // off-centre, so a wrong normalisation would show
+            mid: 0.45, // off-center, so a wrong normalization would show
             right: 0.8,
             left_color: [0.0, 0.25, 1.0, 1.0],
             right_color: [1.0, 0.75, 0.0, 1.0],
@@ -498,9 +498,9 @@ fn the_exposed_factor_is_the_one_eval_uses() {
 }
 
 /// ⭐⭐**The hue-undefined warning fires exactly when the trap applies.** An HSV segment with an
-/// unsaturated endpoint sweeps the whole wheel, because `rgb_to_hsv` reports hue 0 for greys — a
+/// unsaturated endpoint sweeps the whole wheel, because `rgb_to_hsv` reports hue 0 for grays — a
 /// black→red segment goes through green. RGB segments are never affected, and a segment between two
-/// saturated colours is doing what the user asked.
+/// saturated colors is doing what the user asked.
 #[test]
 fn the_hue_undefined_warning_fires_only_where_it_applies() {
     let seg = |lc: [f32; 4], rc: [f32; 4], space| Segment {
@@ -520,7 +520,7 @@ fn the_hue_undefined_warning_fires_only_where_it_applies() {
         // ⚠The same endpoints in RGB are perfectly ordinary — the warning is about the SPACE.
         assert!(!seg(lc, rc, Space::Rgb).hue_undefined_endpoint(), "{why} in RGB must not warn");
     }
-    // Two saturated colours in HSV is the intended use, not a trap.
+    // Two saturated colors in HSV is the intended use, not a trap.
     assert!(!seg(RED, BLUE, Space::HsvCcw).hue_undefined_endpoint());
     // And the measured consequence is real: black -> red really does pass through green.
     let g = Gradient { name: "t".into(), segments: vec![seg(BLACK, RED, Space::HsvCcw)] };
@@ -558,7 +558,7 @@ fn the_bezier_ease_is_a_well_behaved_function() {
     }
 }
 
-/// ⭐**The identity has to be EXACT**, in both parameterisations, or "convert this linear segment
+/// ⭐**The identity has to be EXACT**, in both parameterizations, or "convert this linear segment
 /// to an editable curve" would move pixels the moment it was pressed — and this phase is supposed
 /// to be zero-drift until a user deliberately bends something.
 #[test]
@@ -573,7 +573,7 @@ fn the_identity_bezier_is_exactly_linear() {
 }
 
 /// ⚠**`y` is deliberately NOT clamped by the ease** — an overshooting curve is the point of
-/// letting the handles leave the box — but the COLOUR must still be in gamut. The clamp lives in
+/// letting the handles leave the box — but the COLOR must still be in gamut. The clamp lives in
 /// `Segment::eval`, and this pins both halves of that split.
 #[test]
 fn overshoot_survives_the_factor_and_is_clamped_at_the_colour() {
@@ -681,7 +681,7 @@ fn fitting_a_bezier_is_exact_for_linear_and_close_for_the_rest() {
         assert!((swept - worst).abs() < 0.01, "{b:?}: reported {worst}, swept {swept}");
         worst
     };
-    assert!(worst_of(Blend::Curved) < 1.0e-4, "Curved at a centred midpoint IS a cubic - exact");
+    assert!(worst_of(Blend::Curved) < 1.0e-4, "Curved at a centered midpoint IS a cubic - exact");
     assert!(worst_of(Blend::Sine) < 0.01, "Sine is very close to a cubic");
     // ⭐The spheres have a VERTICAL TANGENT at one end and no cubic with finite control points
     // does, so this error is structural. Bounded from BOTH sides: too small would mean the fit
@@ -777,9 +777,9 @@ fn seamlessness_is_detected_and_can_be_forced() {
     // bit-identically `b` — measured 0.19999999 against 0.2. The seam is closed to well within the
     // 1/255 the renderer can express; demanding bit-equality here would be testing f32, not the
     // feature.
-    approx(fixed.eval(1.0), fixed.eval(0.0), 1.0e-6, "the two ends must now be the same colour");
+    approx(fixed.eval(1.0), fixed.eval(0.0), 1.0e-6, "the two ends must now be the same color");
 
-    // ⚠**The END moved, not the start.** Position 0 is where a preset's defining colour sits;
+    // ⚠**The END moved, not the start.** Position 0 is where a preset's defining color sits;
     // pulling the start toward the end would change the gradient's identity to fix its join.
     assert_eq!(fixed.eval(0.0), g.eval(0.0), "the start must be untouched");
     assert_ne!(fixed.eval(1.0), g.eval(1.0), "the end must be the thing that moved");
@@ -935,7 +935,7 @@ fn a_hostile_name_cannot_forge_the_file() {
 
 /// ⭐⭐**Promoting to Bézier must be invisible, and it must know when to refuse.**
 ///
-/// ⚠⚠**The refusal is the important half.** `Blend::Linear` with an OFF-CENTRE midpoint is
+/// ⚠⚠**The refusal is the important half.** `Blend::Linear` with an OFF-CENTER midpoint is
 /// piecewise linear with a kink, and no cubic reproduces a kink — promoting one would silently
 /// reshape somebody's segment. Those keep `Linear`.
 #[test]
@@ -944,16 +944,16 @@ fn promoting_linear_segments_to_bezier_changes_nothing_and_skips_the_kinked_ones
         "t",
         &[(0.0, [0.0, 0.0, 0.0]), (0.35, [0.9, 0.1, 0.2]), (0.7, [0.2, 0.6, 0.9]), (1.0, [1.0; 3])],
     );
-    // A curved segment and an off-centre linear one, neither of which may be touched.
+    // A curved segment and an off-center linear one, neither of which may be touched.
     g.segments[1].blend = Blend::Sine;
     let s = g.segments[2];
     g.segments[2].mid = s.left + 0.2 * (s.right - s.left);
     let before = g.clone();
 
     g.promote_linear_to_bezier();
-    assert_eq!(g.segments[0].blend, Blend::Bezier(BEZIER_IDENTITY), "a centred linear must promote");
+    assert_eq!(g.segments[0].blend, Blend::Bezier(BEZIER_IDENTITY), "a centered linear must promote");
     assert_eq!(g.segments[1].blend, Blend::Sine, "a named curve must be left alone");
-    assert_eq!(g.segments[2].blend, Blend::Linear, "an off-centre linear has a KINK — leave it");
+    assert_eq!(g.segments[2].blend, Blend::Linear, "an off-center linear has a KINK — leave it");
 
     // ⭐The whole point: the picture does not move. Compared bit-for-bit, because the identity
     // ease is answered exactly rather than solved — which is what makes this safe to do at all.
@@ -976,7 +976,7 @@ fn ember_lut() -> Lut {
 }
 
 /// The box floor equals the point sample: a footprint of one texel or less must be exactly
-/// `sample`, so a barely-undersampled pixel colours identically to today (no seam where the
+/// `sample`, so a barely-undersampled pixel colors identically to today (no seam where the
 /// filter turns on). Verified algebraically (a 1-texel box == the two-tap lerp); pin it.
 #[test]
 fn palette_box_at_texel_floor_equals_sample() {

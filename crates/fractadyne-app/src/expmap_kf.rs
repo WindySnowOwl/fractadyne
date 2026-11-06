@@ -67,7 +67,7 @@ pub(crate) fn kf_count(n: u32, nf: f32, t: f32, p: f64, c: (f64, f64)) -> (u64, 
     } else {
         (n, z_log2, p * angle / TAU)
     };
-    // NF = 1 − log_p(ln|z|/ln ER), the logs' base cancelling; in [0, 1) up to rounding.
+    // NF = 1 − log_p(ln|z|/ln ER), the logs' base canceling; in [0, 1) up to rounding.
     let frac = (1.0 - (at_log2 / er_log2).ln() / p.ln()) as f32;
     let frac = if frac >= 1.0 { 1.0 - f32::EPSILON / 2.0 } else { frac.max(0.0) };
     let mut phase = turns.rem_euclid(1.0) as f32;
@@ -83,7 +83,7 @@ pub(crate) struct KfStrip<'a> {
     pub(crate) k: u64,
     /// The formula's power (2 for Mandelbrot, 3-8 for Multibrot 3-8).
     pub(crate) power: f64,
-    /// The dive's centre: only for `T`'s step back past `c`, where an f64 is ample.
+    /// The dive's center: only for `T`'s step back past `c`, where an f64 is ample.
     pub(crate) centre: (f64, f64),
 }
 

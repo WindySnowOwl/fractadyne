@@ -31,7 +31,7 @@ most editors; sections are the `##` headings the items live under.
 | - | 1 | RX 6800 XT under Linux (Mesa RADV): df32 and floatexp disagree on 4–6% of pixels — dig in … | Open bugs | 917 |
 | - | 1 | T2a. Derive BLA level-0 in-shader. `a = 2Z_n`, `b = one`, `r = |2Z_n|·eps`, `span = 1`, all … | Open bugs | 3907 |
 | - | 1 | Runtime EFT / fused-fma capability probe that derates mode thresholds. Buried in a … | Open bugs | 3983 |
-| - | 1 | PR-B1. Period-synchronised LA stages — retargets T2c, absorbs T2a and T2b. Our own … | Performance & throughput (M7) | 9315 |
+| - | 1 | PR-B1. Period-synchronized LA stages — retargets T2c, absorbs T2a and T2b. Our own … | Performance & throughput (M7) | 9315 |
 | - | 1 | PR-B2. A native in-place bignum kernel for the standard build. Most users run … | Performance & throughput (M7) | 9328 |
 | - | 1 | PR-B3. Adaptive supersampling at settle — the "DE-adaptive anti-aliasing" backlog item. | Performance & throughput (M7) | 9338 |
 | - | 1 | PR-B4. A lattice-aligned tile pyramid with a RAM tile cache — `design/xaos-reuse.md` … | Performance & throughput (M7) | 9344 |
@@ -122,10 +122,10 @@ most editors; sections are the `##` headings the items live under.
 | PR-C6. Split orbit and tree bindings; 8-byte orbit samples. Raises the orbit cap past … | Performance & throughput (M7) | 9454 |
 | PR-C7. Temporal accumulation during slow motion. Needs PR-B4's lattice. M. | Performance & throughput (M7) | 9457 |
 | PR-C8. Second-order BLA. One report: 21× at 2.8e40, from a single pull request … | Performance & throughput (M7) | 9458 |
-| PR-C9. Foveation during motion (the zoom centre as the fovea): a modest gain in motion, … | Performance & throughput (M7) | 9460 |
+| PR-C9. Foveation during motion (the zoom center as the fovea): a modest gain in motion, … | Performance & throughput (M7) | 9460 |
 | PR-C10. An NTT with transform reuse for the complex square, above ~100k bits. 1.5–3× … | Performance & throughput (M7) | 9462 |
 | PR-C11. The precision cascade (Level 3 below), with the literature's ceiling. The cost … | Performance & throughput (M7) | 9465 |
-| One reference per zoom sequence (offline tours) — a zoom toward a fixed centre uses … | Performance & throughput (M7) | 9507 |
+| One reference per zoom sequence (offline tours) — a zoom toward a fixed center uses … | Performance & throughput (M7) | 9507 |
 | Level 3 (research): precision-cascade with parallel residuals — run the serial chain at … | Performance & throughput (M7) | 9530 |
 | By-keyframe distribution once exponential-map export lands — one keyframe per factor … | Performance & throughput (M7) | 9614 |
 | GPU-assisted reference-candidate scoring (the practical "bignum on GPU"). Full GPU bignum … | Performance & throughput (M7) | 9633 |
@@ -137,7 +137,7 @@ most editors; sections are the `##` headings the items live under.
 - [x] ✅⭐⭐**DONE beta.128 — THE SCATTERED-GATHER PASS LANDED; CORRECTION IS NO LONGER THE
   DOMINANT COST.** `fs_iterate_gather` renders a tiny ceil(sqrt(N))-wide texture whose texel *i*
   takes its pixel coordinate from a storage-buffer list instead of from the rasterizer, driving the
-  SAME kernel (`iterate_at`, extracted verbatim out of `fs_iterate`) on the same texel-centre
+  SAME kernel (`iterate_at`, extracted verbatim out of `fs_iterate`) on the same texel-center
   coordinate. **Measured on this box, same session, A/B against the stashed pre-change build:**
 
   | scene | correction before | after | whole render |
@@ -219,7 +219,7 @@ most editors; sections are the `##` headings the items live under.
   (c) minor, still true: `current_export_request_for` is called THREE times per render
   (`main.rs` ≈ 3995, `render.rs` ≈ 2020, ≈ 2205), each re-scoring 101 reference candidates.
   ✅**"Is it just OVER-DETECTION?" ANSWERED — no.** 489 pixels are flagged at 1.3e6× but the
-  corrected and `--no-glitch` renders differ in **197 pixels with a mean colour delta of 224**
+  corrected and `--no-glitch` renders differ in **197 pixels with a mean color delta of 224**
   (max 250) — real, visibly-wrong pixels, not false positives. Detection is ~2.5× conservative,
   which is harmless. ⭐So the economics are settled: **0.7 s uncorrected vs 9.9 s corrected, to
   repair 197 px of 2,073,600.** Correction is NECESSARY and its implementation is ~4,000× more
@@ -266,7 +266,7 @@ most editors; sections are the `##` headings the items live under.
   else in the four-day window disturbed anything the corpus covers. The same run also proves
   the beta.124/126/127 export-chunking work is pixel-neutral across the whole depth range.
   ⚠Still worth an eye if it ever recurs: deep bookmarks/screenshots saved in that window are
-  the only artefacts the corpus cannot vouch for. Original item:
+  the only artifacts the corpus cannot vouch for. Original item:
 - [x] ~~**Audit what else the `+∞` magnification demotion broke while it was live**
   (2026-08-17 → beta.125, four days). Every view past ~1e308× rendered in Direct mode with no
   reference orbit — blank frames — in the LIVE view as well as exports (7 production call
@@ -352,7 +352,7 @@ Ordered by how fast a stranger hits them.
    band were the two couplings that blocked this, and beta.49/50 dissolved the second). Selftest
    `Live budget / explicit iteration count honoured verbatim` pins it end to end (10,000,000 in →
    `params.max_iter` 10,000,000 out; before: ~2,800). Side effect, deliberate: tour keyframes'
-   `max_iter` is now honoured immediately too — the grand tour's holds run at the script's exact
+   `max_iter` is now honored immediately too — the grand tour's holds run at the script's exact
    asks (e72 at 1,200,000 where boost-climbing gave 647,464) with byte-identical outcomes
    (livetest 0 drifted on both tours), boost ×1.00 at every scripted hold.
 2. **A GPU without `TIMESTAMP_QUERY` renders at ~1/3 resolution forever — FIXED
@@ -398,7 +398,7 @@ Ordered by how fast a stranger hits them.
    the next tag** — workflows fire only at the user's request.
 6. **Real-hardware validation** on the new rig, across the swappable GPUs — this is where (2) and
    the orbit-cap differences surface. ✅**The Linux machine is AVAILABLE as of 2026-08-09**, so this
-   is unblocked and waiting on the Windows build stabilising first (the user's sequencing). Highest
+   is unblocked and waiting on the Windows build stabilizing first (the user's sequencing). Highest
    value once it starts: the no-`TIMESTAMP_QUERY` path is no longer theoretical — `IterTiming` is
    absent on the GL backend and on several Mesa/RADV/ANV combinations, and the beta.47 wall-clock
    fallback and settled-resolution invariant have only ever been exercised there via
@@ -424,7 +424,7 @@ Ordered by how fast a stranger hits them.
 11. **Fresh-install smoke test** — ✅RUN 2026-08-09 (beta.51): wiped config dir, booted, verified
     classic home view (session records center (-0.5, 0) at classic zoom), all menus present,
     responsive, clean exit writes a valid session. ⚠A PrintWindow capture of the wgpu surface can
-    show the view composited off-centre — capture artefact (endemic DWM), the session/viewport is
+    show the view composited off-center — capture artifact (endemic DWM), the session/viewport is
     correct; don't chase it from screenshots alone.
 12. ✅**DONE 2026-08-15 — support mailbox live, confirmed by the user before switching.**
     `REPORT_EMAIL` is now `feedback@fractadyne.org` (was a personal address), which is the
@@ -480,7 +480,7 @@ Ordered by how fast a stranger hits them.
   mouse can no longer take over the presentation. The grand tour's orbit chapter was rewritten as
   a three-stop narrative — INSIDE the period-3 bulb (the orbit closes into a clean 3-cycle), ON the
   boundary (a dense tangle that neither cycles nor escapes), OUTSIDE (it spirals out and leaves the
-  frame) — with the point INTERPOLATED between them, so the path visibly reorganises as c crosses
+  frame) — with the point INTERPOLATED between them, so the path visibly reorganizes as c crosses
   the boundary. Verified in the OFFLINE twin (`stamp_orbit`) by rendering the chapter: all three
   read exactly as intended. ⚠Each stop needed a `hold`: the first cut used `hold = 0` waypoints and
   the camera was already flying to the next location by the time the escape stop rendered.
@@ -506,7 +506,7 @@ Ordered by how fast a stranger hits them.
   2026-08-14) — **FIXED beta.100**. New interpolated `dual_split` keyframe field (left-panel
   fraction, clamped to the same `DUAL_SPLIT_MIN..MAX` the divider drag uses — now one pair of
   constants shared by the drag, the session restore and the script, so a script cannot reach a
-  state the viewer cannot drag back out of). Honoured in BOTH paths: live playback sets it per
+  state the viewer cannot drag back out of). Honored in BOTH paths: live playback sets it per
   frame (deliberately without invalidating references — the split is presentation, not geometry,
   and rebuilding a deep orbit on every frame of a sliding divider would be a stall), and the
   offline renderer derives the right panel from the left so the two widths always sum to the
@@ -519,7 +519,7 @@ Ordered by how fast a stranger hits them.
   renderer ignores the live value entirely: `scripting.rs` splits the frame at
   `let half = (width / 2).max(1)`, so a rendered tour can never match what playback showed. Work:
   add an interpolated `dual_split` keyframe field (same 0.15..0.85 clamp, `(inherit)` default, plus
-  a `SchemaField` entry so `--script-schema` documents it), honour it in both the live dual path
+  a `SchemaField` entry so `--script-schema` documents it), honor it in both the live dual path
   and the offline `s.dual` branch (two widths, not one `half` — mind that `stitch_side_by_side`
   and the odd-pixel case both need the two panel widths to sum to `width`), and demonstrate it in
   the grand tour's dual chapter by widening the Julia panel as the pinned c slides. ⚠A script that
@@ -625,7 +625,7 @@ Ordered by how fast a stranger hits them.
         to the time axis rather than scanlines. ("Interleaved" and "coarse-to-fine" are accurate
         alternates; "Progressive" reads most clearly to a non-specialist.)
       - **Scheduling.** Emit frame indices as: all keyframe times (snapped to frame indices),
-        then a max-gap bisection queue (repeatedly split the widest rendered-neighbour interval at
+        then a max-gap bisection queue (repeatedly split the widest rendered-neighbor interval at
         its midpoint). Naturally yields the powers-of-two refinement (½, ¼+¾, ⅛…) between each
         keyframe pair.
       - **Muxing caveat.** The out-of-order frames must still be written to their correct
@@ -816,14 +816,14 @@ Mockups: [design/mockups/](design/mockups/).
   `7450f7d0`): on PLUTO, uncapped, the RTX 3070 and the RX 6800 XT both PASS (budget 7.8e10 at the
   click, series dropped at +2.7 / +2.9 octaves, slowest pass 4.4 / 32.8 ms). Original report, "A
   2-OCTAVE ZOOM STEP AT 2^1214 LEFT THE VIEW'S SCALE NaN" (the user's log, 2026-10-25,
-  session started 16:42:57 UTC, build 5604). Steps of exactly 2.0000 octaves about the centre, one
+  session started 16:42:57 UTC, build 5604). Steps of exactly 2.0000 octaves about the center, one
   every ~0.35 s with no glide (`⚠JUMP view 0: 2^1206.4690 → 2^1208.4690`, … `→ 2^1214.4690` at
   +4669.054 s, a key or toolbar zoom), each rebuilding a 6,330-sample reference; 0.2 s after the
   last, `⚠UNUSABLE VIEW after the autopilot: pane 0 scale m=NaN e=0` (the guard's stage name: the
   autopilot was off). The guard restored 2^1214.47 and the NaN came back (+4674, +4679 s); at
   +4680.9 s the view was at 1× (`arithmetic mode 2 → 1 … mag 2^0.0`): Home with a NaN scale SNAPS
   (`zoom_home` reads `NaN.max(1.0).ln() = 0`, "already home" → `reset_view`). Not reproduced;
-  first step: the same 2-octave steps from ~2^1200 on that kind of centre, and find which
+  first step: the same 2-octave steps from ~2^1200 on that kind of center, and find which
   operation turns the scale NaN (`FloatExp` at upp ~2^-1225 should not). Its knock-on — Home at
   the deep reference's 6,330 iterations — is fixed (next item).
 
@@ -899,7 +899,7 @@ Mockups: [design/mockups/](design/mockups/).
   2026-10-12 while testing U46 on `feat/w2-admission`). `--motiontest` with
   `FRACTADYNE_NO_TIMESTAMPS=1` fails A2, "no complete refresh was adopted during motion — detail
   stopped streaming (the option-B freeze shape)", on the RTX 3080: twice on the dev.1 field build
-  (main's behaviour, `08e6635`) and on the branch before and after U46, so it is pre-existing. It
+  (main's behavior, `08e6635`) and on the branch before and after U46, so it is pre-existing. It
   affects any adapter without `TIMESTAMP_QUERY`, or whose timestamps never arrive (the wall-clock
   fallback then stands in; the zoomtest and the budget trap still pass there). First thing to
   check, not yet verified: a moving refresh is adopted only when priced by its own GPU timestamp
@@ -923,7 +923,7 @@ Mockups: [design/mockups/](design/mockups/).
   wrong, both backends fail.
   ⭐**What the probe found** (`--selftest --selftest-filter fe-df32-probe`, CI precheck run
   35992723256, output `probe-linux-20260924-064816.txt` on the share): all 320 sampled differing
-  pixels are STEEP (a neighbour flips interior/exterior or jumps >2) and none are smooth; there the
+  pixels are STEEP (a neighbor flips interior/exterior or jumps >2) and none are smooth; there the
   bignum oracle agrees with NEITHER path about 90% of the time (df32 only 6 / 11, floatexp only 7 /
   9, neither 147 / 140). The smooth control is 40/40 for both paths. So it is not one path's defect.
   **Open question:** does RADV render ill-conditioned pixels WORSE than the 3080, or only
@@ -955,7 +955,7 @@ Mockups: [design/mockups/](design/mockups/).
   a shallow view ran 140× the iterations it needed and showed a FLAT frame while it ground
   (verified 2026-09-17).** This is what `--uitest` step 30 (`live-df32-1e6`) had been failing on
   every run, on every build **including the released beta.106** — it had been reported as "the
-  known pre-existing failure" for weeks and was a real defect, not a harness artefact.
+  known pre-existing failure" for weeks and was a real defect, not a harness artifact.
   ⭐**The measurement.** The step jumps the live view to the canonical Seahorse point
   (`-0.743643887037158704752191506114774 + 0.131825904205311970493132056385139i`) at **1e6×** on
   the adaptive budget. The app settles on **`eff_iter` 1,004,384** with `orbit_len` 1,012,577 and
@@ -965,9 +965,9 @@ Mockups: [design/mockups/](design/mockups/).
   demand; the offline frame costs **139 s at 640×400** where 5,000 iterations costs 0.2 s.
   ⭐**The mechanism, and it is a one-line reading.** `boost_seed_from_reference(ref_len, cap) =
   clamp(ref_len / cap, 1, ITER_BOOST_MAX)` seeds the boost from the REFERENCE ORBIT'S LENGTH, on
-  the argument that "no pixel can outrun the orbit". True — but a reference whose centre does not
+  the argument that "no pixel can outrun the orbit". True — but a reference whose center does not
   ESCAPE has a length equal to the build target, not to anything the pixels need, and a deep-zoom
-  landmark centre is by construction on the boundary. Here `zoom_iter_cap(19.93) = 2000 + 19.93 ×
+  landmark center is by construction on the boundary. Here `zoom_iter_cap(19.93) = 2000 + 19.93 ×
   256 = 7,102` and the seed lands at `1,012,577 / 7,102 = 142.6` (under the 256 ceiling), so
   **budget = 7,102 × 142.6 ≈ the reference length itself**: 1,004,384 ≈ 1,012,577. The two
   numbers agreeing to 1% IS the bug.
@@ -1053,10 +1053,10 @@ Mockups: [design/mockups/](design/mockups/).
 
 - [x] ✅**DONE (audit 2026-10-12):** P4′ Bézier kind 5 (0.2.41-beta.33), eyedropper (beta.34), `.ggr` export 771fcdc (beta.39); OkLab, per-channel curves and alpha are deferred by choice. — ▶⭐⭐**PARAMETRIC GRADIENT EDITING — P1, P2 and P3′ SHIPPED; ▶P4′ (Bézier kind 5) IS NEXT.**
   Plan, traps and phases are in **`design/gradient-curves.md`** §8, and the **editor redesign that
-  shipped as P3′ is §9** — including the five decisions P4′ has to honour; read both first.
+  shipped as P3′ is §9** — including the five decisions P4′ has to honor; read both first.
 
   ⭐⭐**The finding that sizes the job: the ENGINE IS ALREADY PARAMETRIC, the EDITOR IS NOT.**
-  Per-segment blend curve, colour space and midpoint already evaluate, bake to the LUT, persist
+  Per-segment blend curve, color space and midpoint already evaluate, bake to the LUT, persist
   (`PaletteSegment`) and are gated end to end by `.ggr` import — but the only way a user reaches any
   of it is importing a `.ggr` someone else authored. The editor edits `[pos,r,g,b]` and CLEARS
   `custom_segments` on every edit. This is UI on a finished engine plus one data-model decision.
@@ -1073,7 +1073,7 @@ Mockups: [design/mockups/](design/mockups/).
   ✅**P1 DONE (2026-09-05) — ZERO DRIFT, MEASURED.** `custom_segments` is the source of truth; the
   editor's rows are a VIEW of segment boundaries and every edit goes through a segment operation
   (`set_stop_color` / `set_stop_position` / `insert_stop` / `remove_stop`) that preserves the blend,
-  colour space and midpoint FRACTION of every segment it does not remove. Legacy sessions migrate
+  color space and midpoint FRACTION of every segment it does not remove. Legacy sessions migrate
   on load; `custom_gradient`'s stop/band branches stay as a deliberate SAFETY NET for render-only
   paths (`--palette-*` exits before an editor exists).
   ⭐**Acceptance met in full**: four palette paths (`.map` bands, `.map` smoothed, `.ugr`, `.ggr`)
@@ -1081,18 +1081,18 @@ Mockups: [design/mockups/](design/mockups/).
   **173/173 + 18/18**; F3 corpus **38/38 maxD 0**; **no re-bless**. `segment/edit_tests.rs` (8 new,
   color crate 54→62) pins the zero-drift contract directly — every op equals what `from_stops`
   would give for the edited stop list.
-  ⚠**Two behaviours the migration would have broken, caught in review**: the *Hard bands* checkbox
+  ⚠**Two behaviors the migration would have broken, caught in review**: the *Hard bands* checkbox
   flipped a flag nothing read any more (UI responds, picture does not — the exact failure the
   source-of-truth change exists to end), and *Add stop* did nothing on a fresh session. Both fixed;
   Add stop now splits the WIDEST segment rather than a fixed 0.5, which cannot silently no-op.
 
   1. ✅**Segment-native model** — `custom_segments` becomes the source of truth, stops a derived view.
-     ⚠The MIGRATION is the risky half, not the maths. Acceptance: an old stop-only session renders
+     ⚠The MIGRATION is the risky half, not the math. Acceptance: an old stop-only session renders
      **byte-identically**, selftest 173/173 + 18/18, corpus 38/38, **NO re-bless**.
   2. ✅**DONE beta.29 — expose what exists.** One row per SEGMENT: blend combo, space combo,
      midpoint (as a FRACTION of the span, GIMP semantics), and a preview drawing the REAL curve via
      the newly exposed `Segment::factor` — so the preview cannot drift from what renders, and the
-     two non-midpoint-symmetric sphere curves are drawn honestly. ⭐**The HSV-from-a-grey trap is
+     two non-midpoint-symmetric sphere curves are drawn honestly. ⭐**The HSV-from-a-gray trap is
      surfaced**: `Segment::hue_undefined_endpoint` puts a ⚠ on any HSV segment with an unsaturated
      end, explaining that the sweep starts at red and crosses the whole wheel. A warning, not a
      restriction — the effect is legitimate. Also an empty-state hint, since a fresh session has no
@@ -1108,7 +1108,7 @@ Mockups: [design/mockups/](design/mockups/).
      stop rows and curve rows could only be aligned by counting). Shipped as the **A+B hybrid** —
      draggable stop strip · a segment RIBBON (one cell per segment, the real factor curve, click to
      select) · the selected segment magnified into a canvas with a draggable midpoint ring and a
-     strip of its own colours — **sharing ONE x-axis**; ⚠the RIBBON was later made equal-width
+     strip of its own colors — **sharing ONE x-axis**; ⚠the RIBBON was later made equal-width
      (beta.44) because proportional cells make a sub-pixel segment unreachable; stop list collapsed to the
      SELECTED stop; imports behind `Import ▾`; cap 24→32; width capped at 496 pt.
      ⭐**Zero drift measured**: selftest 173/173 + 18/18, corpus 38/38 maxD 0, no re-bless.
@@ -1142,8 +1142,8 @@ Mockups: [design/mockups/](design/mockups/).
      fact: a midpoint is ONE-DIMENSIONAL by construction** (it says *when* the blend reaches
      halfway) and clamped to 0.02–0.98, so there is nothing for a vertical drag to mean and it
      stops dead at the ends. Two degrees of freedom = kind 5. ⇒ *a UI complaint can be a request
-     for a model that does not exist yet.* All five §9.4 decisions honoured (kind 5 IGNORES `mid`,
-     pinned with a control; two handles; x clamped, y free, COLOUR clamped in `eval` — a no-op for
+     for a model that does not exist yet.* All five §9.4 decisions honored (kind 5 IGNORES `mid`,
+     pinned with a control; two handles; x clamped, y free, COLOR clamped in `eval` — a no-op for
      kinds 0–4, which is what keeps zero drift; solver at BAKE time only).
      ⭐⭐**Two guard assertions failed and both were load-bearing**: the two-point interpolating fit
      let the error reach 0.15 on a sphere (least squares, still closed form, → 0.136), and the first
@@ -1152,19 +1152,19 @@ Mockups: [design/mockups/](design/mockups/).
      MEASURED error per kind — exact / 0.003 / 0.14 — not one flat "approximate".
      ✅**§4 trap 5 discharged**: LUT error re-measured on four steep cubics, still shrinks with
      table size, 1024 still enough. ⚠Switching away from Bézier and back RE-FITS (params ride in
-     the enum variant). Also beta.33: **hex + 0–255 beside every colour swatch**, editable on the
+     the enum variant). Also beta.33: **hex + 0–255 beside every color swatch**, editable on the
      selected stop. Gates green, ZERO DRIFT.
   4c. ✅**SCREEN EYEDROPPER — DONE beta.34** (`eyedropper.rs`). A **Pick** button beside the stop's
-     colour samples any pixel on the DESKTOP, not just our window — the colours people want come
+     color samples any pixel on the DESKTOP, not just our window — the colors people want come
      from a photo or another program. Raw Win32 FFI following `sysinfo.rs`
      (`GetCursorPos`/`GetDC(0)`/`GetPixel` + `GetAsyncKeyState`, because while picking the pointer
      is over another app and egui sees no input at all).
      ⭐⭐**`armed` is why it is a state machine**: the click that STARTS the pick is still down on
-     the first poll, so "commit while down" grabs the colour of the dropper button itself.
+     the first poll, so "commit while down" grabs the color of the dropper button itself.
      ⭐⭐**A `COLORREF` is `0x00bbggrr`** — the same BGR trap as `.ugr`, pinned with red/blue/green
      and an asymmetric value. ⚠`CLR_INVALID` is otherwise a legal-looking white, so an unsampleable
      click CANCELS rather than painting the stop white. ⭐**The full-screen overlay is the INPUT
-     GUARD**, not decoration: without it the OS click that takes the colour would ALSO reach
+     GUARD**, not decoration: without it the OS click that takes the color would ALSO reach
      whatever egui widget is underneath.
      ⚠⚠**Windows only and it SAYS SO** (disabled + reason elsewhere): X11 needs a dependency,
      Wayland needs a portal. ⚠A sample costs **~8 ms** (measured), nearly all in GetDC/ReleaseDC —
@@ -1175,19 +1175,19 @@ Mockups: [design/mockups/](design/mockups/).
      a user sets a curve. ⚠**Kind 5 IGNORES `mid`** (else two knobs for one shape and the handles
      lie) — needs a test, since `mid` still persists. ⚠Kinds 0–4 are not Béziers: handles hidden
      plus an explicit "Convert to editable curve" that says it approximates. ⚠Clamp x to [0,1],
-     allow y overshoot and clamp at the COLOUR not the factor. ⭐The `x(u)=t` solve is BAKE-TIME
+     allow y overshoot and clamp at the COLOR not the factor. ⭐The `x(u)=t` solve is BAKE-TIME
      only (1024×/bake, 0×/pixel) — no solver in the shader.
   5. **`.ggr` export** + round-trip property test; kinds ≥5 approximate and MUST SAY SO.
 
-  ⭐⭐**ZERO DRIFT IS THE ACCEPTANCE CRITERION for P1–P3**: `Linear`/`Rgb`/centred is the default and
+  ⭐⭐**ZERO DRIFT IS THE ACCEPTANCE CRITERION for P1–P3**: `Linear`/`Rgb`/centered is the default and
   is exactly what `from_stops` already produces. If goldens or the corpus move, a DEFAULT moved —
   that is a bug, not a bless. (The last two palette changes each cost a re-bless conversation.)
 
-  ⚠**Traps carried forward** (all grounded in §4 of the doc): ⭐⭐**HSV from a GREY sweeps the whole
+  ⚠**Traps carried forward** (all grounded in §4 of the doc): ⭐⭐**HSV from a GRAY sweeps the whole
   wheel** — `rgb_to_hsv` returns hue 0 for anything unsaturated and equal hues take a FULL turn, so
   a measured **black→red** segment is **GREEN in the middle** (21/65 samples green-dominant); the
   editor must show it · blend/space numbers are a FILE FORMAT, **append only** · midpoint is
-  normalised WITHIN the segment · the two sphere curves are NOT midpoint-symmetric (0.866 at
+  normalized WITHIN the segment · the two sphere curves are NOT midpoint-symmetric (0.866 at
   halfway) so a preview must draw the REAL function · ⚠⚠**no harness drives drag** ⇒ split the
   widget so hit-test/clamp/order/insert/delete are PURE tested functions · ⚠the LUT
   error-shrinks-with-size evidence was taken on LINEAR gradients — re-measure on a curve-heavy one.
@@ -1201,7 +1201,7 @@ Mockups: [design/mockups/](design/mockups/).
   - 🔎 **Audit 2026-10-12:** `.map`, `.ugr`, `.ggr`, `.ase` and the LUT shipped (beta.23–27), self-test checks (beta.28). Still open: a Fractint side-by-side for `.map` index mapping and a real `.ase` file; `.cs` declined.
 
   ✅**SHIPPED beta.23**: the segment model (`fractadyne-color/src/segment.rs`), the 1024-entry
-  bake, and the GPU change — the palette is a storage buffer at colour binding 3, both `ColorU`
+  bake, and the GPU change — the palette is a storage buffer at color binding 3, both `ColorU`
   definitions moved together, and the ≤8-stop shader walk is deleted. ✅**SHIPPED beta.24**: `.map`
   import (`import.rs`), the gradient editor's **Import .map…** + *Hard bands* checkbox, and
   **`--palette-map FILE`** / **`--palette-map-smooth`** for scripted verification.
@@ -1214,16 +1214,16 @@ Mockups: [design/mockups/](design/mockups/).
   they swap, and the result still looks like a plausible palette, which is how that bug survives a
   review. ⚠`rotation=` is APPLIED but its DIRECTION is unverified against UF itself (pinned by
   `ugr_rotation_shifts_the_ring`, so a correction is one sign change plus one test edit);
-  `smooth=yes` is RECORDED but NOT honoured — UF's smooth mode is a spline through the control
+  `smooth=yes` is RECORDED but NOT honored — UF's smooth mode is a spline through the control
   points, not a per-segment blend function, and gnofract4d imports linearly for the same reason.
   ⚠Our `/255` vs gnofract4d's `/256` means our import reaches pure white and theirs does not.
 
   ✅**SHIPPED beta.26**: `.ggr` import — **the only importer that loses NOTHING**, because a `.ggr`
-  segment IS a model segment. Per-segment midpoint, blend curve and colour space all arrive
+  segment IS a model segment. Per-segment midpoint, blend curve and color space all arrive
   verbatim. Editor **Import .ggr…** + **`--palette-ggr FILE`**.
   ⭐⭐**The HSV sweep is verified AT THE PIXEL with a one-integer control**: the same file rendered
-  with colouring column `1` (HSV ccw) vs `0` (RGB), identical red endpoints — **810 distinct
-  colours vs 4**. Both 13- and 15-column forms load; the `Name:` line is optional (GIMP 1.x).
+  with coloring column `1` (HSV ccw) vs `0` (RGB), identical red endpoints — **810 distinct
+  colors vs 4**. Both 13- and 15-column forms load; the `Name:` line is optional (GIMP 1.x).
   ⚠**A `+`-prefixed compressed continuation is REJECTED BY NAME, not guessed at** — §2 of the
   design doc mentions one but it was never confirmed against a real file or a working parser.
   ⭐⭐**This forced a NEW SESSION FIELD, `custom_segments`**, which WINS over `custom_palette` when
@@ -1239,8 +1239,8 @@ Mockups: [design/mockups/](design/mockups/).
   BYTES — `read_to_string` rejects it).
   ⚠⚠**UNVERIFIED AGAINST A REAL FILE** — the only importer written from the published layout rather
   than a real file or a working parser, because none was to hand. Deliberately STRICT as
-  compensation (signature, block lengths and colour model must all agree) so a disagreeing file
-  FAILS LOUDLY rather than importing plausible wrong colours. ⭐**The first real `.ase` anyone
+  compensation (signature, block lengths and color model must all agree) so a disagreeing file
+  FAILS LOUDLY rather than importing plausible wrong colors. ⭐**The first real `.ase` anyone
   imports is the actual test.** ⚠The unit fixtures are BUILT FROM THE SAME UNDERSTANDING as the
   parser, so they prove consistency, not correctness — stated in the test module.
   ⚠**LAB is REFUSED, not converted** (needs a white point + adaptation the file does not carry); a
@@ -1255,19 +1255,19 @@ Mockups: [design/mockups/](design/mockups/).
   check is not a gate because it does not run again. `--selftest` is **170 → 173**:
   `map-bands-are-exact` (0 off-palette pixels; smoothed control has >3× the levels),
   `ugr-color-is-bgr` (each render's own channel leads by 2×, BOTH ways round),
-  `ggr-colour-space-is-per-segment` (hue sweep yields >10× the distinct colours of the RGB
+  `ggr-colour-space-is-per-segment` (hue sweep yields >10× the distinct colors of the RGB
   reading). ⭐⭐**Each is a CONTROL PAIR** — the same file with ONE field changed — because the naive
-  form of each cannot fail: "the .map render has few colours" is also true of a smoothed dark
+  form of each cannot fail: "the .map render has few colors" is also true of a smoothed dark
   palette. ⭐**All three VERIFIED RED** by mutating their three mechanisms (flat flag off, BGR read
   as RGB, space forced to Rgb): 5→253 levels with 32,854 off-palette, r/b exactly swapped,
-  1533→4 colours. ⚠`.ase` is NOT covered — its own format is unverified, so a render check would
+  1533→4 colors. ⚠`.ase` is NOT covered — its own format is unverified, so a render check would
   only confirm our parser agrees with itself.
 
   ✅**CHECKLIST ROWS ADDED (2026-09-05)** — the eyes-and-hands half, since a selftest cannot open a
   file dialog or judge a swatch. `release-checklist.xlsx` is **124 → 131 steps** (81 full / **38**
   partial / **12** manual+process). Steps **59–65**, all in Coloring: the editor's preview bar vs
-  the RENDER (the beta.23 gamma fix removed the mechanism, but "same colour?" is still an eye
-  judgement) · `.map` import + the Hard-bands toggle · ⭐the §7 **Fractint side-by-side**, `manual`,
+  the RENDER (the beta.23 gamma fix removed the mechanism, but "same color?" is still an eye
+  judgment) · `.map` import + the Hard-bands toggle · ⭐the §7 **Fractint side-by-side**, `manual`,
   with BLOCKED a legitimate outcome · the `.ugr` picker · the `.ggr` "Convert to editable stops"
   flow · ⭐loading a **REAL `.ase`** (the format's actual test; a rejection is a result worth
   reporting). The four `partial:` claims resolve to the beta.28 selftest checks — verified by
@@ -1321,10 +1321,10 @@ Mockups: [design/mockups/](design/mockups/).
   correct** — never before, or the gate becomes a rubber stamp. Acceptance criteria for that
   re-bless are in §4 of the design doc; the short version is that the delta must be small,
   concentrated at stop boundaries, and must SHRINK when the LUT is enlarged (bake at 1024 and
-  4096 and compare — if the error does not fall, it is a bug, not quantisation).
+  4096 and compare — if the error does not fall, it is a bug, not quantization).
 
   Order of work:
-  1. **Segment model** on the CPU (`left`, `mid`, `right`, RGBA ends, blend fn, colour space) —
+  1. **Segment model** on the CPU (`left`, `mid`, `right`, RGBA ends, blend fn, color space) —
      GIMP's model, which is a superset of `.map`, `.ugr`, `.ggr` and swatch lists. No GPU.
   2. **Bake to a 1024-entry LUT**, and route presets + the editor through it.
   3. **The GPU change** — ⚠**both `ColorU` definitions together**, the live one in
@@ -1337,10 +1337,10 @@ Mockups: [design/mockups/](design/mockups/).
   ⭐**Settled already, do not re-litigate**: stops are **DISPLAY-referred**, measured — importers
   target that space (`srgb8_to_stop`), not linear. `.map` is a LUT with **no** interpolation, so
   its segments bake FLAT or the banding that defines the Fractint look is smoothed away. `.ugr`
-  packs colour as **BGR** over a **0–399** index. Fractint's values are 6-bit ×4, so white is
+  packs color as **BGR** over a **0–399** index. Fractint's values are 6-bit ×4, so white is
   **252, not 255**.
   ⚠**Licensing**: importing a user's own `.map` raises nothing; EMBEDDING Fractint's table in the
-  repo is redistribution under the Stone Soup licence and needs a decision. Import-first sidesteps
+  repo is redistribution under the Stone Soup license and needs a decision. Import-first sidesteps
   it, which is another reason the order above starts where it does.
 
 - [ ] 🟠**MOVING THE WINDOW BETWEEN MONITORS WITH DIFFERENT SCALING RESIZES IT ERRATICALLY AND
@@ -1379,7 +1379,7 @@ Mockups: [design/mockups/](design/mockups/).
   the handful of rows no machine can check. It was caught by the user instead.
 
 - [x] ✅⭐⭐**`--render-iter` DESTROYED ITS OWN PAYLOAD — fixed 2026-09-04.** "Export raw iteration
-  data (EXR) instead of a colored image" wrote through `write_exr`, the COLOUR writer, whose
+  data (EXR) instead of a colored image" wrote through `write_exr`, the COLOR writer, whose
   `srgb_to_linear` **clamps to [0, 1]**. The R channel is the smooth iteration count — hundreds of
   thousands — so every pixel clamped to 1.0 and `srgb_to_linear(1.0) = 1.0` left the channel a
   **constant**. Measured before the fix on a 1e30× render: R was 1.0 at all 65,536 pixels,
@@ -1389,14 +1389,14 @@ Mockups: [design/mockups/](design/mockups/).
   ⭐**A raw channel that reads back as a constant is indistinguishable from a renderer that
   computed nothing**, which is why this sat unnoticed in a feature whose whole purpose is
   cross-tool comparison. Fix = `write_exr_raw` (verbatim, no clamp, no transfer curve) used by
-  `render_iter_to_file`; the three genuine colour exports keep `write_exr`, where the transform is
+  `render_iter_to_file`; the three genuine color exports keep `write_exr`, where the transform is
   correct and deliberate. Regression test `exr_raw_writes_data_verbatim_including_out_of_range_values`
   is mutation-verified: point it at `write_exr` and it fails `value 0 changed: 1 != 600008`.
   ⚠This also means **any past `--render-iter` output is worthless** — and it is the intended
   instrument for the raw-channel EXR / zoomasm work and for F3 per-channel comparison, so those
   items were resting on a broken tool.
 
-- [x] ⛔⭐**THE SMOOTH ITERATION COUNT IS AN ABSOLUTE f32, QUANTISED TO 16 LEVELS AT DEPTH —
+- [x] ⛔⭐**THE SMOOTH ITERATION COUNT IS AN ABSOLUTE f32, QUANTIZED TO 16 LEVELS AT DEPTH —
   AND THE IMPACT IS MEASURED FALSE** (measured 2026-09-04, now that `--render-iter` works).
   `smit = f32(iter) + 1.0 - nu` goes into the iterate texture's R channel as an absolute value,
   and the palette position is `smit × cycle + offset`. f32 has a 24-bit significand, so the
@@ -1411,11 +1411,11 @@ Mockups: [design/mockups/](design/mockups/).
   Every escaped pixel there lies between 890,252 and 1,599,980 — the whole image sits in the band
   where the fraction has 16 steps. (`aux_pack` takes `frac` but only to blend the stripe/TIA
   averages, so `smit` is the sole carrier of position.) Exactly at `--iter 10000000`, which the
-  selftest pins as honoured verbatim, ulp reaches 1.0 and the fraction is gone entirely —
-  smooth colouring is then arithmetically impossible.
+  selftest pins as honored verbatim, ulp reaches 1.0 and the fraction is gone entirely —
+  smooth coloring is then arithmetically impossible.
   ⛔⭐⭐**IMPACT MEASURED FALSE 2026-09-05 — the arithmetic is real, the consequence is not, and
   this should NOT be "fixed".** The visual question is settled by one number: **how far a
-  quantisation step spans on screen**, i.e. the SPATIAL gradient of `smit`. Measured on the same
+  quantization step spans on screen**, i.e. the SPATIAL gradient of `smit`. Measured on the same
   loc-15 dump:
 
   | | |δsmit| between adjacent pixels |
@@ -1425,13 +1425,13 @@ Mockups: [design/mockups/](design/mockups/).
   | 99th percentile | 321,007 |
   | **smoothest 16×16 patch in the frame** | **71.3** |
 
-  The quantisation step there is **0.125**. Even in the smoothest patch the field moves **570×
+  The quantization step there is **0.125**. Even in the smoothest patch the field moves **570×
   further per pixel** than one step, and at the 1st percentile still 212×. A plateau needs at
   least a pixel to be seen; these are ~0.002 px wide. **There is no room for a band.**
   ⭐The regime that could revive it needs |δsmit| per pixel to approach 0.1 *while* `smit` sits at
   ~1e6 — and those fight each other: reaching a million iterations means hugging the boundary,
-  which is exactly where the field is steepest. At this location the colouring is limited by
-  ALIASING (744 iterations between neighbours — the confetti/Nyquist regime `--normalize` and the
+  which is exactly where the field is steepest. At this location the coloring is limited by
+  ALIASING (744 iterations between neighbors — the confetti/Nyquist regime `--normalize` and the
   log scale exist for), not by f32.
   ⛔**Deliberately not applying the relative-base fix.** It has no measured benefit, and this repo
   has already paid for that once: the mode-0 rebase-underflow "fix" was equally well-argued, also
@@ -1560,7 +1560,7 @@ Mockups: [design/mockups/](design/mockups/).
   ⭐**The reporter's own Performance panel carries the proof**: `SA skip 266,796` against
   `eff iter 224,000` — the skip is PAST the entire budget. The shader seeds `iter = iu.sa_skip`
   and then runs `loop { if (iter >= iu.max_iter) { break; } … }`, so the loop breaks on entry,
-  every pixel exits with `iter >= max_iter`, is classified max-iter-exhausted, and colours as
+  every pixel exits with `iter >= max_iter`, is classified max-iter-exhausted, and colors as
   INTERIOR. The frame is black by construction.
 
   ⭐**Why toggling auto-scale triggers it**: the skip is computed against the REFERENCE's orbit
@@ -1589,9 +1589,9 @@ Mockups: [design/mockups/](design/mockups/).
 - [x] ✅⭐⭐**FIXED 2026-08-30 — PANNING FROM THE MINIMAP LEFT RECTANGULAR BLOCKS OF STALE IMAGE.**
   Root cause: `draw_minimap`'s pan and zoom moved the viewport but never marked the view
   INTERACTING (its `jump` branch did; the other two did not). The settle key is
-  `(orbit_id, gpu_iter, view_gen, resolution, settings_hash)` — the centre and span are in NONE
+  `(orbit_id, gpu_iter, view_gen, resolution, settings_hash)` — the center and span are in NONE
   of them, and `view_gen` only bumps while `interacting` — so a minimap pan changed nothing the
-  key could see and a COMPLETED tile grid kept holding tiles drawn for the old centre. Fixed by
+  key could see and a COMPLETED tile grid kept holding tiles drawn for the old center. Fixed by
   extracting `minimap_pan` / `minimap_zoom`, which set `settle_t` the way every canvas gesture
   does. ⭐Third instance this day of one family: the settle key failing to notice its texture is
   stale (the others: `settings_hash` missing `formula`/`julia`).
@@ -1611,17 +1611,17 @@ Mockups: [design/mockups/](design/mockups/).
   narrow vertical strip near the pane's right edge. The frame is SETTLED (`FPS idle`) — it is not
   a mid-settle frame the user caught in passing.
 
-  ⭐⭐**RULED OUT — it is NOT a colour-mapping artefact, so do not start with normalize.** The
-  obvious theory is that tiles were coloured under different normalized palette mappings (which is
+  ⭐⭐**RULED OUT — it is NOT a color-mapping artifact, so do not start with normalize.** The
+  obvious theory is that tiles were colored under different normalized palette mappings (which is
   a real open item, see the entry below). It cannot be that: the **iterate** pass is scissored to
-  the tile (`set_scissor_rect`, gpu/lib.rs ≈1702) but the **colour** pass is NOT — it redraws the
-  whole frame every time, from one set of colour uniforms. A global mapping cannot produce a
+  the tile (`set_scissor_rect`, gpu/lib.rs ≈1702) but the **color** pass is NOT — it redraws the
+  whole frame every time, from one set of color uniforms. A global mapping cannot produce a
   rectangular seam. So the blocks are **stale ITERATION DATA**: regions of the iteration texture
   holding escape values computed for a DIFFERENT view and never re-iterated.
 
   **Where to look**, given that:
   • The pan path REPROJECTS — it translates the existing texture and fills the newly revealed
-    border with the average colour — and only re-iterates afterwards. A revealed strip that never
+    border with the average color — and only re-iterates afterwards. A revealed strip that never
     gets re-iterated is exactly a block of wrong content, and the vertical sliver at the pane edge
     has the shape of a revealed strip.
   • The tiled settle composes into that same texture one tile per frame. A grid that completes
@@ -1639,7 +1639,7 @@ Mockups: [design/mockups/](design/mockups/).
   UNIFORMITY; a check would want to pan, let it settle, and require no rectangular discontinuity
   (a column/row-wise gradient scan finds a straight edge that a whole-frame stddev cannot).
 
-  ⛔Do not confuse this with the RESOLVED deep-settle pixellation item further down: that was the
+  ⛔Do not confuse this with the RESOLVED deep-settle pixelation item further down: that was the
   whole frame rendered at a shrunken resolution and upscaled (uniformly blocky). This is
   full-resolution content that is simply WRONG in rectangles.~~
 
@@ -1659,7 +1659,7 @@ Mockups: [design/mockups/](design/mockups/).
   away. Pinned in `crates/fractadyne-core/tests/misiurewicz_outcomes.rs`.
   ✅⭐⭐**AND THE INTERESTING HALF IS NOW DONE TOO — detect at the VIEW'S SCALE.** Ranking
   candidates by closest near-return picks whichever pair the orbit matches best, which at depth is
-  routinely a feature decades coarser than the screen. The neighbourhood of a pre-period-k point
+  routinely a feature decades coarser than the screen. The neighborhood of a pre-period-k point
   is ~`1/|D_k|` across (`D = dz/dc`, carried alongside the orbit as a log2 sum), so the pair that
   governs the visible structure is the one with `|D_k| ≈ 1/span`. Measured at the reported view:
 
@@ -1695,7 +1695,7 @@ Mockups: [design/mockups/](design/mockups/).
   **Which of `find_misiurewicz`'s four exits is being taken is NOT yet established**, and that is
   the first job: `denom == 0`, the 80-iteration Newton loop never reaching `tol = span·1e-9`
   (≈1.5e-98 here), the runaway rejection at `> span·8`, or the final pre-periodicity residual.
-  Instrument it before theorising — the seed is the view centre, which at this depth may simply be
+  Instrument it before theorizing — the seed is the view center, which at this depth may simply be
   too far from the root in units of the root's own scale for a plain Newton to land.
 
   ⚠**A precision question worth answering first**: the solve sizes its own working precision from
@@ -1710,8 +1710,8 @@ Mockups: [design/mockups/](design/mockups/).
   user, and only the second is a bug in us.~~
 
 - [x] ~~🟠**THE FEATURE SOLVER CANNOT GO PAST ~1e307×, BECAUSE ITS MAGNIFICATION IS AN `f64` (user,
-  2026-08-30).** Asking the Misiurewicz finder for 1e58000× returned a centre good to ~307 digits
-  and the view then rendered a single flat colour — the centre wrong by tens of thousands of digits.
+  2026-08-30).** Asking the Misiurewicz finder for 1e58000× returned a center good to ~307 digits
+  and the view then rendered a single flat color — the center wrong by tens of thousands of digits.
 
   ✅**FIXED 2026-08-30 — `find_misiurewicz` solves in LOG magnification.** The depth asked for is
   now the depth solved at. `SolveScale { log2_target, log2_seed }`, `precision_for_octaves`, and a
@@ -1832,10 +1832,10 @@ Mockups: [design/mockups/](design/mockups/).
   bignum fallback firing once in the wild at the full ask). The spiral matches the committed
   `validation/e4000-fractadyne.png` structurally (ss=1 vs the committed ss=2 sampling noise
   aside). Pick at the full 2,008,192 ask is 99.4 s astro (the ladder's 68.6 s was at the
-  capped ask; the delta is the centre-rescue's load-bearing verification walk, ~31 s).
+  capped ask; the delta is the center-rescue's load-bearing verification walk, ~31 s).
 
   **What remains is filed above**: SA through the backend (the one stage still astro-hardcoded
-  on the accelerated build). ⛔"do not simply raise budgets" honoured throughout — no constant
+  on the accelerated build). ⛔"do not simply raise budgets" honored throughout — no constant
   moved in this close.
 
   ✅**`SA_COST_BUDGET` landed** — the SA walk is cost-bounded in steps×bits² (its real cost unit),
@@ -1918,11 +1918,11 @@ Mockups: [design/mockups/](design/mockups/).
   2. **Selection scores 101 candidates** (1 + 4 scales × 5×5, `survivors=101` in the trace), each
      walked to `REF_SCORE_SCAN = 4096` iterations at the FULL working precision — 13,353 bits here.
      That is ~414k bignum steps against the winning orbit's 443k, i.e. a whole extra orbit's work
-     before the orbit starts. Does F3 search for a reference at all, or just use the view centre?
+     before the orbit starts. Does F3 search for a reference at all, or just use the view center?
      If the latter, that alone is a ~1.4× we could take by scoring at reduced precision.
 
   3. ⭐⭐**`--bignum` does not reach the hot path.** `orbit_length_bf` (what selection walks) calls
-     `step_bf`, hardcoded to `<BigFloat as RefBackend>`; only `reference_orbit_in` honours the
+     `step_bf`, hardcoded to `<BigFloat as RefBackend>`; only `reference_orbit_in` honors the
      `BackendChoice`. So MPFR accelerates one part of one phase — which is why rug measured 1.07×
      rather than the documented 2.5–7×. Routing selection (and SA/BLA if they are also hardcoded)
      through the backend would let the MPFR build actually pay.
@@ -1998,7 +1998,7 @@ Mockups: [design/mockups/](design/mockups/).
   gate correctly bypassed. Two live runs corrected the design before it shipped: exact-match
   guarding can never hold against a live spawn's headroomed ask (208,192 vs 200,000 — hence
   ProbeOnly), and exact precision equality failed open on a 1-bit tick (now an 8-bit
-  depth-change threshold). Every uncertain path fails OPEN to the old behaviour.
+  depth-change threshold). Every uncertain path fails OPEN to the old behavior.
 
   Original entry follows.~~ **(was:** …HOLDS FOR MINUTES (user, 2026-08-31).**)** Reported at 2.37e4000×: *"about 100 seconds to build the reference,
   then it rendered an image for a moment, then went black and started working again."*
@@ -2131,15 +2131,15 @@ Mockups: [design/mockups/](design/mockups/).
   points, not the pairs.
 
   ✅**Unblocked 2026-08-31**: the pre-filter fix above means the detector now returns the point the
-  view is centred on at e40, 283k× and e89 alike, so a gallery built on it inherits a working
+  view is centered on at e40, 283k× and e89 alike, so a gallery built on it inherits a working
   finder rather than a broken one.
 
   ⭐Related: `MISIUREWICZ_POI` already holds a hand-curated list behind Go-to ▸ "Jump to a point of
   interest…" — the explorer is the generated, navigable version of that.
 
-- [x] ~~🟠**THE DETECTOR'S PRE-FILTER DISCARDED THE PAIR THAT DESCRIBES THE VIEW CENTRE (user,
+- [x] ~~🟠**THE DETECTOR'S PRE-FILTER DISCARDED THE PAIR THAT DESCRIBES THE VIEW CENTER (user,
   2026-08-31).** At a 2.37e40× spiral hub the finder answered `(3411,1)`, whose point is ~15–23
-  view-widths away, and the guard rejected it. There IS a point essentially dead-centre —
+  view-widths away, and the guard rejected it. There IS a point essentially dead-center —
   **0.047 view-widths**.
 
   ✅**FIXED 2026-08-31.** The pre-filter now tests **Newton's first step**, `|z_n − z_m| / |D_n|` —
@@ -2166,7 +2166,7 @@ Mockups: [design/mockups/](design/mockups/).
 
   ⭐⭐**And it looked like a clean sweep**: 0.0002 / 0.0167 / 0.1034 view-widths at e40 / 283k× /
   e89 — beating the shipped ranking at all three locations at once. The reason it flattered itself
-  is the trap: **"the solve lands near the centre" does NOT validate a (k,p)**. At depth Newton's
+  is the trap: **"the solve lands near the center" does NOT validate a (k,p)**. At depth Newton's
   basin converges to a nearby point for almost any pair — measured, k = 16 … 3900 all reach the
   SAME root at e40. Judge a ranking on whether the PAIR is right, never on where the solve ends up.
 
@@ -2248,7 +2248,7 @@ Mockups: [design/mockups/](design/mockups/).
   revisit only if the field shows warnings being ignored. MAX_SOLVE_OCTAVES stays 200,000
   (solve bound ≠ renderable bound, and the dialog now says what rendering needs).
 
-  ✅Verified while measuring the above: the 58,034-digit centre the solve returns for the hero's
+  ✅Verified while measuring the above: the 58,034-digit center the solve returns for the hero's
   (49,3) reproduces `local/hero.fdn` **pixel-identically** at e500, and shows the same self-similar
   spiral at e2000. The coordinate is not in question here; the cost of using it is.
 
@@ -2269,7 +2269,7 @@ Mockups: [design/mockups/](design/mockups/).
   silently stop reducing rather than fail loudly. Convert it in the same pass, and pin it with a
   test that asserts the REDUCED period, not merely that a nucleus came back.
 
-  ⚠**And assert the depth was reached, not that a solve returned** — a centre short of the
+  ⚠**And assert the depth was reached, not that a solve returned** — a center short of the
   requested precision looks exactly like a good one. The pattern that works: feed the answer back
   as its own seed at the target depth and require it to land inside that view, while the shallow
   answer does not.
@@ -2291,7 +2291,7 @@ Mockups: [design/mockups/](design/mockups/).
   half beta.9.** It should be decided once and HELD: stable
   while a single view refines, and stable across every frame of a rendered sequence.
 
-  **What the user sees**: colours shift under them as a deep view settles — the picture is
+  **What the user sees**: colors shift under them as a deep view settles — the picture is
   re-mapped, not just sharpened — which is jarring in a way a sharpening image is not.
 
   ⭐**Both halves already have an EMA. Neither is a HOLD, and that is the point of this item** —
@@ -2355,13 +2355,13 @@ Mockups: [design/mockups/](design/mockups/).
   a mapping still 70% at the previous view; the settled full-res reading is exactly what the
   offline anchors measure); every further reading at that signature is HELD, so ss-ramp
   stages, settle tiles and chunked-walk refreshes stop re-mapping the picture. The signature =
-  centre + depth + iteration ask (a budget raise extends real escapes — re-deciding there is
+  center + depth + iteration ask (a budget raise extends real escapes — re-deciding there is
   honest). ⭐Engagement proven, not assumed: livetest and `--shot` turned out to never deliver
   norm readings at all (their loops idle the readback pump — a pass there is VACUOUS for this
   feature); a windowed `--autodive 8` with `FRACTADYNE_TRACE=gpu` showed all three states
   live: 13 Chase / 2 Adopt / 10 Hold. Grand-tour livetest 24/24, 0 drift (the un-normalized
   live path is untouched); suite 346; selftest 168/168 + 18/18. Remaining eye-check: a deep
-  normalized settle in the GUI should now sharpen without re-colouring — the original report's
+  normalized settle in the GUI should now sharpen without re-coloring — the original report's
   own scenario.
 
 - [x] ⏹**CLOSED, stale (audit 2026-10-12):** the drafts were posted; every message is in `local/messages/sent/` (2026-10-11). — 📣**ANNOUNCE DRAFTS ARE READY AND LIVE ONLY IN THE GITIGNORED `local/` FOLDER (2026-08-26).**
@@ -2390,7 +2390,7 @@ Mockups: [design/mockups/](design/mockups/).
   **Left for the author** (marked in both files): the §3a AI-disclosure proportions, the title
   choice, a UI screenshot with the Controls panel open, and whether to publish benchmark numbers
   at all (the honest set: 8 of 10 4K scenes led, one tie, F3 owns the extreme by ~2.2×, ~17× per
-  frame across a dive — with the caveat that an earlier summary of those runs was an artefact).
+  frame across a dive — with the caveat that an earlier summary of those runs was an artifact).
 
 - [x] ~~🔴⭐⭐**A DEEP PANE STAYS BLACK BECAUSE THE ADAPTIVE ITERATION PROBE IS BLIND ON A COMPLETED
   WALK — CLOSED 2026-09-01: the last open layer was the regression net, and it exists now.**
@@ -2461,16 +2461,16 @@ Mockups: [design/mockups/](design/mockups/).
   against a changing iteration count is the follow-up.
 
   🟠**SUPERSEDED — the "iteration ceiling" theory was wrong.** Before the user identified the reflow
-  I had concluded the view "needs more than 2,000,000 iterations". That was an artefact: the render
+  I had concluded the view "needs more than 2,000,000 iterations". That was an artifact: the render
   was being restarted continuously, so it never reached its budget. It also explains the
-  contradiction filed below — an offline render of the same centre resolves at 600,000 iterations
+  contradiction filed below — an offline render of the same center resolves at 600,000 iterations
   precisely because nothing restarts it.
   With the probe working it climbs to the full appetite and then reports
   `exhausted — 100.0% capped at the full appetite (2000000); reverting boost 97.7→1.0`. So the pane
   is black because the view needs **more than 2,000,000 iterations** and `eff_iter` tops out there
   (the panel's `Iterations (base)` is 10,000,000, so the ceiling is being applied somewhere below
   the user's own setting — find it).
-  ⛔(Resolved by the reflow finding above.) **AN OFFLINE RENDER OF THE SAME CENTRE/ZOOM RESOLVES AT
+  ⛔(Resolved by the reflow finding above.) **AN OFFLINE RENDER OF THE SAME CENTER/ZOOM RESOLVES AT
   600,000 ITERATIONS** — 0.3% black,
   mean luminance 116.84, real structure. Both cannot be true of the same view, so one of them is
   not the view I think it is: the live pane is 721×1102 inside a DUAL split while the offline render
@@ -2481,7 +2481,7 @@ Mockups: [design/mockups/](design/mockups/).
 - [x] 🟠**NORMALIZE + LOG WENT FLAT AT AN e10000 MISIUREWICZ JUMP (user, 2026-09-04) —
   ✅SYMPTOM HEALED v0.2.41-beta.15 (defeasible hold); the attribution race stays OPEN below.**
   The report: at the user's solved Misiurewicz point at 1e10000×, "Normalize deep colors" ON
-  flattened the Mandelbrot pane to one colour; OFF rendered structure. The probe matrix
+  flattened the Mandelbrot pane to one color; OFF rendered structure. The probe matrix
   (400×250 CLI + traced windowed --shot, MPFR exe): plain RICH; --normalize RICH; live
   normalize+no-log RICH (adopted range [181573,182297], engaged); live normalize+log **also
   RICH on a clean load** — the flat state needs HISTORY. Mechanism found in code: `nsig` is
@@ -2489,7 +2489,7 @@ Mockups: [design/mockups/](design/mockups/).
   submitted frames earlier — so at a jump, the OLD view's in-flight reading can be adopted
   under the NEW signature and then held forever (the Hold had no escape hatch). A stale
   shallow range (e.g. [6,191]) under the LOG mapping is ln(v−6) over a 0.4% band at
-  v≈181,573 ⇒ ONE FLAT COLOUR; the linear arm of the same wrong hold merely aliases —
+  v≈181,573 ⇒ ONE FLAT COLOR; the linear arm of the same wrong hold merely aliases —
   exactly "without log it works". ⭐Fix shipped: `norm_hold_break` — a whole-frame reading
   DISJOINT from the held window beyond 4× slack proves the hold maps a different picture;
   re-adopt within one reading, traced ("norm hold BROKEN"). Unit-pinned with the
@@ -2544,7 +2544,7 @@ Mockups: [design/mockups/](design/mockups/).
   v0.2.41-beta.16: PRESENT THROTTLING was poisoning every wall-clock controller mechanism.**
   The final layer under the starvation: an occluded/background window's presents throttle to
   ~1 Hz, and (1) the chunk drain's quick-present release gate can never pass, so a serialized
-  pass wedges held, its WALL accumulator inflates on pure present-wait, and the band licences
+  pass wedges held, its WALL accumulator inflates on pure present-wait, and the band licenses
   lethal-shed with the GPU idle ("IN-FLIGHT PASS IN THE LETHAL BAND: acc=949–1117ms, no drain
   yet"); (2) the held (deduped) pass produces no new timestamps, so the measurement-starvation
   latch fires; (3) the wall fallback then prices real dispatches at the throttle interval and
@@ -2621,7 +2621,7 @@ Mockups: [design/mockups/](design/mockups/).
   OFF (so NOT the beta.15 hold case), frame 116.9 ms / gpu-idle 116.4 ms at "FPS idle",
   recompute tot 123. Candidate mechanisms, neither confirmed: (a) the per-view frame-budget
   controller starving for view 1 (the budget's only actuator is RESOLUTION — a stuck-low
-  budget renders coarse forever); (b) the pixellation family's display-side stall (renders
+  budget renders coarse forever); (b) the pixelation family's display-side stall (renders
   sharp, presents stale — previously fixed for single view; dual view 1 = uncovered variant).
   ⭐**`--dualsettle [DIR]` shipped**: boots dual unpinned, drives the live-hover c along an
   arc via the REAL path (julia_c + settle_t[1] + ref_pt clear + repaint, verbatim from
@@ -2647,7 +2647,7 @@ Mockups: [design/mockups/](design/mockups/).
   - 🔎 **Audit 2026-10-12:** The fixes logged here shipped as 0.2.40-beta.139–142 (band retreat, octave bands, wall-accumulator retreat, wall-aware floor). Still open: a dispatch already in flight cannot be recalled; needs a reproduction. Issue #1.
   - 🔎 **2026-10-25/26: NO RECURRENCE IN SIX WEEKS, AND NO WAY TO REPLAY THIS ONE.** This loss
     has no location to reload: beta.129 wrote no crash-view `.fdn` (they came later), and neither
-    the crash report nor the tail log carries a centre or a depth (grepped). This box's System
+    the crash report nor the tail log carries a center or a depth (grepped). This box's System
     log shows `nvlddmkm` 153 only on 2026-10-11 (x3,
     the deep Julia work, issue #4) and 2026-10-21 (x1, crash-1792627197, the zoom-out SA flip,
     fixed in 0.3.0-beta.20) since 2026-09-13; PLUTO's last driver event is 2026-09-20 (75-day
@@ -2680,9 +2680,9 @@ Mockups: [design/mockups/](design/mockups/).
   `budget_step = clamp(budget·pace / (px·ss²), 256, gpu_iter)` (`render.rs:4095`, floor
   `render.rs:4030`). So the budget DOES reach the window — through the `min`:
 
-  | | budget | `budget_step` | licence | window run |
+  | | budget | `budget_step` | license | window run |
   |---|---|---|---|---|
-  | fatal frame | 3.935e10 | **24,457** | 1024 | 1024 (licence bound) |
+  | fatal frame | 3.935e10 | **24,457** | 1024 | 1024 (license bound) |
   | after the retreat | 5.420e8 | **337** | 1024 | **337** (budget_step binds) |
 
   The 24,457 reproduces this entry's own figure exactly, which is what validates the model. So the
@@ -2696,7 +2696,7 @@ Mockups: [design/mockups/](design/mockups/).
   the WALL-clock accumulator (`chunk_pass_dt`) without waiting for the GPU timestamp, and consider
   whether `budget_step`'s 256 floor is itself too high on hostile regions.
   ✅⭐⭐**PARTIAL FIX beta.139 — THE RETREAT NOW SHEDS THE BAND LEDGER TOO.** With the diagnosis
-  corrected, the one term the retreat genuinely could not reach is the EARNED LICENCE. It cuts the
+  corrected, the one term the retreat genuinely could not reach is the EARNED LICENSE. It cuts the
   budget, and `budget_step` reaches the window through the `min` — but only while `budget_step` is
   the smaller term, and it floors at 256. The other term is `chunk_band_license`, and **nothing in
   the retreat path could lower it**.
@@ -2705,10 +2705,10 @@ Mockups: [design/mockups/](design/mockups/).
   `chunk_band_update` quarters a band on a price past 2× target, but it runs ONLY on a pass the
   walk judged DRAINED (`last_dt_ms < CHUNK_DRAIN_DT_MS` — the quick present, `render.rs`≈4051).
   A queue on its way to losing the device is saturated, quick presents stop, and the hot pass stays
-  `chunk_inflight` — **unpriced**. So the single pass whose price would shed the licence is exactly
-  the pass the release gate silences, and the band keeps a licence earned on this region's cheap
+  `chunk_inflight` — **unpriced**. So the single pass whose price would shed the license is exactly
+  the pass the release gate silences, and the band keeps a license earned on this region's cheap
   frames. That is `chunk=[768,1792)` in the field log: a 1024-iteration window still sized by a
-  licence, at a moment when nothing was being priced.
+  license, at a moment when nothing was being priced.
 
   **Fix**: `chunk_band_retreat(&mut perf.chunk_bands[v])` on a lethal reading — every band reopens
   at the floor, which is the ledger's own documented "first contact with ANY region, however
@@ -2744,12 +2744,12 @@ Mockups: [design/mockups/](design/mockups/).
   | old (ask/16) | **14,480 iterations** | band 0 = `[0, 14480)` |
   | new (octaves from 256) | 512 iterations there | band 2 = `[512, 1024)` |
 
-  Under the old rule that window's 1024-iteration licence had been earned by the passes at
-  iterations **0..768 — the cheap start of the orbit**. Octaves make that impossible: a licence at
+  Under the old rule that window's 1024-iteration license had been earned by the passes at
+  iterations **0..768 — the cheap start of the orbit**. Octaves make that impossible: a license at
   band 2 can only have been earned inside `[512,1024)`. **28× finer attribution exactly where it
   mattered.**
   ⭐⭐**This is `chunk_band_license`'s own warning, one level up.** It already refuses to let
-  UNVISITED territory inherit a neighbour's licence, because "a 36k-step pass earned on a band's
+  UNVISITED territory inherit a neighbor's license, because "a 36k-step pass earned on a band's
   cold beginning ran TEN SECONDS when the band turned hot mid-way — the storm starts before the
   wrap point, **INSIDE the band**". That bounded the gap BETWEEN bands; nothing bounded the gap
   WITHIN one, and a 14,480-iteration band has a great deal of "within".
@@ -2773,7 +2773,7 @@ Mockups: [design/mockups/](design/mockups/).
   the wedge backstop, **and that backstop is `target × 60`, i.e. ~24 s at a 400 ms target** — long
   after a device would be gone. ⭐**That is the exact gap the field loss fell through**: a queue on
   its way to losing the device never produces a quick present, so the one pass whose price would
-  shed the licence is precisely the pass that cannot be priced.
+  shed the license is precisely the pass that cannot be priced.
 
   **Fix**: accumulated wall is a conservative LOWER BOUND on what a pass has already cost — if
   `acc` reaches the lethal band the pass has *already* been that expensive, and no drain is needed
@@ -2832,7 +2832,7 @@ Mockups: [design/mockups/](design/mockups/).
   wall-retreat there is no run that shows it acting. It is verified by ARITHMETIC (table above) and
   by the gates showing it changes nothing where it should change nothing. ⭐Treat that as a weaker
   form of evidence than the 46 observed sheds, and say so.
-  ⚠The band-licence floor in `chunk_band_license` stays a constant: an unvisited band has no
+  ⚠The band-license floor in `chunk_band_license` stays a constant: an unvisited band has no
   measured rate of its own to size from — that is the whole point of it.
 
   **Gates (stock)**: selftest **139/139 + 17/17**, unit green, **livetest 24/24 · 0 drifted**,
@@ -2850,7 +2850,7 @@ Mockups: [design/mockups/](design/mockups/).
   Extracted as `render::wall_shed_now(shed, throttled, acc_ms, lethal_ms)`, called from the one
   site, with `render/wall_shed.rs` beside it — 6 cases: the field frame's own 1216 ms, the `>=`
   boundary, the latch (a long pass sheds ONCE), ⚠⚠the **present-throttle veto** (the accumulator
-  measures the COMPOSITOR, so shedding on it floors licences off an IDLE card — the 2026-09-04
+  measures the COMPOSITOR, so shedding on it floors licenses off an IDLE card — the 2026-09-04
   field log's lines, and the same poisoning the dual-view Julia saga turned on), garbage
   accumulators, and that the threshold is a PARAMETER (`--set TDR_LETHAL_MS=1` is how the harness
   forces 46 fires — a hardcoded 900 would make that run vacuous).
@@ -2893,7 +2893,7 @@ Mockups: [design/mockups/](design/mockups/).
   ✅**INSTRUMENTED beta.135** — the one thing this report could not answer was whether the chunk
   ladder was climbing windows that sat INSIDE the SA skip. `fs_iterate_chunk` seeds `iter =
   sa_skip`, so every window ending at or below it breaks on its first test and costs ~0 ms, and
-  the x2 fast lane doubles the licence on each free one — which is a mechanism for arriving at a
+  the x2 fast lane doubles the license on each free one — which is a mechanism for arriving at a
   lethal window with a budget earned on nothing. `chunk=[768,1792)` is only readable against a
   skip, and the manifest carried none. `sa_skip` and `bla_on` are now stamped on the LIVE manifest
   AND on the (always-logged) LETHAL-BAND line, and the live manifest is traceable per frame under
@@ -2979,7 +2979,7 @@ Mockups: [design/mockups/](design/mockups/).
   CHUNKING DID IT (bisected 2026-08-23).** `--check` gives **37/38**; location 06 reports
   **maxD 60, meanD 0.00** — **57 pixels of 921,600 (0.006%)**, isolated singles scattered across
   the whole frame (bbox x 90..1279, y 12..707), i.e. the shape of one-iteration differences at
-  filament boundaries, NOT the global recolour of the 2026-08-14 red filed above.
+  filament boundaries, NOT the global recolor of the 2026-08-14 red filed above.
 
   **Deterministic** (3 consecutive runs, identical maxD/meanD/std) and **bisected to a single
   commit**, then confirmed by direct build at both sides:
@@ -3212,7 +3212,7 @@ Mockups: [design/mockups/](design/mockups/).
 
   ⭐⭐**RULE FOR THIS BUG, LEARNED FOUR TIMES: any A/B on chunking must first ASSERT THAT CHUNKING
   HAPPENED.** Four separate controls silently did not chunk — ss = 1 (tiles too cheap), a viewport
-  4/3 off, the mode-2 gate, and an aux colour method. Each produced a clean, confident, meaningless
+  4/3 off, the mode-2 gate, and an aux color method. Each produced a clean, confident, meaningless
   zero. `FRACTADYNE_TRACE=tile` prints `chunks=` per tile, and `ExportResult.counters` is the
   cheap in-process check; a harness that does not verify one of them is not a control.
 
@@ -3241,9 +3241,9 @@ Mockups: [design/mockups/](design/mockups/).
   stores it as `ChunkOut(..., vec4(D.m.re.x, D.m.re.y, D.m.im.x, D.m.im.y),
   info_pack(iter, status, f32(ref_n), f32(D.e)))` and restores it as `D.m = cset(sdz.xy, sdz.zw);
   D.e = i32(sm.w)`. Mantissa (df32 pair) and exponent (small int in f32) both look LOSSLESS on
-  paper — so the defect is more likely in WHEN it is normalised or which representation is stored
+  paper — so the defect is more likely in WHEN it is normalized or which representation is stored
   than in the bits themselves: a floatexp has many equivalent (mantissa, exponent) forms, and if
-  a resume re-normalises where the register path does not, later products differ in the low bits.
+  a resume re-normalizes where the register path does not, later products differ in the low bits.
   ⚠Note the encoding comment at mandelbrot.wgsl:~1690 says ch3 while RUNNING carries **`δz.e`**,
   while the mode-0 code stores **`f32(D.e)`** there — worth confirming which the resume expects.
 
@@ -3276,7 +3276,7 @@ Mockups: [design/mockups/](design/mockups/).
     `df_mul_f32(step, coord)`), so the sample points are the same in both paths.
 
   **What remains**: something in `fs_iterate_chunk`'s LOOP or its resume/store, not its inputs.
-  The colour delta 0.2339 = 60/255 is consistent with a ±1 iteration difference across a steep
+  The color delta 0.2339 = 60/255 is consistent with a ±1 iteration difference across a steep
   palette gradient. ⭐**The next measurement is the G-buffer channel that actually differs** —
   iteration count, smooth fraction, or the derivative (`D`, which the chunk path round-trips
   through `sdz`/`sm.w` while `fs_iterate` keeps it in registers). Compare the chunked and
@@ -3301,7 +3301,7 @@ Mockups: [design/mockups/](design/mockups/).
   the complete answer to "104 lines of selftest pass while the corpus fails".
 
   ⛔**CORRECTION to the entry below**: I reported that the iterate was innocent and the defect was
-  in the colour/resolve. That was WRONG, and the reason is worth keeping: `render_iter_tiled`
+  in the color/resolve. That was WRONG, and the reason is worth keeping: `render_iter_tiled`
   **renders at ss = 1 by construction** (export.rs:989, :1068 — "work_per_px = max_iter (ss = 1)",
   "step mantissa is per full-resolution pixel"). Comparing it across tile budgets was therefore an
   ss=1 comparison, i.e. exactly the case with no defect, and its clean result proved nothing.
@@ -3319,7 +3319,7 @@ Mockups: [design/mockups/](design/mockups/).
   innocent was WRONG.]** Reproduced in-process; same request, only `work_budget` (TILE SIZE):
   SIZE) differs:
 
-  | tile budget | coloured export | raw iteration buffer |
+  | tile budget | colored export | raw iteration buffer |
   |---|---|---|
   | None (= const 20e9) | baseline | baseline |
   | 10e9 | **279 px differ**, max\|d\| 0.2339 | **0** |
@@ -3327,7 +3327,7 @@ Mockups: [design/mockups/](design/mockups/).
   | 40e9 | **86 px differ**, max\|d\| 0.2339 | **0** |
 
   ⭐**And it requires SUPERSAMPLING.** Identical request at `ss = 1`: **0 differing at every
-  budget**. At `ss = 2`: 279 / 86. So tiling is bit-exact for the iteration maths and for the
+  budget**. At `ss = 2`: 279 / 86. So tiling is bit-exact for the iteration math and for the
   whole render at one sample per pixel; what is not tile-invariant is the ss resolve.
   ⭐`max|d| = 0.2339 ≈ 60/255` — exactly the corpus's `maxD 60`, so this IS the corpus defect.
 
@@ -3342,7 +3342,7 @@ Mockups: [design/mockups/](design/mockups/).
 
   ⭐**The corpus render is the plainest path there is**: mode 0, `sa_skip=0`, `bla_on=0`,
   `glitch_on=0`, `norm_mode=0`, `aa_filter=1`, ss=2, 1280×720, `work_budget=None`. Nothing exotic
-  is involved — which is why the fix belongs in the tile/resolve geometry, not the maths.
+  is involved — which is why the fix belongs in the tile/resolve geometry, not the math.
 
   **Next**: read the ss resolve's tile handling. The suspicion is that a tile's SAMPLE rect is not
   constrained to whole ss×ss blocks, so a tile edge can cut a 2×2 box and the two halves resolve
@@ -3482,7 +3482,7 @@ Mockups: [design/mockups/](design/mockups/).
   (192 ms chunked vs 97 ms unchunked) — the bound costs more than the work it bounds.
 
   ✅⭐⭐**FULLY REPRODUCED at the original geometry (219-window bracket, width scaled with height).**
-  The 2.45× above was an artefact of a SHORT bracket (32 windows) and a fixed 1280 width; both
+  The 2.45× above was an artifact of a SHORT bracket (32 windows) and a fixed 1280 width; both
   predictions held.
 
   | target | even | odd | ratio | filed 2026-08-22 |
@@ -3521,7 +3521,7 @@ Mockups: [design/mockups/](design/mockups/).
 
   </details>
 
-- [x] ✅**CLOSED 2026-09-09 — the PERF warnings are an artefact of the per-call WGSL compile (mechanism
+- [x] ✅**CLOSED 2026-09-09 — the PERF warnings are an artifact of the per-call WGSL compile (mechanism
   measured below), and the report now prints the scale + fixed-cost shape itself; the one follow-up
   is split out as its own item right after this entry.** Original: 🟡**`--bench-matrix`'s PERF half cries wolf on this box — the blessed baseline no longer
   matches the machine, on ANY build.** Every run reports 8-10 of 22 segments 36-61% slower, and the
@@ -3589,7 +3589,7 @@ Mockups: [design/mockups/](design/mockups/).
   hoist was applied to the GATHER loop only. `render_export` itself still compiles per call, the
   WGSL has grown to **134 KB**, and the blessed baseline predates that growth.
 
-  ⇒**The perf warnings are an ARTEFACT, not a renderer regression** — which is what "record the
+  ⇒**The perf warnings are an ARTIFACT, not a renderer regression** — which is what "record the
   offset so a reader knows" was asking for, now with a mechanism instead of an offset.
 
   ▶**Follow-up worth doing, filed rather than done**: cache the `ShaderModule` per device so an
@@ -3667,7 +3667,7 @@ Mockups: [design/mockups/](design/mockups/).
   **Fix**: the test wants "at least as good as a fresh build would be", not "identical" — so
   `r.prec >= precision + REF_PREC_HEADROOM && r.iter >= eff_iter`, since a reference built with
   MORE precision or MORE iterations than this frame needs is strictly fine. ⚠Deliberately NOT done
-  in beta.129: it ENABLES three dormant paths at once, i.e. it is a behaviour change at every one
+  in beta.129: it ENABLES three dormant paths at once, i.e. it is a behavior change at every one
   of them, and it needs its own commit + F3 corpus + a tour render + a deep GUI export to gate.
   ⚠Check `try_reuse_reference`'s returned `prec` too (a reused orbit carries a PRIOR `orbit_prec`,
   already headroom-inflated), so `>=` is right and `==` is wrong there as well.~~
@@ -3721,7 +3721,7 @@ Mockups: [design/mockups/](design/mockups/).
   established is that the retreat contains it on the hardware that failed.
   ✅Two harness flaws this exposed, both fixed: the reading counter compared ms ONLY, so two
   consecutive 1155 ms readings counted as one (reported 3 against 4 logged) — now paired with the step
-  count and labelled "distinct"; and the rung's 420 s timeout could not fit 3 cycles at ~135 s each, so
+  count and labeled "distinct"; and the rung's 420 s timeout could not fit 3 cycles at ~135 s each, so
   it timed out after 2 — raised to 600 s, because a cycle count the run cannot finish is a deadline
   that lies about what was tested.
 
@@ -3802,7 +3802,7 @@ Mockups: [design/mockups/](design/mockups/).
 
 - [x] 🟢**Offline render: order frames by DECREASING MAGNIFICATION and reuse one reference across
   them.** User idea 2026-08-18 ("render the deepest frame first and work backwards"), sharpened.
-  ⭐**Why it works:** the orbit is ZOOM-INDEPENDENT (`Z_{n+1} = Z_n² + C_ref` depends only on centre
+  ⭐**Why it works:** the orbit is ZOOM-INDEPENDENT (`Z_{n+1} = Z_n² + C_ref` depends only on center
   and precision), and both live reuse gates are satisfied monotonically as you zoom OUT —
   `reuse.prec >= inp.precision` (the deepest frame has the maximum precision requirement, so it covers
   every shallower one) and drift `|dx|/span <= REUSE_MAX_DRIFT` (0.7; span grows, so the ratio shrinks,
@@ -3829,7 +3829,7 @@ Mockups: [design/mockups/](design/mockups/).
   A new order needs the same permutation property tests `progressive_frame_order` now has, and ETA
   estimates will skew (expensive frames first).
   - 🔎 **Audit 2026-10-12:** The farm and `--gpus all` tours build the deepest keyframe's reference first and share it through the orbit cache (49458c4, 0.3.0-beta.18). Still open: standalone `--render-tour` (sequential or progressive order, a reference per frame).
-  - ✅ **Done 2026-10-28 (branch `feat/zoom-video-farm`, the user: "deepest first reuse"), WITHOUT reordering:** `scripting::DeepReference` — the tour's deepest keyframe's reference is built first (for the first frame that renders and shows that keyframe's centre: decided by the tour alone, so farm runs and `--segment`s pick the same) and handed to every frame's build of the same fractal/Julia (`spawn_export_reference_reusing`); `try_reuse_reference`'s gates decide per frame, and extension covers frames wanting more iterations. The frames keep their order (dissolves, progressive, resume untouched), which this item's "order by decreasing magnification" turned out not to need: building the deep one FIRST is the whole effect. RTX 3080: gate-e4000 (5 frames) 1m44s → 22.9 s, pixel-identical; grand tour 320×180 4m37s → 1m37s (92 frames reused, ~1% of pixels differ, scattered single points — looked at); star-e98 15.2 → 12.4 s. `--no-reference-reuse` is the old path. Still per frame, as this item predicted: the BLA tree (T2c).
+  - ✅ **Done 2026-10-28 (branch `feat/zoom-video-farm`, the user: "deepest first reuse"), WITHOUT reordering:** `scripting::DeepReference` — the tour's deepest keyframe's reference is built first (for the first frame that renders and shows that keyframe's center: decided by the tour alone, so farm runs and `--segment`s pick the same) and handed to every frame's build of the same fractal/Julia (`spawn_export_reference_reusing`); `try_reuse_reference`'s gates decide per frame, and extension covers frames wanting more iterations. The frames keep their order (dissolves, progressive, resume untouched), which this item's "order by decreasing magnification" turned out not to need: building the deep one FIRST is the whole effect. RTX 3080: gate-e4000 (5 frames) 1m44s → 22.9 s, pixel-identical; grand tour 320×180 4m37s → 1m37s (92 frames reused, ~1% of pixels differ, scattered single points — looked at); star-e98 15.2 → 12.4 s. `--no-reference-reuse` is the old path. Still per frame, as this item predicted: the BLA tree (T2c).
   - ✅ **Done 2026-10-29 (branch `feat/tour-deepest-first`, the user: "work on the reverse rendering"), THE ORDER ITSELF:** `--order deepest` (`scripting::FrameOrder::Deepest`, `deepest_frame_order`: by decreasing magnification, ties in time order; the Render tour dialog's "Deepest first"), each frame offered the references of the deeper frames already rendered (`RefChain`, 4 dives) and the deepest keyframe's, `render::pick_reuse` choosing by the reuse gates; on `--gpus`/the farm, the deepest runs first (`sched::Config::priority` by depth; Render on farm's "Deepest frames first"). ⭐It exposed an ORDER-DEPENDENCE in the SA trace (`reference.rs` `SaTraces`): a record stopped at its own precision's step budget (15e12/p², which BINDS at 1e4000), so a shallower frame of the same 64-bit precision word asked a few steps more and walked again — every frame of a dive rendered deepest first (~7 s a frame at 1e4000). Records are now walked at the least precision of their key (`sa_record_precision`; the walk is identical across a word, `sa_walks_agree_within_a_precision_word`), so one covers every frame of its key in any order (`an_sa_record_covers_every_frame_of_its_key`, with the old rule as its control). RTX 3080: gate-e4000 deepest 46.4 → 17.7 s, sequential 24.6 → 16.5 s (its first frame re-walked too), pixel-identical; star-e98 deepest identical to sequential; grand tour 1m27s vs 1m29s, 95 vs 92 frames reused, 2 frames differ (scattered single pixels, looked at); `--gpus 1,1` star dive deepest 26 s vs in order 46 s (one run). Goldens 31/31 byte-identical.
 
 - [ ] 🟢**Peer-renderer adoption list — reconciled (2026-08-18).** Sources: `5E-324/Imagina` (+ Imagina 2),
@@ -3870,7 +3870,7 @@ Mockups: [design/mockups/](design/mockups/).
     (deliberately, documented against corpus-15's dendrites), and `ref_n + span >= orbit_len` at :813
     keeps the landing index valid. The orbit-end sub-case leans on the full-step trigger's
     `|| ref_n + 1u >= iu.orbit_len`, which *does* run before anything reads `reference[ref_n+1]`.
-    Adding the recommended condition would rebase a step EARLIER than today ⇒ behaviour change ⇒ full
+    Adding the recommended condition would rebase a step EARLIER than today ⇒ behavior change ⇒ full
     gate cost for no known defect. ✅Their `BLAKernels.cuh` shipping this as acknowledged UB is still
     useful: independent evidence the hazard class is real, which is why the local guard stays.
 
@@ -3932,12 +3932,12 @@ Mockups: [design/mockups/](design/mockups/).
     construction, but the reviewer's own read is low-confidence and the theory is undocumented.
     - 🔎 **Audit 2026-10-12:** Step 3, the attractor transformation, shipped as the renormalized step 864832b with u-space BLA 7faba67 (0.3.0-beta.18). Still open: the table restructure itself.
     - 🔎 **Research review 2026-11-02:** retarget from MipLA (still a binary pyramid; its gain is
-      the separate dc radius) to period-synchronised LA stages, keeping MipLA's dual thresholds ⇒
+      the separate dc radius) to period-synchronized LA stages, keeping MipLA's dual thresholds ⇒
       Performance & throughput, PR-B1.
   - [x] ✅**T2b′. Multi-entry reference-orbit CACHE — SHIPPED beta.78** (codecs beta.77).
     ⭐⭐Returning to an extreme location costs **30-60+ min**, all of it the reference orbit — but
     the GPU consumes 16 bytes/iteration, so the artifact is **4.1 MB** at `LIVE_REF_CAP`. And one
-    orbit serves a NEIGHBOURHOOD (perturbation renders every pixel as a delta from it), so coming
+    orbit serves a NEIGHBORHOOD (perturbation renders every pixel as a delta from it), so coming
     back and zooming *nearby* is free too. `refcache_persist` GREW from its one-slot form into the
     store; the worker consults it BEFORE the pick (⭐at e4000 the pick cost 3.5× the orbit) with the
     same admissibility test the live reuse applies; eviction is by BUILD COST, not LRU (a dive's
@@ -4085,7 +4085,7 @@ Mockups: [design/mockups/](design/mockups/).
   restores the banded shell structure — speckle metric **72.44 → 57.69**.
   ⛔**Precision is EXONERATED**: forcing mode 2 (temporarily `PERT_FE_THRESHOLD = 1e20`, reverted)
   renders the identical **57.69** — so the residue at 2 sweeps is real escape-field detail, not a
-  df32 artefact at the ~1e28 limit. ⚠But `--normalize`'s own mapping reaches **10.61** at nominally
+  df32 artifact at the ~1e28 limit. ⚠But `--normalize`'s own mapping reaches **10.61** at nominally
   the same sweep count, so something beyond sweep count differs between the two mappings and is
   NOT yet explained.
 
@@ -4117,7 +4117,7 @@ Mockups: [design/mockups/](design/mockups/).
   ✅⭐⭐**FIXED beta.144 — THE PREDICATE IS NOW AN ALIASING TEST, AND BOTH ENDS ARE MEASURED.**
   What separates confetti from attractive banding is the palette phase change between ADJACENT
   PIXELS — the local escape GRADIENT × cycle — not the global span × cycle. A shallow view can show
-  100+ sweeps across its span and look perfect because neighbours differ by ≪1 iteration. So the
+  100+ sweeps across its span and look perfect because neighbors differ by ≪1 iteration. So the
   range readback now carries that statistic: `fs_resolve` also accumulates
   **Σ|Δ smooth-iter| between horizontally adjacent escaped pixels** and a sample count (two new
   counter slots, same 4×4 subsample, ×16 fixed-point clamped to 12 bits so the u32 sum cannot
@@ -4149,7 +4149,7 @@ Mockups: [design/mockups/](design/mockups/).
 - [x] ✅⭐⭐**FIXED beta.145 — 3D RELIEF LIGHTING SPECKLED THE FIELD BLACK AT DEEP ZOOM (user report
   2026-08-25). The relief normal is now LOW-PASSED ACROSS PIXELS and weighted by agreement.**
 
-  **Fix**: shade from a 3×3 OUTPUT-PIXEL neighbourhood mean of the slope normal (blended 0.75 with
+  **Fix**: shade from a 3×3 OUTPUT-PIXEL neighborhood mean of the slope normal (blended 0.75 with
   the pixel's own tap mean so a sharp edge keeps some of its own slope), and weight the Lambert
   term by `conf = |mean|` — the agreement of unit normals — so an undersampled region fades to
   UNLIT instead of picking a confident random dark.
@@ -4160,7 +4160,7 @@ Mockups: [design/mockups/](design/mockups/).
   | 2 (the reporter's aa) | 7.56 pt | **0.35 pt** |
   | 4 | 2.03 pt | **0.23 pt** |
 
-  ⭐**The relief is KEPT, not removed** — directional shading on the arms and spiral centres is
+  ⭐**The relief is KEPT, not removed** — directional shading on the arms and spiral centers is
   still clearly present (checked by eye against the relief-OFF control, which is flat). At a
   shallow 1e6× view the character is unchanged and luminance contrast is **113%** of before, i.e.
   it did not wash out; the 42% of pixels that differ there are the dense filament regions that
@@ -4225,7 +4225,7 @@ Mockups: [design/mockups/](design/mockups/).
   ⭐**Where a real fix probably lies** (design call, not yet attempted): light from a SMOOTHER
   field than the raw per-pixel slope. The distance-estimate channel is already computed, already
   much smoother, and already drives the glow; a normal derived from the DE gradient — or a
-  low-pass of the normal across neighbouring pixels before the Lambert term — would attack the
+  low-pass of the normal across neighboring pixels before the Lambert term — would attack the
   frequency rather than throwing samples at it. ⚠Either changes every relief-lit image, so it
   needs the goldens re-blessed and an eyes-on comparison at several depths.
 
@@ -4241,7 +4241,7 @@ Mockups: [design/mockups/](design/mockups/).
   aliases. The bug was never WHETHER to normalize — it was WHICH MAPPING to use once you do.
 
   **Linear normalization across `[1, 7925]` puts everything that escapes in 1..30 — which is the
-  entire visible exterior — inside the first 0.4% of the palette.** One flat colour, plus lit
+  entire visible exterior — inside the first 0.4% of the palette.** One flat color, plus lit
   filaments. That is exactly the collapse this entry described from the start; only the palette
   made it read as "cities" here and "flat gray" in the 2026-08-18 report.
 
@@ -4288,18 +4288,18 @@ Mockups: [design/mockups/](design/mockups/).
   🟡**"Normalize deep colors" renders a FLAT GRAY exterior at shallow zoom with a high manual
   iteration count.** Field report 2026-08-18 (build 1678, screenshot): after returning Home from a deep
   view, zoom 1.06× with `iter = 250,000` and auto-scale OFF drew the set correctly in black on a
-  featureless olive-gray field. Geometry and mode selection are fine (`direct df32`); only the colour
+  featureless olive-gray field. Geometry and mode selection are fine (`direct df32`); only the color
   mapping collapses.
   ⭐**MECHANISM — not a counting bug.** `esc_range_commit` already excludes interior/max-iter pixels
   (`if (sm >= 0.0)`), so the min/max is a true ESCAPED range. The problem is that the range is
   legitimately ~1 → ~250,000 at this depth: a thin halo hugging the boundary escapes very late while
-  the bulk of the exterior escapes in 1–50. Normalising LINEARLY across that compresses everything
+  the bulk of the exterior escapes in 1–50. Normalizing LINEARLY across that compresses everything
   visible into a sliver of the palette. Escape counts near the boundary are heavy-tailed, so linear
-  min/max normalisation collapses whenever the iteration ceiling is high relative to the depth — it
+  min/max normalization collapses whenever the iteration ceiling is high relative to the depth — it
   was designed for deep fields, where the escaped range is narrow and high.
   **Workarounds today:** tick "Log color scale", or enable "Auto-scale iterations with zoom" so Home
   drops the count to suit 1×.
-  **Candidate fixes:** (a) normalise on a PERCENTILE rather than absolute min/max — needs a histogram,
+  **Candidate fixes:** (a) normalize on a PERCENTILE rather than absolute min/max — needs a histogram,
   not two atomics, so it is the real but larger change; (b) when `max/min` exceeds a ratio (~1e3),
   switch or blend to a log mapping automatically, since that is what the user would do by hand;
   (c) leave it and document. Prefer (b) as the cheap correct-feeling default, with (a) if a histogram
@@ -4323,7 +4323,7 @@ Mockups: [design/mockups/](design/mockups/).
   | 1814–1815 | 2.383e10 | 2.387e10 | **1003, 1012 ms** | — |
 
   ⭐⭐**THE CONTROLLER'S ONLY ACTUATOR IS ORTHOGONAL TO THE COST.** On a live frame the budget is
-  honoured by shrinking RESOLUTION and nothing else (`render.rs`: `want = px * gpu_iter;
+  honored by shrinking RESOLUTION and nothing else (`render.rs`: `want = px * gpu_iter;
   budget_res_scale = sqrt(budget/want)` — its own comment says "reduce the iteration-texture
   resolution"). It never lowers `gpu_iter`. Verified from the frame arithmetic: 264x361 x 250000 =
   2.383e10 exactly, and the pre-retreat 5.992e10 is ~239,680 px (~417x571), so the retreat did not
@@ -4374,7 +4374,7 @@ Mockups: [design/mockups/](design/mockups/).
   tolerance). **Recommended: A.** Also flagged: rebasing must work ACROSS a chunk boundary, and each
   pass must build its OWN BLA or it reproduces the beta.101 e100 pathology (0.04 vs 174 Gsteps/s).
 
-  🔨**SLICE 1 LANDED (2026-08-19), and it is behaviourally inert by design.** The four-target
+  🔨**SLICE 1 LANDED (2026-08-19), and it is behaviorally inert by design.** The four-target
   plumbing and the `fs_iterate_chunk_fe` entry point had to land together — a four-target pipeline
   needs a four-output entry point to exist — so this one commit adds: `ChunkOut4` +
   `@group(1) @binding(3) st_exp` + the mode-2 loop (holomorphic formulas 0..3, no Phoenix, no aux,
@@ -4404,7 +4404,7 @@ Mockups: [design/mockups/](design/mockups/).
   mode-0 gates already run through the offline `render_iter_chunked`, so mode 2 joined that path's
   scope — four-target plumbing, `fs_iterate_chunk_fe`, and ⚠**the BLA tree uploaded with `bla_on`
   passed through instead of hard-zeroed** (it was `bla_on: 0`, which is inert for direct/mode 0 but
-  would have been the beta.101 e100 pathology verbatim for mode 2). Live behaviour is still
+  would have been the beta.101 e100 pathology verbatim for mode 2). Live behavior is still
   untouched. `iter-chunk` grew five rows, suite now **126 checks + 17 goldens**:
   corpus loc 07 @1.3e30× split into **2, 3 and 7 passes** (187,097 rebases + 124 BLA skips, and the
   counters are IDENTICAL across all three splits — the boundary does not perturb the rebase/skip
@@ -4649,7 +4649,7 @@ Mockups: [design/mockups/](design/mockups/).
   (`ChunkPricer` high-water mark, seeded at 1M iters/s) — halve >400 ms, double <100 ms.
   ⭐The area cap HOLDS on multi-window tiles (shrinking area in the serial regime only multiplies
   chain count — the home-from-deep wrong-actuator lesson — which is also why the crashed export
-  was on a 40 h trajectory; dwell regions now render ~4× faster). Cancel/deadline are honoured
+  was on a 40 h trajectory; dwell regions now render ~4× faster). Cancel/deadline are honored
   between windows. Verified: 480px repro at the crash location, 1M/2M decoded-RGB bit-identical
   chunked vs unchunked; the full 4M×ss2 killer workload completes in 25 s across 511 dispatches,
   max 290 ms; two new selftest gates (`IterChunk`: tiled chunked export + iter buffer
@@ -4908,11 +4908,11 @@ Mockups: [design/mockups/](design/mockups/).
   corrected image differs from the uncorrected one at 131 of 129,600 pixels (0.1%) with the rest
   byte-identical — exactly the signature of correction doing its job and nothing else.
   ⚠The `--iter`-above-escape-length regime is still the expensive one (166 s vs 473 ms with
-  correction off); this makes it SAFE and correct, not fast. The pixellation entry below shares its
+  correction off); this makes it SAFE and correct, not fast. The pixelation entry below shares its
   root and is still open. Original report:
   ~~DEVICE LOSS rendering a deep view whose EXPLICIT iteration count exceeds the
   reference's escape length — deterministic, 2/2~~ (found 2026-08-14 while investigating the
-  pixellation report below; announce-blocking, it is a hard crash on a plain `--render`).
+  pixelation report below; announce-blocking, it is a hard crash on a plain `--render`).
 
   ```
   fractadyne --render --out x.png --size 480x270 --iter 4000000 --ss 1       --center <three-spar re> <three-spar im> --zoom-log2 335.15   # 7.885e100x
@@ -4972,7 +4972,7 @@ Mockups: [design/mockups/](design/mockups/).
   * **Cost is CLUSTERED, so a controller calibrated on cheap tiles walks into the expensive corner
     at a fatal size.** Forcing a 1×1 first tile did not help: the loop climbed through the cheap
     region and died anyway. The expensive pixels here are the top-left corner (the base pass sees
-    them too — its (7,0) tile is 281 ms against 11 ms for its neighbours, a 25× spread *within the
+    them too — its (7,0) tile is 281 ms against 11 ms for its neighbors, a 25× spread *within the
     healthy pass*).
   * **Governing the tile by the WORST rate seen anywhere is a catastrophic pessimisation.** Tried;
     it turned a plain deep export that finishes in 473 ms into one still running after 10 minutes,
@@ -4993,15 +4993,15 @@ Mockups: [design/mockups/](design/mockups/).
   refuse correction when the base pass's own worst tile rate says a correction pass cannot be
   bounded.
 
-- [x] ✅⭐⭐**A settled deep view rendered PIXELLATED until the window was nudged — FIXED
+- [x] ✅⭐⭐**A settled deep view rendered PIXELATED until the window was nudged — FIXED
   beta.102.** The tile ALLOWANCE was the settled resolution ceiling and was switched on the
   BUDGET'S MAGNITUDE, which for a converged budget is a per-step RATE test in disguise; a view
   slower than ~50 Gsteps/s got sixteen dispatches and stayed a mosaic while a view one percent
   faster got 512 and went native in the same frame. See "the fix" at the end of this entry.
   Original report:
-  ~~A settled deep view renders PIXELLATED until the window is nudged~~ (user report,
+  ~~A settled deep view renders PIXELATED until the window is nudged~~ (user report,
   2026-08-14, v0.2.40-beta.100 build 1577, RTX 3080, ~1000×700 window). Parked at 7.885e100× on
-  the three-spar centre with an explicit 4,000,000 iterations, the settled frame is a grid of
+  the three-spar center with an explicit 4,000,000 iterations, the settled frame is a grid of
   ~30-pixel blocks; resizing the window slightly re-renders the SAME view in full detail. The two
   status bars are the whole clue, and they say the opposite of "this view is expensive":
 
@@ -5175,7 +5175,7 @@ Mockups: [design/mockups/](design/mockups/).
   controller step, the other collapses eleven copies of `px·ss²·iter` into one function — and
   `git diff` confirms neither changed anything else. Two semantically neutral changes both flip
   it; slice 1 passes three times including a mid-sequence control. So the flip tracks *codegen and
-  frame pacing*, not behaviour. ⚠**Consequence: this checkpoint currently fails ANY perturbation
+  frame pacing*, not behavior. ⚠**Consequence: this checkpoint currently fails ANY perturbation
   of `render.rs`, which means it also cannot report a REAL regression — a genuine break would
   arrive wearing the same 508,193 signature.** A gate that reddens on every recompile has stopped
   measuring.
@@ -5197,7 +5197,7 @@ Mockups: [design/mockups/](design/mockups/).
   `FRACTADYNE_TRACE=ref --livetest tours/grand-tour.toml --size 480x270` and read the
   `hold-prefetch spawn/install` pairs in `config/logs/fractadyne.log`.
 
-  ⛔**Hypothesis A — "only one build in flight serialises the pipeline". WRONG.** `slot.rx` clears
+  ⛔**Hypothesis A — "only one build in flight serializes the pipeline". WRONG.** `slot.rx` clears
   when a build FINISHES, not when it installs, so the concurrency rule is almost never the binding
   constraint; a branch added under it never executed across a whole tour. ⚠A livetest run passed
   while that branch was dead code, which would have read as a successful fix — **a green
@@ -5252,7 +5252,7 @@ Mockups: [design/mockups/](design/mockups/).
   fine later in the same run). The ask reaching the worker is 1,130,776, not a clamped value.
   **So the limiter is inside the extension itself — start at `try_reuse_reference`** and find why
   extending a 508,193 orbit toward a 1.13M ask returns 508,193. That is the whole bug.
-  ⭐**Why it matters beyond the tour:** this is a live-view deadlock, not a test artefact. Any
+  ⭐**Why it matters beyond the tour:** this is a live-view deadlock, not a test artifact. Any
   user sitting at a deep view whose reference came back partial gets a reference that can never
   grow, no matter how long they wait — the appetite climbs, the rebuild fires every ~1.2 s, and
   the orbit stays the same length. The tour only makes it visible because a prefetch happens to
@@ -5372,14 +5372,14 @@ Mockups: [design/mockups/](design/mockups/).
   a VALIDATION script is a different matter — a warning line on unknown `[playback]` keys is worth
   considering.
 
-- [x] ⭐**The F3 corpus gate is RED — but it is a COLOUR-MAPPING change, not a maths regression**
+- [x] ⭐**The F3 corpus gate is RED — but it is a COLOR-MAPPING change, not a math regression**
   (found + characterized 2026-08-14). `generate_corpus.py --check --only 01,02,03` gives **0/3
   MATCH**, maxΔ 169, meanΔ 26.9 / 46.9 / 23.6, including `01-home` (1.3×, 512 iters, direct
   mode). ⭐**Decisive characterization — do this before panicking about any future corpus red:**
-  bucket every pixel by its OLD colour and measure how tightly the NEW colours cluster. Result:
-  within-colour spread **0.21** (essentially zero) and an identical interior fraction (9.3% vs
-  9.3%). A one-to-one old→new colour map with an unchanged interior means **the escape field is
-  bit-unchanged and only the iteration→colour mapping moved.** So this is not precision, not
+  bucket every pixel by its OLD color and measure how tightly the NEW colors cluster. Result:
+  within-color spread **0.21** (essentially zero) and an identical interior fraction (9.3% vs
+  9.3%). A one-to-one old→new color map with an unchanged interior means **the escape field is
+  bit-unchanged and only the iteration→color mapping moved.** So this is not precision, not
   perturbation, not the GPU.
   Ruled out so far: palette definitions (no commits to `fractadyne-color` since the baseline;
   Ember is still index 0); `cycle`/`offset` (session holds 0.27/0.10, which ARE the defaults);
@@ -5388,7 +5388,7 @@ Mockups: [design/mockups/](design/mockups/).
   at offset ≈0.20 rather than 0.10 (meanΔ 31.5 → 11.6), i.e. roughly a constant phase shift plus
   a residual, which smells like a changed smooth-iteration → palette-position mapping.
   ⛔**Archaeology done, suspects eliminated — the next person should go straight to a bisect
-  rather than re-derive this.** The colour position is `palette(pv·cycle + offset)` with
+  rather than re-derive this.** The color position is `palette(pv·cycle + offset)` with
   `pv = smit`, so a ~0.1 phase shift at cycle 0.27 implies smit moved ~0.37 of an iteration.
   But: the `nu` smoothing formula is **character-for-character identical** between the
   baseline-era commit `a781f6e` (v0.2.21) and HEAD; `git log -L` over the smit computation
@@ -5403,7 +5403,7 @@ Mockups: [design/mockups/](design/mockups/).
   ✅**RESOLVED-ENOUGH 2026-08-14: it is NOT a code regression, so there is nothing to bisect.**
   Two independent proofs. (1) **The selftest goldens were blessed 2026-07-04 — EARLIER than the
   corpus baseline (07-12) — and they still pass 17/17 today.** A renderer change that moved the
-  colour mapping would have broken them first; it did not. (2) **Checked out the baseline-era
+  color mapping would have broken them first; it did not. (2) **Checked out the baseline-era
   commit `b050ee9` (v0.2.20), built it, and rendered `01-home`: meanΔ 27.98 against its OWN
   baseline** — i.e. the July binary cannot reproduce the July render either. The variable is
   therefore the ENVIRONMENT, not the code. Also excluded by direct test: `aa` (0/1/2/3 all give
@@ -5441,9 +5441,9 @@ Mockups: [design/mockups/](design/mockups/).
   in the PNG, so four identical renders produced four different sha256s — I briefly "measured" the
   renderer as nondeterministic on exactly that evidence. Decoded pixels: maxD 0 across all four.
   `check_corpus` has always compared pixels; any new probe must too.
-  **Re-blessed deliberately** (all 20 renders + catalog), on the evidence that the maths is
-  unchanged: bucketing every pixel by its OLD colour gives a within-colour NEW spread of 1.2/255
-  and an identical interior fraction (0.0933 vs 0.0933) — a one-to-one colour remap, i.e. the
+  **Re-blessed deliberately** (all 20 renders + catalog), on the evidence that the math is
+  unchanged: bucketing every pixel by its OLD color gives a within-color NEW spread of 1.2/255
+  and an identical interior fraction (0.0933 vs 0.0933) — a one-to-one color remap, i.e. the
   escape field is bit-unchanged and only the iteration→palette mapping moved. The F3 reference
   images are untouched, so the structural side-by-side the corpus exists for is unaffected.
   ⚠**Context that reframes the severity: the baseline PNGs are dated 2026-07-12**, predating
@@ -5452,13 +5452,13 @@ Mockups: [design/mockups/](design/mockups/).
   `01-home` alone (0.1 s per render; the cost is the rebuild per step). ⚠Do NOT re-bless to make
   it green — decide first whether the new mapping is intended, then re-bless deliberately.
   ⛔**Related retraction: "score our render against F3 pixel-for-pixel" does NOT work**, and I
-  recommended it twice before checking. The F3 references carry Fraktaler-3's OWN colouring, so
+  recommended it twice before checking. The F3 references carry Fraktaler-3's OWN coloring, so
   a diff is dominated by palette, not precision — measured meanΔ **189** on `01-home`, where
   precision cannot matter at all, and 125 averaged over all 20. The corpus is explicitly for
   *visual, structural* side-by-side comparison (`catalog.html`), which is what its README says.
   A true numeric F3 oracle would need raw escape data, and only **3 of the 20** locations have
   a non-empty F3 `.exr` (`diag/fraktaler/locations/`: me30, me141, me1007 — the other eight are
-  header-only, which is how their parameters were imported). Recolouring those three through our
+  header-only, which is how their parameters were imported). Recoloring those three through our
   palette would give a genuine numeric comparison at three depths; that is the only honest
   version of the idea.
 
@@ -5523,7 +5523,7 @@ Mockups: [design/mockups/](design/mockups/).
   `two_sum` all come back **exact**, and `df_add` lands at **2.64e-15** with `fe_add` at 8.01e-15
   — i.e. ~2⁻⁴⁸, genuine double-float precision, against ~9.4e-8 (pure f32) on every NVIDIA
   backend. That is the proof the whole investigation needed: the WGSL is right, and df32 is real
-  on hardware whose compiler honours IEEE semantics.
+  on hardware whose compiler honors IEEE semantics.
   ⚠**AMD's DX12 path is broken too, but DIFFERENTLY: `two_prod` fails 256/256** (residual exactly
   0 ⇒ `fma(a,b,-p)` is NOT being fused, so the product's error term vanishes), plus the same
   reassociation as NVIDIA. So DX12 is unusable on both vendors, for two distinct reasons — more
@@ -5579,7 +5579,7 @@ Mockups: [design/mockups/](design/mockups/).
   which fits floatexp carrying its own exponent and leaning less on the low limb.
   ⚠**This measures DIVERGENCE, not correctness** — it cannot say which GPU is right. The belief
   that AMD is the more accurate one rests on the gputest evidence (exact EFTs, df_add 3.35e-15),
-  not on these images. ⚠The "structural vs recolour" spread statistic is unreliable below
+  not on these images. ⚠The "structural vs recolor" spread statistic is unreliable below
   meanΔ ~0.1 (a few outlier pixels dominate it); treat `01-home` and `13-deep-3.7e141` as "a few
   pixels moved", not as signal.
   ⭐**Design consequence: this argues for RESTRAINT.** ~1% mean, concentrated in one band, one
@@ -5633,7 +5633,7 @@ Mockups: [design/mockups/](design/mockups/).
   report 2026-08-10).** At the three-spar ~1e103× the live view (ss2, ~1236 px wide) shows uniform
   speckle with one clean central diamond. ⛔**My first diagnosis (f32 smooth-iteration precision)
   was WRONG and is retracted** — f32 quantization of a smooth field causes BANDING (patches of one
-  colour), whereas this is salt-and-pepper. Decisive test: **`--render --ss 8` renders it clean**
+  color), whereas this is salt-and-pepper. Decisive test: **`--render --ss 8` renders it clean**
   (coherent four-armed spar structure), `--ss 1/2` speckles; a precision problem would survive
   supersampling. So the escape-time field here has genuine sub-pixel structure (finer than the
   pixel grid), and low supersampling aliases it. Higher output RESOLUTION aliases MORE (each pixel
@@ -5650,7 +5650,7 @@ Mockups: [design/mockups/](design/mockups/).
   capped low here) or an averaging deep-color mode would help. Not a defect, a quality ceiling.
   ⭐**`--uitest` now REPRODUCES this visually (2026-08-11): its `live-floatexp-1e30` screenshot on
   the Linux rig shows clean seahorse filaments at the edges with a salt-and-pepper speckle field in
-  the centre — the same live deep-zoom aliasing, captured as a reviewable PNG. A good regression
+  the center — the same live deep-zoom aliasing, captured as a reviewable PNG. A good regression
   witness for whenever the settled higher-ss pass lands.**
 
 - [x] ⭐**RESOLVED v0.2.40-beta.65 — ITERATION-RANGE TILING: zooming OUT from a deep view loses the
@@ -5659,7 +5659,7 @@ Mockups: [design/mockups/](design/mockups/).
   `[cursor, cursor+step)` per frame at FULL resolution, per-pixel state (z df32, dz df32,
   iter/status/smit) ping-ponged between passes in three Rgba32Float textures; the cursor advances
   while the view holds still (restarts on interaction/view change) until the FULL explicit count is
-  honoured — A1's verbatim guarantee intact (`params.max_iter` untouched; selftest still pins 10M).
+  honored — A1's verbatim guarantee intact (`params.max_iter` untouched; selftest still pins 10M).
   Verified: offline `render_iter_chunked` **bit-identical** to single-pass (`iter-chunk` group, 3
   cases, 0 texels differ); live soak at the exact crash config (shallow, 4M explicit) — no device
   loss, responsive 150s+, cursor trace shows a clean climb 0→4M in ~22 budget-adaptive chunks then
@@ -5683,18 +5683,18 @@ Mockups: [design/mockups/](design/mockups/).
   ss=1 frame that lost the device anyway." Requires `auto_iter` OFF with a high explicit count (auto
   applies `zoom_iter_cap` and would scale down when zooming out; explicit bypasses it — the A1 fix).
   ⛔**FUNDAMENTAL CONFLICT found while fixing: `params.max_iter` IS `gpu_iter` IS the shader loop
-  bound — ONE value.** A1 (beta.53, selftest "explicit iteration count honoured verbatim" at 10× **
+  bound — ONE value.** A1 (beta.53, selftest "explicit iteration count honored verbatim" at 10× **
   Direct**) guarantees that value == the user's explicit count; TDR-safety needs that same value
   bounded. Can't do both for one number. A trial cap on `gpu_iter` in Direct mode (lossless at a
   shallow view — escaped pixels already escaped, in-set stays black at any count) worked but flipped
   the A1 selftest to `1562500` — proving the conflict, then reverted. **Two real options, a product
   call:** (A) **Cap the explicit count at shallow Direct views** (apply `zoom_iter_cap`/the TDR
   budget even to explicit counts when Direct) — small, lossless where it triggers, but A1 no longer
-  honours a huge count at a shallow view (update its selftest; a shallow view never needs millions)
+  honors a huge count at a shallow view (update its selftest; a shallow view never needs millions)
   ⚠may leave the frame at 16×16 until `auto_iter` re-adapts or the user lowers the count (the
   "collapse to 16×16" the memory notes was previously seen/reverted). (B) **Iteration-range tiling**
   — split the N-iteration loop across several dispatches carrying per-pixel state (z, iter) in
-  textures, so the full count is honoured AND each dispatch is bounded. The correct fix; a
+  textures, so the full count is honored AND each dispatch is bounded. The correct fix; a
   significant shader change. ⚠Touches the delicate settle/budget path (device-loss + black-view
   fixes live there) — verify any fix with the full suite + `--livetest` grand tour + a fresh-dir
   zoom-OUT-from-deep repro. Note: the device-lost handler DID write this report + should auto-restart
@@ -5782,10 +5782,10 @@ Mockups: [design/mockups/](design/mockups/).
 
 - [x] ⭐⭐⭐**RESOLVED v0.2.40-beta.49 (2026-08-09): the 2:58 device loss AND the black deep holds
   — one root cause, `design/reference-lifecycle.md` § 6 is the authoritative account.** Short
-  form: `Playback::sample` ROUNDED a pinned-centre glide's centre to the current depth's precision
+  form: `Playback::sample` ROUNDED a pinned-center glide's center to the current depth's precision
   (`lerp_bf(a, a, ease, p)` is not the identity), and every mysterious orbit length in this ledger
   is `escape(round(centre, p)) + 1` — the crash's 626 is the 78-bit rounding, hold-e72's "602,516
-  accumulation" is the 206-bit rounding. Fixes: exact pinned-centre glides + the picker's cliff
+  accumulation" is the 206-bit rounding. Fixes: exact pinned-center glides + the picker's cliff
   rescue (`best_reference_diag`, selftest group `ref-pick`) + the freeze guard now INSTALLS long
   partials at the floor budget (retiring the A3 refusal loop; e61/e63/e82 went green, baseline
   re-blessed). Verified: 0 losses in 4 fresh-dir runs (base rate was 3-in-4), 0 Event 153,
@@ -5807,13 +5807,13 @@ Mockups: [design/mockups/](design/mockups/).
   next-step lists inside the entry below.** 2026-08-09 (late): the mechanism is now fully
   measured, and it rewrites several of the entry's conclusions:
   - **A reference orbit's usable length is a function of PRECISION, with cliffs** (new experiment
-    `escape_length_vs_precision` in fractadyne-core, `--ignored`): at the exact three-spar centre,
+    `escape_length_vs_precision` in fractadyne-core, `--ignored`): at the exact three-spar center,
     128 bits → escapes at 570 · 160 → 84,941 · 207 → 570,711 · 286+ → survives 700k. Every
     "reference naturally escapes at N" in the spar family is a precision cliff, not a fact about
     the location. The `octaves + 64` precision policy is iteration-blind.
   - **`best_reference` goes blind below the cliff**: scoring at the caller's precision, every
     candidate "escapes" < the 4,096 quick scan ⇒ no survivor ⇒ longest-escaper fallback ⇒ a
-    626-class pick. Fed adequate precision it picks the centre and is healthy (offline 26,465
+    626-class pick. Fed adequate precision it picks the center and is healthy (offline 26,465
     partial @286 bits; live 52,648 partial later in the same tour).
   - **The 626 entered via a `prec=78` lookahead build** (wall t≈172; the pacer-dilated clock puts
     the tour shallow then) and **reuse pinned it** — prec gate 206 ≥ 158 passes, drift ≈ 0, no
@@ -5829,8 +5829,8 @@ Mockups: [design/mockups/](design/mockups/).
 
 - [x] ⭐**RETIRED 2026-08-13 — SUBSUMED: both halves of this crash class were fixed by later
   work, and the trigger state can no longer occur.** (1) The shared state itself — a 626-sample
-  ESCAPED reference on a pinned-centre glide — was the beta.49 spar-family root cause:
-  `626 = escape(round(centre, 78 bits)) + 1`, an orbit computed for a ROUNDED destination centre
+  ESCAPED reference on a pinned-center glide — was the beta.49 spar-family root cause:
+  `626 = escape(round(centre, 78 bits)) + 1`, an orbit computed for a ROUNDED destination center
   (`Playback::sample`'s `lerp_bf(a,a,ease,p)` non-identity). Exact pinned glides (beta.49) make
   that reference unconstructible; verified then by 0/4 fresh-dir losses (was 3/4), 0 Event 153,
   and the e21000 soak. (2) The cost-side marginality it exposed (~0.5–1.3 s dispatches around
@@ -5882,7 +5882,7 @@ Mockups: [design/mockups/](design/mockups/).
   reached the `len=626` precondition (~410 occurrences each). `scratchpad/trim_tour.py` produces
   prefix-trimmed copies of a v2 tour if the bisection is resumed.
 
-  ⭐⭐**LOCALISED: "exactly 2:58" is the df32 → floatexp MODE TRANSITION, to the second.** Third
+  ⭐⭐**LOCALIZED: "exactly 2:58" is the df32 → floatexp MODE TRANSITION, to the second.** Third
   field report 2026-08-09 gave the tour-clock time rather than an uptime, which is what cracked
   it — the earlier reports were wall-clock and the pacer dilates the clock, so nobody had tied the
   crashes to a tour POSITION. `PERT_FE_THRESHOLD` is 1e28 and the grand tour glides LINEARLY in
@@ -6036,7 +6036,7 @@ Mockups: [design/mockups/](design/mockups/).
   new clamp floor, in `budget_step`, in the `tdr_steps` read-back that would otherwise re-raise a
   below-bootstrap budget, and in `install_recompute`'s discontinuity derate. The bootstrap is now
   documented as an opening guess, not a floor, with the 780 ms measurement recorded against its
-  old claim. Property test `the_budget_can_shrink_below_the_opening_guess` pins the behaviour;
+  old claim. Property test `the_budget_can_shrink_below_the_opening_guess` pins the behavior;
   `budget_never_leaves_its_clamps` updated. The resolution shrink's own 16×16 floor still bounds
   how small a frame can get, so the valve cannot collapse the view.
 
@@ -6108,7 +6108,7 @@ Mockups: [design/mockups/](design/mockups/).
   central: `bla_skip=0` with **46 rebases per pixel** (`rebase=5962666` over 129,600 px) — the
   626-sample reference means BLA skips nothing and every pixel grinds 26,464 iterations serially.
 
-  ⭐**Step 1 DONE, and it deepens the mystery: offline mode 2 at 69×54 is FREE.** Same centre, same
+  ⭐**Step 1 DONE, and it deepens the mystery: offline mode 2 at 69×54 is FREE.** Same center, same
   `--iter 26464`, `--zoom-log2 94` (94 not 93 — `magnification()` depends on the viewport, so at
   93 the mode flips with resolution), wall time minus the ~1500 ms constant of app start +
   reference build:
@@ -6214,14 +6214,14 @@ Mockups: [design/mockups/](design/mockups/).
      costs **11 ms**. Candidates: a second view still live from the dual-view
      chapter, the minimap, the orbit overlay, a pass running at window resolution rather than the
      iterate resolution, or the iterate pass running more than once per frame. Instrument by
-     labelling every submit in the frame and logging the set when `outside > 200 ms`.
+     labeling every submit in the frame and logging the set when `outside > 200 ms`.
      ⚠Note the offline CLI renders TWO images (`cli-render-map` + `cli-render-julia`), so the table
      above already includes a second view's cost — which makes the live number stranger, not less
      strange.
   2. Ask why the reference is 626 samples when pixels need 26,464. A reference that escapes at 626
      is a bad pick, and `best_reference` scoring exists to avoid exactly that. This may be a
      rendering-quality bug that happens to also be the performance cliff.
-  3. Only then consider a-priori throttles. An a-priori bound is the ONLY defence available given
+  3. Only then consider a-priori throttles. An a-priori bound is the ONLY defense available given
      point 3 above, so it has to be right rather than tuned.
 
   ⭐**One long-standing assumption is still DISPROVEN — do not re-derive it:**
@@ -6323,7 +6323,7 @@ Mockups: [design/mockups/](design/mockups/).
   collectively fragile — CENTRALIZED beta.104.** The user requirement below is delivered in two
   halves, each provable on its own:
 
-  **(a) One place, zero behaviour change.** All 42 fixed constants moved into
+  **(a) One place, zero behavior change.** All 42 fixed constants moved into
   `crates/fractadyne-app/src/tunables.rs`, **verbatim, with the doc comment that records the
   incident that set each value** — the reasoning is the point, not the digits. `render.rs` and
   `main.rs` re-export the module, so **not one call site changed**: the diff is 263 deletions
@@ -6347,7 +6347,7 @@ Mockups: [design/mockups/](design/mockups/).
     would send a diagnosis chasing a change that never happened.
   - **Loud and traceable** — logged at startup (`⚠TUNABLES 2 OVERRIDE(S) — TDR_BUDGET_MS 900 → 500,
     …`) and stamped into every crash report on a `tunables:` line that reads `stock` otherwise, so a
-    report from an overridden run can never masquerade as stock behaviour — and a report that says
+    report from an overridden run can never masquerade as stock behavior — and a report that says
     nothing about tunables can be told apart from one written before the mechanism existed.
   - **The gates refuse to be quoted off-stock** — `--selftest` carries a check that FAILS under any
     override (verified: `5/6` under `--set TDR_MAX_TILES=64`, `6/6` stock). Every threshold, golden
@@ -6368,7 +6368,7 @@ Mockups: [design/mockups/](design/mockups/).
   that set it — the per-site comments move with the values), and allow OVERRIDING them for
   debugging via CLI (`--set TDR_BUDGET_MS=500`), an advanced settings file, and/or a diagnostics
   UI panel — overrides logged loudly at startup and stamped into crash-report manifests so a
-  report from an overridden run can never masquerade as stock behaviour. ⚠Overrides are a
+  report from an overridden run can never masquerade as stock behavior. ⚠Overrides are a
   debugging tool, not a supported configuration surface: defaults stay the only tested path, and
   the selftest/bench gates run at defaults. Raised 2026-08-08 after a week in which most incidents came from this
   machinery. An inventory first — three tiers:
@@ -6413,7 +6413,7 @@ Mockups: [design/mockups/](design/mockups/).
     hold, starvation is measured from the last READING not the last dispatch, and an idle view
     never trips it.
 
-  Items 2 (centralise the tunables with declared contracts), 4 (unify settled + motion on measured
+  Items 2 (centralize the tunables with declared contracts), 4 (unify settled + motion on measured
   cost — half done, see below) and 5/6 (capability probe as an instrument; the probe itself now
   logs one line and is in the crash report, but `--bench-matrix` does not yet record it) remain.
 
@@ -6430,7 +6430,7 @@ Mockups: [design/mockups/](design/mockups/).
   1. **One invariant retires the largest family**: an UNMEASURED budget may bound the first
      dispatch but must NEVER bind resolution or quality downward. Plus a wall-clock fallback when
      timestamps are absent — the AIMD motion controller already proves that works.
-  2. **Centralise the tunables** with a declared contract each: what it bounds, how it is measured,
+  2. **Centralize the tunables** with a declared contract each: what it bounds, how it is measured,
      what happens when measurement is unavailable, where it was last validated. The prose today is
      good but scattered, and the contract is implicit — which is why one mistake recurred in three
      places.
@@ -6467,7 +6467,7 @@ Mockups: [design/mockups/](design/mockups/).
      never in bytes, which is the one resource a frame sequence actually exhausts. It now shows
      `≈N GB of frames · M GB free` from `sysinfo::free_disk_bytes`, amber with "not enough room for
      the whole sequence" when short. ~0.65 B/px, the measured PNG cost of a 4K fractal frame,
-     labelled as an estimate — deep frames compress worse than shallow ones, so it is an order of
+     labeled as an estimate — deep frames compress worse than shallow ones, so it is an order of
      magnitude, not a promise, and the 1.2× margin keeps it quiet when it is merely close.
   ⚠**This is the third time in two days that the diagnostic, not the failure, was the problem** (the
   beta.36 crash manifest knowing only export frames; the controller's silent `continue`). The
@@ -6497,23 +6497,23 @@ Mockups: [design/mockups/](design/mockups/).
   the exact signature of the three real crashes — and now writes a report naming the failed size,
   the memory, and the breadcrumb. Suite 101/101 + goldens 17/17; `--divetest` 59.5–60 fps, p95
   ≤ 15 ms per band, so the allocator wrapper costs nothing measurable.
-- [x] ⏹**CLOSED, stale (audit 2026-10-12):** one occurrence (2026-08-07) and none in two months; unclean-exit reporting would catch a recurrence. — **WATCH — was "PRIORITY", re-labelled 2026-09-09: unexplained access violation, `08-07 17:00:25
+- [x] ⏹**CLOSED, stale (audit 2026-10-12):** one occurrence (2026-08-07) and none in two months; unclean-exit reporting would catch a recurrence. — **WATCH — was "PRIORITY", re-labeled 2026-09-09: unexplained access violation, `08-07 17:00:25
   0xc0000005`.** One occurrence (2026-08-07), none reported since; (c) above shipped in beta.43, so a
   recurrence now produces a report on the next launch. Nothing is actionable until then. Original:
   No crash report and never investigated. Distinct from the abort class above (a segfault, not a controlled exit), so
   it needs its own look once (c) above makes silent deaths visible.
 
-- [x] **RETIRED 2026-08-13 — the live view now honours a high explicit iteration count; the one
+- [x] **RETIRED 2026-08-13 — the live view now honors a high explicit iteration count; the one
   remaining gap has its own item.** The count reaches the shader verbatim (A1, beta.53). What
-  this item actually tracked — the COST of honouring it — resolved in layers: Direct and mode-0
+  this item actually tracked — the COST of honoring it — resolved in layers: Direct and mode-0
   render the exact count at native via iteration-range chunking (beta.65/68); mode-2 single
   dispatches are bounded by the measured 400 ms explicit budget (beta.79/80) with the tiled
   settle composing native from bounded tiles; and deep-hold references now build to the full ask
   ahead of arrival (the hold prefetch). Residual: mode-2 chunking (its own `[~]` item above) for
   exact-count-at-native in the one regime tiles can't fully serve (>600 ms latency floors).
   Original account kept below.
-  ~~The live view cannot honour a high explicit iteration count — the COST MODEL half is FIXED
-  (v0.2.40-beta.47); honouring the count itself is blocked on two couplings.~~
+  ~~The live view cannot honor a high explicit iteration count — the COST MODEL half is FIXED
+  (v0.2.40-beta.47); honoring the count itself is blocked on two couplings.~~
   ⭐**UPDATE v0.2.40-beta.79/80 — the explicit regime is now measured, and its worst field case is
   fixed.** Point 3 below ("the cost bound counts NOMINAL steps") is addressed for explicit counts:
   `budget_step` runs a separate explicit regime converging on 400 ms REAL (measured, ×1.5-paced,
@@ -6601,7 +6601,7 @@ Mockups: [design/mockups/](design/mockups/).
      branch declares "exhausted" and **reverts the boost to 1.0**, dropping the render two orders
      of magnitude below what was asked for. That revert is right for an AUTO budget (identical flat
      image, far cheaper) and wrong for an explicit one.
-  2. **Simply honouring it makes things WORSE — measured, not predicted.** Removing the cap when
+  2. **Simply honoring it makes things WORSE — measured, not predicted.** Removing the cap when
      `auto_iter` is off renders at 10M and the frame collapses to **16×16 pixels** (the shrink's
      own floor) upscaled to the panel: at 10M iterations one pixel is 1e7 nominal steps, so even
      16×16 is 2.56e9 against a 9.000e8 budget, and the tiled settle never arms (`can_tile=true
@@ -6615,7 +6615,7 @@ Mockups: [design/mockups/](design/mockups/).
      already solved exactly this (the AIMD `res_scale`, driven by the measured frame interval,
      whose comment says the nominal model "over-shrinks the moving frame" where BLA skips); the
      SETTLED path never got the same treatment. Fix direction: size the settled resolution/tiling
-     from measured cost like the motion path does. Then an explicit iteration count can be honoured
+     from measured cost like the motion path does. Then an explicit iteration count can be honored
      at full resolution — the affordable range at this view is ~1.05M iterations before the shrink
      binds at all, i.e. ~12× what the view currently gets.
 
@@ -6644,7 +6644,7 @@ Mockups: [design/mockups/](design/mockups/).
   Caught by the livetest baseline landed the same day — the black metric alone called it a win.
 
   ⚠**The symptom did not reproduce, so treat this as hardening, not a demonstrated fix.** Tried:
-  a static session seeded at the hold-e55 centre and 250,000 iterations (gives the exact reported
+  a static session seeded at the hold-e55 center and 250,000 iterations (gives the exact reported
   numbers — `len=258193`, refused, keeping a 56,795-sample clamp — but 3 builds and 1 refusal in
   40 s, no loop); `--livetest --segment gauntlet` at 480×270 and at 2560×1440 (763 builds, 4
   one-off refusals). The guards measure as a no-op on that workload — 759–762 builds, 4 refusals,
@@ -6700,7 +6700,7 @@ Mockups: [design/mockups/](design/mockups/).
   full 1431×1134.
   ⚠**The `is_fe` gates hid this.** Before beta.40 the budget was equally unmeasurable on a static
   floatexp view, but nothing on the df32 path consumed it, so the dead controller was invisible.
-  Generalising the bound is what turned a silent stall into a visible one.
+  Generalizing the bound is what turned a silent stall into a visible one.
   **Verified** by A/B at the reported location on beta.39 vs beta.40 vs the fix (same
   `session.toml` restored before each run): beta.39 sharp, beta.40 blocky at 205×162, fix sharp and
   pixel-comparable to beta.39. Suite 101/101 + goldens 17/17; `--divetest` 59.3–60 fps, p95 ≤ 16 ms
@@ -6729,7 +6729,7 @@ Mockups: [design/mockups/](design/mockups/).
   ss=1 — and it measured against `TDR_STEPS_CEIL` (3e11), which 1.145e11 is *under*, so it could
   never have fired. Had the same frame been floatexp, the shrink would have taken it to ~273×121.
   That asymmetry was the bug. **Same shape as the beta.36 crash already in this ledger**, where
-  `max_ss_tdr` was floatexp-only and got generalised — only the ss half was fixed then.
+  `max_ss_tdr` was floatexp-only and got generalized — only the ss half was fixed then.
   Fix: every mode measures and is bounded; a MODE SWITCH derates the budget (`budget_mode`) exactly
   as `install_recompute` derates on a reference discontinuity, since a nominal step costs several
   times more in floatexp than in df32.
@@ -6814,7 +6814,7 @@ Mockups: [design/mockups/](design/mockups/).
     `len=626` — ~35 rebuilds a second for six minutes. `playback_ref_prefetch` culls a slot whose
     result has no usable BLA (`lag < 0.86`) and the queue immediately refills the same target, with
     no backoff and no memory of a futile target (unlike `ref_ext_futile` on the extension path).
-  - **Ruled out:** coordinate precision. Keyframe centres were parsed at each keyframe's own depth
+  - **Ruled out:** coordinate precision. Keyframe centers were parsed at each keyframe's own depth
     (fixed in beta.37 for RATIONAL coordinates, with a selftest that fails at 9.8e-40 drift without
     it) — but a plain decimal literal is parsed from its own digit count, so the shipped tours were
     never truncated and this was not the cause.
@@ -6931,7 +6931,7 @@ Mockups: [design/mockups/](design/mockups/).
   ⭐**Root cause.** The climb probe (`render.rs`, "Budget-climb probe") fires while
   `!fe_budget_ok`, paced to every 3rd frame, to break a real deadlock: a view FLOORED to 16×16 by
   a budget too small to render it can never re-key, so it never dispatches, so it never measures,
-  so the budget never grows — pixellated forever. But convergence can only come from a reading
+  so the budget never grows — pixelated forever. But convergence can only come from a reading
   `budget_step` accepts, and it discards any dispatch under **0.7 × budget** as unrepresentative.
   On any view whose whole frame is CHEAPER than that — the default home view is
   `steps=4.288e8` against the `9e8` bootstrap, i.e. 0.48 — the two rules chase each other
@@ -6968,7 +6968,7 @@ Mockups: [design/mockups/](design/mockups/).
   exactly the suspicion: `render_export` DOES tile, but its per-tile `TILE_WORK_BUDGET` is a fixed
   2e10 *nominal* steps with a 64² floor, and for a shallow/all-interior frame (Direct mode, BLA
   skips nothing → nominal ≈ real) that is ~2e10 REAL steps in one dispatch ≈ 2 s → TDR. Fix:
-  `ExportRequest` gained a `work_budget: Option<u64>` the tiler honours (with a 16² floor when set),
+  `ExportRequest` gained a `work_budget: Option<u64>` the tiler honors (with a 16² floor when set),
   and the offline tour path sets `TOUR_WORK_BUDGET = 2e9` on every frame (normal, normalized via
   `render_export_normalized`, and dual). 2e9 real ≈ 0.2 s/tile even in the no-skip worst case, safe
   on any discrete GPU. Verified: the exact 240×135 / 1.3× / `max_iter=2e6` all-interior repro that
@@ -7043,7 +7043,7 @@ Mockups: [design/mockups/](design/mockups/).
     entry (Tools) can follow.
 - [x] ⭐**Tour renders alias at depth — FIXED v0.2.40-beta.54: `[render] normalize` with temporal smoothing.**
   (user-reviewed 2026-08-10 on the 4K grand-tour frames: "large regions that simply look like
-  noise" from ~e50 on). Verified by A/B at the same centre/depth/iterations: default coloring =
+  noise" from ~e50 on). Verified by A/B at the same center/depth/iterations: default coloring =
   confetti (escape values span ~1e5–1e6 against a few-hundred-entry palette cycle ⇒ adjacent
   pixels at random cycle phases; ss4 averages it to flat grain), `--normalize` = the same view
   resolves into spar arcs on a coherent field. The live view has "Normalize deep colors"
@@ -7068,7 +7068,7 @@ Mockups: [design/mockups/](design/mockups/).
   palette/max_iter — but UI-reachable settings like supersampling mode, glitch correction,
   series approx / BLA toggles, normalize-deep-colors, stripe/trap coloring parameters, and the
   watermark are not scriptable. Rule: **anything unset in the script defaults to the current UI
-  settings** (already the effective behaviour for the unlisted ones — make that a documented
+  settings** (already the effective behavior for the unlisted ones — make that a documented
   contract rather than an accident, and emit each resolved value into the render log so a report
   shows what actually applied).
   - 🔎 **Audit 2026-10-12:** `[render]` gained `normalize` (0.2.40-beta.54) and `show_location`; keyframes carry fractal, formula, julia, dual, minimap, orbits and lsystem. Still open: supersampling mode, glitch correction, SA/BLA toggles, coloring method and stripe/trap parameters, watermark; document the "unset = UI settings" contract; log the resolved values.
@@ -7303,7 +7303,7 @@ future *export* if anyone wants to cut frames in an NLE, never the native format
   fe_add de>60, orbit_fe dip decode, Zhuoran rebase) — which is smooth (df32 == df64 == GPU). At these
   dense dendrite fields the smooth-iter counts are huge (~3e5–9e5) and vary steeply pixel-to-pixel, so
   `shade()`'s `palette(pv·cycle + offset)` with the fixed cycle (0.27) ALIASES a correct field into
-  speckle. Colouring the SAME buffer with the frame's escape range mapped to the palette
+  speckle. Coloring the SAME buffer with the frame's escape range mapped to the palette
   (auto-normalized: `cycle = N/range`, `offset = -min·cycle`) reveals the correct structure matching
   F3 arm-for-arm (spiral dendrites at 14; bulb boundary at 15). Corpus 14/15 renders regenerated with
   auto-normalized coloring (FEDUMP, 2560×1440 → 2×2 box downsample). ⚠**Three wrong diagnoses first,
@@ -7413,7 +7413,7 @@ isn't wired into target selection.
   - **A penalty for near-tip locations.**
 - [x] ⏹**CLOSED, stale (audit 2026-10-12):** the autopilot aims at boundary cells, never at a nucleus (beta.109). — **Aim beside the nucleus, not at it.** Landing exactly on a minibrot terminates the zoom in a
   dead end. Choose the aim point as an OFFSET from the nucleus — skirting it at a fraction of the
-  atom size is precisely the Dinkydau shape-stacking manoeuvre that generates embedded Julia sets.
+  atom size is precisely the Dinkydau shape-stacking maneuver that generates embedded Julia sets.
 - [ ] **Prefer Misiurewicz targets as the other good class.** λ guarantees the descent never runs
   out: structure repeats every factor of |λ|, forever.
   - 🔎 **Audit 2026-10-12:** Shipped: a Misiurewicz-point auto-zoom target (0.2.41-beta.111, `--autopilot-target`). Still open: the autopilot does not choose between the two classes itself.
@@ -7436,7 +7436,7 @@ isn't wired into target selection.
 ## Design follow-ups (from mockup review, 2026-06-25)
 
 - [x] ✅**DONE (audit 2026-10-12):** the Life editor takes typed rulestrings including B0..8/S0..8, Hensel and MAP (0.3.0-beta.16); the mockup is historical. — **CA 2-D Birth/Survive rows only go 0–5; must be 0–8.** A 2-D life-like cell
-  has up to 8 neighbours, so rules like HighLife (B36/S23) can't be expressed.
+  has up to 8 neighbors, so rules like HighLife (B36/S23) can't be expressed.
   Fix in mockup `14` and in the real CA 2-D rule editor. (DESIGN.md §4.1)
 - [x] ⏹**CLOSED, stale (audit 2026-10-12):** the L-system editor is a text editor; the mockup's rules table was never built. — **Mockup `12` footer says "1 rule" but shows 2 rows** (the 2nd, `G →`, is an
   empty placeholder). Cosmetic — fix the count or drop the empty row.
@@ -7543,7 +7543,7 @@ cache, adaptive iterations, auto-save/restore, and the first side panels.
       (upsampled, blurry) copy until a fresh reference snaps in. To make it XaoS-like:
       1. **Promote reuse to the primary zoom path** (all depths, every zoom frame): start each
          frame from the reprojected prior texture instead of black, so there's never a
-         blank/pixellated intermediate.
+         blank/pixelated intermediate.
       2. **Refine, don't just upscale** — a scaled frozen texture is upsampling, not real detail.
          Re-iterate only the newly-revealed annulus at the edges + progressively re-iterate the
          interior at correct resolution (center-out or priority tiles) so reused regions stay
@@ -7585,7 +7585,7 @@ cache, adaptive iterations, auto-save/restore, and the first side panels.
 - [x] **Dual-view toolbar icon** — custom-painted "two side-by-side rectangles"
       (`dual_toggle_button`), so it reads as the split view regardless of font glyphs.
 - [x] **Gradient stop editor** (custom palettes) — SHIPPED: "Edit gradient…" in the Coloring
-      panel opens the stop editor (`palette_editor_open`); up to eight stops, each a colour +
+      panel opens the stop editor (`palette_editor_open`); up to eight stops, each a color +
       position, seeded from a preset. (Item was stale-open; verified in the running app.)
 - [x] **Bookmarks / presets library** — Bookmarks menu (+ ★ toolbar button) saves the
       current view (full-precision center via the export view-metadata blob) to
@@ -7861,7 +7861,7 @@ perturbation + series approximation + glitch correction. The headline feature.
   byte (IEND's final CRC is never verified), so a half-written frame can later read as a finished one
   and `--resume` would skip it. That is a silently corrupt deliverable — the single worst outcome here.
   ⚠**Interacts with the encode backpressure.** The encode queue is a bounded `sync_channel`, so while
-  writes are stalled it fills and the render loop blocks on `send`. That is the CORRECT behaviour (it
+  writes are stalled it fills and the render loop blocks on `send`. That is the CORRECT behavior (it
   stops burning GPU on frames it cannot store) but it must be distinguishable from a hang: the hang
   watchdog and any external monitor will otherwise see a frozen render with no explanation. Log the
   state clearly enough that a human reading only the log can tell "waiting for the destination" from
@@ -7939,7 +7939,7 @@ perturbation + series approximation + glitch correction. The headline feature.
       per sub-item (pause-until-dismissed captions, off-screen callout arrows, rect spotlights):
       - [x] **On-screen commentary / text** — DONE: `[[caption]]` entries (timed independently of
         keyframes) with `text` (multi-line), `at`/`secs`, `pos` (top/center/bottom), `fade`, and
-        `size`. Eased fade in/out; wrapped + centred on a soft dark backing. Renders live
+        `size`. Eased fade in/out; wrapped + centered on a soft dark backing. Renders live
         (`draw_captions`, egui painter) **and** burned into exported tour frames (`stamp_caption`,
         rasterized from the font atlas). *(Remaining: optional pause-until-dismissed.)*
       - [x] **Callouts** — DONE: `[[callout]]` entries with a target `center_x`/`center_y` (fractal
@@ -7948,7 +7948,7 @@ perturbation + series approximation + glitch correction. The headline feature.
         depth) so they track the point as the view pans/zooms; off-screen anchors are skipped. Live
         (`draw_callouts`) + exported frames (`stamp_callout`). *(Remaining: off-screen edge arrows.)*
       - [x] **Vignettes / spotlights** — DONE: `[[spotlight]]` entries dim everything outside a soft
-        circle centred on a fractal coordinate (`center_x`/`center_y`), with `radius`/`softness`
+        circle centered on a fractal coordinate (`center_x`/`center_y`), with `radius`/`softness`
         (frame-height fractions), `dim`, and `at`/`secs`/`fade`. Applied in the color shader
         (aspect-corrected round circle) so live + export are identical; anchored via
         `complex_to_pixel` so it tracks the point; the dim eases with the fade window.
@@ -8071,10 +8071,10 @@ perturbation + series approximation + glitch correction. The headline feature.
   licensing question, but FRACTINT's source is licensed and copying it would be.
   **Where it earns its place** (ranked; the value is entirely "you walked away and came back"):
   1. **Offline render completion** — `--render`, `--render-tour`, and the "Render tour…" dialog. The
-     direct analogue of FRACTINT's case and the strongest candidate.
+     direct analog of FRACTINT's case and the strongest candidate.
   2. **Tour playback reaching the end** — cheap to wire, obvious meaning.
   3. **A deep view finishing its settle** — arguably the closest match to what FRACTINT's beep
-     actually signalled ("the image is done"). ⚠Must be gated on the settle having taken long enough
+     actually signaled ("the image is done"). ⚠Must be gated on the settle having taken long enough
      to be worth announcing (order of 10 s), or it fires on every navigation keystroke and becomes
      unbearable within a minute. This gate is the whole design, not a detail.
   4. Export/screenshot written.
@@ -8098,7 +8098,7 @@ perturbation + series approximation + glitch correction. The headline feature.
 - [ ] **Theme polish** — optional light/preset themes, custom font, accent picker.
   - 🔎 **Audit 2026-10-12:** Shipped: dark and light themes with the bundled Spline Sans (v0.1.30), the light accent's WCAG fix (0.2.41-beta.88). Still open: preset themes, an accent picker, a font choice.
 - [x] ✅**DONE (audit 2026-10-12):** drag, click and wheel on the minimap (0.2.40: 33933de, 42c89f5, f29fdd5); uitest MinimapPan / MinimapPanVerify. — **Navigable minimap (user, 2026-08-09)** — dragging (or clicking) the "you are here"
-  marker inside the minimap overlay moves the CENTRE of the current view. `draw_minimap`
+  marker inside the minimap overlay moves the CENTER of the current view. `draw_minimap`
   (`ui/central.rs`) already knows the fixed complex region ↔ pixel mapping, so the hit-test and
   the inverse map exist; wire pointer events on the overlay rect to `set_center` + a re-render,
   and suppress the main-canvas drag handler while the pointer is captured by the minimap.
@@ -8354,7 +8354,7 @@ for fun, informative value, and ease of use.
   only") — connect Fractadyne to the existing palette cultures instead of growing presets alone.
   Import into the custom-gradient editor and offer as a palette source alongside presets:
   - **KF / Fractint `.map`** (plain 256-entry RGB text) — cheapest, largest culture; still
-    blocked on gathering reference `.map` files + KF-rendered images to verify colours against.
+    blocked on gathering reference `.map` files + KF-rendered images to verify colors against.
   - **UltraFractal `.ugr` gradients** (text, gradient stops — closer to our stop-based custom
     palette than `.map`'s baked 256 entries).
   - **Generic fallbacks**: a plain hex list / CSS-style stop list paste box in the gradient
@@ -8444,16 +8444,16 @@ descent and the Tan Lei self-checking test).
   precision, and the flat-frame warning unchanged; the grammar stays radians-only. Verified:
   `compose_polar_evaluates_to_the_offset_polar_point` (all 3 units + empty-fields-as-0) + a
   `--uitest` screenshot of the polar dialog. Original spec:
-  - **Polar form with cartesian offset**: enter a centre as `x0, y0 + r ∠ θ` — i.e.
+  - **Polar form with cartesian offset**: enter a center as `x0, y0 + r ∠ θ` — i.e.
     `re = x0 + r·cos(θ)`, `im = y0 + r·sin(θ)`, all evaluated at target precision. UI shape: a
     mode switch (x,y ↔ offset+polar) in the Go-to dialog with fields (x0, y0, r, θ) and a
     degrees/radians/turns selector (the grammar itself stays radians-only). The functions
-    cover the maths already; this is discoverability. ⚠Grammar stays small and total (no
+    cover the math already; this is discoverability. ⚠Grammar stays small and total (no
     variables, no user functions) — the UI composes the expression from its fields.
 - [ ] **WYSIWYG coordinate-expression editor** (user, 2026-09-11). The Go-to fields take the
   full grammar (Help ▸ "Coordinate expressions", beta.101, lists every constant and function
   with examples) and a refusal now names the field, the character and what to type instead —
-  but the expression is still typed blind. Build a structured editor for the centre: a typeset
+  but the expression is still typed blind. Build a structured editor for the center: a typeset
   preview of the expression (fractions, powers, √, π) that updates as you type, with the
   evaluated decimal beside it at the current depth's precision; a palette of the constants and
   functions rendered from `fractadyne_core::EXPR_FUNCTIONS` / `EXPR_CONSTANTS` (so it cannot
@@ -8468,7 +8468,7 @@ descent and the Tan Lei self-checking test).
 - [x] **Exact rational / complex coordinate entry** (P0, §4.1) — v0.2.40-beta.23. `parse_bf` now
   evaluates rational expressions (`-3/4`, `(1+2)/8`), and `parse_complex_prec` parses complex ones
   (`(37+16i)/100`) — the Go-to dialog's real field accepts a whole complex value and fills both
-  coordinates. Both entry forms honour a caller-supplied precision floor taken from the target
+  coordinates. Both entry forms honor a caller-supplied precision floor taken from the target
   zoom, so an inexact rational carries enough digits for the depth it's viewed at (astro-float's
   `FromStr` sizes precision from the input's digit count, which left `0.37` at ~64 bits). Also
   closed a latent hazard: `FromStr` accepts `"1 2"` as `1`, so coordinates are now shape-validated
@@ -8496,7 +8496,7 @@ descent and the Tan Lei self-checking test).
   runs the critical orbit to the cycle then accumulates the derivative around it, reporting
   `log2|λ|` (the zoom period — the view repeats every that-many octaves) and `arg λ` (the twist per
   repeat). The Go-to dialog reports both after a solve. Verification: both closed-form cases exact
-  to 1e-9 — c = −2 gives λ = 4 real (which is *why* the antenna tip repeats without spiralling),
+  to 1e-9 — c = −2 gives λ = 4 real (which is *why* the antenna tip repeats without spiraling),
   c = i gives 4(1+i) = 45° twist. Core unit test + selftest (suite 89 → 90). This unblocks the Tan
   Lei invariant test and λ-guided descent, which both need λ.
 - [ ] **Landmark library expansion** (P1, §4.3 partial) — we ship 12 curated points; add the
@@ -8514,7 +8514,7 @@ descent and the Tan Lei self-checking test).
   custom-gradient editor and offer as a palette source alongside the presets. **NEXT UP after the
   format work.** Verification bar set by the user: exactness, not just "it loads" — obtain
   reference `.map` files AND the KF-rendered images that use them, then assert our render through
-  the imported palette matches KF's colours with no artifacts (interpolation between the 256
+  the imported palette matches KF's colors with no artifacts (interpolation between the 256
   entries, and gamma/linear handling, are the two places this silently goes wrong). Needs those
   reference assets before starting.
 - [x] **Grand-tour script: landmarks + pathological locations** — SHIPPED v0.2.40-beta.33 as
@@ -8530,9 +8530,9 @@ descent and the Tan Lei self-checking test).
   item: an automated PASS/FAIL harness over the rendered frames (per-frame escaped-pixel and
   capped fractions vs thresholds) so "it went black at depth" becomes a failing check.
 - [ ] **Automated tour-frame verdict harness** — render `grand-tour.toml` (low fps/size) and
-  assert per-frame flatness metrics: standard deviation and distinct-colour count over a sampled
+  assert per-frame flatness metrics: standard deviation and distinct-color count over a sampled
   grid, plus the GPU capped fraction where available. The ad-hoc PowerShell version used during
-  beta.33 development worked (flat frames read sd ≈ 0–8 and 2–12 colours against 60–100+ for a
+  beta.33 development worked (flat frames read sd ≈ 0–8 and 2–12 colors against 60–100+ for a
   healthy frame, and PNG size is a good cheap proxy: 5–8 KB vs 150–240 KB) — make it a committed
   script or a `--tour-verify` flag so it runs unattended.
   - 🔎 **Audit 2026-10-12:** `--livetest` (0.2.40-beta.35) grades the keyframe holds against offline renders. Still open: absolute flatness checks on `--render-tour` output.
@@ -8573,7 +8573,7 @@ descent and the Tan Lei self-checking test).
 - [ ] **Exponential-map render mode** (P1, §1.4 absent) — zoomasm-compatible zoom-video assembly.
 - [ ] **Zoom video: hold the inner strips coarser** (the third high-resolution fix,
   `design/zoom-video.md` §8.6; the first two — strips in pieces, the window holding only what the
-  colouring reads — done 2026-10-28 on `feat/zoom-video-hires`). Toward a frame's centre each
+  coloring reads — done 2026-10-28 on `feat/zoom-video-hires`). Toward a frame's center each
   octave inward is twice as fine as the frame reads it, so a window held only as finely as frames
   read each strip would take ~2.3 strips' worth instead of 13-15 (~6× less): 8K at 2×, or relief
   lighting at 4K 2×, needs it. Costs: samples land up to half a sample from where they land now
@@ -8596,7 +8596,7 @@ descent and the Tan Lei self-checking test).
   + `writer_roundtrip_tests.rs` (PNG bytes ≡ the shared conversion).
 - [ ] **Interior distance-estimation coloring** (P0, §2.2 gap) — exterior DE ships and is stable
   past e300; interior is a flat color today.
-  ⭐**ATTEMPTED 2026-08-14 and REVERTED — the maths works, the integration is the real job. Start
+  ⭐**ATTEMPTED 2026-08-14 and REVERTED — the math works, the integration is the real job. Start
   from here, don't re-derive it.** A working direct-mode implementation renders correctly: the
   cardioid and the period-2 bulb shade smoothly, brightening toward the nucleus.
   - **Formula** (accumulate around one period of `z ← z² + c`, from the settled cycle point):
@@ -8607,7 +8607,7 @@ descent and the Tan Lei self-checking test).
   - ⭐**Period detection must use a TOLERANCE, not the closest return.** Taking the globally
     nearest return looks equivalent and is not: near a component's edge the orbit is still
     creeping toward the cycle, every k is about as close as every other, the winner is noise, and
-    neighbouring pixels pick different periods — a visibly MOTTLED interior. Accept the first k
+    neighboring pixels pick different periods — a visibly MOTTLED interior. Accept the first k
     with `|f^k(z) − z| < 1e-4·(1+|z|)`; pixels that never qualify report "no estimate" and stay
     flat. That single change turned mottle into a clean gradient.
   - **Anchor for the next attempt**: at `c = 0` the cycle is the fixed point with p=1, giving
@@ -8635,7 +8635,7 @@ descent and the Tan Lei self-checking test).
 - [ ] **Curvature-average coloring** (P1, §2.5 gap) — stripe, triangle-inequality and orbit traps
   ship; curvature is the missing fourth. Also: line/stalk trap shapes (we have point/cross/circle).
 - [x] ✅**SUPERSEDED (found stale 2026-09-09) by the ▶ PARAMETRIC GRADIENT EDITING item under Open
-  bugs: per-segment blend curve, midpoint and colour space (RGB, HSV either way round the wheel)
+  bugs: per-segment blend curve, midpoint and color space (RGB, HSV either way round the wheel)
   are editable in the segment-native editor (P1–P3′, beta.29–51) with the P4′ Bézier kind queued
   there; alpha is declined (the renderer has no alpha channel).** Original:
   **Gradient editor depth** (P1, §2.6 partial) — curve-based stops, HSL editing, alpha. The
@@ -8658,13 +8658,13 @@ Recommended order: 2 → 1 → 4 → 3 → 5 — item 2 is a cheap striking win,
 item 4 reuses item 1's engine, item 3 is self-contained, item 5 is an architectural ask.
 
 - [ ] **(2) Bifurcation-measure coloring mode** — μ_bif = Δ G(c), and the G-buffer already holds
-  the smooth escape rate per pixel (`r = smooth`), so this is a coloring pass with neighbour
+  the smooth escape rate per pixel (`r = smooth`), so this is a coloring pass with neighbor
   taps: a discrete Laplacian of G, concentrated on ∂M instead of smeared across the exterior —
   the object the equidistribution theorems are actually about, and distinct from anything in
   KF/UF. Effort SMALL-MEDIUM: one WGSL color-method variant + UI entry (`color_method` is in
   `IterKey`, so switching re-iterates — acceptable). ⚠Numerical care: a Laplacian amplifies
   noise, so it needs the normalized/high-precision smooth field (the DE channel is the related
-  regularised quantity — compare both); expect log-scaling of the density for display.
+  regularized quantity — compare both); expect log-scaling of the density for display.
 - [ ] **(1) Galois orbits of PCF parameters — the flagship.** For fixed (k,n) the PCF parameters
   are the full root set of a degree-2^(k+n−1) polynomial; solve ALL roots and overlay them on
   the parameter plane, and raising the bound visibly fills in ∂M — equidistribution toward
@@ -8707,7 +8707,7 @@ item 4 reuses item 1's engine, item 3 is self-contained, item 5 is an architectu
 
 - [x] **Live period readout in the HUD** (P0, §3.1) — **DONE beta.88.** The minibrot period from
   the M-key / Go-to feature solve now sits ambiently in the status bar (reserved-width, drawn
-  transparent when none applies so it never reflows the bar), keyed to the exact centre+zoom it was
+  transparent when none applies so it never reflows the bar), keyed to the exact center+zoom it was
   solved at so a settling view doesn't flicker it and any pan/zoom clears it. `view_key` +
   `feature_period`; `period_readout` width-gated by `status_bar_slots`. Detection is argmin of
   |Z_n| over the critical orbit, not box-period/ball arithmetic.
@@ -8802,7 +8802,7 @@ item 4 reuses item 1's engine, item 3 is self-contained, item 5 is an architectu
   ⛔**`14-deep-1.2e148` renders as NOISE** (salt-and-pepper where the dendrite belongs) —
   identical at 800k and 8M iterations and under both HDRx32 and HDRx64, so NOT iteration
   starvation, and location-specific rather than a depth limit (5.5e275 and 6.1e1105 are fine).
-  ⭐⭐**NOISE PASSES A STRUCTURE GUARD TRIVIALLY** — many colours, no dominant one. Second hole
+  ⭐⭐**NOISE PASSES A STRUCTURE GUARD TRIVIALLY** — many colors, no dominant one. Second hole
   found in that guard the same day; it was only ever designed to catch a FLAT frame.
   Artifacts: `D:\share\Fractadyne\bench\2026-09-21\` (both full runs zipped, plus an 0.85 MB
   evidence pack). Report for the author drafted at
@@ -8931,7 +8931,7 @@ item 4 reuses item 1's engine, item 3 is self-contained, item 5 is an architectu
 
   ⭐**ZOOM SEQUENCE, 40 frames, same run** (rungs 44..83 = 1e23.90→1e45.08, 4K, 30k iters): fd
   sequence **9.7 s = 0.24 s/frame**; the SAME 40 frames one process at a time **102.1 s = 2.55
-  s/frame** ⇒ **amortisation 10.78×**. F3: 164.3 s for 40 invocations = 4.11 s/frame.
+  s/frame** ⇒ **amortization 10.78×**. F3: 164.3 s for 40 invocations = 4.11 s/frame.
   ⭐**Per frame in sequence we are 17× ahead of F3 (0.24 s vs 4.11 s) while being only 1.6× ahead
   on one frame (2.55 s vs 4.11 s).** THAT is the architecture's actual claim, and it is the one
   the single-frame table cannot see — which is the whole reason this lane exists. It is also the
@@ -8954,16 +8954,16 @@ item 4 reuses item 1's engine, item 3 is self-contained, item 5 is an architectu
   `run-all.ps1`: auto-detected (needs Python 3 — the λ-ladder places its rungs with 400-digit
   decimals), skippable with `-Skip zoomseq` / `-ZoomSeqFrames 0`, hermetic `FRACTADYNE_CONFIG_DIR`
   + `FRACTADYNE_NO_SOUND` like the single-frame lane, its rows folded into the run's ONE
-  `results.csv`, and an amortisation section in `summary.md`. `package.ps1` now ships it (a lane
+  `results.csv`, and an amortization section in `summary.md`. `package.ps1` now ships it (a lane
   the kit invokes by name and does not contain is a lane that reports itself missing on every
   machine), and the README documents both the metric and the F3 caveat.
 
   🔴**Three defects the lane's first REAL 4K run exposed — all fixed, and the smoke-test
-  "amortisation 2.11×" is void because of the first one:**
+  "amortization 2.11×" is void because of the first one:**
   1. **`fractadyne --zoom` silently rendered at 1×.** It was `val("--zoom").and_then(|s|
      s.parse::<f64>().ok()).unwrap_or(1.0)`, and the ladder asks for `1.0e23.900008` — a
      FRACTIONAL exponent, which `f64::from_str` rejects. So the single-frame arm (the
-     DENOMINATOR of the amortisation ratio) rendered the whole Mandelbrot set, at 4K, and exited
+     DENOMINATOR of the amortization ratio) rendered the whole Mandelbrot set, at 4K, and exited
      0. The same line turned `4.6e1105` into `+inf`, which is the blank-frame class of the
      beta.125 regression. FIXED beta.135: `--zoom` now goes through `parse_zoom_to_log2` (the
      parser the go-to field already used, which handles both) and a value we cannot read is
@@ -8973,7 +8973,7 @@ item 4 reuses item 1's engine, item 3 is self-contained, item 5 is an architectu
      `--center` was the worst of them: `parse_bf` returns `None` on anything it cannot read and
      the `?` collapsed the PAIR, so one stray character in a pasted y ordinate — or simply
      omitting y, which makes the next FLAG the y token — threw the location away and rendered the
-     fractal default centre AT THE REQUESTED DEPTH. At depth that is solid main-cardioid
+     fractal default center AT THE REQUESTED DEPTH. At depth that is solid main-cardioid
      interior: a plausible flat frame, full cost, exit 0. Also live on `--size` (wrong resolution,
      silently — the bench-kit defect's own shape), `--iter` (falls back to AUTO iteration, which
      voids the corpus's fixed-iteration contract), `--ss`, `--zoom-log2`, `--fractal`, `--method`,
@@ -8982,7 +8982,7 @@ item 4 reuses item 1's engine, item 3 is self-contained, item 5 is an architectu
      (unreadable ⇒ this node renders the WHOLE timeline) and `--segment-index` (⇒ shard 0, so two
      nodes render the same frames and the rest are never rendered). Plus the headless modes:
      `--refdiag`, `--find-minibrot`, `--frametest --center`, `--regions` per-region `cx`/`cy`
-     (timings attributed to a deep location while profiling the DEFAULT centre), and
+     (timings attributed to a deep location while profiling the DEFAULT center), and
      `--crosscheck-f3`'s `--center`/`--zoom-f3`/`--iter`/`--er` — that one is a CORRECTNESS
      ORACLE, so a silent default there yields a wrong VERDICT that reads as "the other renderer
      disagrees with us". FIXED: three shared helpers (`arg_parse`, `arg_size`, `arg_center` in
@@ -9031,7 +9031,7 @@ item 4 reuses item 1's engine, item 3 is self-contained, item 5 is an architectu
   M(4,3) ladder, rungs 44..51 = 1e23.90 → 1e27.70, 3840×2160, 30,000 iters, ONE sample per
   pixel on both arms, F3 wisdom-benchmarked):
 
-  | | sequence | per frame | single frame, fresh process | amortisation |
+  | | sequence | per frame | single frame, fresh process | amortization |
   |---|---|---|---|---|
   | fractadyne | **3.6 s** (9 frames, one `--render-tour` process) | **0.40 s** | 2.6 s | **6.46×** |
   | fraktaler3 | 38.1 s (8 invocations) | 4.8 s | — | 1.0 by construction (CLI, not engine) |
@@ -9093,13 +9093,13 @@ item 4 reuses item 1's engine, item 3 is self-contained, item 5 is an architectu
   the user's desktop, so it was not run unattended; (1) makes a driver fault very unlikely.
 
   🔴⭐⭐**BUT: EVERY GPU ALGORITHM RENDERS BLANK HEADLESSLY (0.532), AT EXIT 0.** Each pixel comes
-  back with iteration count 1; the PNG is one flat colour. The CLI admits it on `--console`
+  back with iteration count 1; the PNG is one flat color. The CLI admits it on `--console`
   ("all exterior pixels have the same iteration count 1") and stderr carries "OpenGL context
   creation FAILED, no rendering will occur" — the GPU results never reach the image. **`AutoSelect`
   picks a GPU algorithm, so the obvious invocation is silently broken**, and upstream CI
   smoke-tests `Cpu64` only, so it never sees this. CUDA is present and fine (RTX 3080, driver
   596.21). ⚠The CPU algorithms render correctly 1e6–1e27 but ALSO come back blank on the deeper
-  corpus locations (5.07e27, 6.6e43, 1.2e148, 1.47e77, 4.6e1105) — independent of centre
+  corpus locations (5.07e27, 6.6e43, 1.2e148, 1.47e77, 4.6e1105) — independent of center
   precision (40/60/100/196 digits all blank). So the lane yields real numbers for 03 and 04 and
   honest `DNF-blank` for the other eight, which is what it did on a full 10-scene run.
 
@@ -9111,9 +9111,9 @@ item 4 reuses item 1's engine, item 3 is self-contained, item 5 is an architectu
 
   ⛔⭐**MY OWN MEASUREMENT WAS WRONG FIRST TIME, AND IT INVERTED THE CONCLUSION.** I judged
   blankness with `numpy.std()` over the flattened RGB array, which includes the CHANNEL spread of
-  a UNIFORM colour: a solid (117,0,0) field scores std 55 and reads as "has structure". On that
+  a UNIFORM color: a solid (117,0,0) field scores std 55 and reads as "has structure". On that
   metric I concluded the CPU path covered the whole corpus to 4.6e1105 and wrote it into the
-  script. The correct test is spatial — distinct colours / modal fraction — and it says those
+  script. The correct test is spatial — distinct colors / modal fraction — and it says those
   renders were flat all along. ⭐**A blankness test must measure VARIATION ACROSS PIXELS, never
   variance across channels.**
 
@@ -9139,9 +9139,9 @@ item 4 reuses item 1's engine, item 3 is self-contained, item 5 is an architectu
   the tools now drive dialogs by `WM_SETTEXT`/`BM_CLICK` only (untested since the rewrite).
   ⭐**RE-TESTED 2026-09-08 against FractalShark 0.54 (released 2026-09-07): UNCHANGED.** Same
   probes, same box, same driver (596.21): `AutoSelect` and `Gpu1x32PerturbedLAv2` headless ⇒ one
-  black colour at exit 0 with `OpenGlContext: null HWND` / `GlConsumerLoop: OpenGL context
-  creation FAILED`; `Cpu64PerturbedBLAV2HDR` draws scene 03 (1,785 colours) and is FLAT at
-  6.6e43 and at the 1e27.7 spar (2 colours, 1.5-2.4 s — too fast to have iterated at all). The
+  black color at exit 0 with `OpenGlContext: null HWND` / `GlConsumerLoop: OpenGL context
+  creation FAILED`; `Cpu64PerturbedBLAV2HDR` draws scene 03 (1,785 colors) and is FLAT at
+  6.6e43 and at the 1e27.7 spar (2 colors, 1.5-2.4 s — too fast to have iterated at all). The
   0.54 notes cover only the GPU reference-orbit rewrite; the CLI's option set is the same and
   offers no headless/offscreen switch. So it was FractalShark, not its argument parsing, and not
   our scripting; nothing upstream reports it (no matching issue). Filing it upstream with the
@@ -9159,7 +9159,7 @@ item 4 reuses item 1's engine, item 3 is self-contained, item 5 is an architectu
   ~~F3 relative-performance benchmark matrix (user, 2026-08-10)** — a standardized head-to-head
   wall-clock harness vs Fraktaler-3 across a location/zoom matrix, reporting the SPEED RATIO per
   cell (not just correctness — that's the F3-goldens item below). Design notes: reuse the corpus
-  coordinates (same centres/zooms/iterations both tools already agree on) so performance is
+  coordinates (same centers/zooms/iterations both tools already agree on) so performance is
   measured on identical work; drive F3 headless (`fraktaler-3 --render` / its batch mode) and
   fractadyne via `--render` with matched `--iter`/`--size`/`--ss`; separate the COLD (reference
   build + first frame) from WARM (re-render) columns, since the cold `best_reference` cost and the
@@ -9198,8 +9198,8 @@ item 4 reuses item 1's engine, item 3 is self-contained, item 5 is an architectu
   today only self-consistently (`--livetest`: live vs our own offline path). Add them as
   Fraktaler-3 cross-check corpus rows so the tour's key views are pinned against an INDEPENDENT
   renderer: new `[[location]]` entries in `validation/corpus/locations.toml` at each hold's
-  centre/zoom/iterations, F3 renders via `generate_corpus.py` → `--check` gates them like the
-  existing 20. Notes: the three-spar centre's 116 digits cover e55–e94 (not deeper); the
+  center/zoom/iterations, F3 renders via `generate_corpus.py` → `--check` gates them like the
+  existing 20. Notes: the three-spar center's 116 digits cover e55–e94 (not deeper); the
   ultra-dive point is corpus `16-deep-2.1e250` already, so its waypoints are just extra
   mag_log10 rows on a known-good coordinate; ⚠set F3's `maximum_reference_iterations` (the
   missing-ceiling trap that once faked a "~1e13× depth wall"), and use `--normalize` at the
@@ -9271,7 +9271,7 @@ M = one to three weeks, L = a month or more. "PR-" names keep them apart from T1
     4.6e1105 2.08×, p951,094 7.3 → 24.4 s (3.35×); direct mode (seahorse valley 2^10, 50k
     iterations) 142 → 414 ms (2.9×). Pixels changed: 0.1–17%.
     `--bench-matrix` (384 px, ABABAB, 3 rounds each): RTX 3080 fit B = 1.53·A − 33 ms (stripe,
-    trap and decomposition colouring 1.7–1.8×); RX 6800 XT (PLUTO `20261102-141514-15ou`) fit
+    trap and decomposition coloring 1.7–1.8×); RX 6800 XT (PLUTO `20261102-141514-15ou`) fit
     B = 1.15·A − 10 ms, mode medians 1.00–1.05×, worst 1.24× (floatexp without BLA) — AMD's adds
     were already exact, so only its multiply gains work. 20 of 43 segments change output on both
     cards; A drifts on none.
@@ -9306,13 +9306,13 @@ M = one to three weeks, L = a month or more. "PR-" names keep them apart from T1
   lookahead on, standard and accelerated builds. S. Only if it shows contention: one shared pool
   with priorities (live reference > hold > lookahead > scoring > cache I/O).
 - [ ] ⭐⭐**PR-A6. Estimate what adaptive supersampling would save.** From 4- and 24-sample settle
-  renders of the bench scenes, count the pixels whose colour still moves after 4 samples, and how
-  well the a priori rule (colour varies by about 2.9·h/DE across a pixel of width h, from the
+  renders of the bench scenes, count the pixels whose color still moves after 4 samples, and how
+  well the a priori rule (color varies by about 2.9·h/DE across a pixel of width h, from the
   Koebe/Schwarz DE bounds, Brouillette et al. 2018) predicts them. S. Decides PR-B3.
 
 #### Tier B — the biggest expected gains (larger efforts)
 
-- [ ] ⭐**PR-B1. Period-synchronised LA stages — retargets T2c, absorbs T2a and T2b.** Our own
+- [ ] ⭐**PR-B1. Period-synchronized LA stages — retargets T2c, absorbs T2a and T2b.** Our own
   record supports it: at scene 59 (p951,094, 4K) what remains after the renorm step is ~1,200
   steps a pixel, with 70% of renorm trips blocked at level 0 (2026-10-19), and FractalShark's
   LAv2 (Imagina's `HInfLAEvaluator` stages) renders it in 1.34 s against our 7.6 s (own clocks,
@@ -9338,7 +9338,7 @@ M = one to three weeks, L = a month or more. "PR-" names keep them apart from T1
 - [ ] ⭐**PR-B3. Adaptive supersampling at settle — the "DE-adaptive anti-aliasing" backlog item.**
   Settle spends 24 Halton samples on every pixel (~10–15 s at a typical deep view, capped at
   20 s). Take 2–4 everywhere, then spend the rest where 2.9·h/DE (a priori) or the variance of
-  the samples so far (a posteriori) says the colour still varies. ⚠A converged pixel must skip
+  the samples so far (a posteriori) says the color still varies. ⚠A converged pixel must skip
   its LOOP, not `discard` (WGSL `discard` still runs the loop): an early return before the loop,
   or PR-B5's packing gathering only unconverged pixels. M. After PR-A6.
 - [ ] ⭐**PR-B4. A lattice-aligned tile pyramid with a RAM tile cache — `design/xaos-reuse.md`
@@ -9348,7 +9348,7 @@ M = one to three weeks, L = a month or more. "PR-" names keep them apart from T1
   exposed tiles, and a revisit comes from RAM (Kopf et al. 2007 give the fetch and eviction
   policy). Supersampling jitter keyed to the lattice. ⚠A reference switch changes low bits, so
   reuse across one needs a deliberate identity policy; stage 2 (re-iterating during motion) is
-  the fragile core, gated by the coloured reuse-vs-scratch golden first. L. Gain: up to ~4×
+  the fragile core, gated by the colored reuse-vs-scratch golden first. L. Gain: up to ~4×
   fewer iterated pixels in a steady zoom; a pan costs only the new area.
 - [ ] ⭐**PR-B5. Packed live settle walks, then a compute work list.** The live renderer still
   runs `fs_iterate_chunk` / `fs_iterate_chunk_fe` unpacked. Export's `Packer` (packed tails) cut
@@ -9360,7 +9360,7 @@ M = one to three weeks, L = a month or more. "PR-" names keep them apart from T1
   ballot-coalesced appends (Laine et al. 2013; Aila & Laine 2009; Novák et al. 2010). Keep the
   state structure-of-arrays; no spin-waiting (Apple and ARM give no progress guarantee).
 - [ ] ⭐**PR-B6. A live exponential-map cache for autopilot dives and tours.** A dive toward a
-  fixed centre is a translation in log-polar space: iterate only the new inner strip each frame
+  fixed center is a translation in log-polar space: iterate only the new inner strip each frame
   and resample the rest (`expmap_render.rs` already renders the strips). Displayed frame rate
   then no longer depends on iteration cost on straight dives; edge resolution is lower until
   settle. A second GPU can render ahead. M–L.
@@ -9370,7 +9370,7 @@ M = one to three weeks, L = a month or more. "PR-" names keep them apart from T1
 #### Tier C — smaller or less certain gains, or more complex
 
 - [ ] **PR-C1. Faster double-word arithmetic** (Zhang & Aiken 2025 add; Yang et al. 2024
-  normalisation skipping; Kouya 2026 fused double-word FMA): 1.2–1.7× estimated on the df32 tier,
+  normalization skipping; Kouya 2026 fused double-word FMA): 1.2–1.7× estimated on the df32 tier,
   only where the EFTs are honest (AMD's adds; NVIDIA only after PR-A1). M.
 - [ ] ⭐⭐**PR-C2. A per-device floatexp mantissa.** An f32-mantissa floatexp (Fraktaler-3's choice)
   wherever accuracy allows, chosen per adapter by a benchmark. ⚠The report's premise that AMD's
@@ -9457,7 +9457,7 @@ M = one to three weeks, L = a month or more. "PR-" names keep them apart from T1
 - [ ] **PR-C7. Temporal accumulation during slow motion.** Needs PR-B4's lattice. M.
 - [ ] **PR-C8. Second-order BLA.** One report: 21× at 2.8e40, from a single pull request
   (Desarso/mandelbrot-webgpu #2), unverified. Revisit after PR-B1.
-- [ ] **PR-C9. Foveation during motion** (the zoom centre as the fovea): a modest gain in motion,
+- [ ] **PR-C9. Foveation during motion** (the zoom center as the fovea): a modest gain in motion,
   overlapping the AIMD resolution ladder. M.
 - [ ] **PR-C10. An NTT with transform reuse for the complex square, above ~100k bits.** 1.5–3×
   estimated at 256k–1M bits, so only extreme depths (e30000 and beyond). A native implementation:
@@ -9483,8 +9483,8 @@ M = one to three weeks, L = a month or more. "PR-" names keep them apart from T1
   and only helps below 16,384 bits, where threading is off.
 - Taylor-model BLA radii and a ball-arithmetic reference orbit: verification, not speed (speed
   only if provable radii beat ε); they belong under Testing & verification if wanted.
-- Histogram-equalised palette mapping, interior colouring by period, an "undecided at the cap"
-  pixel class: colour and semantics, not speed (coloring backlog §2.4 and §2.10).
+- Histogram-equalized palette mapping, interior coloring by period, an "undecided at the cap"
+  pixel class: color and semantics, not speed (coloring backlog §2.4 and §2.10).
 - Real-time denoisers (they erase filaments), hardware thread reordering (not exposed by wgpu),
   spin-waiting megakernels (no progress guarantee on Apple and ARM GPUs).
 
@@ -9496,7 +9496,7 @@ current-state notes (two of the analysis' premises are ALREADY SHIPPED: candidat
 all-core in beta.7 — the old "9.3 s scoring vs 1.2 s orbit" is now ~0.6 s at 1e1216× — and
 phase-1 scoring is already capped at `REF_SCORE_SCAN = 4096`):
 
-- [x] ✅**DONE (audit 2026-10-12):** 9fdf3da (0.3.0-beta.18): a minibrot-centred reference stops at its period (1e3000 minibrot 84 → 3.0 s). — **Periodic references for nucleus-centred views** — the autopilot/NR-zoom deliberately
+- [x] ✅**DONE (audit 2026-10-12):** 9fdf3da (0.3.0-beta.18): a minibrot-centered reference stops at its period (1e3000 minibrot 84 → 3.0 s). — **Periodic references for nucleus-centered views** — the autopilot/NR-zoom deliberately
   lands on period-P nuclei, where the true orbit is periodic: compute P samples, index mod P. A
   period-10⁴ nucleus under a 10⁶ cap = 100× less serial work, zero threads. ⭐Extra prize the
   analysis missed: a mod-P reference CANNOT NUMERICALLY ESCAPE, so the entire precision-cliff
@@ -9504,7 +9504,7 @@ phase-1 scoring is already capped at `REF_SCORE_SCAN = 4096`):
   P samples must be verified genuinely periodic at build precision (ball-arithmetic check), or
   the wrap re-injects the very rounding drift the cliffs taught us about. Newton machinery
   already yields P.
-- [ ] **One reference per zoom sequence (offline tours)** — a zoom toward a fixed centre uses
+- [ ] **One reference per zoom sequence (offline tours)** — a zoom toward a fixed center uses
   ONE orbit at every depth; compute once at final depth, every frame reads a prefix. Converts N
   serial builds into one AND retires the tour renderer's two-references-in-flight OOM (the item
   gating the e94 8M bump) — the next frame's "build" becomes a prefix slice. The live path
@@ -9565,7 +9565,7 @@ decision in its §13 is taken. The struck item is kept for the reasoning, which 
   - [x] **P0 — render-path prerequisites, byte-neutral** — ✅built 2026-10-04 on
     `feat/remote-rendering`: atomic frame writes (temp + rename), `--frames A..B`,
     `--dump-norm-anchors`/`--norm-anchors`, `--farm-child` preset, `--set ORBIT_LEN_CAP`, per-frame
-    PNG metadata; fixed on the way: shards/chapters ending between keyframes coloured differently
+    PNG metadata; fixed on the way: shards/chapters ending between keyframes colored differently
     from the whole render. Gate evidence in the design's §12. Found and fixed in its own commit
     after it: every normalize anchor measured the HOME view, not its keyframe's (design §12 /
     §15.6) — deep normalized frames came out nearly flat.
@@ -9584,7 +9584,7 @@ decision in its §13 is taken. The struck item is kept for the reasoning, which 
   line each: frame writes must be ATOMIC (write-temp-then-rename, or two hosts can each see the
   other's half-written frame as "present"), and the script asserts identical `--version` on
   every host before dispatch (beta.51 made that possible; version skew silently mixes renderer
-  behaviour mid-video). UF sells network rendering as a paid headline; KF/F3 users script it by
+  behavior mid-video). UF sells network rendering as a paid headline; KF/F3 users script it by
   hand — a shipped script is a differentiator at near-zero risk. ⚠In-app cluster orchestration
   stays OUT (DESIGN.md was right): discovery/scheduling/fault-tolerance is a permanent tax.
 - [x] ⭐**Render-by-segment for multi-machine parallelism: `--segments N --segment-index K`** (user,
@@ -9661,7 +9661,7 @@ decision in its §13 is taken. The struck item is kept for the reasoning, which 
   more octaves; or pipeline the NEXT pick concurrently with serving the current one); make the pacer
   visible (status-bar "paced" tag); SA coefficient pass at depth (~1 s at e1216) is the next cold-path
   cost after the pick; live per-frame palette normalization at extreme depth (the deferred LIVE
-  `--normalize` analogue) for coloring-compression cases the pacer can't help.
+  `--normalize` analog) for coloring-compression cases the pacer can't help.
 
 - [x] ⏹**CLOSED, stale (audit 2026-10-12):** superseded by the df32 tail phase, step-bounded tiles, knee-aware sets, packed tails and the renormalized step (4.6e1105 at 4K 27.8 → 1.7 s); re-file with a fresh measurement if a filament-field settle is slow. — **Deep floatexp *settled* frames are slow in filament fields — a shader-speed fix, NOT multi-reference.**
   *Update (v0.1.57–0.1.68): interactive MOTION is now smooth — reference-orbit reuse (~20× faster
@@ -9788,10 +9788,10 @@ is a sequential dependency chain). The live GPU render is already frame-capped (
   `run_tile`. ⭐Nothing below could be measured until this was repaired; re-read any older GPU-rate
   number in this file with that in mind.
 
-  **Method.** All rows sit at the centre of the main cardioid, where every pixel is interior and
+  **Method.** All rows sit at the center of the main cardioid, where every pixel is interior and
   runs the full count, so nominal work == real work and iterations/second means something. SA off
   (a throwaway `session.toml` with `series_approx = false`) and `--no-bla`, because at an interior
-  centre SA skips 19,999 of 20,000 iterations and there is nothing left to measure. Every rate is a
+  center SA skips 19,999 of 20,000 iterations and there is nothing left to measure. Every rate is a
   DIFFERENCE of two rows that differ only in `max_iter`, so the harness's fixed per-call cost
   (pipeline build, buffer alloc, full readback — `render_iter` pays all three, the live path pays
   none) cancels exactly.
@@ -9864,7 +9864,7 @@ is a sequential dependency chain). The live GPU render is already frame-capped (
 
   Region files and raw logs: `sat-mode.toml`, `sat-deepsize.toml`, `sat-size.toml`, `sat-fixed.toml`.
 
-- [x] ✅**`find_nucleus` returned one atom's PERIOD with another atom's CENTRE** — fixed
+- [x] ✅**`find_nucleus` returned one atom's PERIOD with another atom's CENTER** — fixed
   2026-09-17, `--selftest` back to **190/190 + goldens 19/19**.
 
   The symptom was the NR-zoom "deep minibrot: size, framing, center accuracy" check reporting
@@ -9877,15 +9877,15 @@ is a sequential dependency chain). The live GPU render is already frame-capped (
   and built a retry loop that re-solved at a precision derived from the atom size; it changed
   nothing, because tracing showed `detect_period` returns **998 at every precision from 70 to 179
   bits**. The detector was never wrong. ⭐The trace that found it took five minutes and replaced an
-  hour of plausible theory — instrument before theorising.
+  hour of plausible theory — instrument before theorizing.
 
   **Root cause: `reduce_period` scanned every `n ≤ p_est` for the first one within tolerance.**
   The reduction exists only because `detect_period` may return an integer MULTIPLE of the true
   period, and the fact that licenses it — `Z_m = 0 ⟹ Z_{jm} = 0` — runs one way. Scanning every
   `n` asks a different question ("is ANY lower-period nucleus near this point"), and near a deep
   atom something always is. So Newton converged correctly on the 998 nucleus and the reduction
-  then relabelled it 973 — a real neighbouring minibrot's period pinned to the 998 minibrot's
-  centre. A jump there lands ~500,000 atom-widths into empty space, which is exactly what the
+  then relabeled it 973 — a real neighboring minibrot's period pinned to the 998 minibrot's
+  center. A jump there lands ~500,000 atom-widths into empty space, which is exactly what the
   check's `moved` column was reporting. The tolerance is a thousandth of the VIEW span, so it
   loosened as the view widened: measured 39 at 1e1.8×, 468 at 1e3.9×, 858 at 1e4.8×, 973 at 1e6×,
   and only 998 once the view reached ~1e6.6× — the "nearest minibrot" answer depended on how far
@@ -9896,7 +9896,7 @@ is a sequential dependency chain). The live GPU render is already frame-capped (
   the values beta.71's report recorded to the last digit (`moved 7.0e-31`). Pinned by a new
   `tests/nucleus_outcomes.rs` case that sweeps the view magnification rather than fixing one — the
   answer must not depend on the view — and asserts the period, the atom size, and that re-refining
-  barely moves the centre.
+  barely moves the center.
 
 - [x] ✅**DONE (audit 2026-10-12):** 0d95a6d (beta.129), as the item at the top of Open bugs. — **`about_names_the_running_backend` is not isolated from the rest of its test binary** —
   the test asserts the About panel's arithmetic line honestly reads `none (no reference orbit built
@@ -9952,7 +9952,7 @@ is a sequential dependency chain). The live GPU render is already frame-capped (
   | **`ecace1ce`** (next commit but a docs one) | **0 of 6** | — |
   | `8d888093` (the merge), beta.111, main `00f59cd1` (2 of 9 under 26 busy CPU cores) | 0 of 3, 0 of 2, 0 of 9 | — |
   ⭐**Looked at, then tested.** A failing pair has the SAME geometry (boundary in place, same
-  centre and zoom) and different COLOURS, the difference following the iteration contours and
+  center and zoom) and different COLORS, the difference following the iteration contours and
   largest where Ember changes fastest: one picture under two palette maps, not an old picture.
   `c1b1fea4` with `normalize_live = false` set at the minimap step: **0 of 6** dirty, against 5 of
   12 with it on (the same build). ⚠The first control seeded the session with normalization off
@@ -9964,7 +9964,7 @@ is a sequential dependency chain). The live GPU render is already frame-capped (
   landed — timing-dependent, which is why `timing::accumulate` in `run_tile` moved the odds
   (that call is still in the code). `ecace1ce` measured it in `color_cycle()` units (this view far
   below the threshold); the alias-fraction predicate (`5f493ffa`) followed. ⚠The check's
-  message, "left a stale frame", names a cause it cannot tell from a colour difference: it is
+  message, "left a stale frame", names a cause it cannot tell from a color difference: it is
   also, in effect, a test that normalization decides the same way twice.
   The original entry:
   🔴**`--uitest` step 43 `minimap-pan-verify` is a TIMING RACE, not a flake to wave through**
@@ -10004,7 +10004,7 @@ is a sequential dependency chain). The live GPU render is already frame-capped (
 ## ▶ Render the ultradeep view34 location (someday) (2026-09-12)
 
 - [ ] ⭐**Attempt a Fractadyne render of an ultradeep minibrot shared by the FractalShark author.**
-  A ~650,000-digit centre at **1e650452 zoom** (period **399289978**), found by a months-long
+  A ~650,000-digit center at **1e650452 zoom** (period **399289978**), found by a months-long
   Newton-Raphson zoom. The coordinates, reference images and the author's technical notes are in
   `local/views/` (`view34_coords.txt` / `.zip`, plus `view34-NOTES.md`; not committed — 3.9 MB and
   `local/` is gitignored). The author shared this location publicly on fractalforums. ⚠Far past our

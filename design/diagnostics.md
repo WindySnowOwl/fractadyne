@@ -173,7 +173,7 @@ ownership), F17 per-tile attribution.
 ## After this plan (2026-08)
 
 The plan's own failure catalog was written from incidents on one machine. The next class of cost
-came from the opposite direction — behaviour that differs *between* machines — and the tooling
+came from the opposite direction — behavior that differs *between* machines — and the tooling
 added since is aimed there. Recorded here because it is the same idea (build the instrument the
 failure demanded), not a new plan:
 

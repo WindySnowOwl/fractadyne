@@ -166,12 +166,12 @@ fn the_digest_is_order_independent_but_value_sensitive() {
 
 // ---------------------------------------------------------------- legacy key names
 
-/// ⛔⭐⭐**A rename without an alias orphans every file already written.** `v0.2.20` moved the centre
+/// ⛔⭐⭐**A rename without an alias orphans every file already written.** `v0.2.20` moved the center
 /// from `center_x`/`center_y` to `center_re`/`center_im` and changed the writer AND the reader in
 /// one step. Every `.fdn`, PNG and EXR written before that release then loaded with its coordinates
 /// SILENTLY DROPPED — zoom, palette and iterations applied, and the view stayed where it was.
 ///
-/// This is pinned synthetically as well as against the real shipped specimen, so the behaviour
+/// This is pinned synthetically as well as against the real shipped specimen, so the behavior
 /// survives that file being regenerated.
 #[test]
 fn pre_v0_2_20_centre_keys_are_still_read() {
@@ -185,12 +185,12 @@ fn pre_v0_2_20_centre_keys_are_still_read() {
     };
     assert_eq!(get("center_re"), "-0.743643887037158704752191506114774");
     assert_eq!(get("center_im"), "0.131825904205311970493132056385139");
-    assert!(report.missing.is_empty(), "the centre must count as present: {:?}", report.missing);
+    assert!(report.missing.is_empty(), "the center must count as present: {:?}", report.missing);
     assert_eq!(report.note(), None, "an old file must load in silence, not with a warning");
 }
 
 /// ⚠The legacy spellings must not be reported as unknown keys — that is the same "warned about a
-/// field it had just honoured" defect the `KNOWN_VIEW_KEYS` gate exists to prevent.
+/// field it had just honored" defect the `KNOWN_VIEW_KEYS` gate exists to prevent.
 #[test]
 fn legacy_keys_are_not_reported_as_unknown() {
     for (old, new) in crate::export::LEGACY_VIEW_KEYS {

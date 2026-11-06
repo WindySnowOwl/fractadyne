@@ -40,9 +40,9 @@ iteration range across frames. That gap is this document.
 rendered deep validation-corpus locations interior-black, because their structure escapes above the
 cap, and it broke the "same iterations, both apps" contract with Fraktaler-3. The existing comment in
 `current_export_request_with_ref` records this. Auto-iter off is an explicit instruction and the count
-is honoured verbatim.
+is honored verbatim.
 
-Note the asymmetry that makes chunking the only honest answer: the app's live policy is *honour the
+Note the asymmetry that makes chunking the only honest answer: the app's live policy is *honor the
 iteration count, sacrifice resolution*. That is a deliberate and correct choice — and it is exactly
 why the live view cannot escape a chain-latency wall without splitting the range.
 
@@ -114,7 +114,7 @@ weaker.
 **Recommendation: Option A.** (DECIDED — see §8 for the decision record, the measured VRAM figures behind it, and the concrete channel layout.) The bandwidth is a known, bounded cost on a path that is already
 render-target bound, and it keeps the validation gate at bit-identical — which is the only gate strong
 enough for this. Option B trades a hard guarantee for a soft one, and does it in the direction that
-penalises the vendor whose arithmetic we just confirmed is the correct one.
+penalizes the vendor whose arithmetic we just confirmed is the correct one.
 
 ## 5. Resume semantics
 
@@ -286,7 +286,7 @@ coloring off (the chunk pass carries no orbit statistics)". So the mode-2 chunk 
    `make_state_textures(.., targets)` and a slice-taking `make_state_bg` on the Rust side; a
    `chunk_fe_pipeline`/`resolve_fe_pipeline`/`state_bgl4` trio on `Renderer` built whenever the
    device grants 64 bytes/sample; and `prepare` selecting the trio on `self.mode == 2`.
-   `chunk_over` still excludes mode 2, so this is behaviourally inert. Verified: full suite
+   `chunk_over` still excludes mode 2, so this is behaviorally inert. Verified: full suite
    121/121 + 17/17 (including `iter-chunk`'s five mode-0 bit-identity checks), and the app boots
    and renders — which is what proves naga validated the new entry point, since the pipeline is
    built in `Renderer::new`.
@@ -295,7 +295,7 @@ coloring off (the chunk pass carries no orbit statistics)". So the mode-2 chunk 
    a *dispatchable* chunked mode 2 and the live path cannot be driven from a selftest. The mode-0
    gates already run through the offline `render_iter_chunked`, so mode 2 was added to that path's
    scope (four-target plumbing, `fs_iterate_chunk_fe`, the BLA tree uploaded and `bla_on` passed
-   through) and the `iter-chunk` group grew five rows. Live behaviour is still untouched.
+   through) and the `iter-chunk` group grew five rows. Live behavior is still untouched.
 3. **Flip the `chunk_over` gate** for mode 2, behind `chunking_mode2_available` — the only remaining
    step, and now the only one whose blast radius is the live view.
 
@@ -451,7 +451,7 @@ motion stops. `--autodive` is unpaced by construction, so it displays that worst
 paced grand tour settles and matches the blessed baseline exactly. That is why the live gate is green
 and the defect is still real — **the checkpoints measure SETTLED results and say nothing about the
 frames between them**, which is the same "measures what is RENDERED, not what is DISPLAYED" trap as
-[[topic-pixellation-settle]].
+[[topic-pixelation-settle]].
 
 The flip is saved as `local/mode2-live-flip.patch`. Slices 1 and 2 are committed, pushed and
 independent of it: the four-target shader path and the offline bit-identity gates stand on their own.
@@ -476,7 +476,7 @@ once. Each option below is a choice about which of those three to give up.
 
 Give up COMPLETE. The refresh frame renders `step` of the ask and is displayed.
 ⛔**Rejected: this is the reported defect.** At depth most pixels need most of their iterations, so a
-7.8% frame is interior colour plus sparse escapes — and because that frame becomes the frozen
+7.8% frame is interior color plus sparse escapes — and because that frame becomes the frozen
 texture, it is reprojected until the next refresh. Field description: "the interior regions look
 mostly like noise".
 
@@ -727,7 +727,7 @@ distinct measured kill:
    the cold rate — so the license ledger is per cursor band (`CHUNK_BANDS`), survives same-sig
    restarts (re-crossing the storm with amnesia re-rolled the dice dozens of times a session),
    and clears on a sig change. ⚠**Every unvisited band opens at the FLOOR, never at a
-   neighbour's license**: an inherited 36k license met a mid-band storm and ran TEN SECONDS in
+   neighbor's license**: an inherited 36k license met a mid-band storm and ran TEN SECONDS in
    one submission. The floor (~256 iterations) is worst-case-prior sizing — ~70 ms even at the
    worst rate ever measured here — so first contact with any region is a survivable single;
    everything larger is earned from that region's own prices (×2 below half-target, ×1.25 at
@@ -773,7 +773,7 @@ override — pointed the first hour of triage at the export path.
 The fix is one guard: `if key_changed && chunk_range.is_none()`. A chunked frame's pairing is
 already correct and must win; an un-chunked re-key still stamps exactly as R12 requires. The
 completed-walk tail re-key goes unstamped on purpose — one stale pairing costs one mis-priced
-measurement, which the ratio search corrects (R12's own tolerance, now actually honoured).
+measurement, which the ratio search corrects (R12's own tolerance, now actually honored).
 
 **The lesson in one line: a cost ledger with two writers needs an owner per frame, not an
 order of operations.** And its corollary, already proven twice this cycle in the other
@@ -826,7 +826,7 @@ first.
 engaged the gate **1,323 times** while passing — readings lag their dispatches by 2–3 frames, so
 healthy pipelining *holds* 2–3 unpriced dispatches at steady state, and a cap of 2 clamped every
 third frame of ordinary motion (a motion-only quality regression no checkpoint gate can see —
-the pixellation lesson again). Default is 3: above healthy latency, two under the five-deep kill.
+the pixelation lesson again). Default is 3: above healthy latency, two under the five-deep kill.
 The residual risk stays named: the gate bounds STACKING, but the first budget-sized dispatch at a
 virgin regime cliff still goes out once at the old price — if the Radeon rerun still finds a
 single ≥2 s packet, the next layer is range-chunking the motion frame itself (the option C pin

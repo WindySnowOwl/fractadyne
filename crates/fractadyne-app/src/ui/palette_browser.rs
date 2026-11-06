@@ -2,10 +2,10 @@
 //! with the tags of the palette in use — and, for one of the user's saved gradients, a way to give
 //! it tags of their own.
 //!
-//! ⭐**The thumbnails are the view, recoloured, not re-rendered.** `fractadyne_gpu::atlas` colours
+//! ⭐**The thumbnails are the view, recolored, not re-rendered.** `fractadyne_gpu::atlas` colors
 //! the main view's iteration texture through each palette into one atlas, so a thumbnail shows what
-//! choosing that palette would show, at any depth, for one small colour pass each. It is redrawn
-//! when the view's texture or its colouring changes (`view_writes`, `accum_color_sig`), paced while
+//! choosing that palette would show, at any depth, for one small color pass each. It is redrawn
+//! when the view's texture or its coloring changes (`view_writes`, `accum_color_sig`), paced while
 //! a view refines, and not at all once it has settled.
 //!
 //! Resting the pointer on a thumbnail previews it on the view, exactly as the palette lists do
@@ -29,7 +29,7 @@ const FILTER_ROWS: [&[TagGroup]; 5] = [
     &[TagGroup::Purpose],
 ];
 /// A thumbnail's width in the atlas, in texels: more than it is shown at, so egui's linear filter
-/// averages the colour pass's point samples instead of showing their aliasing.
+/// averages the color pass's point samples instead of showing their aliasing.
 const CELL_W: u32 = 320;
 /// Atlas columns.
 const ATLAS_COLS: u32 = 8;

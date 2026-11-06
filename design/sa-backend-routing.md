@@ -59,7 +59,7 @@ implementation NOT started.
 ## Proof obligations (the beta.2 bar)
 
 - `the_sa_walk_is_backend_identical`: case matrix (shallow/deep log2_max_dc x precisions
-  incl. multi-word x escaping/surviving/budget-bound centres) pinning `skip` equal AND all
+  incl. multi-word x escaping/surviving/budget-bound centers) pinning `skip` equal AND all
   six coefficient outputs (`a/b/c` f64s via to_bits, `*_exp` i32s) equal astro vs twin.
 - `sa_budget_clears_every_blessed_fixture` untouched and green.
 - Corpus 38/38 byte-identical on the DEFAULT build (astro path untouched by construction);

@@ -6,9 +6,9 @@
 use super::hensel::{self, Mask, M_EDGES};
 use std::fmt;
 
-/// Bits of a table index: the 3×3 neighbourhood, NW most significant and SE least, row by row —
+/// Bits of a table index: the 3×3 neighborhood, NW most significant and SE least, row by row —
 /// the order `MAP` strings use. (Life's `MAP` string decodes to B3/S23 under it, which pins the
-/// centre's place and the bit order; the order of the eight neighbours among themselves is
+/// center's place and the bit order; the order of the eight neighbors among themselves is
 /// LifeWiki's documented one, which no isotropic rule can check.)
 pub const NW: usize = 1 << 8;
 pub const N: usize = 1 << 7;
@@ -23,9 +23,9 @@ pub const SE: usize = 1;
 /// The most states a Generations rule may have (a cell is a byte).
 pub const MAX_STATES: u16 = 256;
 
-/// A rule: for each 3×3 neighbourhood (a table index), whether the centre is alive next generation;
+/// A rule: for each 3×3 neighborhood (a table index), whether the center is alive next generation;
 /// and the number of states — 2 for a binary rule, 3 or more for Generations, where state 1 is alive,
-/// 2…C−1 are dying, and only state-1 cells count as neighbours.
+/// 2…C−1 are dying, and only state-1 cells count as neighbors.
 #[derive(Clone, PartialEq, Eq, Hash)]
 pub struct Rule {
     table: [u64; 8],
@@ -48,20 +48,20 @@ fn err<T>(msg: impl Into<String>) -> Result<T, RuleError> {
     Err(RuleError(msg.into()))
 }
 
-/// The neighbour arrangement in a table index (the index without its centre bit).
+/// The neighbor arrangement in a table index (the index without its center bit).
 #[inline]
 pub(crate) fn mask_of(idx: usize) -> Mask {
     (((idx >> 5) << 4) | (idx & 0xF)) as Mask
 }
 
-/// The table index of an arrangement and a centre.
+/// The table index of an arrangement and a center.
 #[inline]
 pub(crate) fn index_of(mask: Mask, centre: bool) -> usize {
     let m = mask as usize;
     ((m >> 4) << 5) | (m & 0xF) | if centre { CENTRE } else { 0 }
 }
 
-/// A set of neighbour arrangements: one bit per [`Mask`].
+/// A set of neighbor arrangements: one bit per [`Mask`].
 type MaskSet = [bool; 256];
 
 impl Rule {
@@ -71,7 +71,7 @@ impl Rule {
     }
 
     /// A rule from its table and state count. Refuses a state count outside 2…[`MAX_STATES`], and a
-    /// Generations rule with B0 (birth with no live neighbours), whose background would need
+    /// Generations rule with B0 (birth with no live neighbors), whose background would need
     /// states the engine does not track.
     pub fn from_table(table: [u64; 8], states: u16) -> Result<Rule, RuleError> {
         if !(2..=MAX_STATES).contains(&states) {
@@ -79,12 +79,12 @@ impl Rule {
         }
         let rule = Rule { table, states };
         if states > 2 && rule.alive(0) {
-            return err("B0 (birth with no live neighbours) is not supported in Generations rules");
+            return err("B0 (birth with no live neighbors) is not supported in Generations rules");
         }
         Ok(rule)
     }
 
-    /// The table: bit `i` of the 512 is whether neighbourhood `i` is alive next generation.
+    /// The table: bit `i` of the 512 is whether neighborhood `i` is alive next generation.
     pub fn table(&self) -> [u64; 8] {
         self.table
     }
@@ -104,14 +104,14 @@ impl Rule {
         self.states
     }
 
-    /// Whether neighbourhood `idx` (a table index) is alive next generation.
+    /// Whether neighborhood `idx` (a table index) is alive next generation.
     #[inline]
     pub fn alive(&self, idx: usize) -> bool {
         (self.table[idx >> 6] >> (idx & 63)) & 1 != 0
     }
 
-    /// The next state of a cell in `state` whose neighbourhood — state-1 cells as alive, the
-    /// centre included — is `idx`.
+    /// The next state of a cell in `state` whose neighborhood — state-1 cells as alive, the
+    /// center included — is `idx`.
     #[inline]
     pub fn next(&self, state: u8, idx: usize) -> u8 {
         if self.states == 2 || state == 0 {
@@ -134,7 +134,7 @@ impl Rule {
         self.next(bg, idx)
     }
 
-    /// Whether the rule has B0: a dead cell with no live neighbours is born.
+    /// Whether the rule has B0: a dead cell with no live neighbors is born.
     pub fn has_b0(&self) -> bool {
         self.alive(0)
     }
@@ -147,13 +147,13 @@ impl Rule {
         })
     }
 
-    /// Outer totalistic: the outcome depends on the centre and the number of live neighbours only.
+    /// Outer totalistic: the outcome depends on the center and the number of live neighbors only.
     pub fn is_totalistic(&self) -> bool {
         self.uniform_over(|a, b| a.count_ones() == b.count_ones())
     }
 
     /// Von Neumann: the corners are ignored, and the outcome depends on the number of live
-    /// orthogonal neighbours only.
+    /// orthogonal neighbors only.
     pub fn is_von_neumann(&self) -> bool {
         self.uniform_over(|a, b| (a & M_EDGES).count_ones() == (b & M_EDGES).count_ones())
     }
@@ -307,7 +307,7 @@ fn set_once<'a>(slot: &mut Option<&'a str>, v: &'a str, what: &str) -> Result<()
     Ok(())
 }
 
-/// The arrangement of `n` neighbours that a totalistic rule's string stands for (any will do).
+/// The arrangement of `n` neighbors that a totalistic rule's string stands for (any will do).
 fn full(n: u8) -> Mask {
     if n == 0 {
         0
@@ -316,7 +316,7 @@ fn full(n: u8) -> Mask {
     }
 }
 
-/// `n` live orthogonal neighbours and no corners.
+/// `n` live orthogonal neighbors and no corners.
 fn edges(n: u8) -> Mask {
     [0, hensel::M_N, hensel::M_N | hensel::M_E, hensel::M_N | hensel::M_E | hensel::M_S, M_EDGES][n as usize]
 }
@@ -328,7 +328,7 @@ fn counts(spec: &str, von_neumann: bool, half: &str) -> Result<MaskSet, RuleErro
     let mut i = 0;
     while i < chars.len() {
         let Some(n) = chars[i].to_digit(10).filter(|&d| d <= 8) else {
-            return err(format!("'{}' in {half}{spec}: expected a neighbour count 0-8", chars[i]));
+            return err(format!("'{}' in {half}{spec}: expected a neighbor count 0-8", chars[i]));
         };
         let n = n as u8;
         i += 1;
@@ -343,12 +343,12 @@ fn counts(spec: &str, von_neumann: bool, half: &str) -> Result<MaskSet, RuleErro
         }
         if von_neumann {
             if n > 4 {
-                return err(format!("{half}{n}: a von Neumann cell has 4 neighbours"));
+                return err(format!("{half}{n}: a von Neumann cell has 4 neighbors"));
             }
             if negate || !letters.is_empty() {
                 return err(format!("{half}{spec}: von Neumann rules take no Hensel letters"));
             }
-            // The corners are ignored: every arrangement with `n` orthogonal neighbours.
+            // The corners are ignored: every arrangement with `n` orthogonal neighbors.
             for m in 0..=255u8 {
                 if (m & M_EDGES).count_ones() == u32::from(n) {
                     set[m as usize] = true;
@@ -363,9 +363,9 @@ fn counts(spec: &str, von_neumann: bool, half: &str) -> Result<MaskSet, RuleErro
             if !hensel::is_letter_of(n, l) {
                 let valid: String = hensel::letters_of(n).collect();
                 return err(if valid.is_empty() {
-                    format!("{half}{n}{l}: {n} neighbours have no letters")
+                    format!("{half}{n}{l}: {n} neighbors have no letters")
                 } else {
-                    format!("{half}{n}{l}: '{l}' is not a letter for {n} neighbours (they are {valid})")
+                    format!("{half}{n}{l}: '{l}' is not a letter for {n} neighbors (they are {valid})")
                 });
             }
         }

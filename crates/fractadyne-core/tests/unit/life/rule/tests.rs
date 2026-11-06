@@ -30,7 +30,7 @@ fn life_is_born_on_three_and_survives_on_two_or_three() {
 
 /// Every spelling of Life is Life: B/S, the lower-case run-together form, the older S/B, Hensel
 /// with every letter written out, and LifeWiki's MAP string — which also pins the MAP bit order
-/// (index 0 first, most significant bit first) and the centre's place in the index.
+/// (index 0 first, most significant bit first) and the center's place in the index.
 #[test]
 fn every_spelling_of_life_is_life() {
     let life = Rule::life();
@@ -42,7 +42,7 @@ fn every_spelling_of_life_is_life() {
 }
 
 /// tlife (LifeWiki: "B3/S2-i34q") is Life except that a cell with two opposite orthogonal
-/// neighbours (2i) does not survive and one with the 4q arrangement does.
+/// neighbors (2i) does not survive and one with the 4q arrangement does.
 #[test]
 fn a_hensel_rule_changes_exactly_the_classes_it_names() {
     let life = Rule::life();
@@ -69,7 +69,7 @@ fn a_hensel_rule_changes_exactly_the_classes_it_names() {
     assert_eq!(Rule::parse("B3-cekainyqj/S").unwrap().canonical(), "B3r/S");
 }
 
-/// A von Neumann rule ignores the corners and counts the four orthogonal neighbours.
+/// A von Neumann rule ignores the corners and counts the four orthogonal neighbors.
 #[test]
 fn von_neumann_rules_ignore_the_corners() {
     let r = Rule::parse("B2/S013V").unwrap();
@@ -85,7 +85,7 @@ fn von_neumann_rules_ignore_the_corners() {
 }
 
 /// Generations: state 1 alive, 2…C−1 dying in order, then dead; only state 1 counts as a
-/// neighbour, which the caller's index already encodes.
+/// neighbor, which the caller's index already encodes.
 #[test]
 fn generations_rules_age_their_dying_cells() {
     let brain = Rule::parse("B2/S/C3").unwrap();
@@ -93,7 +93,7 @@ fn generations_rules_age_their_dying_cells() {
     for spelling in ["/2/3", "B2/S/3", "b2/s/g3", "B2/S/C3"] {
         assert_eq!(Rule::parse(spelling).unwrap(), brain, "{spelling}");
     }
-    let two = NW | N; // two live neighbours
+    let two = NW | N; // two live neighbors
     assert_eq!(brain.next(0, two), 1, "born on two");
     assert_eq!(brain.next(0, NW), 0);
     assert_eq!(brain.next(1, two | CENTRE), 2, "S is empty: every live cell starts dying");
@@ -138,7 +138,7 @@ fn canonical_strings_round_trip() {
     };
     assert_eq!(classes.len(), 51);
     for _ in 0..200 {
-        // A random isotropic rule: one coin per (class, centre).
+        // A random isotropic rule: one coin per (class, center).
         let coins: Vec<u64> = (0..2).map(|_| rng(&mut seed)).collect();
         let mut table = [0u64; 8];
         for idx in 0..512usize {
@@ -174,7 +174,7 @@ fn malformed_rules_are_refused_with_a_reason() {
         ("B3-/S23", "followed by letters"),
         ("B0c/S", "no letters"),
         ("B2a/S1V", "no Hensel letters"),
-        ("B5/S1V", "4 neighbours"),
+        ("B5/S1V", "4 neighbors"),
         ("B3/S23/C1", "states"),
         ("B3/S23/C999", "states"),
         ("B3/B3/S23", "twice"),

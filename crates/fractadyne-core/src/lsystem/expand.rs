@@ -2,7 +2,7 @@
 //!
 //! A parametric module carries numbers (`A(4, 4)`), and a production applies only where its
 //! condition holds (`A(x, y) : y <= 3 = A(x*2, x+y)`); a context-sensitive production applies only
-//! between given neighbours (`b < a = b`). Either way a node's rewrite depends on more than its
+//! between given neighbors (`b < a = b`). Either way a node's rewrite depends on more than its
 //! symbol and depth, so the tables that let the walk skip a subtree do not exist: these systems are
 //! drawn by building the word, a generation at a time, at a fixed order — within a budget of
 //! modules — and running the turtle over it, in double precision.
@@ -58,7 +58,7 @@ pub struct Expanded {
     pub ignore: Vec<u8>,
     /// The definitions, `ignore`, axiom and productions as written, in order (the system's text).
     pub lines: Vec<String>,
-    /// Whether a word holds a bracket, or a colour command (for the default colouring).
+    /// Whether a word holds a bracket, or a color command (for the default coloring).
     pub branches: bool,
     pub colour_index: bool,
 }
@@ -513,7 +513,7 @@ fn step(
 }
 
 /// Runs the turtle over a built word, handing what falls in `view` to `sink` as the walk does
-/// (pixels from the view's centre, y up): a step of 1 is a world unit; `F(l)` steps `l`, `+(a)`
+/// (pixels from the view's center, y up): a step of 1 is a world unit; `F(l)` steps `l`, `+(a)`
 /// turns `a` degrees, `@(f)` scales the step by `f`.
 pub fn draw(sys: &LSystem, x: &Expansion, view: &View, budget: u64, sink: &mut dyn FnMut(Drawn)) -> WalkStats {
     #[derive(Clone, Copy)]

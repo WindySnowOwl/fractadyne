@@ -78,7 +78,7 @@ A fractal explorer for Windows and Linux in Rust (wgpu + egui/eframe), built for
   depth. **Esc** stops it. An **Auto-zoom priority** switch chooses **Speed** (zoom at the set
   rate; the screen refreshes as soon as a frame with detail is ready) or **Quality** (only fully
   resolved frames reach the screen, and the zoom paces itself to them). Either way the view never
-  shows a blank or single-colour frame while diving: a refresh that has not resolved detail yet
+  shows a blank or single-color frame while diving: a refresh that has not resolved detail yet
   stays hidden behind the last one that did. An **Auto-zoom target** switch chooses **Detail**
   (the richest edge in view, re-chosen as the dive goes) or **Misiurewicz point** (the nearest
   Misiurewicz point, solved to the dive limit's depth and then dived into exactly — its structure
@@ -212,7 +212,7 @@ fractadyne --profile [--reps N --regions f.toml --out logs/p.json]
 fractadyne --bench-matrix [--bless] [--reps N]      # dev: 28-segment path-coverage perf + regression
                                                     # suite vs a blessed baseline (design/bench-matrix.md)
 fractadyne --zoomtest [OCTAVES] [--zoomtest-rate R]  # dev: on-screen update-latency harness — a real
-   [--zoomtest-location F.fdn] [--zoomtest-start-log2 L]  # windowed glide (from 2^L on F's centre; L=0
+   [--zoomtest-location F.fdn] [--zoomtest-start-log2 L]  # windowed glide (from 2^L on F's center; L=0
                                                     # = the whole descent from 1x), every presented
                                                     # frame's interval + what it showed -> JSON +
                                                     # stutter summary (scripts/zoomtest_report.py)
@@ -349,7 +349,7 @@ only the icons the UI uses — regenerate with `scripts/subset_lucide.py`.
 The optional [accelerated build](#optional-the-accelerated-build) is the one exception: it
 contains `rug`/`gmp-mpfr-sys` and links GMP and MPFR, all **LGPL-3.0-or-later** (the Windows
 package also ships the GMP/MPFR libraries themselves; the Linux one links the system's). Those
-packages carry their own licence texts and link the libraries dynamically so they can be
+packages carry their own license texts and link the libraries dynamically so they can be
 replaced. The standard downloads contain none of it.
 
 ### Contribution

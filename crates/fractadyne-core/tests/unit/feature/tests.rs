@@ -86,7 +86,7 @@ fn rebasing_carries_a_search_past_an_escaped_reference() {
 #[test]
 fn agrees_with_the_bignum_finder_at_depth() {
     // Seahorse valley at 2^34, on the period-8007 nucleus the bignum finder names (its atom
-    // domain holds the centre). Lower periods crowd it — 998 at 3.6e-16, 7962 at 1.3e-17 (each
+    // domain holds the center). Lower periods crowd it — 998 at 3.6e-16, 7962 at 1.3e-17 (each
     // a true nucleus; see the next test) — so a disc of 1e-24, which only it is inside, finds the
     // same 8007 as the bignum finder, at the same place.
     let p = 256;

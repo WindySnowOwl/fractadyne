@@ -1,11 +1,11 @@
-//! The colour picker popup: a saturation/value square, a hue strip, and numbers in a form a
-//! person recognises.
+//! The color picker popup: a saturation/value square, a hue strip, and numbers in a form a
+//! person recognizes.
 //!
 //! ⭐⭐**Why this is ours and not egui's.** egui's stock popup labels its two numeric modes `U8`
 //! and `F` — the internal names for "gamma byte" and "linear float". They are precise and they are
 //! meaningless to anyone who has not read egui's source. It also offers no HEX field, while the
 //! gradient editor around it speaks hex everywhere, and it has no OK/Cancel, so there is no way to
-//! back out of a colour you were only trying.
+//! back out of a color you were only trying.
 //!
 //! ⚠**The 2D square and the hue strip are drawn here because egui's are private** —
 //! `color_slider_1d` / `color_slider_2d` are not exported, and both public entry points
@@ -17,7 +17,7 @@
 
 use fractadyne_color::segment::{hsv_to_rgb, rgb_to_hsv};
 
-/// The three ways the same colour is written, all shown at once.
+/// The three ways the same color is written, all shown at once.
 ///
 /// ⭐⭐**No mode toggle.** The first version made these a picker — `Range 0-255` / `Range 0-1` /
 /// `Hex` — which is one click away from whichever one you actually wanted, every time. They are
@@ -33,15 +33,15 @@ pub(crate) fn row_labels() -> [String; 3] {
 /// What one frame of the popup decided.
 #[derive(Clone, Copy, PartialEq, Debug)]
 pub(crate) enum PickerOutcome {
-    /// Still open; the colour may have changed.
+    /// Still open; the color may have changed.
     Open,
-    /// Keep the colour as it now stands.
+    /// Keep the color as it now stands.
     Accept,
-    /// Put back the colour the popup opened with.
+    /// Put back the color the popup opened with.
     Cancel,
     /// Start the screen eyedropper and drop what it takes into THIS field.
     ///
-    /// ⭐The stop row has a Pick button, but the picker is where you are when you decide a colour
+    /// ⭐The stop row has a Pick button, but the picker is where you are when you decide a color
     /// is wrong — sending the user back out to a different button to sample one is the kind of
     /// detour that makes a tool feel like several tools.
     Pick,
@@ -49,7 +49,7 @@ pub(crate) enum PickerOutcome {
 
 /// The saturation/value square for a fixed hue.
 ///
-/// ⚠Drawn as a MESH with per-vertex colours rather than a grid of filled rects: a 12×12 mesh is
+/// ⚠Drawn as a MESH with per-vertex colors rather than a grid of filled rects: a 12×12 mesh is
 /// 288 triangles the GPU interpolates smoothly, where visually-equivalent rects would be ~5000
 /// draw items and still show banding at the cell edges.
 fn sv_square(ui: &mut egui::Ui, size: f32, h: f32, s: &mut f32, v: &mut f32) -> bool {
@@ -81,7 +81,7 @@ fn sv_square(ui: &mut egui::Ui, size: f32, h: f32, s: &mut f32, v: &mut f32) -> 
         egui::Stroke::new(1.0_f32, ui.visuals().weak_text_color()),
         egui::StrokeKind::Inside,
     );
-    // The cursor ring, drawn in both black and white so it is visible on any colour beneath it.
+    // The cursor ring, drawn in both black and white so it is visible on any color beneath it.
     let c = egui::pos2(rect.min.x + *s * rect.width(), rect.min.y + (1.0 - *v) * rect.height());
     pr.circle_stroke(c, 6.0, egui::Stroke::new(2.0_f32, egui::Color32::BLACK));
     pr.circle_stroke(c, 6.0, egui::Stroke::new(1.0_f32, egui::Color32::WHITE));
@@ -131,7 +131,7 @@ fn hue_strip(ui: &mut egui::Ui, width: f32, h: &mut f32) -> bool {
 
 /// Draw the picker body. `rgb` is edited in place; the return says what the user asked for.
 ///
-/// ⚠**Hue is carried in `Ui` memory, not derived from the colour every frame.** A grey has no
+/// ⚠**Hue is carried in `Ui` memory, not derived from the color every frame.** A gray has no
 /// hue — `rgb_to_hsv` reports 0 for anything unsaturated — so recomputing it would snap the hue
 /// cursor to red the moment the user dragged the square to the left edge, and they would lose the
 /// hue they were working in.
@@ -146,12 +146,12 @@ pub(crate) fn picker_body(ui: &mut egui::Ui, id: egui::Id, rgb: &mut [f32; 3]) -
     let (h0, s0, v0) = rgb_to_hsv(*rgb);
     let mut h = ui.data_mut(|d| d.get_temp::<f32>(id.with("h")).unwrap_or(h0));
     if s0 > 1.0e-4 {
-        h = h0; // a saturated colour has a real hue; trust it
+        h = h0; // a saturated color has a real hue; trust it
     }
     let (mut s, mut v) = (s0, v0);
 
-    // ⭐**A large patch of the colour itself.** The swatch that opens this popup is 34×18 and is
-    // usually behind the popup once it is open; a colour is the thing being chosen, so it gets
+    // ⭐**A large patch of the color itself.** The swatch that opens this popup is 34×18 and is
+    // usually behind the popup once it is open; a color is the thing being chosen, so it gets
     // room to be looked at.
     let (patch, _) = ui.allocate_exact_size(egui::vec2(W, 44.0), egui::Sense::hover());
     ui.painter().rect_filled(patch, 3.0, crate::stop_color32(*rgb));
@@ -170,7 +170,7 @@ pub(crate) fn picker_body(ui: &mut egui::Ui, id: egui::Id, rgb: &mut [f32; 3]) -
     // `allocate_ui_with_layout` does NOT fix it: it shrinks to its content, so asking for a 56 px
     // cell and putting a narrow label in it still gives a narrow cell. That was the first attempt
     // and the columns came out 23 px apart in the header and 72 px apart in the rows.
-    // `add_sized` forces the width and centres the widget in it, which is what a column is.
+    // `add_sized` forces the width and centers the widget in it, which is what a column is.
     const LABEL_W: f32 = 44.0;
     const COL_W: f32 = 56.0;
     let head = |ui: &mut egui::Ui, t: &str| {
@@ -301,7 +301,7 @@ pub(crate) fn picker_body(ui: &mut egui::Ui, id: egui::Id, rgb: &mut [f32; 3]) -
             out = PickerOutcome::Accept;
         }
         // ⚠On the far LEFT of the row: it is not a commit, and sitting beside OK it would be read
-        // as one. The picker stays open while sampling, so the colour arrives here to be judged.
+        // as one. The picker stays open while sampling, so the color arrives here to be judged.
         ui.with_layout(egui::Layout::left_to_right(egui::Align::Center), |ui| {
             if ui
                 .add_enabled(

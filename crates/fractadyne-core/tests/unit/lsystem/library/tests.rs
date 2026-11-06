@@ -15,13 +15,13 @@ fn round(p: [f64; 2]) -> (i64, i64) {
     (r.0 as i64, r.1 as i64)
 }
 
-/// The grid points a curve of unit steps visits, in order; asserts each step is to a neighbour.
+/// The grid points a curve of unit steps visits, in order; asserts each step is to a neighbor.
 fn vertices(segs: &[Segment]) -> Vec<(i64, i64)> {
     let mut v = vec![round(segs[0].a)];
     for g in segs {
         let (a, b) = (round(g.a), round(g.b));
         assert_eq!(a, *v.last().unwrap(), "the curve is unbroken");
-        assert_eq!((a.0 - b.0).abs() + (a.1 - b.1).abs(), 1, "a unit step to a neighbour");
+        assert_eq!((a.0 - b.0).abs() + (a.1 - b.1).abs(), 1, "a unit step to a neighbor");
         v.push(b);
     }
     v

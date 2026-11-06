@@ -15,20 +15,20 @@
 //! `DIR/NAME.truth.bin`: little-endian planes over the pixels in row order, top row first —
 //! n2, n256, n4096 (i32 each; -1 never escaped), smooth256 (f32; -1 interior), flags (u8), then
 //! the stencil's RANGE per radius: n2 lo, n2 hi, n256 lo, n256 hi, n4096 lo, n4096 hi (i32 each;
-//! over the centre and the four points 1/1000 px away; lo -1 if any of them never escaped, hi -1
-//! if none escaped; equal to the centre's count without --truth-stencil). The range is what lets a
+//! over the center and the four points 1/1000 px away; lo -1 if any of them never escaped, hi -1
+//! if none escaped; equal to the center's count without --truth-stencil). The range is what lets a
 //! sensitive pixel be judged too: a count outside every nearby point's answer is wrong wherever
-//! the renderer sampled in that neighbourhood, so a filament a renderer thins or drops shows up
+//! the renderer sampled in that neighborhood, so a filament a renderer thins or drops shows up
 //! even where no single point is stable (format 2; found by the scorer's self-check, which missed
 //! a planted thin filament with the stable/sensitive flag alone).
 //! Flags:
 //!   bit 0  plain iteration answered (the perturbation would not vouch for the pixel)
 //!   bit 1  the stencil ran: the pixel was also evaluated 1/1000 px away in x and y, both ways
 //!   bit 2  stable: all five points gave the same three counts (only meaningful with bit 1)
-//!   bit 3  a check pixel: plain iteration also ran at its centre
+//!   bit 3  a check pixel: plain iteration also ran at its center
 //!   bit 4  the check agreed
 //! The pixel mapping is the shader's (as `--glitch-audit`'s oracle): pixel (x, y)'s point is
-//! centre + (x + ½ − w/2, h/2 − (y + ½)) · (span_mantissa / size) · 2^delta_exp.
+//! center + (x + ½ − w/2, h/2 − (y + ½)) · (span_mantissa / size) · 2^delta_exp.
 
 use fractadyne_core::{BigFloat, FloatExp, TruthDwell};
 use std::sync::atomic::{AtomicUsize, Ordering};
@@ -83,7 +83,7 @@ pub(crate) fn run(args: &[String]) -> bool {
         crate::exit(2)
     };
     let zoom_log2: f64 = crate::arg_parse("--zoom-log2", zl, "a number");
-    // After the zoom: the centre is parsed at the view's precision (see `arg_center`).
+    // After the zoom: the center is parsed at the view's precision (see `arg_center`).
     let (cx, cy) = crate::arg_center("--center", xs, ys, zoom_log2);
     let (w, h) = match val("--size").map(|s| crate::parse_size(s)) {
         Some((Some(w), Some(h))) => (w as usize, h as usize),
@@ -128,12 +128,12 @@ pub(crate) fn run(args: &[String]) -> bool {
         let step = view.step_x.to_f64().abs().min(view.step_y.to_f64().abs());
         let far = fractadyne_core::to_f64(&view.cx).abs().max(fractadyne_core::to_f64(&view.cy).abs());
         if !(step >= fractadyne_core::TRUTH_DIRECT_MIN_STEP && far <= 4.0) {
-            eprintln!("fractadyne: --truth-direct is for shallow views (a pixel step of 2^-80 or more, centre within 4); this one's step is {step:e}.");
+            eprintln!("fractadyne: --truth-direct is for shallow views (a pixel step of 2^-80 or more, center within 4); this one's step is {step:e}.");
             crate::exit(2)
         }
     }
 
-    // THE REFERENCE: the longest-lived of the centre and a 3x3 grid a quarter of the view out. The
+    // THE REFERENCE: the longest-lived of the center and a 3x3 grid a quarter of the view out. The
     // choice is speed only (rebasing makes any reference correct), so lengths are walked first and
     // only the winner's orbit is kept. None with --truth-direct.
     let t0 = std::time::Instant::now();

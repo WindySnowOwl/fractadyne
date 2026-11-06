@@ -27,7 +27,7 @@ pub struct Pattern {
     pub generation: Option<u64>,
 }
 
-/// The formats [`parse_pattern`] recognises.
+/// The formats [`parse_pattern`] recognizes.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum PatternFormat {
     Rle,

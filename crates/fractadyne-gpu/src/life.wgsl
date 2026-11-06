@@ -2,9 +2,9 @@
 //
 // The universe is a pool of 64x64-cell tiles, a byte per cell packed four to a u32 (byte 0 is the
 // leftmost cell), 1024 words a tile. Each generation reads the pool `src` and writes `dst`; only the
-// tiles listed in `active` are stepped, each reading its eight neighbours through `links` (a missing
-// neighbour reads as the background). The rule is the core's 512-bit table: bit `idx` is whether the
-// 3x3 neighbourhood `idx` (NW most significant ... SE least, state-1 cells alive) is alive next.
+// tiles listed in `active` are stepped, each reading its eight neighbors through `links` (a missing
+// neighbor reads as the background). The rule is the core's 512-bit table: bit `idx` is whether the
+// 3x3 neighborhood `idx` (NW most significant ... SE least, state-1 cells alive) is alive next.
 
 struct Gen {
     // The 512-bit table, word w = bits 32w..32w+31, as four vec4s.
@@ -21,20 +21,20 @@ struct Gen {
 @group(0) @binding(2) var<storage, read_write> dst: array<u32>;
 // Active index -> pool slot.
 @group(0) @binding(3) var<storage, read> active_slots: array<u32>;
-// Per slot: its eight neighbours' slots (NW, N, NE, W, E, SW, S, SE), or -1 for "not stored".
+// Per slot: its eight neighbors' slots (NW, N, NE, W, E, SW, S, SE), or -1 for "not stored".
 @group(0) @binding(4) var<storage, read> links: array<i32>;
 // Per slot: the live rectangle in tile-local cells (x0, y0, x1, y1), exclusive ends; cells outside
 // are forced dead (a bounded plane's walls). (0, 0, 64, 64) everywhere else.
 @group(0) @binding(5) var<storage, read> clip: array<vec4<i32>>;
 // [0]: breach count — a cell differing from the next background on an edge (or corner) whose
-// neighbour is not stored, which could seed a birth the pool cannot hold. Must stay zero.
+// neighbor is not stored, which could seed a birth the pool cannot hold. Must stay zero.
 @group(0) @binding(6) var<storage, read_write> breach: array<atomic<u32>>;
 
 const SIDE: i32 = 64;
 const WORDS: u32 = 1024u;
 
 fn neighbour_slot(slot: u32, dx: i32, dy: i32) -> i32 {
-    let n = (dy + 1) * 3 + (dx + 1); // 0..8, the centre is 4
+    let n = (dy + 1) * 3 + (dx + 1); // 0..8, the center is 4
     let k = select(n, n - 1, n > 4);
     return links[slot * 8u + u32(k)];
 }

@@ -7,7 +7,7 @@
 //! work: here each frame goes to ffmpeg's stdin as raw RGBA, through a writer thread and a short
 //! queue, so the GPU assembles the next frame while ffmpeg encodes this one.
 //!
-//! Frames are the colour pass's display (sRGB) values, quantized with the same ordered dither as
+//! Frames are the color pass's display (sRGB) values, quantized with the same ordered dither as
 //! every 8-bit deliverable ([`fractadyne_export::to_srgb8_dithered`]): a video frame holds the
 //! bytes the PNG of the same frame would. The video is written beside its final name and renamed
 //! into place only when ffmpeg has finished cleanly, so a file under the final name is complete.

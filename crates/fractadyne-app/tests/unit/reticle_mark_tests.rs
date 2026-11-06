@@ -4,7 +4,7 @@
 //! it, so that each of its pixels can take an ink chosen from the fractal underneath. These tests
 //! hold the two properties that made it worth moving: the exact point stays UNPAINTED, and every
 //! core pixel is fully surrounded by outline pixels, which is what guarantees contrast on content
-//! of any colour — including the amber-on-amber that hid the original four accent strokes.
+//! of any color — including the amber-on-amber that hid the original four accent strokes.
 
 use crate::{reticle_mark, ReticleMark};
 
@@ -14,7 +14,7 @@ const R: f32 = crate::RETICLE_PX as f32 * 0.5 - 1.0;
 
 #[test]
 fn the_exact_point_is_never_painted() {
-    // ⭐The reason the arms hold off the centre at all: the reticle exists to show what is AT the
+    // ⭐The reason the arms hold off the center at all: the reticle exists to show what is AT the
     // cursor, and a crosshair that covers it answers a different question.
     assert_eq!(reticle_mark(0.0, 0.0, R), ReticleMark::None);
     for d in [0.0_f32, 0.5, 1.0, 1.5, 2.0] {
@@ -50,7 +50,7 @@ fn nothing_is_marked_away_from_the_axes() {
 fn every_core_pixel_is_fenced_by_outline() {
     // ⭐**The contrast guarantee, stated as a property.** Core takes one ink and Outline the
     // opposite, so a core run that touched raw image on any side could vanish into content of that
-    // ink's colour — which is exactly how the old fixed-colour crosshair disappeared. Walk the
+    // ink's color — which is exactly how the old fixed-color crosshair disappeared. Walk the
     // whole reticle: no core pixel may be 4-adjacent to an unmarked pixel.
     let n = crate::RETICLE_PX as i32;
     let (mut core, mut outline) = (0usize, 0usize);

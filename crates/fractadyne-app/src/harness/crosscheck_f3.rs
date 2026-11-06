@@ -33,7 +33,7 @@ pub(crate) fn run(args: &[String], i: usize) -> bool {
             }
         })
         .unwrap_or(1.0);
-    // After the zoom: the centre is parsed at the view's precision (see `arg_center`).
+    // After the zoom: the center is parsed at the view's precision (see `arg_center`).
     let center = match two("--center") {
         Some((x, y)) => {
             let (cx, cy) = crate::arg_center("--center", x, y, (0.75 * f3_zoom).log2());
@@ -81,7 +81,7 @@ pub(crate) fn run(args: &[String], i: usize) -> bool {
     // F3 jitters every sample by a deterministic hash-based triangular sub-pixel offset
     // (anti-aliasing reconstruction, applied even at subframes=1). To compare integer
     // counts exactly we must sample our oracle at F3's *actual* point, not the pixel
-    // centre — so replicate the kernel's jitter (hybrid.h: burtle_hash/triangle/wrap;
+    // center — so replicate the kernel's jitter (hybrid.h: burtle_hash/triangle/wrap;
     // for subframe 0, dx == dy == triangle(burtle_hash(ix)/2³²)).
     let burtle_hash = |mut a: u32| -> u32 {
         a = a.wrapping_add(0x7ed5_5d16).wrapping_add(a << 12);
@@ -118,7 +118,7 @@ pub(crate) fn run(args: &[String], i: usize) -> bool {
         })
         .collect();
 
-    // Pass 2: compare, excluding ill-conditioned boundary pixels (a 4-neighbour
+    // Pass 2: compare, excluding ill-conditioned boundary pixels (a 4-neighbor
     // flips interior/exterior, or our oracle's count jumps by >2 — those pixels are
     // sub-pixel-sensitive and the two engines legitimately sample slightly differently).
     let idx = |x: usize, y: usize| y * w as usize + x;
@@ -131,7 +131,7 @@ pub(crate) fn run(args: &[String], i: usize) -> bool {
             let o = oracle_n[k];
             let fi = is_interior_f3(nch[k]);
             let oi = o < 0;
-            // Boundary detection via oracle neighbourhood.
+            // Boundary detection via oracle neighborhood.
             let mut steep = false;
             for (dx, dy) in [(-1i32, 0i32), (1, 0), (0, -1), (0, 1)] {
                 let (nx, ny) = (x as i32 + dx, y as i32 + dy);
@@ -144,7 +144,7 @@ pub(crate) fn run(args: &[String], i: usize) -> bool {
                 }
             }
             // Exclude ill-conditioned pixels from BOTH metrics. A pixel sitting on the
-            // max-iteration cliff (a 4-neighbour flips interior/exterior) is `steep`, so
+            // max-iteration cliff (a 4-neighbor flips interior/exterior) is `steep`, so
             // this also keeps near-cliff membership flips — legitimately ambiguous to the
             // last ULP — out of the membership stat.
             if steep {

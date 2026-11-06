@@ -45,7 +45,7 @@ pub(crate) struct SavedFormula {
     pub(crate) category: String,
 }
 
-/// A formula's starting view, as TEXT so a deep one keeps every digit: the centre, the
+/// A formula's starting view, as TEXT so a deep one keeps every digit: the center, the
 /// magnification (1 = the home view; height-anchored, so the same at any window size), the
 /// iteration count, and — for a Julia set — Julia mode with its constant.
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
@@ -78,7 +78,7 @@ impl StartView {
         (re.is_finite() && im.is_finite()).then_some((re, im))
     }
 
-    /// The view as it may be used: untrusted (an imported file), so a centre that does not read as
+    /// The view as it may be used: untrusted (an imported file), so a center that does not read as
     /// a finite number, a zoom that does not read or is out of range, or a Julia constant that does
     /// not read makes no view at all; the iteration count is clamped.
     fn tidy(self) -> Option<StartView> {
@@ -310,7 +310,7 @@ pub(crate) fn from_frm(bytes: &[u8], file: &str) -> FrmImport {
     for e in fractadyne_core::ir::frm::read_frm_bytes(bytes) {
         match (e.reads, fractadyne_core::ir::parse::parse(&e.source)) {
             (Ok(()), Ok(f)) => {
-                // The notes start with a name (`fn1`, `f3`) as often as not: joined, not capitalised.
+                // The notes start with a name (`fn1`, `f3`) as often as not: joined, not capitalized.
                 let about = if e.notes.is_empty() {
                     format!("From {file}.")
                 } else {
@@ -394,7 +394,7 @@ pub(crate) fn file_text(list: &[SavedFormula]) -> String {
     )
 }
 
-/// `formulas.toml` in the config dir (which honours `FRACTADYNE_CONFIG_DIR`).
+/// `formulas.toml` in the config dir (which honors `FRACTADYNE_CONFIG_DIR`).
 pub(crate) fn library_path() -> Option<PathBuf> {
     fractadyne_state::config_dir().map(|d| d.join("formulas.toml"))
 }

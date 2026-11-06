@@ -19,10 +19,10 @@
 //!
 //! Options: `--zoomtest [OCTAVES]` (default 40; 1e100 from 1× is 332.2), `--zoomtest-rate R`
 //! (the Zoom speed slider, default 1.0), `--zoomtest-location FILE.fdn` (start view; default
-//! corpus location 07 at 2^103.3 ≈ 1.3e31×, the same structure-rich deep centre `--motiontest`
+//! corpus location 07 at 2^103.3 ≈ 1.3e31×, the same structure-rich deep center `--motiontest`
 //! drives, so the glide runs in the floatexp regime from its first frame), and
 //! `--zoomtest-start-log2 L` (override the start magnification to 2^L while keeping the file's
-//! centre — `0` starts at 1× on a deep location's centre, so the whole descent to it is measured). Exit codes follow the torture `classify`
+//! center — `0` starts at 1× on a deep location's center, so the whole descent to it is measured). Exit codes follow the torture `classify`
 //! contract: 0 = measured and reported, 2 = never reached the regime (fewer than `MIN_FRAMES`
 //! frames, or the start reference never built), 4 = the watchdog (frame loop stopped).
 //! Run it with a wiped `FRACTADYNE_CONFIG_DIR` like every other gate; `FRACTADYNE_NO_PREFETCH=1`
@@ -127,7 +127,7 @@ struct Frame {
     /// every moving frame of a direct-mode glide while both read "held 0%, 0.00 oct".
     snap: bool,
     /// LIVE AUTO-NORMALIZATION state, for the 2026-09-17 reports ("sometimes doesn't normalize",
-    /// "the colours bounce around on zoom", "it may go to a flat colour panel"). The palette
+    /// "the colors bounce around on zoom", "it may go to a flat color panel"). The palette
     /// mapping is decided from the escape RANGE and an aliasing predicate on the local GRADIENT,
     /// and the gradient is measured between adjacent texels of the RENDER — so it scales with the
     /// dispatch resolution. `norm_on` flipping frame to frame IS the bounce; `norm_lo`/`norm_hi`
@@ -145,7 +145,7 @@ struct Frame {
 
 /// Where the glide starts (`--zoomtest-location`).
 pub(crate) enum StartView {
-    /// Corpus location 07 at 2^103.3, the deep centre `--motiontest` drives (the default).
+    /// Corpus location 07 at 2^103.3, the deep center `--motiontest` drives (the default).
     Corpus,
     /// A `.fdn`, through the same allow-listed loader the Open dialog uses.
     File(std::path::PathBuf),
@@ -177,12 +177,12 @@ pub(crate) fn parse_taps(s: &str) -> Option<(u32, f64, f64)> {
 /// Where `--zoomtest-click` clicks.
 #[derive(Clone, Copy, Debug, PartialEq)]
 pub(crate) enum ClickAt {
-    /// The view's centre.
+    /// The view's center.
     Centre,
     /// A complex point, as f64: only where a pixel is wider than an f64 step.
     Point(f64, f64),
     /// A share of the view's width and height from its top-left corner, each in `[0, 1)`: an
-    /// off-centre click at any depth.
+    /// off-center click at any depth.
     View(f64, f64),
 }
 
@@ -212,7 +212,7 @@ pub(crate) struct ZoomTest {
     octaves: f64,
     rate: f32,
     location: StartView,
-    /// Start magnification override (log2), keeping the location's centre.
+    /// Start magnification override (log2), keeping the location's center.
     start_log2: Option<f64>,
     phase: Phase,
     t0: Instant,
@@ -252,7 +252,7 @@ pub(crate) struct ZoomTest {
     octaves_given: bool,
     /// `--zoomtest-hold S` (see `Phase::Hold`).
     hold_s: f64,
-    /// `--zoomtest-then-log2 L`: when the first glide arrives, JUMP to 2^L on the same centre while
+    /// `--zoomtest-then-log2 L`: when the first glide arrives, JUMP to 2^L on the same center while
     /// it is still moving, then glide again from there; only that second leg is reported. The
     /// 2026-09-27 report ("pressing space to zoom goes to a solid color", 179× direct mode) came
     /// after zooming OUT in jumps from a perturbation depth: a pin abandoned by such a jump left
@@ -270,11 +270,11 @@ pub(crate) struct ZoomTest {
     /// `--zoomtest-quiet S`: how long the start view rests before the zoom (default `QUIET_S`).
     quiet_s: f64,
     /// `--zoomtest-snap`: the glide snaps to features as a person's zoom does (`zoom_snap`; a
-    /// harness's zoom does not otherwise), about the view's centre.
+    /// harness's zoom does not otherwise), about the view's center.
     pub(crate) snap: bool,
     /// `--zoomtest-click FACTOR[,X,Y]` / `FACTOR@FX,FY`: instead of a glide, ONE click-to-zoom by
     /// FACTOR through the real actuator (`click_zoom_at`), on the pixel where the point (X, Y) sits
-    /// in the settled start view, or at that share of the view (else its centre), then
+    /// in the settled start view, or at that share of the view (else its center), then
     /// `CLICK_WATCH_S` of recorded frames. The user's 2026-10-25 video: a 100× click from Home, auto
     /// iterations at a 4,000,000 base, showed one EMPTY frame while the iteration climb raised the ask.
     click: Option<(f32, ClickAt)>,
@@ -611,7 +611,7 @@ impl FractadyneApp {
             Phase::Jump => {
                 // The start view, in-process. A `.fdn` when given (the same allow-listed loader the
                 // Open dialog and `--shot` use), the session's own view for `session`, else the
-                // corpus-07 deep centre `--motiontest` drives.
+                // corpus-07 deep center `--motiontest` drives.
                 match &zt.location {
                     StartView::File(loc) => match std::fs::read_to_string(loc) {
                         Ok(text) => {
@@ -633,13 +633,13 @@ impl FractadyneApp {
                         let cx = fractadyne_core::parse_bf_prec(crate::harness::motiontest::CX, 192);
                         let cy = fractadyne_core::parse_bf_prec(crate::harness::motiontest::CY, 192);
                         let (Some(cx), Some(cy)) = (cx, cy) else {
-                            self.zoomtest_abort(zt, "internal: corpus centre failed to parse");
+                            self.zoomtest_abort(zt, "internal: corpus center failed to parse");
                         };
                         self.viewport.set_center_log2mag(cx, cy, crate::harness::motiontest::LOG2_MAG);
                     }
                 }
                 if let Some(l2) = zt.start_log2 {
-                    // Keep the location's centre (the TARGET of a centred glide) and start the
+                    // Keep the location's center (the TARGET of a centered glide) and start the
                     // descent at 2^l2 — `0` = the 1× home framing of that point.
                     let (cx, cy) = (self.viewport.center_x.clone(), self.viewport.center_y.clone());
                     let session_l2 = self.viewport.log2_magnification();
@@ -669,7 +669,7 @@ impl FractadyneApp {
                 }
                 self.render_cfg.zoom_rate = zt.rate;
                 self.pointer.zoom_vel = 0.0;
-                self.pointer.last_cursor = None; // a centred glide, like a user with the mouse parked
+                self.pointer.last_cursor = None; // a centered glide, like a user with the mouse parked
                 // `FRACTADYNE_ZOOMTEST_PROFILE=user`: the reporting user's settings that shape
                 // the refresh path (their 2026-09-16 session): native-resolution refreshes while
                 // zooming, 2× AA, the dual view, a high motion-resolution floor, live
@@ -758,7 +758,7 @@ impl FractadyneApp {
                 // params `prev_real` describes and whose zoom step is l2 − prev_l2.
                 if let Some(prev) = zt.last_frame {
                     let dt_ms = now.duration_since(prev).as_secs_f64() * 1000.0;
-                    // The mapping as the colour pass would take it this frame (None = the raw
+                    // The mapping as the color pass would take it this frame (None = the raw
                     // palette, i.e. "Normalize deep colors" is on but not engaged).
                     let nm = self.live_norm_cycle_offset(0);
                     let rc = &self.ref_cache[0];
@@ -785,7 +785,7 @@ impl FractadyneApp {
                         blank: self.perf.blank_walks_total[0],
                         worker: self.perf.live_adopted_total[0],
                         snap: self.perf.hold_active[0],
-                        // The window the colour pass USES (`norm_shown`), not the fed target:
+                        // The window the color pass USES (`norm_shown`), not the fed target:
                         // the glide sits between them, and it is the shown one the eye sees.
                         norm_lo: self.perf.norm_shown[0].map_or(f32::NAN, |r| r.0),
                         norm_hi: self.perf.norm_shown[0].map_or(f32::NAN, |r| r.1),
@@ -938,7 +938,7 @@ impl FractadyneApp {
                     zt.driving = false; // the virtual key comes up THIS frame; the glide eases out
                     if let Some(l2_then) = zt.then_log2.take() {
                         // The second leg: JUMP while still moving — the view lands at 2^l2_then on
-                        // the same centre mid-glide, as a user's zoom-out step does — then rest and
+                        // the same center mid-glide, as a user's zoom-out step does — then rest and
                         // glide again. Only the second leg's frames are reported.
                         let (cx, cy) = (self.viewport.center_x.clone(), self.viewport.center_y.clone());
                         crate::diag::log_line(
@@ -978,7 +978,7 @@ impl FractadyneApp {
                 // Two captures of the SAME view: `<png>-s0.png` when the average holds exactly
                 // one sample (the classic settled frame, presented through the accumulator),
                 // and `<png>` once it has converged. Their difference is the de-speckle change
-                // — high-frequency, cancelling under a blur — plus any ghost, which does not.
+                // — high-frequency, canceling under a blur — plus any ghost, which does not.
                 // Capturing a control in a second run does not work: the tap sequence lands at
                 // a slightly different depth each run and the whole image shifts.
                 let no_accum = std::env::var_os("FRACTADYNE_NO_ACCUM").is_some();
@@ -1093,7 +1093,7 @@ impl FractadyneApp {
         regime.entered
     }
 
-    /// Summarise, write the JSON, print the table, exit (`crate::verdict`): 3, VACUOUS, when the glide
+    /// Summarize, write the JSON, print the table, exit (`crate::verdict`): 3, VACUOUS, when the glide
     /// produced too few frames to mean anything, or when the escape instrument was armed and the regime
     /// it exists to reach was never entered; under `--zoomtest-gate`, 2 when a criterion failed.
     fn zoomtest_report(&mut self, zt: ZoomTest) -> ! {

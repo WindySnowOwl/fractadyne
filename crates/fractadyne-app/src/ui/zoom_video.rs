@@ -4,9 +4,9 @@
 //! Like "Render tour…" (`tour_render.rs`), the render runs as a CHILD PROCESS of this executable,
 //! for the same reasons: a lost GPU device there ends the render, not this session, and the command
 //! line is the path the tests and measurements go through. The view goes on the child's command
-//! line exactly — the centre as the text the viewport holds, the depth as `log2` magnification —
-//! and its colouring comes from the SESSION, which is therefore saved just before the child starts:
-//! the video is coloured as the picture on screen is.
+//! line exactly — the center as the text the viewport holds, the depth as `log2` magnification —
+//! and its coloring comes from the SESSION, which is therefore saved just before the child starts:
+//! the video is colored as the picture on screen is.
 
 use crate::ui::tour_render::{parse_frame_progress, RenderLine};
 use crate::FractadyneApp;
@@ -14,13 +14,13 @@ use crate::FractadyneApp;
 /// The dialog's state.
 pub(crate) struct ZoomVideoUi {
     pub(crate) open: bool,
-    /// The view the video dives into, captured when the dialog opens: its centre, exactly (as the
+    /// The view the video dives into, captured when the dialog opens: its center, exactly (as the
     /// viewport's text), its depth (`log2` magnification), and the fractal's name.
     pub(crate) centre: (String, String),
     pub(crate) end_log2: f64,
     pub(crate) fractal: String,
     /// Why this view cannot become a zoom video (Julia sets, fractals the strips do not render, a
-    /// colouring a strip cannot carry), or `None` when it can.
+    /// coloring a strip cannot carry), or `None` when it can.
     pub(crate) unsupported: Option<String>,
     /// The video file.
     pub(crate) out: String,
@@ -37,8 +37,8 @@ pub(crate) struct ZoomVideoUi {
     pub(crate) rotate: f64,
     /// Samples a pixel along each axis; the strips are oversampled as much.
     pub(crate) ss: u32,
-    /// What the strip window will hold of each texel: what the session's colouring reads
-    /// (`fractadyne_gpu::WindowTexels`), refreshed every time the dialog draws, as the colouring
+    /// What the strip window will hold of each texel: what the session's coloring reads
+    /// (`fractadyne_gpu::WindowTexels`), refreshed every time the dialog draws, as the coloring
     /// can change while it is open. It sets the memory the dialog asks of the card.
     pub(crate) texels: fractadyne_gpu::WindowTexels,
     /// Opens (or closes) the "How it works" section once, the next time the dialog draws: the
@@ -50,7 +50,7 @@ pub(crate) struct ZoomVideoUi {
     pub(crate) bla: bool,
     /// The palette follows the escape range (`--normalize`).
     pub(crate) normalize: bool,
-    /// Keep the strips (`--keep-strips`), in `keep_dir`, to recolour later.
+    /// Keep the strips (`--keep-strips`), in `keep_dir`, to recolor later.
     pub(crate) keep: bool,
     pub(crate) keep_dir: String,
     /// Render the strips on every graphics card of this machine (`--gpus all`, a farm on loopback).
@@ -116,7 +116,7 @@ pub(crate) struct ZoomPlan {
     pub(crate) rows: u32,
     /// The strips a frame reads at once: the window's.
     pub(crate) layers: u32,
-    /// Bytes of graphics memory assembly takes: the window, held as the colouring needs
+    /// Bytes of graphics memory assembly takes: the window, held as the coloring needs
     /// (`ZoomVideoUi::texels`) in pieces no wider than the card's textures, and the frame.
     pub(crate) gpu: u64,
 }
@@ -267,7 +267,7 @@ impl FractadyneApp {
         } else {
             None
         };
-        // The session's own normalization is honoured anyway; the box adds it when it is off.
+        // The session's own normalization is honored anyway; the box adds it when it is off.
         z.normalize = self.coloring.normalize_live;
         if z.out.is_empty() {
             z.out = dir.join("zoom-video.mp4").display().to_string();
@@ -352,7 +352,7 @@ impl FractadyneApp {
         }
         let running = self.zoom_video.child.is_some();
         let card = (self.max_texture_dim, self.sysinfo.vram_mb << 20);
-        // The window holds what the session's colouring reads, which can change while this is open.
+        // The window holds what the session's coloring reads, which can change while this is open.
         self.zoom_video.texels =
             fractadyne_gpu::WindowTexels::for_colour(self.coloring.color_method.to_u32(), self.effects.light, self.effects.de);
         let mut open = self.zoom_video.open;
@@ -632,7 +632,7 @@ impl FractadyneApp {
         }
     }
 
-    /// Save the session (the child reads its colouring there), then launch the render child and
+    /// Save the session (the child reads its coloring there), then launch the render child and
     /// stream its progress.
     fn start_zoom_video(&mut self, ctx: &egui::Context) {
         use std::io::{BufRead, BufReader};

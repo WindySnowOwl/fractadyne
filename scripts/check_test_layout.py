@@ -53,7 +53,7 @@ ALLOWED_ITEMS = {}
 # into the harnesses (src/harness.rs lists them). Exact, so the list shrinks as hooks go.
 HARNESS_HOOKS = {
     # logcheck at start and exit, --oomtest, FractadyneApp's harness fields (the four mode states and
-    # the profiler's timings: type, doc, initialiser), --render's --glitch-audit kind, the windowed
+    # the profiler's timings: type, doc, initializer), --render's --glitch-audit kind, the windowed
     # harnesses' flags (one call to harness::modes::Windowed::from_args) and the banner's policy.
     'crates/fractadyne-app/src/main.rs': 22,
     # the headless dispatch: --torture, --logcheck, --gputest, --replay, one call per developer

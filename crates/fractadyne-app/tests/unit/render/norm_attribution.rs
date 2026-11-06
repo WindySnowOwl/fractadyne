@@ -8,8 +8,8 @@ fn the_signature_keys_on_view_and_ask() {
     let base = norm_signature(-0.75, 0.1, 20.0, 4096);
     assert_eq!(base, norm_signature(-0.75, 0.1, 20.0, 4096), "must be a pure function");
     for (what, other) in [
-        ("centre x", norm_signature(-0.7500001, 0.1, 20.0, 4096)),
-        ("centre y", norm_signature(-0.75, 0.1000001, 20.0, 4096)),
+        ("center x", norm_signature(-0.7500001, 0.1, 20.0, 4096)),
+        ("center y", norm_signature(-0.75, 0.1000001, 20.0, 4096)),
         ("depth", norm_signature(-0.75, 0.1, 20.5, 4096)),
         ("iteration ask", norm_signature(-0.75, 0.1, 20.0, 8192)),
     ] {
@@ -27,9 +27,9 @@ fn the_signature_is_never_the_no_reading_sentinel() {
 }
 
 /// ⭐⭐**The field case, 2026-09-04.** An e10000 Misiurewicz jump: a reading measured at the OLD
-/// view lands two frames after the jump. Before the signature travelled with it, it was attributed
+/// view lands two frames after the jump. Before the signature traveled with it, it was attributed
 /// to the view on screen and a shallow `[6, 191]` range got adopted and LOCKED for a view whose
-/// real escapes sit at `[181573, 182297]` — one flat colour under the log mapping.
+/// real escapes sit at `[181573, 182297]` — one flat color under the log mapping.
 #[test]
 fn a_reading_from_the_view_before_a_jump_is_not_current() {
     let before = norm_signature(-0.75, 0.1, 20.0, 4096);
@@ -53,7 +53,7 @@ fn interaction_accepts_every_reading() {
 }
 
 /// ⚠A frame that armed no counter readback echoes nothing, and `0` says so. Falling back to
-/// accepting is the behaviour that shipped before the signature existed — a new mechanism that
+/// accepting is the behavior that shipped before the signature existed — a new mechanism that
 /// silently discarded every reading on a path it did not cover would be far worse than the race
 /// it replaces.
 #[test]

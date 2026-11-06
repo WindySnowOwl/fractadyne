@@ -296,7 +296,7 @@ tag-group-shape = Biçim
 tag-group-theme = Tema
 tag-group-purpose = Amaç
 
-# Tags measured from a palette's colours: its colour families, warm or cool, how busy it is (calm, lively, frantic), its brightness, and its shape. Plural nouns for the families; the rest describe the palette.
+# Tags measured from a palette's colors: its color families, warm or cool, how busy it is (calm, lively, frantic), its brightness, and its shape. Plural nouns for the families; the rest describe the palette.
 tag-reds = Kırmızılar
 tag-oranges = Turuncular
 tag-yellows = Sarılar
@@ -975,9 +975,9 @@ app-gradient-ggr-imported = İçe aktarıldı: “{ $name }” - { $count } segm
 # $error: the reader's reason (in English).
 app-gradient-ggr-invalid = Bir .ggr gradyanı değil: { $error }
 
-## The eyedropper's banner across the top of the screen while picking a colour
+## The eyedropper's banner across the top of the screen while picking a color
 
-# $hex: the colour under the pointer, as #rrggbb.
+# $hex: the color under the pointer, as #rrggbb.
 app-eyedropper-banner-color = Renk seçiliyor  ·  { $hex }  ·  almak için tıklayın, iptal için Esc
 app-eyedropper-banner = Renk seçiliyor  ·  almak için tıklayın, iptal için Esc
 
@@ -1015,7 +1015,7 @@ app-gradient-bezier-exact-hover = Her iki yönde de sürükleyebileceğiniz iki 
 app-gradient-bezier-visible-hover = Her iki yönde de sürükleyebileceğiniz iki kontrol noktası. Dönüştürme mevcut eğriye YAKLAŞIK bir eğri üretir — bu eğri için sapma { $error } içinde kalır ve bu açıkça görülür.
 # Hover on Bézier in the list of blend curves. $error: how far the fit is off (2 decimals).
 app-gradient-bezier-barely-hover = Her iki yönde de sürükleyebileceğiniz iki kontrol noktası. Dönüştürme mevcut eğriye YAKLAŞIK bir eğri üretir — bu eğri için sapma { $error } içinde kalır ve bu güçlükle fark edilir.
-# A label before the list of colour spaces (RGB, HSV).
+# A label before the list of color spaces (RGB, HSV).
 app-gradient-space = Renk uzayı
 # A label before the Bézier presets beside it.
 app-gradient-ease = Yumuşatma
@@ -1066,7 +1066,7 @@ app-gradient-import-ggr-hover = Bir GIMP .ggr gradyanını orta noktaları, kar�
 app-gradient-import-ase-hover = Bir Adobe renk örneği listesi (.ase) yükle. Renk örneklerinin konumu olmadığından eşit aralıklı ve harmanlanmış olarak gelirler.
 # The gradient's name, for the library of saved gradients.
 app-gradient-name = Ad
-# Shown greyed in the empty name field.
+# Shown grayed in the empty name field.
 app-gradient-name-hint = gradyanım
 # The save button, when a gradient of that name is already saved.
 app-gradient-update = Güncelle
@@ -1091,13 +1091,13 @@ app-gradient-ends-differ-hover = Gradyanın sonundaki renk başındaki renkle ay
 app-gradient-hard-bands = Keskin bantlar (girdiler arasında karışım yok)
 app-gradient-hard-bands-hover = Fractint / .map anlamı: her girdi düz bir renktir. Kapalıyken girdiler yumuşak bir gradyan olarak harmanlanır.
 app-gradient-paste-intro = Onaltılık renkleri (#ff8800) ya da 0–255 üçlülerini (255 136 0) virgül, boşluk ya da yeni satırla ayırarak yapıştırın:
-# Applies the pasted colours.
+# Applies the pasted colors.
 app-gradient-apply = Uygula
 # Empties the paste box.
 app-gradient-clear = Temizle
-# $used: the colours kept; $total: the colours pasted; $limit: the most that are kept.
+# $used: the colors kept; $total: the colors pasted; $limit: the most that are kept.
 app-gradient-paste-imported-some = { $total } renkten { $used } tanesi, listeniz boyunca eşit aralıklarla örneklenerek içe aktarıldı (sınır: { $limit }).
-# $count: the colours pasted.
+# $count: the colors pasted.
 app-gradient-paste-imported = { $count } renk içe aktarıldı.
 # $error: why the pasted text could not be read (in English).
 app-gradient-paste-unreadable = Okunamadı: { $error }
@@ -1978,7 +1978,7 @@ farm-client-show-key = Göster
 farm-client-machine = Bu makine
 farm-client-machine-hover = Denetleyicinin bu makine için gösterdiği ad.
 farm-client-share = Paylaşılan sürücü
-# Greyed hint inside the empty field; the path is an example.
+# Grayed hint inside the empty field; the path is an example.
 farm-client-share-hint = isteğe bağlı — örn. \\fileserver\share
 farm-client-share-hover = Bu makinenin, denetleyicinin kullandığı paylaşılan sürücüye giden yolu (paylaşım modu): kareler bağlantı üzerinden gönderilmek yerine oraya yazılır. Her kareyi göndermek için boş bırakın.
 farm-client-gpu = Grafik kartı
@@ -2148,7 +2148,7 @@ farm-ctl-ss = Süper örnekleme
 farm-ctl-port = Dinlenecek bağlantı noktası
 farm-ctl-port-hover = İstemciler bu bağlantı noktasına bağlanır. Yerel ağınız için güvenlik duvarında buna izin verin.
 farm-ctl-share = Paylaşılan sürücü
-# Greyed hint inside the empty field.
+# Grayed hint inside the empty field.
 farm-ctl-share-hint = isteğe bağlı — bu makinenin ona giden yolu
 farm-ctl-share-hover = Paylaşım modu: aynı sürücüye sahip istemciler karelerini bağlantı üzerinden göndermek yerine oraya yazar ve bu makine her birini orada denetler. Sürücüye sahip olmayan istemciler karelerini gönderir.
 # A label followed by a number of clients and two checkboxes.
@@ -2446,7 +2446,7 @@ formula-apply = Uygula
 formula-dialog-apply-hover = Formülü derle ve göster
 # Shown beside Apply while the formula is being compiled.
 formula-dialog-compiling = Formül GPU için derleniyor…
-# The greyed hint in an empty name box (also in the Formula library window).
+# The grayed hint in an empty name box (also in the Formula library window).
 formula-name-hint = ad (isteğe bağlı)
 # The save button: "Update" when the library already has a formula of that name.
 formula-dialog-update-in-library = Kitaplıkta güncelle
@@ -2581,7 +2581,7 @@ formula-library-import = İçe aktar…
 formula-library-import-hover = Bir formül dosyasındaki formülleri ekle; buradaki hiçbir şeyin yerine geçilmez
 formula-library-export-all = Tümünü dışa aktar…
 formula-library-export-all-hover = Buradaki her formülü, paylaşmak ya da saklamak için tek bir dosyaya yaz
-# The filter box: its label, and the greyed hint inside it.
+# The filter box: its label, and the grayed hint inside it.
 formula-library-filter = Süz
 formula-library-filter-hint = ada ya da metne göre süz
 # Shown while the user has no saved formulas.
@@ -2736,10 +2736,10 @@ panel-tail-length-unit = yin.
 panel-tail-length-hover = Yineleme cinsinden pencere uzunluğu. Kısa pencereler (8–32) her derinlikte klasik kalın bantları verir; daha uzun olanlar yeniden düz bir renge doğru ortalanır, çünkü uzun, kaotik bir yörüngenin şerit terimi ortalamada birbirini götürür.
 panel-trap-shape = Tuzak şekli
 panel-palette = Palet
-# The two colours of the Binary palette, each beside its colour swatch.
+# The two colors of the Binary palette, each beside its color swatch.
 panel-in-set = Küme içi
 panel-out-of-set = Küme dışı
-# The two colours of the Duotone palette, each beside its colour swatch.
+# The two colors of the Duotone palette, each beside its color swatch.
 panel-shadow = Gölge
 panel-highlight = Vurgu
 panel-cycle = Döngü
@@ -2757,7 +2757,7 @@ panel-log-scale-hover =
     Paleti doğrusal yerine kaçış değerinin LOGARİTMASINA göre yayar. Derinde kaçış sayıları üst uçta yığılır, bu yüzden doğrusal bir eşleme paletin çoğunu sınırın yakınındaki ince bir kabuğa harcar ve geri kalan her şeyi düzleştirir.
 
     Normalleştirilmiş eşlemeye uygulanır — bunu “Derin renkleri normalleştir” (ya da bir dışa aktarmada --normalize) açar. Çok çarpık bir aralık, bu kutu işaretli olsun ya da olmasın zaten logaritmik eşlemeyi kullanır.
-# The same checkbox's tooltip while it is greyed out (normalization is off).
+# The same checkbox's tooltip while it is grayed out (normalization is off).
 panel-log-scale-off-hover =
     Normalleştirme gerektirir: bu seçenek paletin ölçülen kaçış aralığına NASIL eşleneceğini belirler; bu yüzden “Derin renkleri normalleştir” kapalıyken (ve --normalize ile dışa aktarma yokken) değiştireceği bir eşleme yoktur ve tek bir pikseli bile değiştirmez.
 
@@ -3129,11 +3129,11 @@ lsys-draw-on = Çizilen kısım
 lsys-draw-on-hover = Eğrinin, kaplumbağanın çizdiği sırayla ne kadarının çizildiği
 lsys-draw-on-play-hover = Eğrinin kendini çizmesi
 lsys-colour-by = Renklendirme ölçütü
-# The colourings, in the "Colour by" list.
+# The colorings, in the "Color by" list.
 lsys-colour-position = eğri boyunca konum
 lsys-colour-depth = dal derinliği
 lsys-colour-heading = yön
-# C, < and > are the system's commands that set the colour index: keep them.
+# C, < and > are the system's commands that set the color index: keep them.
 lsys-colour-index = renk dizini (C, <, >)
 lsys-colour-plain = tek renk
 # The panel's numbers.
@@ -3279,9 +3279,9 @@ export-snapshot-saved = Ekran anlık görüntüsü kaydedildi: { $size } → { $
 # $error: why (in English).
 export-snapshot-failed = Anlık görüntü başarısız: { $error }
 
-## The colour picker (the popup of a colour swatch)
+## The color picker (the popup of a color swatch)
 
-# The third row's label: the colour as hexadecimal bytes. Short (about 6 characters).
+# The third row's label: the color as hexadecimal bytes. Short (about 6 characters).
 picker-row-hex = Hex
 picker-hex-hover = Onaltılık bir değer yazmak için tıklayın
 picker-cancel = İptal
@@ -3554,7 +3554,7 @@ fractal-family-lsystem = L-sistemi
 # A family at a power: "Multibrot 3", "Burning Ship 4". $family: a name above; $power: the power.
 fractal-with-power = { $family } { $power }
 
-## Names of choices: colouring methods, orbit traps, palette animation, snapshots, angle units.
+## Names of choices: coloring methods, orbit traps, palette animation, snapshots, angle units.
 
 color-method-smooth = Yumuşak yineleme
 color-method-stripe = Şerit ortalaması

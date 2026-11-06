@@ -7,7 +7,7 @@
 //! [`ReuseRef`](crate::render::ReuseRef) the live deep-dive reuse already uses. Everything from
 //! that seam on is existing, gated machinery.
 //!
-//! ⭐**Lookup is by NEIGHBOURHOOD, and it happens BEFORE the reference pick.** An entry serves any
+//! ⭐**Lookup is by NEIGHBORHOOD, and it happens BEFORE the reference pick.** An entry serves any
 //! view its point is inside of, at any precision up to the one it was built at: come back, then
 //! zoom somewhere nearby, no rebuild. The design first put the lookup AFTER `pick_reference`
 //! (key on the picked point); that was wrong by the numbers already in the tree — at 2.37e4000×
@@ -23,10 +23,10 @@
 //!
 //! **What is NOT stored**: the series approximation and the BLA — derived, cheap next to the orbit
 //! (measured at 2.37e4000×: BLA 0.4 s of a 405 s build; SA is skipped whenever BLA builds), and
-//! colouring-dependent. See `render::orbit_blob`.
+//! coloring-dependent. See `render::orbit_blob`.
 //!
 //! **History.** Until beta.77 this module kept ONE reference — the last view's, keyed on the exact
-//! centre and zoom, as decimal strings, without a tail — so a restored session rendered at once.
+//! center and zoom, as decimal strings, without a tail — so a restored session rendered at once.
 //! That is now the trivial case of a cache hit: the restored view's cold start finds its own orbit
 //! here. The old `last_reference.bin` is removed on startup.
 //!

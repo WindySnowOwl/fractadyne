@@ -136,17 +136,17 @@ fn a_stalled_run_is_cancelled_and_requeued() {
     for t in (0..=300).step_by(5) {
         s.step(secs(b, t), Event::Heartbeat { client: 1, paused: false, frame: Some(0), frame_ms: Some(t * 1000) });
     }
-    assert!(!s.step(secs(b, 300), Event::Tick).iter().any(|c| matches!(c, Command::Cancel { .. })), "cancelled at the timeout itself");
+    assert!(!s.step(secs(b, 300), Event::Tick).iter().any(|c| matches!(c, Command::Cancel { .. })), "canceled at the timeout itself");
     s.step(secs(b, 301), Event::Heartbeat { client: 1, paused: false, frame: Some(0), frame_ms: Some(301_000) });
     let out = s.step(secs(b, 302), Event::Tick);
     assert!(out.contains(&Command::Cancel { client: 1, run: Some(1), reason: CancelReason::Stalled }), "{out:?}");
 }
 
 /// ⭐A run building a deep reference finishes no frame for minutes, and before the job's first frame
-/// only the 300 s floor applies: at 9.98e60205× every client's 7–8 minute build was cancelled at
+/// only the 300 s floor applies: at 9.98e60205× every client's 7–8 minute build was canceled at
 /// 300 s and started again from nothing (2026-10-29). A build that keeps advancing is progress; one
 /// that stops lets the stall clock run out from its last step, heartbeats or not. The control, the
-/// same run with no reports, is cancelled at 300 s (`a_stalled_run_is_cancelled_and_requeued`).
+/// same run with no reports, is canceled at 300 s (`a_stalled_run_is_cancelled_and_requeued`).
 #[test]
 fn a_run_whose_reference_build_advances_is_not_stalled() {
     let b = t0();
@@ -161,12 +161,12 @@ fn a_run_whose_reference_build_advances_is_not_stalled() {
     // Eight minutes of building, each heartbeat saying the build advanced a second ago.
     for t in (2..=480).step_by(2) {
         let out = beat(&mut s, t, t - 1);
-        assert!(!out.iter().any(|c| matches!(c, Command::Cancel { .. })), "cancelled at {t} s while its reference advanced: {out:?}");
+        assert!(!out.iter().any(|c| matches!(c, Command::Cancel { .. })), "canceled at {t} s while its reference advanced: {out:?}");
     }
     // The build stops at 479 s; the heartbeats go on, saying so.
     for t in (482..=778).step_by(2) {
         let out = beat(&mut s, t, 479);
-        assert!(!out.iter().any(|c| matches!(c, Command::Cancel { .. })), "cancelled at {t} s, under 300 s after its last step: {out:?}");
+        assert!(!out.iter().any(|c| matches!(c, Command::Cancel { .. })), "canceled at {t} s, under 300 s after its last step: {out:?}");
     }
     let out = beat(&mut s, 780, 479);
     assert!(out.contains(&Command::Cancel { client: 1, run: Some(1), reason: CancelReason::Stalled }), "{out:?}");
@@ -191,7 +191,7 @@ fn reference_work_counts_only_for_the_senders_own_run() {
     }
     let out = s.step(secs(b, 310), Event::Tick);
     assert!(out.contains(&Command::Cancel { client: 1, run: Some(1), reason: CancelReason::Stalled }), "A's run kept alive by B: {out:?}");
-    assert!(!out.contains(&Command::Cancel { client: 2, run: Some(b_front), reason: CancelReason::Stalled }), "B's own run cancelled: {out:?}");
+    assert!(!out.contains(&Command::Cancel { client: 2, run: Some(b_front), reason: CancelReason::Stalled }), "B's own run canceled: {out:?}");
 }
 
 /// A long frame is not a stall once frames have shown how long they take.

@@ -1,6 +1,6 @@
 use super::{parse_click, parse_taps, ClickAt};
 
-/// A factor alone clicks the centre; a factor and a point clicks that point; `@` a share of the view.
+/// A factor alone clicks the center; a factor and a point clicks that point; `@` a share of the view.
 #[test]
 fn click_parses() {
     assert_eq!(parse_click("100"), Some((100.0, ClickAt::Centre)));

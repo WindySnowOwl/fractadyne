@@ -13,7 +13,7 @@ This is the whole shape of the job, and it is much smaller than the phrase sugge
 | capability | state |
 |---|---|
 | Per-segment **blend curve** — linear, curved, sine, sphere-increasing, sphere-decreasing | evaluated, baked, persisted |
-| Per-segment **colour space** — RGB, HSV counter-clockwise, HSV clockwise | evaluated, baked, persisted |
+| Per-segment **color space** — RGB, HSV counter-clockwise, HSV clockwise | evaluated, baked, persisted |
 | Per-segment **midpoint** — moves where the blend reaches 50% without adding a stop | evaluated, baked, persisted |
 | Per-endpoint **alpha** | parsed and stored (renderer has no alpha channel yet) |
 | **Cost at render time** | one indexed LUT fetch — a curve costs exactly what a line costs |
@@ -21,7 +21,7 @@ This is the whole shape of the job, and it is much smaller than the phrase sugge
 | **Interchange** | `.ggr` import exercises all of it; a selftest check renders it |
 
 ✅**Not built**: any way for a user to set those three things. The gradient editor edits
-`custom_palette: Vec<[pos, r, g, b]>` — colour and position, nothing else — and **clears
+`custom_palette: Vec<[pos, r, g, b]>` — color and position, nothing else — and **clears
 `custom_segments` on every edit** (`main.rs`, the ⚠ on that field says why).
 
 So today the rich model is reachable only by importing a `.ggr` someone else authored. **"Parametric
@@ -29,7 +29,7 @@ gradient editing" is a UI feature on top of a finished engine**, plus one data-m
 
 ⭐This also means the expensive half is already paid for and already has its acceptance evidence:
 the LUT bake, the `.ggr` round trip, the `ggr-colour-space-is-per-segment` selftest check (4 vs 1533
-distinct colours), and the session round-trip test that names midpoint/blend/space individually.
+distinct colors), and the session round-trip test that names midpoint/blend/space individually.
 
 ## 2. The one real design decision: which representation the editor owns
 
@@ -49,11 +49,11 @@ a curve on a segment, the stop list can no longer describe their gradient.
 - The editor edits segments. Stops become a *view* of segment boundaries — which is what they
   already are (`Gradient::to_stops` derives them, and carries a hard edge as a duplicate position).
 - `custom_palette` stays for (a) sessions written before this, (b) `.map` band imports, which are
-  genuinely a colour list, and (c) the paste box. Loading either produces segments via
+  genuinely a color list, and (c) the paste box. Loading either produces segments via
   `Gradient::from_stops` / `from_bands`, which is already how rendering works.
-- ⚠**This is a migration, and the migration is the risky part, not the maths.** A session written
+- ⚠**This is a migration, and the migration is the risky part, not the math.** A session written
   today has stops and no segments; it must keep rendering identically. `from_stops` produces exactly
-  Linear/RGB/centred-midpoint segments, so the conversion is lossless *by construction* — but that
+  Linear/RGB/centered-midpoint segments, so the conversion is lossless *by construction* — but that
   needs a test asserting an old session renders byte-identically after the change, not an argument.
 
 The alternative — keep both, and "promote to segments" on the first curve edit — is what you build
@@ -65,7 +65,7 @@ discarding curves) permanently in the tree.
 **Free — UI only, no engine change, no pixel movement:**
 
 - A blend picker and a space picker per segment. Both enums already bake and persist.
-- A midpoint control. ⚠It is normalised *within* the segment (GIMP semantics), so a marker dragged
+- A midpoint control. ⚠It is normalized *within* the segment (GIMP semantics), so a marker dragged
   along the strip maps to `(mid − left) / (right − left)`, not to an absolute position.
 
 **Cheap and worth doing alongside:**
@@ -75,7 +75,7 @@ discarding curves) permanently in the tree.
   test oracle, and turns `.ggr` import + export into a round-trip property test, which is the
   cheapest correctness evidence available for this whole area.
 - A curve preview per segment (a small sparkline of the blend function). ⚠Draw the *real* function,
-  not an idealised S — the two sphere blends are deliberately **not** midpoint-symmetric (0.866 at
+  not an idealized S — the two sphere blends are deliberately **not** midpoint-symmetric (0.866 at
   halfway; there is a test pinning it). A prettified preview would misrepresent them.
 
 **Real work:**
@@ -91,8 +91,8 @@ discarding curves) permanently in the tree.
 
 ## 4. Traps, each one grounded
 
-1. ⭐⭐**HSV from a grey sweeps the whole wheel, and the middle is a colour neither endpoint
-   contains.** `rgb_to_hsv` returns hue 0 for any unsaturated colour, and `Space::HsvCcw` with equal
+1. ⭐⭐**HSV from a gray sweeps the whole wheel, and the middle is a color neither endpoint
+   contains.** `rgb_to_hsv` returns hue 0 for any unsaturated color, and `Space::HsvCcw` with equal
    hues takes a *full* turn (`1.0 − lh + rh` = 1.0). ✅Measured — a **black → red** segment:
 
    | t | 0.00 | 0.25 | 0.50 | 0.75 | 1.00 |
@@ -101,7 +101,7 @@ discarding curves) permanently in the tree.
 
    21 of 65 samples are green-dominant. That is either a beautiful effect or a baffling one, and the
    user cannot predict it from the two swatches they picked. **The editor must show the consequence**
-   (the preview does this for free) and should probably say "hue of a grey is undefined — this
+   (the preview does this for free) and should probably say "hue of a gray is undefined — this
    sweeps from red" when an endpoint has zero saturation.
 
 2. ⚠**Blend and space numbers are a FILE FORMAT.** They are GIMP's `.ggr` numbering *and* they are
@@ -125,7 +125,7 @@ discarding curves) permanently in the tree.
 ## 5. Zero drift is achievable, and that is worth stating
 
 The last two palette changes each moved pixels and cost a re-bless conversation. **This one need
-not.** `Blend::Linear` + `Space::Rgb` + centred midpoint is the default, and it is exactly what
+not.** `Blend::Linear` + `Space::Rgb` + centered midpoint is the default, and it is exactly what
 `from_stops` already produces — so every existing preset, session and import renders bit-identically
 unless a user deliberately sets a curve. That should be an explicit acceptance criterion:
 
@@ -162,7 +162,7 @@ else reads. That is a defensible trade, but it should be made deliberately and w
 ### OkLab / OkLCh — worth raising, not worth doing yet
 
 The modern answer to "gradients look uneven" is a perceptual space. It would genuinely help fractal
-palettes, where a linear RGB ramp bunches perceived lightness. ⚠But our colours are display-referred
+palettes, where a linear RGB ramp bunches perceived lightness. ⚠But our colors are display-referred
 by deliberate choice, so an OkLab segment needs a real sRGB **decode → OkLab → encode** round trip
 per sample — the first place the display-referred decision actually costs something, and a direct
 contradiction of the "palette interpolation happens in gamma space, by design" comment in
@@ -241,7 +241,7 @@ curve-preview sparkline. This is the feature; the engine is untouched. ⚠Draw t
 function — the two sphere curves are not midpoint-symmetric (0.866 at halfway, pinned by a test).
 Zero drift again: `Linear`/`Rgb`/centred is the default and is exactly what `from_stops` produces.
 
-**P3. The stop strip** (`UI-DESIGN.md` §8: draggable stops, double-click to edit colour, right-click
+**P3. The stop strip** (`UI-DESIGN.md` §8: draggable stops, double-click to edit color, right-click
 to delete). **Cap 32 hand-editable stops** (up from `EDITOR_MAX_STOPS = 24`); above that the
 existing summary fallback stands, because an imported `.map` is 256 entries.
 ⚠⚠**No harness drives hover, drag or scroll** — so split the widget: hit-testing, clamping,
@@ -305,7 +305,7 @@ below.**
 |---|---|---|---|
 | **A. Per-segment ease** (CSS `cubic-bezier`) | x = position *within* the selected segment, y = blend factor 0→1 | the **timing** along a segment | `.ggr` approximates (§8 kind 5) |
 | **B. Whole-gradient graph editor** | x = position `0..1` across the gradient, each segment a cell rising 0→1 | same data as A, all segments at once | same as A |
-| **C. Per-channel R/G/B splines** (Photoshop *Curves*) | x = position, y = channel value | the **colour path** itself | ⛔breaks everything |
+| **C. Per-channel R/G/B splines** (Photoshop *Curves*) | x = position, y = channel value | the **color path** itself | ⛔breaks everything |
 
 ⭐**A and B are the same model with two viewports**, which is why the answer is not to choose. A is
 the only one big enough to grab a handle in; B is the only one that shows the gradient as one
@@ -330,7 +330,7 @@ reads the same bake the preview already builds.
 │   │[==selected==]│    │      │     click    │  real factor curve, click-select
 ├────────────────────────────────────────────┤
 │  segment 3 · 0.275 → 0.400                 │
-│  ┌──────────────────┐  ■ colour            │  A: the editing surface
+│  ┌──────────────────┐  ■ color             │  A: the editing surface
 │  │             ○──╮ │  pos  0.275          │  ~200 px square,
 │  │          ╭──╯   │  space  RGB     ▾     │  two handles off pinned
 │  │      ╭──╯       │                       │  (0,0) and (1,1)
@@ -348,7 +348,7 @@ cells sized by span make a narrow segment UNREACHABLE: a real gradient with segm
 at segment 3 and 1–2 could only be selected if they already were. Position is carried three
 times over — by the bar, its markers, and the selected-span bracket — so the ribbon is a LIST.
 
-The stop list collapses from N rows to **the selected stop's** colour swatch + numeric position +
+The stop list collapses from N rows to **the selected stop's** color swatch + numeric position +
 delete. ⚠Keep the numeric field: 32 stops on a 520 px strip is ~16 px apart, so click-to-select plus
 a typed position and arrow-key nudge is what makes the strip usable, not the drag alone (§8 P3
 already said this).
@@ -372,13 +372,13 @@ buttons in one row. They are file tasks, not editing tasks — collapse them beh
    same idiom as the existing "Convert to editable stops": a lossy conversion is a button the user
    presses, never a surprise on first drag.
 3. ⭐**An interior control point on the ease curve is NOT a stop, and two handles is the cap.** An
-   ease point re-times travel along the segment; a stop bends the colour path. They are different
+   ease point re-times travel along the segment; a stop bends the color path. They are different
    operations and both are wanted — but a 2-handle cubic already covers arbitrary monotone
    re-timing, so adding interior ease points would create a second way to express something the
    split-segment button already does better. **Two handles, endpoints pinned at (0,0) and (1,1).**
 4. ⚠**Overshoot.** x must stay in `[0,1]` or the curve is not a function — clamp it. y outside
-   `[0,1]` extrapolates past the endpoint colours, which is often exactly the wanted effect
-   (anticipation / overshoot) and can go out of gamut. **Allow y overshoot, clamp at the COLOUR, not
+   `[0,1]` extrapolates past the endpoint colors, which is often exactly the wanted effect
+   (anticipation / overshoot) and can go out of gamut. **Allow y overshoot, clamp at the COLOR, not
    at the factor** — clamping the factor would silently flatten the handle the user is dragging.
 5. ⚠**Evaluation cost is a bake-time question only.** A cubic-Bézier ease needs `x(u) = t` solved
    per sample (Newton with a bisection fallback, as CSS does). That runs 1024 times per bake and
@@ -404,7 +404,7 @@ the widget rather than a reason to skip tests:
 
 - ✅**P3′ — the layout, no new model. SHIPPED beta.30.** Draggable stop strip, the segment ribbon,
   selection, the selected-segment canvas drawing kinds 0–4 read-only with a draggable midpoint ring
-  and a strip of the segment's own colours, the collapsed stop row (swatch + typed position + nudge
+  and a strip of the segment's own colors, the collapsed stop row (swatch + typed position + nudge
   + remove), `Import ▾`, cap 32, width capped at 496 pt. ⭐**Zero drift measured**: `--selftest`
   **173/173 + 18/18**, corpus **38/38 maxD 0**, no re-bless. Pure geometry in `gradient_strip.rs`
   (8 tests, **all five helpers verified RED by mutation**).
@@ -414,7 +414,7 @@ the widget rather than a reason to skip tests:
      meant "came from a `.ggr`" only until P1 made every custom gradient have segments. It was
      offering to convert a preset copy into what it already was. Now gated on
      `Gradient::is_stop_expressible`, which asks the question that matters — does any segment carry
-     a non-linear blend, a hue sweep or an off-centre midpoint.
+     a non-linear blend, a hue sweep or an off-center midpoint.
   2. The stop-count line still said positions "may overlap; they're sorted automatically" —
      true of the flat list the editor owned before P1, false of segment boundaries.
   3. The **window's width was set by whichever label was longest**, because a label inside
@@ -436,11 +436,11 @@ the widget rather than a reason to skip tests:
   point already several pixels from the press. The fix is to hit-test the **press origin**. ⚠The
   first write-up blamed the 6 px threshold itself; the test's own guard assertion failed and showed
   that 6 px is *not* enough to leave a 9 px catch radius at 15.8 px spacing. **The threshold is a
-  LOWER bound, not the drift** — the drift is however far a flick travelled in the frame that
+  LOWER bound, not the drift** — the drift is however far a flick traveled in the frame that
   crossed it, so it is unbounded. ⭐And the silent-cancel case needs *few* stops, not many: at the
   32-stop cap the catch zones overlap everywhere, so a drift always grabs *something* (merely the
   wrong thing), whereas on the 7-stop gradient in the report most of the strip is dead band and the
-  drag is cancelled with no feedback at all. Both regimes are pinned in `gradient_strip.rs`.
+  drag is canceled with no feedback at all. Both regimes are pinned in `gradient_strip.rs`.
 
   - **Ring view.** ⭐The justification is not decoration: a palette is *cycled*, so it is
     topologically a circle, and the ring is the only view in which the **seam** exists. On a bar the
@@ -457,14 +457,14 @@ the widget rather than a reason to skip tests:
     in*. It now has an **outer track** (click it at the position you want) and a **`⊕`/`⊖` pair in
     the hole**. ⭐The hole is the one part of a ring that is **not a position**, so a button there
     cannot be mistaken for one — which is why they are not out on the rim beside the markers.
-    ⚠The track must be a **band test, not a disc test**: `d <= r` would swallow the whole colour
+    ⚠The track must be a **band test, not a disc test**: `d <= r` would swallow the whole color
     wheel and both buttons, so every click would insert. Pinned by `the_ring_add_track_is_a_band…`.
     ⇒ ⭐**Porting a view is not porting its affordances.** The ring inherited the *gestures*
     (drag/double-click/right-click) because they were geometry-independent, and silently dropped
     the two *visible controls* because those were drawn in bar coordinates. Nothing failed; the
     feature was simply half there, and only using it showed which half.
   - **A `⊖` under the selected marker**, tracking it. ⚠Interior stops only: the two ends are pinned
-    by contract, so a `⊖` there would be an offer the editor cannot honour.
+    by contract, so a `⊖` there would be an offer the editor cannot honor.
   - **Save / Cancel over a named library** (`gradients.toml`, beside `bookmarks.toml`).
     ⭐⭐**Stored as SEGMENTS, never stops** — a stop-list library would reload, render, and look
     right while having dropped every midpoint, curve and hue sweep, which are the only properties
@@ -485,9 +485,9 @@ the widget rather than a reason to skip tests:
   exactly kind 5. ⇒ *a UI complaint can be a request for a model that does not exist yet; "the
   control only moves one way" was the user reporting a missing degree of freedom, not a bug.*
 
-  All five §9.4 decisions honoured: **kind 5 ignores `mid`** (pinned, with a control proving the
+  All five §9.4 decisions honored: **kind 5 ignores `mid`** (pinned, with a control proving the
   same midpoint move *does* change a kind 0–4 segment); handles hidden for kinds 0–4; **two handles,
-  no more**; **x clamped, y free, the COLOUR clamped in `eval`** (a no-op for kinds 0–4, which is
+  no more**; **x clamped, y free, the COLOR clamped in `eval`** (a no-op for kinds 0–4, which is
   what keeps this at zero drift); and the `x(u) = t` solve stays at **bake time — 1024×, never
   per-pixel**.
 

@@ -3,7 +3,7 @@
 
 use super::*;
 
-/// The strip the shader reads for the sample at `(x, y)` of a `w × h` grid (pixel centres at
+/// The strip the shader reads for the sample at `(x, y)` of a `w × h` grid (pixel centers at
 /// `+½`), in f64: `depth_whole + floor(depth_frac − ½·log2(max(d², ¼)))`.
 fn strip_of(place: &FramePlacement, w: u32, h: u32, x: u32, y: u32) -> i64 {
     let dx = x as f64 + 0.5 - w as f64 / 2.0;
@@ -30,7 +30,7 @@ fn a_frame_reads_exactly_the_strips_its_samples_fall_in_and_the_window_holds_the
                 seen_hi = seen_hi.max(l);
             }
         }
-        // The corners and the centre are on the stride for these sizes or bounded by it.
+        // The corners and the center are on the stride for these sizes or bounded by it.
         assert!(seen_hi <= hi + 1e-12 && seen_lo >= lo - 1e-12, "{w}x{h}: samples span {seen_lo}..{seen_hi}, the bound {lo}..{hi}");
         let layers = layers_for_frame(w, h);
         for n in 0..200 {
@@ -93,7 +93,7 @@ fn a_strip_is_held_in_pieces_no_wider_than_asked_covering_it_once() {
 
 #[test]
 fn a_window_holds_what_the_colouring_reads() {
-    // Smooth: the count alone; distance colouring or glow: and the DE; relief: everything.
+    // Smooth: the count alone; distance coloring or glow: and the DE; relief: everything.
     assert_eq!(WindowTexels::for_colour(0, false, false), WindowTexels::Count);
     assert_eq!(WindowTexels::for_colour(0, false, true), WindowTexels::CountDe);
     assert_eq!(WindowTexels::for_colour(4, false, false), WindowTexels::CountDe);

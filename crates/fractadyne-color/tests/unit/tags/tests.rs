@@ -126,7 +126,7 @@ fn an_untagged_gradient_is_measured() {
     for want in ["neutrals", "calm", "smooth", "single-hue"] {
         assert!(tags.contains(&want), "black-white-black: {want} missing from {tags:?}");
     }
-    // Hard bands of saturated colour, each meeting the next at an edge.
+    // Hard bands of saturated color, each meeting the next at an edge.
     let bands: Vec<(f32, [f32; 3])> = [[1.0, 0.0, 0.0], [0.0, 0.0, 1.0], [1.0, 1.0, 0.0], [0.0, 0.6, 0.0]]
         .iter()
         .enumerate()

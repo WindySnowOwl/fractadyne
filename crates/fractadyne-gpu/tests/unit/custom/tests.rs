@@ -157,7 +157,7 @@ fn powers_hybrids_parameters_and_functions_generate_valid_modules() {
     let p = b.push(Op::Pow(z, w));
     let s = build(&single(b.finish(p).unwrap()), &[]).unwrap();
     assert_eq!(s.precision, Precision::F32);
-    assert_eq!(s.power, 2.0, "no power law: smooth colouring falls back to 2");
+    assert_eq!(s.power, 2.0, "no power law: smooth coloring falls back to 2");
 
     // Everything else in the op set, in one program.
     let mut b = Builder::new();

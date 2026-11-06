@@ -48,7 +48,7 @@ param(
     # harness: the fractadyne flags, as one string ("--zoomtest 40 --zoomtest-rate 4.0").
     [string]$Run = "",
     [int]$Repeat = 1,
-    # harness: run at this view - a .fdn (e.g. a crash-view-*.fdn); its centre, upp_log2, max_iter
+    # harness: run at this view - a .fdn (e.g. a crash-view-*.fdn); its center, upp_log2, max_iter
     # and auto_iter become the run's session. -ViewAa overrides the supersampling (default 2).
     [string]$ViewFdn = "",
     [int]$ViewAa = 2,

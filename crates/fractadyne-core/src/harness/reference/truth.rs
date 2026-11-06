@@ -4,7 +4,7 @@
 //!
 //! WHY (user request, 2026-11-03: golden references "created with no approximations or
 //! optimizations that have the least chance of error", every pixel, filaments included). That day
-//! twelve test views drew a flat disc or one flat colour for every reference pick, and the pick
+//! twelve test views drew a flat disc or one flat color for every reference pick, and the pick
 //! audit, which compares two picks, called them VACUOUS: two renders sharing a fault agree.
 //! [`naive_dwell_bf`] is the independent truth, but at ~0.1 s a point at 1e999× it can judge a
 //! sample of pixels, not a frame, and a thin filament is exactly what a sample misses.

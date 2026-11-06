@@ -3,13 +3,13 @@
 //! Three layers, per `design/palette-import.md` §4:
 //!
 //! 1. [`import`] — a palette FILE (`.map` today) becomes a gradient. Format knowledge stops here.
-//! 2. [`segment`] — the gradient model itself (GIMP's: per-segment colours, midpoint, blend
-//!    function and colour space), a superset of every format we care about, plus the bake that
+//! 2. [`segment`] — the gradient model itself (GIMP's: per-segment colors, midpoint, blend
+//!    function and color space), a superset of every format we care about, plus the bake that
 //!    turns one into the [`segment::LUT_SIZE`]-entry table the shader reads.
 //! 3. This module — the built-in [`PRESETS`] and the tolerant paste parser
 //!    ([`parse_palette_text`]), both of which are just short stop lists feeding layer 2.
 //!
-//! ⚠**Every colour here is DISPLAY-referred, and that was measured** — see [`srgb8_to_stop`].
+//! ⚠**Every color here is DISPLAY-referred, and that was measured** — see [`srgb8_to_stop`].
 //!
 //! Presets are chosen to loop seamlessly (first and last colors match), because the palette is
 //! cycled by the smooth iteration value and a mismatched pair shows as a hard seam.
@@ -32,12 +32,12 @@ pub const MAX_STOPS: usize = 8;
 /// One 8-bit channel → the `0..1` a stop holds. A plain divide, **not** an sRGB decode.
 ///
 /// ⭐⭐**Stops are DISPLAY-REFERRED, and this was measured, not assumed** (2026-09-04). The
-/// renderer writes palette colours straight into a **non-sRGB** framebuffer, so a stop's value IS
+/// renderer writes palette colors straight into a **non-sRGB** framebuffer, so a stop's value IS
 /// the byte the monitor shows (`fractadyne-export`'s module docs spell out why: the live view is
 /// WYSIWYG and palette interpolation happens in gamma space on purpose).
 ///
 /// This used to apply the sRGB→linear transfer, on the stated belief that "every stop in this
-/// crate is LINEAR". The renderer never honoured it, so the conversion was pure loss: a pasted
+/// crate is LINEAR". The renderer never honored it, so the conversion was pure loss: a pasted
 /// `#808080` became the stop 0.2159, which reached the framebuffer as byte 55 and displayed as
 /// **`#373737`** — every imported palette one decode too dark. Verified with a uniform custom
 /// palette rendered through `--render`: stop 0.2159 → `#373737`, and the control, stop 0.502 →
@@ -51,7 +51,7 @@ fn srgb8_to_stop(v: u8) -> f32 {
     v as f32 / 255.0
 }
 
-/// Parse a pasted palette into DISPLAY-space colours (see `srgb8_to_stop`), in the order given.
+/// Parse a pasted palette into DISPLAY-space colors (see `srgb8_to_stop`), in the order given.
 ///
 /// Deliberately format-tolerant rather than format-specific: the goal ("I found a palette on the
 /// web") is defeated by a format war, so this accepts what people actually paste —
@@ -63,7 +63,7 @@ fn srgb8_to_stop(v: u8) -> f32 {
 ///
 /// Each line is classified independently: if it carries hex tokens they win, otherwise its
 /// integers are taken in groups of three. That resolves the one genuine ambiguity — `255 000 000`
-/// is three integers, `FF0000` is one hex colour — without asking the user to declare a format.
+/// is three integers, `FF0000` is one hex color — without asking the user to declare a format.
 ///
 /// Returns `Err` with a human-readable reason; the caller shows it verbatim.
 pub fn parse_palette_text(text: &str) -> Result<Vec<[f32; 3]>, String> {
@@ -109,8 +109,8 @@ pub fn parse_palette_text(text: &str) -> Result<Vec<[f32; 3]>, String> {
             continue;
         }
         // ⭐⭐**A `.map` TRIPLE OUTRANKS BARE HEX SHORTHAND.** `168 168 168` is a real line in
-        // Fractint's `default.map` (the VGA light grey) and every token is also three valid hex
-        // digits, so the hex-wins rule below read it as THREE `#114488` colours. Any `.map` line
+        // Fractint's `default.map` (the VGA light gray) and every token is also three valid hex
+        // digits, so the hex-wins rule below read it as THREE `#114488` colors. Any `.map` line
         // whose three values all land in 100–255 was silently mis-imported — in the very format
         // this parser advertises. Bare 3-digit shorthand made only of DECIMAL digits is
         // vanishingly rare next to a `.map` triple, and anyone who means it can write `#128`;
@@ -153,22 +153,22 @@ pub fn parse_palette_text(text: &str) -> Result<Vec<[f32; 3]>, String> {
             continue;
         }
         return Err(format!(
-            "couldn't read \"{}\" — expected hex colours (#ff8800) or 0–255 triples (255 136 0)",
+            "couldn't read \"{}\" — expected hex colors (#ff8800) or 0–255 triples (255 136 0)",
             line.trim()
         ));
     }
     if out.is_empty() {
-        return Err("no colours found".to_string());
+        return Err("no colors found".to_string());
     }
     Ok(out)
 }
 
-/// Reduce a colour list to at most `n` evenly spaced stops, always keeping the first and last.
+/// Reduce a color list to at most `n` evenly spaced stops, always keeping the first and last.
 ///
 /// Sampling evenly across the list (rather than truncating to the first `n`, which would import
 /// only the palette's dark end) preserves the gradient's overall shape.
 ///
-/// ⚠This used to be called with `MAX_STOPS`, which threw away everything past the EIGHTH colour of
+/// ⚠This used to be called with `MAX_STOPS`, which threw away everything past the EIGHTH color of
 /// every import. The LUT bake lifted that ceiling; `n` is now a generosity limit rather than a
 /// hardware one, and a 256-entry `.map` body passes through untouched.
 pub fn resample_colors(colors: &[[f32; 3]], n: usize) -> Vec<[f32; 3]> {
@@ -314,7 +314,7 @@ pub const PRESETS: &[Palette] = &[
         ],
     },
     // ⚠Append only: a view file and a session store a preset by its INDEX here (`palette=`,
-    // `palette_idx`), so a preset inserted above another recolours every saved view that used the
+    // `palette_idx`), so a preset inserted above another recolors every saved view that used the
     // one after it.
     // The four seasons round the ring: snow, frost, spring leaf, blossom, summer sun, harvest,
     // autumn russet, a bare winter dusk, and back to snow.
@@ -479,7 +479,7 @@ pub const PRESETS: &[Palette] = &[
             (1.00, [0.141, 0.078, 0.039]),
         ],
     },
-    // Every hue in one ring, evenly bright: all the colours together.
+    // Every hue in one ring, evenly bright: all the colors together.
     Palette {
         id: "unity",
         name: "Unity",
@@ -708,7 +708,7 @@ pub const PRESETS: &[Palette] = &[
             (1.00, [0.180, 0.102, 0.118]),
         ],
     },
-    // Play of colour on a dark stone: electric blue, green and orange flashes.
+    // Play of color on a dark stone: electric blue, green and orange flashes.
     Palette {
         id: "black-opal",
         name: "Black Opal",
@@ -785,7 +785,7 @@ pub const PRESETS: &[Palette] = &[
             (1.00, [0.165, 0.039, 0.290]),
         ],
     },
-    // Holi: clouds of coloured powder, magenta, saffron, yellow, green, blue and violet.
+    // Holi: clouds of colored powder, magenta, saffron, yellow, green, blue and violet.
     Palette {
         id: "holi",
         name: "Holi",

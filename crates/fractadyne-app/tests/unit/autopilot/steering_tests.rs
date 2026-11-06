@@ -43,7 +43,7 @@ fn edge(p: &mut Probe, i: usize, j: usize) {
     p.de_log2[j * p.w + i] = -2.0;
 }
 
-/// A compact knot of boundary cells (a spiral centre / branch point, as the probe sees one).
+/// A compact knot of boundary cells (a spiral center / branch point, as the probe sees one).
 fn knot(p: &mut Probe, ci: usize, cj: usize, r: usize) {
     for j in cj - r..=cj + r {
         for i in ci - r..=ci + r {
@@ -67,7 +67,7 @@ fn a_view_with_no_boundary_is_a_dead_end() {
 
 #[test]
 fn the_goal_is_always_on_the_boundary_never_in_the_flat_between() {
-    // Two equal knots either side of the centre: the old argmax-then-average steering converged
+    // Two equal knots either side of the center: the old argmax-then-average steering converged
     // on the flat gap between them. Whatever is chosen must itself be a boundary cell.
     let mut p = flat(40, 25);
     knot(&mut p, 12, 12, 2);
@@ -81,7 +81,7 @@ fn the_goal_is_always_on_the_boundary_never_in_the_flat_between() {
 fn the_first_pick_prefers_detail_near_the_centre() {
     let mut p = flat(40, 25);
     knot(&mut p, 5, 5, 2); // corner
-    knot(&mut p, 21, 13, 2); // centre
+    knot(&mut p, 21, 13, 2); // center
     let s = choose_goal(&p, 1.6, None, true).unwrap();
     let (i, j) = cell(&p, s.goal);
     assert!((19..=23).contains(&i) && (11..=15).contains(&j), "picked cell ({i},{j})");
@@ -93,7 +93,7 @@ fn richer_detail_off_centre_still_wins_over_a_bare_line_at_the_centre() {
     for i in 0..40 {
         edge(&mut p, i, 12); // a single filament through the middle
     }
-    knot(&mut p, 28, 8, 3); // a dense knot a little off centre
+    knot(&mut p, 28, 8, 3); // a dense knot a little off center
     let s = choose_goal(&p, 1.6, None, true).unwrap();
     let (i, j) = cell(&p, s.goal);
     assert!((25..=31).contains(&i) && (5..=11).contains(&j), "picked cell ({i},{j})");
@@ -101,7 +101,7 @@ fn richer_detail_off_centre_still_wins_over_a_bare_line_at_the_centre() {
 
 #[test]
 fn a_tracked_goal_on_the_boundary_is_kept_exactly() {
-    // Held to its sub-cell position: re-quantising to a cell centre every evaluation is the wobble
+    // Held to its sub-cell position: re-quantizing to a cell center every evaluation is the wobble
     // this is meant to remove.
     let mut p = flat(40, 25);
     knot(&mut p, 20, 12, 3);
@@ -127,8 +127,8 @@ fn a_goal_that_drifted_off_the_boundary_snaps_back_nearby_not_across_the_screen(
 
 #[test]
 fn a_somewhat_better_region_elsewhere_does_not_steal_the_goal() {
-    // The goal sits on a short bare segment (neighbourhood richness 3/49 ≈ 0.061); a small knot off
-    // to the side scores ≈ 0.107 after centring — better, but short of RETARGET_GAIN (2×).
+    // The goal sits on a short bare segment (neighborhood richness 3/49 ≈ 0.061); a small knot off
+    // to the side scores ≈ 0.107 after centering — better, but short of RETARGET_GAIN (2×).
     let mut p = flat(40, 25);
     for i in 19..=21 {
         edge(&mut p, i, 12);
@@ -141,7 +141,7 @@ fn a_somewhat_better_region_elsewhere_does_not_steal_the_goal() {
 
 #[test]
 fn a_goal_on_the_boundary_is_not_pulled_toward_richer_cells_beside_it() {
-    // The neighbouring knot cell is 1.4× richer: the old refinement hill-climbed to it every look,
+    // The neighboring knot cell is 1.4× richer: the old refinement hill-climbed to it every look,
     // which at 4× zoom speed re-aimed the camera almost every evaluation.
     let mut p = flat(40, 25);
     for i in 0..40 {
@@ -171,7 +171,7 @@ fn a_goal_off_the_edge_moves_back_across_it_and_not_along_it() {
 #[test]
 fn repeated_looks_keep_the_goal_on_its_piece_of_edge() {
     // What a fast zoom does between looks: the goal's sub-cell error grows and pushes it off the
-    // edge, alternately to either side. Snapping to cell centres turned that into a walk; the
+    // edge, alternately to either side. Snapping to cell centers turned that into a walk; the
     // projection must bring it back to the same point every time.
     let p = straight_edge(40, 25, 20.3, true);
     let mut g = (20.3 / 40.0, 12.37 / 25.0);
@@ -195,7 +195,7 @@ fn at_depth(p: &mut Probe, i: usize, j: usize, de_log2: f32) {
     p.de_log2[j * p.w + i] = de_log2;
 }
 
-/// Boundary density over the neighbourhood of a cell — the quantity the FIRST rewrite maximised.
+/// Boundary density over the neighborhood of a cell — the quantity the FIRST rewrite maximized.
 fn density_at(p: &Probe, i: usize, j: usize) -> f64 {
     box_mean(&p.boundary_weights(), p.w, p.h, DENSITY_R)[j * p.w + i]
 }
@@ -204,9 +204,9 @@ fn density_at(p: &Probe, i: usize, j: usize) -> f64 {
 fn the_goal_takes_the_deep_edge_over_the_denser_eye_of_the_spiral() {
     // ⭐The reported failure, as a fixture. A ring of deep edge around a smooth middle. The middle
     // saturates the boundary WEIGHT at 1.0 — its estimate is half a cell, which on a deep view is
-    // about eleven screen pixels — so it is a perfectly legal goal, it is dead centre, and it has
-    // the higher boundary density, because the density of a ring peaks at the ring's centre.
-    // Maximising density therefore aims at the eye, which is the flat part. But the eye is only two
+    // about eleven screen pixels — so it is a perfectly legal goal, it is dead center, and it has
+    // the higher boundary density, because the density of a ring peaks at the ring's center.
+    // Maximizing density therefore aims at the eye, which is the flat part. But the eye is only two
     // octaves deep and the ring is nine: the dive must take the ring, where the octaves are.
     let mut p = flat(40, 25);
     for j in 0..25 {
@@ -233,13 +233,13 @@ fn the_goal_takes_the_deep_edge_over_the_denser_eye_of_the_spiral() {
 
 #[test]
 fn an_incredible_distance_estimate_cannot_outbid_a_credible_one() {
-    // Both cells are single specks with identical surroundings, so only depth and centring decide.
+    // Both cells are single specks with identical surroundings, so only depth and centering decide.
     // The near one reports the deepest estimate the shader is trusted for; the far one reports a
     // depth no estimate is trusted at (`DE_TRUST_LOG2`), of the kind a pixel that lost its
-    // derivative produces. Floored, they tie on depth and the near one wins on centring; taken at
+    // derivative produces. Floored, they tie on depth and the near one wins on centering; taken at
     // face value the far one would win by 3:1 and the dive would be steered by a broken pixel.
     let mut p = flat(40, 25);
-    at_depth(&mut p, 21, 12, DE_TRUST_LOG2); // credible, near the centre
+    at_depth(&mut p, 21, 12, DE_TRUST_LOG2); // credible, near the center
     at_depth(&mut p, 26, 12, -40.0); // 28 octaves past anything the shader can resolve
     assert!(off_centre(((26.5) / 40.0, 12.5 / 25.0), 1.6) <= TARGET_MAX_OFF, "fixture: both in bound");
     let s = choose_goal(&p, 1.6, None, true).unwrap();
@@ -315,7 +315,7 @@ fn a_goal_with_no_runway_left_is_abandoned_even_if_nothing_is_more_appealing() {
     assert!((25..=27).contains(&i) && (8..=10).contains(&j), "went to ({i},{j}), not the deep knot");
 }
 
-/// Distance from the screen centre in short-side units — the measure the target bound uses.
+/// Distance from the screen center in short-side units — the measure the target bound uses.
 fn off_centre(g: (f64, f64), aspect: f64) -> f64 {
     ((g.0 - 0.5) * aspect).hypot(g.1 - 0.5) / aspect.min(1.0)
 }
@@ -339,7 +339,7 @@ fn with_detail_only_outside_the_bound_the_closest_of_it_is_taken() {
     // structure (the shortest journey), not the richest corner.
     let mut p = flat(40, 25);
     knot(&mut p, 34, 4, 2); // far corner, richer
-    knot(&mut p, 30, 12, 1); // still outside the bound, but closer to the centre
+    knot(&mut p, 30, 12, 1); // still outside the bound, but closer to the center
     let s = choose_goal(&p, 1.6, None, true).unwrap();
     let (i, j) = cell(&p, s.goal);
     assert!((29..=31).contains(&i) && (11..=13).contains(&j), "picked cell ({i},{j})");
@@ -449,7 +449,7 @@ fn dist(a: (f64, f64), b: (f64, f64)) -> f64 {
 #[test]
 fn the_camera_closes_on_the_goal_and_brings_it_in_from_the_edge() {
     // The old pivot held its screen position forever: detail picked near the edge stayed there.
-    // It is brought in to the dead zone, not to the exact centre — see `glide_step`.
+    // It is brought in to the dead zone, not to the exact center — see `glide_step`.
     let mut c = Cam::new((0.8, 0.3));
     for _ in 0..600 {
         c.frame(crate::ZOOM_RATE);
@@ -462,9 +462,9 @@ fn the_camera_closes_on_the_goal_and_brings_it_in_from_the_edge() {
 #[test]
 fn a_target_near_the_middle_is_left_where_it_is() {
     // Inside the dead zone the dive is a pure zoom: no pan, so nothing slides sideways. This is
-    // the "it started sliding down and to the right" report — centring faster made it worse.
+    // the "it started sliding down and to the right" report — centering faster made it worse.
     let g = glide_step((0.54, 0.47), (0.54, 0.47), (0.54, 0.47), crate::ZOOM_RATE, crate::ZOOM_RATE, f64::INFINITY, 1.354, DT);
-    assert_eq!(g.pan, (0.0, 0.0), "a target 4% off centre must not be panned");
+    assert_eq!(g.pan, (0.0, 0.0), "a target 4% off center must not be panned");
     // Far out, the excess is eased away.
     let g = glide_step((0.85, 0.5), (0.85, 0.5), (0.85, 0.5), crate::ZOOM_RATE, crate::ZOOM_RATE, f64::INFINITY, 1.354, DT);
     assert!(g.pan.0 < 0.0, "a target near the edge must be brought in, got {:?}", g.pan);
@@ -474,14 +474,14 @@ fn a_target_near_the_middle_is_left_where_it_is() {
 fn the_picture_does_not_slide_before_the_zoom_has_started() {
     // ⭐The reported "it starts to pan quickly on zoom". The zoom speed ramps in over `SPEED_TAU`,
     // so on the first frames of a dive there is barely any zoom — and a pan with no zoom under it
-    // is a pure sideways slide, which is the most visible thing a camera can do. Centring is
+    // is a pure sideways slide, which is the most visible thing a camera can do. Centering is
     // scaled by the speed that is actually happening, so it arrives WITH the zoom.
     let rate = 4.0 * crate::ZOOM_RATE;
-    let far = (0.85, 0.5); // well outside the dead zone, so centring is active
+    let far = (0.85, 0.5); // well outside the dead zone, so centering is active
     let start = glide_step(far, far, far, 0.0, rate, f64::INFINITY, 1.6, DT); // frame one of the dive
     let running = glide_step(far, far, far, rate, rate, f64::INFINITY, 1.6, DT); // the same camera, up to speed
     let pan = |g: &GlideStep| g.pan.0.hypot(g.pan.1);
-    assert!(pan(&running) > 0.0, "test premise: a target this far out is centred once running");
+    assert!(pan(&running) > 0.0, "test premise: a target this far out is centered once running");
     assert!(
         pan(&start) < 0.1 * pan(&running),
         "the dive slides before it zooms: {:.5} of the screen on frame one against {:.5} running",
@@ -503,8 +503,8 @@ fn the_approach_holds_at_the_fastest_zoom_setting() {
 
 #[test]
 fn the_centring_keeps_up_with_the_zoom_speed() {
-    // Centring is measured in zoom, not in seconds, so a 4× dive brings a far target in about four
-    // times as fast: three seconds of 4× zoom is six centring constants and lands in the dead zone.
+    // Centering is measured in zoom, not in seconds, so a 4× dive brings a far target in about four
+    // times as fast: three seconds of 4× zoom is six centering constants and lands in the dead zone.
     let mut fast = Cam::new((0.8, 0.3));
     for _ in 0..180 {
         fast.frame(4.0 * crate::ZOOM_RATE);
@@ -561,10 +561,10 @@ fn the_zoom_speed_ramps_in_rather_than_starting_at_full_rate() {
 fn the_first_half_second_of_a_dive_barely_slides() {
     // The user-visible quantity behind "it starts to pan quickly on zoom": how far the picture
     // travels SIDEWAYS while the zoom speed is still ramping in. The frame-one check above is the
-    // mechanism; this is the amount a person actually sees. Scaling centring by the commanded rate
+    // mechanism; this is the amount a person actually sees. Scaling centering by the commanded rate
     // instead of the real speed put 2.84% of the screen of pure slide into that window.
     let rate = 4.0 * crate::ZOOM_RATE;
-    let mut c = Cam::new((0.80, 0.30)); // a target well outside the dead zone, so centring is on
+    let mut c = Cam::new((0.80, 0.30)); // a target well outside the dead zone, so centering is on
     let mut slide = 0.0f64;
     for _ in 0..30 {
         // 0.5 s at 60 fps

@@ -57,7 +57,7 @@ fn zero_segments_behaves_as_one_whole_render() {
 fn more_shards_than_frames_still_tiles_without_panicking() {
     // The degenerate shape a distributed run hits at the end of a short tour: some shards are
     // necessarily EMPTY (start == end). That is fine and must stay fine — the renderer skips
-    // them — but they must not overlap their neighbours or drop a frame.
+    // them — but they must not overlap their neighbors or drop a frame.
     for frames in 0..40u64 {
         for n in 1..64u64 {
             let mut prev_end = 0u64;

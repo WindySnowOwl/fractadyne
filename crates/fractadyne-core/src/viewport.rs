@@ -90,17 +90,17 @@ impl Viewport {
         self.units_per_pixel = FloatExp::from_f64(Self::REFERENCE_HEIGHT / self.height_px);
     }
 
-    /// Restore the default framing about an explicit centre — "reset to THIS fractal's home",
-    /// where each formula has its own default centre. Every caller of [`reset`](Self::reset)
-    /// that then overwrites the centre is really doing this; keeping it in one place means the
-    /// depth, the precision and the centre can never be reset by halves.
+    /// Restore the default framing about an explicit center — "reset to THIS fractal's home",
+    /// where each formula has its own default center. Every caller of [`reset`](Self::reset)
+    /// that then overwrites the center is really doing this; keeping it in one place means the
+    /// depth, the precision and the center can never be reset by halves.
     pub fn reset_to(&mut self, cx: f64, cy: f64) {
         self.reset();
         self.center_x = bf(cx, self.precision);
         self.center_y = bf(cy, self.precision);
     }
 
-    /// Recentre on a pixel, then zoom about the new centre — the click-to-zoom gesture's
+    /// Recenter on a pixel, then zoom about the new center — the click-to-zoom gesture's
     /// geometry. Separated from the app's bookkeeping (history, glide cancel, settle timing)
     /// so the part that must be numerically exact can be tested without a GPU.
     pub fn recenter_and_zoom(&mut self, px: f64, py: f64, factor: f64) {
@@ -127,7 +127,7 @@ impl Viewport {
     }
 
     /// Screen pixel a complex coordinate maps to (inverse of `pixel_to_complex`; origin top-left,
-    /// +y down). Stays exact at any depth: the offset from centre is formed as a mantissa scaled by
+    /// +y down). Stays exact at any depth: the offset from center is formed as a mantissa scaled by
     /// the `units_per_pixel` exponent (so tiny deep-zoom deltas don't underflow f64). Used to anchor
     /// tour callouts to a fractal coordinate so they track the point as the view pans/zooms.
     pub fn complex_to_pixel(&self, cx: &BigFloat, cy: &BigFloat) -> (f64, f64) {
@@ -152,8 +152,8 @@ impl Viewport {
     /// [`pan_pixels`](Self::pan_pixels) cannot serve that: converting an overview step
     /// into view pixels divides by `units_per_pixel`, which is astronomically small at
     /// depth, so the pixel count overflows `f64` long before the complex delta does.
-    /// Adding the delta to the existing centre also PRESERVES its precision - assigning
-    /// a centre built from `f64` would silently truncate a deep view's coordinate to 53
+    /// Adding the delta to the existing center also PRESERVES its precision - assigning
+    /// a center built from `f64` would silently truncate a deep view's coordinate to 53
     /// bits while `refresh_precision` still claimed hundreds.
     pub fn pan_complex(&mut self, dx: f64, dy: f64) {
         let p = self.precision;
@@ -163,13 +163,13 @@ impl Viewport {
 
     /// Zoom by `factor` (< 1 zooms in) keeping the complex point under `(px,py)` fixed.
     ///
-    /// ⭐**The centre keeps every bit it already has.** The arithmetic runs at the depth's
-    /// precision or the centre's own, whichever is greater: extending a centre to a deeper view is
+    /// ⭐**The center keeps every bit it already has.** The arithmetic runs at the depth's
+    /// precision or the center's own, whichever is greater: extending a center to a deeper view is
     /// the point of re-precisioning, but rounding one DOWN throws away the location it names. A
     /// glide from 1× toward a 1,600-digit point (the (49,3) hero `.fdn`) rounded it to 64 bits on
     /// the first step and zoomed into a point ~1e-20 away: past ~2^75 the view was empty exterior,
-    /// every pixel escaping within 2 iterations of the next — the solid colour at the end of every
-    /// 1× zoomtest on it (2026-10-15). Zooming out from a deep view and back in about the centre
+    /// every pixel escaping within 2 iterations of the next — the solid color at the end of every
+    /// 1× zoomtest on it (2026-10-15). Zooming out from a deep view and back in about the center
     /// lost the view the same way.
     pub fn zoom_at(&mut self, px: f64, py: f64, factor: f64) {
         let keep = self.center_x.precision().unwrap_or(0).max(self.center_y.precision().unwrap_or(0));
@@ -188,10 +188,10 @@ impl Viewport {
         self.center_y = cy.add(&oy, p, RM);
     }
 
-    /// Zoom about the view CENTRE, which stays put. Delegates to [`zoom_at`](Self::zoom_at)
+    /// Zoom about the view CENTER, which stays put. Delegates to [`zoom_at`](Self::zoom_at)
     /// at the middle pixel rather than just scaling `units_per_pixel`: the offsets it adds
-    /// there are zero, so the result is identical, but it also re-precisions the centre to
-    /// the new depth. A centre left at its old width would stop being able to address the
+    /// there are zero, so the result is identical, but it also re-precisions the center to
+    /// the new depth. A center left at its old width would stop being able to address the
     /// pixels of the view it sits in.
     pub fn zoom_by(&mut self, factor: f64) {
         self.zoom_at(self.width_px * 0.5, self.height_px * 0.5, factor);
@@ -298,7 +298,7 @@ impl Viewport {
         .to_f64()
     }
 
-    /// Whether this view can be rendered at all: a finite, positive scale and a finite centre.
+    /// Whether this view can be rendered at all: a finite, positive scale and a finite center.
     /// `FloatExp::norm` passes a non-finite mantissa straight through, so a NaN or infinite factor
     /// handed to [`zoom_at`](Self::zoom_at) poisons every later step without a word; the app holds
     /// each frame's view to this and puts back the last view that passed.

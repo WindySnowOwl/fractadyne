@@ -8,9 +8,9 @@
 // PLUTO's cards, 2026-10-27, against an A/A control of 24/43 and 16/43).
 //
 // Texel (gx, gy) of a W-wide strip — gx, gy the texel's position in the full grid, integer + 0.5 at
-// its centre plus any jitter — is sampled at u = gx + o, v = gy + o (o = map_pad's bits as an f32:
-// 0, the centre, or −½, the corner, as Kalles Fraktaler samples), at angle 2π·u/W anticlockwise
-// from the positive real axis and radius map_r·exp(−map_s·v) from the centre, map_s the row's step
+// its center plus any jitter — is sampled at u = gx + o, v = gy + o (o = map_pad's bits as an f32:
+// 0, the center, or −½, the corner, as Kalles Fraktaler samples), at angle 2π·u/W anticlockwise
+// from the positive real axis and radius map_r·exp(−map_s·v) from the center, map_s the row's step
 // in ln r (2π/W conformal, ln2/rows an octave strip), row 0 outermost, in units of 2^delta_exp.
 // Formed in f32: a strip texel is ~1e-3 of its radius, so f32 places a sample to ~1e-4 of a texel
 // — it moves the sample, never the arithmetic that follows from it.
@@ -34,7 +34,7 @@ fn strip_set_steplog(gy: f32) {
     strip_steplog = log2(iu.map_r * iu.map_s) - iu.map_s * v * 1.4426950 + f32(iu.delta_exp);
 }
 
-// The texel's offset from the centre, as df32 mantissas (×2^delta_exp), and its size.
+// The texel's offset from the center, as df32 mantissas (×2^delta_exp), and its size.
 fn strip_offset(gx: f32, gy: f32) -> StripOff {
     let o = strip_sample_offset();
     let r = iu.map_r * exp(-iu.map_s * (gy + o));
@@ -64,7 +64,7 @@ fn cos_sin_turns(t: f32) -> vec2<f32> {
     }
 }
 
-// A strip's aux target, replacing the colouring statistics: the EXACT iteration count as two small
+// A strip's aux target, replacing the coloring statistics: the EXACT iteration count as two small
 // integers (as the chunk state keeps it, `info_pack`: a u32 bitcast could be flushed as a denormal),
 // the smooth count's fraction `1 − nu`, and the final z's angle in turns — zoomasm's N, NF and T
 // (`design/zoom-video.md` §5.1). The main target keeps the smooth count as one f32 as everywhere,

@@ -41,7 +41,7 @@ struct WalkKey {
     system: u64,
     tables: u64,
     order: u32,
-    /// The view's centre, exact.
+    /// The view's center, exact.
     centre: [BigFloat; 2],
     /// `log₂` of world units a pixel.
     upp_log2: f64,
@@ -99,7 +99,7 @@ pub(crate) struct LSystemState {
     pub(crate) angle: Option<f64>,
     /// The line width, pixels.
     pub(crate) width: f32,
-    /// The colouring (`None`: the system's default).
+    /// The coloring (`None`: the system's default).
     pub(crate) colour: Option<Colouring>,
     /// The editor window, its text, and why the last Apply was refused.
     pub(crate) editor_open: bool,
@@ -330,7 +330,7 @@ impl LSystemState {
         order > t.max_depth || picture_px > t.f64_reach_log2()
     }
 
-    /// The bracket depth that colours as the palette's end at `order`: the most a branch can nest.
+    /// The bracket depth that colors as the palette's end at `order`: the most a branch can nest.
     fn depth_scale(&self, order: u32) -> f64 {
         let deepest = self.system.rules.iter().flatten().map(|p| nesting(&p.word)).max().unwrap_or(0);
         f64::from(nesting(&self.system.axiom) + order * deepest).max(1.0)
@@ -421,7 +421,7 @@ impl LSystemState {
 }
 
 /// Walks `key`'s view — in `f64`, or deep through `BigTables` (reusing `big` when it is precise
-/// and deep enough) — and colours each segment. Returns the deep tables it used.
+/// and deep enough) — and colors each segment. Returns the deep tables it used.
 /// What a walk hands the GPU.
 struct WalkOut {
     segments: Vec<SegmentInstance>,
@@ -445,7 +445,7 @@ fn walk_segments(
     let size = [f64::from(key.size[0]), f64::from(key.size[1])];
     let margin = f64::from(key.margin);
     // A parametric or context-sensitive system: its word at this order (the last one, if it was
-    // built for this order), its brackets the depth colouring's scale.
+    // built for this order), its brackets the depth coloring's scale.
     let ex = sys.expanded.as_ref().map(|e| ex.unwrap_or_else(|| Arc::new(lsystem::expand::expand(sys, e, key.order, lsystem::EXPAND_BUDGET))));
     let depth_scale = ex.as_ref().map_or(depth_scale, |x| f64::from(x.max_brackets).max(1.0));
     let opts = WalkOptions { order: key.order, lod_px: LOD_PX, budget: BUDGET };
@@ -522,7 +522,7 @@ fn walk_segments(
     WalkOut { segments, triangles, outlines, stats, big: None, ex: None }
 }
 
-/// `d / 2^log2_den` as an `f64`, for any magnitudes (a centre difference at 1e400×).
+/// `d / 2^log2_den` as an `f64`, for any magnitudes (a center difference at 1e400×).
 fn ratio_f64(d: &BigFloat, log2_den: f64) -> f64 {
     if d.is_zero() {
         return 0.0;
@@ -634,7 +634,7 @@ impl FractadyneApp {
         self.lsystem_frame(lsystem::bounds(&t, order, 1 << 21));
     }
 
-    /// The home view's centre and `log₁₀` magnification, without moving to it — what a tour that
+    /// The home view's center and `log₁₀` magnification, without moving to it — what a tour that
     /// starts framed starts from (Tools ▸ Tour from current view).
     pub(crate) fn lsystem_home_view(&self) -> ([f64; 2], f64) {
         let order = self.lsystem.order_for(0.0);
@@ -793,7 +793,7 @@ impl FractadyneApp {
     }
 
     /// File > Export SVG…: the view as vectors (design/lsystems.md §7) — what it shows, in its
-    /// colours, at the canvas's size.
+    /// colors, at the canvas's size.
     pub(crate) fn lsystem_export_svg(&mut self) {
         let svg = self.lsystem_svg_of_view();
         let name = self.lsystem.system.name.clone();
@@ -819,7 +819,7 @@ impl FractadyneApp {
         self.lsystem_svg(&self.lsystem_walk_key(size))
     }
 
-    /// The view walked at `key` as an SVG document, coloured as the screen colours it.
+    /// The view walked at `key` as an SVG document, colored as the screen colors it.
     fn lsystem_svg(&self, key: &WalkKey) -> String {
         let st = &self.lsystem;
         let big = st.big.as_ref().filter(|(id, _)| *id == key.tables).map(|(_, b)| b.clone());
@@ -1111,7 +1111,7 @@ impl FractadyneApp {
     }
 
     /// The lines an L-system view carries: the system's text (one escaped line), the order, the
-    /// angle override, the line width, the colouring. Also the session's `lsystem`.
+    /// angle override, the line width, the coloring. Also the session's `lsystem`.
     pub(crate) fn lsystem_lines(&self) -> String {
         let l = &self.lsystem;
         let mut s = format!("lsystem={}\n", crate::custom_formula::escape_line(&l.system.to_text()));
@@ -1126,8 +1126,8 @@ impl FractadyneApp {
         s
     }
 
-    /// An L-system view's fields: the system, then the order, angle, width and colouring. With
-    /// `show`, switched to (the view's own centre and zoom are applied by the caller afterwards).
+    /// An L-system view's fields: the system, then the order, angle, width and coloring. With
+    /// `show`, switched to (the view's own center and zoom are applied by the caller afterwards).
     pub(crate) fn apply_lsystem_fields(&mut self, get: impl Fn(&str) -> Option<String>, show: bool) -> Result<(), String> {
         let text = get("lsystem").ok_or("the L-system view carries no system")?;
         if text.len() > MAX_VIEW_SYSTEM {
@@ -1147,7 +1147,7 @@ impl FractadyneApp {
                 self.set_fractal(FractalKind::LSystem);
             }
             // Framed, whatever was on screen (an L-system already showing included): a view with
-            // its own centre and zoom has them applied after this.
+            // its own center and zoom has them applied after this.
             self.lsystem_home();
         }
         Ok(())

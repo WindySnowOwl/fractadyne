@@ -66,7 +66,7 @@ fn the_fast_normalization_matches_the_old_one_bit_for_bit() {
             subnormal += 1;
         }
     }
-    // The edges: powers of two and their neighbours across the whole range, both signs.
+    // The edges: powers of two and their neighbors across the whole range, both signs.
     for k in -1074..=1023 {
         let p = if k >= -1022 { pow2_normal(k) } else { f64::from_bits(1u64 << (k + 1074)) };
         for v in [p, f64::from_bits(p.to_bits() + 1), f64::from_bits(p.to_bits().saturating_sub(1))] {

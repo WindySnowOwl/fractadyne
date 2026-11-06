@@ -11,10 +11,10 @@
 #   Exercise:  fractadyne --livetest tours/ultra-dive-e200.toml --size 480x270
 #   Live:      fractadyne --play tours/ultra-dive-e200.toml
 #
-# LOCATION. The F3 corpus point `16-deep-2.1e250` (262-digit centre, matched against
+# LOCATION. The F3 corpus point `16-deep-2.1e250` (262-digit center, matched against
 # Fraktaler-3's me250.exr arm-for-arm at 2.86e250×), so every depth this dive visits
 # is on the approach to a verified feature and the coordinate stays pinned ~50 decades
-# past the deepest keyframe. The grand tour's three-spar centre would NOT work here —
+# past the deepest keyframe. The grand tour's three-spar center would NOT work here —
 # its 116-digit string unpins past ~e116, and e95 is its known depth wall.
 #
 # ITERATIONS. The location resolves at ~600k at e250; per-keyframe budgets below scale

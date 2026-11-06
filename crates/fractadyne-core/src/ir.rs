@@ -1,7 +1,7 @@
 //! The formula **intermediate representation** (design/custom-formulas.md §4.1).
 //!
 //! A formula's step is a [`Program`]: instructions in SSA form, each computing one complex value
-//! from earlier ones — a linearised expression DAG, so a shared subexpression (the `store` of the
+//! from earlier ones — a linearized expression DAG, so a shared subexpression (the `store` of the
 //! hybrid opcode model, a Fractint temporary) is computed once. Every front end lowers to it (the
 //! hybrid opcode model via [`lower_opcodes`] today; a Fractint `.frm` subset and an author-supplied
 //! perturbed step later), and every numeric form is generated from it instead of being written by
@@ -523,7 +523,7 @@ impl Program {
             .unwrap_or(0)
     }
 
-    /// The step's degree in `z` as `|z| → ∞` — the `d` in `|z'| ≈ |z|^d` that smooth colouring
+    /// The step's degree in `z` as `|z| → ∞` — the `d` in `|z'| ≈ |z|^d` that smooth coloring
     /// divides by (`z^5 + c` → 5, `|x| + i|y|` squared → 2, Phoenix → 2). `None` where no power law
     /// holds: exponentials, trigonometry, logarithms, a non-constant exponent.
     pub fn escape_degree(&self) -> Option<f64> {
@@ -862,7 +862,7 @@ pub(crate) trait IrField: Field {
     fn konst(v: f64, ctx: Self::Ctx) -> Self;
     /// Exact negation (a sign flip).
     fn fneg(self) -> Self;
-    /// A non-ring operation on materialised operands (up to three: [`Op::DiffPow`]), or `None`
+    /// A non-ring operation on materialized operands (up to three: [`Op::DiffPow`]), or `None`
     /// where this field has none.
     fn elementary(
         _op: &Op,

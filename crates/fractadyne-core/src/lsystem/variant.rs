@@ -17,7 +17,7 @@ use super::system::LSystem;
 /// How many variants a stochastic system's nodes take.
 pub const VARIANTS: u32 = 64;
 
-/// SplitMix64's finaliser: a well-mixed 64-bit hash of `x`.
+/// SplitMix64's finalizer: a well-mixed 64-bit hash of `x`.
 fn mix64(mut x: u64) -> u64 {
     x = x.wrapping_add(0x9e37_79b9_7f4a_7c15);
     x = (x ^ (x >> 30)).wrapping_mul(0xbf58_476d_1ce4_e5b9);

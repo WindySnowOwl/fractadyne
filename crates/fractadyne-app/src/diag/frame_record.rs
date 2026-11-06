@@ -1,9 +1,9 @@
 //! The per-frame record: one structured row per frame per view, always on
 //! (design/live-render-robustness.md §6.3–§6.6, workstream W1).
 //!
-//! ⭐⭐**Three jobs, one record.** Diagnose a field failure from the artefacts alone; VALIDATE a
+//! ⭐⭐**Three jobs, one record.** Diagnose a field failure from the artifacts alone; VALIDATE a
 //! fix by comparing records before and after rather than by argument; and be the input a replay
-//! test is built from. Before this, the richest always-on artefact was a 24-entry ring of budget
+//! test is built from. Before this, the richest always-on artifact was a 24-entry ring of budget
 //! decisions — about 1.4 s of a 33 s slow episode, with no frame index to join it to anything —
 //! and everything else useful was behind `FRACTADYNE_TRACE`, which a field session never has on.
 //!
@@ -458,7 +458,7 @@ frame_record! {
     /// A normalization reading arrived from another view and was discarded.
     norm_discard: bool,
 
-    // ---- colour and normalization (absent from every diagnostic artefact before this)
+    // ---- color and normalization (absent from every diagnostic artifact before this)
     norm_set: bool,
     norm_lo: f32,
     norm_hi: f32,
@@ -509,7 +509,7 @@ frame_record! {
     prev_gpu_hold: u8,
     live_pixels_ok: bool,
     reuse_refused: bool,
-    /// Schema 12 (W6, U43): this frame coloured a held snapshot under the map it was taken under,
+    /// Schema 12 (W6, U43): this frame colored a held snapshot under the map it was taken under,
     /// not the live one.
     norm_frozen: bool,
 
@@ -618,7 +618,7 @@ pub(crate) fn session_id() -> u64 {
             .map(|d| d.as_nanos() as u64)
             .unwrap_or(0);
         let x = t ^ ((std::process::id() as u64) << 32) ^ 0x9E37_79B9_7F4A_7C15;
-        // splitmix64 finaliser, so neighbouring launches do not share high bits.
+        // splitmix64 finalizer, so neighboring launches do not share high bits.
         let x = (x ^ (x >> 30)).wrapping_mul(0xBF58_476D_1CE4_E5B9);
         let x = (x ^ (x >> 27)).wrapping_mul(0x94D0_49BB_1331_11EB);
         (x ^ (x >> 31)).max(1)

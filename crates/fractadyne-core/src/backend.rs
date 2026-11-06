@@ -1,6 +1,6 @@
 //! The arbitrary-precision **backend** the reference orbit is iterated in.
 //!
-//! [`crate::BigFloat`] (astro-float) is the crate's **carrier** type: the viewport centre, parsing,
+//! [`crate::BigFloat`] (astro-float) is the crate's **carrier** type: the viewport center, parsing,
 //! decimal serialization and every public signature use it, and that does not change. This trait
 //! exists so the *hot loop* — [`crate::reference::run_orbit`], which is `max_iter × step` in bignum
 //! and dominates a deep frame — can be **monomorphized over a different arithmetic library**
@@ -23,7 +23,7 @@
 //!    documented in its source as "skip rounding operation". MPFR's equivalent is `Round::Zero`;
 //!    its *default* nearest rounding does **not** match.
 //! 2. **Word-granular precision.** astro-float rounds a requested precision up to whole 64-bit
-//!    words (`bit_len_to_word_len(p) = (p + 63) / 64`). A backend honouring `p` exactly does not
+//!    words (`bit_len_to_word_len(p) = (p + 63) / 64`). A backend honoring `p` exactly does not
 //!    match — it must round up to `p.div_ceil(64) * 64`, which
 //!    `word_width_matches_astro_floats_own_allocation` below pins against what astro-float
 //!    actually allocates.

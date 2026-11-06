@@ -3,13 +3,13 @@
 //!
 //! Report, 2026-09-17: "I'm clicking at the center of spiral points and the center shifts screen
 //! location more than I would expect from my imprecision." There WAS a real defect alongside it
-//! (the zoom was applied before the viewport learned its panel size, so it recentred against a
-//! stale width), but with that fixed the remaining effect is not a defect at all: recentring puts
-//! the clicked pixel exactly at the centre, so whatever the user MEANT to hit, if they missed it
-//! by d pixels, that target sits d × factor pixels off centre once the scale shrinks.
+//! (the zoom was applied before the viewport learned its panel size, so it recentered against a
+//! stale width), but with that fixed the remaining effect is not a defect at all: recentering puts
+//! the clicked pixel exactly at the center, so whatever the user MEANT to hit, if they missed it
+//! by d pixels, that target sits d × factor pixels off center once the scale shrinks.
 //!
 //! At the 50× the report was taken at, a miss the eye cannot see beforehand — eight pixels — puts
-//! the intended feature four hundred pixels off centre, which is a third of a panel. Anyone would
+//! the intended feature four hundred pixels off center, which is a third of a panel. Anyone would
 //! read that as the program moving rather than as their own aim, which is exactly what happened.
 
 use super::*;
@@ -18,7 +18,7 @@ use crate::reference::sub_f64;
 const W: f64 = 1600.0;
 const H: f64 = 1000.0;
 
-/// The whole contract: the pixel you clicked becomes the centre, whatever the factor.
+/// The whole contract: the pixel you clicked becomes the center, whatever the factor.
 #[test]
 fn the_clicked_pixel_becomes_the_centre() {
     for factor in [1.0 / 2.0, 1.0 / 50.0, 1.0 / 100.0, 2.0, 50.0] {
@@ -32,13 +32,13 @@ fn the_clicked_pixel_becomes_the_centre() {
         let off_px = (dx * dx + dy * dy).sqrt() / vp.units_per_pixel.to_f64();
         assert!(
             off_px < 1.0e-6,
-            "factor {factor}: the clicked point landed {off_px:.3e} px from the centre"
+            "factor {factor}: the clicked point landed {off_px:.3e} px from the center"
         );
     }
 }
 
 /// ⭐**The report, reproduced as arithmetic.** Miss by `d` pixels and the thing you were aiming at
-/// ends up `d × factor` pixels from the centre. This is why a high factor feels inaccurate: the
+/// ends up `d × factor` pixels from the center. This is why a high factor feels inaccurate: the
 /// tool is exact, and it magnifies the aim error along with everything else in the frame.
 #[test]
 fn an_aim_error_is_magnified_by_exactly_the_zoom_factor() {
@@ -49,7 +49,7 @@ fn an_aim_error_is_magnified_by_exactly_the_zoom_factor() {
         // What the user MEANT to click, `miss` pixels from where they actually clicked.
         let intended = vp.pixel_to_complex(cx + miss, cy);
         vp.recenter_and_zoom(cx, cy, 1.0 / factor);
-        // Where that intended point sits now, in pixels from the centre.
+        // Where that intended point sits now, in pixels from the center.
         let p = vp.precision;
         let dx = sub_f64(&intended.0, &vp.center_x, p);
         let dy = sub_f64(&intended.1, &vp.center_y, p);
@@ -57,13 +57,13 @@ fn an_aim_error_is_magnified_by_exactly_the_zoom_factor() {
         let expected = miss * factor;
         assert!(
             (off_px - expected).abs() < expected * 1.0e-6,
-            "factor {factor}: an {miss} px miss should land {expected} px off centre, got {off_px}"
+            "factor {factor}: an {miss} px miss should land {expected} px off center, got {off_px}"
         );
     }
 }
 
 /// ⛔The defect that WAS real, pinned so it cannot come back: `recenter_and_zoom` reads the
-/// viewport's own width and height to find the centre, so calling it while the viewport still
+/// viewport's own width and height to find the center, so calling it while the viewport still
 /// holds a stale size lands the click off by half the difference. In the field that was a click
 /// handler running before `set_size`, and the miss was most of a panel.
 #[test]

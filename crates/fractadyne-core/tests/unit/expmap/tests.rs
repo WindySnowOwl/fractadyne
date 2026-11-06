@@ -144,11 +144,11 @@ fn an_octave_strip_samples_where_kalles_fraktaler_does_and_tiles_without_overlap
 fn a_dive_has_strips_down_to_half_a_pixel_of_its_last_frame() {
     let (w, h) = (1920.0, 1080.0);
     let m = ExpMap::for_frames(w, h, 1.0, 0.0);
-    // 100 octaves of dive, then log2(2202.9) = 11.1 more for the last frame's centre.
+    // 100 octaves of dive, then log2(2202.9) = 11.1 more for the last frame's center.
     let n = m.strips_to(100.0, h);
     assert_eq!(n, 112);
     let half_pixel_log2 = (Viewport::REFERENCE_HEIGHT / h).log2() - 100.0 - 1.0;
-    assert!(m.outer_log2(n) <= half_pixel_log2, "the last strip stops short of the centre");
+    assert!(m.outer_log2(n) <= half_pixel_log2, "the last strip stops short of the center");
     assert!(m.outer_log2(n - 1) > half_pixel_log2, "a strip more than needed");
 }
 

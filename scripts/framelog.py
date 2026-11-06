@@ -258,7 +258,7 @@ def classify(ep, recs_by_frame, target_ms):
         if steps and r["read_steps"] not in steps:
             mismatched += 1
     # (d): a slow frame that submitted NO iterate spent its time somewhere no iterate timestamp
-    # can see (resolve, colour, hold copy, accumulation, present). The beta.112 field log read
+    # can see (resolve, color, hold copy, accumulation, present). The beta.112 field log read
     # exactly this way: "body 0-4 ms + outside(acquire/present/idle) 208-1025 ms".
     undispatched = sum(1 for r in ep if not r["dispatched"])
     ind = {
@@ -609,7 +609,7 @@ def calibrate(paths, min_steps=5e9, knee=CAL_KNEE_PX, target_ms=400.0, out=sys.s
 
 def selftest():
     target = 400.0
-    # Each synthetic episode must be labelled with its own mechanism AND must not be labelled
+    # Each synthetic episode must be labeled with its own mechanism AND must not be labeled
     # with the ones it is not - a classifier that says "all five" every time is never wrong and
     # never useful.
     want = {

@@ -1,7 +1,7 @@
 use super::*;
 
 /// Held for the WHOLE of each test that touches the global ring. ⚠The ring's own mutex does
-/// not serialise them — it is released between calls — and two of these tests raced: one
+/// not serialize them — it is released between calls — and two of these tests raced: one
 /// clearing the ring and asserting it empty while the other filled it (seen as "decision 10…25"
 /// inside an "empty" report once the test mix changed the scheduling).
 static SERIAL: Mutex<()> = Mutex::new(());

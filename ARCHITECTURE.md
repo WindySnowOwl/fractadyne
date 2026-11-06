@@ -223,7 +223,7 @@ Kalles Fraktaler `.map` file (`--palette-map`); cyclic with cycle/offset, plus p
 (Off / Forward / Reverse / Ping-pong / **Random gradients**).
 
 ⭐**Every palette goes through one representation.** `fractadyne-color::segment` holds GIMP's
-segment model — per-segment colours, midpoint, blend function and colour space — and bakes it into
+segment model — per-segment colors, midpoint, blend function and color space — and bakes it into
 a **1024-entry LUT** that the color pass reads with a single indexed fetch (storage buffer, color
 binding 3). Presets, the editor, duotone/binary, the random animator and every importer converge
 there, so a 256-band `.map`, a curved blend and an eight-stop preset all cost the same to render.

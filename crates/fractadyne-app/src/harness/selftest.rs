@@ -191,7 +191,7 @@ fn img_diff(a: &[u8], b: &[u8]) -> (u32, f64) {
 
 /// Frame predicates for the appearance checks (design/checklist-automation.md).
 ///
-/// The manual checklist says things like "colouring visibly changes and produces a coherent image
+/// The manual checklist says things like "coloring visibly changes and produces a coherent image
 /// (no all-black, all-white, or uniform flat frame)". These turn that into numbers.
 ///
 /// ⚠A differential check ("A and B differ") is worthless on its own: it passes when one of them
@@ -257,7 +257,7 @@ mod frame {
     }
 
     /// Mean absolute luma step between horizontally adjacent pixels — the aliasing measure from
-    /// the live-normalisation work. High means salt-and-pepper speckle; low means smooth bands.
+    /// the live-normalization work. High means salt-and-pepper speckle; low means smooth bands.
     /// Doubles as an edge-energy measure for the anti-aliasing rows.
     pub(super) fn neighbour_step(px: &[u8], w: u32) -> f64 {
         let l = luma(px);
@@ -474,7 +474,7 @@ fn family_boundary(formula: u32, outside: (f64, f64), budget: u32) -> Option<(f6
 /// there — Burning Ship 3's third-quadrant ray lands in a stretch that is noise at 30×, every pixel
 /// "steep" — so the rays are tried in turn, third quadrant first (where the |Im| folds engage), and
 /// the first is taken whose view, sampled 24 × 24 on the CPU, has at least 15% samples that escape
-/// within 2 iterations of their neighbours ONE CHECK PIXEL away (`px` of the view's width), the
+/// within 2 iterations of their neighbors ONE CHECK PIXEL away (`px` of the view's width), the
 /// test the check's own "steep" applies. Where no ray reaches that (a hairy boundary — Multibrot 7,
 /// the Tricorns), the ray with the most such samples, if 2% or more.
 fn family_view(formula: u32, mag: f64, px: u32, budget: u32) -> Option<(f64, f64)> {
@@ -490,7 +490,7 @@ fn family_view(formula: u32, mag: f64, px: u32, budget: u32) -> Option<(f64, f64
     // its fourfold symmetry: interior beside stripes of escape time diverging, every pixel "steep").
     // The families' axes lie at whole multiples of 30°, 36° or 45°; rays at 3.75° past a multiple
     // of 7.5° meet none of them. Forty-eight of them: Tricorn 3's best of 24 was a view of 625
-    // comparable pixels, where the direct path's f32-quantised c (two ulps a pixel at |c| ≈ 1, the
+    // comparable pixels, where the direct path's f32-quantized c (two ulps a pixel at |c| ≈ 1, the
     // shader compiler folds df32 to f32) moved the mean past the bound.
     for t in (0..48).map(|k| (183.75 + 7.5 * k as f64).to_radians()) {
         let Some(at) = family_boundary(formula, (t.cos(), t.sin()), budget) else { continue };
@@ -514,7 +514,7 @@ fn family_view(formula: u32, mag: f64, px: u32, budget: u32) -> Option<(f64, f64
     best.filter(|(n, _)| n * 100 >= G * G * 2).map(|(_, at)| at)
 }
 
-/// Deep points of the fold families, good to ~2^-112, whose 1e-30 neighbourhood is mostly STABLE
+/// Deep points of the fold families, good to ~2^-112, whose 1e-30 neighborhood is mostly STABLE
 /// (a sub-pixel nudge leaves a pixel's count alone) — the core's `FOLD_DEEP_FIXTURES`, which record
 /// how they were found. A fold's chaotic boundary is noise at any depth (bisected points first tried
 /// had no stable pixel at all), and a check there would compare noise with noise.
@@ -542,7 +542,7 @@ const FOLD_DEEP: [(FractalKind, &str, &str); 16] = [
 /// records how they were found). A [`family_boundary`] point is f64, good to ~1e-15 and garbage
 /// past that: at 1e30× its reference escapes early and every pixel with it, so a chunked render
 /// agrees trivially (the corpus-07 note in "iter-chunk"). These keep their digits, and their 1e-30
-/// neighbours escape hundreds to thousands of steps apart.
+/// neighbors escape hundreds to thousands of steps apart.
 const MULTIBROT_DEEP: [(FractalKind, &str, &str); 6] = [
     (
         FractalKind::Multibrot3,
@@ -577,7 +577,7 @@ const MULTIBROT_DEEP: [(FractalKind, &str, &str); 6] = [
 ];
 
 /// A power family's iteration texture at `req`'s view as the CPU computes it — the f64 orbit of
-/// each pixel centre by the built-in's own step and policy (escape at 256, at 128 for Multibrot 8;
+/// each pixel center by the built-in's own step and policy (escape at 256, at 128 for Multibrot 8;
 /// the smooth value unclamped, as the shader's) — in `render_iter`'s layout (the smooth value at
 /// every fourth float, −1 for interior). The truth a deep check judges a perturbation render by
 /// where the direct path's f32 c is too coarse.
@@ -1058,7 +1058,7 @@ impl FractadyneApp {
                 .collect();
             // ⭐Multibrot 3–8 (design/power-families.md, phases 2–3): the chunk passes carry their
             // arms, which must be fs_iterate's to the bit in every mode — direct and df32 at a
-            // `family_view` boundary (an f64 centre is exact enough there), the rebase storm, and
+            // `family_view` boundary (an f64 center is exact enough there), the rebase storm, and
             // floatexp at 1e30× on a `MULTIBROT_DEEP` point, where their mode-2 row must show BLA
             // skips as Mandelbrot's do AND escapes spread over many counts (below).
             for (kind, dx, dy) in MULTIBROT_DEEP {
@@ -1601,7 +1601,7 @@ impl FractadyneApp {
         // - the jitter must change the picture (a twin that ignored it would agree about an
         //   unjittered frame, and every sample of a run would be the same sample);
         // - a whole-pixel jitter must be a whole-pixel SHIFT: the units and sign the live view
-        //   uses (`px_offset = jitter · ss`), through the iterate AND the colour pass.
+        //   uses (`px_offset = jitter · ss`), through the iterate AND the color pass.
         if want("worker") {
             use std::sync::atomic::{AtomicBool, AtomicU32};
             const WW: u32 = 192;
@@ -1643,7 +1643,7 @@ impl FractadyneApp {
                 .map(|rs| rs.adapter.get_info())
                 .ok_or_else(|| "no window adapter".to_string())
                 .and_then(|info| crate::gpu_worker::Worker::spawn("same", &info));
-            // One job of run `run`, waited for: its sample, `None` if it was cancelled, or why not.
+            // One job of run `run`, waited for: its sample, `None` if it was canceled, or why not.
             type Answer = Result<Option<std::sync::Arc<fractadyne_gpu::AccumSample>>, String>;
             let ask = |wk: &crate::gpu_worker::Worker, run: u64| -> Answer {
                 if !wk.submit(crate::gpu_worker::Job { view: 0, run, index: 1, req: req.clone() }) {
@@ -1701,8 +1701,8 @@ impl FractadyneApp {
                 pass,
             });
 
-            // Control 2: jitter (1, 0) at ss 1 samples each pixel's right-hand neighbour. The edge
-            // columns are left out: their colour reads a neighbour one frame has and the other not.
+            // Control 2: jitter (1, 0) at ss 1 samples each pixel's right-hand neighbor. The edge
+            // columns are left out: their color reads a neighbor one frame has and the other not.
             let mut a = req.clone();
             a.ss = 1;
             a.jitter = [0.0, 0.0];
@@ -1738,7 +1738,7 @@ impl FractadyneApp {
                 pass,
             });
 
-            // A cancelled run's job answers without a sample, even when the cancel reaches the
+            // A canceled run's job answers without a sample, even when the cancel reaches the
             // worker before the job does (the app cancels on a run's reset, queued or rendering);
             // and the cancel does not stick: the next run's job renders.
             let say = |a: &Answer| match a {
@@ -1753,7 +1753,7 @@ impl FractadyneApp {
                     let (cancelled, next) = (ask(wk, 2), ask(wk, 3));
                     (
                         matches!((&cancelled, &next), (Ok(None), Ok(Some(_)))),
-                        format!("cancelled run's job: {}; next run's job: {}", say(&cancelled), say(&next)),
+                        format!("canceled run's job: {}; next run's job: {}", say(&cancelled), say(&next)),
                     )
                 }
             };
@@ -2154,8 +2154,8 @@ impl FractadyneApp {
         // and resume it from state. At the ladder's period-15,248 minibrot (2.1e57×) the step is the
         // parent's, 953 iterations, perturbed about a 16-step u-orbit — the case it exists for.
         // Each claim asserts the step ENGAGED first: a view where it does not would pass vacuously.
-        // ⚠The centre is the 2.1e57 scene's own. This case first ran at the PARENT's nucleus (the
-        // 1.3e53 scene's centre) at this zoom: there the reference's c′ is 2^-143, the view is the
+        // ⚠The center is the 2.1e57 scene's own. This case first ran at the PARENT's nucleus (the
+        // 1.3e53 scene's center) at this zoom: there the reference's c′ is 2^-143, the view is the
         // middle of the u-map's main cardioid, and every pixel settled at once — the step engaged,
         // and nothing ever paused inside it.
         if want("renorm") {
@@ -2387,20 +2387,20 @@ impl FractadyneApp {
         }
 
         // ⭐**The overlapped pick + build equals the sequential one** (render.rs `pick_and_build`):
-        // the centre's build and series walk run beside the pick, and the pick's centre rescue
+        // the center's build and series walk run beside the pick, and the pick's center rescue
         // reads its score off that build. Every fresh reference goes through it — export and live
         // cold starts alike — so a mismatch here is a wrong picture everywhere. Each view is built
         // both ways and compared field by field; the overlap must also have ENGAGED somewhere
-        // (centre build used AND the series skip taken from the parallel walk), or the identity
+        // (center build used AND the series skip taken from the parallel walk), or the identity
         // compared the sequential path with itself.
         if want("ref-overlap") {
-            // (label, centre x, centre y, log2 magnification, max_iter)
+            // (label, center x, center y, log2 magnification, max_iter)
             let views: [(&str, &str, &str, f64, u32); 3] = [
                 (
-                    // The bench 4.6e1105 centre, truncated, at 2^150: the pick is the centre and
+                    // The bench 4.6e1105 center, truncated, at 2^150: the pick is the center and
                     // its reference is a short escaper (9,736 of 250k), so SA runs — the view
-                    // that exercises the whole overlap (centre build AND parallel series skip).
-                    "bench-10 centre @2^150 (centre, short escaper)",
+                    // that exercises the whole overlap (center build AND parallel series skip).
+                    "bench-10 center @2^150 (center, short escaper)",
                     "2.88551201093059871274071303800151400053376951368725797081040550949502145160849912266356e-1",
                     "1.22837636274455449095906129335365068997904564092657092682711609329657475248504117230298e-2",
                     150.0,
@@ -2460,7 +2460,7 @@ impl FractadyneApp {
                 name: "the pick took its walk of the centre from the centre build".into(),
                 params: "across the views above".into(),
                 result: format!("taken={centre_taken}"),
-                threshold: "at least one view's phase 2 read the centre (and its samples) off the build",
+                threshold: "at least one view's phase 2 read the center (and its samples) off the build",
                 pass: centre_taken,
             });
         }
@@ -2508,14 +2508,14 @@ impl FractadyneApp {
         // render on a wider canvas at the same height must contain the narrower one pixel for
         // pixel — the extra width shows MORE of the plane on either side and moves nothing. That
         // identity is what an export inherits when its aspect differs from the live canvas, and
-        // it is what a centring, mapping or mirroring defect would break.
+        // it is what a centering, mapping or mirroring defect would break.
         //
         // ⚠⚠**Two depths, two thresholds, and the difference is the point.** The direct (f64)
         // path is EXACTLY width-independent and is gated at zero. The perturbation path is not:
         // measured, a handful of isolated pixels out of ~300k change with canvas width, because
-        // glitch detection is per-pixel and its neighbourhood shifts. Gating that arm at zero
+        // glitch detection is per-pixel and its neighborhood shifts. Gating that arm at zero
         // would be gating a defect we have not fixed; gating it loosely would still catch the
-        // failure this check exists for, which is GROSS — a mis-centred or mirrored frame differs
+        // failure this check exists for, which is GROSS — a mis-centered or mirrored frame differs
         // in tens of thousands of pixels, not tens. ⛔So the loose bound is deliberately far
         // below any real misframing and far above the measured noise.
         // ⭐⭐**The EXPORT dialog's aspect override — a different code path from the one above.**
@@ -2635,7 +2635,7 @@ impl FractadyneApp {
                                 } else if rgba.chunks(4).all(|p| p[..3] == rgba[..3]) {
                                     // ⚠⚠A flat thumbnail is what a broken render looks like, and it
                                     // decodes perfectly. Without this the check passes on a blank.
-                                    why = Some("every pixel is the same colour — a blank render".into());
+                                    why = Some("every pixel is the same color — a blank render".into());
                                 }
                             }
                         }
@@ -2679,7 +2679,7 @@ impl FractadyneApp {
         // ⭐⭐**THE DEEPEST LOCATION WE TRACK — 9.98e60205×, and OPT-IN.**
         //
         // ⛔Not in the default sweep, deliberately. `--selftest` is the gate run constantly;
-        // a 60,231-digit centre needs a ~200,000-bit reference orbit (measured to a 2,000,000 ask:
+        // a 60,231-digit center needs a ~200,000-bit reference orbit (measured to a 2,000,000 ask:
         // 8.8 h on 2026-09-08, 1.9 h on 2026-10-24), and paying for that on every run would make the gate something people
         // skip. Run it with `--selftest-filter deep-location` when the deep pipeline is what
         // changed.
@@ -2793,7 +2793,7 @@ impl FractadyneApp {
                                 if diffs != 0 {
                                     why = Some(format!("{diffs} of {} texels differ between two identical renders", a.len()));
                                 } else if flat {
-                                    why = Some(format!("every texel is the same colour (red {lo:.3}..{hi:.3}) — a blank render"));
+                                    why = Some(format!("every texel is the same color (red {lo:.3}..{hi:.3}) — a blank render"));
                                 } else {
                                     note = format!(
                                         "{n}×{n} twice, bit-identical; red spans {lo:.3}..{hi:.3}; \
@@ -2977,12 +2977,12 @@ impl FractadyneApp {
             self.render_cfg.auto_iter = saved_auto;
         }
 
-        // ⭐THE COLOUR PASS'S WIDENED BOX IS CENTRED ON ITS PIXEL (2026-10-21). A frame drawn below
+        // ⭐THE COLOR PASS'S WIDENED BOX IS CENTERED ON ITS PIXEL (2026-10-21). A frame drawn below
         // display resolution takes a box `aa_filter` texels wide; it started at the pixel's own texel
         // and ran right and down, so it drew the picture (taps - 1)/2 texels off, and the live view's
-        // centre jumped 6 screen px as quarter-resolution frames alternated with held ones. With `ss`
+        // center jumped 6 screen px as quarter-resolution frames alternated with held ones. With `ss`
         // 1 and the palette's own anti-aliasing off, every pixel of the plain render is its texel's
-        // colour, so a widened render must EQUAL the centred box average of the plain one, computed
+        // color, so a widened render must EQUAL the centered box average of the plain one, computed
         // here with the shader's weights (half weight on a half-texel overhang) and clamping.
         if want("colour-box") {
             let colour = |req: &fractadyne_gpu::ExportRequest| -> Option<Vec<f32>> {
@@ -2995,7 +2995,7 @@ impl FractadyneApp {
                     }
                 }
             };
-            // The box over an N x N RGBA image: centred (the shader now), or from the pixel's corner
+            // The box over an N x N RGBA image: centered (the shader now), or from the pixel's corner
             // (the shader before), each tap clamped to the image as the shader clamps it.
             let boxed = |img: &[f32], taps: i32, centred: bool| -> Vec<f32> {
                 let n = N as i32;
@@ -3047,7 +3047,7 @@ impl FractadyneApp {
                     category: "Framing",
                     name: format!("a widened colour box ({taps} texels) is centred on its pixel"),
                     params: format!("seahorse 1e2x, {N}px, ss 1, palette anti-aliasing off"),
-                    result: format!("max |colour - centred box| {centred:.2e} (a box from the pixel's corner: {corner:.2e})"),
+                    result: format!("max |color - centered box| {centred:.2e} (a box from the pixel's corner: {corner:.2e})"),
                     threshold: "< 1e-4",
                     pass: centred < 1.0e-4,
                 });
@@ -3056,8 +3056,8 @@ impl FractadyneApp {
 
         // ⭐THE PALETTE DISSOLVE BLENDS TWO MAPS OF ONE PICTURE (2026-10-21). When the palette map
         // changes kind mid-zoom ("Normalize deep colors" switching on or off, linear to log), the
-        // colour pass draws the frame under its own map and under the one it replaces, and mixes
-        // them by `palette_fade.weight`. One iteration buffer coloured three ways — map A, map B, and
+        // color pass draws the frame under its own map and under the one it replaces, and mixes
+        // them by `palette_fade.weight`. One iteration buffer colored three ways — map A, map B, and
         // A fading from B at a quarter — must give exactly 3/4 A + 1/4 B.
         if want("palette-fade") {
             let mut base = make(self, SX, SY, 1.0e2);
@@ -3102,7 +3102,7 @@ impl FractadyneApp {
                 category: "appearance",
                 name: "a palette dissolve blends the two maps by its weight".to_string(),
                 params: format!("seahorse 1e2x, {N}px, linear map fading from a log map at 0.25"),
-                result: format!("max |colour - (3/4 A + 1/4 B)| {err:.2e} (the two maps differ by up to {apart:.2})"),
+                result: format!("max |color - (3/4 A + 1/4 B)| {err:.2e} (the two maps differ by up to {apart:.2})"),
                 threshold: "< 1e-4, and the maps at least 0.2 apart",
                 pass: err < 1.0e-4 && apart > 0.2,
             });
@@ -3208,7 +3208,7 @@ impl FractadyneApp {
                 };
                 let dw = |px: &[f32], i: usize, j: usize| px[(j * nn + i) * 4];
                 // The `oracle` closure's ill-conditioning test, applied to EITHER render: a
-                // 4-neighbour flips interior/exterior or jumps by more than 2 iterations.
+                // 4-neighbor flips interior/exterior or jumps by more than 2 iterations.
                 let steep = |i: usize, j: usize| -> bool {
                     [aa.as_slice(), bb.as_slice()].iter().any(|&px| {
                         let g = dw(px, i, j);
@@ -4112,7 +4112,7 @@ impl FractadyneApp {
                 false
             };
             // ⛔⭐A glitch-corrected export keeps its supersampling. Correction runs for every
-            // non-holomorphic family (and every Julia view), and it used to iterate and colour at ONE
+            // non-holomorphic family (and every Julia view), and it used to iterate and color at ONE
             // sample a pixel whatever the export asked for: a `--ss 2` Burning Ship came out at 1×,
             // and nothing said so. The corrected export at ss=2 must match the plain export at ss=2
             // (the same `fs_color` taps; correction only touches flagged pixels) far more closely
@@ -4120,7 +4120,7 @@ impl FractadyneApp {
             // the ss=1 one instead. The ss=1→2 difference is also the proof the view has sub-pixel
             // detail for supersampling to change.
             // ⚠The view is the antenna's armada at 25×, structured detail in the direct path, where
-            // the corrected export is its supersampled base frame coloured — the code that lost
+            // the corrected export is its supersampled base frame colored — the code that lost
             // `ss`. A deep Burning Ship view is chaotic dust (the abs-family view below is a flat
             // field at 2,000 iterations, ss changes nothing), and the correction loop may move a
             // chaotic pixel legitimately, so a deep view would test the noise, not the plumbing.
@@ -4229,7 +4229,7 @@ impl FractadyneApp {
                 let mut direct = pert.clone();
                 direct.mode = 1; // force the trusted direct df32 path
                 // A power family against the CPU's f64 orbit instead: the direct path's c is
-                // f32-quantised here (the compiler folds df32; two ulps a pixel at |c| ≈ 1), and at
+                // f32-quantized here (the compiler folds df32; two ulps a pixel at |c| ≈ 1), and at
                 // power 8 that quarter pixel moved the mean dwell past the bound (0.89 on a view
                 // where the 1e6× twins check matched the CPU to a median 0.0002).
                 let power_family = fractal.power_family().is_some();
@@ -4434,7 +4434,7 @@ impl FractadyneApp {
         //     own helper calls, so any difference is a splice or codegen bug.
         // (2) Formulas with no built-in: the GPU against the IR's f64 interpreter (which the core
         //     tests hold bit-identical to every built-in), pixel by pixel at the shader's own pixel
-        //     centres.
+        //     centers.
         if want("custom-formula") {
             use fractadyne_core::ir;
             self.julia_mode = false;
@@ -4572,7 +4572,7 @@ impl FractadyneApp {
                 }
             }
 
-            // (2) GPU vs the CPU interpreter at the shader's own pixel centres. A pixel DISAGREES when
+            // (2) GPU vs the CPU interpreter at the shader's own pixel centers. A pixel DISAGREES when
             // its escape status differs or its smooth values are more than `tol` apart. Three kinds:
             //  - Iterated df32 formulas: only the boundary's chaotic pixels may part company (<1%), and
             //    none that escape within EARLY iterations — too few steps for df32 rounding to grow.
@@ -4586,7 +4586,7 @@ impl FractadyneApp {
             //    |cos z| ≈ cosh(Im z) per step, so f32 rounding reaches O(1) within ~10 iterations
             //    (measured: a pixel's GPU and CPU orbits escaped at |z| ≈ 2.7e3 and 6e23) and only
             //    loose agreement is possible. Its gate is that NO smooth value is non-finite: before
-            //    `custom_tame`, 3,044 pixels escaped as −∞, which the colour pass paints as interior.
+            //    `custom_tame`, 3,044 pixels escaped as −∞, which the color pass paints as interior.
             //    Agreement is judged only where the CPU's own value survives c ± 1e-5 (an error per
             //    step about f32 range reduction's at |z| ≈ 256); elsewhere the orbit is chaos on any
             //    GPU. A bound on ALL pixels (<5%) was one GPU's calibration: the RTX 3080 disagreed on
@@ -4731,7 +4731,7 @@ impl FractadyneApp {
                 let precision = shader.precision;
                 req.custom = Some(std::sync::Arc::new(shader));
                 let Some(gpu) = st_render_iter(device, queue, &req) else { continue };
-                // The shader's pixel centre: centre + step·((i + ½) − N/2)·2^delta_exp (y flipped).
+                // The shader's pixel center: center + step·((i + ½) − N/2)·2^delta_exp (y flipped).
                 let centre = (req.center[0] as f64 + req.center[2] as f64, req.center[1] as f64 + req.center[3] as f64);
                 let scale = 2f64.powi(req.delta_exp);
                 let (sx, sy) = (req.span_mantissa.x / N as f64, req.span_mantissa.y / N as f64);
@@ -5191,7 +5191,7 @@ impl FractadyneApp {
             // (b) Formulas no built-in covers, at 1e6× — past the f32 wall, where the direct path is
             //     blocks — on the GPU's perturbation path against the CPU interpreter in f64 (which
             //     resolves this view's 1.4e-8 pixel easily). The reference orbit is the IR's own
-            //     bignum one at the view centre, which sits on the formula's boundary as above.
+            //     bignum one at the view center, which sits on the formula's boundary as above.
             //     ⚠The BUDGET differs by class, and the tolerance with it. The ring formulas run
             //     2,000 iterations to 0.01 of the smooth value. Functions and division run 60, on
             //     status and within 2 iterations: on a boundary view their long orbits are chaotic
@@ -5496,7 +5496,7 @@ impl FractadyneApp {
                 .map(|(l, f, p, b)| (l.to_string(), f, p, b, rays.to_vec()))
                 .collect();
             // ⭐ACROSS THE CUT: formulas again, bisected along the NEGATIVE REAL AXIS, so the view's
-            // centre — the reference — sits ON the branch cut (its upper side) with half the pixels
+            // center — the reference — sits ON the branch cut (its upper side) with half the pixels
             // below it, and the orbit keeps returning to the axes. The views above missed sqrt's
             // cut: a sqrt that never took the difference branch passed them all (planted,
             // measured). A log whose crossings were never seen failed only the complex power's —
@@ -6043,7 +6043,7 @@ impl FractadyneApp {
                 let upp_log2 = upp.log2() - f64::from(k) * 3f64.log2();
                 let p = ls::deep_precision(&t, n + k, upp_log2, 1.0);
                 let result = ls::BigTables::new(&s, &t, p, n + k).map(|bt| {
-                    // The centre exactly, as the coordinate field reads an expression.
+                    // The center exactly, as the coordinate field reads an expression.
                     let expr = |s: String| fractadyne_core::parse_bf_prec(&s, p).expect("an expression");
                     let cx = expr(format!("1 - 0.2*3^-{k}"));
                     let cy = expr(format!("0.05*3^-{k}"));
@@ -6110,7 +6110,7 @@ impl FractadyneApp {
                 self.lsystem.fixed_order = Some(5);
                 self.viewport = fractadyne_core::Viewport::new(640.0, 360.0);
                 let ([hx, hy], home_l10) = self.lsystem_home_view();
-                // 16× in on the home view's centre: past "deep", so the tour recentres, then dives.
+                // 16× in on the home view's center: past "deep", so the tour recenters, then dives.
                 let want_log2 = home_l10 * std::f64::consts::LOG2_10 + 4.0;
                 let bf = |v: f64| fractadyne_core::BigFloat::from_f64(v, 128);
                 self.viewport.set_center_log2mag(bf(hx), bf(hy), want_log2);
@@ -6235,14 +6235,14 @@ impl FractadyneApp {
             // SA disabled (e.g. by tooling that stages the session file) made all three checks
             // report "SA did not engage" with no code defect present. Pin it like `color_method`.
             self.render_cfg.series_approx = true;
-            // (fractal, centre, a boundary view). The INTERIOR view (0.2, 0.1) is the original
+            // (fractal, center, a boundary view). The INTERIOR view (0.2, 0.1) is the original
             // three rows: every pixel stays interior through a skip of 3,999, and SA on and off
             // must agree exactly. ⚠It has no escaping pixel, so it could not see an SA that
             // misplaces an escape (found 2026-10-01, design/power-families.md phase 2, when
             // Multibrot 6–8 joined). So every power also gets a BOUNDARY view (`family_view`).
             // There SA on and off part on thousands of pixels — 4,555 of Multibrot 3's, 13,078 of
             // 4's — nearly all steep, and by the CPU's f64 orbit EQUALLY right: at the pixels
-            // smooth by the CPU's own neighbours, SA on was wrong at 182 / 81 / 242 / 31 / 0 / 3
+            // smooth by the CPU's own neighbors, SA on was wrong at 182 / 81 / 242 / 31 / 0 / 3
             // (Multibrot 3–8), SA off at 190 / 76 / 226 / 32 / 0 / 3. A 4,000-step boundary view is
             // chaotic, and a seed within 2^EPS of the stepped δ is one rounding more. So the
             // boundary row asks the question that has an answer: is SA any worse than no SA,
@@ -6324,7 +6324,7 @@ impl FractadyneApp {
                         let esc = a.iter().step_by(4).filter(|v| **v >= 0.0).count();
                         let nn = N as usize;
                         let t = cpu_family_iter(&on, fractal.formula_id(), N);
-                        // The truth is sure of a pixel whose CPU neighbours agree with it (same
+                        // The truth is sure of a pixel whose CPU neighbors agree with it (same
                         // class, within 2 iterations: the BLA check's "steep", inverted).
                         let sure = |k: usize| -> bool {
                             let (i, j) = (k % nn, k / nn);
@@ -6583,7 +6583,7 @@ impl FractadyneApp {
                             (mism, esc)
                         };
                         let (mism, esc) = count(a);
-                        // ⚠A fold's pixel can be "smooth" (its neighbours within 2 iterations) and still
+                        // ⚠A fold's pixel can be "smooth" (its neighbors within 2 iterations) and still
                         // turn on the DIRECTION of an error far below a pixel — the core traced one
                         // where BLA's state was 4e-12 off and a δc nudge moving it 7e-11 changed
                         // nothing. So a fold row is held to its CHAOS FLOOR, the mismatches of the
@@ -7319,7 +7319,7 @@ impl FractadyneApp {
                     0, None,
                 );
                 // A chunked frame's dispatch runs only its iteration RANGE — that is the count
-                // the budget bound applies to (the full ask is honoured across frames). ⭐The SA
+                // the budget bound applies to (the full ask is honored across frames). ⭐The SA
                 // seed covers [0, sa_skip) in ONE O(1)/pixel polynomial evaluation (the shader's
                 // `start_iter==0` branch), so a first window [0, sa_skip+step) LOOPS only `step`
                 // real iterations — the GPU cost is `e - max(s, sa_skip)`, not the nominal `e - s`.
@@ -7482,7 +7482,7 @@ impl FractadyneApp {
                 let mut deep_best = 0u32;
                 for _ in 0..60 {
                     // Re-injected per frame: a reference install landing mid-loop derates the
-                    // budget and clears `ok`, which is a different (real) behaviour and not what
+                    // budget and clears `ok`, which is a different (real) behavior and not what
                     // this check is about.
                     self.perf.fe_budget = [FIELD_BUDGET, FIELD_BUDGET];
                     self.perf.fe_budget_ok = [true, true];
@@ -7568,7 +7568,7 @@ impl FractadyneApp {
                 // that one does not: a CONVERGED settled walk long enough for `chunk_band_license`
                 // to ratchet. That ledger is what sized the 2026-08-22 field device loss
                 // (crash-1787401025-0) — 1024 iterations from `bands[0]`, against a budget
-                // authorising 24,457 — and its growth is a ×2 fast lane, so the invariant has to
+                // authorizing 24,457 — and its growth is a ×2 fast lane, so the invariant has to
                 // hold not on one frame but along the whole ladder.
                 //
                 // ⚠The mode-2 walk (`ChunkCap::mode2`) is FORCED, not probed. It is false on a device that granted only
@@ -7954,7 +7954,7 @@ impl FractadyneApp {
             );
             self.fractal = crate::fractal::FractalKind::Mandelbrot;
             self.julia_mode = false;
-            // (regime, centre, layout, strip, cap, the mode the strip must render in, BLA asked for
+            // (regime, center, layout, strip, cap, the mode the strip must render in, BLA asked for
             // (`--bla` / `--no-bla`), and BLA where it is the point). Frames of 160×90 from 1×:
             // 577-texel strips, so each strip is quick and the oracle samples a whole one. A strip in
             // the df32 band renders as floatexp, BLA as asked (`with_strip_arithmetic`): the oracle
@@ -7994,7 +7994,7 @@ impl FractadyneApp {
                     name: format!("a {regime} strip matches the oracle where the geometry puts it"),
                     params: format!(
                         "strip {k} of a dive into ({cx}, {cy}), 160x90 frames from 1x, cap {cap}, {} strips",
-                        if layout == Octave { "octave (texel corners)" } else { "conformal (texel centres)" }
+                        if layout == Octave { "octave (texel corners)" } else { "conformal (texel centers)" }
                     ),
                     result,
                     threshold: "rendered in the named mode and BLA state, a perturbation strip on the dive's reference (built 4 strips \
@@ -8030,7 +8030,7 @@ impl FractadyneApp {
                 params: format!("strip {k} of a dive into ({SX}, {SY}), 160x90 frames from 1x, cap {cap}, on the dive's reference"),
                 result,
                 threshold: "a BLA table in the BLA strip only, floatexp, BLA skips iterations; at least 1000 texels off the steep \
-                            ones (a neighbour across the boundary or 2+ iterations away), each both interior or both escaped \
+                            ones (a neighbor across the boundary or 2+ iterations away), each both interior or both escaped \
                             within 0.5 iteration (the BLA group's rule)",
                 pass,
             });
@@ -8078,12 +8078,12 @@ impl FractadyneApp {
                     .into(),
                 pass,
             });
-            // ⭐design/zoom-video.md §8.6: a window holding only what the colouring reads, its strips
+            // ⭐design/zoom-video.md §8.6: a window holding only what the coloring reads, its strips
             // in pieces, makes the very frames the whole window makes.
             let (result, pass) = match self.assemble_window_check(device, queue, SX, SY, 2_000) {
                 Ok(c) => (
                     format!(
-                        "{} frames, {} pixels: {} colouring(s) differ{}; {} pieces a strip; control: {} escaped samples of the count-only window differ in the normal or DE it leaves out, {} in the count; relief on it {}",
+                        "{} frames, {} pixels: {} coloring(s) differ{}; {} pieces a strip; control: {} escaped samples of the count-only window differ in the normal or DE it leaves out, {} in the count; relief on it {}",
                         c.frames,
                         c.pixels,
                         c.differ.len(),
@@ -8100,9 +8100,9 @@ impl FractadyneApp {
             push_check(&mut checks, &mut last_check_t, SelfCheck {
                 category: "Zoom video",
                 name: "a window holding only what the colouring reads, in pieces, makes the same frames".into(),
-                params: format!("a dive into ({SX}, {SY}), 160x90 frames from 1x to 2^12, cap 2000; frames at 2^0, 2^3.3, 2^7.9 turned 0.21 and 2^12, smooth and distance colouring with and without glow and relief; strips in 3 pieces (193, 193, 191)"),
+                params: format!("a dive into ({SX}, {SY}), 160x90 frames from 1x to 2^12, cap 2000; frames at 2^0, 2^3.3, 2^7.9 turned 0.21 and 2^12, smooth and distance coloring with and without glow and relief; strips in 3 pieces (193, 193, 191)"),
                 result,
-                threshold: "every pixel bit-identical to the whole window's for all 6 colourings; the control: over 1000 escaped samples differ in what the count-only window leaves out and none in the count, and a relief colouring is refused on it"
+                threshold: "every pixel bit-identical to the whole window's for all 6 colorings; the control: over 1000 escaped samples differ in what the count-only window leaves out and none in the count, and a relief coloring is refused on it"
                     .into(),
                 pass,
             });
@@ -8115,7 +8115,7 @@ impl FractadyneApp {
                             name: format!("an assembled frame at 2^{} is the flat render's picture", c.log2mag),
                             params: format!("a dive into ({SX}, {SY}), 160x90 frames from 1x to 2^20, cap 3000, 1x1 samples"),
                             result: format!(
-                                "interior agrees {:.2}% (control {:.2}%); within 0.1 iteration {:.1}% (control {:.1}%); DE bias {:+.4}; colour vs the export pass {}",
+                                "interior agrees {:.2}% (control {:.2}%); within 0.1 iteration {:.1}% (control {:.1}%); DE bias {:+.4}; color vs the export pass {}",
                                 100.0 * c.interior_agree,
                                 100.0 * c.control_interior_agree,
                                 100.0 * c.close,
@@ -8123,7 +8123,7 @@ impl FractadyneApp {
                                 c.de_bias,
                                 c.colour_diff
                             ),
-                            threshold: "agrees with the flat render at least as well as the flat render moved (0.3, 0.2) px does (interior within 0.2 points, within-0.1 share within 1 point); log2 DE bias under 0.01; coloured identically to color_iter_buffer_ss"
+                            threshold: "agrees with the flat render at least as well as the flat render moved (0.3, 0.2) px does (interior within 0.2 points, within-0.1 share within 1 point); log2 DE bias under 0.01; colored identically to color_iter_buffer_ss"
                                 .into(),
                             pass: c.pass(),
                         });
@@ -8389,7 +8389,7 @@ impl FractadyneApp {
         // The two Misiurewicz points whose multiplier has a closed form. λ is the number that
         // says what a dive here looks like: |λ| is the zoom period, arg λ the twist per repeat.
         // c = −2 gives exactly 4, real — which is *why* the antenna tip repeats without
-        // spiralling. c = i gives 4(1+i) over the {−1+i, −i} cycle: 45° of twist per period.
+        // spiraling. c = i gives 4(1+i) over the {−1+i, −i} cycle: 45° of twist per period.
         if want("nr-zoom") {
             let cases: &[(&str, f64, f64, u32, u32, f64, f64)] = &[
                 ("antenna tip c=-2", -2.0, 0.0, 2, 1, 2.0, 0.0),
@@ -8430,11 +8430,11 @@ impl FractadyneApp {
         if want("ref-pick") {
             // ⭐The 2:58 device-loss pick, exactly (design/reference-lifecycle.md L1). A lookahead
             // build at the grand tour's shallow-dive era scored candidates at 78 bits, where the
-            // three-spar Misiurewicz centre's orbit numerically escapes in a few hundred
+            // three-spar Misiurewicz center's orbit numerically escapes in a few hundred
             // iterations (the precision CLIFF — see core test `escape_length_vs_precision`), so
             // phase 1 had no survivor and the longest-escaper fallback picked a 626-sample
             // reference. Reuse then pinned it into ~90× frame cost and a GPU device loss. The
-            // cliff rescue must redo the selection at the build precision and return the CENTRE,
+            // cliff rescue must redo the selection at the build precision and return the CENTER,
             // surviving the full ask.
             let cx = fractadyne_core::parse_bf(
                 "-1.0109636384562213181006238475735192993836101418531854095957676926471683503366629508912671364125546238220995191834757e-1",
@@ -8463,12 +8463,12 @@ impl FractadyneApp {
                     "rescued={:?} survivors={} winner_len={} centre={picked_centre}",
                     diag.rescued, diag.survivors, diag.winner_len
                 ),
-                threshold: "rescued, centre picked, survives the ask",
+                threshold: "rescued, center picked, survives the ask",
                 pass: diag.rescued.is_some() && picked_centre && diag.winner_len >= 13_607,
             });
 
             // The rescue must NOT fire on a healthy pick: same view scored at an adequate
-            // precision picks the centre plainly (phase-1 survivor, no rescue) — this pins that
+            // precision picks the center plainly (phase-1 survivor, no rescue) — this pins that
             // healthy picks stay byte-identical to the pre-rescue selection.
             let (pick2, diag2) = fractadyne_core::best_reference_diag(
                 &[cx.clone(), cy.clone()],
@@ -8488,7 +8488,7 @@ impl FractadyneApp {
                     "rescued={:?} survivors={} winner_len={} centre={picked_centre2}",
                     diag2.rescued, diag2.survivors, diag2.winner_len
                 ),
-                threshold: "no rescue, centre picked",
+                threshold: "no rescue, center picked",
                 pass: diag2.rescued.is_none() && picked_centre2 && diag2.winner_len >= 13_607,
             });
         }
@@ -8619,7 +8619,7 @@ impl FractadyneApp {
         // ---- curated Navigate-menu landmarks: each must BE what it claims ----
         // Nothing else gates the FAMOUS / MISIUREWICZ_POI coordinate STRINGS, so a mistyped digit
         // would ship as a menu jump to blank space with no test to catch it. Re-derive each landmark
-        // from its stored centre: deep minibrot nuclei via `find_nucleus` (the period must match and
+        // from its stored center: deep minibrot nuclei via `find_nucleus` (the period must match and
         // the solve must stay on the named atom), and the Misiurewicz points via `detect_misiurewicz`
         // (the (preperiod, period) written into the name). Cheap — a few shallow orbit walks plus one
         // 998-period nucleus solve — so it belongs in the default suite, not the opt-in tier.
@@ -8631,13 +8631,13 @@ impl FractadyneApp {
                 let (Some(x), Some(y)) =
                     (fractadyne_core::parse_bf(cx), fractadyne_core::parse_bf(cy))
                 else {
-                    bad.push(format!("{name}: centre did not parse"));
+                    bad.push(format!("{name}: center did not parse"));
                     continue;
                 };
                 match fractadyne_core::find_nucleus(&[x.clone(), y.clone()], seed_l2, 0, 100_000) {
                     Some(n) if n.period == want_p => {
                         // Landed on the atom we named, not some unrelated far component: the refined
-                        // nucleus must sit within the atom's own width of the stored centre.
+                        // nucleus must sit within the atom's own width of the stored center.
                         let moved = (fractadyne_core::sub_f64(&n.cx, &x, 256).powi(2)
                             + fractadyne_core::sub_f64(&n.cy, &y, 256).powi(2))
                         .sqrt();
@@ -8673,7 +8673,7 @@ impl FractadyneApp {
                 let (Some(x), Some(y)) =
                     (fractadyne_core::parse_bf(cx), fractadyne_core::parse_bf(cy))
                 else {
-                    mbad.push(format!("{name}: centre did not parse"));
+                    mbad.push(format!("{name}: center did not parse"));
                     continue;
                 };
                 // Select the pair whose feature is the size of the framed view (~4/mag tall, the
@@ -9033,7 +9033,7 @@ impl FractadyneApp {
                 });
             }
 
-            // A keyframe's centre is parsed at the DEEPEST depth the tour reaches, not its own.
+            // A keyframe's center is parsed at the DEEPEST depth the tour reaches, not its own.
             //
             // This only bites EXACT RATIONAL coordinates — a plain decimal literal is parsed from
             // its own digit count, so `1e8× keyframe, 119-digit centre` was never truncated (a
@@ -9041,8 +9041,8 @@ impl FractadyneApp {
             // different: it is EVALUATED, at whatever precision it is given, so `re = "-1/3"` on a
             // keyframe at 1e8× is worth ~19 digits unless the floor comes from the tour's deepest
             // view. The camera interpolates between keyframes and the lookahead builds references
-            // for depths ahead of the current one, so a shallow keyframe's centre still has to
-            // carry the digits its deep neighbours need.
+            // for depths ahead of the current one, so a shallow keyframe's center still has to
+            // carry the digits its deep neighbors need.
             const RATIONAL_PREC: &str = concat!(
                 "format_version = 2
 ",
@@ -9072,8 +9072,8 @@ zoom = \"1e94\"
             push_check(&mut checks, &mut last_check_t, SelfCheck {
                 category: "Script",
                 name: "shallow keyframe keeps deep-neighbour precision".into(),
-                params: "rational centre on a 1e8× keyframe, tour reaches 1e94×".into(),
-                result: format!("centre drift {drift:.2e}"),
+                params: "rational center on a 1e8× keyframe, tour reaches 1e94×".into(),
+                result: format!("center drift {drift:.2e}"),
                 threshold: "< 1e-110 (the 1e94× view span is ~1e-95)",
                 pass: prec_ok,
             });
@@ -9250,7 +9250,7 @@ zoom = \"1e94\"
             }
 
             // An L-system view carries its system (text with every command, escaped onto one
-            // line), the fixed order, the angle override, the line width and the colouring.
+            // line), the fixed order, the angle override, the line width and the coloring.
             {
                 let text = "name Round trip\nangle /7\nheading 12.5\ndraw G\naxiom F[+G]@IQ2\\30C3\nF = F-G<2+F\nG = GG\n";
                 let opened = self.lsystem_open_text(text, "unnamed");
@@ -9278,9 +9278,9 @@ zoom = \"1e94\"
                 push_check(&mut checks, &mut last_check_t, SelfCheck {
                     category: "View format",
                     name: "an_lsystem_view_round_trips_its_system".into(),
-                    params: "L-system view (every command, order 5, angle 61.5°, width 2.5, heading colours) → scramble → load".into(),
+                    params: "L-system view (every command, order 5, angle 61.5°, width 2.5, heading colors) → scramble → load".into(),
                     result: format!("opened {}, format 4 {format4}, one line {one_line}, round trip {round_trip}", opened.is_ok()),
-                    threshold: "system, order, angle, width, colouring restored; format 4",
+                    threshold: "system, order, angle, width, coloring restored; format 4",
                     pass: opened.is_ok() && format4 && one_line && round_trip,
                 });
                 let saved = self.lsystem_lines();
@@ -9405,9 +9405,9 @@ zoom = \"1e94\"
             }
 
             // ⭐A coordinate ENTERED AS AN EXPRESSION travels with the view and is re-derived on
-            // load, so a reopened file can be zoomed deeper than it was saved without the centre
+            // load, so a reopened file can be zoomed deeper than it was saved without the center
             // freezing at the digits a plain decimal would carry. Round-tripped through the real
-            // writer and reader; the centre must come back as `1/3` to far more than the ~15 digits
+            // writer and reader; the center must come back as `1/3` to far more than the ~15 digits
             // a shallow decimal holds.
             self.center_expr = crate::CenterExpr::capture(
                 "1/3", "0",
@@ -9435,13 +9435,13 @@ zoom = \"1e94\"
                 name: "coordinate expression round-trips".into(),
                 params: "center_re_expr=1/3 → save → scramble → load".into(),
                 result: format!("has key {has_expr_key}, kept {}, |c−1/3| {x_err:.2e}", self.center_expr.is_some()),
-                threshold: "key written; expression kept; centre re-derived (|c−1/3| < 1e-30)",
+                threshold: "key written; expression kept; center re-derived (|c−1/3| < 1e-30)",
                 pass: expr_rt_ok,
             });
 
             // ⭐The reader must re-derive the expression at the VIEW'S precision, not trust a short
             // decimal beside it: a deep file whose `center_re` holds only 10 digits but carries the
-            // exact expression must reconstruct the centre to the depth, and a saved offset must be
+            // exact expression must reconstruct the center to the depth, and a saved offset must be
             // re-applied on top of the re-derived anchor.
             let deep_expr = "app=Fractadyne\nformat_version=1\ncenter_re=0.3333333333\ncenter_im=0\n\
                              center_re_expr=1/3\ncenter_im_expr=0\nupp_log2=-400\n";
@@ -9462,7 +9462,7 @@ zoom = \"1e94\"
             let off_err = fractadyne_core::to_f64(&fractadyne_core::bf_sub(
                 &self.viewport.center_x, &want, 400,
             )).abs();
-            // A shallow decimal centre sits ~1e-10 from 1/3, and a dropped offset ~1e-40 away — both
+            // A shallow decimal center sits ~1e-10 from 1/3, and a dropped offset ~1e-40 away — both
             // far above these bars, so a regression to either shows up here.
             let deep_ok = deep_err < 1.0e-40 && off_err < 1.0e-60;
             push_check(&mut checks, &mut last_check_t, SelfCheck {
@@ -9473,9 +9473,9 @@ zoom = \"1e94\"
                 threshold: "re-derived deep (< 1e-40) and offset applied (< 1e-60)",
                 pass: deep_ok,
             });
-            // ⭐The LIVE hook `update()` runs every frame: while the centre still sits on the
+            // ⭐The LIVE hook `update()` runs every frame: while the center still sits on the
             // expression's point, a deeper zoom re-derives it to the precision that depth needs;
-            // once panned off, it neither re-derives nor drops (the offset is materialised at save
+            // once panned off, it neither re-derives nor drops (the offset is materialized at save
             // time). Drive `refresh_center_expr` directly — selftest has no frame loop.
             self.viewport.center_x = fractadyne_core::parse_bf_prec("1/3", 100).unwrap();
             self.viewport.center_y = fractadyne_core::parse_bf_prec("0", 100).unwrap();
@@ -9491,7 +9491,7 @@ zoom = \"1e94\"
                 &self.viewport.center_x, &live_third, 700,
             )).abs();
             let grew = self.center_expr.as_ref().map(|c| c.prec).unwrap_or(0) > 400;
-            // Pan off the point: the hook must NOT re-derive (centre stays where the pan left it) and
+            // Pan off the point: the hook must NOT re-derive (center stays where the pan left it) and
             // must NOT drop the anchor (kept so the offset can be written at save time).
             self.viewport.center_x = fractadyne_core::bf_add(
                 &self.viewport.center_x,
@@ -9584,7 +9584,7 @@ zoom = \"1e94\"
 
             // The custom gradient travels WITH the view. Before this field, a `.fdn` saved on a
             // hand-built gradient carried only `palette=<index>`, so reopening it landed on
-            // whichever preset sat at that index: the geometry survived and the colour did not.
+            // whichever preset sat at that index: the geometry survived and the color did not.
             // Round-tripped through the real writer and reader, not just the codec.
             let palette_was = (
                 self.coloring.custom_segments.clone(),
@@ -9651,7 +9651,7 @@ zoom = \"1e94\"
             push_check(&mut checks, &mut last_check_t, SelfCheck {
                 category: "View format",
                 name: "custom gradient round-trips in the view".into(),
-                params: "2 segments: off-centre mid, Bézier blend, HSV space, alpha".into(),
+                params: "2 segments: off-center mid, Bézier blend, HSV space, alpha".into(),
                 result: match diff.clone().or_else(|| cr.note().map(|n| format!("note: {n}"))) {
                     Some(d) => format!("MISMATCH {d}"),
                     None => format!(
@@ -9668,7 +9668,7 @@ zoom = \"1e94\"
             // ⛔⭐⭐**Every key the WRITER emits must be one the READER knows.** `palette_custom`
             // was added to the writer and its own load branch, and both worked — but the key was
             // missing from `KNOWN_VIEW_KEYS`, so every load reported "ignored unknown field(s):
-            // palette_custom" about a field it had just honoured. Nothing else could see that: the
+            // palette_custom" about a field it had just honored. Nothing else could see that: the
             // gradient arrived correctly and the warning was cosmetic-looking noise. This check
             // exists so the NEXT field added to the writer cannot repeat it.
             let unknown_emitted: Vec<String> = cblob
@@ -9706,7 +9706,7 @@ zoom = \"1e94\"
             });
 
             // A corrupt gradient must leave the live palette ALONE and say so — not render a
-            // colour nobody chose. The shape here parses as numbers but does not cover 0..1.
+            // color nobody chose. The shape here parses as numbers but does not cover 0..1.
             self.coloring.custom_segments = rich.clone();
             self.coloring.use_custom_palette = true;
             let bad = "app=Fractadyne\nformat_version=1\ncenter_re=-0.5\ncenter_im=0\n\
@@ -9765,14 +9765,14 @@ zoom = \"1e94\"
         }
 
         // ---- appearance: the image actually CHANGES when a control changes ----
-        // Enforces the "Coloring" block of the manual checklist (steps 48-57, 60-62): every colour
+        // Enforces the "Coloring" block of the manual checklist (steps 48-57, 60-62): every color
         // method and palette must produce a coherent image, and must not produce the SAME image as
-        // its neighbours. A method silently falling back to another one looks perfectly fine in a
+        // its neighbors. A method silently falling back to another one looks perfectly fine in a
         // screenshot and is invisible to the goldens, which only ever render one method each.
         if want("appearance") {
             let (aw, ah) = (480u32, 270u32);
             // One view with interior, exterior and filament in frame, so every method has
-            // something to colour. Shallow on purpose: this is about colouring, not depth.
+            // something to color. Shallow on purpose: this is about coloring, not depth.
             let render = |app: &mut Self, dev: &eframe::wgpu::Device, q: &eframe::wgpu::Queue|
              -> Option<Vec<u8>> {
                 let mut vp = Viewport::new(aw as f64, ah as f64);
@@ -9805,7 +9805,7 @@ zoom = \"1e94\"
             self.effects.light = false;
             self.effects.de = false;
 
-            // --- colour methods, steps 48-53 ---
+            // --- color methods, steps 48-53 ---
             let mut frames: Vec<(String, Vec<u8>)> = Vec::new();
             for m in crate::ColorMethod::ALL {
                 self.coloring.color_method = m;
@@ -9832,7 +9832,7 @@ zoom = \"1e94\"
                     pass: frame::coherent(px),
                 });
             }
-            // Every pair, not just neighbours: two methods collapsing onto each other is the
+            // Every pair, not just neighbors: two methods collapsing onto each other is the
             // defect, and which two is not predictable.
             let mut worst = (f64::INFINITY, String::new());
             for i in 0..frames.len() {
@@ -10089,11 +10089,11 @@ zoom = \"1e94\"
         // ---- manual-checklist rows the other groups do not reach ----
         //
         // The rows here are the ones whose whole content is "render this and look at it":
-        // the depth ladder (25, 27, 28), Julia (44), random locations (69), the two colour
+        // the depth ladder (25, 27, 28), Julia (44), random locations (69), the two color
         // mappings that only exist on the normalized path (29, 30, 57, 58), the export rows
         // (77, 78, 80) and the rapid-switching soak (105). See
         // design/checklist-automation.md for which clause of each row this covers and which
-        // stays a human judgement.
+        // stays a human judgment.
         if want("checklist") {
             let (cw, ch) = (320u32, 180u32);
             // Pin everything that is not the variable under test, and put the view back
@@ -10147,13 +10147,13 @@ zoom = \"1e94\"
                 let log2mag = mag_log10 * std::f64::consts::LOG2_10;
                 let prec = fractadyne_core::precision_for_octaves(log2mag.max(0.0).ceil() as u64);
                 // ⚠A silent fallback here would be indistinguishable from the bug these checks
-                // hunt: an unparseable centre lands on the whole set, which at 1e500× renders a
+                // hunt: an unparseable center lands on the whole set, which at 1e500× renders a
                 // flat frame and reads as "deep zoom is broken". Panic instead — this is a
                 // literal in this file, so a failure to parse is a typo, not an input.
                 let x = fractadyne_core::parse_bf_prec(cx, prec)
-                    .unwrap_or_else(|| panic!("selftest: centre {cx:?} does not parse"));
+                    .unwrap_or_else(|| panic!("selftest: center {cx:?} does not parse"));
                 let y = fractadyne_core::parse_bf_prec(cy, prec)
-                    .unwrap_or_else(|| panic!("selftest: centre {cy:?} does not parse"));
+                    .unwrap_or_else(|| panic!("selftest: center {cy:?} does not parse"));
                 app.viewport.set_size(cw as f64, ch as f64);
                 app.viewport.set_center_log2mag(x, y, log2mag);
                 app.viewport.precision = prec;
@@ -10243,7 +10243,7 @@ zoom = \"1e94\"
             // such view to Direct mode and rendered an empty frame (beta.125).
             // Corpus location 09 (6.1e500×, 150,000 iterations), verbatim — see the drift
             // guard below. ⚠These were first typed from memory rather than copied, and the
-            // resulting frame was flat: a wrong deep centre is not a wrong picture, it is the
+            // resulting frame was flat: a wrong deep center is not a wrong picture, it is the
             // WHOLE SET, which at this depth is a blank field and reads exactly like the
             // saturation bug this row exists to catch.
             const X500: &str = "-8.351966078548609175704283083728201809956421539984007929099437008685832333266\
@@ -10281,7 +10281,7 @@ zoom = \"1e94\"
                 pass,
             });
 
-            // --- steps 29, 30 and 57: the normalized colour mappings ---
+            // --- steps 29, 30 and 57: the normalized color mappings ---
             // These reach the image ONLY through the normalized path. `render_export` does not
             // normalize unless asked, so an A/B of the checkbox against it reports a
             // byte-identical frame (measured, meanD 0.00) — a check built that way is green
@@ -10300,7 +10300,7 @@ zoom = \"1e94\"
                 (Some(a), Some(b)) => {
                     let (sa, sb) = (frame::neighbour_step(a, cw), frame::neighbour_step(b, cw));
                     (
-                        format!("neighbour step {sa:.2} -> {sb:.2}, meanD {:.2}", frame::distance(a, b)),
+                        format!("neighbor step {sa:.2} -> {sb:.2}, meanD {:.2}", frame::distance(a, b)),
                         frame::coherent(a) && frame::coherent(b) && sb < sa,
                     )
                 }
@@ -10311,11 +10311,11 @@ zoom = \"1e94\"
                 name: "normalize-reduces-speckle".into(),
                 params: format!("1.3e24x, 20,000 iterations, {cw}x{ch}, both frames must be coherent"),
                 result: res,
-                threshold: "normalized frame has the SMALLER neighbour step",
+                threshold: "normalized frame has the SMALLER neighbor step",
                 pass,
             });
 
-            // Log colour scale, on the same view and the same path.
+            // Log color scale, on the same view and the same path.
             let lin = normed(self, device, queue);
             self.coloring.log_palette = true;
             let logd = normed(self, device, queue);
@@ -10381,7 +10381,7 @@ zoom = \"1e94\"
             // measurements in the release suite.
             //
             // ⭐⭐Every one is a CONTROL PAIR — the same file with ONE field changed — because the
-            // naive form of each check cannot fail. "The .map render has few colours" is also true
+            // naive form of each check cannot fail. "The .map render has few colors" is also true
             // of a smoothed import of a dark palette; "the .ugr render is red" is also true if red
             // and blue were swapped and the file happened to be red. Changing one field and
             // requiring the OPPOSITE answer is what makes them able to go red.
@@ -10418,11 +10418,11 @@ zoom = \"1e94\"
             self.coloring.custom_segments.clear();
             self.coloring.custom_palette_flat = true;
             let banded = shoot(self, device, queue, cw, ch).map(|(px, _)| px);
-            self.coloring.custom_palette_flat = false; // the control: same colours, blended
+            self.coloring.custom_palette_flat = false; // the control: same colors, blended
             let smoothed = shoot(self, device, queue, cw, ch).map(|(px, _)| px);
             let (res, pass) = match (&banded, &smoothed) {
                 (Some(b), Some(sm)) => {
-                    // Declared levels, as bytes. The in-set colour is not grey, so filtering to
+                    // Declared levels, as bytes. The in-set color is not gray, so filtering to
                     // r == g == b isolates the palette without needing to know the interior.
                     let want: Vec<u8> = m.colors.iter().map(|c| (c[0] * 255.0).round() as u8).collect();
                     let greys = |px: &[u8]| -> Vec<u8> {
@@ -10447,12 +10447,12 @@ zoom = \"1e94\"
                     };
                     (
                         format!(
-                            "banded: {band_levels} levels over {} grey px, {stray} off-palette; \
+                            "banded: {band_levels} levels over {} gray px, {stray} off-palette; \
                              smoothed control: {smooth_levels} levels",
                             bg.len()
                         ),
                         // The bands must be EXACT, and the control must prove the exactness is the
-                        // banding rather than a dark palette with few colours in it anyway.
+                        // banding rather than a dark palette with few colors in it anyway.
                         !bg.is_empty()
                             && stray == 0
                             && band_levels <= want.len()
@@ -10471,7 +10471,7 @@ zoom = \"1e94\"
                 pass,
             });
 
-            // (2) `.ugr` packs colour BGR. Reading it as RGB swaps red and blue on every gradient
+            // (2) `.ugr` packs color BGR. Reading it as RGB swaps red and blue on every gradient
             // and still looks like a plausible palette — so the check renders BOTH and requires
             // them to come out opposite ways round.
             let ugr = fractadyne_color::import::parse_ugr(IMPORT_UGR).expect("selftest .ugr fixture");
@@ -10508,8 +10508,8 @@ zoom = \"1e94\"
                 pass,
             });
 
-            // (3) A `.ggr` segment carries its own colour SPACE, so identical endpoints swept round
-            // the hue wheel are a whole spectrum while in RGB they are one flat colour. The two
+            // (3) A `.ggr` segment carries its own color SPACE, so identical endpoints swept round
+            // the hue wheel are a whole spectrum while in RGB they are one flat color. The two
             // fixtures differ in exactly one integer.
             let mut ggr_shots = Vec::new();
             for text in [IMPORT_GGR_RGB, IMPORT_GGR_HSV] {
@@ -10521,7 +10521,7 @@ zoom = \"1e94\"
                 (Some(rgb), Some(hsv)) => {
                     let (dr, dh) = (distinct(rgb), distinct(hsv));
                     (
-                        format!("RGB space: {dr} distinct colours; HSV sweep: {dh}"),
+                        format!("RGB space: {dr} distinct colors; HSV sweep: {dh}"),
                         dh > dr * 10 && frame::coherent(hsv),
                     )
                 }
@@ -10530,9 +10530,9 @@ zoom = \"1e94\"
             push_check(&mut checks, &mut last_check_t, SelfCheck {
                 category: "checklist",
                 name: "ggr-colour-space-is-per-segment".into(),
-                params: "one segment, red at both ends, colouring column 0 vs 1".into(),
+                params: "one segment, red at both ends, coloring column 0 vs 1".into(),
                 result: res,
-                threshold: "the hue sweep yields >10x the distinct colours of the RGB reading",
+                threshold: "the hue sweep yields >10x the distinct colors of the RGB reading",
                 pass,
             });
 
@@ -10650,7 +10650,7 @@ zoom = \"1e94\"
                 name: "snapshot-matches-the-view".into(),
                 params: format!("{cw}x{ch} PNG written, decoded, compared byte for byte"),
                 result: res,
-                threshold: "decoded pixels identical; embedded centre + depth match the view",
+                threshold: "decoded pixels identical; embedded center + depth match the view",
                 pass,
             });
 
@@ -10800,7 +10800,7 @@ zoom = \"1e94\"
                 pass,
             });
 
-            // The embedded deep centres are copies of the comparison corpus's own locations, so
+            // The embedded deep centers are copies of the comparison corpus's own locations, so
             // that a rung failing here is a location we have independently rendered correctly
             // against Fraktaler-3. A copy can drift from its source silently, so when the
             // corpus is present (a repo checkout, not a release tarball) check that it has not.
@@ -10816,11 +10816,11 @@ zoom = \"1e94\"
                     name: "deep centres still match the comparison corpus".into(),
                     params: "validation/corpus/locations.toml".into(),
                     result: if missing.is_empty() {
-                        "all four embedded centres found verbatim".into()
+                        "all four embedded centers found verbatim".into()
                     } else {
                         format!("not in the corpus: {}", missing.join(", "))
                     },
-                    threshold: "every embedded deep centre appears in the corpus verbatim",
+                    threshold: "every embedded deep center appears in the corpus verbatim",
                     pass: missing.is_empty(),
                 });
             }

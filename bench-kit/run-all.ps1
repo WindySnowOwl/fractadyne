@@ -27,7 +27,7 @@ param(
     # 'all' runs all three. -Scenes then filters whichever set is chosen.
     # 'tip' and 'pi' are the validation points (scenes-tip.csv, scenes-pi.csv; files in points\,
     # written by tools\make-points.py): the antenna tip at six depths, whose counts one reference
-    # judges at every depth, and frames beside the cardioid's neck and cusp whose centre count pi
+    # judges at every depth, and frames beside the cardioid's neck and cusp whose center count pi
     # predicts. The pi frames are 17x17 views: run them with -Size 17x17 -InspectSize 17x17. Not in
     # 'all'. Score their counts with tools\points-score.py.
     [ValidateSet('standard', 'ladder', 'suggested', 'all', 'tip', 'pi')]
@@ -38,10 +38,10 @@ param(
     [ValidatePattern('^[0-9]+x[0-9]+$')]
     [string]$Size = '3840x2160',
     # ZOOM SEQUENCE lane. Every other scene here is ONE FRAME, and a single frame is blind to
-    # the optimisation that matters most for zoom video: a dive toward a fixed centre keeps the
-    # same reference orbit valid across many frames, so the expensive setup can be amortised
+    # the optimisation that matters most for zoom video: a dive toward a fixed center keeps the
+    # same reference orbit valid across many frames, so the expensive setup can be amortized
     # instead of paid per frame. The metric is each app measured against ITSELF -
-    # amortisation = (frames x single_frame_wall) / sequence_wall - so it needs no cross-app
+    # amortization = (frames x single_frame_wall) / sequence_wall - so it needs no cross-app
     # calibration. Set 0 to skip the lane (or -Skip zoomseq).
     [int]$ZoomSeqFrames = 8,
     # The ladder places its rungs with 400-digit decimal arithmetic, which is why that lane is
@@ -65,7 +65,7 @@ param(
     # the developer disables the CPU entirely. Applies only when the wisdom file is being created.
     [switch]$F3GpuOnly,
     # Fraktaler-3's per-pixel limits: maximum_perturb_iterations and maximum_bla_steps, both written
-    # into every scene's per-run file. A pixel that reaches either stops and is coloured as interior,
+    # into every scene's per-run file. A pixel that reaches either stops and is colored as interior,
     # so too low blacks out a deep minibrot's field, and too high lets interior pixels iterate on to
     # the full cap. The manual says "a few 1000"; a scene that needs more names its own in the
     # f3_limit column of its scenes CSV. (The scene files set perturb to the iteration cap, which was
@@ -83,7 +83,7 @@ param(
     # algorithm that goes flat at deep zoom, and there is no "Auto" either (0.543 rejects
     # `--render-algorithm Auto` as an unknown name, despite its own error text suggesting one).
     # NOTE: 0.543 RENDERS ALL FOUR OF THEM (measured 2026-09-21 on an RTX 3080), so that DNF list
-    # is stale for 0.543+: 4.2e275 gives 1683 colours at modal 0.053, and the spar and both nuclei
+    # is stale for 0.543+: 4.2e275 gives 1683 colors at modal 0.053, and the spar and both nuclei
     # give real dendrite structure. WARNING: the latter three come out in a very low-contrast
     # palette -
     # luminance stddev ~1.1 of 255 - so they sit close to the structure guard's margin while being
@@ -141,7 +141,7 @@ param(
     # shared .map, which is the difference between a view check that can confirm nothing and one
     # that can. A Fractint / Kalles Fraktaler .map is the portable format Fractadyne already
     # imports and our imagina-cli fork now does too.
-    # Only those two can join: Fraktaler-3 3.1 exposes no colour options in its batch toml or its
+    # Only those two can join: Fraktaler-3 3.1 exposes no color options in its batch toml or its
     # CLI, and FractalSharkCli has none at all (its --color is ANSI console art). Saying that is
     # better than pretending the column is like-for-like.
     # OFF by default, because switching Fractadyne off its preset palette changes every reference
@@ -153,9 +153,9 @@ param(
     # meet it.
     #
     # palettes/ember.map is Fractadyne's built-in "Ember" (PRESETS[0], its default) baked to 1024
-    # entries the way Gradient::bake does - texel centres, linear between stops.
+    # entries the way Gradient::bake does - texel centers, linear between stops.
     #
-    # The POSITION mapping matters as much as the colours, and is why a neutral shared map only
+    # The POSITION mapping matters as much as the colors, and is why a neutral shared map only
     # reached 0.496. Fractadyne maps position = smooth_iteration * cycle + offset, wrapped, with
     # cycle = 0.004 + 0.27*0.06 = 0.0202 and offset = 0.1 at its defaults. Imagina's smooth value
     # advances at twice that rate, so the matching cycle is EXACTLY HALF, 0.0101, at offset 0.
@@ -307,10 +307,10 @@ if ($missing.Count) {
     $missing | ForEach-Object { Write-Host ('  ' + $_) }
     exit 1
 }
-# A WINDOWS COMMAND LINE HOLDS 32,767 CHARACTERS, and a 1e30000x centre is 30,000 digits per
+# A WINDOWS COMMAND LINE HOLDS 32,767 CHARACTERS, and a 1e30000x center is 30,000 digits per
 # coordinate. Process.Start used to throw on such a line and abort the WHOLE run, every lane, with
 # no row written. Each lane now checks its line against this bound first: Fractadyne then reads its
-# arguments from a file, FractalShark from a locations file, and imagina-cli, which takes the centre
+# arguments from a file, FractalShark from a locations file, and imagina-cli, which takes the center
 # only on its command line, records NA-command-line for that scene. Under the bound, every line is
 # exactly what it always was.
 $MaxCommandLine = 30000
@@ -346,7 +346,7 @@ if ($have.fractadyne) {
             $argLine = ('--render --out "{0}" --size {5} --center {1} {2} --zoom-log2 {3} --iter {4} --ss 1 --palette 0' -f $png, $kfr['Re'], $kfr['Im'], $zl2, $s.iterations, $Size)
             # normalize: 1 = --normalize; log = --normalize --log-palette (the ladder's minibrots, whose
             # field is palette noise without it: escape counts in the hundreds of thousands put
-            # neighbouring pixels far apart on a cyclic palette).
+            # neighboring pixels far apart on a cyclic palette).
             if ($s.normalize -eq '1') { $argLine += ' --normalize' }
             elseif ($s.normalize -eq 'log') { $argLine += ' --normalize --log-palette' }
             if ($SharedPalette) { $argLine += (' --palette-map "{0}"' -f $SharedPalette) }
@@ -619,7 +619,7 @@ if ($have.fraktaler3) {
     # the check found nothing to check.
     #
     # Fraktaler-3 needs one thing more. The check judges magnification by the share of pixels that
-    # never escaped, read off an image as its BLACK share, and Fraktaler-3's default colouring shades
+    # never escaped, read off an image as its BLACK share, and Fraktaler-3's default coloring shades
     # by distance estimate: everything close to the boundary is black too, escaped or not. Scene
     # 59's image is 62% black at 4K while 6.6% of its pixels never escaped, so read off the image the
     # check called that correct render a different magnification. Each scene is therefore rendered
@@ -766,7 +766,7 @@ if ($have.fractalsharkcli) {
             $perturbArg = $(if ($FractalSharkPerturbAlg) { ' --perturbation-alg ' + $FractalSharkPerturbAlg } else { '' })
             $renderArgs = ('--render-algorithm {0} --center-x {1} --center-y {2} --zoom {3} --iterations {4} --width {5} --height {6} --antialiasing 1 --out "{7}"' -f $FractalSharkAlgo, $kfr['Re'], $kfr['Im'], $zoom, $s.iterations, $wh[0], $wh[1], $stem) + $perturbArg
             # Too long for a command line (see $MaxCommandLine): the view goes in FractalShark's own
-            # locations file instead, a box of centre +/- 2/zoom in each axis written at full
+            # locations file instead, a box of center +/- 2/zoom in each axis written at full
             # precision by tools/make-fsloc.py from the same .kfr. No Python, no file, no render.
             $fsLoc = ''
             if ($renderArgs.Length -gt $MaxCommandLine) {
@@ -782,7 +782,7 @@ if ($have.fractalsharkcli) {
             $argLine = if ($imgServer) { ('--connect --endpoint {0} ' -f $endpoint) + $renderArgs } else { $renderArgs }
             if ($fsLoc -and -not (Test-Path $fsLoc)) {
                 $r = @{ status = 'NA-no-python'; wall_s = ''; wall_ms = ''; stdout = ''
-                        stderr = 'this centre needs a locations file, which tools/make-fsloc.py writes with Python' }
+                        stderr = 'this center needs a locations file, which tools/make-fsloc.py writes with Python' }
             } else {
                 $r = Invoke-TimedRender $FractalSharkCliExe $argLine $TimeoutS $outDir
             }
@@ -810,7 +810,7 @@ if ($have.fractalsharkcli) {
             if ($imgServer) { Stop-SharkServer $FractalSharkCliExe $endpoint $srv }
             $note = $(if ($imgServer) { 'fresh warmed server' } else { 'process per frame' }) +
                     $(if ($FractalSharkAlgo -like 'Gpu*') { '; GPU path (CUDA)' } else { '; CPU path' }) +
-                    $(if ($fsLoc) { '; view passed as a locations file (centre too long for a command line)' } else { '' })
+                    $(if ($fsLoc) { '; view passed as a locations file (center too long for a command line)' } else { '' })
             # The reported "Frame time" is worth HAVING - it is FractalShark's own render cost,
             # and the gap between it and our wall is the pipe plus the PNG encode, which is the
             # one number that says whether the CLI transport is in the way. But it is NEVER
@@ -886,7 +886,7 @@ if ($have.fractalsharkcli) {
         # palette once per iteration with no CLI option to slow it, and at 1.6e148 that aliases
         # into apparent static against our --normalize render of the same scene. Treating that as
         # a DNF made this lane publish a claim that another project's renderer was broken. It was
-        # not. Do not let a colouring difference delete a measurement or accuse anyone.
+        # not. Do not let a coloring difference delete a measurement or accuse anyone.
         if ($status -eq 'ok' -and $viewChecked -and $viewOk.ContainsKey($q.scene) -and -not $viewOk[$q.scene]) {
             $status = 'DNF-not-the-scene'
             $note = 'exit 0 and a structured image, but its interior fraction says this is a different magnification; see fs-view-check.json and LOOK at the PNG'
@@ -952,7 +952,7 @@ if ($have.imaginacli) {
             # of trap that had the FractalShark lane rendering the wrong view for months, so the
             # scene file's own field is handed over rather than anything recomputed.
             $zoom = ($kfr['Zoom'] -replace 'E', 'e')
-            # Working precision from the centre's own digit count: the corpus carries centres to
+            # Working precision from the center's own digit count: the corpus carries centers to
             # the precision the location needs, so that count IS the requirement. +96 bits of
             # headroom, floor of 128.
             $digits = ($kfr['Re'] -replace '[^0-9]', '').Length
@@ -967,10 +967,10 @@ if ($have.imaginacli) {
                 $argLine += (' --palette-map "{0}" --palette-cycle {1} --palette-offset {2} --palette-smooth' -f
                              $ImaginaPaletteMap, $ImaginaPaletteCycle, $ImaginaPaletteOffset)
             }
-            # imagina-cli takes the centre ONLY on its command line, so a centre too long for one
+            # imagina-cli takes the center ONLY on its command line, so a center too long for one
             # (see $MaxCommandLine) cannot be rendered at all here: a row that says so, not a crash.
             if ($argLine.Length -gt $MaxCommandLine) {
-                $note = ('imagina-cli takes the centre only on its command line, and this one needs ' + $argLine.Length +
+                $note = ('imagina-cli takes the center only on its command line, and this one needs ' + $argLine.Length +
                          ' characters; Windows allows 32,767')
                 Write-Result $csv 'imagina' $s.slug $rep 'NA-command-line' '' '' $note
                 Add-RunRecord @{
@@ -1137,7 +1137,7 @@ if ($have.fractalzoomer) {
                 }
             }
             # Keep each image's .stats and the batch's own output; the images are copied out above, and
-            # the working folder holds what Fractal Zoomer unpacks at every start (~15 MB of colour maps).
+            # the working folder holds what Fractal Zoomer unpacks at every start (~15 MB of color maps).
             Get-ChildItem -LiteralPath $out -Filter '*.png' | Remove-Item -Force -ErrorAction SilentlyContinue
             Remove-Item -LiteralPath $cwd -Recurse -Force -ErrorAction SilentlyContinue
             [IO.File]::WriteAllText((Join-Path $b 'stdout.txt'), [string]$r.stdout + "`r`n--- stderr ---`r`n" + [string]$r.stderr)
@@ -1153,17 +1153,17 @@ if ($have.fractalzoomer) {
 }
 
 # ---- lane: Fracturing Fog (automated, its own batch command line) ----
-# Fracturing Fog renders a view headlessly with `FracturingFog.App.exe --batch`: centre, zoom,
+# Fracturing Fog renders a view headlessly with `FracturingFog.App.exe --batch`: center, zoom,
 # iteration cap and size on the command line, a PNG out, its own render time printed. Three things
 # differ from every other lane, each measured against the Fractadyne render (README "Fracturing
-# Fog"): its zoom fixes the image's WIDTH, its imaginary axis points down, and a deep centre goes in
+# Fog"): its zoom fixes the image's WIDTH, its imaginary axis points down, and a deep center goes in
 # as up to eight double limbs. tools/ff-view.py converts each scene once, before any timing.
 # ONE SAMPLE PER PIXEL: --quality Standard. Its High preset takes 4 samples per pixel and Ultra and
 # Extreme 16, with temporal AA on top (off here: --no-taa). Batch mode does not raise the preset
 # with depth, and its precision (double-double, quad-double, octuple-double) follows the zoom alone.
 # Its batch renders run on the CPU: that path attaches no GPU kernel.
 # ITS CEILING is 1e100, its Extreme preset's limit (octuple-double). Past it 0.7.1 still exits 0,
-# with one flat colour in a fraction of a second (measured at 1.6e148, 5.5e275 and 2.3e296), and a
+# with one flat color in a fraction of a second (measured at 1.6e148, 5.5e275 and 2.3e296), and a
 # flat frame of a scene with almost no interior even passes the view check's magnification test.
 # So the lane refuses those scenes up front, and the structure guard stands behind it.
 $ffMaxZoomLog10 = 100
@@ -1273,10 +1273,10 @@ if ($have.fractalshark) {
     foreach ($s in $sceneRows) { Write-Result $csv 'fractalshark' $s.slug 1 'NA-no-nvidia' '' '' 'CUDA renderer, no NVIDIA GPU present' }
 }
 
-# ---- lane: ZOOM SEQUENCE (the amortisation axis; see the -ZoomSeqFrames parameter) ----
+# ---- lane: ZOOM SEQUENCE (the amortization axis; see the -ZoomSeqFrames parameter) ----
 # Fractadyne renders the sequence IN ONE PROCESS via --render-tour, the mode that owns the
 # reference prefetch. Fraktaler-3 3.1's batch CLI renders one image per invocation, so its
-# sequence is N processes and its amortisation is ~1.0 BY CONSTRUCTION - a difference in what
+# sequence is N processes and its amortization is ~1.0 BY CONSTRUCTION - a difference in what
 # the two CLIs offer, NOT a measurement of F3's engine, which has zoom-sequence machinery this
 # lane cannot reach. zoom-seq.py prints that caveat too; keep it attached to the number.
 $zsAmort = ''
@@ -1325,7 +1325,7 @@ if ($have.zoomseq) {
         $am = $zsRows | Where-Object { $_.scene -like '*-amortisation' -and $_.status -eq 'ok' } | Select-Object -First 1
         if ($am -and $am.reported_s) {
             $zsAmort = $am.reported_s
-            Write-Host ('  fractadyne amortisation: ' + $zsAmort + 'x')
+            Write-Host ('  fractadyne amortization: ' + $zsAmort + 'x')
         }
     }
 } else {
@@ -1340,10 +1340,10 @@ if ($have.zoomseq) {
 #   1. Fractadyne's raw iteration counts, fd-raw\<scene>.exr (--render-iter);
 #   2. inspect-sheet.py prepare: each scene's band width, and FractalShark's palette file;
 #   3. FractalShark once more with that palette, fs-inspect\<stem>.png (its own client, no server);
-#   4. Imagina once more, its counts encoded in colour, im-inspect\<scene>.ppm (imagina-cli
+#   4. Imagina once more, its counts encoded in color, im-inspect\<scene>.ppm (imagina-cli
 #      --iterations and the decode map `prepare` writes);
-#   5. Fractal Zoomer once more, its counts as its colours, fz-inspect\out\<scene>.png (FzsWriter
-#      --counts: its direct colour mode);
+#   5. Fractal Zoomer once more, its counts as its colors, fz-inspect\out\<scene>.png (FzsWriter
+#      --counts: its direct color mode);
 #   6. inspect-sheet.py sheet: inspect-sheet.jpg and inspect\inspect.json.
 # Fraktaler-3's raw counts are its view check's (f3-raw\). Fracturing Fog appears in its own
 # palette.
@@ -1395,7 +1395,7 @@ if ($Inspect) {
                 $tail = (' --iterations {0} --width {4} --height {5} --antialiasing 1 --palette-map "{1}" --palette-depth {2} --quiet --out "{3}"' -f $s.iterations, $map, $pl.Value.fs_depth, $stem, $insW, $insH)
                 $renderArgs = ('--render-algorithm {0} --center-x {1} --center-y {2} --zoom {3}' -f $FractalSharkAlgo, $kfr['Re'], $kfr['Im'], $kfr['Zoom']) + $tail
                 if ($renderArgs.Length -gt $MaxCommandLine) {
-                    # As the lane: a centre too long for a command line goes in a locations file.
+                    # As the lane: a center too long for a command line goes in a locations file.
                     $locDir = Join-Path $outDir 'fs-loc'
                     New-Item -ItemType Directory -Force $locDir | Out-Null
                     $fsLoc = Join-Path $locDir ($s.slug + '.inspect.fsloc')
@@ -1406,10 +1406,10 @@ if ($Inspect) {
                 if ($r.status -ne 'ok') { Write-Host ('  ' + $s.slug + ': FractalShark inspection render ' + $r.status) }
             }
         }
-        # Imagina's whole iteration counts, ENCODED IN COLOUR: imagina-cli --iterations stores each
+        # Imagina's whole iteration counts, ENCODED IN COLOR: imagina-cli --iterations stores each
         # pixel's smooth count (not its default distance-estimate value), and with no
-        # --palette-cycle it colours a pixel with entry floor(count) mod n of the map, unblended.
-        # The decode map gives entry i the colour (i mod 256, i / 256, 77), so the sheet reads the
+        # --palette-cycle it colors a pixel with entry floor(count) mod n of the map, unblended.
+        # The decode map gives entry i the color (i mod 256, i / 256, 77), so the sheet reads the
         # count back, mod 65,536. An imagina-cli built before --iterations ignores the flag and
         # draws the DE value through the same map - readable, and meaningless - so its own
         # confirmation line on stderr is required, not assumed.
@@ -1430,7 +1430,7 @@ if ($Inspect) {
                 $argLine = ('--center-x {0} --center-y {1} --precision {2} --zoom {3} --iter {4} --width {7} --height {8} --out "{5}" --palette-map "{6}" --iterations' -f
                             $kfr['Re'], $kfr['Im'], $prec, $zoom, $s.iterations, $ppm, $decodeMap, $insW, $insH)
                 if ($argLine.Length -gt $MaxCommandLine) {
-                    Write-Host ('  ' + $s.slug + ': Imagina counts left off the sheet (its centre does not fit a command line)')
+                    Write-Host ('  ' + $s.slug + ': Imagina counts left off the sheet (its center does not fit a command line)')
                     continue
                 }
                 $r = Invoke-TimedRender $ImaginaCliExe $argLine $TimeoutS $imDir
@@ -1445,8 +1445,8 @@ if ($Inspect) {
             }
             $env:PATH = $savedPath
         }
-        # Fractal Zoomer's whole iteration counts AS ITS COLOURS: FzsWriter --counts turns on its
-        # direct colour, where a pixel is 0xFF000000 | count & 0xFFFFFF before any palette (0xFFFFFF
+        # Fractal Zoomer's whole iteration counts AS ITS COLORS: FzsWriter --counts turns on its
+        # direct color, where a pixel is 0xFF000000 | count & 0xFFFFFF before any palette (0xFFFFFF
         # interior). One batch for every scene - untimed, so the shared process does not matter.
         if ($have.fractalzoomer -and (Test-Path $planPath)) {
             $plan = Get-Content $planPath -Raw | ConvertFrom-Json
@@ -1621,7 +1621,7 @@ if (Test-Path $phCsv) {
     $md += 'From each render''s own log (kept in fd-logs\; every rep in fd-phases.csv). startup = process'
     $md += 'start to the render starting; ref wait = the part of the reference build the render had to'
     $md += 'wait for (the build starts at launch, BESIDE startup, so its own cost in the last column is'
-    $md += 'mostly hidden, and its parts overlap: the pick runs beside a speculative centre build);'
+    $md += 'mostly hidden, and its parts overlap: the pick runs beside a speculative center build);'
     $md += 'host other = render - ref wait - GPU (readback, normalization, tiling);'
     $md += 'outside = wall - the last log stamp (OS launch, DLL load, teardown). GPU iterate is timestamp'
     $md += 'queries, or fenced chunk walls on a chunked tile. Phases before b149 lack GPU iterate on the'
@@ -1660,7 +1660,7 @@ if (Test-Path $phCsv) {
 }
 if ($zsRows.Count) {
     $md += ''
-    $md += '## Zoom sequence - amortisation'
+    $md += '## Zoom sequence - amortization'
     $md += ''
     $md += ('A ' + $ZoomSeqFrames + '-frame Misiurewicz ladder at ' + $Size + ', one frame per rung.')
     $md += 'Every frame is the SAME picture at a different scale, so per-frame cost SHOULD be flat and'
@@ -1668,7 +1668,7 @@ if ($zsRows.Count) {
     $md += 'The ratio is `frames x single_frame_wall / sequence_wall` - each app against ITSELF, so it'
     $md += 'needs no cross-app calibration. 1.0 means everything is rebuilt every frame.'
     $md += ''
-    $md += '| Renderer | Sequence wall | Amortisation | Note |'
+    $md += '| Renderer | Sequence wall | Amortization | Note |'
     $md += '|---|---|---|---|'
     foreach ($ren in 'fractadyne', 'fraktaler3') {
         $sq = $zsRows | Where-Object { $_.renderer -eq $ren -and $_.scene -notlike '*-single*' -and $_.scene -notlike '*-amortisation' } | Select-Object -First 1
@@ -1680,7 +1680,7 @@ if ($zsRows.Count) {
     }
     $md += ''
     $md += 'Fraktaler-3 3.1 has no sequence mode in its batch CLI - it renders one image per'
-    $md += 'invocation, so its figure is N processes and its amortisation is 1.0 BY CONSTRUCTION.'
+    $md += 'invocation, so its figure is N processes and its amortization is 1.0 BY CONSTRUCTION.'
     $md += 'That is a property of the CLI, not of its engine (which has zoom-sequence and'
     $md += 'exponential-map machinery this lane does not reach). Do not quote it as an engine ceiling.'
 }

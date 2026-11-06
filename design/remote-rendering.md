@@ -306,7 +306,7 @@ windows (computed from the script's `transition`/`transition_secs` per keyframe)
 
 **By priority (2026-10-29).** `sched::Config::priority`, one number a frame, hands the job out
 deepest first: each new run starts at the free frame first in priority (the later on a tie) and
-grows over the free frames beside it, always toward the higher neighbour, then — as in order —
+grows over the free frames beside it, always toward the higher neighbor, then — as in order —
 leads in off a dissolve and never ends where the next run would have to start on one. A zoom
 video's strips give their index (the deepest, slowest strips first; `zoom-video.md` §8.5); a tour
 asked for `--order deepest` (`--farm-render`, `--gpus`, the Render on farm window's "Deepest frames
@@ -323,16 +323,16 @@ idles on the round trip; at most two runs are ever outstanding per client.
 **Heartbeats and reachability.** Clients send `Heartbeat` every 2 s. Five missed (10 s) → the client
 is **unreachable**: its in-flight runs go back to the queue immediately (any verified `FrameDone`
 stays done) and the connection is dropped. The **client** redials with backoff (2 s → 60 s) — it is
-the dialling side — and on reconnect repeats the handshake and self-check (§9.1) before it is
+the dialing side — and on reconnect repeats the handshake and self-check (§9.1) before it is
 offered work; frames it says it finished while away (share mode) are accepted after verification.
 
 **Timeouts — two rules, because one is wrong for deep zoom.** A frame at 1e60205× legitimately
 takes an hour on the reference alone, so a fixed per-frame deadline would reassign honest work
 forever. (a) **Stall**: a run whose `FrameDone` count has not advanced within `stall_timeout_s`
-(default `max(300, 8 × median frame time seen on this job)`) is cancelled and reassigned, and the
+(default `max(300, 8 × median frame time seen on this job)`) is canceled and reassigned, and the
 client is marked *suspect*. A reference build that is still advancing counts as progress too
 (protocol 8): before a job's first frame there is no median, and at 9.98e60205× (2026-10-29) every
-client's 7–8 minute build was cancelled at 300 s and began again from nothing. The render prints
+client's 7–8 minute build was canceled at 300 s and began again from nothing. The render prints
 `reference-work steps=N` every 5 s in which `fractadyne_core::reference_steps` moved; a build that
 stops advancing lets the stall clock run out from its last step. GPU passes do not count: frame
 times measure them already, and a frame that loops on passes must still look stalled. (b) **Hard deadline** per frame (`deadline_s`, default none): the
@@ -442,7 +442,7 @@ On gigabit that is 0.15 s and 1.1 s. What it costs to build:
 
 ⭐**The pick, not the orbit, dominates at depth — and the blob carries the pick's result** (the
 point it chose, its exact mantissa words, the precision, the tail for extension). BLA is O(n) and
-cheap (≤ 1.5 s at 1.6 M samples) and depends on colouring settings, so it is rebuilt locally, as
+cheap (≤ 1.5 s at 1.6 M samples) and depends on coloring settings, so it is rebuilt locally, as
 the disk cache already does (`orbit_blob.rs:127–133`). SA is a second full bignum walk and is
 *not* in the blob; it is skipped whenever a BLA tree exists (`render.rs:2886–2896`), which is the
 deep Mandelbrot/Multibrot/fold case, so the common deep path loses nothing.
@@ -459,10 +459,10 @@ path changes.
    point words digest, orbit_len, bytes, build_ms}`. In stream mode the controller pulls the blob
    into `<out>/farm/orbits/`; in share mode the client wrote it to `<root>/<job_id>/orbits/` with
    temp-then-rename and the controller only indexes the header.
-3. Before launching a run, the client sends `OrbitQuery{first frame's centre words, span, precision,
+3. Before launching a run, the client sends `OrbitQuery{first frame's center words, span, precision,
    formula key}`. The controller evaluates admissibility over its index with the cache's own rule
    (`reuse_drift`: `prec ≥ needed` and the point within `REUSE_MAX_DRIFT` = 0.7 spans of the view
-   centre — a pure function of header fields and the view) and replies with the longest admissible
+   center — a pure function of header fields and the view) and replies with the longest admissible
    blob, if **transfer beats build**: `bytes / measured_link_rate < build_estimate`, where the
    estimate is `orbit_len × prec²` scaled by the *requesting* client's own measured constant from its
    past `OrbitOffer{build_ms}` values (first run: assume share — the gate already said ≥ 1 s). The
@@ -470,8 +470,8 @@ path changes.
    finds it before the pick runs.
 
 **Where it pays.** References flow deep → shallow: a blob built at a deeper frame (higher
-precision, point near the centre) is admissible for every shallower frame near the same centre. For
-a dive at a fixed centre — most tours in `tours/` — **one** blob at the final keyframe's precision
+precision, point near the center) is admissible for every shallower frame near the same center. For
+a dive at a fixed center — most tours in `tours/` — **one** blob at the final keyframe's precision
 serves every frame on every client; the "shippable reference files" item (TODO.md:9080) falls out
 of this as the special case "the controller pre-builds the deepest keyframe's reference and offers
 it first" (an option, default on for tours whose deepest keyframe is past 1e300×).
@@ -497,8 +497,8 @@ four inputs are **not** carried by the script, and a farm turns each into a fram
 |---|---|---|
 | **Version skew** | `version_string()`; `publish-share.ps1` refuses dirty builds | `Hello`/`HelloAck`: `APP_VERSION`, `FRACT_GIT` and `protocol` must be equal and `git` must not end in `-dirty` (decided, §13.4). Build sequence number is per machine and is *not* compared. Mismatch → client shown *version mismatch: has 0.3.0-beta.17 g3201b74, farm needs 0.3.0-beta.18 gabcdef0*, no work assigned. Dev override `--farm-allow-dirty`: both sides must pass it, it is logged, written to `job.toml`, and the panel shows *non-reproducible build*. |
 | **Tunables** | `--set`, `status_line()`; `--selftest` fails under any override | both sides `stock`, or the job carries the overrides explicitly and every client runs them. Instrument env vars (`FRACTADYNE_REF_ESCAPE_AT` …) count as off-stock and are refused. |
-| **Session-derived settings** | colour method, stripe/trap, light, DE, normalize/log palette, interior, SA/BLA/glitch toggles, watermark, animations — `session.toml` (`main.rs:6487–6493`); and `[render].max_iter` falls back to the *session's* `max_iter.max(500000)` when the script omits it (`scripting.rs:3167–3170`) | the controller resolves all of them into **`RenderSettings`** (typed, allow-listed) in the bundle; the client writes a fresh session from `SessionState::default()` + those fields into the job's config dir. Palette and light animation are pinned off (as `--shot` pins them, `shot.rs:120`). |
-| **GPU-dependent inputs** | (a) orbit length cap from the adapter's storage-binding limit — ~7.4 M vs ~928 k samples (`init_orbit_len_cap`, `render.rs:471`): a deep non-escaping reference truncates differently per GPU; (b) normalize anchors measured at 480×270 on the local GPU (`scripting.rs:3349–3414`): "cross-GPU escape values differ"; (c) the burned-in watermark, rasterised at 40 points × the display's `pixels_per_point` (measured in Phase 0: captions, callouts and the HUD are NOT scale-dependent — they lay out at `size / ppp`, and a 1.5× and a pinned render were pixel-identical there); (d) FP32 itself: NVIDIA folds the df32 error-free transforms, AMD keeps them (`gputest.rs`, `design/bench-matrix.md:25–45`) | (a) the job's cap = the minimum over connected clients' `HelloAck.gpu.max_storage_binding`, passed to children (`--set ORBIT_LEN_CAP`, built in Phase 0) — ⚠which means the weakest card sets it for everyone: at corpus location 15 (918,520-sample reference) a 100,000 cap changed every pixel, so the panel must show the job's cap and which client set it; (b) anchors measured **once** by the controller (`--dump-norm-anchors`) and shipped in the bundle (`--norm-anchors FILE`) — this also closes TODO.md:9086 "distributed normalize coherence"; (c) farm children pin `pixels_per_point` = 2 (`cli::FARM_PIXELS_PER_POINT`; 2 keeps the mark a downscale up to 8K frames) and rebuild the mark at it; (d) **cannot be closed**, see below. |
+| **Session-derived settings** | color method, stripe/trap, light, DE, normalize/log palette, interior, SA/BLA/glitch toggles, watermark, animations — `session.toml` (`main.rs:6487–6493`); and `[render].max_iter` falls back to the *session's* `max_iter.max(500000)` when the script omits it (`scripting.rs:3167–3170`) | the controller resolves all of them into **`RenderSettings`** (typed, allow-listed) in the bundle; the client writes a fresh session from `SessionState::default()` + those fields into the job's config dir. Palette and light animation are pinned off (as `--shot` pins them, `shot.rs:120`). |
+| **GPU-dependent inputs** | (a) orbit length cap from the adapter's storage-binding limit — ~7.4 M vs ~928 k samples (`init_orbit_len_cap`, `render.rs:471`): a deep non-escaping reference truncates differently per GPU; (b) normalize anchors measured at 480×270 on the local GPU (`scripting.rs:3349–3414`): "cross-GPU escape values differ"; (c) the burned-in watermark, rasterized at 40 points × the display's `pixels_per_point` (measured in Phase 0: captions, callouts and the HUD are NOT scale-dependent — they lay out at `size / ppp`, and a 1.5× and a pinned render were pixel-identical there); (d) FP32 itself: NVIDIA folds the df32 error-free transforms, AMD keeps them (`gputest.rs`, `design/bench-matrix.md:25–45`) | (a) the job's cap = the minimum over connected clients' `HelloAck.gpu.max_storage_binding`, passed to children (`--set ORBIT_LEN_CAP`, built in Phase 0) — ⚠which means the weakest card sets it for everyone: at corpus location 15 (918,520-sample reference) a 100,000 cap changed every pixel, so the panel must show the job's cap and which client set it; (b) anchors measured **once** by the controller (`--dump-norm-anchors`) and shipped in the bundle (`--norm-anchors FILE`) — this also closes TODO.md:9086 "distributed normalize coherence"; (c) farm children pin `pixels_per_point` = 2 (`cli::FARM_PIXELS_PER_POINT`; 2 keeps the mark a downscale up to 8K frames) and rebuild the mark at it; (d) **cannot be closed**, see below. |
 
 **FP32 across vendors.** Byte-identical goldens hold per GPU, not across GPUs (`selftest.rs:42–64`:
 strict on the blessing GPU, `GOLDEN_MEAN_CROSS_GPU` informational elsewhere; the "3080 all-black
@@ -515,7 +515,7 @@ things, none of them pretending otherwise:
    in the client row. On `JobOpen` an optional **job probe** (the first keyframe's view at 320×180)
    repeats the comparison with the job's own formula and palette. A `homogeneous` job option
    (default on for final delivery, off for previews) refuses clients whose probe differs.
-3. **Content check** (default on): a frame with fewer than `flat_colours` distinct colours (default
+3. **Content check** (default on): a frame with fewer than `flat_colours` distinct colors (default
    4) where the job's probe had many is *suspect*, not bad — black and flat frames are the known
    failure shape, and two black images compare equal. A suspect frame is re-rendered on another
    client; if the two differ by more than `spot_px` pixels, the first is a bad frame (§5 strike),
@@ -585,7 +585,7 @@ watermark, no visible window, a direct exit after the last frame, and one machin
 frame once it is on disk: `frame-done index=N bytes=B sha256=HEX ms=M` (the digest is of the file as
 read back; a file that cannot be read back is reported `frame-failed index=N reason="…"`). A `ref=`
 field (reference built vs received) waits for Phase 3, where the orbit-cache hit is attributable.
-⚠Two eframe 0.31 behaviours shaped the preset, both measured: `ViewportBuilder::with_visible(false)`
+⚠Two eframe 0.31 behaviors shaped the preset, both measured: `ViewportBuilder::with_visible(false)`
 holds only until the first frame is painted (`post_rendering` then shows the window
 unconditionally — `--deviceloss-repro` relies on it and is visible after frame one), so the child
 re-hides with `ViewportCommand::Visible(false)`, applied after that show; and a hidden window gets no
@@ -622,7 +622,7 @@ script's `[render]` block exactly as `open_tour_render` seeds today, so a tour r
   at the end (the existing ffmpeg path, run once by the controller).
 - **Run**: **Render** / Cancel → while running **Stop** (if/else, one slot), **Pause** / **Resume**.
   Overall progress bar with ETA (completed frames / rate, as `say()` computes), a frame strip
-  coloured by state and client (pending · assigned · done · failed), event log tail, and the finish
+  colored by state and client (pending · assigned · done · failed), event log tail, and the finish
   tone. **Copy command** gives the equivalent CLI line, as the dialog does today.
 - **Resume**: *Open folder…* reads `farm/job.toml`; the dialog shows what is done and what is
   pending before the user presses Render.
@@ -716,7 +716,7 @@ dumped anchors for 1×, 8× and 1e30× shared `lo = 0.98594…` and differed onl
 with each keyframe's iteration budget. Deep normalized frames were mapped through the home view's
 range and came out nearly flat. ✅**Fixed in its own commit after Phase 0**: the anchors now read
 0.99–1,584 (1×), 3.5–2,958 (8×) and 507–698 (1e30×); the gate tour's 1e30× frame went from 100 to
-1,932 distinct colours, and the shipped `ultra-dive-e200` keyframe holds from 651–1,016 to
+1,932 distinct colors, and the shipped `ultra-dive-e200` keyframe holds from 651–1,016 to
 1,505–1,663; shards still match the whole render exactly.
 
 **Phase 1 — channel, protocol, scheduler, CLI.** Pairing, Noise channel (client dials), pinning,
@@ -966,7 +966,7 @@ to a port where nothing listens (PLUTO's own loopback: no controller there) come
 `ConnectionReset` from the socket's NEXT receive, and the loop stopped at any error; on this
 machine the loopback probe always found a controller, so the error never arose. Fixed (only a
 timeout ends the wait; a test probes a closed port first, red before the fix); then PLUTO found
-`192.168.0.74:46733 "<this machine>" · 0.3.0-beta.18 5719ac1`, and a farm run with PLUTO dialling that
+`192.168.0.74:46733 "<this machine>" · 0.3.0-beta.18 5719ac1`, and a farm run with PLUTO dialing that
 discovered address finished (19 frames, exit 0). So a unicast reply to a broadcast does pass
 Windows' default firewall on the client. Noted: this machine has two cards on the LAN (.38 through
 a Hyper-V switch, .74 Intel); the probe arrives on both and the reply leaves from the routing
@@ -1026,7 +1026,7 @@ All eleven decided by the user on 2026-10-03, in two rounds. §13.1 below keeps 
 4. ✅ **Version gate: exact commit** (the user, 2026-10-03) — `APP_VERSION` + `FRACT_GIT` equal,
    `-dirty` refused; the dev override `--farm-allow-dirty` logs loudly and marks the job
    non-reproducible in `job.toml` and the panel. Version-only would let two builds of the same beta
-   differ in renderer behaviour (§13.1).
+   differ in renderer behavior (§13.1).
 5. ✅ **Work unit: contiguous runs seeded by `segment_range`** (the user, 2026-10-03, per the
    recommendation) — fixed-length runs that shrink toward the tail in Phase 1, stealing in Phase 3.
    Runs keep reference pipelining, L-system tables and dissolves; single frames would re-pay a cold
@@ -1050,10 +1050,10 @@ All eleven decided by the user on 2026-10-03, in two rounds. §13.1 below keeps 
 **4 — version gate.** `version_string()` has three parts: the Cargo version (bumped only at a
 release — every commit between tags carries the same label), the build sequence (a per-machine
 counter, meaningless across hosts) and the git short sha with `-dirty` when watched files changed.
-*Version-only* accepts any build labelled, say, `0.3.0-beta.17`. The tree at the time of writing is
-the counter-example: local main `3201b74` is labelled beta.17, the beta.17 release is `09f924b`, and
+*Version-only* accepts any build labeled, say, `0.3.0-beta.17`. The tree at the time of writing is
+the counter-example: local main `3201b74` is labeled beta.17, the beta.17 release is `09f924b`, and
 one of the two commits between them changes the supersampling of corrected exports — **same label,
-different pixels**, exactly the "silently mixes renderer behaviour mid-video" TODO.md:9049 warned
+different pixels**, exactly the "silently mixes renderer behavior mid-video" TODO.md:9049 warned
 about. *Version + sha* makes a farm run one commit everywhere; the cost is that clients must be
 updated after every commit during development (what `publish-share.ps1` + the field agent already
 do). `-dirty` is refused because it says only that *something* differed, not what: two dirty builds
@@ -1071,7 +1071,7 @@ frames a 3–4× slowdown unless the child becomes a long-lived server taking in
 bigger change); **no reference pipelining** — `render_tour_to_dir` builds frame N+1's reference
 while frame N renders only across a contiguous range in one process, so each single frame pays its
 own cold reference (6.2 s at 4.6e1105×, 405 s at 2.37e4000×; the job's orbit cache recovers most of
-that for a fixed-centre dive, little for a pan); L-system `BigTables` rebuilt per frame; and every
+that for a fixed-center dive, little for a pan); L-system `BigTables` rebuilt per frame; and every
 `dissolve` becomes a cut, a visible regression against `--render-tour`. *Runs* keep all of that and
 amortize the child; what they cost is balance at the tail — with run length L and N clients the
 last run can leave N−1 clients idle for up to (L−1) frame-times — and scheduler logic (adaptive
@@ -1083,10 +1083,10 @@ clients are unequal.
 **7 — sharing scope.** The question is which other client's reference blob a client may use.
 *`exact`*: same reference point and same precision only — bit-identical to a fresh build
 (`selfcheck_orbit_cache`), and the case `extend_reference_orbit` can lengthen. Hits across clients
-are rare: the pick scores candidates per view and need not choose the centre, and precision steps
+are rare: the pick scores candidates per view and need not choose the center, and precision steps
 every 64 octaves, so `exact` mostly re-finds a client's own blobs. *`neighbourhood`*: the app's own
-interactive rule (`reuse_drift`: precision ≥ needed, point within 0.7 spans of the centre). For a
-fixed-centre dive **one** deep blob serves every frame on every client; pixels may differ from an
+interactive rule (`reuse_drift`: precision ≥ needed, point within 0.7 spans of the center). For a
+fixed-center dive **one** deep blob serves every frame on every client; pixels may differ from an
 unshared render at glitch-tolerance level ("not perfectly invariant at extreme depth",
 `render.rs:1303`). ⭐This is not a new kind of difference: a single-machine `--render-tour` already
 builds a fresh reference per frame and the pick may choose a different point each time — frame-to-
@@ -1100,7 +1100,7 @@ starts of 8 h 52 min at 9.98e60205× instead of one — and it is the right sett
 - **Cross-GPU flicker is real and cannot be engineered away** (§9). The mitigation is visibility
   (classes, probe, spot check) and a default that refuses mixed farms for final renders. A user
   who overrides it gets a warning in the summary, not a surprise in the video.
-- **A listener in the controller's desktop session.** With clients dialling, the app holding the
+- **A listener in the controller's desktop session.** With clients dialing, the app holding the
   user's live session is the one network service. Off by default, on only while the farm panel is
   listening, authenticated before any byte of protocol, rate-limited, and the protocol surface is
   the allow-list; the clients expose nothing. SECURITY.md says so.
@@ -1121,7 +1121,7 @@ starts of 8 h 52 min at 9.98e60205× instead of one — and it is the right sett
   is parked after a second loss. Issue #1 (export device loss) is therefore contained, not fixed.
 - **Scheduler corner cases** (all tests, none intuition): F < clients; a one-frame tour; every
   client paused at once (job *waiting for clients*, not failed); the controller paused while a
-  `FrameDone` lands; a run cancelled after its last frame finished.
+  `FrameDone` lands; a run canceled after its last frame finished.
 
 ## 15. Side findings from the survey (unverified; worth their own fixes)
 
@@ -1145,7 +1145,7 @@ amplify, none of them verified by a reproduction here:
 
 Found while building Phase 0 (measured, not just read):
 
-5. ✅ *Fixed in Phase 0.* **A shard or chapter ending between keyframes coloured differently from the
+5. ✅ *Fixed in Phase 0.* **A shard or chapter ending between keyframes colored differently from the
    whole render**: the anchor pass clamped keyframe frames to the RANGE's last frame. Measured on the
    gate tour (see §12).
 6. ✅ *Fixed after Phase 0.* **Every normalize anchor measured the home view** (see §12, Phase 0) —

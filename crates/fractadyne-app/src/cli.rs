@@ -322,7 +322,7 @@ pub(crate) fn run_headless(args: &[String]) -> bool {
             std::io::stdin().read_line(&mut line).is_ok() && line.trim().eq_ignore_ascii_case("reset")
         };
         if !confirmed {
-            eprintln!("Cancelled — nothing was deleted.");
+            eprintln!("Canceled — nothing was deleted.");
             return true;
         }
         match fractadyne_state::reset_all() {
@@ -389,7 +389,7 @@ pub(crate) fn run_headless(args: &[String]) -> bool {
                 }
             },
         };
-        // After the zoom: the centre is parsed at the view's precision (see `arg_center`).
+        // After the zoom: the center is parsed at the view's precision (see `arg_center`).
         let center = match two("--center") {
             Some((x, y)) => {
                 let (cx, cy) = crate::arg_center("--center", x, y, mag_l2);
@@ -489,7 +489,7 @@ pub(crate) fn run_headless(args: &[String]) -> bool {
     //
     // ⚠Two rules this table obeys, both learned the hard way:
     //   * It prints the backend that ACTUALLY ran, from `observed_backends()`. A benchmark whose
-    //     configuration and behaviour can disagree measures an unknown build.
+    //     configuration and behavior can disagree measures an unknown build.
     //   * It asserts each row's orbit stayed BOUNDED and says so. An escaped orbit spends its
     //     iterations on infinities, which are fast and meaningless — the first draft of the
     //     backend-comparison probe "won" a row exactly that way before the check existed.

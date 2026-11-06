@@ -5,7 +5,7 @@ Strzelczyk and Piotr Pianowski, Copyright 2012--2014 for the Latin Modern math e
 of TeX Users Groups). It is distributed under the GUST Font License (GUST-FONT-LICENSE.txt), an
 instance of the LaTeX Project Public License 1.3c (http://www.latex-project.org/lppl.txt).
 
-It is NOT Latin Modern Math, and its authors do not support it. As the licence asks, it has a new
+It is NOT Latin Modern Math, and its authors do not support it. As the license asks, it has a new
 name. Changes, all made by scripts/subset_math_font.py in the Fractadyne repository:
 
 - Subset to the 269 glyphs the Fractadyne formula language can show (ASCII, mathematical italic

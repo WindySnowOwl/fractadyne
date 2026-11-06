@@ -14,7 +14,7 @@
 //! It never submits the lethal dispatch. The cost of one 256-iteration ("floor") window is set by
 //! `pixels × 256 × per-step-cost`, and — crucially — is INDEPENDENT of the reference LENGTH (a
 //! 256-iteration window reads at most 256 reference entries whatever the orbit's total size). So the
-//! danger is characterised by measuring the floor-window wall cost at SMALL pixel counts, timed the
+//! danger is characterized by measuring the floor-window wall cost at SMALL pixel counts, timed the
 //! honest way (`render_iter_chunked_timed` → one submission alone against `poll(Wait)`, the same
 //! signal `--chunk-sweep` uses), scaling the area up only while it stays under a safety bound, and
 //! EXTRAPOLATING to the field's full resolution. A lethal full-res dispatch is predicted, never run.
@@ -247,7 +247,7 @@ impl FractadyneApp {
         let (Some(cx), Some(cy)) =
             (fractadyne_core::parse_bf(&cx_s), fractadyne_core::parse_bf(&cy_s))
         else {
-            println!("ABORT: the centre coordinates did not parse.");
+            println!("ABORT: the center coordinates did not parse.");
             println!("--deviceloss-repro: VERDICT FAIL: VACUOUS - no view");
             return 2;
         };
@@ -285,7 +285,7 @@ impl FractadyneApp {
                     );
                 }
                 None => {
-                    println!("M-jump    : no minibrot found near the centre — measuring the view as given.")
+                    println!("M-jump    : no minibrot found near the center — measuring the view as given.")
                 }
             }
         }
@@ -294,7 +294,7 @@ impl FractadyneApp {
         // the watchdog will note the pause — that is expected). `current_export_request_for` runs
         // `recompute_worker` inline and carries the orbit into the request.
         println!(
-            "view      : centre {} , {}\n\
+            "view      : center {} , {}\n\
              zoom      : 2^{:.1} (~{:.2e}x){}\n\
              building reference at iter={ref_iter} (a non-escaping/interior orbit builds to the cap) ...",
             fractadyne_core::to_decimal_string(&self.viewport.center_x),
@@ -694,7 +694,7 @@ impl FractadyneApp {
         }
         // Time the rescued dispatch for real. It is the window [skip, orbit_len−1) — provably small,
         // that being the rescue's precondition. Walked in bounded windows rather than one wide pass
-        // so that even if the seed were somehow not honoured no single submission could approach
+        // so that even if the seed were somehow not honored no single submission could approach
         // the watchdog; windows ending at or below the skip break on entry and cost ~0 ms, so only
         // the pass past the skip carries the real work.
         const RESCUE_WALK_WINDOW: u32 = 4096;

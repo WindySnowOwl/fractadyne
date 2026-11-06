@@ -185,7 +185,7 @@ The alternative is **gettext PO**, the most widely supported format: every trans
 it, and Weblate supports it best ([Weblate formats](https://docs.weblate.org/en/latest/formats.html)).
 Against it here: messages are keyed by their English text, so fixing an English typo orphans every
 translation of it; plurals are a C-like expression in the file header; arguments are positional;
-and the runtime reads compiled `.mo` files, a second artefact to distribute. **Weblate's Fluent
+and the runtime reads compiled `.mo` files, a second artifact to distribute. **Weblate's Fluent
 support is monolingual and has no plural editor**
 ([Weblate: Fluent](https://docs.weblate.org/en/latest/formats/fluent.html)), so translators there
 type the `{ $count -> … }` selector as text; Weblate does check its syntax. That cost is real but
@@ -443,7 +443,7 @@ English README); and a language file that fails to load leaves the app in Englis
 | Ukrainian | `uk` | Cyrillic | a Cyrillic face beside Spline Sans (Noto Sans subset, OFL) | not needed | at spaces |
 | Japanese | `ja` | kanji and kana | a Japanese font: the system's, else a published subset | not needed | between characters (egui 0.31 does it) |
 | Chinese (Simplified) | `zh-Hans` | Simplified Han | a Simplified Chinese font, likewise | not needed | between characters |
-| Khmer | `km` | Khmer | Noto Sans Khmer, bundled (OFL) | **required: egui ≥ 0.35** | at zero-width spaces: egui must honour them |
+| Khmer | `km` | Khmer | Noto Sans Khmer, bundled (OFL) | **required: egui ≥ 0.35** | at zero-width spaces: egui must honor them |
 
 - **Latin.** Spline Sans covers Latin-1 and Latin Extended-A: every Spanish, French and German
   letter. Punctuation to confirm with the coverage test: „ “ « » and the narrow no-break space

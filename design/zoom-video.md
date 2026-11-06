@@ -8,12 +8,12 @@ This covers two things a deep-zoom video maker would use, in the order they shou
 1. **Exponential-map export** that zoomasm can assemble: the format the Kalles Fraktaler →
    zoomasm workflow already uses, so Fractadyne plugs into a pipeline people have.
 2. **Assembly in Fractadyne itself** ("zoomasm functionality in the app"): render the strips and
-   turn them into a video in one step, coloured by Fractadyne's own colouring, with no strip
+   turn them into a video in one step, colored by Fractadyne's own coloring, with no strip
    files left behind unless asked for.
 
-The short answer to "can we implement zoomasm functionality in our app" is **yes**. The maths is
-published and small, Fractadyne already renders, colours on the GPU and drives ffmpeg, and the
-one real change to the renderer is a second way of placing pixels (§4). The licence decides how it
+The short answer to "can we implement zoomasm functionality in our app" is **yes**. The math is
+published and small, Fractadyne already renders, colors on the GPU and drives ffmpeg, and the
+one real change to the renderer is a second way of placing pixels (§4). The license decides how it
 is built, not whether (§2).
 
 ## 1. What an exponential map buys
@@ -41,7 +41,7 @@ Cost (derived from the geometry, not from any program's documentation):
   The ratio grows with frame rate and with a slower zoom; the strips' cost does not depend on
   either.
 - Example: a dive to 1e1000× is 3,322 octaves. Strips: 3,334 of them (the last ~12 cover the final
-  frame's centre, §3) ≈ 17.6 Gpx at 1080p. Frames: 199,316 at 60 fps and an octave a second,
+  frame's center, §3) ≈ 17.6 Gpx at 1080p. Frames: 199,316 at 60 fps and an octave a second,
   413 Gpx.
 - The target is fixed for the whole dive, so **one reference orbit serves every strip**; the tour
   pipeline already builds one reference and reuses it (`render.rs:642`, the SA trace
@@ -51,7 +51,7 @@ The price: the camera can only dive straight in. It can **rotate** for free (an 
 assembly) and change speed freely, but it cannot pan. Fractadyne's own "Script to current view"
 tours pan while shallow and then dive; §8 covers mixing the two.
 
-## 2. Licence: clean-room only
+## 2. License: clean-room only
 
 zoomasm is **AGPL-3.0-or-later** (https://mathr.co.uk/zoomasm/), as are Kalles Fraktaler and
 Fraktaler-3 (https://mathr.co.uk/kf/kf.html, https://fraktaler.mathr.co.uk/). Fractadyne is MIT /
@@ -71,17 +71,17 @@ Apache-2.0. So, as with every other AGPL program this project has measured again
 Our own convention, used everywhere inside Fractadyne (the KF-compatible writer converts, §5):
 
 - **Strip `k`** covers radii `r ∈ [R₀·2^-(k+1)·(1−ε), R₀·2^-k]`: `R₀` = half the diagonal of the
-  first frame, so strip 0 covers its corners; `ε` a small overlap (one row) so neighbouring strips
+  first frame, so strip 0 covers its corners; `ε` a small overlap (one row) so neighboring strips
   share a row for blending.
 - **Texel `(i, j)`** of strip `k` is at angle `θ = 2π(i + ½)/W` (anticlockwise from the positive
   real axis) and radius `r = R₀·2^-k·exp(−2π(j + ½)/W)` (row 0 outermost).
-- **The centre of the last frames.** A frame at zoom `Z` needs radii from its corner down to about
+- **The center of the last frames.** A frame at zoom `Z` needs radii from its corner down to about
   half a pixel, `log2(diagonal)` octaves below its outer radius: 11.1 at 1080p, 12.1 at 4K. The
-  dive's strips therefore run ~12 octaves past the final frame's zoom (or the centre of the last
+  dive's strips therefore run ~12 octaves past the final frame's zoom (or the center of the last
   ~12 octaves of frames is filled from one flat render at the end; the extra strips are simpler and
   cost ~12 strips).
 - **Sampling density.** Along any frame, strip texels are never larger than the frame's pixels and
-  get smaller towards the centre (a texel at radius `r` is `r·2π/W`, a frame pixel is fixed): the
+  get smaller towards the center (a texel at radius `r` is `r·2π/W`, a frame pixel is fixed): the
   strips oversample the inner frame, so assembly is a downsampling problem (§6), and a strip
   oversampling factor `W = q·π·diagonal` buys antialiasing at the corners.
 
@@ -102,8 +102,8 @@ What a strip needs:
 | DE | the escape distance over one per-frame step (`de_log2`, `mandelbrot.wgsl:486-496`) | over the texel's own size `r·2π/W` (one log2 per pixel) |
 | Slope normals (relief) | screen frame | the c-plane frame (the same thing on an unrotated affine frame), so assembly can rotate them |
 | SA / BLA radius, reference pick span | from the view rectangle (`render.rs:1409-1419`, `3434-3443`; `core/src/reference.rs:2967`) | the strip's outer radius |
-| Reference | picked per view | the dive's centre, once; deep strips extend it (`REUSE_MAX_DRIFT` path) |
-| Iteration cap | per view | per strip, **non-decreasing with depth**; a cap that changes between neighbouring strips makes a capped/escaped seam along their shared row, so steps in the cap happen where the colouring hides them (or the dive uses one cap) |
+| Reference | picked per view | the dive's center, once; deep strips extend it (`REUSE_MAX_DRIFT` path) |
+| Iteration cap | per view | per strip, **non-decreasing with depth**; a cap that changes between neighboring strips makes a capped/escaped seam along their shared row, so steps in the cap happen where the coloring hides them (or the dive uses one cap) |
 | Tiles, step-bounded passes, packing, SSAA | rectangular tiles of the output | unchanged: a strip is a rectangle of texels; SSAA jitters `(gx, gy)` before the mapping |
 | Glitch correction | gather list of texels | unchanged (texel coordinates) |
 
@@ -128,8 +128,8 @@ From KF's manual (https://mathr.co.uk/kf/manual.html):
 | `N0`, `N1` | uint32 | low / high words when counts pass `0xFFFFFFFE` | same, for caps past 4.29e9 |
 | `NF` | float | fraction in [0, 1) | smooth fraction |
 | `T` | float | phase of the first escaped `z`, in turns | the final `arg z` the decomposition method keeps (aux.a) |
-| `DEX`, `DEY` | float | directional DE, magnitude ≈ 1 at a neighbouring boundary pixel, pointing away from it | DE vector over the texel size, rotated into the strip frame (a c-plane vector `v` at offset `δc` is `v/δc·W/2π` in strip texels: the exponential map is `log`) |
-| `R`, `G`, `B` | half | linear colour (optional) | our colouring, baked |
+| `DEX`, `DEY` | float | directional DE, magnitude ≈ 1 at a neighboring boundary pixel, pointing away from it | DE vector over the texel size, rotated into the strip frame (a c-plane vector `v` at offset `δc` is `v/δc·W/2π` in strip texels: the exponential map is `log`) |
+| `R`, `G`, `B` | half | linear color (optional) | our coloring, baked |
 
 Header attributes `Iterations` and `IterationsBias`; KF also stores its location and settings.
 The `exr` crate (already used by `fractadyne-export`, `lib.rs:884-907`) writes uint and half
@@ -139,7 +139,7 @@ channels.
 
 zoomasm reads a numbered sequence of such strips, one octave per file, and assembles frames at any
 resolution and frame rate along a timeline of (time, depth) waypoints, with rotation, motion blur,
-samples per pixel, a user GLSL colouring shader with access to the raw channels, audio, and output
+samples per pixel, a user GLSL coloring shader with access to the raw channels, audio, and output
 through ffmpeg (https://mathr.co.uk/zoomasm/zoomasm-3.4.html). Version 3.4 (2025-06-11); Linux is
 its supported platform, Windows builds are cross-compiled and untested by its author, macOS untested.
 
@@ -167,7 +167,7 @@ the shader API's `getN` reads as `N + (1 − NF)`). To settle them:
    `rgb-passthrough` and `binary-decomposition` presets, and compare its frames with frames
    rendered flat at the same zooms. Pass = the same structure everywhere (LOOK at the frames; then
    count differing pixels in the binary-decomposition frames, which have no palette to hide behind).
-   **Done 2026-10-28** with probe colourings of our own instead of the presets (§8.2): it found
+   **Done 2026-10-28** with probe colorings of our own instead of the presets (§8.2): it found
    that KF's default orientation shows our dives upside down.
 
 Disk cost is the workflow's, not ours: KF's channels are ~26 bytes a texel, ~140 MB a 1080p strip
@@ -181,9 +181,9 @@ workflow already live with that; §6 avoids it.
 - **No disk mountain.** A frame at zoom `Z` needs only the ~12–16 strips from `octave(Z)` inward.
   Rendering strips in dive order and assembling each frame as soon as its strips exist keeps a
   sliding window of strips (~1 GB at 1080p) instead of the whole dive.
-- **Fractadyne's colouring**, all of it (palettes, the six methods, relief lighting, normalize /
+- **Fractadyne's coloring**, all of it (palettes, the six methods, relief lighting, normalize /
   log mapping), applied on the GPU to the strips: no GLSL to write.
-- **Recolour without re-rendering**, when the strips are kept: palette, method, cycle speed — the
+- **Recolor without re-rendering**, when the strips are kept: palette, method, cycle speed — the
   iteration data does not change.
 - **One step from the app**, on Windows (where zoomasm is untested) and Linux, through the ffmpeg
   the tour export already uses (`scripting.rs:494-559`, `exec_resolve.rs`).
@@ -197,23 +197,23 @@ For output pixel `p` of a frame at zoom `Z`, rotation `φ`, with `δ = (p − ce
   column `i = θ·W/2π − ½` (wrapping).
 - Strip texels are at least as fine as frame pixels everywhere (§3), so each output pixel takes
   several samples over its own footprint (a sample count, like zoomasm's "samples per pixel") and
-  averages the **colours**. It never interpolates iteration counts: colour each texel, then
+  averages the **colors**. It never interpolates iteration counts: color each texel, then
   average. (The XaoS-reuse work found bilinear interpolation of the iteration texture worse than
   nearest, `design/xaos-reuse.md`; the same reason applies.)
 - Two strips meet on a shared row (the overlap `ε`); a pixel whose footprint crosses the seam
   takes samples from both.
 - Motion blur, if wanted: average sub-frame times (a shutter fraction) — a later option.
 
-### 6.3 Colouring at assembly
+### 6.3 Coloring at assembly
 
-The colour pass works on a texture of per-pixel quantities (`fs_color`,
+The color pass works on a texture of per-pixel quantities (`fs_color`,
 `mandelbrot.wgsl:3429-3570`; `coord_of` 3329-3359). A strip in our own raw format is such a
-texture, so the colour pass runs over each strip once (texel space) and the reprojection samples the
-coloured strip. Two things need care:
+texture, so the color pass runs over each strip once (texel space) and the reprojection samples the
+colored strip. Two things need care:
 
-- **Neighbourhood operations** (relief lighting's 3×3 normal average, the AA footprint estimate,
-  the DE glow) assume neighbouring texels are neighbouring screen pixels. In a strip they are
-  neighbouring texels of a conformal map, which is locally a rotated, scaled screen; normals stored
+- **Neighborhood operations** (relief lighting's 3×3 normal average, the AA footprint estimate,
+  the DE glow) assume neighboring texels are neighboring screen pixels. In a strip they are
+  neighboring texels of a conformal map, which is locally a rotated, scaled screen; normals stored
   in the c-plane frame (§4) and the texel's own size make these exact up to that local scaling.
 - **Normalize / log palette mapping** reads the frame's escape range. Over a dive, the range should
   follow the frames as the live view's does (the 2026-10-18 palette-follows-zoom fix), computed per
@@ -223,7 +223,7 @@ coloured strip. Two things need care:
 
 - **Timeline:** the tour format's keyframes already carry time, zoom (text, log-linear between
   keyframes) and easing (`scripting.rs:977-1005`, 1840). An exp-map tour is a tour whose keyframes
-  share one centre; add an optional `rotate` field (degrees, eased). Captions, callouts and fades
+  share one center; add an optional `rotate` field (degrees, eased). Captions, callouts and fades
   are drawn as the tour renderer draws them now (`scripting.rs:3978-4045`).
 - **Encoding:** pipe raw frames to ffmpeg's stdin instead of writing PNGs and assembling after
   (`scripting.rs:518-527` does the latter). Encoding then runs beside assembly; at 4K the encoder,
@@ -235,9 +235,9 @@ coloured strip. Two things need care:
 
 - CLI: `--render-expmap DIR` (strips, our format and/or `--kf-exr`), `--assemble DIR --out F.mp4`,
   and the one-step `--render-tour T.toml --expmap` for a tour that qualifies.
-- App: File → "Render zoom video…" from the current view: centre = the view's centre, start and end
-  depth (default 1× → here), duration or octaves per second, frame rate, size, rotation, colouring =
-  the current one. Progress shows strips and frames. "Keep strips" enables recolour and resume.
+- App: File → "Render zoom video…" from the current view: center = the view's center, start and end
+  depth (default 1× → here), duration or octaves per second, frame rate, size, rotation, coloring =
+  the current one. Progress shows strips and frames. "Keep strips" enables recolor and resume.
 - Farm and several GPUs: a strip is a self-contained job sharing one reference blob — the farm's
   unit (a run of frames, `farm/src/sched.rs`) becomes a run of strips (`TODO.md:9120-9122` planned
   exactly this). Resume = strips already on disk.
@@ -252,9 +252,9 @@ coloured strip. Two things need care:
 - **Against Fraktaler-3:** §5.3 (1). Per-texel N/NF where comparable, as the corpus does.
 - **Against zoomasm:** §5.3 (2).
 - **Assembly against direct rendering:** frames assembled from strips against frames rendered flat
-  at the same zoom, coloured the same way. Expect differences only from resampling (count them;
+  at the same zoom, colored the same way. Expect differences only from resampling (count them;
   LOOK at the worst frame). Include frames at strip seams, the first frame (strip 0's corners), and
-  the last (the centre's extra octaves).
+  the last (the center's extra octaves).
 - **The selftest and goldens stay byte-identical** with the strip mode switched off: it only adds
   a uniform branch outside the loop (measure that it costs nothing, as the RN_BLA override was
   measured, `mandelbrot.wgsl:882-885`).
@@ -265,8 +265,8 @@ coloured strip. Two things need care:
 |---|---|---|
 | **E0** | Strip geometry, `map_mode` in `iterate_at` and `chunk_fe_at`, per-texel DE size, strip radius for SA/BLA/pick; `--render-expmap DIR` writing our raw strips (integer count + fraction, DE, normals, T) with a manifest | geometry unit test; strip = gather render; selftest/goldens unchanged; cost of the switched-off branch measured |
 | **E1** | KF-compatible EXR writer (N/N0/N1/NF/T/DEX/DEY, optional RGB, header) | F3 exp-map comparison; zoomasm 3.4 assembles our strips with no seams, right orientation |
-| **E2** | `--assemble`: reprojection, multi-sample, colour pass over strips, rotation, timeline from a tour, ffmpeg pipe, audio mux, sliding strip window | assembled vs flat frames (§7); a 1e100 dive at 1080p60 end to end, timed against `--render-tour` of the same dive |
-| **E3** | App dialog, preview/scrub of the assembled video in the view, recolour from kept strips, farm and `--gpus` distribution by strips | uitest screens; a farm run with two GPUs |
+| **E2** | `--assemble`: reprojection, multi-sample, color pass over strips, rotation, timeline from a tour, ffmpeg pipe, audio mux, sliding strip window | assembled vs flat frames (§7); a 1e100 dive at 1080p60 end to end, timed against `--render-tour` of the same dive |
+| **E3** | App dialog, preview/scrub of the assembled video in the view, recolor from kept strips, farm and `--gpus` distribution by strips | uitest screens; a farm run with two GPUs |
 | **E4** (optional) | Tours that pan then dive: flat frames for the pan, strips for the dive, a crossfade where they meet | a "Script to current view" tour rendered both ways, compared |
 
 E0 + E1 alone deliver the zoomasm workflow; E2 is where Fractadyne stops needing zoomasm.
@@ -326,7 +326,7 @@ double-precision orbit — each rule below fits KF's every texel to f32 rounding
 | | KF 2.15.5.2 | Our strips (§3) |
 |---|---|---|
 | Rows | exactly one octave in `H` rows (KF's "zoom size 2"); `H` free | conformal + 1 overlap row |
-| Texel `(x, y)` | `θ = 2πx/W`, `r = top·2^(−y/H)`: sampled at its CORNER; row 0 outermost; angle anticlockwise from +re (`ImagPointsUp: 0`, its default) | `θ = 2π(x+½)/W`, centre |
+| Texel `(x, y)` | `θ = 2πx/W`, `r = top·2^(−y/H)`: sampled at its CORNER; row 0 outermost; angle anticlockwise from +re (`ImagPointsUp: 0`, its default) | `θ = 2π(x+½)/W`, center |
 | Orientation | `ImagPointsUp: 1` writes the same strip mirrored in angle (texel `x` = default texel `(W − x) mod W`, so clockwise) with `DEY` negated, every other value equal (99.9% of texels identical after the mirror). **We write this one**: zoomasm then shows the dive the right way up | imaginary up |
 | `top` | the half diagonal of a flat `W×H` image at KF's zoom (`2/zoom·hypot(W,H)/H`; zoom = our magnification) | `R₀·2^-k` |
 | Escape | `\|zₙ\| > 10^(4/p)` (100, 21.5 … 3.16), `z₁ = c` | `\|z\| > 256` |
@@ -355,10 +355,10 @@ unchanged) and its row step as `map_s`.
   escape relations exercised hundreds of times; mutation-checked: the step back, the escape radius,
   DEY's sign); the octave layout against a 256-bit computation; the EXR integer attributes round trip.
 - **Selftest `expmap`:** a fourth case, a zoomasm-layout df32 strip against the oracle (34/48 exact,
-  0 wrong); sampling it at texel centres instead fails it (0/48 exact, 31 wrong).
+  0 wrong); sampling it at texel centers instead fails it (0/48 exact, 31 wrong).
 - **zoomasm 3.4 assembling the strips (2026-10-28).** A 30-strip seahorse dive (−0.7436…+0.1318…i
   to 2^20, 640x360, fixed cap 20,000) recorded to lossless PPM frames, one an octave, with probe
-  colourings of our own written from the manual's GLSL API (binary decomposition of `T`, bands of
+  colorings of our own written from the manual's GLSL API (binary decomposition of `T`, bands of
   `getN()`, the DE's length and its direction); KF rendered the same 30 strips for comparison.
   - **Geometry exact:** with Shutter 0, zoomasm's frame at depth `Z` is Fractadyne's flat render at
     magnification `2^Z` (interior IoU 0.97 / 0.99 / 0.94 at `Z` 0 / 5 / 19, fitted scale 1.000–1.005).
@@ -375,13 +375,13 @@ unchanged) and its row step as `map_s`.
     neither 50%). Like for like (the same area, texels weighted by area), strip 9 is exactly as
     exact as a flat `--render-iter` at 2^9 (61.6% / 61.1% within 1e-3 of an f64 orbit): the
     shallow gap to KF is the renderer's single-precision direct mode, flat frames included.
-  - **zoomasm facts, measured:** a session loads only with its input and colour paths filled in
+  - **zoomasm facts, measured:** a session loads only with its input and color paths filled in
     (else "load settings error", even for one zoomasm saved itself); a waypoint's `t` is a FRACTION
     of the soundtrack (the last is 1.0); `--record` needs the GUI (with `--no-gui` it sits idle);
     Shutter 50% at one sample a pixel samples each pixel at its own moment (two recordings of the
     same strips differ) and a quarter of a frame's depth later. A 20 s 720p video (31 strips,
     default rising cap) took 17 s to render and 16 s for zoomasm to encode.
-- **Not yet:** RGB channels (KF writes its colouring as half R, G, B; zoomasm's rgb-passthrough
+- **Not yet:** RGB channels (KF writes its coloring as half R, G, B; zoomasm's rgb-passthrough
   preset reads them). Shallow strips by perturbation or double-single, for KF's precision near the
   set (cost to measure).
 
@@ -390,13 +390,13 @@ unchanged) and its row step as `map_s`.
 `--assemble DIR --out F.mp4` (video) and `--assemble DIR --assemble-at L[,L…]` (PNG frames; with
 `--render-iter`, each frame's raw main target as an EXR), from Fractadyne-format strips on disk.
 
-- **Frame = reprojected main target + the app's colour pass.** `fs_color` knows nothing of the
+- **Frame = reprojected main target + the app's color pass.** `fs_color` knows nothing of the
   plane: it reads a main target and assumes `ss×ss` texels a pixel. So the assembler fills a
   FRAME-SHAPED main target, `(w·ss)×(h·ss)`, from the strips (`gpu/src/assemble.wgsl`, a module of
-  its own, nothing in `mandelbrot.wgsl` changed), and colours it with `fs_color` from the unchanged
+  its own, nothing in `mandelbrot.wgsl` changed), and colors it with `fs_color` from the unchanged
   iterate module, with the uniform `color_iter_buffer_ss` builds (`color_uniforms_for`, shared). §6.3's
-  "colour each strip once, then reproject colours" is NOT what was built: colouring after
-  reprojection gets every neighbourhood operation (relief's 3×3, the palette AA footprint) and the
+  "color each strip once, then reproject colors" is NOT what was built: coloring after
+  reprojection gets every neighborhood operation (relief's 3×3, the palette AA footprint) and the
   distance estimate in frame samples for free, exactly as a flat render has them.
 - **Each sample takes its nearest texel** (`ExpMap::locate` is the CPU definition; the shader
   mirrors it with its own atan, WGSL's is only promised to 4096 ULP). The distance estimate is
@@ -418,7 +418,7 @@ unchanged) and its row step as `map_s`.
     with a CONTROL (the same flat render moved (0.3, 0.2) px): the assembled frame agrees with the
     flat one at least as well as the control at every depth (within 0.1 iteration: 97.0/51.9/63.7/
     63.8/8.2% vs the control's 93.2/33.6/56.3/51.2/4.5%), DE bias ≤ 0.0065 (the left-out row step:
-    +6.52), and the coloured frame is identical (max difference 0) to `color_iter_buffer_ss` on the
+    +6.52), and the colored frame is identical (max difference 0) to `color_iter_buffer_ss` on the
     same samples. Sample-for-sample differences are large wherever pixels are chaotic, which is
     why the check is relative to the control, not absolute.
   - The same comparison at 640x360 by hand (the seahorse dive, fixed cap 5000) gave the same
@@ -432,10 +432,10 @@ unchanged) and its row step as `map_s`.
   slowest pixels sit just under the cap wherever interior is in view — min/max put the whole
   picture in the bottom 20% of the palette (measured: top 4998 vs 1689 at the same view). Frames
   interpolate the anchors GEOMETRICALLY (the window grows by factors: linear moved it 13% in an
-  octave's first frame and 3% in its last; the first frame step of the 2^20 dive's mean colour
+  octave's first frame and 3% in its last; the first frame step of the 2^20 dive's mean color
   went 11.1 → 4.4, below the un-normalized video's 4.6). The live view switches linear→log at a
   window ratio of 1000; a video DISSOLVES between the two across a factor of 2 either side
-  (`log_weight`, through the colour pass's palette fade), so a dive across it never jumps. Each
+  (`log_weight`, through the color pass's palette fade), so a dive across it never jumps. Each
   anchor is logged (`[fd-assemble] palette anchor at 2^L: window LO to TOP (W% log)`).
 - **One step, no strips on disk** (`--render-zoom-video F`, §6.1's sliding window): the dive is
   planned as `--render-expmap` plans it (`plan_dive`, shared), its one reference built for the
@@ -451,7 +451,7 @@ unchanged) and its row step as `map_s`.
   count: the in-memory strip carries the renderer's `sm.z`, a file `N + NF` rounded once).
 - **Tours and rotation** (§6.4): `--assemble-tour T` takes each frame's depth from the tour's own
   playback (`Playback::sample`: keyframe zooms, times, holds, easing; the tour's fps unless
-  `--assemble-fps`), and REFUSES a tour that leaves the dive's centre by more than a thousandth of a
+  `--assemble-fps`), and REFUSES a tour that leaves the dive's center by more than a thousandth of a
   pixel of the frame it is at, or goes outside the strips' depths — a strip video cannot pan (start
   the tour where its last pan ends). `--assemble-rotate R`: R turns an octave (the GPU path had
   rotation from the start; normals turn with the frame, so relief light stays fixed to the screen).
@@ -461,7 +461,7 @@ unchanged) and its row step as `map_s`.
   second, a fixed cap of 20,000, normalized. `--render-zoom-video`: **62.5 s** in all — 340 strips
   in 33.8 s (12 direct, 79 df32 perturbation, 249 floatexp; median 107 ms a floatexp strip) and
   9,934 frames assembled (2.7 ms of GPU a frame) and encoded. `--render-tour` of the same dive (a
-  two-keyframe tour on the same centre, linear zoom, the same cap and size, ss 1): **919 s** for its
+  two-keyframe tour on the same center, linear zoom, the same cap and size, ss 1): **919 s** for its
   9,935 PNG frames, without encoding — **14.7× slower**. The frames LOOKED right at every depth (the
   e98 stars, the palette anchored once an octave from 190–239 at 2^40 to 2229–2280 at 2^320).
 - **§8's gate at full size (2026-10-28, the 3080, the user's go-ahead):** the same dive at 1920x1080,
@@ -480,20 +480,20 @@ unchanged) and its row step as `map_s`.
 ### 8.4 E3 so far (2026-10-28): the app dialog
 
 Tools ▸ "Render zoom video…" (`app/src/ui/zoom_video.rs`; in Tools beside "Tour from current
-view…" rather than File, where the app's other video tools are). Modelled on "Render tour…": the
+view…" rather than File, where the app's other video tools are). Modeled on "Render tour…": the
 render is a CHILD `--render-zoom-video` (a lost device ends the render, not the session; the
 tested path), its stdout progress (`frame K/N (…)`, now printed every 30 frames) drives a bar,
 its stderr's first error is quoted on failure, and the live view holds while it runs. The view
-goes on the command line exactly (the centre as the viewport's text, `--zoom-log2`); the colouring
+goes on the command line exactly (the center as the viewport's text, `--zoom-log2`); the coloring
 comes from the SESSION, saved just before the child starts. Options: file, size, fps, octaves a
 second, start depth, turns an octave, anti-aliasing (strips oversampled to match), BLA (on by
 default, below), normalize, keep strips (folder). Before Render it shows the frames, length, strips, the window's GPU memory
 and, keeping strips, their disk (~11 bytes a texel, measured). It refuses Julia, other fractals and
-aux colourings up front, with the reason. `--uitest` step `zoom-video` (seeded mid-render): text
+aux colorings up front, with the reason. `--uitest` step `zoom-video` (seeded mid-render): text
 fits, no overlap — after the strips folder moved to its own line (a 200-pt field beside the
 checkbox cut the path). The command it builds was run as is (strips kept, 2x anti-aliasing,
 rotation, normalize): 181 frames, progress on stdout, 21 strips + manifest kept.
-- **Not yet in E3:** preview/scrub in the view, recolour from kept strips in the app, farm and
+- **Not yet in E3:** preview/scrub in the view, recolor from kept strips in the app, farm and
   `--gpus` distribution by strips.
 
 **The user's first real render (2026-10-28, RTX 3080, 10 GB)** — a dive to 2.2e36× (120.7 octaves),
@@ -579,7 +579,7 @@ frames, and this machine assembles the video when the last one is in.
   290 Mb/s link takes ~6.5 s; a 256 MiB orbit had the same exposure): heartbeats now go out between
   chunks; every other message keeps its order.
 - **The end:** the controller assembles the video here (`--assemble DIR --out F` with the command's
-  assembly options, as a child in this machine's own configuration, so the colouring is the
+  assembly options, as a child in this machine's own configuration, so the coloring is the
   session's), relays its `frame K/N` lines, then deletes the strips unless they were kept.
 - **In the app:** the Render zoom video dialog offers "Use all graphics cards" (two or more) and
   "Render on farm…", which opens Tools ▸ Render on farm… with this video as its job.
@@ -608,7 +608,7 @@ frames, and this machine assembles the video when the last one is in.
   32/255 (mean 0.65–1.98/255); frames where none show (2^12, 2^44, 2^50) identical. ⭐LOOKED at
   2^31 side by side with a difference map: scattered single pixels in the filaments and on the
   minibrot's edge, no ring where its strips meet the others. Motion not judged.
-- **Deepest strips first** (`sched::Config::priority` by index; built as `from_end`, generalised
+- **Deepest strips first** (`sched::Config::priority` by index; built as `from_end`, generalized
   2026-10-29 for tours rendered deepest first; after the user's ask the same day): each new
   run takes the highest strips still free, so the slowest go out first and the cheap shallow ones
   fill the end; a run is still rendered ascending, so stealing its tail works unchanged. The
@@ -631,19 +631,19 @@ ASSEMBLY (§8.4's first render hit both):
   PIECES around its circle (`strip_pieces`: the fewest pieces, as equal as whole texels allow,
   each a layer of the window's array; the shader reads piece `i / piece_width` of slot `s` at layer
   `s·pieces + piece`). A sample reads the very texel it read before.
-- **The window's memory.** A frame reads every strip from its corners to its centre at once:
+- **The window's memory.** A frame reads every strip from its corners to its center at once:
   `layers_for_frame` = 13-15 strips, each `W × 0.11W` texels at 16 bytes (count, normal, DE) —
-  ~19 GB at 4K 2x. The colour pass reads the count always, the distance estimate only for the
-  distance colouring and the glow, and the normal only for relief (`fs_color`; the aux colourings
-  are refused), so the window now holds only what the frames' colouring reads
-  (`WindowTexels::for_colour`): 4 bytes for smooth colouring, 8 with the distance estimate or glow,
+  ~19 GB at 4K 2x. The color pass reads the count always, the distance estimate only for the
+  distance coloring and the glow, and the normal only for relief (`fs_color`; the aux colorings
+  are refused), so the window now holds only what the frames' coloring reads
+  (`WindowTexels::for_colour`): 4 bytes for smooth coloring, 8 with the distance estimate or glow,
   16 with relief. What it leaves out is zero in the reprojected sample and never read. A frame whose
-  colouring reads more than the window holds is refused (`Assembler::frame`), and `--assemble-at`
+  coloring reads more than the window holds is refused (`Assembler::frame`), and `--assemble-at`
   with `--render-iter` (raw samples to a file) keeps everything. The aux target beside the frame's
-  sample grid, which no allowed colouring reads, is one texel instead of 16 bytes a sample.
+  sample grid, which no allowed coloring reads, is one texel instead of 16 bytes a sample.
 
 Graphics memory for assembly (the window and the frame, 10^9 bytes), before → after, smooth
-colouring (the window's strips: 12 at 720p, 13-15 above):
+coloring (the window's strips: 12 at 720p, 13-15 above):
 
 | video | strip | before | now | |
 |---|---|---|---|---|
@@ -654,16 +654,16 @@ colouring (the window's strips: 12 at 720p, 13-15 above):
 | 5K, 2x | 36911 × 4073 | refused: strip too wide | 10.4 GB, 2 pieces | needs a ~12 GB card |
 | 8K, 2x | 55366 × 6109 | refused: strip too wide | 23.5 GB, 2 pieces | |
 
-With relief the window is as before (it reads everything); with distance colouring or glow, half.
+With relief the window is as before (it reads everything); with distance coloring or glow, half.
 The dialog now counts the frame too and warns or refuses on the total.
 
 - **Checked:** the selftest's geometry check runs again with every strip in three pieces (346
   texels as 116 + 116 + 114) — every sample the texel `ExpMap::locate` names; a new check renders a
-  dive's strips and colours its frames six ways (smooth and distance, with and without glow and
-  relief), from the whole window and from one holding only what each colouring reads, in three
+  dive's strips and colors its frames six ways (smooth and distance, with and without glow and
+  relief), from the whole window and from one holding only what each coloring reads, in three
   pieces: bit-identical. Its CONTROL: the count-only window's samples differ from the whole
   window's in the normal and DE it leaves out, never in the count, and relief is refused on it.
-- **Measured end to end (RTX 3080, a copy of the user's session: smooth colouring, `--iter 3000`):**
+- **Measured end to end (RTX 3080, a copy of the user's session: smooth coloring, `--iter 3000`):**
   - Through the real path: a 720p dive's kept strips (35 of 4614×511) assembled at five depths
     with the strips whole and in five pieces (`--set ASSEMBLE_PIECE_MAX=1000`): the PNGs
     byte-identical. The window held the count: 113 MB, and the frame 44 MB.
@@ -672,15 +672,15 @@ The dialog now counts the frame too and warns or refuses on the total.
   - The user's 4K at 2x, a dive to 2^16 at two octaves a second and 30 fps: 29 strips of
     27683×3055 in 72 s, 241 frames, 141 s in all, no error; the window 4,736 MB holding the count
     and the frame 796 MB (the same video crashed at ~17.6 GB before §8.4's fix, then was refused).
-    Frames looked at, a 1:1 crop of the centre included: clean.
+    Frames looked at, a 1:1 crop of the center included: clean.
 - **The dialog's note** (the user: a user "would be confused by the two apparently similar
   functions"): one line under the view says what a zoom video is and how it differs from Render
   tour (faster, straight zoom only); a section that opens says how it works, what it makes, its
   limits, what Render tour does instead and which to choose (that line set apart). The Render tour
   dialog says the same from its side in one line, and the Tools menu's hovers in a sentence each.
-  The memory line's hover says what the strips keep for the colouring chosen. `--uitest` step
+  The memory line's hover says what the strips keep for the coloring chosen. `--uitest` step
   `zoom-video-about` photographs the section open: text fits.
-- **Not done (the third fix, larger):** holding the inner strips coarser. Toward a frame's centre
+- **Not done (the third fix, larger):** holding the inner strips coarser. Toward a frame's center
   each octave inward is twice as fine as the frame reads it, so a window held at the resolution
   frames read would take ~2.3 strips' worth instead of 13-15 (about 6x less), at the cost of
   samples landing up to half a sample from where they land now and the full strips waiting in
@@ -719,7 +719,7 @@ The questions as they were put:
 
 ## 10. Risks and unknowns
 
-- KF's DEX/DEY normalisation and T's exact definition are only described in prose; §5.3 decides
+- KF's DEX/DEY normalization and T's exact definition are only described in prose; §5.3 decides
   them from F3's output, and F3 may itself differ from KF. Where they disagree, match what zoomasm
   renders correctly.
 - A strip's per-pixel cost differs from a frame's: the outer rows of a strip lie outside the

@@ -183,7 +183,7 @@ fn a_blinking_background_is_exact() {
 }
 
 /// Life and AntiLife (B0123478/S01234678, its live/dead reversal) are the same universe with the
-/// colours swapped: a pattern run in one is the complement of its complement run in the other.
+/// colors swapped: a pattern run in one is the complement of its complement run in the other.
 #[test]
 fn antilife_is_life_with_the_colours_swapped() {
     let cells = soup(7, 0, 0, 30, 30, 0.4, 2);

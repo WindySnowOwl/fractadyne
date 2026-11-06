@@ -19,7 +19,7 @@ fn nucleus() -> [BigFloat; 2] {
     [parse_bf_prec(NRE, P).unwrap(), parse_bf_prec(NIM, P).unwrap()]
 }
 
-/// A view centred so the nucleus sits `fx` half-widths right of the centre and `fy` half-heights up.
+/// A view centered so the nucleus sits `fx` half-widths right of the center and `fy` half-heights up.
 fn view(fx: f64, fy: f64) -> [BigFloat; 2] {
     let [w, h] = span();
     let n = nucleus();
@@ -34,13 +34,13 @@ fn log2_span() -> f64 {
     w.log2().max(h.log2())
 }
 
-/// The walk of a view's centre records the nucleus it passes: a hint at the minibrot's period
+/// The walk of a view's center records the nucleus it passes: a hint at the minibrot's period
 /// whose Newton step points at the nucleus, to first order.
 #[test]
 fn the_walk_records_a_hint_at_the_nucleus_it_passes() {
     let c = view(0.6, 0.0);
     let (_, period, hints) = orbit_length_periodic(&c[0], &c[1], formula::MANDELBROT, CAP, P, log2_span(), None);
-    assert!(period.is_none(), "the centre is not the nucleus, so its orbit does not close");
+    assert!(period.is_none(), "the center is not the nucleus, so its orbit does not close");
     let h = hints.iter().find(|h| h.period == PERIOD).expect("a hint at the minibrot's period");
     // c - step should be the nucleus: compare the step with c - nucleus.
     let n = nucleus();
@@ -49,14 +49,14 @@ fn the_walk_records_a_hint_at_the_nucleus_it_passes() {
     assert!(err < -8.0, "the hint's step is the nucleus offset to first order (relative error 2^{err:.1})");
 }
 
-/// The nucleus 0.6 half-widths right of a centre that escapes: the nucleus pick takes it, a
+/// The nucleus 0.6 half-widths right of a center that escapes: the nucleus pick takes it, a
 /// periodic reference, where the plain pick takes a survivor.
 #[test]
 fn the_nucleus_pick_takes_the_nucleus_when_the_centre_escapes() {
     let c = view(0.6, 0.0);
     let zero = bf(0.0, P + REF_RESCUE_EXTRA_BITS);
     let centre_len = orbit_length_bf(&zero, &zero, &c[0], &c[1], formula::MANDELBROT, CAP, P + REF_RESCUE_EXTRA_BITS, false);
-    assert!(centre_len < CAP, "fixture: the centre must escape (got {centre_len} of {CAP})");
+    assert!(centre_len < CAP, "fixture: the center must escape (got {centre_len} of {CAP})");
 
     let (plain, plain_diag) = best_reference_diag(&c, span(), formula::MANDELBROT, false, [0.0, 0.0], CAP, P);
     assert_eq!(plain_diag.nucleus, None, "the plain pick never takes a nucleus");
@@ -75,7 +75,7 @@ fn the_nucleus_pick_takes_the_nucleus_when_the_centre_escapes() {
     assert_eq!(period.map(|p| p.period), Some(PERIOD));
 }
 
-/// Whether `pt` lies inside the view centred at `c` (the pick's own rectangle, `±span/2`).
+/// Whether `pt` lies inside the view centered at `c` (the pick's own rectangle, `±span/2`).
 fn inside(c: &[BigFloat; 2], pt: &[BigFloat; 2]) -> bool {
     let [w, h] = span();
     bf_to_floatexp(&pt[0].sub(&c[0], P, RM)).log2() <= w.log2() - 1.0
@@ -117,12 +117,12 @@ fn with_no_nucleus_in_view_the_pick_is_the_plain_one() {
 fn a_centred_view_still_closes_on_its_period() {
     let c = view(0.0, 0.0);
     let (len, period, _) = orbit_length_periodic(&c[0], &c[1], formula::MANDELBROT, CAP, P + REF_RESCUE_EXTRA_BITS, log2_span(), None);
-    assert_eq!(period.map(|p| p.period), Some(PERIOD), "the nucleus-centred view closes at its period");
+    assert_eq!(period.map(|p| p.period), Some(PERIOD), "the nucleus-centered view closes at its period");
     assert_eq!(len, CAP, "a closing orbit scores the whole budget");
 }
 
 /// The repeats rule: a nucleus whose period is longer than the pick allows is not taken, and the
-/// same hint is taken once the period fits. (The pick allows a quarter of the centre's own walk,
+/// same hint is taken once the period fits. (The pick allows a quarter of the center's own walk,
 /// `NUCLEUS_MIN_REPEATS`.)
 #[test]
 fn a_nucleus_longer_than_the_pick_allows_is_not_taken() {

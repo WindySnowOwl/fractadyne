@@ -38,7 +38,7 @@ impl MapPalette {
 
     /// The palette **smoothed** — evenly spaced stops with linear blending between them.
     ///
-    /// Offered because a `.map` is also just an ordered colour list, and a deep zoom cycling a
+    /// Offered because a `.map` is also just an ordered color list, and a deep zoom cycling a
     /// palette hundreds of times across a narrow band of escape values often wants the ramp. It is
     /// a choice the user makes, never a default the importer makes for them.
     pub fn smooth(&self, name: impl Into<String>) -> Gradient {
@@ -50,7 +50,7 @@ impl MapPalette {
 ///
 /// Strict where it matters and tolerant where the format itself is: `;` starts a comment (the
 /// `.map` convention), blank lines are skipped, and text after the third value is ignored — real
-/// files carry colour names there. What is NOT tolerated is a line that does not begin with three
+/// files carry color names there. What is NOT tolerated is a line that does not begin with three
 /// integers in 0–255, because that is the difference between reading a `.map` and reading
 /// something else that happens to have numbers in it.
 ///
@@ -85,7 +85,7 @@ pub fn parse_map(text: &str) -> Result<MapPalette, String> {
             }
             *slot = parsed;
         }
-        // Trailing tokens are a colour name or a comment; real .map files carry both.
+        // Trailing tokens are a color name or a comment; real .map files carry both.
         colors.push([v[0] as f32 / 255.0, v[1] as f32 / 255.0, v[2] as f32 / 255.0]);
         if colors.len() == 256 {
             break; // a .map is a 256-entry table; anything after it is not part of the palette
@@ -93,7 +93,7 @@ pub fn parse_map(text: &str) -> Result<MapPalette, String> {
     }
     if colors.len() < 2 {
         return Err(format!(
-            "found {} colour{} - a .map file is a list of R G B lines, one per palette entry",
+            "found {} color{} - a .map file is a list of R G B lines, one per palette entry",
             colors.len(),
             if colors.len() == 1 { "" } else { "s" }
         ));
@@ -136,7 +136,7 @@ pub struct UgrGradient {
     pub rotation: u32,
     /// The file's `smooth=yes|no`.
     ///
-    /// ⚠**Recorded, not honoured.** Ultra Fractal's smooth mode is a spline through the control
+    /// ⚠**Recorded, not honored.** Ultra Fractal's smooth mode is a spline through the control
     /// points, which is not a per-segment blend function and so is not expressible in the model
     /// this crate uses; gnofract4d has the same limitation and also imports linearly. Silently
     /// mapping it onto `Blend::Curved` would look like support for something we do not do.
@@ -170,7 +170,7 @@ impl UgrGradient {
 /// The format is free-form: a `name { ... }` block containing a `gradient:` section of interleaved
 /// `index=`/`color=` pairs wrapped across as many lines as it likes, optional `title=`, `smooth=`
 /// and `rotation=`, and a separate `opacity:` section. Whitespace and line breaks carry no meaning
-/// inside a block, so this tokenises rather than reading line by line.
+/// inside a block, so this tokenizes rather than reading line by line.
 ///
 /// ⭐⭐**`color=` is a decimal integer packed BGR — `0xBBGGRR`, red is the LOW byte.** Verified from
 /// gnofract4d's decoder (`icolor & 0xFF` → red, `(icolor >> 16) & 0xFF` → blue). Reading it as RGB
@@ -252,7 +252,7 @@ pub fn parse_ugr(text: &str) -> Result<Vec<UgrGradient>, String> {
             g.stops.sort_by_key(|(idx, _)| *idx);
             out.push(g);
         }
-        // A block with fewer than two colours is not a gradient (UF files carry formula and
+        // A block with fewer than two colors is not a gradient (UF files carry formula and
         // parameter blocks in the same syntax); skipping it is what lets a mixed file load.
     }
     if out.is_empty() {
@@ -323,20 +323,20 @@ fn ugr_u32(v: &str, what: &str) -> Result<u32, String> {
 ///
 /// ⭐**This is the format the whole segment model was taken from**, so unlike `.map` and `.ugr` it
 /// needs no lowering: a `.ggr` segment IS a [`Segment`](crate::segment::Segment), midpoint, blend
-/// function, colour space and all. Nothing is approximated here.
+/// function, color space and all. Nothing is approximated here.
 ///
 /// ```text
 /// GIMP Gradient
 /// Name: Full saturation spectrum CCW
 /// 7
-/// left mid right   lr lg lb la   rr rg rb ra   blend colour [left_type right_type]
+/// left mid right   lr lg lb la   rr rg rb ra   blend color [left_type right_type]
 /// ```
 ///
 /// Thirteen numbers per segment, or fifteen in GIMP 2.x files that record where each endpoint's
-/// colour comes from (fixed, foreground, background); the two extra are read and ignored, because
-/// "the current foreground colour" is not a thing a fractal renderer has.
+/// color comes from (fixed, foreground, background); the two extra are read and ignored, because
+/// "the current foreground color" is not a thing a fractal renderer has.
 ///
-/// ⚠**Colours are DISPLAY-space `0..1` and pass straight through.** GIMP writes what the screen
+/// ⚠**Colors are DISPLAY-space `0..1` and pass straight through.** GIMP writes what the screen
 /// shows, and so does this renderer (see `srgb8_to_stop`), so a conversion here would be the same
 /// mistake that made pasted palettes too dark before beta.21.
 ///
@@ -387,7 +387,7 @@ pub fn parse_ggr(text: &str) -> Result<Gradient, String> {
             ));
         }
         let f: Vec<&str> = line.split_whitespace().collect();
-        // 13 fields, or 15 with GIMP 2.x's per-endpoint colour types.
+        // 13 fields, or 15 with GIMP 2.x's per-endpoint color types.
         if f.len() != 13 && f.len() != 15 {
             return Err(format!(
                 "segment {}: expected 13 or 15 values, found {}",
@@ -451,31 +451,31 @@ pub fn parse_ggr(text: &str) -> Result<Gradient, String> {
 // Adobe `.ase` swatch lists
 // ================================================================================================
 
-/// Parse an Adobe Swatch Exchange (`.ase`) file into its colours, in file order.
+/// Parse an Adobe Swatch Exchange (`.ase`) file into its colors, in file order.
 ///
 /// A swatch list has **no positions and no interpolation semantics** — it is an ordered set of
-/// colours, so importing one means choosing a spacing (even) and a blend (linear). That choice is
-/// the caller's: this returns colours, and [`Gradient::from_colors`] makes the gradient.
+/// colors, so importing one means choosing a spacing (even) and a blend (linear). That choice is
+/// the caller's: this returns colors, and [`Gradient::from_colors`] makes the gradient.
 ///
 /// The format is big-endian binary:
 ///
 /// ```text
 /// "ASEF"  u16 major  u16 minor  u32 block_count
 /// per block:  u16 type  u32 body_len  body
-///   type 0x0001 = colour:  u16 name_len (UTF-16 units, incl. NUL)  name  4-byte model  f32 values  u16 kind
+///   type 0x0001 = color:  u16 name_len (UTF-16 units, incl. NUL)  name  4-byte model  f32 values  u16 kind
 ///   type 0xC001 / 0xC002 = group start / end, skipped
 /// ```
 ///
 /// ⚠⚠**UNVERIFIED AGAINST A REAL FILE.** Every other importer here was written against a real file
 /// or a working parser (`design/palette-import.md` marks those ✅); this one is written from the
 /// published layout alone, because no `.ase` was to hand. It is therefore deliberately **strict** —
-/// the signature, the block lengths and the colour model must all agree — so a file that does not
-/// match this understanding FAILS LOUDLY instead of importing plausible-looking wrong colours.
+/// the signature, the block lengths and the color model must all agree — so a file that does not
+/// match this understanding FAILS LOUDLY instead of importing plausible-looking wrong colors.
 /// ⭐The first real `.ase` anyone imports is the actual test; if it is rejected, this is why.
 ///
 /// ⚠**LAB swatches are refused by name, not converted.** LAB → sRGB needs a white point (Adobe uses
 /// D50) and a chromatic adaptation, and writing that from memory is exactly the kind of guess that
-/// produces colours which look fine and are wrong. Same call as the `.ggr` `+` continuation.
+/// produces colors which look fine and are wrong. Same call as the `.ggr` `+` continuation.
 pub fn parse_ase(bytes: &[u8]) -> Result<Vec<[f32; 3]>, String> {
     let need = |at: usize, n: usize| -> Result<(), String> {
         if at + n > bytes.len() {
@@ -507,13 +507,13 @@ pub fn parse_ase(bytes: &[u8]) -> Result<Vec<[f32; 3]>, String> {
         let body = at + 6;
         need(body, len)?;
         at = body + len;
-        // 0xC001/0xC002 are group start/end. A group carries no colour of its own, and flattening
+        // 0xC001/0xC002 are group start/end. A group carries no color of its own, and flattening
         // groups is right for a gradient: the file's ORDER is the only structure that survives.
         if kind != 0x0001 {
             continue;
         }
         if len < 2 {
-            return Err(format!("block {}: colour block is too short", b + 1));
+            return Err(format!("block {}: color block is too short", b + 1));
         }
         // Name length counts UTF-16 code units including the terminating NUL.
         let name_units = u16at(body) as usize;
@@ -533,14 +533,14 @@ pub fn parse_ase(bytes: &[u8]) -> Result<Vec<[f32; 3]>, String> {
             }
             other => {
                 return Err(format!(
-                    "block {}: unknown colour model {:?}",
+                    "block {}: unknown color model {:?}",
                     b + 1,
                     String::from_utf8_lossy(other)
                 ))
             }
         };
         if v + values * 4 > body + len {
-            return Err(format!("block {}: colour values overrun the block", b + 1));
+            return Err(format!("block {}: color values overrun the block", b + 1));
         }
         let f = |i: usize| f32at(v + i * 4).clamp(0.0, 1.0);
         out.push(match values {
@@ -556,17 +556,17 @@ pub fn parse_ase(bytes: &[u8]) -> Result<Vec<[f32; 3]>, String> {
     }
     if lab > 0 && out.is_empty() {
         return Err(format!(
-            "every swatch ({lab}) is LAB, which needs a colour profile this importer will not guess at"
+            "every swatch ({lab}) is LAB, which needs a color profile this importer will not guess at"
         ));
     }
     if lab > 0 {
         return Err(format!(
-            "{lab} of {} swatches are LAB, which needs a colour profile this importer will not guess at - importing the rest would silently drop them",
+            "{lab} of {} swatches are LAB, which needs a color profile this importer will not guess at - importing the rest would silently drop them",
             out.len() + lab
         ));
     }
     if out.len() < 2 {
-        return Err(format!("found {} colours - a swatch list needs at least two", out.len()));
+        return Err(format!("found {} colors - a swatch list needs at least two", out.len()));
     }
     Ok(out)
 }

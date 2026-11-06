@@ -106,7 +106,7 @@ pub(crate) fn run(args: &[String]) -> bool {
         let (cx, cy) = match (fc::parse_bf_prec(&cx_s, precision), fc::parse_bf_prec(&cy_s, precision)) {
             (Some(x), Some(y)) => (x, y),
             _ => {
-                println!("  [{}] SKIP {name}: centre coordinates did not parse", ri + 1);
+                println!("  [{}] SKIP {name}: center coordinates did not parse", ri + 1);
                 skipped += 1;
                 continue;
             }

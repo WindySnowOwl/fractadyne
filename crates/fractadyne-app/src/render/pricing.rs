@@ -1,7 +1,7 @@
 //! The live view's frame-pricing family (design/live-render-robustness.md §5.1, step M2): what a
 //! dispatch is measured to cost, what the next one may cost, and the backstops for when the
 //! measurement does not arrive — the reading rule and its probe, the reading pool, the wall clock,
-//! the blind tripwire and dead-man, motion jams and the chunk-band licences. Moved verbatim from
+//! the blind tripwire and dead-man, motion jams and the chunk-band licenses. Moved verbatim from
 //! `render.rs`, which re-exports it; the property tests stay beside their subjects there.
 
 /// ⭐The OPENING GUESS, derived from a measured per-step rate rather than assumed.
@@ -250,7 +250,7 @@ pub(crate) fn budget_step(cur: u64, steps: u64, ms: f64, explicit: bool) -> Opti
 /// ⭐**Growth is refused; shrink is not.** A frame rendered while a rebuild is in flight is priced
 /// against a reference that is about to be thrown away — usually a cheap frame, because the pixels
 /// are still clamped to the old (shorter) orbit — so growth measured there is unearned. Shrink is
-/// always honoured: a slow frame is bad news regardless of what happens next.
+/// always honored: a slow frame is bad news regardless of what happens next.
 ///
 /// **The incident.** 2026-08-16 (`reports/fractadyne-report.-2026-08-16a.txt`), a settled tiled view
 /// at zoom 3.4e38. Inside the ~2 s window containing one reference build, `fe_budget` went
@@ -337,7 +337,7 @@ pub(crate) fn wall_probe_step(
 /// Windows), and under it every wall-clock premise in the controller inverts:
 ///   * the chunk drain's "a quick present proves the queue drained" can NEVER pass, so a
 ///     serialized pass wedges, its wall accumulator inflates on pure present-wait, and the
-///     band licences get lethal-shed with the GPU idle;
+///     band licenses get lethal-shed with the GPU idle;
 ///   * the wedged (held, deduped) pass produces no new timestamps, so the measurement-
 ///     starvation latch fires and hands pricing to the wall clock;
 ///   * the wall clock then prices real dispatches at the throttle interval (~1 s) and
@@ -368,7 +368,7 @@ pub(crate) const PRESENT_THROTTLE_FRAMES: u32 = 5;
 /// learned nothing about a pass until it DRAINED (a quick present as proof the queue emptied) or
 /// hit the wedge backstop at `target × 60` — ~24 s at a 400 ms target, long after a device would be
 /// gone. That is the gap the 2026-08-22 field loss fell through: a queue on its way to losing the
-/// device never produces a quick present, so the one pass whose price would shed the licence is
+/// device never produces a quick present, so the one pass whose price would shed the license is
 /// exactly the pass that cannot be priced. Accumulated wall is a conservative LOWER BOUND — if it
 /// has reached the lethal band the pass has *already* been that expensive, no drain required.
 ///
@@ -380,7 +380,7 @@ pub(crate) const PRESENT_THROTTLE_FRAMES: u32 = 5;
 /// - ⚠**`shed` latches.** A pass sitting in the band for many frames sheds ONCE — the ledger is
 ///   already at the floor, and re-shedding every frame is noise that hides the first one.
 /// - ⚠⚠**`throttled` vetoes.** Under present throttling the accumulator measures the COMPOSITOR,
-///   not the GPU (see `present_throttle_step`), so shedding on it would floor every licence off an
+///   not the GPU (see `present_throttle_step`), so shedding on it would floor every license off an
 ///   *idle* card. Those are the 2026-09-04 field log's exact lines, and this is the same
 ///   present-throttle poisoning of a wall-clock controller that the dual-view Julia saga turned on.
 /// - ⚠A NaN or negative accumulator never sheds, and the `>=` alone is what enforces that: every
@@ -512,7 +512,7 @@ pub(crate) fn chunk_band_license(
     if b > 0 {
         b.max(floor)
     } else {
-        // ⚠UNVISITED territory opens at the FLOOR — never at a neighbour's license. The final
+        // ⚠UNVISITED territory opens at the FLOOR — never at a neighbor's license. The final
         // repro death was exactly an inherited license: a 36k-step pass earned on a band's cold
         // beginning ran TEN SECONDS when the band turned hot mid-way (the storm starts before
         // the wrap point, inside the band). The floor is the worst-case-prior sizing: first contact
@@ -527,7 +527,7 @@ pub(crate) fn chunk_band_license(
         // a region only **3× more hostile** would make the floor ITSELF lethal
         // (900 / 256 = 3.5 ms per iteration).
         // ⭐Which is why `budget_step`'s floor is no longer a bare 256: it is now the SMALLER of
-        // 256 and what the worst measured rate says fits the target wall. This licence floor is
+        // 256 and what the worst measured rate says fits the target wall. This license floor is
         // still a constant, because an unvisited band has no measured rate of its own to size
         // from — that is the whole point of it — but it inherits the caller's `floor`.
         floor
@@ -543,13 +543,13 @@ pub(crate) fn chunk_band_license(
 /// ask cut into 16 equal parts — so a band's WIDTH grew with the ask, and the ledger's resolution
 /// collapsed at exactly the depths where device losses happen. At the 2026-08-22 field loss's ask
 /// of **231,676** iterations each band spanned **14,480** iterations, and the fatal window
-/// `[768, 1792)` sat in band 0 — holding a licence earned by the passes at iterations 0..768, the
-/// cheap start of the orbit. Under octaves that window is band 2, `[512, 1024)`, whose licence can
+/// `[768, 1792)` sat in band 0 — holding a license earned by the passes at iterations 0..768, the
+/// cheap start of the orbit. Under octaves that window is band 2, `[512, 1024)`, whose license can
 /// only have been earned inside those 512 iterations: a **28× finer** attribution right where it
 /// mattered.
 ///
 /// ⭐This is the ledger's own warning, one level up. `chunk_band_license` already refuses to let
-/// UNVISITED territory inherit a neighbour's licence, because "a 36k-step pass earned on a band's
+/// UNVISITED territory inherit a neighbor's license, because "a 36k-step pass earned on a band's
 /// cold beginning ran TEN SECONDS when the band turned hot mid-way — the storm starts before the
 /// wrap point, INSIDE the band". That fix bounded the gap BETWEEN bands; nothing bounded the gap
 /// WITHIN one, and a 14,480-iteration band has a great deal of "within".
@@ -569,7 +569,7 @@ pub(crate) fn chunk_band_of(cur: u32) -> usize {
 }
 
 /// The first iteration PAST the band `cur` sits in — where a pin pass that started at `cur` must
-/// stop so the next band is entered under its own licence (`chunk_band_of` gives the band; this
+/// stop so the next band is entered under its own license (`chunk_band_of` gives the band; this
 /// is its upper edge). Band 0 is `[0, 256)`; band k ≥ 1 is `[256·2^(k−1), 256·2^k)`. The last
 /// band is open-ended (its "end" saturates), matching the ledger's clamp.
 pub(crate) fn chunk_band_end(cur: u32) -> u32 {
@@ -598,10 +598,10 @@ pub(crate) fn chunk_band_start(band: usize) -> u32 {
 /// The ordinary cliff rule quarters a band on a price past 2× target — but it only runs on a pass
 /// the walk judges DRAINED (`last_dt_ms < CHUNK_DRAIN_DT_MS`, the quick present). A queue on its
 /// way to losing the device is saturated, presents stop coming back quick, and the hot pass stays
-/// `chunk_inflight` — unpriced. So the one pass whose price would shed the licence is exactly the
-/// pass the gate can silence, and the band keeps a licence earned on this region's cheap frames.
+/// `chunk_inflight` — unpriced. So the one pass whose price would shed the license is exactly the
+/// pass the gate can silence, and the band keeps a license earned on this region's cheap frames.
 /// That is the 2026-08-22 field loss's shape: `chunk=[768,1792)`, a 1024-iteration window still
-/// sized by a licence, at a moment nothing was being priced.
+/// sized by a license, at a moment nothing was being priced.
 ///
 /// ⭐**Shedding is OUTPUT-NEUTRAL, which is what makes it safe on a hot path.** The window size
 /// sets only where a pass stops and resumes, never what it computes: the chunked iterate's
@@ -622,7 +622,7 @@ pub(crate) fn chunk_band_retreat(bands: &mut [u32; crate::tunables::CHUNK_BANDS]
 /// above it and then grown compounds straight into the ~900 ms lethal band — measured, twice);
 /// a price past 2× target is a cliff and QUARTERS the record (never zeroes it: a shed band is
 /// still priced knowledge — "small is what this region affords" — where zero would fall back to
-/// the neighbour's license, which is exactly the license that just failed). Prices between 1×
+/// the neighbor's license, which is exactly the license that just failed). Prices between 1×
 /// and 2× hold: neither evidence for growth nor a cliff.
 ///
 /// `fast_lane` is the growth factor of a clearly cheap price. The settled walk keeps
@@ -643,9 +643,9 @@ pub(crate) fn chunk_band_update_with_lane(
     bands[band] = licence_update(bands[band], size, price_ms, target_ms, fast_lane);
 }
 
-/// One licence after a pass of `size` iterations priced at `price_ms` against `target_ms`
-/// (`chunk_band_update_with_lane`'s rule, for a band's licence and for the settled walk's escape-onset
-/// licence alike, `decide::WalkLedger::onset_licence`). `cur` itself for a garbage price.
+/// One license after a pass of `size` iterations priced at `price_ms` against `target_ms`
+/// (`chunk_band_update_with_lane`'s rule, for a band's license and for the settled walk's escape-onset
+/// license alike, `decide::WalkLedger::onset_licence`). `cur` itself for a garbage price.
 pub(crate) fn licence_update(cur: u32, size: u32, price_ms: f64, target_ms: f64, fast_lane: u32) -> u32 {
     // NaN/negative are garbage; ZERO is not — it is a pass whose accumulated wall time was
     // literally unmeasurable (headless harnesses, and any pass cheaper than the clock), which is
@@ -677,8 +677,8 @@ pub(crate) fn licence_update(cur: u32, size: u32, price_ms: f64, target_ms: f64,
 /// end every pixel rebases, a cliff of its own, and as exact). Before: [`WALK_ONSET_SHARE_REF`] ×
 /// the reference's end, standing in. 0 = no region.
 ///
-/// ⭐**At the escape itself, not short of it.** The region's own licence grows on its own cheap
-/// prices, so any cheap stretch inside it is where the licence balloons before the cliff: from
+/// ⭐**At the escape itself, not short of it.** The region's own license grows on its own cheap
+/// prices, so any cheap stretch inside it is where the license balloons before the cliff: from
 /// 0.85 × the escape the 2^704 view's region held [188k, 221k), nearly free, and its passes doubled
 /// 1,542 → 24,672 iterations and ran the last into the cliff at ~221k for 1 s (2026-10-21). The cost
 /// there rose AT the first escape: a pass over [204,279, 220,663) cost 12 ms, [220,663, 228,855)
@@ -691,10 +691,10 @@ pub(crate) fn walk_onset_start(seen: u32, ref_end: u32) -> u32 {
     }
 }
 
-/// The share of its target the escape-onset region's licence is priced against
-/// (`WalkLedger::onset_work`): half. A band's licence aims at the full target; inside the region the
+/// The share of its target the escape-onset region's license is priced against
+/// (`WalkLedger::onset_work`): half. A band's license aims at the full target; inside the region the
 /// cost per iteration still varies ~2× from stretch to stretch (at the 2^704 view 25, 31 and 32 ms
-/// per 1,000 iterations along one walk, and a licence carried from a cheaper stretch), so a licence
+/// per 1,000 iterations along one walk, and a license carried from a cheaper stretch), so a license
 /// doubled on a price under half the target landed a pass at 909 ms, 2.3× it (2026-10-21).
 pub(crate) const WALK_ONSET_TARGET_SHARE: f64 = 0.5;
 
@@ -801,7 +801,7 @@ pub(crate) fn pin_gate_timeout_us(registered: bool, frame_dt_ms: f64, scaled: bo
 ///
 /// ⚠**Why the completion clause.** Priced by a reading or a 5-frame wait alone, a pin pass went
 /// unpriced whenever a new pass replaced it first: without GPU timestamps none was ever priced (the
-/// band licence never grew, a pin crawled ~1,500 iterations a frame toward a 1,000,000 ask, and
+/// band license never grew, a pin crawled ~1,500 iterations a frame toward a 1,000,000 ask, and
 /// `--motiontest` failed A2 with `FRACTADYNE_NO_TIMESTAMPS=1`, on main's build too), and with them
 /// 34 of 622 were.
 pub(crate) fn pin_pass_priceable(gpu_ms: f64, frames_since: u64, inflight: u32) -> bool {
@@ -1059,12 +1059,12 @@ impl Meter {
         // A pessimistic cut sizes the next passes below any such gate, so no pass can ever
         // qualify again, the pin crawls at its floor and the frozen frame ages 8–13 octaves on
         // screen. The estimate is a HINT: the pass growth limiter (×2 per pass), the band
-        // licence, the wall-clock cut and the TDR budget are the guards, and a deduped 0.2 ms
+        // license, the wall-clock cut and the TDR budget are the guards, and a deduped 0.2 ms
         // reading that inflates the hint is caught by those on the next pass.
         // ⭐The way DOWN is bounded to `MOTION_CUT_MAX` per reading (see that constant): a PIN
         // pass's timestamp — walked past the BLA-skippable range at a per-step cost nothing like
         // a motion frame's — landed here and cut the motion budget 9× in one reading at 2^800,
-        // and the next motion frame painted one flat colour. Three such readings still find a
+        // and the next motion frame painted one flat color. Three such readings still find a
         // 9× slower regime; one reading no longer does, because one reading from a different
         // kind of pass is not a measurement of this one.
         self.motion_rate[v][s] = motion_rate_step(cur, rate);

@@ -4,7 +4,7 @@ The tooling behind the blank-motion-frame fix of 2026-09-20 (`112a088`), kept be
 lesson it taught is easy to forget: **every per-pass metric in the log said the fix was working
 while the screen got worse.** Resolution is part of the iteration walk's signature, so a
 controller that re-chose it every few frames restarted the walk every few frames — walks
-reached further, and 36% of frames were a flat colour. Only capturing the live window and
+reached further, and 36% of frames were a flat color. Only capturing the live window and
 testing the canvas for uniformity showed it. Measure the screen.
 
 ## Reproduction
@@ -34,10 +34,10 @@ python scripts/dive-capture/screengate.py run1 run2 run3      # 0 PASS, 1 RED, 2
 python scripts/dive-capture/screengate.py --selftest          # every criterion seen to fire
 ```
 
-It scores **blank** (canvas stddev < 1), **flat** (>97% within 8 of the median colour), **flash**
+It scores **blank** (canvas stddev < 1), **flat** (>97% within 8 of the median color), **flash**
 EPISODES (the canvas switching into or out of a flat capture) and **stale** (a streak of identical
 captures while the view moved; a whole run whose screen never changed while the autopilot's log
-shows the view travelling is FROZEN, and RED), takes the median of three, and holds it to 7% blank,
+shows the view traveling is FROZEN, and RED), takes the median of three, and holds it to 7% blank,
 no mid-dive blank episode, 7% flat, 3 flashes and a stale streak of 2, with a blank spread of at
 most 10 points. ⚠`flashscore.py`'s FLASH_DIFF of 60 is kept for
 recordings but is NOT the gate's flash: at 2^800 an ordinary zoom step between captures differs by
@@ -63,11 +63,11 @@ through the battery). The margin is thin — the pre-fix median sits exactly at 
 | `grab_full.ps1` | the same at native resolution — needed to read an 8 px toolbar glyph |
 | `blankscore.py RUN…` | per run: frames, `SCREEN BLANK` count (canvas-interior stddev < 1), rung changes, empty passes, and a `#`/`.` timeline |
 | `flashscore.py RUN… [--rect X0 X1 Y0 Y1]` | per run: FLASHES (captures whose canvas differs from the previous one by > 60 mean units/channel — a crisp frame giving way to a flat one, or back), flat frames, and a `!`/`F`/`.` timeline. Also runs on frames extracted from a screen recording (`--rect` names the canvas) — the 2026-09-20 recording scored 35% flat, 22 episodes |
-| `motion.py RUN/stderr.txt…` | camera metrics from the `[fd-autopilot]` evals: focus-of-expansion off-centre and aim movement per look |
+| `motion.py RUN/stderr.txt…` | camera metrics from the `[fd-autopilot]` evals: focus-of-expansion off-center and aim movement per look |
 | `life.py RUN/stderr.txt` | octaves of runway at the goal and the aim: true distance estimate at 260 digits (mpmath), slow. Assumes a 1467×1102 panel — edit `W,H` |
-| `mkpath.py RUN STEP` | every STEP-th eval as `path.tsv` (centre, l2, aim) for offline `--render` frames along the dive |
+| `mkpath.py RUN STEP` | every STEP-th eval as `path.tsv` (center, l2, aim) for offline `--render` frames along the dive |
 | `dive-2p800.kfr`, `dive-2p633.kfr` | the two reported locations (the 2^633 one does NOT reproduce the blank frames on this box) |
-| `dive-2p584.kfr` | the start view of the 2026-09-20 "flashing / flat colour planes" recording (8.1e175×); with `session-2026-09-20.toml`, auto-iter (`ITER` 0) and `FRACTADYNE_BIGNUM=rug` it is that session |
+| `dive-2p584.kfr` | the start view of the 2026-09-20 "flashing / flat color planes" recording (8.1e175×); with `session-2026-09-20.toml`, auto-iter (`ITER` 0) and `FRACTADYNE_BIGNUM=rug` it is that session |
 | `session-seed.toml` | the reporting user's settings, personal paths removed |
 | `session-2026-09-20.toml` | the same user's settings at the flashing report (base iterations 250,000; the auto-iter ask at 2^584 is ~152k against a picture complete by ~4,400) |
 

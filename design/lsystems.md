@@ -99,7 +99,7 @@ Phase 4, stochastic productions, settled:
   word a generation at a time carrying each symbol's variant (four stochastic exercises: a plant,
   a curve, a dragon whose `X` folds either way, leaves on either side); two mutations of the
   walk's variant bookkeeping each fail those tests.
-- **Seen**: branch-depth colouring is depth over (order × nesting), so at a deep zoom every visible
+- **Seen**: branch-depth coloring is depth over (order × nesting), so at a deep zoom every visible
   branch is a dark shade — for every plant, not only stochastic ones. To revisit.
 
 Phase 4, parametric and context-sensitive productions, settled (`lsystem/expand.rs`, `expr.rs`):
@@ -136,12 +136,12 @@ Phase 4, SVG export, settled (`lsystem_view/svg.rs`):
 
 - **The screen's walk, written as vectors**: the view's segments (culled, sub-pixel subtrees as
   chords — so the file is bounded by the view's pixels at any zoom, deep views included) as
-  `<path>`s, consecutive segments that meet in the same colour joined into one; filled shapes as
+  `<path>`s, consecutive segments that meet in the same color joined into one; filled shapes as
   `<polygon>`s of their clipped outlines (triangles would show seams), under the lines; the
-  interior colour as the background. Coordinates to 0.01 px, y flipped.
-- **Colours as the screen's**: the colour pass for an L-system is `palette(value + offset)` from
+  interior color as the background. Coordinates to 0.01 px, y flipped.
+- **Colors as the screen's**: the color pass for an L-system is `palette(value + offset)` from
   the baked LUT (`Lut::sample` is its Rust twin), its channels the bytes shown.
-- **Checked**: the file read back is the segment list (to 0.005 px, colour for colour); a view's
+- **Checked**: the file read back is the segment list (to 0.005 px, color for color); a view's
   SVG has a polygon per shape and a line per segment; Inkscape renders of the mango leaf, the
   stochastic plant and the filled snowflake (`--shot … --svg`) match the app's screenshots.
 - File ▸ Export SVG… and the panel's SVG… button; `--shot LOC --svg FILE` for unattended runs.
@@ -168,15 +168,15 @@ Raster export, settled (`lsystem_view/export.rs`):
   canvas has lines ~4× as wide in its pixels, and the same segments. (More order would be another
   picture: the step target is in screen pixels.) The draw-on progress applies.
 - **Drawn offscreen by the segment pass, in tiles of 2048 texels** (a tile's view shifted by its
-  place), each texel coloured as the screen's colour pass colours it — `palette(value + offset)`
-  or the interior colour — and a pixel the mean of its ss² texels. On the export worker (progress,
+  place), each texel colored as the screen's color pass colors it — `palette(value + offset)`
+  or the interior color — and a pixel the mean of its ss² texels. On the export worker (progress,
   cancel), and on `--render`'s path; the view is embedded as for any export, so the image reopens
   as the view. `fractadyne_gpu::lsystem::Offscreen` is the one offscreen path (the device check
   uses it too). A walk stopped at its 4M-segment budget is said in the status.
 - **Checked**: a self-test row renders the mango leaf at 333×221, 2× supersampled, in 64-texel
   tiles and in one: the same but for edge pixels that f32 rounds the other way (≤ 0.5%). Exports of
   the mango leaf, the stochastic plant and the filled snowflake at 3840 wide (`--shot … --image`)
-  looked at against the screen: framing, orientation, colours, watermark.
+  looked at against the screen: framing, orientation, colors, watermark.
 
 Tours, settled (`scripting.rs`, TOURS.md):
 
@@ -219,7 +219,7 @@ the curve follows the zoom (§4.4) and positions near the view are computed exac
 
 ### Non-goals
 
-- 3D turtles (ABOP's `& ^ \ /` pitch/roll), surfaces, and the plant-modelling extensions that need
+- 3D turtles (ABOP's `& ^ \ /` pitch/roll), surfaces, and the plant-modeling extensions that need
   them.
 - A general vector editor; IFS (Barnsley fern) and other grid-free fractals (separate designs; they
   reuse the class layer too).
@@ -234,7 +234,7 @@ the curve follows the zoom (§4.4) and positions near the view are computed exac
 - **A non-escape-time renderer's path into the picture**: `MandelbrotParams::life`
   (`gpu/src/lib.rs:2377`) carries a frame descriptor; `prepare()` runs that class's passes and keys
   the re-render on `IterKey.life` (`:207`); the display pass writes the **iteration texture**
-  (main = (value, 0, 0, 1e30), interior < 0, aux = `AUX_NONE`), so `fs_color` colours it unchanged —
+  (main = (value, 0, 0, 1e30), interior < 0, aux = `AUX_NONE`), so `fs_color` colors it unchanged —
   palettes, cycling, the gradient editor, supersampled anti-aliasing. `LifeRenderer::update`
   (`gpu/src/life.rs:687`) is the model; the app side is `build_life_params`
   (`app/src/life_view.rs:341`), which skips the escape-time frame machinery entirely.
@@ -256,8 +256,8 @@ the curve follows the zoom (§4.4) and positions near the view are computed exac
 "L-systems" group in the pickers. The system shown — from the standard set, a file, or written by the
 user — is the class's state (`FractadyneApp::lsystem`), as the universe is Life's.
 
-- **Coordinates**: the app's `Viewport` (BigFloat centre, extended-range scale). The curve's turtle
-  starts at the origin heading right (+x), with its first-order size normalised to fit the home view
+- **Coordinates**: the app's `Viewport` (BigFloat center, extended-range scale). The curve's turtle
+  starts at the origin heading right (+x), with its first-order size normalized to fit the home view
   (§4.4); y up, as the complex plane, so a plant grows upward.
 - **Gated off**: Julia, iterations, perturbation, the finders, the autopilot, the minimap (as Life).
 - **Picture**: the class's own pass writes the iteration texture (§5), so everything downstream of the
@@ -285,7 +285,7 @@ A system is a **bracketed D0L system** (deterministic, context-free) with turtle
 | `[` / `]` | push / pop the turtle state (branching) |
 | `@x` | multiply the step by x (`@I x` = 1/x, `@Q x` = √x; Fractint) |
 | `\a` / `/a` | turn left / right by a degrees (Fractint) |
-| `Cn`, `<n`, `>n` | set / raise / lower the colour index (Fractint) |
+| `Cn`, `<n`, `>n` | set / raise / lower the color index (Fractint) |
 | anything else | no action (a variable that only rewrites) |
 
 Which symbols draw is part of the system: `F` and `D` by default; a system may name others (ABOP's
@@ -370,23 +370,23 @@ of the perturbation engine and of the digit automata's exact prefixes:
   is its parent's plus a rotated, scaled table entry, exactly.
 - **Below a root whose extent is a few thousand pixels**, the walk switches to f64 positions relative
   to that root, and emits segments in view-relative pixel coordinates (f32): root offset from the view
-  centre (BigFloat → f64 pixels, once) plus the local f64 path.
+  center (BigFloat → f64 pixels, once) plus the local f64 path.
 
-The segment index runs the same way — exact integers for roots, local counts below — so colouring by
+The segment index runs the same way — exact integers for roots, local counts below — so coloring by
 position along the curve (§5) stays meaningful at any depth.
 
 ## 5. Rendering
 
-- **The segment pass**: the CPU walk fills an instance buffer (endpoints in texels, a colour value, a
+- **The segment pass**: the CPU walk fills an instance buffer (endpoints in texels, a color value, a
   width); a render pass draws one quad per segment (a vertex shader widens each segment to its line
   width, round-capped) into the **iteration texture**, cleared to interior. Lines stay a fixed width
-  on screen at every zoom (default ~1.5 px, adjustable). Supersampling and the colour pass's box filter
+  on screen at every zoom (default ~1.5 px, adjustable). Supersampling and the color pass's box filter
   anti-alias them, as they do escape-time edges.
-- **The colour value** (main.r), by the user's choice: **position along the curve** (the segment
+- **The color value** (main.r), by the user's choice: **position along the curve** (the segment
   index, cycled through the palette — the gradient along a dragon or a Hilbert curve), **branch depth**
-  (bracket nesting: trunk to leaves), **heading** (an angle palette), or **Fractint's colour index**
-  (`C`, `<`, `>`). Background = interior colour.
-- **What changes it**: a new system, order, view, line width or colour choice. A changed view re-walks
+  (bracket nesting: trunk to leaves), **heading** (an angle palette), or **Fractint's color index**
+  (`C`, `<`, `>`). Background = interior color.
+- **What changes it**: a new system, order, view, line width or color choice. A changed view re-walks
   only the visible part; panning reuses the previous segments while the next walk finishes off-thread.
 - **Safety**: one draw call of N instances, N within a per-frame budget (a few million); the walk's
   budget, not the GPU, bounds the work.
@@ -395,7 +395,7 @@ position along the curve (§5) stays meaningful at any depth.
 
 - **Panel** ("L-system" section, in place of the escape-time controls): system (the library + user
   systems), Edit… (the text format in an editor with errors in place, as the formula dialog), order
-  (Auto / fixed n), angle (a slider that overrides δ — plants sway as it moves), line width, colour by,
+  (Auto / fixed n), angle (a slider that overrides δ — plants sway as it moves), line width, color by,
   segments drawn (a readout). File ▸ Open accepts `.l`; Save writes the native format.
 - **Standard set**, entered from their published definitions: the curves, plants and tilings of §1.
   **Custom**: any system the parser accepts, named and saved in a user library beside the formulas
@@ -415,7 +415,7 @@ position along the curve (§5) stays meaningful at any depth.
   curve drawing itself, live and in tour videos. **Angle morphing** animates δ.
 - **Image export**: the same pass at the export size (lines scaled to the export's pixels), the walk
   culled to the export's rectangle; tiled for very large exports.
-- **SVG export** (§9): the visible segments as paths, coloured by the palette — a vector file for print
+- **SVG export** (§9): the visible segments as paths, colored by the palette — a vector file for print
   or a plotter.
 
 ## 8. Phases and gates
@@ -424,7 +424,7 @@ position along the curve (§5) stays meaningful at any depth.
 |---|---|---|
 | **0** | Class layer: `FractalClass::LSystem`, `formula::LSYSTEM` = 1200, the pickers' group, gating, view files (format 4) and session keys | goldens byte-identical; self-test unchanged; an L-system view refused by name in an older build (format 4) |
 | **1** | Core: parser (native + Fractint `.l`), the tables of §4.3, the culling / LOD walk, auto order, the standard set; a naive reference expander (builds the string, runs the turtle) | walk = reference segment for segment at small orders (every library system); R bounds hold; culled ⊇ reference ∩ view; LOD segment count ≤ C × pixels; facts (§10) |
-| **2** | The app: segment pass into the iteration texture, colour modes, panel + editor + library + custom, files, session, tours, raster export | GPU coverage = a CPU quad rasteriser (top-left rule, no AA) on fixed views; goldens; uitest screen; Radeon |
+| **2** | The app: segment pass into the iteration texture, color modes, panel + editor + library + custom, files, session, tours, raster export | GPU coverage = a CPU quad rasterizer (top-left rule, no AA) on fixed views; goldens; uitest screen; Radeon |
 | **3** | Unlimited zoom: BigFloat roots, exact headings, exact indices | self-similarity exact: Koch zoomed 3⁴⁰ about its start = Koch, dragon 2³⁰ about a fixed point; BigFloat roots = rational arithmetic for 90° systems; a 1e100× view at 1× cost |
 | **4** | Per §9: stochastic (variants) / parametric / context-sensitive productions, filled polygons, SVG export, draw-on and angle animation | each against its definition and the reference expander; stochastic: the variant walk = a reference that expands the same hashed choices; SVG re-read = the segment list |
 
@@ -447,13 +447,13 @@ The user: "Yes to 1-6".
      distinct values stay within a budget, which holds for the common geometric forms
      (`F(l) → F(l/3)…`); beyond the budget the system draws at a bounded order by plain expansion,
      and says so.
-   - **Context-sensitive**: a node's rewrite depends on its neighbours in the string, so the tables
+   - **Context-sensitive**: a node's rewrite depends on its neighbors in the string, so the tables
      do not apply: these draw at a bounded order by expanding the string, culled only at the
      segments, and say so (as free-angle systems do, §11).
 3. **Fractint `.l` files**: yes, open directly (§4.2).
-4. **Colouring**: not a yes/no question; taken as "offer all of them" (as automata's Hensel rules):
-   position along the curve, branch depth, heading, Fractint's colour index, and plain. Default: a
-   library entry names its own; otherwise the Fractint colour index for an `.l` entry that uses `C`,
+4. **Coloring**: not a yes/no question; taken as "offer all of them" (as automata's Hensel rules):
+   position along the curve, branch depth, heading, Fractint's color index, and plain. Default: a
+   library entry names its own; otherwise the Fractint color index for an `.l` entry that uses `C`,
    `<` or `>`, branch depth for a system with brackets, position along the curve for one without.
 5. **SVG export**: yes → phase 4 (§7).
 6. **Filled shapes**: yes → phase 4: ABOP's `{` `}` — the turtle's positions between the braces
@@ -464,11 +464,11 @@ The user: "Yes to 1-6".
 
 - **Exactness wherever it exists.** Segment lists are compared exactly (the walk vs the reference
   expander; the culled walk vs the reference clipped to the view); positions at depth exactly
-  (BigFloat vs rational arithmetic for 90° systems). Only rasterised pixels compare against a model of
-  the rasteriser.
+  (BigFloat vs rational arithmetic for 90° systems). Only rasterized pixels compare against a model of
+  the rasterizer.
 - **Facts** (each from the curve's definition): Koch order n has 4ⁿ segments, the snowflake 3·4ⁿ
   (perimeter 3·(4/3)ⁿ times the first triangle's side); Gosper 7ⁿ; Peano (edge-rewriting form) 9ⁿ; the Hilbert
-  curve of order n visits each cell of a 2ⁿ × 2ⁿ grid once, each step to a neighbour; the dragon of
+  curve of order n visits each cell of a 2ⁿ × 2ⁿ grid once, each step to a neighbor; the dragon of
   order n has 2ⁿ unit segments, no edge drawn twice, and its end at distance 2^(n/2) from its start;
   the Lévy C curve's endpoints are fixed.
 - **Self-similarity** (phase 3): a curve zoomed by sᵏ about a fixed point is the curve again, segment

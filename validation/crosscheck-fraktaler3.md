@@ -26,7 +26,7 @@ c_y = center_y + ((j + 0.5 + jitter) − height/2) · pixel_spacing   (kernel ro
 
 — replicating F3's deterministic triangular sub-pixel **jitter** (`burtle_hash`/`triangle`,
 applied even at `subframes = 1`), then iterate `z → z² + c` in `astro-float` at full
-precision and compare. Boundary/cliff pixels (where a 4-neighbour flips interior/exterior
+precision and compare. Boundary/cliff pixels (where a 4-neighbor flips interior/exterior
 or the count jumps by >2) are excluded — there the classification is genuinely ambiguous
 to the last ULP and the two engines legitimately sample differently.
 

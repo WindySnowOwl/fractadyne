@@ -1,5 +1,5 @@
 //! Hensel's notation for non-totalistic isotropic rules (design/automata.md §4.1): the eight
-//! neighbours' 256 arrangements fall into 51 classes under the square's symmetries (rotations and
+//! neighbors' 256 arrangements fall into 51 classes under the square's symmetries (rotations and
 //! reflections), named by a count and a letter — `2a`, `3q`, `4z`.
 //!
 //! The letters come from LifeWiki's chart ("Isotropic non-totalistic rule"), one picture per class,
@@ -7,8 +7,8 @@
 //! can be checked against itself (`(8−n)x` is the complement of `nx`) and against the page's
 //! symmetry tables (`hensel/tests.rs`).
 
-/// An arrangement of the eight neighbours, one bit each: NW is the most significant bit and SE the
-/// least, row by row — the neighbour bits of a table index (`rule.rs`) with the centre taken out.
+/// An arrangement of the eight neighbors, one bit each: NW is the most significant bit and SE the
+/// least, row by row — the neighbor bits of a table index (`rule.rs`) with the center taken out.
 pub(crate) type Mask = u8;
 
 pub(crate) const M_NW: Mask = 1 << 7;
@@ -20,7 +20,7 @@ pub(crate) const M_SW: Mask = 1 << 2;
 pub(crate) const M_S: Mask = 1 << 1;
 pub(crate) const M_SE: Mask = 1;
 
-/// The orthogonal neighbours: what a von Neumann rule counts.
+/// The orthogonal neighbors: what a von Neumann rule counts.
 pub(crate) const M_EDGES: Mask = M_N | M_W | M_E | M_S;
 
 /// The letters in the chart's order, which is also the order a canonical rule string lists them in.
@@ -82,11 +82,11 @@ pub(crate) const CHART: [(u8, char, Mask); 51] = [
     (8, ' ', 0xFF),
 ];
 
-/// Neighbour positions as `(dx, dy)`, y down, in mask-bit order (bit 7 first).
+/// Neighbor positions as `(dx, dy)`, y down, in mask-bit order (bit 7 first).
 const POS: [(i8, i8); 8] = [(-1, -1), (0, -1), (1, -1), (-1, 0), (1, 0), (-1, 1), (0, 1), (1, 1)];
 
 fn bit_of(dx: i8, dy: i8) -> Mask {
-    let i = POS.iter().position(|&p| p == (dx, dy)).expect("a neighbour position");
+    let i = POS.iter().position(|&p| p == (dx, dy)).expect("a neighbor position");
     1 << (7 - i)
 }
 
@@ -135,7 +135,7 @@ pub(crate) fn class_of(mask: Mask) -> (u8, char) {
     (n, l)
 }
 
-/// Whether `letter` names a class of `count` neighbours.
+/// Whether `letter` names a class of `count` neighbors.
 pub(crate) fn is_letter_of(count: u8, letter: char) -> bool {
     letter != ' ' && CHART.iter().any(|&(n, l, _)| n == count && l == letter)
 }

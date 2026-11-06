@@ -319,7 +319,7 @@ impl FractadyneApp {
             return Err(format!("mode {mode} is not one the profile times"));
         };
         let (Some(cx), Some(cy)) = (fractadyne_core::parse_bf("-0.1"), fractadyne_core::parse_bf("0.1")) else {
-            return Err("the measuring view's centre does not parse".to_string());
+            return Err("the measuring view's center does not parse".to_string());
         };
         let mut vp = fractadyne_core::Viewport::new(MEASURE_W as f64, MEASURE_H as f64);
         if mode == 1 {

@@ -50,7 +50,7 @@ fn an_lsystem_given_as_text_reads_and_a_wrong_one_is_refused() {
     assert!(e.contains("order"), "{e}");
     let e = refused("[[keyframe]]\nt = 0.0\nfractal = \"L-system\"\nre = \"0\"\nim = \"0\"\nzoom = 1\nangle = 900\n");
     assert!(e.contains("angle"), "{e}");
-    // Its own coordinates are required: the Mandelbrot's default centre means nothing to it.
+    // Its own coordinates are required: the Mandelbrot's default center means nothing to it.
     let e = refused("[[keyframe]]\nt = 0.0\nfractal = \"L-system\"\nlsystem = \"Koch curve\"\n");
     assert!(e.contains("re`, `im` and `zoom"), "{e}");
     // An escape-time family is still held at 1× or more.

@@ -1,8 +1,8 @@
-//! The centre's precision guard: how much arithmetic headroom a view carries beyond its depth.
+//! The center's precision guard: how much arithmetic headroom a view carries beyond its depth.
 //!
-//! ⭐A deep view's centre is only useful if it can still address the PIXELS of that view: the
-//! difference between neighbouring pixels is `units_per_pixel`, which at 1e150× is ~1e-152, and a
-//! centre held to just enough bits for the magnification would round that away. `Viewport` sets
+//! ⭐A deep view's center is only useful if it can still address the PIXELS of that view: the
+//! difference between neighboring pixels is `units_per_pixel`, which at 1e150× is ~1e-152, and a
+//! center held to just enough bits for the magnification would round that away. `Viewport` sets
 //! `precision_for_octaves(depth) = depth + 64` — about 19 decimal digits of guard past the last
 //! bit the depth itself needs — and these pin it, because the guard is invisible until it is gone.
 
@@ -30,15 +30,15 @@ fn the_precision_carries_at_least_the_guard_past_the_depth() {
 
 #[test]
 fn a_deep_centre_can_still_address_one_pixel() {
-    // The guard exists so a single-pixel pan at depth MOVES the centre, and by the pixel's worth.
+    // The guard exists so a single-pixel pan at depth MOVES the center, and by the pixel's worth.
     for l2 in [100.0, 372.4, 481.7, 1000.0] {
         let mut vp = Viewport::new(1920.0, 1200.0);
         vp.set_center_log2mag(bf(-0.75, 64), bf(0.1, 64), l2);
         let before = to_decimal_string(&vp.center_x);
         vp.pan_pixels(1.0, 0.0);
         let after = to_decimal_string(&vp.center_x);
-        assert_ne!(before, after, "2^{l2}: a one-pixel pan left the centre unchanged");
-        // And the move is one pixel: (Δcentre)/upp ≈ 1.
+        assert_ne!(before, after, "2^{l2}: a one-pixel pan left the center unchanged");
+        // And the move is one pixel: (Δcenter)/upp ≈ 1.
         let d = ref_offset_mantissa(&vp.center_x, &bf(-0.75, vp.precision), vp.units_per_pixel.e, vp.precision)
             / vp.units_per_pixel.m;
         assert!((d.abs() - 1.0).abs() < 1e-6, "2^{l2}: one pixel moved {d} pixels");

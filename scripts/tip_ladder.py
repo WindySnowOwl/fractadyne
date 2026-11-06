@@ -20,15 +20,15 @@ the way down (f32's exponent range near 1e38x, f64's near 1e308x, extended forma
 
 THE VIEW
 --------
-Rung L is zoom 2^L (L even: two of L per 4x step). The view's height is 4 / zoom, and its centre is
+Rung L is zoom 2^L (L even: two of L per 4x step). The view's height is 4 / zoom, and its center is
 -2 + (U_RE + U_IM i) x height. The offset is a fixed fraction of the frame, so it shrinks with the
-zoom and every rung shows the same picture: the tip U_RE heights left of the centre and U_IM below
-it. Not centred on -2 exactly, because
-- -2 is a two-bit number and its orbit is exact in any arithmetic, so a centre there tests none of
-  the deep machinery; the offset centre needs every digit of the depth;
+zoom and every rung shows the same picture: the tip U_RE heights left of the center and U_IM below
+it. Not centered on -2 exactly, because
+- -2 is a two-bit number and its orbit is exact in any arithmetic, so a center there tests none of
+  the deep machinery; the offset center needs every digit of the depth;
 - that orbit sits at |z| = 2, ON the radius-2 escape test, where > against >= decides it;
 - the real axis there is the antenna, wholly inside the set: a pixel row on it would never escape,
-  and nothing could prove it interior. The offset keeps every pixel centre off the axis (the
+  and nothing could prove it interior. The offset keeps every pixel center off the axis (the
   nearest is 0.1 px from it at 360 rows).
 The pixels next to the antenna are a filament test of their own: the antenna is a line of zero
 width, and the counts climb towards it.
@@ -46,7 +46,7 @@ JUDGING
   scores it against the base truth shifted (`truth_check.py score --shift`); a rung shallower than
   LAW_MIN against a truth of its own. Each rung is also rendered as a PNG (`--render`), to look at
   and for the log line naming the GPU arithmetic (the mode column).
-Coordinates go through an args file (`@FILE`): at 1e10000x the centre has 10,000 digits, and a
+Coordinates go through an args file (`@FILE`): at 1e10000x the center has 10,000 digits, and a
 Windows command line holds 32,767 characters.
 Exit 0 when every confirmation holds and every rung passes, 1 otherwise, 2 on a usage error.
 """
@@ -120,7 +120,7 @@ def rungs_of(a):
 def write_args(path, level, size):
     re, im = centre(level)
     with open(path, "w", encoding="ascii", newline="\n") as f:
-        f.write("# tip ladder rung L=%d: zoom 2^%d, centre -2 + (%s + %si) x height\n" % (level, level, U_RE, U_IM))
+        f.write("# tip ladder rung L=%d: zoom 2^%d, center -2 + (%s + %si) x height\n" % (level, level, U_RE, U_IM))
         f.write("--center %s %s\n--zoom-log2 %d\n--size %dx%d\n--iter %d\n" % (re, im, level, size[0], size[1], cap(level)))
 
 
@@ -183,7 +183,7 @@ def render_fd(exe, out, level, env_dir):
     with open(os.path.join(out, "logs", "fd-L%d.log" % level), "w", encoding="utf-8") as f:
         f.write(text)
     info = MO.parse_log(text)
-    # The same view as a coloured PNG: something to look at, and its log names the arithmetic the
+    # The same view as a colored PNG: something to look at, and its log names the arithmetic the
     # GPU used (the `cli-render ... mode=` line, which the --render-iter path does not write).
     shot = os.path.join(out, "png", "tip-L%d.png" % level)
     # ⛔--render: `--out` alone opens the WINDOWED app (2026-11-04, twice, on the user's desktop).
@@ -268,7 +268,7 @@ def views(a):
     size = tuple(int(x) for x in a.size.split("x"))
     for level in rungs_of(a):
         re, im = centre(level)
-        print("L=%-6d zoom 1e%-6d +%-6d iter %-7d centre %s... %s" % (
+        print("L=%-6d zoom 1e%-6d +%-6d iter %-7d center %s... %s" % (
             level, int(level * math.log10(2)), (level - BASE) // 2, cap(level), re[:24], im))
     print("(%dx%d; truth at L=%d)" % (size[0], size[1], BASE))
     return 0

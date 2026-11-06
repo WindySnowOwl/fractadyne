@@ -1,5 +1,5 @@
 //! The tiles instrument drawn headlessly for every kind of pass it shows: egui's own shapes,
-//! tessellated as egui does, rasterized here in software (vertex colours, the font atlas, egui's
+//! tessellated as egui does, rasterized here in software (vertex colors, the font atlas, egui's
 //! premultiplied gamma-space blending). The checks read the plane back pixel by pixel: which tiles
 //! are lit and where. Set `FRACTADYNE_TEST_DUMP` to a folder to also write each case as a PNG.
 
@@ -80,9 +80,9 @@ fn raster(canvas: &mut Canvas, tex: &Textures, clip: Rect, mesh: &egui::Mesh) {
         let hi = a.pos.max(b.pos).max(c.pos).min(clip.max).min(pos2(canvas.w as f32, canvas.h as f32));
         for y in lo.y.floor() as usize..hi.y.ceil() as usize {
             for x in lo.x.floor() as usize..hi.x.ceil() as usize {
-                // Sampled a hair off the pixel centre, so a pixel on an edge two triangles share
+                // Sampled a hair off the pixel center, so a pixel on an edge two triangles share
                 // (every rectangle's diagonal) falls in exactly one of them, as the GPU's fill rule
-                // has it; a centre exactly on the edge would be filled twice.
+                // has it; a center exactly on the edge would be filled twice.
                 let p = pos2(x as f32 + 0.500_13, y as f32 + 0.500_29);
                 let w0 = ((b.pos.x - p.x) * (c.pos.y - p.y) - (b.pos.y - p.y) * (c.pos.x - p.x)) / area;
                 let w1 = ((c.pos.x - p.x) * (a.pos.y - p.y) - (c.pos.y - p.y) * (a.pos.x - p.x)) / area;
@@ -152,9 +152,9 @@ fn model(plane: Plane) -> Model {
     m
 }
 
-/// A settle grid of `side`-px tiles over `res`, the first `done` tiles of its centre-out order
+/// A settle grid of `side`-px tiles over `res`, the first `done` tiles of its center-out order
 /// finished, the next one `strip` (rows sent, piece rows) on its way if given — as the renderer
-/// would leave it (`render.rs`: the grid's visit order is by distance from the grid's centre).
+/// would leave it (`render.rs`: the grid's visit order is by distance from the grid's center).
 fn grid(res: (u32, u32), side: u32, done: usize, strip: Option<(u32, u32)>) -> (Grid, Vec<u32>) {
     let (cols, rows) = (res.0.div_ceil(side).max(1), res.1.div_ceil(side).max(1));
     let n = (cols * rows) as usize;
@@ -175,7 +175,7 @@ fn grid(res: (u32, u32), side: u32, done: usize, strip: Option<(u32, u32)>) -> (
     (Grid { res, cols, rows, side, done: done_v, flash: vec![0.0; n], last, complete: done >= n }, order)
 }
 
-/// Every tile's centre on the plane, and whether it reads lit.
+/// Every tile's center on the plane, and whether it reads lit.
 fn read_grid(c: &Canvas, plane: Rect, sc: f32, g: &Grid) -> Vec<bool> {
     let cs = g.side as f32 * sc;
     (0..g.cols * g.rows).map(|i| c.lum(tile_rect(plane, cs, g.cols, i).center()) > between(LEVEL_TO_COME, LEVEL_DONE)).collect()
@@ -187,7 +187,7 @@ fn a_settle_grid_lights_exactly_its_finished_tiles_at_every_tile_size() {
     for side in [16u32, 32, 64, 128, 160, 256, 512, 1000] {
         let (cols, rows) = (RES.0.div_ceil(side), RES.1.div_ceil(side));
         let n = (cols * rows) as usize;
-        // Tiles under 3 panel px cannot be told apart by their centres; their coverage is checked.
+        // Tiles under 3 panel px cannot be told apart by their centers; their coverage is checked.
         for done in [0, 1, n / 3, n - 1, n] {
             let (g, _) = grid(RES, side, done, None);
             let m = model(Plane::Grid(g.clone()));
@@ -197,7 +197,7 @@ fn a_settle_grid_lights_exactly_its_finished_tiles_at_every_tile_size() {
             let (plane, sc) = plane_rect(r, 1.0, RES);
             if side as f32 * sc >= 3.0 {
                 let lit = read_grid(&c, plane, sc, &g);
-                // The tile in progress is outlined, and its centre may read lit through it.
+                // The tile in progress is outlined, and its center may read lit through it.
                 let progress = g.last.filter(|_| !g.complete).map(|l| l.0 as usize);
                 for (i, (&want, &got)) in g.done.iter().zip(lit.iter()).enumerate() {
                     if Some(i) == progress {
@@ -322,10 +322,10 @@ fn small_settle_tiles_meet_edge_to_edge_so_a_finished_grid_lights_the_plane() {
         };
         let (full, _, _) = lit_share(n);
         assert!(full > 0.97, "side {side}: a finished grid lights {:.0}% of the plane", 100.0 * full);
-        // A third done, centre out: a lit middle and dark corners.
+        // A third done, center out: a lit middle and dark corners.
         let (third, centre, corner) = lit_share(n / 3);
         assert!((0.2..0.5).contains(&third), "side {side}: a third done lights {:.0}%", 100.0 * third);
-        assert!(centre && !corner, "side {side}: centre lit {centre}, corner lit {corner}");
+        assert!(centre && !corner, "side {side}: center lit {centre}, corner lit {corner}");
     }
 }
 
@@ -472,7 +472,7 @@ fn the_sample_chart_puts_a_dot_where_each_sample_landed() {
         plane.center() + vec2(jx, jy) * (side - 6.0)
     };
     // Every sample folded so far: a lavender dot (blue well above red) at its place in the jitter
-    // sequence, the first at the pixel's centre; the newest one near white.
+    // sequence, the first at the pixel's center; the newest one near white.
     for i in 0..5 {
         let [r_, _, b, _] = c.at(at(i));
         assert!(b > r_ + 20.0 && b > 150.0, "sample {i} at {:?}: rgb {:?}", at(i), c.at(at(i)));

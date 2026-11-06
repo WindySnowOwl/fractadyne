@@ -4,9 +4,9 @@
 WHY THIS LANE EXISTS
 --------------------
 Every other scene in this kit is a SINGLE FRAME, and a single frame is blind to the entire
-class of optimisation that matters most for zoom video: a dive toward a FIXED CENTRE keeps the
-same reference orbit valid across many frames, so the expensive part can be amortised instead
-of paid per frame. What is amortisable is exactly the part our own bench-matrix measured as
+class of optimisation that matters most for zoom video: a dive toward a FIXED CENTER keeps the
+same reference orbit valid across many frames, so the expensive part can be amortized instead
+of paid per frame. What is amortizable is exactly the part our own bench-matrix measured as
 dominant - at a period-145 nucleus the reference + BLA build costs 60.97 ms against 17.04 ms of
 GPU iterate, a 58x setup-to-render ratio - plus the BLA/LA tables and the series-approximation
 coefficients derived from it.
@@ -17,7 +17,7 @@ benchmark scores that work as exactly zero.
 
 THE METRIC
 ----------
-    amortisation = (frames x single_frame_wall) / sequence_wall
+    amortization = (frames x single_frame_wall) / sequence_wall
 
 1.0 means the app rebuilds everything every frame. Higher means it reuses. It is directly
 comparable across renderers because it is each app measured against ITSELF - no cross-app
@@ -27,17 +27,17 @@ WHY A MISIUREWICZ LADDER IS THE RIGHT PATH
 ------------------------------------------
 The sequence descends by |lambda| per frame at a Misiurewicz point, so every frame is the SAME
 PICTURE at a different scale (verified: |c - c_M| / span held 1.205 across 37 rungs). Per-frame
-cost therefore SHOULD be flat, and any ramp is the renderer failing to amortise rather than the
+cost therefore SHOULD be flat, and any ramp is the renderer failing to amortize rather than the
 scene getting harder. On an arbitrary dive the two are hopelessly confounded.
 
 FAIRNESS NOTE, AND IT IS THE IMPORTANT ONE
 ------------------------------------------
 Fractadyne renders the sequence IN ONE PROCESS via --render-tour, which is the mode that owns
 the reference prefetch. Fraktaler-3 3.1's batch CLI (-b) renders ONE image per invocation, so
-its sequence is N invocations and its amortisation is ~1.0 BY CONSTRUCTION. That is a real
+its sequence is N invocations and its amortization is ~1.0 BY CONSTRUCTION. That is a real
 difference in what the two CLIs offer, not a measurement of F3's engine: F3 has zoom-sequence
 and exponential-map/zoomasm machinery that this lane does not reach. Report it as "CLI batch
-mode, per-frame" and do NOT quote it as F3's amortisation ceiling.
+mode, per-frame" and do NOT quote it as F3's amortization ceiling.
 """
 import argparse, csv, os, re, subprocess, sys, time
 from decimal import Decimal, getcontext
@@ -67,7 +67,7 @@ def zoom_str(n, digits=20):
     two other readers did not, and neither said so:
 
       * `fractadyne --zoom` was a bare f64 parse with `unwrap_or(1.0)`, so the SINGLE-FRAME arm
-        - the denominator of the amortisation ratio - rendered the whole Mandelbrot set at 1x
+        - the denominator of the amortization ratio - rendered the whole Mandelbrot set at 1x
         and exited 0. Fixed in beta.135 (it is now the real parser, and fatal on garbage), but
         the kit must not depend on that: 3.1's Fraktaler-3 is not ours to fix.
       * Fraktaler-3 rejects the value and falls back to the settings PERSISTED in
@@ -244,7 +244,7 @@ def main():
         sum_singles = sum(singles)
         wr.writerow(['fractadyne', scene + '-singles', 1, 'ok' if ok_all else 'fail',
                      round(sum_singles, 2), '',
-                     '%d frames, one fresh process each (the amortisation denominator)' % len(singles)])
+                     '%d frames, one fresh process each (the amortization denominator)' % len(singles)])
         if singles:
             print("  fractadyne  %-10s %8.1fs  (%d single frames, %.2f..%.2fs each)"
                   % ('ok' if ok_all else 'fail', sum_singles, len(singles),
@@ -258,7 +258,7 @@ def main():
             # `len(singles)` rungs, so scale the sum to the same frame count before dividing.
             per_single = sum_singles / len(singles)
             amort = rendered * per_single / wall
-            print("  -> amortisation %.2fx  (%d frames: %.2fs/frame in sequence vs %.2fs alone)"
+            print("  -> amortization %.2fx  (%d frames: %.2fs/frame in sequence vs %.2fs alone)"
                   % (amort, rendered, wall / rendered, per_single))
             # Write the ratio rather than leaving every reader to re-derive it. run-all.ps1 used
             # to recompute it in PowerShell from --frames, which is a second implementation of an
@@ -303,14 +303,14 @@ def main():
                 os.replace(want, os.path.join(a.out, 'zoomseq-f3-%02d.png' % i))
         wall = time.time() - t0
         wr.writerow(['fraktaler3', scene, 1, 'ok' if ok else 'fail', round(wall, 2), '',
-                     'sequence: N invocations (CLI batch renders one image; amortisation ~1.0 BY CONSTRUCTION, not an engine limit)'])
+                     'sequence: N invocations (CLI batch renders one image; amortization ~1.0 BY CONSTRUCTION, not an engine limit)'])
         print("  fraktaler3  %-10s %8.1fs  (%d invocations)" % ('ok' if ok else 'fail', wall, a.frames))
         results['fraktaler3'] = ('ok' if ok else 'fail', wall)
 
     fh.close()
     print("\nresults -> %s" % csv_path)
     print("NOTE: F3's figure is N separate processes. Its CLI has no sequence mode, so its\n"
-          "      amortisation is 1.0 by construction - do NOT read it as F3's engine ceiling.")
+          "      amortization is 1.0 by construction - do NOT read it as F3's engine ceiling.")
     return 0
 
 

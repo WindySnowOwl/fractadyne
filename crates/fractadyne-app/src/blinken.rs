@@ -61,7 +61,7 @@ impl Corner {
         };
         Pos2::new(x, y)
     }
-    /// The corner of `view` nearest the centre of `panel`.
+    /// The corner of `view` nearest the center of `panel`.
     pub(crate) fn nearest(view: Rect, panel: Rect) -> Corner {
         let c = panel.center();
         match (c.x < view.center().x, c.y < view.center().y) {

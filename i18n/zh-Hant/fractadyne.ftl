@@ -292,7 +292,7 @@ tag-group-shape = 形態
 tag-group-theme = 主題
 tag-group-purpose = 用途
 
-# Tags measured from a palette's colours: its colour families, warm or cool, how busy it is (calm, lively, frantic), its brightness, and its shape. Plural nouns for the families; the rest describe the palette.
+# Tags measured from a palette's colors: its color families, warm or cool, how busy it is (calm, lively, frantic), its brightness, and its shape. Plural nouns for the families; the rest describe the palette.
 tag-reds = 紅色系
 tag-oranges = 橙色系
 tag-yellows = 黃色系
@@ -967,9 +967,9 @@ app-gradient-ggr-imported = 已匯入「{ $name }」：{ $count } 個區段，�
 # $error: the reader's reason (in English).
 app-gradient-ggr-invalid = 不是 .ggr 漸層：{ $error }
 
-## The eyedropper's banner across the top of the screen while picking a colour
+## The eyedropper's banner across the top of the screen while picking a color
 
-# $hex: the colour under the pointer, as #rrggbb.
+# $hex: the color under the pointer, as #rrggbb.
 app-eyedropper-banner-color = 正在選取色彩  ·  { $hex }  ·  按一下以取用，按 Esc 取消
 app-eyedropper-banner = 正在選取色彩  ·  按一下以取用，按 Esc 取消
 
@@ -1007,7 +1007,7 @@ app-gradient-bezier-exact-hover = 兩個可以朝兩個方向拖曳的控制點�
 app-gradient-bezier-visible-hover = 兩個可以朝兩個方向拖曳的控制點。轉換會「近似」目前的曲線：這一條的誤差在 { $error } 以內，明顯看得出來。
 # Hover on Bézier in the list of blend curves. $error: how far the fit is off (2 decimals).
 app-gradient-bezier-barely-hover = 兩個可以朝兩個方向拖曳的控制點。轉換會「近似」目前的曲線：這一條的誤差在 { $error } 以內，幾乎看不出來。
-# A label before the list of colour spaces (RGB, HSV).
+# A label before the list of color spaces (RGB, HSV).
 app-gradient-space = 色彩空間
 # A label before the Bézier presets beside it.
 app-gradient-ease = 緩動
@@ -1058,7 +1058,7 @@ app-gradient-import-ggr-hover = 載入 GIMP 的 .ggr 漸層，完整保留其中
 app-gradient-import-ase-hover = 載入 Adobe 色票清單（.ase）。色票沒有位置資訊，因此會平均分布並混合。
 # The gradient's name, for the library of saved gradients.
 app-gradient-name = 名稱
-# Shown greyed in the empty name field.
+# Shown grayed in the empty name field.
 app-gradient-name-hint = 我的漸層
 # The save button, when a gradient of that name is already saved.
 app-gradient-update = 更新
@@ -1083,13 +1083,13 @@ app-gradient-ends-differ-hover = 漸層終點的色彩與起點不同，因此�
 app-gradient-hard-bands = 硬邊色帶（項目之間不混合）
 app-gradient-hard-bands-hover = Fractint / .map 的語意：每個項目都是單一的平塗色彩。關閉後會將它們混合成平滑的漸層。
 app-gradient-paste-intro = 貼上十六進位色彩（#ff8800）或 0–255 三元組（255 136 0），以逗號、空格或換行分隔：
-# Applies the pasted colours.
+# Applies the pasted colors.
 app-gradient-apply = 套用
 # Empties the paste box.
 app-gradient-clear = 清除
-# $used: the colours kept; $total: the colours pasted; $limit: the most that are kept.
+# $used: the colors kept; $total: the colors pasted; $limit: the most that are kept.
 app-gradient-paste-imported-some = 已匯入 { $total } 個色彩中的 { $used } 個，從你的清單中平均取樣（上限為 { $limit }）。
-# $count: the colours pasted.
+# $count: the colors pasted.
 app-gradient-paste-imported = 已匯入 { $count } 個色彩。
 # $error: why the pasted text could not be read (in English).
 app-gradient-paste-unreadable = 無法讀取：{ $error }
@@ -1970,7 +1970,7 @@ farm-client-show-key = 顯示
 farm-client-machine = 這台電腦
 farm-client-machine-hover = 主控端為這台電腦顯示的名稱。
 farm-client-share = 共用磁碟
-# Greyed hint inside the empty field; the path is an example.
+# Grayed hint inside the empty field; the path is an example.
 farm-client-share-hint = 選填，例如 \\fileserver\share
 farm-client-share-hover = 這台電腦通往主控端所用共用磁碟的路徑（共用模式）：影格會寫入該處，而不是透過連線傳送。留空則會傳送每個影格。
 farm-client-gpu = 顯示卡
@@ -2132,7 +2132,7 @@ farm-ctl-ss = 超取樣
 farm-ctl-port = 監聽連接埠
 farm-ctl-port-hover = 用戶端會連線到這個連接埠。請在防火牆中允許你的區域網路使用它。
 farm-ctl-share = 共用磁碟
-# Greyed hint inside the empty field.
+# Grayed hint inside the empty field.
 farm-ctl-share-hint = 選填，這台電腦通往它的路徑
 farm-ctl-share-hover = 共用模式：擁有相同磁碟的用戶端會將影格寫入該處，而不是透過連線傳送，這台電腦會在那裡檢查每一個影格。沒有該磁碟的用戶端則會傳送它們的影格。
 # A label followed by a number of clients and two checkboxes.
@@ -2398,7 +2398,7 @@ formula-apply = 套用
 formula-dialog-apply-hover = 編譯公式並顯示
 # Shown beside Apply while the formula is being compiled.
 formula-dialog-compiling = 正在為 GPU 編譯公式…
-# The greyed hint in an empty name box (also in the Formula library window).
+# The grayed hint in an empty name box (also in the Formula library window).
 formula-name-hint = 名稱（選填）
 # The save button: "Update" when the library already has a formula of that name.
 formula-dialog-update-in-library = 在公式庫中更新
@@ -2533,7 +2533,7 @@ formula-library-import = 匯入…
 formula-library-import-hover = 加入公式檔中的公式；這裡的公式都不會被取代
 formula-library-export-all = 全部匯出…
 formula-library-export-all-hover = 將這裡的每個公式寫入一個檔案，以便分享或保存
-# The filter box: its label, and the greyed hint inside it.
+# The filter box: its label, and the grayed hint inside it.
 formula-library-filter = 篩選
 formula-library-filter-hint = 依名稱或內容篩選
 # Shown while the user has no saved formulas.
@@ -2664,10 +2664,10 @@ panel-tail-length-unit = 次
 panel-tail-length-hover = 以疊代次數表示的區間長度。短區間（8–32）在任何深度都能呈現經典的粗色帶；較長的區間又會平均成一片平坦的顏色，因為長混沌軌道的條紋項會被平均掉。
 panel-trap-shape = 陷阱形狀
 panel-palette = 調色盤
-# The two colours of the Binary palette, each beside its colour swatch.
+# The two colors of the Binary palette, each beside its color swatch.
 panel-in-set = 集合內
 panel-out-of-set = 集合外
-# The two colours of the Duotone palette, each beside its colour swatch.
+# The two colors of the Duotone palette, each beside its color swatch.
 panel-shadow = 陰影
 panel-highlight = 亮部
 panel-cycle = 循環
@@ -2685,7 +2685,7 @@ panel-log-scale-hover =
     依逃逸值的「對數」而非線性地分配調色盤。在深處，逃逸次數會集中在高端，因此線性對應會把大部分調色盤花在邊界附近的一層薄殼上，並讓其他部分變得平坦。
 
     這適用於正規化對應，也就是「正規化深層色彩」（或匯出時的 --normalize）所開啟的功能。範圍嚴重偏斜時，無論是否勾選此項，都會採用對數對應。
-# The same checkbox's tooltip while it is greyed out (normalization is off).
+# The same checkbox's tooltip while it is grayed out (normalization is off).
 panel-log-scale-off-hover =
     需要正規化：這個選項決定調色盤「如何」對應到量測到的逃逸範圍，因此在「正規化深層色彩」關閉時（且沒有使用 --normalize 匯出），就沒有可以讓它改變的對應，也不會改變任何一個像素。
 
@@ -3037,11 +3037,11 @@ lsys-draw-on = 繪製進度
 lsys-draw-on-hover = 依海龜繪製的順序，曲線已繪製了多少
 lsys-draw-on-play-hover = 曲線自行繪製出來
 lsys-colour-by = 著色依據
-# The colourings, in the "Colour by" list.
+# The colorings, in the "Color by" list.
 lsys-colour-position = 沿曲線的位置
 lsys-colour-depth = 分支深度
 lsys-colour-heading = 方向
-# C, < and > are the system's commands that set the colour index: keep them.
+# C, < and > are the system's commands that set the color index: keep them.
 lsys-colour-index = 色彩索引（C、<、>）
 lsys-colour-plain = 單一色彩
 # The panel's numbers.
@@ -3172,9 +3172,9 @@ export-snapshot-saved = 已儲存螢幕快照 { $size } → { $path }
 # $error: why (in English).
 export-snapshot-failed = 快照失敗：{ $error }
 
-## The colour picker (the popup of a colour swatch)
+## The color picker (the popup of a color swatch)
 
-# The third row's label: the colour as hexadecimal bytes. Short (about 6 characters).
+# The third row's label: the color as hexadecimal bytes. Short (about 6 characters).
 picker-row-hex = 色碼
 picker-hex-hover = 按一下即可輸入十六進位值
 picker-cancel = 取消
@@ -3440,7 +3440,7 @@ fractal-family-lsystem = L 系統
 # A family at a power: "Multibrot 3", "Burning Ship 4". $family: a name above; $power: the power.
 fractal-with-power = { $family } { $power }
 
-## Names of choices: colouring methods, orbit traps, palette animation, snapshots, angle units.
+## Names of choices: coloring methods, orbit traps, palette animation, snapshots, angle units.
 
 color-method-smooth = 平滑疊代
 color-method-stripe = 條紋平均

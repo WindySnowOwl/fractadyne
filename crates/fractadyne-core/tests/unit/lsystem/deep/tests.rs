@@ -123,7 +123,7 @@ fn the_koch_curve_zoomed_about_its_end_is_itself() {
     let t = Tables::new(&s);
     let (n, size) = (6u32, [300.0, 200.0]);
     let upp: f64 = 0.3 / 300.0;
-    // Centred 0.2 before the end, 0.05 up.
+    // Centered 0.2 before the end, 0.05 up.
     let shallow = collect_f64(&t, &View { centre: [0.8, 0.05], upp, size, margin: 1.5 }, n);
     for k in [40u32, 200] {
         let upp_log2 = upp.log2() - f64::from(k) * 3f64.log2();

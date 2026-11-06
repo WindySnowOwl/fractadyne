@@ -25,7 +25,7 @@ Part 1 (this document): what is worth showing. Part 2, once that is agreed: how 
 |---|---|---|
 | A | **The frame loop** (UI thread) | input → plan (resolution ladder, iteration ask, budget) → dispatch → present (live, reprojected or held) → drain the readings. Frame interval, CPU body time, frame kind, present kind, interacting. |
 | B | **The GPU queue** | 0–N passes a frame: the moving frame, a pin pass (an iteration window), a settle tile, an SSAA sample, a live probe, a split set. Kind, iterations, pixels, GPU ms, passes in flight. |
-| C | **The pinned refresh (the walk)** | start → passes through octave bands from 256 to the ask → last pass → its verification reading → adopted, or abandoned (drift, age, superseded, re-keyed). Cursor, ask, each pass's price against the 20 ms target, band licences. |
+| C | **The pinned refresh (the walk)** | start → passes through octave bands from 256 to the ask → last pass → its verification reading → adopted, or abandoned (drift, age, superseded, re-keyed). Cursor, ask, each pass's price against the 20 ms target, band licenses. |
 | D | **The picture on screen** | live, held or reprojected; its age in octaves against the 0.5 target and the 1.0 gate; the reuse-hold waiting out its drift; the resolution of what is shown. |
 | E | **The reference pipeline** (threads) | live, lookahead and reactive builds: orbit length, precision, series walk, BLA; installs, overtaken drops, re-keys; the reference's depth against the view's. |
 | F | **Arithmetic** | direct → df32 → floatexp (the 2^93 switch), the pre-switch probe, BLA skipping, rebases. |
@@ -48,31 +48,31 @@ per frame today (A: ✓ kept, ~ kept in a trace only, ✗ needs plumbing).
 | B GPU queue | 2 | 3 | 3 | ✓ | pass kinds stacked per frame, against the 16.7 / 33 / 50 ms lines |
 | E references | 2 | 3 | 3 | ~ | builders racing the view down a depth ruler; installs, drops, re-keys |
 | A frame loop | 2 | 2 | 2 | ✓ | the step order of one frame; best as LEDs, not text |
-| K worker GPU | 2 | 3 | 3 | ~ | frames travelling from a second device into the hold |
+| K worker GPU | 2 | 3 | 3 | ~ | frames traveling from a second device into the hold |
 | I palette | 2 | 3 | 2 | ✓ | the window over the histogram (it would have shown today's frozen range at a glance) |
 | H timer ring | 1 | 3 | 3 | ✗ | three literal blinking lights |
 | F arithmetic | 2 | 2 | 2 | ✓ | a mode lamp and the 2^93 crossing |
 | J settling | 2 | 1 | 2 | ✓ | a ring filling to 24 samples |
-| G budget | 1 | 3 | 1 | ✓ | numbers more than motion; a diagnostics tab, not the centrepiece |
+| G budget | 1 | 3 | 1 | ✓ | numbers more than motion; a diagnostics tab, not the centerpiece |
 | L iteration climb | 1 | 2 | 1 | ✓ | |
 
 ## The proposal: five instruments
 
 1. **The walk dial** (C). A round dial whose rim is the iteration count on a log scale, 256 at the
    top to the ask, divided into its octave bands. A hand sweeps as the walk's cursor advances; each
-   pass paints the arc it covered, coloured by its price against the 20 ms target (cool to hot), so
+   pass paints the arc it covered, colored by its price against the 20 ms target (cool to hot), so
    a cheap band fills in one stroke and a dear one in several. The verification wait is a pulse at
    the rim; adoption flashes the dial white and it resets for the next pin. An abandoned walk fades
    red with its reason. A small second dial can show the worker GPU's walk beside it.
    *(Added 2026-10-21, on the user's 2^704 view, where the dial sat empty through two minutes of
    settling:)* a still view's walk sweeps the dial too, tagged SETTLE, and so does each
-   supersampling sample's, tagged SSAA (`WalkStart`, `WalkPass`): each arc is coloured against the
+   supersampling sample's, tagged SSAA (`WalkStart`, `WalkPass`): each arc is colored against the
    time the pass was sized for (the 400 ms settle budget, not the pin's 20 ms), and the walk ends
    when its last pass is timed.
 2. **The freshness gauge** (D). A needle for how far the picture on screen lags the view, in
    octaves, with the 0.5 target and the 1.0 gate marked, and the last few seconds as a trace behind
-   it: the sawtooth of ageing and adoption that is the zoom blur. Reprojection and hold show as the
-   needle's colour.
+   it: the sawtooth of aging and adoption that is the zoom blur. Reprojection and hold show as the
+   needle's color.
 3. **The GPU oscilloscope** (B, H). A scrolling strip, one column a frame: the frame's passes stacked
    by kind (moving, pin, settle, SSAA, probe, worker), height in GPU ms, against the 16.7, 33 and
    50 ms lines. A pass with no price is drawn hollow. Above it, the three timer-ring lights cycle
@@ -82,7 +82,7 @@ per frame today (A: ✓ kept, ~ kept in a trace only, ✗ needs plumbing).
    probe's blink). Reference builds launch from the three builders as pucks that land ahead of the
    view (lookahead) or at it (live, reactive); an install pulses, an overtaken build is dropped with
    an X, a re-key ticks.
-5. **The light bank** (A, E, J, K, I). The literal blinkenlights: a row of labelled lamps that light
+5. **The light bank** (A, E, J, K, I). The literal blinkenlights: a row of labeled lamps that light
    when their process acts and decay over a few frames: plan, dispatch, present (live / held /
    reprojected), reading landed, pin pass, adoption, reference build ×3, series walk, worker frame,
    SSAA sample, palette feed. The order they light in, frame after frame, is the sequence.
@@ -101,7 +101,7 @@ A sixth cluster for the machine underneath the picture: how much of it is busy, 
 | **Computational work** | ✓ Each GPU reading pairs nominal steps with milliseconds; the armed frames' work counters give BLA skips and rebases; reference builds report length, precision and time. | **The tachometer:** nominal steps per second on a log dial (1e9–1e13), with a second needle for the iterations actually executed. The gap between the two needles is BLA's multiplier made visible. An **odometer** rolls the session's total. A smaller dial for the CPU's bignum work (orbit iterations × precision bits per second). |
 | **Split between GPUs** | ✓ The window's GPU time per frame; the worker's walk time, frames offered, delivered, and adopted live or into the hold (`LiveStats`). On PLUTO, two cards; elsewhere, two devices on one. | **Two engines:** a busy gauge per device, and frames flowing as dots from each device to a screen glyph, so the share of what you are looking at is visible. A balance bar gives the split as a number. |
 | **Memory** | ✓ Process working set and peak (`sysinfo::process_memory`). ✗ GPU memory: wgpu does not report it, but the app knows every large thing it allocates (G-buffers, hold and SSAA textures, orbit and BLA buffers, the worker's reference copy, capped at a quarter of the card), so a ledger of its own allocations gives a true lower bound. | **Two tanks:** system RAM (working set, the peak as a line) and GPU memory as a stacked column by kind, against the card's size. |
-| **Pixel throughput** | ✓ Resolution, supersampling and passes per frame give pixel-passes per second; content readings give how many pixels finished (escaped) per walk. | **The pixel stream:** particles flowing into the screen at a rate set by pixels per second, coloured by arithmetic mode, with Mpx/s beside it. Finished pixels fall in brighter than passes still walking. |
+| **Pixel throughput** | ✓ Resolution, supersampling and passes per frame give pixel-passes per second; content readings give how many pixels finished (escaped) per walk. | **The pixel stream:** particles flowing into the screen at a rate set by pixels per second, colored by arithmetic mode, with Mpx/s beside it. Finished pixels fall in brighter than passes still walking. |
 
 ## What it needs that is not there
 
@@ -145,7 +145,7 @@ Instruments are the period's own:
 | instrument | period form |
 |---|---|
 | light bank | a PDP-8 / Altair row of round lamps under engraved labels: red, amber and green, with a warm incandescent glow that fades over ~150 ms when the event is past |
-| walk dial | a **radar PPI scope**: round green-phosphor screen, the iteration count on a log scale round the rim from 256 at the top, octave bands as range rings' arcs; the walk's cursor is the sweeping beam, each pass leaves an afterglow arc coloured by its price (pale green cheap → amber → red over target), the verification wait blips at the rim, adoption flashes the whole screen |
+| walk dial | a **radar PPI scope**: round green-phosphor screen, the iteration count on a log scale round the rim from 256 at the top, octave bands as range rings' arcs; the walk's cursor is the sweeping beam, each pass leaves an afterglow arc colored by its price (pale green cheap → amber → red over target), the verification wait blips at the rim, adoption flashes the whole screen |
 | freshness gauge | a **VU meter**: cream face, black scale in octaves (0 to 2), red zone past 1.0, a mark at 0.5; the needle has meter ballistics. Behind it, under glass, a small phosphor strip of the last few seconds' sawtooth |
 | GPU oscilloscope | a **phosphor scope**: green P31 trace on a graticule, one column per frame scrolling left, the passes as stacked bars by kind (bright = priced, hollow = unpriced), the 16.7 / 33 / 50 ms lines on the graticule; above it the three **timer-ring lamps** |
 | depth ruler | a **radio tuning dial**: backlit amber glass with a log2-magnification scale, the view as the red pointer gliding along it; scale bands shaded by arithmetic (direct, df32, floatexp) with the 2^93 crossing marked; the reference builders as three small lamps riding the dial ahead of or at the pointer, an install pulsing, an overtaken build blinking out |
@@ -167,8 +167,8 @@ Routed Gothic's 1 is narrower than its other digits, so a number that changes is
 digit in a cell as wide as a 0; fixed labels are drawn as set. The nixie row sits at the top of the
 panel with a clock (`yyyy-mm-dd hh:mm:ss.s`, local time), which stamps any screenshot of the panel.
 
-Colour: warm amber and red lamps, phosphor green, cream meter faces, on charcoal. The price colours
-run green → amber → red and also brighten, so they read without colour vision. Everything is drawn as
+Color: warm amber and red lamps, phosphor green, cream meter faces, on charcoal. The price colors
+run green → amber → red and also brighten, so they read without color vision. Everything is drawn as
 vectors, so it scales with the display.
 
 ### The tile plane (added on review, 2026-10-19)
@@ -181,7 +181,7 @@ three ways, and the plane draws each one the way it happens:
 |---|---|---|---|
 | **The whole frame in one pass:** a moving frame, a priced live refresh, each pass of a pinned walk or of a still view's walk (the settle's, or a supersampling sample's) | one full-screen draw | the whole plane flashes on each pass; for a walk, the band (e.g. 4,096–8,192) captions it, named PIN PASS, SETTLE PASS, or SSAA with the samples done. *(2026-10-21, the maintainer: "Tiles instrument seems to always look like a single rectangle".)* A still view's walk pass covers the whole frame but iterates only the pixels not yet escaped: the plane fills from the bottom to that share (`Perf::chunk_running` over the walk's texels, log scale, 0.01% at the floor) and reads it ("RUNNING 1.5%"), so it drains as the walk goes deeper | the resolution · 1 |
 | **A split refresh:** a live refresh priced dearer than one frame's share goes out in `k` passes, one a frame, each about `LIVE_REFRESH_MS` (4.5 ms), up to `LIVE_SPLIT_MAX` (8) | `LiveRefresh::Split(k)`, `PinnedRefresh::split`; set `j` = the 16-texel tiles with (x + y) mod k = j (`SPLIT_TILE`, `vs_split_tiles`) | the interleaved sets fill pass by pass (a checkerboard at k = 2, diagonals above), this frame's set brightest | 16 px · tiles ÷ k (about 2,100 at 1455×1102, k = 3) |
-| **The settle grid:** a settled frame too dear for one dispatch | `TileGrid`: side √(admission ÷ (iterations × ss²)), at least 16 px, frozen for the grid; 16 to 512 tiles (`TDR_MAX_TILES`, `TDR_TILES_CEIL`); one a frame, centre-out; a tile over the admission goes out as strips (`settle_strip`) | lamps fill from the centre out, the next tile outlined, a stripped tile filling row by row; then SSAA samples pulse the whole plane | the side · 1 (or 1/strips) |
+| **The settle grid:** a settled frame too dear for one dispatch | `TileGrid`: side √(admission ÷ (iterations × ss²)), at least 16 px, frozen for the grid; 16 to 512 tiles (`TDR_MAX_TILES`, `TDR_TILES_CEIL`); one a frame, center-out; a tile over the admission goes out as strips (`settle_strip`) | lamps fill from the center out, the next tile outlined, a stripped tile filling row by row; then SSAA samples pulse the whole plane | the side · 1 (or 1/strips) |
 
 A frame with no pass (reprojected, held, waiting on a reading) leaves the plane dark and says why.
 The GPU oscilloscope gets a fourth bar kind (settle tiles), and the light bank gets **SPLIT** and
@@ -290,7 +290,7 @@ What the implementation settled, where it differs from or adds to the above:
   flake) and uploaded with a repeating sampler; one texel is one panel unit, so the dents scale
   with the panel, and it lives in the static layer, so it costs nothing a frame. Soft Gaussian
   dents read as smoke at 1:1 and were dropped. Legibility is measured, not judged: every legend
-  printed on the case carries a dark halo a pixel round it, the legend colours were raised
+  printed on the case carries a dark halo a pixel round it, the legend colors were raised
   (`ENGRAVE_DIM` #8f8875 → #ccc2a8), and a unit test holds each at 4.5:1 or better against the
   tile's median texel and against its p99.5 glint under the halo; the maker's mark moved onto a
   dark enamel badge (red on the hammertone itself would read at 1.5–2:1).
@@ -302,7 +302,7 @@ What the implementation settled, where it differs from or adds to the above:
   bubble make the relief, lit as before; the creases and the bubbles' rims are darkened on top.
   Fifteen rounds in a NumPy prototype beside the photograph (rendered in silver to compare the
   pattern, in the case's slate to ship it): high-relief cells read as stone, a strong warp as
-  worms, a morphological opening erased the small cells. The case keeps its slate colour, since
+  worms, a morphological opening erased the small cells. The case keeps its slate color, since
   the legends are light, and the same unit tests hold (in the prototype the dimmer legend read
   7.2:1 against the median texel and 5.6:1 against the halo-darkened glint; no seam).
 - **Review fixes (2026-10-20):** supersampling passes are lavender on the scope, with their own
@@ -314,7 +314,7 @@ What the implementation settled, where it differs from or adds to the above:
   software) for settle grids of 16 to 1000-px tiles at several stages, strips, splits of 2 to 8
   passes, whole frames, SSAA and idle, and read back tile by tile. The geometry was right; what
   the eye saw was not. Its levels were amber at an alpha over the dark face, and egui premultiplies
-  a faint colour in linear light: the plane at 0.04 showed as a quarter-bright brown, done cells at
+  a faint color in linear light: the plane at 0.04 showed as a quarter-bright brown, done cells at
   0.3 almost matched the pass's own at 0.95, so a two-pass split read as half the plane, then all
   of it. The levels are now opaque mixes into the face (plane 0.07, to come 0.13, done 0.38, the
   pass 0.7 to 1). At the instrument's own size a 16-px tile is ~2 px: grids of tiles under 6 px

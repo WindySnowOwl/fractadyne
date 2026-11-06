@@ -12,7 +12,7 @@ Prereq reading: TODO.md § Open bugs (the device-loss entry, bottom-up), `topic-
 
 `cargo test -p fractadyne-core --release --lib escape_length_vs_precision -- --ignored --nocapture`
 
-At the exact three-spar dive centre (a Misiurewicz point — its true orbit never escapes), with the
+At the exact three-spar dive center (a Misiurewicz point — its true orbit never escapes), with the
 point parsed at full precision and only the orbit arithmetic varied:
 
 | orbit precision | computed escape length |
@@ -36,8 +36,8 @@ ties the precision of a reference to the number of iterations it is being asked 
 `best_reference` scores candidates by bignum orbit length **at the caller's precision**. When that
 precision's cliff is below the 4,096-iteration quick scan, *every* candidate "escapes" in phase 1,
 there is no survivor, and the function falls back to "longest escaper" — institutionalising a
-short-escaper pick at exactly the views where the centre (fed 32 more bits) would survive the whole
-render. Fed adequate precision the picker is healthy: offline picked the centre and produced
+short-escaper pick at exactly the views where the center (fed 32 more bits) would survive the whole
+render. Fed adequate precision the picker is healthy: offline picked the center and produced
 `len=26465 partial` at 286 bits; the live path later in the tour produced `len=52648 partial`.
 
 ### 1.3 The reuse gate pins one bad pick indefinitely
@@ -94,7 +94,7 @@ architectural limit), offline tour-render cost/memory bounds, the livetest flap.
 
 ### Layer 0 — observability (prereq, small)
 
-- Trace every **pick**: scoring precision, survivor count, chosen point's offset from centre (in
+- Trace every **pick**: scoring precision, survivor count, chosen point's offset from center (in
   spans), scored length, and whether the no-survivor fallback fired. The fallback firing is the
   cliff detector's raw signal and must be visible.
 - Trace every **reuse** decision: drift, prec check, len, escaped, ask, and the implied traversal
@@ -115,8 +115,8 @@ The ladder shows growth under the cliff is dramatic (570 → 84,941 for +32 bits
 almost always resolves. Cost is one extra bignum orbit, paid **only** on suspicion; the
 101-candidate scan is not repeated.
 
-**Picker rescue.** When phase 1 finds no survivor (the blindness signature), rescore the *centre
-candidate only* at `prec + 64` before accepting the longest-escaper fallback. If the centre
+**Picker rescue.** When phase 1 finds no survivor (the blindness signature), rescore the *center
+candidate only* at `prec + 64` before accepting the longest-escaper fallback. If the center
 un-cliffs, it wins. This costs one orbit in exactly the pathological case.
 
 **Placement**: app-side in the recompute worker (`render.rs`), with a small `pub` helper in core
@@ -136,7 +136,7 @@ Replace "reuse-or-repick" with **adopt-if-strictly-better**:
 
 - The cache keeps serving the **incumbent** exactly as today — every existing consumer, the freeze
   guard, and the refusal ledger are untouched. By construction, no regression is possible while a
-  challenger is pending: the worst case is today's behaviour.
+  challenger is pending: the worst case is today's behavior.
 - At build time compute fitness: incumbent `escaped && ask > K·len` (start K=4; the live
   `bla_skip≈0` counter is the empirical justification). Unfit ⇒ the worker still returns the
   incumbent-based result **and** sets `refit_wanted`.
@@ -153,7 +153,7 @@ Replace "reuse-or-repick" with **adopt-if-strictly-better**:
 - **Persistence gate**: `build_saved_ref` additionally refuses an unfit reference (escaped with
   `orbit_iter` ≪ the ask it was serving), so a bad era cannot cross sessions.
 
-**Acceptance**: hold-e72 baseline behaviour identical (`--livetest` 0 drift — the incumbent path
+**Acceptance**: hold-e72 baseline behavior identical (`--livetest` 0 drift — the incumbent path
 is untouched); a seeded-bad-reference scenario (start the tour with a planted 626 cache via
 `refcache_persist`) recovers within one challenger build; adoption events visible in the Layer-0
 trace.
@@ -171,7 +171,7 @@ trace.
 
 ## 4. Sequencing
 
-1. **L0** (small) — traces. No behaviour change; bless nothing.
+1. **L0** (small) — traces. No behavior change; bless nothing.
 2. **L1** (medium) — the probe + picker rescue. Likely cures the crash on its own; run the full
    acceptance battery before starting L2.
 3. **L2** (larger) — incumbent/challenger. Cures the *class* (any future bad pick, any entry
@@ -198,12 +198,12 @@ Each layer lands with suite 104+/goldens 17/bench-matrix 0-drift/livetest 0-drif
 Implementation order was driven by two measurements made AFTER the plan was written:
 
 1. **The rounded-point axis** (`escape_length_of_rounded_centre`): `Playback::sample` routed a
-   PINNED-CENTRE glide through `lerp_bf(a, a, ease, p)` with `p` = the *current interpolated
-   depth's* precision — which rounds the centre, handing the pick a genuinely different point:
+   PINNED-CENTER glide through `lerp_bf(a, a, ease, p)` with `p` = the *current interpolated
+   depth's* precision — which rounds the center, handing the pick a genuinely different point:
    78 bits → true escape 625 (**the crash's `len=626`**), 157 → 94,126, 206 → 602,515 (**hold-e72's
    "accumulated" 602,516 — it was never an accumulation**), 300+ → survives. Every mysterious
-   orbit length in the ledger is `escape(round(centre, p)) + 1`. Fixed: a pinned-centre glide now
-   returns the centre exactly; genuine pans still interpolate (arrivals are keyframes, which the
+   orbit length in the ledger is `escape(round(centre, p)) + 1`. Fixed: a pinned-center glide now
+   returns the center exactly; genuine pans still interpolate (arrivals are keyframes, which the
    hold branch returns exactly).
 2. **The e72 lottery**: the deep holds' historically-green states were CARRIED by cliff-escaped
    (numerically wrong) orbits laundering themselves past the freeze guard — a truthful orbit comes
@@ -215,11 +215,11 @@ Shipped:
 - **L0**: pick trace (`pick [origin]: ask/scored@bits/survivors/winner_len/RESCUED/offset`),
   slow-frame log carries `rebase/bla_skip/ref_len/partial`.
 - **L1 — cliff rescue** in `best_reference` (now `best_reference_diag`): no phase-1 survivor →
-  full re-scan at `p+128` (the build precision); winner-escapes-early → centre rescored at
+  full re-scan at `p+128` (the build precision); winner-escapes-early → center rescored at
   `p+128`, taken only if it survives the render. Deterministic; healthy picks byte-identical
   (bench-matrix 0 drift). Selftest group `ref-pick` pins the exact bug pick (prec-78 era) and the
   no-rescue-on-healthy case.
-- **L1 — exact pinned-centre glides** in `Playback::sample` (the entry-vector fix).
+- **L1 — exact pinned-center glides** in `Playback::sample` (the entry-vector fix).
 - **L2-core — the freeze guard now INSTALLS long partials at the FLOOR budget** instead of
   refusing them: `install_recompute` treats `partial > LIVE_REF_CAP+1` as maximally
   cost-discontinuous (`fe_budget := TDR_MIN_STEPS`, re-measure from a ~10 ms worst-case

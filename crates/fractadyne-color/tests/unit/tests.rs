@@ -43,7 +43,7 @@ fn palette_text_accepts_common_shapes() {
     assert_eq!(parse_palette_text("255 0 0 0 255 0").unwrap().len(), 2);
 }
 
-/// ⭐⭐**A pasted colour must render as the colour that was pasted.** Stops are DISPLAY-referred
+/// ⭐⭐**A pasted color must render as the color that was pasted.** Stops are DISPLAY-referred
 /// — the shader writes them straight into a non-sRGB framebuffer — so `#808080` is the stop
 /// 128/255, NOT its linear decode.
 ///
@@ -64,9 +64,9 @@ fn palette_text_is_display_referred_not_linear() {
 
 /// ⭐⭐**A `.map` triple must not be read as three hex shorthands.** `168 168 168` is a real line
 /// in Fractint's `default.map`, and each token is also three valid hex digits — so the
-/// "hex tokens win" rule turned it into THREE `#114488` colours. Every `.map` line whose values
+/// "hex tokens win" rule turned it into THREE `#114488` colors. Every `.map` line whose values
 /// all land in 100–255 was silently mis-imported, in the format this parser advertises support
-/// for. These are the exact greys and whites out of `default.map`.
+/// for. These are the exact grays and whites out of `default.map`.
 #[test]
 fn map_triples_beat_bare_hex_shorthand() {
     for (line, want) in [
@@ -75,12 +75,12 @@ fn map_triples_beat_bare_hex_shorthand() {
         ("252 252 252", 252.0 / 255.0), // Fractint's white: 6-bit 63 x4, not 255
     ] {
         let c = parse_palette_text(line).unwrap();
-        assert_eq!(c.len(), 1, "{line:?} produced {} colours, not one", c.len());
+        assert_eq!(c.len(), 1, "{line:?} produced {} colors, not one", c.len());
         for ch in 0..3 {
             assert!((c[0][ch] - want).abs() < 1e-6, "{line:?} ch{ch} = {}", c[0][ch]);
         }
     }
-    // A whole run of .map lines still yields one colour per line.
+    // A whole run of .map lines still yields one color per line.
     let m = parse_palette_text("168 168 168\n84 84 252\n252 252 252\n").unwrap();
     assert_eq!(m.len(), 3);
     // …while shorthand that CANNOT be a decimal triple keeps the hex reading.
@@ -155,8 +155,8 @@ fn presets_pack_within_bounds() {
 
 /// Every shipped preset is a ring the app can draw and the gradient editor can open: it starts at
 /// 0 and ends at 1 with positions ascending, two stops at most share a position (a hard edge), its
-/// colours are display values in 0..1, it fits the editor (32 stops, `EDITOR_MAX_STOPS` in the
-/// app), its name is its own, and it loops: a smooth preset ends on the colour it starts with (a
+/// colors are display values in 0..1, it fits the editor (32 stops, `EDITOR_MAX_STOPS` in the
+/// app), its name is its own, and it loops: a smooth preset ends on the color it starts with (a
 /// mismatched pair is a hard seam every palette cycle), a banded one meets the seam at a hard edge
 /// between two flat bands, like each of its other edges.
 #[test]
@@ -176,11 +176,11 @@ fn presets_are_well_formed_rings() {
             assert!(!(w[0].0 == w[1].0 && w[1].0 == w[2].0), "{}: three stops at {}", p.name, w[0].0);
         }
         for (pos, c) in s {
-            assert!(c.iter().all(|v| (0.0..=1.0).contains(v)), "{}: colour at {pos} outside 0..1", p.name);
+            assert!(c.iter().all(|v| (0.0..=1.0).contains(v)), "{}: color at {pos} outside 0..1", p.name);
         }
         let seamless = s[0].1 == s[s.len() - 1].1;
         let banded_seam = s[0].1 == s[1].1 && s[s.len() - 1].1 == s[s.len() - 2].1;
-        assert!(seamless || banded_seam, "{}: a smooth preset must end on the colour it starts with", p.name);
+        assert!(seamless || banded_seam, "{}: a smooth preset must end on the color it starts with", p.name);
     }
 }
 
@@ -260,7 +260,7 @@ fn the_holiday_block_holds_the_holiday_palettes() {
 /// ⭐⭐**A palette file must parse the same whatever wrote its line endings.** `str::lines()` does
 /// not treat a lone `\r` as a terminator, so before the hygiene layer a classic-Mac `.map` — and
 /// there are plenty in the archives these palettes come from — arrived as ONE line and parsed as
-/// zero colours, reported as "no colours found" for a file that was completely fine.
+/// zero colors, reported as "no colors found" for a file that was completely fine.
 #[test]
 fn every_importer_handles_cr_crlf_and_lf() {
     let map_unix = "  0   0   0\n255 128  64\n 12  34  56\n";

@@ -18,7 +18,7 @@ runs in the app as `--selftest-filter replay` (a group of the full self-test too
 
 Lifted so far (schema 2): `moving` (the moving frame's scale: the work budget's bound, the rate-aware refresh
 cap, the AIMD, the visible-frame ladder), `present` (the present gate: the held snapshot, the
-settled-cost probe, the colour-pass filter) and `iter` (the adaptive live-iteration climb: the boost's
+settled-cost probe, the color-pass filter) and `iter` (the adaptive live-iteration climb: the boost's
 seed from the reference, the raises, the plateau, the appetite re-pick and the exhausted revert, the
 verdict, and the frame's iteration ask) and `probe` (the budget-climb probe: whether a settled view whose
 work budget has not converged, with nothing else dispatching, forces a re-measure) and `walk-price` (the
@@ -27,7 +27,7 @@ the drain, the band ledger — the pass's step budget and the growth-limited ite
 (the walk's identity: the signature composed from everything it folds, the restart and whether it clears
 the band ledger, the counted lost walk, the SA-skip floor and a partial reference's capped end) and
 `walk-dispatch` (the walk's dispatch: the serialized hold, the pin gate and its wall-clock escape, the
-regional licence, the running-pixel charge, the window, the cursor, the pin pass's bookkeeping, the
+regional license, the running-pixel charge, the window, the cursor, the pin pass's bookkeeping, the
 finished walk's tail and its read retry). With the last three, `bp_chunk_tiling`'s decisions are all
 lifted; what stays imperative is its state resets, the frame's cost trace and the clock reads (§5.4).
 

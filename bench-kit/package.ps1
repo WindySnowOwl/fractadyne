@@ -36,7 +36,7 @@ try {
     # first. Omitted, a distributed kit silently downgrades to "view NOT verified" with no report,
     # which is precisely the state that let a wrong-view benchmark run for months.
     New-Item -ItemType Directory -Force (Join-Path $stage 'tools') | Out-Null
-    # make-fsloc.py: the FractalShark lane writes a locations file with it for a centre too long
+    # make-fsloc.py: the FractalShark lane writes a locations file with it for a center too long
     # for a command line (the 1e30000x ladder scenes). exr-interior.py: the Fraktaler-3 view check
     # reads the never-escaped share from that renderer's raw counts with it. ff-view.py: the
     # Fracturing Fog lane converts every scene's view with it. inspect-sheet.py: run-all -Inspect.

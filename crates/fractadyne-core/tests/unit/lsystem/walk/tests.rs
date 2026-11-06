@@ -99,7 +99,7 @@ fn culling_keeps_every_segment_that_touches_the_view_and_no_stranger() {
         let t = Tables::new(&s);
         let order = (0..=7).rev().find(|&n| t.axiom_entry(n).n <= 60_000.0).unwrap_or(0);
         let whole = framing(&t, order, 800.0);
-        // The curve in world units, to centre views on (a random point of the frame is mostly
+        // The curve in world units, to center views on (a random point of the frame is mostly
         // empty space once zoomed in, and an empty view tests nothing).
         let world = reference_segments(&s, &t, order, &View::EVERYTHING, 1_000_000).unwrap();
         if world.is_empty() {
@@ -144,7 +144,7 @@ fn a_mirrored_subtree_is_stepped_over_mirrored() {
     let upp = norm(t.step(1));
     let u = t.step(1);
     assert!((u[0] - upp).abs() < 1e-12 && u[1].abs() < 1e-12, "step along +x: {u:?}");
-    // 20 px a step; the view (16 px square) is centred on the F's far end, (3, −1) steps: X's reach
+    // 20 px a step; the view (16 px square) is centered on the F's far end, (3, −1) steps: X's reach
     // (√5 steps, 44.7 px from the origin) misses it by 9 px.
     let view = View { centre: [3.0 * upp, -upp], upp: upp / 20.0, size: [16.0, 16.0], margin: 0.0 };
     let (got, stats) = collect(&t, &view, &WalkOptions { order: 1, lod_px: 0.0, budget: u64::MAX });

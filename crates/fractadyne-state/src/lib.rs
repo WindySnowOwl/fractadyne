@@ -100,7 +100,7 @@ pub struct SessionState {
     /// anti-aliasing and it is NOT what the name promises — users read "normalize" as "fit the
     /// palette to this view's range", asked for it repeatedly, and got a control that appeared to
     /// do nothing. Rather than move the calibrated threshold (which has regressed in both
-    /// directions before — flat-grey at shallow depth, and "cities at night"), the range fit is its
+    /// directions before — flat-gray at shallow depth, and "cities at night"), the range fit is its
     /// own switch.
     #[serde(default)]
     pub normalize_fit: bool,
@@ -314,7 +314,7 @@ pub struct SessionState {
     /// Custom gradient stops `[pos, r, g, b]` (DISPLAY-space RGB) from the gradient editor.
     #[serde(default)]
     pub custom_palette: Vec<[f32; 4]>,
-    /// Read `custom_palette` as **bands** (one flat colour per entry, no interpolation) rather
+    /// Read `custom_palette` as **bands** (one flat color per entry, no interpolation) rather
     /// than as gradient stops — Fractint `.map` semantics, set by importing one. `false` for
     /// every session written before palette import existed, which is the right reading of an
     /// editor-authored gradient.
@@ -323,7 +323,7 @@ pub struct SessionState {
     /// A full SEGMENT gradient, when the palette is one a stop list cannot express.
     ///
     /// ⭐**This exists because `.ggr` is a superset of `custom_palette`.** A GIMP gradient carries a
-    /// per-segment midpoint, one of five blend curves and a colour space (RGB or either way round
+    /// per-segment midpoint, one of five blend curves and a color space (RGB or either way round
     /// the hue wheel); a `[pos, r, g, b]` list holds none of those, so persisting an imported
     /// `.ggr` as stops would have quietly flattened every curve and every hue sweep on the first
     /// restart. When this is non-empty it WINS over `custom_palette`.

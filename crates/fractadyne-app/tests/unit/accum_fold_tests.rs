@@ -50,7 +50,7 @@ fn the_time_cap_keeps_the_worker_sample_it_already_counted() {
     p.accum_ext_ready[0] = vec![sample(2)];
     p.accum_free[0] = vec![3];
     p.worker_job = Some((0, 5, 9));
-    assert_eq!(p.accum_cap(0, 8), Some((0, 5)), "the worker's job is cancelled");
+    assert_eq!(p.accum_cap(0, 8), Some((0, 5)), "the worker's job is canceled");
     assert_eq!(p.accum_goal(0), 8);
     assert_eq!(p.accum_ext_attach[0].as_ref().map(|s| s.width), Some(1), "the counted sample still folds");
     assert!(p.accum_ext_ready[0].is_empty() && p.accum_free[0].is_empty());
@@ -65,7 +65,7 @@ fn the_time_cap_keeps_the_worker_sample_it_already_counted() {
     assert_eq!(p.accum_cap(0, 4), None);
 }
 
-/// Sample 0 is the pixel centre (so the hand-off from the ordinary settle is seamless); every
+/// Sample 0 is the pixel center (so the hand-off from the ordinary settle is seamless); every
 /// later sample stays inside the pixel.
 #[test]
 fn jitter_sequence_starts_at_the_pixel_centre_and_stays_in_the_pixel() {
@@ -77,7 +77,7 @@ fn jitter_sequence_starts_at_the_pixel_centre_and_stays_in_the_pixel() {
 }
 
 /// Supersampling begins on a chunk-walked settle only once the adaptive limit has a verdict at the
-/// budget it plans and the colour range has had its complete reading (2026-10-07: a run begun
+/// budget it plans and the color range has had its complete reading (2026-10-07: a run begun
 /// during the climb restarted at every raise, for minutes).
 #[test]
 fn a_walked_settle_begins_only_once_the_limit_and_the_range_are_decided() {

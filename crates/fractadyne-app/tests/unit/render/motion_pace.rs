@@ -6,7 +6,7 @@ const DT60: f64 = 1.0 / 60.0;
 fn a_pass_is_sized_from_the_measured_rate_to_the_target() {
     // 1e8 nominal steps/ms at a 10 ms target = 1e9 steps — not the 4e10 TDR budget. (With no fixed
     // term; with one, its ms are set aside first.) ⚠The fixed term is the ADAPTER's calibration
-    // (`calibration::pass_fixed_ms`), a process global another test may have initialised (the
+    // (`calibration::pass_fixed_ms`), a process global another test may have initialized (the
     // calibration tests init the RTX 3080's 0.21), so the expectation reads the active value.
     assert_eq!(motion_pass_steps_fixed(1.0e8, 10.0, 0.0, 4.0e10 as u64, 4.0e8 as u64), 1.0e9 as u64);
     assert_eq!(
@@ -101,7 +101,7 @@ fn a_pin_inherits_a_cold_band_only_past_the_first_wrap_storm() {
     // The floor still holds when the predecessor is tiny.
     bands[8] = 300;
     assert_eq!(pin_band_license(&bands, 9, 256, 65_536, orbit_len), 256);
-    // A band with its own licence uses it (and never below the floor).
+    // A band with its own license uses it (and never below the floor).
     bands[9] = 100;
     assert_eq!(pin_band_license(&bands, 9, 256, 65_536, orbit_len), 256);
     bands[9] = 2_048;
@@ -121,7 +121,7 @@ fn a_pin_inherits_a_cold_band_only_past_the_first_wrap_storm() {
 
 /// The user's 2^800 dive, from the log and the video of it (2026-09-20): a 1469×1102 panel, a
 /// motion pass budget of ~1.35e9 steps (an 833-iteration walk at native), and an escape range
-/// topping out near 4900 — so at native the frame commits NOTHING and paints one flat colour,
+/// topping out near 4900 — so at native the frame commits NOTHING and paints one flat color,
 /// which is 36% of what the video recorded.
 const PANEL: u64 = 1469 * 1102;
 const PASS: u64 = 833 * PANEL;
@@ -209,7 +209,7 @@ fn the_visible_target_never_guesses_and_never_asks_for_no_pixels() {
 #[test]
 fn one_interval_cannot_slash_the_motion_rate() {
     // The pin-pass cuts measured at 2^800: 1.35e9 -> 1.5e8 (9x) on the evidence of ONE interval
-    // the motion frame did not own, and the next motion frame painted a flat colour. A cut is
+    // the motion frame did not own, and the next motion frame painted a flat color. A cut is
     // still a cut - it just cannot exceed MOTION_CUT_MAX in one event; repeated slow intervals
     // still ratchet it down.
     use crate::render::bounded_motion_cut;

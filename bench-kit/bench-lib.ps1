@@ -266,7 +266,7 @@ function Write-FsPhases($csvPath, $row) {
 # One untimed frame on a FRESH server, so the timed image after it starts warm. A server's first
 # render pays a one-off setup that its later renders do not: measured 2026-10-06 on scene 03 at 4K,
 # 1.20-1.34 s client time as a server's first image, 0.35-0.38 s as its second, and 0.36-0.37 s
-# after this warm-up. The warm-up frame lies entirely OUTSIDE the set (centre 4+0i at zoom 1, every
+# after this warm-up. The warm-up frame lies entirely OUTSIDE the set (center 4+0i at zoom 1, every
 # pixel escapes at once), so its reference orbit is a single step that no scene could reuse. Returns
 # the warm-up's own wall, which is kept out of every image's time.
 function Invoke-SharkWarmup($cli, $endpoint, $algo, $w, $h, $dir, $timeoutS) {
@@ -343,7 +343,7 @@ function Read-FdPhases($logPath, $wallMs) {
         elseif ($line -match 'orbit_ms=(\d+) sa_ms=(\d+) bla_ms=(\d+)') {
             $orbit += [double]$Matches[1]; $sa += [double]$Matches[2]; $bla += [double]$Matches[3]; $builds++
         }
-        elseif ($line -match 'overlap: centre build ([A-Z]+)') { $p.overlap = $Matches[1] }
+        elseif ($line -match 'overlap: cent(?:er|re) build ([A-Z]+)') { $p.overlap = $Matches[1] }
         elseif ($null -eq $tPerf -and $line -match '\[fd-perf\] cli-render: ') {
             $tPerf = $t
             $keys = @{ mode = 'mode=(\d+)'; iter = ' iter=(\d+)'
@@ -424,7 +424,7 @@ function Test-RenderHasStructure($path) {
             # Demand REAL variation, not just two differing pixels. A near-flat blank with a
             # handful of stray edge pixels used to pass the old "any two differ" test - that is
             # exactly how a blank GPU frame got scored as a render. Sample a dense grid and
-            # require many distinct colours AND no single colour dominating, matching
+            # require many distinct colors AND no single color dominating, matching
             # tools/image-structure.py (distinct > 16 and modal share < 0.98).
             $counts = @{}
             $total = 0
@@ -450,7 +450,7 @@ function Test-RenderHasStructure($path) {
 }
 
 # Is this PNG COMPLETE? `Test-RenderHasStructure` cannot tell: GDI+ decodes a PNG that was cut off
-# part-way and fills the missing rows, so half an image still has plenty of colours and passes "is
+# part-way and fills the missing rows, so half an image still has plenty of colors and passes "is
 # this a picture". That is how every Fractal Zoomer image of the first 4K run (2026-10-12) passed
 # with the bottom half missing: its driver exited the JVM on the stats file, which Fractal Zoomer
 # writes BEFORE it saves the image. A finished PNG ends with its IEND chunk; check for it. Anything

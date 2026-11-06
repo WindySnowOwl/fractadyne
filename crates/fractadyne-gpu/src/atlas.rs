@@ -1,14 +1,14 @@
-//! The palette browser's thumbnails: the view's current iteration texture coloured through each
+//! The palette browser's thumbnails: the view's current iteration texture colored through each
 //! palette in turn, into one atlas texture that egui draws from.
 //!
-//! ⭐**Nothing is iterated.** Colouring is its own pass over the iteration texture the view already
-//! holds, so a thumbnail costs one small colour pass, however deep the view: fifty palettes are
+//! ⭐**Nothing is iterated.** Coloring is its own pass over the iteration texture the view already
+//! holds, so a thumbnail costs one small color pass, however deep the view: fifty palettes are
 //! fifty draws of `fs_color` into cells of one texture, in one submission. Each thumbnail uses the
-//! colouring the view was last drawn with (`ViewResources::last_cu`) — method, cycle, offset,
+//! coloring the view was last drawn with (`ViewResources::last_cu`) — method, cycle, offset,
 //! normalization, lighting — with only the palette swapped, so it shows what choosing that
 //! palette would show.
 //!
-//! ⚠**Colour space.** `fs_color` writes display values into a non-sRGB target, which is what the
+//! ⚠**Color space.** `fs_color` writes display values into a non-sRGB target, which is what the
 //! screen shows. egui samples a registered texture as LINEAR and encodes it for display, so the
 //! atlas is registered through an sRGB VIEW of the same texture: sampling decodes the display values
 //! to linear and egui's encode puts them back, unchanged. Registered through the plain view, every

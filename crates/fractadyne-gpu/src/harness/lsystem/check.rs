@@ -1,7 +1,7 @@
 //! Device checks for the segment pass: the self-test's `lsystem` rows (design/lsystems.md §8,
 //! phase 2's gate). The GPU's coverage is compared with a CPU model of the rule the shader states —
-//! a texel takes the value of the LAST segment whose distance from the texel's centre is at most
-//! the half-width, else "interior" — texel for texel. Only a texel whose centre lies within a
+//! a texel takes the value of the LAST segment whose distance from the texel's center is at most
+//! the half-width, else "interior" — texel for texel. Only a texel whose center lies within a
 //! hair of a line's edge, where f32 and f64 may round to opposite sides, is left out, and those are
 //! counted.
 
@@ -18,7 +18,7 @@ pub fn render_segments(device: &wgpu::Device, queue: &wgpu::Queue, frame: &LSyst
 }
 
 /// The CPU model of the pass: per texel, the value of the last segment within the half-width of
-/// its centre, `Some(-1)` where none is — or `None` where the answer depends on rounding (a centre
+/// its center, `Some(-1)` where none is — or `None` where the answer depends on rounding (a center
 /// within `eps` of some line's edge changes the answer between `half − eps` and `half + eps`).
 pub fn model(frame: &LSystemFrame, size: [u32; 2], ss: u32) -> Vec<Option<f32>> {
     let ss = f64::from(ss.max(1));

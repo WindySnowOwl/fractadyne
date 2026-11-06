@@ -13,7 +13,7 @@
 # ONE AT A TIME, DELIBERATELY. Every step below either measures GPU time or measures frame
 # intervals, and a second consumer on the same card makes both meaningless (the same reason the
 # bench-matrix A/B rules say to interleave rather than run in parallel). Nothing here is
-# parallelised, and nothing else should be running on the machine while it does.
+# parallelized, and nothing else should be running on the machine while it does.
 #
 # HERMETIC: a private config directory per run, so the developer's own session is never touched
 # and never contributes settings to a number that gets published.

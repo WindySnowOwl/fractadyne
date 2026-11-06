@@ -298,11 +298,11 @@ pub struct FrameFailed {
 #[derive(Serialize, Deserialize, Debug, Clone, PartialEq)]
 #[serde(tag = "why", content = "detail", rename_all = "snake_case", deny_unknown_fields)]
 pub enum AbortReason {
-    /// The client's user cancelled the frame in progress.
+    /// The client's user canceled the frame in progress.
     UserCancel,
     /// The client's user paused: the current frame finished, no more work is taken.
     Paused,
-    /// The controller cancelled it.
+    /// The controller canceled it.
     Canceled,
     /// The render process lost its GPU.
     DeviceLost,

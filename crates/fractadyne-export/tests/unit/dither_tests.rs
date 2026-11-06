@@ -75,7 +75,7 @@ fn dither_breaks_up_bands() {
         "a single row should not lose levels"
     );
 
-    // Brightness is preserved: the offsets are centred, so the mean must not shift by more
+    // Brightness is preserved: the offsets are centered, so the mean must not shift by more
     // than a fraction of one level.
     let mean = |b: &[u8]| b.iter().step_by(4).map(|v| *v as f64).sum::<f64>() / (w * h) as f64;
     assert!((mean(&plain) - mean(&dithered)).abs() < 0.6);

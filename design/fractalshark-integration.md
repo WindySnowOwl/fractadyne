@@ -79,18 +79,18 @@ entry in that list.
 Today the CLI returns a **PNG**. For this we need it to return **data**. The ask is small and
 sharply bounded:
 
-> An option that computes a reference orbit for a given centre, precision and iteration budget,
+> An option that computes a reference orbit for a given center, precision and iteration budget,
 > and writes the samples out in a documented binary layout — rather than rendering an image.
 
 Concretely, what would make it usable:
 
-- **Inputs:** centre as decimal strings (as `--center-x` / `--center-y` already are), a precision
+- **Inputs:** center as decimal strings (as `--center-x` / `--center-y` already are), a precision
   in bits, and a maximum iteration count.
 - **Output:** a header (sample count, precision, whether and where the orbit escaped) followed by
   the samples. Per sample, real and imaginary parts in a form that survives the exponent range —
   an (f64 mantissa, i32 exponent) pair each is exactly what we consume, and is what any
   perturbation renderer needs.
-- **A determinism statement:** is this the orbit of that centre at that precision, and what is
+- **A determinism statement:** is this the orbit of that center at that precision, and what is
   the rounding? We do not need bit-identity with our own; we need to know what we are getting.
 
 That endpoint is generically useful to any perturbation renderer, not bespoke to us, which makes

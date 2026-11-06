@@ -416,7 +416,7 @@ impl crate::FractadyneApp {
         // palette across the escape range measured *on the view the user is looking at*. Every
         // thumbnail here is a different location at a different (shallow) depth, so that band is
         // meaningless for it: the whole exterior falls into one end of it and the thumbnail comes
-        // out a single flat colour with only the boundary filaments lit.
+        // out a single flat color with only the boundary filaments lit.
         //
         // ⚠That is the failure `live_norm_cycle_offset` already documents for a shallow view under a
         // deep view's mapping — reported here as "most thumbnails are now mostly red rectangles"
@@ -424,7 +424,7 @@ impl crate::FractadyneApp {
         // by putting the live view into that state and rendering the gallery.
         //
         // ⚠**Normalization is per-view by construction**, so the honest thing for a foreign view is
-        // to use none: the user's own cycle and offset, unmapped. A gallery is a catalogue of
+        // to use none: the user's own cycle and offset, unmapped. A gallery is a catalog of
         // places, and every tile must be readable on its own terms.
         // ⚠**`color_cycle()`, NOT `coloring.cycle`** — these four lines must reproduce the builder's
         // *un-normalized* branch exactly, and its cycle fallback is the depth-scaled

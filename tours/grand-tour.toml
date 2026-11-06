@@ -147,10 +147,10 @@ hold = 5
 # ============================================================ 2. Famous landmarks
 #
 # Every landmark is approached the same way: PAN at the home zoom, where the whole set is on
-# screen, and only then zoom in. Moving the centre while still zoomed in flies the camera through
+# screen, and only then zoom in. Moving the center while still zoomed in flies the camera through
 # the set's INTERIOR — the straight line from Seahorse Valley to Elephant Valley passes through
 # the middle of the cardioid, so at 1e5x every frame between them is solid black. (This is the
-# same reason the deep chapter swoops onto its centre at zoom 8 before descending.) The general
+# same reason the deep chapter swoops onto its center at zoom 8 before descending.) The general
 # fix is a Van Wijk-Nuij path, which derives "zoom out, pan, zoom in" in closed form instead of
 # making every author remember it — see the autopilot section of TODO.md.
 
@@ -230,7 +230,7 @@ hold = 1
 
 # The antenna tip, c = -2 exactly. Misiurewicz (2,1): the critical orbit lands on the
 # repelling fixed point 2, whose multiplier is exactly 4 — real, so the structure
-# repeats under zoom WITHOUT spiralling. The cleanest self-similarity in the set.
+# repeats under zoom WITHOUT spiraling. The cleanest self-similarity in the set.
 [[keyframe]]
 id = "antenna-tip"
 t = 65
@@ -300,9 +300,9 @@ hold = 4
 # Orbit overlay: the actual path of z under iteration, drawn over the set. The point MOVES from
 # here to the Burning Ship keyframe, and the three stops are the whole of what the set means:
 # inside -> on the boundary -> outside. The orbit point interpolates between keyframes, so the
-# path visibly reorganises itself as c crosses the boundary rather than cutting between stills.
+# path visibly reorganizes itself as c crosses the boundary rather than cutting between stills.
 # (The intermediate keyframes deliberately carry hold = 0: a hold is what the livetest samples as
-# a checkpoint, and these exist to be travelled through, not stopped at.)
+# a checkpoint, and these exist to be traveled through, not stopped at.)
 #
 # Stop 1 — INSIDE the period-3 bulb: the orbit falls onto a 3-cycle and stays there forever.
 # That closed loop is what "c is in the set" looks like.
@@ -318,7 +318,7 @@ hold = 2
 # Stop 2 — ON the boundary (the seahorse-valley point this tour pins its Julia set to): the orbit
 # never settles into a cycle and never escapes, so it fills a dense tangle. Every deep-zoom
 # location in the last chapter lives on this knife edge.
-# ⚠Each stop HOLDS. A waypoint with hold = 0 is travelled through, not seen — the first cut put
+# ⚠Each stop HOLDS. A waypoint with hold = 0 is traveled through, not seen — the first cut put
 # the escape stop 1.4 s before the Burning Ship keyframe with no hold, and the camera was already
 # flying to the next location by the time it rendered.
 [[keyframe]]
@@ -330,7 +330,7 @@ ease = "linear"
 hold = 1.5
 
 # Stop 3 — OUTSIDE: the orbit spirals out and escapes in a handful of steps. How FAST it escapes
-# is the escape count, which is the number every colour in every other frame of this tour is
+# is the escape count, which is the number every color in every other frame of this tour is
 # drawn from.
 [[keyframe]]
 id = "orbit-escape"
@@ -370,7 +370,7 @@ hold = 2
 id = "dive-start"
 t = 143
 location = "three-spar"
-# …and off once the descent pins the centre (a static dot tells the viewer nothing).
+# …and off once the descent pins the center (a static dot tells the viewer nothing).
 minimap = false
 zoom = 8
 max_iter = 3000
@@ -488,7 +488,7 @@ t = 60.5
 secs = 4.0
 [[annotation]]
 kind = "caption"
-text = "c = -2 exactly  ·  Misiurewicz (2,1)\nmultiplier 4, real — it repeats without spiralling"
+text = "c = -2 exactly  ·  Misiurewicz (2,1)\nmultiplier 4, real — it repeats without spiraling"
 t = 65.5
 secs = 4.0
 [[annotation]]
@@ -529,7 +529,7 @@ t = 122.2
 secs = 1.8
 [[annotation]]
 kind = "caption"
-text = "Outside: it escapes — and how fast is the colour"
+text = "Outside: it escapes — and how fast is the color"
 t = 124.7
 secs = 1.8
 [[annotation]]

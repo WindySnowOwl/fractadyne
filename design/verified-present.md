@@ -9,14 +9,14 @@ autopilot dive from 8.1e175× at zoom speed 4×, `prefer_detail`, `min_motion_re
 `work_budget_scale` 7.5, auto-iter (ask ≈ 152k–180k). The user's words: "the screen flashing as
 it zooms and also going to flat color planes".
 
-Measured on the recording (canvas interior, dominant-colour fraction > 97% = flat):
+Measured on the recording (canvas interior, dominant-color fraction > 97% = flat):
 
 | what | value |
 |---|---|
 | flat frames | 255 of 731 (35%) |
 | flat episodes | 22, of 2–32 frames (0.07–1.07 s) |
 | black flats (5,4,7) | 16 episodes |
-| single-palette-colour flats | 6 episodes, each the colour of the previous frame's centre |
+| single-palette-color flats | 6 episodes, each the color of the previous frame's center |
 | frame-to-frame change at the transitions | mean absolute difference 80–130 per channel — the "flash" |
 
 The log of the same session (build 3445, `FRACTADYNE_TRACE=autopilot,tile,gpu`), +36 s to +59 s:
@@ -42,9 +42,9 @@ consecutive frames). Nothing in the pipeline checks that a texture has content b
 displayed or snapshotted; the only content signal (`CTR_ESC_MIN == 0xFFFFFFFF`) is traced and
 discarded.
 
-Coloured flats. Between adoptions the snapshot is magnified to follow the zoom. Two to three
-seconds without an adoption at 2.65 oct/s is 30–80×: the snapshot's centre pixel fills the
-screen. That is the "flat colour plane"; it is the previous frame's centre colour, measured.
+Colored flats. Between adoptions the snapshot is magnified to follow the zoom. Two to three
+seconds without an adoption at 2.65 oct/s is 30–80×: the snapshot's center pixel fills the
+screen. That is the "flat color plane"; it is the previous frame's center color, measured.
 
 Flashing = the alternation: crisp adopted frame → magnified snapshot → black snapshot → crisp.
 
@@ -101,8 +101,8 @@ the slider rate so the dive never stalls. Speed mode: no cap.
   `PIN_INSTALL_DEFER_FRAMES` (30); it lands the frame the pin adopts or stops. A same-point
   extension installs at once (the pin re-keys and continues). A parked result counts as in flight
   for the reactive spawn gate.
-- The band ledger survives a point change at half its licences instead of resetting to the
-  floor (priced knowledge of the neighbouring orbit's cost structure; the cliff rule still
+- The band ledger survives a point change at half its licenses instead of resetting to the
+  floor (priced knowledge of the neighboring orbit's cost structure; the cliff rule still
   quarters a surprise).
 - A frame the freeze verdict turns into a reprojection is unstamped as a dispatch
   (`fe_dispatch_frame`/`fe_steps_last`): the wall-clock lift in `motion_wall_cut` was pricing

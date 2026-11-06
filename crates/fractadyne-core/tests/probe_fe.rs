@@ -64,7 +64,7 @@ impl Flt for f64 {
 // ours. Neither is currently instantiated -- `--gputest` now measures the real hardware directly,
 // which is strictly better evidence -- but they are kept, not deleted, because the question they
 // model is still open: the RX 6800 XT's DX12 backend fails two_prod 256/256, i.e. exactly the
-// non-fused-FMA behaviour `Nf` simulates. Re-point a probe test at them to reproduce a suspected
+// non-fused-FMA behavior `Nf` simulates. Re-point a probe test at them to reproduce a suspected
 // backend on the CPU. See TODO.md, "The shader compiler FOLDS the df32 error-free transforms".
 #[allow(dead_code)]
 fn ftz(x: f32) -> f32 { if x != 0.0 && x.abs() < f32::MIN_POSITIVE { 0.0 } else { x } }
@@ -288,7 +288,7 @@ fn probe_row_fe() {
     let refpt = fractadyne_core::best_reference(&center, span, 0, false, [0.0, 0.0], max_iter, prec);
     let (orbit, len) = fractadyne_core::reference_orbit(&zero, &zero, &refpt[0], &refpt[1], 0, max_iter, prec);
     let len = len as usize;
-    // Reference offset from the view centre (complex units), so each row pixel's dc = (pixel_c - ref).
+    // Reference offset from the view center (complex units), so each row pixel's dc = (pixel_c - ref).
     let rox = fractadyne_core::sub_f64(&refpt[0], &center[0], prec);
     let roy = fractadyne_core::sub_f64(&refpt[1], &center[1], prec);
     // df32 with the SHADER's 24-bit sf-rebase (= the GPU) vs df32 with the sim's f64-rebase vs df64 truth.

@@ -123,7 +123,7 @@ fn view_text_past_latin1_never_costs_the_picture() {
     assert_eq!(read_exr_metadata(&t.path("latin.exr")).unwrap().as_deref(), Some(latin));
 }
 
-/// ⭐**The raw writer must not touch a single value.** `--render-iter` used the COLOUR writer,
+/// ⭐**The raw writer must not touch a single value.** `--render-iter` used the COLOR writer,
 /// whose `srgb_to_linear` clamps to [0,1]: the smooth-iteration channel holds counts in the
 /// hundreds of thousands, so every pixel clamped to 1.0 and the whole channel read back as a
 /// CONSTANT — indistinguishable from a renderer that computed nothing. The values below are
@@ -258,7 +258,7 @@ fn corrupt_input_is_an_error_not_a_panic() {
     // disk-full failure at frame 1091 that put that check there.
     assert!(
         read_png_rgba8_bytes(&full[..full.len() - 1]).is_ok(),
-        "behaviour changed: the decoder now rejects a PNG missing IEND's last CRC byte. That is \
+        "behavior changed: the decoder now rejects a PNG missing IEND's last CRC byte. That is \
          stricter, and welcome — but the resume vetter's own IEND check must stay, because it \
          is what makes the guarantee rather than the decoder's leniency happening to be narrow."
     );

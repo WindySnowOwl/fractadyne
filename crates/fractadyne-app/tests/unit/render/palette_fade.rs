@@ -4,12 +4,12 @@ const CLASSIC: NormMap = NormMap { cycle: 0.0352, offset: 0.8, mode: 0, lo: 0.0 
 const LOG: NormMap = NormMap { cycle: 0.48, offset: 0.8, mode: 1, lo: 302.5 };
 const LINEAR: NormMap = NormMap { cycle: 0.0022, offset: 0.13, mode: 0, lo: 0.0 };
 const FRAME: f32 = 1.0 / 60.0;
-/// The window the normalised maps above are drawn over.
+/// The window the normalized maps above are drawn over.
 const WIN: Option<(f32, f32)> = Some((300.0, 1900.0));
 
 #[test]
 fn a_glide_step_never_dissolves() {
-    // A normalised map gliding (its window moving a little each frame) is one kind throughout,
+    // A normalized map gliding (its window moving a little each frame) is one kind throughout,
     // and each step is far under a jump: no fade.
     let (s, f) = palette_fade_step(PaletteFadeState::default(), LINEAR, true, 7, FRAME, WIN);
     assert_eq!(f.weight, 0.0);
@@ -35,8 +35,8 @@ fn a_whole_cycle_is_no_change_at_all() {
 
 #[test]
 fn a_jump_within_one_kind_of_map_dissolves() {
-    // The 2026-10-25 strobe and the settled view's snap: a normalised map whose window jumps
-    // recolours the picture by a palette cycle or more in one frame. It dissolves instead.
+    // The 2026-10-25 strobe and the settled view's snap: a normalized map whose window jumps
+    // recolors the picture by a palette cycle or more in one frame. It dissolves instead.
     let (s, _) = palette_fade_step(PaletteFadeState::default(), LINEAR, true, 7, FRAME, WIN);
     let jumped = NormMap { cycle: 0.0011, offset: 0.4, ..LINEAR };
     assert!(map_change(&LINEAR, &jumped, WIN.unwrap()) > PALETTE_JUMP);
@@ -108,7 +108,7 @@ fn switching_on_and_linear_to_log_dissolve_too_and_a_slow_frame_does_not_skip_it
 #[test]
 fn the_users_own_colouring_changes_at_once() {
     let (s, _) = palette_fade_step(PaletteFadeState::default(), LOG, true, 7, FRAME, WIN);
-    // "Normalize deep colors" unticked: another colouring signature, so no dissolve…
+    // "Normalize deep colors" unticked: another coloring signature, so no dissolve…
     let (s, f) = palette_fade_step(s, CLASSIC, false, 8, FRAME, None);
     assert_eq!(f.weight, 0.0);
     // …and one under way stops when the user changes something.
@@ -116,7 +116,7 @@ fn the_users_own_colouring_changes_at_once() {
     assert_eq!(f.weight, 1.0);
     let (_, f) = palette_fade_step(s, LOG, true, 9, FRAME, WIN);
     assert_eq!(f.weight, 0.0);
-    // A jump in the user's own colouring (the cycle slider) snaps, as every colour control does.
+    // A jump in the user's own coloring (the cycle slider) snaps, as every color control does.
     let (s, _) = palette_fade_step(PaletteFadeState::default(), LINEAR, true, 7, FRAME, WIN);
     let (_, f) = palette_fade_step(s, NormMap { cycle: 0.0044, ..LINEAR }, true, 10, FRAME, WIN);
     assert_eq!(f.weight, 0.0);

@@ -1,7 +1,7 @@
 //! The render-affecting settings a job carries (design §9).
 //!
 //! A tour states its camera path, palettes and budgets, but a render also reads the machine's saved
-//! session: colouring method, lighting, distance glow, the palette when no keyframe names one, the
+//! session: coloring method, lighting, distance glow, the palette when no keyframe names one, the
 //! iteration base when the script gives none, SA/BLA/glitch switches, the watermark. Rendered on
 //! machines with different sessions, one tour came out as several. So the controller reads these
 //! from ITS session into a [`RenderSettings`], and each client writes a FRESH session from it
@@ -189,7 +189,7 @@ impl RenderSettings {
         }
         finite64("Julia c", self.julia_c_re)?;
         finite64("Julia c", self.julia_c_im)?;
-        word("colouring method", &self.color_method)?;
+        word("coloring method", &self.color_method)?;
         word("trap", &self.trap_type)?;
         word("fractal", &self.fractal)?;
         textual("custom formula", &self.custom_formula, 8 * 1024)?;
@@ -206,7 +206,7 @@ impl RenderSettings {
                 [g.left, g.mid, g.right].iter().chain(&g.left_color).chain(&g.right_color).chain(&g.blend_params).all(|v| v.is_finite())
             });
         if !colours_ok {
-            return Err("a palette colour is not a finite number".into());
+            return Err("a palette color is not a finite number".into());
         }
         Ok(())
     }

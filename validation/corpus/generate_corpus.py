@@ -197,7 +197,7 @@ def render_location(loc, out_png=None, config_dir=None):
     if loc.get("normalize"):
         args.append("--normalize")  # escape-range -> palette (deep dense fields; see read_locations)
     if sum(len(a) for a in args) > 30000:
-        # An e18000-class centre is ~18k digits per ordinate — two of them overflow the Windows
+        # An e18000-class center is ~18k digits per ordinate — two of them overflow the Windows
         # 32,767-char command-line ceiling (CreateProcess fails with WinError 206 before the app
         # even starts). The app expands @response-file arguments itself (main.rs), so route the
         # whole argument list through one; the parsed values are identical either way.
@@ -355,7 +355,7 @@ depths the smooth-iter counts are huge (~3e5&ndash;1.6e6+) and vary steeply pixe
 palette cycle (0.27) aliases a correct escape field into speckle (long mis-diagnosed as glitches, then a
 perturbation bug &mdash; both wrong; a faithful CPU transcription of the mode-2 shader kernel reproduces
 the escape VALUES exactly). These renders use <em>auto-normalized</em> coloring (<code>--normalize</code>:
-the frame's escape range mapped to the palette), which colours the smooth exterior cleanly and matches F3
+the frame's escape range mapped to the palette), which colors the smooth exterior cleanly and matches F3
 arm-for-arm. The spiral views (09&ndash;12) have slowly-varying exteriors that don't alias, so they keep
 the standard cycle. The general fix &mdash; an adaptive-cycle coloring mode for the live view &mdash; is in
 TODO.md. <strong>15 also needed a rendering fix (v0.2.18):</strong> its right-side dendrites escape at
@@ -363,7 +363,7 @@ TODO.md. <strong>15 also needed a rendering fix (v0.2.18):</strong> its right-si
 reference&rsquo;s near-zero orbit dips. The GPU&rsquo;s BLA-skip path was skipping those dips without a
 rebase check (it assumed &delta;z stays small in the BLA regime, which fails where |Z|&asymp;0),
 marching the deep pixels to the reference end and capping them at ~919k so the dendrites vanished. A
-rebase check at the BLA landing restored the full range (this also sharpened the deep-centre detail of
+rebase check at the BLA landing restored the full range (this also sharpened the deep-center detail of
 11&ndash;13); goldens stayed byte-identical.</p>
 <p><strong>Reading the comparison:</strong> palettes and smooth-coloring curves differ between the apps by
 design &mdash; compare <em>structure</em> (feature placement, spiral arm counts, escape-boundary shape,
@@ -443,7 +443,7 @@ def check_corpus(locs, only=None):
             maxd, meand, std = int(d.max()), float(d.mean()), float(b.std())
             # ⭐**Count the differing PIXELS, not just the largest difference.** maxD saturates at
             # the 8-bit output quantum: a change that is pure rounding reports maxD 1 no matter how
-            # much more accurate the renderer gets, so maxD alone cannot tell "quantisation" from
+            # much more accurate the renderer gets, so maxD alone cannot tell "quantization" from
             # "a real shift that happens to be small". The pixel count can, and it is what showed
             # the palette-LUT bake was rounding (differing pixels fell 10.9x when the LUT grew 4x
             # while maxD sat at 1 both times). See design/palette-import.md 5b.
@@ -485,7 +485,7 @@ USAGE = (
 
 
 def check_argv():
-    """Reject an unrecognised flag instead of falling through to the destructive default.
+    """Reject an unrecognized flag instead of falling through to the destructive default.
 
     ⛔**This is not tidiness — it cost us the baselines once.** There is no argparse here, so an
     unknown flag used to be silently ignored and the script ran its DEFAULT action, which is to

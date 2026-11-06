@@ -9,7 +9,7 @@
 //!
 //! The reason exactness matters HERE is different and concrete:
 //!
-//! 1. ⭐**Key stability.** A neighbourhood cache is keyed ON the reference point. If the point does
+//! 1. ⭐**Key stability.** A neighborhood cache is keyed ON the reference point. If the point does
 //!    not round-trip identically, the key changes between sessions and every lookup misses — a
 //!    cache that is silently useless rather than wrong, which is its own kind of bad.
 //! 2. ⭐**Size.** A ~200,000-bit value is ~25 KB in words against ~60,000 decimal digits.

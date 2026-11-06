@@ -1,7 +1,7 @@
 //! What a subtree of the derivation does, without expanding it (design/lsystems.md §4.3–4.4).
 //!
 //! For every symbol X with a production and every depth d, an [`Entry`]: the turtle's net motion,
-//! turn, mirroring, step factor and colour change over X's d-fold rewrite ([`Effect`]), how far from
+//! turn, mirroring, step factor and color change over X's d-fold rewrite ([`Effect`]), how far from
 //! its start it draws (`r`), and how many segments it draws (`n`). Each row is a recurrence over the
 //! productions on the row below, so building the tables to depth d costs d × the productions' length,
 //! and the walk can step over a subtree of 4^60 segments in one addition.
@@ -34,7 +34,7 @@ pub(crate) enum Op {
     Vertex,
 }
 
-/// The change a subtree makes to the colour index: set it (or not), then add.
+/// The change a subtree makes to the color index: set it (or not), then add.
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
 pub struct ColourFx {
     pub set: Option<i32>,
@@ -78,7 +78,7 @@ impl Effect {
         Effect { d: [0.0, 0.0], turns: 0, free: 0.0, flip: false, scale: 1.0, colour: ColourFx { set: None, add: 0 } };
 }
 
-/// A subtree, summarised.
+/// A subtree, summarized.
 #[derive(Clone, Copy, Debug, PartialEq)]
 pub struct Entry {
     pub fx: Effect,
@@ -411,7 +411,7 @@ impl Tables {
         }
     }
 
-    /// A word rewritten from a node of variant `v`, its symbols rewritten `d` times, summarised.
+    /// A word rewritten from a node of variant `v`, its symbols rewritten `d` times, summarized.
     fn fold(&self, ops: &[Op], d: u32, v: u32) -> Entry {
         let mut st = Effect::IDENTITY;
         let mut stack: Vec<Effect> = Vec::new();

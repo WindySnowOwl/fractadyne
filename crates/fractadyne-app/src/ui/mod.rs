@@ -16,7 +16,7 @@ pub(crate) mod textbook;
 mod menus;
 pub(crate) mod language;
 mod panels;
-/// The panel's labelled-row helper, for sections drawn outside `panels` (the Life section).
+/// The panel's labeled-row helper, for sections drawn outside `panels` (the Life section).
 pub(crate) use panels::labelled;
 pub(crate) mod diagnostics;
 mod orbit_cache;

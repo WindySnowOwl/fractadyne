@@ -262,7 +262,7 @@ pub(crate) fn fixture_coverage<'a>(texts: impl IntoIterator<Item = &'a str>) -> 
         ("a pin held the display", |_, d| d.pin_gate),
         ("a snapshot was taken", |_, d| d.hold_copy),
         ("the settled-cost probe armed", |_, d| d.aa_probe.is_some()),
-        ("the colour-pass filter widened", |_, d| d.aa_filter > 1),
+        ("the color-pass filter widened", |_, d| d.aa_filter > 1),
     ];
     let climb_terms: [(&'static str, fn(&IterInputs, &IterDecision) -> bool); 11] = [
         ("a settled reading was judged", |i, d| !i.interacting && d.reached_ask && !d.stale),
@@ -294,7 +294,7 @@ pub(crate) fn fixture_coverage<'a>(texts: impl IntoIterator<Item = &'a str>) -> 
         ("a pin pass was priced", |_, d| {
             d.events.iter().any(|e| matches!(e, WalkPriceEvent::PinPriced { .. }))
         }),
-        ("the lethal band shed the licences", |_, d| {
+        ("the lethal band shed the licenses", |_, d| {
             d.events.iter().any(|e| matches!(e, WalkPriceEvent::LethalShed { .. }))
         }),
         ("a pin pass was released before its reading, its price deferred", |_, d| {

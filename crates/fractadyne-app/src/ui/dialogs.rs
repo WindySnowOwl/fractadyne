@@ -12,7 +12,7 @@ fn default_dive_secs(log10mag: f64) -> f64 {
 }
 
 /// Middle-elide a path so BOTH ends survive. Left-truncation hides the drive, right-truncation
-/// hides the leaf, and it is the two ends together that let someone recognise where a file went.
+/// hides the leaf, and it is the two ends together that let someone recognize where a file went.
 /// Operates on chars, not bytes, so a non-ASCII user directory cannot split a codepoint.
 fn elide_middle(s: &str, max: usize) -> String {
     let n = s.chars().count();
@@ -65,7 +65,7 @@ impl FractadyneApp {
     /// anything leaves the machine and carries the crash report AND the crashing location (`.fdn`)
     /// as selectable artifacts. Nothing is transmitted from here.
     ///
-    /// ⚠Suppressed for `launched_for_a_task` (see where `crash_prompt_open` is initialised): a modal
+    /// ⚠Suppressed for `launched_for_a_task` (see where `crash_prompt_open` is initialized): a modal
     /// in front of `--uitest` / `--livetest` would block them exactly the way the welcome dialog
     /// once did.
     pub(crate) fn draw_crash_prompt(&mut self, ctx: &egui::Context) {
@@ -382,7 +382,7 @@ impl FractadyneApp {
             .resizable(false)
             .default_width(420.0)
             .show(ctx, |ui| {
-                // Cartesian or polar entry. The maths is the ONE evaluator either way; polar just
+                // Cartesian or polar entry. The math is the ONE evaluator either way; polar just
                 // composes `x0 + r·cos θ`, `y0 + r·sin θ` (see `compose_polar`) on Go — the
                 // discoverable half of the coordinate-expression feature, no new grammar.
                 ui.horizontal(|ui| {
@@ -433,7 +433,7 @@ impl FractadyneApp {
                 let rz = ui.add(egui::TextEdit::singleline(&mut self.goto.zoom).desired_width(220.0));
                 // Live warning for the flat-frame trap BEFORE the jump is made: the solver
                 // reaches depths the renderer's fixed iteration count cannot resolve, and a
-                // correct coordinate under a solid-colour frame reads as a bug. Auto-iteration
+                // correct coordinate under a solid-color frame reads as a bug. Auto-iteration
                 // never warns — its budget follows the jump like a hand zoom.
                 if let Some((have, typical)) = crate::parse_zoom_to_log2(&self.goto.zoom)
                     .and_then(|t| {
@@ -471,7 +471,7 @@ impl FractadyneApp {
                         self.goto.x = fractadyne_core::to_decimal_string(&self.viewport.center_x);
                         self.goto.y = fractadyne_core::to_decimal_string(&self.viewport.center_y);
                         self.goto.zoom = fmt_zoom_field(self.viewport.log2_magnification());
-                        // A view's centre is x/y — there's no natural offset+angle for it, so show
+                        // A view's center is x/y — there's no natural offset+angle for it, so show
                         // the filled cartesian fields rather than leaving the polar fields (which it
                         // did not touch) looking as if the button did nothing.
                         self.goto.polar = false;
@@ -799,7 +799,7 @@ impl FractadyneApp {
                         .small(),
                 );
                 ui.add_space(4.0);
-                // ⭐⭐The thumbnail is what turns a folder of `.fdn` files into a catalogue: deep
+                // ⭐⭐The thumbnail is what turns a folder of `.fdn` files into a catalog: deep
                 // locations are otherwise indistinguishable coordinate files. Optional because it
                 // is most of the file size — a deep fractal is close to incompressible.
                 ui.checkbox(
@@ -1389,7 +1389,7 @@ impl FractadyneApp {
             .recommended_max_iter(self.render_cfg.max_iter)
             .max(2_000);
         // An L-system's full view is its framed home, at a magnification of its own; an
-        // escape-time family's is 1×. "Deep" and the recentring zoom are measured from it.
+        // escape-time family's is 1×. "Deep" and the recentering zoom are measured from it.
         let ls_home = (self.fractal == crate::FractalKind::LSystem).then(|| self.lsystem_home_view());
         let home_l10 = ls_home.map_or(0.0, |(_, l10)| l10);
         let deep = log10mag - home_l10 > 8f64.log10();
@@ -1521,7 +1521,7 @@ impl FractadyneApp {
                             // Wrap only for a message that would not fit the window: the default
                             // wrap width broke "…Misiurewicz point… (36 s; any input stops)" in
                             // the middle of its parenthesis. Messages that want two lines carry
-                            // their own newline (the autopilot's do), which a label honours.
+                            // their own newline (the autopilot's do), which a label honors.
                             ui.set_max_width((ctx.screen_rect().width() - 48.0).clamp(240.0, 900.0));
                             ui.label(egui::RichText::new(msg).color(ink));
                         });
@@ -1683,7 +1683,7 @@ impl FractadyneApp {
                     });
                 });
                 // ⚠**Above the action row, not below it.** This sentence describes what Run is
-                // about to do, so it belongs with the settings it summarises — and `UI-DESIGN.md`
+                // about to do, so it belongs with the settings it summarizes — and `UI-DESIGN.md`
                 // §8.2 puts the actions LAST. It was underneath, which nobody could see while the
                 // window was stretching itself to the full height of the app: the buttons floated
                 // in the middle and this line sat somewhere below them. Fixing the growth is what
@@ -1756,7 +1756,7 @@ impl FractadyneApp {
                 }
                 ui.add_space(4.0);
                 // ⚠**This window has no title-bar ✕** (no `.open()`), by design: dismissing a run
-                // is cancelling it, and a ✕ that silently abandoned a benchmark mid-dive would be a
+                // is canceling it, and a ✕ that silently abandoned a benchmark mid-dive would be a
                 // second, quieter way to do something that deserves saying. Cancel is the only exit,
                 // which is exactly why it belongs where every other dialog's actions are.
                 crate::theme::action_row(ui, |ui| {

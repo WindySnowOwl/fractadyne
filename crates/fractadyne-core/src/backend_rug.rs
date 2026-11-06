@@ -96,7 +96,7 @@ impl RefBackend for Float {
         // doing the same sum. That is reachable in the app, not a theoretical worry: a pasted
         // coordinate is parsed by `parse_bf_prec`, which returns the literal's NATURAL width
         // whenever that already exceeds the requested precision (`if min_prec <= natural { return
-        // Some(auto) }`) — so a 33-digit centre viewed at a shallow zoom is a 2-word value being
+        // Some(auto) }`) — so a 33-digit center viewed at a shallow zoom is a 2-word value being
         // used at p=64. Caught by `the_mpfr_backend_is_byte_identical_to_astro_float`, which
         // diverged on 81 of 1800 cases, every one of them at p=64.
         let words = v.mantissa_digits().map(|d| d.len()).unwrap_or(0);
@@ -126,7 +126,7 @@ impl RefBackend for Float {
         // of this same call.
         //
         // The two guards below are not defensive padding — they reproduce `crate::to_f64`'s exact
-        // behaviour at the edges, which is what precondition 3 actually requires:
+        // behavior at the edges, which is what precondition 3 actually requires:
         //   * it returns `0.0` for a value carrying no mantissa, i.e. for BOTH infinity and NaN;
         //   * it returns a POSITIVE literal `0.0` when a value underflows, dropping the sign — so
         //     a `-0.0` escaping from here would reach `pack_sample`, which CAN see the difference
@@ -497,7 +497,7 @@ fn split_min_bits() -> u32 {
 }
 
 /// Whether a walk of working width `ctx` splits its products: wide enough, and a machine with the
-/// cores for it. The pick's centre walk and the build's run side by side, so that is two walks'
+/// cores for it. The pick's center walk and the build's run side by side, so that is two walks'
 /// `SPLIT_THREADS`; with fewer cores the threads only take turns (measured: oversubscribed product
 /// threads, 32 pool walks × 9, made the 1e10003 minibrot's reference 3.7× slower).
 fn split_enabled(ctx: u32) -> bool {
@@ -1470,7 +1470,7 @@ pub(crate) fn try_series_skip_walk(
     let rcx = <Float as RefBackend>::from_carrier(cx, ctx);
     let rcy = <Float as RefBackend>::from_carrier(cy, ctx);
     // Astro's per-step copy of Z truncated to the coefficient width (its `set_precision` with
-    // `RoundingMode::None` keeps the top `pc` bits of a normalised mantissa = MPFR's RZ).
+    // `RoundingMode::None` keeps the top `pc` bits of a normalized mantissa = MPFR's RZ).
     let narrow = ctx_c < ctx;
     // The two chains of `series_skip_astro_piped`, mirrored. One Z-chain step yields the
     // coefficient-width copy of Z_{n-1}, advances the reference through the shared generic step
@@ -1491,7 +1491,7 @@ pub(crate) fn try_series_skip_walk(
         let m2 = fx * fx + fy * fy;
         (zcx, zcy, m2 > 1.0e12, m2 <= seed_max2)
     };
-    // The coefficient chain. `Err` = cancelled. `rec`: every step, as the astro walk records it.
+    // The coefficient chain. `Err` = canceled. `rec`: every step, as the astro walk records it.
     type Walked = Result<Option<(u32, [Float; 6])>, ()>;
     let mut walk = |next: &mut dyn FnMut() -> Option<(Float, Float, bool, bool)>| -> Walked {
         let (mut ax, mut ay) = (zero(ctx_c), zero(ctx_c));
@@ -1580,7 +1580,7 @@ pub(crate) fn try_series_skip_walk(
         walk(&mut || Some(z_step(&mut zx, &mut zy)))
     };
     let Ok(best) = best else {
-        return Some(None); // = SeriesSkip::NONE, as the astro walk returns when cancelled
+        return Some(None); // = SeriesSkip::NONE, as the astro walk returns when canceled
     };
     Some(best.map(|(n, k)| {
         (

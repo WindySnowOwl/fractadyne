@@ -1,6 +1,6 @@
 use super::*;
 
-/// The segments an SVG document's paths draw, in order, with their colours: what a reader of the
+/// The segments an SVG document's paths draw, in order, with their colors: what a reader of the
 /// file gets back.
 fn read_back(svg: &str) -> Vec<([f64; 2], [f64; 2], String)> {
     let mut out = Vec::new();
@@ -23,7 +23,7 @@ fn seg(a: [f32; 2], b: [f32; 2], value: f32) -> SegmentInstance {
     SegmentInstance { a, b, value, t: [0.0, 1.0] }
 }
 
-/// Two colours by palette value: below ½ red, else blue.
+/// Two colors by palette value: below ½ red, else blue.
 fn two(v: f32) -> [u8; 3] {
     if v < 0.5 {
         [255, 0, 0]
@@ -34,8 +34,8 @@ fn two(v: f32) -> [u8; 3] {
 
 #[test]
 fn the_file_reads_back_as_the_segment_list() {
-    // A chain of three that meet (one path), a colour change mid-chain (a second path), and a jump
-    // (a third) — in the view's y-up pixels about its centre.
+    // A chain of three that meet (one path), a color change mid-chain (a second path), and a jump
+    // (a third) — in the view's y-up pixels about its center.
     let segs = [
         seg([-50.0, 0.0], [-25.0, 10.5], 0.1),
         seg([-25.0, 10.5], [0.0, 0.0], 0.2),

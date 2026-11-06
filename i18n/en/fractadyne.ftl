@@ -178,7 +178,7 @@ menu-file-open-lsystem-hover = A Fractint .l file (its entries to pick from) or 
 menu-file-save-lsystem = Save L-system…
 menu-file-save-lsystem-hover = The system's text, as a .lsys file.
 menu-file-export-svg = Export SVG…
-menu-file-export-svg-hover = The view as an SVG drawing: its lines and shapes as vectors, in its colours.
+menu-file-export-svg-hover = The view as an SVG drawing: its lines and shapes as vectors, in its colors.
 menu-file-render-client = Render client…
 menu-file-render-client-hover = Lend this machine's GPU to a render farm: connect to a controller (Tools ▸ Render on farm… on another machine) and render frames for it.
 menu-file-settings = Settings
@@ -301,7 +301,7 @@ tag-group-shape = Shape
 tag-group-theme = Theme
 tag-group-purpose = Purpose
 
-# Tags measured from a palette's colours: its colour families, warm or cool, how busy it is (calm, lively, frantic), its brightness, and its shape. Plural nouns for the families; the rest describe the palette.
+# Tags measured from a palette's colors: its color families, warm or cool, how busy it is (calm, lively, frantic), its brightness, and its shape. Plural nouns for the families; the rest describe the palette.
 tag-reds = Reds
 tag-oranges = Oranges
 tag-yellows = Yellows
@@ -368,7 +368,7 @@ menu-tools-play-tour-hover = Pick a tour script to play. The toolbar ▶ replays
 menu-tools-tour-from-view = Tour from current view…
 menu-tools-tour-from-view-hover = Create a tour that zooms from the full view down to the current view — add a caption and set the dive duration. Saved as a tour script (.toml) you can edit, play, or render.
 menu-tools-render-tour = Render tour…
-menu-tools-render-tour-hover = Render the loaded tour to a PNG frame sequence (and optionally an mp4) in a separate process. Every frame is rendered on its own, so a tour can pan, follow keyframes and use any fractal and colouring.
+menu-tools-render-tour-hover = Render the loaded tour to a PNG frame sequence (and optionally an mp4) in a separate process. Every frame is rendered on its own, so a tour can pan, follow keyframes and use any fractal and coloring.
 menu-tools-render-zoom-video = Render zoom video…
 menu-tools-render-zoom-video-hover = Render a straight dive from the whole set into the current view as a video. The dive is computed once and every frame is built from it, so it is usually several times faster than Render tour, but it can only zoom straight in.
 menu-tools-close-player = Close tour player
@@ -513,7 +513,7 @@ dlg-goto-polar = offset + r ∠ θ
 # The tooltip of the "?" button beside the entry choice.
 dlg-goto-help-hover = What the fields accept: fractions, powers, sqrt/sin/cos…, pi and other constants — opens Help → Coordinate expressions
 # Labels over the entry fields. x0, y0, r, θ, Re and Im are the fields' symbols: keep them.
-dlg-goto-polar-offset = Offset centre  (x0, y0 — leave 0 for a pure polar point)
+dlg-goto-polar-offset = Offset center  (x0, y0 — leave 0 for a pure polar point)
 dlg-goto-polar-radius = Radius r, angle θ
 dlg-goto-re = Center — real (Re)
 dlg-goto-im = Center — imaginary (Im)
@@ -540,8 +540,8 @@ dlg-goto-feature-period = Period p
 dlg-goto-feature-auto-hint = auto
 # A small button that empties both fields, so they are found automatically again.
 dlg-goto-feature-auto = Auto
-dlg-goto-feature-auto-hover = Clear both boxes so the next search detects the preperiod and period from the orbit at the view centre.
-dlg-goto-feature-kp-hover = Leave both blank to detect them from the orbit at the view centre; the values found are filled in here. Nobody looking at a spiral knows its preperiod, and having to supply one is what made this solver unusable in practice.
+dlg-goto-feature-auto-hover = Clear both boxes so the next search detects the preperiod and period from the orbit at the view center.
+dlg-goto-feature-kp-hover = Leave both blank to detect them from the orbit at the view center; the values found are filled in here. Nobody looking at a spiral knows its preperiod, and having to supply one is what made this solver unusable in practice.
 # While a solve runs, followed by its elapsed time and the note below.
 dlg-goto-feature-solving = Solving…
 dlg-goto-feature-solving-note = (arbitrary precision; deep views take longer)
@@ -551,7 +551,7 @@ dlg-goto-feature-find-hover =
     Newton-solve from the current center onto the exact feature (arbitrary precision). Navigate near the feature first.
 
     Set the Zoom field above to the depth you WANT before solving: the point is computed to the precision that depth needs, and the view jumps straight there. That is one solve instead of a long sequence of manual zoom steps.
-dlg-goto-solve-cancelled = Solve cancelled.
+dlg-goto-solve-cancelled = Solve canceled.
 
 ## Snapshot (the camera button): its tooltip, and the choice on the first press
 
@@ -819,7 +819,7 @@ dlg-export-open-after = Open when done
 dlg-export-open-after-hover = Hand the finished image to the system viewer as soon as it is written.
 # $count: the graphics cards in this machine (2 or more).
 dlg-export-all-gpus = Use all graphics cards ({ $count })
-dlg-export-all-gpus-hover = Split the image by tile across every graphics card of this machine, each with its own copy of the deep reference. Identical cards give exactly the image one renders alone; different models draw a few pixels slightly differently, tile by tile (measured: no visible seam). If a card fails, its tiles go to the others. Images the split cannot take (some colouring methods and formulas) use this window's card.
+dlg-export-all-gpus-hover = Split the image by tile across every graphics card of this machine, each with its own copy of the deep reference. Identical cards give exactly the image one renders alone; different models draw a few pixels slightly differently, tile by tile (measured: no visible seam). If a card fails, its tiles go to the others. Images the split cannot take (some coloring methods and formulas) use this window's card.
 # The export's progress.
 dlg-export-preparing = Preparing (building reference)…
 dlg-export-saving = Saving…
@@ -886,7 +886,7 @@ app-feature-not-in-julia = The minibrot finder searches the Mandelbrot set — s
 app-feature-busy = Already looking for a feature — one at a time.
 app-feature-searching = Looking for the nearest minibrot…
 app-feature-mandelbrot-only = Feature finding is Mandelbrot-only.
-app-feature-no-pair = No Misiurewicz point found within the search budget — the point may be deeper than the finder reaches at this view, or the centre may not be near a spiral or branch point.
+app-feature-no-pair = No Misiurewicz point found within the search budget — the point may be deeper than the finder reaches at this view, or the center may not be near a spiral or branch point.
 # The name of what was found, used as $feature in the messages below. $period: the minibrot's period (a whole number).
 app-feature-minibrot = period-{ $period } minibrot
 # $preperiod and $period: the point's two whole numbers (k, p). $octaves: how often the view repeats when zooming in (2 decimals); $twist: the turn per repeat in degrees.
@@ -968,7 +968,7 @@ app-gradient-ase-imported = Imported { $count } swatches, evenly spaced and blen
 app-gradient-ase-invalid = Not a .ase swatch list: { $error }
 app-gradient-nothing-to-save = No custom gradient to save yet.
 # $file: the saved file's name.
-app-gradient-ggr-saved = Saved "{ $file }" — midpoints, blend curves and colour spaces all intact.
+app-gradient-ggr-saved = Saved "{ $file }" — midpoints, blend curves and color spaces all intact.
 # $file: the saved file's name; $count: the segments whose curve could not be kept.
 app-gradient-ggr-saved-lossy =
     { $count ->
@@ -978,15 +978,15 @@ app-gradient-ggr-saved-lossy =
 # $path: the file; $error: the system's reason (often in English).
 app-gradient-write-failed = Couldn't write { $path }: { $error }
 # $name: the gradient's name; $count: its segments.
-app-gradient-ggr-imported = Imported "{ $name }" - { $count } segments, with their midpoints, blend curves and colour spaces.
+app-gradient-ggr-imported = Imported "{ $name }" - { $count } segments, with their midpoints, blend curves and color spaces.
 # $error: the reader's reason (in English).
 app-gradient-ggr-invalid = Not a .ggr gradient: { $error }
 
-## The eyedropper's banner across the top of the screen while picking a colour
+## The eyedropper's banner across the top of the screen while picking a color
 
-# $hex: the colour under the pointer, as #rrggbb.
-app-eyedropper-banner-color = Picking a colour  ·  { $hex }  ·  click to take it, Esc to cancel
-app-eyedropper-banner = Picking a colour  ·  click to take it, Esc to cancel
+# $hex: the color under the pointer, as #rrggbb.
+app-eyedropper-banner-color = Picking a color  ·  { $hex }  ·  click to take it, Esc to cancel
+app-eyedropper-banner = Picking a color  ·  click to take it, Esc to cancel
 
 ## The gradient editor window
 
@@ -1000,7 +1000,7 @@ app-gradient-view-ring-hover = A ring, because the palette is CYCLED: the join a
 app-gradient-add-lane-hover = Click anywhere on this line to add a stop there. The + adds one in the widest gap.
 app-gradient-strip-hover = Drag a marker to move its stop · drag the strip itself to ROTATE the whole gradient, wrapping at the seam · double-click to add a stop, right-click a marker to remove it · arrow keys nudge the selection (Shift for fine).
 app-gradient-remove-selected-hover = Remove the selected stop
-app-gradient-ring-hover = Drag the ring itself to ROTATE the whole gradient — what passes the seam comes back round the other side · drag a marker to move its stop · click the outer track to add a stop there, or ⊕ in the middle to add one in the widest gap · ⊖ removes the selected stop. The hollow mark at the top is the seam, where a cycled palette wraps; it stays put because it IS the join, and the colours turn under it.
+app-gradient-ring-hover = Drag the ring itself to ROTATE the whole gradient — what passes the seam comes back round the other side · drag a marker to move its stop · click the outer track to add a stop there, or ⊕ in the middle to add one in the widest gap · ⊖ removes the selected stop. The hollow mark at the top is the seam, where a cycled palette wraps; it stays put because it IS the join, and the colors turn under it.
 app-gradient-empty = No custom gradient yet — "Copy preset…", an import or a saved gradient below starts one, and its stops and per-segment curves appear here.
 # $count: the entries of an imported palette, more than the editor shows stop by stop.
 app-gradient-too-many = { $count } imported entries - too many to edit stop by stop. Use the preview above, or Copy preset to start over.
@@ -1008,7 +1008,7 @@ app-gradient-too-many = { $count } imported entries - too many to edit stop by s
 app-gradient-segment-heading = Segment { $index } of { $total }  ·  { $left } → { $right }
 # A label before the list of blend curves.
 app-gradient-curve = Curve
-app-gradient-curve-hover = How fast the colour travels across this segment. "Curved" is shaped by the midpoint — at midpoint 0.50 it is exactly linear.
+app-gradient-curve-hover = How fast the color travels across this segment. "Curved" is shaped by the midpoint — at midpoint 0.50 it is exactly linear.
 # The blend curves (GIMP's kinds), in a narrow list: keep them short.
 app-gradient-blend-linear = Linear
 app-gradient-blend-curved = Curved
@@ -1022,7 +1022,7 @@ app-gradient-bezier-exact-hover = Two control points you can drag in both direct
 app-gradient-bezier-visible-hover = Two control points you can drag in both directions. Converting APPROXIMATES the current curve — this one to within { $error }, which is clearly visible.
 # Hover on Bézier in the list of blend curves. $error: how far the fit is off (2 decimals).
 app-gradient-bezier-barely-hover = Two control points you can drag in both directions. Converting APPROXIMATES the current curve — this one to within { $error }, which is barely visible.
-# A label before the list of colour spaces (RGB, HSV).
+# A label before the list of color spaces (RGB, HSV).
 app-gradient-space = Space
 # A label before the Bézier presets beside it.
 app-gradient-ease = Ease
@@ -1033,25 +1033,25 @@ app-gradient-ease-in = In
 app-gradient-ease-out = Out
 app-gradient-ease-in-out = In-out
 app-gradient-midpoint = Midpoint
-app-gradient-midpoint-hover = Where the blend reaches halfway, as a fraction of this segment. 0.50 is centred.
+app-gradient-midpoint-hover = Where the blend reaches halfway, as a fraction of this segment. 0.50 is centered.
 # A button that puts the midpoint back in the middle of the segment.
-app-gradient-centre = Centre
+app-gradient-centre = Center
 app-gradient-centre-hover = Back to 0.50
 app-gradient-no-hue = ⚠ one end of this segment has no hue
-app-gradient-no-hue-hover = One end is black, white or grey, so the sweep starts from red and travels the whole colour wheel. That is legal and sometimes wanted — but it is why the middle can be a colour neither end contains. The strip under the curve shows what it does.
-app-gradient-segment-start-hover = Colour at the START of this segment
-app-gradient-segment-end-hover = Colour at the END of this segment
+app-gradient-no-hue-hover = One end is black, white or gray, so the sweep starts from red and travels the whole color wheel. That is legal and sometimes wanted — but it is why the middle can be a color neither end contains. The strip under the curve shows what it does.
+app-gradient-segment-start-hover = Color at the START of this segment
+app-gradient-segment-end-hover = Color at the END of this segment
 app-gradient-bytes-hover = Red, green and blue as 0–255
-app-gradient-floats-hover = The same colour as 0–1, which is what the renderer stores
-app-gradient-canvas-bezier-hover = The blend curve for the selected segment. Drag either control point — in x AND y — to reshape it. The faint lines are 0 and 1; a curve may pass outside them, and the colour is clamped rather than the curve.
-app-gradient-canvas-hover = The blend curve for the selected segment: how fast the colour travels from the left stop to the right one. Drag the ring to move the midpoint, or switch the curve to Bézier for a control point that moves in both directions.
+app-gradient-floats-hover = The same color as 0–1, which is what the renderer stores
+app-gradient-canvas-bezier-hover = The blend curve for the selected segment. Drag either control point — in x AND y — to reshape it. The faint lines are 0 and 1; a curve may pass outside them, and the color is clamped rather than the curve.
+app-gradient-canvas-hover = The blend curve for the selected segment: how fast the color travels from the left stop to the right one. Drag the ring to move the midpoint, or switch the curve to Bézier for a control point that moves in both directions.
 # The selected stop's heading. $index: its number; $total: how many there are.
 app-gradient-stop-heading = Stop { $index } of { $total }
-app-gradient-stop-color-hover = The colour at this stop — click the swatch to pick, or type a hex value beside it
-app-gradient-stop-bytes-hover = Red, green and blue as 0–255 — the bytes this colour is written as
+app-gradient-stop-color-hover = The color at this stop — click the swatch to pick, or type a hex value beside it
+app-gradient-stop-bytes-hover = Red, green and blue as 0–255 — the bytes this color is written as
 # The eyedropper button.
 app-gradient-pick = Pick
-app-gradient-pick-hover = Eyedropper — take a colour from anywhere on screen. Move the pointer to the colour you want and click; Esc cancels.
+app-gradient-pick-hover = Eyedropper — take a color from anywhere on screen. Move the pointer to the color you want and click; Esc cancels.
 # Written before the stop's position (0.000–1.000) in its number field: a short abbreviation of "position".
 app-gradient-stop-pos = pos
 app-gradient-nudge-hover = Nudge this stop (hold Shift for a finer step)
@@ -1062,50 +1062,50 @@ app-gradient-add-stop-hover = Split the widest segment (or click the line above 
 # A menu of the built-in palettes, to start from a copy of one.
 app-gradient-copy-preset = Copy preset…
 app-gradient-paste = Paste…
-app-gradient-paste-hover = Import a palette from hex colours or 0–255 RGB triples
+app-gradient-paste-hover = Import a palette from hex colors or 0–255 RGB triples
 app-gradient-save-ggr = Save .ggr…
 app-gradient-save-ggr-hover = Write this gradient to a GIMP .ggr file — readable by GIMP, Krita and Inkscape, and by this editor
 # A menu of the palette file formats (.map, .ugr, .ggr, .ase).
 app-gradient-import = Import
 app-gradient-import-map-hover = Load a Fractint / Kalles Fraktaler .map palette file (R G B lines, one per entry)
 app-gradient-import-ugr-hover = Load an Ultra Fractal .ugr gradient file (a .ugr usually holds many gradients — you pick one)
-app-gradient-import-ggr-hover = Load a GIMP .ggr gradient, with its midpoints, blend curves and colour spaces intact
+app-gradient-import-ggr-hover = Load a GIMP .ggr gradient, with its midpoints, blend curves and color spaces intact
 app-gradient-import-ase-hover = Load an Adobe swatch list (.ase). Swatches have no positions, so they arrive evenly spaced and blended.
 # The gradient's name, for the library of saved gradients.
 app-gradient-name = Name
-# Shown greyed in the empty name field.
+# Shown grayed in the empty name field.
 app-gradient-name-hint = my gradient
 # The save button, when a gradient of that name is already saved.
 app-gradient-update = Update
 app-gradient-save = Save
-app-gradient-save-hover = Save this gradient to your library, with its curves and colour spaces intact
+app-gradient-save-hover = Save this gradient to your library, with its curves and color spaces intact
 app-gradient-save-needs-name-hover = Give the gradient a name first
 # A menu of the saved gradients. $count: how many there are.
 app-gradient-saved-menu = Saved ({ $count })
 app-gradient-nothing-saved = Nothing saved yet
 app-gradient-delete-saved-hover = Delete this saved gradient
 # $count: the gradient's segments.
-app-gradient-rich = Rich gradient: { $count } segments carry midpoints, blend curves or colour spaces — more than a plain stop list can hold.
+app-gradient-rich = Rich gradient: { $count } segments carry midpoints, blend curves or color spaces — more than a plain stop list can hold.
 app-gradient-convert = Convert to editable stops
 app-gradient-convert-hover = Replace it with a plain stop list. This DISCARDS the midpoints, blend curves and hue sweeps a stop list cannot hold.
 # Above the list of gradients in an Ultra Fractal file. $count: how many; $file: the file's name.
 app-gradient-ugr-list = { $count } gradients in { $file }
 app-gradient-close-list = Close list
 app-gradient-seamless = Seamless (end matches start)
-app-gradient-seamless-hover = A palette is cycled, so position 1 and position 0 are next to each other on screen. With this on, the last stop's colour is held equal to the first — the ring view shows the join at the top.
+app-gradient-seamless-hover = A palette is cycled, so position 1 and position 0 are next to each other on screen. With this on, the last stop's color is held equal to the first — the ring view shows the join at the top.
 app-gradient-ends-differ = ⚠ ends differ
-app-gradient-ends-differ-hover = The colour at the end of the gradient is not the colour at the start, so a cycled palette shows a hard edge where it wraps.
+app-gradient-ends-differ-hover = The color at the end of the gradient is not the color at the start, so a cycled palette shows a hard edge where it wraps.
 app-gradient-hard-bands = Hard bands (no blending between entries)
-app-gradient-hard-bands-hover = Fractint / .map semantics: every entry is a flat colour. Off blends them into a smooth gradient.
-app-gradient-paste-intro = Paste hex colours (#ff8800) or 0–255 triples (255 136 0), separated by commas, spaces or new lines:
-# Applies the pasted colours.
+app-gradient-hard-bands-hover = Fractint / .map semantics: every entry is a flat color. Off blends them into a smooth gradient.
+app-gradient-paste-intro = Paste hex colors (#ff8800) or 0–255 triples (255 136 0), separated by commas, spaces or new lines:
+# Applies the pasted colors.
 app-gradient-apply = Apply
 # Empties the paste box.
 app-gradient-clear = Clear
-# $used: the colours kept; $total: the colours pasted; $limit: the most that are kept.
-app-gradient-paste-imported-some = Imported { $used } of { $total } colours, sampled evenly across your list ({ $limit } is the limit).
-# $count: the colours pasted.
-app-gradient-paste-imported = Imported { $count } colours.
+# $used: the colors kept; $total: the colors pasted; $limit: the most that are kept.
+app-gradient-paste-imported-some = Imported { $used } of { $total } colors, sampled evenly across your list ({ $limit } is the limit).
+# $count: the colors pasted.
+app-gradient-paste-imported = Imported { $count } colors.
 # $error: why the pasted text could not be read (in English).
 app-gradient-paste-unreadable = Couldn't read that: { $error }
 # A hint at the bottom of the editor. $count: the palette's entries.
@@ -1142,9 +1142,9 @@ app-accel-offer-body = Deep zoom spends much of its time computing reference orb
 app-accel-offer-identical = The images are BYTE-IDENTICAL - it is the same mathematics computed by a faster library, checked across every fractal formula and the whole deep-zoom comparison corpus.
 app-accel-offer-shared = Your settings, saved session and locations are shared between the two, so you can switch freely and nothing needs importing.
 # Shown on Windows.
-app-accel-separate-windows = It is a separate download because the libraries it uses cannot be built with the compiler the standard Windows build uses, and they carry a different licence (GNU LGPL v3) from Fractadyne's own.
+app-accel-separate-windows = It is a separate download because the libraries it uses cannot be built with the compiler the standard Windows build uses, and they carry a different license (GNU LGPL v3) from Fractadyne's own.
 # Shown on other systems.
-app-accel-separate = It is a separate download because the libraries it uses carry a different licence (GNU LGPL v3) from Fractadyne's own.
+app-accel-separate = It is a separate download because the libraries it uses carry a different license (GNU LGPL v3) from Fractadyne's own.
 app-accel-download = Download for this version
 app-accel-all-releases = All releases
 app-accel-all-releases-hover = If the direct link 404s, this version has no accelerated build yet - pick the nearest one here.
@@ -1355,7 +1355,7 @@ help-key-hold-shift-space = Hold Shift+Space
 help-nav-hold-shift-space = Smoothly zoom out.
 help-nav-continuous-text = The Zoom-home button animates a gentle fly-back to the full view. "Zoom speed" in the right panel sets the continuous-zoom rate.
 help-nav-autopilot = Autopilot
-help-nav-autopilot-text = Press A (or Tools → "Auto-zoom (autopilot)") for a hands-free dive: it picks a point on the fractal's edge where the detail is densest, preferring the middle of the view, and glides into it while easing it to the centre of the screen. It keeps that target while it stays interesting and turns smoothly toward richer structure when some appears. Any navigation input — or Esc — stops it. "Auto-zoom priority" in the right panel (or under Tools) chooses what it puts first: Speed zooms at the set rate and refreshes the screen as soon as a frame with detail is ready; Quality shows only fully resolved full-resolution frames and slows the zoom as needed so the picture never magnifies far before the next one lands. Either way the screen never shows a blank or single-colour frame: a refresh that has not yet resolved any detail stays hidden behind the last one. "Auto-zoom target" chooses what it aims at: Detail (the richest edge in view, re-chosen as it goes) or Misiurewicz point — it finds the nearest Misiurewicz point, solves it to the dive limit's depth while holding still, then dives exactly into it; the structure around such a point repeats every few octaves forever, so that dive never dead-ends (Mandelbrot set only).
+help-nav-autopilot-text = Press A (or Tools → "Auto-zoom (autopilot)") for a hands-free dive: it picks a point on the fractal's edge where the detail is densest, preferring the middle of the view, and glides into it while easing it to the center of the screen. It keeps that target while it stays interesting and turns smoothly toward richer structure when some appears. Any navigation input — or Esc — stops it. "Auto-zoom priority" in the right panel (or under Tools) chooses what it puts first: Speed zooms at the set rate and refreshes the screen as soon as a frame with detail is ready; Quality shows only fully resolved full-resolution frames and slows the zoom as needed so the picture never magnifies far before the next one lands. Either way the screen never shows a blank or single-color frame: a refresh that has not yet resolved any detail stays hidden behind the last one. "Auto-zoom target" chooses what it aims at: Detail (the richest edge in view, re-chosen as it goes) or Misiurewicz point — it finds the nearest Misiurewicz point, solves it to the dive limit's depth while holding still, then dives exactly into it; the structure around such a point repeats every few octaves forever, so that dive never dead-ends (Mandelbrot set only).
 help-nav-history = History & precise moves
 help-nav-undo = Undo the previous view.
 help-nav-redo = Redo.
@@ -1429,7 +1429,7 @@ help-fractals-deep-text = Mandelbrot, Multibrot 3/4/5 and Tricorn support extrem
 help-fractals-custom = Custom formulas
 help-fractals-custom-text = Fractal ▸ Custom formula… takes a formula's step in Fractint-style expressions: z = z^3 - p1*z + c, or several statements (t = sqr(z), then z = t*t + c). z is the iterate, c the pixel (the Julia constant in Julia mode), p1-p5 parameters; |z| is the squared modulus, as in Fractint, and the usual functions are available (sqr, abs, conj, real, imag, cabs, flip, recip, ident, exp, log, sqrt, sin, cos, tan, cotan, sinh, cosh, tanh, cotanh, asin, acos, atan, asinh, acosh, atanh, cosxx, and floor, ceil, trunc and round, which round each part). log is the natural logarithm, as in Fractint and in complex analysis: what many textbooks write ln (there is no base-10 logarithm). A formula written with ln, cot, coth, Re or Im does not read; the syntax check names the function to use, a button rewrites it, and typing ln offers log. Every step deep-zooms by perturbation, with the same extended-range arithmetic past 1e28x as the built-in fractals, except one with a power whose exponent varies with z or c (such as z^c): that renders on the direct path, sharp until one single-precision step of c spans a pixel, about 1e4x to 1e5x, and less deep away from the origin. The formula dialog says which applies. log, sqrt and non-integer powers take their principal values, which jump across the negative real axis. Perturbation follows the jump exactly, but a pixel whose orbit crosses where the reference's does not is carried on at about single precision from then on, so deep views whose orbits straddle a cut show noise there (measured: clean at 1e5x on the real axis for sqrt(z^4 + c), noisy for log formulas even at 1e4x). Every step is iterated in full (no series approximation), so a deep view with a high iteration count renders more slowly than a built-in fractal's. Near its boundary a formula with functions orbits chaotically, and a long orbit there is followed only loosely in single precision: at 2,000 iterations a third of sin(z) + c's pixels differ from the exact orbit's, at 60 almost none. Views, sessions and exported images keep the formula's text.
 help-fractals-custom-sections = Fractint's sections work too. Statements before a ':' are the init section, run once per pixel; a comparison as the last statement is the formula's own bailout test, iterating while it holds (|z| <= 100 && |z - 1| > 0.000001 stops an orbit that escapes or settles on 1); if (...), elseif (...), else and endif choose statements; and a variable read before it is set in a step has its value from the step before (from the init section, or 0). Comparisons compare real parts and give 1 or 0, && and || combine them, and an assignment is a value too (a = b = pixel). pixel, p1-p5, pi and e may be assigned, keeping their own value until they are; maxit is the iteration count and ismand is 1 (the formula's Mandelbrot form). A formula with any of these, or with rounding, renders on the direct path, without deep zoom. Formula library ▸ Import reads Fractint .frm files as well. Each entry that reads becomes a formula, and its row says what the reading changed: fn1-fn4 take Fractint's defaults (sin, sqr, sinh, cosh); Fractint's variable c is renamed c_, as c is the pixel here; a name nothing sets is 0, as in Fractint; blanks inside a name are dropped (end if is endif), as Fractint drops them. The import's message counts the entries that do not read and gives the commonest reason: the screen and view variables (whitesq, scrnpix, scrnmax, center, magxmag, rotskew), lastsqr and random numbers are not supported. The Collection's Fractint classics (Magnet, Nova, Spider, Manowar and others) are written with these sections.
-help-fractals-custom-editor = In the formula field, parentheses take a colour per nesting level; the pair next to the cursor is highlighted, and one without a partner is shown in red (a comment's do not count, as the parser ignores them). Names complete as you type: after two letters a list offers the functions, names and your own variables that begin so. Up and Down choose, Tab or Enter takes one (a function comes with its opening parenthesis), Esc closes the list, and Enter after a name typed in full still starts a new line.
+help-fractals-custom-editor = In the formula field, parentheses take a color per nesting level; the pair next to the cursor is highlighted, and one without a partner is shown in red (a comment's do not count, as the parser ignores them). Names complete as you type: after two letters a list offers the functions, names and your own variables that begin so. Up and Down choose, Tab or Enter takes one (a function comes with its opening parenthesis), Esc closes the list, and Enter after a name typed in full still starts a new line.
 help-fractals-custom-textbook = Textbook (the switch above the formula) shows it typeset as a textbook sets it, and edits it in place. Type as in the text: / makes a fraction of the term before it, ^ an exponent (+, - or = typed at an exponent's end steps out of it), ( parentheses, or a call after a function's name, | bars, and a comma inside parentheses a complex constant. The arrows move through the formula, Up and Down between a numerator and its denominator, Tab to the next empty box; Backspace at the start of a fraction or a pair of parentheses selects it, and a second press removes it and keeps what it held. Copy, paste and undo work as in a text field, names complete as they do there, and the keypad types into the typeset formula (□² squares what is before the caret, a function key wraps the selection). Every edit is written back to the text, so the two views always hold the same formula; a line you have not edited keeps its spacing and comment. The notation never changes what is computed: |z| is the squared modulus and shows as |z|², cabs(z) shows as |z|, and exp(z) stays exp(z). A line that does not read shows in red; click it to edit it as text. LaTeX copies the formula as LaTeX source, as it is typeset, and while Textbook is on the formula library shows its formulas typeset too.
 help-fractals-custom-numbers = Numbers in a formula (0.1, 1/3, pi, the parameters) are read as double-precision values, about 16 digits, and the deep reference orbit iterates with exactly those values. Two formulas that are equal on paper can therefore differ deep down: 0.1*z multiplies by the double nearest 0.1, while z/10 divides by an exact 10, and the two pictures part past about 1e15x (measured: 5% of pixels at 1e15x, a third at 1e17x, all of them at 1e20x). Either picture is correct for its own formula; write the one you mean to share.
 help-fractals-custom-library = The dialog's Save to library keeps a formula and its parameters under a name (saving under a name the library has updates that entry). Fractal ▸ Formula library… lists them to apply, edit, export or delete; Import adds the formulas in a formula file without replacing any: one the library already has is skipped, and a new one whose name is taken becomes "name (2)". The library is formulas.toml in the folder named under Files & data (About), itself a formula file. A tour keyframe carries a formula as formula = "..." with formula_params = [[re, im], ...], and Tools ▸ Tour from current view… writes them for a custom view.
@@ -1533,7 +1533,7 @@ help-ack-intro = Fractadyne stands on decades of work by the fractal community. 
 help-ack-deep-zoom = Deep-zoom algorithms
 # A credit's heading: what was contributed, then by whom. $who: the person's name, as written.
 help-ack-martin-title = Perturbation & series approximation — { $who }
-help-ack-martin = The reference-orbit + low-precision-delta method (δz → 2Z·δz + δz² + δc) and the order-n series that skips early iterations, introduced in SuperFractalThing and its note “SuperFractalThing Maths” (sft_maths.pdf, 2013).
+help-ack-martin = The reference-orbit + low-precision-delta method (δz → 2Z·δz + δz² + δc) and the order-n series that skips early iterations, introduced in SuperFractalThing and its note “SuperFractalThing Math” (sft_maths.pdf, 2013).
 # A credit's heading: what was contributed, then by whom. $who: the person's name, as written.
 help-ack-bla-title = Bivariate Linear Approximation (BLA) & rebasing — { $who }
 help-ack-bla = Skipping runs of iterations via merged linear maps, and rebasing to a single reference to avoid glitches; developed on fractalforums.org (2021).
@@ -1797,8 +1797,8 @@ live-card-healthy = HEALTHY
 # The heading of a card's list of what signals trouble.
 live-card-trouble = TROUBLE
 
-live-card-walk-what = A deep refresh too costly for one frame is pinned and walked: rendered pass after pass, each letting pixels iterate an octave further (256, 512, 1,024 … up to the ask). The rim is that count on a log scale, starting at the top; the beam is the walk’s progress; each arc is one pass, coloured by its GPU time against the 20 ms target. The white blip waits for the last pass’s reading; the flash is the new picture going on screen.
-live-card-walk-note = A still view too costly for one pass is walked the same way, marked SETTLE, and each supersampling sample walks again, marked SSAA: their passes may each take up to 400 ms, and the arcs are coloured against that. A split refresh draws one ring per pass instead: every band, a share of the tiles.
+live-card-walk-what = A deep refresh too costly for one frame is pinned and walked: rendered pass after pass, each letting pixels iterate an octave further (256, 512, 1,024 … up to the ask). The rim is that count on a log scale, starting at the top; the beam is the walk’s progress; each arc is one pass, colored by its GPU time against the 20 ms target. The white blip waits for the last pass’s reading; the flash is the new picture going on screen.
+live-card-walk-note = A still view too costly for one pass is walked the same way, marked SETTLE, and each supersampling sample walks again, marked SSAA: their passes may each take up to 400 ms, and the arcs are colored against that. A split refresh draws one ring per pass instead: every band, a share of the tiles.
 live-card-walk-good-sweep = A sweep that goes round in a handful of frames and ends in a flash.
 live-card-walk-good-arcs = Arcs mostly green and amber.
 live-card-walk-good-still = On a deep still view: a slower sweep per sample, its arcs green to amber.
@@ -1812,7 +1812,7 @@ live-card-age-good-still = Close to 0 once you stop.
 live-card-age-bad-red = The needle living past 1.0, in the red: the picture is more than 2× out of date and looks soft or blocky while zooming.
 live-card-age-bad-ramp = A ramp that never drops: refreshes are not finishing (watch ABANDON).
 
-live-card-tiles-what = How this frame’s GPU pass covers the picture. Moving frames and walk passes cover it whole, and the caption names a walk pass’s iteration band. A walk’s pass iterates only the pixels that have not escaped yet: the plane fills to that share (log scale, 0.01% at the floor) and reads it in the corner, so it drains as the walk goes deeper. A refresh a little too costly for one frame is split into up to 8 passes, each an interleaved set of 16-px tiles. A settled view too costly for one pass becomes a grid of tiles, one a frame from the centre out, and a tile still too costly goes out in strips. Read out below: tile size and tiles per frame. The bar under the plane is the range of iterations the pass covers, on a log scale: a walk lights its band, with what it has already finished below it. A whole frame is drawn as a checker whose squares grow as it renders below the screen’s resolution (the fraction reads in the corner), and while supersampling a magnified pixel shows where each sample landed.
+live-card-tiles-what = How this frame’s GPU pass covers the picture. Moving frames and walk passes cover it whole, and the caption names a walk pass’s iteration band. A walk’s pass iterates only the pixels that have not escaped yet: the plane fills to that share (log scale, 0.01% at the floor) and reads it in the corner, so it drains as the walk goes deeper. A refresh a little too costly for one frame is split into up to 8 passes, each an interleaved set of 16-px tiles. A settled view too costly for one pass becomes a grid of tiles, one a frame from the center out, and a tile still too costly goes out in strips. Read out below: tile size and tiles per frame. The bar under the plane is the range of iterations the pass covers, on a log scale: a walk lights its band, with what it has already finished below it. A whole frame is drawn as a checker whose squares grow as it renders below the screen’s resolution (the fraction reads in the corner), and while supersampling a magnified pixel shows where each sample landed.
 live-card-tiles-good-whole = Whole passes while you zoom; split refreshes of a few passes.
 live-card-tiles-good-grid = When you stop: a grid of tens of tiles filled in a second or two, then SSAA.
 live-card-tiles-bad-small = A grid of hundreds of small tiles: each pass’s budget is small, and sharpening will take a long time.
@@ -1958,9 +1958,9 @@ live-card-lamp-ssaa-what = A supersampling sample was added to the settled pictu
 live-card-lamp-ssaa-good = A run of blinks after a settle, then dark.
 live-card-lamp-ssaa-bad = Restarting over and over: the settle keeps being disturbed.
 
-live-card-lamp-palette-what = The colour normalization took in a new escape range, so the colours follow the zoom.
+live-card-lamp-palette-what = The color normalization took in a new escape range, so the colors follow the zoom.
 live-card-lamp-palette-good = Flickers while zooming.
-live-card-lamp-palette-bad = Dark while zooming: the palette range is frozen, and colours go flat and low in contrast.
+live-card-lamp-palette-bad = Dark while zooming: the palette range is frozen, and colors go flat and low in contrast.
 
 live-card-lamp-mode-what = The arithmetic changed: direct, df32 or floatexp.
 live-card-lamp-mode-good = One blink at a boundary such as 2^93.
@@ -1981,7 +1981,7 @@ farm-client-show-key = Show
 farm-client-machine = This machine
 farm-client-machine-hover = The name the controller shows for this machine.
 farm-client-share = Shared drive
-# Greyed hint inside the empty field; the path is an example.
+# Grayed hint inside the empty field; the path is an example.
 farm-client-share-hint = optional — e.g. \\fileserver\share
 farm-client-share-hover = This machine's path to the shared drive the controller uses (share mode): frames are written there instead of sent over the connection. Leave empty to send every frame.
 farm-client-gpu = Graphics card
@@ -2080,7 +2080,7 @@ farm-client-detail-rendering-strips = Rendering strips { $first }–{ $last }
 farm-client-detail-in-use = Waiting — someone is using this machine; work resumes once nobody has for { $time }
 farm-client-detail-paused = Paused — the controller has been told
 farm-client-detail-pausing = Pausing — finishing the frame in progress
-farm-client-detail-cancelled = Cancelled the frame in progress; paused
+farm-client-detail-cancelled = Canceled the frame in progress; paused
 # A machine with several graphics cards. $rendering: the cards rendering now; $total: all its cards (two or more).
 farm-client-rendering-on-cards = Rendering on { $rendering } of { $total } graphics cards
 
@@ -2153,7 +2153,7 @@ farm-ctl-ss = Supersampling
 farm-ctl-port = Listen on port
 farm-ctl-port-hover = Clients connect to this port. Allow it through the firewall for your local network.
 farm-ctl-share = Shared drive
-# Greyed hint inside the empty field.
+# Grayed hint inside the empty field.
 farm-ctl-share-hint = optional — this machine's path to it
 farm-ctl-share-hover = Share mode: clients that have the same drive write their frames to it instead of sending them over the connection, and this machine checks every one there. Clients without it send theirs.
 # A label followed by a number of clients and two checkboxes.
@@ -2365,7 +2365,7 @@ farm-ctl-render-hover = Start listening for clients and render the tour on them
 
 tour-render-title = Render tour
 # Under the tour's name: how this differs from Tools ▸ Render zoom video…, which looks like the same tool.
-tour-render-vs-zoom-video = Renders every frame of the tour on its own, so a tour can pan, follow keyframes and use any fractal and colouring. For a straight dive into one point, Tools ▸ Render zoom video… is usually several times faster.
+tour-render-vs-zoom-video = Renders every frame of the tour on its own, so a tour can pan, follow keyframes and use any fractal and coloring. For a straight dive into one point, Tools ▸ Render zoom video… is usually several times faster.
 tour-render-out = Output folder
 tour-render-browse = Browse…
 tour-render-out-hover = Full path the frames are written to.
@@ -2446,19 +2446,19 @@ zoom-video-title = Render zoom video
 # What the video dives into. $fractal: the fractal's name; $magnification: "2.2e99×"; $octaves: a number.
 zoom-video-view = { $fractal } · into the current view at { $magnification } ({ $octaves } octaves)
 # Under the view line, always shown: what this window makes and how it differs from Render tour (Tools ▸ Render tour…).
-zoom-video-intro = A straight dive into the centre of this view. The dive is computed once, as rings, and every frame is built from them, so it is usually several times faster than Render tour, but it can only zoom straight in.
+zoom-video-intro = A straight dive into the center of this view. The dive is computed once, as rings, and every frame is built from them, so it is usually several times faster than Render tour, but it can only zoom straight in.
 # The heading of a section that opens: how a zoom video is made, its limits, and when to use Render tour instead.
 zoom-video-about = How it works, and when to use Render tour instead
 # The section's paragraphs. Each starts with a short heading word or two and a colon.
-zoom-video-about-how = How it works: the dive is computed once as a stack of rings ("strips") around the centre, one for each doubling of the magnification. Each frame is cut from the rings it shows, then coloured, so frames are cheap: a higher frame rate or a slower zoom makes a longer video in about the same time.
-zoom-video-about-can = What it makes: a steady zoom into this view's centre, turning if you like, into the Mandelbrot set or Multibrot 3–8, with smooth, distance estimate, relief or glow colouring.
-zoom-video-about-limits = Limits: no panning, no keyframes, no Julia sets or other fractals, and no stripe, triangle inequality, orbit trap or decomposition colouring. The graphics card holds every ring a frame shows at once, so a large size or anti-aliasing needs a lot of its memory (the estimate below says whether this card has enough). Fine detail can differ very slightly from a frame rendered on its own.
-zoom-video-about-tour = Render tour (Tools ▸ Render tour…) renders every frame of a tour on its own: it can pan, follow keyframes, change the fractal and use any colouring, and its memory need is one frame's. Each frame is a full render, so a long, deep dive takes much longer. Tools ▸ Tour from current view… makes a dive into this view as a tour.
+zoom-video-about-how = How it works: the dive is computed once as a stack of rings ("strips") around the center, one for each doubling of the magnification. Each frame is cut from the rings it shows, then colored, so frames are cheap: a higher frame rate or a slower zoom makes a longer video in about the same time.
+zoom-video-about-can = What it makes: a steady zoom into this view's center, turning if you like, into the Mandelbrot set or Multibrot 3–8, with smooth, distance estimate, relief or glow coloring.
+zoom-video-about-limits = Limits: no panning, no keyframes, no Julia sets or other fractals, and no stripe, triangle inequality, orbit trap or decomposition coloring. The graphics card holds every ring a frame shows at once, so a large size or anti-aliasing needs a lot of its memory (the estimate below says whether this card has enough). Fine detail can differ very slightly from a frame rendered on its own.
+zoom-video-about-tour = Render tour (Tools ▸ Render tour…) renders every frame of a tour on its own: it can pan, follow keyframes, change the fractal and use any coloring, and its memory need is one frame's. Each frame is a full render, so a long, deep dive takes much longer. Tools ▸ Tour from current view… makes a dive into this view as a tour.
 zoom-video-about-choose = Use this window for a straight dive into one point, and Render tour for anything else.
 zoom-video-no-julia = Zoom videos dive into the Mandelbrot set and Multibrot 3–8, not Julia sets yet.
 # $fractal: the fractal's name.
 zoom-video-no-fractal = Zoom videos dive into the Mandelbrot set and Multibrot 3–8 for now, not { $fractal }.
-zoom-video-no-method = This colouring reads statistics a zoom video's strips do not keep (stripe, triangle inequality, orbit trap, decomposition): choose smooth, distance estimate, relief or glow.
+zoom-video-no-method = This coloring reads statistics a zoom video's strips do not keep (stripe, triangle inequality, orbit trap, decomposition): choose smooth, distance estimate, relief or glow.
 zoom-video-too-shallow = Zoom in first: the video dives from its start into the current view.
 zoom-video-out = Video file
 zoom-video-browse = Browse…
@@ -2481,7 +2481,7 @@ zoom-video-bla-hover = Skip iterations with bilinear approximation (BLA) in stri
 zoom-video-normalize = Palette follows the depth (normalize)
 zoom-video-normalize-hover = Spread the palette over each moment's escape range, as Normalize deep colors does on screen, changing smoothly through the dive. Deep dives need it: past ~1e50× a fixed palette cycle turns to confetti.
 zoom-video-keep = Keep the strips
-zoom-video-keep-hover = Also write the strips to this folder, so the video can be coloured again later without rendering (fractadyne --assemble FOLDER). They take a lot of space.
+zoom-video-keep-hover = Also write the strips to this folder, so the video can be colored again later without rendering (fractadyne --assemble FOLDER). They take a lot of space.
 # $frames: the number of frames; $seconds: the video's length; $strips: strips to render, each $width × $rows texels.
 zoom-video-summary =
     { $frames ->
@@ -2491,12 +2491,12 @@ zoom-video-summary =
 # The graphics memory the video takes: the strips a frame reads, and the frame. $size: a number of gigabytes ("1.0").
 zoom-video-memory = ≈{ $size } GB of graphics memory (the strips in view and the frame)
 # Hover text on the memory line. $layers: how many strips a frame shows at once (a number, 10–16). $held: what each
-# strip keeps for the colouring chosen: count (smooth colouring), distance (distance estimate or glow), all (relief).
+# strip keeps for the coloring chosen: count (smooth coloring), distance (distance estimate or glow), all (relief).
 zoom-video-memory-hover =
     { $held ->
-        [count] The card holds the { $layers } strips a frame shows at once. Each keeps only the iteration count, which is all smooth colouring reads; distance estimate or glow would need twice as much, relief lighting four times.
-        [distance] The card holds the { $layers } strips a frame shows at once. Each keeps the iteration count and the distance estimate, which this colouring reads: twice what smooth colouring needs.
-       *[all] The card holds the { $layers } strips a frame shows at once. Each keeps everything relief lighting reads: four times what smooth colouring needs.
+        [count] The card holds the { $layers } strips a frame shows at once. Each keeps only the iteration count, which is all smooth coloring reads; distance estimate or glow would need twice as much, relief lighting four times.
+        [distance] The card holds the { $layers } strips a frame shows at once. Each keeps the iteration count and the distance estimate, which this coloring reads: twice what smooth coloring needs.
+       *[all] The card holds the { $layers } strips a frame shows at once. Each keeps everything relief lighting reads: four times what smooth coloring needs.
     }
 # The disk space the kept strips take (an estimate). $size: a number of gigabytes.
 zoom-video-disk = ≈{ $size } GB of strips on disk
@@ -2506,11 +2506,11 @@ zoom-video-grid-too-big = The frames' samples ({ $width }×{ $height }) are more
 zoom-video-too-much-memory =
     { $held ->
         [count] The video needs ≈{ $need } GB of graphics memory, more than this card's { $have } GB can spare: lower the size or the anti-aliasing.
-       *[other] The video needs ≈{ $need } GB of graphics memory, more than this card's { $have } GB can spare: lower the size or the anti-aliasing, or colour without relief, distance estimate or glow, which needs less.
+       *[other] The video needs ≈{ $need } GB of graphics memory, more than this card's { $have } GB can spare: lower the size or the anti-aliasing, or color without relief, distance estimate or glow, which needs less.
     }
 # $have: the card's gigabytes ("10.0").
 zoom-video-memory-tight = That is most of this card's { $have } GB, and the picture behind this dialog holds some too: if the render runs out, it stops and says so.
-zoom-video-separate = Renders in a separate process, coloured as the view is now (the session is saved first) — a lost GPU device there cannot take this session with it.
+zoom-video-separate = Renders in a separate process, colored as the view is now (the session is saved first) — a lost GPU device there cannot take this session with it.
 # $done, $total: frames.
 zoom-video-progress = { $done } / { $total } frames
 zoom-video-starting = starting…
@@ -2577,7 +2577,7 @@ formula-apply = Apply
 formula-dialog-apply-hover = Compile the formula and show it
 # Shown beside Apply while the formula is being compiled.
 formula-dialog-compiling = Compiling the formula for the GPU…
-# The greyed hint in an empty name box (also in the Formula library window).
+# The grayed hint in an empty name box (also in the Formula library window).
 formula-name-hint = name (optional)
 # The save button: "Update" when the library already has a formula of that name.
 formula-dialog-update-in-library = Update in library
@@ -2712,7 +2712,7 @@ formula-library-import = Import…
 formula-library-import-hover = Add the formulas in a formula file; nothing here is replaced
 formula-library-export-all = Export all…
 formula-library-export-all-hover = Write every formula here to one file, to share or keep
-# The filter box: its label, and the greyed hint inside it.
+# The filter box: its label, and the grayed hint inside it.
 formula-library-filter = Filter
 formula-library-filter-hint = filter by name or text
 # Shown while the user has no saved formulas.
@@ -2860,17 +2860,17 @@ panel-method = Method
 panel-method-hover = How escape data maps to color. Stripe / triangle-inequality / orbit-trap / decomposition reveal orbit structure; distance shades by proximity to the boundary.
 panel-stripe-density = Stripe density
 panel-stripe-tail = Tail only (deep zoom)
-panel-stripe-tail-hover = Average the stripe term over the last N iterations of each orbit (an exponential window) instead of the whole orbit. At extreme depth every orbit shadows the reference for all but its last few hundred iterations, so the full-orbit average is one colour for the whole view; the tail keeps the contrast. Orbits shorter than the window are unaffected. Also --stripe-tail N for --render.
+panel-stripe-tail-hover = Average the stripe term over the last N iterations of each orbit (an exponential window) instead of the whole orbit. At extreme depth every orbit shadows the reference for all but its last few hundred iterations, so the full-orbit average is one color for the whole view; the tail keeps the contrast. Orbits shorter than the window are unaffected. Also --stripe-tail N for --render.
 panel-tail-length = Tail length
 # The unit after the tail length's number: short for "iterations" (the slider reads "64 it").
 panel-tail-length-unit = it
-panel-tail-length-hover = Window length in iterations. Short windows (8–32) give the classic bold banding at any depth; longer ones average toward a flat colour again, since the stripe term of a long chaotic orbit averages out.
+panel-tail-length-hover = Window length in iterations. Short windows (8–32) give the classic bold banding at any depth; longer ones average toward a flat color again, since the stripe term of a long chaotic orbit averages out.
 panel-trap-shape = Trap shape
 panel-palette = Palette
-# The two colours of the Binary palette, each beside its colour swatch.
+# The two colors of the Binary palette, each beside its color swatch.
 panel-in-set = In-set
 panel-out-of-set = Out-of-set
-# The two colours of the Duotone palette, each beside its colour swatch.
+# The two colors of the Duotone palette, each beside its color swatch.
 panel-shadow = Shadow
 panel-highlight = Highlight
 panel-cycle = Cycle
@@ -2888,7 +2888,7 @@ panel-log-scale-hover =
     Spread the palette by the LOGARITHM of the escape value rather than linearly. Escape counts crowd towards the high end at depth, so a linear map spends most of the palette on a thin shell near the boundary and flattens everything else.
 
     Applies to the normalized mapping — which is what 'Normalize deep colors' (or --normalize on an export) turns on. A heavily skewed range takes the log mapping anyway, whether or not this is ticked.
-# The same checkbox's tooltip while it is greyed out (normalization is off).
+# The same checkbox's tooltip while it is grayed out (normalization is off).
 panel-log-scale-off-hover =
     Requires normalization: this chooses HOW the palette is mapped to the measured escape range, so with 'Normalize deep colors' off (and no --normalize export) there is no mapping for it to change and it would not alter a single pixel.
 
@@ -2959,7 +2959,7 @@ panel-priority-quality-hover = Every refresh is a fully resolved full-resolution
 # Followed by two choices, Detail and Misiurewicz point.
 panel-autopilot-target = Auto-zoom target
 panel-target-detail-hover = Dive toward the richest structure on the fractal's edge in view, re-choosing the target as the dive goes.
-panel-target-misiurewicz-hover = Find the nearest Misiurewicz point (a spiral centre whose structure repeats forever) and dive exactly into it. The dive first holds still while the point is solved to the dive limit's depth — a moment at ordinary depths, longer past 1e1000×. Mandelbrot set only.
+panel-target-misiurewicz-hover = Find the nearest Misiurewicz point (a spiral center whose structure repeats forever) and dive exactly into it. The dive first holds still while the point is solved to the dive limit's depth — a moment at ordinary depths, longer past 1e1000×. Mandelbrot set only.
 panel-work-budget = Live render budget
 panel-work-budget-hover = Detail vs. speed for the live view at deep zoom. Higher renders at fuller resolution (crisper — less of the "soft" upscaled look) but lowers frame-rate, and very high values risk a brief GPU stall on the heaviest frames. Exports are always full resolution regardless of this.
 panel-min-motion-res = Min motion resolution
@@ -2995,7 +2995,7 @@ gpu2-hover =
 ## The view (canvas)
 
 # A notice after Ctrl+click pins the Julia c at a deep zoom.
-canvas-julia-pin-quantized = Pinned Julia c — but it is held in double precision, so at this depth the whole panel rounds to a single value and the pin lands on the view centre. Zoom out to aim it.
+canvas-julia-pin-quantized = Pinned Julia c — but it is held in double precision, so at this depth the whole panel rounds to a single value and the pin lands on the view center. Zoom out to aim it.
 # A small caption in the top-left corner of the view while the orbit overlay is fitted to the view (its "Normalize (fit to view)" option).
 canvas-orbit-normalized = orbit (normalized)
 # The minimap's tooltip.
@@ -3078,7 +3078,7 @@ diag-arithmetic = Deep-zoom arithmetic: { $status }
 diag-run-selftest = Run self-test
 diag-run-uitest = Run UI test
 diag-run-gputest = Run GPU arithmetic check
-diag-blurb-selftest = Checks the maths and rendering on your GPU against known-correct results. Takes a few minutes.
+diag-blurb-selftest = Checks the math and rendering on your GPU against known-correct results. Takes a few minutes.
 diag-blurb-uitest = Walks the interface and the live view, capturing screenshots at several zoom depths. Takes a minute or two and opens windows while it runs.
 diag-blurb-gputest = Checks the shader's double-float arithmetic against known-correct values on every graphics backend your machine offers. Takes a few seconds, opens no window. If it reports a failure, that is a genuine finding we would like to see — please attach it to a report.
 # While a test runs. $count: the checks finished so far.
@@ -3129,7 +3129,7 @@ misi-cancel = Cancel
 misi-solve-jump = Solve & jump
 misi-solve-jump-hover = Newton-solve this exact point to the precision the asked depth needs (from its stored coordinate as the seed), then jump straight there. Deep asks take longer — the solve is arbitrary-precision.
 misi-select-hint = Select a point, name a depth, and jump — the multiplier line under each thumbnail is what a dive there will look like: how many octaves before the view repeats, and how far it twists per repeat.
-misi-cancelled = Solve cancelled.
+misi-cancelled = Solve canceled.
 # $text: what was typed in the depth field.
 misi-bad-zoom = Cannot read "{ $text }" as a magnification (write 1e50, 3.2e120, …).
 misi-no-kp = This entry has no detected (k,p) to solve with.
@@ -3197,7 +3197,7 @@ life-density-hover = The fraction of cells a fill sets alive.
 life-seed = seed
 life-fill-view = Fill view
 # $cells: the largest side of the filled area, in cells (2,048).
-life-fill-view-hover = Fill the visible area (up to { $cells } × { $cells } cells about its centre) at random.
+life-fill-view-hover = Fill the visible area (up to { $cells } × { $cells } cells about its center) at random.
 life-clear = Clear
 life-clear-hover = Kill every cell (Undo brings them back).
 
@@ -3246,7 +3246,7 @@ lsys-edit-hover = The system's text: axiom, productions, angle — edit and appl
 lsys-save = Save…
 lsys-save-hover = Save the system as a .lsys text file.
 # Tooltip of the "SVG…" button.
-lsys-svg-hover = Export the view as an SVG drawing: its lines and shapes as vectors, in its colours.
+lsys-svg-hover = Export the view as an SVG drawing: its lines and shapes as vectors, in its colors.
 lsys-follow = Order follows zoom
 lsys-follow-hover = The order rises as you zoom in, so the detail never runs out.
 lsys-follow-fixed-hover = This system does not grow by a factor each order, so it is drawn at a fixed order.
@@ -3264,18 +3264,18 @@ lsys-line-width = Line width
 lsys-draw-on = Draw on
 lsys-draw-on-hover = How much of the curve is drawn, in the order the turtle draws it
 lsys-draw-on-play-hover = The curve drawing itself on
-lsys-colour-by = Colour by
-# The colourings, in the "Colour by" list.
+lsys-colour-by = Color by
+# The colorings, in the "Color by" list.
 lsys-colour-position = position along the curve
 lsys-colour-depth = branch depth
 lsys-colour-heading = heading
-# C, < and > are the system's commands that set the colour index: keep them.
-lsys-colour-index = colour index (C, <, >)
-lsys-colour-plain = one colour
+# C, < and > are the system's commands that set the color index: keep them.
+lsys-colour-index = color index (C, <, >)
+lsys-colour-plain = one color
 # The panel's numbers.
 lsys-growth = Growth
 lsys-growth-built = built as a word, at its order
-lsys-growth-built-hover = Parametric or context-sensitive: a module's rewrite depends on its numbers or its neighbours, so the word is built a generation at a time (up to two million modules) and drawn in double precision — the order does not follow the zoom.
+lsys-growth-built-hover = Parametric or context-sensitive: a module's rewrite depends on its numbers or its neighbors, so the word is built a generation at a time (up to two million modules) and drawn in double precision — the order does not follow the zoom.
 # How much the picture grows from one order to the next. $factor: the factor (1.4142).
 lsys-growth-factor = ×{ $factor } an order
 lsys-growth-factor-period-2 = ×{ $factor } an order (orders step by 2)
@@ -3347,8 +3347,8 @@ lsys-toolbar-edit-hover = Edit the system's text
 ## L-systems: the editor window, and a .l file's entries
 
 lsys-editor-title = L-system
-# The editor's help. The line keys (angle, axiom, heading, draw / move / variables, colour, order), the quoted examples ('X = word', 'seed n', 'define R 1.456'…), the commands and "The Algorithmic Beauty of Plants" (a book's title) are the system's syntax and names: keep them as they are.
-lsys-editor-help = One key a line: angle (degrees, or /n for a division of the circle), axiom, productions 'X = word', and optionally heading, draw / move / variables, colour, order. A symbol with alternatives chosen at random has one line for each, with its weight: 'X (0.3) = word'; 'seed n' picks the plant. In a word, {"{"} {"}"} fills the turtle's path and . adds a vertex. Parametric and context-sensitive productions (The Algorithmic Beauty of Plants): 'A(s) : s > 1 = F(s)[+A(s/2)]', 'b < a > c = b', with 'define R 1.456' and 'ignore +-F'; F(l) steps l, +(a) turns a degrees. A Fractint .l entry can be pasted as it is.
+# The editor's help. The line keys (angle, axiom, heading, draw / move / variables, color, order), the quoted examples ('X = word', 'seed n', 'define R 1.456'…), the commands and "The Algorithmic Beauty of Plants" (a book's title) are the system's syntax and names: keep them as they are.
+lsys-editor-help = One key a line: angle (degrees, or /n for a division of the circle), axiom, productions 'X = word', and optionally heading, draw / move / variables, color, order. A symbol with alternatives chosen at random has one line for each, with its weight: 'X (0.3) = word'; 'seed n' picks the plant. In a word, {"{"} {"}"} fills the turtle's path and . adds a vertex. Parametric and context-sensitive productions (The Algorithmic Beauty of Plants): 'A(s) : s > 1 = F(s)[+A(s/2)]', 'b < a > c = b', with 'define R 1.456' and 'ignore +-F'; F(l) steps l, +(a) turns a degrees. A Fractint .l entry can be pasted as it is.
 lsys-editor-apply = Apply
 lsys-editor-revert = Revert
 lsys-editor-revert-hover = The text of the system shown.
@@ -3415,20 +3415,20 @@ export-snapshot-saved = Saved screen snapshot { $size } → { $path }
 # $error: why (in English).
 export-snapshot-failed = Snapshot failed: { $error }
 
-## The colour picker (the popup of a colour swatch)
+## The color picker (the popup of a color swatch)
 
-# The third row's label: the colour as hexadecimal bytes. Short (about 6 characters).
+# The third row's label: the color as hexadecimal bytes. Short (about 6 characters).
 picker-row-hex = Hex
 picker-hex-hover = Click to type a hex value
 picker-cancel = Cancel
-picker-cancel-hover = Put back the colour this picker opened with
+picker-cancel-hover = Put back the color this picker opened with
 picker-ok = OK
-picker-ok-hover = Keep this colour
+picker-ok-hover = Keep this color
 # Starts the screen eyedropper (an icon is shown before it).
 picker-pick = Pick
-picker-pick-hover = Take a colour from anywhere on screen
+picker-pick-hover = Take a color from anywhere on screen
 # Tooltip of the disabled Pick button (in the picker and the gradient editor) on Linux and macOS.
-picker-eyedropper-unsupported = Picking a colour from elsewhere on screen needs a platform screen-capture API. Only the Windows build has one; on Linux this would need an X11 dependency, and Wayland requires a portal with its own permission prompt.
+picker-eyedropper-unsupported = Picking a color from elsewhere on screen needs a platform screen-capture API. Only the Windows build has one; on Linux this would need an X11 dependency, and Wayland requires a portal with its own permission prompt.
 
 ## The fractal families: what each one is (the info panel's "About" section and the pickers' hover text).
 ## The formulas themselves (z -> z^2 + c) are written in code and stay as they are.
@@ -3465,7 +3465,7 @@ fractal-lsystem-about = Lindenmayer systems: curves, space-filling curves, islan
 # Shown where the other families show their formula (z -> z^2 + c).
 fractal-custom-formula = z -> the formula you write
 # Shown where the other families show their formula. "B3/S23" is the rule's notation: keep it.
-fractal-life-formula = B3/S23: born with 3 live neighbours, survives with 2 or 3
+fractal-life-formula = B3/S23: born with 3 live neighbors, survives with 2 or 3
 # Shown where the other families show their formula. "F = F+F--F+F" is the grammar's notation: keep it.
 fractal-lsystem-formula = F = F+F--F+F: each symbol rewritten, then drawn by a turtle
 
@@ -3562,7 +3562,7 @@ autopilot-misi-not-found =
 # ($preperiod,$period) names the point, as mathematicians write it: keep the notation. $widths: a power of two (2^$widths screen widths).
 autopilot-misi-off-screen =
     Autopilot: the nearest Misiurewicz point ({ $preperiod },{ $period }) is off screen
-    ~2^{ $widths } screen widths away — move closer to a spiral centre
+    ~2^{ $widths } screen widths away — move closer to a spiral center
 # ($preperiod,$period) names the point: keep the notation.
 autopilot-misi-not-solved =
     Autopilot: the Misiurewicz point ({ $preperiod },{ $period }) near this view did not solve
@@ -3711,7 +3711,7 @@ fractal-family-lsystem = L-system
 # A family at a power: "Multibrot 3", "Burning Ship 4". $family: a name above; $power: the power.
 fractal-with-power = { $family } { $power }
 
-## Names of choices: colouring methods, orbit traps, palette animation, snapshots, angle units.
+## Names of choices: coloring methods, orbit traps, palette animation, snapshots, angle units.
 
 color-method-smooth = Smooth iteration
 color-method-stripe = Stripe average
@@ -3799,7 +3799,7 @@ status-limit-exhausted = iter exhausted
 # Pixels are capped at the iteration budget. Short.
 status-limit-capped = iter capped
 # $pixels: how many pixels wide one step of the coordinates is; $sharp_to: the magnification the view is sharp to (written out, 1,234,567).
-status-limit-direct-detail = This view renders directly on the GPU in single precision, where one step of the coordinates is { $pixels } pixels wide here: neighbouring pixels compute the same point, so the image breaks into blocks. At this location it is sharp to about { $sharp_to }×. This formula has no deep-zoom (perturbation) path yet, so zooming further shows no more detail.
+status-limit-direct-detail = This view renders directly on the GPU in single precision, where one step of the coordinates is { $pixels } pixels wide here: neighboring pixels compute the same point, so the image breaks into blocks. At this location it is sharp to about { $sharp_to }×. This formula has no deep-zoom (perturbation) path yet, so zooming further shows no more detail.
 # $samples: the GPU buffer's capacity in orbit samples; $iterations: the iterations pixels are limited to.
 status-limit-depth-detail = The reference orbit reached the GPU buffer cap ({ $samples } samples) without escaping, so pixels here are limited to ~{ $iterations } iterations and finer detail cannot be computed at this view — live or exported. This is the current depth limit for this location family.
 # $budget: the largest iteration budget this view can be given.

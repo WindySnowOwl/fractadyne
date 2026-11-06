@@ -7,14 +7,14 @@ WHY THIS EXISTS
 ---------------
 verify-views.py judges magnification by the interior fraction: the share of pixels that never
 escaped. It reads that off the image as the share of BLACK pixels, which assumes a renderer
-draws only never-escaped pixels black. Fraktaler-3's default colouring does not. It shades by
+draws only never-escaped pixels black. Fraktaler-3's default coloring does not. It shades by
 distance estimate, so every pixel close to the boundary is black too, escaped or not. On scene 59
 (2.1e68x, 28.5 million iterations) its image is 62% black at 4K, while only 6.6% of its pixels
 never escaped (measured at 640x360 from this output, 2026-10-31); the other 91% of its black
 pixels escaped after 4 to 10 million iterations. Read off the image, that looks like a
 different magnification, and the check called a correct render the wrong view.
 
-Whether a pixel escaped is not a colouring decision, so this reads it from the renderer itself.
+Whether a pixel escaped is not a coloring decision, so this reads it from the renderer itself.
 Fraktaler-3 writes raw iteration counts to EXR when asked (`save_exr = true`,
 `exr_channels = ["N0", "N1"]`, one subframe), and marks a pixel that never escaped with the
 all-ones count 0xFFFFFFFF. The Fraktaler-3 lane renders each scene once more for this, untimed,

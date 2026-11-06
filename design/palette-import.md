@@ -1,7 +1,7 @@
 # Palette import: how other renderers do it, and what we should build
 
 Survey written 2026-09-04, prompted by "add the Fractint default palette". It turned out that
-request cannot be satisfied by adding a preset, and the reason generalises into a design.
+request cannot be satisfied by adding a preset, and the reason generalizes into a design.
 
 Every claim below marked ✅ was read out of a real file or a working parser, not from
 documentation prose. Claims marked ⚠ are unverified and must be confirmed before code depends on
@@ -33,13 +33,13 @@ look is banded.
 ⭐**Two traps, both verified in `default.map` itself:**
 - Values are **6-bit VGA (0–63) scaled ×4**, so every value is a multiple of 4 and the maximum is
   **252, not 255**. Dividing by 255 desaturates the whole palette slightly.
-- The table is structural, not artistic: entries 0–15 are EGA/VGA text colours, 16–31 a greyscale
-  ramp, 32–247 are 216 colours on an HSV cylinder, and 248–255 are black padding. Only 32–247 is
+- The table is structural, not artistic: entries 0–15 are EGA/VGA text colors, 16–31 a grayscale
+  ramp, 32–247 are 216 colors on an HSV cylinder, and 248–255 are black padding. Only 32–247 is
   "the gradient"; the first 32 are a system palette that happens to be in the file.
 
-⚠KF also has `.kfp` palette files that override the colour settings inside a `.kfr`. Our
+⚠KF also has `.kfp` palette files that override the color settings inside a `.kfr`. Our
 `parse_kfr` deliberately reads only `Re`/`Im`/`Zoom`/`Iterations` and ignores everything else, so
-KF colour data passes us by today. Format unverified.
+KF color data passes us by today. Format unverified.
 
 ### Ultra Fractal — `.ugr` ✅
 
@@ -76,9 +76,9 @@ one line per segment:
 left mid right   lr lg lb la   rr rg rb ra   blend_mode color_mode
 ```
 
-Positions are floats in 0..1, colours floats 0..1 **with alpha**, plus **per-segment**:
+Positions are floats in 0..1, colors floats 0..1 **with alpha**, plus **per-segment**:
 - a **blend function**: linear, curved, sine, sphere-increasing, sphere-decreasing;
-- a **colour space**: RGB, HSV counter-clockwise, HSV clockwise — so a single segment can sweep
+- a **color space**: RGB, HSV counter-clockwise, HSV clockwise — so a single segment can sweep
   the long way round the hue wheel;
 - a **midpoint**, which shifts where the blend reaches 50% without adding a stop.
 
@@ -86,13 +86,13 @@ A `+` prefix marks a compressed continuation reusing the previous segment's righ
 
 ### Swatch lists — Adobe `.ase`, ColorSchemer `.cs`, hex/CSS ✅
 
-Flat ordered lists of colours with no positions and no interpolation semantics. Importing means
+Flat ordered lists of colors with no positions and no interpolation semantics. Importing means
 choosing a spacing convention (even) and a blend (linear). We already accept the hex/CSS case via
 `parse_palette_text` (`#rgb` and `#rrggbb`).
 
 ### The rest ⚠
 
-XaoS generates palettes algorithmically from a seed rather than storing them; Fraktaler-3 colours
+XaoS generates palettes algorithmically from a seed rather than storing them; Fraktaler-3 colors
 via its own formula rather than a palette file; Imagina has its own scheme. None of these are
 *import sources* — they are reminders that "palette" is not universal, and that a renderer can
 legitimately have no palette file at all.
@@ -112,7 +112,7 @@ other format here.** Each one maps into it without loss:
 |---|---|
 | `.ggr` | natively |
 | `.ugr` | one linear RGB segment per adjacent index pair, position = `index / 399` |
-| `.map` | 256 segments, **flat** (left colour == right colour) to preserve the banding, or 255 linear segments if the user wants it smoothed |
+| `.map` | 256 segments, **flat** (left color == right color) to preserve the banding, or 255 linear segments if the user wants it smoothed |
 | `.ase` / `.cs` / hex list | evenly spaced linear RGB segments |
 | our presets | unchanged — 8 stops is just a short segment list |
 
@@ -121,7 +121,7 @@ other format here.** Each one maps into it without loss:
 Three layers, and the middle one is what we lack:
 
 1. **Importers** — format → segment list. Independent, individually testable, no GPU.
-2. **A segment model on the CPU**: `left`, `mid`, `right`, RGBA endpoints, blend function, colour
+2. **A segment model on the CPU**: `left`, `mid`, `right`, RGBA endpoints, blend function, color
    space. Superset of everything above; the custom-gradient editor and the built-in presets are
    both expressible in it.
 3. **Bake to a LUT** — evaluate the segment list into an N-entry table (256 minimum; 1024 gives
@@ -147,7 +147,7 @@ N entries and interpolating between them reproduces the original exactly *except
 positions that fall between LUT entries, where the kink is rounded. So:
 
 - `--selftest` goldens (**18/18**) will drift.
-- The F3 corpus (**38/38 at maxD 0**) will drift — every row, since the colour mapping changed.
+- The F3 corpus (**38/38 at maxD 0**) will drift — every row, since the color mapping changed.
 
 **Both get a deliberate re-bless, AFTER the change is shown correct — never before.** The order
 matters: re-blessing first turns the gate into a rubber stamp and destroys the only record of the
@@ -155,11 +155,11 @@ old output.
 
 ⭐**Acceptance criteria for the re-bless** (so "it changed" is not confused with "it broke"):
 
-1. The delta must be **small and explainable** — bounded by LUT quantisation, concentrated at stop
+1. The delta must be **small and explainable** — bounded by LUT quantization, concentrated at stop
    boundaries. Measure it (decoded-RGB maxD / meanΔ per corpus row), do not eyeball it. A large or
    widely-spread delta means the bake is wrong, not that the gate is stale.
 2. **Raising the LUT size must shrink the delta.** Bake at 1024 and at 4096 and compare against the
-   pre-change render: if the error does not fall, the difference is not quantisation and the bake
+   pre-change render: if the error does not fall, the difference is not quantization and the bake
    has a real bug.
 3. A **flat-segment `.map`** must come back with its bands intact — that is the case the whole
    design exists for, and it is the one an interpolating bake would quietly smooth.
@@ -178,7 +178,7 @@ Ranked by how quietly they produce a wrong picture that survives review:
    interpolation; UF and GIMP interpolate between stops. Applying our smooth interpolation to a
    `.map` turns 37 hard bands into a smear that no longer resembles the source. The segment model
    handles this by making flatness a property of the *segment*, not a global switch.
-2. ⭐⭐**Colour space — and we currently contradict ourselves about it.** Two comments in the tree
+2. ⭐⭐**Color space — and we currently contradict ourselves about it.** Two comments in the tree
    assert opposite things, and both are load-bearing:
    - `fractadyne-color/src/lib.rs`: *"every stop in this crate is LINEAR"* — and
      `parse_palette_text` converts sRGB→linear, pinned by the test
@@ -191,9 +191,9 @@ Ranked by how quietly they produce a wrong picture that survives review:
 
    ✅⭐⭐**SETTLED BY EXPERIMENT 2026-09-04 — the renderer is display-referred, and
    `parse_palette_text` is wrong.** Method: a session with a UNIFORM custom palette (every stop
-   the same colour, so palette POSITION cannot influence the result), `--render` at 240×240, then
+   the same color, so palette POSITION cannot influence the result), `--render` at 240×240, then
    a histogram of the PNG. `light`/`de`/`normalize_live` forced off so nothing modulates the
-   colour. Both runs asserted the `session: … — loaded` line first; two earlier attempts silently
+   color. Both runs asserted the `session: … — loaded` line first; two earlier attempts silently
    fell back to defaults and would have "measured" nothing.
 
    | stop value written to the session | dominant rendered pixel |
@@ -207,7 +207,7 @@ Ranked by how quietly they produce a wrong picture that survives review:
 
    ⇒ **Pasting `#808080` gives you `#373737`.** Every pasted palette is one sRGB decode too dark.
    The `fractadyne-export` comment is right and the `fractadyne-color` one describes an intent the
-   renderer does not honour. The presets escape the bug because they were authored by eye against
+   renderer does not honor. The presets escape the bug because they were authored by eye against
    the live view, so their numbers are display values by construction — the space only bites where
    the user has a stated expectation, which is exactly what import is.
 
@@ -220,13 +220,13 @@ Ranked by how quietly they produce a wrong picture that survives review:
    remains the open architectural alternative.
 
    ⭐⭐**A second bug fell out of writing the test: a `.map` triple was being read as three hex
-   shorthands.** `168 168 168` is a real line in Fractint's `default.map` (the VGA light grey) and
-   each token is also three valid hex digits, so the "hex tokens win" rule turned one grey into
-   THREE `#114488` colours. **Every `.map` line whose three values all land in 100–255 was
+   shorthands.** `168 168 168` is a real line in Fractint's `default.map` (the VGA light gray) and
+   each token is also three valid hex digits, so the "hex tokens win" rule turned one gray into
+   THREE `#114488` colors. **Every `.map` line whose three values all land in 100–255 was
    silently mis-imported** — in the one external format this parser already advertised. Fixed by
    preferring the integer reading when every token is pure decimal, the count is a multiple of
    three, and all values are ≤255; shorthand containing a letter (`f80`) or a lone token (`128`)
-   still takes the hex path. Pinned by `map_triples_beat_bare_hex_shorthand` using the exact greys
+   still takes the hex path. Pinned by `map_triples_beat_bare_hex_shorthand` using the exact grays
    and whites from `default.map`.
 
    **Two candidate fixes, and they are not equivalent:**
@@ -234,7 +234,7 @@ Ranked by how quietly they produce a wrong picture that survives review:
      inverting `palette_text_converts_srgb_to_linear`, which currently pins the bug. Matches the
      renderer as designed, and is what the importers below should target.
    - **(b) Make the renderer linear** — encode sRGB at the end of `fs_color` and treat stops as
-     truly linear. Colour-managed, better gradient midtones, and it would change the appearance of
+     truly linear. Color-managed, better gradient midtones, and it would change the appearance of
      every existing preset and saved palette plus the export path's stated assumptions. A much
      larger change, and it contradicts a documented deliberate choice ("it matches what the user
      sees while exploring").
@@ -244,7 +244,7 @@ Ranked by how quietly they produce a wrong picture that survives review:
    in opposite directions.
 
    ⚠Not tested: the gradient editor writes `ui.color_edit_button_rgb` values into `custom_palette`
-   with no conversion, so whether the editor's SWATCH matches the rendered colour is a second,
+   with no conversion, so whether the editor's SWATCH matches the rendered color is a second,
    separate question.
 
    Separately and regardless: interpolating *in* linear gives different midtones than an
@@ -263,13 +263,13 @@ Ranked by how quietly they produce a wrong picture that survives review:
 | Palette stops | `[f32; 4]` — **32-bit float** |
 | Iterate + aux textures (`ITER_FORMAT`) | `Rgba32Float` — **32-bit float ×4** (smooth iteration, slope normal, DE) |
 | Offline export target (`EXPORT_FORMAT`) | `Rgba32Float` |
-| Shader colour maths | f32 |
+| Shader color math | f32 |
 | **Live display** | `Bgra8Unorm`/`Rgba8Unorm`, non-sRGB — **8 bits/channel**, and **no dither** |
 | **PNG export** | 8 bits/channel **with ordered Bayer dither** (`to_srgb8_dithered`) |
 | **EXR export** | 32-bit float, linear |
 
 **8-bit palette DATA is not a limiting factor.** Endpoints arrive at 8 bits, but everything from
-the stop onward is f32, so the interpolated values between them are continuous; the quantisation
+the stop onward is f32, so the interpolated values between them are continuous; the quantization
 costs at most ±1/255 at the stops themselves.
 
 **8-bit OUTPUT is a limiting factor**, and we already know it: 256 levels per channel across a
@@ -284,7 +284,7 @@ POSITION resolution.** What matters is how finely the continuous smooth-iteratio
 address the palette, and two things bound it: the **LUT length** once we bake, and at depth the
 compression of escape values into a narrow band (what `--normalize` and the log scale exist for).
 At a high `cycle` the palette repeats many times across that narrow band, and position
-quantisation shows up long before colour quantisation does.
+quantization shows up long before color quantization does.
 
 ⇒ **Bake to 1024 entries, not 256**, and interpolate *between* LUT entries rather than
 nearest-fetching — except where a format demands flat bands, which is exactly Fractint's case.
@@ -339,16 +339,16 @@ cannot:
 | 1024 | 16,372 | 1 level |
 | 4096 | 1,496 | 1 level |
 
-A **10.9× fall** for a 4× LUT. The error is quantisation, and 1024 is comfortably enough.
-⭐The lesson generalises: *a metric that saturates cannot show a trend*, and "the number did not
+A **10.9× fall** for a 4× LUT. The error is quantization, and 1024 is comfortably enough.
+⭐The lesson generalizes: *a metric that saturates cannot show a trend*, and "the number did not
 move" would have read as a failed criterion here when the bake was in fact correct.
 
 ✅**Criterion 3 (a flat `.map` keeps its bands) verified END TO END**, not just in the bake. A
-16-entry `.map` of distinct greys rendered through `--palette-map` at 400×400: **exactly the 16
+16-entry `.map` of distinct grays rendered through `--palette-map` at 400×400: **exactly the 16
 declared levels, zero off-palette values** across 159,993 exterior pixels — and the PNG writer's
 ordered dither did not smear them, because a `v/255` entry is exactly representable. The control
 that makes this mean something: the *same file* with `--palette-map-smooth` gives **253** distinct
-levels. Without it, "few colours" would have been indistinguishable from "few colours in the
+levels. Without it, "few colors" would have been indistinguishable from "few colors in the
 image".
 
 ✅Criterion 4: `BLESSED-GPU.txt` untouched — nothing was re-blessed.
@@ -359,7 +359,7 @@ lighter than the pixel it stood for (0.502 previewed at 186, rendered at 128). I
 same baked LUT the GPU fetches from, which closes the ⚠ left open at the end of §5's trap 2.
 
 **And a gate that did not exist**: the Rust `ColorUniforms` and the WGSL `ColorU` describe the
-same opaque bytes, and nothing checked it — a field added to one alone builds, runs, and colours
+same opaque bytes, and nothing checked it — a field added to one alone builds, runs, and colors
 every pixel from the wrong offsets. `uniform_layout_tests` now parses the WGSL struct, lays it out
 under WGSL's rules and compares sizes; verified it goes red by adding one `f32` to the shader
 alone. That is the mechanical form of §4's "**both `ColorU` definitions must change together**".
@@ -399,7 +399,7 @@ Decisions inside it, all stated rather than silent:
 | `index` | `/399`, matching gnofract4d's segment-per-adjacent-pair reading; ends clamp |
 | byte scale | **`/255`**, not gnofract4d's `/256` — so ours reaches pure white and theirs does not |
 | `rotation=` | **applied**, direction ⚠UNVERIFIED against UF; pinned by a test so a fix is one sign |
-| `smooth=yes` | **recorded, not honoured** — UF's smooth is a spline through control points, not a per-segment blend function. gnofract4d imports linearly for the same reason |
+| `smooth=yes` | **recorded, not honored** — UF's smooth is a spline through control points, not a per-segment blend function. gnofract4d imports linearly for the same reason |
 | `opacity:` | parsed and carried, though the renderer's palette has no alpha today |
 | non-gradient blocks | skipped, so a file mixing formula/parameter blocks still loads |
 
@@ -413,22 +413,22 @@ rather than sorting and losing its far half.
 
 §3 said GIMP's segment model is a superset of every other format here and that we should steal it.
 We did, in beta.23 — so `.ggr` import needs no lowering at all: a file segment IS a
-`segment::Segment`, midpoint, blend function and colour space included. `parse_ggr` → `Gradient`,
+`segment::Segment`, midpoint, blend function and color space included. `parse_ggr` → `Gradient`,
 and that is the whole conversion.
 
 ⭐⭐**The HSV sweep is verified AT THE PIXEL, with a one-integer control.** The same one-segment
-file, red endpoints at both ends, rendered twice with only the colouring column changed:
+file, red endpoints at both ends, rendered twice with only the coloring column changed:
 
-| colouring column | distinct colours in the render |
+| coloring column | distinct colors in the render |
 |---|---|
 | `0` (RGB) | **4** — flat red, as RGB interpolation between identical endpoints must be |
 | `1` (HSV counter-clockwise) | **810** — a full circuit of the hue wheel, green and blue both reaching 255 |
 
 That is the case §2 called "a single segment can sweep the long way round the hue wheel", and it is
-the reason the model carries a colour space per segment rather than a global one.
+the reason the model carries a color space per segment rather than a global one.
 
 Both the 13-column and the GIMP 2.x 15-column forms load (the two extra record where each
-endpoint's colour comes from — foreground, background, fixed — which is not a thing a fractal
+endpoint's color comes from — foreground, background, fixed — which is not a thing a fractal
 renderer has). The `Name:` line is optional, because GIMP 1.x files predate it.
 
 ⚠**§2's `+` compressed continuation is REJECTED BY NAME, not implemented.** That claim was never
@@ -455,16 +455,16 @@ no positions and no interpolation semantics, so "evenly spaced, linearly blended
 against a real file or a working parser; no `.ase` was to hand, so this came from the published
 layout alone. Two consequences worth being explicit about:
 
-1. It is deliberately **STRICT** — signature, block lengths and colour model must all agree — so a
+1. It is deliberately **STRICT** — signature, block lengths and color model must all agree — so a
    file that disagrees with this understanding is REJECTED with a reason rather than importing
-   plausible-looking wrong colours. ⭐**The first real `.ase` anyone imports is the actual test.**
+   plausible-looking wrong colors. ⭐**The first real `.ase` anyone imports is the actual test.**
 2. ⚠**The unit-test fixtures are built from the same understanding as the parser**, so them
    agreeing proves consistency, not correctness. That is written at the top of the fixture builder
    so nobody later mistakes green tests for a verified format.
 
 ⚠**LAB swatches are REFUSED by name, not converted.** LAB → sRGB needs a white point (Adobe uses
 D50) and a chromatic adaptation, and writing that from memory is the kind of guess that produces
-colours which look fine and are wrong. A file MIXING LAB with other models is refused too —
+colors which look fine and are wrong. A file MIXING LAB with other models is refused too —
 importing "the rest" would silently drop swatches, which is worse than refusing. Same call as the
 `.ggr` `+` continuation.
 
@@ -482,22 +482,22 @@ a gate: it does not run again. `--selftest` is now **170 → 173**:
 |---|---|
 | `map-bands-are-exact` | zero off-palette pixels, and the smoothed control has >3× the levels |
 | `ugr-color-is-bgr` | each render's own channel leads the other by 2×, **both ways round** |
-| `ggr-colour-space-is-per-segment` | the hue sweep yields >10× the distinct colours of the RGB reading |
+| `ggr-colour-space-is-per-segment` | the hue sweep yields >10× the distinct colors of the RGB reading |
 
 ⭐⭐**Each is a CONTROL PAIR — the same file with ONE field changed — because the naive form of each
-cannot fail.** "The `.map` render has few colours" is also true of a smoothed import of a dark
+cannot fail.** "The `.map` render has few colors" is also true of a smoothed import of a dark
 palette; "the `.ugr` render is red" is also true if red and blue were swapped and the file happened
 to be red. Requiring the OPPOSITE answer from the altered file is what gives them the ability to
 go red at all — the same reasoning as §5b's "a saturating metric cannot show a trend".
 
 ⭐**And they were VERIFIED RED**, by breaking the three mechanisms they test (the flat flag off, the
-BGR decode read as RGB, the colour space forced to `Rgb`):
+BGR decode read as RGB, the color space forced to `Rgb`):
 
 | check | healthy | mutated |
 |---|---|---|
 | `map-bands-are-exact` | 5 levels, **0** off-palette | 253 levels, **32,854** off-palette |
 | `ugr-color-is-bgr` | r 149.7 / b 3.2, then r 2.1 / b 150.7 | exactly swapped |
-| `ggr-colour-space-is-per-segment` | 4 vs **1533** colours | 4 vs **4** |
+| `ggr-colour-space-is-per-segment` | 4 vs **1533** colors | 4 vs **4** |
 
 ⚠`.ase` is deliberately NOT covered: its own format is unverified, so a render check would only
 confirm that our parser agrees with itself — which the unit fixtures already do, and which is not
@@ -515,7 +515,7 @@ Fractint's. Those are different claims and only a side-by-side settles the secon
 ## 6. Recommended order
 
 1. **Segment model + LUT bake + the GPU change.** Nothing else is possible without it, and it
-   immediately lets the existing paste-import stop throwing away colours past the 8th.
+   immediately lets the existing paste-import stop throwing away colors past the 8th.
 2. **`.map`** — simplest format, and `default.map` is a ready-made fixture with known structure.
 3. **`.ugr`** — biggest community corpus; needs the multi-gradient picker UI.
 4. **`.ggr`** — richest, and the model is already native by then.
@@ -523,7 +523,7 @@ Fractint's. Those are different claims and only a side-by-side settles the secon
 
 ## 7. Before writing code
 
-- ⚠**Licensing.** Fractint ships under the Stone Soup licence, not MIT/Apache. Importing a user's
+- ⚠**Licensing.** Fractint ships under the Stone Soup license, not MIT/Apache. Importing a user's
   own `.map` raises nothing; *embedding* Fractint's table in this repo is redistribution and needs
   a call. The import-first order above sidesteps it by construction.
 - ⚠**Verification bar** (set previously for `.map` import, and it should hold for all of these):
@@ -538,5 +538,5 @@ Fractint's. Those are different claims and only a side-by-side settles the secon
   as **manual checklist area "Palette interchange", steps 131–138** — `.ggr` opened in GIMP and in a
   second reader, a `.ggr` authored in GIMP imported back, `.ugr` rotation direction against Ultra
   Fractal, and a real Adobe `.ase`. See `design/checklist-automation.md`.
-- ⚠KF `.kfp` and the colour keys inside `.kfr` are unverified. Worth a look, since we already
-  parse `.kfr` for locations and ignore its colour data.
+- ⚠KF `.kfp` and the color keys inside `.kfr` are unverified. Worth a look, since we already
+  parse `.kfr` for locations and ignore its color data.

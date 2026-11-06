@@ -1,14 +1,14 @@
 //! `--assemble DIR` (`design/zoom-video.md` §6, phase E2): a zoom video, or single frames of one,
 //! assembled from the exponential-map strips `--render-expmap DIR` rendered, on the GPU
-//! ([`fractadyne_gpu::Assembler`]) and coloured with the app's own colouring.
+//! ([`fractadyne_gpu::Assembler`]) and colored with the app's own coloring.
 //!
 //! A frame at magnification `2^L` takes, for each of its samples, the nearest texel of the strip
-//! its radius falls in, and the app's colour pass colours the result as it colours a render. The
+//! its radius falls in, and the app's color pass colors the result as it colors a render. The
 //! strips are read from DIR a few ahead of the frames that need them, and a window of them stays on
 //! the GPU; the frames go straight to ffmpeg ([`crate::video_pipe`]) or, with `--assemble-at`, to
 //! PNGs.
 //!
-//! Fractadyne's own strips only (the zoomasm format is for zoomasm), and the colourings that read
+//! Fractadyne's own strips only (the zoomasm format is for zoomasm), and the colorings that read
 //! no per-orbit statistics: smooth, distance, relief and glow, not stripe, TIA or trap.
 
 use crate::expmap_render::{manifest_convention, strip_file, StripFormat, MANIFEST};
@@ -36,7 +36,7 @@ pub(crate) struct AssembleCli {
     /// `--assemble-crf N`: H.264 quality, 0 (lossless) to 51 (default 18, the tour export's).
     pub(crate) crf: Option<u32>,
     /// `--assemble-tour T`: the video follows tour T's timeline (its keyframes' zooms, times, holds
-    /// and easing; every frame on the dive's centre).
+    /// and easing; every frame on the dive's center).
     pub(crate) tour: Option<PathBuf>,
     /// `--assemble-rotate R`: the frame turns R turns an octave of zoom (the plane turns clockwise on
     /// screen when R is positive).
@@ -112,7 +112,7 @@ pub(crate) struct Dive {
     pub(crate) start_log2mag: f64,
     pub(crate) end_log2mag: f64,
     pub(crate) fractal: String,
-    /// The dive's centre, as the manifest writes it (decimal).
+    /// The dive's center, as the manifest writes it (decimal).
     pub(crate) centre: (String, String),
 }
 
@@ -201,7 +201,7 @@ pub(crate) fn strip_main(path: &Path, map: &ExpMap) -> Result<Vec<f32>, String> 
 
 /// Where the frame at magnification `2^l` sits among the strips, for frames `height_px` pixels
 /// high at `ss×ss` samples a pixel: the samples are `REFERENCE_HEIGHT / (h·ss·2^l)` apart, so one
-/// sample from the centre lies `r0_log2 − log2(spacing)` octaves inside strip 0's outer radius.
+/// sample from the center lies `r0_log2 − log2(spacing)` octaves inside strip 0's outer radius.
 pub(crate) fn placement(map: &ExpMap, l: f64, height_px: f64, ss: u32, turns: f64) -> FramePlacement {
     let spacing_log2 = (Viewport::REFERENCE_HEIGHT / (height_px * ss as f64)).log2() - l;
     FramePlacement::new(map.r0_log2 - spacing_log2, turns)
@@ -275,7 +275,7 @@ pub(crate) fn strip_range(main: &[f32], w: usize, h: usize) -> StripRange {
 /// it: from the least smooth count in the frame to the value by which fraction `q` of its AREA had
 /// escaped (`norm_palette_top`'s quantile: the slowest pixels, just under the cap wherever interior
 /// is in view, would otherwise squash the picture into the bottom of the palette). Read from the
-/// blocks of every strip the frame shows whose centre texel lies inside it, each weighted by its
+/// blocks of every strip the frame shows whose center texel lies inside it, each weighted by its
 /// escaped texels' area in the frame (a deep strip's texels are tiny there). `None` when nothing in
 /// the frame escaped. `ranges` must hold its strips.
 pub(crate) fn frame_range(
@@ -297,7 +297,7 @@ pub(crate) fn frame_range(
     let mut blocks: Vec<(f32, f64)> = Vec::new();
     for k in first..=last {
         let r = ranges.get(&k).ok_or_else(|| format!("strip {k}'s escape range has not been read"))?;
-        // A texel of row j lies 2^(D − k − (j + o)/rpo) pixels from the centre, D the placement's
+        // A texel of row j lies 2^(D − k − (j + o)/rpo) pixels from the center, D the placement's
         // depth (r0_log2 − log2 pixel), kept exact as the placement keeps it.
         let dk = (place.depth_whole - k as i64) as f64 + place.depth_frac;
         let centre = |b: usize, n: u32| ((b * RANGE_BLOCK + RANGE_BLOCK / 2).min(n as usize - 1)) as f64 + o;
@@ -358,7 +358,7 @@ pub(crate) fn log_weight(lo: f32, top: f32, log_palette: bool) -> f32 {
 /// function of its depth alone — as a tour's time-keyed anchors are — never of the frames before it.
 /// GEOMETRICALLY: a window grows by factors (11 to 54 over the first octave of a dive from 1×), and
 /// interpolated linearly it moved 13% in the first frame of the octave and 3% in the last.
-/// An anchor with nothing escaped takes its neighbour's range; with none on either side the last
+/// An anchor with nothing escaped takes its neighbor's range; with none on either side the last
 /// range given carries on.
 pub(crate) struct NormAnchors {
     start: f64,
@@ -499,7 +499,7 @@ impl StripReader {
 
 /// Strips rendered as a video's frames need them (`--render-zoom-video`), in dive order, on the
 /// dive's one reference, and written to a folder as well when one is given (`--keep-strips`, in
-/// Fractadyne's own format, for `--assemble` to recolour later). A strip's texels wait in `ready`
+/// Fractadyne's own format, for `--assemble` to recolor later). A strip's texels wait in `ready`
 /// until the window takes them; its escape range stays for `--normalize`.
 pub(crate) struct StripRenderer {
     pub(crate) plan: crate::expmap_render::DivePlan,
@@ -691,7 +691,7 @@ impl crate::FractadyneApp {
 impl crate::FractadyneApp {
     /// Map the palette onto a video frame's window `[lo, top]` in `req`: the live view's map
     /// (`norm_map_for`), with its linear-to-log switch made a dissolve ([`log_weight`]) through the
-    /// colour pass's palette fade.
+    /// color pass's palette fade.
     pub(crate) fn apply_video_norm(&self, req: &mut fractadyne_gpu::ExportRequest, lo: f32, top: f32) {
         let w = log_weight(lo, top, self.coloring.log_palette);
         let (lin, log) = (self.norm_map_linear(lo, top), self.norm_map_log(lo, top));
@@ -707,15 +707,15 @@ impl crate::FractadyneApp {
         };
     }
 
-    /// The colouring an assembled frame gets: the session's (palette, method, cycle, effects), as an
+    /// The coloring an assembled frame gets: the session's (palette, method, cycle, effects), as an
     /// export of the dive's first frame would carry it. Built at 1×, where Mandelbrot renders
-    /// directly, so no reference orbit is computed for what is only a colouring.
+    /// directly, so no reference orbit is computed for what is only a coloring.
     pub(crate) fn assembly_colour_request(&self, dive: &Dive) -> fractadyne_gpu::ExportRequest {
         let vp = Viewport::new(dive.frame.0, dive.frame.1);
         self.current_export_request_for(&vp, false)
     }
 
-    /// What every assembly sets up: the "Fd" mark, the samples a pixel, the colouring (refusing one a
+    /// What every assembly sets up: the "Fd" mark, the samples a pixel, the coloring (refusing one a
     /// strip cannot give), and the GPU window for the dive's frames. `source` names where the strips
     /// come from, for the log.
     fn begin_assembly(
@@ -733,7 +733,7 @@ impl crate::FractadyneApp {
         let (fw, fh) = (dive.frame.0 as u32, dive.frame.1 as u32);
         let colour = self.assembly_colour_request(dive);
         if fractadyne_gpu::method_needs_aux(colour.color_method) {
-            return Err("this colouring reads per-orbit statistics (stripe, TIA, trap or decomposition) that strips do not keep; \
+            return Err("this coloring reads per-orbit statistics (stripe, TIA, trap or decomposition) that strips do not keep; \
                         assemble with smooth, distance, relief or glow"
                 .into());
         }
@@ -771,9 +771,9 @@ impl crate::FractadyneApp {
         Ok((asm, ss, colour))
     }
 
-    /// How the strip window is held for frames coloured as `colour` (`design/zoom-video.md` §8.6):
-    /// only what that colouring reads of each texel — everything when the frames are written raw,
-    /// before colouring (`--assemble-at` with `--render-iter`) — in pieces no wider than the card's
+    /// How the strip window is held for frames colored as `colour` (`design/zoom-video.md` §8.6):
+    /// only what that coloring reads of each texel — everything when the frames are written raw,
+    /// before coloring (`--assemble-at` with `--render-iter`) — in pieces no wider than the card's
     /// textures (`--set ASSEMBLE_PIECE_MAX` narrower, to test).
     pub(crate) fn assembly_window(&self, colour: &fractadyne_gpu::ExportRequest) -> fractadyne_gpu::WindowLayout {
         let raw = self.render_cli.iter_mode && !self.render_cli.assemble_opts.at.is_empty();
@@ -810,7 +810,7 @@ impl crate::FractadyneApp {
             if several {
                 std::fs::create_dir_all(&out).map_err(|e| format!("cannot create {}: {e}", out.display()))?;
             }
-            // With --render-iter, the frame's raw main target (its sample grid, before colouring) as an
+            // With --render-iter, the frame's raw main target (its sample grid, before coloring) as an
             // EXR, as `--render-iter` writes a flat render's: the two compare sample for sample.
             let raw = self.render_cli.iter_mode;
             for &l in &opts.at {
@@ -847,7 +847,7 @@ impl crate::FractadyneApp {
     /// `--render-zoom-video F`: the dive into the view, rendered as strips and assembled into a video
     /// in one run — a strip is rendered just before the first frame that shows it and leaves the GPU
     /// with the last, so the dive never needs its strips on disk (`--keep-strips DIR` writes them
-    /// too, for `--assemble` to recolour later).
+    /// too, for `--assemble` to recolor later).
     pub(crate) fn render_zoom_video(
         &mut self,
         ctx: &egui::Context,
@@ -855,7 +855,7 @@ impl crate::FractadyneApp {
         queue: &eframe::wgpu::Queue,
         out: &Path,
     ) -> Result<String, String> {
-        // Options a one-step video cannot honour are refused, never silently ignored.
+        // Options a one-step video cannot honor are refused, never silently ignored.
         let eo = &self.render_cli.expmap_opts;
         if eo.format != StripFormat::Fractadyne {
             return Err("--render-zoom-video assembles Fractadyne's own strips; --expmap-format zoomasm is for --render-expmap".into());
@@ -938,7 +938,7 @@ impl crate::FractadyneApp {
     /// the log: the whole dive at a constant zoom speed (`--assemble-speed`), or tour T's timeline
     /// (`--assemble-tour`: its keyframes' zooms, times, holds and easing, at its own frame rate unless
     /// `--assemble-fps` says otherwise), turning `--assemble-rotate` turns an octave either way.
-    /// A tour must stay on the dive's centre and inside its depths: a strip video cannot pan.
+    /// A tour must stay on the dive's center and inside its depths: a strip video cannot pan.
     pub(crate) fn video_frames(opts: &AssembleCli, dive: &Dive) -> Result<(Vec<(f64, f64)>, f64, String), String> {
         let spin = opts.rotate.unwrap_or(0.0);
         let turns = |l: f64| spin * (l - dive.start_log2mag);
@@ -956,7 +956,7 @@ impl crate::FractadyneApp {
         let fps = opts.fps.or(pb.render.fps).unwrap_or(30.0);
         let n = crate::scripting::tour_frame_count(pb.total, fps);
         let p = fractadyne_core::precision_for_octaves(dive.end_log2mag.max(0.0) as u64 + 64);
-        let parse = |s: &str| fractadyne_core::parse_bf_prec(s, p).ok_or_else(|| format!("the dive's centre {s} is unreadable"));
+        let parse = |s: &str| fractadyne_core::parse_bf_prec(s, p).ok_or_else(|| format!("the dive's center {s} is unreadable"));
         let (cx, cy) = (parse(&dive.centre.0)?, parse(&dive.centre.1)?);
         let mut frames = Vec::with_capacity(n as usize);
         for f in 0..n {
@@ -971,13 +971,13 @@ impl crate::FractadyneApp {
                     dive.end_log2mag
                 ));
             }
-            // On the centre to within a thousandth of a pixel of the frame it is at.
+            // On the center to within a thousandth of a pixel of the frame it is at.
             let pixel_log2 = (Viewport::REFERENCE_HEIGHT / dive.frame.1).log2() - l;
             let off = fractadyne_core::log2_abs(&fractadyne_core::bf_sub(&s.cx, &cx, p))
                 .max(fractadyne_core::log2_abs(&fractadyne_core::bf_sub(&s.cy, &cy, p)));
             if off > pixel_log2 - 10.0 {
                 return Err(format!(
-                    "{} is off the dive's centre at {t:.2} s (by 2^{off:.1}; a pixel there is 2^{pixel_log2:.1}): a zoom video \
+                    "{} is off the dive's center at {t:.2} s (by 2^{off:.1}; a pixel there is 2^{pixel_log2:.1}): a zoom video \
                      from strips dives into one point, so start the tour where its last pan ends",
                     path.display()
                 ));

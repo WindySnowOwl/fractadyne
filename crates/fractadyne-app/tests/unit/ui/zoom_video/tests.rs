@@ -23,7 +23,7 @@ fn the_command_line_carries_the_view_exactly_and_only_the_options_set() {
     assert_eq!(a[0], "--render-zoom-video");
     assert_eq!(a[1], "C:/videos/my dive.mp4", "the path is one argument, spaces and all");
     let i = a.iter().position(|x| x == "--center").unwrap();
-    assert_eq!((a[i + 1].as_str(), a[i + 2].as_str()), ("-0.75", "0.1"), "the centre as the viewport's text");
+    assert_eq!((a[i + 1].as_str(), a[i + 2].as_str()), ("-0.75", "0.1"), "the center as the viewport's text");
     assert_eq!(pair("--zoom-log2").as_deref(), Some("20"));
     assert_eq!(pair("--size").as_deref(), Some("640x360"));
     assert_eq!(pair("--assemble-fps").as_deref(), Some("30"));
@@ -81,7 +81,7 @@ fn the_summary_is_the_dive_the_command_line_will_render() {
     assert_eq!(p.layers, fractadyne_gpu::layers_for_frame(640, 360));
     let window = p.layers as u64 * p.width as u64 * p.rows as u64 * 16;
     assert_eq!(p.gpu, window + fractadyne_gpu::frame_bytes([640, 360], 1), "the whole window and the frame");
-    // Smooth colouring's window holds the count alone: a quarter.
+    // Smooth coloring's window holds the count alone: a quarter.
     let smooth = zoom_video_plan(&ZoomVideoUi { texels: T::Count, ..dialog() }, 32768);
     assert_eq!(smooth.gpu, window / 4 + fractadyne_gpu::frame_bytes([640, 360], 1));
     // Anti-aliasing widens the strips and the window.
@@ -92,8 +92,8 @@ fn the_summary_is_the_dive_the_command_line_will_render() {
 /// The user's three tries on a 10 GB RTX 3080 (2026-10-28), at 2× anti-aliasing: 5120x2880 was
 /// refused by the render after 13 s (a strip wider than the card's 32768-texel textures),
 /// 3840x2160 crashed allocating a ~17.6 GB window, 1920x1080 ran with a 4.4 GB one. Since the window
-/// holds a wide strip in pieces and only what the colouring reads (`design/zoom-video.md` §8.6), a
-/// strip's width is no reason to refuse, and 4K at 2x fits that card with smooth colouring; relief
+/// holds a wide strip in pieces and only what the coloring reads (`design/zoom-video.md` §8.6), a
+/// strip's width is no reason to refuse, and 4K at 2x fits that card with smooth coloring; relief
 /// lighting, which reads everything, still does not.
 #[test]
 fn the_dialog_refuses_what_the_card_cannot_hold_before_render() {
@@ -106,7 +106,7 @@ fn the_dialog_refuses_what_the_card_cannot_hold_before_render() {
     assert!(p.width > DIM, "the 5K strip is {} texels around", p.width);
     assert_eq!(zoom_video_fit(&five_k, DIM, 24 << 30), CardFit::Fits, "5K at 2x: wider than the textures, held in pieces");
     assert!(matches!(zoom_video_fit(&five_k, DIM, VRAM), CardFit::Refused(_)), "5K at 2x needs more than a 10 GB card's memory");
-    assert_eq!(zoom_video_fit(&at(3840, 2160, T::Count), DIM, VRAM), CardFit::Fits, "4K at 2x, smooth colouring, on the user's card");
+    assert_eq!(zoom_video_fit(&at(3840, 2160, T::Count), DIM, VRAM), CardFit::Fits, "4K at 2x, smooth coloring, on the user's card");
     let relief = at(3840, 2160, T::All);
     assert!(zoom_video_plan(&relief, DIM).gpu > VRAM, "relief at 4K 2x keeps everything");
     assert!(matches!(zoom_video_fit(&relief, DIM, VRAM), CardFit::Refused(_)), "4K at 2x with relief: the window exceeds the card");

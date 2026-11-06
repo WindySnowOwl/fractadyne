@@ -234,7 +234,7 @@ const BAYER8: [u8; 64] = [
 ///
 /// Fractal exteriors are enormous, very smooth gradients — the worst case for 8-bit
 /// quantization, and why banding is the complaint newcomers raise first. Rounding alone maps a
-/// wide span of colour onto one byte value and leaves a visible contour where it steps; nudging
+/// wide span of color onto one byte value and leaves a visible contour where it steps; nudging
 /// the rounding threshold by a position-dependent fraction of one level breaks that contour into
 /// a fine pattern the eye integrates back into a smooth ramp.
 ///
@@ -244,7 +244,7 @@ const BAYER8: [u8; 64] = [
 /// far worse than banding). Bayer is a pure function of `(x, y)`, so renders stay bit-identical
 /// run to run while the pattern stays fixed to the image rather than swimming through it.
 fn quantize8_dither(c: f32, x: usize, y: usize) -> u8 {
-    // Bayer 0..63 → −0.5..+0.5 of one 8-bit level, centred so the mean offset is ~0 and overall
+    // Bayer 0..63 → −0.5..+0.5 of one 8-bit level, centered so the mean offset is ~0 and overall
     // brightness is unchanged.
     let d = (BAYER8[(y % 8) * 8 + (x % 8)] as f32 + 0.5) / 64.0 - 0.5;
     let v = c.clamp(0.0, 1.0) * 255.0 + 0.5 + d;
@@ -267,7 +267,7 @@ pub fn to_srgb8(rgba: &[f32]) -> Vec<u8> {
     out
 }
 
-/// As [`to_srgb8`], but with ordered dithering applied to the colour channels — the conversion
+/// As [`to_srgb8`], but with ordered dithering applied to the color channels — the conversion
 /// every 8-bit deliverable goes through (see [`quantize8_dither`] for why banding matters here
 /// and why the dither is ordered rather than random).
 ///
@@ -565,7 +565,7 @@ pub fn write_retry_policy(
 mod write_retry;
 
 /// The name a PNG is written under until it is complete: `<path>.part`, beside it. Public so a
-/// reader that scans a folder (`--resume`'s vetting, the render farm) can recognise and discard
+/// reader that scans a folder (`--resume`'s vetting, the render farm) can recognize and discard
 /// the leftovers of a write that was killed — never mistake one for a frame.
 pub fn partial_path(path: &Path) -> std::path::PathBuf {
     let mut s = path.as_os_str().to_owned();
@@ -934,11 +934,11 @@ pub fn write_exr(
 
 /// Write four f32 channels to an OpenEXR **verbatim** — no clamp, no transfer curve.
 ///
-/// [`write_exr`] is for COLOUR: it applies `srgb_to_linear` to R/G/B because the render buffer
+/// [`write_exr`] is for COLOR: it applies `srgb_to_linear` to R/G/B because the render buffer
 /// holds display-referred values and EXR is a linear-convention container. That transform
-/// **clamps to [0, 1]**, which is right for a colour and catastrophic for data.
+/// **clamps to [0, 1]**, which is right for a color and catastrophic for data.
 ///
-/// ⭐**This exists because `--render-iter` used the colour writer and silently destroyed its own
+/// ⭐**This exists because `--render-iter` used the color writer and silently destroyed its own
 /// payload** (found 2026-09-04). That export's R channel is the smooth iteration count — values
 /// in the hundreds of thousands — so every pixel clamped to 1.0 and `srgb_to_linear(1.0) = 1.0`
 /// left the channel a CONSTANT. Measured on a 1e30× render: R was 1.0 at every one of 65,536
@@ -947,7 +947,7 @@ pub fn write_exr(
 /// A raw channel that reads back as a constant is indistinguishable from a renderer that computed
 /// nothing, which is why this went unnoticed.
 ///
-/// Use this for anything that is not a colour; use [`write_exr`] for anything that is.
+/// Use this for anything that is not a color; use [`write_exr`] for anything that is.
 pub fn write_exr_raw(
     path: &Path,
     width: u32,

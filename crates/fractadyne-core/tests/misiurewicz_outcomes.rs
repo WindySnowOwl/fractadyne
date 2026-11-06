@@ -164,9 +164,9 @@ fn a_missing_or_broken_scale_falls_back_cleanly() {
 ///
 /// A magnification carried as `f64` stops at 2^1020 ≈ 1e307. Below that ceiling the solver still
 /// returned an answer — it just quietly stopped adding digits — so the failure reached the user as
-/// a view that rendered a SINGLE FLAT COLOUR at 1e58000×, not as an error.
+/// a view that rendered a SINGLE FLAT COLOR at 1e58000×, not as an error.
 ///
-/// ⚠**Asserting that a deep solve merely RETURNS proves nothing**: a centre short of the requested
+/// ⚠**Asserting that a deep solve merely RETURNS proves nothing**: a center short of the requested
 /// precision looks exactly like a good one. What is checked here is that the answer is accurate AT
 /// THE TARGET SCALE — it sits inside its own 2^2000 view — while the shallow answer, the best the
 /// old ceiling could produce, is thousands of those view-widths outside it.
@@ -219,7 +219,7 @@ fn a_solve_reaches_a_depth_f64_cannot_express() {
 
 /// ⭐⭐**A SHALLOW view has to find its point too** — reported at 283,353×, where the finder said
 /// "No Misiurewicz point found near this view" while the point sat 0.05 view-widths from the
-/// centre (user, 2026-08-31).
+/// center (user, 2026-08-31).
 ///
 /// The detector's f64 pre-filter was a fixed 1e-6, on the reasoning that a genuine near-return is
 /// far below f64 resolution. ⚠That is true at 1e89× and FALSE here: the orbit's closest
@@ -290,10 +290,10 @@ fn a_shallow_view_finds_its_point_too() {
     );
 }
 
-/// ⭐⭐**A DEEP view has to find the point it is CENTRED ON** — reported at a 2.37e40× spiral hub,
+/// ⭐⭐**A DEEP view has to find the point it is CENTERED ON** — reported at a 2.37e40× spiral hub,
 /// where the finder answered a pair whose point is 15–23 view-widths away and the guard then
 /// refused it: *"Found a Misiurewicz (3411,1) point, but it is … view-widths away"* (user,
-/// 2026-08-31). There is a point essentially dead centre, 0.047 view-widths out.
+/// 2026-08-31). There is a point essentially dead center, 0.047 view-widths out.
 ///
 /// ⚠**The pre-filter was the whole defect, and it failed in the direction opposite to
 /// [`a_shallow_view_finds_its_point_too`].** That pair's separation is **2.6e-4** — 264× ABOVE the

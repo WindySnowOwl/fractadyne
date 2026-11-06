@@ -300,9 +300,9 @@ struct Verdict {
     centre_levels: usize,
     /// The commonest value's share of the frame.
     dominant: f64,
-    /// Neighbouring pixels that agree (within 2 steps, or both inside): a picture, not noise.
+    /// Neighboring pixels that agree (within 2 steps, or both inside): a picture, not noise.
     coherent: f64,
-    /// Neighbouring pixels that differ sharply (3+ steps, or inside against outside): a boundary,
+    /// Neighboring pixels that differ sharply (3+ steps, or inside against outside): a boundary,
     /// not only the smooth gradient far from the set.
     edges: f64,
 }
@@ -351,7 +351,7 @@ fn judge(f: &Frame) -> Verdict {
     }
 }
 
-/// A frame as a PPM image, for looking at: inside black, outside coloured by escape count.
+/// A frame as a PPM image, for looking at: inside black, outside colored by escape count.
 fn write_ppm(f: &Frame, path: &std::path::Path) {
     let mut out = format!("P6\n{} {}\n255\n", f.w, f.h).into_bytes();
     for p in &f.px {

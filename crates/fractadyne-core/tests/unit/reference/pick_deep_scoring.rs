@@ -2,7 +2,7 @@ use super::*;
 
 /// δc = 0 must replay the reference exactly: the δ-recurrence stays at zero, the escape
 /// test sees the recorded samples themselves, and the returned length is the recorded
-/// walk's own. This is the identity the duplicate-centre candidates in the 5×5 grid rely
+/// walk's own. This is the identity the duplicate-center candidates in the 5×5 grid rely
 /// on (offset (0,0) exists at every scale), so it is pinned per supported power.
 #[test]
 fn a_zero_delta_perturbation_replays_the_reference() {
@@ -301,7 +301,7 @@ fn the_perturbed_scan_keeps_the_bignum_survivors() {
         let cy = parse_bf_prec(y, p).unwrap();
         for span_y in [1.0e-30, 1.0e-9] {
             let span = [FloatExp::from_f64(span_y * 16.0 / 9.0), FloatExp::from_f64(span_y)];
-            // `pick_pass`'s grid: the centre, then 5×5 at four fractions of the span.
+            // `pick_pass`'s grid: the center, then 5×5 at four fractions of the span.
             let mut cands = vec![[cx.clone(), cy.clone()]];
             for sc in [0.04, 0.12, 0.28, 0.5] {
                 for j in 0..5 {
@@ -318,7 +318,7 @@ fn the_perturbed_scan_keeps_the_bignum_survivors() {
             let idxs: Vec<usize> = (0..cands.len()).collect();
             let walked = par_orbit_scores(&cands, &idxs, quick, false, &zero, &zero, formula, p);
             let scan = perturb_scan(&cands, quick, false, &zero, &zero, formula, p)
-                .expect("the centre's walk is long enough to perturb against");
+                .expect("the center's walk is long enough to perturb against");
             let alive = |s: &[u32]| s.iter().map(|&l| l >= quick).collect::<Vec<_>>();
             assert_eq!(
                 alive(&scan.scores),

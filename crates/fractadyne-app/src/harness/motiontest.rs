@@ -31,7 +31,7 @@
 //!   each a few short passes (design/multi-gpu-live.md §9.1).
 //!   Explanatory: the screen is the verdict on a motion fix, never this count alone.
 //! - **A5 (a jump keeps the jump floor, U39)**: first, at depth, a 100× click-to-zoom from the
-//!   settled view (the real actuator, at the panel's centre), watched for [`CLICK_S`] and then
+//!   settled view (the real actuator, at the panel's center), watched for [`CLICK_S`] and then
 //!   clicked back out by the same factor before the motion begins. Until a frame at the new view is
 //!   latched the display holds the old frame 6.64 octaves magnified, and that is what the jump floor
 //!   bounds (`HELD_JUMP_MAX_OCT`: the 2026-09-18 "goes black" report was that frame unbounded, an
@@ -305,7 +305,7 @@ impl FractadyneApp {
                             "A5: {deep} frame(s) after a 100x click held the old frame at the DIVE floor past 8x — the jump was read as motion (the 11-pixel patch)"
                         ));
                     }
-                    // Back out by the same factor at the centre: the view the motion phases were
+                    // Back out by the same factor at the center: the view the motion phases were
                     // calibrated at, without dropping the references (an undo would).
                     let (px, py) = (self.viewport.width_px * 0.5, self.viewport.height_px * 0.5);
                     self.click_zoom_at(px, py, true, now);

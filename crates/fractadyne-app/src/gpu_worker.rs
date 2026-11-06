@@ -6,7 +6,7 @@
 //! carries on with one GPU.
 //!
 //! First use (L2): progressive supersampling on settle. A job is one jittered sample of the
-//! settled frame (`params_to_request_exact`); the result is that sample's colour as floats, for
+//! settled frame (`params_to_request_exact`); the result is that sample's color as floats, for
 //! `MandelbrotParams::accum_external` — the window's device rounds it to 8 bits itself, as it does
 //! its own samples (see `fractadyne_gpu::AccumSample`).
 //!
@@ -42,8 +42,8 @@ pub(crate) struct LiveJob {
     pub(crate) pass_ms: f64,
 }
 
-/// A finished, failed or cancelled [`LiveJob`] (every accepted one answers once). `frame` is
-/// `None` when it was cancelled (`err` too) or failed (`err` says why).
+/// A finished, failed or canceled [`LiveJob`] (every accepted one answers once). `frame` is
+/// `None` when it was canceled (`err` too) or failed (`err` says why).
 pub(crate) struct LiveDone {
     pub(crate) view: usize,
     pub(crate) gen: u64,
@@ -69,7 +69,7 @@ enum Work {
     Live(LiveJob),
 }
 
-/// A finished (or failed, or cancelled) [`Job`]. Every accepted job answers exactly once, so the
+/// A finished (or failed, or canceled) [`Job`]. Every accepted job answers exactly once, so the
 /// caller can always tell its sample index was not rendered.
 pub(crate) struct Done {
     pub(crate) view: usize,
@@ -84,9 +84,9 @@ pub(crate) struct Worker {
     tx: mpsc::Sender<Work>,
     rx: mpsc::Receiver<Done>,
     live_rx: mpsc::Receiver<LiveDone>,
-    /// Every live job up to this `gen` is cancelled (asked before each of its passes).
+    /// Every live job up to this `gen` is canceled (asked before each of its passes).
     live_cancel: Arc<AtomicU64>,
-    /// The job being cancelled, as [`job_key`]; with `cancel`, the flag the render polls.
+    /// The job being canceled, as [`job_key`]; with `cancel`, the flag the render polls.
     cancelled: Arc<AtomicU64>,
     cancel: Arc<AtomicBool>,
     alive: Arc<AtomicBool>,
@@ -168,7 +168,7 @@ impl Worker {
                         let (sample, err) = if !alive.load(Relaxed) {
                             (None, Some("the worker GPU is gone".to_string()))
                         } else if cancelled.load(SeqCst) == job_key(job.view, job.run) {
-                            (None, None) // cancelled while it waited in the queue
+                            (None, None) // canceled while it waited in the queue
                         } else {
                             let progress = AtomicU32::new(0);
                             let _busy = crate::blinken::registry::busy(crate::blinken::registry::Role::Worker);
@@ -635,7 +635,7 @@ impl Drop for PanelPasses {
     }
 }
 
-/// An export's colour (`fs_color`'s output, RGBA floats) as a supersampling sample.
+/// An export's color (`fs_color`'s output, RGBA floats) as a supersampling sample.
 pub(crate) fn sample_of(r: fractadyne_gpu::ExportResult) -> fractadyne_gpu::AccumSample {
     fractadyne_gpu::AccumSample { width: r.width, height: r.height, rgba: r.pixels }
 }

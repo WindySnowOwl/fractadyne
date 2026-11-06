@@ -292,7 +292,7 @@ tag-group-shape = 모양
 tag-group-theme = 주제
 tag-group-purpose = 용도
 
-# Tags measured from a palette's colours: its colour families, warm or cool, how busy it is (calm, lively, frantic), its brightness, and its shape. Plural nouns for the families; the rest describe the palette.
+# Tags measured from a palette's colors: its color families, warm or cool, how busy it is (calm, lively, frantic), its brightness, and its shape. Plural nouns for the families; the rest describe the palette.
 tag-reds = 빨강 계열
 tag-oranges = 주황 계열
 tag-yellows = 노랑 계열
@@ -967,9 +967,9 @@ app-gradient-ggr-imported = “{ $name }”을(를) 가져왔습니다 - 세그�
 # $error: the reader's reason (in English).
 app-gradient-ggr-invalid = .ggr 그라데이션이 아닙니다: { $error }
 
-## The eyedropper's banner across the top of the screen while picking a colour
+## The eyedropper's banner across the top of the screen while picking a color
 
-# $hex: the colour under the pointer, as #rrggbb.
+# $hex: the color under the pointer, as #rrggbb.
 app-eyedropper-banner-color = 색 고르는 중  ·  { $hex }  ·  클릭하면 선택, Esc는 취소
 app-eyedropper-banner = 색 고르는 중  ·  클릭하면 선택, Esc는 취소
 
@@ -1007,7 +1007,7 @@ app-gradient-bezier-exact-hover = 양방향으로 드래그할 수 있는 두 �
 app-gradient-bezier-visible-hover = 양방향으로 드래그할 수 있는 두 제어점입니다. 변환하면 현재 곡선을 근사합니다 — 이 곡선은 오차 { $error } 이내이며, 차이가 뚜렷이 보입니다.
 # Hover on Bézier in the list of blend curves. $error: how far the fit is off (2 decimals).
 app-gradient-bezier-barely-hover = 양방향으로 드래그할 수 있는 두 제어점입니다. 변환하면 현재 곡선을 근사합니다 — 이 곡선은 오차 { $error } 이내이며, 차이가 거의 보이지 않습니다.
-# A label before the list of colour spaces (RGB, HSV).
+# A label before the list of color spaces (RGB, HSV).
 app-gradient-space = 색 공간
 # A label before the Bézier presets beside it.
 app-gradient-ease = 이징
@@ -1058,7 +1058,7 @@ app-gradient-import-ggr-hover = 중간점, 혼합 곡선, 색 공간을 그대�
 app-gradient-import-ase-hover = Adobe 견본 목록(.ase)을 불러옵니다. 견본에는 위치가 없으므로 균등한 간격으로 배치되고 혼합됩니다.
 # The gradient's name, for the library of saved gradients.
 app-gradient-name = 이름
-# Shown greyed in the empty name field.
+# Shown grayed in the empty name field.
 app-gradient-name-hint = 내 그라데이션
 # The save button, when a gradient of that name is already saved.
 app-gradient-update = 업데이트
@@ -1083,13 +1083,13 @@ app-gradient-ends-differ-hover = 그라데이션 끝의 색이 시작의 색과 
 app-gradient-hard-bands = 뚜렷한 띠(항목 사이 혼합 없음)
 app-gradient-hard-bands-hover = Fractint / .map 방식: 모든 항목이 단색입니다. 끄면 부드러운 그라데이션으로 혼합합니다.
 app-gradient-paste-intro = 16진수 색(#ff8800)이나 0–255 세 값(255 136 0)을 쉼표, 공백 또는 줄 바꿈으로 구분해 붙여 넣으십시오:
-# Applies the pasted colours.
+# Applies the pasted colors.
 app-gradient-apply = 적용
 # Empties the paste box.
 app-gradient-clear = 지우기
-# $used: the colours kept; $total: the colours pasted; $limit: the most that are kept.
+# $used: the colors kept; $total: the colors pasted; $limit: the most that are kept.
 app-gradient-paste-imported-some = 색 { $total }개 중 { $used }개를 목록 전체에서 균등하게 골라 가져왔습니다(최대 { $limit }개).
-# $count: the colours pasted.
+# $count: the colors pasted.
 app-gradient-paste-imported = 색 { $count }개를 가져왔습니다.
 # $error: why the pasted text could not be read (in English).
 app-gradient-paste-unreadable = 읽을 수 없습니다: { $error }
@@ -1970,7 +1970,7 @@ farm-client-show-key = 표시
 farm-client-machine = 이 컴퓨터
 farm-client-machine-hover = 컨트롤러가 이 컴퓨터에 대해 표시하는 이름입니다.
 farm-client-share = 공유 드라이브
-# Greyed hint inside the empty field; the path is an example.
+# Grayed hint inside the empty field; the path is an example.
 farm-client-share-hint = 선택 사항 — 예: \\fileserver\share
 farm-client-share-hover = 컨트롤러가 사용하는 공유 드라이브에 대한 이 컴퓨터의 경로입니다(공유 모드): 프레임을 연결로 보내는 대신 그곳에 기록합니다. 비워 두면 모든 프레임을 보냅니다.
 farm-client-gpu = 그래픽 카드
@@ -2132,7 +2132,7 @@ farm-ctl-ss = 슈퍼샘플링
 farm-ctl-port = 수신 포트
 farm-ctl-port-hover = 클라이언트가 이 포트로 연결합니다. 로컬 네트워크에 대해 방화벽에서 허용하십시오.
 farm-ctl-share = 공유 드라이브
-# Greyed hint inside the empty field.
+# Grayed hint inside the empty field.
 farm-ctl-share-hint = 선택 사항 — 이 컴퓨터에서의 경로
 farm-ctl-share-hover = 공유 모드: 같은 드라이브가 있는 클라이언트는 프레임을 연결로 보내는 대신 그곳에 기록하며, 이 컴퓨터가 그곳에서 모든 프레임을 확인합니다. 드라이브가 없는 클라이언트는 프레임을 보냅니다.
 # A label followed by a number of clients and two checkboxes.
@@ -2398,7 +2398,7 @@ formula-apply = 적용
 formula-dialog-apply-hover = 수식을 컴파일해 표시합니다
 # Shown beside Apply while the formula is being compiled.
 formula-dialog-compiling = GPU용으로 수식을 컴파일하는 중…
-# The greyed hint in an empty name box (also in the Formula library window).
+# The grayed hint in an empty name box (also in the Formula library window).
 formula-name-hint = 이름(선택 사항)
 # The save button: "Update" when the library already has a formula of that name.
 formula-dialog-update-in-library = 라이브러리에서 업데이트
@@ -2533,7 +2533,7 @@ formula-library-import = 가져오기…
 formula-library-import-hover = 수식 파일의 수식을 추가합니다. 여기 있는 것은 아무것도 바뀌지 않습니다
 formula-library-export-all = 모두 내보내기…
 formula-library-export-all-hover = 여기 있는 모든 수식을 파일 하나에 기록해 공유하거나 보관합니다
-# The filter box: its label, and the greyed hint inside it.
+# The filter box: its label, and the grayed hint inside it.
 formula-library-filter = 필터
 formula-library-filter-hint = 이름이나 텍스트로 필터
 # Shown while the user has no saved formulas.
@@ -2664,10 +2664,10 @@ panel-tail-length-unit = 회
 panel-tail-length-hover = 반복 횟수로 나타낸 창 길이입니다. 짧은 창(8–32)은 어느 깊이에서나 고전적인 굵은 띠를 만들고, 긴 창은 다시 평평한 색으로 평균되는데, 길고 혼돈적인 궤도의 스트라이프 항은 평균하면 상쇄되기 때문입니다.
 panel-trap-shape = 트랩 모양
 panel-palette = 팔레트
-# The two colours of the Binary palette, each beside its colour swatch.
+# The two colors of the Binary palette, each beside its color swatch.
 panel-in-set = 집합 안
 panel-out-of-set = 집합 밖
-# The two colours of the Duotone palette, each beside its colour swatch.
+# The two colors of the Duotone palette, each beside its color swatch.
 panel-shadow = 그림자
 panel-highlight = 하이라이트
 panel-cycle = 순환
@@ -2685,7 +2685,7 @@ panel-log-scale-hover =
     탈출 값을 선형이 아니라 로그로 팔레트에 펼칩니다. 깊은 곳에서는 탈출 횟수가 높은 쪽으로 몰리므로, 선형 매핑은 팔레트의 대부분을 경계 근처의 얇은 껍질에 쓰고 나머지를 모두 평평하게 만듭니다.
 
     정규화된 매핑에 적용됩니다 — ‘깊은 색상 정규화’(또는 내보내기의 --normalize)가 켜는 매핑입니다. 범위가 심하게 치우치면 이 확인란과 상관없이 로그 매핑을 사용합니다.
-# The same checkbox's tooltip while it is greyed out (normalization is off).
+# The same checkbox's tooltip while it is grayed out (normalization is off).
 panel-log-scale-off-hover =
     정규화가 필요합니다: 이 옵션은 측정된 탈출 범위에 팔레트를 어떻게 매핑할지 정하므로, ‘깊은 색상 정규화’가 꺼져 있으면(그리고 --normalize 내보내기가 아니면) 바꿀 매핑이 없어 픽셀 하나도 바뀌지 않습니다.
 
@@ -3037,11 +3037,11 @@ lsys-draw-on = 그리기 진행
 lsys-draw-on-hover = 거북이가 그리는 순서대로, 곡선을 얼마나 그릴지
 lsys-draw-on-play-hover = 스스로 그려지는 곡선
 lsys-colour-by = 색 기준
-# The colourings, in the "Colour by" list.
+# The colorings, in the "Color by" list.
 lsys-colour-position = 곡선 위의 위치
 lsys-colour-depth = 가지 깊이
 lsys-colour-heading = 방향
-# C, < and > are the system's commands that set the colour index: keep them.
+# C, < and > are the system's commands that set the color index: keep them.
 lsys-colour-index = 색 인덱스(C, <, >)
 lsys-colour-plain = 한 가지 색
 # The panel's numbers.
@@ -3172,9 +3172,9 @@ export-snapshot-saved = 화면 스냅샷 { $size } 저장 완료 → { $path }
 # $error: why (in English).
 export-snapshot-failed = 스냅샷 실패: { $error }
 
-## The colour picker (the popup of a colour swatch)
+## The color picker (the popup of a color swatch)
 
-# The third row's label: the colour as hexadecimal bytes. Short (about 6 characters).
+# The third row's label: the color as hexadecimal bytes. Short (about 6 characters).
 picker-row-hex = 16진
 picker-hex-hover = 클릭하여 16진수 값 입력
 picker-cancel = 취소
@@ -3441,7 +3441,7 @@ fractal-family-lsystem = L-시스템
 # A family at a power: "Multibrot 3", "Burning Ship 4". $family: a name above; $power: the power.
 fractal-with-power = { $family } { $power }
 
-## Names of choices: colouring methods, orbit traps, palette animation, snapshots, angle units.
+## Names of choices: coloring methods, orbit traps, palette animation, snapshots, angle units.
 
 color-method-smooth = 부드러운 반복
 color-method-stripe = 스트라이프 평균

@@ -305,9 +305,9 @@ pub struct ExportRequest {
     /// Where the passes split never changes a pixel (step caps and chunk windows), so neither does
     /// this.
     pub pass_ms: Option<f64>,
-    /// Sub-pixel sample offset in DISPLAY pixels (`[0, 0]` = pixel centres), as the live view's
+    /// Sub-pixel sample offset in DISPLAY pixels (`[0, 0]` = pixel centers), as the live view's
     /// `MandelbrotParams::jitter` — the progressive-supersampling sample position, so a sample
-    /// rendered here on another device lands where the live view would place it. Honoured by
+    /// rendered here on another device lands where the live view would place it. Honored by
     /// [`render_export`] (each tile's `px_offset` = its origin + `jitter · ss`, in texels).
     pub jitter: [f32; 2],
     /// Test hook: the largest tile side, output px, the tiled loops may use. `None` in production.
@@ -430,7 +430,7 @@ pub struct ExportResult {
 /// to the device's max 2D texture dimension (e.g. 8192); supersampling is reduced if
 /// `resolution × ss` would exceed it.
 /// Wall-priced tile cap for the NEXT export tile (design/mode2-chunking.md §12, offline
-/// flavour). The static tile bound prices work NOMINALLY (`tile²·ss²·iter`), and nominal is not
+/// flavor). The static tile bound prices work NOMINALLY (`tile²·ss²·iter`), and nominal is not
 /// real: at a wrap-storm view (BLA skips nothing, rebases every few hundred iterations) a
 /// nominally-budgeted tile runs seconds — crash-1787194989 was 64²-px thumbnail tiles at
 /// 6.55e10 nominal racing the live walk. Every tile's WALL time is already observable (the loop
@@ -830,7 +830,7 @@ struct PackedGrid {
 
 /// ⭐⭐PACKED TAILS for the step-bounded tiles ([`TileChunker::run_tile_steps`]; the shader's note
 /// at `fs_iterate_chunk_fe_packed`). A tile's last passes run a few pixels scattered across it, and
-/// a warp shades a block of neighbours and runs while any one of them does: measured at 4K with
+/// a warp shades a block of neighbors and runs while any one of them does: measured at 4K with
 /// the step counts per pass, a pass with 10–50% of its tile running cost 8× the busy rate per step
 /// at 1.2e148, 1–10% 20×, under 1% 77×, and those passes were 27% of the iterate there and 50% at
 /// 4.2e275. So once at most half a tile (or half a packed grid) still runs, its pixels move into a
@@ -1505,7 +1505,7 @@ fn export_plan(limits: &wgpu::Limits, req: &ExportRequest, allow_chunking: bool)
     // and freeze the live UI — the render stays responsive across many short tiles.
     const TILE_WORK_BUDGET: u64 = 20_000_000_000;
     // A caller may cap per-tile work below the default (the tour path does). A smaller budget also
-    // lowers the tile-size floor so the cap is actually honoured — at extreme `max_iter` a 64²
+    // lowers the tile-size floor so the cap is actually honored — at extreme `max_iter` a 64²
     // floor tile could still exceed a small budget, so drop the floor to 16² when one is set.
     let budget = req.work_budget.unwrap_or(TILE_WORK_BUDGET);
     let fe = req.mode == 2;
@@ -1532,7 +1532,7 @@ fn export_plan(limits: &wgpu::Limits, req: &ExportRequest, allow_chunking: bool)
     // on the same queue — device lost (crash-1787194989, beta.109). The floor drops to 16²
     // whenever the budget asks for less than 64²; readback-overhead efficiency is a luxury the
     // watchdog budget outranks. (Nominal pricing itself is still the residual here: a wall-
-    // adaptive tile loop — the §12 design, offline flavour — is the recorded follow-up.)
+    // adaptive tile loop — the §12 design, offline flavor — is the recorded follow-up.)
     let by_work_raw = ((budget / work_per_px.max(1)) as f64).sqrt() as u32;
     let by_work = by_work_raw.max(if by_work_raw < 64 { 16 } else { 64 });
     // Chunked per-tile iterate (crash-1787292746, the export-TDR fix): when the request fits the
@@ -2230,7 +2230,7 @@ pub struct DeviceShare {
     /// Tiles it rendered, and their output pixels.
     pub tiles: u32,
     pub pixels: u64,
-    /// Its pure-GPU iterate and colour time, summed over its tiles (ms).
+    /// Its pure-GPU iterate and color time, summed over its tiles (ms).
     pub iterate_ms: f64,
     pub color_ms: f64,
     /// Why it stopped early, if it did (its unfinished tile went to another device).
@@ -2238,7 +2238,7 @@ pub struct DeviceShare {
 }
 
 /// Whether [`render_export_multi`] can split this request across devices. Only the chunked
-/// iterate: outside its scope (aux colouring, a formula without resumable passes, a device without
+/// iterate: outside its scope (aux coloring, a formula without resumable passes, a device without
 /// the state-attachment width) a tile is one unbounded dispatch, kept safe only by the single
 /// device loop's wall-adaptive tile size, which a split render cannot have.
 pub fn export_splits(limits: &[wgpu::Limits], req: &ExportRequest) -> bool {
@@ -2780,7 +2780,7 @@ pub fn render_iter_tiled(
                     ));
             }
             // Chunked tiles iterate BEFORE the main encoder, one polled submission per window;
-            // the first window clears the counters. The deadline is honoured between windows.
+            // the first window clears the counters. The deadline is honored between windows.
             let chunked = match chunker.as_ref() {
                 Some(ch) if occupancy => {
                     let (passes, read_set, max_chunk) = ch.run_tile_steps(
@@ -3058,12 +3058,12 @@ pub fn gather_dispatch_safe(max_iter: u32) -> bool {
 /// untouched. This removes both: one small dispatch, and a readback proportional to N.
 ///
 /// Output is **bit-identical** to the same pixels rendered full-frame: `fs_iterate_gather` and
-/// `fs_iterate` share `iterate_at` verbatim and are handed the same texel-centre coordinate, so
+/// `fs_iterate` share `iterate_at` verbatim and are handed the same texel-center coordinate, so
 /// this is a pure cost removal — no quality trade, no policy decision.
 ///
 /// ⚠Precondition: [`gather_dispatch_safe`]. Coordinates are absolute texels in the full
 /// `req.width × req.height` grid; duplicates are allowed but wasteful. `work_budget` bounds one
-/// batch's nominal work exactly as it bounds a tile's, and `deadline` is honoured **between**
+/// batch's nominal work exactly as it bounds a tile's, and `deadline` is honored **between**
 /// batches.
 pub fn render_iter_gather(
     device: &wgpu::Device,
@@ -3857,10 +3857,10 @@ fn render_iter_passes(
     })
 }
 
-/// The colour pass's uniform for colouring a `w × h` image from an `ss`-supersampled main target
-/// with `req`'s colouring and an uploaded LUT of `lut_len` entries: no reprojection, the
+/// The color pass's uniform for coloring a `w × h` image from an `ss`-supersampled main target
+/// with `req`'s coloring and an uploaded LUT of `lut_len` entries: no reprojection, the
 /// one-tap filter. [`color_iter_buffer_ss`]'s, and the zoom-video assembler's, so a frame
-/// assembled from strips is coloured exactly as a buffer handed to it would be.
+/// assembled from strips is colored exactly as a buffer handed to it would be.
 pub(crate) fn color_uniforms_for(req: &ExportRequest, ss: u32, w: u32, h: u32, lut_len: u32, lut_smooth: u32) -> ColorUniforms {
     ColorUniforms {
         lut_len,
@@ -3916,13 +3916,13 @@ pub fn color_iter_buffer(
 
 /// [`color_iter_buffer`] for a SUPERSAMPLED iteration buffer: `iter_pixels` is
 /// `(req.width·ss) × (req.height·ss)` texels and the image comes back at `req.width × req.height`,
-/// coloured by the same `fs_color` taps as [`render_export`] — each output pixel shades its `ss×ss`
+/// colored by the same `fs_color` taps as [`render_export`] — each output pixel shades its `ss×ss`
 /// texels with one palette footprint and averages them, and lighting reads the averaged slope.
-/// ⛔The glitch corrector used to colour at `ss = 1` and drop the export's supersampling without a
+/// ⛔The glitch corrector used to color at `ss = 1` and drop the export's supersampling without a
 /// word, for every view it corrects (the non-holomorphic families, and every Julia view): a
-/// `--ss 3` Burning Ship came out at one sample a pixel. A CPU box-average of a 1× colouring is not
-/// the same picture (the palette footprint and the relief neighbourhood are sized per OUTPUT
-/// pixel), which is why the supersampled buffer is coloured here rather than downsampled after.
+/// `--ss 3` Burning Ship came out at one sample a pixel. A CPU box-average of a 1× coloring is not
+/// the same picture (the palette footprint and the relief neighborhood are sized per OUTPUT
+/// pixel), which is why the supersampled buffer is colored here rather than downsampled after.
 pub fn color_iter_buffer_ss(
     device: &wgpu::Device,
     queue: &wgpu::Queue,

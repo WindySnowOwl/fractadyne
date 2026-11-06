@@ -256,12 +256,12 @@ pub(crate) fn height(size: Size, width: f32) -> f32 {
     PAD_TOP + body + PAD_BOTTOM
 }
 
-/// A price's colour: green when cheap, amber near the 20 ms target, red past it, brightening.
+/// A price's color: green when cheap, amber near the 20 ms target, red past it, brightening.
 pub(crate) fn price_color(ms: f32, alpha: f32) -> Color32 {
     target_color(ms, super::model::PIN_TARGET_MS, alpha)
 }
 
-/// A pass's colour against the GPU time it was sized for: green when cheap, amber near the
+/// A pass's color against the GPU time it was sized for: green when cheap, amber near the
 /// target, red past it, brightening.
 pub(crate) fn target_color(ms: f32, target_ms: f32, alpha: f32) -> Color32 {
     let p = (ms / target_ms.max(1.0)).clamp(0.0, 1.6);
@@ -270,7 +270,7 @@ pub(crate) fn target_color(ms: f32, target_ms: f32, alpha: f32) -> Color32 {
     fade(hsl(hue, 1.0, light), alpha)
 }
 
-/// HSL (hue in degrees) to an opaque colour.
+/// HSL (hue in degrees) to an opaque color.
 fn hsl(h: f32, s: f32, l: f32) -> Color32 {
     let c = (1.0 - (2.0 * l - 1.0).abs()) * s;
     let hp = (h.rem_euclid(360.0)) / 60.0;
@@ -617,7 +617,7 @@ fn nixies(p: &Painter, layer: Layer, at: Pos2, s: f32, text: &str) -> Rect {
         }
         return case;
     }
-    // The digits, one layout: each centred in its tube (a cell of the tube's width and the gap).
+    // The digits, one layout: each centered in its tube (a cell of the tube's width and the gap).
     let font = face::nixie(20.0 * s);
     let shown: String = text.chars().map(|ch| if ch == '_' { ' ' } else { ch }).collect();
     let cells: Vec<f32> = widths.iter().map(|w| w + 2.0 * s).collect();
@@ -896,7 +896,7 @@ const SPLIT_TILE_PX: u32 = 16;
 const TILES_FACE: Color32 = Color32::from_rgb(0x0d, 0x0b, 0x08);
 /// The plane's levels, as shares of amber mixed into the face: the plane itself, a tile still to
 /// come, a tile done, and the tiles of this frame's pass (up to 1 while its glow lasts). Opaque
-/// mixes, not amber at an alpha: egui premultiplies a faint colour in linear light, so amber at
+/// mixes, not amber at an alpha: egui premultiplies a faint color in linear light, so amber at
 /// 0.04 alpha showed as a quarter-bright brown and done tiles at 0.3 nearly matched the pass's
 /// own at 0.95 — the last pass of a split read as the whole plane lit (2026-10-20).
 const LEVEL_PLANE: f32 = 0.07;
@@ -904,7 +904,7 @@ const LEVEL_TO_COME: f32 = 0.13;
 const LEVEL_DONE: f32 = 0.38;
 const LEVEL_PASS: f32 = 0.7;
 
-/// The plane's colour at a level (a share of amber in the face).
+/// The plane's color at a level (a share of amber in the face).
 fn level(t: f32) -> Color32 {
     paint::mix(TILES_FACE, ink::AMBER, t)
 }
@@ -1034,7 +1034,7 @@ fn draw_tiles(p: &Painter, layer: Layer, r: Rect, s: f32, m: &Model) {
     let pass = |glow: f32| level(LEVEL_PASS + (1.0 - LEVEL_PASS) * glow);
     p.rect_filled(plane, 0.0_f32, level(LEVEL_PLANE));
     // A walk's pass covers the whole picture but iterates only the pixels still running: the plane
-    // fills to that share (`running_level`), labelled.
+    // fills to that share (`running_level`), labeled.
     let running = m.snap.running.filter(|_| matches!(&m.plane, Plane::Whole { band: Some(_), .. } | Plane::Ssaa { band: Some(_), .. }));
     match &m.plane {
         Plane::Whole { glow, .. } if running.is_some() => draw_running(p, plane, s, running.unwrap_or(1.0), pass(*glow)),
@@ -1213,7 +1213,7 @@ const MAX_SAMPLE_DOTS: u32 = 256;
 
 /// The supersampling chart: one pixel of the picture magnified in the plane's middle, a dot where
 /// each sample folded so far landed in it (the jitter sequence, `crate::accum_jitter_seq`; the
-/// first at the centre), the newest brightest, and while the next sample walks, a pulsing ring
+/// first at the center), the newest brightest, and while the next sample walks, a pulsing ring
 /// where it will land.
 fn draw_samples(p: &Painter, plane: Rect, s: f32, samples: u32, walking: bool, clock_s: f32) {
     let side = plane.width().min(plane.height()) * 0.62;
@@ -1275,7 +1275,7 @@ pub(crate) fn running_text(share: f32) -> String {
 }
 
 /// A walk's pass on the plane: the whole picture lit as done, filled from the bottom to the share
-/// of its pixels still iterating (`running_level`) in the pass's colour, with a hairline at the
+/// of its pixels still iterating (`running_level`) in the pass's color, with a hairline at the
 /// level and the share printed in the corner.
 fn draw_running(p: &Painter, plane: Rect, s: f32, share: f32, lit: Color32) {
     p.rect_filled(plane, 0.0_f32, level(LEVEL_DONE));
@@ -1382,12 +1382,12 @@ fn draw_scope(p: &Painter, layer: Layer, r: Rect, s: f32, m: &Model) {
     }
 }
 
-/// How bright a scope legend name is while no pass of its kind runs, of its full colour: still
+/// How bright a scope legend name is while no pass of its kind runs, of its full color: still
 /// legible on the screen (3.2:1 for SSAA's lavender to 5.3:1 for SETTLE's cream against its glow,
 /// where 0.4 left 2.2 to 3.2), while lit names reach 6.5 to 12:1, and their glow.
 const LEGEND_UNLIT: f32 = 0.6;
 
-/// The scope legend's names (in [`super::model::LEGEND`]'s order), colours and top-left corners,
+/// The scope legend's names (in [`super::model::LEGEND`]'s order), colors and top-left corners,
 /// left to right. Both layers lay it out here, so the lit names land on the unlit ones.
 fn scope_legend(p: &Painter, r: Rect, s: f32) -> Vec<(String, Color32, Pos2)> {
     let f = face::narrow(10.0 * s);
@@ -1781,7 +1781,7 @@ fn draw_cores(p: &Painter, layer: Layer, r: Rect, s: f32, inp: &Inputs) {
         p.text(pos2(r.left() + 6.0 * s, r.bottom() - 5.0 * s), Align2::LEFT_BOTTOM, tr!(live_cores_count, count = e.cores.len()), face::narrow(11.0 * s), Color32::from_rgb(0xd8, 0xcf, 0xb6));
         paint::phosphor_disc(p, c, rr);
         let labels = [tr!(live_cores_role_ref), tr!(live_cores_role_pool), tr!(live_cores_role_worker), tr!(live_cores_role_probe), tr!(live_cores_role_export)];
-        // One size for all, the longest no wider than the chord between two neighbours (the two at
+        // One size for all, the longest no wider than the chord between two neighbors (the two at
         // the bottom sit side by side; the pseudo-language's ran together).
         let chord = 2.0 * rr * 0.5 * (PI / roles as f32).sin();
         let fit = fit_scale(chord - 3.0 * s, |k| widest_text(p, labels.iter().map(String::as_str), face::narrow(8.0 * s * k)));

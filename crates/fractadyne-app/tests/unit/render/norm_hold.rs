@@ -1,6 +1,6 @@
 use super::*;
 
-/// The user report this closes: "colours shift under them as a deep view settles — the
+/// The user report this closes: "colors shift under them as a deep view settles — the
 /// picture is re-mapped, not just sharpened." Same signature + already decided ⇒ every
 /// further reading (ss ramp stages, settle tiles, chunked-walk refreshes) is HELD.
 #[test]
@@ -17,7 +17,7 @@ fn a_new_or_undecided_view_adopts() {
     assert_eq!(norm_feed_decision(42, 42, false, false), NormFeed::Adopt, "same sig, undecided");
 }
 
-/// Motion always chases with the EMA — the pre-hold behaviour, so a dive's mapping glides.
+/// Motion always chases with the EMA — the pre-hold behavior, so a dive's mapping glides.
 /// Interaction outranks the lock: a reading that arrives mid-drag must not adopt-and-lock
 /// a mapping for a view the camera is already leaving.
 #[test]
@@ -40,7 +40,7 @@ fn touching_a_decided_view_does_not_remap_it() {
 /// A held mapping is defeasible (`norm_hold_break`): a whole-frame reading DISJOINT from the
 /// held window beyond the 4x-width slack proves the hold maps a different picture. The field
 /// case shaped these numbers: a stale [6, 191] adopted for a view whose escapes sit at
-/// [181573, 182297] — under the log mapping, one flat colour until the next signature change.
+/// [181573, 182297] — under the log mapping, one flat color until the next signature change.
 #[test]
 fn a_disjoint_reading_breaks_the_hold() {
     use super::norm_hold_break;

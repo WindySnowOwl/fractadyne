@@ -34,7 +34,7 @@ pub(crate) fn overlay_text(elapsed_s: f64, frame: u64) -> (String, String) {
 pub(crate) fn draw(ctx: &egui::Context, rect: egui::Rect, elapsed_s: f64, frame: u64) {
     let (clock, frames) = overlay_text(elapsed_s, frame);
     let painter = super::central::decor_painter(ctx);
-    // White on a dark plate: the fractal underneath is any colour at all, and a diagnostic that is
+    // White on a dark plate: the fractal underneath is any color at all, and a diagnostic that is
     // unreadable over half the palettes is no diagnostic. The plate is translucent so it never
     // hides what is being diagnosed.
     let fg = egui::Color32::WHITE;

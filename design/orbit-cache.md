@@ -19,7 +19,7 @@ person starts from the existing code rather than repeating the search.
 | | before (`refcache_persist`, ≤ beta.77) | now |
 |---|---|---|
 | entries | **one** — the last view | many, in `<config_dir>/orbits/`, against a budget |
-| match rule | exact view centre + zoom exponent | the **reference point inside the view**, at a usable precision |
+| match rule | exact view center + zoom exponent | the **reference point inside the view**, at a usable precision |
 | point encoding | decimal string | exact mantissa words (`bfbytes`) |
 | extendable | no tail stored | tail stored → `extend_reference_orbit` resumes |
 | SA / BLA | stored | rebuilt on load (see below) |
@@ -43,7 +43,7 @@ iterations. What the GPU consumes from it is `[f32; 4]` per iteration — **16 b
 
 At 4 MB per live orbit the default 1 GB budget holds ~250 extreme locations.
 
-⭐**One orbit serves a NEIGHBOURHOOD.** Perturbation renders every pixel as a delta from the
+⭐**One orbit serves a NEIGHBORHOOD.** Perturbation renders every pixel as a delta from the
 reference, so a cached orbit covers nearby views too — come back, then zoom into a *different*
 region nearby, with no rebuild. Going *deeper* needs more iterations, which is what the tail is for.
 
@@ -70,7 +70,7 @@ allocation, and a key that changes when the point's LAST word does.
 eviction, clear, and the on/off switch. Unit-tested against a scratch directory.
 
 ⚠**SA and BLA deliberately not stored** (unlike the old one-slot file): they are derived, cheap next
-to the orbit, and the BLA depends on live colouring settings (`bla_stripe_freq`, `bla_trap_type`) —
+to the orbit, and the BLA depends on live coloring settings (`bla_stripe_freq`, `bla_trap_type`) —
 caching it would drag those into the cache identity for no gain. ✅**Measured, not argued** (the
 numbers already in `reference.rs`, taken at 2.37e4000×, 13,353 bits): of a 405 s reference build,
 BLA was **0.4 s**; the SA walk is not run at all when a BLA tree will exist, which is every deep
@@ -99,7 +99,7 @@ which the identity arm cannot see.
 one 64-bit id, one file. A longer orbit of the same identity replaces a shorter one; a shorter one
 never replaces a longer one.
 
-⭐⭐**Lookup by NEIGHBOURHOOD, BEFORE the pick.** The design as first written keyed the lookup on
+⭐⭐**Lookup by NEIGHBORHOOD, BEFORE the pick.** The design as first written keyed the lookup on
 the *picked* point — "lookup after `pick_reference`, so the saving is the orbit build". That was
 wrong by numbers already in the tree: at 2.37e4000× the candidate scoring cost **113.7 s against
 32.8 s for the orbit**. A cache that paid the pick to find its key would have left most of the

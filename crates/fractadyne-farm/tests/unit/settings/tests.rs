@@ -42,8 +42,8 @@ fn listed_fields_travel_and_nothing_else_does() {
     assert_eq!(out.custom_palette, src.custom_palette);
     assert!(!out.watermark && !out.series_approx);
     let d = SessionState::default();
-    assert_eq!(out.last_script, d.last_script, "a path travelled");
-    assert_eq!(out.export_dir, d.export_dir, "a path travelled");
+    assert_eq!(out.last_script, d.last_script, "a path traveled");
+    assert_eq!(out.export_dir, d.export_dir, "a path traveled");
     assert_eq!(out.ui_scale, d.ui_scale);
     assert_eq!(out.update_track, d.update_track);
     // And the round trip is exact.

@@ -1,15 +1,15 @@
 //! Tests for the screen eyedropper: the byte order, and the state machine that decides when a
-//! click means "take this colour".
+//! click means "take this color".
 //!
 //! ⚠The FFI itself cannot be tested here — it needs a desktop, a cursor and another window to
 //! point at. What CAN be tested is everything that decides what the FFI's answers mean, which is
-//! where both of the plausible bugs live: reading the colour channels backwards, and treating the
+//! where both of the plausible bugs live: reading the color channels backwards, and treating the
 //! click that STARTED the pick as the click that ends it.
 
 use super::{colorref_rgb, step, Pick, PickStep};
 
 /// ⭐⭐**A `COLORREF` is `0x00bbggrr`.** Reading it as RGB swaps red and blue and still yields a
-/// perfectly plausible colour — the failure has no symptom except that everything picked comes
+/// perfectly plausible color — the failure has no symptom except that everything picked comes
 /// back the wrong hue. The `.ugr` importer had the same trap and it took a pixel-level check to
 /// find, so this pins the two channels that swap, by name, with a control between them.
 #[test]
@@ -30,18 +30,18 @@ fn colorref_is_bgr_not_rgb() {
 }
 
 /// ⚠`CLR_INVALID` is how `GetPixel` reports failure, and it is otherwise a legal-looking value —
-/// white with the top byte set. Taking it as a colour would silently paint the stop white every
+/// white with the top byte set. Taking it as a color would silently paint the stop white every
 /// time a sample failed, which reads as "the dropper picked the wrong thing" rather than as an
 /// error.
 #[test]
 fn an_invalid_sample_is_not_a_colour() {
     assert_eq!(colorref_rgb(0xffff_ffff), None);
-    // ⭐But 0x00ffffff — the same white with a clear top byte — IS a colour, and must survive.
+    // ⭐But 0x00ffffff — the same white with a clear top byte — IS a color, and must survive.
     assert_eq!(colorref_rgb(0x00ff_ffff), Some([1.0, 1.0, 1.0]));
 }
 
 /// ⭐⭐**The bug `armed` exists to prevent.** The click that starts the pick is still physically
-/// down when the first poll runs, so "commit while the button is down" takes the colour of the
+/// down when the first poll runs, so "commit while the button is down" takes the color of the
 /// dropper button itself — instantly, before the user has moved anywhere.
 #[test]
 fn the_starting_click_cannot_be_the_picking_click() {
@@ -49,18 +49,18 @@ fn the_starting_click_cannot_be_the_picking_click() {
     assert!(!start.armed);
     // Frame 1: the button that opened the pick is still held. Nothing may be taken.
     let s = step(start, true, false, Some([1.0, 0.0, 0.0]));
-    let PickStep::Continue(p) = s else { panic!("a held starting button took a colour: {s:?}") };
+    let PickStep::Continue(p) = s else { panic!("a held starting button took a color: {s:?}") };
     assert!(!p.armed, "still not armed while the starting press is down");
     // Frame 2: released. Now the gesture is live.
     let PickStep::Continue(p) = step(p, false, false, Some([0.0, 1.0, 0.0])) else {
         panic!("release should continue")
     };
     assert!(p.armed);
-    // Frame 3: a fresh press takes the colour.
+    // Frame 3: a fresh press takes the color.
     assert_eq!(step(p, true, false, Some([0.0, 0.0, 1.0])), PickStep::Take([0.0, 0.0, 1.0]));
 }
 
-/// The colour taken is the one under the cursor AT THE CLICK, not the last preview — between two
+/// The color taken is the one under the cursor AT THE CLICK, not the last preview — between two
 /// frames the pointer can move a long way, and the user is looking at where it is now.
 #[test]
 fn the_click_takes_the_current_sample_not_the_stale_preview() {
@@ -87,7 +87,7 @@ fn escape_always_cancels() {
     }
 }
 
-/// The preview keeps the last good colour across a frame that failed to sample, so moving over a
+/// The preview keeps the last good color across a frame that failed to sample, so moving over a
 /// surface that cannot be read does not make the swatch flicker to nothing.
 #[test]
 fn the_preview_holds_through_a_failed_sample() {

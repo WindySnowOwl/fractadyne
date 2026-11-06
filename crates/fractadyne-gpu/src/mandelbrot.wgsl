@@ -461,7 +461,7 @@ fn tail_rebase(zfull: Cdf, dz: Cdf) -> bool {
 // right (one side flushed while the other did not still orders correctly, because the flushed side
 // is genuinely the smaller magnitude). So the original comparison is kept verbatim and consulted
 // first, and the fallback runs just for `0 < 0`. Rewriting the test unconditionally is what NOT to
-// do here: an earlier attempt normalised by max-component, which is algebraically identical but
+// do here: an earlier attempt normalized by max-component, which is algebraically identical but
 // multiplies by an inexact 1/s, and it drifted three determinism checks by ~99 iterations in 1.2M
 // as near-ties rounded the other way.
 //
@@ -835,14 +835,14 @@ const CTR_ESC_MIN: u32 = 5u;     // min escaped smooth-iter (f32 bits; positive 
 const CTR_ESC_MAX: u32 = 6u;     // max escaped smooth-iter (f32 bits)
 // ESCAPED PIXELS in the frame — the count the app checks before it lets a frame reach the screen
 // or become the held snapshot (a walk that has not reached the view's first escape resolves to
-// one flat interior colour; nothing else on the wire can tell that frame from a finished one).
+// one flat interior color; nothing else on the wire can tell that frame from a finished one).
 // Un-subsampled, like CTR_MAXITER: it is a COUNT against the frame's pixel total.
 const CTR_ESC_COUNT: u32 = 7u;
 // LOCAL GRADIENT of the escape field: Σ|Δ smooth-iter| between horizontally adjacent escaped
 // pixels (×16, clamped), and the number of samples in that sum. Their ratio is the mean step the
 // palette takes from one pixel to the next, which is what decides whether a fixed cycle ALIASES.
 // ⭐The escape RANGE cannot decide that: a shallow view spans a hundred palette sweeps and still
-// looks perfect because neighbours differ by ≪1 iteration, while a deep dense field aliases on a
+// looks perfect because neighbors differ by ≪1 iteration, while a deep dense field aliases on a
 // far narrower span. Range is a global statistic; aliasing is a local one.
 const CTR_GRAD_SUM: u32 = 8u;
 const CTR_GRAD_N: u32 = 9u;
@@ -866,7 +866,7 @@ fn esc_hist_commit(sm: f32) {
 // live palette window (keep in sync with lib.rs `CTR_NORM_HIST` / `NORM_HIST_BUCKETS` /
 // `norm_hist_bucket`): 16 buckets per doubling of `v − norm_base + 1`, the last open-ended. The
 // app takes the window's top from a quantile of it, so a few pixels escaping just under the
-// iteration ask beside a minibrot no longer set the colours of the whole picture.
+// iteration ask beside a minibrot no longer set the colors of the whole picture.
 const CTR_NORM_HIST: u32 = 57u;
 // On the 4x4 grid of the escape-range commit; called where a whole frame's escapes are seen once
 // each: `fs_resolve` on a chunked frame, the single-pass iterates' escape otherwise.
@@ -1153,7 +1153,7 @@ fn esc_range_commit(sm: f32) {
 // is the shape this file warns about twice: `esc_range_commit` is subsampled because "two atomics
 // on two slots from ~1.6M threads is real contention", and the gradient histogram skips its
 // bucket 0 because "nearly all samples would land on that ONE address — a same-address atomic
-// serialised across the whole frame". Un-subsampled, this counter is exactly that: one address
+// serialized across the whole frame". Un-subsampled, this counter is exactly that: one address
 // taking an increment from every escaped fragment, 8.68 MILLION of them on a 1676×1295 ss=2
 // exterior-heavy frame.
 //
@@ -1199,7 +1199,7 @@ struct Aux {
 // ---- stripe average over the TAIL only ------------------------------------------------------
 // At extreme depth every pixel's orbit shadows the reference for all but its last few hundred
 // iterates (δ grows from the pixel spacing to O(1) in ~ln(zoom)/λ steps), and the stripe term is
-// a function of z alone — so the FULL-orbit mean is the same colour for the whole view (2.5e246×,
+// a function of z alone — so the FULL-orbit mean is the same color for the whole view (2.5e246×,
 // field report 2026-09-16). The tail mode replaces the plain mean with an exponentially-weighted
 // mean over the last `tail_len` iterates: `s += (term − s)·α`, α = 1/tail_len, bias-corrected by
 // `1 − (1−α)^n` so a SHORT orbit reads exactly like the plain mean (no look change on shallow
@@ -1300,7 +1300,7 @@ const GLITCH_SENTINEL: vec4<f32> = vec4<f32>(-2.0, 0.0, 0.0, 1.0e30);
 // Factored out of `fs_iterate` so a SECOND entry point can drive the identical arithmetic with a
 // coordinate that does NOT come from the rasterizer - see `fs_iterate_gather`, which iterates a
 // scattered LIST of pixels for multi-reference glitch correction.
-// `gx`/`gy` are GLOBAL texel coordinates in the full iteration grid at the texel CENTRE
+// `gx`/`gy` are GLOBAL texel coordinates in the full iteration grid at the texel CENTER
 // (integer + 0.5), which is exactly what `iu.px_offset + in.pos` yields in a tiled fragment pass -
 // so from here down both entry points evaluate the same expressions on the same inputs. Both the
 // integer part and the +0.5 are exact in f32 below 2^24, and so is their sum, so a coordinate
@@ -2235,7 +2235,7 @@ fn vs_split_tiles(@builtin(vertex_index) vi: u32, @builtin(instance_index) ii: u
 @fragment
 fn fs_iterate_gather(in: VsOut) -> FragOut {
     ob_arm(); // keep two_prod's product opaque (see `ob`)
-    // in.pos is the texel centre (integer + 0.5); truncation recovers the integer texel.
+    // in.pos is the texel center (integer + 0.5); truncation recovers the integer texel.
     let idx = u32(in.pos.y) * iu.gather_w + u32(in.pos.x);
     if (idx >= iu.gather_n) {
         // Padding texel in the last row - never read back. Returning before the loop keeps it free
@@ -2243,7 +2243,7 @@ fn fs_iterate_gather(in: VsOut) -> FragOut {
         return FragOut(vec4<f32>(-1.0, 0.0, 0.0, 1.0e30), AUX_NONE);
     }
     let c = gather_coords[idx];
-    // Rebuild the exact texel centre the tiled pass would have rasterized for this pixel.
+    // Rebuild the exact texel center the tiled pass would have rasterized for this pixel.
     return iterate_at(f32(c.x) + 0.5, f32(c.y) + 0.5);
 }
 
@@ -2257,7 +2257,7 @@ fn fs_iterate_gather(in: VsOut) -> FragOut {
 // G-buffer that the color pass consumes. Scope: DIRECT mode (1) and DF32-PERTURBATION mode (0),
 // holomorphic formulas 0..3 and 10..12, aux off (glitch detection IS supported — see ST_GLITCHED);
 // everything else keeps single-pass `fs_iterate`,
-// whose behaviour is untouched. Mode 0 carries δz + the floatexp derivative + ref_n between
+// whose behavior is untouched. Mode 0 carries δz + the floatexp derivative + ref_n between
 // passes, rebasing across chunk boundaries exactly as the single pass would.
 //
 // State layout (all Rgba32Float):
@@ -2697,7 +2697,7 @@ fn fs_iterate_chunk(in: VsOut) -> ChunkOut {
 // same one the unchunked loop takes; but the host's `steps = px * delta_iter` cost model
 // over-counts whenever BLA is live, which mode 0 never had to account for.
 // The body of every floatexp chunk entry point (`fs_iterate_chunk_fe` and the export's packed pass
-// below): the pixel at texel centre `pos` of the tile, whose state is at texel `p` of the bound
+// below): the pixel at texel center `pos` of the tile, whose state is at texel `p` of the bound
 // state set — the same texel in a whole-tile pass, its slot in a packed one.
 // @@CUSTOM_CHUNK_FE_BEGIN — a custom formula's module replaces this whole function, to the
 // matching END marker, with its own (`custom.rs`): same state layout, its generated step.
@@ -3174,14 +3174,14 @@ fn fs_iterate_chunk_fe(in: VsOut) -> ChunkOut4 {
 // ---------------- packed tails (the export's step-bounded passes) ----------------
 // A step-bounded tile ends with a few pixels scattered across it: at 1.2e148 (4K) a pass with a
 // tenth of its pixels running cost a third of a full pass, 8× the busy rate per step, and a
-// hundredth 77×, because a warp shades a block of neighbouring pixels and runs while any one of
+// hundredth 77×, because a warp shades a block of neighboring pixels and runs while any one of
 // them does. So the export PACKS a thinning tile: every pass lists the pixels it leaves running
 // (`pk_next`, indexed by `chunk_slot`), and once few enough run, `fs_pack_gather` copies their
 // state into a small dense grid whose texel i iterates pixel `pk_cur[i]`. Passes then run over
 // that grid (`fs_iterate_chunk_fe_packed`), and `vs/fs_pack_scatter` write it back into the
 // tile's state, where `fs_resolve` finds every pixel as if the tile had never been packed.
 //
-// ⭐Bit-identical by construction: a packed texel runs `chunk_fe_at` on the same texel centre and
+// ⭐Bit-identical by construction: a packed texel runs `chunk_fe_at` on the same texel center and
 // the same stored state as the whole-tile pass would (and the whole-tile passes use the same entry
 // point, so no second compiled program is involved), and where the passes split never changes a
 // pixel. Which slot a pixel lands in depends on atomic order and changes nothing.
@@ -3211,7 +3211,7 @@ fn fs_iterate_chunk_fe_packed(in: VsOut) -> ChunkOut4 {
         if (i >= pk.n) { return pack_pad(); }
         c = pk_cur[i];
     }
-    // `f32(c) + 0.5` is the rasterizer's texel centre exactly, so a whole-tile pass sees `in.pos`.
+    // `f32(c) + 0.5` is the rasterizer's texel center exactly, so a whole-tile pass sees `in.pos`.
     let out = chunk_fe_at(vec2<f32>(f32(c.x) + 0.5, f32(c.y) + 0.5), p);
     if (chunk_slot != NO_SLOT) { pk_next[chunk_slot] = c; }
     return out;
@@ -3344,7 +3344,7 @@ fn fs_resolve(in: VsOut) -> FragOut {
         esc_range_commit(sm.z);
         esc_hist_commit(sm.z);
         norm_hist_commit(sm.z, p);
-        // Local gradient against the RIGHT neighbour, same subsample. Bounds-checked rather than
+        // Local gradient against the RIGHT neighbor, same subsample. Bounds-checked rather than
         // relying on out-of-range textureLoad returning zero: a zeroed meta decodes to a status
         // that is not ST_ESCAPED today, but that is a coincidence to depend on.
         let qx = p.x + 1;
@@ -3365,7 +3365,7 @@ fn fs_resolve(in: VsOut) -> FragOut {
                 //
                 // ⭐**Bucket 0 is never written here.** Steps under one iteration are what every
                 // smooth region produces, so in most frames nearly all samples would land on that
-                // ONE address — a same-address atomic serialised across the whole frame. It carries
+                // ONE address — a same-address atomic serialized across the whole frame. It carries
                 // nothing CTR_GRAD_N does not already imply, so the readback derives it as
                 // N − Σ(buckets 1..) and the hottest address is simply never touched. (A design
                 // choice, not a measured win: the bench-matrix could not resolve a per-pixel cost
@@ -3399,11 +3399,11 @@ struct ColorU {
     aa_filter: u32,    // color-pass box-filter taps per axis (≥1); >1 anti-aliases an upscaled iter texture
     reproject: u32,    // 1 = reprojection: sample the frozen texture scaled+translated (no re-iterate)
     uv_off: vec2<f32>, // uv translation for the reprojection (fraction of the screen panned)
-    uv_scale: f32,     // uv scale about centre (1 = pan only; <1 = zoomed in since the frozen frame)
+    uv_scale: f32,     // uv scale about center (1 = pan only; <1 = zoomed in since the frozen frame)
     vig_on: u32,       // 1 = spotlight vignette: dim everything outside a soft circle
     vig_dim: f32,      // how dark outside the spotlight (0..1)
     vig_soft: f32,     // soft-edge width (uv height fraction)
-    vig_center: vec2<f32>, // spotlight centre in screen uv (0..1)
+    vig_center: vec2<f32>, // spotlight center in screen uv (0..1)
     vig_radius: f32,   // spotlight radius (uv height fraction)
     // 1 = interpolate between LUT entries, 0 = nearest (hard bands). Occupies what used to be
     // `_pad_vig`, so removing the stop array below is the only size change this struct has taken.
@@ -3419,7 +3419,7 @@ struct ColorU {
     // `palette_box`); 0 = point sample. The three pad words restore the 16-byte-multiple size and
     // mirror `_pad_aa` in the Rust `ColorUniforms` (kept in step, per uniform_layout_tests).
     aa_palette: u32,
-    // A dissolve from another palette map (`PaletteFade`): that map's colour takes `fade_weight`
+    // A dissolve from another palette map (`PaletteFade`): that map's color takes `fade_weight`
     // (0 = none). Mirrors the Rust `ColorUniforms` field for field.
     fade_weight: f32,
     fade_mode: u32,
@@ -3440,7 +3440,7 @@ struct ColorU {
 @group(0) @binding(3) var<storage, read> lut: array<vec4<f32>>;
 
 // ---------------------------------------------------------------------------
-// Seed pass (tiled settle): nearest-neighbour upscale of the previous
+// Seed pass (tiled settle): nearest-neighbor upscale of the previous
 // iteration + aux textures into a freshly resized pair, so a tiled settle
 // starts from the coarse frame it is refining instead of from black. Raw
 // iteration data upscales losslessly-in-meaning (same values, coarser grid),
@@ -3469,12 +3469,12 @@ fn fs_seed(in: VsOut) -> SeedOut {
 // GIMP segment, an HSV sweep, a 256-band Fractint `.map` — arrives here already evaluated, so this
 // costs the same for all of them and the shader never learns what a blend function is.
 //
-// Entry `i` holds the gradient at `(i + 0.5) / n` (texel centres — `Gradient::bake` in
+// Entry `i` holds the gradient at `(i + 0.5) / n` (texel centers — `Gradient::bake` in
 // `fractadyne-color` is the other half of this contract, and `Lut::sample` is this function in
 // Rust). `lut_smooth == 0` nearest-fetches, which is what keeps a `.map`'s bands hard; anything
 // else interpolates, which is what gives a deep view palette-POSITION resolution at a high cycle.
 // Indices WRAP rather than clamp: the palette is cycled by `fract`, so t = 1 and t = 0 are
-// neighbours on screen.
+// neighbors on screen.
 fn palette(t_in: f32) -> vec3<f32> {
     let n = i32(cu.lut_len);
     if (n <= 0) {
@@ -3492,14 +3492,14 @@ fn palette(t_in: f32) -> vec3<f32> {
     return mix(a, b, f);
 }
 
-// Interior pixels have no palette coordinate; `coord_of` returns this sentinel so callers colour
+// Interior pixels have no palette coordinate; `coord_of` returns this sentinel so callers color
 // them with `interior_col` and the footprint estimate skips them. Far above any real coordinate
 // (`cycle`·log(escape) + offset), and finite so arithmetic on it stays well-defined.
 const INTERIOR_COORD: f32 = 1.0e30;
 
 // The CONTINUOUS palette coordinate for one texel (before the `fract` wrap), per the selected
 // method, or `INTERIOR_COORD` for an in-set pixel. Split out from `shade` so the color pass can
-// finite-difference it between neighbouring pixels to size the anti-aliasing footprint — and
+// finite-difference it between neighboring pixels to size the anti-aliasing footprint — and
 // diffing the pre-`fract` value is what keeps that footprint free of wrap discontinuities.
 // `m` = (smooth iter, normal.x, normal.y, DE log2); `a` = (stripe, TIA, trap, decomp).
 fn coord_of(m: vec4<f32>, a: vec4<f32>) -> f32 {
@@ -3535,7 +3535,7 @@ fn coord_under(m: vec4<f32>, a: vec4<f32>, cycle: f32, offset: f32, mode: u32, l
     // Log range mapping. Escape values crowd towards the high end at depth — most of a deep
     // frame's pixels sit in the last few percent of the range — so a linear map spends nearly the
     // whole palette on a thin shell and flattens everything else. Compressing with log spreads
-    // the palette over the range as the eye reads it, which is what keeps colour stable through a
+    // the palette over the range as the eye reads it, which is what keeps color stable through a
     // zoom video rather than washing out as the range grows.
     // `+ 1` keeps the argument ≥ 1 (log ≥ 0) so the floor of the range maps to 0 exactly.
     var pv_mapped = pv;
@@ -3547,7 +3547,7 @@ fn coord_under(m: vec4<f32>, a: vec4<f32>, cycle: f32, offset: f32, mode: u32, l
 
 // Cyclic antiderivative of the palette at texel coordinate `x` (may be < 0 or > n), from the
 // prefix sum appended after the LUT at binding 3 (`psum[i] = lut[n + i]`, `psum[n]` the total).
-// Each entry is a unit-width texel of constant colour, so within a cycle the integral is
+// Each entry is a unit-width texel of constant color, so within a cycle the integral is
 // `psum[floor(r)] + frac(r)·entries[floor(r)]`, plus `total` per whole cycle wrapped.
 fn palette_psum_at(x: f32, n: i32, nf: f32, total: vec3<f32>) -> vec3<f32> {
     let cycles = floor(x / nf);
@@ -3557,7 +3557,7 @@ fn palette_psum_at(x: f32, n: i32, nf: f32, total: vec3<f32>) -> vec3<f32> {
     return cycles * total + lut[n + i].xyz + f * lut[i].xyz;
 }
 
-// Box-average the palette over a footprint `width` PALETTE CYCLES wide, centred at `coord`.
+// Box-average the palette over a footprint `width` PALETTE CYCLES wide, centered at `coord`.
 // This is the analytic anti-aliasing: `width` is how much of the palette a single pixel spans,
 // so an undersampled pixel gets the mean over what it covers rather than a point sample that
 // aliases into speckle. Continuous in `width` — `width ≤ 1 texel` returns exactly `palette`
@@ -3585,11 +3585,11 @@ fn shade(m: vec4<f32>, a: vec4<f32>) -> vec3<f32> {
     return palette(coord);
 }
 
-// Band-limited shade: colour one texel with the palette box-averaged over `width` cycles (the
+// Band-limited shade: color one texel with the palette box-averaged over `width` cycles (the
 // output pixel's palette-phase footprint). `width == 0` degenerates to the point sample, so this
 // is a drop-in for `shade` when the anti-aliasing is off (`cu.aa_palette == 0`, width left 0).
 // During a dissolve (`cu.fade_weight` > 0) the texel is also shaded under the map it fades from,
-// with that map's own footprint `width_fade`, and the two colours are blended.
+// with that map's own footprint `width_fade`, and the two colors are blended.
 fn shade_aa(m: vec4<f32>, a: vec4<f32>, width: f32, width_fade: f32) -> vec3<f32> {
     let coord = coord_of(m, a);
     if (coord >= INTERIOR_COORD) { return cu.interior_col.xyz; }
@@ -3628,13 +3628,13 @@ fn fs_color(in: VsOut) -> @location(0) vec4<f32> {
     var suv = in.uv;
     if (cu.reproject == 1u) {
         // Aspect-fit first: display the frozen (possibly old-size) iteration texture at NATIVE
-        // scale, centred in the output rect, so a resize to a new aspect ratio doesn't stretch it —
-        // the center stays centred and the revealed border fills with the average color below. When
+        // scale, centered in the output rect, so a resize to a new aspect ratio doesn't stretch it —
+        // the center stays centered and the revealed border fills with the average color below. When
         // the frozen frame matches the current size (pan / zoom reprojection) this is the identity.
         let fit = cu.out_res / max(vec2<f32>(screen_dim), vec2<f32>(1.0));
         suv = (in.uv - vec2<f32>(0.5)) * fit + vec2<f32>(0.5);
-        // Then scale about the centre + translate: follows both the zoom and pan since the frozen
-        // frame was rendered (uv_scale == 1 → pure pan, the original behaviour).
+        // Then scale about the center + translate: follows both the zoom and pan since the frozen
+        // frame was rendered (uv_scale == 1 → pure pan, the original behavior).
         suv = (suv - vec2<f32>(0.5)) * cu.uv_scale + vec2<f32>(0.5) - cu.uv_off;
         if (suv.x < 0.0 || suv.x > 1.0 || suv.y < 0.0 || suv.y > 1.0) {
             return vec4<f32>(view_average(), 1.0);
@@ -3645,10 +3645,10 @@ fn fs_color(in: VsOut) -> @location(0) vec4<f32> {
     let maxc = vec2<i32>(tex_dim) - vec2<i32>(1, 1);
 
     // Analytic palette anti-aliasing footprint: how much palette PHASE this output pixel spans,
-    // from the CONTINUOUS coord difference to the +1-pixel neighbours (one output pixel = ss
+    // from the CONTINUOUS coord difference to the +1-pixel neighbors (one output pixel = ss
     // texels). Diffing the pre-`fract` coord (via `coord_of`) avoids wrap discontinuities;
-    // interior neighbours (the INTERIOR_COORD sentinel) are skipped. It is computed ONCE per
-    // output pixel and applied to every tap, so the band-limited colour is the SAME regardless of
+    // interior neighbors (the INTERIOR_COORD sentinel) are skipped. It is computed ONCE per
+    // output pixel and applied to every tap, so the band-limited color is the SAME regardless of
     // `ss` — which is what makes a low-AA live view and a high-AA export agree, and keeps a zoom
     // free of pops (the footprint grows smoothly with depth). Zero when off ⇒ `shade_aa` is a
     // point sample identical to the old `shade`.
@@ -3684,10 +3684,10 @@ fn fs_color(in: VsOut) -> @location(0) vec4<f32> {
     // widens the box so the upscaled, finely-banded texture is anti-aliased instead of
     // point-sampled into speckle. Also accumulates the slope normal (relief lighting).
     //
-    // ⭐The box is CENTRED on this pixel's own texels. A box wider than them (`aa_filter`: a frame
+    // ⭐The box is CENTERED on this pixel's own texels. A box wider than them (`aa_filter`: a frame
     // rendered below display resolution) used to start at the pixel's first texel and run right and
     // down, so it drew the picture (taps - ss)/2 texels off: 6 screen px for a quarter-resolution
-    // frame, shown between held frames that had no such offset, and the view's centre jumped as they
+    // frame, shown between held frames that had no such offset, and the view's center jumped as they
     // alternated (2026-10-21). The overhang each side is whole or half a texel; a half one takes one
     // more texel each way at half weight. With no overhang (taps == ss) this is the plain block.
     let taps = max(ss, max(cu.aa_filter, 1u));
@@ -3723,7 +3723,7 @@ fn fs_color(in: VsOut) -> @location(0) vec4<f32> {
         // ⭐⭐**THE RELIEF NORMAL IS LOW-PASSED ACROSS PIXELS, AND THE RADIUS IS THE MEASURED ONE.**
         // Lighting used to shade from `nacc / count` — the slope averaged over this pixel's
         // anti-aliasing taps alone. At depth that field has structure finer than the pixel grid,
-        // so the Lambert term flickered between lit and back-facing on neighbouring pixels and the
+        // so the Lambert term flickered between lit and back-facing on neighboring pixels and the
         // exterior stippled black. Reported at 3.1e34x; measured dark-pixel fraction attributable
         // to lighting was 28.84 pt at ss=1, 7.56 at ss=2, 2.03 at ss=4 — falling as 1/samples,
         // which is undersampling, not a numerical fault.
@@ -3731,10 +3731,10 @@ fn fs_color(in: VsOut) -> @location(0) vec4<f32> {
         // ⛔**Averaging the TAPS harder cannot fix it, and that was measured before this was
         // written**: weighting the light by how much the taps agreed produced byte-identical
         // output, because the taps INSIDE a pixel already agree. The variation lives BETWEEN
-        // adjacent pixels, so the filter has to span pixels — hence a 3x3 neighbourhood in OUTPUT
+        // adjacent pixels, so the filter has to span pixels — hence a 3x3 neighborhood in OUTPUT
         // pixel steps rather than a wider tap box.
         //
-        // ⭐`|mean|` of unit normals is then a real confidence: 1 where the neighbourhood agrees on
+        // ⭐`|mean|` of unit normals is then a real confidence: 1 where the neighborhood agrees on
         // a surface, ~0 where it does not. Fading toward UNLIT there (`mix(1.0, lam, conf)`) means
         // an undersampled region loses its relief instead of gaining a random dark speckle — and
         // where the field IS well defined, `conf` is 1 and the result is unchanged.
@@ -3753,8 +3753,8 @@ fn fs_color(in: VsOut) -> @location(0) vec4<f32> {
                 nn = nn + 1.0;
             }
         }
-        // Blend the neighbourhood mean with this pixel's own tap mean so a genuinely sharp edge
-        // keeps some of its own slope rather than being smeared entirely by its neighbours.
+        // Blend the neighborhood mean with this pixel's own tap mean so a genuinely sharp edge
+        // keeps some of its own slope rather than being smeared entirely by its neighbors.
         let n = mix(nacc / count, nsm / nn, 0.75);
         let conf = length(n);
         if (conf > 1.0e-6) {
@@ -3787,10 +3787,10 @@ fn fs_color(in: VsOut) -> @location(0) vec4<f32> {
 
 // ---------------- progressive on-settle supersampling (accumulate + present) ----------------
 // While the view is settled and idle, the app re-renders it with a sub-pixel JITTER each frame
-// (via `IterUniforms.px_offset`) and folds the shaded colour into a running average, converging to
+// (via `IterUniforms.px_offset`) and folds the shaded color into a running average, converging to
 // the box-averaged (anti-aliased) image — the spatial supersampling that removes deep-zoom speckle,
 // spread across idle frames so no single dispatch is large. `fs_accum` is the fold; `fs_present`
-// blits the average to the surface. These reuse @group(0) slots the way the iterate and colour
+// blits the average to the surface. These reuse @group(0) slots the way the iterate and color
 // passes already do (each pipeline binds only what its entry point reads).
 
 struct AccumU {
@@ -3800,7 +3800,7 @@ struct AccumU {
     _p2: f32,
 };
 @group(0) @binding(0) var<uniform> au: AccumU;
-@group(0) @binding(1) var accum_frame: texture_2d<f32>; // this frame's freshly-shaded colour
+@group(0) @binding(1) var accum_frame: texture_2d<f32>; // this frame's freshly-shaded color
 @group(0) @binding(2) var accum_prev: texture_2d<f32>;  // running average so far (ping-pong source)
 
 // Numerically-stable running mean: avg += (sample - avg) / n. At n=1 (inv_weight=1) it returns the

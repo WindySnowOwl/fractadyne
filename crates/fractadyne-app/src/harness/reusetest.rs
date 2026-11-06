@@ -65,7 +65,7 @@ impl FractadyneApp {
             ReuseView { name: "seahorse-1e6", cx: "-0.743643887037151", cy: "0.131825904205330", mag: 1.0e6 },
             ReuseView { name: "seahorse-1e12", cx: "-0.743643887037151", cy: "0.131825904205330", mag: 1.0e12 },
             // Precise boundary point (the golden "mandelbrot-1e6"): richly escaping, so the
-            // escaped-pixel comparison is well-populated (unlike a coarse-precision centre).
+            // escaped-pixel comparison is well-populated (unlike a coarse-precision center).
             ReuseView {
                 name: "boundary-1e6",
                 cx: "-7.219621882920463979621343199249635039400777157391994056859e-1",
@@ -103,7 +103,7 @@ impl FractadyneApp {
 
         println!(
             "reuse-first zoom staleness — reprojection vs from-scratch, {N}×{N}, iter {ITER} (fixed).\n\
-             `reprojection` = the exact color-pass affine magnify (uv_scale = 2^-Δ about centre) of the\n\
+             `reprojection` = the exact color-pass affine magnify (uv_scale = 2^-Δ about center) of the\n\
              base frame — what the live view shows while holding through a Δ-octave dive.\n\
              raw = smooth-iter (conservative); sRGB = the colored image the user actually sees (0–255).\n"
         );
@@ -126,7 +126,7 @@ impl FractadyneApp {
                 // base frame at the magnified coordinate (2^Δ magnify → uv_scale = 2^-Δ):
                 //  - `reproj_n`  NEAREST (what the shader does today, `pix = i32(suv*screen_dim)`);
                 //  - `reproj_b`  class-guarded BILINEAR (bilerp the escape channel only where all 4
-                //    neighbours escaped — else nearest, to avoid averaging interior(-1) with exterior;
+                //    neighbors escaped — else nearest, to avoid averaging interior(-1) with exterior;
                 //    normal/DE always bilerp). This is the candidate color-pass improvement, measured
                 //    before touching the fragile live shader.
                 let s = 2f64.powf(-d);

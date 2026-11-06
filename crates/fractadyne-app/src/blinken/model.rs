@@ -169,7 +169,7 @@ pub(crate) struct WalkPass {
     pub(crate) ms: Option<f32>,
     /// No timing came back in time: drawn hollow.
     pub(crate) untimed: bool,
-    /// The GPU time it was sized for, ms: its colour is its time against this.
+    /// The GPU time it was sized for, ms: its color is its time against this.
     pub(crate) target_ms: f32,
     /// Seconds since it ran.
     pub(crate) age_s: f32,

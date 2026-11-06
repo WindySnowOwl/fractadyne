@@ -11,7 +11,7 @@
 //! curved GIMP blend and an HSV-sweep segment all cost the same at render time — one indexed
 //! fetch — so the shader never learns what a blend function is.
 //!
-//! ⚠**Colours here are DISPLAY-referred**, like every other colour in this crate: the renderer
+//! ⚠**Colors here are DISPLAY-referred**, like every other color in this crate: the renderer
 //! writes them straight into a non-sRGB framebuffer, so a channel value IS the byte the monitor
 //! shows. See `srgb8_to_stop` for the measurement that settled it. Blending therefore happens in
 //! gamma space, which is what the live view already does and what matching a reference render from
@@ -19,9 +19,9 @@
 
 /// LUT length the renderer bakes to.
 ///
-/// ⭐**1024, not 256, and the binding constraint is palette POSITION, not colour depth**
+/// ⭐**1024, not 256, and the binding constraint is palette POSITION, not color depth**
 /// (`design/palette-import.md` §5a). Endpoints arrive at 8 bits but everything downstream is f32,
-/// so colour quantisation costs at most ±1/255; what actually runs out is how finely the
+/// so color quantization costs at most ±1/255; what actually runs out is how finely the
 /// continuous smooth-iteration value can address the palette once `cycle` sweeps it many times
 /// across a narrow band of escape values. 1024 × 16 B = 16 KB, comfortably inside a uniform buffer.
 pub const LUT_SIZE: usize = 1024;
@@ -51,7 +51,7 @@ pub enum Blend {
 /// A cubic-Bézier ease that is exactly the identity, `y = x`, with both handles visible and
 /// grabbable at the thirds — what "convert this to an editable curve" starts from.
 ///
-/// ⚠With `x1 = 1/3` and `x2 = 2/3` the parameterisation is exact: `x(u) = u`. That is what makes
+/// ⚠With `x1 = 1/3` and `x2 = 2/3` the parameterization is exact: `x(u) = u`. That is what makes
 /// the fit in `Blend::fit_to` a closed form rather than an optimisation.
 pub const BEZIER_IDENTITY: [f32; 4] = [1.0 / 3.0, 1.0 / 3.0, 2.0 / 3.0, 2.0 / 3.0];
 
@@ -61,7 +61,7 @@ pub const BEZIER_IDENTITY: [f32; 4] = [1.0 / 3.0, 1.0 / 3.0, 2.0 / 3.0, 2.0 / 3.
 /// ⚠⚠**Applied when a gradient enters the EDITOR, not by `Segment::linear`, and the reason is
 /// MEASURED.** Making it the constructor's default drifted the F3 corpus to **8/38** — maxD 1 on
 /// 10–20 px of 800k. Not from the curve: `bezier_ease` answers the identity exactly. From the
-/// MIDPOINT. `Segment::linear` stores `mid = 0.5 * (left + right)`, and `factor` normalises it as
+/// MIDPOINT. `Segment::linear` stores `mid = 0.5 * (left + right)`, and `factor` normalizes it as
 /// `(mid - left) / (right - left)`, which in f32 is **not exactly 0.5** — 0.49999997 for a
 /// 0.35..0.70 span. So `Blend::Linear` carries a hair of midpoint asymmetry that a Bézier, which
 /// ignores `mid` by design, does not, and every golden was blessed with that asymmetry in it.
@@ -73,9 +73,9 @@ pub const DEFAULT_BLEND: Blend = Blend::Bezier(BEZIER_IDENTITY);
 
 impl Gradient {
     /// Convert plain linear segments to unbent Béziers, so the editor can offer draggable handles
-    /// on every one of them. Anything already curved, swept, or off-centre is left exactly alone.
+    /// on every one of them. Anything already curved, swept, or off-center is left exactly alone.
     ///
-    /// ⚠**Centred midpoints only.** `Blend::Linear` with an off-centre midpoint is piecewise
+    /// ⚠**Centered midpoints only.** `Blend::Linear` with an off-center midpoint is piecewise
     /// linear with a KINK, and no cubic reproduces a kink — promoting one would silently reshape
     /// the segment. Those keep `Linear`; the user can convert them from the picker, which reports
     /// how far the fit lands.
@@ -153,7 +153,7 @@ impl Blend {
     /// `t = 1/3` and `t = 2/3` is a one-liner and was the first version; it nails those two
     /// samples and lets the error between them run to 0.15 on a sphere blend. Fitting all of it
     /// halves that, for the same closed form.
-    /// ⭐For a blend that IS a cubic in this family — `Linear`, and `Curved` at a centred midpoint —
+    /// ⭐For a blend that IS a cubic in this family — `Linear`, and `Curved` at a centered midpoint —
     /// the model contains the answer, so the fit is exact and converting moves no pixels.
     pub fn fit_to(sample: impl Fn(f32) -> f32) -> [f32; 4] {
         const N: usize = 64;
@@ -219,7 +219,7 @@ fn bez_slope(a: f32, b: f32, u: f32) -> f32 {
 ///
 /// ⚠`x1` and `x2` are clamped into `0..1`, which is what guarantees `x(u)` is monotone and the
 /// solve therefore has exactly one answer. `y1`/`y2` are deliberately NOT clamped: a curve that
-/// overshoots is a legitimate effect, and it is the COLOUR that gets clamped, not the factor —
+/// overshoots is a legitimate effect, and it is the COLOR that gets clamped, not the factor —
 /// clamping here would silently flatten the handle the user is dragging.
 pub fn bezier_ease(p: [f32; 4], t: f32) -> f32 {
     let (x1, x2) = (p[0].clamp(0.0, 1.0), p[2].clamp(0.0, 1.0));
@@ -291,7 +291,7 @@ pub enum Space {
 }
 
 impl Space {
-    /// GIMP's `.ggr` colouring-type number — a file format, like [`Blend::from_u8`].
+    /// GIMP's `.ggr` coloring-type number — a file format, like [`Blend::from_u8`].
     pub fn from_u8(v: u8) -> Self {
         match v {
             1 => Space::HsvCcw,
@@ -326,7 +326,7 @@ pub struct Segment {
 }
 
 impl Segment {
-    /// A linear RGB segment with the midpoint centred — what every format that is "just stops"
+    /// A linear RGB segment with the midpoint centered — what every format that is "just stops"
     /// (`.ugr`, swatch lists, our presets, the gradient editor) maps to.
     pub fn linear(left: f32, right: f32, left_color: [f32; 4], right_color: [f32; 4]) -> Self {
         Self {
@@ -340,7 +340,7 @@ impl Segment {
         }
     }
 
-    /// A constant-colour segment — a band.
+    /// A constant-color segment — a band.
     ///
     /// ⭐⭐This is the one that makes `.map` import faithful. Fractint indexes a table with **no**
     /// interpolation, and the 37 hard jumps in `default.map` ARE the classic look; importing it as
@@ -358,12 +358,12 @@ impl Segment {
     /// How far along the blend `t` sits: `0` at the left endpoint, `1` at the right.
     ///
     /// ⭐**This is the curve itself, and the editor's preview must draw THIS** rather than an
-    /// idealised shape. Two of GIMP's five are deliberately not midpoint-symmetric — a
+    /// idealized shape. Two of GIMP's five are deliberately not midpoint-symmetric — a
     /// sphere-increasing segment reads **0.866** at its halfway point, not 0.5 — so a prettified
     /// preview would misrepresent them. Exposing the real function makes the preview correct by
     /// construction instead of by a second implementation that can drift.
     pub fn factor(&self, t: f32) -> f32 {
-        // GIMP normalises position and midpoint into the segment's own 0..1 before applying the
+        // GIMP normalizes position and midpoint into the segment's own 0..1 before applying the
         // blend function, so the same `mid` means the same thing in a wide and a narrow segment.
         let len = self.right - self.left;
         let (mid, pos) = if len < f32::EPSILON {
@@ -414,11 +414,11 @@ impl Segment {
         sat(self.left_color) < 1e-3 || sat(self.right_color) < 1e-3
     }
 
-    /// Colour at `t`, which the caller has already established lies in `left..=right`.
+    /// Color at `t`, which the caller has already established lies in `left..=right`.
     fn eval(&self, t: f32) -> [f32; 4] {
         let f = self.factor(t);
         let (a, b) = (self.left_color, self.right_color);
-        // Alpha is always a straight lerp; only the colour triple respects `space`.
+        // Alpha is always a straight lerp; only the color triple respects `space`.
         let alpha = a[3] + (b[3] - a[3]) * f;
         let rgb = match self.space {
             Space::Rgb => [
@@ -445,8 +445,8 @@ impl Segment {
         };
         // ⭐**The clamp that lets a Bézier overshoot safely.** `factor` may return outside `0..1`
         // for kind 5 — that is the point of allowing the handles out of the box, and it
-        // extrapolates past an endpoint colour. Clamping HERE rather than in `factor` keeps the
-        // curve the user drew intact while guaranteeing an in-gamut colour.
+        // extrapolates past an endpoint color. Clamping HERE rather than in `factor` keeps the
+        // curve the user drew intact while guaranteeing an in-gamut color.
         // ⚠**A no-op for kinds 0–4**, whose factor is always in `0..1` between in-range endpoints —
         // which is what keeps this change at zero drift for every existing gradient.
         let c = |v: f32| v.clamp(0.0, 1.0);
@@ -509,7 +509,7 @@ pub fn hsv_to_rgb(h: f32, s: f32, v: f32) -> [f32; 3] {
 /// A named gradient: segments covering `0..1`, ascending and contiguous.
 ///
 /// The constructors below all produce full coverage; a gradient assembled by hand need not, and
-/// [`Gradient::eval`] then clamps to the nearest endpoint rather than inventing a colour.
+/// [`Gradient::eval`] then clamps to the nearest endpoint rather than inventing a color.
 #[derive(Clone, Debug, Default, PartialEq)]
 pub struct Gradient {
     pub name: String,
@@ -520,8 +520,8 @@ impl Gradient {
     /// From `(position, RGB)` stops — our presets, the gradient editor, `.ugr`.
     ///
     /// Stops are sorted, and coverage is extended to `0..1` with flat segments if the outermost
-    /// stops do not reach the ends. ⚠That extension is a deliberate behaviour change from the old
-    /// shader walk, which fell back to the FIRST stop's colour for any `t` past the LAST stop —
+    /// stops do not reach the ends. ⚠That extension is a deliberate behavior change from the old
+    /// shader walk, which fell back to the FIRST stop's color for any `t` past the LAST stop —
     /// a wrap-around no one asked for. Clamping to the nearest end is what every other gradient
     /// implementation does and what the editor's own preview implies.
     pub fn from_stops(name: impl Into<String>, stops: &[(f32, [f32; 3])]) -> Self {
@@ -537,7 +537,7 @@ impl Gradient {
                 }
                 for w in s.windows(2) {
                     // A zero-width span would divide by zero in `eval`; drop it and keep the
-                    // later colour, which is what a sorted duplicate position means.
+                    // later color, which is what a sorted duplicate position means.
                     if w[1].0 > w[0].0 {
                         segments.push(Segment::linear(w[0].0, w[1].0, rgba(w[0].1), rgba(w[1].1)));
                     }
@@ -564,7 +564,7 @@ impl Gradient {
         Self::from_stops(name, &stops)
     }
 
-    /// From an ordered colour list with no positions — swatch lists, pasted hex, `.ase` / `.cs`.
+    /// From an ordered color list with no positions — swatch lists, pasted hex, `.ase` / `.cs`.
     /// Evenly spaced, linearly blended.
     pub fn from_colors(name: impl Into<String>, colors: &[[f32; 3]]) -> Self {
         if colors.len() < 2 {
@@ -579,7 +579,7 @@ impl Gradient {
         Self::from_stops(name, &stops)
     }
 
-    /// From an ordered colour list read as a **lookup table** — one flat band per entry, no
+    /// From an ordered color list read as a **lookup table** — one flat band per entry, no
     /// interpolation. This is Fractint/KF `.map` semantics, and the reason [`Segment::flat`]
     /// exists.
     pub fn from_bands(name: impl Into<String>, colors: &[[f32; 3]]) -> Self {
@@ -599,7 +599,7 @@ impl Gradient {
     ///
     /// Ultra Fractal stores a `rotation=` with each gradient, and a palette is cycled anyway, so
     /// this is a rotation of a RING rather than a slide of a strip: a segment that ends up
-    /// straddling the seam is **split in two** and the halves re-evaluated, so no colour is lost
+    /// straddling the seam is **split in two** and the halves re-evaluated, so no color is lost
     /// and no flat clamp is invented at the ends. Sorting alone would have silently dropped the
     /// straddling segment's far half.
     ///
@@ -624,7 +624,7 @@ impl Gradient {
                 out.push(Self::shifted(seg, by - 1.0, seg.left, seg.right));
             } else {
                 // Straddles the seam: keep [left, cut) where it is and wrap [cut, right) to the
-                // front, evaluating the split colour so the join is exact.
+                // front, evaluating the split color so the join is exact.
                 let cut = seg.left + (1.0 - l);
                 out.push(Self::shifted(seg, by, seg.left, cut));
                 out.push(Self::shifted(seg, by - 1.0, cut, seg.right));
@@ -633,9 +633,9 @@ impl Gradient {
         out.sort_by(|a, b| a.left.total_cmp(&b.left));
         // ⚠**Snap the two ends to exact 0 and 1.** `seg.left + by - 1.0` reaches 0 only up to f32
         // rounding, so the first segment can start at 6e-8 and the last end at 0.99999994 — leaving
-        // slivers `eval` answers with the nearest endpoint colour instead of the covered gradient.
+        // slivers `eval` answers with the nearest endpoint color instead of the covered gradient.
         // At the seam, which is exactly where a rotation puts the user's eye, that is a hairline of
-        // the wrong colour. ⚠Endpoints only: shifting the whole segment would move its colours.
+        // the wrong color. ⚠Endpoints only: shifting the whole segment would move its colors.
         if let Some(f) = out.first_mut() {
             f.left = 0.0;
             f.mid = f.mid.clamp(f.left, f.right);
@@ -679,7 +679,7 @@ impl Gradient {
             None => return,
         };
         let (a, b) = (self.segments[i - 1], self.segments[i]);
-        // Cheap rejects first: a join carrying a colour edge, or two different curves, is content.
+        // Cheap rejects first: a join carrying a color edge, or two different curves, is content.
         if a.blend != b.blend || a.space != b.space {
             return;
         }
@@ -708,9 +708,9 @@ impl Gradient {
         self.segments.remove(i);
     }
 
-    /// One segment's `[from, to]` sub-span, moved by `by`. The endpoint colours are re-evaluated
+    /// One segment's `[from, to]` sub-span, moved by `by`. The endpoint colors are re-evaluated
     /// at the cut so a split segment's halves meet exactly; blend and space carry over, and the
-    /// midpoint is re-centred because a partial span no longer has the original's midpoint in it.
+    /// midpoint is re-centered because a partial span no longer has the original's midpoint in it.
     fn shifted(seg: &Segment, by: f32, from: f32, to: f32) -> Segment {
         let (a, b) = (seg.eval(from), seg.eval(to));
         let (l, r) = (from + by, to + by);
@@ -726,7 +726,7 @@ impl Gradient {
         }
     }
 
-    /// Colour at `t`. Outside the covered range, the nearest endpoint colour; `t` is clamped to
+    /// Color at `t`. Outside the covered range, the nearest endpoint color; `t` is clamped to
     /// `0..1` first (the caller has already taken `fract`).
     pub fn eval(&self, t: f32) -> [f32; 4] {
         let Some(first) = self.segments.first() else {
@@ -739,7 +739,7 @@ impl Gradient {
         for seg in &self.segments {
             if t <= seg.right {
                 // A gap between segments (only possible in a hand-assembled gradient) resolves to
-                // this segment's left colour, which is the nearest covered value.
+                // this segment's left color, which is the nearest covered value.
                 return if t >= seg.left { seg.eval(t) } else { seg.left_color };
             }
         }
@@ -750,12 +750,12 @@ impl Gradient {
     ///
     /// ⭐**A hard jump between two segments becomes a DUPLICATE POSITION**, which is how every
     /// gradient editor expresses an edge and what [`Self::from_stops`] reads back (a zero-width
-    /// span contributes no segment, so the colour simply changes there). Without it a rotated
+    /// span contributes no segment, so the color simply changes there). Without it a rotated
     /// gradient's seam — a real discontinuity, since a palette that is not seamless has one —
     /// would be quietly smoothed into a ramp across a whole segment. That was caught by the
     /// round-trip test, not by reading the code.
     ///
-    /// ⚠**Exact only for a linear-RGB gradient with centred midpoints**, which is what
+    /// ⚠**Exact only for a linear-RGB gradient with centered midpoints**, which is what
     /// [`Self::from_stops`], the `.ugr` importer and [`Self::rotated`] produce. A `.ggr` with
     /// curved blends, HSV sweeps or shifted midpoints is a SUPERSET of a stop list, so this drops
     /// what a stop list cannot hold. It exists because the app persists a custom palette as stops;
@@ -786,11 +786,11 @@ impl Gradient {
     /// P1 made the editor segment-native — after which EVERY custom gradient has segments, so it
     /// fired for one the user had just copied from a preset and offered to convert it into what it
     /// already was. What actually matters is whether any segment carries something a stop list
-    /// cannot hold: a non-linear blend, a hue sweep, or an off-centre midpoint.
+    /// cannot hold: a non-linear blend, a hue sweep, or an off-center midpoint.
     ///
-    /// ⚠The midpoint test is a TOLERANCE, not equality. A centred midpoint is stored as
+    /// ⚠The midpoint test is a TOLERANCE, not equality. A centered midpoint is stored as
     /// `left + 0.5 * (right - left)` and survives f32 arithmetic, a session round trip and a
-    /// segment being re-spanned by a neighbouring drag; an `==` here would report a plain dragged
+    /// segment being re-spanned by a neighboring drag; an `==` here would report a plain dragged
     /// gradient as rich for the sake of one ulp.
     pub fn is_stop_expressible(&self) -> bool {
         self.segments.iter().all(|s| {
@@ -809,7 +809,7 @@ impl Gradient {
         })
     }
 
-    /// Does the colour at `1.0` already equal the colour at `0.0`?
+    /// Does the color at `1.0` already equal the color at `0.0`?
     ///
     /// ⭐**The property that decides whether a CYCLED palette has a visible seam.** The renderer
     /// takes `fract()` of the palette coordinate, so `t = 1` and `t = 0` are adjacent pixels on
@@ -826,9 +826,9 @@ impl Gradient {
     /// Force the end to match the start, so a cycled palette has no seam.
     ///
     /// ⚠**The END moves, not the start.** Position 0 is where the eye lands first and where a
-    /// preset's defining colour usually sits, so pulling the start toward the end would change the
+    /// preset's defining color usually sits, so pulling the start toward the end would change the
     /// gradient's identity to fix its join. Moving the end is the smaller edit and the reversible
-    /// one — the user can always recolour it afterwards.
+    /// one — the user can always recolor it afterwards.
     /// ⚠Alpha travels with it: a seam in opacity is a seam.
     pub fn make_seamless(&mut self) {
         let Some(&first) = self.segments.first() else {
@@ -839,7 +839,7 @@ impl Gradient {
         }
     }
 
-    /// Rotate the whole gradient by `delta` turns, wrapping at the seam. `+0.25` moves every colour
+    /// Rotate the whole gradient by `delta` turns, wrapping at the seam. `+0.25` moves every color
     /// a quarter of the way toward 1.0; what falls off the end comes back at 0.0.
     ///
     /// ⭐⭐**A palette is CYCLED, so it is topologically a circle and rotating it is a meaningful
@@ -869,11 +869,11 @@ impl Gradient {
     //
     // ⭐**The gradient editor edits SEGMENTS, and a "stop" is a segment boundary.** Before P1 the
     // editor owned a flat `[pos, r, g, b]` list and every edit DESTROYED the segment gradient
-    // beside it, so a curve, a colour space or a midpoint could only ever arrive by importing
+    // beside it, so a curve, a color space or a midpoint could only ever arrive by importing
     // somebody else's `.ggr`. These operations are the replacement: each one preserves the blend
-    // function, the colour space and the midpoint FRACTION of every segment it does not remove.
+    // function, the color space and the midpoint FRACTION of every segment it does not remove.
     //
-    // ⭐⭐**Zero drift is the contract.** On a gradient of `Linear`/`Rgb` segments with centred
+    // ⭐⭐**Zero drift is the contract.** On a gradient of `Linear`/`Rgb` segments with centered
     // midpoints — which is exactly what `from_stops` produces, i.e. every preset, every pasted
     // palette and every session written before this — each operation gives the same gradient
     // `from_stops` would give for the edited stop list. `edit_tests.rs` asserts that directly.
@@ -885,8 +885,8 @@ impl Gradient {
 
     /// Stop `i` as `(position, RGB)`.
     ///
-    /// ⚠For a gradient with a hard edge the two sides of a boundary hold different colours; this
-    /// reports the LEFT-hand one (the colour arriving at the boundary), which is what a strip marker
+    /// ⚠For a gradient with a hard edge the two sides of a boundary hold different colors; this
+    /// reports the LEFT-hand one (the color arriving at the boundary), which is what a strip marker
     /// sits on. [`Self::to_stops`] is the lossless view and emits both.
     pub fn stop(&self, i: usize) -> Option<(f32, [f32; 3])> {
         let rgb = |c: [f32; 4]| [c[0], c[1], c[2]];
@@ -902,11 +902,11 @@ impl Gradient {
         }
     }
 
-    /// Recolour stop `i`, updating both segments that meet there.
+    /// Recolor stop `i`, updating both segments that meet there.
     ///
-    /// ⚠This deliberately CLOSES a hard edge at that boundary: setting one colour on a stop the user
+    /// ⚠This deliberately CLOSES a hard edge at that boundary: setting one color on a stop the user
     /// sees as one marker must not leave the other side untouched, or the swatch would disagree with
-    /// the picture. Splitting a boundary back into two colours is a separate, explicit action.
+    /// the picture. Splitting a boundary back into two colors is a separate, explicit action.
     pub fn set_stop_color(&mut self, i: usize, rgb: [f32; 3]) {
         let n = self.segments.len();
         if n == 0 || i > n {
@@ -923,14 +923,14 @@ impl Gradient {
         }
     }
 
-    /// Move stop `i` to `pos`, clamped strictly inside its neighbours.
+    /// Move stop `i` to `pos`, clamped strictly inside its neighbors.
     ///
     /// ⭐**Midpoint FRACTIONS are preserved, not midpoint positions.** A segment whose midpoint sits
-    /// halfway must still sit halfway after its span moves — otherwise dragging a neighbouring stop
-    /// would silently reshape a segment the user did not touch, and a centred (default) segment
+    /// halfway must still sit halfway after its span moves — otherwise dragging a neighboring stop
+    /// would silently reshape a segment the user did not touch, and a centered (default) segment
     /// would stop matching what `from_stops` produces.
     /// ⚠The two end stops (0 and `N`) do not move: the gradient covers `0..1` by contract, and a
-    /// gradient that stopped short would render a flat clamp at the end rather than the colour the
+    /// gradient that stopped short would render a flat clamp at the end rather than the color the
     /// user placed there.
     pub fn set_stop_position(&mut self, i: usize, pos: f32) {
         let n = self.segments.len();
@@ -951,7 +951,7 @@ impl Gradient {
 
     /// Insert a stop at `pos`, splitting the segment that contains it. Returns the new stop index.
     ///
-    /// Both halves inherit the parent's blend and colour space, and the split colour is EVALUATED so
+    /// Both halves inherit the parent's blend and color space, and the split color is EVALUATED so
     /// the boundary joins exactly.
     /// ⚠**Exact for a `Linear`/`Rgb` segment; approximate for a curved or HSV one** — half of a
     /// curve is not the same curve, so re-fitting the parent's blend to each half changes the shape
@@ -980,10 +980,10 @@ impl Gradient {
 
     /// Remove interior stop `i`, merging the two segments that meet there into one.
     ///
-    /// ⚠**The LEFT segment's blend and colour space win**, and the merged midpoint keeps the left
+    /// ⚠**The LEFT segment's blend and color space win**, and the merged midpoint keeps the left
     /// segment's fraction. Something has to, and choosing the left matches reading order; the
     /// alternative (whichever segment is wider) is defensible and would be a surprise, since the
-    /// answer would change as the user dragged a neighbour.
+    /// answer would change as the user dragged a neighbor.
     /// ⚠End stops cannot be removed — see [`Self::set_stop_position`].
     pub fn remove_stop(&mut self, i: usize) {
         let n = self.segments.len();
@@ -1009,7 +1009,7 @@ impl Gradient {
 
     /// Evaluate into an `n`-entry table.
     ///
-    /// ⭐**Entry `i` is the gradient at `(i + 0.5) / n`** — texel-centre sampling, one convention
+    /// ⭐**Entry `i` is the gradient at `(i + 0.5) / n`** — texel-center sampling, one convention
     /// for both fetch modes. The renderer's smooth fetch is therefore `x = fract(t) * n - 0.5`
     /// with the index wrapping mod `n`, and its flat fetch is `floor(fract(t) * n)`. Sampling at
     /// `i / (n - 1)` instead would make the flat fetch land half a band off and quietly shift
@@ -1023,8 +1023,8 @@ impl Gradient {
     }
 }
 
-/// Where the midpoint sits inside a segment, as a fraction of its span. `0.5` is centred, which is
-/// what every default segment is. A zero-width span reports centred rather than dividing by zero.
+/// Where the midpoint sits inside a segment, as a fraction of its span. `0.5` is centered, which is
+/// what every default segment is. A zero-width span reports centered rather than dividing by zero.
 fn span_fraction(seg: &Segment) -> f32 {
     let len = seg.right - seg.left;
     if len.abs() < f32::EPSILON {
@@ -1043,7 +1043,7 @@ fn set_span(seg: &mut Segment, left: f32, right: f32) {
     seg.mid = left + frac * (right - left);
 }
 
-/// An RGB triple as RGBA with opaque alpha — the internal colour shape is RGBA because `.ggr`
+/// An RGB triple as RGBA with opaque alpha — the internal color shape is RGBA because `.ggr`
 /// carries per-endpoint alpha and dropping it at import would be unrecoverable.
 fn rgba(c: [f32; 3]) -> [f32; 4] {
     [c[0], c[1], c[2], 1.0]
@@ -1053,7 +1053,7 @@ fn rgba(c: [f32; 3]) -> [f32; 4] {
 /// Write a gradient as a GIMP `.ggr` file — the interchange format for "save and share".
 ///
 /// ⭐**The internal model IS GIMP's**, so this is a formatter rather than a conversion: every
-/// midpoint, blend curve and colour space survives, which is what makes a saved gradient openable
+/// midpoint, blend curve and color space survives, which is what makes a saved gradient openable
 /// in GIMP, Krita, Inkscape and back in here without loss.
 ///
 /// ⚠⚠**Blend kind 5 (our Bézier) has no `.ggr` number, and this is where that costs something.**
@@ -1125,7 +1125,7 @@ pub fn bezier_is_identity(p: [f32; 4]) -> bool {
     })
 }
 
-/// A baked palette: `entries.len()` colours plus how the renderer should fetch between them.
+/// A baked palette: `entries.len()` colors plus how the renderer should fetch between them.
 ///
 /// ⭐⭐**`smooth` is not a style preference, it is fidelity.** Interpolating between entries is what
 /// gives the palette position resolution a deep view needs at a high `cycle`; nearest-fetching is
@@ -1167,8 +1167,8 @@ impl Lut {
     /// Cyclic running integral of the entries, for exact box-filtering (analytic palette
     /// anti-aliasing). Length `n + 1`: `psum[0] = 0`, `psum[k] = Σ entries[0..k]`, and
     /// `psum[n]` is the whole-palette total. Treating each entry `i` as a unit-width texel
-    /// holding a constant colour, `psum` is the antiderivative sampled at the texel boundaries,
-    /// so the average colour over any sub-range is one subtraction. This is the exact companion
+    /// holding a constant color, `psum` is the antiderivative sampled at the texel boundaries,
+    /// so the average color over any sub-range is one subtraction. This is the exact companion
     /// to [`Lut::sample`] and is what the shader reads (appended after the LUT at binding 3).
     pub fn prefix_sum(&self) -> Vec<[f32; 4]> {
         let n = self.entries.len();
@@ -1184,10 +1184,10 @@ impl Lut {
         ps
     }
 
-    /// Box-average of the palette over a footprint `width` **cycles** wide, centred at `t`.
+    /// Box-average of the palette over a footprint `width` **cycles** wide, centered at `t`.
     /// This is the analytic anti-aliasing the renderer applies per pixel: `width` is how much
     /// of the palette a single pixel spans, so wide-footprint (undersampled) pixels get the
-    /// mean colour over what they cover instead of a point sample that aliases into speckle.
+    /// mean color over what they cover instead of a point sample that aliases into speckle.
     ///
     /// Continuous in `width` by construction, which is what keeps a live/rendered zoom free of
     /// pops: `width ≤ 1 texel` returns exactly [`Lut::sample`] (a box one texel wide equals the

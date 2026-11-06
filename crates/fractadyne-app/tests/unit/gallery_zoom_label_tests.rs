@@ -13,8 +13,8 @@ fn a_depth_past_the_range_of_a_double_is_labelled_not_infinite() {
         ("1.2e500", "e500×"),
     ] {
         let got = gallery_zoom_label(field);
-        assert!(!got.contains("inf"), "{field} labelled {got}");
-        assert!(got.ends_with(want), "{field} labelled {got}, wanted …{want}");
+        assert!(!got.contains("inf"), "{field} labeled {got}");
+        assert!(got.ends_with(want), "{field} labeled {got}, wanted …{want}");
     }
     // And the mantissa survives, not just the exponent.
     assert!(gallery_zoom_label("1.584047e1008").starts_with("1.58"));
@@ -43,7 +43,7 @@ fn every_label_that_was_already_right_is_unchanged() {
 fn an_unreadable_field_gives_an_empty_label_as_before() {
     for field in ["", "   ", "deep", "e500", "-1e5", "0"] {
         let got = gallery_zoom_label(field);
-        assert!(!got.contains("inf") && !got.contains("NaN"), "{field:?} labelled {got}");
+        assert!(!got.contains("inf") && !got.contains("NaN"), "{field:?} labeled {got}");
     }
     assert_eq!(gallery_zoom_label(""), "");
     assert_eq!(gallery_zoom_label("deep"), "");

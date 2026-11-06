@@ -187,7 +187,7 @@ pub(crate) struct StripJob {
     /// into its render folder first, so a client whose own plan differs is refused by the renderer
     /// (`write_or_check_manifest`) instead of rendering another dive.
     pub(crate) manifest: String,
-    /// The dive's centre, as the viewport's text.
+    /// The dive's center, as the viewport's text.
     pub(crate) center_re: String,
     pub(crate) center_im: String,
     /// Where it ends (`--zoom-log2`) and starts (`--expmap-start`), log2 magnification.
@@ -206,18 +206,18 @@ pub(crate) struct StripJob {
     pub(crate) bla: bool,
 }
 
-/// A number as the command line writes one (`-1.19e-2`): what a centre may be.
+/// A number as the command line writes one (`-1.19e-2`): what a center may be.
 fn plain_number(s: &str) -> bool {
     !s.is_empty() && s.len() <= 100_000 && s.chars().all(|c| c.is_ascii_digit() || matches!(c, '.' | 'e' | 'E' | '+' | '-')) && s.chars().any(|c| c.is_ascii_digit())
 }
 
 impl StripJob {
-    /// The strip job's own checks (beside [`Bundle::check`]'s): a centre that is a number, depths,
+    /// The strip job's own checks (beside [`Bundle::check`]'s): a center that is a number, depths,
     /// a frame size and oversampling the app accepts, an iteration count the policy allows, and a
     /// manifest that is a manifest.
     fn check(&self, policy: &fractadyne_farm::proto::Policy) -> Result<(), String> {
         if !plain_number(&self.center_re) || !plain_number(&self.center_im) {
-            return Err("the dive's centre is not a number".into());
+            return Err("the dive's center is not a number".into());
         }
         if !(self.zoom_log2.is_finite() && self.start_log2.is_finite() && self.start_log2 >= 0.0 && self.zoom_log2 > self.start_log2 && self.zoom_log2 <= 1e7) {
             return Err("the dive's depths are out of range".into());
@@ -362,7 +362,7 @@ const REFERENCE_WORK_EVERY: std::time::Duration = std::time::Duration::from_secs
 /// ([`fractadyne_core::reference_steps`], counted as a build runs), for its client to pass on
 /// ([`fractadyne_farm::proto::Heartbeat::reference_work_ms`]). A deep reference finishes no frame
 /// for many minutes, and the controller's stall rule took that for a hang: at 9.98e60205× every
-/// client's 7–8 minute build was cancelled at 300 s and started again (2026-10-29). Only the
+/// client's 7–8 minute build was canceled at 300 s and started again (2026-10-29). Only the
 /// reference build counts, not a GPU pass: frame times are what the stall rule already measures,
 /// and a frame that loops on passes forever must still look stalled. Stops when dropped.
 pub(crate) struct ReferenceWorkLines {
@@ -515,7 +515,7 @@ pub(crate) fn spawn_child(args: &[String], config_dir: &Path) -> Result<std::pro
     spawn_in(args, Some(config_dir))
 }
 
-/// [`spawn_child`] in THIS process's own configuration (its session, so its colouring): a
+/// [`spawn_child`] in THIS process's own configuration (its session, so its coloring): a
 /// controller's own step, such as assembling a zoom video once its strips are in.
 pub(crate) fn spawn_child_here(args: &[String]) -> Result<std::process::Child, String> {
     spawn_in(args, None)

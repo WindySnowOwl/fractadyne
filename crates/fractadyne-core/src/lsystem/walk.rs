@@ -10,7 +10,7 @@ use std::f64::consts::TAU;
 /// A view of the world: what the walk culls to.
 #[derive(Clone, Copy, Debug, PartialEq)]
 pub struct View {
-    /// The view's centre, world units.
+    /// The view's center, world units.
     pub centre: [f64; 2],
     /// World units per pixel.
     pub upp: f64,
@@ -22,11 +22,11 @@ pub struct View {
 }
 
 impl View {
-    /// A view that sees everything, in world units (centre 0, a pixel per unit): for a whole
+    /// A view that sees everything, in world units (center 0, a pixel per unit): for a whole
     /// picture.
     pub const EVERYTHING: View = View { centre: [0.0, 0.0], upp: 1.0, size: [f64::INFINITY; 2], margin: 0.0 };
 
-    /// Whether a disc at `p` (pixels from the centre) of radius `r` meets the view.
+    /// Whether a disc at `p` (pixels from the center) of radius `r` meets the view.
     pub(crate) fn meets(&self, p: [f64; 2], r: f64) -> bool {
         let dx = (p[0].abs() - 0.5 * self.size[0]).max(0.0);
         let dy = (p[1].abs() - 0.5 * self.size[1]).max(0.0);
@@ -37,7 +37,7 @@ impl View {
 /// One segment to draw.
 #[derive(Clone, Copy, Debug, PartialEq)]
 pub struct Segment {
-    /// The ends, pixels from the view's centre (y up).
+    /// The ends, pixels from the view's center (y up).
     pub a: [f64; 2],
     pub b: [f64; 2],
     /// Where along the curve it is: the index of the first segment it stands for…
@@ -48,7 +48,7 @@ pub struct Segment {
     pub depth: u16,
     /// The direction the turtle faced, in turns, `[0, 1)`.
     pub heading: f64,
-    /// The colour index.
+    /// The color index.
     pub colour: i32,
 }
 
@@ -75,8 +75,8 @@ pub struct WalkStats {
     pub stopped: bool,
 }
 
-/// A filled polygon (`{ … }`): its vertices in the view's pixels (y up, from its centre), and
-/// what colours it, as of where it started.
+/// A filled polygon (`{ … }`): its vertices in the view's pixels (y up, from its center), and
+/// what colors it, as of where it started.
 #[derive(Clone, Debug, PartialEq)]
 pub struct Polygon {
     pub pts: Vec<[f64; 2]>,
@@ -125,7 +125,7 @@ struct Frame {
 const ONE: u16 = NONE - 1;
 
 /// Where a [`walk_from`] starts: one symbol rewritten `depth` times, with the turtle as given (in
-/// the view's pixels, y up, from its centre). The deep walk hands each subtree small enough for
+/// the view's pixels, y up, from its center). The deep walk hands each subtree small enough for
 /// `f64` to one of these.
 #[derive(Clone, Copy, Debug, PartialEq)]
 pub struct SubStart {

@@ -117,7 +117,7 @@ pub(crate) fn set_source(key: u64) {
     SOURCE.with(|s| s.set(key));
 }
 
-/// [`compiling`] for a pipeline that a repeat can be recognised by: `name` (label and entry point)
+/// [`compiling`] for a pipeline that a repeat can be recognized by: `name` (label and entry point)
 /// and `shape` (constants and formats), with this thread's shader source and card.
 pub(crate) fn compiling_keyed<T>(name: &str, shape: &str, f: impl FnOnce() -> T) -> T {
     let start = now_ms();
@@ -127,7 +127,7 @@ pub(crate) fn compiling_keyed<T>(name: &str, shape: &str, f: impl FnOnce() -> T)
     out
 }
 
-/// What recognises a repeat: the pipeline (`name`, `shape`) with this thread's shader source and card.
+/// What recognizes a repeat: the pipeline (`name`, `shape`) with this thread's shader source and card.
 fn repeat_key(name: &str, shape: &str) -> String {
     format!("{name}|{shape}|{:016x}|{:016x}", SOURCE.with(|s| s.get()), ADAPTER.with(|a| a.get()))
 }

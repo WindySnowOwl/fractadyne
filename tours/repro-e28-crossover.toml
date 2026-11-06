@@ -9,7 +9,7 @@
 #   +121.393s  frame 4303: dt=1038ms  mode=2 steps=5.909e8 budget=6.000e8 … bla_skip=0
 #   +122.687s  DEVICE LOST (Unknown)
 #
-# The centre below is verbatim from that report's .fdn block, so this crosses at the same place.
+# The center below is verbatim from that report's .fdn block, so this crosses at the same place.
 #
 # ⚠THE SHALLOW HOLD IS LOAD-BEARING, not padding. The kill needs a CONVERGED mode-0 budget
 # (7.785e10) to exist at the moment of the switch — that is what the ×1.5 growth then walks up from
@@ -41,7 +41,7 @@ id = "report"
 re = "3.56347746013043822145931349632498083368187522594299004088899999999999999999999e-1"
 im = "6.551721978595704786747352603319278832581733349789635038606000000000000000000030000000000000000001e-1"
 
-[[keyframe]]            # already on the target centre, well inside mode 0 (df32)
+[[keyframe]]            # already on the target center, well inside mode 0 (df32)
 id = "approach"
 t = 0.0
 fractal = "Mandelbrot"

@@ -21,7 +21,7 @@ impl crate::FractadyneApp {
     /// LAYER PAINTER, not an `Area` — the painter draws on top and senses no input, so it neither
     /// blocks `--uitest`'s synthetic clicks nor reflows the layout. It is egui, outside the fractal
     /// render target, so nothing the goldens / F3 corpus / `--livetest` compare can see it; it does
-    /// appear in `--uitest` screenshots (which capture the whole frame), correctly labelling that
+    /// appear in `--uitest` screenshots (which capture the whole frame), correctly labeling that
     /// bundle as a test — `--no-test-banner` removes it there when a pristine capture is wanted.
     pub(crate) fn draw_test_banner(&self, ctx: &egui::Context) {
         let Some(mode) = self.test_banner.as_deref() else {

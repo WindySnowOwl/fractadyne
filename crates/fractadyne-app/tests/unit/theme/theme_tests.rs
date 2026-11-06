@@ -1,6 +1,6 @@
 use super::*;
 
-/// WCAG relative luminance of an opaque colour (sRGB, gamma-decoded).
+/// WCAG relative luminance of an opaque color (sRGB, gamma-decoded).
 fn relative_luminance(c: egui::Color32) -> f32 {
     fn chan(v: u8) -> f32 {
         let s = v as f32 / 255.0;
@@ -13,7 +13,7 @@ fn relative_luminance(c: egui::Color32) -> f32 {
     0.2126 * chan(c.r()) + 0.7152 * chan(c.g()) + 0.0722 * chan(c.b())
 }
 
-/// WCAG contrast ratio between two opaque colours, 1.0 (identical) to 21.0 (black on white).
+/// WCAG contrast ratio between two opaque colors, 1.0 (identical) to 21.0 (black on white).
 ///
 /// Used to hold the theme to a floor rather than to a taste: "sufficient contrast to read every
 /// label" is checkable, "consistent theme throughout" is not.
@@ -90,7 +90,7 @@ fn theme_contrast_meets_minimum() {
         }
     }
     // The measure itself is not vacuous: the extremes are the known WCAG endpoints, and a
-    // colour against itself is 1:1 — without this a ratio function that always returned 21
+    // color against itself is 1:1 — without this a ratio function that always returned 21
     // would satisfy every assertion above.
     let (black, white) = (egui::Color32::BLACK, egui::Color32::WHITE);
     assert!((contrast_ratio(black, white) - 21.0).abs() < 0.01);
@@ -98,7 +98,7 @@ fn theme_contrast_meets_minimum() {
 }
 
 
-/// The formula editor's depth-coloured parentheses are TEXT on the text field's backing, so they get
+/// The formula editor's depth-colored parentheses are TEXT on the text field's backing, so they get
 /// the body-text floor there; and they exist to be told apart, from each other and from the text
 /// around them.
 #[test]
@@ -110,7 +110,7 @@ fn formula_parentheses_read_on_the_text_field_and_differ() {
         for (i, &c) in colours.iter().enumerate() {
             let r = contrast_ratio(c, p.window);
             assert!(r >= 4.5, "{name}: the depth-{i} parenthesis on the text field is {r:.2}:1");
-            assert!(dist(c, p.text) >= 120, "{name}: depth {i} is too close to the text colour");
+            assert!(dist(c, p.text) >= 120, "{name}: depth {i} is too close to the text color");
             for (j, &d) in colours.iter().enumerate().skip(i + 1) {
                 assert!(dist(c, d) >= 120, "{name}: depths {i} and {j} are too alike ({})", dist(c, d));
             }
@@ -157,18 +157,18 @@ fn semantic_colours_are_legible_on_every_widget_surface() {
         }
         // ⭐⭐**A measured fact worth stating rather than asserting on.** The green and the red
         // are nearly the same LIGHTNESS — 1.50:1 in dark, **1.04:1 in light** — so they differ
-        // almost entirely in hue. To a red-green colour-blind reader (about 8% of men) the two
+        // almost entirely in hue. To a red-green color-blind reader (about 8% of men) the two
         // marks are the same mark.
         //
         // ⛔This is deliberately NOT gated as a contrast failure: the two are never drawn on top
         // of each other, so a luminance ratio between them is the wrong measurement, and forcing
         // one apart would mean a washed-out red or a muddy green for no real gain.
-        // ⭐**The colour is REDUNDANT reinforcement; the SHAPE carries the meaning.** That is what
+        // ⭐**The color is REDUNDANT reinforcement; the SHAPE carries the meaning.** That is what
         // is asserted instead, and it is the property that actually has to hold.
         assert_ne!(
             crate::icons::CONFIRM,
             crate::icons::CLOSE,
-            "the affirmative and dismiss glyphs must differ in SHAPE — colour alone is not              readable for a red-green colour-blind user, and these two are within 1.04:1 of              each other in lightness in the light theme"
+            "the affirmative and dismiss glyphs must differ in SHAPE — color alone is not              readable for a red-green color-blind user, and these two are within 1.04:1 of              each other in lightness in the light theme"
         );
     }
     // The two themes must not accidentally share a value: the whole reason for a pair is that the

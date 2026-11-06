@@ -9,15 +9,15 @@ and why, and fixes the order of work.
 Three rules, each of them learned the hard way in this repo:
 
 1. **A check that cannot go red is not a gate.** Every enforcer below must be shown to fail when
-   the behaviour it guards is broken. Where a check compares two renders, BOTH renders must first
+   the behavior it guards is broken. Where a check compares two renders, BOTH renders must first
    be asserted non-degenerate — otherwise "these differ" passes trivially when one is blank, which
    is the exact shape of the bug the row exists to catch.
 2. **A test that stops existing cannot fail.** The step-to-enforcer mapping lives in
    `scripts/release_checklist.py` beside the step text, and a test asserts every named enforcer
    actually exists. A row claiming coverage it no longer has is worse than a row claiming none.
-3. **Automating a row does not delete it.** A machine can check that six colouring methods produce
+3. **Automating a row does not delete it.** A machine can check that six coloring methods produce
    six different coherent images; it cannot check that they are *attractive*. Rows that keep a
-   human judgement keep their place in the workbook, annotated with what the machine already
+   human judgment keep their place in the workbook, annotated with what the machine already
    covered so the reviewer knows what is left to look at.
 
 ## Classification
@@ -25,10 +25,10 @@ Three rules, each of them learned the hard way in this repo:
 | class | meaning | count |
 |---|---|---|
 | **A** | Fully enforced by a machine check; the manual row becomes a spot-check | 81 |
-| **B** | Partly enforced — the effect is checked, the gesture or the aesthetic judgement is not | 45 |
+| **B** | Partly enforced — the effect is checked, the gesture or the aesthetic judgment is not | 45 |
 | **R** | Run-gated — enforced by a RECORDED run of the release's binary (`run:`, see 5. below) | 5 |
 | **C** | Not automatable here; needs a human, a second machine, or a second display | 15 |
-| **P** | Process step, not a behaviour | 2 |
+| **P** | Process step, not a behavior | 2 |
 | *planned* | Declared, not yet implemented (`planned:`): OUTSTANDING, never counted as covered | 2 |
 
 (Counts as of 2026-10-15; `scripts/checklist_coverage.py` prints the live ones.)
@@ -54,8 +54,8 @@ Adds a small vocabulary of frame predicates, all computed from decoded RGB (neve
 - `coherent(frame)` — tonal spread and bucket count above a floor. Catches all-black, all-white
   and uniform-flat, which is what rows 48–53 actually mean by "coherent".
 - `differs(a, b)` — mean absolute RGB distance above a floor, **after** asserting both coherent.
-- `speckle(frame)` — mean absolute difference between neighbouring pixels. The aliasing measure
-  from the live-normalisation work; high means salt-and-pepper, low means smooth bands.
+- `speckle(frame)` — mean absolute difference between neighboring pixels. The aliasing measure
+  from the live-normalization work; high means salt-and-pepper, low means smooth bands.
 - `edge_energy(frame)` — for the anti-aliasing rows.
 
 ### 2. `uitest` layout invariants
@@ -156,7 +156,7 @@ Residue, stated rather than hidden:
 | 5 | A | On EVERY uitest step: each region has area, sits inside the window, and no two overlap; the canvas and status bar must exist. ⚠FOUR regions, not five — the menu bar and toolbar share one wrapped `TopBottomPanel`, so what a person sees as two rows is one rect. |
 | 6 | B | The glyph-coverage test already enforces "no placeholder boxes" — this row's exact failure mode, which shipped four times. Crispness stays human. |
 | 7 | B | Contrast-ratio test over the theme's fg/bg pairs against a minimum. Aesthetic consistency stays human. |
-| 8 | A | The readouts as DRAWN (recorded inside the bar's own `mono` helper, not rebuilt by the check): centre, cursor, zoom and iteration all present, zoom and iteration parse as numbers, and the cursor field keeps its reserved width even with no pointer — the field appearing and disappearing is what wrapped the bar in the beta.149 report. |
+| 8 | A | The readouts as DRAWN (recorded inside the bar's own `mono` helper, not rebuilt by the check): center, cursor, zoom and iteration all present, zoom and iteration parse as numbers, and the cursor field keeps its reserved width even with no pointer — the field appearing and disappearing is what wrapped the bar in the beta.149 report. |
 | 9 | C | Driving individual `CollapsingHeader`s is not something the harness does, and writing a second layout engine to check the first is not worth it. The panel's presence, area and non-overlap ARE covered by `layout-regions`; the row now says what is and is not automated. |
 | 10 | A | A uitest step opens the panel, measures the OPEN layout, hides it, and requires the canvas to gain the panel's width (985 → 1280 px for a 295 px panel) and the panel to stop laying out entirely. ⚠It measures the panel width during the step's own open phase — reading it at step setup got `None`, because every window step opens the home screen, which closes the panel. |
 
@@ -173,13 +173,13 @@ Residue, stated rather than hidden:
 
 | # | class | enforcer |
 |---|---|---|
-| 16–17 | B | Action test over `CLICK_ZOOM_FACTORS` (the list the tool draws, now named rather than inline): each factor multiplies magnification by exactly itself, in and out, and the clicked point becomes the view centre — checked in PIXELS, so it holds at 2^200. |
-| 18 | B | Action test on `TOOLBAR_ZOOM_{IN,OUT}_FACTOR`: in-then-out returns to the exact starting magnification (they are reciprocals) and the centre does not drift. |
-| 19 | B | `pan_pixels` moves the centre exactly `pixels × units_per_pixel` — the "1:1" claim, at several depths. |
+| 16–17 | B | Action test over `CLICK_ZOOM_FACTORS` (the list the tool draws, now named rather than inline): each factor multiplies magnification by exactly itself, in and out, and the clicked point becomes the view center — checked in PIXELS, so it holds at 2^200. |
+| 18 | B | Action test on `TOOLBAR_ZOOM_{IN,OUT}_FACTOR`: in-then-out returns to the exact starting magnification (they are reciprocals) and the center does not drift. |
+| 19 | B | `pan_pixels` moves the center exactly `pixels × units_per_pixel` — the "1:1" claim, at several depths. |
 | 20 | B | `zoom_at` keeps the complex point under the cursor fixed. Sharp invariant, already the right shape. |
 | 21 | A | Undo/redo unit test: walk N views, undo N, redo N, assert exact coordinates at every stop. |
-| 22–23 | A | Home / reset actions land on the documented default centre and magnification per formula. |
-| 24 | B | The minimap projection is pure: assert the marker position maps back to the view centre, and that `pan_complex` from a drag moves it in the matching direction (already pinned by `minimap_drag_signs`). |
+| 22–23 | A | Home / reset actions land on the documented default center and magnification per formula. |
+| 24 | B | The minimap projection is pure: assert the marker position maps back to the view center, and that `pan_complex` from a drag moves it in the matching direction (already pinned by `minimap_drag_signs`). |
 
 ### Deep zoom (25–32)
 
@@ -189,7 +189,7 @@ Residue, stated rather than hidden:
 | 26 | A | `RenderMode::select` partition is already unit-tested; add a rendered frame at each side of both boundaries, all coherent. |
 | 27 | A | Same ladder: precision must more than DOUBLE across it. ⚠Non-decreasing is not enough — a constant satisfies it, and that mutant (every rung pinned at 64 bits) passed the first draft green. ⚠Reference ORBIT LENGTH is reported but not gated: it is bounded by where the reference escapes, a property of the location, and across these rungs it legitimately goes 1501 → 3001 → 1558 → 619 → 20001. |
 | 28 | A | Corpus location 09 at 6.1e500× — past the f64 magnification range — must be coherent and carry a real reference orbit. Verified to go red under the beta.125 saturation mutant (`!mag.is_finite() → Direct`): orbit_len 0, a flat frame. |
-| 29–30 | B | Differential through `render_export_normalized` (the mapping the checkbox selects) against the plain export at 1.3e24×: neighbour step 76.27 → 21.87. ⚠The earlier note was right that toggling the field against `render_export` is vacuous — the fix was to call the normalized path, not the flag. Still partial: the LIVE auto-normalization gate (Nyquist on the local gradient) decides *when* to apply this, and that is not exercised. |
+| 29–30 | B | Differential through `render_export_normalized` (the mapping the checkbox selects) against the plain export at 1.3e24×: neighbor step 76.27 → 21.87. ⚠The earlier note was right that toggling the field against `render_export` is vacuous — the fix was to call the normalized path, not the flag. Still partial: the LIVE auto-normalization gate (Nyquist on the local gradient) decides *when* to apply this, and that is not exercised. |
 | 31 | B | Deep pan then settle: final frame coherent and equal to a direct render of the same view. |
 | 32 | R | `run:--autodive-home [exit 0,3]` — a recorded `--autodive N --autodive-home 0` from the release binary. Since W8 the dive is judged from the frame record: 0 = reached the lethal regime and the retreat held, 2 = it did not hold, 3 = never reached it. 3 is accepted HERE because this row asks whether the dive and the zoom home ran to their end with no device loss, and a run that exits 3 did. That says nothing about the retreat, which needs the card that reaches the regime (the RX 6800 XT). |
 
@@ -197,10 +197,10 @@ Residue, stated rather than hidden:
 
 | # | class | enforcer |
 |---|---|---|
-| 33–42 | A | One golden per formula at its default view (5 of 10 exist; add the missing 5) plus a coherence check. "Recognisable" is what a golden is for. |
+| 33–42 | A | One golden per formula at its default view (5 of 10 exist; add the missing 5) plus a coherence check. "Recognizable" is what a golden is for. |
 | 43 | A | Deep render for every `supports_perturbation` formula; coherent and matching a golden. |
 | 44 | A | Julia render coherent AND different from the parameter plane at the same framing. ⚠The second half is the point: `julia` is a field of the export REQUEST, not a mode the builder reads off the app, so a Julia render that forgets to ask for one returns the Mandelbrot — meanΔ 0.00, which is exactly what the first draft measured. |
-| 45 | B | `dual_panel_rects` over the whole clamp range: the panels never overlap, both stay inside the window, neither collapses, the separator stays grabbable, and an absurd split is clamped rather than honoured. Plus `dual_panel_widths` summing exactly to the frame at odd widths. Cursor tracking stays human. |
+| 45 | B | `dual_panel_rects` over the whole clamp range: the panels never overlap, both stay inside the window, neither collapses, the separator stays grabbable, and an absurd split is clamped rather than honored. Plus `dual_panel_widths` summing exactly to the frame at odd widths. Cursor tracking stays human. |
 | 46 | B | A pointer sweep across the full width through `dual_panel_at`: no x belongs to both panels, and the assignment changes at most twice (parameter → separator → Julia). That routing IS what makes the two sides independent — every gesture in the dual view is dispatched by it. |
 | 47 | A | Every formula agrees with itself about having a Julia — Newton has none, and a dual view of it would render an empty right panel — and `reset_to` restores the single view's framing from any depth. |
 
@@ -211,13 +211,13 @@ Residue, stated rather than hidden:
 | 48–53 | A | All six methods rendered at one view: each coherent, and all 15 pairs differ. Would have caught a method silently falling back. |
 | 54 | A | Four palettes: each coherent, all 6 pairs differ. |
 | 55–56 | A | Cycle / offset at two values each: coherent and differing. |
-| 57 | A | Log on vs off **through `render_export_normalized`**: meanΔ 62.06, both coherent. ⚠**`log_palette` has no effect at all unless normalization is active** — live it is read inside the `normalize_live` branch, offline only the normalized path consults it. That is not a test artefact, it is what the checkbox does, and step 57's instruction has been corrected to say so. Greying the control when Normalize is off would be the real fix. |
+| 57 | A | Log on vs off **through `render_export_normalized`**: meanΔ 62.06, both coherent. ⚠**`log_palette` has no effect at all unless normalization is active** — live it is read inside the `normalize_live` branch, offline only the normalized path consults it. That is not a test artifact, it is what the checkbox does, and step 57's instruction has been corrected to say so. Graying the control when Normalize is off would be the real fix. |
 | 58 | B | Preset → custom gradient changes the render (meanΔ 21.13), then moving ONE stop changes it again (meanΔ 16.91). The dialog interaction stays human. |
-| 59 | C | The gradient editor's preview bar against the RENDERED image. Nothing compares the two, and they were wrong for the whole life of the editor: the bar gamma-encoded its swatches (`c^(1/2.2)`), a survivor of the "stops are linear" belief beta.21 disproved, so a display-referred 0.502 previewed at 186 and rendered at 128. beta.23 made the bar sample the same baked LUT the GPU fetches from, which removes the mechanism — but "these two look like the same colour" is still an eye judgement. |
+| 59 | C | The gradient editor's preview bar against the RENDERED image. Nothing compares the two, and they were wrong for the whole life of the editor: the bar gamma-encoded its swatches (`c^(1/2.2)`), a survivor of the "stops are linear" belief beta.21 disproved, so a display-referred 0.502 previewed at 186 and rendered at 128. beta.23 made the bar sample the same baked LUT the GPU fetches from, which removes the mechanism — but "these two look like the same color" is still an eye judgment. |
 | 60–61 | B | `--selftest:map-bands-are-exact` renders a `.map` as bands and requires ZERO off-palette pixels, with the same file smoothed as the control (>3× the levels). What stays human: the file dialog, and whether the bands *look* like Fractint. |
 | 62 | C | ⭐**§7 of `design/palette-import.md`, the one claim no machine here can make.** Our checks prove a `.map`'s values reach the framebuffer unaltered; they cannot prove our iteration→palette-index mapping matches Fractint's. That needs Fractint (or KF) installed and a side-by-side. BLOCKED is a legitimate outcome. |
 | 63 | B | `--selftest:ugr-color-is-bgr` renders `color=255` and `color=16711680` and requires each render's own channel to lead by 2×, BOTH ways round — the format packs red in the LOW byte, and reading it as RGB swaps red and blue while still looking like a plausible palette. The multi-gradient picker and its preview swatches stay human. |
-| 64 | B | `--selftest:ggr-colour-space-is-per-segment` renders one segment with red at both ends twice, changing only the colouring column: 4 distinct colours in RGB against 1533 swept round the hue wheel. The "Convert to editable stops" warning and its result stay human. |
+| 64 | B | `--selftest:ggr-colour-space-is-per-segment` renders one segment with red at both ends twice, changing only the coloring column: 4 distinct colors in RGB against 1533 swept round the hue wheel. The "Convert to editable stops" warning and its result stay human. |
 | 65 | C | ⭐`.ase` is the ONE importer written from the published layout rather than against a real file or a working parser, so its unit fixtures share the parser's understanding and prove consistency, not correctness. **The first real `.ase` is the actual test** — which is a person with a real file, and a rejection is a result worth reporting. |
 | 66 | B | `palette_anim_step` over 600 simulated frames per mode: the phase never leaves 0..1, forward and reverse both move, ping-pong reaches BOTH end stops, and Off holds still at a nonzero step. Smoothness stays human. |
 | 67–69 | A | Binary, duotone, relief, glow: each on vs off coherent and differing; relief light angle changes the image; glow strength changes it. |
@@ -248,16 +248,16 @@ Residue, stated rather than hidden:
 | # | class | enforcer |
 |---|---|---|
 | 86 | B | `export_file_name` for every formula: no spaces (two formula names have one), no illegal filename characters, the right extension, and stamps that sort chronologically. That the write happens and is reported stays human. |
-| 87 | A | The PNG is written, decoded and compared byte for byte against the rendered buffer, and its embedded centre + depth must name the same view. Goes red on a one-row truncation. |
+| 87 | A | The PNG is written, decoded and compared byte for byte against the rendered buffer, and its embedded center + depth must name the same view. Goes red on a one-row truncation. |
 | 88 | A | 3840×2160 at ss 2×: full-size buffer, and EVERY EIGHTH of the frame independently coherent — a missing tile leaves a flat strip that a whole-frame spread hides. |
 | 89 | A | **Tile-seam check**: the tiled export must equal a single-pass render of the same frame. This is the beta.136 chunker class, where pixels depended on the tile budget. Assert `tiles_chunked` is non-zero first, so the check cannot pass by never chunking. |
-| 90 | B | 6.6e43× (corpus location 08): coherent, a real reference orbit, and the depth recorded in the metadata equal to the viewport's to 1e-9. Whether the COLOURS match what was on screen stays human — the offline path has no screen. |
+| 90 | B | 6.6e43× (corpus location 08): coherent, a real reference orbit, and the depth recorded in the metadata equal to the viewport's to 1e-9. Whether the COLORS match what was on screen stays human — the offline path has no screen. |
 
 ### Tools (91–97)
 
 | # | class | enforcer |
 |---|---|---|
-| 91 | A | Minibrot search returns a nucleus whose neighbourhood renders coherent structure. |
+| 91 | A | Minibrot search returns a nucleus whose neighborhood renders coherent structure. |
 | 92 | A | Solver runs to completion within a time bound and returns a root. |
 | 93 | A | `--livetest` already plays the grand tour with 24 checkpoints and drift detection. |
 | 94 | A | COMPLETENESS, not a round trip: every `[[keyframe]]` field must be either restored by `PlaybackRestore` when the tour ends or on an explicit keep-list with a reason. Add a keyframe field without deciding, and a played tour silently edits the viewer's session — the test names the field. |
@@ -319,7 +319,7 @@ another application can say whether the file means to it what it means to us. `p
 | 133 | M | Open the exported `.ggr` in **GIMP**. No machine here can hold another application's opinion of the file. |
 | 134 | M | Open it in a **second** reader (Krita / Inkscape). ⭐GIMP authored the format and forgives files shaped the way it writes them; a second implementation is where a tolerated quirk becomes a difference. |
 | 135 | B | `an_unbent_bezier_exports_as_linear_and_a_bent_one_is_reported` — pins that a bent curve is COUNTED as approximated and an unbent one is not. ⚠Partial: the count is enforced, that the message reaches the user's eye is not. |
-| 136 | M | Import a `.ggr` **authored in GIMP** carrying a curve, an HSV sweep and an off-centre midpoint. ⚠Every `.ggr` fixture in the suite was written by this repo, so a file from elsewhere is the only real test of the parser. |
+| 136 | M | Import a `.ggr` **authored in GIMP** carrying a curve, an HSV sweep and an off-center midpoint. ⚠Every `.ggr` fixture in the suite was written by this repo, so a file from elsewhere is the only real test of the parser. |
 | 137 | M | `.ugr` `rotation=` **direction**, against Ultra Fractal. ⚠Applied but never checked against the source application — a sign error still yields a plausible palette. |
 | 138 | M | A **real** Adobe `.ase`. ⚠The one importer written from the published layout rather than against a real file; its fixtures share the parser's understanding, so they prove consistency only. |
 | 139 | B | `a_saved_gradient_round_trips_through_toml_without_flattening` — the library keeps segments, not stops. ⚠Partial: the restart itself is human. |
@@ -366,7 +366,7 @@ declared but cannot gate yet.
 
 | # | class | enforcer |
 |---|---|---|
-| 151 | P | Not a behaviour. `checklist_coverage.py` can assert every row carries a verdict and no row is blank, which is the mechanical half. |
+| 151 | P | Not a behavior. `checklist_coverage.py` can assert every row carries a verdict and no row is blank, which is the mechanical half. |
 
 ---
 
@@ -376,7 +376,7 @@ Phased so each phase is independently useful and independently verifiable.
 
 1. **Coverage plumbing** — `enforcer` field on each step, `checklist_coverage.py`, the
    "Automated by" column. Nothing else can be trusted to stay true without it.
-2. **Selftest image predicates + the colouring/effects/quality matrix** (rows 48–67, 29–30).
+2. **Selftest image predicates + the coloring/effects/quality matrix** (rows 48–67, 29–30).
    The largest block, and pure offscreen work with no GUI dependency.
 3. **The remaining formula goldens** (rows 33–43).
 4. **Action-level navigation, locations, persistence** (rows 16–24, 68–75, 100–102).
@@ -384,7 +384,7 @@ Phased so each phase is independently useful and independently verifiable.
 6. **Export integrity, including the tile-seam check** (rows 76–80).
 7. **Help, settings, accelerated, stability** (rows 87–99, 103–105).
 
-Each phase ends by deliberately breaking the behaviour it guards and confirming the new check
+Each phase ends by deliberately breaking the behavior it guards and confirming the new check
 goes red.
 
 ## State (2026-09-05)

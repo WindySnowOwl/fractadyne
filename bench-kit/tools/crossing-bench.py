@@ -2,14 +2,14 @@
 
 For each crossing tour it drives every available renderer through the SAME per-frame views (the tour's
 keyframes: fixed hard center, zoom sweeping the band across the cutoff), at one sample per pixel, and
-reports per-tour timing plus a self-amortisation figure. Every frame is structure-checked, so a blank
+reports per-tour timing plus a self-amortization figure. Every frame is structure-checked, so a blank
 render is DNF-blank, never a time (the "144x on an empty frame" trap the kit exists to avoid).
 
 Lanes:
   * fractadyne  -- SEQUENCE via --render-tour (one process, owns the cross-frame reference reuse),
-                   plus N single --render frames as the amortisation denominator.
+                   plus N single --render frames as the amortization denominator.
   * fraktaler3  -- one --f3.toml per frame (its batch CLI renders one image per call, so its
-                   amortisation is 1.0 BY CONSTRUCTION -- a CLI property, not an engine limit).
+                   amortization is 1.0 BY CONSTRUCTION -- a CLI property, not an engine limit).
   * fractalshark-- one FractalSharkCli GPU render per frame (needs 0.541+ on RTX 20/30/40/50).
 
 All three receive the identical zoom string per frame, so this is a like-for-like sequence.

@@ -1,8 +1,8 @@
-//! Tests for the hex / 0–255 readouts beside a colour swatch.
+//! Tests for the hex / 0–255 readouts beside a color swatch.
 //!
 //! ⭐These are the numbers a user reads off the editor and types back in, so the only property that
-//! really matters is that the loop closes: what the field SHOWS must parse back to the colour it
-//! was showing. A rounding mismatch here does not crash or look broken — it just means a colour
+//! really matters is that the loop closes: what the field SHOWS must parse back to the color it
+//! was showing. A rounding mismatch here does not crash or look broken — it just means a color
 //! copied out of the editor and pasted back in is a shade different, every time.
 
 use super::{hex_of, parse_hex_rgb, rgb_bytes, stop_color32};
@@ -21,7 +21,7 @@ fn hex_round_trips_through_the_field_for_every_byte() {
 }
 
 /// ⚠**Rounding, not truncation.** `(v * 255.0) as u8` reports 0.5 as 127 and 0.999 as 254, so the
-/// hex shown differs from the hex that produced the colour and the field appears to eat input.
+/// hex shown differs from the hex that produced the color and the field appears to eat input.
 #[test]
 fn the_bytes_are_rounded() {
     assert_eq!(rgb_bytes([0.5, 0.5, 0.5])[0], 128);
@@ -32,7 +32,7 @@ fn the_bytes_are_rounded() {
 }
 
 /// ⭐Three-digit shorthand expands by DUPLICATION, the CSS rule. Zero-padding instead gives a
-/// different colour that still looks plausible — `#fff` would come out mid-grey rather than white.
+/// different color that still looks plausible — `#fff` would come out mid-gray rather than white.
 #[test]
 fn short_hex_expands_the_css_way() {
     assert_eq!(parse_hex_rgb("#fff"), parse_hex_rgb("#ffffff"));
@@ -47,13 +47,13 @@ fn parsing_accepts_the_forms_a_user_pastes_and_rejects_the_rest() {
         assert!(parse_hex_rgb(good).is_some(), "{good} should parse");
     }
     // ⚠A partial edit must NOT parse: the field applies on every keystroke, so "#ff88" resolving
-    // to something would repaint the gradient with a colour the user is halfway through typing.
+    // to something would repaint the gradient with a color the user is halfway through typing.
     for bad in ["", "#", "#ff", "#ff88", "#ff88000", "#gggggg", "rgb(1,2,3)", "#ff 88 00"] {
         assert!(parse_hex_rgb(bad).is_none(), "{bad} should NOT parse");
     }
 }
 
-/// The swatch, the hex string and the bytes must all name the same colour — three renderings of
+/// The swatch, the hex string and the bytes must all name the same color — three renderings of
 /// one value, and the point of showing them together is that they agree.
 #[test]
 fn the_swatch_and_the_readouts_agree() {

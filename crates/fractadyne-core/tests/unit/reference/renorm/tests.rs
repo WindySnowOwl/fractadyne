@@ -306,7 +306,7 @@ fn probe_u_space_at_the_1e68_minibrot() {
 #[test]
 fn a_trivial_step_is_never_offered() {
     // L = 1 is an empty product (κ = 0, every limit infinite): it passes the model tests, and
-    // must still never be chosen. A wide view of the main cardioid's centre has nothing else.
+    // must still never be chosen. A wide view of the main cardioid's center has nothing else.
     let orbit = orbit_f64(-0.1, 0.05, 200);
     assert!(renorm_step(&orbit).map_or(true, |st| st.len >= RENORM_MIN_LEN), "{:?}", renorm_step(&orbit));
 }

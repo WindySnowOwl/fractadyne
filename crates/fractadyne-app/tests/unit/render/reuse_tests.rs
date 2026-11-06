@@ -101,7 +101,7 @@ fn reuse_gates_reject_invalid_references() {
     let lowp = ReuseRef { point: a.rp.clone(), prefix: a.orbit.clone(), tail: tail.clone(), prec: 8 };
     assert!(try_reuse_reference(&mk(lowp)).is_none(), "insufficient precision must not reuse");
 
-    // Point far off-centre (origin is ~0.75 away, ≫ a 1e8× span) → drifted out of validity.
+    // Point far off-center (origin is ~0.75 away, ≫ a 1e8× span) → drifted out of validity.
     let far = [parse_bf("0.0").unwrap(), parse_bf("0.0").unwrap()];
     let drift = ReuseRef { point: far, prefix: a.orbit.clone(), tail, prec: a.prec };
     assert!(try_reuse_reference(&mk(drift)).is_none(), "a drifted point must not reuse");

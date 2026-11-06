@@ -5,7 +5,7 @@ use crate::*;
 /// A titled group of choices inside a menu: a dimmed, smaller heading with its options **indented
 /// underneath it**.
 ///
-/// ⭐⭐**A heading set in the same font, weight and colour as the rows below it is not a heading —
+/// ⭐⭐**A heading set in the same font, weight and color as the rows below it is not a heading —
 /// it is the first row.** File ▸ Settings had four of them ("Frame-rate cap", "UI scale", "Theme",
 /// "Updates") sitting flush with their own options, so the only thing grouping "60 FPS" with
 /// "Frame-rate cap" rather than with "80%" was the separator lines, and the eye had to reconstruct
@@ -223,7 +223,7 @@ impl FractadyneApp {
         }
         // Newton has no free parameter, so it has no Julia and no dual view. The options stay
         // VISIBLE and disabled rather than vanishing: a picker whose contents change shape as you
-        // move through it is harder to learn than one where something is greyed with a reason.
+        // move through it is harder to learn than one where something is grayed with a reason.
         ui.add_enabled_ui(can_julia, |ui| {
             if ui
                 .radio(cur == crate::ShowMode::Julia, tr!(menu_show_julia))
@@ -477,7 +477,7 @@ impl FractadyneApp {
                         }
                         ui.separator();
                         // Was two checkboxes ("Julia mode", "Dual view") of which only three
-                        // combinations were legal — the fourth was suppressed by grey. One
+                        // combinations were legal — the fourth was suppressed by gray. One
                         // three-way choice says the same thing in one row less, and can be worded
                         // to explain what a Julia set IS. Same widget as the dropdown's.
                         self.show_mode_group(ui);
@@ -1095,7 +1095,7 @@ impl FractadyneApp {
                 // Julia set is; the picker's "Show" group is where someone finds that out. Both
                 // go through `set_show_mode`, so the three surfaces cannot disagree about what
                 // state a click lands in — clicking Julia while dual is on now leaves dual
-                // rather than being greyed out, which is what the button appears to promise.
+                // rather than being grayed out, which is what the button appears to promise.
                 // ⚠⚠**`add_enabled` on the widget, NOT `add_enabled_ui` around it.** The whole top
                 // bar is one `horizontal_wrapped`, but `add_enabled_ui` builds a nested `Ui` that
                 // the parent places as a single unit — so at a width where this button no longer
@@ -1152,7 +1152,7 @@ impl FractadyneApp {
                 }
                 // ⭐Share location sits with the FILE actions, not with navigation, even though
                 // its menu entry lives under Navigate (a location is a PLACES concern there). On
-                // the toolbar the neighbouring verbs are open / browse / save, and this is the
+                // the toolbar the neighboring verbs are open / browse / save, and this is the
                 // fourth of those — it writes and reads a `.fdn`.
                 if ui
                     .button(crate::icons::SHARE)
@@ -1280,11 +1280,11 @@ impl FractadyneApp {
     /// The DIRECT path's precision wall, for the status-bar diagnostic (design/custom-formulas.md
     /// §5.1). Current GPU compilers fold the error-free transforms double-single arithmetic relies
     /// on (`--gputest`), so a pixel's coordinate is single precision: once one f32 step of it spans
-    /// more than a pixel, neighbouring pixels compute the same point and the image breaks into
+    /// more than a pixel, neighboring pixels compute the same point and the image breaks into
     /// blocks. Measured per component, at the pixel coordinate's own magnitude — the orbit passing
     /// |z| ≈ 1 does not merge pixels (at 0.286+0.012i the blocks were 1.98 px across, the real
     /// part's step, and 1.00 down) — and on a field view (−1.64+0.36i, 549,309×) as 17×4-px
-    /// blocks, one f32 step each way. `cx`/`cy` are the view centre, `half_w`/`half_h` its
+    /// blocks, one f32 step each way. `cx`/`cy` are the view center, `half_w`/`half_h` its
     /// half-extent (the step is taken at the largest magnitude in view), `upp` the pixel size.
     /// Only the direct path has this wall; perturbation iterates small offsets.
     pub(crate) fn direct_precision_status(
@@ -1396,7 +1396,7 @@ impl FractadyneApp {
     }
 
     /// Bottom status bar: view readouts only. Anything CLICKABLE belongs elsewhere — this bar is
-    /// sized by its content, and the centre coordinates gain and lose digits as the view moves, so
+    /// sized by its content, and the center coordinates gain and lose digits as the view moves, so
     /// a control placed here slides horizontally under the cursor. The playback transport lives in
     /// `draw_playback_transport` for exactly that reason.
     pub(crate) fn draw_status_bar(&mut self, ctx: &egui::Context) {
@@ -1409,7 +1409,7 @@ impl FractadyneApp {
             .filter(|(_, key)| key == &self.view_key())
             .map(|(p, _)| *p);
         let resp = egui::TopBottomPanel::bottom("status_bar").show(ctx, |ui| {
-            // WRAPPED, not a single row: at depth the centre coordinates alone can be most of the
+            // WRAPPED, not a single row: at depth the center coordinates alone can be most of the
             // width, and a plain `horizontal` silently CLIPS whatever doesn't fit — the limit
             // diagnostics on the right would vanish on a narrow window, which is precisely when a
             // user needs to be told why the view is black. Wrapping costs a second line only when
@@ -1658,10 +1658,10 @@ impl FractadyneApp {
     }
 
     /// Floating playback transport — scrubber, restart / back / pause / stop / forward, speed,
-    /// render, loop, close — anchored over the top-centre of the VIEW while a script is loaded.
+    /// render, loop, close — anchored over the top-center of the VIEW while a script is loaded.
     ///
     /// It lives here rather than in the status bar because that bar is sized by its content: the
-    /// centre coordinates alone gain and lose digits as the view moves, so anything to their right
+    /// center coordinates alone gain and lose digits as the view moves, so anything to their right
     /// slides horizontally under the cursor while you are trying to click it. A fixed anchor over
     /// the view is the only stable position — and it is where a video player puts a transport.
     ///
@@ -1692,7 +1692,7 @@ impl FractadyneApp {
         let (mut open_render, mut close, mut pick_script) = (false, false, false);
         let has_source = self.playback.as_ref().is_some_and(|p| p.source.is_some());
         // `available_rect` is what the panels left over — the fractal view, below the menu bar and
-        // inside the right panel — so the transport centres on the VIEW, not on the window.
+        // inside the right panel — so the transport centers on the VIEW, not on the window.
         let view = ctx.available_rect();
         egui::Area::new(egui::Id::new("playback_transport"))
             .order(egui::Order::Foreground)
@@ -1945,7 +1945,7 @@ impl FractadyneApp {
         }
         if pick_script {
             // Same picker as Tools → Play script (opens in the current script's folder). A chosen
-            // file replaces this playback; a cancelled picker leaves it exactly as it was.
+            // file replaces this playback; a canceled picker leaves it exactly as it was.
             self.load_script();
             return;
         }

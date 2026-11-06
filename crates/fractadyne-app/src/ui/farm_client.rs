@@ -280,7 +280,7 @@ fn detail_words(d: &str) -> String {
         "The job is over" => return tr!(farm_client_detail_job_over),
         "Paused — the controller has been told" => return tr!(farm_client_detail_paused),
         "Pausing — finishing the frame in progress" => return tr!(farm_client_detail_pausing),
-        "Cancelled the frame in progress; paused" => return tr!(farm_client_detail_cancelled),
+        "Canceled the frame in progress; paused" => return tr!(farm_client_detail_cancelled),
         _ => {}
     }
     if let Some(a) = between("Connecting to ", "…") {

@@ -1,6 +1,6 @@
 """Score the FLASHING of a captured dive: how often the canvas changes abruptly frame to frame.
 
-`blankscore.py` counts frames that are one flat colour; this counts the transitions the eye
+`blankscore.py` counts frames that are one flat color; this counts the transitions the eye
 reads as a flash — a frame whose canvas interior differs from the previous capture by more than
 FLASH_DIFF mean absolute units per channel (a crisp frame giving way to a flat one, or back, is
 80–130; a smooth dive step at 100 ms intervals is under 30). Run on the `frames/` of a

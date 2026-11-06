@@ -34,7 +34,7 @@ fn view(cx: &str, cy: &str, upp: f64, w: f64, h: f64) -> Viewport {
     vp
 }
 
-/// A 10 × 10 px view of 10 × 10 cells centred on cell (0, 0) starts at cell (−5, −5): tile (−1, −1),
+/// A 10 × 10 px view of 10 × 10 cells centered on cell (0, 0) starts at cell (−5, −5): tile (−1, −1),
 /// 59.5 cells into it — rows growing downward (−y).
 #[test]
 fn a_view_near_the_origin() {

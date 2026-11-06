@@ -3,11 +3,11 @@
   python make-fsloc.py SCENE.kfr OUT.fsloc --width W --height H --iterations N [--name NAME]
 
 The benchmark passes FractalShark a view on its command line (--center-x/--center-y/--zoom) until
-the centre is too long for one: a 1e30000x centre is 30,000 digits per coordinate and a Windows
+the center is too long for one: a 1e30000x center is 30,000 digits per coordinate and a Windows
 command line holds 32,767 characters. FractalSharkCli also reads a locations file, which this
-writes. The view is a box of centre +/- 2/zoom in each axis, zoom being the .kfr's own Zoom (the
+writes. The view is a box of center +/- 2/zoom in each axis, zoom being the .kfr's own Zoom (the
 Kalles Fraktaler convention every lane shares: zoom 1 is a 4-unit-high view). The arithmetic is
-decimal at the centre's own precision plus 50 digits, never float, which could not even represent
+decimal at the center's own precision plus 50 digits, never float, which could not even represent
 the zoom.
 """
 import argparse

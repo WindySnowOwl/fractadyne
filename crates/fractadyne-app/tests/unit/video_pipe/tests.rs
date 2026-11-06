@@ -40,7 +40,7 @@ fn ffmpegs_last_words_are_kept_for_the_error() {
     assert_eq!(tail_lines("a\nb\n\nc\nd\n", 2), "; ffmpeg said:\n  c\n  d");
 }
 
-/// End to end, where ffmpeg is installed: five flat frames in, five frames of those colours out
+/// End to end, where ffmpeg is installed: five flat frames in, five frames of those colors out
 /// (decoded again by ffmpeg; H.264's 4:2:0 and rounding allow a few levels). Where it is not, the
 /// pipe must say so rather than pretend.
 #[test]

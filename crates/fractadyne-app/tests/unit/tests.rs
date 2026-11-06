@@ -173,8 +173,8 @@ fn fuzz_metadata_parser_panic_free() {
 
 // ---------------------------------------------------------------- navigation (steps 18, 21)
 
-/// Checklist step 18, "the toolbar magnifier buttons zoom in and out, centred on the view".
-/// Two claims worth pinning: the centre does not move, and the two buttons are exact
+/// Checklist step 18, "the toolbar magnifier buttons zoom in and out, centered on the view".
+/// Two claims worth pinning: the center does not move, and the two buttons are exact
 /// inverses - if they were not, a user alternating them would creep deeper (or shallower)
 /// with every pair of clicks and could never get back to where they started.
 #[test]
@@ -205,17 +205,17 @@ fn toolbar_zoom_actions() {
             vp.log2_magnification()
         );
         // Drift measured in PIXELS, not complex units: at 2^300 the whole view is ~1e-93
-        // wide, so an absolute coordinate threshold would be satisfied by a centre that had
+        // wide, so an absolute coordinate threshold would be satisfied by a center that had
         // slid clean off the screen.
         let (bx, by) = vp.complex_to_pixel(&cx0, &cy0);
         assert!(
             (bx - 800.0).abs() < 0.01 && (by - 450.0).abs() < 0.01,
-            "2^{log2mag}: the centre drifted to ({bx:.3}, {by:.3})"
+            "2^{log2mag}: the center drifted to ({bx:.3}, {by:.3})"
         );
     }
 }
 
-/// A history snapshot of a view at `log2mag` on a distinguishable centre.
+/// A history snapshot of a view at `log2mag` on a distinguishable center.
 fn snap_at(x: f64, log2mag: f64) -> ViewSnapshot {
     let mut vp = fractadyne_core::Viewport::new(1600.0, 900.0);
     vp.set_center_log2mag(
@@ -289,7 +289,7 @@ fn undo_redo_round_trip() {
         "a new location left the old redo branch in place"
     );
 
-    // The stack is bounded: snapshots carry full-precision centres, so an unbounded one is
+    // The stack is bounded: snapshots carry full-precision centers, so an unbounded one is
     // a slow leak at depth. Oldest entries fall off; the newest is always reachable.
     let mut deep = NavHistory::default();
     for i in 0..(NavHistory::LIMIT + 50) {
@@ -333,7 +333,7 @@ palette_custom=0,0.25,0.5,0,0,0,1,1,0.2,0.1,1,0,0,0,0,0,0;\
 /// - `checksum` is DERIVED from the other fields, so a hand-written one would be wrong the moment
 ///   anything else in the sample changed. `view_text.rs` covers it against a computed value.
 /// - `center_re_expr` / `center_im_expr` / `center_re_offset` / `center_im_offset` appear ONLY when
-///   the centre was entered as a re-derivable expression (see `center_expr_metadata`); an ordinary
+///   the center was entered as a re-derivable expression (see `center_expr_metadata`); an ordinary
 ///   view — which the sample is — carries none of them, and their round-trip has its own selftest.
 /// - `formula` / `formula_params` appear ONLY in a Custom view (see `custom_formula_metadata`); the
 ///   sample is a built-in view, and their round trip is `a_custom_view_round_trips_its_formula`.
@@ -429,21 +429,21 @@ fn share_string_round_trip() {
         location_text_verdict("hello"),
         Err("Not a Fractadyne location.".to_string())
     );
-    // The centre survives the trip at full precision - a share string that rounded the
+    // The center survives the trip at full precision - a share string that rounded the
     // coordinate to f64 would still parse, look right, and land somewhere else entirely.
     let digits = meta_get(SAMPLE_LOCATION, "center_re");
-    let back = fractadyne_core::parse_bf(&digits).expect("centre parses");
+    let back = fractadyne_core::parse_bf(&digits).expect("center parses");
     let round = fractadyne_core::to_decimal_string(&back);
     assert!(
         round.starts_with(&digits[..40]),
-        "the shared centre lost digits: {digits} -> {round}"
+        "the shared center lost digits: {digits} -> {round}"
     );
 }
 
 /// Checklist step 70, "a bookmark is saved with a usable name and restores the exact view".
 /// A bookmark is a name plus a location blob, persisted as TOML, so what can silently break
 /// is the file round trip - and the coordinate is exactly the part a lossy round trip would
-/// damage invisibly, since a truncated deep centre still renders a picture.
+/// damage invisibly, since a truncated deep center still renders a picture.
 #[test]
 fn bookmark_round_trip() {
     let saved = BookmarkFile {
@@ -481,7 +481,7 @@ fn bookmark_round_trip() {
     assert_eq!(
         meta_get(restored, "center_re"),
         meta_get(SAMPLE_LOCATION, "center_re"),
-        "the bookmarked centre did not survive the file"
+        "the bookmarked center did not survive the file"
     );
     // A file written by an older build (no `thumb` field) must still load.
     let old = "[[bookmark]]\nname = \"Old\"\nmeta = \"center_re=-0.5\\n\"\n";
@@ -719,7 +719,7 @@ fn welcome_shows_once() {
 #[test]
 fn test_banner_defaults_on_for_harness_and_off_wins() {
     // Default: follows launched_for_a_task.
-    assert!(test_banner_on(true, false, false), "a harness window is unlabelled");
+    assert!(test_banner_on(true, false, false), "a harness window is unlabeled");
     assert!(!test_banner_on(false, false, false), "an interactive window wears a test banner");
     // Explicit overrides.
     assert!(test_banner_on(false, true, false), "--test-banner did not force it on");
@@ -785,7 +785,7 @@ fn dual_view_splits_the_viewports() {
             None
         );
     }
-    // An out-of-range split is CLAMPED, not honoured: the divider must stay somewhere the
+    // An out-of-range split is CLAMPED, not honored: the divider must stay somewhere the
     // viewer can drag it back from.
     let (wide_l, _) = dual_panel_rects(full, 99.0);
     let (max_l, _) = dual_panel_rects(full, DUAL_SPLIT_MAX);
@@ -836,7 +836,7 @@ fn julia_viewport_zooms_independently() {
 }
 
 /// The picker's "Show" axis is three states over two booleans, and only three of the four
-/// combinations are legal. The illegal fourth used to be prevented only by GREY — a disabled
+/// combinations are legal. The illegal fourth used to be prevented only by GRAY — a disabled
 /// checkbox — which is a promise the state machine now has to keep on its own, because
 /// scripts, session loads and the toolbar all reach the same two flags.
 ///
@@ -889,7 +889,7 @@ fn leaving_dual_restores_the_single_view() {
         );
     }
     // Leaving dual restores the single view's own framing: `reset_to` puts the parameter
-    // panel back at the formula's default centre and 1x, whatever the Julia panel was doing.
+    // panel back at the formula's default center and 1x, whatever the Julia panel was doing.
     let mut vp = fractadyne_core::Viewport::new(1280.0, 720.0);
     vp.set_center_log2mag(
         fractadyne_core::BigFloat::from_f64(-0.743, 64),
@@ -1065,7 +1065,7 @@ fn about_names_the_running_backend() {
 /// The Go-to dialog's polar entry composes `x0 + r·cos θ`, `y0 + r·sin θ` as EXPRESSIONS and hands
 /// them to the same coordinate evaluator `apply_goto` uses (`parse_bf_prec`). This pins that the
 /// composed strings evaluate to the right point, in all three angle units, and that empty fields
-/// read as 0 — the maths that makes the feature correct, and the part the UI can't show.
+/// read as 0 — the math that makes the feature correct, and the part the UI can't show.
 #[test]
 fn compose_polar_evaluates_to_the_offset_polar_point() {
     let prec = 160usize;
@@ -1139,7 +1139,7 @@ fn export_work_gate_separates_the_field_case_from_a_quick_save() {
     assert!(export_is_heavy(export_nominal_steps(u32::MAX, u32::MAX, u32::MAX, u32::MAX)));
 }
 
-/// The Snapshot mode round-trips through the session file's string, and anything unrecognised
+/// The Snapshot mode round-trips through the session file's string, and anything unrecognized
 /// falls back to ASKING — the only value that cannot silently start the expensive render.
 #[test]
 fn snapshot_mode_round_trips_and_unknown_means_ask() {
@@ -1154,7 +1154,7 @@ fn snapshot_mode_round_trips_and_unknown_means_ask() {
     assert_eq!(crate::SnapshotMode::from_str(&s.snapshot_mode), crate::SnapshotMode::Ask);
 }
 
-/// The centre expression is preserved only when it can actually gain precision: a pair of plain
+/// The center expression is preserved only when it can actually gain precision: a pair of plain
 /// decimals is capped at the digits typed, so nothing a deeper zoom could recover, while a rational
 /// or a transcendental is re-derivable. And re-deriving a kept expression deeper genuinely narrows
 /// the error toward the true value — which is the whole reason the expression, not the resolved
@@ -1201,7 +1201,7 @@ fn issue_url_is_well_formed() {
                 "parameter {i} of {url} carries an unencoded reserved character: {v:?}"
             );
         }
-        // The subject must be recognisable once decoded, not empty or mangled away.
+        // The subject must be recognizable once decoded, not empty or mangled away.
         assert!(
             url.contains("Fractadyne%20issue%3A"),
             "the subject did not survive: {url}"

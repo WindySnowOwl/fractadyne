@@ -8,8 +8,8 @@
 //!    distance estimate rescaled from the texel's size to the sample spacing and the normal turned
 //!    with the frame. The result is what an iterate pass would have written at those samples, up
 //!    to where the texels sit.
-//! 2. **Colour**: the app's own colour pass (`fs_color` from the unchanged iterate module), with
-//!    the same uniform [`crate::color_iter_buffer_ss`] builds: every colouring that reads only the
+//! 2. **Color**: the app's own color pass (`fs_color` from the unchanged iterate module), with
+//!    the same uniform [`crate::color_iter_buffer_ss`] builds: every coloring that reads only the
 //!    main target (smooth, distance, relief, glow), each sample shaded and the `ss×ss` averaged.
 //!    The aux statistics (stripe, TIA, trap) are not in a strip.
 //!
@@ -20,7 +20,7 @@
 //! texels around and a frame reads ~13-15 of them at once, so the window is the one large thing a
 //! zoom video holds. Two things keep it on the card, neither changing a frame: a strip wider than
 //! the card's textures is held in PIECES around its circle (array layers side by side, [`strip_pieces`]),
-//! and the window holds only what the frames' colouring reads of each texel ([`WindowTexels`]).
+//! and the window holds only what the frames' coloring reads of each texel ([`WindowTexels`]).
 
 use egui_wgpu::wgpu;
 
@@ -51,14 +51,14 @@ pub(crate) struct AssembleUniforms {
     pub(crate) _pad1: u32,
 }
 
-/// What a strip window holds of each texel: only what the frames' colouring reads. The colour
+/// What a strip window holds of each texel: only what the frames' coloring reads. The color
 /// pass (`fs_color`) reads the smooth count always, the distance estimate for the distance
-/// colouring (method 4) and the glow, and the slope normal for relief lighting, and nothing else of
+/// coloring (method 4) and the glow, and the slope normal for relief lighting, and nothing else of
 /// the main target, so a frame comes out the same from a window that leaves the rest out: a smooth
-/// colouring's window is a quarter of the whole one.
+/// coloring's window is a quarter of the whole one.
 ///
-/// ⛔A colouring that starts reading another channel must be added to [`Self::for_colour`]: the
-/// selftest's window check compares every colouring a strip allows, smooth and distance with and
+/// ⛔A coloring that starts reading another channel must be added to [`Self::for_colour`]: the
+/// selftest's window check compares every coloring a strip allows, smooth and distance with and
 /// without relief and glow, against the whole window, byte for byte.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum WindowTexels {
@@ -71,7 +71,7 @@ pub enum WindowTexels {
 }
 
 impl WindowTexels {
-    /// What a frame coloured with `method` (the colour pass's `color_method`), relief lighting
+    /// What a frame colored with `method` (the color pass's `color_method`), relief lighting
     /// (`light`) and the distance glow (`glow`) reads. A method this does not know keeps everything.
     pub fn for_colour(method: u32, light: bool, glow: bool) -> Self {
         if light || !matches!(method, 0 | 4) {
@@ -83,7 +83,7 @@ impl WindowTexels {
         }
     }
 
-    /// What a frame coloured as `req` is reads.
+    /// What a frame colored as `req` is reads.
     pub fn for_request(req: &ExportRequest) -> Self {
         Self::for_colour(req.color_method, req.light != 0, req.de_on != 0)
     }
@@ -144,7 +144,7 @@ pub struct StripShape {
     pub rows: u32,
     /// Rows in one octave of radius.
     pub rows_per_octave: f64,
-    /// Where in its texel a strip samples (0.5: the centre).
+    /// Where in its texel a strip samples (0.5: the center).
     pub sample_offset: f64,
     /// A row's step in `ln r`.
     pub row_step: f64,
@@ -153,7 +153,7 @@ pub struct StripShape {
 }
 
 /// Where a frame sits in the dive. `depth` is `r0_log2 − log2(sample spacing)` — how many octaves
-/// inside strip 0's outer radius a point one sample from the centre is — split into whole octaves
+/// inside strip 0's outer radius a point one sample from the center is — split into whole octaves
 /// and a fraction, so a frame thousands of octaves deep is placed as exactly as the first.
 #[derive(Clone, Copy, Debug, PartialEq)]
 pub struct FramePlacement {
@@ -173,7 +173,7 @@ impl FramePlacement {
     }
 }
 
-/// `log2` of the distance, in samples, of the sample nearest a `w × h` grid's centre and of its
+/// `log2` of the distance, in samples, of the sample nearest a `w × h` grid's center and of its
 /// corner sample: the depths a frame reads span `depth − hi .. depth − lo`. The shader reads a
 /// sample nearer than half a sample at half a sample.
 pub fn sample_log2_span(w: u32, h: u32) -> (f64, f64) {
@@ -245,7 +245,7 @@ pub fn window_bytes(shape: StripShape, layers: u32, layout: WindowLayout, max_di
 }
 
 /// The GPU memory an assembler's frame takes beside its window: the `(w·ss)×(h·ss)` sample grid
-/// the reprojection fills and the frame's colour target and its read-back, 16 bytes a texel each.
+/// the reprojection fills and the frame's color target and its read-back, 16 bytes a texel each.
 pub fn frame_bytes(frame: [u32; 2], ss: u32) -> u64 {
     let ss = ss.max(1) as u64;
     let (w, h) = (frame[0] as u64, frame[1] as u64);
@@ -441,7 +441,7 @@ impl Assembler {
             ],
         });
 
-        // The frame-shaped main target the reprojection writes and the colour pass reads, and a
+        // The frame-shaped main target the reprojection writes and the color pass reads, and a
         // zeroed aux beside it.
         let grid = |label, (width, height), usage| {
             device.create_texture(&wgpu::TextureDescriptor {
@@ -461,14 +461,14 @@ impl Assembler {
             wgpu::TextureUsages::RENDER_ATTACHMENT | wgpu::TextureUsages::TEXTURE_BINDING | wgpu::TextureUsages::COPY_SRC,
         );
         let main_view = main_tex.create_view(&wgpu::TextureViewDescriptor::default());
-        // ONE texel, created zeroed (wgpu zero-initialises a texture's first use): the colourings a
+        // ONE texel, created zeroed (wgpu zero-initializes a texture's first use): the colorings a
         // strip supports read no aux (`coord_under` reads it for stripe, TIA, trap and
-        // decomposition only, which assembly refuses), so the colour pass's unconditional load of it
+        // decomposition only, which assembly refuses), so the color pass's unconditional load of it
         // is never used, and a frame-sized one was 16 bytes a sample for nothing (2 GB at 8K, 2x).
         let aux_tex = grid("assemble.aux", (1, 1), wgpu::TextureUsages::TEXTURE_BINDING | wgpu::TextureUsages::COPY_DST);
         let aux_view = aux_tex.create_view(&wgpu::TextureViewDescriptor::default());
 
-        // Pass 2: the app's colour pass, from the unchanged iterate module.
+        // Pass 2: the app's color pass, from the unchanged iterate module.
         let shader = crate::shader_module(device);
         let color_bgl = crate::color_bind_group_layout(device);
         let color_layout = device.create_pipeline_layout(&wgpu::PipelineLayoutDescriptor {
@@ -632,13 +632,13 @@ impl Assembler {
         pass.draw(0..3, 0..1);
     }
 
-    /// The frame at `place`, coloured with `colour`'s colouring: `w × h` RGBA display values,
+    /// The frame at `place`, colored with `colour`'s coloring: `w × h` RGBA display values,
     /// row-major, as an export's pixels. Every strip the frame reads must be in the window.
     pub fn frame(&mut self, device: &wgpu::Device, queue: &wgpu::Queue, place: &FramePlacement, colour: &ExportRequest) -> Result<Vec<f32>, GpuError> {
         let need = WindowTexels::for_request(colour);
         if !self.texels.holds(need) {
             return Err(GpuError::Assembly(format!(
-                "this colouring reads {} of each texel, and the window holds {}",
+                "this coloring reads {} of each texel, and the window holds {}",
                 need.describe(),
                 self.texels.describe()
             )));
@@ -669,7 +669,7 @@ impl Assembler {
         read_texture(device, queue, enc, &self.out_tex, self.frame[0], self.frame[1])
     }
 
-    /// The frame's main target only (no colouring): `(w·ss) × (h·ss)` samples of `(smooth count,
+    /// The frame's main target only (no coloring): `(w·ss) × (h·ss)` samples of `(smooth count,
     /// normal x, y, log2 DE in samples)`, as an iterate pass of the same frame writes them. For
     /// checking assembly against flat renders.
     pub fn reprojected(&mut self, device: &wgpu::Device, queue: &wgpu::Queue, place: &FramePlacement) -> Result<Vec<f32>, GpuError> {

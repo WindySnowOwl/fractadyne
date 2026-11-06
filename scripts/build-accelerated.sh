@@ -25,7 +25,7 @@
 #     from the Windows package, which does ship them as DLLs. On Windows those libraries come from
 #     MSYS2 and are not present on a user's machine; on Linux they are stock distro packages
 #     (`libgmp10`, `libmpfr6`) present on essentially every desktop, and bundling system libraries
-#     is not the platform convention. Not conveying them at all is also the cleaner licence
+#     is not the platform convention. Not conveying them at all is also the cleaner license
 #     position: what is conveyed here is a work that dynamically LINKS them. The runtime
 #     requirement is stated in the package's README-ACCELERATED.txt instead.
 #   * The LGPL and GPL texts still ship: rug and gmp-mpfr-sys' own Rust code IS statically linked
@@ -118,7 +118,7 @@ cp validation/catalog.toml "$dir/validation/"
 # Every card's bench-matrix baseline (the reference card's file and the per-card ones).
 cp benchmarks/bench-matrix-baseline*.json "$dir/benchmarks/"
 
-# Licence texts for the LGPL code compiled INTO this binary. Section 4(b) requires the LGPL and
+# License texts for the LGPL code compiled INTO this binary. Section 4(b) requires the LGPL and
 # the GPL it refers to, so both ship or the package is not conveyable — fail rather than omit.
 found_lgpl=0
 for cand in /usr/share/doc/libmpfr6/copyright /usr/share/doc/libgmp10/copyright \

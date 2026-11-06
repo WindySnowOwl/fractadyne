@@ -273,7 +273,7 @@ rule is by ROLE, and most buttons are deliberately left plain.
 | **Established task verb** | its own glyph | Copy, Save…, Refresh / Run again…, Add stop, Remove, Pick |
 | **Destructive commit** | ⛔**none — keep the red fill** | Reset everything |
 | Opens another surface (`…`) with no verb of its own | none | Manage…, Diagnostics…, Benchmark… |
-| Dense inline control in a packed row | none | Centre, Auto, Clear, ◂ ▸, Linear/In/Out, `.map…` |
+| Dense inline control in a packed row | none | Center, Auto, Clear, ◂ ▸, Linear/In/Out, `.map…` |
 
 ⭐⭐**The destructive row is the one that matters.** A check mark reads as endorsement — "this is
 the safe one" — so putting it on *Reset everything*, which permanently deletes every saved
@@ -350,7 +350,7 @@ zoom, the notice dialog), **Cancel** when something would be abandoned. A window
 
 **⚠⚠Use `theme::action_row`, never a bare `with_layout` (0.2.41-beta.58).** A right-aligned row
 written as `ui.with_layout(Layout::right_to_left(Align::Center), …)` hands its child the whole
-`available_rect_before_wrap()`, centres the buttons inside *that*, and then allocates the child's
+`available_rect_before_wrap()`, centers the buttons inside *that*, and then allocates the child's
 `min_rect` — which now stretches from the top of the remaining space down past the buttons. In an
 auto-sizing `Window` the parent grows to contain it, which enlarges the available rect, which
 enlarges the claim. **The Benchmark window opened at its natural size and then stretched to the full
@@ -362,7 +362,7 @@ only the height feeds back.
 
 ### 8.3 Sections inside a menu (standard, 0.2.41-beta.54)
 
-**A heading set in the same font, weight and colour as the rows below it is not a heading — it is
+**A heading set in the same font, weight and color as the rows below it is not a heading — it is
 the first row.** File ▸ Settings had four ("Frame-rate cap", "UI scale (font size)", "Theme",
 "Updates") sitting flush with their own options, so the only thing grouping *60 FPS* with
 *Frame-rate cap* rather than with *80%* was the separator lines, and the reader had to reconstruct

@@ -23,7 +23,7 @@ const VERSION: i64 = 1;
 /// What the anchors were measured FOR. Every field must match the render that reads them.
 #[derive(Clone, Debug, PartialEq)]
 pub(crate) struct AnchorContext {
-    /// FNV-1a 64 over the script text with line endings normalised to LF (a script copied between
+    /// FNV-1a 64 over the script text with line endings normalized to LF (a script copied between
     /// Windows and Linux machines is still the same script).
     pub(crate) script_digest: u64,
     pub(crate) fps: f64,
@@ -82,7 +82,7 @@ pub(crate) fn script_digest(text: &str) -> u64 {
 pub(crate) fn encode(ctx: &AnchorContext, app_version: &str, git: &str, anchors: &[Anchor]) -> String {
     let mut s = String::new();
     s.push_str("# Fractadyne normalize anchors - written by `--dump-norm-anchors`, read by `--norm-anchors`.\n");
-    s.push_str("# The tour's palette ranges, measured once so every machine rendering it colours it alike.\n");
+    s.push_str("# The tour's palette ranges, measured once so every machine rendering it colors it alike.\n");
     s.push_str("# Values are exact: do not edit them. A file for a different script, frame rate or\n");
     s.push_str("# iteration base is refused.\n");
     // Informational strings, kept to printable ASCII so the TOML is valid whatever they contain.

@@ -15,7 +15,7 @@ count beside them (Dave Boll, 1991; Aaron Klebanoff, "pi in the Mandelbrot set",
 - the CUSP c = 1/4, the cardioid's cusp: on the real axis to its right, c = 1/4 + eps, the count
   is pi/sqrt(eps) minus about 2.
 Neither is a deep test: the count grows with the zoom (10x closer is 10x the count at the neck,
-100x closer at the cusp), and a view centred on either goes black past about 1e3x (neck) or 1e6x
+100x closer at the cusp), and a view centered on either goes black past about 1e3x (neck) or 1e6x
 (cusp), as the escaping gap narrows below a pixel. What they test is the high-iteration regime -
 counts in the millions whose answer is known in advance - and the precision of c itself: at the
 cusp a relative error in eps is half that relative error in the count (f64 already gets the 1e-12
@@ -24,7 +24,7 @@ point wrong by about 32: 0.25 + 1e-12 is not a double), and in f32 every point c
 
 THE VIEWS
 ---------
-Each point is the centre of a SIZE x SIZE frame (SIZE odd, so the centre pixel is the point
+Each point is the center of a SIZE x SIZE frame (SIZE odd, so the center pixel is the point
 exactly; 17, as Fractadyne renders nothing under 16), small enough to lie inside the escaping gap: at the neck the gap at height eps runs from
 -3/4 - 2 eps^2 (the disc) to -3/4 + 0.75 eps^2 (the cardioid); at the cusp it is the wedge
 |y| < 2 eps^1.5. The frame's half-span is FILL of the nearer side.
@@ -38,7 +38,7 @@ the truth's smooth count within 0.5 plus one f32 step at that count: both store 
 which above 2^24 (16.7 million) holds only even numbers. A SENSITIVE pixel (its count changes
 within 1/1000 px: the seahorse valley's filaments at eps = 0.1) is held to the stencil's range, as
 truth_check.py does, and reported, not failed: no renderer can be held to a point there. The
-centre pixel - the pi point itself - must be stable, and the truth's own count there must meet the
+center pixel - the pi point itself - must be stable, and the truth's own count there must meet the
 pi law within PI_SLACK: a check on the truth, not on Fractadyne.
 Exit 0 when every point passes, 1 otherwise, 2 on a usage error.
 """
@@ -180,7 +180,7 @@ def run(a):
                         "interior_fd": int((v < 0).sum())})
             centre_ok = bool(stable[mid, mid])
             row["verdict"] = ("PASS" if off == 0 and law_ok and centre_ok else
-                              "DEVIATES" if off else "LAW?" if not law_ok else "CENTRE SENSITIVE")
+                              "DEVIATES" if off else "LAW?" if not law_ok else "CENTER SENSITIVE")
         ok &= row["verdict"] == "PASS"
         rows.append(row)
         print("\t".join(str(row.get(k, "")) for k in cols), flush=True)
@@ -205,7 +205,7 @@ def main():
     s.add_argument("--checks", type=int, default=3, help="plain-iteration checks per truth (1 above a million)")
     a = ap.parse_args()
     if a.size % 2 == 0:
-        sys.stderr.write("pi_points: --size must be odd (the centre pixel is the point)\n")
+        sys.stderr.write("pi_points: --size must be odd (the center pixel is the point)\n")
         return 2
     if a.cmd == "points":
         for p in points(a.size):

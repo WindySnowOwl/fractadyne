@@ -20,7 +20,7 @@ fn the_target_round_trips_through_its_session_string() {
 fn the_goal_of_a_point_is_where_the_viewport_puts_it() {
     let mut vp = Viewport::new(1456.0, 1102.0);
     vp.reset_to(-0.5, 0.0);
-    // The centre maps to the middle of the screen…
+    // The center maps to the middle of the screen…
     let (cx, cy) = (vp.center_x.clone(), vp.center_y.clone());
     let g = goal_of_point(&vp, &cx, &cy);
     assert!((g.0 - 0.5).abs() < 1e-12 && (g.1 - 0.5).abs() < 1e-12, "{g:?}");
@@ -87,9 +87,9 @@ fn a_misiurewicz_dive_stays_on_its_point_through_a_long_dive() {
     // The aim converged onto the point: within a pixel…
     let dpx = ((last_goal.0 - cam.aim.0) * 1456.0).hypot((last_goal.1 - cam.aim.1) * 1102.0);
     assert!(dpx < 1.0, "aim is {dpx:.2} px off the point");
-    // …and the point sits inside the centring dead zone, not sliding to the edge.
+    // …and the point sits inside the centering dead zone, not sliding to the edge.
     let off = ((last_goal.0 - 0.5) * 1456.0).hypot((last_goal.1 - 0.5) * 1102.0) / 1102.0;
-    assert!(off <= CENTER_DEAD + 0.01, "point is {off:.3} of the short side off centre");
+    assert!(off <= CENTER_DEAD + 0.01, "point is {off:.3} of the short side off center");
     // And the precision followed the depth (the viewport refreshes it on every zoom).
     assert!(cam.vp.precision >= fractadyne_core::precision_for_octaves(descended as u64));
 }

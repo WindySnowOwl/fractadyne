@@ -1,5 +1,5 @@
-//! The Custom formula dialog's text field: parentheses coloured by nesting depth (the pair at the
-//! cursor highlighted, an unmatched one in the error colour), comments dimmed, and completion of
+//! The Custom formula dialog's text field: parentheses colored by nesting depth (the pair at the
+//! cursor highlighted, an unmatched one in the error color), comments dimmed, and completion of
 //! the language's names as you type.
 //!
 //! The scanning follows the parser's lexer (`core::ir::parse`): `;` starts a comment that runs to
@@ -115,8 +115,8 @@ pub(crate) fn pair_at(src: &str, ps: &[Paren], cursor: usize) -> Option<(usize, 
     Some((p.at, p.partner?))
 }
 
-/// The field's text as a layout: comments dimmed, each parenthesis in its depth's colour, the pair
-/// at `cursor` (a character index) highlighted, an unmatched one in the error colour.
+/// The field's text as a layout: comments dimmed, each parenthesis in its depth's color, the pair
+/// at `cursor` (a character index) highlighted, an unmatched one in the error color.
 pub(crate) fn layout_job(src: &str, cursor: Option<usize>, look: &Look) -> LayoutJob {
     let ps = parens(src);
     let pair = cursor.and_then(|c| pair_at(src, &ps, c));

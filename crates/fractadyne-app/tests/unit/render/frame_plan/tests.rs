@@ -283,7 +283,7 @@ fn the_hold_floor_code_says_whether_the_jump_bound_moved_the_picture() {
 #[test]
 fn a_stepped_homes_held_frame_is_never_shrunk() {
     // A stop 2,000 octaves out: at its true scale (the hold's 2^40 cap) the held picture is a speck
-    // in its average colour; during a stepped Home it stays at full size.
+    // in its average color; during a stepped Home it stays at full size.
     let (shrunk, _) = hold_scale(2000.0, false);
     assert!(shrunk > 1.0e12, "{shrunk}");
     assert_eq!(home_step_hold_scale(shrunk, true), 1.0);
@@ -291,7 +291,7 @@ fn a_stepped_homes_held_frame_is_never_shrunk() {
     assert_eq!(home_step_hold_scale(shrunk, false), shrunk);
     assert_eq!(home_step_hold_scale(0.25, true), 0.25);
     assert_eq!(home_step_hold_scale(1.0, true), 1.0);
-    // ...and centred: a stop's offset from the held picture places nothing at that scale.
+    // ...and centered: a stop's offset from the held picture places nothing at that scale.
     assert_eq!(home_step_hold_shift(4.0, true), 0.0);
     assert_eq!(home_step_hold_shift(4.0, false), 4.0);
 }
@@ -302,8 +302,8 @@ fn held_uv(t: [f32; 3], uv: (f32, f32)) -> (f32, f32) {
     ((uv.0 - 0.5) * t[2] + 0.5 - t[0], (uv.1 - 0.5) * t[2] + 0.5 - t[1])
 }
 
-/// A click `(fx, fy)` of the old view's width and height off its centre (x right, y up), by
-/// `factor`: the octaves since the held frame and the new centre's offset in spans of the new view.
+/// A click `(fx, fy)` of the old view's width and height off its center (x right, y up), by
+/// `factor`: the octaves since the held frame and the new center's offset in spans of the new view.
 fn click(factor: f64, fx: f64, fy: f64) -> (f64, (f64, f64)) {
     (-factor.log2(), (fx * factor, fy * factor))
 }
@@ -312,16 +312,16 @@ fn click(factor: f64, fx: f64, fy: f64) -> (f64, (f64, f64)) {
 fn a_clicks_held_frame_is_magnified_about_the_clicked_point() {
     // The user's 100× click (2026-10-31: "rather than going to a solid color screen while
     // computing, magnify the image around where it will be zoomed"), 0.3 of the width right of the
-    // centre and 0.1 of the height up: the screen's centre shows the clicked point of the held frame…
+    // center and 0.1 of the height up: the screen's center shows the clicked point of the held frame…
     let (gap, off) = click(100.0, 0.3, 0.1);
     let (t, code) = hold_transform(gap, true, false, off);
     let (cx, cy) = held_uv(t, (0.5, 0.5));
-    assert!((cx - 0.8).abs() < 1.0e-5 && (cy - 0.4).abs() < 1.0e-5, "the centre shows ({cx}, {cy})");
+    assert!((cx - 0.8).abs() < 1.0e-5 && (cy - 0.4).abs() < 1.0e-5, "the center shows ({cx}, {cy})");
     // …magnified by the jump's bound, not 100× (a 14-pixel patch is a flat field).
     assert_eq!(code, hold_floor::JUMP_BOUND);
     assert_eq!(t[2], super::super::hold_scale_floor(true));
-    // ⛔The regression: the offset taken at the BOUNDED scale put the centre at 0.5 + 0.3 × 100 / 8
-    // = 4.25, far off the held frame, and the whole screen showed the frame's average colour.
+    // ⛔The regression: the offset taken at the BOUNDED scale put the center at 0.5 + 0.3 × 100 / 8
+    // = 4.25, far off the held frame, and the whole screen showed the frame's average color.
     for (fx, fy) in [(0.3, 0.1), (-0.43, 0.43), (0.05, -0.2), (0.0, 0.0)] {
         let (gap, off) = click(100.0, fx, fy);
         let (t, _) = hold_transform(gap, true, false, off);
@@ -345,7 +345,7 @@ fn a_held_frame_no_bound_binds_keeps_the_transform_it_had() {
         let s = (gap as f32).exp2();
         assert_eq!(t, [-3.25 * s, -1.5 * s, s], "gap {gap} jumped {jumped}");
     }
-    // A stepped Home: full size at most, and centred.
+    // A stepped Home: full size at most, and centered.
     let (t, _) = hold_transform(2000.0, false, true, (40.0, 7.0));
     assert_eq!(t, [0.0, 0.0, 1.0]);
 }

@@ -100,7 +100,7 @@ pub struct CustomShader {
     pub source: String,
     /// FNV-1a of `source` — the pipeline-cache key.
     pub key: u64,
-    /// The escape degree smooth colouring divides by (2 where the formula has none).
+    /// The escape degree smooth coloring divides by (2 where the formula has none).
     pub power: f32,
     pub precision: Precision,
     /// The dispatch ceiling's per-step cost factor relative to Mandelbrot ([`cost_factor`]).
@@ -283,7 +283,7 @@ fn step_source(formula: &Formula, params: &[(f64, f64)]) -> Result<(String, Prec
 }
 
 /// The perturbed step: `custom_pstep(Z, δz, δc, iter)` → δz', over `custom_pphase{k}(Z, C, δz, δc)`
-/// with `C` the REFERENCE's c — the Julia constant, or the view centre less the reference offset
+/// with `C` the REFERENCE's c — the Julia constant, or the view center less the reference offset
 /// (which is how the perturbation paths define δc: pixel − reference).
 fn pstep_source(perturbed: &Formula, params: &[(f64, f64)]) -> Result<String, CustomError> {
     let mut out = String::new();

@@ -33,7 +33,7 @@ const BAILOUT2: f64 = 16.0;
 const NEWTON_BAILOUT2: f64 = 1.0e200;
 /// Periods the disc test names that are tried before the search gives up.
 const CANDIDATES: usize = 4;
-/// How often (iterations) the search asks whether it has been cancelled.
+/// How often (iterations) the search asks whether it has been canceled.
 const CANCEL_EVERY: u32 = 8192;
 
 fn cfe(re: f64, im: f64) -> CFloatExp {
@@ -83,7 +83,7 @@ enum Walked {
 }
 
 /// Iterate `δc` for `steps` iterations; with `r2` (a radius²), stop at the first `n` past `after`
-/// at which the disc of that radius could contain 0. `None` when cancelled.
+/// at which the disc of that radius could contain 0. `None` when canceled.
 fn walk(orbit: &Orbit, dc: CFloatExp, steps: u32, r2: Option<FloatExp>, after: u32, cancel: &dyn Fn() -> bool) -> Option<Walked> {
     let one = cfe(1.0, 0.0);
     let mut dz = CFloatExp::ZERO;
@@ -123,7 +123,7 @@ fn walk(orbit: &Orbit, dc: CFloatExp, steps: u32, r2: Option<FloatExp>, after: u
 /// The nucleus of `z² + c` nearest in period to `c = C + dc0` within `radius` of it, if any, with
 /// periods up to `max_period`. `orbit` is the reference orbit of `C` (packed df64 samples, the
 /// first `orbit_len` usable), or empty for `C = 0` (`dc0` is then `c`). `cancel` is asked every few
-/// thousand iterations; a cancelled search finds nothing.
+/// thousand iterations; a canceled search finds nothing.
 pub fn find_nucleus_near(
     orbit: &[[f32; 4]],
     orbit_len: u32,
@@ -151,7 +151,7 @@ pub fn find_nucleus_near(
 }
 
 /// Newton on `z_period(c) = 0` from `dc0`: the nucleus, if it converges inside the disc of radius²
-/// `r2` about `dc0` (`Some(None)`: it did not; `None`: cancelled).
+/// `r2` about `dc0` (`Some(None)`: it did not; `None`: canceled).
 fn newton(orbit: &Orbit, dc0: CFloatExp, period: u32, r2: FloatExp, cancel: &dyn Fn() -> bool) -> Option<Option<CFloatExp>> {
     let tol2 = r2.mul_f64(NEWTON_TOL * NEWTON_TOL);
     let mut dc = dc0;

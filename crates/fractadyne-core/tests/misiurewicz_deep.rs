@@ -9,7 +9,7 @@
 //! bignum steps at ~13,366-bit precision, so this is `#[ignore]` (≈70 s) — run explicitly:
 //!   cargo test -p fractadyne-core --release --test misiurewicz_deep -- --ignored --nocapture
 //!
-//! The coordinate lives in `tests/fixtures/e4001-misiurewicz.txt` (the user's exact centre) rather
+//! The coordinate lives in `tests/fixtures/e4001-misiurewicz.txt` (the user's exact center) rather
 //! than inline, because it is 4,031 digits.
 
 use fractadyne_core as fc;
@@ -26,10 +26,10 @@ fn fixture() -> (String, String) {
 /// broke, and the `expect` below is that regression pin. The REPORTED preperiod is the CANONICAL
 /// entry since the pre-period reduction landed: the winner walks back to the first index whose
 /// relative near-return matches its own, ~3,990 here. Probe-verified 2026-09-02: (3,990, 1) and
-/// the scale-matched (438,732, 1) Newton-solve to the SAME point — solved centres differ by
+/// the scale-matched (438,732, 1) Newton-solve to the SAME point — solved centers differ by
 /// ~2^-13,376 against a 2^-13,281 view width, i.e. ~2^-95 view-widths. Not pinned to one exact
 /// pair — a better ranking may legitimately pick another — but it must solve back onto the view
-/// centre (a pair whose point is elsewhere is the false positive the scale-ranking exists to
+/// center (a pair whose point is elsewhere is the false positive the scale-ranking exists to
 /// avoid).
 #[test]
 #[ignore = "≈70 s: ~440k bignum steps at 13,366-bit precision"]
@@ -46,7 +46,7 @@ fn the_e4001_view_finds_its_deep_misiurewicz_point() {
     assert!(k > 1_000, "preperiod {k} is too shallow to be the e4001 spiral's entry");
     assert!(per > 0 && per < 4_096, "period {per} is not a plausible cycle length");
 
-    // It must solve back onto the view — a real point at the centre, not a distant misfit.
+    // It must solve back onto the view — a real point at the center, not a distant misfit.
     let m = fc::find_misiurewicz(
         &[cx.clone(), cy.clone()],
         k,
@@ -56,5 +56,5 @@ fn the_e4001_view_finds_its_deep_misiurewicz_point() {
     )
     .expect("the detected pair solves to a real point near the seed view");
     assert_eq!((m.preperiod, m.period), (k, per), "the solve confirms the detected pair");
-    println!("e4001 detect -> (k={k}, p={per}); solved onto the view centre");
+    println!("e4001 detect -> (k={k}, p={per}); solved onto the view center");
 }

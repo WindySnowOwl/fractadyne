@@ -42,7 +42,7 @@ both into a per-run copy, and the corpus originals are never touched.
 The ten scenes above stop at 6.1e1105x and 800,000 iterations. `scenes-ladder.csv` adds 21 that
 reach the deep and the long, in three rungs:
 
-- **Minibrots** from 1.3e13x to 1.5e30000x, each centred on its nucleus with an iteration cap of
+- **Minibrots** from 1.3e13x to 1.5e30000x, each centered on its nucleus with an iteration cap of
   30 times its period (a minibrot's own picture keeps changing up to about there; 30 against 300
   periods still differed in 1.1% of pixels, so the cap is a choice, recorded here).
 - **Views along one spiral path** from 1e13x to 1e30000x (the path to `validation/spiral-9.98e60205.fdn`,
@@ -83,15 +83,15 @@ which the two 1e30000x scenes take several minutes per render in every lane.
 
 The twelve minibrot scenes give Fractadyne `--normalize --log-palette` (`normalize` = `log` in
 `scenes-ladder.csv`; `1` is `--normalize` alone). Without it their field is palette noise: escape
-counts in the hundreds of thousands put neighbouring pixels far apart on the cyclic palette. On an
+counts in the hundreds of thousands put neighboring pixels far apart on the cyclic palette. On an
 RTX 3080 at 4K it costs Fractadyne 0.1 to 0.4 s a render, so it does not flatter it; the other
-renderers colour as they always do.
+renderers color as they always do.
 
-Two scenes need their centre in a file, because a 1e30000x centre is 30,000 digits per coordinate
+Two scenes need their center in a file, because a 1e30000x center is 30,000 digits per coordinate
 and a Windows command line holds 32,767 characters. Each lane checks its line first: Fractadyne
 reads the same arguments from an `@file` (kept in `fd-args\`), FractalShark reads a locations file
 written by `tools\make-fsloc.py` (kept in `fs-loc\`; it needs Python), Fraktaler-3 already reads
-its scene file, and imagina-cli, which takes the centre only on its command line, records
+its scene file, and imagina-cli, which takes the center only on its command line, records
 `NA-command-line` for that scene. On Linux (`bench-latest.sh --scene-set ladder`) an argument may
 be 128 KiB, so no lane needs a file.
 
@@ -116,7 +116,7 @@ Like the ladder, they are benchmark scenes, not cross-checked correctness fixtur
 
 kaludix suggested these in the fractalforums.org thread "Benchmarking deep zoom renderers": the
 first two directly, and one location each from Phil Thompson's article where BLA or series
-approximation wins. The centres and iteration caps are copied from the post and from the article's
+approximation wins. The centers and iteration caps are copied from the post and from the article's
 own Very Plotter links. Magnifications are converted to the kit's zoom, where the view is 4 / zoom
 high:
 
@@ -227,15 +227,15 @@ tours in `tours/crossing/` are committed and need no staging.
 ## The zoom-sequence lane
 
 Every scene above is ONE frame, and one frame is blind to the optimisation that matters most
-for zoom video: a dive toward a fixed centre keeps the same reference orbit valid across many
-frames, so the expensive setup can be amortised instead of paid per frame. A single-frame
+for zoom video: a dive toward a fixed center keeps the same reference orbit valid across many
+frames, so the expensive setup can be amortized instead of paid per frame. A single-frame
 benchmark scores that work as exactly zero.
 
 The lane descends a Misiurewicz λ-ladder — every frame is the **same picture at a different
 scale**, so per-frame cost *should* be flat and any ramp is the renderer failing to reuse its
 setup rather than the scene getting harder. The metric is each app measured against **itself**:
 
-    amortisation = frames_rendered × single_frame_wall / sequence_wall
+    amortization = frames_rendered × single_frame_wall / sequence_wall
 
 1.0 means everything is rebuilt every frame; higher means reuse. Because it is a self-ratio it
 needs no cross-app calibration.
@@ -246,7 +246,7 @@ run says so and continues. Fractadyne renders the sequence in ONE process (`--re
 which is the mode that owns its reference prefetch.
 
 **Read Fraktaler-3's figure carefully.** Its 3.1 batch CLI renders one image per invocation, so
-its "sequence" is N processes and its amortisation is 1.0 *by construction*. That is a property
+its "sequence" is N processes and its amortization is 1.0 *by construction*. That is a property
 of the command-line interface, not of its engine — F3 has zoom-sequence and exponential-map
 machinery this lane cannot reach. Do not quote it as an engine ceiling.
 
@@ -270,7 +270,7 @@ runs with a profile of the kit's own (`f3-profile\` in the run folder, Limit Ite
 Linux through `XDG_DATA_HOME`) and never reads your own F3 preferences. Both limits are written into
 each per-run scene file: **`-F3Limit`** (default 8192; F3's manual advises "a few 1000"), or the
 scene's own `f3_limit` column in its scenes CSV where it needs more. A pixel that reaches either
-limit stops and is coloured as interior. **Every Fraktaler-3 number this kit published before
+limit stops and is colored as interior. **Every Fraktaler-3 number this kit published before
 2026-10-10 ran at 4096/4096**, whatever the scene files said. A survey that day (RTX 3080,
 1280x720, Limit Iterations off) rendered all 31 scenes at 4096, 8192 and 32768: 29 drew identical
 images at all three, in the same time; `58-iter-p121984-1e66` changed 4 pixels between 4096 and 8192
@@ -280,7 +280,7 @@ and none after; `59-iter-p951094-1e68` was black at 4096, 85% black at 8192 and 
 lane was not checked at all: `verify-views.py` looked for `f3-<scene>.png` and Fraktaler-3 writes
 `<scene>-f3.png`. Run by hand, the check then called one correct render the wrong view. It judges
 magnification by the share of pixels that never escaped, read off an image as its black share,
-and Fraktaler-3's default colouring is a distance estimate: everything close to the boundary is
+and Fraktaler-3's default coloring is a distance estimate: everything close to the boundary is
 black too, escaped or not. `59-iter-p951094-1e68` is 62% black at 4K while 6.6% of its pixels never
 escaped; the rest of its black escaped after 4 to 10 million of the scene's 28.5 million
 iterations. Nothing else in such an image can stand in. Its black covers the right scene's
@@ -345,7 +345,7 @@ across 1e28, a deep field across 1e308). Two harnesses consume them:
   `--livetest` for the live/multithreaded path.
 - `tools/crossing-bench.py` — the cross-renderer lane. Drives each renderer through the SAME per-frame
   views at one sample per pixel: Fractadyne as a sequence (`--render-tour`, plus singles for the
-  amortisation denominator), and Fraktaler-3, FractalShark and Imagina one process per frame. Every
+  amortization denominator), and Fraktaler-3, FractalShark and Imagina one process per frame. Every
   frame is structure-checked, so a blank render is `DNF-blank`, never a time. FractalShark is driven
   through its `--locations` file (not `--center-x`) to dodge a 0.541 CLI parse bug that otherwise
   blanks the spar and nuclei; the Imagina lane uses the headless `imagina-cli` (see "Imagina"); Julia
@@ -392,43 +392,43 @@ across 1e28, a deep field across 1e308). Two harnesses consume them:
 ## The inspection sheet (`-Inspect`)
 
 Each renderer draws with its own palette, so two correct renders of one scene can look nothing
-alike, and a real difference hides among the colouring differences. `-Inspect` adds an untimed
+alike, and a real difference hides among the coloring differences. `-Inspect` adds an untimed
 pass after the lanes that writes `inspect-sheet.jpg`: the renderers that allow it on ONE stepped
 palette, side by side, and a map of where Fraktaler-3's iteration counts disagree with
 Fractadyne's. It is for looking at, not for publishing; the published images keep each
 renderer's own look.
 
-- **The palette.** Four colours in a fixed order, light and dark alternating (white, blue,
+- **The palette.** Four colors in a fixed order, light and dark alternating (white, blue,
   yellow, vermillion), never blended, interior black: a pixel's band is floor(n / k) mod 4 for its
   whole iteration count n. `k` is a power of two chosen per scene from Fractadyne's counts, so
   bands are about 10 pixels wide at 640x360. Hard edges are the point: a count off by a few
   iterations moves an edge, which a smooth ramp (grayscale included) would hide.
 - **Who gets it.** Fractadyne (`--render-iter`) and Fraktaler-3 (its view check's raw EXR) write
-  raw counts, which `tools/inspect-sheet.py` colours itself, so their palette is identical by
+  raw counts, which `tools/inspect-sheet.py` colors itself, so their palette is identical by
   construction. FractalShark 0.545 takes `--palette-map` and `--palette-depth`: it resamples the
   file to 2^depth entries and advances one entry per iteration (measured on scene 03), so the
-  tool writes each scene a file of exactly 2^depth entries, each colour repeated k times
-  (`inspect\<scene>.fs.map`). Imagina's counts come back encoded in colour: `imagina-cli
+  tool writes each scene a file of exactly 2^depth entries, each color repeated k times
+  (`inspect\<scene>.fs.map`). Imagina's counts come back encoded in color: `imagina-cli
   --iterations` stores each pixel's smooth iteration count (by default it stores a value from its
   distance estimate, which lights filaments rather than bands), and with a 65,536-entry decode map
   whose every entry encodes its own index (`inspect\imagina-decode.map`), the tool reads the count
-  back and colours it like Fraktaler-3's. On scenes 61 to 64 Imagina counts 1 to 3 more than
+  back and colors it like Fraktaler-3's. On scenes 61 to 64 Imagina counts 1 to 3 more than
   Fractadyne, apart from a ring on scene 63 that comes from its Julia sampling (see below).
-  Fractal Zoomer's counts are its colours: FzsWriter `--counts` turns on its direct
-  colour mode, where a pixel is its escape iteration count written straight into RGB (white is
+  Fractal Zoomer's counts are its colors: FzsWriter `--counts` turns on its direct
+  color mode, where a pixel is its escape iteration count written straight into RGB (white is
   interior), and sets its escape radius to Fractadyne's 256 (at its default of 2, the steps
   between the two radii vary across a view by more than any one offset can take out); on scenes
   61 to 64 its count is then Fractadyne's plus 3. Fracturing Fog appears in
-  its own palette. Fraktaler-3 3.1 has no colour option, which is why its raw counts are used.
+  its own palette. Fraktaler-3 3.1 has no color option, which is why its raw counts are used.
 - **The deviation map.** Fraktaler-3's, Imagina's and Fractal Zoomer's counts, less their median offset from
   Fractadyne's (for Fraktaler-3, 1024 from its EXR's iteration bias plus about 3 from its escape
   radius), are compared with the RANGE
-  of Fractadyne's 3x3 neighbourhood, since a renderer samples a pixel somewhere inside it.
+  of Fractadyne's 3x3 neighborhood, since a renderer samples a pixel somewhere inside it.
   Outside that range by more than 2 iterations is a deviation, counted only in connected patches
   of 12 pixels or more. Measured on scenes 61 to 64: in smooth areas the two agree to one
   iteration everywhere, and they disagree only in isolated pixels where the field has structure
   finer than a pixel (drawn dull purple and reported as speckle). Magenta is a deviating patch,
-  red escaped in one renderer only, grey chaotic (the neighbourhood spans more than a band).
+  red escaped in one renderer only, gray chaotic (the neighborhood spans more than a band).
 - **It can go red.** Faults planted in Fraktaler-3's counts were found: a 30x30 block 50
   iterations out, a 20x20 blank patch and a 4x4 glitch, one patch each; a block shifted by half
   a band was found where it crossed smooth ground, which is the limit of a test done pixel by
@@ -549,7 +549,7 @@ than papering over it:
   we control: Fractadyne renders exactly as it ships, so every reference image and historical
   number stays comparable, and `imagina-cli` is calibrated to meet it.
   `palettes/ember.map` is Fractadyne's built-in **Ember** (its default preset) baked to 1024
-  entries the way its own gradient baker does. **Position matters as much as colour**: Fractadyne
+  entries the way its own gradient baker does. **Position matters as much as color**: Fractadyne
   maps `position = smooth_iteration * cycle + offset` and wraps, at `cycle = 0.0202` and
   `offset = 0.1` by default, while Imagina's smooth value advances at twice that rate, so the
   matching cycle is exactly half — `0.0101` at offset `0`. That factor of two came out of a
@@ -565,17 +565,17 @@ than papering over it:
 
   `-SharedPalette <file>` is the other option: it puts *both* Fractadyne and Imagina on one file.
   It is off by default, because switching Fractadyne off its preset changes every reference image.
-  Either way **only those two lanes can join** — Fraktaler-3 3.1 exposes no colour options in its
+  Either way **only those two lanes can join** — Fraktaler-3 3.1 exposes no color options in its
   batch toml or its CLI, and `FractalSharkCli` has none at all — so those two keep their own
-  colours and the report says so rather than implying the column is like-for-like.
+  colors and the report says so rather than implying the column is like-for-like.
   What remains after matching is the finer detail Fractadyne resolves through its analytic
   palette anti-aliasing, which Imagina point-samples; the shallow scene sits at 0.76 for that
   reason.
 - **A shared palette also removes a harness cost that was being counted as engine time.** Our
-  `imagina-cli` fork coloured every pixel with three `cos()` calls; at 4K that is 25 million
+  `imagina-cli` fork colored every pixel with three `cos()` calls; at 4K that is 25 million
   cosines, and it measured **1.83 s against 0.93 s** for the same scene with a `.map` lookup,
   three reps each. Roughly half of every Imagina figure this kit ever produced was our own
-  colouring code. Colouring cost cannot be equalised across renderers we do not control, so the
+  coloring code. Coloring cost cannot be equalized across renderers we do not control, so the
   honest statement is that each lane pays whatever its own output path costs, and the two lanes
   we do control now pay a table lookup.
 - **Mirrored output is its own verdict.** `verify-views.py` also scores each render against the
@@ -594,7 +594,7 @@ than papering over it:
   Each scene is also scored against every other scene as a control.
   **The two signals carry different authority, and the difference matters.** Interior fraction
   tracks magnification and no palette choice can move it, because whether a pixel escaped is not
-  a colouring decision (read off an image it is the black share, which one renderer here breaks;
+  a coloring decision (read off an image it is the black share, which one renderer here breaks;
   see Fraktaler-3's view check); when it disagrees, the render is of somewhere else and the row becomes
   `DNF-not-the-scene`. Edge correlation compares *pictures*, and two renderers can draw the same
   iteration field so differently that it collapses — see the 1.6e148 note below — so on its own
@@ -614,7 +614,7 @@ than papering over it:
   will hit. Downsampled, that frame looks like salt-and-pepper static where the dendrite belongs.
   At 1:1 it is smooth, continuous iteration banding: FractalShark advances its palette once per
   iteration, the scene caps at 800,000 iterations, and where the field moves fastest adjacent
-  pixels land on different colours, so the bands alias into apparent static the moment anything
+  pixels land on different colors, so the bands alias into apparent static the moment anything
   resamples them — while our render of that same scene is the one we apply `--normalize` to,
   mapping the identical field onto one slow gradient. Same view, two images with nothing visually
   in common, and no CLI option on either side to bring the palettes closer.
@@ -624,7 +624,7 @@ than papering over it:
   for structure first, and a flat image becomes `DNF-blank`. This kit once published "144x faster
   than Fraktaler-3" for a frame that was entirely empty; never again. (The structure check itself
   was tightened in 2026-09: the old "any two sampled pixels differ" test passed a near-flat blank
-  with a few stray edge pixels; it now requires many distinct colours and no single colour over 98%,
+  with a few stray edge pixels; it now requires many distinct colors and no single color over 98%,
   matching `tools/image-structure.py`.)
 - **The GUI can also be driven without a mouse** — `tools/fractalshark-gui-scene.ps1` is a working
   prototype (window sized, Enter Location dialog filled, algorithm and antialiasing set by posted
@@ -681,7 +681,7 @@ forever. Its author's main target is Java 1.8, with `-XX:+UseG1GC` (the lane pas
 What the lane does:
 
 - writes every scene's `.fzs` once per run (`fz-fzs\`), with Fractal Zoomer's own
-  `Settings.save`: the `.kfr` centre, the iteration cap from the scene table, and the
+  `Settings.save`: the `.kfr` center, the iteration cap from the scene table, and the
   magnification as `size = 4 / Zoom` (Fractal Zoomer's `size` spans the shorter side of the image,
   the height here), at the precision Fractal Zoomer itself derives from those strings;
 - renders each scene of each round in a FRESH Java process of its own, through the command line
@@ -744,11 +744,11 @@ Fractadyne render of the same scene:
   the width spans 3.5/zoom; the `.kfr` zoom sets the height to 4/zoom. The lane passes the scene's
   zoom × 3.5 × (height / max(width, height)) / 4, which is 0.4921875 at 3840x2160. Scene 03 then
   has 42.1% interior against Fractadyne's 42.7%.
-- **Its imaginary axis points down the image.** Given the scene's own centre, scene 03 came out
+- **Its imaginary axis points down the image.** Given the scene's own center, scene 03 came out
   flipped top-to-bottom at the right magnification. The Mandelbrot set is symmetric about the
-  real axis, so the lane passes −Im: the conjugate centre drawn downward is the scene drawn upward.
-- **A deep centre goes in as limbs.** `--x` and `--y` take up to eight doubles, `hi|lo|...`, whose
-  sum is the centre (about 124 digits). The `.kfr` decimal is split exactly, with rational
+  real axis, so the lane passes −Im: the conjugate center drawn downward is the scene drawn upward.
+- **A deep center goes in as limbs.** `--x` and `--y` take up to eight doubles, `hi|lo|...`, whose
+  sum is the center (about 124 digits). The `.kfr` decimal is split exactly, with rational
   arithmetic, never through a float.
 
 **One sample per pixel.** Its quality presets set the sampling: Draft and Standard take one
@@ -761,7 +761,7 @@ renders deep views at full precision. `--no-watermark` leaves its caption off th
 uses, so this is a CPU lane like Imagina's.
 
 **It renders to 1e100.** That is its Extreme preset's limit, octuple-double. Version 0.7.1 still
-exits 0 past it, with one flat colour in a fraction of a second, measured at 1.6e148, 5.5e275 and
+exits 0 past it, with one flat color in a fraction of a second, measured at 1.6e148, 5.5e275 and
 2.3e296. A flat frame of a scene with almost no interior gives the view check's magnification
 test nothing to contradict. So the lane refuses those scenes up front (`NA-past-its-ceiling`), and the
 structure guard stands behind it. Of the kit's 31 scenes, 17 are in range.
@@ -772,7 +772,7 @@ PNG, and is the column it competes in. `reported_s` is the time it prints, "save
 1.9 s per image, which is .NET start-up plus the PNG.
 
 **Its view check runs on its default theme**, HSV, which cycles fast. Around a deep minibrot it
-aliases into grey noise at 4K, so the image test cannot confirm those scenes, while their
+aliases into gray noise at 4K, so the image test cannot confirm those scenes, while their
 magnification agrees; the shapes match when you look. Its interior is black, so the
 magnification test applies as it stands.
 

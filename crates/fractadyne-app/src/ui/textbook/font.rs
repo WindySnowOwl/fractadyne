@@ -208,7 +208,7 @@ impl MathFont {
 
     /// The em size, in points, that egui actually draws a `size_pt` font with at `ppp` physical
     /// pixels per point. egui scales the font so its em is `size_pt`, but rounds the scale it hands
-    /// the rasteriser — ascender−descender in whole pixels (epaint `Fonts::font_impl`) — so the em
+    /// the rasterizer — ascender−descender in whole pixels (epaint `Fonts::font_impl`) — so the em
     /// drawn is a little off the one asked for. The layout measures with this one, or its boxes and
     /// the glyphs drawn in them would disagree by up to half a pixel per em.
     pub(crate) fn rendered_em(&self, size_pt: f32, ppp: f32) -> f32 {

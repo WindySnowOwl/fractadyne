@@ -2,7 +2,7 @@
 
 Status: **plan (2026-10-05). Phase 1 built 2026-10-08 (§3, "Phase 1 as built"); the live view's
 second GPU (L2, `design/multi-gpu-live.md`) built 2026-10-07.** The test machine (PLUTO) now has an
-RTX 3070 beside its RX 6800 XT. This document says what is worth parallelising across them, in what order, and what
+RTX 3070 beside its RX 6800 XT. This document says what is worth parallelizing across them, in what order, and what
 has to change first. Line references are to `feat/bench-ladder` unless marked `[RR]`
 (`feat/remote-rendering`, not merged).
 
@@ -219,7 +219,7 @@ process, with no per-device capability state (`design/multi-gpu-live.md` §8).
   close-up of the busiest seam shows the same speckle on both sides (`local/l2-ab/split-pluto/`).
   So splitting by tile across different models looks safe for stills; a smooth-gradient view would
   be the harder test of it.
-- **The smooth-gradient test (2026-10-08, user: "yes"; field agent v22 for the 4,031-digit centre).**
+- **The smooth-gradient test (2026-10-08, user: "yes"; field agent v22 for the 4,031-digit center).**
   6.8e3999× (`locations/e4000.fdn`, the view whose class difference showed as faint arcs in a smooth
   background) at 3840×2160 ss 2, 2,008,192 iterations: the two cards agree EXACTLY on 64.6% of the
   pixels — every smooth region (the map of which card drew what is `=` there) — and differ (mean

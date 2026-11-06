@@ -4,7 +4,7 @@
 // people pass around on a forum.
 // ---- .kfr import (manual checklist step 73) and go-to round-trip (step 68) ----------------
 
-/// A 62-digit centre from a Kalles Fraktaler / Fraktaler-3 location file. The whole point of
+/// A 62-digit center from a Kalles Fraktaler / Fraktaler-3 location file. The whole point of
 /// importing one is to land on a DEEP coordinate, so the property that matters is that the
 /// digits survive: a parser that quietly went through f64 would keep about 17 of them and
 /// still produce a plausible-looking view a long way from the one that was shared.
@@ -25,8 +25,8 @@ fn kfr_import_keeps_every_digit_of_a_deep_centre() {
     );
     assert_eq!(v.iterations, Some(250_000));
 
-    // Round-trip the centre back to decimal and compare digit strings. Comparing f64s here
-    // would be exactly the bug this guards: two centres that differ in the 30th digit are
+    // Round-trip the center back to decimal and compare digit strings. Comparing f64s here
+    // would be exactly the bug this guards: two centers that differ in the 30th digit are
     // the same f64 and utterly different views at 1e30x.
     for (got, want) in [
         (
@@ -43,7 +43,7 @@ fn kfr_import_keeps_every_digit_of_a_deep_centre() {
         let keep = b.len().min(a.len());
         assert!(
             keep >= 55 && a[..keep] == b[..keep],
-            "centre lost precision:\n  got  {s}\n  want {want}"
+            "center lost precision:\n  got  {s}\n  want {want}"
         );
     }
 }
@@ -146,7 +146,7 @@ Location.Im: 0
 
 #[test]
 fn a_full_precision_centre_survives_verbatim() {
-    // The whole point of importing: deep centres are long, and truncating one silently moves
+    // The whole point of importing: deep centers are long, and truncating one silently moves
     // the view. 139 digits, the length our own session files already carry.
     let re = "-0.101096363845622131810062384757351929938361014185318540959576769264716835033666295089126713641250096615102645646890476648163450651052568";
     let t = format!(
@@ -156,7 +156,7 @@ fn a_full_precision_centre_survives_verbatim() {
  Im: 0.5
 "
     );
-    let v = parse_imagina_text(&t).expect("deep centre must parse");
+    let v = parse_imagina_text(&t).expect("deep center must parse");
     let round = crate::to_decimal_string(&v.cx);
     assert!(round.starts_with("-1.0109636384562213181006238475735192993836101418531854095957676926471683503366629508912671364125"),
             "precision lost on import: {round}");

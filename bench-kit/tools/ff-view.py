@@ -8,14 +8,14 @@ Prints one JSON object: {"x": ..., "y": ..., "zoom": ..., "zoom_log10": ...}.
 THREE CONVERSIONS, each measured against the Fractadyne render of the same scene (2026-10-31,
 Fracturing Fog 0.7.1):
 
-  centre  Past about 1e15 a single double cannot hold the centre, so --x/--y take it as up to
-          eight double limbs, "hi|lo|...", whose exact sum is the centre (Fracturing Fog's own
+  center  Past about 1e15 a single double cannot hold the center, so --x/--y take it as up to
+          eight double limbs, "hi|lo|...", whose exact sum is the center (Fracturing Fog's own
           lossless form). The .kfr decimal is split exactly, with rational arithmetic, never via
           a float: the first limb is the nearest double, the next the nearest double to what is
           left, and so on. Eight limbs hold about 124 digits.
   y       Fracturing Fog's imaginary axis points DOWN the image. Given the .kfr's Im, scene 03
           came out flipped top-to-bottom at the right magnification. The set is symmetric about
-          the real axis, so the conjugate centre, -Im, drawn y-down is exactly the scene drawn
+          the real axis, so the conjugate center, -Im, drawn y-down is exactly the scene drawn
           y-up, as every other renderer here draws it.
   zoom    Fracturing Fog's pixel size is 3.5 / (max(width, height) * zoom): its zoom fixes the
           WIDTH of a landscape image at 3.5/zoom. The .kfr's is Kalles Fraktaler's, the HEIGHT
@@ -54,7 +54,7 @@ def log10_fraction(q):
 
 
 def main():
-    # The deepest scenes carry centres of 10,000 to 30,000 digits, past the 4,300-digit cap Python
+    # The deepest scenes carry centers of 10,000 to 30,000 digits, past the 4,300-digit cap Python
     # 3.11 put on converting a string to an integer, which Fraction does. Older Pythons have no cap.
     if hasattr(sys, "set_int_max_str_digits"):
         sys.set_int_max_str_digits(0)

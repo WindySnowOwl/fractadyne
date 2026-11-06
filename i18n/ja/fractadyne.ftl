@@ -292,7 +292,7 @@ tag-group-shape = 形
 tag-group-theme = テーマ
 tag-group-purpose = 用途
 
-# Tags measured from a palette's colours: its colour families, warm or cool, how busy it is (calm, lively, frantic), its brightness, and its shape. Plural nouns for the families; the rest describe the palette.
+# Tags measured from a palette's colors: its color families, warm or cool, how busy it is (calm, lively, frantic), its brightness, and its shape. Plural nouns for the families; the rest describe the palette.
 tag-reds = 赤系
 tag-oranges = オレンジ系
 tag-yellows = 黄系
@@ -968,9 +968,9 @@ app-gradient-ggr-imported = 「{ $name }」をインポートしました：{ $c
 # $error: the reader's reason (in English).
 app-gradient-ggr-invalid = .ggrグラデーションではありません：{ $error }
 
-## The eyedropper's banner across the top of the screen while picking a colour
+## The eyedropper's banner across the top of the screen while picking a color
 
-# $hex: the colour under the pointer, as #rrggbb.
+# $hex: the color under the pointer, as #rrggbb.
 app-eyedropper-banner-color = 色を取得中  ·  { $hex }  ·  クリックで取得、Escでキャンセル
 app-eyedropper-banner = 色を取得中  ·  クリックで取得、Escでキャンセル
 
@@ -1008,7 +1008,7 @@ app-gradient-bezier-exact-hover = 両方向にドラッグできる2つの制御
 app-gradient-bezier-visible-hover = 両方向にドラッグできる2つの制御点です。変換すると現在のカーブを近似します。このカーブでは誤差が{ $error }以内で、はっきり目に見えます。
 # Hover on Bézier in the list of blend curves. $error: how far the fit is off (2 decimals).
 app-gradient-bezier-barely-hover = 両方向にドラッグできる2つの制御点です。変換すると現在のカーブを近似します。このカーブでは誤差が{ $error }以内で、ほとんど目に見えません。
-# A label before the list of colour spaces (RGB, HSV).
+# A label before the list of color spaces (RGB, HSV).
 app-gradient-space = 色空間
 # A label before the Bézier presets beside it.
 app-gradient-ease = イージング
@@ -1059,7 +1059,7 @@ app-gradient-import-ggr-hover = GIMPの.ggrグラデーションを、中間点�
 app-gradient-import-ase-hover = Adobeのスウォッチリスト（.ase）を読み込みます。スウォッチには位置がないため、等間隔に配置してブレンドします。
 # The gradient's name, for the library of saved gradients.
 app-gradient-name = 名前
-# Shown greyed in the empty name field.
+# Shown grayed in the empty name field.
 app-gradient-name-hint = マイグラデーション
 # The save button, when a gradient of that name is already saved.
 app-gradient-update = 更新
@@ -1084,13 +1084,13 @@ app-gradient-ends-differ-hover = グラデーションの終点の色が始点�
 app-gradient-hard-bands = ハードバンド（エントリ間をブレンドしない）
 app-gradient-hard-bands-hover = Fractint / .mapの考え方です：各エントリが単色になります。オフにすると、エントリをなめらかなグラデーションにブレンドします。
 app-gradient-paste-intro = 16進の色（#ff8800）または0～255の3つ組（255 136 0）を、カンマ、スペース、改行で区切って貼り付けてください：
-# Applies the pasted colours.
+# Applies the pasted colors.
 app-gradient-apply = 適用
 # Empties the paste box.
 app-gradient-clear = クリア
-# $used: the colours kept; $total: the colours pasted; $limit: the most that are kept.
+# $used: the colors kept; $total: the colors pasted; $limit: the most that are kept.
 app-gradient-paste-imported-some = { $total }色のうち{ $used }色を、リスト全体から均等に抜き出してインポートしました（上限は{ $limit }色）。
-# $count: the colours pasted.
+# $count: the colors pasted.
 app-gradient-paste-imported = { $count }色をインポートしました。
 # $error: why the pasted text could not be read (in English).
 app-gradient-paste-unreadable = 読み取れませんでした：{ $error }
@@ -1971,7 +1971,7 @@ farm-client-show-key = 表示
 farm-client-machine = このマシン
 farm-client-machine-hover = コントローラーがこのマシンに表示する名前です。
 farm-client-share = 共有ドライブ
-# Greyed hint inside the empty field; the path is an example.
+# Grayed hint inside the empty field; the path is an example.
 farm-client-share-hint = 省略可。例：\\fileserver\share
 farm-client-share-hover = コントローラーが使う共有ドライブへの、このマシンからのパスです（共有モード）：フレームは接続経由で送る代わりにそこへ書き込まれます。空欄にすると、すべてのフレームを送信します。
 farm-client-gpu = グラフィックスカード
@@ -2133,7 +2133,7 @@ farm-ctl-ss = スーパーサンプリング
 farm-ctl-port = 待ち受けポート
 farm-ctl-port-hover = クライアントはこのポートに接続します。ローカルネットワークに対して、ファイアウォールでこのポートを許可してください。
 farm-ctl-share = 共有ドライブ
-# Greyed hint inside the empty field.
+# Grayed hint inside the empty field.
 farm-ctl-share-hint = 省略可。このマシンからのパス
 farm-ctl-share-hover = 共有モード：同じドライブを持つクライアントは、フレームを接続経由で送る代わりにそこへ書き込み、このマシンがそこで1枚ずつ確認します。ドライブを持たないクライアントは、フレームを送信します。
 # A label followed by a number of clients and two checkboxes.
@@ -2399,7 +2399,7 @@ formula-apply = 適用
 formula-dialog-apply-hover = 数式をコンパイルして表示します
 # Shown beside Apply while the formula is being compiled.
 formula-dialog-compiling = GPU用に数式をコンパイル中…
-# The greyed hint in an empty name box (also in the Formula library window).
+# The grayed hint in an empty name box (also in the Formula library window).
 formula-name-hint = 名前（省略可）
 # The save button: "Update" when the library already has a formula of that name.
 formula-dialog-update-in-library = ライブラリ内を更新
@@ -2534,7 +2534,7 @@ formula-library-import = インポート…
 formula-library-import-hover = 数式ファイル内の数式を追加します。ここにあるものは何も置き換えられません
 formula-library-export-all = すべてエクスポート…
 formula-library-export-all-hover = ここにあるすべての数式を1つのファイルに書き出します。共有や保存に使えます
-# The filter box: its label, and the greyed hint inside it.
+# The filter box: its label, and the grayed hint inside it.
 formula-library-filter = フィルター
 formula-library-filter-hint = 名前またはテキストで絞り込み
 # Shown while the user has no saved formulas.
@@ -2665,10 +2665,10 @@ panel-tail-length-unit = 回
 panel-tail-length-hover = 窓の長さ（反復回数）です。短い窓（8～32）はどの深度でも古典的な太い帯を生みます。長い窓では、長いカオス的な軌道のストライプ項が平均されて打ち消し合うため、再び平坦な色に近づきます。
 panel-trap-shape = トラップの形
 panel-palette = パレット
-# The two colours of the Binary palette, each beside its colour swatch.
+# The two colors of the Binary palette, each beside its color swatch.
 panel-in-set = 集合内
 panel-out-of-set = 集合外
-# The two colours of the Duotone palette, each beside its colour swatch.
+# The two colors of the Duotone palette, each beside its color swatch.
 panel-shadow = シャドウ
 panel-highlight = ハイライト
 panel-cycle = サイクル
@@ -2686,7 +2686,7 @@ panel-log-scale-hover =
     パレットを脱出値に比例させず、その「対数」に従って広げます。深いところでは脱出回数が大きい側に偏るため、線形の割り当てではパレットの大部分が境界付近の薄い層に費やされ、ほかのすべてが平坦になります。
 
     正規化された割り当てに適用されます。これは「深い色を正規化」（エクスポートでは--normalize）でオンになるものです。範囲が大きく偏っている場合は、これがオンかどうかに関係なく、対数の割り当てが使われます。
-# The same checkbox's tooltip while it is greyed out (normalization is off).
+# The same checkbox's tooltip while it is grayed out (normalization is off).
 panel-log-scale-off-hover =
     正規化が必要です：これは測定した脱出値の範囲にパレットを「どのように」割り当てるかを選ぶものなので、「深い色を正規化」がオフ（かつ--normalizeのエクスポートでもない）のときは変える割り当てがなく、1ピクセルも変わりません。
 
@@ -3038,11 +3038,11 @@ lsys-draw-on = 描画範囲
 lsys-draw-on-hover = 曲線のどこまでを、タートルが描く順に描画するか
 lsys-draw-on-play-hover = 曲線が自らを描いていく様子
 lsys-colour-by = 色分けの基準
-# The colourings, in the "Colour by" list.
+# The colorings, in the "Color by" list.
 lsys-colour-position = 曲線に沿った位置
 lsys-colour-depth = 枝の深さ
 lsys-colour-heading = 向き
-# C, < and > are the system's commands that set the colour index: keep them.
+# C, < and > are the system's commands that set the color index: keep them.
 lsys-colour-index = カラーインデックス（C、<、>）
 lsys-colour-plain = 単色
 # The panel's numbers.
@@ -3173,9 +3173,9 @@ export-snapshot-saved = 画面のスナップショット{ $size }を保存し�
 # $error: why (in English).
 export-snapshot-failed = スナップショットに失敗しました：{ $error }
 
-## The colour picker (the popup of a colour swatch)
+## The color picker (the popup of a color swatch)
 
-# The third row's label: the colour as hexadecimal bytes. Short (about 6 characters).
+# The third row's label: the color as hexadecimal bytes. Short (about 6 characters).
 picker-row-hex = 16進
 picker-hex-hover = クリックして16進値を入力
 picker-cancel = キャンセル
@@ -3448,7 +3448,7 @@ fractal-family-lsystem = Lシステム
 # A family at a power: "Multibrot 3", "Burning Ship 4". $family: a name above; $power: the power.
 fractal-with-power = { $family } { $power }
 
-## Names of choices: colouring methods, orbit traps, palette animation, snapshots, angle units.
+## Names of choices: coloring methods, orbit traps, palette animation, snapshots, angle units.
 
 color-method-smooth = スムーズ反復
 color-method-stripe = ストライプ平均

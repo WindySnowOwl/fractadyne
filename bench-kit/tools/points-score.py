@@ -11,9 +11,9 @@ RESULTS_DIR/truth):
 - a TIP scene against the truth of the 1e12x rung, shifted by the number of 4x steps between them:
   each 4x of zoom about -2 adds exactly one iteration at radius 256 and 4096 (not at 2, so a
   renderer that counts from radius 2 is judged on radius 256/4096 planes only);
-- a PI scene against its own truth (`--truth-direct`), and the truth's centre against pi's law.
+- a PI scene against its own truth (`--truth-direct`), and the truth's center against pi's law.
 Writes RESULTS_DIR/points-score.json and points-score.md, and a map per renderer and scene in
-RESULTS_DIR/points-maps (grey agrees, magenta a deviating patch, red escaped in one only).
+RESULTS_DIR/points-maps (gray agrees, magenta a deviating patch, red escaped in one only).
 """
 import argparse
 import json

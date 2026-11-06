@@ -1,8 +1,8 @@
 use super::*;
 
 fn detect(re: &str, im: &str, prec: usize, max_iter: u32, max_period: u32) -> Option<(u32, u32)> {
-    let cx = crate::parse_bf_prec(re, prec).expect("centre parses");
-    let cy = crate::parse_bf_prec(im, prec).expect("centre parses");
+    let cx = crate::parse_bf_prec(re, prec).expect("center parses");
+    let cy = crate::parse_bf_prec(im, prec).expect("center parses");
     detect_misiurewicz(&cx, &cy, 0, max_iter, max_period, prec)
 }
 
@@ -17,12 +17,12 @@ fn the_two_textbook_points_are_identified() {
     assert_eq!(detect("0.0", "1.0", 128, 64, 32), Some((2, 2)), "c = i");
 }
 
-/// The spiral this was written for: the centre of a 1.6e39x view whose structure is organised
+/// The spiral this was written for: the center of a 1.6e39x view whose structure is organized
 /// around a Misiurewicz point. Independently identified as (49, 3) with mpmath, then Newton
 /// refined to 522 digits and RENDERED at 1e500x, where it shows the same spiral rather than
 /// noise — which is the check that the pair is right, not merely plausible.
 ///
-/// The separation at this centre is 6.6e-39, so this doubles as the regression pin for the
+/// The separation at this center is 6.6e-39, so this doubles as the regression pin for the
 /// f64 pre-filter: an implementation that ranked candidates in f64 would see every one of them
 /// as exactly zero and could return any pair at all.
 #[test]
@@ -59,8 +59,8 @@ fn points_without_a_misiurewicz_pair_are_declined() {
 #[test]
 fn the_reported_preperiod_is_the_canonical_minimal_one() {
     let p = 192;
-    let cx = crate::parse_bf_prec("-1.99999999999999999999", p).expect("centre parses");
-    let cy = crate::parse_bf_prec("0.0", p).expect("centre parses");
+    let cx = crate::parse_bf_prec("-1.99999999999999999999", p).expect("center parses");
+    let cy = crate::parse_bf_prec("0.0", p).expect("center parses");
     let span_log2 = 1.0e-18f64.log2();
     let got = detect_misiurewicz_at_scale(&cx, &cy, 0, 200, 32, p, Some(span_log2));
     assert_eq!(got, Some((2, 1)), "canonical antenna-tip pair, not an inflated tail index");

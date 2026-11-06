@@ -48,10 +48,10 @@ fn view_and_preference_fields_roundtrip() {
 
 /// Checklist step 101: "it reopens on the SAME view you left, with the same fractal, palette
 /// and settings." `view_and_preference_fields_roundtrip` covers the fractal and the
-/// preferences but NOT the view itself or the colouring, which is the half a user would
+/// preferences but NOT the view itself or the coloring, which is the half a user would
 /// actually notice — reopening somewhere else is the whole failure.
 ///
-/// The centre is checked as a STRING at 60 digits. `center_x`/`center_y` are f64 and exist
+/// The center is checked as a STRING at 60 digits. `center_x`/`center_y` are f64 and exist
 /// only as a fallback for old saves; a deep session that round-tripped through them would
 /// come back looking fine and be somewhere else entirely, which is the same defect the .kfr
 /// import carries a test for.
@@ -76,8 +76,8 @@ fn a_deep_view_and_its_colouring_survive_a_restart() {
     };
     let r = roundtrip(&s);
 
-    assert_eq!(r.center_x_str, CX, "deep centre lost digits across a save/load");
-    assert_eq!(r.center_y_str, CY, "deep centre lost digits across a save/load");
+    assert_eq!(r.center_x_str, CX, "deep center lost digits across a save/load");
+    assert_eq!(r.center_y_str, CY, "deep center lost digits across a save/load");
     assert_eq!(r.units_per_pixel, 1.0);
     assert_eq!(r.units_per_pixel_e, -1669, "the depth exponent was dropped");
     assert_eq!(r.max_iter, 200_000);
@@ -351,7 +351,7 @@ fn reset_all_removes_config_dir_via_override() {
 }
 
 /// ⭐⭐**An imported `.ggr` is RICHER than a stop list, and the session must hold all of it.** The
-/// midpoint, the blend curve and the colour space are exactly what a `[pos, r, g, b]` list cannot
+/// midpoint, the blend curve and the color space are exactly what a `[pos, r, g, b]` list cannot
 /// express, so persisting one as stops would have flattened every curve and every hue sweep on the
 /// first restart — silently, and visible only as "it looks different than when I imported it".
 #[test]
@@ -359,7 +359,7 @@ fn an_imported_segment_gradient_survives_a_restart() {
     let segs = vec![
         PaletteSegment {
             left: 0.0,
-            mid: 0.17,           // deliberately NOT centred
+            mid: 0.17,           // deliberately NOT centered
             right: 0.5,
             left_color: [1.0, 0.0, 0.0, 1.0],
             right_color: [0.0, 0.0, 1.0, 0.5],
@@ -394,7 +394,7 @@ fn an_imported_segment_gradient_survives_a_restart() {
     let r = roundtrip(&s);
     assert_eq!(r.custom_segments, segs, "the segment gradient did not round-trip");
     // The three things a stop list cannot hold, named individually so a partial loss is obvious.
-    assert_eq!(r.custom_segments[0].mid, 0.17, "the off-centre midpoint was lost");
+    assert_eq!(r.custom_segments[0].mid, 0.17, "the off-center midpoint was lost");
     assert_eq!(r.custom_segments[0].blend, 2, "the blend curve was lost");
     assert_eq!(
         r.custom_segments[1].blend_params,
@@ -402,7 +402,7 @@ fn an_imported_segment_gradient_survives_a_restart() {
         "the Bezier control points were lost - a segment switched to kind 5 and back would come \
          back as a straight line"
     );
-    assert_eq!(r.custom_segments[0].space, 1, "the colour space was lost");
+    assert_eq!(r.custom_segments[0].space, 1, "the color space was lost");
     assert_eq!(r.custom_segments[0].right_color[3], 0.5, "alpha was lost");
 }
 
