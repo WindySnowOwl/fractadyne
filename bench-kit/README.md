@@ -110,7 +110,7 @@ Like the ladder, they are benchmark scenes, not cross-checked correctness fixtur
 | Scene | Magnification | Iterations | What it stresses | Source |
 |---|---|---|---|---|
 | 61-flake-7.8e156 | 7.8e156 | 60,000 | perturbation without rebasing needs many reference points to resolve it | Dinkydau's "Flake", suggested by kaludix |
-| 62-fraqcel-2.3e31 | 2.3e31 | 2,000 | without rebasing, glitch correction is likely to recurse into the regions it corrected | the Fraqcel test location, suggested by kaludix |
+| 62-fraqcel-4.5e31 | 4.5e31 | 2,000 | without rebasing, glitch correction is likely to recurse into the regions it corrected | the Fraqcel test location, suggested by kaludix |
 | 63-cerebral-spin-6.7e152 | 6.7e152 | 2,000,000 | BLA far ahead of series approximation (36x in Very Plotter) | a deeper "Cerebral Spin", from [Phil Thompson's BLA article](https://philthompson.me/2023/Faster-Mandelbrot-Set-Rendering-with-BLA-Bivariate-Linear-Approximation.html) |
 | 64-ssss-1.3e694 | 1.3e694 | 350,000 | series approximation ahead of BLA (1.66x in Very Plotter) | Dinkydau's "SSSSSSSSSSSSSSSS", from the same article |
 
@@ -120,14 +120,21 @@ approximation wins. The centres and iteration caps are copied from the post and 
 own Very Plotter links. Magnifications are converted to the kit's zoom, where the view is 4 / zoom
 high:
 
-- kaludix's "Plot Scale" is read as the view's half-height (zoom = 2 / scale). That reading frames
-  both of their views as a whole structure; read as the full height, the Fraqcel location runs off
-  the frame.
+- kaludix's "Plot Scale" is the length of the view's shorter side, the height for these landscape
+  views (kaludix's reply in the thread), so zoom = 4 / scale. The Fraqcel view matches the picture
+  in that reply. Scene 61 still has the first post's value read the old way (zoom = 2 / scale)
+  until kaludix's corrected Flake value is copied in.
 - Very Plotter's `mag` makes the shorter side of the view 3 / mag (`magnificationFactor` 3 for the
   Mandelbrot set), so zoom = 4 × mag / 3.
 
 Scene 63 gives Fractadyne `normalize` = `log`, as the ladder's minibrots do: at 2 million iterations
-its field is otherwise palette noise.
+its field is otherwise palette noise. Scene 61 gives it `normalize` = `1`, Fractadyne's way to
+follow kaludix's advice to divide the Flake's iteration count by 8 before coloring it: its escapes
+(about 29,000 to 34,000) step so fast between neighboring pixels that a palette repeating every 50
+iterations, Fractadyne's default, draws rings of moiré and no flake. Normalizing costs Fractadyne
+about 0.1 s at 4K (1.82 s against 1.73 s, best of three), since it reads the frame's range before
+coloring. The other renderers keep their own colorings; the inspection sheet recolors those that
+give it their counts in one shared palette either way.
 
 ### Validation points (`-SceneSet tip`, `-SceneSet pi`)
 
