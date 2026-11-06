@@ -983,6 +983,24 @@ fn esc_hist_commit(sm: f32) {
 // app takes the window's top from a quantile of it, so a few pixels escaping just under the
 // iteration ask beside a minibrot no longer set the colors of the whole picture.
 const CTR_NORM_HIST: u32 = 57u;
+// ⭐THE ORBIT TRAP'S VALUE HISTOGRAM, for "Always fit range" with the orbit-trap method (keep in
+// sync with lib.rs `CTR_TRAP_HIST` / `TRAP_HIST_*`): the colored value, −log₂ of the orbit's nearest
+// approach to the trap (`coord_under`), in fixed buckets of 1/16 from −8 to 68. The app takes the
+// palette window from its 0.5% and 99.5% quantiles: in the Mandelbrot plane most of a view's values
+// can sit inside two units while a pixel on a nucleus reaches 66, so a min/max window would leave
+// the picture as flat as no fitting at all. Counted on the 4x4 grid, interior pixels too (the trap
+// colors them), from the single-pass iterate only: orbit statistics never take the chunked walk.
+const CTR_TRAP_HIST: u32 = 473u;
+const TRAP_HIST_LO: f32 = -8.0;
+const TRAP_HIST_PER_UNIT: f32 = 16.0;
+const TRAP_HIST_BUCKETS: u32 = 1216u;
+fn trap_hist_commit(a: Aux, gx: f32, gy: f32) {
+    if ((iu.aux_on & 1u) == 1u && iu.color_method == 3u && (i32(gx) & 3) == 0 && (i32(gy) & 3) == 0) {
+        let pv = -log2(max(a.trap, 1.0e-20));
+        let k = u32(clamp((pv - TRAP_HIST_LO) * TRAP_HIST_PER_UNIT, 0.0, f32(TRAP_HIST_BUCKETS - 1u)));
+        atomicAdd(&counters[CTR_TRAP_HIST + k], 1u);
+    }
+}
 // On the 4x4 grid of the escape-range commit; called where a whole frame's escapes are seen once
 // each: `fs_resolve` on a chunked frame, the single-pass iterates' escape otherwise.
 fn norm_hist_commit(sm: f32, p: vec2<i32>) {
@@ -1602,6 +1620,7 @@ fn iterate_at(gx: f32, gy: f32) -> FragOut {
         }
         if (!escaped) {
             atomicAdd(&counters[CTR_MAXITER], 1u);
+            trap_hist_commit(aux, gx, gy);
             let aux_out = select(AUX_NONE, aux_pack(aux, 0.0, zf), (iu.aux_on & 1u) == 1u);
             return FragOut(vec4<f32>(-1.0, 0.0, 0.0, 1.0e30), aux_out);
         }
@@ -1623,6 +1642,7 @@ fn iterate_at(gx: f32, gy: f32) -> FragOut {
             nrm = slope_normal(zf, vec2<f32>(dz.re.x, dz.im.x));
             de = de_log2(mag2, dz.re.x * dz.re.x + dz.im.x * dz.im.x, 0.0);
         }
+        trap_hist_commit(aux, gx, gy);
         let aux_out = select(AUX_NONE, aux_pack(aux, fract(smit), zf), (iu.aux_on & 1u) == 1u);
         esc_range_commit(smit);
         esc_count_commit(vec2<i32>(i32(gx), i32(gy)));
@@ -2081,6 +2101,7 @@ fn iterate_at(gx: f32, gy: f32) -> FragOut {
         if (rn_px) { rn_commit(gx, gy); }
         if (!escaped) {
             atomicAdd(&counters[CTR_MAXITER], 1u);
+            trap_hist_commit(aux, gx, gy);
             let aux_out = select(AUX_NONE, aux_pack(aux, 0.0, zf), (iu.aux_on & 1u) == 1u);
             return FragOut(vec4<f32>(-1.0, 0.0, 0.0, 1.0e30), aux_out);
         }
@@ -2093,6 +2114,7 @@ fn iterate_at(gx: f32, gy: f32) -> FragOut {
             nrm = slope_normal(zf, vec2<f32>(D.m.re.x, D.m.im.x));
             de = de_log2(mag2, D.m.re.x * D.m.re.x + D.m.im.x * D.m.im.x, f32(D.e));
         }
+        trap_hist_commit(aux, gx, gy);
         let aux_out = select(AUX_NONE, aux_pack(aux, fract(smit), zf), (iu.aux_on & 1u) == 1u);
         esc_range_commit(smit);
         esc_count_commit(vec2<i32>(i32(gx), i32(gy)));
@@ -2278,6 +2300,7 @@ fn iterate_at(gx: f32, gy: f32) -> FragOut {
         step_commit(gx, gy, n_bla + n_full, n_full, n_big, iter);
         if (!escaped) {
             atomicAdd(&counters[CTR_MAXITER], 1u);
+            trap_hist_commit(aux, gx, gy);
             let aux_out = select(AUX_NONE, aux_pack(aux, 0.0, zf), (iu.aux_on & 1u) == 1u);
             return FragOut(vec4<f32>(-1.0, 0.0, 0.0, 1.0e30), aux_out);
         }
@@ -2292,6 +2315,7 @@ fn iterate_at(gx: f32, gy: f32) -> FragOut {
             nrm = slope_normal(zf, vec2<f32>(D.m.re.x, D.m.im.x));
             de = de_log2(mag2, D.m.re.x * D.m.re.x + D.m.im.x * D.m.im.x, f32(D.e));
         }
+        trap_hist_commit(aux, gx, gy);
         let aux_out = select(AUX_NONE, aux_pack(aux, fract(smit), zf), (iu.aux_on & 1u) == 1u);
         esc_range_commit(smit);
         esc_count_commit(vec2<i32>(i32(gx), i32(gy)));

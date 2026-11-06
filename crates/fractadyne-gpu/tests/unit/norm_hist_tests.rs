@@ -1,7 +1,7 @@
 //! The fine escape histogram the live palette window takes its top from (`CTR_NORM_HIST`).
 
 use crate::{
-    norm_hist_bucket, NormHist, COUNTER_SLOTS, CTR_NORM_HIST, CTR_RENORM, NORM_HIST_BUCKETS,
+    norm_hist_bucket, NormHist, COUNTER_SLOTS, CTR_NORM_HIST, CTR_RENORM, CTR_TRAP_HIST, NORM_HIST_BUCKETS,
     NORM_HIST_PER_OCTAVE,
 };
 
@@ -15,12 +15,13 @@ fn hist_of(values: &[f32], base: f32) -> NormHist {
 }
 
 #[test]
-fn the_histogram_is_the_last_thing_in_the_counter_buffer() {
+fn the_histogram_ends_where_the_trap_histogram_begins() {
     assert_eq!(CTR_RENORM + 1, CTR_NORM_HIST);
-    assert_eq!(CTR_NORM_HIST + NORM_HIST_BUCKETS, COUNTER_SLOTS);
+    assert_eq!(CTR_NORM_HIST + NORM_HIST_BUCKETS, CTR_TRAP_HIST);
     let mut slots = [0u32; COUNTER_SLOTS];
     slots[CTR_NORM_HIST] = 3;
-    slots[COUNTER_SLOTS - 1] = 4;
+    slots[CTR_TRAP_HIST - 1] = 4;
+    slots[CTR_TRAP_HIST] = 99; // the trap histogram's first bucket, which is not this histogram's
     let h = NormHist::from_slots(&slots, 12.5);
     assert_eq!((h.base, h.counts.len(), h.counts[0], h.counts[NORM_HIST_BUCKETS - 1]), (12.5, NORM_HIST_BUCKETS, 3, 4));
     assert_eq!(h.total(), 7);

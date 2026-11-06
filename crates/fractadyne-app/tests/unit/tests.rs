@@ -1443,3 +1443,15 @@ fn the_iter_div_option_is_documented_with_its_range() {
         .expect("--iter-div is in the reference");
     assert!(entry.contains(&format!("1 to {}", fractadyne_state::ITER_DIV_MAX)), "{entry}");
 }
+
+/// ⛔Every method the shader accumulates orbit statistics for must be one the app keeps off the
+/// paths that cannot carry them (the chunked walk, the band's BLA, the corrector, strips). The orbit
+/// trap was left out until 2026-11-06 — its palette rate and its statistics were decided by one
+/// predicate — and the live view drew it as one flat color.
+#[test]
+fn the_app_gates_every_method_the_shader_computes_statistics_for() {
+    for m in ColorMethod::ALL {
+        assert_eq!(m.needs_aux(), fractadyne_gpu::method_needs_aux(m.to_u32()), "{}", m.key());
+    }
+    assert!(ColorMethod::OrbitTrap.needs_aux() && !ColorMethod::OrbitTrap.bounded_value());
+}

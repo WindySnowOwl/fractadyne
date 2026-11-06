@@ -68,7 +68,9 @@ impl FractadyneApp {
     }
 
     pub(crate) fn log_scale_checkbox(&mut self, ui: &mut egui::Ui) {
-        let live = self.coloring.normalize_live || self.coloring.normalize;
+        // "Always fit range" makes a mapping on its own (for the orbit trap it is the only one), so
+        // it enables this as the guard does.
+        let live = self.coloring.normalize_live || self.coloring.normalize || self.coloring.normalize_fit;
         // INDENTED, because it is a sub-option of the checkbox above it — the same idiom the
         // "Click to zoom" / "Factor" pair already uses in this panel. The two marks say different
         // things and both are wanted: graying says "you cannot use this right now", the indent
