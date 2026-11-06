@@ -12265,7 +12265,7 @@ pub(crate) fn trap_window_feed(old: Option<(f32, f32)>, new: (f32, f32)) -> (f32
 pub(crate) const TRAP_WINDOW_HOLD: f32 = 0.05;
 
 #[cfg(test)]
-#[path = "../tests/unit/render/trap_window_feed.rs"]
+#[path = "../tests/unit/render/trap_window_feed_tests.rs"]
 mod trap_window_feed_tests;
 
 pub(crate) fn norm_map_is_log(mn: f32, mx: f32, log_palette: bool) -> bool {
