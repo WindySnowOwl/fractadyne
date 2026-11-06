@@ -1,5 +1,5 @@
 id,slug,mag_log10,iterations,normalize,f3_limit
-61,61-flake-7.8e156,156.892,60000,1,
+61,61-flake-2.5e157,157.398,60000,1,
 62,62-fraqcel-4.5e31,31.657,2000,0,
 63,63-cerebral-spin-6.7e152,152.823,2000000,log,
 64,64-ssss-1.3e694,694.103,350000,0,
