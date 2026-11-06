@@ -20,3 +20,6 @@ dcd78f1d481084a0cb400125582b85d5e7fb269b
 61c882bcbcd2c6abcdedc7f5e48425ad4557c3d1
 4a833650627b11f969ccaa27a845a5840f7aa8d1
 20244ca6be6cfcbebd2a21adefcd4c201c747ddf
+
+# US spelling throughout: prose only (comments, docs, UI text, messages), no logic change (2026-11-06)
+6f0124c88e9987361bde73c33e3fa05aa638bbc6
