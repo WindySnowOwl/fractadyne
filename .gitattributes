@@ -9,3 +9,8 @@
 # Linux refuse to run them ("bad interpreter"). This holds regardless of a committer's platform
 # or core.autocrlf setting.
 *.sh text eol=lf
+
+# The Windows icon and its compiled resources (scripts/make_windows_icon.py): binary, byte for byte.
+crates/fractadyne-app/assets/fractadyne.ico binary
+crates/fractadyne-app/assets/fractadyne-icon.res binary
+crates/fractadyne-app/assets/fractadyne-icon.o binary
