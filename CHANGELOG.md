@@ -96,6 +96,16 @@ Changes after 0.3.0-beta.1:
   written with `color`, which every version since L-systems arrived reads, and the British
   spellings that files and the command line already accept (`colour`, `centre`, `neighbourhood`)
   are still accepted.
+- **Divide iterations, for views the palette cannot keep up with (0.3.0-beta.27).** A new slider
+  under Cycle in the Controls panel divides the iteration count by up to 10,000 before it is
+  colored, so the palette repeats that many times more slowly. Cycle alone stops at one palette
+  per 250 iterations; on a view whose escape counts climb by hundreds between neighboring pixels,
+  such as kaludix's Dinkydau's Flake from the benchmarks thread, every Cycle setting is moiré, and
+  dividing by 8, as he suggested, brings the flake out. Its tooltip says how many iterations one
+  trip through the palette takes. It applies to the Smooth method, and is grayed out under
+  "Always fit range", which fits the palette to the view however the count is divided. Saved with
+  the view (`iter_div=`, written only when it divides, so other views are saved exactly as before)
+  and in the session; `--iter-div N` on the command line; render-farm jobs carry it.
 - **On processors with few cores, the live view no longer stutters while it picks a new reference
   (0.3.0-beta.26).** At great depth, choosing a reference orbit is seconds of work spread over
   every core, and during a zoom the view can be choosing two at once. On an 8-thread processor

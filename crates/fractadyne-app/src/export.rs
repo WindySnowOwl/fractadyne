@@ -295,6 +295,9 @@ pub(crate) const KNOWN_VIEW_KEYS: &[&str] = &[
     "app", "version", "format_version", "saved_unix", "saved", "notes", "fractal", "julia",
     "julia_c_re", "julia_c_im", "center_re", "center_im", "upp", "upp_log2", "zoom", "max_iter",
     "auto_iter", "palette", "palette_id", "cycle", "offset", "aa", "palette_custom", "thumb", "checksum",
+    // "Divide iterations", written only when it is not 1 (so an ordinary view is byte-identical to
+    // one written before the key existed).
+    "iter_div",
     // The center's source EXPRESSION and its offset from that anchor, when the center was entered
     // as a re-derivable expression. Optional and written IN ADDITION to `center_re`/`center_im`, so
     // an older reader still lands on the resolved decimal; a newer one re-derives at the view's
@@ -367,6 +370,7 @@ const TYPED_VIEW_KEYS: &[(&str, ValueKind)] = &[
     ("palette", ValueKind::Uint),
     ("palette_id", ValueKind::Id),
     ("cycle", ValueKind::Float),
+    ("iter_div", ValueKind::Uint),
     ("offset", ValueKind::Float),
     ("aa", ValueKind::Uint),
 ];
@@ -851,7 +855,7 @@ impl FractadyneApp {
             "app=Fractadyne\nversion={}\nformat_version={}\nsaved_unix={}\nsaved={}\n\
              notes={}\nfractal={}\njulia={}\njulia_c_re={:.17e}\njulia_c_im={:.17e}\n\
              center_re={}\ncenter_im={}\nupp={:.17e}\nupp_log2={:.17e}\nzoom={}\nmax_iter={}\nauto_iter={}\n\
-             palette={}\npalette_id={}\ncycle={}\noffset={}\naa={}\n{}{}{}{}",
+             palette={}\npalette_id={}\ncycle={}\n{}offset={}\naa={}\n{}{}{}{}",
             version_string(),
             if self.fractal == FractalKind::LSystem {
                 VIEW_FORMAT_VERSION
@@ -888,6 +892,9 @@ impl FractadyneApp {
             fractadyne_color::legacy_number_of(self.coloring.palette_idx).unwrap_or(self.coloring.palette_idx),
             fractadyne_color::PRESETS[self.coloring.palette_idx.min(fractadyne_color::PRESETS.len() - 1)].id,
             self.coloring.cycle,
+            // "Divide iterations", only when it divides: an ordinary view's metadata stays
+            // byte-identical to what it was before the key existed.
+            if self.coloring.iter_div > 1 { format!("iter_div={}\n", self.coloring.iter_div) } else { String::new() },
             self.coloring.offset,
             self.render_cfg.aa,
             // The custom gradient, when there is one. Empty otherwise, so a preset view's
@@ -1169,6 +1176,25 @@ impl FractadyneApp {
             } else {
                 report.clamped.push("cycle");
             }
+        }
+        // ⭐"Divide iterations" travels WITH the cycle. A file that states its coloring (`cycle=`)
+        // and no divisor was written at 1 — every file from before the key existed, and every
+        // view since that did not divide — so it resets to 1 rather than inheriting whatever this
+        // session had. A file that states neither (a hand-written location) leaves the coloring
+        // alone, as it leaves the cycle alone. An unreadable value is reported by its type
+        // (`TYPED_VIEW_KEYS`) and keeps the current setting.
+        match get("iter_div") {
+            Some(d) => {
+                if let Ok(n) = d.parse::<u32>() {
+                    let v = n.clamp(1, fractadyne_state::ITER_DIV_MAX);
+                    if v != n {
+                        report.clamped.push("divide iterations");
+                    }
+                    self.coloring.iter_div = v;
+                }
+            }
+            None if get("cycle").is_some() => self.coloring.iter_div = 1,
+            None => {}
         }
         if let Some(o) = get("offset").and_then(|s| s.parse::<f32>().ok()) {
             if o.is_finite() {

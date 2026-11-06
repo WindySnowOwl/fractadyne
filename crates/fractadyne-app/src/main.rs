@@ -3074,6 +3074,25 @@ impl ColorMethod {
     }
 }
 
+/// The Smooth method's palette rate — palettes per iteration, what the shader multiplies the
+/// smooth iteration count by — for Cycle slider `cycle` and "Divide iterations" `div`.
+///
+/// ⭐**Why a divisor and not a wider Cycle slider.** The slider's rate is `0.004 + cycle·0.06`, so
+/// its slowest (cycle 0) is one palette per 250 iterations, and it cannot go lower: below that the
+/// line runs through zero to negative rates. A view whose escape counts climb by hundreds between
+/// neighboring pixels (kaludix's Dinkydau's Flake, escapes 29,000–34,000, at the default ~50
+/// iterations per palette) is moiré at every slider position. Dividing scales the rate the slider
+/// chose, by any factor, without changing what the slider means.
+pub(crate) fn smooth_color_rate(cycle: f32, div: u32) -> f32 {
+    (0.004 + cycle * 0.06) / div.max(1) as f32
+}
+
+/// How many iterations one trip through the palette takes at `rate` (palettes per iteration), for
+/// the "Divide iterations" readout. `None` for a rate that is not positive.
+pub(crate) fn iterations_per_palette(rate: f32) -> Option<f64> {
+    (rate > 0.0 && rate.is_finite()).then(|| 1.0 / rate as f64)
+}
+
 /// Orbit-trap shape (only meaningful for [`ColorMethod::OrbitTrap`]). Discriminants match the shader.
 #[derive(Clone, Copy, PartialEq, Eq, Debug, Default)]
 pub(crate) enum TrapType {
@@ -6140,6 +6159,9 @@ struct ColoringConfig {
     palette_idx: usize,
     /// Color cycle density slider (0..1; mapped to a shader multiplier).
     cycle: f32,
+    /// "Divide iterations" (`1..=ITER_DIV_MAX`, 1 = off): the Smooth method's iteration count is
+    /// divided by this before coloring. See [`smooth_color_rate`].
+    iter_div: u32,
     /// Palette offset slider (0..1).
     offset: f32,
     /// Custom gradient (editor): stops as `[pos, r, g, b]` (DISPLAY-space RGB). When `use_custom_palette`
@@ -7787,6 +7809,7 @@ impl FractadyneApp {
                     .or_else(|| fractadyne_color::preset_by_legacy_number(s.palette_idx))
                     .unwrap_or(0),
                 cycle: s.cycle,
+                iter_div: s.iter_div.clamp(1, fractadyne_state::ITER_DIV_MAX),
                 offset: s.offset,
                 custom_palette: s.custom_palette.clone(),
                 custom_palette_flat: s.custom_palette_flat,
@@ -8415,6 +8438,30 @@ impl FractadyneApp {
             }
             self.coloring.trap_type = picked;
         }
+        // `--iter-div N` ("Divide iterations"): fatal when unreadable or out of range, as every
+        // option that steers a render is. After `--method`, so it can say when the method in force
+        // ignores it — a supplied option that changes no pixel says so (`--log-palette` likewise).
+        if let Some(d) = val("--iter-div").map(|s| arg_parse::<u32>("--iter-div", s, "a whole number")) {
+            if !(1..=fractadyne_state::ITER_DIV_MAX).contains(&d) {
+                eprintln!(
+                    "fractadyne: --iter-div: {d} is out of range; use 1 to {}.",
+                    fractadyne_state::ITER_DIV_MAX
+                );
+                crate::exit(2)
+            }
+            self.coloring.iter_div = d;
+            if d > 1 && self.coloring.color_method != ColorMethod::Smooth {
+                eprintln!(
+                    "fractadyne: --iter-div has no effect with --method {}: only the smooth method colors the iteration count.",
+                    self.coloring.color_method.key()
+                );
+            } else if d > 1 && args.iter().any(|a| a == "--normalize") {
+                eprintln!(
+                    "fractadyne: --iter-div has no effect with --normalize, which fits the palette to the frame's \
+                     range however the count is divided."
+                );
+            }
+        }
         // Output format from the file extension.
         if let Some(out) = &self.render_cli.out {
             if out.extension().and_then(|e| e.to_str()) == Some("exr") {
@@ -8589,6 +8636,7 @@ impl FractadyneApp {
             .id
             .to_string(),
             cycle: self.coloring.cycle,
+            iter_div: self.coloring.iter_div,
             offset: self.coloring.offset,
             normalize_live: self.coloring.normalize_live,
             normalize_fit: self.coloring.normalize_fit,
@@ -11321,13 +11369,26 @@ impl FractadyneApp {
     /// Palette-cycle scaling for the GPU. The bounded statistical methods (stripe /
     /// triangle-inequality / decomposition) produce a 0..1 value, so they want a few
     /// cycles across the palette; the unbounded ones (iteration / trap / distance) use
-    /// the fine per-unit scaling.
+    /// the fine per-unit scaling, and the iteration count (Smooth) is also divided by
+    /// "Divide iterations".
+    ///
+    /// ⭐Every fixed (not normalized) colorer reads its rate from here — the live view, exports,
+    /// the farm's renders through the session, the Misiurewicz thumbnails — and so does the
+    /// normalization guard, which judges aliasing at this rate. So dividing here is dividing
+    /// everywhere, and the shader is unchanged: it already multiplies by the rate.
     fn color_cycle(&self) -> f32 {
-        if self.coloring.color_method.needs_aux() {
-            0.5 + self.coloring.cycle * 4.0
-        } else {
-            0.004 + self.coloring.cycle * 0.06
+        match self.coloring.color_method {
+            m if m.needs_aux() => 0.5 + self.coloring.cycle * 4.0,
+            ColorMethod::Smooth => smooth_color_rate(self.coloring.cycle, self.coloring.iter_div),
+            _ => 0.004 + self.coloring.cycle * 0.06,
         }
+    }
+
+    /// Whether "Divide iterations" changes the picture: only the Smooth method colors the
+    /// iteration count, and a range fit ("Always fit range") maps whatever the count is onto the
+    /// same palette sweeps, so dividing it first changes nothing there.
+    pub(crate) fn iter_div_applies(&self) -> bool {
+        self.coloring.color_method == ColorMethod::Smooth && !self.coloring.normalize_fit
     }
 
     // Autopilot (toggle_autopilot / autopilot_step / autopilot_pick_target) moved to autopilot.rs.
@@ -16035,6 +16096,7 @@ impl FractadyneApp {
             v.to_bits().hash(&mut h);
         }
         c.cycle.to_bits().hash(&mut h);
+        c.iter_div.hash(&mut h);
         c.offset.to_bits().hash(&mut h);
         c.color_method.to_u32().hash(&mut h);
         c.stripe_freq.to_bits().hash(&mut h);

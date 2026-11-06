@@ -9159,6 +9159,52 @@ zoom = \"1e94\"
                 pass: rt_ok,
             });
 
+            // "Divide iterations" through the real writer and reader: it round-trips; a view that
+            // does not divide is written exactly as before the key existed; a view that states its
+            // coloring without the key (every older file) resets it to 1 rather than inheriting
+            // this session's; a bare location leaves it alone; out of range is clamped and said.
+            // And the rate the colorer gets is the slider's, divided.
+            {
+                let (div_was, method_was, fit_was) =
+                    (self.coloring.iter_div, self.coloring.color_method, self.coloring.normalize_fit);
+                self.coloring.color_method = crate::ColorMethod::Smooth;
+                self.coloring.normalize_fit = false;
+                self.coloring.iter_div = 8;
+                let divided = self.view_metadata();
+                let rate8 = self.color_cycle();
+                self.coloring.iter_div = 1;
+                let plain = self.view_metadata();
+                let rate1 = self.color_cycle();
+                let rt = self.load_view_metadata(&divided);
+                let round_trip = rt.note().is_none() && self.coloring.iter_div == 8 && divided.contains("\niter_div=8\n");
+                let unwritten = !plain.contains("iter_div") && plain == divided.replace("iter_div=8\n", "");
+                self.load_view_metadata(&plain);
+                let older_resets = self.coloring.iter_div == 1;
+                self.coloring.iter_div = 8;
+                let bare = "center_re=-0.75\ncenter_im=0.1\nzoom=10\n";
+                self.load_view_metadata(bare);
+                let bare_keeps = self.coloring.iter_div == 8;
+                let low = self.load_view_metadata(&plain.replace("\ncycle=", "\niter_div=0\ncycle="));
+                let low_ok = self.coloring.iter_div == 1 && low.clamped.contains(&"divide iterations");
+                let high = self.load_view_metadata(&plain.replace("\ncycle=", "\niter_div=99999\ncycle="));
+                let high_ok = self.coloring.iter_div == fractadyne_state::ITER_DIV_MAX
+                    && high.clamped.contains(&"divide iterations");
+                let rate_ok = (rate8 * 8.0 - rate1).abs() <= 1.0e-6 * rate1;
+                (self.coloring.iter_div, self.coloring.color_method, self.coloring.normalize_fit) =
+                    (div_was, method_was, fit_was);
+                push_check(&mut checks, &mut last_check_t, SelfCheck {
+                    category: "View format",
+                    name: "a view carries its iteration divisor".into(),
+                    params: "iter_div 8 → scramble → load; 1; an older view; a bare location; 0 and 99999".into(),
+                    result: format!(
+                        "round trip {round_trip}, unwritten at 1 {unwritten}, older view resets {older_resets}, \
+                         bare location keeps {bare_keeps}, clamped low {low_ok} high {high_ok}, rate {rate1:.5}/{rate8:.6}"
+                    ),
+                    threshold: "8 restored; no key at 1; reset to 1 by a view with cycle=; kept by one without; clamped 1..=10000 and reported; rate ÷ 8",
+                    pass: round_trip && unwritten && older_resets && bare_keeps && low_ok && high_ok && rate_ok,
+                });
+            }
+
             // A Custom view carries its formula — a multi-line source with a comment, and its
             // parameters — through the real writer and reader; and a view whose formula no longer
             // compiles says so and is NOT shown under whatever formula happened to be loaded.
@@ -9909,6 +9955,9 @@ zoom = \"1e94\"
             toggles.push(("offset slider",
                 Box::new(|a: &mut Self| a.coloring.offset = 0.6),
                 Box::new(|a: &mut Self| a.coloring.offset = 0.1)));
+            toggles.push(("divide iterations",
+                Box::new(|a: &mut Self| a.coloring.iter_div = 8),
+                Box::new(|a: &mut Self| a.coloring.iter_div = 1)));
             toggles.push(("binary (set)",
                 Box::new(|a: &mut Self| a.coloring.use_binary = true),
                 Box::new(|a: &mut Self| a.coloring.use_binary = false)));

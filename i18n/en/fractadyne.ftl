@@ -1378,6 +1378,7 @@ help-options-paste = "Paste…" in the gradient editor imports a palette you fou
 help-options-import-map = "Import ▸ .map…" beside it loads a Fractint or Kalles Fraktaler .map palette file. Those are lookup tables indexed by iteration count with no blending between entries, and the hard color steps that produces are what the classic Fractint look is made of — so that is how they import, with a "Hard bands" checkbox to blend the same colors into a smooth gradient instead. Fractint's own files store 6-bit color values multiplied by four, so their white is 252 rather than 255; Fractadyne says so when it imports one and leaves the values exactly as written, because Fractint's own saved images carry the same 252.
 help-options-duotone = Duotone maps the value to a smooth two-color ramp (Shadow → Highlight). Binary (set) is a flat two-color view — one solid color for points inside the set and another for outside, with no gradient — the clearest way to see the set's shape.
 help-options-cycle = Cycle sets how many times the gradient repeats across the iteration range (tighter or looser bands). Offset rotates the whole gradient.
+help-options-iter-div = "Divide iterations" divides the iteration count before it is colored, so the gradient repeats that many times more slowly than Cycle alone can make it. On a view whose escape counts climb by hundreds between neighboring pixels, every Cycle setting turns the gradient into moiré; dividing by 8 or so brings the structure out while keeping a fixed palette. Its tooltip says how many iterations one trip through the gradient takes. Smooth method only; it changes nothing under "Always fit range", which fits the palette to the view however the count is divided.
 help-options-normalize = "Normalize deep colors" fits the palette to the range of escape values actually present in the view. Deep views span hundreds of thousands of iterations, and without this a fixed cycle wraps the gradient thousands of times between neighboring pixels, turning correct detail into speckle.
 help-options-log-scale = "Log color scale" spreads the palette by the logarithm of the escape value instead of linearly. Escape counts crowd toward the high end as you go deeper, so a linear fit spends most of the gradient on a thin shell hugging the boundary and leaves the rest nearly flat; the log scale opens that out, and keeps colors steadier through a zoom video as the range grows.
 help-options-animate = Animate cycles the colors over time — Forward, Reverse, or Ping-pong shift the offset; Random continuously synthesizes smoothly morphing, harmonious gradients. Speed controls cycles (or morphs) per second; "Shuffle gradient" rolls a new one in Random mode.
@@ -2874,6 +2875,19 @@ panel-out-of-set = Out-of-set
 panel-shadow = Shadow
 panel-highlight = Highlight
 panel-cycle = Cycle
+# A slider under Cycle: the smooth iteration count is divided by its value before it is colored (1 = off).
+panel-iter-div = Divide iterations
+# Its tooltip. $count = how many iterations one trip through the palette takes at the Cycle and divisor set.
+panel-iter-div-hover =
+    Divide the iteration count by this before coloring, so the palette repeats this many times more slowly than Cycle alone can make it. One trip through the palette takes about { $count } iterations.
+
+    For a view whose escape counts climb so fast between neighboring pixels that the palette turns to moiré. 'Normalize deep colors' fixes such a view by fitting the palette to its range; dividing keeps the fixed palette and slows it down, and once the view no longer aliases, normalization leaves it alone. 1 = off. Kalles Fraktaler calls this 'Divide iteration'.
+# Added below that tooltip while 'Normalize deep colors' is remapping the view on screen.
+panel-iter-div-normalized-note = Right now 'Normalize deep colors' is fitting the palette to this view's range, so the screen shows that instead. Divide further and, once the view no longer turns to noise, the fixed palette returns.
+# Its tooltip while grayed out because the coloring method is not Smooth.
+panel-iter-div-method-hover = Only the Smooth method colors the iteration count, so this changes nothing with the method in use.
+# Its tooltip while grayed out because 'Always fit range' is ticked.
+panel-iter-div-fit-hover = Changes nothing while 'Always fit range' is ticked: the palette is fitted to the view's escape range however the count is divided.
 panel-offset = Offset
 panel-normalize-hover = At extreme depth, escape counts span hundreds of thousands and a fixed Cycle wraps the palette thousands of times between neighboring pixels — a correct dense field reads as speckle noise. This remaps the palette to the view's measured escape range (Cycle then sets how many palette sweeps span it) WHEN the view actually aliases — a smooth view is left alone, because remapping it would change the picture for nothing. Tick 'Always fit range' below to remap regardless. Smooth method only; matches --normalize.
 # A checkbox indented under "Normalize deep colors" (also in the Color menu).

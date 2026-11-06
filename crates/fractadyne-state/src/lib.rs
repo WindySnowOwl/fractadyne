@@ -18,6 +18,16 @@ fn default_state_version() -> u32 {
     1
 }
 
+/// The largest "Divide iterations" value ([`SessionState::iter_div`]). At the default Cycle a
+/// palette then spans about half a million iterations; a view that needs more than that is one for
+/// normalization, which fits the palette to the view's range instead.
+pub const ITER_DIV_MAX: u32 = 10_000;
+
+/// `1`: the iteration count is colored as it is.
+pub fn default_iter_div() -> u32 {
+    1
+}
+
 /// Persisted session. The center is stored at **full precision** as decimal strings
 /// (`center_x_str`/`center_y_str`) so deep-zoom locations survive quit/restart; the
 /// `f64` `center_x`/`center_y` remain for display and backward compatibility with
@@ -83,6 +93,13 @@ pub struct SessionState {
     #[serde(default)]
     pub palette_id: String,
     pub cycle: f32,
+    /// "Divide iterations": the Smooth method's iteration count is divided by this before it is
+    /// colored, so one trip through the palette takes this many times more iterations than the
+    /// Cycle slider alone allows (its slowest is one palette per 250 iterations). `1` = off, the
+    /// default; `serde(default)` keeps older session files loadable. Kalles Fraktaler's "Divide
+    /// iteration" is the same idea.
+    #[serde(default = "default_iter_div")]
+    pub iter_div: u32,
     pub offset: f32,
     /// Log-scaled palette mapping (default off) — applies wherever normalization is active.
     /// `serde(default)` keeps older session files loadable.
@@ -636,6 +653,7 @@ impl Default for SessionState {
             palette_idx: 0,
             palette_id: String::new(),
             cycle: 0.27,
+            iter_div: default_iter_div(),
             log_palette: false,
             normalize_live: true,
             normalize_fit: false,

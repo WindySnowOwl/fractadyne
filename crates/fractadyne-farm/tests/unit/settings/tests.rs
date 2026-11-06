@@ -80,3 +80,26 @@ fn out_of_range_settings_are_refused() {
     let unknown = serde_json::to_string(&base).unwrap().replacen('{', "{\"export_dir\":\"D:/x\",", 1);
     assert!(serde_json::from_str::<RenderSettings>(&unknown).is_err(), "an unlisted field was accepted");
 }
+
+/// "Divide iterations" travels with a job. ⭐At 1 it is left out of the message, so a client built
+/// before the field (which refuses unknown fields) still takes every job that does not divide;
+/// one that does divide carries it, and a message without it reads as 1.
+#[test]
+fn the_iteration_divisor_travels_and_is_absent_at_one() {
+    let plain = RenderSettings::from_session(&SessionState::default());
+    assert_eq!(plain.iter_div, 1);
+    let json = serde_json::to_string(&plain).unwrap();
+    assert!(!json.contains("iter_div"), "a job at 1 names the field: {json}");
+    let divided = RenderSettings::from_session(&SessionState { iter_div: 8, ..SessionState::default() });
+    divided.validate().expect("8 validates");
+    let json8 = serde_json::to_string(&divided).unwrap();
+    assert!(json8.contains("\"iter_div\":8"), "{json8}");
+    let back: RenderSettings = serde_json::from_str(&json8).unwrap();
+    assert_eq!(back.to_session().iter_div, 8);
+    let old: RenderSettings = serde_json::from_str(&json).unwrap();
+    assert_eq!(old.iter_div, 1);
+    for bad in [0, fractadyne_state::ITER_DIV_MAX + 1] {
+        let r = RenderSettings { iter_div: bad, ..plain.clone() };
+        assert!(r.validate().is_err(), "accepted a divisor of {bad}");
+    }
+}

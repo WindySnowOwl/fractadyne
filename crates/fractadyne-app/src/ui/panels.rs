@@ -345,6 +345,31 @@ impl FractadyneApp {
                 labelled(ui, &tr!(panel_cycle), |ui| {
                     ui.add(egui::Slider::new(&mut self.coloring.cycle, 0.0..=1.0))
                 });
+                // "Divide iterations": under Cycle, because it scales what Cycle chose. ⭐Grayed out
+                // where it would change no pixel (another method, or a range fit), with a tooltip
+                // that says why — a live control that does nothing reads as a broken one.
+                let applies = self.iter_div_applies();
+                let per_palette = crate::iterations_per_palette(self.color_cycle()).map_or(0, |n| n.round() as u64);
+                // ⚠The readout is the FIXED palette's. While "Normalize deep colors" is remapping
+                // the view, the screen shows the fitted palette instead, so the tooltip says so
+                // rather than state a rate the picture is not using.
+                let mut hover = tr!(panel_iter_div_hover, count = per_palette);
+                if (0..=self.dual as usize).any(|vi| self.live_norm_window(vi).is_some()) {
+                    hover = format!("{hover}\n\n{}", tr!(panel_iter_div_normalized_note));
+                }
+                labelled(ui, &tr!(panel_iter_div), |ui| {
+                    ui.add_enabled(
+                        applies,
+                        egui::Slider::new(&mut self.coloring.iter_div, 1..=fractadyne_state::ITER_DIV_MAX)
+                            .logarithmic(true),
+                    )
+                })
+                .on_hover_text(hover)
+                .on_disabled_hover_text(if self.coloring.color_method == crate::ColorMethod::Smooth {
+                    tr!(panel_iter_div_fit_hover)
+                } else {
+                    tr!(panel_iter_div_method_hover)
+                });
                 labelled(ui, &tr!(panel_offset), |ui| {
                     ui.add(egui::Slider::new(&mut self.coloring.offset, 0.0..=1.0))
                 });

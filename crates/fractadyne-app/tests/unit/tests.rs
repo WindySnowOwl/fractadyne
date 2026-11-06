@@ -343,12 +343,16 @@ palette_custom=0,0.25,0.5,0,0,0,1,1,0.2,0.1,1,0,0,0,0,0,0;\
 /// - `lsystem` / `lsystem_order` / `lsystem_angle` / `lsystem_width` / `lsystem_colour` appear ONLY
 ///   in an L-system view (see `lsystem_lines`); their round trip is
 ///   `an_lsystem_view_round_trips_its_system`.
+/// - `iter_div` ("Divide iterations") appears ONLY when it is not 1, so that an ordinary view —
+///   the sample is one — is written exactly as before the key existed; its round trip is the
+///   selftest `a view carries its iteration divisor`.
 const SAMPLE_OPTIONAL_KEYS: &[&str] = &[
     "thumb", "checksum",
     "center_re_expr", "center_im_expr", "center_re_offset", "center_im_offset",
     "formula", "formula_params",
     "rule", "pattern", "pattern_origin", "pattern_generation", "generation", "pattern_name",
     "lsystem", "lsystem_order", "lsystem_angle", "lsystem_width", "lsystem_colour",
+    "iter_div",
 ];
 
 #[test]
@@ -1404,4 +1408,38 @@ fn the_worded_size_presets_are_the_tables() {
     for (l, _, _) in STANDARD_SIZES {
         assert_eq!(size_preset_label(l), *l);
     }
+}
+
+/// "Divide iterations" scales the rate the Cycle slider chose, by the divisor, and nothing else:
+/// at the default Cycle (0.27) a palette spans about 50 iterations, and ÷8 makes that about 396,
+/// the stretch kaludix asked for on Dinkydau's Flake. A divisor of 0 (never stored) reads as 1.
+#[test]
+fn dividing_iterations_divides_the_smooth_rate() {
+    let r1 = smooth_color_rate(0.27, 1);
+    assert!((r1 - (0.004 + 0.27 * 0.06)).abs() < 1.0e-7);
+    assert!((smooth_color_rate(0.27, 8) * 8.0 - r1).abs() < 1.0e-7);
+    assert_eq!(smooth_color_rate(0.27, 0), r1);
+    let per = iterations_per_palette(smooth_color_rate(0.27, 8)).unwrap();
+    assert!((per - 396.0).abs() < 1.0, "{per} iterations per palette");
+    // Cycle's slowest alone, against the divisor's: 250 and 2.5 million.
+    assert!((iterations_per_palette(smooth_color_rate(0.0, 1)).unwrap() - 250.0).abs() < 0.01);
+    let slowest = iterations_per_palette(smooth_color_rate(0.0, fractadyne_state::ITER_DIV_MAX)).unwrap();
+    assert!((slowest - 2.5e6).abs() < 1.0, "{slowest}");
+    assert_eq!(iterations_per_palette(0.0), None);
+    assert_eq!(iterations_per_palette(f32::NAN), None);
+}
+
+/// `--iter-div` is a known option (harvested from the reference), and the range its entry states
+/// is the one the parser, the view reader and the farm enforce.
+#[test]
+fn the_iter_div_option_is_documented_with_its_range() {
+    assert!(crate::cli::known_long_flags().contains("--iter-div"));
+    let entry = crate::help::CLI_REFERENCE
+        .iter()
+        .find_map(|e| match e {
+            crate::help::CliRef::Flag(f, d) if f.starts_with("--iter-div") => Some(*d),
+            _ => None,
+        })
+        .expect("--iter-div is in the reference");
+    assert!(entry.contains(&format!("1 to {}", fractadyne_state::ITER_DIV_MAX)), "{entry}");
 }

@@ -205,6 +205,12 @@ STEPS = [
      "Drag the Offset slider across its range.",
      "Colors shift phase smoothly through the palette."),
     ("Coloring",
+     "Drag 'Divide iterations' (under Cycle) up from 1, then rest the pointer on it. Then set "
+     "Method to Stripe, and back to Smooth with 'Always fit range' ticked.",
+     "The bands widen live as the value rises (the palette repeats more slowly), with no flicker "
+     "or stuck frame, and the tooltip's iterations per palette grows with it. Under Stripe, and "
+     "with 'Always fit range' ticked, the slider is grayed out and its tooltip says why."),
+    ("Coloring",
      "With 'Normalize deep colors' ON, toggle 'Log color scale'.",
      "Color distribution changes noticeably; image stays coherent. (Log scale acts on the "
      "NORMALIZED mapping - with normalization off it has no visible effect.)"),
@@ -779,6 +785,7 @@ ENFORCERS = [
     ("Coloring", "selftest:palettes are all different and coherent"),
     ("Coloring", "selftest:control changes the image"),
     ("Coloring", "selftest:control changes the image"),
+    ("Coloring", "partial:selftest:control changes the image"),
     ("Coloring", "selftest:log-scale-changes-the-image"),
     ("Coloring", "partial:selftest:gradient-edit-changes-the-image"),
     ("Coloring", "manual"),

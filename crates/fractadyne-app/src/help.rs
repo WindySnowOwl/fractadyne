@@ -151,6 +151,7 @@ pub(crate) fn help_options(ui: &mut egui::Ui) {
     help_p(ui, &tr!(help_options_import_map));
     help_p(ui, &tr!(help_options_duotone));
     help_p(ui, &tr!(help_options_cycle));
+    help_p(ui, &tr!(help_options_iter_div));
     help_p(ui, &tr!(help_options_normalize));
     help_p(ui, &tr!(help_options_log_scale));
     help_p(ui, &tr!(help_options_animate));
@@ -355,7 +356,8 @@ pub(crate) const CLI_REFERENCE: &[CliRef] = {
         Flag("--orbit-cache / --no-orbit-cache", "Force the on-disk reference-orbit cache on / off. By default it is ON for an ordinary launch and OFF for every task invocation (--render, --selftest, --bench-matrix, tours, …), because a cached orbit makes a timed run look faster than the code is and a gate must build what it measures. A CLI render of a location you have visited in the app can opt in with --orbit-cache. File > Settings > Reference cache… shows where it is, how big, and clears it."),
         Flag("--sound / --no-sound", "Play or silence the tone that marks a finished render (default on). The FRACTADYNE_NO_SOUND environment variable does the same and is what batch runs want, because it is inherited by child processes -- --torture launches each rung as its own exe and the corpus harness shells out per location, neither of which sees a flag passed to the parent. An explicit --sound wins over the variable."),
         Flag("--normalize", "Auto-normalize the palette cycle to the frame's escape-value range on export — prevents smooth-coloring aliasing (speckle) at extreme depth; the cycle slider then means palette sweeps. Falls back to normal coloring for aux methods / huge supersampled sizes. With --assemble, the video's palette follows the dive's escape range smoothly, as the live view's does."),
-        Flag("--log-palette", "Spread the palette by the LOGARITHM of the escape value rather than linearly, wherever normalization is active. Escape counts crowd towards the high end at depth, so a linear map spends most of the palette on a thin shell near the boundary and flattens the rest; log keeps color readable and stable as a zoom video's range grows."),
+        Flag("--iter-div N", "Divide iterations: divide the smooth iteration count by N (1 to 10000, default 1) before coloring, so the palette repeats N times more slowly than the cycle alone makes it (the Divide iterations slider in the Controls panel). For a view whose escape counts climb so fast between neighboring pixels that the palette turns to moiré, a fixed alternative to --normalize; Kalles Fraktaler's \"Divide iteration\" is the same idea. Saved in a view file as iter_div. No effect with --normalize or a method other than smooth."),
+        Flag("--log-palette","Spread the palette by the LOGARITHM of the escape value rather than linearly, wherever normalization is active. Escape counts crowd towards the high end at depth, so a linear map spends most of the palette on a thin shell near the boundary and flattens the rest; log keeps color readable and stable as a zoom video's range grows."),
         Flag("--no-perf / --perf", "Hide / show the performance panel."),
         Section("Validation & diagnostics"),
         Flag("--render-iter -o F.exr", "Export raw iteration data (EXR) instead of a colored image."),

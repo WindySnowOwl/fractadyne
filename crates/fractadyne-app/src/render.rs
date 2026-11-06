@@ -2136,6 +2136,7 @@ impl FractadyneApp {
         let mut h = std::collections::hash_map::DefaultHasher::new();
         let c = &self.coloring;
         c.cycle.to_bits().hash(&mut h);
+        c.iter_div.hash(&mut h);
         c.offset.to_bits().hash(&mut h);
         c.color_method.to_u32().hash(&mut h);
         c.log_palette.hash(&mut h);

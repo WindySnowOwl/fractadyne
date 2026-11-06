@@ -487,3 +487,18 @@ fn a_session_from_before_the_open_after_field_still_loads() {
     let back: SessionState = toml::from_str(&older).expect("an older session must still parse");
     assert!(!back.export_open_after);
 }
+
+/// "Divide iterations" defaults to 1, survives a restart, and a session from before the field
+/// still loads, at 1 (`serde(default)`): without it every older session would be unreadable.
+#[test]
+fn the_iteration_divisor_defaults_to_one_and_survives_a_restart() {
+    assert_eq!(SessionState::default().iter_div, 1);
+    let s = SessionState { iter_div: 8, ..SessionState::default() };
+    assert_eq!(roundtrip(&s).iter_div, 8);
+    let text = toml::to_string_pretty(&SessionState::default()).expect("serialize");
+    let older: String =
+        text.lines().filter(|l| !l.trim_start().starts_with("iter_div")).collect::<Vec<_>>().join("\n");
+    assert!(!older.contains("iter_div"), "the guard: the field must really be absent");
+    let back: SessionState = toml::from_str(&older).expect("an older session must still parse");
+    assert_eq!(back.iter_div, 1);
+}
