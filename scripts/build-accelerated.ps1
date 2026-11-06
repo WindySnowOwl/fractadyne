@@ -39,11 +39,25 @@
   Skip the clean-room verification. NOT recommended - read the comment above the verify step
   before you reach for this.
 
+.PARAMETER InstallDir
+  The fixed folder the finished package is mirrored into, so the build to run is always in the
+  same place whatever its version: exe, DLLs and the payload beside them, plus installed.txt
+  saying which build it is. Defaults to %LOCALAPPDATA%\Programs\Fractadyne, outside dist\ so
+  cleaning dist\ does not remove it. Skipped on GitHub Actions (the release job only packages).
+
+.PARAMETER NoInstall
+  Package only; leave -InstallDir as it is.
+
+.PARAMETER InstallOnly
+  Skip the build: mirror the existing dist\ package for this version into -InstallDir. For when
+  the install was refused because Fractadyne was running from there.
+
 .PARAMETER Run
-  Launch the freshly PACKAGED fractadyne.exe (from the dist folder, with its DLLs beside it -
-  the exact bytes a user would run) once the build, packaging and verification have finished.
-  The app starts detached in your normal environment (your real config dir and session), so
-  this is "build it, then hand it to me", not another test harness.
+  Launch the freshly built fractadyne.exe from -InstallDir (from the dist folder with
+  -NoInstall), with its DLLs beside it - the exact bytes a user would run - once the build,
+  packaging and verification have finished. The app starts detached in your normal environment
+  (your real config dir and session), so this is "build it, then hand it to me", not another test
+  harness.
 
 .PARAMETER RunArgs
   Extra command-line arguments for the -Run launch, as one string (e.g. -RunArgs "--bignum rug"
@@ -57,6 +71,9 @@
 
 .EXAMPLE
   .\scripts\build-accelerated.ps1 -Run -RunArgs "--bignum rug"
+
+.EXAMPLE
+  .\scripts\build-accelerated.ps1 -InstallOnly
 #>
 #Requires -Version 7.0
 # (PowerShell 7+, not Windows PowerShell 5.1: under 5.1, `2>&1` wraps a native command's
@@ -67,6 +84,9 @@
 param(
     [string]$Tag,
     [string]$OutDir = "dist",
+    [string]$InstallDir = (Join-Path $env:LOCALAPPDATA "Programs\Fractadyne"),
+    [switch]$NoInstall,
+    [switch]$InstallOnly,
     [switch]$Deps,
     [switch]$SkipVerify,
     [switch]$Run,
@@ -87,6 +107,43 @@ $RUNTIME_DLLS = @("libgmp-10.dll", "libmpfr-6.dll", "libgcc_s_seh-1.dll", "libwi
 
 function Fail($msg) { Write-Host "ERROR: $msg" -ForegroundColor Red; exit 1 }
 function Step($msg) { Write-Host "== $msg" -ForegroundColor Cyan }
+
+# ---------------------------------------------------------------- install (one fixed place)
+# The package folder is named by version, so every version moved the exe, and a shortcut (or a
+# Firewall rule, which Windows keeps per path) went stale with it. The finished package is MIRRORED
+# into -InstallDir, and that is the folder to run from; installed.txt there names the build.
+# Never over a running copy: Windows will not replace a running exe, and a half-replaced folder
+# would mix two builds. The script never stops the app; it says so and leaves the folder alone.
+# Never over an unrelated folder: a mirror deletes whatever the package lacks, so the target must be
+# missing, empty, or already hold fractadyne.exe, and never the repo, dist\ or a drive root.
+function Install-Package([string]$src) {
+    if (-not (Test-Path (Join-Path $src "fractadyne.exe"))) { Fail "no package at $src to install - build it first (without -InstallOnly)" }
+    $dst = [IO.Path]::GetFullPath($InstallDir).TrimEnd('\')
+    $forbidden = @($root, (Join-Path $root $OutDir), [IO.Path]::GetPathRoot($dst)) | ForEach-Object { [IO.Path]::GetFullPath($_).TrimEnd('\') }
+    if ($forbidden -contains $dst) { Fail "-InstallDir $dst is the repo, the package folder or a drive root; refusing to mirror into it" }
+    if ((Test-Path $dst) -and (Get-ChildItem -Force $dst | Select-Object -First 1) -and -not (Test-Path (Join-Path $dst "fractadyne.exe"))) {
+        Fail "-InstallDir $dst holds files but no fractadyne.exe; refusing to mirror over a folder that is not an earlier install"
+    }
+    $running = @(Get-Process fractadyne -ErrorAction SilentlyContinue |
+                 Where-Object { $_.Path -and $_.Path.StartsWith($dst + '\', [StringComparison]::OrdinalIgnoreCase) })
+    if ($running) {
+        Write-Host "NOT INSTALLED: Fractadyne is running from $dst (pid $($running.Id -join ', '))." -ForegroundColor Red
+        Write-Host "The package is built in $src. Close Fractadyne, then run:" -ForegroundColor Red
+        Write-Host "  .\scripts\build-accelerated.ps1 -InstallOnly" -ForegroundColor Red
+        exit 2
+    }
+    Step "Installing to $dst"
+    New-Item -ItemType Directory -Force $dst | Out-Null
+    & robocopy $src $dst /MIR /NFL /NDL /NJH /NJS /NP | Out-Null
+    if ($LASTEXITCODE -ge 8) { Fail "robocopy failed (exit $LASTEXITCODE) mirroring $src to $dst" }
+    $global:LASTEXITCODE = 0
+    $version = try { (& (Join-Path $dst "fractadyne.exe") --version 2>$null | Select-Object -First 1) } catch { "" }
+    $global:LASTEXITCODE = 0
+    @("Fractadyne, accelerated build: $version", "installed $(Get-Date -Format 'yyyy-MM-dd HH:mm') from $src") |
+        Set-Content -Path (Join-Path $dst "installed.txt")
+    Write-Host "  installed: $(Join-Path $dst 'fractadyne.exe')" -ForegroundColor Green
+    if ($version) { Write-Host "  $version" }
+}
 
 if ($Deps) {
     Write-Host @"
@@ -156,6 +213,11 @@ if (-not $Tag) {
     $Tag = "v$Tag"
 }
 Write-Host "  tag: $Tag"
+
+if ($InstallOnly) {
+    Install-Package (Join-Path $OutDir "fractadyne-$Tag-windows-x64-accelerated")
+    exit 0
+}
 
 # ---------------------------------------------------------------- delay-load libraries
 # ***DELAY-LOAD GMP AND MPFR*** so a user whose DLLs went missing (they split the zip, antivirus
@@ -464,17 +526,21 @@ Write-Host ""
 Write-Host "Packaged: $zip ($mb MB)" -ForegroundColor Green
 Get-ChildItem $dir | ForEach-Object { Write-Host ("  " + $_.Name) }
 
+$installed = -not $NoInstall -and $env:GITHUB_ACTIONS -ne "true"
+if ($installed) { Install-Package $dir }
+
 # ---------------------------------------------------------------- run (optional)
 # Launches the PACKAGED exe from the dist folder - its DLLs sit beside it, so this runs the
 # exact bytes a user would, with no PATH additions (the same discipline as the verify step).
 # Detached: the script's job is done; the app is yours.
 if ($Run) {
-    $runExe = Join-Path $dir "fractadyne.exe"
+    $runDir = if ($installed) { [IO.Path]::GetFullPath($InstallDir) } else { $dir }
+    $runExe = Join-Path $runDir "fractadyne.exe"
     Step "Launching $runExe"
     if ($RunArgs) {
         Write-Host "  args: $RunArgs"
-        Start-Process -FilePath $runExe -WorkingDirectory $dir -ArgumentList $RunArgs
+        Start-Process -FilePath $runExe -WorkingDirectory $runDir -ArgumentList $RunArgs
     } else {
-        Start-Process -FilePath $runExe -WorkingDirectory $dir
+        Start-Process -FilePath $runExe -WorkingDirectory $runDir
     }
 }
