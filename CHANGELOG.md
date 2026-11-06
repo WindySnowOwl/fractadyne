@@ -106,6 +106,18 @@ Changes after 0.3.0-beta.1:
   "Always fit range", which fits the palette to the view however the count is divided. Saved with
   the view (`iter_div=`, written only when it divides, so other views are saved exactly as before)
   and in the session; `--iter-div N` on the command line; render-farm jobs carry it.
+- **High-power Julia sets no longer show false black specks (0.3.0-beta.27).** In a Multibrot 3–8
+  Julia set, an orbit that passes very close to the center lost the detail that sends it out
+  again: the renderer's single precision rounded it onto the orbit of c itself, and where that
+  orbit repeats, the pixel stayed in and was drawn black. Near a minibrot's center, where a
+  Julia set beside a deep view is usually taken, that was hundreds of scattered pixels: 380 of
+  408,240 for a Multibrot 8 Julia set at c ≈ 0.32295 + 0.98330i, every one of which escapes within
+  491 iterations in double precision. A pixel now switches to double-single arithmetic once its
+  orbit comes that close, and none stay in; the rest of the picture is closer to double precision
+  too (98.5% of pixels within one iteration, from 96.9%). The pixels that switch cost about three
+  times as much per step, so such a Julia set renders in roughly twice the time, still a
+  fraction of what it took before the change below. The Mandelbrot side is unchanged.
+  `--set HONEST_STEP=0` turns it off for comparison.
 - **Julia sets, and shallow views with black interior, render many times faster
   (0.3.0-beta.27).** A pixel that never escapes used to run every one of its iterations, however
   many the view asked for. In the renderer for shallow views and Julia sets, a pixel whose orbit

@@ -252,13 +252,23 @@ pub fn set_cycle_check(on: bool) {
     CYCLE_CHECK.store(on, std::sync::atomic::Ordering::Relaxed);
 }
 
-/// The uniform row carrying the tail-phase switch (bit 0 of its first word) and the exact-repeat
-/// check's OFF bit (bit 1, set only when the check is turned off, so a row built without it reads
-/// as on).
+/// The direct loops' honest step past the critical point (`HONEST_STEP`, a `--set` tunable in the
+/// app; on by default). Process-wide for the same reason as [`set_tail_df32`].
+static HONEST_STEP: std::sync::atomic::AtomicBool = std::sync::atomic::AtomicBool::new(true);
+
+/// Set the honest step on or off for every dispatch that follows.
+pub fn set_honest_step(on: bool) {
+    HONEST_STEP.store(on, std::sync::atomic::Ordering::Relaxed);
+}
+
+/// The uniform row carrying the tail-phase switch (bit 0 of its first word), the exact-repeat
+/// check's OFF bit (bit 1) and the honest step's OFF bit (bit 2). The OFF bits are set only when a
+/// feature is turned off, so a row built without them reads as on.
 pub(crate) fn tail_word() -> [u32; 4] {
     let tail = TAIL_DF32.load(std::sync::atomic::Ordering::Relaxed) as u32;
     let cycle_off = !CYCLE_CHECK.load(std::sync::atomic::Ordering::Relaxed) as u32;
-    [tail | (cycle_off << 1), 0, 0, 0]
+    let honest_off = !HONEST_STEP.load(std::sync::atomic::Ordering::Relaxed) as u32;
+    [tail | (cycle_off << 1) | (honest_off << 2), 0, 0, 0]
 }
 
 /// Occupancy-sized export tiles (`TILE_OCCUPANCY`, a `--set` tunable in the app; on by default).

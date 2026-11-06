@@ -255,6 +255,7 @@ fn main() -> eframe::Result<()> {
         // occupancy-sized export tiles (`TILE_OCCUPANCY`).
         fractadyne_gpu::set_tail_df32(tunables::cost().tail_df32 == 1);
         fractadyne_gpu::set_cycle_check(tunables::cost().cycle_check == 1);
+        fractadyne_gpu::set_honest_step(tunables::cost().honest_step == 1);
         fractadyne_gpu::set_tile_occupancy(tunables::cost().tile_occupancy == 1);
         fractadyne_gpu::set_tile_pack(tunables::cost().tile_pack == 1);
         fractadyne_core::set_orbit_schedule(tunables::cost().orbit_schedule == 1);
