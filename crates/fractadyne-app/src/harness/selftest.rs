@@ -1384,6 +1384,76 @@ impl FractadyneApp {
             (self.render_cfg.max_iter, self.render_cfg.auto_iter, self.coloring.color_method) = saved;
         }
 
+        // ⭐THE EXACT-REPEAT CHECK (`CYCLE_CHECK`, `cycle_check_on` in mandelbrot.wgsl). A pixel whose
+        // z repeats bit for bit in a direct loop can never escape, so it ends there as interior. The
+        // claim is "the same picture, sooner", and each half has a vacuous way to pass, so all of it
+        // is asserted: the iteration buffer bit for bit with the check off (the single dispatch AND
+        // the chunked walk, which carry it separately); pixels that do cycle (else nothing ran); and
+        // the time (else the check never fired). The view is the one that found it (2026-11-06): a
+        // Multibrot 8 Julia set at c ≈ 0.32295 + 0.98330i, where orbits that pass within 0.126 of
+        // the critical point round to exactly c in f32 and replay its cycle.
+        if want("cycle-check") {
+            let saved = (self.fractal, self.julia_mode, self.julia_c, self.render_cfg.max_iter, self.render_cfg.auto_iter, self.coloring.color_method);
+            self.fractal = FractalKind::from_name("Multibrot 8").unwrap_or(FractalKind::Mandelbrot);
+            self.julia_mode = true;
+            self.julia_c = (0.3229505482631078, 0.9832962099634425);
+            // 20,000, not the 267,346 that found it: with the check off this pass is the old cost,
+            // and on a slow card (the GT 710) it must stay well inside the watchdog.
+            self.render_cfg.max_iter = 20_000;
+            self.render_cfg.auto_iter = false;
+            self.coloring.color_method = crate::ColorMethod::Smooth;
+            let (w, h) = (256u32, 358u32);
+            let mut vp = Viewport::new(w as f64, h as f64);
+            vp.center_x = fractadyne_core::BigFloat::from_f64(0.0, 64);
+            vp.center_y = fractadyne_core::BigFloat::from_f64(0.0, 64);
+            vp.units_per_pixel = fractadyne_core::FloatExp::from_f64(4.0 / h as f64);
+            let mut req = self.current_export_request_for(&vp, true);
+            req.width = w;
+            req.height = h;
+            req.ss = 1;
+            (self.fractal, self.julia_mode, self.julia_c, self.render_cfg.max_iter, self.render_cfg.auto_iter, self.coloring.color_method) = saved;
+            // The GPU's own time for the iterate pass where the device has timestamps (the readback
+            // around it is the same either way and would swamp the difference), else the wall.
+            let timed = |on: bool| {
+                fractadyne_gpu::set_cycle_check(on);
+                let t0 = std::time::Instant::now();
+                let r = fractadyne_gpu::render_iter(device, queue, &req).ok();
+                let wall = t0.elapsed().as_secs_f64() * 1000.0;
+                let ms = r.as_ref().map_or(wall, |r| if r.iterate_ms > 0.0 { r.iterate_ms } else { wall });
+                (r, ms)
+            };
+            let _warm = timed(true);
+            let (on, on_ms) = timed(true);
+            let (off, off_ms) = timed(false);
+            fractadyne_gpu::set_cycle_check(true);
+            let walk = fractadyne_gpu::render_iter_chunked(device, queue, &req, 3_000).ok();
+            fractadyne_gpu::set_cycle_check(crate::tunables::cost().cycle_check == 1);
+            let differ = |a: &[f32], b: &[f32]| a.iter().zip(b).filter(|(x, y)| x.to_bits() != y.to_bits()).count();
+            let (pass, result) = match (&on, &off, &walk) {
+                (Some(a), Some(b), Some(c)) if a.pixels.len() == b.pixels.len() && a.pixels.len() == c.pixels.len() => {
+                    let (d_off, d_walk) = (differ(&a.pixels, &b.pixels), differ(&a.pixels, &c.pixels));
+                    let cycling = a.pixels.chunks(4).filter(|p| p[0] < 0.0).count();
+                    (
+                        req.mode == 1 && d_off == 0 && d_walk == 0 && cycling > 0 && on_ms * 4.0 < off_ms,
+                        format!(
+                            "mode {}; {d_off} texels differ from the check off, {d_walk} from a walk in \
+                             3,000-iteration windows; {cycling} interior px; {on_ms:.2} ms against {off_ms:.2} ms",
+                            req.mode
+                        ),
+                    )
+                }
+                _ => (false, "render failed".into()),
+            };
+            push_check(&mut checks, &mut last_check_t, SelfCheck {
+                category: "IterChunk",
+                name: "exact-repeat check: the same picture, sooner".into(),
+                params: "Multibrot 8 Julia c 0.32295+0.98330i, 256x358, 20k iter, check on/off + 3k windows".into(),
+                result,
+                threshold: "direct; 0 texels differ either way; interior px > 0; on < off / 4",
+                pass,
+            });
+        }
+
         // (D4) The TILED chunked iterate — the per-tile windowed dispatch that fixed the 5K
         // export device loss (crash-1787292746). Same shaders as the battery above, but through
         // the tile loops' integration: scissored shared ping-pong state reused across tiles,

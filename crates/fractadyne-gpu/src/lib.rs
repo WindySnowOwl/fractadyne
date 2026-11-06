@@ -95,7 +95,7 @@ pub(crate) struct IterUniforms {
     /// take them without moving a single existing field — this one struct is bound by every iterate
     /// pipeline in the app, the live view included.
     pub(crate) gather: [u32; 2],
-    /// `[tail_on, step_cap, split_n, split_j]`: 1 = the mode-2 df32 TAIL PHASE is enabled
+    /// `[tail_on, step_cap, split_n, split_j]`: bit 0 of `tail_on` = the mode-2 df32 TAIL PHASE is enabled
     /// (`TAIL_DF32_MIN` in the shader); `step_cap` > 0 stops each pixel of a mode-2 chunk pass after
     /// that many executed steps (the export's step-bounded passes, beta.150; 0 everywhere else);
     /// `split_n` > 1 makes `fs_iterate` render only checkerboard set `split_j` of `split_n`
@@ -243,9 +243,22 @@ pub fn set_tail_df32(on: bool) {
     TAIL_DF32.store(on, std::sync::atomic::Ordering::Relaxed);
 }
 
-/// The uniform row carrying the tail-phase switch.
+/// The direct loops' exact-repeat check (`CYCLE_CHECK`, a `--set` tunable in the app; on by
+/// default). Process-wide for the same reason as [`set_tail_df32`].
+static CYCLE_CHECK: std::sync::atomic::AtomicBool = std::sync::atomic::AtomicBool::new(true);
+
+/// Set the exact-repeat check on or off for every dispatch that follows.
+pub fn set_cycle_check(on: bool) {
+    CYCLE_CHECK.store(on, std::sync::atomic::Ordering::Relaxed);
+}
+
+/// The uniform row carrying the tail-phase switch (bit 0 of its first word) and the exact-repeat
+/// check's OFF bit (bit 1, set only when the check is turned off, so a row built without it reads
+/// as on).
 pub(crate) fn tail_word() -> [u32; 4] {
-    [TAIL_DF32.load(std::sync::atomic::Ordering::Relaxed) as u32, 0, 0, 0]
+    let tail = TAIL_DF32.load(std::sync::atomic::Ordering::Relaxed) as u32;
+    let cycle_off = !CYCLE_CHECK.load(std::sync::atomic::Ordering::Relaxed) as u32;
+    [tail | (cycle_off << 1), 0, 0, 0]
 }
 
 /// Occupancy-sized export tiles (`TILE_OCCUPANCY`, a `--set` tunable in the app; on by default).

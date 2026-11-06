@@ -418,7 +418,7 @@ const TAIL_Z_MIN: f32 = 8.881784197001252e-16; // 2^-50: the reference value, as
 // df32 precision, and f32 could not hold it anyway.
 const TAIL_DC_MIN_E: i32 = -120;
 fn tail_df32_ok() -> bool {
-    return iu.tail_on == 1u && iu.formula == 0u && iu.glitch_on == 0u;
+    return (iu.tail_on & 1u) == 1u && iu.formula == 0u && iu.glitch_on == 0u;
 }
 fn tail_dc(dc: Fe) -> Cdf {
     if (dc.e < TAIL_DC_MIN_E) {
@@ -619,6 +619,29 @@ fn fam_pow_df(b: Cdf, d: u32) -> Cdf {
         default: { return c_sqr(c_sqr(c_sqr(b))); } // 8
     }
 }
+// ⭐⭐THE EXACT-REPEAT CHECK (Brent). In the direct loops the next z is a function of z alone (c
+// is fixed per pixel), so once z repeats BIT FOR BIT the arithmetic cycles forever and the pixel
+// can never escape: it is the interior it would be at `max_iter`, and ending it at the repeat
+// changes no output, only the time. The repeat is found by saving z at iterations 1, 2, 4, 8, …
+// of the loop and comparing every step against the saved one, so a cycle of period p entered by
+// step T is found by about 2·max(T, p).
+// Why it matters: these loops run in plain f32 (`EFT_ADD_RESIDUALS` off), and near the critical
+// point z^d falls below c's last bit (|z| < 0.126 for d = 8), so z^d + c rounds to exactly c and
+// the orbit replays c's own, which repeats. Measured 2026-11-06 on a Multibrot 8 Julia set at
+// c ≈ 0.32295 + 0.98330i: 1,500 pixels (0.09%) that cycle this way took 97% of the panel's
+// iterations at 267,346 each, and every one repeats by iteration 568. (A double-precision orbit
+// of those pixels escapes in 20–491 steps, so they are wrong as well as slow; that is the
+// precision's doing, and this check neither causes nor hides it.)
+// Only where z is the whole state: the built-in formulas but Phoenix (8, which reads z_{n−1})
+// and Newton (9, which converges by its own test), and none with orbit statistics (`aux_on`),
+// whose interior output depends on the whole orbit. A custom formula (1000) may keep variables
+// of its own between steps, so it is never checked.
+fn cycle_check_on(f: u32, aux_on: u32) -> bool {
+    return (f <= 7u || is_fam(f)) && (aux_on & 1u) == 0u && (iu.tail_on & 2u) == 0u;
+}
+fn cdf_bits_eq(a: Cdf, b: Cdf) -> bool {
+    return all(bitcast<vec4<u32>>(vec4<f32>(a.re, a.im)) == bitcast<vec4<u32>>(vec4<f32>(b.re, b.im)));
+}
 // A family's direct step without its `+ c`: the fold, the power, the fold.
 fn fam_direct(f: u32, z: Cdf) -> Cdf {
     let shape = fam_shape(f);
@@ -763,7 +786,8 @@ struct IterU {
     // the live view included.
     gather_w: u32,         // width in texels of the tiny gather texture
     gather_n: u32,         // how many of its texels carry a real coordinate
-    // 1 = the mode-2 df32 tail phase is enabled (TAIL_DF32_MIN; `TAIL_DF32` tunable). A whole
+    // Bit 0: the mode-2 df32 tail phase is enabled (TAIL_DF32_MIN; `TAIL_DF32` tunable). Bit 1: the
+    // direct loops' exact-repeat check is OFF (`cycle_check_on`; `CYCLE_CHECK` tunable). A whole
     // 16-byte row with its padding, mirrored by `IterUniforms::tail` in lib.rs.
     tail_on: u32,
     // `fs_iterate_chunk_fe` only: stop each pixel after this many EXECUTED steps (BLA skips + full
@@ -1372,6 +1396,11 @@ fn iterate_at(gx: f32, gy: f32) -> FragOut {
         var aux = aux_init(vec2<f32>(z.re.x, z.im.x));
         // @@CUSTOM_INIT_BEGIN — a custom formula's init section, run once from z₀ (`custom.rs`).
         // @@CUSTOM_INIT_END
+        // The exact-repeat check (`cycle_check_on`): z as last saved, and when it is next replaced.
+        let cyc_on = cycle_check_on(iu.formula, iu.aux_on);
+        var cyc_z = z;
+        var cyc_k: u32 = 0u;
+        var cyc_at: u32 = 1u;
         loop {
             if (iter >= iu.max_iter) { break; }
             if (newton) {
@@ -1467,6 +1496,13 @@ fn iterate_at(gx: f32, gy: f32) -> FragOut {
                 // @@CUSTOM_BAILOUT_BEGIN — a custom formula's own bailout replaces this test (`custom.rs`).
                 if (dot(zf, zf) > bail2) { escaped = true; break; }
                 // @@CUSTOM_BAILOUT_END
+                if (cyc_on) {
+                    // z repeated bit for bit: this arithmetic cycles from here on and the pixel can
+                    // never escape, so it ends now as the interior it would be at `max_iter`.
+                    cyc_k = cyc_k + 1u;
+                    if (cdf_bits_eq(z, cyc_z)) { break; }
+                    if (cyc_k == cyc_at) { cyc_z = z; cyc_at = cyc_at * 2u; }
+                }
             }
         }
         if (!escaped) {
@@ -2404,6 +2440,13 @@ fn fs_iterate_chunk(in: VsOut) -> ChunkOut {
         else if (fam_holo(iu.formula)) { power_f = f32(fam_power(iu.formula)); }
         var zf = vec2<f32>(z.re.x, z.im.x);
         var escaped = false;
+        // The exact-repeat check, as fs_iterate's direct branch (`cycle_check_on`), saved afresh
+        // in each pass: a repeat inside one window ends the pixel as interior for every later one.
+        let cyc_on = cycle_check_on(iu.formula, iu.aux_on);
+        var cyc_z = z;
+        var cyc_k: u32 = 0u;
+        var cyc_at: u32 = 1u;
+        var cycled = false;
         loop {
             if (iter >= stop) { break; }
             // Formula step + derivative update — the exact arithmetic and ORDER of the direct
@@ -2444,6 +2487,11 @@ fn fs_iterate_chunk(in: VsOut) -> ChunkOut {
             iter = iter + 1u;
             zf = vec2<f32>(z.re.x, z.im.x);
             if (dot(zf, zf) > bail2) { escaped = true; break; }
+            if (cyc_on) {
+                cyc_k = cyc_k + 1u;
+                if (cdf_bits_eq(z, cyc_z)) { cycled = true; break; }
+                if (cyc_k == cyc_at) { cyc_z = z; cyc_at = cyc_at * 2u; }
+            }
         }
         var smit_out = smit;
         if (escaped) {
@@ -2454,7 +2502,9 @@ fn fs_iterate_chunk(in: VsOut) -> ChunkOut {
             smit_out = f32(iter) + 1.0 - nu;
             // @@CUSTOM_CHUNK_SMOOTH_END
             esc_range_commit(smit_out);
-        } else if (iter >= iu.max_iter) {
+        } else if (iter >= iu.max_iter || cycled) {
+            // A repeat is the interior the budget would reach: settled now, counted as capped by
+            // `fs_resolve` exactly as at `max_iter`.
             status = ST_INTERIOR;
         }
         return ChunkOut(

@@ -254,6 +254,7 @@ fn main() -> eframe::Result<()> {
         // The GPU crate's process-wide copies of the df32 tail-phase switch (`TAIL_DF32`) and the
         // occupancy-sized export tiles (`TILE_OCCUPANCY`).
         fractadyne_gpu::set_tail_df32(tunables::cost().tail_df32 == 1);
+        fractadyne_gpu::set_cycle_check(tunables::cost().cycle_check == 1);
         fractadyne_gpu::set_tile_occupancy(tunables::cost().tile_occupancy == 1);
         fractadyne_gpu::set_tile_pack(tunables::cost().tile_pack == 1);
         fractadyne_core::set_orbit_schedule(tunables::cost().orbit_schedule == 1);

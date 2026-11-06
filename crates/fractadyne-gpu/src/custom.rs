@@ -1033,7 +1033,7 @@ fn fe_advance(ind: &str) -> String {
     format!(
         "{ind}n_full = n_full + 1u;
 {ind}let Z = orbit_cdf(reference[ref_n]);
-{ind}if (iu.tail_on == 1u && dz.e >= TAIL_DF32_MIN_E) {{
+{ind}if ((iu.tail_on & 1u) == 1u && dz.e >= TAIL_DF32_MIN_E) {{
 {ind}    n_big = n_big + 1u;
 {ind}    dz = fe_from_cdf(custom_tame(custom_pstep(Z, fe_to_cdf(dz), tail_dc(dc), iter)));
 {ind}}} else {{

@@ -104,6 +104,8 @@ pub(crate) struct Cost {
     pub pin_timeout_scaled: u64,
     /// The mode-2 df32 tail phase (`TAIL_DF32_DEFAULT`; 0 = off, 1 = on).
     pub tail_df32: u64,
+    /// The direct loops' exact-repeat check (`CYCLE_CHECK_DEFAULT`; 0 = off, 1 = on).
+    pub cycle_check: u64,
     /// The overlapped pick + center build (`REF_OVERLAP_DEFAULT`; 0 = off, 1 = on).
     pub ref_overlap: u64,
     /// A `--render`'s reference started before the window (`EARLY_REF_DEFAULT`; 0 = off, 1 = on).
@@ -218,6 +220,7 @@ impl Default for Cost {
             admission: ADMISSION_DEFAULT,
             pin_timeout_scaled: PIN_TIMEOUT_SCALED_DEFAULT,
             tail_df32: TAIL_DF32_DEFAULT,
+            cycle_check: CYCLE_CHECK_DEFAULT,
             ref_overlap: REF_OVERLAP_DEFAULT,
             early_ref: EARLY_REF_DEFAULT,
             tile_occupancy: TILE_OCCUPANCY_DEFAULT,
@@ -753,6 +756,15 @@ pub(crate) fn apply_overrides(pairs: &[(String, String)]) -> Result<(), String> 
                 };
                 p.to_string()
             }
+            "CYCLE_CHECK" => {
+                let p = c.cycle_check;
+                c.cycle_check = match raw.as_str() {
+                    "0" => 0,
+                    "1" => 1,
+                    _ => return Err(format!("--set CYCLE_CHECK: '{raw}' is not 0 (off) or 1 (on)")),
+                };
+                p.to_string()
+            }
             "REF_OVERLAP" => {
                 let p = c.ref_overlap;
                 c.ref_overlap = match raw.as_str() {
@@ -851,7 +863,7 @@ pub(crate) const OVERRIDABLE: &str = "TDR_BUDGET_MS, TDR_EXPLICIT_BUDGET_MS, \
     TDR_BOOTSTRAP_MS, MOTION_UNPRICED_MAX, \
     MODE_RATE_UNKNOWN_MARGIN, TDR_MIN_STEPS, TDR_STEPS_CEIL, EXPLICIT_STEPS_CEIL, \
     EXPLICIT_DISPATCH_CAP, TDR_MAX_TILES, TDR_TILES_CEIL, BLA_EPS, PASS_FIXED_MS, MOTION_NEED_QUANTILE, MOTION_NEED_SOURCE, READING_POOL, \
-    DEAD_MAN, DISPATCH_CEILING, SETTLE_SERIALIZE, ADMISSION, PIN_TIMEOUT_SCALED, TAIL_DF32, REF_OVERLAP, EARLY_REF, TILE_OCCUPANCY, LIVE_REFRESH, \
+    DEAD_MAN, DISPATCH_CEILING, SETTLE_SERIALIZE, ADMISSION, PIN_TIMEOUT_SCALED, TAIL_DF32, CYCLE_CHECK, REF_OVERLAP, EARLY_REF, TILE_OCCUPANCY, LIVE_REFRESH, \
     ORBIT_LEN_CAP, RENORM, TILE_PACK, RENORM_BLA, ORBIT_SCHEDULE, NUCLEUS_REF, NUCLEUS_REF_LIVE, SA_TRACE, CHUNK_CHARGE, \
     CHUNK_SHUFFLE, WORKER_MOTION, WORKER_YIELD, WORKER_PASS_MS, MISI_FIRST_STAGE_OCT, RECORD_COST_PPM, REUSE_MAX_WRAPS, PIN_BAND_SPAN, REF_OVERTAKEN_DROP, SA_TRACE_LIVE_STEPS, GROWTH_IN_WORK, PIN_GROWTH_LANE, PRE_SWITCH_PROBE, BAND_FLOATEXP, WALK_STEPS, PIN_SPAN_PRICED, TIMER_SLOTS, \
     WALK_SERIALIZE, WALK_ONSET, ACCUM_TIME_CAP_MS, NORM_TOP_QUANTILE, ASSEMBLE_PIECE_MAX";
@@ -1390,6 +1402,14 @@ pub(crate) const GRID_CONFIDENCE_WAIT_FRAMES: u64 = 30;
 /// (beta.137) found 84–100% of mode-2 full steps in that range at every deep corpus scene. 0 = the
 /// all-floatexp loop, for the before/after measurement.
 pub(crate) const TAIL_DF32_DEFAULT: u64 = 1;
+
+/// 1 = THE EXACT-REPEAT CHECK in the direct loops (`cycle_check_on` in mandelbrot.wgsl): a pixel
+/// whose z repeats bit for bit can never escape, so it ends as interior at the repeat instead of
+/// at `max_iter`, with the same output. A Multibrot 8 Julia set at 267,346 iterations
+/// (2026-11-06, RTX 3080, 1080x1512) took 6,777 ms with it off and 11 ms with it on, bit for bit
+/// the same picture. 0 = every interior pixel runs to `max_iter`, for the before/after
+/// measurement.
+pub(crate) const CYCLE_CHECK_DEFAULT: u64 = 1;
 
 /// 1 = THE RENORMALIZED STEP (`fractadyne_core::RenormStep`, `rn_*` in mandelbrot.wgsl): near a
 /// minibrot a pixel takes a whole period per step as u ↦ u² + c′. An approximation held to 2^-24
