@@ -88,6 +88,9 @@ Changes after 0.3.0-beta.1:
   palette. Files saved before this open exactly as they did. `--palette` and a tour's `palette =`
   take the id, the name or the old number; an unknown palette on the command line now stops with a
   message instead of quietly using the last one in the list.
+- **The panel's Palette box shows the palette, not just its name (0.3.0-beta.27).** The chosen
+  palette's color strip sits before its name, as it does in the list, for presets, saved gradients,
+  duotone and binary alike.
 - **US spelling throughout (0.3.0-beta.27).** The English interface, help and messages now use US
   spelling: color, center, gray, canceled. Saved files are unaffected: L-system files are now
   written with `color`, which every version since L-systems arrived reads, and the British

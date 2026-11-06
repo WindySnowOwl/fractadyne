@@ -29,6 +29,37 @@ fn menu_section<R>(
     ui.indent(title, add).inner
 }
 
+/// The size of a palette's swatch: in every palette list's rows, and in the panel's Palette box.
+pub(crate) const PALETTE_SWATCH: egui::Vec2 = egui::vec2(48.0, 12.0);
+
+/// The panel's Palette box shows the chosen palette's swatch before its name, as the list's rows
+/// do. A `ComboBox` shows only text, so the name is laid out with room for the swatch in front of
+/// it ([`palette_box_text`]), and the swatch is painted into that room once the box is drawn
+/// ([`paint_palette_box_swatch`]).
+pub(crate) fn palette_box_text(ui: &egui::Ui, name: &str) -> egui::WidgetText {
+    let mut job = egui::text::LayoutJob::default();
+    job.append(
+        name,
+        PALETTE_SWATCH.x + ui.spacing().item_spacing.x,
+        egui::TextFormat {
+            font_id: egui::TextStyle::Button.resolve(ui.style()),
+            // Painted in the box's own text color, whatever state it is in.
+            color: egui::Color32::PLACEHOLDER,
+            valign: egui::Align::Center,
+            ..Default::default()
+        },
+    );
+    job.into()
+}
+
+/// Paint `lut`'s swatch into the room [`palette_box_text`] left, inside the box drawn at `button`
+/// (the box's response rect, which takes in its padding).
+pub(crate) fn paint_palette_box_swatch(ui: &egui::Ui, button: egui::Rect, lut: &fractadyne_color::segment::Lut) {
+    let min = egui::pos2(button.left() + ui.spacing().button_padding.x, button.center().y - PALETTE_SWATCH.y / 2.0);
+    let rect = egui::Rect::from_min_size(min, PALETTE_SWATCH);
+    crate::paint_gradient(&ui.painter_at(rect), rect, lut);
+}
+
 /// What one palette picker row reported this frame (`FractadyneApp::palette_menu_row`).
 pub(crate) struct PaletteRowHit {
     pub(crate) clicked: bool,
@@ -53,8 +84,7 @@ impl FractadyneApp {
         selected: bool,
     ) -> PaletteRowHit {
         let row = ui.horizontal(|ui| {
-            let (rect, resp) =
-                ui.allocate_exact_size(egui::vec2(48.0, 12.0), egui::Sense::click());
+            let (rect, resp) = ui.allocate_exact_size(PALETTE_SWATCH, egui::Sense::click());
             crate::paint_gradient(
                 &ui.painter_at(rect),
                 rect,

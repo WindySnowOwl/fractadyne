@@ -221,6 +221,8 @@ impl FractadyneApp {
                 } else {
                     fractadyne_color::PRESETS[self.coloring.palette_idx].name.to_string()
                 };
+                // The chosen palette's swatch, not a hover preview's: the box names the choice.
+                let pal_swatch = self.chosen_gradient().bake(fractadyne_color::segment::LUT_SIZE);
                 labelled(ui, &tr!(panel_palette), |ui| {
                     if std::mem::take(&mut self.dialogs.open_palette_dropdown) {
                         // The combo box's own id rule (see the fractal dropdown in menus.rs).
@@ -228,8 +230,8 @@ impl FractadyneApp {
                         ui.memory_mut(|m| m.open_popup(popup));
                         self.coloring.palette_preview.reopened();
                     }
-                    egui::ComboBox::from_id_salt("panel_palette")
-                        .selected_text(pal_name)
+                    let combo = egui::ComboBox::from_id_salt("panel_palette")
+                        .selected_text(crate::ui::menus::palette_box_text(ui, &pal_name))
                         // Tall enough for a good run of the presets; it scrolls past that.
                         .height(430.0)
                         .show_ui(ui, |ui| {
@@ -300,6 +302,7 @@ impl FractadyneApp {
                                 self.coloring.use_duotone = false;
                             }
                         });
+                    crate::ui::menus::paint_palette_box_swatch(ui, combo.response.rect, &pal_swatch);
                     // The palette browser: every palette over this view, side by side, by tag.
                     if ui.small_button(crate::icons::GALLERY).on_hover_text(tr!(menu_color_browse_hover)).clicked() {
                         self.palette_browser.open = true;
