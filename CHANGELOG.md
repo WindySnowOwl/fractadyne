@@ -106,6 +106,15 @@ Changes after 0.3.0-beta.1:
   "Always fit range", which fits the palette to the view however the count is divided. Saved with
   the view (`iter_div=`, written only when it divides, so other views are saved exactly as before)
   and in the session; `--iter-div N` on the command line; render-farm jobs carry it.
+- **Julia sets, and shallow views with black interior, render many times faster
+  (0.3.0-beta.27).** A pixel that never escapes used to run every one of its iterations, however
+  many the view asked for. In the renderer for shallow views and Julia sets, a pixel whose orbit
+  comes back to exactly the same value now stops there, since it can never escape: the same
+  picture, bit for bit, sooner. On an RTX 3080 a Multibrot 8 Julia set at 267,346 iterations
+  dropped from 6.9 s to 0.01 s, which was most of the time a side-by-side export of a deep
+  Multibrot 8 view and its Julia set took; the Mandelbrot set's opening view at 100,000 iterations
+  went from 120 to 49 ms, and Multibrot 8's from 515 to 160 ms. Deep views, which use the
+  perturbation renderer, are unchanged. `--set CYCLE_CHECK=0` turns it off for comparison.
 - **On processors with few cores, the live view no longer stutters while it picks a new reference
   (0.3.0-beta.26).** At great depth, choosing a reference orbit is seconds of work spread over
   every core, and during a zoom the view can be choosing two at once. On an 8-thread processor
