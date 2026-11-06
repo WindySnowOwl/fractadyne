@@ -8,10 +8,10 @@
   edge of a double's range), 1e1000x and 1e10000x. Each 4x of zoom about -2 adds exactly one
   iteration to every count, so one reference at any depth judges them all.
 - `pi` (scenes-pi.csv, 81-86): pi points (scripts/pi_points.py) - frames beside the neck c = -3/4
-  and the cusp c = 1/4 whose centre's escape count pi predicts: 3,143 to 3,141,593 iterations.
+  and the cusp c = 1/4 whose center's escape count pi predicts: 3,143 to 3,141,593 iterations.
   These are 17x17 frames: run them with -Size 17x17 -InspectSize 17x17.
 
-Every scene in all three formats (.kfr, .f3.toml, .fdn) in bench-kit/points/, with the same centre,
+Every scene in all three formats (.kfr, .f3.toml, .fdn) in bench-kit/points/, with the same center,
 magnification and iteration cap; the kit's view is 4 / zoom high. Coordinates are written in
 full: a short decimal is read at too low a precision by some readers (Fractadyne's own
 `--center` was, until 2026-11-03).

@@ -27,7 +27,7 @@ published as the pre-releases `v0.2.41-beta.1` to `v0.2.41-beta.150`, and a "bet
   that is safe; and the graphics card is given pieces of work large enough to keep it busy.
 - **Safer on AMD graphics cards.** A safety stop catches a frame the GPU timings misjudged before
   it can hang the machine: on an RX 6800 XT, the crash test that hung the whole machine under the
-  old behaviour ran to the end three times out of three. A fixed per-card limit bounds the work
+  old behavior ran to the end three times out of three. A fixed per-card limit bounds the work
   handed to the GPU at once, and deep exports limit the steps each pixel may take in one
   submission. Device loss on AMD cards is made less likely, not fixed (issue #1).
 - **Easier to diagnose.** The app keeps a record of every frame it draws, and a crash report
@@ -35,20 +35,20 @@ published as the pre-releases `v0.2.41-beta.1` to `v0.2.41-beta.150`, and a "bet
   names the commit it was built from, the log rolls over in a long session, an issue report no
   longer contains your user name, and the benchmark kit reports where each render's time went.
 - **Smoother live zooming.** Zooms are paced for smoothness at every speed and keep their detail
-  wherever the frame can afford it. The view no longer flashes black or to a single colour while
+  wherever the frame can afford it. The view no longer flashes black or to a single color while
   diving, at the start of a Space zoom, or after a large click-to-zoom. "Normalize deep colors"
   keeps working while you zoom and no longer makes the palette breathe.
 - **A better auto-zoom.** It steers smoothly, stays out of flat, empty regions, can dive exactly
   into a Misiurewicz point, can show where it is heading, and says so when it stops because the
   iteration count ran out.
 - **Navigation.** Click-to-zoom and "Nearest minibrot" work in the dual view, and click-to-zoom
-  gains a 25× step, snap-to-centre and a magnifier. Coordinates accept expressions: functions,
+  gains a 25× step, snap-to-center and a magnifier. Coordinates accept expressions: functions,
   constants, powers, polar form and exact points. A Misiurewicz explorer lists points to visit.
   Returning to an extreme location costs seconds instead of hours: at 9.98e60205×, a reference
   that took 6 h 26 min to build loads from the new orbit cache in 1.3 s.
-- **Colour.** The gradient editor is rebuilt, with blend curves between stops, a ring view you can
-  rotate, a library of saved gradients, and a colour picker with an eyedropper. Palettes are no
-  longer limited to eight colours, and Fractint and Kalles Fraktaler `.map`, Ultra Fractal
+- **Color.** The gradient editor is rebuilt, with blend curves between stops, a ring view you can
+  rotate, a library of saved gradients, and a color picker with an eyedropper. Palettes are no
+  longer limited to eight colors, and Fractint and Kalles Fraktaler `.map`, Ultra Fractal
   `.ugr`, GIMP `.ggr` and Adobe `.ase` files import.
 - **Views as files.** A `.fdn` view carries its gradient and a thumbnail, the gallery lists them,
   and an export at a different aspect no longer crops the composition.
@@ -63,7 +63,7 @@ Changes after 0.3.0-beta.1:
   Palette and the panel's Palette list gain a "Holidays" group, in the order of the year: Lunar
   New Year, Valentine's Day, Mardi Gras, Holi, Nowruz, Eid al-Fitr, Easter, Vesak, Midsummer,
   Matariki, Mid-Autumn, Meskel, Halloween, Day of the Dead, Diwali, Thanksgiving, Hanukkah,
-  Christmas, Kwanzaa and New Year's Eve. Each takes its holiday's own colours: Diwali's diya flames,
+  Christmas, Kwanzaa and New Year's Eve. Each takes its holiday's own colors: Diwali's diya flames,
   marigolds and rangoli magenta on an indigo night; Easter's pastel egg stripes between white lines;
   the Day of the Dead's marigolds, papel picado and sugar-skull white. They follow the thirty
   presets, so views and sessions saved with an earlier palette open as before. A palette list now
@@ -72,10 +72,10 @@ Changes after 0.3.0-beta.1:
   or the new button beside the panel's Palette list, shows the current view in every palette at
   once, the built-in ones and your saved gradients, and opens on the palette in use. Resting the
   pointer on a thumbnail previews it on the view and clicking chooses it, as in the lists. The
-  thumbnails are the view's own iterations recoloured, not rendered again, so they appear at once
-  at any depth and follow the view as it refines. Every palette has tags: its colours, warm or
+  thumbnails are the view's own iterations recolored, not rendered again, so they appear at once
+  at any depth and follow the view as it refines. Every palette has tags: its colors, warm or
   cool, calm, lively or frantic, dark, light, pastel or vivid, smooth, banded, single-hue or
-  rainbow, all measured from the colours, so a gradient you saved or imported has them too; and a
+  rainbow, all measured from the colors, so a gradient you saved or imported has them too; and a
   theme (holidays, seasons, nature, retro, art, materials, science, food) and a purpose
   (analytical, built to read the structure, or aesthetic), given by hand. Click tags to see only
   the palettes that have all of them. A saved gradient takes tags of your own, typed or chosen,
@@ -88,6 +88,24 @@ Changes after 0.3.0-beta.1:
   palette. Files saved before this open exactly as they did. `--palette` and a tour's `palette =`
   take the id, the name or the old number; an unknown palette on the command line now stops with a
   message instead of quietly using the last one in the list.
+- **The panel's Palette box shows the palette, not just its name (0.3.0-beta.27).** The chosen
+  palette's color strip sits before its name, as it does in the list, for presets, saved gradients,
+  duotone and binary alike.
+- **US spelling throughout (0.3.0-beta.27).** The English interface, help and messages now use US
+  spelling: color, center, gray, canceled. Saved files are unaffected: L-system files are now
+  written with `color`, which every version since L-systems arrived reads, and the British
+  spellings that files and the command line already accept (`colour`, `centre`, `neighbourhood`)
+  are still accepted.
+- **Divide iterations, for views the palette cannot keep up with (0.3.0-beta.27).** A new slider
+  under Cycle in the Controls panel divides the iteration count by up to 10,000 before it is
+  colored, so the palette repeats that many times more slowly. Cycle alone stops at one palette
+  per 250 iterations; on a view whose escape counts climb by hundreds between neighboring pixels,
+  such as kaludix's Dinkydau's Flake from the benchmarks thread, every Cycle setting is moiré, and
+  dividing by 8, as he suggested, brings the flake out. Its tooltip says how many iterations one
+  trip through the palette takes. It applies to the Smooth method, and is grayed out under
+  "Always fit range", which fits the palette to the view however the count is divided. Saved with
+  the view (`iter_div=`, written only when it divides, so other views are saved exactly as before)
+  and in the session; `--iter-div N` on the command line; render-farm jobs carry it.
 - **On processors with few cores, the live view no longer stutters while it picks a new reference
   (0.3.0-beta.26).** At great depth, choosing a reference orbit is seconds of work spread over
   every core, and during a zoom the view can be choosing two at once. On an 8-thread processor
@@ -99,7 +117,7 @@ Changes after 0.3.0-beta.1:
   cores to spare nothing changes.
 - **A `--center` on the command line is read to the precision its zoom needs (0.3.0-beta.26).** A
   short decimal such as `0.25000000000001` was read to about 64 bits whatever the zoom, so past
-  about 1e17× the view's centre could land many pixels from the point written: 40 pixels at
+  about 1e17× the view's center could land many pixels from the point written: 40 pixels at
   3.4e21× in the render that found it, a point beside the main cardioid's cusp whose escape count
   π predicts. The Go-to box and tours already read coordinates this way. Coordinates written out
   in full, as Fractadyne saves them, were not affected.
@@ -122,28 +140,28 @@ Changes after 0.3.0-beta.1:
   2.3e999× beside a minibrot of period 14,416, an export using the old reference choice came out
   entirely black, and with BLA off every pixel escaped within 8,000 iterations of the reference.
   With that minibrot just outside the frame, every export drew a flat disc or a single flat
-  colour. The dips are now stored from the full-precision value. Those views now take two to three
+  color. The dips are now stored from the full-precision value. Those views now take two to three
   times as long, because the real picture costs more to compute than the broken one did. This applies to stills, tours, zoom
   videos and the live view, typically past about 1e600×; shallower renders are unchanged.
   Reference orbits saved by earlier builds are built again, not reused.
-- **Deep exports render faster when a minibrot is in the view but not at its centre, and at
+- **Deep exports render faster when a minibrot is in the view but not at its center, and at
   1e1000× they now come out right (0.3.0-beta.26).** An export takes its reference orbit at the
-  view's centre when it can. When the centre lies just outside a minibrot, its orbit escapes
+  view's center when it can. When the center lies just outside a minibrot, its orbit escapes
   before the render's last iteration, and Fractadyne tried a hundred other points and built one
-  of them for the whole iteration count. It now finds the minibrot's own centre, its nucleus,
+  of them for the whole iteration count. It now finds the minibrot's own center, its nucleus,
   whose orbit repeats, and uses that: the reference costs one period instead of millions of
   iterations. The deeper Cerebral Spin benchmark scene (6.7e152×, 2 million iterations) takes
   3.4 s at 4K instead of 7.2 s. A new test set puts four minibrots at 136 places in and around the
-  view; its off-centre views of the 6.7e152× minibrot take 1.6 to 1.9 s instead of 3.3 to 4.8 s at
+  view; its off-center views of the 6.7e152× minibrot take 1.6 to 1.9 s instead of 3.3 to 4.8 s at
   1080p. (The wrong pixels and black images the old reference drew at 1e1000× came from a
   separate fault, fixed in the entry above.) Stills, tours, zoom videos and the live view; the
   live view's use can be switched off alone with `--set NUCLEUS_REF_LIVE=0`.
-- **A render past the graphics card's reference-orbit limit no longer paints false colour inside
+- **A render past the graphics card's reference-orbit limit no longer paints false color inside
   minibrots (0.3.0-beta.26).** A graphics card holds a reference orbit of limited length
   (7,452,444 iterations on an RTX 3080). An export that asked for more iterations than that, at a
   view whose reference neither escapes nor repeats, carried on past the reference's end, and the
   pixels that had followed the reference furthest lost their position there and escaped: the
-  deeper Cerebral Spin at 7.5 million iterations drew an ellipse of 1,828 coloured pixels inside
+  deeper Cerebral Spin at 7.5 million iterations drew an ellipse of 1,828 colored pixels inside
   its minibrot, which is all interior. Exports, tours and zoom-video strips now stop at the
   reference's last sample, as the live view already did (its status bar says "depth limit"), and
   the log says when they do. Renders that stay within the limit are unchanged.
@@ -154,8 +172,8 @@ Changes after 0.3.0-beta.1:
   bookmarks use the palette you chose. "Edit gradient…" used to reopen the last custom gradient
   whenever there was one, so after choosing a preset it put that older gradient back on screen in
   place of the preset; it now starts from what the view is showing — a preset, a saved gradient,
-  the duotone ramp or Binary's colour — and Cancel puts back the palette as it was before, the
-  preset or two-colour mode included.
+  the duotone ramp or Binary's color — and Cancel puts back the palette as it was before, the
+  preset or two-color mode included.
 - **AMD graphics cards render up to 2.7× faster, and compute what NVIDIA's do (0.3.0-beta.25).**
   The shader's double-precision helpers computed an error term on every addition that NVIDIA's
   shader compiler has always thrown away, so every NVIDIA render, every reference image and the
@@ -230,7 +248,7 @@ Changes after 0.3.0-beta.1:
   `FRACTADYNE_MISI_FAIL_STAGE=N`, fails stage N on purpose: with stage 2 failing, the user's dive
   from 2^1198.7 went on to the depth stage 1 had solved, 2^1214.7, and stopped there with "could not
   be refined past". Unit tests cover the stages' order and seeding, a first-stage failure, a
-  cancelled solve, and when the dive holds or stops. One case was wrong: raising the dive limit
+  canceled solve, and when the dive holds or stops. One case was wrong: raising the dive limit
   after every stage had landed stopped the dive at the old limit with the "could not be refined"
   message. It now says the point was solved before the limit was raised, and to start the dive
   again to go deeper.
@@ -317,15 +335,15 @@ Changes after 0.3.0-beta.1:
   shorter (0.1 s against 0.2 s on the accelerated build).
 - **Click-to-zoom keeps a picture on screen while the new view computes (0.3.0-beta.22).** After a
   click, the old picture is shown magnified around the clicked point until the new view is ready.
-  A click more than a few percent of the width away from the centre used to place that magnified
-  picture off the screen, so the view went to one flat colour for as long as the new view took:
+  A click more than a few percent of the width away from the center used to place that magnified
+  picture off the screen, so the view went to one flat color for as long as the new view took:
   1.9 s after a 100× click at 2^40 on an RTX 3080. When the new picture is ready it now appears
-  at once in its own colours; it used to start as an almost uniform pale wash in the old view's
-  colours and fade in over half a second.
+  at once in its own colors; it used to start as an almost uniform pale wash in the old view's
+  colors and fade in over half a second.
 - **"Snap to nearest center" works in the single view (0.3.0-beta.22).** The option only ever
   acted in the dual view's panels: a click in the single view jumped and never snapped. It now
-  settles the centre onto the nearest minibrot after a click in either, and the picture held while
-  the snapped view computes keeps its colours instead of turning to speckle.
+  settles the center onto the nearest minibrot after a click in either, and the picture held while
+  the snapped view computes keeps its colors instead of turning to speckle.
 - **Deep views between 10,000× and 1e28× finish two to three times faster (0.3.0-beta.22).** In
   that range the live view iterated every step; it now skips runs of steps with the same
   approximation (BLA) the views past 1e28× use, and finishes a still view in passes bounded by
@@ -335,7 +353,7 @@ Changes after 0.3.0-beta.1:
   1e28×, the 2^704 test view finishes in 2.1 s instead of 4.0 s on the RTX 3070. No pass came near
   the time at which Windows resets a graphics card. At pixels where the two pictures differ, a
   check against the exact answer found the new one right wherever the old one was. Julia views,
-  custom formulas, colourings that collect orbit statistics, views with BLA turned off, and
+  custom formulas, colorings that collect orbit statistics, views with BLA turned off, and
   exported images keep the previous arithmetic. `--band-audit` compares the two at any view in
   that range.
 - **Lighting no longer drops out at pixels right on the edge of the set (0.3.0-beta.22).** At
@@ -353,14 +371,14 @@ Changes after 0.3.0-beta.1:
   pass made while zooming, at a fraction of the window's resolution. On a dive at 2^70 (about
   1e21×) with 165,000 iterations, the view took 8 to 10 s to finish in some 250 small passes; it
   now takes 4 s in about 27.
-- **Render farm: a deep reference is no longer cancelled as a stall (0.3.0-beta.22).** A farm
+- **Render farm: a deep reference is no longer canceled as a stall (0.3.0-beta.22).** A farm
   cancels and hands out again a run that finishes no frame for 5 minutes (or 8 times the job's
   typical frame time, when longer), and before the first frame only the 5 minutes applies. At
   extreme depth the reference orbit takes longer than that to build: on a 1000-octave dive to
-  9.98e60205× every machine's 7 to 8 minute build was cancelled at 5 minutes and started again from
+  9.98e60205× every machine's 7 to 8 minute build was canceled at 5 minutes and started again from
   nothing. A farm render now says while its reference build is advancing, and that counts as
-  progress; a build that stops advancing is still cancelled 5 minutes after its last step. On that
-  dive, rendered deepest first on three graphics cards in two machines, no run is cancelled now
+  progress; a build that stops advancing is still canceled 5 minutes after its last step. On that
+  dive, rendered deepest first on three graphics cards in two machines, no run is canceled now
   (before, all three were), and the job takes the same 11.5 minutes: the reference the controller
   builds and shares set its pace both times. Also
   fixed: when another machine's reference arrived while memory was short, a render kept building
@@ -383,12 +401,12 @@ Changes after 0.3.0-beta.1:
   strip the frame shows on the graphics card at once, and that limited its size: on a 10 GB RTX
   3080, 4K at 2× anti-aliasing needed about 20 GB, and 5K at 2× was refused because a strip was
   wider than the card's largest texture. A strip that wide is now held in pieces, and the card keeps
-  only what the colouring reads of each strip: the iteration count alone for smooth colouring, a
-  quarter of before, or the count and distance estimate for distance colouring or glow, half.
-  Relief lighting reads everything and needs as much as before. 4K at 2× with smooth colouring now
+  only what the coloring reads of each strip: the iteration count alone for smooth coloring, a
+  quarter of before, or the count and distance estimate for distance coloring or glow, half.
+  Relief lighting reads everything and needs as much as before. 4K at 2× with smooth coloring now
   needs about 5.5 GB; the frames are the same as before, bit for bit. The memory estimate in the
   Render zoom video window now includes the frame itself, and its hover says what the strips keep
-  for the colouring chosen. The window also says what a zoom video is and how it differs from
+  for the coloring chosen. The window also says what a zoom video is and how it differs from
   Render tour: one line under the view, and a section that opens with how it works, what it can
   and cannot make, and when to use Render tour instead. The Render tour window says the same from
   its side, and so do both Tools menu entries' hovers.
@@ -437,29 +455,29 @@ Changes after 0.3.0-beta.1:
 - **Tools ▸ Render zoom video… (0.3.0-beta.22).** A dive from the whole set into the current view
   as a video, from the app: choose the file, size, frame rate, zoom speed, where the dive starts,
   rotation, anti-aliasing, whether the palette follows the depth, and whether to keep the strips to
-  recolour later. Before it starts, the dialog shows the frames, the length, the strips and the
-  graphics memory and disk they take; while it runs, a progress bar. The video is coloured as the
+  recolor later. Before it starts, the dialog shows the frames, the length, the strips and the
+  graphics memory and disk they take; while it runs, a progress bar. The video is colored as the
   view is (the session is saved first), and it renders in a separate process, so a lost graphics
   device ends the render, not the session. A dive to 4.7e99× at 1080p and 60 frames a second, 331 s
   of video, took 12 minutes on an RTX 3080, about five times faster than rendering its frames one by
   one as a tour.
 - **Zoom videos made in the app (0.3.0-beta.22).** `--assemble DIR --out dive.mp4` turns the
   strips `--render-expmap DIR` rendered into a video of the whole dive at a constant zoom speed
-  (`--assemble-speed`, octaves a second; `--assemble-fps`), coloured with the current colouring and
+  (`--assemble-speed`, octaves a second; `--assemble-fps`), colored with the current coloring and
   encoded by ffmpeg as the frames are made, with no folder of images in between. `--assemble-at L`
   writes single frames instead. `--render-zoom-video dive.mp4` does it all in one run from the view
   (`--center`, `--zoom`, `--size`): each strip is rendered just before the first frame that shows
-  it, so the dive needs no strips on disk (`--keep-strips DIR` keeps them, to recolour later with
+  it, so the dive needs no strips on disk (`--keep-strips DIR` keeps them, to recolor later with
   `--assemble`); a 640x360 dive to 2^20 took 7.5 s, strips included. `--assemble-crf` sets the
   video's quality (0 is lossless). `--assemble-tour T.toml` follows a tour's timeline (its zooms,
-  holds and easing) instead of a constant speed, as long as the tour stays on the dive's centre, and
+  holds and easing) instead of a constant speed, as long as the tour stays on the dive's center, and
   `--assemble-rotate R` turns the picture R turns an octave as it dives. Measured on a dive to
   4.7e99× at 320x180 and 30 frames a second: 62 s from nothing to the finished video, against 15
   minutes for rendering its frames one by one as a tour. Each frame is assembled on the GPU from the nearest strip texel of
-  every sample and coloured by the same colour pass as an exported image; a 640x360 dive assembles
+  every sample and colored by the same color pass as an exported image; a 640x360 dive assembles
   at about 200 frames a second. Checked: every sample reads the texel the geometry says, and an
   assembled frame agrees with an ordinary render of the same view at least as well as that render
-  moved by a third of a pixel does. Smooth, distance, relief and glow colourings (not stripe, TIA,
+  moved by a third of a pixel does. Smooth, distance, relief and glow colorings (not stripe, TIA,
   trap or decomposition, whose per-orbit statistics a strip does not keep). With `--normalize`, or
   the session's Normalize deep colors, the palette follows the escape range as the live view's
   does (its top where 98% of the picture has escaped, log for a wide range), measured once an
@@ -467,7 +485,7 @@ Changes after 0.3.0-beta.1:
 - **Zoom videos: strips in zoomasm's format (0.3.0-beta.22).** `--render-expmap DIR
   --expmap-format zoomasm` writes the strips in Kalles Fraktaler's EXR layout (`N`, `NF`, `T`,
   `DEX`, `DEY`, one octave a strip), the input zoomasm assembles into a video with its own
-  colouring presets: open DIR as zoomasm's input with Reverse and Flip unticked. Every convention
+  coloring presets: open DIR as zoomasm's input with Reverse and Flip unticked. Every convention
   was measured from KF 2.15.5's own files, not taken from its source, and strips rendered by both
   programs at the same places agree texel for texel: count, fraction, phase and distance estimate
   to about one part in a million on the median texel. The strips use KF's "imaginary axis up"
@@ -477,7 +495,7 @@ Changes after 0.3.0-beta.1:
   channels yet, so zoomasm's rgb-passthrough preset has nothing to show.
 - **Zoom videos, the first step: exponential-map strips (0.3.0-beta.22).** `--render-expmap DIR`
   renders a straight dive into the view as strips, each covering one octave of depth around the
-  centre, from which a zoom video's frames can be assembled. Each part of the plane is computed
+  center, from which a zoom video's frames can be assembled. Each part of the plane is computed
   once instead of once for every frame it appears in: at 60 frames a second and an octave a second,
   about 23 times less work. The strips hold raw data (escape count, its fraction, the final angle,
   distance estimate and normals) in OpenEXR files, with a manifest; turning them into a video, with
@@ -496,7 +514,7 @@ Changes after 0.3.0-beta.1:
   before, and not at all after.
 - **Home from extreme depth shows pictures on the way out (0.3.0-beta.22).** From deeper than
   about 1e19×, the glide Home passed through depths far faster than any of them could render, and
-  most of it showed solid panels of a single colour: from 1.5e4850×, nine seconds of them on an
+  most of it showed solid panels of a single color: from 1.5e4850×, nine seconds of them on an
   RTX 3080. Home now makes stops on the way out, each at about half the previous depth's exponent
   (from 1e4000×: about 1e2000×, then 1e1000×, and so on), down to about 4,000×. At each stop it
   waits for that depth's picture, rendered at a quarter of the resolution and with only the
@@ -504,8 +522,8 @@ Changes after 0.3.0-beta.1:
   seconds gives way. The last stretch is the usual glide. On an RTX 3070, Home from 1e4000× took
   14 s with a picture at each of its ten stops, and from 4e500× took 12 s over seven. Home from
   shallower than 1e19× is unchanged.
-- **The view no longer goes black for a frame when the centre coordinates lengthen
-  (0.3.0-beta.22).** The centre readout in the status bar grew wider with depth, and when it no
+- **The view no longer goes black for a frame when the center coordinates lengthen
+  (0.3.0-beta.22).** The center readout in the status bar grew wider with depth, and when it no
   longer fitted, the bar re-wrapped and the view changed size by a few pixels. A view that changes
   size starts its picture again, so it showed nothing for a frame; seen at about 1.7e7× on the way
   Home. The readout now keeps one width at every depth.
@@ -542,20 +560,20 @@ Changes after 0.3.0-beta.1:
   Seventies, Eighties, Mondrian, Dragon Scales, Machine Age, Bronze Age, Unity, Spice, Veggies,
   Mosaic, Coral Reef, Aurora, Desert, Candy, Blueprint, Sepia, Thermal, Stained Glass, Noir, Cherry
   Blossom, Black Opal and Lavender Fields join Ember, Ice, Nebula and Grayscale. Mondrian, Mosaic
-  and Stained Glass are hard-edged bands (black lines between fields of colour, tiles in grout,
+  and Stained Glass are hard-edged bands (black lines between fields of color, tiles in grout,
   jewel tones in lead); the rest are smooth rings. The right panel's palette list now shows each
   palette's swatch beside its name, as Color ▸ Palette does, and both lists scroll. Saved views
   keep their palettes: the new ones come after the old four.
 - **"Normalize deep colors" no longer strobes, goes dark or jumps while you zoom
   (0.3.0-beta.22).** The palette's range used to end at the slowest-escaping pixel, which beside a
-  small copy of the set is the iteration limit itself, so a few pixels decided the colours of the
+  small copy of the set is the iteration limit itself, so a few pixels decided the colors of the
   whole picture: on a zoom to 2^127 the picture sank into the palette's first eighth (black to dark
   red) and swept through the palette several times a second whenever the limit rose. The range now
   ends where 98% of the picture has escaped (the pixels above it keep cycling through the palette),
-  for frames from the second graphics card too. Colours drift at most 1.5 palette cycles a second;
-  a bigger change dissolves instead of sweeping; and while you zoom, each colour stays with its
+  for frames from the second graphics card too. Colors drift at most 1.5 palette cycles a second;
+  a bigger change dissolves instead of sweeping; and while you zoom, each color stays with its
   feature, as with a fixed palette, settling within a second of stopping to the view's own
-  colours. On that zoom, from 10 palette cycles in the fastest second to 2, with no frame jumping.
+  colors. On that zoom, from 10 palette cycles in the fastest second to 2, with no frame jumping.
 - **The Tiles window shows more of what a pass does (0.3.0-beta.22).** On the live-render panel, a
   bar under the picture's plane shows the range of iterations the pass covers on a log scale: a
   walk's band lit, with what it has already finished below it. A whole frame is drawn as a checker
@@ -635,16 +653,16 @@ Changes after 0.3.0-beta.1:
   measures the budget afresh, as a change of arithmetic already did. A skip exactly equal to the
   iteration count is also used, no longer refused into a full recount. A crash report now also says
   what the second graphics device's last pass was doing.
-- **Deep zooms no longer shake, and their colours no longer jump (0.3.0-beta.20).** While zooming
+- **Deep zooms no longer shake, and their colors no longer jump (0.3.0-beta.20).** While zooming
   deep, the view shows a mix of fresh frames and held ones, and frames rendered below full resolution
   were drawn a few pixels down and to the right of where they belong: up to 6 pixels for a
-  quarter-resolution frame, which reads as the picture's centre jittering as such frames come and
+  quarter-resolution frame, which reads as the picture's center jittering as such frames come and
   go. They are now drawn in place. With a second graphics device (the worker GPU), each of its
-  frames was shown with a colour mapping taken from that frame alone, so the palette jumped several
-  times a second; the colour mapping now glides from one frame to the next. The supersampling
+  frames was shown with a color mapping taken from that frame alone, so the palette jumped several
+  times a second; the color mapping now glides from one frame to the next. The supersampling
   samples the second device renders are also no longer half a pixel off the window's own. When
   "Normalize deep colors" switches on or off as you zoom, or between its two kinds of mapping, the
-  colours now dissolve from one to the other over 0.4 s instead of changing in one frame. And while
+  colors now dissolve from one to the other over 0.4 s instead of changing in one frame. And while
   a deep refresh composes behind the picture on screen, or the picture is stretched to follow the
   zoom, it is no longer blurred by a filter meant for a lower-resolution frame.
 - **Zooming in snaps to a nearby minibrot (0.3.0-beta.20).** With Navigate ▸ Snap zoom to
@@ -655,7 +673,7 @@ Changes after 0.3.0-beta.1:
   after a few doublings it sits under the cursor and stays there. Near the real axis the zoom is
   pulled onto the axis instead. The minibrot is found in the background, from the view's own
   reference orbit, a fraction of a second after the cursor or the view moves, at any depth.
-  Mandelbrot only, in the single view. (The behaviour follows Imagina's.)
+  Mandelbrot only, in the single view. (The behavior follows Imagina's.)
 - **The mouse wheel zooms faster, and faster still when turned quickly (0.3.0-beta.20).** A notch
   of the wheel zoomed ×1.06, so doubling the magnification took about 11 notches. A notch now
   zooms ×1.11 (about 7 notches to double), and a wheel turned faster than 4 notches a second zooms
@@ -806,15 +824,15 @@ Changes after 0.3.0-beta.1:
   309 timings credited to a frame where the card ran nothing; now none in three runs (0 of 258 to
   292), and no switch to wall-clock pricing.
 - **Zooming out and back in keeps a deep location (0.3.0-beta.20).** Each zoom step recomputed
-  the view's centre at the precision the current depth needs, so zooming out rounded away the
-  digits a deeper view had needed. Zooming back in about the centre then went somewhere else: a
+  the view's center at the precision the current depth needs, so zooming out rounded away the
+  digits a deeper view had needed. Zooming back in about the center then went somewhere else: a
   Space glide from 1× toward the 1e500× spiral on the website's front page ended about 1e-20 away
-  from it, in empty space, and the last stretch of the glide was one flat colour. The centre now
+  from it, in empty space, and the last stretch of the glide was one flat color. The center now
   keeps every digit it has, and a zoom out to 1× and back in returns to exactly the same point.
 - **Faster reference orbits at extreme depth (0.3.0-beta.20).** Choosing the reference point no
   longer competes with building it: the first round of the choice used to walk about a hundred
   candidate points at full precision on every core while the reference was being computed, and
-  now scores them by perturbation against the centre instead. With identical images, that took
+  now scores them by perturbation against the center instead. With identical images, that took
   17–33% off the deepest benchmark scenes (the 1e30000× spiral view 54.9 → 45.8 s, the 1.5e30000×
   minibrot 43.5 → 33.8 s, both at 1280x720). And the precision schedule — each step of the
   reference orbit computed at the precision it needs, introduced for the Mandelbrot set in beta.18 —
@@ -845,7 +863,7 @@ Changes after 0.3.0-beta.1:
   -SceneSet ladder` (and `bench-latest.sh --scene-set ladder`) runs 21 scenes beyond the standard
   ten, to 1e30000× and iteration caps of 28.5 million. Its twelve minibrot scenes now render with
   `--normalize --log-palette`: without it the field around a deep minibrot came out as palette
-  noise, because escape counts in the hundreds of thousands put neighbouring pixels far apart on
+  noise, because escape counts in the hundreds of thousands put neighboring pixels far apart on
   the palette. It costs Fractadyne 0.1 to 0.4 s a 4K render on an RTX 3080.
 - **A still image on several graphics cards (0.3.0-beta.18).** On a machine with more than one
   graphics card, Export image has *Use all graphics cards* (off by default), and `--render … --gpus
@@ -867,7 +885,7 @@ Changes after 0.3.0-beta.1:
 - **A deep view sharpens sooner after it stops moving (0.3.0-beta.18).** Once a deep view
   settles, the app averages 24 slightly shifted renders of it to remove speckle. That stage was
   paced by the screen's frames rather than by the graphics card, and it started over every time the
-  automatic iteration count rose or the colour range was measured again. At one user's 2.3e11×
+  automatic iteration count rose or the color range was measured again. At one user's 2.3e11×
   view it started over 20 times and finished after 122 s; it now starts once, after the iteration
   count has settled, and finishes after 85 s. At two test views the averaging takes a third and a
   fifth of the time it took (9.3e78×: 68 s to 21 s; 6.8e3999×: 24 s to 5 s). The finished picture
@@ -914,7 +932,7 @@ Changes after 0.3.0-beta.1:
   get runs of frames. Every frame that comes back is checked — its SHA-256, that it is a complete
   PNG, its size — before it is kept; a bad one is quarantined and rendered elsewhere, and a machine
   that sends two is removed, with its diagnostics saved and a notice printed. A machine that goes
-  quiet or is cancelled hands its frames back; a stalled run is reassigned. The job's state lives in
+  quiet or is canceled hands its frames back; a stalled run is reassigned. The job's state lives in
   `DIR/farm/` — done log, events, status, metrics, quarantined frames — so running the same command
   again resumes it. Builds must match exactly (version and commit), the palette ranges of a
   normalized tour are measured once for every machine, and the reference-orbit cap is the smallest
@@ -948,10 +966,10 @@ Changes after 0.3.0-beta.1:
   tour measures a palette range at each keyframe's view, and every one of those measurements was
   taken of the home view instead, at the keyframe's iteration budget. A deep frame's escape values
   then sat in a narrow band of a range meant for the whole set, and the palette flattened: in a
-  test dive the 1e30× frame had 100 distinct colours, and has 1,932 now. Keyframe holds of the
-  shipped `ultra-dive-e200` tour use 1.6 to 2.5 times as many colours. A normalized tour rendered
+  test dive the 1e30× frame had 100 distinct colors, and has 1,932 now. Keyframe holds of the
+  shipped `ultra-dive-e200` tour use 1.6 to 2.5 times as many colors. A normalized tour rendered
   before this change will look different, with more contrast, when it is rendered again.
-- **Fixed: a tour rendered in parts coloured differently from the same tour rendered whole
+- **Fixed: a tour rendered in parts colored differently from the same tour rendered whole
   (0.3.0-beta.18).** A normalized tour maps its palette through ranges measured at its keyframes,
   and a `--segments` shard or `--segment` chapter that ended between two keyframes measured its
   last range at its own last frame instead of at the next keyframe. Every frame after the previous
@@ -971,7 +989,7 @@ Changes after 0.3.0-beta.1:
 - **Render-farm groundwork (0.3.0-beta.18).** The first phase of rendering one tour on several
   machines ([design](design/remote-rendering.md)). `--frames A..B` renders one run of the tour's
   frames. `--dump-norm-anchors FILE` measures a normalized tour's palette ranges once and
-  `--norm-anchors FILE` applies them, so every machine colours the tour identically; a file
+  `--norm-anchors FILE` applies them, so every machine colors the tour identically; a file
   measured for a different script, frame rate, frame count or iteration base is refused.
   `--farm-child` runs with no window, pins the watermark's display scale, and prints a
   `frame-done` line with each written frame's size and SHA-256. `--set ORBIT_LEN_CAP=N` pins the
@@ -981,7 +999,7 @@ Changes after 0.3.0-beta.1:
   (0.3.0-beta.18).** An export of Burning Ship, Tricorn, Celtic or Buffalo, at any power, or of
   any Julia view, runs glitch correction, and that path rendered one sample a pixel whatever the
   Anti-alias setting or `--ss` asked for, without saying so: a `--ss 2` export of Tricorn 3 was
-  byte-identical to `--ss 1`. The correction now runs on the supersampled frame, which is coloured
+  byte-identical to `--ss 1`. The correction now runs on the supersampled frame, which is colored
   the way every other export is, and matches the uncorrected supersampled export wherever nothing
   was corrected. A frame too large for the corrected path at that sampling renders uncorrected, and
   the log says so.
@@ -1004,7 +1022,7 @@ Changes after 0.3.0-beta.1:
   Fractint .l files open directly (a file with several entries lists them), and a system can be
   edited as text, with errors placed at their line and column. Fractint's turtle commands are
   supported: draw and move, turns, turn-around, swapped turns, brackets, step factors, turns by any
-  angle, colour indices. Filled shapes: the turtle's path between `{` and `}` is a polygon, filled
+  angle, color indices. Filled shapes: the turtle's path between `{` and `}` is a polygon, filled
   (a `.` adds a vertex without moving), so the snowflake can be drawn as a shape and a plant can
   have leaves. Stochastic systems: a symbol can have alternatives with weights
   (`F (0.33) = F[+F]F`), one chosen at random for each branch, so no two branches are alike; a
@@ -1012,19 +1030,19 @@ Changes after 0.3.0-beta.1:
   rather than drawing another, and stochastic plants zoom without limit like the rest.
   Parametric and context-sensitive systems, as *The Algorithmic Beauty of Plants* writes them:
   modules carry numbers (`A(s) : s > 1 = F(s)[+A(s/2)]`, with `define`d constants), and a
-  production can depend on a module's neighbours (`b < a > c = b`, with `ignore` for the symbols
+  production can depend on a module's neighbors (`b < a > c = b`, with `ignore` for the symbols
   context skips). These are drawn at a fixed order, by building the word (up to two million
   modules) in double precision; Hogeweg and Hesper's plants, the book's row of trees and its
   branching pattern are built in. The angle
   has a slider, and a play button that sweeps it there and back (the curve morphing as it turns);
   Draw on reveals the curve in the order the turtle draws it — a slider, or play to watch it draw
-  itself. The line width, and colouring by position along
-  the curve, branch depth, heading or colour index, are in the panel; the toolbar raises and
+  itself. The line width, and coloring by position along
+  the curve, branch depth, heading or color index, are in the panel; the toolbar raises and
   lowers the order. Zoom has no limit: past what double precision places, the top of the drawing
   is computed in arbitrary precision with exact headings, so the Koch snowflake's corner at 1e100×
   is as sharp, and as quick, as at 1×. A view carries its system and writes format_version 4; the
   session keeps it. File ▸ Export SVG (or SVG… in the panel) writes the view as a vector drawing —
-  its lines as paths and its filled shapes as polygons, in its colours — for print or a plotter;
+  its lines as paths and its filled shapes as polygons, in its colors — for print or a plotter;
   `--shot … --svg FILE` writes one unattended. File ▸ Export image works for an L-system view: the
   picture on screen at the export's size — its order and line width the screen's, scaled — drawn
   in tiles at any size, supersampled, with the view embedded as for any export; `--shot … --image
@@ -1110,7 +1128,7 @@ Changes after 0.3.0-beta.1:
     on at about single precision, so deep views straddling that line show noise along it.
     Numbers in a formula are doubles (about 16 digits), so `0.1*z` and `z/10` are different
     fractals past about 1e15×; Help says which is which.
-  - **Editor (0.3.0-beta.13):** in the formula field, parentheses are coloured by nesting level,
+  - **Editor (0.3.0-beta.13):** in the formula field, parentheses are colored by nesting level,
     the pair at the cursor is highlighted and an unmatched one is red; after two letters a list
     completes the language's names and the formula's own variables (Tab or Enter; Esc closes it).
     `log` is the natural logarithm, as in Fractint; a call written `ln(…)` (or `cot`, `coth`,
@@ -1169,7 +1187,7 @@ Changes after 0.3.0-beta.1:
     orbit is not chaotic (it had failed on the Radeon RX 6800 XT with 7.1% of all pixels differing,
     against a bound fitted to the RTX 3080's 3.0%). Judged that way, it found a real difference on
     the Radeon, fixed in beta.12: a pixel escaping by overflowing single precision (as `sin z`
-    does) came out 0.014 of a colour band off on 4.4% of the non-chaotic pixels.
+    does) came out 0.014 of a color band off on 4.4% of the non-chaotic pixels.
 
 - **Live refresh stays out of the way where it cannot help** (0.3.0-beta.8 and beta.9).
   - **The problem:** on the RX 6800 XT at 1280×800 no frame can be drawn in cheaper pieces: every
@@ -1267,7 +1285,7 @@ Changes after 0.3.0-beta.1:
     frame at a slightly lower resolution with it off. A view with no measurement yet, just after
     the switch or a jump, is measured with one smaller frame and then one full-size frame. No frame
     exceeds the per-card dispatch limit. Dearer views, deeper zooms and the floatexp mode behave as
-    before. `--set LIVE_REFRESH=0` restores the old behaviour for a comparison.
+    before. `--set LIVE_REFRESH=0` restores the old behavior for a comparison.
   - **How much**, glides from 1× at 2.7 octaves a second at a 1280×800 window on a 120 Hz
     display, RTX 3080, "Prefer detail while zooming" on, against 0.3.0-beta.1:
     - from 1e4× to 1e6×, including the switch, the frame on screen is stretched 1.17× on average
@@ -1326,18 +1344,18 @@ Changes after 0.3.0-beta.1:
 - **Render timing is now reported for every export, and the benchmark kit shows where each
   render's time goes** (beta.149).
   - **GPU time on normalized and glitch-corrected exports.** The log's `[fd-perf]` line gave
-    `gpu_iterate=0.0ms` for any export that normalizes its colours or corrects glitches. Those
+    `gpu_iterate=0.0ms` for any export that normalizes its colors or corrects glitches. Those
     paths never measured their GPU passes, and three of the benchmark's deep scenes (1.47e77,
     1.2e148, 4.2e275) are normalized. They now measure them the way the plain export already
     did. At 4K on an RTX 3080: 1.47e77 spends 0.74 s iterating on the GPU, 4.2e275 2.5 s,
-    1.2e148 7.8 s. The line's peak-dispatch figure on the normalized path was the colour pass's
+    1.2e148 7.8 s. The line's peak-dispatch figure on the normalized path was the color pass's
     0 ms; it is now the iterate pass's.
   - **File write time.** A `--render` now logs how long encoding and writing the image took, and
     its size: `file-write: png 3840x2160 13092929 bytes in 196.3ms`. A 4K PNG takes 0.13–0.20 s.
   - **Benchmark kit.** The Fractadyne lane keeps every render's log and turns it into a table:
     - startup;
     - the wait for the reference orbit, and that orbit's pick, orbit, series and BLA times;
-    - GPU iterate and colour time;
+    - GPU iterate and color time;
     - other host work (readback, normalization);
     - PNG write, exit, and the time outside the log (process launch and teardown);
     - step counts: steps executed, iterations per step, df32 share, rebases.
@@ -1352,8 +1370,8 @@ Changes after 0.3.0-beta.1:
   - **Linux:** one line of code, added in beta.128, named a graphics library in a way that only
     compiles on Windows. It now compiles on both.
   - **Accelerated Windows package:** the build tool that supplies its MPFR libraries (MSYS2)
-    moved the licence file of one bundled library. The packaging step refused to ship the
-    library without its licence, as it should. It now finds the licence in either place.
+    moved the license file of one bundled library. The packaging step refused to ship the
+    library without its license, as it should. It now finds the license in either place.
 - **Faster command-line renders: the reference calculation starts before the window opens**
   (beta.147).
   - **The change:** a `--render` spent its first ~0.7 s creating the window and graphics device,
@@ -1382,7 +1400,7 @@ Changes after 0.3.0-beta.1:
     precision; the other updates three 128-bit coefficients from each step. They now run on two
     threads, the first feeding the second, instead of taking turns.
   - **Reference pick:** the pick first scores all 101 candidate points briefly, then walks the
-    best one to the end, and the view centre is always walked first. The centre's full walk now
+    best one to the end, and the view center is always walked first. The center's full walk now
     starts while the brief scoring is still running.
   - **Command-line render:** `--render` exits as soon as the image is written. Before, it drew
     two frames of the live view first, and at a deep location those started another reference
@@ -1398,13 +1416,13 @@ Changes after 0.3.0-beta.1:
 - **Faster deep renders: the reference orbit's repeated calculations now overlap** (beta.143).
   - **The change:** before rendering a deep view, Fractadyne picks a reference point, builds its
     orbit, and computes the series approximation. At a view whose reference escapes early, the
-    pick re-checks the view centre at the build's precision. When the centre is the pick, the
-    same orbit was being calculated up to four times, one after another. Now the centre's
+    pick re-checks the view center at the build's precision. When the center is the pick, the
+    same orbit was being calculated up to four times, one after another. Now the center's
     orbit build and its series step run on their own threads while the pick scores candidates.
     The pick's re-check reads its answer from that build instead of repeating it.
   - **How much**, on 4K renders (median of three interleaved pairs, same build, with the new
     `REF_OVERLAP` setting on and off):
-    - 4.6e1105, where the centre is the pick: the preparation before rendering takes 2.2 s
+    - 4.6e1105, where the center is the pick: the preparation before rendering takes 2.2 s
       instead of 6.2 s. The whole render takes 3.9 s instead of 8.1 s.
     - 1.2e148: 2.7 s instead of 3.2 s. 4.2e275 and 1.47e77: about 0.05 s less. Here
       another point is picked, so only the re-check is saved.
@@ -1481,8 +1499,8 @@ Changes after 0.3.0-beta.1:
       thousandth of a pixel, where neither image can be called right.
     - The visible damage is pixels correction gives up on, which it paints black.
   - **What it costs:** up to 5× the render time (4.6e1105: 76 s against 15.6 s without it).
-- **Faster: a render with normalized colours no longer computes its reference twice**
-  (beta.138). A command-line render with normalized colours (`--normalize`) computed the
+- **Faster: a render with normalized colors no longer computes its reference twice**
+  (beta.138). A command-line render with normalized colors (`--normalize`) computed the
   reference orbit for its view, then computed the identical orbit again before rendering. At the
   4.2e275 benchmark scene that doubled 0.64 s of work. The image is unchanged: 0 differing pixels
   at two corpus scenes.
@@ -1520,10 +1538,10 @@ Changes after 0.3.0-beta.1:
   previous submission better than its own. The frame budget learns from those timings, which may
   be why that card's budget has behaved oddly. This limit does not depend on them: its value for
   that card comes from wall-clock timing.
-- **Fixed: zooming could show a frozen, blown-up picture that looked like a solid colour**
+- **Fixed: zooming could show a frozen, blown-up picture that looked like a solid color**
   (beta.134). After zooming out from a deep view into the shallow range, where a simpler kind of
   arithmetic is used, every zoom with Space could keep showing the last finished picture for its
-  whole length. That picture was magnified until it was a few blocks of colour, instead of the view
+  whole length. That picture was magnified until it was a few blocks of color, instead of the view
   being drawn as it zoomed. The cause: a moving frame interrupted during the zoom-out left behind a
   "not ready" marker that nothing in the shallow range could clear. Crossing into that range now
   clears it. The zoom test can now follow a user's path, going deep, jumping out while moving and
@@ -1531,7 +1549,7 @@ Changes after 0.3.0-beta.1:
   held for the whole 1.25 s zoom); with the fix, the view is drawn live on every frame. It also
   reports how often the old picture was shown, which its earlier measures could not see.
 - **The safety stop passed the crash test on the RX 6800 XT** (beta.133, for testing). With the old
-  behaviour, the crash test hung the whole machine. With beta.132's safety stop, all three runs
+  behavior, the crash test hung the whole machine. With beta.132's safety stop, all three runs
   survived. The stop fired on the first frame of about one second, the frame budget dropped from
   the crash level to its starting value, and after one more slow frame already queued on the GPU,
   every run stayed smooth to the end: no frame over 0.2 s through the zoom and the minute-long
@@ -1539,7 +1557,7 @@ Changes after 0.3.0-beta.1:
   since the warning it counted is what that test is for.
 - **The safety stop now acts on the first dangerous frame, and the diagnostics survive a machine
   hang** (beta.132, for testing). On the RX 6800 XT, the crash test from beta.130, run with the
-  old behaviour, hung the whole machine. The frame budget stayed at the crash level, no GPU timing
+  old behavior, hung the whole machine. The frame budget stayed at the crash level, no GPU timing
   came back, and there were frames of 1.0 s and 1.4 s. After zooming, frames of 0.6 s and then
   2.0 s followed, and the machine hung. It never produced the eight slow frames in a row that the
   beta.131 stop waited for. A single frame of 0.9 s or longer with no slow GPU timing now triggers
@@ -1760,7 +1778,7 @@ Changes after 0.3.0-beta.1:
   Each frame, for each view, the app writes down what it was asked to draw, which reference it
   used, what it expected the frame to cost and what it actually dispatched, what reached the
   screen, how long the frame took, what the graphics card reported back and what the frame-size
-  controller did with that, the colour-range window, and what the mouse and keyboard were doing.
+  controller did with that, the color-range window, and what the mouse and keyboard were doing.
   The last 4,096 frames are kept — about a minute at full speed, and a quarter of an hour or more
   at the one-to-five frames a second of a session that is about to fail. The record the previous
   release added held 24 decisions, which at the moment of the 2026-09-21 device loss was about a
@@ -1835,7 +1853,7 @@ Changes after 0.3.0-beta.1:
 - **The escaped-pixel counter added in beta.110 is now sampled rather than counted at every
   pixel** (beta.112). It incremented a single counter once per escaped pixel, which on a
   full-screen view where nearly everything escapes is millions of updates to one place, competing
-  with each other. It now samples one pixel in sixteen, like the neighbouring measurement, and
+  with each other. It now samples one pixel in sixteen, like the neighboring measurement, and
   scales the result back up. Measured on the development machine the old form cost nothing at all,
   so this is not a speed fix and did not cause the device loss above; it is removing a pattern the
   renderer avoids everywhere else. Output is identical to the pixel.
@@ -1852,11 +1870,11 @@ Changes after 0.3.0-beta.1:
   this dive never runs out of detail. If no such point is found near the view, or the nearest one
   is off screen, the auto-zoom stops and says so; on a formula other than the Mandelbrot set, or
   in Julia mode, it dives toward detail instead and says so. The Detail target is the existing
-  behaviour and stays the default.
-- **The view no longer flashes to black or to a single colour while diving, and the auto-zoom
+  behavior and stays the default.
+- **The view no longer flashes to black or to a single color while diving, and the auto-zoom
   has a Speed / Quality priority** (beta.110). A user's recording of an auto-zoom dive from
-  8e175× at 4× speed had one frame in three as a flat colour — black, or the colour of the
-  previous frame's centre — flashing against the occasional crisp frame. Lined up against the log:
+  8e175× at 4× speed had one frame in three as a flat color — black, or the color of the
+  previous frame's center — flashing against the occasional crisp frame. Lined up against the log:
   a refresh at that depth walks the iteration axis in passes while the screen holds the last
   complete frame, and two things broke that hold. The snapshot the screen holds was copied *after*
   the render target had been cleared for a new size, so a refresh that started at a different
@@ -1864,8 +1882,8 @@ Changes after 0.3.0-beta.1:
   its whole walk; and nothing anywhere checked that a frame had any content before showing or
   holding it. Meanwhile most refreshes never finished — each had to walk the full 155,000-iteration
   ask where the picture is complete by 4,400, began every band with 12-iteration passes, and was
-  cancelled whenever a reference for a deeper view arrived — so the held frame was magnified 30–80×
-  into one colour before the next one landed. Now the GPU reports how many pixels of each frame
+  canceled whenever a reference for a deeper view arrived — so the held frame was magnified 30–80×
+  into one color before the next one landed. Now the GPU reports how many pixels of each frame
   have escaped, and a frame reaches the screen, or becomes the held snapshot, only when a reading
   of its own render shows a picture; the snapshot is taken before any resize; a refresh that
   finishes with nothing escaped is kept off the screen (three in a row stop the dive with the
@@ -1888,12 +1906,12 @@ Changes after 0.3.0-beta.1:
   eased toward their average, which is the empty gap between them. It now picks a point on the
   fractal's edge, the only kind of point that never runs out of detail, where the detail is
   densest near the middle of the view. It holds that point as the view moves, eases it to the
-  centre of the screen, and changes target only for something twice as rich; the zoom eases in
+  center of the screen, and changes target only for something twice as rich; the zoom eases in
   when it starts and slows through a turn. From the same view it reaches the 1e40 dive limit
   with structure through the middle of the screen at every depth, and from the home view,
-  Seahorse Valley, a minibrot and an empty-centred view the target moves at most 7% of the
+  Seahorse Valley, a minibrot and an empty-centered view the target moves at most 7% of the
   screen per step, where it used to jump across the whole of it. It also holds its point at the
-  fastest zoom speed: re-centring the target on a grid cell every look let it slide off the edge
+  fastest zoom speed: re-centering the target on a grid cell every look let it slide off the edge
   and wander at 4×, so each look now moves it back onto the edge only across the edge, never along
   it. On a user's 4× dive at 1e118 the looks that moved the target more than 2% of the screen fell
   from 20 in 81 to 2 in 78. And the picture no longer slides sideways while it dives: a target
@@ -1906,8 +1924,8 @@ Changes after 0.3.0-beta.1:
   now aims at the part of the view with the most zooming left in it, rather than at the middle of
   the structure. The old score treated everything within about eleven screen pixels of the fractal's
   edge as equally good — on a deep view that is nearly half the picture — and then picked whichever
-  of those had the most detail around it. The point with the most detail around it is the *centre*
-  of the detail, and the centre of a spiral is its empty eye, so the dive kept aiming just beside
+  of those had the most detail around it. The point with the most detail around it is the *center*
+  of the detail, and the center of a spiral is its empty eye, so the dive kept aiming just beside
   the structure and magnifying it away. Measured on a reported 1e146 dive, the target now has
   enough structure ahead of it for 12.4 more magnifications where it used to have 8.4, and the
   worst case over the whole dive improved from 4.9 to 6.9. The dive descends just as fast.
@@ -1925,11 +1943,11 @@ Changes after 0.3.0-beta.1:
   — steadier than before any of this work (0.5%), while keeping the better targets.
 
 - **The auto-zoom no longer slides sideways just as it starts** (beta.109). The dive eases a target
-  that has drifted off centre back toward the middle, and that easing was paced by the zoom *speed
+  that has drifted off center back toward the middle, and that easing was paced by the zoom *speed
   setting* rather than by the zoom actually happening. But the zoom speed ramps up over the first
   half second, so for that half second the picture was being pushed sideways with almost no zoom
   underneath it — which is the most visible thing a camera can do, and it is the first thing you
-  see. Pacing it by the speed that is really happening means the centring arrives together with the
+  see. Pacing it by the speed that is really happening means the centering arrives together with the
   zoom: over the opening half second of a 4× dive the picture now travels 1.0% of the screen
   sideways instead of 2.8%, and on the very first frame the sideways push is about a twenty-fifth of
   what it was. It also eases off while the dive is turning toward a new target, which is the other
@@ -1962,7 +1980,7 @@ Changes after 0.3.0-beta.1:
 - **A very deep auto-zoom no longer goes blank while it moves** (beta.109). At extreme depth —
   around 1e240 in the reported dive — a moving frame was given far too few iterations to reach
   the point where any pixel of that view escapes, so it committed nothing and painted a single
-  flat colour; a screen recording showed **36% of the dive as a blank canvas**, in stretches of up
+  flat color; a screen recording showed **36% of the dive as a blank canvas**, in stretches of up
   to two seconds. Because the picture only reappeared after the view had moved on, this read as
   the camera panning somewhere off screen. Nothing corrected it, because every control that sizes
   a moving frame judges by how long the frame took — and a frame that draws nothing is the fastest
@@ -1978,17 +1996,17 @@ Changes after 0.3.0-beta.1:
   the resolution changed 7–10 times per dive instead of being re-chosen every few frames.
 
 - **"Normalize deep colors" no longer makes the palette breathe during a deep zoom, and a view
-  that stops keeps the right colours** (beta.109). Deep frames are computed in iteration steps,
+  that stops keeps the right colors** (beta.109). Deep frames are computed in iteration steps,
   and each step reported the range of the pixels finished so far as though it were the whole
   frame's. During a zoom those steps restart with every refresh, so the top of the palette range
   climbed and fell about two and a half times a second (1,758 → 3,150 → 6,582 → 10,238, then back
-  to 1,758), and every colour on screen swelled and shrank with it. Each reading now says whether
+  to 1,758), and every color on screen swelled and shrank with it. Each reading now says whether
   it describes the picture on screen; one that does not can widen the palette range but never
   narrow it. Through the reported 2e13 view the swing in the palette's scale fell from 1.35 to
   0.011 per second, and in the autopilot dive through the same region from 2.57 to 0.084. The
-  same readings were also freezing the colours of a view that had just stopped: its palette
+  same readings were also freezing the colors of a view that had just stopped: its palette
   locked onto the first step's range, about 6× too narrow, so spirals rendered as busy concentric
-  rings. A stopped view now waits for the complete frame before it settles its colours.
+  rings. A stopped view now waits for the complete frame before it settles its colors.
 
 - **Starting a Space zoom no longer flashes the screen black** (beta.109). With the Controls
   panel's Performance section open, a zoom from a view that had been sitting still switched the
@@ -2002,7 +2020,7 @@ Changes after 0.3.0-beta.1:
   easy to misread by a factor of ten, and it is the setting that can stall the app. The Iterations
   and stripe Tail length sliders now read `10,000,000`, every figure in the Performance section is
   comma-grouped (`92,151.25 ms`), and the Julia parameter rows are grouped in fives exactly like the
-  status bar's centre. The value boxes still take what they show: commas, spaces and the "it"
+  status bar's center. The value boxes still take what they show: commas, spaces and the "it"
   suffix are ignored when you type a number back in, and `1e6` still means a million.
 
 - **Help's credits no longer link to two sites that have gone offline** (beta.109). The Fractal
@@ -2015,18 +2033,18 @@ Changes after 0.3.0-beta.1:
   through a number that overflows. Those entries now read like the status bar (`1.58e1008×`), and
   every label that was already correct is unchanged to the digit.
 
-- **Click to zoom works in the dual view, and gains a 25× step, snap-to-centre and a magnifier**
+- **Click to zoom works in the dual view, and gains a 25× step, snap-to-center and a magnifier**
   (beta.108). In the dual view a click used to do nothing at all; it now zooms the panel you
   clicked (right-click backs out), and Ctrl+click pins the Julia parameter while the tool is on.
   The factor row gains **25×** between 10× and 50×. **Snap to nearest center** (Controls ▸
   Navigate, off by default) solves for the minibrot nucleus nearest the point you clicked and
-  centres on it, off the UI thread — the view jumps at once and settles onto the nucleus when the
+  centers on it, off the UI thread — the view jumps at once and settles onto the nucleus when the
   solve lands, and a stale answer is dropped if you have moved on. Holding **Shift** raises a
   circular **magnifier** beside the cursor, rendered at the magnification the click is about to
   land at; while it is up the aim moves at a quarter of your hand's speed for fine placement, a
   ring marks the exact point, and Shift+click takes it. Its crosshair takes black or white from
-  the fractal beneath each of its pixels, so it stays readable on any colour. Every click logs
-  how far the clicked point landed from the centre: recentring is exact, so at 50× an 8-pixel
+  the fractal beneath each of its pixels, so it stays readable on any color. Every click logs
+  how far the clicked point landed from the center: recentering is exact, so at 50× an 8-pixel
   aim miss moves the target 400 pixels — that is arithmetic, and 25× or the snap are the answer.
 
 - **Nearest minibrot (M) works in the dual view and no longer freezes the window** (beta.108). In
@@ -2038,13 +2056,13 @@ Changes after 0.3.0-beta.1:
 - **A large click-to-zoom no longer flashes black** (beta.108). A 100× click moves the view 6.6
   octaves in a single frame, and until the new reference orbit was ready (~160 ms at 1e52×) the
   display magnified the previous frame by the full 100× — an 11-pixel patch stretched across the
-  panel, which showed as a flat colour, and as black whenever that patch was dark. After a jump
+  panel, which showed as a flat color, and as black whenever that patch was dark. After a jump
   the held frame is now magnified at most 8× while the new view builds, so you see a blocky
   version of where you clicked instead. A continuous zoom is unaffected: capping the scale of a
   moving frame makes it slide, so the cap applies to jumps only.
 
 - **"Normalize deep colors" engages on views that actually alias, and gains "Always fit
-  range"** (beta.108). The option only remaps the palette when neighbouring pixels step more than
+  range"** (beta.108). The option only remaps the palette when neighboring pixels step more than
   half a palette period apart — past that, a dense escape field reads as speckle. Two defects kept
   it from doing that. It multiplied the step by the Cycle *slider* rather than by the palette
   speed the slider sets, so at the default Cycle of 0 it could never engage on any view. And it
@@ -2052,7 +2070,7 @@ Changes after 0.3.0-beta.1:
   and half dense speckle averaged out to "fine": a 1.08e66 Julia panel measured 0.494 against a
   limit of 0.5 and was declined while visibly speckling, and because it sat on the line it
   switched on and off from one render to the next. It now measures what **fraction** of
-  neighbouring pixels alias, from a histogram the renderer already has in hand, and engages when
+  neighboring pixels alias, from a histogram the renderer already has in hand, and engages when
   4% of the frame does (that panel: 7.6%; a smooth shallow view at 500,000 iterations: 1.7%).
   Changing the Cycle re-decides immediately. **Always fit range**, a new option under it, remaps
   the palette to the view's measured escape range whether or not the view aliases — for when you
@@ -2060,8 +2078,8 @@ Changes after 0.3.0-beta.1:
 
 - **Ctrl+click tells you when the Julia parameter can no longer follow it** (beta.108). The Julia
   parameter is held in double precision, so past about 1e16× the whole panel rounds to one value
-  and a pin necessarily lands on the view centre. The pin now says so instead of silently
-  choosing the centre.
+  and a pin necessarily lands on the view center. The pin now says so instead of silently
+  choosing the center.
 
 - **Live zooms are paced for smoothness at every zoom speed** (beta.108). A moving refresh used
   to be sized by the GPU-watchdog safety budget (a 400 ms target): after a jump to a deep view or
@@ -2080,7 +2098,7 @@ Changes after 0.3.0-beta.1:
   hand-over at 1.0–4.0× 25–26 ms worst (was 57 ms with a 10× stale frame); the "paste a deep
   location, then zoom" case at 4.0× 38 ms worst with the held frame at 6× (was 215 ms and 21×)
   and at 1.0× 20 ms mean / 126 ms worst (was 39 ms mean at 26 fps, 445 ms worst). A refresh whose passes
-  price far under their target now grows its per-band licence in proportion and, past the
+  price far under their target now grows its per-band license in proportion and, past the
   reference's first-wrap storm, carries half of it into the next band — so a high explicit
   iteration count keeps streaming detail during a fast zoom instead of re-climbing from 256
   iterations in every band (`--motiontest`, 1M iterations at 1e31×, was a coin flip at 400 ms per
@@ -2095,12 +2113,12 @@ Changes after 0.3.0-beta.1:
 - **A shallow view no longer runs a hundred times the iterations it needs** (beta.108). The
   automatic iteration budget gave itself a head start by reading the length of the reference orbit
   the view had already built, on the reasoning that no pixel can iterate longer than the orbit
-  does. That holds only when the orbit ends by escaping. A reference whose centre never escapes —
+  does. That holds only when the orbit ends by escaping. A reference whose center never escapes —
   which is every deep-zoom landmark, since those sit on the boundary — stops at whatever length it
   was asked for, so its length measured the budget rather than the view, and a large budget built
   a long reference which justified a large budget. At 1e6 on the canonical Seahorse point the
   result was 1,004,384 iterations where 5,000 draws the same picture: the view spent minutes of
-  GPU time and showed one flat colour while it worked through it. The budget now takes its head
+  GPU time and showed one flat color while it worked through it. The budget now takes its head
   start only from a reference that escaped, and otherwise climbs under the measurement that
   already owns it. The same view now settles at 18,181 iterations and draws in 1.6 ms instead of
   14.6 ms of flat brown. Deep views are unaffected: their references escape, and the tour
@@ -2113,12 +2131,12 @@ Changes after 0.3.0-beta.1:
   two different notions of "the view is moving" — the zoom was applied from the raw pointer
   position while the moving flag came from a per-panel hover test that a tooltip, a menu or a
   keyboard-driven zoom can turn off — so the app rendered a moving view believing it had settled.
-  A frozen mapping is why the colours could stop normalizing part-way into a zoom, and why a deep
-  view could go to one flat colour: under the log colour scale, a mapping measured at an earlier
+  A frozen mapping is why the colors could stop normalizing part-way into a zoom, and why a deep
+  view could go to one flat color: under the log color scale, a mapping measured at an earlier
   view collapses the new view's escape values into a single palette entry. The zoom now marks the
   view moving wherever it is applied, as the overview map already did. Separately, the mapping is
   fed in steps as readings arrive, and a step repaints the whole picture: one frame could move the
-  palette window by more than its own width, which reads as the colours bouncing around. The
+  palette window by more than its own width, which reads as the colors bouncing around. The
   shown window now glides toward each new reading, at most a few percent of its width per frame
   (measured: 109% worst before, 7% after), while a settled view deciding its mapping and the
   recovery from a mapping measured elsewhere still arrive at once.
@@ -2142,8 +2160,8 @@ Changes after 0.3.0-beta.1:
 
 - **A settled deep view's progressive render is keyed to the view's exact position** (beta.108).
   The resumable iteration walk that renders a settled deep view over several frames identified
-  its view by the f64 centre, which stops telling nearby views apart at depth (one value covers
-  the whole neighbourhood past ~1e240×). A small pan there, or a re-picked reference at the same
+  its view by the f64 center, which stops telling nearby views apart at depth (one value covers
+  the whole neighborhood past ~1e240×). A small pan there, or a re-picked reference at the same
   f64 point, let the walk resume its per-pixel state against the moved view, so the previous
   view's escaped pixels stayed on screen under the new one — a translucent copy of another
   location. The walk now restarts whenever the view's offset from its reference or its span
@@ -2160,12 +2178,12 @@ Changes after 0.3.0-beta.1:
   screen belongs to the view you are looking at.
 
 - **"Nearest minibrot" now reports the minibrot it actually found** (beta.108). The period it
-  named and the centre it jumped to could describe two different minibrots: the solver located the
-  right one, then a verification step relabelled it with the period of a neighbour that happened to
+  named and the center it jumped to could describe two different minibrots: the solver located the
+  right one, then a verification step relabeled it with the period of a neighbor that happened to
   lie nearby. The jump then landed far outside the minibrot it promised, in empty space. Which
-  neighbour got picked depended on how far out you were zoomed, so the same location answered
+  neighbor got picked depended on how far out you were zoomed, so the same location answered
   differently from different views. In deep Seahorse Valley the answer is now period 998 from every
-  view between 60× and a trillion×, and the centre is accurate far below the minibrot's own width.
+  view between 60× and a trillion×, and the center is accurate far below the minibrot's own width.
 
 - **The profiler's GPU timing now reports the whole render** (beta.108). The `gpu-it` column of
   `--profile`, and every GPU rate derived from it, timed only the pass that assembles a chunked
@@ -2188,11 +2206,11 @@ Changes after 0.3.0-beta.1:
   running average after a pan (a faint shifted ghost behind the picture), kept presenting a stale
   average after a palette or effects change (so glow and lighting seemed to affect only the Julia
   pane in dual view), and never ran in the ordinary single view at all. It now folds only real,
-  complete frames of the current view, restarts on any colouring change, and runs in both views.
+  complete frames of the current view, restarts on any coloring change, and runs in both views.
 
 - **Stripe average: "Tail only (deep zoom)"** (beta.107). At extreme depth nearly every iteration
   of every pixel's orbit is shared with the reference, so the classic full-orbit stripe average is
-  one flat colour across the view. The new option (Coloring ▸ Stripe density ▸ Tail only, with a
+  one flat color across the view. The new option (Coloring ▸ Stripe density ▸ Tail only, with a
   Tail length slider, or `--stripe-tail N` for `--render`) averages the last N iterations of each
   orbit instead — an exponential window, 16 by default — restoring the banding. Off by default;
   orbits shorter than the window read exactly as before.
@@ -2202,14 +2220,14 @@ Changes after 0.3.0-beta.1:
   frame's wall interval and what it showed, with a stutter summary (mean / p95 / p99 / max
   interval, hitch counts, the longest stall and where it happened, real-refresh cadence, held-frame
   magnification) — the measurement behind "the zoom feels jerky". `--zoomtest-location F.fdn`
-  picks the target and `--zoomtest-start-log2 L` starts the glide at 2^L on that centre (`L=0`:
+  picks the target and `--zoomtest-start-log2 L` starts the glide at 2^L on that center (`L=0`:
   the whole descent from 1×), so a 1× → 1e100 dive to a chosen point is one command.
   `scripts/zoomtest_report.py` reads the JSON: summary, interval histogram, per-depth-band table
   (which part of the dive stutters) and the worst frames with context. See DIAGNOSTICS.md.
 
 - **The gradient editor opens with the current preset's stops** (beta.107). Opening it on a
   preset used to show a preview with nothing to select — no markers, an empty ring view, and
-  colour controls that waited for "Add stop" (which seeded a single cyan stop). It now starts from
+  color controls that waited for "Add stop" (which seeded a single cyan stop). It now starts from
   the preset you were using; Cancel still restores exactly what you had.
 
 - **Security hardening: malformed image files, oversized response files, and untrusted tool/URL
@@ -2222,7 +2240,7 @@ Changes after 0.3.0-beta.1:
   path rather than by bare name — closing a path in which a program of the same name in the current
   directory could run instead — and the in-app "download update" link opens only when it is an
   `https` link on `github.com`. The bundled TLS and browser-launch libraries were also updated to
-  pick up upstream security fixes. Images and behaviour are unchanged; the release goldens,
+  pick up upstream security fixes. Images and behavior are unchanged; the release goldens,
   chunk-identity, determinism and live-vs-offline gates all still pass byte-for-byte.
 
 - **The accelerated Windows build no longer fails to start when its MPFR libraries are missing —
@@ -2249,7 +2267,7 @@ Changes after 0.3.0-beta.1:
 
 - **The accelerated Windows download now ships the validation data, so its self-test and UI test
   work** (beta.105). The accelerated (MPFR) Windows package was built by `scripts/build-accelerated.ps1`,
-  which staged only the executable, its DLLs and the licence texts — not the `validation/` tree, the
+  which staged only the executable, its DLLs and the license texts — not the `validation/` tree, the
   tours, the example scripts or the benchmark baseline that the standard Windows package and the
   accelerated *Linux* package both include. So `--selftest`, `--uitest` and `--bench-matrix` all
   failed from the accelerated Windows download for lack of data (a tester hit it as missing golden
@@ -2308,7 +2326,7 @@ Changes after 0.3.0-beta.1:
 
 - **"Find minibrot center" (M) no longer refuses a minibrot it has already found at depth**
   (beta.102). Field report 2026-09-12: at 1.8e122× with a period-1411 minibrot ~19 px from the
-  centre, M said "No minibrot center found". Newton had in fact converged to the nucleus in two
+  center, M said "No minibrot center found". Newton had in fact converged to the nucleus in two
   steps; the finder's final verification — iterate the critical orbit at the nucleus and require
   `|Z_n|` below 10⁻³ of the view span — then failed, because `Z_n` is not a c-plane length: at
   that nucleus it is `2^204` times more sensitive than `c`, so at the finder's 471-bit working
@@ -2317,10 +2335,10 @@ Changes after 0.3.0-beta.1:
   measures the c-plane distance to the period-`n` nucleus, `|Z_n / dZ_n/dc|` — one Newton step,
   from the derivative the solve already computes — which sits at the precision floor at the
   true period (`2^-472` here) whatever the sensitivity, and stays far above the tolerance at
-  every smaller `n` (`2^-206` at best), so the recovered period is unchanged. Shallow behaviour
+  every smaller `n` (`2^-206` at best), so the recovered period is unchanged. Shallow behavior
   is identical (period-2 disk, period-3 bulb and the curated deep landmarks all re-derive the
   same nuclei). The location is kept as `validation/minibrot-m-key-1.8e122.fdn` and pinned by
-  a core test; `--find-minibrot` at that centre and zoom now prints period 1411.
+  a core test; `--find-minibrot` at that center and zoom now prints period 1411.
 
 - **Coordinate expressions: a Help reference, and refusals that say what and where** (beta.101).
   Two gaps in the expression feature (beta.17 / 94 / 95). First, the grammar was documented only
@@ -2403,21 +2421,21 @@ Changes after 0.3.0-beta.1:
   is `c(θ) = e^{iθ}/2 − e^{2iθ}/4`, so the period-`q` bulb at internal angle `p/q` has its root at
   `θ = 2π·p/q`, i.e. `cos(θ)/2 − cos(2θ)/4` + `i·(sin(θ)/2 − sin(2θ)/4)`. For `q ≥ 3` those are
   transcendental, so a decimal would drift off the point at depth — which makes them the natural
-  showcase for beta.95's expression preservation: jump to one and zoom in and the centre stays
+  showcase for beta.95's expression preservation: jump to one and zoom in and the center stays
   exactly on the root at any depth. The set spans periods 2–7 (period 2 is the −¾ Seahorse Valley
   neck), with the cardioid cusp (¼) rounding it out. Mandelbrot only; each is jumped to by a path
   that keeps the expression, and a self-test confirms every point lands on the cardioid boundary
   (its fixed-point multiplier has magnitude 1) so a typo can't ship a menu item that goes nowhere.
 
-- **Coordinate expressions are preserved and re-derived at depth** (beta.95). Entering a centre as an
+- **Coordinate expressions are preserved and re-derived at depth** (beta.95). Entering a center as an
   expression — `1/3`, `-0.5 + 0.25*cos(pi/4)` — used to resolve to a decimal the instant you applied
   it, capped at the digits that depth needed; zooming deeper then slowly drifted off the exact point,
   because a decimal cannot grow more digits than it was written with. The expression is now kept as
-  the centre's anchor and re-evaluated at the precision each depth demands, so zooming straight into
+  the center's anchor and re-evaluated at the precision each depth demands, so zooming straight into
   an exact landmark stays exact all the way down. It travels with the file too: a `.fdn` now records
   `center_re_expr`/`center_im_expr` (plus a small `center_re_offset`/`center_im_offset` when you have
   panned near — but off — the point), so a saved location can be reopened and zoomed far past where it
-  was saved without the centre freezing. These are written *in addition* to the resolved
+  was saved without the center freezing. These are written *in addition* to the resolved
   `center_re`/`center_im`, so an older reader still lands in the right place; the offset is computed
   against the anchor only at save time, which keeps live pan and zoom on the fast plain-decimal path.
   The anchor is dropped the moment you jump elsewhere (a landmark, a feature snap, Home). Reopening
@@ -2442,9 +2460,9 @@ Changes after 0.3.0-beta.1:
 - **A device loss (or any crash) now records the exact view as a loadable `.fdn`** (beta.92). The
   crash report already captured the render manifest, but not the coordinates — which is why the
   2026-09-10 field device loss could not be reproduced. The app now writes a `crash-view-<stamp>.fdn`
-  beside the crash report, holding the full-precision centre, zoom and iteration count of the view
+  beside the crash report, holding the full-precision center, zoom and iteration count of the view
   that was on screen when it crashed. Open it (File ▸ Open) to return to the spot, or hand it to the
-  `--deviceloss-repro` diagnostic to characterise what happened. The view is captured cheaply every
+  `--deviceloss-repro` diagnostic to characterize what happened. The view is captured cheaply every
   frame (a couple of coordinate clones, no formatting); the file is written only when a crash occurs,
   so a device loss never does expensive work to record its own cause.
 
@@ -2484,7 +2502,7 @@ Changes after 0.3.0-beta.1:
 - **The minibrot period is now shown ambiently in the status bar, not just in a toast** (beta.88).
   Jumping to a minibrot (the `M` key, or Go to location ▸ Go to feature) announced its period only
   in a two-second toast. The period now also sits in the status bar and stays there while the view
-  is on that feature, clearing the moment you pan or zoom away. It is tied to the exact centre and
+  is on that feature, clearing the moment you pan or zoom away. It is tied to the exact center and
   zoom it was solved at, so a view settling in place does not make it flicker; the slot is
   reserved-width and drawn invisibly when no period applies, so its coming and going never reflows
   the bar.
@@ -2517,7 +2535,7 @@ Changes after 0.3.0-beta.1:
 - **A deep minibrot under auto now re-picks a better reference instead of settling for a black
   interior** (beta.86). The finish of the black-minibrot arc. beta.84 stopped the false revert, but
   a view could still come up only partly resolved, with a large black body, because the reference
-  orbit it was using had been chosen cheaply while the view was still moving — the centre of the
+  orbit it was using had been chosen cheaply while the view was still moving — the center of the
   view, which stops iterating early and represents the surrounding structure poorly — and the
   settled view kept re-using it. When the picture is settled and still all-black at the highest
   count the view allows, the app now discards that reference once and picks a fresh one at the full
@@ -2548,7 +2566,7 @@ Changes after 0.3.0-beta.1:
   counter only; rendered pixels are unaffected (the golden and cross-renderer image comparisons are
   byte-identical).
 
-- **Auto-iterations honours the iteration count you set — deep minibrots no longer go black under
+- **Auto-iterations honors the iteration count you set — deep minibrots no longer go black under
   auto** (beta.83). This is the real fix for the black-minibrot report the beta.81 change did not
   solve. With "Auto-scale iterations with zoom" on, the appetite the renderer would climb to was
   capped at 2,000,000 regardless of the base count you set, so a view of a deep minibrot with the
@@ -2583,7 +2601,7 @@ Changes after 0.3.0-beta.1:
   the view needs — where the old slope was only a guess from how deep you happen to be. The budget
   jumps to that estimate in a single settled frame instead of climbing to it in slow steps. It only
   ever raises the count and never past your own Iterations setting, it runs only on a settled view
-  (motion is untouched), and it applies only in auto mode — a forced count is still honoured exactly
+  (motion is untouched), and it applies only in auto mode — a forced count is still honored exactly
   as typed. A genuinely solid interior still costs nothing extra: it reverts to the cheap budget as
   before, just without the long black wait first. `validation/minibrot-auto-iter-9.3e78.fdn` is the
   reported location, kept as a reproduction. Visible live under `FRACTADYNE_TRACE=gpu`
@@ -2650,12 +2668,12 @@ Changes after 0.3.0-beta.1:
   The hour is spent building the reference orbit — but what the GPU consumes from it is 16 bytes
   per iteration, so the artifact that took an hour is **4.1 MB** at the live cap and 32 MB at full
   quality. Small enough to keep, which is the whole opportunity. And because perturbation renders
-  every pixel as a delta from the reference, one saved orbit covers the whole NEIGHBOURHOOD — come
+  every pixel as a delta from the reference, one saved orbit covers the whole NEIGHBORHOOD — come
   back, then zoom somewhere else nearby, with no rebuild.
 
   This release adds the two codecs and their tests, not the cache itself.
 
-  **Exact `BigFloat` bytes.** A location stores its centre as decimal because a human pastes it,
+  **Exact `BigFloat` bytes.** A location stores its center as decimal because a human pastes it,
   and "correct to the view's precision" is all a location needs. An orbit is a different contract:
   the stored orbit is the orbit *of a specific point*, so a point that returns differing in its
   last bits gives a wrong picture, arrived at quickly. Sign, exponent and mantissa words go out and
@@ -2670,7 +2688,7 @@ Changes after 0.3.0-beta.1:
 
 
 - **The deepest location we track: 9.98e60205×** (beta.76). `validation/spiral-9.98e60205.fdn` —
-  a 60,231-digit centre, 121 KB. The previous deepest was ~e21000. It is checked by the
+  a 60,231-digit center, 121 KB. The previous deepest was ~e21000. It is checked by the
   shipped-file sweep like every other location, so it stays loadable for free.
 
   A new **opt-in** `deep-location` group renders it and asserts two things a portable check can:
@@ -2714,14 +2732,14 @@ Changes after 0.3.0-beta.1:
 
 - **Share location is on the toolbar** (beta.74), as the fourth of the file verbs — open, gallery,
   export, snapshot, share. Its menu entry stays under Navigate, where a location is a places
-  concern; on a toolbar its neighbours are the things that read and write files, which is what it
+  concern; on a toolbar its neighbors are the things that read and write files, which is what it
   does.
 
 
 - **Locations saved before v0.2.20 had been loading without their coordinates** (beta.73), and
   the sample location that ships in the release archive was one of them.
 
-  `v0.2.20` renamed the centre from `center_x`/`center_y` to `center_re`/`center_im` — the right
+  `v0.2.20` renamed the center from `center_x`/`center_y` to `center_re`/`center_im` — the right
   call, since Re/Im is what the deep-zoom community and our own `.kfr` output use — but it
   changed the writer and the reader in one step and left nothing that could read the old
   spelling. Every `.fdn`, and every exported PNG and EXR, written before that release therefore
@@ -2780,7 +2798,7 @@ Changes after 0.3.0-beta.1:
 
   **Every text format handles CR, CRLF and LF.** `str::lines()` does not split on a lone `\r`,
   so a classic-Mac or badly-transferred file arrived as a single enormous line. Measured: a
-  `.map` palette with CR endings parsed as **one colour** and was reported as malformed. Now
+  `.map` palette with CR endings parsed as **one color** and was reported as malformed. Now
   fixed for `.fdn`, `.map`, `.ugr`, `.ggr`, palette text, `.kfr` and Imagina locations, in one
   shared place with its own tests.
 
@@ -2836,19 +2854,19 @@ Changes after 0.3.0-beta.1:
 
 
 - **"The exported image does not match my screen" — measured, and gated** (beta.70). A report
-  that a spiral's centre appeared to have moved in an exported EXR, and might be mirrored.
+  that a spiral's center appeared to have moved in an exported EXR, and might be mirrored.
   Neither turned out to be happening, and the measurements are worth writing down.
 
   The EXR container is not flipped or transposed: the writer walks the buffer row-major exactly
   as the PNG writer does, and an existing test on a non-square image with a per-pixel-unique
   ramp would fail if either axis moved. Rendering the same view at two canvas widths and the
-  same height is **pixel-identical** on the direct path, so the centre and the vertical extent
+  same height is **pixel-identical** on the direct path, so the center and the vertical extent
   are preserved exactly.
 
   What does change is the horizontal extent, and that is by design: magnification is
   height-anchored, so a frame with a different aspect than the live canvas shows more or less of
-  the plane to the left and right. Anything not exactly at the centre therefore sits at a
-  different fraction across the frame — which is what "the centre moved" looks like.
+  the plane to the left and right. Anything not exactly at the center therefore sits at a
+  different fraction across the frame — which is what "the center moved" looks like.
 
   Two self-test checks now pin it (180 now): a wider canvas must contain the narrower one pixel
   for pixel, at both a direct-path and a perturbation depth. Verified to go red — a **single
@@ -2857,7 +2875,7 @@ Changes after 0.3.0-beta.1:
 
   One real, small defect came out of it: in the perturbation regime a handful of isolated pixels
   (27 of 307,200 at 1e30x, at export resolution) do change with canvas width, because glitch
-  detection is per-pixel and its neighbourhood shifts. Too small to see, and now measured rather
+  detection is per-pixel and its neighborhood shifts. Too small to see, and now measured rather
   than suspected.
 
 
@@ -2868,12 +2886,12 @@ Changes after 0.3.0-beta.1:
   picture did not, which for something people share is most of what a saved view is for.
 
   Views saved on a custom gradient now embed it. Every segment travels — positions, both
-  endpoint colours with alpha, the off-centre midpoint, the blend curve and its colour space,
+  endpoint colors with alpha, the off-center midpoint, the blend curve and its color space,
   and the Bézier control points — in one line of the same `key=value` metadata the view fields
   already ride in, so it works in `.fdn` files, in shared location text, and in the metadata
   embedded in an exported PNG. A view saved on a preset writes nothing new at all.
 
-  The reader refuses a gradient it cannot trust rather than rendering a colour nobody chose: the
+  The reader refuses a gradient it cannot trust rather than rendering a color nobody chose: the
   segments must cover 0 to 1 in order, with no gaps, no zero-width spans, no midpoint outside
   its own segment, and no non-finite value. A file that fails any of those keeps the palette you
   already had and says so in the load report.
@@ -2885,7 +2903,7 @@ Changes after 0.3.0-beta.1:
 - **Four new self-test checks (178 now), and one of them caught a defect while being written.**
   `palette_custom` was added to the writer and to its own load branch, and both worked — but the
   key was missing from the reader's known-key list, so every load reported "ignored unknown
-  field(s): palette_custom" about a field it had just correctly honoured. Nothing else could have
+  field(s): palette_custom" about a field it had just correctly honored. Nothing else could have
   seen it: the gradient arrived intact and the warning looked like noise. There is now a check
   that every key the writer emits is one the reader knows, so the next field added cannot repeat
   it.
@@ -2909,11 +2927,11 @@ Changes after 0.3.0-beta.1:
 
 - **Misiurewicz explorer thumbnails no longer come out as flat rectangles** (beta.67). Once the
   view you were looking at got deep enough for "Normalize deep colors" to engage, every thumbnail in
-  the gallery inherited *that* view's colour mapping — a range measured on a deep field, applied to
+  the gallery inherited *that* view's color mapping — a range measured on a deep field, applied to
   shallow previews of somewhere else entirely. The whole exterior of each thumbnail fell into one end
   of the range, leaving a flat rectangle with only the boundary filaments lit.
 
-  Normalisation describes one view; a gallery is a catalogue of different places at different depths,
+  Normalization describes one view; a gallery is a catalog of different places at different depths,
   so the thumbnails now use the plain palette instead of borrowing it. Nothing else about them
   changed — with the feature inactive the gallery renders pixel-for-pixel as before.
 
@@ -2971,7 +2989,7 @@ Changes after 0.3.0-beta.1:
   long enough session can still outrun any ceiling. Two attempts to catch it further downstream were
   tried and reverted, because both made things worse rather than better: letting the app carry on
   past the refusal left it drawing at the wrong size and crashing harder a frame later, and asking
-  the window manager to cap the window is simply not honoured on the code path that changes a
+  the window manager to cap the window is simply not honored on the code path that changes a
   window's monitor.
 
   Alongside it, **window size and display scale are now recorded whenever they change**, so the next
@@ -2981,7 +2999,7 @@ Changes after 0.3.0-beta.1:
 
 - **Two narrow-window layout faults** (beta.60). At some widths a toolbar button was **clipped at
   the window edge instead of wrapping** to the second row — the Julia, dual-view, click-to-zoom and
-  auto-zoom buttons, which are the four that grey themselves out. Each was wrapped in a nested
+  auto-zoom buttons, which are the four that gray themselves out. Each was wrapped in a nested
   layout that the row placed as a single unit, so it could not participate in the wrapping going on
   around it. They are plain widgets in that row now and wrap with everything else.
 
@@ -3008,7 +3026,7 @@ Changes after 0.3.0-beta.1:
 - **The Benchmark window stops stretching to fill the app** (beta.58). It opened at its natural size
   and then grew until it spanned the whole window, leaving Run and Cancel stranded in the middle of
   a field of empty space. The bottom action row was claiming all the height left in the window and
-  centring the buttons inside it; the window then grew to contain the claim, which made the next
+  centering the buttons inside it; the window then grew to contain the claim, which made the next
   frame's claim larger still.
 
   All four of the app's action rows were written that way — Benchmark was simply the one with little
@@ -3016,7 +3034,7 @@ Changes after 0.3.0-beta.1:
   helper that pins the row to a single row's height.
 
   Fixing it exposed a second fault the growth had been hiding: the sentence describing what Run will
-  do sat *below* the buttons. It now sits with the settings it summarises, and the actions are last,
+  do sat *below* the buttons. It now sits with the settings it summarizes, and the actions are last,
   as every other dialog has them.
 
 - **The Performance panel is off until you ask for it** (beta.57). It was expanded at the bottom of
@@ -3064,7 +3082,7 @@ Changes after 0.3.0-beta.1:
   who is *told*, never what is *kept*. A panic always reaches the console.
 
 - **Menu sections look like sections** (beta.54). File ▸ Settings set its four headings —
-  Frame-rate cap, UI scale, Theme, Updates — in the same font, weight and colour as their own
+  Frame-rate cap, UI scale, Theme, Updates — in the same font, weight and color as their own
   options, flush at the same margin. A heading that matches the rows below it is not a heading, it
   is the first row, and the only thing grouping *60 FPS* with *Frame-rate cap* rather than with
   *80%* was a separator line. Headings are now dimmed and a size smaller, and their options are
@@ -3075,7 +3093,7 @@ Changes after 0.3.0-beta.1:
   3-segment gradient to **12**, growing without bound until the editor started refusing stops you
   never added. A rotation now dissolves the cut the last one left — but only after building the
   merged segment and proving, by sampling it against the two it replaces, that nothing moves. A
-  boundary carrying a colour edge or joining two different curves is content and always survives,
+  boundary carrying a color edge or joining two different curves is content and always survives,
   and a stop you placed yourself is never a candidate.
 
 - **The ring says it turns, and the seam stops posing as a stuck stop** (beta.52). Two follow-ups to
@@ -3085,8 +3103,8 @@ Changes after 0.3.0-beta.1:
   rotate". Every stop you place *does* rotate; that marker was two overlapping triangles — the first
   and last stops sit at 0.0 and 1.0, which on a ring are the same angle — and the seam boundary is
   structural, so rotating cuts a fresh one in underneath them. The ring now draws the seam **once**:
-  hollow and dimmed when it carries no colour edge (it is a place, not a colour), and as a **split
-  marker** when it does, one half showing the colour arriving and the other the colour leaving. A
+  hollow and dimmed when it carries no color edge (it is a place, not a color), and as a **split
+  marker** when it does, one half showing the color arriving and the other the color leaving. A
   hard edge at the seam is the defect the ring view exists to reveal, so the marker states it.
 
   Rotation also had no affordance. A curved arrow now sits in the ring's hole, and both views show a
@@ -3104,13 +3122,13 @@ Changes after 0.3.0-beta.1:
   when the seam lands on an existing stop.
 
   Fixed alongside it: a rotation left a sub-pixel sliver uncovered at each end, showing as a hairline
-  of the wrong colour exactly at the seam. That defect was also reaching **`.ugr` imports**, which
+  of the wrong color exactly at the seam. That defect was also reaching **`.ugr` imports**, which
   have been applying Ultra Fractal's `rotation=` through the same code all along.
 
 - **Saved gradients are palettes** (beta.50). A gradient you saved now appears under **Color ▸
   Palette** and in the Controls panel's Palette dropdown, beside Ember, Ice, Nebula and Grayscale —
   one click to apply. Until now the library was reachable only from inside the gradient editor, so
-  using a gradient you had already saved meant opening a modal editor to pick a colour scheme, while
+  using a gradient you had already saved meant opening a modal editor to pick a color scheme, while
   the four built-in presets sat one click away in the menu. Saving a gradient is the act of saying
   "I want this again"; the menu is where "again" happens.
 
@@ -3120,9 +3138,9 @@ Changes after 0.3.0-beta.1:
   moment you edit a saved gradient instead of claiming the saved one is still on screen.
 
 - **The editor speaks the picker's language** (beta.49). Both ends of the selected segment now show
-  all three notations — hex, 0–255 and 0–1 — as the colour picker does, instead of hex alone. The
-  editor was quietly teaching that a colour *is* a hex string while the picker it opens teaches
-  three; two dialogs onto the same colour should not disagree about what a colour looks like.
+  all three notations — hex, 0–255 and 0–1 — as the color picker does, instead of hex alone. The
+  editor was quietly teaching that a color *is* a hex string while the picker it opens teaches
+  three; two dialogs onto the same color should not disagree about what a color looks like.
 
   Curve, Space and the ease preset (or the midpoint, when the segment is not a Bézier) now share a
   single row above the canvas. They were three stacked rows for what is one decision about one
@@ -3135,7 +3153,7 @@ Changes after 0.3.0-beta.1:
 
   The segment's Curve, Space and Ease controls have moved **above** the curve editor, which now
   spans the full width of the window — they were side by side, which left the curve a narrow
-  square and squeezed the two end colours beneath it. The ends now sit at the two ends of
+  square and squeezed the two end colors beneath it. The ends now sit at the two ends of
   something the width of the gradient.
 
 - **The picker's values are a table, and it has its own eyedropper** (beta.47). R, G and B are
@@ -3144,23 +3162,23 @@ Changes after 0.3.0-beta.1:
   `#rrggbb` field the moment you click it to type — a value that is read per-channel but typed as
   one token.
 
-  A **Pick** button in the picker samples a colour from anywhere on screen straight into it,
+  A **Pick** button in the picker samples a color from anywhere on screen straight into it,
   without going back out to the stop row. The picker stays open, so what it takes can still be
-  judged and cancelled.
+  judged and canceled.
 
-- **The colour picker shows all three notations at once** (beta.46). 0–255, 0–1 and hex are on
+- **The color picker shows all three notations at once** (beta.46). 0–255, 0–1 and hex are on
   screen together and every one of them is editable, so there is no mode to be in the wrong one
-  of. A large patch of the chosen colour sits at the top, and the popup is now only as wide as its
+  of. A large patch of the chosen color sits at the top, and the popup is now only as wide as its
   contents — it had been stretching to the width of the panel behind it.
 
-- **A colour picker that speaks plainly** (beta.45). The picker now offers **Range 0–255**,
-  **Range 0–1** and **Hex**, and closes with **OK** or **Cancel** - Cancel putting back the colour
-  it opened with, so a colour you were only trying costs nothing.
+- **A color picker that speaks plainly** (beta.45). The picker now offers **Range 0–255**,
+  **Range 0–1** and **Hex**, and closes with **OK** or **Cancel** - Cancel putting back the color
+  it opened with, so a color you were only trying costs nothing.
 
-  The stock picker labelled its two numeric modes `U8` and `F`, which are the internal names for
+  The stock picker labeled its two numeric modes `U8` and `F`, which are the internal names for
   "gamma byte" and "linear float": precise, and meaningless unless you have read the toolkit's
   source. It also had no hex field, while the gradient editor around it speaks hex throughout, and
-  no way to back out of a colour.
+  no way to back out of a color.
 
 - **Fixed: narrow segments were missing from the segment list** (beta.44). The row of segment
   curves gave each segment a share of the width proportional to how much of the gradient it
@@ -3171,8 +3189,8 @@ Changes after 0.3.0-beta.1:
   The row is a LIST of segments, not a map of the gradient - position is already shown by the bar,
   by the markers on it, and by the bracket marking the selected span.
 
-- **The start and end colours sit at the start and the end** (beta.43), under the curve view whose
-  width IS the selected segment - flanking the strip of that segment's own colours. They were a
+- **The start and end colors sit at the start and the end** (beta.43), under the curve view whose
+  width IS the selected segment - flanking the strip of that segment's own colors. They were a
   row to the RIGHT of it, so "start" and "end" were both to the right of the thing they were the
   ends of.
 
@@ -3182,20 +3200,20 @@ Changes after 0.3.0-beta.1:
 
   **Fixed: a single click in the editor appeared to do nothing.** Every edit here is applied after
   the gradient has already been drawn that frame, and a lone click - the Seamless checkbox, an ease
-  preset, Centre, the curve and space pickers - had no reason to schedule another one. The change
+  preset, Center, the curve and space pickers - had no reason to schedule another one. The change
   landed and the picture did not move until something else happened to cause a repaint. Dragging
   never showed it, because a drag repaints continuously.
 
-- **A segment shows both of its colours** (beta.42). The segment panel now has an **Ends** row
-  with the colour at each end of the selected segment - swatch and hex, both editable. Previously
-  there was one colour on screen and it was often neither end of the segment you were looking at:
+- **A segment shows both of its colors** (beta.42). The segment panel now has an **Ends** row
+  with the color at each end of the selected segment - swatch and hex, both editable. Previously
+  there was one color on screen and it was often neither end of the segment you were looking at:
   selecting a segment never moved the stop selection, so the panel could read "Segment 3 of 10 ·
-  0.001→0.150" above a colour belonging to stop 1. Selecting a segment now selects its own start,
+  0.001→0.150" above a color belonging to stop 1. Selecting a segment now selects its own start,
   so the two halves of the panel always describe the same place.
 
-  Editing either end still keeps the join with the neighbouring segment closed - the two segments
-  meeting at a stop share that colour. Gradients CAN carry a hard edge there (an imported one
-  may), but opening one stays a deliberate act rather than a side effect of recolouring.
+  Editing either end still keeps the join with the neighboring segment closed - the two segments
+  meeting at a stop share that color. Gradients CAN carry a hard edge there (an imported one
+  may), but opening one stays a deliberate act rather than a side effect of recoloring.
 
 - **The gradient shows which segment you are editing** (beta.41). Selecting a segment now marks
   its span on the gradient itself: a bracket under it in the bar view, an arc across its sector in
@@ -3207,19 +3225,19 @@ Changes after 0.3.0-beta.1:
   draggable control points instead of needing to be converted first. It looks and renders exactly
   the same until you actually move a handle.
 
-  ⚠Segments whose midpoint has been moved off centre are left as they were: that shape has a kink
+  ⚠Segments whose midpoint has been moved off center are left as they were: that shape has a kink
   in it, which no Bezier curve can follow, and quietly reshaping someone's segment would be worse
   than leaving the extra step in. Those still convert on request, and say how close the fit is.
 
 - **Save a gradient to a file, force it seamless, and see the seam** (beta.39).
   **Save .ggr…** writes the current gradient to a GIMP gradient file - openable in GIMP, Krita and
-  Inkscape as well as back in here, with its midpoints, blend curves and colour spaces intact. If
+  Inkscape as well as back in here, with its midpoints, blend curves and color spaces intact. If
   any segment uses a Bezier curve, which the format cannot express, it says so rather than
   flattening in silence.
 
-  **Seamless (end matches start)** holds the last stop's colour equal to the first, so a cycled
+  **Seamless (end matches start)** holds the last stop's color equal to the first, so a cycled
   palette has no hard edge where it wraps - and when it is off, the editor says when the ends
-  differ. In the ring view the seam mark at twelve o'clock no longer draws THROUGH the colour: it
+  differ. In the ring view the seam mark at twelve o'clock no longer draws THROUGH the color: it
   is two small ticks either side, so the join it points at is actually visible.
 
   Copy, Paste and Import buttons gained their standard icons, and the curve list now leads with
@@ -3228,18 +3246,18 @@ Changes after 0.3.0-beta.1:
 - **Green checks, red crosses, right-aligned** (beta.38). Confirm buttons carry a green check and
   cancel buttons a red X, across every dialog, and the action rows sit at the bottom right.
 
-  ⚠The colours are not the ones this project's own design tokens specified. Those (`#5BBF7A`
+  ⚠The colors are not the ones this project's own design tokens specified. Those (`#5BBF7A`
   green, `#E0584B` red) look right on a panel and fail on a BUTTON: against the pressed-button
   fill the red measures 2.43:1, below even the floor for "must be told apart". A check mark that
-  vanishes when you press the button is worse than no check mark, so both colours were re-picked
+  vanishes when you press the button is worse than no check mark, so both colors were re-picked
   by measuring every surface either theme draws a widget on, and a test now holds them there.
 
   ⭐The green and the red are almost the same LIGHTNESS - 1.04:1 in the light theme - so to a
-  red-green colour-blind reader they are the same mark. The colour is redundant reinforcement
+  red-green color-blind reader they are the same mark. The color is redundant reinforcement
   only; the check and the cross are different SHAPES, and that is what carries the meaning.
 
 - **Every dialog now has a consistent way to accept or back out** (beta.37). The gradient editor
-  gains an **OK** button - previously the only labelled way out was Cancel, which reverts, so
+  gains an **OK** button - previously the only labeled way out was Cancel, which reverts, so
   keeping your work meant clicking the window's X and hoping. Its OK and Cancel have also moved to
   the bottom of the window, where they were previously buried above the paste box and the hints.
 
@@ -3256,7 +3274,7 @@ Changes after 0.3.0-beta.1:
 
 - **A button-icon standard, applied across the app** (beta.36). The affirmative half of every
   confirm/cancel pair now carries a check mark - Run, Apply, Go, Export, Render, Solve & jump -
-  so a dialog's yes and no are recognisable before either is read. Copy, Save and Refresh buttons
+  so a dialog's yes and no are recognizable before either is read. Copy, Save and Refresh buttons
   carry their own icons, and the two clipboard emoji left in the Help window are gone: they came
   from a different font and never matched the rest of the set.
 
@@ -3276,11 +3294,11 @@ Changes after 0.3.0-beta.1:
   replacing the desktop-wide cursor, which would stay broken if Fractadyne stopped unexpectedly;
   there it stays a crosshair.
 
-- **An eyedropper that reaches the whole screen** (beta.34). Next to the selected stop's colour
-  there is now a **Pick** button: press it, move the pointer to any colour **anywhere on your
+- **An eyedropper that reaches the whole screen** (beta.34). Next to the selected stop's color
+  there is now a **Pick** button: press it, move the pointer to any color **anywhere on your
   desktop** — a photograph, another fractal program, a palette on a web page — and click to take it.
-  A banner shows the colour under the cursor as you move, and Esc cancels. Restricting a dropper to
-  the application's own window would make it a novelty; the colours worth stealing are somewhere
+  A banner shows the color under the cursor as you move, and Esc cancels. Restricting a dropper to
+  the application's own window would make it a novelty; the colors worth stealing are somewhere
   else.
 
   ⚠**Windows only.** Reading a pixel from another application needs a platform screen-capture API;
@@ -3288,11 +3306,11 @@ Changes after 0.3.0-beta.1:
   without a permission portal. On other platforms the button is disabled and says why rather than
   quietly doing nothing.
 
-- **Curve control points you can drag in both directions, and colour values beside every swatch**
+- **Curve control points you can drag in both directions, and color values beside every swatch**
   (beta.33). A segment's blend can now be a **Bézier** curve with **two control points that move in
   x and y**, so you shape the curve directly instead of nudging a midpoint along one axis. Presets
   (Linear / In / Out / In-out) write the control points, and the curve may swing outside the 0–1
-  band — the colour is clamped, not the curve. Picking Bézier **fits the curve that is already
+  band — the color is clamped, not the curve. Picking Bézier **fits the curve that is already
   there** rather than resetting it, and the picker says how close the fit is: exact for Linear and
   Curved, within 0.003 for Sine, and about 0.14 for the two spherical blends, whose vertical
   tangent no curve of this kind can reproduce.
@@ -3301,8 +3319,8 @@ Changes after 0.3.0-beta.1:
   which is why it only ever moved horizontally, and why it stopped dead at the ends of its range.
   Bézier segments have no midpoint control at all, since their handles already say the same thing.
 
-  **Colour swatches now show their values.** The selected stop has an editable `#rrggbb` field and
-  its 0–255 triple beside it, so you can read a colour out of a gradient and type an exact one back
+  **Color swatches now show their values.** The selected stop has an editable `#rrggbb` field and
+  its 0–255 triple beside it, so you can read a color out of a gradient and type an exact one back
   in; the duotone/binary swatches show theirs underneath. Existing gradients are untouched — every
   preset, import and saved session renders exactly as before.
 
@@ -3323,18 +3341,18 @@ Changes after 0.3.0-beta.1:
   Above the bar there is now a **line you can click anywhere to add a stop at that point**, with a
   **+** at its end for "somewhere sensible", and a **−** under the selected stop to remove it.
   Gradients can be **named and saved** to a library that persists between sessions, keeping their
-  curves, midpoints and colour spaces intact; **Cancel** discards everything done since the editor
+  curves, midpoints and color spaces intact; **Cancel** discards everything done since the editor
   was opened. (Closing the window with ✕ keeps your changes — only Cancel reverts.)
 
   **Fixed: dragging a stop sometimes did nothing.** The editor decided which marker you had grabbed
-  *after* the pointer had already started moving, so a quick drag could pick up the neighbouring
+  *after* the pointer had already started moving, so a quick drag could pick up the neighboring
   stop — or, on a gradient with few stops, nothing at all, leaving the marker sitting still.
 
 - **The gradient editor is rebuilt around a selection** (beta.30). The gradient bar now carries
   **draggable stop markers**, and under it a **ribbon** shows one cell per segment with that
   segment's actual blend curve drawn in it. Click either to select; the selected segment gets a
-  large curve view with a draggable midpoint and a strip of its own colours beneath it, and the
-  selected stop gets a colour swatch, a typed position and a nudge. Drag a marker to move a stop,
+  large curve view with a draggable midpoint and a strip of its own colors beneath it, and the
+  selected stop gets a color swatch, a typed position and a nudge. Drag a marker to move a stop,
   double-click the strip to add one, right-click a marker to remove it.
 
   The old editor listed every stop and every segment at once, so nothing on screen could be bigger
@@ -3344,7 +3362,7 @@ Changes after 0.3.0-beta.1:
   into a single **Import** menu. Nothing about how a gradient renders has changed.
 
 - **The gradient editor can shape the blend between stops** (beta.29). Each segment of a custom
-  gradient now has its own **curve** (linear, curved, sine, or either spherical), its own **colour
+  gradient now has its own **curve** (linear, curved, sine, or either spherical), its own **color
   space** (RGB, or a sweep round the hue wheel in either direction), and its own **midpoint** - the
   point where the blend reaches halfway, which you can move without adding a stop. A small preview
   beside each row draws the actual curve.
@@ -3355,32 +3373,32 @@ Changes after 0.3.0-beta.1:
   exactly as before.
 
   One thing the editor now warns about: if a segment blends through hue and one end is black, white
-  or grey, that end has no hue to start from, so the sweep begins at red and travels the whole
-  colour wheel. A black-to-red segment passes through green on the way. It is a legitimate effect
+  or gray, that end has no hue to start from, so the sweep begins at red and travels the whole
+  color wheel. A black-to-red segment passes through green on the way. It is a legitimate effect
   and sometimes what you want, which is why it is a warning rather than a restriction.
 
 - **The palette importers are now covered by the release self-test** (beta.28). `--selftest` grew
   three checks that render through an imported palette and measure the result, so the three ways
   an importer can be wrong while still looking plausible are caught automatically instead of by
   hand: a Fractint .map keeps its hard bands exactly, an Ultra Fractal .ugr gets red and blue the
-  right way round, and a GIMP .ggr segment's colour space really does sweep the hue wheel. Each
+  right way round, and a GIMP .ggr segment's color space really does sweep the hue wheel. Each
   one renders the same file twice with a single field changed, so a passing result cannot come
   from the picture happening to look right.
 
 - **Adobe `.ase` swatch lists now import** (beta.27). Gradient editor -> **Import .ase...**, or
-  `--palette-ase FILE`. A swatch list is just an ordered set of colours with no positions and no
+  `--palette-ase FILE`. A swatch list is just an ordered set of colors with no positions and no
   blending rules of its own, so they arrive evenly spaced and linearly blended - that spacing is a
   choice Fractadyne makes, not something the file says. RGB, grayscale and CMYK swatches are read.
 
   Two things it deliberately will not do. **LAB swatches are refused rather than converted**:
-  turning LAB into screen colours needs a colour profile the file does not carry, and a guessed
-  one produces colours that look fine and are wrong. And a file mixing LAB with other swatches is
-  refused too, rather than importing "the rest" and quietly leaving colours out.
+  turning LAB into screen colors needs a color profile the file does not carry, and a guessed
+  one produces colors that look fine and are wrong. And a file mixing LAB with other swatches is
+  refused too, rather than importing "the rest" and quietly leaving colors out.
 
   Worth flagging honestly: unlike the other importers, this one was written from the published
   format description rather than against a real file, because none was available. It is
   deliberately strict as a result - a file that disagrees with that understanding is rejected with
-  a reason instead of loading plausible-looking wrong colours. If you have an .ase that Fractadyne
+  a reason instead of loading plausible-looking wrong colors. If you have an .ase that Fractadyne
   refuses, that is worth reporting.
 
 - **GIMP `.ggr` gradients now import, without losing anything** (beta.26). Gradient editor ->
@@ -3388,13 +3406,13 @@ Changes after 0.3.0-beta.1:
   one Fractadyne's own gradient model was designed around, so nothing is approximated on the way
   in: each segment keeps its own midpoint (where the blend reaches halfway, which is not
   necessarily the middle), its own blend curve (linear, curved, sine, or either spherical), and
-  its own colour space - RGB, or a sweep round the hue wheel in either direction.
+  its own color space - RGB, or a sweep round the hue wheel in either direction.
 
   That last one is worth seeing: a segment that starts and ends on the same red, blended the long
   way round the hue wheel, becomes a full spectrum. Rendered side by side with the same file and
-  only the colour-space column changed, it is 810 distinct colours against 4.
+  only the color-space column changed, it is 810 distinct colors against 4.
 
-  Because a .ggr holds more than a list of colour stops can, an imported one is stored in full
+  Because a .ggr holds more than a list of color stops can, an imported one is stored in full
   and the gradient editor says so rather than pretending to edit it: there is a "Convert to
   editable stops" button that tells you what it will discard first.
 
@@ -3405,7 +3423,7 @@ Changes after 0.3.0-beta.1:
   `--palette-ugr-name`, and the run tells you which it took. Unlike a .map these interpolate
   between their control points, and the file's own rotation setting is applied.
 
-  The reason this needed care rather than a quick parser: Ultra Fractal stores each colour as a
+  The reason this needed care rather than a quick parser: Ultra Fractal stores each color as a
   single decimal number with the **red channel in the low byte** - the reverse of what you would
   guess. Reading it the obvious way swaps red and blue in every imported gradient and still looks
   like a perfectly plausible palette, so it is the kind of mistake that survives a review. There
@@ -3414,19 +3432,19 @@ Changes after 0.3.0-beta.1:
 
 - **Fractint and Kalles Fraktaler `.map` palettes now import** (beta.24). Gradient editor ->
   **Import .map...**, or `--palette-map FILE` on a command-line render. A `.map` is a lookup
-  table indexed by iteration count with no blending between its entries, and the hard colour
+  table indexed by iteration count with no blending between its entries, and the hard color
   steps that produces are the classic Fractint look - so that is how it imports, with a **Hard
-  bands** checkbox to blend the same colours into a smooth gradient instead if you prefer it.
-  Checked end to end rather than by eye: a 16-entry file renders to exactly its 16 colours and
+  bands** checkbox to blend the same colors into a smooth gradient instead if you prefer it.
+  Checked end to end rather than by eye: a 16-entry file renders to exactly its 16 colors and
   nothing in between, while the same file with `--palette-map-smooth` gives 253 shades.
 
-  One thing worth knowing about Fractint's own files: their colour values are 6-bit, written out
+  One thing worth knowing about Fractint's own files: their color values are 6-bit, written out
   multiplied by four, so their white is **252 and not 255**. Fractadyne detects this, says so when
   it imports, and deliberately leaves the values alone - Fractint's own saved images carry the
   same 252, so 'correcting' them to 255 would make every side-by-side comparison wrong by about a
   percent.
 
-- **The paste box no longer throws away everything past the eighth colour** (beta.24). It used to
+- **The paste box no longer throws away everything past the eighth color** (beta.24). It used to
   sample your list down to eight stops because that is all the renderer could carry; it now keeps
   up to 256. The gradient editor shows per-stop rows for hand-editable palettes and a summary for
   a long imported one.
@@ -3434,10 +3452,10 @@ Changes after 0.3.0-beta.1:
 - **Palettes are now baked into a 1024-entry lookup table, and the eight-stop ceiling is gone**
   (beta.23). Every palette in the app - the built-in presets, the gradient editor, duotone and
   binary, the morphing random gradient - now goes through one representation: a list of gradient
-  SEGMENTS, each with its own colours, midpoint, blend curve and colour space, evaluated into a
+  SEGMENTS, each with its own colors, midpoint, blend curve and color space, evaluated into a
   1024-entry table that the shader reads with a single lookup. Before this, a palette was at most
-  eight colour stops walked in the shader, which is not enough to hold a real palette file: the
-  standard Fractint palette alone has 37 hard colour jumps, so an eight-stop rendition of it was
+  eight color stops walked in the shader, which is not enough to hold a real palette file: the
+  standard Fractint palette alone has 37 hard color jumps, so an eight-stop rendition of it was
   not a lower-fidelity version, it was a different palette. Segments can also be FLAT, which is
   how a Fractint `.map` keeps the hard bands that define its look instead of being smeared into a
   gradient. Nothing about the existing palettes changed visibly - measured across the 18 golden
@@ -3446,19 +3464,19 @@ Changes after 0.3.0-beta.1:
   rounding and not a mistake. This is the groundwork for importing palettes from other
   applications (`.map`, `.ugr`, `.ggr`); see `design/palette-import.md`.
 
-- **The gradient editor's preview bar now shows the colour that will actually render** (beta.23).
+- **The gradient editor's preview bar now shows the color that will actually render** (beta.23).
   It was gamma-encoding the preview - a leftover from the same wrong assumption that made pasted
   palettes too dark - so every swatch looked markedly lighter than the pixels it stood for.
 
-- **Pasted palettes now render as the colours you pasted** (beta.21). Paste `#808080` into the
+- **Pasted palettes now render as the colors you pasted** (beta.21). Paste `#808080` into the
   gradient editor and you got `#373737` back - every imported palette arrived one sRGB decode
-  too dark. The import path converted colours to linear light, but the renderer writes palette
+  too dark. The import path converted colors to linear light, but the renderer writes palette
   values straight to the screen unconverted (deliberately - it is what makes the live view
   WYSIWYG), so the conversion was pure loss. The built-in presets were never affected, because
   they were tuned by eye against the live view in the first place; only imports, where you have
-  an expectation about the colour, showed it.
+  an expectation about the color, showed it.
 
-- **Palette lines like `168 168 168` import as one colour again** (beta.21). Those three values
+- **Palette lines like `168 168 168` import as one color again** (beta.21). Those three values
   are also three valid hex digits each, so a line of them was read as three separate `#114488`
   swatches - meaning any Fractint or Kalles Fraktaler `.map` line whose values all fall between
   100 and 255 was silently mangled, in the one external palette format the paste box already
@@ -3521,7 +3539,7 @@ Changes after 0.3.0-beta.1:
   Misiurewicz jump). "Normalize deep colors" decides its mapping once per view and holds it
   while the view refines - but a reading drained at the moment of a jump can belong to the
   previous view, and a wrong adopted range was held forever. Under the log color scale that
-  rendered the whole frame one flat colour (a shallow range's logarithm is constant across a
+  rendered the whole frame one flat color (a shallow range's logarithm is constant across a
   deep view's narrow escape band); without log it merely aliased, which is why unchecking
   the box seemed to fix it. A held mapping is now defeasible: a whole-frame reading disjoint
   from the held window re-adopts immediately, so the palette recovers within one frame
@@ -3576,7 +3594,7 @@ Changes after 0.3.0-beta.1:
 - **The live normalized palette no longer re-maps while a view settles** (beta.9 - the live
   half of beta.8's fix; user-reported). As a deep view refined, every supersampling stage,
   settle tile and chunked-walk refresh fed a new escape-range reading into the mapping EMA,
-  so the colours shifted under you - re-mapped, not sharpened. The mapping is now DECIDED
+  so the colors shifted under you - re-mapped, not sharpened. The mapping is now DECIDED
   ONCE per view and held: motion still glides on the EMA, the first settled reading of a new
   view adopts the whole-frame range outright (what the offline keyframe anchors measure),
   and every further reading at the same view is discarded until the view itself changes
@@ -3609,7 +3627,7 @@ Changes after 0.3.0-beta.1:
   appetite). Auto-iteration never warns - its budget follows the jump like a hand zoom.
   The threshold is anchored to measurements (e500 resolves at 200k; e2000 is black at 200k,
   fine at 1M) and engages only past ~1e150, so ordinary shallow settings are never nagged.
-  An explicit count is still honoured verbatim - the app warns, it does not override.
+  An explicit count is still honored verbatim - the app warns, it does not override.
 
 - **"Find minibrot" works past 1e305x** (beta.6) — the nucleus finder took a linear `f64`
   magnification, so the Go-to dialog's minibrot half stopped where the Misiurewicz half now
@@ -3701,7 +3719,7 @@ Changes after 0.3.0-beta.1:
   (beta.4) — "Find near view" auto-detects the Misiurewicz `(k,p)` pair by walking the critical
   orbit for a near-return, but that walk was hard-capped at 20,000 iterations. At a 2.37e4001×
   spiral the organizing point sits at preperiod ~438,732 — ~22× past the cap — so the detector
-  returned nothing and the dialog wrongly blamed your centring ("try centring closer to a
+  returned nothing and the dialog wrongly blamed your centering ("try centering closer to a
   spiral"). The walk is now bounded by a steps×bits² cost budget (like the series-approximation
   budget) rather than a flat cap, and the orbit's own escape usually stops it sooner. Reaching
   those depths also meant not storing the whole orbit (~1.5 GB at 450k steps × 13k bits) or
@@ -3735,12 +3753,12 @@ Changes after 0.3.0-beta.1:
   walk lengths AND the recorded extended-range samples bitwise, which makes the elected
   reference backend-independent by composition. Also corrects the beta.1 outcome notes: the
   scoring walk was never "~2× the build's walk" (measured 68.6 vs 73.3 µs/step); the missing
-  time was the centre-rescue's own ~443k-step verification walk at e4000, which is
+  time was the center-rescue's own ~443k-step verification walk at e4000, which is
   load-bearing cliff protection and stays — and winner-orbit reuse across the `p + 128`
   boundary is documented as foreclosed in design/pick-redesign.md.
 
 - **Reference-candidate scoring no longer walks sixteen full-precision orbits** — at extreme
-  depth every candidate sits within half a view-span of the centre (|Δc| ~ 1e-4000), so the
+  depth every candidate sits within half a view-span of the center (|Δc| ~ 1e-4000), so the
   deep-ranking phase's sixteen bignum walks to escape lengths differing by ±0.01% were near-pure
   duplication, and after the series-approximation budget they had become the LARGEST slice of a
   deep reference build (113.7 s of 333 s at 2.37e4000×). Phase 2 now walks ONE orbit — the first
@@ -3776,7 +3794,7 @@ zoom).
   rendered 9 direct, 51 df32 and *zero* deep frames. BLA, which only runs on the deep path,
   had therefore never executed in a benchmark whose settings block reads "BLA on". Both
   depths now cross well past that boundary: Standard dives to 1e32× (8 / 44 / 8 frames
-  across the three regimes) and Ultra to 1e48× (5 / 30 / 25), both on a 116-digit centre
+  across the three regimes) and Ultra to 1e48× (5 / 30 / 25), both on a 116-digit center
   taken from a real dive — the previous 33-digit location was not precise enough to render
   a meaningful deep frame at all. **Scores are not comparable with earlier releases**, which
   is why the report now names the dive site.
@@ -3845,7 +3863,7 @@ zoom).
 - **Dual view behaves the same from the menu as from the toolbar** — the two toggles were
   separate implementations, and the menu's copy did not discard the cached reference orbits
   when it turned dual view on. It could leave the second pane rendering from a reference
-  built for the view you left. Both now run the same code, and Julia mode greys out while
+  built for the view you left. Both now run the same code, and Julia mode grays out while
   dual view is on in the menu as it already did on the toolbar.
 
 - **The fractal dropdown no longer shows a scrollbar it does not need** — ten formulas came
@@ -3877,8 +3895,8 @@ zoom).
   on this machine computes the same orbits roughly 2.5x to 7x faster, depending on depth. It is a
   build-time option that is **off unless asked for**, for two reasons that are not going away: the
   library does not build with the Microsoft compiler Fractadyne normally uses on Windows, and it
-  carries a copyleft licence that would place conditions on a released binary which Fractadyne's own
-  licence does not. Nothing about a normal build changes. Where it is enabled it is used by default
+  carries a copyleft license that would place conditions on a released binary which Fractadyne's own
+  license does not. Nothing about a normal build changes. Where it is enabled it is used by default
   — a build option that then needs a second flag to do anything is a build option that does nothing
   — and `--bignum` overrides that either way; asking for an engine that is not in the build is a
   clear error rather than a silent fall back to the other. The two engines produce **byte-identical**
@@ -3906,15 +3924,15 @@ zoom).
   budget at the worst speed measured, so it only ever shrinks, only in regions whose own
   measurements call for it, and never slows an ordinary render.
 
-- **Auto-normalized colour no longer buries the picture at shallow zoom with a big iteration
+- **Auto-normalized color no longer buries the picture at shallow zoom with a big iteration
   budget** (beta.150) — "Normalize deep colors" spreads the palette across the range of escape
   values in view. That works when those values sit in a narrow high band, which is what deep views
   give you. At a shallow view with a large iteration budget the range is lopsided instead: nearly
   everything escapes within a few dozen steps while a thin fringe along the boundary runs to tens
   of thousands. Spreading the palette evenly across that put the whole visible exterior into a
-  fraction of a percent of the colours — a near-black field with only the filaments lit. A lopsided
+  fraction of a percent of the colors — a near-black field with only the filaments lit. A lopsided
   range now uses the logarithmic mapping (the same one the "Log color scale" checkbox selects)
-  automatically, so the exterior gets its colours back. Deep views are unaffected.
+  automatically, so the exterior gets its colors back. Deep views are unaffected.
 
 - **A deep view no longer restarts itself forever because the status bar changed width**
   (beta.149) — the iteration count and the zoom shown along the bottom were drawn at whatever width
@@ -3937,22 +3955,22 @@ zoom).
 - **3D relief lighting no longer speckles deep views black** (beta.145) — with relief lighting on,
   deep zooms came out stippled with near-black pixels. The shading was computed from the surface
   slope at each pixel on its own, and at that depth the slope varies faster than the pixel grid, so
-  neighbouring pixels disagreed about which way the surface faced and the light flickered between
+  neighboring pixels disagreed about which way the surface faced and the light flickered between
   lit and shadowed. Extra anti-aliasing only helped in proportion to the number of samples, because
   each sample was still asked to decide on its own. The shading now reads the slope over a small
-  neighbourhood and, where that neighbourhood cannot agree on a direction, fades the lighting out
+  neighborhood and, where that neighborhood cannot agree on a direction, fades the lighting out
   instead of picking one at random. Deep views keep their relief without the speckle, ordinary
   views look as they did, and there is no measurable cost.
 
 - **"Normalize deep colors" now actually engages where the picture needs it** (beta.144) — deep
-  views could come out as coloured static: a correct image, mapped through a palette that repeated
+  views could come out as colored static: a correct image, mapped through a palette that repeated
   many times between one pixel and the next. The setting meant to prevent exactly that decided
   whether to act by looking at the total spread of escape values across the frame, which turns out
   not to answer the question — a shallow view can span a hundred palette repeats and look perfect,
-  because neighbouring pixels barely differ. What matters is how far the palette moves from one
-  pixel to its neighbour. The renderer now measures that directly and normalizes when the palette
+  because neighboring pixels barely differ. What matters is how far the palette moves from one
+  pixel to its neighbor. The renderer now measures that directly and normalizes when the palette
   would advance more than half a cycle per pixel, which is the point past which the banding cannot
-  be seen as banding at all. Deep dense fields resolve; ordinary views keep their classic colouring.
+  be seen as banding at all. Deep dense fields resolve; ordinary views keep their classic coloring.
 
 - **A stalling render now reacts without waiting to be asked** (beta.141) — the renderer judged how
   expensive a piece of work had been only once that work reported back, and it treated a frame
@@ -3987,7 +4005,7 @@ zoom).
   within about 2x of losing the graphics device, the app always writes a line about it, so that a
   report from the field carries the evidence even if nobody had diagnostics turned on. That line
   did not include the resolution being rendered, which turned out to matter: a recent fix showed
-  that certain render sizes cost roughly 20x more than their neighbours, and the existing field
+  that certain render sizes cost roughly 20x more than their neighbors, and the existing field
   report could not be checked against it. It can be now.
 
 - **Deep renders were up to 20x slower at half of all window sizes, for no visible reason**
@@ -4037,7 +4055,7 @@ zoom).
   renderers finally sampling each pixel once, Fraktaler-3 is FASTER than Fractadyne on the two
   heaviest scenes: the 1e148 view by 1.18x and the extreme 1e1105 view by 2.20x. Fractadyne still
   leads the other eight, but by 1.12x to 2.29x rather than the 1.9x to 6.8x the handicapped run
-  suggested. The earlier summary of "Fractadyne owns deep and extreme" was an artefact of the
+  suggested. The earlier summary of "Fractadyne owns deep and extreme" was an artifact of the
   sampling defect and should not be repeated.
 
   Where the architecture does show a large advantage is a zoom SEQUENCE, which is what it was
@@ -4389,7 +4407,7 @@ zoom).
   made on. Without it the self-test has no way to know it is running somewhere else, so it applies
   the strict same-card comparison and flags the ordinary differences between one vendor's
   arithmetic and another's — which is precisely what that file exists to prevent. The Windows
-  archive has always included it. Also, release publishing was reorganised so the Windows and
+  archive has always included it. Also, release publishing was reorganized so the Windows and
   Linux builds can no longer race each other: previously the Linux archive was attached to a
   release the Windows build had to create first, and a slow Windows build could have caused a
   release to be published without the Linux download at all.
@@ -4406,7 +4424,7 @@ zoom).
   code."*). The values that govern how much work one frame may ask of the graphics card — the ones
   behind most of this release's rendering incidents — were scattered through two large source files,
   each with a long comment explaining the incident that set it. They are now collected in
-  `tunables.rs`, moved verbatim with those comments, with no change to behaviour whatsoever. For
+  `tunables.rs`, moved verbatim with those comments, with no change to behavior whatsoever. For
   diagnosis there is also a new developer flag, `--set NAME=VALUE`, that moves one of the twelve
   frame-cost numbers for that run only: it is announced at startup, recorded in any crash report,
   and deliberately made impossible to mistake for a supported setting — the self-test fails outright
@@ -4422,7 +4440,7 @@ zoom).
   from the first assembly onward the view kept displaying the coarse placeholder it had started
   from, while the finished, sharp image sat unseen. Nudging the window revealed it instantly because
   interacting suspends the hold — the picture had been ready all along.
-- **Fixed: a deep view could stay pixellated until you nudged the window** (beta.102,
+- **Fixed: a deep view could stay pixelated until you nudged the window** (beta.102,
   user-reported). Parked at 7.9e100× with an explicit 4,000,000 iterations, the settled picture was
   a grid of coarse blocks; resizing the window slightly re-rendered the same view in full detail,
   eleven times faster per frame. A settled view too costly to draw in one pass is drawn as a grid of
@@ -4453,7 +4471,7 @@ zoom).
   (beta.100, both user-reported).
   - **`dual_split` keyframe field**: the fraction of the width the Mandelbrot panel takes — the same
     thing dragging the divider sets — interpolated between keyframes, so a tour can hand the Julia
-    panel more room as it moves into it. The offline tour renderer honours it too; it previously
+    panel more room as it moves into it. The offline tour renderer honors it too; it previously
     hardcoded a 50/50 split, which meant a rendered tour could not match the playback it was
     rendering. Your own divider position is restored when the tour ends.
   - **The script now outranks the cursor during playback.** The orbit overlay picked the point under
@@ -4464,7 +4482,7 @@ zoom).
     Julia panel as c travels along the boundary; its orbit chapter is now a three-stop story —
     inside the set the orbit closes into a 3-cycle, on the boundary it never cycles and never
     escapes, outside it spirals out and leaves the frame — with the point gliding between them so
-    the path visibly reorganises as c crosses the boundary.
+    the path visibly reorganizes as c crosses the boundary.
 - **The Fraktaler-3 comparison corpus is reproducible again** (beta.99). Its regression check had
   been red since July on every location including the simplest one, and the reason was the harness,
   not the renderer: corpus renders patched a handful of settings into the developer's *live*
@@ -4475,7 +4493,7 @@ zoom).
   config directory: they depend on the program, the command line, and that file, and on nothing
   about the machine. Verified by rendering with a deliberately hostile live session and getting a
   pixel-identical result; baselines re-blessed deliberately (the escape values were never in
-  question — the difference was a one-to-one recolour), and the check is 20/20 across depths to
+  question — the difference was a one-to-one recolor), and the check is 20/20 across depths to
   1.2e1008x.
   - The app now records which session it loaded, and says so when a session file exists but could
     not be read — previously indistinguishable from having no session at all, which is precisely
@@ -4524,13 +4542,13 @@ zoom).
   shell hugging the boundary and flattens everything outside into near-darkness. Compressing with
   `log(v − lo + 1)` first spreads the palette across the range as the eye actually reads it. On a
   1e6× view the difference is stark — the linear render keeps its bright end in a few tight rings
-  while the log render opens the whole field up — and it is what keeps colour stable through a
+  while the log render opens the whole field up — and it is what keeps color stable through a
   zoom video instead of washing out as the measured range grows. Applies wherever normalization is
   active (the live "Normalize deep colors" path and `--normalize`); the classic linear mapping
   remains the default and is bit-identical to before.
 - **Dithered 8-bit export — banding is gone from smooth gradients** (beta.95). Fractal exteriors
   are enormous, very shallow ramps, which is the worst case for 8-bit output: rounding maps a wide
-  span of colour onto one byte value and leaves a visible contour where it steps. That is the
+  span of color onto one byte value and leaves a visible contour where it steps. That is the
   complaint newcomers raise first. Every PNG now goes through an ordered (Bayer 8×8) dither that
   nudges the rounding threshold by up to half a level based on pixel position. Measured on the
   home view, the mean run of identical horizontal pixels — the thing you actually see as a band —
@@ -4561,7 +4579,7 @@ zoom).
   sRGB is converted to linear on the way in. Deliberately format-tolerant rather than
   format-specific: "I found a palette on the web" is defeated by a format war.
 - **Help → Diagnostics…: run the tests from the UI, and attach the result to an issue report**
-  (beta.93). Two buttons — *Run self-test* (does the maths hold on this GPU?) and *Run UI test*
+  (beta.93). Two buttons — *Run self-test* (does the math hold on this GPU?) and *Run UI test*
   (does it draw and lay out correctly?) — with live progress, the test's own verdict line, and
   **Open results**. A finished run can be attached to *Report an issue…*, upgrading a report from
   "here is my crash log" to "here is my crash log **and** a machine-validated test result from my
@@ -4616,11 +4634,11 @@ zoom).
   progress that a quiet-period timer cannot see.
 - **A shared tour script could kill the app before it drew a frame — fixed** (beta.89). Tour
   `zoom` is a string so a tour can go deeper than `f64`, but that value sizes the bignum
-  precision every centre in the script is parsed at, and is re-derived per frame while playing.
+  precision every center in the script is parsed at, and is re-derived per frame while playing.
   The exponent itself was read as an `f64`, so `zoom = "1e1e999"` produced an infinite log₁₀, the
   octave count saturated on its cast, and the loader asked for a `usize::MAX`-bit number: the
   process died allocating, on nothing worse than opening someone's file. A merely absurd finite
-  value like `1e999999999999` did the same thing more slowly (~415 GB per centre). Zoom is now
+  value like `1e999999999999` did the same thing more slowly (~415 GB per center). Zoom is now
   bounded at the parse boundary, which covers both the load-time and per-frame paths, with a
   clean error instead of an abort. The ceiling (1e1000000×) is far past anything reachable — the
   deepest verified corpus location is ~4.6e1105× and the extreme-zoom battery runs 1e21000× — and
@@ -4842,7 +4860,7 @@ zoom).
   tiles instead of resting at a coarse single-dispatch resolution. Verified at the exact crash
   view: native 1445×1134, six-minute soak, zero device loss. Auto-iteration views are untouched;
   the grand-tour livetest (tours run explicit counts) stays 22/22.
-- **Iteration-range tiling extended to df32 perturbation — the pixellated spar view now renders
+- **Iteration-range tiling extended to df32 perturbation — the pixelated spar view now renders
   at native resolution** (beta.68). beta.67 left a view with a huge explicit count over a short
   escaped reference resting at a safe but coarse resolution (79×62); the resumable chunked path now
   covers mode 0 as well as Direct, carrying δz, the floatexp derivative, and the reference position
@@ -4855,7 +4873,7 @@ zoom).
   (Tricorn/Ship/Celtic/Buffalo/Phoenix/Newton) and aux coloring methods (stripe/TIA/trap/
   decomposition) now correctly fall back to the single-pass path instead of chunking with wrong
   math. Floatexp (mode 2) chunking remains future work — its rebase-grind case stays safely capped.
-- **The startup pixellation deadlock is fixed, and the rebase-grind regime is capped safely**
+- **The startup pixelation deadlock is fixed, and the rebase-grind regime is capped safely**
   (beta.67). Restarting into a view with a huge explicit iteration count left the screen at giant
   pixels forever: the frame budget can only climb when a measurement arrives, a measurement needs a
   dispatch, and a dispatch needs the frame to re-key — but at the 16×16 resolution floor one ×1.5
@@ -4884,8 +4902,8 @@ zoom).
   view to a shallow one killed the GPU: the shallow view switches to Direct mode (no reference, no
   BLA skip), the huge count came with it, and one dispatch of `16×16 × 4M` real steps tripped the
   OS watchdog — the live cost-bound could shrink resolution and supersampling but never the
-  iteration count, and capping the count would break the "explicit count honoured verbatim"
-  guarantee. The fix honours the count **across frames** instead: a Direct frame whose cost exceeds
+  iteration count, and capping the count would break the "explicit count honored verbatim"
+  guarantee. The fix honors the count **across frames** instead: a Direct frame whose cost exceeds
   the budget renders through a new resumable path — one bounded pass over an iteration range per
   frame at FULL resolution (no more 16×16 collapse), carrying per-pixel state (z, dz, iteration,
   status) in ping-pong textures, the cursor advancing while the view holds still and restarting on
@@ -4935,12 +4953,12 @@ zoom).
   to load now opens a dialog titled **"Could not load script"** instead of borrowing the
   benchmark window's "Benchmark results" title.
 - **The 2:58 device loss and the black deep holds — one root cause** (beta.48–50). The tour
-  camera ROUNDED a pinned-centre glide's coordinates to the current depth's precision
-  (`lerp(x, x)` is not the identity), and a rounded centre is a genuinely different point whose
+  camera ROUNDED a pinned-center glide's coordinates to the current depth's precision
+  (`lerp(x, x)` is not the identity), and a rounded center is a genuinely different point whose
   orbit spuriously escapes at a precision-set length — every mysterious reference length of the
   release cycle (626, 602,516) was `escape(round(centre, bits)) + 1`, and the deep holds only
   ever looked healthy when such a numerically-escaped orbit slipped past the freeze guard. Three
-  coupled fixes: exact pinned-centre glides; a cliff rescue in reference selection (rescan at the
+  coupled fixes: exact pinned-center glides; a cliff rescue in reference selection (rescan at the
   build precision when no candidate survives — with a selftest pinning the exact bad pick); and
   the freeze guard now INSTALLS long partial references at a floor frame budget instead of
   refusing them, which retired the refused-extension rebuild loop and turned every known-black
@@ -4948,11 +4966,11 @@ zoom).
   can also finally shrink below its own opening guess (its clamp used the bootstrap constant as a
   FLOOR — a safety valve that could not move toward safety), and the install derate no longer
   fires on ordinary partial-orbit growth, which had pinned the budget at its floor and rendered
-  the whole deep chapter pixellated. Verified end to end: 0 device losses across the repro
+  the whole deep chapter pixelated. Verified end to end: 0 device losses across the repro
   battery, the grand-tour live baseline all-green for the first time, and a 60-second
   `ultra-dive-e200` exercise tour (e30 → e200, five staged holds, all matching the offline
   oracle exactly) blessed as a standing gate.
-- **An explicit iteration count is honoured verbatim** (beta.53). Auto-iter OFF now means the
+- **An explicit iteration count is honored verbatim** (beta.53). Auto-iter OFF now means the
   count reaches the GPU untouched — 10,000,000 in the Iterations box used to render as ~82,000
   (the zoom cap × the adaptive boost silently applied). One shared formula now feeds both the
   dispatch and the adaptive probe's staleness gate, so the two can never drift; tour keyframes
@@ -4997,7 +5015,7 @@ zoom).
   - `FRACTADYNE_NO_TIMESTAMPS=1` makes the whole path reproducible on hardware that has the
     feature, and `render::controller_props` pins the controller's properties in `cargo test`.
 - **Playback & render reliability** (beta.37–46):
-  - Tour centres parse at the tour's deepest precision (beta.37), and the lookahead no longer
+  - Tour centers parse at the tour's deepest precision (beta.37), and the lookahead no longer
     spins re-spawning builds (a live device-loss class, beta.38).
   - **A playback player**: scrub bar, width-stable transport, outlives the tour (beta.39).
   - **Frame cost is bounded in every arithmetic mode**, not just floatexp (beta.40); the budget
@@ -5048,13 +5066,13 @@ zoom).
   It also reuses the code path everything else is measured through. "Copy command" yields the
   equivalent command line.
 - **Playback transport** (beta.36) — restart / back 10 s / pause / stop / forward 10 s / speed
-  (0.5–4×) / loop, in a floating bar over the top-centre of the view. It is not in the status bar
-  because that bar is sized by its content: the centre coordinates gain and lose digits as the view
+  (0.5–4×) / loop, in a floating bar over the top-center of the view. It is not in the status bar
+  because that bar is sized by its content: the center coordinates gain and lose digits as the view
   moves, so controls placed there slide horizontally under the cursor. Seeking moves the tour clock
   only — the camera follows through the normal sampling path — which required converting playback
   from a wall-clock origin (`now - t0`) to an accumulating clock, since a derived time cannot
   express pause, seek or speed.
-- **The tour no longer flies through black** (beta.36) — a keyframe that changes both centre and
+- **The tour no longer flies through black** (beta.36) — a keyframe that changes both center and
   zoom interpolates them together, so leaving Seahorse Valley for Elephant Valley crossed the
   cardioid's interior while still at ~1e5×: every frame between them was solid black, and the
   status-bar screenshot that caught it showed an entirely black view. Landmarks are now approached
@@ -5065,7 +5083,7 @@ zoom).
 - **Script playback is visible in the status bar** (beta.36) — a spinner, `mm:ss / mm:ss (N%)`,
   and an explicit "waiting for detail" when the pacer has stopped the tour clock. A deep hold can
   legitimately sit on one frame for many seconds and the pacer deliberately freezes the clock while
-  the renderer catches up, so a frozen percentage was expected behaviour that looked exactly like a
+  the renderer catches up, so a frozen percentage was expected behavior that looked exactly like a
   hang — it was reported as "the script stopped".
 - **The grand tour's deep chapter descends at half the old rate** (beta.36) — it ran at ~1 decade
   per second, which no deep view can resolve at (the reference rebuild alone costs seconds past
@@ -5308,7 +5326,7 @@ completed. Per-version detail is in the git history.
 
 ## 0.1.23
 
-- **Location HUD works in dual view** (was incorrectly greyed out). The HUD reflects the map /
+- **Location HUD works in dual view** (was incorrectly grayed out). The HUD reflects the map /
   Mandelbrot view's zoom + center and lands on the image's top-left (the map panel of a side-by-side
   stitch).
 - **Extended the deep-export freeze fix to dual view.** 0.1.22 moved the reference build off the UI
@@ -5575,7 +5593,7 @@ Baseline for tracked versioning. Notable capabilities already present:
 - **Guided-tour captions + version tracking** — camera-tour scripts (`Tools → Play script…`,
   `--render-tour`) can now narrate: `[[caption]]` entries with `text` (multi-line), `at`/`secs`
   timing (independent of keyframes), `pos` (top/center/bottom), `fade`, and `size`. Captions ease
-  in/out, wrap, and sit centred on a soft dark backing; they render live over the fractal **and**
+  in/out, wrap, and sit centered on a soft dark backing; they render live over the fractal **and**
   burn into exported tour frames. Scripts also declare a `format_version`; loading a newer script
   warns (schema is additive, so old scripts keep playing).
 
@@ -5585,7 +5603,7 @@ Baseline for tracked versioning. Notable capabilities already present:
   captions (`at`/`secs`/`fade`), rendered live and burned into exported tour frames; off-screen
   anchors are skipped.
 
-- **Guided-tour spotlights** — `[[spotlight]]` entries dim everything outside a soft circle centred
+- **Guided-tour spotlights** — `[[spotlight]]` entries dim everything outside a soft circle centered
   on a fractal coordinate to draw the eye, with `radius`/`softness`/`dim` and `at`/`secs`/`fade`.
   Applied in the color shader (aspect-corrected, so the circle is round; live and export identical)
   and anchored via `complex_to_pixel` so it tracks its point; the dimming eases with the window.
@@ -5598,7 +5616,7 @@ Baseline for tracked versioning. Notable capabilities already present:
 
 - **Deep-zoom tours** — tour keyframes can now express zooms past f64's ~1e308 ceiling via
   `mag_log10` (e.g. `mag_log10 = 420` for 1e420×), and a script `palette` field sets a preset so a
-  tour colours consistently regardless of the session palette (a binary palette rendered deep
+  tour colors consistently regardless of the session palette (a binary palette rendered deep
   exterior-only views as one flat color). `--render-tour` also forces zoom-appropriate iteration
   counts so deep frames resolve. Ships example tours in `tours/`: a dive to a real minibrot
   (~1e30×) and a dive to an endless spiral (~1e420×).
@@ -6180,7 +6198,7 @@ Baseline for tracked versioning. Notable capabilities already present:
   contrast against a warm-palette thumbnail (e.g. Ember), and it was only drawn when the view
   center fell inside the minimap's fixed region. Now it always shows (clamped to the thumbnail
   edge if the view is outside the region) and is drawn with a dark halo behind the bright
-  marker so it reads on any palette — a view rectangle when shallow, a crosshair + centre dot
+  marker so it reads on any palette — a view rectangle when shallow, a crosshair + center dot
   when deep.
 
 - **Frame-rate cap "Uncapped" wasn't persisted** — the cap was stored as an `Option<f64>`,

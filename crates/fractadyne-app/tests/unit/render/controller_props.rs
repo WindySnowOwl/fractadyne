@@ -163,7 +163,7 @@ fn an_explicit_iteration_count_is_honoured_verbatim() {
         live_iter_budget(u32::MAX, 30.0, 1.0, true),
         crate::MAX_ITER_LIMIT
     );
-    // Auto mode: unchanged behaviour — the zoom-appropriate cap times the boost binds.
+    // Auto mode: unchanged behavior — the zoom-appropriate cap times the boost binds.
     let auto = live_iter_budget(10_000_000, 30.0, 1.0, false);
     assert!(auto < 20_000, "auto at 1e9x should sit near the zoom cap, got {auto}");
     let boosted = live_iter_budget(10_000_000, 30.0, 4.0, false);
@@ -473,11 +473,11 @@ fn a_pending_rebuild_refuses_growth_but_never_blocks_a_shrink() {
     let up = cur * 3 / 2; // a ×1.5 growth step
     let down = cur / 2;
 
-    // Idle: both directions honoured, convergence passes through.
+    // Idle: both directions honored, convergence passes through.
     assert_eq!(budget_after_build_gate(cur, up, true, false), (up, true));
     assert_eq!(budget_after_build_gate(cur, down, true, false), (down, true));
 
-    // Rebuild in flight: growth refused, shrink honoured. The asymmetry IS the safety property
+    // Rebuild in flight: growth refused, shrink honored. The asymmetry IS the safety property
     // — a frame priced against an orbit about to be replaced can warn us, but cannot reward us.
     assert_eq!(budget_after_build_gate(cur, up, true, true), (cur, false));
     assert_eq!(budget_after_build_gate(cur, down, true, true), (down, false));

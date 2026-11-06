@@ -9,7 +9,7 @@ NAME.truth.bin). RENDER is the renderer's raw counts at the truth's size and vie
     fd       Fractadyne --render-iter EXR (smooth count, R channel; < 0 interior)
     f3       Fraktaler-3 raw EXR (N or N0+N1, bias 1024; 0xFFFFFFFF never escaped)
     imagina  imagina-cli --iterations through the bench kit's decode map (PPM/PNG)
-    fz       Fractal Zoomer direct colour through FzsWriter --counts (PNG)
+    fz       Fractal Zoomer direct color through FzsWriter --counts (PNG)
 The kind is guessed from the file name when not given.
 
 WHY. A render compared with another render can agree with it on a shared fault (2026-11-03: twelve
@@ -24,14 +24,14 @@ HOW IT JUDGES.
   no one offset maps one radius onto another. The truth holds all three; the scorer takes the one
   this renderer's counts follow most closely (most pixels within 1 of the median difference) and
   says which. A Fractadyne smooth count is compared with the truth's own smooth count at 256.
-- EVERY PIXEL against its RANGE: the truth's stencil evaluated each pixel's centre and four
+- EVERY PIXEL against its RANGE: the truth's stencil evaluated each pixel's center and four
   points 1/1000 px away, and kept the lowest and highest count (format 2). A count outside that
-  range by more than SLACK (after the offset) is wrong wherever in that neighbourhood the
+  range by more than SLACK (after the offset) is wrong wherever in that neighborhood the
   renderer sampled. On a STABLE pixel (all five agree) the range is one value, and a Fractadyne
   smooth count is held to the truth's smooth count within 0.5. On a SENSITIVE pixel (structure
   finer than the pixel, such as a thin filament) the range is wider, and only a pixel whose
   structure is finer than 1/1000 px is beyond judging. Escaping where every point stayed inside
-  (or the reverse) is its own class. Deviations count as connected patches (8-neighbour,
+  (or the reverse) is its own class. Deviations count as connected patches (8-neighbor,
   PATCH_MIN px or more): a real fault - a lost filament, a glitch, a blank - is a region.
   (The first scorer judged sensitive pixels only by block medians and its self-check MISSED a
   planted 2-px filament: a thin line moves no median.)
@@ -262,8 +262,8 @@ def selfcheck(stem, render, kind=None):
 
     def filament():
         # A LOST FILAMENT: the thin ridges of the count field (a pixel at least SLACK+2 above both
-        # neighbours across it, horizontally or vertically, where the truth's range is narrow) in
-        # the band of rows richest in them, flattened to the lower of those neighbours - what a
+        # neighbors across it, horizontally or vertically, where the truth's range is narrow) in
+        # the band of rows richest in them, flattened to the lower of those neighbors - what a
         # renderer that thins a filament away draws there. Mostly sensitive or edge pixels.
         def f(v, _t):
             n = t["n256"].astype(np.float64)
@@ -323,7 +323,7 @@ def main():
     s.add_argument("truth", help="DIR/NAME of NAME.truth.json + NAME.truth.bin")
     s.add_argument("render")
     s.add_argument("--kind", choices=("fd", "f3", "imagina", "fz"))
-    s.add_argument("--png", help="write a map: grey agrees, blue sensitive, orange a deviating block, "
+    s.add_argument("--png", help="write a map: gray agrees, blue sensitive, orange a deviating block, "
                                  "magenta a deviating patch (dull purple isolated), red escaped in one only")
     s.add_argument("--shift", type=int, default=0, help="add N to the truth's escaped counts first")
     s = sub.add_parser("selfcheck", help="plant faults in a copy of a passing render; each must be found")

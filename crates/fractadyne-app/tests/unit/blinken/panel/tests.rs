@@ -64,7 +64,7 @@ fn the_english_lamp_labels_break_as_they_always_did_and_a_long_translation_fits_
         }
         // A longer label breaks at the space that keeps its longer line shortest...
         assert_eq!(lamp_label_lines(p, "REF EN AVANCE").0, ["REF EN", "AVANCE"]);
-        // ...and a word wider than the cell is drawn smaller, not over its neighbours.
+        // ...and a word wider than the cell is drawn smaller, not over its neighbors.
         let (lines, k) = lamp_label_lines(p, "ÜBERSCHREIBUNGEN");
         assert_eq!(lines.len(), 1);
         assert!((0.6..1.0).contains(&k), "{k}");
@@ -92,7 +92,7 @@ fn sizes_cycle_in_order() {
 
 #[test]
 fn a_pass_is_coloured_against_the_time_it_was_sized_for() {
-    // The pin's 20 ms target is the price colour's.
+    // The pin's 20 ms target is the price color's.
     assert_eq!(target_color(12.0, 20.0, 1.0), price_color(12.0, 1.0));
     // A still view's 300 ms pass against its 400 ms target reads as a 15 ms pin pass would, not red.
     assert_eq!(target_color(300.0, 400.0, 1.0), price_color(15.0, 1.0));

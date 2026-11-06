@@ -256,8 +256,8 @@ def main():
 
     total = len(m.STEPS)
     print("Manual checklist: %d steps" % total)
-    print("  %3d fully enforced      (a machine check fails if the behaviour breaks)" % len(covered))
-    print("  %3d partly enforced     (effect checked; gesture or judgement is not)" % len(partial))
+    print("  %3d fully enforced      (a machine check fails if the behavior breaks)" % len(covered))
+    print("  %3d partly enforced     (effect checked; gesture or judgment is not)" % len(partial))
     print("  %3d run-gated           (a recorded exit 0 from the release's binary; see --release)"
           % len(gated))
     print("  %3d outstanding         (declared in the plan, not yet implemented)" % len(planned))

@@ -156,7 +156,7 @@ pub fn parse_bf(s: &str) -> Option<BigFloat> {
 /// ⭐Also the test the app uses to decide whether a coordinate is worth PRESERVING as an
 /// expression: a plain decimal cannot gain precision when re-parsed (its digits are all there is),
 /// so only a NON-literal — a rational or a function/constant expression — is re-derivable to a
-/// deeper zoom's precision, and only that is stored alongside the resolved centre.
+/// deeper zoom's precision, and only that is stored alongside the resolved center.
 pub fn is_decimal_literal(t: &str) -> bool {
     let b = t.as_bytes();
     let mut i = 0;
@@ -555,7 +555,7 @@ impl Expr<'_> {
     }
 
     /// The typo hints shared by both contexts: the characters a word processor, a keyboard
-    /// layout or a maths habit puts into a coordinate, each with what to type instead.
+    /// layout or a math habit puts into a coordinate, each with what to type instead.
     fn unexpected(&self, i: usize, c: char, want: &str) -> ErrAt {
         let hint = match c {
             '\u{2212}' | '\u{2013}' | '\u{2014}' => "that is a typographic dash; use the ASCII minus '-'",
@@ -1085,7 +1085,7 @@ pub fn parse_kfr(text: &str) -> Option<KfrView> {
 /// magic (`0x000A0D56504D49FF`, i.e. the bytes `FF 49 4D 50 56 0D 0A 00`) with a clear message.
 ///
 /// Hardened exactly as [`parse_kfr`] is: bounded size and value lengths, an allow-list of keys
-/// (no formulas-as-code, no paths), the centre validated through [`parse_bf`], and clamped
+/// (no formulas-as-code, no paths), the center validated through [`parse_bf`], and clamped
 /// zoom/iterations. Returns `None` unless a valid `Re`, `Im` and `Size` are present.
 pub fn parse_imagina_text(text: &str) -> Option<KfrView> {
     // ⭐⭐**Line endings and clipboard damage, before anything else.** These files arrive by
@@ -1237,14 +1237,14 @@ pub fn lerp_bf(a: &BigFloat, b: &BigFloat, t: f64, p: usize) -> BigFloat {
 }
 
 /// `a − b` at precision `p`. A thin wrapper so callers outside this crate (the app, computing the
-/// offset of a view centre from an anchor expression, and testing whether a centre still sits
+/// offset of a view center from an anchor expression, and testing whether a center still sits
 /// exactly on that anchor) can do coordinate arithmetic without importing astro-float's rounding
-/// vocabulary — and get the same rounding the viewport's own centre math uses.
+/// vocabulary — and get the same rounding the viewport's own center math uses.
 pub fn bf_sub(a: &BigFloat, b: &BigFloat, p: usize) -> BigFloat {
     a.sub(b, p, RM)
 }
 
-/// `a + b` at precision `p`. Companion to [`bf_sub`], for reconstructing a centre from an anchor
+/// `a + b` at precision `p`. Companion to [`bf_sub`], for reconstructing a center from an anchor
 /// expression plus a saved offset.
 pub fn bf_add(a: &BigFloat, b: &BigFloat, p: usize) -> BigFloat {
     a.add(b, p, RM)

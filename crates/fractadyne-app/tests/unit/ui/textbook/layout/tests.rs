@@ -53,7 +53,7 @@ fn frac(num: Vec<Node>, den: Vec<Node>) -> Node {
 }
 
 /// TeX's rule 15: the bar on the math axis, numerator and denominator clear of it by the MATH gaps,
-/// both centred over the wider of the two.
+/// both centered over the wider of the two.
 #[test]
 fn a_fraction_sits_on_the_axis_with_its_gaps() {
     let c = &font().constants;
@@ -63,7 +63,7 @@ fn a_fraction_sits_on_the_axis_with_its_gaps() {
     let b = node(&frac(n.clone(), d.clone()), st, &CTX);
     let (_, y, w, h) = rules_of(&b)[0];
     let axis = units(st, c.axis_height);
-    assert!((y + h / 2.0 + axis).abs() < 1e-3, "bar centre {} on the axis {}", y + h / 2.0, -axis);
+    assert!((y + h / 2.0 + axis).abs() < 1e-3, "bar center {} on the axis {}", y + h / 2.0, -axis);
     assert!((h - units(st, c.fraction_rule_thickness)).abs() < 1e-4);
     // The numerator's ink bottom clears the bar by the display gap; the denominator's top likewise.
     let (nb, db) = (hlist(&n, st.num(), &CTX), hlist(&d, st.den(), &CTX));
@@ -71,7 +71,7 @@ fn a_fraction_sits_on_the_axis_with_its_gaps() {
     assert!((y) - (num_baseline + nb.depth) >= units(st, c.fraction_num_display_style_gap_min) - 1e-3);
     let den_baseline = glyphs_of(&b).last().unwrap().2;
     assert!((den_baseline - db.height) - (y + h) >= units(st, c.fraction_denom_display_style_gap_min) - 1e-3);
-    // The bar spans the numerator (the wider); the denominator is centred under it.
+    // The bar spans the numerator (the wider); the denominator is centered under it.
     assert!((w - nb.width).abs() < 1e-3);
     // A numerator is set one style smaller: Text in Display, Script in Text.
     assert_eq!(St::DISPLAY.num().style, Style::Text);
@@ -175,7 +175,7 @@ fn parentheses_grow_from_glyph_to_variant_to_assembly() {
     let axis = units(st, font().constants.axis_height);
     let delta = (inner.height - axis).max(inner.depth + axis);
     assert!(tall.height + tall.depth >= 2.0 * delta * 0.901 - 1e-3, "{} vs {}", tall.height + tall.depth, 2.0 * delta);
-    // Each delimiter, variant or assembly, is centred on the axis (the content need not be).
+    // Each delimiter, variant or assembly, is centered on the axis (the content need not be).
     for target in [0.0, 30.0, 200.0] {
         let d = delimiter('(', target, st, &CTX);
         assert!(((d.height - d.depth) / 2.0 - axis).abs() < 1e-3, "{target}: {} / {}", d.height, d.depth);

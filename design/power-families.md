@@ -131,7 +131,7 @@ gates and goldens review.
     against the CPU with ITS policy: by the module's, the more exact built-in looked 1.6–3.6× worse.
   - *B3.* Every family at 1e5×: the perturbation against the CPU's f64 orbit (mean |Δ| under 0.0002
     iterations, thousands of pixels each), floatexp against df32 at 1e10×, finite at 1e35×. The
-    direct path was the first comparison and is not usable here: its c is f32-quantised (the
+    direct path was the first comparison and is not usable here: its c is f32-quantized (the
     compiler folds df32; two ulps a pixel at |c| ≈ 1), which moved Multibrot 8's mean to 0.89.
     Views come from `family_view`: rays from 0 at 3.75° past multiples of 7.5° (never a symmetry
     axis: Tricorn 3's real and imaginary axes end in parabolic points, every pixel steep), the first
@@ -152,9 +152,9 @@ gates and goldens review.
     57 vs `z² + c` 110 Gsteps/s, Multibrot 5 35 vs 67, Burning Ship 3 50 vs 68; floatexp at 1e40×
     17.7 vs 38, 8.5 vs 27, 11.7 vs 20.5; direct `z⁶ + c` 145 vs the built-in 72. Part is what the
     lean modules leave out (the derivative for distance estimation, glitch detection, aux
-    colouring); part is presumably one fragment function carrying every family's and mode's live
+    coloring); part is presumably one fragment function carrying every family's and mode's live
     state. The built-in power families are therefore correct but no faster per step than typing them
-    as custom formulas; their case rests on the fixed path's extras and on phases 2–4. Specialising
+    as custom formulas; their case rests on the fixed path's extras and on phases 2–4. Specializing
     the fixed shader per family (a module per family, as the custom path builds) looks like a
     broad per-step win for the existing families too — not started, a decision of its own.
 - **Phase 2** (RTX 3080). `caps` counts Multibrot 6–8 as `z^d + c`: series approximation,
@@ -168,7 +168,7 @@ gates and goldens review.
   - *The old SA check was vacuous.* "Multibrot 3–5 SA matches SA-off at 1e7×" ran at (0.2, 0.1),
     every pixel interior. At boundary views SA on and off part on thousands of pixels for every
     power, old ones included (4,555 for Multibrot 3), nearly all steep; against the CPU's f64 orbit,
-    at the pixels its own neighbours agree on, they are equally right (SA on / off wrong at 182 /
+    at the pixels its own neighbors agree on, they are equally right (SA on / off wrong at 182 /
     190, 81 / 76, 242 / 226, 31 / 32, 0 / 0, 3 / 3 for d = 3..8). The boundary rows now ask that
     question; the interior rows stay.
   - *A seed past the bailout — a black frame in a released family.* The walk stops at the
@@ -182,8 +182,8 @@ gates and goldens review.
   - *Chunked = single pass, bit for bit,* in direct, df32 (incl. the rebase storm) and floatexp at
     1e30× on deep points bisected in bignum: 48,390 pixels escaping over 7,474 distinct counts,
     SA seeding at 1,920 (Multibrot 6). ⚠The first bisected points left the set through the main
-    body, whose boundary is neutral: every neighbour escaped on step 1999 or 2000 — a view that
-    agrees trivially. The fixtures are the first rays whose 1e-30 neighbours spread ≥ 300 steps.
+    body, whose boundary is neutral: every neighbor escaped on step 1999 or 2000 — a view that
+    agrees trivially. The fixtures are the first rays whose 1e-30 neighbors spread ≥ 300 steps.
   - *Glitch correction* (the audit, 800×450 at 1e30×): it changed 0.016–0.027% of pixels and, of
     24 sampled per family, made none right that was wrong (22–24 sub-pixel sensitive, the rest
     right either way) — Multibrot 3–5's finding. Off for 6–8, as for them.
@@ -224,7 +224,7 @@ gates and goldens review.
   tree (folds are not resumable). ⚠Three places assumed "a BLA view has a series to fall back on"
   (the walk started beside the build, the short-escaper rule, its live mirror) — true until the
   folds; each now asks `series_approximation`.
-  - *B7, core.* Level 0 is each fold's linearisation to 1.5·eps in every direction at reference
+  - *B7, core.* Level 0 is each fold's linearization to 1.5·eps in every direction at reference
     values in all four quadrants, for all 16; the fold radius binds next to a fold (y ≈ 3e-8; arg z
     = π/(2d) + 1e-7), holds inside, fails twice past it — ⚠a mutation that dropped the fold radius
     passed every other test, since away from an axis the power's radius is ~1e-6 and the smaller;

@@ -169,6 +169,6 @@ fn each_texel_is_written_where_the_plane_comes_out_upright_in_zoomasm() {
             assert_eq!(n[j * w + x], whole as u32 + KF_ITERATIONS_BIAS as u32, "column {x}, row {j}: wants the rendered texel ({i}, {j})");
         }
     }
-    // Column 2 of 8 is a quarter turn clockwise: BELOW the centre in the plane, rendered at 270°.
+    // Column 2 of 8 is a quarter turn clockwise: BELOW the center in the plane, rendered at 270°.
     assert_eq!(n[2] as u64, kf_count(tag(6, 0), nf, 0.75, 2.0, (0.0, 0.0)).0 + KF_ITERATIONS_BIAS as u64);
 }

@@ -1,10 +1,10 @@
 use super::*;
 
-/// A deep centre carries far more information than an `f64` can hold. `pan_complex` exists
+/// A deep center carries far more information than an `f64` can hold. `pan_complex` exists
 /// so the overview map can move such a view WITHOUT going through one: it adds the delta to
 /// the existing coordinate at full precision. The obvious alternative - convert the map
-/// position to `f64` and assign it as the new centre - looks equivalent and silently
-/// truncates the centre to about 17 digits, which at depth is the whole coordinate.
+/// position to `f64` and assign it as the new center - looks equivalent and silently
+/// truncates the center to about 17 digits, which at depth is the whole coordinate.
 ///
 /// Pinned as a round trip: pan out and back, and the original bits must return.
 #[test]
@@ -35,7 +35,7 @@ fn a_round_trip_pan_returns_the_original_deep_centre() {
 }
 
 /// Checklist step 19, "the image follows the cursor 1:1 while dragging". The claim is exact:
-/// a drag of N pixels must move the centre by N * units_per_pixel, at any depth. Checked
+/// a drag of N pixels must move the center by N * units_per_pixel, at any depth. Checked
 /// across 15 orders of magnitude because a scale factor that is subtly wrong is invisible at
 /// one depth and obvious at another.
 #[test]
@@ -79,8 +79,8 @@ fn zoom_at_keeps_the_point_under_the_cursor_fixed() {
             crate::BigFloat::from_f64(0.0, 64),
             40.0,
         );
-        // Deliberately NOT the centre: zooming about the centre keeps everything fixed, so a
-        // centred cursor would pass even if the anchoring were ignored entirely.
+        // Deliberately NOT the center: zooming about the center keeps everything fixed, so a
+        // centered cursor would pass even if the anchoring were ignored entirely.
         let (px, py) = (1500.0f64, 300.0);
         let (cx, cy) = vp.pixel_to_complex(px, py);
 
@@ -163,7 +163,7 @@ fn recommended_max_iter_honours_a_high_user_base() {
     );
 }
 
-/// `zoom_by` must leave the centre exactly where it was, at any depth - it is the
+/// `zoom_by` must leave the center exactly where it was, at any depth - it is the
 /// gesture for "deeper from here", so any drift is the bug.
 #[test]
 fn zoom_by_holds_the_centre_and_scales_the_span() {
@@ -184,15 +184,15 @@ fn zoom_by_holds_the_centre_and_scales_the_span() {
     let p = vp.precision;
     let dx = crate::to_f64(&vp.center_x.sub(&cx, p, RM)).abs();
     let dy = crate::to_f64(&vp.center_y.sub(&cy, p, RM)).abs();
-    assert!(dx < 1.0e-40 && dy < 1.0e-40, "centre drifted: {dx:e}, {dy:e}");
+    assert!(dx < 1.0e-40 && dy < 1.0e-40, "center drifted: {dx:e}, {dy:e}");
 }
 
 /// Checklist step 22, "the Home button ends at the standard home view". The animation is
 /// `home_lerp` driven from the starting magnification down to 0, so what this pins is the
-/// LANDING: at `new_logmag == 0` the view must be exactly home — 1x, on the requested centre —
+/// LANDING: at `new_logmag == 0` the view must be exactly home — 1x, on the requested center —
 /// from any starting depth, with nothing left of the deep coordinate it flew out of.
 ///
-/// Checked from several depths because the centre glide is a fraction of the remaining
+/// Checked from several depths because the center glide is a fraction of the remaining
 /// magnification (`1 - e^-logmag`), so an error in it shrinks with depth and would be
 /// invisible if only one shallow start were tried.
 #[test]
@@ -229,7 +229,7 @@ fn home_view_is_the_default() {
 
 /// Checklist step 23, "Reset to default view returns to the default view for the current
 /// fractal". `reset_to` is what the menu item applies to each panel; from any depth it must
-/// restore the whole framing - magnification, centre AND precision. A reset that left the
+/// restore the whole framing - magnification, center AND precision. A reset that left the
 /// precision at its deep value would look right and carry hundreds of bits of working
 /// precision through every subsequent frame.
 #[test]
@@ -245,10 +245,10 @@ fn reset_view_is_the_default() {
         );
         assert!(vp.precision > 64, "the deep view under test is not actually deep");
 
-        // Each formula has its own default centre; the Mandelbrot's is the fresh viewport's.
+        // Each formula has its own default center; the Mandelbrot's is the fresh viewport's.
         vp.reset_to(-0.5, 0.0);
         let (x, y) = vp.center_f64();
-        assert!((x - -0.5).abs() < 1.0e-15 && y.abs() < 1.0e-15, "centre ({x}, {y})");
+        assert!((x - -0.5).abs() < 1.0e-15 && y.abs() < 1.0e-15, "center ({x}, {y})");
         assert_eq!(vp.precision, fresh.precision, "{w}x{h}: precision not reset");
         assert!(
             (vp.magnification() - 1.0).abs() < 1.0e-9,
@@ -261,16 +261,16 @@ fn reset_view_is_the_default() {
             "{w}x{h}: framing differs from a fresh viewport of the same size"
         );
 
-        // A non-default centre is honoured (Burning Ship and friends do not sit at -0.5).
+        // A non-default center is honored (Burning Ship and friends do not sit at -0.5).
         vp.reset_to(-1.75, 0.03);
         let (x, y) = vp.center_f64();
-        assert!((x - -1.75).abs() < 1.0e-15 && (y - 0.03).abs() < 1.0e-15, "centre ({x}, {y})");
+        assert!((x - -1.75).abs() < 1.0e-15 && (y - 0.03).abs() < 1.0e-15, "center ({x}, {y})");
     }
 }
 
 /// Checklist steps 16-17, "a click zooms in on the clicked point by the selected Factor".
 /// Two claims, both exact: the magnification multiplies by the factor, and the clicked point
-/// becomes the view centre. Run at depth as well as at home because the recentre is a bignum
+/// becomes the view center. Run at depth as well as at home because the recenter is a bignum
 /// pan and the zoom is a `FloatExp` scale - a factor applied to the wrong one of the two
 /// would still look plausible shallow.
 ///
@@ -287,8 +287,8 @@ fn click_zoom_applies_factor() {
                     crate::BigFloat::from_f64(0.0, 64),
                     log2mag,
                 );
-                // Deliberately off-centre: clicking the centre would pass even if the
-                // recentre were skipped entirely.
+                // Deliberately off-center: clicking the center would pass even if the
+                // recenter were skipped entirely.
                 let (px, py) = (1180.0f64, 260.0);
                 let (tx, ty) = vp.pixel_to_complex(px, py);
                 let before = vp.log2_magnification();
@@ -300,19 +300,19 @@ fn click_zoom_applies_factor() {
                     "{f}x {label} at 2^{log2mag}: magnification went 2^{before} -> 2^{}",
                     vp.log2_magnification()
                 );
-                // The clicked point is now the centre - checked in PIXELS, so it holds at
+                // The clicked point is now the center - checked in PIXELS, so it holds at
                 // depths where the coordinate itself is far past f64.
                 let (bx, by) = vp.complex_to_pixel(&tx, &ty);
                 assert!(
                     (bx - 800.0).abs() < 0.01 && (by - 450.0).abs() < 0.01,
-                    "{f}x {label} at 2^{log2mag}: clicked point sits at ({bx:.3}, {by:.3}),                          wanted the centre (800, 450)"
+                    "{f}x {label} at 2^{log2mag}: clicked point sits at ({bx:.3}, {by:.3}),                          wanted the center (800, 450)"
                 );
             }
         }
     }
 }
 
-/// Direction and magnitude: the delta lands on the centre as given, in complex units.
+/// Direction and magnitude: the delta lands on the center as given, in complex units.
 #[test]
 fn pan_complex_moves_the_centre_by_exactly_the_delta() {
     let mut vp = Viewport::new(1920.0, 1080.0);

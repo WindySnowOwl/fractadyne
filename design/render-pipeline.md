@@ -3,11 +3,11 @@
 A map of what happens between "the view changed" and "pixels on screen", and of the feedback loops
 that make this the most delicate part of the codebase.
 
-**Why this document exists:** the pipeline's behaviour is spread across `render.rs::build_params`
+**Why this document exists:** the pipeline's behavior is spread across `render.rs::build_params`
 (staged 2026-09-02 into `bp_frame_budget` / `bp_chunk_tiling` / `bp_present_gate` /
 `bp_finish_params` around a ~1,700-line core), `fractadyne-gpu/src/lib.rs`, and
 `mandelbrot.wgsl`, and no single file states the
-whole shape. It is also the thing a refactor must *not* change — so this describes **behaviour**,
+whole shape. It is also the thing a refactor must *not* change — so this describes **behavior**,
 deliberately not code structure. If restructuring `build_params` changes anything in this document,
 the refactor changed something it shouldn't have.
 
@@ -49,7 +49,7 @@ flowchart TD
 
     subgraph GPU["3 · Iterate — GPU"]
         KEY{"<b>IterKey</b> unchanged?"}
-        REUSE["Reuse texture<br/><i>recolour only</i>"]
+        REUSE["Reuse texture<br/><i>recolor only</i>"]
         REPRO["Reproject frozen frame<br/><i>uv scale + offset, during motion</i>"]
         SINGLE["fs_iterate<br/><i>one dispatch</i>"]
         CHUNK["fs_iterate_chunk → fs_resolve<br/><i>iteration-range chunking,<br/>state in ping-pong textures</i>"]
@@ -62,7 +62,7 @@ flowchart TD
 
     GPU --> COLOR
 
-    subgraph COLOR["4 · Colour — GPU, cheap, always runs"]
+    subgraph COLOR["4 · Color — GPU, cheap, always runs"]
         SHADE["<b>shade()</b> — method → value<br/>log/linear range map → palette<br/>interior · DE glow · relief · vignette"]
         OUT["Surface (live)<br/>or Rgba32Float (export)"]
         SHADE --> OUT
@@ -84,7 +84,7 @@ flowchart TD
 
     subgraph POST["Export tail"]
         GLITCH["Multi-reference glitch correction"]
-        NORM["Two-pass normalize<br/><i>measure range, then colour</i>"]
+        NORM["Two-pass normalize<br/><i>measure range, then color</i>"]
         DOWN["Box-downsample supersampling"]
         DITHER["<b>to_srgb8_dithered</b> → PNG"]
         GLITCH --> NORM --> DOWN --> DITHER
@@ -127,8 +127,8 @@ Four ways to satisfy a frame, in increasing cost:
 
 | path | when | note |
 |---|---|---|
-| **Reuse** | `IterKey` unchanged | the recolour path — palette/cycle/offset changes never re-iterate |
-| **Reproject** | during motion | colour pass samples the frozen texture with a uv scale + offset |
+| **Reuse** | `IterKey` unchanged | the recolor path — palette/cycle/offset changes never re-iterate |
+| **Reproject** | during motion | color pass samples the frozen texture with a uv scale + offset |
 | **`fs_iterate`** | key changed, dispatch affordable | one pass |
 | **`fs_iterate_chunk` + `fs_resolve`** | dispatch would exceed the watchdog budget | resumable; per-pixel state ping-pongs through textures across frames |
 
@@ -140,11 +140,11 @@ the failure is a subtly wrong image, not a crash.
 This is what blocked the interior-DE work: adding an estimate to `fs_iterate` alone made the two
 disagree.
 
-### 4 · Colour (GPU)
+### 4 · Color (GPU)
 
-Always runs, and is cheap — which is why recolouring is instant. `shade()` picks the value by
+Always runs, and is cheap — which is why recoloring is instant. `shade()` picks the value by
 method, maps it to a palette position (linear, or logarithmic when the range is wide), and applies
-interior colour, distance glow, relief lighting and the vignette.
+interior color, distance glow, relief lighting and the vignette.
 
 ### 5 · Measure (the feedback loops)
 
@@ -195,5 +195,5 @@ Run all four before and after. A refactor that leaves this document accurate is 
 > a rebuild that could not reuse came back *shorter*, and the next hold rendered black. With the
 > cap made relative, `hold-e72` adjudicates again. Verified in anger 2026-09-02: the staged
 > `build_params` split ran all four gates — livetest 24/24 checkpoints (0 drifted), signatures
-> identical, goldens byte-identical — and this document needed no behavioural edits, which is
+> identical, goldens byte-identical — and this document needed no behavioral edits, which is
 > exactly the contract it exists to enforce.

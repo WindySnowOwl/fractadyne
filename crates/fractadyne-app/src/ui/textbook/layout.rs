@@ -8,7 +8,7 @@
 
 use super::font::{font, MathFont, Part};
 
-/// TeX's atom classes, which decide the space between neighbours (the whole table is kept, though
+/// TeX's atom classes, which decide the space between neighbors (the whole table is kept, though
 /// the formula language makes no punctuation atoms yet).
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]
 #[allow(dead_code)]
@@ -40,7 +40,7 @@ pub(crate) enum Node {
     /// An empty place still to be filled: a dashed box (with the anchor of a caret in it).
     Slot(Option<u32>),
     /// A place a caret can stand between two nodes: no width, no class (the spacing is the two
-    /// neighbours'), reported back as an [`Anchor`] in the middle of the space between them.
+    /// neighbors'), reported back as an [`Anchor`] in the middle of the space between them.
     Mark(u32),
     /// A sub-list set as one node, as TeX's `{…}`: what an exponent's base with a mark after it is.
     /// With one node besides marks it is that node (its class, its italic correction).
@@ -238,7 +238,7 @@ fn space_mu(l: Class, r: Class, script: bool) -> f32 {
     }
 }
 
-/// A node's class as its left and right neighbours see it.
+/// A node's class as its left and right neighbors see it.
 ///
 /// ⚠Growing parentheses space as ordinary ones do — an opening on the left, a closing on the right
 /// — not as TeX's `\left…\right`, which makes an Inner atom and so a thin space after an operator
@@ -301,7 +301,7 @@ pub(crate) fn hlist(nodes: &[Node], st: St, ctx: &Ctx) -> LBox {
 }
 
 /// [`hlist`], with the x at which each node starts (a mark's: where its anchor went). Marks take
-/// no part in spacing: the space is the two real neighbours', and a mark's anchor stands in the
+/// no part in spacing: the space is the two real neighbors', and a mark's anchor stands in the
 /// middle of it. Anchors that do not know their row yet get this list's extent, at least a letter's.
 pub(crate) fn hlist_with_marks(nodes: &[Node], st: St, ctx: &Ctx) -> (LBox, Vec<f32>) {
     let (mut out, marks) = hlist_inner(nodes, st, ctx);
@@ -486,11 +486,11 @@ fn scripts(base: &Node, sup: Option<&[Node]>, sub: Option<&[Node]>, st: St, ctx:
     out
 }
 
-/// A delimiter `ch` at least `target` points tall in total, centred on the math axis.
+/// A delimiter `ch` at least `target` points tall in total, centered on the math axis.
 fn delimiter(ch: char, target: f32, st: St, ctx: &Ctx) -> LBox {
     let axis = ctx.u(st, ctx.f().constants.axis_height);
     let b = sized_glyph(ch, target, st, ctx);
-    let shift = axis - (b.height - b.depth) / 2.0; // move up by this to centre on the axis
+    let shift = axis - (b.height - b.depth) / 2.0; // move up by this to center on the axis
     let mut out = LBox { width: b.width, ..Default::default() };
     out.put(&b, 0.0, -shift);
     out
@@ -513,7 +513,7 @@ fn sized_glyph(ch: char, need: f32, st: St, ctx: &Ctx) -> LBox {
 
 /// The font's parts for a stretchy glyph, stacked bottom to top to at least `target` points.
 ///
-/// OpenType's rule: neighbouring parts overlap by at least `minConnectorOverlap` and at most the
+/// OpenType's rule: neighboring parts overlap by at least `minConnectorOverlap` and at most the
 /// shorter of the two connectors. So `k` extender repeats reach anything between
 /// Σadvance − Σ(most overlap) and Σadvance − joints·(least overlap); the fewest repeats that reach
 /// `target` are used, every joint overlapping by the same amount, as much as still reaches it.

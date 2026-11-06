@@ -372,7 +372,7 @@ jobs:
   # MPFR, hence the separate GNU toolchain + MSYS2 dance), while the standard Linux binary is
   # already built with gcc. What survives is the LICENSING: rug/gmp-mpfr-sys/GMP/MPFR are
   # LGPL-3.0-or-later against this project's MIT OR Apache-2.0, and those obligations attach to
-  # conveying a binary — so this stays a separate, clearly-labelled download rather than becoming
+  # conveying a binary — so this stays a separate, clearly-labeled download rather than becoming
   # the default one. `scripts/build-accelerated.sh` owns the build, the notices and the
   # verification; read its header before changing anything here.
   #

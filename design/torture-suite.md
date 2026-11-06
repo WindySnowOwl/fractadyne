@@ -78,7 +78,7 @@ What the large window genuinely adds, and why it was still worth blessing:
 (0 drifted on a re-run), wired in as `tour/grand/gauntlet-1080p` and `tour/grand/full-1080p`.
 
 Still open: the no-`TIMESTAMP_QUERY` path (1445×1134 + `FRACTADYNE_NO_TIMESTAMPS=1`), the
-beta.102/103 pixellation size (1920×1102), and a window at the 2247×1485 class the 08-16 loss
+beta.102/103 pixelation size (1920×1102), and a window at the 2247×1485 class the 08-16 loss
 actually used.
 
 **G4 — Goldens stop at 1e6.** There is no exact-image check anywhere in e6–e1008. Deep correctness
@@ -217,7 +217,7 @@ Prefix matching: `--torture live` (lane), `--torture live/crossover` (family), o
 ## 4. The difficulty ladder
 
 Difficulty is a product of independent axes. The ladder is a *path* through that space, ordered so
-that the first failure localises the cause.
+that the first failure localizes the cause.
 
 ### Axis A — depth, with regime boundaries named
 
@@ -241,7 +241,7 @@ that the first failure localises the cause.
 | State | How to construct | Motivates |
 |---|---|---|
 | BLA-live, long ref | current tour holds | baseline |
-| **short escaped ref (`orbit_len` ~600, `bla_skip=0`)** | centre just outside a minibrot so the reference escapes early relative to the pixel ask — the documented three-spar `orbit_len=626` | **every device loss** |
+| **short escaped ref (`orbit_len` ~600, `bla_skip=0`)** | center just outside a minibrot so the reference escapes early relative to the pixel ask — the documented three-spar `orbit_len=626` | **every device loss** |
 | partial reference | ask above `LIVE_REF_CAP` | freeze guard v2 |
 | collapse-on-install | wheel-jump that shortens the ref >1.5× | `install_collapse` derate |
 | rebase grind | high rebase count, low skip | crash-1786506241 |
@@ -254,7 +254,7 @@ auto-iter · explicit small · **explicit 10M** · **explicit above the referenc
 
 ### Axis D — resolution
 
-320×200 · 1280×720 · **1445×1134** (beta.47 repro) · **1920×1102** (pixellation repro) · 1920×1080 ·
+320×200 · 1280×720 · **1445×1134** (beta.47 repro) · **1920×1102** (pixelation repro) · 1920×1080 ·
 3840×2160 · **resize-during-settle** · odd/prime widths.
 
 ### Axis E — motion
@@ -321,14 +321,14 @@ blessed.
 
 | ID | Construction | Guards against |
 |---|---|---|
-| **PP1 e28-noBLA** | centre where the reference escapes in ~600 iterations at a pixel ask of ~10⁵, sitting at 1e28 | the 2026-08-15 device loss |
+| **PP1 e28-noBLA** | center where the reference escapes in ~600 iterations at a pixel ask of ~10⁵, sitting at 1e28 | the 2026-08-15 device loss |
 | **PP2 e28-blaLive** | same depth, long non-escaping reference | isolates B from A |
 | **PP3 f32-cliff** | 1e13.7 straddle, direct and perturbation both valid | the df32 fold cliff |
 | **PP4 explicit-over-escape** | e100 view, auto-iter OFF, count above the reference's escape length | beta.101 |
 | **PP5 refusal-band** | ask 248k–256k at a depth needing extension | the beta.42 hang |
 | **PP6 collapse-jump** | wheel jump shortening the ref >1.5× | `install_collapse` |
 | **PP7 latency-floor minibrot** | interior of a deep minibrot, tiny frame | "steps ∝ time is FALSE" |
-| **PP8 glitch-storm** | the documented pathology centre | correction >1h |
+| **PP8 glitch-storm** | the documented pathology center | correction >1h |
 | **PP9 e95-wall** | just past the honest limit | must degrade with a message, not a black screen |
 | **PP10 zoom-out-crossover** | start e30, zoom out through e28 | G6 |
 | **PP11 julia-100x** | dual Julia at `PERT_JULIA_THRESHOLD` | beta.88 |
@@ -380,7 +380,7 @@ runs and across machines are diffable. On the Radeon box this is what gets zippe
   the ladder next to the code that defines the regimes and makes `--list` trivial; a script is easier
   to run against an *installed* build. Leaning Rust with the ladder as committed data.
 - Blessing policy for the deep goldens: which card is authoritative, and does `BLESSED-GPU.txt`
-  generalise to per-rung tolerance?
+  generalize to per-rung tolerance?
 - Does the full suite have a "quick" tier (< 5 min, offline only) for pre-commit, distinct from the
   overnight soak?
 - How do rungs that *intentionally* lose the device get scored — expected-failure, or excluded from

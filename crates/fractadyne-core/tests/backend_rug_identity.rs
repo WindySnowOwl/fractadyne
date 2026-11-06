@@ -321,7 +321,7 @@ fn the_pick_scoring_walk_is_backend_identical() {
 ///
 /// `try_series_skip_walk` mirrors the astro recurrence op-for-op; this matrix holds it to
 /// that: same skip index, same six coefficient mantissa lanes (bit-compared), same shared
-/// exponents — across centres, precisions, worst-case |δc| depths and iteration caps. The
+/// exponents — across centers, precisions, worst-case |δc| depths and iteration caps. The
 /// multibrot ids exercise the dispatch fallback (twin declines → astro runs under `Rug`),
 /// which must also be identical, trivially. Anti-vacuity is asserted three ways: real skips
 /// were produced, the twin actually RAN (the observed-backend stamp — a matrix whose Rug arm
@@ -497,7 +497,7 @@ fn the_split_product_build_is_byte_identical_to_astro_float() {
 }
 
 /// The build's extended-range RECORDING (`reference_orbit_periodic_until`'s sink, which the pick
-/// takes the centre's walk from) against the pick's own scoring walk, in the products-across-cores
+/// takes the center's walk from) against the pick's own scoring walk, in the products-across-cores
 /// walk (17,000 bits) and the split one (40,000): the same samples, bit for bit, in MPFR and in
 /// astro-float. The low-precision loops are covered by the core's
 /// `the_centre_walk_can_come_from_a_build`, which runs in MPFR under this feature.

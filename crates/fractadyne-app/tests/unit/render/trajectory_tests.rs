@@ -31,7 +31,7 @@ fn glide_for(vp: &Viewport, ax: f64, ay: f64, v0: f64, target_v: f64) -> Glide {
     }
 }
 
-/// The closed form must land where the frame-by-frame glide lands: depth AND centre, for every
+/// The closed form must land where the frame-by-frame glide lands: depth AND center, for every
 /// slider setting, from rest and in steady state. Steady state is exact (the per-frame factors
 /// multiply to `e^(−v·τ)`); the 0.15 s easing transient is integrated right-Riemann by the app
 /// (each frame applies the velocity it just eased TO), which the closed form undershoots by
@@ -46,7 +46,7 @@ fn glide_closed_form_matches_the_frame_by_frame_glide() {
         fractadyne_core::BigFloat::from_f64(0.131_825_904, 64),
         5.0e3,
     );
-    // Cursor-anchored (off-centre) so the centre actually moves, plus the centred case.
+    // Cursor-anchored (off-center) so the center actually moves, plus the centered case.
     for &(ax, ay) in &[(w * 0.5, h * 0.5), (w * 0.8, h * 0.3)] {
         for &zr in &[0.25, 1.0, 4.0] {
             let rate = crate::ZOOM_RATE * zr;
@@ -66,12 +66,12 @@ fn glide_closed_form_matches_the_frame_by_frame_glide() {
                         truth.log2_magnification()
                     );
                     assert!((traj.l2_at(tau) - pred.l2).abs() < 1e-12);
-                    // The predicted centre, seen through the true future view, sits at its middle.
+                    // The predicted center, seen through the true future view, sits at its middle.
                     let (px, py) = truth.complex_to_pixel(&pred.cx, &pred.cy);
                     let err = ((px - w * 0.5).powi(2) + (py - h * 0.5).powi(2)).sqrt();
                     assert!(
                         err < tol_px,
-                        "centre: zr {zr} v0 {v0:.3} T {target_v:.3} τ {tau} anchor ({ax},{ay}): \
+                        "center: zr {zr} v0 {v0:.3} T {target_v:.3} τ {tau} anchor ({ax},{ay}): \
                          {err:.4} px off"
                     );
                 }

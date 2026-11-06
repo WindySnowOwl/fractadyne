@@ -34,7 +34,7 @@ struct ScriptFile {
     /// and CLI flags merely override.
     #[serde(default)]
     render: RenderFile,
-    /// Live-playback behaviour (pacing).
+    /// Live-playback behavior (pacing).
     #[serde(default)]
     playback: PlaybackFile,
     /// Named coordinates, referenced by `location = "id"` from keyframes and annotations.
@@ -1034,14 +1034,14 @@ fn parse_zoom_log10(s: &str) -> Result<f64, String> {
     let l10 = m.log10() + exp;
     // BOUND the depth an untrusted script may ask for. Zoom is a string precisely so a tour can
     // go deeper than f64 — but the value sizes `precision_for_octaves`, which is the precision
-    // EVERY centre in the tour is then parsed at (and re-derived per frame in `Playback::sample`).
+    // EVERY center in the tour is then parsed at (and re-derived per frame in `Playback::sample`).
     // So an unbounded exponent is not a silly-zoom nuisance, it is an allocation vector: the
     // exponent itself is parsed as f64, so `zoom = "1e1e999"` yields an infinite log10, the octave
     // count saturates `as u64`, and astro-float is asked for a usize::MAX-bit BigFloat — the
     // process dies allocating before a single frame is drawn. Tours are the artifact people will
     // share on a forum, so this has to be a clean error, not an abort. The ceiling is far past
     // anything reachable: the deepest verified corpus location is ~4.6e1105x and the extreme-zoom
-    // battery runs 1e21000x, against a limit of 1e1000000x (~3.3M octaves, ~415 KB per centre).
+    // battery runs 1e21000x, against a limit of 1e1000000x (~3.3M octaves, ~415 KB per center).
     const MAX_ZOOM_LOG10: f64 = 1.0e6;
     if !l10.is_finite() || l10 > MAX_ZOOM_LOG10 {
         return Err(format!(
@@ -1526,7 +1526,7 @@ impl TransitionKind {
     }
 }
 
-/// What the renderer must do to a finished frame to realise a transition.
+/// What the renderer must do to a finished frame to realize a transition.
 ///
 /// Deliberately a description of a PIXEL operation rather than of camera state: transitions are
 /// composited after the frame exists, so they cost nothing in the renderer and cannot perturb the
@@ -1836,7 +1836,7 @@ pub(crate) struct Playback {
     pub(crate) paused: bool,
     /// The tour has reached its end and stopped there. The player STAYS on screen in this state —
     /// a finished tour is the one moment you most want to scrub back into it, and the old
-    /// behaviour (tear the transport down the instant the clock ran out) took that away. The
+    /// behavior (tear the transport down the instant the clock ran out) took that away. The
     /// script's own iteration budget and coloring are still applied; the viewer's are handed back
     /// only when the player is closed (`stop_playback`). Scrubbing or pressing play clears it.
     pub(crate) finished: bool,
@@ -1920,7 +1920,7 @@ impl Playback {
     }
 
     /// The camera's depth at time `e` (natural log of the magnification) exactly as [`Self::sample`]
-    /// computes it, without the rest of the state — its bignum centre above all — for ordering a
+    /// computes it, without the rest of the state — its bignum center above all — for ordering a
     /// render by depth ([`deepest_frame_order`]). A unit test holds it to `sample(e).logmag`.
     pub(crate) fn logmag_at(&self, e: f64) -> f64 {
         let n = self.kfs.len();
@@ -2039,11 +2039,11 @@ impl Playback {
             }),
             (None, _) => None,
         };
-        // ⭐A PINNED-CENTRE GLIDE MUST RETURN THE CENTRE EXACTLY. `lerp_bf(x, x, ease, p)` is not
+        // ⭐A PINNED-CENTER GLIDE MUST RETURN THE CENTER EXACTLY. `lerp_bf(x, x, ease, p)` is not
         // the identity — it ROUNDS x to `p` bits, and `p` here is the precision of the CURRENT
-        // interpolated depth, so a zoom dive's shallow entry rounds the destination centre it will
-        // spend the whole descent converging on. A rounded centre is a genuinely DIFFERENT point,
-        // and at a Misiurewicz centre its true orbit escapes at a length set by the rounding
+        // interpolated depth, so a zoom dive's shallow entry rounds the destination center it will
+        // spend the whole descent converging on. A rounded center is a genuinely DIFFERENT point,
+        // and at a Misiurewicz center its true orbit escapes at a length set by the rounding
         // (measured, core test `escape_length_of_rounded_centre`: 78 bits → escape 625, 157 →
         // 94,126, 206 → 602,515, 300+ → survives). The grand tour's 626-sample reference — pinned
         // by reuse through the df32→floatexp crossover into `bla_skip=0`, ~90× frame cost and a
@@ -2051,7 +2051,7 @@ impl Playback {
         // mysterious 602,516-sample orbit was `escape(round(centre, 206)) + 1`. However good the
         // reference picker, it cannot beat a wrong input point.
         //
-        // A genuine pan (a.c ≠ b.c) still interpolates at the depth precision: mid-pan centres are
+        // A genuine pan (a.c ≠ b.c) still interpolates at the depth precision: mid-pan centers are
         // transient (references re-anchor continuously) and every arrival point is a keyframe,
         // which the hold branch above returns EXACTLY.
         let (cx, cy) = if a.cx == b.cx && a.cy == b.cy {
@@ -2067,7 +2067,7 @@ impl Playback {
 
     /// Is the camera stationary at time `e` — inside a keyframe's hold, or past the final one?
     /// A hold is the only part of a tour where the view is meant to be LOOKED at rather than
-    /// travelled through, which is why it gets settled rendering and (under `Settled` pacing) as
+    /// traveled through, which is why it gets settled rendering and (under `Settled` pacing) as
     /// much time as it needs.
     /// The next keyframe HOLD whose window starts after `e`: its `(at, until)` in tour seconds.
     /// The hold-prefetch (`playback_hold_prefetch`) uses this to start the hold's full-ask
@@ -2239,7 +2239,7 @@ fn draw_line(px: &mut [f32], w: u32, h: u32, x0: f32, y0: f32, x1: f32, y1: f32,
 }
 
 /// Burn a caption into a **linear-RGBA** export frame — the offscreen equivalent of
-/// `draw_captions`: a soft dark backing rect + white text (× `alpha`), wrapped and centred on the
+/// `draw_captions`: a soft dark backing rect + white text (× `alpha`), wrapped and centered on the
 /// caption's screen anchor. `atlas` is the (pre-cloned) egui font atlas.
 /// Returns the caption's backing rect (device pixels) so callouts can avoid it, or `None` if not drawn.
 fn stamp_caption(ctx: &egui::Context, px: &mut [f32], w: u32, h: u32, cap: &Caption, alpha: f32) -> Option<egui::Rect> {
@@ -2267,7 +2267,7 @@ fn stamp_caption(ctx: &egui::Context, px: &mut [f32], w: u32, h: u32, cap: &Capt
 
 /// Burn a small location HUD — zoom level + center coordinates — into the top-left of an export
 /// frame, over a soft dark backing. The zoom line is amber (brand accent); the coordinate lines are
-/// light grey monospace. `vp` supplies the arbitrary-precision center + zoom for the current frame.
+/// light gray monospace. `vp` supplies the arbitrary-precision center + zoom for the current frame.
 /// Pre-rasterized location HUD (dark panel + zoom/coordinate text): premultiplied **linear** RGBA at
 /// its export scale, plus the top-left pixel position. Built on the main thread (needs the egui font
 /// atlas) so it can be blitted by the ctx-less export worker — like the brand watermark. The live
@@ -2616,13 +2616,13 @@ fn resolve_script(sf: ScriptFile, bench: Option<Bench>) -> Result<Playback, Stri
     }
 
     // --- keyframes ---
-    // PRE-PASS: the deepest zoom anywhere in the tour. Every centre is then parsed at THAT
+    // PRE-PASS: the deepest zoom anywhere in the tour. Every center is then parsed at THAT
     // precision, not at its own keyframe's.
     //
-    // Parsing each centre at its own depth looks right and is badly wrong: the camera interpolates
+    // Parsing each center at its own depth looks right and is badly wrong: the camera interpolates
     // BETWEEN keyframes, so a glide from 1e30× to 1e55× is limited by the 1e30× endpoint's
     // precision. The spar coordinate carries 120 digits; parsed at 1e30×'s ~140 bits it loses the
-    // rest, and by 1e55× the resulting centre error is larger than the whole view span — the camera
+    // rest, and by 1e55× the resulting center error is larger than the whole view span — the camera
     // is pointed somewhere else entirely. Measured live: every reference along that glide escaped
     // after 626 samples (a point nowhere near the set boundary), the prefetch queue rebuilt one
     // 13,529 times in six minutes, and the run ended in a lost GPU device. The lookahead makes it
@@ -2713,10 +2713,10 @@ fn resolve_script(sf: ScriptFile, bench: Option<Bench>) -> Result<Playback, Stri
             Some(z) => parse_zoom_log10(z).map_err(|e| format!("keyframe {id}: {e}"))?,
             None => 0.0,
         };
-        // Parse the centre at the DEEPEST depth the tour reaches (see `center_prec` above), not at
+        // Parse the center at the DEEPEST depth the tour reaches (see `center_prec` above), not at
         // this keyframe's — the camera interpolates between keyframes and the lookahead builds
-        // references for depths ahead of the current one, so a shallow keyframe's centre still has
-        // to carry the digits a deep neighbour needs. An exact rational like (37+16i)/100 is only
+        // references for depths ahead of the current one, so a shallow keyframe's center still has
+        // to carry the digits a deep neighbor needs. An exact rational like (37+16i)/100 is only
         // as good as the bits it is evaluated to, which is the same argument.
         let prec = center_prec;
         let (re, im) = center
@@ -3436,7 +3436,7 @@ impl FractadyneApp {
 
     /// Measure one normalize anchor: the escape-value range of keyframe frame `kfi`'s view at the
     /// fixed 480×270 measuring size and the keyframe's own iteration budget. `None` when the view
-    /// has no range to measure (all interior, aux colouring, or not an escape-time family).
+    /// has no range to measure (all interior, aux coloring, or not an escape-time family).
     ///
     /// Leaves the app holding that keyframe's fractal, budget and palette — the caller renders
     /// frames afterwards, and each frame sets all of these again for itself.
@@ -3550,7 +3550,7 @@ impl FractadyneApp {
         cli: &TourRenderConfig,
     ) -> Result<String, String> {
         // The text is kept (not just parsed, as `read_script` does) because the normalize-anchor
-        // file is keyed on it: anchors measured for one script must never colour another.
+        // file is keyed on it: anchors measured for one script must never color another.
         let script_text = std::fs::read_to_string(script_path)
             .map_err(|e| format!("read {}: {e}", script_path.display()))?;
         let pb = resolve_script(
@@ -3970,7 +3970,7 @@ impl FractadyneApp {
             }
         }
         // The deepest frame's reference, reused by every frame it serves ([`DeepReference`]):
-        // built for the first frame that renders AND shows the deepest keyframe's centre — a
+        // built for the first frame that renders AND shows the deepest keyframe's center — a
         // resume with nothing left, or a run of another chapter's frames, never pays for it. That
         // rule reads the tour alone, so every process rendering part of it decides the same.
         // `--no-reference-reuse` builds each frame's own.
@@ -4009,7 +4009,7 @@ impl FractadyneApp {
             // what lets one script hold a 1.33× home view at a few thousand iterations and a 1e94×
             // spar at millions — a single budget either starves the deep frames or makes the
             // shallow ones cost minutes each.
-            // Behaviour-identical to the old `= base_iter; = base_auto;` pair (the
+            // Behavior-identical to the old `= base_iter; = base_auto;` pair (the
             // `apply_sampled_settings` below re-applies the same override), but routed through the
             // helper so this frame and the prefetch of the NEXT one read the same rule.
             let frame_budget = Self::sampled_iter_budget(&s, base_iter, base_auto);
@@ -4099,7 +4099,7 @@ impl FractadyneApp {
                     // frame's per-keyframe count, and per-keyframe `max_iter` interpolates
                     // geometrically, so it differs on nearly every frame of a dive — which made the
                     // consumer reject the prefetch and rebuild it synchronously instead.
-                    // (Taken before `s2`'s bignum centre is moved into the viewport below.)
+                    // (Taken before `s2`'s bignum center is moved into the viewport below.)
                     let budget2 = Self::sampled_iter_budget(&s2, base_iter, base_auto);
                     // The references the successor may take: deeper frames' (deepest first) and the
                     // deepest frame's, where they serve it.
@@ -4506,7 +4506,7 @@ impl FractadyneApp {
             pb.paced_hold = hold;
             // Advance the clock. `1 - hold` is the pacer's dilation (0 = fully stopped while the
             // renderer catches up), `speed` and `paused` are the user's transport. At speed 1 with
-            // no hold this is exactly the old wall-clock behaviour, so tour durations and the
+            // no hold this is exactly the old wall-clock behavior, so tour durations and the
             // `--divetest` timings are unchanged.
             let live = if pb.paused || pb.finished { 0.0 } else { dt * pb.speed };
             let step = live * (1.0 - hold);
@@ -4543,7 +4543,7 @@ impl FractadyneApp {
             self.apply_tour_lsystem(&s.ls);
         }
         // The panel split is presentation, not geometry: each panel re-lays-out at its new width
-        // and re-renders, but neither viewport's centre or zoom changes, so this must NOT
+        // and re-renders, but neither viewport's center or zoom changes, so this must NOT
         // invalidate references (that would rebuild a deep Mandelbrot orbit every frame of a
         // sliding divider). The resize path already re-sizes the panels' textures.
         if let Some(sp) = s.dual_split {
@@ -4811,11 +4811,11 @@ pub(crate) const STD_ZOOM_LOG10: f64 = 32.0;
 /// at the boundary.
 pub(crate) const STD_ZOOM_LOG10_ULTRA: f64 = 48.0;
 
-/// The dive centre for every preset: corpus location `35-field-dive-1p47e77`, a field
+/// The dive center for every preset: corpus location `35-field-dive-1p47e77`, a field
 /// location from a real dive rather than a synthetic point. 116 digits against a 1e48
 /// endpoint - about 29 decades of margin, so the deepest frames land on structure instead
 /// of precision noise. This REPLACED the 33-digit Seahorse Valley point the shallow presets
-/// used: 33 digits is sub-pixel only to ~1e30x, so no dive centred there could render a
+/// used: 33 digits is sub-pixel only to ~1e30x, so no dive centered there could render a
 /// meaningful floatexp frame at all. Scores from before that change are not comparable
 /// with scores after it, which is why the report names the dive site.
 const STD_CX: &str = "3.5634774601304382214593134944855658665333542382319826904819524052878394297711653798870071071230880055625454711405583e-1";
@@ -4857,8 +4857,8 @@ impl BenchDepth {
         }
     }
 
-    /// The dive centre and the name of the place. One centre serves every preset now, but
-    /// this stays a per-depth lookup: a centre is only usable to the depth its digit count
+    /// The dive center and the name of the place. One center serves every preset now, but
+    /// this stays a per-depth lookup: a center is only usable to the depth its digit count
     /// supports, so a future deeper preset must be able to bring its own.
     pub(crate) fn center(self) -> (&'static str, &'static str, &'static str) {
         match self {
@@ -4947,7 +4947,7 @@ pub(crate) struct StdBench {
     cur: Option<Bench>,
     /// log10 of the dive's final magnification (depth preset — 1e32× standard, 1e48× ultra).
     zoom_log10: f64,
-    /// Name of the dive centre, for the report (it follows the depth).
+    /// Name of the dive center, for the report (it follows the depth).
     site: &'static str,
     /// Per-regime totals: in progress, then the last completed pass.
     cur_regimes: [RegimeAcc; 3],
@@ -5005,7 +5005,7 @@ impl FractadyneApp {
         self.coloring.use_duotone = false;
         self.coloring.use_custom_palette = false;
         self.invalidate_refs();
-        // A centre that failed to parse would silently dive somewhere else and still print a
+        // A center that failed to parse would silently dive somewhere else and still print a
         // full report, so `centres_parse_to_full_precision` holds every preset to its digits.
         let (cx_s, cy_s, site) = depth.center();
         let cx = fractadyne_core::parse_bf(cx_s)

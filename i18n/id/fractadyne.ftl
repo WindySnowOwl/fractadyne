@@ -292,7 +292,7 @@ tag-group-shape = Bentuk
 tag-group-theme = Tema
 tag-group-purpose = Tujuan
 
-# Tags measured from a palette's colours: its colour families, warm or cool, how busy it is (calm, lively, frantic), its brightness, and its shape. Plural nouns for the families; the rest describe the palette.
+# Tags measured from a palette's colors: its color families, warm or cool, how busy it is (calm, lively, frantic), its brightness, and its shape. Plural nouns for the families; the rest describe the palette.
 tag-reds = Merah
 tag-oranges = Jingga
 tag-yellows = Kuning
@@ -967,9 +967,9 @@ app-gradient-ggr-imported = “{ $name }” diimpor - { $count } segmen, beserta
 # $error: the reader's reason (in English).
 app-gradient-ggr-invalid = Bukan gradien .ggr: { $error }
 
-## The eyedropper's banner across the top of the screen while picking a colour
+## The eyedropper's banner across the top of the screen while picking a color
 
-# $hex: the colour under the pointer, as #rrggbb.
+# $hex: the color under the pointer, as #rrggbb.
 app-eyedropper-banner-color = Memilih warna  ·  { $hex }  ·  klik untuk mengambilnya, Esc untuk membatalkan
 app-eyedropper-banner = Memilih warna  ·  klik untuk mengambilnya, Esc untuk membatalkan
 
@@ -1007,7 +1007,7 @@ app-gradient-bezier-exact-hover = Dua titik kendali yang dapat Anda seret ke dua
 app-gradient-bezier-visible-hover = Dua titik kendali yang dapat Anda seret ke dua arah. Konversi MENDEKATI kurva saat ini — yang ini dengan selisih hingga { $error }, yang jelas terlihat.
 # Hover on Bézier in the list of blend curves. $error: how far the fit is off (2 decimals).
 app-gradient-bezier-barely-hover = Dua titik kendali yang dapat Anda seret ke dua arah. Konversi MENDEKATI kurva saat ini — yang ini dengan selisih hingga { $error }, yang nyaris tidak terlihat.
-# A label before the list of colour spaces (RGB, HSV).
+# A label before the list of color spaces (RGB, HSV).
 app-gradient-space = Ruang
 # A label before the Bézier presets beside it.
 app-gradient-ease = Easing
@@ -1058,7 +1058,7 @@ app-gradient-import-ggr-hover = Muat gradien GIMP .ggr, dengan titik tengah, kur
 app-gradient-import-ase-hover = Muat daftar swatch Adobe (.ase). Swatch tidak memiliki posisi, jadi semuanya ditempatkan dengan jarak merata dan dibaurkan.
 # The gradient's name, for the library of saved gradients.
 app-gradient-name = Nama
-# Shown greyed in the empty name field.
+# Shown grayed in the empty name field.
 app-gradient-name-hint = gradien saya
 # The save button, when a gradient of that name is already saved.
 app-gradient-update = Perbarui
@@ -1083,13 +1083,13 @@ app-gradient-ends-differ-hover = Warna di akhir gradien tidak sama dengan warna 
 app-gradient-hard-bands = Pita tegas (tanpa pembauran antarentri)
 app-gradient-hard-bands-hover = Semantik Fractint / .map: setiap entri adalah warna datar. Jika dimatikan, entri-entri dibaurkan menjadi gradien yang halus.
 app-gradient-paste-intro = Tempelkan warna heks (#ff8800) atau tripel 0–255 (255 136 0), dipisahkan dengan koma, spasi, atau baris baru:
-# Applies the pasted colours.
+# Applies the pasted colors.
 app-gradient-apply = Terapkan
 # Empties the paste box.
 app-gradient-clear = Kosongkan
-# $used: the colours kept; $total: the colours pasted; $limit: the most that are kept.
+# $used: the colors kept; $total: the colors pasted; $limit: the most that are kept.
 app-gradient-paste-imported-some = { $used } dari { $total } warna diimpor, diambil secara merata dari daftar Anda (batasnya { $limit }).
-# $count: the colours pasted.
+# $count: the colors pasted.
 app-gradient-paste-imported = { $count } warna diimpor.
 # $error: why the pasted text could not be read (in English).
 app-gradient-paste-unreadable = Tidak dapat membacanya: { $error }
@@ -1970,7 +1970,7 @@ farm-client-show-key = Tampilkan
 farm-client-machine = Mesin ini
 farm-client-machine-hover = Nama yang ditampilkan pengendali untuk mesin ini.
 farm-client-share = Drive bersama
-# Greyed hint inside the empty field; the path is an example.
+# Grayed hint inside the empty field; the path is an example.
 farm-client-share-hint = opsional — mis. \\fileserver\share
 farm-client-share-hover = Jalur mesin ini ke drive bersama yang digunakan pengendali (mode berbagi): bingkai ditulis ke sana alih-alih dikirim melalui koneksi. Biarkan kosong untuk mengirim setiap bingkai.
 farm-client-gpu = Kartu grafis
@@ -2132,7 +2132,7 @@ farm-ctl-ss = Supersampling
 farm-ctl-port = Dengarkan di port
 farm-ctl-port-hover = Klien menyambung ke port ini. Izinkan port ini melewati firewall untuk jaringan lokal Anda.
 farm-ctl-share = Drive bersama
-# Greyed hint inside the empty field.
+# Grayed hint inside the empty field.
 farm-ctl-share-hint = opsional — jalur mesin ini ke drive itu
 farm-ctl-share-hover = Mode berbagi: klien yang memiliki drive yang sama menulis bingkainya ke drive itu alih-alih mengirimkannya melalui koneksi, dan mesin ini memeriksa setiap bingkai di sana. Klien yang tidak memilikinya mengirimkan bingkainya.
 # A label followed by a number of clients and two checkboxes.
@@ -2398,7 +2398,7 @@ formula-apply = Terapkan
 formula-dialog-apply-hover = Kompilasi rumus dan tampilkan
 # Shown beside Apply while the formula is being compiled.
 formula-dialog-compiling = Mengompilasi rumus untuk GPU…
-# The greyed hint in an empty name box (also in the Formula library window).
+# The grayed hint in an empty name box (also in the Formula library window).
 formula-name-hint = nama (opsional)
 # The save button: "Update" when the library already has a formula of that name.
 formula-dialog-update-in-library = Perbarui di pustaka
@@ -2533,7 +2533,7 @@ formula-library-import = Impor…
 formula-library-import-hover = Tambahkan rumus-rumus dalam sebuah berkas rumus; tidak ada yang diganti di sini
 formula-library-export-all = Ekspor semua…
 formula-library-export-all-hover = Tulis semua rumus di sini ke satu berkas, untuk dibagikan atau disimpan
-# The filter box: its label, and the greyed hint inside it.
+# The filter box: its label, and the grayed hint inside it.
 formula-library-filter = Filter
 formula-library-filter-hint = filter berdasarkan nama atau teks
 # Shown while the user has no saved formulas.
@@ -2664,10 +2664,10 @@ panel-tail-length-unit = it
 panel-tail-length-hover = Panjang jendela dalam iterasi. Jendela pendek (8–32) memberikan pita tebal klasik pada kedalaman berapa pun; jendela yang lebih panjang kembali merata-rata menjadi warna datar, karena suku garis dari orbit kacau yang panjang saling meniadakan.
 panel-trap-shape = Bentuk perangkap
 panel-palette = Palet
-# The two colours of the Binary palette, each beside its colour swatch.
+# The two colors of the Binary palette, each beside its color swatch.
 panel-in-set = Di dalam
 panel-out-of-set = Di luar
-# The two colours of the Duotone palette, each beside its colour swatch.
+# The two colors of the Duotone palette, each beside its color swatch.
 panel-shadow = Bayangan
 panel-highlight = Sorotan
 panel-cycle = Siklus
@@ -2685,7 +2685,7 @@ panel-log-scale-hover =
     Sebarkan palet berdasarkan LOGARITMA nilai lolos, bukan secara linear. Jumlah iterasi lolos menumpuk ke arah ujung atas pada kedalaman, sehingga pemetaan linear menghabiskan sebagian besar palet pada lapisan tipis di dekat batas dan meratakan semua yang lain.
 
     Berlaku untuk pemetaan yang dinormalisasi — yang diaktifkan oleh “Normalkan warna dalam” (atau --normalize pada ekspor). Rentang yang sangat miring tetap memakai pemetaan log, dicentang atau tidak.
-# The same checkbox's tooltip while it is greyed out (normalization is off).
+# The same checkbox's tooltip while it is grayed out (normalization is off).
 panel-log-scale-off-hover =
     Memerlukan normalisasi: ini memilih BAGAIMANA palet dipetakan ke rentang lolos terukur, jadi jika “Normalkan warna dalam” mati (dan tidak ada ekspor --normalize), tidak ada pemetaan yang dapat diubahnya dan tidak satu piksel pun akan berubah.
 
@@ -3037,11 +3037,11 @@ lsys-draw-on = Penggambaran
 lsys-draw-on-hover = Seberapa banyak kurva yang digambar, menurut urutan kura-kura menggambarnya
 lsys-draw-on-play-hover = Kurva menggambar dirinya sendiri
 lsys-colour-by = Warnai menurut
-# The colourings, in the "Colour by" list.
+# The colorings, in the "Color by" list.
 lsys-colour-position = posisi di sepanjang kurva
 lsys-colour-depth = kedalaman cabang
 lsys-colour-heading = arah hadap
-# C, < and > are the system's commands that set the colour index: keep them.
+# C, < and > are the system's commands that set the color index: keep them.
 lsys-colour-index = indeks warna (C, <, >)
 lsys-colour-plain = satu warna
 # The panel's numbers.
@@ -3172,9 +3172,9 @@ export-snapshot-saved = Cuplikan layar { $size } disimpan → { $path }
 # $error: why (in English).
 export-snapshot-failed = Cuplikan gagal: { $error }
 
-## The colour picker (the popup of a colour swatch)
+## The color picker (the popup of a color swatch)
 
-# The third row's label: the colour as hexadecimal bytes. Short (about 6 characters).
+# The third row's label: the color as hexadecimal bytes. Short (about 6 characters).
 picker-row-hex = Heks
 picker-hex-hover = Klik untuk mengetik nilai heks
 picker-cancel = Batal
@@ -3442,7 +3442,7 @@ fractal-family-lsystem = Sistem-L
 # A family at a power: "Multibrot 3", "Burning Ship 4". $family: a name above; $power: the power.
 fractal-with-power = { $family } { $power }
 
-## Names of choices: colouring methods, orbit traps, palette animation, snapshots, angle units.
+## Names of choices: coloring methods, orbit traps, palette animation, snapshots, angle units.
 
 color-method-smooth = Iterasi halus
 color-method-stripe = Rata-rata garis

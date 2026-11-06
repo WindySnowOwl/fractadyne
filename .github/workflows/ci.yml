@@ -93,7 +93,7 @@ jobs:
       - run: rustup default stable
       # eframe/winit need X11 + Wayland + xkbcommon headers; rfd's file dialogs need GTK3 unless
       # built for the xdg portal. Mesa's Vulkan drivers give the runner a software adapter
-      # (lavapipe) so the binary has something to initialise against — there is no GPU here.
+      # (lavapipe) so the binary has something to initialize against — there is no GPU here.
       - name: System dependencies
         run: |
           sudo apt-get update

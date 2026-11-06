@@ -1,7 +1,7 @@
 //! Tests for the saved-gradient library's on-disk round trip.
 //!
 //! ⭐⭐**The failure this exists to prevent is silent.** A gradient library that stores STOPS
-//! looks perfectly correct — it reloads, it renders, the colours are right — and has quietly
+//! looks perfectly correct — it reloads, it renders, the colors are right — and has quietly
 //! dropped every midpoint, blend curve and hue sweep, which are exactly the properties that make a
 //! gradient worth saving. It is the same trap `custom_segments` was introduced for, one layer out,
 //! and nothing about the UI would reveal it: you would only find out by saving a curved gradient,
@@ -16,7 +16,7 @@ fn rich() -> Gradient {
     Gradient {
         name: "rich".into(),
         segments: vec![
-            // An off-centre midpoint.
+            // An off-center midpoint.
             Segment {
                 left: 0.0,
                 mid: 0.08,
@@ -122,7 +122,7 @@ fn a_saved_gradients_tags_round_trip_and_cost_an_older_build_nothing() {
 
 /// ⚠**The control.** The assertion above is only meaningful if flattening would actually be
 /// visible — if a stop list happened to render the same, saving stops would have been fine and the
-/// test would be theatre. It does not: routing the same gradient through `to_stops`/`from_stops`
+/// test would be theater. It does not: routing the same gradient through `to_stops`/`from_stops`
 /// changes what renders.
 #[test]
 fn storing_the_same_gradient_as_stops_would_have_changed_the_picture() {

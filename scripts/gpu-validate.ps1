@@ -344,7 +344,7 @@ else {
 # --- step 10: the SETTLE that kept working (2026-10-20) --------------------------------------------
 # A user's 2^704 view at a 5120x2054 window: after it settled, every walk of the on-settle
 # supersampling ran passes past the lethal band (in flight to 1,865 ms on an RTX 3080), because a
-# pass was released on a quick frame while it was still queued, and an octave band's licence,
+# pass was released on a quick frame while it was still queued, and an octave band's license,
 # earned where the iterations were cheap, carried a pass into the part where the pixels begin to
 # escape. Glide three octaves onto it (one made 85 frames under the stock settings, VACUOUS),
 # ending at its depth, let it settle and its supersampling converge, and capture the window
@@ -458,7 +458,7 @@ Out-File $sum -Encoding utf8 -Append
 
 How to read this
 ----------------
-verdict      The battery's own judgement, above: each step's exit code (and, for a step known to
+verdict      The battery's own judgment, above: each step's exit code (and, for a step known to
              fail, which checks failed) against what gpu-validate-expected.json declares for this
              card. Exit 0 = all as declared, 2 = something UNEXPECTED (named), 3 = not judged. The
              notes below say why each declaration is what it is.

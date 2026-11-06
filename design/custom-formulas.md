@@ -10,7 +10,7 @@ Let a user render formulas that are not among the ten built-in families, without
 program is for: deep zoom. Concretely:
 
 - **Any formula renders.** A user formula always renders at shallow depth, however exotic.
-- **Deep zoom is automatic where the maths allows it**, and the program says plainly where it does not.
+- **Deep zoom is automatic where the math allows it**, and the program says plainly where it does not.
 - **Existing formulas and files keep working**, and the ten built-ins render exactly as today.
 - **A custom formula cannot take the machine down**: it gets the same dispatch ceiling, dead-man and
   watchdog protection as a built-in, calibrated to its own cost.
@@ -18,7 +18,7 @@ program is for: deep zoom. Concretely:
 ### Non-goals
 
 - Adopting Ultra Fractal's full language (classes, arrays, `global:`, plug-ins, layers).
-- User-written colouring algorithms (a separate project; the IR below does not preclude it).
+- User-written coloring algorithms (a separate project; the IR below does not preclude it).
 - Pixel-perfect reproduction of every Fractint quirk (`rand` order, `whitesq`, `LastSqr`).
 - Porting code from Kalles Fraktaler, Fraktaler-3, `et`, Imagina or any GPL/AGPL project (§10).
 
@@ -46,12 +46,12 @@ program is for: deep zoom. Concretely:
 | A1 | Fractint `.frm` is the de facto interchange format with the largest corpus | Survey of readers (Ultra Fractal, ChaosPro, Gnofract 4D, Iterated Dynamics) and corpora | Holds. Orgform: 29,348 entries, **20,181 distinct formula bodies** (counted) |
 | A2 | Nothing in `.frm` or the UF corpus supplies deep-zoom forms | Survey | Holds. UF6 perturbation sections appear in 2 shipped and 3 public UF formulas; `.frm` has none |
 | A3 | The Fraktaler-3 / Kalles Fraktaler hybrid opcode model covers the deep-zoom community's formulas and 8 of our 10 built-ins | `crates/fractadyne-core/tests/opcode_equivalence.rs`: the opcode program applied at every point of the core's own orbits (~120,000 steps) | **Bit for bit** for Mandelbrot, Multibrot 3/4/5, Tricorn, Burning Ship, Celtic, Buffalo. Phoenix and Newton are not expressible |
-| A4 | The opcode perturbation rules (reimplemented from the published maths, incl. `diffabs`) are cancellation-free | Exact rational arithmetic vs the f64 perturbed update, 3,000 cases per program, deltas 1e-9…1e-14, including deltas straddling a fold | Worst error **1.0e-15–2.7e-15 relative** for all eight programs; naive f64 differencing: up to **178%** |
+| A4 | The opcode perturbation rules (reimplemented from the published math, incl. `diffabs`) are cancellation-free | Exact rational arithmetic vs the f64 perturbed update, 3,000 cases per program, deltas 1e-9…1e-14, including deltas straddling a fold | Worst error **1.0e-15–2.7e-15 relative** for all eight programs; naive f64 differencing: up to **178%** |
 | A5 | A first `.frm` subset without the screen/random features covers most of the corpus | Scan of Orgform (excluding `whitesq scrnpix scrnmax rand lastsqr cosxx`) | **88.5%** of distinct bodies; adding `cosxx` (4.8%, = conj(cos)) makes it ~93%. `fn1..fn4` in 34.5%, `p1..p5` in 70%, `if` in 8.5% |
-| A6 | A generated per-formula shader compiles fast enough to use | `crates/fractadyne-gpu/examples/shader_compile_bench.rs`, RTX 3080, Vulkan, cold driver cache | naga parse+validate ~10 ms. Today's all-formula module: iterate **~4.0–4.2 s**, resumable 0.32–0.36 s, resumable-floatexp 1.4–1.7 s. Specialised to one formula: iterate **0.9–1.6 s**, 0.29–0.32 s, 0.58–1.1 s (1.8–3.0 s for the three). **Too slow per keystroke; fine per "apply", cached after** |
+| A6 | A generated per-formula shader compiles fast enough to use | `crates/fractadyne-gpu/examples/shader_compile_bench.rs`, RTX 3080, Vulkan, cold driver cache | naga parse+validate ~10 ms. Today's all-formula module: iterate **~4.0–4.2 s**, resumable 0.32–0.36 s, resumable-floatexp 1.4–1.7 s. Specialized to one formula: iterate **0.9–1.6 s**, 0.29–0.32 s, 0.58–1.1 s (1.8–3.0 s for the three). **Too slow per keystroke; fine per "apply", cached after** |
 | A7 | Real deep-zoom parameter files carry their formulas | Kalles Fraktaler's 88 example `.kfr` files | 74 carry `HybridFormula` strings (e.g. `0/1\|0,0,0,0,2,1,0;0,0,0,0,0,0,0;0`) |
 | A8 | Automatic deep zoom is feasible only for a class of formulas | Published theory (§11) and the corpus classification | Orgform bodies: polynomial 10.3%, +abs/conj 5.7%, rational 15.9%, non-integer powers 7.7%, transcendental/`fn` 40.4%, branching 17.4% |
-| A9 | Our licence forbids porting the reference implementations | `Cargo.toml`: `MIT OR Apache-2.0`; KF/F3/`et`/Imagina AGPL, Iterated Dynamics / formula-compiler GPL | Holds: reimplement from the published maths |
+| A9 | Our license forbids porting the reference implementations | `Cargo.toml`: `MIT OR Apache-2.0`; KF/F3/`et`/Imagina AGPL, Iterated Dynamics / formula-compiler GPL | Holds: reimplement from the published math |
 
 Not yet measured: compile times on the RX 6800 XT; UF6 `#z` semantics inside `perturbloop` (inferred
 from shipped code, not documented).
@@ -61,7 +61,7 @@ from shipped code, not documented).
 ### 4.1 One intermediate representation
 
 `fractadyne-core::ir` holds an **expression IR**: instructions in SSA form, each computing one complex
-value from earlier ones. That makes it a linearised expression DAG, so a shared subexpression is computed once. Its values are
+value from earlier ones. That makes it a linearized expression DAG, so a shared subexpression is computed once. Its values are
 `z`, `c` (the pixel), the previous iterate (for Phoenix-like formulas), parameters, constants,
 `+ − × ÷`, integer and complex powers, `sqr`, real scaling, `conj`, negation, `abs` per component,
 real/imag parts, `|z|²`, and the elementary functions (`exp log sqrt sin cos tan` and hyperbolics;
@@ -83,7 +83,7 @@ which programs qualify.
 
 Everything else is **generated from the IR**:
 
-| Artefact | How |
+| Artifact | How |
 |---|---|
 | Bignum reference step | tree-walking interpreter over astro-float (and rug when enabled) |
 | f64 overlay step, CPU oracle | the same interpreter over f64 |
@@ -177,7 +177,7 @@ The shader is restructured so every formula-specific piece sits behind **named f
 
 - **Built-ins** keep the fixed module exactly as compiled today (the functions dispatch on the id).
 - **A custom formula** gets a generated module: the same template with those functions replaced by
-  generated bodies and no built-in code at all. Measured specialisation cost: 0.9–1.6 s for the
+  generated bodies and no built-in code at all. Measured specialization cost: 0.9–1.6 s for the
   iterate pipeline, 1.8–3.0 s for all three iterate entry points (A6).
 - **Compile policy:** a small direct-only preview pipeline while editing (one entry point); the full
   set compiled in the background on "apply"; a pipeline cache keyed by the IR's hash, persisted with
@@ -202,7 +202,7 @@ subset (Fractint has none), so a step's cost is bounded by its size.
 ### 4.7 Persistence and identity
 
 - `.fdn`, sessions and PNG metadata store `fractal=Custom` plus the formula **source text** and its
-  front end (`hybrid`, `frm`), parameters, and a hash of the normalised IR. Files written before this
+  front end (`hybrid`, `frm`), parameters, and a hash of the normalized IR. Files written before this
   stay valid (`writer ⊆ reader`).
 - The on-disk orbit cache keys on the IR hash instead of the numeric id for custom formulas.
 - KFR import maps `FractalType`/`Power` to a built-in where one matches, and otherwise
@@ -222,7 +222,7 @@ editor of mockup `07` comes later.
 | Phase | Content | Gate (must be green before the next phase) |
 |---|---|---|
 | **0** | `FormulaCaps`; the ~20 id gates replaced | Byte-neutral: self-test all checks, goldens 19/19, F3 corpus, `cargo test` count never decreases |
-| **1** | Expression IR; f64 and bignum interpreters; opcode programs lowered to IR | The eight opcode programs reproduce the built-ins through the IR bit for bit (A3 generalised); bignum IR orbit = `step_bf` orbit bit for bit |
+| **1** | Expression IR; f64 and bignum interpreters; opcode programs lowered to IR | The eight opcode programs reproduce the built-ins through the IR bit for bit (A3 generalized); bignum IR orbit = `step_bf` orbit bit for bit |
 | **2** | Shader restructured into formula functions (byte-neutral); generated direct (shallow) WGSL; pipeline cache; compile-time cost calibration; minimal formula dialog; `.fdn` persistence | Fixed module byte-neutral as in phase 0; a generated Mandelbrot/Burning Ship renders equal the built-in at shallow depth (bit for bit or within a stated tolerance, measured); GPU vs CPU interpreter equivalence over a formula set |
 | **3** | `.frm` subset reader | Parses ≥ 88% of Orgform's distinct bodies (A5); rendered spot checks against the CPU interpreter; unsupported features reported, never mis-rendered |
 | **4** | Deep zoom for opcode programs: generated df32/floatexp perturbation, per-phase references, rebasing, 2×2 BLA with our own radius validation; KFR/F3 formula import | Generated perturbation renders of the eight built-in programs vs the hand-written built-ins at the corpus depths (difference measured and bounded); perturbed vs CPU bignum per-pixel oracle at 1e30, 1e100, 1e300; BLA on vs off identical within the corpus tolerance |
@@ -243,7 +243,7 @@ separate, later decision, and only if phase 4 shows the generated render is iden
   - bignum vs `reference_orbit_t_in` (every sample, the length, and the full-precision tail): 9 families ×
     p = 64, 128, 320, 1088 × 17 cases, 1,000 iterations, **bit-identical in astro-float and in MPFR**
     (GNU toolchain, `--features rug`). Plus 5,000-step orbits: the real axis (chaotic) and a complex orbit
-    spiralling into a fixed point with multiplier 0.995.
+    spiraling into a fixed point with multiplier 0.995.
   - `PowI` reproduces the Multibrot 3/4/5 chains bit for bit; hybrid phases rotate per iteration
     (checked against the hand-written steps, `f64` and bignum).
   - **Controls.** Computing `Re z²` as `(x+y)(x−y)` turned 7 of the 11 tests then present red. The
@@ -258,7 +258,7 @@ separate, later decision, and only if phase 4 shows the generated render is iden
   hybrids, parameters, every elementary function and the whole op set generate modules that naga
   validates; generated built-in steps are exactly the built-in helper calls (Mandelbrot `c_sqr` then
   `c_add`). Elementary functions run at `f32` precision for now (`Precision::F32`). The
-  `escape_degree` of the IR sets smooth colouring's power, with 2 where no power law holds.
+  `escape_degree` of the IR sets smooth coloring's power, with 2 where no power law holds.
   `cargo test` 942 passed.
 - **Phase 2, slice 2 (GPU equivalence).** `ExportRequest::custom` carries a generated module through
   the export paths. The self-test group `custom-formula` (8 checks; full run 211/211, goldens 19/19):
@@ -269,14 +269,14 @@ separate, later decision, and only if phase 4 shows the generated render is iden
     at compile time, where the fixed module computes it on the GPU. The generated power is therefore kept opaque
     to the compiler. Two further red gates showed what that takes. A condition the loop guard decides
     (`max_iter == 0`) is folded. So are equal arms (`select(2.0, 2.0, …)` for Mandelbrot).
-  - GPU vs the CPU interpreter, at the shader's own pixel centres: a two-phase hybrid 0.76% and a
-    parameterised quadratic 0.36% of pixels disagree (boundary chaos). None of the ~42,000 pixels that
+  - GPU vs the CPU interpreter, at the shader's own pixel centers: a two-phase hybrid 0.76% and a
+    parameterized quadratic 0.36% of pixels disagree (boundary chaos). None of the ~42,000 pixels that
     escape within 20 iterations disagree. Each f32-tier function evaluated once per pixel
     (`z + 8·(f(c) + 1 + 2i)`): 1 of 371,940 informative pixels. A sign error planted in `cos`
     turned that check red (75,838 px), as it should.
   - **Two rendering bugs found and fixed in the generated module** (the built-ins cannot reach either
     from their views): (1) an escaping step of a steep formula overflows f32 (`sin z + c` jumps to
-    |z|² ≈ 1e50–1e158), and the smooth value of an infinite `z` is −∞, which the colour pass paints as
+    |z|² ≈ 1e50–1e158), and the smooth value of an infinite `z` is −∞, which the color pass paints as
     interior. 3,044 pixels were affected; `custom_tame` now clamps a non-finite or ≥1e15 component
     (bit tests, since a compiler may assume floats are finite). (2) The smooth value
     `n + 1 − log(log₂|z|)/log d` is negative for an escape at n ≤ 2 or far past the bailout, which
@@ -358,7 +358,7 @@ separate, later decision, and only if phase 4 shows the generated render is iden
 - **Stage C: deep zoom in the app.** One mode rule for every caller, `render_mode(fractal, julia,
   mag)`: a custom formula with a perturbed step perturbs past 1e4× like a built-in, in df32 only
   (its module has no floatexp path). Its reference is the IR's bignum orbit
-  (`render::custom_reference`), at the view centre, or the longest of a 3×3 grid when the centre
+  (`render::custom_reference`), at the view center, or the longest of a 3×3 grid when the center
   escapes early. No candidate pick, extension, disk cache, SA or BLA: each is keyed or implemented
   per built-in id. Export glitch correction is off for `CUSTOM` in `caps`: it builds its extra
   references by formula id. Before that, a custom export ran 52 references of the wrong orbit;
@@ -430,7 +430,7 @@ separate, later decision, and only if phase 4 shows the generated render is iden
     custom formulas gained resumable passes, a switch at an unchanged view (Custom's home is
     Mandelbrot's) resumed the finished walk of the earlier formula. The walk signature now folds
     in the settings hash the tiled settle's key uses (formula id, custom key, Julia and its c, the
-    colour inputs). The step also checks that its picture differs from the z³ step's, in the band
+    color inputs). The step also checks that its picture differs from the z³ step's, in the band
     right of the dialog: 5.4 fixed against 0.0 stale.
 - **Functions and division in deep zoom.** The rule table gained division, `exp`, `sin`, `cos`,
   `sinh`, `cosh`, `tan` and `tanh` (§4.4), so a formula like `sin(z) + cos(z)·cos(z) + c` perturbs
@@ -512,7 +512,7 @@ separate, later decision, and only if phase 4 shows the generated render is iden
     That is why (b) got its floatexp twin.
   - Two traps in picking the deeper views, both now in the probe. The bisection needed ~1e-44 at
     1e40×, below what an f64 offset from one base point resolves (~2e-22 of a 1e-6 bracket), so it
-    re-centres on the inside end and bisects again. And a view must be MIXED and STABLE, not only
+    re-centers on the inside end and bisects again. And a view must be MIXED and STABLE, not only
     decidable: the hybrid's first 1e40× view was one escaping sliver thinner than the sample
     spacing (all 1,024 samples interior), and its next was chaotic. There, at 1e12×, six sampled
     pixels escaped at 470–1,714 in bignum and changed status or moved by 90–1,300 iterations with c
@@ -697,10 +697,10 @@ separate, later decision, and only if phase 4 shows the generated render is iden
 ## 9. Open questions
 
 1. How much of the ~4 s all-formula compile is a startup cost users pay today on a driver update? (A6
-   suggests specialising the built-in module too could cut first-launch time; out of scope here.)
+   suggests specializing the built-in module too could cut first-launch time; out of scope here.)
 2. Should the `.frm` reader accept `whitesq` (6.5% of the corpus) as a per-pixel checkerboard value,
    accepting that supersampling changes its meaning?
-3. Newton-type (convergent) custom formulas: a separate bailout kind and colouring; phase 3 or later?
+3. Newton-type (convergent) custom formulas: a separate bailout kind and coloring; phase 3 or later?
 4. Phoenix-like formulas (previous iterate): in the IR from phase 1, deep zoom only with an author
    `perturbloop` (as UF does) unless the rule table is extended to two-term state.
 

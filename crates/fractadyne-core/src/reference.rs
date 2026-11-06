@@ -48,7 +48,7 @@ pub(crate) fn count_reference_step(n: u32) {
 /// Where a Mandelbrot reference orbit closes on itself: `Z_period ≈ 0 = Z_0`, so
 /// `Z_{period+k} = Z_k` and the orbit to `period` IS the whole orbit. A pixel that reaches its end
 /// continues from `Z_0` with its δ unchanged — the shader's end-of-orbit rebase
-/// (`δz ← Z_n + δz − Z_0`) is then exact — so a minibrot-centred reference costs one period
+/// (`δz ← Z_n + δz − Z_0`) is then exact — so a minibrot-centered reference costs one period
 /// instead of the whole iteration cap (1e10000×: 137,396 steps instead of 4.12 million).
 ///
 /// Whether the wrap is exact ENOUGH depends on the view ([`OrbitPeriod::valid_for`]): the error
@@ -87,8 +87,8 @@ impl OrbitPeriod {
 /// order. Unlike [`OrbitPeriod`] the walk does not stop: a hint is a CANDIDATE reference, which a
 /// pick refines, checks is inside the view and checks closes ([`nucleus_in_view`]).
 ///
-/// Why (2026-11-03): the deeper Cerebral Spin (bench scene 63, 6.7e152×) has its centre in the
-/// edge halo of a period-104,572 minibrot 52 px away at 4K. The centre's orbit escapes at
+/// Why (2026-11-03): the deeper Cerebral Spin (bench scene 63, 6.7e152×) has its center in the
+/// edge halo of a period-104,572 minibrot 52 px away at 4K. The center's orbit escapes at
 /// 1,442,500 of a 2M cap, so the pick scored 100 other points and built a non-periodic 2M orbit:
 /// 4.3 s of a 6.8 s render. The walk saw the nucleus at step 104,572 (|Z| = 2^-256,
 /// |D| = 2^255, so 2^-511 away in a 2^-505 view) and had no way to say so.
@@ -473,7 +473,7 @@ pub struct OrbitTail {
     /// that step, so a view the period is not valid for extends it like any other.
     pub period: Option<OrbitPeriod>,
     /// Nuclei the build's walk passed near ([`NucleusHint`]), earliest first; empty when the build
-    /// did not watch for a period. A pick of this centre may take one as its reference.
+    /// did not watch for a period. A pick of this center may take one as its reference.
     pub hints: Vec<NucleusHint>,
     /// Which [`crate::BackendChoice`] built this tail (its `RefBackend::BIT`).
     ///
@@ -796,8 +796,8 @@ impl Schedule {
         // ⛔The step's error is its OPERANDS' scale, not its result's: x², y² and their difference
         // are each rounded to the step's bits before `c` is added, so a near-return (Z_n² ≈ −c,
         // the result ~1e-71) still carries 2^-p·|c| of absolute error. Reckoned from |Z_{n+1}| the
-        // first version gave such a step 64 bits — its f64 estimate cancelled to 0 — and at the
-        // 1.2e148 corpus centre the orbit lost its dip at step 4,383 and escaped at 6,780 where it
+        // first version gave such a step 64 bits — its f64 estimate canceled to 0 — and at the
+        // 1.2e148 corpus center the orbit lost its dip at step 4,383 and escaped at 6,780 where it
         // survives 363,791.
         let scale = operands.max(self.cxf.hypot(self.cyf));
         let full = self.full as f64;
@@ -857,7 +857,7 @@ fn run_orbit(
 
 /// Run the orbit in the backend identified by `bit`. The ONE place the backend is chosen.
 ///
-/// An unrecognised `bit` cannot arise from a fresh build (it comes from the selection, which is a
+/// An unrecognized `bit` cannot arise from a fresh build (it comes from the selection, which is a
 /// typed enum); it can only reach here from an [`OrbitTail`] tagged by a backend this binary does
 /// not have. That is not reachable today — a tail never leaves the process — and if it ever
 /// becomes reachable, falling back to a *different* backend would silently break the extend
@@ -1182,7 +1182,7 @@ pub fn reference_orbit_periodic_in(
 ///
 /// `fe`, when present, also records the orbit extended-range — exactly the samples the pick's
 /// phase 2 records walking the same point at the same precision (see [`CentreWalk`]), so the
-/// pick can take the centre's walk from this build instead of walking it again.
+/// pick can take the center's walk from this build instead of walking it again.
 #[allow(clippy::too_many_arguments)]
 pub fn reference_orbit_periodic_until(
     z0x: &BigFloat,
@@ -1411,7 +1411,7 @@ pub fn series_skip_in(
 
 /// [`series_skip_in`] that stops at the next step once `cancel` is set, returning
 /// [`SeriesSkip::NONE`] — for a walk started speculatively beside the orbit build, which the app
-/// cancels when the build shows the skip will not be used. A cancelled result means nothing; the
+/// cancels when the build shows the skip will not be used. A canceled result means nothing; the
 /// caller discards it.
 #[allow(clippy::too_many_arguments)]
 pub fn series_skip_in_cancellable(
@@ -1617,7 +1617,7 @@ impl SaTraces {
         // steps do not depend on the limit, so a longer record serves the deeper frames too — and at
         // the least precision of `p`'s word ([`sa_record_precision`]): the same steps, as far as any
         // frame of this key may ask. A speculative walk (`cancel`, beside the pick) records too;
-        // cancelled, its record is partial and goes, and the answer is NONE, as the plain walk's is.
+        // canceled, its record is partial and goes, and the answer is NONE, as the plain walk's is.
         let mut steps = Vec::new();
         let pw = sa_record_precision(p);
         series_skip_walk(backend, cx, cy, SA_TRACE_LOG2_DC, u32::MAX, orbit_len, formula, pw, cancel, Some(&mut steps));
@@ -1769,7 +1769,7 @@ pub(crate) fn series_skip_astro_piped(
         let m2 = to_f64(zx) * to_f64(zx) + to_f64(zy) * to_f64(zy);
         (zcx, zcy, m2 > ref_escape2(formula), m2 <= seed_max2)
     };
-    // The coefficient chain, fed one Z-chain step per iteration. `Err` = cancelled. `rec` gets
+    // The coefficient chain, fed one Z-chain step per iteration. `Err` = canceled. `rec` gets
     // every step it computes (an `SaStep`), before the stop rules read it.
     type Walked = Result<Option<(u32, [BigFloat; 6])>, ()>;
     let mut walk = |next: &mut dyn FnMut() -> Option<(BigFloat, BigFloat, bool, bool)>| -> Walked {
@@ -2403,7 +2403,7 @@ fn orbit_length_bf(
     orbit_length_probed(crate::backend::selected(), z0x, z0y, cx, cy, formula, max_iter, p, None, None, julia)
 }
 
-/// The centre rescue's score ([`best_reference_diag_rescued`]) from a finished BUILD of the same
+/// The center rescue's score ([`best_reference_diag_rescued`]) from a finished BUILD of the same
 /// point at the same precision `p` (`reference_orbit_t` → `len` samples and `tail`; `(cx, cy)` =
 /// the `c` both walks iterate with). The two walks take the same step at the same precision and
 /// stop on the same `f64` escape test, and the build's `len − 1` samples past `Z₀` are exactly
@@ -2421,7 +2421,7 @@ pub fn scoring_len_from_build(
     p: usize,
 ) -> Option<u32> {
     let steps = len.checked_sub(1)?;
-    // A periodic centre never escapes: it is interior to its own minibrot (the period is only
+    // A periodic center never escapes: it is interior to its own minibrot (the period is only
     // accepted within 2^-38 of a view of the nucleus), which is what the walk would report too.
     if tail.period.is_some() {
         return Some(max_iter);
@@ -2435,24 +2435,24 @@ pub fn scoring_len_from_build(
     Some(steps + orbit_length_bf(&tail.zx, &tail.zy, cx, cy, formula, max_iter - steps, p, false))
 }
 
-/// The CENTRE's deep walk in the pick ([`best_reference_diag_from_build`]): its score — the
-/// scoring walk's count, `max_iter` for a centre whose orbit closes on itself — and, when phase 2
+/// The CENTER's deep walk in the pick ([`best_reference_diag_from_build`]): its score — the
+/// scoring walk's count, `max_iter` for a center whose orbit closes on itself — and, when phase 2
 /// asks for them, its extended-range samples `R[0..=len]` for the perturbation scorer.
 pub struct CentreWalk {
     pub len: u32,
     pub samples: Option<Vec<CFloatExp>>,
-    /// Nuclei the centre's walk passed near ([`NucleusHint`]): the build's
+    /// Nuclei the center's walk passed near ([`NucleusHint`]): the build's
     /// ([`OrbitTail::hints`]), or the pick's own walk's.
     pub hints: Vec<NucleusHint>,
 }
 
-/// The centre's deep walk from a finished BUILD of the centre at the walk's precision `p`
+/// The center's deep walk from a finished BUILD of the center at the walk's precision `p`
 /// (`p_pick + REF_RESCUE_EXTRA_BITS`): `len` samples, `tail`, and `fe` — the build's
 /// extended-range recording ([`reference_orbit_periodic_until`]'s sink), if it made one.
 /// Without `want_samples` this is [`scoring_len_from_build`] (a build cut short by its cap is
-/// continued from its tail). With them, the build must have walked the whole of the centre's walk
+/// continued from its tail). With them, the build must have walked the whole of the center's walk
 /// — escaped, closed on itself, or reached `max_iter` — and recorded it; anything less is `None`,
-/// and the pick walks the centre itself.
+/// and the pick walks the center itself.
 #[allow(clippy::too_many_arguments)]
 pub fn centre_walk_from_build(
     len: u32,
@@ -2476,22 +2476,22 @@ pub fn centre_walk_from_build(
     Some(CentreWalk { len, samples: Some(samples), hints: tail.hints.clone() })
 }
 
-/// Where the pick may take its walks of the centre from ([`best_reference_diag_from_build`]).
+/// Where the pick may take its walks of the center from ([`best_reference_diag_from_build`]).
 #[derive(Clone, Copy)]
 pub struct CentreSource<'a> {
-    /// `walk(want_samples)`: the centre's walk, from the build — or `None`, and the pick walks
-    /// the centre itself. May block until the build is done.
+    /// `walk(want_samples)`: the center's walk, from the build — or `None`, and the pick walks
+    /// the center itself. May block until the build is done.
     pub walk: &'a dyn Fn(bool) -> Option<CentreWalk>,
     /// The build's cap is at least the pick's `max_iter`, so it holds the whole of phase 2's walk
     /// whatever the orbit does: phase 2 waits for it. Otherwise (the live view caps its builds
-    /// short) phase 2 walks the centre itself, beside phase 1 as without a build — waiting first
+    /// short) phase 2 walks the center itself, beside phase 1 as without a build — waiting first
     /// for a build that may stop short would serialize the walk behind phase 1 — and the source
     /// answers only the rescue.
     pub whole: bool,
 }
 
-/// Whether a pick of this view would want the centre's walk RECORDED (its phase 2 scores the
-/// other survivors by perturbation against it): what a build of the centre should record for
+/// Whether a pick of this view would want the center's walk RECORDED (its phase 2 scores the
+/// other survivors by perturbation against it): what a build of the center should record for
 /// [`centre_walk_from_build`].
 pub fn pick_records_centre(formula: u32, julia: bool, span: [FloatExp; 2]) -> bool {
     perturb_scoring_supported(formula, julia)
@@ -2566,8 +2566,8 @@ fn orbit_length_probed(
     }
 }
 
-/// The centre's deep scoring walk, watching for the orbit to close on itself ([`OrbitPeriod`])
-/// for a view `2^log2_span` across — a minibrot-centred view then stops at one period instead of
+/// The center's deep scoring walk, watching for the orbit to close on itself ([`OrbitPeriod`])
+/// for a view `2^log2_span` across — a minibrot-centered view then stops at one period instead of
 /// walking the whole budget (the pick's walk was 365 s of a 1e10000× render). Mandelbrot from
 /// `Z_0 = 0` only; otherwise the plain walk. Returns the length and whether a period was found.
 #[allow(clippy::too_many_arguments)]
@@ -2856,17 +2856,17 @@ struct ScanScores {
 const SCAN_BAND: u32 = 64;
 
 /// PHASE 1 BY PERTURBATION (2026-10-11, design/precision-schedule.md P0). Phase 1 only decides which
-/// candidates survive `quick` steps, and at depth every candidate is a small δ off the centre: the
+/// candidates survive `quick` steps, and at depth every candidate is a small δ off the center: the
 /// old scan walked all 101 in bignum, 4,096 steps each at full precision (at 1e30000× ~414,000
-/// full-precision steps, half the length of the whole orbit, on every core beside the centre's
-/// build — which ran its opening 7× slower per step for it). Here the centre alone is walked in
+/// full-precision steps, half the length of the whole orbit, on every core beside the center's
+/// build — which ran its opening 7× slower per step for it). Here the center alone is walked in
 /// bignum, recorded, to `quick + SCAN_BAND`; the others are δ-walked against it in floatexp to the
 /// same cap. A candidate whose δ walk escapes `SCAN_BAND` steps or more before `quick`, or survives
 /// the whole cap, is decided by it; one that lands nearer the threshold, or whose score the trust
 /// rule rejects, is walked in bignum exactly as before. So the survivor set — the only thing phase 2
 /// reads from phase 1 — is the bignum scan's unless a trusted δ score is off by more than
 /// `SCAN_BAND` steps. (Escapers' scores matter only when nothing survives, and then the caller
-/// re-scans in bignum.) `None` when the centre's walk is too short to perturb against.
+/// re-scans in bignum.) `None` when the center's walk is too short to perturb against.
 fn perturb_scan(
     cands: &[[BigFloat; 2]],
     quick: u32,
@@ -2892,7 +2892,7 @@ fn perturb_scan(
         })
         .collect();
     let per = par_perturb_lengths(&samples, &dcs, power, cap);
-    // The centre's own score is its bignum walk's, capped as the scan caps it.
+    // The center's own score is its bignum walk's, capped as the scan caps it.
     let mut scores = vec![len0.min(quick)];
     let mut rewalk = Vec::new();
     for (k, &(len, _)) in per.iter().enumerate() {
@@ -2920,7 +2920,7 @@ fn perturb_scoring_supported(formula: u32, julia: bool) -> bool {
 }
 
 /// Auto-engage floor for [`RefDeepScore::Perturb`]: both view spans must be below `2^-44`
-/// (≈5.7e-14) — past f64 pixel resolution, where every candidate is a small δ off the centre
+/// (≈5.7e-14) — past f64 pixel resolution, where every candidate is a small δ off the center
 /// and the perturbation regime is unambiguous. Shallower views keep the bignum walk: it is
 /// cheap there (low precision), and shallow candidates diverge fast enough that the two
 /// arithmetics' rounding could plausibly order near-ties differently. A deterministic input
@@ -3007,7 +3007,7 @@ const REF_DEEP_MAX: usize = 16;
 /// app's `REF_PREC_HEADROOM` (the orbit is built 128 bits above the request), so a rescued score
 /// describes exactly the orbit that will be built — scoring BELOW the build precision is the
 /// blindness this exists to cure. Public so the app can hold its headroom equal to it: the
-/// centre rescue may take its score from the app's build ([`best_reference_diag_rescued`]),
+/// center rescue may take its score from the app's build ([`best_reference_diag_rescued`]),
 /// which is only the same walk while the two precisions agree.
 pub const REF_RESCUE_EXTRA_BITS: usize = 128;
 
@@ -3020,11 +3020,11 @@ pub struct RefPickDiag {
     /// Phase-1 survivor count of the winning pass.
     pub survivors: usize,
     /// The winner's deep score at `scoring_prec` (≥ `max_iter` means it survives the render) —
-    /// except the CENTRE's, which phase 2 scores at `scoring_prec + REF_RESCUE_EXTRA_BITS`, the
+    /// except the CENTER's, which phase 2 scores at `scoring_prec + REF_RESCUE_EXTRA_BITS`, the
     /// precision the app builds it at (see [`best_reference_diag_from_build`]).
     pub winner_len: u32,
     /// `Some("rescan")` — no phase-1 survivor at `p`, whole selection redone at `p + 128`;
-    /// `Some("centre")` — the `p`-winner escaped early and the centre, rescored at `p + 128`,
+    /// `Some("centre")` — the `p`-winner escaped early and the center, rescored at `p + 128`,
     /// survives the full render. `None` — the plain pick stood.
     pub rescued: Option<&'static str>,
     /// The winning pass had no survivor either: the pick is the longest ESCAPER (deep exterior).
@@ -3042,14 +3042,14 @@ pub struct RefPickDiag {
     /// Candidates whose perturbed score was DISTRUSTED (ran past the first rebase's
     /// [`PERTURB_POST_REBASE_TRUST`]) and were re-walked in bignum (`0` on the walk engine).
     pub perturb_fallbacks: u32,
-    /// Phase 2 took the centre's deep walk from the app's build of the centre instead of walking
+    /// Phase 2 took the center's deep walk from the app's build of the center instead of walking
     /// it again ([`best_reference_diag_from_build`]).
     pub centre_from_build: bool,
-    /// Phase 1 of the winning pass scored by perturbation against the centre ([`perturb_scan`]).
+    /// Phase 1 of the winning pass scored by perturbation against the center ([`perturb_scan`]).
     pub scan_perturb: bool,
     /// Candidates [`perturb_scan`] walked in bignum after all (near the threshold, or untrusted).
     pub scan_rewalked: u32,
-    /// The pick is the nucleus of this period, found from the centre's walk
+    /// The pick is the nucleus of this period, found from the center's walk
     /// ([`best_reference_diag_nucleus`]); `None` for every other pick.
     pub nucleus: Option<u32>,
 }
@@ -3085,7 +3085,7 @@ enum PickPass {
 ///
 /// ⭐**Cliff rescue** (2026-08-09, `design/reference-lifecycle.md` L1): orbit arithmetic at `p`
 /// bits is only true for a precision-dependent number of iterations before rounding error, amplified
-/// by a repelling orbit, makes it spuriously escape — measured at the three-spar Misiurewicz centre
+/// by a repelling orbit, makes it spuriously escape — measured at the three-spar Misiurewicz center
 /// as ESCAPE CLIFFS: 128 bits → 570, 160 → 84,941, 207 → 570,711, 286+ → survives (test
 /// `escape_length_vs_precision`). Below the cliff this function used to go BLIND: every candidate
 /// "escaped" inside the quick scan, phase 1 had no survivor, and the longest-escaper fallback
@@ -3094,8 +3094,8 @@ enum PickPass {
 /// already-suspicious outcomes so healthy picks are byte-identical to the old selection:
 /// - no phase-1 survivor at `p` → redo the whole selection at `p + 128` (the orbit-build
 ///   precision, so the rescued score describes the orbit that will actually be built);
-/// - the winner escapes before `max_iter` → rescore the CENTRE alone at `p + 128`; take the
-///   centre only if it then survives the full render (the unambiguous case).
+/// - the winner escapes before `max_iter` → rescore the CENTER alone at `p + 128`; take the
+///   center only if it then survives the full render (the unambiguous case).
 #[allow(clippy::too_many_arguments)]
 pub fn best_reference(
     center: &[BigFloat; 2],
@@ -3123,18 +3123,18 @@ pub fn best_reference_diag(
     best_reference_diag_forced(center, span, formula, julia, julia_c, max_iter, p, None, None, false)
 }
 
-/// [`best_reference_diag`] that takes the CENTRE's walks from `centre` instead of walking the
-/// centre itself. The pick walks the centre twice over, both times at `p + REF_RESCUE_EXTRA_BITS`
-/// to `max_iter`: phase 2's deep walk (the centre is candidate 0, so whenever it survives phase 1
-/// it is the first survivor) and the centre rescue. That is the orbit, at the precision, the app
-/// builds whenever the centre is the pick, so the app builds it once, on its own thread, while
+/// [`best_reference_diag`] that takes the CENTER's walks from `centre` instead of walking the
+/// center itself. The pick walks the center twice over, both times at `p + REF_RESCUE_EXTRA_BITS`
+/// to `max_iter`: phase 2's deep walk (the center is candidate 0, so whenever it survives phase 1
+/// it is the first survivor) and the center rescue. That is the orbit, at the precision, the app
+/// builds whenever the center is the pick, so the app builds it once, on its own thread, while
 /// phase 1 runs here, and answers both from that build ([`centre_walk_from_build`]). At 1e30000×
-/// the pick's own walk of the centre had run beside the app's build of it, step for step: two
+/// the pick's own walk of the center had run beside the app's build of it, step for step: two
 /// 100,000-bit walks of one orbit.
 ///
-/// ⛔Contract: `centre.walk(want_samples)` returns EXACTLY what the walk here would — the centre's
+/// ⛔Contract: `centre.walk(want_samples)` returns EXACTLY what the walk here would — the center's
 /// length (c-plane: the period-watching walk, `max_iter` for an orbit that closes; Julia: `z₀` =
-/// centre, `c` = `julia_c`) and, with `want_samples`, its extended-range samples — or `None`, and
+/// center, `c` = `julia_c`) and, with `want_samples`, its extended-range samples — or `None`, and
 /// the walk then runs here. The pick is then byte-identical to [`best_reference_diag`]'s
 /// (`the_rescue_can_come_from_a_build`, `the_centre_walk_can_come_from_a_build`).
 #[allow(clippy::too_many_arguments)]
@@ -3152,7 +3152,7 @@ pub fn best_reference_diag_from_build(
 }
 
 /// [`best_reference_diag_from_build`] (or [`best_reference_diag`] without a `centre`) that may
-/// elect a NUCLEUS: when the centre does not survive the render and its walk passed a nucleus
+/// elect a NUCLEUS: when the center does not survive the render and its walk passed a nucleus
 /// inside the view ([`NucleusHint`]), the refined nucleus is the reference, its orbit closing at
 /// one period, instead of the longest-surviving candidate. [`RefPickDiag::nucleus`] says so.
 /// Otherwise the pick is byte-identical to the plain one. Exports only for now (2026-11-03).
@@ -3213,7 +3213,7 @@ fn best_reference_diag_forced(
         PickPass::Winner { point, deep_len, survivors, deep_perturb, deep_scored, rebases, fallbacks, centre_from_build, scan_perturb, scan_rewalked, nucleus: _ } => {
             // The winner escapes before the render budget — either a genuine boundary/exterior
             // view (every point escapes) or a precision cliff between `quick` and `max_iter`.
-            // Rescoring the centre at the BUILD precision separates them: only a cliff un-blinds.
+            // Rescoring the center at the BUILD precision separates them: only a cliff un-blinds.
             let p2 = p + REF_RESCUE_EXTRA_BITS;
             let centre_len = centre.and_then(|c| (c.walk)(false)).map(|w| w.len).unwrap_or_else(|| {
                 let jcx = bf(julia_c[0], p2);
@@ -3234,7 +3234,7 @@ fn best_reference_diag_forced(
                         winner_len: centre_len,
                         rescued: Some("centre"),
                         fallback_escaper: false,
-                        // The winning score is the centre's plain rescue walk, not phase 2.
+                        // The winning score is the center's plain rescue walk, not phase 2.
                         deep_perturb: false,
                         deep_scored: 0,
                         perturb_rebases: 0,
@@ -3272,8 +3272,8 @@ fn best_reference_diag_forced(
             // fiction. Redo the WHOLE selection at the build precision; a still-empty pass is
             // then a real exterior view and the longest escaper (at truthful scores) stands.
             let p2 = p + REF_RESCUE_EXTRA_BITS;
-            // The rescan's centre walk is at `p2 + REF_RESCUE_EXTRA_BITS`, not the build's precision,
-            // so `centre` cannot answer it: the pass walks the centre itself.
+            // The rescan's center walk is at `p2 + REF_RESCUE_EXTRA_BITS`, not the build's precision,
+            // so `centre` cannot answer it: the pass walks the center itself.
             match pick_pass(center, span, formula, julia, julia_c, max_iter, p2, force, None, nucleus_ok) {
                 PickPass::Winner { point, deep_len, survivors, deep_perturb, deep_scored, rebases, fallbacks, centre_from_build, scan_perturb, scan_rewalked, nucleus } => (
                     point,
@@ -3338,7 +3338,7 @@ fn pick_pass(
     // smooth; ranking only to `quick` couldn't tell a filament point (survives to `max_iter`) from a
     // near-exterior point that escapes just past `quick`, so at near-filament spots it picked an
     // escaping reference → heavy rebasing → the deep-zoom "jump on zoom". Deep-ranking only survivors
-    // (centre first, early-break once one survives the full render) keeps the common boundary case
+    // (center first, early-break once one survives the full render) keeps the common boundary case
     // cheap; a genuine deep-exterior dive (no survivor) falls back to the longest-escaping point.
     let quick = max_iter.min(REF_SCORE_SCAN);
     let jcx = bf(julia_c[0], p);
@@ -3351,7 +3351,7 @@ fn pick_pass(
             orbit_length_bf(&zero, &zero, zx, zy, formula, cap, p, false)
         }
     };
-    // Candidate points: the centre first, then a 5×5 grid at several span fractions (fine→coarse), so
+    // Candidate points: the center first, then a 5×5 grid at several span fractions (fine→coarse), so
     // the search reliably samples the central detail even when the boundary is a thin filament (a
     // single coarse ±0.5-span grid falls into the gaps between filaments at deep zoom).
     const N: usize = 5;
@@ -3363,7 +3363,7 @@ fn pick_pass(
             for i in 0..N {
                 let fx = (i as f64 / (N as f64 - 1.0) - 0.5) * 2.0 * sc;
                 let fy = (j as f64 / (N as f64 - 1.0) - 0.5) * 2.0 * sc;
-                // Offsets via the extended-range span so the grid doesn't collapse to the centre
+                // Offsets via the extended-range span so the grid doesn't collapse to the center
                 // past ~1e308× (where an f64 span would underflow to 0).
                 let px = center[0].add(&span[0].mul_f64(fx).to_bf(p), p, RM);
                 let py = center[1].add(&span[1].mul_f64(fy).to_bf(p), p, RM);
@@ -3387,16 +3387,16 @@ fn pick_pass(
             }
         };
     let idxs: Vec<usize> = (0..cands.len()).collect();
-    // ⭐The CENTRE's deep walk. The centre is candidate 0, so whenever it survives phase 1 it is
+    // ⭐The CENTER's deep walk. The center is candidate 0, so whenever it survives phase 1 it is
     // the first survivor, and phase 2 walks it to `max_iter`. It walks at `p +
-    // REF_RESCUE_EXTRA_BITS`, the precision the app builds a reference at: when the centre is the
+    // REF_RESCUE_EXTRA_BITS`, the precision the app builds a reference at: when the center is the
     // pick, its build is then this very walk, so the app can build it once, beside phase 1, and
     // answer from that build (`centre_src`, see [`best_reference_diag_from_build`]). Without a
     // build that holds the whole walk it runs here, BESIDE phase 1, which takes phase 1 off the
-    // pick's critical path (at 4.6e1105×, ~0.3 s of phase 1 ahead of a ~1.2 s deep walk); a centre
+    // pick's critical path (at 4.6e1105×, ~0.3 s of phase 1 ahead of a ~1.2 s deep walk); a center
     // that does NOT survive phase 1 escaped inside `quick` steps, so that walk was short.
     //
-    // ⭐A centre whose orbit closes on itself ([`OrbitPeriod`], a minibrot-centred view) stops
+    // ⭐A center whose orbit closes on itself ([`OrbitPeriod`], a minibrot-centered view) stops
     // there and scores `max_iter`: a periodic point never escapes, so it wins outright, and the
     // walk costs one period instead of the whole budget.
     let log2_span = span[0].log2().max(span[1].log2());
@@ -3415,7 +3415,7 @@ fn pick_pass(
             (len, None, hints)
         }
     };
-    // Phase 1's scores: by perturbation against the centre where phase 2 would use it (see
+    // Phase 1's scores: by perturbation against the center where phase 2 would use it (see
     // [`perturb_scan`]), else the bignum walks of every candidate.
     let standing = crate::worker_priority::current();
     let (mut scan, centre_beside) = std::thread::scope(|s| {
@@ -3434,7 +3434,7 @@ fn pick_pass(
                 perturb: false,
                 rewalked: 0,
             });
-        (scan, centre.map(|h| h.join().expect("the centre's deep walk panicked")))
+        (scan, centre.map(|h| h.join().expect("the center's deep walk panicked")))
     });
     let rank = |scores: &[u32]| {
         let mut survivors: Vec<usize> = Vec::new();
@@ -3460,14 +3460,14 @@ fn pick_pass(
         };
         (survivors, esc_i, esc_len) = rank(&scan.scores);
     }
-    // ⭐THE NUCLEUS (`nucleus`; exports only for now). When the centre's own walk does not
+    // ⭐THE NUCLEUS (`nucleus`; exports only for now). When the center's own walk does not
     // survive the render, everything after this point walks some other candidate's whole orbit,
-    // and the app then builds that orbit again at full length. If the centre's walk passed a
+    // and the app then builds that orbit again at full length. If the center's walk passed a
     // nucleus inside the view ([`NucleusHint`]), that nucleus is the better reference: its orbit
     // closes, so its build stops at one period and the renormalized step can run. Taken only
-    // when its period fits [`NUCLEUS_MIN_REPEATS`] times into the centre's walk, it refines, lies
+    // when its period fits [`NUCLEUS_MIN_REPEATS`] times into the center's walk, it refines, lies
     // inside the view and closes for it ([`nucleus_in_view`]); otherwise the pick goes on exactly
-    // as before. A centre that survives keeps its own walk (already built beside the pick) and is
+    // as before. A center that survives keeps its own walk (already built beside the pick) and is
     // untouched.
     let mut centre_from_build = false;
     if nucleus && !julia {
@@ -3501,7 +3501,7 @@ fn pick_pass(
         // Deep exterior — or a precision cliff; the caller's rescue pass tells them apart.
         return PickPass::NoSurvivor { point: cands[esc_i].clone(), esc_len };
     }
-    // Phase 2 — deep-rank survivors to the full render length; take the longest-surviving. The centre
+    // Phase 2 — deep-rank survivors to the full render length; take the longest-surviving. The center
     // (cands[0], usually best on the boundary) is scanned first — alone, so the common boundary case
     // stays a single deep orbit — and only if it does NOT survive the whole render do the remaining
     // survivors get a deep scan. The selection loop then replicates the old sequential early-break
@@ -3518,7 +3518,7 @@ fn pick_pass(
     let first = survivors[0];
     let rest: Vec<usize> = survivors.iter().skip(1).take(REF_DEEP_MAX - 1).copied().collect();
     let (dl0, ref_orbit) = if first == 0 {
-        // The centre's deep walk: run beside phase 1, else from the app's build, else walked now
+        // The center's deep walk: run beside phase 1, else from the app's build, else walked now
         // (a build cut short of the whole walk). The recorded and plain walks return the same
         // length, so only the recording's use follows the rule below.
         let want = use_perturb && !rest.is_empty();
@@ -3631,11 +3631,11 @@ fn pick_pass(
     }
 }
 
-/// A nucleus is taken only if its orbit repeats at least this often within the centre's own walk.
+/// A nucleus is taken only if its orbit repeats at least this often within the center's own walk.
 /// A reference that closes pays off by being SHORT (its build stops at one period) and by letting
 /// the renormalized step skip whole periods, and both need the pixels to run through several
 /// periods. Measured on the minibrot-offset set (2026-11-03): the view's own minibrot repeated 6 to
-/// 11 times within the centre's walk and its views ran 1.2 to 2.6x faster; a minibrot of period
+/// 11 times within the center's walk and its views ran 1.2 to 2.6x faster; a minibrot of period
 /// 72,080 to 731,742 found near the edge repeated 1 to 3 times, and its views ran up to 64x slower
 /// to pick and up to 1.7x slower on the GPU.
 const NUCLEUS_MIN_REPEATS: u32 = 4;
@@ -3901,7 +3901,7 @@ fn detect_period(cx: &BigFloat, cy: &BigFloat, formula: u32, max: u32, p: usize)
 /// Field case 2026-09-12 (`validation/minibrot-m-key-1.8e122.fdn`): a period-1411 minibrot
 /// at 1.8e122× has `|D_1411| ≈ 2^204`, so at the finder's 471 bits `|Z_1411|` bottomed out
 /// at `2^-268` against a tolerance of `2^-414` — Newton had converged in two steps to the
-/// nucleus 19 px from the view centre, and the verification then declared "no minibrot".
+/// nucleus 19 px from the view center, and the verification then declared "no minibrot".
 /// Raising precision only moves the wall (that view needs ~620 bits; deeper ones more).
 /// `|Z_n / D_n|` IS a c-plane length, so the tolerance compares like with like, and at the
 /// true period it sits at the precision floor (`2^-472` there) regardless of `|D_n|`.
@@ -3947,8 +3947,8 @@ fn reduce_period(
         // instead asked a different question ("is any lower-period nucleus within tolerance of this
         // point"), and near a deep atom the answer is yes: the seahorse seed at 1e6× detected 998
         // correctly, Newton converged on the 998 nucleus, and this loop then returned **973** — a
-        // real neighbouring minibrot, but not this one. `find_nucleus` handed back one atom's
-        // PERIOD with another atom's CENTRE, so the jump landed ~500,000 atom-widths off target and
+        // real neighboring minibrot, but not this one. `find_nucleus` handed back one atom's
+        // PERIOD with another atom's CENTER, so the jump landed ~500,000 atom-widths off target and
         // `--selftest`'s NR-zoom check went red. Shallower views were worse (39 at 1e1.8×, 468, 858)
         // because the tolerance is a thousandth of the VIEW span and so loosens as the view widens.
         // Restricting to divisors makes the test answer the question the reduction is actually for,
@@ -3995,13 +3995,13 @@ pub fn find_nucleus(
 /// How [`find_nucleus_by`] chooses the period it Newton-solves for.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum PeriodSearch {
-    /// The iteration at which the critical orbit from the view CENTRE comes closest to 0: the
-    /// atom domain that encloses the centre. What the in-app finder uses, since a user looking
+    /// The iteration at which the critical orbit from the view CENTER comes closest to 0: the
+    /// atom domain that encloses the center. What the in-app finder uses, since a user looking
     /// at a minibrot is inside its domain.
     ClosestApproach,
     /// The first iteration at which a disc of the view's radius, carried forward with ball
     /// arithmetic, can contain 0: the lowest period with a nucleus at or near the view.
-    /// ⭐On a deep zoom path the centre stays inside a shallow minibrot's atom domain long after
+    /// ⭐On a deep zoom path the center stays inside a shallow minibrot's atom domain long after
     /// that nucleus has left the view, so the closest approach keeps naming it and the runaway
     /// check rightly rejects it (measured: a path to 1e60206× named the same period-953
     /// minibrot from 1e2× to 1e30× and nothing from 1e40×). The ball asks about the view
@@ -4326,7 +4326,7 @@ pub struct Multiplier {
     /// astronomically large.
     pub log2_abs: f64,
     /// `arg λ` in radians — the **spiral twist**: how far the structure rotates over one zoom
-    /// period. Zero means the repetition is straight (self-similar without spiralling).
+    /// period. Zero means the repetition is straight (self-similar without spiraling).
     pub arg: f64,
 }
 
@@ -4335,7 +4335,7 @@ pub struct Multiplier {
 /// `∏ k·z^(k−1)` around the `p` cycle points.
 ///
 /// Two exact cases pin it. At `c = −2` (the antenna tip, k=2 p=1) the orbit reaches the fixed
-/// point 2 and `λ = 4` exactly and real — which is why the tip repeats without spiralling. At
+/// point 2 and `λ = 4` exactly and real — which is why the tip repeats without spiraling. At
 /// `c = i` (k=2 p=2) the cycle is `{−1+i, −i}` and `λ = 4(1+i)`, so `|λ| = 4√2` and the structure
 /// twists 45° per zoom period.
 pub fn misiurewicz_multiplier(
@@ -4387,13 +4387,13 @@ pub fn misiurewicz_multiplier(
 /// Detect a Misiurewicz point's `(preperiod, period)` from the critical orbit at `(cx, cy)`.
 ///
 /// A Misiurewicz point is strictly PRE-periodic: the critical orbit runs for `k` steps and then
-/// lands exactly on a repelling `p`-cycle. So the pair to find is the `(m, n-m)` minimising
-/// `|z_n - z_m|` — at the true point that separation is zero, and at a view centred near one it is
+/// lands exactly on a repelling `p`-cycle. So the pair to find is the `(m, n-m)` minimizing
+/// `|z_n - z_m|` — at the true point that separation is zero, and at a view centered near one it is
 /// about the width of the view.
 ///
 /// This is the pre-periodic counterpart of [`detect_period`], and it is what lets the Misiurewicz
 /// solver work the way the minibrot one already does: without it a caller has to KNOW the two
-/// numbers, which in practice means nobody uses it and dives to a spiral centre by hand.
+/// numbers, which in practice means nobody uses it and dives to a spiral center by hand.
 ///
 /// ⚠**The scan cannot be done in `f64`.** The orbit values are order 1, so an `f64` copy resolves
 /// differences no finer than ~1e-16, while the separation that identifies the pair is the width of
@@ -4423,7 +4423,7 @@ pub fn detect_misiurewicz(
 /// perfectly and the caller has to reject it for being nowhere near the view.
 ///
 /// `target_span_log2` (log2 of the view's complex width) selects instead by SCALE. The
-/// neighbourhood of a pre-period-`k` point is about `1/|D_k|` across, where `D = dz/dc` is carried
+/// neighborhood of a pre-period-`k` point is about `1/|D_k|` across, where `D = dz/dc` is carried
 /// alongside the orbit, so the pair that governs the visible structure is the one with
 /// `|D_k| ≈ 1/span`.
 ///
@@ -4436,7 +4436,7 @@ pub fn detect_misiurewicz(
 /// and irrelevant once it is astronomically large, and only the ORDER OF MAGNITUDE is used here.
 /// Tracking `D` itself would overflow `f64` before 1e309× and cost a bignum multiply per step.
 /// Cost ceiling for the Misiurewicz DETECTOR's critical-orbit walk, in **steps × bits²** — the
-/// walk's cost unit (each step is one full-precision `z^k + c`, ~O(bits²)). Modelled on
+/// walk's cost unit (each step is one full-precision `z^k + c`, ~O(bits²)). Modeled on
 /// [`SA_COST_BUDGET`], but its OWN constant: the organizing point at a 2.37e4001× view is only
 /// identified by its scale-matched near-return at index ~438,732 (its canonical pre-period is
 /// ~3,990 — the reduction below walks back to it), which `SA_COST_BUDGET` (~84k steps at 13k
@@ -4793,7 +4793,7 @@ pub struct SolveScale {
     pub log2_target: f64,
     /// log2 of the magnification of the view the SEED came from. Sets only how far a converged
     /// point may be from the seed before it is reported as [`MisiurewiczMiss::TooFar`] — a
-    /// judgement about the view the user is LOOKING AT, which is why it cannot use the target.
+    /// judgment about the view the user is LOOKING AT, which is why it cannot use the target.
     pub log2_seed: f64,
 }
 
@@ -4835,7 +4835,7 @@ pub enum MisiurewiczMiss {
 /// [`SolveScale`] carries the depth to solve FOR and the depth the seed came FROM, both as
 /// **log2 — not the magnification itself**, so the solve reaches the depths this app renders at.
 /// An `f64` magnification capped it at 2^1020 ≈ 1e307: a request for 1e58000× came back with a
-/// centre good to ~307 digits, and navigating there rendered a single flat colour, because the
+/// center good to ~307 digits, and navigating there rendered a single flat color, because the
 /// coordinate was wrong by tens of thousands of digits (field report 2026-08-30).
 ///
 /// Returns why it failed rather than a bare `None`; see [`MisiurewiczMiss`].

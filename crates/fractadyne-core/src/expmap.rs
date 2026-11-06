@@ -1,11 +1,11 @@
 //! Exponential-map strips: their geometry (`design/zoom-video.md` §3).
 //!
-//! A zoom video dives straight into one centre. Rendering it frame by frame computes each annulus
-//! around the centre once per frame it appears in; an exponential map renders each annulus ONCE, as
-//! a strip whose columns are the angle around the centre and whose rows are the logarithm of the
+//! A zoom video dives straight into one center. Rendering it frame by frame computes each annulus
+//! around the center once per frame it appears in; an exponential map renders each annulus ONCE, as
+//! a strip whose columns are the angle around the center and whose rows are the logarithm of the
 //! distance from it (Munafo's exponential map, https://mrob.com/pub/muency/exponentialmap.html).
 //! The map is conformal, so a strip's texels are square in the plane. Built from that published
-//! maths only: zoomasm, Kalles Fraktaler and Fraktaler-3, which use the same idea, are AGPL, and
+//! math only: zoomasm, Kalles Fraktaler and Fraktaler-3, which use the same idea, are AGPL, and
 //! their source is never read (design §2).
 //!
 //! Fractadyne's own convention, used everywhere inside the app (a zoomasm-compatible writer
@@ -101,7 +101,7 @@ impl ExpMap {
     }
 
     /// Where in its texel a strip samples, in texels from the texel's corner along both axes:
-    /// `0.5` (the centre) for a conformal strip, `0.0` (the corner, as Kalles Fraktaler samples)
+    /// `0.5` (the center) for a conformal strip, `0.0` (the corner, as Kalles Fraktaler samples)
     /// for an octave strip.
     pub fn sample_offset(&self) -> f64 {
         match self.layout {
@@ -126,7 +126,7 @@ impl ExpMap {
 
     /// The sample point of texel `(i, j)` of strip `k` in polar form: (`log2` of its radius, its
     /// angle in radians). `i` and `j` are texel indices; a fractional part moves the sample from
-    /// where the layout puts it ([`ExpMap::sample_offset`]: the texel's centre, or its corner). The
+    /// where the layout puts it ([`ExpMap::sample_offset`]: the texel's center, or its corner). The
     /// `log2` is an `f64`, so thousands of octaves deep it is good to ~1e-12 of the radius;
     /// [`ExpMap::texel_offset`] is exact.
     pub fn texel_polar(&self, k: u64, i: f64, j: f64) -> (f64, f64) {
@@ -134,7 +134,7 @@ impl ExpMap {
         (self.outer_log2(k) - self.row_step() * (j + o) / LN_2, self.step() * (i + o))
     }
 
-    /// Texel `(i, j)`'s sample point as an offset from the dive's centre, `(re, im)`,
+    /// Texel `(i, j)`'s sample point as an offset from the dive's center, `(re, im)`,
     /// extended-range.
     pub fn texel_offset(&self, k: u64, i: f64, j: f64) -> (FloatExp, FloatExp) {
         let o = self.sample_offset();
@@ -151,7 +151,7 @@ impl ExpMap {
 
     /// How many strips a dive to frames at `end_log2mag` needs: one an octave from the first
     /// frame's corner down to the last frame's corner, then on to half a pixel of the last frame
-    /// (`log2(diagonal)` octaves more), so the last frame's centre is covered too.
+    /// (`log2(diagonal)` octaves more), so the last frame's center is covered too.
     pub fn strips_to(&self, end_log2mag: f64, height_px: f64) -> u64 {
         let half_pixel_log2 = (Viewport::REFERENCE_HEIGHT / height_px).log2() - end_log2mag - 1.0;
         (self.r0_log2 - half_pixel_log2).max(1.0).ceil() as u64
@@ -172,7 +172,7 @@ impl ExpMap {
     ///
     /// Nearest, not interpolated: a texel holds an iteration count, which must not be blended
     /// (`design/zoom-video.md` §6.2). The texel whose sample point is nearest along each axis is
-    /// `floor(position + ½ − sample_offset)`: the one the position falls in for centre-sampled
+    /// `floor(position + ½ − sample_offset)`: the one the position falls in for center-sampled
     /// texels, the nearer corner for corner-sampled ones (where a position in an octave strip's
     /// last half row goes to the next strip's row 0, which samples the same circle). A conformal
     /// strip's octave ends inside its overlap rows, so its rows never run out.

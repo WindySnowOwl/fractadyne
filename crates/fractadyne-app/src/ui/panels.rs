@@ -6,7 +6,7 @@ use crate::*;
 /// left edge instead of starting wherever the preceding label happened to end.
 const PANEL_LABEL_W: f32 = 104.0;
 
-/// One labelled control row: label on the LEFT, control to its right.
+/// One labeled control row: label on the LEFT, control to its right.
 ///
 /// egui's own idiom appends the label - `Slider::text` and `ComboBox::from_label` both put it
 /// AFTER the widget - which reads as a caption and leaves a column of ragged text down the right
@@ -53,12 +53,12 @@ impl FractadyneApp {
     /// design, because remapping a view that reads correctly only changes the picture for nothing.
     /// But people read "normalize" as "fit the palette to what is on screen", and reported it as
     /// broken when it sat there declining (2026-09-17, 2026-09-18). The threshold is calibrated
-    /// against two regressions in OPPOSITE directions — flat-grey at shallow depth, and "cities at
+    /// against two regressions in OPPOSITE directions — flat-gray at shallow depth, and "cities at
     /// night" — so moving it to satisfy the request risks both. Asking the question outright costs
     /// one checkbox and leaves the guard alone.
     ///
     /// ⚠Indented under the line above, because it modifies it rather than standing on its own. Not
-    /// greyed when normalization is off: this checkbox is itself a way to TURN normalization on.
+    /// grayed when normalization is off: this checkbox is itself a way to TURN normalization on.
     pub(crate) fn fit_range_checkbox(&mut self, ui: &mut egui::Ui) {
         ui.horizontal(|ui| {
             ui.add_space(ui.spacing().indent * 0.5);
@@ -71,7 +71,7 @@ impl FractadyneApp {
         let live = self.coloring.normalize_live || self.coloring.normalize;
         // INDENTED, because it is a sub-option of the checkbox above it — the same idiom the
         // "Click to zoom" / "Factor" pair already uses in this panel. The two marks say different
-        // things and both are wanted: greying says "you cannot use this right now", the indent
+        // things and both are wanted: graying says "you cannot use this right now", the indent
         // says "this belongs to the line above" — which is the half that tells you WHY, and it
         // says it before you go hunting for a tooltip.
         ui.add_enabled_ui(live, |ui| {
@@ -221,6 +221,8 @@ impl FractadyneApp {
                 } else {
                     fractadyne_color::PRESETS[self.coloring.palette_idx].name.to_string()
                 };
+                // The chosen palette's swatch, not a hover preview's: the box names the choice.
+                let pal_swatch = self.chosen_gradient().bake(fractadyne_color::segment::LUT_SIZE);
                 labelled(ui, &tr!(panel_palette), |ui| {
                     if std::mem::take(&mut self.dialogs.open_palette_dropdown) {
                         // The combo box's own id rule (see the fractal dropdown in menus.rs).
@@ -228,8 +230,8 @@ impl FractadyneApp {
                         ui.memory_mut(|m| m.open_popup(popup));
                         self.coloring.palette_preview.reopened();
                     }
-                    egui::ComboBox::from_id_salt("panel_palette")
-                        .selected_text(pal_name)
+                    let combo = egui::ComboBox::from_id_salt("panel_palette")
+                        .selected_text(crate::ui::menus::palette_box_text(ui, &pal_name))
                         // Tall enough for a good run of the presets; it scrolls past that.
                         .height(430.0)
                         .show_ui(ui, |ui| {
@@ -300,6 +302,7 @@ impl FractadyneApp {
                                 self.coloring.use_duotone = false;
                             }
                         });
+                    crate::ui::menus::paint_palette_box_swatch(ui, combo.response.rect, &pal_swatch);
                     // The palette browser: every palette over this view, side by side, by tag.
                     if ui.small_button(crate::icons::GALLERY).on_hover_text(tr!(menu_color_browse_hover)).clicked() {
                         self.palette_browser.open = true;
@@ -315,7 +318,7 @@ impl FractadyneApp {
                     // ⭐The hex sits under each swatch rather than beside it: the panel is 298 px
                     // and two swatches with their labels already fill the row, so an inline value
                     // would wrap. It is a readout here, not a field — the gradient editor is where
-                    // a colour gets typed, and duplicating an editable field in two places would
+                    // a color gets typed, and duplicating an editable field in two places would
                     // duplicate the "which one wins" question with it.
                     ui.horizontal(|ui| {
                         ui.color_edit_button_rgb(&mut self.coloring.duotone_lo);
@@ -341,6 +344,31 @@ impl FractadyneApp {
                 }
                 labelled(ui, &tr!(panel_cycle), |ui| {
                     ui.add(egui::Slider::new(&mut self.coloring.cycle, 0.0..=1.0))
+                });
+                // "Divide iterations": under Cycle, because it scales what Cycle chose. ⭐Grayed out
+                // where it would change no pixel (another method, or a range fit), with a tooltip
+                // that says why — a live control that does nothing reads as a broken one.
+                let applies = self.iter_div_applies();
+                let per_palette = crate::iterations_per_palette(self.color_cycle()).map_or(0, |n| n.round() as u64);
+                // ⚠The readout is the FIXED palette's. While "Normalize deep colors" is remapping
+                // the view, the screen shows the fitted palette instead, so the tooltip says so
+                // rather than state a rate the picture is not using.
+                let mut hover = tr!(panel_iter_div_hover, count = per_palette);
+                if (0..=self.dual as usize).any(|vi| self.live_norm_window(vi).is_some()) {
+                    hover = format!("{hover}\n\n{}", tr!(panel_iter_div_normalized_note));
+                }
+                labelled(ui, &tr!(panel_iter_div), |ui| {
+                    ui.add_enabled(
+                        applies,
+                        egui::Slider::new(&mut self.coloring.iter_div, 1..=fractadyne_state::ITER_DIV_MAX)
+                            .logarithmic(true),
+                    )
+                })
+                .on_hover_text(hover)
+                .on_disabled_hover_text(if self.coloring.color_method == crate::ColorMethod::Smooth {
+                    tr!(panel_iter_div_fit_hover)
+                } else {
+                    tr!(panel_iter_div_method_hover)
                 });
                 labelled(ui, &tr!(panel_offset), |ui| {
                     ui.add(egui::Slider::new(&mut self.coloring.offset, 0.0..=1.0))
@@ -509,7 +537,7 @@ impl FractadyneApp {
                 // approximation, glitch correction - mean nothing without the theory) and the
                 // performance-tuning sliders that used to sit inside Navigation. "Live render
                 // budget" and "Min motion resolution" are arguably MORE obscure than BLA: BLA can
-                // be ignored safely, whereas a mis-set budget changes behaviour with no clue why.
+                // be ignored safely, whereas a mis-set budget changes behavior with no clue why.
                 egui::CollapsingHeader::new(tr!(panel_section_advanced))
                     .id_salt("fractadyne.panel.advanced")
                     .default_open(false)

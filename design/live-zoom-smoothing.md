@@ -3,7 +3,7 @@
 *2026-09-16, build 3202 (`ee5cde9`), RTX 3080 · Vulkan, 1280×800 pt window @1.5×, 60 Hz. All
 numbers are `--zoomtest` runs (`DIAGNOSTICS.md`); the JSON logs and the trace transcripts are in
 the session scratchpad, the target files are `misi-49-3.fdn` (the hero Misiurewicz (49,3) spiral
-centre, `max_iter=500000`, auto-iter on) and `mini-p1411.fdn` (the period-1411 island at 1.2e123,
+center, `max_iter=500000`, auto-iter on) and `mini-p1411.fdn` (the period-1411 island at 1.2e123,
 `validation/dive-to-minibrot-1.6e123.toml`). Predecessor: `local/live-zoom-pipeline-analysis-2026-09-15.md`
 (the interactive lookahead, P1, is now shipped in `b194e51`).*
 
@@ -129,7 +129,7 @@ must keep, and the measurement that proves it.
 Size every *motion* and *pin* pass to a real-time target instead of the TDR budget:
 
 - New tunable `MOTION_PASS_MS` (≈ 10 ms; the present interval is 16.7 ms and the pass must leave
-  room for the colour pass and present). In the chunk walk (`render.rs:4538`) replace
+  room for the color pass and present). In the chunk walk (`render.rs:4538`) replace
   `pace = 1.0 for interacting || pin_frame` with `chunk_step_factor(motion_pass_dt, MOTION_PASS_MS)`,
   where `motion_pass_dt` is the measured wall/timestamp cost of the previous *motion* pass in this
   mode (a per-view EMA seeded from the last settled reading — never "no reading ⇒ full budget").
@@ -151,7 +151,7 @@ held max ≤ 1 oct at 4× (today 3.3); the continuous 1× → 1e100 tables uncha
 
 ### P-B  Pins survive references that did not change (F2)
 
-1. `install_recompute`: if the result is the *same* reference point (compare the pick's centre or
+1. `install_recompute`: if the result is the *same* reference point (compare the pick's center or
    the orbit's identity hash) with `orbit_len` equal to the installed one, drop it as a no-op — no
    `orbit_id` bump, no BLA re-upload. The trace shows every install between 1e4 and 1e6 and most at
    1e28–1e30 is this case (`⚠DID NOT GROW`).
@@ -236,13 +236,13 @@ and 4.0× on the Zoom speed slider (`--zoomtest-rate`):
 |---|---|
 | P-B.1 no-op installs dropped (`same_reference`: same point, length, completeness, tables, precision) | `install_recompute` |
 | P-B.2 a same-point extension keeps the pin (`PinnedRefresh::ref_pt`, `PinInputs::same_point`, re-keyed on continue) | `pin_verdict`, the verdict site |
-| P-A every moving refresh past 512 iterations is a pinned walk; pin passes use the settled walk's ledger — dispatch gated on GPU **completion callbacks** (`Perf::pin_inflight`, `PIN_INFLIGHT_MAX` 2 in flight), each pass **priced by its own GPU timestamp reading** (paired by nominal steps, `Perf::pin_pass_steps`; the completion stamp less `PIN_PASS_FRAMES` of latency stands in after `PIN_PRICE_WAIT_FRAMES`), per-band licence with a price-proportional fast lane for pins (`pin_fast_lane`, ×4..×16) and cold bands past the first-wrap storm inheriting half their predecessor's licence (`pin_band_license`), the wall-price factor (`chunk_step_factor` vs `MOTION_PIN_TARGET_MS` 20 ms), a growth limiter (×2, `MOTION_STEP_OPEN` 512), passes clipped at the band edge (`chunk_band_end`), a pin floor sized from the pin target and the mode's worst measured rate; the band ledger persists across the pins of a glide and resets when the reference POINT or LENGTH changes | `bp_chunk_tiling`, `chunk_over`, the pin-start block |
+| P-A every moving refresh past 512 iterations is a pinned walk; pin passes use the settled walk's ledger — dispatch gated on GPU **completion callbacks** (`Perf::pin_inflight`, `PIN_INFLIGHT_MAX` 2 in flight), each pass **priced by its own GPU timestamp reading** (paired by nominal steps, `Perf::pin_pass_steps`; the completion stamp less `PIN_PASS_FRAMES` of latency stands in after `PIN_PRICE_WAIT_FRAMES`), per-band license with a price-proportional fast lane for pins (`pin_fast_lane`, ×4..×16) and cold bands past the first-wrap storm inheriting half their predecessor's license (`pin_band_license`), the wall-price factor (`chunk_step_factor` vs `MOTION_PIN_TARGET_MS` 20 ms), a growth limiter (×2, `MOTION_STEP_OPEN` 512), passes clipped at the band edge (`chunk_band_end`), a pin floor sized from the pin target and the mode's worst measured rate; the band ledger persists across the pins of a glide and resets when the reference POINT or LENGTH changes | `bp_chunk_tiling`, `chunk_over`, the pin-start block |
 | harness fidelity: the headless `--livetest` / `--divetest` loops retire the pin gate after their synchronous readback (`Perf::retire_synchronous_dispatches`) and feed readings through the app's own `Perf::record_gpu_reading` | `livetest.rs`, `profile.rs` |
 | P-A/P-D rate-aware refresh resolution: `Perf::zoom_oct_s` (observed oct/s), `refresh_passes_allowed` (`HELD_MAX_OCT` 0.5 / `REFRESH_TARGET_S` 0.25 ⇒ 11 frames at 4×, 15 at ≤1×), `refresh_res_cap` from the nominal-rate hint (`Perf::motion_rate`, GPU readings + wall lift/cut) **and** the measured duration of the last pin (`pin_frames_last`/`pin_res_last`, cost ∝ pixels, growth ≤ ×1.25 per pin); applied as a cap on the AIMD scale (deep motion) and on the work-budget scale (direct mode) | the `res_scale` block of `build_params` |
 | harness: `res_px`, `oct_s`, `adopts` per frame; `pinned refreshes adopted` in the summary | `zoomtest.rs`, `scripts/zoomtest_report.py` |
 
-Measured (build 3247 — the final build, with the pin licence rules of finding 8 below; RTX 3080,
-1280×800 pt @1.5×; "before" = build 3202; the 1.0× continuous row is from build 3240, the licence
+Measured (build 3247 — the final build, with the pin license rules of finding 8 below; RTX 3080,
+1280×800 pt @1.5×; "before" = build 3202; the 1.0× continuous row is from build 3240, the license
 rules changed nothing measurable on the other rows):
 
 | case | rate | mean / p99 / max ms before → after | > 100 ms before → after | held max (oct) before → after |
@@ -260,7 +260,7 @@ rules changed nothing measurable on the other rows):
 | `--livetest` grand tour, headless | — | 24/24 checkpoints, 0 drift, both builds; pins 160 started / 0 adopted → **167 / 15 adopted** (the tour's glides run 5–19 oct/s, the drift window is 6–36 frames) | | |
 | continuous 1× → 1e100, dispatched RESOLUTION (build 3263) | 1.0× | 30% linear (9% of pixels) for the whole dive → **native (1460 of 1460 px) from 1e6 down**, 18.0 / 18.1 / 63 ms, 0 > 100 (the unpaced build: 133 > 100) | | ≤ 1.2 oct |
 | continuous 1× → 1e100, dispatched RESOLUTION | 4.0× | 30% linear → 1029 px at 1e0–1e4, **still 438 px (the floor) below 1e4** — a refresh has half an octave to finish at this rate, and the bands where no pin completes fall back to the model (finding 13); 17.8 ms, 0 > 100 | | 4.51 oct |
-| `--autodive 32 --autodive-home 3` (the device-loss experiment, autopilot dive, explicit 250k) | — | before: 31 lethal readings, peak iterate 2314 ms, 14 lethal-band frames, home-glide peak 1197 ms → **0 lethal readings, peak iterate 138 ms, 0 lethal-band frames, home-glide peak 66 ms**; no device loss on either. The experiment now exits 2 ("did not reach the regime") on the paced build — its repro value for issue #1 is gone with the 400 ms passes it relied on. One earlier run of the paced build (3245) logged 45 in-flight lethal-band warnings at the settled 1e32 view; the final build's run logged none — run-to-run variance not yet characterised | | |
+| `--autodive 32 --autodive-home 3` (the device-loss experiment, autopilot dive, explicit 250k) | — | before: 31 lethal readings, peak iterate 2314 ms, 14 lethal-band frames, home-glide peak 1197 ms → **0 lethal readings, peak iterate 138 ms, 0 lethal-band frames, home-glide peak 66 ms**; no device loss on either. The experiment now exits 2 ("did not reach the regime") on the paced build — its repro value for issue #1 is gone with the 400 ms passes it relied on. One earlier run of the paced build (3245) logged 45 in-flight lethal-band warnings at the settled 1e32 view; the final build's run logged none — run-to-run variance not yet characterized | | |
 
 What the round found, beyond the plan (each cost a build cycle and is recorded in the code):
 
@@ -268,7 +268,7 @@ What the round found, beyond the plan (each cost a build cycle and is recorded i
    the rate" and "only a reading ≥ 1 ms may grow it" both deadlocked: a pessimistic cut sized the
    next passes below the gate, nothing could qualify again, the pin crawled at its floor, and the
    frozen frame aged 13 octaves (11,000×) on screen while the cadence read perfect. The rate is a
-   hint; the licence, the limiter, the completion gate and the TDR budget are the guards.
+   hint; the license, the limiter, the completion gate and the TDR budget are the guards.
 2. **The present interval cannot price a pass.** The swap chain hides a pass's cost for two frames,
    so the 17 ms interval after a 100 ms pass priced it "cheap", it doubled, and three stacked before
    the acquire blocked for the whole backlog. The settled walk's quick-present drain proof has the
@@ -278,9 +278,9 @@ What the round found, beyond the plan (each cost a build cycle and is recorded i
    A pass licensed in one band must not run into the next (band clip), and the residual stalls at
    0.5×–1.0× after a jump are that storm: the lookahead picks a reference that escapes at 29,159
    iterations against a 32k ask — a reference-pick property (`design/pick-redesign.md`), not pacing.
-4. **A pin's opening pass** is an ordinary moving frame and was exempt from the licence; with an
+4. **A pin's opening pass** is an ordinary moving frame and was exempt from the license; with an
    inflated hint it went out at the TDR budget's size — once per pin, at every rate.
-5. **Per-band licences reset per pin** (each pin has a new signature) meant ~50 passes per pin;
+5. **Per-band licenses reset per pin** (each pin has a new signature) meant ~50 passes per pin;
    at 4× that is past the 2-octave drift abandon, so no pin adopted. The ledger now survives the
    pins of a glide.
 6. **Completion callbacks are delivered on the queue's poll cadence**, so a completion stamp
@@ -298,9 +298,9 @@ What the round found, beyond the plan (each cost a build cycle and is recorded i
    frames after its dispatch (the timestamp readback), so a band cost ~16 frames and six cold bands
    between 16k and 1M cost 64+ of the 36 frames the drift window allows. The reference also moved
    with the zoom anchor, so the ledger reset (new point) between pins. Two rules, both
-   rate-derived: a pin's licence grows in proportion to how far under target it priced
+   rate-derived: a pin's license grows in proportion to how far under target it priced
    (`pin_fast_lane`, ×4..×16, the grown pass predicted at half the target), and a pin's cold band
-   inherits HALF its predecessor's licence once the pass starts past `2 × orbit_len` — beyond the
+   inherits HALF its predecessor's license once the pass starts past `2 × orbit_len` — beyond the
    first-wrap rebase storm, the one hot region at a KNOWN cursor that the floor rule exists for
    (`pin_band_license`); bands up to the storm still open at the floor, and the settled walk is
    untouched. Result: pins reach 130k–950k in the same window, 2 of 10 dive-phase pins adopt, the
@@ -323,8 +323,8 @@ What the round found, beyond the plan (each cost a build cycle and is recorded i
     converged with every fold at sample 0's view, and the one-sample vs converged captures of the
     same view (`FRACTADYNE_ZOOMTEST_SETTLE`, `scratchpad/ghost_diff.py`) differ only by the
     de-speckle texture (blurred mean 1.8–2.5 / 255, 0.1–0.2 % of pixels over 16). What the review
-    DID find and fix: the settled chunk walk's signature hashed the **f64 centre**, whose ulp is
-    1/190 of the view width at 2^49 and one value for the whole neighbourhood at 2^800 — a small
+    DID find and fix: the settled chunk walk's signature hashed the **f64 center**, whose ulp is
+    1/190 of the view width at 2^49 and one value for the whole neighborhood at 2^800 — a small
     pan, or a re-picked reference of the same length at the same f64 point, kept the signature and
     the walk RESUMED its per-pixel state against the moved view: the old view's escaped pixels
     stay on screen under the new one, which is exactly a translucent copy of another location.
@@ -423,7 +423,7 @@ its number is a finding, not a merge.
 ## 7. The P-G round of 2026-10-17 (0.3.0-beta.20)
 
 The P-G rows (§4) on the RTX 3080 at 1280×800 pt (1455×1102 px), each run its own process with a
-fresh config dir, the continuous rows on `validation/misi-49-3.fdn` (the (49,3) spiral's centre,
+fresh config dir, the continuous rows on `validation/misi-49-3.fdn` (the (49,3) spiral's center,
 committed with this round). Every comparison is ONE exe with `--set` arms, alternated, and every run
 was put through `local/session-tools/w8/validity.py` (three runs it marked STEERED, a real pointer
 over the window, are left out of every number below).
@@ -467,7 +467,7 @@ average, 1.9–2.0 at worst, and the pacer slowed the zoom on 24–26% of frames
   against the current view, so a zoom-out's shallower build still lands. Traced (`overtaken install
   DROPPED`) and counted on `--zoomtest`'s installs line.
 - **`PIN_BAND_SPAN` (an experiment, OFF):** `render::pin_span_end`. A pin pass that covers its whole
-  start band runs on through bands with prices of their own while their licence shares fit the
+  start band runs on through bands with prices of their own while their license shares fit the
   setting's share of a pass; a span's price is charged to every band it ran in (`feed_pin_price`,
   the band byte `span_band_code`). Recorded as `WalkDispatchInputs::pin_span_share` (old recordings
   replay as 0).
@@ -503,10 +503,10 @@ The span experiment, against spans off (same exe, alternated):
 | deep 1× 2^245–2^305 (traced), spanned passes over 40 ms | 4 of 205; 50 of 136 | — | (one-band: 40 of 895, 56 of 819) |
 | 1× continuous, frames over 50 ms | 355, 92, 28, 0 | 9, 28 | 116, 78, 34, 2, 10 |
 
-⛔**Why spans are off.** A band's licence grows ×16 on a cheap price, and the band ledger assumes
+⛔**Why spans are off.** A band's license grows ×16 on a cheap price, and the band ledger assumes
 cost scales with the iterations in a band; at depth it jumps instead (pixels that survive into a
 band). One band at a time, the growth limiter's ×2 a frame absorbs those jumps; a span spends several
-grown licences in one pass and lands at 2–3× its price before the ledger's cut catches up. The 4×
+grown licenses in one pass and lands at 2–3× its price before the ledger's cut catches up. The 4×
 gain is real but so is that. And the on-screen picture is about RESOLUTION as well as age: a refresh
 held 0.6 octaves at 257 px is not sharper than one held 0.75 octaves at 436 (§7.4).
 
@@ -592,7 +592,7 @@ recordings replay unchanged), measured on the RTX 3080 in two rounds of alternat
   opening budget, not the limiter: `fe_budget` restarts at the bootstrap (4e6 steps) and re-climbs ×1.5
   a reading, which at 813×606 is 8 iterations a pass, lifted to the 256 pin floor — 18 frames of
   256-iteration passes. §7.7's frames 311–315 (limiter-bound) were one run's case, not the rule.
-  Clearing the band ledger at the switch (so df32 licences could not feed the lane) was tried first and
+  Clearing the band ledger at the switch (so df32 licenses could not feed the lane) was tried first and
   made it worse: every band reopened at its 256 floor while the lane allowed 7,899. And in the runs the
   pacer throttled ~20% (bimodal, every arm), the df32 stalls were worst with the lane on: 8.95, 3.17,
   3.08 octaves against 1.57–1.96 off.
@@ -665,7 +665,7 @@ opened the switch at 9.8e6–5.5e7, not the 8e7 the reading gives. ⭐**On this 
 not hold the first floatexp pin**: its first pass priced 0.0–0.1 ms (this card's timestamps lag a
 dispatch), floatexp's rate counted as measured, and the opening guess went to the
 4e8 ceiling at the next frame in both arms; the band ledger then set the passes (256-iteration
-passes, a band-3 pass priced 16.7 ms that cut its licence to 320). What the probe changed was the
+passes, a band-3 pass priced 16.7 ms that cut its license to 320). What the probe changed was the
 pin's SIZE: it started at the size of the df32 pins before it (620×466, 99 iterations a pass) where
 without it the 4e6 opening started one at 345×259 (44), and the bigger one took 24 frames to the
 smaller's 18.
@@ -688,11 +688,11 @@ each priced 1.1–1.7 ms against the 20 ms pin target, the band clip (not the gr
 every one, and adoption three frames after the last pass (the verified-present reading). Twelve frames
 a pin, adopted 0.56 octaves behind and ~1.1 behind before the next: every cycle at the gate's edge.
 
-`pin_span_end` (§7.3) spanned bands by their LICENCES, prices extrapolated ×4–×16, and overran where
+`pin_span_end` (§7.3) spanned bands by their LICENSES, prices extrapolated ×4–×16, and overran where
 cost jumps. `PIN_SPAN_PRICED` bounds a span by what its bands last COST: `WalkLedger::band_ms`, fed
 only by pin passes' own GPU timestamps (never a completion stand-in, never a 0.0 reading — the RX
 6800 XT's lag), a span's price shared out in proportion to its bands' earlier costs, each cost scaled
-up (never down) past the iterations it covered; doubled where the licences are halved (a new
+up (never down) past the iterations it covered; doubled where the licenses are halved (a new
 reference), cleared where they are; never into the band of the reference's first wrap unless that
 band was measured against this length. The span vouches for its size, so the growth limiter
 remembers it (`DispatchEvent::PricedSpan`) — without that the next band restarted its doubling at
@@ -720,7 +720,7 @@ iterate timer (`IterTiming`) is ONE slot, armed only when idle, and its readback
 with a pass every frame, every other pass goes untimed (`gpu` trace: a reading every second frame).
 66–78% of spans fell in the untimed phase, so the costs that bound them come from one-band passes
 only. A ring of timers would price every pass; it also doubles the readings every controller term was
-tuned on (the ×1.5 climbs, the motion EMA, the latched minimum, the licences), so it is its own
+tuned on (the ×1.5 climbs, the motion EMA, the latched minimum, the licenses), so it is its own
 experiment.
 
 **The timer ring (`TIMER_SLOTS`, default 3 on this branch).** Fed to every rate and budget, three

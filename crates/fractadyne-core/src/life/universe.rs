@@ -15,9 +15,9 @@ const SIDE: usize = TILE as usize;
 /// Cells in a tile.
 pub const TILE_CELLS: usize = SIDE * SIDE;
 const CELLS: usize = TILE_CELLS;
-/// The padded window a tile is stepped from: the tile and a one-cell ring of its neighbours.
+/// The padded window a tile is stepped from: the tile and a one-cell ring of its neighbors.
 const PAD: usize = SIDE + 2;
-/// The plane's extent: cell coordinates stay within ±`LIMIT`, so a tile's neighbours never overflow.
+/// The plane's extent: cell coordinates stay within ±`LIMIT`, so a tile's neighbors never overflow.
 pub const LIMIT: i64 = 1 << 62;
 
 /// The shape of a universe.
@@ -288,7 +288,7 @@ impl Universe {
         }
     }
 
-    /// The neighbour of tile `key` at offset `(dx, dy)`, if the universe has one there: a torus
+    /// The neighbor of tile `key` at offset `(dx, dy)`, if the universe has one there: a torus
     /// wraps; a plane's and a bounded plane's missing tiles read as the background.
     fn neighbour(&self, (tx, ty): (i64, i64), dx: i64, dy: i64) -> Option<&Tile> {
         let key = match self.topology {
@@ -310,7 +310,7 @@ impl Universe {
         for dy in -1..=1i64 {
             for dx in -1..=1i64 {
                 let Some(t) = self.neighbour(key, dx, dy) else { continue };
-                // The source rectangle in the neighbour, and where it lands in the pad.
+                // The source rectangle in the neighbor, and where it lands in the pad.
                 let (sx, w, px) = match dx {
                     -1 => (last, 1, 0),
                     0 => (0, SIDE, 1),

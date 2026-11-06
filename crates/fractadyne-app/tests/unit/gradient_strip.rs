@@ -20,7 +20,7 @@ const W: f32 = 490.0;
 /// ⭐⭐**Why the editor hit-tests the PRESS ORIGIN.** `Response::drag_started()` does not fire
 /// until the pointer has moved at least this far, so hit-testing at `interact_pointer_pos()` in
 /// that frame asks about a point that is *somewhere else*. ⚠⚠**And this is only the LOWER bound**:
-/// the drift is however far the pointer travelled in the frame that crossed it, so an ordinary
+/// the drift is however far the pointer traveled in the frame that crossed it, so an ordinary
 /// flick — tens of pixels in one 60 Hz frame — lands arbitrarily far away.
 ///
 /// ⚠It lives here, in the tests, because that is the only place it is *used*: it mirrors a
@@ -49,10 +49,10 @@ fn position_and_pixel_round_trip_and_clamp() {
 
 /// ⭐⭐**The reason `pick_stop` is nearest-wins and not first-in-range.** At the 32-stop cap the
 /// markers are ~15.8 px apart and the catch radius is 9 px, so a band in the middle of every gap
-/// is inside BOTH neighbours' radii. First-in-range names the left marker throughout that band,
+/// is inside BOTH neighbors' radii. First-in-range names the left marker throughout that band,
 /// which reads as the strip grabbing the wrong handle for a third of its width.
 ///
-/// ⚠**The obvious version of this test is vacuous** — aiming at a marker's dead centre, or a few
+/// ⚠**The obvious version of this test is vacuous** — aiming at a marker's dead center, or a few
 /// pixels off it, leaves only one marker in range, so nearest and first-in-range agree and the
 /// mutation survives. It was written that way first and passed against a deliberately broken
 /// `pick_stop`. The probe has to land in the overlap band, and the assertions below pin that it
@@ -81,7 +81,7 @@ fn the_nearest_marker_wins_inside_the_overlap_band() {
     // And every marker is still reachable by aiming at it.
     for (i, &p) in positions.iter().enumerate() {
         let x = strip_x(p, X0, W);
-        assert_eq!(pick_stop(&positions, x, X0, W, radius), Some(i), "dead centre of marker {i}");
+        assert_eq!(pick_stop(&positions, x, X0, W, radius), Some(i), "dead center of marker {i}");
         assert_eq!(pick_stop(&positions, x - 3.0, X0, W, radius), Some(i), "3 px left of {i}");
         assert_eq!(pick_stop(&positions, x + 3.0, X0, W, radius), Some(i), "3 px right of {i}");
     }
@@ -160,7 +160,7 @@ fn the_fine_nudge_is_finer_than_a_pixel_and_the_coarse_one_is_not() {
 }
 
 /// ⭐⭐**The reported bug, pinned as arithmetic.** "The drag points sometimes hang up where they
-/// stop moving": `Response::drag_started()` does not fire until the pointer has already travelled
+/// stop moving": `Response::drag_started()` does not fire until the pointer has already traveled
 /// egui's drag threshold, so hit-testing at `interact_pointer_pos()` in that frame asks about a
 /// point ~6 px from where the user pressed. At the 32-stop cap that is enough to name the WRONG
 /// marker, or — landing mid-gap — no marker at all, which cancels the drag silently and leaves the
@@ -190,7 +190,7 @@ fn the_drag_threshold_re_targets_the_marker_so_the_press_origin_is_the_one_to_te
     assert_eq!(pick_stop(&positions, press, X0, W, radius), Some(5), "the press names marker 5");
 
     // Drifting toward the next marker: past the halfway point the nearest marker is 6, so a
-    // hit-test after the threshold grabs the neighbour.
+    // hit-test after the threshold grabs the neighbor.
     let drifted = press + spacing * 0.55;
     assert_eq!(
         pick_stop(&positions, drifted, X0, W, radius),
@@ -216,7 +216,7 @@ fn the_drag_threshold_re_targets_the_marker_so_the_press_origin_is_the_one_to_te
     assert_eq!(
         pick_stop(&few, press + few_spacing * 0.5, X0, W, radius),
         None,
-        "post-threshold this names NOTHING — the drag is cancelled and the stop never moves"
+        "post-threshold this names NOTHING — the drag is canceled and the stop never moves"
     );
     // Even a modest one-frame flick is already past every marker's zone.
     assert_eq!(pick_stop(&few, press + 20.0, X0, W, radius), None, "a 20 px flick lands nowhere");
@@ -240,7 +240,7 @@ fn ring_positions_and_points_round_trip_with_the_seam_at_twelve_oclock() {
     assert!(x > cx && (y - cy).abs() < 1e-3, "0.25 must be at 3 o'clock, got ({x},{y})");
     assert!((ring_pos(cx, cy, cx + r, cy) - 0.25).abs() < 1e-4);
     assert!((ring_pos(cx, cy, cx, cy + r) - 0.5).abs() < 1e-4, "0.5 is 6 o'clock");
-    // Degenerate: the centre has no angle and must not produce a NaN position.
+    // Degenerate: the center has no angle and must not produce a NaN position.
     assert_eq!(ring_pos(cx, cy, cx, cy), 0.0);
     assert!(ring_pos(cx, cy, cx, cy).is_finite());
 }
@@ -296,7 +296,7 @@ fn ring_hit_testing_wraps_across_the_seam() {
 }
 
 /// ⭐⭐**The ring's add track has to be a LINE, not a disc.** A radius test (`d <= r`) reads as
-/// "anywhere inside the track", which on this layout means the entire colour wheel *and* both
+/// "anywhere inside the track", which on this layout means the entire color wheel *and* both
 /// buttons in the hole — so every click on the gradient would insert a stop. The band test is what
 /// makes "click the track to add here" mean only the track.
 #[test]
@@ -315,13 +315,13 @@ fn the_ring_add_track_is_a_band_not_a_disc() {
     assert!(on_ring_track(cx, cy, track, x, y, tol));
 
     // ⚠The cases a disc test gets wrong. The annulus the gradient is painted in, the empty hole
-    // where the ⊕/⊖ buttons live, and the centre itself are all INSIDE the track radius and must
+    // where the ⊕/⊖ buttons live, and the center itself are all INSIDE the track radius and must
     // not count as clicks on it.
     let (x, y) = ring_point(cx, cy, 82.0, 0.4);
     assert!(!on_ring_track(cx, cy, track, x, y, tol), "the gradient annulus is not the track");
     let (x, y) = ring_point(cx, cy, 40.0, 0.4);
     assert!(!on_ring_track(cx, cy, track, x, y, tol), "the hole is not the track");
-    assert!(!on_ring_track(cx, cy, track, cx, cy, tol), "the centre is not the track");
+    assert!(!on_ring_track(cx, cy, track, cx, cy, tol), "the center is not the track");
     assert!(!on_ring_track(cx, cy, track, cx + 16.0, cy, tol), "the ⊕ button is not the track");
     // And well outside is a miss, so a click in the window's margin does nothing.
     let (x, y) = ring_point(cx, cy, track + 30.0, 0.4);
@@ -335,7 +335,7 @@ fn the_ring_add_track_is_a_band_not_a_disc() {
 /// be seen, numbered or clicked: the ribbon appeared to start at segment 3, and segments 1 and 2
 /// were selectable only if they already were.
 ///
-/// ⚠The old behaviour is reproduced here as the CONTROL, so this cannot pass by accident: the same
+/// ⚠The old behavior is reproduced here as the CONTROL, so this cannot pass by accident: the same
 /// click that `pick_segment` resolves to segment 2 of 10 must resolve, by cell, to the cell the
 /// pointer is actually over.
 #[test]
@@ -351,12 +351,12 @@ fn every_segment_is_reachable_in_the_ribbon_however_narrow_it_is() {
         assert!(px < 1.0, "segment {i} must be sub-pixel for this test to mean anything ({px} px)");
     }
 
-    // Equal cells: every segment gets the same share, and each is reachable at its own centre.
+    // Equal cells: every segment gets the same share, and each is reachable at its own center.
     let cell_w = W / n as f32;
     assert!(cell_w > 40.0, "ten cells across {W} px should be comfortably clickable");
     for i in 0..n {
         let centre = X0 + cell_w * (i as f32 + 0.5);
-        assert_eq!(ribbon_cell(centre, X0, W, n), Some(i), "cell {i} at its own centre");
+        assert_eq!(ribbon_cell(centre, X0, W, n), Some(i), "cell {i} at its own center");
         // And the edges belong to the cells they close, so no gap between them is dead.
         let just_in = X0 + cell_w * i as f32 + 0.5;
         assert_eq!(ribbon_cell(just_in, X0, W, n), Some(i), "left edge of cell {i}");
@@ -364,12 +364,12 @@ fn every_segment_is_reachable_in_the_ribbon_however_narrow_it_is() {
 
     // ⚠**The control**: the same pointer position under the OLD rule selects something else
     // entirely — proof that this test would fail if the proportional mapping came back.
-    let probe = X0 + cell_w * 0.5; // dead centre of cell 0
+    let probe = X0 + cell_w * 0.5; // dead center of cell 0
     assert_eq!(ribbon_cell(probe, X0, W, n), Some(0));
     assert_eq!(
         pick_segment(&bounds, strip_pos(probe, X0, W)),
         Some(2),
-        "under the old proportional rule this same click landed on index 2 — labelled \"Segment          3\" in the UI, which is exactly what the report described: a ribbon that appeared to          start at 3 because 1 and 2 were half a pixel wide"
+        "under the old proportional rule this same click landed on index 2 — labeled \"Segment          3\" in the UI, which is exactly what the report described: a ribbon that appeared to          start at 3 because 1 and 2 were half a pixel wide"
     );
 
     // Degenerate inputs resolve rather than panic or divide by zero.

@@ -9,7 +9,7 @@ This is the eyes-and-hands gate. The automated gates (`--selftest`, the F3 corpu
 tell you the window opened, the menus are reachable, the palette looks like a palette, or
 the app survives being resized. Everything in here needs a human.
 
-⚠KEEP IT HONEST. Every row names a control that EXISTS: the fractal list, colour methods,
+⚠KEEP IT HONEST. Every row names a control that EXISTS: the fractal list, color methods,
 palettes, menu items and panel sections below were read out of the source, not invented. If
 a row cannot be performed because the feature moved, that is a FAIL of this document — fix
 the row, do not skip it.
@@ -53,7 +53,7 @@ STEPS = [
      "Dialog is readable, no clipped text, buttons work, and it closes without reappearing."),
     ("Launch",
      "Observe the initial view.",
-     "The full Mandelbrot set is drawn, centred, correctly proportioned, and finishes rendering "
+     "The full Mandelbrot set is drawn, centered, correctly proportioned, and finishes rendering "
      "(no permanent blank, black, or half-drawn frame)."),
 
     # ---------------------------------------------------------------- layout
@@ -65,12 +65,12 @@ STEPS = [
      "Text is crisp and fully legible at the current DPI. Icons are not blurry, clipped or missing "
      "(no placeholder boxes)."),
     ("Layout & theme",
-     "Check colour scheme consistency: panel background, headings, buttons, highlighted/active items.",
+     "Check color scheme consistency: panel background, headings, buttons, highlighted/active items.",
      "Consistent theme throughout. Sufficient contrast to read every label. Active/selected states "
      "are visually distinct."),
     ("Layout & theme",
      "Read the status bar at the bottom.",
-     "Shows centre coordinates, cursor position, zoom, and iteration count. Values are populated, "
+     "Shows center coordinates, cursor position, zoom, and iteration count. Values are populated, "
      "not blank or placeholder."),
     ("Layout & theme",
      "Expand every Controls panel section: Navigate, Coloring, Quality, Effects, Overlays, Advanced, "
@@ -92,7 +92,7 @@ STEPS = [
      "Drag to make the window very SHORT (a wide letterbox), then very TALL.",
      "Layout still holds; no controls become unreachable; the image stays correctly proportioned."),
     ("Window sizing",
-     "Maximise the window, then restore it.",
+     "Maximize the window, then restore it.",
      "Renders at the new size both ways. No lingering black bands or stale image."),
     ("Window sizing",
      "Resize the window rapidly back and forth for ~5 seconds.",
@@ -105,14 +105,14 @@ STEPS = [
     # ---------------------------------------------------------------- navigation
     ("Navigation",
      "Click once in the fractal area with 'Click to zoom' enabled.",
-     "View zooms in centred on the clicked point by the selected Factor. Motion is smooth and "
+     "View zooms in centered on the clicked point by the selected Factor. Motion is smooth and "
      "lands where you clicked."),
     ("Navigation",
      "Try each zoom Factor: 2x, 4x, 10x, 50x, 100x.",
      "Each factor visibly changes the zoom step. The status-bar zoom value increases accordingly."),
     ("Navigation",
      "Use the toolbar magnifier buttons to zoom in and out several times.",
-     "Zoom in and out both work and are centred on the view."),
+     "Zoom in and out both work and are centered on the view."),
     ("Navigation",
      "Drag with the mouse to pan around the set.",
      "The image follows the cursor 1:1 while dragging and resolves to a sharp frame when released."),
@@ -136,22 +136,22 @@ STEPS = [
     # ---------------------------------------------------------------- deep zoom
     ("Deep zoom",
      "Pick a filament edge and zoom continuously to about 1e6x. Watch the image the whole way in.",
-     "Detail keeps resolving. No banding artefacts, no blocky tiles left behind, no all-black frames."),
+     "Detail keeps resolving. No banding artifacts, no blocky tiles left behind, no all-black frames."),
     ("Deep zoom",
      "Continue to roughly 1e15x, then 1e30x. Watch the Performance panel 'mode' field.",
      "Mode changes as depth increases (direct -> perturb df32 -> floatexp). Each transition is "
-     "seamless; the image does not flash to garbage or flat colour."),
+     "seamless; the image does not flash to garbage or flat color."),
     ("Deep zoom",
      "Continue to about 1e100x, pausing to let each view fully settle.",
      "Image still resolves to clean structure. Status bar precision and orbit length grow. No "
-     "speckle field, no solid-colour frame."),
+     "speckle field, no solid-color frame."),
     ("Deep zoom",
      "Push on to 1e300x or deeper if patience allows.",
      "Still renders real structure. Deep zoom is the headline feature; a blank or noise frame here "
      "is a release blocker."),
     ("Deep zoom",
      "At depth, confirm 'Normalize deep colors' (Coloring) is ON and look at the exterior banding.",
-     "The exterior shows smooth colour bands, NOT per-pixel salt-and-pepper speckle."),
+     "The exterior shows smooth color bands, NOT per-pixel salt-and-pepper speckle."),
     ("Deep zoom",
      "Toggle 'Normalize deep colors' OFF at that same deep view.",
      "The exterior becomes visibly noisier/aliased - which confirms the setting is actually doing "
@@ -167,7 +167,7 @@ STEPS = [
 ] + [
     ("Fractal types",
      "Fractal menu > %s. Let it render." % name,
-     "Correct, recognisable %s renders at a sensible default view. No blank frame, no error." % name)
+     "Correct, recognizable %s renders at a sensible default view. No blank frame, no error." % name)
     for name in FRACTALS
 ] + [
     ("Fractal types",
@@ -187,11 +187,11 @@ STEPS = [
      "Turn off dual view and Julia mode.",
      "Returns cleanly to the single Mandelbrot view."),
 
-    # ---------------------------------------------------------------- colour
+    # ---------------------------------------------------------------- color
 ] + [
     ("Coloring",
      "Coloring > Method: %s. Observe the image." % m,
-     "Colouring visibly changes and produces a coherent image (no all-black, all-white, or "
+     "Coloring visibly changes and produces a coherent image (no all-black, all-white, or "
      "uniform flat frame)." )
     for m in COLOR_METHODS
 ] + [
@@ -203,34 +203,40 @@ STEPS = [
      "Band frequency changes smoothly and live. No flicker, no stuck frame."),
     ("Coloring",
      "Drag the Offset slider across its range.",
-     "Colours shift phase smoothly through the palette."),
+     "Colors shift phase smoothly through the palette."),
+    ("Coloring",
+     "Drag 'Divide iterations' (under Cycle) up from 1, then rest the pointer on it. Then set "
+     "Method to Stripe, and back to Smooth with 'Always fit range' ticked.",
+     "The bands widen live as the value rises (the palette repeats more slowly), with no flicker "
+     "or stuck frame, and the tooltip's iterations per palette grows with it. Under Stripe, and "
+     "with 'Always fit range' ticked, the slider is grayed out and its tooltip says why."),
     ("Coloring",
      "With 'Normalize deep colors' ON, toggle 'Log color scale'.",
-     "Colour distribution changes noticeably; image stays coherent. (Log scale acts on the "
+     "Color distribution changes noticeably; image stays coherent. (Log scale acts on the "
      "NORMALIZED mapping - with normalization off it has no visible effect.)"),
     ("Coloring",
-     "Open 'Edit gradient…', change a colour stop, and apply.",
+     "Open 'Edit gradient…', change a color stop, and apply.",
      "Editor opens, the edit is reflected in the live image, and the dialog closes cleanly."),
     ("Coloring",
      "In the gradient editor, compare the preview bar against the rendered image: pick a stop, "
-     "note its colour in the bar, and find that colour in the fractal.",
-     "The preview bar shows the SAME colours the image is painted with - not lighter, not darker. "
+     "note its color in the bar, and find that color in the fractal.",
+     "The preview bar shows the SAME colors the image is painted with - not lighter, not darker. "
      "(Before beta.23 the bar gamma-encoded its swatches, so every one read markedly lighter than "
      "the pixels it stood for. No machine check compares the two.)"),
     ("Coloring",
      "In the gradient editor, click 'Import .map…' and load a Fractint or Kalles Fraktaler .map "
      "palette file (e.g. Fractint's default.map).",
-     "The palette applies immediately as HARD BANDS - flat steps of colour, not a smooth ramp - "
+     "The palette applies immediately as HARD BANDS - flat steps of color, not a smooth ramp - "
      "and the message reports how many entries were read. For a Fractint file it also says the "
      "table is 6-bit VGA (white is 252, not 255)."),
     ("Coloring",
      "With that .map still loaded, untick 'Hard bands (no blending between entries)'.",
-     "The same colours blend into a smooth gradient. Ticking it again restores the hard steps."),
+     "The same colors blend into a smooth gradient. Ticking it again restores the hard steps."),
     ("Coloring",
      "⭐Render a view through the imported .map, then render the SAME location and palette in "
      "Fractint (or Kalles Fraktaler) and compare the two side by side. Mark BLOCKED if that "
      "application is not available.",
-     "The band structure and the ORDER of colours match. This is the one claim no automated check "
+     "The band structure and the ORDER of colors match. This is the one claim no automated check "
      "can make: our checks prove the file's values reach the framebuffer unaltered, not that our "
      "iteration→palette-index mapping is the same as theirs. See design/palette-import.md §7."),
     ("Coloring",
@@ -238,13 +244,13 @@ STEPS = [
      "gradients). Pick one from the list that appears.",
      "A scrollable list appears, each row showing the gradient's name AND a preview swatch of it. "
      "Clicking a row applies that gradient immediately. Reds look red and blues look blue - the "
-     "format stores colour with red in the LOW byte, so a mistake here swaps them while still "
+     "format stores color with red in the LOW byte, so a mistake here swaps them while still "
      "looking like a plausible palette."),
     ("Coloring",
      "Click 'Import .ggr…' and load a GIMP gradient, then read the note in the editor and press "
      "'Convert to editable stops'.",
      "The editor says how many segments were imported, and that they carry midpoints, blend curves "
-     "and colour spaces. 'Convert to editable stops' warns that it DISCARDS those, and after it "
+     "and color spaces. 'Convert to editable stops' warns that it DISCARDS those, and after it "
      "the per-stop rows appear."),
     ("Coloring",
      "⭐Click 'Import .ase…' and load a real Adobe swatch file.",
@@ -334,18 +340,18 @@ STEPS = [
      "An image is written without freezing the UI, and the app reports where it went."),
     ("Export & capture",
      "Open the saved snapshot in an image viewer.",
-     "It matches what was on screen (same framing and colours) and is not corrupt or truncated."),
+     "It matches what was on screen (same framing and colors) and is not corrupt or truncated."),
     ("Export & capture",
      "File > Export image… at a LARGER size than the window (e.g. 4K) with supersampling on.",
      "Progress is shown, the export completes, and the app stays responsive or clearly indicates "
      "it is working."),
     ("Export & capture",
      "Open the 4K export.",
-     "Full resolution, complete image, no missing tiles, no seams between tiles, no colour banding "
+     "Full resolution, complete image, no missing tiles, no seams between tiles, no color banding "
      "differences across tile boundaries."),
     ("Export & capture",
      "Export once at a DEEP view (1e30x or deeper).",
-     "Completes and matches the on-screen framing and colouring."),
+     "Completes and matches the on-screen framing and coloring."),
 
     # ---------------------------------------------------------------- tools
     ("Tools",
@@ -439,7 +445,7 @@ STEPS = [
      "Run once under Wayland and once under X11 (log into an X11 session, or unset WAYLAND_DISPLAY "
      "so winit falls back).",
      "Window opens, resizes, and scales sensibly under both. Note any difference in DPI handling, "
-     "cursor behaviour or window decorations."),
+     "cursor behavior or window decorations."),
     ("Linux",
      "Help > Diagnostics — check the four readings that have platform-specific implementations: "
      "process memory (/proc/self/status), free disk (statvfs), CPU topology (/proc/cpuinfo), and "
@@ -450,7 +456,7 @@ STEPS = [
     ("Linux",
      "Exercise the native file dialogs: File > Open view or location…, and an export that asks for "
      "a path.",
-     "The GTK dialogs open, are navigable, and the chosen path is honoured. A missing GTK runtime "
+     "The GTK dialogs open, are navigable, and the chosen path is honored. A missing GTK runtime "
      "shows up here first."),
     ("Linux",
      "Run on a box with no audio server (or with FRACTADYNE_NO_SOUND=1) and let a long render "
@@ -554,7 +560,7 @@ STEPS = [
      "Do a fast, sustained zoom-in / zoom-out / pan session for ~2 minutes.",
      "No freeze, no device-loss restart, no crash. The app keeps up or degrades gracefully."),
     ("Stability",
-     "Switch fractal type, colour method and palette rapidly several times in a row.",
+     "Switch fractal type, color method and palette rapidly several times in a row.",
      "No crash and no stuck frame; the final selection is what renders."),
 
     # ------------------------------------------------- palette interchange (other applications)
@@ -566,7 +572,7 @@ STEPS = [
     ("Palette interchange",
      "In the gradient editor, build or load a gradient, give it a name and press 'Save .ggr…'. "
      "Then press 'Import .ggr…' and load the file you just wrote.",
-     "It comes back looking identical - same colours, same midpoints, same curves. The editor does "
+     "It comes back looking identical - same colors, same midpoints, same curves. The editor does "
      "NOT report it as approximated unless a segment uses a Bézier curve you actually bent."),
     ("Palette interchange",
      "⭐Open that exported .ggr in GIMP (drop it in the gradients folder, or File ▸ Open in the "
@@ -590,7 +596,7 @@ STEPS = [
      "what is being checked is that it SAID so rather than flattening in silence."),
     ("Palette interchange",
      "⭐In GIMP, author a gradient that uses a curved (not linear) segment, an HSV-anticlockwise "
-     "segment and a midpoint dragged well off centre. Save it and import it here. Mark BLOCKED if "
+     "segment and a midpoint dragged well off center. Save it and import it here. Mark BLOCKED if "
      "GIMP is not available.",
      "All three survive: the curve bends the same way, the hue sweep goes the long way round, and "
      "the midpoint sits where GIMP put it. ⚠Every .ggr fixture in the test suite was written by "
@@ -598,7 +604,7 @@ STEPS = [
     ("Palette interchange",
      "⭐Load a .ugr gradient that carries a 'rotation=' value, and compare the result against the "
      "same gradient shown in Ultra Fractal. Mark BLOCKED if Ultra Fractal is not available.",
-     "The colours are rotated the same way round. ⚠The rotation is applied but its DIRECTION has "
+     "The colors are rotated the same way round. ⚠The rotation is applied but its DIRECTION has "
      "never been checked against the source application - a sign error here still produces a "
      "plausible palette, which is why only a comparison can catch it."),
     ("Palette interchange",
@@ -611,7 +617,7 @@ STEPS = [
     ("Palette interchange",
      "Save a gradient into the library (type a name, press Save), quit the application, relaunch "
      "it, open the gradient editor and load that entry from the 'Saved' menu.",
-     "It is still there after the restart and comes back with its curves, midpoints and colour "
+     "It is still there after the restart and comes back with its curves, midpoints and color "
      "spaces intact - not flattened to plain stops."),
 
     # ------------------------------------------------- the on-disk reference-orbit cache (beta.78)
@@ -706,7 +712,7 @@ REFERENCE_ADAPTER = "NVIDIA GeForce RTX 3080"
 # Which machine check enforces each step, in STEP ORDER. See design/checklist-automation.md.
 #
 # Paired POSITIONALLY rather than carried inside the tuples because STEPS is partly generated
-# (one row per fractal, one per colour method), so not every step is a literal to edit. The area
+# (one row per fractal, one per color method), so not every step is a literal to edit. The area
 # is repeated here so a reordered or inserted step misaligns loudly instead of silently crediting
 # one step with another's coverage - `scripts/checklist_coverage.py` checks both.
 #
@@ -720,7 +726,7 @@ REFERENCE_ADAPTER = "NVIDIA GeForce RTX 3080"
 #                    `checklist_coverage.py --release VERSION` requires an exit 0 (or the exits an
 #                    `[exit …]` suffix lists) from VERSION's binary in validation/runs/VERSION.tsv,
 #                    recorded by scripts/run_ledger.py
-#   partial:<e>      the effect is enforced; a gesture or an aesthetic judgement is not
+#   partial:<e>      the effect is enforced; a gesture or an aesthetic judgment is not
 #   manual/process   no machine enforcer is possible - the reason is in the plan document
 ENFORCERS = [
     ("Launch", "partial:uitest:no-crash-files"),
@@ -779,6 +785,7 @@ ENFORCERS = [
     ("Coloring", "selftest:palettes are all different and coherent"),
     ("Coloring", "selftest:control changes the image"),
     ("Coloring", "selftest:control changes the image"),
+    ("Coloring", "partial:selftest:control changes the image"),
     ("Coloring", "selftest:log-scale-changes-the-image"),
     ("Coloring", "partial:selftest:gradient-edit-changes-the-image"),
     ("Coloring", "manual"),
@@ -896,7 +903,7 @@ for _i, ((_area, _enf), _step) in enumerate(zip(ENFORCERS, STEPS), start=1):
     )
 
 def enforcer_label(enf):
-    """Turn an enforcer string into something a TESTER can act on, plus a flag for colouring.
+    """Turn an enforcer string into something a TESTER can act on, plus a flag for coloring.
 
     The raw form (`partial:test:click_zoom_applies_factor`) is developer notation. What the person
     holding the workbook needs to know is only: is this already machine-checked, partly, or not at
@@ -972,7 +979,7 @@ def build(out_path):
     # ⚠Record where each label lands. The count formulas below used to be written to hard-coded
     # B13/B14/B15 while the labels sat at 14/15/16 — every blank separator in `rows` advances the
     # row, and two of them come before the counts. The workbook opened perfectly and reported the
-    # PASS count on an unlabelled row, the FAIL count beside "Steps passed", and nothing at all
+    # PASS count on an unlabeled row, the FAIL count beside "Steps passed", and nothing at all
     # beside "Steps blocked / N-A". Derive the rows instead.
     label_row = {}
     r = 4
@@ -1014,14 +1021,14 @@ def build(out_path):
     note_r = r + 3 + i
     cov.cell(row=note_r, column=1, value="How much of the Run sheet is machine-checked:").font = lab
     for j, line in enumerate([
-        "%d of %d steps are FULLY automated - a machine check fails if the behaviour breaks."
+        "%d of %d steps are FULLY automated - a machine check fails if the behavior breaks."
         % (counts["auto"], len(STEPS)),
         "   Perform these as a SPOT CHECK: confirm the feature is there and looks right, and move on.",
         "%d are PARTLY automated - the effect is checked; the gesture and the appearance are yours."
         % counts["partial"],
         "%d need a person outright, and %d is a process step." % (counts["manual"], counts["none"]),
         "The 'Automated by' column on each row says which, and names the check.",
-        "A row still FAILS on your judgement even when it says AUTO - the machine checks that the",
+        "A row still FAILS on your judgment even when it says AUTO - the machine checks that the",
         "   image is not blank, never that it is beautiful.",
     ]):
         cov.cell(row=note_r + 1 + j, column=1, value=line)
@@ -1044,7 +1051,7 @@ def build(out_path):
 
     area_fill = PatternFill("solid", fgColor="D9E2F3")
     auto_fill = PatternFill("solid", fgColor="D6EAD6")     # green: fully machine-checked
-    partial_fill = PatternFill("solid", fgColor="FFF2CC")  # amber: effect checked, judgement yours
+    partial_fill = PatternFill("solid", fgColor="FFF2CC")  # amber: effect checked, judgment yours
     manual_fill = PatternFill("solid", fgColor="F2DCDB")   # pink: no machine check is possible
     top_wrap = Alignment(wrap_text=True, vertical="top")
 
@@ -1068,7 +1075,7 @@ def build(out_path):
         label, flag = enforcer_label(enforcer)
         cell = ws.cell(row=row, column=5, value=label)
         cell.alignment = top_wrap
-        # Colour is the FLAG the reviewer scans for: green = a machine check fails if this breaks,
+        # Color is the FLAG the reviewer scans for: green = a machine check fails if this breaks,
         # amber = partly, plain = it is entirely on you.
         fill = {"auto": auto_fill, "partial": partial_fill, "manual": manual_fill}.get(flag)
         if fill is not None:

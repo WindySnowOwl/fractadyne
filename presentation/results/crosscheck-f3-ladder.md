@@ -11,7 +11,7 @@ and compares.
 - **`|Δn|≤1`** — fraction matching to within one iteration. The residual (exact < 100%) is the
   half-open-pixel jitter/sampling difference between the two engines, always ≤ 1 iteration.
 - **`membership`** — fraction agreeing on interior vs exterior (in/out of the set).
-- Boundary/cliff pixels (a 4-neighbour flips interior/exterior, or the count jumps > 2) are
+- Boundary/cliff pixels (a 4-neighbor flips interior/exterior, or the count jumps > 2) are
   excluded — there the classification is genuinely ambiguous to the last ULP and the two engines
   legitimately sample differently.
 

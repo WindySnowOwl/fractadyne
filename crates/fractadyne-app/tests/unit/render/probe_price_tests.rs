@@ -12,7 +12,7 @@ fn the_idle_home_view_probe_is_declined() {
 
 /// The regime the probe EXISTS for: a view floored by a budget too small to render it. The frame
 /// is budget-sized by construction there, so the guard must not block it — blocking this is the
-/// "pixellated forever" deadlock the probe was written to break.
+/// "pixelated forever" deadlock the probe was written to break.
 #[test]
 fn a_budget_sized_floored_frame_still_probes() {
     let cur = 900_000_000u64;
@@ -36,7 +36,7 @@ fn a_zero_budget_always_probes() {
     assert!(probe_would_price(1, 0));
 }
 
-/// Naming the constant must not have moved the behaviour of the pricing rule: an UNDERSIZED but
+/// Naming the constant must not have moved the behavior of the pricing rule: an UNDERSIZED but
 /// SLOW dispatch is still kept (it is the strongest evidence per-step cost has collapsed), which
 /// is the one-sided exception the discard test has always carried.
 #[test]

@@ -466,7 +466,7 @@ fn print_item(row: &[Item], i: usize) -> String {
     }
 }
 
-// ---- Normalisation: a row an edit left, back in the grammar's form ----
+// ---- Normalization: a row an edit left, back in the grammar's form ----
 
 /// Where a caret is relative to one row: at a position in it, or inside one of its atoms.
 enum Rel {

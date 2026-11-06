@@ -12,11 +12,11 @@
 //! circle (`fractadyne_gpu::strip_pieces`, as a strip wider than the card's textures is held): every
 //! sample must read the very texel it read before.
 //!
-//! **Only what the colouring reads** (`design/zoom-video.md` §8.6). A real dive's frames, coloured
-//! six ways (smooth and distance colouring, each with and without glow and relief), from the whole
-//! window and from one holding only what that colouring reads, in pieces: byte for byte the same.
+//! **Only what the coloring reads** (`design/zoom-video.md` §8.6). A real dive's frames, colored
+//! six ways (smooth and distance coloring, each with and without glow and relief), from the whole
+//! window and from one holding only what that coloring reads, in pieces: byte for byte the same.
 //! The CONTROL: the count-only window's samples differ from the whole window's in the normal and
-//! distance estimate it leaves out, and a colouring that reads them is refused on it.
+//! distance estimate it leaves out, and a coloring that reads them is refused on it.
 //!
 //! **Pictures, against a flat render, scored against a CONTROL.** A real dive's strips assembled at
 //! several depths, against `render_iter` of the same frame. Sample for sample they differ wherever a
@@ -74,9 +74,9 @@ pub(crate) struct FlatCompare {
     pub(crate) control_close: f64,
     /// The median signed difference of log2 DE where the smooth counts agree within 0.05.
     pub(crate) de_bias: f64,
-    /// The largest difference between the assembler's coloured frame and the export colour pass
+    /// The largest difference between the assembler's colored frame and the export color pass
     /// ([`fractadyne_gpu::color_iter_buffer_ss`]) run on the same assembled main target: 0 when
-    /// an assembled frame is coloured exactly as any export is.
+    /// an assembled frame is colored exactly as any export is.
     pub(crate) colour_diff: f32,
 }
 
@@ -212,8 +212,8 @@ impl crate::FractadyneApp {
         let map = ExpMap::for_frames(fw as f64, fh as f64, 1.0, 0.0);
         let strips = map.strips_to(end, fh as f64);
         let p0 = fractadyne_core::precision_for_octaves(strips + 64);
-        let cxb = fractadyne_core::parse_bf_prec(cx, p0).ok_or("unreadable centre")?;
-        let cyb = fractadyne_core::parse_bf_prec(cy, p0).ok_or("unreadable centre")?;
+        let cxb = fractadyne_core::parse_bf_prec(cx, p0).ok_or("unreadable center")?;
+        let cyb = fractadyne_core::parse_bf_prec(cy, p0).ok_or("unreadable center")?;
         let saved = (self.render_cfg.max_iter, self.render_cfg.auto_iter, self.export.width, self.export.ss);
         let result = (|| -> Result<Vec<FlatCompare>, String> {
             // The strips, as a dive renders them: on its one reference, at one cap.
@@ -271,7 +271,7 @@ impl crate::FractadyneApp {
                     .collect();
                 dde.sort_by(|a, b| a.total_cmp(b));
                 let de_bias = dde.get(dde.len() / 2).copied().unwrap_or(f64::NAN);
-                // The colouring: the assembler's own pass against the export's on the same samples.
+                // The coloring: the assembler's own pass against the export's on the same samples.
                 let colour = self.current_export_request_for(&Viewport::new(fw as f64, fh as f64), false);
                 let mine = asm.frame(device, queue, &place, &colour).map_err(|e| e.to_string())?;
                 let theirs = fractadyne_gpu::color_iter_buffer_ss(device, queue, &colour, &assembled, 1).map_err(|e| e.to_string())?;
@@ -285,7 +285,7 @@ impl crate::FractadyneApp {
     }
 
     /// The window check (see the module note): a real dive into `(cx, cy)`, 160x90 frames from 1x
-    /// to 2^12 at `cap`, assembled at four depths (one turned) and coloured six ways.
+    /// to 2^12 at `cap`, assembled at four depths (one turned) and colored six ways.
     pub(crate) fn assemble_window_check(
         &mut self,
         device: &eframe::wgpu::Device,
@@ -299,8 +299,8 @@ impl crate::FractadyneApp {
         let map = ExpMap::for_frames(fw as f64, fh as f64, 1.0, 0.0);
         let strips = map.strips_to(12.0, fh as f64);
         let p0 = fractadyne_core::precision_for_octaves(strips + 64);
-        let cxb = fractadyne_core::parse_bf_prec(cx, p0).ok_or("unreadable centre")?;
-        let cyb = fractadyne_core::parse_bf_prec(cy, p0).ok_or("unreadable centre")?;
+        let cxb = fractadyne_core::parse_bf_prec(cx, p0).ok_or("unreadable center")?;
+        let cyb = fractadyne_core::parse_bf_prec(cy, p0).ok_or("unreadable center")?;
         let saved = (self.render_cfg.max_iter, self.render_cfg.auto_iter, self.export.width);
         let result = (|| -> Result<WindowCheck, String> {
             let dive_ref = self.dive_reference(&map, strips - 1, &cxb, &cyb, cap);
@@ -334,7 +334,7 @@ impl crate::FractadyneApp {
             let base_colour = self.current_export_request_for(&Viewport::new(fw as f64, fh as f64), false);
             let mut c = WindowCheck { frames: 0, pixels: 0, differ: Vec::new(), pieces: 0, left_out_differ: 0, count_differ: 0, refused: false };
             let mut whole = make(WindowLayout::default())?;
-            // Smooth (0) and distance (4) colouring, with and without glow and relief.
+            // Smooth (0) and distance (4) coloring, with and without glow and relief.
             for (method, light, glow) in [(0u32, false, false), (0, false, true), (0, true, false), (4, false, false), (4, false, true), (4, true, true)] {
                 let mut colour = base_colour.clone();
                 (colour.color_method, colour.light, colour.de_on) = (method, light as u32, glow as u32);
@@ -357,7 +357,7 @@ impl crate::FractadyneApp {
                     c.differ.push(format!("method {method}, relief {light}, glow {glow} ({texels:?}): {differ} pixels"));
                 }
             }
-            // The control: the count-only window really leaves the rest out, and a colouring that
+            // The control: the count-only window really leaves the rest out, and a coloring that
             // reads it is refused there.
             let mut count = make(WindowLayout { texels: WindowTexels::Count, piece_max: WINDOW_PIECE_MAX })?;
             for place in &places {
@@ -387,7 +387,7 @@ const WINDOW_PIECE_MAX: u32 = 200;
 pub(crate) struct WindowCheck {
     pub(crate) frames: usize,
     pub(crate) pixels: usize,
-    /// Each colouring whose frames differed between the windows, described (none may).
+    /// Each coloring whose frames differed between the windows, described (none may).
     pub(crate) differ: Vec<String>,
     /// The most pieces a strip was held in.
     pub(crate) pieces: u32,
@@ -395,7 +395,7 @@ pub(crate) struct WindowCheck {
     /// the count-only window (must be many), and samples whose count does (must be none).
     pub(crate) left_out_differ: usize,
     pub(crate) count_differ: usize,
-    /// A relief colouring was refused on the count-only window.
+    /// A relief coloring was refused on the count-only window.
     pub(crate) refused: bool,
 }
 

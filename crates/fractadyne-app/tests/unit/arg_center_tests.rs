@@ -34,7 +34,7 @@ fn a_short_decimal_is_read_at_the_views_precision() {
 
 #[test]
 fn a_long_decimal_keeps_every_digit_it_was_given() {
-    // A centre pasted with more digits than the zoom needs is not rounded down to the zoom.
+    // A center pasted with more digits than the zoom needs is not rounded down to the zoom.
     let text = format!("-1.{}", "7".repeat(400)); // ~1,330 bits of digits
     let (cx, _) = arg_center("--center", &text, "0", 10.0);
     assert!(off_log2(&cx, &text) < -1300.0);

@@ -1,5 +1,5 @@
 //! SVG export of an L-system view (design/lsystems.md §7, §9.5): what the view shows, as vectors —
-//! its lines as paths and its filled shapes as polygons, in the colours on screen — for print or a
+//! its lines as paths and its filled shapes as polygons, in the colors on screen — for print or a
 //! plotter. The walk is the screen's (culled to the view, subtrees under a pixel as their chords),
 //! so the file holds what the pixels show and is bounded by them, at any zoom.
 
@@ -12,17 +12,17 @@ pub(crate) struct Picture<'a> {
     pub size: [u32; 2],
     /// The line width, pixels.
     pub width: f32,
-    /// The lines, in the walk's pixels (from the view's centre, y up), in curve order.
+    /// The lines, in the walk's pixels (from the view's center, y up), in curve order.
     pub segments: &'a [SegmentInstance],
     /// The filled shapes (clipped to the view), and their palette values.
     pub polygons: &'a [(Vec<[f32; 2]>, f32)],
-    /// A palette value's colour.
+    /// A palette value's color.
     pub colour: &'a dyn Fn(f32) -> [u8; 3],
     pub background: [u8; 3],
     pub title: &'a str,
 }
 
-/// A coordinate to 0.01 px: the view's y-up, centred pixels to SVG's y-down from the corner.
+/// A coordinate to 0.01 px: the view's y-up, centered pixels to SVG's y-down from the corner.
 fn coord(p: [f32; 2], size: [u32; 2]) -> (i64, i64) {
     let x = f64::from(p[0]) + 0.5 * f64::from(size[0]);
     let y = 0.5 * f64::from(size[1]) - f64::from(p[1]);
@@ -47,8 +47,8 @@ fn escape(s: &str) -> String {
     s.replace('&', "&amp;").replace('<', "&lt;").replace('>', "&gt;").replace('"', "&quot;")
 }
 
-/// The SVG document. Consecutive segments that meet, in the same colour, are one path — a curve
-/// coloured by position along it changes colour every few segments, not every one — so a drawing
+/// The SVG document. Consecutive segments that meet, in the same color, are one path — a curve
+/// colored by position along it changes color every few segments, not every one — so a drawing
 /// of a million segments is not a million elements.
 pub(crate) fn document(p: &Picture) -> String {
     let [w, h] = p.size;
@@ -77,7 +77,7 @@ pub(crate) fn document(p: &Picture) -> String {
         r#"<g fill="none" stroke-width="{}" stroke-linecap="round" stroke-linejoin="round">"#,
         num((f64::from(p.width) * 100.0).round() as i64)
     );
-    // The open path: its colour, where it ends, and its `d`.
+    // The open path: its color, where it ends, and its `d`.
     let mut open: Option<([u8; 3], (i64, i64), String)> = None;
     let close = |s: &mut String, o: Option<([u8; 3], (i64, i64), String)>| {
         if let Some((c, _, d)) = o {

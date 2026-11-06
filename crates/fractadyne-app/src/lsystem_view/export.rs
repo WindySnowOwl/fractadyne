@@ -2,8 +2,8 @@
 //! size with the screen's order and the screen's line width scaled to the export's pixels — so the
 //! image is the picture on screen at the export's resolution — framed as every export is (the
 //! smallest rectangle of the export's aspect that holds the window's view). The segment pass draws
-//! it offscreen, tile by tile, and each texel is coloured as the screen's colour pass colours it:
-//! `palette(value + offset)` from the baked LUT, the interior colour where nothing is drawn; a
+//! it offscreen, tile by tile, and each texel is colored as the screen's color pass colors it:
+//! `palette(value + offset)` from the baked LUT, the interior color where nothing is drawn; a
 //! pixel is the mean of its texels (the export's supersampling).
 
 use super::*;
@@ -42,7 +42,7 @@ pub(crate) struct Rendered {
 }
 
 impl Job {
-    /// Walk, draw and colour. `progress` runs to 1000 (permille of the tiles); `cancel` stops it
+    /// Walk, draw and color. `progress` runs to 1000 (permille of the tiles); `cancel` stops it
     /// between tiles.
     pub(crate) fn render(
         &self,
@@ -89,7 +89,7 @@ impl Job {
                 }
                 let (ox, oy) = (tx * tile, ty * tile);
                 let (tw, th) = ((all_w - ox).min(tile), (all_h - oy).min(tile));
-                // The tile's texels are the whole target's, shifted: its view sits off-centre by the
+                // The tile's texels are the whole target's, shifted: its view sits off-center by the
                 // tile's place (y up, texels to pixels).
                 let tile = LSystemFrame {
                     offset: [
@@ -118,7 +118,7 @@ impl Job {
         Ok(Rendered { width: w, height: h, pixels, stopped: out.stats.stopped, big: out.big, ex: out.ex })
     }
 
-    /// A texel's colour: the screen colour pass's for an L-system.
+    /// A texel's color: the screen color pass's for an L-system.
     fn colour(&self, v: f32) -> [f32; 3] {
         if v < 0.0 {
             return self.interior;
@@ -209,7 +209,7 @@ impl FractadyneApp {
     }
 
     /// The view walked at `size` pixels, a world unit `1 / factor` times as many of them as of the
-    /// screen's (the line width scaled with it), coloured and supersampled as the Export dialog says.
+    /// screen's (the line width scaled with it), colored and supersampled as the Export dialog says.
     fn lsystem_job(&self, size: [u32; 2], factor: f64) -> Job {
         let [w, h] = size;
         let st = &self.lsystem;

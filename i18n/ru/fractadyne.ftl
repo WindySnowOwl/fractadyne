@@ -298,7 +298,7 @@ tag-group-shape = Форма
 tag-group-theme = Тема
 tag-group-purpose = Назначение
 
-# Tags measured from a palette's colours: its colour families, warm or cool, how busy it is (calm, lively, frantic), its brightness, and its shape. Plural nouns for the families; the rest describe the palette.
+# Tags measured from a palette's colors: its color families, warm or cool, how busy it is (calm, lively, frantic), its brightness, and its shape. Plural nouns for the families; the rest describe the palette.
 tag-reds = Красные
 tag-oranges = Оранжевые
 tag-yellows = Жёлтые
@@ -997,9 +997,9 @@ app-gradient-ggr-imported = Импортирован «{ $name }» — сегм�
 # $error: the reader's reason (in English).
 app-gradient-ggr-invalid = Это не градиент .ggr: { $error }
 
-## The eyedropper's banner across the top of the screen while picking a colour
+## The eyedropper's banner across the top of the screen while picking a color
 
-# $hex: the colour under the pointer, as #rrggbb.
+# $hex: the color under the pointer, as #rrggbb.
 app-eyedropper-banner-color = Выбор цвета  ·  { $hex }  ·  щёлкните, чтобы взять его, Esc — отмена
 app-eyedropper-banner = Выбор цвета  ·  щёлкните, чтобы взять его, Esc — отмена
 
@@ -1037,7 +1037,7 @@ app-gradient-bezier-exact-hover = Две управляющие точки, ко
 app-gradient-bezier-visible-hover = Две управляющие точки, которые можно перетаскивать в обоих направлениях. Преобразование ПРИБЛИЖАЕТ текущую кривую — эту с точностью до { $error }, что хорошо заметно.
 # Hover on Bézier in the list of blend curves. $error: how far the fit is off (2 decimals).
 app-gradient-bezier-barely-hover = Две управляющие точки, которые можно перетаскивать в обоих направлениях. Преобразование ПРИБЛИЖАЕТ текущую кривую — эту с точностью до { $error }, что едва заметно.
-# A label before the list of colour spaces (RGB, HSV).
+# A label before the list of color spaces (RGB, HSV).
 app-gradient-space = Пространство
 # A label before the Bézier presets beside it.
 app-gradient-ease = Плавность
@@ -1088,7 +1088,7 @@ app-gradient-import-ggr-hover = Загрузить градиент GIMP .ggr с
 app-gradient-import-ase-hover = Загрузить список образцов Adobe (.ase). У образцов нет позиций, поэтому они располагаются с равными промежутками и плавными переходами.
 # The gradient's name, for the library of saved gradients.
 app-gradient-name = Имя
-# Shown greyed in the empty name field.
+# Shown grayed in the empty name field.
 app-gradient-name-hint = мой градиент
 # The save button, when a gradient of that name is already saved.
 app-gradient-update = Обновить
@@ -1113,13 +1113,13 @@ app-gradient-ends-differ-hover = Цвет в конце градиента не 
 app-gradient-hard-bands = Резкие полосы (без смешивания записей)
 app-gradient-hard-bands-hover = Семантика Fractint / .map: каждая запись — сплошной цвет. Если выключить, записи смешиваются в плавный градиент.
 app-gradient-paste-intro = Вставьте шестнадцатеричные цвета (#ff8800) или тройки 0–255 (255 136 0), разделённые запятыми, пробелами или переводами строк:
-# Applies the pasted colours.
+# Applies the pasted colors.
 app-gradient-apply = Применить
 # Empties the paste box.
 app-gradient-clear = Очистить
-# $used: the colours kept; $total: the colours pasted; $limit: the most that are kept.
+# $used: the colors kept; $total: the colors pasted; $limit: the most that are kept.
 app-gradient-paste-imported-some = Импортировано цветов: { $used } из { $total }, равномерно выбранных по вашему списку (предел — { $limit }).
-# $count: the colours pasted.
+# $count: the colors pasted.
 app-gradient-paste-imported = Импортировано цветов: { $count }.
 # $error: why the pasted text could not be read (in English).
 app-gradient-paste-unreadable = Не удалось это прочитать: { $error }
@@ -2000,7 +2000,7 @@ farm-client-show-key = Показать
 farm-client-machine = Этот компьютер
 farm-client-machine-hover = Имя, под которым контроллер показывает этот компьютер.
 farm-client-share = Общий диск
-# Greyed hint inside the empty field; the path is an example.
+# Grayed hint inside the empty field; the path is an example.
 farm-client-share-hint = необязательно — напр. \\fileserver\share
 farm-client-share-hover = Путь этого компьютера к общему диску, который использует контроллер (режим общего диска): кадры записываются туда, а не отправляются по соединению. Оставьте пустым, чтобы отправлять каждый кадр.
 farm-client-gpu = Видеокарта
@@ -2174,7 +2174,7 @@ farm-ctl-ss = Суперсэмплинг
 farm-ctl-port = Слушать порт
 farm-ctl-port-hover = Клиенты подключаются к этому порту. Разрешите его в брандмауэре для вашей локальной сети.
 farm-ctl-share = Общий диск
-# Greyed hint inside the empty field.
+# Grayed hint inside the empty field.
 farm-ctl-share-hint = необязательно — путь к нему с этого компьютера
 farm-ctl-share-hover = Режим общего диска: клиенты, у которых есть тот же диск, записывают кадры на него, а не отправляют их по соединению, и этот компьютер проверяет там каждый кадр. Клиенты без него отправляют свои кадры.
 # A label followed by a number of clients and two checkboxes.
@@ -2488,7 +2488,7 @@ formula-apply = Применить
 formula-dialog-apply-hover = Скомпилировать формулу и показать её
 # Shown beside Apply while the formula is being compiled.
 formula-dialog-compiling = Компиляция формулы для GPU…
-# The greyed hint in an empty name box (also in the Formula library window).
+# The grayed hint in an empty name box (also in the Formula library window).
 formula-name-hint = имя (необязательно)
 # The save button: "Update" when the library already has a formula of that name.
 formula-dialog-update-in-library = Обновить в библиотеке
@@ -2623,7 +2623,7 @@ formula-library-import = Импорт…
 formula-library-import-hover = Добавить формулы из файла формул; ничего здесь не заменяется
 formula-library-export-all = Экспортировать все…
 formula-library-export-all-hover = Записать все формулы отсюда в один файл, чтобы поделиться ими или сохранить
-# The filter box: its label, and the greyed hint inside it.
+# The filter box: its label, and the grayed hint inside it.
 formula-library-filter = Фильтр
 formula-library-filter-hint = фильтр по имени или тексту
 # Shown while the user has no saved formulas.
@@ -2790,10 +2790,10 @@ panel-tail-length-unit = ит
 panel-tail-length-hover = Длина окна в итерациях. Короткие окна (8–32) дают классические чёткие полосы на любой глубине; более длинные снова усредняются к ровному цвету, поскольку член полос длинной хаотической орбиты усредняется.
 panel-trap-shape = Форма ловушки
 panel-palette = Палитра
-# The two colours of the Binary palette, each beside its colour swatch.
+# The two colors of the Binary palette, each beside its color swatch.
 panel-in-set = Внутри
 panel-out-of-set = Снаружи
-# The two colours of the Duotone palette, each beside its colour swatch.
+# The two colors of the Duotone palette, each beside its color swatch.
 panel-shadow = Тень
 panel-highlight = Свет
 panel-cycle = Цикл
@@ -2811,7 +2811,7 @@ panel-log-scale-hover =
     Распределять палитру по ЛОГАРИФМУ значения убегания, а не линейно. На глубине числа итераций до убегания скапливаются у верхнего края, поэтому линейное отображение тратит большую часть палитры на тонкую оболочку у границы и сплющивает всё остальное.
 
     Применяется к нормализованному отображению — его включает «Нормализовать глубокие цвета» (или --normalize при экспорте). Сильно перекошенный диапазон получает логарифмическое отображение в любом случае, отмечен этот флажок или нет.
-# The same checkbox's tooltip while it is greyed out (normalization is off).
+# The same checkbox's tooltip while it is grayed out (normalization is off).
 panel-log-scale-off-hover =
     Требуется нормализация: этот флажок выбирает, КАК палитра отображается на измеренный диапазон убегания, поэтому при выключенном «Нормализовать глубокие цвета» (и без экспорта с --normalize) ему нечего менять, и он не изменил бы ни одного пикселя.
 
@@ -3193,11 +3193,11 @@ lsys-draw-on = Прорисовка
 lsys-draw-on-hover = Какая часть кривой нарисована, в том порядке, в каком её рисует черепаха
 lsys-draw-on-play-hover = Кривая рисует сама себя
 lsys-colour-by = Цвет по
-# The colourings, in the "Colour by" list.
+# The colorings, in the "Color by" list.
 lsys-colour-position = положению вдоль кривой
 lsys-colour-depth = глубине ветвления
 lsys-colour-heading = направлению
-# C, < and > are the system's commands that set the colour index: keep them.
+# C, < and > are the system's commands that set the color index: keep them.
 lsys-colour-index = индексу цвета (C, <, >)
 lsys-colour-plain = один цвет
 # The panel's numbers.
@@ -3351,9 +3351,9 @@ export-snapshot-saved = Снимок экрана { $size } сохранён →
 # $error: why (in English).
 export-snapshot-failed = Снимок не удался: { $error }
 
-## The colour picker (the popup of a colour swatch)
+## The color picker (the popup of a color swatch)
 
-# The third row's label: the colour as hexadecimal bytes. Short (about 6 characters).
+# The third row's label: the color as hexadecimal bytes. Short (about 6 characters).
 picker-row-hex = Hex
 picker-hex-hover = Щёлкните, чтобы ввести шестнадцатеричное значение
 picker-cancel = Отмена
@@ -3626,7 +3626,7 @@ fractal-family-lsystem = L-система
 # A family at a power: "Multibrot 3", "Burning Ship 4". $family: a name above; $power: the power.
 fractal-with-power = { $family } { $power }
 
-## Names of choices: colouring methods, orbit traps, palette animation, snapshots, angle units.
+## Names of choices: coloring methods, orbit traps, palette animation, snapshots, angle units.
 
 color-method-smooth = Плавные итерации
 color-method-stripe = Среднее полос

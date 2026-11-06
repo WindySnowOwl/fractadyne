@@ -137,7 +137,7 @@ fn a_cancelled_stage_sends_nothing_more() {
     let (sent, seeds, _) =
         run_with(&[356.0, 712.0, 1424.0], |s| if s == 2 { Err(fractadyne_core::MisiurewiczMiss::Cancelled) } else { Ok(()) });
     assert_eq!(seeds.len(), 2);
-    assert_eq!(sent.len(), 1, "a cancelled solve reported more than its first stage");
+    assert_eq!(sent.len(), 1, "a canceled solve reported more than its first stage");
     assert!(matches!(sent[0], MisiMsg::Stage { stage: 1, .. }));
 }
 

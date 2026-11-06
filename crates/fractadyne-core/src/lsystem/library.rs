@@ -130,7 +130,7 @@ pub const SYSTEMS: &[NamedSystem] = &[
         name: "Hilbert curve",
         category: Category::SpaceFilling,
         text: "angle 90\naxiom X\nX = -YF+XFX+FY-\nY = +XF-YFY-FX+\n",
-        about: "David Hilbert's curve (1891): visits every cell of a 2^n by 2^n grid, each step to a neighbour.",
+        about: "David Hilbert's curve (1891): visits every cell of a 2^n by 2^n grid, each step to a neighbor.",
     },
     NamedSystem {
         name: "Moore curve",
@@ -282,7 +282,7 @@ pub const SYSTEMS: &[NamedSystem] = &[
                0 < 0 > 0 = 0\n0 < 0 > 1 = 1[+F1F1]\n0 < 1 > 0 = 1\n0 < 1 > 1 = 1\n\
                1 < 0 > 0 = 0\n1 < 0 > 1 = 1F1\n1 < 1 > 0 = 0\n1 < 1 > 1 = 0\n\
                * < + > * = -\n* < - > * = +\n",
-        about: "Context-sensitive: a 0 or 1 changes by its neighbours', as signals pass along the stem \
+        about: "Context-sensitive: a 0 or 1 changes by its neighbors', as signals pass along the stem \
                 (Hogeweg and Hesper, 1974; The Algorithmic Beauty of Plants figure 1.31a). Drawn at its order, 30.",
     },
     NamedSystem {

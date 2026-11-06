@@ -54,7 +54,7 @@ fn orbit_at(z: (f32, f32)) -> Vec<[f32; 4]> {
     vec![[z.0, z.1, 0.0, 0.0], [0.0, 0.0, 0.0, 0.0]]
 }
 
-/// Level 0 IS each fold's linearisation: within the node's radius, `A·δ + δc` is the exact
+/// Level 0 IS each fold's linearization: within the node's radius, `A·δ + δc` is the exact
 /// perturbed step to eps (1e-6) of the step's size, in every direction — and one notch past a
 /// fold's radius, in the direction that crosses the fold, it is not. Reference values sit in every
 /// quadrant, so every sign of every fold is taken.
@@ -94,7 +94,7 @@ fn level_zero_is_each_folds_linearisation() {
 /// the fold — y ≈ 0 for Burning Ship, Re W ≈ 0 (Re and Im for Buffalo) at arg z = π/(2d) for Celtic
 /// and Buffalo. Elsewhere the power's radius (2·eps·|Z|/(d−1) ~ 1e-6) is the smaller, so a fold
 /// radius that was dropped altogether passed every other test (mutation, 2026-10-01). Here: the
-/// radius must be the fold's (well under the power's), the linearisation must hold inside it, and
+/// radius must be the fold's (well under the power's), the linearization must hold inside it, and
 /// twice past it, moved straight across the fold, it must fail.
 #[test]
 fn the_fold_radius_binds_next_to_a_fold() {
@@ -146,7 +146,7 @@ fn the_fold_radius_binds_next_to_a_fold() {
 
 /// An interior reference per fold family, off every axis: a grid point whose f64 orbit stays bounded
 /// for 3,000 steps with its last 500 samples clear of the folds (so the tree can skip there), and
-/// whose orbit attracts: a neighbour 1e-9 away ends within 1e-6 of it. ⚠Bounded is not enough:
+/// whose orbit attracts: a neighbor 1e-9 away ends within 1e-6 of it. ⚠Bounded is not enough:
 /// c = −1 − i is a Burning Ship FIXED point (−1 + i, exactly, so the bignum reference sits on it
 /// forever) but a repelling one (×2√2 a step), and every perturbation of it overflows; and a fold's
 /// bounded orbits can be chaotic (Burning Ship at −1 − 0.4i), where any approximation — the tree's
@@ -256,7 +256,7 @@ fn the_fold_tree_packs_as_the_complex_one() {
     assert!(bla_tree_gpu(&orbit, fe(1e-9), 1e-6, aux, formula::PHOENIX).is_empty(), "no tree for Phoenix");
 }
 
-/// Deep points of the fold families, good to ~2^-112, whose 1e-30 neighbourhood is mostly STABLE: a
+/// Deep points of the fold families, good to ~2^-112, whose 1e-30 neighborhood is mostly STABLE: a
 /// ±1e-35 nudge of δc leaves plain perturbation's count alone at most of a 5×5 grid. Each is a
 /// bignum bisection of "escapes within N" (N = 2,000, or 500 for Celtic 5) from 0 to 2.5 along a
 /// ray — rays every 1.875° from 180.9375°, never a symmetry axis — the first whose grid is ≥ 15 of 25

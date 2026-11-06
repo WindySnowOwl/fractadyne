@@ -66,7 +66,7 @@ fn a_frame_below_the_knee_reads_the_rate_a_full_frame_does() {
     // W8 rung 1c: the RTX 3080 (knee 262,144 px). A full 800,812-px frame and a 15,950-px one at the
     // same 25,000 iterations: below the knee the small one costs like the knee's pixels, ~13.6 ms
     // against ~41.6. Counted at the knee, both read the same rate — uncorrected the small one read
-    // 16× slower, sized the next frame smaller, and the moving frames spiralled to 145×110.
+    // 16× slower, sized the next frame smaller, and the moving frames spiraled to 145×110.
     const KNEE: u64 = 262_144;
     let eff = 4.8e8; // steps per ms, at or above the knee
     let full = (800_812u64, 800_812u64 * 25_000);

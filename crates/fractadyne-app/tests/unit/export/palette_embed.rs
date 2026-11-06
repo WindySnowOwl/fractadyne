@@ -2,7 +2,7 @@
 //!
 //! ⭐**Why this field exists at all.** A view's `palette=` is an INDEX into the built-in presets, so
 //! a file saved while a hand-built gradient was live reopened in whatever preset happened to sit at
-//! that index — the geometry survived and the colour did not. `palette_custom=` carries the
+//! that index — the geometry survived and the color did not. `palette_custom=` carries the
 //! segments themselves, so the file is self-contained.
 //!
 //! ⚠⚠**The metadata container is `key=value`, one pair per LINE, Latin-1** (it is also written into
@@ -35,7 +35,7 @@ fn seg(
     }
 }
 
-/// Not a tidy two-stop ramp: off-centre midpoints, every blend kind we ship, both HSV directions,
+/// Not a tidy two-stop ramp: off-center midpoints, every blend kind we ship, both HSV directions,
 /// partial alpha, and a Bézier segment whose control points are the whole point of the field.
 fn rich() -> Vec<PaletteSegment> {
     vec![
@@ -195,7 +195,7 @@ fn malformed_shapes_are_refused() {
     nan[0].left_color[1] = f32::NAN;
     assert!(
         decode_palette_segments(&encode_palette_segments(&nan)).is_none(),
-        "NaN colour"
+        "NaN color"
     );
     let mut inf = rich();
     inf[0].blend_params[0] = f32::INFINITY;
@@ -211,7 +211,7 @@ fn malformed_shapes_are_refused() {
 
 /// ⛔⭐⭐**`blend` and `space` are a FILE FORMAT, and file formats are append-only.** They are the
 /// `.ggr` numbering, shared with the session and the importers. This test fails the moment someone
-/// renumbers them, which is the point: a renumbering silently recolours every file already on
+/// renumbers them, which is the point: a renumbering silently recolors every file already on
 /// disk — there is no version stamp inside this field to catch it later.
 #[test]
 fn blend_and_space_numbering_is_pinned() {
@@ -231,7 +231,7 @@ fn blend_and_space_numbering_is_pinned() {
     );
 }
 
-/// A single full-width segment is the degenerate but legal case — a two-colour gradient.
+/// A single full-width segment is the degenerate but legal case — a two-color gradient.
 #[test]
 fn one_segment_is_legal() {
     let one = vec![seg(
@@ -249,7 +249,7 @@ fn one_segment_is_legal() {
     assert_eq!(back[0].right_color[0].to_bits(), 0.9f32.to_bits());
 }
 
-/// ⭐The cap is a shared constant, and the reader honours it exactly. The writer's side of the
+/// ⭐The cap is a shared constant, and the reader honors it exactly. The writer's side of the
 /// symmetry (not emitting a gradient it could not read back) is checked in `view_metadata`'s own
 /// guard, which reads the same constant — there is no second number to drift.
 #[test]

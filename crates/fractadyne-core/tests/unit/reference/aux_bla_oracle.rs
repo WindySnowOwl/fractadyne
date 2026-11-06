@@ -1,7 +1,7 @@
 use super::*;
 
 /// EXPERIMENT (run: `cargo test -p fractadyne-core escape_length_vs_precision -- --ignored
-/// --nocapture`): at a Misiurewicz centre, how long does the computed reference orbit stay
+/// --nocapture`): at a Misiurewicz center, how long does the computed reference orbit stay
 /// true as a function of ARITHMETIC precision? The point is parsed at full precision (116
 /// digits ≈ 385 bits); only the orbit arithmetic varies. A Misiurewicz orbit is repelling, so
 /// per-iteration rounding error is amplified until the computed orbit spuriously escapes —
@@ -11,9 +11,9 @@ use super::*;
 /// survives phase 1, so `best_reference` falls back to "longest escaper").
 /// COMPANION EXPERIMENT (run: `cargo test -p fractadyne-core --release --lib
 /// escape_length_of_rounded_centre -- --ignored --nocapture`): the ROUNDED-POINT axis of the
-/// cliff. `Playback::sample` used to route a pinned-centre glide through
+/// cliff. `Playback::sample` used to route a pinned-center glide through
 /// `lerp_bf(a, a, ease, p)` with `p` = the CURRENT interpolated depth's precision — which is
-/// not the identity: it ROUNDS the centre to `p` bits, i.e. hands the reference machinery a
+/// not the identity: it ROUNDS the center to `p` bits, i.e. hands the reference machinery a
 /// genuinely different point. This measures the true escape length (high-precision
 /// arithmetic) of `lerp_bf(centre, centre, 0.5, k)` for the glide precisions the grand tour
 /// actually produces. However good the picker, it cannot beat a wrong input point.

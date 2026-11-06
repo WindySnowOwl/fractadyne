@@ -63,9 +63,9 @@ pub enum Tok {
     Scale(f64),
     /// `\a` (+a) / `/a` (−a): turn left by `a` degrees.
     TurnBy(f64),
-    /// `Cn`: set the colour index.
+    /// `Cn`: set the color index.
     SetColour(i32),
-    /// `<n` (+n) / `>n` (−n): raise or lower the colour index.
+    /// `<n` (+n) / `>n` (−n): raise or lower the color index.
     AddColour(i32),
     /// `{`: start a filled polygon at the turtle (ABOP's leaves). Every step taken inside it —
     /// drawing or not — adds its end as a vertex, and draws no line.
@@ -87,7 +87,7 @@ pub enum Role {
     Move,
 }
 
-/// How the segments are coloured (design/lsystems.md §5).
+/// How the segments are colored (design/lsystems.md §5).
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum Colouring {
     /// Position along the curve: the segment's index.
@@ -96,9 +96,9 @@ pub enum Colouring {
     Depth,
     /// The direction the segment is drawn in.
     Heading,
-    /// The colour index (`C`, `<`, `>`).
+    /// The color index (`C`, `<`, `>`).
     Index,
-    /// One colour.
+    /// One color.
     Plain,
 }
 
@@ -160,7 +160,7 @@ pub struct LSystem {
     pub rules: Vec<Vec<Production>>,
     /// What each symbol does when read. 256 entries.
     pub roles: Vec<Role>,
-    /// The colouring the system asks for (`None`: the default, [`LSystem::colouring`]).
+    /// The coloring the system asks for (`None`: the default, [`LSystem::colouring`]).
     pub colour: Option<Colouring>,
     /// A fixed order to draw at (`None`: the order follows the zoom).
     pub order: Option<u32>,
@@ -394,7 +394,7 @@ fn parse_word_spans(s: &str, line: usize, col0: usize, fold: bool) -> Result<(Ve
                         i = j;
                         v as i32
                     }
-                    Some(_) => return fail(line, col, "a colour step must be a whole number up to 1000000"),
+                    Some(_) => return fail(line, col, "a color step must be a whole number up to 1000000"),
                     None => 1,
                 };
                 Tok::AddColour(if c == b'<' { n } else { -n })
@@ -402,7 +402,7 @@ fn parse_word_spans(s: &str, line: usize, col0: usize, fold: bool) -> Result<(Ve
             b'C' if i < b.len() && b[i].is_ascii_digit() => {
                 let Some((v, j)) = number(b, i) else { unreachable!("a digit follows") };
                 if v.fract() != 0.0 || v > 1e6 {
-                    return fail(line, col, "a colour must be a whole number up to 1000000");
+                    return fail(line, col, "a color must be a whole number up to 1000000");
                 }
                 i = j;
                 Tok::SetColour(v as i32)
@@ -448,7 +448,7 @@ pub fn word_text(word: &[Tok]) -> String {
         // A number followed by a digit symbol or a `.` would read as one longer number.
         let numeric = matches!(t, Tok::Scale(_) | Tok::TurnBy(_) | Tok::SetColour(_) | Tok::AddColour(_));
         let next_digit = matches!(word.get(k + 1), Some(Tok::Sym(c)) if c.is_ascii_digit()) || matches!(word.get(k + 1), Some(Tok::Vertex));
-        // `C` then a digit symbol would read as a colour.
+        // `C` then a digit symbol would read as a color.
         let c_then_digit =
             matches!(t, Tok::Sym(b'C')) && matches!(word.get(k + 1), Some(Tok::Sym(c)) if c.is_ascii_digit());
         if (numeric && next_digit) || c_then_digit {
@@ -501,7 +501,7 @@ impl LSystem {
         self.expanded.as_ref().is_some_and(|e| e.branches) || self.words().any(|w| w.contains(&Tok::Push))
     }
 
-    /// Whether any word sets or steps the colour index.
+    /// Whether any word sets or steps the color index.
     pub fn uses_colour_index(&self) -> bool {
         self.expanded.as_ref().is_some_and(|e| e.colour_index)
             || self.words().any(|w| w.iter().any(|t| matches!(t, Tok::SetColour(_) | Tok::AddColour(_))))
@@ -512,7 +512,7 @@ impl LSystem {
         std::iter::once(&self.axiom).chain(self.rules.iter().flatten().map(|p| &p.word))
     }
 
-    /// The colouring to draw with (design/lsystems.md §9.4): the system's own; else the colour
+    /// The coloring to draw with (design/lsystems.md §9.4): the system's own; else the color
     /// index if it uses one, bracket depth if it branches, position along the curve if not.
     pub fn colouring(&self) -> Colouring {
         self.colour.unwrap_or(if self.uses_colour_index() {
@@ -663,7 +663,7 @@ impl LSystem {
                     sys.colour = Some(Colouring::from_key(value).ok_or_else(|| ParseError {
                         line,
                         col: vcol,
-                        message: "a colouring is position, depth, heading, index or plain".into(),
+                        message: "a coloring is position, depth, heading, index or plain".into(),
                     })?);
                 }
                 "order" => {
@@ -715,7 +715,7 @@ impl LSystem {
             }
         }
         if let Some(c) = self.colour {
-            s.push_str(&format!("colour {}\n", c.key()));
+            s.push_str(&format!("color {}\n", c.key()));
         }
         if let Some(n) = self.order {
             s.push_str(&format!("order {n}\n"));

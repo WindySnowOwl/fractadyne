@@ -1,5 +1,5 @@
-// Life display pass (design/automata.md §4.3): cells -> the iteration texture, so the ordinary colour
-// pass (`fs_color`) colours them. Writes what an escape-time pass writes: main = (value, 0, 0, 1e30)
+// Life display pass (design/automata.md §4.3): cells -> the iteration texture, so the ordinary color
+// pass (`fs_color`) colors them. Writes what an escape-time pass writes: main = (value, 0, 0, 1e30)
 // with value < 0 for "interior" (a dead cell), aux = AUX_NONE; and commits the escape-range counters
 // the live normalization reads.
 //
@@ -86,7 +86,7 @@ fn intensity(st: u32) -> f32 {
 
 @fragment
 fn fs_life(in: VsOut) -> FragOut {
-    let p = in.pos.xy; // the texel centre, in texels
+    let p = in.pos.xy; // the texel center, in texels
     let c = L.origin + p * L.step;
     var v = 0.0;
     if (L.coarse == 1u) {

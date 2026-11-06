@@ -6,7 +6,7 @@
 //! hour is 4.1 MB at the live cap (`LIVE_REF_CAP` = 256,000) and 32 MB at full quality: small enough
 //! to keep, which is the whole opportunity.
 //!
-//! ⭐**One orbit serves a NEIGHBOURHOOD, not a point.** Perturbation renders every pixel as a delta
+//! ⭐**One orbit serves a NEIGHBORHOOD, not a point.** Perturbation renders every pixel as a delta
 //! from the reference, so a saved orbit covers every nearby view too — which is exactly the case
 //! that motivated this: come back, then zoom somewhere else nearby.
 //!
@@ -138,7 +138,7 @@ pub(crate) fn key_id(key: &OrbitKey, prec: usize, point: &[BigFloat; 2]) -> u64 
 ///
 /// ⚠**Only the orbit is stored — the series approximation and the BLA are NOT.** They are derived,
 /// they are cheap next to the orbit (measured at 2.37e4000×: BLA 0.4 s against a 405 s build, and
-/// SA is not computed at all when a BLA tree will exist), and the BLA depends on live colouring
+/// SA is not computed at all when a BLA tree will exist), and the BLA depends on live coloring
 /// settings (`bla_stripe_freq`, `bla_trap_type`), so caching it would drag those into the identity
 /// for no gain. Rebuilding them on load is both simpler and more correct.
 pub(crate) fn encode(res: &RecomputeResult, key: OrbitKey) -> Option<Vec<u8>> {

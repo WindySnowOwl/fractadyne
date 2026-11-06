@@ -13,10 +13,10 @@
 //! - **Unreachable** (no heartbeat for `heartbeat_timeout`): its unfinished frames go back to the
 //!   queue at once.
 //! - **Stall** (the client's current run has finished no frame for the stall timeout, which is
-//!   `max(stall_floor, stall_factor × median frame time)`): cancelled and re-queued. A fixed
+//!   `max(stall_floor, stall_factor × median frame time)`): canceled and re-queued. A fixed
 //!   per-frame deadline is optional, because a deep frame can honestly take an hour. A reference
 //!   build that is still advancing (`Event::ReferenceWork`) is progress too: before a job's first
-//!   frame only the floor applies, and at 9.98e60205× every client's 7–8 minute build was cancelled
+//!   frame only the floor applies, and at 9.98e60205× every client's 7–8 minute build was canceled
 //!   at 300 s and started again from nothing (measured 2026-10-29). A build that stops advancing
 //!   still lets the stall clock run out.
 //! - **Bad frames** (failed verification): re-queued away from the sender, and a strike against
@@ -71,7 +71,7 @@ pub struct Config {
     pub steal_min: u64,
     /// Hand the job out by PRIORITY, one number a frame (empty: in order, from the first frame): each
     /// new run starts at the free frame first in priority (the later on a tie) and grows over the
-    /// free frames beside it, always toward the higher of its two neighbours. A zoom video's strips
+    /// free frames beside it, always toward the higher of its two neighbors. A zoom video's strips
     /// give their index (the deepest — the slowest — first, so the cheap shallow ones fill the end
     /// and no machine is left on a long strip while the others wait); a tour rendered deepest first
     /// gives each frame's depth, so a run is a stretch of one dive around its deepest frames still
@@ -108,9 +108,9 @@ impl Config {
 /// How a run stopped early, as the scheduler needs it.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub enum AbortKind {
-    /// The client's user cancelled or paused.
+    /// The client's user canceled or paused.
     UserPaused,
-    /// We cancelled it.
+    /// We canceled it.
     Canceled,
     /// The render process lost its GPU or crashed.
     Crashed,
@@ -401,7 +401,7 @@ impl Scheduler {
                                 out.push(Command::Cancel { client, run: Some(run), reason: CancelReason::Deadline });
                                 self.fail_frame(f, &name, &mut out, "missed the hard deadline");
                                 let n = self.drop_run(run);
-                                out.push(Command::Note(format!("{name}: frame {f} passed the {}s deadline; run cancelled, {n} frame(s) re-queued", limit.as_secs())));
+                                out.push(Command::Note(format!("{name}: frame {f} passed the {}s deadline; run canceled, {n} frame(s) re-queued", limit.as_secs())));
                             }
                         }
                     }
@@ -588,7 +588,7 @@ impl Scheduler {
             let name = self.clients[&id].name.clone();
             let n = self.drop_run(run);
             out.push(Command::Cancel { client: id, run: Some(run), reason: CancelReason::Stalled });
-            out.push(Command::Note(format!("{name}: no frame finished in {}s — run cancelled, {n} frame(s) re-queued", stall.as_secs())));
+            out.push(Command::Note(format!("{name}: no frame finished in {}s — run canceled, {n} frame(s) re-queued", stall.as_secs())));
         }
     }
 
@@ -760,7 +760,7 @@ impl Scheduler {
 
     fn assign_one(&mut self, id: ClientId, active: usize, now: Instant, out: &mut Vec<Command>, at: Option<u64>) -> bool {
         // By priority (`Config::priority`): from the free frame first in priority, growing toward the
-        // higher neighbour. A steal (`at`) still takes the run's tail it was given.
+        // higher neighbor. A steal (`at`) still takes the run's tail it was given.
         if !self.cfg.priority.is_empty() && at.is_none() {
             let pr = |i: u64| self.cfg.priority.get(i as usize).copied().unwrap_or(f64::NEG_INFINITY);
             let Some(top) = (0..self.cfg.frames).filter(|&i| self.assignable(i, id)).max_by(|&a, &b| pr(a).total_cmp(&pr(b)).then(a.cmp(&b)))

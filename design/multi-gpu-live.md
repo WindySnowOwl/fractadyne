@@ -17,7 +17,7 @@ otherwise now:
    records the same conclusion: the one device is saturated at realistic frame sizes, so the cheap
    single-GPU 1.5–2× does not exist and a second GPU is the honest path to 2×.
 2. **The reference has become cheap.** The precision schedule, products split across cores, the
-   pick sharing the centre's build, and the live reference lookahead along the glide's trajectory
+   pick sharing the center's build, and the live reference lookahead along the glide's trajectory
    (render.rs:2535-2695) mean references arrive ahead of a zoom. At 1.82e5001 a 4K frame's reference
    built in ~1.6 s with MPFR, once, for many frames.
 
@@ -32,10 +32,10 @@ each of the 24 samples is a whole walk of the frame.
    `paint` then draws `fs_color` or `fs_present`, and one `queue.submit` presents
    (lib.rs:2764-3672; egui-wgpu winit.rs:378-549). **No pixel data is ever read back in the live
    path.**
-2. **The G-buffer is the interface between iterating and colouring.** It is `iter_tex` plus
+2. **The G-buffer is the interface between iterating and coloring.** It is `iter_tex` plus
    `aux_tex`, both `Rgba32Float`: 32 B per texel at res·ss per axis (lib.rs:31, 1157-1173).
-   `fs_color` reads neighbourhoods (relief 3×3, palette-AA +1). When reprojecting it reads anywhere
-   in the frozen frame, plus a whole-texture average (wgsl:3373-3530). **So colouring needs the
+   `fs_color` reads neighborhoods (relief 3×3, palette-AA +1). When reprojecting it reads anywhere
+   in the frozen frame, plus a whole-texture average (wgsl:3373-3530). **So coloring needs the
    complete G-buffer on the presenting device.**
 3. **Moving frames are always ss = 1** (central.rs:1238-1247). They refresh by one of three paths:
    - **Reprojection.** The frozen frame is held and reprojected (`reuse_hold`, `will_reproject`,
@@ -52,7 +52,7 @@ each of the 24 samples is a whole walk of the frame.
    log2 magnification ≥ 33 (main.rs:13956-14221):
    - 24 Halton-jittered samples;
    - each one re-renders the whole frame;
-   - each sample's **colour** frame folds into a running average,
+   - each sample's **color** frame folds into a running average,
      `avg + (frame − avg)·inv_weight`, with the weight in a uniform (lib.rs:3582-3634;
      wgsl:3553-3559).
 5. **The reference on the GPU** is one buffer per view: the orbit, then the BLA tree (16 B a
@@ -77,7 +77,7 @@ each of the 24 samples is a whole walk of the frame.
 1. **The window's device presents everything.** A second GPU (a *worker*) never touches the
    screen.
 2. **Only whole products cross between devices:** a complete G-buffer for a captured view, or a
-   partial colour average. Never chunk state, never a half-walked frame. These are exactly the two
+   partial color average. Never chunk state, never a half-walked frame. These are exactly the two
    places the live path already adopts finished work (§2.3 pins, §2.4 the fold).
 3. **A job carries everything that defines its pixels:** the live iterate uniform verbatim, the
    reference (`orbit_id`), the geometry and the jitter. The same job on the window's device would
@@ -109,7 +109,7 @@ each of the 24 samples is a whole walk of the frame.
   deep settled one. The orbit cap becomes the minimum over all devices, as the farm already does.
 - **Output.** The G-buffer, plus the counter block (228 B) and the pass timings:
   - `iter` channel: 16 B/px;
-  - `aux` channel: another 16 B/px, sent only when the colour method reads it.
+  - `aux` channel: another 16 B/px, sent only when the color method reads it.
 - **Interface:**
   - `submit(job) → receiver`;
   - `cancel(generation)`: a new view generation drops stale jobs;
@@ -122,7 +122,7 @@ each of the 24 samples is a whole walk of the frame.
 - **Sizes:**
   - A motion refresh at ss = 1, at 2560×1600 and res 0.5, is 1.02M px × 16 B = **16 MB**
     (32 MB with aux).
-  - A settle delivery is a colour partial average at base resolution. As `Rgba16Float` (8 B/px)
+  - A settle delivery is a color partial average at base resolution. As `Rgba16Float` (8 B/px)
     that is **33 MB** at 2560×1600, sent every few samples rather than every sample.
 - **Expected cost:** a few ms of PCIe each way, plus about one frame of latency. L0 measures it.
 
@@ -131,7 +131,7 @@ each of the 24 samples is a whole walk of the frame.
 - **(A) Settle samples.** A worker's partial average of m samples folds into n with
   `inv_weight = m/(n+m)`. `fs_accum` already computes `avg + (frame − avg)·inv_weight`, so no
   shader change is needed: the fold pass reads the uploaded partial average in place of this frame's
-  colour.
+  color.
 - **(B) Motion refreshes.** A worker G-buffer for a captured view is adopted the way a completed
   pin is (render.rs:9104-9119). It becomes the frozen frame, which `fs_color` reprojects to the
   current camera.
@@ -173,7 +173,7 @@ byte-identity rig. PLUTO is for speed and mixed-class checks (ask before queuein
 
 - When the view settles (`drive_accumulation`), the worker takes every other sample of the 24
   (its own Halton indices).
-- It renders each one whole: iterate, then colour with the **window's colour uniform verbatim**,
+- It renders each one whole: iterate, then color with the **window's color uniform verbatim**,
   so normalization is identical.
 - It folds its samples locally and ships a partial average plus its count every few samples.
 - The window's device keeps rendering its own samples and folds the worker's partials (§3.3 A).
@@ -287,7 +287,7 @@ a twin device on the window's adapter, the test rig. Otherwise it takes a number
 **Where it differs from §4 L2, and why.**
 - **Sample indices are shared, not split.** The window's device and the worker take the next free
   Halton index when each is ready, not every other one. Two cards of different speeds both stay
-  busy. A failed or cancelled sample gives its index back.
+  busy. A failed or canceled sample gives its index back.
 - **Each sample is shipped, not a partial average.** Every fold then uses the one weight rule,
   `1/(n+1)`. At most one fold runs per frame, because the folds share the accumulator's weight
   uniform.
@@ -318,7 +318,7 @@ run. Between the settle and `accum: begin` it passed, and a 9.3e78× shot was wr
     request;
   - control: the jitter changes the sample;
   - control: a whole-pixel jitter is a whole-pixel shift (sign and units);
-  - a cancelled run's job answers without a sample, even when the cancel arrives before the job,
+  - a canceled run's job answers without a sample, even when the cancel arrives before the job,
     and the next run's job renders. It went red with the queued-cancel branch disabled.
 - `--shot` A/B at 1600×1000, with and without `--worker-gpu same`, comparing view 0's pane only:
 
@@ -357,7 +357,7 @@ run. Between the settle and `accum: begin` it passed, and a 9.3e78× shot was wr
 nothing, yet it finished the run 3.8× and 5.8× sooner. That means a live settle sample takes far
 longer than the GPU work in it: 2.9 s against 0.78 s, and 1.0 s against 0.13 s. The live path paces
 samples by its frame budget; the export path has no such pacing. Every timing here was taken while
-a farm render loaded the same GPU, and time-slicing favours big batches over frame-paced work. So
+a farm render loaded the same GPU, and time-slicing favors big batches over frame-paced work. So
 these ratios are an upper bound until they are re-measured on an idle machine. If they hold, a
 faster single-GPU settle is open, at the cost of how quickly the first input after a settle can
 interrupt a long dispatch.
@@ -443,7 +443,7 @@ Decision (user, 2026-10-08): `CHUNK_CHARGE` stays ON by default while the timing
 **A walk's identity now includes its SERIES SEED** (`series_seed_bits`). Found while checking
 step 2's images: at 9.3e78× the series skip is refined (5513 → 5535, with a new reference) a few
 frames after the settle walk starts, and the walk carried on, its pixels seeded from the old series
-while every later walk seeds from the new one. A supersampling run whose quick colour restarts
+while every later walk seeds from the new one. A supersampling run whose quick color restarts
 reused that settle walk as sample 0 converged 79 pixels away from one that re-walked it. A
 pre-existing bug; it touched ordinary settled frames too.
 
@@ -454,18 +454,18 @@ settings sometimes converge a few dozen pixels apart (≤ 3/255): uniform 209k-i
 windows did not show it here, but two runs sharing the GPU did (192/251, earlier). Longer passes
 make it likelier, so step 2 surfaces it more often (1 run in 5 at default normalization-off; with
 normalization on, 0–3 pixels). Ruled out: window size and placement (`--set CHUNK_SHUFFLE=1`,
-deterministic uneven windows, is pixel-identical), the colour mapping, the series seed (fixed), the
+deterministic uneven windows, is pixel-identical), the color mapping, the series seed (fixed), the
 running count's data flow (no shader code reads counters), and every iterate input in the frame
 record. Next: read back each folded sample's iteration texture and hash it, so two runs name the
 sample that differs.
 
-**A run begins only once the iteration limit and the colour range are decided (2026-10-07, user:
+**A run begins only once the iteration limit and the color range are decided (2026-10-07, user:
 "start supersampling only after the iteration limit stops rising").** Asked "is it speckled?" at a
 user's 2.3e11× view (df32, an escaping 6,286-long reference): the converged 24-sample average keeps
 a fine grain (128 samples halve it, as 1/√N predicts), but for minutes the screen showed single
-samples, because every run restarted. Two causes, both in the colour signature a run is held to:
+samples, because every run restarted. Two causes, both in the color signature a run is held to:
 (1) the adaptive limit climbed ×1 → ×42.9 and fell back to ×10.5, and every raise re-decides the
-colour range at the new ask; (2) at a fixed limit a run began before the range had its whole-walk
+color range at the new ask; (2) at a fixed limit a run began before the range had its whole-walk
 reading, so each jittered sample's partial reading nudged the unlocked range. The reading both
 decide on comes from the walk's last pass, and the counter readback arms only when idle, so about
 every other pass goes out unarmed; when the last one did, nothing re-dispatched on a still view,
@@ -555,7 +555,7 @@ second card to settle samples.
 - **The resolution** follows the worker's time: 150 ms a frame from offer to answer, each side
   scaled by `√(target / ms)`, within a quarter either way a frame, 0.25 to 1 of the panel.
 - **Transfer.** The G-buffer comes back through the seed pipeline (the live textures have no
-  `COPY_SRC`; `Renderer::read_gbuffer`), the aux plane only for the colourings that read it, and is
+  `COPY_SRC`; `Renderer::read_gbuffer`), the aux plane only for the colorings that read it, and is
   checked to hold a picture (`GBuffer::drawn`). The worker thread then hands it to the WINDOW's
   device itself (`AdoptFrame::upload`; wgpu 24's `Device` is `Clone` and `Send`), so the UI thread
   copies nothing. Measured: the first version uploaded on the UI thread, 26 MB a frame at full
@@ -619,7 +619,7 @@ pacing again (§8): the window's walks run one pass a displayed frame, the worke
 same-card twin is a single-GPU speed-up for motion, as it was for the settle.
 
 Window captures during a twin zoom (`PrintWindow` on the test's own window, ~9 a second),
-registered pair by pair as a magnification about the pane's centre: every pair a pure zoom with
+registered pair by pair as a magnification about the pane's center: every pair a pure zoom with
 zero shift (residual 1–3 of 255), through the settle (scale 1.06 → 1.000 as the glide eases out).
 The only outliers were the live normalization switching mapping (3 times, as many as in a solo run:
 not L3) and supersampling starting at the settled view.

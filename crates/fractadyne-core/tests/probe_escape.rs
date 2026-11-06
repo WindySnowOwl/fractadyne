@@ -69,8 +69,8 @@ fn probe_escape_times() {
     }
 }
 
-/// Dense-row oracle: escape times along a horizontal run of `npix` ADJACENT pixels centred on the
-/// view centre, at the render's real per-pixel step. This is the CPU "truth" (f64 reference via
+/// Dense-row oracle: escape times along a horizontal run of `npix` ADJACENT pixels centered on the
+/// view center, at the render's real per-pixel step. This is the CPU "truth" (f64 reference via
 /// sample_xy, floatexp δz + Zhuoran rebasing — same algorithm as the shader). If the row varies
 /// SMOOTHLY, the true escape field is smooth and any GPU speckle is a shader bug; if the row is
 /// itself noisy, the perturbation algorithm is unstable here (a shared CPU/GPU accuracy problem).
@@ -102,7 +102,7 @@ fn probe_escape_row() {
     let step = half.mul_f64(2.0 / height_px);
     let mut escapes: Vec<i64> = Vec::with_capacity(npix);
     for i in 0..npix {
-        let off = i as f64 - (npix as f64 - 1.0) / 2.0; // pixels from centre along +x
+        let off = i as f64 - (npix as f64 - 1.0) / 2.0; // pixels from center along +x
         let dc = CFloatExp { re: step.mul_f64(off), im: FloatExp::ZERO };
         let mut dz = CFloatExp { re: FloatExp::ZERO, im: FloatExp::ZERO };
         let mut n: usize = 0;
@@ -252,7 +252,7 @@ fn probe_best_ref() {
     let clen = fractadyne_core::reference_orbit(&zero, &zero, &center[0], &center[1], 0, max_iter, prec).1;
     let refpt = fractadyne_core::best_reference(&center, span, 0, false, [0.0, 0.0], max_iter, prec);
     let rlen = fractadyne_core::reference_orbit(&zero, &zero, &refpt[0], &refpt[1], 0, max_iter, prec).1;
-    // How far (in pixels) did best_reference move from the centre?
+    // How far (in pixels) did best_reference move from the center?
     let dx = fractadyne_core::sub_f64(&refpt[0], &center[0], prec);
     let dy = fractadyne_core::sub_f64(&refpt[1], &center[1], prec);
     let step = span[1].mul_f64(1.0 / 180.0).to_f64();
@@ -268,7 +268,7 @@ fn probe_best_ref() {
     );
 
     // PROTOTYPE the proposed fix: hill-climb from best_reference's pick toward a longer-surviving
-    // (ideally interior) neighbour, shrinking the step on a barren round. Report whether it reaches
+    // (ideally interior) neighbor, shrinking the step on a barren round. Report whether it reaches
     // an interior reference and how many orbit-length scorings it cost.
     let score = |px: &fractadyne_core::BigFloat, py: &fractadyne_core::BigFloat, cap: u32| -> u32 {
         fractadyne_core::reference_orbit(&zero, &zero, px, py, 0, cap, prec).1

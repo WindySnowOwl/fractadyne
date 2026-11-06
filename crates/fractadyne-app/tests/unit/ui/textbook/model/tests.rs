@@ -147,7 +147,7 @@ fn printing_adds_the_parentheses_the_grammar_needs_and_no_others() {
     }
 }
 
-/// Normalisation puts an edited row back in the grammar's form and keeps the caret in place.
+/// Normalization puts an edited row back in the grammar's form and keeps the caret in place.
 #[test]
 fn normalising_keeps_the_grammar_and_the_caret() {
     let at = |path: Vec<(usize, u8)>, pos: usize| Caret { path, pos, ..Default::default() };

@@ -63,7 +63,7 @@ fn every_status_phrase_the_window_translates_is_one_the_client_writes() {
         "The job is over",
         "Paused — the controller has been told",
         "Pausing — finishing the frame in progress",
-        "Cancelled the frame in progress; paused",
+        "Canceled the frame in progress; paused",
         "Connecting to ",
         r#"\" — running the self-check"#,
         r#"\" — waiting for its user to approve this machine"#,

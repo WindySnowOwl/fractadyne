@@ -30,7 +30,7 @@ fn bands_are_octaves_from_a_fixed_base_not_a_fraction_of_the_ask() {
 #[test]
 fn the_2026_08_22_fatal_window_no_longer_shares_a_band_with_the_cheap_orbit_start() {
     // The field loss ran chunk=[768,1792) against an ask of 231,676. Under the old
-    // ask-proportional rule every cursor below 14,480 was band 0, so that window's licence had
+    // ask-proportional rule every cursor below 14,480 was band 0, so that window's license had
     // been earned by the passes at iterations 0..768. Octaves separate them.
     let old_band = |cur: u32, ask: u32| -> usize {
         ((cur as u64 * N as u64) / (ask.max(1) as u64)).min(N as u64 - 1) as usize

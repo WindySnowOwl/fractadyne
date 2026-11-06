@@ -22,13 +22,13 @@ fn crash_view_fdn_is_a_loadable_location() {
     let fdn = super::crash_view_fdn().expect("a view was stashed");
     assert!(super::location_text_verdict(&fdn).is_ok(), "not accepted as a location:\n{fdn}");
     assert!(fdn.contains("max_iter=10000000"), "iteration count missing:\n{fdn}");
-    // The centre round-trips (notation-independent — `to_decimal_string` writes scientific form for
+    // The center round-trips (notation-independent — `to_decimal_string` writes scientific form for
     // |x| < 1, e.g. `-7.436…e-1`), which is what makes the crashing spot recoverable.
     let cre = fdn.lines().find_map(|l| l.strip_prefix("center_re=")).expect("center_re present");
     let v = fractadyne_core::parse_bf(cre).expect("center_re parses");
     assert!(
         (fractadyne_core::to_f64(&v) - (-0.7436438870371589)).abs() < 1e-12,
-        "centre did not round-trip: {cre}"
+        "center did not round-trip: {cre}"
     );
     assert!(!fdn.contains("formula="), "a built-in view carries no formula:\n{fdn}");
 

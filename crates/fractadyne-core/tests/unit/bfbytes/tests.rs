@@ -29,7 +29,7 @@ fn a_deep_coordinate_round_trips_bit_for_bit() {
     // ⚠`precision_for_magnification` cannot express this depth at all — 9.98e60205 is far past
     // `f64::MAX`, which is exactly why the octave-based entry point exists.
     let prec = crate::precision_for_octaves(200_000);
-    // The centre of the deepest location we track, at the precision that view needs.
+    // The center of the deepest location we track, at the precision that view needs.
     let src = "-0.28041054305504546698407770028983979273643258419006230007410381499044388400475";
     let v = parse_bf_prec(src, prec.max(4096)).expect("parse");
     let back = roundtrip(&v).expect("decode");

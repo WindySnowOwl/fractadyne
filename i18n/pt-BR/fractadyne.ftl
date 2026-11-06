@@ -296,7 +296,7 @@ tag-group-shape = Forma
 tag-group-theme = Tema
 tag-group-purpose = Finalidade
 
-# Tags measured from a palette's colours: its colour families, warm or cool, how busy it is (calm, lively, frantic), its brightness, and its shape. Plural nouns for the families; the rest describe the palette.
+# Tags measured from a palette's colors: its color families, warm or cool, how busy it is (calm, lively, frantic), its brightness, and its shape. Plural nouns for the families; the rest describe the palette.
 tag-reds = Vermelhos
 tag-oranges = Laranjas
 tag-yellows = Amarelos
@@ -975,9 +975,9 @@ app-gradient-ggr-imported = “{ $name }” importado - { $count } segmentos, co
 # $error: the reader's reason (in English).
 app-gradient-ggr-invalid = Não é um gradiente .ggr: { $error }
 
-## The eyedropper's banner across the top of the screen while picking a colour
+## The eyedropper's banner across the top of the screen while picking a color
 
-# $hex: the colour under the pointer, as #rrggbb.
+# $hex: the color under the pointer, as #rrggbb.
 app-eyedropper-banner-color = Escolhendo uma cor  ·  { $hex }  ·  clique para pegá-la, Esc para cancelar
 app-eyedropper-banner = Escolhendo uma cor  ·  clique para pegá-la, Esc para cancelar
 
@@ -1015,7 +1015,7 @@ app-gradient-bezier-exact-hover = Dois pontos de controle que você pode arrasta
 app-gradient-bezier-visible-hover = Dois pontos de controle que você pode arrastar nas duas direções. Converter APROXIMA a curva atual — esta, com erro de até { $error }, o que é claramente visível.
 # Hover on Bézier in the list of blend curves. $error: how far the fit is off (2 decimals).
 app-gradient-bezier-barely-hover = Dois pontos de controle que você pode arrastar nas duas direções. Converter APROXIMA a curva atual — esta, com erro de até { $error }, o que é quase imperceptível.
-# A label before the list of colour spaces (RGB, HSV).
+# A label before the list of color spaces (RGB, HSV).
 app-gradient-space = Espaço
 # A label before the Bézier presets beside it.
 app-gradient-ease = Suavização
@@ -1066,7 +1066,7 @@ app-gradient-import-ggr-hover = Carregar um gradiente .ggr do GIMP, com seus pon
 app-gradient-import-ase-hover = Carregar uma lista de amostras da Adobe (.ase). As amostras não têm posições, então chegam espaçadas por igual e mescladas.
 # The gradient's name, for the library of saved gradients.
 app-gradient-name = Nome
-# Shown greyed in the empty name field.
+# Shown grayed in the empty name field.
 app-gradient-name-hint = meu gradiente
 # The save button, when a gradient of that name is already saved.
 app-gradient-update = Atualizar
@@ -1091,13 +1091,13 @@ app-gradient-ends-differ-hover = A cor no fim do gradiente não é a cor do iní
 app-gradient-hard-bands = Faixas rígidas (sem mistura entre as entradas)
 app-gradient-hard-bands-hover = Semântica do Fractint / .map: cada entrada é uma cor chapada. Desligado, elas se misturam num gradiente suave.
 app-gradient-paste-intro = Cole cores hexadecimais (#ff8800) ou triplas 0–255 (255 136 0), separadas por vírgulas, espaços ou quebras de linha:
-# Applies the pasted colours.
+# Applies the pasted colors.
 app-gradient-apply = Aplicar
 # Empties the paste box.
 app-gradient-clear = Limpar
-# $used: the colours kept; $total: the colours pasted; $limit: the most that are kept.
+# $used: the colors kept; $total: the colors pasted; $limit: the most that are kept.
 app-gradient-paste-imported-some = { $used } de { $total } cores importadas, amostradas por igual ao longo da sua lista ({ $limit } é o limite).
-# $count: the colours pasted.
+# $count: the colors pasted.
 app-gradient-paste-imported = { $count } cores importadas.
 # $error: why the pasted text could not be read (in English).
 app-gradient-paste-unreadable = Não foi possível ler isso: { $error }
@@ -1978,7 +1978,7 @@ farm-client-show-key = Mostrar
 farm-client-machine = Esta máquina
 farm-client-machine-hover = O nome que o controlador mostra para esta máquina.
 farm-client-share = Unidade compartilhada
-# Greyed hint inside the empty field; the path is an example.
+# Grayed hint inside the empty field; the path is an example.
 farm-client-share-hint = opcional — ex.: \\fileserver\share
 farm-client-share-hover = O caminho desta máquina até a unidade compartilhada que o controlador usa (modo compartilhado): os quadros são gravados ali em vez de enviados pela conexão. Deixe vazio para enviar todos os quadros.
 farm-client-gpu = Placa de vídeo
@@ -2148,7 +2148,7 @@ farm-ctl-ss = Superamostragem
 farm-ctl-port = Escutar na porta
 farm-ctl-port-hover = Os clientes se conectam a esta porta. Libere-a no firewall para a sua rede local.
 farm-ctl-share = Unidade compartilhada
-# Greyed hint inside the empty field.
+# Grayed hint inside the empty field.
 farm-ctl-share-hint = opcional — o caminho desta máquina até ela
 farm-ctl-share-hover = Modo compartilhado: os clientes que têm a mesma unidade gravam os quadros nela em vez de enviá-los pela conexão, e esta máquina confere cada um ali. Os clientes sem ela enviam os seus.
 # A label followed by a number of clients and two checkboxes.
@@ -2446,7 +2446,7 @@ formula-apply = Aplicar
 formula-dialog-apply-hover = Compilar a fórmula e mostrá-la
 # Shown beside Apply while the formula is being compiled.
 formula-dialog-compiling = Compilando a fórmula para a GPU…
-# The greyed hint in an empty name box (also in the Formula library window).
+# The grayed hint in an empty name box (also in the Formula library window).
 formula-name-hint = nome (opcional)
 # The save button: "Update" when the library already has a formula of that name.
 formula-dialog-update-in-library = Atualizar na biblioteca
@@ -2581,7 +2581,7 @@ formula-library-import = Importar…
 formula-library-import-hover = Adicionar as fórmulas de um arquivo de fórmulas; nada aqui é substituído
 formula-library-export-all = Exportar todas…
 formula-library-export-all-hover = Gravar todas as fórmulas daqui num único arquivo, para compartilhar ou guardar
-# The filter box: its label, and the greyed hint inside it.
+# The filter box: its label, and the grayed hint inside it.
 formula-library-filter = Filtro
 formula-library-filter-hint = filtrar por nome ou texto
 # Shown while the user has no saved formulas.
@@ -2736,10 +2736,10 @@ panel-tail-length-unit = it
 panel-tail-length-hover = Comprimento da janela em iterações. Janelas curtas (8–32) dão as faixas fortes clássicas em qualquer profundidade; as mais longas voltam a tender a uma cor chapada, já que o termo de listras de uma órbita caótica longa se anula na média.
 panel-trap-shape = Forma da armadilha
 panel-palette = Paleta
-# The two colours of the Binary palette, each beside its colour swatch.
+# The two colors of the Binary palette, each beside its color swatch.
 panel-in-set = Dentro
 panel-out-of-set = Fora
-# The two colours of the Duotone palette, each beside its colour swatch.
+# The two colors of the Duotone palette, each beside its color swatch.
 panel-shadow = Sombra
 panel-highlight = Realce
 panel-cycle = Ciclo
@@ -2757,7 +2757,7 @@ panel-log-scale-hover =
     Distribuir a paleta pelo LOGARITMO do valor de escape em vez de linearmente. As contagens de escape se acumulam no extremo alto em profundidade, então um mapeamento linear gasta a maior parte da paleta numa casca fina perto da borda e achata todo o resto.
 
     Aplica-se ao mapeamento normalizado — que é o que “Normalizar cores profundas” (ou --normalize numa exportação) liga. Uma faixa muito assimétrica recebe o mapeamento logarítmico de qualquer forma, esteja isto marcado ou não.
-# The same checkbox's tooltip while it is greyed out (normalization is off).
+# The same checkbox's tooltip while it is grayed out (normalization is off).
 panel-log-scale-off-hover =
     Requer normalização: isto escolhe COMO a paleta é mapeada para a faixa de escape medida, então com “Normalizar cores profundas” desligado (e sem exportação com --normalize) não há mapeamento para mudar, e isto não alteraria um único pixel.
 
@@ -3129,11 +3129,11 @@ lsys-draw-on = Traçado
 lsys-draw-on-hover = Quanto da curva é desenhado, na ordem em que a tartaruga a desenha
 lsys-draw-on-play-hover = A curva se desenhando sozinha
 lsys-colour-by = Colorir por
-# The colourings, in the "Colour by" list.
+# The colorings, in the "Color by" list.
 lsys-colour-position = posição ao longo da curva
 lsys-colour-depth = profundidade do ramo
 lsys-colour-heading = direção
-# C, < and > are the system's commands that set the colour index: keep them.
+# C, < and > are the system's commands that set the color index: keep them.
 lsys-colour-index = índice de cor (C, <, >)
 lsys-colour-plain = uma só cor
 # The panel's numbers.
@@ -3279,9 +3279,9 @@ export-snapshot-saved = Captura de tela salva: { $size } → { $path }
 # $error: why (in English).
 export-snapshot-failed = Falha na captura: { $error }
 
-## The colour picker (the popup of a colour swatch)
+## The color picker (the popup of a color swatch)
 
-# The third row's label: the colour as hexadecimal bytes. Short (about 6 characters).
+# The third row's label: the color as hexadecimal bytes. Short (about 6 characters).
 picker-row-hex = Hex
 picker-hex-hover = Clique para digitar um valor hexadecimal
 picker-cancel = Cancelar
@@ -3554,7 +3554,7 @@ fractal-family-lsystem = Sistema L
 # A family at a power: "Multibrot 3", "Burning Ship 4". $family: a name above; $power: the power.
 fractal-with-power = { $family } { $power }
 
-## Names of choices: colouring methods, orbit traps, palette animation, snapshots, angle units.
+## Names of choices: coloring methods, orbit traps, palette animation, snapshots, angle units.
 
 color-method-smooth = Iteração suave
 color-method-stripe = Média de listras

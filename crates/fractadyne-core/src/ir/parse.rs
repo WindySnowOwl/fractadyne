@@ -349,7 +349,7 @@ enum Tok {
     OrOr,
     /// The end of the init section.
     Colon,
-    /// A lone `&` or `!`: recognised only to be refused.
+    /// A lone `&` or `!`: recognized only to be refused.
     Unsupported(&'static str),
     /// A statement separator: a new line (a `,` outside parentheses becomes one too).
     Sep,

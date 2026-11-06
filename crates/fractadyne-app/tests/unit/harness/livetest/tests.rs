@@ -61,7 +61,7 @@ fn a_false_alarm_is_an_iter_capped_report_that_four_times_the_ask_does_not_bear_
     assert!(false_alarm(capped, 0.0942, Some(0.01)));
     // The 3.3e61 spar at an exact 60,000: 100% black, 0.1% at 4× — the report is right.
     assert!(!false_alarm(capped, 1.0, Some(99.9)));
-    // No second oracle, no judgement; and only "iter capped" makes the claim.
+    // No second oracle, no judgment; and only "iter capped" makes the claim.
     assert!(!false_alarm(capped, 0.0942, None));
     assert!(!false_alarm(Some("⚠ depth limit"), 0.0942, Some(0.01)));
     assert!(!false_alarm(None, 0.0942, Some(0.01)));

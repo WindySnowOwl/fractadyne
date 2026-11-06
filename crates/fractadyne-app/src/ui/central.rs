@@ -149,7 +149,7 @@ impl FractadyneApp {
         let (space, shift) = ctx.input(|i| (i.key_down(egui::Key::Space), i.modifiers.shift));
         // `--zoomtest` holds a virtual key here too (the single-view path reads it the same
         // way), so a dual-view glide is this exact code path: with no pointer, the virtual key
-        // glides the Mandelbrot pane about its centre — a user with the mouse parked over it.
+        // glides the Mandelbrot pane about its center — a user with the mouse parked over it.
         let virtual_key = self.harness_holds_space();
         let space = (space && !ctx.wants_keyboard_input()) || virtual_key;
         let dt = (ctx.input(|i| i.stable_dt) as f64).clamp(0.0, 0.1);
@@ -199,8 +199,8 @@ impl FractadyneApp {
                 // on an 8-octave dual-view glide: 177 of 177 readings discarded, 0 folded, the
                 // map stuck at the range it had before the zoom started. That is the 2026-09-17
                 // report in one line — "sometimes doesn't normalize" (the frozen map), "the
-                // colours bounce around" (it snaps when a reading finally lands on settle) and
-                // "a flat colour panel" (a log mapping over an old range collapses the new
+                // colors bounce around" (it snaps when a reading finally lands on settle) and
+                // "a flat color panel" (a log mapping over an old range collapses the new
                 // view's escape values into one palette entry).
                 self.pointer.settle_t[is_julia as usize] = ctx.input(|i| i.time);
             }
@@ -217,7 +217,7 @@ impl FractadyneApp {
         // to Ctrl+click. Both gestures used to want the same plain click here, which is why the
         // tool was never wired into this path at all; giving the armed tool priority is the half of
         // that trade the user notices, since the tool is the one they just switched on. With the
-        // tool off this is exactly the old behaviour, plain click and nothing to learn.
+        // tool off this is exactly the old behavior, plain click and nothing to learn.
         // `nav_and_draw` owns the mirror of this rule and the two must agree — if one changes,
         // change the other, or a click will either do both things or neither.
         let pin_click = if self.click_zoom {
@@ -244,7 +244,7 @@ impl FractadyneApp {
                     // ⚠**The Julia parameter is an `f64`, and past ~1e16× the whole panel rounds to
                     // one.** At c ≈ −0.018 an ulp is ~7e-18, while a 1e60 view spans 3e-60 — forty
                     // orders of magnitude finer — so every pixel maps to the same double and the
-                    // pin necessarily lands on the view centre. That is arithmetic, not a broken
+                    // pin necessarily lands on the view center. That is arithmetic, not a broken
                     // handler, but it looked like one at the 2026-09-17 pass ("Ctrl+click at a deep
                     // zoom set the Julia point at the center — is that expected?"). A limit the user
                     // can SEE the effect of has to be a limit the app will STATE.
@@ -252,7 +252,7 @@ impl FractadyneApp {
                         crate::diag::log_line(
                             "view",
                             &format!(
-                                "julia pin: f64-quantized to the view centre at 2^{:.2} — c=({:.17e},{:.17e})",
+                                "julia pin: f64-quantized to the view center at 2^{:.2} — c=({:.17e},{:.17e})",
                                 self.viewport.log2_magnification(),
                                 cc.0,
                                 cc.1
@@ -612,8 +612,8 @@ impl FractadyneApp {
         p.circle_stroke(c, r, egui::Stroke::new(1.5_f32, accent));
         // ⭐**The crosshair is NOT painted here** — it is stamped into the reticle image by
         // `reticle_mark`, where each of its pixels can pick an ink from the fractal underneath it.
-        // Four fixed-colour strokes on this layer were invisible whenever the content happened to
-        // match them (2026-09-17 pass), and no fixed colour or shadow fixes that in general.
+        // Four fixed-color strokes on this layer were invisible whenever the content happened to
+        // match them (2026-09-17 pass), and no fixed color or shadow fixes that in general.
         // A line back to the aim point, so which point is being magnified is never in doubt.
         p.line_segment([at.screen, c], egui::Stroke::new(1.0_f32, accent.gamma_multiply(0.5)));
         // ⭐**Mark the aim, and tie it to the hand.** With `RETICLE_AIM_GAIN` damping the aim to a
@@ -764,11 +764,11 @@ impl FractadyneApp {
     ///
     /// ⭐⭐**Marking the view interacting is the load-bearing half.** Moving the view from the
     /// minimap used to change nothing the settle key can see: that key is
-    /// `(orbit_id, gpu_iter, view_gen, resolution, settings_hash)`, the centre and span appear in
+    /// `(orbit_id, gpu_iter, view_gen, resolution, settings_hash)`, the center and span appear in
     /// NONE of them, and `view_gen` — the one field that stands for them — only bumps while
     /// `interacting`. The canvas drag sets that in `nav_and_draw`; the minimap bypassed it. So a
     /// COMPLETED tile grid stayed "valid" across the pan and kept holding tiles drawn for the old
-    /// centre — rectangular blocks of stale image in a settled frame (field report 2026-08-30,
+    /// center — rectangular blocks of stale image in a settled frame (field report 2026-08-30,
     /// reproduced by the `minimap-pan-redraws` check at meanΔ 19.6).
     ///
     /// It is also what the gesture deserves on its own terms: coarse while the drag is live, full
@@ -847,7 +847,7 @@ impl FractadyneApp {
                             p.rect_stroke(vr, 0.0, egui::Stroke::new(3.0_f32, halo), egui::StrokeKind::Middle);
                             p.rect_stroke(vr, 0.0, egui::Stroke::new(1.5_f32, amber), egui::StrokeKind::Middle);
                         } else {
-                            // Deep: a bright crosshair + centre dot (the view is sub-pixel here).
+                            // Deep: a bright crosshair + center dot (the view is sub-pixel here).
                             let c = 8.0;
                             let cross = |w: f32, col: egui::Color32, p: &egui::Painter| {
                                 p.line_segment([mk - egui::vec2(c, 0.0), mk + egui::vec2(c, 0.0)], egui::Stroke::new(w, col));
@@ -876,9 +876,9 @@ impl FractadyneApp {
                                 jump = Some((tx, ty));
                             }
                         }
-                        // Pan by the drag DELTA rather than by centring on the pointer:
+                        // Pan by the drag DELTA rather than by centering on the pointer:
                         // the marker then tracks the hand from wherever it was grabbed,
-                        // instead of snapping its centre under the cursor on the first
+                        // instead of snapping its center under the cursor on the first
                         // pixel of movement.
                         grabbed = resp.drag_started();
                         if resp.dragged() {
@@ -887,10 +887,10 @@ impl FractadyneApp {
                                 pan = Some(Self::minimap_drag_to_complex(d, rect.size()));
                             }
                         }
-                        // Wheel = depth, about the view CENTRE. Zooming toward the cursor
+                        // Wheel = depth, about the view CENTER. Zooming toward the cursor
                         // (as the main view does) would fold a move into the zoom, and at
                         // depth one map pixel is an enormous distance - far too coarse to
-                        // aim with. Centre-fixed keeps the gesture meaning exactly
+                        // aim with. Center-fixed keeps the gesture meaning exactly
                         // "deeper / shallower from here". Same response curve as the main
                         // view so the wheel feels the same in both places.
                         if resp.hovered() {
@@ -925,11 +925,11 @@ impl FractadyneApp {
         }
         // ⭐⭐**A MINIMAP GESTURE IS AN INTERACTION, AND MUST SAY SO.** Moving the view from here
         // used to change nothing the settle key can see: the key is
-        // `(orbit_id, gpu_iter, view_gen, resolution, settings_hash)`, the centre and span appear
+        // `(orbit_id, gpu_iter, view_gen, resolution, settings_hash)`, the center and span appear
         // in NONE of them, and `view_gen` — the one field that stands for them — only bumps while
         // `interacting`. The canvas drag sets that in `nav_and_draw`; the minimap bypassed it. So
         // a COMPLETED tile grid stayed "valid" across the pan and kept holding tiles drawn for
-        // the old centre: rectangular blocks of stale image in a settled frame (field report
+        // the old center: rectangular blocks of stale image in a settled frame (field report
         // 2026-08-30, reproduced by `minimap-pan-redraws` at meanΔ 19.6).
         //
         // Marking it interacting is also what the gesture deserves on its own terms — it renders
@@ -1152,7 +1152,7 @@ impl FractadyneApp {
                 // Snap zoom (`zoom_snap`): look for a feature near the cursor (off the UI thread),
                 // so a zoom in below can be pulled toward it. Where the cursor last was when it is
                 // off the canvas, as the Space zoom does.
-                // A harness's glide is about the centre (as its zoom below is), whatever a real
+                // A harness's glide is about the center (as its zoom below is), whatever a real
                 // pointer resting over its window does.
                 let snap_pos = if self.harness_holds_space() { Some(rect.center()) } else { response.hover_pos().or(self.pointer.last_cursor) };
                 let snap_cursor = snap_pos.map(|p| {
@@ -1193,9 +1193,9 @@ impl FractadyneApp {
                     self.schedule_repaint(ctx); // animate while held and during glide-out
                 }
                 if self.pointer.zoom_vel.abs() > 1e-3 {
-                    // A harness's virtual Space glides about the CENTRE, whatever the real cursor
+                    // A harness's virtual Space glides about the CENTER, whatever the real cursor
                     // does: a pointer resting over a `--zoomtest` window steered its glide into
-                    // empty space, a solid-colour run measured as if it were the scene (2026-10-15).
+                    // empty space, a solid-color run measured as if it were the scene (2026-10-15).
                     let anchor = if self.harness_holds_space() {
                         rect.center()
                     } else {

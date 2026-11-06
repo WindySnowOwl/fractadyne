@@ -10,7 +10,7 @@ const DIALOG: egui::Color32 = egui::Color32::from_rgb(7, 8, 9);
 fn paint_order() -> (usize, usize, usize) {
     let ctx = egui::Context::default();
     // ⚠A window FADES IN, and egui multiplies everything in it — including a marker painted
-    // inside — by the fade alpha, so colour matching finds nothing while it is animating.
+    // inside — by the fade alpha, so color matching finds nothing while it is animating.
     ctx.style_mut(|s| s.animation_time = 0.0);
     let input = || egui::RawInput {
         screen_rect: Some(egui::Rect::from_min_size(
@@ -26,7 +26,7 @@ fn paint_order() -> (usize, usize, usize) {
             });
             egui::Window::new("dialog").show(ctx, |ui| {
                 // Marked from INSIDE the window, so the shape is unambiguously in its layer —
-                // the frame's own fill comes from the style and is not ours to recognise.
+                // the frame's own fill comes from the style and is not ours to recognize.
                 let (_, r) = ui.allocate_space(egui::vec2(20.0, 20.0));
                 ui.painter().rect_filled(r, 0.0, DIALOG);
             });

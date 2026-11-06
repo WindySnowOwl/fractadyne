@@ -1,6 +1,6 @@
 use super::*;
 
-/// The diagonal neighbours.
+/// The diagonal neighbors.
 const M_CORNERS: Mask = M_NW | M_NE | M_SW | M_SE;
 
 fn class(count: u8, letter: char) -> Mask {
@@ -40,7 +40,7 @@ fn the_chart_partitions_the_arrangements() {
     let mut per_count = [0usize; 9];
     let mut reps: Vec<Mask> = Vec::new();
     for &(n, l, m) in &CHART {
-        assert_eq!(m.count_ones() as u8, n, "{n}{l}: the picture has {} neighbours", m.count_ones());
+        assert_eq!(m.count_ones() as u8, n, "{n}{l}: the picture has {} neighbors", m.count_ones());
         let c = canonical(m);
         assert!(!reps.contains(&c), "{n}{l} pictures a class another letter already names");
         reps.push(c);
@@ -75,10 +75,10 @@ fn counts_above_four_are_the_complements_of_those_below() {
 }
 
 /// LifeWiki's "von Neumann emulation" lists which classes share an arrangement of the four
-/// orthogonal neighbours — text on the page, independent of the chart's pictures.
+/// orthogonal neighbors — text on the page, independent of the chart's pictures.
 #[test]
 fn the_von_neumann_groups_match_the_page() {
-    // Each group: its classes and the orthogonal neighbours they all have (up to symmetry).
+    // Each group: its classes and the orthogonal neighbors they all have (up to symmetry).
     let groups: [(&[&str], Mask); 6] = [
         (&["0", "1c", "2n", "2c", "3c", "4c"], 0),
         (&["1e", "2a", "2k", "3i", "3n", "3y", "3q", "4n", "4y", "5e"], M_N),
@@ -93,7 +93,7 @@ fn the_von_neumann_groups_match_the_page() {
             let (n, l) = named(name);
             let m = class(n, l);
             let e = m & M_EDGES;
-            assert!((0..8).any(|t| transform(e, t) == edges), "{name}: orthogonal neighbours {e:#010b}");
+            assert!((0..8).any(|t| transform(e, t) == edges), "{name}: orthogonal neighbors {e:#010b}");
             listed += 1;
         }
     }
@@ -101,7 +101,7 @@ fn the_von_neumann_groups_match_the_page() {
 }
 
 /// LifeWiki's duality table, checkerboard columns: for odd-parity cells the input is XORed with the
-/// four edges, for even-parity cells with the four corners (and the centre, which the table records
+/// four edges, for even-parity cells with the four corners (and the center, which the table records
 /// as a birth/survival swap). Each row maps a class to a class — 51 more facts from the page's
 /// text, not its pictures.
 #[test]

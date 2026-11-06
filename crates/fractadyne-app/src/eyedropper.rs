@@ -1,6 +1,6 @@
-//! A screen-wide colour picker: sample the pixel under the OS cursor, anywhere on the desktop.
+//! A screen-wide color picker: sample the pixel under the OS cursor, anywhere on the desktop.
 //!
-//! ⭐**Why this reaches outside our own window.** The colours people want in a fractal palette come
+//! ⭐**Why this reaches outside our own window.** The colors people want in a fractal palette come
 //! from somewhere else — a photograph, another fractal program, a palette on a web page. Restricting
 //! the dropper to our window would make it a novelty; the whole value is picking the orange out of
 //! a sunset that is open in another application.
@@ -17,12 +17,12 @@
 /// Unpack a Win32 `COLORREF` into a display-referred RGB triple, or `None` for `CLR_INVALID`.
 ///
 /// ⭐⭐**A `COLORREF` is `0x00bbggrr` — BLUE in the high byte.** Reading it as RGB swaps red and
-/// blue and still produces a plausible-looking colour, which is exactly how the `.ugr` importer's
+/// blue and still produces a plausible-looking color, which is exactly how the `.ugr` importer's
 /// byte order went unnoticed until it was checked at the pixel. That is why this is a separate
 /// function with a test naming the two channels, rather than three shifts inlined at the call site.
 ///
 /// ⚠`GetPixel` reports failure as `CLR_INVALID` (`0xffffffff`), which is otherwise a legal-looking
-/// colour value — white with the top byte set. Treating it as a colour would silently paint a stop
+/// color value — white with the top byte set. Treating it as a color would silently paint a stop
 /// white whenever the sample failed, so it is rejected here rather than at the caller.
 pub(crate) fn colorref_rgb(c: u32) -> Option<[f32; 3]> {
     const CLR_INVALID: u32 = 0xffff_ffff;
@@ -43,7 +43,7 @@ pub(crate) fn unsupported_reason() -> Option<String> {
     (!supported()).then(|| tr!(picker_eyedropper_unsupported))
 }
 
-/// The colour of the screen pixel under the OS cursor right now.
+/// The color of the screen pixel under the OS cursor right now.
 #[cfg(windows)]
 pub(crate) fn sample_under_cursor() -> Option<[f32; 3]> {
     #[repr(C)]
@@ -103,7 +103,7 @@ fn key_down(_vk: i32) -> bool {
     false
 }
 
-/// The primary mouse button, honouring a left-handed swap — `GetAsyncKeyState(VK_LBUTTON)` is
+/// The primary mouse button, honoring a left-handed swap — `GetAsyncKeyState(VK_LBUTTON)` is
 /// documented to track the PHYSICAL left button, so the logical primary is what we must ask for.
 pub(crate) fn primary_button_down() -> bool {
     const VK_LBUTTON: i32 = 0x01;
@@ -135,22 +135,22 @@ fn swapped_buttons() -> bool {
 ///
 /// ⭐⭐**`armed` is the whole reason this is a state machine and not a boolean.** The click that
 /// STARTS the pick is still physically down when the first poll runs, so a naive "commit when the
-/// button is down" reads that same press as the pick and the dropper grabs the colour of its own
+/// button is down" reads that same press as the pick and the dropper grabs the color of its own
 /// button. The gesture only becomes live once the button has been seen RELEASED.
 #[derive(Clone, Copy, Debug, Default, PartialEq)]
 pub(crate) struct Pick {
     /// The starting press has been released, so a new press means "take this one".
     pub armed: bool,
-    /// The colour under the cursor as of the last poll, for the live preview.
+    /// The color under the cursor as of the last poll, for the live preview.
     pub preview: Option<[f32; 3]>,
 }
 
 /// What a poll decided.
 #[derive(Clone, Copy, Debug, PartialEq)]
 pub(crate) enum PickStep {
-    /// Still picking; `preview` on the returned state is the live colour.
+    /// Still picking; `preview` on the returned state is the live color.
     Continue(Pick),
-    /// The user clicked: take this colour.
+    /// The user clicked: take this color.
     Take([f32; 3]),
     /// Escape, or an unsampleable screen.
     Cancel,
@@ -170,7 +170,7 @@ pub(crate) fn step(pick: Pick, down: bool, esc: bool, sample: Option<[f32; 3]>) 
     }
     match (down, sample) {
         // ⚠Take the sample from THIS poll, not the previous one: between the last frame and the
-        // click the pointer may have moved, and the colour the user is looking at is the one under
+        // click the pointer may have moved, and the color the user is looking at is the one under
         // the cursor now.
         (true, Some(c)) => PickStep::Take(c),
         // A click we could not sample must not silently take the stale preview — that would paint

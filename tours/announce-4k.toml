@@ -114,7 +114,7 @@ max_iter = 3000
 ease = "smooth"
 
 # ══ 2. SEAHORSE VALLEY ═══════════════════════════════════════════════════════════════════════
-[[keyframe]]              # CUT (t == previous t + hold): no glide, no frames spent travelling
+[[keyframe]]              # CUT (t == previous t + hold): no glide, no frames spent traveling
 id = "seahorse-enter"
 transition = "dissolve"
 transition_secs = 0.8
@@ -150,7 +150,7 @@ julia_im = 0.521
 ease = "linear"
 hold = 3.0
 
-[[keyframe]]              # slide c along the boundary; the Julia set reorganises continuously
+[[keyframe]]              # slide c along the boundary; the Julia set reorganizes continuously
 id = "julia-slide"
 t = 46.0
 julia_re = -0.743
@@ -228,7 +228,7 @@ text = "The Mandelbrot set: the points c where z → z² + c never escapes to in
 kind = "caption"
 t = 6.0
 secs = 4.6
-text = "Colour shows how quickly a point escapes. The black interior never does."
+text = "Color shows how quickly a point escapes. The black interior never does."
 
 [[annotation]]
 kind = "caption"
@@ -264,7 +264,7 @@ text = "Inside the set, the Julia set is connected. Outside, it shatters into du
 kind = "caption"
 t = 43.5
 secs = 4.5
-text = "Sliding c along the boundary reorganises the Julia set continuously."
+text = "Sliding c along the boundary reorganizes the Julia set continuously."
 
 [[annotation]]
 kind = "caption"

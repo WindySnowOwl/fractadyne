@@ -13,7 +13,7 @@ pub(crate) const BUILD_SEQ: &str = env!("FRACT_BUILD");
 pub(crate) const BUILD_GIT: &str = env!("FRACT_GIT");
 
 /// Display string, e.g. `0.2.41-beta.113 (build 3501, g1a2b3c4)`. The commit field is what makes a
-/// field artefact attributable: the build counter alone cannot tell two machines' builds apart, and
+/// field artifact attributable: the build counter alone cannot tell two machines' builds apart, and
 /// a validation run once measured the previous binary without anyone being able to tell.
 pub(crate) fn version_string() -> String {
     format!("{APP_VERSION} (build {BUILD_SEQ}, {})", git_field(BUILD_GIT))
@@ -538,7 +538,7 @@ pub(crate) fn local_now() -> Option<(i32, u32, u32, u32, u32, u32, u32)> {
     None
 }
 
-/// GPU utilisation percent and VRAM used/total bytes, via `nvidia-smi`.
+/// GPU utilization percent and VRAM used/total bytes, via `nvidia-smi`.
 ///
 /// ⚠Deliberately best-effort and vendor-limited: there is no portable GPU counter, and shelling out
 /// is too slow to do at a high rate. Callers must sample this rarely and treat `None` as "unknown",

@@ -52,8 +52,8 @@ pub const RULES: &[NamedRule] = &[
     NamedRule { name: "Assimilation", rule: "B345/S4567", about: "Stable diamond shapes." },
     NamedRule { name: "Brian's Brain", rule: "B2/S/C3", about: "Generations: live cells always die, through one dying state." },
     NamedRule { name: "Star Wars", rule: "B2/S345/C4", about: "Generations with two dying states." },
-    NamedRule { name: "tlife", rule: "B3/S2-i34q", about: "Non-totalistic: Life where two opposite orthogonal neighbours don't keep a cell alive." },
-    NamedRule { name: "Just Friends", rule: "B2-a/S12", about: "Non-totalistic: born on two neighbours unless they sit side by side (2a)." },
+    NamedRule { name: "tlife", rule: "B3/S2-i34q", about: "Non-totalistic: Life where two opposite orthogonal neighbors don't keep a cell alive." },
+    NamedRule { name: "Just Friends", rule: "B2-a/S12", about: "Non-totalistic: born on two neighbors unless they sit side by side (2a)." },
 ];
 
 pub const PATTERNS: &[NamedPattern] = &[

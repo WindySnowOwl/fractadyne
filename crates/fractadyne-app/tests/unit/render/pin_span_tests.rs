@@ -56,7 +56,7 @@ fn a_band_without_prices_of_its_own_still_stops_the_pass() {
     let mut bands = priced();
     bands[3] = 0;
     assert_eq!(pin_span_end(&bands, 256, 512, bands[1], 256, 42_237, 100_000, 50_000, 1.0), (1_024, span_band_code(1, 2)));
-    // Even past the storm, where a cold band's licence is inherited: an inherited licence is not a price.
+    // Even past the storm, where a cold band's license is inherited: an inherited license is not a price.
     assert_eq!(pin_span_end(&bands, 256, 512, bands[1], 256, 42_237, 100_000, 100, 1.0), (1_024, span_band_code(1, 2)));
 }
 
@@ -65,7 +65,7 @@ fn a_pass_that_does_not_cover_its_start_band_does_not_span() {
     let bands = priced();
     // Starts inside the band (past the series skip).
     assert_eq!(pin_span_end(&bands, 300, 512, bands[1], 256, 42_237, 100_000, 50_000, 1.0), (512, 1));
-    // Its licence (or the step) stopped it short of the band's end.
+    // Its license (or the step) stopped it short of the band's end.
     assert_eq!(pin_span_end(&bands, 512, 900, bands[2], 256, 42_237, 100_000, 50_000, 1.0), (900, 2));
     // The walk ends in this band.
     assert_eq!(pin_span_end(&bands, 256, 400, bands[1], 256, 400, 100_000, 50_000, 1.0), (400, 1));
@@ -94,7 +94,7 @@ fn a_span_takes_at_most_its_share_of_a_pass() {
 
 #[test]
 fn bands_licensed_at_their_width_admit_no_span() {
-    // Each band's licence is its own width: one band is a whole pass.
+    // Each band's license is its own width: one band is a whole pass.
     let mut bands = [0; crate::tunables::CHUNK_BANDS];
     for b in 1..=8 {
         bands[b] = chunk_band_end(chunk_band_start(b)) - chunk_band_start(b);
@@ -143,7 +143,7 @@ fn a_priced_span_runs_on_while_the_bands_measured_costs_fit() {
     // The whole pin target: on to the walk's end, inside band 9 (13.5 ms), in one pass.
     let ((end, band), _) = pin_span_end_priced(&costs, &bands, 256, 512, 4_096, 67_086, 100_000, 35_138, 20.0);
     assert_eq!((end, band), (67_086, span_band_code(1, 9)));
-    // ⛔The licences never enter the sum: one priced 4,096 for a band 32,768 wide spans nothing less.
+    // ⛔The licenses never enter the sum: one priced 4,096 for a band 32,768 wide spans nothing less.
     // The rate model's pass size still caps the span.
     let ((end, _), _) = pin_span_end_priced(&costs, &bands, 256, 512, 4_096, 67_086, 4_000, 35_138, 20.0);
     assert_eq!(end, 4_096);
@@ -161,7 +161,7 @@ fn a_priced_span_stops_at_a_band_with_no_cost_or_no_licence() {
     let mut bands = licensed();
     bands[5] = 0;
     let ((end, _), _) = pin_span_end_priced(&costs, &bands, 256, 512, 4_096, 67_086, 100_000, 35_138, 20.0);
-    assert_eq!(end, 4_096, "band 5 has no licence (a retreat shed it)");
+    assert_eq!(end, 4_096, "band 5 has no license (a retreat shed it)");
 }
 
 #[test]
@@ -189,7 +189,7 @@ fn a_band_is_predicted_at_its_cost_scaled_up_past_the_iterations_it_covered() {
     assert_eq!(costs.predict(9, 3_100), Some(3.0));
     assert_eq!(costs.predict(9, 1_000), Some(1.5));
     assert_eq!(costs.predict(10, 1_000), None);
-    // A start band with no cost of its own counts its licence's share of the 20 ms target (256 of
+    // A start band with no cost of its own counts its license's share of the 20 ms target (256 of
     // 4,096 = 1.25 ms), as `pin_span_end` would.
     let (mut ms, iters, len) = costed();
     ms[1] = 0.0;

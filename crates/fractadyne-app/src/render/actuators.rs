@@ -12,7 +12,7 @@ use crate::RenderMode;
 
 /// The resumable iteration-range walk (`MandelbrotParams::chunk_range`): a frame's iterations split
 /// across passes, so no single dispatch carries the whole count. It needs three `Rgba32Float` state
-/// targets (48 colour-attachment bytes a sample); `mode2` says whether the device also granted the
+/// targets (48 color-attachment bytes a sample); `mode2` says whether the device also granted the
 /// fourth that floatexp's 13 floats of state need (64 bytes) — a device can have one and not the
 /// other, and then loses only the deep path.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]

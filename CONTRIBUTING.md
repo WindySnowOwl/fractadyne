@@ -113,7 +113,7 @@ python scripts/release_checklist.py     # regenerates validation/release-checkli
 
 Walk `validation/release-checklist.xlsx` end to end **on the exact build you intend to
 publish** — launch, layout, window sizing, navigation, deep zoom, all ten formulas,
-Julia/dual view, colouring, quality, locations/bookmarks, export, tours, help, the optional
+Julia/dual view, coloring, quality, locations/bookmarks, export, tours, help, the optional
 accelerated build, persistence and stability. (The generator prints the step count; it is
 not repeated here, because a number in prose goes stale and then nobody trusts either copy.) Record Actual result and Pass/Fail, and fill in the Cover sheet
 (build, GPU, decision). The checklist names real controls; if a step can no longer be
@@ -138,7 +138,7 @@ performed because something moved, fix the step — do not skip it.
 - Keep changes focused; match the surrounding code's style, naming, and comment
   density. Update `CHANGELOG.md` and, for a functional change, bump the workspace
   version in `Cargo.toml`.
-- New behaviour should come with a test or a validation step (a core unit test, a
+- New behavior should come with a test or a validation step (a core unit test, a
   `--selftest` case, or a documented manual check).
 - Unit tests live under `crates/<crate>/tests/unit/`, never in `src/`. The tests for
   `src/<path>.rs` sit in `tests/unit/<path>/<module>.rs`, declared at the bottom of the file

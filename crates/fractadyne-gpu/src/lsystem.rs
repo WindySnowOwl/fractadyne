@@ -1,7 +1,7 @@
 //! The L-system segment pass (design/lsystems.md §5): the app walks the system for a view
 //! (`fractadyne_core::lsystem::walk`) and hands the segments over in an [`LSystemFrame`]; this
-//! draws them, a quad each, into the iteration texture, so the colour pass colours them as it
-//! colours an escape-time picture.
+//! draws them, a quad each, into the iteration texture, so the color pass colors them as it
+//! colors an escape-time picture.
 //!
 //! A walk takes time (it runs off the UI thread), so a frame carries the last walk's segments with
 //! where its view sits in the current one: while the next walk runs, the last one is drawn moved
@@ -10,8 +10,8 @@
 use egui_wgpu::wgpu;
 use std::sync::Arc;
 
-/// One segment as the shader reads it: its ends in pixels of the walked view, from its centre
-/// (y up), its colour value (≥ 0; the palette coordinate before the cycle and offset), and where
+/// One segment as the shader reads it: its ends in pixels of the walked view, from its center
+/// (y up), its color value (≥ 0; the palette coordinate before the cycle and offset), and where
 /// along the curve it starts and ends (0 to 1: what the draw-on animation reveals it by).
 #[repr(C)]
 #[derive(Clone, Copy, Debug, Default, PartialEq, bytemuck::Pod, bytemuck::Zeroable)]
@@ -43,7 +43,7 @@ pub struct LSystemFrame {
     pub triangles: Arc<Vec<TriangleInstance>>,
     /// Changes whenever `segments` does: the upload's key.
     pub segments_id: u64,
-    /// A walked pixel `p` shows at `p * scale + offset` pixels from this view's centre (y up).
+    /// A walked pixel `p` shows at `p * scale + offset` pixels from this view's center (y up).
     pub scale: f32,
     pub offset: [f32; 2],
     /// The line width, pixels.
@@ -226,7 +226,7 @@ impl LSystemRenderer {
             self.uploaded = Some(frame.segments_id);
         }
         let ss = ss.max(1) as f32;
-        // At least a texel across, so a hairline still lands on texel centres.
+        // At least a texel across, so a hairline still lands on texel centers.
         let half = (0.5 * frame.width * ss).max(0.5);
         let u = LViewU {
             offset: frame.offset,

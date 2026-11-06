@@ -196,7 +196,7 @@ fn shipped_golden_pngs_carry_a_repro_command_not_a_view() {
                     bad.push(format!("{name}: {note}"));
                 }
                 if !fields.iter().any(|(k, _, _, _)| k == "center_re") {
-                    bad.push(format!("{name}: no centre after alias folding"));
+                    bad.push(format!("{name}: no center after alias folding"));
                 }
             }
             Ok(Some(m)) => {

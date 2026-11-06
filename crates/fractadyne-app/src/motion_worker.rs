@@ -55,7 +55,7 @@ pub(crate) struct LiveDelivery {
 }
 
 /// The live view a pin frame's params are re-aimed at (`build_params` saves it before shadowing
-/// the view with the pin's): centre, magnification, and span as the GPU takes it.
+/// the view with the pin's): center, magnification, and span as the GPU takes it.
 pub(crate) struct LiveAim {
     pub(crate) center_bf: [fractadyne_core::BigFloat; 2],
     pub(crate) log2mag: f64,
@@ -64,7 +64,7 @@ pub(crate) struct LiveAim {
     pub(crate) precision: usize,
 }
 
-/// Whether a view of span `(lx, ly)` centred `(dx, dy)` from another view's centre lies inside
+/// Whether a view of span `(lx, ly)` centered `(dx, dy)` from another view's center lies inside
 /// that view, of span `(tx, ty)` — all in one exponent's units.
 pub(crate) fn view_inside(dx: f64, dy: f64, lx: f64, ly: f64, tx: f64, ty: f64) -> bool {
     let slack = 1.0 + 1.0e-9;
@@ -207,7 +207,7 @@ impl FractadyneApp {
     /// The worker's next motion refresh, offered at the end of `build_params` for view 0. `real`:
     /// `params` describe a whole frame of the view at `center_bf` / `log2mag` (a perturbation mode
     /// with its reference, not a pan drag). `aim`: on a pin frame, the live view to re-aim them at.
-    /// Off the moment the view stops moving: the job in flight is cancelled and the motion's counts
+    /// Off the moment the view stops moving: the job in flight is canceled and the motion's counts
     /// are logged.
     #[allow(clippy::too_many_arguments)]
     pub(crate) fn live_offer(

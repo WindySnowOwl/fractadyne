@@ -336,7 +336,7 @@ fn rebuild(u: &Universe, rule: Rule) -> Universe {
 }
 
 impl FractadyneApp {
-    /// The Life frame: playback for this frame, the colouring, and the universe's commands.
+    /// The Life frame: playback for this frame, the coloring, and the universe's commands.
     pub(crate) fn build_life_params(&mut self, now: f64, resolution: [u32; 2], ss: u32) -> fractadyne_gpu::MandelbrotParams {
         // A download that arrived: changes waiting for it, or a save.
         if let Some(u) = self.life.take_download() {
@@ -524,7 +524,7 @@ impl FractadyneApp {
     }
 
     /// A Life view's universe: `pattern` (at generation `at`) under `rule`, then run on to generation
-    /// `shown`; with `show`, switched to (the view's own centre and zoom are applied by the caller
+    /// `shown`; with `show`, switched to (the view's own center and zoom are applied by the caller
     /// afterwards), else only kept (a session whose view is another family).
     pub(crate) fn life_open_view(&mut self, pattern: life::Pattern, rule: &str, name: String, at: u64, shown: u64, show: bool) -> Result<(), String> {
         /// More than this is a hostile or broken file, not a view (a run of hours).
@@ -886,7 +886,7 @@ impl FractadyneApp {
         }
     }
 
-    /// Fill what the view shows (capped about its centre) at random.
+    /// Fill what the view shows (capped about its center) at random.
     fn life_fill_view(&mut self) {
         let Some(w) = life::cell_window(&self.viewport) else { return };
         let cells_w = (self.viewport.width_px * w.cells_per_px).ceil().min(2048.0) as u32;

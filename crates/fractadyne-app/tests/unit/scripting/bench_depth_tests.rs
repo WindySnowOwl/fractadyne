@@ -38,8 +38,8 @@ fn every_preset_crosses_into_floatexp() {
     );
 }
 
-/// A centre is only usable as deep as its digit count supports, and `begin_standard_bench`
-/// falls back to (-0.5, 0) when a centre fails to parse - which would dive somewhere else
+/// A center is only usable as deep as its digit count supports, and `begin_standard_bench`
+/// falls back to (-0.5, 0) when a center fails to parse - which would dive somewhere else
 /// entirely and still print a complete, plausible report. Sub-pixel placement at 1eN needs
 /// about N + log10(width in px) digits, so require N + 4.
 #[test]
@@ -50,7 +50,7 @@ fn every_preset_centre_parses_and_is_precise_enough_for_its_depth() {
         for coord in [cx, cy] {
             assert!(
                 fractadyne_core::parse_bf(coord).is_some(),
-                "{site}: centre does not parse: {coord}"
+                "{site}: center does not parse: {coord}"
             );
             let digits = coord.chars().filter(|c| c.is_ascii_digit()).count() as f64;
             assert!(

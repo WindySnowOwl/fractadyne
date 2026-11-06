@@ -69,7 +69,7 @@ fn a_scheduled_orbit_stores_the_full_precision_samples() {
     assert_eq!(ext_tail.sched, sched_tail.sched, "the extension ends in the fresh build's state");
 }
 
-/// Probe (ignored): the 1.2e148 corpus centre walked at the pick's 557 bits with and without the
+/// Probe (ignored): the 1.2e148 corpus center walked at the pick's 557 bits with and without the
 /// schedule — length, and where the samples first part.
 #[test]
 #[ignore]

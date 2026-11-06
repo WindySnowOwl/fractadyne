@@ -94,7 +94,7 @@ const NIM: &str = "3.540207347648327221719984333721934753758406620526068439482e-
 #[test]
 fn full_step_perturbation_matches_plain_iteration_at_every_pixel() {
     // The minibrot a tenth of the view (1e11.96x, 16:9), its nucleus 0.6 half-widths right of the
-    // centre, at the set's cap of 30 periods: a grid over the whole view, every pixel compared.
+    // center, at the set's cap of 30 periods: a grid over the whole view, every pixel compared.
     let p = 192;
     let h = FloatExp::from_f64(4.0).mul_pow2(-11.962 * std::f64::consts::LOG2_10);
     let w = h.mul_f64(16.0 / 9.0);
@@ -153,7 +153,7 @@ fn the_radii_are_crossed_in_order() {
     assert_eq!(inside, TruthDwell::INTERIOR);
 }
 
-/// The tip ladder's view (scripts/tip_ladder.py) as a `gw` x `gh` grid: centre -2 + (0.4937 +
+/// The tip ladder's view (scripts/tip_ladder.py) as a `gw` x `gh` grid: center -2 + (0.4937 +
 /// 0.0711i)·height, height 4·2^-level; pixel (x, y)'s point as the shader maps it.
 fn tip_point(level: i64, x: usize, y: usize, gw: usize, gh: usize, p: usize) -> (BigFloat, BigFloat) {
     let height = FloatExp::from_f64(4.0).mul_pow2(-(level as f64));
@@ -260,7 +260,7 @@ fn radius_2_is_decided_exactly_where_the_orbit_hovers_on_it() {
         let (x, y) = tip_point(level, gw / 2, gh / 2, gw, gh, p);
         truth_reference(&x, &y, iter, p)
     };
-    // The tip sits 0.4937 heights left of the centre: grid column 6.6.
+    // The tip sits 0.4937 heights left of the center: grid column 6.6.
     let tip_col = gw as f64 / 2.0 - 0.5 - 0.4937 * gh as f64;
     for y in 0..gh {
         for x in 0..gw {

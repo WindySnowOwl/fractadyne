@@ -10,9 +10,9 @@
 //!
 //! - the goal is scored on the shader's distance estimate and must itself be a boundary cell —
 //!   only boundary points have unbounded detail, so zooming about one never runs out of it. What
-//!   the score MAXIMISES is how many octaves the dive can descend about the cell ([`Probe::depth`],
-//!   floored at the depth the estimate is trustworthy to); boundary density over a neighbourhood
-//!   and nearness to the centre only discount that. Maximising the DENSITY instead — which is what
+//!   the score MAXIMIZES is how many octaves the dive can descend about the cell ([`Probe::depth`],
+//!   floored at the depth the estimate is trustworthy to); boundary density over a neighborhood
+//!   and nearness to the center only discount that. Maximizing the DENSITY instead — which is what
 //!   the first rewrite did — aims at the centroid of the structure, and the centroid of a spiral is
 //!   its empty eye;
 //! - it is carried through every zoom and pan (`after_zoom`), so it stays on its content between
@@ -23,7 +23,7 @@
 //!   runs out, or when it is lost. ⭐Depth ranks candidates but must never be the thing compared
 //!   in that ratio: it saturates, and `best` is a maximum over the whole frame, so a depth-weighted
 //!   ratio sits pinned at the cap and retargets on any dip — see the rule in `choose_goal`;
-//! - the camera eases: the aim closes on the goal, the aim drifts to the centre of the screen, and
+//! - the camera eases: the aim closes on the goal, the aim drifts to the center of the screen, and
 //!   the zoom speed ramps in and slows through a turn.
 
 use crate::{FractadyneApp, ZOOM_RATE};
@@ -47,7 +47,7 @@ const PROBE_CELLS: f64 = 3136.0;
 const AIM_TAU: f64 = 0.35;
 /// Time constant (s, at the default zoom rate) of the aim drifting to the middle of the screen.
 const CENTER_TAU: f64 = 2.0;
-/// How far off centre (fraction of the screen's short side) the aim may sit before the pan above
+/// How far off center (fraction of the screen's short side) the aim may sit before the pan above
 /// touches it at all. Inside this, the dive is a pure zoom and the picture does not slide.
 const CENTER_DEAD: f64 = 0.10;
 /// Time constant (s) of every zoom-speed change: the start, a slow-down for a turn, the resume.
@@ -266,7 +266,7 @@ pub(crate) fn misi_stages(cur_l2: f64, target_l2: f64, first_oct: f64) -> Vec<f6
 
 /// The solve worker's stages, after detection named `kp`: each of `stages` in order, seeded by the
 /// last stage's point (the first by `center`), sending a `Stage` for each that solves and a
-/// `Failed` for the first that does not; nothing for a cancelled one, or once the dive has dropped
+/// `Failed` for the first that does not; nothing for a canceled one, or once the dive has dropped
 /// the solve. `solve` is one stage's Newton solve (`find_misiurewicz_with`); the "is this the
 /// point in view?" test stays about the view the dive started from (`log2_seed` = `cur_l2`).
 #[allow(clippy::too_many_arguments)]
@@ -862,7 +862,7 @@ impl FractadyneApp {
         }
         // Refreshes that complete with no escaped pixel: the view has nothing at this iteration
         // count (the verified-present policy keeps those frames off the screen, so without this
-        // the dive would carry on magnifying the held frame into a flat colour).
+        // the dive would carry on magnifying the held frame into a flat color).
         if self.perf.content[0].blank_walks >= BLANK_WALKS_DEAD_END {
             if self.autopilot_hold_for_reference(now, l2, "refreshes came back blank") {
                 self.schedule_repaint(ctx);
@@ -1082,7 +1082,7 @@ impl FractadyneApp {
                         if stepping {
                             // Stepped dive: snap the aim to the goal, jump the zoom by a fixed
                             // factor (2^AUTOPILOT_STEP_LOG2×) about it, then bring it halfway to
-                            // the centre — each step is a full re-render, so there is no glide to
+                            // the center — each step is a full re-render, so there is no glide to
                             // ease through.
                             self.autopilot.aim = s.goal;
                             self.autopilot.lead = s.goal;
@@ -1264,7 +1264,7 @@ impl FractadyneApp {
 /// Distance-estimate sentinel: at or above this the cell has no estimate (interior, or a family
 /// whose shader tracks no derivative — the iterate pass writes 1e30).
 const DE_NONE: f32 = 1.0e29;
-/// Radius (cells) of the neighbourhood the detail density is averaged over. Averaging is what
+/// Radius (cells) of the neighborhood the detail density is averaged over. Averaging is what
 /// makes the score a smooth field: the old per-cell argmax flipped between clusters every look.
 const DENSITY_R: usize = 3;
 /// How far (cells) an evaluation may look for the edge again when the goal has drifted off it,
@@ -1283,12 +1283,12 @@ const RETARGET_GAIN: f64 = 2.0;
 /// a couple of looks. This is depth's whole job in the retarget decision — a threshold on the
 /// goal's OWN runway, never a comparison against the best reading in the frame.
 const RETARGET_MIN_DEPTH: f64 = 3.0;
-/// Width of the centre preference, as a fraction of the screen's short side. Tight on purpose: at
-/// the old probe's 40%-at-the-edge bias, picks sat a median 0.32 screen heights off centre.
+/// Width of the center preference, as a fraction of the screen's short side. Tight on purpose: at
+/// the old probe's 40%-at-the-edge bias, picks sat a median 0.32 screen heights off center.
 const CENTER_SIGMA: f64 = 0.25;
 /// The deepest distance estimate the shader is trusted to report, in log₂ cells.
 ///
-/// ⚠**The deepest readings are fantasies, and a chooser that maximises depth would chase exactly
+/// ⚠**The deepest readings are fantasies, and a chooser that maximizes depth would chase exactly
 /// them.** Checked against an independent 260-digit distance estimate on the probes of a reported
 /// dive (2026-09-19, 2^486→2^548): the shader's estimate is EXACT — 0.00 octaves of error — for
 /// every reading down to about −12, drifts ~2 octaves by −16, and is **22 to 28 octaves wrong**
@@ -1297,7 +1297,7 @@ const CENTER_SIGMA: f64 = 0.25;
 /// first. So every reading is floored here: a cell may be credited with at most 12 octaves of
 /// descent, which is still twelve times what one evaluation interval spends.
 const DE_TRUST_LOG2: f32 = -12.0;
-/// How far from the centre (fraction of the screen's short side) a NEW target may be chosen. A
+/// How far from the center (fraction of the screen's short side) a NEW target may be chosen. A
 /// target beyond this is a long pan at depth, so the search stays inside this region unless there
 /// is no boundary in it at all.
 const TARGET_MAX_OFF: f64 = 0.35;
@@ -1335,7 +1335,7 @@ impl Probe {
 
     /// Whether the probe's interior may be its CAP's rather than the set's: interior cells beside
     /// escaped cells that ran right up to the cap. A real minibrot's interior does that too when
-    /// the cap is short of its neighbours' escapes, so this says "unproven", never "fake"; the
+    /// the cap is short of its neighbors' escapes, so this says "unproven", never "fake"; the
     /// caller acts on it only while the reference is known to be clamping (`RefWait`).
     ///
     /// ⚠Every escaped cell beside such an interior counts as the set's edge (`boundary_weights`),
@@ -1366,7 +1366,7 @@ impl Probe {
     /// ⭐⭐**A SCORE CANNOT RANK WHAT IT SATURATES ON.** `boundary_weights` reaches 1.0 at a HALF
     /// CELL and stays there — and on a deep view a half cell is ~11 screen pixels, so a median 42%
     /// of the eligible cells were tied at exactly 1.0 (measured over the 69 probes of a reported
-    /// dive). The chooser maximised a DENSITY of those tied weights, and the maximum of a density
+    /// dive). The chooser maximized a DENSITY of those tied weights, and the maximum of a density
     /// over a blob is the blob's CENTROID — which, for the spiral that dominates every deep view,
     /// is the smooth eye. That is the "it zooms into a flat region" report, exactly: the goal had a
     /// median 4.0 octaves of descent in it (worst 0.8) while a fully credible 12 was available
@@ -1394,13 +1394,13 @@ impl Probe {
                     continue;
                 }
                 out[k] = if self.neighbours(i, j).any(|n| self.interior(n)) {
-                    1.0 // the set's edge runs between this cell and its interior neighbour
+                    1.0 // the set's edge runs between this cell and its interior neighbor
                 } else if self.de_log2[k] < DE_NONE {
                     // Estimate ≤ ½ cell → 1, ≥ 2 cells → 0, log-linear between. Measured on the
                     // report's probes: flat exterior reads 4–16 cells, structure far below one.
                     ((1.0 - self.de_log2[k]) * 0.5).clamp(0.0, 1.0)
                 } else {
-                    // No estimate: the escape-count step to a neighbour stands in for it
+                    // No estimate: the escape-count step to a neighbor stands in for it
                     // (≈1.4 counts per cell puts the boundary about a cell away).
                     let c = self.iter[k];
                     let g = self
@@ -1416,14 +1416,14 @@ impl Probe {
     }
 
     /// Move the screen-fraction point `g` onto the edge line of cell `(i, j)`: the line through
-    /// the cell's own edge estimate (centre − DE·n) perpendicular to its normal `n`. `None` when
+    /// the cell's own edge estimate (center − DE·n) perpendicular to its normal `n`. `None` when
     /// the cell carries no usable estimate (interior, a family without one, a degenerate normal, or
     /// an edge farther than [`EDGE_TRUST`]).
     ///
     /// ⭐⭐**Across the edge, never along it.** Keeping a goal on the boundary used to mean snapping
-    /// it to the CENTRE of a boundary cell. At the 4× zoom-speed setting the view grows almost an
+    /// it to the CENTER of a boundary cell. At the 4× zoom-speed setting the view grows almost an
     /// octave between looks, so that sub-cell error nearly doubles each time: the goal slid off the
-    /// edge, was snapped to another centre up to two cells away, slid off again — a random walk the
+    /// edge, was snapped to another center up to two cells away, slid off again — a random walk the
     /// camera chased across a third of the screen in 3.5 s (a user's 1e118 dive, 2026-09-19). The
     /// projection removes only the component of the error that takes the goal OFF the edge; its
     /// place along the edge — which piece of structure the dive is heading into — is left alone.
@@ -1493,7 +1493,7 @@ pub(crate) fn choose_goal(
     let density = box_mean(&wt, w, h, DENSITY_R);
     let inside: Vec<f32> = p.iter.iter().map(|&s| if s < 0.0 { 1.0 } else { 0.0 }).collect();
     let inside = box_mean(&inside, w, h, DENSITY_R);
-    // Richness of a cell's neighbourhood: boundary density, discounted where the interior (flat
+    // Richness of a cell's neighborhood: boundary density, discounted where the interior (flat
     // black) fills it.
     let rich = |k: usize| density[k] * (1.0 - 0.5 * inside[k]);
     let frac = |i: usize, j: usize| ((i as f64 + 0.5) / w as f64, (j as f64 + 0.5) / h as f64);
@@ -1511,11 +1511,11 @@ pub(crate) fn choose_goal(
     // score settled in the eye of a spiral).
     let score = |k: usize, at: (f64, f64)| p.depth(k, &wt) * appeal(k, at);
 
-    // ⭐⭐**A NEW TARGET MUST FIT THE BOUNDED REGION AROUND THE CENTRE.** The centre preference only
+    // ⭐⭐**A NEW TARGET MUST FIT THE BOUNDED REGION AROUND THE CENTER.** The center preference only
     // discourages an edge target; it does not forbid one, and a target near the edge is a long pan
     // — at depth the camera would travel most of a screen to reach it. Candidates are therefore
-    // limited to `TARGET_MAX_OFF` of the screen's short side from the centre, and only when NOTHING
-    // qualifies does the search widen — and then to the boundary cell CLOSEST to the centre, the
+    // limited to `TARGET_MAX_OFF` of the screen's short side from the center, and only when NOTHING
+    // qualifies does the search widen — and then to the boundary cell CLOSEST to the center, the
     // shortest journey to structure, rather than the richest one wherever it happens to be.
     let off_centre = |f: (f64, f64)| ((f.0 - 0.5) * aspect).hypot(f.1 - 0.5) / short;
     let mut best: Option<(usize, usize, f64)> = None;
@@ -1540,7 +1540,7 @@ pub(crate) fn choose_goal(
             }
         }
     }
-    // A new goal goes ON the edge its cell's estimate locates, not at the cell's centre.
+    // A new goal goes ON the edge its cell's estimate locates, not at the cell's center.
     let on_edge = |i: usize, j: usize| p.project_onto_edge(frac(i, j), i, j).unwrap_or(frac(i, j));
     let (bi, bj, _) = match (best, nearest) {
         (Some(b), _) => b,
@@ -1586,7 +1586,7 @@ pub(crate) fn choose_goal(
     };
     // Back onto the edge, moving only across it. Without an estimate (a family with no distance
     // estimate, or an interior-adjacent cell) the goal stays put on its own cell, or takes the
-    // centre of the nearest boundary cell.
+    // center of the nearest boundary cell.
     let refined = p
         .project_onto_edge(g, ai, aj)
         .unwrap_or(if (ai, aj) == (gi, gj) { g } else { frac(ai, aj) });
@@ -1694,22 +1694,22 @@ pub(crate) fn glide_step(
     let aim = (aim.0 + (lead.0 - aim.0) * close, aim.1 + (lead.1 - aim.1) * close);
     // ⭐⭐**A TARGET NEAR THE MIDDLE IS LEFT ALONE.** Zooming about a point keeps that point where
     // it is on screen, so the picture only flows outward from it — no sideways motion at all. Any
-    // pan on top of that IS sideways motion, and a user sees it: centring on a fixed two seconds
-    // left a 4× dive's target 3–5% off centre and drifting one way then the other ("sliding"),
-    // and simply centring faster made the slide faster rather than removing it. So the pan has a
+    // pan on top of that IS sideways motion, and a user sees it: centering on a fixed two seconds
+    // left a 4× dive's target 3–5% off center and drifting one way then the other ("sliding"),
+    // and simply centering faster made the slide faster rather than removing it. So the pan has a
     // DEAD ZONE: inside `CENTER_DEAD` the aim is left exactly where it is and the dive is a pure
     // zoom; outside, only the excess is eased away (measured in zoom, not seconds, so it behaves
-    // the same at every zoom-rate setting). Detail can sit a little off centre — it cannot wander
+    // the same at every zoom-rate setting). Detail can sit a little off center — it cannot wander
     // to the edge, and it never slides while it is comfortable.
     //
     // ⭐⭐**AND IT IS MEASURED IN THE ZOOM THAT IS HAPPENING, NOT THE ONE THAT WAS ASKED FOR.** The
-    // centring used to scale with `rate` — the zoom-rate SETTING — but the zoom speed ramps in over
+    // centering used to scale with `rate` — the zoom-rate SETTING — but the zoom speed ramps in over
     // `SPEED_TAU`, so at the moment a dive starts there is a full-rate pan with essentially no zoom
     // underneath it. That is a pure sideways slide, and it is the first thing the user sees: "I
     // still see it start to panning quickly on zoom" (2026-09-20), after the dead zone had already
     // fixed the steady-state drift. Scaling by `speed` keeps the original intent exactly — once the
-    // ramp is done `speed` IS `rate` — while making the centring arrive with the zoom instead of
-    // before it. It also eases centring off through a turn, when `speed` is deliberately halved:
+    // ramp is done `speed` IS `rate` — while making the centering arrive with the zoom instead of
+    // before it. It also eases centering off through a turn, when `speed` is deliberately halved:
     // the camera should not slide sideways while it is already steering.
     let short = aspect.min(1.0);
     let (ox, oy) = ((0.5 - aim.0) * aspect / short, (0.5 - aim.1) / short);

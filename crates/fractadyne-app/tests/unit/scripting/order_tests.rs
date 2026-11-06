@@ -134,7 +134,7 @@ fn progressive_order_leads_with_every_in_range_seed() {
 // ---- Tour scripts are UNTRUSTED input: they are the artifact people share on a forum ----
 
 /// A hostile `zoom` must be REFUSED, not turned into an allocation. Every one of these
-/// reaches `precision_for_octaves`, which sizes the BigFloat precision that every centre in
+/// reaches `precision_for_octaves`, which sizes the BigFloat precision that every center in
 /// the tour is parsed at; before the bound in `parse_zoom_log10`, the infinite cases
 /// saturated the octave count and asked astro-float for a usize::MAX-bit number, killing the
 /// process during load. Regression pins for that class.
@@ -142,7 +142,7 @@ fn progressive_order_leads_with_every_in_range_seed() {
 fn hostile_zoom_is_refused_not_allocated() {
     for z in [
         "1e1e999",             // exponent itself overflows f64 -> inf log10
-        "1e999999999999",      // finite but absurd: ~3.3e12 octaves ~ 415 GB per centre
+        "1e999999999999",      // finite but absurd: ~3.3e12 octaves ~ 415 GB per center
         "1E1E999",             // same, upper case
         "-1e1e999",            // negative mantissa (already refused, kept as a pin)
         "1e-1e999",            // -inf log10

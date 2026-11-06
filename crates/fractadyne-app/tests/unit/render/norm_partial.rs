@@ -58,7 +58,7 @@ fn a_moving_view_whose_walk_restarts_no_longer_breathes() {
     };
     let (before, _) = run(false);
     let (after_fed, after_shown) = run(true);
-    // Modelled: the readings swing the fed window's scale by over a fifth, repeating every walk
+    // Modeled: the readings swing the fed window's scale by over a fifth, repeating every walk
     // (the time-paced glide now damps most of that on screen, but the fix is upstream of it).
     assert!(before > 1.15, "the recorded sawtooth should reproduce the swing ({before:.3}×)");
     assert!(after_fed < 1.001, "the fed window still swings {after_fed:.4}× with partial readings bounded");

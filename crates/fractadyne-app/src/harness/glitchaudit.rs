@@ -123,7 +123,7 @@ pub(crate) fn verdict(oracle: Value, stable: bool, uncorrected: Value, corrected
     }
 }
 
-/// Whether a set of oracle answers (centre + stencil) is stable: all interior, or all escaped at
+/// Whether a set of oracle answers (center + stencil) is stable: all interior, or all escaped at
 /// the same integer iteration.
 pub(crate) fn stable(answers: &[Option<(u32, f32)>]) -> bool {
     match answers.first() {
@@ -389,8 +389,8 @@ impl crate::FractadyneApp {
             }
         }
 
-        // The oracle, at each pixel's centre and a ±STENCIL_PX stencil — the shader's own mapping:
-        // c = centre + (x + ½ − w/2, h/2 − (y + ½)) · (span_mantissa / size) · 2^delta_exp.
+        // The oracle, at each pixel's center and a ±STENCIL_PX stencil — the shader's own mapping:
+        // c = center + (x + ½ − w/2, h/2 − (y + ½)) · (span_mantissa / size) · 2^delta_exp.
         let p = self.viewport.precision + 64;
         let step_x = fractadyne_core::FloatExp::new(req.span_mantissa.x / w as f64, req.delta_exp);
         let step_y = fractadyne_core::FloatExp::new(req.span_mantissa.y / h as f64, req.delta_exp);

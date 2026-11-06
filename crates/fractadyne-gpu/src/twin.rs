@@ -5,7 +5,7 @@
 //! are separately compiled programs that differ on a few hundred pixels, export.rs), so the
 //! worker runs THIS renderer: [`LiveTwin`] holds its own [`Renderer`] and drives the window's
 //! `prepare` path headless, with the same entry points, uniforms and chunk state. [`GBuffer`] is
-//! what comes back: the iteration and aux planes the colour pass reads.
+//! what comes back: the iteration and aux planes the color pass reads.
 
 use crate::{GpuError, MandelbrotParams, Renderer, ITER_FORMAT};
 use egui_wgpu::wgpu;
@@ -13,7 +13,7 @@ use egui_wgpu::{CallbackResources, CallbackTrait, ScreenDescriptor};
 
 /// One view's G-buffer, read back: the iteration plane (`smooth_iter, normal.x, normal.y,
 /// DE_log2`; `r < 0` = interior or glitched) and the aux plane, `Rgba32Float`, row-major, at the
-/// texture's size (resolution × ss). `aux` is empty when it was not read: the colour pass reads it
+/// texture's size (resolution × ss). `aux` is empty when it was not read: the color pass reads it
 /// only for the orbit-statistics methods (`method_needs_aux`), and a frame installed without it
 /// gets a zero plane.
 #[derive(Clone, Debug, Default)]

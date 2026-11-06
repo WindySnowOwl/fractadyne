@@ -9,9 +9,9 @@ a viewer sees, the median of the three held to a bound, and an exit code.
     python scripts/dive-capture/screengate.py RUN1 RUN2 RUN3 [--bignum astro-float] [--json out.json]
     python scripts/dive-capture/screengate.py --selftest     # every criterion seen to fire
 
-  blank   a capture whose canvas is one colour (interior grey stddev < 1) — the 2026-09-20 report;
+  blank   a capture whose canvas is one color (interior gray stddev < 1) — the 2026-09-20 report;
           also counted as EPISODES, separate stretches of blank captures after the dive's start
-  flat    a capture whose canvas is >97% within 8 units of its median colour (a near-flat panel)
+  flat    a capture whose canvas is >97% within 8 units of its median color (a near-flat panel)
   flash   an EPISODE: the canvas switching into a flat capture or out of one — what the eye reads as
           a flash. ⚠Not "a big frame-to-frame difference": at the 2^800 fixture an ordinary zoom step
           between captures differs by 35–75 units, so flashscore.py's FLASH_DIFF of 60 counted 26–43%
@@ -77,7 +77,7 @@ def backend_of(run):
 
 
 def log_octaves(run):
-    """How far the autopilot's recorded view travelled (its `eval … l2=` lines), or None."""
+    """How far the autopilot's recorded view traveled (its `eval … l2=` lines), or None."""
     p = os.path.join(run, "stderr.txt")
     if not os.path.exists(p):
         return None
@@ -186,7 +186,7 @@ def selftest():
         got = subprocess_gate(wrong)
         ok &= got == 2
         print(f"selftest: {'PASS' if got == 2 else 'FAIL'} — an undeclared bignum backend: exit {got} (want 2)")
-        # The screen never changed while the autopilot's view travelled 20 octaves: frozen, RED.
+        # The screen never changed while the autopilot's view traveled 20 octaves: frozen, RED.
         frozen = [run(root, f"frozen{i}", ["still"] * 80, travelled=20.0) for i in range(3)]
         got = subprocess_gate(frozen)
         ok &= got == 1

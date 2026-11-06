@@ -248,7 +248,7 @@ pub(crate) const LADDER: &[Rung] = &[
     Rung {
         id: "offline/smoke/coords",
         lane: Lane::Offline,
-        motivation: "Coordinate parse/format round-trip — the layer every deeper rung's centre \
+        motivation: "Coordinate parse/format round-trip — the layer every deeper rung's center \
                      string passes through before it reaches the shader.",
         cmd: Cmd::SelfExe(&["--selftest", "--selftest-filter", "coords"]),
         deadline: Duration::from_secs(3 * MIN),
@@ -289,14 +289,14 @@ pub(crate) const LADDER: &[Rung] = &[
     Rung {
         id: "offline/math/iter-chunk",
         lane: Lane::Offline,
-        motivation: "Iteration-range chunking must be honoured ACROSS frames (beta.64-69): chunk \
+        motivation: "Iteration-range chunking must be honored ACROSS frames (beta.64-69): chunk \
                      state lives in ping-pong textures and must stay bit-identical.",
         cmd: Cmd::SelfExe(&["--selftest", "--selftest-filter", "iter-chunk"]),
         deadline: Duration::from_secs(5 * MIN),
         requires: &["offline/math/numeric"],
         needs_disk: 128 * MB,
     },
-    // ---- the offline DEPTH ladder. Coordinates are the corpus seahorse centre (34 significant
+    // ---- the offline DEPTH ladder. Coordinates are the corpus seahorse center (34 significant
     // digits, so it stays meaningful past e28). These rungs assert that the engine SURVIVES and
     // exits clean at each depth; correctness at depth is the corpus gate's job. Survival is exactly
     // the failure class that matters here — device loss and hangs.
@@ -587,7 +587,7 @@ pub(crate) const LADDER: &[Rung] = &[
         id: "live/julia/dive",
         lane: Lane::Live,
         motivation: "Dual-Julia motion harness through PERT_JULIA_THRESHOLD (100x, beta.88), where \
-                     Julia starts perturbing and the tessellation artefacts appeared.",
+                     Julia starts perturbing and the tessellation artifacts appeared.",
         cmd: Cmd::SelfExe(&["--juliadive"]),
         deadline: Duration::from_secs(20 * MIN),
         requires: &[],
@@ -596,7 +596,7 @@ pub(crate) const LADDER: &[Rung] = &[
     Rung {
         id: "live/resize/settle",
         lane: Lane::Live,
-        motivation: "Resize during settle — the beta.102/103 pixellation pair (a tile allowance \
+        motivation: "Resize during settle — the beta.102/103 pixelation pair (a tile allowance \
                      that was secretly a rate test; a finished sharp frame never presented).",
         cmd: Cmd::SelfExe(&["--resizetest"]),
         deadline: Duration::from_secs(20 * MIN),
@@ -627,7 +627,7 @@ pub(crate) const LADDER: &[Rung] = &[
         id: "live/dive/ultra-e200",
         lane: Lane::Live,
         motivation: "e30/e60/e100/e150/e200 holds — a SHORTER-reference regime than the grand tour \
-                     (orbit_len 5k-24k vs 258k-4M), so it exercises different rebase/BLA behaviour \
+                     (orbit_len 5k-24k vs 258k-4M), so it exercises different rebase/BLA behavior \
                      at comparable depths. WARNING: the first draft of this rung passed \
                      `--livetest --ultra`; `--ultra` is a BENCHMARK depth flag, not a livetest \
                      modifier, so it silently ran the default tour instead.",
@@ -1140,7 +1140,7 @@ fn write_artifact(out_dir: &Path, rung: &Rung, rec: &RunRecord) -> std::io::Resu
         rec.outcome.as_str(),
         rec.duration.as_secs_f64(),
         rung.deadline.as_secs_f64(),
-        rec.exit_code.map_or("none (killed or signalled)".to_string(), |c| c.to_string()),
+        rec.exit_code.map_or("none (killed or signaled)".to_string(), |c| c.to_string()),
         crate::version_string(),
         crate::tunables::status_line(),
         rung.id,

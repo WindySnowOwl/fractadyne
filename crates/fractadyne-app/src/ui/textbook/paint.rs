@@ -3,7 +3,7 @@
 //! Glyphs are egui text in the math family, each placed by its galley's own baseline
 //! (`Glyph::pos`, which epaint documents as the baseline), so the layout's baselines are exactly
 //! where the ink goes. Rules are snapped to whole physical pixels: a fraction bar 1.1 px thick drawn
-//! as is would straddle two pixel rows and come out grey and blurred.
+//! as is would straddle two pixel rows and come out gray and blurred.
 
 use super::font::family;
 use super::layout::{Item, Laid};

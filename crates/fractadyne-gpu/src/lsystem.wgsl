@@ -1,12 +1,12 @@
 // L-system segment pass (design/lsystems.md §5): each segment a quad, widened to the line width
-// with round ends, into the iteration texture — so the ordinary colour pass (`fs_color`) colours
+// with round ends, into the iteration texture — so the ordinary color pass (`fs_color`) colors
 // it. Writes what an escape-time pass writes: main = (value, 0, 0, 1e30), aux = AUX_NONE; the
 // texture is cleared to "interior" (main.r < 0) first, so what no line covers is the background.
 // Commits the escape-range counters the live normalization reads.
 
 struct LView {
-    // A walked pixel p (from the walked view's centre, y up) shows at p * scale + offset pixels from
-    // this view's centre: the last walk, drawn under a view that has moved since.
+    // A walked pixel p (from the walked view's center, y up) shows at p * scale + offset pixels from
+    // this view's center: the last walk, drawn under a view that has moved since.
     offset: vec2<f32>,
     scale: f32,
     // Half the line width, texels.
@@ -138,7 +138,7 @@ fn fs_triangle(in: TriOut) -> FragOut {
 
 @fragment
 fn fs_segment(in: VsOut) -> FragOut {
-    let p = in.pos.xy; // the texel centre
+    let p = in.pos.xy; // the texel center
     let ab = in.b - in.a;
     let l2 = dot(ab, ab);
     var t = 0.0;

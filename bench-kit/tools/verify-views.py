@@ -14,7 +14,7 @@ exponent: that render is byte-identical to `--zoom 1e6`. Every scene in the run 
 under-zoomed by up to 10x. Every one exited 0. Every one was a real, structured, plausible
 picture of the wrong place. And because an under-zoomed frame is a CHEAPER frame, the error did
 not look like an error -- it looked like FractalShark being 20-50x faster than everything else,
-which is exactly the shape a result takes when it is wrong in your favour.
+which is exactly the shape a result takes when it is wrong in your favor.
 
 A time is only meaningful if it is the time for the work you asked for. This checks that.
 
@@ -29,7 +29,7 @@ correlation is defeated by a palette inversion alone (it scores a perfect struct
                         magnification, so it catches a wrong zoom directly. This is the signal
                         that settled the 0.543 case.
   edge correlation   -- correlation of gradient MAGNITUDE, which survives inversion and most
-                        remapping, and catches a wrong centre at the same zoom.
+                        remapping, and catches a wrong center at the same zoom.
 
 THE CONTROL IS NOT OPTIONAL. Each render is also scored against every OTHER scene's reference.
 A metric that cannot tell the right scene from the wrong one is measuring nothing, so a match
@@ -38,11 +38,11 @@ must beat the best wrong scene, not merely score highly. That is reported on eve
 BLACK IS NOT ALWAYS INTERIOR
 ----------------------------
 Read off an image, the interior fraction is the share of BLACK pixels, which assumes the
-renderer draws only never-escaped pixels black. Fraktaler-3's default colouring does not: it
+renderer draws only never-escaped pixels black. Fraktaler-3's default coloring does not: it
 shades by distance estimate, so everything close to the boundary is black as well. On scene 59
 its image is 62% black at 4K while 6.6% of its pixels never escaped, and this check called that
 correct render a different magnification. No signal in such an image can stand in: the black
-covers the right scene's interior and the wrong scenes' alike, and its noisy grey shading leaves
+covers the right scene's interior and the wrong scenes' alike, and its noisy gray shading leaves
 edge correlation negative at every blur tried (2026-10-31).
 
 --interior-json supplies the never-escaped share measured by the renderer itself
@@ -66,8 +66,8 @@ the tighter of that and the old 0.06, so it is never looser than before.
 The share alone can be fooled the same way: Imagina's palette draws a black ring around scene 46
 when zoomed out 2x, and the black share stayed at 7% while the minibrot shrank to a quarter. So
 the check also asks WHICH pixels: at least 75% of the mask's interior pixels must be black in the
-test. Palette darkness only adds black, so it cannot hide them coming out coloured, which an
-under-zoom or a moved centre does. Correct renders: 0.85 and up; 1.26x under-zoomed: 0.68 at most.
+test. Palette darkness only adds black, so it cannot hide them coming out colored, which an
+under-zoom or a moved center does. Correct renders: 0.85 and up; 1.26x under-zoomed: 0.68 at most.
 
 On these scenes an interior contradiction stands against a decisive picture match. That match
 says which SCENE (it beats the other scenes), not which magnification: scene 03 at 1.26x off was
@@ -80,7 +80,7 @@ Most scenes have none: Misiurewicz points, nuclei, spirals, dendrites. There, in
 nothing about magnification, and the old check said "magnification agrees" anyway. Re-run on
 the 2026-09-21 truncated-exponent run, it passed nine of the ten under-zoomed renders that way.
 The scale search asks the question directly: edge correlation with the reference at
-magnifications from 0.1x to 10x (twelve steps an octave), cropping the centre of whichever image
+magnifications from 0.1x to 10x (twelve steps an octave), cropping the center of whichever image
 is the wider view. On that run it names each truncation, near its true factor (scene 04: 3.78x
 found, 3.90x true; 21 and 23: 5.04x, 5.07x), at r 0.53 to 0.94 against -0.10 to 0.49 as asked.
 On correct renders of scenes with no interior (80), no other scale scoring 0.45 or more beat the
@@ -177,7 +177,7 @@ def interior_fraction(rgb):
 
 
 def edge_feature(rgb):
-    """Gradient magnitude of luminance, standardised. Invariant to palette inversion."""
+    """Gradient magnitude of luminance, standardized. Invariant to palette inversion."""
     lum = rgb.mean(axis=2)
     gy, gx = np.gradient(lum)
     e = np.hypot(gx, gy).ravel()
@@ -229,10 +229,10 @@ def judge_interior(ti, ri, mark, masked, recall=None):
             return "contradicts", "interior %.4f where the scene has %.4f" % (ti, ri)
         return "none", ""
     # WHERE before HOW MUCH: palette darkness only adds black, so it cannot hide the scene's
-    # interior pixels coming out coloured, which is what an under-zoom or a moved centre does.
+    # interior pixels coming out colored, which is what an under-zoom or a moved center does.
     if recall is not None and recall < INTERIOR_RECALL:
         return "contradicts", ("only %.0f%% of the scene's interior is black in it (an under-zoom "
-                               "shrinks it; a moved centre moves it)" % (100 * recall))
+                               "shrinks it; a moved center moves it)" % (100 * recall))
     # Each side is the TIGHTER of the relative bound and the old absolute one, so it is never
     # looser than the old check: scene 03 has 41% interior, where 20% short would be 0.08 and 2x
     # over would let a 2x over-zoom through (Imagina, 2026-11-01), both of which 0.06 catches.
@@ -256,7 +256,7 @@ def blur(a):
 
 
 def scale_feature(im, box):
-    """Blurred edge magnitude of box (left, top, right, bottom) of a PIL L image, standardised."""
+    """Blurred edge magnitude of box (left, top, right, bottom) of a PIL L image, standardized."""
     a = np.asarray(im.resize(SCALE_RES, Image.LANCZOS, box=box), dtype=np.float64)
     gy, gx = np.gradient(a)
     e = blur(np.hypot(gx, gy)).ravel()
@@ -273,7 +273,7 @@ def centre_box(size, k):
 def scale_search(ref_path, test_path):
     """Edge correlation of the test with the reference at magnifications 0.1x to 10x.
 
-    k > 1 asks "is the test k times too SHALLOW?": its field is k times wider, so the centre 1/k
+    k > 1 asks "is the test k times too SHALLOW?": its field is k times wider, so the center 1/k
     of the TEST is compared with the whole reference. k < 1 asks the opposite, cropping the
     reference. Returns (r at the asked magnification, best k, r there), or None when the two
     images' shapes differ, so that cropping one cannot frame the other.
@@ -328,7 +328,7 @@ def main():
                     help="also write per-scene verdicts here, for the lane to consume")
     ap.add_argument("--interior-json", metavar="PATH",
                     help="never-escaped share per scene, measured by the renderer under test from "
-                         "its own raw output (tools/exr-interior.py). For a renderer whose colouring "
+                         "its own raw output (tools/exr-interior.py). For a renderer whose coloring "
                          "draws escaped pixels black, so its image overstates the interior")
     ap.add_argument("--masks", metavar="DIR",
                     help="the reference's interior masks, SLUG.png (default: RESULTS_DIR/%s, "
@@ -392,7 +392,7 @@ def main():
     if raw_int is not None:
         print("test int: r = never escaped, from the renderer's raw output (%s, %d of %d scenes);"
               % (os.path.basename(args.interior_json), sum(1 for s in tests if s in raw_int), len(tests)))
-        print("          b = black share of its image, which this renderer's colouring overstates,")
+        print("          b = black share of its image, which this renderer's coloring overstates,")
         print("              so only a SHORTFALL counts against the render")
     if len(Rmask) == len(tests):
         print("ref int: m = the reference's interior mask (%s); magnification by interior where the"
@@ -471,7 +471,7 @@ def main():
         #
         # Interior fraction tracks MAGNIFICATION. A wrong zoom moves it hard - scene 03 went
         # 0.427 to 0.251 on a single truncated mantissa - and no palette choice moves it at all,
-        # because "did this pixel escape" is not a colouring decision. When it disagrees, the
+        # because "did this pixel escape" is not a coloring decision. When it disagrees, the
         # renderer is looking somewhere else and the time is void.
         #
         # Edge correlation compares PICTURES, and two renderers can draw the same iteration field
@@ -574,7 +574,7 @@ def main():
             print("The right view, drawn the wrong way up. Nothing else here can see this:")
             print("interior fraction is exactly flip-invariant, and a large palette difference")
             print("flattens the image test. Check the row order where the pixel buffer is")
-            print("serialised - a bottom-up buffer written into a top-down format does this.")
+            print("serialized - a bottom-up buffer written into a top-down format does this.")
         print()
         # A mirror is a DEFECT, not an ambiguity: the view is identifiable and it is wrong.
         # Unlike an unmatched palette, there is something specific to go and fix.
@@ -596,7 +596,7 @@ def main():
             print("  Usually a palette difference, not a wrong view. Two renderers can draw the")
             print("  same iteration field so differently that the correlation collapses: a")
             print("  palette cycling once per iteration aliases into static when downsampled,")
-            print("  while a normalised one maps the same field onto a single slow gradient.")
+            print("  while a normalized one maps the same field onto a single slow gradient.")
             print("  The time stands. Look at the image at 1:1 before concluding anything, and")
             print("  do not call it a failure of the other renderer on this evidence.")
         print()
@@ -609,11 +609,11 @@ def main():
             print()
             print("Their INTERIOR FRACTION disagrees, which tracks magnification, or their")
             print("picture matches another magnification far better than the one asked for.")
-            print("Check the zoom and centre actually reaching the renderer. A")
+            print("Check the zoom and center actually reaching the renderer. A")
             print("truncated mantissa under-zooms, and an under-zoomed frame is CHEAPER, so this")
             print("always arrives looking like good news. A time for the wrong view is not slow")
             print("or fast, it is VOID. One exception, read off an image: a renderer whose")
-            print("colouring draws ESCAPED pixels black looks too deep. Look at the image, and")
+            print("coloring draws ESCAPED pixels black looks too deep. Look at the image, and")
             print("give its own never-escaped counts with --interior-json.")
         return 1
 

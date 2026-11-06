@@ -113,7 +113,7 @@ pub(crate) struct CorrectedIter {
 // frames are sized by a feedback loop against the GPU watchdog and the UI thread, and its
 // inputs are invisible from outside — a device-lost crash and a hung window can both come from
 // the same over-large dispatch, while the obvious knobs (`max_iter`, `aa`) turn out not to move
-// it at all because the resolution shrink normalises the frame back onto the budget. Reading
+// it at all because the resolution shrink normalizes the frame back onto the budget. Reading
 // the real numbers settles in one run what guessing at the constants does not.
 
 /// Serializing a reference orbit so an extreme location can be returned to in seconds
@@ -214,12 +214,12 @@ pub(crate) struct RecomputeResult {
     /// assumed, because a lookup that silently misses falls back to a fresh build that renders
     /// the same picture.
     from_disk: bool,
-    /// What became of the speculative CENTRE build [`pick_and_build`] runs beside the pick:
-    /// `"centre"` (the pick was the centre, and this is that build), `"discarded"` (another point
+    /// What became of the speculative CENTER build [`pick_and_build`] runs beside the pick:
+    /// `"centre"` (the pick was the center, and this is that build), `"discarded"` (another point
     /// won), `""` (no speculation — every other path). The same non-vacuity purpose as `reused`.
     spec_build: &'static str,
-    /// The pick took its walks of the centre (phase 2's deep walk and its samples) off that
-    /// speculative build instead of walking the centre again (`RefPickDiag::centre_from_build`).
+    /// The pick took its walks of the center (phase 2's deep walk and its samples) off that
+    /// speculative build instead of walking the center again (`RefPickDiag::centre_from_build`).
     /// The same non-vacuity purpose as `spec_build`.
     pick_centre_from_build: bool,
     /// Where the series skip came from: `"overlap"` (the walk that ran beside the build, kept
@@ -275,19 +275,19 @@ pub(crate) struct TrajSample {
 
 /// An interactive continuous zoom, predicted forward in CLOSED FORM. The app's glide integrates
 /// `zoom_vel += (target − zoom_vel)·(1 − e^(−dt/EASE_TAU))` then `zoom_at(anchor, e^(−vel·dt))`
-/// every frame (`ui/central.rs`); that is the exact discretisation of `dv/dt = (T − v)/τ`, whose
+/// every frame (`ui/central.rs`); that is the exact discretization of `dv/dt = (T − v)/τ`, whose
 /// integral is `nepers(τ) = T·τ + (v₀ − T)·τₑ·(1 − e^(−τ/τₑ))`. Because the anchor pixel maps to
 /// the SAME complex point every frame, the whole τ-second glide collapses to one
 /// `zoom_at(anchor, e^(−nepers))`: centre(τ) = a + e^(−nepers)·(c − a). The autopilot is
 /// predicted as the same shape about its goal (`v₀` = its current speed, `T = rate`): its slower
-/// ease and turn slow-down reach each depth later than that, and its centring pan only brings the
-/// centre nearer the goal than predicted. Two effects are knowingly
+/// ease and turn slow-down reach each depth later than that, and its centering pan only brings the
+/// center nearer the goal than predicted. Two effects are knowingly
 /// left out, both on the safe side: the pipeline pacer only SLOWS the real dive (targets arrive
 /// later than predicted — a prefetch is early, never late), and a moving cursor moves `a` — the
-/// queue is re-derived from the live anchor every frame and a build whose centre drifted still
+/// queue is re-derived from the live anchor every frame and a build whose center drifted still
 /// installs while within `reuse_drift`, else it is superseded exactly like a tour back-out.
 pub(crate) struct Glide {
-    /// Current log2 magnification and centre.
+    /// Current log2 magnification and center.
     pub(crate) l2: f64,
     pub(crate) center: (fractadyne_core::BigFloat, fractadyne_core::BigFloat),
     /// Complex point the zoom keeps fixed (under the cursor / the autopilot pivot).
@@ -315,7 +315,7 @@ impl Glide {
 }
 
 /// Where the camera will be `tau` seconds from now — the ONE thing the reference lookahead needs,
-/// abstracted over who knows it: a tour script (today's behaviour, byte for byte) or an
+/// abstracted over who knows it: a tour script (today's behavior, byte for byte) or an
 /// interactive glide predicted from the zoom-rate slider (see [`Glide`]).
 pub(crate) enum Trajectory<'a> {
     Playback { pb: &'a crate::scripting::Playback, e: f64 },
@@ -334,7 +334,7 @@ impl Trajectory<'_> {
         }
     }
 
-    /// The full view `tau` seconds ahead (centre at the depth's precision).
+    /// The full view `tau` seconds ahead (center at the depth's precision).
     pub(crate) fn at(&self, tau: f64) -> TrajSample {
         const LN_2: f64 = std::f64::consts::LN_2;
         match self {
@@ -706,7 +706,7 @@ pub(crate) fn recompute_worker(inp: RecomputeInputs) -> RecomputeResult {
 /// with none of the built-ins' machinery — no candidate pick (`best_reference` iterates the
 /// built-in steps), no extension of a previous orbit, no disk cache (keyed on the formula id), no
 /// series approximation or BLA (neither is derived for a custom step; `do_sa` and `bla_dc_max`
-/// arrive off from the capabilities). The reference is the view centre; when the centre escapes
+/// arrive off from the capabilities). The reference is the view center; when the center escapes
 /// early, a 3×3 grid of points a quarter-span apart is tried and the longest orbit kept (the first
 /// to reach the cap wins). Pixels past a short reference's end rebase, so the choice is speed and
 /// fewer rebases, not correctness.
@@ -737,21 +737,21 @@ fn custom_reference(inp: &RecomputeInputs) -> RecomputeResult {
     finish_reference(rp, b.o, len, b.tail, b.orbit_prec, inp.gpu_iter, false, inp, b.ref_ms, None)
 }
 
-/// Pick a reference and build it. With `overlap`, the CENTRE's walks run beside the pick instead
-/// of after it, and the pick takes its walks of the centre off the centre's build.
+/// Pick a reference and build it. With `overlap`, the CENTER's walks run beside the pick instead
+/// of after it, and the pick takes its walks of the center off the center's build.
 ///
 /// Why: the sequential order walks the same orbit up to four times. At 4.6e1105× (4K export,
-/// the centre is the pick) that was phase 2 scoring the centre, the rescue re-scoring it, the
+/// the center is the pick) that was phase 2 scoring the center, the rescue re-scoring it, the
 /// build walking it again, and the series walk re-iterating it — pick 2.8 s + orbit 1.3 s +
 /// series 2.1 s of a 6.2 s reference window.
 ///
-/// The centre is candidate 0, deep-scored first, and the likeliest pick, so its build (at the
+/// The center is candidate 0, deep-scored first, and the likeliest pick, so its build (at the
 /// build precision and cap) and its series walk start on their own threads BEFORE the pick. When
-/// the pick is the centre, that build is the one `build_reference_from_point` would have made —
-/// same point, same cap, same precision. The pick's phase 2 and its rescue walk the centre at
+/// the pick is the center, that build is the one `build_reference_from_point` would have made —
+/// same point, same cap, same precision. The pick's phase 2 and its rescue walk the center at
 /// that same precision, so both are read off the build (`centre_walk_from_build`; the build
 /// records the extended-range samples phase 2 scores against when the pick would want them,
-/// `pick_records_centre`) — before this the pick walked the centre again beside the build: two
+/// `pick_records_centre`) — before this the pick walked the center again beside the build: two
 /// 100,000-bit walks of one orbit at 1e30000×. The series walk runs against an upper bound on
 /// the orbit length and is kept under `series_skip_holds_for`, else walked again. Any other pick
 /// cancels the series walk, drops the build, and builds as before. The result is therefore
@@ -829,7 +829,7 @@ fn pick_and_build(inp: &RecomputeInputs, overlap: bool) -> RecomputeResult {
             take();
             let mut b = built.borrow_mut();
             let b = b.as_mut()?;
-            // The `c` the centre's walks iterate with: the centre itself, or Julia's constant.
+            // The `c` the center's walks iterate with: the center itself, or Julia's constant.
             let (cx, cy) = if inp.julia {
                 (
                     fc::BigFloat::from_f64(inp.julia_c.0, b.orbit_prec),
@@ -845,12 +845,12 @@ fn pick_and_build(inp: &RecomputeInputs, overlap: bool) -> RecomputeResult {
             )
         };
         // Phase 2 waits for the build only when the build runs to the pick's own cap: then it holds
-        // the whole of the centre's walk whatever the orbit does. The live view caps its builds
-        // short; there phase 2 walks the centre beside phase 1 as before.
+        // the whole of the center's walk whatever the orbit does. The live view caps its builds
+        // short; there phase 2 walks the center beside phase 1 as before.
         let src = fc::CentreSource { walk: &centre_walk, whole: build_cap(inp.gpu_iter, inp) >= inp.gpu_iter };
         let t_pick = Instant::now();
         let (rp, pick_diag) = pick_reference(inp, Some(src));
-        pick_trace(t_pick, " (overlapped with the centre's build)");
+        pick_trace(t_pick, " (overlapped with the center's build)");
         let is_centre = same_point(&rp, centre);
         if is_centre {
             take();
@@ -886,7 +886,7 @@ fn pick_and_build(inp: &RecomputeInputs, overlap: bool) -> RecomputeResult {
             crate::diag::trace(
                 "ref",
                 format!(
-                    "[{}] overlap: centre build {} ({spec_ms:.0}ms beside the pick), sa={}",
+                    "[{}] overlap: center build {} ({spec_ms:.0}ms beside the pick), sa={}",
                     inp.origin,
                     if res.spec_build == "centre" { "USED" } else { "DISCARDED" },
                     if res.sa_from.is_empty() { "none" } else { res.sa_from },
@@ -897,7 +897,7 @@ fn pick_and_build(inp: &RecomputeInputs, overlap: bool) -> RecomputeResult {
     })
 }
 
-/// Exact equality of two bignum points (the pick returns a clone of the centre when it picks it).
+/// Exact equality of two bignum points (the pick returns a clone of the center when it picks it).
 fn same_point(a: &[fractadyne_core::BigFloat; 2], b: &[fractadyne_core::BigFloat; 2]) -> bool {
     let eq = |x: &fractadyne_core::BigFloat, y: &fractadyne_core::BigFloat| x.cmp(y).is_some_and(|o| o == 0);
     eq(&a[0], &b[0]) && eq(&a[1], &b[1])
@@ -994,7 +994,7 @@ enum PickupLook {
 /// ⭐Asked at EVERY look, not once: memory is often short only while something else ends. On a render
 /// farm at 9.98e60205× (2026-10-29) the controller's own pre-build was finishing as its orbit
 /// arrived; the watch ended at that first refusal, the build went on for 100 s more until the stall
-/// rule cancelled it, and the next run took the same orbit at once.
+/// rule canceled it, and the next run took the same orbit at once.
 fn pickup_look(orbit_len: u32, available: Option<u64>, short_said: bool) -> PickupLook {
     let need = (orbit_len as u64).saturating_mul(16 * 4);
     if available.is_none_or(|a| need.saturating_add(REF_MEM_MARGIN) < a) {
@@ -1148,7 +1148,7 @@ fn take_early_reference(inputs: &RecomputeInputs) -> Option<RecomputeResult> {
 /// request (every field `recompute_worker` reads, and neither carries a reuse).
 fn early_inputs_differ(a: &RecomputeInputs, b: &RecomputeInputs) -> Option<&'static str> {
     let fields: [(&'static str, bool); 16] = [
-        ("centre", !same_point(&a.center_bf, &b.center_bf)),
+        ("center", !same_point(&a.center_bf, &b.center_bf)),
         ("span", a.span != b.span),
         ("span mantissa", a.span_mantissa != b.span_mantissa),
         ("delta exponent", a.delta_exp != b.delta_exp),
@@ -1255,7 +1255,7 @@ fn reuse_drift(inp: &RecomputeInputs, point: &[fractadyne_core::BigFloat; 2], pr
 
 /// Of `candidates`, the reference a build of `inp` should reuse: one the reuse test admits
 /// ([`reuse_drift`]: its precision enough for this view, its point inside it), the nearest the
-/// view's centre; `None` when none is. A tour rendered deepest first offers each frame the deeper
+/// view's center; `None` when none is. A tour rendered deepest first offers each frame the deeper
 /// frames' references it has seen (`scripting::RefChain`) and the tour's deepest frame's.
 pub(crate) fn pick_reuse<'a>(inp: &RecomputeInputs, candidates: &[&'a ReuseRef]) -> Option<&'a ReuseRef> {
     candidates
@@ -1352,7 +1352,7 @@ pub(crate) fn nucleus_pick_live_enabled() -> bool {
 /// Choose the reference point for `inp`. The ranking scan is internally capped (`REF_SCORE_SCAN`),
 /// so this is cheap and deterministic — the SAME point comes back for any iteration budget past the
 /// cap, which is why a coarse and a full stage share it exactly. `centre`: the pick's walks of the
-/// centre, from a build of the centre ([`pick_and_build`]); `None` walks them here.
+/// center, from a build of the center ([`pick_and_build`]); `None` walks them here.
 fn pick_reference(
     inp: &RecomputeInputs,
     centre: Option<fractadyne_core::CentreSource<'_>>,
@@ -1375,7 +1375,7 @@ fn pick_reference(
         ),
     };
     if crate::diag::trace_on("ref") {
-        // Offset of the pick from the view centre, in spans — the same normalisation the reuse
+        // Offset of the pick from the view center, in spans — the same normalization the reuse
         // drift gate uses, so a pick and its later reuse verdicts read in one unit.
         let dx = fractadyne_core::ref_offset_mantissa(
             &inp.center_bf[0],
@@ -1463,7 +1463,7 @@ fn log2_view_span(inp: &RecomputeInputs) -> f64 {
 }
 
 /// Build the orbit of `rp` (to `build_cap`, at reuse-headroom precision). Everything the fresh
-/// build path walks, in one place, so the speculative centre build in [`pick_and_build`] is the
+/// build path walks, in one place, so the speculative center build in [`pick_and_build`] is the
 /// same build by construction. `record`: also record it extended-range for the pick (c-plane
 /// builds only — a Julia pick never asks).
 fn build_orbit(rp: &[fractadyne_core::BigFloat; 2], orbit_iter: u32, inp: &RecomputeInputs, record: bool) -> BuiltOrbit {
@@ -1488,9 +1488,9 @@ fn build_orbit(rp: &[fractadyne_core::BigFloat; 2], orbit_iter: u32, inp: &Recom
         // division or functions) with every parameter supplied.
         Some(c) => fc::ir::reference_orbit(&c.formula, &z0x, &z0y, &cx0, &cy0, &c.params, cap, orbit_prec)
             .expect("a perturbable custom formula evaluates in bignum"),
-        // ⭐A minibrot-centred view's orbit closes on itself: the build stops at the period and
+        // ⭐A minibrot-centered view's orbit closes on itself: the build stops at the period and
         // the shader wraps (see `OrbitPeriod`), instead of walking the whole cap — at 1e10000×,
-        // 137,396 steps instead of 4.12 million. Julia's orbit starts at the centre, not 0.
+        // 137,396 steps instead of 4.12 million. Julia's orbit starts at the center, not 0.
         None if !inp.julia => fc::reference_orbit_periodic_until(
             &z0x,
             &z0y,
@@ -1517,12 +1517,12 @@ struct SaPre {
     skip: fractadyne_core::SeriesSkip,
     max_iter: u32,
     ms: f64,
-    /// The radius it was walked for ([`sa_log2_max_dc`] about the centre).
+    /// The radius it was walked for ([`sa_log2_max_dc`] about the center).
     log2_dc: f64,
 }
 
 /// log₂ of the series approximation's worst-case |δc| for reference `rp`: its offset from the
-/// view centre plus the half-diagonal, in the view's delta exponent.
+/// view center plus the half-diagonal, in the view's delta exponent.
 fn sa_log2_max_dc(inp: &RecomputeInputs, rp: &[fractadyne_core::BigFloat; 2]) -> f64 {
     series_log2_dc(&inp.center_bf, rp, inp.delta_exp, inp.precision, inp.span_mantissa)
 }
@@ -1668,7 +1668,7 @@ fn finish_reference(
         _ => (std::sync::Arc::new(Vec::new()), f64::NEG_INFINITY),
     };
     let bla_ms = t_bla.elapsed().as_secs_f64() * 1000.0;
-    // ⭐THE RENORMALIZED STEP (`fc::RenormStep`): near the minibrot a periodic reference is centred
+    // ⭐THE RENORMALIZED STEP (`fc::RenormStep`): near the minibrot a periodic reference is centered
     // on, a pixel takes a whole period (or its parent's) per step as u ↦ u² + c′. One pass over the
     // orbit in an extended-range accumulator; periodic orbits only, which bounds that pass.
     let t_rn = Instant::now();
@@ -1765,7 +1765,7 @@ fn try_reuse_reference(inp: &RecomputeInputs) -> Option<RecomputeResult> {
     if reuse.prefix.is_empty() {
         return None;
     }
-    // Re-verify the point is still a good in-view reference at a usable precision (defence in
+    // Re-verify the point is still a good in-view reference at a usable precision (defense in
     // depth; the caller already gated on `!out_of_view`, but this snapshot could in principle
     // lag). ⭐The same test the disk lookup selects by — see `reuse_drift`.
     reuse_drift(inp, &reuse.point, reuse.prec)?;
@@ -2010,7 +2010,7 @@ mod pre_switch_tests;
 ///
 /// `px` is `render_iter` output — `r < 0` = did not escape (interior OR capped; at the coarse
 /// cap the two are indistinguishable and equally invisible). A frame where ~nothing escapes is a
-/// single flat colour, and a flat colour must not replace the reprojected image the user still
+/// single flat color, and a flat color must not replace the reprojected image the user still
 /// has.
 ///
 /// ⛔An unreadable probe fails CLOSED (W6, U45): not worth showing. It used to fail open, on the
@@ -2136,6 +2136,7 @@ impl FractadyneApp {
         let mut h = std::collections::hash_map::DefaultHasher::new();
         let c = &self.coloring;
         c.cycle.to_bits().hash(&mut h);
+        c.iter_div.hash(&mut h);
         c.offset.to_bits().hash(&mut h);
         c.color_method.to_u32().hash(&mut h);
         c.log_palette.hash(&mut h);
@@ -2196,14 +2197,14 @@ impl FractadyneApp {
         self.live_norm_window(vi).map(|(mn, mx)| self.norm_map_for(mn, mx))
     }
 
-    /// The escape window the live colour map is built from ([`Self::live_norm_cycle_offset`]), or
-    /// `None` for the classic colouring.
+    /// The escape window the live color map is built from ([`Self::live_norm_cycle_offset`]), or
+    /// `None` for the classic coloring.
     pub(crate) fn live_norm_window(&self, vi: usize) -> Option<(f32, f32)> {
         // ⭐⭐**THE PREDICATE IS AN ALIASING TEST, NOT A SPAN TEST.** It used to be
         // `mx - mn > NORM_RANGE_MIN` with `NORM_RANGE_MIN = 20_000` — an ABSOLUTE escape span,
         // which cannot decide this. Aliasing is LOCAL: what matters is how far the palette moves
-        // between NEIGHBOURING pixels, `mean|Δ smooth-iter| × cycle`. A shallow view spans a
-        // hundred palette sweeps and still looks perfect, because neighbours differ by ≪1
+        // between NEIGHBORING pixels, `mean|Δ smooth-iter| × cycle`. A shallow view spans a
+        // hundred palette sweeps and still looks perfect, because neighbors differ by ≪1
         // iteration; a deep dense field turns to speckle on a far narrower span.
         //
         // ⛔The span test got a real user's 9.83e27 view wrong in exactly that way: measured span
@@ -2239,7 +2240,7 @@ impl FractadyneApp {
                 // escape counts near the boundary are heavy-tailed, so a shallow view with a large
                 // iteration budget spans something like `[1, 7925]`. Two palette sweeps across THAT
                 // put the whole visible exterior — which escapes in 1..30 — inside the first 0.4%
-                // of the palette, i.e. one flat colour, with only the boundary filaments lit.
+                // of the palette, i.e. one flat color, with only the boundary filaments lit.
                 //
                 // ⛔Reported 2026-08-25 as "coloring that looks like cities at night" at 19.88×
                 // with 350,000 iterations, and it is the same defect as the older
@@ -2260,7 +2261,7 @@ impl FractadyneApp {
     }
 
     /// How the palette windows of view `vb` may move this frame (`norm_glide_step`): the frame's
-    /// time step, the user's colouring, and whether a cut may be taken (no dissolve under way).
+    /// time step, the user's coloring, and whether a cut may be taken (no dissolve under way).
     pub(crate) fn norm_pace(&self, vb: usize) -> NormPace {
         NormPace {
             dt_s: (self.perf.last_dt_ms / 1000.0) as f32,
@@ -2269,7 +2270,7 @@ impl FractadyneApp {
         }
     }
 
-    /// The normalized colour map for an escape range `[mn, mx]` under the user's colouring (the
+    /// The normalized color map for an escape range `[mn, mx]` under the user's coloring (the
     /// mapping half of [`Self::live_norm_cycle_offset`], whose predicate decides whether to map at
     /// all): log for a heavy-tailed range or when asked, linear otherwise.
     pub(crate) fn norm_map_for(&self, mn: f32, mx: f32) -> NormMap {
@@ -2409,7 +2410,7 @@ impl FractadyneApp {
         // clamp then never lifted, which is the direct mechanism of the black e63/e72/e82 holds.
         // And the ONLY reason those holds ever looked healthy historically was a numerically
         // ESCAPED (precision-cliff) orbit laundering itself past this guard — see
-        // `escape_length_of_rounded_centre`. A correct camera (exact pinned-centre glides) makes
+        // `escape_length_of_rounded_centre`. A correct camera (exact pinned-center glides) makes
         // truthful long partials the NORM at deep holds, so they must be installable.
         // ⭐STALE-CLOBBER GUARD. A deep build runs for seconds, and four builders (reactive,
         // lookahead, hold prefetch, cold start) feed this one cache — so a result can land against
@@ -2603,7 +2604,7 @@ impl FractadyneApp {
             // references (the beta.49 sampler fix) partial growth is the NORM: deep-glide
             // lookahead installs land every ~300 ms with ×2.3 length jumps (measured), so any
             // derate wired to them pins the budget at its floor and the whole deep chapter
-            // renders pixellated. The derate is for PER-STEP cost discontinuities: a clamp LIFT
+            // renders pixelated. The derate is for PER-STEP cost discontinuities: a clamp LIFT
             // (partial → complete, BLA character changes end-to-end) and length jumps between
             // ESCAPED orbits (a different orbit shape under the same BLA machinery).
             let growth_only = old.partial && res.partial;
@@ -2662,14 +2663,14 @@ impl FractadyneApp {
         // escaped reference sits at cur ≈ orbit_len, so a new length moves the storm into a band
         // the ledger had priced cheap — measured as one 150 ms pass per move in the 1e12–1e40
         // bands of a 1.0× dive (54 frames over 100 ms where the unpaced build had none).
-        // ⭐…at HALF its licences, not at zero (2026-09-20). Zeroing sent every pin after every
+        // ⭐…at HALF its licenses, not at zero (2026-09-20). Zeroing sent every pin after every
         // lookahead install (a different point, every ~0.3 s at 4×) back to the floor in every
         // band, and the floor is sized from the worst rate ever measured in the mode — on a
         // user's 2^584 dive that was 12-iteration passes through the bands below the view's
         // first escape at ~4,400 (`pin-price band=1 size=12`), a second of walking before any
-        // pixel could appear, longer than the 2-octave drift window at 4×. A neighbouring orbit
+        // pixel could appear, longer than the 2-octave drift window at 4×. A neighboring orbit
         // has the same cost structure along its iteration axis to within a band; half the
-        // licence is a priced prior for it, the band clip still stops a pass at the next band's
+        // license is a priced prior for it, the band clip still stops a pass at the next band's
         // edge, and the cliff rule still quarters a surprise.
         if self.ref_cache[vi].ref_pt.as_ref() != Some(&res.rp)
             || self.ref_cache[vi].orbit_len != res.orbit_len
@@ -2863,7 +2864,7 @@ impl FractadyneApp {
     /// install it only when the frame it would produce shows something. Runs in `update()`, which
     /// owns the GPU handles the install path lacks — the autopilot steering probe set the pattern.
     ///
-    /// ⚠**Every uncertain path fails OPEN** (install unprobed = the old behaviour). In particular
+    /// ⚠**Every uncertain path fails OPEN** (install unprobed = the old behavior). In particular
     /// the request builder's `Precomputed` arm falls back to a SYNCHRONOUS full-depth reference
     /// build on any mismatch — 400 s on this thread at the reported view — so the exact-match
     /// inputs (`precomputed_matches`) are mirrored and checked HERE, before the builder can reach
@@ -3237,7 +3238,7 @@ impl FractadyneApp {
                 return None;
             }
             // Anchor on the GOAL — the fractal point the dive converges on (the aim eases onto it
-            // and the centring pan brings it to the middle), easing from the current speed to the
+            // and the centering pan brings it to the middle), easing from the current speed to the
             // full rate. The real dive eases more slowly and slows through a turn, so it reaches
             // each predicted depth LATER: a prefetch that is early is the safe side (see `Glide`).
             let (tx, ty) = self.autopilot.goal.unwrap_or(self.autopilot.aim);
@@ -3292,7 +3293,7 @@ impl FractadyneApp {
     /// inter-hold gap of lead where the build needs 8–20 s of wall clock — hold-e72 lost that
     /// race on a livetest re-run (captured at the PREVIOUS ask's 508k clamp, 27.6% black). One
     /// build in flight at a time (a bignum build fans out across cores); install inside the hold
-    /// window (the destination centre may differ from the current view mid-glide, so installing
+    /// window (the destination center may differ from the current view mid-glide, so installing
     /// early would hand the live path an out-of-view reference); a build that misses its window
     /// is orphaned exactly like a missed queue slot.
     fn playback_hold_prefetch(&mut self, pb: &crate::scripting::Playback, e: f64) {
@@ -3883,7 +3884,7 @@ impl FractadyneApp {
     /// Render the current view small, as a base64 PNG for embedding in a saved view.
     ///
     /// ⭐**Why a `.fdn` wants a picture.** A folder of deep locations is a folder of coordinate
-    /// files that look identical; with a thumbnail the same folder becomes a catalogue.
+    /// files that look identical; with a thumbnail the same folder becomes a catalog.
     ///
     /// ⛔⭐⭐**IT MUST NEVER BUILD A REFERENCE ORBIT.** The first version called
     /// `current_export_request_for`, which builds a FRESH one synchronously on the UI thread.
@@ -4362,7 +4363,7 @@ pub(crate) fn params_to_request(p: &fractadyne_gpu::MandelbrotParams) -> fractad
         ref_offset: p.ref_offset,
         delta_exp: p.delta_exp,
         sa_skip: p.sa_skip,
-        // Profiling measures cost, not colour: the mapping never affects iterate time, so this
+        // Profiling measures cost, not color: the mapping never affects iterate time, so this
         // path stays on the classic linear map regardless of the session's setting.
         norm_mode: 0,
         norm_lo: 0.0,
@@ -4410,7 +4411,7 @@ pub(crate) fn params_to_request(p: &fractadyne_gpu::MandelbrotParams) -> fractad
     }
 }
 
-/// [`params_to_request`] for COLOUR too, at sample position `jitter` (display pixels): the frame's
+/// [`params_to_request`] for COLOR too, at sample position `jitter` (display pixels): the frame's
 /// own normalization map, palette anti-aliasing and custom formula. What a supersampling sample
 /// rendered on another device must use to fold into the live average (`gpu_worker`,
 /// `design/multi-gpu-live.md` L2) — the profiling conversion keeps the linear map on purpose.
@@ -4655,7 +4656,7 @@ impl FractadyneApp {
             // list, which is ~4,000× less work per pass at the measured 1.3e6× scene (489 glitched
             // of 2,073,600) and reads back 2 KB instead of ~33 MB. Output is bit-identical by
             // construction: the gather entry point and `fs_iterate` share the same kernel and are
-            // handed the same texel-centre coordinate, so this is cost removal, not a quality trade.
+            // handed the same texel-center coordinate, so this is cost removal, not a quality trade.
             //
             // The tiled + ROI path stays as the fallback for the one regime the gather cannot bound:
             // a gather batch is a handful of pixels, so its dispatch is one pixel's entire dependent
@@ -4714,7 +4715,7 @@ impl FractadyneApp {
         let leftover: Vec<usize> = (0..w * h).filter(|&i| merged[i * 4] < -1.5).collect();
         let residual = leftover.len();
         // ⭐THE RESIDUAL WAS PAINTED BLACK. A pixel still flagged when the loop stopped (its
-        // reference cap or work box) kept the -2 sentinel, and the colour pass renders anything
+        // reference cap or work box) kept the -2 sentinel, and the color pass renders anything
         // negative as INTERIOR. `--glitch-audit` (2026-09-28) checked the pixels correction changes
         // against the arbitrary-precision oracle. EVERY one it made worse was one of these: 15 of
         // 120 sampled, with 312–2,892 such pixels per scene. The plain render of the same pixel
@@ -4773,10 +4774,10 @@ impl FractadyneApp {
     /// when the size exceeds the GPU's single-texture limit — tiling is future work — or the
     /// coloring method needs per-orbit aux statistics the merged buffer can't carry.
     /// `req` is the caller's already-built request, reused for the COLOR pass. ⭐⭐**Passing it
-    /// saves a whole second reference build** — the colour pass reads the merged iteration buffer
+    /// saves a whole second reference build** — the color pass reads the merged iteration buffer
     /// and never touches the orbit, so building one here was pure waste. Measured at 2.37e4000×:
     /// two identical bignum builds of 430 s and 400 s for a render whose GPU work was **0.58 s**,
-    /// and the second existed only to fill in a struct the colourer ignores. `None` (the selftest,
+    /// and the second existed only to fill in a struct the colorer ignores. `None` (the selftest,
     /// which has no request) falls back to building one exactly as before.
     pub(crate) fn render_export_corrected(
         &self,
@@ -4795,11 +4796,11 @@ impl FractadyneApp {
         // conservative area cap to avoid OOM. Above either, fall back to the tiled (uncorrected)
         // path. ~32 MP covers 4K/5K/6K comfortably. `budget` work-boxes the correction loop.
         const MAX_CORRECT_PX: u64 = 32_000_000;
-        // ⛔⭐The export's supersampling. This path used to iterate and colour at ONE sample a pixel
+        // ⛔⭐The export's supersampling. This path used to iterate and color at ONE sample a pixel
         // whatever the export asked for, and said nothing: every view it corrects (the
         // non-holomorphic families, and every Julia view) lost its `--ss` / Anti-alias setting. Now
         // the correction runs on the supersampled frame — `ss` texels a pixel along each axis, the
-        // normalized export's shape — and the colour pass averages them as `render_export` does.
+        // normalized export's shape — and the color pass averages them as `render_export` does.
         // (`None`, the selftest's correction checks, has no export settings: one sample, as before.)
         let ss = req.map_or(1, |r| r.ss.max(1));
         let (iw, ih) = (width * ss, height * ss);
@@ -4834,7 +4835,7 @@ impl FractadyneApp {
             other => other,
         };
         let ci = self.render_corrected_iter(device, queue, vp, julia, iw, ih, 64, iter_req, budget)?;
-        // ⚠The size guard is load-bearing: a request built for a different frame size would colour
+        // ⚠The size guard is load-bearing: a request built for a different frame size would color
         // the merged buffer against the wrong dimensions. Both real callers pass their own
         // `req.width`/`req.height` as `width`/`height`, so it holds; anything else rebuilds.
         let built;
@@ -4941,7 +4942,7 @@ impl FractadyneApp {
         let (clo, chi) = match norm {
             // A time-keyed range is applied EXACTLY — no measurement reduction, and no
             // all-interior fallback: a frame with nothing escaped keeps the sequence's mapping
-            // (the interior colour is range-independent anyway) instead of silently flipping to
+            // (the interior color is range-independent anyway) instead of silently flipping to
             // the un-normalized path for one frame, which was itself a mapping discontinuity.
             NormRange::Fixed(r) => r,
             NormRange::OwnFrame | NormRange::Ema(_) => {
@@ -4959,7 +4960,7 @@ impl FractadyneApp {
                 }
                 // Legacy render-order smoothing (see [`NormRange::Ema`]): α = 0.2 lags a range
                 // that only grows. A single export (`OwnFrame`, and `Ema(None)`) uses the
-                // frame's own range, byte-identical to the original behaviour.
+                // frame's own range, byte-identical to the original behavior.
                 const NORM_EMA_ALPHA: f32 = 0.2;
                 match norm {
                     NormRange::Ema(Some((plo, phi))) => (
@@ -5071,7 +5072,7 @@ impl FractadyneApp {
     /// needs rather than from how large its budget happens to be.
     ///
     /// The fixed 16 was the binder on settled resolution, and it is why an explicit iteration count
-    /// could not be honoured. At the 8.8e94× three-spar the field HUD reads `iterate 1.3 ms (GPU)`
+    /// could not be honored. At the 8.8e94× three-spar the field HUD reads `iterate 1.3 ms (GPU)`
     /// against `budget 3.00e11` — the budget is pinned at `TDR_STEPS_CEIL`, so a "budget-sized"
     /// tile actually costs 1.3 ms, not the ~900 ms the count of 16 was chosen against. Sixteen of
     /// those is ~21 ms of GPU work, and the frame STILL renders shrunk because 16 × 3e11 cannot
@@ -5097,7 +5098,7 @@ impl FractadyneApp {
     /// 22.316s  bud=6.487e9   maxt=16   res=53x30      ← native to 3% linear, for 2.2 s
     /// ```
     ///
-    /// The reported "pixellated until I nudge the window" is that same step function seen from the
+    /// The reported "pixelated until I nudge the window" is that same step function seen from the
     /// losing side: a nudge moves the view a fraction of a percent onto a reference on the other
     /// side of the threshold. Nothing about the picture, the reference, or the hardware changes.
     ///
@@ -5286,10 +5287,10 @@ impl FractadyneApp {
 #[derive(Clone, Copy)]
 pub(crate) enum NormRange {
     /// Measure this frame and use its own range — single exports (byte-identical to the
-    /// pre-enum behaviour) and the tour's canonical keyframe-anchor measurements.
+    /// pre-enum behavior) and the tour's canonical keyframe-anchor measurements.
     OwnFrame,
     /// Measure, then EMA against the previous smoothed range (α = 0.2). The legacy tour
-    /// behaviour, kept ONLY as the fallback when no time-keyed anchor could be measured
+    /// behavior, kept ONLY as the fallback when no time-keyed anchor could be measured
     /// (an all-interior tour): it makes the mapping a function of RENDER HISTORY, which is
     /// exactly the order/resume/shard shimmer the anchors exist to remove.
     Ema(Option<(f32, f32)>),
@@ -5570,7 +5571,7 @@ impl FractadyneApp {
             let reading_current = norm_reading_is_current(read_sig, nsig, interacting);
             let nfeed =
                 norm_feed_decision(nsig, self.perf.norm_sig[vb], self.perf.norm_locked[vb], interacting);
-            // Is the window already fed describing THIS view (or, while moving, its neighbour)?
+            // Is the window already fed describing THIS view (or, while moving, its neighbor)?
             let same_view = interacting || self.perf.norm_sig[vb] == nsig;
             if self.perf.norm_sig[vb] != nsig {
                 self.perf.norm_sig[vb] = nsig;
@@ -5654,7 +5655,7 @@ impl FractadyneApp {
                 // ⚠Only a reading of a dispatch made since then: readings land two or three frames
                 // after their pass, and the last moving frames' are of shallower views, whose
                 // pixels escape sooner — an onset too low puts cheap territory in the region, and
-                // its licence is earned there and carried into the dear part again.
+                // its license is earned there and carried into the dear part again.
                 if r.escaped > 0 && r.esc_min_bits != u32::MAX && r.prov.frame >= self.perf.walk_onset_from[vb] {
                     let lo = f32::from_bits(r.esc_min_bits);
                     if lo.is_finite() && lo >= 1.0 {
@@ -5805,7 +5806,7 @@ impl FractadyneApp {
                         // sizes a moving frame's walk, says when a refresh has reached its picture
                         // and feeds the autopilot. The PALETTE's window takes its top where most of
                         // the picture has escaped (`norm_palette_top`), so a few pixels escaping
-                        // just under the ask beside a minibrot do not set every colour on screen.
+                        // just under the ask beside a minibrot do not set every color on screen.
                         // Both are fed under the same decision, so they lock, hold and re-adopt
                         // together.
                         let top = norm_palette_top(mn, mx, nhist.as_ref(), crate::tunables::cost().norm_top_quantile);
@@ -5935,7 +5936,7 @@ impl FractadyneApp {
         // cursor advances while the view holds still and restarts on any view change or
         // interaction. Escaped pixels appear progressively (a moving frame shows everything that
         // escapes within one step — visually what a capped render would show); a settled view runs
-        // the cursor to max_iter and is then EXACT, honouring the explicit count across frames
+        // the cursor to max_iter and is then EXACT, honoring the explicit count across frames
         // instead of in one watchdog-tripping dispatch.
         let mut chunk_range: Option<[u32; 2]> = None;
         let mut chunk_idx = 0u32;
@@ -5957,7 +5958,7 @@ impl FractadyneApp {
                 self.perf.tile_state[vidx] = None;
                 self.perf.tile_pending[vidx] = false;
             }
-            // The escape onset belongs to the VIEW (`WALK_ONSET`, `Perf::walk_onset`): a new centre,
+            // The escape onset belongs to the VIEW (`WALK_ONSET`, `Perf::walk_onset`): a new center,
             // magnification or settings forgets it. A new resolution, ask or supersampling sample
             // does not — the next sample's pixels escape where the last one's did.
             let onset_key = center.0.to_bits()
@@ -5972,7 +5973,7 @@ impl FractadyneApp {
             // …and while none has been seen, an ESCAPED reference's length stands in: past it every
             // pixel rebases (the pin floor's "rebase storm at the end of an escaped reference"), and
             // at the 2^704 view the cost cliff (~220k) sat just short of the reference's end
-            // (247,533). Before this, a view's first walk met that cliff with an octave band's licence
+            // (247,533). Before this, a view's first walk met that cliff with an octave band's license
             // earned on the cheap front (one ~900 ms pass a fresh view). A partial reference is still
             // growing, and an un-escaped one has no end short of the ask.
             let onset_start = if crate::tunables::cost().walk_onset == 1 {
@@ -6087,7 +6088,7 @@ impl FractadyneApp {
                         crate::diag::log_line(
                             "render",
                             &format!(
-                                "⚠IN-FLIGHT PASS IN THE LETHAL BAND: view={vs} size={size} band={band} acc={acc:.0}ms (band ≥{:.0}ms, no drain yet) — chunk-band licences shed{}",
+                                "⚠IN-FLIGHT PASS IN THE LETHAL BAND: view={vs} size={size} band={band} acc={acc:.0}ms (band ≥{:.0}ms, no drain yet) — chunk-band licenses shed{}",
                                 price_in.tdr_lethal_ms,
                                 match outcome {
                                     crate::render::RetreatOutcome::Applied { .. } => String::new(),
@@ -6126,7 +6127,7 @@ impl FractadyneApp {
                     }
                     decide::WalkPriceEvent::PinPriced { band, size, price: p, acc } => {
                         if crate::diag::trace_on("tile") {
-                            // The licence of each band the pass ran in, after its price.
+                            // The license of each band the pass ran in, after its price.
                             let (a, z) = span_band_decode(band);
                             let licence = (a..=z)
                                 .map(|k| self.perf.chunk_bands[vs][k.min(crate::tunables::CHUNK_BANDS - 1)].to_string())
@@ -6256,7 +6257,7 @@ impl FractadyneApp {
                 );
             }
             // The DISPATCH: the pure `decide::decide_walk_dispatch` (its notes moved with it), so a
-            // recording replays the serialized hold, the licence and the cursor exactly.
+            // recording replays the serialized hold, the license and the cursor exactly.
             let dispatch_in = decide::WalkDispatchInputs {
                 interacting,
                 pin_frame,
@@ -6589,8 +6590,8 @@ impl FractadyneApp {
             live_verified: self.perf.content[vs.min(1)].live_verified(),
             aa_unmeasured: self.perf.aa_measured[vs].is_none() && self.perf.aa_probe[vs].is_none(),
             frame: self.perf.frame_idx,
-            // A held jump picture waits for the new view's palette window: only under normalised
-            // colouring — the held picture's, or the live view's (a snap wipes the live one until
+            // A held jump picture waits for the new view's palette window: only under normalized
+            // coloring — the held picture's, or the live view's (a snap wipes the live one until
             // the new view's readings return) — until the view's mapping is adopted, and no longer
             // than `JUMP_MAP_WAIT_S` once the compose is done.
             await_map: {
@@ -6692,7 +6693,7 @@ impl FractadyneApp {
     /// applies and the floatexp walk can serve the frame: floatexp WITHOUT the BLA iterates every step
     /// at several times df32's cost. So: a built-in family with BLA and resumable passes (not a custom
     /// formula, whose floatexp loop has no BLA), not a Julia view (the BLA is Mandelbrot-mode only),
-    /// the BLA on, no colouring that carries orbit statistics (neither walk serves one), and a device
+    /// the BLA on, no coloring that carries orbit statistics (neither walk serves one), and a device
     /// that granted floatexp's fourth state target — without it a floatexp frame cannot be split, and
     /// a df32 one can.
     pub(crate) fn band_bla(&self, fractal: FractalKind, julia: bool) -> bool {
@@ -6790,7 +6791,7 @@ impl FractadyneApp {
         // `fs_iterate_chunk` seeds `iter = sa_skip`, so every window ending at or below the skip
         // breaks on its first test and costs ~0 ms (`--chunk-sweep` measures exactly that). Without
         // the skip stamped, `chunk=[768,1792)` in a death manifest cannot say whether the ladder
-        // that led there was climbing FREE windows — the fast lane doubles the licence on each —
+        // that led there was climbing FREE windows — the fast lane doubles the license on each —
         // or real ones, and that is the open question in the field device-loss item. `bla_on=0` is
         // the other silent multiplier: the e100 crash was a pass running an empty tree at 0.04
         // Gsteps/s beside a 174 Gsteps/s pass in the SAME frame.
@@ -6924,12 +6925,12 @@ impl FractadyneApp {
         // corpus-14/15 aliasing, now surfacing live since the adaptive budget resolves these
         // fields). Smooth method only; range-thresholded so ordinary views keep classic coloring.
         let live_win = self.live_norm_window(vs);
-        // ⭐W6 (U43): a HELD snapshot keeps the colour map it was seen under. The map follows the
+        // ⭐W6 (U43): a HELD snapshot keeps the color map it was seen under. The map follows the
         // escape-range readings, and while a hold is served those readings are the composing walk's
-        // — a picture nobody sees yet — so the snapshot was recoloured every frame under another
+        // — a picture nobody sees yet — so the snapshot was recolored every frame under another
         // picture's window; under the log map every value below the new `norm_lo` collapsed to one
-        // colour. The snapshot is of the frame the screen last showed live (`hold_copy` fires only
-        // with no hold up), so its map is frozen at the copy. The user's own colouring still applies
+        // color. The snapshot is of the frame the screen last showed live (`hold_copy` fires only
+        // with no hold up), so its map is frozen at the copy. The user's own coloring still applies
         // at once: a change to it un-freezes (`norm_user_sig`).
         let user_sig = self.norm_user_sig();
         // ⭐…the window ITS PICTURE wants — the live one at the moment of the copy, which describes
@@ -6944,8 +6945,8 @@ impl FractadyneApp {
         }
         // ⭐A held picture that stood across a JUMP gives way to the new view's as a CUT: the drawn
         // window, the dissolve and the carried phase start afresh at the new picture's own window.
-        // Each exists to keep ONE picture's colours steady from frame to frame; across a jump the
-        // picture itself changes, and the old view's window drew the new picture as one pale colour
+        // Each exists to keep ONE picture's colors steady from frame to frame; across a jump the
+        // picture itself changes, and the old view's window drew the new picture as one pale color
         // that dissolved into it over 0.4 s (2026-10-31, a 100× click at 2^429). The hold waits for
         // that window first (`decide::PresentInputs::await_map`).
         let shown_held = display_hold || reproject.is_some();
@@ -6967,7 +6968,7 @@ impl FractadyneApp {
             }
         }
         self.perf.shown_held[vb] = shown_held;
-        // The held picture's own window, while one is served (inside, `None`: classic colours).
+        // The held picture's own window, while one is served (inside, `None`: classic colors).
         // ⭐A picture held across a jump keeps the window it had when the jump came
         // (`Perf::jump_win`), reprojected or snapshotted alike: a snap to the nearest nucleus wipes
         // the live window (`invalidate_refs`), and the held picture, its escapes near 190,000 at
@@ -6988,7 +6989,7 @@ impl FractadyneApp {
         let nm = drawn.map_or(NormMap { cycle: self.color_cycle(), offset: self.coloring.offset, mode: 0, lo: 0.0 }, |(mn, mx)| {
             self.norm_map_for(mn, mx)
         });
-        // ⭐…with its PHASE CARRIED: a window that slides with the zoom keeps every colour where it
+        // ⭐…with its PHASE CARRIED: a window that slides with the zoom keeps every color where it
         // was, and a view at rest gives the carried phase back (`phase_carry_step`).
         let (carry, phase) =
             phase_carry_step(self.perf.palette_phase[vs], nm, drawn, user_sig, !interacting, (self.perf.last_dt_ms / 1000.0) as f32);
@@ -7002,9 +7003,9 @@ impl FractadyneApp {
         if !display_hold {
             self.perf.hold_norm[vs] = None;
         }
-        // ⭐THE COLOUR BOX IS THE SHOWN PICTURE'S, NOT THIS FRAME'S PASS'S. The decision sizes
+        // ⭐THE COLOR BOX IS THE SHOWN PICTURE'S, NOT THIS FRAME'S PASS'S. The decision sizes
         // `aa_filter` for the pass this frame renders, before the pin and freeze verdicts, and the
-        // colour pass applied it to whatever the frame SHOWS: a pin composing under the hold at a
+        // color pass applied it to whatever the frame SHOWS: a pin composing under the hold at a
         // quarter or an eighth of the resolution asked for a 4-texel box and blurred the held,
         // full-resolution picture for the pin's whole walk (40 of 735 moving frames of a 16-octave
         // glide with a same-card worker, 2026-10-21), and a frame expected to render that then froze
@@ -7028,7 +7029,7 @@ impl FractadyneApp {
         if !display_hold {
             self.perf.shown_aa[vs] = Some(aa_filter);
         }
-        // The colour map and box this frame is drawn under, for judging how the picture moves frame to frame.
+        // The color map and box this frame is drawn under, for judging how the picture moves frame to frame.
         if crate::diag::trace_on("palette") {
             crate::diag::trace(
                 "palette",
@@ -7044,7 +7045,7 @@ impl FractadyneApp {
                     self.perf.norm_shown[vs.min(1)],
                     palette_fade.weight,
                     // The depth, and the map a dissolve under way fades from (cycle, offset, mode,
-                    // lo), so a reader can colour any escape value exactly as this frame drew it.
+                    // lo), so a reader can color any escape value exactly as this frame drew it.
                     if julia { &self.julia_viewport } else { &self.viewport }.log2_magnification(),
                     drawn,
                     palette_fade.cycle,
@@ -7225,7 +7226,7 @@ impl FractadyneApp {
             // The view the GPU stamps this frame's pixels with, and where it reports back which
             // view the texture is WHOLLY drawn at. `pos_sig` is the right identity because it is
             // the view's exact position as the shader sees it — the offset from the reference,
-            // the exponent and the span — not the f64 centre, which stops telling neighbouring
+            // the exponent and the span — not the f64 center, which stops telling neighboring
             // deep views apart. See `ViewResources::content_stamp`.
             view_stamp: pos_sig,
             provenance: Default::default(), // completed below, once the frame's kind is classified
@@ -7459,7 +7460,7 @@ impl FractadyneApp {
 
     /// The held frame's display transform on view `v` (`frame_plan::hold_transform`):
     /// `[uv_off.x, uv_off.y, uv_scale]` for `gap_oct` octaves of zoom since it was rendered
-    /// (`frozen − now`) and the view's centre `off` from the held frame's, in spans of the view now.
+    /// (`frozen − now`) and the view's center `off` from the held frame's, in spans of the view now.
     /// ⭐The ONE site the four hold transforms (the freeze, a worker frame, the two snapshots) take
     /// it from, so the bound they apply cannot differ — and the bound that applied goes into the
     /// frame record (`hold_floor`, U39: whether a jump clamp put the held frame on screen at a
@@ -7470,7 +7471,7 @@ impl FractadyneApp {
         let jumped = self.perf.hold_jump[v.min(1)];
         let stepping = self.perf.hold_home_step[v.min(1)];
         let (t, code) = crate::render::frame_plan::hold_transform(gap_oct, jumped, stepping, off);
-        // The held picture keeps the colours it had when the jump came (`Perf::jump_win`), taken on
+        // The held picture keeps the colors it had when the jump came (`Perf::jump_win`), taken on
         // the jump's first held frame — before anything at the new view could feed the window — and
         // kept through a second click or a snap until the new picture replaces it.
         if jumped && self.perf.jump_win[v.min(1)].is_none() {
@@ -7519,7 +7520,7 @@ impl FractadyneApp {
         resolution: [u32; 2],
         view_id: u32,
         // Some(uv_offset) → pan reprojection: reuse the cached orbit + frozen iteration texture
-        // and translate it in the color pass (no bignum recompute, no re-iterate). Only honoured
+        // and translate it in the color pass (no bignum recompute, no re-iterate). Only honored
         // at deep zoom (mode ≠ 1) once a reference exists for this view.
         reproject: Option<[f32; 2]>,
     ) -> MandelbrotParams {
@@ -7911,7 +7912,7 @@ impl FractadyneApp {
         // Before this gate the floor forced a full deep re-iterate on every resize tick (a resize
         // interacts, and a settled frame is always "old"); those slow presents let the OS
         // compositor stretch the stale frame — the "briefly squashed" resize. With zero zoom the
-        // hold's reproject path serves the frame aspect-fit and cheap (the pre-floor behaviour);
+        // hold's reproject path serves the frame aspect-fit and cheap (the pre-floor behavior);
         // the `frozen_drift < REFRESH_OCTAVES` gate still forces a real frame on a BIG resize.
         // ⭐On THIS DEVICE's refresh clock (`local_l2`, `local_at`): a worker frame on screen
         // (`motion_worker`) does not postpone the window's own next refresh, so the two interleave.
@@ -8113,7 +8114,7 @@ impl FractadyneApp {
         // frozen_screen_dim` goes < 1 and MAGNIFIES the held frame (a spurious zoom-in) while also
         // amplifying the pan translation by 1/fit (the "drag is exaggerated / double acceleration"
         // at deep zoom). Keep native resolution on a held frame so fit ≈ 1; a mode-0 REFRESH frame
-        // (reuse_hold false) re-iterates and is res-scaled like the old behaviour, so it stays cheap.
+        // (reuse_hold false) re-iterates and is res-scaled like the old behavior, so it stays cheap.
         // ⚠A missing reference forces reprojection ONLY in modes that NEED one. Direct mode
         // renders referenceless, so `ref_pt.is_none()` is its PERMANENT state — with the old
         // unconditional term, a direct view that never crossed a perturbation depth (the
@@ -8206,7 +8207,7 @@ impl FractadyneApp {
                 // in direct mode — so a pin a jump abandoned on the way OUT of perturbation left the
                 // flag set for the rest of the session, and the present gate served the stale
                 // snapshot for every moving frame there, magnified until the screen was solid
-                // colour (2026-09-27 report, 179× direct; reproduced by `--zoomtest-then-log2`: 100%
+                // color (2026-09-27 report, 179× direct; reproduced by `--zoomtest-then-log2`: 100%
                 // of a glide held). Between the perturbation modes the latch still runs, so those
                 // crossovers keep their pins and their holds unchanged.
                 if sel.is_direct() {
@@ -8491,7 +8492,7 @@ impl FractadyneApp {
         // dispatch against a 4.000e8 budget (286× over) and lost the device. Tiling, the resolution
         // shrink below, and the cost measurement that feeds both were all floatexp-only, so on the
         // df32 path there was nothing between the frame and the watchdog. (Precedent: `max_ss_tdr`
-        // was floatexp-only for the same reason and was generalised in beta.36 after the same class
+        // was floatexp-only for the same reason and was generalized in beta.36 after the same class
         // of crash; only the ss half got fixed then.)
         //
         // ⭐INVARIANT: an UNMEASURED budget may bound the first dispatch, but it must never bind
@@ -8654,7 +8655,7 @@ impl FractadyneApp {
         // split: its cost axis is per-pixel iteration DEPTH, and both the resolution shrink below
         // (floors 16×16) and the settle tiles (side floors 16) leave `16·16·iter` unbounded. That
         // was the zoom-out-from-deep crash (Direct, crash-1786499093) and the 197k× spar's capped
-        // pixellation (mode 0, 99-sample reference at an explicit 4M). Such frames render through
+        // pixelation (mode 0, 99-sample reference at an explicit 4M). Such frames render through
         // the resumable CHUNKED path instead (the block after the tile decision): full resolution,
         // one bounded pass over an iteration RANGE per frame — so skip the shrink (it would defeat
         // the full-res payoff) and the settle tiling (wrong axis). Gated to the chunk shaders'
@@ -8708,8 +8709,8 @@ impl FractadyneApp {
                 // …and EVERY moving refresh past the opening step is chunked, whatever the
                 // nominal rate says: an over-estimated rate (a deduped 0.2 ms reading, or a
                 // pass memory earned in a cheap band) turned refreshes into single 350 ms
-                // dispatches that bypassed the band licence entirely. A pinned walk pays the
-                // licence's floor in each band; a single dispatch of ≤ 512 iterations is the
+                // dispatches that bypassed the band license entirely. A pinned walk pays the
+                // license's floor in each band; a single dispatch of ≤ 512 iterations is the
                 // only refresh cheap enough to skip it.
                 // …unless the WHOLE refresh has been measured cheap, or is the single pass that
                 // measures it (`live_refresh`): that price is the full frame's own timestamp, not
@@ -8748,7 +8749,7 @@ impl FractadyneApp {
                 );
             }
         }
-        // First line of defence is lowering ss (`max_ss_tdr` below), but that floors at 1. If even ss=1
+        // First line of defense is lowering ss (`max_ss_tdr` below), but that floors at 1. If even ss=1
         // would blow the budget — `spx·gpu_iter` alone > the budget, i.e. a large floatexp panel at
         // a high fixed iteration count — the ss cap can't help, so shrink the render RESOLUTION too.
         // Applied to reproject frames AS WELL: the frozen texture they re-sample was rendered by a
@@ -8789,7 +8790,7 @@ impl FractadyneApp {
             .sqrt()
             .max(1.0) as u32;
         // The GPU watchdog does not care which arithmetic mode a dispatch uses. This cap was
-        // generalised to every mode in beta.36 (a settle ramp reaching ss=8 at a shallow view is
+        // generalized to every mode in beta.36 (a settle ramp reaching ss=8 at a shallow view is
         // over a trillion nominal steps), but the non-floatexp branch had to fall back on the
         // absolute `TDR_STEPS_CEIL` because no budget was MEASURED there. It is now, so every mode
         // uses its own measured envelope — which matters because the ceiling is ~15× too generous
@@ -8916,11 +8917,11 @@ impl FractadyneApp {
         );
         // The view's EXACT position for the chunk walk's signature: its offset from the reference
         // point as the render sees it (a 2^-delta_exp mantissa, exact to f64 at any depth), the
-        // span's exponent and mantissa. The f64 centre alone cannot tell nearby views apart once
+        // span's exponent and mantissa. The f64 center alone cannot tell nearby views apart once
         // the zoom is deep — at 2^49 its ulp is 1/190 of the view width, at 2^800 the whole
-        // neighbourhood shares one value — and a walk that resumes its per-pixel state against a
+        // neighborhood shares one value — and a walk that resumes its per-pixel state against a
         // moved view continues the OLD view's escapes under the new one: a translucent copy of
-        // another location. Direct mode (no reference) renders from the f64 centre, so that IS
+        // another location. Direct mode (no reference) renders from the f64 center, so that IS
         // its exact position.
         let pos_sig = {
             use std::hash::{Hash, Hasher};
@@ -8996,7 +8997,7 @@ impl FractadyneApp {
         let precision = fractadyne_core::precision_for_octaves(log2mag.max(0.0).ceil() as u64);
         let vi = view_id as usize;
 
-        // Honour a pan reprojection only at deep zoom (the shallow direct path is cheap + already
+        // Honor a pan reprojection only at deep zoom (the shallow direct path is cheap + already
         // detailed) and only once a reference orbit exists to have produced the frozen texture.
         // Mutable: also set below to freeze the last good frame while an off-thread recompute is in
         // flight and the cached reference has drifted fully out of view (extreme depth), so the
@@ -9005,7 +9006,7 @@ impl FractadyneApp {
             .filter(|_| !mode.is_direct() && self.ref_cache[vi].ref_pt.is_some());
         // A pan drag's frame computes no reference offset: its params describe no real frame.
         let caller_pan = reproject.is_some();
-        // Reprojection scale about the view centre: 1.0 for a pan (drag) reprojection; set <1.0 by
+        // Reprojection scale about the view center: 1.0 for a pan (drag) reprojection; set <1.0 by
         // the freeze below to zoom the held frame as the view keeps diving (zoom-reprojection).
         let mut reproject_scale = 1.0_f32;
         // A worker frame adopted on this frame (`motion_worker`), and whether into the hold.
@@ -9095,7 +9096,7 @@ impl FractadyneApp {
             // so the bignum cost doesn't stall every frame — keeping deep zoom sharp
             // without tanking the frame-rate. (Affordable since the release build made
             // bignum ~8× faster.)
-            // Refresh when the reference drifts past ~0.7 span off-centre. best_reference sits at
+            // Refresh when the reference drifts past ~0.7 span off-center. best_reference sits at
             // ≤ ~0.4, and the perturbation stays clean out to ~1 span, so 0.7 leaves margin while
             // recomputing far less often than the old 0.5 — a tiny margin there meant a refresh
             // after almost any motion, which at shallow depth (recompute ≈ instant) churned the
@@ -9382,7 +9383,7 @@ impl FractadyneApp {
             // to native resolution (see `res_scale`), so the streamed detail is full-res and the
             // hold never magnifies more than REFRESH_OCTAVES (×1.4) past a sharp frame.
             // At extreme depth the recompute can take long enough that a fast/continuous dive
-            // drifts the cached reference too far off-centre before a fresh one lands — rendering
+            // drifts the cached reference too far off-center before a fresh one lands — rendering
             // with it is dark/glitchy (the "screen goes black" while zooming). Instead freeze the
             // last clean frame (via the reprojection path: prepare skips the re-iterate and holds
             // the frozen texture) until a fresh reference installs and the view snaps to it. NOT
@@ -9414,7 +9415,7 @@ impl FractadyneApp {
                         // stays correctly positioned; a very stale frozen frame just magnifies (blocky)
                         // in place instead of sliding.
                         // scale = 2^(l2_frozen − l2_now): ≤ 1 zooming IN (frozen frame magnifies),
-                        // > 1 zooming OUT (frozen frame shrinks toward centre, the average fills the
+                        // > 1 zooming OUT (frozen frame shrinks toward center, the average fills the
                         // revealed border). The old upper clamp of 1.0 pinned zoom-out reprojection at
                         // 1:1 — the held frame stayed full-size instead of shrinking, so a zoom-out
                         // held its stale (too-magnified) detail until the refresh snapped it smaller.
@@ -10052,7 +10053,7 @@ impl FractadyneApp {
 /// `explicit` (auto-iter OFF) is an instruction, not a request: the user's Iterations box and a
 /// tour keyframe's `max_iter` both mean THIS count — no depth cap, no boost multiplier. This was
 /// A1's remaining half ("an explicit iteration count is silently overridden": 10,000,000 in the
-/// UI rendered as `iter 82,741`). It could not ship before v0.2.40-beta.49/50 because an honoured
+/// UI rendered as `iter 82,741`). It could not ship before v0.2.40-beta.49/50 because an honored
 /// count raises the reference ask past `LIVE_REF_CAP`, where the old freeze guard refused the
 /// build and pixels stayed clamped short (the measured 1e61 42.1% → 100% black regression);
 /// freeze guard v2 installs long partials, so an explicit ask can actually be served. In auto
@@ -10089,7 +10090,7 @@ pub(crate) fn seed_evidence(perturbation: bool, installed: bool, partial: bool, 
 /// `zoom_cap` (never produced by `zoom_iter_cap`, which floors at 256) yields no seed.
 ///
 /// ⛔⛔**ONLY AN ESCAPED ORBIT'S LENGTH IS EVIDENCE.** "No pixel can outrun the orbit" holds only
-/// when the orbit ENDED ON ITS OWN. A reference whose centre never escapes stops at the length we
+/// when the orbit ENDED ON ITS OWN. A reference whose center never escapes stops at the length we
 /// ASKED for — `ref_build_iter = gpu_iter.max(eff_iter) + 32·256` — so its length measures the
 /// budget, not the location, and seeding from it is a loop: a big budget builds a long reference,
 /// which seeds a big budget. Verified 2026-09-17 on `--uitest` step 30, the canonical Seahorse
@@ -10259,7 +10260,7 @@ pub(crate) enum PinStop {
     /// The caller supplied a pan-reprojection: this frame will not dispatch a pass.
     CallerReproject,
     /// The walk completed and its own reading says NOT ONE pixel escaped: the picture at this
-    /// ask is a flat interior colour. The hold stays; adopting it would put that colour on screen.
+    /// ask is a flat interior color. The hold stays; adopting it would put that color on screen.
     Blank,
     /// A frame from the second GPU on screen shows the live view at least as well as the pin's
     /// could (`motion_worker::frame_quality`): the pin's work could never reach the screen.
@@ -10295,7 +10296,7 @@ pub(crate) enum RefreshPolicy {
 
 /// Does a frame's escaped-pixel reading amount to a picture? The blank frame this guards
 /// against has ZERO escaped pixels (a walk that never reached the view's first escape resolves
-/// every pixel to the interior colour); the threshold above zero is noise margin for a
+/// every pixel to the interior color); the threshold above zero is noise margin for a
 /// subsampled/clipped frame, low enough that a single thin filament in an otherwise interior
 /// view still counts as detail.
 ///
@@ -10318,7 +10319,7 @@ pub(crate) fn ref_clamps(partial: bool, orbit_len: u32, ask: u32) -> bool {
 /// The least share of a frame's pixels that must escape for a frame its cut-off reference clamped
 /// to count as a picture while the autopilot dives (`clamped_blackout`). Under a cut-off reference
 /// an interior pixel may be real or the cut-off, and nothing tells which: at 0.5 a frame about half
-/// black passed, and the stepped dive's next jump magnified its black centre for 0.6 s (a
+/// black passed, and the stepped dive's next jump magnified its black center for 0.6 s (a
 /// Misiurewicz dive at 2^1512, 2026-11-01). Holding it back costs a short hold for the reference.
 pub(crate) const CLAMPED_MIN_ESCAPED_SHARE: f64 = 0.9;
 
@@ -10326,7 +10327,7 @@ pub(crate) const CLAMPED_MIN_ESCAPED_SHARE: f64 = 0.9;
 /// most pixels did not escape: its black is as likely the cut-off as the set. The autopilot holds
 /// its last valid frame instead (the user, 2026-11-01: "hold on the last valid frame before
 /// drawing a mostly black frame"). The case: a 145-px refresh at 2^1034, 39% escaped, adopted, and
-/// the stepped dive's next jump magnified its interior centre into a black screen for ~0.3 s. A
+/// the stepped dive's next jump magnified its interior center into a black screen for ~0.3 s. A
 /// mostly interior frame whose reference reaches its ask is a real view (a minibrot) and shows.
 pub(crate) fn clamped_blackout(clamped: bool, escaped: u32, px: u32) -> bool {
     clamped && px > 0 && (escaped as f64) < px as f64 * CLAMPED_MIN_ESCAPED_SHARE
@@ -10388,7 +10389,7 @@ pub(crate) const CLIMB_STARVE_READS: u32 = 8;
 
 /// Has a chunked walk's picture stopped changing between two readings of the SAME render? The
 /// later reading must come from a pass well past the earlier one (`CONVERGE_CURSOR_GROWTH`, and
-/// at least a floor pass further — one more pass at a tiny licence proves nothing) and add no
+/// at least a floor pass further — one more pass at a tiny license proves nothing) and add no
 /// more than `CONVERGE_TOLERANCE` of the escaped pixels seen so far (plus a per-frame allowance
 /// for the odd straggler). Escapes are monotonic through a walk, so this is a one-sided test.
 pub(crate) fn content_converged(prev: &ContentReading, last: &ContentReading) -> bool {
@@ -10409,8 +10410,8 @@ pub(crate) fn content_converged(prev: &ContentReading, last: &ContentReading) ->
 /// the pipeline used to check: the display served whatever the last dispatch resolved, and the
 /// hold copied whatever the texture held at the moment a pin started. Lined up against a user's
 /// recording (2026-09-20, an autopilot dive from 2^584 at 4×): 35% of the frames were one flat
-/// colour — black where a walk had not reached the view's first escape, a palette colour where
-/// the previous frame's centre had been magnified 30–80× — and the "flashing" was the
+/// color — black where a walk had not reached the view's first escape, a palette color where
+/// the previous frame's center had been magnified 30–80× — and the "flashing" was the
 /// alternation between those and the occasional crisp frame. The readings land 2–3 frames after
 /// their render, like every readback, so the verdict is attached to the RENDER (`ContentReading::tag`)
 /// and compared with what the texture holds NOW (`live_tag`), never assumed for the frame in
@@ -10920,14 +10921,14 @@ pub(crate) fn pin_fast_lane(price_ms: f64, target_ms: f64) -> u32 {
     (ratio.max(LANE_MIN as f64).min(LANE_MAX as f64)) as u32
 }
 
-/// A PINNED pass's licence for the band at `real_lo`: the band's own earned licence when it has
+/// A PINNED pass's license for the band at `real_lo`: the band's own earned license when it has
 /// one; otherwise — and this is the one place a cold band does NOT open at the floor — HALF the
-/// predecessor band's licence, but only once the pass starts past `2 × orbit_len`, i.e. beyond
+/// predecessor band's license, but only once the pass starts past `2 × orbit_len`, i.e. beyond
 /// the rebase storm of the reference's first wrap. That storm (every pixel rebasing at
 /// cur ≈ orbit_len, 10–70× the cold per-iteration cost) is the "band turned hot mid-way" that
 /// `chunk_band_license`'s floor rule exists for, and it sits at a KNOWN cursor. Past it the
 /// pixels still alive have thinned and the cost along the orbit is the predecessor's kind, so an
-/// inherited half-licence is a pass predicted at half the predecessor's price. Bands up to the
+/// inherited half-license is a pass predicted at half the predecessor's price. Bands up to the
 /// storm keep the floor rule unchanged. Measured need: the settled walk has 400 ms per pass and
 /// re-climbs at leisure; a pin has ~36 frames at 3.6 oct/s, and six cold bands between a 16k
 /// cursor and a 1M ask cost it 64+ frames of floor openings.
@@ -10951,8 +10952,8 @@ pub(crate) fn pin_band_license(
 
 /// Where a PIN pass that covers its whole start band may stop instead of at that band's end: on
 /// through the following bands while each has a price of its own (`bands[b] > 0`) and the pass's
-/// shares of their licences sum to no more than `share_max` of a pass (`PIN_BAND_SPAN`; each band's
-/// licence is the size its prices say fits the pin's target), within `step_cap` iterations in all. Whole bands only, or the walk's
+/// shares of their licenses sum to no more than `share_max` of a pass (`PIN_BAND_SPAN`; each band's
+/// license is the size its prices say fits the pin's target), within `step_cap` iterations in all. Whole bands only, or the walk's
 /// end. Returns the end and the pass's band byte (`span_band_code`).
 ///
 /// ⭐Why: a pin pass stopped at the end of the band it started in, and the bands are octaves, so a
@@ -11030,13 +11031,13 @@ impl BandCosts<'_> {
 
 /// [`pin_span_end`] bounded by what the bands COST (`PIN_SPAN_PRICED`): a PIN pass that covers its
 /// whole start band runs on through the following bands while each has a GPU-timed cost of its own
-/// and a licence (`BandCosts::predict`) and the costs of all the bands it covers sum to no more than
+/// and a license (`BandCosts::predict`) and the costs of all the bands it covers sum to no more than
 /// `budget_ms`, within `step_cap` iterations. The start band's cost is its own when it has one, else
-/// its licence's share of the pin target. A band holding the reference's first wrap (cur ≈
+/// its license's share of the pin target. A band holding the reference's first wrap (cur ≈
 /// `orbit_len`, the rebase storm, 10–70× the cold cost) is entered only if its cost was measured
 /// against this same length. Returns the end, the band byte (`span_band_code`) and the cost predicted.
 ///
-/// ⭐Why: `pin_span_end` sums its bands' LICENCES, and a licence is a price extrapolated ×4–×16; where
+/// ⭐Why: `pin_span_end` sums its bands' LICENSES, and a license is a price extrapolated ×4–×16; where
 /// cost jumps between bands its spans ran 2–3× over their price (design/live-zoom-smoothing.md §7.3).
 /// A cost is what the band took, the last time it was walked. At 2^260 on the (49,3) spiral every
 /// band's pass cost 1.1–1.7 ms whatever its length, and one band a pass made each pin nine passes and
@@ -11495,14 +11496,14 @@ mod live_refresh_tests;
 /// when the tail bands contained escapes the window collapsed onto the top of the range and the
 /// whole exterior rendered FLAT; when they did not, an earlier wider window survived and the
 /// same view rendered its true noise. (Field report: "near this minibrot it sometimes resolves
-/// to noise or a flat coloring" — same neighbourhood, nondeterministic by escape distribution.)
+/// to noise or a flat coloring" — same neighborhood, nondeterministic by escape distribution.)
 /// So: readings ACCUMULATE (min-min/max-max) while a progression is mid-flight, and the EMA is
 /// fed once, with the whole-ask range, when it completes — which is also exactly one feed per
-/// settled frame in the un-chunked case, the pre-walk behaviour.
+/// settled frame in the un-chunked case, the pre-walk behavior.
 /// What a live-normalization reading may do to the mapping, given where the view stands.
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]
 pub(crate) enum NormFeed {
-    /// Motion: chase the reading with the EMA, exactly the pre-hold behaviour — a dive's
+    /// Motion: chase the reading with the EMA, exactly the pre-hold behavior — a dive's
     /// mapping glides instead of snapping per frame.
     Chase,
     /// First settled reading of this view signature: adopt the whole-frame reading OUTRIGHT
@@ -11517,13 +11518,13 @@ pub(crate) enum NormFeed {
 
 /// The live half of "the palette mapping moves while the image resolves": decide the
 /// mapping ONCE per view and hold it while that view refines. The signature is the set of
-/// inputs whose change makes it a genuinely different picture (view centre, depth, and the
+/// inputs whose change makes it a genuinely different picture (view center, depth, and the
 /// iteration ask — a budget raise extends real escapes, so re-deciding there is honest);
 /// everything else that produces a fresh reading — supersampling stages, tiles, walk
 /// refreshes — shares the signature and is held. Pure, so the state machine is testable
 /// without a GPU. Rhymes with the offline sequence fix: decide from the VIEW, never from
 /// render history.
-/// The live-normalization view signature: centre, depth and the iteration ask.
+/// The live-normalization view signature: center, depth and the iteration ask.
 ///
 /// ⭐**ONE definition, used by BOTH the frame that submits a reading and the frame that drains it.**
 /// Two hand-rolled copies of this expression is how a producer and a consumer come to disagree
@@ -11548,7 +11549,7 @@ pub(crate) fn norm_signature(cx: f64, cy: f64, log2mag: f64, budget: u32) -> u64
 /// decide-once-and-hold mapping could lock onto a range measured somewhere else entirely. The field
 /// case (2026-09-04, an e10000 Misiurewicz jump): a shallow `[6, 191]` adopted and LOCKED for a
 /// view whose real escapes sit at `[181573, 182297]`, which under the log mapping is one flat
-/// colour. `norm_hold_break` heals that within one reading; this stops it happening.
+/// color. `norm_hold_break` heals that within one reading; this stops it happening.
 ///
 /// ⭐**The race is not rare.** Measured over a real `--autodive 24`: 1,569 fresh readings, and
 /// **63% carried a signature different from the view on screen**. Nearly all of those are motion,
@@ -11584,7 +11585,7 @@ pub(crate) fn norm_feed_decision(sig: u64, prev_sig: u64, locked: bool, interact
 /// reading can be drained under the NEW view's signature — `nsig` is computed at drain time,
 /// the reading belongs to a render submitted frames earlier — so a shallow range like
 /// [6, 191] gets adopted and LOCKED for a view whose real escapes sit at [181573, 182297].
-/// Under the log mapping that is ln(v−6) over a 0.4% band — ONE FLAT COLOUR (linear merely
+/// Under the log mapping that is ln(v−6) over a 0.4% band — ONE FLAT COLOR (linear merely
 /// aliases, which is why "without log it works" was the report). The break re-adopts within
 /// one reading, healing every variant of the wrong-adopt race; the structural fix (tagging
 /// readings with the SUBMITTING frame's signature) is filed in TODO.md.
@@ -11620,10 +11621,10 @@ pub(crate) fn norm_glide_is_reacquire(shown: (f32, f32), target: (f32, f32)) -> 
 /// One frame's step of the SHOWN palette window toward the fed target.
 ///
 /// The target moves in steps — one per escape-range reading, every few frames — and each step
-/// recolours the whole picture. Gliding turns a step into a drift. ⭐**How fast colours may drift is
+/// recolors the whole picture. Gliding turns a step into a drift. ⭐**How fast colors may drift is
 /// a question about the EYE, so it is paced in TIME and measured in PALETTE CYCLES**
 /// ([`window_change`]): the window closes on its target with a time constant of [`GLIDE_TAU_S`],
-/// and no colour anywhere in it moves faster than [`PALETTE_MAX_SPEED`] cycles a second.
+/// and no color anywhere in it moves faster than [`PALETTE_MAX_SPEED`] cycles a second.
 ///
 /// ⛔**The glide this replaces was paced per FRAME in window WIDTHS** (15% of the gap, at most 6%
 /// of the width, per frame). Six percent of the width is ~0.2 palette cycles at the window's ends
@@ -11632,8 +11633,8 @@ pub(crate) fn norm_glide_is_reacquire(shown: (f32, f32), target: (f32, f32)) -> 
 /// the worst second, the strobe in the user's video — and at 120 fps it ran twice as fast as at 60.
 ///
 /// ⭐**A gap of more than [`GLIDE_CUT`] cycles is not glided at all**: sweeping it would pass the
-/// picture through every colour of the palette. It is taken outright, and the drawn map's change is
-/// DISSOLVED (`palette_fade_step`), which passes through blends of two colours instead. Not while a
+/// picture through every color of the palette. It is taken outright, and the drawn map's change is
+/// DISSOLVED (`palette_fade_step`), which passes through blends of two colors instead. Not while a
 /// dissolve is still running (`pace.can_cut`), which a cut would cut short: then the glide crawls
 /// at the speed limit until it ends.
 ///
@@ -11655,13 +11656,13 @@ pub(crate) fn norm_glide_step(shown: Option<(f32, f32)>, target: (f32, f32), sna
     }
     /// W6 (U58): the residual, as a fraction of the window's width, under which the glide lands
     /// exactly. Geometric alone only approaches, an f32 ulp at a time, and the SSAA average —
-    /// whose colour signature includes this window — could not begin until it stopped.
+    /// whose color signature includes this window — could not begin until it stopped.
     const ARRIVE: f32 = 0.005;
     // A slow frame advances the glide no more than a tenth of a second.
     let dt = pace.dt_s.clamp(0.0, 0.1);
     let a = 1.0 - (-dt / GLIDE_TAU_S).exp();
     let mut next = (slo + (target.0 - slo) * a, shi + (target.1 - shi) * a);
-    // The speed limit, in the map's own terms: scale the step down until no colour in the window
+    // The speed limit, in the map's own terms: scale the step down until no color in the window
     // moves faster (the change is nearly linear in a small step; three passes make it so).
     let budget = PALETTE_MAX_SPEED * dt;
     for _ in 0..3 {
@@ -11683,14 +11684,14 @@ pub(crate) fn norm_glide_step(shown: Option<(f32, f32)>, target: (f32, f32), sna
 /// this long. Short enough to track a zoom's own drift within a few percent of the window (the
 /// user's 2026-10-25 dive grew its window ~8% a second), long enough that a step reads as a drift.
 pub(crate) const GLIDE_TAU_S: f32 = 0.2;
-/// The fastest the glide may move any colour in the window, palette cycles per second. The user's
+/// The fastest the glide may move any color in the window, palette cycles per second. The user's
 /// strobe moved them six times faster; a zoom's own drift moved them well under one.
 pub(crate) const PALETTE_MAX_SPEED: f32 = 1.5;
 /// A gap between the shown window and its target, in palette cycles, past which the glide cuts
 /// (and the drawn map dissolves) rather than sweeping the picture through the palette.
 pub(crate) const GLIDE_CUT: f32 = 1.0;
 
-/// What a palette window's colours depend on besides the window: how many palette sweeps span it
+/// What a palette window's colors depend on besides the window: how many palette sweeps span it
 /// (`0.5 + cycle·6`, as [`FractadyneApp::norm_map_for`]) and whether the log form is asked for.
 #[derive(Clone, Copy, Debug, PartialEq)]
 pub(crate) struct NormShape {
@@ -11698,7 +11699,7 @@ pub(crate) struct NormShape {
     pub(crate) log_palette: bool,
 }
 
-/// How one frame may move a palette window: its time step, the colouring, and whether it may cut
+/// How one frame may move a palette window: its time step, the coloring, and whether it may cut
 /// (no dissolve under way).
 #[derive(Clone, Copy, Debug, PartialEq)]
 pub(crate) struct NormPace {
@@ -11721,9 +11722,9 @@ pub(crate) fn window_phase(w: (f32, f32), v: f32, s: NormShape) -> f32 {
     p as f32
 }
 
-/// How far, in palette cycles, changing window `a` to `b` moves the colour of the escape values
+/// How far, in palette cycles, changing window `a` to `b` moves the color of the escape values
 /// both describe, as the screen shows it: the phase is carried (`phase_carry_step`), so the change
-/// at `b`'s middle value is not seen, and a window that only SLIDES moves no colour at all. The
+/// at `b`'s middle value is not seen, and a window that only SLIDES moves no color at all. The
 /// largest change relative to the middle's, over both windows' ends and points between, spaced
 /// finely near the floor, where a log map is steepest.
 pub(crate) fn window_change(a: (f32, f32), b: (f32, f32), s: NormShape) -> f32 {
@@ -11773,7 +11774,7 @@ impl DrawnNorm {
 /// way to a live one (2026-10-21, the `palette` trace). So a change of source glides at the live
 /// window's own pace (`norm_glide_step`, `pace`) until it arrives — or, more than a palette cycle
 /// away, is cut, and the drawn map dissolves (`palette_fade_step`) — and only then tracks the wanted
-/// window exactly: a live view gains no lag. `None` wanted (classic colouring) draws no window.
+/// window exactly: a live view gains no lag. `None` wanted (classic coloring) draws no window.
 pub(crate) fn drawn_norm_step(prev: Option<DrawnNorm>, want: Option<(f32, f32)>, held: bool, pace: NormPace) -> Option<DrawnNorm> {
     let want = want?;
     let Some(p) = prev else { return Some(DrawnNorm { win: want, want, held, tracking: true }) };
@@ -11797,27 +11798,27 @@ pub(crate) const PALETTE_FADE_S: f32 = 0.4;
 /// A view's palette maps for dissolving between them (`Perf::palette_fade`).
 #[derive(Clone, Copy, Debug, Default, PartialEq)]
 pub(crate) struct PaletteFadeState {
-    /// The map the last frame was drawn under, whether it was a normalised one, and the user's
-    /// colouring then (`norm_user_sig`).
+    /// The map the last frame was drawn under, whether it was a normalized one, and the user's
+    /// coloring then (`norm_user_sig`).
     last: Option<(NormMap, bool, u64)>,
     /// The dissolve under way: the map it fades from, and that map's remaining weight.
     fade: Option<(NormMap, f32)>,
 }
 
 /// ⭐One frame of the palette dissolve. The drawn window (`drawn_norm_step`) glides within one kind
-/// of map, but the KIND can change too: "Normalize deep colors" switches the normalised map on or
-/// off as the field starts or stops aliasing, and a normalised map turns from linear to log as its
+/// of map, but the KIND can change too: "Normalize deep colors" switches the normalized map on or
+/// off as the field starts or stops aliasing, and a normalized map turns from linear to log as its
 /// range grows heavy-tailed. No window joins two kinds, and interpolating their parameters would
-/// sweep the colours through many palette cycles; drawn at once it is a cut, measured as one phase
+/// sweep the colors through many palette cycles; drawn at once it is a cut, measured as one phase
 /// step of 0.22–0.33 of a palette cycle near the end of a 16-octave glide (2026-10-21). So a change of
-/// kind starts a dissolve from the last frame's map, which the colour pass blends in with a weight
-/// falling from 1 to 0 over [`PALETTE_FADE_S`]. The user's own colouring changing snaps instead, as
-/// every colour control does. Returns the new state and the fade this frame draws.
+/// kind starts a dissolve from the last frame's map, which the color pass blends in with a weight
+/// falling from 1 to 0 over [`PALETTE_FADE_S`]. The user's own coloring changing snaps instead, as
+/// every color control does. Returns the new state and the fade this frame draws.
 ///
-/// ⭐**So does a JUMP within one kind.** A normalised map whose window is cut (`norm_glide_step`
+/// ⭐**So does a JUMP within one kind.** A normalized map whose window is cut (`norm_glide_step`
 /// past [`GLIDE_CUT`], a settled view adopting its mapping, a hold broken, a held picture far from
-/// the live one) recolours the picture by up to several palette cycles in one frame — the cut the
-/// glide exists to avoid. Any frame whose map moves a colour of the drawn window `win` by more than
+/// the live one) recolors the picture by up to several palette cycles in one frame — the cut the
+/// glide exists to avoid. Any frame whose map moves a color of the drawn window `win` by more than
 /// [`PALETTE_JUMP`] cycles ([`map_change`]) dissolves from the last frame's map, unless a dissolve
 /// more than half done is still running: restarting it then would drop most of ITS old map at once.
 pub(crate) fn palette_fade_step(
@@ -11871,7 +11872,7 @@ pub(crate) const PALETTE_JUMP: f32 = 0.2;
 /// A view's palette PHASE carried from frame to frame (`Perf::palette_phase`).
 #[derive(Clone, Copy, Debug, Default, PartialEq)]
 pub(crate) struct PhaseCarry {
-    /// The last frame's map before the carry, its window, and the user's colouring then.
+    /// The last frame's map before the carry, its window, and the user's coloring then.
     last: Option<(NormMap, (f32, f32), u64)>,
     /// Palette cycles added to the map's offset, within half a cycle either way.
     debt: f32,
@@ -11888,21 +11889,21 @@ impl PhaseCarry {
 /// at most half a cycle, so a stop settles within a second.
 pub(crate) const PHASE_SETTLE_SPEED: f32 = 0.6;
 
-/// ⭐One frame of the carried palette PHASE. A normalised map pins the palette to its window's floor
+/// ⭐One frame of the carried palette PHASE. A normalized map pins the palette to its window's floor
 /// (`norm_map_for`: the floor is palette position 0), so while a zoom slides the window up, every
-/// colour in the picture rotates through the palette even when nothing else about the picture
+/// color in the picture rotates through the palette even when nothing else about the picture
 /// changes: on the 2026-10-25 path, two palette cycles a second of the drift were the window
-/// SLIDING, a tenth of one its WIDENING. Only the window's width matters to what normalisation is
+/// SLIDING, a tenth of one its WIDENING. Only the window's width matters to what normalization is
 /// for — the palette's DENSITY, cycles per iteration — and the palette repeats, so its phase is
-/// free. So the phase is carried: each frame adds to the map's offset whatever keeps the colour of
-/// the window's middle value where the last frame drew it. A slide then recolours nothing (each
-/// escape value keeps its colour as its feature moves across the screen, as under a fixed palette);
-/// a widening recolours values in proportion to their distance from the middle.
+/// free. So the phase is carried: each frame adds to the map's offset whatever keeps the color of
+/// the window's middle value where the last frame drew it. A slide then recolors nothing (each
+/// escape value keeps its color as its feature moves across the screen, as under a fixed palette);
+/// a widening recolors values in proportion to their distance from the middle.
 ///
 /// The carry is kept within half a cycle (a whole cycle is invisible), and a view at rest gives it
-/// back at [`PHASE_SETTLE_SPEED`], so a still picture is coloured by its view alone, the same
+/// back at [`PHASE_SETTLE_SPEED`], so a still picture is colored by its view alone, the same
 /// however it was reached — a uniform rotation of at most half a cycle after a stop. Classic
-/// colouring, a change of map kind (dissolved by `palette_fade_step`) and the user's own colouring
+/// coloring, a change of map kind (dissolved by `palette_fade_step`) and the user's own coloring
 /// changing carry nothing. Returns the new state and the phase to add to this frame's offset.
 pub(crate) fn phase_carry_step(
     st: PhaseCarry,
@@ -11936,7 +11937,7 @@ pub(crate) fn phase_carry_step(
 #[path = "../tests/unit/render/phase_carry.rs"]
 mod phase_carry;
 
-/// How far, in palette cycles, changing map `a` to `b` moves the colour of the escape values in
+/// How far, in palette cycles, changing map `a` to `b` moves the color of the escape values in
 /// window `w`: the largest change over its ends and points between, spaced finely near the floor.
 /// Whole cycles are no change — the palette repeats, and the carried phase (`phase_carry_step`)
 /// wraps by exactly one — so the change at the window's middle counts only to its nearest whole
@@ -11983,7 +11984,7 @@ pub(crate) fn hold_scale_floor(jumped: bool) -> f32 {
 #[path = "../tests/unit/render/hold_scale_floor_tests.rs"]
 mod hold_scale_floor_tests;
 
-/// ⭐**0.5 is Nyquist.** A palette step of more than half a period between neighbouring pixels
+/// ⭐**0.5 is Nyquist.** A palette step of more than half a period between neighboring pixels
 /// cannot be resolved on screen — past that the banding IS noise. This is the per-PAIR limit; how
 /// much of the frame must pass it before the guard engages is `tunables::ALIAS_FRACTION_LIMIT`.
 pub(crate) const ALIAS_PHASE_LIMIT: f32 = 0.5;
@@ -12070,7 +12071,7 @@ mod norm_window;
 /// a moving view's chunked walk restarts at every refresh, so fed as whole-frame ranges its
 /// readings made the window's top a sawtooth — 1,758 → 3,150 → 6,582 → 10,238, then back to
 /// 1,758, about 2.5 times a second — and the EMA and the glide turned the sawtooth into a steady
-/// swell and shrink of every colour on screen.
+/// swell and shrink of every color on screen.
 pub(crate) fn norm_reading_bound(
     reading: (f32, f32),
     complete: bool,
@@ -12178,7 +12179,7 @@ mod norm_palette_top;
 /// ⭐⭐**SA IS ALL-OR-NOTHING.** It hands the shader the orbit state AT iteration `skip`, so the
 /// shader seeds `iter = sa_skip` and then runs `loop { if (iter >= max_iter) { break; } … }`.
 /// A skip at or past `max_iter` therefore breaks the loop on entry: every pixel exits with
-/// `iter >= max_iter`, is classified as max-iter-exhausted, and colours as INTERIOR. **The whole
+/// `iter >= max_iter`, is classified as max-iter-exhausted, and colors as INTERIOR. **The whole
 /// frame renders BLACK.**
 ///
 /// ⛔That is a real field report (2026-08-25, dual view at 6.2e39×): toggling "Auto-scale
@@ -12216,7 +12217,7 @@ mod norm_map_choice;
 /// `std::thread::spawn` with a NAME. Every `[crumb]` line and every crash report names the thread
 /// that wrote it, and the reference-build workers were unnamed — so the watchdog's last-activity
 /// line read `reference built [live]: … [?]`, and a breadcrumb could not be told from one written
-/// on another thread. Same failure behaviour as `thread::spawn` (it panics if the OS refuses).
+/// on another thread. Same failure behavior as `thread::spawn` (it panics if the OS refuses).
 pub(crate) fn spawn_named<F: FnOnce() + Send + 'static>(name: &str, f: F) {
     std::thread::Builder::new()
         .name(name.to_string())
@@ -12633,7 +12634,7 @@ pub(crate) fn motion_res_step(cur: f64, dt_ms: f64, floor: f64) -> f64 {
 mod present_throttle_tests;
 
 /// The settled repaint beat while the view is not quiescent. Ordinarily 4× the frame EMA held to
-/// 250–1000 ms, so a settling view is not redrawn at full rate (the colour pass is uncached).
+/// 250–1000 ms, so a settling view is not redrawn at full rate (the color pass is uncached).
 ///
 /// ⭐⭐**But while a chunk pass is IN FLIGHT the beat must stay UNDER `CHUNK_DRAIN_DT_MS`.** The pass
 /// is released only by a QUICK PRESENT (`last_dt_ms < CHUNK_DRAIN_DT_MS` — the proof the queue
@@ -12728,10 +12729,10 @@ pub(crate) const IDLE_DISPATCH_FRAMES: u64 = 8;
 /// hand-maintained conditions that drift (the `live_iter_budget` lesson). Before this, the panel
 /// said "idle" while the heartbeat kept re-rendering the frame that said it: a fresh default
 /// session ticked 3.7 fps and 2.8% CPU forever at the home view, and ~25% GPU duty at a deep
-/// view whose colour pass costs ~234 ms, redrawing a picture already on screen.
+/// view whose color pass costs ~234 ms, redrawing a picture already on screen.
 ///
 /// ⚠**Every mistake here must bias toward BEATING.** A false "busy" costs one cosmetic
-/// heartbeat (today's behaviour); a false "idle" would stop refreshing the readouts. It can
+/// heartbeat (today's behavior); a false "idle" would stop refreshing the readouts. It can
 /// never stall the RENDERER: egui takes the earliest of all requested repaints, so withholding
 /// this one cannot suppress another source's, and every real activity source — settle walks,
 /// in-flight recomputes, palette/DE/light/orbit animation, tours, autopilot, toasts — already

@@ -1,4 +1,4 @@
-//! Tests for the colour picker's vocabulary and its round trip.
+//! Tests for the color picker's vocabulary and its round trip.
 //!
 //! ⚠The square and the strip are pointer widgets and rest on the author's eye, as everything
 //! drag-driven in this app does. What does not is the naming the user reads and the HSV round trip
@@ -27,7 +27,7 @@ fn the_row_labels_are_in_the_users_vocabulary_not_the_implementations() {
     assert_eq!(labels.len(), 3);
 }
 
-/// The square and the strip both round-trip through HSV, so a colour dragged and left alone has to
+/// The square and the strip both round-trip through HSV, so a color dragged and left alone has to
 /// come back unchanged — otherwise merely opening the picker would nudge the gradient.
 #[test]
 fn hsv_round_trips_for_every_colour_the_square_can_produce() {
@@ -49,18 +49,18 @@ fn hsv_round_trips_for_every_colour_the_square_can_produce() {
     }
 }
 
-/// ⭐⭐**Why the picker keeps its own hue instead of reading it back off the colour each frame.**
-/// A grey has no hue, and `rgb_to_hsv` reports 0 — red — for anything unsaturated. Recomputing
+/// ⭐⭐**Why the picker keeps its own hue instead of reading it back off the color each frame.**
+/// A gray has no hue, and `rgb_to_hsv` reports 0 — red — for anything unsaturated. Recomputing
 /// every frame would snap the hue cursor to the far left the moment the user dragged the square to
-/// the greys, losing the hue they were working in.
+/// the grays, losing the hue they were working in.
 #[test]
 fn an_unsaturated_colour_has_no_hue_to_read_back() {
     for grey in [0.0_f32, 0.25, 0.5, 1.0] {
         let (h, s, _) = rgb_to_hsv([grey, grey, grey]);
-        assert_eq!(s, 0.0, "a grey must report zero saturation");
+        assert_eq!(s, 0.0, "a gray must report zero saturation");
         assert_eq!(h, 0.0, "and its hue reads as 0 (red) — which is why it must not be trusted");
     }
-    // A saturated colour DOES have a real hue, which is the case the picker trusts.
+    // A saturated color DOES have a real hue, which is the case the picker trusts.
     let (h, s, _) = rgb_to_hsv([0.0, 0.0, 1.0]);
     assert!(s > 0.9);
     assert!((h - 2.0 / 3.0).abs() < 1.0e-3, "pure blue sits two thirds round the wheel, got {h}");

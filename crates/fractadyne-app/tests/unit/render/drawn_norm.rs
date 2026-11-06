@@ -3,7 +3,7 @@ use super::*;
 const SHAPE: NormShape = NormShape { sweeps: 0.5 + 0.52 * 6.0, log_palette: false };
 const PACE: NormPace = NormPace { dt_s: 1.0 / 60.0, shape: SHAPE, can_cut: true };
 
-/// The fastest one-frame change of colour (palette cycles) over `frames` frames.
+/// The fastest one-frame change of color (palette cycles) over `frames` frames.
 fn walk(mut d: Option<DrawnNorm>, frames: usize, want: impl Fn(usize) -> (f32, f32), held: bool) -> (Option<DrawnNorm>, f32) {
     let mut worst = 0.0_f32;
     for k in 0..frames {
@@ -30,7 +30,7 @@ fn a_held_picture_with_another_window_is_reached_by_gliding_then_tracked() {
     // Live at [1000, 2000]; a worker frame goes into the hold wanting [1040, 2100]: no snap.
     let live = drawn_norm_step(None, Some((1000.0, 2000.0)), false, PACE);
     let (d, worst) = walk(live, 120, |_| (1040.0, 2100.0), true);
-    assert!(worst <= PALETTE_MAX_SPEED * PACE.dt_s * 1.001 + 1e-6, "a frame moved the colours {worst} cycles");
+    assert!(worst <= PALETTE_MAX_SPEED * PACE.dt_s * 1.001 + 1e-6, "a frame moved the colors {worst} cycles");
     let d = d.unwrap();
     assert_eq!(d.win, (1040.0, 2100.0), "and it arrives");
     assert!(d.tracking);
@@ -63,7 +63,7 @@ fn a_far_window_or_another_picture_is_taken_outright_and_classic_colours_draw_no
     assert_eq!(drawn_norm_step(held, Some((40_000.0, 60_000.0)), false, PACE).unwrap().win, (40_000.0, 60_000.0));
     let live = drawn_norm_step(None, Some((1000.0, 2000.0)), false, PACE);
     assert_eq!(drawn_norm_step(live, Some((1000.0, 5000.0)), true, PACE).unwrap().win, (1000.0, 5000.0));
-    // Classic colouring: nothing to draw, and the next window starts from itself.
+    // Classic coloring: nothing to draw, and the next window starts from itself.
     assert_eq!(drawn_norm_step(held, None, false, PACE), None);
     assert_eq!(drawn_norm_step(None, Some((5.0, 9.0)), false, PACE).unwrap().win, (5.0, 9.0));
 }

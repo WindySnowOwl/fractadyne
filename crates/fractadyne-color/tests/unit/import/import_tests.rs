@@ -1,7 +1,7 @@
 use super::*;
 use crate::segment::LUT_SIZE;
 
-/// The first sixteen lines of Fractint's `default.map` — the EGA/VGA text colours. Real data, not
+/// The first sixteen lines of Fractint's `default.map` — the EGA/VGA text colors. Real data, not
 /// a synthesised fixture: `design/palette-import.md` records that entries 0–15 are a system
 /// palette that happens to live in the file, and these are the exact values.
 const DEFAULT_MAP_HEAD: &str = "\
@@ -23,7 +23,7 @@ const DEFAULT_MAP_HEAD: &str = "\
 252 252 252
 ";
 
-/// A `.map` reads one colour per line, in file order, with the values it carries.
+/// A `.map` reads one color per line, in file order, with the values it carries.
 #[test]
 fn reads_one_color_per_line() {
     let m = parse_map(DEFAULT_MAP_HEAD).unwrap();
@@ -55,7 +55,7 @@ fn detects_the_six_bit_vga_table_without_rescaling() {
     assert!(!parse_map("0 0 0\n4 8 12\n").unwrap().vga_6bit);
 }
 
-/// Comments, blank lines and trailing colour names are all part of real files.
+/// Comments, blank lines and trailing color names are all part of real files.
 #[test]
 fn tolerates_what_real_files_carry() {
     let m = parse_map("; a comment header\n\n255 0 0 red\n0 255 0   green\n\n0 0 255 ; blue\n")
@@ -78,8 +78,8 @@ fn stops_at_256_entries() {
 #[test]
 fn rejects_what_is_not_a_map() {
     for (text, want) in [
-        ("", "found 0 colours"),
-        ("255 0 0\n", "found 1 colour"),
+        ("", "found 0 colors"),
+        ("255 0 0\n", "found 1 color"),
         ("255 0\n0 0 0\n", "line 1"),
         ("255 0 0\n300 0 0\n", "line 2"),
         ("#ff0000\n#00ff00\n", "line 1"),
@@ -171,7 +171,7 @@ fn ugr_returns_every_gradient_in_the_file() {
     assert_eq!(gs[0].title.as_deref(), Some("blatte10"));
     assert_eq!(gs[1].name, "second");
     assert_eq!(gs[1].title.as_deref(), Some("the other one"));
-    // The index/colour run pairs up across line breaks — whitespace carries no meaning in a block.
+    // The index/color run pairs up across line breaks — whitespace carries no meaning in a block.
     assert_eq!(gs[0].stops.len(), 4);
     assert_eq!(gs[0].stops.iter().map(|(i, _)| *i).collect::<Vec<_>>(), vec![0, 25, 56, 399]);
 }
@@ -211,7 +211,7 @@ fn ugr_divides_by_255_so_full_is_white() {
     assert_eq!(g.stops[0].1, [1.0, 1.0, 1.0]);
 }
 
-/// ⭐Indices run 0–399, so position is `index / 399` — not /255 and not already-normalised.
+/// ⭐Indices run 0–399, so position is `index / 399` — not /255 and not already-normalized.
 #[test]
 fn ugr_index_range_is_0_to_399() {
     assert_eq!(UGR_INDEX_MAX, 399);
@@ -219,7 +219,7 @@ fn ugr_index_range_is_0_to_399() {
     // index 0 and index 399 are the ends, so the gradient covers 0..1 with no flat clamps.
     assert_eq!(g.segments.first().unwrap().left, 0.0);
     assert_eq!(g.segments.last().unwrap().right, 1.0);
-    // index 25 of 399 lands at 0.0627, and the colour there is that stop's colour.
+    // index 25 of 399 lands at 0.0627, and the color there is that stop's color.
     let at = g.eval(25.0 / 399.0);
     let want = parse_ugr(UGR_SAMPLE).unwrap()[0].stops[1].1;
     for ch in 0..3 {
@@ -247,7 +247,7 @@ fn ugr_rotation_shifts_the_ring() {
     assert!(just_past[0] > 0.9 && just_past[2] < 0.1, "expected red just past 0.25, got {just_past:?}");
     let just_before = rotated.eval(0.24);
     assert!(just_before[2] > 0.9 && just_before[0] < 0.1, "expected blue before 0.25, got {just_before:?}");
-    // A rotation must not lose or invent colour: still covers 0..1 contiguously.
+    // A rotation must not lose or invent color: still covers 0..1 contiguously.
     assert_eq!(rotated.segments.first().unwrap().left, 0.0);
     assert_eq!(rotated.segments.last().unwrap().right, 1.0);
     for w in rotated.segments.windows(2) {
@@ -263,7 +263,7 @@ fn ugr_opacity_section_is_separate() {
     assert_eq!(gs[0].opacity, vec![(0, 1.0)]);
     assert!(!gs[0].smooth, "smooth=no on the gradient");
     assert!(gs[1].smooth, "smooth=yes on the gradient");
-    // The opacity section's stops did not become colours.
+    // The opacity section's stops did not become colors.
     assert_eq!(gs[0].stops.len(), 4);
 }
 
@@ -283,7 +283,7 @@ fn ugr_rejects_a_file_with_no_gradients() {
     assert!(parse_ugr("").is_err());
     assert!(parse_ugr("just some text\n").is_err());
     assert!(parse_ugr("empty {\n}\n").is_err());
-    // A colour with no index before it is a malformed block, and says so.
+    // A color with no index before it is a malformed block, and says so.
     let e = parse_ugr("b {\ngradient:\ncolor=255 index=0 color=0\n}\n").unwrap_err();
     assert!(e.contains("no index="), "got {e:?}");
 }
@@ -319,22 +319,22 @@ fn ggr_reads_the_gimp_format() {
 }
 
 /// ⭐⭐**`.ggr` needs no lowering — a file segment IS a model segment.** The three things only this
-/// format carries must survive verbatim: the shifted midpoint, the blend function, and the colour
+/// format carries must survive verbatim: the shifted midpoint, the blend function, and the color
 /// space. Approximating any of them is the whole failure mode the segment model exists to avoid.
 #[test]
 fn ggr_carries_midpoint_blend_and_space_verbatim() {
     use crate::segment::{Blend, Space};
     let g = parse_ggr(GGR_SAMPLE).unwrap();
 
-    // Midpoint 0.25 inside a 0.0-0.5 span is CENTRED; segment 2's 0.75 inside 0.5-0.8 is not.
+    // Midpoint 0.25 inside a 0.0-0.5 span is CENTERED; segment 2's 0.75 inside 0.5-0.8 is not.
     assert_eq!(g.segments[0].mid, 0.25);
     assert_eq!(g.segments[1].mid, 0.75);
     assert!(
         (g.segments[1].mid - 0.5 * (g.segments[1].left + g.segments[1].right)).abs() > 1e-3,
-        "segment 2's midpoint is off-centre and must not be re-centred on import",
+        "segment 2's midpoint is off-center and must not be re-centered on import",
     );
 
-    // blend / colour columns, in GIMP's numbering.
+    // blend / color columns, in GIMP's numbering.
     assert_eq!(g.segments[0].blend, Blend::Linear);
     assert_eq!(g.segments[1].blend, Blend::Sine);
     assert_eq!(g.segments[0].space, Space::Rgb);
@@ -358,7 +358,7 @@ fn ggr_carries_midpoint_blend_and_space_verbatim() {
     );
 }
 
-/// ⚠Colours are DISPLAY-space 0..1 and pass straight through — converting them here is the same
+/// ⚠Colors are DISPLAY-space 0..1 and pass straight through — converting them here is the same
 /// mistake that made every pasted palette one sRGB decode too dark before beta.21.
 #[test]
 fn ggr_colors_are_display_space_and_pass_through() {
@@ -367,7 +367,7 @@ fn ggr_colors_are_display_space_and_pass_through() {
     )
     .unwrap();
     let c = g.segments[0].left_color;
-    assert!((c[0] - 0.501961).abs() < 1e-5, "mid grey was transformed: {c:?}");
+    assert!((c[0] - 0.501961).abs() < 1e-5, "mid gray was transformed: {c:?}");
     // The value that an sRGB->linear decode would have produced, named so a regression is obvious.
     assert!((c[0] - 0.2159).abs() > 0.2, "regressed to a linear decode: {}", c[0]);
 }
@@ -380,8 +380,8 @@ fn ggr_name_line_is_optional() {
     assert_eq!(g.segments.len(), 1);
 }
 
-/// GIMP 2.x writes two extra columns recording where each endpoint's colour comes from; they are
-/// read and ignored, because "the current foreground colour" is not a thing a renderer has.
+/// GIMP 2.x writes two extra columns recording where each endpoint's color comes from; they are
+/// read and ignored, because "the current foreground color" is not a thing a renderer has.
 #[test]
 fn ggr_accepts_the_fifteen_column_form() {
     let g = parse_ggr("GIMP Gradient\nName: x\n1\n0 0.5 1 0 0 0 1 1 1 1 1 0 0 0 0\n").unwrap();
@@ -408,7 +408,7 @@ fn ggr_rejects_what_it_cannot_read() {
     }
 }
 
-/// The blend and colour-space numbers are a FILE FORMAT, in both directions — a session stores
+/// The blend and color-space numbers are a FILE FORMAT, in both directions — a session stores
 /// them too, so a reordering of the enums without updating the mapping would re-interpret every
 /// saved gradient.
 #[test]
@@ -425,7 +425,7 @@ fn blend_and_space_numbers_round_trip() {
         assert_eq!(b.as_u8(), n);
     }
     for (n, s) in [(0, Space::Rgb), (1, Space::HsvCcw), (2, Space::HsvCw)] {
-        assert_eq!(Space::from_u8(n), s, "GIMP colouring {n}");
+        assert_eq!(Space::from_u8(n), s, "GIMP coloring {n}");
         assert_eq!(s.as_u8(), n);
     }
     // An out-of-range number falls back to the safe default rather than panicking on a bad file.
@@ -442,7 +442,7 @@ fn blend_and_space_numbers_round_trip() {
 ///
 /// ⚠**This fixture and the parser share one author's understanding of the format**, so agreeing
 /// proves consistency, not correctness — see the ⚠⚠ on `parse_ase`. What the tests below CAN show
-/// is that the endianness, the block walk and the colour models behave as the layout says, and
+/// is that the endianness, the block walk and the color models behave as the layout says, and
 /// that a file which disagrees is rejected rather than half-read.
 fn ase_bytes(blocks: &[(u16, Vec<u8>)]) -> Vec<u8> {
     let mut v = b"ASEF".to_vec();
@@ -457,7 +457,7 @@ fn ase_bytes(blocks: &[(u16, Vec<u8>)]) -> Vec<u8> {
     v
 }
 
-/// One colour block body: a UTF-16BE name, a 4-byte model tag, big-endian f32 values, a kind word.
+/// One color block body: a UTF-16BE name, a 4-byte model tag, big-endian f32 values, a kind word.
 fn ase_color(name: &str, model: &[u8; 4], values: &[f32]) -> (u16, Vec<u8>) {
     let mut b = Vec::new();
     let units: Vec<u16> = name.encode_utf16().chain(std::iter::once(0)).collect();
@@ -478,19 +478,19 @@ fn ase_color(name: &str, model: &[u8; 4], values: &[f32]) -> (u16, Vec<u8>) {
 fn ase_reads_rgb_swatches_in_order() {
     let data = ase_bytes(&[
         ase_color("red", b"RGB ", &[1.0, 0.0, 0.0]),
-        ase_color("mid grey", b"RGB ", &[0.501961, 0.501961, 0.501961]),
+        ase_color("mid gray", b"RGB ", &[0.501961, 0.501961, 0.501961]),
         ase_color("blue", b"RGB ", &[0.0, 0.0, 1.0]),
     ]);
     let c = parse_ase(&data).unwrap();
     assert_eq!(c.len(), 3);
     assert_eq!(c[0], [1.0, 0.0, 0.0]);
     assert_eq!(c[2], [0.0, 0.0, 1.0]);
-    // Display space, like every other colour in this crate — not an sRGB decode.
-    assert!((c[1][0] - 0.501961).abs() < 1e-5, "mid grey was transformed: {:?}", c[1]);
+    // Display space, like every other color in this crate — not an sRGB decode.
+    assert!((c[1][0] - 0.501961).abs() < 1e-5, "mid gray was transformed: {:?}", c[1]);
     assert!((c[1][0] - 0.2159).abs() > 0.2, "regressed to a linear decode");
 }
 
-/// Group markers carry no colour; flattening them is right for a gradient, where the file's ORDER
+/// Group markers carry no color; flattening them is right for a gradient, where the file's ORDER
 /// is the only structure that survives.
 #[test]
 fn ase_flattens_groups() {
@@ -505,11 +505,11 @@ fn ase_flattens_groups() {
         ase_color("c", b"RGB ", &[0.0, 0.0, 1.0]),
     ]);
     let c = parse_ase(&data).unwrap();
-    assert_eq!(c.len(), 3, "group markers should contribute no colours");
+    assert_eq!(c.len(), 3, "group markers should contribute no colors");
     assert_eq!(c[2], [0.0, 0.0, 1.0]);
 }
 
-/// Gray is one value; CMYK is converted naively and says so — an .ase carries no colour profile,
+/// Gray is one value; CMYK is converted naively and says so — an .ase carries no color profile,
 /// so anything cleverer would be inventing one.
 #[test]
 fn ase_handles_gray_and_cmyk() {
@@ -548,7 +548,7 @@ fn ase_refuses_lab_rather_than_guessing() {
 
 /// ⭐The parser is deliberately STRICT, because it was written from the published layout rather
 /// than from a real file: anything that disagrees with that understanding must fail loudly instead
-/// of importing plausible-looking wrong colours.
+/// of importing plausible-looking wrong colors.
 #[test]
 fn ase_rejects_what_it_cannot_read() {
     assert!(parse_ase(b"").is_err());
@@ -559,7 +559,7 @@ fn ase_rejects_what_it_cannot_read() {
         ase_color("b", b"RGB ", &[0.0, 0.0, 1.0]),
     ]);
     assert!(parse_ase(&good[..good.len() - 4]).is_err(), "a truncated file must not parse");
-    // An unknown colour model is named, not skipped.
+    // An unknown color model is named, not skipped.
     let weird = ase_bytes(&[ase_color("x", b"XYZ!", &[1.0, 0.0, 0.0])]);
     assert!(parse_ase(&weird).unwrap_err().contains("XYZ!"));
     // A name length that overruns its block.
@@ -568,7 +568,7 @@ fn ase_rejects_what_it_cannot_read() {
     body.extend_from_slice(b"RGB ");
     let bad = ase_bytes(&[(0x0001, body)]);
     assert!(parse_ase(&bad).unwrap_err().contains("overruns"));
-    // One colour is not a gradient.
+    // One color is not a gradient.
     let one = ase_bytes(&[ase_color("a", b"RGB ", &[1.0, 0.0, 0.0])]);
     assert!(parse_ase(&one).unwrap_err().contains("at least two"));
 }

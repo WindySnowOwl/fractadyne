@@ -1,5 +1,5 @@
 //! `--render-expmap DIR` (`design/zoom-video.md`, phase E0): a straight dive into the view,
-//! rendered as EXPONENTIAL-MAP STRIPS (one octave of radius around the dive's centre each), with a
+//! rendered as EXPONENTIAL-MAP STRIPS (one octave of radius around the dive's center each), with a
 //! manifest. The raw material of a zoom video: E1 writes what zoomasm reads from them, E2 assembles
 //! frames in the app.
 //!
@@ -294,7 +294,7 @@ pub(crate) fn strip_file(k: u64) -> String {
     format!("strip_{k:06}.exr")
 }
 
-/// The view strip `k` renders as: the dive's centre, `W × rows` texels, scaled so the rectangle's
+/// The view strip `k` renders as: the dive's center, `W × rows` texels, scaled so the rectangle's
 /// half diagonal is the strip's outer radius. The renderer's view-derived radii (the reference
 /// pick's span, the series and BLA radii) then cover the strip's disk; the texels themselves are
 /// placed by the strip map, not by this rectangle's grid.
@@ -386,7 +386,7 @@ impl crate::FractadyneApp {
         req.height = map.rows;
         req.ss = 1;
         let (m, e) = map.outer_scale(k);
-        // The shader's texel centre is at +0.5; the layout says where in the texel to sample.
+        // The shader's texel center is at +0.5; the layout says where in the texel to sample.
         req.map = fractadyne_gpu::StripMap::strip(map.row_step(), map.sample_offset() - 0.5, m, e, req.delta_exp);
         let r = fractadyne_gpu::render_iter_tiled(device, queue, &req, crate::tunables::CORRECT_WORK_BUDGET, None, None, None)
             .map_err(|e| format!("strip {k}: {e}"))?;
@@ -409,7 +409,7 @@ impl crate::FractadyneApp {
 
     /// The dive's ONE reference: built once for its deepest strip `k`, at that strip's cap and
     /// precision, which every shallower strip's view accepts (its precision is lower and the point
-    /// is at its centre). `None` when that strip renders on the direct path, which needs none.
+    /// is at its center). `None` when that strip renders on the direct path, which needs none.
     pub(crate) fn dive_reference(
         &mut self,
         map: &ExpMap,
@@ -452,7 +452,7 @@ impl crate::FractadyneApp {
     }
 
     /// The dive into the view, as `--render-expmap` and `--render-zoom-video` render it: the strips'
-    /// map, their count and caps, the centre and the manifest's description of the dive. Refuses
+    /// map, their count and caps, the center and the manifest's description of the dive. Refuses
     /// what the strip path cannot render (`what` names the flag in the message).
     pub(crate) fn plan_dive(&self, format: StripFormat, what: &str) -> Result<DivePlan, String> {
         use crate::fractal::FractalKind as F;
@@ -671,7 +671,7 @@ pub(crate) fn write_or_check_manifest(dir: &Path, map: &ExpMap, format: StripFor
 pub(crate) fn manifest_convention(format: StripFormat) -> (&'static str, serde_json::Value) {
     match format {
         StripFormat::Fractadyne => (
-            "texel (i, j) of strip k is at angle 2*pi*(i + 0.5)/width anticlockwise from the positive real axis and radius 2^(r0_log2 - k) * exp(-2*pi*(j + 0.5)/width) from the centre; row 0 is outermost; strip k's last rows overlap strip k+1's first",
+            "texel (i, j) of strip k is at angle 2*pi*(i + 0.5)/width anticlockwise from the positive real axis and radius 2^(r0_log2 - k) * exp(-2*pi*(j + 0.5)/width) from the center; row 0 is outermost; strip k's last rows overlap strip k+1's first",
             serde_json::json!({
                 "N": "escape count (uint32); 4294967295 = never escaped (the cap was reached), 0 = glitched",
                 "NF": "fraction of the smooth count, 1 - nu; the smooth count is N + NF",
@@ -682,7 +682,7 @@ pub(crate) fn manifest_convention(format: StripFormat) -> (&'static str, serde_j
             }),
         ),
         StripFormat::Zoomasm => (
-            "Kalles Fraktaler's exponential map with the imaginary axis up (its ImagPointsUp: 1), for zoomasm: texel (i, j) of strip k is sampled at angle 2*pi*i/width CLOCKWISE from the positive real axis and radius 2^(r0_log2 - k - j/rows) from the centre; row 0 is outermost; one octave a strip, no overlap; strip 0 is the outermost (zoom-in order: leave zoomasm's Reverse and Flip boxes unticked)",
+            "Kalles Fraktaler's exponential map with the imaginary axis up (its ImagPointsUp: 1), for zoomasm: texel (i, j) of strip k is sampled at angle 2*pi*i/width CLOCKWISE from the positive real axis and radius 2^(r0_log2 - k - j/rows) from the center; row 0 is outermost; one octave a strip, no overlap; strip 0 is the outermost (zoom-in order: leave zoomasm's Reverse and Flip boxes unticked)",
             serde_json::json!({
                 "N": "escape count + IterationsBias (uint32), escaping at |z| > 10^(4/power); 4294967295 = never escaped, 0 = not computed (N0 and N1 instead, low and high words, when a count passes 4294967294)",
                 "NF": "1 - log_power(ln|z| / ln 10^(4/power)), in [0, 1); the smooth count is N - IterationsBias + NF",

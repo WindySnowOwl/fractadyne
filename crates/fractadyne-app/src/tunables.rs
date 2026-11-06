@@ -11,7 +11,7 @@
 //! a build that ships different ones has not been tested by any of them. The debug override
 //! mechanism (`--set NAME=VALUE`) exists so a field diagnosis can move one number for one run; it
 //! logs loudly at startup and stamps every crash report, so a report from an overridden run can
-//! never masquerade as stock behaviour.
+//! never masquerade as stock behavior.
 //!
 //! ⭐**The bug history says the values are mostly NOT what breaks** (TODO.md, "tunables ... are
 //! individually well-reasoned and collectively fragile"). Five shapes account for everything that
@@ -104,7 +104,7 @@ pub(crate) struct Cost {
     pub pin_timeout_scaled: u64,
     /// The mode-2 df32 tail phase (`TAIL_DF32_DEFAULT`; 0 = off, 1 = on).
     pub tail_df32: u64,
-    /// The overlapped pick + centre build (`REF_OVERLAP_DEFAULT`; 0 = off, 1 = on).
+    /// The overlapped pick + center build (`REF_OVERLAP_DEFAULT`; 0 = off, 1 = on).
     pub ref_overlap: u64,
     /// A `--render`'s reference started before the window (`EARLY_REF_DEFAULT`; 0 = off, 1 = on).
     pub early_ref: u64,
@@ -160,8 +160,8 @@ pub(crate) struct Cost {
     /// The share of one pin pass a pass across several bands may take (`PIN_BAND_SPAN_DEFAULT`;
     /// 0 = off).
     pub pin_band_span: f64,
-    /// A span is bounded by its bands' measured costs, not their licences (`PIN_SPAN_PRICED_DEFAULT`;
-    /// 0 = by licences).
+    /// A span is bounded by its bands' measured costs, not their licenses (`PIN_SPAN_PRICED_DEFAULT`;
+    /// 0 = by licenses).
     pub pin_span_priced: u64,
     /// Live iterate timers that may be armed at once (`TIMER_SLOTS_DEFAULT`; 1 = one, as before).
     pub timer_slots: u64,
@@ -171,8 +171,8 @@ pub(crate) struct Cost {
     /// The settled walk's pass is released by its GPU completion (`WALK_SERIALIZE_DEFAULT`; 0 = by
     /// a quick frame, as before).
     pub walk_serialize: u64,
-    /// The settled walk enters the view's escape-onset region under that region's own licence
-    /// (`WALK_ONSET_DEFAULT`; 0 = under the octave bands' licences alone, as before).
+    /// The settled walk enters the view's escape-onset region under that region's own license
+    /// (`WALK_ONSET_DEFAULT`; 0 = under the octave bands' licenses alone, as before).
     pub walk_onset: u64,
     /// The on-settle supersampling stops after this much wall time, ms, once it holds
     /// `ACCUM_MIN_SAMPLES` (`ACCUM_TIME_CAP_MS_DEFAULT`; 0 = only the sample count ends it).
@@ -695,7 +695,7 @@ pub(crate) fn apply_overrides(pairs: &[(String, String)]) -> Result<(), String> 
                 c.pin_span_priced = match raw.as_str() {
                     "0" => 0,
                     "1" => 1,
-                    _ => return Err(format!("--set PIN_SPAN_PRICED: '{raw}' is not 0 (by licences) or 1 (by costs)")),
+                    _ => return Err(format!("--set PIN_SPAN_PRICED: '{raw}' is not 0 (by licenses) or 1 (by costs)")),
                 };
                 p.to_string()
             }
@@ -931,7 +931,7 @@ pub(crate) const MOTION_UNPRICED_MAX_DEFAULT: u64 = 3;
 /// Per-measurement budget change limits. Growth is capped well under 2× so the next frame cannot leap
 /// from the target into the watchdog; shrink is allowed to halve at once.
 ///
-/// The budget is retargeted by the measured-time RATIO, deliberately without modelling cost as
+/// The budget is retargeted by the measured-time RATIO, deliberately without modeling cost as
 /// `steps ∝ time`. That model is false at deep interior views: every pixel runs the full iteration
 /// count on a dependent chain, so a small frame is LATENCY-bound (~89.9k iterations ≈ 415 ms here no
 /// matter how few pixels) and only becomes throughput-bound once it saturates GPU occupancy. Assuming
@@ -1102,7 +1102,7 @@ pub(crate) const TDR_EXPLICIT_BUDGET_MS_DEFAULT: f64 = 400.0;
 /// note here said the accept bound "keeps this guard out of the AUTO regime entirely: auto's `slow`
 /// starts at 900 ms, already past it". Lowering `TDR_BUDGET_MS` to 400 makes auto's `slow` start at
 /// 400 ms, so a small auto dispatch measuring 400–600 ms is now HELD rather than shrunk. That is
-/// the intended behaviour in both regimes — a latency-bound frame cannot be made faster by making
+/// the intended behavior in both regimes — a latency-bound frame cannot be made faster by making
 /// it smaller — but it is a real change to auto, and it is recorded here because the previous
 /// sentence would otherwise read as still true.
 pub(crate) const TDR_LATENCY_ACCEPT_MS_DEFAULT: f64 = 600.0;
@@ -1123,7 +1123,7 @@ pub(crate) const TDR_STEPS_CEIL_DEFAULT: u64 = 300_000_000_000;
 // ----------------------------------------------------------------------------
 
 /// FLOOR on the budget-sized dispatches a tiled settle may spend sharpening one frame — the count
-/// this was a fixed constant at, kept so nothing regresses below the behaviour it produced. It is
+/// this was a fixed constant at, kept so nothing regresses below the behavior it produced. It is
 /// also what a view with a still-CLIMBING budget gets, so its grid completes quickly and can
 /// re-form sharper; `settle_max_tiles` grants a converged view what its frame actually needs.
 pub(crate) const TDR_MAX_TILES_DEFAULT: u64 = 16;
@@ -1243,7 +1243,7 @@ pub(crate) const LIVE_PRICE_DROP_MAX: f64 = 4.0;
 /// only escaped because the motion-jam gate happened to clamp it to bootstrap-size passes). A
 /// pass is now sized from the MEASURED nominal-steps-per-ms of the current mode
 /// (`Perf::motion_rate`) to land near this; the TDR budget stays the ceiling. 10 ms leaves the
-/// colour pass and the present inside a 16.7 ms frame.
+/// color pass and the present inside a 16.7 ms frame.
 pub(crate) const MOTION_PASS_MS: f64 = 10.0;
 
 /// The part of every GPU pass's time that does NOT scale with its steps, ms — clearing and storing
@@ -1281,7 +1281,7 @@ pub(crate) const PASS_FIXED_MS_DEFAULT: f64 = 0.2;
 
 /// How much of the picture a MOVING frame is sized to show, as the fraction of the view's escaped
 /// pixels its one-pass walk must reach (`render::motion_need`). 1.0 = all of it — the top of the
-/// escape range, the shipped behaviour. Below 1, the iteration by which that fraction had escaped
+/// escape range, the shipped behavior. Below 1, the iteration by which that fraction had escaped
 /// on the view's last complete walk (`Perf::esc_hist`), never above the top.
 ///
 /// ⭐WHY. Deep, a few stragglers put the top of the range far above where nearly all of the picture
@@ -1294,7 +1294,7 @@ pub(crate) const MOTION_NEED_QUANTILE_DEFAULT: f64 = 1.0;
 /// How far up the picture's escape values the live palette window's TOP reaches, as the fraction
 /// of the view's escaped pixels below it (`render::norm_palette_top`, from the fine histogram
 /// `fractadyne_gpu::CTR_NORM_HIST`). 1.0 = the top of the escape range, as shipped until
-/// 2026-10-25. Only the colours follow it: the escape RANGE (`Perf::norm_range`) keeps its true top
+/// 2026-10-25. Only the colors follow it: the escape RANGE (`Perf::norm_range`) keeps its true top
 /// for what it sizes — a moving frame's walk, a refresh's end, the autopilot.
 ///
 /// ⭐0.98, measured on the user's 2026-10-25 path (2^80 → 2^127): where a minibrot's fringe sets
@@ -1305,14 +1305,14 @@ pub(crate) const MOTION_NEED_QUANTILE_DEFAULT: f64 = 1.0;
 pub(crate) const NORM_TOP_QUANTILE_DEFAULT: f64 = 0.98;
 
 /// Where the escape TOP a moving frame is sized to reach comes from (`render::motion_need`; U24,
-/// design/live-render-robustness.md §3.3). 0: the palette normalisation window's top, which the
+/// design/live-render-robustness.md §3.3). 0: the palette normalization window's top, which the
 /// moving frame's own one-pass preview feeds — a guess reading a value downstream of what it sizes
 /// (P3). 1: the top of the view's last COMPLETE walk (`Perf::esc_top`). The A/B arm while the screen
 /// gate decides which sizes a moving frame better.
 pub(crate) const MOTION_NEED_SOURCE_DEFAULT: u64 = 0;
 
 /// 1 = pool the GPU readings the frame-budget rule would discard until together they are
-/// representative, and price the budget on the pool (`render::pool_step`); 0 = off, the behaviour
+/// representative, and price the budget on the pool (`render::pool_step`); 0 = off, the behavior
 /// before beta.129. ON from beta.129: it is the first change here that moves the frame BUDGET — the
 /// safety controller — rather than a motion pass inside it, so it waited for (1) the escaped-
 /// reference storm on the RX 6800 XT (9 runs, budget at most 1.48e10, 10× under the 2026-09-21
@@ -1324,7 +1324,7 @@ pub(crate) const READING_POOL_DEFAULT: u64 = 1;
 /// wall-slow frames with no reading the controller judged slow — the view's budget is derated to
 /// its bootstrap, so every dispatch path (chunk passes, the shrink, the tiles) sizes from a bound
 /// the hardware has not refuted, and budget GROWTH is refused until the latch clears on a frame
-/// under half `TDR_BUDGET_MS`. 0 = report only, the behaviour before beta.131. It needs no theory of
+/// under half `TDR_BUDGET_MS`. 0 = report only, the behavior before beta.131. It needs no theory of
 /// why the controller is blind: that is its point (the 2026-09-21 cost may sit outside every timed
 /// pass). ⚠The derate on engaging is a deviation from §5.1's letter, which only bounded dispatches
 /// WHILE latched: the latch clears on the first fast frame, and a budget left stale then re-arms
@@ -1453,10 +1453,10 @@ pub(crate) const RENORM_BLA_DEFAULT: u64 = 1;
 pub(crate) const ORBIT_SCHEDULE_DEFAULT: u64 = 1;
 
 /// 1 = AN EXPORT MAY TAKE A NUCLEUS AS ITS REFERENCE (`fractadyne_core::best_reference_diag_nucleus`):
-/// when the view's centre does not survive the render and its orbit passed a nucleus inside the
+/// when the view's center does not survive the render and its orbit passed a nucleus inside the
 /// view, the pick refines that nucleus and takes it, a reference whose orbit closes at one period,
 /// instead of scoring the other candidates and building a survivor's whole orbit. The deeper
-/// Cerebral Spin (bench scene 63) took 6.8 s with its centre 52 px from a period-104,572 nucleus.
+/// Cerebral Spin (bench scene 63) took 6.8 s with its center 52 px from a period-104,572 nucleus.
 /// 0 = the plain pick, for the before/after measurement (`--pick-audit` compares the two).
 pub(crate) const NUCLEUS_REF_DEFAULT: u64 = 1;
 
@@ -1559,8 +1559,8 @@ pub(crate) const PRE_SWITCH_PROBE_RETRY_FRAMES: u64 = 60;
 /// four times in thirteen (2026-10-18), which would have opened the switch at the 4e8 ceiling.
 pub(crate) const PRE_SWITCH_FLOATEXP_RATIO_MIN: f64 = 8.0;
 
-/// 1 = the OVERLAPPED pick + build (render.rs `pick_and_build`): the view centre's orbit build and
-/// series walk run beside the pick, and the pick's centre rescue reads its score off that build.
+/// 1 = the OVERLAPPED pick + build (render.rs `pick_and_build`): the view center's orbit build and
+/// series walk run beside the pick, and the pick's center rescue reads its score off that build.
 /// Byte-identical to the sequential order (selftest `ref-overlap`); only the wall-clock differs.
 /// 0 = the sequential order, for the before/after measurement.
 pub(crate) const REF_OVERLAP_DEFAULT: u64 = 1;
@@ -1641,8 +1641,8 @@ pub(crate) const HELD_MAX_OCT: f64 = 0.5;
 ///
 /// ⛔**…but a static offset that is too far is still too far.** Until 2026-10-31 the offset was
 /// taken at the clamped scale too: 12.5 times too far after a 100× click, so a click more than
-/// about 4% of the width off centre put the held picture off the screen, and the screen showed the
-/// frame's average colour until the new picture arrived. The offset is now always the true one
+/// about 4% of the width off center put the held picture off the screen, and the screen showed the
+/// frame's average color until the new picture arrived. The offset is now always the true one
 /// (`frame_plan::hold_transform`): the bound magnifies about the clicked point.
 ///
 /// ⚠"A jump" is decided by `frame_plan::hold_jump_next`: some frame since the held one was latched
@@ -1658,7 +1658,7 @@ pub(crate) const HELD_JUMP_MAX_OCT: f64 = 3.0;
 /// not keep the new picture off the screen.
 pub(crate) const JUMP_MAP_WAIT_S: f64 = 0.25;
 
-/// The share of a view's neighbouring pixel pairs that must step past Nyquist (see
+/// The share of a view's neighboring pixel pairs that must step past Nyquist (see
 /// `render::ALIAS_PHASE_LIMIT`) before "Normalize deep colors" engages on its own. Read against the
 /// step histogram by `render::alias_fraction`.
 ///
@@ -1670,7 +1670,7 @@ pub(crate) const JUMP_MAP_WAIT_S: f64 = 0.25;
 /// | 1.08e66 dual, **Julia** panel (the report: visibly speckled) | engage | **0.076** |
 /// | 1.08e66 dual, Mandelbrot panel | engage | 0.241 |
 /// | 9.15e9 dual, Julia / Mandelbrot | engage | 0.057 / 0.362 |
-/// | home at 500,000 iterations, cycle 0.27 (the FLAT-GREY regression) | **decline** | **0.017** (max 0.025 over the run) |
+/// | home at 500,000 iterations, cycle 0.27 (the FLAT-GRAY regression) | **decline** | **0.017** (max 0.025 over the run) |
 /// | 1e28 at cycle 0 | decline | 0.001 |
 ///
 /// 0.04 sits near the log-midpoint of the gap between the worst must-decline reading (0.025) and the
@@ -1710,7 +1710,7 @@ pub(crate) const MOTION_STEP_OPEN: u32 = 512;
 /// per-step cost nothing like the motion frames' — and its interval cut the motion budget
 /// **6–9× in one event** (1.35e9 → 1.5e8). The motion frame after each cut walked ~500
 /// iterations against a view that escapes at ~4700, committed nothing, and painted one flat
-/// colour. A rate that halves is still a cut; a rate that is slashed nine-fold on the evidence of
+/// color. A rate that halves is still a cut; a rate that is slashed nine-fold on the evidence of
 /// one interval the pass may not even own is an over-reaction the recovery (`MOTION_RATE_GROW`)
 /// then spends many frames undoing. Repeated slow intervals still ratchet the rate down through
 /// this bound one event at a time, so a genuinely slow regime is still found — just not on one
@@ -1763,7 +1763,7 @@ pub(crate) const PIN_PRICE_WAIT_FRAMES: u64 = 5;
 /// 4.0× a 60k-iteration refresh outlived the 2-octave drift abandon. That was before a pass could
 /// be priced by its completion: with two in flight a new pass went out every frame, a reading
 /// paired only to the latest, and in a traced `--motiontest` 34 of 622 pin passes were priced
-/// ("the ledger learns from every other pass" was not so), so the band licences barely grew and
+/// ("the ledger learns from every other pass" was not so), so the band licenses barely grew and
 /// passes stayed small. One in flight, every pass priced, on the RTX 3080 (2026-10-12, interleaved):
 /// the motiontest adopts 43–44 complete refreshes a run against 12–16; a 20-octave zoomtest's
 /// frame on screen lags the view 0.11 against 0.30 octaves (worst 1.5× against 2.1× magnified)
@@ -1772,7 +1772,7 @@ pub(crate) const PIN_PRICE_WAIT_FRAMES: u64 = 5;
 pub(crate) const PIN_INFLIGHT_MAX: u32 = 2;
 
 /// EXPERIMENT, off by default (2026-10-17). Above 0: a pinned refresh's pass that covers its whole
-/// start band runs on through the next bands while each has prices of its own and their licences,
+/// start band runs on through the next bands while each has prices of its own and their licenses,
 /// shared, take no more than this share of one pass (`pin_span_end`). 0 = every pin pass stops at the
 /// end of the band it started in, one octave band per frame.
 ///
@@ -1780,7 +1780,7 @@ pub(crate) const PIN_INFLIGHT_MAX: u32 = 2;
 /// lags the view 0.59–0.64 octaves on average against 0.74–0.80 off, with more refreshes adopted —
 /// but the spanned passes run over their price where costs jump: in a deep 1× stretch (2^245–2^305)
 /// one run priced them at a median 28.5 ms (p90 68.6) against the 20 ms pin target, 73 frames over
-/// 33 ms against 1. A band's licence grows ×16 on a cheap price; a span spends several such licences
+/// 33 ms against 1. A band's license grows ×16 on a cheap price; a span spends several such licenses
 /// at once, past the growth limiter's ×2 a frame that absorbs the same overshoots one band at a time.
 /// In the df32 hand-over (2^10–2^26) the refreshes sat at the visible ladder's floor (147 px wide) in
 /// 7 of 10 runs with spans, 1 of 8 without. At 0.5 the 4× gain mostly went (0.71–0.72).
@@ -1789,10 +1789,10 @@ pub(crate) const PIN_BAND_SPAN_DEFAULT: f64 = 0.0;
 /// EXPERIMENT, off by default (2026-10-18). 1 = a span (`PIN_BAND_SPAN` above 0) runs on through the
 /// next bands while the GPU-timed costs of those bands (`WalkLedger::band_ms`: what a whole pass over
 /// each cost the last time it was priced) sum to no more than that share of the pin target
-/// (`pin_span_end_priced`), instead of their licences' shares. A licence is a price extrapolated
+/// (`pin_span_end_priced`), instead of their licenses' shares. A license is a price extrapolated
 /// ×4–×16; a cost is what the band took. At 2^260 on the (49,3) spiral every band's pass cost
 /// 1.1–1.7 ms whatever its length, and one band a pass made each pin nine passes and twelve frames
-/// (held ~1.1 octaves at 4×). 0 = spans bounded by licences, as before.
+/// (held ~1.1 octaves at 4×). 0 = spans bounded by licenses, as before.
 pub(crate) const PIN_SPAN_PRICED_DEFAULT: u64 = 0;
 
 /// (2026-10-18; a candidate default, under test): how many of a view's live iterate timers
@@ -1819,20 +1819,20 @@ pub(crate) const WALK_SERIALIZE_DEFAULT: u64 = 1;
 
 /// 1 = the settled walk treats the view's ESCAPE ONSET as a boundary of its own
 /// (`render::walk_onset_start`: 0.99 × the lowest escape the view's readings have seen): a pass stops
-/// at it, and past it carries no more than that region's licence (`decide::WalkLedger::onset_licence`),
-/// which opens at the floor and is earned by its own passes' prices like a band's. A band's licence
+/// at it, and past it carries no more than that region's license (`decide::WalkLedger::onset_licence`),
+/// which opens at the floor and is earned by its own passes' prices like a band's. A band's license
 /// is one number for a whole octave, and the cost is not uniform inside one: at the 2^704 view band
 /// 10 ([131k, 262k)) is nearly free up to ~200k and ~100× dearer past it, where the pixels begin to
-/// escape. The licence earned on the cheap front carried a 32,585-iteration pass into the dear part,
+/// escape. The license earned on the cheap front carried a 32,585-iteration pass into the dear part,
 /// the lethal retreat shed every band, and the next supersampling sample re-earned it there and did it
 /// again: one ~1 s pass a sample. (A per-band memory of the worst cost was tried first: held to the
 /// dear part's cost, band 10's cheap front crawled at 572 iterations a pass, 2.2× slower samples.)
-/// The region's licence counts WORK (iterations × the pixels a pass is charged for); while no escape
+/// The region's license counts WORK (iterations × the pixels a pass is charged for); while no escape
 /// has been seen, an escaped reference's length stands in for the onset (the first walk of a fresh
-/// view); and a band's licence remembers the pixels it was earned over and is scaled down for a
+/// view); and a band's license remembers the pixels it was earned over and is scaled down for a
 /// pass charged for more (`decide::WalkLedger::band_px`): a count of iterations holds only at the
 /// pixels it was priced at, and in the tail the running pixels fall ~5× inside one band. The
-/// region's licence is priced against half the target (`render::WALK_ONSET_TARGET_SHARE`).
+/// region's license is priced against half the target (`render::WALK_ONSET_TARGET_SHARE`).
 /// 0 = the octave bands alone, in iterations.
 pub(crate) const WALK_ONSET_DEFAULT: u64 = 1;
 
@@ -1917,7 +1917,7 @@ pub(crate) const PIN_MAX_FRAMES: u64 = 240;
 /// CONTENT VERIFICATION (design/verified-present.md). A frame counts as a picture when at least
 /// this fraction of its pixels have escaped (`render::content_has_detail`). The frame being kept
 /// off the screen has ZERO — a walk short of the view's first escape resolves every pixel to
-/// the interior colour — so this is margin, not a quality bar: 0.1% of a 1456×1102 frame is
+/// the interior color — so this is margin, not a quality bar: 0.1% of a 1456×1102 frame is
 /// 1,600 pixels, a thin filament in an otherwise interior view.
 ///
 /// ⭐Calibrated in the MIDDLE of its range (W6, U57; P10's rule — a calibration checked only at its
@@ -1938,7 +1938,7 @@ pub(crate) const CONVERGE_TOLERANCE: f64 = 0.01;
 pub(crate) const CONVERGE_TOLERANCE_PX: f64 = 0.0005;
 /// `RefreshPolicy::Converged`, the fast path: a walk that passed the view's last known
 /// escape-range top by this factor has the picture (the readings that fed the top were taken at
-/// neighbouring views; the margin covers the drift between them).
+/// neighboring views; the margin covers the drift between them).
 pub(crate) const RANGE_TOP_MARGIN: f64 = 1.25;
 
 /// A reference install at a DIFFERENT point aborts a pinned refresh (`PinStop::Orbit`: the stored
@@ -1974,7 +1974,7 @@ pub(crate) const CHUNK_DRAIN_DT_MS: f64 = 100.0;
 pub(crate) const CHUNK_BANDS: usize = 16;
 
 /// Hard drift ceiling for reusing a cached reference: a point beyond this fraction of a span
-/// off-centre is re-anchored (fresh pick) instead. Held at the `out_of_view` gate that already
+/// off-center is re-anchored (fresh pick) instead. Held at the `out_of_view` gate that already
 /// filters the caller, so a reused reference is never worse than one the live path already trusts.
 pub(crate) const REUSE_MAX_DRIFT: f64 = 0.7;
 

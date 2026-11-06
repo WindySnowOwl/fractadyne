@@ -1,6 +1,6 @@
 //! Which cells a view shows (design/automata.md §3): the app's [`Viewport`] maps a cell `(i, j)` —
 //! column `i`, row `j`, rows growing downward as pattern files read — to the unit square
-//! `x ∈ [i, i+1)`, `−y ∈ [j, j+1)`. The centre is a `BigFloat`, so a view 2^60 cells from the origin
+//! `x ∈ [i, i+1)`, `−y ∈ [j, j+1)`. The center is a `BigFloat`, so a view 2^60 cells from the origin
 //! still knows which cell each pixel is in; this module turns it into a tile origin (exact `i64`)
 //! plus small `f64` offsets the GPU can take.
 

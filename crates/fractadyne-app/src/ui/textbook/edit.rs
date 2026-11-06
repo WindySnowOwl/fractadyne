@@ -476,7 +476,7 @@ impl Editor {
             '+' | '-' | '=' => {
                 self.begin(false);
                 // A sign is typed as a character: one after a number's `e` is its exponent's sign
-                // (`1e-5`); normalising makes every other one an operator.
+                // (`1e-5`); normalizing makes every other one an operator.
                 self.insert(vec![if ch == '=' { Atom::Op(Op::Eq) } else { Atom::Char(ch) }]);
             }
             '*' => {
@@ -986,7 +986,7 @@ impl Editor {
             self.caret.path.push((after, 0));
             self.caret.pos = 0;
         }
-        // Normalising makes the name and the parentheses one call, the caret in its argument.
+        // Normalizing makes the name and the parentheses one call, the caret in its argument.
         self.done();
         true
     }

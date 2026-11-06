@@ -129,7 +129,7 @@ fn strip_bundle() -> Bundle {
     }
 }
 
-/// A strip job is checked as a dive: a centre that is a number, depths and sizes the app takes,
+/// A strip job is checked as a dive: a center that is a number, depths and sizes the app takes,
 /// a manifest that is one, the `strip` prefix and no script — and a strip's TEXELS against the
 /// policy, not its long side (a 1080p strip at 3x is 20763 wide, under a 16384×16384 policy).
 #[test]
@@ -144,8 +144,8 @@ fn a_strip_job_is_checked_as_a_dive() {
         b
     };
     let cases: Vec<(Bundle, &str)> = vec![
-        (with(&|s| s.center_re = "1; del *".into()), "centre"),
-        (with(&|s| s.center_im = String::new()), "centre"),
+        (with(&|s| s.center_re = "1; del *".into()), "center"),
+        (with(&|s| s.center_im = String::new()), "center"),
         (with(&|s| s.zoom_log2 = f64::NAN), "depths"),
         (with(&|s| s.start_log2 = 200.0), "depths"),
         (with(&|s| s.frame_width = 0), "video frames"),

@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Analyse one or two `fractadyne --zoomtest` JSON logs.
+"""Analyze one or two `fractadyne --zoomtest` JSON logs.
 
     python scripts/zoomtest_report.py logs/zoomtest-A.json [logs/zoomtest-B.json] [--worst N]
 

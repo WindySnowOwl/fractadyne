@@ -234,7 +234,7 @@ fn keys(ui: &egui::Ui, ed: &mut Editor, frame: &Frame) -> (bool, bool) {
 
 /// The formula as an editable typeset document, at least `min_height` points tall. `source` is the
 /// dialog's text: read when it changed elsewhere, written on every edit. `error_line`: the source
-/// line (from 1) the syntax check stops at, underlined in the error colour.
+/// line (from 1) the syntax check stops at, underlined in the error color.
 pub(crate) fn show(
     ui: &mut egui::Ui,
     id: egui::Id,

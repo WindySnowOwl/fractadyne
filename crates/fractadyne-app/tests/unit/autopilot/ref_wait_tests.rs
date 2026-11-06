@@ -48,7 +48,7 @@ fn an_interior_beside_counts_at_the_cap_is_unproven() {
 
 #[test]
 fn an_interior_whose_neighbours_escape_well_below_the_cap_is_the_sets() {
-    // A real minibrot under a reference long enough: its neighbours escape far below the cap.
+    // A real minibrot under a reference long enough: its neighbors escape far below the cap.
     let x = -1.0;
     let p = probe([1200.0, 1210.5, x, x, 1190.0, 1205.0, 1230.0, x, 1180.0, 1195.0, 1210.0, 1240.0, 1170.0, 1185.0, 1200.0, 1220.0], 259_136);
     assert!(!p.interior_at_cap());

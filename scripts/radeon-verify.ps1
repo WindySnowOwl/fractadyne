@@ -258,7 +258,7 @@ if (& $want 5) {
     $env:FRACTADYNE_TRACE = 'gpu'
     Say "trace: FRACTADYNE_TRACE=gpu (per-frame measured iterate, so a no-repro run says so)"
     Say ""
-    Say "A) pre-fix behaviour (MODE_RATE_UNKNOWN_MARGIN=1) - a device loss here is EXPECTED"
+    Say "A) pre-fix behavior (MODE_RATE_UNKNOWN_MARGIN=1) - a device loss here is EXPECTED"
     $results += Run-Phase -Tag '05a-repro-OLD' -FdArgs @('--set', 'MODE_RATE_UNKNOWN_MARGIN=1', '--play', $tour) -TimeoutSec 150 -ExpectNoExit
 
     Kill-Stragglers

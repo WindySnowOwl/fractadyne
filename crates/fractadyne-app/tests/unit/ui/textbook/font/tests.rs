@@ -52,7 +52,7 @@ fn every_glyph_the_layout_can_emit_has_a_character() {
     assert_eq!(f.char_of(f.glyph('(').unwrap()), Some('('));
 }
 
-/// egui rounds the rasteriser's scale to whole pixels; the layout must measure with the em that is
+/// egui rounds the rasterizer's scale to whole pixels; the layout must measure with the em that is
 /// actually drawn, which is within half a pixel of the one asked for.
 #[test]
 fn the_rendered_em_is_the_one_egui_draws() {

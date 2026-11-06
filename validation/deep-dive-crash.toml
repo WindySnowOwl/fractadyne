@@ -71,7 +71,7 @@ ss = 1
 pace = "settled"
 settle_timeout = 15
 
-# The three-spar dive centre, copied from tours/grand-tour.toml so the two stay comparable.
+# The three-spar dive center, copied from tours/grand-tour.toml so the two stay comparable.
 [[location]]
 id = "three-spar"
 re = "-1.0109636384562213181006238475735192993836101418531854095957676926471683503366629508912671364125546238220995191834757e-1"

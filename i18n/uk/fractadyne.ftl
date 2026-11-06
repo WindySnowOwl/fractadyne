@@ -298,7 +298,7 @@ tag-group-shape = Форма
 tag-group-theme = Тема
 tag-group-purpose = Призначення
 
-# Tags measured from a palette's colours: its colour families, warm or cool, how busy it is (calm, lively, frantic), its brightness, and its shape. Plural nouns for the families; the rest describe the palette.
+# Tags measured from a palette's colors: its color families, warm or cool, how busy it is (calm, lively, frantic), its brightness, and its shape. Plural nouns for the families; the rest describe the palette.
 tag-reds = Червоні
 tag-oranges = Помаранчеві
 tag-yellows = Жовті
@@ -1022,9 +1022,9 @@ app-gradient-ggr-imported =
 # $error: the reader's reason (in English).
 app-gradient-ggr-invalid = Це не градієнт .ggr: { $error }
 
-## The eyedropper's banner across the top of the screen while picking a colour
+## The eyedropper's banner across the top of the screen while picking a color
 
-# $hex: the colour under the pointer, as #rrggbb.
+# $hex: the color under the pointer, as #rrggbb.
 app-eyedropper-banner-color = Вибір кольору  ·  { $hex }  ·  клацніть, щоб узяти його, Esc — скасувати
 app-eyedropper-banner = Вибір кольору  ·  клацніть, щоб узяти його, Esc — скасувати
 
@@ -1068,7 +1068,7 @@ app-gradient-bezier-exact-hover = Дві контрольні точки, які
 app-gradient-bezier-visible-hover = Дві контрольні точки, які можна тягнути в обох напрямках. Перетворення АПРОКСИМУЄ поточну криву — цю з точністю до { $error }, що добре помітно.
 # Hover on Bézier in the list of blend curves. $error: how far the fit is off (2 decimals).
 app-gradient-bezier-barely-hover = Дві контрольні точки, які можна тягнути в обох напрямках. Перетворення АПРОКСИМУЄ поточну криву — цю з точністю до { $error }, що ледь помітно.
-# A label before the list of colour spaces (RGB, HSV).
+# A label before the list of color spaces (RGB, HSV).
 app-gradient-space = Простір
 # A label before the Bézier presets beside it.
 app-gradient-ease = Плавність
@@ -1119,7 +1119,7 @@ app-gradient-import-ggr-hover = Завантажити градієнт GIMP .gg
 app-gradient-import-ase-hover = Завантажити список зразків Adobe (.ase). Зразки не мають позицій, тому їх буде розташовано рівномірно й змішано.
 # The gradient's name, for the library of saved gradients.
 app-gradient-name = Назва
-# Shown greyed in the empty name field.
+# Shown grayed in the empty name field.
 app-gradient-name-hint = мій градієнт
 # The save button, when a gradient of that name is already saved.
 app-gradient-update = Оновити
@@ -1156,13 +1156,13 @@ app-gradient-ends-differ-hover = Колір у кінці градієнта н�
 app-gradient-hard-bands = Чіткі смуги (без змішування між записами)
 app-gradient-hard-bands-hover = Семантика Fractint / .map: кожен запис — суцільний колір. Якщо вимкнути, записи змішуються в плавний градієнт.
 app-gradient-paste-intro = Вставте шістнадцяткові кольори (#ff8800) або трійки 0–255 (255 136 0), розділені комами, пробілами чи новими рядками:
-# Applies the pasted colours.
+# Applies the pasted colors.
 app-gradient-apply = Застосувати
 # Empties the paste box.
 app-gradient-clear = Очистити
-# $used: the colours kept; $total: the colours pasted; $limit: the most that are kept.
+# $used: the colors kept; $total: the colors pasted; $limit: the most that are kept.
 app-gradient-paste-imported-some = Імпортовано кольорів: { $used } з { $total }, рівномірно вибраних із вашого списку (межа — { $limit }).
-# $count: the colours pasted.
+# $count: the colors pasted.
 app-gradient-paste-imported =
     { $count ->
         [one] Імпортовано { $count } колір.
@@ -2073,7 +2073,7 @@ farm-client-show-key = Показати
 farm-client-machine = Цей компʼютер
 farm-client-machine-hover = Назва, під якою контролер показує цей компʼютер.
 farm-client-share = Спільний диск
-# Greyed hint inside the empty field; the path is an example.
+# Grayed hint inside the empty field; the path is an example.
 farm-client-share-hint = необовʼязково — напр. \\fileserver\share
 farm-client-share-hover = Шлях цього компʼютера до спільного диска, який використовує контролер (режим спільного диска): кадри записуються туди, а не надсилаються через зʼєднання. Залиште порожнім, щоб надсилати кожен кадр.
 farm-client-gpu = Відеокарта
@@ -2253,7 +2253,7 @@ farm-ctl-ss = Суперсемплінг
 farm-ctl-port = Слухати порт
 farm-ctl-port-hover = Клієнти підключаються до цього порту. Дозвольте його в брандмауері для вашої локальної мережі.
 farm-ctl-share = Спільний диск
-# Greyed hint inside the empty field.
+# Grayed hint inside the empty field.
 farm-ctl-share-hint = необовʼязково — шлях до нього на цьому компʼютері
 farm-ctl-share-hover = Режим спільного диска: клієнти, що мають той самий диск, записують на нього свої кадри замість надсилати їх через зʼєднання, а цей компʼютер перевіряє там кожен кадр. Клієнти без цього диска надсилають свої.
 # A label followed by a number of clients and two checkboxes.
@@ -2573,7 +2573,7 @@ formula-apply = Застосувати
 formula-dialog-apply-hover = Скомпілювати формулу й показати її
 # Shown beside Apply while the formula is being compiled.
 formula-dialog-compiling = Компіляція формули для GPU…
-# The greyed hint in an empty name box (also in the Formula library window).
+# The grayed hint in an empty name box (also in the Formula library window).
 formula-name-hint = назва (необовʼязково)
 # The save button: "Update" when the library already has a formula of that name.
 formula-dialog-update-in-library = Оновити в бібліотеці
@@ -2708,7 +2708,7 @@ formula-library-import = Імпорт…
 formula-library-import-hover = Додати формули з файлу формул; тут нічого не замінюється
 formula-library-export-all = Експортувати все…
 formula-library-export-all-hover = Записати всі формули звідси в один файл, щоб поділитися чи зберегти
-# The filter box: its label, and the greyed hint inside it.
+# The filter box: its label, and the grayed hint inside it.
 formula-library-filter = Фільтр
 formula-library-filter-hint = фільтр за назвою або текстом
 # Shown while the user has no saved formulas.
@@ -2881,10 +2881,10 @@ panel-tail-length-unit = іт
 panel-tail-length-hover = Довжина вікна в ітераціях. Короткі вікна (8–32) дають класичні виразні смуги на будь-якій глибині; довші знову усереднюються до плаского кольору, бо член смуг довгої хаотичної орбіти усереднюється.
 panel-trap-shape = Форма пастки
 panel-palette = Палітра
-# The two colours of the Binary palette, each beside its colour swatch.
+# The two colors of the Binary palette, each beside its color swatch.
 panel-in-set = У множині
 panel-out-of-set = Поза множиною
-# The two colours of the Duotone palette, each beside its colour swatch.
+# The two colors of the Duotone palette, each beside its color swatch.
 panel-shadow = Тінь
 panel-highlight = Світло
 panel-cycle = Цикл
@@ -2902,7 +2902,7 @@ panel-log-scale-hover =
     Розподіляти палітру за ЛОГАРИФМОМ значення утечі, а не лінійно. На глибині значення утечі скупчуються біля верхньої межі, тож лінійне відображення витрачає більшу частину палітри на тонку оболонку біля межі й робить пласким усе інше.
 
     Застосовується до нормалізованого відображення — саме його вмикає «Нормалізувати глибокі кольори» (або --normalize під час експорту). Сильно перекошений діапазон усе одно отримує логарифмічне відображення, позначено це чи ні.
-# The same checkbox's tooltip while it is greyed out (normalization is off).
+# The same checkbox's tooltip while it is grayed out (normalization is off).
 panel-log-scale-off-hover =
     Потребує нормалізації: це визначає, ЯК палітра відображається на виміряний діапазон утечі, тож коли «Нормалізувати глибокі кольори» вимкнено (і немає експорту з --normalize), немає відображення, яке це могло б змінити, і воно не змінило б жодного пікселя.
 
@@ -3296,11 +3296,11 @@ lsys-draw-on = Промальовування
 lsys-draw-on-hover = Яку частину кривої намальовано, у тому порядку, в якому її малює черепаха
 lsys-draw-on-play-hover = Крива, що сама себе малює
 lsys-colour-by = Колір за
-# The colourings, in the "Colour by" list.
+# The colorings, in the "Color by" list.
 lsys-colour-position = позицією вздовж кривої
 lsys-colour-depth = глибиною гілки
 lsys-colour-heading = напрямком
-# C, < and > are the system's commands that set the colour index: keep them.
+# C, < and > are the system's commands that set the color index: keep them.
 lsys-colour-index = індексом кольору (C, <, >)
 lsys-colour-plain = одним кольором
 # The panel's numbers.
@@ -3454,9 +3454,9 @@ export-snapshot-saved = Знімок екрана { $size } збережено �
 # $error: why (in English).
 export-snapshot-failed = Не вдалося зробити знімок: { $error }
 
-## The colour picker (the popup of a colour swatch)
+## The color picker (the popup of a color swatch)
 
-# The third row's label: the colour as hexadecimal bytes. Short (about 6 characters).
+# The third row's label: the color as hexadecimal bytes. Short (about 6 characters).
 picker-row-hex = Hex
 picker-hex-hover = Клацніть, щоб ввести шістнадцяткове значення
 picker-cancel = Скасувати
@@ -3734,7 +3734,7 @@ fractal-family-lsystem = L-система
 # A family at a power: "Multibrot 3", "Burning Ship 4". $family: a name above; $power: the power.
 fractal-with-power = { $family } { $power }
 
-## Names of choices: colouring methods, orbit traps, palette animation, snapshots, angle units.
+## Names of choices: coloring methods, orbit traps, palette animation, snapshots, angle units.
 
 color-method-smooth = Плавна ітерація
 color-method-stripe = Середнє смуг

@@ -1,5 +1,5 @@
 //! The reference stepper: a plain array and the obvious loop, every cell reading its nine
-//! neighbours one by one. Slow, and deliberately independent of the tile map — no tiles, no padded
+//! neighbors one by one. Slow, and deliberately independent of the tile map — no tiles, no padded
 //! windows, no sliding index — so a tiling bug cannot hide in both. The tile stepper is tested
 //! against it here, and the GPU stepper (phase 2) against the tile stepper.
 

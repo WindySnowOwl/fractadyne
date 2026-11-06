@@ -38,7 +38,7 @@ fn home_starts_from_zero_at_or_above_home_and_for_an_unusable_view() {
 }
 
 /// The user's 2026-10-26 recording: Home from 1.46e4850× (2^16,111) glided at ~1,800 octaves a
-/// second and showed solid panels of colour. Stepped, it stops ten times, each about half the last
+/// second and showed solid panels of color. Stepped, it stops ten times, each about half the last
 /// depth, down to the depth the glide takes over at.
 #[test]
 fn a_home_from_extreme_depth_stops_at_halving_depths() {

@@ -35,24 +35,24 @@ splits the rest. Cross-checked against `--profile` (which now prints `series ms`
 
 ## Where the 113.7 s goes (`pick_pass`, fractadyne-core/src/reference.rs)
 
-- **Phase 1 — cheap rank**: 101 candidates (centre + 4 scales × 5×5 grid) walked to
+- **Phase 1 — cheap rank**: 101 candidates (center + 4 scales × 5×5 grid) walked to
   `quick = min(max_iter, REF_SCORE_SCAN=4096)` at FULL precision. Parallelized
   (`par_orbit_scores`) — wall ≈ 1–2 s on 32 threads. **Not the cost.**
-- **Phase 2 — deep rank**: the centre survivor walked ALONE to `max_iter` (sequential), then up
+- **Phase 2 — deep rank**: the center survivor walked ALONE to `max_iter` (sequential), then up
   to `REF_DEEP_MAX−1 = 15` more survivors walked to `max_iter` in parallel. At e4000 every
   candidate survives phase 1 (`survivors=101`) and every deep walk escapes at ~443k steps, so
   phase 2 ≈ one sequential 443k-step bignum walk (~33 s) + a parallel batch of 15 more (~60–80 s
   wall with hyperthread scaling). **This is the cost.**
-- The winner's escape length beat the centre's by **55 iterations** (443,199 vs 443,144): sixteen
+- The winner's escape length beat the center's by **55 iterations** (443,199 vs 443,144): sixteen
   full-precision orbits were walked to separate escape lengths differing by ±0.01%.
 
 ## The structural observation (the headroom)
 
-At extreme depth every candidate is within 0.5 view-spans of the centre — |Δc| ≈ 1e-4000 — so all
+At extreme depth every candidate is within 0.5 view-spans of the center — |Δc| ≈ 1e-4000 — so all
 101 orbits are IDENTICAL until the perturbation grows to O(1), which takes ≥ |log2 δc| ≈ 13,289
 iterations of ~2×/step growth (in practice they stay together for hundreds of thousands of
 steps: escape lengths spread only ±55 at 443k). Walking 16 bignum orbits to compare them is
-therefore almost pure duplication. **Walk ONE orbit (the centre's) in bignum; score every other
+therefore almost pure duplication. **Walk ONE orbit (the center's) in bignum; score every other
 candidate by CPU perturbation against it** — a δ-iteration in floatexp costs ~ns/step against
 ~µs–ms/step in bignum at 13k bits. Phase 2 collapses to one walk (~33 s) + noise.
 
@@ -100,7 +100,7 @@ tolerates rebasing happily. Two consequences:
 A dual-run equivalence check: run old `pick_pass` and the new scorer on the same inputs and
 assert the SAME WINNER (point identity, not score equality) across a depth ladder — e24, e43,
 e89 (misiurewicz_outcomes' dendrite), e148 (profile region), e500 (hero), e726/e1008 (corpus 19/
-20 centres), e4000 (`validation/e4000-misiurewicz.fdn`). Keep the old path compiled (test-only or
+20 centers), e4000 (`validation/e4000-misiurewicz.fdn`). Keep the old path compiled (test-only or
 feature-gated) until the ladder has run on at least the corpus depths + e4000. Expect legitimate
 ties (multiple candidates with equal deep scores) — the old tie-break order must be replicated,
 not approximated: phase 2 takes the FIRST survivor reaching the best length in candidate order.
@@ -150,7 +150,7 @@ error growth).
 | rung | regime | walk | perturb | note |
 |---|---|---|---|---|
 | e17 / e43 / e89 | no phase-1 survivor → rescue/fallback-escaper | ~0.02 s | ~0.02 s | scorer never runs (do-no-harm) |
-| e24 / e148 | centre survives capped ask → early return | 0.04–0.17 s | ≈ same | do-no-harm |
+| e24 / e148 | center survives capped ask → early return | 0.04–0.17 s | ≈ same | do-no-harm |
 | e500 (corpus 09) | scored=15 rb=67 fb=0 | 1.29 s | 0.91 s | **1.41×** |
 | e500 (hero) | scored=15 rb=68 fb=0 | 1.60 s | 1.23 s | 1.30×; winner IDENTICAL, its score ±2 (the spec's "point identity, not score equality") |
 | e726 | scored=15 rb=77 fb=0 | 1.32 s | 0.90 s | 1.47× |
@@ -159,16 +159,16 @@ error growth).
 
 **Where the remaining e4000 cost lives — CORRECTED 2026-09-01 (beta.2 follow-up)**: the two
 "levers" this section first named were mis-diagnosed, and a direct measurement replaced them.
-A release probe on the e4000 centre at 13,352 bits put `orbit_length_bf` at **68.6 µs/step
+A release probe on the e4000 center at 13,352 bits put `orbit_length_bf` at **68.6 µs/step
 against the astro build walk's 73.3** — the scoring walk was never "~2× the build's walk";
 recording adds ~1 µs/step. The number that misled the first draft was a wrong decomposition:
-the missing ~31 s in the perturb engine is the **centre-rescue** — at e4000 the winner escapes
-before the ask, so `best_reference_diag` re-walks the centre at `p + 128` (~443k steps ≈ 31 s)
+the missing ~31 s in the perturb engine is the **center-rescue** — at e4000 the winner escapes
+before the ask, so `best_reference_diag` re-walks the center at `p + 128` (~443k steps ≈ 31 s)
 just to *decline* the rescue. Both engines pay it identically; it is load-bearing cliff
 protection (the 2:58 device-loss fix) and stays. True e4000 astro decomposition:
-walk engine 115.2 ≈ phase 1 (2) + first walk (31) + parallel batch (~50) + centre-rescue (31);
+walk engine 115.2 ≈ phase 1 (2) + first walk (31) + parallel batch (~50) + center-rescue (31);
 perturb engine 68.6 ≈ phase 1 (2) + recorded first walk (32) + parallel δ-scoring (~3) +
-centre-rescue (31).
+center-rescue (31).
 
 **The real lever, shipped in 0.2.41-beta.2**: the pick's bignum walks were hardcoded
 astro-float — `--bignum` never reached them, which is exactly why the accelerated build

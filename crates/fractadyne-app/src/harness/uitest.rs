@@ -120,7 +120,7 @@ enum Screen {
     /// SEAM is visible — and it is a whole second interaction geometry (hit-testing by arc
     /// rather than by x), so a screenshot of the bar says nothing about it.
     PaletteEditorRing,
-    /// The colour picker popup, which no walk can reach by clicking.
+    /// The color picker popup, which no walk can reach by clicking.
     ColorPicker,
     /// The Custom formula dialog with a formula APPLIED — the dialog, its parameter row and depth
     /// note, and the custom formula rendering behind it.
@@ -135,7 +135,7 @@ enum Screen {
     /// compile costs on the render thread.
     FormulaApplyAsync,
     /// The formula field's parentheses: three depths, one inside a comment (dimmed, not counted), one
-    /// unmatched (error colour), and the pair at the cursor highlighted.
+    /// unmatched (error color), and the pair at the cursor highlighted.
     FormulaParens,
     /// The formula field completing a name: `co` typed at the end, its list open.
     FormulaComplete,
@@ -196,7 +196,7 @@ enum Screen {
     /// it lacks one click away.
     PaletteBrowserTags,
     /// The browser over the deep view the step before left (1e12×, perturbation): its thumbnails are
-    /// THAT view recoloured, so a deep view's structure shows in every palette.
+    /// THAT view recolored, so a deep view's structure shows in every palette.
     PaletteBrowserDeep,
     /// The same list opened with Holi chosen, a holiday palette below the list's first screenful:
     /// it opens scrolled to Holi, with the "Holidays" heading above the holiday palettes.
@@ -225,7 +225,7 @@ enum Screen {
     DualFormulaB,
     /// Field report 2026-08-30: panning FROM THE MINIMAP leaves rectangular blocks of stale
     /// image. The minimap moves the viewport with `pan_complex` and never marks the view as
-    /// interacting, so `view_gen` — the only part of the settle key that stands for the centre —
+    /// interacting, so `view_gen` — the only part of the settle key that stands for the center —
     /// does not move, and a completed tile grid keeps holding tiles drawn for the old view.
     ///
     /// Three steps, because the assertion is a comparison: settle a view, pan it the way the
@@ -243,7 +243,7 @@ struct LiveView {
 }
 
 /// A window-sizing step: resize the window, then capture the home view — validates layout and,
-/// specifically, the bottom status bar's wrap behaviour (and stability) at that width.
+/// specifically, the bottom status bar's wrap behavior (and stability) at that width.
 #[derive(Clone, Copy, Debug)]
 struct WindowSize {
     w: f32,
@@ -322,7 +322,7 @@ struct StepResult {
     precision: Option<usize>,
     mag_log10: Option<f64>,
     frame_ms: Option<f64>,
-    // Content-region image stats (centre crop): mean luma, its stddev, non-empty luma buckets/32.
+    // Content-region image stats (center crop): mean luma, its stddev, non-empty luma buckets/32.
     mean_luma: f64,
     luma_stddev: f64,
     buckets: usize,
@@ -463,7 +463,7 @@ pub(crate) struct UiTest {
     /// step's setup switches back.
     restore_language: Option<String>,
     /// The palette the walk showed before the palette-dropdown step picked one to show selected:
-    /// the next step's setup puts it back, so no later screenshot is in that step's colours.
+    /// the next step's setup puts it back, so no later screenshot is in that step's colors.
     restore_palette: Option<usize>,
 }
 
@@ -638,7 +638,7 @@ impl FractadyneApp {
             self.render_cfg.max_iter = 1_500_000;
             self.render_cfg.aa = 2;
             // Start SHALLOW; the motion phase performs the reporter's 100x click-zoom jump
-            // onto this centre (their panel: click-to-zoom on, factor 100x, M ~82x).
+            // onto this center (their panel: click-to-zoom on, factor 100x, M ~82x).
             self.viewport.set_center_mag(
                 fractadyne_core::BigFloat::from_f64(-0.032_98, 64),
                 fractadyne_core::BigFloat::from_f64(0.772_92, 64),
@@ -793,7 +793,7 @@ impl FractadyneApp {
         let jd = self.harness.juliadive.as_mut().unwrap();
         if jd.stopped_at.is_none() {
             if l2 < TARGET_L2 {
-                // Zoom about the Julia panel centre, with the same interaction stamp the real
+                // Zoom about the Julia panel center, with the same interaction stamp the real
                 // wheel/Space path applies (settle_t[1] ⇒ view 1 is "interacting").
                 let dt = (ctx.input(|i| i.stable_dt) as f64).clamp(0.0, 0.1);
                 let factor = (-(OCTAVES_PER_S * std::f64::consts::LN_2) * dt).exp();
@@ -1175,7 +1175,7 @@ impl FractadyneApp {
                     || self.perf.chunk_pending[1]
                     || !ramp_done(0)
                     || (self.dual && !ramp_done(1))
-                    // …and its COLOURS settled: a settled view's normalization is decided on its
+                    // …and its COLORS settled: a settled view's normalization is decided on its
                     // completed walk, so the switch it makes can start a 0.4 s dissolve just as the
                     // grid drains, and a capture inside it held a blend of two palettes (the
                     // minimap pan read 11.3 and 13.8 against the 9.5 gate, 2026-10-21).
@@ -1199,7 +1199,7 @@ impl FractadyneApp {
                         // nothing about whether the chunked PIXEL walk has drawn anything yet. At
                         // 1e6 the walk needs minutes when the budget is wrong (see the adaptive-seed
                         // bug in TODO.md, found by this very step), so the capture landed on a frame
-                        // where almost nothing had escaped: one flat colour, graded "looks flat",
+                        // where almost nothing had escaped: one flat color, graded "looks flat",
                         // red on every build for weeks. The walk's own flags are already in `busy`,
                         // so a live step now waits for the same quiet period every other step does —
                         // still bounded by the hard cap, so a genuinely slow view still captures and
@@ -1267,7 +1267,7 @@ impl FractadyneApp {
             StepKind::Screen(s) => self.uitest_open_screen(ctx, *s),
             StepKind::Live(v) => self.uitest_set_live(ctx, v.decades),
             StepKind::Window(win) => {
-                // Home view (so the status bar shows a normal centre readout), then resize. winit
+                // Home view (so the status bar shows a normal center readout), then resize. winit
                 // applies the new inner size over the next frame or two — hence the longer settle.
                 self.uitest_open_screen(ctx, Screen::Home);
                 // ⭐**The minimap is ON for the resize steps, because the two faults meet there.**
@@ -1583,7 +1583,7 @@ impl FractadyneApp {
                 ));
             }
             // Dual view, first formula. `set_fractal` resets the view to that formula's own
-            // default centre, which is the state a user is in after picking from the dropdown.
+            // default center, which is the state a user is in after picking from the dropdown.
             Screen::DualFormulaA => {
                 // The REPORTER'S SETTINGS, not the defaults. This matters: the settle grid arms
                 // far more eagerly under an EXPLICIT iteration count ("an explicit count arms
@@ -1636,7 +1636,7 @@ impl FractadyneApp {
                 );
                 self.pointer.settle_t = [-1.0e9, -1.0e9]; // settled, not interacting
             }
-            // EXACTLY what the minimap's drag does, and nothing else: move the centre, cancel the
+            // EXACTLY what the minimap's drag does, and nothing else: move the center, cancel the
             // glide. No settle_t, no invalidate — that omission IS the bug under test.
             Screen::MinimapPan => {
                 // THE REAL ACTION, not a copy of it: `minimap_pan` is what a drag on the overview
@@ -1739,7 +1739,7 @@ impl FractadyneApp {
                 self.coloring.paste_open = false;
                 self.coloring.ring_view = true;
             }
-            // ⭐The colour picker is a POPUP — nothing in the walk can click a swatch, so
+            // ⭐The color picker is a POPUP — nothing in the walk can click a swatch, so
             // the one surface whose labels this step exists to review would never appear.
             // Opened directly by its (deliberately stable) id.
             Screen::ColorPicker => {
@@ -2447,13 +2447,13 @@ impl FractadyneApp {
                 sb_problems.push(format!("no {want:?} readout"));
             }
         }
-        // The centre is two coordinates. It is never absent — unlike the cursor, which reads `—`
+        // The center is two coordinates. It is never absent — unlike the cursor, which reads `—`
         // when the pointer is off the canvas, and legitimately does here (the harness has no
         // pointer): what matters for that one is that its RESERVED FIELD is still drawn, since
         // the field appearing and disappearing is what wrapped the bar in the field report.
         if let Some(c) = find(&center) {
             if !c.contains(',') || c.trim_end().ends_with(',') {
-                sb_problems.push(format!("centre readout is incomplete: {c:?}"));
+                sb_problems.push(format!("center readout is incomplete: {c:?}"));
             }
         }
         if let Some(c) = find(&cursor) {
@@ -2547,7 +2547,7 @@ impl FractadyneApp {
         // FIELD REPORT (2026-08-30): in dual view, picking a different formula left the LEFT pane
         // drawing the previous one — the dropdown, the panel heading and the minimap all updated,
         // the pane did not. A differential is the whole check: the two formulas are rendered at
-        // their own default centres, so a working app cannot produce the same picture twice.
+        // their own default centers, so a working app cannot produce the same picture twice.
         if matches!(step.kind, StepKind::Screen(Screen::DualFormulaB)) {
             let before = ut.results.last().filter(|r| r.name == "dual-formula-a");
             match before {
@@ -2587,7 +2587,7 @@ impl FractadyneApp {
         // The step drove the REAL path: gallery generation, selecting the first entry (the
         // antenna tip, c = −2 — the one Misiurewicz point with an exact closed form), a
         // Newton solve at the asked depth, and the navigation. The check pins the viewport
-        // the walk ended on: centre at −2+0i to a millionth of the view width, depth 1e6×.
+        // the walk ended on: center at −2+0i to a millionth of the view width, depth 1e6×.
         if matches!(step.kind, StepKind::Screen(Screen::MisiurewiczJump)) {
             let (cx, cy) = self.viewport.center_f64();
             let l2 = self.viewport.log2_magnification();
@@ -2597,7 +2597,7 @@ impl FractadyneApp {
             if pos_ok && depth_ok {
                 checks.push(pass(
                     "misiurewicz-jump-lands",
-                    format!("landed on the antenna tip: centre ({cx:.9}, {cy:.9}), {l2:.2} oct"),
+                    format!("landed on the antenna tip: center ({cx:.9}, {cy:.9}), {l2:.2} oct"),
                 ));
             } else {
                 checks.push(Check {

@@ -15,15 +15,15 @@ pub(crate) fn run(args: &[String]) -> bool {
         crate::exit(2);
     }
     // An INTERIOR point (well inside the main cardioid), irrational so every limb is
-    // populated and the multiplies do real carry work — a dyadic centre like -0.5 would
+    // populated and the multiplies do real carry work — a dyadic center like -0.5 would
     // produce sparse mantissas and understate the cost.
     //
     // ⚠Interior, not boundary, and that choice is load-bearing: an interior orbit cannot
     // escape at ANY precision, so every row does the full `iters` of real bignum work. A
-    // boundary centre escaped at 64 bits (where truncation makes it a different point) and
+    // boundary center escaped at 64 bits (where truncation makes it a different point) and
     // spent the rest of the row on infinities — fast, meaningless, and it made the whole
     // command exit 1 permanently. The escape guard below stays as the tripwire; it was seen
-    // firing on exactly that case before this centre was chosen.
+    // firing on exactly that case before this center was chosen.
     const CX: &str = "-0.287935866751537269847162833107461";
     const CY: &str = "0.007071067811865475244008443621048";
 
@@ -64,7 +64,7 @@ pub(crate) fn run(args: &[String]) -> bool {
         let (Some(cx), Some(cy)) =
             (fractadyne_core::parse_bf_prec(CX, bits), fractadyne_core::parse_bf_prec(CY, bits))
         else {
-            eprintln!("fractadyne: could not parse the benchmark centre at {bits} bits");
+            eprintln!("fractadyne: could not parse the benchmark center at {bits} bits");
             crate::exit(2);
         };
         let z0 = fractadyne_core::BigFloat::from_f64(0.0, bits);

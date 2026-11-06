@@ -1,5 +1,5 @@
-"""Is a render a PICTURE? Measures variation ACROSS PIXELS: distinct colours and the modal
-colour's share. (Channel variance is the wrong metric: a uniform (117,0,0) field has a large
+"""Is a render a PICTURE? Measures variation ACROSS PIXELS: distinct colors and the modal
+color's share. (Channel variance is the wrong metric: a uniform (117,0,0) field has a large
 channel spread and no structure at all.)"""
 import sys
 from collections import Counter

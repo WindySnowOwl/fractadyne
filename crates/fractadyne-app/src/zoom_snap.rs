@@ -3,7 +3,7 @@
 //! the zoom lands on it instead of beside it. The Navigate panel's "Snap zoom to features"
 //! (`RenderConfig::snap_zoom`, on by default). Mandelbrot only, single view.
 //!
-//! The behaviour follows Imagina's (studied, not copied — Imagina is AGPL): a feature within 1/24
+//! The behavior follows Imagina's (studied, not copied — Imagina is AGPL): a feature within 1/24
 //! of the view's height of the cursor attracts the zoom, more strongly the nearer it is, and each
 //! octave zoomed in shrinks its distance from the cursor by up to half. The finder is our own:
 //! `fractadyne_core::feature::find_nucleus_near`, run off the UI thread against the view's

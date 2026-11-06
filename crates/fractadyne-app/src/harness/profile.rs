@@ -116,8 +116,8 @@ pub fn load_regions(path: &std::path::Path) -> Result<Vec<ProfRegion>, String> {
         return Err("no [[region]] entries".into());
     }
     // ⚠**Out-of-range dev input is an ERROR here, never a silent adjustment.** This used to
-    // `take(2048)` the centre and `clamp(.., 200_000)` the iteration count, and both bit on the
-    // first real use: a 4,031-digit e4000 centre truncated to 2,048 digits picked a reference
+    // `take(2048)` the center and `clamp(.., 200_000)` the iteration count, and both bit on the
+    // first real use: a 4,031-digit e4000 center truncated to 2,048 digits picked a reference
     // ~1e2000 view-widths off the view, and the profile reported `ref 0.31 ms` for a build that
     // really costs 400 s — a wrong number formatted exactly like a right one. The whole point of a
     // regions file is deep views; the caps must refuse, not quietly reshape the region into a
@@ -258,7 +258,7 @@ impl FractadyneApp {
 
             let mut vp = Viewport::new(r.size as f64, r.size as f64);
             // A region file that names a coordinate we cannot read used to profile the DEFAULT
-            // centre under that region's name, so the report attributed timings from the main
+            // center under that region's name, so the report attributed timings from the main
             // cardioid to a deep location. Fatal instead.
             let (cx, cy) = crate::arg_center(&format!("--regions [[region]] \"{}\"", r.name), &r.cx, &r.cy, r.zoom_log2);
             vp.set_center_log2mag(cx, cy, r.zoom_log2);
@@ -384,7 +384,7 @@ impl crate::FractadyneApp {
     /// interval between real frames, and lookahead installs.
     ///
     /// `FRACTADYNE_DIVETEST_GLIDE=<zoom_rate>` swaps the camera driver for an INTERACTIVE glide:
-    /// the hold-Space zoom at that slider setting, about the tour's final centre, through the same
+    /// the hold-Space zoom at that slider setting, about the tour's final center, through the same
     /// pacer the GUI applies (`paced_zoom_vel`) and the interactive lookahead
     /// (`interactive_ref_prefetch_with`) — the tour only supplies the window start views and the
     /// anchor. `FRACTADYNE_NO_PREFETCH=1` is the A/B baseline in either mode.
@@ -505,7 +505,7 @@ impl crate::FractadyneApp {
             }
             let tour_max_l2 = pb.sample(pb.total).logmag / LN_2;
             // Glide mode: the tour supplies the window's start view and the anchor (its final
-            // centre — the point an interactive dive keeps under the cursor); the camera is then
+            // center — the point an interactive dive keeps under the cursor); the camera is then
             // the GUI's own glide at the selected zoom rate, and there is NO playback, so the
             // interactive pump owns the lookahead queue exactly as it does in the GUI.
             let glide = glide_rate.map(|zr| {
@@ -934,7 +934,7 @@ impl FractadyneApp {
             .frametest.center
             .clone()
             .unwrap_or_else(|| (def_x.to_string(), def_y.to_string()));
-        // At the dive's DEEPEST point: the one centre serves every depth the dive passes.
+        // At the dive's DEEPEST point: the one center serves every depth the dive passes.
         let (cx, cy) = crate::arg_center("--center", &sx, &sy, target_log10 * std::f64::consts::LOG2_10);
         self.set_fractal(FractalKind::Mandelbrot);
         self.julia_mode = false;

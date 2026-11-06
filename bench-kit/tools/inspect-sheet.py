@@ -7,7 +7,7 @@
 WHY
 ---
 Each renderer draws with its own palette, so two correct renders of one scene can look nothing
-alike, and a real difference (a glitch, a blank patch, a wrong count) hides among the colouring
+alike, and a real difference (a glitch, a blank patch, a wrong count) hides among the coloring
 differences. The view check (verify-views.py) can say "same scene" and no more. An inspection
 sheet puts the renderers that allow it on one palette made for spotting differences, and says
 WHERE a renderer that writes its raw counts disagrees with Fractadyne. (User request, 2026-11-03:
@@ -17,8 +17,8 @@ publishing: the published images keep each renderer's own look.
 
 THE PALETTE
 -----------
-Four colours in a fixed order, light and dark alternating (white, blue, yellow, vermillion),
-never blended; interior black. A pixel's colour is band(n) = floor(n / k) mod 4 for its whole
+Four colors in a fixed order, light and dark alternating (white, blue, yellow, vermillion),
+never blended; interior black. A pixel's color is band(n) = floor(n / k) mod 4 for its whole
 iteration count n. k, the band width in iterations, is a power of two chosen per scene from
 Fractadyne's own counts, so bands come out about BAND_PX pixels wide at 640x360. Hard edges are
 the point: an off-by-a-few count moves a band edge, which a smooth ramp (grayscale included)
@@ -27,17 +27,17 @@ would hide.
 WHO GETS IT
 -----------
 - Fractadyne and Fraktaler-3 write raw iteration counts (fd-raw/, f3-raw/, both 640x360); they
-  are coloured HERE, so their palette is identical by construction.
+  are colored HERE, so their palette is identical by construction.
 - FractalShark 0.545 takes --palette-map FILE --palette-depth D. Measured 2026-11-03 at bench
   scene 03: it resamples the file to 2^D entries and advances ONE ENTRY PER ITERATION, blending
-  neighbouring entries; its count runs about one behind Fractadyne's (offset -1 for most pixels,
-  -3..+1 overall). `prepare` writes each scene a file of exactly 2^D entries, each colour repeated
+  neighboring entries; its count runs about one behind Fractadyne's (offset -1 for most pixels,
+  -3..+1 overall). `prepare` writes each scene a file of exactly 2^D entries, each color repeated
   k times, so blends fall only at band edges (inspect/<scene>.fs.map, depth in inspect/plan.json).
-- Imagina, through imagina-cli: its counts come back ENCODED IN COLOUR and are coloured here like
+- Imagina, through imagina-cli: its counts come back ENCODED IN COLOR and are colored here like
   Fraktaler-3's. `--iterations` makes it store each pixel's smooth iteration count instead of its
   default value, 8*log(1/DE + 1) from the distance estimate (which ran 600..738 on scene 62 where
   Fractadyne counted 1,029..1,856, and lit filaments rather than bands). With no --palette-cycle,
-  imagina-cli colours a pixel with map entry floor(count) mod n, unblended, so `prepare` writes
+  imagina-cli colors a pixel with map entry floor(count) mod n, unblended, so `prepare` writes
   inspect/imagina-decode.map, entry i = (i mod 256, i / 256, 77), and `im_counts` reads the count
   back mod 65,536. Measured 2026-11-03 on scenes 61-64: its whole count is Fractadyne's plus 1 to
   3 (the median), within 1-2 at the median pixel; Cerebral Spin (63, 2M iterations) spreads far
@@ -49,9 +49,9 @@ WHO GETS IT
   Imagina matched the truth at every distance from the minibrot; with it on, Fraktaler-3 and
   Fractal Zoomer scattered evenly around the truth in that ring while Imagina fell short. Scene 64
   the same day: off, two runs identical; on, 18% of pixels differed.
-- Fractal Zoomer: its counts ARE its colours. Its direct colour mode (Settings.useDirectColor)
+- Fractal Zoomer: its counts ARE its colors. Its direct color mode (Settings.useDirectColor)
   makes a pixel 0xFF000000 | (int) result & 0xFFFFFF before any palette or transfer function, and
-  the default out-colouring (escape time, smoothing off) makes `result` the whole iteration count,
+  the default out-coloring (escape time, smoothing off) makes `result` the whole iteration count,
   so FzsWriter --counts writes .fzs files that render counts (0xFFFFFF interior; exact to 2^24).
   It also sets the escape radius to 256, Fractadyne's: at Fractal Zoomer's default of 2 its count
   was the exact radius-2 escape (checked against direct iteration), and the steps from radius 2 to
@@ -60,18 +60,18 @@ WHO GETS IT
   Fractadyne's plus 3 on every scene, within 1-3 at the median pixel; 63 spreads to p90 841.
   Interior agreed to within 4 px; 0 deviating patches on 61, 62, 64 and 2 (0.01%) on 63.
 - Fracturing Fog: its own image, marked "own palette".
-  Fraktaler-3 3.1 has no colour option, which is why its raw counts are used.
+  Fraktaler-3 3.1 has no color option, which is why its raw counts are used.
 
 THE DEVIATION MAP (Fraktaler-3, Imagina and Fractal Zoomer against Fractadyne)
 ------------------------------------------------------------------------------
 Over pixels where both escaped, the median count difference is taken as the two renderers'
 convention offset (they count escapes from different radii) and removed. A pixel then deviates
-when its count lies outside the RANGE of Fractadyne's 3x3 neighbourhood by more than DEV_SLACK
+when its count lies outside the RANGE of Fractadyne's 3x3 neighborhood by more than DEV_SLACK
 (a renderer samples a pixel somewhere inside it), and counts only as part of a connected patch of
 DEV_MIN_PATCH pixels or more; isolated ones are sampling speckle (see `deviation`). Escaped in one
-renderer only is its own class. A pixel whose neighbourhood spans more than a band is CHAOTIC: no
-count there is stable to a pixel, so it is drawn grey and not judged. Colours: agreeing pixels
-dimmed, deviating patches magenta, speckle dull purple, escaped-in-one-only red, chaotic grey.
+renderer only is its own class. A pixel whose neighborhood spans more than a band is CHAOTIC: no
+count there is stable to a pixel, so it is drawn gray and not judged. Colors: agreeing pixels
+dimmed, deviating patches magenta, speckle dull purple, escaped-in-one-only red, chaotic gray.
 
 Exit 0 on success, 1 if a scene's raw counts could not be read, 2 on a usage error.
 Needs numpy and Pillow.
@@ -98,16 +98,16 @@ BAND_PX = 10
 K_MAX = 1 << 18
 FS_DEPTHS = (5, 6, 8, 12, 16, 20)
 NEVER_ESCAPED = 0xFFFFFFFF
-# Imagina's counts come back through colour: entry i of the decode map is (i mod 256, i / 256,
+# Imagina's counts come back through color: entry i of the decode map is (i mod 256, i / 256,
 # IM_MARK), so a pixel gives floor(count) mod IM_N. The blue lane marks a decodable pixel.
 IM_N = 65536
 IM_MARK = 77
-# Fractal Zoomer's direct colour for a pixel that never escaped: (int) Double.MAX_VALUE & 0xFFFFFF.
+# Fractal Zoomer's direct color for a pixel that never escaped: (int) Double.MAX_VALUE & 0xFFFFFF.
 FZ_INTERIOR = 0xFFFFFF
 # A count may sit this far outside the reference's 3x3 range before it deviates (escape-count
 # conventions differ by a step or two even after the median offset).
 DEV_SLACK = 2
-# A deviation counts only as part of a connected patch (8-neighbour) of at least this many pixels.
+# A deviation counts only as part of a connected patch (8-neighbor) of at least this many pixels.
 # Measured on bench scenes 62-64 (2026-11-03): in smooth areas Fraktaler-3 and Fractadyne agree to
 # +-1 iteration everywhere, and where the field has structure finer than a pixel the two disagree
 # by up to the local spread in ISOLATED pixels (no sub-pixel sampling shift between them). A real
@@ -252,8 +252,8 @@ def im_counts(path, ref):
 
 
 def fz_counts(path, ref):
-    """Fractal Zoomer's whole counts from its direct-colour render (fz-inspect/out/<scene>.png,
-    FzsWriter --counts): the colour IS the count, 0xFFFFFF interior. Exact to 2^24 iterations;
+    """Fractal Zoomer's whole counts from its direct-color render (fz-inspect/out/<scene>.png,
+    FzsWriter --counts): the color IS the count, 0xFFFFFF interior. Exact to 2^24 iterations;
     past that, unwrapped like Imagina's."""
     rgb = read_rgb(path, ref, "Fractal Zoomer")
     v = (rgb[..., 0] << 16) | (rgb[..., 1] << 8) | rgb[..., 2]
@@ -295,7 +295,7 @@ def imagina_decode_lines():
 
 def band_width(n):
     """A power of two k so that bands are about BAND_PX pixels wide: BAND_PX times the median
-    count step between escaped neighbours (the 75th percentile when most steps are zero)."""
+    count step between escaped neighbors (the 75th percentile when most steps are zero)."""
     steps = []
     for a, b in ((n[:, 1:], n[:, :-1]), (n[1:, :], n[:-1, :])):
         both = (a >= 0) & (b >= 0)
@@ -315,7 +315,7 @@ def colour(n, k):
 
 
 def neighbours(a, fill):
-    """The 3x3 neighbourhood of every pixel, as 9 shifted copies (edges padded with `fill`)."""
+    """The 3x3 neighborhood of every pixel, as 9 shifted copies (edges padded with `fill`)."""
     p = np.pad(a, 1, constant_values=fill)
     h, w = a.shape
     return [p[dy:dy + h, dx:dx + w] for dy in range(3) for dx in range(3)]
@@ -324,7 +324,7 @@ def neighbours(a, fill):
 def deviation(ref, test, k):
     """The deviation image and its statistics. `test`'s counts, less their median offset from
     `ref` (escape conventions: Fraktaler-3's EXR adds 1024 and counts from another radius), are
-    compared with the RANGE of `ref`'s 3x3 neighbourhood, since a renderer samples a pixel
+    compared with the RANGE of `ref`'s 3x3 neighborhood, since a renderer samples a pixel
     somewhere inside it: a pixel deviates when it lies outside that range by more than DEV_SLACK.
     Deviations count only in connected patches of DEV_MIN_PATCH pixels or more; isolated ones are
     sampling speckle where the field has structure finer than a pixel. (Tried and measured on
@@ -345,13 +345,13 @@ def deviation(ref, test, k):
     for q in neighbours(ref, -2):
         ref_int |= q == -1
         ref_esc |= q >= 0
-    # Escaped in one only: the test's state matches no reference pixel in the neighbourhood.
+    # Escaped in one only: the test's state matches no reference pixel in the neighborhood.
     one_raw = ((t < 0) & ~ref_int) | ((t >= 0) & ~ref_esc)
     raw_dev = (t >= 0) & ref_esc & ((t < lo - DEV_SLACK) | (t > hi + DEV_SLACK)) & ~one_raw
     dev, patches = patches_of(raw_dev, DEV_MIN_PATCH)
     one, one_patches = patches_of(one_raw, 3)
     speckle = raw_dev & ~dev
-    # Where the neighbourhood spans more than a whole band the range test is near vacuous.
+    # Where the neighborhood spans more than a whole band the range test is near vacuous.
     chaos = (hi - lo > k) & (ref >= 0) & ~raw_dev & ~one_raw
     img = (colour(ref, k).astype(np.float32) * 0.35).astype(np.uint8)
     img[chaos] = (128, 128, 128)
@@ -484,7 +484,7 @@ def sheet(res, out_path):
                 t = f3_counts(f3p)
                 if t.shape == ref.shape:
                     dimg, s["fraktaler3"] = deviation(ref, t, k)
-                    # Coloured after removing its offset from Fractadyne's count (an EXR iteration
+                    # Colored after removing its offset from Fractadyne's count (an EXR iteration
                     # bias of 1024 plus its escape radius), so its bands are in phase.
                     off = s["fraktaler3"]["offset"]
                     tiles[1] = (Image.fromarray(colour(np.where(t >= 0, t - off, -1), k)), "offset %+d removed" % off)
@@ -501,7 +501,7 @@ def sheet(res, out_path):
             o = own_image(res, "fs-%s-r1.png" % stem)
             if o is not None:
                 tiles[3] = (o, "own palette")
-        # Renderers whose counts come back through colour: coloured here, with their own deviation
+        # Renderers whose counts come back through color: colored here, with their own deviation
         # column; otherwise their own image.
         def im_read(p):
             t, undecodable = im_counts(p, ref)
@@ -535,14 +535,14 @@ def sheet(res, out_path):
             tiles[8] = (o, "own palette")
         for j, (tile, note) in tiles.items():
             x = LEFT + j * (TW + PAD)
-            # Counts coloured here (and FractalShark's stepped palette) are hard-edged: no blending.
+            # Counts colored here (and FractalShark's stepped palette) are hard-edged: no blending.
             img.paste(tile.resize((TW, TH), Image.LANCZOS if note == "own palette" else Image.NEAREST), (x, y))
             if note:
                 d.text((x + 2, y + TH + 3), note, fill=(200, 200, 200), font=fs)
         stats[scene] = s
     d.text((6, H - 34), "Palette: band(n) = floor(n / k) mod 4 (white, blue, yellow, vermillion), interior black. "
            "Deviation: magenta = a patch of 12+ px outside Fractadyne's 3x3 count range by more than 2 (after the median offset); "
-           "dull purple = isolated pixels (sampling); red = escaped in one only; grey = chaotic; dim = agrees.", fill=(200, 200, 200), font=fs)
+           "dull purple = isolated pixels (sampling); red = escaped in one only; gray = chaotic; dim = agrees.", fill=(200, 200, 200), font=fs)
     img.save(out_path, quality=90)
     with open(os.path.join(res, "inspect", "inspect.json"), "w") as f:
         json.dump(stats, f, indent=1)

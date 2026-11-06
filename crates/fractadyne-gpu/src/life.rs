@@ -7,7 +7,7 @@
 //! **Why a batch may run [`BATCH`] generations without the host looking:** a live cell moves at most
 //! one cell a generation, so a pattern that starts a batch inside its occupied tiles cannot cross
 //! the one-tile (64-cell) halo in fewer than 64. The shader's breach counter — a cell left on an
-//! edge whose neighbour is not stored — is the tripwire that this holds; it must read zero.
+//! edge whose neighbor is not stored — is the tripwire that this holds; it must read zero.
 
 use egui_wgpu::wgpu;
 use fractadyne_core::life::{Rule, Topology, Universe, TILE, TILE_CELLS};
@@ -308,7 +308,7 @@ impl LifeGpu {
         Ok(())
     }
 
-    /// The tiles to store for these occupied ones: on a plane, each with its eight neighbours; a
+    /// The tiles to store for these occupied ones: on a plane, each with its eight neighbors; a
     /// torus and a bounded plane keep every tile of their area.
     fn wanted(&self, occupied: &[(i64, i64)]) -> Vec<(i64, i64)> {
         match self.topology {
@@ -333,7 +333,7 @@ impl LifeGpu {
         }
     }
 
-    /// The key of tile `(tx, ty)`'s neighbour at `(dx, dy)` — wrapped on a torus.
+    /// The key of tile `(tx, ty)`'s neighbor at `(dx, dy)` — wrapped on a torus.
     fn neighbour_key(&self, (tx, ty): (i64, i64), dx: i64, dy: i64) -> (i64, i64) {
         match self.topology {
             Topology::Torus { width, height } => {
@@ -343,7 +343,7 @@ impl LifeGpu {
         }
     }
 
-    /// Upload the active list, every active slot's neighbour links and its live rectangle.
+    /// Upload the active list, every active slot's neighbor links and its live rectangle.
     fn upload_tables(&self, queue: &wgpu::Queue) {
         let active: Vec<u32> = self.active.clone();
         let mut links = vec![-1i32; self.capacity as usize * 8];

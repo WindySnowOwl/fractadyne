@@ -32,7 +32,7 @@ pub(crate) struct MovingInputs {
     /// "Prefer detail while zooming" or the auto-zoom's Quality priority.
     pub(crate) prefer_detail: bool,
     pub(crate) tour_playing: bool,
-    /// The chunk path can serve this frame (mode, formula, colouring, device), so a perturbation
+    /// The chunk path can serve this frame (mode, formula, coloring, device), so a perturbation
     /// refresh is spread over a pin's passes.
     pub(crate) can_chunk: bool,
     pub(crate) zoom_oct_s: f64,
@@ -183,9 +183,9 @@ pub(crate) fn decide_moving(i: &MovingInputs) -> MovingDecision {
     let mut rate_cap = None;
     let rate_res_cap = if interacting && !pin_frame && !i.prefer_detail {
         // Only a frame the chunk path can serve is spread over passes (the pin); an aux
-        // colouring, a formula past the chunk shaders' scope or a device without the state
+        // coloring, a formula past the chunk shaders' scope or a device without the state
         // targets renders each refresh as ONE dispatch, and then one pass is all there is.
-        // (`can_chunk`: the caller decides it from the mode, the formula, the colouring and the
+        // (`can_chunk`: the caller decides it from the mode, the formula, the coloring and the
         // device's state targets.)
         let can_chunk = i.can_chunk;
         // A PINNED refresh spans many frames, so no single frame interval prices it; an
@@ -302,7 +302,7 @@ pub(crate) fn decide_moving(i: &MovingInputs) -> MovingDecision {
         // second panel used to move at view 0's scale, which only view 0's frames stepped.
         {
             // Adapt ONLY on the interval following a REAL re-iterate frame. During a dive most
-            // frames are ~free reprojections; adapting on those (the old behaviour) pushed the
+            // frames are ~free reprojections; adapting on those (the old behavior) pushed the
             // res toward native (+0.03/frame), so every rare real refresh rendered near-native
             // at 33–64 ms — 2–4 dropped vsyncs each, the divetest-measured "stepped zooming".
             // A reprojection interval says nothing about iterate cost → hold. The raw interval
@@ -427,7 +427,7 @@ pub(crate) struct PresentInputs {
     /// The frame, which an armed probe is stamped with.
     pub(crate) frame: u64,
     /// The held picture stands across a JUMP and the new view's palette window is not adopted yet
-    /// (the caller: normalised colouring, the view's mapping not locked, within
+    /// (the caller: normalized coloring, the view's mapping not locked, within
     /// `tunables::JUMP_MAP_WAIT_S` of the compose ending).
     #[serde(default, skip_serializing_if = "is_false")]
     pub(crate) await_map: bool,
@@ -445,7 +445,7 @@ pub(crate) struct PresentDecision {
     pub(crate) hold_copy: bool,
     pub(crate) display_hold: bool,
     pub(crate) pin_gate: bool,
-    /// Colour-pass box-filter width when true supersampling wasn't affordable.
+    /// Color-pass box-filter width when true supersampling wasn't affordable.
     pub(crate) aa_filter: u32,
     /// The view's hold flag after this frame; the snapshot's verified flag if this frame sets it
     /// (`None` = unchanged); the settled-cost probe this frame arms, if any.
@@ -467,7 +467,7 @@ pub(crate) struct AaProbe {
 
 /// The PRESENT gate (`bp_present_gate`, lifted): whether the display serves the held snapshot while
 /// compose work runs underneath, whether this frame takes the snapshot, the settled-cost probe, and
-/// the colour-pass filter. Pure.
+/// the color-pass filter. Pure.
 #[must_use]
 pub(crate) fn decide_present(i: &PresentInputs) -> PresentDecision {
     let (chunk_over, chunk_range, probe_fired, tile_work) = (i.chunk_over, i.chunk_range, i.probe_fired, i.tile_work);
@@ -523,7 +523,7 @@ pub(crate) fn decide_present(i: &PresentInputs) -> PresentDecision {
     // view's palette window is adopted (`await_map`). Revealed at once, the new picture was drawn
     // under the OLD view's window for the frames its reading took to come back, then dissolved
     // from it: after a 100× click at 2^429 the whole new picture lay in 1% of the old window, one
-    // pale colour that took 0.4 s to fade into the picture (2026-10-31). Only an existing hold is
+    // pale color that took 0.4 s to fade into the picture (2026-10-31). Only an existing hold is
     // kept; none is started for it.
     let awaiting_map = !composing && i.await_map && i.hold_active;
     let mut pin_gate = false;
@@ -876,16 +876,16 @@ pub(crate) fn decide_iter(i: &IterInputs) -> IterDecision {
         if frac.is_finite() && frac > 0.98 && boost > 1.0 {
             // ⭐Before concluding INTERIOR and reverting to black, try ONE fresh reference
             // pick at the full appetite. The reference in hand may have been chosen cheaply
-            // during motion — the view CENTRE, which escapes early and covers this view
+            // during motion — the view CENTER, which escapes early and covers this view
             // badly — and the settled path reuse-EXTENDED it rather than re-picking. A pick
             // at the appetite runs the deep-perturb engine and finds a better point (measured
-            // 2026-09-10 at 9.34e80×: the export/appetite pick lands OFF-CENTRE, offset
+            // 2026-09-10 at 9.34e80×: the export/appetite pick lands OFF-CENTER, offset
             // ≈(−0.04,+0.02), and resolves where the reused motion pick stays solid black).
             // Clearing `ref_pt` forces the next build to pick fresh instead of reuse — and it
             // picks at the appetite ask, because the boost is at the appetite right here.
             // ⚠Wait for that build to land before deciding: reverting while it is in flight
             // would drop the boost, and the re-pick would then rebuild at the throttled ask
-            // and pick the poor centre all over again. Once per settle (`iter_repicked`): if
+            // and pick the poor center all over again. Once per settle (`iter_repicked`): if
             // the appetite-picked reference is STILL all-capped, the view is genuinely
             // interior and the revert below stands.
             if !s.repicked {
@@ -959,7 +959,7 @@ pub(crate) fn decide_iter(i: &IterInputs) -> IterDecision {
     }
     // ⭐THE CLIMB'S VERDICT (`Perf::iter_verdict`): a reading measured at this budget that
     // left it where it was. Supersampling begins on nothing less (`accum_inputs_pending`):
-    // every raise and revert re-decides the colour range and restarts a run.
+    // every raise and revert re-decides the color range and restarts a run.
     let moved = s.boost != boost_in || s.repicked != repicked_in;
     if interacting || moved {
         s.verdict = None;
@@ -972,7 +972,7 @@ pub(crate) fn decide_iter(i: &IterInputs) -> IterDecision {
     // until settle re-boosted ("screen goes black until it repaints"). A boosted motion frame
     // costs up to boost× more, which the motion-res controller absorbs as resolution — softer
     // beats black. (ADAPTATION stays settled-only; this is only the budget's application.)
-    // ✅A1 RESOLVED (v0.2.40-beta.53): an explicit iteration count is honoured verbatim, in
+    // ✅A1 RESOLVED (v0.2.40-beta.53): an explicit iteration count is honored verbatim, in
     // auto mode the zoom cap × boost applies as before — one shared formula with the boost
     // probe's `budget_now`, so the two can never drift (`live_iter_budget`; the drift failure
     // mode and the freeze-guard coupling that blocked this for two releases are documented on
@@ -1043,7 +1043,7 @@ pub(crate) fn decide_probe(i: &ProbeInputs) -> ProbeDecision {
     // else will dispatch this frame, force a re-measure. Without this the climb deadlocks at
     // the resolution floor: one ×1.5 budget step is too small to unfloor a 16×16 frame under a
     // huge iteration count, so the key never changes → no dispatch → no measurement → the
-    // budget freezes one step off the bootstrap and the view stays pixellated forever (seen
+    // budget freezes one step off the bootstrap and the view stays pixelated forever (seen
     // at the 197k× spar with an explicit 4M count after restart — interaction used to mask it
     // by re-keying every frame, and before beta.65/66 this state usually crashed first).
     // Each forced dispatch is budget-sized by the shrink above, so it is TDR-safe by
@@ -1136,9 +1136,9 @@ fn one() -> u32 {
 #[derive(Clone, Copy, Debug, PartialEq, Serialize, Deserialize)]
 pub(crate) struct WalkLedger {
     /// The one unpriced pass in flight: its iterations, its band, the wall accumulated since it went
-    /// out, and whether the lethal band has already shed the licences for it.
+    /// out, and whether the lethal band has already shed the licenses for it.
     pub(crate) inflight: Option<(u32, u8, f64, bool)>,
-    /// Per iteration band: the licence (iterations a pass may carry there) its prices have earned.
+    /// Per iteration band: the license (iterations a pass may carry there) its prices have earned.
     pub(crate) bands: [u32; crate::tunables::CHUNK_BANDS],
     /// The last priced pass's wall price, ms.
     pub(crate) pass_dt: f64,
@@ -1159,7 +1159,7 @@ pub(crate) struct WalkLedger {
     /// Per iteration band: what the GPU last timed a pin pass's iterations there at, ms (a span's
     /// price shared out in proportion to what its bands cost before), the iterations that cost
     /// covered, and the reference length it was measured against (`PIN_SPAN_PRICED`,
-    /// `feed_pin_cost`; 0 = none). A span is bounded by these, not by the licences
+    /// `feed_pin_cost`; 0 = none). A span is bounded by these, not by the licenses
     /// (`pin_span_end_priced`). (Absent when empty, and empty unless `PIN_SPAN_PRICED` is on.)
     #[serde(default, skip_serializing_if = "no_cost")]
     pub(crate) band_ms: [f32; crate::tunables::CHUNK_BANDS],
@@ -1176,24 +1176,24 @@ pub(crate) struct WalkLedger {
     /// another size). (Absent when empty.)
     #[serde(default, skip_serializing_if = "no_late_px")]
     pub(crate) late_px: [u32; LATE_MAX],
-    /// The settled walk's licence past the ESCAPE ONSET (`WALK_ONSET`, `walk_onset_start`), as WORK:
+    /// The settled walk's license past the ESCAPE ONSET (`WALK_ONSET`, `walk_onset_start`), as WORK:
     /// iterations × the pixels a pass is charged for, earned by those passes' own prices with a band
-    /// licence's rule (`licence_update`) and shed with the band licences. 0 = unvisited, which opens
+    /// license's rule (`licence_update`) and shed with the band licenses. 0 = unvisited, which opens
     /// at the floor. A band is one octave and the cost is not uniform inside one: at the 2^704 view
     /// band 10 ([131k, 262k)) is nearly free up to ~220k and ~100x dearer past it, where the pixels
-    /// begin to escape, so the band's licence, earned on its cheap front, carried a 32,585-iteration
+    /// begin to escape, so the band's license, earned on its cheap front, carried a 32,585-iteration
     /// pass into the dear part. ⚠Work, not iterations: the region runs on into the tail, where a
-    /// few hundred thousand pixels still run and a cheap pass carries 20-30k iterations; a licence
+    /// few hundred thousand pixels still run and a cheap pass carries 20-30k iterations; a license
     /// in iterations earned there opened the next sample's first dear pass at 20,608 over all 9.2M
     /// (2026-10-21). (Absent when 0.)
     #[serde(default, skip_serializing_if = "zero_u64")]
     pub(crate) onset_work: u64,
-    /// Per iteration band: the pixels the settled pass that last priced its licence was charged for
-    /// (`WALK_ONSET`; 0 = unknown, or priced by a pin). A licence is a count of iterations, and it
+    /// Per iteration band: the pixels the settled pass that last priced its license was charged for
+    /// (`WALK_ONSET`; 0 = unknown, or priced by a pin). A license is a count of iterations, and it
     /// holds only at the pixels it was earned over: inside band 11 at the 2^704 view the running
-    /// pixels fall from ~1.4M to a few hundred thousand, so a licence earned at the band's end opened
+    /// pixels fall from ~1.4M to a few hundred thousand, so a license earned at the band's end opened
     /// the next sample's first pass there at 29,596 iterations, 922 ms. A settled pass charged for
-    /// more pixels takes the licence scaled down to the same work (`decide_walk_dispatch`); never up.
+    /// more pixels takes the license scaled down to the same work (`decide_walk_dispatch`); never up.
     /// (Absent when empty.)
     #[serde(default, skip_serializing_if = "no_cost_len")]
     pub(crate) band_px: [u32; crate::tunables::CHUNK_BANDS],
@@ -1212,7 +1212,7 @@ fn zero_f64(v: &f64) -> bool {
 }
 
 /// The `band` a step-bounded pass in flight is recorded under (`WalkLedger::inflight`): not an
-/// iteration band, so its price feeds `step_cap_last` / `step_wall_last` and no band's licence.
+/// iteration band, so its price feeds `step_cap_last` / `step_wall_last` and no band's license.
 pub(crate) const STEP_PASS_BAND: u8 = u8::MAX;
 
 /// What [`decide_walk_price`] reads: `bp_chunk_tiling`'s pricing and sizing inputs, one view, one frame
@@ -1290,7 +1290,7 @@ pub(crate) struct WalkPriceInputs {
     /// The settled pass in flight's first live iteration and the pixels it was charged for
     /// (`DispatchState::inflight_lo`, `inflight_px`; 0 = unknown), and where the view's escape-onset
     /// region starts (`walk_onset_start`; 0 = unknown or `WALK_ONSET` 0): a completed pass that
-    /// started in the region prices its licence too (`WalkLedger::onset_work`). Recordings made
+    /// started in the region prices its license too (`WalkLedger::onset_work`). Recordings made
     /// before them read 0, which prices nothing there.
     #[serde(default)]
     pub(crate) inflight_lo: u32,
@@ -1327,7 +1327,7 @@ pub(crate) struct WalkPriceDecision {
 /// What the pricing did, for the caller's log and trace.
 #[derive(Clone, Copy, Debug, PartialEq, Serialize, Deserialize)]
 pub(crate) enum WalkPriceEvent {
-    /// The in-flight pass reached the lethal band before draining: the licences were shed.
+    /// The in-flight pass reached the lethal band before draining: the licenses were shed.
     LethalShed { size: u32, band: u8, acc: f64, floor: u32, outcome: super::RetreatOutcome },
     /// A pin pass was priced (`acc` -1: a parked pass, priced by its reading when it landed;
     /// -2: one whose reading never came, priced by its completion stand-in).
@@ -1431,7 +1431,7 @@ pub(crate) fn decide_walk_price(i: &WalkPriceInputs) -> WalkPriceDecision {
     let mut events = Vec::new();
     let ss2 = (ss as u64).saturating_mul(ss as u64);
     // The 256-iteration floor keeps a MEASURED progression from thrashing in slivers, but
-    // an UNMEASURED opening dispatch must honour the bootstrap bound at ANY panel size —
+    // an UNMEASURED opening dispatch must honor the bootstrap bound at ANY panel size —
     // floor × a large panel exceeds it severalfold (1445×1134 × 256 = 4.195e8 vs the 4e8
     // bootstrap, caught by the "unmeasured budget bounds the FIRST dispatch" selftest; a
     // 4K panel would be 5×). Until a measurement exists the plain division is the bound;
@@ -1562,7 +1562,7 @@ pub(crate) fn decide_walk_price(i: &WalkPriceInputs) -> WalkPriceDecision {
             // gone. That is the gap the 2026-08-22 field loss fell through: the release
             // gate below wants a QUICK PRESENT as proof the queue drained, and a queue on
             // its way to losing the device never produces one, so the one pass whose price
-            // would shed the licence is exactly the pass that cannot be priced.
+            // would shed the license is exactly the pass that cannot be priced.
             //
             // Accumulated wall is a conservative LOWER BOUND on what this pass has already
             // cost: if `acc` has reached the lethal band the pass has *already* been that
@@ -1576,7 +1576,7 @@ pub(crate) fn decide_walk_price(i: &WalkPriceInputs) -> WalkPriceDecision {
             // rather than re-shedding every frame — the ledger is already at the floor.
             // Under present throttling the wall accumulator measures the
             // COMPOSITOR (see `present_throttle_step`): a shed on it would floor the
-            // licences off an idle GPU — the 2026-09-04 field log's exact lines.
+            // licenses off an idle GPU — the 2026-09-04 field log's exact lines.
             // ⭐The decision itself is `wall_shed_now` — a pure predicate with its own
             // tests, so the rule that runs here and the rule under test cannot drift.
             let throttled = i.present_throttle >= super::PRESENT_THROTTLE_FRAMES;
@@ -1607,7 +1607,7 @@ pub(crate) fn decide_walk_price(i: &WalkPriceInputs) -> WalkPriceDecision {
                 // Present-throttled: the quick present this gate waits for CANNOT
                 // arrive, and `acc` is present-wait, not cost. Release on a short
                 // backstop WITHOUT feeding either ledger — a poisoned price would
-                // floor the very licences the shed above is protected from. Still
+                // floor the very licenses the shed above is protected from. Still
                 // serialized-in-effect: at most one pass per backstop interval, so
                 // passes cannot stack toward a TDR while throttled.
                 led.inflight = None;
@@ -1655,7 +1655,7 @@ pub(crate) fn decide_walk_price(i: &WalkPriceInputs) -> WalkPriceDecision {
                         // sleep. `frame_ms` (sleep excluded, ~3 ms at a capped 60 Hz)
                         // left ~27 ms of pipeline latency in every price, and without GPU
                         // timestamps — where this stamp is the only price — every pin pass
-                        // read ~25 ms against a 20 ms target and its licence halved.
+                        // read ~25 ms against a 20 ms target and its license halved.
                         (wall - crate::tunables::PIN_PASS_FRAMES as f64 * i.frame_period_ms)
                             .max(0.0)
                     }
@@ -1695,12 +1695,12 @@ pub(crate) fn decide_walk_price(i: &WalkPriceInputs) -> WalkPriceDecision {
                     led.band_px[(band as usize).min(crate::tunables::CHUNK_BANDS - 1)] =
                         if i.walk_done.is_some() { u32::try_from(i.inflight_px).unwrap_or(u32::MAX) } else { 0 };
                     // ...and a pass that started in the escape-onset region earns that region's
-                    // licence. Only a completion's price can (a quick frame's is ~10 ms whatever the
+                    // license. Only a completion's price can (a quick frame's is ~10 ms whatever the
                     // pass cost).
-                    // In work: the licence at the pass's own pixels, updated, and back. Against HALF
+                    // In work: the license at the pass's own pixels, updated, and back. Against HALF
                     // the target (`WALK_ONSET_TARGET_SHARE`): the region is where the dear work is,
                     // and its cost per iteration still varies ~2× from stretch to stretch, so a
-                    // licence doubled at the full target's rule ran a pass at 909 ms (2026-10-21).
+                    // license doubled at the full target's rule ran a pass at 909 ms (2026-10-21).
                     let onset = i.onset_start;
                     if i.walk_done.is_some() && onset > 0 && i.inflight_lo >= onset && i.inflight_px > 0 {
                         let px = i.inflight_px;
@@ -1715,7 +1715,7 @@ pub(crate) fn decide_walk_price(i: &WalkPriceInputs) -> WalkPriceDecision {
                 // ⭐PRICE EVERY PASS (rung 1d): the next pin pass goes out this frame with this one
                 // still in flight, and its dispatch rewrites the in-flight record. Park this one's
                 // price for its own reading instead of losing it: at two in flight the motiontest
-                // priced 26 pin passes across 70 pins, the licences barely grew, and 50 pins drifted out.
+                // priced 26 pin passes across 70 pins, the licenses barely grew, and 50 pins drifted out.
                 park_pin_price(&mut led, &mut events, (size, band, i.pin_pass_frame, -1.0), pass_px, target_ms);
                 events.push(WalkPriceEvent::PinDeferred { band, size, stand_in: -1.0 });
                 led.inflight = None;
@@ -1811,8 +1811,8 @@ pub(crate) fn decide_walk_price(i: &WalkPriceInputs) -> WalkPriceDecision {
     // ⭐…and a pin pass the GPU timed far under the pin target lets the next grow by the band
     // ledger's own proportional lane (`pin_growth_lane`): the first floatexp pin's passes priced
     // 0.16–0.85 ms against 20 while the ×2 a frame held them for five frames. The rate model (its
-    // own per mode: floatexp starts from the bootstrap at the switch), the band licences and the
-    // band clip still bound every pass. The licences df32 earned are LARGER than floatexp's, so
+    // own per mode: floatexp starts from the bootstrap at the switch), the band licenses and the
+    // band clip still bound every pass. The licenses df32 earned are LARGER than floatexp's, so
     // they never bind first; clearing them at the switch was tried and gave the lane nothing to
     // grow into (every band reopened at its 256 floor: the first floatexp pin took 256-iteration
     // passes while the lane allowed 7,899).
@@ -1872,7 +1872,7 @@ pub(crate) struct WalkIdInputs {
     pub(crate) pin_frame: bool,
     /// A settled mode-2 walk (it counts its running pixels).
     pub(crate) fe_walk: bool,
-    /// Everything the signature folds: the f64 centre and magnification, the exact position
+    /// Everything the signature folds: the f64 center and magnification, the exact position
     /// (`pos_sig`), the settings hash (`view_key.4`), the series seed (`series_seed_bits`), the
     /// supersampling jitter's bits, the ask, the texture and its ss.
     pub(crate) center: [f64; 2],
@@ -1945,16 +1945,16 @@ pub(crate) fn decide_walk_id(i: &WalkIdInputs) -> WalkIdDecision {
     // comes out identical — no de-speckle). Fold the jitter bits into the sig hash.
     let jbits = (i.jitter_bits[0] as u64) ^ (i.jitter_bits[1] as u64).rotate_left(23);
     // ⚠`pos_sig` (the caller's exact view position: offset from the reference, span
-    // exponent + mantissa) is part of it, not just the f64 centre. The f64 centre stops
+    // exponent + mantissa) is part of it, not just the f64 center. The f64 center stops
     // distinguishing nearby views at depth (its ulp is 1/190 of the view width at 2^49;
-    // one value covers the whole neighbourhood at 2^800), so a small pan or a re-picked
+    // one value covers the whole neighborhood at 2^800), so a small pan or a re-picked
     // reference at the same f64 point kept the signature, the walk RESUMED its per-pixel
     // state against the moved view, and the old view's escaped pixels stayed on screen
     // under the new one — a translucent copy of another location (field report
     // 2026-09-16). Restarting the walk is output-neutral (bit-identity contract); only
     // its cost is paid, and only when the view really moved.
     // ⚠And WHAT is iterated: the settings hash (`view_key.4` — formula id, custom shader
-    // key, Julia and its c, the iterate-affecting colour inputs). It was missing, so a
+    // key, Julia and its c, the iterate-affecting color inputs). It was missing, so a
     // formula switch at an unchanged view resumed the previous formula's finished walk and
     // re-showed its image: measured when custom formulas gained resumable passes — the
     // uitest's Custom step at home (−0.5+0i, Mandelbrot's home too) kept showing the
@@ -2008,7 +2008,7 @@ pub(crate) fn decide_walk_id(i: &WalkIdInputs) -> WalkIdDecision {
             // adopted (traced: 14 started, 7 adopted, 6 abandoned for drift, the frozen
             // frame aged 13 octaves on screen). The ledger is cleared when the reference
             // POINT changes instead (`install_recompute`).
-            // (The caller zeroes the band licences and the last price: `clear_ledger`.)
+            // (The caller zeroes the band licenses and the last price: `clear_ledger`.)
             clear_ledger = true;
         }
         // ⭐The band ledger SURVIVES a same-sig restart on purpose: every hold/refresh
@@ -2178,7 +2178,7 @@ pub(crate) struct WalkDispatchInputs {
     pub(crate) frame: u64,
     pub(crate) now_us: u64,
     pub(crate) last_dt_ms: f64,
-    /// The worst rate measured in this mode; the band licences after this frame's pricing; the
+    /// The worst rate measured in this mode; the band licenses after this frame's pricing; the
     /// reference's length; the walk's epoch and its running-pixel reading; the calibration's occupancy
     /// knee (`calibration::knee_px`).
     pub(crate) worst_rate: Option<f64>,
@@ -2212,14 +2212,14 @@ pub(crate) struct WalkDispatchInputs {
     pub(crate) band_ms_len: [u32; crate::tunables::CHUNK_BANDS],
     #[serde(default, skip_serializing_if = "no_cost_len")]
     pub(crate) band_ms_px: [u32; crate::tunables::CHUNK_BANDS],
-    /// Where the view's escape-onset region starts, and the settled walk's licence past it, in work
+    /// Where the view's escape-onset region starts, and the settled walk's license past it, in work
     /// (`WalkPriceInputs::onset_start`, `WalkLedger::onset_work`, `WALK_ONSET`). Recordings made
     /// before them read 0: no region.
     #[serde(default)]
     pub(crate) onset_start: u32,
     #[serde(default)]
     pub(crate) onset_work: u64,
-    /// The pixels each band's licence was earned over by a settled pass (`WalkLedger::band_px`;
+    /// The pixels each band's license was earned over by a settled pass (`WalkLedger::band_px`;
     /// none in recordings made before it, which scale nothing).
     #[serde(default, skip_serializing_if = "no_cost_len")]
     pub(crate) band_px: [u32; crate::tunables::CHUNK_BANDS],
@@ -2253,8 +2253,8 @@ pub(crate) struct WalkDispatchDecision {
     pub(crate) pin_dispatched: bool,
     pub(crate) events: Vec<DispatchEvent>,
     /// A settled pass in a view with an escape-onset region (`WALK_ONSET`): the iterations each of
-    /// its bounds allowed — the budget's step (over the pixels charged), the start band's licence
-    /// (scaled by `band_px`), the onset region's licence (0 = not in it) — and the pixels charged,
+    /// its bounds allowed — the budget's step (over the pixels charged), the start band's license
+    /// (scaled by `band_px`), the onset region's license (0 = not in it) — and the pixels charged,
     /// for the `tile` trace. (Absent otherwise, and in recordings made before it.)
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub(crate) bounds: Option<(u32, u32, u32, u64)>,
@@ -2280,7 +2280,7 @@ pub(crate) enum DispatchEvent {
 }
 
 /// The chunk walk's DISPATCH (`bp_chunk_tiling`'s, lifted): the serialized hold (the settled walk's
-/// one unpriced pass; the pin gate, and its wall-clock escape), the regional licence, the
+/// one unpriced pass; the pin gate, and its wall-clock escape), the regional license, the
 /// running-pixel charge, the step and the window's end, the cursor's advance and the pin pass's
 /// bookkeeping, the finished walk's tail and its read retry, and whether this pass's reading will
 /// describe the picture on screen. Pure.
@@ -2441,10 +2441,10 @@ pub(crate) fn decide_walk_dispatch(i: &WalkDispatchInputs) -> WalkDispatchDecisi
             // dispatch. (Motion frames carry `walk_floor = 0`, so `real_lo = cur` there.)
             let real_lo = cur.max(walk_floor);
             let band = chunk_band_of(real_lo) as u8;
-            // EVERY pass takes the regional licence — settled, pinned, and the moving
+            // EVERY pass takes the regional license — settled, pinned, and the moving
             // frame that OPENS a pin. A band's price is earned by its own passes, and a
             // walk crossing into a hot band meets it with one floor-sized pass, not a
-            // licence-sized one. The opening pass used to be exempt ("motion frames
+            // license-sized one. The opening pass used to be exempt ("motion frames
             // restart each frame"), and with the nominal-rate hint inflated by a deduped
             // reading it went out at the TDR budget's size: 400–440 ms, once per pin, at
             // every zoom rate (build 3222). The ledger persists across the pins of a
@@ -2493,7 +2493,7 @@ pub(crate) fn decide_walk_dispatch(i: &WalkDispatchInputs) -> WalkDispatchDecisi
             // knee a pass is charged the knee, as the calibration ceiling charges it: the
             // worst-case model is unchanged, only the pixel count is honest. Unknown (no
             // reading of THIS walk yet, no knee) charges the whole frame, as before. The band
-            // licence below still caps every pass by its own band's prices.
+            // license below still caps every pass by its own band's prices.
             let all_px = spx.saturating_mul(ss2);
             let charged = if fe_walk && !interacting && !pin_frame && i.chunk_charge == 1 {
                 walk_charged_px(
@@ -2522,8 +2522,8 @@ pub(crate) fn decide_walk_dispatch(i: &WalkDispatchInputs) -> WalkDispatchDecisi
             } else {
                 budget_step
             };
-            // A settled pass charged for more pixels than its band's licence was earned over takes
-            // the licence scaled down to the same work (`WalkLedger::band_px`): a count of iterations
+            // A settled pass charged for more pixels than its band's license was earned over takes
+            // the license scaled down to the same work (`WalkLedger::band_px`): a count of iterations
             // holds only at the pixels it was priced at. Never scaled up.
             let licence = {
                 let b = (band as usize).min(crate::tunables::CHUNK_BANDS - 1);
@@ -2536,12 +2536,12 @@ pub(crate) fn decide_walk_dispatch(i: &WalkDispatchInputs) -> WalkDispatchDecisi
                 }
             };
             let step = budget_step.min(licence);
-            // ⭐…and, settled, past the view's ESCAPE ONSET no more than that region's own licence
+            // ⭐…and, settled, past the view's ESCAPE ONSET no more than that region's own license
             // (`WALK_ONSET`, `WalkLedger::onset_licence`; the floor while unvisited): an octave band
-            // is one licence, and its cost is not uniform where the pixels begin to escape.
+            // is one license, and its cost is not uniform where the pixels begin to escape.
             let onset = i.onset_start;
             let onset_licence = if !interacting && !pin_frame && onset > 0 && real_lo >= onset {
-                // The licence's work over the pixels this pass is charged for.
+                // The license's work over the pixels this pass is charged for.
                 let licence = (i.onset_work / charged.max(1)).min(u64::from(u32::MAX)) as u32;
                 chunk_band_license(&[licence; crate::tunables::CHUNK_BANDS], 0, pin_floor)
             } else {
@@ -2561,26 +2561,26 @@ pub(crate) fn decide_walk_dispatch(i: &WalkDispatchInputs) -> WalkDispatchDecisi
             let step = if pin_frame { step.max(pin_floor.min(gpu_iter.max(1))) } else { step };
             let end = real_lo.saturating_add(step).min(walk_end);
             // …and a settled pass that starts short of the onset region stops at its edge, so the
-            // region is entered under its own licence.
+            // region is entered under its own license.
             let end = if !interacting && !pin_frame && onset > 0 && real_lo < onset { end.min(onset) } else { end };
-            // A PIN pass stops at the end of the band it started in. The licence is the
+            // A PIN pass stops at the end of the band it started in. The license is the
             // START band's, and a pass that runs on into unvisited bands carries it there
             // — traced: a 21,480-iteration pass licensed in [8k,16k) ran through the
             // orbit's rebase storm at cur ≈ orbit_len (10–70× the cold rate) and cost
-            // 380 ms. Entering each band with that band's own licence (the floor when
+            // 380 ms. Entering each band with that band's own license (the floor when
             // unvisited) is what the ledger was built for; it costs a pin at most one
             // extra pass per band. Output is unchanged by pass boundaries (the chunked
             // iterate's bit-identity contract).
             let end = if pin_frame { end.min(chunk_band_end(real_lo)).max(real_lo + 1).min(walk_end) } else { end };
             // ⭐…and goes on through the next bands only while each has prices of its own and their
-            // licences, shared, still fit one pass (`pin_span_end`): a pin walked one octave band per
+            // licenses, shared, still fit one pass (`pin_span_end`): a pin walked one octave band per
             // frame however cheap the bands were. The span's bound is the rate model's pass size,
             // not the growth limiter's doubling, which tracks the bands' own widths and so would undo
             // it; every band past the first is bounded by its own prices.
             let (end, band) = if pin_frame && i.pin_span_share > 0.0 {
                 let step_cap = ((pass_steps / spx.saturating_mul(ss2).max(1)) as u32).max(budget_step);
                 if i.pin_span_priced {
-                    // …bounded by what those bands COST, not by their licences (`PIN_SPAN_PRICED`).
+                    // …bounded by what those bands COST, not by their licenses (`PIN_SPAN_PRICED`).
                     let (span, pred_ms) = super::pin_span_end_priced(
                         &super::BandCosts {
                             ms: &i.band_ms,
@@ -2626,7 +2626,7 @@ pub(crate) fn decide_walk_dispatch(i: &WalkDispatchInputs) -> WalkDispatchDecisi
             chunk_range = Some([cur, end]);
             chunk_idx = st.idx;
             // Moving frames restart at 0 next frame (the sig reset above); settled frames
-            // and PIN frames advance until the full count is honoured. A pin keeps
+            // and PIN frames advance until the full count is honored. A pin keeps
             // `chunk_pending` up through its completing pass, so repaints keep coming for
             // the adoption frame even if the user's input pauses inside the settle window.
             if !interacting || pin_frame {
@@ -2650,7 +2650,7 @@ pub(crate) fn decide_walk_dispatch(i: &WalkDispatchInputs) -> WalkDispatchDecisi
                 // ⚠Written for EVERY pass, never left from an earlier one: its price writes these
                 // pixels into its band's `band_px`. Set only with an onset known, a walk before its
                 // first escape priced the pixels an EARLIER pass had left (a pin's, a fraction of the
-                // panel), and each doubled licence was scaled straight back to the floor: 256-iteration
+                // panel), and each doubled license was scaled straight back to the floor: 256-iteration
                 // passes for 9.5 s at the user's 2^70 view (2026-10-30,
                 // `a_settled_walk_earns_its_licence_before_the_escape_onset_is_known`). With no onset
                 // known they are 0, unknown: before its first escape every pixel of a walk runs, so a
@@ -2689,7 +2689,7 @@ pub(crate) fn decide_walk_dispatch(i: &WalkDispatchInputs) -> WalkDispatchDecisi
         // out unarmed; re-dispatching the (empty, cheap) tail under a fresh probe nonce
         // keeps readings coming until one carries the finished cursor.
         // ⭐So does a finished SETTLED walk, until its complete reading lands: the iteration
-        // climb and the colour range both decide on it, and supersampling waits for both
+        // climb and the color range both decide on it, and supersampling waits for both
         // (`accum_inputs_pending`). Missed, nothing else dispatched on a still view, and the
         // run that began anyway was what retried it — restarting at every reading it brought.
         let retry = tail_read_retry(
@@ -2716,7 +2716,7 @@ pub(crate) fn decide_walk_dispatch(i: &WalkDispatchInputs) -> WalkDispatchDecisi
     // Fed as if whole, a pinned walk's readings made the palette window a SAWTOOTH,
     // measured 2026-09-19 on a 2e13 autopilot dive: tops of 1,758 → 3,150 → 6,582 →
     // 10,238 and back to 1,758, about 2.5 times a second, which the EMA and the glide
-    // turned into a rhythmic "breathing" of every colour on screen.
+    // turned into a rhythmic "breathing" of every color on screen.
     // (A step-bounded pass ends at `walk_end` with pixels still running: a partial like a window's.)
     st.norm_complete_submit = (interacting && !pin_frame)
         || (step_cap == 0 && chunk_range.is_none_or(|[_, end]| end >= walk_end));

@@ -43,8 +43,8 @@ orbits.
 Windows-only:
 
 1. MPFR and GMP are licensed under the **GNU LGPL v3**, while Fractadyne itself is MIT OR
-   Apache-2.0. Keeping them in a separate, clearly labelled download keeps the standard build free
-   of those terms. The full notices, and the licence texts, are inside the package.
+   Apache-2.0. Keeping them in a separate, clearly labeled download keeps the standard build free
+   of those terms. The full notices, and the license texts, are inside the package.
 2. On Windows only: MPFR cannot be built with the Microsoft compiler the standard Windows binary
    uses, so that build comes from a different toolchain. (The standard Linux build already uses the
    same compiler as its accelerated sibling.)

@@ -214,7 +214,7 @@ def derive_findings(scenes, rows_by, views, meta, zs_rows):
     if meta.get("fractalshark_shape"):
         out.append(("FractalShark mode", meta["fractalshark_shape"]))
     if meta.get("zoomseq_amortisation"):
-        out.append(("Zoom-sequence amortisation",
+        out.append(("Zoom-sequence amortization",
                     "Fractadyne %sx over single frames. Fraktaler-3's batch CLI renders one "
                     "image per invocation, so its 1.0 is a property of the CLI, not its engine."
                     % meta["zoomseq_amortisation"]))
@@ -293,7 +293,7 @@ def fmt_mag(l10):
     return "%.1fe%d" % (m, int(e))
 
 
-# One colour per lane, reused by the chart and its legend.
+# One color per lane, reused by the chart and its legend.
 LANE_COLOR = {"fractadyne": "#79b8ff", "fraktaler3": "#e3b341",
               "fractalshark": "#5fd08a", "imagina": "#d48bff", "fractalzoomer": "#ff8a65",
               "fracturingfog": "#4dd0c8",
@@ -399,7 +399,7 @@ def svg_time_vs_depth(scenes, mags, rows_by, live, label):
                  "text-anchor='end'>%s</text>" % (L - 8, y + 4, lbl))
 
     # x grid: magnifications at 1/2/5 x 10^n of the EXPONENT - 1e10, 1e20, 1e50, 1e100 ...
-    # Labelled with the magnification itself so the axis reads as zoom, not as an exponent.
+    # Labeled with the magnification itself so the axis reads as zoom, not as an exponent.
     for cand in (5, 10, 20, 50, 100, 200, 500, 1000, 2000, 5000):
         v = math.log10(cand)
         if not (x0 <= v <= x1):
@@ -616,7 +616,7 @@ th{background:#232833;font-weight:600} td.n{text-align:right;font-variant-numeri
       padding:10px;width:340px;flex:0 0 auto}
 .card img{width:100%;height:auto;border-radius:4px;display:block;background:#000}
 .card .cap{font-size:13px;margin:8px 0 4px;display:flex;justify-content:space-between;gap:8px}
-/* WRAP, do not scroll. These lines are the reason the report exists: a 200-digit centre and a
+/* WRAP, do not scroll. These lines are the reason the report exists: a 200-digit center and a
    full argument line must be READABLE, and inside a table cell an overflow-x box is simply cut
    off at the page edge with no scrollbar the reader will ever find. */
 pre{background:#0f1115;border:1px solid var(--line);border-radius:6px;padding:9px 11px;
@@ -718,7 +718,7 @@ def main():
     for r in rows:
         rows_by[(r["renderer"], r["scene"])].append(r)
     # Fractadyne's own figure, as a column of its own, only when a lane competes on its own clock
-    # (REPORTED_LANES): it is that lane's like-for-like neighbour.
+    # (REPORTED_LANES): it is that lane's like-for-like neighbor.
     if any(ren in REPORTED_LANES for (ren, _sc) in rows_by):
         for (ren, sc), rs in list(rows_by.items()):
             if ren == "fractadyne":
@@ -1070,7 +1070,7 @@ def main():
                 continue
             hits += doc.count(old)
             doc = doc.replace(old, new)
-            # Case matters on paths that different tools capitalised differently.
+            # Case matters on paths that different tools capitalized differently.
             if old.lower() != old:
                 hits += doc.count(old.lower())
                 doc = doc.replace(old.lower(), new)

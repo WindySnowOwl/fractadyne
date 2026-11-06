@@ -1,16 +1,16 @@
 //! The panel's period parts, drawn with egui's painter (design/blinkenlights.md, "The look"): lamps
 //! with an incandescent glow, phosphor screens, meter faces, arcs, engraved legends.
 //!
-//! egui has no blur, so every soft edge here is a mesh whose vertex colours fade to transparent: a
-//! glow is a disc whose rim colour is the lamp's and whose outer ring is clear. Colours are built
+//! egui has no blur, so every soft edge here is a mesh whose vertex colors fade to transparent: a
+//! glow is a disc whose rim color is the lamp's and whose outer ring is clear. Colors are built
 //! with `from_rgba_unmultiplied` and scaled with [`fade`], so a half-lit lamp is half as opaque, not
-//! a darker colour on top of the panel.
+//! a darker color on top of the panel.
 
 use egui::epaint::{Mesh, PathShape, PathStroke};
 use egui::{Align2, Color32, FontFamily, FontId, Painter, Pos2, Rect, Shape, Stroke, vec2};
 use std::f32::consts::TAU;
 
-/// The panel's palette: a slate hammertone case, engraved cream, lamp and phosphor colours.
+/// The panel's palette: a slate hammertone case, engraved cream, lamp and phosphor colors.
 pub(crate) mod ink {
     use egui::Color32;
     /// The hammertone's base, before its dimples are lit ([`super::hammertone`]).
@@ -117,7 +117,7 @@ const HAMMER_SPEC: i32 = 24;
 const HAMMER_FLAKE: f32 = 0.05;
 
 /// A seamless square tile of hammertone paint, `n` texels a side: the hammered, faintly metallic
-/// finish of a period instrument case. Modelled on a photograph of the paint (2026-10-21, the
+/// finish of a period instrument case. Modeled on a photograph of the paint (2026-10-21, the
 /// maintainer's reference): irregular rounded cells parted by thin dark creases, each gently domed,
 /// with small round bubbles crowding inside them, each bubble outlined and catching the light.
 /// Built on the torus so opposite edges meet: weighted Voronoi cells (`d − w`, a little warped)
@@ -244,7 +244,7 @@ pub(crate) fn hammertone(n: usize, seed: u64) -> egui::ColorImage {
             let glint = (nrm.0 * half.0 + nrm.1 * half.1 + nrm.2 * half.2).max(0.0).powi(HAMMER_SPEC);
             let flake = (next() - 0.5) * HAMMER_FLAKE;
             let i = y * n + x;
-            // A flat texel's diffuse is `light.2`: the base colour, as specified; the creases and
+            // A flat texel's diffuse is `light.2`: the base color, as specified; the creases and
             // the bubbles' rims are darkened on top.
             let k = (1.0 + HAMMER_GAIN * (diffuse - light.2) + flake)
                 * (1.0 - HAMMER_LINE * (-edge[i].max(0.0) / HAMMER_LINE_W).exp())
@@ -285,7 +285,7 @@ pub(crate) fn fade(c: Color32, k: f32) -> Color32 {
     Color32::from_rgba_unmultiplied(r, g, b, (a as f32 * k.clamp(0.0, 1.0)).round() as u8)
 }
 
-/// Linear mix of two colours (`t` = 0 gives `a`), alpha included.
+/// Linear mix of two colors (`t` = 0 gives `a`), alpha included.
 pub(crate) fn mix(a: Color32, b: Color32, t: f32) -> Color32 {
     let t = t.clamp(0.0, 1.0);
     let (a, b) = (a.to_srgba_unmultiplied(), b.to_srgba_unmultiplied());
@@ -298,7 +298,7 @@ fn segments(r: f32) -> usize {
     ((r * 0.9).ceil() as usize).clamp(12, 96)
 }
 
-/// A filled disc whose colour runs from `inner` at the centre to `outer` at radius `r`.
+/// A filled disc whose color runs from `inner` at the center to `outer` at radius `r`.
 pub(crate) fn radial_disc(p: &Painter, c: Pos2, r: f32, inner: Color32, outer: Color32) {
     let n = segments(r);
     let mut m = Mesh::default();
@@ -313,7 +313,7 @@ pub(crate) fn radial_disc(p: &Painter, c: Pos2, r: f32, inner: Color32, outer: C
     p.add(Shape::mesh(m));
 }
 
-/// A ring from radius `r0` to `r1`, colour `c0` at its inner edge fading to `c1` at its outer one:
+/// A ring from radius `r0` to `r1`, color `c0` at its inner edge fading to `c1` at its outer one:
 /// the halo of a glow, or the afterglow band of a phosphor arc.
 pub(crate) fn radial_ring(p: &Painter, c: Pos2, r0: f32, r1: f32, c0: Color32, c1: Color32) {
     let n = segments(r1);
@@ -353,7 +353,7 @@ pub(crate) fn lamp_bezel(p: &Painter, c: Pos2, r: f32) {
 }
 
 /// The lamp's glass at brightness `lit` (0..1), in the panel's dynamic layer: a bead that warms
-/// from a dark tint of `hue` to the full colour, with a halo past its rim as it brightens.
+/// from a dark tint of `hue` to the full color, with a halo past its rim as it brightens.
 pub(crate) fn lamp_glass(p: &Painter, c: Pos2, r: f32, hue: Color32, lit: f32) {
     let lit = lit.clamp(0.0, 1.0);
     if lit > 0.02 {
@@ -365,7 +365,7 @@ pub(crate) fn lamp_glass(p: &Painter, c: Pos2, r: f32, hue: Color32, lit: f32) {
     radial_disc(p, c + vec2(-r * 0.2, -r * 0.25), r, core, body);
 }
 
-/// A green-phosphor screen face: dark at the rim, a faint glow at the centre.
+/// A green-phosphor screen face: dark at the rim, a faint glow at the center.
 pub(crate) fn phosphor_disc(p: &Painter, c: Pos2, r: f32) {
     radial_disc(p, c, r, ink::SCREEN_HI, ink::SCREEN_LO);
 }
@@ -450,7 +450,7 @@ pub(crate) fn tracked(p: &Painter, pos: Pos2, anchor: Align2, text: &str, font: 
 
 /// Text with every digit in a cell as wide as a 0, so a changing number holds still (Routed
 /// Gothic's 1 is narrower than its other digits): one layout, each digit narrower than a 0 its own
-/// section, padded half before and half after so it sits centred in its cell.
+/// section, padded half before and half after so it sits centered in its cell.
 pub(crate) fn tabular(p: &Painter, pos: Pos2, anchor: Align2, text: &str, font: FontId, color: Color32) -> Rect {
     let galley = p.layout_job(tabular_job(p, text, &font, color));
     let rect = anchor.anchor_size(pos, galley.size());
@@ -498,7 +498,7 @@ fn tabular_job(p: &Painter, text: &str, font: &FontId, color: Color32) -> egui::
     job
 }
 
-/// A row of characters each centred in a cell of its own width (`cells`), laid out once: the
+/// A row of characters each centered in a cell of its own width (`cells`), laid out once: the
 /// nixie tubes' digits. Returns the galley's rect.
 pub(crate) fn celled(p: &Painter, at: Pos2, text: &str, cells: &[f32], font: FontId, color: Color32, glow: Color32, s: f32) -> Rect {
     let widths: Vec<f32> = p.fonts(|f| text.chars().map(|ch| f.glyph_width(&font, ch)).collect());

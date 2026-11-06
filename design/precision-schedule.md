@@ -66,18 +66,18 @@ walk 57.0 → 51.1–53.8 s, wall 58.5–63.1 → 52.7–55.6 s; images identica
 
 Two options, smallest first:
 
-1. **Leave the build its cores.** When the centre's build runs beside the pick (`centre_src.whole`),
+1. **Leave the build its cores.** When the center's build runs beside the pick (`centre_src.whole`),
    cap phase 1 at `available − build threads` (9 with split products, else the walk's own). Measured
    above: −4 to −6 s at 1e30000. Must be checked at 1e1000–1e10000, where a slower phase 1 could
    delay a pick whose build is short.
-2. **Score phase 1 by perturbation.** At depth every candidate is within half a view of the centre;
+2. **Score phase 1 by perturbation.** At depth every candidate is within half a view of the center;
    their 4,096-step bignum walks are near-duplicates. Phase 2 already δ-scores survivors in floatexp
-   against the centre's recorded walk with a trust rule (design/pick-redesign.md). Doing the same for
+   against the center's recorded walk with a trust rule (design/pick-redesign.md). Doing the same for
    phase 1 removes its ~414,000 full-precision steps: the build would run uncontended (scene 55's
    opening alone would save ~9.5 s; the whole saving is unmeasured). Same gate as phase 2 (`!julia`,
    polynomial, deep spans); `--pickcheck` must show the same winner on the ladder and the corpus.
 
-**Done: option 2** (`perturb_scan`, `9c5646e`). The centre walked in bignum to `quick + 64`; the others
+**Done: option 2** (`perturb_scan`, `9c5646e`). The center walked in bignum to `quick + 64`; the others
 δ-scored against it; a trusted score 64+ steps either side of the threshold decides, anything nearer
 or untrusted is walked in bignum, and "no survivor" is never decided by perturbation. The 31 bench
 scenes at 1280x720 are pixel-identical to the previous build; `--pickcheck` 9/9 with the same
@@ -99,7 +99,7 @@ and the orbit blob are unchanged); the power-2 arm is the old arithmetic verbati
 `M_{2,1}` Misiurewicz points `c = (ω − 1)^{1/(d−1)}`, `ω = e^{2πi/d}` (0 → c → ωc, repelling,
 `|f'| = 2d·sin(π/d)`), d = 3–8, at 1,024 bits: samples bit for bit over the accurate stretch, the
 schedule below half, extend == fresh (goes red when the derivative is inflated 2^200); and both
-backends byte-identical at d = 3 and 8. Renders (`local/bench-ladder/mb_sched_ab.py`, views centred
+backends byte-identical at d = 3 and 8. Renders (`local/bench-ladder/mb_sched_ab.py`, views centered
 on those points, schedule on vs `--set ORBIT_SCHEDULE=0`): 17 views at 1e300–1e30000, every one
 pixel-identical. Reference build: 1e3000 about half; 1e10000 2.8 → 1.2 s (d=3), 3.7 → 1.5 s (d=5),
 2.7 → 1.1 s (d=8); 1e30000 40.0 → 17.5 s (d=3, render 40.5 → 18.1 s), 41.7 → 19.4 s (d=8, render
@@ -115,7 +115,7 @@ Multibrot speed-up; it hides the schedule's saving below ~1e30000.
 
 `Z_0` is the pixel, `c` the constant: derivative with respect to `Z_0`, `D_0 = 1`,
 `D_{n+1} = d·Z_n^{d−1}·D_n` (no `+1`), same error term. `D` can fall below 1 (near the critical
-point, attracting cycles); the bits then cap at full, which is today's behaviour. The pick's Julia
+point, attracting cycles); the bits then cap at full, which is today's behavior. The pick's Julia
 walk and the build both pass `from_zero = false` today; they need the Julia flag instead. ⚠The core
 cannot tell a Julia view from `Z_0 ≠ 0`: the orbit entry points (`reference_orbit_t`, the extend
 path, the pick's walks, the orbit cache key) take `z0` and `c` with no plane, so the app has to pass
@@ -130,18 +130,18 @@ Tests: repelling fixed points β of `z^d + c` (`β^d + c = β`) for c = −0.8+0
 Julia, extend == fresh (red with the derivative inflated 2^200); both backends identical; the blob
 round-trips each plane. ⚠The app holds the Julia constant as an f64, so β must be the fixed point
 of the f64's exact value (`local/bench-ladder/julia_points.py`). Renders (`julia_sched_ab.py`,
-views centred on β, cap ~2 steps per digit of depth): 8 views at 1e300–1e30000, all
+views centered on β, cap ~2 steps per digit of depth): 8 views at 1e300–1e30000, all
 pixel-identical; reference build at 1e30000 16.0 → 12.5 s (d=2), 69.5 → 30.2 s (d=3, render
 71.5 → 32.2 s). ⚠Three of those eight compared nothing: a pixel 10^-D from β escapes after
 about D·ln 10 / ln|f'(β)| steps, 2.06 per digit at d=2 (|f'| = 3.06), so at 2 per digit the d=2
-views at 1e3000 and deeper were 99% black (53 colours) on both sides. Re-run at 3 per digit
-(2026-10-11): all four d=2 views pixel-identical with 1,677–1,755 colours; 1e30000 render
-58.3 → 32.5 s. The d=3 views (1.62 per digit needed) had 390–480 colours throughout.
+views at 1e3000 and deeper were 99% black (53 colors) on both sides. Re-run at 3 per digit
+(2026-10-11): all four d=2 views pixel-identical with 1,677–1,755 colors; 1e30000 render
+58.3 → 32.5 s. The d=3 views (1.62 per digit needed) had 390–480 colors throughout.
 
 **Found on the way: the Julia pick walks everything in bignum.** The perturbation scoring of both
 pick phases is gated to the c plane (`perturb_scoring_supported`: "a Julia view varies z₀ —
 unvalidated there"), so a deep Julia view's pick walks 101 candidates × 4,096 steps and then the
-centre and 15 survivors to the whole cap at full precision. It contends with the build exactly as
+center and 15 survivors to the whole cap at full precision. It contends with the build exactly as
 P0 found (d=2 at 1e10000: the build's first 506 steps took 1.7 s of its 2.1) and is most of a deep
 Julia render (d=3 at 1e10000: 32 of 35 s). The δ-recurrence for a Julia candidate is the c-plane
 one without `δc` (`δ_0 = Z_0 − Z_0^ref`); extending both phases to it is the next Julia speed-up.
@@ -178,7 +178,7 @@ big cross-backend matrix compared tails by decimal string: with folds, some walk
 precision, where astro-float keeps the tail at its own width and MPFR widens it to the carrier's —
 the same value, different strings; it now compares by value (all equal).
 
-Renders (`fold_sched_ab.py`, views centred on those points, schedule on vs off): 16 views at
+Renders (`fold_sched_ab.py`, views centered on those points, schedule on vs off): 16 views at
 1e300 and 1e3000, all pixel-identical, including the glitch-corrected ones (Buffalo 3 at 1e300
 corrects 84,501 pixels over 64 passes, scheduled references and all). Reference build at 1e3000:
 119–126 → 72–75 ms at power 2, 235–241 → 107–113 ms at power 3; an interior reference (Burning

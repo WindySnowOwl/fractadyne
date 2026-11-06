@@ -3,7 +3,7 @@ use super::{
     zoom_slot_width, MAX_ITER_LIMIT,
 };
 
-/// The centre readout's digits grow with the depth; unpadded, the bar wrapped differently at the
+/// The center readout's digits grow with the depth; unpadded, the bar wrapped differently at the
 /// 2^49 and 2^24 stops of a stepped Home (canvas 1102 → 1104 px on a 1280×800 window, read as an
 /// interaction: a black frame, 2026-10-26). One length at every depth, and ASCII only (one
 /// monospace cell each: the elision is `...`, not `…`).

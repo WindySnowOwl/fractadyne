@@ -1,11 +1,11 @@
-//! Palette tags: words a palette can be found by — its colours, warm or cool, calm or frantic,
+//! Palette tags: words a palette can be found by — its colors, warm or cool, calm or frantic,
 //! dark or light, smooth or banded, a theme, and whether it is built for reading structure or for
 //! looks.
 //!
-//! ⭐**Most tags are MEASURED, not assigned.** Colour, temperature, energy, brightness and shape
+//! ⭐**Most tags are MEASURED, not assigned.** Color, temperature, energy, brightness and shape
 //! come from the gradient itself (`computed_tags`), so they are consistent across the built-in
 //! palettes and apply to a gradient the user saved or imported without anyone tagging it. Theme
-//! and purpose are judgements, so the built-in palettes carry them by hand (`PRESET_TAGS`) and a
+//! and purpose are judgments, so the built-in palettes carry them by hand (`PRESET_TAGS`) and a
 //! user adds them to their own.
 //!
 //! The measures run in OKLab on a 256-entry table baked like the app's. Their thresholds were set
@@ -39,7 +39,7 @@ impl TagGroup {
         TagGroup::Purpose,
     ];
 
-    /// Groups the gradient's colours decide; the others are given by hand.
+    /// Groups the gradient's colors decide; the others are given by hand.
     pub fn is_measured(self) -> bool {
         !matches!(self, TagGroup::Theme | TagGroup::Purpose)
     }
@@ -184,12 +184,12 @@ fn in_vocabulary_order(mut tags: Vec<&'static str>) -> Vec<&'static str> {
 // ------------------------------------------------------------------------------------- measures
 
 const N: usize = 256;
-/// Chroma below which a colour reads as black, white or grey.
+/// Chroma below which a color reads as black, white or gray.
 const NEUTRAL_C: f64 = 0.035;
-/// Below this lightness a colour reads as black whatever its tint.
+/// Below this lightness a color reads as black whatever its tint.
 const BLACK_L: f64 = 0.18;
 
-/// The measured tags a gradient earns (colour, temperature, energy, brightness, shape), in
+/// The measured tags a gradient earns (color, temperature, energy, brightness, shape), in
 /// vocabulary order.
 pub fn computed_tags(g: &Gradient) -> Vec<&'static str> {
     let m = Measures::of(g);
@@ -208,7 +208,7 @@ pub fn computed_tags(g: &Gradient) -> Vec<&'static str> {
             out.push("cool");
         }
     }
-    // ⭐**Energy is reversals, not distance.** A gradient that sweeps steadily through many colours
+    // ⭐**Energy is reversals, not distance.** A gradient that sweeps steadily through many colors
     // (Unity, a single black-to-white ramp) is not busy; one whose lightness keeps swinging, whose
     // hue keeps doubling back, is. Calm below 2.7 (the 50 presets leave a gap from 2.5 to 2.8);
     // frantic at six lightness swings or an energy of 9 (a gap from 8.2 to 9.8).
@@ -359,7 +359,7 @@ impl Measures {
     }
 }
 
-/// sRGB-encoded display colour (0..1) to OKLab.
+/// sRGB-encoded display color (0..1) to OKLab.
 fn oklab(rgb: [f64; 3]) -> [f64; 3] {
     let lin = |v: f64| {
         let v = v.clamp(0.0, 1.0);
@@ -408,7 +408,7 @@ fn swings(l: &[f64], prom: f64) -> u32 {
 }
 
 /// Turns of the hue's direction of at least `prom` degrees, over the chromatic entries in ring
-/// order, and the total hue travelled in whole turns of the wheel.
+/// order, and the total hue traveled in whole turns of the wheel.
 fn hue_reversals(h: &[f64], c: &[f64], l: &[f64], prom: f64) -> (u32, f64) {
     let idx: Vec<usize> = (0..h.len()).filter(|i| c[*i] >= 0.05 && l[*i] >= BLACK_L).collect();
     if idx.len() < 8 {

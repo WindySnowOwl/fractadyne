@@ -124,12 +124,12 @@ foreach ($d in $RUNTIME_DLLS) {
     if (-not (Test-Path (Join-Path $MINGW_BIN $d))) { Fail "$d not found in $MINGW_BIN (see -Deps)." }
 }
 
-# Licence texts. LGPLv3 section 4(b) REQUIRES shipping the LGPL and the GPL it refers to, so a
+# License texts. LGPLv3 section 4(b) REQUIRES shipping the LGPL and the GPL it refers to, so a
 # missing text is a hard failure rather than a warning.
 #
 # Each text is listed by the places MSYS2 installs it, newest packaging first, because packaging
 # moves them: gcc 16.2.0-4 split `gcc-libs` into per-library packages, and libgcc_s_seh-1.dll's
-# runtime-exception licence moved from licenses\gcc-libs\ to licenses\libgcc\ (the release of
+# runtime-exception license moved from licenses\gcc-libs\ to licenses\libgcc\ (the release of
 # v0.2.41-beta.147 failed on exactly that, on a fresh runner image). The text is the same file.
 $licenseSources = [ordered]@{
     "LICENSE-LGPL-3.0.txt"          = @("doc\mpfr\COPYING.LESSER")
@@ -138,13 +138,13 @@ $licenseSources = [ordered]@{
     "LICENSE-libwinpthread.txt"     = @("licenses\libwinpthread\COPYING", "licenses\winpthreads\COPYING")
 }
 # ALL of them, not just the LGPL pair: there is one entry per shipped DLL, and a conditional
-# copy silently omitted the libgcc terms from a package once already. A missing licence text
+# copy silently omitted the libgcc terms from a package once already. A missing license text
 # is a hard failure, never a warning.
 $licenses = [ordered]@{}
 foreach ($k in $licenseSources.Keys) {
     $tried = @($licenseSources[$k] | ForEach-Object { Join-Path $SHARE $_ })
     $found = $tried | Where-Object { Test-Path $_ } | Select-Object -First 1
-    if (-not $found) { Fail "$k source missing (looked in: $($tried -join ', ')). Its library ships in this package, so its licence must too; refusing to package." }
+    if (-not $found) { Fail "$k source missing (looked in: $($tried -join ', ')). Its library ships in this package, so its license must too; refusing to package." }
     $licenses[$k] = $found
 }
 $toolchains = (& rustup toolchain list) -join "`n"
@@ -190,7 +190,7 @@ Step "Building (GNU toolchain, MPFR backend, dynamically linked, MPFR/GMP delay-
 $cargoBinU = ((Join-Path $env:USERPROFILE ".cargo\bin") -replace '\\', '/') -replace '^([A-Za-z]):', '/$1'
 # The build runs in an MSYS2 login shell whose PATH does not include Git for Windows, so build.rs
 # could not find git and stamped the package `git unknown` (build 3513). Hand it the git THIS
-# shell resolves, by the FRACTADYNE_GIT override build.rs honours. An environment variable, not a
+# shell resolves, by the FRACTADYNE_GIT override build.rs honors. An environment variable, not a
 # PATH edit inside $cmd: Git lives under "Program Files", and a path with a space nested inside
 # that already-quoted bash command string depends on how each PowerShell version escapes native
 # arguments (7.3 changed it). An environment variable crosses into MSYS2 untouched.
@@ -244,7 +244,7 @@ Copy-Item (Join-Path $root "LICENSE-MIT"), (Join-Path $root "LICENSE-APACHE") -D
 
 # **The SAME user payload the standard Windows package ships** (release.yml's `windows` job) and
 # the accelerated LINUX script (`build-accelerated.sh`) already stage. This script used to ship only
-# the exe + DLLs + licences, so `--selftest`, `--uitest` and `--bench-matrix` all FAILED from the
+# the exe + DLLs + licenses, so `--selftest`, `--uitest` and `--bench-matrix` all FAILED from the
 # accelerated download -- the goldens, tours, scripts and benchmark baseline were simply absent (a
 # tester reported `--uitest` failing on missing goldens, 2026-09-12). A green backend build is not a
 # green PACKAGE: the presence check below is the packaging gate that would have caught this, and the

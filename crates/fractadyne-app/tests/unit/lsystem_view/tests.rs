@@ -26,7 +26,7 @@ fn the_default_system_is_in_the_library() {
 
 #[test]
 fn walk_values_stay_in_the_palette_range() {
-    // Every colouring writes a value in [0, 1] (the shader reads < 0 as "no line").
+    // Every coloring writes a value in [0, 1] (the shader reads < 0 as "no line").
     // In f64 at 100 px a unit, and deep at 2^200 px a unit (the dragon at order ~400, 2^400
     // segments: an index past f64's integers).
     let st = LSystemState::default();

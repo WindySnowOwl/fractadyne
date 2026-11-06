@@ -6,7 +6,7 @@
 //! 1. **No CLI gate.** The people who benefit most are exactly the ones who will never pass a
 //!    flag, so the dialog is always in the Help menu. That is also what makes cross-GPU
 //!    validation crowdsourceable instead of limited to cards we can buy.
-//! 2. **Only the tests that mean something without context**: the self-test (does the maths hold
+//! 2. **Only the tests that mean something without context**: the self-test (does the math hold
 //!    on this GPU?), the UI test (does it draw and lay out correctly?), and the GPU arithmetic
 //!    check (do the shader's extended-precision transforms survive this compiler?). The dev
 //!    harnesses — `--livetest`, `--bench-matrix`, `--divetest`, `--juliadive` — stay CLI-only on
@@ -139,7 +139,7 @@ pub(crate) struct DiagnosticsUi {
 /// `— FAILURES PRESENT`). Returns `(checks_passed, checks_total, goldens_passed, goldens_total)`.
 ///
 /// Deliberately tolerant about what follows the counts: the trailing verdict word has changed
-/// before, and a parser that insists on it would silently stop recognising the line.
+/// before, and a parser that insists on it would silently stop recognizing the line.
 pub(crate) fn parse_selftest_verdict(line: &str) -> Option<(u32, u32, u32, u32)> {
     let l = line.trim();
     let rest = l.strip_prefix("checks ")?;
@@ -399,7 +399,7 @@ impl FractadyneApp {
             // self-test exits non-zero on golden mismatches, which on non-reference hardware are
             // expected rather than failures, and a red banner there teaches testers to ignore it.
             // An informational test is never graded — it captures a result to send back — so it is
-            // always "ok" for the purpose of colour; the GPU sweep exits non-zero precisely when it
+            // always "ok" for the purpose of color; the GPU sweep exits non-zero precisely when it
             // has found the thing worth reporting, which must not read as a fault.
             let ok = if test.is_informational() {
                 true

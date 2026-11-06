@@ -100,7 +100,7 @@ impl crate::FractadyneApp {
             // printed here, so a Life view whose fields did not load was shot as whatever was on
             // screen (the default Mandelbrot), exited 0, and passed its logcheck — a published
             // picture of the wrong thing that every check called fine. Missing keys stay allowed:
-            // an L-system or Life view without a centre is framed at home on purpose.
+            // an L-system or Life view without a center is framed at home on purpose.
             if !load.problems.is_empty() {
                 for p in &load.problems {
                     eprintln!("fractadyne: --shot: {}: {p}", loc.display());

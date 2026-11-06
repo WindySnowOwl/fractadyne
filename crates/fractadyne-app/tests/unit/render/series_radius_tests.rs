@@ -55,7 +55,7 @@ fn a_zoom_out_inside_the_slack_keeps_it_and_past_it_refuses_it() {
 
 #[test]
 fn a_zoom_in_or_a_pan_inside_the_radius_keeps_it() {
-    // Built with its reference 300 px off the centre: the offset is part of the radius.
+    // Built with its reference 300 px off the center: the offset is part of the radius.
     let rp = offset(300.0, START_UPP_LOG2);
     let built = asks(&rp, START_UPP_LOG2);
     assert!(built > asks(&centre(), START_UPP_LOG2));

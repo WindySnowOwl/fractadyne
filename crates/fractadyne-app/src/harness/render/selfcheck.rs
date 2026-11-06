@@ -101,7 +101,7 @@ impl FractadyneApp {
             b.sa_from,
             b.pick_centre_from_build,
             format!(
-                "identical; len={} sa_skip={} sa={}/{} centre build={} pick's centre walk={} ({seq_ms:.0} ms sequential, {ovl_ms:.0} ms overlapped)",
+                "identical; len={} sa_skip={} sa={}/{} center build={} pick's center walk={} ({seq_ms:.0} ms sequential, {ovl_ms:.0} ms overlapped)",
                 b.orbit_len,
                 b.sa.skip,
                 if a.sa_from.is_empty() { "none" } else { a.sa_from },
@@ -334,8 +334,8 @@ impl FractadyneApp {
     /// ⭐⭐**Why this is the check an "the export doesn't match my screen" report needs.**
     /// Magnification is HEIGHT-anchored (`upp = REFERENCE_HEIGHT / height_px × 2^-log2mag`), so two
     /// renders sharing a height share `upp` exactly, every pixel column maps to a fixed complex
-    /// coordinate relative to the centre, and **the narrow image must appear pixel-for-pixel inside
-    /// the wide one**. A centring error, an off-by-one in the raster mapping, or a mirrored axis all
+    /// coordinate relative to the center, and **the narrow image must appear pixel-for-pixel inside
+    /// the wide one**. A centering error, an off-by-one in the raster mapping, or a mirrored axis all
     /// break that identity; a mere aspect change does not.
     ///
     /// ⚠⚠**The viewport is what varies, not just the request.** `delta_exp` comes from
@@ -381,7 +381,7 @@ impl FractadyneApp {
                 usize::MAX,
                 0,
                 format!(
-                    "size not honoured: got {}x{} and {}x{}",
+                    "size not honored: got {}x{} and {}x{}",
                     a.width, a.height, b.width, b.height
                 ),
             );

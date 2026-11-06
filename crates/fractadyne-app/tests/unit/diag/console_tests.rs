@@ -18,7 +18,7 @@ fn args(v: &[&str]) -> Vec<String> {
 #[test]
 fn a_bare_launch_is_quiet_and_any_argument_makes_it_talk() {
     assert!(!console_default(&args(&["fractadyne"]), None, None), "a bare GUI launch must be quiet");
-    // Every shape of argument, because the rule is "any", not "a recognised one".
+    // Every shape of argument, because the rule is "any", not "a recognized one".
     for a in [
         vec!["fractadyne", "--selftest"],
         vec!["fractadyne", "--render", "-o", "x.png"],

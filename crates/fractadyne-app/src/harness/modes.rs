@@ -221,7 +221,7 @@ impl crate::FractadyneApp {
                         // so a regions file that failed to parse (measured: one cp1252 em-dash)
                         // profiled eight unrelated views and reported success — the exact trap the
                         // F3 harness taught us to check output files for. The flag is an explicit
-                        // request; honouring a different one is worse than stopping.
+                        // request; honoring a different one is worse than stopping.
                         Err(e) => {
                             eprintln!("fractadyne: --regions {path}: {e}");
                             crate::exit(2);

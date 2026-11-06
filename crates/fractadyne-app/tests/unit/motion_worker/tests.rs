@@ -30,7 +30,7 @@ fn a_frame_is_ranked_by_how_it_shows_the_view_now() {
 
 #[test]
 fn a_live_view_is_inside_a_pinned_one_only_when_all_of_it_is() {
-    // Zoomed in at the same centre: inside; zoomed out: not.
+    // Zoomed in at the same center: inside; zoomed out: not.
     assert!(view_inside(0.0, 0.0, 0.5, 0.4, 1.0, 0.8));
     assert!(view_inside(0.0, 0.0, 1.0, 0.8, 1.0, 0.8));
     assert!(!view_inside(0.0, 0.0, 1.01, 0.8, 1.0, 0.8));

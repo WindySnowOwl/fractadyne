@@ -17,7 +17,7 @@ fn a_typed_tag_becomes_a_vocabulary_tag_when_it_names_one() {
     assert_eq!(normalize_user_tag("  Calm "), Some("calm".into()));
     assert_eq!(normalize_user_tag("single-hue"), Some("single-hue".into()));
     assert_eq!(normalize_user_tag("Single hue"), Some("single-hue".into()));
-    assert_eq!(normalize_user_tag("  my   favourites "), Some("my favourites".into()));
+    assert_eq!(normalize_user_tag("  my   favorites "), Some("my favorites".into()));
     assert_eq!(normalize_user_tag("   "), None);
     assert_eq!(normalize_user_tag(&"x".repeat(100)).map(|s| s.chars().count()), Some(MAX_TAG_CHARS));
 }

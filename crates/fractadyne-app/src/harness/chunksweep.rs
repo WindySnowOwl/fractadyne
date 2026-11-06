@@ -3,7 +3,7 @@
 //! ## Why this exists
 //!
 //! The 2026-08-22 field device loss (`crash-1787401025-0`) was sized by `chunk_band_license`, not
-//! by the frame-cost budget and not by resolution: the budget authorised 24,457 iterations and the
+//! by the frame-cost budget and not by resolution: the budget authorized 24,457 iterations and the
 //! pass ran 1,024. The manifest's `chunk=[768,1792)` forces the ladder
 //! `[0,256) → [256,768) → [768,1792)`, which forces `bands[0]` = 0 → 512 → 1024, and in
 //! `chunk_band_update` the ONLY branch producing those values is the ×2 fast lane at
@@ -32,7 +32,7 @@
 //!
 //! - **The window axis.** For each window size, the wall cost of every position in `[0, iters)`.
 //!   If cost is proportional to the window, sizing the window is a sufficient actuator. If a
-//!   position costs many times its neighbours at the same size, it is not.
+//!   position costs many times its neighbors at the same size, it is not.
 //! - **The area axis.** The same view at successively fewer pixels, at one fixed window. The fit
 //!   `wall ~ area^a` is the go/no-go for any spatial sub-budget scheme: `a ≈ 0` means removing
 //!   pixels buys nothing and the "spatial splits are the wrong axis" verdict extends to bounded
@@ -49,7 +49,7 @@
 //! one that died. The report prints `orbit_len` so a silent fallback to a fresh build is visible
 //! rather than assumed.
 //!
-//! ⚠**The ladder aborts on the first window past `SAFETY_MS`.** The point is to characterise the
+//! ⚠**The ladder aborts on the first window past `SAFETY_MS`.** The point is to characterize the
 //! curve, not to reproduce the crash: escalation stops as soon as a window is slow enough that
 //! doubling it again would approach the ~2 s watchdog. A sweep that stopped early says so.
 //!
@@ -327,7 +327,7 @@ impl FractadyneApp {
         let skip = base.sa_skip;
         let iters = iters.saturating_add(skip);
         println!(
-            "view      : centre {} , {}\n\
+            "view      : center {} , {}\n\
              zoom      : 2^{:.2}   ({}x{} px, mode {}, formula {}, ss forced to 1 on this path)\n\
              reference : orbit_len={} sa_skip={} bla_on={}\n\
              bracket   : iterations [0,{}) — windows ending at or below sa_skip are FREE BY
@@ -549,7 +549,7 @@ impl FractadyneApp {
         // targets, never the full frame — and the penalty does grow as the target shrinks, so a
         // sweep at one size would understate it. The SCALE IS APPLIED TO THE BASE FIRST and the
         // +-4 offsets walked around the scaled value: scaling after the offset collapses
-        // neighbouring heights onto the same value (1098 and 1099 both floor to 549 at 0.5) and
+        // neighboring heights onto the same value (1098 and 1099 both floor to 549 at 0.5) and
         // silently measures the same row twice, which the first version of this axis did.
         //
         // ⚠**CORRECTION to an earlier note here**, which said the request width is derived from

@@ -92,19 +92,19 @@ fn the_model_is_the_rule() {
     };
     let m = check::model(&frame, [40, 40], 1);
     let at = |x: usize, y: usize| m[y * 40 + x];
-    // Texel (25, 19): centre (25.5, 19.5) = view (5.5, 0.5): on the horizontal line only.
+    // Texel (25, 19): center (25.5, 19.5) = view (5.5, 0.5): on the horizontal line only.
     assert_eq!(at(25, 19), Some(0.25));
     // The crossing: the vertical line was drawn last.
     assert_eq!(at(19, 19), Some(0.75));
     assert_eq!(at(5, 5), Some(-1.0));
-    // Texel (25, 21): centre at view (5.5, −1.5), exactly a half-width from the line — on its
+    // Texel (25, 21): center at view (5.5, −1.5), exactly a half-width from the line — on its
     // edge, left to rounding.
     assert_eq!(at(25, 21), None);
-    // Texel (8, 31): centre at view (−11.5, −11.5), inside the triangle; (13, 25): view
+    // Texel (8, 31): center at view (−11.5, −11.5), inside the triangle; (13, 25): view
     // (−6.5, −5.5), outside it.
     assert_eq!(at(8, 31), Some(0.5));
     assert_eq!(at(13, 25), Some(-1.0));
-    // Drawn on a quarter of the way: half the first line (to the view's centre), not the second,
+    // Drawn on a quarter of the way: half the first line (to the view's center), not the second,
     // not the shape (which starts three quarters along).
     frame.progress = 0.25;
     let m = check::model(&frame, [40, 40], 1);

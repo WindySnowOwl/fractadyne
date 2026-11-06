@@ -77,17 +77,17 @@ fn the_layout_colours_depths_highlights_the_pair_and_flags_strays() {
     assert_eq!(format_at(&job, semi + 2).color, l.comment);
     assert!(format_at(&job, semi + 2).italics);
     assert_eq!(format_at(&job, 8).color, l.depth[0], "paired across the comment's line");
-    // Depths past four take the first colour again.
+    // Depths past four take the first color again.
     let deep = layout_job("(((((z)))))", None, &l);
     assert_eq!(format_at(&deep, 4).color, l.depth[0]);
-    // The pair at the cursor: text colour on the pair background, both ends; the rest unchanged.
+    // The pair at the cursor: text color on the pair background, both ends; the rest unchanged.
     let job = layout_job(src, Some(5), &l);
     for b in [0, 4] {
         assert_eq!(format_at(&job, b).color, l.text);
         assert_eq!(format_at(&job, b).background, l.pair_bg);
     }
     assert_eq!(format_at(&job, 1).background, egui::Color32::TRANSPARENT);
-    // A stray close is in the unmatched colour.
+    // A stray close is in the unmatched color.
     let stray = layout_job("z)", None, &l);
     assert_eq!(format_at(&stray, 1).color, l.unmatched);
     // An empty text still has a format (the cursor's height comes from it).

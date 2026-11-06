@@ -45,7 +45,7 @@ depths the smooth-iter counts are huge (~3e5&ndash;1.6e6+) and vary steeply pixe
 palette cycle (0.27) aliases a correct escape field into speckle (long mis-diagnosed as glitches, then a
 perturbation bug &mdash; both wrong; a faithful CPU transcription of the mode-2 shader kernel reproduces
 the escape VALUES exactly). These renders use <em>auto-normalized</em> coloring (<code>--normalize</code>:
-the frame's escape range mapped to the palette), which colours the smooth exterior cleanly and matches F3
+the frame's escape range mapped to the palette), which colors the smooth exterior cleanly and matches F3
 arm-for-arm. The spiral views (09&ndash;12) have slowly-varying exteriors that don't alias, so they keep
 the standard cycle. The general fix &mdash; an adaptive-cycle coloring mode for the live view &mdash; is in
 TODO.md. <strong>15 also needed a rendering fix (v0.2.18):</strong> its right-side dendrites escape at
@@ -53,7 +53,7 @@ TODO.md. <strong>15 also needed a rendering fix (v0.2.18):</strong> its right-si
 reference&rsquo;s near-zero orbit dips. The GPU&rsquo;s BLA-skip path was skipping those dips without a
 rebase check (it assumed &delta;z stays small in the BLA regime, which fails where |Z|&asymp;0),
 marching the deep pixels to the reference end and capping them at ~919k so the dendrites vanished. A
-rebase check at the BLA landing restored the full range (this also sharpened the deep-centre detail of
+rebase check at the BLA landing restored the full range (this also sharpened the deep-center detail of
 11&ndash;13); goldens stayed byte-identical.</p>
 <p><strong>Reading the comparison:</strong> palettes and smooth-coloring curves differ between the apps by
 design &mdash; compare <em>structure</em> (feature placement, spiral arm counts, escape-boundary shape,
@@ -120,7 +120,7 @@ Iterations: 512</pre>
 
 <section class="card" id="29-nucleus-p2-basilica">
   <h2><span class="num" title="location 29 (slug 29-nucleus-p2-basilica) — matches --check / logs / --only 29">29</span> Period-2 nucleus (basilica) 50x <span class="zoom">3.99945&times;</span></h2>
-  <p class="note">EXACT superattracting nucleus, c = -1 with no truncation (f^2(0,c) = 0 exactly). The interior is max-iter by construction, so this is the INTERIOR cost regime at its simplest and cheapest - the control the deep interior locations (23/24) are the expensive end of. FRAMING: 8x - the period-2 bulb spans ~0.5 in c, so this frames it against the exterior. At 50x the whole view was INSIDE the bulb and rendered 3 unique colours: a flat interior that would pass maxD 0 forever while testing nothing.</p>
+  <p class="note">EXACT superattracting nucleus, c = -1 with no truncation (f^2(0,c) = 0 exactly). The interior is max-iter by construction, so this is the INTERIOR cost regime at its simplest and cheapest - the control the deep interior locations (23/24) are the expensive end of. FRAMING: 8x - the period-2 bulb spans ~0.5 in c, so this frames it against the exterior. At 50x the whole view was INSIDE the bulb and rendered 3 unique colors: a flat interior that would pass maxD 0 forever while testing nothing.</p>
   <div class="pair">
     <figure>
       <img src="renders/29-nucleus-p2-basilica-fractadyne.png" alt="Fractadyne render">
@@ -276,7 +276,7 @@ Iterations: 2000</pre>
 
 <section class="card" id="31-nucleus-p3-rabbit">
   <h2><span class="num" title="location 31 (slug 31-nucleus-p3-rabbit) — matches --check / logs / --only 31">31</span> Period-3 nucleus (Douady rabbit) 80x <span class="zoom">19.9986&times;</span></h2>
-  <p class="note">The Douady rabbit: same period as location 30, same superattracting interior, but off the real axis. The pair 30/31 isolates real-axis symmetry at fixed period. FRAMING: 20x - frames the period-3 bulb. At 80x the view was entirely interior (3 colours).</p>
+  <p class="note">The Douady rabbit: same period as location 30, same superattracting interior, but off the real axis. The pair 30/31 isolates real-axis symmetry at fixed period. FRAMING: 20x - frames the period-3 bulb. At 80x the view was entirely interior (3 colors).</p>
   <div class="pair">
     <figure>
       <img src="renders/31-nucleus-p3-rabbit-fractadyne.png" alt="Fractadyne render">
@@ -328,7 +328,7 @@ Iterations: 3000</pre>
 
 <section class="card" id="32-nucleus-p4">
   <h2><span class="num" title="location 32 (slug 32-nucleus-p4) — matches --check / logs / --only 32">32</span> Period-4 nucleus (real) 300x <span class="zoom">57.0164&times;</span></h2>
-  <p class="note">Period-4 nucleus, Newton-refined. With 29/30/32 the corpus carries a period ladder 2 -&gt; 3 -&gt; 4 at shallow depth, where the reference orbit is short and every difference is the shader's. FRAMING: 57x - frames the period-4 component. At 300x the view was entirely interior (3 colours).</p>
+  <p class="note">Period-4 nucleus, Newton-refined. With 29/30/32 the corpus carries a period ladder 2 -&gt; 3 -&gt; 4 at shallow depth, where the reference orbit is short and every difference is the shader's. FRAMING: 57x - frames the period-4 component. At 300x the view was entirely interior (3 colors).</p>
   <div class="pair">
     <figure>
       <img src="renders/32-nucleus-p4-fractadyne.png" alt="Fractadyne render">
@@ -588,7 +588,7 @@ Iterations: 1500</pre>
 
 <section class="card" id="27-misiurewicz-4-1">
   <h2><span class="num" title="location 27 (slug 27-misiurewicz-4-1) — matches --check / logs / --only 27">27</span> Misiurewicz (4,1) three-spar 1e5x <span class="zoom">1.000000e5&times;</span></h2>
-  <p class="note">Misiurewicz (4,1), Newton-refined to 240 digits; |lambda| = 1.32833011530030112, i.e. only 0.1233 decades per self-similar rung - the slowest ladder of the five landmarks, which is why the same centre serves bench-matrix's 1e300 segment. The three-spar structure is the classic Misiurewicz shape.</p>
+  <p class="note">Misiurewicz (4,1), Newton-refined to 240 digits; |lambda| = 1.32833011530030112, i.e. only 0.1233 decades per self-similar rung - the slowest ladder of the five landmarks, which is why the same center serves bench-matrix's 1e300 segment. The three-spar structure is the classic Misiurewicz shape.</p>
   <div class="pair">
     <figure>
       <img src="renders/27-misiurewicz-4-1-fractadyne.png" alt="Fractadyne render">
@@ -848,7 +848,7 @@ Iterations: 20000</pre>
 
 <section class="card" id="21-m43-spar-1e27.7">
   <h2><span class="num" title="location 21 (slug 21-m43-spar-1e27.7) — matches --check / logs / --only 21">21</span> M(4,3) spar 5.07e27x <span class="zoom">5.071075e27&times;</span></h2>
-  <p class="note">MODE-BOUNDARY CONTROL, df32 side. Misiurewicz (4,3), Newton-refined; |lambda|=3.49331342397577021, and this is self-similar rung n=51 - so it renders the SAME picture as location 22 at rung n=52, and the ONLY difference across the pair is which arithmetic each app selects. Ours crosses df32-&gt;floatexp at 1e28 (PERT_FE_THRESHOLD). Matching on BOTH rungs shows our mode switch is pixel-neutral against an independent implementation; matching on one but not the other localises the fault to the switch itself.</p>
+  <p class="note">MODE-BOUNDARY CONTROL, df32 side. Misiurewicz (4,3), Newton-refined; |lambda|=3.49331342397577021, and this is self-similar rung n=51 - so it renders the SAME picture as location 22 at rung n=52, and the ONLY difference across the pair is which arithmetic each app selects. Ours crosses df32-&gt;floatexp at 1e28 (PERT_FE_THRESHOLD). Matching on BOTH rungs shows our mode switch is pixel-neutral against an independent implementation; matching on one but not the other localizes the fault to the switch itself.</p>
   <div class="pair">
     <figure>
       <img src="renders/21-m43-spar-1e27.7-fractadyne.png" alt="Fractadyne render">
@@ -900,7 +900,7 @@ Iterations: 30000</pre>
 
 <section class="card" id="23-nucleus-p145-1e27.7">
   <h2><span class="num" title="location 23 (slug 23-nucleus-p145-1e27.7) — matches --check / logs / --only 23">23</span> Period-145 minibrot 5.07e27x <span class="zoom">5.071075e27&times;</span></h2>
-  <p class="note">COST-REGIME CONTROL, df32 side. A period-145 minibrot nucleus embedded in the M(4,3) neighbourhood at the same rung and depth as location 21, found by continuation along the self-similar ladder (c -&gt; c_M + (c-c_M)/lambda, period stepping by the 3-cycle length per rung; residual 1e-182). Where 21 is a fast-escaping spar field, this is an interior: series approximation gives up, every pixel takes extended-range samples, and the reference+BLA build costs ~58x more at identical depth. Interiors are also where our truncation clamp and max-iter handling differ most from F3's, so this is the cross-app check location 21 cannot make.</p>
+  <p class="note">COST-REGIME CONTROL, df32 side. A period-145 minibrot nucleus embedded in the M(4,3) neighborhood at the same rung and depth as location 21, found by continuation along the self-similar ladder (c -&gt; c_M + (c-c_M)/lambda, period stepping by the 3-cycle length per rung; residual 1e-182). Where 21 is a fast-escaping spar field, this is an interior: series approximation gives up, every pixel takes extended-range samples, and the reference+BLA build costs ~58x more at identical depth. Interiors are also where our truncation clamp and max-iter handling differ most from F3's, so this is the cross-app check location 21 cannot make.</p>
   <div class="pair">
     <figure>
       <img src="renders/23-nucleus-p145-1e27.7-fractadyne.png" alt="Fractadyne render">
@@ -952,7 +952,7 @@ Iterations: 30000</pre>
 
 <section class="card" id="34-field-dive-2p06e28">
   <h2><span class="num" title="location 34 (slug 34-field-dive-2p06e28) — matches --check / logs / --only 34">34</span> field dive 2.06e28x <span class="zoom">1.057665e28&times;</span></h2>
-  <p class="note">FIELD LOCATION from the user's own dive (shared bookmarks, saved 2026-08-15). One centre progressively refined across five depths - locations 34-38 are the SAME point, so together they are a real zoom sequence rather than five unrelated views, which is what the reference-reuse and tour work needs. All five are mode 2 for us. Centre carries 58 digits against 28.024348 decades of depth. This one sits 5.8% above PERT_FE_THRESHOLD (1e28), i.e. essentially ON our df32-&gt;floatexp boundary, which makes it the real-dive counterpart to the synthetic boundary pair at locations 21/22. WARNING: the iteration count here is PROVISIONAL - the bookmark stored auto_iter with a 10,000,000 ceiling, and 300,000 was chosen by analogy with neighbouring corpus entries rather than by measuring escape times. Check for clipped interiors before trusting this as a baseline.</p>
+  <p class="note">FIELD LOCATION from the user's own dive (shared bookmarks, saved 2026-08-15). One center progressively refined across five depths - locations 34-38 are the SAME point, so together they are a real zoom sequence rather than five unrelated views, which is what the reference-reuse and tour work needs. All five are mode 2 for us. Center carries 58 digits against 28.024348 decades of depth. This one sits 5.8% above PERT_FE_THRESHOLD (1e28), i.e. essentially ON our df32-&gt;floatexp boundary, which makes it the real-dive counterpart to the synthetic boundary pair at locations 21/22. WARNING: the iteration count here is PROVISIONAL - the bookmark stored auto_iter with a 10,000,000 ceiling, and 300,000 was chosen by analogy with neighboring corpus entries rather than by measuring escape times. Check for clipped interiors before trusting this as a baseline.</p>
   <div class="pair">
     <figure>
       <img src="renders/34-field-dive-2p06e28-fractadyne.png" alt="Fractadyne render">
@@ -1004,7 +1004,7 @@ Iterations: 300000</pre>
 
 <section class="card" id="22-m43-spar-1e28.2">
   <h2><span class="num" title="location 22 (slug 22-m43-spar-1e28.2) — matches --check / logs / --only 22">22</span> M(4,3) spar 1.77e28x <span class="zoom">1.771740e28&times;</span></h2>
-  <p class="note">MODE-BOUNDARY CONTROL, floatexp side. Same centre and iteration count as location 21, one self-similar rung deeper (n=52), so the scene is unchanged and only our arithmetic mode differs. See location 21.</p>
+  <p class="note">MODE-BOUNDARY CONTROL, floatexp side. Same center and iteration count as location 21, one self-similar rung deeper (n=52), so the scene is unchanged and only our arithmetic mode differs. See location 21.</p>
   <div class="pair">
     <figure>
       <img src="renders/22-m43-spar-1e28.2-fractadyne.png" alt="Fractadyne render">
@@ -1212,7 +1212,7 @@ Iterations: 60000</pre>
 
 <section class="card" id="35-field-dive-1p47e77">
   <h2><span class="num" title="location 35 (slug 35-field-dive-1p47e77) — matches --check / logs / --only 35">35</span> field dive 1.47e77x <span class="zoom">1.469268e77&times;</span></h2>
-  <p class="note">FIELD LOCATION from the user's own dive (shared bookmarks, saved 2026-08-22). One centre progressively refined across five depths - locations 34-38 are the SAME point, so together they are a real zoom sequence rather than five unrelated views, which is what the reference-reuse and tour work needs. All five are mode 2 for us. Centre carries 116 digits against 77.167101 decades of depth. WARNING: the iteration count here is PROVISIONAL - the bookmark stored auto_iter with a 10,000,000 ceiling, and 300,000 was chosen by analogy with neighbouring corpus entries rather than by measuring escape times. Check for clipped interiors before trusting this as a baseline.</p>
+  <p class="note">FIELD LOCATION from the user's own dive (shared bookmarks, saved 2026-08-22). One center progressively refined across five depths - locations 34-38 are the SAME point, so together they are a real zoom sequence rather than five unrelated views, which is what the reference-reuse and tour work needs. All five are mode 2 for us. Center carries 116 digits against 77.167101 decades of depth. WARNING: the iteration count here is PROVISIONAL - the bookmark stored auto_iter with a 10,000,000 ceiling, and 300,000 was chosen by analogy with neighboring corpus entries rather than by measuring escape times. Check for clipped interiors before trusting this as a baseline.</p>
   <div class="pair">
     <figure>
       <img src="renders/35-field-dive-1p47e77-fractadyne.png" alt="Fractadyne render">
@@ -1264,7 +1264,7 @@ Iterations: 300000</pre>
 
 <section class="card" id="36-field-dive-1p08e104">
   <h2><span class="num" title="location 36 (slug 36-field-dive-1p08e104) — matches --check / logs / --only 36">36</span> field dive 1.08e104x <span class="zoom">1.079471e104&times;</span></h2>
-  <p class="note">FIELD LOCATION from the user's own dive (shared bookmarks, saved 2026-08-22). One centre progressively refined across five depths - locations 34-38 are the SAME point, so together they are a real zoom sequence rather than five unrelated views, which is what the reference-reuse and tour work needs. All five are mode 2 for us. Centre carries 135 digits against 104.033211 decades of depth. WARNING: the iteration count here is PROVISIONAL - the bookmark stored auto_iter with a 10,000,000 ceiling, and 300,000 was chosen by analogy with neighbouring corpus entries rather than by measuring escape times. Check for clipped interiors before trusting this as a baseline.</p>
+  <p class="note">FIELD LOCATION from the user's own dive (shared bookmarks, saved 2026-08-22). One center progressively refined across five depths - locations 34-38 are the SAME point, so together they are a real zoom sequence rather than five unrelated views, which is what the reference-reuse and tour work needs. All five are mode 2 for us. Center carries 135 digits against 104.033211 decades of depth. WARNING: the iteration count here is PROVISIONAL - the bookmark stored auto_iter with a 10,000,000 ceiling, and 300,000 was chosen by analogy with neighboring corpus entries rather than by measuring escape times. Check for clipped interiors before trusting this as a baseline.</p>
   <div class="pair">
     <figure>
       <img src="renders/36-field-dive-1p08e104-fractadyne.png" alt="Fractadyne render">
@@ -1316,7 +1316,7 @@ Iterations: 300000</pre>
 
 <section class="card" id="37-field-dive-3p11e114">
   <h2><span class="num" title="location 37 (slug 37-field-dive-3p11e114) — matches --check / logs / --only 37">37</span> field dive 3.11e114x <span class="zoom">3.106962e114&times;</span></h2>
-  <p class="note">FIELD LOCATION from the user's own dive (shared bookmarks, saved 2026-08-22). One centre progressively refined across five depths - locations 34-38 are the SAME point, so together they are a real zoom sequence rather than five unrelated views, which is what the reference-reuse and tour work needs. All five are mode 2 for us. Centre carries 135 digits against 114.492336 decades of depth. WARNING: the iteration count here is PROVISIONAL - the bookmark stored auto_iter with a 10,000,000 ceiling, and 300,000 was chosen by analogy with neighbouring corpus entries rather than by measuring escape times. Check for clipped interiors before trusting this as a baseline.</p>
+  <p class="note">FIELD LOCATION from the user's own dive (shared bookmarks, saved 2026-08-22). One center progressively refined across five depths - locations 34-38 are the SAME point, so together they are a real zoom sequence rather than five unrelated views, which is what the reference-reuse and tour work needs. All five are mode 2 for us. Center carries 135 digits against 114.492336 decades of depth. WARNING: the iteration count here is PROVISIONAL - the bookmark stored auto_iter with a 10,000,000 ceiling, and 300,000 was chosen by analogy with neighboring corpus entries rather than by measuring escape times. Check for clipped interiors before trusting this as a baseline.</p>
   <div class="pair">
     <figure>
       <img src="renders/37-field-dive-3p11e114-fractadyne.png" alt="Fractadyne render">
@@ -1472,7 +1472,7 @@ Iterations: 600000</pre>
 
 <section class="card" id="38-field-dive-2p87e140">
   <h2><span class="num" title="location 38 (slug 38-field-dive-2p87e140) — matches --check / logs / --only 38">38</span> field dive 2.87e140x <span class="zoom">2.868461e140&times;</span></h2>
-  <p class="note">FIELD LOCATION from the user's own dive (shared bookmarks, saved 2026-08-22). One centre progressively refined across five depths - locations 34-38 are the SAME point, so together they are a real zoom sequence rather than five unrelated views, which is what the reference-reuse and tour work needs. All five are mode 2 for us. Centre carries 174 digits against 140.457649 decades of depth. WARNING: the iteration count here is PROVISIONAL - the bookmark stored auto_iter with a 10,000,000 ceiling, and 300,000 was chosen by analogy with neighbouring corpus entries rather than by measuring escape times. Check for clipped interiors before trusting this as a baseline.</p>
+  <p class="note">FIELD LOCATION from the user's own dive (shared bookmarks, saved 2026-08-22). One center progressively refined across five depths - locations 34-38 are the SAME point, so together they are a real zoom sequence rather than five unrelated views, which is what the reference-reuse and tour work needs. All five are mode 2 for us. Center carries 174 digits against 140.457649 decades of depth. WARNING: the iteration count here is PROVISIONAL - the bookmark stored auto_iter with a 10,000,000 ceiling, and 300,000 was chosen by analogy with neighboring corpus entries rather than by measuring escape times. Check for clipped interiors before trusting this as a baseline.</p>
   <div class="pair">
     <figure>
       <img src="renders/38-field-dive-2p87e140-fractadyne.png" alt="Fractadyne render">
@@ -2044,7 +2044,7 @@ Iterations: 250000</pre>
 
 <section class="card" id="39-misiurewicz-5p63e18003">
   <h2><span class="num" title="location 39 (slug 39-misiurewicz-5p63e18003) — matches --check / logs / --only 39">39</span> Misiurewicz spiral 5.63e18003x <span class="zoom">5.629408e18003&times;</span></h2>
-  <p class="note">FIELD LOCATION from the user, reached with the log-space Misiurewicz solver (Go-to feature, solved 2026-09-02; the solve reported preperiod ~440,410 at this scale, period 1). By an order of magnitude the deepest corpus row (previous: 10 at 4.6e1105) and the first past 1e10000 - it exists to pin the e18000-class regime: ~59,900-bit working precision, floatexp everywhere, reference pick + orbit dominate the build (tens of minutes; hence extreme = true, excluded from the routine --check gate). Centre carries 18,032 digits against 18,003.75 decades - about 28 guard digits, the app share-serializer convention. The pasted source location carried only the human-readable zoom string (5.629408e18003); depth here was derived from that string mathematically (mag_log10 = 18003 + log10(5.629408)) - never through an f64, which would overflow to +inf (the beta.125 blank-frame class). The committed .fdn (written from the render metadata) carries the authoritative upp_log2. Iterations 2008192 were validated by a probe render (maxiter counter 0 - nothing starved) but clear the reference orbit by only 1.6% (winner escapes at 1,975,881 of the 2,008,192 ask - the orbit shadows the repelling cycle for ~4.5x the naive preperiod estimate); do not lower them. Measured at this row (2026-09-02, beta.11): accelerated probe 24 m 15 s at 400x250 (pick 18.7 m, orbit 5.5 m, SA correctly skipped - sa_ms=0, BLA 15.8M nodes in 2.5 s, prec 60,000 bits); Fraktaler-3 rendered the full 1280x720/subframes-4 frame in 592 s and matches ARM-FOR-ARM (its whole render is faster than our candidate pick alone - the F3-gap cost structure, replayed at e18003). F3's coarser internal reference rounding held at 18k digits.</p>
+  <p class="note">FIELD LOCATION from the user, reached with the log-space Misiurewicz solver (Go-to feature, solved 2026-09-02; the solve reported preperiod ~440,410 at this scale, period 1). By an order of magnitude the deepest corpus row (previous: 10 at 4.6e1105) and the first past 1e10000 - it exists to pin the e18000-class regime: ~59,900-bit working precision, floatexp everywhere, reference pick + orbit dominate the build (tens of minutes; hence extreme = true, excluded from the routine --check gate). Center carries 18,032 digits against 18,003.75 decades - about 28 guard digits, the app share-serializer convention. The pasted source location carried only the human-readable zoom string (5.629408e18003); depth here was derived from that string mathematically (mag_log10 = 18003 + log10(5.629408)) - never through an f64, which would overflow to +inf (the beta.125 blank-frame class). The committed .fdn (written from the render metadata) carries the authoritative upp_log2. Iterations 2008192 were validated by a probe render (maxiter counter 0 - nothing starved) but clear the reference orbit by only 1.6% (winner escapes at 1,975,881 of the 2,008,192 ask - the orbit shadows the repelling cycle for ~4.5x the naive preperiod estimate); do not lower them. Measured at this row (2026-09-02, beta.11): accelerated probe 24 m 15 s at 400x250 (pick 18.7 m, orbit 5.5 m, SA correctly skipped - sa_ms=0, BLA 15.8M nodes in 2.5 s, prec 60,000 bits); Fraktaler-3 rendered the full 1280x720/subframes-4 frame in 592 s and matches ARM-FOR-ARM (its whole render is faster than our candidate pick alone - the F3-gap cost structure, replayed at e18003). F3's coarser internal reference rounding held at 18k digits.</p>
   <div class="pair">
     <figure>
       <img src="renders/39-misiurewicz-5p63e18003-fractadyne.png" alt="Fractadyne render">

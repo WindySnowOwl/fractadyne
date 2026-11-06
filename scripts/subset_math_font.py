@@ -7,8 +7,8 @@ table, so the table is kept whole. Two changes besides dropping glyphs:
 - Every size variant and assembly part of the stretchy glyphs -- parentheses, bars, the radical --
   gets a Private Use Area code point (U+E000 up). egui draws text by CHARACTER, and these glyphs have
   none in the original; with one, they are drawn from egui's anti-aliased glyph atlas like any letter.
-- The font is renamed. Its licence, the GUST Font License (the LaTeX Project Public License 1.3c plus
-  a request to rename derived fonts), is honoured by: the new name; the original copyright kept in the
+- The font is renamed. Its license, the GUST Font License (the LaTeX Project Public License 1.3c plus
+  a request to rename derived fonts), is honored by: the new name; the original copyright kept in the
   name table; FractadyneMath-NOTICE.txt saying what changed and where the original is; and
   GUST-FONT-LICENSE.txt shipped beside it.
 
@@ -140,7 +140,7 @@ Strzelczyk and Piotr Pianowski, Copyright 2012--2014 for the Latin Modern math e
 of TeX Users Groups). It is distributed under the GUST Font License (GUST-FONT-LICENSE.txt), an
 instance of the LaTeX Project Public License 1.3c (http://www.latex-project.org/lppl.txt).
 
-It is NOT Latin Modern Math, and its authors do not support it. As the licence asks, it has a new
+It is NOT Latin Modern Math, and its authors do not support it. As the license asks, it has a new
 name. Changes, all made by scripts/subset_math_font.py in the Fractadyne repository:
 
 - Subset to the {glyphs} glyphs the Fractadyne formula language can show (ASCII, mathematical italic

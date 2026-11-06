@@ -22,9 +22,9 @@ fn region(extra: &str) -> String {
     )
 }
 
-/// ⭐The measured failure: a 4,031-digit e4000 centre was silently `take(2048)`-truncated, the
+/// ⭐The measured failure: a 4,031-digit e4000 center was silently `take(2048)`-truncated, the
 /// picked reference landed ~1e2000 view-widths off the view, and the profile printed
-/// `ref 0.31 ms` for a 400-second build. Deep centres are the regions file's whole purpose —
+/// `ref 0.31 ms` for a 400-second build. Deep centers are the regions file's whole purpose —
 /// every digit must survive the trip.
 #[test]
 fn a_deep_centre_round_trips_every_digit() {
@@ -33,7 +33,7 @@ fn a_deep_centre_round_trips_every_digit() {
         "[[region]]\nname = \"deep\"\ncx = \"{cx}\"\ncy = \"0.0\"\nzoom_log2 = 13288.0\niter = 2008192\n"
     );
     let r = load(&body).expect("a deep region must load");
-    assert_eq!(r[0].cx, cx, "the centre lost digits on the way in");
+    assert_eq!(r[0].cx, cx, "the center lost digits on the way in");
     // ...and the iteration ask survives too: the old clamp(64, 200_000) silently rewrote
     // 2,008,192 — while the BUILT-IN deep-interior region uses 800,000, which a file could
     // not even express.
@@ -48,7 +48,7 @@ fn out_of_range_input_is_refused_not_reshaped() {
     assert!(e.contains("iter"), "error should name the field: {e}");
     let giant = format!("cx = \"0.{}\"", "9".repeat(100_001));
     let body = format!("[[region]]\nname = \"g\"\n{giant}\ncy = \"0.0\"\n");
-    let e = load(&body).expect_err("an implausible centre length");
+    let e = load(&body).expect_err("an implausible center length");
     assert!(e.contains("cx"), "error should name the field: {e}");
 }
 

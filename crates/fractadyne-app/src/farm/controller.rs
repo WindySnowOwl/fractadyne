@@ -275,7 +275,7 @@ fn strips_spec(args: &[String], settings: &RenderSettings) -> Result<JobSpec, St
             return Err(format!("{f} cannot be used with a farm's zoom video: {why}"));
         }
     }
-    let i = args.iter().position(|a| a == "--center").ok_or("a farm's zoom video needs the dive's centre (--center RE IM)")?;
+    let i = args.iter().position(|a| a == "--center").ok_or("a farm's zoom video needs the dive's center (--center RE IM)")?;
     let (Some(re), Some(im)) = (args.get(i + 1), args.get(i + 2)) else {
         return Err("--center needs two numbers".into());
     };
@@ -382,7 +382,7 @@ fn run_inner(args: &[String]) -> Result<i32, String> {
     let sharing = match value(args, "--sharing") {
         None | Some("neighbourhood") | Some("neighborhood") => true,
         Some("off") => false,
-        Some(other) => return Err(format!("--sharing takes neighbourhood or off, not {other:?}")),
+        Some(other) => return Err(format!("--sharing takes neighborhood or off, not {other:?}")),
     };
 
     // What the job is: a tour's frames (`--farm-render TOUR`), resolved exactly as `--render-tour`
@@ -1859,7 +1859,7 @@ impl Controller<'_> {
 
     /// Every strip of a zoom video is in: assemble the video on this machine — `--assemble DIR
     /// --out F` with the command's own assembly options, as a child in this machine's OWN
-    /// configuration, so it is coloured as the session is (a single machine's render reads the same
+    /// configuration, so it is colored as the session is (a single machine's render reads the same
     /// session) — and pass its progress on. Then the strips go, unless they were to be kept. Exit 0;
     /// 1 when the video could not be made (the strips stay, and `--assemble DIR` makes it from them);
     /// 4 when the window stopped it.

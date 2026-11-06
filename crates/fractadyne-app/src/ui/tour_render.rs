@@ -406,7 +406,7 @@ impl FractadyneApp {
                 // failing at frame 1091. Nothing in this dialog hinted at that before starting.
                 //
                 // ~0.65 B/px is the measured PNG cost of a 4K fractal frame; it is an ESTIMATE and
-                // labelled as one — deep frames with fine structure compress worse than shallow
+                // labeled as one — deep frames with fine structure compress worse than shallow
                 // ones, so treat it as the right order of magnitude, not a promise.
                 let est_bytes = (self.tour_render.width as u64)
                     .saturating_mul(self.tour_render.height as u64)

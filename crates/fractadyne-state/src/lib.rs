@@ -18,6 +18,16 @@ fn default_state_version() -> u32 {
     1
 }
 
+/// The largest "Divide iterations" value ([`SessionState::iter_div`]). At the default Cycle a
+/// palette then spans about half a million iterations; a view that needs more than that is one for
+/// normalization, which fits the palette to the view's range instead.
+pub const ITER_DIV_MAX: u32 = 10_000;
+
+/// `1`: the iteration count is colored as it is.
+pub fn default_iter_div() -> u32 {
+    1
+}
+
 /// Persisted session. The center is stored at **full precision** as decimal strings
 /// (`center_x_str`/`center_y_str`) so deep-zoom locations survive quit/restart; the
 /// `f64` `center_x`/`center_y` remain for display and backward compatibility with
@@ -83,6 +93,13 @@ pub struct SessionState {
     #[serde(default)]
     pub palette_id: String,
     pub cycle: f32,
+    /// "Divide iterations": the Smooth method's iteration count is divided by this before it is
+    /// colored, so one trip through the palette takes this many times more iterations than the
+    /// Cycle slider alone allows (its slowest is one palette per 250 iterations). `1` = off, the
+    /// default; `serde(default)` keeps older session files loadable. Kalles Fraktaler's "Divide
+    /// iteration" is the same idea.
+    #[serde(default = "default_iter_div")]
+    pub iter_div: u32,
     pub offset: f32,
     /// Log-scaled palette mapping (default off) — applies wherever normalization is active.
     /// `serde(default)` keeps older session files loadable.
@@ -100,7 +117,7 @@ pub struct SessionState {
     /// anti-aliasing and it is NOT what the name promises — users read "normalize" as "fit the
     /// palette to this view's range", asked for it repeatedly, and got a control that appeared to
     /// do nothing. Rather than move the calibrated threshold (which has regressed in both
-    /// directions before — flat-grey at shallow depth, and "cities at night"), the range fit is its
+    /// directions before — flat-gray at shallow depth, and "cities at night"), the range fit is its
     /// own switch.
     #[serde(default)]
     pub normalize_fit: bool,
@@ -314,7 +331,7 @@ pub struct SessionState {
     /// Custom gradient stops `[pos, r, g, b]` (DISPLAY-space RGB) from the gradient editor.
     #[serde(default)]
     pub custom_palette: Vec<[f32; 4]>,
-    /// Read `custom_palette` as **bands** (one flat colour per entry, no interpolation) rather
+    /// Read `custom_palette` as **bands** (one flat color per entry, no interpolation) rather
     /// than as gradient stops — Fractint `.map` semantics, set by importing one. `false` for
     /// every session written before palette import existed, which is the right reading of an
     /// editor-authored gradient.
@@ -323,7 +340,7 @@ pub struct SessionState {
     /// A full SEGMENT gradient, when the palette is one a stop list cannot express.
     ///
     /// ⭐**This exists because `.ggr` is a superset of `custom_palette`.** A GIMP gradient carries a
-    /// per-segment midpoint, one of five blend curves and a colour space (RGB or either way round
+    /// per-segment midpoint, one of five blend curves and a color space (RGB or either way round
     /// the hue wheel); a `[pos, r, g, b]` list holds none of those, so persisting an imported
     /// `.ggr` as stops would have quietly flattened every curve and every hue sweep on the first
     /// restart. When this is non-empty it WINS over `custom_palette`.
@@ -636,6 +653,7 @@ impl Default for SessionState {
             palette_idx: 0,
             palette_id: String::new(),
             cycle: 0.27,
+            iter_div: default_iter_div(),
             log_palette: false,
             normalize_live: true,
             normalize_fit: false,

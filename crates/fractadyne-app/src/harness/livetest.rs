@@ -36,7 +36,7 @@
 //!   - **STARVED** live is ≥10 points blacker than the 4× oracle, and the app does not say why.
 //!   - **capped** as STARVED, but the status bar reports the limit. Not a failure.
 //!   - **warn** ≥3 points blacker than either oracle, or the colored images differ by a mean of
-//!     ≥24/255 at the SAME blackness (colour alone is not evidence of a defect at a dense deep field).
+//!     ≥24/255 at the SAME blackness (color alone is not evidence of a defect at a dense deep field).
 //! Failures dump `live`/`truth`(/`truth4x`) PNGs so the difference can be looked at, not just read.
 //!
 //! Exit codes follow `crate::verdict`: 0 no drift from the blessed baseline, 2 drift (or, with no
@@ -84,7 +84,7 @@ struct Checkpoint {
     budget_maxed: bool,
     app_says: Option<&'static str>,
     /// Escape-iteration range (max − min smooth iteration of escaped pixels) of the live frame and
-    /// the oracle: context, so a FLAT frame (detail collapsed to one colour) is visible in the log
+    /// the oracle: context, so a FLAT frame (detail collapsed to one color) is visible in the log
     /// even where the black fractions agree.
     live_range: f64,
     truth_range: f64,
@@ -137,10 +137,10 @@ impl Grade {
 ///
 /// A live-path shortfall outranks starvation: the frame failed to show what its own ask shows.
 ///
-/// The two black metrics and the colour metric are not equally trustworthy. "The live view resolved
-/// less of this view than an offline render did" is unambiguous. A colour difference at the same
+/// The two black metrics and the color metric are not equally trustworthy. "The live view resolved
+/// less of this view than an offline render did" is unambiguous. A color difference at the same
 /// blackness is not: at a dense deep field the palette maps a huge escape-iteration range into one
-/// cycle, so colour is hypersensitive to sub-iteration differences between two independently picked
+/// cycle, so color is hypersensitive to sub-iteration differences between two independently picked
 /// references — the same aliasing that made corpus locations 14/15 look wrong when the rendering
 /// was right. Measured at the 6.5e94× hold: live and offline agree to +0.0 points of blackness at
 /// the full 4 000 000 iterations the script asked for, and still differ by 28.6 sRGB. Failing that
@@ -624,7 +624,7 @@ impl FractadyneApp {
                         // ---- second oracle: the same view at 4× the ask (U34) ----
                         // Only where it can change the grade: starvation is live black that a
                         // bigger budget resolves, so a frame under `WARN_PT` black has none to
-                        // show. The count is honoured verbatim (auto-iter off for the build), with
+                        // show. The count is honored verbatim (auto-iter off for the build), with
                         // a reference built for it — a reference built for the ask would clamp
                         // the longer pixels to its own length.
                         let want4 = ask.saturating_mul(STARVE_ORACLE_MULT).min(crate::MAX_ITER_LIMIT);

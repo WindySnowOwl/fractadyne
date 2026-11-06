@@ -183,12 +183,12 @@ pub(crate) fn stamp_watermark(pixels: &mut [f32], w: u32, h: u32, ov: &WmOverlay
 /// field's meaning or units — purely additive new keys don't need it (the allow-list reader
 /// ignores unknown keys and defaults missing ones, so old and new builds interoperate).
 /// A file whose `format_version` exceeds this is from a newer build: we still load the
-/// fields we recognise, but warn the user that newer settings/semantics may not apply.
+/// fields we recognize, but warn the user that newer settings/semantics may not apply.
 ///
 /// 2 — `fractal=Custom`, with `formula=` / `formula_params=`. Written ONLY by a Custom view
 /// ([`VIEW_FORMAT_PLAIN`] otherwise), so every other file is format 1 byte for byte and loads
 /// without a word in every build. Bumped although the keys are additive because an older reader
-/// cannot honour the new `fractal` value and does not fail: v0.3.0-beta.9 keeps the family it is
+/// cannot honor the new `fractal` value and does not fail: v0.3.0-beta.9 keeps the family it is
 /// showing when the name is unknown, so a shared custom view opened as, say, Mandelbrot at those
 /// coordinates, with only an "unknown key: formula" note. Format 2 makes it say "saved by a newer
 /// Fractadyne" instead. A view of a power family ("Burning Ship 3", design/power-families.md)
@@ -295,7 +295,10 @@ pub(crate) const KNOWN_VIEW_KEYS: &[&str] = &[
     "app", "version", "format_version", "saved_unix", "saved", "notes", "fractal", "julia",
     "julia_c_re", "julia_c_im", "center_re", "center_im", "upp", "upp_log2", "zoom", "max_iter",
     "auto_iter", "palette", "palette_id", "cycle", "offset", "aa", "palette_custom", "thumb", "checksum",
-    // The centre's source EXPRESSION and its offset from that anchor, when the centre was entered
+    // "Divide iterations", written only when it is not 1 (so an ordinary view is byte-identical to
+    // one written before the key existed).
+    "iter_div",
+    // The center's source EXPRESSION and its offset from that anchor, when the center was entered
     // as a re-derivable expression. Optional and written IN ADDITION to `center_re`/`center_im`, so
     // an older reader still lands on the resolved decimal; a newer one re-derives at the view's
     // precision so a deeper zoom of the same file stays exact. See `CenterExpr`.
@@ -310,7 +313,7 @@ pub(crate) const KNOWN_VIEW_KEYS: &[&str] = &[
     // reached again by running the difference, which Life's determinism makes exact.
     "rule", "pattern", "pattern_origin", "pattern_generation", "generation", "pattern_name",
     // An L-system (format 4): the system's text (one line, `\n`/`\\` escaped), the order (`auto` or
-    // fixed), the angle slider's override, the line width, the colouring.
+    // fixed), the angle slider's override, the line width, the coloring.
     "lsystem", "lsystem_order", "lsystem_angle", "lsystem_width", "lsystem_colour",
 ];
 
@@ -321,7 +324,7 @@ pub(crate) const ESSENTIAL_VIEW_KEYS: &[&str] = &["center_re", "center_im"];
 /// Keys a PREVIOUS version of Fractadyne wrote, mapped to their current names: `(old, new)`.
 ///
 /// ⛔⭐⭐**A rename without an alias orphans every file already written.** `v0.2.20` moved the
-/// centre from `center_x`/`center_y` to `center_re`/`center_im` — the right call, since Re/Im
+/// center from `center_x`/`center_y` to `center_re`/`center_im` — the right call, since Re/Im
 /// is what the deep-zoom community and our own `.kfr` output use — but it changed the writer
 /// AND the reader in one step and left nothing to read the old spelling. Every `.fdn`, and
 /// every exported PNG and EXR, written before that release therefore loaded with its
@@ -367,6 +370,7 @@ const TYPED_VIEW_KEYS: &[(&str, ValueKind)] = &[
     ("palette", ValueKind::Uint),
     ("palette_id", ValueKind::Id),
     ("cycle", ValueKind::Float),
+    ("iter_div", ValueKind::Uint),
     ("offset", ValueKind::Float),
     ("aa", ValueKind::Uint),
 ];
@@ -751,8 +755,8 @@ pub(crate) const MAX_EMBEDDED_SEGMENTS: usize = 512;
 
 /// Encode the custom gradient as ONE Latin-1, single-line field for view metadata.
 ///
-/// ⭐⭐**A `.fdn` that restores the view but not the colours does not restore the IMAGE**, which is
-/// the thing people share. The view fields have always travelled; the gradient did not, so a
+/// ⭐⭐**A `.fdn` that restores the view but not the colors does not restore the IMAGE**, which is
+/// the thing people share. The view fields have always traveled; the gradient did not, so a
 /// carefully built palette arrived as whatever preset the recipient happened to be on.
 ///
 /// ⚠**One line, ASCII, and no `=`** — this rides in PNG `tEXt` beside the view fields, which is a
@@ -786,7 +790,7 @@ fn encode_palette_segments(segs: &[fractadyne_state::PaletteSegment]) -> String 
 
 /// Decode [`encode_palette_segments`]. Untrusted input: a malformed segment is DROPPED rather than
 /// defaulted, and the whole field is refused unless what survives still covers `0..1` in order — a
-/// half-parsed gradient would render as a colour nobody chose.
+/// half-parsed gradient would render as a color nobody chose.
 fn decode_palette_segments(v: &str) -> Option<Vec<fractadyne_state::PaletteSegment>> {
     let mut out: Vec<fractadyne_state::PaletteSegment> = Vec::new();
     for part in v.split(';').filter(|p| !p.trim().is_empty()) {
@@ -851,7 +855,7 @@ impl FractadyneApp {
             "app=Fractadyne\nversion={}\nformat_version={}\nsaved_unix={}\nsaved={}\n\
              notes={}\nfractal={}\njulia={}\njulia_c_re={:.17e}\njulia_c_im={:.17e}\n\
              center_re={}\ncenter_im={}\nupp={:.17e}\nupp_log2={:.17e}\nzoom={}\nmax_iter={}\nauto_iter={}\n\
-             palette={}\npalette_id={}\ncycle={}\noffset={}\naa={}\n{}{}{}{}",
+             palette={}\npalette_id={}\ncycle={}\n{}offset={}\naa={}\n{}{}{}{}",
             version_string(),
             if self.fractal == FractalKind::LSystem {
                 VIEW_FORMAT_VERSION
@@ -882,12 +886,15 @@ impl FractadyneApp {
             self.render_cfg.max_iter,
             self.render_cfg.auto_iter as u32,
             // ⭐The palette twice: `palette_id` is what this build and later ones read; `palette` is
-            // the number an older build knows the same palette by, so a shared view keeps its colours
+            // the number an older build knows the same palette by, so a shared view keeps its colors
             // there too. A preset added after the numbers were frozen has none an older build knows:
             // it gets its position, and such a build shows a palette of its own (it cannot have this one).
             fractadyne_color::legacy_number_of(self.coloring.palette_idx).unwrap_or(self.coloring.palette_idx),
             fractadyne_color::PRESETS[self.coloring.palette_idx.min(fractadyne_color::PRESETS.len() - 1)].id,
             self.coloring.cycle,
+            // "Divide iterations", only when it divides: an ordinary view's metadata stays
+            // byte-identical to what it was before the key existed.
+            if self.coloring.iter_div > 1 { format!("iter_div={}\n", self.coloring.iter_div) } else { String::new() },
             self.coloring.offset,
             self.render_cfg.aa,
             // The custom gradient, when there is one. Empty otherwise, so a preset view's
@@ -909,7 +916,7 @@ impl FractadyneApp {
             } else {
                 String::new()
             },
-            // The centre's source expression + offset, when it was entered as one (empty otherwise,
+            // The center's source expression + offset, when it was entered as one (empty otherwise,
             // so an ordinary view's metadata is byte-identical to before this existed).
             self.center_expr_metadata(),
             // The custom formula, for a Custom view (empty otherwise, likewise).
@@ -993,15 +1000,15 @@ impl FractadyneApp {
         }
     }
 
-    /// The centre's source expression and its offset from that anchor — the `center_re_expr` /
-    /// `center_im_expr` (+ `center_re_offset` / `center_im_offset`) lines — when the centre was
+    /// The center's source expression and its offset from that anchor — the `center_re_expr` /
+    /// `center_im_expr` (+ `center_re_offset` / `center_im_offset`) lines — when the center was
     /// entered as a re-derivable expression. Empty otherwise.
     ///
     /// Written IN ADDITION to the resolved `center_re`/`center_im`: an older reader (or one that
-    /// never had an expression) still lands on the decimal centre, while a current reader
+    /// never had an expression) still lands on the decimal center, while a current reader
     /// reconstructs `expression(re-derived at the view's precision) + offset`, so a deeper zoom of
     /// the reloaded file stays exact instead of freezing at the digits the decimal was written with.
-    /// The offset is zero while the centre still sits on the point and small while exploring near it;
+    /// The offset is zero while the center still sits on the point and small while exploring near it;
     /// past the set's own ~8-unit span it cannot be a meaningful offset from the anchor (a discrete
     /// jump we failed to clear), so the expression is dropped and only the plain decimal is written.
     fn center_expr_metadata(&self) -> String {
@@ -1073,7 +1080,7 @@ impl FractadyneApp {
                     report.problems.push(e);
                 }
             }
-            // An L-system view carries its system, order, angle, width and colouring.
+            // An L-system view carries its system, order, angle, width and coloring.
             Some(FractalKind::LSystem) => {
                 if let Err(e) = self.apply_lsystem_fields(get, true) {
                     report.problems.push(e);
@@ -1139,7 +1146,7 @@ impl FractadyneApp {
         //
         // ⚠Untrusted: `decode_palette_segments` refuses anything that does not cover 0..1 in
         // order, so a truncated or hostile field leaves the current palette alone rather than
-        // rendering a colour nobody chose.
+        // rendering a color nobody chose.
         if let Some(segs) = get("palette_custom").and_then(|v| decode_palette_segments(&v)) {
             self.coloring.custom_segments = segs;
             self.coloring.custom_palette_flat = false;
@@ -1170,6 +1177,25 @@ impl FractadyneApp {
                 report.clamped.push("cycle");
             }
         }
+        // ⭐"Divide iterations" travels WITH the cycle. A file that states its coloring (`cycle=`)
+        // and no divisor was written at 1 — every file from before the key existed, and every
+        // view since that did not divide — so it resets to 1 rather than inheriting whatever this
+        // session had. A file that states neither (a hand-written location) leaves the coloring
+        // alone, as it leaves the cycle alone. An unreadable value is reported by its type
+        // (`TYPED_VIEW_KEYS`) and keeps the current setting.
+        match get("iter_div") {
+            Some(d) => {
+                if let Ok(n) = d.parse::<u32>() {
+                    let v = n.clamp(1, fractadyne_state::ITER_DIV_MAX);
+                    if v != n {
+                        report.clamped.push("divide iterations");
+                    }
+                    self.coloring.iter_div = v;
+                }
+            }
+            None if get("cycle").is_some() => self.coloring.iter_div = 1,
+            None => {}
+        }
         if let Some(o) = get("offset").and_then(|s| s.parse::<f32>().ok()) {
             if o.is_finite() {
                 let v = o.clamp(-1.0e6, 1.0e6);
@@ -1195,9 +1221,9 @@ impl FractadyneApp {
         self.viewport.precision = fractadyne_core::precision_for_octaves(
             self.viewport.log2_magnification().max(0.0).ceil() as u64,
         );
-        // ⭐If the file carries the centre's SOURCE EXPRESSION, re-derive it at that precision and
+        // ⭐If the file carries the center's SOURCE EXPRESSION, re-derive it at that precision and
         // re-apply the saved offset — overriding the decimal `center_re`/`center_im` read above — so
-        // the centre is exact for THIS depth and for any deeper zoom from here, not frozen at the
+        // the center is exact for THIS depth and for any deeper zoom from here, not frozen at the
         // digits the decimal was written with. Read after the depth so the precision is known; a
         // file with no expression keys is unchanged. See `CenterExpr` / `center_expr_metadata`.
         self.center_expr = None;
@@ -1314,7 +1340,7 @@ impl FractadyneApp {
                 match meta {
                     // ⚠Our keyword, but not necessarily a view: the golden images store a
                     // repro command line under it. Say so, rather than complaining that a
-                    // location which never claimed to be one is missing its centre.
+                    // location which never claimed to be one is missing its center.
                     Ok(Some(m)) if !looks_like_a_view(&m) => self.set_toast(
                         tr!(export_not_view, path = path.display().to_string()),
                         ctx,
@@ -1845,7 +1871,7 @@ impl FractadyneApp {
         );
         crate::diag::breadcrumb(format!("CLI iter render → {}", path.display()));
         let mut req = self.current_export_request_for(&self.viewport, self.julia_mode);
-        // Raw counts are taken at pixel centres, one sample each. CHUNKED, as an export and the
+        // Raw counts are taken at pixel centers, one sample each. CHUNKED, as an export and the
         // audits iterate (2026-11-03): `render_iter` submits the whole ask in one dispatch, which
         // a heavy view can stretch past the GPU watchdog (the bench ladder's scene 59 runs 28.5M
         // iterations), and the bench kit's inspection pass asks for every scene's raw counts.
@@ -1856,7 +1882,7 @@ impl FractadyneApp {
              B=normal.y, A=log2(distance_estimate_px)",
             self.view_metadata()
         );
-        // RAW, not the colour writer: these channels are DATA (a smooth iteration count in the
+        // RAW, not the color writer: these channels are DATA (a smooth iteration count in the
         // hundreds of thousands, signed normals, a log2 distance estimate), and `write_exr`
         // clamps R/G/B to [0,1] and applies the sRGB transfer. Using it here left the iteration
         // channel a constant 1.0 — see `write_exr_raw`.
@@ -2110,7 +2136,7 @@ impl FractadyneApp {
     /// (watermark + HUD applied). Shares the export status channel + progress/cancel. Used by the
     /// deep-export path once the reference has been built off the main thread (`export_prep`).
     /// An L-system view's export on a worker thread (`lsystem_view::export`): walked, drawn in tiles,
-    /// coloured, written — progress and cancel as for any export.
+    /// colored, written — progress and cancel as for any export.
     fn spawn_lsystem_export(
         &mut self,
         device: eframe::wgpu::Device,

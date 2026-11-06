@@ -314,7 +314,7 @@ pub fn display(device: &wgpu::Device, queue: &wgpu::Queue) -> Vec<Outcome> {
         }
         let window = CellWindow { tile_x0: 0, tile_y0: 0, origin: [0.0, 0.0], cells_per_px: 128.0 };
         let px = render_display(device, queue, &u, window, [4, 4])?;
-        // Texel (0, 0)'s centre is cell (64, 64): the full tile; every other texel's bin is empty.
+        // Texel (0, 0)'s center is cell (64, 64): the full tile; every other texel's bin is empty.
         let want: Vec<f32> = (0..16).map(|i| if i == 0 { 1.0 } else { -1.0 }).collect();
         if px == want { Ok("the full tile reads 1, the rest interior".into()) } else { Err(format!("read {px:?}")) }
     })();

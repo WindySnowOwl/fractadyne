@@ -1,4 +1,4 @@
-//! The formula library window (Fractal ▸ Formula library…), modelled on the bookmarks window: the
+//! The formula library window (Fractal ▸ Formula library…), modeled on the bookmarks window: the
 //! custom formulas saved by name, each applied, edited in the Custom formula dialog, exported or
 //! deleted from its row, and Import / Export for whole files (`formula_library.rs` has the file,
 //! the merge rules and the storage) — and, on a second tab, the collection that comes with the app,
@@ -139,7 +139,7 @@ impl FractadyneApp {
         })
     }
 
-    /// The view on screen as a starting view: the centre to its full precision, the magnification,
+    /// The view on screen as a starting view: the center to its full precision, the magnification,
     /// the iteration count, Julia mode and its constant.
     pub(crate) fn current_start_view(&self) -> StartView {
         let v = &self.viewport;
@@ -151,8 +151,8 @@ impl FractadyneApp {
         }
     }
 
-    /// Go to a starting view (after its formula is applied): centre, magnification, iterations,
-    /// Julia mode. The centre is read at the precision its depth needs.
+    /// Go to a starting view (after its formula is applied): center, magnification, iterations,
+    /// Julia mode. The center is read at the precision its depth needs.
     pub(crate) fn apply_start_view(&mut self, v: &StartView) {
         let Some(l2) = v.log2_zoom() else { return };
         let target = fractadyne_core::precision_for_octaves(l2.max(0.0).ceil() as u64) + 64;

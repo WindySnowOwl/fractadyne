@@ -12,7 +12,7 @@
 # Each run writes  <out>/<YYYYmmdd-HHMMSS>/  containing:
 #   note.txt        your description + when/where
 #   system.txt      uname, os-release, CPU/mem, GPU + driver, rustc/cargo versions
-#   gpu-kernel.txt  kernel GPU messages (journalctl -k / dmesg) — the Linux analogue of the
+#   gpu-kernel.txt  kernel GPU messages (journalctl -k / dmesg) — the Linux analog of the
 #                   Windows "Event 153" GPU-reset evidence
 #   git.txt         the working copy's commit / branch / version / dirty state
 #   crash/          any crash-*.txt from the app's config dir (device-loss / OOM field evidence)

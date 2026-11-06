@@ -31,7 +31,7 @@ fn the_palette_top_is_where_most_of_the_picture_escapes() {
 #[test]
 fn the_palette_top_falls_back_to_the_range() {
     let h = minibrot_frame();
-    // q = 1 is the shipped behaviour, exactly: the top of the range.
+    // q = 1 is the shipped behavior, exactly: the top of the range.
     assert_eq!(norm_palette_top(3900.0, 80_000.0, Some(&h), 1.0), 80_000.0);
     // No histogram (a reading from a path that has none), or too few samples to be a statistic.
     assert_eq!(norm_palette_top(3900.0, 80_000.0, None, 0.98), 80_000.0);

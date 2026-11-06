@@ -11,7 +11,7 @@ use eframe::egui;
 pub(crate) const BRAND_ACCENT: egui::Color32 = egui::Color32::from_rgb(0xE0, 0xA0, 0x30);
 pub(crate) const BRAND_TEXT: egui::Color32 = egui::Color32::from_rgb(0xE6, 0xE7, 0xEA);
 
-/// Semantic colours for an affirmative and a destructive action, per theme.
+/// Semantic colors for an affirmative and a destructive action, per theme.
 ///
 /// ⭐⭐**These are NOT the tokens `UI-DESIGN.md` §9 lists, and the difference is measured.** That
 /// table gives success `#5BBF7A` and error `#E0584B`, which are fine on a panel and fail on a
@@ -27,12 +27,12 @@ pub(crate) const OK_LIGHT: egui::Color32 = egui::Color32::from_rgb(0x1B, 0x6B, 0
 pub(crate) const DANGER_DARK: egui::Color32 = egui::Color32::from_rgb(0xF0, 0x79, 0x6A);
 pub(crate) const DANGER_LIGHT: egui::Color32 = egui::Color32::from_rgb(0xB0, 0x20, 0x20);
 
-/// The formula editor's parentheses by nesting depth (a fifth level takes the first colour again):
+/// The formula editor's parentheses by nesting depth (a fifth level takes the first color again):
 /// amber, blue, violet, green (teal in the light theme), each at the body-text floor (4.5:1) on the
-/// text field's backing (`Palette::window`) and far enough from the text colour and from each other
+/// text field's backing (`Palette::window`) and far enough from the text color and from each other
 /// to be told apart — `theme_tests` holds them to both; its first run turned down a violet too near
 /// the dark text and a green too near the light text. The pair at the cursor is drawn in the TEXT
-/// colour on the hover fill instead: amber on that fill is 3.97:1 in the dark theme.
+/// color on the hover fill instead: amber on that fill is 3.97:1 in the dark theme.
 pub(crate) const PAREN_DARK: [egui::Color32; 4] =
     [rgb(0xE0, 0xA0, 0x30), rgb(0x6C, 0xB6, 0xFF), rgb(0xB8, 0x8A, 0xF0), rgb(0x7F, 0xD3, 0x9A)];
 pub(crate) const PAREN_LIGHT: [egui::Color32; 4] =
@@ -187,7 +187,7 @@ pub(crate) fn ui_accent(ctx: &egui::Context) -> egui::Color32 {
 /// The active theme's affirmative green / destructive red.
 ///
 /// ⚠Keyed off `dark_mode` rather than stashed in `Visuals`, because egui has a slot for an error
-/// colour and none for a success one — putting half the pair in `Visuals` and half in a constant
+/// color and none for a success one — putting half the pair in `Visuals` and half in a constant
 /// is how the two drift apart.
 /// ⭐Read back out of the `Palette` rather than from the constants directly, so the values the UI
 /// draws with are the same fields the contrast test measures. Reading the constants here instead
@@ -204,13 +204,13 @@ pub(crate) fn danger_color(ctx: &egui::Context) -> egui::Color32 {
     palette_for(ctx).danger
 }
 
-/// A button whose ICON is tinted and whose label keeps the ordinary text colour.
+/// A button whose ICON is tinted and whose label keeps the ordinary text color.
 ///
-/// ⭐**Only the glyph is coloured.** Tinting the whole button green would make the label itself
-/// fail the contrast floor on some fills and would read as a coloured button rather than a
-/// labelled action; the icon is what carries the signal, so the icon is what gets the colour.
+/// ⭐**Only the glyph is colored.** Tinting the whole button green would make the label itself
+/// fail the contrast floor on some fills and would read as a colored button rather than a
+/// labeled action; the icon is what carries the signal, so the icon is what gets the color.
 /// ⚠The label deliberately takes `text_color()` at build time rather than being left to the
-/// widget: a `LayoutJob` carries its own colours, so egui will not tint it on hover.
+/// widget: a `LayoutJob` carries its own colors, so egui will not tint it on hover.
 fn tinted_icon_button(ui: &mut egui::Ui, icon: &str, tint: egui::Color32, label: &str) -> egui::Response {
     let font = egui::TextStyle::Button.resolve(ui.style());
     let mut job = egui::text::LayoutJob::default();
@@ -240,7 +240,7 @@ pub(crate) fn cancel_button(ui: &mut egui::Ui, label: &str) -> egui::Response {
 ///
 /// ⚠⚠**The height must be pinned, and this exists because it wasn't.** A bare
 /// `ui.with_layout(Layout::right_to_left(Align::Center), …)` gives its child the whole
-/// `available_rect_before_wrap()`, centres the buttons in *that*, and then allocates the child's
+/// `available_rect_before_wrap()`, centers the buttons in *that*, and then allocates the child's
 /// `min_rect` — which now reaches from the top of the remaining space down past the buttons. In an
 /// auto-sizing `Window` the parent grows to contain that, which enlarges the available rect, which
 /// enlarges the claim: **the Benchmark window opened small and then stretched to the full height of
@@ -377,7 +377,7 @@ fn install_text_styles(ctx: &egui::Context) {
     // the edge of legibility on a large high-resolution desktop monitor, where the OS scaling that
     // would fix it is often turned *down* precisely because everything else is already big enough.
     // `Small` carries real content here rather than decoration: the update-check result, the
-    // "Cycle, offset, animation…" hints under menu groups, licence and attribution lines, and the
+    // "Cycle, offset, animation…" hints under menu groups, license and attribution lines, and the
     // explanatory captions in dialogs. 11.0 keeps it clearly subordinate to body text (88%) while
     // being comfortably readable.
     //
@@ -413,7 +413,7 @@ pub(crate) fn apply_theme(ctx: &egui::Context, mode: ThemeMode) {
     v.faint_bg_color = p.surface; // striped/group backgrounds
     v.hyperlink_color = p.accent; // doubles as the theme accent (see `ui_accent`)
     // egui draws its own error text in this; keeping it the same red means a validation
-    // message and a Cancel icon are the same colour rather than two opinions about red.
+    // message and a Cancel icon are the same color rather than two opinions about red.
     v.error_fg_color = p.danger;
     v.selection.bg_fill = p.selection;
     v.selection.stroke = egui::Stroke::new(1.0_f32, p.accent);

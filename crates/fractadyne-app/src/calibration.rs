@@ -27,7 +27,7 @@
 //! as its backstop (stated, not hidden: `ceiling_for(Floatexp, ..)` is `None`).
 //!
 //! ⚠What this cannot bound: a frame that cannot be split on the iteration axis (formulas past
-//! Multibrot 5, aux colouring) at an iteration count so high that ONE pixel's chain costs more than
+//! Multibrot 5, aux coloring) at an iteration count so high that ONE pixel's chain costs more than
 //! the target. The resolution shrink and settle tiles leave `16·16·iter` unbounded, and so does
 //! this; only the chunked path's iteration windows reach it.
 //!

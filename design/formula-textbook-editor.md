@@ -68,7 +68,7 @@ exponent, `(` a pair of parentheses.
 ## 2. What exists today
 
 - **The text field** (`ui/formula_editor.rs`, `933412a`): a multi-line `TextEdit` with a custom
-  layouter — parentheses coloured by depth, the pair at the caret highlighted, comments dimmed — and
+  layouter — parentheses colored by depth, the pair at the caret highlighted, comments dimmed — and
   completion of the language's names. Its egui lessons apply here: Tab/Esc must be claimed with
   `set_focus_lock_filter`, and a popup entry must be taken on the press (`topic-ui-standards`).
 - **The keypad** (`ui/formula_keypad.rs`): every name and operator, as `Action::Insert` / `Action::Wrap`;
@@ -106,7 +106,7 @@ exponent, `(` a pair of parentheses.
 | T1 | egui draws glyphs of an OTF/CFF math font at arbitrary sizes, crisp at 1.0–2.0 points-per-pixel | **Spike**: Latin Modern Math through `install_fonts`, screenshots at 1.0×, 1.5×, 2.0× |
 | T2 | The baseline of an egui galley can be found exactly (for TeX's baseline-relative placement) | **Spike**: draw a glyph at a known baseline; compare its ink box with `ttf-parser`'s glyph bbox |
 | T3 | A subset of the font with Private Use Area code points for the stretchy variants keeps its MATH table usable | **Spike**: `fonttools subset` + cmap edit; read the MATH table back with `ttf-parser`; draw `(` size variants by code point |
-| T4 | The GUST Font License (Latin Modern) allows shipping a renamed subset in an MIT/Apache app | Read the licence; **the user decides** (§8) |
+| T4 | The GUST Font License (Latin Modern) allows shipping a renamed subset in an MIT/Apache app | Read the license; **the user decides** (§8) |
 | T5 | A flat-row editor model (§4.3) can represent every parse of the grammar, and printing it back reproduces the parse | The identity tests of §6 over every formula in the tests and corpus |
 
 ## 4. Design
@@ -166,7 +166,7 @@ error earlier in the text.
 
 ### 4.3 The editor tree
 
-Modelled on MathQuill's: a formula is a list of **statements**, each a **row** — a flat sequence of
+Modeled on MathQuill's: a formula is a list of **statements**, each a **row** — a flat sequence of
 atoms in which standard precedence applies, exactly as in the text — and the structures that need
 two dimensions hold rows of their own.
 
@@ -258,7 +258,7 @@ dimension comes from the font's MATH table through `ttf-parser`, not from consta
 - **Spacing between atoms:** TeX's table over Ord, Op, Bin, Rel, Open, Close, Punct, Inner (thin,
   medium, thick space = 3, 4, 5 mu), none in script styles except after operators; a binary minus
   with nothing to its left becomes Ord (unary).
-- **Fractions** (rule 15): numerator in the next smaller style, denominator cramped, both centred;
+- **Fractions** (rule 15): numerator in the next smaller style, denominator cramped, both centered;
   the bar `fractionRuleThickness` thick on the math axis (`axisHeight`); shifts and minimum gaps from
   `fractionNumerator(DisplayStyle)ShiftUp`, `…GapMin` and the denominator counterparts.
 - **Exponents and subscripts** (rules 17–18): `superscriptShiftUp(Cramped)`, `superscriptBottomMin`,
@@ -281,7 +281,7 @@ formula is a few hundred boxes; it is recomputed only when the tree, the size or
 ### 4.7 The math font
 
 - **Latin Modern Math** — the OpenType Computer Modern that LaTeX users know — is the recommended
-  face; STIX Two Math and Libertinus Math (both OFL) are the alternatives if its licence is not
+  face; STIX Two Math and Libertinus Math (both OFL) are the alternatives if its license is not
   acceptable (T4, §8).
 - `scripts/subset_math_font.py` (fonttools, as `subset_lucide.py`) keeps only what the language can
   show: Latin letters and math italics, digits, π, the operators, the parenthesis / bar / radical
@@ -290,7 +290,7 @@ formula is a few hundred boxes; it is recomputed only when the tree, the size or
   it renames the font (a modified font must not carry the original name) and writes the map into a
   generated `ui/textbook/math_glyphs.rs`, as `icons.rs` is generated. Estimated 50–80 KB, against
   ~700 KB for the whole face.
-- `install_fonts` registers it as `FontFamily::Name("math")`; its licence ships beside `OFL.txt`.
+- `install_fonts` registers it as `FontFamily::Name("math")`; its license ships beside `OFL.txt`.
 - Why not draw glyphs ourselves: `ttf-parser` outlines would need tessellating into meshes (egui's
   `PathShape` fills convex shapes only), and egui draws a mesh as given, without the edge feathering
   that anti-aliases its own shapes; glyphs from the atlas are anti-aliased already.
@@ -315,7 +315,7 @@ formula is a few hundred boxes; it is recomputed only when the tree, the size or
   `Func`, `÷` → `Frac`, `(a, b)` → `Complex` with two slots, `↵` → new statement, the arrows → caret
   moves. A test walks every key, as the keypad tests do.
 - **Errors:** the syntax check still runs on the printed text; its line/column maps through the spans
-  to the atom, which is underlined in the error colour. An empty slot reads "Fill the empty box".
+  to the atom, which is underlined in the error color. An empty slot reads "Fill the empty box".
 - **Accessibility:** the widget's AccessKit value is the source text.
 
 ### 4.9 Editing commands
@@ -339,7 +339,7 @@ formula is a few hundred boxes; it is recomputed only when the tree, the size or
 | Ctrl+C / X / V | the selection's printed text; paste parses text as atoms or statements |
 | Ctrl+Z / Y | snapshot undo of (text, caret) |
 
-After each command a local **normalisation** keeps the tree in grammar form: adjacent letters merge
+After each command a local **normalization** keeps the tree in grammar form: adjacent letters merge
 into one `Word`; a function name followed by a `Group` becomes a `Func`; a `Func` whose name was edited
 into something else falls back to `Word` + `Group`; empty `Frac`/`Sup` slots stay `Slot`s. Re-parsing
 the printed text would do this too, but most states while typing do not parse.
@@ -362,7 +362,7 @@ the printed text would do this too, but most states while typing do not parse.
 | P0 spike | font subset with PUA variants; MATH table via `ttf-parser`; a fraction, an exponent and stretchy parentheses drawn in egui | T1–T3 hold; a screenshot beside KaTeX's rendering of the same formula looks the same to the user; T4 decided | 1–2 days |
 | P1 syntax tree | §4.2 split, spans, comments kept | byte-neutral: identical IR, WGSL, errors over the corpus; all tests and the self-test unchanged | 2–3 days |
 | P2 display | flatten, layout, paint, the toggle (Textbook read-only; clicking edits in Text mode) | every corpus formula typesets without panic; layout invariants (§6); uitest screens reviewed | 4–6 days |
-| P3 editing | caret, the commands of §4.9, normalisation, selection, clipboard, undo, error mapping | command-sequence suite; round-trip identities; headless egui interaction tests | 6–10 days |
+| P3 editing | caret, the commands of §4.9, normalization, selection, clipboard, undo, error mapping | command-sequence suite; round-trip identities; headless egui interaction tests | 6–10 days |
 | P4 polish | keypad and completion in Textbook mode, Copy as LaTeX, library rows typeset | uitest; the user's review | 2–3 days |
 
 P2 is useful on its own: it delivers the typeset display while editing stays textual.
@@ -388,17 +388,17 @@ P2 is useful on its own: it delivers the typeset display while editing stays tex
 
 | Risk | Mitigation |
 |---|---|
-| The font's licence (GUST) does not fit | OFL alternatives (STIX Two Math, Libertinus Math); decided at P0 |
+| The font's license (GUST) does not fit | OFL alternatives (STIX Two Math, Libertinus Math); decided at P0 |
 | egui's text placement cannot be pinned to a baseline exactly | P0 spike; fall back to measuring each glyph run's ink box once per size |
 | Structural editing feels wrong where it differs from typing text | Every command mirrors the parser (the `/` rule above all); the Text toggle is always one click away; P3 ends with the user trying it |
 | The typeset form drifts from what the parser computes | One grammar (§4.2); the identity tests; spellings kept in nodes |
 | Canonical spacing rewrites a statement the user formatted | Only edited statements are reprinted |
-| Scope: a WYSIWYG maths editor is a large project in general | The language is small: ten constructs, ASCII names, no matrices or big operators |
+| Scope: a WYSIWYG math editor is a large project in general | The language is small: ten constructs, ASCII names, no matrices or big operators |
 
 ## 8. Decisions for the user
 
 1. **Font:** Latin Modern Math (the LaTeX look; GUST Font License, a renamed subset shipped with
-   its licence) — recommended — or an OFL face (STIX Two Math, Libertinus Math).
+   its license) — recommended — or an OFL face (STIX Two Math, Libertinus Math).
 2. **Assignment:** `=` as typed (recommended for v1), `←`, or the recurrence 𝑧ₙ₊₁ = 𝑓(𝑧ₙ) — the last
    needs care when `z` is assigned mid-formula and read afterwards.
 3. **Products:** juxtaposition with `·` only between numbers (recommended), or `·` everywhere.

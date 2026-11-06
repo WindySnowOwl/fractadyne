@@ -9,11 +9,11 @@
 WHY
 ---
 An optimization keyed on a minibrot (a periodic reference, the renormalized step, a nucleus
-found by Newton) behaves differently depending on WHERE the minibrot sits: dead centre, off
-centre, at the edge, just outside, far outside; filling the view or a speck in a crowd. Every
-deep scene the bench kit had put its minibrot dead centre, and the one that did not (the deeper
-Cerebral Spin, 2026-11-03) cost Fractadyne 6.8 s against 2.8 s for the same view centred on the
-nucleus. This set sweeps the position on purpose, so a change that only works at the centre
+found by Newton) behaves differently depending on WHERE the minibrot sits: dead center, off
+center, at the edge, just outside, far outside; filling the view or a speck in a crowd. Every
+deep scene the bench kit had put its minibrot dead center, and the one that did not (the deeper
+Cerebral Spin, 2026-11-03) cost Fractadyne 6.8 s against 2.8 s for the same view centered on the
+nucleus. This set sweeps the position on purpose, so a change that only works at the center
 shows up here, as a wrong pixel or a slow view, before it ships.
 
 THE SET (validation/minibrot-offsets/nuclei.csv)
@@ -21,8 +21,8 @@ THE SET (validation/minibrot-offsets/nuclei.csv)
 Four nuclei (periods 128, 2,066, 104,572 and 14,416 at about 1e13, 1e97, 1e153 and 1e1000),
 each at three sizes - BIG (the minibrot a third of the view height), SMALL (a thirtieth) and
 SPECK (a thousandth, about a pixel at 1080, among many other minibrots) - with the nucleus at
-the centre and at 0.2, 0.6, 0.95, 1.2 and 3.0 of the half-view towards the right edge (x) and
-towards the top-right corner (d): 11 positions, so 132 views, plus each nucleus centred and BIG
+the center and at 0.2, 0.6, 0.95, 1.2 and 3.0 of the half-view towards the right edge (x) and
+towards the top-right corner (d): 11 positions, so 132 views, plus each nucleus centered and BIG
 at an iteration cap of half its period (the reference cannot repeat inside the cap): 136. The
 cap is otherwise 30 x the period, the bench ladder's rule.
 
@@ -57,7 +57,7 @@ AUDIT_FLAGS = {'renorm': '--renorm-audit', 'band': '--band-audit', 'pick': '--pi
 
 
 def views(size):
-    """Every view of the set, in order: dicts with id, nucleus, period, centre, zoom, cap."""
+    """Every view of the set, in order: dicts with id, nucleus, period, center, zoom, cap."""
     w, h = size
     out = []
     with open(NUCLEI, encoding='ascii', newline='') as f:
@@ -70,7 +70,7 @@ def views(size):
                 half_w = half_h * w / h
                 pos = [('c', 0.0, 0.0)] + [('x%g' % fr, fr, 0.0) for fr in FRACTIONS] + [('d%g' % fr, fr, fr) for fr in FRACTIONS]
                 for pname, fx, fy in pos:
-                    # The view centre sits so the nucleus appears fx half-widths right of it and fy
+                    # The view center sits so the nucleus appears fx half-widths right of it and fy
                     # half-heights up.
                     cre = nre - Decimal(repr(fx)) * half_w
                     cim = nim - Decimal(repr(fy)) * half_h

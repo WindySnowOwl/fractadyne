@@ -1,14 +1,14 @@
 // Assembling a zoom-video frame from exponential-map strips (`design/zoom-video.md` §6.2;
-// `assemble.rs`). A module of its own: nothing here is compiled into the iterate or colour modules.
+// `assemble.rs`). A module of its own: nothing here is compiled into the iterate or color modules.
 //
 // The pass fills a FRAME-SHAPED main target — the frame's (w·ss)×(h·ss) sample grid, each sample
 // `(smooth count, slope normal x, y, log2 distance estimate)` exactly as an iterate pass writes it —
-// from the strips, and the app's own colour pass (`fs_color`) colours it as it colours any frame.
+// from the strips, and the app's own color pass (`fs_color`) colors it as it colors any frame.
 // Each sample takes the NEAREST texel: an iteration count is never interpolated (§6.2); the
-// colour pass shades every sample and averages the colours, as it does for supersampling.
+// color pass shades every sample and averages the colors, as it does for supersampling.
 //
 // Geometry (`fractadyne_core::ExpMap::locate` is the CPU definition this mirrors): a sample at
-// `d` samples from the frame's centre lies `A − log2 d` octaves inside strip 0's outer radius, `A`
+// `d` samples from the frame's center lies `A − log2 d` octaves inside strip 0's outer radius, `A`
 // = r0_log2 − log2(sample spacing). The CPU splits `A` into whole octaves and a fraction, so the
 // sample's own part, `A_f − log2 d`, stays a small number an f32 resolves to ~1e-3 of a row at any
 // depth. Its whole part picks the strip; the fraction × rows-an-octave the row; the angle the column.
@@ -42,7 +42,7 @@ struct AssembleU {
     width: f32,              // texels around a strip (W)
     rows: f32,               // rows in a strip
     rows_per_octave: f32,    // W·ln2/2π for a conformal strip
-    sample_offset: f32,      // where in its texel a strip samples (0.5: the centre)
+    sample_offset: f32,      // where in its texel a strip samples (0.5: the center)
     depth_frac: f32,         // A_f: the fractional octaves of A
     rel_base: i32,           // A_i − k_first: strip k = k_first + rel_base + floor(A_f − log2 d)
     first_layer: i32,        // the array layer holding strip k_first (strip k is in layer k mod layers)
@@ -89,8 +89,8 @@ fn atan2_turns(y: f32, x: f32) -> f32 {
 
 @fragment
 fn fs_assemble(in: VsOut) -> @location(0) vec4<f32> {
-    // The sample's offset from the frame's centre in samples, imaginary up (as `iterate_at` lays a
-    // frame out). A sample nearer the centre than half a sample — the centre sample of an odd grid
+    // The sample's offset from the frame's center in samples, imaginary up (as `iterate_at` lays a
+    // frame out). A sample nearer the center than half a sample — the center sample of an odd grid
     // — is read at half a sample: the texel there is as near as any.
     let dx = in.pos.x - 0.5 * au.res.x;
     let dy = 0.5 * au.res.y - in.pos.y;
@@ -104,7 +104,7 @@ fn fs_assemble(in: VsOut) -> @location(0) vec4<f32> {
     let rows = i32(au.rows);
     var j = i32(floor((s - ks) * au.rows_per_octave + 0.5 - au.sample_offset));
     if (rel > au.rel_last) {
-        // Deeper than the dive's last strip (within half a pixel of the last frame's centre):
+        // Deeper than the dive's last strip (within half a pixel of the last frame's center):
         // its innermost row is the nearest there is.
         rel = au.rel_last;
         j = rows - 1;
@@ -119,8 +119,8 @@ fn fs_assemble(in: VsOut) -> @location(0) vec4<f32> {
     // A strip wider than the card's textures is held in pieces around its circle (`strip_pieces`).
     let piece = i / au.piece_width;
     let held = textureLoad(strips, vec2<i32>(i - piece * au.piece_width, j), slot * au.pieces + piece, 0);
-    // The window holds only what the colouring reads (`WindowTexels`): what it leaves out is zero
-    // here and never read by the colour pass.
+    // The window holds only what the coloring reads (`WindowTexels`): what it leaves out is zero
+    // here and never read by the color pass.
     var q = held;
     if (au.texels == 1u) {
         q = vec4<f32>(held.x, 0.0, 0.0, 0.0);
@@ -130,7 +130,7 @@ fn fs_assemble(in: VsOut) -> @location(0) vec4<f32> {
     if (q.x < 0.0) {
         return q; // interior (-1) or glitched (-2): as rendered
     }
-    // The distance estimate is in this texel's own (radial) size; the colour pass reads it in
+    // The distance estimate is in this texel's own (radial) size; the color pass reads it in
     // samples. log2(texel / sample) = A − (the texel's depth) + log2(row step), with A − k =
     // A_f − (k − A_i) for the strip actually read (the deepest one, when clamped above).
     let kk = f32(rel - au.rel_base);

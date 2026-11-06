@@ -65,6 +65,6 @@ Please include:
 - a minimal file or steps that reproduce it,
 - what you observed vs. expected, and the impact as you see it.
 
-You can expect an acknowledgement within a few days. Once a fix is available it
+You can expect an acknowledgment within a few days. Once a fix is available it
 will be released and the reporter credited in the release notes (unless you'd
 prefer to remain anonymous). Coordinated disclosure is appreciated.

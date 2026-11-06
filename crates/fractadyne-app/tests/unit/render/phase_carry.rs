@@ -1,10 +1,10 @@
 use super::*;
 
 const FRAME: f32 = 1.0 / 60.0;
-/// The user's colouring in the 2026-10-25 report: cycle 0.52 is 3.62 sweeps across the window.
+/// The user's coloring in the 2026-10-25 report: cycle 0.52 is 3.62 sweeps across the window.
 const SWEEPS: f32 = 0.5 + 0.52 * 6.0;
 
-/// The normalised linear map of window `w` (`norm_map_for`), offset 0.0286 as the user had it.
+/// The normalized linear map of window `w` (`norm_map_for`), offset 0.0286 as the user had it.
 fn map_of(w: (f32, f32)) -> NormMap {
     let c = SWEEPS / (w.1 - w.0);
     NormMap { cycle: c, offset: 0.0286 - w.0 * c, mode: 0, lo: 0.0 }
@@ -24,7 +24,7 @@ fn wrapped(a: f64, b: f64) -> f64 {
 #[test]
 fn a_sliding_window_keeps_every_colour_while_the_view_moves() {
     // A zoom slides the window up 2 iterations a frame, keeping its width: every value keeps its
-    // colour, frame after frame, where the bare map rotates them all through the palette.
+    // color, frame after frame, where the bare map rotates them all through the palette.
     let mut st = PhaseCarry::default();
     let mut prev: Option<(NormMap, f32)> = None;
     for k in 0..300 {
@@ -50,7 +50,7 @@ fn a_sliding_window_keeps_every_colour_while_the_view_moves() {
 fn a_widening_window_recolours_about_its_middle() {
     let w0 = (1000.0_f32, 2000.0_f32);
     let (st, _) = phase_carry_step(PhaseCarry::default(), map_of(w0), Some(w0), 7, false, FRAME);
-    // Wider by a tenth about its middle: the middle keeps its colour, the ends move.
+    // Wider by a tenth about its middle: the middle keeps its color, the ends move.
     let w1 = (950.0_f32, 2050.0_f32);
     let (_, phase) = phase_carry_step(st, map_of(w1), Some(w1), 7, false, FRAME);
     let (m0, m1) = (map_of(w0), map_of(w1));
@@ -90,10 +90,10 @@ fn classic_colours_a_change_of_kind_or_of_the_users_colouring_carry_nothing() {
     let w2 = (1100.0_f32, 2100.0_f32);
     let (moved, phase) = phase_carry_step(st, map_of(w2), Some(w2), 7, false, FRAME);
     assert!(phase != 0.0);
-    // Classic colouring (no window): nothing carried, and the next window starts afresh.
+    // Classic coloring (no window): nothing carried, and the next window starts afresh.
     let (st2, p) = phase_carry_step(moved, map_of(w2), None, 7, false, FRAME);
     assert_eq!((p, st2), (0.0, PhaseCarry::default()));
-    // The user's colouring changed: the map takes it at once.
+    // The user's coloring changed: the map takes it at once.
     let (_, p) = phase_carry_step(moved, map_of(w), Some(w), 8, false, FRAME);
     assert_eq!(p, 0.0);
     // Linear to log: another kind of map, dissolved elsewhere; nothing carried across it.

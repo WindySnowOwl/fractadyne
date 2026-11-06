@@ -475,7 +475,7 @@ impl BigTables {
     }
 }
 
-/// The measure symbol's displacement at a depth `d` and the two below, summarised exactly (for
+/// The measure symbol's displacement at a depth `d` and the two below, summarized exactly (for
 /// [`Tables`]: its orientation, growth and turn per order).
 pub(crate) struct ExactMeasure {
     /// The direction at `d`, a unit vector.
@@ -501,7 +501,7 @@ pub(crate) fn exact_measure(sys: &LSystem, sym: u8, variant: u32, d: u32, prec: 
     })
 }
 
-/// A view for the deep walk: its centre exact, its scale by `log₂`.
+/// A view for the deep walk: its center exact, its scale by `log₂`.
 #[derive(Clone, Debug)]
 pub struct DeepView {
     pub centre: [BigFloat; 2],
@@ -557,7 +557,7 @@ struct Frame {
 }
 
 /// Walks `t` at `opts.order` over a deep `view`, through `bt` (built to at least that order), and
-/// hands each segment to `sink` as the `f64` walk would — pixels from the view's centre, y up.
+/// hands each segment to `sink` as the `f64` walk would — pixels from the view's center, y up.
 /// `switch_px`: subtrees reaching less than this many pixels are drawn by the `f64` walk.
 pub fn deep_walk(
     t: &Tables,

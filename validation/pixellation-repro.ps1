@@ -1,4 +1,4 @@
-# Deep-view PIXELLATION repro -- the settle grid needs more tiles than it is allowed.
+# Deep-view PIXELATION repro -- the settle grid needs more tiles than it is allowed.
 #
 # Reproduces the 2026-08-14 field report (TODO.md "Open bugs"): park at a deep view with an
 # EXPLICIT iteration count, click to zoom 100x, and the destination settles as a coarse mosaic that
@@ -87,7 +87,7 @@ $h = (Get-Process -Id $p.Id).MainWindowHandle
 [FdClick]::SetForegroundWindow($h) | Out-Null
 $r = New-Object 'FdClick+Rect'
 [FdClick]::GetWindowRect($h, [ref]$r) | Out-Null
-# Left of centre so the click lands on the canvas, clear of the ~430 px controls panel.
+# Left of center so the click lands on the canvas, clear of the ~430 px controls panel.
 $cx = [int](0.5 * ($r.L + $r.R) - 220)
 $cy = [int](0.5 * ($r.T + $r.B))
 Write-Host "click-to-zoom 100x at $cx,$cy"

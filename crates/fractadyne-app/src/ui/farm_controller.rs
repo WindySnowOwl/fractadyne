@@ -372,7 +372,7 @@ impl FractadyneApp {
 
     fn start_farm_controller(&mut self, ctx: &egui::Context) {
         if self.farm_controller.zoom.is_some() {
-            // The controller plans the dive from the session, and the video is coloured from it:
+            // The controller plans the dive from the session, and the video is colored from it:
             // saved first, as the Render zoom video window does.
             self.autosave(ctx);
         }
@@ -839,7 +839,7 @@ fn cell(ui: &mut egui::Ui, width: f32, text: egui::RichText) -> egui::Response {
     .inner
 }
 
-/// The frame strip: one cell per `Scheduler::strip` character, coloured by state.
+/// The frame strip: one cell per `Scheduler::strip` character, colored by state.
 fn strip(ui: &mut egui::Ui, cells: &str) {
     if cells.is_empty() {
         return;

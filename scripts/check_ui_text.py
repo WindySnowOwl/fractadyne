@@ -60,7 +60,7 @@ ALLOWED_WORDS = {
     'PNG', 'png', 'EXR', 'exr', 'JPEG', 'JPG', 'jpg', 'TIFF', 'tif', 'tiff', 'WebP', 'webp', 'MP4',
     'mp4', 'RLE', 'rle', 'cells', 'fdn', 'kfr', 'kfp', 'toml', 'json', 'ftl', 'frm', 'ugr', 'map',
     'gpl', 'ggr', 'ase', 'csv', 'txt', 'zip', 'exe', 'svg', 'SVG', 'ico',
-    # Notation for a colour as written in hex.
+    # Notation for a color as written in hex.
     'rrggbb',
     # Key names.
     'Ctrl', 'Shift', 'Alt', 'Cmd', 'Space', 'Esc', 'Enter', 'Tab', 'Home', 'End', 'PgUp', 'PgDn',

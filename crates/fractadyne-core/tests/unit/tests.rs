@@ -700,7 +700,7 @@ fn sa_coefficient_width_is_output_neutral() {
 // The pipelined series walk (Z chain on its own thread, coefficients here) is the sequential walk,
 // byte for byte — the same values meet the same operations in the same order. Covers validity
 // cuts, cap-bound walks, an escaping reference (the Z chain stops at the escape), multibrot, and a
-// cancelled walk. Anti-vacuity: real skips, and walks long enough to exercise the channel.
+// canceled walk. Anti-vacuity: real skips, and walks long enough to exercise the channel.
 #[test]
 fn the_pipelined_sa_walk_is_the_sequential_one() {
     let bits4 = |q: &[f32; 4]| [q[0].to_bits(), q[1].to_bits(), q[2].to_bits(), q[3].to_bits()];
@@ -724,14 +724,14 @@ fn the_pipelined_sa_walk_is_the_sequential_one() {
         }
     }
     assert!(real >= cases / 2 && longest >= 1000, "vacuous: {real}/{cases} with a skip, longest {longest}");
-    // A cancelled pipelined walk returns NONE and does not hang on its Z chain.
+    // A canceled pipelined walk returns NONE and does not hang on its Z chain.
     let on = std::sync::atomic::AtomicBool::new(true);
     let (cx, cy) = (bf(-0.5, p), bf(0.1, p));
     let dead = series_skip_astro_piped(&cx, &cy, -40.0, 3000, 3002, 0, p, pc, Some(&on), Some(true), None);
     assert_eq!(dead.skip, 0);
 }
 
-// The centre rescue may take its score from the app's build of the centre instead of walking it
+// The center rescue may take its score from the app's build of the center instead of walking it
 // again (`best_reference_diag_from_build` + `centre_walk_from_build`). The pick must come out
 // byte-identical to the plain one — point, score, scoring precision, rescue verdict — whatever
 // the build's cap: past the escape (read off the build), short of it (continued from the tail),
@@ -743,7 +743,7 @@ fn the_rescue_can_come_from_a_build() {
     let p2 = p + REF_RESCUE_EXTRA_BITS;
     // Seahorse valley: every candidate escapes after ~2π/0.0005 ≈ 6,300 iterations — past the
     // quick scan (4,096), so phase 1 has survivors, and short of `max_iter`, so the winner
-    // escapes early and the centre rescue runs.
+    // escapes early and the center rescue runs.
     let center = [bf(-0.75, p), bf(0.0005, p)];
     let span = [FloatExp::from_f64(1e-9), FloatExp::from_f64(1e-9)];
     let max_iter = 20_000;
@@ -783,28 +783,28 @@ fn the_rescue_can_come_from_a_build() {
     }
 }
 
-// Phase 2 may take the CENTRE's deep walk — its score AND the samples the perturbation scorer
-// rates the other survivors against — from the app's build of the centre (the build records into
+// Phase 2 may take the CENTER's deep walk — its score AND the samples the perturbation scorer
+// rates the other survivors against — from the app's build of the center (the build records into
 // `reference_orbit_periodic_until`'s sink; `centre_walk_from_build`). The pick must come out
 // byte-identical to the plain one whatever the build's cap: a build that walked the whole of the
-// centre's walk answers it, one cut short does not (the pick walks the centre itself); a build
+// center's walk answers it, one cut short does not (the pick walks the center itself); a build
 // not known to hold the whole walk (`whole` false) is not waited for at all. And the recording
 // must be the walk's own samples, bit for bit. Anti-vacuity: the scorer really ran against the
-// centre's walk, the samples were really asked for, and taken exactly where they should be.
+// center's walk, the samples were really asked for, and taken exactly where they should be.
 #[test]
 fn the_centre_walk_can_come_from_a_build() {
     let p = 128;
     let p2 = p + REF_RESCUE_EXTRA_BITS;
     // Seahorse valley at a 1e-20 span: past 2^-44, so phase 2 scores the other survivors by
-    // perturbation against the centre's recorded walk; every candidate escapes after ~π/1e-4 ≈
-    // 31,400 iterations — past the quick scan (4,096), short of `max_iter` — so the centre is the
+    // perturbation against the center's recorded walk; every candidate escapes after ~π/1e-4 ≈
+    // 31,400 iterations — past the quick scan (4,096), short of `max_iter` — so the center is the
     // first of many survivors and the winner escapes early (the rescue runs too).
     let center = [bf(-0.75, p), bf(0.0001, p)];
     let span = [FloatExp::from_f64(1e-20), FloatExp::from_f64(1e-20)];
     let max_iter = 50_000;
     assert!(pick_records_centre(0, false, span), "the view no longer engages the perturbation scorer");
     let (plain, plain_diag) = best_reference_diag(&center, span, 0, false, [0.0, 0.0], max_iter, p);
-    assert!(plain_diag.deep_perturb && plain_diag.deep_scored > 0, "nothing was scored against the centre's walk");
+    assert!(plain_diag.deep_perturb && plain_diag.deep_scored > 0, "nothing was scored against the center's walk");
     assert!(!plain_diag.centre_from_build);
     let zero = bf(0.0, p2);
     let log2_span = span[0].log2().max(span[1].log2());
@@ -816,7 +816,7 @@ fn the_centre_walk_can_come_from_a_build() {
     let eq = |a: &BigFloat, b: &BigFloat| a.cmp(b).is_some_and(|o| o == 0);
     // (cap, `whole` as claimed, phase 2 takes the walk from the build): a build that ran to
     // `max_iter`; one that escaped inside its cap, claimed whole and not; one cut a step short,
-    // even when (wrongly) claimed whole — it then walks the centre after phase 1; and a stub.
+    // even when (wrongly) claimed whole — it then walks the center after phase 1; and a stub.
     for (cap, whole, taken) in
         [(max_iter, true, true), (full, true, true), (full, false, false), (full - 1, true, false), (1, false, false)]
     {
@@ -1035,7 +1035,7 @@ fn the_sa_bound_rule_is_exact() {
     assert!(holds_real >= 3 && redo >= 3, "vacuous: holds {holds} ({holds_real} real), redo {redo}");
 }
 
-// A cancelled speculative walk stops and reports nothing usable.
+// A canceled speculative walk stops and reports nothing usable.
 #[test]
 fn a_cancelled_sa_walk_stops() {
     let p = 256;
@@ -1176,10 +1176,10 @@ fn bla_matches_naive_including_escapes() {
     check(0.8, &[(0.2, 0.1), (0.4, -0.2), (0.5, 0.3), (-0.6, 0.0)]);
 }
 
-/// Deep boundary points of Multibrot 3–8, good to ~2^-112, whose 1e-30 neighbours escape hundreds
+/// Deep boundary points of Multibrot 3–8, good to ~2^-112, whose 1e-30 neighbors escape hundreds
 /// to thousands of steps apart (6–8 are the deep-pick scorer's fixtures; all found the same way:
 /// bignum bisection of "escapes within 2,000" along the first ray of 3.75° + 7.5°·k with that
-/// spread — rays leaving through the main body meet its NEUTRAL boundary, where every neighbour
+/// spread — rays leaving through the main body meet its NEUTRAL boundary, where every neighbor
 /// escapes on the same step).
 const MULTIBROT_DEEP_FIXTURES: [(u32, &str, &str); 6] = [
     (
@@ -1535,7 +1535,7 @@ fn find_nucleus_period3_bulb() {
 }
 
 /// Field report 2026-09-12: at this view (1.8e122×) the M key said "No minibrot center found"
-/// with a period-1411 minibrot ~19 px from the centre and 8 px wide. Newton converged to its
+/// with a period-1411 minibrot ~19 px from the center and 8 px wide. Newton converged to its
 /// nucleus in two steps; the final `reduce_period` check then failed, because it compared
 /// `|Z_1411|` — whose computed value floors at `2^(−471 + 204)` for `|dZ/dc| ≈ 2^204` at the
 /// finder's 471 bits — against a c-plane tolerance of `2^-414`. The check now measures the
@@ -1548,9 +1548,9 @@ fn find_nucleus_deep_period_1411_at_1e122() {
     // The app's own magnification for that view (`zoom=1.807897016376924e122`), as log2.
     let log2_mag = 1.807897016376924e122f64.log2();
     let n = find_nucleus(&[cx.clone(), cy.clone()], log2_mag, 0, 100_000)
-        .expect("the period-1411 minibrot 19 px from the centre must be found");
+        .expect("the period-1411 minibrot 19 px from the center must be found");
     assert_eq!(n.period, 1411);
-    // The nucleus is ~2^-408 from the centre — inside the view (span 2^-404.5), off-centre.
+    // The nucleus is ~2^-408 from the center — inside the view (span 2^-404.5), off-center.
     let p = precision_for_octaves(log2_mag.ceil() as u64);
     let d = log2_abs(&bf_sub(&n.cx, &cx, p)).max(log2_abs(&bf_sub(&n.cy, &cy, p)));
     assert!((-410.0..-406.5).contains(&d), "nucleus distance log2 {d}");
@@ -1957,7 +1957,7 @@ fn nucleus_size_deep_and_precision_stable() {
 /// The multiplier at the two Misiurewicz points with closed-form answers.
 ///
 /// `c = −2` (antenna tip, k=2 p=1): the orbit reaches the fixed point 2, so λ = 4 exactly and
-/// real — the tip repeats under zoom without spiralling, the classic non-spiral self-similar
+/// real — the tip repeats under zoom without spiraling, the classic non-spiral self-similar
 /// case. `c = i` (k=2 p=2): the cycle is {−1+i, −i}, so λ = 4(1+i), |λ| = 4√2, arg = 45°.
 #[test]
 fn misiurewicz_multiplier_exact_cases() {
@@ -2007,7 +2007,7 @@ fn refine_nucleus_beats_atom_size() {
         after < size - 200.0,
         "center error 2^{after} is not far below the atom size 2^{size}"
     );
-    // The refined center must still BE the same nucleus, not a neighbouring one.
+    // The refined center must still BE the same nucleus, not a neighboring one.
     let moved = (sub_f64(&rx, &n.cx, deep).powi(2) + sub_f64(&ry, &n.cy, deep).powi(2)).sqrt();
     assert!(moved < size.exp2() * 1e-3, "refinement moved off the atom: {moved}");
 }

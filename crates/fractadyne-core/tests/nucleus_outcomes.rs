@@ -13,14 +13,14 @@ use fractadyne_core as fc;
 const DEEP_L2: f64 = 6_644.0;
 
 /// ⭐The pattern the backlog item prescribes: assert the DEPTH WAS REACHED, not that a solve
-/// returned — a centre short of the requested precision looks exactly like a good one. The
+/// returned — a center short of the requested precision looks exactly like a good one. The
 /// oracle is the Newton-step magnitude at the target precision (first-order distance to the
 /// true root): the deep solve must sit within its own 2^-6644 view, while the shallow answer —
 /// the best the old ceiling could produce — is thousands of view-widths outside it.
 ///
 /// Doubles as the `reduce_period` pin the item asks for: at this depth the old linear `tol2`
 /// was exactly `0.0`, so a nucleus could not verify at all — the REDUCED period 3 coming back
-/// is the fixed behaviour, not an incidental detail.
+/// is the fixed behavior, not an incidental detail.
 #[test]
 fn a_nucleus_solve_reaches_a_depth_f64_cannot_express() {
     // Stage 1 — shallow: the period-3 island's nucleus from a 1e6× view beside it.
@@ -33,7 +33,7 @@ fn a_nucleus_solve_reaches_a_depth_f64_cannot_express() {
     // two-stage flow `--find-minibrot` uses), then run the CONVERTED finder at the deep view
     // seeded there. The refine in between is not a dodge, it is the contract: `find_nucleus`
     // finds the minibrot near a VIEW (seed within ~8 view-widths — a user at e2000 can see
-    // the minibrot they ask about), and a shallow-accurate centre is trillions of deep
+    // the minibrot they ask about), and a shallow-accurate center is trillions of deep
     // view-widths off — the runaway rejection SHOULD fire on it (and, converted to log2,
     // now actually does; the old linear test compared 0.0 > 0.0 and let anything through).
     let p = fc::precision_for_octaves(DEEP_L2 as u64);
@@ -44,9 +44,9 @@ fn a_nucleus_solve_reaches_a_depth_f64_cannot_express() {
     assert_eq!(deep.period, 3, "the reduced (fundamental) period survives at depth");
 
     let res_deep = fc::nucleus_residual_log2(&deep.cx, &deep.cy, 3, 0, p)
-        .expect("residual at the deep centre");
+        .expect("residual at the deep center");
     let res_shallow = fc::nucleus_residual_log2(&shallow.cx, &shallow.cy, 3, 0, p)
-        .expect("residual at the shallow centre");
+        .expect("residual at the shallow center");
     assert!(
         res_deep < -6_000.0,
         "deep solve must be accurate AT THE TARGET SCALE (Newton step 2^{res_deep:.0}; \
@@ -64,13 +64,13 @@ fn a_nucleus_solve_reaches_a_depth_f64_cannot_express() {
     );
 }
 
-/// ⭐⭐**The period and the centre must describe the SAME atom.** `reduce_period` used to scan
+/// ⭐⭐**The period and the center must describe the SAME atom.** `reduce_period` used to scan
 /// every `n ≤ p_est` for the first one within tolerance of the solved point, but the only thing
 /// that licenses the reduction is `Z_m = 0 ⟹ Z_{jm} = 0`, which runs one way — so only a DIVISOR
 /// of the detected period can be the true period. Scanning everything asked "is any lower-period
 /// nucleus nearby", and near a deep atom something always is: at the seahorse seed viewed at 1e6×
 /// the detector correctly said 998, Newton converged on the 998 nucleus, and the reduction handed
-/// back **973** — a real neighbouring minibrot's period attached to the 998 minibrot's centre. A
+/// back **973** — a real neighboring minibrot's period attached to the 998 minibrot's center. A
 /// jump there lands ~500,000 atom-widths into empty space.
 ///
 /// The tolerance is a thousandth of the VIEW span, so the failure got worse as the view widened
@@ -92,27 +92,27 @@ fn the_reduced_period_and_the_centre_describe_the_same_atom() {
         assert_eq!(
             n.period, 998,
             "the seahorse minibrot has period 998; 2^{l2} reported {} — the reduction picked a \
-             neighbouring atom's period",
+             neighboring atom's period",
             n.period
         );
 
         let atom = fc::nucleus_size(&n.cx, &n.cy, n.period, 0, 128).expect("atom size");
         assert!(
             (atom.log2_size + 50.5).abs() < 0.5,
-            "the period-998 atom is 2^-50.5 wide; 2^{l2} sized it 2^{:.3}, so the centre and the \
+            "the period-998 atom is 2^-50.5 wide; 2^{l2} sized it 2^{:.3}, so the center and the \
              period do not describe the same atom",
             atom.log2_size
         );
 
-        // The centre must be accurate far below the atom's own width, or the jump this feature
+        // The center must be accurate far below the atom's own width, or the jump this feature
         // exists to make lands on empty space. Re-refining at the atom's precision is the oracle:
-        // a correct centre barely moves.
+        // a correct center barely moves.
         let p = fc::precision_for_octaves(atom.log2_size.abs().ceil() as u64) + 64;
         let (rx, ry) = fc::refine_nucleus(&n.cx, &n.cy, n.period, 0, p).expect("refine");
         let moved = (fc::sub_f64(&rx, &n.cx, p).powi(2) + fc::sub_f64(&ry, &n.cy, p).powi(2)).sqrt();
         assert!(
             moved < atom.log2_size.exp2() * 1.0e-3,
-            "2^{l2}: refining moved the centre {moved:.2e}, which is {:.0} atom-widths — the \
+            "2^{l2}: refining moved the center {moved:.2e}, which is {:.0} atom-widths — the \
              solve did not converge at the scale its own answer lives at",
             moved / atom.log2_size.exp2()
         );
@@ -136,11 +136,11 @@ fn shallow_behaviour_is_unchanged_and_a_perfect_seed_converges_in_place() {
 
 /// ⭐`PeriodSearch::Ball` answers "which minibrot is at this view", which the closest-approach
 /// search cannot on a deep zoom path: the path to the 9.98e60205× spiral
-/// (`validation/spiral-9.98e60205.fdn`) keeps its centre inside the period-953 minibrot's atom
+/// (`validation/spiral-9.98e60205.fdn`) keeps its center inside the period-953 minibrot's atom
 /// domain long after that nucleus has left the view, so closest approach names 953 and the
-/// runaway check rejects it. Measured 2026-10-05 at this 1e50× view (the path's centre cut to
+/// runaway check rejects it. Measured 2026-10-05 at this 1e50× view (the path's center cut to
 /// 80 digits): closest approach → None; the ball → the period-2066 minibrot, 3.6 view widths
-/// from the centre (the ball over-approximates: "near the view", not "in it").
+/// from the center (the ball over-approximates: "near the view", not "in it").
 #[test]
 fn the_ball_search_finds_the_minibrot_in_a_deep_path_view() {
     let seed = [
@@ -155,17 +155,17 @@ fn the_ball_search_finds_the_minibrot_in_a_deep_path_view() {
     let n = fc::find_nucleus_by(&seed, l2, 0, 100_000, fc::PeriodSearch::Ball)
         .expect("the ball search finds the minibrot in the view");
     assert_eq!(n.period, 2066, "the path's minibrot in this view has period 2066");
-    // Near the view: 3.6 spans (3/mag) from the centre, measured; the runaway bound is 8.
+    // Near the view: 3.6 spans (3/mag) from the center, measured; the runaway bound is 8.
     let p = fc::precision_for_octaves(l2.ceil() as u64);
     let off = (fc::sub_f64(&n.cx, &seed[0], p).powi(2) + fc::sub_f64(&n.cy, &seed[1], p).powi(2)).sqrt();
     let spans = off / (3.0 * (-l2).exp2());
-    assert!((3.0..4.5).contains(&spans), "the nucleus is {spans:.2} view widths from the centre (measured 3.6)");
+    assert!((3.0..4.5).contains(&spans), "the nucleus is {spans:.2} view widths from the center (measured 3.6)");
     // And it is a real nucleus at its own scale: the atom is 2^-320.7 wide (it frames at 1e96.5×).
     let atom = fc::nucleus_size(&n.cx, &n.cy, n.period, 0, p).expect("atom size");
     assert!((atom.log2_size + 320.67).abs() < 0.05, "atom 2^{:.3}", atom.log2_size);
 }
 
-/// The ball's own arithmetic on cases with a known answer: a view centred on the period-2 nucleus
+/// The ball's own arithmetic on cases with a known answer: a view centered on the period-2 nucleus
 /// (-1) finds period 2, a view that contains 0 finds period 1, and the ball refuses a family it
 /// has no bound for (it is written for `z² + c`) rather than answer with the wrong one.
 #[test]
@@ -188,7 +188,7 @@ fn seahorse_nucleus(p: usize) -> ([fc::BigFloat; 2], f64) {
     ([rx, ry], atom.log2_size)
 }
 
-/// ⭐A reference centred on a nucleus closes on itself at the period: `Z_998 ≈ 0 = Z_0`, so the
+/// ⭐A reference centered on a nucleus closes on itself at the period: `Z_998 ≈ 0 = Z_0`, so the
 /// build stops there and the orbit to 998 IS the whole orbit (the shader wraps). Its samples are
 /// the plain build's, sample for sample — the period only decides where to stop.
 #[test]

@@ -9,7 +9,7 @@ const LETHAL: f64 = 900.0;
 ///
 /// ⭐The field loss it was written for ran **1024 iterations in 1216 ms** while the queue was on
 /// its way down, and a queue in that state never produces the quick present the drain gate waits
-/// for — so before this predicate existed, the one pass whose price would have shed the licence
+/// for — so before this predicate existed, the one pass whose price would have shed the license
 /// was precisely the pass that could not be priced.
 #[test]
 fn an_in_flight_pass_past_the_lethal_band_sheds() {
@@ -19,7 +19,7 @@ fn an_in_flight_pass_past_the_lethal_band_sheds() {
 }
 
 /// Below the band there is no evidence yet, and the accumulator is only a LOWER bound — acting on
-/// it early would floor licences on passes that were about to drain normally.
+/// it early would floor licenses on passes that were about to drain normally.
 #[test]
 fn a_pass_short_of_the_band_does_not_shed() {
     for acc in [0.0, 1.0, 400.0, LETHAL - 1.0] {
@@ -43,7 +43,7 @@ fn the_shed_latches_so_a_long_pass_sheds_once() {
 /// away by someone who has not read the field log.**
 ///
 /// Under present throttling the wall accumulator measures the COMPOSITOR, not the GPU: the frame
-/// is waiting to be shown, not computing. Shedding on that would floor every band licence off an
+/// is waiting to be shown, not computing. Shedding on that would floor every band license off an
 /// **idle** card — which is what the 2026-09-04 field log recorded. It is the same
 /// present-throttle poisoning of a wall-clock controller that the dual-view Julia investigation
 /// turned on, arriving in a second mechanism.

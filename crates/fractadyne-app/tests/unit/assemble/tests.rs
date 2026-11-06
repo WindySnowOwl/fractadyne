@@ -102,7 +102,7 @@ fn a_frames_corner_lies_on_the_outer_radius_of_the_strip_it_first_shows() {
         let l = map.frame_log2mag(k, fw, fh);
         for ss in [1u32, 2, 3] {
             let p = placement(&map, l, fh, ss, 0.0);
-            // The frame's corner is half its diagonal from the centre: diag·ss/2 samples.
+            // The frame's corner is half its diagonal from the center: diag·ss/2 samples.
             let corner = ((fw * ss as f64).hypot(fh * ss as f64) / 2.0).log2();
             let depth_at_corner = (p.depth_whole as f64 - k as f64) + p.depth_frac - corner;
             assert!(depth_at_corner.abs() < 1e-9, "k {k}, ss {ss}: the corner is {depth_at_corner} octaves off strip {k}'s edge");
@@ -180,7 +180,7 @@ fn a_frames_window_is_the_least_value_and_the_area_quantile_of_the_texels_inside
     for l in [0.0, 3.3, 9.75] {
         let got = frame_range(&map, &ranges, strips, l, fw, fh, 0.98).unwrap().expect("escaped");
         let upp_log2 = (Viewport::REFERENCE_HEIGHT / fh).log2() - l;
-        // The strips the frame's samples read: deeper ones lie within half a pixel of its centre.
+        // The strips the frame's samples read: deeper ones lie within half a pixel of its center.
         let (first, last) = fractadyne_gpu::strips_for_frame(&placement(&map, l, fh, 1, 0.0), fw as u32, fh as u32, strips).unwrap();
         let mut lo = f32::INFINITY;
         let mut inside: Vec<(f32, f64)> = Vec::new();
@@ -263,7 +263,7 @@ fn a_videos_palette_ranges_are_measured_once_an_octave_and_interpolated_between(
     assert!(ok, "{g:?}");
     assert_eq!(a.range(5.5, &mut measure).unwrap(), Some((55.0, 550.0)));
     assert_eq!(measured, vec![3.0, 4.0, 5.0, 5.5], "each anchor measured once, in order");
-    // Nothing escaped at an anchor: its neighbour's range; at both: the last one given.
+    // Nothing escaped at an anchor: its neighbor's range; at both: the last one given.
     let mut b = NormAnchors::new(0.0, 4.0);
     let mut empty_at_2 = |d: f64| -> Result<Option<(f32, f32)>, String> { Ok((d != 2.0 && d != 3.0).then_some((d as f32, d as f32 + 1.0))) };
     assert_eq!(b.range(1.5, &mut empty_at_2).unwrap(), Some((1.0, 2.0)));
@@ -287,7 +287,7 @@ fn the_assembly_options_read_as_given() {
     assert!(none.at.is_empty() && none.fps.is_none() && none.keep.is_none() && none.crf.is_none());
 }
 
-/// A dive whose strips run from 1× to 2^12 at a centre written as the manifest writes it.
+/// A dive whose strips run from 1× to 2^12 at a center written as the manifest writes it.
 fn dive_at(centre: (&str, &str)) -> Dive {
     let map = ExpMap::for_frames(64.0, 36.0, 1.0, 0.0);
     Dive {
@@ -341,15 +341,15 @@ fn a_straight_dive_turns_as_asked_and_a_tour_sets_the_depth_of_every_frame() {
 #[test]
 fn a_tour_that_pans_or_dives_past_the_strips_is_refused() {
     let dive = dive_at(("-0.75", "0.1"));
-    // Off the centre by 1e-5: a ten-thousandth of a pixel at 1x, a tenth of one at 2^10.
+    // Off the center by 1e-5: a ten-thousandth of a pixel at 1x, a tenth of one at 2^10.
     let off = tour_file("off", "-0.74999", "0.1", "1024", 6.0, "linear");
     let err = crate::FractadyneApp::video_frames(&AssembleCli { tour: Some(off), ..Default::default() }, &dive).unwrap_err();
-    assert!(err.contains("off the dive's centre"), "{err}");
+    assert!(err.contains("off the dive's center"), "{err}");
     // Deeper than the dive's strips go.
     let deep = tour_file("deep", "-0.75", "0.1", "1e6", 6.0, "linear");
     let err = crate::FractadyneApp::video_frames(&AssembleCli { tour: Some(deep), ..Default::default() }, &dive).unwrap_err();
     assert!(err.contains("outside the dive"), "{err}");
-    // The same centre written to more digits is the same point.
+    // The same center written to more digits is the same point.
     let same = tour_file("same", "-0.750000000000000000000", "0.10000000000000000000", "1024", 6.0, "linear");
     assert!(crate::FractadyneApp::video_frames(&AssembleCli { tour: Some(same), ..Default::default() }, &dive).is_ok());
 }

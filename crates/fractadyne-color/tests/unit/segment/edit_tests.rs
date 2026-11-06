@@ -22,7 +22,7 @@ fn rich() -> Gradient {
         segments: vec![
             Segment {
                 left: 0.0,
-                mid: 0.1, // deliberately NOT centred
+                mid: 0.1, // deliberately NOT centered
                 right: 0.5,
                 left_color: [1.0, 0.0, 0.0, 1.0],
                 right_color: [0.0, 1.0, 0.0, 0.5],
@@ -65,21 +65,21 @@ fn stops_are_segment_boundaries() {
     for (i, (pos, rgb)) in stops().iter().enumerate() {
         let (p, c) = g.stop(i).expect("stop in range");
         assert!((p - pos).abs() < 1e-6, "stop {i} position");
-        assert_eq!(c, *rgb, "stop {i} colour");
+        assert_eq!(c, *rgb, "stop {i} color");
     }
     assert!(g.stop(4).is_none(), "past the end");
     assert_eq!(Gradient::default().stop_count(), 0);
     assert!(Gradient::default().stop(0).is_none());
 }
 
-/// ⭐⭐**THE ZERO-DRIFT CONTRACT.** On a default gradient — `Linear`/`Rgb`, centred midpoints, which
+/// ⭐⭐**THE ZERO-DRIFT CONTRACT.** On a default gradient — `Linear`/`Rgb`, centered midpoints, which
 /// is exactly what `from_stops` produces for every preset, every pasted palette and every session
 /// written before P1 — each edit must give the gradient `from_stops` would give for the edited stop
 /// list. If this fails, migrating the editor to segments moves pixels, and the whole phase was
 /// supposed to move none.
 #[test]
 fn every_edit_matches_from_stops_on_a_default_gradient() {
-    // Recolour.
+    // Recolor.
     let mut g = plain();
     g.set_stop_color(1, [0.3, 0.4, 0.5]);
     let mut s = stops();
@@ -130,21 +130,21 @@ fn inserting_a_stop_into_a_linear_segment_changes_nothing() {
 }
 
 /// ⚠**The three things a stop list cannot hold survive every edit** — that is the entire point of
-/// making the editor segment-native. Blend, colour space and the midpoint FRACTION are preserved on
+/// making the editor segment-native. Blend, color space and the midpoint FRACTION are preserved on
 /// every segment an operation does not remove.
 #[test]
 fn edits_preserve_blend_space_and_midpoint_fraction() {
-    // Recolour keeps everything but the colour.
+    // Recolor keeps everything but the color.
     let mut g = rich();
     g.set_stop_color(1, [0.5, 0.5, 0.5]);
     assert_eq!(g.segments[0].blend, Blend::Sine);
     assert_eq!(g.segments[0].space, Space::HsvCcw);
-    assert!((g.segments[0].mid - 0.1).abs() < 1e-6, "midpoint moved on a recolour");
+    assert!((g.segments[0].mid - 0.1).abs() < 1e-6, "midpoint moved on a recolor");
     assert_eq!(g.segments[1].blend, Blend::SphereIncreasing);
-    // Both sides of the boundary took the new colour, so the edge closed.
+    // Both sides of the boundary took the new color, so the edge closed.
     assert_eq!(g.segments[0].right_color[..3], [0.5, 0.5, 0.5]);
     assert_eq!(g.segments[1].left_color[..3], [0.5, 0.5, 0.5]);
-    // ⚠Alpha is NOT clobbered by a colour edit — the picker has no alpha channel.
+    // ⚠Alpha is NOT clobbered by a color edit — the picker has no alpha channel.
     assert_eq!(g.segments[0].right_color[3], 0.5);
 
     // Moving a boundary keeps the midpoint FRACTION, not its position.
@@ -155,7 +155,7 @@ fn edits_preserve_blend_space_and_midpoint_fraction() {
     let frac_after = (s.mid - s.left) / (s.right - s.left);
     assert!((frac_before - frac_after).abs() < 1e-5, "fraction {frac_before} -> {frac_after}");
     assert!((s.right - 0.25).abs() < 1e-6, "the boundary did not move");
-    assert!(s.mid < 0.25, "an off-centre midpoint must stay inside its own segment");
+    assert!(s.mid < 0.25, "an off-center midpoint must stay inside its own segment");
     assert_eq!(s.blend, Blend::Sine, "blend survived the move");
 
     // A split inherits blend and space on BOTH halves.
@@ -166,7 +166,7 @@ fn edits_preserve_blend_space_and_midpoint_fraction() {
     assert_eq!(g.segments[1].blend, Blend::Sine);
     assert_eq!(g.segments[0].space, Space::HsvCcw);
     assert_eq!(g.segments[1].space, Space::HsvCcw);
-    // The join is exact: the split colour is evaluated, not guessed.
+    // The join is exact: the split color is evaluated, not guessed.
     assert_eq!(g.segments[0].right_color, g.segments[1].left_color);
 }
 
@@ -232,17 +232,17 @@ fn end_stops_and_bad_indices_are_refused() {
         assert!((w[0].right - w[1].left).abs() < 1e-6, "a gap opened");
         assert!(w[0].right > w[0].left, "a segment collapsed");
     }
-    // A move past a neighbour clamps instead of reordering.
+    // A move past a neighbor clamps instead of reordering.
     let mut g = plain();
     g.set_stop_position(2, 0.01);
     assert!(g.stop(2).unwrap().0 > g.stop(1).unwrap().0, "stops must stay ordered");
-    // A colour set on a bad index changes nothing.
+    // A color set on a bad index changes nothing.
     let mut g = plain();
     g.set_stop_color(99, [1.0, 0.0, 0.0]);
     same_gradient(&g, &before, "set_stop_color out of range");
 }
 
-/// A one-segment gradient is the floor: its stop can be recoloured, and nothing can be removed.
+/// A one-segment gradient is the floor: its stop can be recolored, and nothing can be removed.
 #[test]
 fn a_single_segment_gradient_survives_editing() {
     let mut g = Gradient::from_stops("t", &[(0.0, [0.0; 3]), (1.0, [1.0; 3])]);
@@ -267,7 +267,7 @@ fn stop_expressible_tracks_content_not_the_mere_presence_of_segments() {
     assert!(plain.is_stop_expressible(), "from_stops IS the stop-expressible shape");
     assert!(
         Gradient::from_bands("t", &[[0.0; 3], [1.0; 3], [0.5; 3]]).is_stop_expressible(),
-        "flat bands are Linear/Rgb/centred too — a .map is a colour list, not a rich gradient"
+        "flat bands are Linear/Rgb/centered too — a .map is a color list, not a rich gradient"
     );
     // Surviving the editor's own operations must not turn a plain gradient rich: `set_span` keeps
     // the midpoint FRACTION, which is exactly what the tolerance here exists to accept.
@@ -289,12 +289,12 @@ fn stop_expressible_tracks_content_not_the_mere_presence_of_segments() {
     let mut shifted = plain.clone();
     let s = shifted.segments[2];
     shifted.segments[2].mid = s.left + 0.8 * (s.right - s.left);
-    assert!(!shifted.is_stop_expressible(), "an off-centre midpoint is not expressible as stops");
+    assert!(!shifted.is_stop_expressible(), "an off-center midpoint is not expressible as stops");
 }
 
 // ── Rotation ────────────────────────────────────────────────────────────────────────────────────
 
-/// The colour a rotated gradient shows at `t` must be the colour the original showed at `t - delta`,
+/// The color a rotated gradient shows at `t` must be the color the original showed at `t - delta`,
 /// wrapped. This is the definition of rotation, and everything below is a corner of it.
 fn assert_rotated_by(orig: &Gradient, rotated: &Gradient, delta: f32, tol: f32, what: &str) {
     for i in 0..=400 {
@@ -364,7 +364,7 @@ fn a_whole_turn_changes_nothing() {
 
 /// Rotating forward then back returns the original picture. ⚠The segment COUNT does not come back —
 /// the two cuts are real — which is why the editor rotates from a pre-drag baseline rather than
-/// accumulating; this pins the colours, which is what the user sees.
+/// accumulating; this pins the colors, which is what the user sees.
 #[test]
 fn rotating_there_and_back_restores_the_picture() {
     let g = plain();
@@ -376,7 +376,7 @@ fn rotating_there_and_back_restores_the_picture() {
 
 /// The gradient still COVERS 0..1 after rotating, with no sliver left uncovered at either end.
 /// ⚠A last segment ending at 0.99999994 is invisible in every test that samples on a grid and shows
-/// up as a hairline of the wrong colour at the seam — the one place a rotation puts the user's eye.
+/// up as a hairline of the wrong color at the seam — the one place a rotation puts the user's eye.
 #[test]
 fn a_rotated_gradient_still_covers_the_whole_range() {
     for delta in [0.05_f32, 0.3333, 0.5, 0.87] {
@@ -399,7 +399,7 @@ fn a_rotated_gradient_still_covers_the_whole_range() {
 }
 
 /// ⚠**Rotation carries the rich properties a stop list cannot hold** — a segment that is not cut
-/// must arrive with its curve, its colour space and its midpoint FRACTION intact. The one segment
+/// must arrive with its curve, its color space and its midpoint FRACTION intact. The one segment
 /// the new seam cuts is the approximate case, and it is approximate in exactly the way adding a stop
 /// there already is; this checks the others are untouched.
 #[test]
@@ -444,12 +444,12 @@ fn rotating_over_and_over_does_not_grow_the_segment_list() {
 }
 
 /// ⚠**The guard that makes the test above mean something.** Dissolving must not be free to fire
-/// anywhere: a boundary carrying a real colour edge, or joining two different curves, is CONTENT and
+/// anywhere: a boundary carrying a real color edge, or joining two different curves, is CONTENT and
 /// has to survive rotation. Without this, "the count stays flat" could be achieved by quietly
 /// eating the user's stops.
 #[test]
 fn rotation_never_dissolves_a_boundary_that_carries_content() {
-    // A hard edge in the middle: the two sides of 0.5 hold different colours.
+    // A hard edge in the middle: the two sides of 0.5 hold different colors.
     let mut hard = plain();
     hard.segments[1].right_color = [0.0, 0.0, 0.0, 1.0];
     let edges = hard.segments.len();
@@ -468,7 +468,7 @@ fn rotation_never_dissolves_a_boundary_that_carries_content() {
     });
     assert!(jump, "the hard edge stopped being a hard edge");
 
-    // Same for a curve change across a boundary, with matching colours: still content.
+    // Same for a curve change across a boundary, with matching colors: still content.
     let mut curved = plain();
     curved.segments[1].blend = Blend::SphereIncreasing;
     let before = curved.segments.len();
@@ -479,7 +479,7 @@ fn rotation_never_dissolves_a_boundary_that_carries_content() {
     assert!(g2.segments.len() >= before, "a curve boundary was dissolved away");
 }
 
-/// Dissolving must not move a single pixel — that is the whole licence for doing it.
+/// Dissolving must not move a single pixel — that is the whole license for doing it.
 #[test]
 fn dissolving_keeps_the_picture_identical() {
     let g0 = plain();

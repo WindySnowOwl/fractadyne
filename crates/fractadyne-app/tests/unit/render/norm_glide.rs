@@ -1,6 +1,6 @@
 use super::*;
 
-/// The user's colouring in the 2026-10-25 report: cycle 0.52, linear.
+/// The user's coloring in the 2026-10-25 report: cycle 0.52, linear.
 const SHAPE: NormShape = NormShape { sweeps: 0.5 + 0.52 * 6.0, log_palette: false };
 const FRAME: f32 = 1.0 / 60.0;
 
@@ -18,7 +18,7 @@ fn the_first_window_and_a_snap_arrive_outright() {
 
 #[test]
 fn a_small_step_glides_no_faster_than_the_eye_can_follow_and_arrives() {
-    // A reading lands with the window 6% lower and 10% wider: under a cycle of colour change at the
+    // A reading lands with the window 6% lower and 10% wider: under a cycle of color change at the
     // edges, so it is glided, never cut.
     let (mut shown, target) = ((1000.0_f32, 2000.0_f32), (1060.0_f32, 2160.0_f32));
     assert!(window_change(shown, target, SHAPE) < GLIDE_CUT);
@@ -38,7 +38,7 @@ fn a_small_step_glides_no_faster_than_the_eye_can_follow_and_arrives() {
 #[test]
 fn a_far_target_is_cut_for_the_dissolve_or_glided_at_the_speed_limit_while_one_runs() {
     // The 2026-10-25 strobe: the top leapt 4,650 -> 26,781 in one reading. Swept, it moved every
-    // colour through palette cycles at 0.2 a frame; now it is cut, and the drawn map dissolves.
+    // color through palette cycles at 0.2 a frame; now it is cut, and the drawn map dissolves.
     let shown = (2020.0_f32, 4650.0_f32);
     let target = (2044.0_f32, 26_781.0_f32);
     assert!(window_change(shown, target, SHAPE) > GLIDE_CUT);
@@ -98,7 +98,7 @@ fn another_location_is_re_acquired_but_a_zoom_s_own_drift_is_not() {
 
 #[test]
 fn the_glide_arrives_exactly_in_finite_frames() {
-    // W6 (U58): the SSAA average's colour signature includes the shown window, so a glide that only
+    // W6 (U58): the SSAA average's color signature includes the shown window, so a glide that only
     // APPROACHES (an f32 ulp at a time) would hold the average off.
     let mut shown = (1000.0_f32, 2000.0_f32);
     let target = (1040.0, 2080.0);
@@ -115,16 +115,16 @@ fn the_glide_arrives_exactly_in_finite_frames() {
 
 #[test]
 fn a_change_of_window_is_measured_in_palette_cycles_as_the_screen_shows_it() {
-    // The phase is carried (`phase_carry_step`), so a window that only SLIDES moves no colour.
+    // The phase is carried (`phase_carry_step`), so a window that only SLIDES moves no color.
     let a = (1000.0_f32, 2000.0_f32);
     assert_eq!(window_change(a, a, SHAPE), 0.0);
     assert!(window_change(a, (1100.0, 2100.0), SHAPE) < 1e-3);
-    // Widening the top of a 1,000..2,000 window to 2,200 recolours its ends about the new middle
+    // Widening the top of a 1,000..2,000 window to 2,200 recolors its ends about the new middle
     // (1,600): each by a tenth of the sweeps.
     let c = window_change(a, (1000.0, 2200.0), SHAPE);
     let at_ends = SHAPE.sweeps * 0.1;
     assert!((c - at_ends).abs() < 0.01, "{c} vs {at_ends}");
-    // Log (a heavy-tailed range): moving the floor moves the colours just above it most, and the
+    // Log (a heavy-tailed range): moving the floor moves the colors just above it most, and the
     // measure sees that.
     let log = NormShape { sweeps: SHAPE.sweeps, log_palette: true };
     let floor_moved = window_change((10.0, 50_000.0), (20.0, 50_000.0), log);

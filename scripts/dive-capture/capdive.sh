@@ -6,7 +6,7 @@
 #     NAME       output directory (created under the current directory, wiped first)
 #     EXE        the fractadyne build to run (a COPY, not the one the user is running)
 #     KFR        the start location (dive-2p800.kfr reproduces the blank-motion-frame regime;
-#                dive-2p584.kfr is the 2026-09-20 "flashing / flat colour" recording's start)
+#                dive-2p584.kfr is the 2026-09-20 "flashing / flat color" recording's start)
 #     SEED_TOML  session.toml to seed the scratch config with (default: session-seed.toml here —
 #                the reporting user's settings: prefer_detail, min_motion_res 0.83, zoom rate 4x;
 #                session-2026-09-20.toml is the same user's settings at the flashing report)

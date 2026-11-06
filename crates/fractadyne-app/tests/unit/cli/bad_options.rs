@@ -25,7 +25,7 @@ fn values_and_documented_shorthands_never_trip_it() {
     assert_eq!(first_bad_option(&s(&["exe", "-V"])), None);
 }
 
-/// A free-form value that begins with a minus sign is a value: an expression for the centre (Help's
+/// A free-form value that begins with a minus sign is a value: an expression for the center (Help's
 /// own example), a formula, a parameter list. These were refused as unknown options.
 #[test]
 fn free_form_values_that_start_with_a_minus_are_values() {

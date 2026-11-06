@@ -1,6 +1,6 @@
 use super::*;
 
-/// A colour's relative luminance (WCAG 2): its sRGB channels linearized and weighted.
+/// A color's relative luminance (WCAG 2): its sRGB channels linearized and weighted.
 fn luminance(c: Color32) -> f32 {
     let lin = |v: u8| {
         let v = v as f32 / 255.0;
@@ -10,7 +10,7 @@ fn luminance(c: Color32) -> f32 {
     0.2126 * lin(r) + 0.7152 * lin(g) + 0.0722 * lin(b)
 }
 
-/// The WCAG contrast ratio between two colours (1 to 21).
+/// The WCAG contrast ratio between two colors (1 to 21).
 fn contrast(a: Color32, b: Color32) -> f32 {
     let (la, lb) = (luminance(a), luminance(b));
     (la.max(lb) + 0.05) / (la.min(lb) + 0.05)
@@ -53,7 +53,7 @@ fn the_hammertone_is_the_same_every_time() {
 #[test]
 fn the_hammertone_tiles_without_a_seam() {
     // The step across the wrap (last column to first, last row to first) is no rougher than the
-    // tile's own steps between neighbouring columns and rows.
+    // tile's own steps between neighboring columns and rows.
     let img = tile();
     let n = HAMMER_TILE;
     let col_step = |a: usize, b: usize| (0..n).map(|y| (lum_at(&img, a, y) - lum_at(&img, b, y)).abs()).sum::<f32>() / n as f32;

@@ -14,7 +14,7 @@ The system is already reuse-first — a warm view never blanks during motion:
   per-view, allocated once (lib.rs:547), survives across frames. Reuse = *skip the iterate dispatch
   and re-color the existing texture*.
 - **Whole-texture affine reprojection** (color pass). `fs_color` samples the frozen texture through
-  aspect-fit → scale-about-centre → translate (mandelbrot.wgsl:1308-1322), off-frame → `view_average()`
+  aspect-fit → scale-about-center → translate (mandelbrot.wgsl:1308-1322), off-frame → `view_average()`
   (not black). Driven by `reproject`/`uv_scale`/`uv_off` in `ColorU` (mandelbrot.wgsl:1197-1199).
 - **`reuse_hold`** (render.rs:1319): deep interactive zoom holds+magnifies the frozen frame until it
   has drifted `REFRESH_OCTAVES = 0.5` octaves (render.rs:1317), then takes ONE real re-iterate at
@@ -57,7 +57,7 @@ harnesses, both CLI-driven (no live-loop change, deterministic):
 
 - **`--reusetest` staleness curve.** For each of a few deep views: render from-scratch (`render_iter`)
   → reference R; for Δ ∈ {0.1, 0.25, 0.5, 0.75, 1.0} octaves deeper, CPU-resample R by the exact
-  color-pass affine (2^Δ magnify about centre) and compare to a from-scratch render of the Δ-zoomed
+  color-pass affine (2^Δ magnify about center) and compare to a from-scratch render of the Δ-zoomed
   view. Report max/mean smooth-iter error vs Δ. **Immediate payoff:** it turns `REFRESH_OCTAVES = 0.5`
   from a guess into a measured choice (refresh when reprojection error crosses a threshold), a safe
   data-driven tuning that needs no new reuse machinery.

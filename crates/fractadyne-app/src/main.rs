@@ -108,7 +108,7 @@ mod zoom_snap;
 
 // ⭐The tunables live in ONE module now (a user requirement — see `tunables.rs`), and are
 // re-exported from here and from `render` so that every existing `crate::NAME` /
-// `crate::render::NAME` call site is unchanged. The move is therefore provably behaviour-neutral:
+// `crate::render::NAME` call site is unchanged. The move is therefore provably behavior-neutral:
 // the compiler resolves the same names to the same values, and nothing outside `tunables.rs` had
 // to be edited to make it so.
 pub(crate) use tunables::*;
@@ -258,7 +258,7 @@ fn main() -> eframe::Result<()> {
         fractadyne_gpu::set_tile_pack(tunables::cost().tile_pack == 1);
         fractadyne_core::set_orbit_schedule(tunables::cost().orbit_schedule == 1);
         // A tour renders hundreds of frames against one reference: its series walk once, not each.
-        // So does a strip dive (`--render-expmap`): every strip's reference is the dive's centre,
+        // So does a strip dive (`--render-expmap`): every strip's reference is the dive's center,
         // and each replays the one walk for its own radius. Anything else records only short
         // walks (`SA_TRACE_LIVE_STEPS`): a live dive rebuilds one point's reference many times,
         // and a long orbit's record would be large.
@@ -561,7 +561,7 @@ fn arg_parse<T: std::str::FromStr>(name: &str, s: &str, expect: &str) -> T {
 }
 
 /// `--flag TOKEN` for a type parsed from a fixed vocabulary, fatal when supplied and
-/// unreadable. Same reason as [`arg_parse`]: a benchmark handed an unrecognised preset
+/// unreadable. Same reason as [`arg_parse`]: a benchmark handed an unrecognized preset
 /// silently ran a DIFFERENT workload and still printed a complete, plausible report, with
 /// the preset it actually used named in the output where nobody rereads it.
 fn arg_token<T>(name: &str, s: &str, parse: impl Fn(&str) -> Option<T>, expect: &str) -> T {
@@ -600,7 +600,7 @@ fn arg_size(name: &str, s: &str) -> (Option<u32>, Option<u32>) {
 /// A full-precision coordinate pair for a view at magnification `2^log2mag`, fatal when either
 /// half is unreadable. `parse_bf` returns `None` on anything it cannot read and the `?` collapsed
 /// the PAIR, so one stray character in a pasted y ordinate threw the whole location away and
-/// rendered the fractal default centre at the requested depth — solid interior, full cost, exit 0.
+/// rendered the fractal default center at the requested depth — solid interior, full cost, exit 0.
 ///
 /// ⛔Parsed at the VIEW's precision, `precision_for_octaves(log2mag)` — what the Viewport carries
 /// and the Go-to box parses at. It was `parse_real_expr(text, 0)`, so a decimal kept only the
@@ -984,8 +984,8 @@ mod wgpu_error_policy;
 /// `RenderMode::select` then compounded it by mapping NaN to the most expensive mode; that is fixed
 /// separately, and this stops the bad value entering at all.
 ///
-/// Rejecting only the zoom, not the centre: a garbage magnification with a good centre still opens
-/// somewhere recognisable, and throwing away a 40-digit centre the user may not be able to retype is
+/// Rejecting only the zoom, not the center: a garbage magnification with a good center still opens
+/// somewhere recognizable, and throwing away a 40-digit center the user may not be able to retype is
 /// the more destructive failure.
 pub(crate) fn restored_units_per_pixel(mantissa: f64, exp: i32) -> Option<fractadyne_core::FloatExp> {
     if !mantissa.is_finite() || mantissa <= 0.0 {
@@ -1134,7 +1134,7 @@ impl RenderMode {
 struct AccumCmd {
     /// Sub-pixel jitter of the sampling grid, in fractions of a pixel.
     jitter: [f32; 2],
-    /// Present the running average (vs this frame's colour).
+    /// Present the running average (vs this frame's color).
     present: bool,
     /// Fold this (complete, jittered) frame into the average.
     commit: bool,
@@ -1599,7 +1599,7 @@ struct Perf {
     /// interval is measured, so it lies inside the next one). Discounted like `cap_sleep_ms`: a
     /// compile is not GPU work, and a 1.6 s one in the paint callback read as a pass IN FLIGHT in
     /// the lethal band and a blind frame budget (uitest's `formula` step, a cold driver cache) —
-    /// the stall guards shed licences and reset the budget for a GPU that was idle.
+    /// the stall guards shed licenses and reset the budget for a GPU that was idle.
     ui_compile_ms: f64,
     /// ⭐DIAGNOSTIC INSTRUMENT (`FRACTADYNE_BLA_DROP_FRAMES=N`, default off). Frames of BLA
     /// suppression remaining for this view after an arithmetic-mode switch.
@@ -1662,11 +1662,11 @@ struct Perf {
     hold_jump: [bool; 2],
     /// A held picture standing across a jump is on screen (`hold_transform_for` with the jump
     /// bound), and the new view's picture has not replaced it yet: the palette window it was shown
-    /// under when the jump came (`None` inside: classic colours) and the user's colouring then
+    /// under when the jump came (`None` inside: classic colors) and the user's coloring then
     /// (`norm_user_sig`). It is drawn under that window until it goes — a snap to the nearest
     /// nucleus (`finish_nav_jump` → `invalidate_refs`) wipes the live one — and the new picture
     /// waits for its own window (`decide::PresentInputs::await_map`, until `jump_map_until`, app
-    /// micros) and arrives as a cut, not a dissolve from the old view's colours. `shown_held`: the
+    /// micros) and arrives as a cut, not a dissolve from the old view's colors. `shown_held`: the
     /// last frame showed a held picture (a hold snapshot or a reprojection).
     jump_win: [Option<(Option<(f32, f32)>, u64)>; 2],
     jump_map_until: [Option<u64>; 2],
@@ -1779,20 +1779,20 @@ struct Perf {
     chunk_bands: [[u32; crate::tunables::CHUNK_BANDS]; 2],
     /// The band-cost memory (`decide::WalkLedger::band_ms`, `PIN_SPAN_PRICED`): per band, the GPU-timed
     /// cost of a pin pass's iterations there, those iterations, and the reference length it was
-    /// measured against. Doubled where the licences are halved, cleared where they are.
+    /// measured against. Doubled where the licenses are halved, cleared where they are.
     chunk_band_ms: [[f32; crate::tunables::CHUNK_BANDS]; 2],
     chunk_band_ms_iters: [[u32; crate::tunables::CHUNK_BANDS]; 2],
     chunk_band_ms_len: [[u32; crate::tunables::CHUNK_BANDS]; 2],
     chunk_band_ms_px: [[u32; crate::tunables::CHUNK_BANDS]; 2],
     /// The pixels each parked pin pass ran at (`decide::WalkLedger::late_px`).
     chunk_late_px: [[u32; render::decide::LATE_MAX]; 2],
-    /// The settled walk's licence past the view's escape onset, in work (`decide::WalkLedger::
-    /// onset_work`, `WALK_ONSET`): cleared and shed with the band licences.
+    /// The settled walk's license past the view's escape onset, in work (`decide::WalkLedger::
+    /// onset_work`, `WALK_ONSET`): cleared and shed with the band licenses.
     chunk_onset_work: [u64; 2],
-    /// The pixels each band's licence was earned over by a settled pass (`decide::WalkLedger::band_px`).
+    /// The pixels each band's license was earned over by a settled pass (`decide::WalkLedger::band_px`).
     chunk_band_px: [[u32; crate::tunables::CHUNK_BANDS]; 2],
     /// The view's ESCAPE ONSET: the lowest escape iteration its counter readings have seen (0 = none
-    /// yet), forgotten when the view — its f64 centre and magnification and its settings
+    /// yet), forgotten when the view — its f64 center and magnification and its settings
     /// (`walk_onset_key`) — changes.
     walk_onset: [u32; 2],
     walk_onset_key: [u64; 2],
@@ -1842,7 +1842,7 @@ struct Perf {
     /// L-system, Life) never reads due.
     accum_due: [bool; 2],
     /// Settled frames in a row `drive_accumulation` has held a run back for an undecided iteration
-    /// limit or colour range (`accum_inputs_pending`; the waiver's count), and when that wait began
+    /// limit or color range (`accum_inputs_pending`; the waiver's count), and when that wait began
     /// (`diag::elapsed_ms`; the begin line's note).
     accum_gate_wait: [u32; 2],
     accum_gate_since: [Option<u64>; 2],
@@ -1891,14 +1891,14 @@ struct Perf {
     live_stats: [motion_worker::LiveStats; 2],
     /// Worker frames adopted since the start (`--zoomtest` reads it).
     live_adopted_total: [u64; 2],
-    /// The colour-state signature (`accum_color_sig`) the running average was started under, and
-    /// the supersampling factor its samples are rendered at. The average is a COLOUR texture, so
-    /// any change to how a frame is coloured — palette, cycle/offset, method, effects, live
+    /// The color-state signature (`accum_color_sig`) the running average was started under, and
+    /// the supersampling factor its samples are rendered at. The average is a COLOR texture, so
+    /// any change to how a frame is colored — palette, cycle/offset, method, effects, live
     /// normalization, AA — makes every folded sample stale: the run restarts. Likewise a sample at
     /// a different `ss` than sample 0 would fold a differently-filtered image into the mean.
     accum_sig: [u64; 2],
     /// The normalization part of `accum_sig` (`accum_norm_sig`), so a restart can say whether the
-    /// colouring changed or the live-normalization range moved; and why the last run ended, for the
+    /// coloring changed or the live-normalization range moved; and why the last run ended, for the
     /// next `begin` line (`None` once said). A field session restarted a converged run every
     /// ~0.5 s on a still view (2026-10-16), and nothing said why.
     accum_norm_sig: [u64; 2],
@@ -1907,7 +1907,7 @@ struct Perf {
     pre_switch_probe_next: u64,
     accum_ss: [u32; 2],
     /// The view sample 0 of the running average was folded at — (log2 magnification, f64
-    /// centre) — so a later fold at ANOTHER view is caught and logged (always, no trace flag):
+    /// center) — so a later fold at ANOTHER view is caught and logged (always, no trace flag):
     /// that is the one way a converged average shows a translucent copy of another location,
     /// and the field report of 2026-09-16 could not be reproduced in the harness.
     accum_view0: [(f64, f64, f64); 2],
@@ -1924,7 +1924,7 @@ struct Perf {
     /// One log line per waiting episode, not per frame: a settle can spend many frames with the
     /// texture not yet wholly its own, and a user's session log is the thing being protected here.
     content_wait_logged: [bool; 2],
-    /// Previous frame's view per panel — magnification, full-precision centre, and the navigation
+    /// Previous frame's view per panel — magnification, full-precision center, and the navigation
     /// epoch it was taken at — for the jump tripwire in `track_view_jump`.
     view_prev: [Option<(f64, fractadyne_core::BigFloat, fractadyne_core::BigFloat, u64)>; 2],
     /// Bumped by `record_nav`, i.e. by every DELIBERATE jump, so the tripwire can tell one from a
@@ -2005,7 +2005,7 @@ struct Perf {
     iter_stall: [u8; 2],
     iter_stall_base: [f64; 2],
     /// One fresh appetite re-pick has been tried for this settle. When a settled view is capped at
-    /// the full appetite, the reference may be a poor motion-time pick (the view centre, which
+    /// the full appetite, the reference may be a poor motion-time pick (the view center, which
     /// escapes early and covers this view badly) that the settled path reuse-extended instead of
     /// re-picking; a fresh pick at the appetite runs the deep-perturb engine and finds a better one.
     /// Bounded to once per settle — if the appetite-picked reference is STILL all-capped the view is
@@ -2023,7 +2023,7 @@ struct Perf {
     norm_sink: [std::sync::Arc<std::sync::atomic::AtomicU64>; 2],
     /// Live sink for the escape field's LOCAL GRADIENT — `(Σ|Δ|×16) << 32 | (samples + 1)`. The
     /// auto-normalization predicate keys on this rather than on the escape RANGE: aliasing is a
-    /// local property (how far the palette moves between neighbouring pixels), not a global one.
+    /// local property (how far the palette moves between neighboring pixels), not a global one.
     grad_sink: [std::sync::Arc<std::sync::atomic::AtomicU64>; 2],
     /// Live sink for the log₂ HISTOGRAM of the same steps (`fractadyne_gpu::CTR_GRAD_HIST`), per
     /// view. Published from the same armed frame as `grad_sink`, so the same signature covers it.
@@ -2048,7 +2048,7 @@ struct Perf {
     /// to the GPU is the signature of the render it travels with.
     norm_sig_submit: [u64; 2],
     /// The signature of the last COMPLETE reading drained per view (a pass that reached the walk's
-    /// end, at the view on screen), whether it held escapes or not: the reading the colour range
+    /// end, at the view on screen), whether it held escapes or not: the reading the color range
     /// locks on and the iteration climb decides on. A finished walk re-sends its empty tail until
     /// one lands (`tail_retries` per walk, at most `render::TAIL_READ_RETRIES`).
     walk_read_sig: [u64; 2],
@@ -2072,7 +2072,7 @@ struct Perf {
     norm_range: [Option<(f32, f32)>; 2],
     /// The PALETTE's window per view: fed by the same readings under the same rules as
     /// `norm_range`, with the top taken where most of the picture has escaped
-    /// (`render::norm_palette_top`) rather than at its slowest pixel. The colours follow this one
+    /// (`render::norm_palette_top`) rather than at its slowest pixel. The colors follow this one
     /// (`norm_shown` glides to it); `norm_range` keeps the true top for what it sizes — a moving
     /// frame's walk, a refresh's end, the autopilot.
     norm_pal: [Option<(f32, f32)>; 2],
@@ -2081,7 +2081,7 @@ struct Perf {
     /// see `norm_feed_decision` (render.rs) for the whole story.
     norm_sig: [u64; 2],
     norm_locked: [bool; 2],
-    /// EMA-smoothed MEAN |Δ smooth-iter| between neighbouring escaped pixels, per view. Kept for the
+    /// EMA-smoothed MEAN |Δ smooth-iter| between neighboring escaped pixels, per view. Kept for the
     /// trace and the harness fields; the guard no longer DECIDES on it (see `norm_hist`).
     norm_grad: [Option<f32>; 2],
     /// EMA-smoothed step histogram per view, as fractions of the sampled pairs — what the
@@ -2111,26 +2111,26 @@ struct Perf {
     reading_pool: [render::ReadingPool; 2],
     /// The palette window actually SHOWN, gliding toward `norm_range` (the fed target) a fixed
     /// fraction per frame. The target moves in steps — one per escape-range reading, every few
-    /// frames — and a step is a visible colour snap: measured on an 8-octave glide, one frame
-    /// moved the window by 109% of its own width. The eye reads that as the colours "bouncing
+    /// frames — and a step is a visible color snap: measured on an 8-octave glide, one frame
+    /// moved the window by 109% of its own width. The eye reads that as the colors "bouncing
     /// around"; gliding turns the same information into a continuous drift. See
     /// `render::norm_glide_step`.
     norm_shown: [Option<(f32, f32)>; 2],
     /// W6 (U43): the palette window a hold snapshot keeps while it is served — the live window when
-    /// it was copied, or a worker frame's own — with the user's colouring then (`norm_user_sig`).
-    /// `None` inside: drawn in the classic colouring.
+    /// it was copied, or a worker frame's own — with the user's coloring then (`norm_user_sig`).
+    /// `None` inside: drawn in the classic coloring.
     hold_norm: [Option<(Option<(f32, f32)>, u64)>; 2],
     /// The palette window each view was last DRAWN with, gliding from one picture's window to the
     /// next's (`render::drawn_norm_step`).
     norm_drawn: [Option<render::DrawnNorm>; 2],
-    /// The colour box (`aa_filter`) the live texture was last shown with, and the one a hold
+    /// The color box (`aa_filter`) the live texture was last shown with, and the one a hold
     /// snapshot keeps while it is served (U43's rule for the box).
     shown_aa: [Option<u32>; 2],
     hold_aa: [Option<u32>; 2],
     /// The palette map each view was last drawn under, and any dissolve from a map of another kind
     /// (`render::palette_fade_step`).
     palette_fade: [render::PaletteFadeState; 2],
-    /// The palette phase each view carries so a sliding window keeps the picture's colours
+    /// The palette phase each view carries so a sliding window keeps the picture's colors
     /// (`render::phase_carry_step`).
     palette_phase: [render::PhaseCarry; 2],
     /// This view's frames are currently chunk-governed (`chunk_over`), stamped every
@@ -2165,7 +2165,7 @@ struct Perf {
     /// dive (build 3413, 2026-09-20, iterations pinned at 10,000): pixels escape at ~4471, a motion
     /// pass walked a median of **550**, only **5%** of motion walks reached the band, and 36% of
     /// the recorded video — 4.8 s of 13.6, in episodes up to 1.9 s — was a canvas of one flat
-    /// colour. The picture reappearing somewhere else after each blank is what was reported as
+    /// color. The picture reappearing somewhere else after each blank is what was reported as
     /// panning; a dive that never gains detail cannot read as a zoom.
     ///
     /// This is the same shape of feedback as `motion_res`, but on the quantity that decides whether
@@ -2806,7 +2806,7 @@ const DEEP_JUMP_ITER_PER_OCTAVE: f64 = 100.0;
 /// a FIXED (auto-iter OFF) count is below the resolving line for the target depth, `None`
 /// when the view will resolve. With auto-iterations ON the budget follows the jump exactly
 /// as it follows a hand zoom (`zoom_iter_cap` of the new depth × the adaptive boost), so
-/// only an explicit count can be starved — and per the beta.53 rule it is honoured
+/// only an explicit count can be starved — and per the beta.53 rule it is honored
 /// verbatim, so the app WARNS rather than silently raising it. `typical` is
 /// [`zoom_iter_cap`] at the target — the count auto-iteration would run, a known-good
 /// suggestion rather than the bare minimum.
@@ -2848,7 +2848,7 @@ pub(crate) const ACCUM_MIN_LOG2: f64 = 33.0;
 /// view (`diag::LineLimiter`). Every begin is still counted, in the frame record's `accum_begins`.
 const ACCUM_LINE_GAP_MS: u64 = 5000;
 
-/// How many settled frames in a row supersampling waits for an undecided iteration limit or colour
+/// How many settled frames in a row supersampling waits for an undecided iteration limit or color
 /// range (`accum_inputs_pending`) before it begins anyway, with a warning. The reading both decide
 /// on lands a few frames after a walk finishes (the tail is re-sent until it does), so reaching
 /// this means the reading is not coming, and waiting longer would leave the view unaveraged.
@@ -2860,16 +2860,16 @@ pub(crate) enum AccumWait {
     /// The adaptive iteration limit has no verdict at the budget it is planning: it has not read a
     /// complete frame there, or the reading it read moved it.
     IterationLimit,
-    /// No complete reading at this view and limit has reached the colour range's decision yet.
+    /// No complete reading at this view and limit has reached the color range's decision yet.
     ColourRange,
 }
 
 /// May supersampling begin on a settled view whose ordinary settle has finished? `None` = yes;
 /// otherwise what it still waits for. Pure, so the test pins it.
 ///
-/// ⭐⭐**Every sample enters the average under the colouring and limit of sample 0, and a run whose
+/// ⭐⭐**Every sample enters the average under the coloring and limit of sample 0, and a run whose
 /// inputs move restarts.** Begun while the adaptive limit was still climbing, a run restarted at
-/// every raise (each re-decides the colour range at the new ask), and begun before the range had
+/// every raise (each re-decides the color range at the new ask), and begun before the range had
 /// its complete reading, every jittered sample's partial reading nudged the range and restarted it
 /// again. Measured on a user's 2.3e11× view (2026-10-07): the limit climbed ×1.6 → ×68.7 and fell
 /// back to ×16.8 over ~90 s, the range locked 14 s after that, and the view showed unaveraged single
@@ -2972,7 +2972,7 @@ pub(crate) fn accum_fold_clean(
 mod accum_fold_tests;
 
 /// Sub-pixel jitter for accumulation sample `i` — a 2D Halton (base 2, 3) sequence mapped to
-/// `[-0.5, 0.5]`. Sample 0 is the pixel centre `(0, 0)`, so the first accumulated frame equals
+/// `[-0.5, 0.5]`. Sample 0 is the pixel center `(0, 0)`, so the first accumulated frame equals
 /// today's settled frame exactly (a seamless hand-off from the ordinary settle into accumulation).
 pub(crate) fn accum_jitter_seq(i: u32) -> [f32; 2] {
     if i == 0 {
@@ -3072,6 +3072,25 @@ impl ColorMethod {
                 | ColorMethod::Decomposition
         )
     }
+}
+
+/// The Smooth method's palette rate — palettes per iteration, what the shader multiplies the
+/// smooth iteration count by — for Cycle slider `cycle` and "Divide iterations" `div`.
+///
+/// ⭐**Why a divisor and not a wider Cycle slider.** The slider's rate is `0.004 + cycle·0.06`, so
+/// its slowest (cycle 0) is one palette per 250 iterations, and it cannot go lower: below that the
+/// line runs through zero to negative rates. A view whose escape counts climb by hundreds between
+/// neighboring pixels (kaludix's Dinkydau's Flake, escapes 29,000–34,000, at the default ~50
+/// iterations per palette) is moiré at every slider position. Dividing scales the rate the slider
+/// chose, by any factor, without changing what the slider means.
+pub(crate) fn smooth_color_rate(cycle: f32, div: u32) -> f32 {
+    (0.004 + cycle * 0.06) / div.max(1) as f32
+}
+
+/// How many iterations one trip through the palette takes at `rate` (palettes per iteration), for
+/// the "Divide iterations" readout. `None` for a rate that is not positive.
+pub(crate) fn iterations_per_palette(rate: f32) -> Option<f64> {
+    (rate > 0.0 && rate.is_finite()).then(|| 1.0 / rate as f64)
 }
 
 /// Orbit-trap shape (only meaningful for [`ColorMethod::OrbitTrap`]). Discriminants match the shader.
@@ -3179,7 +3198,7 @@ const RAND_STOPS: usize = 6;
 /// the selected stop always has a numeric position field beside it.
 const EDITOR_MAX_STOPS: usize = 32;
 
-/// Most colours the paste box keeps from one paste (a `.map` body is 256).
+/// Most colors the paste box keeps from one paste (a `.map` body is 256).
 const PASTE_MAX_COLORS: usize = 256;
 
 /// Short UI names for the blend kinds. ⚠The NUMBERS are a file format (GIMP's `.ggr` numbering,
@@ -3195,7 +3214,7 @@ fn blend_label(k: u8) -> String {
     }
 }
 
-/// Short UI names for the colour spaces — the arrows are the direction round the hue wheel.
+/// Short UI names for the color spaces — the arrows are the direction round the hue wheel.
 fn space_label(k: u8) -> &'static str {
     match k {
         1 => "HSV ↺",
@@ -3212,7 +3231,7 @@ fn space_label(k: u8) -> &'static str {
 // selection lands after a delete — and leaves only the pointer plumbing resting on the author's
 // eye. `design/gradient-curves.md` §9.5.
 //
-// ⚠These do **no clamping of their own** beyond the strip's own 0..1: ordering and neighbour
+// ⚠These do **no clamping of their own** beyond the strip's own 0..1: ordering and neighbor
 // clamping belong to `Gradient::set_stop_position`, which already owns them and preserves midpoint
 // fractions while doing it. A second clamp here would be a second answer to the same question.
 
@@ -3343,10 +3362,10 @@ fn wrapped_step(prev: f32, now: f32) -> f32 {
 
 /// Pointer → position on the ring: `0` at twelve o'clock, increasing CLOCKWISE.
 ///
-/// ⭐Clockwise from the top because that is how a colour wheel and a clock both read, and because
+/// ⭐Clockwise from the top because that is how a color wheel and a clock both read, and because
 /// it puts the palette's seam — the `1.0 → 0.0` join that a cycled palette crosses on every
 /// sweep — at the top where it can be seen. Showing that seam is the entire point of the ring
-/// view. The centre itself has no angle and reports `0`.
+/// view. The center itself has no angle and reports `0`.
 fn ring_pos(cx: f32, cy: f32, x: f32, y: f32) -> f32 {
     let (dx, dy) = (x - cx, y - cy);
     if dx == 0.0 && dy == 0.0 {
@@ -3426,7 +3445,7 @@ fn paint_gradient(
     }
 }
 
-/// Persisted segments → the colour crate's gradient.
+/// Persisted segments → the color crate's gradient.
 ///
 /// ⚠The `blend`/`space` numbers are a FILE FORMAT (GIMP's `.ggr` numbering, also written into our
 /// sessions and now into the gradient library), so this conversion goes through `Blend::from_u8` /
@@ -3477,7 +3496,7 @@ fn live_saved_index(
     saved.iter().position(|sg| sg.segment == live)
 }
 
-/// A stop colour's 0–255 bytes — the numbers a user recognises, and the ones the renderer writes.
+/// A stop color's 0–255 bytes — the numbers a user recognizes, and the ones the renderer writes.
 ///
 /// ⚠**Rounded, not truncated.** `(v * 255.0) as u8` turns 0.5 into 127 and makes the hex a user
 /// types differ from the hex the editor shows back, which reads as the field losing their input.
@@ -3496,7 +3515,7 @@ fn hex_of(rgb: [f32; 3]) -> String {
 ///
 /// ⭐**Three-digit shorthand expands by DUPLICATION (`f80` → `ff8800`), not by padding**, which is
 /// the CSS rule and the only one that keeps `#fff` white. Padding with zeros would give `f0 80 00`
-/// — a different colour that still looks plausible, which is the worst kind of wrong.
+/// — a different color that still looks plausible, which is the worst kind of wrong.
 fn parse_hex_rgb(s: &str) -> Option<[f32; 3]> {
     let h = s.trim().trim_start_matches('#');
     if !h.chars().all(|c| c.is_ascii_hexdigit()) {
@@ -3516,12 +3535,12 @@ fn parse_hex_rgb(s: &str) -> Option<[f32; 3]> {
 #[path = "../tests/unit/color_values.rs"]
 mod color_values;
 
-/// A swatch + editable hex field for one colour. Returns the new colour when it changed.
+/// A swatch + editable hex field for one color. Returns the new color when it changed.
 ///
 /// ⭐**Shared by the segment's two endpoints and by the selected stop**, so the three cannot drift
-/// into three different ideas of how a colour is edited.
+/// into three different ideas of how a color is edited.
 /// ⚠The hex field keeps its half-typed text in `Ui` memory while focused, or the next frame would
-/// re-render the current colour's full hex over what the user is in the middle of typing.
+/// re-render the current color's full hex over what the user is in the middle of typing.
 fn color_field(
     ui: &mut egui::Ui,
     id: egui::Id,
@@ -3542,8 +3561,8 @@ fn color_field(
     );
     let popup = id.with("popup");
     if sw.clone().on_hover_text(tip).clicked() {
-        // ⚠The colour as it stands NOW is what Cancel restores — captured on opening, so a
-        // cancelled experiment puts back what was there before it started, not some later state.
+        // ⚠The color as it stands NOW is what Cancel restores — captured on opening, so a
+        // canceled experiment puts back what was there before it started, not some later state.
         ui.data_mut(|d| d.insert_temp(popup.with("was"), rgb));
         ui.memory_mut(|m| m.toggle_popup(popup));
     }
@@ -3607,7 +3626,7 @@ fn color_field(
     out
 }
 
-/// A DISPLAY-referred stop colour as an egui colour.
+/// A DISPLAY-referred stop color as an egui color.
 ///
 /// ⚠**No gamma transform**, for the reason [`gradient_preview_color`] spells out: the renderer
 /// writes these values straight into a non-sRGB framebuffer, so the channel value already IS the
@@ -3619,7 +3638,7 @@ fn stop_color32(rgb: [f32; 3]) -> egui::Color32 {
 
 /// Draw one segment's blend function into `rect` — `0` at the bottom-left, `1` at the top-right.
 ///
-/// ⚠**The REAL function, via `Segment::factor`, never an idealised S.** Two of GIMP's five are
+/// ⚠**The REAL function, via `Segment::factor`, never an idealized S.** Two of GIMP's five are
 /// deliberately not midpoint-symmetric (sphere-increasing reads 0.866 at halfway, pinned by a
 /// test), so a prettified curve would misrepresent them. Sharing the evaluator with the renderer is
 /// also why a preview/render drift here has no code path to occur in.
@@ -3695,7 +3714,7 @@ impl RandomPalette {
         (self.next_u32() >> 8) as f32 / (1u32 << 24) as f32
     }
     /// Generate a *harmonious* gradient: a single base hue with a gentle analogous
-    /// excursion (so colors flow through neighbouring hues, not a clashing rainbow), a
+    /// excursion (so colors flow through neighboring hues, not a clashing rainbow), a
     /// smooth dark→bright→dark brightness arc for contrast, and matching dark endpoints
     /// for seamless cycling. The hue/brightness follow a `sin(πt)` arc so the first and
     /// last stops coincide (no seam) while the middle carries the color and light.
@@ -3788,9 +3807,9 @@ fn mandel_escapes(cx: f64, cy: f64, max: u32) -> Option<u32> {
     None
 }
 
-/// The editor's gradient preview colour at `t∈0..1`.
+/// The editor's gradient preview color at `t∈0..1`.
 ///
-/// ⭐⭐**This is a SWATCH of what will render, so it must not transform the colour.** It used to
+/// ⭐⭐**This is a SWATCH of what will render, so it must not transform the color.** It used to
 /// gamma-encode (`c^(1/2.2)`), a leftover from the belief that stops were linear — which made
 /// every swatch markedly lighter than the pixel it stood for (the display-referred 0.502 previewed
 /// at 186, rendered at 128). The renderer writes stop values straight into a non-sRGB framebuffer,
@@ -4012,14 +4031,14 @@ pub(crate) fn zoom_readout(dual: bool, m_log2: f64, j_log2: f64) -> String {
     }
 }
 
-/// Character slot for each coordinate of the status bar's centre readout ([`center_readout`]): the
+/// Character slot for each coordinate of the status bar's center readout ([`center_readout`]): the
 /// widest [`fmt_coord_deep`] writes for a one-digit integer part — 25 grouped fractional digits,
 /// just before it elides to `head ... tail` (sign, digit, point, 25 digits, 4 group spaces).
 pub(crate) fn center_slot_width() -> usize {
     32
 }
 
-/// The status bar's centre readout — same width contract as [`zoom_readout`]. The digits shown grow
+/// The status bar's center readout — same width contract as [`zoom_readout`]. The digits shown grow
 /// with the depth ([`fmt_coord_deep`]: 15 at Home, 25 near 2^63, then `head ... tail`), and the
 /// field moving by a group wrapped the bar differently at different depths: the canvas went from
 /// 1102 to 1104 px at the 2^24 stop of a stepped Home (1280×800 window, 2026-10-26), the
@@ -4085,7 +4104,7 @@ pub(crate) fn fmt_zoom_log2(log2mag: f64) -> String {
 /// ⛔**The field is TEXT, and past ~1e308 it does not fit a double.** The writer stores it with
 /// [`fmt_zoom_field`], which stays valid at any depth (`1.584047e1008`, `7.456789e37000`), but the
 /// gallery parsed it with `str::parse::<f64>` — which OVERFLOWS TO INFINITY without an error — and
-/// so labelled every render past 1e308 `zoom inf×`. Found on 2026-09-19 composing the published
+/// so labeled every render past 1e308 `zoom inf×`. Found on 2026-09-19 composing the published
 /// gallery screenshot: four of the eight entries in the renders folder said `inf×`, while the
 /// status bar showed the same views correctly. The depth was never lost; only the parse was wrong.
 ///
@@ -4381,9 +4400,9 @@ pub(crate) fn random_boundary_location(seed: u64) -> (f64, f64, f64) {
 /// and a dropped file — so a location the app itself wrote can never be accepted by one and
 /// refused by another.
 ///
-/// The content test is deliberately loose: our own tag OR a centre field, because a location
+/// The content test is deliberately loose: our own tag OR a center field, because a location
 /// hand-edited down to just the coordinates is still a location. What it excludes is arbitrary
-/// text, which `load_view_metadata` would silently accept as "no recognised keys" and apply as a
+/// text, which `load_view_metadata` would silently accept as "no recognized keys" and apply as a
 /// no-op jump, leaving the user staring at an unchanged view with no error.
 pub(crate) fn location_text_verdict(t: &str) -> Result<(), String> {
     let t = t.trim();
@@ -4886,7 +4905,7 @@ pub(crate) fn welcome_should_open(welcome_seen: bool, launched_for_a_task: bool)
 ///
 /// A Julia set is not a different fractal; it is one POINT of the parameter plane, drawn as its
 /// own picture. A new user has no way to know that, and the app's own best explanation of it —
-/// the linked dual view — was buried as a checkbox called "Dual view". Modelling the three states
+/// the linked dual view — was buried as a checkbox called "Dual view". Modeling the three states
 /// as one choice is what lets the picker say so.
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]
 pub(crate) enum ShowMode {
@@ -4902,7 +4921,7 @@ pub(crate) enum ShowMode {
 ///
 /// `dual` wins: the dual path draws both panes regardless of `julia_mode`, so a stale `true`
 /// underneath it must still READ as `Both` or the picker would show a state the renderer is not
-/// in. (`set_show_mode` normalises the flag away, but sessions written by older builds carry it.)
+/// in. (`set_show_mode` normalizes the flag away, but sessions written by older builds carry it.)
 pub(crate) fn show_mode_of(dual: bool, julia_mode: bool) -> ShowMode {
     if dual {
         ShowMode::Both
@@ -4985,7 +5004,7 @@ const HOME_SECONDS_PER_LOGMAG: f64 = 0.45;
 
 /// The natural-log magnification a Home glide starts from, taken in LOG space. `magnification()`
 /// is an `f64` and overflows to ∞ past ~1e308× (2^1024); from `ln(∞)` every frame of the glide
-/// set the scale to 2^(−∞), which `mul_pow2` makes NaN, while the centre stayed finite
+/// set the scale to 2^(−∞), which `mul_pow2` makes NaN, while the center stayed finite
 /// (1 − e^(−∞) = 1). The view guard restored the last view and the glide poisoned it again, every
 /// frame for its whole 9 s, then the view jumped to Home: the user's 2026-10-25 session, Home
 /// clicked at 2^1214 during an auto-zoom dive; reproduced from 2^1663. Never below Home (0), and 0
@@ -5012,13 +5031,13 @@ fn home_glide_seconds(logmag: f64) -> f64 {
 /// the way out ([`home_stops`]) and glides only from [`HOME_SMOOTH_LOG2`]. A glide is at most
 /// [`HOME_MAX_SECONDS`], and from 1e4850× that is ~1,800 octaves a second: every frame is a new
 /// view whose walk has just begun, shown with no pixel finished, and the held picture shrinks to a
-/// speck in its average colour — 9 s of solid panels of colour (the user's recording, 2026-10-26).
+/// speck in its average color — 9 s of solid panels of color (the user's recording, 2026-10-26).
 /// No renderer draws that depth at that rate; a stop is a still view, which renders.
 pub(crate) const HOME_STEP_FROM_LOG2: f64 = 64.0;
 
 /// Where the stops end and the glide takes over (≈4,096×). Measured on PLUTO's RTX 3070 (dev.46,
 /// 2^1663 at 4M auto iterations): a glide from 2^128 showed no live frame and finished no refresh
-/// until ~2^13 — 7 s of the last stop's picture shrinking into its average colour.
+/// until ~2^13 — 7 s of the last stop's picture shrinking into its average color.
 pub(crate) const HOME_SMOOTH_LOG2: f64 = 12.0;
 
 /// The most stops a stepped Home makes.
@@ -5066,7 +5085,7 @@ struct HomeAnim {
     j_start_logmag: f64,
     dual: bool,
     /// The share of the start's log magnification the glide starts from: 1, or the last stop's
-    /// after a stepped Home (the centre still lerps from the start's, so the two phases join).
+    /// after a stepped Home (the center still lerps from the start's, so the two phases join).
     glide_from: f64,
     /// A stepped Home's stops still to make (`None` once the glide has begun).
     steps: Option<HomeSteps>,
@@ -5191,10 +5210,10 @@ impl SnapshotMode {
     }
 }
 
-/// Compose a polar centre entry — `x0, y0` offset plus radius `r` at angle `θ` — into the pair of
+/// Compose a polar center entry — `x0, y0` offset plus radius `r` at angle `θ` — into the pair of
 /// REAL coordinate EXPRESSIONS the Go-to evaluator already understands: `re = x0 + r·cos θ`,
 /// `im = y0 + r·sin θ`, with `θ` converted to radians for the unit. The fields may themselves be
-/// expressions (`r = 1/2`), so each is parenthesised; empty fields read as 0. The maths lives in the
+/// expressions (`r = 1/2`), so each is parenthesised; empty fields read as 0. The math lives in the
 /// one evaluator (no duplicate trig here) — this only builds the string it evaluates, which is what
 /// keeps the grammar small and total while the UI stays discoverable.
 pub(crate) fn compose_polar(x0: &str, y0: &str, r: &str, theta: &str, unit: AngleUnit) -> (String, String) {
@@ -5268,16 +5287,16 @@ fn goto_error_message(
     lines.join("\n")
 }
 
-/// A view centre entered as an EXPRESSION rather than a fixed decimal — kept so the exact point can
+/// A view center entered as an EXPRESSION rather than a fixed decimal — kept so the exact point can
 /// be RE-DERIVED to whatever precision a deeper zoom demands. A saved decimal is capped at the digits
 /// it was written with; `-0.5 + 0.25*cos(pi/4)` is not, so it stays exact at any depth. Dropped the
-/// moment the centre is moved off the expression's point (a pan, drag, or feature jump), detected by
-/// comparing the live centre to the value this last produced — no need to instrument every move site.
+/// moment the center is moved off the expression's point (a pan, drag, or feature jump), detected by
+/// comparing the live center to the value this last produced — no need to instrument every move site.
 pub(crate) struct CenterExpr {
     re: String,
     im: String,
-    /// The last values this expression produced — equal to the viewport centre until the user moves
-    /// it (a pure zoom leaves the centre untouched; a pan/jump replaces it).
+    /// The last values this expression produced — equal to the viewport center until the user moves
+    /// it (a pure zoom leaves the center untouched; a pan/jump replaces it).
     res_re: fractadyne_core::BigFloat,
     res_im: fractadyne_core::BigFloat,
     /// The working precision `res_*` were derived at; re-derived when the view comes to need more.
@@ -5285,9 +5304,9 @@ pub(crate) struct CenterExpr {
 }
 
 impl CenterExpr {
-    /// Keep the entered expression strings alongside the centre they resolved to — but only if at
+    /// Keep the entered expression strings alongside the center they resolved to — but only if at
     /// least one field is a genuine expression, since a pair of plain decimals cannot gain precision
-    /// and is not worth preserving. `res_*` are the LIVE viewport centre (not a re-parse), so the
+    /// and is not worth preserving. `res_*` are the LIVE viewport center (not a re-parse), so the
     /// on-point check ([`FractadyneApp::refresh_center_expr`]) matches immediately.
     pub(crate) fn capture(
         re: &str,
@@ -5304,7 +5323,7 @@ impl CenterExpr {
     }
 
     /// Reconstruct from a loaded `.fdn`: the expression strings plus the anchor they resolved to at
-    /// the view's precision. Any saved offset has already been folded into the live centre by the
+    /// the view's precision. Any saved offset has already been folded into the live center by the
     /// caller, so `res_*` are the ANCHOR — an on-point check then reads true only when the file was
     /// saved right on the point (zero offset), which is exactly when a deeper zoom should re-derive.
     pub(crate) fn loaded(
@@ -5371,8 +5390,8 @@ enum ReticleMark {
     Outline,
 }
 
-/// Classify one reticle pixel, at `(dx, dy)` from the centre in physical pixels, against a reticle
-/// of radius `r`. Four arms that stop short of the centre, plus a ring marking the exact point.
+/// Classify one reticle pixel, at `(dx, dy)` from the center in physical pixels, against a reticle
+/// of radius `r`. Four arms that stop short of the center, plus a ring marking the exact point.
 ///
 /// ⭐**The arms stop at `GAP` so the pixel under test is never painted over.** The whole purpose of
 /// the reticle is to show what is at that point; a crosshair that covers it defeats the feature.
@@ -5407,7 +5426,7 @@ mod reticle_mark_tests;
 /// What the draw phase saw under the cursor, for the update phase to render a reticle from.
 #[derive(Clone)]
 struct ReticleAt {
-    /// Full-precision complex point under the cursor. An f64 centre is useless past ~1e240×, and
+    /// Full-precision complex point under the cursor. An f64 center is useless past ~1e240×, and
     /// the whole point of this feature is aiming at depth.
     cx: fractadyne_core::BigFloat,
     cy: fractadyne_core::BigFloat,
@@ -5474,7 +5493,7 @@ struct GotoDialog {
     y: String,
     zoom: String,
     msg: Option<String>,
-    /// Polar entry mode: the centre is composed from `x0, y0 + r∠θ` instead of typed as x/y. The
+    /// Polar entry mode: the center is composed from `x0, y0 + r∠θ` instead of typed as x/y. The
     /// `x`/`y` fields above still receive the resolved expression on Go, so Copy / apply are unchanged.
     polar: bool,
     polar_x0: String,
@@ -5637,7 +5656,7 @@ struct RefCache {
     /// bignum coefficient iteration is as costly as the reference orbit itself).
     sa: fractadyne_core::SeriesSkip,
     /// The worst-case log₂ |δc| `sa` was validated for at its build (`render::sa_log2_max_dc`:
-    /// the reference's offset from the build view's centre plus its half-diagonal); `NEG_INFINITY`
+    /// the reference's offset from the build view's center plus its half-diagonal); `NEG_INFINITY`
     /// without a series. A view that asks more of it is refused it (`render::series_fits`).
     sa_log2_dc: f64,
     sa_key: (u64, u32),
@@ -5799,7 +5818,7 @@ struct SavedGradient {
     #[serde(default)]
     segment: Vec<fractadyne_state::PaletteSegment>,
     /// The tags the user gave it — words from `fractadyne_color::tags::TAGS` or their own — on top
-    /// of the ones its colours earn (`tags::computed_tags`, measured, never stored). Absent in a
+    /// of the ones its colors earn (`tags::computed_tags`, measured, never stored). Absent in a
     /// library saved before tags, and in this build's file when there are none, so an older build
     /// reads the file as it always did.
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
@@ -5817,7 +5836,7 @@ struct GradientFile {
 ///
 /// ⚠It has to carry the palette MODE too (`use_custom`, `use_duotone`, `use_binary`): opening the
 /// editor on a preset, the duotone ramp or Binary copies it in as a custom gradient, so restoring
-/// only the gradient would leave the view on a custom palette the user had cancelled out of.
+/// only the gradient would leave the view on a custom palette the user had canceled out of.
 #[derive(Clone)]
 struct GradientBaseline {
     segments: Vec<fractadyne_state::PaletteSegment>,
@@ -5851,7 +5870,7 @@ struct NavHistory {
 }
 
 impl NavHistory {
-    /// Deepest history. Snapshots hold a full-precision centre, so an unbounded stack at extreme
+    /// Deepest history. Snapshots hold a full-precision center, so an unbounded stack at extreme
     /// depth is a slow memory leak; 256 locations is far more than anyone backs out through.
     const LIMIT: usize = 256;
 
@@ -6140,6 +6159,9 @@ struct ColoringConfig {
     palette_idx: usize,
     /// Color cycle density slider (0..1; mapped to a shader multiplier).
     cycle: f32,
+    /// "Divide iterations" (`1..=ITER_DIV_MAX`, 1 = off): the Smooth method's iteration count is
+    /// divided by this before coloring. See [`smooth_color_rate`].
+    iter_div: u32,
     /// Palette offset slider (0..1).
     offset: f32,
     /// Custom gradient (editor): stops as `[pos, r, g, b]` (DISPLAY-space RGB). When `use_custom_palette`
@@ -6160,10 +6182,10 @@ struct ColoringConfig {
     use_custom_palette: bool,
     /// Palette editor window open (transient UI).
     palette_editor_open: bool,
-    /// ⭐⭐**P3′: the selection the whole editor is organised around.** Before it, every parameter
+    /// ⭐⭐**P3′: the selection the whole editor is organized around.** Before it, every parameter
     /// of every segment was resident at once — 6 segments × 3 widgets — so nothing could be drawn
     /// large enough to read, which is what made the editor hard to use. The stop and the segment
-    /// are selected separately because they are separately editable (a stop carries a colour and a
+    /// are selected separately because they are separately editable (a stop carries a color and a
     /// position; a segment carries a curve, a space and a midpoint), and clicking either one moves
     /// the other to match via `segment_for_stop`.
     /// ⚠Transient, and clamped against the live stop count on every frame — an import can shorten
@@ -6176,7 +6198,7 @@ struct ColoringConfig {
     /// ⚠⚠**Latched from the PRESS ORIGIN, not from the pointer position at `drag_started`.** See
     /// `gradient_strip::DRAG_THRESHOLD_PX`: that callback does not fire until the pointer has
     /// already moved — by an unbounded amount, since a flick covers tens of pixels in one frame —
-    /// so hit-testing where it currently is grabs the neighbouring stop, or, on a gradient with
+    /// so hit-testing where it currently is grabs the neighboring stop, or, on a gradient with
     /// few widely-spaced stops, nothing at all, which cancels the drag silently. That was the
     /// reported "drag points sometimes hang up where they stop moving".
     drag_stop: Option<usize>,
@@ -6202,19 +6224,19 @@ struct ColoringConfig {
     /// An eyedropper pick in progress: sample the screen under the OS cursor until the user
     /// clicks or presses Escape. `None` when not picking.
     ///
-    /// ⭐The colours people want in a palette are usually somewhere ELSE — a photo, another
+    /// ⭐The colors people want in a palette are usually somewhere ELSE — a photo, another
     /// fractal program, a palette on a web page — so this reaches outside our own window.
     eyedrop: Option<crate::eyedropper::Pick>,
-    /// Which colour field asked for the pick, if not the selected stop. The sampled colour is
+    /// Which color field asked for the pick, if not the selected stop. The sampled color is
     /// handed back through `Ui` memory at `<id>.with("picked")`.
     eyedrop_into: Option<egui::Id>,
-    /// Keep the gradient SEAMLESS: the colour at 1.0 held equal to the colour at 0.0.
+    /// Keep the gradient SEAMLESS: the color at 1.0 held equal to the color at 0.0.
     ///
     /// ⭐The renderer takes `fract()` of the palette coordinate, so 1 and 0 are adjacent pixels on
     /// screen — a mismatch there is a hard edge on every sweep of a cycled palette. Held as an
     /// editing MODE rather than applied once, because any later edit to the first stop would
     /// otherwise re-open the seam silently.
-    /// ⚠Transient by design: the fix lives in the COLOURS, which persist. A stored flag would
+    /// ⚠Transient by design: the fix lives in the COLORS, which persist. A stored flag would
     /// claim authority over a gradient that may since have been edited elsewhere.
     seamless: bool,
     /// Show the gradient as a RING rather than a bar.
@@ -6268,7 +6290,7 @@ struct ColoringConfig {
     normalize: bool,
     /// LIVE auto-normalization: when a settled deep frame's escaped smooth-iter RANGE (read back
     /// from the GPU escape-range counters) is huge, remap the palette so the range spans
-    /// `0.5 + cycle·6` sweeps — the live analogue of `--normalize`, killing the "noise pools"
+    /// `0.5 + cycle·6` sweeps — the live analog of `--normalize`, killing the "noise pools"
     /// a fixed cycle makes of dense 1e5-scale escape fields. Only active for the Smooth method
     /// and only past a range threshold, so ordinary views keep classic coloring. Persisted.
     normalize_live: bool,
@@ -6473,7 +6495,7 @@ struct FractadyneApp {
     click_zoom: bool,
     /// Click-to-zoom: settle onto the nearest minibrot nucleus after the jump. The point of the
     /// tool is usually to land ON a feature, and a hand cannot aim well enough for that — a miss
-    /// of d pixels leaves the target d × factor pixels off centre once the scale shrinks, so at
+    /// of d pixels leaves the target d × factor pixels off center once the scale shrinks, so at
     /// 50× even a perfect-looking click is a third of a panel out. Solving for the nucleus removes
     /// the aim from the problem entirely.
     click_zoom_snap: bool,
@@ -6623,7 +6645,7 @@ struct FractadyneApp {
     /// Heal-on-jump: a bookmark was jumped to that has no usable thumbnail (empty id, or the
     /// 1x1 chrome-pixel captures the dual-view rect bug wrote before 0.2.41-beta.3); once the
     /// view has SETTLED and is still exactly at the bookmark's coordinates, recapture it.
-    /// Holds (bookmark index, target centre x/y, target log2 magnification); any interaction
+    /// Holds (bookmark index, target center x/y, target log2 magnification); any interaction
     /// moves the viewport off the exact target and disarms it.
     heal_thumb: Option<(usize, fractadyne_core::BigFloat, fractadyne_core::BigFloat, f64)>,
     /// A bookmark-thumbnail SCREENSHOT is in flight (the reply lands next frame as
@@ -6670,11 +6692,11 @@ struct FractadyneApp {
     /// The last solved minibrot period and the exact view ([`view_key`]) it was solved at, shown
     /// ambiently in the status bar (§3.1) — not just in the 2-second finder toast. Kept as a
     /// (period, view-key) pair rather than cleared on navigation: the status bar shows it only
-    /// while the key still matches what is on screen, so it survives settling (same centre/zoom)
+    /// while the key still matches what is on screen, so it survives settling (same center/zoom)
     /// and disappears the instant the view moves, with no coupling to the reference lifecycle.
     feature_period: Option<(u32, String)>,
-    /// The centre entered as an expression, kept so it can be re-derived at a deeper zoom's precision
-    /// (see [`CenterExpr`]). `None` once the centre is a fixed value the user typed or navigated to.
+    /// The center entered as an expression, kept so it can be re-derived at a deeper zoom's precision
+    /// (see [`CenterExpr`]). `None` once the center is a fixed value the user typed or navigated to.
     center_expr: Option<CenterExpr>,
     /// `max_texture_dimension_2d` this device was created with — the ceiling a window's surface
     /// must stay under. 0 means "unknown".
@@ -7396,7 +7418,7 @@ impl FractadyneApp {
                 diag::log_line(
                     "start",
                     &format!(
-                        "session zoom is UNUSABLE (mantissa={}, exp={}) — opening at the default view, keeping the saved centre",
+                        "session zoom is UNUSABLE (mantissa={}, exp={}) — opening at the default view, keeping the saved center",
                         s.units_per_pixel, s.units_per_pixel_e
                     ),
                 );
@@ -7787,6 +7809,7 @@ impl FractadyneApp {
                     .or_else(|| fractadyne_color::preset_by_legacy_number(s.palette_idx))
                     .unwrap_or(0),
                 cycle: s.cycle,
+                iter_div: s.iter_div.clamp(1, fractadyne_state::ITER_DIV_MAX),
                 offset: s.offset,
                 custom_palette: s.custom_palette.clone(),
                 custom_palette_flat: s.custom_palette_flat,
@@ -8107,7 +8130,7 @@ impl FractadyneApp {
         // ⭐⭐**P1 MIGRATION.** A session written before segments became the source of truth carries
         // a stop list and no segments; build them now so the editor and the renderer both read one
         // representation. Lossless by construction — `from_stops` produces exactly the
-        // `Linear`/`Rgb`/centred segments the old stop walk rendered — and pinned by
+        // `Linear`/`Rgb`/centered segments the old stop walk rendered — and pinned by
         // `a_legacy_stop_session_migrates_without_moving` rather than left as an argument.
         // ⚠Only when segments are ABSENT: a session that already has them (a `.ggr` import, or one
         // written after P1) must not have them overwritten from the derived stop list, which cannot
@@ -8196,7 +8219,7 @@ impl FractadyneApp {
         // to +inf, which is the blank-frame class fixed in beta.125. A value we cannot read is
         // now FATAL: the alternative is a render that looks perfectly fine and is of somewhere
         // else entirely.
-        // The zoom is read BEFORE the centre: the centre is parsed at the view's precision (see
+        // The zoom is read BEFORE the center: the center is parsed at the view's precision (see
         // `arg_center`).
         let log2mag: Option<f64> = if let Some(l) = val("--zoom-log2").map(|s| arg_parse::<f64>("--zoom-log2", s, "a number")) {
             Some(l)
@@ -8386,12 +8409,12 @@ impl FractadyneApp {
         if args.iter().any(|a| a == "--de") {
             self.effects.de = true;
         }
-        // `from_key` ends in `unwrap_or_default()`, so an unknown key silently colours Smooth.
+        // `from_key` ends in `unwrap_or_default()`, so an unknown key silently colors Smooth.
         // Round-trip the key to tell "you asked for smooth" from "we could not read that".
         if let Some(m) = val("--method") {
             let picked = ColorMethod::from_key(m);
             if picked.key() != m.as_str() {
-                eprintln!("fractadyne: --method: unknown colouring \"{m}\".");
+                eprintln!("fractadyne: --method: unknown coloring \"{m}\".");
                 crate::exit(2)
             }
             self.coloring.color_method = picked;
@@ -8414,6 +8437,30 @@ impl FractadyneApp {
                 crate::exit(2)
             }
             self.coloring.trap_type = picked;
+        }
+        // `--iter-div N` ("Divide iterations"): fatal when unreadable or out of range, as every
+        // option that steers a render is. After `--method`, so it can say when the method in force
+        // ignores it — a supplied option that changes no pixel says so (`--log-palette` likewise).
+        if let Some(d) = val("--iter-div").map(|s| arg_parse::<u32>("--iter-div", s, "a whole number")) {
+            if !(1..=fractadyne_state::ITER_DIV_MAX).contains(&d) {
+                eprintln!(
+                    "fractadyne: --iter-div: {d} is out of range; use 1 to {}.",
+                    fractadyne_state::ITER_DIV_MAX
+                );
+                crate::exit(2)
+            }
+            self.coloring.iter_div = d;
+            if d > 1 && self.coloring.color_method != ColorMethod::Smooth {
+                eprintln!(
+                    "fractadyne: --iter-div has no effect with --method {}: only the smooth method colors the iteration count.",
+                    self.coloring.color_method.key()
+                );
+            } else if d > 1 && args.iter().any(|a| a == "--normalize") {
+                eprintln!(
+                    "fractadyne: --iter-div has no effect with --normalize, which fits the palette to the frame's \
+                     range however the count is divided."
+                );
+            }
         }
         // Output format from the file extension.
         if let Some(out) = &self.render_cli.out {
@@ -8484,7 +8531,7 @@ impl FractadyneApp {
                     "view",
                     &format!(
                         concat!(
-                            "⚠UNUSABLE VIEW after {stage}: pane {pane} scale m={} e={}, centre finite {}/{}, {:.0}x{:.0} px",
+                            "⚠UNUSABLE VIEW after {stage}: pane {pane} scale m={} e={}, center finite {}/{}, {:.0}x{:.0} px",
                             " — frame {}, dt {dt:.3} s, window {:.0}x{:.0} pt focused={focused} minimized={minimized:?};",
                             " zoom_vel {:.4}, autopilot active={} stepping={} speed={:.4} goal={:?} aim={:?} lead={:?},",
                             " playback={}, tour={}; {}{}",
@@ -8589,6 +8636,7 @@ impl FractadyneApp {
             .id
             .to_string(),
             cycle: self.coloring.cycle,
+            iter_div: self.coloring.iter_div,
             offset: self.coloring.offset,
             normalize_live: self.coloring.normalize_live,
             normalize_fit: self.coloring.normalize_fit,
@@ -8782,7 +8830,7 @@ impl FractadyneApp {
         if name.is_empty() || self.coloring.custom_segments.is_empty() {
             return;
         }
-        // Saving over a gradient keeps the tags the user gave it: the colours changed, not what
+        // Saving over a gradient keeps the tags the user gave it: the colors changed, not what
         // they chose to call it.
         let tags = self.saved_gradients.iter().find(|g| g.name == name).map(|g| g.tags.clone()).unwrap_or_default();
         let entry = SavedGradient { name: name.to_string(), segment: self.coloring.custom_segments.clone(), tags };
@@ -8895,7 +8943,7 @@ impl FractadyneApp {
         }
     }
 
-    /// Path to the bookmarks file in the config dir (honours `FRACTADYNE_CONFIG_DIR`).
+    /// Path to the bookmarks file in the config dir (honors `FRACTADYNE_CONFIG_DIR`).
     fn bookmarks_path() -> Option<std::path::PathBuf> {
         fractadyne_state::config_dir().map(|d| d.join("bookmarks.toml"))
     }
@@ -8954,7 +9002,7 @@ impl FractadyneApp {
         self.save_bookmarks();
     }
 
-    /// Directory holding bookmark thumbnail PNGs (honours `FRACTADYNE_CONFIG_DIR`).
+    /// Directory holding bookmark thumbnail PNGs (honors `FRACTADYNE_CONFIG_DIR`).
     fn bookmark_thumbs_dir() -> Option<std::path::PathBuf> {
         fractadyne_state::config_dir().map(|d| d.join("bookmark_thumbs"))
     }
@@ -9239,7 +9287,7 @@ impl FractadyneApp {
     }
 
     /// The single view's click, as the user makes it: the jump (`click_zoom_at`), then — with
-    /// "Snap to nearest center" on — the nucleus solve that settles the centre onto the nearest
+    /// "Snap to nearest center" on — the nucleus solve that settles the center onto the nearest
     /// minibrot (`start_snap_solve`; it declines a Julia view or a family without the solvers).
     ///
     /// ⛔The single view jumped and never snapped. The snap was added to the dual-view panels' click
@@ -9251,7 +9299,7 @@ impl FractadyneApp {
         let aim = self.viewport.pixel_to_complex(px, py);
         self.click_zoom_at(px, py, out, ctx.input(|i| i.time));
         // The line the dual-view panels write for every click (`nav_and_draw`): how far the clicked
-        // point landed from the centre, which separates a mis-landing from aim error × factor.
+        // point landed from the center, which separates a mis-landing from aim error × factor.
         let vp = &self.viewport;
         let dx = fractadyne_core::sub_f64(&vp.center_x, &aim.0, vp.precision);
         let dy = fractadyne_core::sub_f64(&vp.center_y, &aim.1, vp.precision);
@@ -9262,7 +9310,7 @@ impl FractadyneApp {
             "view",
             &format!(
                 "click-zoom view 0: clicked ({px:.1},{py:.1}) of {:.0}x{:.0} px, factor {}{f:.0}× — the \
-                 clicked point landed {err_px:.2} px from centre (anything near 0 means the click was \
+                 clicked point landed {err_px:.2} px from center (anything near 0 means the click was \
                  exact and what moved is your aim, magnified {f:.0}×)",
                 vp.width_px,
                 vp.height_px,
@@ -9308,19 +9356,19 @@ impl FractadyneApp {
         }
     }
 
-    /// Keep an expression-defined centre exact as the view zooms deeper.
+    /// Keep an expression-defined center exact as the view zooms deeper.
     ///
-    /// A centre entered as an expression ([`CenterExpr`]) is resolved to a `BigFloat` at the depth it
+    /// A center entered as an expression ([`CenterExpr`]) is resolved to a `BigFloat` at the depth it
     /// was entered. A pure zoom-in never refreshes that value (it only pads it with zeros), so past
-    /// the entered precision the centre would silently drift. While the live centre still sits
+    /// the entered precision the center would silently drift. While the live center still sits
     /// EXACTLY on the expression's point — i.e. only zoom, no pan, has happened since — re-derive the
     /// expression at the precision the current magnification needs, so an exact landmark stays exact
-    /// all the way down. Once the centre is panned off the point, this is a two-comparison no-op and
-    /// the plain centre carries the exploration (the offset is materialised only when saving).
+    /// all the way down. Once the center is panned off the point, this is a two-comparison no-op and
+    /// the plain center carries the exploration (the offset is materialized only when saving).
     fn refresh_center_expr(&mut self) {
         let Some(ce) = self.center_expr.as_ref() else { return };
-        // On-point iff the live centre equals what the expression last produced (an exact-value
-        // check via subtraction: a centre-preserving zoom re-sizes the value but does not change it).
+        // On-point iff the live center equals what the expression last produced (an exact-value
+        // check via subtraction: a center-preserving zoom re-sizes the value but does not change it).
         let p = self.viewport.precision;
         let on_point = fractadyne_core::bf_sub(&self.viewport.center_x, &ce.res_re, p).is_zero()
             && fractadyne_core::bf_sub(&self.viewport.center_y, &ce.res_im, p).is_zero();
@@ -9366,8 +9414,8 @@ impl FractadyneApp {
         self.viewport.center_y = s.cy.clone();
         self.viewport.units_per_pixel = s.upp;
         self.viewport.precision = s.prec;
-        // Undo/redo restores the centre as a fixed value; drop any live expression anchor (the
-        // history records the decimal centre, not the expression it may have come from).
+        // Undo/redo restores the center as a fixed value; drop any live expression anchor (the
+        // history records the decimal center, not the expression it may have come from).
         self.center_expr = None;
         self.pointer.zoom_vel = 0.0;
         self.invalidate_refs();
@@ -9392,7 +9440,7 @@ impl FractadyneApp {
     /// octaves — and every deliberate jump bumps `nav_epoch`. What is left is what we are looking
     /// for, and this prints its own evidence: how far, in what, and what else was happening.
     ///
-    /// Depth limit, stated rather than hidden: the centre delta comes back through `sub_f64`, so
+    /// Depth limit, stated rather than hidden: the center delta comes back through `sub_f64`, so
     /// past ~1e300× it underflows to zero and this reports nothing. That is the safe direction —
     /// silence rather than a false alarm — and the magnification half keeps working at any depth.
     fn track_view_jump(&mut self, view: usize, ctx: &egui::Context) {
@@ -9439,7 +9487,7 @@ impl FractadyneApp {
         crate::diag::log_line(
             "view",
             &format!(
-                "⚠JUMP view {view}: 2^{pl2:.4} → 2^{l2:.4} ({d_oct:.4} octaves) and the centre \
+                "⚠JUMP view {view}: 2^{pl2:.4} → 2^{l2:.4} ({d_oct:.4} octaves) and the center \
                  moved {px:.0} px in one frame — reproject={} tile={} chunk={} building={} \
                  zoom_vel={:.4} interacting_t={:.3} ref_len={}",
                 self.perf.prev_real.get(view.min(1)).map(|r| !r).unwrap_or(false),
@@ -9454,9 +9502,9 @@ impl FractadyneApp {
     }
 
     /// A stable identity for the Mandelbrot view on screen — fractal family, Julia mode, zoom, and
-    /// the full-precision centre. Used by the ambient period readout to tell whether a solved
+    /// the full-precision center. Used by the ambient period readout to tell whether a solved
     /// minibrot period still describes what is displayed: it changes only when the user moves the
-    /// view (settling re-renders the same centre and zoom, so the readout doesn't flicker), and it
+    /// view (settling re-renders the same center and zoom, so the readout doesn't flicker), and it
     /// carries the family so a period never bleeds across a fractal or Julia switch.
     fn view_key(&self) -> String {
         format!(
@@ -9552,7 +9600,7 @@ impl FractadyneApp {
         self.pointer.zoom_vel = 0.0;
     }
 
-    /// Put both views at the share `f` of their start depth on the Home path (the centre lerps
+    /// Put both views at the share `f` of their start depth on the Home path (the center lerps
     /// toward Home as the glide's does).
     fn home_place(&mut self, anim: &HomeAnim, f: f64) {
         self.viewport.home_lerp(self.fractal.default_center(), &anim.m_start_center, anim.m_start_logmag * f);
@@ -9716,7 +9764,7 @@ impl FractadyneApp {
     /// Goes through `toggle_dual` rather than assigning `dual`, because that is where the Julia
     /// panel's framing and the reference invalidation live — two copies of "what entering dual
     /// means" is exactly how the old toolbar/menu pair drifted apart. `julia_mode` is also
-    /// NORMALISED here (cleared when entering dual), so the flag a session saves always matches
+    /// NORMALIZED here (cleared when entering dual), so the flag a session saves always matches
     /// the picture on screen; it used to keep a stale `true` underneath a dual view.
     fn set_show_mode(&mut self, m: ShowMode) {
         if self.show_mode() == m {
@@ -9771,7 +9819,7 @@ impl FractadyneApp {
     }
 
     /// Jump to a Mandelbrot point given as coordinate EXPRESSIONS, PRESERVING the expression as the
-    /// centre's anchor so a deeper zoom re-derives it exactly ([`CenterExpr`]) — the opposite of
+    /// center's anchor so a deeper zoom re-derives it exactly ([`CenterExpr`]) — the opposite of
     /// [`goto_location`], whose entries are fixed decimals. Used by the [`EXPRESSION_POI`] menu: the
     /// cardioid bulb roots are transcendental, so a decimal would drift off the point at depth.
     fn goto_expression(&mut self, re: &str, im: &str, mag: f64, name: &str, ctx: &egui::Context) {
@@ -9786,7 +9834,7 @@ impl FractadyneApp {
         self.julia_mode = false;
         self.viewport.set_center_mag(x, y, mag.max(1.0));
         self.viewport.precision = prec;
-        // Capture against the live centre (post-set) so it reads as on-point immediately, and the
+        // Capture against the live center (post-set) so it reads as on-point immediately, and the
         // next zoom re-derives the expression at the deeper precision.
         self.center_expr = CenterExpr::capture(
             re,
@@ -9822,11 +9870,11 @@ impl FractadyneApp {
         self.set_toast(tr!(app_toast_random_location, zoom = fmt_zoom(mag)), ctx);
     }
 
-    /// Open the go-to-location dialog, pre-filled with the current view. When the centre is still
+    /// Open the go-to-location dialog, pre-filled with the current view. When the center is still
     /// sitting on a coordinate expression (entered as one and not yet panned off), show the
     /// EXPRESSION rather than its resolved decimal — so the user sees the exact `1/3` or
     /// `-0.5 + 0.25*cos(pi/4)` they typed, and Go re-preserves it. Falls back to the decimal once
-    /// the centre has been moved off the point (the expression alone would then be the wrong place).
+    /// the center has been moved off the point (the expression alone would then be the wrong place).
     fn open_goto(&mut self) {
         let on_expr = self.center_expr.as_ref().filter(|ce| {
             let p = self.viewport.precision;
@@ -9881,8 +9929,8 @@ impl FractadyneApp {
             (Ok(cx), Ok(cy), Some(l)) => {
                 self.viewport.set_center_log2mag(cx, cy, l);
                 // Preserve a re-derivable coordinate expression so a deeper zoom can recompute the
-                // centre at the precision it then needs — a fixed decimal is capped at its digits.
-                // Captured against the LIVE centre (post-set), so it reads as on-point immediately.
+                // center at the precision it then needs — a fixed decimal is capped at its digits.
+                // Captured against the LIVE center (post-set), so it reads as on-point immediately.
                 self.center_expr = if separate {
                     CenterExpr::capture(
                         &self.goto.x,
@@ -9938,9 +9986,9 @@ impl FractadyneApp {
         // otherwise pins the Julia parameter, so while this tool is on, pinning moves to
         // Ctrl+click; `draw_dual` owns that half of the rule and the two must agree.
         // ⛔**DEFERRED, because `recenter_and_zoom` reads the viewport's OWN width and height** to
-        // work out where the centre is, and this runs before `vp.set_size` below. Applying the
-        // click here recentres against whatever size the viewport was left at last frame, and the
-        // clicked point lands off-centre by half the difference — which is most of a panel when
+        // work out where the center is, and this runs before `vp.set_size` below. Applying the
+        // click here recenters against whatever size the viewport was left at last frame, and the
+        // clicked point lands off-center by half the difference — which is most of a panel when
         // the canvas has just changed shape (a dual-split drag, a side panel expanding, coming
         // back from single view). That is the 2026-09-17 report, "clicking at the center of spiral
         // points and the center shifts more than I would expect from my imprecision". The box-zoom
@@ -10065,9 +10113,9 @@ impl FractadyneApp {
         if let Some((px, py, out)) = pending_click_zoom.take() {
             let f = self.render_cfg.click_zoom_factor.max(1.01) as f64;
             // What the user pointed at, read BEFORE the view moves. The line below compares it to
-            // where the centre ended up, which is the only way to tell a mis-landing from the
-            // thing it is far more often: aim error multiplied by the zoom factor. Recentring puts
-            // the clicked pixel exactly at the centre, so a miss of d pixels becomes d × factor
+            // where the center ended up, which is the only way to tell a mis-landing from the
+            // thing it is far more often: aim error multiplied by the zoom factor. Recentering puts
+            // the clicked pixel exactly at the center, so a miss of d pixels becomes d × factor
             // pixels once the scale shrinks — at 50× a 8-pixel miss lands the target 400 px off,
             // a third of a panel, from an aim error the eye cannot even see beforehand. Always on:
             // a click is a rare event, so there is nothing to rate-limit.
@@ -10084,7 +10132,7 @@ impl FractadyneApp {
                 "view",
                 &format!(
                     "click-zoom view {}: clicked ({px:.1},{py:.1}) of {w:.0}x{h:.0} px, \
-                     factor {}{f:.0}× — the clicked point landed {err_px:.2} px from centre \
+                     factor {}{f:.0}× — the clicked point landed {err_px:.2} px from center \
                      (anything near 0 means the click was exact and what moved is your aim, \
                      magnified {f:.0}×)",
                     is_julia as usize,
@@ -10256,8 +10304,8 @@ impl FractadyneApp {
             ])
         } else if resized {
             // Window/panel resize: hold the last frame rather than stretching it to the new aspect
-            // ratio. The color pass fit-centres the frozen frame at native scale (center stays
-            // centred) and fills any newly revealed border with the average color, until the size
+            // ratio. The color pass fit-centers the frozen frame at native scale (center stays
+            // centered) and fills any newly revealed border with the average color, until the size
             // settles and it re-iterates. `pan_px` stays at whatever it was (uv offset 0 here).
             self.schedule_repaint(ctx);
             Some([0.0, 0.0])
@@ -10320,7 +10368,7 @@ impl FractadyneApp {
 
 impl FractadyneApp {
 
-    /// `M` / Navigate ▸ nearest minibrot: solve for the nucleus near the view centre, then jump to
+    /// `M` / Navigate ▸ nearest minibrot: solve for the nucleus near the view center, then jump to
     /// it at its own scale. Shares [`poll_feature_solve`]'s apply half with the Go-to dialog.
     ///
     /// ⭐**Off the UI thread, and it always says something.** Both halves of that sentence are
@@ -10362,7 +10410,7 @@ impl FractadyneApp {
             rx,
             started: Instant::now(),
             // No depth was asked for: the destination is the minibrot's OWN scale, which only the
-            // reply knows (`newton_raphson_target` sizes the atom once its centre is in hand).
+            // reply knows (`newton_raphson_target` sizes the atom once its center is in hand).
             zoom_to: None,
             depth_capped: None,
             formula,
@@ -10493,8 +10541,8 @@ impl FractadyneApp {
                     self.viewport.units_per_pixel.log2() + self.viewport.width_px.log2();
                 // ⭐The solve now works in LOG magnification, so the depth asked for is the depth
                 // solved at — the old `f64` magnification stopped at 2^1020 ≈ 1e307 and returned a
-                // centre good to ~307 digits for a view needing tens of thousands, which rendered
-                // as a single flat colour. What remains is a sanity bound, not an arithmetic one:
+                // center good to ~307 digits for a view needing tens of thousands, which rendered
+                // as a single flat color. What remains is a sanity bound, not an arithmetic one:
                 // precision grows with the ask, and an accidental 1e1000000× would spend hours in
                 // bignum for a view nothing can render.
                 let solve_l2 = match target_l2 {
@@ -10629,12 +10677,12 @@ impl FractadyneApp {
                 }
                 // ⭐**The crosshair is stamped INTO the image, keyed to the pixel it covers.** It
                 // used to be four thin accent strokes painted over the top, which is invisible
-                // whenever the fractal happens to be the same colour as the accent — reported at
+                // whenever the fractal happens to be the same color as the accent — reported at
                 // the 2026-09-17 pass as "add cross hairs" on a reticle that already had them.
-                // A mark that must read on ARBITRARY content cannot carry a fixed colour, and a
+                // A mark that must read on ARBITRARY content cannot carry a fixed color, and a
                 // drop shadow only moves the problem to dark content. So each mark pixel picks
                 // black or white from what is UNDER it, and the mark's outline takes the other —
-                // maximum contrast everywhere, including the mid-grey where a true photographic
+                // maximum contrast everywhere, including the mid-gray where a true photographic
                 // negative washes out (128 inverts to 127).
                 if mark != ReticleMark::None {
                     let luma = 0.2126 * rgb[0] as f32 + 0.7152 * rgb[1] as f32 + 0.0722 * rgb[2] as f32;
@@ -10654,8 +10702,8 @@ impl FractadyneApp {
     }
 
     /// A stable identity for the Mandelbrot view, cheap enough to take on every click: magnification
-    /// plus the f64 centre. Only used to notice that the user has moved since a snap solve started,
-    /// where an f64 centre is plenty — a move small enough for f64 to miss is a move the snap would
+    /// plus the f64 center. Only used to notice that the user has moved since a snap solve started,
+    /// where an f64 center is plenty — a move small enough for f64 to miss is a move the snap would
     /// have made anyway.
     fn snap_view_sig(&self) -> u64 {
         use std::hash::{Hash, Hasher};
@@ -10689,7 +10737,7 @@ impl FractadyneApp {
     /// Collect a finished snap solve and settle the view onto the nucleus. Called once per frame.
     ///
     /// ⭐The zoom is NOT changed — the click already chose the depth, and the snap only decides
-    /// where the centre sits. Re-aiming and re-zooming at once would make a click unpredictable in
+    /// where the center sits. Re-aiming and re-zooming at once would make a click unpredictable in
     /// two ways instead of one.
     fn poll_snap_solve(&mut self, ctx: &egui::Context) {
         let Some(solve) = &self.snap_solve else { return };
@@ -10716,9 +10764,9 @@ impl FractadyneApp {
         self.viewport.center_y = n.cy;
         self.pointer.settle_t[0] = ctx.input(|i| i.time);
         // ⛔**A snap is a NAVIGATION JUMP and has to finish like one.** This path used to assign the
-        // centre and call `record_nav` alone — the only view-moving code in the app that skipped
+        // center and call `record_nav` alone — the only view-moving code in the app that skipped
         // `finish_nav_jump`, and so the only one that left the RESIDENT REFERENCE ORBIT describing
-        // the point the view just left. That is not a cosmetic omission: the snap moves the centre
+        // the point the view just left. That is not a cosmetic omission: the snap moves the center
         // by the aim error TIMES the click factor (measured: 331–1470 px at 100×, i.e. up to a full
         // panel), which is far past the `drift > 1.5` staleness trigger, so the renderer stopped
         // painting the new location and instead froze and PANNED the last good frame — the old view
@@ -10729,7 +10777,7 @@ impl FractadyneApp {
         crate::diag::log_line(
             "view",
             &format!(
-                "snap: period-{} nucleus, centre moved {moved_px:.0} px ({ms:.0} ms)",
+                "snap: period-{} nucleus, center moved {moved_px:.0} px ({ms:.0} ms)",
                 n.period
             ),
         );
@@ -10789,9 +10837,9 @@ impl FractadyneApp {
             FeatureOutcome::Nucleus(None) => (None, String::new(), String::new()),
             FeatureOutcome::NoPairDetected => {
                 // Deliberately hedged: the detector searches the critical orbit within a cost
-                // budget, so `None` means EITHER the centre is not near pre-periodic structure OR
+                // budget, so `None` means EITHER the center is not near pre-periodic structure OR
                 // the organizing point is deeper than the walk reached here — not necessarily
-                // that the view is mis-centred (the old text wrongly blamed centring, which
+                // that the view is mis-centered (the old text wrongly blamed centering, which
                 // misled a user already sitting exactly on a deep spiral).
                 self.goto.msg = Some(tr!(app_feature_no_pair));
                 return;
@@ -10874,7 +10922,7 @@ impl FractadyneApp {
                 );
                 // The flat-frame trap, said out loud at the moment it is entered: a fixed
                 // iteration count far below the destination depth's resolving line renders
-                // every pixel unescaped — a long wait for a solid-colour frame, with the
+                // every pixel unescaped — a long wait for a solid-color frame, with the
                 // coordinate perfectly correct underneath.
                 let iter_note = zoom_to
                     .and_then(|t| {
@@ -10891,7 +10939,7 @@ impl FractadyneApp {
                 self.set_toast(
                     match (solve.depth_capped, zoom_to) {
                         // Landing short of what was asked, and saying so: the alternative is a
-                        // centre that is wrong by tens of thousands of digits and a flat frame.
+                        // center that is wrong by tens of thousands of digits and a flat frame.
                         (Some(asked), _) => format!(
                             "{}{iter_note}",
                             tr!(
@@ -10931,7 +10979,7 @@ impl FractadyneApp {
                             // ⚠**The distance decides which story is true**, and saying the wrong
                             // one is worse than saying nothing. A point 2^187 view-widths out is a
                             // different, far coarser feature and the answer is to zoom out. A
-                            // point 23 view-widths out is the SAME neighbourhood, just off-screen,
+                            // point 23 view-widths out is the SAME neighborhood, just off-screen,
                             // and telling that user their feature is "far COARSER" sent them
                             // hunting in the wrong direction (user, 2026-08-31).
                             let widths = fmt_log2_count(log2_view_widths);
@@ -11007,7 +11055,7 @@ impl FractadyneApp {
         }
         self.viewport.set_center_mag(v.cx, v.cy, zoom.max(1.0));
         self.viewport.precision = fractadyne_core::precision_for_magnification(zoom);
-        self.center_expr = None; // imported foreign file — a fixed decimal centre, no expression
+        self.center_expr = None; // imported foreign file — a fixed decimal center, no expression
         self.pointer.zoom_vel = 0.0;
         self.invalidate_refs();
         self.record_nav();
@@ -11046,7 +11094,7 @@ impl FractadyneApp {
         }
         self.viewport.set_center_mag(v.cx, v.cy, zoom.max(1.0));
         self.viewport.precision = fractadyne_core::precision_for_magnification(zoom);
-        self.center_expr = None; // imported foreign file — a fixed decimal centre, no expression
+        self.center_expr = None; // imported foreign file — a fixed decimal center, no expression
         self.pointer.zoom_vel = 0.0;
         self.invalidate_refs();
         self.record_nav();
@@ -11321,13 +11369,26 @@ impl FractadyneApp {
     /// Palette-cycle scaling for the GPU. The bounded statistical methods (stripe /
     /// triangle-inequality / decomposition) produce a 0..1 value, so they want a few
     /// cycles across the palette; the unbounded ones (iteration / trap / distance) use
-    /// the fine per-unit scaling.
+    /// the fine per-unit scaling, and the iteration count (Smooth) is also divided by
+    /// "Divide iterations".
+    ///
+    /// ⭐Every fixed (not normalized) colorer reads its rate from here — the live view, exports,
+    /// the farm's renders through the session, the Misiurewicz thumbnails — and so does the
+    /// normalization guard, which judges aliasing at this rate. So dividing here is dividing
+    /// everywhere, and the shader is unchanged: it already multiplies by the rate.
     fn color_cycle(&self) -> f32 {
-        if self.coloring.color_method.needs_aux() {
-            0.5 + self.coloring.cycle * 4.0
-        } else {
-            0.004 + self.coloring.cycle * 0.06
+        match self.coloring.color_method {
+            m if m.needs_aux() => 0.5 + self.coloring.cycle * 4.0,
+            ColorMethod::Smooth => smooth_color_rate(self.coloring.cycle, self.coloring.iter_div),
+            _ => 0.004 + self.coloring.cycle * 0.06,
         }
+    }
+
+    /// Whether "Divide iterations" changes the picture: only the Smooth method colors the
+    /// iteration count, and a range fit ("Always fit range") maps whatever the count is onto the
+    /// same palette sweeps, so dividing it first changes nothing there.
+    pub(crate) fn iter_div_applies(&self) -> bool {
+        self.coloring.color_method == ColorMethod::Smooth && !self.coloring.normalize_fit
     }
 
     // Autopilot (toggle_autopilot / autopilot_step / autopilot_pick_target) moved to autopilot.rs.
@@ -11356,7 +11417,7 @@ impl FractadyneApp {
     fn chosen_gradient(&self) -> fractadyne_color::segment::Gradient {
         use fractadyne_color::segment::Gradient;
         if self.coloring.use_binary {
-            // Flat exterior: one colour everywhere (interior uses `lo`). A single stop makes a
+            // Flat exterior: one color everywhere (interior uses `lo`). A single stop makes a
             // flat gradient, which bakes to a nearest-fetch LUT — no interpolation to smear.
             Gradient::from_stops("Binary", &[(0.0, self.coloring.duotone_hi)])
         } else if self.coloring.use_duotone {
@@ -11417,7 +11478,7 @@ impl FractadyneApp {
     /// Baked on demand rather than cached — 1024 evaluations of a handful of segments is a few
     /// microseconds, and a cache would have to be invalidated by the random-palette animator, the
     /// editor, every preset swap and every duotone toggle. A stale palette cache is exactly the
-    /// class of bug that is invisible until someone reports "the colours don't change".
+    /// class of bug that is invisible until someone reports "the colors don't change".
     fn active_lut(&self) -> (std::sync::Arc<Vec<[f32; 4]>>, bool) {
         let lut = self.active_gradient().bake(fractadyne_color::segment::LUT_SIZE);
         (std::sync::Arc::new(lut.entries), lut.smooth)
@@ -11451,8 +11512,8 @@ impl FractadyneApp {
         }
     }
 
-    /// The interior colour the SCREEN shows: a previewed row is shown as choosing it would show it,
-    /// which leaves Binary/Duotone and their interior colour too. See [`Self::view_lut`].
+    /// The interior color the SCREEN shows: a previewed row is shown as choosing it would show it,
+    /// which leaves Binary/Duotone and their interior color too. See [`Self::view_lut`].
     pub(crate) fn view_interior_color(&self) -> [f32; 4] {
         if self.previewed_row().is_some() {
             [0.02, 0.02, 0.03, 1.0]
@@ -11468,7 +11529,7 @@ impl FractadyneApp {
     ///
     /// ⭐It lands as **bands** (`custom_palette_flat`), which is what the format means: a lookup
     /// table indexed by iteration count with no interpolation between entries. The checkbox beside
-    /// the button smooths it if the user wants a ramp out of the same colours - but that is their
+    /// the button smooths it if the user wants a ramp out of the same colors - but that is their
     /// call, taken after seeing the faithful version, not a default this code makes for them.
     ///
     /// ⚠The 6-bit VGA case (`vga_6bit`) is REPORTED, never rescaled: Fractint's files carry
@@ -11797,7 +11858,7 @@ impl FractadyneApp {
     /// what actually renders and what the editor edits.
     ///
     /// ⚠**Lossless by construction, which is the whole reason this migration is safe**:
-    /// `from_stops` produces `Linear`/`Rgb` segments with centred midpoints, and that is exactly
+    /// `from_stops` produces `Linear`/`Rgb` segments with centered midpoints, and that is exactly
     /// what the old stop-walking path rendered. `a_legacy_stop_session_migrates_without_moving`
     /// asserts it rather than trusting the argument.
     fn rebuild_segments_from_palette(&mut self) {
@@ -11969,7 +12030,7 @@ impl FractadyneApp {
 
     /// The custom-gradient editor window.
     ///
-    /// ⭐⭐**P3′ — the editor is organised around a SELECTION** (`design/gradient-curves.md` §9).
+    /// ⭐⭐**P3′ — the editor is organized around a SELECTION** (`design/gradient-curves.md` §9).
     /// Before this it drew one row per stop and one row per segment, so every parameter of every
     /// segment was resident at once and nothing could be drawn large enough to read — the curve
     /// preview that exists to compensate for undecodable blend names was **30×16 px**, and the two
@@ -11987,13 +12048,13 @@ impl FractadyneApp {
     /// Advance an in-progress eyedropper pick by one frame, and draw the picking overlay.
     ///
     /// ⭐⭐**The full-screen overlay is not decoration — it is the INPUT GUARD.** While picking,
-    /// the click that takes the colour is detected from the OS, not from egui; if the pointer
+    /// the click that takes the color is detected from the OS, not from egui; if the pointer
     /// happens to be over our own window, egui would ALSO deliver that click to whatever is
     /// underneath — zooming the fractal, or dragging a stop, at the same moment as the pick. A
     /// foreground `Area` that senses clicks absorbs them, so one gesture cannot mean two things.
     fn poll_eyedropper(&mut self, ctx: &egui::Context) {
         use crate::eyedropper::{self, PickStep};
-        // A colour picker popup asking to sample into itself (see `color_field`).
+        // A color picker popup asking to sample into itself (see `color_field`).
         if let Some(Some(target)) =
             ctx.data_mut(|d| d.get_temp::<Option<egui::Id>>(egui::Id::new("eyedrop_request")))
         {
@@ -12099,7 +12160,7 @@ impl FractadyneApp {
 
                         // The drawn cursor. ⚠Rendered TWICE — a dark copy one pixel down-right,
                         // then the accent on top — because it floats over the user's own gradient
-                        // and a single-colour glyph disappears against half of it. The glyph's
+                        // and a single-color glyph disappears against half of it. The glyph's
                         // bottom-left is the pipette's tip, so that corner sits on the pointer and
                         // the sample it names is the pixel under it.
                         if let Some(at) = pointer {
@@ -12147,10 +12208,10 @@ impl FractadyneApp {
             // custom gradient whenever one existed, however long ago it was last shown: choose
             // Ember after editing another gradient, click "Edit gradient…", and the editor opened
             // on the old one and put it back on screen in place of Ember (user, 2026-11-02). So a
-            // preset, the duotone ramp or Binary's flat colour is copied in as the custom gradient;
+            // preset, the duotone ramp or Binary's flat color is copied in as the custom gradient;
             // a custom or saved gradient on screen is edited as it stands.
             // (Before 2026-09-16 a preset gave the editor nothing at all to select — no markers, an
-            // empty ring, colour controls waiting on an "Add stop" — which is why a preset has to be
+            // empty ring, color controls waiting on an "Add stop" — which is why a preset has to be
             // copied in rather than shown.)
             let showing_custom =
                 self.coloring.use_custom_palette && !self.coloring.use_duotone && !self.coloring.use_binary;
@@ -12222,7 +12283,7 @@ impl FractadyneApp {
                 const LANE_H: f32 = 17.0;
                 const REM_H: f32 = 15.0;
                 const RIBBON_H: f32 = 34.0;
-                // ⚠240, not the original 168: the row of TWO colour fields under it has
+                // ⚠240, not the original 168: the row of TWO color fields under it has
                 // to fit, and 168 clipped the second one mid-hex. 200 still truncated
                 // `#e64d05` to `#e64c` — a monospace `#rrggbb` needs ~74 px, and there
                 // are two of them plus their swatches.
@@ -12235,7 +12296,7 @@ impl FractadyneApp {
                 const RING_TRACK_TOL: f32 = 8.0;
                 // ⊕ and ⊖ live in the HOLE, which is otherwise dead space — and it is the one
                 // place on a ring that is not a position, so a button there cannot be mistaken for
-                // one. `RING_BTN_DX` is their offset either side of centre.
+                // one. `RING_BTN_DX` is their offset either side of center.
                 const RING_BTN_DX: f32 = 17.0;
                 const RING_BTN_HIT: f32 = 12.0;
                 // How near a marker the pointer must be to grab it. ⚠At the 32-stop cap the
@@ -12282,8 +12343,8 @@ impl FractadyneApp {
 
                 // ⭐⭐**The press origin, not the pointer position.** `drag_started` does not fire
                 // until the pointer has already moved past egui's threshold — and the drift is
-                // unbounded, being however far a flick travelled in one frame. Hit-testing where
-                // the pointer IS grabs the neighbouring stop, or (on a gradient with few, widely
+                // unbounded, being however far a flick traveled in one frame. Hit-testing where
+                // the pointer IS grabs the neighboring stop, or (on a gradient with few, widely
                 // spaced stops) nothing at all, which cancels the drag silently and leaves the
                 // stop sitting still. That was the reported "drag points hang up". See
                 // `gradient_strip.rs`, which pins the size of that gap.
@@ -12623,7 +12684,7 @@ impl FractadyneApp {
                             // ⚠**The stop selection has to follow.** Selecting a segment used to
                             // leave `sel_stop` wherever it was, so the panel could read
                             // "Segment 3 of 10 · 0.001→0.150" over a stop row for stop 1 — a
-                            // colour belonging to neither end of the segment on screen. Segment
+                            // color belonging to neither end of the segment on screen. Segment
                             // `i`'s left endpoint IS stop `i`.
                             self.coloring.sel_stop = i;
                             }
@@ -12712,7 +12773,7 @@ impl FractadyneApp {
                             // ⚠**The stop selection has to follow.** Selecting a segment used to
                             // leave `sel_stop` wherever it was, so the panel could read
                             // "Segment 3 of 10 · 0.001→0.150" over a stop row for stop 1 — a
-                            // colour belonging to neither end of the segment on screen. Segment
+                            // color belonging to neither end of the segment on screen. Segment
                             // `i`'s left endpoint IS stop `i`.
                             self.coloring.sel_stop = i;
                         }
@@ -12738,7 +12799,7 @@ impl FractadyneApp {
                     // numbers you had to convert yourself. This is a bracket under that span on the
                     // gradient itself.
                     // ⚠**A bracket, not a wash.** A translucent overlay across the span would
-                    // tint the very colours the user is judging. This costs the bottom 3 px of a
+                    // tint the very colors the user is judging. This costs the bottom 3 px of a
                     // 30 px bar — the ring's version sits in clear space and costs nothing — which
                     // is a fair price for the span being readable off the gradient itself.
                     if let Some(seg) = grad
@@ -12792,7 +12853,7 @@ impl FractadyneApp {
                         let x = strip_x(p, x0, w);
                         let (top, bot) = (rect.min.y, rect.max.y - 2.0);
                         let half = if i == sel { 6.5 } else { 4.5 };
-                        // The marker carries the stop's own colour, so the strip reads as the
+                        // The marker carries the stop's own color, so the strip reads as the
                         // gradient's handles rather than as a row of identical pins.
                         pr.add(egui::Shape::convex_polygon(
                             vec![
@@ -12814,7 +12875,7 @@ impl FractadyneApp {
                         // one?".
                         if i == sel {
                             // ⚠BESIDE the marker, not under it: the remove lane's ⊖ tracks the
-                            // same x, so a number centred below the triangle lands on top of it.
+                            // same x, so a number centered below the triangle lands on top of it.
                             pr.text(
                                 egui::pos2(x + half + 2.0, top),
                                 egui::Align2::LEFT_TOP,
@@ -12828,7 +12889,7 @@ impl FractadyneApp {
                 if let (Some((rect, _)), Some(g)) = (rem_lane.as_ref(), grad.as_ref()) {
                     let i = self.coloring.sel_stop;
                     // ⚠Only for an interior stop. The two ends are pinned by contract, so a ⊖
-                    // there would be an offer the editor cannot honour.
+                    // there would be an offer the editor cannot honor.
                     if i > 0 && i + 1 < count {
                         if let Some((p, _)) = g.stop(i) {
                             let c = egui::pos2(strip_x(p, x0, w), rect.center().y);
@@ -12876,13 +12937,13 @@ impl FractadyneApp {
                         inner,
                         egui::Stroke::new(1.0_f32, BRAND_ACCENT),
                     );
-                    // ⭐⭐**The seam, marked from OUTSIDE the colour.** This is the join a cycled
+                    // ⭐⭐**The seam, marked from OUTSIDE the color.** This is the join a cycled
                     // palette crosses on every sweep and the one thing the bar cannot show: on a
                     // bar the two ends are as far apart as they can be, while in the render they
                     // are adjacent.
                     // ⚠⚠**It used to be drawn straight THROUGH the annulus, covering the very
                     // transition it exists to point at** — the one place on the ring where you
-                    // need to see the colour is the one place a 1.5 px line was sitting. Now it is
+                    // need to see the color is the one place a 1.5 px line was sitting. Now it is
                     // two ticks that stop at the ring's edges, so the join itself is unobstructed
                     // and the eye still knows where to look.
                     for (r0, r1) in [
@@ -12991,7 +13052,7 @@ impl FractadyneApp {
                         }
                     }
                     // ⭐**The SECTOR being edited**, as an arc just inside the hole's edge —
-                    // clean empty space, so the indicator never sits on the colour it points at.
+                    // clean empty space, so the indicator never sits on the color it points at.
                     // Radial ticks close both ends, which is what makes a narrow sector read as a
                     // span rather than as a dash.
                     if let Some(seg) = g.segments.get(self.coloring.sel_segment) {
@@ -13026,26 +13087,26 @@ impl FractadyneApp {
                     // rotate and this was the cut arriving underneath them.
                     //
                     // ⭐So the ring draws the seam ONCE, and draws it as what it is: a stop marker
-                    // when the seam carries a real colour edge — content the user must be able to
+                    // when the seam carries a real color edge — content the user must be able to
                     // see and grab — and the dimmed seam mark when it does not, because then there
                     // is nothing there but the place the list happens to start.
                     // ⚠**Drawing only.** Both indices stay hit-testable, so nothing that was
                     // grabbable stops being grabbable; and the segment panel's Ends row reaches
-                    // either colour regardless.
+                    // either color regardless.
                     let seam_is_an_edge = !g.is_seamless();
                     let last = g.stop_count().saturating_sub(1);
                     for i in 0..g.stop_count() {
                         let Some((p, rgb)) = g.stop(i) else { continue };
                         // ⚠**The far end of the seam pair is never drawn** — it is at the same
                         // angle as stop 0, so a second triangle there can only hide behind the
-                        // first. When the seam carries a colour edge, stop 0's marker is drawn
+                        // first. When the seam carries a color edge, stop 0's marker is drawn
                         // SPLIT below instead, showing both sides of the join in one shape.
                         if i == last {
                             continue;
                         }
                         let is_seam = i == 0;
                         // Markers point INWARD from just outside the ring, so they never cover the
-                        // colour they stand for.
+                        // color they stand for.
                         let (tipx, tipy) = ring_point(cx, cy, outer + 1.0, p);
                         let (b1x, b1y) = ring_point(cx, cy, outer + 10.0, p - 0.012);
                         let (b2x, b2y) = ring_point(cx, cy, outer + 10.0, p + 0.012);
@@ -13063,8 +13124,8 @@ impl FractadyneApp {
                         };
                         if is_seam && seam_is_an_edge {
                             // ⭐**A hard edge at the seam, shown as one SPLIT marker.** `b1` is a
-                            // hair anticlockwise of the seam — the colour ARRIVING at 1.0 — and
-                            // `b2` a hair clockwise, the colour LEAVING 0.0. Painting the halves
+                            // hair anticlockwise of the seam — the color ARRIVING at 1.0 — and
+                            // `b2` a hair clockwise, the color LEAVING 0.0. Painting the halves
                             // separately is the only way one marker can state a discontinuity, and
                             // a hard edge at the seam is the defect the ring view exists to reveal.
                             let mid = egui::pos2(0.5 * (b1.x + b2.x), 0.5 * (b1.y + b2.y));
@@ -13088,7 +13149,7 @@ impl FractadyneApp {
                             pr.add(egui::Shape::convex_polygon(
                                 vec![tip, b1, b2],
                                 if is_seam {
-                                    // Hollow: the seam is a place, not a colour.
+                                    // Hollow: the seam is a place, not a color.
                                     egui::Color32::TRANSPARENT
                                 } else {
                                     stop_color32(rgb)
@@ -13183,7 +13244,7 @@ impl FractadyneApp {
                     let span = (seg.right - seg.left).max(1.0e-6);
                     // ⭐**Controls above, canvas below and FULL WIDTH.** They were side by
                     // side, which made the canvas a narrow square and pushed the two end
-                    // colours under it into a column too tight for their hex values. The
+                    // colors under it into a column too tight for their hex values. The
                     // curve is the thing being shaped, so it gets the width.
                         ui.vertical(|ui| {
                             ui.label(
@@ -13199,7 +13260,7 @@ impl FractadyneApp {
                             ui.add_space(3.0);
                             ui.horizontal(|ui| {
                                 // ⚠The hover earns its place: GIMP's "Curved" is `pos^(ln 0.5 /
-                                // ln mid)`, so at a CENTRED midpoint it is exactly linear and the
+                                // ln mid)`, so at a CENTERED midpoint it is exactly linear and the
                                 // canvas draws it lying on the identity line. Without the note
                                 // that reads as the picker being broken.
                                 ui.label(tr!(app_gradient_curve))
@@ -13335,7 +13396,7 @@ impl FractadyneApp {
                             }
                             });
                             // ⭐⭐The trap a user cannot see coming: an HSV segment with an
-                            // unsaturated endpoint sweeps the WHOLE wheel, because a grey has no
+                            // unsaturated endpoint sweeps the WHOLE wheel, because a gray has no
                             // hue to start from. Measured: black → red goes through green.
                             if seg.hue_undefined_endpoint() {
                                 ui.label(
@@ -13350,7 +13411,7 @@ impl FractadyneApp {
                       ui.vertical(|ui| {
                         // ⭐Full width of the editor, fixed height. The curve is the thing
                         // being shaped, so it gets the room; the ends row below inherits the
-                        // same width, which puts the two colours genuinely at the two ends.
+                        // same width, which puts the two colors genuinely at the two ends.
                         let cw = ui.available_width();
                         let (crect, cresp) = ui.allocate_exact_size(
                             egui::vec2(cw, CANVAS),
@@ -13395,8 +13456,8 @@ impl FractadyneApp {
                             }
                         }
                         paint_factor_curve(&pr, curve, &seg, accent, 2.0, yr);
-                        // ⭐**The consequence, not only the shape**: this segment's own colours
-                        // under its own curve. It is where the HSV-from-a-grey sweep stops being
+                        // ⭐**The consequence, not only the shape**: this segment's own colors
+                        // under its own curve. It is where the HSV-from-a-gray sweep stops being
                         // a warning and becomes something the user can see — a black → red
                         // segment reads visibly green in the middle.
                         let bar = egui::Rect::from_min_max(
@@ -13476,7 +13537,7 @@ impl FractadyneApp {
                                     let k = usize::from(k);
                                     // ⚠x is clamped to 0..1 because x(u) must stay monotone for
                                     // the ease to be a function at all; y is deliberately free
-                                    // within the box, and the COLOUR is what gets clamped.
+                                    // within the box, and the COLOR is what gets clamped.
                                     p[k * 2] = ((at.x - curve.min.x) / curve.width().max(1.0))
                                         .clamp(0.0, 1.0);
                                     p[k * 2 + 1] = curve_value(curve, yr, at.y);
@@ -13493,17 +13554,17 @@ impl FractadyneApp {
                                 _ => {}
                             }
                         }
-                        // ⭐⭐**The two end colours sit AT the two ends**, under the canvas whose
+                        // ⭐⭐**The two end colors sit AT the two ends**, under the canvas whose
                         // x-axis IS this segment: start under the left edge, end under the right,
-                        // flanking the strip of the segment's own colours. They were previously a
+                        // flanking the strip of the segment's own colors. They were previously a
                         // row in the controls column to the RIGHT of the canvas, so "start" and
                         // "end" were both to the right of the thing they were the ends OF — the
                         // labels carried the whole meaning and the layout argued against them.
                         // ⭐⭐**Both ends carry all three notations**, the same 0–255 / 0–1 / hex
-                        // the colour picker shows — a value should not change form depending on
+                        // the color picker shows — a value should not change form depending on
                         // which surface you read it from.
                         // ⚠A COLUMN each rather than one long row: 0–255 and 0–1 and hex side by
-                        // side is ~420 px per colour, and two of those do not fit a 480 px editor.
+                        // side is ~420 px per color, and two of those do not fit a 480 px editor.
                         // Stacked, each end is ~200 px and both fit with room between them.
                         ui.horizontal_top(|ui| {
                             for (k, tip, right) in [
@@ -13573,7 +13634,7 @@ impl FractadyneApp {
                         );
                         let Some((pos0, rgb0)) = g.stop(i) else { return };
                         // ⭐Through the same helper the segment's two ends use, so all three
-                        // colour editors in this window share one picker and one hex field.
+                        // color editors in this window share one picker and one hex field.
                         // ⚠A STABLE id, not `ui.id()`-derived: the popup's state has to survive
                         // layout changes, and a fixed one is also what lets `--uitest` open it.
                         if let Some(c) = color_field(
@@ -13596,7 +13657,7 @@ impl FractadyneApp {
                         )
                         .on_hover_text(tr!(app_gradient_stop_bytes_hover));
                         // ⭐**The eyedropper reaches the WHOLE SCREEN, not just this window.** The
-                        // colours people want in a fractal palette come from a photograph, another
+                        // colors people want in a fractal palette come from a photograph, another
                         // fractal program, a palette on a web page — restricting it to our own
                         // window would make it a novelty.
                         let can_pick = crate::eyedropper::supported();
@@ -13614,7 +13675,7 @@ impl FractadyneApp {
                             self.coloring.eyedrop = Some(crate::eyedropper::Pick::default());
                         }
                         // ⚠The end stops are pinned: a gradient covers 0..1 by contract, and one
-                        // that stopped short would render a flat clamp instead of the colour the
+                        // that stopped short would render a flat clamp instead of the color the
                         // user put there. Shown disabled rather than hidden so the row still reads.
                         let movable = i > 0 && i + 1 < count;
                         let mut pos = pos0;
@@ -13680,7 +13741,7 @@ impl FractadyneApp {
                             .on_hover_text(tr!(app_gradient_add_stop_hover))
                             .clicked()
                     {
-                        // ⭐Through the SEGMENT op: splitting preserves the blend and colour space
+                        // ⭐Through the SEGMENT op: splitting preserves the blend and color space
                         // of the segment it lands in, and on a linear one leaves the picture
                         // untouched — adding a handle, nothing else.
                         // ⚠Split the WIDEST segment rather than a fixed 0.5: a fixed position lands
@@ -13982,7 +14043,7 @@ impl FractadyneApp {
                 // ⭐⭐The one control that decides whether an imported `.map` looks like Fractint.
                 // The format is a lookup table indexed by iteration count with NO blending between
                 // entries, and the hard steps that produces are the classic look - so import sets
-                // this, and clearing it is a deliberate choice to smooth the same colours instead.
+                // this, and clearing it is a deliberate choice to smooth the same colors instead.
                 if ui
                     .checkbox(&mut self.coloring.custom_palette_flat, tr!(app_gradient_hard_bands))
                     .on_hover_text(tr!(app_gradient_hard_bands_hover))
@@ -14005,7 +14066,7 @@ impl FractadyneApp {
                         egui::TextEdit::multiline(&mut self.coloring.paste_text)
                             .desired_rows(3)
                             .desired_width(f32::INFINITY)
-                            // i18n: keep (colours in hex, an example of what to paste)
+                            // i18n: keep (colors in hex, an example of what to paste)
                             .hint_text("#000000, #8b1a1a, #ff8800, #ffe6b3"),
                     );
                     ui.horizontal(|ui| {
@@ -14014,12 +14075,12 @@ impl FractadyneApp {
                                 Ok(colors) => {
                                     let got = colors.len();
                                     // ⭐**Barely any resampling any more.** This used to throw
-                                    // away everything past the EIGHTH colour, because that is what
+                                    // away everything past the EIGHTH color, because that is what
                                     // the GPU uniform carried; the LUT bake lifted that ceiling, so
                                     // a pasted 256-entry `.map` body now arrives whole.
                                     let used =
                                         fractadyne_color::resample_colors(&colors, PASTE_MAX_COLORS);
-                                    // Spread the imported colours evenly; a single colour becomes
+                                    // Spread the imported colors evenly; a single color becomes
                                     // one stop at 0 rather than dividing by zero.
                                     let n = used.len();
                                     self.coloring.custom_palette = used
@@ -14113,10 +14174,10 @@ impl FractadyneApp {
                     // ⭐⭐**The affirmative was MISSING, and its absence was not
                     // neutral.** The editor is modeless — every edit is already live in
                     // the view — so it did not strictly NEED an accept. But the only
-                    // labelled way out was Cancel, which reverts; keeping your work
+                    // labeled way out was Cancel, which reverts; keeping your work
                     // meant clicking the window's ✕, which reads as dismissal rather
                     // than commitment. A dialog whose only named exit undoes your work
-                    // is asking you to trust an unlabelled one.
+                    // is asking you to trust an unlabeled one.
                     // ⚠It does exactly what ✕ does — close, keep, drop the Cancel
                     // baseline — and that is the point: the safe exit should be the
                     // obvious one.
@@ -14135,7 +14196,7 @@ impl FractadyneApp {
             // frame**, so the result is only visible on the NEXT one. A drag repaints
             // continuously and hides that; a single click has no reason to schedule another
             // frame, so the model changed and the picture did not — the checkbox, the ease
-            // presets, Centre and the curve/space pickers all appeared to do nothing until
+            // presets, Center and the curve/space pickers all appeared to do nothing until
             // something else happened to cause a repaint. This is the frame they need.
             ctx.request_repaint();
         }
@@ -14161,7 +14222,7 @@ impl FractadyneApp {
     ///
     /// ⭐**It restores the baseline wholesale**, the palette MODE included: opening the editor on a
     /// preset, the duotone ramp or Binary copies it in as a custom gradient, so putting back only
-    /// the gradient would strand the view on a custom palette the user cancelled out of.
+    /// the gradient would strand the view on a custom palette the user canceled out of.
     fn cancel_gradient_edit(&mut self) {
         if let Some(b) = self.coloring.editor_baseline.clone() {
             self.coloring.custom_segments = b.segments;
@@ -14383,7 +14444,7 @@ impl FractadyneApp {
                     ui.label(tr!(app_accel_offer_shared));
                     // The REASON it is separate differs by platform, and only one half travels:
                     // the toolchain obstacle is Windows-only (MSVC cannot build MPFR), while the
-                    // licence difference applies everywhere. Saying "the compiler the standard
+                    // license difference applies everywhere. Saying "the compiler the standard
                     // Windows build uses" to a Linux user is simply false there.
                     ui.label(
                         egui::RichText::new(if cfg!(target_os = "windows") {
@@ -14712,7 +14773,7 @@ impl FractadyneApp {
     ///
     /// A fixed column rather than an [`egui::Grid`] because the panel is split into
     /// separator-delimited groups, and a Grid sizes its columns per instance: every group
-    /// would align internally and disagree with its neighbours - which is precisely what the
+    /// would align internally and disagree with its neighbors - which is precisely what the
     /// hand-counted padding this replaces already did (`ref recompute` sat three characters
     /// past the column the groups above it used, and values alternated between left- and
     /// right-aligned depending on whether the format string carried a width).
@@ -14776,7 +14837,7 @@ impl FractadyneApp {
             || self.zoom_video.child.is_some()
     }
 
-    /// The palette of view `v` is still moving toward its colours: the shown window gliding to the
+    /// The palette of view `v` is still moving toward its colors: the shown window gliding to the
     /// fed one (`render::norm_glide_step`), the drawn window gliding to a new picture's
     /// (`render::drawn_norm_step`), or a dissolve from another kind of map (`render::palette_fade_step`).
     /// Each advances only when a frame is built, so it asks for the next one: on a view gone still,
@@ -14874,7 +14935,7 @@ impl FractadyneApp {
         };
         Self::metric_row(ui, &tr!(app_perf_fps), line, tr!(app_perf_fps_hover));
         // ⭐Every number in this section is comma-grouped (`commas` touches only the integer part),
-        // and the Julia parameter below is grouped in fives like the status bar's centre. Values
+        // and the Julia parameter below is grouped in fives like the status bar's center. Values
         // here swing across orders of magnitude — an idle frame reads tens of thousands of ms, an
         // orbit millions of samples — and ungrouped digits are where a factor of ten gets misread.
         Self::metric_row(
@@ -15045,7 +15106,7 @@ impl FractadyneApp {
         // reference orbits + BLA trees (both views), the iteration G-buffer pair, the
         // chunk-state ping-pong while a walk holds one, and the present-gate hold snapshot.
         // An estimate — wgpu cannot portably report the driver's true figure — so it is
-        // labelled as one and carries no annunciator.
+        // labeled as one and carries no annunciator.
         let gpu_est: u64 = {
             let mut b = 0u64;
             for vi in 0..2 {
@@ -15079,7 +15140,7 @@ impl FractadyneApp {
         if self.dual || self.julia_mode {
             ui.separator();
             let (jr, ji) = self.julia_c;
-            // Grouped in fives exactly as the status bar's centre and cursor are (`fmt_coord`:
+            // Grouped in fives exactly as the status bar's center and cursor are (`fmt_coord`:
             // `+0.16318 15194 00248`), so the same number reads the same in both places.
             Self::metric_row(ui, &tr!(app_perf_julia_re), fmt_coord(jr), tr!(app_perf_julia_re_hover));
             Self::metric_row(ui, &tr!(app_perf_julia_im), fmt_coord(ji), tr!(app_perf_julia_im_hover));
@@ -15284,11 +15345,11 @@ impl FractadyneApp {
         busy: bool,
         log2mag: f64,
     ) {
-        // The average is a COLOUR image: a run started under one colouring must not present or
+        // The average is a COLOR image: a run started under one coloring must not present or
         // extend under another (field report 2026-09-15: toggling Distance glow in dual view
         // changed the shallow Julia pane only — the deep Mandelbrot pane sat in the converged
         // state presenting its stale average, never repainting). Any change restarts the run;
-        // an ANIMATED colouring (glow phase, palette cycling) changes every frame and so simply
+        // an ANIMATED coloring (glow phase, palette cycling) changes every frame and so simply
         // keeps accumulation off, which is right — a moving image has no fixed mean.
         self.pump_worker();
         let sig = self.accum_color_sig(view);
@@ -15315,7 +15376,7 @@ impl FractadyneApp {
                                 .map_or("unset".to_string(), |(lo, hi)| format!("{lo:.2}..{hi:.2}"))
                         )
                     } else {
-                        "the colouring changed (palette, its animation, effects or settings)".to_string()
+                        "the coloring changed (palette, its animation, effects or settings)".to_string()
                     }
                 } else if interacting {
                     "the view moved".to_string()
@@ -15332,7 +15393,7 @@ impl FractadyneApp {
             self.perf.accum_cmd[view] = AccumCmd::default();
             self.perf.accum_sig[view] = sig;
             if stale {
-                self.schedule_repaint(ctx); // show the freshly coloured classic frame, then restart
+                self.schedule_repaint(ctx); // show the freshly colored classic frame, then restart
             }
             return;
         }
@@ -15410,7 +15471,7 @@ impl FractadyneApp {
                 self.schedule_repaint(ctx);
                 return;
             }
-            // ⭐⭐**AND THE ITERATION LIMIT AND THE COLOUR RANGE MUST BE DECIDED** — see
+            // ⭐⭐**AND THE ITERATION LIMIT AND THE COLOR RANGE MUST BE DECIDED** — see
             // `accum_inputs_pending`. Both decide on the finished walk's complete reading, a few
             // frames after the walk ends; until then the classic frame stays on screen.
             if let Some(what) = accum_inputs_pending(
@@ -15583,7 +15644,7 @@ impl FractadyneApp {
     }
 
     /// Forget view `view`'s worker samples: a run starts or stops. The job in flight, if it is this
-    /// view's, is cancelled; its answer arrives under the old run id and is dropped.
+    /// view's, is canceled; its answer arrives under the old run id and is dropped.
     fn accum_worker_reset(&mut self, view: usize) {
         let job = self.perf.accum_worker_stop(view);
         self.cancel_worker_job(job);
@@ -15799,7 +15860,7 @@ impl FractadyneApp {
     }
 
     /// Collect the worker's finished jobs: a current run's sample waits to fold; a failed or
-    /// cancelled one gives its index back; an old run's is dropped. A lost worker is dropped.
+    /// canceled one gives its index back; an old run's is dropped. A lost worker is dropped.
     fn pump_worker(&mut self) {
         self.pump_live();
         let Some(w) = self.gpu_worker.as_ref() else { return };
@@ -16015,7 +16076,7 @@ impl FractadyneApp {
         self.schedule_repaint(ctx); // advance (or reach the terminal state) next frame
     }
 
-    /// Everything that decides how a frame is COLOURED, hashed: the palette (index, revision,
+    /// Everything that decides how a frame is COLORED, hashed: the palette (index, revision,
     /// custom/duotone/binary state), cycle/offset, method + its parameters, live normalization
     /// (the setting AND the decided map, which `norm_feed_decision` may change on its own),
     /// the effects, and the AA level. See `Perf::accum_sig`.
@@ -16035,6 +16096,7 @@ impl FractadyneApp {
             v.to_bits().hash(&mut h);
         }
         c.cycle.to_bits().hash(&mut h);
+        c.iter_div.hash(&mut h);
         c.offset.to_bits().hash(&mut h);
         c.color_method.to_u32().hash(&mut h);
         c.stripe_freq.to_bits().hash(&mut h);
@@ -16059,7 +16121,7 @@ impl FractadyneApp {
         }
         // ⭐W6 (U58): and the window actually MAPPED — the shown one, which glides toward the fed
         // `norm_pal` above over many frames. Without it an average begun mid-glide went on
-        // folding frames coloured under a moving window and was presented under a signature that
+        // folding frames colored under a moving window and was presented under a signature that
         // said nothing had changed. The glide lands exactly (`render::norm_glide_step`), so this
         // settles.
         if let Some((lo, hi)) = self.perf.norm_shown[view] {
@@ -16078,12 +16140,12 @@ impl FractadyneApp {
     }
 
     /// The live-normalization part of [`accum_color_sig`](Self::accum_color_sig): the fed and the
-    /// shown range and the lock. When the whole signature changed and this did not, the colouring
+    /// shown range and the lock. When the whole signature changed and this did not, the coloring
     /// itself did (palette, its animation, effects or settings), which `accum_end_why` says.
     fn accum_norm_sig(&self, view: usize) -> u64 {
         use std::hash::{Hash, Hasher};
         let mut h = std::collections::hash_map::DefaultHasher::new();
-        // …and the window drawn: a palette still gliding to the view's own is not its colours yet.
+        // …and the window drawn: a palette still gliding to the view's own is not its colors yet.
         for r in [self.perf.norm_pal[view], self.perf.norm_shown[view], self.perf.norm_drawn[view].map(|d| d.win)] {
             r.map(|(lo, hi)| (lo.to_bits(), hi.to_bits())).hash(&mut h);
         }
@@ -16470,9 +16532,9 @@ impl FractadyneApp {
         // four such frames between the first one and the end. If it happens in the field the log
         // must already say so — by the time anyone thinks to enable a trace, the run is over.
         if ms >= crate::tunables::cost().tdr_lethal_ms {
-            // Shed this view's earned chunk-band licences along with the budget. The budget cut
+            // Shed this view's earned chunk-band licenses along with the budget. The budget cut
             // already reaches the window (`budget_step.min(chunk_band_license(..))`), but only
-            // while `budget_step` is the smaller term — and it floors at 256. The licence is the
+            // while `budget_step` is the smaller term — and it floors at 256. The license is the
             // other term, and nothing else here can lower it: the cliff rule that would runs only
             // on a pass the walk judged drained, which a saturated queue stops producing exactly
             // when this fires. Output-neutral (see `chunk_band_retreat`).
@@ -16722,7 +16784,7 @@ impl eframe::App for FractadyneApp {
         crate::theme::ensure_fonts(ctx, &crate::i18n::active().script);
         // The driver's shader cache stopped keeping compiled shaders: say so once (`driver_cache`).
         self.check_driver_shader_cache();
-        // While the centre still sits exactly on a coordinate expression, top its precision up to
+        // While the center still sits exactly on a coordinate expression, top its precision up to
         // whatever the current zoom needs — so zooming straight into an exact landmark stays exact
         // rather than freezing at the digits it was entered with. Cheap no-op once off-point.
         self.refresh_center_expr();
@@ -16811,7 +16873,7 @@ impl eframe::App for FractadyneApp {
                 // the change and puts it back if a later frame has grown it.
                 //
                 // A DPI change is *supposed* to preserve logical size — that is what keeps a window
-                // looking the same size to the user — so restoring it is the correct behaviour, not
+                // looking the same size to the user — so restoring it is the correct behavior, not
                 // a hack around it. ⚠**Growth only, and only briefly**: it never shrinks a window
                 // the user is enlarging, and the guard expires, so a deliberate resize a moment
                 // later is untouched.
@@ -17622,7 +17684,7 @@ impl eframe::App for FractadyneApp {
                         // Growth is capped per probe so one anomalously quick interval can't authorize a
                         // frame that then overruns; shrink is immediate and uncapped. A frame cheaper
                         // than the interval floor simply grows the budget, which is what stops the loop
-                        // from spiralling downward. See `Perf::fe_budget`.
+                        // from spiraling downward. See `Perf::fe_budget`.
                         // NOTE: this interval must NOT be used to price the GPU. `mx` is a wall-clock
                         // frame gap, and it is dominated by repaint scheduling (`request_repaint_after`,
                         // animation timers), not by the iterate: halving a frame's work leaves it at a
@@ -17795,7 +17857,7 @@ impl eframe::App for FractadyneApp {
             // frames keep the full ~4 Hz.
             // ⭐**AND IT STOPS ENTIRELY ONCE THERE IS NOTHING LEFT TO SHOW.** Throttling the beat
             // bounded the waste but never ended it: a settled view still repainted 1–4 times a
-            // second forever, re-running the un-cached colour pass to redraw a picture already on
+            // second forever, re-running the un-cached color pass to redraw a picture already on
             // screen — measured on a fresh default session at 3.7 fps / 2.8% CPU at the home view
             // (0.3% with `--no-perf`), and the panel was printing the word "idle" on every one of
             // those frames. `render_quiescent` is that same "idle" test, so the readout and the
@@ -18028,7 +18090,7 @@ impl eframe::App for FractadyneApp {
             // FORCE the log and the frame record to disk. A slow frame is the prelude a hard hang
             // leaves behind, and the OS cache does not survive one: on PLUTO (2026-09-27, the
             // dead-man BEFORE arm) the machine hung after a 2,017 ms frame, and `fractadyne.log`,
-            // `frames.bin` and `frames.jsonl` all came back as zeros — the artefacts built to
+            // `frames.bin` and `frames.jsonl` all came back as zeros — the artifacts built to
             // explain exactly that failure. Slow frames are ≥200 ms apart, so this is bounded. The
             // log's writer thread does the syncing; this frame waits for it at most 100 ms.
             if body_ms > 200.0 || self.perf.last_dt_ms > 200.0 {

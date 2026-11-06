@@ -839,7 +839,7 @@ impl Session<'_> {
                 self.queue.retain(|q| !(q.job_id == c.job_id && c.run_id.is_none_or(|r| r == q.run_id)));
                 let hit = self.running.as_ref().is_some_and(|r| r.assign.job_id == c.job_id && c.run_id.is_none_or(|x| x == r.assign.run_id));
                 if hit {
-                    say!("  run cancelled by the controller ({:?})", c.reason);
+                    say!("  run canceled by the controller ({:?})", c.reason);
                     self.stop_child(Some(AbortReason::Canceled));
                 }
             }
@@ -1361,14 +1361,14 @@ impl Session<'_> {
         let pause = self.cfg.control.join("PAUSE").exists() || self.ui.paused();
         if self.ui.take_cancel() {
             if self.running.is_some() {
-                say!("Cancelled the frame in progress; paused");
+                say!("Canceled the frame in progress; paused");
                 self.stop_child(Some(AbortReason::UserCancel));
             }
             self.paused = true;
             self.ui.update(|s| {
                 s.paused = true;
                 s.phase = ClientPhase::Paused;
-                s.detail = "Cancelled the frame in progress; paused".into();
+                s.detail = "Canceled the frame in progress; paused".into();
             });
         } else if pause != self.paused {
             self.paused = pause;

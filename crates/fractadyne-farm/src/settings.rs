@@ -1,7 +1,7 @@
 //! The render-affecting settings a job carries (design §9).
 //!
 //! A tour states its camera path, palettes and budgets, but a render also reads the machine's saved
-//! session: colouring method, lighting, distance glow, the palette when no keyframe names one, the
+//! session: coloring method, lighting, distance glow, the palette when no keyframe names one, the
 //! iteration base when the script gives none, SA/BLA/glitch switches, the watermark. Rendered on
 //! machines with different sessions, one tour came out as several. So the controller reads these
 //! from ITS session into a [`RenderSettings`], and each client writes a FRESH session from it
@@ -20,6 +20,12 @@ pub struct RenderSettings {
     pub auto_iter: bool,
     pub palette_idx: usize,
     pub cycle: f32,
+    /// "Divide iterations". ⭐Left out of the message when it is 1, so a job that does not divide
+    /// still reads on a client from before the field (this struct refuses unknown fields); a job
+    /// that does divide is refused by such a client, which cannot render it, instead of being
+    /// rendered at ÷1. A job without the field reads as 1.
+    #[serde(default = "fractadyne_state::default_iter_div", skip_serializing_if = "is_one")]
+    pub iter_div: u32,
     pub offset: f32,
     pub log_palette: bool,
     pub light: bool,
@@ -65,6 +71,7 @@ impl RenderSettings {
             auto_iter: s.auto_iter,
             palette_idx: s.palette_idx,
             cycle: s.cycle,
+            iter_div: s.iter_div,
             offset: s.offset,
             log_palette: s.log_palette,
             light: s.light,
@@ -111,6 +118,7 @@ impl RenderSettings {
             auto_iter: self.auto_iter,
             palette_idx: self.palette_idx,
             cycle: self.cycle,
+            iter_div: self.iter_div,
             offset: self.offset,
             log_palette: self.log_palette,
             light: self.light,
@@ -176,6 +184,9 @@ impl RenderSettings {
         if self.palette_idx > 1024 || self.stripe_tail_len > 1 << 20 {
             return Err("palette index or stripe tail out of range".into());
         }
+        if !(1..=fractadyne_state::ITER_DIV_MAX).contains(&self.iter_div) {
+            return Err(format!("iteration divisor {} is out of range", self.iter_div));
+        }
         for (w, v) in [
             ("cycle", self.cycle),
             ("offset", self.offset),
@@ -189,7 +200,7 @@ impl RenderSettings {
         }
         finite64("Julia c", self.julia_c_re)?;
         finite64("Julia c", self.julia_c_im)?;
-        word("colouring method", &self.color_method)?;
+        word("coloring method", &self.color_method)?;
         word("trap", &self.trap_type)?;
         word("fractal", &self.fractal)?;
         textual("custom formula", &self.custom_formula, 8 * 1024)?;
@@ -206,10 +217,14 @@ impl RenderSettings {
                 [g.left, g.mid, g.right].iter().chain(&g.left_color).chain(&g.right_color).chain(&g.blend_params).all(|v| v.is_finite())
             });
         if !colours_ok {
-            return Err("a palette colour is not a finite number".into());
+            return Err("a palette color is not a finite number".into());
         }
         Ok(())
     }
+}
+
+fn is_one(v: &u32) -> bool {
+    *v == 1
 }
 
 #[cfg(test)]

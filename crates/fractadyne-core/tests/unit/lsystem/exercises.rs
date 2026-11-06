@@ -1,6 +1,6 @@
 //! Systems that exercise every command the library does not (tests only): step factors, `!`
 //! inside and outside brackets, `|` with an odd division, free turns that are not whole steps,
-//! colour commands, an angle that is no division of the circle. The walk and the tables are
+//! color commands, an angle that is no division of the circle. The walk and the tables are
 //! checked against the reference on these as on the library.
 
 use super::{library, LSystem};

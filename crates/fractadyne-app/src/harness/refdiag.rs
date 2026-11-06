@@ -7,7 +7,7 @@ pub(crate) fn run(args: &[String]) -> bool {
     let log2mag = val("--zoom-log2")
         .map(|s| crate::arg_parse::<f64>("--zoom-log2", s, "a number"))
         .unwrap_or(133.0);
-    // After the zoom: the centre is parsed at the view's precision (see `arg_center`).
+    // After the zoom: the center is parsed at the view's precision (see `arg_center`).
     let (cx, cy) = two("--center")
         .map(|(x, y)| crate::arg_center("--center", x, y, log2mag))
         .unwrap_or((fc::BigFloat::from_f64(-0.5, 64), fc::BigFloat::from_f64(0.0, 64)));

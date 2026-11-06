@@ -29,7 +29,7 @@ impl FractadyneApp {
         z.open = true;
     }
 
-    /// A video no card holds: 8K at 3x, ~50 GB even for smooth colouring — the dialog must say so
+    /// A video no card holds: 8K at 3x, ~50 GB even for smooth coloring — the dialog must say so
     /// and disable Render. (The user's first try, 5K at 2x, was refused for its strip's width until
     /// the window held strips in pieces; it now needs ~10 GB, so whether it is refused depends on the
     /// card the walk runs on.) No render, no progress.

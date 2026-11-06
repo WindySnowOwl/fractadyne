@@ -1,6 +1,6 @@
 //! The Rust `ColorUniforms` and the WGSL `ColorU` describe the same bytes, and nothing checks
 //! that at compile time: the uniform is written with `bytemuck::bytes_of` into an opaque buffer,
-//! so a field added to one and not the other produces a pipeline that builds, runs, and colours
+//! so a field added to one and not the other produces a pipeline that builds, runs, and colors
 //! every pixel from the wrong offsets. `design/palette-import.md` §4 names this in advance —
 //! "**both `ColorU` definitions must change together** … or offline renders silently keep the old
 //! palette" — and the palette-LUT change edited both.
@@ -10,7 +10,7 @@
 
 use super::ColorUniforms;
 
-/// `(size, align)` for the WGSL types this struct uses. An unrecognised type fails the test rather
+/// `(size, align)` for the WGSL types this struct uses. An unrecognized type fails the test rather
 /// than being guessed at — a new type in the uniform is a deliberate change and should say so.
 fn size_align(ty: &str) -> (usize, usize) {
     let ty = ty.trim();

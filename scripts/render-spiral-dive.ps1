@@ -171,7 +171,7 @@ if ($existing.Count -gt 0) {
         switch -Regex ($choice) {
             '^(o|over|overwrite)$' { $mode = "restart" }
             '^(r|resume)$'         { $mode = "resume" }
-            default                { Write-Host "Cancelled."; exit 0 }
+            default                { Write-Host "Canceled."; exit 0 }
         }
     }
 

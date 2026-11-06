@@ -43,8 +43,8 @@ controllers behind it.
 
 and, for all of them, the controllers: frame cost (`render.rs:4615-5300`, `9015-9700`), the
 iteration ask (`render.rs:4051-4614`), the reference lifecycle (`render.rs:1341-1700`, `621-1003`),
-motion presentation (`render.rs:5301-5427`, `6180-6440`, gpu `lib.rs:1921-2540`), colour
-normalisation on the live path, and the harnesses that grade any of it.
+motion presentation (`render.rs:5301-5427`, `6180-6440`, gpu `lib.rs:1921-2540`), color
+normalization on the live path, and the harnesses that grade any of it.
 
 ### Out of scope
 
@@ -68,7 +68,7 @@ normalisation on the live path, and the harnesses that grade any of it.
 
 ### 2.1 By class
 
-201 incidents, each filed under exactly one class. "Found by" is derived from the catalogue's
+201 incidents, each filed under exactly one class. "Found by" is derived from the catalog's
 detection column per class, not from a per-incident field, so read it as the dominant route rather
 than a count.
 
@@ -80,10 +80,10 @@ than a count.
 | unbounded or oversized dispatch | 9 | no (CL-165 residual) | user report, `--motiontest` | CL-95 (Home from depth reset the graphics card) |
 | guard scope / capability-gating hole | 9 | no | user report | CL-83 (every view past 1e308× blank, live four days) |
 | coarse or unsatisfiable identity key | 6 | mechanism closed; CL-29 **open-and-unreproduced** | user report | CL-29 (a translucent copy of another location after a small pan) |
-| normalization source & wrong statistic | 13 | no | user report | CL-15 (every colour swelling and shrinking ~2.5×/s) |
+| normalization source & wrong statistic | 13 | no | user report | CL-15 (every color swelling and shrinking ~2.5×/s) |
 | iteration starvation / misjudged interior | 11 | **yes** | screen recording, field log | CL-13 (36% of a dive's length blank), MEM-61 (motion `[0,step]` false, **not fixed**) |
 | reference lifecycle | 16 | no; MEM-71 standing | validation script, trace | CL-102 (100% black at 2e82× after a pan) |
-| presentation ≠ render | 10 | **yes** | screen recording | CL-3 (one frame in three a flat colour during a dive) |
+| presentation ≠ render | 10 | **yes** | screen recording | CL-3 (one frame in three a flat color during a dive) |
 | UI reflow feeding back into the render | 3 | no | user report | CL-17 / CL-69 / CL-115 — the same loop three times |
 | main-thread blocking & unbounded aggregate | 5 | **yes** | user report, crash reconstruction | MEM-38 (~1 fps grind, no device loss, no watchdog line), MEM-37 |
 | numeric representation limit | 8 | mechanism closed; CL-108 **open** (workaround) | user report, code reading | CL-108 (df32 running at f32 for the product's whole history) |
@@ -100,7 +100,7 @@ than a count.
 | heuristic tuned in one direction or at one depth | 3 | no | later audit | MEM-73 (a derate calibrated while a data bug was live) |
 | open / unexplained | 2 | **yes** | user report, harness | CL-163 (issue #3, dual-view Julia), CL-165 |
 | file, format & session contract | 4 | no | a shipped-file sweep | CL-50 (coordinates silently dropped for 52 releases) |
-| colouring quality & mapping | 4 | CL-167 = ceiling | user report | CL-167 (speckle with one clean central diamond) |
+| coloring quality & mapping | 4 | CL-167 = ceiling | user report | CL-167 (speckle with one clean central diamond) |
 | miscellaneous | 11 | no | mixed | — |
 
 **Nine** classes remain open — the nine bolded **yes** above. Of those nine, **five have no check on
@@ -119,7 +119,7 @@ maintainer's own dogfooding, not by a gate. The gates that did find things are a
 harnesses built *after* an incident: `--livetest` (CL-134, CL-112), `--motiontest` (CL-95, CL-165),
 `--zoomtest` (CL-23, CL-28), `--uitest` (CL-106, CL-161, CL-166, CL-167), `--gputest` (CL-108),
 `--divetest` (CL-33), `--deviceloss-repro` (CL-38, CL-39). CL-134's own note explains the shape of
-the whole catalogue: *goldens are offline export renders, so none of them can see a live-path bug.*
+the whole catalog: *goldens are offline export renders, so none of them can see a live-path bug.*
 
 **Screen recordings are a distinct instrument.** CL-3/4/5/6, CL-7, CL-11 and CL-13 were all
 diagnosed from a recording lined up against the log, which is why `--show-timestamp` exists. A
@@ -139,7 +139,7 @@ release. Two of these were invisible precisely because nothing was asking.
    element; the structural rule arrived only after the third.
 3. Buffer-dimension parity costing ~200× — CL-77 (odd height) then CL-39 (odd width). The width
    twin survived two months because nobody swept the other axis.
-4. Normalisation from unrepresentative data — nine incidents, beta.8 → beta.109.
+4. Normalization from unrepresentative data — nine incidents, beta.8 → beta.109.
 5. A measurement paired with the wrong subject — CL-126, CL-85, CL-87, CL-88, CL-59, and still
    unresolved in CL-1.
 6. A gate that cannot go red — CL-52 (twice in one check), CL-67, CL-81, CL-101, CL-150.
@@ -147,7 +147,7 @@ release. Two of these were invisible precisely because nothing was asking.
 **What one fix broke elsewhere.** The record is unusually explicit, and this is the single strongest
 argument for the migration discipline in §5.10:
 
-- Chunked refinement, introduced for device-loss safety, immediately broke colour: CL-90 and CL-88
+- Chunked refinement, introduced for device-loss safety, immediately broke color: CL-90 and CL-88
   exist only because the palette window now saw pieces instead of frames, and CL-89 (black screen,
   no spinner) because the spinner's idle-gap detector was tuned for the old repaint cadence.
 - CL-114: "Prefer detail while zooming" stage A froze every moving frame, disabling the refresh
@@ -242,9 +242,9 @@ MEM-77 shape, a guard that passes noise and passes the wrong view, reproduced in
 (`render.rs:4322`, `5878`, `7730`) (U59); the GPU display gate is `self.display_hold &&
 view.hold.is_some()` (gpu `lib.rs:2077`) with no content and no provenance term.
 
-Two more in the same family: a held or reprojected frame is re-coloured every frame under the
-*current* normalisation map, so under the log map every pixel below `norm_lo` collapses to one
-colour (U43); and the converged SSAA average is presented under a colour signature that omits the
+Two more in the same family: a held or reprojected frame is re-colored every frame under the
+*current* normalization map, so under the log map every pixel below `norm_lo` collapses to one
+color (U43); and the converged SSAA average is presented under a color signature that omits the
 window actually mapped (U58).
 
 *Failure scenario.* A hold snapshot is taken from a texture that was cleared for a resize, and
@@ -262,7 +262,7 @@ frame restarts however far it could have walked. Three independent writers set i
 The costs are visible throughout: `fe_dispatch_frame` is stamped at four sites (`render.rs:5174`,
 `5291`, `5629`, `7132`) and actively rewound eight frames at a fifth (`render.rs:5843-5844`), which
 is the mechanism behind the present-throttle misclassification (U11); the moving frame's resolution
-is decided by the palette normalisation window (U24, `render.rs:6412`), which is a guess reading a
+is decided by the palette normalization window (U24, `render.rs:6412`), which is a guess reading a
 value downstream of what it sizes; view 1's moving resolution is a view-0 quantity that view 1 can
 never move (U56, `main.rs:1547`); and `hold_scale_floor(jumped)` itself is a clean pure function taking the
 flag (`render.rs:8863`, whose doc says "One definition, three callers"), but all three callers infer
@@ -284,7 +284,7 @@ is blank — and every per-pass metric improves while the screen goes from 8% bl
 `partial` (`render.rs:7341-7344`), so a complete (escaped) orbit is never compared with the ask
 again (U6). At 4,627 iterations against a 655-sample orbit that is about seven wraps per pixel and
 25–33 M rebases per frame with `bla_skip = 0` (the 2026-09-21 field manifest — **not verified in
-code**, it is a memory note plus a crash artefact), and nothing in the ask, the nominal step price
+code**, it is a memory note plus a crash artifact), and nothing in the ask, the nominal step price
 or `chunk_over` carries a rebase term.
 
 Three more, all structural: the reuse gate's precision comparand is the *view* precision while a
@@ -307,7 +307,7 @@ more expensive than the number the controller is steering on.
 
 ### 3.5 The iteration ask versus the reference — high
 
-The iteration ask has no always-on per-frame record, and the two always-on artefacts that describe
+The iteration ask has no always-on per-frame record, and the two always-on artifacts that describe
 it are stamped at different points and disagree in the one open field incident: the LIVE manifest
 reads `iter=4627` while the crash view `.fdn` reads `max_iter=25000 auto_iter=1`, same crash, same
 second (U28). The only directly measured cost multiplier in the app — `CTR_REBASE` and
@@ -431,7 +431,7 @@ it, and every item in §5 and §7 is checked against the list.
 | P12 | My replays are milder than the user's live sessions. | Same seed, same location, their motion budget 6× smaller (MEM-61). A gate that cannot enter the regime is not coverage; a gate that cannot *prove* it entered is not a gate. |
 | P13 | A probe whose reading another rule discards never terminates — gate the producer on the consumer's predicate, from one constant. | The climb probe on the default home view (MEM-66). |
 | P14 | Byte-identity on the corpus for refactors, and watch the test count. | 151 → 149, still "ok", still committed clean (MEM-69). Never compare renders by file hash. |
-| P15 | Never close a bug on a mechanism argument without a reproduction — and deleting a guard on a mechanism argument is the mirror image of it. | The flat-grey closure was disproved in one day (MEM-42). |
+| P15 | Never close a bug on a mechanism argument without a reproduction — and deleting a guard on a mechanism argument is the mirror image of it. | The flat-gray closure was disproved in one day (MEM-42). |
 | P16 | Record first, reproduce second, react third. | Beta.112 shipped instrumentation and deliberately no reaction, because inferring a controller rule from one field log on hardware the dev box cannot reproduce is how a controller gains a rule nobody can explain (MEM-39). |
 | P17 | A feature that can decline must say it declined, and a control that is offered and does nothing is worse than one that is absent. | The dual-view click-zoom checkbox; `M` in dual view (MEM-63). |
 | P18 | After fixing a long-standing data bug, audit every heuristic tuned while it was live. | Beta.50's derate was calibrated against frozen-length references (MEM-73). |
@@ -502,7 +502,7 @@ with no public constructor outside `render/pricing.rs`, and every dispatch entry
 `render_iter_gather` `:1617`, `render_iter_chunked` `:2274`, `render_iter_chunked_timed` `:2312`) —
 which is the path the autopilot steering probe calls at `autopilot.rs:676` and the export path §1
 says shares this gate — and the settle-tile path. A submission without an `Admission` does not
-compile. That is the difference between this section and a better-organised guard. "There is no
+compile. That is the difference between this section and a better-organized guard. "There is no
 code path from a `Plan` to a submission that does not pass through `admit()`" would be a claim about
 the tree, checked by review — and review is precisely what failed for the third, fourth and fifth
 presenters of the content guard (U20, U42, U45) and for `--livetest`'s controller copy. The token
@@ -585,7 +585,7 @@ has three legs. A submission cannot be made without an `Admission`, and `Admissi
 constructed outside `render/pricing.rs` — a future refactor that routes around `admit()` fails to
 build, rather than passing review. `admit()` takes a `min()` over a term no other rule can freeze
 (`wall`) and a term nothing can raise (`ceiling`), so neither a frozen budget nor a first surprise
-can authorise an unbounded dispatch. And a budget that is too large can no longer switch off the
+can authorize an unbounded dispatch. And a budget that is too large can no longer switch off the
 shrink or the tiles, because those are no longer gated on the chunk decision at all; a controller
 that is unfed can no longer bind a bootstrap constant *upward*, because `budget_confident` names
 that state and chunks.
@@ -599,7 +599,7 @@ paragraph must be downgraded to that weaker sentence and §10's falsifiers amend
 `Admission` token + `admit` at every entry point, and the three deletions), B5 (the actuator
 un-suppression and the literal). Each rung leaves `main` shippable.
 
-**If abandoned half-way.** After M2/M3 the tree is strictly better organised and behaviourally
+**If abandoned half-way.** After M2/M3 the tree is strictly better organized and behaviorally
 identical — a safe stopping point. After B4 but before B5 the wall backstop exists but the
 suppressions remain, so the min() can reduce the budget and the frame still will not shrink; that is
 a *worse* intermediate than either end and must not be left as a release boundary. B4 and B5 ship
@@ -676,7 +676,7 @@ check of its own in W8, in `--gputest`, which already grades op families per bac
 **And one band ledger per target and lane (U48).** `chunk_band_license` / `_update_with_lane` /
 `_retreat` (`render.rs:9046-9270`) keep one ledger across two targets, two clocks and two lanes. M2
 moves them verbatim; this rung then keys the ledger on `(target, lane)` so a retreat in one lane
-cannot spend another's licence, with `--selftest pricing-props` asserting that two lanes driven from
+cannot spend another's license, with `--selftest pricing-props` asserting that two lanes driven from
 one recorded stream never share a band index.
 
 **Classes closed.** *actuator & retreat blind spots* (4, open) and the residual of *unbounded or
@@ -751,7 +751,7 @@ forgets the sig cannot compile.
 thin shim converts it to `MandelbrotParams` — byte-neutral by construction), then B7 (make
 `Plan::res` private, route the three writers, collapse the stamps).
 
-**If abandoned half-way.** M6 alone is a pure reorganisation and safe to leave. B7 half-applied — two
+**If abandoned half-way.** M6 alone is a pure reorganization and safe to leave. B7 half-applied — two
 writers routed, one not — leaves an unowned writer and a false sense that the invariant holds, which
 is the worst state of the three. B7 is one commit.
 
@@ -846,7 +846,7 @@ which asks a different question at a different sampling and fails open (U45), ta
 verified-plus-stamp test rather than its own. The GPU display gate (gpu `lib.rs:2077`) requires
 `hold_verified`, giving that field its first consumer that is not a `format!`. `live_verified()`'s
 `||` short-circuit on `live_complete` (`render.rs:8322-8326`) is replaced so `content_has_detail`
-(`render.rs:8260`) runs on the fast path too. The held frame's colour uniform is frozen with the
+(`render.rs:8260`) runs on the fast path too. The held frame's color uniform is frozen with the
 snapshot rather than rewritten every frame (gpu `lib.rs:2152`; `mandelbrot.wgsl:2388-2391`) for the
 log branch (U43).
 
@@ -909,7 +909,7 @@ U38 asks for. The second half, a bound on total in-flight work across the live p
 concurrent export, is **not** delivered here and is not scheduled (§5.9, §8): MEM-37 has no
 controlled reproduction. So this change does not close *main-thread blocking & unbounded aggregate*;
 what makes that class red-capable is the record's watchdog heartbeat and the `--logcheck` rules of
-§6.4 and §6.5, which turn a grind or a wedge into a positive artefact.
+§6.4 and §6.5, which turn a grind or a wedge into a positive artifact.
 
 **Classes closed.** *actuator & retreat blind spots* (4, open). Recurrence is prevented by
 `#[must_use]` on `retreat` plus the `RetreatOutcome` enum: a caller that ignores the outcome does
@@ -944,17 +944,17 @@ path, beside the existing `FRACTADYNE_RESTARTED_AFTER_GPU_LOSS` handling that al
 rather than at the view that lost the device (`main.rs:6184-6190`, read this pass). It is **not** a
 change to `.fdn` loading in general, and `crash_view_fdn()` (`main.rs:708-724`) — which is the
 *writer*, formatting `max_iter=` and `auto_iter=` into the file at `:718-719` — keeps emitting both
-keys. A key honoured by the writer and ignored by the reader is precisely the CL-50 shape this
+keys. A key honored by the writer and ignored by the reader is precisely the CL-50 shape this
 project gates against: `selftest.rs:4801-4812` asserts *writer ⊆ `KNOWN_VIEW_KEYS`*, and
 `relaunch_policy.rs:8-9` (`crash_view_fdn_is_a_loadable_location`) pins that a crash view loads as a
 location with its iteration count intact. Both move with this change only in the sense that the
 quarantine test is added beside them; neither assertion is weakened. Reproducing the lethal
-configuration deliberately — opening the crash `.fdn` from the file dialogue — still restores it
+configuration deliberately — opening the crash `.fdn` from the file dialog — still restores it
 verbatim, which is what `--deviceloss-repro` wants anyway.
 
 **Classes closed.** *crash & report invisibility / recovery*, the recovery half.
 
-**Argument against, honestly.** This is the only user-visible behaviour change in the whole document
+**Argument against, honestly.** This is the only user-visible behavior change in the whole document
 and the one place P17 can bite in the other direction — a quarantine the user did not ask for is a
 surprise. It is included because the alternative, a relaunch that walks straight back into the
 grind, has already been observed twice (MEM-38, U18). The notice is part of the gate's RED criterion
@@ -993,11 +993,11 @@ to different df32 mantissas so "at least as precise" would not be pixel-identica
 byte-identical. Both read this pass; they cannot both be true. The calibration data already exists —
 128 bits escapes at 570, 160 at 84,941, 207 at 570,711, 286+ survives 700k (memory
 `topic-spar-family.md`, **not verified in code**). Instrument the intermediate value before
-theorising, and record the answer in this document's successor.
+theorizing, and record the answer in this document's successor.
 
 **Default off.** This is the one change in the architecture that touches the picture and can re-enter
 the build-storm and lookahead-clobber families (U50, U55; CL-102, CL-127), and P18 says to audit
-every heuristic tuned while the old behaviour was live — the iteration-boost seed and all three
+every heuristic tuned while the old behavior was live — the iteration-boost seed and all three
 install derates were calibrated against it. The tunable flips on only when: the reference-rebuild
 rate on the grand tour is within 10% of beta.112; `--selftest` goldens are byte-identical; and
 `--bench-matrix` reports 0 algorithmic drift.
@@ -1019,7 +1019,7 @@ tunable is not.
 | A parallel telemetry system, a network sink, uploads. | `diag` already has a teed log, a crash composer, an unclean-exit marker, an OOM reserve and `perf.jsonl`. A second system would be a second thing to keep honest. One record, three sinks, all local. |
 | Tightening the shared cross-GPU golden tolerance so something can fail on the RX 6800 XT. | An RX 6800 XT legitimately reaches meanΔ 19.15 against a 24.0 limit (U30). A tighter shared constant manufactures red. The answer is a per-adapter baseline (§7.8), never a tighter shared constant. |
 | Pricing on the rebase counter, primary **or** secondary. | Two reasons, either sufficient. It is shader arithmetic that folds differently per GPU vendor, and the only cross-vendor gate is deliberately loosened for exactly that reason (U26). And the reading is armed for full-frame iterates only, one in flight per view, landing 2–3 frames late (gpu `lib.rs:2274-2276`, `424-426`), so it cannot be a per-frame term at all. It is a recorded session estimate and a gate criterion (§5.2, W9), never an input to `admit()`. Its detect half gets a `--gputest` check (W8). |
-| Making `decide` pure over the reference lifecycle. | Installs spawn threads and land asynchronously; forcing them into a pure function would either serialise them or lie about them. `RefState` enters as an input (§5.4). |
+| Making `decide` pure over the reference lifecycle. | Installs spawn threads and land asynchronously; forcing them into a pure function would either serialize them or lie about them. `RefState` enters as an input (§5.4). |
 | A chunking heuristic keyed on depth. | A device loss is not a depth problem — the 2026-09-21 loss was at 1.76e6× (MEM-39). |
 | Rewriting the renderer, the shader or the bignum layer. | Byte-identity on the corpus is a constraint on every commit here. |
 | Fixing U27 (the autopilot cannot name starvation with auto-iter on) as part of this. | A message-correctness bug with a small local fix and no architectural content. It belongs in the ordinary bug queue; its *detection* half is covered by `capped_frac` / `iter_exhausted` entering the record and the harness verdicts (§3.5: both fields already have live consumers and one red-gated test). |
@@ -1034,7 +1034,7 @@ discipline is fixed.
 
 - **(M) a pure move** — code relocated into `render/<mod>.rs` or `diag/<mod>.rs` with no logic
   change, gated on *signature* identity, appended to `.git-blame-ignore-revs`; or
-- **(B) one behaviour change**, with a gate that can go red, named in the commit message.
+- **(B) one behavior change**, with a gate that can go red, named in the commit message.
 
 Never both.
 
@@ -1049,7 +1049,7 @@ checkout under `autocrlf=true` re-checks files out as CRLF.
 |---|---|---|
 | M0 | move | `diag/frame_record.rs` created; `diag::budget_note` (`diag.rs:539`) kept as a thin adapter that also fills a `FrameRecord`. Nothing else moves. |
 | B1 | behav | One `diag::frame_record()` call at the end of `update()` (`main.rs` ~14800). `BUDGET_LOG_CAP` 24 (`diag.rs:58-62`) becomes a typed 4096-entry ring. Crash report gains a `frames:` section. |
-| M2 | move | `render/pricing.rs`: the thirteen pure functions at `render.rs:8005-9692` move verbatim, with their `#[cfg(test)]` siblings — `chunk_bands`, `wall_shed`, `controller_props`, `motion_pace`, `probe_price_tests`, `present_throttle_tests`, `budget_blind_tests`, and also `motion_jam` (because `motion_jam_counts` is in the move set), `sa_skip_budget` and `frame_cost_tests`, which sit in the same neighbourhood. Zero logic change. |
+| M2 | move | `render/pricing.rs`: the thirteen pure functions at `render.rs:8005-9692` move verbatim, with their `#[cfg(test)]` siblings — `chunk_bands`, `wall_shed`, `controller_props`, `motion_pace`, `probe_price_tests`, `present_throttle_tests`, `budget_blind_tests`, and also `motion_jam` (because `motion_jam_counts` is in the move set), `sa_skip_budget` and `frame_cost_tests`, which sit in the same neighborhood. Zero logic change. |
 | M3 | move | `record_mode_rate` / `record_motion_rate` / `motion_wall_cut` / `bootstrap_steps` (`main.rs:1616-1814`) move into `render/pricing.rs` as methods on `Meter`. |
 | B4 | behav | `wall_budget` and the fixed per-adapter `ceiling` added; `ReadingProvenance` attached to every published reading; the `Admission` token introduced and required by every dispatch entry point; `wall_fallback` latch, unlatch and the three `present_throttle` vetoes deleted. |
 | B5 | behav | `&& !chunk_over` deleted at `render.rs:7012` and `7120`; `chunk_over` renamed `chunk_needed`; `render.rs:9409`'s literal replaced by `PRICE_REPRESENTATIVE_FRAC`. `budget_confident` and the blind dead-man land here. **Carries a P18 audit and a screen measurement of its own** — see below. |
@@ -1067,8 +1067,8 @@ arithmetic those stages produce.
 `:7120` makes the resolution shrink and the settle tiles engage in frames where they were suppressed
 — and every constant that decides what a moving screen looks like was calibrated with those
 suppressions live: `112a088`'s seven-rung sticky ladder, `MOTION_CUT_MAX` 2.0, the 40% visible
-headroom, `min_motion_res`. P18 says to audit every heuristic tuned while the old behaviour was
-live, and it applies here at least as much as it applies to §5.8. So B5 is the one behaviour rung
+headroom, `min_motion_res`. P18 says to audit every heuristic tuned while the old behavior was
+live, and it applies here at least as much as it applies to §5.8. So B5 is the one behavior rung
 that ships with a screen measurement attached rather than deferring it to a later workstream: three
 pairs through `scripts/dive-capture/`, control scored, blank and stale fractions before and after,
 and each of the four constants either re-measured or explicitly recorded as unchanged with the
@@ -1080,14 +1080,14 @@ engagement rate that justifies it.
 
 Three jobs, one record:
 
-1. **Diagnose a field failure from the artefacts alone** — no trace flag, no reproduction, no
+1. **Diagnose a field failure from the artifacts alone** — no trace flag, no reproduction, no
    correspondence with the reporter.
 2. **Validate a fix by measurement before and after**, rather than by argument.
 3. **Feed the replay tests as their input**, so a field failure can become a regression test.
 
 Everything below builds on what `diag` already has. A parallel system is rejected (§5.9).
 
-### 6.1 Build identity — the field that makes every other artefact attributable
+### 6.1 Build identity — the field that makes every other artifact attributable
 
 Every exit criterion in §7 reads "green on the Radeon three runs running", and today nothing ties a
 field crash report to a commit. On 2026-08-16 a six-phase run started 53 s after a push measured the
@@ -1146,11 +1146,11 @@ The gaps are precise, not general:
 | No join key | `slow frame N`, `[fd-glide] fN`, `chunk f=`, `pin-* f=` and the overlay carry a frame index; the budget ring, the LETHAL-BAND line, the manifest and the crumbs do not. |
 | Coverage | The ring holds 24 entries at ~17 decisions/s ≈ **1.4 s**; the field episode ran **33 s**. |
 | Missing inputs | The ring carries ms/steps/budget only — no `iter`, `eff`, `boost`, frame index, `explicit` or `building`, the last two being inputs `budget_step` and `budget_after_build_gate` actually consume. |
-| Contradictory artefacts | Manifest `iter=4627` against `.fdn` `max_iter=25000 auto_iter=1`, same crash, same second (U28). |
+| Contradictory artifacts | Manifest `iter=4627` against `.fdn` `max_iter=25000 auto_iter=1`, same crash, same second (U28). |
 | Everything richer is trace-gated | `FRACTADYNE_TRACE` is read once at startup through a `OnceLock` (`diag.rs:323-333`), so a field session is untraced by definition. The 2026-09-21 session contains 0 trace lines. |
 | Nothing machine-reads it | Five log-reading sites, all PowerShell, all copy-or-grep-a-literal. The only parsers in the tree are `scripts/zoomtest_report.py` and `scripts/dive-capture/motion.py` (U29). |
 | The log drowns | `[fd-accum] view 0: begin` (`main.rs:13418-13421`) fired 10,323 times at ~31/s for 740 s — about 65% of the crashing session's 1.06 MB — because `accum_active` is cleared again every frame the content stamp does not match (`main.rs:13374`, and on a signature change at `:13338`), so the episode re-begins and re-logs. |
-| No colour or normalization field anywhere | The record this section proposes must close the *engagement* half of the longest-running class in the catalogue (13 incidents), and `norm_complete` (`render.rs:5741`) and the normalization window appear in **no** `diag` artefact today (grepped this pass). |
+| No color or normalization field anywhere | The record this section proposes must close the *engagement* half of the longest-running class in the catalog (13 incidents), and `norm_complete` (`render.rs:5741`) and the normalization window appear in **no** `diag` artifact today (grepped this pass). |
 
 ### 6.3 `FrameRecord` — the exact fields
 
@@ -1266,7 +1266,7 @@ written once per frame per view and the slot key below carries the view: with on
 holds 4096 frames — 68 s at 60 fps, and **14–68 minutes** at the failing cadence of 1–5 fps. In dual
 view each panel gets 2048 slots, so the same figures halve: 34 s at 60 fps, 7–34 minutes at the
 failing cadence. Either way the ring lengthens in time exactly as the app slows down, which is the
-opposite of the current 24-entry ring's behaviour and covers the entire 33 s approach plus the 860 s
+opposite of the current 24-entry ring's behavior and covers the entire 33 s approach plus the 860 s
 session that led to it. (2 MB resident buys the headroom; if it ever needs to be 1 MB, halve the
 slot, not the slot count.)
 
@@ -1506,7 +1506,7 @@ slots with a mid-run size check; one emit site at the end of `update()`; new `sc
 **Gate.** `--selftest record` (§6.6.1) on the dev GPU, plus a `run:` checklist row executing
 `framelog.py --schema-check` against the session's own jsonl. **RED:** record count ≠ frame count; a
 gap or duplicate in `frame`; a required field at its default sentinel; a lossy schema round-trip; a
-short `frames.bin` after a simulated abrupt exit. *Where:* the app's own artefacts, dev GPU.
+short `frames.bin` after a simulated abrupt exit. *Where:* the app's own artifacts, dev GPU.
 
 **Cost.** ~3 days plus one measurement day for the overhead A/B. **Order:** first; nothing else here
 can be validated without it.
@@ -1539,7 +1539,7 @@ regime, and one is the anti-latch invariant that an existing group already knows
 1. `--selftest pricing-props`, extending `render/controller_props.rs`, driven from
    `validation/replays/*.jsonl`. **RED:** on any recorded window of ≥ 8 consecutive frames with
    `last_dt_ms > TDR_BUDGET_MS`, the `admitted_budget` did not decrease within k = 4 frames. This is
-   verbatim the assertion the catalogue records as "would have caught CL-1".
+   verbatim the assertion the catalog records as "would have caught CL-1".
    **Anti-vacuity — and this gate needs it more than any other in the plan, because it is the gate
    for the largest open class:** if no file in the corpus contains such a window, the result is
    **exit 2 / VACUOUS**, distinct from both pass and fail. A green here on a corpus of healthy
@@ -1600,7 +1600,7 @@ It does **not** close *main-thread blocking & unbounded aggregate* (5, open), te
 count it here. Routing the steering probe through `admit()` accounts for a
 dispatch that is already bounded to ≤ 128×128 at ss = 1 (`autopilot.rs:658-664`); the probe is not
 the load. The class's red-capable half comes from W1's watchdog heartbeat row and W8's `--logcheck`
-rules (a grind and a wedge both become positive artefacts with a duration); its aggregate half —
+rules (a grind and a wedge both become positive artifacts with a duration); its aggregate half —
 concurrent export plus live path — has no controlled reproduction and is a named non-goal (§8, §10).
 
 **Changes.** §5.2 and §5.6, including the per-adapter calibration file, the clamped learned
@@ -1754,7 +1754,7 @@ U59.
    three pairs), or any of flash/flat/stale above its threshold, or a three-run spread wider than
    the calibration. *Where:* the screen, via PrintWindow by PID, **with one arm on the RX 6800 XT**
    through `gpu-validate.ps1` — the failures this gate grades (MEM-60's 36% blank, MEM-61's
-   flat-colour pan) were reported from that machine, and a blank-fraction threshold blessed only on
+   flat-color pan) were reported from that machine, and a blank-fraction threshold blessed only on
    the dev box is a threshold calibrated in the mild regime (P12). Where a commit cannot get a
    Radeon arm, the dev-box numbers bound regression only and the run says so.
 
@@ -1788,7 +1788,7 @@ budget at the loss, the restored configuration's admitted price still exceeds it
 
 **Cost.** ~3 days. **Order:** seventh; needs W2's `admitted_budget`.
 
-**Risks.** The only user-visible behaviour change in the plan; a silent quarantine is worse than
+**Risks.** The only user-visible behavior change in the plan; a silent quarantine is worse than
 none, which is why the notice is in the RED criterion.
 
 **Exit criteria.** A relaunch after a recorded loss opens at a configuration whose admitted price is
@@ -1877,9 +1877,9 @@ reachability fixture set of §6.6.4, which is the stronger claim.
 **Order:** continuous; the `--autodive` verdict rebuild specifically after W1.
 
 **Risks.** Turning informational reds into failures will surface pre-existing failures — `--uitest`
-step 30 was red for weeks, including a shipped release, normalised as "the known pre-existing
+step 30 was red for weeks, including a shipped release, normalized as "the known pre-existing
 failure". Budget for that: the first `gate_selfcheck` run is expected to find several, and each must
-be **filed** rather than re-normalised.
+be **filed** rather than re-normalized.
 
 **Exit criteria.** Every harness in the checklist returns non-zero on its sabotage arm; every
 assertion has a reachability fixture that has been observed red; `--autodive` distinguishes pass /
@@ -1936,7 +1936,7 @@ Nothing in this loop needs CI (`ci.yml` is `workflow_dispatch` and has no GPU) a
 dev box to reach the Radeon box. The later automation is TODO T-6: `scripts/job-watcher.ps1` running
 in the **logged-on desktop session** — remoting alone usually cannot create a swapchain, or lands on
 a software adapter and gives plausible timings that describe nothing. Job files carry **parameters,
-not commands**, the watcher invokes only a whitelisted script, and anything unrecognised is a
+not commands**, the watcher invokes only a whitelisted script, and anything unrecognized is a
 **refusal**, never a skip.
 
 **Gate.** `--torture escaped-ref-shallow` on the **RX 6800 XT through the share**. **RED:** a device
@@ -1987,7 +1987,7 @@ undocumented prefix.
 The headline claim of this document is that the **five of the nine** open classes with no
 red-capable check go to zero — with two of those five reaching only *partial* coverage, named in the
 rows below and in §10, because their residual halves have no controlled reproduction. (Nine, not
-eight: §2.1 bolds nine open classes, the catalogue bolds the same nine, and
+eight: §2.1 bolds nine open classes, the catalog bolds the same nine, and
 `findings-verifiability.md`'s summary paragraph miscounts against its own table.) The claim is only
 demonstrable in this shape.
 
@@ -2019,7 +2019,7 @@ demonstrable in this shape.
 | silent default / unread value (2) | yes | unchanged, plus the job schema's refuse-unknown-keys rule | W9 |
 | heuristic tuned in one direction / at one depth (3) | partial | the screen gate's three depth fixtures plus a shallow control — calibrate in the middle, not at the extremes | W6 |
 | file, format & session contract (4) | yes | unchanged, plus the record's schema version and strict reader | W1 |
-| colouring quality & mapping (4) | partial | the screen gate's flat and flash fractions on a real dive | W6 |
+| coloring quality & mapping (4) | partial | the screen gate's flat and flash fractions on a real dive | W6 |
 | miscellaneous (11) | partial | unchanged | — |
 
 ---
@@ -2157,11 +2157,11 @@ after-arms, with its cost written down in §8.
 | Held-frame max magnification | printed by `--zoomtest`, asserted nowhere; design target ≤ 1 octave | ≤ 1 octave, asserted |
 | Rebase per sampled pixel, session 95th percentile (the counter is full-frame only and lands 2–3 frames late, so it is a session statistic, not a per-frame one) | **~7 wraps/px** at 1.76e6× (25–33 M/frame, `bla_skip=0`, `orbit_len=655` against ask 4627) — memory note, **not verified in code** | **< 1.0 outside a declared rung**, and any frame above 4 with `chunk_needed == false` is W9's RED |
 | Fraction of settled frames admitted below native resolution | the MEM-49 latch ran **9% of the pixels** for a whole dive at 17.8 ms/frame with the GPU idle | **gated** by `--selftest live-res` extended to the admission path (W2, gate 4), *and* watched here as the anti-latch canary. A watched number alone would have been P6's own mistake |
-| Open classes with no check that can go red | **5 of 9** (§2.1 and the catalogue both bold nine open classes; `findings-verifiability.md`'s summary paragraph says eight and miscounts its own table) | 0 of 9, with two of the five reaching *partial* only — the aggregate half of main-thread blocking, and issue #3 inside open/unexplained — both named non-goals |
+| Open classes with no check that can go red | **5 of 9** (§2.1 and the catalog both bold nine open classes; `findings-verifiability.md`'s summary paragraph says eight and miscounts its own table) | 0 of 9, with two of the five reaching *partial* only — the aggregate half of main-thread blocking, and issue #3 inside open/unexplained — both named non-goals |
 | Log bytes per minute / accum share | 1.06 MB per 14 min, **65% accum** | < 300 KB, < 5% |
 | dev-box build → Radeon verdict on the share | days, hand-assembled | ≤ 24 h |
-| Device losses per field session at the field geometry | 2 in ~5 weeks, both RX 6800 XT | 0 across 3 sessions ≥ 30 min — **and read it for what it is**. Against a base rate of two losses in five weeks, three half-hour sessions cannot distinguish a fix from luck; an error that runs in your favour is the one you will not notice (MEM-77). A green here means *the regime was entered and survived* (W9's entry proof carries that), and it does **not** mean issue #1 is closed |
-| `test result:` total | a **`test result:`-line** count from a full `cargo test` run, not a `#[test]` grep — the `#[test]` counts on `4e86e0e` are 486 app / 117 core / 34 gpu / 20 state, against a beta.111 snapshot of 479 / 106 / 34 / 20, so the figure must be re-measured per release and labelled with how it was obtained | never decreases |
+| Device losses per field session at the field geometry | 2 in ~5 weeks, both RX 6800 XT | 0 across 3 sessions ≥ 30 min — **and read it for what it is**. Against a base rate of two losses in five weeks, three half-hour sessions cannot distinguish a fix from luck; an error that runs in your favor is the one you will not notice (MEM-77). A green here means *the regime was entered and survived* (W9's entry proof carries that), and it does **not** mean issue #1 is closed |
+| `test result:` total | a **`test result:`-line** count from a full `cargo test` run, not a `#[test]` grep — the `#[test]` counts on `4e86e0e` are 486 app / 117 core / 34 gpu / 20 state, against a beta.111 snapshot of 479 / 106 / 34 / 20, so the figure must be re-measured per release and labeled with how it was obtained | never decreases |
 | `--bench-matrix` algorithmic drift on a refactor commit | **0** (the beta.111 matrix) | 0 |
 | Record overhead, interleaved ABABAB median-of-3 | not yet measured | < 0.5% of median frame time |
 
@@ -2204,8 +2204,8 @@ after-arms, with its cost written down in §8.
 | A new gate engaging on healthy runs | the standing precondition at the head of §7: engagement rate 0, or a stated healthy distribution, on both cards before any threshold is fixed |
 | Deleting the present-throttle vetoes re-exposes the compositor case | `wall_budget` learns only from frames that dispatched; the discriminator becomes "did anything get submitted recently" |
 | `CONTENT_MIN_ESCAPED` on the fast path calls a thin-filament frame blank | recalibrate across six views in the middle of the range, not at the extremes |
-| Turning informational reds into failures surfaces pre-existing failures | expected; each is filed, none is re-normalised |
-| The reference-fitness change re-enters the build-storm family | default off behind a tunable with named flip conditions; audit every heuristic calibrated against the old behaviour |
+| Turning informational reds into failures surfaces pre-existing failures | expected; each is filed, none is re-normalized |
+| The reference-fitness change re-enters the build-storm family | default off behind a tunable with named flip conditions; audit every heuristic calibrated against the old behavior |
 | 45–50 days is long for one maintainer | the beta cadence of §8, with a stated failure mode at each boundary |
 
 ### What would make this strategy wrong
@@ -2243,7 +2243,7 @@ harness copy. "Screen" = scores captured pixels.
 | `--zoomtest` | on-screen update cadence, held-frame magnification | **none** — prints and exits 0 | real loop | per-pass timings | single | cadence data | nothing; it has no criterion |
 | `--uitest` / `--juliadive` | scripted UI walk, screenshots | per-check; deep band is WARN-not-FAIL | real loop | screen (stills) | single | reflow, panel layout, appearance | deep-band failures (downgraded by CL-166) |
 | `--autodive` | device-loss regime | `exit(if lethal > 0 {0} else {2})` | real loop | per-pass | single | a lethal *reading* | a blind loss — reports "did not reach the regime" (U8) |
-| `--deviceloss-repro` | cost curves, actuators, parity axes | **none** — report only | real loop | per-pass | both, by hand | cost characterisation | nothing; no criterion |
+| `--deviceloss-repro` | cost curves, actuators, parity axes | **none** — report only | real loop | per-pass | both, by hand | cost characterization | nothing; no criterion |
 | `--chunk-sweep` | per-pass cost against window size and dimension parity | **none** — no `exit(` in the file | real loop | per-pass | both, by hand | the fixed term, parity cliffs | nothing; no criterion |
 | `--soak` | liveness over a 20 s window | crash/hang census | real loop | none | single | crashes, hangs | a ~1 fps grind passes |
 | `--torture` ladder | escalating live/offline rungs | rung exit codes; ladder shape tested | real loop | mixed | single | what its rungs cover | the short-escaped-reference regime — stated in its own header |
@@ -2251,7 +2251,7 @@ harness copy. "Screen" = scores captured pixels.
 | `--bench-matrix` | 28 segments: signatures + timings | signature equality, `|| !same_gpu`; timing warns at 1.35× | real loop | per-pass | single effectively | algorithmic drift on the blessed card | anything on a second adapter |
 | F3 corpus `--check` | 38 locations, e0–e1105 | maxΔ per location | offline | per-pixel | single | perturbation correctness | live path; SA and the corrector are pinned off |
 | `scripts/dive-capture/` | blank / flash / flat fractions | **manual, no thresholds** | real loop | screen | single | blanking and flashing | nothing automatically |
-| `scripts/gpu-validate.ps1` | the cross-GPU battery | records exit codes, **always exits 0** | n/a | n/a | multi | data collection | nothing; red is normalised in prose |
+| `scripts/gpu-validate.ps1` | the cross-GPU battery | records exit codes, **always exits 0** | n/a | n/a | multi | data collection | nothing; red is normalized in prose |
 | `checklist_coverage.py` | that each checklist enforcer name resolves | name resolution | n/a | n/a | n/a | a missing enforcer | a vacuous one; reports 0 outstanding |
 
 **After this plan**, the additions are: `--selftest record`, `budget-confidence`, `pricing-props`,
@@ -2304,7 +2304,7 @@ written from.
 | U21 | verification | No automated gate looks at the pixels that reached the screen during motion | W8, W6 |
 | U22 | frame-cost | `chunk_over` is the only place the iteration ask meets the cost model, and all three actuators hang off it | W2 |
 | U23 | frame-cost | `mode_rate` is a session-long running minimum, fed by every kind of dispatch, feeding three floors, with no recovery | W2 |
-| U24 | motion | The moving frame's resolution is decided by the palette normalisation window | W4 |
+| U24 | motion | The moving frame's resolution is decided by the palette normalization window | W4 |
 | U25 | reference | The on-disk orbit cache ranks by length alone and never reads the header fields that would say the orbit is unfit | W9 |
 | U26 | gpu | The rebase count is shader arithmetic that folds differently per vendor, and the only cross-vendor gate is loosened for that reason | W8 (detect only: the counter arithmetic joins `--gputest`'s per-backend op families). The fix half stays out of scope, and §5.2 keeps the counter out of `admit()` accordingly |
 | U27 | autopilot | With auto-iterations on, starvation cannot be named: both witnesses in `dead_end_message` require auto off | *not assigned* |
@@ -2323,7 +2323,7 @@ written from.
 | U40 | frame-cost | The motion pacer's wall LIFT is unbounded, kind-blind, and can be proved by a frame that never waited for the GPU | W2 |
 | U41 | reference | The series-approximation skip has no validity re-check while the BLA has one every frame | W9 |
 | U42 | presentation | The settled compose gate snapshots and serves a texture with neither a content nor a provenance check | W6 |
-| U43 | colour | A held or reprojected frame is re-coloured under the current normalisation map; under the log map everything below `norm_lo` collapses | W6 |
+| U43 | color | A held or reprojected frame is re-colored under the current normalization map; under the log map everything below `norm_lo` collapses | W6 |
 
 ### Medium
 
@@ -2343,7 +2343,7 @@ written from.
 | U55 | reference | Reference identity at install is "longer wins", which is wrong for escaped orbits at different points | W9 |
 | U56 | presentation | The dual-view second panel's moving resolution is a view-0 quantity view 1 can never move | W4 |
 | U57 | presentation | `CONTENT_MIN_ESCAPED` can call a genuine thin-filament frame blank, and three of them stop the dive | W6 |
-| U58 | colour | The converged SSAA average is presented under a colour signature that omits the window actually mapped | W6 |
+| U58 | color | The converged SSAA average is presented under a color signature that omits the window actually mapped | W6 |
 
 ### Low
 
@@ -2376,26 +2376,26 @@ None. Both lenses agreed on all sixty candidate findings.
 
 ---
 
-## Appendix C — the incident catalogue
+## Appendix C — the incident catalog
 
 201 incidents were merged from the release notes and the post-mortem notes and classified in §2.1.
 Reproduced here: every incident that is **open**, plus the exemplar for each recurring shape and each
 "one fix broke another" pair — the rows this document's workstreams act on. Ids prefixed `CL-` come
-from the release-note catalogue and `MEM-` from the post-mortem notes; a row carrying both is the
+from the release-note catalog and `MEM-` from the post-mortem notes; a row carrying both is the
 same incident seen from both vantage points.
 
 | id | version / date | symptom | class | detected by | gate added |
 |---|---|---|---|---|---|
 | CL-1 · MEM-39 | beta.112 / 2026-09-21 — **OPEN** | RX 6800 XT lost the GPU at a shallow 1.76e6×; frames 200 → >1000 ms over half a minute | cost-model-blind | field crash report (user's own zoom) | none — diagnostics only (budget-history section, blind tripwire) |
 | CL-2 · MEM-39 | beta.112 / 2026-09-21 | (no symptom) — the escaped-pixel atomic suspected of costing CL-1; measured Δ=0 ms, pixel-identical | retracted diagnosis | code reading | none |
-| MEM-61 | 2026-09-20 — **OPEN** | "it starts to pan and the screen goes to a flat colour so it seems to go off screen" | iteration starvation | field log | none |
-| CL-3 · MEM-62 | beta.110 / 2026-09-20 | dive from 8e175×: one frame in three a flat colour, black or the previous centre's colour | presentation ≠ render | screen recording, lined up against the log | escaped-pixel content reading gates adoption and snapshotting |
+| MEM-61 | 2026-09-20 — **OPEN** | "it starts to pan and the screen goes to a flat color so it seems to go off screen" | iteration starvation | field log | none |
+| CL-3 · MEM-62 | beta.110 / 2026-09-20 | dive from 8e175×: one frame in three a flat color, black or the previous center's color | presentation ≠ render | screen recording, lined up against the log | escaped-pixel content reading gates adoption and snapshotting |
 | CL-4 · MEM-62 | beta.110 / 2026-09-20 | same dive — flat/black frames shown *and adopted* | guard scope | screen recording | `TRACE=gpu` content reading per frame |
 | CL-10 · MEM-56 | beta.109 / 2026-09-19 | at 4× zoom speed the auto-zoom's aim slid off the edge | steering & search | the user's own 4× dive at 1e118 | target-motion replay: 20/81 → 2/78 looks |
 | CL-11 · MEM-59 | beta.109 / 2026-09-19 | the picture slid sideways for the first half second of every dive | cost-model-blind (proxy input) | user report + `--show-timestamp` recording | sideways travel over the opening half second: 2.84% → 1.03% |
 | CL-12 | beta.109 / 2026-09-20 | auto-zoom stopped with "no detail ahead" on a 1e590 dive that had detail | guard scope | user report | none automated |
 | CL-13 · MEM-60 | beta.109 / 2026-09-20 | at ~1e240 a dive showed **36% of its length blank**, in stretches up to 2 s | iteration starvation | screen recording of the reported dive | `scripts/dive-capture/` blank measurement, 3 runs per arm |
-| CL-15 · MEM-46 | beta.109 / 2026-09-20 | every colour on screen swelling and shrinking ~2.5×/s during a deep zoom | normalization source | user report at a 2e13 view | `render/norm_partial.rs`; palette-scale swing 1.35 → 0.011/s |
+| CL-15 · MEM-46 | beta.109 / 2026-09-20 | every color on screen swelling and shrinking ~2.5×/s during a deep zoom | normalization source | user report at a 2e13 view | `render/norm_partial.rs`; palette-scale swing 1.35 → 0.011/s |
 | CL-17 · MEM-21 | beta.109 / 2026-09-19 | one black frame at the start of every Space zoom with the Performance section open | UI reflow → render | user report | live readouts `.truncate()`; status-bar width invariants |
 | MEM-38 | 2026-09-18 — **OPEN** | "the app is no longer responding" — ~1 fps, no device loss, no watchdog line | actuator blind spot | field log | none |
 | CL-19 · MEM-47 | beta.108 / 2026-09-18 | a 100× click-to-zoom flashed the panel black | presentation ≠ render | user report | `hold_scale_floor`; `--zoomtest` records held magnification |
@@ -2407,7 +2407,7 @@ same incident seen from both vantage points.
 | MEM-37 | 2026-09-13 — **OPEN** | device lost at ~68 min on the already-fixed driver, with concurrent export | main-thread blocking & aggregate | crash report + log reconstruction | none; no `export_active` gate found |
 | CL-38 · MEM-32 | beta.99 / 2026-09-11 | re-zooming a parabolic exact point settled then sat "computing" for minutes | guard scope | user report | `--deviceloss-repro` reproduces it headlessly |
 | CL-39 · MEM-31 | beta.99 / 2026-09-11 | the same view, ~200× per-pass cost for no visible reason (odd **width**) | driver fast path | `--deviceloss-repro` with a new parity axis | the parity axes are the regression |
-| MEM-35 | 2026-09-10 | shedding the chunk window to its 256 floor did **not** save the device | actuator blind spot | field crash report + `--deviceloss-repro` | `--deviceloss-repro` characterises the cost curve |
+| MEM-35 | 2026-09-10 | shedding the chunk window to its 256 floor did **not** save the device | actuator blind spot | field crash report + `--deviceloss-repro` | `--deviceloss-repro` characterizes the cost curve |
 | CL-49 | beta.75 / 2026-09-02 | Save on a `.fdn` at 9.98e60205× put the app into "(Not Responding)" for minutes | main-thread blocking | user report | refusal in 0.3 ms with nothing resident |
 | CL-50 | beta.73 / 2026-09-02 | every `.fdn`, PNG and EXR written before v0.2.20 loaded with coordinates silently dropped — **52 releases** | file/format contract | a new shipped-file sweep over 81 `.fdn` and 39 `.kfr` | that sweep, asserting a silent load |
 | CL-52 | beta.71 / 2026-09-01 | an export-aspect check passed against a known defect, twice over | vacuous gate | self-review | verified red against the rule it replaced |
@@ -2416,7 +2416,7 @@ same incident seen from both vantage points.
 | CL-77 · MEM-31 | beta.137 / 2026-08-24 | deep renders up to 20× slower at half of all window sizes (odd **height**) | driver fast path | investigation of "the fractal simply got harder" | crash-report render size; the parity axes |
 | CL-78 | beta.136 / 2026-08-24 | the same view rendered a few dozen pixels differently by tile budget and machine speed | schedule-dependent output | corpus regression, three views drifting | a self-test fails if a render mixes the two paths |
 | CL-83 | beta.125 / 2026-08-21 | every view deeper than 1e308× rendered blank — live four days | numeric limit + guard scope | user report | none named at the time |
-| CL-89 · MEM-29 | beta.113 / 2026-08-20 | a deep refinement showed a solid interior-colour screen with no spinner | presentation ≠ render | field report | state-aware FPS row; pure tests |
+| CL-89 · MEM-29 | beta.113 / 2026-08-20 | a deep refinement showed a solid interior-color screen with no spinner | presentation ≠ render | field report | state-aware FPS row; pure tests |
 | CL-90 · MEM-29 | beta.112 / 2026-08-20 | deep views near minibrots rendered flat, or noise, depending on timing | normalization source | user report with screenshots | pure tests only |
 | CL-95 · MEM-25 | beta.106 / 2026-08-19 | Home from a deep view reset the graphics card; the first fix made deep interiors look like noise | unbounded dispatch | user report | **`--motiontest`** |
 | CL-102 | beta.98 / 2026-08-18 | zooming or panning at extreme depth left the picture blank — 100% black at 2e82× | reference lifecycle | a 6-minute deep-zoom validation script | five deep stops each gated |
@@ -2425,7 +2425,7 @@ same incident seen from both vantage points.
 | CL-113 | beta.79 / 2026-08-13 | a scripted deep dive rendered ~26-pixel blocks for most of the descent | cost-model-blind | user report of a scripted dive | `--livetest` baseline |
 | CL-114 · MEM-22 | beta.78 / 2026-08-12 | "Prefer detail while zooming" made a long dive worse than the toggle off | presentation ≠ render | user report | held frame never more than half an octave past a sharp frame |
 | CL-115 · MEM-21 | beta.71/70 / 2026-08-12 | a deep view never finished: label toggles → bar reflow → "interaction" → grid discarded | UI reflow → render | user report | the slot renders the identical monospace widget in both states |
-| CL-124 | beta.53 / 2026-08-09 | with auto-iterations off, 10,000,000 in the Iterations box rendered as ~82,000 | silent default | user report | selftest pins 10M honoured verbatim |
+| CL-124 | beta.53 / 2026-08-09 | with auto-iterations off, 10,000,000 in the Iterations box rendered as ~82,000 | silent default | user report | selftest pins 10M honored verbatim |
 | CL-125 · MEM-15 | beta.47 / 2026-08-09 | a 1445×1134 panel at 2,000 iterations rendered at **504×396**, permanently | measurement ⇒ bootstrap binds | measured on affected hardware | `live-res` selftest group |
 | CL-127 | beta.47 / 2026-08-09 | a doomed reference build was requested again and again | reference lifecycle | trace analysis | none named |
 | CL-134 | beta.35 / 2026-08-07 | the live view rendered **100% black at 1e61×, 1e72× and 1e82×** where offline was correct | presentation ≠ render | **`--livetest`**, a new headless harness | `--livetest` against a blessed baseline |
@@ -2571,7 +2571,7 @@ printed for every run so the control is scored on the same number.
   rungs can share the log. Per-harness verdict tokens (`[[harness]] require`) cover only the
   harnesses whose verdict now reaches the log — `--soak`, `--zoomtest`, `--recordtest` via
   `diag::verdict` — the rest are judged on `[fd-exit]` alone until theirs do.
-- **Pre-existing reds are bounded and printed, not normalised** (§7.8's risk). The first run over
+- **Pre-existing reds are bounded and printed, not normalized** (§7.8's risk). The first run over
   239 sessions on the share found: `--livetest` logs 8–12 in-flight-lethal and 5–9 `possible hang`
   lines on BOTH cards on every build since beta.111 (the tour plays inside one `update()`); `--uitest`
   flips GPU timing 21 times a minute on both cards. Each is a `known = true` mode bound with its
@@ -2594,7 +2594,7 @@ printed for every run so the control is scored on the same number.
   (§6.3 promised "view span"; W1 did not ship it), and captures cannot be aligned to log times (the
   timestamp overlay changes every frame). So `stale` = a streak of identical captures in a run whose
   canvas is moving; a run whose canvas never changed while the autopilot's `eval … l2=` lines show
-  the view travelling is FROZEN (RED), and one whose log shows no travel is VACUOUS.
+  the view traveling is FROZEN (RED), and one whose log shows no travel is VACUOUS.
 - **Deviation: `flash` is an episode, not a difference.** `flashscore.py`'s FLASH_DIFF of 60 counted
   26–43% of healthy transitions at 2^800, where an ordinary zoom step differs by 35–75 units; the
   gate counts the canvas switching into or out of a flat capture.
@@ -2654,7 +2654,7 @@ printed for every run so the control is scored on the same number.
   - one forward jump of ~179,700 s (~50 h) per run, early on;
   - a step of about 2.16 s at about frame 140 in every run, with nothing in flight and the CPU's
     frames regular;
-  - 63–153 steps of ±150–550 ms per run, forward and backward roughly cancelling (+17.3 s / −17.2 s),
+  - 63–153 steps of ±150–550 ms per run, forward and backward roughly canceling (+17.3 s / −17.2 s),
     almost all while moving.
 - The pool-off clock run had 124 such steps and no frame over 55 ms, so they are not real GPU
   delays. On this card a single timestamp reading is therefore not a reliable measure of its pass,
@@ -2768,7 +2768,7 @@ the trigger acts after the first lethal frame, so a FIRST dispatch past the watc
   (beta.133).
 
 **2026-10-12 — §5.1's M2 and M3 (branch `feat/w2-pricing-module`, `f9b07d1`, `077e8ec`).** Both
-byte-neutral in behaviour.
+byte-neutral in behavior.
 
 - **M2:** the pricing family (28 functions and constants, not the thirteen the section lists: the
   reading pool, the blind tripwire's helpers and the dead-man arrived after it was written) moved
@@ -2881,8 +2881,8 @@ place: no schema-5 file had left this machine) shows the gate's input.
   already says). A drain on it would have released the trap's second tile exactly when it was
   released anyway.
 - **Why not strict one-in-flight:** settles only tile where chunking cannot serve (auxiliary
-  colourings, formulas past power 3, missing device capability) or where the frame fits the learned
-  budget but not the ceiling. On the RTX 3080 at the trap's view in stripe colouring, 1920x1200, a
+  colorings, formulas past power 3, missing device capability) or where the frame fits the learned
+  budget but not the ceiling. On the RTX 3080 at the trap's view in stripe coloring, 1920x1200, a
   cheap settle (bootstrap-sized tiles, each a few ms of GPU) reached full resolution in 0.68 s
   unpaced, 1.39 s strictly serialized, 0.91 s with the rule above capped at two outstanding (a
   completion is noticed two to three frames after its dispatch, so one cheap tile per frame keeps
@@ -2948,7 +2948,7 @@ What §5.1 specifies, adapted to today's code and to what the shadow and the two
   the frame. Here the admission feeds `chunk_over` itself, so a budget the wall clock or confidence
   distrusts makes the frame chunk; the suppressions only keep the iteration axis in charge where it
   serves, which the chunk walk's own serialization bounds. Re-examine if a non-chunkable moving
-  frame (auxiliary colouring) turns up over its admission in a field log.
+  frame (auxiliary coloring) turns up over its admission in a field log.
 - **Not built:** the `Admission` token (a GPU-crate trait with one app implementation, counted by a
   test). Today every live dispatch size reads `adm` in `build_params`, which is a claim checked by
   review, not by the compiler; the token remains the way to make it structural.
@@ -2970,7 +2970,7 @@ Evidence, RTX 3080 (three interleaved runs per arm unless stated):
   four strip tests); self-test 516/516, goldens 31/31, after one harness change: `deep_build` now
   marks the injected converged budget as fed each frame (no reading ever arrives there, so the
   admission called it unconfident after 16 frames and "a completed tiled settle REVEALS" ran out of
-  frames). Its checks then measure exactly what they did before (491 frames, licence 7873, pass
+  frames). Its checks then measure exactly what they did before (491 frames, license 7873, pass
   4.333e9).
 - **Next:** one PLUTO run of the trap with this build (ask first), then the token.
 
@@ -3010,7 +3010,7 @@ same trap; user approved).** Exit 0 in 52 s, logcheck PASS, 0 of 225 dispatches 
   admission of 4.0e8, none over it; fed again, the admission is the learned size and passes regrow
   to 1.666e10. Control: `--set ADMISSION=0` turns it red (25 of 25 over, worst 41.65×). Gate 4's
   anti-latch half is the same check's recovery leg; the existing live-res checks run through the
-  admission unchanged (491 frames, licence 7873, pass 4.333e9). Gates 1 (replay corpus) and 3 (a
+  admission unchanged (491 frames, license 7873, pass 4.333e9). Gates 1 (replay corpus) and 3 (a
   Radeon torture rung; the dev.1–dev.3 trap runs stand in for it) remain.
 - **U11/U12.** `present_throttle_step` counted a slow frame that dispatched nothing as compositor
   evidence, and a serialized walk or a held settle tile dispatches nothing while its own pass runs:
@@ -3023,7 +3023,7 @@ same trap; user approved).** Exit 0 in 52 s, logcheck PASS, 0 of 225 dispatches 
   so detection arrives one frame later. No harness simulates a compositor throttle, so that half is
   argued, not measured. RTX 3080: motiontest, soak and zoomtest never counted a frame; the trap's
   two counted frames both had an empty queue.
-- **The review's detailed findings are gone.** `verified.md`, the catalogue and the subsystem maps
+- **The review's detailed findings are gone.** `verified.md`, the catalog and the subsystem maps
   lived in session Temp folders that were emptied on 2026-09-30; only this document's §11 one-liners
   and prose survive. U23 (`mode_rate`'s session-long minimum: kind filter and decay) and U40 (the
   motion pacer's wall LIFT) are therefore re-derived from the code before they are changed.
@@ -3077,11 +3077,11 @@ stopped streaming"; filed in TODO.md under Open bugs.
 
 **2026-10-12 — U49 (in-flight pricing and the lethal shed are off for unpinned motion): covered by
 B4, no code change.** Re-derived: `bp_chunk_tiling` records a pass in flight, drains and prices it,
-and sheds the band licences on a lethal accumulator only `if !interacting || pin_frame`; an unpinned
+and sheds the band licenses on a lethal accumulator only `if !interacting || pin_frame`; an unpinned
 moving pass clears `chunk_inflight` and is never priced by the wall. What reacts to a slow moving pass
 now is B4: every dispatch's completion is priced into the wall cap whatever its kind
 (`view_done`, `0ac2ac1`), a completion past 600 ms sets or tightens it, and the admission bounds
-every later chunk pass, tile and frame by it, moving or not. The licences the shed would lower size
+every later chunk pass, tile and frame by it, moving or not. The licenses the shed would lower size
 settled passes, which the admission bounds too. In-flight detection would act no sooner: while a
 lethal pass holds the queue, the frame loop is blocked at acquire and runs again when the pass
 completes, which is when the completion prices it. Not measured: no harness produces a lethal moving
@@ -3092,20 +3092,20 @@ under unchanged pass sizes), which is W9's instrument and not built.
 
 **2026-10-12 — without GPU timestamps, pins never adopted a refresh: fixed.** Found while testing
 U46: `--motiontest` with `FRACTADYNE_NO_TIMESTAMPS=1` failed A2 ("no complete refresh was adopted
-during motion") on the RTX 3080, on the dev.1 field build (main's behaviour) too. Two defects:
+during motion") on the RTX 3080, on the dev.1 field build (main's behavior) too. Two defects:
 
 - **No pin pass was ever priced.** A pin pass is priced by its own GPU timestamp, or by its completion
   stamp after `PIN_PRICE_WAIT_FRAMES` (5). Up to `PIN_INFLIGHT_MAX` (2) pin passes may be queued, so
   a new one went out every frame and restarted the wait; without timestamps none was priced (0
-  pin-price lines in a traced run, against 34 with timestamps), the band licence never grew from its
+  pin-price lines in a traced run, against 34 with timestamps), the band license never grew from its
   opening value, and a pin crawled ~1,500 iterations a frame toward a 1,000,000 ask until it drifted
   out. `pin_pass_priceable`: without timestamps a pass is priced as soon as its completion has been
   seen, and `pin_inflight_max` holds the pin to one pass in flight so that it can be.
 - **The completion-stamp price counted the pipeline as cost.** It subtracts `PIN_PASS_FRAMES` frames
   of latency, measured in `frame_ms`, which excludes the frame cap's sleep: ~3 ms at a capped 60 Hz
-  where a frame takes ~16.7. Every pin pass then read ~25 ms against the 20 ms target and its licence
+  where a frame takes ~16.7. Every pin pass then read ~25 ms against the 20 ms target and its license
   halved. `Perf::frame_period_ms` is the raw period, sleep included, and the price now subtracts it
-  (prices of 0–1 ms for the same passes; licences grow ×2 a pass).
+  (prices of 0–1 ms for the same passes; licenses grow ×2 a pass).
 
 Without timestamps the motiontest now passes, three runs of three, adopting 36–40 complete refreshes
 (0 before); with timestamps it passes as before (12–14). That the no-timestamps path now adopts more
@@ -3142,7 +3142,7 @@ The zoomtest's "real refreshes" fall (33/s → 15/s at the default rate) because
 re-iterated, and a pin dispatches a pass about every second frame now; what is ON SCREEN (the lag) is
 what improved. The reason two were allowed — strict serialization made a pass every third frame and
 at 4.0× a 60k-iteration refresh outlived the drift abandon — predates pricing by completion: then an
-unpriced pass's licence never grew, now each pass grows the next. `pin_pass_priceable` prices by the
+unpriced pass's license never grew, now each pass grows the next. `pin_pass_priceable` prices by the
 reading when it lands first, else by the completion stamp once seen, else after the 5-frame wait.
 The refresh-resolution sizing still counts the rate's frames as passes; it was left as measured.
 
@@ -3168,7 +3168,7 @@ admission) now sits near 5e6 steps: the storm keeps re-lowering the per-mode min
 U23 lets it recover, as designed.
 
 **2026-10-12 — U53 (the steering loop's cadence and pacing are silently rescaled by the cost loop's
-failures): made visible, behaviour unchanged.** Re-derived: the autopilot re-evaluates its target
+failures): made visible, behavior unchanged.** Re-derived: the autopilot re-evaluates its target
 every max(0.35 s, 1.5 × `frame_ms`), so frames slowed by a mispriced dispatch stretch the steering
 with them; the Quality priority caps the zoom speed from the refresh period (floored at
 `QUALITY_MIN_SPEED_FRAC`, so it cannot stall); the glide's own step is already bounded (egui's
@@ -3198,14 +3198,14 @@ identically. The dev.4 PLUTO records cannot answer whether the RX 6800 XT escape
 stays at 1 across back-to-back passes (a new pass goes out in the frame the last completes), so its
 spans are trains of passes, not passes; the 3080's own median span is 231 ms with 0 escapes.
 
-**2026-10-13 — U48 (one band ledger, two targets, two lanes): not reproduced on the RTX 3080; behaviour
+**2026-10-13 — U48 (one band ledger, two targets, two lanes): not reproduced on the RTX 3080; behavior
 unchanged.** Pins (20 ms target, ×4 fast lane) and the settled walk (400 ms, ×2) share each view's
-ledger, so a licence the walk earned could size a pin pass ~20× its target. Traced (`TRACE=tile`
+ledger, so a license the walk earned could size a pin pass ~20× its target. Traced (`TRACE=tile`
 `pin-price`): the budget trap's taps (1 s settles between 0.08-octave taps at 4.0×), 154 pin passes,
 worst 28 ms; the motiontest (1M ask, settle then dive and glide), 275 pin passes, 5 over twice the
 target, worst 74 ms, and all five are band-0 first passes whose size includes the free series-skip
-prefix (size 4× the licence), not passes sized by an inherited licence. Two things keep inheritance
-cheap: a pin pass stops at its band's edge (`chunk_band_end`), so in the narrow low bands no licence
+prefix (size 4× the license), not passes sized by an inherited license. Two things keep inheritance
+cheap: a pin pass stops at its band's edge (`chunk_band_end`), so in the narrow low bands no license
 can make it long, and the ledger SURVIVES interaction on purpose (clearing it per pin made every pin
 re-climb from the floor and drift out before adopting). Keying the ledger per lane would bring that
 re-climb back after every settle, on a mechanism argument. The RX 6800 XT's pin-price trace on a
@@ -3222,7 +3222,7 @@ arms of `PIN_TIMEOUT_SCALED`, one run each, plus the motiontest's pin-price trac
   the first time a field log reaches it.
 - **U48: not reproduced on this card either.** 226 and 228 traced pin passes, median 0 ms, p95
   ~20 ms, worst 44 ms; the 3 over twice the target are band-0 first passes carrying the series-skip
-  prefix (size 4× the licence), as on the RTX 3080 — none sized by an inherited licence. Closed as
+  prefix (size 4× the license), as on the RTX 3080 — none sized by an inherited license. Closed as
   not reproduced on either card; the shared ledger stays.
 
 **2026-10-13 — U4 (the chunk-pass price has no constant term): measured, small on both cards;
@@ -3338,7 +3338,7 @@ planning sites and, when the later freeze verdict turned the frame into a reproj
 frames. A pass is now planned upstream (`ChunkPlan::pass`, `tile_work`, the un-chunked key change)
 and stamped once in `bp_finish_params`, after the verdict; a planned-then-frozen frame zeroes its step
 count as before. The view's registration and motion-jam counts had keyed on the EARLY
-`will_reproject`, so they also counted the dispatch the freeze cancelled; they now require the
+`will_reproject`, so they also counted the dispatch the freeze canceled; they now require the
 stamp. Frames reading 8+ frames since a dispatch while one had run within 7: 41–50 per baseline run,
 0 after. `rg 'fe_dispatch_frame\[[a-z]+\] = '` finds one site.
 
@@ -3391,7 +3391,7 @@ grep could not be the test: it also matches the config's `min_motion_res =` and 
 copy.) Byte-neutral: goldens 31/31, `--motiontest` unchanged.
 
 **2026-10-13 — W4's screen gate, RTX 3080; and a metric that lied.** The 2^800 fixture (`dive-2p800.kfr`,
-session-seed, 10,000 iterations), interleaved against the W4 step-1 binary (`adba77b`: W3's behaviour
+session-seed, 10,000 iterations), interleaved against the W4 step-1 binary (`adba77b`: W3's behavior
 plus the record): `screengate.py` PASS on both arms, and on W4 again in a second session — 0% blank,
 flat, flash and stale in every valid run. ⚠The first launch of each binary in a session dives ~28
 octaves instead of ~61 and captures under 60 frames, which the gate rightly calls VACUOUS: score from
@@ -3439,7 +3439,7 @@ recordings — `--motiontest` (1,262 decisions) and the 2^800 autodive (2,978) �
 to 570 and 608 decisions (every decision of a rare branch kept), they are the fixtures in
 `validation/replays/`, and `cargo test` replays them on the CPU (CI runs it): RED on any field of any
 decision, and VACUOUS with no recording, a recording under 200 decisions or none of a moving frame, or a
-branch no fixture replays (settled, a pin frame, prefer detail, the rate cap measured and modelled, the
+branch no fixture replays (settled, a pin frame, prefer detail, the rate cap measured and modeled, the
 AIMD stepping, the ladder's rung moving and binding, direct-mode motion — the autodive alone never
 reaches direct mode, the motiontest never prefer detail). A one-character change to the controller (the
 pin growth cap 1.25 → 1.26) turned it red, naming the frame and the field.
@@ -3455,7 +3455,7 @@ present gate; the regime predicate (§6.7) and a field capture are not yet terms
 
 **2026-10-13 — W5: the present gate lifted** (`decide_present`): whether the display serves the held
 snapshot while compose work runs underneath, whether this frame takes the snapshot, the settled-cost
-probe and the colour-pass filter — `PresentInputs` (the frame's flags, the grid's composing state, the
+probe and the color-pass filter — `PresentInputs` (the frame's flags, the grid's composing state, the
 view's hold, pin, dirty and verified state) to `PresentDecision` (the four outputs, plus the hold flag,
 the snapshot's verified flag and the armed probe it writes), moved by the same asserting script. The
 fixtures were re-recorded with both stages (`--motiontest` 2,666 decisions, the 2^800 autodive 5,900,
@@ -3498,7 +3498,7 @@ the calibration, a clock, an atomic, the environment); putting the old call back
 `motion_pass_steps` and the read. (`budget_base` reads two tunables in place, so the probe, which calls it,
 will carry them as inputs.)
 
-A pre-existing oddity, read off the decisions and left alone (a move changes no behaviour): the plateau
+A pre-existing oddity, read off the decisions and left alone (a move changes no behavior): the plateau
 leaves `iter_stall` at its count, so the next motion traces "motion ends a flat run (2/3) — boost
 1.0→1.0", a revert to where the boost already is.
 
@@ -3539,7 +3539,7 @@ are read in the stage itself and enter as inputs), the regime predicate (§6.7) 
 `bp_chunk_tiling`'s three sub-stages: the wall-aware floor, the pass's wall-clock target, the in-flight
 pass's price (the wall-clock retreat into the lethal band, the quick-present drain, the pin pass's
 timestamp price, the band ledger), the pass's step budget and the growth-limited iteration step.
-`WalkPriceInputs` carries the view's `WalkLedger` (the pass in flight, the band licences, the last price,
+`WalkPriceInputs` carries the view's `WalkLedger` (the pass in flight, the band licenses, the last price,
 the last moving step), the frame's timing, the pin pass's stamps, the measured rates, five overridable
 tunables and the adapter's per-pass fixed cost — every global the stage read in place (`cost()`, the
 calibration through `motion_pass_steps`, the completion stamp's atomic) is read by the caller now. The
@@ -3564,11 +3564,11 @@ the same binary read `[11, 1]` five times in a row on the `worker` group and aga
 the check's both-devices term has always had a ONE-TILE margin, and the race tipped once. Not this change
 (the still never reaches the chunk walk), but a check one tile from flaking, worth widening. Remaining in
 `bp_chunk_tiling`: the walk's identity (the signature, the restart and its ledger rule, the SA-skip
-floor) and the dispatch (the serialized hold, the pin gate, the licence, the charge, the cursor).
+floor) and the dispatch (the serialized hold, the pin gate, the license, the charge, the cursor).
 
 **2026-10-14 — W5: the chunk walk's identity lifted** (`decide_walk_id`), the second of
 `bp_chunk_tiling`'s sub-stages: the signature that keys the walk and the jitter-free one that keys its
-band ledger, composed inside the decision from everything they fold (the f64 centre and magnification,
+band ledger, composed inside the decision from everything they fold (the f64 center and magnification,
 the reference length, the exact position, the settings hash, the series seed, the jitter's bits, the ask,
 the texture, the ss) — §7.5's "replay pins the sig composition per frame" — the restart and whether it
 clears the ledger, the counted restart that lost progress (A4), and the live range the walk covers (the
@@ -3590,7 +3590,7 @@ goldens 31/31 (the twin still at `[11, 1]`); `--motiontest` PASS ×3; `--livetes
 
 **2026-10-14 — W5: the chunk walk's dispatch lifted, and with it every decision of `bp_chunk_tiling`**
 (`decide_walk_dispatch`): the serialized hold (the settled walk's one unpriced pass; the pin gate and its
-wall-clock escape), the regional licence, the running-pixel charge, the step and the window's end, the
+wall-clock escape), the regional license, the running-pixel charge, the step and the window's end, the
 cursor's advance and the pin pass's bookkeeping, the finished walk's tail and its read retry, and whether
 the pass's reading will describe the picture on screen. The stage read the clock twice — the pin gate's
 age, then the dispatch stamp — and the decision takes one reading (`now_us`) for the age while the caller
@@ -3672,7 +3672,7 @@ says, per view, whether it RAN an iterate pass and why (`ran_out`: forced by a n
 resize; the key; a tile; the chunk range; the probe nonce; the split) — the truth the app's dispatch
 stamp, which is a plan, is held against. Frame record schema 11 carries all of it
 (`read_prov_frame/kind`, `ctr_prov_frame/ask/shader`, `prev_gpu_ran/why`) and the two silent discards
-(`climb_read`, `norm_discard`); `framelog.py summarize` reconciles them. Behaviour unchanged.
+(`climb_read`, `norm_discard`); `framelog.py summarize` reconciles them. Behavior unchanged.
 
 What the record says on the first runs (RTX 3080):
 - **U54, the climb's silent discard, quantified.** The MAXITER reading carries the shader's count, not
@@ -3734,7 +3734,7 @@ passes, with no line at all. The Radeon's uitest is to be confirmed with W6's fi
 allowance said both cards, and only this one has been measured.
 
 **2026-10-14 — W6 rungs 2–3 and the provenance gate: one question for every presenter, the hold's
-own colours, and a tally held to zero.** (R1b's gates, for the record: workspace 1,506 / 0 / 11,
+own colors, and a tally held to zero.** (R1b's gates, for the record: workspace 1,506 / 0 / 11,
 self-test 528/528 with goldens 31/31, `--motiontest` PASS ×3, `--livetest` 24/24 with 0 drifted.)
 
 *The question.* Every presenter now asks the same two things of the pixels it puts on screen. Is
@@ -3763,11 +3763,11 @@ named an adopted worker frame with (`adopt_stamp`).
   56×56 probe against 0.1%) on purpose: it asks whether the probe beats the picture already shown,
   not whether a texture is a picture.
 
-*The colours.* U43: a held snapshot keeps the palette-range map it was seen under (`Perf::hold_norm`).
+*The colors.* U43: a held snapshot keeps the palette-range map it was seen under (`Perf::hold_norm`).
 While a hold is served, the escape-range readings are the composing walk's, so the snapshot was
-recoloured every frame under another picture's window; under the log map everything below the new
-`norm_lo` went to one colour. Any change to the user's own colouring un-freezes it
-(`norm_user_sig`). U58: the SSAA average's colour signature includes the window actually mapped
+recolored every frame under another picture's window; under the log map everything below the new
+`norm_lo` went to one color. Any change to the user's own coloring un-freezes it
+(`norm_user_sig`). U58: the SSAA average's color signature includes the window actually mapped
 (`norm_shown`). The glide toward a new window now lands exactly once the residual is under 0.5% of
 the window's width, so the signature settles and the average can begin.
 
@@ -4015,7 +4015,7 @@ significant). Cap 2's was 0.86–0.91. The e4000 held max is back to cap 2's 6.3
 5.47).
 
 *The P-G matrix, gated, on the RTX 3080.* The continuous rows' `misi-49-3.fdn` was never in the
-tree. It is rebuilt from `local/hero.fdn` (the same (49,3) centre, base 500k, auto-iter on), and the
+tree. It is rebuilt from `local/hero.fdn` (the same (49,3) center, base 500k, auto-iter on), and the
 appetite row runs on it as the design says.
 
 | row (one run per build) | fix | cap 1 (main) | beta.19 |
@@ -4030,7 +4030,7 @@ appetite row runs on it as the design says.
 (beta.19 ran ungated: it predates the flag; its numbers are read against the same bounds. It is the
 accelerated package, whose pixels match the standard one.)
 
-Three findings, filed here rather than re-normalised (§7.8's risk):
+Three findings, filed here rather than re-normalized (§7.8's risk):
 - **The held criterion fails on every Smooth row, on beta.19 too.** At 4× the held picture reaches
   2.2–3.5 octaves against a bound of 1; at 1× 0.53–0.96 against 0.5. The jump-start 1× row reads
   0.53–0.93 on four runs of each build, with no pin abandoned for drift on either (the tile trace).
@@ -4121,8 +4121,8 @@ feed pairs by the frame a reading names, and it pairs on this card as well:
   the wait;
 - minibrot glide: 215 of 218 by their own reading.
 
-*The 1× leg on the Radeon* (95 octaves on the (49,3) spiral from 1×; the agent caps a centre at
-400 characters, so the view went with its centre cut to 300 digits, ample for 2^95): an A/B against beta.18 (on the share; beta.19 changed only credits and bench-kit code, 0 px), interleaved, two runs each:
+*The 1× leg on the Radeon* (95 octaves on the (49,3) spiral from 1×; the agent caps a center at
+400 characters, so the view went with its center cut to 300 digits, ample for 2^95): an A/B against beta.18 (on the share; beta.19 changed only credits and bench-kit code, 0 px), interleaved, two runs each:
 
 | RX 6800 XT, 1× leg | beta.18 | dev.10 |
 |---|---|---|
@@ -4174,10 +4174,10 @@ stayed at 0, the 1× lag recovered (0.22 octaves against 0.30) and e4000 adoptio
 800,812. Below the occupancy knee a small frame costs nearly what a full one does, so a small frame
 reads as a low rate, which sizes the next frame smaller: the spiral the ladder's own notes warn of. A
 rate in nominal steps cannot serve both a pin pass and a whole frame, and cannot serve a whole frame
-across the knee without normalising for it.
+across the knee without normalizing for it.
 
 Open, with three candidate fixes:
-1. Normalise the frame rate for the occupancy knee (steps × max(px, knee) / px).
+1. Normalize the frame rate for the occupancy knee (steps × max(px, knee) / px).
 2. Size the visible frame from its own last measured price rather than from a rate.
 3. Revert `PIN_INFLIGHT_MAX` to 2 and give back `c012f32`'s lag gain, keeping the drift rule and
    the deferred feed.
@@ -4189,7 +4189,7 @@ The fix chosen: `Meter::frame_rate` is fed only by readings and lifts of whole m
 pin pass) and counted at the occupancy knee. `decide_walk_price` uses it only to bound a non-pin
 moving frame's iteration step. The resolution keeps `motion_rate`. Two attempts that sized more
 from the frame rate were measured on the RTX 3080 and dropped:
-- uncorrected for the knee, moving frames spiralled to 145×110;
+- uncorrected for the knee, moving frames spiraled to 145×110;
 - corrected for it, the pins' resolution still halved (514×389 against 1028×779), because the 3080
   dispatches no whole moving frame, has no frame rate, and the ladder fell back to the opening guess.
 
@@ -4224,7 +4224,7 @@ records say otherwise: at one in flight both cards dispatch a pin pass every two
 the caps was the regime, not the card. On the RTX 3080 two in flight won the 1× glide (lag 0.20
 against 0.29–0.33 octaves, e4000 48–49 adoptions against 26) and lost the motiontest (13–20 against
 42–45). The traced motiontest showed why: 26 pin passes priced across 70 pins against 285 across 85,
-because each new pass rewrote the in-flight record of the one before it, so the licences barely grew
+because each new pass rewrote the in-flight record of the one before it, so the licenses barely grew
 and 50 pins drifted out.
 
 *The change.* The deferred feed's single parked pass becomes a queue (`WalkLedger::late`, four slots:
@@ -4245,17 +4245,17 @@ A/B on the RTX 3080 against rung 1c (one in flight), interleaved:
 | e4000 4×: adopted / lag (oct) | 54 / 1.96, 53 / 2.03 | 26 / 3.74, 24 / 3.94 |
 | 20-octave 4× zoom: lag (oct) | 0.624, 0.673, 0.680 | 0.760, 0.736, 0.841 |
 
-(One of the rung-1d 1× legs was a solid-colour run; see below. It is left out of the lag figure.) A traced
+(One of the rung-1d 1× legs was a solid-color run; see below. It is left out of the lag figure.) A traced
 motiontest: 268 pin passes priced, 180 by their own reading, 444 parked in flight, 263 never read. The
-timestamp readback does not time every pass at two in flight, but enough are priced for the licences
+timestamp readback does not time every pass at two in flight, but enough are priced for the licenses
 to grow.
 
-*A correction: the solid-colour runs.* The user saw the screen go to one flat colour in some of these
+*A correction: the solid-color runs.* The user saw the screen go to one flat color in some of these
 zoomtests. In those runs the zoom renders, for about two-thirds of the glide, from a reference that
 escapes after 7–8 iterations. It is picked about 24 s in and then reused by every lookahead build,
 since `try_reuse_reference` accepts a complete (escaped) orbit. Every pixel reads as escaped (458,242
-of 458,242), no rebase is recorded, palette normalisation never engages, and the frame is close to one
-colour. The content guard passes it, because it asks whether anything escaped. This happened in 2 of
+of 458,242), no rebase is recorded, palette normalization never engages, and the frame is close to one
+color. The content guard passes it, because it asks whether anything escaped. This happened in 2 of
 about 45 long legs (`ab5/l95-late-1`, length 7; `ab9/l95-pe-2`, length 8), and partly in three more
 (lengths 1,292–4,187 for 2,600–6,200 frames). Every run spends about 1,850 frames early on on a
 4,999-sample escaped reference, beta.19's included, and renders correctly there.
@@ -4263,7 +4263,7 @@ about 45 long legs (`ab5/l95-late-1`, length 7; `ab9/l95-pe-2`, length 8), and p
 **This revises rung 1's "bimodal per-step cost".** Several of the clean runs it explained were these
 renders: cheap because almost nothing iterates. They include the first dev.5 run, the
 `PASS_FIXED_MS=0.2` run, and rung 1b's "cheap state" leg with lag 0.009. The fixes do not rest on
-them. The ×16 licence (1b) and the 115 ms visible frames (1c) were traced in the record of the runs
+them. The ×16 license (1b) and the 115 ms visible frames (1c) were traced in the record of the runs
 they fix, and the RX 6800 XT bisect's runs need checking against this before its counts are
 quoted again. The bug itself is next.
 
@@ -4308,26 +4308,26 @@ Against beta.18, interleaved, two runs each, every run checked:
 The motiontest and the 4× zoom are valid everywhere and decisive, both fresher and sharper. The 1×
 leg carries the pre-existing flat end-stretch in every run (16–24% of recorded frames here), so its
 small freshness difference is not a reliable reading. W8's live-path regressions from `c012f32` are
-closed on both cards. The solid-colour bug (a reused escaped reference) is next.
+closed on both cards. The solid-color bug (a reused escaped reference) is next.
 
-**2026-10-15 — The solid-colour zoomtests, root-caused: two harness-visible defects, neither in the
+**2026-10-15 — The solid-color zoomtests, root-caused: two harness-visible defects, neither in the
 renderer.** This corrects the rung-1d entry's account, which blamed a reused escaped reference.
 
 *The end-of-glide flat stretch: the zoom rounded the target away (a real bug, in beta.19 too).*
-`Viewport::zoom_at` recomputed the centre at the precision the new depth needs (depth + 64 bits).
+`Viewport::zoom_at` recomputed the center at the precision the new depth needs (depth + 64 bits).
 At 1× that is 64 bits, so the first step of a glide from 1× rounded the 1,600-digit (49,3) hero
 point to 64 bits, and the glide zoomed into a point about 1e-20 away from it. Two consequences
 follow:
 - That point is outside the set: a reference there escapes near iteration 5,000. These are the
   4,999-sample escaped references every 1× leg ran on.
 - Past about 2^75 the view is smaller than that distance, so every pixel escapes within 2 iterations
-  of every other: a correct render of empty exterior, and on screen one colour, for the last ~25 s of
+  of every other: a correct render of empty exterior, and on screen one color, for the last ~25 s of
   every 95-octave leg on both cards.
 
 A jump-start at 2^80 kept the file's precision and rendered full detail (escape range ~13,000).
-The same rounding lost a user's deep view on any zoom out and back in about the centre. Fixed: the
-centre keeps every bit it already has (`zoom_at` works at the greater of the depth's precision and
-the centre's own). A core test zooms the hero point out from 2^300 to 1× and back in glide-sized
+The same rounding lost a user's deep view on any zoom out and back in about the center. Fixed: the
+center keeps every bit it already has (`zoom_at` works at the greater of the depth's precision and
+the center's own). A core test zooms the hero point out from 2^300 to 1× and back in glide-sized
 steps. It returns exactly; under the old rounding it drifts by 2^-64 to 2^-67, so the test goes red
 without the fix. Two 95-octave legs with the fix: 0% flat frames, escape ranges 2,350–2,520, an
 11,412-sample reference that does not escape, and the regime is never entered.
@@ -4342,7 +4342,7 @@ frame record's input fields show it:
 - the clean runs: no pointer.
 
 The user was watching these windows. Fixed: under a harness's virtual Space the glide anchors on the
-view centre. The validity check now also flags a run with a real pointer over its window
+view center. The validity check now also flags a run with a real pointer over its window
 (STEERED).
 
 So the "short escaped reference" seen in these runs was a symptom: the steered or rounded glide was
@@ -4355,7 +4355,7 @@ arm, measured its last ~25 s on that flat render. Between arms the figures stay 
 absolute figures they are partly of the wrong picture. The decisive scenes (the motiontest, the
 e4000 glide, the 20-octave 4× zoom) were valid throughout.
 
-Gates (RTX 3080): workspace tests 1,545 / 0 / 11 (+1, the round trip); self-test 529/529, goldens 31/31; `--motiontest` ×3 PASS (A7: 434–462 readings, every count 0); `--livetest` 24/24, 0 drifted (the extra centre digits change no blessed tour frame); `--uitest` 75 / 1 / 0 over 76 steps.
+Gates (RTX 3080): workspace tests 1,545 / 0 / 11 (+1, the round trip); self-test 529/529, goldens 31/31; `--motiontest` ×3 PASS (A7: 434–462 readings, every count 0); `--livetest` 24/24, 0 drifted (the extra center digits change no blessed tour frame); `--uitest` 75 / 1 / 0 over 76 steps.
 
 **2026-10-15 — W8: `--livetest`'s second oracle at 4× the ask, and the app's own account in the
 verdict (U34).** The oracle renders "the same view at the same iteration budget", so a view that the
@@ -4363,7 +4363,7 @@ ask itself starves was black on both sides and graded ok.
 
 *What changed.*
 - Where the live frame is at least 3% black (below that, starvation cannot change the grade), the
-  view is rendered a second time at 4× the oracle's iteration count. The count is honoured verbatim,
+  view is rendered a second time at 4× the oracle's iteration count. The count is honored verbatim,
   with a reference built for it. Black that the bigger budget resolves is starvation.
 - Whether starvation is a defect depends on what the user is told. At the checkpoint the harness
   reads the fields the frame record carries (`capped_frac`, `iter_exhausted`, the plateau, `budget_maxed`)
@@ -4573,7 +4573,7 @@ PLUTO):
   - The self-test's bench-matrix rows were exact there too: 528 checks, the declared failure the
     only one. That is one fewer row than on dev.14, because the "no baseline for this card" note is
     gone.
-  - The battery's verdict was PASS (exit 0), the first battery whose exit code is a judgement.
+  - The battery's verdict was PASS (exit 0), the first battery whose exit code is a judgment.
 
 **2026-10-15 — W8: the meta-gate, `scripts/gate_selfcheck.py` (first version).** §7.8's gate, for a
 workstream whose product is gates: each ARM runs one gate twice, in a scratch copy of the data it
@@ -4609,7 +4609,7 @@ byte-exactly, which PowerShell 5.1 makes error-prone, and nothing here runs on t
 - The checklist arm's first control failed because its scratch tree lacked scripts that `script:`
   and `run:` rows name; the tree now copies `scripts/` whole.
 
-*Gaps, filed rather than normalised (§7.8's risk).* No arm yet for:
+*Gaps, filed rather than normalized (§7.8's risk).* No arm yet for:
 - `--motiontest`;
 - `--uitest`;
 - `--recordtest`;
@@ -4767,7 +4767,7 @@ cause cannot arise. It has no small-Z guard (`TAIL_Z_MIN`), and that is what thi
   where both apply. It went red on a mutant that iterates z² + c for every formula.
 
 *The views.* Every view had to show the tail running (its df32 share of full steps) and a real
-picture (grey levels, edge pixels, looked at).
+picture (gray levels, edge pixels, looked at).
 - Custom z² + c on the ten corpus rows the fixed tail had changed.
 - The self-test's two mode-2 custom goldens.
 - New deep views at 1e40× and 1e80×, found in mpmath for z³ + c, z⁴ + c, the Burning Ship
@@ -4795,7 +4795,7 @@ picture (grey levels, edge pixels, looked at).
   and 54). So the audit sees a custom-tail difference, and the threshold change removed them.
 - No small-Z guard is added: nothing measured calls for one.
 - Not measured on the RX 6800 XT. The field agent's allow-list has no `--formula`, and a `.fdn`
-  view passes its centre and iterations but not its formula.
+  view passes its center and iterations but not its formula.
 
 *Found on the way: custom formulas cannot follow a reference through an extended dip.*
 - On corpus rows 11–15, custom z² + c renders 47–100% interior where the built-in renders 0–11%
@@ -4886,7 +4886,7 @@ BLA-skip counter arithmetic to join `--gputest`'s op families.
   touches the record.
 - Five reruns of the same build: PASS, p99 0.37–0.46%. Across the 18 Radeon runs on record, p99 is
   0.36–0.48% and this is the only one over the limit.
-- **A finding about the gate, filed rather than normalised:** p99 over ~240 frames is the third
+- **A finding about the gate, filed rather than normalized:** p99 over ~240 frames is the third
   largest sample, so two or three preempted frames decide it, and on this card the limit sits only
   5–30% above the usual reading. It goes red without cause about once in eighteen runs. Options:
   more frames, re-measure a near miss, or a cost that excludes preemption. Not changed here.
@@ -5009,7 +5009,7 @@ ladder, RED on the budget stall.**
   - What no harness produces is the field shape: an escaped orbit reused while auto-iter climbs.
     With `REF_ESCAPE_AT` armed, every install is truncated, so refuse → rebuild → truncate would
     loop: not a measurement.
-- **The rule stays off.** It is behaviour-neutral where measured and unexercised where it would
+- **The rule stays off.** It is behavior-neutral where measured and unexercised where it would
   act. §5.8 itself names the risk of switching it on alone: a refused reuse asks for a build, and
   install identity is still "longer wins", which can re-open the build-storm family (U55;
   CL-102, CL-127). Turning it on needs, first, a rung that produces the natural shape, and then
@@ -5056,7 +5056,7 @@ target of 2^16,609.6, and a randomly animated palette. Three findings came out o
   frame record of those days is gone. Ruled out by the code:
   - a minimized window: no window-size change was logged, and `set_size` clamps to 1 px;
   - a long frame through the glide or the autopilot: both clamp dt to 0.1 s.
-- `Viewport::is_usable` asks for a finite, positive scale and a finite centre. `FractadyneApp::view_guard(stage)`
+- `Viewport::is_usable` asks for a finite, positive scale and a finite center. `FractadyneApp::view_guard(stage)`
   runs it after the feature solves, after the autopilot, after navigation in both draw paths
   (before `build_params` reads the view), and at the end of the frame, where a passing view is
   saved.
@@ -5176,7 +5176,7 @@ target of 2^16,609.6, and a randomly animated palette. Three findings came out o
 
 **2026-10-17 — §5.8: the precision contradiction, settled by measurement** (`feat/ref-fitness`).
 
-§5.8 asked for this ("instrument the intermediate value before theorising, and record the answer").
+§5.8 asked for this ("instrument the intermediate value before theorizing, and record the answer").
 The tree said two things:
 - `precomputed_matches` (`==`, not `>=`): a reference built at a different precision rounds to
   different df32 mantissas.
@@ -5213,7 +5213,7 @@ What this changes in §5.8:
   one was admissible. Ranking by fitness now would be a guess; the hit line should first name the
   runner-up.
 
-**2026-10-21 — The settle that kept working: a walk released on quick frames, and licences that
+**2026-10-21 — The settle that kept working: a walk released on quick frames, and licenses that
 assumed the cost and the pixels of the passes that earned them** (`fix/settle-lethal-band`).
 
 The maintainer: "check the rendering of the current location. It seems to continue working after
@@ -5235,27 +5235,27 @@ decoded record (every frame) showed why, four layers deep:
    (`Perf::pin_inflight`) and the settle tiles (`SETTLE_SERIALIZE`) had each learned this; the walk
    had not. Fixed by `WALK_SERIALIZE`: released by its GPU completion, the tiles' signal
    (`view_reg_seq` / `view_done`), with the tiles' 3 s backstop.
-2. **An octave band's licence carried a cheap stretch's size into a dear one.** Band 10
+2. **An octave band's license carried a cheap stretch's size into a dear one.** Band 10
    ([131k, 262k)) cost ~10 ms a pass up to ~220k and ~100× more past it, where the pixels begin to
-   escape. Its licence, doubled on the cheap front, sent a 32,585-iteration pass into the dear part;
+   escape. Its license, doubled on the cheap front, sent a 32,585-iteration pass into the dear part;
    the lethal shed floored every band; the next supersampling sample re-earned it and did it again.
    A per-band memory of the worst cost was tried first and dropped: held to the dear part's cost,
    the cheap front crawled at 572 iterations a pass, 2.2× slower samples. Kept: `WALK_ONSET`, the
    ESCAPE ONSET as a boundary of its own (0.99 × the lowest escape the view's readings have seen,
    `walk_onset_start`), a pass stopping at it and past it carrying no more than that region's own
-   licence (`WalkLedger::onset_work`), opening at the floor and earned by its own prices. ⚠AT the
-   escape: from 0.85 × it, the region held [188k, 221k), nearly free, its own licence doubled there
+   license (`WalkLedger::onset_work`), opening at the floor and earned by its own prices. ⚠AT the
+   escape: from 0.85 × it, the region held [188k, 221k), nearly free, its own license doubled there
    1,542 → 24,672, and a pass from 211,281 ran into the cliff for 1 s. The cost rose at the first
    escape itself: [204,279, 220,663) 12 ms, [220,663, 228,855) 508 ms, the escape at 221,354.
    ⚠And priced against HALF the target (`WALK_ONSET_TARGET_SHARE`): inside the region the cost per
-   iteration still varies ~2× from stretch to stretch, and a licence doubled at the full target's
+   iteration still varies ~2× from stretch to stretch, and a license doubled at the full target's
    rule (a price under 200 ms) landed passes at 900–930 ms, about one a 22-sample run.
-3. **A licence in iterations earned where few pixels run.** The onset region runs on into the tail,
+3. **A license in iterations earned where few pixels run.** The onset region runs on into the tail,
    where a few hundred thousand pixels still run and a cheap pass carries 20–30k iterations; in
-   iterations, the tail's licence opened the next sample's first dear pass at 20,608 over all 9.2M.
-   So the onset licence counts WORK (iterations × the pixels a pass is charged for), and every band
-   licence a settled pass earns remembers its pixels (`WalkLedger::band_px`) and is scaled down for
-   a pass charged for more — inside band 11 the running pixels fall ~5×, and an end-of-band licence
+   iterations, the tail's license opened the next sample's first dear pass at 20,608 over all 9.2M.
+   So the onset license counts WORK (iterations × the pixels a pass is charged for), and every band
+   license a settled pass earns remembers its pixels (`WalkLedger::band_px`) and is scaled down for
+   a pass charged for more — inside band 11 the running pixels fall ~5×, and an end-of-band license
    ran 29,596 iterations at the band's start, 922 ms. Never scaled up.
 4. **First contact.** A fresh view's onset is known only once pixels escape, which is the cliff
    itself. While none has been seen, an escaped reference's length stands in, at 0.85 of it (past
@@ -5299,7 +5299,7 @@ at a 2400×1300 window, expected exit 0). Recordings made before these inputs re
 (`walk_done: None` keeps the quick frame; the new fields are left out when empty); the fixtures do
 not yet exercise the new branches (`fixture_coverage` has no terms for them).
 
-**2026-10-21 — the view's centre jumps and the palette steps while zooming (the maintainer's
+**2026-10-21 — the view's center jumps and the palette steps while zooming (the maintainer's
 report: "the frame center seems to jump slightly so it looks a bit like jitter. Also the palette
 shifts non continuously").** The maintainer's session had a same-card worker GPU; their recent
 zooms took 500–1,000 of its frames each, most into the hold. Two defects, each measured from what
@@ -5307,20 +5307,20 @@ the app drew rather than from screen captures (PrintWindow captures, 110 ms apar
 scale-fitted, were too noisy to settle a few pixels; they did show blurry, blocky and sharp
 pictures alternating):
 
-- *The centre.* A frame rendered below display resolution and shown as it is (`res_scale < 1`, not
-  reprojected) is coloured with a box `aa_filter` = clamp(round(1/res), 2, 4) texels wide, and the
+- *The center.* A frame rendered below display resolution and shown as it is (`res_scale < 1`, not
+  reprojected) is colored with a box `aa_filter` = clamp(round(1/res), 2, 4) texels wide, and the
   box started at the pixel's own texel and ran right and down (`fs_color`), so the picture was drawn
   (taps − 1)/2 texels off. Held frames (box 1) are not. With the worker, 39 of 735 moving frames of
   a 16-octave glide at 2^103 (the maintainer's settings and window, `FRACTADYNE_RECORD_DECIDE`)
   were GPU 0's own quarter-resolution frames with a 4-texel box: each drawn 6 screen px off between
-  held frames, and blurred over 16 px; without the worker 19, 0.7 to 15 px off. The box is centred
+  held frames, and blurred over 16 px; without the worker 19, 0.7 to 15 px off. The box is centered
   now (a half-texel overhang takes one more texel each way at half weight; with no overhang it is
   the plain block, so supersampled and full-resolution frames are untouched). The selftest's
-  `colour-box` checks hold a widened render equal to the centred average of the plain one, computed
+  `colour-box` checks hold a widened render equal to the centered average of the plain one, computed
   on the CPU: 0 to 6e-8 after, 0.42 to 0.54 before (and the old shader matched the corner-anchored
   box exactly). A worker supersampling sample takes the live `aa_filter` too, so its samples were
-  half a pixel off the window's own and blurred the average: centred with the rest.
-- *The palette.* A worker frame adopted into the hold was coloured under a map built from its own
+  half a pixel off the window's own and blurred the average: centered with the rest.
+- *The palette.* A worker frame adopted into the hold was colored under a map built from its own
   raw escape range, and a held snapshot under its frozen one (U43), while live frames follow the
   gliding window, so the map was cut over whenever the picture changed source. The `palette` trace
   (new: each frame's map) gives the phase step of fixed escape values between frames: with the
@@ -5331,32 +5331,32 @@ pictures alternating):
   view); a held picture's target stays frozen (U43 kept). Three runs an arm, old and new builds
   interleaved: with the worker 0 steps over 0.05 (largest 0.024–0.025); without it 0 in two runs.
   ⚠The third had one 0.22 step: "Normalize deep colors" switching OFF mid-glide (the aliasing test),
-  a cut between the normalised and the classic map that no window can glide. It switches on once
+  a cut between the normalized and the classic map that no window can glide. It switches on once
   early in every glide and off again near the end in about half of the runs without the worker; a
   cross-fade there is the open half.
 
 *Closed the same day (the maintainer: "work on those two open items").* (1) The KIND of map
-changing — the normalization switching on or off (`live_norm_window` → `None`), or a normalised map
+changing — the normalization switching on or off (`live_norm_window` → `None`), or a normalized map
 turning between linear and log (`norm_map_is_log`) — now DISSOLVES: `render::palette_fade_step`
 starts a fade from the last frame's map whose weight falls from 1 to 0 over `PALETTE_FADE_S` (0.4 s;
-a slow frame advances it at most 0.1 s), and the colour pass (`ColorU::fade_*`, `PaletteFade`,
+a slow frame advances it at most 0.1 s), and the color pass (`ColorU::fade_*`, `PaletteFade`,
 `coord_under`/`coord_fade`, `shade_aa`'s second footprint) shades each tap under both maps and mixes
-them. The user's own colouring changing (`norm_user_sig`) snaps, as every colour control does. Three
-glides without the worker at the maintainer's settings: each had the switch to the normalised (log)
+them. The user's own coloring changing (`norm_user_sig`) snaps, as every color control does. Three
+glides without the worker at the maintainer's settings: each had the switch to the normalized (log)
 map before the glide and the switch back to classic near its end (frames 919–950), and every one is a
 dissolve of 48–51 frames, where the old build cut in one frame (0.22–0.33 of a palette cycle). The
-selftest's `palette-fade` check colours one iteration buffer three ways (map A, map B, A fading from
+selftest's `palette-fade` check colors one iteration buffer three ways (map A, map B, A fading from
 B at 1/4) and holds the third to 3/4 A + 1/4 B (6e-8; a shader ignoring the fade is off by up to
 0.25). A uniform test now holds each `fade_*` field's offset in `ColorU` to the Rust struct's.
 (2) The blur: the "quarter-resolution frames" were not shown frames at all. All 40 widened boxes of
 the worker glide were PIN frames serving the HOLD (`display_hold`): the decision sized `aa_filter` for
-the pin composing underneath at 1/4 or 1/8 resolution, and the colour pass applied it to the held,
+the pin composing underneath at 1/4 or 1/8 resolution, and the color pass applied it to the held,
 full-resolution picture — blurred for the pin's whole walk, sharp when it landed. U43's rule now
 covers the box too: a hold snapshot keeps the box it was seen with (`Perf::shown_aa` → `hold_aa` at
 `hold_copy`), a worker frame entering the hold or taken live is point-sampled like every held frame.
 Two worker glides after: 21 and 27 held frames asked for a 4-texel box and were drawn with 1; no
 moving frame drawn widened. (Without the worker, a handful of genuinely low-resolution frames, 0.1 to
-0.71, are still shown live with their box — 18 in a glide; centred now, but at 0.1 still very soft.)
+0.71, are still shown live with their box — 18 in a glide; centered now, but at 0.1 still very soft.)
 And a defect in the first half, fixed with it: the drawn window was hashed only into
 `accum_norm_sig` (which names why a supersampling run ended), not `accum_color_sig` (which ends it),
 so a run could begin while the drawn window still glided; both signatures now carry the drawn window
@@ -5424,10 +5424,10 @@ the crash frame's pass was 1–4 s on its own.
 reference's life, and a reference's series is computed for the view it was built at
 (`sa_log2_max_dc`): a fast zoom out renders with it at views wider than its validity radius, as the
 crash glide's frames already did before the fix (orbit 443's series, built at ~2^247, at ~2^225).
-The truth there, computed apart (320-bit reference at the crash centre, 35 pixels per view in
+The truth there, computed apart (320-bit reference at the crash center, 35 pixels per view in
 double perturbation, `truth_escape.py` in the session scratchpad): every pixel escapes within ~100
 iterations of the reference at 2^247 down to 2^225 (2^230: 298,387–298,426; the skip was 298,404),
-so those frames were coloured ~20 iterations off, not garbage, and their cheap readings were honest
+so those frames were colored ~20 iterations off, not garbage, and their cheap readings were honest
 (the escape-fast regime is real at this location). It also leaves the second of GPU work before the
 crash frame unexplained by it. Open: a validity check that drops the series once the view outgrows
 its radius — safe now that a collapse re-measures the budget, a picture-correctness change rather

@@ -10,7 +10,7 @@
 //! the check vacuous, and it says so rather than passing.
 //! ⭐A mismatch is excused only when the oracle's own answer changes within ±`STENCIL_TEXEL` of the
 //! texel: the GPU places a strip sample to ~1e-4 of a texel (f32), so there either answer is right.
-//! Both layouts are judged: Fractadyne's conformal strips (sampled at texel centres) and the
+//! Both layouts are judged: Fractadyne's conformal strips (sampled at texel centers) and the
 //! octave strips the zoomasm format writes (sampled at texel corners, as Kalles Fraktaler does) —
 //! a sample half a texel from where the geometry says is a wrong texel, not an excused one.
 
@@ -95,8 +95,8 @@ impl crate::FractadyneApp {
         samples: usize,
     ) -> Result<StripCheck, String> {
         let p0 = fractadyne_core::precision_for_octaves(k + 64);
-        let cxb = fractadyne_core::parse_bf_prec(cx, p0).ok_or("unreadable centre")?;
-        let cyb = fractadyne_core::parse_bf_prec(cy, p0).ok_or("unreadable centre")?;
+        let cxb = fractadyne_core::parse_bf_prec(cx, p0).ok_or("unreadable center")?;
+        let cyb = fractadyne_core::parse_bf_prec(cy, p0).ok_or("unreadable center")?;
         let map = match layout {
             StripRows::Conformal => ExpMap::for_frames(frame.0, frame.1, 1.0, 0.0),
             StripRows::Octave => ExpMap::for_frames(frame.0, frame.1, 1.0, 0.0).with_octave_rows(),
@@ -230,8 +230,8 @@ impl crate::FractadyneApp {
         cap: u32,
     ) -> Result<BlaStripCheck, String> {
         let p0 = fractadyne_core::precision_for_octaves(k + 64);
-        let cxb = fractadyne_core::parse_bf_prec(cx, p0).ok_or("unreadable centre")?;
-        let cyb = fractadyne_core::parse_bf_prec(cy, p0).ok_or("unreadable centre")?;
+        let cxb = fractadyne_core::parse_bf_prec(cx, p0).ok_or("unreadable center")?;
+        let cyb = fractadyne_core::parse_bf_prec(cy, p0).ok_or("unreadable center")?;
         let map = ExpMap::for_frames(frame.0, frame.1, 1.0, 0.0);
         let dive_ref = self.dive_reference(&map, k + 4, &cxb, &cyb, cap);
         let saved = self.render_cfg.use_bla;
@@ -244,7 +244,7 @@ impl crate::FractadyneApp {
         let (a, b) = (&with.result.pixels, &without.result.pixels);
         let (w, h) = (map.width as usize, map.rows as usize);
         let at = |px: &[f32], i: usize, j: usize| px[(j * w + i) * 4];
-        // A strip's columns go round the circle, so its left and right edges are neighbours.
+        // A strip's columns go round the circle, so its left and right edges are neighbors.
         let steep = |px: &[f32], i: usize, j: usize| -> bool {
             let g = at(px, i, j);
             let mut ns = vec![(i + 1) % w, (i + w - 1) % w].into_iter().map(|ni| (ni, j)).collect::<Vec<_>>();
@@ -295,7 +295,7 @@ impl crate::FractadyneApp {
 
 /// What BLA changes in a strip (`--bla`, the Render zoom video dialog's default): the strip
 /// rendered with BLA and without, on the dive's one reference, compared by the rule the selftest's
-/// other BLA checks use ("BLA render == non-BLA @1e30×"): away from steep texels (a neighbour
+/// other BLA checks use ("BLA render == non-BLA @1e30×"): away from steep texels (a neighbor
 /// across the boundary or more than 2 iterations away, in either strip), both interior, or both
 /// escaped within half an iteration. The strip without BLA is the one the oracle judges
 /// ([`crate::FractadyneApp::expmap_strip_check`]); against the oracle directly, BLA's approximation moves

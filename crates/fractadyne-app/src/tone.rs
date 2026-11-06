@@ -192,7 +192,7 @@ pub(crate) fn muted() -> bool {
 /// the CLI `--render` path passes true — the process exits right after the completion message,
 /// which would cut an async tune mid-note.
 ///
-/// The mute is checked HERE rather than in the platform backend so both platforms honour it
+/// The mute is checked HERE rather than in the platform backend so both platforms honor it
 /// identically and the decision stays testable off Windows.
 pub(crate) fn play_finish_sound(blocking: bool) {
     if muted() {

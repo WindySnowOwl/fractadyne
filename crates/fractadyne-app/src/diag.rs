@@ -1093,7 +1093,7 @@ fn compose_crash_report(msg: &str, loc: &str, frames: &str) -> String {
         MANIFEST.lock().map(|m| m.clone()).unwrap_or_default(),
         // Always printed, `stock` included: a report that says nothing about tunables cannot be
         // told apart from one written by a build that predates the override mechanism — and a
-        // report from an overridden run must never be read as stock behaviour.
+        // report from an overridden run must never be read as stock behavior.
         crate::tunables::status_line(),
         // Same reasoning as the tunables line, and sourced the same way: from what actually ran.
         // A deep-zoom crash report whose arithmetic backend is unknown cannot be compared with
