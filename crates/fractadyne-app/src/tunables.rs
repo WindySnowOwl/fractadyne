@@ -106,6 +106,8 @@ pub(crate) struct Cost {
     pub tail_df32: u64,
     /// The direct loops' exact-repeat check (`CYCLE_CHECK_DEFAULT`; 0 = off, 1 = on).
     pub cycle_check: u64,
+    /// The direct loops' honest step past the critical point (`HONEST_STEP_DEFAULT`; 0 = off, 1 = on).
+    pub honest_step: u64,
     /// The overlapped pick + center build (`REF_OVERLAP_DEFAULT`; 0 = off, 1 = on).
     pub ref_overlap: u64,
     /// A `--render`'s reference started before the window (`EARLY_REF_DEFAULT`; 0 = off, 1 = on).
@@ -221,6 +223,7 @@ impl Default for Cost {
             pin_timeout_scaled: PIN_TIMEOUT_SCALED_DEFAULT,
             tail_df32: TAIL_DF32_DEFAULT,
             cycle_check: CYCLE_CHECK_DEFAULT,
+            honest_step: HONEST_STEP_DEFAULT,
             ref_overlap: REF_OVERLAP_DEFAULT,
             early_ref: EARLY_REF_DEFAULT,
             tile_occupancy: TILE_OCCUPANCY_DEFAULT,
@@ -765,6 +768,15 @@ pub(crate) fn apply_overrides(pairs: &[(String, String)]) -> Result<(), String> 
                 };
                 p.to_string()
             }
+            "HONEST_STEP" => {
+                let p = c.honest_step;
+                c.honest_step = match raw.as_str() {
+                    "0" => 0,
+                    "1" => 1,
+                    _ => return Err(format!("--set HONEST_STEP: '{raw}' is not 0 (off) or 1 (on)")),
+                };
+                p.to_string()
+            }
             "REF_OVERLAP" => {
                 let p = c.ref_overlap;
                 c.ref_overlap = match raw.as_str() {
@@ -863,7 +875,7 @@ pub(crate) const OVERRIDABLE: &str = "TDR_BUDGET_MS, TDR_EXPLICIT_BUDGET_MS, \
     TDR_BOOTSTRAP_MS, MOTION_UNPRICED_MAX, \
     MODE_RATE_UNKNOWN_MARGIN, TDR_MIN_STEPS, TDR_STEPS_CEIL, EXPLICIT_STEPS_CEIL, \
     EXPLICIT_DISPATCH_CAP, TDR_MAX_TILES, TDR_TILES_CEIL, BLA_EPS, PASS_FIXED_MS, MOTION_NEED_QUANTILE, MOTION_NEED_SOURCE, READING_POOL, \
-    DEAD_MAN, DISPATCH_CEILING, SETTLE_SERIALIZE, ADMISSION, PIN_TIMEOUT_SCALED, TAIL_DF32, CYCLE_CHECK, REF_OVERLAP, EARLY_REF, TILE_OCCUPANCY, LIVE_REFRESH, \
+    DEAD_MAN, DISPATCH_CEILING, SETTLE_SERIALIZE, ADMISSION, PIN_TIMEOUT_SCALED, TAIL_DF32, CYCLE_CHECK, HONEST_STEP, REF_OVERLAP, EARLY_REF, TILE_OCCUPANCY, LIVE_REFRESH, \
     ORBIT_LEN_CAP, RENORM, TILE_PACK, RENORM_BLA, ORBIT_SCHEDULE, NUCLEUS_REF, NUCLEUS_REF_LIVE, SA_TRACE, CHUNK_CHARGE, \
     CHUNK_SHUFFLE, WORKER_MOTION, WORKER_YIELD, WORKER_PASS_MS, MISI_FIRST_STAGE_OCT, RECORD_COST_PPM, REUSE_MAX_WRAPS, PIN_BAND_SPAN, REF_OVERTAKEN_DROP, SA_TRACE_LIVE_STEPS, GROWTH_IN_WORK, PIN_GROWTH_LANE, PRE_SWITCH_PROBE, BAND_FLOATEXP, WALK_STEPS, PIN_SPAN_PRICED, TIMER_SLOTS, \
     WALK_SERIALIZE, WALK_ONSET, ACCUM_TIME_CAP_MS, NORM_TOP_QUANTILE, ASSEMBLE_PIECE_MAX";
@@ -1410,6 +1422,15 @@ pub(crate) const TAIL_DF32_DEFAULT: u64 = 1;
 /// the same picture. 0 = every interior pixel runs to `max_iter`, for the before/after
 /// measurement.
 pub(crate) const CYCLE_CHECK_DEFAULT: u64 = 1;
+
+/// 1 = THE HONEST STEP PAST THE CRITICAL POINT in the direct loops (`honest_step` in
+/// mandelbrot.wgsl): in a Multibrot 3–8 Julia set, once z^d falls below 2^-16 of |c| a pixel iterates on
+/// barrier-protected df32 instead of the plain-f32 ops, so the orbits that pass near 0 no longer
+/// round onto c's own and stall there as false interior. A Multibrot 8 Julia set at
+/// c ≈ 0.32295 + 0.98330i (2026-11-06, 540x756) went from 380 false-interior pixels to none, and
+/// from 96.9% to 98.5% of its pixels within one iteration of double precision. 0 = the plain ops
+/// throughout, for the before/after measurement.
+pub(crate) const HONEST_STEP_DEFAULT: u64 = 1;
 
 /// 1 = THE RENORMALIZED STEP (`fractadyne_core::RenormStep`, `rn_*` in mandelbrot.wgsl): near a
 /// minibrot a pixel takes a whole period per step as u ↦ u² + c′. An approximation held to 2^-24

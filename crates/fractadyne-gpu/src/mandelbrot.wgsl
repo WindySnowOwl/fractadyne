@@ -189,6 +189,96 @@ fn c_mag2(a: Cdf) -> f32 {
     return a.re.x * a.re.x + a.im.x * a.im.x;
 }
 
+// ---------------- HONEST df32: the direct Multibrot step past the critical point ----------
+// ⭐⭐WHY. The df32 ops above run as plain f32 on the shipping stacks (`EFT_ADD_RESIDUALS` off,
+// and NVIDIA's compiler folds the add EFTs anyway), which is right almost everywhere and is the
+// renderer's speed. It fails at ONE place: the step just after an orbit passes near the critical
+// point 0. There z^d is tiny against c, z^d + c rounds to c, and every orbit that passed within
+// that radius continues as c's own (0.126 of 0 for d = 8). Measured 2026-11-06 on a Multibrot 8
+// Julia set at c ≈ 0.32295 + 0.98330i: 380 of 408,240 pixels collapsed onto c's orbit, which repeats
+// in f32, and drew as interior though every one escapes in 20–491 steps in double precision.
+// So a pixel switches to these ops when z^d falls below 2^-16 of |c| (`honest_r2`), and STAYS on them
+// while its z carries a low word: the plain ops always leave it exactly 0 and these almost never do,
+// so the stored z says which arithmetic a pixel is in, and a chunked walk resumes it on the same one
+// as the single pass. Emulated on the CPU (f32 steps, double after the switch, against double
+// throughout): 2^-24 left 12 pixels stuck, 2^-20 none, 2^-16 none with 4% of the pixels switched.
+// ⭐HOW. `hb` passes every rounding step through `ob_zero`, 0 at run time and unknowable at compile
+// time in the armed entry points (`ob_arm`), so no compiler can fold the error-free transforms: the
+// uniform-derived barrier that restored exact df32 on all six stacks (`--gputest` rows 19–23).
+fn hb(x: f32) -> f32 {
+    return bitcast<f32>(bitcast<u32>(x) | ob_zero);
+}
+fn two_sum_h(a: f32, b: f32) -> vec2<f32> {
+    let s = hb(a + b);
+    let v = hb(s - a);
+    let e = hb(a - hb(s - v)) + hb(b - v);
+    return vec2<f32>(s, hb(e));
+}
+fn quick_two_sum_h(a: f32, b: f32) -> vec2<f32> {
+    let s = hb(a + b);
+    return vec2<f32>(s, hb(b - hb(s - a)));
+}
+fn df_add_h(a: vec2<f32>, b: vec2<f32>) -> vec2<f32> {
+    let s = two_sum_h(a.x, b.x);
+    let t = two_sum_h(a.y, b.y);
+    let v = quick_two_sum_h(s.x, hb(s.y + t.x));
+    return quick_two_sum_h(v.x, hb(t.y + v.y));
+}
+fn df_mul_h(a: vec2<f32>, b: vec2<f32>) -> vec2<f32> {
+    let p = hb(a.x * b.x);
+    let pe = hb(fma(a.x, b.x, -p));
+    let e = hb(pe + hb(hb(a.x * b.y) + hb(a.y * b.x)));
+    return quick_two_sum_h(p, e);
+}
+fn c_sqr_h(a: Cdf) -> Cdf {
+    let ri = df_mul_h(a.re, a.im);
+    let rr = df_mul_h(a.re, a.re);
+    let ii = df_mul_h(a.im, a.im);
+    return cset(df_add_h(rr, vec2<f32>(-ii.x, -ii.y)), df_add_h(ri, ri));
+}
+fn c_mul_h(a: Cdf, b: Cdf) -> Cdf {
+    let rr = df_mul_h(a.re, b.re);
+    let ii = df_mul_h(a.im, b.im);
+    return cset(df_add_h(rr, vec2<f32>(-ii.x, -ii.y)), df_add_h(df_mul_h(a.re, b.im), df_mul_h(a.im, b.re)));
+}
+// z^d + c in honest df32, the power chained as `fam_pow_df` chains it (d = 3..8).
+fn mb_step_h(z: Cdf, d: u32, c: Cdf) -> Cdf {
+    var w: Cdf;
+    switch (d) {
+        case 3u: { w = c_mul_h(c_sqr_h(z), z); }
+        case 4u: { w = c_sqr_h(c_sqr_h(z)); }
+        case 5u: { w = c_mul_h(c_sqr_h(c_sqr_h(z)), z); }
+        case 6u: { w = c_sqr_h(c_mul_h(c_sqr_h(z), z)); }
+        case 7u: { w = c_mul_h(c_sqr_h(c_mul_h(c_sqr_h(z), z)), z); }
+        default: { w = c_sqr_h(c_sqr_h(c_sqr_h(z))); }
+    }
+    return cset(df_add_h(w.re, c.re), df_add_h(w.im, c.im));
+}
+// The Multibrot power whose direct step switches to the honest ops (Multibrot 3–5 are formulas 1–3,
+// 6–8 the families 10–12) in a Julia set; 0 = never (the parameter plane, Mandelbrot, whose radius
+// is 2^-8·|c|^½ and which was not seen to collapse, and every non-holomorphic or custom formula).
+fn honest_power(f: u32) -> u32 {
+    if ((iu.tail_on & 4u) != 0u) { return 0u; } // `HONEST_STEP` off
+    // Julia sets only. There c is fixed, so every orbit that passes near 0 lands on the SAME orbit,
+    // c's, and whole regions stall at once (380 of 408,240 pixels above). In the parameter plane the
+    // collapse lands on the pixel's own orbit, mostly inside a component anyway: measured at
+    // 0.32295 + 0.98330i ×1000, 0.28% of the frame false interior against 0.04% with the honest step,
+    // for 3.5× the time (interior pixels converge to an exact repeat more slowly in df32).
+    if (iu.julia != 1u) { return 0u; }
+    if (f >= 1u && f <= 3u) { return f + 2u; }
+    if (fam_holo(f)) { return fam_power(f); }
+    return 0u;
+}
+// |z|² below which z^d < 2^-16·|c|: (2^-16·|c|)^(2/d).
+fn honest_r2(d: u32, c: Cdf) -> f32 {
+    let cm = max(length(vec2<f32>(c.re.x, c.im.x)), 1.0e-30);
+    return exp2((-16.0 + log2(cm)) * 2.0 / f32(max(d, 1u)));
+}
+// Does this step run on the honest ops: z near the critical point, or already carrying a low word.
+fn honest_step(z: Cdf, r2: f32) -> bool {
+    return z.re.y != 0.0 || z.im.y != 0.0 || (z.re.x * z.re.x + z.im.x * z.im.x) < r2;
+}
+
 // ---------------- floatexp complex (df32 mantissa + shared i32 exponent) ----------
 // value = m · 2^e, with the df32 complex mantissa `m` normalized so its larger hi
 // word is ~[1,2). This extends df32's f32 *exponent* range to i32, so the
@@ -630,8 +720,8 @@ fn fam_pow_df(b: Cdf, d: u32) -> Cdf {
 // the orbit replays c's own, which repeats. Measured 2026-11-06 on a Multibrot 8 Julia set at
 // c ≈ 0.32295 + 0.98330i: 1,500 pixels (0.09%) that cycle this way took 97% of the panel's
 // iterations at 267,346 each, and every one repeats by iteration 568. (A double-precision orbit
-// of those pixels escapes in 20–491 steps, so they are wrong as well as slow; that is the
-// precision's doing, and this check neither causes nor hides it.)
+// of those pixels escapes in 20–491 steps, so they were wrong as well as slow: the precision's
+// doing, which this check neither causes nor hides. The honest step, `honest_step`, is the fix.)
 // Only where z is the whole state: the built-in formulas but Phoenix (8, which reads z_{n−1})
 // and Newton (9, which converges by its own test), and none with orbit statistics (`aux_on`),
 // whose interior output depends on the whole orbit. A custom formula (1000) may keep variables
@@ -787,7 +877,8 @@ struct IterU {
     gather_w: u32,         // width in texels of the tiny gather texture
     gather_n: u32,         // how many of its texels carry a real coordinate
     // Bit 0: the mode-2 df32 tail phase is enabled (TAIL_DF32_MIN; `TAIL_DF32` tunable). Bit 1: the
-    // direct loops' exact-repeat check is OFF (`cycle_check_on`; `CYCLE_CHECK` tunable). A whole
+    // direct loops' exact-repeat check is OFF (`cycle_check_on`; `CYCLE_CHECK` tunable). Bit 2: their
+    // honest step past the critical point is OFF (`honest_power`; `HONEST_STEP` tunable). A whole
     // 16-byte row with its padding, mirrored by `IterUniforms::tail` in lib.rs.
     tail_on: u32,
     // `fs_iterate_chunk_fe` only: stop each pixel after this many EXECUTED steps (BLA skips + full
@@ -1401,6 +1492,9 @@ fn iterate_at(gx: f32, gy: f32) -> FragOut {
         var cyc_z = z;
         var cyc_k: u32 = 0u;
         var cyc_at: u32 = 1u;
+        // The honest step past the critical point (`honest_step`): the power, 0 = never, and the radius.
+        let hon_d = honest_power(iu.formula);
+        let hon_r2 = honest_r2(hon_d, c);
         loop {
             if (iter >= iu.max_iter) { break; }
             if (newton) {
@@ -1487,6 +1581,7 @@ fn iterate_at(gx: f32, gy: f32) -> FragOut {
                     if (iu.julia == 0u) { dz = c_add(dz, one); }
                 }
                 zn = c_add(zn, c);
+                if (hon_d != 0u && honest_step(z, hon_r2)) { zn = mb_step_h(z, hon_d, c); }
                 // @@CUSTOM_STEP_END
                 zprev = z;
                 z = zn;
@@ -2447,6 +2542,9 @@ fn fs_iterate_chunk(in: VsOut) -> ChunkOut {
         var cyc_k: u32 = 0u;
         var cyc_at: u32 = 1u;
         var cycled = false;
+        // The honest step, as fs_iterate's direct branch: resumed from the stored z, low word and all.
+        let hon_d = honest_power(iu.formula);
+        let hon_r2 = honest_r2(hon_d, c);
         loop {
             if (iter >= stop) { break; }
             // Formula step + derivative update — the exact arithmetic and ORDER of the direct
@@ -2482,6 +2580,7 @@ fn fs_iterate_chunk(in: VsOut) -> ChunkOut {
             dz = c_mul(fp, dz);
             if (iu.julia == 0u) { dz = c_add(dz, one); }
             zn = c_add(zn, c);
+            if (hon_d != 0u && honest_step(z, hon_r2)) { zn = mb_step_h(z, hon_d, c); }
             z = zn;
             // @@CUSTOM_CHUNK_STEP_END
             iter = iter + 1u;

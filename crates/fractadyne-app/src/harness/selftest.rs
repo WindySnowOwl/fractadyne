@@ -1389,12 +1389,13 @@ impl FractadyneApp {
         // claim is "the same picture, sooner", and each half has a vacuous way to pass, so all of it
         // is asserted: the iteration buffer bit for bit with the check off (the single dispatch AND
         // the chunked walk, which carry it separately); pixels that do cycle (else nothing ran); and
-        // the time (else the check never fired). The view is the one that found it (2026-11-06): a
-        // Multibrot 8 Julia set at c ≈ 0.32295 + 0.98330i, where orbits that pass within 0.126 of
-        // the critical point round to exactly c in f32 and replay its cycle.
+        // the time (else the check never fired). It was found on a Multibrot 8 Julia set at
+        // c ≈ 0.32295 + 0.98330i (2026-11-06), whose cycling pixels were false interior that the honest
+        // step (below) now lets escape; at the same c Multibrot 4's Julia set has REAL interior (6.7%,
+        // and double precision agrees), which is what this check needs to cycle.
         if want("cycle-check") {
             let saved = (self.fractal, self.julia_mode, self.julia_c, self.render_cfg.max_iter, self.render_cfg.auto_iter, self.coloring.color_method);
-            self.fractal = FractalKind::from_name("Multibrot 8").unwrap_or(FractalKind::Mandelbrot);
+            self.fractal = FractalKind::from_name("Multibrot 4").unwrap_or(FractalKind::Mandelbrot);
             self.julia_mode = true;
             self.julia_c = (0.3229505482631078, 0.9832962099634425);
             // 20,000, not the 267,346 that found it: with the check off this pass is the old cost,
@@ -1447,9 +1448,89 @@ impl FractadyneApp {
             push_check(&mut checks, &mut last_check_t, SelfCheck {
                 category: "IterChunk",
                 name: "exact-repeat check: the same picture, sooner".into(),
-                params: "Multibrot 8 Julia c 0.32295+0.98330i, 256x358, 20k iter, check on/off + 3k windows".into(),
+                params: "Multibrot 4 Julia c 0.32295+0.98330i, 256x358, 20k iter, check on/off + 3k windows".into(),
                 result,
                 threshold: "direct; 0 texels differ either way; interior px > 0; on < off / 4",
+                pass,
+            });
+        }
+
+        // ⭐THE HONEST STEP (`HONEST_STEP`, `honest_step` in mandelbrot.wgsl). The direct loops run in
+        // plain f32, and in a Multibrot 8 Julia set an orbit that passes within 0.126 of the critical
+        // point rounds onto c's own, which at c ≈ 0.32295 + 0.98330i repeats: false interior. With
+        // the step off the case must SHOW the defect (pixels that never escape, and that double
+        // precision on the CPU sends out, else the case tests nothing); with it on there must be
+        // none; and the chunked walk must match the single pass bit for bit, which rests on the
+        // switch being read from the stored z's low word rather than from anything a pass forgets.
+        if want("honest-step") {
+            let saved = (self.fractal, self.julia_mode, self.julia_c, self.render_cfg.max_iter, self.render_cfg.auto_iter, self.coloring.color_method);
+            let c = (0.3229505482631078f64, 0.9832962099634425f64);
+            self.fractal = FractalKind::from_name("Multibrot 8").unwrap_or(FractalKind::Mandelbrot);
+            self.julia_mode = true;
+            self.julia_c = c;
+            self.render_cfg.max_iter = 2_000;
+            self.render_cfg.auto_iter = false;
+            self.coloring.color_method = crate::ColorMethod::Smooth;
+            let (w, h) = (256u32, 358u32);
+            let mut vp = Viewport::new(w as f64, h as f64);
+            vp.center_x = fractadyne_core::BigFloat::from_f64(0.0, 64);
+            vp.center_y = fractadyne_core::BigFloat::from_f64(0.0, 64);
+            vp.units_per_pixel = fractadyne_core::FloatExp::from_f64(4.0 / h as f64);
+            let mut req = self.current_export_request_for(&vp, true);
+            req.width = w;
+            req.height = h;
+            req.ss = 1;
+            (self.fractal, self.julia_mode, self.julia_c, self.render_cfg.max_iter, self.render_cfg.auto_iter, self.coloring.color_method) = saved;
+            fractadyne_gpu::set_honest_step(false);
+            let off = fractadyne_gpu::render_iter(device, queue, &req).ok();
+            fractadyne_gpu::set_honest_step(true);
+            let on = fractadyne_gpu::render_iter(device, queue, &req).ok();
+            let walk = fractadyne_gpu::render_iter_chunked(device, queue, &req, 300).ok();
+            fractadyne_gpu::set_honest_step(crate::tunables::cost().honest_step == 1);
+            // z^8 + c in double precision from the pixel's center, as the shader maps it.
+            let escapes_f64 = |i: usize| -> bool {
+                let (x, y) = ((i % w as usize) as f64, (i / w as usize) as f64);
+                let s = 4.0 / h as f64;
+                let (mut zr, mut zi) = ((x + 0.5 - w as f64 / 2.0) * s, (h as f64 / 2.0 - y - 0.5) * s);
+                for _ in 0..2_000 {
+                    for _ in 0..3 {
+                        (zr, zi) = (zr * zr - zi * zi, 2.0 * zr * zi);
+                    }
+                    (zr, zi) = (zr + c.0, zi + c.1);
+                    if zr * zr + zi * zi > 128.0 * 128.0 {
+                        return true;
+                    }
+                }
+                false
+            };
+            let interior = |r: &fractadyne_gpu::ExportResult| -> Vec<usize> {
+                r.pixels.chunks(4).enumerate().filter(|(_, p)| p[0] < 0.0).map(|(i, _)| i).collect()
+            };
+            let (pass, result) = match (&off, &on, &walk) {
+                (Some(a), Some(b), Some(k)) if a.pixels.len() == b.pixels.len() && b.pixels.len() == k.pixels.len() => {
+                    let (off_in, on_in) = (interior(a), interior(b));
+                    let off_false = off_in.iter().filter(|&&i| escapes_f64(i)).count();
+                    let on_false = on_in.iter().filter(|&&i| escapes_f64(i)).count();
+                    let d_walk = b.pixels.iter().zip(&k.pixels).filter(|(x, y)| x.to_bits() != y.to_bits()).count();
+                    (
+                        req.mode == 1 && off_false > 0 && off_false * 10 >= off_in.len() * 9 && on_false == 0 && d_walk == 0,
+                        format!(
+                            "mode {}; off: {} interior px, {off_false} of them escape in double precision; \
+                             on: {} interior px, {on_false} false; {d_walk} texels differ from a walk in 300-iteration windows",
+                            req.mode,
+                            off_in.len(),
+                            on_in.len()
+                        ),
+                    )
+                }
+                _ => (false, "render failed".into()),
+            };
+            push_check(&mut checks, &mut last_check_t, SelfCheck {
+                category: "IterChunk",
+                name: "honest step: a Julia set's orbits past the critical point do not stall".into(),
+                params: "Multibrot 8 Julia c 0.32295+0.98330i, 256x358, 2k iter, step off/on + 300-it windows".into(),
+                result,
+                threshold: "direct; off shows false interior (≥90% escape in f64); on: none false; 0 texels differ",
                 pass,
             });
         }
