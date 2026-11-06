@@ -106,6 +106,11 @@ Changes after 0.3.0-beta.1:
   "Always fit range", which fits the palette to the view however the count is divided. Saved with
   the view (`iter_div=`, written only when it divides, so other views are saved exactly as before)
   and in the session; `--iter-div N` on the command line; render-farm jobs carry it.
+- **The program file carries its icon (0.3.0-beta.27).** Windows takes a program's icon for
+  Explorer, shortcuts, the Start menu and taskbar pins from the .exe itself, and Fractadyne's
+  had none: it set its icon only once its window opened, so a shortcut showed a blank icon and
+  Change Icon reported that the file "contains no icons". The exe now contains the same spiral,
+  16 to 256 pixels, in the standard and the accelerated download.
 - **Orbit-trap coloring is no longer drawn as one flat color in the live view (0.3.0-beta.27).**
   The live view could render an orbit-trap frame by a route that skips the per-orbit trap
   measurement (the one it uses to spread deep work over several passes), and then every pixel got

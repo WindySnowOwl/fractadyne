@@ -1455,3 +1455,15 @@ fn the_app_gates_every_method_the_shader_computes_statistics_for() {
     }
     assert!(ColorMethod::OrbitTrap.needs_aux() && !ColorMethod::OrbitTrap.bounded_value());
 }
+
+/// The exe's own icon (build.rs `link_windows_icon`, scripts/make_windows_icon.py): the icon and both
+/// compiled forms of it are in the tree. Without them a Windows build links no icon and only warns,
+/// and Explorer and shortcuts go back to "contains no icons".
+#[test]
+fn the_windows_icon_resources_are_in_the_tree() {
+    let dir = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("assets");
+    for f in ["fractadyne.ico", "fractadyne-icon.res", "fractadyne-icon.o"] {
+        let m = std::fs::metadata(dir.join(f)).unwrap_or_else(|_| panic!("{f} is missing: run scripts/make_windows_icon.py"));
+        assert!(m.len() > 1000, "{f} is only {} bytes", m.len());
+    }
+}

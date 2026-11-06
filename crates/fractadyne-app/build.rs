@@ -51,8 +51,28 @@ const ENGLISH_FTL: &str = "i18n/en/fractadyne.ftl";
 /// committed: line 1 the full sha, line 2 the short one.
 const ARCHIVE_STAMP: &str = "BUILD-COMMIT.txt";
 
+/// Link the exe's own icon on Windows: the compiled resource `scripts/make_windows_icon.py` writes
+/// beside `assets/fractadyne.ico`, as a `.res` for the MSVC linker (the standard build) or a COFF
+/// object for the GNU one (the accelerated build). Explorer, a shortcut, the Start menu and a taskbar
+/// pin read a program's icon from the file, never from the window it opens, so without this every
+/// build reported "contains no icons". Precompiled, so a build needs no resource compiler.
+fn link_windows_icon(manifest: &str) {
+    if env::var("CARGO_CFG_TARGET_OS").as_deref() != Ok("windows") || manifest.is_empty() {
+        return;
+    }
+    let name = if env::var("CARGO_CFG_TARGET_ENV").as_deref() == Ok("msvc") { "fractadyne-icon.res" } else { "fractadyne-icon.o" };
+    let res = PathBuf::from(manifest).join("assets").join(name);
+    println!("cargo:rerun-if-changed={}", res.display());
+    if res.exists() {
+        println!("cargo:rustc-link-arg-bins={}", res.display());
+    } else {
+        println!("cargo:warning=no {name}: the exe will carry no icon (run scripts/make_windows_icon.py)");
+    }
+}
+
 fn main() {
     let manifest = env::var("CARGO_MANIFEST_DIR").unwrap_or_default();
+    link_windows_icon(&manifest);
     let path: PathBuf = if manifest.is_empty() {
         PathBuf::from(env::var("OUT_DIR").unwrap_or_default()).join("build_seq.txt")
     } else {
