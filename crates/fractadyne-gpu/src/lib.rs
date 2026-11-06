@@ -942,6 +942,7 @@ impl CounterRead {
         content_out: Option<&ContentSink>,
         step_out: Option<&StepSink>,
         norm_hist_out: Option<&NormHistSink>,
+        trap_out: Option<&Arc<std::sync::atomic::AtomicU64>>,
     ) {
         use std::sync::atomic::Ordering::SeqCst;
         match self.state {
@@ -987,6 +988,15 @@ impl CounterRead {
                             let packed = ((slots[CTR_ESC_MIN] as u64) << 32)
                                 | slots[CTR_ESC_MAX] as u64;
                             o.store(packed, SeqCst);
+                        }
+                        // The orbit trap's palette window, when the frame counted any (only an
+                        // orbit-trap frame does): `(lo_bits << 32) | hi_bits`.
+                        if let Some((lo, hi)) = trap_out.and_then(|_| {
+                            trap_window(&slots[CTR_TRAP_HIST..CTR_TRAP_HIST + TRAP_HIST_BUCKETS], TRAP_WINDOW_QUANTILES)
+                        }) {
+                            if let Some(o) = trap_out {
+                                o.store(((lo.to_bits() as u64) << 32) | hi.to_bits() as u64, SeqCst);
+                            }
                         }
                         // The frame's content, tagged with the render that produced it (the
                         // app matches the tag against what its live texture holds NOW — the
@@ -1431,7 +1441,7 @@ pub(crate) fn make_iter_bg(
 /// atomics per pixel — negligible next to the iteration loop. This is the "did the code
 /// path actually execute?" detector (the F4 dead-NaN-marker lesson): a render that claims
 /// to exercise rebasing/extended samples/BLA must show nonzero counts.
-pub const COUNTER_SLOTS: usize = CTR_NORM_HIST + NORM_HIST_BUCKETS;
+pub const COUNTER_SLOTS: usize = CTR_TRAP_HIST + TRAP_HIST_BUCKETS;
 /// Slot indices (keep in sync with mandelbrot.wgsl's `CTR_*` constants).
 pub const CTR_REBASE: usize = 0; // Zhuoran rebases taken (mode 2)
 pub const CTR_EXT_SAMPLE: usize = 1; // extended-range orbit samples decoded (mode 2)
@@ -1597,6 +1607,54 @@ impl NormHist {
 #[cfg(test)]
 #[path = "../tests/unit/norm_hist_tests.rs"]
 mod norm_hist_tests;
+
+/// First of [`TRAP_HIST_BUCKETS`] slots holding a histogram of the ORBIT TRAP's colored value,
+/// −log₂ of each orbit's nearest approach to the trap (the shader's `trap_hist_commit`), for
+/// "Always fit range" with the orbit-trap method: fixed buckets of 1/[`TRAP_HIST_PER_UNIT`] from
+/// [`TRAP_HIST_LO`], on the escape histogram's 4x4 grid, interior pixels included.
+///
+/// ⭐**A histogram, not a min and max.** At a Multibrot 7 view of 0.77404 + 0.24417i ×21,000
+/// (2026-11-06) the values ran 0.80 to 10.35 while 99% of the pixels sat under 4.33, and a pixel
+/// on a nucleus reaches 66 (the shader's 1e-20 floor): a window from the extremes would leave the picture
+/// as flat as no fitting at all. [`trap_window`] takes quantiles.
+pub const CTR_TRAP_HIST: usize = CTR_NORM_HIST + NORM_HIST_BUCKETS;
+/// The value at the bottom of [`CTR_TRAP_HIST`]'s first bucket: −log₂ 256, the escape radius.
+pub const TRAP_HIST_LO: f32 = -8.0;
+/// Buckets per unit of the trap's value in [`CTR_TRAP_HIST`].
+pub const TRAP_HIST_PER_UNIT: f32 = 16.0;
+/// Buckets in [`CTR_TRAP_HIST`]: up to 68, past the shader's 1e-20 floor (66.4).
+pub const TRAP_HIST_BUCKETS: usize = 1216;
+/// The quantiles of the trap's values the palette window spans ([`trap_window`]).
+pub const TRAP_WINDOW_QUANTILES: (f64, f64) = (0.005, 0.995);
+
+/// The palette window `(lo, hi)` of a [`CTR_TRAP_HIST`] histogram: the values at quantiles `q.0`
+/// and `q.1` of its samples, interpolated inside the bucket each falls in. `None` for fewer than 16
+/// samples (no orbit-trap frame, or one too small to say) or a window narrower than one bucket.
+pub fn trap_window(hist: &[u32], q: (f64, f64)) -> Option<(f32, f32)> {
+    let total: u64 = hist.iter().map(|&n| n as u64).sum();
+    if total < 16 {
+        return None;
+    }
+    let at = |frac: f64| -> f64 {
+        let want = frac * total as f64;
+        let mut cum = 0.0;
+        for (k, &n) in hist.iter().enumerate() {
+            let next = cum + n as f64;
+            if n > 0 && next >= want {
+                let inside = ((want - cum) / n as f64).clamp(0.0, 1.0);
+                return TRAP_HIST_LO as f64 + (k as f64 + inside) / TRAP_HIST_PER_UNIT as f64;
+            }
+            cum = next;
+        }
+        TRAP_HIST_LO as f64 + hist.len() as f64 / TRAP_HIST_PER_UNIT as f64
+    };
+    let (lo, hi) = (at(q.0) as f32, at(q.1) as f32);
+    (hi - lo >= 1.0 / TRAP_HIST_PER_UNIT).then_some((lo, hi))
+}
+
+#[cfg(test)]
+#[path = "../tests/unit/trap_hist_tests.rs"]
+mod trap_hist_tests;
 
 /// Where a frame's [`StepStats`] are published for the app (`MandelbrotParams::step_out`).
 pub type StepSink = Arc<std::sync::Mutex<Option<StepStats>>>;
@@ -2945,6 +3003,10 @@ pub struct MandelbrotParams {
     /// Sink for the fine escape histogram ([`NormHist`]) of the frame that submitted the
     /// norm/gradient readings, published with them. `None` disables it.
     pub norm_hist_out: Option<NormHistSink>,
+    /// Sink for the orbit trap's palette window ([`trap_window`] of [`CTR_TRAP_HIST`]):
+    /// `(lo_bits << 32) | hi_bits`, published only by a frame that counted trap values. Drained with
+    /// `swap(u64::MAX)`. `None` disables it.
+    pub trap_window_out: Option<Arc<std::sync::atomic::AtomicU64>>,
     /// Opaque identity of the RENDER this frame's pixels belong to (a pinned refresh's passes all
     /// carry the pin's tag; any other frame its own). Handed back with the frame's
     /// [`ContentReading`] so the app can tell which render a reading describes, the way
@@ -3243,6 +3305,7 @@ impl Default for MandelbrotParams {
             norm_complete_out: None,
             norm_base: 0.0,
             norm_hist_out: None,
+            trap_window_out: None,
             content_tag: 0,
             content_out: None,
             view_stamp: 0,
@@ -3479,6 +3542,7 @@ impl CallbackTrait for MandelbrotParams {
             self.content_out.as_ref(),
             self.step_out.as_ref(),
             self.norm_hist_out.as_ref(),
+            self.trap_window_out.as_ref(),
         );
 
         // The offscreen iteration texture is (resolution × ss). It must not exceed

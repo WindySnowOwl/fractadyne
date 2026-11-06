@@ -2200,6 +2200,16 @@ impl FractadyneApp {
     /// The escape window the live color map is built from ([`Self::live_norm_cycle_offset`]), or
     /// `None` for the classic coloring.
     pub(crate) fn live_norm_window(&self, vi: usize) -> Option<(f32, f32)> {
+        // ⭐THE ORBIT TRAP fits its OWN values: "Always fit range" spreads the palette over the trap
+        // values on screen (`trap_window_drain`); the aliasing guard below is Smooth's and stays
+        // out of it. Off, the trap keeps its fixed scaling.
+        if self.coloring.color_method == crate::ColorMethod::OrbitTrap {
+            return if self.coloring.normalize_fit {
+                self.perf.trap_shown[vi.min(1)].or(self.perf.trap_pal[vi.min(1)])
+            } else {
+                None
+            };
+        }
         // ⭐⭐**THE PREDICATE IS AN ALIASING TEST, NOT A SPAN TEST.** It used to be
         // `mx - mn > NORM_RANGE_MIN` with `NORM_RANGE_MIN = 20_000` — an ABSOLUTE escape span,
         // which cannot decide this. Aliasing is LOCAL: what matters is how far the palette moves
@@ -2258,6 +2268,28 @@ impl FractadyneApp {
             }
             _ => None,
         }
+    }
+
+    /// Feed view `vb`'s orbit-trap window from the GPU's latest reading (`Perf::trap_sink`), and
+    /// glide the shown one toward it. Every frame, so the glide is one frame's step however sparse
+    /// the readings; cleared when the method is not the orbit trap, so a later return starts from
+    /// the picture then on screen rather than from a window measured somewhere else.
+    pub(crate) fn trap_window_drain(&mut self, vb: usize) {
+        use std::sync::atomic::Ordering::SeqCst;
+        let r = self.perf.trap_sink[vb].swap(u64::MAX, SeqCst);
+        if self.coloring.color_method != crate::ColorMethod::OrbitTrap {
+            self.perf.trap_pal[vb] = None;
+            self.perf.trap_shown[vb] = None;
+            return;
+        }
+        if r != u64::MAX {
+            let (lo, hi) = (f32::from_bits((r >> 32) as u32), f32::from_bits(r as u32));
+            if lo.is_finite() && hi.is_finite() && hi > lo {
+                self.perf.trap_pal[vb] = Some(trap_window_feed(self.perf.trap_pal[vb], (lo, hi)));
+            }
+        }
+        self.perf.trap_shown[vb] =
+            self.perf.trap_pal[vb].map(|target| norm_glide_step(self.perf.trap_shown[vb], target, false, self.norm_pace(vb)));
     }
 
     /// How the palette windows of view `vb` may move this frame (`norm_glide_step`): the frame's
@@ -5584,6 +5616,7 @@ impl FractadyneApp {
                 // Clearing (not peeking) so the next frame sees a genuinely fresh one.
                 self.perf.grad_sink[vb].store(0, SeqCst);
                 self.perf.norm_sink[vb].store(u64::MAX, SeqCst);
+                self.perf.trap_sink[vb].store(u64::MAX, SeqCst);
                 if let Ok(mut h) = self.perf.hist_sink[vb].lock() {
                     *h = None; // same reading, same verdict: it was measured somewhere else
                 }
@@ -5884,6 +5917,8 @@ impl FractadyneApp {
                 .perf
                 .norm_pal[vb]
                 .map(|target| norm_glide_step(self.perf.norm_shown[vb], target, norm_snap, self.norm_pace(vb)));
+            // The orbit trap's window, every frame likewise: its own feed and glide.
+            self.trap_window_drain(vb);
         }
         for e in climb.events.iter().filter(|e| !e.before_drains()) {
             e.trace();
@@ -7129,6 +7164,7 @@ impl FractadyneApp {
             norm_complete_out: Some(self.perf.norm_complete_sink[vs.min(1)].clone()),
             norm_base: self.perf.norm_base[vs.min(1)],
             norm_hist_out: Some(self.perf.norm_hist_sink[vs.min(1)].clone()),
+            trap_window_out: Some(self.perf.trap_sink[vs.min(1)].clone()),
             content_tag,
             content_out: Some(self.perf.content_sink[vs.min(1)].clone()),
             chunk_walk: self.perf.chunk_count_walk[vs.min(1)],
@@ -12202,6 +12238,36 @@ mod norm_palette_top;
 ///
 /// ⭐**Ratio, not span.** `[45075, 63736]` is wide in absolute terms and must stay LINEAR;
 /// `[1, 7925]` is narrower in absolute terms and must not. Only the ratio separates them.
+/// The orbit trap's palette window after a reading `new` (`fractadyne_gpu::trap_window`): taken
+/// when there is none yet, or when either end moved by more than [`TRAP_WINDOW_HOLD`] of the
+/// window; otherwise the window held is kept.
+///
+/// ⭐**Why it holds.** A view at rest refines by supersampling, which moves every sample a little
+/// each frame, so the quantiles wobble by a bucket or two from frame to frame. Followed, each wobble
+/// would be a new palette map, and the supersampled average restarts on any change of map
+/// (`accum_color_sig`): it would never finish. A real change of view moves the ends far more.
+pub(crate) fn trap_window_feed(old: Option<(f32, f32)>, new: (f32, f32)) -> (f32, f32) {
+    match old {
+        Some((lo, hi)) => {
+            let tol = TRAP_WINDOW_HOLD * (hi - lo).max(1.0 / 16.0);
+            if (new.0 - lo).abs() > tol || (new.1 - hi).abs() > tol {
+                new
+            } else {
+                (lo, hi)
+            }
+        }
+        None => new,
+    }
+}
+
+/// How far either end of the orbit trap's window must move, as a share of the window, before a
+/// reading replaces it ([`trap_window_feed`]).
+pub(crate) const TRAP_WINDOW_HOLD: f32 = 0.05;
+
+#[cfg(test)]
+#[path = "../tests/unit/render/trap_window_feed_tests.rs"]
+mod trap_window_feed_tests;
+
 pub(crate) fn norm_map_is_log(mn: f32, mx: f32, log_palette: bool) -> bool {
     log_palette || mx > mn.max(1.0) * NORM_LOG_AUTO_RATIO
 }

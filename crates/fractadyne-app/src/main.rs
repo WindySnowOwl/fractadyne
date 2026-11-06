@@ -2023,6 +2023,15 @@ struct Perf {
     /// Escape-range sink per view (GPU → app: packed `(min_bits << 32) | max_bits` f32 bits of the
     /// frame's escaped smooth-iter range; drained with `swap(u64::MAX)`).
     norm_sink: [std::sync::Arc<std::sync::atomic::AtomicU64>; 2],
+    /// The orbit trap's palette window per view, from the GPU (`fractadyne_gpu::trap_window` of
+    /// the frame's trap-value histogram): packed `(lo_bits << 32) | hi_bits`, drained with
+    /// `swap(u64::MAX)` into `trap_pal`.
+    trap_sink: [std::sync::Arc<std::sync::atomic::AtomicU64>; 2],
+    /// The palette window "Always fit range" gives the orbit-trap method, per view
+    /// (`render::trap_window_feed`), and the one SHOWN, gliding toward it as `norm_shown` does
+    /// toward `norm_pal`. Smooth's windows are escape counts; these are the trap's own values.
+    trap_pal: [Option<(f32, f32)>; 2],
+    trap_shown: [Option<(f32, f32)>; 2],
     /// Live sink for the escape field's LOCAL GRADIENT — `(Σ|Δ|×16) << 32 | (samples + 1)`. The
     /// auto-normalization predicate keys on this rather than on the escape RANGE: aliasing is a
     /// local property (how far the palette moves between neighboring pixels), not a global one.
@@ -2704,6 +2713,12 @@ impl Default for Perf {
                 std::sync::Arc::new(std::sync::atomic::AtomicU64::new(u64::MAX)),
                 std::sync::Arc::new(std::sync::atomic::AtomicU64::new(u64::MAX)),
             ],
+            trap_sink: [
+                std::sync::Arc::new(std::sync::atomic::AtomicU64::new(u64::MAX)),
+                std::sync::Arc::new(std::sync::atomic::AtomicU64::new(u64::MAX)),
+            ],
+            trap_pal: [None, None],
+            trap_shown: [None, None],
             grad_sink: [
                 std::sync::Arc::new(std::sync::atomic::AtomicU64::new(0)),
                 std::sync::Arc::new(std::sync::atomic::AtomicU64::new(0)),
@@ -3049,8 +3064,26 @@ impl ColorMethod {
     pub(crate) fn from_u32(v: u32) -> ColorMethod {
         ColorMethod::ALL.into_iter().find(|m| m.to_u32() == v).unwrap_or_default()
     }
-    /// Methods that accumulate the aux statistics texture (stripe / triangle-ineq / decomposition).
+    /// Methods that accumulate the aux statistics texture (stripe / triangle-ineq / orbit trap /
+    /// decomposition): `fractadyne_gpu::method_needs_aux`, which decides what the shader computes.
+    /// Every path that cannot carry those statistics — the chunked walk, the floatexp band's BLA,
+    /// the reference corrector, the normalized export, zoom-video strips — is gated on this.
+    ///
+    /// ⛔⭐**The orbit trap was missing here until 2026-11-06**, because this predicate also chose
+    /// the coloring's palette rate, where the trap belongs with the unbounded methods. So the live
+    /// view handed trap frames to the chunked walk and the band's BLA, which compute no trap, and
+    /// every pixel read the "no statistics" value: one flat color (a Multibrot 7 Julia panel, every
+    /// pixel the same; its Mandelbrot panel 91%). The rate now asks [`Self::bounded_value`].
     pub(crate) fn needs_aux(self) -> bool {
+        matches!(
+            self,
+            ColorMethod::Stripe | ColorMethod::TriangleIneq | ColorMethod::OrbitTrap | ColorMethod::Decomposition
+        )
+    }
+    /// Methods whose colored value lies in 0..1 (stripe / triangle-ineq / decomposition), which take
+    /// a few palette cycles across that range rather than the per-unit rate of the unbounded ones
+    /// (iteration count, orbit trap, distance). See `color_cycle`.
+    pub(crate) fn bounded_value(self) -> bool {
         matches!(
             self,
             ColorMethod::Stripe | ColorMethod::TriangleIneq | ColorMethod::Decomposition
@@ -9266,6 +9299,8 @@ impl FractadyneApp {
         self.perf.iter_exhausted = [false, false];
         self.perf.norm_range = [None, None];
         self.perf.norm_pal = [None, None];
+        self.perf.trap_pal = [None, None];
+        self.perf.trap_shown = [None, None];
         self.perf.esc_hist = [None, None];
         self.perf.esc_top = [None, None];
         self.perf.reading_pool = [render::ReadingPool::default(); 2];
@@ -11380,7 +11415,7 @@ impl FractadyneApp {
     /// everywhere, and the shader is unchanged: it already multiplies by the rate.
     fn color_cycle(&self) -> f32 {
         match self.coloring.color_method {
-            m if m.needs_aux() => 0.5 + self.coloring.cycle * 4.0,
+            m if m.bounded_value() => 0.5 + self.coloring.cycle * 4.0,
             ColorMethod::Smooth => smooth_color_rate(self.coloring.cycle, self.coloring.iter_div),
             _ => 0.004 + self.coloring.cycle * 0.06,
         }
@@ -16130,6 +16165,10 @@ impl FractadyneApp {
             lo.to_bits().hash(&mut h);
             hi.to_bits().hash(&mut h);
         }
+        // The orbit trap's windows likewise: fed (held against the samples' jitter by
+        // `render::trap_window_feed`) and shown (the glide lands exactly), so this settles too.
+        self.perf.trap_pal[view].map(|(lo, hi)| (lo.to_bits(), hi.to_bits())).hash(&mut h);
+        self.perf.trap_shown[view].map(|(lo, hi)| (lo.to_bits(), hi.to_bits())).hash(&mut h);
         // …and the window DRAWN, which glides to the shown one after a change of picture
         // (`render::drawn_norm_step`), and a dissolve from another kind of map still under way
         // (`render::palette_fade_step`): both land exactly, so this settles too.

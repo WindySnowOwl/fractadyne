@@ -106,6 +106,22 @@ Changes after 0.3.0-beta.1:
   "Always fit range", which fits the palette to the view however the count is divided. Saved with
   the view (`iter_div=`, written only when it divides, so other views are saved exactly as before)
   and in the session; `--iter-div N` on the command line; render-farm jobs carry it.
+- **Orbit-trap coloring is no longer drawn as one flat color in the live view (0.3.0-beta.27).**
+  The live view could render an orbit-trap frame by a route that skips the per-orbit trap
+  measurement (the one it uses to spread deep work over several passes), and then every pixel got
+  the same "no measurement" value: a Multibrot 7 view and its Julia set, side by side, came out
+  as a single cream color, or nearly. The orbit trap now takes the same route as the other
+  colorings that measure the orbit (stripe, triangle inequality, decomposition), and the panel
+  shows its real values. Like those colorings, it is slow to settle at very high iteration
+  counts; it needs far fewer, since an orbit's closest approach comes early.
+- **"Always fit range" works with the orbit trap (0.3.0-beta.27).** The orbit trap colors each
+  pixel by how close its orbit comes to the trap, and in the Mandelbrot set those distances often
+  differ little across a view: at 0.77404 + 0.24417i ×21,000 (Multibrot 7) nine pixels in ten
+  used under a tenth of the palette, so the view read as nearly one color. With Orbit trap chosen, "Always fit range" now spreads the palette
+  over the trap values on screen, from the 0.5% that come closest to the 0.5% that stay farthest,
+  so a few pixels on a minibrot's center cannot squeeze the rest back together; a Julia set gets
+  the same. "Log color scale" applies to it too, and is no longer grayed out when "Always fit
+  range" is the only normalization ticked. Saved views keep their colors unless the box is ticked.
 - **High-power Julia sets no longer show false black specks (0.3.0-beta.27).** In a Multibrot 3–8
   Julia set, an orbit that passes very close to the center lost the detail that sends it out
   again: the renderer's single precision rounded it onto the orbit of c itself, and where that
