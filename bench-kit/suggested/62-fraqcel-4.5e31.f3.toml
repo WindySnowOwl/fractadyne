@@ -1,7 +1,7 @@
 [location]
 real = "-1.99909517044828534214814164792614097"
 imag = "6.16911258817465896937280471817351021e-7"
-zoom = "2.268212e31"
+zoom = "4.536423e31"
 [image]
 width = 1280
 height = 720
@@ -15,5 +15,5 @@ escape_radius = 256
 [transform]
 exponential_map = false
 [render]
-filename = "62-fraqcel-2.3e31-f3"
+filename = "62-fraqcel-4.5e31-f3"
 save_png = true
