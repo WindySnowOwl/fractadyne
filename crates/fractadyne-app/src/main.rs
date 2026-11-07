@@ -2401,6 +2401,13 @@ impl Perf {
         crate::tunables::instrument("FRACTADYNE_SEED_BUDGET")
     }
 
+    /// `FRACTADYNE_DEAD_MAN_AT=N`: the wall-clock dead-man fires on frame N for every view as if that
+    /// frame had been blind-slow, so the state it leaves (bootstrap budget, not converged, growth
+    /// latched until a quick frame) can be reproduced at will. Zero, the default, disables it.
+    pub(crate) fn dead_man_at() -> u32 {
+        crate::tunables::instrument("FRACTADYNE_DEAD_MAN_AT")
+    }
+
     /// `FRACTADYNE_POISON_VIEW_AT=N`: frame N's view gets a NaN scale after the autopilot's step,
     /// for `FractadyneApp::view_guard` to catch. Zero, the default, disables it.
     pub(crate) fn poison_view_at() -> u32 {
@@ -18005,9 +18012,11 @@ impl eframe::App for FractadyneApp {
                 self.perf.blind_slow_readings = [0, 0];
                 self.perf.blind_warned = [false, false];
             }
+            // The `FRACTADYNE_DEAD_MAN_AT` instrument: this frame fires the dead-man unconditionally.
+            let forced = crate::Perf::dead_man_at() > 0 && self.perf.frame_idx == crate::Perf::dead_man_at() as u64;
             for v in 0..views {
                 // Eight slow frames, or ONE in the lethal band (see `render::budget_blind_lethal`).
-                if !render::budget_blind(
+                if !forced && !render::budget_blind(
                     self.perf.blind_slow_frames[v],
                     self.perf.blind_slow_readings[v],
                     self.perf.blind_warned[v],

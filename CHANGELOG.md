@@ -106,6 +106,15 @@ Changes after 0.3.0-beta.1:
   "Always fit range", which fits the palette to the view however the count is divided. Saved with
   the view (`iter_div=`, written only when it divides, so other views are saved exactly as before)
   and in the session; `--iter-div N` on the command line; render-farm jobs carry it.
+- **Stripe, orbit-trap and similar colorings no longer stay pixelated after a slow spell
+  (0.3.0-beta.27).** These colorings cannot spread a frame's work over several passes, so the
+  live view sharpens them with tiles instead, and it started the tiles only once it had learned
+  how much work a frame can hold. If the screen had been slow to update just before (a window
+  covering Fractadyne, a busy GPU), a safety cut-off dropped that budget to its minimum, the view
+  shrank to 16 × 16 blocks, and it never learned the budget again, because a finished view sends
+  no more work to learn from: a Multibrot 7 orbit-trap view reloaded from a file stayed as large
+  colored squares. Such a view now starts its tiles straight away, and each tile it draws teaches
+  the budget again.
 - **The program file carries its icon (0.3.0-beta.27).** Windows takes a program's icon for
   Explorer, shortcuts, the Start menu and taskbar pins from the .exe itself, and Fractadyne's
   had none: it set its icon only once its window opened, so a shortcut showed a blank icon and

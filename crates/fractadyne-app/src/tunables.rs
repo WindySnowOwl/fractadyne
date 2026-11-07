@@ -312,6 +312,8 @@ pub(crate) const INSTRUMENTS: &[&str] = &[
     "FRACTADYNE_BLA_DROP_FRAMES",
     "FRACTADYNE_PASS_CLOCK",
     "FRACTADYNE_SEED_BUDGET",
+    // The wall-clock dead-man fires on frame N (`Perf::dead_man_at`), to reproduce what it leaves.
+    "FRACTADYNE_DEAD_MAN_AT",
     // Frame N's view gets a NaN scale, as three field sessions' did, so `FractadyneApp::view_guard`
     // and `--logcheck`'s `unusable-view` rule can be seen to fire (W8's meta-gate arm).
     "FRACTADYNE_POISON_VIEW_AT",

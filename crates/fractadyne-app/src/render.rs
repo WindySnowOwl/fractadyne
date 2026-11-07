@@ -8557,6 +8557,13 @@ impl FractadyneApp {
         // frames — and it does not apply when the count is the user's, since then there is no
         // probe running to starve.
         let can_tile = self.allow_tiled_settle && !offscreen && !interacting && !will_reproject;
+        // Whether this frame could be spread over a chunked walk at all (the same three tests as
+        // `chunk_over` below). A frame that cannot — orbit statistics (stripe, triangle inequality,
+        // orbit trap, decomposition), a formula without resumable passes, a device without the
+        // state targets — reaches native resolution ONLY through tiles; see the arm below.
+        let walk_possible = actuators::can_chunk(self.perf.actuators.as_ref(), self.live_render_mode(fractal, julia, magnification))
+            && self.resumable(fractal)
+            && !self.coloring.color_method.needs_aux();
         // Everything the ITERATE's output depends on that isn't covered by orbit_id / gen /
         // resolution, folded to one hash. The GPU re-renders whenever ITS IterKey changes
         // (color method, stripe frequency, trap type, SA/BLA toggles, Julia c, …) — but under a
@@ -8649,9 +8656,24 @@ impl FractadyneApp {
                 // arming unconditionally dropped the boost to ×1.60 and took the 1e61 hold from
                 // 42.1% black to 100%. An explicit count runs no probe, so there is nothing to
                 // starve.)
-                _ if self.perf.fe_budget_ok[vidx]
-                    || self.perf.fe_budget[vidx] == 0
-                    || !self.render_cfg.auto_iter =>
+                // ⛔⭐⭐…and a frame that CANNOT WALK arms whenever settled, auto or not. For it the
+                // tiles are the only way to native resolution, so waiting for convergence is the
+                // deadlock above again: a user's Multibrot 7 orbit-trap view (2026-11-06, auto
+                // iterations, 51,045) had its budget cut to the bootstrap by the wall-clock
+                // dead-man while it was still climbing (the window's frames took ~1 s at the wall),
+                // shrank to 16×16, counted itself complete there, and sat at 16×16 with nothing
+                // dispatched — not converged, never armed — until the user gave up. Reproduced with
+                // a GPU hog and `FRACTADYNE_DEAD_MAN_AT=2`: the panel settled at a budget-shrunk
+                // resolution (10,460 colors against 318,995 resolved). Arming feeds the climb as the
+                // explicit case does — every tile is a measurement. The adaptive boost's starvation
+                // (the reason above for auto views to wait) is what such a view already lives with
+                // once its budget converges; it is no reason to leave it pixelated meanwhile.
+                _ if settle_grid_arms(
+                    self.perf.fe_budget_ok[vidx],
+                    self.perf.fe_budget[vidx],
+                    self.render_cfg.auto_iter,
+                    walk_possible,
+                ) =>
                 {
                     // ARM: this frame renders the coarse single-dispatch full frame; the grid may
                     // start next frame, seeded from it. Once armed/running, an `ok` flap must NOT
@@ -12238,6 +12260,20 @@ mod norm_palette_top;
 ///
 /// ⭐**Ratio, not span.** `[45075, 63736]` is wide in absolute terms and must stay LINEAR;
 /// `[1, 7925]` is narrower in absolute terms and must not. Only the ratio separates them.
+/// Whether a settled view with no tile grid for its current picture arms one now (`build_params`):
+/// once its budget has converged, before it has any budget at all, whenever the iteration count is
+/// the user's, and whenever the frame cannot walk (`walk_possible`: orbit statistics, a
+/// non-resumable formula, a device without the state targets), for which tiles are the only way to
+/// native resolution. An auto-iteration view that can walk waits for convergence, so its tiles do
+/// not starve the adaptive boost of whole-frame readings. The reasons for each are at the call.
+pub(crate) fn settle_grid_arms(budget_ok: bool, budget: u64, auto_iter: bool, walk_possible: bool) -> bool {
+    budget_ok || budget == 0 || !auto_iter || !walk_possible
+}
+
+#[cfg(test)]
+#[path = "../tests/unit/render/settle_grid_arms_tests.rs"]
+mod settle_grid_arms_tests;
+
 /// The orbit trap's palette window after a reading `new` (`fractadyne_gpu::trap_window`): taken
 /// when there is none yet, or when either end moved by more than [`TRAP_WINDOW_HOLD`] of the
 /// window; otherwise the window held is kept.
