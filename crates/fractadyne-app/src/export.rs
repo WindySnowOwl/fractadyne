@@ -21,6 +21,12 @@ pub(crate) struct ExportPrep {
     pub julia_vp: Option<fractadyne_core::Viewport>,
     pub dual_mode: crate::DualExport,
     pub path: std::path::PathBuf,
+    /// The Julia parameter, and the export's width, height and supersampling, when Export was
+    /// pressed. The requests are built only when the reference lands, which at depth is minutes
+    /// later, and read the app as it is then: an unpinned Julia panel follows the cursor, so the
+    /// export rendered wherever the mouse had wandered meanwhile (reported 2026-11-07).
+    pub julia_c: (f64, f64),
+    pub size: (u32, u32, u32),
 }
 
 /// Pre-rasterized "Fd" brand mark for stamping into exports: premultiplied **linear** RGBA at a
@@ -2057,6 +2063,8 @@ impl FractadyneApp {
                     julia_vp: self.dual.then(|| self.julia_viewport.clone()),
                     dual_mode: self.export.dual_mode,
                     path,
+                    julia_c: self.julia_c,
+                    size: (ew, eh, ess),
                 });
                 self.export.status = Some(if heavy {
                     tr!(export_large, size = format!("{ew}×{eh}"), ss = ess, iterations = eiter)
@@ -2091,6 +2099,18 @@ impl FractadyneApp {
             }
         }
         self.spawn_export_worker(device, queue, job, path, hud);
+    }
+
+    /// Whether the cursor must leave the Julia parameter alone: the Export dialog is open, or an
+    /// export is preparing or rendering.
+    ///
+    /// An unpinned Julia panel follows the cursor over the Mandelbrot panel, and with click-to-zoom
+    /// on a plain click zooms rather than pins (Ctrl+click pins), so the panel is often unpinned.
+    /// Reaching the dialog's controls, or simply moving the mouse while a deep export prepared,
+    /// moved the Julia set on screen and in the file (reported 2026-11-07); it also re-rendered the
+    /// Julia panel on the GPU the export was using.
+    pub(crate) fn export_holds_julia(&self) -> bool {
+        self.export.open || self.export.task.is_some() || self.export.prep.is_some()
     }
 
     /// Format an export duration compactly: `8.3s`, or `1m 04.0s` past a minute.
@@ -2209,11 +2229,37 @@ impl FractadyneApp {
         // Export ▸ Use all graphics cards: the thread opens the other cards and splits the image.
         let window = self.export.all_gpus.then(|| self.render_state.as_ref().map(|rs| rs.adapter.get_info())).flatten();
         let window_name = self.gpu_name.clone();
+        let own_card = self.render_state.as_ref().map(|rs| rs.adapter.get_info());
         let (tx, rx) = std::sync::mpsc::channel();
         self.export.task = Some(rx);
         self.export.status = Some(tr!(export_rendering));
         crate::diag::breadcrumb(format!("GUI export → {}", path.display()));
         std::thread::spawn(move || {
+            // ⭐⭐THE EXPORT RENDERS ON A DEVICE OF ITS OWN, on the window's card. On the window's
+            // device, beside the frames the window goes on drawing from the UI thread, a few of
+            // its tiles came out wrong in about half the exports: a Multibrot 8 side-by-side export
+            // at 5.4e23× (2026-11-07, RTX 3080) differed from the same export rendered
+            // synchronously in 0 to 40,738 pixels, speckled through one row of tiles early in the
+            // render, with the same tiles, passes and request. Never synchronously (6 of 6), never
+            // with the window held while the worker rendered (8 of 8), never on a device of its
+            // own (8 of 8, half a second slower to start), nor with the live view's iteration
+            // passes stopped (still 3 of 8). Two threads submitting to one wgpu device is where
+            // wgpu has had synchronization hazards (gfx-rs/wgpu#6344). The fallback, should the
+            // card refuse a second device, is the window's own, as before.
+            let own = own_card.and_then(|card| {
+                crate::gpu_worker::open_headless("same", &card, crate::gpu_choice::backends(), "fractadyne.export")
+                    .map_err(|e| {
+                        crate::diag::log_line(
+                            "render",
+                            &format!("export: no device of its own ({e}); rendering on the window's, beside its frames"),
+                        )
+                    })
+                    .ok()
+            });
+            let (device, queue) = match &own {
+                Some(h) => (h.device.clone(), h.queue.clone()),
+                None => (device, queue),
+            };
             let extra = window.as_ref().map(crate::gpu_worker::open_other_cards).unwrap_or_default();
             let render = |req: &fractadyne_gpu::ExportRequest| {
                 if extra.is_empty() {

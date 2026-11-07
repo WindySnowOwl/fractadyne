@@ -2863,18 +2863,15 @@ pub(crate) fn aa_ramp(frame: u32, target: u32) -> u32 {
     (1u32 << frame.min(5)).min(target.max(1))
 }
 
-/// How often the window redraws while it waits on a background export (its progress bar), rather
-/// than every frame.
-///
-/// ⭐**An export shares the window's device, and every frame the window draws holds it up.** The
-/// Export dialog's route renders on a worker thread with the window's own device and queue, and
-/// while this poll repainted every frame (to move a progress bar) each export pass waited behind
-/// the window's frames, though the live view drew nothing: a Multibrot 8 side-by-side export
-/// (2026-11-07, RTX 3080, 1920×3070 a panel, about 3,600 passes) took 99.8 s, against 17 s
-/// rendered synchronously, the same image bit for bit. A smaller one's tiles had a median wall of
-/// 75 ms against 2.2 ms. Repainting every 100 ms instead: 17.3 s, and a 2.1 ms median. Input
-/// still repaints at once, so the window answers as before.
-pub(crate) const EXPORT_POLL: std::time::Duration = std::time::Duration::from_millis(100);
+/// Ask for the next redraw while the window waits on a background export: after
+/// `EXPORT_POLL_MS` (see `tunables::EXPORT_POLL_MS_DEFAULT` for why not every frame), or every
+/// frame when it is 0.
+pub(crate) fn request_export_poll(ctx: &egui::Context) {
+    match crate::tunables::cost().export_poll_ms {
+        0 => ctx.request_repaint(),
+        ms => ctx.request_repaint_after(std::time::Duration::from_millis(ms)),
+    }
+}
 
 /// Progressive on-settle supersampling (deep-zoom despeckle) tunables.
 /// Only accumulate deeper than `ACCUM_MIN_LOG2` (≈1e10×), where the escape field is undersampled
@@ -17622,7 +17619,7 @@ impl eframe::App for FractadyneApp {
                         crate::tone::play_finish_sound(false);
                     }
                 }
-                Err(std::sync::mpsc::TryRecvError::Empty) => ctx.request_repaint_after(EXPORT_POLL),
+                Err(std::sync::mpsc::TryRecvError::Empty) => request_export_poll(ctx),
                 Err(std::sync::mpsc::TryRecvError::Disconnected) => {
                     self.export.task = None;
                     self.export.started = None;
@@ -17635,7 +17632,11 @@ impl eframe::App for FractadyneApp {
         if let Some(prep) = self.export.prep.take() {
             match prep.rx.try_recv() {
                 Ok(res) => {
-                    let (ew, eh, ess) = (self.export.width.max(1), self.export_height(), self.export.ss.max(1));
+                    // As Export was pressed, not as things are now (`ExportPrep::julia_c`): the
+                    // requests below read `self.julia_c`, so it holds the pressed value while they
+                    // are built and is given back after.
+                    let (ew, eh, ess) = prep.size;
+                    let live_c = std::mem::replace(&mut self.julia_c, prep.julia_c);
                     // Map view: reuse the just-built reference (no rebuild). Dual map is Mandelbrot.
                     let map_julia = prep.julia_vp.is_none() && prep.julia_mode;
                     let mut map_req = self.current_export_request_with_ref(&prep.map_vp, map_julia, Some(res));
@@ -17659,6 +17660,7 @@ impl eframe::App for FractadyneApp {
                     } else {
                         ExportJob::Single(map_req)
                     };
+                    self.julia_c = live_c;
                     let hud = self
                         .show_location
                         .then(|| crate::scripting::build_location_overlay(ctx, &prep.map_vp, eh))
@@ -17671,7 +17673,7 @@ impl eframe::App for FractadyneApp {
                 }
                 Err(std::sync::mpsc::TryRecvError::Empty) => {
                     self.export.prep = Some(prep); // reference still building
-                    ctx.request_repaint_after(EXPORT_POLL);
+                    request_export_poll(ctx);
                 }
                 Err(std::sync::mpsc::TryRecvError::Disconnected) => {
                     self.export.status = Some(tr!(app_export_reference_aborted));
