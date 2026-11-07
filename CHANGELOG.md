@@ -173,6 +173,9 @@ Changes after 0.3.0-beta.1:
   so a few pixels on a minibrot's center cannot squeeze the rest back together; a Julia set gets
   the same. "Log color scale" applies to it too, and is no longer grayed out when "Always fit
   range" is the only normalization ticked. Saved views keep their colors unless the box is ticked.
+  A view at rest keeps the window it was given, so its supersampling finishes: the values at
+  the window's ends can differ a little from one sample to the next, and following them
+  restarted the supersampling of a deep Multibrot 8 view for as long as it stayed on screen.
 - **High-power Julia sets no longer show false black specks (0.3.0-beta.27).** In a Multibrot 3–8
   Julia set, an orbit that passes very close to the center lost the detail that sends it out
   again: the renderer's single precision rounded it onto the orbit of c itself, and where that

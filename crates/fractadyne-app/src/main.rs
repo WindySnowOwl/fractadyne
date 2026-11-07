@@ -2032,6 +2032,9 @@ struct Perf {
     /// toward `norm_pal`. Smooth's windows are escape counts; these are the trap's own values.
     trap_pal: [Option<(f32, f32)>; 2],
     trap_shown: [Option<(f32, f32)>; 2],
+    /// The view (`norm_sig`: center, depth and iteration ask) `trap_pal` was last taken at. At
+    /// rest on that same view the window is held (`render::trap_window_feed`'s `at_rest`).
+    trap_sig: [u64; 2],
     /// Live sink for the escape field's LOCAL GRADIENT — `(Σ|Δ|×16) << 32 | (samples + 1)`. The
     /// auto-normalization predicate keys on this rather than on the escape RANGE: aliasing is a
     /// local property (how far the palette moves between neighboring pixels), not a global one.
@@ -2726,6 +2729,7 @@ impl Default for Perf {
             ],
             trap_pal: [None, None],
             trap_shown: [None, None],
+            trap_sig: [0, 0],
             grad_sink: [
                 std::sync::Arc::new(std::sync::atomic::AtomicU64::new(0)),
                 std::sync::Arc::new(std::sync::atomic::AtomicU64::new(0)),
@@ -9318,6 +9322,7 @@ impl FractadyneApp {
         self.perf.norm_pal = [None, None];
         self.perf.trap_pal = [None, None];
         self.perf.trap_shown = [None, None];
+        self.perf.trap_sig = [0, 0];
         self.perf.esc_hist = [None, None];
         self.perf.esc_top = [None, None];
         self.perf.reading_pool = [render::ReadingPool::default(); 2];
@@ -15420,14 +15425,39 @@ impl FractadyneApp {
             self.perf.accum_gate_wait[view] = 0;
             self.perf.accum_gate_since[view] = None;
             if self.perf.accum_active[view] {
+                if stale && crate::diag::trace_on("accum") {
+                    // What the color signature is made of, at the restart: which part moved.
+                    let p = &self.perf;
+                    crate::diag::trace(
+                        "accum",
+                        format!(
+                            "view {view}: restart f={} — trap pal {:?} shown {:?}; norm pal {:?} shown {:?} drawn {:?}; \
+                             fade {} phase debt {} norm_sig {:x} locked {}",
+                            p.frame_idx,
+                            p.trap_pal[view],
+                            p.trap_shown[view],
+                            p.norm_pal[view],
+                            p.norm_shown[view],
+                            p.norm_drawn[view].map(|d| d.win),
+                            p.palette_fade[view].weight(),
+                            p.palette_phase[view].debt(),
+                            p.norm_sig[view],
+                            p.norm_locked[view],
+                        ),
+                    );
+                }
                 self.accum_worker_reset(view);
                 self.perf.accum_end_why[view] = Some(if stale {
                     if self.accum_norm_sig(view) != self.perf.accum_norm_sig[view] {
+                        // The window that colors this frame: the trap's own under the orbit trap.
+                        let win = if self.coloring.color_method == ColorMethod::OrbitTrap {
+                            self.perf.trap_shown[view].or(self.perf.trap_pal[view])
+                        } else {
+                            self.perf.norm_shown[view].or(self.perf.norm_pal[view])
+                        };
                         format!(
                             "the normalization range moved (now {})",
-                            self.perf.norm_shown[view]
-                                .or(self.perf.norm_pal[view])
-                                .map_or("unset".to_string(), |(lo, hi)| format!("{lo:.2}..{hi:.2}"))
+                            win.map_or("unset".to_string(), |(lo, hi)| format!("{lo:.2}..{hi:.2}"))
                         )
                     } else {
                         "the coloring changed (palette, its animation, effects or settings)".to_string()
@@ -16169,23 +16199,14 @@ impl FractadyneApp {
         e.de_width.to_bits().hash(&mut h);
         e.de_phase.to_bits().hash(&mut h);
         self.render_cfg.aa.hash(&mut h);
-        if let Some((lo, hi)) = self.perf.norm_pal[view] {
-            lo.to_bits().hash(&mut h);
-            hi.to_bits().hash(&mut h);
-        }
-        // ⭐W6 (U58): and the window actually MAPPED — the shown one, which glides toward the fed
-        // `norm_pal` above over many frames. Without it an average begun mid-glide went on
+        // The fed window and, ⭐W6 (U58), the window actually MAPPED — the shown one, which glides
+        // toward the fed one over many frames. Without it an average begun mid-glide went on
         // folding frames colored under a moving window and was presented under a signature that
         // said nothing had changed. The glide lands exactly (`render::norm_glide_step`), so this
-        // settles.
-        if let Some((lo, hi)) = self.perf.norm_shown[view] {
-            lo.to_bits().hash(&mut h);
-            hi.to_bits().hash(&mut h);
+        // settles. Only the windows that COLOR the frame (`accum_windows`).
+        for r in self.accum_windows(view) {
+            r.map(|(lo, hi)| (lo.to_bits(), hi.to_bits())).hash(&mut h);
         }
-        // The orbit trap's windows likewise: fed (held against the samples' jitter by
-        // `render::trap_window_feed`) and shown (the glide lands exactly), so this settles too.
-        self.perf.trap_pal[view].map(|(lo, hi)| (lo.to_bits(), hi.to_bits())).hash(&mut h);
-        self.perf.trap_shown[view].map(|(lo, hi)| (lo.to_bits(), hi.to_bits())).hash(&mut h);
         // …and the window DRAWN, which glides to the shown one after a change of picture
         // (`render::drawn_norm_step`), and a dissolve from another kind of map still under way
         // (`render::palette_fade_step`): both land exactly, so this settles too.
@@ -16197,6 +16218,19 @@ impl FractadyneApp {
         h.finish()
     }
 
+    /// The palette windows, fed and shown, that color view `view`'s frame — the ones an average
+    /// must restart for ([`accum_color_sig`](Self::accum_color_sig)); the rule is
+    /// [`render::coloring_windows`].
+    fn accum_windows(&self, view: usize) -> [Option<(f32, f32)>; 2] {
+        let p = &self.perf;
+        render::coloring_windows(
+            self.coloring.color_method == ColorMethod::OrbitTrap,
+            self.coloring.normalize_fit,
+            [p.norm_pal[view], p.norm_shown[view]],
+            [p.trap_pal[view], p.trap_shown[view]],
+        )
+    }
+
     /// The live-normalization part of [`accum_color_sig`](Self::accum_color_sig): the fed and the
     /// shown range and the lock. When the whole signature changed and this did not, the coloring
     /// itself did (palette, its animation, effects or settings), which `accum_end_why` says.
@@ -16204,7 +16238,8 @@ impl FractadyneApp {
         use std::hash::{Hash, Hasher};
         let mut h = std::collections::hash_map::DefaultHasher::new();
         // …and the window drawn: a palette still gliding to the view's own is not its colors yet.
-        for r in [self.perf.norm_pal[view], self.perf.norm_shown[view], self.perf.norm_drawn[view].map(|d| d.win)] {
+        let [fed, shown] = self.accum_windows(view);
+        for r in [fed, shown, self.perf.norm_drawn[view].map(|d| d.win)] {
             r.map(|(lo, hi)| (lo.to_bits(), hi.to_bits())).hash(&mut h);
         }
         self.perf.palette_fade[view].weight().to_bits().hash(&mut h);
