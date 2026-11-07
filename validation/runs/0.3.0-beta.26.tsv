@@ -1,0 +1,7 @@
+utc	version	identity	exit	verdict	config	command
+2026-11-05 18:58:20	0.3.0-beta.26	build 1, gd98f424	0	selftest exit 0; logcheck PASS	fresh	fractadyne --selftest --selftest-filter fe-df32-probe
+2026-11-05 19:04:26	0.3.0-beta.26	build 1, gd98f424	0	livetest exit 0; logcheck PASS	fresh	fractadyne --livetest tours/grand-tour.toml --size 480x270
+2026-11-05 19:11:28	0.3.0-beta.26	build 1, gd98f424	0	selftest exit 0; logcheck PASS	fresh	fractadyne --selftest --selftest-filter deep-location
+2026-11-05 19:16:49	0.3.0-beta.26	repo gd98f424d	0	-	-	python scripts/dive-capture/screengate.py D:/share/Fractadyne/field/results/20261105-125725-n9sz/validate-pluto-v0.3.0-beta.26-standard-20261105-125737/screen/run1 D:/share/Fractadyne/field/results/20261105-125725-n9sz/validate-pluto-v0.3.0-beta.26-standard-20261105-125737/screen/run2 D:/share/Fractadyne/field/results/20261105-125725-n9sz/validate-pluto-v0.3.0-beta.26-standard-20261105-125737/screen/run3
+2026-11-07 15:03:39	0.3.0-beta.26	build 1, gd98f424	0	motiontest exit 0; logcheck PASS	fresh; window on DISPLAY3 at 100%	fractadyne --motiontest --worker-gpu same
+2026-11-07 15:12:21	0.3.0-beta.26	build 1, gd98f424	3	autodive exit 3; logcheck PASS	fresh; window on DISPLAY3 at 100%	fractadyne --autodive 32 --autodive-timeout 900 --autodive-home 3
