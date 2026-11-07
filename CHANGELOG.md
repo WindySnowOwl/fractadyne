@@ -59,6 +59,15 @@ published as the pre-releases `v0.2.41-beta.1` to `v0.2.41-beta.150`, and a "bet
 
 Changes after 0.3.0-beta.1:
 
+- **An export from the Export dialog comes out the same every time (0.3.0-beta.27).** About half the
+  time, a few tiles of an export started from the dialog were rendered slightly differently:
+  scattered pixels in the busiest parts of a row of tiles, early in the render. Exporting a deep
+  Multibrot 8 view and its Julia set eight times gave anywhere from 0 to 40,738 pixels that differed
+  from the same export rendered without the dialog. The export rendered on the same graphics device
+  the window draws with, from another thread, and the two did not always keep out of each other's
+  way. It now renders on a device of its own on the same graphics card, which takes about half a
+  second to open, and eight exports in a row came out identical. If the card will not open a
+  second device, the export uses the window's, as before, and the log says so.
 - **The Julia panel stays put while you export (0.3.0-beta.27).** In dual view, the Julia panel
   follows the cursor across the Mandelbrot panel until you pin it, and with click-to-zoom on a
   plain click zooms rather than pins (Ctrl+click pins). Moving the mouse to reach the Export dialog's
@@ -73,7 +82,8 @@ Changes after 0.3.0-beta.1:
   card, even with nothing changing on screen: a side-by-side export of a deep Multibrot 8 view took
   99.8 s from the dialog and 17 s from the command line, the same image bit for bit. The window
   now redraws ten times a second while it waits, and at once when you move the mouse or press a
-  key, and the same export takes 17.3 s. The log now also records each panel's render time for a
+  key, and the same export takes 17.3 s (`--set EXPORT_POLL_MS=0` redraws every frame again, for
+  comparison). The log now also records each panel's render time for a
   side-by-side or two-file export (`gui-export-map`, `gui-export-julia`).
 - **Orbit trap, stripe and other orbit colorings render much faster in views with black interior
   (0.3.0-beta.27).** A pixel that never escapes used to run every one of its iterations when the

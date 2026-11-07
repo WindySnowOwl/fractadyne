@@ -79,7 +79,7 @@ impl crate::FractadyneApp {
         // Unattended: there is no user input to wake the loop. While an `--export-live` export runs
         // the app's own export poll paces it, as for someone waiting on the Export dialog.
         if self.harness.shot.as_ref().is_some_and(|s| s.live_t0.is_some()) {
-            ctx.request_repaint_after(crate::EXPORT_POLL);
+            crate::request_export_poll(ctx);
         } else {
             ctx.request_repaint();
         }

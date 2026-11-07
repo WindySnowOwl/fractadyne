@@ -108,6 +108,9 @@ pub(crate) struct Cost {
     pub cycle_check: u64,
     /// The direct loops' honest step past the critical point (`HONEST_STEP_DEFAULT`; 0 = off, 1 = on).
     pub honest_step: u64,
+    /// How often the window redraws while it waits on a background export, ms
+    /// (`EXPORT_POLL_MS_DEFAULT`; 0 = every frame, as before 0.3.0-beta.27).
+    pub export_poll_ms: u64,
     /// The overlapped pick + center build (`REF_OVERLAP_DEFAULT`; 0 = off, 1 = on).
     pub ref_overlap: u64,
     /// A `--render`'s reference started before the window (`EARLY_REF_DEFAULT`; 0 = off, 1 = on).
@@ -224,6 +227,7 @@ impl Default for Cost {
             tail_df32: TAIL_DF32_DEFAULT,
             cycle_check: CYCLE_CHECK_DEFAULT,
             honest_step: HONEST_STEP_DEFAULT,
+            export_poll_ms: EXPORT_POLL_MS_DEFAULT,
             ref_overlap: REF_OVERLAP_DEFAULT,
             early_ref: EARLY_REF_DEFAULT,
             tile_occupancy: TILE_OCCUPANCY_DEFAULT,
@@ -779,6 +783,15 @@ pub(crate) fn apply_overrides(pairs: &[(String, String)]) -> Result<(), String> 
                 };
                 p.to_string()
             }
+            "EXPORT_POLL_MS" => {
+                let p = c.export_poll_ms;
+                c.export_poll_ms = raw
+                    .parse::<u64>()
+                    .ok()
+                    .filter(|v| *v <= 1000)
+                    .ok_or_else(|| format!("--set EXPORT_POLL_MS: '{raw}' is not a number of ms from 0 (every frame) to 1000"))?;
+                p.to_string()
+            }
             "REF_OVERLAP" => {
                 let p = c.ref_overlap;
                 c.ref_overlap = match raw.as_str() {
@@ -877,7 +890,7 @@ pub(crate) const OVERRIDABLE: &str = "TDR_BUDGET_MS, TDR_EXPLICIT_BUDGET_MS, \
     TDR_BOOTSTRAP_MS, MOTION_UNPRICED_MAX, \
     MODE_RATE_UNKNOWN_MARGIN, TDR_MIN_STEPS, TDR_STEPS_CEIL, EXPLICIT_STEPS_CEIL, \
     EXPLICIT_DISPATCH_CAP, TDR_MAX_TILES, TDR_TILES_CEIL, BLA_EPS, PASS_FIXED_MS, MOTION_NEED_QUANTILE, MOTION_NEED_SOURCE, READING_POOL, \
-    DEAD_MAN, DISPATCH_CEILING, SETTLE_SERIALIZE, ADMISSION, PIN_TIMEOUT_SCALED, TAIL_DF32, CYCLE_CHECK, HONEST_STEP, REF_OVERLAP, EARLY_REF, TILE_OCCUPANCY, LIVE_REFRESH, \
+    DEAD_MAN, DISPATCH_CEILING, SETTLE_SERIALIZE, ADMISSION, PIN_TIMEOUT_SCALED, TAIL_DF32, CYCLE_CHECK, HONEST_STEP, EXPORT_POLL_MS, REF_OVERLAP, EARLY_REF, TILE_OCCUPANCY, LIVE_REFRESH, \
     ORBIT_LEN_CAP, RENORM, TILE_PACK, RENORM_BLA, ORBIT_SCHEDULE, NUCLEUS_REF, NUCLEUS_REF_LIVE, SA_TRACE, CHUNK_CHARGE, \
     CHUNK_SHUFFLE, WORKER_MOTION, WORKER_YIELD, WORKER_PASS_MS, MISI_FIRST_STAGE_OCT, RECORD_COST_PPM, REUSE_MAX_WRAPS, PIN_BAND_SPAN, REF_OVERTAKEN_DROP, SA_TRACE_LIVE_STEPS, GROWTH_IN_WORK, PIN_GROWTH_LANE, PRE_SWITCH_PROBE, BAND_FLOATEXP, WALK_STEPS, PIN_SPAN_PRICED, TIMER_SLOTS, \
     WALK_SERIALIZE, WALK_ONSET, ACCUM_TIME_CAP_MS, NORM_TOP_QUANTILE, ASSEMBLE_PIECE_MAX";
@@ -1427,6 +1440,19 @@ pub(crate) const TAIL_DF32_DEFAULT: u64 = 1;
 /// time off and 12.4 s on; bit for bit the same pictures. 0 = every interior pixel runs to
 /// `max_iter`, for the before/after measurement.
 pub(crate) const CYCLE_CHECK_DEFAULT: u64 = 1;
+
+/// How often the window redraws while it waits on a background export (its progress bar), ms,
+/// rather than every frame (0).
+///
+/// ⭐**An export shares the window's device, and every frame the window draws holds it up.** The
+/// Export dialog's route renders on a worker thread with the window's own device and queue, and
+/// while the poll repainted every frame (to move a progress bar) each export pass waited behind
+/// the window's frames, though the live view drew nothing: a Multibrot 8 side-by-side export
+/// (2026-11-07, RTX 3080, 1920×3070 a panel, about 3,600 passes) took 99.8 s, against 17 s
+/// rendered synchronously, the same image bit for bit. A smaller one's tiles had a median wall of
+/// 75 ms against 2.2 ms. Repainting every 100 ms instead: 17.3 s, and a 2.1 ms median. Input
+/// still repaints at once, so the window answers as before.
+pub(crate) const EXPORT_POLL_MS_DEFAULT: u64 = 100;
 
 /// 1 = THE HONEST STEP PAST THE CRITICAL POINT in the direct loops (`honest_step` in
 /// mandelbrot.wgsl): in a Multibrot 3–8 Julia set, once z^d falls below 2^-16 of |c| a pixel iterates on
