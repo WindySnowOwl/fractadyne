@@ -281,7 +281,14 @@ impl FractadyneApp {
             // Julia view underneath (reported 2026-08-13). `Response::hovered()` respects layer
             // occlusion (false when a menu/popup/dialog is on top at the pointer), so it is the
             // "the pointer really is on the fractal" signal.
-            if !is_julia && self.julia_pin.is_none() && coord != self.julia_c && resp_l.hovered() {
+            // Not while an export is being set up or made (`export_holds_julia`): the Julia set on
+            // screen is the one being exported, and reaching the dialog must not move it.
+            if !is_julia
+                && self.julia_pin.is_none()
+                && coord != self.julia_c
+                && resp_l.hovered()
+                && !self.export_holds_julia()
+            {
                 self.julia_c = coord; // live: cursor over Mandelbrot drives the Julia
                 self.pointer.settle_t[1] = ctx.input(|i| i.time); // only the Julia panel is changing
                 self.ref_cache[1].ref_pt = None;

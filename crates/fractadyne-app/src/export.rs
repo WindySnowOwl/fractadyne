@@ -21,6 +21,12 @@ pub(crate) struct ExportPrep {
     pub julia_vp: Option<fractadyne_core::Viewport>,
     pub dual_mode: crate::DualExport,
     pub path: std::path::PathBuf,
+    /// The Julia parameter, and the export's width, height and supersampling, when Export was
+    /// pressed. The requests are built only when the reference lands, which at depth is minutes
+    /// later, and read the app as it is then: an unpinned Julia panel follows the cursor, so the
+    /// export rendered wherever the mouse had wandered meanwhile (reported 2026-11-07).
+    pub julia_c: (f64, f64),
+    pub size: (u32, u32, u32),
 }
 
 /// Pre-rasterized "Fd" brand mark for stamping into exports: premultiplied **linear** RGBA at a
@@ -2057,6 +2063,8 @@ impl FractadyneApp {
                     julia_vp: self.dual.then(|| self.julia_viewport.clone()),
                     dual_mode: self.export.dual_mode,
                     path,
+                    julia_c: self.julia_c,
+                    size: (ew, eh, ess),
                 });
                 self.export.status = Some(if heavy {
                     tr!(export_large, size = format!("{ew}×{eh}"), ss = ess, iterations = eiter)
@@ -2091,6 +2099,18 @@ impl FractadyneApp {
             }
         }
         self.spawn_export_worker(device, queue, job, path, hud);
+    }
+
+    /// Whether the cursor must leave the Julia parameter alone: the Export dialog is open, or an
+    /// export is preparing or rendering.
+    ///
+    /// An unpinned Julia panel follows the cursor over the Mandelbrot panel, and with click-to-zoom
+    /// on a plain click zooms rather than pins (Ctrl+click pins), so the panel is often unpinned.
+    /// Reaching the dialog's controls, or simply moving the mouse while a deep export prepared,
+    /// moved the Julia set on screen and in the file (reported 2026-11-07); it also re-rendered the
+    /// Julia panel on the GPU the export was using.
+    pub(crate) fn export_holds_julia(&self) -> bool {
+        self.export.open || self.export.task.is_some() || self.export.prep.is_some()
     }
 
     /// Format an export duration compactly: `8.3s`, or `1m 04.0s` past a minute.

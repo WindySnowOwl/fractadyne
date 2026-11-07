@@ -59,6 +59,14 @@ published as the pre-releases `v0.2.41-beta.1` to `v0.2.41-beta.150`, and a "bet
 
 Changes after 0.3.0-beta.1:
 
+- **The Julia panel stays put while you export (0.3.0-beta.27).** In dual view, the Julia panel
+  follows the cursor across the Mandelbrot panel until you pin it, and with click-to-zoom on a
+  plain click zooms rather than pins (Ctrl+click pins). Moving the mouse to reach the Export dialog's
+  buttons, or while a deep export prepared its reference, moved the Julia set on screen, and a deep
+  export then rendered the Julia set from wherever the mouse had ended up rather than from where it
+  was when you pressed Export. The Julia panel now ignores the cursor while the Export dialog is
+  open or an export is running, and an export takes the Julia parameter, size and supersampling
+  from the moment you press Export.
 - **Exports from the Export dialog are several times faster (0.3.0-beta.27).** An export runs in
   the background while the window stays live, and the window redrew itself every frame to move
   the progress bar. Each of those redraws held up the export's next piece of work on the graphics

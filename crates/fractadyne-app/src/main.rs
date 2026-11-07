@@ -17635,7 +17635,11 @@ impl eframe::App for FractadyneApp {
         if let Some(prep) = self.export.prep.take() {
             match prep.rx.try_recv() {
                 Ok(res) => {
-                    let (ew, eh, ess) = (self.export.width.max(1), self.export_height(), self.export.ss.max(1));
+                    // As Export was pressed, not as things are now (`ExportPrep::julia_c`): the
+                    // requests below read `self.julia_c`, so it holds the pressed value while they
+                    // are built and is given back after.
+                    let (ew, eh, ess) = prep.size;
+                    let live_c = std::mem::replace(&mut self.julia_c, prep.julia_c);
                     // Map view: reuse the just-built reference (no rebuild). Dual map is Mandelbrot.
                     let map_julia = prep.julia_vp.is_none() && prep.julia_mode;
                     let mut map_req = self.current_export_request_with_ref(&prep.map_vp, map_julia, Some(res));
@@ -17659,6 +17663,7 @@ impl eframe::App for FractadyneApp {
                     } else {
                         ExportJob::Single(map_req)
                     };
+                    self.julia_c = live_c;
                     let hud = self
                         .show_location
                         .then(|| crate::scripting::build_location_overlay(ctx, &prep.map_vp, eh))
