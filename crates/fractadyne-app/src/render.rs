@@ -2273,19 +2273,37 @@ impl FractadyneApp {
     /// Feed view `vb`'s orbit-trap window from the GPU's latest reading (`Perf::trap_sink`), and
     /// glide the shown one toward it. Every frame, so the glide is one frame's step however sparse
     /// the readings; cleared when the method is not the orbit trap, so a later return starts from
-    /// the picture then on screen rather than from a window measured somewhere else.
-    pub(crate) fn trap_window_drain(&mut self, vb: usize) {
+    /// the picture then on screen rather than from a window measured somewhere else. `at_rest`:
+    /// nothing is moving the view, so a window already taken for this same view is held
+    /// ([`trap_window_feed`]).
+    pub(crate) fn trap_window_drain(&mut self, vb: usize, at_rest: bool) {
         use std::sync::atomic::Ordering::SeqCst;
         let r = self.perf.trap_sink[vb].swap(u64::MAX, SeqCst);
         if self.coloring.color_method != crate::ColorMethod::OrbitTrap {
             self.perf.trap_pal[vb] = None;
             self.perf.trap_shown[vb] = None;
+            self.perf.trap_sig[vb] = 0;
             return;
         }
         if r != u64::MAX {
             let (lo, hi) = (f32::from_bits((r >> 32) as u32), f32::from_bits(r as u32));
             if lo.is_finite() && hi.is_finite() && hi > lo {
-                self.perf.trap_pal[vb] = Some(trap_window_feed(self.perf.trap_pal[vb], (lo, hi)));
+                let before = self.perf.trap_pal[vb];
+                let sig = self.perf.norm_sig[vb];
+                let held = at_rest && self.perf.trap_sig[vb] == sig;
+                self.perf.trap_pal[vb] = Some(trap_window_feed(before, (lo, hi), held));
+                self.perf.trap_sig[vb] = sig;
+                if crate::diag::trace_on("accum") {
+                    crate::diag::trace(
+                        "accum",
+                        format!(
+                            "trap reading v={vb} f={}: [{lo:.4},{hi:.4}] window {before:?} → {:?}{}",
+                            self.perf.frame_idx,
+                            self.perf.trap_pal[vb],
+                            if held { " (held: at rest on this view)" } else { "" }
+                        ),
+                    );
+                }
             }
         }
         self.perf.trap_shown[vb] =
@@ -5918,7 +5936,7 @@ impl FractadyneApp {
                 .norm_pal[vb]
                 .map(|target| norm_glide_step(self.perf.norm_shown[vb], target, norm_snap, self.norm_pace(vb)));
             // The orbit trap's window, every frame likewise: its own feed and glide.
-            self.trap_window_drain(vb);
+            self.trap_window_drain(vb, !interacting);
         }
         for e in climb.events.iter().filter(|e| !e.before_drains()) {
             e.trace();
@@ -12282,10 +12300,21 @@ mod settle_grid_arms_tests;
 /// each frame, so the quantiles wobble by a bucket or two from frame to frame. Followed, each wobble
 /// would be a new palette map, and the supersampled average restarts on any change of map
 /// (`accum_color_sig`): it would never finish. A real change of view moves the ends far more.
-pub(crate) fn trap_window_feed(old: Option<(f32, f32)>, new: (f32, f32)) -> (f32, f32) {
+///
+/// ⭐⭐**At rest on the view it was taken for (`held`), only [`TRAP_WINDOW_BREAK`] moves it.** The
+/// 0.5% and 99.5% quantiles sit in the histogram's thin tails, where the next value can be a long
+/// way off: a Multibrot 8 view at 2^79 and 250,000 iterations read its top as 14.58 or 14.89 from
+/// one supersample to the next, 6.5% of its 4.6-wide window, past the 5% hold every time. Each
+/// flip glided the drawn window for a second, every frame of the glide restarted the average, and
+/// the next flip came before it finished: the spinner never stopped (2026-11-07). A view at rest
+/// is one picture, so its window is decided once and held, as the escape window is
+/// (`norm_feed_decision`); a reading that moves an end by a quarter of the window is a different
+/// picture (a window taken before the reference arrived) and replaces it.
+pub(crate) fn trap_window_feed(old: Option<(f32, f32)>, new: (f32, f32), held: bool) -> (f32, f32) {
     match old {
         Some((lo, hi)) => {
-            let tol = TRAP_WINDOW_HOLD * (hi - lo).max(1.0 / 16.0);
+            let share = if held { TRAP_WINDOW_BREAK } else { TRAP_WINDOW_HOLD };
+            let tol = share * (hi - lo).max(1.0 / 16.0);
             if (new.0 - lo).abs() > tol || (new.1 - hi).abs() > tol {
                 new
             } else {
@@ -12300,9 +12329,40 @@ pub(crate) fn trap_window_feed(old: Option<(f32, f32)>, new: (f32, f32)) -> (f32
 /// reading replaces it ([`trap_window_feed`]).
 pub(crate) const TRAP_WINDOW_HOLD: f32 = 0.05;
 
+/// The same, for a view at rest on the view its window was taken for ([`trap_window_feed`]'s
+/// `held`): a quarter of the window.
+pub(crate) const TRAP_WINDOW_BREAK: f32 = 0.25;
+
 #[cfg(test)]
 #[path = "../tests/unit/render/trap_window_feed_tests.rs"]
 mod trap_window_feed_tests;
+
+/// The palette windows, fed and shown, that COLOR a frame, and so the ones its supersampled average
+/// restarts for (`FractadyneApp::accum_windows`): the escape windows, except under the orbit trap,
+/// which colors by its own values — its window with "Always fit range" (`fit`), none without
+/// (`FractadyneApp::live_norm_window`).
+///
+/// ⭐The escape window goes on being measured under the orbit trap and moves as the samples do;
+/// counted, it restarted the average of a picture it did not color, and so did the trap's own
+/// window with the box unticked (2026-11-07).
+pub(crate) fn coloring_windows(
+    orbit_trap: bool,
+    fit: bool,
+    escape: [Option<(f32, f32)>; 2],
+    trap: [Option<(f32, f32)>; 2],
+) -> [Option<(f32, f32)>; 2] {
+    if !orbit_trap {
+        escape
+    } else if fit {
+        trap
+    } else {
+        [None, None]
+    }
+}
+
+#[cfg(test)]
+#[path = "../tests/unit/render/coloring_windows_tests.rs"]
+mod coloring_windows_tests;
 
 pub(crate) fn norm_map_is_log(mn: f32, mx: f32, log_palette: bool) -> bool {
     log_palette || mx > mn.max(1.0) * NORM_LOG_AUTO_RATIO
