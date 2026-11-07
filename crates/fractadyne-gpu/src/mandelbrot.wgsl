@@ -723,11 +723,17 @@ fn fam_pow_df(b: Cdf, d: u32) -> Cdf {
 // of those pixels escapes in 20–491 steps, so they were wrong as well as slow: the precision's
 // doing, which this check neither causes nor hides. The honest step, `honest_step`, is the fix.)
 // Only where z is the whole state: the built-in formulas but Phoenix (8, which reads z_{n−1})
-// and Newton (9, which converges by its own test), and none with orbit statistics (`aux_on`),
-// whose interior output depends on the whole orbit. A custom formula (1000) may keep variables
+// and Newton (9, which converges by its own test). A custom formula (1000) may keep variables
 // of its own between steps, so it is never checked.
-fn cycle_check_on(f: u32, aux_on: u32) -> bool {
-    return (f <= 7u || is_fam(f)) && (aux_on & 1u) == 0u && (iu.tail_on & 2u) == 0u;
+// The df32 perturbation loop (mode 0) checks its own state the same way: its next step reads only
+// the reference index and δz (and the pixel's δc), so a repeat of both cycles for ever too.
+// ⭐ORBIT STATISTICS TOO (2026-11-07). An interior pixel's statistics show only through the orbit
+// trap (`coord_under`: stripe, TIA and decomposition draw the interior in the interior color), and
+// by the repeat every point of the cycle has been through `aux_step`, so the trap's nearest
+// approach is already final. Measured on a Multibrot 7 orbit-trap view at 6.4e6× and 250,000
+// iterations: 0.5% of the samples were interior and took 85% of the frame's iterations.
+fn cycle_check_on(f: u32) -> bool {
+    return (f <= 7u || is_fam(f)) && (iu.tail_on & 2u) == 0u;
 }
 fn cdf_bits_eq(a: Cdf, b: Cdf) -> bool {
     return all(bitcast<vec4<u32>>(vec4<f32>(a.re, a.im)) == bitcast<vec4<u32>>(vec4<f32>(b.re, b.im)));
@@ -877,7 +883,7 @@ struct IterU {
     gather_w: u32,         // width in texels of the tiny gather texture
     gather_n: u32,         // how many of its texels carry a real coordinate
     // Bit 0: the mode-2 df32 tail phase is enabled (TAIL_DF32_MIN; `TAIL_DF32` tunable). Bit 1: the
-    // direct loops' exact-repeat check is OFF (`cycle_check_on`; `CYCLE_CHECK` tunable). Bit 2: their
+    // exact-repeat check is OFF (`cycle_check_on`, direct and mode 0; `CYCLE_CHECK` tunable). Bit 2: the direct loops'
     // honest step past the critical point is OFF (`honest_power`; `HONEST_STEP` tunable). A whole
     // 16-byte row with its padding, mirrored by `IterUniforms::tail` in lib.rs.
     tail_on: u32,
@@ -929,6 +935,14 @@ struct IterU {
     map_s: f32,
     map_r: f32,
     map_pad: u32,
+    // THE REFERENCE'S OWN CYCLE (`ref_fold` in lib.rs), for mode 0's exact-repeat check only: the
+    // stored reference repeats exactly with period `fold_by` from index `fold_end − fold_by` to its
+    // end, so the check compares reference indices reduced into that period. 0 = no fold. A row of
+    // its own after the strip map's, so no field moved.
+    fold_end: u32,
+    fold_by: u32,
+    fold_pad0: u32,
+    fold_pad1: u32,
 };
 @group(0) @binding(0) var<uniform> iu: IterU;
 // Reference orbit as double-single: each Z_n = (re.hi, im.hi, re.lo, im.lo). When BLA is on,
@@ -1506,7 +1520,7 @@ fn iterate_at(gx: f32, gy: f32) -> FragOut {
         // @@CUSTOM_INIT_BEGIN — a custom formula's init section, run once from z₀ (`custom.rs`).
         // @@CUSTOM_INIT_END
         // The exact-repeat check (`cycle_check_on`): z as last saved, and when it is next replaced.
-        let cyc_on = cycle_check_on(iu.formula, iu.aux_on);
+        let cyc_on = cycle_check_on(iu.formula);
         var cyc_z = z;
         var cyc_k: u32 = 0u;
         var cyc_at: u32 = 1u;
@@ -2172,6 +2186,21 @@ fn iterate_at(gx: f32, gy: f32) -> FragOut {
                 ref_n = 0u;
             }
         }
+        // The exact-repeat check (`cycle_check_on`) on this loop's state: the reference index and δz
+        // as last saved, and when they are next replaced. The index it compares is `cyc_n`, `ref_n`
+        // reduced into the reference's own cycle when it has one (`ref_fold` in lib.rs), else
+        // `ref_n` itself: a pixel inside the reference's minibrot follows it, δz settles onto a cycle,
+        // and `ref_n` only climbs, so without the fold its state never repeated.
+        let cyc_on = cycle_check_on(iu.formula);
+        var cyc_n = ref_n;
+        if (iu.fold_by != 0u && cyc_n >= iu.fold_end) {
+            let n0 = iu.fold_end - iu.fold_by;
+            cyc_n = n0 + (cyc_n - n0) % iu.fold_by;
+        }
+        var cyc_dz = dz;
+        var cyc_ref = cyc_n;
+        var cyc_k: u32 = 0u;
+        var cyc_at: u32 = 1u;
         loop {
             if (iter >= iu.max_iter) { break; }
             n_full = n_full + 1u; // mode 0 has no skip: every trip is one full step
@@ -2295,6 +2324,19 @@ fn iterate_at(gx: f32, gy: f32) -> FragOut {
                 ref_n = 0u;
             }
             // @@CUSTOM_REBASE_END
+            if (cyc_on) {
+                // `cyc_n` follows `ref_n`: 0 after a rebase (the only way `ref_n` is 0 here), else one
+                // on, folded back a period at `fold_end` (with no fold, `fold_end` is 0 and the
+                // subtraction takes 0 from a rebased 0).
+                cyc_n = select(cyc_n + 1u, 0u, ref_n == 0u);
+                if (cyc_n == iu.fold_end) { cyc_n = cyc_n - iu.fold_by; }
+                // The same index and δz, bit for bit: the next steps are the ones already taken
+                // (escape and glitch tests included), so the pixel ends as the interior it would be
+                // at `max_iter`.
+                cyc_k = cyc_k + 1u;
+                if (cyc_n == cyc_ref && cdf_bits_eq(dz, cyc_dz)) { break; }
+                if (cyc_k == cyc_at) { cyc_dz = dz; cyc_ref = cyc_n; cyc_at = cyc_at * 2u; }
+            }
         }
         ctr_commit(n_rebase, n_ext, n_bla);
         step_commit(gx, gy, n_bla + n_full, n_full, n_big, iter);
@@ -2561,7 +2603,7 @@ fn fs_iterate_chunk(in: VsOut) -> ChunkOut {
         var escaped = false;
         // The exact-repeat check, as fs_iterate's direct branch (`cycle_check_on`), saved afresh
         // in each pass: a repeat inside one window ends the pixel as interior for every later one.
-        let cyc_on = cycle_check_on(iu.formula, iu.aux_on);
+        let cyc_on = cycle_check_on(iu.formula);
         var cyc_z = z;
         var cyc_k: u32 = 0u;
         var cyc_at: u32 = 1u;

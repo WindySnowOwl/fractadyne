@@ -338,6 +338,15 @@ impl ExportRequest {
         Ok(orbit_buf)
     }
 
+    /// Mode 0's fold of this request's reference, `[fold_end, period, 0, 0]` (`ref_fold` in the
+    /// crate root); zeros in any other mode, or when the reference does not repeat.
+    pub fn ref_fold(&self) -> [u32; 4] {
+        if self.mode != 0 {
+            return [0; 4];
+        }
+        crate::ref_fold(&self.orbit, self.orbit_len, self.max_iter)
+    }
+
     /// `K` of the u-space tree, or 0 when there is none for this orbit (see [`crate::rn_bla_k`]).
     fn rn_bla_k(&self) -> u32 {
         crate::rn_bla_k(self.rn.len, self.orbit_len, self.rn_bla.len())
@@ -1603,6 +1612,8 @@ struct TileRenderer<'a> {
     /// The full-resolution step (hi, lo per axis) and iteration resolution.
     step: [f32; 4],
     full: [f32; 2],
+    /// [`ExportRequest::ref_fold`], scanned once for every tile.
+    fold: [u32; 4],
 }
 
 impl<'a> TileRenderer<'a> {
@@ -1748,6 +1759,7 @@ impl<'a> TileRenderer<'a> {
             _orbit_buf: orbit_buf,
             step: [sxh, sxl, syh, syl],
             full: [w as f32 * ss as f32, h as f32 * ss as f32],
+            fold: req.ref_fold(),
         })
     }
 
@@ -1797,6 +1809,7 @@ impl<'a> TileRenderer<'a> {
             tail: crate::tail_word(),
             rn: req.rn_uniform(),
             map: req.map,
+            fold: self.fold,
         };
         queue.write_buffer(&self.iter_uniform, 0, bytemuck::bytes_of(&iu));
 
@@ -2659,6 +2672,7 @@ pub fn render_iter_tiled(
     // full frame, exactly as `render_export` does — so no per-tile reference arithmetic.
     let (sxh, sxl) = split(req.span_mantissa.x / w as f64);
     let (syh, syl) = split(req.span_mantissa.y / h as f64);
+    let fold = req.ref_fold(); // once, not per tile
 
     let bpp = 16u32;
     let align = wgpu::COPY_BYTES_PER_ROW_ALIGNMENT;
@@ -2730,6 +2744,7 @@ pub fn render_iter_tiled(
                 tail: crate::tail_word(),
                 rn: req.rn_uniform(),
                 map: req.map,
+                fold,
             };
             queue.write_buffer(&iter_uniform, 0, bytemuck::bytes_of(&iu));
 
@@ -3226,6 +3241,7 @@ impl GatherPass {
         // is irrelevant to the arithmetic, since every coordinate is absolute (`px_offset` stays 0).
         let (sxh, sxl) = split(req.span_mantissa.x / w as f64);
         let (syh, syl) = split(req.span_mantissa.y / h as f64);
+        let fold = req.ref_fold(); // once, not per pass
 
         let bpp = 16u32;
         let align = wgpu::COPY_BYTES_PER_ROW_ALIGNMENT;
@@ -3288,6 +3304,7 @@ impl GatherPass {
                 tail: crate::tail_word(),
                 rn: req.rn_uniform(),
                 map: req.map,
+                fold,
             };
             queue.write_buffer(&self.iter_uniform, 0, bytemuck::bytes_of(&iu));
 
@@ -3580,6 +3597,7 @@ fn render_iter_passes(
         tail: crate::tail_word(),
         rn: req.rn_uniform(),
         map: req.map,
+        fold: req.ref_fold(),
     };
     queue.write_buffer(&iter_uniform, 0, bytemuck::bytes_of(&iu));
 

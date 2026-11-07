@@ -1455,6 +1455,106 @@ impl FractadyneApp {
             });
         }
 
+        // ⭐THE EXACT-REPEAT CHECK IN THE PERTURBATION LOOP, WITH THE ORBIT TRAP (2026-11-07;
+        // `cycle_check_on` and `ref_fold`). Mode 0's next step reads only the reference index and δz,
+        // so a repeat of both ends the pixel as interior; orbit statistics no longer turn the check
+        // off, since by the repeat the trap has seen the whole cycle. Found on a Multibrot 7 orbit-trap
+        // view at 6.4e6× and 250,000 iterations, where 0.5% of the samples were interior and took 85%
+        // of the frame's iterations. This frame is one of that view's minibrots with the reference
+        // inside it, the case the fold exists for: a pixel that follows the reference has an index
+        // that only climbs, and without the fold it never repeated (40% of this frame's interior was
+        // caught). Asserted as for the direct check, on the COLORED image (the trap colors the
+        // interior, so a nearest approach cut short would show): bit for bit with the check off;
+        // interior pixels; mode 0; a fold found; and the WORK, the loop trips the shader counts on
+        // its 1-in-64 grid. Not the time: a frame this small is one dispatch, as long as its slowest
+        // pixel, and a pixel on the minibrot's edge settles too slowly to repeat (measured 29.7 ms
+        // against 32.8 ms for a third of the work).
+        if want("cycle-check") {
+            let saved = (
+                self.fractal,
+                self.julia_mode,
+                self.render_cfg.max_iter,
+                self.render_cfg.auto_iter,
+                self.coloring.color_method,
+                self.coloring.trap_type,
+            );
+            self.fractal = FractalKind::from_name("Multibrot 7").unwrap_or(FractalKind::Mandelbrot);
+            self.julia_mode = false;
+            self.render_cfg.max_iter = 20_000;
+            self.render_cfg.auto_iter = false;
+            self.coloring.color_method = crate::ColorMethod::OrbitTrap;
+            self.coloring.trap_type = crate::TrapType::Point;
+            let (w, h) = (256u32, 160u32);
+            let span = 5.54e-8; // the minibrot is 3.3e-8 across
+            let mut vp = Viewport::new(w as f64, h as f64);
+            vp.center_x = fractadyne_core::parse_bf("0.77409898094802687130").unwrap();
+            vp.center_y = fractadyne_core::parse_bf("0.24418224534626276068").unwrap();
+            vp.units_per_pixel = fractadyne_core::FloatExp::from_f64(span / h as f64);
+            vp.precision = fractadyne_core::precision_for_magnification(4.0 / span);
+            let mut req = self.current_export_request_for(&vp, false);
+            req.width = w;
+            req.height = h;
+            req.ss = 1;
+            (
+                self.fractal,
+                self.julia_mode,
+                self.render_cfg.max_iter,
+                self.render_cfg.auto_iter,
+                self.coloring.color_method,
+                self.coloring.trap_type,
+            ) = saved;
+            use std::sync::atomic::{AtomicBool, AtomicU32};
+            let (progress, cancel) = (AtomicU32::new(0), AtomicBool::new(false));
+            let colored = |on: bool| {
+                fractadyne_gpu::set_cycle_check(on);
+                fractadyne_gpu::render_export(device, queue, &req, &progress, &cancel).ok()
+            };
+            let timed = |on: bool| {
+                fractadyne_gpu::set_cycle_check(on);
+                let t0 = std::time::Instant::now();
+                let r = fractadyne_gpu::render_iter(device, queue, &req).ok();
+                let wall = t0.elapsed().as_secs_f64() * 1000.0;
+                let ms = r.as_ref().map_or(wall, |r| if r.iterate_ms > 0.0 { r.iterate_ms } else { wall });
+                (r, ms)
+            };
+            let _warm = timed(true);
+            let (raw, on_ms) = timed(true);
+            let (_, off_ms) = timed(false);
+            let (img_on, img_off) = (colored(true), colored(false));
+            fractadyne_gpu::set_cycle_check(crate::tunables::cost().cycle_check == 1);
+            let fold = req.ref_fold();
+            let differ = |a: &[f32], b: &[f32]| a.iter().zip(b).filter(|(x, y)| x.to_bits() != y.to_bits()).count();
+            let (pass, result) = match (&raw, &img_on, &img_off) {
+                (Some(r), Some(a), Some(b)) if a.pixels.len() == b.pixels.len() => {
+                    let d = differ(&a.pixels, &b.pixels);
+                    let interior = r.pixels.chunks(4).filter(|p| p[0] < 0.0).count();
+                    let trips =
+                        |x: &fractadyne_gpu::ExportResult| fractadyne_gpu::StepStats::from_u64_slots(&x.counters).executed;
+                    let (t_on, t_off) = (trips(a), trips(b));
+                    (
+                        req.mode == 0 && d == 0 && interior > 0 && fold[1] > 0 && t_off > 0 && t_on * 2 < t_off,
+                        format!(
+                            "mode {}; {d} colored px differ from the check off; {interior} interior px; \
+                             reference period {} from sample {}; {t_on} loop trips against {t_off} (1 px \
+                             in 64); {on_ms:.2} ms against {off_ms:.2} ms",
+                            req.mode,
+                            fold[1],
+                            fold[0].saturating_sub(fold[1]),
+                        ),
+                    )
+                }
+                _ => (false, "render failed".into()),
+            };
+            push_check(&mut checks, &mut last_check_t, SelfCheck {
+                category: "IterChunk",
+                name: "exact-repeat check in perturbation: the same trap picture, sooner".into(),
+                params: "Multibrot 7 minibrot at 0.7740990+0.2441822i, 7.2e7x, 256x160, 20k iter, trap".into(),
+                result,
+                threshold: "mode 0; 0 px differ; interior px > 0; reference folded; trips on < off / 2",
+                pass,
+            });
+        }
+
         // ⭐THE HONEST STEP (`HONEST_STEP`, `honest_step` in mandelbrot.wgsl). The direct loops run in
         // plain f32, and in a Multibrot 8 Julia set an orbit that passes within 0.126 of the critical
         // point rounds onto c's own, which at c ≈ 0.32295 + 0.98330i repeats: false interior. With

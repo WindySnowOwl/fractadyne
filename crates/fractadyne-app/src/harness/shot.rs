@@ -42,6 +42,14 @@ pub(crate) struct Shot {
     pub(crate) svg: Option<PathBuf>,
     /// `--image`: the view's image export (File ▸ Export image), written when the shot is taken.
     pub(crate) image: Option<PathBuf>,
+    /// `--export-live`: the same export, but by the Export dialog's own route (`start_export_to`:
+    /// the reference off-thread, the render on a worker) with the live view drawing meanwhile, as
+    /// when someone presses Export; the shot waits for it and logs how long it took. `--image`
+    /// renders synchronously and holds the live view still, so the two together tell what the live
+    /// view costs an export.
+    pub(crate) export_live: Option<PathBuf>,
+    /// When the `--export-live` export was started (`None` before, and after it finished).
+    live_t0: Option<Instant>,
 }
 
 impl Shot {
@@ -59,6 +67,8 @@ impl Shot {
             pending: false,
             svg: None,
             image: None,
+            export_live: None,
+            live_t0: None,
         }
     }
 }
@@ -66,7 +76,13 @@ impl Shot {
 impl crate::FractadyneApp {
     /// One frame of the `--shot` state machine, driven from `update()`.
     pub(crate) fn shot_frame(&mut self, ctx: &egui::Context, gpu: &(eframe::wgpu::Device, eframe::wgpu::Queue)) {
-        ctx.request_repaint(); // unattended: there is no user input to wake the loop
+        // Unattended: there is no user input to wake the loop. While an `--export-live` export runs
+        // the app's own export poll paces it, as for someone waiting on the Export dialog.
+        if self.harness.shot.as_ref().is_some_and(|s| s.live_t0.is_some()) {
+            ctx.request_repaint_after(crate::EXPORT_POLL);
+        } else {
+            ctx.request_repaint();
+        }
 
         // ---- one-time setup -----------------------------------------------------------------
         if !self.harness.shot.as_ref().is_some_and(|s| s.applied) {
@@ -167,6 +183,25 @@ impl crate::FractadyneApp {
             }
         }
 
+        // ---- `--export-live`: wait for the background export, the live view drawing meanwhile ------
+        if let Some(t0) = self.harness.shot.as_ref().and_then(|s| s.live_t0) {
+            if self.export.task.is_some() || self.export.prep.is_some() {
+                return;
+            }
+            let msg = format!(
+                "export-live: finished in {:.1} s: {}",
+                t0.elapsed().as_secs_f64(),
+                self.export.status.clone().unwrap_or_default()
+            );
+            println!("--shot: {msg}");
+            crate::diag::log_line("harness", &msg);
+            let s = self.harness.shot.as_mut().unwrap();
+            s.live_t0 = None;
+            s.pending = true;
+            ctx.send_viewport_cmd(egui::ViewportCommand::Screenshot(egui::UserData::default()));
+            return;
+        }
+
         // ---- wait for the picture to be worth capturing ---------------------------------------
         let now = Instant::now();
         let orbit = self.perf.last_orbit_len;
@@ -199,6 +234,23 @@ impl crate::FractadyneApp {
                  the image may be unresolved",
                 s.deadline.saturating_duration_since(s.start).as_secs()
             );
+        }
+        if let Some(path) = s.export_live.take() {
+            // Pressing Export: the dialog's route, left to run while the live view goes on drawing.
+            // The shot is taken once it has finished (above).
+            s.live_t0 = Some(now);
+            let msg = format!("export-live: started → {}", path.display());
+            println!("--shot: {msg}");
+            crate::diag::log_line("harness", &msg);
+            self.start_export_to(ctx, gpu.0.clone(), gpu.1.clone(), path);
+            if self.export.task.is_none() && self.export.prep.is_none() {
+                eprintln!(
+                    "fractadyne: --shot: --export-live did not start: {}",
+                    self.export.status.clone().unwrap_or_default()
+                );
+                crate::exit(2);
+            }
+            return;
         }
         s.pending = true;
         let (svg, image) = (s.svg.clone(), s.image.clone());

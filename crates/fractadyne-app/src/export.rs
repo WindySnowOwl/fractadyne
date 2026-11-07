@@ -2245,8 +2245,13 @@ impl FractadyneApp {
                         Ok(tr!(export_saved, size = format!("{rw}×{rh}"), path = path.display().to_string()))
                     }
                     ExportJob::SideBySide(a, b) => {
+                        // Each panel's timing line, as the single view and the command line write
+                        // theirs: without them a slow dual export left nothing in the log to say
+                        // which panel the time went to.
                         let ra = render(&a)?;
+                        Self::log_export_perf("gui-export-map", &a, &ra);
                         let rb = render(&b)?;
+                        Self::log_export_perf("gui-export-julia", &b, &rb);
                         progress.store(2000, Relaxed);
                         let (w, h, px) = stitch_side_by_side(&ra, &rb);
                         write(&path, w, h, px)?;
@@ -2255,8 +2260,10 @@ impl FractadyneApp {
                     ExportJob::Separate(a, b) => {
                         let (pmap, pjul) = separate_paths(&path);
                         let ra = render(&a)?;
+                        Self::log_export_perf("gui-export-map", &a, &ra);
                         write(&pmap, ra.width, ra.height, ra.pixels)?;
                         let rb = render(&b)?;
+                        Self::log_export_perf("gui-export-julia", &b, &rb);
                         progress.store(2000, Relaxed);
                         write(&pjul, rb.width, rb.height, rb.pixels)?;
                         Ok(tr!(export_saved_two, path = pmap.display().to_string()))
