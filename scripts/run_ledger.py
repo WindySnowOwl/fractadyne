@@ -17,6 +17,9 @@ one that never happened.
   `--config DIR` is the explicit way to start from a prepared one. Its identity is the binary's own
   `--version` (version, build, git sha, `-dirty`), and the row also carries what the app's log
   says: the `[fd-exit]` line and logcheck's verdict.
+- `--monitor right` (Windows) opens the window on another monitor from the start, out of the way of
+  someone working (`scripts/on_monitor.py`). That monitor's scaling sets how many pixels a frame
+  renders, so the row's config column says which monitor and scaling it ran at.
 - Anything else is a command run as given (a Python or PowerShell script). Its identity is the
   workspace version and the repository's HEAD.
 
@@ -34,6 +37,14 @@ import tempfile
 ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 RUNS = os.path.join(ROOT, "validation", "runs")
 COLUMNS = ["utc", "version", "identity", "exit", "verdict", "config", "command"]
+
+
+def load_on_monitor():
+    import importlib.util
+    spec = importlib.util.spec_from_file_location("on_monitor", os.path.join(ROOT, "scripts", "on_monitor.py"))
+    mod = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(mod)
+    return mod
 
 
 def default_exe():
@@ -194,7 +205,16 @@ def cmd_run(args):
         shown = " ".join(argv)
     print("run_ledger: %s  [%s %s]" % (shown, version, identity), flush=True)
     start = log_size(env["FRACTADYNE_CONFIG_DIR"]) if app else 0
-    code = subprocess.run(cmd, cwd=ROOT, env=env).returncode
+    if args.monitor and os.name == "nt":
+        # The window opens on that monitor at its own scaling, which sets the size a frame renders
+        # at: the row says where it ran.
+        on_monitor = load_on_monitor()
+        m = on_monitor.pick(args.monitor, on_monitor.monitors())
+        config += "; window on %s at %d%%" % (m[0].lstrip("\\."), round(m[2] * 100 / 96))
+        code = on_monitor.run(cmd, args.monitor, cwd=ROOT, env=env,
+                              say=lambda s: print("run_ledger: " + s.split(": ", 1)[-1], flush=True))
+    else:
+        code = subprocess.run(cmd, cwd=ROOT, env=env).returncode
     verdict = log_verdict(env["FRACTADYNE_CONFIG_DIR"], start) if app else "-"
     row = {
         "utc": datetime.datetime.now(datetime.timezone.utc).strftime("%Y-%m-%d %H:%M:%S"),
@@ -207,7 +227,7 @@ def cmd_run(args):
     }
     path = append(row)
     print("run_ledger: exit %d (%s) recorded in %s" % (code, verdict, os.path.relpath(path, ROOT)))
-    if app and config == "fresh":
+    if app and config.startswith("fresh"):
         print("run_ledger: the run's config and log: %s" % env["FRACTADYNE_CONFIG_DIR"])
     return code
 
@@ -230,6 +250,9 @@ def main():
     r.add_argument("--exe", help="the app binary for app arguments (default: target/release)")
     r.add_argument("--config", metavar="DIR",
                    help="start the app from this config directory instead of a fresh one (recorded)")
+    r.add_argument("--monitor", metavar="WHERE",
+                   help="Windows: open the window on this monitor (right, left, primary or a device "
+                        "name; scripts/on_monitor.py), out of the way of someone working; recorded")
     r.add_argument("command", nargs=argparse.REMAINDER, help="-- then the app arguments or a command")
     s = sub.add_parser("show", help="list what was recorded for a version")
     s.add_argument("version", nargs="?", help="default: the workspace version")
