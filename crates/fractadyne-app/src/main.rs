@@ -2863,6 +2863,19 @@ pub(crate) fn aa_ramp(frame: u32, target: u32) -> u32 {
     (1u32 << frame.min(5)).min(target.max(1))
 }
 
+/// How often the window redraws while it waits on a background export (its progress bar), rather
+/// than every frame.
+///
+/// ⭐**An export shares the window's device, and every frame the window draws holds it up.** The
+/// Export dialog's route renders on a worker thread with the window's own device and queue, and
+/// while this poll repainted every frame (to move a progress bar) each export pass waited behind
+/// the window's frames, though the live view drew nothing: a Multibrot 8 side-by-side export
+/// (2026-11-07, RTX 3080, 1920×3070 a panel, about 3,600 passes) took 99.8 s, against 17 s
+/// rendered synchronously, the same image bit for bit. A smaller one's tiles had a median wall of
+/// 75 ms against 2.2 ms. Repainting every 100 ms instead: 17.3 s, and a 2.1 ms median. Input
+/// still repaints at once, so the window answers as before.
+pub(crate) const EXPORT_POLL: std::time::Duration = std::time::Duration::from_millis(100);
+
 /// Progressive on-settle supersampling (deep-zoom despeckle) tunables.
 /// Only accumulate deeper than `ACCUM_MIN_LOG2` (≈1e10×), where the escape field is undersampled
 /// and speckles.
@@ -17609,7 +17622,7 @@ impl eframe::App for FractadyneApp {
                         crate::tone::play_finish_sound(false);
                     }
                 }
-                Err(std::sync::mpsc::TryRecvError::Empty) => ctx.request_repaint(),
+                Err(std::sync::mpsc::TryRecvError::Empty) => ctx.request_repaint_after(EXPORT_POLL),
                 Err(std::sync::mpsc::TryRecvError::Disconnected) => {
                     self.export.task = None;
                     self.export.started = None;
@@ -17658,7 +17671,7 @@ impl eframe::App for FractadyneApp {
                 }
                 Err(std::sync::mpsc::TryRecvError::Empty) => {
                     self.export.prep = Some(prep); // reference still building
-                    ctx.request_repaint();
+                    ctx.request_repaint_after(EXPORT_POLL);
                 }
                 Err(std::sync::mpsc::TryRecvError::Disconnected) => {
                     self.export.status = Some(tr!(app_export_reference_aborted));

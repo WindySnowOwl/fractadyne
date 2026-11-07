@@ -368,6 +368,7 @@ impl Windowed {
             let mut s = super::shot::Shot::new(loc, out, (w, h), budget);
             s.svg = val("--svg").map(std::path::PathBuf::from);
             s.image = val("--image").map(std::path::PathBuf::from);
+            s.export_live = val("--export-live").map(std::path::PathBuf::from);
             Some(s)
         } else {
             None

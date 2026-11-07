@@ -59,6 +59,14 @@ published as the pre-releases `v0.2.41-beta.1` to `v0.2.41-beta.150`, and a "bet
 
 Changes after 0.3.0-beta.1:
 
+- **Exports from the Export dialog are several times faster (0.3.0-beta.27).** An export runs in
+  the background while the window stays live, and the window redrew itself every frame to move
+  the progress bar. Each of those redraws held up the export's next piece of work on the graphics
+  card, even with nothing changing on screen: a side-by-side export of a deep Multibrot 8 view took
+  99.8 s from the dialog and 17 s from the command line, the same image bit for bit. The window
+  now redraws ten times a second while it waits, and at once when you move the mouse or press a
+  key, and the same export takes 17.3 s. The log now also records each panel's render time for a
+  side-by-side or two-file export (`gui-export-map`, `gui-export-julia`).
 - **Orbit trap, stripe and other orbit colorings render much faster in views with black interior
   (0.3.0-beta.27).** A pixel that never escapes used to run every one of its iterations when the
   coloring measures the orbit, and in deep views it always did. It now stops as soon as its orbit
