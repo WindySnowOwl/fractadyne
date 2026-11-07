@@ -58,6 +58,9 @@ param(
     # harness (agent v24+): record each run's lifted live decisions (FRACTADYNE_RECORD_DECIDE) and
     # return them as decide.jsonl - a field capture for `fractadyne --replay` / validation/replays.
     [switch]$RecordDecide,
+    # harness (agent v33+): sample each run's threads 4 times a second (threads.csv: on a core,
+    # waiting for one, CPU seconds, the system's processor queue).
+    [switch]$SampleThreads,
     [int]$Days = 30,
     # farm-client: the controller to dial (HOST:PORT) and the file holding the farm key (fdn1-...).
     # The key travels in the request on the share and is redacted from the results.
@@ -165,6 +168,7 @@ switch ($Action) {
         if ($Builds.Count -gt 0) { $req.builds = @($Builds) } else { $req.build = $Build }
         $req.repeat = $Repeat
         if ($RecordDecide) { $req.record_decide = $true }
+        if ($SampleThreads) { $req.sample_threads = $true }
         if ($Instrument) {
             $req.env = [ordered]@{}
             foreach ($pair in ($Instrument -split ',' | Where-Object { $_ })) {
@@ -172,6 +176,8 @@ switch ($Action) {
                 if ($pair -cmatch '^\s*(FRACTADYNE_TRACE)=([a-z]+)\s*$') { $req.env[$Matches[1]] = $Matches[2]; continue }
                 # Seconds between a Home's window captures (agent v32), a decimal: kept as text.
                 if ($pair -cmatch '^\s*(FRACTADYNE_ZOOMTEST_HOME_SHOTS)=([0-9]{1,3}(\.[0-9]{1,3})?)\s*$') { $req.env[$Matches[1]] = $Matches[2]; continue }
+                # The zoom rate a --divetest glides at (agent v33), a decimal: kept as text.
+                if ($pair -cmatch '^\s*(FRACTADYNE_DIVETEST_GLIDE)=([0-9]{1,3}(\.[0-9]{1,3})?)\s*$') { $req.env[$Matches[1]] = $Matches[2]; continue }
                 if ($pair -notmatch '^\s*([A-Z_]+)=([0-9]+)\s*$') { throw "bad -Instrument entry '$pair' (NAME=N, or FRACTADYNE_TRACE=category)" }
                 $req.env[$Matches[1]] = [int]$Matches[2]
             }

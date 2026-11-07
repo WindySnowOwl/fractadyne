@@ -51,7 +51,7 @@ param(
 )
 
 $ErrorActionPreference = "Continue"
-$AgentVersion = 32   # 32: FRACTADYNE_ZOOMTEST_HOME_SHOTS (seconds between window captures of a --zoomtest-home run's Home; observes only), and a --zoomtest run's window captures (home-shot-*.png, click-shot-*.png, up to 1 GB) come back in shots/: what a stepped Home puts on the screen (2026-10-26). 31: a request's view center (center_re/center_im) may be up to 5000 characters, as v22 allows in arguments (it was 400: a view past ~1e400x, such as the 2^1663 Home glide, was refused as "not plain decimals"). 30: --zoomtest-home [REST_S] and --zoomtest-quiet S (the toolbar Home glide after the start view rests: the zoom-out from extreme depth, 2026-10-26). 29: --live-panel (the live-render front panel at a size, off|strip|panel|full: its cost on this card) and --zoomtest-gate (the zoom harness's own verdict, smooth|appetite). 28: a battery's regime step (W9) is read into the status detail. 27: --soak-location (a package view file: W9's regime rungs soak validation/field/*.fdn). 26: an accelerated battery takes the standard package's gpu-validate-expected.json and dive-capture too (it could not judge itself, and skipped the screen step). 25: --formula and --formula-params (a custom formula written without spaces, z=z^3+c; its parameters re,im;re,im). 24: record_decide (a harness request may ask its runs to record their lifted live decisions, FRACTADYNE_RECORD_DECIDE, into a file in each run's own folder; delivered as decide.jsonl, up to 2 GB; observes only, the path is the agent's, never the request's). 23: an explicitly named DEV build (vX.Y.Z-beta.N.dev.M, a test build published under its own tag) is accepted; "latest" still skips them. 22: coordinates up to 5000 characters (a 6.8e3999 view's center has 4031 digits). 21: a --render's image comes back (PNGs the run wrote in its folder, up to 1 GB each): a still split across this machine's cards with --gpus (design/multi-gpu.md Phase 2) is checked against each card alone. 20: frames delivered up to 4 GB (a 30 fps tour at 1280x720 is about 2 GB). 19: --render-tour (a tour shipped in the package; the agent names --out and delivers the frames up to 1 GB, the folder's farm state and the local client's logs), --gpus (design/multi-gpu.md Phase 1: a tour on every graphics card through a farm on this machine), --fps, --ss and -y. 18: --shot (a location, captured once its supersampling converges; the agent names --out and delivers shot.png), --list-adapters, --adapter and --worker-gpu (design/multi-gpu-live.md L2: a second GPU in the live view). 17: farm-client "adapters" (--adapters: all of this machine's GPUs, or some, each its own session) and a 24 h ceiling (a long tour render; was 4 h). 16: farm-client "discover": first run --discover from the package and return what answered this machine's broadcast (the farm's network discovery). 15: farm-client in share mode (request "share": the client writes its frames to this agent's share). 14: farm-client (one render-farm job as a client of a controller) and --farmtest. 13: the FRACTADYNE_TRACE instrument, one category by name (observes only; the live-refresh verdicts on AMD). 12: --no-bla (the step-bounded worst case: every mode-2 step a full floatexp step). 2: screens; "used during run" only with the idle wait on. 3: request "view"; self-update. 4: request "env" (instruments); --soak-depth session. 5: --zoomtest-location session, --zoomtest-taps, --zoomtest-hold, --window (W9 motion rung). 6: the battery's screen step in the status. 7: the FRACTADYNE_PASS_CLOCK instrument. 8: FRACTADYNE_SEED_BUDGET. 9: recover jobs orphaned by a hang or reboot. 10: --tail-audit / --glitch-audit (headless, write no file; send with --render); coordinates up to 2000 characters (a 1e1105 view's center has 1141 digits). 11: plain --render as a mode (the [fd-perf] step counters; the image stays in the local run folder)
+$AgentVersion = 33   # 33: --divetest (a tour shipped in the package; the agent names --out and delivers divetest.json), the FRACTADYNE_DIVETEST_GLIDE and FRACTADYNE_NO_PREFETCH instruments (the interactive glide and its no-lookahead baseline), and sample_threads (the run's threads sampled 4 times a second while it runs, into threads.csv: how many are on a core and how many wait for one; observes only) - TODO PR-A5, CPU oversubscription on this machine's 8 threads (2026-11-07). 32: FRACTADYNE_ZOOMTEST_HOME_SHOTS (seconds between window captures of a --zoomtest-home run's Home; observes only), and a --zoomtest run's window captures (home-shot-*.png, click-shot-*.png, up to 1 GB) come back in shots/: what a stepped Home puts on the screen (2026-10-26). 31: a request's view center (center_re/center_im) may be up to 5000 characters, as v22 allows in arguments (it was 400: a view past ~1e400x, such as the 2^1663 Home glide, was refused as "not plain decimals"). 30: --zoomtest-home [REST_S] and --zoomtest-quiet S (the toolbar Home glide after the start view rests: the zoom-out from extreme depth, 2026-10-26). 29: --live-panel (the live-render front panel at a size, off|strip|panel|full: its cost on this card) and --zoomtest-gate (the zoom harness's own verdict, smooth|appetite). 28: a battery's regime step (W9) is read into the status detail. 27: --soak-location (a package view file: W9's regime rungs soak validation/field/*.fdn). 26: an accelerated battery takes the standard package's gpu-validate-expected.json and dive-capture too (it could not judge itself, and skipped the screen step). 25: --formula and --formula-params (a custom formula written without spaces, z=z^3+c; its parameters re,im;re,im). 24: record_decide (a harness request may ask its runs to record their lifted live decisions, FRACTADYNE_RECORD_DECIDE, into a file in each run's own folder; delivered as decide.jsonl, up to 2 GB; observes only, the path is the agent's, never the request's). 23: an explicitly named DEV build (vX.Y.Z-beta.N.dev.M, a test build published under its own tag) is accepted; "latest" still skips them. 22: coordinates up to 5000 characters (a 6.8e3999 view's center has 4031 digits). 21: a --render's image comes back (PNGs the run wrote in its folder, up to 1 GB each): a still split across this machine's cards with --gpus (design/multi-gpu.md Phase 2) is checked against each card alone. 20: frames delivered up to 4 GB (a 30 fps tour at 1280x720 is about 2 GB). 19: --render-tour (a tour shipped in the package; the agent names --out and delivers the frames up to 1 GB, the folder's farm state and the local client's logs), --gpus (design/multi-gpu.md Phase 1: a tour on every graphics card through a farm on this machine), --fps, --ss and -y. 18: --shot (a location, captured once its supersampling converges; the agent names --out and delivers shot.png), --list-adapters, --adapter and --worker-gpu (design/multi-gpu-live.md L2: a second GPU in the live view). 17: farm-client "adapters" (--adapters: all of this machine's GPUs, or some, each its own session) and a 24 h ceiling (a long tour render; was 4 h). 16: farm-client "discover": first run --discover from the package and return what answered this machine's broadcast (the farm's network discovery). 15: farm-client in share mode (request "share": the client writes its frames to this agent's share). 14: farm-client (one render-farm job as a client of a controller) and --farmtest. 13: the FRACTADYNE_TRACE instrument, one category by name (observes only; the live-refresh verdicts on AMD). 12: --no-bla (the step-bounded worst case: every mode-2 step a full floatexp step). 2: screens; "used during run" only with the idle wait on. 3: request "view"; self-update. 4: request "env" (instruments); --soak-depth session. 5: --zoomtest-location session, --zoomtest-taps, --zoomtest-hold, --window (W9 motion rung). 6: the battery's screen step in the status. 7: the FRACTADYNE_PASS_CLOCK instrument. 8: FRACTADYNE_SEED_BUDGET. 9: recover jobs orphaned by a hang or reboot. 10: --tail-audit / --glitch-audit (headless, write no file; send with --render); coordinates up to 2000 characters (a 1e1105 view's center has 1141 digits). 11: plain --render as a mode (the [fd-perf] step counters; the image stays in the local run folder)
 $PollSeconds = 30
 $Home_ = Split-Path -Parent $MyInvocation.MyCommand.Path
 $Cache = Join-Path $Home_ "cache"
@@ -172,7 +172,10 @@ function Stop-Tree([int]$Id) {
 }
 
 # Start a process, wait up to $TimeoutMin, return @{ exit; seconds; timed_out }.
-function Invoke-Bounded([string]$File, [string[]]$Arguments, [string]$Cwd, [string]$Out, [string]$Err, [int]$TimeoutMin, [switch]$Hidden) {
+function Invoke-Bounded([string]$File, [string[]]$Arguments, [string]$Cwd, [string]$Out, [string]$Err, [int]$TimeoutMin, [switch]$Hidden, [string]$ThreadsCsv = "") {
+    # v33: the system counter's first reading takes seconds; take it before the run starts.
+    $q = $null
+    if ($ThreadsCsv) { $q = try { $c = New-Object Diagnostics.PerformanceCounter("System", "Processor Queue Length"); $null = $c.NextValue(); $c } catch { $null } }
     $sw = [Diagnostics.Stopwatch]::StartNew()
     $sp = @{ FilePath = $File; ArgumentList = $Arguments; WorkingDirectory = $Cwd; PassThru = $true
         RedirectStandardOutput = $Out; RedirectStandardError = $Err }
@@ -181,7 +184,26 @@ function Invoke-Bounded([string]$File, [string[]]$Arguments, [string]$Cwd, [stri
     if ($Hidden) { $sp.WindowStyle = "Hidden" } else { $sp.NoNewWindow = $true }
     $p = Start-Process @sp
     $null = $p.Handle   # so ExitCode is populated after a timed wait
-    $timedOut = -not $p.WaitForExit($TimeoutMin * 60 * 1000)
+    if ($ThreadsCsv) {
+        # v33: sample the run while waiting for it: its threads on a core (Running) and waiting for
+        # one (Ready), its CPU seconds, and the system's processor queue. Observes only.
+        $limitMs = $TimeoutMin * 60 * 1000
+        $rows = [Collections.Generic.List[string]]::new()
+        $rows.Add("t,threads,running,ready,cpu_s,sys_queue")
+        while (-not $p.WaitForExit(250)) {
+            if ($sw.Elapsed.TotalMilliseconds -gt $limitMs) { break }
+            try {
+                $p.Refresh()
+                $th = $p.Threads; $run = 0; $rdy = 0
+                foreach ($t in $th) { if ($t.ThreadState -eq 'Running') { $run++ } elseif ($t.ThreadState -eq 'Ready') { $rdy++ } }
+                $ql = if ($q) { $q.NextValue() } else { -1 }
+                $rows.Add(("{0:F2},{1},{2},{3},{4:F2},{5}" -f $sw.Elapsed.TotalSeconds, $th.Count, $run, $rdy, $p.TotalProcessorTime.TotalSeconds, $ql))
+            } catch { }
+        }
+        try { [IO.File]::WriteAllLines($ThreadsCsv, $rows) } catch { }
+        $timedOut = -not $p.HasExited
+    }
+    else { $timedOut = -not $p.WaitForExit($TimeoutMin * 60 * 1000) }
     if ($timedOut) { Stop-Tree $p.Id; $p.WaitForExit(10000) | Out-Null }
     $sw.Stop()
     $code = if ($timedOut) { $null } else { $p.ExitCode }
@@ -249,7 +271,7 @@ function Get-Package([string]$tag, [string]$package) {
 # --- the harness allow-list -------------------------------------------------------------------------
 # flag -> the values it takes. "?x" = optional. Values never contain spaces or quotes, and a file is
 # only ever one shipped inside the package.
-$Modes = @("--recordtest", "--zoomtest", "--motiontest", "--gputest", "--selftest", "--bench-matrix", "--livetest", "--chunk-sweep", "--soak", "--tail-audit", "--glitch-audit", "--render", "--farmtest", "--shot", "--list-adapters", "--render-tour")
+$Modes = @("--recordtest", "--zoomtest", "--motiontest", "--gputest", "--selftest", "--bench-matrix", "--livetest", "--chunk-sweep", "--soak", "--tail-audit", "--glitch-audit", "--render", "--farmtest", "--shot", "--list-adapters", "--render-tour", "--divetest")
 $Allowed = @{
     # The audits render a view (--center/--zoom-log2/--iter/--size) twice and check the pixels that
     # differ against the arbitrary-precision oracle; they print a verdict and write no file. Send them
@@ -296,6 +318,10 @@ $Allowed = @{
     # v29: the live-render front panel (design/blinkenlights.md) open at a size, for its cost on this
     # card against the same run without it; and the zoom harness's own verdict line.
     "--live-panel" = @("panel"); "--zoomtest-gate" = @("?gate")
+    # v33: the live-dive harness: a tour shipped in the package, played in real-time windows at
+    # increasing depths (report only). The agent adds --out and delivers divetest.json.
+    # FRACTADYNE_DIVETEST_GLIDE (an instrument) drives it as the interactive glide.
+    "--divetest" = @("pkgfile")
 }
 $ValuePattern = @{
     "int" = '^[0-9]{1,9}$'; "num" = '^[-+0-9.eE]{1,5000}$'; "word" = '^[A-Za-z0-9_.-]{1,64}$'
@@ -444,8 +470,10 @@ function New-ViewSession($r) {
 # two put the live path in a regime that has killed devices, on purpose; PASS_CLOCK only observes
 # (v7). Integer values only; nothing else from a request ever reaches the environment - except
 # FRACTADYNE_TRACE (v13), which also only observes: ONE trace category, by name, from $TraceCats -
-# and FRACTADYNE_ZOOMTEST_HOME_SHOTS (v32), seconds between window captures (observes only).
-$InstrumentEnv = @("FRACTADYNE_REF_ESCAPE_AT", "FRACTADYNE_BLA_DROP_FRAMES", "FRACTADYNE_PASS_CLOCK", "FRACTADYNE_SEED_BUDGET", "FRACTADYNE_TRACE", "FRACTADYNE_ZOOMTEST_HOME_SHOTS")
+# and FRACTADYNE_ZOOMTEST_HOME_SHOTS (v32), seconds between window captures (observes only); and
+# (v33) FRACTADYNE_DIVETEST_GLIDE, the zoom rate a --divetest glides at, and FRACTADYNE_NO_PREFETCH,
+# the reference lookahead off (that harness's baseline).
+$InstrumentEnv = @("FRACTADYNE_REF_ESCAPE_AT", "FRACTADYNE_BLA_DROP_FRAMES", "FRACTADYNE_PASS_CLOCK", "FRACTADYNE_SEED_BUDGET", "FRACTADYNE_TRACE", "FRACTADYNE_ZOOMTEST_HOME_SHOTS", "FRACTADYNE_DIVETEST_GLIDE", "FRACTADYNE_NO_PREFETCH")
 $TraceCats = @("live", "gpu", "tile", "glide", "ref", "req", "idle")
 
 function Get-RequestEnv($r) {
@@ -459,6 +487,9 @@ function Get-RequestEnv($r) {
         }
         elseif ($p.Name -eq "FRACTADYNE_ZOOMTEST_HOME_SHOTS") {
             if ([string]$p.Value -notmatch '^[0-9]{1,3}(\.[0-9]{1,3})?$') { Stop-Refused "env FRACTADYNE_ZOOMTEST_HOME_SHOTS must be seconds, e.g. 0.25" }
+        }
+        elseif ($p.Name -eq "FRACTADYNE_DIVETEST_GLIDE") {
+            if ([string]$p.Value -notmatch '^[0-9]{1,3}(\.[0-9]{1,3})?$') { Stop-Refused "env FRACTADYNE_DIVETEST_GLIDE must be a zoom rate, e.g. 4" }
         }
         elseif ([string]$p.Value -notmatch '^[0-9]{1,9}$') { Stop-Refused "env $($p.Name) must be a whole number" }
         $out[$p.Name] = [string]$p.Value
@@ -475,6 +506,9 @@ function Invoke-Harness($r, [string]$dir, $status) {
     # capture that `fractadyne --replay` recomputes on another machine. The file is the agent's.
     $recordDecide = [bool](Get-Field $r "record_decide" $false)
     $status.record_decide = $recordDecide
+    # v33: sample each run's threads while it runs (threads.csv; observes only).
+    $sampleThreads = [bool](Get-Field $r "sample_threads" $false)
+    $status.sample_threads = $sampleThreads
     $builds = @(Get-Field $r "builds" @())
     if ($builds.Count -eq 0) { $builds = @([string](Get-Field $r "build" "latest")) }
     if ($builds.Count -gt 4) { Stop-Refused "at most 4 builds per request" }
@@ -504,6 +538,10 @@ function Invoke-Harness($r, [string]$dir, $status) {
             # v19: a tour's frames likewise, into this run's folder.
             $framesDir = Join-Path $local "frames"
             if ($resolved -contains "--render-tour") { $resolved += @("--out", $framesDir) }
+            # v33: a divetest's report likewise.
+            $diveJson = Join-Path $local "divetest.json"
+            if ($resolved -contains "--divetest") { $resolved += @("--out", $diveJson) }
+            $threadsCsv = if ($sampleThreads) { Join-Path $local "threads.csv" } else { "" }
             $status.detail = "$name of $($repeat * $tags.Count): fractadyne $($argv -join ' ')"
             Write-JsonFile (Join-Path $dir "status.json") $status
             $env:FRACTADYNE_CONFIG_DIR = $cfgDir
@@ -515,7 +553,7 @@ function Invoke-Harness($r, [string]$dir, $status) {
             if ($recordDecide) { $env:FRACTADYNE_RECORD_DECIDE = $decideFile }
             $idle0 = [FdField]::IdleSeconds()
             $screens = @(Get-Screens)
-            $res = Invoke-Bounded -File $exe -Arguments @($resolved | ForEach-Object { Format-Arg $_ }) -Cwd $local -Out (Join-Path $local "stdout.txt") -Err (Join-Path $local "stderr.txt") -TimeoutMin $timeout
+            $res = Invoke-Bounded -File $exe -Arguments @($resolved | ForEach-Object { Format-Arg $_ }) -Cwd $local -Out (Join-Path $local "stdout.txt") -Err (Join-Path $local "stderr.txt") -TimeoutMin $timeout -ThreadsCsv $threadsCsv
             # Only meaningful when the idle wait is on: with it off (-IdleMinutes 0, e.g. behind a
             # KVM switch that sends input of its own) every run would read as "used".
             $touched = if ($IdleMinutes -gt 0 -and $idle0 -ge 0) { [FdField]::IdleSeconds() -lt $res.seconds } else { $null }
@@ -533,6 +571,7 @@ function Invoke-Harness($r, [string]$dir, $status) {
                 if (Test-Path $logs) { Copy-Item -Path (Join-Path $logs "*") -Destination $to -Recurse -Force -ErrorAction SilentlyContinue }
             }
             if (Test-Path -LiteralPath $shotPng) { Copy-Item -LiteralPath $shotPng -Destination $to -Force }
+            foreach ($f in @($diveJson, $threadsCsv)) { if ($f -and (Test-Path -LiteralPath $f)) { Copy-Item -LiteralPath $f -Destination $to -Force } }
             # v32: a --zoomtest run's window captures (FRACTADYNE_ZOOMTEST_HOME_SHOTS / _CLICK_SHOTS), into shots/.
             if ($resolved -contains "--zoomtest") {
                 $caps = @(Get-ChildItem -LiteralPath $local -File -ErrorAction SilentlyContinue | Where-Object { $_.Name -match '^(home|click)-shot-[0-9]+-f[0-9]+\.png$' })
