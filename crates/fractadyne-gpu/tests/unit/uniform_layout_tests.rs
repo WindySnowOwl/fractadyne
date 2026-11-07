@@ -193,6 +193,11 @@ fn iter_uniform_matches_the_shader() {
         "IterU.map_mode and IterUniforms.map start at different offsets",
     );
     assert_eq!(std::mem::size_of::<super::StripMap>(), 16, "StripMap is the shader's 4 words");
+    assert_eq!(
+        wgsl_field_offset(&fields, "fold_end"),
+        std::mem::offset_of!(super::IterUniforms, fold),
+        "IterU.fold_end and IterUniforms.fold start at different offsets",
+    );
 }
 
 /// The zoom-video assembly module (`assemble.wgsl`) validates, and its uniform `AssembleU` lines up

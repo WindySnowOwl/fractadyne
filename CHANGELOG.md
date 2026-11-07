@@ -59,6 +59,17 @@ published as the pre-releases `v0.2.41-beta.1` to `v0.2.41-beta.150`, and a "bet
 
 Changes after 0.3.0-beta.1:
 
+- **Orbit trap, stripe and other orbit colorings render much faster in views with black interior
+  (0.3.0-beta.27).** A pixel that never escapes used to run every one of its iterations when the
+  coloring measures the orbit, and in deep views it always did. It now stops as soon as its orbit
+  comes back to exactly where it was, as shallow views and Julia sets already did: at that point
+  it can never escape, and the orbit trap has already seen the orbit's closest approach, so the
+  picture is the same, bit for bit. A pixel inside the same minibrot as the view's reference orbit
+  is caught too, once that orbit's stored values repeat. A Multibrot 7 orbit-trap view at
+  6.4e6× and 250,000 iterations, where half a percent of the pixels were interior and took 85% of
+  the time, renders in 12.4 s of graphics-card time instead of 56.9 s (RTX 3080, 1920 × 1200 at
+  2× supersampling). Pixels on the very edge of a minibrot settle too slowly to be caught and
+  still run in full. `--set CYCLE_CHECK=0` turns it off for comparison.
 - **Twenty holiday palettes, from Lunar New Year to New Year's Eve (0.3.0-beta.27).** Color ▸
   Palette and the panel's Palette list gain a "Holidays" group, in the order of the year: Lunar
   New Year, Valentine's Day, Mardi Gras, Holi, Nowruz, Eid al-Fitr, Easter, Vesak, Midsummer,
@@ -156,7 +167,8 @@ Changes after 0.3.0-beta.1:
   dropped from 6.9 s to 0.01 s, which was most of the time a side-by-side export of a deep
   Multibrot 8 view and its Julia set took; the Mandelbrot set's opening view at 100,000 iterations
   went from 120 to 49 ms, and Multibrot 8's from 515 to 160 ms. Deep views, which use the
-  perturbation renderer, are unchanged. `--set CYCLE_CHECK=0` turns it off for comparison.
+  perturbation renderer, are unchanged here (see above for what changed for them since).
+  `--set CYCLE_CHECK=0` turns it off for comparison.
 - **On processors with few cores, the live view no longer stutters while it picks a new reference
   (0.3.0-beta.26).** At great depth, choosing a reference orbit is seconds of work spread over
   every core, and during a zoom the view can be choosing two at once. On an 8-thread processor

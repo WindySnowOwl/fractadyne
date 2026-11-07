@@ -106,7 +106,47 @@ pub(crate) struct IterUniforms {
     pub(crate) rn: Renorm,
     /// EXPONENTIAL-MAP STRIPS (the shader's `map_*`); `mode` 0 = the affine grid.
     pub(crate) map: StripMap,
+    /// THE REFERENCE'S OWN CYCLE (the shader's `fold_*`): `[fold_end, fold_by, 0, 0]` from
+    /// [`ref_fold`], zeros = none. A row of its own after the strip map's, so no field moved.
+    pub(crate) fold: [u32; 4],
 }
+
+/// THE REFERENCE'S OWN CYCLE, for mode 0's exact-repeat check (`cycle_check_on` in mandelbrot.wgsl):
+/// `[fold_end, fold_by, 0, 0]` when the stored reference repeats exactly, `orbit[n] == orbit[n + P]`
+/// in all four words for every `n` from `fold_end − P` to the end, else zeros.
+///
+/// A reference inside a minibrot converges onto its attracting cycle, and once stored in df32 its
+/// samples repeat exactly: a Multibrot 7 reference at 7.2e7× did after 3 periods of 136. A pixel in
+/// the same minibrot follows it, its δz settling onto a cycle of its own, but its reference index
+/// only climbs, so its state never repeated and it ran every iteration. The check compares indices
+/// reduced into the period instead; the iteration itself is unchanged.
+///
+/// Only for a reference that reaches `max_iter`: the one step that reads the index itself rather
+/// than the sample there, the end-of-orbit wrap, then comes at `max_iter` at the earliest, where the
+/// pixel stops anyway, so two states the check calls equal have the same future. A shorter
+/// (partial) reference gets zeros.
+pub(crate) fn ref_fold(orbit: &[[f32; 4]], orbit_len: u32, max_iter: u32) -> [u32; 4] {
+    let len = (orbit_len as usize).min(orbit.len());
+    if len < 3 || (orbit_len as u64) < max_iter as u64 + 1 {
+        return [0; 4];
+    }
+    let bits = |s: &[f32; 4]| s.map(f32::to_bits);
+    let last = bits(&orbit[len - 1]);
+    let Some(m) = (0..len - 1).rev().find(|&m| bits(&orbit[m]) == last) else {
+        return [0; 4];
+    };
+    let p = len - 1 - m;
+    // `orbit[m] == orbit[m + p]` by the search; extend it back as far as it holds.
+    let mut n0 = m;
+    while n0 > 0 && bits(&orbit[n0 - 1]) == bits(&orbit[n0 - 1 + p]) {
+        n0 -= 1;
+    }
+    [(n0 + p) as u32, p as u32, 0, 0]
+}
+
+#[cfg(test)]
+#[path = "../tests/unit/ref_fold_tests.rs"]
+mod ref_fold_tests;
 
 /// Where an iterate pass puts its texels (the shader's `map_*`): `mode` 0, the default, is the
 /// affine grid every render uses; `mode` 1 renders an EXPONENTIAL-MAP STRIP (`design/zoom-video.md`
@@ -1155,6 +1195,9 @@ struct ViewResources {
     /// keep showing it instead of falling through and re-iterating a stale reference (black frame).
     rendered: bool,
     last_orbit_id: u64,
+    /// [`ref_fold`] of the orbit this view last iterated, keyed by `(orbit_id, orbit_len,
+    /// max_iter)`: a scan of the whole orbit, which a settle grid would otherwise repeat every tile.
+    fold_cache: Option<((u64, u32, u32), [u32; 4])>,
     /// The BLA tree in `orbit_buf` (its `Arc` address; 0 = none) — see the upload in `prepare`.
     last_bla_ptr: usize,
     last_iter_key: Option<IterKey>,
@@ -2590,6 +2633,7 @@ impl ViewResources {
             writes: 0,
             rendered: false,
             last_orbit_id: u64::MAX,
+            fold_cache: None,
             last_bla_ptr: 0,
             last_iter_key: None,
             chunk_state: None,
@@ -3891,6 +3935,20 @@ impl CallbackTrait for MandelbrotParams {
             };
             let (sxh, sxl) = split(self.span_mantissa.x / size[0] as f64);
             let (syh, syl) = split(self.span_mantissa.y / size[1] as f64);
+            // Mode 0's fold, scanned once per orbit and iteration count.
+            let fold = if self.mode != 0 {
+                [0; 4]
+            } else {
+                let k = (self.orbit_id, self.orbit_len, self.max_iter);
+                match view.fold_cache {
+                    Some((ck, f)) if ck == k => f,
+                    _ => {
+                        let f = ref_fold(&self.orbit, self.orbit_len, self.max_iter);
+                        view.fold_cache = Some((k, f));
+                        f
+                    }
+                }
+            };
             let mut iu = IterUniforms {
                 step: [sxh, sxl, syh, syl],
                 ref_offset: self.ref_offset.to_array(),
@@ -3931,6 +3989,7 @@ impl CallbackTrait for MandelbrotParams {
                 tail: tail_word(),
                 rn: self.rn_uniform(),
                 map: StripMap::default(),
+                fold,
             };
             // A split pass is a single full-frame pass by definition (`MandelbrotParams::split`).
             let split_on = self.split[0] > 1 && self.chunk_range.is_none() && self.tile.is_none();

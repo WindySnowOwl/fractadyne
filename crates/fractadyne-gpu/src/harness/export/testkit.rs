@@ -244,6 +244,7 @@ pub fn render_iter_chunked_timed(
         tail: crate::tail_word(),
         rn: req.rn_uniform(),
         map: crate::StripMap::default(),
+        fold: req.ref_fold(),
     };
 
     // One bounded submission per iteration range; poll-wait between them so each stays a short,

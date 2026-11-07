@@ -1417,12 +1417,15 @@ pub(crate) const GRID_CONFIDENCE_WAIT_FRAMES: u64 = 30;
 /// all-floatexp loop, for the before/after measurement.
 pub(crate) const TAIL_DF32_DEFAULT: u64 = 1;
 
-/// 1 = THE EXACT-REPEAT CHECK in the direct loops (`cycle_check_on` in mandelbrot.wgsl): a pixel
-/// whose z repeats bit for bit can never escape, so it ends as interior at the repeat instead of
-/// at `max_iter`, with the same output. A Multibrot 8 Julia set at 267,346 iterations
-/// (2026-11-06, RTX 3080, 1080x1512) took 6,777 ms with it off and 11 ms with it on, bit for bit
-/// the same picture. 0 = every interior pixel runs to `max_iter`, for the before/after
-/// measurement.
+/// 1 = THE EXACT-REPEAT CHECK in the direct loops and the df32 perturbation loop (`cycle_check_on`
+/// in mandelbrot.wgsl): a pixel whose state repeats bit for bit (z; or the reference index, reduced
+/// into the reference's own cycle by `ref_fold`, and δz) can never escape, so it ends as interior
+/// at the repeat instead of at `max_iter`, with the same output, orbit statistics included (the
+/// trap's nearest approach is final by the repeat). A Multibrot 8 Julia set at 267,346 iterations
+/// (2026-11-06, RTX 3080, 1080x1512) took 6,777 ms with it off and 11 ms with it on; a Multibrot 7
+/// orbit-trap view at 6.4e6× and 250,000 iterations (2026-11-07, 1920x1200 ×2) took 56.9 s of GPU
+/// time off and 12.4 s on; bit for bit the same pictures. 0 = every interior pixel runs to
+/// `max_iter`, for the before/after measurement.
 pub(crate) const CYCLE_CHECK_DEFAULT: u64 = 1;
 
 /// 1 = THE HONEST STEP PAST THE CRITICAL POINT in the direct loops (`honest_step` in
