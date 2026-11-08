@@ -285,6 +285,7 @@ impl crate::FractadyneApp {
         let aspect = (self.viewport.height_px / self.viewport.width_px.max(1.0)).clamp(0.2, 5.0) as f32;
         let thumb = egui::vec2(THUMB_W, (THUMB_W * aspect).round());
         let mut open = true;
+        let mut close = false;
         let mut pick: Option<PaletteRow> = None;
         egui::Window::new(tr!(palette_browser_title))
             .id(egui::Id::new("fractadyne.palette-browser"))
@@ -297,7 +298,8 @@ impl crate::FractadyneApp {
                 ui.separator();
                 let shown: Vec<usize> =
                     (0..entries.len()).filter(|k| passes(&entries[*k].tags, &self.palette_browser.filter)).collect();
-                let details_h = 120.0;
+                // The details panel and, under it, the Close row.
+                let details_h = 156.0;
                 egui::ScrollArea::vertical()
                     .id_salt("palette-browser-grid")
                     .max_height((ui.available_height() - details_h).max(160.0))
@@ -325,11 +327,18 @@ impl crate::FractadyneApp {
                     });
                 ui.separator();
                 self.browser_details(ui, &entries, chosen);
+                // A named way out, as every dialog has (the title bar's × alone is easy to miss).
+                ui.separator();
+                crate::theme::action_row(ui, |ui| {
+                    if crate::theme::cancel_button(ui, &tr!(dlg_close)).clicked() {
+                        close = true;
+                    }
+                });
             });
         if let Some(row) = pick {
             self.browser_choose(row);
         }
-        self.palette_browser.open = open;
+        self.palette_browser.open = open && !close;
         self.palette_browser.open_frames = self.palette_browser.open_frames.saturating_add(1);
     }
 
