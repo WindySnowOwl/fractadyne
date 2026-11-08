@@ -1444,6 +1444,32 @@ fn the_iter_div_option_is_documented_with_its_range() {
     assert!(entry.contains(&format!("1 to {}", fractadyne_state::ITER_DIV_MAX)), "{entry}");
 }
 
+/// The coloring sliders' options are known options, and each one's help entry states the range
+/// the parser enforces and the panel's slider uses (`slider_range`), so the three cannot drift.
+#[test]
+fn the_coloring_slider_options_are_documented_with_their_ranges() {
+    use crate::slider_range as r;
+    let known = crate::cli::known_long_flags();
+    for (flag, range) in [
+        ("--cycle", r::CYCLE),
+        ("--offset", r::OFFSET),
+        ("--light-height", r::LIGHT_HEIGHT),
+        ("--glow-strength", r::GLOW_STRENGTH),
+        ("--glow-width", r::GLOW_WIDTH),
+    ] {
+        assert!(known.contains(flag), "{flag} is not a known option");
+        let entry = crate::help::CLI_REFERENCE
+            .iter()
+            .find_map(|e| match e {
+                crate::help::CliRef::Flag(f, d) if f.split_whitespace().next() == Some(flag) => Some(*d),
+                _ => None,
+            })
+            .unwrap_or_else(|| panic!("{flag} is not in the reference"));
+        let want = format!("{} to {}", range.start(), range.end());
+        assert!(entry.contains(&want), "{flag}: the entry does not say \"{want}\": {entry}");
+    }
+}
+
 /// ⛔Every method the shader accumulates orbit statistics for must be one the app keeps off the
 /// paths that cannot carry them (the chunked walk, the band's BLA, the corrector, strips). The orbit
 /// trap was left out until 2026-11-06 — its palette rate and its statistics were decided by one

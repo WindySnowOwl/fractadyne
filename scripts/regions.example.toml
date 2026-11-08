@@ -6,6 +6,9 @@
 # or `zoom` (plain magnification, ≤ ~1e308×). `cx`/`cy` are full-precision decimal strings.
 # method ∈ smooth | stripe | triangle | trap | distance | decomposition (stripe/triangle/
 # trap/decomposition accumulate per-orbit stats, which disables series approximation).
+# trap ∈ point | cross | circle (the orbit trap's shape, default point); stripe_freq is the
+# stripe density, 1 to 24. Both change what a trap or stripe region costs to iterate.
+# An unknown key, method, trap or fractal is an error, not a default.
 
 [[region]]
 name = "home"

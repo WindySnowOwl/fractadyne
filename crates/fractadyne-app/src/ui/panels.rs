@@ -345,7 +345,7 @@ impl FractadyneApp {
                     self.coloring.palette_editor_open = true;
                 }
                 labelled(ui, &tr!(panel_cycle), |ui| {
-                    ui.add(egui::Slider::new(&mut self.coloring.cycle, 0.0..=1.0))
+                    ui.add(egui::Slider::new(&mut self.coloring.cycle, crate::slider_range::CYCLE))
                 });
                 // "Divide iterations": under Cycle, because it scales what Cycle chose. ⭐Grayed out
                 // where it would change no pixel (another method, or a range fit), with a tooltip
@@ -373,7 +373,7 @@ impl FractadyneApp {
                     tr!(panel_iter_div_method_hover)
                 });
                 labelled(ui, &tr!(panel_offset), |ui| {
-                    ui.add(egui::Slider::new(&mut self.coloring.offset, 0.0..=1.0))
+                    ui.add(egui::Slider::new(&mut self.coloring.offset, crate::slider_range::OFFSET))
                 });
                 // ⭐Normalization FIRST, then the mapping it selects. `log_palette` is read only
                 // inside the normalized path, so with normalization off it changed nothing — and
@@ -486,7 +486,7 @@ impl FractadyneApp {
                     });
                     labelled(ui, &tr!(panel_relief), |ui| {
                         ui.add(
-                            egui::Slider::new(&mut self.effects.light_height, 0.2..=4.0)
+                            egui::Slider::new(&mut self.effects.light_height, crate::slider_range::LIGHT_HEIGHT)
                                 .logarithmic(true),
                         )
                     })
@@ -498,11 +498,11 @@ impl FractadyneApp {
                     .on_hover_text(tr!(panel_distance_glow_hover));
                 ui.add_enabled_ui(self.effects.de, |ui| {
                     labelled(ui, &tr!(panel_glow), |ui| {
-                        ui.add(egui::Slider::new(&mut self.effects.de_strength, 0.0..=1.0))
+                        ui.add(egui::Slider::new(&mut self.effects.de_strength, crate::slider_range::GLOW_STRENGTH))
                     });
                     labelled(ui, &tr!(panel_band_width), |ui| {
                         ui.add(
-                            egui::Slider::new(&mut self.effects.de_width, 0.15..=4.0)
+                            egui::Slider::new(&mut self.effects.de_width, crate::slider_range::GLOW_WIDTH)
                                 .logarithmic(true),
                         )
                     })

@@ -36,6 +36,11 @@ pub struct ProfRegion {
     pub size: u32,
     pub ss: u32,
     pub method: u32,
+    /// The orbit trap's shape and the stripe density: iteration parameters, so they change what
+    /// a trap or stripe region costs. Set for every region, so one region's never carries into
+    /// the next.
+    pub trap: crate::TrapType,
+    pub stripe_freq: f32,
 }
 
 const LOG2_10: f64 = std::f64::consts::LOG2_10;
@@ -59,6 +64,8 @@ pub fn default_regions() -> Vec<ProfRegion> {
         size: 512,
         ss: 1,
         method,
+        trap: crate::TrapType::default(),
+        stripe_freq: fractadyne_state::SessionState::default().stripe_freq,
     };
     vec![
         m("home", "-0.5", "0.0", 0.0, 512, 0),
@@ -84,8 +91,8 @@ pub fn default_regions() -> Vec<ProfRegion> {
 }
 
 /// Optional regions file (`--regions PATH`, TOML): `[[region]]` tables override the built-ins.
-/// Bounded/clamped (dev input, but kept tidy). Returns `None` on any problem (caller falls
-/// back to the built-ins, reporting why).
+/// Bounded (dev input, but kept tidy). Any problem is an `Err`, which the caller treats as fatal:
+/// an unknown key or name, or a value out of range.
 pub fn load_regions(path: &std::path::Path) -> Result<Vec<ProfRegion>, String> {
     let meta = std::fs::metadata(path).map_err(|e| e.to_string())?;
     if meta.len() > 1_000_000 {
@@ -98,7 +105,10 @@ pub fn load_regions(path: &std::path::Path) -> Result<Vec<ProfRegion>, String> {
         #[serde(default)]
         region: Vec<Spec>,
     }
+    // ⚠An unknown key is an error: serde ignores one by default, so a misspelled `methd` profiled
+    // Smooth under the region's name.
     #[derive(serde::Deserialize)]
+    #[serde(deny_unknown_fields)]
     struct Spec {
         name: String,
         fractal: Option<String>,
@@ -110,6 +120,8 @@ pub fn load_regions(path: &std::path::Path) -> Result<Vec<ProfRegion>, String> {
         size: Option<u32>,
         ss: Option<u32>,
         method: Option<String>,
+        trap: Option<String>,
+        stripe_freq: Option<f32>,
     }
     let f: File = toml::from_str(&text).map_err(|e| e.to_string())?;
     if f.region.is_empty() {
@@ -149,20 +161,50 @@ pub fn load_regions(path: &std::path::Path) -> Result<Vec<ProfRegion>, String> {
                 crate::MAX_ITER_LIMIT
             ));
         }
+        // A name we cannot read is an error. `from_key` falls back to the default (Smooth, the
+        // point trap) without a word, and an unknown family used to profile the Mandelbrot set.
+        let method = match s.method.as_deref() {
+            None => crate::ColorMethod::Smooth,
+            Some(m) => {
+                let picked = crate::ColorMethod::from_key(m);
+                if picked.key() != m {
+                    return Err(format!("region \"{}\": unknown method \"{m}\"", s.name));
+                }
+                picked
+            }
+        };
+        let trap = match s.trap.as_deref() {
+            None => crate::TrapType::default(),
+            Some(k) => {
+                let picked = crate::TrapType::from_key(k);
+                if picked.key() != k {
+                    return Err(format!("region \"{}\": unknown trap \"{k}\"", s.name));
+                }
+                picked
+            }
+        };
+        let fractal = match s.fractal.as_deref() {
+            None => FractalKind::Mandelbrot,
+            Some(f) => FractalKind::from_name(f)
+                .ok_or_else(|| format!("region \"{}\": unknown fractal \"{f}\"", s.name))?,
+        };
+        // The CLI's range for `--stripe-freq`.
+        let stripe_freq = s.stripe_freq.unwrap_or_else(|| fractadyne_state::SessionState::default().stripe_freq);
+        if !(1.0..=24.0).contains(&stripe_freq) {
+            return Err(format!("region \"{}\": stripe_freq {stripe_freq} outside 1..=24", s.name));
+        }
         out.push(ProfRegion {
             name: s.name.chars().take(48).collect(),
-            fractal: s
-                .fractal
-                .as_deref()
-                .and_then(FractalKind::from_name)
-                .unwrap_or(FractalKind::Mandelbrot),
+            fractal,
             cx: s.cx,
             cy: s.cy,
             zoom_log2,
             iter,
             size: s.size.unwrap_or(512).clamp(16, 4_096),
             ss: s.ss.unwrap_or(1).clamp(1, 8),
-            method: crate::ColorMethod::from_key(s.method.as_deref().unwrap_or("smooth")).to_u32(),
+            method: method.to_u32(),
+            trap,
+            stripe_freq,
         });
     }
     Ok(out)
@@ -250,6 +292,8 @@ impl FractadyneApp {
             self.julia_mode = false;
             self.dual = false;
             self.coloring.color_method = crate::ColorMethod::from_u32(r.method);
+            self.coloring.trap_type = r.trap;
+            self.coloring.stripe_freq = r.stripe_freq;
             self.render_cfg.auto_iter = false;
             self.render_cfg.max_iter = r.iter;
             self.export.width = r.size;
@@ -312,6 +356,8 @@ impl FractadyneApp {
             json.push_str(&format!("      \"size\": [{}, {}],\n", req.width, req.height));
             json.push_str(&format!("      \"ss\": {},\n", req.ss));
             json.push_str(&format!("      \"method\": {},\n", req.color_method));
+            json.push_str(&format!("      \"trap\": {},\n", js(r.trap.key())));
+            json.push_str(&format!("      \"stripe_freq\": {},\n", r.stripe_freq));
             json.push_str(&format!("      \"mode\": {},\n", req.mode));
             json.push_str(&format!("      \"eff_iter\": {},\n", req.max_iter));
             json.push_str(&format!("      \"sa_skip\": {},\n", req.sa_skip));

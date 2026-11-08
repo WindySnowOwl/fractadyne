@@ -52,9 +52,41 @@ fn out_of_range_input_is_refused_not_reshaped() {
     assert!(e.contains("cx"), "error should name the field: {e}");
 }
 
+/// A name the loader cannot read is an error, never the default: `from_key` falls back to Smooth
+/// and the point trap without a word, and an unknown family used to profile the Mandelbrot set.
+/// A misspelled key is an error too (serde ignores one unless told not to).
+#[test]
+fn unknown_names_and_keys_are_refused() {
+    for (extra, field) in [
+        ("method = \"stripes\"\n", "method"),
+        ("trap = \"square\"\n", "trap"),
+        ("fractal = \"Mandlebrot\"\n", "fractal"),
+        ("stripe_freq = 30.0\n", "stripe_freq"),
+    ] {
+        let e = load(&region(extra)).expect_err(extra);
+        assert!(e.contains(field), "error should name the field {field}: {e}");
+    }
+    let e = load(&region("methd = \"stripe\"\n")).expect_err("a misspelled key");
+    assert!(e.contains("methd"), "error should name the key: {e}");
+}
+
+/// The trap shape and the stripe density are region keys, and a region that names neither gets
+/// the defaults rather than whatever an earlier region set.
+#[test]
+fn trap_and_stripe_density_are_read_and_default() {
+    let r = load(&region("method = \"trap\"\ntrap = \"circle\"\nstripe_freq = 6.0\n")).expect("loads");
+    assert_eq!(r[0].method, crate::ColorMethod::OrbitTrap.to_u32());
+    assert_eq!(r[0].trap, crate::TrapType::Circle);
+    assert_eq!(r[0].stripe_freq, 6.0);
+    let d = load(&region("")).expect("loads");
+    assert_eq!(d[0].method, crate::ColorMethod::Smooth.to_u32());
+    assert_eq!(d[0].trap, crate::TrapType::default());
+    assert_eq!(d[0].stripe_freq, fractadyne_state::SessionState::default().stripe_freq);
+}
+
 /// The e21000 and e4000 region files in the repo/scratchpad load — guarding the shipped
-/// example against schema drift (unknown keys are silently ignored by serde, so a renamed
-/// field would otherwise turn a deep region into a shallow default without a sound).
+/// example against schema drift (a renamed field is now refused as an unknown key, which this
+/// catches before a user's run does).
 #[test]
 fn the_shipped_extreme_region_still_loads_deep() {
     let root = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../..");
