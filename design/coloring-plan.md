@@ -1,0 +1,735 @@
+# Coloring methods: implementation plan
+
+Status: **plan (2026-11-08), nothing started.** Line references are to `main` at `9ab75357`; check
+them before editing, they drift. The research behind it (methods, prototypes, measured results,
+prior art) is the coloring-methods doc; its local copy is
+`local/research_notes/Fractal coloring methods/` (PDF, HTML, Markdown, prototype scripts).
+
+The order follows one rule: **simple and independent first, then the plumbing everything else
+needs, then the methods from the best defined to the least proven.** Each step is one branch and
+one reviewable change. A step lists what it depends on, so steps without a dependency on each
+other can be done in any order.
+
+---
+
+## 0. How to use this plan
+
+### 0.1 Step template
+
+Every step below has:
+
+- **Goal**: what the user can do afterwards, in one or two sentences.
+- **Depends on**: step ids that must be merged first.
+- **Size**: S (one session), M (two to four), L (more).
+- **Touches**: files and functions, with line numbers at `9ab75357`.
+- **Work**: the change, in order.
+- **Tests**: what to add and what to run.
+- **Done when**: the acceptance checks.
+- **Traps**: the known ways this goes wrong.
+
+### 0.2 Branch, commit and merge
+
+- Branch per step: `feat/color-<id>-<slug>`, `fix/color-<id>-<slug>`, `chore/...`.
+- Commit messages through the Write tool and `git commit -F`; end with the Co-Authored-By line.
+- Before every commit, chained: `python scripts/check_text_hygiene.py --staged &&
+  python scripts/check_test_layout.py && <redaction grep> && git commit -F msg.txt`.
+- Merge and push only when the user says so. After each merge and push: run
+  `scripts/build-accelerated.ps1` on `main` and check `installed.txt`.
+- User-visible changes get a CHANGELOG entry under the unreleased version, written with the
+  change, not at release time.
+
+### 0.3 Standard commands
+
+Run every exe test with a scratch config and no sound:
+`FRACTADYNE_CONFIG_DIR=<scratch> FRACTADYNE_NO_SOUND=1`. Never run against the real config dir,
+never kill the user's running app, and put windowed runs on the right monitor.
+
+| What | Command |
+|---|---|
+| Build | `CARGO_BUILD_JOBS=1 cargo build --release -p fractadyne-app` |
+| Unit tests | `CARGO_BUILD_JOBS=1 cargo test --release -p fractadyne-app -p fractadyne-gpu -p fractadyne-core -p fractadyne-color -p fractadyne-state -p fractadyne-farm` |
+| One selftest group | `target/release/fractadyne.exe --selftest --selftest-filter <tag> --out <scratch>/report.md` |
+| Full selftest | `target/release/fractadyne.exe --selftest --out <scratch>/report.md` (about 3.5 min on the RTX 3080); if it ran with the default `--out`, `git restore validation/report.md` |
+| Bless one golden | `--selftest --bless --selftest-filter <golden-name>` (only on the RTX 3080, the reference card) |
+| One render | `--render --out F.png --fractal "NAME" --center X Y --zoom M --size WxH --iter N --ss 1 --method KEY --palette N --no-watermark` |
+| Compare two renders | `--compare A.png B.png --out heat.png` (report only) |
+| GPU timings | `--profile --regions F.toml --reps 3` (iterate and color-pass ms from timestamp queries) |
+| Bench matrix | `--bench-matrix --reps 5`; timing comparisons between builds: interleave ABABAB, median of 3 |
+| UI screens | `python scripts/on_monitor.py right -- target/release/fractadyne.exe --uitest <dir>`; then LOOK at the screenshots (physical pixels) |
+| Text layout | the uitest text-layout check, also with `--language en-XA` |
+| Second machine | `scripts/field-request.ps1 -Action harness -Run "..." -Build v...dev.N` (PLUTO: RTX 3070 + RX 6800 XT) |
+
+### 0.4 Standing rules for every coloring change
+
+These come from past bugs; each one has bitten before.
+
+1. **Method ids are append-only.** `ColorMethod` discriminants 0–5 are GPU ids and appear as
+   numbers in the shader (`mandelbrot.wgsl:1012, 1358, 1381-1412, 3734-3747`), in
+   `method_needs_aux` (`gpu/src/lib.rs:3453`), `WindowTexels::for_colour`
+   (`gpu/src/assemble.rs:76-84`), `render.rs:3645-3648, 3693-3695, 9947-9950`, the bench matrix
+   (`harness/bench_matrix.rs:208`), the profiler (`harness/profile.rs:38, 314`) and the golden
+   spec (`harness/selftest.rs:11316`). Users' files store `key()` strings. The same holds for
+   `TrapType` (numbers also in `core/src/reference.rs:1946-1950`) and for palette presets.
+2. **Keep the duplicated method sets in step.** `ColorMethod::needs_aux` (`main.rs:3098`) ↔
+   `method_needs_aux` (`gpu/src/lib.rs:3452`), pinned by the unit test at
+   `app/tests/unit/tests.rs:1452-1457` (a missing entry gave flat trap frames on 2026-11-06,
+   fixed in `028d7204`); `WindowTexels::for_colour`; `COLOR_METHODS` in
+   `scripts/release_checklist.py:36`.
+3. **Anything an iteration depends on goes in both keys**: the GPU `IterKey`
+   (`gpu/src/lib.rs:422-457`, built at 3872-3893) and the app's `settings_hash`
+   (`render.rs:8585-8621`). Anything that colors a frame goes in `accum_color_sig`
+   (`main.rs:16163-16219`), or the progressive average and the palette browser go stale.
+4. **ColorU and ColorUniforms change together.** `ColorU` (`mandelbrot.wgsl:3601-3646`) and
+   `ColorUniforms` (`gpu/src/lib.rs:340-387`, two pad words free at 385) are pinned by
+   `gpu/tests/unit/uniform_layout_tests.rs` (size 69-90, offsets 112-125, naga 144-151); give
+   every new field an offset entry.
+5. **i18n**: every label, tooltip and message is a key in `i18n/en/fractadyne.ftl` used through
+   `tr!` (a missing key fails the build). `scripts/check_ui_text.py` rejects literal widget text;
+   `scripts/check_i18n.py` checks the other 14 languages. New English keys need placeholder
+   entries or the language check's allowance. US English.
+6. **UI**: explicit ids on every `Window`, `CollapsingHeader` and `ComboBox`; icons only from
+   `icons.rs`, generated by `scripts/subset_lucide.py` (edit its `ICONS` table, never `icons.rs`);
+   every dialog has a named way out (`dlg-close`); action rows via `theme::action_row`.
+7. **Persistence travels to four places**: the session (`fractadyne-state`, additive
+   `#[serde(default)]`), the `.fdn` view (writer `export.rs:847-933`, reader 1052-1225, gates
+   below), the farm (`fractadyne-farm/src/settings.rs` `RenderSettings`, `deny_unknown_fields`:
+   a field missing here makes farm renders silently use the default) and the CLI (`help.rs`
+   `CLI_REFERENCE`; a flag missing there is rejected). Tours and scripts are a fifth when the
+   setting should be keyframed.
+8. **`.fdn` gates**: the writer must stay a subset of the reader. Selftest "every emitted key is
+   a known key" (`selftest.rs:9965-9988`), `the_sample_location_covers_every_view_key`
+   (`app/tests/unit/tests.rs:315-383`, with `SAMPLE_OPTIONAL_KEYS`), `tests/unit/export/view_text.rs`
+   and `shipped_files.rs`. Emit only non-default values so ordinary files stay byte-identical.
+9. **Selftest checks are hermetic**: reset and restore every field they touch, like `aux-bla`
+   (`selftest.rs:6936-7019`), and add new fields to the reset at `selftest.rs:714-748`. Add every
+   new `want` tag to `GROUPS` (`selftest.rs:757-763`).
+10. **Never compare renders by file hash.** Compare decoded channels with a tolerance
+    (`img_diff`, `--compare`, the corpus script). And LOOK at the image before calling a step
+    done: a number that looks good on a broken picture is a bug report.
+11. **A change that turns on a new GPU regime runs untested code.** The first run of a new
+    per-iteration statistic, a deeper loop or a new BLA lane is a device-loss risk: say so first,
+    run it capped, and run it on PLUTO before the user's machine.
+12. **Test layout**: unit tests under `crates/<crate>/tests/unit/...` via `#[cfg(test)] #[path]`;
+    harness code in `src/harness/`; `scripts/check_test_layout.py` before every commit. A new call
+    from `main.rs`, `cli.rs` or `render.rs` into a harness raises `HARNESS_HOOKS`
+    (`check_test_layout.py:47-58`) on purpose. New harness flags go in `help.rs` and `TASK_FLAGS`
+    (`main.rs:802-811`).
+13. **DE units**: the stored DE is per iteration sample, not per pixel: `de_log2` subtracts the
+    texel step (`mandelbrot.wgsl:646-657`, step per texel at `gpu/src/lib.rs:3929-3937`) and the
+    texture is screen × supersampling. Anything with a width in pixels must correct by log2 of the
+    supersampling factor, and also for reduced-resolution motion frames.
+14. **Depth bands**: direct below 1e4× (1e2× for Julia), df32 from 1e4× to 1e28×
+    (`PERT_FE_THRESHOLD`, `tunables.rs:2308`), floatexp above. The live view renders the df32 band
+    as floatexp with BLA (`BAND_FLOATEXP_DEFAULT`, `tunables.rs:1584-1591`), except for aux
+    methods (`render.rs:6752-6762`); exports keep df32. Aux methods get BLA only past 1e28×. Test
+    every method in every band it can reach.
+
+### 0.5 Definition of done (every step)
+
+- Unit tests green; the step's selftest group green; the full selftest green before merge for any
+  GPU change.
+- Once B1 exists: `--coloring-matrix --quick` shows no new red cell, and the step's contact sheet
+  has been looked at.
+- UI steps: uitest screens added and looked at, also in `en-XA`.
+- CHANGELOG entry for user-visible changes; the TODO.md item checked or updated; this plan's step
+  marked done with its commit.
+
+---
+
+## 1. Where coloring lives today
+
+### 1.1 Data per pixel
+
+Two `Rgba32Float` targets per iteration sample (`mandelbrot.wgsl:1328-1335`):
+
+| Target | Lanes | Written when |
+|---|---|---|
+| `main` | smooth count `smit`, normal x, normal y, log2 DE | always; interior `(-1, 0, 0, 1e30)`, Newton `(iter, 0, 0, 1e30)`, glitch −2; normal and DE only for formulas 0–3, Phoenix and Multibrot 6–8 (`wgsl:1653-1658`), 1e30 otherwise |
+| `aux` | stripe, TIA, trap minimum, final angle | only under an aux method (`aux_on` bit 0); `aux_step` fills only the selected statistic (`wgsl:1374-1414`), `aux_pack` writes the angle for every aux method (`wgsl:1417-1435`); otherwise `AUX_NONE` = (0, 0, 1e30, 0) |
+
+The color pass (`fs_color`, `wgsl:3835-4001`) reads both targets at every tap. `coord_under`
+(`wgsl:3731-3761`) picks the value by `cu.color_method`: 1 `a.r`, 2 `a.g`, 3 `−log2(a.b)`
+(colors the interior too), 4 `m.a`, 5 `a.a`, else `m.r`; then the optional log map, then
+`× cycle + offset`. Then palette lookup (`palette()`, 3693-3708, with the prefix-sum box filter
+3767-3793 behind `FRACTADYNE_PALETTE_AA`), relief lighting (3937-3980), glow (3984-3991) and
+vignette (3994-3999).
+
+### 1.2 The method enum and what it switches
+
+`ColorMethod` (`main.rs:3036-3131`): Smooth 0, Stripe 1, TriangleIneq 2, OrbitTrap 3, Distance 4,
+Decomposition 5. One value drives both sides:
+
+- **Iteration side**: `IterUniforms.color_method` (`gpu/src/lib.rs:69`), read by the shader only at
+  `wgsl:1012` (trap histogram), 1358 (stripe tail) and 1381 (`aux_step`); `aux_on_word`
+  (`gpu/src/lib.rs:3440-3446`: bit 0 aux, bit 1 tail, bits 2.. tail length).
+- **What an aux method turns off**: series approximation (`blocks_iter_skip`, `main.rs:3122-3130`),
+  the chunked walk (`frame_plan.rs:396-399`), band BLA (`render.rs:6752-6762`), the glitch
+  corrector and the normalized export (`render.rs:4858, 4967`), zoom video
+  (`ui/zoom_video.rs:263-264`, `assemble.rs:735-739`), multi-GPU export splitting
+  (`gpu/src/export.rs:1524`), and the renormalized step (`wgsl:1077-1080`). BLA is kept only for
+  stripe, TIA and trap (`aux_bla_ok`, `render.rs:3693-3695`), whose aggregates sit in the BLA
+  node's fourth vec4 `[span, trap, ΣTIA, Σstripe]` (`wgsl:1851-1870`; `reference.rs:2177-2273`).
+- **Color side**: `ColorUniforms.color_method` (`gpu/src/lib.rs:355`), `coord_under`, and the
+  palette rate `color_cycle` (`main.rs:11438-11444`).
+
+### 1.3 Where coloring settings travel
+
+| Place | Carries today | Gap |
+|---|---|---|
+| Session (`fractadyne-state/src/lib.rs:291-361`) | everything | none |
+| `.fdn` view, bookmarks, Share location, PNG/EXR text | palette, cycle, iter_div, offset, aa, custom gradient | method, stripe, trap, effects, duotone/binary, normalize, log scale |
+| Farm `RenderSettings` | method, stripe, trap, light, glow, log, cycle, offset, iter_div, palette, custom | `palette_id`, normalize live/fit |
+| CLI (`main.rs:8452-8520`) | method, stripe, trap, binary, light, light angle, de, iter_div | cycle, offset, light height, glow strength and width, normalize live/fit, interior color |
+| Tours (`scripting.rs:576-688`) | palette only | method, cycle, offset, effects |
+| GPU export (`gpu/src/export.rs:278-290, 1710, 1789-1796`) | all | aux methods export on one device, without glitch correction |
+| Zoom video | Smooth and Distance only | every aux method refused |
+| Multi-GPU live twin (`motion_worker.rs:312`) | with aux when needed | none |
+
+### 1.4 Tests that exist
+
+- Selftest `appearance` (`selftest.rs:10069-10235`): all six methods at the seahorse, 2e3×, direct;
+  coherent and mutually different; toggles for cycle, offset, divide, binary, duotone, relief, glow.
+- Selftest `aux-bla` (`selftest.rs:6928-7020`): BLA on vs off at 1e30× for traps, TIA, stripe.
+- Selftest `bla` (6636-6925): per-family BLA A/B, Smooth only. `cycle-check`, `colour-box`,
+  `palette-fade`.
+- Goldens (31): one stripe (`seahorse-stripe-1e6`) and one relief golden; the rest Smooth.
+- Bench matrix: color segments smooth, stripe, trap, decomposition at 1e20× (df32, no BLA).
+- Unit: the needs_aux sync, uniform layout, trap and norm histograms, the core aux-BLA oracle
+  (`core/tests/unit/reference/aux_bla_oracle.rs`).
+
+**Gaps that matter for this plan**: no live-path coloring harness (`--livetest` pins Smooth,
+`livetest.rs:362`; windowed harnesses ignore `--method`, `main.rs:8155-8157`); no aux A/B for the
+fold or Multibrot BLA trees; no TIA or Distance bench segment; no stored non-Mandelbrot or Julia
+view files (deep points for other families exist only as `FOLD_DEEP` and `MULTIBROT_DEEP`
+constants, `selftest.rs:517-577`); `GROUPS` is not checked against the `want` tags.
+
+---
+
+## 2. Overview
+
+| Phase | Steps | Needs | Gives |
+|---|---|---|---|
+| A. Independent fixes | A1–A9 | nothing | correct baseline, persistence, reproducible CLI |
+| B. Plumbing | B1–B8 | A1, A6 | test matrix, accumulate mask, full G-buffer, settings model, method picker and preview sheet, second LUT and interior modes, stored angle |
+| C. Color-pass methods | C1–C11 | B4 (B5 for C4) | interior color, transfers, DE shading, lighting, histogram, OKLab, palette AA, fringe, grid, linked Julia palettes |
+| D. Escape-data methods | D1–D3 | B8 | angle colorings, exact count past 8.4M, interior period |
+| E. Statistic combinations | E1–E5 | B3, B5 | warped bands, statistic near filaments, two-layer blend, bump, specular by statistic |
+| F. New per-iteration statistics | F1–F6 | B2, F2 | exponential smoothing, second aux target, curvature, parametric traps, atom domains, pixel-width traps |
+| G. Research methods | G1–G8 | as listed | interior DE, interior coordinates, second derivative, fold DE, two-plane, multi-degree, texture effects, user scripts |
+
+Critical path: **A6 → B1 → B2 → B3 → B7**, with **A1 → B4 → B6 → B7** beside it. Everything in
+C needs B4 (C4 also B5); E needs B3 and B5; F needs B2. Phase A steps are independent of each
+other.
+
+---
+
+## 3. Phase A: independent fixes
+
+### A1. Coloring travels with the view
+
+- **Goal**: a `.fdn` file, a bookmark, a Share link and a PNG's embedded view reopen in the method
+  and effects they were saved with.
+- **Depends on**: none. **Size**: M.
+- **Touches**: `export.rs` `view_metadata` (847-933), `load_view_metadata` (1052-1225),
+  `KNOWN_VIEW_KEYS` (300-324), `TYPED_VIEW_KEYS` (357-382); `tests/unit/tests.rs` `SAMPLE_LOCATION`
+  and `SAMPLE_OPTIONAL_KEYS` (315-383); `tests/unit/export/view_text.rs`.
+- **Work**:
+  1. Keys, all optional and written only when they differ from the default: `method`,
+     `stripe_freq`, `stripe_tail`, `stripe_tail_len`, `trap`, `light`, `light_angle`,
+     `light_height`, `glow`, `glow_strength`, `glow_width`, `duotone`/`binary` with their two
+     colors, `normalize_live`, `normalize_fit`, `log_scale`.
+  2. Reader: follow the `iter_div` precedent (1186-1204): a file that states `cycle=` but omits a
+     coloring key was written with the default, so reset that setting; a file stating neither
+     leaves the session alone. Parse method and trap with a round-trip check and report an
+     unknown value as a warning, never a silent Smooth (`from_key` falls back silently,
+     `main.rs:3082-3087`).
+  3. No format bump: unknown keys are already reported, not fatal (rule at `export.rs:195-209`).
+- **Tests**: round-trip unit test for every key and its default; a view with every key set reloads
+  to the same `ColoringConfig`; the existing gates stay green; selftest render of a saved trap view
+  equals the live settings.
+- **Done when**: a stripe view saved, closed and reopened renders identically (channels), and an
+  older file without the keys opens unchanged.
+- **Traps**: the checksum covers every field (506-527); keep notes Latin-1; `MAX_EMBEDDED_SEGMENTS`
+  for custom gradients is unchanged.
+
+### A2. Small corrections
+
+- **Goal**: help text and comments say what the code does.
+- **Depends on**: none. **Size**: S.
+- **Work**:
+  - `--binary` help says "Binary-decomposition coloring" (`help.rs:343`) but selects the Binary
+    palette (`main.rs:8452-8456`): reword.
+  - The stale doc comment of `aux_agg_from_orbit` (`render.rs:490-494`) says stripe "isn't folded
+    yet" and "BLA is Mandelbrot-only": correct both.
+  - The stale comment at `wgsl:949-950` about the BLA node layout.
+  - `GROUPS` (`selftest.rs:757-763`): add the eight missing tags (`colour-box`, `cycle-check`,
+    `export-contain`, `honest-step`, `palette-fade`, `retreat`, `view-thumb`,
+    `width-independence`) and a unit test that every `want("...")` tag in `selftest.rs` appears in
+    `GROUPS` (parse the source, like the layout check).
+  - `design/multilingual.md` §9 still says eight languages; there are 15.
+- **Done when**: the new GROUPS test fails if a tag is removed from the list.
+
+### A3. Hide what a formula cannot do
+
+- **Goal**: Distance, relief lighting and glow are not offered where they cannot work.
+- **Depends on**: none. **Size**: S.
+- **Touches**: `ui/panels.rs` method combo (167-177) and Effects (410, 477-513); `ui/menus.rs`
+  586-596; `FormulaCaps` (`core/src/lib.rs:192-240`).
+- **Work**: a helper `formula_has_derivative(fractal)` from `FormulaCaps` (true for formulas 0–3,
+  Phoenix, Multibrot 6–8; false for the folds, Newton and custom). Gray out Distance in the combo
+  and menu with a tooltip saying why; gray the relief and glow rows the same way. If the session
+  already holds Distance for such a formula, keep it but show the reason under the combo.
+- **Tests**: uitest screen with Burning Ship selected (looked at); unit test of the helper against
+  the shader's list (`wgsl:1655`).
+- **Traps**: Newton stores 1e30 in the DE lane (`wgsl:1641-1647`); custom modules hard-code
+  `de = 1.0e30` (`gpu/src/custom.rs:999`).
+
+### A4. The stripe-tail iterate key
+
+- **Goal**: toggling "Tail only (deep zoom)" or changing its length always re-iterates.
+- **Depends on**: none. **Size**: S.
+- **Work**: first reproduce: a settled, untiled stripe view, toggle the tail, check whether the
+  frame changes (`IterKey` has no `stripe_tail`/`stripe_tail_len`, `gpu/src/lib.rs:430-457`; the
+  app's `settings_hash` has them, `render.rs:8610-8611`). If it does not, add both to `IterKey`.
+- **Tests**: unit test that two `IterKey`s differing only in the tail are unequal; a selftest that
+  toggles the tail on a fixed view and requires a channel difference.
+
+### A5. The two open coloring bugs
+
+Both are in TODO.md (top of "Open bugs", branch `chore/todo-coloring-bugs`). Neither is
+reproduced. Reproduce before fixing; never close on the mechanism argument alone.
+
+**A5a. Short-escaper series drops statistics.**
+
+- **Depends on**: none. **Size**: M.
+- **Work**: `sa_short_escaper` (`render.rs:1562-1567`) and `live_series` (3721-3727) apply the
+  series for a BLA view whose reference escapes early, without checking the method; the shader
+  seeds δz at `sa_skip` with no aggregate (`wgsl:1720-1735`). Repro: a stripe and a point-trap
+  view past 1e28× in the deep exterior, export with the series as is and with it forced off,
+  compare aux channels. Fix by seeding the aggregate from the reference's first `sa_skip` iterates
+  (the same approximation the BLA fold makes), computed once per reference on the CPU and passed as
+  a uniform; gating the rule off for aux methods would bring back the slow minibrot pixels it was
+  added for (its doc comment).
+- **Tests**: extend `aux-bla` with a short-escaper view: SA forced on vs off within the `aux-bla`
+  tolerance.
+- **Traps**: the aggregate depends on the trap type and stripe frequency like the BLA lanes do.
+
+**A5b. Stripe and TIA band-edge seams on Multibrot 3–7.**
+
+- **Depends on**: none. **Size**: S.
+- **Work**: `aux_pack` blends with `fract(smit)` (`wgsl:1660, 2132, 2361`), which is the position
+  inside the band only for powers 2 and 8. Repro: Stripe and TIA on Multibrot 3 with "Always fit
+  range", LOOK for seams along band edges. Fix: pass the in-band position
+  `clamp(1 − log_p(log2|z_N| / log2 R), 0, 1)` (R = the family's bailout: 256, or 128 for
+  Multibrot 8), checking its direction against `mix(prev, avg, ·)`.
+- **Tests**: a CPU unit test of the weight at both band edges for p = 2…8; a selftest measuring the
+  largest jump across a band edge on a Multibrot 3 stripe render before and after.
+- **Traps**: the degree-2 picture changes slightly at some edges, so `seahorse-stripe-1e6` needs a
+  re-bless on the RTX 3080; say so in the commit.
+
+### A6. CLI flags for existing settings
+
+- **Goal**: every coloring setting can be set from the command line, so tests are reproducible.
+- **Depends on**: none. **Size**: S.
+- **Work**: add `--cycle`, `--offset`, `--light-height`, `--glow-strength`, `--glow-width`,
+  `--normalize-live on|off`, `--normalize-fit on|off`, and later `--interior-color` (C1), to
+  `help.rs` and `apply_cli_render` (`main.rs:8452-8520`). Note that `apply_cli_render` runs only
+  with `--render` (`main.rs:8155-8157`); also give `--profile` regions these keys
+  (`profile.rs:102-166`, which today turns an unknown method into Smooth silently: make that an
+  error).
+- **Tests**: unit tests of the parsing; the flag list test.
+
+### A7. Field agent can run coloring tests
+
+- **Goal**: PLUTO can render any method, fractal and depth.
+- **Depends on**: none. **Size**: S.
+- **Work**: extend `$Allowed` in `field-agent.ps1:275-327` with `--method`, `--fractal`,
+  `--profile`, `--stripe-freq`, `--trap` and the A6 flags; bump the agent version; deploy per
+  `scripts/field-request.ps1`.
+
+### A8. Palette browser: a named way out
+
+- **Goal**: the browser follows the dialog rule and becomes the template for the method sheet.
+- **Depends on**: none. **Size**: S.
+- **Work**: a Close button (`dlg-close`) in an action row (`ui/palette_browser.rs:273-334`);
+  optionally a keyboard shortcut for both browsers.
+
+### A9. DE in pixels
+
+- **Goal**: Distance colors and glow bands look the same at every supersampling factor.
+- **Depends on**: none. **Size**: S. **User decision**: this changes the default look at the
+  default 2× supersampling (Distance colors shift by one octave, glow bands rescale), so ask first.
+- **Work**: pass `log2(ss)` (and the motion-frame resolution factor) in `ColorU` and subtract it
+  where the color pass reads `m.a` (`coord_under`, glow at `wgsl:3983-3990`).
+- **Tests**: render the same view at ss 1, 2 and 3; the Distance coloring agrees within the
+  tolerance.
+
+---
+
+## 4. Phase B: plumbing
+
+### B1. The coloring test matrix
+
+- **Goal**: one command renders every method across fractal families and depth bands, writes
+  contact sheets to look at and metrics to compare, and flags regressions.
+- **Depends on**: A6 (flags for reproducible settings). **Size**: L.
+- **Touches**: new `crates/fractadyne-app/src/harness/coloring_matrix.rs`; `harness.rs` module
+  list; `help.rs` (`--coloring-matrix`, `--quick`, `--only`, `--bless`); `TASK_FLAGS`; new
+  `validation/coloring/views.toml`; baseline `benchmarks/coloring-matrix-baseline-<card>.json`.
+- **View set** (`validation/coloring/views.toml`), each with family, center, zoom, iterations and
+  the bands it covers:
+
+  | Family | Views |
+  |---|---|
+  | Mandelbrot | overview; seahorse 2e3× (direct); seahorse 1e6× and 1e20× (df32); seahorse 1e30× (floatexp); minibrot interior `minibrot-auto-iter-9.3e78`; Misiurewicz `misiurewicz-4-1` 7.4e143×; extreme opt-in `spiral-9.98e60205` |
+  | Multibrot 3–8 | overview and the `MULTIBROT_DEEP` points (`selftest.rs:540-577`) at 1e6× and 1e30× |
+  | Folds (Burning Ship, Tricorn, Celtic, Buffalo, and powers 3–5) | overview and `FOLD_DEEP` (`selftest.rs:517-538`) at 1e6× and 1e28× (accurate to about 1e30×) |
+  | Phoenix | overview and 1e3× |
+  | Newton | overview |
+  | Julia | Mandelbrot Julia at c = −0.75 + 0.1i and the triple point; overview and 1e10× |
+  | Custom | `z^2.5 + c` overview and 1e20× |
+
+  Copy the constants into the TOML so they are no longer selftest-only.
+- **Cells**: every view × every method (and each method's parameter variants, e.g. the three trap
+  shapes) that the method claims to support; unsupported cells are recorded as "n/a", not skipped
+  silently.
+- **Per cell, measured**:
+  - picture: standard deviation and bucket count (`frame::coherent`), count of NaN, sentinel and
+    pure-black pixels, mean difference from the Smooth cell (a method that equals Smooth is a bug);
+  - correctness A/Bs: BLA on vs off and SA on vs off where the method claims to be skip-safe
+    (tolerance as `aux-bla`: max channel Δ < 0.1 and < 1% of channels above 0.02); render twice
+    and require identical channels (determinism); ss 1 vs 2 for pixel-width features;
+  - timing: GPU iterate ms and color-pass ms from timestamp queries (as `--profile`,
+    `profile.rs:270-330`), and the ratio to the Smooth cell of the same view.
+- **Outputs**: one contact sheet per view (methods as cells, labeled) and one per method (views as
+  cells), PNG, for looking at; `coloring-matrix-<stamp>.json` with every metric; a Markdown summary
+  of red cells.
+- **Gates**: picture checks and A/Bs are pass or fail on every card; timing is compared to the
+  baseline of the same card only, warning above +35% and 1 ms (the bench-matrix rule), never
+  failing a run on timing alone. `--quick`: the overview, one df32 and one floatexp view of
+  Mandelbrot, Multibrot 3 and Burning Ship; a selftest group `coloring-matrix-quick` runs it.
+- **Live path**: add a `method` key to the livetest/tour `[render]` table (`scripting.rs:158-163`)
+  so `--livetest` can run a method tour; a short `tours/coloring-methods.toml` dives through the
+  depth bands once per method.
+- **Done when**: the full matrix runs on the RTX 3080 and on PLUTO, the current six methods give
+  no red cell except known ones (recorded with a reason), and the contact sheets have been looked
+  at.
+- **Traps**: render with a scratch config; the `make()` span caveat (`selftest.rs:895-900`); keep
+  timing runs one at a time.
+
+### B2. Decouple what is accumulated from how it is shown
+
+- **Goal**: the iteration accumulates a set of statistics (an accumulate mask) independent of the
+  displayed method, so switching between methods whose data is present only recolors.
+- **Depends on**: B1 (to prove no change). **Size**: L.
+- **Work** (the full table is in §8):
+  1. `AccumMask` bits: stripe, TIA, trap, angle. Today's behavior is `mask = default_mask(method)`.
+  2. Repurpose `IterUniforms.color_method` (`gpu/src/lib.rs:69`; read only at `wgsl:1012, 1358,
+     1381`) as the mask; `aux_step` dispatches per bit; the stripe-tail gate (`wgsl:1357-1359`)
+     reads the stripe bit; mask the tail-length shift (`wgsl:1361`) with `& 0x1FFFFF` if bits are
+     packed above it.
+  3. Split `method_needs_aux` into "iteration accumulates" (mask ≠ 0: chunked walk, band BLA, SA,
+     corrector, normalized export, renormalized step) and "display reads aux" (strips, assembler,
+     `WindowTexels`).
+  4. `IterKey` and `settings_hash` key on the mask plus only the enabled bits' parameters;
+     `accum_color_sig` keeps the displayed method and adds the mask.
+  5. `aux_bla_ok` becomes a per-bit table; the aux staleness patch (`render.rs:9939-9988`) watches
+     the stripe frequency when the stripe bit is on and the trap type when the trap bit is on.
+  6. `RefCache.bla_stripe_freq`/`bla_trap_type` and `same_reference` (`render.rs:10279-10287`)
+     compare only enabled bits.
+- **Tests**: with the default mask, the B1 matrix and all goldens are channel-identical to `main`;
+  a unit test per predicate; the needs_aux sync test becomes a mask test.
+- **Traps**: the trap histogram commit (`wgsl:1011-1017`) needs the trap bit and display = trap;
+  the custom-formula code path (`gpu/src/custom.rs:1097-1110`) has its own `aux_step` copy.
+
+### B3. The full G-buffer
+
+- **Goal**: an option (and, where cheap, the default) to accumulate stripe, TIA, trap and the angle
+  in one pass, so every recolor-capable method is available without re-iterating.
+- **Depends on**: B2. **Size**: M.
+- **Work**:
+  1. Mask = all bits. Per iteration this adds about 5–6 transcendental and 15 plain operations.
+  2. Measure with B1 timing and `--profile` in all three bands, on the RTX 3080 and both PLUTO
+     cards, interleaving builds. The only measurement so far is floatexp at 1e30×: perf-neutral
+     when the per-method gate was added (commit `1de2b888`, 298.2 → 297.0 ms). The direct and df32
+     paths were never measured.
+  3. Choose: full G-buffer always in floatexp (where measured free); on demand in direct and df32
+     (when the method sheet or a combination asks for it), unless the measurement says it is free
+     there too.
+  4. The trap shape and stripe frequency remain iteration parameters; the trap lane holds the
+     selected shape.
+- **Tests**: B1 with the full mask: every method's cell equals its own-mask cell (channels); BLA
+  A/B for all lanes on Mandelbrot, a fold and Multibrot 5.
+- **Traps**: an all-lanes view still pays every aux restriction (no SA, no walk, no band BLA): the
+  cost is not just the operations; report both.
+
+### B4. One coloring settings model
+
+- **Goal**: adding a coloring parameter means editing one struct, and it then persists everywhere.
+- **Depends on**: A1. **Size**: M.
+- **Work**: a `ColoringSpec` struct (method, method parameters, transfer, wrap, interior mode and
+  color, layer settings, lighting and glow, palette references) with serde, used by the session,
+  the `.fdn` reader and writer, farm `RenderSettings`, the CLI and the script schema. A capability
+  table per method: live, export, normalized export, corrector, zoom video, farm, multi-GPU split,
+  chunked walk, SA, BLA, which families, which depth bands. The UI and the export dialogs read
+  this table to gray out or explain.
+- **Tests**: one round-trip test per destination; the farm settings tests
+  (`farm/tests/unit/settings/tests.rs:26-102`); `RenderSettings` stays `deny_unknown_fields`, so a
+  missing field fails its test, not a farm render.
+- **Traps**: `ColorU` has a size budget; group new fields into vec4s and update the layout tests.
+
+### B5. Second LUT and interior modes
+
+- **Goal**: the color pass can use a second gradient (for the interior or a second layer) and an
+  interior mode other than one flat color.
+- **Depends on**: B4. **Size**: M.
+- **Work**: grow the LUT buffer to two gradients (`make_lut_buffer`, `write_lut`,
+  `gpu/src/lib.rs:1910-1949`; each with its prefix sum) with an offset in `ColorU`; an
+  `InteriorMode` (solid, trap, period, later others) and an interior palette reference; generalize
+  the interior branch of `coord_under`.
+- **Tests**: layout tests; a selftest rendering an interior with the second gradient.
+
+### B6. Method picker
+
+- **Goal**: choosing a method shows what it does and what it costs, grouped sensibly.
+- **Depends on**: B4. **Size**: M. Details in §9.
+- **Work**: replace the flat combo (`ui/panels.rs:167-177`) with a grouped list (Escape count,
+  Distance, Orbit statistics, Angle, Layers), an Inside section (interior mode), per-method
+  settings below, cost badges from the B4 capability table, and a "Preview methods…" button for
+  B7; mirror in the Color menu (`ui/menus.rs:586-596`).
+- **Tests**: uitest screens for each group and a disabled method; text layout in `en-XA`.
+
+### B7. Method preview sheet
+
+- **Goal**: a window that shows the current view in every method, like the palette browser;
+  hover previews on the main view, click applies.
+- **Depends on**: B3, B6 (and A8 for the window pattern). **Size**: L. Details in §9.
+- **Work**:
+  1. A sibling of `atlas::render_palette_atlas` (`gpu/src/atlas.rs:67-210`) that takes per-cell
+     `ColorU` overrides (method, cycle from `color_cycle()` per method, no normalization, trap and
+     stripe fields), exposed through a public struct since `ColorUniforms` is `pub(crate)`.
+  2. Cells whose data is in the G-buffer are recolors (instant). Cells that need other iteration
+     parameters (another trap shape, another stripe frequency, a method not accumulated) are small
+     re-renders in the background, one per frame, like `render_misi_thumb`
+     (`ui/misiurewicz_explorer.rs:395-447`), with a time estimate; at depth, a cell over the budget
+     shows the estimate and a "Render" button instead of rendering.
+  3. Hover previews the method on the live view through the preview rules of
+     `palette_preview.rs` ("a preview is never a choice", 0.3 s delay); click applies; Close button.
+- **Tests**: uitest screens (shallow, 1e30× with recolor cells, a re-render cell in progress);
+  unit tests of the cell plan (which cells recolor, which re-render) against the capability table;
+  a selftest that the sheet's recolor cell equals a full render of that method (channels).
+- **Traps**: the atlas uses view 0 only; `last_cu`'s cycle belongs to the current method, so each
+  cell needs its own; invalidate on `accum_color_sig`, view writes and the mask.
+
+### B8. The final angle without aux
+
+- **Goal**: the final angle is stored for every method, and we know when it survives SA and BLA.
+- **Depends on**: B2. **Size**: M.
+- **Work**: an angle-only mask bit that writes `aux.a` at escape without running `aux_step`;
+  the chunked resolve (`fs_resolve`, `wgsl:3596`) must output it too, or the walk stays off for
+  it. Then measure: the angle with SA on vs off and BLA on vs off (Decomposition was gated off for
+  "~15% of pixels change with SA", `main.rs:3114-3121`; BLA was never measured). Inside a valid
+  skip a bit can flip only where the reference passes within the BLA tolerance of the real axis
+  (derived), so BLA may be safe.
+- **Tests**: B1 A/Bs for Decomposition with BLA on, at 1e30× and 1e60×, three families.
+- **Done when**: a measured verdict on BLA and SA for angle colorings, recorded here.
+
+---
+
+## 5. Phase C: color-pass methods
+
+All need B4 for persistence; their data already exists. Each: shader branch or `ColorU` fields,
+UI rows, `.fdn`/farm/CLI through B4, B1 cells, a selftest appearance check, uitest screen.
+
+| Id | Method | Notes | Size |
+|---|---|---|---|
+| C1 | Interior color for every palette | `interior_col` exists in `ColorU`; Binary/Duotone already have a picker (`ui/panels.rs:313-330`) | S |
+| C2 | Transfer functions, wrap modes, banding step | sqrt, cbrt, fourth root, square, log, log-log, atan; repeat, clamp, mirror; step count. Match KF/Mandel Machine names. Live normalization and fit range must apply before the transfer | M |
+| C3 | DE darkening, DE transfer curves, edge anti-aliasing | Chéritat's blend `t = d/(thickness·px)`; needs A9 for pixel units | M |
+| C4 | Smooth outside, trap inside | under the trap method color escaped pixels by μ; interior palette from B5; prototype worked | S |
+| C5 | Lighting: specular, light color, strength, DE-scaled steepness | Relief is already the elevation; add Blinn-Phong on the stored normal with a steepness from the DE | M |
+| C6 | Histogram and rank-order coloring with a held CDF | the live fine histogram exists (`wgsl:994-999`); the offline `--normalize` path and tours still use min/max | M |
+| C7 | OKLab blending | `tags.rs` has only sRGB→OKLab (362-381): add the inverse; a new blend-space id outside GIMP's `.ggr` set, so `.ggr` export must convert or refuse | M |
+| C8 | Palette anti-aliasing in the UI, DE-sized | exists behind `FRACTADYNE_PALETTE_AA`; prototype 2.9× less aliasing at the default density | S |
+| C9 | Rainbow fringe and DE-lightness OKLCh mapping | hue from the normal's azimuth, lightness from the DE; prior art zoomasm | S |
+| C10 | Level-of-detail equipotential grid | equipotentials only (rays wait for D1); width from \|∇μ\| = 1/(d·ln p); needs A9; prototype held 1.1–1.5 px at eight depths | M |
+| C11 | Linked dual-view palettes | the Julia count at z = c is the Mandelbrot count minus 1: a +1 offset and a shared normalization window | S |
+
+Order: C1, C4, C8, C9, C11 (smallest), then C2, C3, C10, then C5, C6, C7.
+
+**Tests specific to this phase**: CPU oracles for C2 transfers and C7 OKLab round trip
+(sRGB → OKLab → sRGB within 1e-5); C3 and C10 line widths measured as 2·area/perimeter in B1 at
+ss 1 and 2; C6 temporal stability over a zoom tour (frame-to-frame palette shift).
+
+---
+
+## 6. Phases D to G
+
+### D. Escape-data methods (tier 2)
+
+| Id | Method | Needs | Size |
+|---|---|---|---|
+| D1 | Angle colorings for every method: phase strength (KF), one-step hard binary decomposition, rays for the C10 grid, distance + dwell + decomposition | B8 verdict; hard decomposition today is reachable only with Cycle 0.125, Offset 0 and a two-color "Hard bands" gradient (derived, not run) | M |
+| D2 | Exact iteration count past 8.4M | store N and the fraction separately in `main` as the zoom-video strips already do (`strip.wgsl:66-75`); the f32 count loses its fraction at 2^23 | M |
+| D3 | Interior period tint, optionally trap-shaded | the exact-repeat check's cycle length into the free interior lanes of `main`; direct and df32 loops only; a Newton pass for deep perturbed interiors later | M |
+
+### E. Statistic combinations (tier 1 after B3)
+
+| Id | Combination | Notes | Size |
+|---|---|---|---|
+| E1 | Statistic-warped bands | position = rate·μ + offset + λ·(s − center); center fixed at first (no stripe/TIA histogram exists) | S |
+| E2 | Statistic near filaments | weight exp(−d_px/k); needs A9 | S |
+| E3 | Two-layer blend | statistic over smooth with multiply, screen, overlay, hard light and soft light; second LUT from B5 | M |
+| E4 | Statistic bump map | screen-space differences of the statistic (analytic gradients measured as noise), reusing the palette-AA neighbor fetch and the relief low-pass | M |
+| E5 | Specular strength from a statistic | after C5 | S |
+
+Every E step shows "slower at depth" in the picker: it needs the statistic, so it pays the aux
+restrictions under Smooth.
+
+### F. New per-iteration statistics (tier 3)
+
+| Id | Statistic | Notes | Size |
+|---|---|---|---|
+| F1 | Exponential smoothing for Newton and convergent formulas | direct loop only, no BLA; can borrow an unused aux lane under Newton | S |
+| F2 | Second aux target and a fifth BLA vec4 | all four aux lanes and the node's fourth vec4 are full; touches the seed pass (`wgsl:3668-3681`), the color binding (3649), the G-buffer, strips, bytes per sample, `reference.rs` node stride and `bla_fold.rs` | L |
+| F3 | Curvature average | after F2; BLA aggregate like TIA's | M |
+| F4 | Parametric traps, new shapes, tail window | center, rotation, scale; line, ring with radius, stalks; tail window (Fractal Zoomer and Fracturing Fog have one); lanes rebuilt per slider change | M |
+| F5 | Atom domains and a gated period tint for the exterior | record minimum index and z_p; the hard tint failed on seams, so only the near-filament version | L |
+| F6 | Pixel-width traps | save \|dz/dc\| at the trap's best iteration; no derivative inside BLA skips | M |
+
+Every F step is a new GPU regime: rule 11 (capped first run, PLUTO first).
+
+### G. Research methods (tier 4, unproven)
+
+| Id | Method | Notes |
+|---|---|---|
+| G1 | Interior DE and two-sided glow | read the TODO.md entry first: the math worked and was reverted because the chunked direct render stopped being bit-identical; carry c through the chunk→resolve handoff before re-applying. Also fix the glow's mixed-tap DE average |
+| G2 | Interior coordinates (multiplier rings and rays), Lyapunov interior | after G1's period and cycle machinery |
+| G3 | Second-derivative shading | under BLA z'' needs A·z'' + C·z'² + E·z' + F, three more coefficients per node (derived, checked numerically) |
+| G4 | DE for fold families | Jacobian (2×2) derivatives, as KF did in 2.13.2 |
+| G5 | Mandelbrot + Julia ideas | Tan Lei texture transfer (median defect 0.01–0.06 iterations, about 10% of pixels off by more than one), derivative-ratio deviation, post-critical trap for the Julia view |
+| G6 | Multi-degree ideas | auto light angle at arg σ + 180°, crossing-point navigator, degree channels |
+| G7 | Texture effects | supersample variance, LIC, thin film, material shading, zoom-anchored phase, rebase-event sampling |
+| G8 | User-scriptable coloring | a WGSL snippet over the G-buffer; shares the custom-formula codegen |
+
+Each G item starts with a prototype on the B1 view set and a written verdict before any shader
+work. The period-locked palette is not listed: its prototype failed.
+
+---
+
+## 7. Testing in detail
+
+### 7.1 Layers
+
+| Layer | What | Where |
+|---|---|---|
+| CPU oracles | transfers, OKLab, blend weights, LOD level choice, line-width math, period detection | `crates/*/tests/unit/` |
+| Layout | every `ColorU`, `IterUniforms` and BLA node change | `gpu/tests/unit/uniform_layout_tests.rs` |
+| Selftest | per method: coherent, differs from Smooth, BLA and SA A/B where claimed, determinism, `.fdn` round trip; one golden per method at 1e6× once stable | `harness/selftest.rs`, new tags in `GROUPS` |
+| Coloring matrix | families × depth bands × methods: pictures, A/Bs, timings | `--coloring-matrix` (B1) |
+| Live | a method tour through the bands; motion and settle with each method | `--livetest tours/coloring-methods.toml` |
+| UI | picker, preview sheet, disabled states, `en-XA` | `--uitest` |
+| Second machine | the matrix and the live tour on the RTX 3070 and RX 6800 XT | field agent |
+
+### 7.2 Performance budget
+
+Per method and band, from B1 (iterate ms relative to Smooth on the same view):
+
+- color-pass methods (C, E without a new statistic): iterate time unchanged; color-pass time
+  under 2 ms at 1080p on the RTX 3080;
+- methods that need the aux statistic: report the ratio in every band; the picker's "slower at
+  depth" badge comes from these numbers, not from guesses;
+- a regression above +35% (and 1 ms) against the card's own baseline is a warning to investigate
+  with an interleaved A/B, not a fail.
+
+### 7.3 Looking at results
+
+Every step that changes a picture ends with its contact sheet looked at, at 1:1, before merge;
+the step's PR description names the sheet and what was checked. Metrics catch regressions; they
+do not prove a picture is right.
+
+---
+
+## 8. The accumulate mask: every switch
+
+| Switch | Location | Today | With the mask |
+|---|---|---|---|
+| `method_needs_aux` | `gpu/src/lib.rs:3448-3454` | method ∈ {1,2,3,5} | two predicates: accumulates (mask ≠ 0) and display reads aux |
+| `aux_on_word` | `gpu/src/lib.rs:3440-3446`; `wgsl:863-866` | bit 0 aux, bit 1 tail, bits 2.. length | bit 0 from the mask; tail gated on the stripe bit (`wgsl:1357-1359`); mask the shift at 1361 |
+| `IterUniforms.color_method` | `gpu/src/lib.rs:69`; `wgsl:860` | read at 1012, 1358, 1381 | becomes the mask; setters `lib.rs:3969-3976`, `export.rs:1789-1796` and the three aux-off paths (`export.rs:2728-2731, 3288-3291, 3581-3584`) |
+| `aux_step` / `aux_pack` | `wgsl:1374-1436`; `gpu/src/custom.rs:1097-1110` | selected statistic only | per bit |
+| `IterKey` | `gpu/src/lib.rs:422-457` | method, stripe freq, trap type | mask plus enabled parameters (plus A4's tail fields) |
+| `settings_hash` | `render.rs:8585-8621`; walk signature `render/decide.rs:1956-1977` | method and parameters | mask plus enabled parameters |
+| `bla_eligible` / `aux_bla_ok` | `render.rs:3683-3701` | method ∈ {1,2,3} | per-bit fold table |
+| SA (`do_sa`) | `render.rs:3177-3181, 3452-3456, 3873-3878, 9286-9292` | `!blocks_iter_skip` | from the mask |
+| Aux staleness | `render.rs:9939-9988`; `live_ref_fields` 3644-3653 | method 1 + freq, method 3 + trap | stripe bit + freq, trap bit + trap |
+| Chunked walk | `render/frame_plan.rs:396-399`; `build_params` 8582-8584, 8757-8760 | `!needs_aux` | mask = 0 (or angle-only after B8) |
+| Band BLA | `render.rs:6752-6762` | `!needs_aux` | from the mask |
+| Corrector, normalized export | `render.rs:4858, 4967` | refuse aux methods | refuse mask ≠ 0 |
+| Renormalized step | `wgsl:1077-1080` | off when aux | off when mask ≠ 0 |
+| Trap histogram / fit | `wgsl:1011-1017`; `render.rs:2202-2212, 2279-2287` | method 3 | trap bit and display = trap |
+| Multi-GPU twin | `motion_worker.rs:312` | `method_needs_aux` | accumulates predicate |
+| Strips and assembler | `assemble.rs:735-739`; `gpu/src/assemble.rs:60-89` | refuse aux | display predicate |
+| Reference cache | `main.rs:5728-5735`; `render.rs:434-441, 10279-10287, 9120` | stripe freq and trap type always compared | only enabled bits |
+| Accumulation signature | `main.rs:16163-16219` | method and parameters | add the mask |
+
+---
+
+## 9. UI design
+
+### 9.1 Choosing a method
+
+The Coloring section keeps its place (`ui/panels.rs:166-407`). Top to bottom:
+
+1. **Method**: a combo whose list is grouped under small headings (`menu_section` style):
+   - Escape count: Smooth (default), and with C2 the transfer appears as a setting, not a method;
+   - Distance: Distance estimate, Rainbow fringe (C9);
+   - Orbit statistics: Stripe average, Triangle inequality, Curvature (F3), Orbit trap;
+   - Angle: Decomposition, Phase (D1);
+   - Layers (E): Warped bands, Statistic near filaments, Two-layer blend.
+   Each item has a one-line tooltip: what it shows, then its cost from the B4 table, for example
+   "Recolors instantly", "Re-renders the view", "Slower past 1e4× (no series approximation)".
+   Disabled items say why ("Needs a derivative; Burning Ship has none").
+2. **Method settings**: only the chosen method's rows (stripe density and tail, trap shape and its
+   parameters, layer weight).
+3. **Inside** (B5): a small combo, Solid color (picker), Trap, Period (D3), later Distance (G1),
+   with the interior palette below it when it is not solid.
+4. **Palette** and its rows, unchanged.
+5. **Preview methods…** button with the `GALLERY` icon, beside the method combo; also Color ▸
+   Preview methods… in the menu.
+
+The Effects section gains specular and light color (C5), DE darkening (C3) and the grid (C10).
+
+### 9.2 The method preview sheet
+
+- An `egui::Window` with id `fractadyne.method-preview`, laid out like the palette browser: a grid
+  of cells, each the current view (view 0) in one method, labeled with the method name and a cost
+  badge; a row per group; the current method outlined.
+- Cells that recolor from the G-buffer appear at once. Cells that must re-render show a progress
+  spinner and fill in one per frame; at depth, a cell whose estimate exceeds a budget (for
+  example 2 s) shows the estimate and a Render button instead.
+- Hover previews the method on the main view after 0.3 s (the palette preview rules); moving off
+  restores; click applies and keeps the sheet open; Close closes.
+- Parameter variants appear as extra cells where they matter: the three trap shapes, stripe
+  density 3 and 6.
+- Invalidation: the view's writes, `accum_color_sig`, the mask. While the user zooms or pans, the
+  sheet pauses re-renders and redraws recolor cells at most every 400 ms, like the palette atlas
+  (`REDRAW_PACE`).
+- Dual view: the sheet previews view 0; a later option can switch it to the Julia panel.
+
+### 9.3 Consistency
+
+- Every method has a key, a label, a tooltip, a capability row and a selftest tag; adding a method
+  without all five fails a unit test that walks `ColorMethod::ALL`.
+- Labels fit the 104 px label column (`ui/panels.rs:5-32`); check in `en-XA`.
+
+---
+
+## 10. Status
+
+| Step | State | Commit |
+|---|---|---|
+| A1–A9 | not started | |
+| B1–B8 | not started | |
+| C1–C11 | not started | |
+| D, E, F, G | not started | |
