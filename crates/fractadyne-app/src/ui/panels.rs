@@ -164,17 +164,37 @@ impl FractadyneApp {
 
                 });
                 egui::CollapsingHeader::new(tr!(panel_section_coloring)).id_salt("fractadyne.panel.coloring").default_open(true).show(ui, |ui| {
+                // ⭐A family without a derivative has no distance estimate
+                // (`FormulaCaps::distance_estimate`), so Distance would color the whole view one
+                // color: it is grayed out with the reason. A session that already holds it keeps it
+                // and says why under the box, rather than switching the method on its own.
+                let has_de = self.fractal.caps().distance_estimate;
+                let no_de = tr!(coloring_needs_derivative, family = self.fractal.display_name());
                 labelled(ui, &tr!(panel_method), |ui| {
                     egui::ComboBox::from_id_salt("panel_method")
                         .selected_text(self.coloring.color_method.label())
                         .show_ui(ui, |ui| {
                             for m in ColorMethod::ALL {
-                                ui.selectable_value(&mut self.coloring.color_method, m, m.label());
+                                let r = ui.add_enabled(
+                                    has_de || !m.needs_distance_estimate(),
+                                    egui::SelectableLabel::new(self.coloring.color_method == m, m.label()),
+                                );
+                                if r.clicked() {
+                                    self.coloring.color_method = m;
+                                }
+                                r.on_disabled_hover_text(&no_de);
                             }
                         })
                         .response
                         .on_hover_text(tr!(panel_method_hover));
                 });
+                if !has_de && self.coloring.color_method.needs_distance_estimate() {
+                    ui.label(
+                        egui::RichText::new(tr!(panel_method_no_derivative, family = self.fractal.display_name()))
+                            .small()
+                            .color(ui.visuals().warn_fg_color),
+                    );
+                }
                 if self.coloring.color_method == ColorMethod::Stripe {
                     labelled(ui, &tr!(panel_stripe_density), |ui| {
                         ui.add(
@@ -474,10 +494,28 @@ impl FractadyneApp {
                 });
 
                 });
-                egui::CollapsingHeader::new(tr!(panel_section_effects)).id_salt("fractadyne.panel.effects").default_open(false).show(ui, |ui| {
-                ui.checkbox(&mut self.effects.light, tr!(panel_relief_lighting))
-                    .on_hover_text(tr!(panel_relief_lighting_hover));
-                ui.add_enabled_ui(self.effects.light, |ui| {
+                egui::CollapsingHeader::new(tr!(panel_section_effects))
+                    .id_salt("fractadyne.panel.effects")
+                    .default_open(false)
+                    .open(self.dialogs.uitest_effects_open)
+                    .show(ui, |ui| {
+                // ⭐Relief lighting and the glow read the distance estimate's slope and value, which
+                // a family without a derivative does not have: both are grayed out there with the
+                // reason. A switch already on stays on (it comes back with a family that has one),
+                // and the note says it does nothing here.
+                let has_de = self.fractal.caps().distance_estimate;
+                let no_de = tr!(coloring_needs_derivative, family = self.fractal.display_name());
+                if !has_de && (self.effects.light || self.effects.de) {
+                    ui.label(
+                        egui::RichText::new(tr!(panel_effects_no_derivative, family = self.fractal.display_name()))
+                            .small()
+                            .color(ui.visuals().warn_fg_color),
+                    );
+                }
+                ui.add_enabled(has_de, egui::Checkbox::new(&mut self.effects.light, tr!(panel_relief_lighting)))
+                    .on_hover_text(tr!(panel_relief_lighting_hover))
+                    .on_disabled_hover_text(&no_de);
+                ui.add_enabled_ui(has_de && self.effects.light, |ui| {
                     labelled(ui, &tr!(panel_light_angle), |ui| {
                         ui.add(
                             egui::Slider::new(&mut self.effects.light_angle, 0.0..=std::f32::consts::TAU)
@@ -494,9 +532,10 @@ impl FractadyneApp {
                     ui.checkbox(&mut self.effects.light_anim, tr!(panel_rotate_light))
                         .on_hover_text(tr!(panel_rotate_light_hover));
                 });
-                ui.checkbox(&mut self.effects.de, tr!(panel_distance_glow))
-                    .on_hover_text(tr!(panel_distance_glow_hover));
-                ui.add_enabled_ui(self.effects.de, |ui| {
+                ui.add_enabled(has_de, egui::Checkbox::new(&mut self.effects.de, tr!(panel_distance_glow)))
+                    .on_hover_text(tr!(panel_distance_glow_hover))
+                    .on_disabled_hover_text(&no_de);
+                ui.add_enabled_ui(has_de && self.effects.de, |ui| {
                     labelled(ui, &tr!(panel_glow), |ui| {
                         ui.add(egui::Slider::new(&mut self.effects.de_strength, crate::slider_range::GLOW_STRENGTH))
                     });

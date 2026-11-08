@@ -59,6 +59,14 @@ published as the pre-releases `v0.2.41-beta.1` to `v0.2.41-beta.150`, and a "bet
 
 Changes after 0.3.0-beta.1:
 
+- **Distance, relief lighting and glow are grayed out where they cannot work (0.3.0-beta.27).**
+  They read the distance estimate, which only Mandelbrot, Multibrot 3–8 and Phoenix have. On
+  Burning Ship, Tricorn, Celtic, Buffalo, Newton or a custom formula, Distance colored the whole
+  view one color and relief and glow changed nothing, with no word why. Now Distance is grayed out
+  in the method list (panel and Color menu) and relief and glow in Effects, each with a tooltip
+  saying why. A setting already on stays on, with a note saying it does nothing on this fractal,
+  and comes back into play when you switch to one that has a distance estimate. On the command
+  line, `--method distance`, `--light` and `--de` say so for such a fractal.
 - **A saved view keeps its coloring method and effects (0.3.0-beta.27).** A `.fdn` file, a
   bookmark, a Share location and the view inside an exported image now carry the coloring
   method with its settings (stripe density and tail, trap shape), relief lighting, the distance

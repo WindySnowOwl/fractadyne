@@ -209,6 +209,12 @@ pub mod formula {
         pub export_glitch_correction: bool,
         /// Convergent (root finding) rather than escape time: the orbit starts at the point.
         pub convergent: bool,
+        /// The shader tracks the derivative (dz/dc, or dz/dz0 for a Julia set), so a pixel has a
+        /// distance estimate and its slope: what Distance coloring, relief lighting and the glow
+        /// read. Mandelbrot, Multibrot 3–8 and Phoenix. Every other family writes "no distance"
+        /// (1e30) in its place, so Distance colors the whole view one color and relief and glow
+        /// change nothing. Pinned to the shader's own test by `fractadyne-gpu`'s `de_gate_tests`.
+        pub distance_estimate: bool,
     }
 
     /// The built-in families' capabilities. An unknown id gets none of them, and glitch correction
@@ -236,6 +242,7 @@ pub mod formula {
             feature_solvers: formula == MANDELBROT,
             export_glitch_correction: !polynomial && formula != CUSTOM && formula != LIFE && formula != LSYSTEM,
             convergent: formula == NEWTON,
+            distance_estimate: polynomial || formula == PHOENIX,
         }
     }
 }

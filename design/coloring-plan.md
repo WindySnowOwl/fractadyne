@@ -1,6 +1,6 @@
 # Coloring methods: implementation plan
 
-Status: **plan (2026-11-08); A9, A6, A2, A4, A8 and A1 done, see §10.** Line references are to `main` at `9ab75357`; check
+Status: **plan (2026-11-08); A9, A6, A2, A4, A8, A1 and A3 done, see §10.** Line references are to `main` at `9ab75357`; check
 them before editing, they drift. The research behind it (methods, prototypes, measured results,
 prior art) is the coloring-methods doc; its local copy is
 `local/research_notes/Fractal coloring methods/` (PDF, HTML, Markdown, prototype scripts).
@@ -307,6 +307,19 @@ other.
   the shader's list (`wgsl:1655`).
 - **Traps**: Newton stores 1e30 in the DE lane (`wgsl:1641-1647`); custom modules hard-code
   `de = 1.0e30` (`gpu/src/custom.rs:999`).
+- **Done 2026-11-08** (branch `feat/color-a3-derivative-gate`): the helper is a capability,
+  `FormulaCaps::distance_estimate` (Mandelbrot, Multibrot 3–8, Phoenix), so every caller asks it
+  as for the other capabilities; `ColorMethod::needs_distance_estimate` names the methods that read
+  it (Distance). Measured first, at Burning Ship ×30: Distance renders 3 colors (all black), relief
+  and glow change no pixel (meanΔ 0.0); Phoenix with Distance renders 10,536 colors. Panel and Color
+  menu gray out Distance, Effects grays out relief and glow, each with the reason as its disabled
+  tooltip; a setting already on stays on, with a note under the Method box or at the top of Effects.
+  `--method distance`, `--light`, `--de` warn on such a family. The relief and glow tooltips now
+  name Phoenix too. Tests: `fractadyne-gpu` `de_gate_tests` reads the shader's three distance
+  writes and `fam_holo`, and checks the capability for every id (red with Phoenix dropped); the
+  core caps test; uitest screen `no-derivative` (Burning Ship, Distance, relief and glow on,
+  Effects held open by `Dialogs::uitest_effects_open`), whose check holds the canvas to one color
+  as the note says, looked at in English and en-XA.
 
 ### A4. The stripe-tail iterate key
 
@@ -843,8 +856,9 @@ coloring in these places, so sequence the two with care:
 | A2 | done, merged | `3e5aa578` (merge `2a14e005`) |
 | A4 | done, merged | `475e2190` (merge `b9812c74`) |
 | A8 | done, merged | `095a7131` (merge `1db50a24`) |
-| A1 | done, branch `feat/color-a1-view-coloring` | |
-| A3, A5, A7, A10 | not started | |
+| A1 | done, merged | `c15bd9c7` (merge `aa5b22e7`) |
+| A3 | done, branch `feat/color-a3-derivative-gate` | |
+| A5, A7, A10 | not started | |
 | B1–B8 | not started | |
 | C1–C11 | not started | |
 | D, E, F, G | not started | |

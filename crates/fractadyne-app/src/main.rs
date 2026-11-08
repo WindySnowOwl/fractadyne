@@ -3102,6 +3102,12 @@ impl ColorMethod {
             ColorMethod::Stripe | ColorMethod::TriangleIneq | ColorMethod::OrbitTrap | ColorMethod::Decomposition
         )
     }
+    /// Methods that read the distance estimate, which only a family with a derivative has
+    /// (`FormulaCaps::distance_estimate`): elsewhere they color the whole view one color, so the
+    /// panel and the Color menu gray them out there.
+    pub(crate) fn needs_distance_estimate(self) -> bool {
+        self == ColorMethod::Distance
+    }
     /// Methods whose colored value lies in 0..1 (stripe / triangle-ineq / decomposition), which take
     /// a few palette cycles across that range rather than the per-unit rate of the unbounded ones
     /// (iteration count, orbit trap, distance). See `color_cycle`.
@@ -6527,6 +6533,9 @@ struct DialogState {
     /// the walk leaves that screen — egui remembers a section's state, and the open section stood
     /// in every later screenshot. `None` outside the walk.
     uitest_advanced_open: Option<bool>,
+    /// `--uitest` only: holds the panel's Effects section open (`Some(true)`, the `no-derivative`
+    /// screen), and closes it once as the walk leaves (`Some(false)`), as `uitest_advanced_open`.
+    uitest_effects_open: Option<bool>,
     /// Minimap overview enabled (persisted).
     minimap: bool,
     /// "Script to current view" export dialog open, plus its inputs (a notation caption and the
@@ -7764,6 +7773,7 @@ impl FractadyneApp {
                 backend_notice_suppress: s.mpfr_warning_suppressed,
                 right_panel_open: s.right_panel_open,
                 uitest_advanced_open: None,
+                uitest_effects_open: None,
                 minimap: s.minimap,
                 script_export_open: false,
                 script_export_note: String::new(),
@@ -8563,6 +8573,23 @@ impl FractadyneApp {
                 crate::exit(2)
             }
             self.coloring.trap_type = picked;
+        }
+        // A family without a derivative has no distance estimate (`FormulaCaps::distance_estimate`):
+        // Distance colors its whole picture one color, and relief lighting and the glow change no
+        // pixel. Said, as every supplied option that changes nothing is; the render still runs.
+        if !self.fractal.caps().distance_estimate {
+            let why = format!(
+                "{} has no distance estimate (only Mandelbrot, Multibrot 3-8 and Phoenix do)",
+                self.fractal.name()
+            );
+            if val("--method").is_some() && self.coloring.color_method.needs_distance_estimate() {
+                eprintln!("fractadyne: --method distance: {why}, so the picture is one color.");
+            }
+            for flag in ["--light", "--de"] {
+                if args.iter().any(|a| a == flag) {
+                    eprintln!("fractadyne: {flag} has no effect: {why}.");
+                }
+            }
         }
         // `--iter-div N` ("Divide iterations"): fatal when unreadable or out of range, as every
         // option that steers a render is. After `--method`, so it can say when the method in force

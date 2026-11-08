@@ -1397,7 +1397,7 @@ help-method-distance-text = Shades by nearness to the boundary.
 help-method-decomposition = Decomposition
 help-method-decomposition-text = Cells from the final escape angle.
 help-options-relief = 3D relief lighting
-help-options-relief-text = Shades the surface from the boundary's slope (the derivative) for an embossed, lit look. Light angle sets the direction; Relief sets strength (lower = sharper); "Rotate light" animates it. Holomorphic families only (Mandelbrot / Multibrot).
+help-options-relief-text = Shades the surface from the boundary's slope (the derivative) for an embossed, lit look. Light angle sets the direction; Relief sets strength (lower = sharper); "Rotate light" animates it. Mandelbrot, Multibrot and Phoenix only: the other families keep no derivative.
 help-options-glow = Distance glow
 help-options-glow-text = Bright contour bands that densify into glowing filaments near the boundary. Glow is the blend amount, Band width the spacing, and "Animate glow" flows them.
 help-options-quality = Quality & iterations
@@ -2859,6 +2859,12 @@ panel-click-zoom-snap-hover = After the jump, solve for the nearest minibrot nuc
 
 panel-method = Method
 panel-method-hover = How escape data maps to color. Stripe / triangle-inequality / orbit-trap / decomposition reveal orbit structure; distance shades by proximity to the boundary.
+# Hover text on Distance estimate in the method list, and on 3D relief lighting and Distance glow, when they are grayed out because the fractal keeps no derivative. $family = the fractal's name, such as Burning Ship.
+coloring-needs-derivative = { $family } has no distance estimate: only Mandelbrot, Multibrot 3–8 and Phoenix track the derivative it comes from.
+# Under the Method box when Distance estimate is chosen for a fractal without one (the method stays chosen). $family = the fractal's name.
+panel-method-no-derivative = { $family } has no distance estimate, so this method colors the whole view one color. Choose another method.
+# At the top of Effects when relief lighting or the glow is on for a fractal without a distance estimate (they stay on). $family = the fractal's name.
+panel-effects-no-derivative = { $family } has no distance estimate, so relief lighting and the glow change nothing here.
 panel-stripe-density = Stripe density
 panel-stripe-tail = Tail only (deep zoom)
 panel-stripe-tail-hover = Average the stripe term over the last N iterations of each orbit (an exponential window) instead of the whole orbit. At extreme depth every orbit shadows the reference for all but its last few hundred iterations, so the full-orbit average is one color for the whole view; the tail keeps the contrast. Orbits shorter than the window are unaffected. Also --stripe-tail N for --render.
@@ -2932,14 +2938,14 @@ panel-anti-alias-hover = Supersampling for still images (applied when the view s
 ## The control panel: Effects
 
 panel-relief-lighting = 3D relief lighting
-panel-relief-lighting-hover = Shade the surface using the distance-estimate slope — an embossed, lit look. (Holomorphic families: Mandelbrot / Multibrot.)
+panel-relief-lighting-hover = Shade the surface using the distance-estimate slope — an embossed, lit look. (Mandelbrot, Multibrot and Phoenix.)
 panel-light-angle = Light angle
 panel-relief = Relief
 panel-relief-hover = Lower = sharper relief; higher = softer/flatter.
 panel-rotate-light = Rotate light
 panel-rotate-light-hover = Spin the light direction over time (uses the Speed slider).
 panel-distance-glow = Distance glow
-panel-distance-glow-hover = Bright distance-estimate contour bands that densify into glowing filaments near the boundary. (Holomorphic families.)
+panel-distance-glow-hover = Bright distance-estimate contour bands that densify into glowing filaments near the boundary. (Mandelbrot, Multibrot and Phoenix.)
 panel-glow = Glow
 panel-band-width = Band width
 panel-band-width-hover = Spacing of the distance contours (octaves per band).
