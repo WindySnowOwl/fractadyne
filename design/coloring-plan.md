@@ -1,6 +1,6 @@
 # Coloring methods: implementation plan
 
-Status: **plan (2026-11-08); A9 and A6 done, see §10.** Line references are to `main` at `9ab75357`; check
+Status: **plan (2026-11-08); A9, A6 and A2 done, see §10.** Line references are to `main` at `9ab75357`; check
 them before editing, they drift. The research behind it (methods, prototypes, measured results,
 prior art) is the coloring-methods doc; its local copy is
 `local/research_notes/Fractal coloring methods/` (PDF, HTML, Markdown, prototype scripts).
@@ -269,6 +269,9 @@ other.
     `GROUPS` (parse the source, like the layout check).
   - `design/multilingual.md` §9 still says eight languages; there are 15.
 - **Done when**: the new GROUPS test fails if a tag is removed from the list.
+- **Done 2026-11-08** (branch `fix/color-a2-small-corrections`, stacked on A6): all five. `GROUPS`
+  moved to module level beside `OPT_IN_GROUPS`; `every_want_group_is_listed` (in
+  `opt_in_tests.rs`) reads the source's `want("…")` calls both ways, like the opt-in check.
 
 ### A3. Hide what a formula cannot do
 
@@ -799,8 +802,9 @@ coloring in these places, so sequence the two with care:
 | Step | State | Commit |
 |---|---|---|
 | A9 | done, merged | `33c6527e` (merge `3d202f30`) |
-| A6 | done, branch `feat/color-a6-cli-flags` | |
-| A1–A5, A7, A8, A10 | not started | |
+| A6 | done, branch `feat/color-a6-cli-flags` | `2c898852` |
+| A2 | done, branch `fix/color-a2-small-corrections` | |
+| A1, A3–A5, A7, A8, A10 | not started | |
 | B1–B8 | not started | |
 | C1–C11 | not started | |
 | D, E, F, G | not started | |

@@ -26,6 +26,36 @@ fn every_opt_in_group_is_registered() {
     }
 }
 
+/// The names this file passes to `want("…")`, read from its own source.
+fn want_calls() -> Vec<String> {
+    let src = include_str!(concat!(env!("CARGO_MANIFEST_DIR"), "/src/harness/selftest.rs"));
+    let needle = ["want", "(\""].concat();
+    src.match_indices(needle.as_str())
+        // `want(`, not the end of a longer name.
+        .filter(|(i, _)| !src[..*i].ends_with(|c: char| c.is_ascii_alphanumeric() || c == '_'))
+        .filter_map(|(i, _)| {
+            let rest = &src[i + needle.len()..];
+            let name: String = rest.chars().take_while(|c| c.is_ascii_alphanumeric() || *c == '-' || *c == '_').collect();
+            (!name.is_empty() && rest[name.len()..].starts_with('"')).then_some(name)
+        })
+        .collect()
+}
+
+/// ⭐`--selftest-list` is how a group is found to run on its own, so every `want` tag must be in
+/// `GROUPS` and every entry must run something. Eight tags (colour-box, cycle-check, …) were
+/// missing from the list until 2026-11-08.
+#[test]
+fn every_want_group_is_listed() {
+    let calls = want_calls();
+    assert!(calls.len() >= 40, "the source scan found {} want calls: it is not reading them", calls.len());
+    for c in &calls {
+        assert!(GROUPS.contains(&c.as_str()), "want(\"{c}\") is not in GROUPS: --selftest-list does not show it");
+    }
+    for g in GROUPS {
+        assert!(calls.iter().any(|c| c == g), "GROUPS names {g}, which no want call runs");
+    }
+}
+
 #[test]
 fn each_card_is_judged_by_its_own_golden_set_and_blesses_its_own() {
     let g = std::env::temp_dir().join(format!("fd-golden-sets-{}", std::process::id()));

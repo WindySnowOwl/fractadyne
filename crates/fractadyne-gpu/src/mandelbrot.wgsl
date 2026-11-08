@@ -947,7 +947,8 @@ struct IterU {
 @group(0) @binding(0) var<uniform> iu: IterU;
 // Reference orbit as double-single: each Z_n = (re.hi, im.hi, re.lo, im.lo). When BLA is on,
 // the BLA tree is appended right after (starting at index orbit_len): 4 vec4 per node —
-// [A mantissa], [B mantissa], [a_exp, b_exp, r_exp, r_mant], [span, -, -, -].
+// [A mantissa], [B mantissa], [a_exp, b_exp, r_exp, r_mant], [span, trap_min, ΣTIA, Σstripe]
+// (the aux aggregates over the node's span; see `reference.rs`).
 @group(0) @binding(1) var<storage, read> reference: array<vec4<f32>>;
 // Event counters (diagnostics D3.3): per-fragment tallies are kept in registers and
 // committed as one atomicAdd per nonzero slot at fragment end - a few atomics per pixel,
