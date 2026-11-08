@@ -245,6 +245,12 @@ enum Screen {
     StripeTailToggle,
     StripeTailAway,
     StripeTailOn,
+    /// Coloring plan A3: Burning Ship, which keeps no derivative, with Distance chosen and relief
+    /// lighting and the glow on, the Effects section open. The panel grays out relief and glow
+    /// (and Distance in the method list), and says under the Method box and at the top of Effects
+    /// that they do nothing here. The view is one color, as the note says, and the step holds it to
+    /// that.
+    NoDerivative,
 }
 
 /// The stripe-tail steps' view (the seahorse valley at 2e3x, direct), and how far they pan away
@@ -1012,6 +1018,7 @@ fn build_steps() -> Vec<Step> {
         screen("stripe-tail-toggle", Screen::StripeTailToggle),
         screen("stripe-tail-away", Screen::StripeTailAway),
         screen("stripe-tail-on", Screen::StripeTailOn),
+        screen("no-derivative", Screen::NoDerivative),
     ]
 }
 
@@ -1377,6 +1384,15 @@ impl FractadyneApp {
         if self.dialogs.uitest_advanced_open.is_some() {
             self.dialogs.uitest_advanced_open = Some(false); // closed on the panel's next draw
         }
+        // The no-derivative screen's Effects section and the coloring it set, ONCE as the walk
+        // leaves it: a later step pair carries its coloring from one step to the next.
+        if self.dialogs.uitest_effects_open == Some(true) {
+            self.dialogs.uitest_effects_open = Some(false);
+            self.coloring.color_method = crate::ColorMethod::Smooth;
+            self.effects.light = false;
+            self.effects.de = false;
+            self.set_fractal(crate::FractalKind::Mandelbrot);
+        }
         self.render_cfg.worker_gpu.clear();
         self.worker_state = crate::gpu_worker::WorkerState::Off;
         self.worker_cards = None;
@@ -1707,6 +1723,15 @@ impl FractadyneApp {
             Screen::StripeTailToggle => self.coloring.stripe_tail = true,
             Screen::StripeTailAway => self.viewport.pan_complex(STRIPE_TAIL_PAN, 0.0),
             Screen::StripeTailOn => self.viewport.pan_complex(-STRIPE_TAIL_PAN, 0.0),
+            Screen::NoDerivative => {
+                self.dialogs.right_panel_open = true;
+                self.set_show_mode(crate::ShowMode::Set);
+                self.set_fractal(crate::FractalKind::BurningShip);
+                self.coloring.color_method = crate::ColorMethod::Distance;
+                self.effects.light = true;
+                self.effects.de = true;
+                self.dialogs.uitest_effects_open = Some(true);
+            }
             Screen::PaletteEditor => {
                 self.coloring.palette_editor_open = true;
                 // ⭐⭐**Seed a real custom gradient, or this step screenshots the EMPTY STATE.**
@@ -2163,7 +2188,21 @@ impl FractadyneApp {
         let deep_ambiguous =
             matches!(&step.kind, StepKind::Live(v) if v.expect == RenderMode::Floatexp);
         let blank = luma_stddev < 3.0 && buckets <= 2;
-        if blank {
+        if matches!(step.kind, StepKind::Screen(Screen::NoDerivative)) {
+            // Flat by design: Distance on a family without a distance estimate colors the whole
+            // view one color. The note under the Method box says so, and this holds it to that,
+            // on the canvas alone (the panel stands inside the image's central 60% here).
+            let (_, sd, b) = canvas_stats(&image.pixels, w as usize, h as usize, self.central_rect_px);
+            let one_color = sd < 3.0 && b <= 2;
+            checks.push(Check {
+                name: "distance without a derivative is one color".into(),
+                verdict: if one_color { Verdict::Pass } else { Verdict::Fail },
+                detail: format!(
+                    "canvas stddev {sd:.1}, {b} luma buckets{}",
+                    if one_color { "" } else { ": the panel's note says one color, and the view is not" }
+                ),
+            });
+        } else if blank {
             checks.push(Check {
                 name: "frame not blank".into(),
                 verdict: if is_live && !deep_ambiguous { Verdict::Fail } else { Verdict::Warn },
@@ -3245,11 +3284,32 @@ fn text_layout_checks(screen: egui::Rect, items: &[crate::harness::text_layout::
 /// blank fractal isn't masked by a populated frame border. Returns (mean, stddev, non-empty
 /// buckets out of 32).
 fn centre_stats(pixels: &[egui::Color32], w: usize, h: usize) -> (f64, f64, usize) {
+    let (x0, x1) = ((w as f64 * 0.2) as usize, (w as f64 * 0.8) as usize);
+    let (y0, y1) = ((h as f64 * 0.2) as usize, (h as f64 * 0.8) as usize);
+    region_stats(pixels, w, h, x0..x1, y0..y1)
+}
+
+/// [`centre_stats`] over the middle 60% of the canvas (`central_rect_px`, physical pixels), for a
+/// step that judges the fractal alone: at a narrow window the image's own central 60% reaches into
+/// the control panel.
+fn canvas_stats(pixels: &[egui::Color32], w: usize, h: usize, canvas: [u32; 4]) -> (f64, f64, usize) {
+    let [cx, cy, cw, ch] = canvas.map(|v| v as usize);
+    let (x0, x1) = ((cx + cw / 5).min(w), (cx + cw * 4 / 5).min(w));
+    let (y0, y1) = ((cy + ch / 5).min(h), (cy + ch * 4 / 5).min(h));
+    region_stats(pixels, w, h, x0..x1, y0..y1)
+}
+
+fn region_stats(
+    pixels: &[egui::Color32],
+    w: usize,
+    h: usize,
+    xs: std::ops::Range<usize>,
+    ys: std::ops::Range<usize>,
+) -> (f64, f64, usize) {
     if w == 0 || h == 0 || pixels.len() < w * h {
         return (0.0, 0.0, 0);
     }
-    let (x0, x1) = ((w as f64 * 0.2) as usize, (w as f64 * 0.8) as usize);
-    let (y0, y1) = ((h as f64 * 0.2) as usize, (h as f64 * 0.8) as usize);
+    let (x0, x1, y0, y1) = (xs.start, xs.end, ys.start, ys.end);
     let mut sum = 0.0f64;
     let mut sum2 = 0.0f64;
     let mut n = 0u64;

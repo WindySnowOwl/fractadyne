@@ -34,6 +34,9 @@ fn formula_caps_answer_as_the_id_ranges_they_replaced() {
         assert_eq!(c.feature_solvers, id == 0, "feature solvers, id {id}");
         assert_eq!(c.export_glitch_correction, !polynomial, "export glitch correction, id {id}");
         assert_eq!(c.convergent, id == 9, "convergent, id {id}");
+        // Added with the capability rather than replacing a range: the `z^d + c` families and
+        // Phoenix (id 8), as the shader's distance-estimate test reads (`de_gate_tests`).
+        assert_eq!(c.distance_estimate, polynomial || id == 8, "distance estimate, id {id}");
     }
     assert!(formula::caps(formula::MULTIBROT8).series_approximation);
     assert!(!formula::caps(formula::BURNING_SHIP3).resumable_passes);
@@ -47,13 +50,15 @@ fn formula_caps_answer_as_the_id_ranges_they_replaced() {
     assert!(custom.resumable_passes);
     assert!(!custom.series_approximation && !custom.bla && !custom.nucleus_finder);
     assert!(!custom.feature_solvers && !custom.export_glitch_correction && !custom.convergent);
+    // Its generated module writes no distance (`custom.rs`).
+    assert!(!custom.distance_estimate);
     // Life is not an escape-time formula: no capability at all — glitch correction included, which
     // would build references for a picture that has none.
     // Nor are L-systems.
     for id in [formula::LIFE, formula::LSYSTEM] {
         let c = formula::caps(id);
         assert_eq!((c.series_approximation, c.bla, c.resumable_passes, c.nucleus_finder), (false, false, false, false));
-        assert!(!c.feature_solvers && !c.export_glitch_correction && !c.convergent, "{id}");
+        assert!(!c.feature_solvers && !c.export_glitch_correction && !c.convergent && !c.distance_estimate, "{id}");
     }
 }
 
