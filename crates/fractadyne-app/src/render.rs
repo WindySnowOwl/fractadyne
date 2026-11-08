@@ -7244,6 +7244,8 @@ impl FractadyneApp {
             aa_filter,
             interior_col: self.view_interior_color(),
             resolution,
+            // The panel, which `build_params` knows and sets after this returns.
+            display_res: [0, 0],
             ss,
             reproject: reproject.is_some() as u32,
             // A gated frame's DISPLAY samples the hold snapshot with its transform; reproject
@@ -10084,6 +10086,11 @@ impl FractadyneApp {
             split_pass.filter(|_| chunk_range.is_none() && tile.is_none()).unwrap_or([0, 0]),
             chunk_pass || tile_work,
         );
+        // The panel the color pass fills, not this frame's (possibly motion-shrunk) iteration
+        // size: the stored distance estimate is per texel, and the color pass reads it per PANEL
+        // pixel from this, so Distance colors and the glow do not move with the motion
+        // resolution or the anti-aliasing level.
+        params.display_res = panel_res;
         // The worker's frame for this frame, and its next motion refresh (`motion_worker`).
         if let Some((g, hold, stamp)) = worker_adopt {
             params.adopt = Some(g);

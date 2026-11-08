@@ -59,6 +59,14 @@ published as the pre-releases `v0.2.41-beta.1` to `v0.2.41-beta.150`, and a "bet
 
 Changes after 0.3.0-beta.1:
 
+- **Distance coloring and the distance glow measure in screen pixels (0.3.0-beta.27).** The
+  distance to the set was measured in the renderer's samples, and with anti-aliasing a pixel holds
+  several samples, so at the default 2× every distance read one octave too far: the Distance colors
+  sat further along the palette, the glow bands shifted whenever the anti-aliasing level changed,
+  and they moved again between a moving view's reduced-resolution frames and the settled frame.
+  Distances are now read per screen pixel in the live view, in exports and in the palette browser's
+  thumbnails. Views with anti-aliasing off look the same as before; at 2× and 3× the Distance colors
+  and glow bands move to where they are at 1×.
 - **An export from the Export dialog comes out the same every time (0.3.0-beta.27).** About half the
   time, a few tiles of an export started from the dialog were rendered slightly differently:
   scattered pixels in the busiest parts of a row of tiles, early in the render. Exporting a deep

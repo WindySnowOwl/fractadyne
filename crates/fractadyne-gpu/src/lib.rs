@@ -383,7 +383,12 @@ pub(crate) struct ColorUniforms {
     pub(crate) fade_lo: f32,
     pub(crate) fade_cycle: f32,
     pub(crate) fade_offset: f32,
-    pub(crate) _pad_fade: [u32; 2],
+    /// Output pixels across the rect the color pass fills, or 0 for the iteration texture's own
+    /// base (`width / ss`). The shader divides the texture's width by it to read the stored
+    /// per-texel distance estimate per output pixel (`de_px_shift` in `fs_color`). In what was the
+    /// first `_pad_fade` word; `ColorU.display_w` mirrors it.
+    pub(crate) display_w: f32,
+    pub(crate) _pad_fade: u32,
 }
 
 /// A dissolve between two palette maps: a frame drawn under its own map (`cycle`, `offset`,
@@ -3204,6 +3209,11 @@ pub struct MandelbrotParams {
     /// pick the interior color; defaults to near-black.
     pub interior_col: [f32; 4],
     pub resolution: [u32; 2],
+    /// The panel this view fills, in physical pixels: `resolution` before a motion frame shrinks
+    /// it. The color pass reads the stored per-texel distance estimate per PANEL pixel from it, so
+    /// the Distance colors and the glow stay put while the motion resolution and the anti-aliasing
+    /// change. `[0, 0]` = the same as `resolution` (every caller but the live view).
+    pub display_res: [u32; 2],
     pub ss: u32,
     /// Pan reprojection: 1 = don't re-iterate, just translate the frozen iteration texture by
     /// `uv_offset` (used while dragging so the detailed image slides with the cursor and only
@@ -3417,6 +3427,7 @@ impl Default for MandelbrotParams {
             aa_filter: 1,
             interior_col: [0.0, 0.0, 0.0, 1.0],
             resolution: [1, 1],
+            display_res: [0, 0],
             ss: 1,
             reproject: 0,
             uv_offset: [0.0, 0.0],
@@ -3828,7 +3839,10 @@ impl CallbackTrait for MandelbrotParams {
             fade_lo: self.palette_fade.lo,
             fade_cycle: self.palette_fade.cycle,
             fade_offset: self.palette_fade.offset,
-            _pad_fade: [0; 2],
+            // The panel this view fills (`display_res`): a reduced motion frame's texels are larger
+            // than its pixels, and a held frame's texture is not this frame's size.
+            display_w: self.display_res[0] as f32,
+            _pad_fade: 0,
         };
         queue.write_buffer(&view.color_uniform, 0, bytemuck::bytes_of(&cu));
         view.last_cu = Some(cu);
