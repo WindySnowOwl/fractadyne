@@ -1,6 +1,6 @@
 # Coloring methods: implementation plan
 
-Status: **plan (2026-11-08); A9, A6 and A2 done, see §10.** Line references are to `main` at `9ab75357`; check
+Status: **plan (2026-11-08); A9, A6, A2 and A4 done, see §10.** Line references are to `main` at `9ab75357`; check
 them before editing, they drift. The research behind it (methods, prototypes, measured results,
 prior art) is the coloring-methods doc; its local copy is
 `local/research_notes/Fractal coloring methods/` (PDF, HTML, Markdown, prototype scripts).
@@ -297,6 +297,17 @@ other.
   app's `settings_hash` has them, `render.rs:8610-8611`). If it does not, add both to `IterKey`.
 - **Tests**: unit test that two `IterKey`s differing only in the tail are unequal; a selftest that
   toggles the tail on a fixed view and requires a channel difference.
+- **Done 2026-11-08** (branch `fix/color-a4-stripe-tail-key`, stacked on A2). **Reproduced
+  first**: a uitest, not a selftest, because the bug lives in the live paint callback the
+  selftest cannot reach. Four screens (`stripe-tail-off`, `-toggle`, `-away`, `-on`): settle a
+  stripe view with the tail off, flip it as the checkbox does, pan away and back for an honest
+  re-render. Before the fix the toggled frame matched the tail-off frame pixel for pixel (fingerprint
+  distance to the honest render 72.7, two runs); after, 0.0. ⚠It was stale WITH a settle grid in
+  force too: the app's `settings_hash` re-arming the grid did not cover it, so the tail could not
+  be left to the app's key. Fix: `stripe_tail` and `stripe_tail_len` in `IterKey`, whose
+  construction moved to `MandelbrotParams::iter_key` so `gpu/tests/unit/iter_key_tests.rs` can
+  check the tail changes it. ⚠A `view_gen` bump does not force a GPU re-iterate (the minimap check
+  uses one): only a key change, a resize, an adopted frame or a new orbit does.
 
 ### A5. The two open coloring bugs
 
@@ -803,8 +814,9 @@ coloring in these places, so sequence the two with care:
 |---|---|---|
 | A9 | done, merged | `33c6527e` (merge `3d202f30`) |
 | A6 | done, branch `feat/color-a6-cli-flags` | `2c898852` |
-| A2 | done, branch `fix/color-a2-small-corrections` | |
-| A1, A3–A5, A7, A8, A10 | not started | |
+| A2 | done, branch `fix/color-a2-small-corrections` | `3e5aa578` |
+| A4 | done, branch `fix/color-a4-stripe-tail-key` | |
+| A1, A3, A5, A7, A8, A10 | not started | |
 | B1–B8 | not started | |
 | C1–C11 | not started | |
 | D, E, F, G | not started | |
