@@ -1728,7 +1728,9 @@ impl<'a> TileRenderer<'a> {
             fade_lo: req.palette_fade.lo,
             fade_cycle: req.palette_fade.cycle,
             fade_offset: req.palette_fade.offset,
-            _pad_fade: [0; 2],
+            // Each tile is the texture's own base (`w·ss` samples across `w` pixels).
+            display_w: 0.0,
+            _pad_fade: 0,
         };
         queue.write_buffer(&color_uniform, 0, bytemuck::bytes_of(&cu));
         let split = |v: f64| -> (f32, f32) {
@@ -3913,7 +3915,9 @@ pub(crate) fn color_uniforms_for(req: &ExportRequest, ss: u32, w: u32, h: u32, l
         fade_lo: req.palette_fade.lo,
         fade_cycle: req.palette_fade.cycle,
         fade_offset: req.palette_fade.offset,
-        _pad_fade: [0; 2],
+        // The image is the texture's own base (`w·ss` samples across `w` pixels).
+        display_w: 0.0,
+        _pad_fade: 0,
     }
 }
 

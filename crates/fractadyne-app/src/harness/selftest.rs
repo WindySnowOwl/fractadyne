@@ -759,7 +759,7 @@ impl FractadyneApp {
             "consistency", "counters", "iter-budget", "iter-chunk", "renorm", "live-split", "worker", "nr-zoom", "coords",
             "curated-poi", "ref-pick", "ref-reuse", "ref-overlap", "orbit-cache", "script", "metadata",
             "display", "catalog", "goldens", "bench-matrix", "live-res", "appearance",
-            "checklist", "replay", "settings-quarantine", "expmap", "assemble",
+            "checklist", "replay", "settings-quarantine", "expmap", "assemble", "de-pixels",
         ];
         if self.selftest.list {
             println!("selftest groups (use with --selftest-filter <substr>):");
@@ -3301,6 +3301,77 @@ impl FractadyneApp {
                     result: format!("max |color - centered box| {centred:.2e} (a box from the pixel's corner: {corner:.2e})"),
                     threshold: "< 1e-4",
                     pass: centred < 1.0e-4,
+                });
+            }
+        }
+
+        // ⭐THE DISTANCE ESTIMATE IS READ PER OUTPUT PIXEL, NOT PER TEXEL (2026-11-08). The iterate
+        // pass stores log2 of the distance in iteration TEXELS (`de_log2` divides by the texel
+        // step), and a texel is 1/ss of a pixel. Until the color pass shifted by log2(ss), every
+        // supersampled render read each distance log2(ss) octaves too far: the Distance colors slid
+        // along the palette and the glow bands moved whenever the anti-aliasing level changed. The
+        // same view at ss 1 and ss 3 must agree; ss 3 because log2 3 is not a whole octave, so the
+        // glow's one-octave band period cannot hide a misread. Supersampling itself changes the
+        // pixels at the filaments, so the gate is the MEDIAN pixel's difference.
+        if want("de-pixels") {
+            let colour = |req: &fractadyne_gpu::ExportRequest| -> Option<Vec<f32>> {
+                let (progress, cancel) = (std::sync::atomic::AtomicU32::new(0), std::sync::atomic::AtomicBool::new(false));
+                match fractadyne_gpu::render_export(device, queue, req, &progress, &cancel) {
+                    Ok(r) => Some(r.pixels),
+                    Err(e) => {
+                        eprintln!("[selftest] GPU ERROR (render_export): {e}");
+                        None
+                    }
+                }
+            };
+            // Per-pixel mean |Δ| over r, g, b, sorted: the 50th, 75th and 90th percentiles.
+            let diff_pcts = |a: &[f32], b: &[f32]| -> [f64; 3] {
+                let mut d: Vec<f64> = a
+                    .chunks_exact(4)
+                    .zip(b.chunks_exact(4))
+                    .map(|(p, q)| ((p[0] - q[0]).abs() + (p[1] - q[1]).abs() + (p[2] - q[2]).abs()) as f64 / 3.0)
+                    .collect();
+                d.sort_by(|x, y| x.total_cmp(y));
+                let at = |f: f64| d.get(((d.len() as f64 * f) as usize).min(d.len().saturating_sub(1))).copied();
+                match (at(0.5), at(0.75), at(0.9)) {
+                    (Some(a), Some(b), Some(c)) => [a, b, c],
+                    _ => [f64::INFINITY; 3],
+                }
+            };
+            let mut base = make(self, SX, SY, 1.0e2);
+            base.aa_filter = 1;
+            base.aa_palette = false;
+            base.light = 0;
+            base.vignette.on = 0;
+            for (label, method, glow) in [("the Distance method", 4u32, false), ("the distance glow", 0u32, true)] {
+                let mut req = base.clone();
+                req.color_method = method;
+                if method == 4 {
+                    // Half a palette an octave, so a misread octave is plain to see.
+                    req.cycle = 0.5;
+                }
+                req.de_on = glow as u32;
+                req.de_strength = 1.0;
+                req.de_width = 1.0;
+                let at = |ss: u32| {
+                    let mut r = req.clone();
+                    r.ss = ss;
+                    colour(&r)
+                };
+                let [p50, p75, p90] = match (at(1), at(3)) {
+                    (Some(a), Some(b)) => diff_pcts(&a, &b),
+                    _ => [f64::INFINITY; 3],
+                };
+                push_check(&mut checks, &mut last_check_t, SelfCheck {
+                    category: "appearance",
+                    name: format!("{label} reads the distance per output pixel, not per texel"),
+                    params: format!("seahorse 1e2x, {N}px, ss 1 vs ss 3"),
+                    result: format!("pixel difference p50 {p50:.4}, p75 {p75:.4}, p90 {p90:.4}"),
+                    // Measured 2026-11-08 on the RTX 3080: p50 0.0001 (Distance) and 0.0000 (glow)
+                    // read per pixel, 0.20 and 0.12 read per texel. The upper percentiles are the
+                    // filament pixels supersampling changes (p75 0.06 even when correct).
+                    threshold: "p50 < 0.01",
+                    pass: p50 < 0.01,
                 });
             }
         }

@@ -119,6 +119,9 @@ fn the_palette_fade_fields_line_up() {
         ("fade_lo", std::mem::offset_of!(ColorUniforms, fade_lo)),
         ("fade_cycle", std::mem::offset_of!(ColorUniforms, fade_cycle)),
         ("fade_offset", std::mem::offset_of!(ColorUniforms, fade_offset)),
+        // The output width the per-texel distance estimate is read per pixel against: swapped
+        // with a pad word it would read 0 (the texture's base) and quietly undo the correction.
+        ("display_w", std::mem::offset_of!(ColorUniforms, display_w)),
     ] {
         assert_eq!(wgsl_field_offset(&fields, wgsl), rust, "`{wgsl}` is at another offset in ColorU than in ColorUniforms");
     }

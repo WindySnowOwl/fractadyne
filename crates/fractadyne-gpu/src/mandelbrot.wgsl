@@ -3641,7 +3641,10 @@ struct ColorU {
     fade_lo: f32,
     fade_cycle: f32,
     fade_offset: f32,
-    _pad_fade0: u32,
+    // Output pixels across the rect the color pass fills, or 0 for the texture's own base
+    // (`width / ss`): what `fs_color` turns the stored per-TEXEL distance estimate into per-pixel
+    // distance with (`de_px_shift`). In what was `_pad_fade0`; mirrors `ColorUniforms.display_w`.
+    display_w: f32,
     _pad_fade1: u32,
 };
 @group(0) @binding(0) var<uniform> cu: ColorU;
@@ -3707,6 +3710,13 @@ fn palette(t_in: f32) -> vec3<f32> {
     return mix(a, b, f);
 }
 
+// log2 of how many iteration texels span one OUTPUT pixel, set once at the top of `fs_color` (every
+// function below that reads the distance estimate runs inside it). `de_log2` stores the distance in
+// texels, and a texel is 1/ss of a pixel on a supersampled frame, more than a pixel on a reduced
+// motion frame, and changes size while a reprojection follows a zoom; the Distance method and the
+// glow are specified in output pixels, so they subtract this.
+var<private> de_px_shift: f32;
+
 // Interior pixels have no palette coordinate; `coord_of` returns this sentinel so callers color
 // them with `interior_col` and the footprint estimate skips them. Far above any real coordinate
 // (`cycle`·log(escape) + offset), and finite so arithmetic on it stays well-defined.
@@ -3740,7 +3750,7 @@ fn coord_under(m: vec4<f32>, a: vec4<f32>, cycle: f32, offset: f32, mode: u32, l
         pv = -log2(max(a.b, 1.0e-20));             // nearer approach → larger value
     } else if (cu.color_method == 4u) {
         interior = (m.a > 1.0e20);                 // DE unavailable → interior
-        pv = m.a;                                  // distance estimate (log2 pixels)
+        pv = m.a - de_px_shift;                    // distance estimate, log2 output pixels
     } else if (cu.color_method == 5u) {
         pv = a.a;                                  // decomposition angle (0..1)
     } else {
@@ -3836,6 +3846,15 @@ fn fs_color(in: VsOut) -> @location(0) vec4<f32> {
     let tex_dim = textureDimensions(iter_tex); // = screen × ss
     let ss = max(cu.ss, 1u);
     let screen_dim = tex_dim / ss;
+    // ⭐The stored distance is per TEXEL; read it per OUTPUT pixel (`de_px_shift`). Texels across one
+    // output pixel = the texture's width over the output's, times a reprojection's zoom since the
+    // frozen frame (it magnifies the frozen texels). With no output width given that is log2(ss)
+    // exactly — an export tile, the zoom-video assembler. Until 2026-11-08 nothing shifted, so a
+    // 2×-supersampled view read every distance one octave too far: the Distance colors and the
+    // glow bands moved whenever the anti-aliasing level, or the motion resolution, changed.
+    let out_w = select(f32(screen_dim.x), cu.display_w, cu.display_w > 0.0);
+    let zoomed = select(1.0, cu.uv_scale, cu.reproject == 1u);
+    de_px_shift = log2(max(f32(tex_dim.x) * zoomed, 1.0e-6) / max(out_w, 1.0));
     // Pan reprojection: sample the frozen texture shifted by the panned offset, so the detailed
     // image slides with the cursor. Anything the pan drags in from outside the frozen frame
     // isn't rendered yet — fill it with the frame's average color (nicer than black) until the
@@ -3980,9 +3999,10 @@ fn fs_color(in: VsOut) -> @location(0) vec4<f32> {
     }
     // Distance-estimate glow: bright contour bands at log-distance intervals from the
     // boundary; they densify near the filaments (→ glow) and flow when `de_phase`
-    // animates. `de` channel carries log2(distance in pixels); ≥20 means "far"/none.
+    // animates. `de` channel carries log2(distance in texels), read here in output pixels; ≥20
+    // means "far"/none.
     if (cu.de_on == 1u) {
-        let dl = dacc / count;
+        let dl = dacc / count - de_px_shift;
         if (dl < 20.0) {
             let phase = dl / max(cu.de_width, 0.05) - cu.de_phase;
             let band = pow(0.5 + 0.5 * cos(phase * 6.2831853), 3.0);

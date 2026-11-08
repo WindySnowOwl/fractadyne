@@ -156,6 +156,8 @@ pub fn render_palette_atlas(
                 vig_on: 0,
                 out_res: [cell[0] as f32, cell[1] as f32],
                 fade_weight: 0.0,
+                // `display_w` stays the panel's: a thumbnail is the view in miniature, so its
+                // distance colors and glow bands sit where the panel shows them.
                 ..cu
             };
             let uniform = device.create_buffer(&wgpu::BufferDescriptor {

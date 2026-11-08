@@ -63,7 +63,8 @@ never kill the user's running app, and put windowed runs on the right monitor.
 
 These come from past bugs; each one has bitten before.
 
-1. **Method ids are append-only.** `ColorMethod` discriminants 0–5 are GPU ids and appear as
+1. **Method ids are append-only** until A10 generates them from one table. `ColorMethod`
+   discriminants 0–5 are GPU ids and appear as
    numbers in the shader (`mandelbrot.wgsl:1012, 1358, 1381-1412, 3734-3747`), in
    `method_needs_aux` (`gpu/src/lib.rs:3453`), `WindowTexels::for_colour`
    (`gpu/src/assemble.rs:76-84`), `render.rs:3645-3648, 3693-3695, 9947-9950`, the bench matrix
@@ -209,7 +210,7 @@ constants, `selftest.rs:517-577`); `GROUPS` is not checked against the `want` ta
 
 | Phase | Steps | Needs | Gives |
 |---|---|---|---|
-| A. Independent fixes | A1–A9 | nothing | correct baseline, persistence, reproducible CLI |
+| A. Independent fixes | A1–A10 | nothing | correct baseline, persistence, reproducible CLI |
 | B. Plumbing | B1–B8 | A1, A6 | test matrix, accumulate mask, full G-buffer, settings model, method picker and preview sheet, second LUT and interior modes, stored angle |
 | C. Color-pass methods | C1–C11 | B4 (B5 for C4) | interior color, transfers, DE shading, lighting, histogram, OKLab, palette AA, fringe, grid, linked Julia palettes |
 | D. Escape-data methods | D1–D3 | B8 | angle colorings, exact count past 8.4M, interior period |
@@ -363,6 +364,34 @@ reproduced. Reproduce before fixing; never close on the mechanism argument alone
   where the color pass reads `m.a` (`coord_under`, glow at `wgsl:3983-3990`).
 - **Tests**: render the same view at ss 1, 2 and 3; the Distance coloring agrees within the
   tolerance.
+- **Done 2026-11-08** (branch `fix/de-in-pixels`): `ColorU.display_w` (the panel width, from the
+  new `MandelbrotParams.display_res`; 0 = the texture's base) and a `de_px_shift` the color pass
+  computes from the texture's real width, so it also covers reduced motion frames, held frames and
+  a reprojection's zoom. Selftest group `de-pixels`: ss 1 vs ss 3 median pixel difference 0.0001
+  (Distance) and 0.0000 (glow) fixed, 0.20 and 0.12 with the shift disabled.
+
+### A10. One method table: string identity, generated GPU numbers
+
+- **Goal**: a method is identified by its key string everywhere outside the GPU; the GPU number is
+  generated from one Rust table, so method ids no longer need to be append-only.
+- **Depends on**: none (easier before B2, which adds the accumulate bits). **Size**: M.
+- **Work**:
+  1. One table in Rust: key, label key, GPU id, predicates (needs aux, bounded, blocks skips),
+     capability row (B4 later extends it). `ColorMethod`'s helpers read the table.
+  2. Inject the ids into the shader as constants (`const METHOD_STRIPE: u32 = …;`), the way the
+     shader already takes generated text at `@@` markers, and replace the numeric literals in
+     `coord_under`, `aux_step`, the trap histogram and the stripe-tail gate.
+  3. Replace the Rust literals: `method_needs_aux` (`gpu/src/lib.rs:3453`),
+     `WindowTexels::for_colour` (`gpu/src/assemble.rs:77`), `render.rs:3645-3648, 3693-3695,
+     9947-9950`. The GPU crate cannot see `ColorMethod` (it lives in the app), so the table belongs
+     in a crate both use (`fractadyne-core` or `fractadyne-color`).
+  4. Harness outputs and baselines store the key, not the number: `bench_matrix.rs:208` and its
+     baseline JSON (migrate on read), `profile.rs:38, 314`, the golden spec
+     (`selftest.rs:11316`), `BenchSnapshot` (`scripting.rs:4890`, `from_u32` at 5051).
+  5. The same for `TrapType` (numbers also in `core/src/reference.rs:1946-1950`).
+- **Tests**: a unit test that every table row's shader constant matches the injected text; that no
+  numeric method literal remains in the shader (grep the source); the needs_aux sync test reads the
+  table; old bench baselines still load.
 
 ---
 
@@ -717,7 +746,35 @@ The Effects section gains specular and light color (C5), DE darkening (C3) and t
   (`REDRAW_PACE`).
 - Dual view: the sheet previews view 0; a later option can switch it to the Julia panel.
 
-### 9.3 Consistency
+### 9.3 View rotation (planned separately; where it meets this work)
+
+Rotation (TODO.md, "Rotation for views", user 2026-11-01) is its own project, but it touches
+coloring in these places, so sequence the two with care:
+
+- **The distance estimate's pixel size.** `de_log2` takes the texel size from `abs(iu.step.x)`
+  (`mandelbrot.wgsl:646-657`). If rotation turns the per-texel step into a rotated complex step,
+  that must become the step's LENGTH, or every distance is wrong by `|cos θ|` (a 45° view reads
+  distances half an octave off). A distance itself is rotation-invariant, so A9's per-pixel
+  correction needs no change.
+- **Normals and the light.** The stored slope normal is in plane coordinates. Decide whether the
+  light stays fixed on screen (rotate normals by the view angle before lighting) or turns with the
+  image; the same choice applies to specular (C5), bump maps (E4) and the auto light angle (G6,
+  arg σ is a plane angle).
+- **Angle colorings** (Decomposition, D1, the grid's rays in C10) read arg z, which does not
+  change with the view; they turn with the image, which is right.
+- **The `.fdn` file.** Rotation adds a view key next to A1's coloring keys: do them one after the
+  other, with one writer-⊆-reader update each.
+- **Reprojection** (the frozen-frame uv transform, `ColorU.uv_off`/`uv_scale`) gains a rotation;
+  A9's zoom factor is unaffected because rotation does not change texel size. The method preview
+  sheet (B7) and the palette atlas reuse the live texture and are unaffected.
+- **Screen-space differences** (palette anti-aliasing's +x/+y footprint, the relief's 3×3
+  low-pass, E4) stay in screen pixels and need no change.
+- **Tests.** B1's view set gets one rotated view per family (30° and 45°); the angle colorings and
+  lighting are checked there.
+- **Importers.** `.kfr` carries `RotateAngle`; the importer reads only center, zoom and iterations
+  today.
+
+### 9.4 Consistency
 
 - Every method has a key, a label, a tooltip, a capability row and a selftest tag; adding a method
   without all five fails a unit test that walks `ColorMethod::ALL`.
@@ -729,7 +786,8 @@ The Effects section gains specular and light color (C5), DE darkening (C3) and t
 
 | Step | State | Commit |
 |---|---|---|
-| A1–A9 | not started | |
+| A9 | done, branch `fix/de-in-pixels` | |
+| A1–A8, A10 | not started | |
 | B1–B8 | not started | |
 | C1–C11 | not started | |
 | D, E, F, G | not started | |
