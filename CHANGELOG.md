@@ -59,6 +59,17 @@ published as the pre-releases `v0.2.41-beta.1` to `v0.2.41-beta.150`, and a "bet
 
 Changes after 0.3.0-beta.1:
 
+- **A saved view keeps its coloring method and effects (0.3.0-beta.27).** A `.fdn` file, a
+  bookmark, a Share location and the view inside an exported image now carry the coloring
+  method with its settings (stripe density and tail, trap shape), relief lighting, the distance
+  glow, Duotone or Binary with their two colors, and the Normalize deep colors, Always fit range
+  and Log color scale switches. Before, they carried only the palette, Cycle, Offset and Divide
+  iterations, so a stripe or orbit-trap view reopened in whatever method was current, without its
+  lighting. A setting is written only when it differs from the default and changes the picture,
+  so an ordinary Smooth view's file is unchanged. A view saved before this records none of these
+  settings and opens in Smooth with the effects off; a hand-written location that states no
+  coloring leaves yours as it is. An older Fractadyne opening a new view that does carry them
+  lists them as unknown fields and keeps its own coloring.
 - **The palette browser has a Close button (0.3.0-beta.27)**, below its details, as every other
   dialog has. Before, the only way out was the small × in its title bar.
 - **Turning on the stripe tail redraws the view (0.3.0-beta.27).** Ticking "Tail only (deep

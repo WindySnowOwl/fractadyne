@@ -93,6 +93,7 @@ mod refcache_persist;
 mod render;
 mod update;
 mod video_pipe;
+mod view_coloring;
 mod scripting;
 mod session_outcome;
 mod machine;
@@ -3145,6 +3146,11 @@ pub(crate) mod slider_range {
     pub(crate) const GLOW_STRENGTH: RangeInclusive<f32> = 0.0..=1.0;
     /// Band width (`--glow-width`).
     pub(crate) const GLOW_WIDTH: RangeInclusive<f32> = 0.15..=4.0;
+    /// Stripe density (`--stripe-freq`).
+    pub(crate) const STRIPE_FREQ: RangeInclusive<f32> = 1.0..=24.0;
+    /// The stripe tail's length in iterations: what `--stripe-tail` and a view file accept. The
+    /// panel's slider stops at 1024; past that only the command line goes.
+    pub(crate) const STRIPE_TAIL_LEN: RangeInclusive<u32> = 4..=1 << 20;
 }
 
 /// The Smooth method's palette rate — palettes per iteration, what the shader multiplies the
@@ -8542,13 +8548,13 @@ impl FractadyneApp {
         if let Some(f) =
             val("--stripe-freq").map(|s| arg_parse::<f32>("--stripe-freq", s, "a number"))
         {
-            self.coloring.stripe_freq = f.clamp(1.0, 24.0);
+            self.coloring.stripe_freq = f.clamp(*slider_range::STRIPE_FREQ.start(), *slider_range::STRIPE_FREQ.end());
         }
         if let Some(n) =
             val("--stripe-tail").map(|s| arg_parse::<u32>("--stripe-tail", s, "a number of iterations"))
         {
             self.coloring.stripe_tail = true;
-            self.coloring.stripe_tail_len = n.clamp(4, 1 << 20);
+            self.coloring.stripe_tail_len = n.clamp(*slider_range::STRIPE_TAIL_LEN.start(), *slider_range::STRIPE_TAIL_LEN.end());
         }
         if let Some(t) = val("--trap") {
             let picked = TrapType::from_key(t);

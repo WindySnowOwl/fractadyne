@@ -1,6 +1,6 @@
 # Coloring methods: implementation plan
 
-Status: **plan (2026-11-08); A9, A6, A2, A4 and A8 done, see §10.** Line references are to `main` at `9ab75357`; check
+Status: **plan (2026-11-08); A9, A6, A2, A4, A8 and A1 done, see §10.** Line references are to `main` at `9ab75357`; check
 them before editing, they drift. The research behind it (methods, prototypes, measured results,
 prior art) is the coloring-methods doc; its local copy is
 `local/research_notes/Fractal coloring methods/` (PDF, HTML, Markdown, prototype scripts).
@@ -178,7 +178,7 @@ Decomposition 5. One value drives both sides:
 | Place | Carries today | Gap |
 |---|---|---|
 | Session (`fractadyne-state/src/lib.rs:291-361`) | everything | none |
-| `.fdn` view, bookmarks, Share location, PNG/EXR text | palette, cycle, iter_div, offset, aa, custom gradient | method, stripe, trap, effects, duotone/binary, normalize, log scale |
+| `.fdn` view, bookmarks, Share location, PNG/EXR text | palette, cycle, iter_div, offset, aa, custom gradient; since A1 also method, stripe, trap, effects, duotone/binary, normalize, log scale | none since A1 (interior color when C1 adds it) |
 | Farm `RenderSettings` | method, stripe, trap, light, glow, log, cycle, offset, iter_div, palette, custom | `palette_id`, normalize live/fit |
 | CLI (`main.rs:8452-8520`) | method, stripe, trap, binary, light, light angle, de, iter_div | cycle, offset, light height, glow strength and width, normalize live/fit, interior color |
 | Tours (`scripting.rs:576-688`) | palette only | method, cycle, offset, effects |
@@ -252,6 +252,26 @@ other.
   older file without the keys opens unchanged.
 - **Traps**: the checksum covers every field (506-527); keep notes Latin-1; `MAX_EMBEDDED_SEGMENTS`
   for custom gradients is unchanged.
+- **Done 2026-11-08** (branch `feat/color-a1-view-coloring`): a new module `view_coloring.rs` holds
+  the keys, the writer (`ViewColoring::lines`) and the reader (`ViewColoring::apply`) apart from the
+  app, so they are unit-tested on their own; `export.rs` maps the app's fields to and from it
+  (`view_coloring`, `set_view_coloring`). Keys as listed, except that Duotone and Binary are one
+  key, `palette_mode=duotone|binary`, with `palette_lo` and `palette_hi`, since the two are one
+  choice beside the file's other `palette` keys. One rule beyond the list: **a key is written only
+  when the picture depends on it**, and only then reset when absent (the stripe density only under
+  Stripe, the light's angle only with the light on, the two colors only under Duotone or Binary,
+  "Normalize deep colors" only under Smooth, "Always fit range" and the log scale under Smooth and
+  the orbit trap), so opening a view does not undo what was tuned for another method. Also: a view
+  that states its coloring with no gradient and no two-color palette turns the custom gradient off
+  (it was saved on its preset; before, a custom gradient stayed on over it), and Life and L-system
+  views neither write nor read these keys. An unknown method, trap or palette mode is a positional
+  problem naming the choices, and keeps the session's setting. Tests: 9 unit tests
+  (`tests/unit/view_coloring/round_trip.rs`); selftest group `view-coloring` (5 colorings through the
+  app's writer and reader onto a different session, a default view carries no key, an older view
+  opens in the defaults, a bare location keeps the session's; a trap + relief + glow + Duotone view
+  renders meanΔ 0.000 after a reload, 73.8 from the default coloring). Both checks go red with the
+  writer's lines removed. ⚠An older view (no keys, with `cycle=`) now opens in Smooth with the
+  effects off rather than in the session's method, as `iter_div` already resets.
 
 ### A2. Small corrections
 
@@ -819,11 +839,12 @@ coloring in these places, so sequence the two with care:
 | Step | State | Commit |
 |---|---|---|
 | A9 | done, merged | `33c6527e` (merge `3d202f30`) |
-| A6 | done, branch `feat/color-a6-cli-flags` | `2c898852` |
-| A2 | done, branch `fix/color-a2-small-corrections` | `3e5aa578` |
-| A4 | done, branch `fix/color-a4-stripe-tail-key` | `475e2190` |
-| A8 | done, branch `feat/color-a8-browser-close` | |
-| A1, A3, A5, A7, A10 | not started | |
+| A6 | done, merged | `2c898852` (merge `38d93def`) |
+| A2 | done, merged | `3e5aa578` (merge `2a14e005`) |
+| A4 | done, merged | `475e2190` (merge `b9812c74`) |
+| A8 | done, merged | `095a7131` (merge `1db50a24`) |
+| A1 | done, branch `feat/color-a1-view-coloring` | |
+| A3, A5, A7, A10 | not started | |
 | B1–B8 | not started | |
 | C1–C11 | not started | |
 | D, E, F, G | not started | |

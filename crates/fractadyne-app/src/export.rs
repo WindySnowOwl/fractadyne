@@ -321,6 +321,14 @@ pub(crate) const KNOWN_VIEW_KEYS: &[&str] = &[
     // An L-system (format 4): the system's text (one line, `\n`/`\\` escaped), the order (`auto` or
     // fixed), the angle slider's override, the line width, the coloring.
     "lsystem", "lsystem_order", "lsystem_angle", "lsystem_width", "lsystem_colour",
+    // The coloring beyond the palette (`view_coloring`, coloring plan step A1): the method and its
+    // settings, the relief light, the distance glow, Duotone or Binary with their two colors, and
+    // the live normalization. Each written only when the picture depends on it and it is not the
+    // default, so an ordinary view is byte-identical to one written before the keys existed.
+    "method", "stripe_freq", "stripe_tail", "stripe_tail_len", "trap",
+    "light", "light_angle", "light_height", "glow", "glow_strength", "glow_width",
+    "palette_mode", "palette_lo", "palette_hi",
+    "normalize_live", "normalize_fit", "log_scale",
 ];
 
 /// Without these a "view" is not a view. Their absence is reported by NAME, so a paste that
@@ -379,6 +387,23 @@ const TYPED_VIEW_KEYS: &[(&str, ValueKind)] = &[
     ("iter_div", ValueKind::Uint),
     ("offset", ValueKind::Float),
     ("aa", ValueKind::Uint),
+    ("method", ValueKind::Method),
+    ("stripe_freq", ValueKind::Float),
+    ("stripe_tail", ValueKind::Flag),
+    ("stripe_tail_len", ValueKind::Uint),
+    ("trap", ValueKind::Trap),
+    ("light", ValueKind::Flag),
+    ("light_angle", ValueKind::Float),
+    ("light_height", ValueKind::Float),
+    ("glow", ValueKind::Flag),
+    ("glow_strength", ValueKind::Float),
+    ("glow_width", ValueKind::Float),
+    ("palette_mode", ValueKind::PaletteMode),
+    ("palette_lo", ValueKind::Rgb),
+    ("palette_hi", ValueKind::Rgb),
+    ("normalize_live", ValueKind::Flag),
+    ("normalize_fit", ValueKind::Flag),
+    ("log_scale", ValueKind::Flag),
 ];
 
 #[derive(Clone, Copy, PartialEq, Eq)]
@@ -395,6 +420,14 @@ enum ValueKind {
     Expr,
     /// A palette id (`fractadyne_color::Palette::id`): ASCII letters, digits and hyphens.
     Id,
+    /// A coloring method's key (`ColorMethod::key`).
+    Method,
+    /// An orbit trap's key (`TrapType::key`).
+    Trap,
+    /// `duotone` or `binary` (`view_coloring::TwoColor`).
+    PaletteMode,
+    /// A color: three numbers separated by commas.
+    Rgb,
 }
 
 impl ValueKind {
@@ -409,17 +442,33 @@ impl ValueKind {
             ValueKind::Id => {
                 !v.is_empty() && v.len() <= 64 && v.bytes().all(|b| b.is_ascii_alphanumeric() || b == b'-')
             }
+            ValueKind::Method => crate::ColorMethod::ALL.iter().any(|m| m.key() == v),
+            ValueKind::Trap => crate::TrapType::ALL.iter().any(|t| t.key() == v),
+            ValueKind::PaletteMode => crate::view_coloring::TwoColor::from_key(v).is_some(),
+            ValueKind::Rgb => {
+                let parts: Vec<&str> = v.split(',').collect();
+                parts.len() == 3 && parts.iter().all(|p| p.trim().parse::<f32>().is_ok())
+            }
         }
     }
 
-    fn describe(self) -> &'static str {
+    /// What the value has to be. ⭐The named kinds list their choices from the enums themselves, so
+    /// a method added later is offered here without an edit.
+    fn describe(self) -> String {
+        let one_of = |keys: Vec<&str>| format!("one of {}", keys.join(", "));
         match self {
-            ValueKind::Uint => "a whole number",
-            ValueKind::Float => "a number",
-            ValueKind::Flag => "0 or 1",
-            ValueKind::BigFloat => "a decimal number",
-            ValueKind::Expr => "a coordinate expression",
-            ValueKind::Id => "a palette name such as lunar-new-year",
+            ValueKind::Uint => "a whole number".into(),
+            ValueKind::Float => "a number".into(),
+            ValueKind::Flag => "0 or 1".into(),
+            ValueKind::BigFloat => "a decimal number".into(),
+            ValueKind::Expr => "a coordinate expression".into(),
+            ValueKind::Id => "a palette name such as lunar-new-year".into(),
+            ValueKind::Method => one_of(crate::ColorMethod::ALL.iter().map(|m| m.key()).collect()),
+            ValueKind::Trap => one_of(crate::TrapType::ALL.iter().map(|t| t.key()).collect()),
+            ValueKind::PaletteMode => {
+                one_of(crate::view_coloring::TwoColor::ON.iter().filter_map(|m| m.key()).collect())
+            }
+            ValueKind::Rgb => "three numbers separated by commas, such as 0.04,0.05,0.12".into(),
         }
     }
 }
@@ -861,7 +910,7 @@ impl FractadyneApp {
             "app=Fractadyne\nversion={}\nformat_version={}\nsaved_unix={}\nsaved={}\n\
              notes={}\nfractal={}\njulia={}\njulia_c_re={:.17e}\njulia_c_im={:.17e}\n\
              center_re={}\ncenter_im={}\nupp={:.17e}\nupp_log2={:.17e}\nzoom={}\nmax_iter={}\nauto_iter={}\n\
-             palette={}\npalette_id={}\ncycle={}\n{}offset={}\naa={}\n{}{}{}{}",
+             palette={}\npalette_id={}\ncycle={}\n{}offset={}\naa={}\n{}{}{}{}{}",
             version_string(),
             if self.fractal == FractalKind::LSystem {
                 VIEW_FORMAT_VERSION
@@ -903,6 +952,11 @@ impl FractadyneApp {
             if self.coloring.iter_div > 1 { format!("iter_div={}\n", self.coloring.iter_div) } else { String::new() },
             self.coloring.offset,
             self.render_cfg.aa,
+            // The method, the light, the glow, Duotone or Binary, the live normalization: only what
+            // differs from the default and changes this picture (`view_coloring`), so an ordinary
+            // view's metadata is byte-identical to what it was before these keys existed. Not for a
+            // Life or L-system view, which these settings do not color.
+            if self.fractal.is_escape_time() { self.view_coloring().lines() } else { String::new() },
             // The custom gradient, when there is one. Empty otherwise, so a preset view's
             // metadata is byte-identical to what it was before this field existed.
             if self.coloring.use_custom_palette
@@ -996,6 +1050,63 @@ impl FractadyneApp {
             u.generation(),
             self.life.generation(),
         )
+    }
+
+    /// This session's coloring as a view carries it ([`crate::view_coloring`]).
+    pub(crate) fn view_coloring(&self) -> crate::view_coloring::ViewColoring {
+        use crate::view_coloring::{TwoColor, ViewColoring};
+        let (c, e) = (&self.coloring, &self.effects);
+        ViewColoring {
+            method: c.color_method,
+            stripe_freq: c.stripe_freq,
+            stripe_tail: c.stripe_tail,
+            stripe_tail_len: c.stripe_tail_len,
+            trap: c.trap_type,
+            light: e.light,
+            light_angle: e.light_angle,
+            light_height: e.light_height,
+            glow: e.de,
+            glow_strength: e.de_strength,
+            glow_width: e.de_width,
+            // Binary first, as `chosen_gradient` reads the two flags.
+            two_color: if c.use_binary {
+                TwoColor::Binary
+            } else if c.use_duotone {
+                TwoColor::Duotone
+            } else {
+                TwoColor::Off
+            },
+            lo: c.duotone_lo,
+            hi: c.duotone_hi,
+            normalize_live: c.normalize_live,
+            normalize_fit: c.normalize_fit,
+            log_scale: c.log_palette,
+        }
+    }
+
+    /// Put a view's coloring into this session: the inverse of [`Self::view_coloring`].
+    pub(crate) fn set_view_coloring(&mut self, v: &crate::view_coloring::ViewColoring) {
+        use crate::view_coloring::TwoColor;
+        let c = &mut self.coloring;
+        c.color_method = v.method;
+        c.stripe_freq = v.stripe_freq;
+        c.stripe_tail = v.stripe_tail;
+        c.stripe_tail_len = v.stripe_tail_len;
+        c.trap_type = v.trap;
+        c.use_binary = v.two_color == TwoColor::Binary;
+        c.use_duotone = v.two_color == TwoColor::Duotone;
+        c.duotone_lo = v.lo;
+        c.duotone_hi = v.hi;
+        c.normalize_live = v.normalize_live;
+        c.normalize_fit = v.normalize_fit;
+        c.log_palette = v.log_scale;
+        let e = &mut self.effects;
+        e.light = v.light;
+        e.light_angle = v.light_angle;
+        e.light_height = v.light_height;
+        e.de = v.glow;
+        e.de_strength = v.glow_strength;
+        e.de_width = v.glow_width;
     }
 
     /// `formula=` and `formula_params=` for a Custom view; empty for a built-in family.
@@ -1167,10 +1278,34 @@ impl FractadyneApp {
         } else if get("palette_custom").is_some() {
             report.clamped.push("custom palette");
         }
-        match view_palette(get("palette_id").as_deref(), get("palette").as_deref()) {
+        let preset = view_palette(get("palette_id").as_deref(), get("palette").as_deref());
+        match preset {
             ViewPalette::Preset(i) => self.coloring.palette_idx = i,
             ViewPalette::NotInThisBuild => report.clamped.push("palette"),
             ViewPalette::Absent => {}
+        }
+        // ⭐The rest of the coloring: the method and its settings, the light, the glow, Duotone or
+        // Binary, the live normalization. `view_coloring` holds the rules: a key left out of a view
+        // that states its coloring (`cycle=`) goes back to its default, as `iter_div` below does,
+        // and what the picture does not depend on is left alone. Not for a Life or L-system view,
+        // which these settings do not color.
+        if self.fractal.is_escape_time() {
+            let states = get("cycle").is_some();
+            let mut vc = self.view_coloring();
+            vc.apply(&get, states, &mut report.clamped);
+            self.set_view_coloring(&vc);
+            // The palette's mode, as the Color menu sets it: naming Duotone or Binary turns the
+            // custom gradient off, and a view that states its coloring with neither and no gradient
+            // was saved on its preset.
+            let named_two_color = get("palette_mode")
+                .is_some_and(|v| crate::view_coloring::TwoColor::from_key(&v).is_some());
+            let on_preset = states
+                && get("palette_mode").is_none()
+                && get("palette_custom").is_none()
+                && matches!(preset, ViewPalette::Preset(_));
+            if named_two_color || on_preset {
+                self.coloring.use_custom_palette = false;
+            }
         }
         if let Some(c) = get("cycle").and_then(|s| s.parse::<f32>().ok()) {
             if c.is_finite() {

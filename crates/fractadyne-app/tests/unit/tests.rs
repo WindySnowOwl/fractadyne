@@ -346,6 +346,10 @@ palette_custom=0,0.25,0.5,0,0,0,1,1,0.2,0.1,1,0,0,0,0,0,0;\
 /// - `iter_div` ("Divide iterations") appears ONLY when it is not 1, so that an ordinary view —
 ///   the sample is one — is written exactly as before the key existed; its round trip is the
 ///   selftest `a view carries its iteration divisor`.
+/// - `method` … `log_scale` (the coloring beyond the palette, `view_coloring::KEYS`) appear ONLY
+///   when the picture depends on them and they are not the default, so the sample (a default Smooth
+///   view) carries none; their round trip is `tests/unit/view_coloring/round_trip.rs` and the
+///   selftest `view-coloring`.
 const SAMPLE_OPTIONAL_KEYS: &[&str] = &[
     "thumb", "checksum",
     "center_re_expr", "center_im_expr", "center_re_offset", "center_im_offset",
@@ -353,6 +357,10 @@ const SAMPLE_OPTIONAL_KEYS: &[&str] = &[
     "rule", "pattern", "pattern_origin", "pattern_generation", "generation", "pattern_name",
     "lsystem", "lsystem_order", "lsystem_angle", "lsystem_width", "lsystem_colour",
     "iter_div",
+    "method", "stripe_freq", "stripe_tail", "stripe_tail_len", "trap",
+    "light", "light_angle", "light_height", "glow", "glow_strength", "glow_width",
+    "palette_mode", "palette_lo", "palette_hi",
+    "normalize_live", "normalize_fit", "log_scale",
 ];
 
 #[test]

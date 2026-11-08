@@ -178,7 +178,7 @@ impl FractadyneApp {
                 if self.coloring.color_method == ColorMethod::Stripe {
                     labelled(ui, &tr!(panel_stripe_density), |ui| {
                         ui.add(
-                            egui::Slider::new(&mut self.coloring.stripe_freq, 1.0..=24.0)
+                            egui::Slider::new(&mut self.coloring.stripe_freq, crate::slider_range::STRIPE_FREQ)
                                 .logarithmic(true),
                         )
                     });

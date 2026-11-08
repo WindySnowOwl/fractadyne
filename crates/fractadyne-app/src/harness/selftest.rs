@@ -68,7 +68,7 @@ const GOLDEN_MEAN_CROSS_GPU: f64 = 24.0;
 pub(crate) const GROUPS: &[&str] = &[
     "numeric", "symmetry", "abs-family", "custom-formula", "life", "lsystem", "multibrot-sa", "bla", "aux-bla",
     "consistency", "counters", "iter-budget", "iter-chunk", "renorm", "live-split", "worker", "nr-zoom", "coords",
-    "curated-poi", "ref-pick", "ref-reuse", "ref-overlap", "orbit-cache", "script", "metadata",
+    "curated-poi", "ref-pick", "ref-reuse", "ref-overlap", "orbit-cache", "script", "metadata", "view-coloring",
     "display", "catalog", "goldens", "bench-matrix", "live-res", "appearance",
     "checklist", "replay", "settings-quarantine", "expmap", "assemble", "de-pixels",
     "colour-box", "cycle-check", "export-contain", "honest-step", "palette-fade", "retreat", "view-thumb",
@@ -10135,6 +10135,201 @@ zoom = \"1e94\"
                 threshold: "leading … frontier; short coord safe",
                 pass: ok,
             });
+        }
+
+        // ---- view-coloring: a view carries its coloring (coloring plan step A1) ----
+        // The app's own writer and reader, on top of `view_coloring`'s unit tests (which cannot see
+        // the app's fields): every coloring comes back onto a session set to something else, by the
+        // keys a person would read; a default view carries none of the keys; an older view (none of
+        // them, but `cycle=`) opens in the defaults with its preset; a bare location keeps the
+        // session's coloring. And a saved view RENDERS the same after it is reloaded.
+        if want("view-coloring") {
+            use crate::view_coloring::{TwoColor, ViewColoring, KEYS};
+            use crate::{ColorMethod, TrapType};
+            let was = (
+                self.view_coloring(),
+                self.coloring.use_custom_palette,
+                self.coloring.palette_idx,
+                self.coloring.cycle,
+                self.coloring.offset,
+                self.coloring.iter_div,
+            );
+            let saved_vp = self.viewport.clone();
+            let saved_cfg = (self.render_cfg.max_iter, self.render_cfg.auto_iter, self.render_cfg.aa);
+            self.fractal = FractalKind::Mandelbrot;
+            self.julia_mode = false;
+            self.dual = false;
+            self.anim.palette_anim = crate::PaletteAnim::Off;
+            self.coloring.use_custom_palette = false;
+            self.coloring.iter_div = 1;
+            self.coloring.cycle = 0.27;
+            self.coloring.offset = 0.1;
+            self.render_cfg.auto_iter = false;
+            self.render_cfg.max_iter = 2_000;
+            self.render_cfg.aa = 1;
+            let d = ViewColoring::default();
+            // Every setting away from the default and from every coloring below.
+            let scrambled = ViewColoring {
+                method: ColorMethod::Distance,
+                stripe_freq: 17.0,
+                stripe_tail: true,
+                stripe_tail_len: 900,
+                trap: TrapType::Circle,
+                light: true,
+                light_angle: -1.25,
+                light_height: 3.5,
+                glow: true,
+                glow_strength: 0.15,
+                glow_width: 3.25,
+                two_color: TwoColor::Binary,
+                lo: [0.9, 0.1, 0.1],
+                hi: [0.1, 0.9, 0.1],
+                normalize_live: false,
+                normalize_fit: true,
+                log_scale: true,
+            };
+            // (coloring, lines its view must hold)
+            let colorings = [
+                (
+                    ViewColoring {
+                        method: ColorMethod::Stripe,
+                        stripe_freq: 9.5,
+                        stripe_tail: true,
+                        stripe_tail_len: 64,
+                        light: true,
+                        light_angle: 0.5,
+                        light_height: 0.8,
+                        ..d.clone()
+                    },
+                    &["method=stripe", "stripe_freq=9.5", "stripe_tail=1", "stripe_tail_len=64", "light=1", "light_angle=0.5", "light_height=0.8"][..],
+                ),
+                (
+                    ViewColoring {
+                        method: ColorMethod::OrbitTrap,
+                        trap: TrapType::Cross,
+                        glow: true,
+                        glow_strength: 0.4,
+                        glow_width: 0.7,
+                        two_color: TwoColor::Duotone,
+                        lo: [0.2, 0.3, 0.4],
+                        hi: [0.9, 0.8, 0.7],
+                        normalize_fit: true,
+                        ..d.clone()
+                    },
+                    &["method=trap", "trap=cross", "glow=1", "glow_strength=0.4", "glow_width=0.7", "palette_mode=duotone", "palette_lo=0.2,0.3,0.4", "palette_hi=0.9,0.8,0.7", "normalize_fit=1"][..],
+                ),
+                (
+                    ViewColoring { method: ColorMethod::TriangleIneq, two_color: TwoColor::Binary, hi: [1.0, 0.75, 0.0], ..d.clone() },
+                    &["method=triangle", "palette_mode=binary", "palette_hi=1,0.75,0"][..],
+                ),
+                (ViewColoring { normalize_live: false, log_scale: true, ..d.clone() }, &["normalize_live=0", "log_scale=1"][..]),
+                (ViewColoring { method: ColorMethod::Decomposition, ..d.clone() }, &["method=decomposition"][..]),
+            ];
+            let mut bad: Vec<String> = Vec::new();
+            for (v, want_lines) in &colorings {
+                self.set_view_coloring(v);
+                let blob = self.view_metadata();
+                for l in *want_lines {
+                    if !blob.contains(&format!("\n{l}\n")) {
+                        bad.push(format!("{} view lacks {l}", v.method.key()));
+                    }
+                }
+                self.set_view_coloring(&scrambled);
+                self.coloring.use_custom_palette = true;
+                let rt = self.load_view_metadata(&blob);
+                if let Some(n) = rt.note() {
+                    bad.push(format!("{}: {n}", v.method.key()));
+                }
+                if self.view_coloring().lines() != v.lines() {
+                    bad.push(format!("{} came back as {:?}", v.method.key(), self.view_coloring().lines()));
+                }
+                if self.coloring.use_custom_palette {
+                    bad.push(format!("{}: the custom gradient stayed on over the view's preset", v.method.key()));
+                }
+            }
+            self.set_view_coloring(&d);
+            let plain = self.view_metadata();
+            let keyless = !crate::export::view_field_pairs(&plain).iter().any(|(k, _)| KEYS.contains(k));
+            self.set_view_coloring(&scrambled);
+            self.load_view_metadata(&plain);
+            let older_defaults = self.view_coloring().lines().is_empty();
+            self.set_view_coloring(&scrambled);
+            self.load_view_metadata("center_re=-0.75\ncenter_im=0.1\n");
+            let bare_keeps = self.view_coloring() == scrambled;
+            push_check(&mut checks, &mut last_check_t, SelfCheck {
+                category: "View format",
+                name: "a view carries its coloring".into(),
+                params: format!("{} colorings → a different session → load; a default view; an older view; a bare location", colorings.len()),
+                result: if bad.is_empty() {
+                    format!("all came back; default view keyless {keyless}, older view → defaults {older_defaults}, bare location keeps {bare_keeps}")
+                } else {
+                    bad.join("; ")
+                },
+                threshold: "every coloring restored, no note, custom gradient off; no coloring key at the defaults; an older view opens in the defaults; a bare location changes nothing",
+                pass: bad.is_empty() && keyless && older_defaults && bare_keeps,
+            });
+
+            // The picture: a trap view with relief, glow and a Duotone ramp, saved, then rendered
+            // after the session was set to the default coloring and the view reloaded.
+            let (rw, rh) = (360u32, 200u32);
+            let render = |app: &mut Self, dev: &eframe::wgpu::Device, q: &eframe::wgpu::Queue| -> Option<Vec<u8>> {
+                let mut vp = Viewport::new(rw as f64, rh as f64);
+                vp.set_center_mag(
+                    fractadyne_core::BigFloat::from_f64(-0.743_643_887_037_15, 64),
+                    fractadyne_core::BigFloat::from_f64(0.131_825_904_205_31, 64),
+                    2.0e3,
+                );
+                let req = app.current_export_request_for(&vp, false);
+                let progress = std::sync::atomic::AtomicU32::new(0);
+                let cancel = std::sync::atomic::AtomicBool::new(false);
+                fractadyne_gpu::render_export(dev, q, &req, &progress, &cancel)
+                    .ok()
+                    .map(|r| fractadyne_export::to_srgb8_dithered(&r.pixels, r.width))
+            };
+            let shown = ViewColoring {
+                method: ColorMethod::OrbitTrap,
+                trap: TrapType::Cross,
+                light: true,
+                light_angle: 1.0,
+                light_height: 0.8,
+                glow: true,
+                glow_strength: 0.4,
+                glow_width: 0.7,
+                two_color: TwoColor::Duotone,
+                lo: [0.1, 0.05, 0.2],
+                hi: [0.95, 0.7, 0.3],
+                ..d.clone()
+            };
+            self.set_view_coloring(&shown);
+            let saved = render(self, device, queue);
+            let blob = self.view_metadata();
+            self.set_view_coloring(&d);
+            let other = render(self, device, queue);
+            self.load_view_metadata(&blob);
+            let reloaded = render(self, device, queue);
+            let (same, apart, coherent) = match (&saved, &other, &reloaded) {
+                (Some(a), Some(s), Some(b)) => (frame::distance(a, b), frame::distance(a, s), frame::coherent(a)),
+                _ => (f64::INFINITY, 0.0, false),
+            };
+            push_check(&mut checks, &mut last_check_t, SelfCheck {
+                category: "View format",
+                name: "a saved view renders the same after a reload".into(),
+                params: format!("{rw}x{rh} seahorse 2e3×: orbit trap (cross), relief, glow, Duotone"),
+                result: format!("saved vs reloaded meanΔ {same:.3}; saved vs the default coloring meanΔ {apart:.2}; coherent {coherent}"),
+                threshold: "meanΔ ≤ 0.01 after the reload; ≥ 2 from the default coloring (else the check sees nothing)",
+                pass: same <= 0.01 && apart >= 2.0 && coherent,
+            });
+
+            self.set_view_coloring(&was.0);
+            (
+                self.coloring.use_custom_palette,
+                self.coloring.palette_idx,
+                self.coloring.cycle,
+                self.coloring.offset,
+                self.coloring.iter_div,
+            ) = (was.1, was.2, was.3, was.4, was.5);
+            self.viewport = saved_vp;
+            (self.render_cfg.max_iter, self.render_cfg.auto_iter, self.render_cfg.aa) = saved_cfg;
         }
 
         // ---- appearance: the image actually CHANGES when a control changes ----
