@@ -59,6 +59,11 @@ published as the pre-releases `v0.2.41-beta.1` to `v0.2.41-beta.150`, and a "bet
 
 Changes after 0.3.0-beta.1:
 
+- **Turning on the stripe tail redraws the view (0.3.0-beta.27).** Ticking "Tail only (deep
+  zoom)" under Stripe average, or changing its Tail length, over a view that had finished drawing
+  left the picture exactly as it was: the renderer decided whether to redraw from a list of
+  settings that did not include the tail, so the new setting showed only once something else
+  changed the view. It now redraws at once.
 - **The coloring sliders can be set from the command line (0.3.0-beta.27).** `--cycle`, `--offset`,
   `--light-height` (Relief), `--glow-strength` (Glow) and `--glow-width` (Band width) set the
   Coloring and Effects sliders for a `--render`, each within its slider's range; a value outside

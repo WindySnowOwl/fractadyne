@@ -448,6 +448,12 @@ struct IterKey {
     delta_exp: i32,
     color_method: u32,
     stripe_freq: f32,
+    /// Stripe's tail window (`aux_on_word` bits 1 and up): it changes what the iteration
+    /// accumulates, so a toggled tail must re-iterate. ⛔Missing until 2026-11-08: turning on
+    /// "Tail only" over a settled view left the frame exactly as it was (`--uitest`
+    /// stripe-tail-redraws).
+    stripe_tail: bool,
+    stripe_tail_len: u32,
     trap_type: u32,
     sa_skip: u32,
     bla_on: u32,
@@ -460,6 +466,10 @@ struct IterKey {
     /// An L-system frame's display key (`LSystemRenderer::update`). 0 for every other frame.
     lsystem: u64,
 }
+
+#[cfg(test)]
+#[path = "../tests/unit/iter_key_tests.rs"]
+mod iter_key_tests;
 
 /// GPU-timestamp capture around the LIVE `iterate_pass`, so the app can size deep frames against what
 /// the iterate ACTUALLY costs on this GPU at this view.
@@ -3294,6 +3304,35 @@ pub struct MandelbrotParams {
 /// tile, chunk, split, hold, reprojection or accumulation. What a Life frame starts from (it sets
 /// the coloring, the size and `life`); the escape-time frames set every field themselves.
 impl MandelbrotParams {
+    /// The key a frame re-iterates on: everything the iteration's output depends on. `size` is
+    /// the texture's, `life` and `lsystem` the display keys of those renderers (0 otherwise).
+    fn iter_key(&self, size: [u32; 2], life: u64, lsystem: u64) -> IterKey {
+        IterKey {
+            ref_offset: self.ref_offset,
+            center: self.center,
+            julia_c: self.julia_c,
+            span_mantissa: self.span_mantissa,
+            max_iter: self.max_iter,
+            size,
+            orbit_id: self.orbit_id,
+            mode: self.mode,
+            formula: self.formula,
+            custom: self.custom.as_ref().map_or(0, |c| c.key),
+            julia: self.julia,
+            delta_exp: self.delta_exp,
+            color_method: self.color_method,
+            stripe_freq: self.stripe_freq,
+            stripe_tail: self.stripe_tail,
+            stripe_tail_len: self.stripe_tail_len,
+            trap_type: self.trap_type,
+            sa_skip: self.sa_skip,
+            bla_on: self.bla_on,
+            jitter: self.jitter,
+            life,
+            lsystem,
+        }
+    }
+
     /// `K` of the u-space tree, or 0 when there is none for this orbit (see [`rn_bla_k`]).
     fn rn_bla_k(&self) -> u32 {
         rn_bla_k(self.rn.len, self.orbit_len, self.rn_bla.len())
@@ -3883,28 +3922,7 @@ impl CallbackTrait for MandelbrotParams {
         }
 
         // Re-iterate only when the view / orbit changed.
-        let key = IterKey {
-            ref_offset: self.ref_offset,
-            center: self.center,
-            julia_c: self.julia_c,
-            span_mantissa: self.span_mantissa,
-            max_iter: self.max_iter,
-            size,
-            orbit_id: self.orbit_id,
-            mode: self.mode,
-            formula: self.formula,
-            custom: self.custom.as_ref().map_or(0, |c| c.key),
-            julia: self.julia,
-            delta_exp: self.delta_exp,
-            color_method: self.color_method,
-            stripe_freq: self.stripe_freq,
-            trap_type: self.trap_type,
-            sa_skip: self.sa_skip,
-            bla_on: self.bla_on,
-            jitter: self.jitter,
-            life: life_key,
-            lsystem: lsystem_key,
-        };
+        let key = self.iter_key(size, life_key, lsystem_key);
         // Re-render when the key changed (new view/orbit/size) OR when a tiled settle advanced to a
         // new rect under an unchanged key — OR when a chunked progression advanced its iteration
         // range (same idea, on the iteration axis). A completed grid/progression keeps sending its

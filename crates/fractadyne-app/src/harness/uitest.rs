@@ -233,7 +233,31 @@ enum Screen {
     MinimapBase,
     MinimapPan,
     MinimapPanVerify,
+    /// Coloring plan A4: turning on Stripe's "Tail only" over a settled view must re-iterate it.
+    /// The tail changes what the iteration accumulates, but the GPU's `IterKey` did not carry it,
+    /// so the view kept the statistics of the setting before the toggle: the toggled frame
+    /// matched the tail-off frame pixel for pixel (2026-11-08, with a settle grid in force).
+    ///
+    /// Four steps, because an honest tail-on render needs the key to change: settle with the tail
+    /// off, toggle it exactly as the checkbox does, move to another view, come back. The toggled
+    /// frame must match the one that came back, and the first must differ from it.
+    StripeTailOff,
+    StripeTailToggle,
+    StripeTailAway,
+    StripeTailOn,
 }
+
+/// The stripe-tail steps' view (the seahorse valley at 2e3x, direct), and how far they pan away
+/// and back (complex units, a few view heights). ⚠A PAN and its reverse, not two jumps: they keep
+/// the scale, so the frame that comes back is the same view to well under a pixel. Two jumps put
+/// the first step at 1,959x and the last at 2,000x, because the first ran while the window was
+/// still taking its size.
+const STRIPE_TAIL_AT: (f64, f64) = (-0.743_643_887_037_158_7, 0.131_825_904_205_311_97);
+const STRIPE_TAIL_PAN: f64 = 0.004;
+/// The largest fingerprint distance between the toggled frame and the honest re-render that still
+/// counts as the same picture. Calibrated 2026-11-08 on the RTX 3080, two runs each: fixed 0.0 and
+/// 0.0, broken (no tail in the GPU key) 72.7 and 72.7. The minimap check's 9.5 sits far from both.
+const STRIPE_TAIL_STALE_MAX: f64 = 9.5;
 
 /// A live-render step: jump to a view and let the on-screen live path render it, then screenshot.
 #[derive(Clone, Debug)]
@@ -984,6 +1008,10 @@ fn build_steps() -> Vec<Step> {
         screen("minimap-base", Screen::MinimapBase),
         screen("minimap-pan", Screen::MinimapPan),
         screen("minimap-pan-verify", Screen::MinimapPanVerify),
+        screen("stripe-tail-off", Screen::StripeTailOff),
+        screen("stripe-tail-toggle", Screen::StripeTailToggle),
+        screen("stripe-tail-away", Screen::StripeTailAway),
+        screen("stripe-tail-on", Screen::StripeTailOn),
     ]
 }
 
@@ -1652,6 +1680,33 @@ impl FractadyneApp {
             Screen::MinimapPanVerify => {
                 self.perf.view_gen = [self.perf.frame_idx + 1, self.perf.frame_idx + 1];
             }
+            Screen::StripeTailOff => {
+                self.set_show_mode(crate::ShowMode::Set);
+                self.set_fractal(crate::FractalKind::Mandelbrot);
+                // ⚠Anti-aliasing OFF: progressive supersampling puts a jitter in the GPU key, and
+                // the restart a coloring change causes would re-iterate for that reason alone,
+                // hiding the defect. An explicit count, so the steps cannot differ by an
+                // auto-scaled budget.
+                self.render_cfg.aa = 1;
+                self.render_cfg.auto_iter = false;
+                self.render_cfg.max_iter = 1_000;
+                self.coloring.normalize_live = false;
+                self.coloring.normalize_fit = false;
+                self.coloring.color_method = crate::ColorMethod::Stripe;
+                self.coloring.stripe_tail = false;
+                // The shortest tail, so tail on and off look clearly different.
+                self.coloring.stripe_tail_len = 4;
+                self.viewport.set_center_mag(
+                    fractadyne_core::BigFloat::from_f64(STRIPE_TAIL_AT.0, 64),
+                    fractadyne_core::BigFloat::from_f64(STRIPE_TAIL_AT.1, 64),
+                    2.0e3,
+                );
+                self.pointer.settle_t = [-1.0e9, -1.0e9]; // settled, not interacting
+            }
+            // EXACTLY what the "Tail only" checkbox does (`ui/panels.rs`): flip the setting.
+            Screen::StripeTailToggle => self.coloring.stripe_tail = true,
+            Screen::StripeTailAway => self.viewport.pan_complex(STRIPE_TAIL_PAN, 0.0),
+            Screen::StripeTailOn => self.viewport.pan_complex(-STRIPE_TAIL_PAN, 0.0),
             Screen::PaletteEditor => {
                 self.coloring.palette_editor_open = true;
                 // ⭐⭐**Seed a real custom gradient, or this step screenshots the EMPTY STATE.**
@@ -2657,6 +2712,58 @@ impl FractadyneApp {
                     name: "minimap-pan-redraws".into(),
                     verdict: Verdict::Warn,
                     detail: "no preceding minimap-pan step to compare against".into(),
+                }),
+            }
+        }
+
+        // ---- turning on the stripe tail over a settled view redraws it (coloring plan A4) ----
+        if matches!(step.kind, StepKind::Screen(Screen::StripeTailOn)) {
+            let find = |n: &str| ut.results.iter().rev().find(|r| r.name == n);
+            match (find("stripe-tail-off"), find("stripe-tail-toggle")) {
+                (Some(off), Some(toggled)) => {
+                    // The toggled frame against an honest tail-on render of the same view, and the
+                    // tail-off frame against it (how much the tail changes this view at all).
+                    let stale = fp_distance(&toggled.left_fp, &left_fp);
+                    let effect = fp_distance(&off.left_fp, &left_fp);
+                    let real = luma_stddev >= 3.0 && off.luma_stddev >= 3.0;
+                    // Reported, not required: the frame stayed stale WITH a settle grid in force
+                    // too (2026-11-08, both runs tiled), so the app's key re-arming the grid did
+                    // not cover it, and the check holds either way.
+                    let grid = if toggled.tiled { "tiled" } else { "untiled" };
+                    // ⭐ANTI-VACUITY: a view the tail barely changes cannot show a stale frame.
+                    if effect < 8.0 || !real {
+                        checks.push(Check {
+                            name: "stripe-tail-redraws".into(),
+                            verdict: Verdict::Warn,
+                            detail: format!(
+                                "the tail changes this view too little to tell (meanD {effect:.1}, \
+                                 stddev {luma_stddev:.1}) — this run proves nothing"
+                            ),
+                        });
+                    } else if stale <= STRIPE_TAIL_STALE_MAX {
+                        checks.push(pass(
+                            "stripe-tail-redraws",
+                            format!(
+                                "the toggled frame matches an honest re-render (meanD {stale:.1}; the \
+                                 tail itself moves the view by {effect:.1}, {grid})"
+                            ),
+                        ));
+                    } else {
+                        checks.push(Check {
+                            name: "stripe-tail-redraws".into(),
+                            verdict: Verdict::Fail,
+                            detail: format!(
+                                "turning on the stripe tail left a stale frame: meanD {stale:.1} \
+                                 against an honest re-render of the SAME view (the tail moves it by \
+                                 {effect:.1}, {grid})"
+                            ),
+                        });
+                    }
+                }
+                _ => checks.push(Check {
+                    name: "stripe-tail-redraws".into(),
+                    verdict: Verdict::Warn,
+                    detail: "no stripe-tail-off and stripe-tail-toggle steps to compare against".into(),
                 }),
             }
         }
