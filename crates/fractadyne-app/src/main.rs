@@ -3130,6 +3130,23 @@ impl ColorMethod {
     }
 }
 
+/// The ranges of the coloring panel's sliders, shared by the panel and the command line
+/// (`apply_cli_render`), so a value one accepts the other can show. Each flag's help entry states
+/// its range, pinned by a unit test.
+pub(crate) mod slider_range {
+    use std::ops::RangeInclusive;
+    /// Cycle (`--cycle`).
+    pub(crate) const CYCLE: RangeInclusive<f32> = 0.0..=1.0;
+    /// Offset (`--offset`).
+    pub(crate) const OFFSET: RangeInclusive<f32> = 0.0..=1.0;
+    /// Relief (`--light-height`).
+    pub(crate) const LIGHT_HEIGHT: RangeInclusive<f32> = 0.2..=4.0;
+    /// Glow (`--glow-strength`).
+    pub(crate) const GLOW_STRENGTH: RangeInclusive<f32> = 0.0..=1.0;
+    /// Band width (`--glow-width`).
+    pub(crate) const GLOW_WIDTH: RangeInclusive<f32> = 0.15..=4.0;
+}
+
 /// The Smooth method's palette rate — palettes per iteration, what the shader multiplies the
 /// smooth iteration count by — for Cycle slider `cycle` and "Divide iterations" `div`.
 ///
@@ -8464,6 +8481,53 @@ impl FractadyneApp {
         }
         if args.iter().any(|a| a == "--de") {
             self.effects.de = true;
+        }
+        // The panel's coloring sliders, each limited to its slider's range. A value outside it is
+        // fatal, as for `--iter-div`: the app can never show it, so clamping it quietly would
+        // render something other than what was asked for. A setting for an effect that is off
+        // changes no pixel, so it says so.
+        let ranged = |name: &str, range: std::ops::RangeInclusive<f32>| -> Option<f32> {
+            val(name).map(|s| {
+                let v = arg_parse::<f32>(name, s, "a number");
+                if !range.contains(&v) {
+                    eprintln!(
+                        "fractadyne: {name}: {v} is out of range; use {} to {}.",
+                        range.start(),
+                        range.end()
+                    );
+                    crate::exit(2)
+                }
+                v
+            })
+        };
+        if let Some(c) = ranged("--cycle", slider_range::CYCLE) {
+            self.coloring.cycle = c;
+        }
+        if let Some(o) = ranged("--offset", slider_range::OFFSET) {
+            self.coloring.offset = o;
+        }
+        let light_off = |flag: &str| eprintln!("fractadyne: {flag} has no effect without --light (relief lighting is off).");
+        let glow_off = |flag: &str| eprintln!("fractadyne: {flag} has no effect without --de (the distance glow is off).");
+        if val("--light-angle").is_some() && !self.effects.light {
+            light_off("--light-angle");
+        }
+        if let Some(h) = ranged("--light-height", slider_range::LIGHT_HEIGHT) {
+            self.effects.light_height = h;
+            if !self.effects.light {
+                light_off("--light-height");
+            }
+        }
+        if let Some(s) = ranged("--glow-strength", slider_range::GLOW_STRENGTH) {
+            self.effects.de_strength = s;
+            if !self.effects.de {
+                glow_off("--glow-strength");
+            }
+        }
+        if let Some(w) = ranged("--glow-width", slider_range::GLOW_WIDTH) {
+            self.effects.de_width = w;
+            if !self.effects.de {
+                glow_off("--glow-width");
+            }
         }
         // `from_key` ends in `unwrap_or_default()`, so an unknown key silently colors Smooth.
         // Round-trip the key to tell "you asked for smooth" from "we could not read that".

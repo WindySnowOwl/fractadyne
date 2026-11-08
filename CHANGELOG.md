@@ -59,6 +59,14 @@ published as the pre-releases `v0.2.41-beta.1` to `v0.2.41-beta.150`, and a "bet
 
 Changes after 0.3.0-beta.1:
 
+- **The coloring sliders can be set from the command line (0.3.0-beta.27).** `--cycle`, `--offset`,
+  `--light-height` (Relief), `--glow-strength` (Glow) and `--glow-width` (Band width) set the
+  Coloring and Effects sliders for a `--render`, each within its slider's range; a value outside
+  it is an error, and a relief or glow setting without `--light` or `--de` says it has no effect.
+  Before, a command-line render could only use whatever the last session left in them. In a
+  `--profile` regions file, `trap` and `stripe_freq` set the orbit trap's shape and the stripe
+  density, and an unknown key, method, trap or fractal is now an error: an unknown method used
+  to profile Smooth, and an unknown fractal the Mandelbrot set, under the region's name.
 - **Distance coloring and the distance glow measure in screen pixels (0.3.0-beta.27).** The
   distance to the set was measured in the renderer's samples, and with anti-aliasing a pixel holds
   several samples, so at the default 2× every distance read one octave too far: the Distance colors

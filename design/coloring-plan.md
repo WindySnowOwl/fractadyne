@@ -1,6 +1,6 @@
 # Coloring methods: implementation plan
 
-Status: **plan (2026-11-08), nothing started.** Line references are to `main` at `9ab75357`; check
+Status: **plan (2026-11-08); A9 and A6 done, see §10.** Line references are to `main` at `9ab75357`; check
 them before editing, they drift. The research behind it (methods, prototypes, measured results,
 prior art) is the coloring-methods doc; its local copy is
 `local/research_notes/Fractal coloring methods/` (PDF, HTML, Markdown, prototype scripts).
@@ -339,6 +339,18 @@ reproduced. Reproduce before fixing; never close on the mechanism argument alone
   (`profile.rs:102-166`, which today turns an unknown method into Smooth silently: make that an
   error).
 - **Tests**: unit tests of the parsing; the flag list test.
+- **Done 2026-11-08** (branch `feat/color-a6-cli-flags`): `--cycle`, `--offset`, `--light-height`,
+  `--glow-strength`, `--glow-width`, each limited to its slider's range from one table
+  (`slider_range` in `main.rs`, which the panel's sliders now read too; out of range is fatal,
+  and a relief or glow setting without `--light`/`--de` warns, as does `--light-angle`). A unit
+  test pins each flag's help entry to its range. `--profile` regions: `deny_unknown_fields`,
+  unknown method, trap or fractal is an error, new keys `trap` and `stripe_freq` (set for every
+  region, so none carries into the next). **Left out, on purpose**: `--normalize-live` and
+  `--normalize-fit`. Both act only on the live view (`live_norm_window` reads the live range
+  readings; a headless render has none, `render.rs` at the export request's `cycle`), so on
+  `--render` they would change no pixel; `--assemble` already normalizes with `--normalize`.
+  They belong with B1's live path (`--livetest` method tours), where a live run reads them. The
+  cycle, offset and effect sliders are not region keys: they do not change what a region costs.
 
 ### A7. Field agent can run coloring tests
 
@@ -786,8 +798,9 @@ coloring in these places, so sequence the two with care:
 
 | Step | State | Commit |
 |---|---|---|
-| A9 | done, branch `fix/de-in-pixels` | |
-| A1–A8, A10 | not started | |
+| A9 | done, merged | `33c6527e` (merge `3d202f30`) |
+| A6 | done, branch `feat/color-a6-cli-flags` | |
+| A1–A5, A7, A8, A10 | not started | |
 | B1–B8 | not started | |
 | C1–C11 | not started | |
 | D, E, F, G | not started | |
