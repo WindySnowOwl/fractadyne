@@ -1,6 +1,6 @@
 # Coloring methods: implementation plan
 
-Status: **plan (2026-11-08); A9, A6, A2 and A4 done, see §10.** Line references are to `main` at `9ab75357`; check
+Status: **plan (2026-11-08); A9, A6, A2, A4 and A8 done, see §10.** Line references are to `main` at `9ab75357`; check
 them before editing, they drift. The research behind it (methods, prototypes, measured results,
 prior art) is the coloring-methods doc; its local copy is
 `local/research_notes/Fractal coloring methods/` (PDF, HTML, Markdown, prototype scripts).
@@ -380,6 +380,12 @@ reproduced. Reproduce before fixing; never close on the mechanism argument alone
 - **Depends on**: none. **Size**: S.
 - **Work**: a Close button (`dlg-close`) in an action row (`ui/palette_browser.rs:273-334`);
   optionally a keyboard shortcut for both browsers.
+- **Done 2026-11-08** (branch `feat/color-a8-browser-close`, stacked on A4): the Close row under
+  the details (`theme::action_row` + `cancel_button`, the dialogs' pattern), with the grid's
+  reserve below it raised from 120 to 156 px. uitest palette-browser screens 3/3 in English; in
+  en-XA the same two shortened filter headings (Temperature, Brightness) as on `main`, so not
+  this change. No keyboard shortcut: no dialog closes on a key (Esc stops the auto-zoom, a tour
+  or full screen, `main.rs`), so one here would be the only one; decide for all dialogs at once.
 
 ### A9. DE in pixels
 
@@ -815,8 +821,9 @@ coloring in these places, so sequence the two with care:
 | A9 | done, merged | `33c6527e` (merge `3d202f30`) |
 | A6 | done, branch `feat/color-a6-cli-flags` | `2c898852` |
 | A2 | done, branch `fix/color-a2-small-corrections` | `3e5aa578` |
-| A4 | done, branch `fix/color-a4-stripe-tail-key` | |
-| A1, A3, A5, A7, A8, A10 | not started | |
+| A4 | done, branch `fix/color-a4-stripe-tail-key` | `475e2190` |
+| A8 | done, branch `feat/color-a8-browser-close` | |
+| A1, A3, A5, A7, A10 | not started | |
 | B1–B8 | not started | |
 | C1–C11 | not started | |
 | D, E, F, G | not started | |

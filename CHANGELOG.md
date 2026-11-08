@@ -59,6 +59,8 @@ published as the pre-releases `v0.2.41-beta.1` to `v0.2.41-beta.150`, and a "bet
 
 Changes after 0.3.0-beta.1:
 
+- **The palette browser has a Close button (0.3.0-beta.27)**, below its details, as every other
+  dialog has. Before, the only way out was the small × in its title bar.
 - **Turning on the stripe tail redraws the view (0.3.0-beta.27).** Ticking "Tail only (deep
   zoom)" under Stripe average, or changing its Tail length, over a view that had finished drawing
   left the picture exactly as it was: the renderer decided whether to redraw from a list of
