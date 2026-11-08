@@ -487,11 +487,10 @@ impl RecomputeResult {
     }
 }
 
-/// Aux coloring aggregates for the BLA tree, derived from a reference orbit. Triangle-inequality
-/// needs `cmag` (= |c_ref| = |Z_1|, since Mandelbrot's Z_0 = 0 ⇒ Z_1 = c) and `power` (= 2, because
-/// BLA is Mandelbrot-only) — both reference-intrinsic, so the tree caches per reference with no live
-/// dependency. Point-trap uses the default trap aggregate (trap_type 0). `stripe_freq` stays default
-/// (stripe's per-node aggregate isn't folded yet — it would need a rebuild on the freq slider).
+/// Aux coloring aggregates for the BLA tree, derived from a reference orbit and the coloring
+/// settings. Triangle-inequality needs `cmag` (= |c_ref| = |Z_1|, since Z_0 = 0 ⇒ Z_1 = c) and the
+/// formula's degree `power`, both fixed by the reference. The stripe and trap aggregates depend on
+/// the stripe density and the trap shape, so a stripe or trap tree is rebuilt when either changes.
 fn aux_agg_from_orbit(orbit: &[[f32; 4]], stripe_freq: f64, trap_type: u32, power: u32) -> fractadyne_core::AuxAggParams {
     let cmag = orbit
         .get(1)

@@ -1,7 +1,9 @@
 # Multilingual support — design
 
-Status: **design, decisions recorded (2026-10-22). Nothing built.** Line references are to
-`main` at `5f9193d1`.
+Status: **design, decisions recorded (2026-10-22); since built in part.** The interface and Help
+are translatable, and `i18n/` holds English and 14 draft translations (§9 lists the first eight
+as planned; what shipped is noted there). The other sections describe the design as decided,
+not necessarily what was built. Line references are to `main` at `5f9193d1`.
 
 The goal: Fractadyne's interface and Help in eight languages to start — English, Spanish, French,
 German, Japanese, Chinese, Khmer and Ukrainian — with each language held in **one file that is easy
@@ -436,6 +438,11 @@ language with no file changes nothing.
 English README); and a language file that fails to load leaves the app in English with a notice.
 
 ## 9. The eight languages: fonts and scripts
+
+The first eight, as decided. **Shipped (2026-11-08)**: seven of them (all but Khmer, which
+waits for the egui upgrade below) and eight more: Indonesian (`id`), Italian (`it`), Korean
+(`ko`), Polish (`pl`), Brazilian Portuguese (`pt-BR`), Russian (`ru`), Turkish (`tr`) and
+Traditional Chinese (`zh-Hant`), 15 with English, every translation a draft.
 
 | Language | Tag | Script | Font | Shaping | Line breaks |
 |---|---|---|---|---|---|

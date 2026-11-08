@@ -340,7 +340,7 @@ pub(crate) const CLI_REFERENCE: &[CliRef] = {
         Flag("--stripe-freq N", "Stripe density (stripe method)."),
         Flag("--stripe-tail N", "Stripe average over the tail only (stripe method): an exponential window over the last N iterations of each orbit instead of the whole orbit, so extreme-depth views keep their stripe contrast (4..=1048576, 16 is the classic look; the Tail only option in Coloring)."),
         Flag("--trap SHAPE", "point | cross | circle (orbit-trap method)."),
-        Flag("--binary", "Binary-decomposition coloring."),
+        Flag("--binary", "The Binary (set) palette: one flat color inside the set and another outside, no gradient (Color > Binary (set)). Not binary decomposition, which is --method decomposition."),
         Flag("--light [--light-angle R]", "Enable 3D relief lighting."),
         Flag("--de", "Enable distance glow."),
         Flag("--cycle C", "Cycle, 0 to 1 (the Cycle slider under Coloring): how fast the palette repeats. For the smooth method 0 is one palette per 250 iterations and 1 one per about 16; with --normalize it sets how many times the palette sweeps the frame's range."),

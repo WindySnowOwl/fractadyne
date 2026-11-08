@@ -63,6 +63,18 @@ const GOLDEN_MEAN_STRICT: f64 = 2.0;
 /// the report always prints the numbers so a human can judge.
 const GOLDEN_MEAN_CROSS_GPU: f64 = 24.0;
 
+/// The check groups `--selftest-list` prints: every `want("…")` tag in this file
+/// (`every_want_group_is_listed`), so a group can be found and run on its own.
+pub(crate) const GROUPS: &[&str] = &[
+    "numeric", "symmetry", "abs-family", "custom-formula", "life", "lsystem", "multibrot-sa", "bla", "aux-bla",
+    "consistency", "counters", "iter-budget", "iter-chunk", "renorm", "live-split", "worker", "nr-zoom", "coords",
+    "curated-poi", "ref-pick", "ref-reuse", "ref-overlap", "orbit-cache", "script", "metadata",
+    "display", "catalog", "goldens", "bench-matrix", "live-res", "appearance",
+    "checklist", "replay", "settings-quarantine", "expmap", "assemble", "de-pixels",
+    "colour-box", "cycle-check", "export-contain", "honest-step", "palette-fade", "retreat", "view-thumb",
+    "width-independence",
+];
+
 /// Groups that run ONLY when named. ⛔Kept out of `GROUPS` so a bare `--selftest` never pays for
 /// them — each costs minutes, not milliseconds. Which means a full run never runs them either: it
 /// says so at its end (`opt_in_not_run`), and the release checklist requires each to have been run
@@ -754,13 +766,6 @@ impl FractadyneApp {
         // The flags come from `new()` (the EXPANDED args), NOT std::env::args(), so
         // `@response-file` expansion is honored (raw args would silently drop them).
         let filter: Option<String> = self.selftest.filter.clone();
-        const GROUPS: &[&str] = &[
-            "numeric", "symmetry", "abs-family", "custom-formula", "life", "lsystem", "multibrot-sa", "bla", "aux-bla",
-            "consistency", "counters", "iter-budget", "iter-chunk", "renorm", "live-split", "worker", "nr-zoom", "coords",
-            "curated-poi", "ref-pick", "ref-reuse", "ref-overlap", "orbit-cache", "script", "metadata",
-            "display", "catalog", "goldens", "bench-matrix", "live-res", "appearance",
-            "checklist", "replay", "settings-quarantine", "expmap", "assemble", "de-pixels",
-        ];
         if self.selftest.list {
             println!("selftest groups (use with --selftest-filter <substr>):");
             for g in GROUPS {
