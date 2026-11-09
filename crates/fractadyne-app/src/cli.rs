@@ -235,6 +235,11 @@ pub(crate) fn run_headless(args: &[String]) -> bool {
         let fails = crate::harness::gputest::run_gputest_sweep(out.as_deref());
         crate::exit(if fails > 0 { 1 } else { 0 });
     }
+    // --gl-link-bisect / --gl-link-probe FILE: what in the renderer's shader an OpenGL driver's
+    // compiler crashes on (Eris, 2026-11-09). Headless: the bisect links each variant in a child.
+    if let Some(code) = crate::harness::gl_link_probe::run(args) {
+        crate::exit(code);
+    }
     // --discover: the render-farm controllers answering on this network (and this machine).
     if args.iter().any(|a| a == "--discover") {
         match fractadyne_farm::discovery::discover(std::time::Duration::from_millis(1500)) {

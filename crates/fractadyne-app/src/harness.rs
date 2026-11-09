@@ -77,6 +77,7 @@ pub(crate) mod crosscheck_f3;
 pub(crate) mod deviceloss_repro;
 pub(crate) mod assemble_check;
 pub(crate) mod expmap_check;
+pub(crate) mod gl_link_probe;
 pub(crate) mod glitchaudit;
 pub(crate) mod truth;
 pub(crate) mod gputest;
