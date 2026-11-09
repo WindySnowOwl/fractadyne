@@ -59,6 +59,13 @@ published as the pre-releases `v0.2.41-beta.1` to `v0.2.41-beta.150`, and a "bet
 
 Changes after 0.3.0-beta.1:
 
+- **Stripe, triangle-inequality and orbit-trap coloring keep their whole orbit in deep exterior
+  views (0.3.0-beta.27).** Past about 1e28×, where the reference orbit escapes well within the
+  iteration budget, the renderer skips the first stretch of every orbit with a series
+  approximation, and these three methods lost the statistics of that stretch: at 1e30× they colored
+  from the last few iterations of a 3,090-iteration orbit, and the view came out a different color.
+  The skipped stretch is now folded in from the reference, as the BLA skips already did, and these
+  views match the same view iterated in full.
 - **Stripe and triangle-inequality coloring no longer draw rings on Multibrot 3–8 (0.3.0-beta.27).**
   On every power but 2 (Multibrot 3–8, and Burning Ship, Tricorn, Celtic and Buffalo at powers
   3–5), these two methods drew a sharp ring along every iteration band: the blend between the

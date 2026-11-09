@@ -1,6 +1,6 @@
 # Coloring methods: implementation plan
 
-Status: **plan (2026-11-08); A9, A6, A2, A4, A8, A1, A3 and A5b done, see §10.** Line references are to `main` at `9ab75357`; check
+Status: **plan (2026-11-08); A9, A6, A2, A4, A8, A1, A3, A5b and A5a done, see §10.** Line references are to `main` at `9ab75357`; check
 them before editing, they drift. The research behind it (methods, prototypes, measured results,
 prior art) is the coloring-methods doc; its local copy is
 `local/research_notes/Fractal coloring methods/` (PDF, HTML, Markdown, prototype scripts).
@@ -361,6 +361,20 @@ reproduced. Reproduce before fixing; never close on the mechanism argument alone
 - **Tests**: extend `aux-bla` with a short-escaper view: SA forced on vs off within the `aux-bla`
   tolerance.
 - **Traps**: the aggregate depends on the trap type and stripe frequency like the BLA lanes do.
+- **Done 2026-11-08** (branch `fix/color-a5a-series-aux`). **Reproduced first** by the new selftest
+  `aux-series` (the method set before the request is built, as an export does): the seahorse at
+  1e30× needs a 20,000 budget to be a short escaper (its reference escapes at 3,090; at 5,000 it is
+  not, and `sa_skip` is 0); then `sa_skip` 3,088, and stripe / TIA / point and cross traps differed
+  from the view iterated in full (no series, no BLA) by maxΔ 0.22 / 0.72 / 0.25 / 0.27 on 75% of the
+  channels. **Fix, simpler than planned**: no CPU uniform. The shader folds [0, sa_skip) out of the
+  BLA tree at the mode-2 seed (binary decomposition into aligned nodes, highest level first) with
+  `aux_fold_run`, now shared with the BLA skip; the aggregates follow the trap type and stripe
+  frequency because the BLA lanes already do. Result against every iteration: 0.0010 / 0.0004 /
+  0.0000 / 0.0000. **The stripe tail stays approximate** (0.029; 0.70 with the prefix dropped): its
+  window weighs the last iterations before the seed, where each pixel has drifted from the
+  reference (folding the prefix term by term made it 0.17, so the mean fold stays). BLA alone is
+  0.23 off in tail mode, a separate TODO item. Mode 1 and the chunk pass have no aux + series case
+  (a statistics method gets the series only through the BLA rule, which is mode 2 only).
 
 **A5b. Stripe and TIA band-edge seams on Multibrot 3–7.**
 
@@ -872,8 +886,9 @@ coloring in these places, so sequence the two with care:
 | A8 | done, merged | `095a7131` (merge `1db50a24`) |
 | A1 | done, merged | `c15bd9c7` (merge `aa5b22e7`) |
 | A3 | done, merged | `3ee690d7` (merge `3c8a59e7`) |
-| A5b | done, branch `fix/color-a5b-stripe-seams` | |
-| A5a, A7, A10 | not started | |
+| A5b | done, merged | `fddc6ada` (merge `e11d1890`) |
+| A5a | done, branch `fix/color-a5a-series-aux` | |
+| A7, A10 | not started | |
 | B1–B8 | not started | |
 | C1–C11 | not started | |
 | D, E, F, G | not started | |
