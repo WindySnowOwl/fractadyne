@@ -477,6 +477,25 @@ dlg-filter-text = Text
 
 ## Asked after a session that did not shut down cleanly
 
+## The dialog shown at the moment Fractadyne has to close because of an error it could not recover
+## from (the one above is shown on the NEXT launch). A system message box: plain text, no markup.
+crash-dialog-title = Fractadyne has to close
+# $reason = the error (technical, usually English); $path = the crash report's file; $url = the project's issue page; $email = the feedback address.
+crash-dialog-body =
+    Fractadyne ran into an error it could not recover from and has to close.
+
+    The error: { $reason }
+
+    A crash report was saved to:
+    { $path }
+
+    Please send it so the problem can be fixed: attach it to a new issue at { $url }, or email it to { $email }. Once Fractadyne starts again, Help ▸ Report an issue attaches it for you.
+
+    Open the folder that holds the report?
+# The error the crash dialog shows when the graphics driver lacks what Fractadyne needs. $card = the graphics card's name; $api = Vulkan or Gl (OpenGL); $have and $need = storage buffers per shader.
+gpu-unsupported-reason = this graphics driver cannot run Fractadyne. { $card } through { $api } offers { $have } storage buffers per shader, and Fractadyne needs { $need }. Updating the graphics driver usually fixes this: Fractadyne runs on Vulkan, or on OpenGL 4.3 and later.
+# The error the crash dialog shows when no graphics device could be opened at all.
+gpu-backend-failed-reason = no graphics device could be opened. Fractadyne needs a graphics driver with Vulkan, or OpenGL 4.3 or later; updating the graphics driver usually fixes this.
 dlg-crash-title = Fractadyne didn't shut down cleanly
 dlg-crash-intro = The previous session ended unexpectedly. A report has been saved on this machine — would you like to send it?
 dlg-crash-review = Nothing is sent until you review it: the next screen shows exactly what would be included, and system information is one checkbox to exclude.

@@ -156,6 +156,11 @@ fn main() -> eframe::Result<()> {
     // Crash/hang visibility (design/diagnostics.md D1): log file, panic hook, watchdog.
     // Before run_headless so even the pre-GUI CLI modes get crash reports.
     diag::init(&args);
+    // The crash dialog, for a person's own launch only (`diag::interactive_launch`): a window that
+    // just vanishes tells nobody what happened or where the report is. English until the session's
+    // language is loaded, below.
+    diag::enable_crash_dialog(diag::interactive_launch(&args));
+    diag::set_crash_text(crate::ui::crash_dialog_text());
     // The live view's reference work runs below normal priority, and every thread it spawns with
     // it (`fractadyne_core::worker_priority`): on an 8-thread CPU, two lookahead picks at once left
     // the frames at the end of a zoom waiting 20-57 ms to present.
@@ -372,12 +377,35 @@ fn main() -> eframe::Result<()> {
                     // None (no `--adapter`) leaves the choice to wgpu, as always.
                     native_adapter_selector: adapter_spec.map(gpu_choice::selector),
                     device_descriptor: std::sync::Arc::new(|adapter: &eframe::wgpu::Adapter| {
-                        let base_limits =
-                            if adapter.get_info().backend == eframe::wgpu::Backend::Gl {
-                                eframe::wgpu::Limits::downlevel_webgl2_defaults()
-                            } else {
-                                eframe::wgpu::Limits::default()
-                            };
+                        let info = adapter.get_info();
+                        let adapter_limits = adapter.limits();
+                        // ⭐Name the card before anything can fail on it: the 2026-11-08 laptop
+                        // crash log said nothing about which card or API it ran on.
+                        crate::diag::log_line(
+                            "gpu",
+                            &format!(
+                                "adapter: {} ({:?}, {:?}), driver {} {}; storage buffers per shader stage {}",
+                                info.name,
+                                info.backend,
+                                info.device_type,
+                                info.driver,
+                                info.driver_info,
+                                adapter_limits.max_storage_buffers_per_shader_stage
+                            ),
+                        );
+                        // ⛔⭐**Not WebGL2's limits on OpenGL.** egui-wgpu's default asks an OpenGL
+                        // adapter for `downlevel_webgl2_defaults` (written for a browser), and this
+                        // copy did too: they allow NO storage buffers, which the renderer needs
+                        // (`STORAGE_BUFFERS_PER_STAGE`), so every machine that lands on OpenGL (no
+                        // Vulkan driver) died 0.3 s into start-up building the iteration pass's bind
+                        // group layout (a laptop, 2026-11-08; reproduced with `WGPU_BACKEND=gl`).
+                        // A native OpenGL driver states its real limits; asking for exactly those is
+                        // always granted, and `attach_gpu` says plainly when they are too small.
+                        let base_limits = if info.backend == eframe::wgpu::Backend::Gl {
+                            adapter_limits.clone()
+                        } else {
+                            eframe::wgpu::Limits::default()
+                        };
                         let mut features = eframe::wgpu::Features::empty();
                         // `FRACTADYNE_NO_TIMESTAMPS=1` declines the feature even where the adapter
                         // offers it. Not a user setting — it is the only way to exercise the
@@ -402,7 +430,6 @@ fn main() -> eframe::Result<()> {
                         // what it has, and `init_orbit_len_cap` sizes the cap from whatever was
                         // actually granted, so nothing here assumes a big GPU.
                         let want_binding: u32 = 1 << 30;
-                        let adapter_limits = adapter.limits();
                         let binding = adapter_limits.max_storage_buffer_binding_size.min(want_binding);
                         let buffer = adapter_limits.max_buffer_size.min(want_binding as u64);
                         // Iteration-range tiling writes Rgba32Float state attachments per chunk
@@ -494,6 +521,8 @@ fn main() -> eframe::Result<()> {
     // build is CPU work that needs only the state, so it starts here and runs while the window
     // and device come up (~0.7 s of a 3.1 s 4K render at 4.6e1105×).
     let mut app = FractadyneApp::new_state(&args);
+    // The session's language is loaded now: the crash dialog speaks it from here on.
+    diag::set_crash_text(crate::ui::crash_dialog_text());
     app.start_early_cli_reference();
     let r = eframe::run_native(
         "Fractadyne",
@@ -6943,13 +6972,36 @@ impl FractadyneApp {
         let render_state = match cc.wgpu_render_state.as_ref() {
             Some(rs) => rs,
             None => {
-                eprintln!(
-                    "Fractadyne requires the wgpu GPU backend (eframe Renderer::Wgpu), which failed \
-                     to initialize. Check that your GPU drivers support Vulkan/DX12/Metal."
-                );
+                let reason = tr!(gpu_backend_failed_reason);
+                eprintln!("fractadyne: {reason}");
+                // ⚠A GUI program has no console on Windows: without the dialog this said nothing.
+                let report = diag::write_crash_report_at(&format!("no graphics device: {reason}"), "<start-up: graphics device>");
+                diag::show_fatal_dialog(&reason, report.as_deref());
                 crate::exit(1);
             }
         };
+        // `FRACTADYNE_PANIC_AT_START=1`: a deliberate crash here, the only way to see the crash
+        // dialog (`diag::show_fatal_dialog`) on a machine that does not crash.
+        if std::env::var_os("FRACTADYNE_PANIC_AT_START").is_some() {
+            panic!("a deliberate crash at start-up (FRACTADYNE_PANIC_AT_START)");
+        }
+        // ⭐A device that cannot give the renderer its storage buffers would panic building it: say
+        // so in words, with the card, and leave cleanly.
+        let have = render_state.device.limits().max_storage_buffers_per_shader_stage;
+        if have < fractadyne_gpu::STORAGE_BUFFERS_PER_STAGE {
+            let info = render_state.adapter.get_info();
+            let reason = tr!(
+                gpu_unsupported_reason,
+                card = info.name.as_str(),
+                api = format!("{:?}", info.backend),
+                have = have,
+                need = fractadyne_gpu::STORAGE_BUFFERS_PER_STAGE
+            );
+            eprintln!("fractadyne: {reason}");
+            let report = diag::write_crash_report_at(&format!("unsupported graphics device: {reason}"), "<start-up: graphics device>");
+            diag::show_fatal_dialog(&reason, report.as_deref());
+            crate::exit(1);
+        }
         // Before any pipeline exists on this device: does its shader compiler fuse `two_prod`'s
         // product (TODO PR-C2)? Where it does, the iterate pipelines get the WGSL product barrier.
         let fusion = fractadyne_gpu::detect_product_fusion(&render_state.device, &render_state.queue);

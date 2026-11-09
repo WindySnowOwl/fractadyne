@@ -59,6 +59,19 @@ published as the pre-releases `v0.2.41-beta.1` to `v0.2.41-beta.150`, and a "bet
 
 Changes after 0.3.0-beta.1:
 
+- **Fractadyne starts on computers that offer only OpenGL (0.3.0-beta.27).** On a machine without a
+  Vulkan driver it crashed a third of a second after launch, every time, before showing anything:
+  it asked the OpenGL driver for the limits of a web browser's graphics, which allow none of the
+  storage buffers the renderer needs. It now asks the driver for what it actually has. The first
+  launch on OpenGL can take a minute or more while the driver compiles Fractadyne's shaders (82 s on
+  an RTX 3080); later launches take under a second. A driver that really cannot run it gets a
+  message naming the card and what to update, instead of a crash, and the log now names the
+  graphics card before anything can fail on it.
+- **A crash says what happened (0.3.0-beta.27).** When Fractadyne has to close because of an error,
+  the window no longer just disappears: a message names the error, says where the crash report was
+  saved and how to send it, and offers to open the folder. It appears only when you started the
+  program yourself, never in a command-line render or a test run. The next launch no longer files a
+  second, empty report about a session that had already written its own.
 - **Stripe and triangle-inequality coloring no longer draw rings on Multibrot 3–8 (0.3.0-beta.27).**
   On every power but 2 (Multibrot 3–8, and Burning Ship, Tricorn, Celtic and Buffalo at powers
   3–5), these two methods drew a sharp ring along every iteration band: the blend between the

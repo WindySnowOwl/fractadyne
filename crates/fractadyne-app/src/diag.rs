@@ -32,7 +32,7 @@
 //! through [`log_line`], so a device loss lands in the same file as everything else.
 
 use std::io::Write;
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicBool, AtomicU8, AtomicU64, Ordering};
 use std::sync::{Mutex, OnceLock};
 use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
@@ -1005,8 +1005,8 @@ pub(crate) fn budget_history() -> Option<String> {
 /// same-second `crash-<secs>.txt` overwrite. `loc` is the code location when known ("" = none).
 /// Used by the panic hook AND by the device-lost handler, which restarts instead of panicking
 /// but must leave the same forensic trail.
-pub(crate) fn write_crash_report(msg: &str) {
-    write_crash_report_at(msg, "<device-lost handler>");
+pub(crate) fn write_crash_report(msg: &str) -> Option<PathBuf> {
+    write_crash_report_at(msg, "<device-lost handler>")
 }
 
 /// The crash-report `hint:` line for a GPU device-loss crash, or `""` for any other crash. A device
@@ -1113,8 +1113,8 @@ fn compose_crash_report(msg: &str, loc: &str, frames: &str) -> String {
     )
 }
 
-fn write_crash_report_at(msg: &str, loc: &str) {
-    write_crash_report_frames(msg, loc, None);
+pub(crate) fn write_crash_report_at(msg: &str, loc: &str) -> Option<PathBuf> {
+    write_crash_report_frames(msg, loc, None)
 }
 
 /// Write a crash report whose `frames:` section comes from `recovered` — a previous session's
@@ -1122,7 +1122,7 @@ fn write_crash_report_at(msg: &str, loc: &str) {
 /// Either way the WHOLE set goes to a companion `crash-<stamp>-frames.jsonl` beside the report
 /// (the report itself prints only the last few): that file is the one that can cover an entire
 /// slow episode, where the 24-entry decision ring above held about 1.4 s of a 33 s one.
-fn write_crash_report_frames(msg: &str, loc: &str, recovered: Option<(String, Vec<frame_record::FrameRecord>)>) {
+fn write_crash_report_frames(msg: &str, loc: &str, recovered: Option<(String, Vec<frame_record::FrameRecord>)>) -> Option<PathBuf> {
     let secs = SystemTime::now().duration_since(UNIX_EPOCH).map(|d| d.as_secs()).unwrap_or(0);
     let n = CRASH_SEQ.fetch_add(1, Ordering::Relaxed);
     let (header, records) = recovered.unwrap_or_else(|| (frame_record::header(), frame_record::snapshot()));
@@ -1135,10 +1135,12 @@ fn write_crash_report_frames(msg: &str, loc: &str, recovered: Option<(String, Ve
         _ => None,
     };
     let report = compose_crash_report(msg, loc, &frame_record::crash_section(&records, companion.as_deref()));
+    let mut written = None;
     if let Some(dir) = dir {
         let path = dir.join(format!("crash-{secs}-{n}.txt"));
         if std::fs::write(&path, &report).is_ok() {
             let _ = writeln!(std::io::stderr(), "[fd-panic] crash report written: {}", path.display());
+            written = Some(path);
         }
         // Beside the report, the crashing VIEW as a loadable `.fdn` — the full-precision coordinates
         // the manifest line omits. This is what turns a field device loss into a reproducible case:
@@ -1151,6 +1153,7 @@ fn write_crash_report_frames(msg: &str, loc: &str, recovered: Option<(String, Ve
             }
         }
     }
+    written
 }
 
 /// `<logs>/session.running` — present only while the GUI event loop is running.
@@ -1347,6 +1350,15 @@ fn report_unclean_previous_session() {
     if let Some(d) = prev.lines().find_map(|l| l.strip_prefix("second-device ")).map(str::trim).filter(|d| !d.is_empty()) {
         let _ = PREV_SECOND_DEVICE.set(d.to_string());
     }
+    // ⭐A session that PANICKED wrote its own report, and said so in its marker (`mark_panicked`).
+    // Filing a second one here said "no panic, no crash report" about a session that had both:
+    // the 2026-11-08 laptop crash at start-up left one such duplicate per launch, beside each real
+    // report. The session still ended unclean, so the prompt to send its report still comes.
+    if let Some(report) = marker_panicked(&prev) {
+        log_line("unclean", &format!("the previous session ended in a crash; its report is {report}"));
+        PREV_UNCLEAN.store(true, std::sync::atomic::Ordering::Relaxed);
+        return;
+    }
     // The dead session's log: rotated into `.1` if this startup rotated it (see ROTATED_AT_START).
     let dead_log = if ROTATED_AT_START.load(Ordering::Relaxed) { "fractadyne.log.1" } else { "fractadyne.log" };
     let tail = LOG_DIR
@@ -1463,7 +1475,8 @@ fn install_panic_hook() {
             .map(|l| format!("{}:{}:{}", l.file(), l.line(), l.column()))
             .unwrap_or_else(|| "<unknown>".into());
         // Write the crash FILE first — see `write_crash_report_at`.
-        write_crash_report_at(&msg, &loc);
+        let report = write_crash_report_at(&msg, &loc);
+        mark_panicked(report.as_deref());
         // Then let the `frames.jsonl` writer catch up (bounded: the panic may be ON that thread).
         frame_record::flush_jsonl_within(std::time::Duration::from_millis(250));
         // Then the log line (non-panicking stderr; also teed to the log file), and a bounded wait for
@@ -1476,8 +1489,124 @@ fn install_panic_hook() {
         } else {
             flush_log_within(std::time::Duration::from_secs(1));
         }
+        // ⭐Then say so, before the window goes (user, 2026-11-08: a window that vanishes tells
+        // nobody what happened, where the report is or what to do with it). Only for the main
+        // thread, whose panic ends the program; only for a person's own launch (`enable_crash_dialog`).
+        if std::thread::current().name() == Some("main") {
+            show_fatal_dialog(&crash_reason(&msg), report.as_deref());
+        }
         default(info);
     }));
+}
+
+/// Note in the session marker that this session panicked, and which report it wrote, so the next
+/// launch does not file a second report about it ([`marker_panicked`]). Only a marker this process
+/// armed; best-effort, as everything in a dying process is.
+fn mark_panicked(report: Option<&Path>) {
+    let Some(p) = marker_path().filter(|_| MARKER_ARMED.load(Ordering::Relaxed)) else { return };
+    let name = report.and_then(|r| r.file_name()).map(|n| n.to_string_lossy().into_owned()).unwrap_or_else(|| "(not written)".into());
+    if let Ok(mut f) = std::fs::OpenOptions::new().append(true).open(&p) {
+        let _ = writeln!(f, "panicked {name}");
+    }
+}
+
+/// The report a previous session's marker says it wrote as it panicked, if it panicked.
+pub(crate) fn marker_panicked(marker: &str) -> Option<&str> {
+    marker.lines().find_map(|l| l.strip_prefix("panicked ")).map(str::trim).filter(|r| !r.is_empty())
+}
+
+// ---- the crash dialog -------------------------------------------------------------------------
+
+/// What the crash dialog says, in the language in use. Built by `ui::dialogs::crash_dialog_text`,
+/// which owns the translations, and handed over at start-up and on a language change
+/// ([`set_crash_text`]), so the panic hook only fills in two strings and never calls into the
+/// translation system while the program is dying (a second panic there would abort, dialog and all).
+pub(crate) struct CrashText {
+    pub(crate) title: String,
+    /// The message, with `{reason}` where the error goes and `{path}` where the report's path goes,
+    /// ending on a yes/no question: open the folder that holds the report?
+    pub(crate) body: String,
+}
+
+static CRASH_TEXT: std::sync::Mutex<Option<CrashText>> = std::sync::Mutex::new(None);
+static CRASH_DIALOG_ON: AtomicBool = AtomicBool::new(false);
+
+/// Use `t` for the crash dialog from now on.
+pub(crate) fn set_crash_text(t: CrashText) {
+    if let Ok(mut g) = CRASH_TEXT.lock() {
+        *g = Some(t);
+    }
+}
+
+/// Allow the crash dialog (main, for a person's own launch: [`interactive_launch`]).
+pub(crate) fn enable_crash_dialog(on: bool) {
+    CRASH_DIALOG_ON.store(on, Ordering::Relaxed);
+}
+
+/// The flags a person passes to the app themselves. Any other `--` flag means a script, a harness
+/// or a task is driving it, and a modal dialog would hang it until someone came by.
+const PERSON_FLAGS: &[&str] = &["--adapter", "--language"];
+
+/// Whether this launch is a person at the window: every `--` flag is one of [`PERSON_FLAGS`] (a
+/// file to open is not a flag), and `FRACTADYNE_NO_CRASH_DIALOG` is not set.
+pub(crate) fn interactive_launch<S: AsRef<str>>(args: &[S]) -> bool {
+    std::env::var_os("FRACTADYNE_NO_CRASH_DIALOG").is_none() && persons_flags_only(args)
+}
+
+/// The flag half of [`interactive_launch`]. `args[0]` is the program.
+pub(crate) fn persons_flags_only<S: AsRef<str>>(args: &[S]) -> bool {
+    args.iter()
+        .skip(1)
+        .map(|a| a.as_ref())
+        .filter(|a| a.starts_with("--"))
+        .all(|a| PERSON_FLAGS.contains(&a.split('=').next().unwrap_or(a)))
+}
+
+/// The error, short enough to read in a dialog: its first four non-empty lines, at most 400
+/// characters.
+pub(crate) fn crash_reason(msg: &str) -> String {
+    let s = msg.lines().map(str::trim).filter(|l| !l.is_empty()).take(4).collect::<Vec<_>>().join("\n");
+    if s.chars().count() > 400 {
+        format!("{}…", s.chars().take(399).collect::<String>())
+    } else {
+        s
+    }
+}
+
+/// Tell the person at the window that Fractadyne has to close, why, and where the report is, and
+/// wait until they have read it; Yes opens the folder that holds the report. Nothing unless the
+/// dialog is enabled ([`enable_crash_dialog`]) and its text was prepared.
+///
+/// ⚠Yes and No, not named buttons: rfd names its buttons only with its `common-controls-v6`
+/// feature, a task dialog that needs the version-6 common controls declared in the program's
+/// manifest; without it, custom names come out as a plain OK and Cancel. Windows labels Yes and No
+/// in its own language.
+pub(crate) fn show_fatal_dialog(reason: &str, report: Option<&Path>) {
+    if !CRASH_DIALOG_ON.load(Ordering::Relaxed) {
+        return;
+    }
+    // `try_lock`: a dying program must not wait on a lock it may itself be holding.
+    let Some((title, body)) = CRASH_TEXT.try_lock().ok().and_then(|g| g.as_ref().map(|t| (t.title.clone(), t.body.clone())))
+    else {
+        return;
+    };
+    let folder = report.and_then(|r| r.parent().map(Path::to_path_buf)).or_else(logs_dir);
+    let shown = report
+        .map(|r| r.display().to_string())
+        .or_else(|| folder.as_ref().map(|f| f.display().to_string()))
+        .unwrap_or_default();
+    let body = body.replace("{reason}", reason).replace("{path}", &shown);
+    let answer = rfd::MessageDialog::new()
+        .set_level(rfd::MessageLevel::Error)
+        .set_title(title)
+        .set_description(body)
+        .set_buttons(rfd::MessageButtons::YesNo)
+        .show();
+    if answer == rfd::MessageDialogResult::Yes {
+        if let Some(f) = folder {
+            let _ = crate::ui::open_in_file_manager(&f);
+        }
+    }
 }
 
 /// Watchdog: logs `possible hang` with the breadcrumb when nothing stamped liveness for over
@@ -1642,6 +1771,9 @@ impl Drop for ProgressPump {
     }
 }
 
+#[cfg(test)]
+#[path = "../tests/unit/diag/crash_dialog_tests.rs"]
+mod crash_dialog_tests;
 #[cfg(test)]
 #[path = "../tests/unit/diag/session_marker_tests.rs"]
 mod session_marker_tests;
