@@ -79,7 +79,8 @@ Changes after 0.3.0-beta.1:
   while it was compiling Fractadyne's shaders), when (at start-up, opening the window, starting
   the graphics device or preparing the shaders, or while running), which graphics card, graphics
   API and driver version, and what to check or try for that failure: the newest driver from the
-  card's maker, the computer's other graphics card (`--list-adapters`, `--adapter`), the computer
+  card's maker (or from the computer's maker, whose customized driver on a laptop or brand-name
+  computer the card maker's installer often refuses to replace), the computer's other graphics card (`--list-adapters`, `--adapter`), the computer
   itself rather than a Remote Desktop session, starting again, or a newer Fractadyne. A program
   started from a terminal prints the same there.
 - **Stripe, triangle-inequality and orbit-trap coloring keep their whole orbit in deep exterior

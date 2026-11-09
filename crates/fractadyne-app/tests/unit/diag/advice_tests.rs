@@ -33,6 +33,8 @@ fn erises_crash_reads_as_a_driver_crash_while_compiling_with_driver_tips() {
          Graphics: Intel(R) HD Graphics 4400 (OpenGL, driver 4.3.0 - Build 20.19.15.4531)"
     );
     assert!(a.tips.starts_with("• Install the newest graphics driver for this card from Intel's website."), "{}", a.tips);
+    // Eris is a Lenovo laptop: Intel's installer refused there, and Lenovo's own build installs.
+    assert!(a.tips.contains("If Intel's installer refuses") && a.tips.contains("the computer maker's support site"), "{}", a.tips);
     assert!(a.tips.contains("• If this computer has a second graphics card"), "{}", a.tips);
     assert!(a.tips.contains("--list-adapters") && a.tips.contains("--adapter 2"), "{}", a.tips);
     assert_eq!(a.tips.lines().count(), 3, "{}", a.tips);
@@ -75,6 +77,7 @@ fn a_bug_at_start_up_on_the_graphics_side_gets_the_graphics_tips() {
     // No card noted yet: the tip names no maker, and no Graphics line appears.
     let a = compose(&s, &english());
     assert!(a.tips.starts_with("• Install the newest graphics driver from the website of the company that made the graphics card, such as Intel, NVIDIA or AMD."), "{}", a.tips);
+    assert!(a.tips.contains("If its installer refuses") && a.tips.contains("the computer maker's support site"), "{}", a.tips);
     assert!(!a.what.contains("Graphics:"), "{}", a.what);
 }
 
