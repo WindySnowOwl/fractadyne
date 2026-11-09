@@ -1437,6 +1437,19 @@ fn aux_pack(a: Aux, frac: f32, zf: vec2<f32>) -> vec4<f32> {
 }
 const AUX_NONE: vec4<f32> = vec4<f32>(0.0, 0.0, 1.0e30, 0.0);
 
+// Where an escaped pixel sits inside its iteration band, 0..1: the weight `aux_pack` blends the
+// stripe and triangle-inequality averages over N and N−1 terms with (Härkönen's d),
+// 1 − log_p(log|z_N| / log R). 1 when |z_N| has just passed the bailout R, 0 when it passed it by a
+// whole power (|z_N| = R^p), so the blend meets itself across every band edge.
+// ⛔Not `fract(smit)`: smit = N + 1 − log_p(log2|z_N|) carries the constant log_p(log2 R), a whole
+// number only for p = 2 with R = 256, so every other power wrapped the weight inside the band and
+// started it off zero at the edge: a ring along every band of Multibrot 3–8 and the folds at powers
+// 3–5 (coloring plan A5b, 2026-11-08). At p = 2 the two agree except where |z_N| overshoots R^p,
+// a sliver where `fract` wrapped and this clamps.
+fn band_pos(mag2: f32, power_f: f32, bail2: f32) -> f32 {
+    return clamp(1.0 - log(log(mag2) / log(bail2)) / max(log(power_f), 1.0e-3), 0.0, 1.0);
+}
+
 // Pauldelbrot glitch: a perturbed pixel is unreliable when its full value dips far below the
 // reference (|z_n|² < GLITCH_TOL2·|Z_n|²) — the low-precision δz can't hold the cancellation.
 // Flagged (only when iu.glitch_on) with a distinct sentinel in main.r for multi-reference
@@ -1658,7 +1671,7 @@ fn iterate_at(gx: f32, gy: f32) -> FragOut {
             de = de_log2(mag2, dz.re.x * dz.re.x + dz.im.x * dz.im.x, 0.0);
         }
         trap_hist_commit(aux, gx, gy);
-        let aux_out = select(AUX_NONE, aux_pack(aux, fract(smit), zf), (iu.aux_on & 1u) == 1u);
+        let aux_out = select(AUX_NONE, aux_pack(aux, band_pos(mag2, power_f, bail2_of(iu.formula)), zf), (iu.aux_on & 1u) == 1u);
         esc_range_commit(smit);
         esc_count_commit(vec2<i32>(i32(gx), i32(gy)));
         norm_hist_commit(smit, vec2<i32>(i32(gx), i32(gy)));
@@ -2130,7 +2143,7 @@ fn iterate_at(gx: f32, gy: f32) -> FragOut {
             de = de_log2(mag2, D.m.re.x * D.m.re.x + D.m.im.x * D.m.im.x, f32(D.e));
         }
         trap_hist_commit(aux, gx, gy);
-        let aux_out = select(AUX_NONE, aux_pack(aux, fract(smit), zf), (iu.aux_on & 1u) == 1u);
+        let aux_out = select(AUX_NONE, aux_pack(aux, band_pos(mag2, power_f, bail2_of(iu.formula)), zf), (iu.aux_on & 1u) == 1u);
         esc_range_commit(smit);
         esc_count_commit(vec2<i32>(i32(gx), i32(gy)));
         norm_hist_commit(smit, vec2<i32>(i32(gx), i32(gy)));
@@ -2359,7 +2372,7 @@ fn iterate_at(gx: f32, gy: f32) -> FragOut {
             de = de_log2(mag2, D.m.re.x * D.m.re.x + D.m.im.x * D.m.im.x, f32(D.e));
         }
         trap_hist_commit(aux, gx, gy);
-        let aux_out = select(AUX_NONE, aux_pack(aux, fract(smit), zf), (iu.aux_on & 1u) == 1u);
+        let aux_out = select(AUX_NONE, aux_pack(aux, band_pos(mag2, power_f, bail2_of(iu.formula)), zf), (iu.aux_on & 1u) == 1u);
         esc_range_commit(smit);
         esc_count_commit(vec2<i32>(i32(gx), i32(gy)));
         norm_hist_commit(smit, vec2<i32>(i32(gx), i32(gy)));

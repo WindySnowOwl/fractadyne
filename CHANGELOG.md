@@ -59,6 +59,12 @@ published as the pre-releases `v0.2.41-beta.1` to `v0.2.41-beta.150`, and a "bet
 
 Changes after 0.3.0-beta.1:
 
+- **Stripe and triangle-inequality coloring no longer draw rings on Multibrot 3–8 (0.3.0-beta.27).**
+  On every power but 2 (Multibrot 3–8, and Burning Ship, Tricorn, Celtic and Buffalo at powers
+  3–5), these two methods drew a sharp ring along every iteration band: the blend between the
+  last two averages took the pixel's position inside its band from a formula that is right only at
+  power 2. They now run smoothly across the bands. Mandelbrot and the other power-2 families look
+  exactly as before.
 - **Distance, relief lighting and glow are grayed out where they cannot work (0.3.0-beta.27).**
   They read the distance estimate, which only Mandelbrot, Multibrot 3–8 and Phoenix have. On
   Burning Ship, Tricorn, Celtic, Buffalo, Newton or a custom formula, Distance colored the whole

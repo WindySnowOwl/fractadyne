@@ -1107,7 +1107,7 @@ fn fe_branch() -> String {
         let mag2 = dot(zf, zf);
         let nu = log(log(mag2) * 0.5 / log(2.0)) / log(power_f);
         let smit = max(f32(iter) + 1.0 - nu, 0.0);
-        let aux_out = select(AUX_NONE, aux_pack(aux, fract(smit), zf), (iu.aux_on & 1u) == 1u);
+        let aux_out = select(AUX_NONE, aux_pack(aux, band_pos(mag2, power_f, bail2), zf), (iu.aux_on & 1u) == 1u);
         esc_range_commit(smit);
         esc_count_commit(vec2<i32>(i32(gx), i32(gy)));
         norm_hist_commit(smit, vec2<i32>(i32(gx), i32(gy)));
