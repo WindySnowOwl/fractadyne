@@ -66,7 +66,7 @@ const GOLDEN_MEAN_CROSS_GPU: f64 = 24.0;
 /// The check groups `--selftest-list` prints: every `want("…")` tag in this file
 /// (`every_want_group_is_listed`), so a group can be found and run on its own.
 pub(crate) const GROUPS: &[&str] = &[
-    "numeric", "symmetry", "abs-family", "custom-formula", "life", "lsystem", "multibrot-sa", "bla", "aux-bla",
+    "numeric", "symmetry", "abs-family", "custom-formula", "life", "lsystem", "multibrot-sa", "bla", "aux-bla", "aux-series",
     "consistency", "counters", "iter-budget", "iter-chunk", "renorm", "live-split", "worker", "nr-zoom", "coords",
     "curated-poi", "ref-pick", "ref-reuse", "ref-overlap", "orbit-cache", "script", "metadata", "view-coloring",
     "display", "catalog", "goldens", "bench-matrix", "live-res", "appearance", "band-seams",
@@ -7093,6 +7093,126 @@ impl FractadyneApp {
             self.coloring.color_method = crate::ColorMethod::Smooth;
             self.coloring.stripe_freq = saved_stripe_freq;
             self.coloring.trap_type = saved_trap_type;
+        }
+
+        // ---- aux-series: the series prefix must not drop the coloring statistics (A5a) ----
+        // A BLA view whose reference escapes early (a SHORT ESCAPER, the deep exterior) runs the
+        // series approximation even under a statistics method (`sa_short_escaper`: it seeds δz past
+        // an early-iteration glitch), and the seed skips the first `sa_skip` iterations. Stripe,
+        // TIA and the orbit trap accumulate over every iteration, so the prefix must reach them as
+        // the BLA skips do. Compared as `aux-bla` compares BLA on and off: the colored render with
+        // the series as the export builds it, and the same request with the series off. The method
+        // is set BEFORE the request is built, as an export does, so the reference, its series and
+        // its tree are the ones a real stripe or trap export gets.
+        if want("aux-series") {
+            self.fractal = FractalKind::Mandelbrot;
+            self.julia_mode = false;
+            self.coloring.use_custom_palette = false;
+            let saved = (
+                self.coloring.color_method,
+                self.coloring.stripe_freq,
+                self.coloring.trap_type,
+                self.coloring.stripe_tail,
+                self.coloring.stripe_tail_len,
+                self.render_cfg.max_iter,
+                self.render_cfg.auto_iter,
+                self.render_cfg.series_approx,
+                self.render_cfg.use_bla,
+            );
+            self.render_cfg.auto_iter = false;
+            self.render_cfg.max_iter = 20_000; // > 2 × the reference's 3,090: a short escaper
+            self.render_cfg.series_approx = true;
+            self.render_cfg.use_bla = true;
+            let nn = N as usize;
+            let mut vp = Viewport::new(N as f64, N as f64);
+            vp.center_x = fractadyne_core::parse_bf(SX).unwrap();
+            vp.center_y = fractadyne_core::parse_bf(SY).unwrap();
+            vp.units_per_pixel = fractadyne_core::FloatExp::from_f64(3.0 / (N as f64 * 1.0e30));
+            vp.precision = fractadyne_core::precision_for_magnification(1.0e30);
+            let prog = std::sync::atomic::AtomicU32::new(0);
+            let cancel = std::sync::atomic::AtomicBool::new(false);
+            let rex = |req: &fractadyne_gpu::ExportRequest| {
+                fractadyne_gpu::render_export(device, queue, req, &prog, &cancel).ok().map(|r| r.pixels)
+            };
+            // The stripe TAIL is a case of its own, and approximate: its window weighs the last
+            // iterations before the seed, where each pixel has drifted from the reference the
+            // aggregates come from. Measured 0.029 off; BLA alone is 0.23 off (TODO), so it is held
+            // to maxΔ < 0.06 only, enough to catch a prefix that is dropped (0.70).
+            for (m, tt, freq, tail, label) in [
+                (crate::ColorMethod::Stripe, crate::TrapType::Point, 5.0f32, false, "stripe"),
+                (crate::ColorMethod::Stripe, crate::TrapType::Point, 5.0, true, "stripe-tail-16"),
+                (crate::ColorMethod::TriangleIneq, crate::TrapType::Point, 1.0, false, "triangle-ineq"),
+                (crate::ColorMethod::OrbitTrap, crate::TrapType::Point, 1.0, false, "orbit-trap-point"),
+                (crate::ColorMethod::OrbitTrap, crate::TrapType::Cross, 1.0, false, "orbit-trap-cross"),
+            ] {
+                self.coloring.color_method = m;
+                self.coloring.trap_type = tt;
+                self.coloring.stripe_freq = freq;
+                self.coloring.stripe_tail = tail;
+                self.coloring.stripe_tail_len = 16;
+                let mut with = self.current_export_request_for(&vp, false);
+                with.width = N;
+                with.height = N;
+                with.ss = 1;
+                // The truth: every iteration taken, no series and no BLA skip.
+                let mut truth = with.clone();
+                truth.sa_skip = 0;
+                truth.bla_on = 0;
+                // BLA alone (no series), as the view would run without the short-escaper rule.
+                let mut bla_only = with.clone();
+                bla_only.sa_skip = 0;
+                let (skip, bla_on, mode, orbit_len) = (with.sa_skip, with.bla_on, with.mode, with.orbit_len);
+                let engaged = skip > 0 && bla_on == 1 && mode == 2;
+                let diff = |a: &[f32], b: &[f32]| -> (f32, u64) {
+                    let (mut maxd, mut nd) = (0.0f32, 0u64);
+                    for k in 0..a.len().min(b.len()) {
+                        let d = (a[k] - b[k]).abs();
+                        maxd = maxd.max(d);
+                        if d > 0.02 {
+                            nd += 1;
+                        }
+                    }
+                    (maxd, nd)
+                };
+                let bla_alone = match (rex(&bla_only), rex(&truth)) {
+                    (Some(x), Some(t)) => format!("; BLA alone vs truth maxΔ {:.4}", diff(&x, &t).0),
+                    _ => String::new(),
+                };
+                match (rex(&with), rex(&truth)) {
+                    (Some(a), Some(b)) if engaged && a.len() == b.len() => {
+                        let (maxd, nd) = diff(&a, &b);
+                        let chans = (nn * nn * 4) as u64;
+                        let pass = if tail { maxd < 0.06 } else { maxd < 0.1 && nd < chans / 100 };
+                        push_check(&mut checks, &mut last_check_t, SelfCheck {
+                            category: "BLA",
+                            name: format!("{label}: series prefix == every iteration @1e30×"),
+                            params: format!("sa_skip {skip} of orbit {orbit_len}, max_iter 20000, maxΔ {maxd:.4}{bla_alone}"),
+                            result: format!("{nd}/{chans} channels >2%"),
+                            threshold: if tail { "series engaged, maxΔ<0.06 (tail: approximate)" } else { "series engaged, maxΔ<0.1, <1% differ" },
+                            pass,
+                        });
+                    }
+                    _ => push_check(&mut checks, &mut last_check_t, SelfCheck {
+                        category: "BLA",
+                        name: format!("{label}: series prefix == every iteration @1e30×"),
+                        params: format!("sa_skip {skip}, orbit {orbit_len}, bla_on {bla_on}, mode {mode}"),
+                        result: "render failed, or the series did not engage (not a short escaper here)".into(),
+                        threshold: "series engaged",
+                        pass: false,
+                    }),
+                }
+            }
+            (
+                self.coloring.color_method,
+                self.coloring.stripe_freq,
+                self.coloring.trap_type,
+                self.coloring.stripe_tail,
+                self.coloring.stripe_tail_len,
+                self.render_cfg.max_iter,
+                self.render_cfg.auto_iter,
+                self.render_cfg.series_approx,
+                self.render_cfg.use_bla,
+            ) = saved;
         }
 
         // ---- invariance & consistency (Phase 3) — oracle-free, targets the tier crossovers ----

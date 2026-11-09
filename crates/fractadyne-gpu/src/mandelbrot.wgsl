@@ -1413,6 +1413,25 @@ fn aux_step(a: ptr<function, Aux>, zf: vec2<f32>, cmag: f32, power_f: f32) {
     // method == 5u (decomposition): nothing to accumulate — aux_pack reads only the final angle.
     (*a).n = (*a).n + 1.0;
 }
+// Fold a run of `span` reference iterates into the statistics, from its precomputed aggregate
+// `agg` = [span, trap_min, ΣTIA, Σstripe] (a BLA node's fourth vec4, built from the reference with
+// z ≈ Z): what a BLA skip folds, and what the series seed folds for the prefix it skips. The
+// caller sets `prev_abs` (|z| where the run lands).
+fn aux_fold_run(a: ptr<function, Aux>, agg: vec4<f32>, span: u32) {
+    (*a).trap = min((*a).trap, agg.y);
+    (*a).tia_sum = (*a).tia_sum + agg.z;
+    if (stripe_tail_on()) {
+        // Exponential tail window across the skipped span: the recurrence with
+        // the span's mean term `m` in closed form (see `stripe_tail_on`).
+        let m = agg.w / max(f32(span), 1.0);
+        let d = tail_decay(stripe_tail_alpha(), f32(span));
+        (*a).sac_prev = (*a).sac_sum;
+        (*a).sac_sum = m + ((*a).sac_sum - m) * d;
+    } else {
+        (*a).sac_sum = (*a).sac_sum + agg.w;
+    }
+    (*a).n = (*a).n + f32(span);
+}
 // Pack the accumulated statistics into the aux target. `frac` is the fractional part
 // of the smooth iteration count (blends the last two averages for a continuous result).
 fn aux_pack(a: Aux, frac: f32, zf: vec2<f32>) -> vec4<f32> {
@@ -1734,7 +1753,9 @@ fn iterate_at(gx: f32, gy: f32) -> FragOut {
         // Series approximation: seed δz (and the derivative D) from the order-3 polynomial
         // δz ≈ A·δc + B·δc² + C·δc³ and start at iteration `sa_skip`, skipping that many
         // perturbation steps. The `z^d + c` families only (the CPU gates this: the formula's
-        // `series_approximation`, no Julia, no aux-accumulating coloring method).
+        // `series_approximation`, no Julia). A statistics coloring method reaches it in one case
+        // only, a BLA view whose reference escapes early (`sa_short_escaper`), and gets the skipped
+        // prefix's statistics folded in below.
         if (iu.sa_skip > 0u && iu.julia == 0u) {
             let A = fe_norm(cset(iu.sa_a.xy, iu.sa_a.zw), iu.sa_a_exp);
             let B = fe_norm(cset(iu.sa_b.xy, iu.sa_b.zw), iu.sa_b_exp);
@@ -1746,6 +1767,39 @@ fn iterate_at(gx: f32, gy: f32) -> FragOut {
             D = fe_add(fe_add(A, fe_scale(fe_mul(B, dc), 2.0)), fe_scale(fe_mul(C, dc2), 3.0));
             iter = iu.sa_skip;
             ref_n = iu.sa_skip;
+            // ⭐THE PREFIX'S STATISTICS (coloring plan A5a, 2026-11-08). The seed jumps `sa_skip`
+            // iterations whose stripe, TIA and trap terms the loop never sees: a stripe or trap
+            // export at 1e30× (skip 3,088 of a 3,090-sample reference) colored from its last few
+            // iterations instead of the whole orbit, 75% of the channels off. Fold [0, sa_skip) out
+            // of the BLA tree as a BLA skip folds its run: the binary decomposition of `sa_skip`
+            // into aligned nodes, highest level first (each level once, so `p` stays aligned), with
+            // z ≈ Z over the prefix, the approximation the series itself makes. The rule that
+            // brings a statistics method here needs a BLA view, so the tree is there.
+            // ⚠Stripe's TAIL window is approximate here, and no finer fold fixes it: the window
+            // weighs the last iterations before the seed, where each pixel has already drifted from
+            // the reference the aggregates were built from. Measured at 1e30× (tail 16): 0.029 off
+            // every-iteration with this fold, 0.17 folding the whole prefix term by term, and BLA
+            // alone (no series) 0.23 off (TODO).
+            if ((iu.aux_on & 1u) == 1u && bla_levels > 0u) {
+                var p = 0u;
+                var l = bla_levels;
+                loop {
+                    if (l == 0u || p >= iu.sa_skip) { break; }
+                    l = l - 1u;
+                    let stepn = 1u << l;
+                    if (p + stepn > iu.sa_skip) { continue; }
+                    let j = p >> l;
+                    if (j >= bla_len[l]) { continue; }
+                    let agg = reference[iu.orbit_len + (bla_off[l] + j) * 4u + 3u];
+                    let span = u32(agg.x);
+                    if (span == 0u) { break; } // a corrupt node: fold no further, never spin
+                    aux_fold_run(&aux, agg, span);
+                    p = p + span;
+                }
+                let zs = orbit_cdf(reference[iu.sa_skip]);
+                let dzs = fe_lo_f32(dz);
+                aux.prev_abs = length(vec2<f32>(zs.re.x + dzs.x, zs.im.x + dzs.y));
+            }
             // A PERIODIC reference may hand a skip of exactly its period (`orbit_len − 1`): the
             // pixel then starts on the last sample, Z_period ≈ 0, and wraps before its first step —
             // the same exact wrap the end-of-orbit rebase makes (see `OrbitPeriod`).
@@ -1866,20 +1920,7 @@ fn iterate_at(gx: f32, gy: f32) -> FragOut {
                     // stripe/TIA/trap coloring stays correct across the skip instead of dropping the
                     // skipped run. `zf` is the actual landing value → prev_abs restores exactly.
                     if ((iu.aux_on & 1u) == 1u) {
-                        let agg = reference[node + 3u]; // [span, trap_min, ΣTIA, Σstripe]
-                        aux.trap = min(aux.trap, agg.y);
-                        aux.tia_sum = aux.tia_sum + agg.z;
-                        if (stripe_tail_on()) {
-                            // Exponential tail window across the skipped span: the recurrence with
-                            // the span's mean term `m` in closed form (see `stripe_tail_on`).
-                            let m = agg.w / max(f32(span), 1.0);
-                            let d = tail_decay(stripe_tail_alpha(), f32(span));
-                            aux.sac_prev = aux.sac_sum;
-                            aux.sac_sum = m + (aux.sac_sum - m) * d;
-                        } else {
-                            aux.sac_sum = aux.sac_sum + agg.w;
-                        }
-                        aux.n = aux.n + f32(span);
+                        aux_fold_run(&aux, reference[node + 3u], span); // [span, trap_min, ΣTIA, Σstripe]
                         aux.prev_abs = length(zf);
                     }
                     n_bla = n_bla + 1u;

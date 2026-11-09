@@ -12,34 +12,34 @@ most editors; sections are the `##` headings the items live under.
 
 | Pri | ⭐ | Item | Section | Line |
 |-----|----|------|---------|------|
-| red | 2 | FIELD DEVICE LOSS 2026-08-22, USER'S OWN DEEP ZOOM, beta.129 build 1837, RTX 3080, … | Open bugs | 2686 |
-| orange |  | MOVING THE WINDOW BETWEEN MONITORS WITH DIFFERENT SCALING RESIZES IT ERRATICALLY AND … | Open bugs | 1391 |
-| orange |  | DUAL-VIEW JULIA SOMETIMES STAYS BLURRY OR LANDS ON A FLAT PLANE AFTER MOTION … | Open bugs | 2662 |
-| orange |  | DEVICE LOSS in `--motiontest` at Home→Settle, MODE 1 (direct), NOT reproducible — one … | Open bugs | 3720 |
-| yellow |  | POSSIBLE, NOT REPRODUCED: STRIPE, TIA AND TRAP DROP STATISTICS WHEN A SHORT-ESCAPING … | Open bugs | 806 |
-| yellow |  | Ask FractalShark's author for a reference-orbit endpoint (assessment done, message … | Proposed feature set — reconciled backlog (2026-08-06) | 8856 |
-| yellow |  | Relative-performance benchmark kit — F3 + Imagina + FractalShark, public (user, … | Proposed feature set — reconciled backlog (2026-08-06) | 8874 |
-| green |  | Peer-renderer adoption list — reconciled (2026-08-18). Sources: `5E-324/Imagina` (+ Imagina 2), … | Open bugs | 3880 |
-| - | 2 | ▶⭐⭐PALETTE IMPORT — THE PLANNED ORDER IS COMPLETE: LUT + segment model (beta.23), `.map` (beta.24), `.ugr`… | Open bugs | 1243 |
-| - | 2 | T2c. Restructure the acceleration table along MipLA lines — the converged recommendation of … | Open bugs | 3964 |
-| - | 2 | T3. Julia-mipmap early termination (Imagina's renormalization trick): once a pixel's tail … | Open bugs | 4012 |
-| - | 2 | PR-A2. Measure the interior share before building any interior shortcut. Add a step … | Performance & throughput (M7) | 9330 |
-| - | 2 | PR-A3. Subgroup support on our backends. Log whether the adapter offers … | Performance & throughput (M7) | 9335 |
-| - | 2 | PR-A4. Ask for the adapter's full storage-binding size. `main.rs` asks for at most … | Performance & throughput (M7) | 9342 |
-| - | 2 | PR-A5. Check for CPU oversubscription during deep dives. Two lookahead references … | Performance & throughput (M7) | 9348 |
-| - | 2 | PR-A6. Estimate what adaptive supersampling would save. From 4- and 24-sample settle … | Performance & throughput (M7) | 9353 |
-| - | 2 | PR-C2. A per-device floatexp mantissa. An f32-mantissa floatexp (Fraktaler-3's choice) | Performance & throughput (M7) | 9420 |
-| - | 1 | RX 6800 XT under Linux (Mesa RADV): df32 and floatexp disagree on 4–6% of pixels — dig in … | Open bugs | 962 |
-| - | 1 | T2a. Derive BLA level-0 in-shader. `a = 2Z_n`, `b = one`, `r = |2Z_n|·eps`, `span = 1`, all … | Open bugs | 3952 |
-| - | 1 | Runtime EFT / fused-fma capability probe that derates mode thresholds. Buried in a … | Open bugs | 4028 |
-| - | 1 | PR-B1. Period-synchronized LA stages — retargets T2c, absorbs T2a and T2b. Our own … | Performance & throughput (M7) | 9360 |
-| - | 1 | PR-B2. A native in-place bignum kernel for the standard build. Most users run … | Performance & throughput (M7) | 9373 |
-| - | 1 | PR-B3. Adaptive supersampling at settle — the "DE-adaptive anti-aliasing" backlog item. | Performance & throughput (M7) | 9383 |
-| - | 1 | PR-B4. A lattice-aligned tile pyramid with a RAM tile cache — `design/xaos-reuse.md` … | Performance & throughput (M7) | 9389 |
-| - | 1 | PR-B5. Packed live settle walks, then a compute work list. The live renderer still … | Performance & throughput (M7) | 9398 |
-| - | 1 | PR-B6. A live exponential-map cache for autopilot dives and tours. A dive toward a … | Performance & throughput (M7) | 9407 |
-| - | 1 | PR-B7. Julia-mipmap early termination — T3, after PR-B1. PR-B1's step counters will … | Performance & throughput (M7) | 9412 |
-| - | 1 | Attempt a Fractadyne render of an ultradeep minibrot shared by the FractalShark author. | ▶ Render the ultradeep view34 location (someday) (2026-09-12) | 10051 |
+| red | 2 | FIELD DEVICE LOSS 2026-08-22, USER'S OWN DEEP ZOOM, beta.129 build 1837, RTX 3080, … | Open bugs | 2706 |
+| orange |  | MOVING THE WINDOW BETWEEN MONITORS WITH DIFFERENT SCALING RESIZES IT ERRATICALLY AND … | Open bugs | 1411 |
+| orange |  | DUAL-VIEW JULIA SOMETIMES STAYS BLURRY OR LANDS ON A FLAT PLANE AFTER MOTION … | Open bugs | 2682 |
+| orange |  | DEVICE LOSS in `--motiontest` at Home→Settle, MODE 1 (direct), NOT reproducible — one … | Open bugs | 3740 |
+| yellow |  | STRIPE'S TAIL WINDOW UNDER BLA PAST 1e28× IS 0.23 OFF EVERY-ITERATION (measured … | Open bugs | 806 |
+| yellow |  | Ask FractalShark's author for a reference-orbit endpoint (assessment done, message … | Proposed feature set — reconciled backlog (2026-08-06) | 8876 |
+| yellow |  | Relative-performance benchmark kit — F3 + Imagina + FractalShark, public (user, … | Proposed feature set — reconciled backlog (2026-08-06) | 8894 |
+| green |  | Peer-renderer adoption list — reconciled (2026-08-18). Sources: `5E-324/Imagina` (+ Imagina 2), … | Open bugs | 3900 |
+| - | 2 | ▶⭐⭐PALETTE IMPORT — THE PLANNED ORDER IS COMPLETE: LUT + segment model (beta.23), `.map` (beta.24), `.ugr`… | Open bugs | 1263 |
+| - | 2 | T2c. Restructure the acceleration table along MipLA lines — the converged recommendation of … | Open bugs | 3984 |
+| - | 2 | T3. Julia-mipmap early termination (Imagina's renormalization trick): once a pixel's tail … | Open bugs | 4032 |
+| - | 2 | PR-A2. Measure the interior share before building any interior shortcut. Add a step … | Performance & throughput (M7) | 9350 |
+| - | 2 | PR-A3. Subgroup support on our backends. Log whether the adapter offers … | Performance & throughput (M7) | 9355 |
+| - | 2 | PR-A4. Ask for the adapter's full storage-binding size. `main.rs` asks for at most … | Performance & throughput (M7) | 9362 |
+| - | 2 | PR-A5. Check for CPU oversubscription during deep dives. Two lookahead references … | Performance & throughput (M7) | 9368 |
+| - | 2 | PR-A6. Estimate what adaptive supersampling would save. From 4- and 24-sample settle … | Performance & throughput (M7) | 9373 |
+| - | 2 | PR-C2. A per-device floatexp mantissa. An f32-mantissa floatexp (Fraktaler-3's choice) | Performance & throughput (M7) | 9440 |
+| - | 1 | RX 6800 XT under Linux (Mesa RADV): df32 and floatexp disagree on 4–6% of pixels — dig in … | Open bugs | 982 |
+| - | 1 | T2a. Derive BLA level-0 in-shader. `a = 2Z_n`, `b = one`, `r = |2Z_n|·eps`, `span = 1`, all … | Open bugs | 3972 |
+| - | 1 | Runtime EFT / fused-fma capability probe that derates mode thresholds. Buried in a … | Open bugs | 4048 |
+| - | 1 | PR-B1. Period-synchronized LA stages — retargets T2c, absorbs T2a and T2b. Our own … | Performance & throughput (M7) | 9380 |
+| - | 1 | PR-B2. A native in-place bignum kernel for the standard build. Most users run … | Performance & throughput (M7) | 9393 |
+| - | 1 | PR-B3. Adaptive supersampling at settle — the "DE-adaptive anti-aliasing" backlog item. | Performance & throughput (M7) | 9403 |
+| - | 1 | PR-B4. A lattice-aligned tile pyramid with a RAM tile cache — `design/xaos-reuse.md` … | Performance & throughput (M7) | 9409 |
+| - | 1 | PR-B5. Packed live settle walks, then a compute work list. The live renderer still … | Performance & throughput (M7) | 9418 |
+| - | 1 | PR-B6. A live exponential-map cache for autopilot dives and tours. A dive toward a … | Performance & throughput (M7) | 9427 |
+| - | 1 | PR-B7. Julia-mipmap early termination — T3, after PR-B1. PR-B1's step counters will … | Performance & throughput (M7) | 9432 |
+| - | 1 | Attempt a Fractadyne render of an ultradeep minibrot shared by the FractalShark author. | ▶ Render the ultradeep view34 location (someday) (2026-09-12) | 10071 |
 
 ### Unflagged backlog (86)
 
@@ -50,87 +50,87 @@ most editors; sections are the `##` headings the items live under.
 | D3 — cache I/O outside the `STORE` mutex (`refcache_persist.rs offer`): reserve under the … | ▶ Image rendering path rework (2026-09-15) | 322 |
 | E (chunking-coverage half): resumable state for auxiliary/non-holomorphic paths where … | ▶ Image rendering path rework (2026-09-15) | 326 |
 | D — B3 async export-prep was assessed as very high blast-radius (`build_export_request` is … | ▶ Image rendering path rework (2026-09-15) | 330 |
-| Cache the export `ShaderModule` per device (split out 2026-09-09 from the closed … | Open bugs | 3665 |
-| T1b. Chebyshev norms in the hot radius tests (`max(|re|,|im|)` for `fe_abs_sf`). ⚠Reviews … | Open bugs | 3944 |
-| T2b. Per-level precision demotion (Imagina's `ConvertStageToDouble` transposed): levels whose … | Open bugs | 3960 |
-| T2d. Self-referential orbit compression for `refcache_persist`. Imagina's scheme (perturb the … | Open bugs | 3999 |
-| Exponential-map EXR export for the zoomasm pipeline — low effort, and it plugs into the … | Open bugs | 4035 |
-| Informational: watch `ImaginaFractal`'s module ABI. If Imagina 2 lands as a platform, interop … | Open bugs | 4037 |
-| The deep LIVE view is strongly hardware/OS-dependent — same view, very different render … | Open bugs | 5767 |
-| Redact the user name from paths in the log files, on by default in every release published … | Requested 2026-11-01 (user) | 7041 |
-| Rotation for views (user, 2026-11-01). The view model has no rotation at all (noted as the … | Requested 2026-11-01 (user) | 7053 |
-| More coloring algorithms (user, 2026-11-01). Six methods ship: smooth iteration, stripe … | Requested 2026-11-01 (user) | 7060 |
-| CSV point list → generated tour (user, 2026-08-13): import a set of points from a CSV … | Script format — requested extensions (user, 2026-08-09) | 7070 |
-| Tour files should be able to set every rendering parameter the UI can. Today `[render]` … | Script format — requested extensions (user, 2026-08-09) | 7111 |
-| Tour-driven debug logging for remote diagnosis. The ability to annotate a tour with … | Script format — requested extensions (user, 2026-08-09) | 7120 |
-| Prefer Misiurewicz targets as the other good class. λ guarantees the descent never runs … | Autopilot / auto-zoom — target selection & path planning (user spec, 2026-08-07) | 7462 |
-| Fly it with Van Wijk & Nuij (2003), "Smooth and efficient zooming and panning" — the … | Autopilot / auto-zoom — target selection & path planning (user spec, 2026-08-07) | 7468 |
-| L-systems, cellular automata (1-D & 2-D). | Milestone M3/M4 — Fractal variety & dual view (in progress) | 7879 |
-| Tour editor (visual timeline) — an in-app editor for camera tours: a scrubbing timeline … | Tooling, scripting & versioning (M7) | 8013 |
-| Benchmark presets — multiple scenes (Julia deep, Multibrot, dual) + CSV/JSON … | Tooling, scripting & versioning (M7) | 8033 |
-| In-app editor for the authorable files — a text/TOML editor (probably a Tools → … | Tooling, scripting & versioning (M7) | 8083 |
-| Theme polish — optional light/preset themes, custom font, accent picker. | Branding & UI (M7) | 8143 |
-| Layers + blend modes (Ultra Fractal-style compositing). | Survey-driven roadmap (2026-06-28) | 8261 |
-| 3D fractals (Mandelbulb / Mandelbox, ray-marched). | Survey-driven roadmap (2026-06-28) | 8361 |
-| Flame / IFS fractals; L-systems; cellular automata. | Survey-driven roadmap (2026-06-28) | 8362 |
-| Shallow-view resize pacing — the direct-mode path re-iterates + reallocates the … | UI test automation | 8386 |
-| Custom formula / coloring scripting — Ultra Fractal's killer feature (user-written … | Feature gaps vs. peer renderers (survey 2026-08-05: KF2 / Fraktaler-3 / Ultra Fractal / XaoS / Imagina) | 8408 |
-| Huge tiled exports — KF renders wall-sized images by tiling; we cap at the GPU texture … | Feature gaps vs. peer renderers (survey 2026-08-05: KF2 / Fraktaler-3 / Ultra Fractal / XaoS / Imagina) | 8414 |
-| Glitch correction robustness at depth — KF's Pauldelbrot correction is mature; ours has … | Feature gaps vs. peer renderers (survey 2026-08-05: KF2 / Fraktaler-3 / Ultra Fractal / XaoS / Imagina) | 8421 |
-| Ecosystem/platform — no plugin system; ~~Windows-only release builds~~ Windows + Linux … | Feature gaps vs. peer renderers (survey 2026-08-05: KF2 / Fraktaler-3 / Ultra Fractal / XaoS / Imagina) | 8424 |
-| WYSIWYG coordinate-expression editor (user, 2026-09-11). The Go-to fields take the … | Proposed feature set — reconciled backlog (2026-08-06) | 8498 |
-| Newton-Raphson zoom follow-ups — (a) run the refine off-thread; a period-100k atom at … | Proposed feature set — reconciled backlog (2026-08-06) | 8536 |
-| Landmark library expansion (P1, §4.3 partial) — we ship 12 curated points; add the … | Proposed feature set — reconciled backlog (2026-08-06) | 8547 |
-| Automated tour-frame verdict harness — render `grand-tour.toml` (low fps/size) and … | Proposed feature set — reconciled backlog (2026-08-06) | 8577 |
-| Original grand-tour spec (superseded, kept for the unbuilt parts) — one tour that visits the known … | Proposed feature set — reconciled backlog (2026-08-06) | 8584 |
-| Complete the G-buffer (P0, §1.1 partial) — the iterate target already carries smooth … | Proposed feature set — reconciled backlog (2026-08-06) | 8603 |
-| Method switching without re-iterating (P0, §1.2 partial) — palette, cycle, offset and … | Proposed feature set — reconciled backlog (2026-08-06) | 8608 |
-| Raw-channel EXR export (P1, §1.3 partial) — we write a linear *color* EXR with embedded … | Proposed feature set — reconciled backlog (2026-08-06) | 8613 |
-| Exponential-map render mode (P1, §1.4 absent) — zoomasm-compatible zoom-video assembly. | Proposed feature set — reconciled backlog (2026-08-06) | 8618 |
-| Zoom video: hold the inner strips coarser (the third high-resolution fix, … | Proposed feature set — reconciled backlog (2026-08-06) | 8619 |
-| Resumable/checkpointed tiled export (P2, §1.5 partial) — tiled iterate exists; see … | Proposed feature set — reconciled backlog (2026-08-06) | 8629 |
-| Interior distance-estimation coloring (P0, §2.2 gap) — exterior DE ships and is stable … | Proposed feature set — reconciled backlog (2026-08-06) | 8642 |
-| Log-scaled + histogram/percentile palette mapping (P0, §2.4 partial) — `--normalize` and … | Proposed feature set — reconciled backlog (2026-08-06) | 8671 |
-| Curvature-average coloring (P1, §2.5 gap) — stripe, triangle-inequality and orbit traps … | Proposed feature set — reconciled backlog (2026-08-06) | 8680 |
-| Layer compositing (P1, §2.7 absent) — multiple colorings over one G-buffer with masks and … | Proposed feature set — reconciled backlog (2026-08-06) | 8688 |
-| DE-adaptive anti-aliasing (P1, §2.8 absent) — supersample only where DE says the boundary … | Proposed feature set — reconciled backlog (2026-08-06) | 8690 |
-| User-scriptable coloring (P2, §2.9 absent) — a WGSL snippet slot over the G-buffer; see … | Proposed feature set — reconciled backlog (2026-08-06) | 8693 |
-| Interior colorings (P2, §2.10 absent) — period coloring, atom domains, interior-coordinate … | Proposed feature set — reconciled backlog (2026-08-06) | 8695 |
-| (2) Bifurcation-measure coloring mode — μ_bif = Δ G(c), and the G-buffer already holds … | Proposed feature set — reconciled backlog (2026-08-06) | 8705 |
-| (1) Galois orbits of PCF parameters — the flagship. For fixed (k,n) the PCF parameters … | Proposed feature set — reconciled backlog (2026-08-06) | 8713 |
-| (4) Unlikely-intersection explorer (DeMarco–Krieger–Ye) — two parameters c₁, c₂; … | Proposed feature set — reconciled backlog (2026-08-06) | 8726 |
-| (3) Exact rational critical-orbit arithmetic — for c ∈ ℚ iterate the critical orbit in … | Proposed feature set — reconciled backlog (2026-08-06) | 8733 |
-| (5) Special curves / PCF loci in two-parameter families (André–Oort setting) — the … | Proposed feature set — reconciled backlog (2026-08-06) | 8744 |
-| Embedded-Julia size/orientation estimates (P1, §3.5 absent) — shape-stacking navigation; … | Proposed feature set — reconciled backlog (2026-08-06) | 8763 |
-| Orbit cycle detection + multipliers (P1, §3.6 partial) — the cursor-point orbit plot, … | Proposed feature set — reconciled backlog (2026-08-06) | 8765 |
-| Critical-orbit overlay in the Julia panel (P2, §3.7 gap) — the dual linked view otherwise … | Proposed feature set — reconciled backlog (2026-08-06) | 8768 |
-| Guided descent modes (P1, §4.4 partial) — approach-nucleus, λ-stepped Misiurewicz … | Proposed feature set — reconciled backlog (2026-08-06) | 8771 |
-| External angles and rays (P2, §3.8 absent) — landing angles, parameter rays, equipotentials. | Proposed feature set — reconciled backlog (2026-08-06) | 8775 |
-| Internal addresses and tuning navigation (P2, §3.9 absent) — "go to p/q bulb", display the … | Proposed feature set — reconciled backlog (2026-08-06) | 8776 |
-| Verified computation mode (P2, §3.10 absent) — interval/ball arithmetic for certified … | Proposed feature set — reconciled backlog (2026-08-06) | 8778 |
-| Numeric egress (P2, §3.11 absent) — iteration grids, orbits, ray data as CSV/NumPy via the … | Proposed feature set — reconciled backlog (2026-08-06) | 8780 |
-| Auto-stretch (P2, §4.5 absent) — unskew sheared deep locations from iteration histograms … | Proposed feature set — reconciled backlog (2026-08-06) | 8786 |
-| `.kfr` export / `.kfb` support (§4.2 gap) — `.kfr` import ships (hardened + fuzzed); … | Proposed feature set — reconciled backlog (2026-08-06) | 8788 |
-| F3 goldens for the tours' key steps (user, 2026-08-10). The grand tour's regression … | Proposed feature set — reconciled backlog (2026-08-06) | 9241 |
-| Tan Lei invariant goldens (P0, §5.1 absent) — at a Misiurewicz landmark, render at … | Proposed feature set — reconciled backlog (2026-08-06) | 9254 |
-| Landmark benchmark regimes (P1, §5.2 partial) — `--bench-matrix` covers zoom bands, … | Proposed feature set — reconciled backlog (2026-08-06) | 9259 |
-| λ-scaling zoom-loop test (P1, §5.3 absent) — a Misiurewicz-centered zoom must become … | Proposed feature set — reconciled backlog (2026-08-06) | 9264 |
-| Per-channel cross-tool differential testing (P2, §5.4 partial) — the F3 corpus (20 … | Proposed feature set — reconciled backlog (2026-08-06) | 9266 |
-| PR-C1. Faster double-word arithmetic (Zhang & Aiken 2025 add; Yang et al. 2024 … | Performance & throughput (M7) | 9417 |
-| PR-C3. BLA for Julia views. `bla_eligible` excludes Julia; with δc = 0 the B terms … | Performance & throughput (M7) | 9489 |
-| PR-C4. Certified interior: a per-pixel attracting-cycle test (Tucker & Wilczak 2009) and … | Performance & throughput (M7) | 9492 |
-| PR-C5. Speculative work along the camera path, with camera prediction (L4 in … | Performance & throughput (M7) | 9496 |
-| PR-C6. Split orbit and tree bindings; 8-byte orbit samples. Raises the orbit cap past … | Performance & throughput (M7) | 9499 |
-| PR-C7. Temporal accumulation during slow motion. Needs PR-B4's lattice. M. | Performance & throughput (M7) | 9502 |
-| PR-C8. Second-order BLA. One report: 21× at 2.8e40, from a single pull request … | Performance & throughput (M7) | 9503 |
-| PR-C9. Foveation during motion (the zoom center as the fovea): a modest gain in motion, … | Performance & throughput (M7) | 9505 |
-| PR-C10. An NTT with transform reuse for the complex square, above ~100k bits. 1.5–3× … | Performance & throughput (M7) | 9507 |
-| PR-C11. The precision cascade (Level 3 below), with the literature's ceiling. The cost … | Performance & throughput (M7) | 9510 |
-| One reference per zoom sequence (offline tours) — a zoom toward a fixed center uses … | Performance & throughput (M7) | 9552 |
-| Level 3 (research): precision-cascade with parallel residuals — run the serial chain at … | Performance & throughput (M7) | 9575 |
-| By-keyframe distribution once exponential-map export lands — one keyframe per factor … | Performance & throughput (M7) | 9659 |
-| GPU-assisted reference-candidate scoring (the practical "bignum on GPU"). Full GPU bignum … | Performance & throughput (M7) | 9678 |
-| Tile-level export pipeline — overlap tile N+1 iterate with tile N async readback + … | Performance & throughput (M7) | 9808 |
+| Cache the export `ShaderModule` per device (split out 2026-09-09 from the closed … | Open bugs | 3685 |
+| T1b. Chebyshev norms in the hot radius tests (`max(|re|,|im|)` for `fe_abs_sf`). ⚠Reviews … | Open bugs | 3964 |
+| T2b. Per-level precision demotion (Imagina's `ConvertStageToDouble` transposed): levels whose … | Open bugs | 3980 |
+| T2d. Self-referential orbit compression for `refcache_persist`. Imagina's scheme (perturb the … | Open bugs | 4019 |
+| Exponential-map EXR export for the zoomasm pipeline — low effort, and it plugs into the … | Open bugs | 4055 |
+| Informational: watch `ImaginaFractal`'s module ABI. If Imagina 2 lands as a platform, interop … | Open bugs | 4057 |
+| The deep LIVE view is strongly hardware/OS-dependent — same view, very different render … | Open bugs | 5787 |
+| Redact the user name from paths in the log files, on by default in every release published … | Requested 2026-11-01 (user) | 7061 |
+| Rotation for views (user, 2026-11-01). The view model has no rotation at all (noted as the … | Requested 2026-11-01 (user) | 7073 |
+| More coloring algorithms (user, 2026-11-01). Six methods ship: smooth iteration, stripe … | Requested 2026-11-01 (user) | 7080 |
+| CSV point list → generated tour (user, 2026-08-13): import a set of points from a CSV … | Script format — requested extensions (user, 2026-08-09) | 7090 |
+| Tour files should be able to set every rendering parameter the UI can. Today `[render]` … | Script format — requested extensions (user, 2026-08-09) | 7131 |
+| Tour-driven debug logging for remote diagnosis. The ability to annotate a tour with … | Script format — requested extensions (user, 2026-08-09) | 7140 |
+| Prefer Misiurewicz targets as the other good class. λ guarantees the descent never runs … | Autopilot / auto-zoom — target selection & path planning (user spec, 2026-08-07) | 7482 |
+| Fly it with Van Wijk & Nuij (2003), "Smooth and efficient zooming and panning" — the … | Autopilot / auto-zoom — target selection & path planning (user spec, 2026-08-07) | 7488 |
+| L-systems, cellular automata (1-D & 2-D). | Milestone M3/M4 — Fractal variety & dual view (in progress) | 7899 |
+| Tour editor (visual timeline) — an in-app editor for camera tours: a scrubbing timeline … | Tooling, scripting & versioning (M7) | 8033 |
+| Benchmark presets — multiple scenes (Julia deep, Multibrot, dual) + CSV/JSON … | Tooling, scripting & versioning (M7) | 8053 |
+| In-app editor for the authorable files — a text/TOML editor (probably a Tools → … | Tooling, scripting & versioning (M7) | 8103 |
+| Theme polish — optional light/preset themes, custom font, accent picker. | Branding & UI (M7) | 8163 |
+| Layers + blend modes (Ultra Fractal-style compositing). | Survey-driven roadmap (2026-06-28) | 8281 |
+| 3D fractals (Mandelbulb / Mandelbox, ray-marched). | Survey-driven roadmap (2026-06-28) | 8381 |
+| Flame / IFS fractals; L-systems; cellular automata. | Survey-driven roadmap (2026-06-28) | 8382 |
+| Shallow-view resize pacing — the direct-mode path re-iterates + reallocates the … | UI test automation | 8406 |
+| Custom formula / coloring scripting — Ultra Fractal's killer feature (user-written … | Feature gaps vs. peer renderers (survey 2026-08-05: KF2 / Fraktaler-3 / Ultra Fractal / XaoS / Imagina) | 8428 |
+| Huge tiled exports — KF renders wall-sized images by tiling; we cap at the GPU texture … | Feature gaps vs. peer renderers (survey 2026-08-05: KF2 / Fraktaler-3 / Ultra Fractal / XaoS / Imagina) | 8434 |
+| Glitch correction robustness at depth — KF's Pauldelbrot correction is mature; ours has … | Feature gaps vs. peer renderers (survey 2026-08-05: KF2 / Fraktaler-3 / Ultra Fractal / XaoS / Imagina) | 8441 |
+| Ecosystem/platform — no plugin system; ~~Windows-only release builds~~ Windows + Linux … | Feature gaps vs. peer renderers (survey 2026-08-05: KF2 / Fraktaler-3 / Ultra Fractal / XaoS / Imagina) | 8444 |
+| WYSIWYG coordinate-expression editor (user, 2026-09-11). The Go-to fields take the … | Proposed feature set — reconciled backlog (2026-08-06) | 8518 |
+| Newton-Raphson zoom follow-ups — (a) run the refine off-thread; a period-100k atom at … | Proposed feature set — reconciled backlog (2026-08-06) | 8556 |
+| Landmark library expansion (P1, §4.3 partial) — we ship 12 curated points; add the … | Proposed feature set — reconciled backlog (2026-08-06) | 8567 |
+| Automated tour-frame verdict harness — render `grand-tour.toml` (low fps/size) and … | Proposed feature set — reconciled backlog (2026-08-06) | 8597 |
+| Original grand-tour spec (superseded, kept for the unbuilt parts) — one tour that visits the known … | Proposed feature set — reconciled backlog (2026-08-06) | 8604 |
+| Complete the G-buffer (P0, §1.1 partial) — the iterate target already carries smooth … | Proposed feature set — reconciled backlog (2026-08-06) | 8623 |
+| Method switching without re-iterating (P0, §1.2 partial) — palette, cycle, offset and … | Proposed feature set — reconciled backlog (2026-08-06) | 8628 |
+| Raw-channel EXR export (P1, §1.3 partial) — we write a linear *color* EXR with embedded … | Proposed feature set — reconciled backlog (2026-08-06) | 8633 |
+| Exponential-map render mode (P1, §1.4 absent) — zoomasm-compatible zoom-video assembly. | Proposed feature set — reconciled backlog (2026-08-06) | 8638 |
+| Zoom video: hold the inner strips coarser (the third high-resolution fix, … | Proposed feature set — reconciled backlog (2026-08-06) | 8639 |
+| Resumable/checkpointed tiled export (P2, §1.5 partial) — tiled iterate exists; see … | Proposed feature set — reconciled backlog (2026-08-06) | 8649 |
+| Interior distance-estimation coloring (P0, §2.2 gap) — exterior DE ships and is stable … | Proposed feature set — reconciled backlog (2026-08-06) | 8662 |
+| Log-scaled + histogram/percentile palette mapping (P0, §2.4 partial) — `--normalize` and … | Proposed feature set — reconciled backlog (2026-08-06) | 8691 |
+| Curvature-average coloring (P1, §2.5 gap) — stripe, triangle-inequality and orbit traps … | Proposed feature set — reconciled backlog (2026-08-06) | 8700 |
+| Layer compositing (P1, §2.7 absent) — multiple colorings over one G-buffer with masks and … | Proposed feature set — reconciled backlog (2026-08-06) | 8708 |
+| DE-adaptive anti-aliasing (P1, §2.8 absent) — supersample only where DE says the boundary … | Proposed feature set — reconciled backlog (2026-08-06) | 8710 |
+| User-scriptable coloring (P2, §2.9 absent) — a WGSL snippet slot over the G-buffer; see … | Proposed feature set — reconciled backlog (2026-08-06) | 8713 |
+| Interior colorings (P2, §2.10 absent) — period coloring, atom domains, interior-coordinate … | Proposed feature set — reconciled backlog (2026-08-06) | 8715 |
+| (2) Bifurcation-measure coloring mode — μ_bif = Δ G(c), and the G-buffer already holds … | Proposed feature set — reconciled backlog (2026-08-06) | 8725 |
+| (1) Galois orbits of PCF parameters — the flagship. For fixed (k,n) the PCF parameters … | Proposed feature set — reconciled backlog (2026-08-06) | 8733 |
+| (4) Unlikely-intersection explorer (DeMarco–Krieger–Ye) — two parameters c₁, c₂; … | Proposed feature set — reconciled backlog (2026-08-06) | 8746 |
+| (3) Exact rational critical-orbit arithmetic — for c ∈ ℚ iterate the critical orbit in … | Proposed feature set — reconciled backlog (2026-08-06) | 8753 |
+| (5) Special curves / PCF loci in two-parameter families (André–Oort setting) — the … | Proposed feature set — reconciled backlog (2026-08-06) | 8764 |
+| Embedded-Julia size/orientation estimates (P1, §3.5 absent) — shape-stacking navigation; … | Proposed feature set — reconciled backlog (2026-08-06) | 8783 |
+| Orbit cycle detection + multipliers (P1, §3.6 partial) — the cursor-point orbit plot, … | Proposed feature set — reconciled backlog (2026-08-06) | 8785 |
+| Critical-orbit overlay in the Julia panel (P2, §3.7 gap) — the dual linked view otherwise … | Proposed feature set — reconciled backlog (2026-08-06) | 8788 |
+| Guided descent modes (P1, §4.4 partial) — approach-nucleus, λ-stepped Misiurewicz … | Proposed feature set — reconciled backlog (2026-08-06) | 8791 |
+| External angles and rays (P2, §3.8 absent) — landing angles, parameter rays, equipotentials. | Proposed feature set — reconciled backlog (2026-08-06) | 8795 |
+| Internal addresses and tuning navigation (P2, §3.9 absent) — "go to p/q bulb", display the … | Proposed feature set — reconciled backlog (2026-08-06) | 8796 |
+| Verified computation mode (P2, §3.10 absent) — interval/ball arithmetic for certified … | Proposed feature set — reconciled backlog (2026-08-06) | 8798 |
+| Numeric egress (P2, §3.11 absent) — iteration grids, orbits, ray data as CSV/NumPy via the … | Proposed feature set — reconciled backlog (2026-08-06) | 8800 |
+| Auto-stretch (P2, §4.5 absent) — unskew sheared deep locations from iteration histograms … | Proposed feature set — reconciled backlog (2026-08-06) | 8806 |
+| `.kfr` export / `.kfb` support (§4.2 gap) — `.kfr` import ships (hardened + fuzzed); … | Proposed feature set — reconciled backlog (2026-08-06) | 8808 |
+| F3 goldens for the tours' key steps (user, 2026-08-10). The grand tour's regression … | Proposed feature set — reconciled backlog (2026-08-06) | 9261 |
+| Tan Lei invariant goldens (P0, §5.1 absent) — at a Misiurewicz landmark, render at … | Proposed feature set — reconciled backlog (2026-08-06) | 9274 |
+| Landmark benchmark regimes (P1, §5.2 partial) — `--bench-matrix` covers zoom bands, … | Proposed feature set — reconciled backlog (2026-08-06) | 9279 |
+| λ-scaling zoom-loop test (P1, §5.3 absent) — a Misiurewicz-centered zoom must become … | Proposed feature set — reconciled backlog (2026-08-06) | 9284 |
+| Per-channel cross-tool differential testing (P2, §5.4 partial) — the F3 corpus (20 … | Proposed feature set — reconciled backlog (2026-08-06) | 9286 |
+| PR-C1. Faster double-word arithmetic (Zhang & Aiken 2025 add; Yang et al. 2024 … | Performance & throughput (M7) | 9437 |
+| PR-C3. BLA for Julia views. `bla_eligible` excludes Julia; with δc = 0 the B terms … | Performance & throughput (M7) | 9509 |
+| PR-C4. Certified interior: a per-pixel attracting-cycle test (Tucker & Wilczak 2009) and … | Performance & throughput (M7) | 9512 |
+| PR-C5. Speculative work along the camera path, with camera prediction (L4 in … | Performance & throughput (M7) | 9516 |
+| PR-C6. Split orbit and tree bindings; 8-byte orbit samples. Raises the orbit cap past … | Performance & throughput (M7) | 9519 |
+| PR-C7. Temporal accumulation during slow motion. Needs PR-B4's lattice. M. | Performance & throughput (M7) | 9522 |
+| PR-C8. Second-order BLA. One report: 21× at 2.8e40, from a single pull request … | Performance & throughput (M7) | 9523 |
+| PR-C9. Foveation during motion (the zoom center as the fovea): a modest gain in motion, … | Performance & throughput (M7) | 9525 |
+| PR-C10. An NTT with transform reuse for the complex square, above ~100k bits. 1.5–3× … | Performance & throughput (M7) | 9527 |
+| PR-C11. The precision cascade (Level 3 below), with the literature's ceiling. The cost … | Performance & throughput (M7) | 9530 |
+| One reference per zoom sequence (offline tours) — a zoom toward a fixed center uses … | Performance & throughput (M7) | 9572 |
+| Level 3 (research): precision-cascade with parallel residuals — run the serial chain at … | Performance & throughput (M7) | 9595 |
+| By-keyframe distribution once exponential-map export lands — one keyframe per factor … | Performance & throughput (M7) | 9679 |
+| GPU-assisted reference-candidate scoring (the practical "bignum on GPU"). Full GPU bignum … | Performance & throughput (M7) | 9698 |
+| Tile-level export pipeline — overlap tile N+1 iterate with tile N async readback + … | Performance & throughput (M7) | 9828 |
 <!-- TODO-INDEX:END -->
 
 ## ▶ Offline render path: the fixed cost in the shallow/mid band (2026-08-21)
@@ -803,7 +803,27 @@ Mockups: [design/mockups/](design/mockups/).
 
 ## Open bugs
 
-- [ ] 🟡**POSSIBLE, NOT REPRODUCED: STRIPE, TIA AND TRAP DROP STATISTICS WHEN A SHORT-ESCAPING
+- [ ] 🟡**STRIPE'S TAIL WINDOW UNDER BLA PAST 1e28× IS 0.23 OFF EVERY-ITERATION** (measured
+  2026-11-08 by the selftest `aux-series`, which prints it beside its own check: the seahorse at
+  1e30×, tail 16, a BLA render with no series against the same view iterated in full). The BLA skip
+  folds a run into the tail window by the run's MEAN term in closed form (`aux_fold_run`), which is
+  exact for one term and only approximate for a long run, because the window weighs its last terms
+  most. Idea: a fourth lane per node with the window-weighted sum W = Σ (1−α)^(span−1−i)·t_i, which
+  folds exactly (s ← (1−α)^span·s + α·W) and merges associatively (W = (1−α)^span_y·W_x + W_y); it
+  depends on the tail length, so it is patched with the other aux lanes when the slider moves. The
+  series prefix (A5a) is 0.029 off with the mean fold and cannot do better from the reference: near
+  the end of a long skip each pixel has drifted from it (0.17 when the prefix was folded term by
+  term). Reproduce first in the live view (a tail-16 stripe at 1e30×, BLA on vs off).
+- [x] ✅**CLOSED 2026-11-08, ON A REPRODUCTION — STRIPE, TIA AND TRAP DROPPED THE STATISTICS OF THE
+  SERIES PREFIX ON A SHORT-ESCAPING BLA VIEW; fixed on `fix/color-a5a-series-aux` (coloring plan
+  A5a).** Reproduced by the new selftest `aux-series`: the seahorse at 1e30× with a 20,000 budget
+  (the reference escapes at 3,090, so it is a short escaper) takes `sa_skip` 3,088, and the stripe,
+  TIA and trap renders differed from the same view iterated in full on 75% of the channels (maxΔ
+  0.22, 0.72, 0.25 and 0.27; the tail 0.70), each a different flat color. The fix folds the prefix
+  [0, sa_skip) out of the BLA tree at the series seed, as a BLA skip folds its run (the binary
+  decomposition of the skip into aligned nodes; `aux_fold_run`, now shared with the BLA skip): stripe
+  0.0010, TIA 0.0004, traps 0.0000 against every iteration; the tail 0.029 (approximate, item above).
+  The report, as filed: **POSSIBLE, NOT REPRODUCED: STRIPE, TIA AND TRAP DROP STATISTICS WHEN A SHORT-ESCAPING
   REFERENCE TURNS THE SERIES BACK ON** (found by reading the code during the coloring-doc review,
   2026-11-08). Aux methods turn series approximation off (`blocks_iter_skip`, `main.rs`), but
   `sa_short_escaper` (`render.rs`, used by `finish_reference`) and `live_series` (`render.rs`) turn
