@@ -74,7 +74,14 @@ Changes after 0.3.0-beta.1:
   second, empty report about a session that had already written its own. On Windows this now
   covers crashes that are not program errors too, such as an access violation inside a graphics
   driver: the report names the exception, the library it happened in (the graphics driver, when
-  it was), what the driver was compiling at the time and the crashed thread's call chain.
+  it was), what the driver was compiling at the time and the crashed thread's call chain. The
+  message itself says what happened in plain words (for example, that the graphics driver crashed
+  while it was compiling Fractadyne's shaders), when (at start-up, opening the window, starting
+  the graphics device or preparing the shaders, or while running), which graphics card, graphics
+  API and driver version, and what to check or try for that failure: the newest driver from the
+  card's maker, the computer's other graphics card (`--list-adapters`, `--adapter`), the computer
+  itself rather than a Remote Desktop session, starting again, or a newer Fractadyne. A program
+  started from a terminal prints the same there.
 - **Stripe, triangle-inequality and orbit-trap coloring keep their whole orbit in deep exterior
   views (0.3.0-beta.27).** Past about 1e28×, where the reference orbit escapes well within the
   iteration budget, the renderer skips the first stretch of every orbit with a series

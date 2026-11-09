@@ -46,11 +46,14 @@ fn a_panicked_session_names_its_report_in_its_marker() {
 }
 
 #[test]
-fn the_dialog_text_carries_both_placeholders() {
-    // The panic hook fills these two in; a translation that dropped one would hide the error or the
-    // report's path. The English text is the template every translation follows.
+fn the_dialog_text_carries_every_placeholder() {
+    // The panic hook fills these in; a translation that dropped one would hide what happened, the
+    // error, what to try or the report's path. The English text is the template every translation
+    // follows.
     let t = crate::ui::crash_dialog_text();
-    assert!(t.body.contains("{reason}") && t.body.contains("{path}"), "{}", t.body);
+    for p in ["{what}", "{reason}", "{tips}", "{path}"] {
+        assert!(t.body.contains(p), "{p} missing: {}", t.body);
+    }
     assert!(t.body.contains(crate::ISSUES_URL), "{}", t.body);
     assert!(!t.title.is_empty());
     // Paragraphs: a system message box is plain text, and one block of it is hard to read.

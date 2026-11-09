@@ -601,6 +601,52 @@ pub(crate) mod native_crash;
 #[path = "../tests/unit/diag/native_crash_tests.rs"]
 mod native_crash_tests;
 
+/// What a fatal error tells the person beyond the error itself: what happened, when, on which
+/// graphics card, and what to check or try.
+pub(crate) mod advice;
+
+#[cfg(test)]
+#[path = "../tests/unit/diag/advice_tests.rs"]
+mod advice_tests;
+
+/// How far the program had got (`advice::Phase`), for a fatal error's account.
+static PHASE: std::sync::atomic::AtomicU8 = std::sync::atomic::AtomicU8::new(0);
+/// The graphics card the window's device was opened on.
+static GPU_SEEN: OnceLock<advice::Gpu> = OnceLock::new();
+
+/// Start-up has reached `p` (also `Running`, when it is over).
+pub(crate) fn set_phase(p: advice::Phase) {
+    PHASE.store(p as u8, Ordering::Relaxed);
+}
+
+/// The window's graphics card, as a fatal error's account names it. The first one only: that is
+/// the window's; an export's or a worker's device comes later.
+pub(crate) fn note_gpu(name: &str, backend: eframe::wgpu::Backend, vendor_id: u32, driver: &str, driver_info: &str) {
+    let _ = GPU_SEEN.set(advice::Gpu {
+        name: name.trim().to_string(),
+        api: advice::api_name(backend),
+        driver: advice::driver_text(driver, driver_info),
+        vendor: advice::vendor_name(vendor_id, name),
+    });
+}
+
+/// Whether this is a Remote Desktop session (Windows: `SM_REMOTESESSION`).
+#[cfg(windows)]
+fn remote_session() -> bool {
+    #[link(name = "user32")]
+    unsafe extern "system" {
+        fn GetSystemMetrics(index: i32) -> i32;
+    }
+    const SM_REMOTESESSION: i32 = 0x1000;
+    // SAFETY: a documented Win32 query with no pointers.
+    unsafe { GetSystemMetrics(SM_REMOTESESSION) != 0 }
+}
+
+#[cfg(not(windows))]
+fn remote_session() -> bool {
+    false
+}
+
 /// Replace the user's home directory with `~` everywhere in `s` — for anything that leaves the
 /// machine (the issue report). Issues are public, and on every desktop OS the home path contains
 /// the account name.
@@ -1543,7 +1589,7 @@ fn install_panic_hook() {
         // nobody what happened, where the report is or what to do with it). Only for the main
         // thread, whose panic ends the program; only for a person's own launch (`enable_crash_dialog`).
         if std::thread::current().name() == Some("main") {
-            show_fatal_dialog(&crash_reason(&msg), report.as_deref());
+            show_fatal_dialog(&advice::Failure::Panic(msg.clone()), &crash_reason(&msg), report.as_deref());
         }
         default(info);
     }));
@@ -1573,9 +1619,12 @@ pub(crate) fn marker_panicked(marker: &str) -> Option<&str> {
 /// translation system while the program is dying (a second panic there would abort, dialog and all).
 pub(crate) struct CrashText {
     pub(crate) title: String,
-    /// The message, with `{reason}` where the error goes and `{path}` where the report's path goes,
-    /// ending on a yes/no question: open the folder that holds the report?
+    /// The message, with `{what}` where the account of what happened goes, `{reason}` the error,
+    /// `{tips}` what to check or try and `{path}` the report's path, ending on a yes/no question:
+    /// open the folder that holds the report?
     pub(crate) body: String,
+    /// The account's and the tips' phrases (`advice::compose`).
+    pub(crate) phrases: advice::Phrases,
 }
 
 static CRASH_TEXT: std::sync::Mutex<Option<CrashText>> = std::sync::Mutex::new(None);
@@ -1623,29 +1672,71 @@ pub(crate) fn crash_reason(msg: &str) -> String {
     }
 }
 
-/// Tell the person at the window that Fractadyne has to close, why, and where the report is, and
-/// wait until they have read it; Yes opens the folder that holds the report. Nothing unless the
-/// dialog is enabled ([`enable_crash_dialog`]) and its text was prepared.
+/// What the program was doing, for a fatal error's account: the breadcrumb without its thread.
+/// `try_lock`: the crashed thread may hold it.
+fn activity_now() -> Option<String> {
+    let b = BREADCRUMB.try_lock().ok()?.clone();
+    let b = match b.rfind(" [") {
+        Some(i) if b.ends_with(']') => b[..i].to_string(),
+        _ => b,
+    };
+    Some(b).filter(|b| !b.is_empty())
+}
+
+/// The crash dialog's message for `failure`: the account of what happened (when, on which card),
+/// the error, what to check or try and the report's path, in the language in use. `None` before
+/// its text was prepared, or while another thread holds it.
+pub(crate) fn fatal_message(failure: &advice::Failure, reason: &str, report_shown: &str) -> Option<(String, String)> {
+    // `try_lock`: a dying program must not wait on a lock it may itself be holding.
+    let g = CRASH_TEXT.try_lock().ok()?;
+    let t = g.as_ref()?;
+    let compiling = fractadyne_gpu::pipeline_compile::compiling_now();
+    let activity = activity_now();
+    let situation = advice::Situation {
+        failure,
+        phase: advice::Phase::from_u8(PHASE.load(Ordering::Relaxed)),
+        compiling: &compiling,
+        gpu: GPU_SEEN.get(),
+        activity: activity.as_deref(),
+        remote_session: remote_session(),
+    };
+    let account = advice::compose(&situation, &t.phrases);
+    let body = t
+        .body
+        .replace("{what}", &account.what)
+        .replace("{tips}", &account.tips)
+        .replace("{reason}", reason)
+        .replace("{path}", report_shown);
+    Some((t.title.clone(), body))
+}
+
+/// Tell the person that Fractadyne has to close: what happened, when, on which graphics card, the
+/// error, what to check or try and where the report is. On the console always (a launch from a
+/// terminal reads it there); in a dialog for a person's own launch ([`enable_crash_dialog`]),
+/// waiting until they have read it, where Yes opens the folder that holds the report.
 ///
 /// ⚠Yes and No, not named buttons: rfd names its buttons only with its `common-controls-v6`
 /// feature, a task dialog that needs the version-6 common controls declared in the program's
 /// manifest; without it, custom names come out as a plain OK and Cancel. Windows labels Yes and No
 /// in its own language.
-pub(crate) fn show_fatal_dialog(reason: &str, report: Option<&Path>) {
-    if !CRASH_DIALOG_ON.load(Ordering::Relaxed) {
-        return;
-    }
-    // `try_lock`: a dying program must not wait on a lock it may itself be holding.
-    let Some((title, body)) = CRASH_TEXT.try_lock().ok().and_then(|g| g.as_ref().map(|t| (t.title.clone(), t.body.clone())))
-    else {
-        return;
-    };
+pub(crate) fn show_fatal_dialog(failure: &advice::Failure, reason: &str, report: Option<&Path>) {
     let folder = report.and_then(|r| r.parent().map(Path::to_path_buf)).or_else(logs_dir);
     let shown = report
         .map(|r| r.display().to_string())
         .or_else(|| folder.as_ref().map(|f| f.display().to_string()))
         .unwrap_or_default();
-    let body = body.replace("{reason}", reason).replace("{path}", &shown);
+    let Some((title, body)) = fatal_message(failure, reason, &shown) else {
+        return;
+    };
+    // The console's copy: the message without its closing question, which only the dialog asks.
+    let console = match body.trim_end().rsplit_once("\n\n") {
+        Some((head, last)) if last.trim_end().ends_with('?') => head.trim_end().to_string(),
+        _ => body.trim_end().to_string(),
+    };
+    let _ = writeln!(std::io::stderr(), "\nfractadyne: {title}\n{console}\n");
+    if !CRASH_DIALOG_ON.load(Ordering::Relaxed) {
+        return;
+    }
     let answer = rfd::MessageDialog::new()
         .set_level(rfd::MessageLevel::Error)
         .set_title(title)

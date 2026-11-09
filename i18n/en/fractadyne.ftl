@@ -480,11 +480,15 @@ dlg-filter-text = Text
 ## The dialog shown at the moment Fractadyne has to close because of an error it could not recover
 ## from (the one above is shown on the NEXT launch). A system message box: plain text, no markup.
 crash-dialog-title = Fractadyne has to close
-# $reason = the error (technical, usually English); $path = the crash report's file; $url = the project's issue page; $email = the feedback address.
+# $what = what happened, when, and on which graphics card: lines made of the crash-what-* and crash-detail-* messages below; $reason = the error (technical, usually English); $tips = what to check or try: a bulleted list of the crash-tip-* messages below; $path = the crash report's file; $url = the project's issue page; $email = the feedback address.
 crash-dialog-body =
     Fractadyne ran into an error it could not recover from and has to close.
 
+    { $what }
     The error: { $reason }
+
+    Things to check or try:
+    { $tips }
 
     A crash report was saved to:
     { $path }
@@ -492,10 +496,42 @@ crash-dialog-body =
     Please send it so the problem can be fixed: attach it to a new issue at { $url }, or email it to { $email }. Once Fractadyne starts again, Help ▸ Report an issue attaches it for you.
 
     Open the folder that holds the report?
-# The error the crash dialog shows when the graphics driver lacks what Fractadyne needs. $card = the graphics card's name; $api = Vulkan or Gl (OpenGL); $have and $need = storage buffers per shader.
-gpu-unsupported-reason = this graphics driver cannot run Fractadyne. { $card } through { $api } offers { $have } storage buffers per shader, and Fractadyne needs { $need }. Updating the graphics driver usually fixes this: Fractadyne runs on Vulkan, or on OpenGL 4.3 and later.
-# The error the crash dialog shows when no graphics device could be opened at all.
-gpu-backend-failed-reason = no graphics device could be opened. Fractadyne needs a graphics driver with Vulkan, or OpenGL 4.3 or later; updating the graphics driver usually fixes this.
+# The crash dialog's first line: what happened. $module = the library the crash happened in, a file name such as ig75icd64.dll.
+crash-what-driver-compiling = The graphics driver ({ $module }) crashed while it was compiling Fractadyne's shaders.
+crash-what-driver = The graphics driver ({ $module }) crashed.
+crash-what-device-lost = The graphics card stopped responding, and its driver reset it.
+crash-what-module = Fractadyne crashed inside { $module }.
+crash-what-native = Fractadyne crashed.
+crash-what-bug = Fractadyne stopped on an error in its own code.
+crash-what-window = The window could not open.
+crash-what-no-device = No graphics device could be opened. Fractadyne needs a graphics driver with Vulkan, or with OpenGL 4.3 or later.
+crash-what-unsupported = This graphics driver lacks a feature Fractadyne needs. Fractadyne runs on Vulkan, or on OpenGL 4.3 and later.
+# The crash dialog's "When:" line. $phase = one of the crash-phase-* messages.
+crash-detail-when = When: { $phase }
+crash-phase-window = at start-up, while opening the window
+crash-phase-device = at start-up, while starting the graphics device
+crash-phase-shaders = at start-up, while preparing the graphics shaders
+crash-phase-running = while Fractadyne was running
+# $shader = the pipelines being compiled (technical, such as fractadyne.iter_pipeline fs_iterate).
+crash-detail-shader = Shader being compiled: { $shader }
+# $activity = what the program was doing (technical, English).
+crash-detail-activity = Doing: { $activity }
+# $card = the graphics card's name; $api = the graphics API (Vulkan, OpenGL, Direct3D 12); $driver = the driver's version as the driver reports it.
+crash-detail-graphics = Graphics: { $card } ({ $api }, driver { $driver })
+# As crash-detail-graphics, for a driver that reports no version.
+crash-detail-graphics-no-driver = Graphics: { $card } ({ $api })
+# Things to check or try: each is one bullet of the crash dialog's list. Keep the command-line options as written.
+crash-tip-remote = This is a Remote Desktop session, which often has no graphics acceleration: start Fractadyne at the computer itself.
+# $vendor = the graphics card's maker (Intel, NVIDIA, AMD).
+crash-tip-driver-vendor = Install the newest graphics driver for this card from { $vendor }'s website. The driver a computer came with is often years old.
+crash-tip-driver = Install the newest graphics driver from the website of the company that made the graphics card, such as Intel, NVIDIA or AMD. The driver a computer came with is often years old.
+crash-tip-other-card = If this computer has a second graphics card (many laptops do), start Fractadyne on it: fractadyne --list-adapters lists the cards, and fractadyne --adapter 2 starts on the second.
+crash-tip-again = Start Fractadyne again. If the error comes back, the crash report is what lets it be fixed.
+crash-tip-newer = Check for a newer Fractadyne (Help ▸ Check for updates): this may already be fixed there.
+# The error the crash dialog shows when the graphics driver lacks what Fractadyne needs. $card = the graphics card's name; $api = the graphics API (Vulkan, OpenGL); $have and $need = storage buffers per shader.
+gpu-unsupported-reason = { $card } through { $api } offers { $have } storage buffers per shader, and Fractadyne needs { $need }.
+# The error the crash dialog shows when the window opened without a graphics device.
+gpu-backend-failed-reason = the window has no graphics device (eframe gave it no wgpu render state).
 dlg-crash-title = Fractadyne didn't shut down cleanly
 dlg-crash-intro = The previous session ended unexpectedly. A report has been saved on this machine — would you like to send it?
 dlg-crash-review = Nothing is sent until you review it: the next screen shows exactly what would be included, and system information is one checkbox to exclude.

@@ -52,12 +52,47 @@ pub(crate) fn open_in_file_manager(dir: &std::path::Path) -> std::io::Result<()>
     cmd.spawn().map(|_| ())
 }
 
-/// The crash dialog's text in the language in use (`diag::show_fatal_dialog` fills in the error
-/// and the report's path). Handed to `diag` at start-up and on a language change.
+/// The crash dialog's text in the language in use (`diag::show_fatal_dialog` fills in what
+/// happened, the error, what to try and the report's path; `diag::advice` the phrases'
+/// placeholders). Handed to `diag` at start-up and on a language change.
 pub(crate) fn crash_dialog_text() -> crate::diag::CrashText {
     crate::diag::CrashText {
         title: tr!(crash_dialog_title),
-        body: tr!(crash_dialog_body, reason = "{reason}", path = "{path}", url = crate::ISSUES_URL, email = crate::REPORT_EMAIL),
+        body: tr!(
+            crash_dialog_body,
+            what = "{what}",
+            reason = "{reason}",
+            tips = "{tips}",
+            path = "{path}",
+            url = crate::ISSUES_URL,
+            email = crate::REPORT_EMAIL
+        ),
+        phrases: crate::diag::advice::Phrases {
+            summary_driver_compiling: tr!(crash_what_driver_compiling, module = "{module}"),
+            summary_driver: tr!(crash_what_driver, module = "{module}"),
+            summary_device_lost: tr!(crash_what_device_lost),
+            summary_module: tr!(crash_what_module, module = "{module}"),
+            summary_native: tr!(crash_what_native),
+            summary_bug: tr!(crash_what_bug),
+            summary_window: tr!(crash_what_window),
+            summary_no_device: tr!(crash_what_no_device),
+            summary_unsupported: tr!(crash_what_unsupported),
+            phase_window: tr!(crash_phase_window),
+            phase_device: tr!(crash_phase_device),
+            phase_shaders: tr!(crash_phase_shaders),
+            phase_running: tr!(crash_phase_running),
+            when: tr!(crash_detail_when, phase = "{phase}"),
+            shader: tr!(crash_detail_shader, shader = "{shader}"),
+            activity: tr!(crash_detail_activity, activity = "{activity}"),
+            graphics: tr!(crash_detail_graphics, card = "{card}", api = "{api}", driver = "{driver}"),
+            graphics_no_driver: tr!(crash_detail_graphics_no_driver, card = "{card}", api = "{api}"),
+            tip_remote: tr!(crash_tip_remote),
+            tip_driver_vendor: tr!(crash_tip_driver_vendor, vendor = "{vendor}"),
+            tip_driver: tr!(crash_tip_driver),
+            tip_other_card: tr!(crash_tip_other_card),
+            tip_again: tr!(crash_tip_again),
+            tip_newer: tr!(crash_tip_newer),
+        },
     }
 }
 

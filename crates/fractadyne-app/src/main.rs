@@ -397,6 +397,9 @@ fn main() -> eframe::Result<()> {
                             "start-up: the graphics device on {} ({:?}), then the window's own pipelines",
                             info.name, info.backend
                         ));
+                        // For a fatal error's account: when, and on which card (`diag::advice`).
+                        crate::diag::set_phase(crate::diag::advice::Phase::StartingDevice);
+                        crate::diag::note_gpu(&info.name, info.backend, info.vendor, &info.driver, &info.driver_info);
                         // ⛔⭐**Not WebGL2's limits on OpenGL.** egui-wgpu's default asks an OpenGL
                         // adapter for `downlevel_webgl2_defaults` (written for a browser), and this
                         // copy did too: they allow NO storage buffers, which the renderer needs
@@ -528,6 +531,7 @@ fn main() -> eframe::Result<()> {
     // The session's language is loaded now: the crash dialog speaks it from here on.
     diag::set_crash_text(crate::ui::crash_dialog_text());
     app.start_early_cli_reference();
+    diag::set_phase(diag::advice::Phase::OpeningWindow);
     diag::breadcrumb("start-up: opening the window and its graphics device".into());
     let r = eframe::run_native(
         "Fractadyne",
@@ -545,7 +549,7 @@ fn main() -> eframe::Result<()> {
         let reason = e.to_string();
         diag::log_line("fatal", &format!("the window could not open: {reason}"));
         let report = diag::write_crash_report_at(&format!("the window could not open: {reason}"), "<start-up: eframe>");
-        diag::show_fatal_dialog(&reason, report.as_deref());
+        diag::show_fatal_dialog(&diag::advice::Failure::WindowOpen, &crate::diag::crash_reason(&reason), report.as_deref());
     }
     // A windowed task that ended by closing its window (`--chunk-sweep` does) still owes its
     // `[fd-exit]` line and its log check.
@@ -6988,10 +6992,10 @@ impl FractadyneApp {
             Some(rs) => rs,
             None => {
                 let reason = tr!(gpu_backend_failed_reason);
-                eprintln!("fractadyne: {reason}");
                 // ⚠A GUI program has no console on Windows: without the dialog this said nothing.
+                // (`show_fatal_dialog` also writes the whole account to the console.)
                 let report = diag::write_crash_report_at(&format!("no graphics device: {reason}"), "<start-up: graphics device>");
-                diag::show_fatal_dialog(&reason, report.as_deref());
+                diag::show_fatal_dialog(&diag::advice::Failure::NoDevice, &reason, report.as_deref());
                 crate::exit(1);
             }
         };
@@ -7013,19 +7017,19 @@ impl FractadyneApp {
             let reason = tr!(
                 gpu_unsupported_reason,
                 card = info.name.as_str(),
-                api = format!("{:?}", info.backend),
+                api = diag::advice::api_name(info.backend),
                 have = have,
                 need = fractadyne_gpu::STORAGE_BUFFERS_PER_STAGE
             );
-            eprintln!("fractadyne: {reason}");
             let report = diag::write_crash_report_at(&format!("unsupported graphics device: {reason}"), "<start-up: graphics device>");
-            diag::show_fatal_dialog(&reason, report.as_deref());
+            diag::show_fatal_dialog(&diag::advice::Failure::Unsupported, &reason, report.as_deref());
             crate::exit(1);
         }
         // Before any pipeline exists on this device: does its shader compiler fuse `two_prod`'s
         // product (TODO PR-C2)? Where it does, the iterate pipelines get the WGSL product barrier.
         // ⭐Start-up's phases as breadcrumbs: a driver that dies compiling a shader leaves a crash
         // report whose `activity` says which (Eris, 2026-11-09, died 7 s into an OpenGL start-up).
+        diag::set_phase(diag::advice::Phase::PreparingShaders);
         diag::breadcrumb("start-up: the product-fusion probe (one pipeline)".into());
         let fusion = fractadyne_gpu::detect_product_fusion(&render_state.device, &render_state.queue);
         diag::breadcrumb("start-up: building the renderer's pipelines".into());
@@ -7034,6 +7038,7 @@ impl FractadyneApp {
         // A driver may have put its own crash handler in place of ours as it loaded.
         diag::native_crash::reinstall("the graphics driver's start-up");
         diag::breadcrumb("start-up: the renderer is ready".into());
+        diag::set_phase(diag::advice::Phase::Running);
         // Record the GPU's storage-buffer binding limit as the reference-orbit length ceiling, so
         // the off-thread live recompute can bound a deep-interior orbit to what the buffer holds
         // (a `.fdn` with auto-iter off + a very high max_iter at an interior view would otherwise
