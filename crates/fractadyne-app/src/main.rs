@@ -532,6 +532,16 @@ fn main() -> eframe::Result<()> {
             Ok(Box::new(app))
         }),
     );
+    // ⭐eframe could not open the window or its graphics device (no adapter, a refused device, a
+    // surface that would not configure). Before, this error went to the console only, which a
+    // window launched from Explorer closes as the program ends: the laptop's dev.2 run
+    // (2026-11-08) died with nothing in its log and no dialog. Log it, write a report, and say so.
+    if let Err(e) = &r {
+        let reason = e.to_string();
+        diag::log_line("fatal", &format!("the window could not open: {reason}"));
+        let report = diag::write_crash_report_at(&format!("the window could not open: {reason}"), "<start-up: eframe>");
+        diag::show_fatal_dialog(&reason, report.as_deref());
+    }
     // A windowed task that ended by closing its window (`--chunk-sweep` does) still owes its
     // `[fd-exit]` line and its log check.
     if task_mode().is_some() {
