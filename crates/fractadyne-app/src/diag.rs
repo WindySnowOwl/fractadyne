@@ -289,6 +289,9 @@ pub(crate) fn init(args: &[String]) {
     );
 
     install_panic_hook();
+    // ⭐And the crashes that are not panics (an access violation in a graphics driver): see
+    // `native_crash`.
+    native_crash::install();
     install_console_ctrl_handler();
     // The watchdog is NOT started here: the pre-GUI CLI modes (--crosscheck-f3,
     // --validate-deep, …) do minutes of legitimate silent bignum work and would trip it.
@@ -590,6 +593,13 @@ pub(crate) mod log_writer;
 
 /// The diagnostics bundle (Help ▸ Diagnostics ▸ Save diagnostics bundle…).
 pub(crate) mod bundle;
+
+/// Crashes that are not panics (an access violation, in a graphics driver above all).
+pub(crate) mod native_crash;
+
+#[cfg(test)]
+#[path = "../tests/unit/diag/native_crash_tests.rs"]
+mod native_crash_tests;
 
 /// Replace the user's home directory with `~` everywhere in `s` — for anything that leaves the
 /// machine (the issue report). Issues are public, and on every desktop OS the home path contains
@@ -1065,8 +1075,48 @@ fn worker_pass_line() -> String {
     }
 }
 
+/// Set by [`native_crash_report`] before it writes the report on its helper thread: the thread
+/// that crashed and its native stack, which the report shows in place of the writing thread's.
+static NATIVE_CRASH: OnceLock<(String, String)> = OnceLock::new();
+
+/// The pipeline compiles running at the crash ([`fractadyne_gpu::pipeline_compile::compiling_now`]):
+/// a driver that dies compiling a shader takes the process with it.
+fn compiling_line() -> String {
+    let now = fractadyne_gpu::pipeline_compile::compiling_now();
+    if now.is_empty() { "no pipeline compile in flight".to_string() } else { now.join("; ") }
+}
+
+/// Write the report for a crash that is not a panic ([`native_crash`]), from its helper thread:
+/// `reason` says what and where, `loc` is the faulting module+offset, `thread` the crashed thread
+/// and `stack` its native stack. Marks the session as crashed (no second report on the next
+/// launch) and logs the line, as the panic hook does.
+pub(crate) fn native_crash_report(reason: &str, loc: &str, thread: &str, stack: &str) -> Option<PathBuf> {
+    let _ = NATIVE_CRASH.set((thread.to_string(), stack.to_string()));
+    let report = write_crash_report_at(reason, loc);
+    mark_panicked(report.as_deref());
+    frame_record::flush_jsonl_within(Duration::from_millis(250));
+    let line = format!("{reason} at {loc} — activity: {}; compiling: {}", current_breadcrumb(), compiling_line());
+    log_line("fatal", &line);
+    if thread == log_writer::THREAD {
+        // The log's own thread is the one that crashed: nothing will write what it was handed.
+        write_direct(&format!("{} [fd-fatal] {line}\n", stamp()));
+    } else {
+        flush_log_within(Duration::from_secs(1));
+    }
+    report
+}
+
 fn compose_crash_report(msg: &str, loc: &str, frames: &str) -> String {
     let gpu_hint = device_loss_hint(msg);
+    let native = NATIVE_CRASH.get();
+    let thread = native.map(|n| n.0.clone()).unwrap_or_else(|| std::thread::current().name().unwrap_or("<unnamed>").to_string());
+    let backtrace = match native {
+        Some((_, stack)) => format!("native stack of the crashed thread (module+offset; the exception dispatch first):\n{stack}"),
+        None => format!(
+            "backtrace (debug symbols are disabled in this build; addresses only):\n{}",
+            std::backtrace::Backtrace::force_capture()
+        ),
+    };
     format!(
         "fractadyne crash report\n\
          version : {}\n\
@@ -1080,10 +1130,11 @@ fn compose_crash_report(msg: &str, loc: &str, frames: &str) -> String {
          manifest: {}\n\
          tunables: {}\n\
          bignum  : {}\n\
-         thread  : {}\n\
+         thread  : {thread}\n\
          worker  : {}\n\
+         compiling: {}\n\
          {}{frames}{}\n\
-         backtrace (debug symbols are disabled in this build; addresses only):\n{}\n",
+         {backtrace}\n",
         crate::sysinfo::version_string(),
         frame_record::session_id(),
         crate::sysinfo::now_utc_string(),
@@ -1099,8 +1150,8 @@ fn compose_crash_report(msg: &str, loc: &str, frames: &str) -> String {
         // A deep-zoom crash report whose arithmetic backend is unknown cannot be compared with
         // any other report, and `none` is itself informative (nothing had iterated yet).
         fractadyne_core::backend_status_line(),
-        std::thread::current().name().unwrap_or("<unnamed>"),
         worker_pass_line(),
+        compiling_line(),
         // The frame-budget decisions leading up to this, oldest first. On a device loss this is
         // the section to read first: it says whether the controller was handed a slow reading and
         // ignored it, or was never handed one at all.
@@ -1109,7 +1160,6 @@ fn compose_crash_report(msg: &str, loc: &str, frames: &str) -> String {
             |h| format!("budget  : the last frame-budget decisions (oldest first)\n{h}\n"),
         ),
         gpu_hint,
-        std::backtrace::Backtrace::force_capture(),
     )
 }
 
