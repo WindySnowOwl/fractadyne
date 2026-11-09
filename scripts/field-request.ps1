@@ -34,6 +34,7 @@
 #                                                                 # that machine's own Fractadyne log folder
 #                                                                 # (agent v34): why the app died there
 #   .\scripts\field-request.ps1 -Machine ERIS -Action harness -Run "--list-adapters" -Instrument WGPU_BACKEND=gl -Build v0.3.0-beta.26.dev.3 -Wait
+#   .\scripts\field-request.ps1 -Machine ERIS -Action harness -Run "--list-adapters" -Instrument WGPU_BACKEND=gl -RustLog "wgpu_hal=debug,wgpu_core=warn" -Build v0.3.0-beta.26.dev.3
 #                                                                 # a run on ERIS through one graphics API (v34)
 #   .\scripts\field-request.ps1 -Cancel <id>                      # withdraw a request not yet started
 #
@@ -65,6 +66,10 @@ param(
     # harness: arm diagnostic instruments, "NAME=N[,NAME=N]" (e.g. FRACTADYNE_REF_ESCAPE_AT=655).
     # WARNING: these exist to reach regimes that have caused device losses.
     [string]$Instrument = "",
+    # harness (agent v35+): libraries' own log to the run's stderr (output.txt), e.g.
+    # "wgpu_hal=debug,wgpu_core=warn": which shader wgpu's OpenGL backend was compiling at a crash.
+    # The agent accepts only TARGET=LEVEL, TARGET or LEVEL entries.
+    [string]$RustLog = "",
     # harness (agent v24+): record each run's lifted live decisions (FRACTADYNE_RECORD_DECIDE) and
     # return them as decide.jsonl - a field capture for `fractadyne --replay` / validation/replays.
     [switch]$RecordDecide,
@@ -197,6 +202,11 @@ switch ($Action) {
                 if ($pair -notmatch '^\s*([A-Z_]+)=([0-9]+)\s*$') { throw "bad -Instrument entry '$pair' (NAME=N, or FRACTADYNE_TRACE=category)" }
                 $req.env[$Matches[1]] = [int]$Matches[2]
             }
+        }
+        # (agent v35) RUST_LOG has commas of its own, so it is a parameter, not an -Instrument entry.
+        if ($RustLog) {
+            if ($null -eq $req.env) { $req.env = [ordered]@{} }
+            $req.env["RUST_LOG"] = $RustLog
         }
         if ($ViewFdn) {
             $kv = @{}
