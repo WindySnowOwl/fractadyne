@@ -4705,6 +4705,12 @@ pub fn chunking_mode2_available(device: &wgpu::Device) -> bool {
     device.limits().max_color_attachment_bytes_per_sample >= 64
 }
 
+/// Storage buffers the renderer binds in one shader stage: the iteration pass's reference orbit and
+/// counters, the color pass's two. A device that offers fewer cannot build the renderer (the app
+/// checks before it tries, and says so: an OpenGL device asked for WebGL2's limits offered 0, the
+/// 2026-11-08 laptop crash).
+pub const STORAGE_BUFFERS_PER_STAGE: u32 = 2;
+
 pub fn install_renderer(render_state: &egui_wgpu::RenderState) {
     let renderer = Renderer::new(&render_state.device, &render_state.queue, render_state.target_format);
     render_state

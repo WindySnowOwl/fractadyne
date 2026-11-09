@@ -99,7 +99,7 @@ impl LanguageState {
             })
         };
         let Some(i) = found else {
-            i18n::set_active(i18n::english());
+            activate(i18n::english());
             self.tag = "en".into();
             return tag == "en";
         };
@@ -111,12 +111,12 @@ impl LanguageState {
                 false
             }
             Ok(c) => {
-                i18n::set_active(Arc::new(c));
+                activate(Arc::new(c));
                 self.tag = i.tag;
                 true
             }
             Err(why) => {
-                i18n::set_active(i18n::english());
+                activate(i18n::english());
                 self.tag = "en".into();
                 self.notice = Some(tr!(language_load_failed, name = i.name.as_str(), why = why));
                 false
@@ -415,4 +415,11 @@ impl FractadyneApp {
             self.language.choose(&t);
         }
     }
+}
+
+/// Make `c` the language in use, and the crash dialog's too (`diag::set_crash_text`): it is
+/// prepared ahead, since a dying program must not call into the translations.
+fn activate(c: Arc<i18n::Catalog>) {
+    i18n::set_active(c);
+    crate::diag::set_crash_text(crate::ui::crash_dialog_text());
 }

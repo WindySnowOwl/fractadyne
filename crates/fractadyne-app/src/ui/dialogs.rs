@@ -52,6 +52,15 @@ pub(crate) fn open_in_file_manager(dir: &std::path::Path) -> std::io::Result<()>
     cmd.spawn().map(|_| ())
 }
 
+/// The crash dialog's text in the language in use (`diag::show_fatal_dialog` fills in the error
+/// and the report's path). Handed to `diag` at start-up and on a language change.
+pub(crate) fn crash_dialog_text() -> crate::diag::CrashText {
+    crate::diag::CrashText {
+        title: tr!(crash_dialog_title),
+        body: tr!(crash_dialog_body, reason = "{reason}", path = "{path}", url = crate::ISSUES_URL, email = crate::REPORT_EMAIL),
+    }
+}
+
 #[cfg(test)]
 #[path = "../../tests/unit/ui/dialogs/welcome_tests.rs"]
 mod welcome_tests;
