@@ -393,6 +393,10 @@ fn main() -> eframe::Result<()> {
                                 adapter_limits.max_storage_buffers_per_shader_stage
                             ),
                         );
+                        crate::diag::breadcrumb(format!(
+                            "start-up: the graphics device on {} ({:?}), then the window's own pipelines",
+                            info.name, info.backend
+                        ));
                         // ⛔⭐**Not WebGL2's limits on OpenGL.** egui-wgpu's default asks an OpenGL
                         // adapter for `downlevel_webgl2_defaults` (written for a browser), and this
                         // copy did too: they allow NO storage buffers, which the renderer needs
@@ -524,6 +528,7 @@ fn main() -> eframe::Result<()> {
     // The session's language is loaded now: the crash dialog speaks it from here on.
     diag::set_crash_text(crate::ui::crash_dialog_text());
     app.start_early_cli_reference();
+    diag::breadcrumb("start-up: opening the window and its graphics device".into());
     let r = eframe::run_native(
         "Fractadyne",
         native_options,
@@ -6995,6 +7000,11 @@ impl FractadyneApp {
         if std::env::var_os("FRACTADYNE_PANIC_AT_START").is_some() {
             panic!("a deliberate crash at start-up (FRACTADYNE_PANIC_AT_START)");
         }
+        // `FRACTADYNE_NATIVE_CRASH_AT_START=1` (or `=thread`): the same for a crash that is not a
+        // panic (`diag::native_crash`), on this thread or on a thread of its own.
+        if let Some(v) = std::env::var_os("FRACTADYNE_NATIVE_CRASH_AT_START") {
+            diag::native_crash::raise_for_test(v == "thread");
+        }
         // ⭐A device that cannot give the renderer its storage buffers would panic building it: say
         // so in words, with the card, and leave cleanly.
         let have = render_state.device.limits().max_storage_buffers_per_shader_stage;
@@ -7014,9 +7024,16 @@ impl FractadyneApp {
         }
         // Before any pipeline exists on this device: does its shader compiler fuse `two_prod`'s
         // product (TODO PR-C2)? Where it does, the iterate pipelines get the WGSL product barrier.
+        // ⭐Start-up's phases as breadcrumbs: a driver that dies compiling a shader leaves a crash
+        // report whose `activity` says which (Eris, 2026-11-09, died 7 s into an OpenGL start-up).
+        diag::breadcrumb("start-up: the product-fusion probe (one pipeline)".into());
         let fusion = fractadyne_gpu::detect_product_fusion(&render_state.device, &render_state.queue);
+        diag::breadcrumb("start-up: building the renderer's pipelines".into());
         install_renderer(render_state);
         log_product_fusion("main", &fusion);
+        // A driver may have put its own crash handler in place of ours as it loaded.
+        diag::native_crash::reinstall("the graphics driver's start-up");
+        diag::breadcrumb("start-up: the renderer is ready".into());
         // Record the GPU's storage-buffer binding limit as the reference-orbit length ceiling, so
         // the off-thread live recompute can bound a deep-interior orbit to what the buffer holds
         // (a `.fdn` with auto-iter off + a very high max_iter at an interior view would otherwise

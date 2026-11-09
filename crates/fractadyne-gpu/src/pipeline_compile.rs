@@ -121,7 +121,9 @@ pub(crate) fn set_source(key: u64) {
 /// and `shape` (constants and formats), with this thread's shader source and card.
 pub(crate) fn compiling_keyed<T>(name: &str, shape: &str, f: impl FnOnce() -> T) -> T {
     let start = now_ms();
+    let named = Named::new(name, start);
     let out = compiling(f);
+    drop(named);
     let ms = now_ms().saturating_sub(start);
     note_compile(repeat_key(name, shape), name, ms);
     out
@@ -205,6 +207,45 @@ pub fn compile_in_flight_ms() -> Option<u64> {
         0 => None,
         s => Some(now_ms().saturating_sub(s - 1)),
     }
+}
+
+/// The named compiles running now ([`compiling_keyed`]): id, name, start (ms since [`EPOCH`]) and
+/// the thread compiling it.
+static NAMED: Mutex<Vec<(u64, String, u64, String)>> = Mutex::new(Vec::new());
+static NEXT_NAMED: AtomicU64 = AtomicU64::new(1);
+
+/// In [`NAMED`] from construction to drop, so a panicking compile does not stay listed.
+struct Named(u64);
+
+impl Named {
+    fn new(name: &str, start_ms: u64) -> Self {
+        let id = NEXT_NAMED.fetch_add(1, Ordering::Relaxed);
+        let thread = std::thread::current().name().unwrap_or("?").to_string();
+        NAMED.lock().unwrap_or_else(|e| e.into_inner()).push((id, name.to_string(), start_ms, thread));
+        Named(id)
+    }
+}
+
+impl Drop for Named {
+    fn drop(&mut self) {
+        NAMED.lock().unwrap_or_else(|e| e.into_inner()).retain(|n| n.0 != self.0);
+    }
+}
+
+/// The named pipeline compiles running now, each as `label entry (on THREAD, N.N s)`: what a crash
+/// report says the driver was compiling when the process died (a driver that crashes compiling a
+/// shader takes the process with it, Eris 2026-11-09). Empty when none is; `["(busy)"]` when the
+/// list is locked, since a dying process must not wait on a lock.
+pub fn compiling_now() -> Vec<String> {
+    let now = now_ms();
+    let list = match NAMED.try_lock() {
+        Ok(g) => g.clone(),
+        Err(std::sync::TryLockError::Poisoned(p)) => p.into_inner().clone(),
+        Err(std::sync::TryLockError::WouldBlock) => return vec!["(busy)".to_string()],
+    };
+    list.iter()
+        .map(|(_, name, start, thread)| format!("{name} (on {thread}, {:.1} s)", now.saturating_sub(*start) as f64 / 1000.0))
+        .collect()
 }
 
 /// Wall time spent creating pipelines in this process, ms.

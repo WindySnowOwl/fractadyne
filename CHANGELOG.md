@@ -71,7 +71,10 @@ Changes after 0.3.0-beta.1:
   the window no longer just disappears: a message names the error, says where the crash report was
   saved and how to send it, and offers to open the folder. It appears only when you started the
   program yourself, never in a command-line render or a test run. The next launch no longer files a
-  second, empty report about a session that had already written its own.
+  second, empty report about a session that had already written its own. On Windows this now
+  covers crashes that are not program errors too, such as an access violation inside a graphics
+  driver: the report names the exception, the library it happened in (the graphics driver, when
+  it was), what the driver was compiling at the time and the crashed thread's call chain.
 - **Stripe, triangle-inequality and orbit-trap coloring keep their whole orbit in deep exterior
   views (0.3.0-beta.27).** Past about 1e28×, where the reference orbit escapes well within the
   iteration budget, the renderer skips the first stretch of every orbit with a series
