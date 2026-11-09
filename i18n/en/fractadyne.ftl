@@ -523,8 +523,8 @@ crash-detail-graphics-no-driver = Graphics: { $card } ({ $api })
 # Things to check or try: each is one bullet of the crash dialog's list. Keep the command-line options as written.
 crash-tip-remote = This is a Remote Desktop session, which often has no graphics acceleration: start Fractadyne at the computer itself.
 # $vendor = the graphics card's maker (Intel, NVIDIA, AMD).
-crash-tip-driver-vendor = Install the newest graphics driver for this card from { $vendor }'s website. The driver a computer came with is often years old.
-crash-tip-driver = Install the newest graphics driver from the website of the company that made the graphics card, such as Intel, NVIDIA or AMD. The driver a computer came with is often years old.
+crash-tip-driver-vendor = Install the newest graphics driver for this card from { $vendor }'s website. If { $vendor }'s installer refuses, as it often does on laptops and brand-name computers (Lenovo, Dell, HP and others) whose makers customize the driver, get it from the computer maker's support site instead. The driver a computer came with is often years old.
+crash-tip-driver = Install the newest graphics driver from the website of the company that made the graphics card, such as Intel, NVIDIA or AMD. If its installer refuses, as it often does on laptops and brand-name computers (Lenovo, Dell, HP and others) whose makers customize the driver, get it from the computer maker's support site instead. The driver a computer came with is often years old.
 crash-tip-other-card = If this computer has a second graphics card (many laptops do), start Fractadyne on it: fractadyne --list-adapters lists the cards, and fractadyne --adapter 2 starts on the second.
 crash-tip-again = Start Fractadyne again. If the error comes back, the crash report is what lets it be fixed.
 crash-tip-newer = Check for a newer Fractadyne (Help ▸ Check for updates): this may already be fixed there.
