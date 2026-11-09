@@ -69,7 +69,7 @@ pub(crate) const GROUPS: &[&str] = &[
     "numeric", "symmetry", "abs-family", "custom-formula", "life", "lsystem", "multibrot-sa", "bla", "aux-bla",
     "consistency", "counters", "iter-budget", "iter-chunk", "renorm", "live-split", "worker", "nr-zoom", "coords",
     "curated-poi", "ref-pick", "ref-reuse", "ref-overlap", "orbit-cache", "script", "metadata", "view-coloring",
-    "display", "catalog", "goldens", "bench-matrix", "live-res", "appearance",
+    "display", "catalog", "goldens", "bench-matrix", "live-res", "appearance", "band-seams",
     "checklist", "replay", "settings-quarantine", "expmap", "assemble", "de-pixels",
     "colour-box", "cycle-check", "export-contain", "honest-step", "palette-fade", "retreat", "view-thumb",
     "width-independence",
@@ -10330,6 +10330,152 @@ zoom = \"1e94\"
             ) = (was.1, was.2, was.3, was.4, was.5);
             self.viewport = saved_vp;
             (self.render_cfg.max_iter, self.render_cfg.auto_iter, self.render_cfg.aa) = saved_cfg;
+        }
+
+        // ---- band-seams: stripe and TIA meet themselves across the iteration bands (A5b) ----
+        // The two methods blend their averages over N and N−1 terms by the pixel's position inside
+        // its iteration band (`band_pos` in the shader). They took `fract(smit)` for it, which is
+        // that position only at power 2 with bailout 256: Multibrot 3–8 drew a ring along every
+        // band (2026-11-08). The statistic is read back exactly (a gray ramp as the palette, at
+        // cycle 1), the smooth count beside it, and each pixel pair across a line where the old
+        // weight jumped (floor(smit) changes, or the band does) is compared with the steps on either
+        // side of it: a seam is a step larger than both its neighbors'. Some such steps are the
+        // field's own (sharp gradients near the set), so each power is judged against Mandelbrot at
+        // the same view, the CONTROL: power 2 was right before the fix and after. Measured on the RTX
+        // 3080: the control 0.164 (stripe) and 0.048 (TIA); Multibrot 3 and 8 at 0.84–1.19× the
+        // control with `band_pos`, 3.5–15× with `fract(smit)` (0.57–0.74).
+        if want("band-seams") {
+            const N: u32 = 360;
+            let was = (
+                self.fractal,
+                self.julia_mode,
+                self.view_coloring(),
+                self.render_cfg.max_iter,
+                self.render_cfg.auto_iter,
+                self.render_cfg.aa,
+            );
+            self.julia_mode = false;
+            self.effects.light = false;
+            self.effects.de = false;
+            self.coloring.stripe_tail = false;
+            self.coloring.use_custom_palette = false;
+            self.coloring.use_binary = false;
+            self.coloring.use_duotone = false;
+            self.render_cfg.auto_iter = false;
+            self.render_cfg.max_iter = 500;
+            self.render_cfg.aa = 1;
+            let ramp: Vec<[f32; 4]> = (0..4096)
+                .map(|i| {
+                    let v = (i as f32 + 0.5) / 4096.0;
+                    [v, v, v, 1.0]
+                })
+                .collect();
+            let ramp = std::sync::Arc::new(ramp);
+            let prog = std::sync::atomic::AtomicU32::new(0);
+            let cancel = std::sync::atomic::AtomicBool::new(false);
+            // (pairs judged, share that is a seam, mean excess of the seams)
+            let seams = |smit: &[f32], s: &[f32], p: f64, r: f64| -> (usize, f64, f64) {
+                let n = N as usize;
+                let shift = (r.log2()).ln() / p.ln(); // log_p(log2 R)
+                let esc = |i: usize| smit[i] >= 0.0;
+                let key = |i: usize| (smit[i].floor() as i64, (smit[i] as f64 + shift).floor() as i64);
+                let step = |a: usize, b: usize| {
+                    let d = (s[a] - s[b]).abs();
+                    d.min(1.0 - d)
+                };
+                let (mut pairs, mut bad, mut excess) = (0usize, 0usize, 0.0f64);
+                for y in 0..n {
+                    for x in 1..n.saturating_sub(2) {
+                        for (a0, a, b, b1) in [
+                            (y * n + x - 1, y * n + x, y * n + x + 1, y * n + x + 2),
+                            ((x - 1) * n + y, x * n + y, (x + 1) * n + y, (x + 2) * n + y),
+                        ] {
+                            if b1 >= smit.len() || ![a0, a, b, b1].iter().all(|&i| esc(i)) {
+                                continue;
+                            }
+                            // A pair across a line, with plain pairs on both sides of it.
+                            if key(a) == key(b) || key(a0) != key(a) || key(b) != key(b1) {
+                                continue;
+                            }
+                            pairs += 1;
+                            let e = step(a, b) as f64 - step(a0, a).max(step(b, b1)) as f64;
+                            if e > 0.004 {
+                                bad += 1;
+                                excess += e;
+                            }
+                        }
+                    }
+                }
+                (pairs, bad as f64 / pairs.max(1) as f64, excess / bad.max(1) as f64)
+            };
+            let mut rows: Vec<String> = Vec::new();
+            // Share of seams by (power, method), the control first.
+            let mut shares: Vec<(f64, crate::ColorMethod, f64)> = Vec::new();
+            let mut judged = true;
+            for (kind, p, r) in [
+                (FractalKind::Mandelbrot, 2.0f64, 256.0f64),
+                (FractalKind::Multibrot3, 3.0, 256.0),
+                (FractalKind::Multibrot8, 8.0, 128.0),
+            ] {
+                self.fractal = kind;
+                let mut vp = Viewport::new(N as f64, N as f64);
+                vp.set_center_mag(
+                    fractadyne_core::BigFloat::from_f64(-0.2, 64),
+                    fractadyne_core::BigFloat::from_f64(0.0, 64),
+                    1.2,
+                );
+                for method in [crate::ColorMethod::Stripe, crate::ColorMethod::TriangleIneq] {
+                    self.coloring.color_method = method;
+                    let mut req = self.current_export_request_for(&vp, false);
+                    req.width = N;
+                    req.height = N;
+                    req.ss = 1;
+                    let counts = fractadyne_gpu::render_iter_tiled(device, queue, &req, crate::tunables::CORRECT_WORK_BUDGET, None, None, None);
+                    let mut col = req.clone();
+                    col.lut = ramp.clone();
+                    col.lut_smooth = true;
+                    col.aa_palette = false;
+                    col.cycle = 1.0;
+                    col.offset = 0.0;
+                    col.norm_mode = 0;
+                    col.vignette = fractadyne_gpu::Vignette::default();
+                    col.light = 0;
+                    col.de_on = 0;
+                    let stat = fractadyne_gpu::render_export(device, queue, &col, &prog, &cancel);
+                    match (counts, stat) {
+                        (Ok(c), Ok(t)) if c.pixels.len() == t.pixels.len() => {
+                            let smit: Vec<f32> = c.pixels.chunks(4).map(|q| q[0]).collect();
+                            let s: Vec<f32> = t.pixels.chunks(4).map(|q| q[0]).collect();
+                            let (pairs, share, mean) = seams(&smit, &s, p, r);
+                            judged &= pairs >= 500;
+                            shares.push((p, method, share));
+                            rows.push(format!("{} {}: {share:.3} of {pairs} (mean step {mean:.3})", kind.name(), method.key()));
+                        }
+                        _ => {
+                            judged = false;
+                            rows.push(format!("{} {}: render failed", kind.name(), method.key()));
+                        }
+                    }
+                }
+            }
+            let control = |m: crate::ColorMethod| shares.iter().find(|(p, mm, _)| *p == 2.0 && *mm == m).map(|t| t.2);
+            let control_ok = shares.iter().filter(|t| t.0 == 2.0).all(|t| t.2 <= 0.30);
+            let powers_ok = shares
+                .iter()
+                .filter(|t| t.0 != 2.0)
+                .all(|(_, m, sh)| control(*m).is_some_and(|c| *sh <= 1.6 * c + 0.02));
+            push_check(&mut checks, &mut last_check_t, SelfCheck {
+                category: "appearance",
+                name: "stripe and triangle inequality have no seams at the band edges".into(),
+                params: format!("{N}x{N} overview, Mandelbrot (control) / Multibrot 3 / Multibrot 8; pixel pairs across a band or smooth-count line stepping 0.004 past both neighbors"),
+                result: rows.join("; "),
+                threshold: "each power ≤ 1.6 × the control's share + 0.02 for its method; the control ≤ 0.30; ≥ 500 pairs each",
+                pass: judged && control_ok && powers_ok && shares.len() == 6,
+            });
+            self.fractal = was.0;
+            self.julia_mode = was.1;
+            self.set_view_coloring(&was.2);
+            (self.render_cfg.max_iter, self.render_cfg.auto_iter, self.render_cfg.aa) = (was.3, was.4, was.5);
         }
 
         // ---- appearance: the image actually CHANGES when a control changes ----

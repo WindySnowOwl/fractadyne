@@ -473,6 +473,9 @@ mod iter_key_tests;
 #[cfg(test)]
 #[path = "../tests/unit/de_gate_tests.rs"]
 mod de_gate_tests;
+#[cfg(test)]
+#[path = "../tests/unit/band_pos_tests.rs"]
+mod band_pos_tests;
 
 /// GPU-timestamp capture around the LIVE `iterate_pass`, so the app can size deep frames against what
 /// the iterate ACTUALLY costs on this GPU at this view.

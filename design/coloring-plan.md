@@ -1,6 +1,6 @@
 # Coloring methods: implementation plan
 
-Status: **plan (2026-11-08); A9, A6, A2, A4, A8, A1 and A3 done, see §10.** Line references are to `main` at `9ab75357`; check
+Status: **plan (2026-11-08); A9, A6, A2, A4, A8, A1, A3 and A5b done, see §10.** Line references are to `main` at `9ab75357`; check
 them before editing, they drift. The research behind it (methods, prototypes, measured results,
 prior art) is the coloring-methods doc; its local copy is
 `local/research_notes/Fractal coloring methods/` (PDF, HTML, Markdown, prototype scripts).
@@ -374,6 +374,20 @@ reproduced. Reproduce before fixing; never close on the mechanism argument alone
   largest jump across a band edge on a Multibrot 3 stripe render before and after.
 - **Traps**: the degree-2 picture changes slightly at some edges, so `seahorse-stripe-1e6` needs a
   re-bless on the RTX 3080; say so in the commit.
+- **Done 2026-11-08** (branch `fix/color-a5b-stripe-seams`). **Reproduced first**: at the overview
+  (700 px, iter 500) stripe and TIA on Multibrot 3 drew a ring along every band, Multibrot 4,
+  Multibrot 8 and Burning Ship 3 likewise, Mandelbrot none. Multibrot 8 is affected as well (R = 128,
+  so log_8 7 is not whole; the plan's "only 2 and 8" was wrong). Fix: `band_pos(mag2, power_f, bail2)`
+  = clamp(1 − log(log mag2 / log bail2) / log p, 0, 1) at the three escape sites and in the custom
+  module (`custom.rs`). Direction as `mix(prev, avg, ·)`: 1 at |z_N| = R (all N terms), 0 at R^p.
+  **The degree-2 trap did not happen**: Mandelbrot stripe and TIA are unchanged (mean 0.000, max 1
+  level of 255), and the goldens stayed within tolerance (no re-bless). Tests: `fractadyne-gpu`
+  `band_pos_tests` (the shader's expression word for word, weight 1 and 0 at both edges for p = 2–7
+  at R = 256 and p = 8 at 128, monotone, clamped past R^p, `fract(smit)` agrees only at p = 2, and no
+  `fract(smit)` blend left); selftest `band-seams`, which reads the statistic back exactly (a gray
+  ramp palette at cycle 1) beside the smooth count and scores pixel pairs across the lines where the
+  old weight jumped against Mandelbrot as the control: Multibrot 3 and 8 at 0.84–1.19× the control
+  with the fix, 3.5–15× (0.57–0.74) with `fract(smit)`.
 
 ### A6. CLI flags for existing settings
 
@@ -857,8 +871,9 @@ coloring in these places, so sequence the two with care:
 | A4 | done, merged | `475e2190` (merge `b9812c74`) |
 | A8 | done, merged | `095a7131` (merge `1db50a24`) |
 | A1 | done, merged | `c15bd9c7` (merge `aa5b22e7`) |
-| A3 | done, branch `feat/color-a3-derivative-gate` | |
-| A5, A7, A10 | not started | |
+| A3 | done, merged | `3ee690d7` (merge `3c8a59e7`) |
+| A5b | done, branch `fix/color-a5b-stripe-seams` | |
+| A5a, A7, A10 | not started | |
 | B1–B8 | not started | |
 | C1–C11 | not started | |
 | D, E, F, G | not started | |
