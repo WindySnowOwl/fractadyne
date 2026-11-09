@@ -67,6 +67,14 @@ Changes after 0.3.0-beta.1:
   an RTX 3080); later launches take under a second. A driver that really cannot run it gets a
   message naming the card and what to update, instead of a crash, and the log now names the
   graphics card before anything can fail on it.
+- **Fractadyne starts on older Intel graphics (0.3.0-beta.27).** On an Intel HD Graphics 4400 (a
+  2014 laptop whose only graphics API is OpenGL), the graphics driver crashed every time while it
+  compiled Fractadyne's main shader, on the newest driver the card has too. That driver's compiler
+  fails on a shader that large, so on OpenGL the shader is now built in two halves, one for the
+  direct and double-float precision modes and one for floatexp, each about half the size. Every
+  mode computes exactly what it did before. Vulkan and Direct3D keep the single shader: the halves
+  were measured there too and were not faster. For developers, `--gl-link-bisect` finds what in the
+  shader an OpenGL driver's compiler crashes on, linking each variant in a process of its own.
 - **A crash says what happened (0.3.0-beta.27).** When Fractadyne has to close because of an error,
   the window no longer just disappears: a message names the error, says where the crash report was
   saved and how to send it, and offers to open the folder. It appears only when you started the

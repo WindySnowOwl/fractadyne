@@ -580,6 +580,15 @@ pub(crate) fn log_product_fusion(which: &str, fusion: &Result<fractadyne_gpu::Fu
     diag::log_line("gpu", &line);
 }
 
+/// Say so when a device's iterate pipelines are built in two halves, split by precision mode
+/// (`fractadyne_gpu::iter_split`: on OpenGL, whose compiler on an old Intel card crashed linking
+/// them whole).
+pub(crate) fn log_iter_split(which: &str, device: &eframe::wgpu::Device) {
+    if fractadyne_gpu::iter_split::split_for(device) {
+        diag::log_line("gpu", &format!("{which}: iterate pipelines split by precision mode (modes 0 and 1 in one, mode 2 in the other)"));
+    }
+}
+
 pub(crate) fn exit(code: i32) -> ! {
     // A task logs its exit code and holds its own log to `validation/logcheck-rules.toml`; a rule
     // it broke turns a 0 into a 1 (`harness::logcheck::at_exit`).
@@ -7035,6 +7044,7 @@ impl FractadyneApp {
         diag::breadcrumb("start-up: building the renderer's pipelines".into());
         install_renderer(render_state);
         log_product_fusion("main", &fusion);
+        log_iter_split("main", &render_state.device);
         // A driver may have put its own crash handler in place of ours as it loaded.
         diag::native_crash::reinstall("the graphics driver's start-up");
         diag::breadcrumb("start-up: the renderer is ready".into());

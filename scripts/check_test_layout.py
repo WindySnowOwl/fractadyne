@@ -57,8 +57,9 @@ HARNESS_HOOKS = {
     # harnesses' flags (one call to harness::modes::Windowed::from_args) and the banner's policy.
     'crates/fractadyne-app/src/main.rs': 22,
     # the headless dispatch: --torture, --logcheck, --gputest, --replay, one call per developer
-    # mode (--truth the newest), and RenderCli's --glitch-audit kind.
-    'crates/fractadyne-app/src/cli.rs': 12,
+    # mode (--truth, then --gl-link-bisect / --gl-link-probe the newest), and RenderCli's
+    # --glitch-audit kind.
+    'crates/fractadyne-app/src/cli.rs': 13,
     # the export-request builder records the profiler's setup timings.
     'crates/fractadyne-app/src/render.rs': 1,
 }
