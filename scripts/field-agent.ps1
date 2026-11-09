@@ -51,7 +51,7 @@ param(
 )
 
 $ErrorActionPreference = "Continue"
-$AgentVersion = 33   # 33: --divetest (a tour shipped in the package; the agent names --out and delivers divetest.json), the FRACTADYNE_DIVETEST_GLIDE and FRACTADYNE_NO_PREFETCH instruments (the interactive glide and its no-lookahead baseline), and sample_threads (the run's threads sampled 4 times a second while it runs, into threads.csv: how many are on a core and how many wait for one; observes only) - TODO PR-A5, CPU oversubscription on this machine's 8 threads (2026-11-07). 32: FRACTADYNE_ZOOMTEST_HOME_SHOTS (seconds between window captures of a --zoomtest-home run's Home; observes only), and a --zoomtest run's window captures (home-shot-*.png, click-shot-*.png, up to 1 GB) come back in shots/: what a stepped Home puts on the screen (2026-10-26). 31: a request's view center (center_re/center_im) may be up to 5000 characters, as v22 allows in arguments (it was 400: a view past ~1e400x, such as the 2^1663 Home glide, was refused as "not plain decimals"). 30: --zoomtest-home [REST_S] and --zoomtest-quiet S (the toolbar Home glide after the start view rests: the zoom-out from extreme depth, 2026-10-26). 29: --live-panel (the live-render front panel at a size, off|strip|panel|full: its cost on this card) and --zoomtest-gate (the zoom harness's own verdict, smooth|appetite). 28: a battery's regime step (W9) is read into the status detail. 27: --soak-location (a package view file: W9's regime rungs soak validation/field/*.fdn). 26: an accelerated battery takes the standard package's gpu-validate-expected.json and dive-capture too (it could not judge itself, and skipped the screen step). 25: --formula and --formula-params (a custom formula written without spaces, z=z^3+c; its parameters re,im;re,im). 24: record_decide (a harness request may ask its runs to record their lifted live decisions, FRACTADYNE_RECORD_DECIDE, into a file in each run's own folder; delivered as decide.jsonl, up to 2 GB; observes only, the path is the agent's, never the request's). 23: an explicitly named DEV build (vX.Y.Z-beta.N.dev.M, a test build published under its own tag) is accepted; "latest" still skips them. 22: coordinates up to 5000 characters (a 6.8e3999 view's center has 4031 digits). 21: a --render's image comes back (PNGs the run wrote in its folder, up to 1 GB each): a still split across this machine's cards with --gpus (design/multi-gpu.md Phase 2) is checked against each card alone. 20: frames delivered up to 4 GB (a 30 fps tour at 1280x720 is about 2 GB). 19: --render-tour (a tour shipped in the package; the agent names --out and delivers the frames up to 1 GB, the folder's farm state and the local client's logs), --gpus (design/multi-gpu.md Phase 1: a tour on every graphics card through a farm on this machine), --fps, --ss and -y. 18: --shot (a location, captured once its supersampling converges; the agent names --out and delivers shot.png), --list-adapters, --adapter and --worker-gpu (design/multi-gpu-live.md L2: a second GPU in the live view). 17: farm-client "adapters" (--adapters: all of this machine's GPUs, or some, each its own session) and a 24 h ceiling (a long tour render; was 4 h). 16: farm-client "discover": first run --discover from the package and return what answered this machine's broadcast (the farm's network discovery). 15: farm-client in share mode (request "share": the client writes its frames to this agent's share). 14: farm-client (one render-farm job as a client of a controller) and --farmtest. 13: the FRACTADYNE_TRACE instrument, one category by name (observes only; the live-refresh verdicts on AMD). 12: --no-bla (the step-bounded worst case: every mode-2 step a full floatexp step). 2: screens; "used during run" only with the idle wait on. 3: request "view"; self-update. 4: request "env" (instruments); --soak-depth session. 5: --zoomtest-location session, --zoomtest-taps, --zoomtest-hold, --window (W9 motion rung). 6: the battery's screen step in the status. 7: the FRACTADYNE_PASS_CLOCK instrument. 8: FRACTADYNE_SEED_BUDGET. 9: recover jobs orphaned by a hang or reboot. 10: --tail-audit / --glitch-audit (headless, write no file; send with --render); coordinates up to 2000 characters (a 1e1105 view's center has 1141 digits). 11: plain --render as a mode (the [fd-perf] step counters; the image stays in the local run folder)
+$AgentVersion = 34   # 34: a request names the machine it is for ("machine", a COMPUTERNAME), so two test machines can poll one share and each takes only its own (a request without one, filed before v34, is any agent's); action app-logs (this machine's own Fractadyne log folder - the sessions its user ran, not the agent's - for the last DAYS days: why the app died on a machine whose user is elsewhere, Eris 2026-11-08); app-logs and events run while the machine is in use (they read files and the event log and open no window); WGPU_BACKEND (vulkan, gl or dx12) as an instrument. 33: --divetest (a tour shipped in the package; the agent names --out and delivers divetest.json), the FRACTADYNE_DIVETEST_GLIDE and FRACTADYNE_NO_PREFETCH instruments (the interactive glide and its no-lookahead baseline), and sample_threads (the run's threads sampled 4 times a second while it runs, into threads.csv: how many are on a core and how many wait for one; observes only) - TODO PR-A5, CPU oversubscription on this machine's 8 threads (2026-11-07). 32: FRACTADYNE_ZOOMTEST_HOME_SHOTS (seconds between window captures of a --zoomtest-home run's Home; observes only), and a --zoomtest run's window captures (home-shot-*.png, click-shot-*.png, up to 1 GB) come back in shots/: what a stepped Home puts on the screen (2026-10-26). 31: a request's view center (center_re/center_im) may be up to 5000 characters, as v22 allows in arguments (it was 400: a view past ~1e400x, such as the 2^1663 Home glide, was refused as "not plain decimals"). 30: --zoomtest-home [REST_S] and --zoomtest-quiet S (the toolbar Home glide after the start view rests: the zoom-out from extreme depth, 2026-10-26). 29: --live-panel (the live-render front panel at a size, off|strip|panel|full: its cost on this card) and --zoomtest-gate (the zoom harness's own verdict, smooth|appetite). 28: a battery's regime step (W9) is read into the status detail. 27: --soak-location (a package view file: W9's regime rungs soak validation/field/*.fdn). 26: an accelerated battery takes the standard package's gpu-validate-expected.json and dive-capture too (it could not judge itself, and skipped the screen step). 25: --formula and --formula-params (a custom formula written without spaces, z=z^3+c; its parameters re,im;re,im). 24: record_decide (a harness request may ask its runs to record their lifted live decisions, FRACTADYNE_RECORD_DECIDE, into a file in each run's own folder; delivered as decide.jsonl, up to 2 GB; observes only, the path is the agent's, never the request's). 23: an explicitly named DEV build (vX.Y.Z-beta.N.dev.M, a test build published under its own tag) is accepted; "latest" still skips them. 22: coordinates up to 5000 characters (a 6.8e3999 view's center has 4031 digits). 21: a --render's image comes back (PNGs the run wrote in its folder, up to 1 GB each): a still split across this machine's cards with --gpus (design/multi-gpu.md Phase 2) is checked against each card alone. 20: frames delivered up to 4 GB (a 30 fps tour at 1280x720 is about 2 GB). 19: --render-tour (a tour shipped in the package; the agent names --out and delivers the frames up to 1 GB, the folder's farm state and the local client's logs), --gpus (design/multi-gpu.md Phase 1: a tour on every graphics card through a farm on this machine), --fps, --ss and -y. 18: --shot (a location, captured once its supersampling converges; the agent names --out and delivers shot.png), --list-adapters, --adapter and --worker-gpu (design/multi-gpu-live.md L2: a second GPU in the live view). 17: farm-client "adapters" (--adapters: all of this machine's GPUs, or some, each its own session) and a 24 h ceiling (a long tour render; was 4 h). 16: farm-client "discover": first run --discover from the package and return what answered this machine's broadcast (the farm's network discovery). 15: farm-client in share mode (request "share": the client writes its frames to this agent's share). 14: farm-client (one render-farm job as a client of a controller) and --farmtest. 13: the FRACTADYNE_TRACE instrument, one category by name (observes only; the live-refresh verdicts on AMD). 12: --no-bla (the step-bounded worst case: every mode-2 step a full floatexp step). 2: screens; "used during run" only with the idle wait on. 3: request "view"; self-update. 4: request "env" (instruments); --soak-depth session. 5: --zoomtest-location session, --zoomtest-taps, --zoomtest-hold, --window (W9 motion rung). 6: the battery's screen step in the status. 7: the FRACTADYNE_PASS_CLOCK instrument. 8: FRACTADYNE_SEED_BUDGET. 9: recover jobs orphaned by a hang or reboot. 10: --tail-audit / --glitch-audit (headless, write no file; send with --render); coordinates up to 2000 characters (a 1e1105 view's center has 1141 digits). 11: plain --render as a mode (the [fd-perf] step counters; the image stays in the local run folder)
 $PollSeconds = 30
 $Home_ = Split-Path -Parent $MyInvocation.MyCommand.Path
 $Cache = Join-Path $Home_ "cache"
@@ -140,10 +140,25 @@ function Get-Screens {
     catch { return @("unknown: $($_.Exception.Message)") }
 }
 
+# v34: a request names the machine it is for ("machine", the COMPUTERNAME), so two test machines
+# can poll one share and each takes only its own. A request without a name (filed before v34) is any
+# agent's, as before; so is one that does not parse - whoever claims it refuses it, with the reason.
+function Test-ForThisMachine([string]$path) {
+    try { $r = [IO.File]::ReadAllText($path) | ConvertFrom-Json } catch { return $true }
+    if ($null -eq $r) { return $true }
+    $m = [string](Get-Field $r "machine" "")
+    return ((-not $m) -or ($m -ieq $Computer))
+}
+
+function Get-MyRequests {
+    return @(Get-ChildItem -LiteralPath $ReqDir -Filter "*.json" -ErrorAction SilentlyContinue | Sort-Object Name |
+        Where-Object { Test-ForThisMachine $_.FullName })
+}
+
 function Write-Heartbeat([string]$state, [string]$detail, [string]$current = "") {
     try {
         if (-not (Test-Path $AgentDir)) { New-Item -ItemType Directory -Force -Path $AgentDir | Out-Null }
-        $pending = @(Get-ChildItem -LiteralPath $ReqDir -Filter "*.json" -ErrorAction SilentlyContinue).Count
+        $pending = @(Get-MyRequests).Count
         Write-JsonFile (Join-Path $AgentDir "$Computer.json") ([ordered]@{
                 computer      = $Computer
                 agent_version = $AgentVersion
@@ -473,7 +488,9 @@ function New-ViewSession($r) {
 # and FRACTADYNE_ZOOMTEST_HOME_SHOTS (v32), seconds between window captures (observes only); and
 # (v33) FRACTADYNE_DIVETEST_GLIDE, the zoom rate a --divetest glides at, and FRACTADYNE_NO_PREFETCH,
 # the reference lookahead off (that harness's baseline).
-$InstrumentEnv = @("FRACTADYNE_REF_ESCAPE_AT", "FRACTADYNE_BLA_DROP_FRAMES", "FRACTADYNE_PASS_CLOCK", "FRACTADYNE_SEED_BUDGET", "FRACTADYNE_TRACE", "FRACTADYNE_ZOOMTEST_HOME_SHOTS", "FRACTADYNE_DIVETEST_GLIDE", "FRACTADYNE_NO_PREFETCH")
+# (v34) WGPU_BACKEND, the graphics API the app opens: vulkan, gl or dx12 - which of a machine's
+# drivers a start-up problem is in (Eris, 2026-11-08: no Vulkan, and OpenGL died at start-up).
+$InstrumentEnv = @("FRACTADYNE_REF_ESCAPE_AT", "FRACTADYNE_BLA_DROP_FRAMES", "FRACTADYNE_PASS_CLOCK", "FRACTADYNE_SEED_BUDGET", "FRACTADYNE_TRACE", "FRACTADYNE_ZOOMTEST_HOME_SHOTS", "FRACTADYNE_DIVETEST_GLIDE", "FRACTADYNE_NO_PREFETCH", "WGPU_BACKEND")
 $TraceCats = @("live", "gpu", "tile", "glide", "ref", "req", "idle")
 
 function Get-RequestEnv($r) {
@@ -490,6 +507,9 @@ function Get-RequestEnv($r) {
         }
         elseif ($p.Name -eq "FRACTADYNE_DIVETEST_GLIDE") {
             if ([string]$p.Value -notmatch '^[0-9]{1,3}(\.[0-9]{1,3})?$') { Stop-Refused "env FRACTADYNE_DIVETEST_GLIDE must be a zoom rate, e.g. 4" }
+        }
+        elseif ($p.Name -eq "WGPU_BACKEND") {
+            if (@("vulkan", "gl", "dx12") -cnotcontains [string]$p.Value) { Stop-Refused "env WGPU_BACKEND must be vulkan, gl or dx12" }
         }
         elseif ([string]$p.Value -notmatch '^[0-9]{1,9}$') { Stop-Refused "env $($p.Name) must be a whole number" }
         $out[$p.Name] = [string]$p.Value
@@ -779,6 +799,33 @@ function Invoke-Events($r, [string]$dir, $status) {
     $status.detail = "$($drv.Count) driver event(s), $($lke.Count) LiveKernelEvent report(s), $($app.Count) Fractadyne crash report(s), $dumpNote"
 }
 
+# --- this machine's own app logs (v34) -------------------------------------------------------------------
+# The log folder of the sessions this machine's USER ran (not the agent's runs, which come back with
+# each job): fractadyne.log and the one before it, crash reports and the views written beside them,
+# the start-up marker - every file written in the last DAYS days, each up to 200 MB, 1 GB in all. The
+# way to see why the app died on a machine whose user is not at the dev box.
+function Invoke-AppLogs($r, [string]$dir, $status) {
+    $days = [int](Get-Field $r "days" 7)
+    if ($days -lt 1 -or $days -gt 365) { Stop-Refused "days must be 1..365" }
+    $since = (Get-Date).AddDays(-$days)
+    $logs = Join-Path $env:APPDATA "Fractadyne\Fractadyne\config\logs"
+    if (-not (Test-Path -LiteralPath $logs)) { $status.detail = "no Fractadyne log folder on this machine ($logs)"; return }
+    $out = Join-Path $dir "app-logs"
+    New-Item -ItemType Directory -Force -Path $out | Out-Null
+    $files = @(Get-ChildItem -LiteralPath $logs -File -ErrorAction SilentlyContinue |
+        Where-Object { $_.LastWriteTime -ge $since } | Sort-Object LastWriteTime)
+    $total = 0L; $n = 0; $skipped = 0
+    foreach ($f in $files) {
+        if ($f.Length -gt 200MB -or $total + $f.Length -gt 1GB) { $skipped++; continue }
+        Copy-Item -LiteralPath $f.FullName -Destination (Join-Path $out $f.Name) -Force
+        $total += $f.Length; $n++
+    }
+    $list = @($files | ForEach-Object { "{0:yyyy-MM-dd HH:mm:ss}  {1,14:N0}  {2}" -f $_.LastWriteTime, $_.Length, $_.Name })
+    $txt = @("Fractadyne log folder $logs on $($Computer): files written in the last $days days") + $list
+    $txt | Out-File (Join-Path $dir "app-logs.txt") -Encoding utf8
+    $status.detail = "$n file(s), $([math]::Round($total / 1MB, 1)) MB from $logs$(if ($skipped) { ", $skipped too large, listed only" })"
+}
+
 # --- self-update ----------------------------------------------------------------------------------------
 # A newer agent published in <share>\field\setup\ replaces this one: copied over it, then this process
 # exits and the scheduled task's 5-minute trigger starts the new one. This widens nothing: whoever can
@@ -838,15 +885,20 @@ function Invoke-Poll {
     if (-not $Once) { Test-SelfUpdate }
     foreach ($d in @($ReqDir, $ResDir, $AgentDir)) { if (-not (Test-Path $d)) { New-Item -ItemType Directory -Force -Path $d | Out-Null } }
     Invoke-OrphanRecovery
-    $pending = @(Get-ChildItem -LiteralPath $ReqDir -Filter "*.json" -ErrorAction SilentlyContinue | Sort-Object Name)
+    $pending = @(Get-MyRequests)
     if ((Test-Path (Join-Path $Field "PAUSE")) -or (Test-Path (Join-Path $Home_ "PAUSE"))) { Write-Heartbeat "paused" "a PAUSE file is present"; return }
-    if ($pending.Count -eq 0) { Write-Heartbeat "idle" "no requests"; return }
-    if (-not $IgnoreIdle) {
+    if ($pending.Count -eq 0) { Write-Heartbeat "idle" "no requests for $Computer"; return }
+    # (v34) A request that only reads - this machine's app logs, its event log - opens no window and
+    # runs nothing, so it does not wait for the machine to be free.
+    $first = $null
+    try { $first = [IO.File]::ReadAllText($pending[0].FullName) | ConvertFrom-Json } catch { }
+    $passive = ($null -ne $first) -and (@("app-logs", "events") -contains [string](Get-Field $first "action" ""))
+    if (-not $IgnoreIdle -and -not $passive) {
         if (Test-Locked) { Write-Heartbeat "waiting" "the workstation is locked"; return }
         $idle = [FdField]::IdleSeconds()
         if ($idle -ge 0 -and $idle -lt $IdleMinutes * 60) { Write-Heartbeat "waiting" ("in use - idle {0:N0} s of the {1} s required" -f $idle, ($IdleMinutes * 60)); return }
     }
-    if (@(Get-Process -Name fractadyne -ErrorAction SilentlyContinue).Count -gt 0) { Write-Heartbeat "waiting" "Fractadyne is open"; return }
+    if (-not $passive -and @(Get-Process -Name fractadyne -ErrorAction SilentlyContinue).Count -gt 0) { Write-Heartbeat "waiting" "Fractadyne is open"; return }
 
     $f = $pending[0]
     $id = $f.BaseName
@@ -873,6 +925,7 @@ function Invoke-Poll {
             "battery" { Invoke-Battery $r $dir $status }
             "harness" { Invoke-Harness $r $dir $status }
             "events" { Invoke-Events $r $dir $status }
+            "app-logs" { Invoke-AppLogs $r $dir $status }
             "farm-client" { Invoke-FarmClient $r $dir $status }
             default { Stop-Refused "unknown action '$($status.action)'" }
         }

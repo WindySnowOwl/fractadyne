@@ -30,7 +30,15 @@
 #                                                                 # a custom formula (agent v25): written WITHOUT
 #                                                                 # spaces (-Run splits on whitespace); a comma outside
 #                                                                 # parentheses separates statements
+#   .\scripts\field-request.ps1 -Machine ERIS -Action app-logs -Days 3 -Wait
+#                                                                 # that machine's own Fractadyne log folder
+#                                                                 # (agent v34): why the app died there
+#   .\scripts\field-request.ps1 -Machine ERIS -Action harness -Run "--list-adapters" -Instrument WGPU_BACKEND=gl -Build v0.3.0-beta.26.dev.3 -Wait
+#                                                                 # a run on ERIS through one graphics API (v34)
 #   .\scripts\field-request.ps1 -Cancel <id>                      # withdraw a request not yet started
+#
+# -Machine names the test machine (its COMPUTERNAME; default PLUTO). Agent v34 and later take only
+# their own machine's requests, so two machines can share the queue.
 #
 # The agent is the authority on what it will run (field-agent.ps1 $Allowed); this only checks the
 # shape of a request so a typo fails here rather than after a wait.
@@ -39,7 +47,9 @@
 
 [CmdletBinding()]
 param(
-    [ValidateSet("status", "battery", "harness", "events", "farm-client")][string]$Action = "status",
+    [ValidateSet("status", "battery", "harness", "events", "farm-client", "app-logs")][string]$Action = "status",
+    # The test machine the request is for: its COMPUTERNAME (agent v34+ takes only its own).
+    [string]$Machine = "PLUTO",
     [string]$Build = "latest",
     [string[]]$Builds = @(),
     [ValidateSet("standard", "accelerated")][string]$Package = "standard",
@@ -140,7 +150,10 @@ if ($Action -eq "status") {
     $pending = @(Get-ChildItem -LiteralPath $ReqDir -Filter "*.json" -ErrorAction SilentlyContinue | Sort-Object Name)
     Write-Host ""
     Write-Host "Queued: $($pending.Count)"
-    $pending | ForEach-Object { Write-Host "    $($_.BaseName)" }
+    $pending | ForEach-Object {
+        $q = Read-Json $_.FullName
+        $for = if ($q -and $q.PSObject.Properties.Name -contains "machine") { $q.machine } else { "any machine" }
+        Write-Host "    $($_.BaseName)  for $for" }
     Write-Host ""
     Write-Host "Recent results:"
     Get-ChildItem -LiteralPath $ResDir -Directory -ErrorAction SilentlyContinue | Sort-Object Name -Descending |
@@ -155,7 +168,8 @@ $Builds = @($Builds | ForEach-Object { $_ -split ',' } | Where-Object { $_ })
 $tagRe = '^(latest|v[0-9]+\.[0-9]+\.[0-9]+(-beta\.[0-9]+(\.dev\.[0-9]+)?)?)$'   # .dev.M: a test build under its own tag (agent v23)
 foreach ($t in @($Build) + $Builds) { if ($t -notmatch $tagRe) { throw "bad build tag: $t" } }
 $id = "{0:yyyyMMdd-HHmmss}-{1}" -f (Get-Date), (-join ((48..57) + (97..122) | Get-Random -Count 4 | ForEach-Object { [char]$_ }))
-$req = [ordered]@{ schema = 1; id = $id; action = $Action; package = $Package; requested_utc = (Get-Date).ToUniversalTime().ToString("yyyy-MM-ddTHH:mm:ssZ"); note = $Note }
+if ($Machine -notmatch '^[A-Za-z0-9-]{1,15}$') { throw "bad -Machine: $Machine (a computer name)" }
+$req = [ordered]@{ schema = 1; id = $id; action = $Action; machine = $Machine.ToUpper(); package = $Package; requested_utc = (Get-Date).ToUniversalTime().ToString("yyyy-MM-ddTHH:mm:ssZ"); note = $Note }
 switch ($Action) {
     "battery" {
         $req.build = $Build
@@ -178,6 +192,8 @@ switch ($Action) {
                 if ($pair -cmatch '^\s*(FRACTADYNE_ZOOMTEST_HOME_SHOTS)=([0-9]{1,3}(\.[0-9]{1,3})?)\s*$') { $req.env[$Matches[1]] = $Matches[2]; continue }
                 # The zoom rate a --divetest glides at (agent v33), a decimal: kept as text.
                 if ($pair -cmatch '^\s*(FRACTADYNE_DIVETEST_GLIDE)=([0-9]{1,3}(\.[0-9]{1,3})?)\s*$') { $req.env[$Matches[1]] = $Matches[2]; continue }
+                # The graphics API the app opens (agent v34).
+                if ($pair -cmatch '^\s*(WGPU_BACKEND)=(vulkan|gl|dx12)\s*$') { $req.env[$Matches[1]] = $Matches[2]; continue }
                 if ($pair -notmatch '^\s*([A-Z_]+)=([0-9]+)\s*$') { throw "bad -Instrument entry '$pair' (NAME=N, or FRACTADYNE_TRACE=category)" }
                 $req.env[$Matches[1]] = [int]$Matches[2]
             }
@@ -192,6 +208,7 @@ switch ($Action) {
         }
     }
     "events" { $req.days = $Days }
+    "app-logs" { $req.days = $Days }
     "farm-client" {
         if ($Controller -notmatch '^[A-Za-z0-9.-]{1,253}:[0-9]{1,5}$') { throw "-Controller must be HOST:PORT (the controller's address as the test machine reaches it)" }
         if (-not $FarmKeyFile -or -not (Test-Path -LiteralPath $FarmKeyFile)) { throw "-FarmKeyFile must name the controller's farm-key file" }
@@ -214,7 +231,7 @@ New-Item -ItemType Directory -Force -Path $ReqDir | Out-Null
 $path = Join-Path $ReqDir "$id.json"
 [IO.File]::WriteAllText("$path.tmp", ($req | ConvertTo-Json -Depth 6), $Utf8)
 Move-Item -LiteralPath "$path.tmp" -Destination $path   # the agent only picks up *.json
-Write-Host "Filed $id ($Action)." -ForegroundColor Cyan
+Write-Host "Filed $id ($Action, for $($Machine.ToUpper()))." -ForegroundColor Cyan
 Show-Agents
 
 if (-not $Wait) { return }
