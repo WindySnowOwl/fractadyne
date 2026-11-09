@@ -345,10 +345,11 @@ mod imp {
             let _ = tx.send(0);
             // SAFETY: the crashed thread finished writing `SLOT` before it started this thread.
             let f = unsafe { &*SLOT.0.get() };
-            let (reason, loc, stack) = render(f, &thread);
+            let (reason, loc, stack, module) = render(f, &thread);
             let report = crate::diag::native_crash_report(&reason, &loc, &thread, &stack);
             let _ = tx.send(1);
-            crate::diag::show_fatal_dialog(&crate::diag::crash_reason(&reason), report.as_deref());
+            let failure = crate::diag::advice::Failure::Native { module };
+            crate::diag::show_fatal_dialog(&failure, &crate::diag::crash_reason(&reason), report.as_deref());
             let _ = tx.send(2);
         });
         if spawned.is_err() {
@@ -363,8 +364,9 @@ mod imp {
         let _ = rx.recv();
     }
 
-    /// The reason line, the report's `at` and the native stack section, from the copied facts.
-    fn render(f: &Facts, thread: &str) -> (String, String, String) {
+    /// The reason line, the report's `at`, the native stack section and the faulting module's file
+    /// name, from the copied facts.
+    fn render(f: &Facts, thread: &str) -> (String, String, String, Option<String>) {
         let path = |i: u8| -> Option<String> {
             f.modules.get(i as usize).filter(|_| (i as usize) < f.n_modules).map(|m| String::from_utf16_lossy(&m.2[..m.1]))
         };
@@ -387,6 +389,6 @@ mod imp {
         for m in &f.modules[..f.n_modules] {
             stack.push_str(&format!("  0x{:x} {}\n", m.0, String::from_utf16_lossy(&m.2[..m.1])));
         }
-        (reason, loc, stack)
+        (reason, loc, stack, fault.map(|(m, _)| m))
     }
 }
