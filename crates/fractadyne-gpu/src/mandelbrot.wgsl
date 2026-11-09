@@ -1515,6 +1515,8 @@ fn iterate_at(gx: f32, gy: f32) -> FragOut {
     var n_full: u32 = 0u;
     var n_big: u32 = 0u;
 
+    // @@SPLIT_DIRECT_BEGIN — mode 1, which the floatexp half of a split iterate pipeline is cut without (`iter_split.rs`);
+    // the other half is cut without mode 2 (`@@CUSTOM_FE`).
     if (iu.mode == 1u) {
         // Direct df32 (no reference). Glitch-free; used while depth is within df32's
         // reach (~1e6×). Mandelbrot beyond that uses perturbation; the other formulas
@@ -1696,6 +1698,7 @@ fn iterate_at(gx: f32, gy: f32) -> FragOut {
         norm_hist_commit(smit, vec2<i32>(i32(gx), i32(gy)));
         return FragOut(vec4<f32>(smit, nrm.x, nrm.y, de), aux_out);
     }
+    // @@SPLIT_DIRECT_END
     // @@CUSTOM_FE_BEGIN — a custom formula's module replaces mode 2 from here to the matching END
     // marker with its own, leaner floatexp loop (`custom.rs`): no BLA, SA, glitch detection or
     // derivative, which are most of this pipeline's compile time.
@@ -2191,6 +2194,7 @@ fn iterate_at(gx: f32, gy: f32) -> FragOut {
         return FragOut(vec4<f32>(smit, nrm.x, nrm.y, de), aux_out);
     }
     // @@CUSTOM_FE_END
+    // @@SPLIT_PERT_BEGIN — mode 0, which the floatexp half of a split iterate pipeline is cut without (`iter_split.rs`).
     else {
         // df32 perturbation (mode 0): the fast path for the common deep range. Valid
         // until the df32 δ's f32 exponent underflows (~1e30×); deeper zoom uses mode 2.
@@ -2419,6 +2423,7 @@ fn iterate_at(gx: f32, gy: f32) -> FragOut {
         norm_hist_commit(smit, vec2<i32>(i32(gx), i32(gy)));
         return FragOut(vec4<f32>(smit, nrm.x, nrm.y, de), aux_out);
     }
+    // @@SPLIT_PERT_END
 }
 
 @fragment

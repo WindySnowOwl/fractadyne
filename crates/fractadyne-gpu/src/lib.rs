@@ -42,6 +42,8 @@ pub mod pipeline_compile;
 mod strip;
 /// Whether a device's shader compiler fuses `two_prod`'s product (TODO PR-C2): asked once per device.
 mod fusion;
+/// The iterate pipelines split by precision mode, for a compiler that cannot take them whole (OpenGL).
+pub mod iter_split;
 /// The palette browser's thumbnails: the view recolored through every palette.
 pub mod atlas;
 pub use fusion::{detect_product_fusion, product_barrier, FusionVerdict};
@@ -1311,10 +1313,11 @@ struct ChunkState {
 }
 
 struct Renderer {
-    iter_pipeline: wgpu::RenderPipeline,
+    /// `fs_iterate`, whole or split by precision mode ([`iter_split`]).
+    iter_pipeline: iter_split::ModePipelines,
     /// `fs_iterate` over a split refresh's tile geometry (`vs_split_tiles`; see
     /// `MandelbrotParams::split`).
-    iter_split_pipeline: wgpu::RenderPipeline,
+    iter_split_pipeline: iter_split::ModePipelines,
     color_pipeline: wgpu::RenderPipeline,
     /// Nearest-neighbor upscale of the old iteration/aux textures into a resized pair — runs once
     /// when a tiled settle grows the texture, so the display never drops to black mid-refine.
@@ -2094,9 +2097,13 @@ pub(crate) fn shader_module(device: &wgpu::Device) -> wgpu::ShaderModule {
     pipeline_compile::set_source(0);
     device.create_shader_module(wgpu::ShaderModuleDescriptor {
         label: Some("fractadyne.shader"),
-        source: wgpu::ShaderSource::Wgsl(include_str!("mandelbrot.wgsl").into()),
+        source: wgpu::ShaderSource::Wgsl(SHADER_SRC.into()),
     })
 }
+
+/// The fixed module's WGSL, which [`shader_module`] compiles and a split iterate pipeline is cut
+/// from ([`iter_split`]).
+pub(crate) const SHADER_SRC: &str = include_str!("mandelbrot.wgsl");
 
 /// [`shader_module`], or a custom formula's generated module ([`custom::build`]) when given. The
 /// generated module keeps every entry point but the perturbation paths, so the color and resolve
@@ -2473,14 +2480,20 @@ impl Renderer {
             push_constant_ranges: &[],
         });
 
-        let iter_pipeline = fullscreen_pipeline(
-            device, &shader, &iter_layout, "fs_iterate", &[ITER_FORMAT, ITER_FORMAT],
-            "fractadyne.iter_pipeline",
-        );
-        let iter_split_pipeline = raster_pipeline(
-            device, &shader, &iter_layout, "vs_split_tiles", "fs_iterate", &[ITER_FORMAT, ITER_FORMAT],
-            "fractadyne.iter_split_pipeline",
-        );
+        // On OpenGL, two pipelines per iterate entry point, one per half of the module (`iter_split`).
+        let split = iter_split::SplitModules::new(device, SHADER_SRC, "fractadyne.shader");
+        let iter_pipeline = iter_split::SplitModules::build(split.as_ref(), &shader, |m, half| {
+            fullscreen_pipeline(
+                device, m, &iter_layout, "fs_iterate", &[ITER_FORMAT, ITER_FORMAT],
+                &format!("fractadyne.iter_pipeline{half}"),
+            )
+        });
+        let iter_split_pipeline = iter_split::SplitModules::build(split.as_ref(), &shader, |m, half| {
+            raster_pipeline(
+                device, m, &iter_layout, "vs_split_tiles", "fs_iterate", &[ITER_FORMAT, ITER_FORMAT],
+                &format!("fractadyne.iter_split_pipeline{half}"),
+            )
+        });
         let color_pipeline = fullscreen_pipeline(
             device, &shader, &color_layout, "fs_color", &[target_format],
             "fractadyne.color_pipeline",
@@ -3559,7 +3572,8 @@ impl CallbackTrait for MandelbrotParams {
         let color_bgl = &r.color_bgl;
         let (iter_pipeline, iter_split_pipeline) = match (self.custom.as_ref(), r.custom.as_ref()) {
             (Some(_), Some(p)) => (&p.iter, &p.iter_split),
-            _ => (&r.iter_pipeline, &r.iter_split_pipeline),
+            // The half for this frame's mode, when split; the uniforms below carry the same `mode`.
+            _ => (r.iter_pipeline.for_mode(self.mode), r.iter_split_pipeline.for_mode(self.mode)),
         };
         let seed_pipeline = &r.seed_pipeline;
         // Mode 2 (floatexp) chunks through its OWN four-target pipelines; every other mode uses

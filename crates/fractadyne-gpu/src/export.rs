@@ -1594,7 +1594,8 @@ struct TileRenderer<'a> {
     queue: &'a wgpu::Queue,
     req: &'a ExportRequest,
     plan: ExportPlan,
-    iter_pipeline: wgpu::RenderPipeline,
+    /// `fs_iterate`, whole or split by precision mode (`iter_split`).
+    iter_pipeline: crate::iter_split::ModePipelines,
     color_pipeline: wgpu::RenderPipeline,
     color_bgl: wgpu::BindGroupLayout,
     chunker: Option<TileChunker>,
@@ -1634,10 +1635,17 @@ impl<'a> TileRenderer<'a> {
         });
         // The u-space BLA is compiled into every iterate pipeline of a render whose request carries a
         // tree — the single-pass control included, so the two agree as they do without one.
-        let iter_pipeline = crate::fullscreen_pipeline_c(
-            device, &shader, &iter_layout, "fs_iterate", &[ITER_FORMAT, ITER_FORMAT],
-            "export.iter_pipeline", crate::iter_constants(plan.rn_bla),
-        );
+        // Split on OpenGL (`iter_split`); a custom formula's module keeps its own, leaner mode 2.
+        let split = match req.custom {
+            None => crate::iter_split::SplitModules::new(device, crate::SHADER_SRC, "export.shader"),
+            Some(_) => None,
+        };
+        let iter_pipeline = crate::iter_split::SplitModules::build(split.as_ref(), &shader, |m, half| {
+            crate::fullscreen_pipeline_c(
+                device, m, &iter_layout, "fs_iterate", &[ITER_FORMAT, ITER_FORMAT],
+                &format!("export.iter_pipeline{half}"), crate::iter_constants(plan.rn_bla),
+            )
+        });
         let color_pipeline = fullscreen_pipeline(
             device, &shader, &color_layout, "fs_color", &[EXPORT_FORMAT], "export.color_pipeline",
         );
@@ -1938,7 +1946,7 @@ impl<'a> TileRenderer<'a> {
                     pass.draw(0..3, 0..1);
                 }
                 _ => {
-                    pass.set_pipeline(&self.iter_pipeline);
+                    pass.set_pipeline(self.iter_pipeline.for_mode(self.req.mode));
                     pass.set_bind_group(0, &self.iter_bg, &[]);
                     pass.draw(0..3, 0..1);
                 }
@@ -2492,7 +2500,8 @@ fn make_running_read(device: &wgpu::Device) -> wgpu::Buffer {
 pub struct IterScaffold {
     shader: wgpu::ShaderModule,
     iter_bgl: wgpu::BindGroupLayout,
-    iter_pipeline: wgpu::RenderPipeline,
+    /// `fs_iterate`, whole or split by precision mode (`iter_split`).
+    iter_pipeline: crate::iter_split::ModePipelines,
 }
 
 impl IterScaffold {
@@ -2502,26 +2511,33 @@ impl IterScaffold {
 
     /// For a custom formula's module (`None` = the fixed one).
     fn new_for(device: &wgpu::Device, custom: Option<&crate::custom::CustomShader>) -> Self {
-        Self::from_shader(device, crate::shader_module_for(device, custom))
+        // Split on OpenGL (`iter_split`); a custom formula's module keeps its own, leaner mode 2.
+        let split = custom.is_none().then_some(crate::SHADER_SRC);
+        Self::from_shader(device, crate::shader_module_for(device, custom), split)
     }
 
     /// For an exponential-map strip: the strip module ([`crate::strip`]), which every pipeline of a
     /// strip's render — its chunk passes, packed passes and resolve — is built from.
     fn new_strip(device: &wgpu::Device) -> Self {
-        Self::from_shader(device, crate::strip::module(device))
+        let src = crate::strip::source().expect("the strip module's slots");
+        Self::from_shader(device, crate::strip::module(device), Some(&src))
     }
 
-    fn from_shader(device: &wgpu::Device, shader: wgpu::ShaderModule) -> Self {
+    /// `split_src`: the source `shader` was made from, when its iterate pipeline may be split.
+    fn from_shader(device: &wgpu::Device, shader: wgpu::ShaderModule, split_src: Option<&str>) -> Self {
         let iter_bgl = iter_bind_group_layout(device);
         let iter_layout = device.create_pipeline_layout(&wgpu::PipelineLayoutDescriptor {
             label: Some("itertiled.layout"),
             bind_group_layouts: &[&iter_bgl],
             push_constant_ranges: &[],
         });
-        let iter_pipeline = fullscreen_pipeline(
-            device, &shader, &iter_layout, "fs_iterate", &[ITER_FORMAT, ITER_FORMAT],
-            "itertiled.pipeline",
-        );
+        let split = split_src.and_then(|src| crate::iter_split::SplitModules::new(device, src, "itertiled.shader"));
+        let iter_pipeline = crate::iter_split::SplitModules::build(split.as_ref(), &shader, |m, half| {
+            fullscreen_pipeline(
+                device, m, &iter_layout, "fs_iterate", &[ITER_FORMAT, ITER_FORMAT],
+                &format!("itertiled.pipeline{half}"),
+            )
+        });
         Self { shader, iter_bgl, iter_pipeline }
     }
 }
@@ -2603,7 +2619,8 @@ pub fn render_iter_tiled(
     };
     let shader = &sc.shader;
     let iter_bgl = &sc.iter_bgl;
-    let iter_pipeline = &sc.iter_pipeline;
+    // The half for this render's mode, when split; its uniforms carry the same `mode`.
+    let iter_pipeline = sc.iter_pipeline.for_mode(req.mode);
     let setup_ms = t_setup.elapsed().as_secs_f64() * 1000.0;
 
     // Lazy for the same reason as `render_export` — and it matters most HERE, since the
@@ -3109,7 +3126,8 @@ pub struct GatherPass {
     _shader: wgpu::ShaderModule,
     iter_bgl: wgpu::BindGroupLayout,
     gather_bgl: wgpu::BindGroupLayout,
-    pipeline: wgpu::RenderPipeline,
+    /// `fs_iterate_gather`, whole or split by precision mode (`iter_split`).
+    pipeline: crate::iter_split::ModePipelines,
     iter_uniform: wgpu::Buffer,
     counters_buf: wgpu::Buffer,
     counters_read: wgpu::Buffer,
@@ -3125,14 +3143,10 @@ impl GatherPass {
             bind_group_layouts: &[&iter_bgl, &gather_bgl],
             push_constant_ranges: &[],
         });
-        let pipeline = fullscreen_pipeline(
-            device,
-            &shader,
-            &layout,
-            "fs_iterate_gather",
-            &[ITER_FORMAT, ITER_FORMAT],
-            "gather.pipeline",
-        );
+        let split = crate::iter_split::SplitModules::new(device, crate::SHADER_SRC, "gather.shader");
+        let pipeline = crate::iter_split::SplitModules::build(split.as_ref(), &shader, |m, half| {
+            fullscreen_pipeline(device, m, &layout, "fs_iterate_gather", &[ITER_FORMAT, ITER_FORMAT], &format!("gather.pipeline{half}"))
+        });
         let iter_uniform = device.create_buffer(&wgpu::BufferDescriptor {
             label: Some("gather.uniform"),
             size: std::mem::size_of::<IterUniforms>() as u64,
@@ -3363,7 +3377,7 @@ impl GatherPass {
                     timestamp_writes: None,
                     occlusion_query_set: None,
                 });
-                pass.set_pipeline(&self.pipeline);
+                pass.set_pipeline(self.pipeline.for_mode(req.mode));
                 pass.set_bind_group(0, &iter_bg, &[]);
                 pass.set_bind_group(1, &gather_bg, &[]);
                 pass.draw(0..3, 0..1);
@@ -3533,17 +3547,26 @@ fn render_iter_passes(
         bind_group_layouts: &[&iter_bgl],
         push_constant_ranges: &[],
     });
-    let iter_pipeline = if sets.is_some() {
-        crate::raster_pipeline(
-            device, &shader, &iter_layout, "vs_split_tiles", "fs_iterate",
-            &[ITER_FORMAT, ITER_FORMAT], "selftest.iter_split_pipeline",
-        )
-    } else {
-        fullscreen_pipeline(
-            device, &shader, &iter_layout, "fs_iterate", &[ITER_FORMAT, ITER_FORMAT],
-            "selftest.iter_pipeline",
-        )
+    // Split on OpenGL (`iter_split`); a custom formula's module keeps its own, leaner mode 2.
+    let split = match req.custom {
+        None => crate::iter_split::SplitModules::new(device, crate::SHADER_SRC, "selftest.shader"),
+        Some(_) => None,
     };
+    let iter_pipeline = crate::iter_split::SplitModules::build(split.as_ref(), &shader, |m, half| {
+        if sets.is_some() {
+            crate::raster_pipeline(
+                device, m, &iter_layout, "vs_split_tiles", "fs_iterate",
+                &[ITER_FORMAT, ITER_FORMAT], &format!("selftest.iter_split_pipeline{half}"),
+            )
+        } else {
+            fullscreen_pipeline(
+                device, m, &iter_layout, "fs_iterate", &[ITER_FORMAT, ITER_FORMAT],
+                &format!("selftest.iter_pipeline{half}"),
+            )
+        }
+    });
+    // The half for this run's mode, when split; its uniforms carry the same `mode`.
+    let iter_pipeline = iter_pipeline.for_mode(req.mode);
 
     let iter_uniform = device.create_buffer(&wgpu::BufferDescriptor {
         label: Some("selftest.iter_uniform"),
@@ -3699,7 +3722,7 @@ fn render_iter_passes(
                     }),
                     occlusion_query_set: None,
                 });
-                pass.set_pipeline(&iter_pipeline);
+                pass.set_pipeline(iter_pipeline);
                 pass.set_bind_group(0, &iter_bg, &[]);
                 if sets.is_some() {
                     pass.draw(0..6, 0..w.div_ceil(16) * h.div_ceil(16));
@@ -3759,7 +3782,7 @@ fn render_iter_passes(
                 }),
                 occlusion_query_set: None,
             });
-            pass.set_pipeline(&iter_pipeline);
+            pass.set_pipeline(iter_pipeline);
             pass.set_bind_group(0, &iter_bg, &[]);
             pass.draw(0..3, 0..1);
         }
@@ -3793,7 +3816,7 @@ fn render_iter_passes(
                         timestamp_writes: None,
                         occlusion_query_set: None,
                     });
-                    pass.set_pipeline(&iter_pipeline);
+                    pass.set_pipeline(iter_pipeline);
                     pass.set_bind_group(0, &iter_bg, &[]);
                     pass.draw(0..6, 0..tiles);
                 }
