@@ -759,6 +759,13 @@ speed-check-held = Tamam: kartın kayıtlı hızı hâlâ geçerli.
 # The check's result: the card measured differently, and the new measurement replaced the saved one.
 speed-check-updated = Tamam: kart farklı ölçüldü ve yeni hızı kaydedildi.
 
+## The notice an export puts up on OpenGL, where it renders on the window's own thread and the
+## window cannot respond until it is done (export.rs, run_export_work)
+
+export-gl-title = Dışa aktarılıyor
+# Shown just before the export renders, and on screen until it is done.
+export-gl-running = OpenGL'de Fractadyne dışa aktarmayı pencerenin kendi iş parçacığında işler; bu yüzden dışa aktarma bitene kadar pencere yanıt vermez. Yavaş bir ekran kartında bu birkaç dakika sürebilir.
+
 ## File ▸ Gallery…
 
 dlg-gallery-title = Galeri

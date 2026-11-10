@@ -2312,8 +2312,8 @@ impl FractadyneApp {
         self.export.task = Some(rx);
         self.export.status = Some(tr!(export_rendering));
         crate::diag::breadcrumb(format!("GUI L-system export → {}", path.display()));
-        std::thread::spawn(move || {
-            let msg = match job.render(&device, &queue, &progress, &cancel) {
+        self.run_export_work(tx, true, move || {
+            match job.render(&device, &queue, &progress, &cancel) {
                 Err(_) if cancel.load(Relaxed) => Err(tr!(export_canceled)),
                 Err(e) => Err(tr!(export_failed, error = e.to_string())),
                 Ok(mut r) => {
@@ -2340,8 +2340,7 @@ impl FractadyneApp {
                         Err(e) => Err(tr!(export_failed, error = e.to_string())),
                     }
                 }
-            };
-            let _ = tx.send(msg);
+            }
         });
     }
 
@@ -2365,11 +2364,16 @@ impl FractadyneApp {
         let window = self.export.all_gpus.then(|| self.render_state.as_ref().map(|rs| rs.adapter.get_info())).flatten();
         let window_name = self.gpu_name.clone();
         let own_card = self.render_state.as_ref().map(|rs| rs.adapter.get_info());
+        let gl = self.window_on_gl();
         let (tx, rx) = std::sync::mpsc::channel();
         self.export.task = Some(rx);
         self.export.status = Some(tr!(export_rendering));
         crate::diag::breadcrumb(format!("GUI export → {}", path.display()));
-        std::thread::spawn(move || {
+        self.run_export_work(tx, false, move || {
+            // On OpenGL no other card's device joins it (Use all graphics cards): more OpenGL
+            // contexts busy beside the window's are what froze it on Eris before its passes were
+            // sized from this card's measured cost (`fractadyne_gpu::set_card_step_ms`).
+            //
             // ⭐⭐THE EXPORT RENDERS ON A DEVICE OF ITS OWN, on the window's card. On the window's
             // device, beside the frames the window goes on drawing from the UI thread, a few of
             // its tiles came out wrong in about half the exports: a Multibrot 8 side-by-side export
@@ -2395,7 +2399,7 @@ impl FractadyneApp {
                 Some(h) => (h.device.clone(), h.queue.clone()),
                 None => (device, queue),
             };
-            let extra = window.as_ref().map(crate::gpu_worker::open_other_cards).unwrap_or_default();
+            let extra = window.as_ref().filter(|_| !gl).map(crate::gpu_worker::open_other_cards).unwrap_or_default();
             let render = |req: &fractadyne_gpu::ExportRequest| {
                 if extra.is_empty() {
                     fractadyne_gpu::render_export(&device, &queue, req, &progress, &cancel)
@@ -2451,13 +2455,93 @@ impl FractadyneApp {
                     }
                 }
             })();
-            let _ = tx.send(match msg {
+            match msg {
                 Ok(m) => Ok(m),
                 Err(crate::error::AppError::Gpu(fractadyne_gpu::GpuError::Canceled)) => Err(tr!(export_canceled)),
                 Err(e) => Err(tr!(export_failed, error = e.to_string())),
-            });
+            }
         });
     }
+
+    /// The window's device is OpenGL's.
+    pub(crate) fn window_on_gl(&self) -> bool {
+        self.render_state.as_ref().is_some_and(|rs| rs.adapter.get_info().backend == eframe::wgpu::Backend::Gl)
+    }
+
+    /// Run an export's `work` (render and write; its outcome goes to `tx`, as `export.task`
+    /// expects) on a thread of its own, or, where `on_window_device` and the window is on OpenGL,
+    /// ON THIS ONE, once a notice saying so has been on the screen
+    /// ([`Self::export_on_ui_thread_step`]).
+    ///
+    /// ⛔Why not on a thread with the window's device on OpenGL (2026-11-10): wgpu's OpenGL backend
+    /// panics when a thread waits more than a second for its context, which a driver compiling an
+    /// export pipeline holds for seconds (`render::speed_probe::recheck`). So an export drawing
+    /// with the window's device (the L-system's) renders on the UI thread there, as `--render` and
+    /// `--shot --image` always did: the window stops until it is done, and says so first. An export
+    /// with a device of its own (the Export dialog's) has its own context and lock, and keeps its
+    /// thread.
+    fn run_export_work(
+        &mut self,
+        tx: std::sync::mpsc::Sender<Result<String, String>>,
+        on_window_device: bool,
+        work: impl FnOnce() -> Result<String, String> + Send + 'static,
+    ) {
+        if on_window_device && self.window_on_gl() {
+            self.export.on_ui_thread = Some(OnUiThread { work: Box::new(work), tx, announced: self.perf.frame_idx });
+            self.dialogs.export_notice = true;
+            crate::diag::log_line("render", "export: on OpenGL it renders on the window's own thread; the window stops until it is done");
+        } else {
+            std::thread::spawn(move || {
+                let _ = tx.send(work());
+            });
+        }
+    }
+
+    /// Each frame: an export waiting for the UI thread ([`Self::run_export_work`]) runs once its
+    /// notice has been on the screen for `NOTICE_FRAMES` frames; its time is taken out of the
+    /// frame interval it falls in, as a synchronous offscreen render's is.
+    pub(crate) fn export_on_ui_thread_step(&mut self, ctx: &egui::Context) {
+        let Some(w) = &self.export.on_ui_thread else { return };
+        if self.perf.frame_idx < w.announced + crate::render::speed_probe::NOTICE_FRAMES {
+            ctx.request_repaint();
+            return;
+        }
+        let OnUiThread { work, tx, .. } = self.export.on_ui_thread.take().expect("checked above");
+        let t0 = std::time::Instant::now();
+        let _ = tx.send(work());
+        let ms = t0.elapsed().as_secs_f64() * 1000.0;
+        self.perf.offscreen_ms += ms;
+        self.perf.startup_probe_ms += ms;
+        self.dialogs.export_notice = false;
+        ctx.request_repaint();
+    }
+
+    /// The notice an export on the UI thread puts up before the window stops
+    /// ([`Self::run_export_work`]). It closes when the export is done: the export's own status
+    /// then says how it went. Nothing in it can be pressed while the window is stopped, so it has
+    /// no close button.
+    pub(crate) fn draw_export_notice(&mut self, ctx: &egui::Context) {
+        if !self.dialogs.export_notice {
+            return;
+        }
+        egui::Window::new(tr!(export_gl_title))
+            .id(egui::Id::new("fractadyne.export_notice"))
+            .collapsible(false)
+            .resizable(false)
+            .anchor(egui::Align2::CENTER_CENTER, [0.0, 0.0])
+            .show(ctx, |ui| {
+                ui.set_max_width(380.0);
+                ui.label(tr!(export_gl_running));
+            });
+    }
+}
+
+/// An export waiting to run on the UI thread (OpenGL: `FractadyneApp::run_export_work`), with the
+/// frame its notice went up on.
+pub(crate) struct OnUiThread {
+    work: Box<dyn FnOnce() -> Result<String, String> + Send>,
+    tx: std::sync::mpsc::Sender<Result<String, String>>,
+    announced: u64,
 }
 
 /// The export policy this audit produced (`FractadyneApp::correction_wanted` has the evidence):

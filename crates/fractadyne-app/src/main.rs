@@ -6094,6 +6094,8 @@ struct ExportState {
     task: Option<std::sync::mpsc::Receiver<Result<String, String>>>,
     /// Deep single-view export whose reference orbit is building off-thread (before the render).
     prep: Option<crate::export::ExportPrep>,
+    /// An export waiting to render on the UI thread (OpenGL, `run_export_work`).
+    on_ui_thread: Option<crate::export::OnUiThread>,
     /// Progress in permille (0–1000) and a cooperative cancel flag.
     progress: std::sync::Arc<std::sync::atomic::AtomicU32>,
     cancel: std::sync::Arc<std::sync::atomic::AtomicBool>,
@@ -6616,6 +6618,8 @@ struct DialogState {
     /// The speed check's notice, where its re-check stops the window (OpenGL,
     /// `render::speed_probe::recheck`): what is happening, then the result.
     speed_notice: Option<render::speed_probe::SpeedNotice>,
+    /// An export is about to render, or rendering, on the UI thread (OpenGL, `run_export_work`).
+    export_notice: bool,
 }
 
 // ================================================================================================
@@ -6667,6 +6671,9 @@ struct FractadyneApp {
     /// The saved start-up speed reading in use, waiting for its background re-check or being
     /// re-checked (`render::speed_probe::recheck`).
     speed_recheck: Option<render::speed_probe::Recheck>,
+    /// The start-up speed check's floatexp reading, for the export's tile sizing
+    /// (`render::speed_probe::tell_export_card_costs`); `None` where the card was not checked.
+    speed_probe_floatexp: Option<render::speed_probe::Finding>,
     /// Dual view: if `Some`, the Julia `c` is pinned to this Mandelbrot point (a marker
     /// is drawn there) instead of following the cursor. Click to pin, click it to release.
     julia_pin: Option<(f64, f64)>,
@@ -7687,6 +7694,7 @@ impl FractadyneApp {
             snap_solve: None,
             pre_switch_job: None,
             speed_recheck: None,
+            speed_probe_floatexp: None,
             julia_pin: None,
             dual: s.dual && fractal.supports_julia(),
             dual_split: s.dual_split.clamp(DUAL_SPLIT_MIN, DUAL_SPLIT_MAX),
@@ -7895,6 +7903,7 @@ impl FractadyneApp {
                 // the interface's language is chosen while it is.
                 notice: None,
                 speed_notice: None,
+                export_notice: false,
             },
             // The adapter facts (and the VRAM probe that needs the adapter's name) are filled in by
             // `attach_gpu`; no frame runs before it.
@@ -7928,6 +7937,7 @@ impl FractadyneApp {
                 status: None,
                 task: None,
                 prep: None,
+                on_ui_thread: None,
                 progress: std::sync::Arc::new(std::sync::atomic::AtomicU32::new(0)),
                 cancel: std::sync::Arc::new(std::sync::atomic::AtomicBool::new(false)),
                 last_dir: s.export_dir.clone().map(std::path::PathBuf::from),
@@ -17394,6 +17404,8 @@ impl eframe::App for FractadyneApp {
                 // at that speed and lowers the ceiling where the card is slower than the default.
                 let measured = frame.wgpu_render_state().and_then(|rs| self.startup_speed_probe(rs));
                 let cal = calibration::init_measured(&self.gpu_name, measured);
+                // What a step costs here, for the export's tiles (`fractadyne_gpu::set_card_step_ms`).
+                render::speed_probe::tell_export_card_costs(self.speed_probe_floatexp);
                 let at = |cost: f64| {
                     calibration::ceiling(cost, 1.0, cal.knee_px, u64::MAX)
                         .map_or("none".to_string(), |c| format!("{:.2e}", c as f64))
@@ -17814,6 +17826,8 @@ impl eframe::App for FractadyneApp {
             // view is still, on a thread of its own or on OpenGL here (`render::speed_probe::recheck`).
             self.speed_recheck_step(ctx, dev, q);
         }
+        // An export waiting to render on the UI thread (OpenGL) runs once its notice is up.
+        self.export_on_ui_thread_step(ctx);
 
         // Auto-zoom autopilot — dive toward detail (advance before drawing so this frame
         // reflects the new view).
@@ -18108,6 +18122,7 @@ impl eframe::App for FractadyneApp {
         self.draw_bench_results_dialog(ctx);
         self.draw_notice_dialog(ctx);
         self.draw_speed_notice(ctx);
+        self.draw_export_notice(ctx);
         self.draw_backend_notice_dialog(ctx);
         self.poll_mpfr_recovery(ctx);
 

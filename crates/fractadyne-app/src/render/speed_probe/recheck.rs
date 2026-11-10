@@ -265,6 +265,7 @@ impl FractadyneApp {
         } else {
             "the dispatch ceiling unchanged"
         };
+        super::tell_export_card_costs(found[2].as_ref().ok().copied());
         let filed = match fractadyne_state::config_dir() {
             None => "not saved (no config folder)".to_string(),
             Some(d) => {

@@ -756,6 +756,13 @@ speed-check-held = 完成：显卡保存的速度仍然有效。
 # The check's result: the card measured differently, and the new measurement replaced the saved one.
 speed-check-updated = 完成：显卡的测量结果有变化，已保存新的速度。
 
+## The notice an export puts up on OpenGL, where it renders on the window's own thread and the
+## window cannot respond until it is done (export.rs, run_export_work)
+
+export-gl-title = 正在导出
+# Shown just before the export renders, and on screen until it is done.
+export-gl-running = 在 OpenGL 下，Fractadyne 在窗口自身的线程上渲染导出，因此在导出完成之前窗口不会响应。在较慢的显卡上，这可能需要几分钟。
+
 ## File ▸ Gallery…
 
 dlg-gallery-title = 图库

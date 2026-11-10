@@ -759,6 +759,13 @@ speed-check-held = Pronto: a velocidade salva da placa continua valendo.
 # The check's result: the card measured differently, and the new measurement replaced the saved one.
 speed-check-updated = Pronto: a placa mediu diferente, e a nova velocidade foi salva.
 
+## The notice an export puts up on OpenGL, where it renders on the window's own thread and the
+## window cannot respond until it is done (export.rs, run_export_work)
+
+export-gl-title = Exportando
+# Shown just before the export renders, and on screen until it is done.
+export-gl-running = No OpenGL, o Fractadyne renderiza a exportação na própria thread da janela, então a janela não responderá até a exportação terminar. Em uma placa de vídeo lenta, isso pode levar vários minutos.
+
 ## File ▸ Gallery…
 
 dlg-gallery-title = Galeria

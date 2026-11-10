@@ -188,6 +188,15 @@ Changes after 0.3.0-beta.1:
   way. It now renders on a device of its own on the same graphics card, which takes about half a
   second to open, and eight exports in a row came out identical. If the card will not open a
   second device, the export uses the window's, as before, and the log says so.
+- **A large export works on a slow graphics card (0.3.0-beta.27).** On an Intel HD Graphics 4400,
+  exporting a view in dual view at 3840 pixels wide with 2× supersampling saved an all-black image,
+  and then the window stopped responding for good. The export sized each pass of GPU work for a fast
+  desktop card, and on that laptop some passes took nearly 3 seconds. Exports now size their passes
+  from the speed the start-up check measured on the card, about half a second or less each there:
+  the same export now comes out right in about 77 seconds, and the window keeps working. A fast card
+  exports as before. On OpenGL, an L-system export renders on the window's own thread, so the window
+  stops until it is done, and a small window says so first; Use all graphics cards does not apply to
+  OpenGL.
 - **The Julia panel stays put while you export (0.3.0-beta.27).** In dual view, the Julia panel
   follows the cursor across the Mandelbrot panel until you pin it, and with click-to-zoom on a
   plain click zooms rather than pins (Ctrl+click pins). Moving the mouse to reach the Export dialog's
