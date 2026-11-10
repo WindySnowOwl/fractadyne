@@ -17371,8 +17371,12 @@ impl eframe::App for FractadyneApp {
                 if let Some(g) = crate::machine::gpu_settings_line() {
                     diag::log_line("start", &format!("gpu settings: {g}"));
                 }
-                // The per-adapter DISPATCH CEILING (`calibration`), resolved once by adapter name.
-                let cal = calibration::init(&self.gpu_name);
+                // The per-adapter DISPATCH CEILING (`calibration`), resolved once by adapter name —
+                // after the START-UP SPEED PROBE (`render::speed_probe`), which on a card the table
+                // has no entry for measures what a step costs there: it opens each slow mode's budget
+                // at that speed and lowers the ceiling where the card is slower than the default.
+                let measured = frame.wgpu_render_state().and_then(|rs| self.startup_speed_probe(rs));
+                let cal = calibration::init_measured(&self.gpu_name, measured);
                 let at = |cost: f64| {
                     calibration::ceiling(cost, 1.0, cal.knee_px, u64::MAX)
                         .map_or("none".to_string(), |c| format!("{:.2e}", c as f64))

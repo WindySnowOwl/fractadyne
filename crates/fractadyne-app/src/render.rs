@@ -133,6 +133,10 @@ pub(crate) use frame_plan::{Resolution, WalkSig};
 /// The live frame's decisions as pure functions over a recorded inputs struct, and their recorder
 /// (design/live-render-robustness.md §5.4, W5); `--replay` (src/harness/replay.rs) replays them.
 pub(crate) mod decide;
+/// The start-up speed probe: on a card the calibration table has no entry for, what one nominal
+/// step costs in each precision mode, so the first frame's budget and the dispatch ceiling are not
+/// guesses made on fast cards (`STARTUP_PROBE`).
+pub(crate) mod speed_probe;
 /// The self-test's and the UI test's ways into the live reference pipeline: harness code, filed
 /// under `src/harness/`, attached here because it needs `render`'s private machinery.
 #[path = "harness/render/selfcheck.rs"]

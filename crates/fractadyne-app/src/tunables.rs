@@ -146,6 +146,9 @@ pub(crate) struct Cost {
     pub pin_growth_lane: u64,
     /// Floatexp measured before a dive reaches it (`PRE_SWITCH_PROBE_DEFAULT`; 0 = off).
     pub pre_switch_probe: u64,
+    /// The start-up speed probe (`STARTUP_PROBE_DEFAULT`; 0 = off, 1 = a card the calibration table
+    /// has no entry for, 2 = every card).
+    pub startup_probe: u64,
     /// The df32 perturbation band renders floatexp, BLA as configured (`BAND_FLOATEXP_DEFAULT`;
     /// 0 = df32, 1 = floatexp).
     pub band_floatexp: u64,
@@ -244,6 +247,7 @@ impl Default for Cost {
             growth_in_work: GROWTH_IN_WORK_DEFAULT,
             pin_growth_lane: PIN_GROWTH_LANE_DEFAULT,
             pre_switch_probe: PRE_SWITCH_PROBE_DEFAULT,
+            startup_probe: STARTUP_PROBE_DEFAULT,
             band_floatexp: BAND_FLOATEXP_DEFAULT,
             walk_steps: WALK_STEPS_DEFAULT,
             chunk_charge: CHUNK_CHARGE_DEFAULT,
@@ -596,6 +600,20 @@ pub(crate) fn apply_overrides(pairs: &[(String, String)]) -> Result<(), String> 
                     .ok_or_else(|| format!("--set MISI_FIRST_STAGE_OCT: '{raw}' is not a number of octaves from 1 to 100000"))?;
                 p.to_string()
             }
+            "STARTUP_PROBE" => {
+                let p = c.startup_probe;
+                c.startup_probe = match raw.as_str() {
+                    "0" => 0,
+                    "1" => 1,
+                    "2" => 2,
+                    _ => {
+                        return Err(format!(
+                            "--set STARTUP_PROBE: '{raw}' is not 0 (off), 1 (uncalibrated cards) or 2 (every card)"
+                        ))
+                    }
+                };
+                p.to_string()
+            }
             "PRE_SWITCH_PROBE" => {
                 let p = c.pre_switch_probe;
                 c.pre_switch_probe = match raw.as_str() {
@@ -892,7 +910,7 @@ pub(crate) const OVERRIDABLE: &str = "TDR_BUDGET_MS, TDR_EXPLICIT_BUDGET_MS, \
     EXPLICIT_DISPATCH_CAP, TDR_MAX_TILES, TDR_TILES_CEIL, BLA_EPS, PASS_FIXED_MS, MOTION_NEED_QUANTILE, MOTION_NEED_SOURCE, READING_POOL, \
     DEAD_MAN, DISPATCH_CEILING, SETTLE_SERIALIZE, ADMISSION, PIN_TIMEOUT_SCALED, TAIL_DF32, CYCLE_CHECK, HONEST_STEP, EXPORT_POLL_MS, REF_OVERLAP, EARLY_REF, TILE_OCCUPANCY, LIVE_REFRESH, \
     ORBIT_LEN_CAP, RENORM, TILE_PACK, RENORM_BLA, ORBIT_SCHEDULE, NUCLEUS_REF, NUCLEUS_REF_LIVE, SA_TRACE, CHUNK_CHARGE, \
-    CHUNK_SHUFFLE, WORKER_MOTION, WORKER_YIELD, WORKER_PASS_MS, MISI_FIRST_STAGE_OCT, RECORD_COST_PPM, REUSE_MAX_WRAPS, PIN_BAND_SPAN, REF_OVERTAKEN_DROP, SA_TRACE_LIVE_STEPS, GROWTH_IN_WORK, PIN_GROWTH_LANE, PRE_SWITCH_PROBE, BAND_FLOATEXP, WALK_STEPS, PIN_SPAN_PRICED, TIMER_SLOTS, \
+    CHUNK_SHUFFLE, WORKER_MOTION, WORKER_YIELD, WORKER_PASS_MS, MISI_FIRST_STAGE_OCT, RECORD_COST_PPM, REUSE_MAX_WRAPS, PIN_BAND_SPAN, REF_OVERTAKEN_DROP, SA_TRACE_LIVE_STEPS, GROWTH_IN_WORK, PIN_GROWTH_LANE, PRE_SWITCH_PROBE, STARTUP_PROBE, BAND_FLOATEXP, WALK_STEPS, PIN_SPAN_PRICED, TIMER_SLOTS, \
     WALK_SERIALIZE, WALK_ONSET, ACCUM_TIME_CAP_MS, NORM_TOP_QUANTILE, ASSEMBLE_PIECE_MAX";
 
 #[cfg(test)]
@@ -1580,6 +1598,20 @@ pub(crate) const PIN_GROWTH_LANE_DEFAULT: u64 = 0;
 /// (`Meter::opening_rate`, the opening only). 0 = the switch opens unmeasured (df32's rate over
 /// `MODE_RATE_UNKNOWN_MARGIN`), as before.
 pub(crate) const PRE_SWITCH_PROBE_DEFAULT: u64 = 1;
+
+/// ⭐THE START-UP SPEED PROBE (`render::speed_probe`, 2026-11-10). 1 = on a card the calibration
+/// table has no entry for, the first frame times one small all-interior pass per precision mode
+/// through the live renderer's pipelines and (a) opens each mode's budget at that rate
+/// (`Meter::opening_rate`, the opening only) and (b) lowers the dispatch ceiling to the card's
+/// measured worst cost per step where that is slower than the table default. It can only lower
+/// either, and changes nothing on a card faster than the defaults assume. 2 = on every card (an
+/// experiment: a calibrated card's own entry is the base it may lower). 0 = off, as before.
+///
+/// Why: Intel HD Graphics 4400 (Eris, 2026-11-10, `--zoomtest 3` at 2^103): nothing measured, the
+/// first frame opened at `TDR_BOOTSTRAP_STEPS` (4e8) and its 1.9e8 floatexp steps took **1354 ms**
+/// on a 2 s watchdog, and the default ceiling (twice the RX 6800 XT) let a direct dispatch run
+/// ~100 s there.
+pub(crate) const STARTUP_PROBE_DEFAULT: u64 = 1;
 
 /// 1 = the LIVE view renders the df32 perturbation band (`1e4×` to `PERT_FE_THRESHOLD`) as floatexp
 /// perturbation with BLA, wherever the BLA applies (`FractadyneApp::live_render_mode`, `band_bla`);
