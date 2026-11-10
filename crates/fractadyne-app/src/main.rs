@@ -339,6 +339,9 @@ fn main() -> eframe::Result<()> {
             crate::exit(2);
         }
     };
+    // Before anything enumerates: a Vulkan loader too old to list cards through crashes the app
+    // natively (Venus, 2026-11-10), so it is left out of every instance this run makes.
+    gpu_choice::log_loader();
     if let Some(s) = &adapter_spec {
         match gpu_choice::check(s) {
             Ok(line) => diag::log_line("wgpu", &format!("--adapter {s}: {line}")),

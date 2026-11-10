@@ -933,6 +933,14 @@ pub(crate) fn run_gputest_sweep(out: Option<&std::path::Path>) -> usize {
             sink.line(format!("{label}: not compiled into this binary — skipped\n"));
             continue;
         }
+        // A loader that crashes the app listing cards (`gpu_choice::vulkan_left_out`) would end the
+        // sweep, every other backend's result with it.
+        if backends == wgpu::Backends::VULKAN {
+            if let Some(why) = crate::gpu_choice::vulkan_left_out() {
+                sink.line(format!("{label}: skipped — {why}\n"));
+                continue;
+            }
+        }
         let instance = wgpu::Instance::new(&wgpu::InstanceDescriptor {
             backends,
             ..Default::default()

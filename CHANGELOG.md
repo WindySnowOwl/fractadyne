@@ -67,6 +67,12 @@ Changes after 0.3.0-beta.1:
   an RTX 3080); later launches take under a second. A driver that really cannot run it gets a
   message naming the card and what to update, instead of a crash, and the log now names the
   graphics card before anything can fail on it.
+- **Fractadyne starts on computers with an old Vulkan loader (0.3.0-beta.27).** On a 2012 MacBook
+  Pro running Windows (GeForce GT 650M, a 2017 NVIDIA driver, and the Vulkan loader from 2016), it
+  crashed while listing the graphics cards, before showing anything. Fractadyne now checks the
+  Vulkan loader before using it: one from before Vulkan 1.1 (2018) is left out, and Fractadyne runs
+  on OpenGL instead. The log and `--list-adapters` say when this happens. A newer graphics driver
+  brings a newer loader, and setting `WGPU_BACKEND=vulkan` still tries Vulkan.
 - **A slow graphics card's first frames stay short (0.3.0-beta.27).** Before it had measured
   anything, Fractadyne sized the first frame for a fast desktop card. On an Intel HD Graphics 4400,
   the first frame of a deep zoom kept the GPU busy for 1.4 seconds, close to the 2 seconds after
