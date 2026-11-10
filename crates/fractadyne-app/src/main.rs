@@ -1668,6 +1668,11 @@ struct Perf {
     /// Milliseconds the start-up speed probe took (`render::speed_probe`), run this frame BEFORE its
     /// interval is measured: handed to `ui_compile_ms` once it is, so the NEXT interval discounts it.
     pub(crate) startup_probe_ms: f64,
+    /// The background speed re-check's GPU time, and how much of it the frame intervals have taken
+    /// out so far (`render::speed_probe::overlap_ms`). OpenGL only: there its passes stop this
+    /// thread's GPU calls, and a multi-second first-draw compile would read as a frame the GPU
+    /// timestamps cannot see.
+    pub(crate) recheck_clock: Option<(std::sync::Arc<render::speed_probe::BusyClock>, f64)>,
     /// ⭐DIAGNOSTIC INSTRUMENT (`FRACTADYNE_BLA_DROP_FRAMES=N`, default off). Frames of BLA
     /// suppression remaining for this view after an arithmetic-mode switch.
     ///
@@ -2645,6 +2650,7 @@ impl Default for Perf {
             cap_sleep_ms: 0.0,
             ui_compile_ms: 0.0,
             startup_probe_ms: 0.0,
+            recheck_clock: None,
             bla_suppress_until: [0, 0],
             tile_state: [None, None],
             tile_pending: [false, false],
@@ -6660,6 +6666,9 @@ struct FractadyneApp {
     snap_solve: Option<SnapSolve>,
     /// The pre-switch floatexp probe running on its own thread, if one is (`pre_switch_probe`).
     pre_switch_job: Option<render::PreSwitchJob>,
+    /// The saved start-up speed reading in use, waiting for its background re-check or being
+    /// re-checked (`render::speed_probe::recheck`).
+    speed_recheck: Option<render::speed_probe::Recheck>,
     /// Dual view: if `Some`, the Julia `c` is pinned to this Mandelbrot point (a marker
     /// is drawn there) instead of following the cursor. Click to pin, click it to release.
     julia_pin: Option<(f64, f64)>,
@@ -7679,6 +7688,7 @@ impl FractadyneApp {
             click_zoom_snap: s.click_zoom_snap,
             snap_solve: None,
             pre_switch_job: None,
+            speed_recheck: None,
             julia_pin: None,
             dual: s.dual && fractal.supports_julia(),
             dual_split: s.dual_split.clamp(DUAL_SPLIT_MIN, DUAL_SPLIT_MAX),
@@ -17801,6 +17811,9 @@ impl eframe::App for FractadyneApp {
             self.probe_pending_coarse(dev, q);
             // A dive about to reach floatexp measures it first (`PRE_SWITCH_PROBE`).
             self.pre_switch_probe(dev, q);
+            // A saved start-up speed reading in use is re-checked on a thread of its own once the
+            // picture is up and the view is still (`render::speed_probe::recheck`).
+            self.speed_recheck_step(dev, q);
         }
 
         // Auto-zoom autopilot — dive toward detail (advance before drawing so this frame
@@ -17924,10 +17937,12 @@ impl eframe::App for FractadyneApp {
             self.perf.frame_period_ms = ema(self.perf.frame_period_ms, raw_ms);
             // Discount the previous frame's deliberate cap sleep — it lies inside this interval and
             // is not work. See `Perf::cap_sleep_ms` for the mispricing that cost. Likewise its
-            // pipeline compile (`Perf::ui_compile_ms`, also after this point in a frame).
+            // pipeline compile (`Perf::ui_compile_ms`, also after this point in a frame), and on
+            // OpenGL the background speed re-check's hold on the GPU (`Perf::recheck_clock`).
             let dt = (frame_start.duration_since(prev).as_secs_f64() * 1000.0
                 - std::mem::take(&mut self.perf.cap_sleep_ms)
-                - std::mem::take(&mut self.perf.ui_compile_ms))
+                - std::mem::take(&mut self.perf.ui_compile_ms)
+                - render::speed_probe::overlap_ms(&mut self.perf.recheck_clock, Instant::now()))
                 .max(0.0);
             self.perf.last_dt_ms = dt; // the actual spike, with cap sleep removed
             // Observed zoom speed, octaves/s, for the rate-aware refresh sizing. A step of two

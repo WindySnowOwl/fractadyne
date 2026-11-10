@@ -35,6 +35,7 @@
 //! default. Not a `--set` override (§5.2: a per-card value as an override would make every gate on
 //! that card non-stock); `DISPATCH_CEILING=0` only switches it off for a before/after measurement.
 
+use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::OnceLock;
 
 use crate::fractal::FractalKind;
@@ -78,6 +79,12 @@ struct Active {
 }
 
 static ACTIVE: OnceLock<Active> = OnceLock::new();
+
+/// Costs measured AFTER the calibration was resolved (the speed check's background re-check,
+/// `render::speed_probe::recheck`), as f64 bits, 0 = none: [`costs_in_force`] takes the slower of
+/// these and the resolved ones, so a later measurement can only lower a ceiling, like the first.
+static LATER_DIRECT: AtomicU64 = AtomicU64::new(0);
+static LATER_DF32: AtomicU64 = AtomicU64::new(0);
 
 #[derive(serde::Deserialize)]
 pub(crate) struct Table {
@@ -247,6 +254,28 @@ pub(crate) fn init_measured(adapter: &str, measured: Option<Costs>) -> &'static 
         .cal
 }
 
+/// Lower the ceiling to `measured` where the card measured slower than the costs in force
+/// ([`slower_of`]: never raises one). For a measurement taken after [`init_measured`] resolved the
+/// calibration (the speed check's background re-check); `false` = nothing came down, or nothing is
+/// resolved yet.
+pub(crate) fn lower_to(measured: Costs) -> bool {
+    let Some(now) = costs_in_force() else { return false };
+    let (c, slower) = slower_of(now, measured);
+    if slower {
+        LATER_DIRECT.store(c.direct.to_bits(), Ordering::Relaxed);
+        LATER_DF32.store(c.df32_pert.to_bits(), Ordering::Relaxed);
+    }
+    slower
+}
+
+/// The per-step costs the ceiling is sized from: the resolved ones, raised where a later
+/// measurement read the card slower ([`lower_to`]). `None` before [`init_measured`].
+pub(crate) fn costs_in_force() -> Option<Costs> {
+    let a = ACTIVE.get()?;
+    let later = |v: &AtomicU64| f64::from_bits(v.load(Ordering::Relaxed));
+    Some(slower_of(a.cal.costs, Costs { direct: later(&LATER_DIRECT), df32_pert: later(&LATER_DF32) }).0)
+}
+
 /// The adapter this run's calibration was resolved for (`None` before `init`, e.g. a headless
 /// harness): the name a decision recording's header carries, so a fixture set can say which cards
 /// its recordings come from.
@@ -272,10 +301,11 @@ pub(crate) fn ceiling_for(mode: RenderMode, formula: FractalKind, px: u64) -> Op
         return None;
     }
     let a = ACTIVE.get()?;
+    let costs = costs_in_force()?;
     let cost = if mode.is_direct() {
-        a.cal.costs.direct
+        costs.direct
     } else if mode == RenderMode::Df32Pert {
-        a.cal.costs.df32_pert
+        costs.df32_pert
     } else {
         return None;
     };

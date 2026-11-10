@@ -34,13 +34,18 @@
 //! budget never reads it.
 //!
 //! **Saved, then re-checked** ([`saved`]): a reading is kept per card, driver, build and power
-//! state, and a later launch in the same state measures only the first frame's mode again, at the
-//! iterations it was saved at, to confirm it. On Eris that turns ~7 s at every launch into ~7 s
-//! once per build and power state.
+//! state. A later launch in the same state uses it at once and measures the first frame's mode
+//! again IN THE BACKGROUND, at the iterations it was saved at, on a thread of its own once the
+//! picture is up and the view is still ([`recheck`]); a reading that no longer holds is measured
+//! again there and replaced. On Eris that takes the check off every launch but the first in a
+//! build and power state.
 
+mod recheck;
 mod saved;
 
-use super::{assemble_ref_fields, pre_switch_probe_representative, recompute_worker};
+pub(crate) use recheck::{overlap_ms, BusyClock, Recheck};
+
+use super::{assemble_ref_fields, pre_switch_probe_representative, recompute_worker, RecomputeInputs};
 use crate::calibration::Costs;
 use crate::power_state::PowerState;
 use crate::{FractadyneApp, FractalKind, RenderMode};
@@ -185,12 +190,228 @@ fn taken_now() -> String {
     crate::sysinfo::local_now().map_or_else(String::new, |(y, mo, d, h, mi, ..)| format!("{y}-{mo:02}-{d:02} {h:02}:{mi:02}"))
 }
 
+/// What a probe pass in one mode needs from the app, taken on the UI thread
+/// ([`FractadyneApp::speed_probe_plan`]): the view, and its reference's inputs (none in direct
+/// mode). The reference itself is built where the passes run ([`plan_request`]).
+pub(crate) struct Plan {
+    mode: RenderMode,
+    vp: Viewport,
+    inputs: Option<RecomputeInputs>,
+}
+
+/// One timed probe pass through `live` (warm-up, then [`REPS`] timed: `render_iter_probe`), the
+/// time it holds the GPU marked on `busy` where one is given ([`BusyClock`]).
+fn timed_pass(
+    dev: &eframe::wgpu::Device,
+    q: &eframe::wgpu::Queue,
+    req: &fractadyne_gpu::ExportRequest,
+    live: &fractadyne_gpu::LiveIterPipeline,
+    busy: Option<&BusyClock>,
+) -> Result<(fractadyne_gpu::ExportResult, Vec<[f64; 2]>), String> {
+    let _held = busy.map(BusyClock::hold);
+    fractadyne_gpu::render_iter_probe(dev, q, req, REPS, live).map_err(|e| e.to_string())
+}
+
+/// One mode's ramp (see the module header) through `live`, from a request [`plan_request`] built
+/// (with the most iterations its reference supports).
+fn ramp(
+    dev: &eframe::wgpu::Device,
+    q: &eframe::wgpu::Queue,
+    live: &fractadyne_gpu::LiveIterPipeline,
+    (req, iters_cap): &mut (fractadyne_gpu::ExportRequest, u32),
+    fast_below: f64,
+    busy: Option<&BusyClock>,
+) -> Result<Finding, String> {
+    let iters_cap = *iters_cap;
+    let px = u64::from(SIDE) * u64::from(SIDE);
+    let mut iters = ITERS_START.min(iters_cap);
+    loop {
+        req.max_iter = iters;
+        let (r, reps) = timed_pass(dev, q, req, live, busy)?;
+        let (running, ok) = pre_switch_probe_representative(&r.pixels, SIDE, SIDE);
+        if !ok {
+            return Err(format!("{:.1}% of pixels ran every step at {iters} (need 98%)", running * 100.0));
+        }
+        let gpu = reps.iter().map(|&t| gpu_ms(t)).fold(f64::NAN, f64::max);
+        let wall = reps.iter().map(|&[_, w]| w).fold(f64::NAN, f64::max);
+        match step(px, iters, gpu, wall, fast_below) {
+            None => return Err(format!("unusable times {reps:?} ms at {iters}")),
+            Some(Step::Done(f)) => return Ok(f),
+            Some(Step::Next(n)) if n > iters && n <= iters_cap => iters = n,
+            Some(Step::Next(_)) => {
+                // The reference stopped short (`partial`): price what was timed.
+                let ms_per_step = gpu / (px as f64 * f64::from(iters));
+                return Ok(Finding::Measured { iters, ms: gpu, wall_ms: wall, ms_per_step });
+            }
+        }
+    }
+}
+
+/// A saved finding's mode measured again at the iterations it was found at: one probe pass, its
+/// cost per step by the GPU's clock ([`gpu_ms`]).
+fn remeasure_at(
+    dev: &eframe::wgpu::Device,
+    q: &eframe::wgpu::Queue,
+    live: &fractadyne_gpu::LiveIterPipeline,
+    (req, iters_cap): &mut (fractadyne_gpu::ExportRequest, u32),
+    saved: Finding,
+    busy: Option<&BusyClock>,
+) -> Result<f64, String> {
+    let iters = match saved {
+        Finding::Measured { iters, .. } | Finding::Fast { iters, .. } => iters,
+    };
+    if iters > *iters_cap {
+        return Err(format!("the reference reaches {iters_cap} iterations, not the saved {iters}"));
+    }
+    req.max_iter = iters;
+    let (r, reps) = timed_pass(dev, q, req, live, busy)?;
+    let (running, ok) = pre_switch_probe_representative(&r.pixels, SIDE, SIDE);
+    if !ok {
+        return Err(format!("{:.1}% of pixels ran every step at {iters} (need 98%)", running * 100.0));
+    }
+    let gpu = reps.iter().map(|&t| gpu_ms(t)).fold(f64::NAN, f64::max);
+    let px = f64::from(SIDE) * f64::from(SIDE);
+    if !(gpu.is_finite() && gpu > 0.0) {
+        return Err(format!("unusable times {reps:?} ms at {iters}"));
+    }
+    Ok(gpu / (px * f64::from(iters)))
+}
+
+/// The log's words for one mode's finding (`took`: how long it took, or `saved`), and whether it
+/// opens the mode's budget (`opens`, [`speed_probe_opens`]).
+fn finding_part(mode: RenderMode, found: &Result<Finding, String>, took: &str, opens: bool) -> String {
+    match found {
+        Ok(Finding::Measured { iters, ms, wall_ms, ms_per_step }) => format!(
+            "{} {ms_per_step:.3e} ms/step ({SIDE}² × {iters}: {ms:.1} ms GPU, {wall_ms:.1} wall; {took}){}",
+            mode_name(mode),
+            if opens {
+                format!(", opens at {:.2e} steps", super::bootstrap_steps(1.0 / ms_per_step, 0.0) as f64)
+            } else {
+                String::new()
+            }
+        ),
+        Ok(Finding::Fast { iters, ms, ms_per_step }) => format!(
+            "{} under {ms_per_step:.2e} ms/step ({SIDE}² × {iters}: {ms:.2} ms GPU; {took}), faster than the defaults",
+            mode_name(mode)
+        ),
+        Err(e) => format!("{} not measured ({e}; {took})", mode_name(mode)),
+    }
+}
+
+/// A measured finding's cost per step where it opens its mode's budget: only where that comes down
+/// from the default (`opening_floor`, [`fast_below`] with no ceiling term). A faster reading would
+/// mark the mode measured and change nothing else, e.g. stop the pre-switch probe.
+fn speed_probe_opens(found: &Result<Finding, String>, opening_floor: f64) -> Option<f64> {
+    match found {
+        Ok(Finding::Measured { ms_per_step, .. }) if *ms_per_step > opening_floor => Some(*ms_per_step),
+        _ => None,
+    }
+}
+
+/// The costs a set of findings lowers the ceiling to (0 = leave the table's): direct's and df32's
+/// measured costs; floatexp has no ceiling.
+fn lowered_costs(found: &[Result<Finding, String>; 3]) -> Costs {
+    let mut lowered = Costs::default();
+    for (mode, f) in MODES.into_iter().zip(found) {
+        if let Ok(Finding::Measured { ms_per_step, .. }) = f {
+            match mode {
+                RenderMode::Direct => lowered.direct = *ms_per_step,
+                RenderMode::Df32Pert => lowered.df32_pert = *ms_per_step,
+                RenderMode::Floatexp => {}
+            }
+        }
+    }
+    lowered
+}
+
+/// The probe's request for `plan`'s mode at the cardioid point, and the most iterations its
+/// reference supports: the reference is built here, on the caller's thread. Mandelbrot whatever the
+/// session shows, plain smooth coloring, nothing that skips steps: BLA, the series skip and the
+/// renormalized step are off.
+fn plan_request(plan: Plan) -> (fractadyne_gpu::ExportRequest, u32) {
+    let Plan { mode, vp, inputs } = plan;
+    let scale = vp.gpu_scale();
+    let mut iters_cap = ITERS_MAX;
+    let fields = match inputs {
+        None => super::RefFields::default(),
+        Some(inputs) => {
+            let res = recompute_worker(inputs);
+            if res.partial {
+                iters_cap = res.orbit_len.saturating_sub(1).max(1);
+            }
+            assemble_ref_fields(&vp, vp.precision, scale.delta_exp, res)
+        }
+    };
+    let (cx, cy) = vp.center_f64();
+    let (cxh, cyh) = (cx as f32, cy as f32);
+    let none = fractadyne_core::SeriesSkip::NONE;
+    let req = fractadyne_gpu::ExportRequest {
+        width: SIDE,
+        height: SIDE,
+        ss: 1,
+        span_mantissa: scale.span_mantissa,
+        center: [cxh, cyh, (cx - f64::from(cxh)) as f32, (cy - f64::from(cyh)) as f32],
+        ref_offset: fields.ref_offset,
+        delta_exp: scale.delta_exp,
+        sa_skip: 0,
+        glitch_on: 0,
+        vignette: Default::default(),
+        sa_a: none.a,
+        sa_a_exp: none.a_exp,
+        sa_b: none.b,
+        sa_b_exp: none.b_exp,
+        sa_c: none.c,
+        sa_c_exp: none.c_exp,
+        rn: fractadyne_gpu::Renorm::default(),
+        rn_bla: std::sync::Arc::new(Vec::new()),
+        map: fractadyne_gpu::StripMap::default(),
+        julia_c: [0.0; 4],
+        orbit: fields.orbit,
+        orbit_len: fields.orbit_len,
+        bla: std::sync::Arc::new(Vec::new()),
+        bla_on: 0,
+        max_iter: ITERS_START,
+        mode: mode.to_u32(),
+        formula: FractalKind::Mandelbrot.formula_id(),
+        custom: None,
+        julia: 0,
+        cycle: 1.0,
+        offset: 0.0,
+        norm_mode: 0,
+        norm_lo: 0.0,
+        palette_fade: fractadyne_gpu::PaletteFade::default(),
+        aa_palette: false,
+        lut: std::sync::Arc::new(Vec::new()),
+        lut_smooth: false,
+        light: 0,
+        light_angle: 0.0,
+        light_height: 0.0,
+        de_on: 0,
+        de_strength: 0.0,
+        de_width: 0.0,
+        de_phase: 0.0,
+        color_method: crate::ColorMethod::Smooth.to_u32(),
+        stripe_freq: 0.0,
+        stripe_tail: false,
+        stripe_tail_len: 0,
+        trap_type: 0,
+        aa_filter: 1,
+        interior_col: [0.0; 4],
+        work_budget: None,
+        pass_ms: None,
+        jitter: [0.0, 0.0],
+        tile_px_max: None,
+    };
+    (req, iters_cap)
+}
+
 impl FractadyneApp {
     /// Run the probe if this card gets one (`STARTUP_PROBE`), record each slow mode's opening rate,
     /// log what it found, and return the costs the ceiling should be lowered to (0 = leave the
     /// table's). `None` = not probed. Called once, on the first frame that has a device, before the
     /// calibration is resolved (`calibration::init_measured`). With `STARTUP_PROBE=1` a saved
-    /// reading for this card and power state is re-checked and used ([`saved`]); 2 always measures.
+    /// reading for this card and power state is used at once and re-checked in the background
+    /// ([`recheck`]); 2 always measures.
     pub(crate) fn startup_speed_probe(&mut self, rs: &eframe::egui_wgpu::RenderState) -> Option<Costs> {
         let setting = crate::tunables::cost().startup_probe;
         let table = crate::calibration::table_entry(&self.gpu_name)?;
@@ -201,7 +422,7 @@ impl FractadyneApp {
         crate::diag::breadcrumb("start-up: the speed probe (one small pass per precision mode)".into());
         let c = crate::tunables::cost();
         let opening_floor = fast_below(0.0, c.tdr_bootstrap_ms, c.tdr_bootstrap_steps);
-        let below = |mode| fast_below(table_cost(table.costs, mode), c.tdr_bootstrap_ms, c.tdr_bootstrap_steps);
+        let below = MODES.map(|mode| fast_below(table_cost(table.costs, mode), c.tdr_bootstrap_ms, c.tdr_bootstrap_steps));
         let info = rs.adapter.get_info();
         let card = saved::Card {
             app: crate::sysinfo::version_string(),
@@ -211,105 +432,65 @@ impl FractadyneApp {
         };
         let power = PowerState::read();
         let dir = if setting == 1 { fractadyne_state::config_dir() } else { None };
-        let mut readings = dir.as_deref().map(saved::load).unwrap_or_default();
-        let mut store = false;
-        // A saved reading for this card in this power state, confirmed by one mode's re-check.
-        let mut from_saved = None;
+        let readings = dir.as_deref().map(saved::load).unwrap_or_default();
+        let live = MODES.map(|m| fractadyne_gpu::live_iter_pipeline(rs, m.to_u32()));
         let mut how = String::new();
-        if let Some(r) = saved::find(&readings, &card, &power) {
-            let findings = r.findings().expect("find returns usable readings only");
-            let mode = self.live_render_mode(self.fractal, false, self.viewport.magnification());
-            let k = MODES.iter().position(|&m| m == mode).unwrap_or(0);
-            let tm = Instant::now();
-            let fresh = self.speed_probe_recheck(rs, MODES[k], findings[k]);
-            let took = tm.elapsed().as_secs_f64() * 1000.0;
-            let was = match findings[k] {
-                Finding::Measured { ms_per_step, .. } => format!("{ms_per_step:.3e}"),
-                Finding::Fast { ms_per_step, .. } => format!("under {ms_per_step:.2e}"),
-            };
-            match fresh {
-                Ok(f) if saved::still_holds(findings[k], f, below(MODES[k])) => {
-                    how = format!(
-                        "saved {}, {} re-checked at {f:.3e} ms/step against {was} ({took:.0} ms)",
-                        if r.taken.is_empty() { "earlier" } else { r.taken.as_str() },
-                        mode_name(MODES[k])
-                    );
-                    from_saved = Some(findings);
-                }
-                Ok(f) => {
-                    how = format!(
-                        "the saved reading no longer holds ({} re-checked at {f:.3e} ms/step against {was}), so every mode is measured again; ",
-                        mode_name(MODES[k])
-                    );
-                    readings = saved::without(&readings, &card, &power);
-                    store = true;
-                }
-                Err(e) => how = format!("the saved reading could not be re-checked ({e}), so every mode is measured again; "),
+        // A saved reading for this card in this power state: used now, re-checked in the background.
+        let saved_hit = saved::find(&readings, &card, &power).cloned();
+        let found: [(Result<Finding, String>, String); 3] = match saved_hit {
+            Some(r) => {
+                let findings = r.findings().expect("find returns usable readings only");
+                let mode = self.live_render_mode(self.fractal, false, self.viewport.magnification());
+                let k = MODES.iter().position(|&m| m == mode).unwrap_or(0);
+                let taken = if r.taken.is_empty() { "earlier".to_string() } else { r.taken.clone() };
+                how = format!(
+                    "saved {taken}, in use; {} is re-checked in the background once the picture is up and the view is still",
+                    mode_name(MODES[k])
+                );
+                self.speed_recheck = Some(Recheck::new(recheck::Saved {
+                    card: card.clone(),
+                    power: power.clone(),
+                    taken,
+                    findings,
+                    k,
+                    below,
+                    opening_floor,
+                    live: live.clone(),
+                    gl: info.backend == eframe::wgpu::Backend::Gl,
+                    adopted_frame: self.perf.frame_idx,
+                }));
+                findings.map(|f| (Ok(f), String::from("saved")))
             }
-        }
-        let mut lowered = Costs::default();
-        let mut parts = Vec::new();
-        let mut measured = Vec::new();
-        for (k, mode) in MODES.into_iter().enumerate() {
-            let (found, took) = match from_saved {
-                Some(f) => (Ok(f[k]), String::from("saved")),
-                None => {
+            None => {
+                let mut out = Vec::new();
+                for (k, mode) in MODES.into_iter().enumerate() {
                     let tm = Instant::now();
-                    let found = self.speed_probe_mode(rs, mode, below(mode));
-                    (found, format!("{:.0} ms", tm.elapsed().as_secs_f64() * 1000.0))
-                }
-            };
-            if let Ok(f) = &found {
-                measured.push(*f);
-            }
-            match found {
-                Ok(Finding::Measured { iters, ms, wall_ms, ms_per_step }) => {
-                    // The opening, only where it would come down (a faster reading would mark the
-                    // mode measured and change nothing else, e.g. stop the pre-switch probe).
-                    let opens = ms_per_step > opening_floor;
-                    if opens {
-                        for v in 0..2 {
-                            self.perf.record_opening_rate(v, mode.to_u32(), 1.0 / ms_per_step);
+                    let found = match &live[k] {
+                        Some(l) => {
+                            let mut req = plan_request(self.speed_probe_plan(mode));
+                            ramp(&rs.device, &rs.queue, l, &mut req, below[k], None)
                         }
-                    }
-                    match mode {
-                        RenderMode::Direct => lowered.direct = ms_per_step,
-                        RenderMode::Df32Pert => lowered.df32_pert = ms_per_step,
-                        RenderMode::Floatexp => {}
-                    }
-                    parts.push(format!(
-                        "{} {ms_per_step:.3e} ms/step ({SIDE}² × {iters}: {ms:.1} ms GPU, {wall_ms:.1} wall; {took}){}",
-                        mode_name(mode),
-                        if opens {
-                            format!(", opens at {:.2e} steps", super::bootstrap_steps(1.0 / ms_per_step, 0.0) as f64)
-                        } else {
-                            String::new()
-                        }
-                    ));
+                        None => Err("the renderer is not installed".to_string()),
+                    };
+                    out.push((found, format!("{:.0} ms", tm.elapsed().as_secs_f64() * 1000.0)));
                 }
-                Ok(Finding::Fast { iters, ms, ms_per_step }) => parts.push(format!(
-                    "{} under {ms_per_step:.2e} ms/step ({SIDE}² × {iters}: {ms:.2} ms GPU; {took}), faster than the defaults",
-                    mode_name(mode)
-                )),
-                Err(e) => parts.push(format!("{} not measured ({e}; {took})", mode_name(mode))),
+                out.try_into().expect("one per mode")
             }
-        }
+        };
+        let parts = self.speed_probe_apply(&found, opening_floor);
+        let from_saved = self.speed_recheck.is_some();
         // Every mode measured: filed for the next launch in this state. A mode that could not be
         // measured saves nothing, so the next launch tries again.
-        if let (None, [d, f, x]) = (from_saved, measured.as_slice()) {
+        if let (false, Some(d), [(Ok(d0), _), (Ok(f), _), (Ok(x), _)]) = (from_saved, &dir, &found) {
             let r = saved::Reading {
                 card: card.clone(),
                 power: power.clone(),
                 taken: taken_now(),
-                direct: saved::SavedFinding::of(*d),
+                direct: saved::SavedFinding::of(*d0),
                 df32: saved::SavedFinding::of(*f),
                 floatexp: saved::SavedFinding::of(*x),
             };
-            readings = saved::with(&readings, r);
-            store = true;
-        }
-        if let (true, Some(d)) = (store, &dir) {
-            match saved::store(d, &readings) {
+            match saved::store(d, &saved::with(&readings, r)) {
                 Ok(()) => how.push_str(&format!("saved to {}", saved::FILE)),
                 Err(e) => how.push_str(&format!("not saved ({e})")),
             }
@@ -326,87 +507,38 @@ impl FractadyneApp {
                 table.source,
                 parts.join("; "),
                 power.line(),
-                if how.is_empty() { String::new() } else { format!("; {}", how.trim_end_matches("; ")) }
+                if how.is_empty() { String::new() } else { format!("; {how}") }
             ),
         );
-        Some(lowered)
+        Some(lowered_costs(&found.map(|(f, _)| f)))
     }
 
-    /// Measure `mode` again at the iterations `saved` was found at: one probe pass (warm-up, then
-    /// [`REPS`] timed), its cost per step by the GPU's clock ([`gpu_ms`]).
-    fn speed_probe_recheck(&self, rs: &eframe::egui_wgpu::RenderState, mode: RenderMode, saved: Finding) -> Result<f64, String> {
-        let live = fractadyne_gpu::live_iter_pipeline(rs, mode.to_u32())
-            .ok_or_else(|| "the renderer is not installed".to_string())?;
-        let (mut req, iters_cap) = self.speed_probe_request(mode);
-        let iters = match saved {
-            Finding::Measured { iters, .. } | Finding::Fast { iters, .. } => iters,
-        };
-        if iters > iters_cap {
-            return Err(format!("the reference reaches {iters_cap} iterations, not the saved {iters}"));
-        }
-        req.max_iter = iters;
-        let (r, reps) = fractadyne_gpu::render_iter_probe(&rs.device, &rs.queue, &req, REPS, &live).map_err(|e| e.to_string())?;
-        let (running, ok) = pre_switch_probe_representative(&r.pixels, SIDE, SIDE);
-        if !ok {
-            return Err(format!("{:.1}% of pixels ran every step at {iters} (need 98%)", running * 100.0));
-        }
-        let gpu = reps.iter().map(|&t| gpu_ms(t)).fold(f64::NAN, f64::max);
-        let px = f64::from(SIDE) * f64::from(SIDE);
-        if !(gpu.is_finite() && gpu > 0.0) {
-            return Err(format!("unusable times {reps:?} ms at {iters}"));
-        }
-        Ok(gpu / (px * f64::from(iters)))
-    }
-
-    /// One mode's ramp (see the module header).
-    fn speed_probe_mode(
-        &self,
-        rs: &eframe::egui_wgpu::RenderState,
-        mode: RenderMode,
-        fast_below: f64,
-    ) -> Result<Finding, String> {
-        let live = fractadyne_gpu::live_iter_pipeline(rs, mode.to_u32())
-            .ok_or_else(|| "the renderer is not installed".to_string())?;
-        let (mut req, iters_cap) = self.speed_probe_request(mode);
-        let px = u64::from(SIDE) * u64::from(SIDE);
-        let mut iters = ITERS_START.min(iters_cap);
-        loop {
-            req.max_iter = iters;
-            let (r, reps) = fractadyne_gpu::render_iter_probe(&rs.device, &rs.queue, &req, REPS, &live)
-                .map_err(|e| e.to_string())?;
-            let (running, ok) = pre_switch_probe_representative(&r.pixels, SIDE, SIDE);
-            if !ok {
-                return Err(format!("{:.1}% of pixels ran every step at {iters} (need 98%)", running * 100.0));
-            }
-            let gpu = reps.iter().map(|&t| gpu_ms(t)).fold(f64::NAN, f64::max);
-            let wall = reps.iter().map(|&[_, w]| w).fold(f64::NAN, f64::max);
-            match step(px, iters, gpu, wall, fast_below) {
-                None => return Err(format!("unusable times {reps:?} ms at {iters}")),
-                Some(Step::Done(f)) => return Ok(f),
-                Some(Step::Next(n)) if n > iters && n <= iters_cap => iters = n,
-                Some(Step::Next(_)) => {
-                    // The reference stopped short (`partial`): price what was timed.
-                    let ms_per_step = gpu / (px as f64 * f64::from(iters));
-                    return Ok(Finding::Measured { iters, ms: gpu, wall_ms: wall, ms_per_step });
+    /// Record the opening rate of each mode `found` measured slow ([`speed_probe_opens`]), in both
+    /// views, and return the log's words for each mode (`found`'s second field: how long it took).
+    fn speed_probe_apply(&mut self, found: &[(Result<Finding, String>, String); 3], opening_floor: f64) -> Vec<String> {
+        let mut parts = Vec::new();
+        for (mode, (f, took)) in MODES.into_iter().zip(found) {
+            let opens = speed_probe_opens(f, opening_floor);
+            if let Some(ms_per_step) = opens {
+                for v in 0..2 {
+                    self.perf.record_opening_rate(v, mode.to_u32(), 1.0 / ms_per_step);
                 }
             }
+            parts.push(finding_part(mode, f, took, opens.is_some()));
         }
+        parts
     }
 
-    /// The probe's request for `mode` at the cardioid point, and the most iterations its reference
-    /// supports. Mandelbrot whatever the session shows, plain smooth coloring, nothing that skips
-    /// steps: BLA, the series skip and the renormalized step are off.
-    fn speed_probe_request(&self, mode: RenderMode) -> (fractadyne_gpu::ExportRequest, u32) {
+    /// What a probe pass in `mode` needs from the app ([`Plan`]): cheap, for the UI thread; the
+    /// reference is built by [`plan_request`], where the passes run.
+    fn speed_probe_plan(&self, mode: RenderMode) -> Plan {
         let mut vp = Viewport::new(f64::from(SIDE), f64::from(SIDE));
         vp.center_x = fractadyne_core::parse_bf(CENTER.0).expect("a decimal literal parses");
         vp.center_y = fractadyne_core::parse_bf(CENTER.1).expect("a decimal literal parses");
         vp.units_per_pixel = fractadyne_core::FloatExp::from_f64(2f64.powi(upp_log2(mode)));
         vp.precision = fractadyne_core::precision_for_magnification(vp.magnification());
-        let scale = vp.gpu_scale();
-        let mut iters_cap = ITERS_MAX;
-        let fields = if mode.is_direct() {
-            super::RefFields::default()
-        } else {
+        let inputs = (!mode.is_direct()).then(|| {
+            let scale = vp.gpu_scale();
             let mut inputs = self.export_reference_inputs(
                 &vp, false, mode, ITERS_MAX, vp.precision, scale.span_mantissa, scale.delta_exp,
             );
@@ -416,73 +548,9 @@ impl FractadyneApp {
             inputs.do_sa = false;
             inputs.bla_dc_max = None;
             inputs.nucleus = false;
-            let res = recompute_worker(inputs);
-            if res.partial {
-                iters_cap = res.orbit_len.saturating_sub(1).max(1);
-            }
-            assemble_ref_fields(&vp, vp.precision, scale.delta_exp, res)
-        };
-        let (cx, cy) = vp.center_f64();
-        let (cxh, cyh) = (cx as f32, cy as f32);
-        let none = fractadyne_core::SeriesSkip::NONE;
-        let req = fractadyne_gpu::ExportRequest {
-            width: SIDE,
-            height: SIDE,
-            ss: 1,
-            span_mantissa: scale.span_mantissa,
-            center: [cxh, cyh, (cx - f64::from(cxh)) as f32, (cy - f64::from(cyh)) as f32],
-            ref_offset: fields.ref_offset,
-            delta_exp: scale.delta_exp,
-            sa_skip: 0,
-            glitch_on: 0,
-            vignette: Default::default(),
-            sa_a: none.a,
-            sa_a_exp: none.a_exp,
-            sa_b: none.b,
-            sa_b_exp: none.b_exp,
-            sa_c: none.c,
-            sa_c_exp: none.c_exp,
-            rn: fractadyne_gpu::Renorm::default(),
-            rn_bla: std::sync::Arc::new(Vec::new()),
-            map: fractadyne_gpu::StripMap::default(),
-            julia_c: [0.0; 4],
-            orbit: fields.orbit,
-            orbit_len: fields.orbit_len,
-            bla: std::sync::Arc::new(Vec::new()),
-            bla_on: 0,
-            max_iter: ITERS_START,
-            mode: mode.to_u32(),
-            formula: FractalKind::Mandelbrot.formula_id(),
-            custom: None,
-            julia: 0,
-            cycle: 1.0,
-            offset: 0.0,
-            norm_mode: 0,
-            norm_lo: 0.0,
-            palette_fade: fractadyne_gpu::PaletteFade::default(),
-            aa_palette: false,
-            lut: std::sync::Arc::new(Vec::new()),
-            lut_smooth: false,
-            light: 0,
-            light_angle: 0.0,
-            light_height: 0.0,
-            de_on: 0,
-            de_strength: 0.0,
-            de_width: 0.0,
-            de_phase: 0.0,
-            color_method: crate::ColorMethod::Smooth.to_u32(),
-            stripe_freq: 0.0,
-            stripe_tail: false,
-            stripe_tail_len: 0,
-            trap_type: 0,
-            aa_filter: 1,
-            interior_col: [0.0; 4],
-            work_budget: None,
-            pass_ms: None,
-            jitter: [0.0, 0.0],
-            tile_px_max: None,
-        };
-        (req, iters_cap)
+            inputs
+        });
+        Plan { mode, vp, inputs }
     }
 }
 

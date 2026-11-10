@@ -5,9 +5,9 @@
 //! card, its driver, this build's shaders, and the machine's power state (`power_state`), so it is
 //! filed under all of them and reused while they all hold.
 //!
-//! **A saved reading is checked, not trusted.** At a launch that finds one, ONE mode is measured
-//! again, at the iterations it was saved at: the mode the first frame renders in, whose shader
-//! compiles at its first draw anyway. A reading that moved more than [`RECHECK_SLACK`] either way
+//! **A saved reading is checked, not trusted.** A launch that finds one uses it at once, and ONE
+//! mode is measured again in the background, at the iterations it was saved at: the mode the first
+//! frame renders in (`super::recheck`). A reading that moved more than [`RECHECK_SLACK`] either way
 //! is dropped and every mode measured again: something the key cannot see changed (the card runs
 //! hot, a power setting not read, another program on the GPU). A slower card must not inherit a
 //! faster reading, and a reading taken while the machine was busy must not cap it for good.

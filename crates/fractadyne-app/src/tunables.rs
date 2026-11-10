@@ -1606,7 +1606,8 @@ pub(crate) const PRE_SWITCH_PROBE_DEFAULT: u64 = 1;
 /// measured worst cost per step where that is slower than the table default. It can only lower
 /// either, and changes nothing on a card faster than the defaults assume. Its reading is saved per
 /// card, driver, build and power state (`speed-checks.toml`, `render::speed_probe::saved`), and a
-/// later launch in the same state re-checks one mode instead of measuring all three. 2 = on every
+/// later launch in the same state uses it at once and re-checks one mode in the background
+/// (`render::speed_probe::recheck`) instead of measuring all three. 2 = on every
 /// card, measured at every launch and never saved (an experiment: a calibrated card's own entry is
 /// the base it may lower). 0 = off, as before.
 ///
