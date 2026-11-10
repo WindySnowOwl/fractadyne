@@ -61,3 +61,34 @@ fn the_hard_floor_bounds_the_window_at_any_rate() {
     assert_eq!(p.open(5_000_000), CHUNK_ABS_MIN, "opening ignored the hard floor");
     assert_eq!(p.next(CHUNK_ABS_MIN, 9_999.0, 5_000_000), CHUNK_ABS_MIN, "next() broke the hard floor");
 }
+
+#[test]
+fn a_slow_cards_cost_prices_the_opening_from_the_tiles_throughput() {
+    // Eris's df32 step, 5.6e-6 ms, over a tile sized for it at the 256-iteration floor.
+    let c = 5.6e-6;
+    let side = card_tile_side(c, CHUNK_ABS_MIN, 1);
+    let samples = u64::from(side) * u64::from(side);
+    let p = ChunkPricer::new().with_card(Some(c), samples);
+    let open = p.open(4_000_000);
+    // One window over the whole tile is about the hot budget at that cost, and not below the floor.
+    assert!(open >= CHUNK_ABS_MIN, "{open}");
+    let wall = c * samples as f64 * f64::from(open);
+    assert!(wall <= CHUNK_HOT_MS * 1.05, "{wall} ms for {open} iterations over {samples} samples");
+    // A fast card's cost changes nothing on a tile the nominal-work budget allows (area x ask
+    // <= 2e10): the RTX 3080's direct step, a 5M-sample tile at a 4,000-iteration ask.
+    assert_eq!(ChunkPricer::new().with_card(Some(4.92e-9), 5_000_000).open(4_000), ChunkPricer::new().open(4_000));
+    assert_eq!(ChunkPricer::new().with_card(None, 4096 * 4096).open(4_000_000), 400_000);
+}
+
+#[test]
+fn the_card_tile_side_holds_a_pass_near_the_hot_budget() {
+    // df32 on Eris, 2x supersampling, the chunk floor: a 3840x5841 export's 2048-px tiles shrink.
+    let side = card_tile_side(5.6e-6, CHUNK_ABS_MIN, 2);
+    assert!((200..600).contains(&side), "{side}");
+    let samples = f64::from(side * 2).powi(2);
+    assert!(samples * 5.6e-6 * f64::from(CHUNK_ABS_MIN) <= CHUNK_HOT_MS * 1.05);
+    // The RTX 3080's df32 cost leaves the 2048-px tile alone.
+    assert!(card_tile_side(2.76e-8, CHUNK_ABS_MIN, 2) >= 2048);
+    // Never under 16 px, however slow.
+    assert_eq!(card_tile_side(1.0, 1_000_000, 4), 16);
+}

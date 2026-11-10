@@ -161,3 +161,19 @@ fn the_cap_has_a_floor_on_a_pathological_card() {
     p.observe(1.0e9, area, 100); // absurdly slow
     assert_eq!(p.cap(area), STEP_MIN_CAP);
 }
+
+#[test]
+fn a_slow_cards_cost_prices_the_first_pass_and_bounds_every_pass() {
+    // Eris's floatexp step, 1.18e-5 ms = 11.8 ns.
+    let p = StepPricer::new().with_card(Some(1.18e-5));
+    let area = 1_000_000u64;
+    let cap = p.cap_for(area, area, true);
+    let wall_ms = 1.18e-5 * area as f64 * f64::from(cap);
+    assert!(wall_ms <= STEP_TARGET_MS * 1.05 || cap == STEP_MIN_CAP, "{cap} steps, {wall_ms} ms");
+    // The ceiling on any pass: no more than the hot budget of steps at that cost.
+    assert!(p.max_px_steps <= CHUNK_HOT_MS / 1.18e-5 + 1.0);
+    // A fast card's cost changes nothing.
+    let fast = StepPricer::new().with_card(Some(1.0e-7));
+    assert_eq!(fast.cap_for(area, area, true), StepPricer::new().cap_for(area, area, true));
+    assert_eq!(StepPricer::new().with_card(None).max_px_steps, STEP_MAX_PX_STEPS);
+}

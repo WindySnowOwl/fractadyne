@@ -2312,7 +2312,7 @@ impl FractadyneApp {
         self.export.task = Some(rx);
         self.export.status = Some(tr!(export_rendering));
         crate::diag::breadcrumb(format!("GUI L-system export → {}", path.display()));
-        self.run_export_work(tx, move || {
+        self.run_export_work(tx, true, move || {
             match job.render(&device, &queue, &progress, &cancel) {
                 Err(_) if cancel.load(Relaxed) => Err(tr!(export_canceled)),
                 Err(e) => Err(tr!(export_failed, error = e.to_string())),
@@ -2369,10 +2369,10 @@ impl FractadyneApp {
         self.export.task = Some(rx);
         self.export.status = Some(tr!(export_rendering));
         crate::diag::breadcrumb(format!("GUI export → {}", path.display()));
-        self.run_export_work(tx, move || {
-            // ⛔On OpenGL this runs on the UI thread, on the window's own device, and no other
-            // card's (`run_export_work`): a second OpenGL context busy beside the window's froze it
-            // for good on Eris.
+        self.run_export_work(tx, false, move || {
+            // On OpenGL no other card's device joins it (Use all graphics cards): more OpenGL
+            // contexts busy beside the window's are what froze it on Eris before its passes were
+            // sized from this card's measured cost (`fractadyne_gpu::set_card_step_ms`).
             //
             // ⭐⭐THE EXPORT RENDERS ON A DEVICE OF ITS OWN, on the window's card. On the window's
             // device, beside the frames the window goes on drawing from the UI thread, a few of
@@ -2385,7 +2385,7 @@ impl FractadyneApp {
             // passes stopped (still 3 of 8). Two threads submitting to one wgpu device is where
             // wgpu has had synchronization hazards (gfx-rs/wgpu#6344). The fallback, should the
             // card refuse a second device, is the window's own, as before.
-            let own = own_card.filter(|_| !gl).and_then(|card| {
+            let own = own_card.and_then(|card| {
                 crate::gpu_worker::open_headless("same", &card, crate::gpu_choice::backends(), "fractadyne.export")
                     .map_err(|e| {
                         crate::diag::log_line(
@@ -2469,25 +2469,24 @@ impl FractadyneApp {
     }
 
     /// Run an export's `work` (render and write; its outcome goes to `tx`, as `export.task`
-    /// expects) on a thread of its own, or ON OPENGL ON THIS ONE, once a notice saying so has been
-    /// on the screen ([`Self::export_on_ui_thread_step`]).
+    /// expects) on a thread of its own, or, where `on_window_device` and the window is on OpenGL,
+    /// ON THIS ONE, once a notice saying so has been on the screen
+    /// ([`Self::export_on_ui_thread_step`]).
     ///
-    /// ⛔Why not on a thread on OpenGL (2026-11-10). On the window's device a thread is out: wgpu's
-    /// OpenGL backend panics when a thread waits more than a second for its context, which a
-    /// driver compiling an export pipeline holds for seconds (`render::speed_probe::recheck`). And
-    /// on a device of its own, a second OpenGL context busy beside the window's, Intel HD Graphics
-    /// 4400's driver deadlocked: the window's next frame waited inside `wgpu_hal::gles::Queue::
-    /// submit` → `ig75icd64.dll` for an event that never came, even after the export had finished
-    /// and written its file (Eris, dev.13-dev.15, `--shot … --export-live`; the stack from the
-    /// watchdog, `diag::hang_stack`). Windows logged no GPU reset. So on OpenGL the export renders
-    /// on the window's own device on the UI thread, as `--render` and `--shot --image` always did
-    /// there: the window stops until it is done, and says so first.
+    /// ⛔Why not on a thread with the window's device on OpenGL (2026-11-10): wgpu's OpenGL backend
+    /// panics when a thread waits more than a second for its context, which a driver compiling an
+    /// export pipeline holds for seconds (`render::speed_probe::recheck`). So an export drawing
+    /// with the window's device (the L-system's) renders on the UI thread there, as `--render` and
+    /// `--shot --image` always did: the window stops until it is done, and says so first. An export
+    /// with a device of its own (the Export dialog's) has its own context and lock, and keeps its
+    /// thread.
     fn run_export_work(
         &mut self,
         tx: std::sync::mpsc::Sender<Result<String, String>>,
+        on_window_device: bool,
         work: impl FnOnce() -> Result<String, String> + Send + 'static,
     ) {
-        if self.window_on_gl() {
+        if on_window_device && self.window_on_gl() {
             self.export.on_ui_thread = Some(OnUiThread { work: Box::new(work), tx, announced: self.perf.frame_idx });
             self.dialogs.export_notice = true;
             crate::diag::log_line("render", "export: on OpenGL it renders on the window's own thread; the window stops until it is done");

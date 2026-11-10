@@ -6671,6 +6671,9 @@ struct FractadyneApp {
     /// The saved start-up speed reading in use, waiting for its background re-check or being
     /// re-checked (`render::speed_probe::recheck`).
     speed_recheck: Option<render::speed_probe::Recheck>,
+    /// The start-up speed check's floatexp reading, for the export's tile sizing
+    /// (`render::speed_probe::tell_export_card_costs`); `None` where the card was not checked.
+    speed_probe_floatexp: Option<render::speed_probe::Finding>,
     /// Dual view: if `Some`, the Julia `c` is pinned to this Mandelbrot point (a marker
     /// is drawn there) instead of following the cursor. Click to pin, click it to release.
     julia_pin: Option<(f64, f64)>,
@@ -7691,6 +7694,7 @@ impl FractadyneApp {
             snap_solve: None,
             pre_switch_job: None,
             speed_recheck: None,
+            speed_probe_floatexp: None,
             julia_pin: None,
             dual: s.dual && fractal.supports_julia(),
             dual_split: s.dual_split.clamp(DUAL_SPLIT_MIN, DUAL_SPLIT_MAX),
@@ -17400,6 +17404,8 @@ impl eframe::App for FractadyneApp {
                 // at that speed and lowers the ceiling where the card is slower than the default.
                 let measured = frame.wgpu_render_state().and_then(|rs| self.startup_speed_probe(rs));
                 let cal = calibration::init_measured(&self.gpu_name, measured);
+                // What a step costs here, for the export's tiles (`fractadyne_gpu::set_card_step_ms`).
+                render::speed_probe::tell_export_card_costs(self.speed_probe_floatexp);
                 let at = |cost: f64| {
                     calibration::ceiling(cost, 1.0, cal.knee_px, u64::MAX)
                         .map_or("none".to_string(), |c| format!("{:.2e}", c as f64))

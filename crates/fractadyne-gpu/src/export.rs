@@ -563,6 +563,45 @@ fn occupancy_tile(by_work: u32, ss: u32) -> u32 {
     by_work.max(OCC_TILE_SAMPLES / ss.max(1))
 }
 
+/// ⭐THE CARD'S MEASURED COST OF ONE PIXEL-STEP, ms, per precision mode (direct, df32, floatexp;
+/// f64 bits, 0 = unknown): the app's start-up speed check and dispatch ceiling
+/// (`set_card_step_ms`). An export sizes its tiles ([`export_plan`]) and the first passes of its
+/// pricers from it, so that on a slow card one pass stays near [`CHUNK_HOT_MS`].
+///
+/// Why (Eris, Intel HD Graphics 4400, OpenGL, 2026-11-10): the export's own sizing assumed a fast
+/// card. The tile is bounded by a nominal-work budget of 2e10 steps (~112 s at that card's 5.6e-6 ms
+/// a df32 step), the chunked iterate's window by a SERIAL cost per iteration and never below
+/// [`CHUNK_ABS_MIN`] iterations, and the step-bounded passes by a 1.5 ns prior and
+/// [`STEP_MAX_PX_STEPS`] (~3.4 s at 5.6 ns). A 3840x5841 2x-supersampled dual export there ran passes
+/// the log priced at 2.7-2.9 s; it came back all black, and the window's next frame then waited in the
+/// driver forever (dev.13-dev.16, `--shot … --export-live`). On a fast card the tile bound is above
+/// every tile the nominal-work budget already allows; the opening window changes only for a tile at
+/// that budget, priced worse than one window can hold (df32 on the RTX 3080: two windows, not one).
+static CARD_STEP_MS: [std::sync::atomic::AtomicU64; 3] =
+    [std::sync::atomic::AtomicU64::new(0), std::sync::atomic::AtomicU64::new(0), std::sync::atomic::AtomicU64::new(0)];
+
+/// Record the card's measured worst cost of one pixel-step in `mode` (0 direct, 1 df32, 2 floatexp),
+/// ms; 0 or anything not finite and positive forgets it.
+pub fn set_card_step_ms(mode: u32, ms: f64) {
+    if let Some(slot) = CARD_STEP_MS.get(mode as usize) {
+        let v = if ms.is_finite() && ms > 0.0 { ms } else { 0.0 };
+        slot.store(v.to_bits(), std::sync::atomic::Ordering::Relaxed);
+    }
+}
+
+/// The card's cost of one pixel-step in `mode`, ms, where the app has measured it.
+pub(crate) fn card_step_ms(mode: u32) -> Option<f64> {
+    let v = f64::from_bits(CARD_STEP_MS.get(mode as usize)?.load(std::sync::atomic::Ordering::Relaxed));
+    (v.is_finite() && v > 0.0).then_some(v)
+}
+
+/// The tile side, output px, at which one pass of `window` iterations over the tile's samples costs
+/// [`CHUNK_HOT_MS`] at `ms_per_step` (at least 16 px).
+pub(crate) fn card_tile_side(ms_per_step: f64, window: u32, ss: u32) -> u32 {
+    let samples = (CHUNK_HOT_MS / (ms_per_step * f64::from(window.max(1)))).max(1.0);
+    ((samples.sqrt() as u32) / ss.max(1)).max(16)
+}
+
 /// The wall a step-bounded pass is sized for, at the worst per-step cost seen so far.
 const STEP_TARGET_MS: f64 = 200.0;
 /// The per-step cost assumed before any pass is measured, ns per active pixel-step: well above the
@@ -613,6 +652,9 @@ pub(crate) struct StepPricer {
     /// Under a pass target: the last pass's cap and wall, which size the next pass of the same
     /// tile ([`Self::cap_for`]).
     last: Option<(u32, f64)>,
+    /// The most pixel-steps one pass may ask: [`STEP_MAX_PX_STEPS`], lower on a card measured slow
+    /// ([`Self::with_card`]).
+    max_px_steps: f64,
 }
 
 /// Passes in the median a pass target prices from ([`StepPricer::recent`]).
@@ -626,7 +668,24 @@ impl StepPricer {
     pub(crate) fn for_pass(pass_ms: Option<f64>) -> Self {
         let target = pass_ms.filter(|m| m.is_finite() && *m > 0.0);
         let target_ms = target.map_or(STEP_TARGET_MS, |m| m.min(STEP_TARGET_MS));
-        Self { worst_ns: STEP_PRIOR_NS, measured: false, target_ms, recent: target.map(|_| Vec::new()), last: None }
+        Self {
+            worst_ns: STEP_PRIOR_NS,
+            measured: false,
+            target_ms,
+            recent: target.map(|_| Vec::new()),
+            last: None,
+            max_px_steps: STEP_MAX_PX_STEPS,
+        }
+    }
+    /// The card's measured cost per pixel-step (`card_step_ms`), where there is one: the first pass
+    /// is priced at it if it is above [`STEP_PRIOR_NS`] (the prior is replaced by the first
+    /// measurement either way), and no pass asks more than [`CHUNK_HOT_MS`] of steps at it.
+    pub(crate) fn with_card(mut self, ms_per_step: Option<f64>) -> Self {
+        if let Some(c) = ms_per_step.filter(|c| c.is_finite() && *c > 0.0) {
+            self.worst_ns = self.worst_ns.max(c * 1.0e6);
+            self.max_px_steps = self.max_px_steps.min(CHUNK_HOT_MS / c);
+        }
+        self
     }
     /// Size passes for `pass_ms` from here on (as [`Self::for_pass`]; a garbage target changes
     /// nothing).
@@ -651,7 +710,7 @@ impl StepPricer {
     }
     /// The step cap for a pass over `area` samples.
     fn cap(&self, area: u64) -> u32 {
-        let px_steps = (self.target_ms * 1.0e6 / self.price_ns()).min(STEP_MAX_PX_STEPS);
+        let px_steps = (self.target_ms * 1.0e6 / self.price_ns()).min(self.max_px_steps);
         (px_steps / area.max(1) as f64).clamp(STEP_MIN_CAP as f64, u32::MAX as f64) as u32
     }
     /// The step cap for the next pass over a tile of `area` samples, `active` of them still
@@ -679,7 +738,7 @@ impl StepPricer {
             return match self.last {
                 Some((cap, wall)) if !fresh && active < STEP_PRICE_MIN_ACTIVE && wall.is_finite() && wall > 0.0 => {
                     let floor = STEP_MIN_CAP as f64;
-                    let ceiling = (STEP_MAX_PX_STEPS / active.max(1) as f64).min(STEP_MAX_FOLLOW_CAP).max(floor);
+                    let ceiling = (self.max_px_steps / active.max(1) as f64).min(STEP_MAX_FOLLOW_CAP).max(floor);
                     (cap as f64 * (self.target_ms / wall).min(2.0)).clamp(floor, ceiling) as u32
                 }
                 _ => self.cap(area),
@@ -691,7 +750,7 @@ impl StepPricer {
                 (cap as f64 * (self.target_ms / wall).min(2.0)).clamp(floor, u32::MAX as f64) as u32
             }
             _ => {
-                let px_steps = (self.target_ms * 1.0e6 / self.price_ns()).min(STEP_MAX_PX_STEPS);
+                let px_steps = (self.target_ms * 1.0e6 / self.price_ns()).min(self.max_px_steps);
                 (px_steps / area.max(1) as f64).clamp(floor, u32::MAX as f64) as u32
             }
         }
@@ -740,6 +799,15 @@ impl ChunkPricer {
             None => (CHUNK_HOT_MS, CHUNK_CHEAP_MS),
         };
         Self { worst_ms_per_iter: 1.0 / CHUNK_SERIAL_FLOOR_IPMS, hot_ms, cheap_ms }
+    }
+    /// The card's measured cost per pixel-step (`card_step_ms`) over a tile of `tile_samples`: one
+    /// iteration of the whole tile costs at least that on a card whose throughput, not one pixel's
+    /// chain, bounds the pass, so the opening window is priced from it where it is the higher.
+    pub(crate) fn with_card(mut self, ms_per_step: Option<f64>, tile_samples: u64) -> Self {
+        if let Some(c) = ms_per_step.filter(|c| c.is_finite() && *c > 0.0) {
+            self.worst_ms_per_iter = self.worst_ms_per_iter.max(c * tile_samples as f64);
+        }
+        self
     }
     /// The window floor for the current worst observed rate. Normally [`CHUNK_MIN_ITERS`], but
     /// when the worst serial rate says that many iters would exceed [`CHUNK_HOT_MS`] it yields
@@ -1500,6 +1568,11 @@ struct ExportPlan {
     state_size: [u32; 2],
 }
 
+/// The samples one tile of `plan` holds (its state's area).
+fn plan_tile_samples(plan: &ExportPlan) -> u64 {
+    u64::from(plan.state_size[0]) * u64::from(plan.state_size[1])
+}
+
 fn export_plan(limits: &wgpu::Limits, req: &ExportRequest, allow_chunking: bool) -> ExportPlan {
     let max_dim = limits.max_texture_dimension_2d;
     let max_buf = limits.max_buffer_size;
@@ -1555,9 +1628,23 @@ fn export_plan(limits: &wgpu::Limits, req: &ExportRequest, allow_chunking: bool)
     // `OCC_TILE_SAMPLES`). Everything else keeps the nominal-work tile, which is its bound.
     let occupancy = chunk_scope && fe && crate::tile_occupancy_on();
     let tile_work = if occupancy { occupancy_tile(by_work, ss) } else { by_work };
+    // The card's own bound (`CARD_STEP_MS`): one pass of the fewest iterations a pass can hold
+    // (a step-bounded pass's floor, a chunk window's floor, or the whole ask where the tile is the
+    // pass) over the tile costs about `CHUNK_HOT_MS` at the card's measured cost per step.
+    let by_card = card_step_ms(req.mode).map_or(u32::MAX, |c| {
+        let window = if occupancy {
+            STEP_MIN_CAP
+        } else if chunk_scope {
+            req.max_iter.min(CHUNK_ABS_MIN)
+        } else {
+            req.max_iter
+        };
+        card_tile_side(c, window, ss)
+    });
     let tile = by_tex
         .min(by_buf)
         .min(tile_work)
+        .min(by_card)
         .min(req.tile_px_max.unwrap_or(u32::MAX))
         .clamp(1, 2048);
     // Step-bounded tiles split the frame into EQUAL rows and columns (see `balanced_extent`), and
@@ -1757,8 +1844,8 @@ impl<'a> TileRenderer<'a> {
             color_pipeline,
             color_bgl,
             chunker,
-            pricer: ChunkPricer::for_pass(req.pass_ms),
-            steps: StepPricer::for_pass(req.pass_ms),
+            pricer: ChunkPricer::for_pass(req.pass_ms).with_card(card_step_ms(req.mode), plan_tile_samples(&plan)),
+            steps: StepPricer::for_pass(req.pass_ms).with_card(card_step_ms(req.mode)),
             running_read,
             iter_uniform,
             color_uniform,
@@ -2595,9 +2682,21 @@ pub fn render_iter_tiled(
     // only the chunked resolve writes a strip's count, fraction and angle.
     let strip = req.map.mode != 0;
     let tile_work = if occupancy { occupancy_tile(by_work, 1) } else { by_work };
+    // The card's own bound, as in `export_plan` (`CARD_STEP_MS`).
+    let by_card = card_step_ms(req.mode).map_or(u32::MAX, |c| {
+        let window = if occupancy {
+            STEP_MIN_CAP
+        } else if chunk_scope {
+            req.max_iter.min(CHUNK_ABS_MIN)
+        } else {
+            req.max_iter
+        };
+        card_tile_side(c, window, 1)
+    });
     let tile = by_tex
         .min(by_buf)
         .min(tile_work)
+        .min(by_card)
         .min(req.tile_px_max.unwrap_or(u32::MAX))
         .clamp(1, 2048);
 
@@ -2626,8 +2725,8 @@ pub fn render_iter_tiled(
     // Lazy for the same reason as `render_export` — and it matters most HERE, since the
     // multi-reference corrector calls this once per pass (up to 64).
     let mut chunker: Option<TileChunker> = None;
-    let mut pricer = ChunkPricer::new();
-    let mut steps = StepPricer::new();
+    let mut pricer = ChunkPricer::new().with_card(card_step_ms(req.mode), u64::from(tile) * u64::from(tile));
+    let mut steps = StepPricer::new().with_card(card_step_ms(req.mode));
     let running_read = make_running_read(device);
     let mut max_dispatch_ms = 0.0f64;
     let mut max_work = 0u64;

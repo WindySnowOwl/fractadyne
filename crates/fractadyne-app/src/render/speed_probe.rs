@@ -106,6 +106,29 @@ pub(crate) enum Finding {
     Fast { iters: u32, ms: f64, ms_per_step: f64 },
 }
 
+impl Finding {
+    /// The cost per step it found: measured, or the upper bound a fast pass gave.
+    pub(crate) fn ms_per_step(&self) -> f64 {
+        match *self {
+            Finding::Measured { ms_per_step, .. } | Finding::Fast { ms_per_step, .. } => ms_per_step,
+        }
+    }
+}
+
+/// Tell the export's tile sizing what a step costs on this card (`fractadyne_gpu::set_card_step_ms`):
+/// direct and df32 at the dispatch ceiling's costs (`calibration::costs_in_force`, the table's or
+/// lower where this card measured slower), floatexp at `floatexp` (the speed check's reading;
+/// `None` leaves it unknown, as on a card with a table entry, which is not checked).
+pub(crate) fn tell_export_card_costs(floatexp: Option<Finding>) {
+    if let Some(c) = crate::calibration::costs_in_force() {
+        fractadyne_gpu::set_card_step_ms(RenderMode::Direct.to_u32(), c.direct);
+        fractadyne_gpu::set_card_step_ms(RenderMode::Df32Pert.to_u32(), c.df32_pert);
+    }
+    if let Some(f) = floatexp {
+        fractadyne_gpu::set_card_step_ms(RenderMode::Floatexp.to_u32(), f.ms_per_step());
+    }
+}
+
 /// The ramp's next move after a timed pass.
 #[derive(Clone, Copy, Debug, PartialEq)]
 pub(crate) enum Step {
@@ -473,6 +496,9 @@ impl FractadyneApp {
             }
         };
         let parts = self.speed_probe_apply(&found, opening_floor);
+        // Floatexp's cost for the export's tiles; direct's and df32's follow once the calibration
+        // is resolved (`main.rs`, `tell_export_card_costs`).
+        self.speed_probe_floatexp = found[2].0.as_ref().ok().copied();
         let from_saved = self.speed_recheck.is_some();
         // Every mode measured: filed for the next launch in this state. A mode that could not be
         // measured saves nothing, so the next launch tries again.
