@@ -51,7 +51,7 @@ param(
 )
 
 $ErrorActionPreference = "Continue"
-$AgentVersion = 38   # 38: carry_config (each run after the first starts with the previous run's config folder, its logs left behind: what one launch saved, the next reads, such as the start-up speed check's speed-checks.toml, 2026-11-10). 37: no Windows crash dialog for the runs (SetErrorMode, inherited): on Windows 10 a crashed run waited on "has stopped working" until someone closed it (Venus, 2026-11-10). 36: --gl-link-bisect and --gl-link-minutes (what in the renderer's shader an OpenGL driver's compiler crashes on, each variant linked by a child process of its own; Eris, 2026-11-09). 35: the RUST_LOG instrument (TARGET=LEVEL pairs, checked; observes only: which shader wgpu's OpenGL backend was compiling when Eris's driver died, 2026-11-09), and a status file's rename is retried while a reader on the share holds it open (a finished request stayed "running"). 34: a request names the machine it is for ("machine", a COMPUTERNAME), so two test machines can poll one share and each takes only its own (a request without one, filed before v34, is any agent's); action app-logs (this machine's own Fractadyne log folder - the sessions its user ran, not the agent's - for the last DAYS days: why the app died on a machine whose user is elsewhere, Eris 2026-11-08); app-logs and events run while the machine is in use (they read files and the event log and open no window); WGPU_BACKEND (vulkan, gl or dx12) as an instrument. 33: --divetest (a tour shipped in the package; the agent names --out and delivers divetest.json), the FRACTADYNE_DIVETEST_GLIDE and FRACTADYNE_NO_PREFETCH instruments (the interactive glide and its no-lookahead baseline), and sample_threads (the run's threads sampled 4 times a second while it runs, into threads.csv: how many are on a core and how many wait for one; observes only) - TODO PR-A5, CPU oversubscription on this machine's 8 threads (2026-11-07). 32: FRACTADYNE_ZOOMTEST_HOME_SHOTS (seconds between window captures of a --zoomtest-home run's Home; observes only), and a --zoomtest run's window captures (home-shot-*.png, click-shot-*.png, up to 1 GB) come back in shots/: what a stepped Home puts on the screen (2026-10-26). 31: a request's view center (center_re/center_im) may be up to 5000 characters, as v22 allows in arguments (it was 400: a view past ~1e400x, such as the 2^1663 Home glide, was refused as "not plain decimals"). 30: --zoomtest-home [REST_S] and --zoomtest-quiet S (the toolbar Home glide after the start view rests: the zoom-out from extreme depth, 2026-10-26). 29: --live-panel (the live-render front panel at a size, off|strip|panel|full: its cost on this card) and --zoomtest-gate (the zoom harness's own verdict, smooth|appetite). 28: a battery's regime step (W9) is read into the status detail. 27: --soak-location (a package view file: W9's regime rungs soak validation/field/*.fdn). 26: an accelerated battery takes the standard package's gpu-validate-expected.json and dive-capture too (it could not judge itself, and skipped the screen step). 25: --formula and --formula-params (a custom formula written without spaces, z=z^3+c; its parameters re,im;re,im). 24: record_decide (a harness request may ask its runs to record their lifted live decisions, FRACTADYNE_RECORD_DECIDE, into a file in each run's own folder; delivered as decide.jsonl, up to 2 GB; observes only, the path is the agent's, never the request's). 23: an explicitly named DEV build (vX.Y.Z-beta.N.dev.M, a test build published under its own tag) is accepted; "latest" still skips them. 22: coordinates up to 5000 characters (a 6.8e3999 view's center has 4031 digits). 21: a --render's image comes back (PNGs the run wrote in its folder, up to 1 GB each): a still split across this machine's cards with --gpus (design/multi-gpu.md Phase 2) is checked against each card alone. 20: frames delivered up to 4 GB (a 30 fps tour at 1280x720 is about 2 GB). 19: --render-tour (a tour shipped in the package; the agent names --out and delivers the frames up to 1 GB, the folder's farm state and the local client's logs), --gpus (design/multi-gpu.md Phase 1: a tour on every graphics card through a farm on this machine), --fps, --ss and -y. 18: --shot (a location, captured once its supersampling converges; the agent names --out and delivers shot.png), --list-adapters, --adapter and --worker-gpu (design/multi-gpu-live.md L2: a second GPU in the live view). 17: farm-client "adapters" (--adapters: all of this machine's GPUs, or some, each its own session) and a 24 h ceiling (a long tour render; was 4 h). 16: farm-client "discover": first run --discover from the package and return what answered this machine's broadcast (the farm's network discovery). 15: farm-client in share mode (request "share": the client writes its frames to this agent's share). 14: farm-client (one render-farm job as a client of a controller) and --farmtest. 13: the FRACTADYNE_TRACE instrument, one category by name (observes only; the live-refresh verdicts on AMD). 12: --no-bla (the step-bounded worst case: every mode-2 step a full floatexp step). 2: screens; "used during run" only with the idle wait on. 3: request "view"; self-update. 4: request "env" (instruments); --soak-depth session. 5: --zoomtest-location session, --zoomtest-taps, --zoomtest-hold, --window (W9 motion rung). 6: the battery's screen step in the status. 7: the FRACTADYNE_PASS_CLOCK instrument. 8: FRACTADYNE_SEED_BUDGET. 9: recover jobs orphaned by a hang or reboot. 10: --tail-audit / --glitch-audit (headless, write no file; send with --render); coordinates up to 2000 characters (a 1e1105 view's center has 1141 digits). 11: plain --render as a mode (the [fd-perf] step counters; the image stays in the local run folder)
+$AgentVersion = 39   # 39: --uitest (the UI walk; the agent names its folder and delivers the bundle, up to 1 GB) with the FRACTADYNE_UITEST_ONLY instrument (which steps, by name), --export-live for --shot (the Export dialog's own route while the live view draws; the agent names the file and delivers it), and --benchmark-std with --res, --depth, --burnin and --ultra (the standardized benchmark, comparable across machines; its report comes back): whether a custom formula's background compile and a live export survive OpenGL's one-second context lock on Eris, and the machines' benchmark (2026-11-10). 38: carry_config (each run after the first starts with the previous run's config folder, its logs left behind: what one launch saved, the next reads, such as the start-up speed check's speed-checks.toml, 2026-11-10). 37: no Windows crash dialog for the runs (SetErrorMode, inherited): on Windows 10 a crashed run waited on "has stopped working" until someone closed it (Venus, 2026-11-10). 36: --gl-link-bisect and --gl-link-minutes (what in the renderer's shader an OpenGL driver's compiler crashes on, each variant linked by a child process of its own; Eris, 2026-11-09). 35: the RUST_LOG instrument (TARGET=LEVEL pairs, checked; observes only: which shader wgpu's OpenGL backend was compiling when Eris's driver died, 2026-11-09), and a status file's rename is retried while a reader on the share holds it open (a finished request stayed "running"). 34: a request names the machine it is for ("machine", a COMPUTERNAME), so two test machines can poll one share and each takes only its own (a request without one, filed before v34, is any agent's); action app-logs (this machine's own Fractadyne log folder - the sessions its user ran, not the agent's - for the last DAYS days: why the app died on a machine whose user is elsewhere, Eris 2026-11-08); app-logs and events run while the machine is in use (they read files and the event log and open no window); WGPU_BACKEND (vulkan, gl or dx12) as an instrument. 33: --divetest (a tour shipped in the package; the agent names --out and delivers divetest.json), the FRACTADYNE_DIVETEST_GLIDE and FRACTADYNE_NO_PREFETCH instruments (the interactive glide and its no-lookahead baseline), and sample_threads (the run's threads sampled 4 times a second while it runs, into threads.csv: how many are on a core and how many wait for one; observes only) - TODO PR-A5, CPU oversubscription on this machine's 8 threads (2026-11-07). 32: FRACTADYNE_ZOOMTEST_HOME_SHOTS (seconds between window captures of a --zoomtest-home run's Home; observes only), and a --zoomtest run's window captures (home-shot-*.png, click-shot-*.png, up to 1 GB) come back in shots/: what a stepped Home puts on the screen (2026-10-26). 31: a request's view center (center_re/center_im) may be up to 5000 characters, as v22 allows in arguments (it was 400: a view past ~1e400x, such as the 2^1663 Home glide, was refused as "not plain decimals"). 30: --zoomtest-home [REST_S] and --zoomtest-quiet S (the toolbar Home glide after the start view rests: the zoom-out from extreme depth, 2026-10-26). 29: --live-panel (the live-render front panel at a size, off|strip|panel|full: its cost on this card) and --zoomtest-gate (the zoom harness's own verdict, smooth|appetite). 28: a battery's regime step (W9) is read into the status detail. 27: --soak-location (a package view file: W9's regime rungs soak validation/field/*.fdn). 26: an accelerated battery takes the standard package's gpu-validate-expected.json and dive-capture too (it could not judge itself, and skipped the screen step). 25: --formula and --formula-params (a custom formula written without spaces, z=z^3+c; its parameters re,im;re,im). 24: record_decide (a harness request may ask its runs to record their lifted live decisions, FRACTADYNE_RECORD_DECIDE, into a file in each run's own folder; delivered as decide.jsonl, up to 2 GB; observes only, the path is the agent's, never the request's). 23: an explicitly named DEV build (vX.Y.Z-beta.N.dev.M, a test build published under its own tag) is accepted; "latest" still skips them. 22: coordinates up to 5000 characters (a 6.8e3999 view's center has 4031 digits). 21: a --render's image comes back (PNGs the run wrote in its folder, up to 1 GB each): a still split across this machine's cards with --gpus (design/multi-gpu.md Phase 2) is checked against each card alone. 20: frames delivered up to 4 GB (a 30 fps tour at 1280x720 is about 2 GB). 19: --render-tour (a tour shipped in the package; the agent names --out and delivers the frames up to 1 GB, the folder's farm state and the local client's logs), --gpus (design/multi-gpu.md Phase 1: a tour on every graphics card through a farm on this machine), --fps, --ss and -y. 18: --shot (a location, captured once its supersampling converges; the agent names --out and delivers shot.png), --list-adapters, --adapter and --worker-gpu (design/multi-gpu-live.md L2: a second GPU in the live view). 17: farm-client "adapters" (--adapters: all of this machine's GPUs, or some, each its own session) and a 24 h ceiling (a long tour render; was 4 h). 16: farm-client "discover": first run --discover from the package and return what answered this machine's broadcast (the farm's network discovery). 15: farm-client in share mode (request "share": the client writes its frames to this agent's share). 14: farm-client (one render-farm job as a client of a controller) and --farmtest. 13: the FRACTADYNE_TRACE instrument, one category by name (observes only; the live-refresh verdicts on AMD). 12: --no-bla (the step-bounded worst case: every mode-2 step a full floatexp step). 2: screens; "used during run" only with the idle wait on. 3: request "view"; self-update. 4: request "env" (instruments); --soak-depth session. 5: --zoomtest-location session, --zoomtest-taps, --zoomtest-hold, --window (W9 motion rung). 6: the battery's screen step in the status. 7: the FRACTADYNE_PASS_CLOCK instrument. 8: FRACTADYNE_SEED_BUDGET. 9: recover jobs orphaned by a hang or reboot. 10: --tail-audit / --glitch-audit (headless, write no file; send with --render); coordinates up to 2000 characters (a 1e1105 view's center has 1141 digits). 11: plain --render as a mode (the [fd-perf] step counters; the image stays in the local run folder)
 $PollSeconds = 30
 $Home_ = Split-Path -Parent $MyInvocation.MyCommand.Path
 $Cache = Join-Path $Home_ "cache"
@@ -304,7 +304,7 @@ function Get-Package([string]$tag, [string]$package) {
 # --- the harness allow-list -------------------------------------------------------------------------
 # flag -> the values it takes. "?x" = optional. Values never contain spaces or quotes, and a file is
 # only ever one shipped inside the package.
-$Modes = @("--recordtest", "--zoomtest", "--motiontest", "--gputest", "--selftest", "--bench-matrix", "--livetest", "--chunk-sweep", "--soak", "--tail-audit", "--glitch-audit", "--render", "--farmtest", "--shot", "--list-adapters", "--render-tour", "--divetest", "--gl-link-bisect")
+$Modes = @("--recordtest", "--zoomtest", "--motiontest", "--gputest", "--selftest", "--bench-matrix", "--livetest", "--chunk-sweep", "--soak", "--tail-audit", "--glitch-audit", "--render", "--farmtest", "--shot", "--list-adapters", "--render-tour", "--divetest", "--gl-link-bisect", "--uitest", "--benchmark-std")
 $Allowed = @{
     # The audits render a view (--center/--zoom-log2/--iter/--size) twice and check the pixels that
     # differ against the arbitrary-precision oracle; they print a verdict and write no file. Send them
@@ -360,6 +360,15 @@ $Allowed = @{
     # increasing depths (report only). The agent adds --out and delivers divetest.json.
     # FRACTADYNE_DIVETEST_GLIDE (an instrument) drives it as the interactive glide.
     "--divetest" = @("pkgfile")
+    # v39: the UI walk (every screen, or the steps FRACTADYNE_UITEST_ONLY names), screenshotting
+    # each: the agent adds its folder, in the run's local folder, and delivers the bundle (report.md,
+    # report.json, log.txt, the screenshots; up to 1 GB). --export-live, only with --shot, writes the
+    # view's export by the Export dialog's own route while the live view goes on drawing: the agent
+    # adds the file, in the run's local folder, and delivers it. --benchmark-std is the standardized
+    # benchmark (pinned settings, comparable across machines; --ultra = --depth ultra); its report
+    # is in the output and comes back as fractadyne_benchmark.txt.
+    "--uitest" = @(); "--export-live" = @()
+    "--benchmark-std" = @(); "--res" = @("res"); "--depth" = @("benchdepth"); "--burnin" = @("int"); "--ultra" = @()
 }
 $ValuePattern = @{
     "int" = '^[0-9]{1,9}$'; "num" = '^[-+0-9.eE]{1,5000}$'; "word" = '^[A-Za-z0-9_.-]{1,64}$'
@@ -377,6 +386,7 @@ $ValuePattern = @{
     "formula" = '^[A-Za-z0-9_.+*/^(),=|<>!&:-]{1,500}$'
     # re,im;re,im;... (up to five pairs)
     "fparams" = '^[-+0-9.eE,;]{1,200}$'
+    "res" = '^(720p|1080p|4k|5k)$'; "benchdepth" = '^(standard|ultra)$'
 }
 
 # Validate and resolve a harness argument list. Package files become absolute paths.
@@ -410,6 +420,7 @@ function Resolve-HarnessArgs([string[]]$argv, [string]$pkgRoot) {
     # An audit is sent WITH --render (see $Allowed): the pair is one mode.
     if (($out -contains "--render") -and (($out -contains "--tail-audit") -or ($out -contains "--glitch-audit"))) { $modeCount-- }
     if ($modeCount -ne 1) { Stop-Refused "exactly one harness mode is required, one of: $($Modes -join ' ')" }
+    if (($out -contains "--export-live") -and -not ($out -contains "--shot")) { Stop-Refused "--export-live is a --shot option" }
     return , $out
 }
 
@@ -518,7 +529,9 @@ function New-ViewSession($r) {
 # level one of $RustLogLevels. Nothing else: no spaces, no '/' filter, no other characters. Eris,
 # 2026-11-09: OpenGL died with an access violation 7 s into start-up, and only wgpu_hal's debug
 # log says which shader it was compiling.
-$InstrumentEnv = @("FRACTADYNE_REF_ESCAPE_AT", "FRACTADYNE_BLA_DROP_FRAMES", "FRACTADYNE_PASS_CLOCK", "FRACTADYNE_SEED_BUDGET", "FRACTADYNE_TRACE", "FRACTADYNE_ZOOMTEST_HOME_SHOTS", "FRACTADYNE_DIVETEST_GLIDE", "FRACTADYNE_NO_PREFETCH", "WGPU_BACKEND", "RUST_LOG")
+# (v39) FRACTADYNE_UITEST_ONLY, which steps of a --uitest walk run: names or parts of names,
+# comma-separated, lower case, digits and hyphens (formula-apply-async).
+$InstrumentEnv = @("FRACTADYNE_REF_ESCAPE_AT", "FRACTADYNE_BLA_DROP_FRAMES", "FRACTADYNE_PASS_CLOCK", "FRACTADYNE_SEED_BUDGET", "FRACTADYNE_TRACE", "FRACTADYNE_ZOOMTEST_HOME_SHOTS", "FRACTADYNE_DIVETEST_GLIDE", "FRACTADYNE_NO_PREFETCH", "WGPU_BACKEND", "RUST_LOG", "FRACTADYNE_UITEST_ONLY")
 $TraceCats = @("live", "gpu", "tile", "glide", "ref", "req", "idle")
 $RustLogLevels = @("off", "error", "warn", "info", "debug", "trace")
 
@@ -550,6 +563,9 @@ function Get-RequestEnv($r) {
         }
         elseif ($p.Name -eq "WGPU_BACKEND") {
             if (@("vulkan", "gl", "dx12") -cnotcontains [string]$p.Value) { Stop-Refused "env WGPU_BACKEND must be vulkan, gl or dx12" }
+        }
+        elseif ($p.Name -eq "FRACTADYNE_UITEST_ONLY") {
+            if ([string]$p.Value -cnotmatch '^[a-z0-9-]{1,40}(,[a-z0-9-]{1,40}){0,15}$') { Stop-Refused "env FRACTADYNE_UITEST_ONLY must be step names, comma-separated (lower case, digits and hyphens)" }
         }
         elseif ($p.Name -eq "RUST_LOG") {
             if (-not (Test-RustLog ([string]$p.Value))) { Stop-Refused "env RUST_LOG must be TARGET=LEVEL, TARGET or LEVEL, comma-separated (a target like wgpu_hal::gles, a level one of: $($RustLogLevels -join ', '))" }
@@ -613,6 +629,14 @@ function Invoke-Harness($r, [string]$dir, $status) {
             # v33: a divetest's report likewise.
             $diveJson = Join-Path $local "divetest.json"
             if ($resolved -contains "--divetest") { $resolved += @("--out", $diveJson) }
+            # v39: a UI walk's folder and a live export's file likewise: each right after its flag.
+            $uitestDir = Join-Path $local "uitest"
+            $exportLive = Join-Path $local "export-live.png"
+            $resolved = @(foreach ($a in $resolved) {
+                $a
+                if ($a -ceq "--uitest") { $uitestDir }
+                elseif ($a -ceq "--export-live") { $exportLive }
+            })
             $threadsCsv = if ($sampleThreads) { Join-Path $local "threads.csv" } else { "" }
             $status.detail = "$name of $($repeat * $tags.Count): fractadyne $($argv -join ' ')"
             Write-JsonFile (Join-Path $dir "status.json") $status
@@ -644,6 +668,15 @@ function Invoke-Harness($r, [string]$dir, $status) {
             }
             if (Test-Path -LiteralPath $shotPng) { Copy-Item -LiteralPath $shotPng -Destination $to -Force }
             foreach ($f in @($diveJson, $threadsCsv)) { if ($f -and (Test-Path -LiteralPath $f)) { Copy-Item -LiteralPath $f -Destination $to -Force } }
+            # v39: a live export's file, a benchmark's report and a UI walk's bundle.
+            foreach ($f in @($exportLive, (Join-Path $local "fractadyne_benchmark.txt"))) {
+                if ((Test-Path -LiteralPath $f) -and (Get-Item -LiteralPath $f).Length -le 1GB) { Copy-Item -LiteralPath $f -Destination $to -Force }
+            }
+            if (Test-Path -LiteralPath $uitestDir) {
+                $uiBytes = (Get-ChildItem -LiteralPath $uitestDir -Recurse -File -ErrorAction SilentlyContinue | Measure-Object -Property Length -Sum).Sum
+                if ($uiBytes -le 1GB) { Copy-Item -LiteralPath $uitestDir -Destination $to -Recurse -Force -ErrorAction SilentlyContinue }
+                else { "uitest: $uiBytes bytes, over 1 GB, not copied" | Out-File (Join-Path $to "uitest-not-copied.txt") -Encoding utf8 }
+            }
             # v32: a --zoomtest run's window captures (FRACTADYNE_ZOOMTEST_HOME_SHOTS / _CLICK_SHOTS), into shots/.
             if ($resolved -contains "--zoomtest") {
                 $caps = @(Get-ChildItem -LiteralPath $local -File -ErrorAction SilentlyContinue | Where-Object { $_.Name -match '^(home|click)-shot-[0-9]+-f[0-9]+\.png$' })

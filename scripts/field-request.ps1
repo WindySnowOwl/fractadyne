@@ -202,6 +202,12 @@ switch ($Action) {
                 if ($pair -cmatch '^\s*(FRACTADYNE_ZOOMTEST_HOME_SHOTS)=([0-9]{1,3}(\.[0-9]{1,3})?)\s*$') { $req.env[$Matches[1]] = $Matches[2]; continue }
                 # The zoom rate a --divetest glides at (agent v33), a decimal: kept as text.
                 if ($pair -cmatch '^\s*(FRACTADYNE_DIVETEST_GLIDE)=([0-9]{1,3}(\.[0-9]{1,3})?)\s*$') { $req.env[$Matches[1]] = $Matches[2]; continue }
+                # (agent v39) which steps of a --uitest walk run; ONE step name per -Instrument entry,
+                # as the entries are split on commas (the agent takes up to 16, comma-separated).
+                if ($pair -cmatch '^\s*(FRACTADYNE_UITEST_ONLY)=([a-z0-9-]{1,40})\s*$') {
+                    $req.env[$Matches[1]] = if ($req.env.Contains($Matches[1])) { "$($req.env[$Matches[1]]),$($Matches[2])" } else { $Matches[2] }
+                    continue
+                }
                 # The graphics API the app opens (agent v34).
                 if ($pair -cmatch '^\s*(WGPU_BACKEND)=(vulkan|gl|dx12)\s*$') { $req.env[$Matches[1]] = $Matches[2]; continue }
                 if ($pair -notmatch '^\s*([A-Z_]+)=([0-9]+)\s*$') { throw "bad -Instrument entry '$pair' (NAME=N, or FRACTADYNE_TRACE=category)" }
