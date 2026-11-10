@@ -98,6 +98,7 @@ mod scripting;
 mod session_outcome;
 mod machine;
 mod palette_preview;
+mod power_state;
 mod sysinfo;
 mod theme;
 mod tone;

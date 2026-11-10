@@ -81,8 +81,13 @@ Changes after 0.3.0-beta.1:
   work it hands the GPU at once, from what the card measured. On that laptop the first frame now
   asks for about 50 times less work. The check can only lower these limits, so a fast card keeps
   them as they were; it takes about 0.2 s at start-up there, and about 7 s on the Intel laptop,
-  where most of that time is its driver compiling shaders the first time they draw.
-  `--set STARTUP_PROBE=0` turns it off.
+  where most of that time is its driver compiling shaders the first time they draw. The result is
+  saved for each graphics card, driver and power state (plugged in or on battery, battery saver,
+  the power plan and power mode, and the processor's clock limit), so the full check runs once per
+  version and state. A later launch in the same state measures only one mode again to confirm the
+  saved result, and measures everything again if it has moved. `--set STARTUP_PROBE=0` turns the
+  check off; deleting `speed-checks.toml` in the settings folder makes the next launch measure
+  again.
 - **Fractadyne starts on older Intel graphics (0.3.0-beta.27).** On an Intel HD Graphics 4400 (a
   2014 laptop whose only graphics API is OpenGL), the graphics driver crashed every time while it
   compiled Fractadyne's main shader, on the newest driver the card has too. That driver's compiler
