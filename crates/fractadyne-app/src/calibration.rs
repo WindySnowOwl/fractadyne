@@ -187,13 +187,50 @@ fn custom_factor() -> f64 {
     if v.is_finite() && v >= 1.0 { v } else { 3.0 }
 }
 
+/// What the table gives `adapter` (its own entry, or the default), without resolving it for the
+/// run: the start-up speed probe reads it to know whether the card was measured and what its
+/// measurement would have to beat. `None` when the table does not parse.
+pub(crate) fn table_entry(adapter: &str) -> Option<Calibration> {
+    parse(TABLE).ok().map(|t| lookup(&t, adapter))
+}
+
+/// Each of `table`'s per-step costs, raised to `measured`'s where the card measured SLOWER (a
+/// higher cost is a lower ceiling), and whether any was. A measured term that is 0 or not finite
+/// says nothing and leaves the table's. Never lowers a cost, so it can never raise a ceiling: the
+/// start-up probe's reading is a bound for safety, not the cost model (MEM-16;
+/// design/live-render-robustness.md §5.2).
+pub(crate) fn slower_of(table: Costs, measured: Costs) -> (Costs, bool) {
+    let pick = |t: f64, m: f64| if m.is_finite() && m > t { (m, true) } else { (t, false) };
+    let (df32_pert, a) = pick(table.df32_pert, measured.df32_pert);
+    let (direct, b) = pick(table.direct, measured.direct);
+    (Costs { df32_pert, direct }, a || b)
+}
+
 /// Resolve the running adapter's calibration, once. Returns it for the log. A table that does not
 /// parse is a build defect (it is compiled in and tested), so it degrades to NO ceiling rather than
 /// a guess, and says so.
 pub(crate) fn init(adapter: &str) -> &'static Calibration {
+    init_measured(adapter, None)
+}
+
+/// [`init`], with the start-up speed probe's measurement of this card (`render::speed_probe`): the
+/// table's costs raised to the measured ones where the card measured slower ([`slower_of`]), so its
+/// ceiling only comes down. `None` = nothing measured. Once resolved, a later call returns what was
+/// resolved and ignores what it is given.
+pub(crate) fn init_measured(adapter: &str, measured: Option<Costs>) -> &'static Calibration {
     &ACTIVE
         .get_or_init(|| match parse(TABLE) {
-            Ok(t) => Active { cal: lookup(&t, adapter), factors: t.formula, adapter: adapter.to_string() },
+            Ok(t) => {
+                let mut cal = lookup(&t, adapter);
+                if let Some(m) = measured {
+                    let (costs, slower) = slower_of(cal.costs, m);
+                    if slower {
+                        cal.costs = costs;
+                        cal.source = format!("{}, lowered to this card's start-up measurement", cal.source);
+                    }
+                }
+                Active { cal, factors: t.formula, adapter: adapter.to_string() }
+            }
             Err(e) => Active {
                 cal: Calibration {
                     costs: Costs::default(),

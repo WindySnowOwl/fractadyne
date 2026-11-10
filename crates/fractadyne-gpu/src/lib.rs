@@ -4747,6 +4747,23 @@ impl PreparedCustom {
     }
 }
 
+/// The live renderer's whole-frame iterate pipeline for one precision mode, lent with the bind-group
+/// layout it was built against, so the start-up speed probe can time passes through it
+/// ([`render_iter_probe`]) instead of compiling its own.
+#[derive(Clone)]
+pub struct LiveIterPipeline {
+    pub(crate) pipeline: wgpu::RenderPipeline,
+    pub(crate) iter_bgl: wgpu::BindGroupLayout,
+}
+
+/// [`LiveIterPipeline`] for `mode` (the half that serves it where the pipelines are split by
+/// precision mode, `iter_split`); `None` before the renderer is installed.
+pub fn live_iter_pipeline(render_state: &egui_wgpu::RenderState, mode: u32) -> Option<LiveIterPipeline> {
+    let guard = render_state.renderer.read();
+    let r = guard.callback_resources.get::<Renderer>()?;
+    Some(LiveIterPipeline { pipeline: r.iter_pipeline.for_mode(mode).clone(), iter_bgl: r.iter_bgl.clone() })
+}
+
 /// Compile `shader`'s pipelines on a worker thread, against the live renderer's own bind-group
 /// layouts, and deliver them on the returned channel. The render thread otherwise builds them on
 /// the first frame that draws the formula — ~0.8 s on the RTX 3080 before mode 2 (`fs_iterate`,

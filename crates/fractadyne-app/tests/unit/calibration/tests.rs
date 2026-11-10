@@ -178,3 +178,36 @@ fn floatexp_has_no_ceiling_and_the_other_modes_do() {
             < ceiling_for(RenderMode::Direct, FractalKind::Mandelbrot, 4_000_000)
     );
 }
+
+/// The start-up probe's measurement can only RAISE a cost (lower a ceiling): a slower term wins, a
+/// faster one, a zero or a non-finite one leaves the table's, and the flag says whether anything
+/// moved.
+#[test]
+fn a_measurement_only_ever_lowers_a_ceiling() {
+    let table = Costs { df32_pert: 9.9e-8, direct: 1.92e-8 };
+    // Intel HD Graphics 4400 (2026-11-10): direct ~5.0e-6 ms/step, ~260× the default.
+    let (c, slower) = slower_of(table, Costs { df32_pert: 0.0, direct: 5.0e-6 });
+    assert!(slower);
+    assert_eq!(c, Costs { df32_pert: 9.9e-8, direct: 5.0e-6 });
+    // A faster card changes nothing.
+    assert_eq!(slower_of(table, Costs { df32_pert: 2.76e-8, direct: 4.92e-9 }), (table, false));
+    // Nothing measured, or nonsense, says nothing.
+    assert_eq!(slower_of(table, Costs::default()), (table, false));
+    assert_eq!(slower_of(table, Costs { df32_pert: f64::NAN, direct: f64::INFINITY }), (table, false));
+    // A table term with no ceiling (0) takes a measured one: a ceiling where there was none.
+    let (c, slower) = slower_of(Costs { df32_pert: 0.0, direct: 1.92e-8 }, Costs { df32_pert: 1e-6, direct: 0.0 });
+    assert!(slower);
+    assert_eq!(c.df32_pert, 1e-6);
+}
+
+/// An adapter the table does not list reads as the default and not its own entry; a listed one as
+/// its own. The probe gates on this before anything is resolved.
+#[test]
+fn the_table_entry_says_whether_a_card_was_measured() {
+    let listed = table_entry("NVIDIA GeForce RTX 3080").expect("the table parses");
+    assert!(listed.own_entry);
+    let unlisted = table_entry("Intel(R) HD Graphics 4400").expect("the table parses");
+    assert!(!unlisted.own_entry);
+    assert!(unlisted.source.starts_with("default"));
+    assert!(unlisted.costs.direct > 0.0 && unlisted.costs.df32_pert > 0.0);
+}

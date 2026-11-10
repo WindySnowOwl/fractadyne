@@ -3503,7 +3503,7 @@ pub fn render_iter(
     queue: &wgpu::Queue,
     req: &ExportRequest,
 ) -> Result<ExportResult, GpuError> {
-    render_iter_passes(device, queue, req, None, None)
+    render_iter_passes(device, queue, req, None, None, None)
 }
 
 /// [`render_iter`], warmed and timed: the pass once untimed, then `reps` times, each in a submission
@@ -3521,7 +3521,29 @@ pub fn render_iter_timed(
     reps: u32,
 ) -> Result<(ExportResult, Vec<[f64; 2]>), GpuError> {
     let mut out = Vec::new();
-    let r = render_iter_passes(device, queue, req, None, Some((reps, &mut out)))?;
+    let r = render_iter_passes(device, queue, req, None, Some((reps, &mut out)), None)?;
+    Ok((r, out))
+}
+
+/// [`render_iter_timed`] for the start-up speed probe: through the live renderer's own iterate
+/// pipeline (`live`, from [`crate::live_iter_pipeline`]), so nothing compiles, and with the
+/// exact-repeat check OFF for these passes alone, so every interior pixel runs every step.
+///
+/// ⚠Both matter on a slow card. A compile of the iterate shader took 12–26 s on OpenGL on Intel HD
+/// Graphics 4400 (2026-11-09), every launch, which a probe of its own would add to start-up; and
+/// with the check on, an all-interior view stops each pixel once its orbit repeats bit for bit
+/// (~24 steps at the calibration views), so the pass would time a fraction of the steps it is
+/// charged for and read the card as faster than it is: the wrong side for a safety measurement.
+/// The check stays on for every other dispatch (it is per pass here, not the process-wide switch).
+pub fn render_iter_probe(
+    device: &wgpu::Device,
+    queue: &wgpu::Queue,
+    req: &ExportRequest,
+    reps: u32,
+    live: &crate::LiveIterPipeline,
+) -> Result<(ExportResult, Vec<[f64; 2]>), GpuError> {
+    let mut out = Vec::new();
+    let r = render_iter_passes(device, queue, req, None, Some((reps, &mut out)), Some(live))?;
     Ok((r, out))
 }
 
@@ -3531,6 +3553,7 @@ fn render_iter_passes(
     req: &ExportRequest,
     sets: Option<(u32, Option<u32>)>,
     timed: Option<(u32, &mut Vec<[f64; 2]>)>,
+    live: Option<&crate::LiveIterPipeline>,
 ) -> Result<ExportResult, GpuError> {
     let max_dim = device.limits().max_texture_dimension_2d;
     let w = req.width.clamp(1, max_dim);
@@ -3540,33 +3563,42 @@ fn render_iter_passes(
     let per_pass_px = (w as u64 * h as u64).div_ceil(sets.map_or(1, |(k, _)| k.max(1)) as u64);
     crate::dispatch_guard::admit(req.mode, req.formula, per_pass_px * req.max_iter as u64)?;
 
-    let shader = crate::shader_module_for(device, req.custom.as_deref());
-    let iter_bgl = iter_bind_group_layout(device);
-    let iter_layout = device.create_pipeline_layout(&wgpu::PipelineLayoutDescriptor {
-        label: Some("selftest.iter_layout"),
-        bind_group_layouts: &[&iter_bgl],
-        push_constant_ranges: &[],
-    });
-    // Split on OpenGL (`iter_split`); a custom formula's module keeps its own, leaner mode 2.
-    let split = match req.custom {
-        None => crate::iter_split::SplitModules::new(device, crate::SHADER_SRC, "selftest.shader"),
-        Some(_) => None,
-    };
-    let iter_pipeline = crate::iter_split::SplitModules::build(split.as_ref(), &shader, |m, half| {
-        if sets.is_some() {
-            crate::raster_pipeline(
-                device, m, &iter_layout, "vs_split_tiles", "fs_iterate",
-                &[ITER_FORMAT, ITER_FORMAT], &format!("selftest.iter_split_pipeline{half}"),
-            )
-        } else {
-            fullscreen_pipeline(
-                device, m, &iter_layout, "fs_iterate", &[ITER_FORMAT, ITER_FORMAT],
-                &format!("selftest.iter_pipeline{half}"),
-            )
+    // A lent live pipeline is the whole-frame one (`fs_iterate` from `vs_main`), never the split-set
+    // geometry, and the built-in module's, never a custom formula's.
+    debug_assert!(live.is_none() || (sets.is_none() && req.custom.is_none()));
+    let own;
+    let (iter_pipeline, iter_bgl) = match live {
+        Some(l) => (&l.pipeline, l.iter_bgl.clone()),
+        None => {
+            let shader = crate::shader_module_for(device, req.custom.as_deref());
+            let iter_bgl = iter_bind_group_layout(device);
+            let iter_layout = device.create_pipeline_layout(&wgpu::PipelineLayoutDescriptor {
+                label: Some("selftest.iter_layout"),
+                bind_group_layouts: &[&iter_bgl],
+                push_constant_ranges: &[],
+            });
+            // Split on OpenGL (`iter_split`); a custom formula's module keeps its own, leaner mode 2.
+            let split = match req.custom {
+                None => crate::iter_split::SplitModules::new(device, crate::SHADER_SRC, "selftest.shader"),
+                Some(_) => None,
+            };
+            own = crate::iter_split::SplitModules::build(split.as_ref(), &shader, |m, half| {
+                if sets.is_some() {
+                    crate::raster_pipeline(
+                        device, m, &iter_layout, "vs_split_tiles", "fs_iterate",
+                        &[ITER_FORMAT, ITER_FORMAT], &format!("selftest.iter_split_pipeline{half}"),
+                    )
+                } else {
+                    fullscreen_pipeline(
+                        device, m, &iter_layout, "fs_iterate", &[ITER_FORMAT, ITER_FORMAT],
+                        &format!("selftest.iter_pipeline{half}"),
+                    )
+                }
+            });
+            // The half for this run's mode, when split; its uniforms carry the same `mode`.
+            (own.for_mode(req.mode), iter_bgl)
         }
-    });
-    // The half for this run's mode, when split; its uniforms carry the same `mode`.
-    let iter_pipeline = iter_pipeline.for_mode(req.mode);
+    };
 
     let iter_uniform = device.create_buffer(&wgpu::BufferDescriptor {
         label: Some("selftest.iter_uniform"),
@@ -3624,6 +3656,10 @@ fn render_iter_passes(
         map: req.map,
         fold: req.ref_fold(),
     };
+    // The speed probe's passes (`render_iter_probe`) run the exact-repeat check OFF (bit 1).
+    if live.is_some() {
+        iu.tail[0] |= 2;
+    }
     queue.write_buffer(&iter_uniform, 0, bytemuck::bytes_of(&iu));
 
     let tex = |label| {

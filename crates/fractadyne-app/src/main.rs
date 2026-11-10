@@ -1661,6 +1661,9 @@ struct Perf {
     /// the lethal band and a blind frame budget (uitest's `formula` step, a cold driver cache) —
     /// the stall guards shed licenses and reset the budget for a GPU that was idle.
     ui_compile_ms: f64,
+    /// Milliseconds the start-up speed probe took (`render::speed_probe`), run this frame BEFORE its
+    /// interval is measured: handed to `ui_compile_ms` once it is, so the NEXT interval discounts it.
+    pub(crate) startup_probe_ms: f64,
     /// ⭐DIAGNOSTIC INSTRUMENT (`FRACTADYNE_BLA_DROP_FRAMES=N`, default off). Frames of BLA
     /// suppression remaining for this view after an arithmetic-mode switch.
     ///
@@ -2637,6 +2640,7 @@ impl Default for Perf {
             ],
             cap_sleep_ms: 0.0,
             ui_compile_ms: 0.0,
+            startup_probe_ms: 0.0,
             bla_suppress_until: [0, 0],
             tile_state: [None, None],
             tile_pending: [false, false],
@@ -17371,8 +17375,12 @@ impl eframe::App for FractadyneApp {
                 if let Some(g) = crate::machine::gpu_settings_line() {
                     diag::log_line("start", &format!("gpu settings: {g}"));
                 }
-                // The per-adapter DISPATCH CEILING (`calibration`), resolved once by adapter name.
-                let cal = calibration::init(&self.gpu_name);
+                // The per-adapter DISPATCH CEILING (`calibration`), resolved once by adapter name —
+                // after the START-UP SPEED PROBE (`render::speed_probe`), which on a card the table
+                // has no entry for measures what a step costs there: it opens each slow mode's budget
+                // at that speed and lowers the ceiling where the card is slower than the default.
+                let measured = frame.wgpu_render_state().and_then(|rs| self.startup_speed_probe(rs));
+                let cal = calibration::init_measured(&self.gpu_name, measured);
                 let at = |cost: f64| {
                     calibration::ceiling(cost, 1.0, cal.knee_px, u64::MAX)
                         .map_or("none".to_string(), |c| format!("{:.2e}", c as f64))
@@ -17992,6 +18000,8 @@ impl eframe::App for FractadyneApp {
         self.perf.frame_idx += 1;
         crate::blinken::events::set_frame(self.perf.frame_idx);
         self.perf.last_frame = Some(frame_start);
+        // The speed probe ran this frame after `frame_start`: its time is in the next interval.
+        self.perf.ui_compile_ms += std::mem::take(&mut self.perf.startup_probe_ms);
 
         if !self.bench.auto && !self.bench.auto_std && !self.render_cli.run && !self.selftest.run && !self.profile.run && !self.harness.reusetest && self.render_cli.tour.is_none() && self.bench.std.is_none() && !self.uitest_active() {
             self.autosave(ctx); // don't let a CLI run (or a transient benchmark override) overwrite the saved session

@@ -37,7 +37,7 @@ pub fn render_iter_split(
     k: u32,
     only: Option<u32>,
 ) -> Result<ExportResult, GpuError> {
-    render_iter_passes(device, queue, req, Some((k.max(1), only)), None)
+    render_iter_passes(device, queue, req, Some((k.max(1), only)), None, None)
 }
 
 /// One `render_iter` pass timed both ways, `reps` times: `[GPU timestamp ms, wall ms]` each (the
@@ -55,7 +55,7 @@ pub fn time_iter_pass(
     reps: u32,
 ) -> Result<Vec<[f64; 2]>, GpuError> {
     let mut out = Vec::new();
-    render_iter_passes(device, queue, req, tiles.then_some((1, None)), Some((reps, &mut out)))?;
+    render_iter_passes(device, queue, req, tiles.then_some((1, None)), Some((reps, &mut out)), None)?;
     Ok(out)
 }
 
