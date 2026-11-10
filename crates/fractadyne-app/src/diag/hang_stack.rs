@@ -68,12 +68,13 @@ mod imp {
 
     unsafe extern "system" {
         fn GetCurrentThreadId() -> u32;
-        fn GetCurrentProcess() -> *mut c_void;
-        fn OpenThread(access: u32, inherit: i32, id: u32) -> *mut c_void;
-        fn CloseHandle(h: *mut c_void) -> i32;
-        fn SuspendThread(h: *mut c_void) -> u32;
-        fn ResumeThread(h: *mut c_void) -> u32;
-        fn GetThreadContext(h: *mut c_void, ctx: *mut Context) -> i32;
+        // Handles as `isize`, as the app's other declarations of these have them.
+        fn GetCurrentProcess() -> isize;
+        fn OpenThread(access: u32, inherit: i32, id: u32) -> isize;
+        fn CloseHandle(h: isize) -> i32;
+        fn SuspendThread(h: isize) -> u32;
+        fn ResumeThread(h: isize) -> u32;
+        fn GetThreadContext(h: isize, ctx: *mut Context) -> i32;
         fn RtlLookupFunctionEntry(pc: u64, image_base: *mut u64, history: *mut c_void) -> *mut c_void;
         fn RtlVirtualUnwind(
             handler_type: u32,
@@ -85,7 +86,7 @@ mod imp {
             establisher: *mut u64,
             pointers: *mut c_void,
         ) -> *mut c_void;
-        fn ReadProcessMemory(process: *mut c_void, at: *const c_void, buf: *mut c_void, size: usize, read: *mut usize) -> i32;
+        fn ReadProcessMemory(process: isize, at: *const c_void, buf: *mut c_void, size: usize, read: *mut usize) -> i32;
         fn GetModuleHandleExW(flags: u32, address: *const u16, module: *mut *mut c_void) -> i32;
         fn GetModuleFileNameW(module: *mut c_void, name: *mut u16, size: u32) -> u32;
     }
@@ -109,7 +110,7 @@ mod imp {
         }
         // SAFETY: plain handle request; checked for null.
         let h = unsafe { OpenThread(THREAD_SUSPEND_RESUME | THREAD_GET_CONTEXT | THREAD_QUERY_INFORMATION, 0, id) };
-        if h.is_null() {
+        if h == 0 {
             return Some(Err(format!("could not open thread {id}: {}", std::io::Error::last_os_error())));
         }
         let mut frames = [0u64; MAX_FRAMES];
@@ -130,7 +131,7 @@ mod imp {
     }
 
     /// Walk the suspended thread `h` into `frames`; how many were recorded. Allocates nothing.
-    unsafe fn walk(h: *mut c_void, frames: &mut [u64; MAX_FRAMES]) -> Result<usize, String> {
+    unsafe fn walk(h: isize, frames: &mut [u64; MAX_FRAMES]) -> Result<usize, String> {
         // SAFETY: a zeroed CONTEXT with its flags set is what GetThreadContext fills.
         let mut ctx: Context = unsafe { std::mem::zeroed() };
         ctx.context_flags = CONTEXT_FULL;
