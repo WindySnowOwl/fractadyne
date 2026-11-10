@@ -596,6 +596,7 @@ pub(crate) mod bundle;
 
 /// Crashes that are not panics (an access violation, in a graphics driver above all).
 pub(crate) mod native_crash;
+pub(crate) mod hang_stack;
 
 #[cfg(test)]
 #[path = "../tests/unit/diag/native_crash_tests.rs"]
@@ -1761,6 +1762,8 @@ pub(crate) fn start_watchdog() {
     if WATCHDOG_ON.swap(true, Ordering::SeqCst) {
         return;
     }
+    // Called on the UI thread: the one whose stack a warning records (`hang_stack`).
+    hang_stack::note_ui_thread();
     std::thread::Builder::new()
         .name("fd-watchdog".into())
         .spawn(|| {
@@ -1813,6 +1816,17 @@ pub(crate) fn start_watchdog() {
                             ))
                         ),
                     );
+                    // Where the UI thread is, innermost first (`hang_stack`; worded so the log
+                    // check's `possible hang` count stays one per warning).
+                    if let Some(stack) = hang_stack::ui_thread_stack() {
+                        log_line(
+                            "watch",
+                            &match stack {
+                                Ok(frames) => format!("the UI thread at that moment: {}", frames.join(" < ")),
+                                Err(e) => format!("the UI thread's stack could not be read: {e}"),
+                            },
+                        );
+                    }
                 }
             }
         })
