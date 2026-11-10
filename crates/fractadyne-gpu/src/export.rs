@@ -590,7 +590,7 @@ pub fn set_card_step_ms(mode: u32, ms: f64) {
 }
 
 /// The card's cost of one pixel-step in `mode`, ms, where the app has measured it.
-pub(crate) fn card_step_ms(mode: u32) -> Option<f64> {
+pub fn card_step_ms(mode: u32) -> Option<f64> {
     let v = f64::from_bits(CARD_STEP_MS.get(mode as usize)?.load(std::sync::atomic::Ordering::Relaxed));
     (v.is_finite() && v > 0.0).then_some(v)
 }

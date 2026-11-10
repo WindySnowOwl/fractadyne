@@ -631,3 +631,17 @@ fn an_unmeasured_budget_never_binds_resolution_below_a_measured_one() {
         "tiling must be able to exceed a single bootstrap dispatch, or the bootstrap              constant becomes a permanent resolution cap"
     );
 }
+
+#[test]
+fn a_slow_cards_budget_floor_is_what_takes_200_ms_and_a_fast_cards_is_unchanged() {
+    use crate::render::pricing::{card_floor, CARD_FLOOR_MIN_STEPS};
+    let base = crate::tunables::TDR_MIN_STEPS_DEFAULT;
+    assert_eq!(card_floor(base, 0.0), base, "unmeasured");
+    assert_eq!(card_floor(base, f64::INFINITY), base);
+    assert_eq!(card_floor(base, 2.76e-8), base, "the RTX 3080's df32");
+    assert_eq!(card_floor(base, 1.18e-5), base, "Eris's floatexp: 4e6 is 47 ms");
+    // Venus's floatexp: 4e6 would be ~470 ms; the floor is what takes 200.
+    let venus = card_floor(base, 1.17e-4);
+    assert!(venus < base && (1_700_000..1_720_000).contains(&venus), "{venus}");
+    assert_eq!(card_floor(base, 1.0), CARD_FLOOR_MIN_STEPS, "never below the least floor");
+}

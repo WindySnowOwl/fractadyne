@@ -8350,7 +8350,7 @@ impl FractadyneApp {
                 self.perf.witness_pending[0].take(),
             );
             let lethal_ms = crate::tunables::cost().tdr_lethal_ms * 1.25;
-            let floor = crate::tunables::cost().tdr_min_steps;
+            let floor = crate::render::pricing::tdr_min_steps();
             self.perf.fe_budget[0] = floor;
             self.perf.retreat_last[0] = None;
             self.apply_iterate_measurement(0, lethal_ms, floor, "wall_iterate", crate::ReadShape::default());

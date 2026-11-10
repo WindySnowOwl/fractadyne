@@ -1293,6 +1293,7 @@ fn dispatch() -> WalkDispatchInputs {
         step_target_ms: 0.0,
         step_cap_last: 0,
         step_wall_last: 0.0,
+        card_ms_per_step: 0.0,
         state: DispatchState {
             pin_inflight: 0,
             pin_reg_pending: 0,
@@ -1728,4 +1729,27 @@ fn a_step_pass_never_outgrows_the_pass_budget_over_the_pixels_still_running() {
     // Never below the floor, however small the budget.
     let starved = WalkDispatchInputs { pass_steps: 1, ..step_dispatch() };
     assert_eq!(decide_walk_dispatch(&starved).step_cap, crate::render::STEP_WALK_MIN_CAP);
+    // …the floor a card measured as slow as Venus (1.17e-4 ms a floatexp step) can afford: under
+    // 16 steps, and a pass of about 200 ms at that cost.
+    let slow = WalkDispatchInputs { pass_steps: 1, card_ms_per_step: 1.17e-4, ..step_dispatch() };
+    let d = decide_walk_dispatch(&slow);
+    assert!(d.step_cap < crate::render::STEP_WALK_MIN_CAP, "{}", d.step_cap);
+    assert!(
+        d.step_cap == 1 || d.state.fe_steps_last as f64 * 1.17e-4 <= crate::render::STEP_WALK_FLOOR_MS * 1.01,
+        "{} steps at 1.17e-4 ms",
+        d.state.fe_steps_last
+    );
+    // A card measured fast (the RTX 3070's floatexp, 1.13e-7) keeps the floor.
+    let fast = WalkDispatchInputs { pass_steps: 1, card_ms_per_step: 1.13e-7, ..step_dispatch() };
+    assert_eq!(decide_walk_dispatch(&fast).step_cap, crate::render::STEP_WALK_MIN_CAP);
+}
+
+#[test]
+fn the_least_cap_is_16_unless_the_card_is_measured_too_slow_for_it() {
+    use crate::render::{walk_min_cap, STEP_WALK_MIN_CAP};
+    assert_eq!(walk_min_cap(0.0, 524_288), STEP_WALK_MIN_CAP, "unmeasured");
+    assert_eq!(walk_min_cap(f64::NAN, 524_288), STEP_WALK_MIN_CAP);
+    assert_eq!(walk_min_cap(1.18e-5, 524_288), STEP_WALK_MIN_CAP, "Eris's floatexp affords 32 over the knee");
+    assert_eq!(walk_min_cap(1.17e-4, 524_288), 3, "Venus over the knee");
+    assert_eq!(walk_min_cap(1.17e-4, 1971 * 1470), 1, "Venus over its whole frame");
 }

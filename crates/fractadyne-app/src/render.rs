@@ -2683,9 +2683,9 @@ impl FractadyneApp {
                 // not merely ÷8 — the mispricing scales with the collapse ratio (3,333× here),
                 // and the budget re-climbs within a few measured frames if the frame is cheap.
                 let derated = if big_collapse {
-                    (cur / 8).min(crate::tunables::cost().tdr_bootstrap_steps).max(crate::tunables::cost().tdr_min_steps)
+                    (cur / 8).min(crate::tunables::cost().tdr_bootstrap_steps).max(pricing::tdr_min_steps())
                 } else {
-                    (cur / 8).max(crate::tunables::cost().tdr_min_steps)
+                    (cur / 8).max(pricing::tdr_min_steps())
                 };
                 if cur == 0 || derated < cur {
                     self.perf.fe_budget[vb] = derated;
@@ -6367,6 +6367,7 @@ impl FractadyneApp {
                     },
                 step_cap_last: self.perf.chunk_step_cap_last[vs],
                 step_wall_last: self.perf.chunk_step_wall_last[vs],
+                card_ms_per_step: fractadyne_gpu::card_step_ms(RenderMode::Floatexp.to_u32()).unwrap_or(0.0),
                 state: decide::DispatchState {
                     pin_inflight: self.perf.pin_inflight[vs],
                     pin_reg_pending: self.perf.pin_reg_pending[vs],
@@ -6581,7 +6582,7 @@ impl FractadyneApp {
             fe_budget: self.perf.fe_budget[vidx],
             bootstrap_steps: self.perf.bootstrap_steps(vidx),
             explicit_dispatch_cap: crate::tunables::cost().explicit_dispatch_cap,
-            tdr_min_steps: crate::tunables::cost().tdr_min_steps,
+            tdr_min_steps: pricing::tdr_min_steps(),
             tdr_steps_ceil: crate::tunables::cost().tdr_steps_ceil,
         };
         let probe = decide::decide_probe(&probe_in);
@@ -12635,13 +12636,31 @@ pub(crate) fn walk_charged_px(
 /// 0.011 ns, ~20× under, and the next walk opened at 32,768 steps over 3.1M pixels: 2.2 s
 /// (2026-10-30).
 pub(crate) const STEP_WALK_PRIOR_NS: f64 = 1.5;
-/// A step-bounded pass never asks fewer steps of a pixel: a bounded pass count.
+/// A step-bounded pass never asks fewer steps of a pixel: a bounded pass count. (On a card measured
+/// too slow for it, fewer: [`walk_min_cap`].)
 pub(crate) const STEP_WALK_MIN_CAP: u32 = 16;
+/// The most a least-cap pass may cost on a card the speed check measured ([`walk_min_cap`]), ms.
+pub(crate) const STEP_WALK_FLOOR_MS: f64 = 200.0;
+
+/// ⭐A step-bounded pass's least cap: [`STEP_WALK_MIN_CAP`], unless the card's measured floatexp cost
+/// (`card_ms_per_step`, ms a step; 0 = unmeasured) says that many steps over the `charged_px` pixels
+/// would take more than [`STEP_WALK_FLOOR_MS`] — then what takes that long, at least 1 (2026-11-10).
+/// On Venus (GeForce GT 650M, OpenGL, 1.17e-4 ms a floatexp step) 16 steps over the knee's 524,288
+/// pixels charged were 8.4e6 steps against a 4e6 budget, ~1.2 s a pass, and an opening pass over the
+/// whole 1971x1470 frame 4.6e7, up to 1,993 ms: the floor, not the budget, sized them. Every other
+/// card measured keeps 16 (Eris's floatexp, 1.18e-5, affords 32 over the knee).
+pub(crate) fn walk_min_cap(card_ms_per_step: f64, charged_px: u64) -> u32 {
+    if !(card_ms_per_step.is_finite() && card_ms_per_step > 0.0) {
+        return STEP_WALK_MIN_CAP;
+    }
+    let affordable = STEP_WALK_FLOOR_MS / (card_ms_per_step * charged_px.max(1) as f64);
+    (affordable as u32).clamp(1, STEP_WALK_MIN_CAP)
+}
 /// …nor more than this: a thin tail is one chain of dependent steps at 2–7 µs a step whatever its
 /// pixel count (the export's `STEP_MAX_FOLLOW_CAP`; ~230 ms at the slowest chain measured).
 pub(crate) const STEP_WALK_MAX_CAP: u32 = 32_768;
 /// A step-bounded walk still running after this many passes is counting wrong (every pass moves a
-/// running pixel at least `STEP_WALK_MIN_CAP` steps, and caps double): it is ended, not left spinning.
+/// running pixel at least `walk_min_cap` steps, and caps double): it is ended, not left spinning.
 pub(crate) const STEP_WALK_MAX_PASSES: u32 = 4_096;
 
 /// The step cap of a step-bounded settled walk's next pass (`WALK_STEPS`). The opening pass
