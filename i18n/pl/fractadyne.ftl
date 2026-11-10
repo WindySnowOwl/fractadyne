@@ -750,6 +750,17 @@ dlg-bench-results-saved = Zapisano test wydajności.
 dlg-backend-title = Kompilacja przyspieszona — używa wbudowanej arytmetyki
 dlg-backend-dont-show = Nie pokazuj ponownie
 
+## The graphics speed check's notice: shown on OpenGL while a saved speed measurement is confirmed on
+## the window's own thread, during which the window cannot respond (render/speed_probe/recheck.rs)
+
+speed-check-title = Sprawdzanie szybkości grafiki
+# Shown just before the check runs, and on screen while the window cannot respond.
+speed-check-running = Fractadyne sprawdza, jak szybka jest ta karta graficzna, aby nigdy nie dawać jej naraz więcej pracy, niż zdąży wykonać. Okno może przez kilka sekund nie odpowiadać, gdy sterownik grafiki przygotowuje sprawdzenie.
+# The check's result: the saved measurement was confirmed.
+speed-check-held = Gotowe: zapisana szybkość karty jest nadal aktualna.
+# The check's result: the card measured differently, and the new measurement replaced the saved one.
+speed-check-updated = Gotowe: karta zmierzyła się inaczej i zapisano jej nową szybkość.
+
 ## File ▸ Gallery…
 
 dlg-gallery-title = Galeria

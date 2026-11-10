@@ -744,6 +744,17 @@ dlg-bench-results-saved = 벤치마크를 저장했습니다.
 dlg-backend-title = 가속 빌드 — 내장 산술 사용 중
 dlg-backend-dont-show = 다시 표시하지 않기
 
+## The graphics speed check's notice: shown on OpenGL while a saved speed measurement is confirmed on
+## the window's own thread, during which the window cannot respond (render/speed_probe/recheck.rs)
+
+speed-check-title = 그래픽 속도 확인 중
+# Shown just before the check runs, and on screen while the window cannot respond.
+speed-check-running = Fractadyne이 이 그래픽 카드의 속도를 확인하고 있습니다. 제시간에 끝낼 수 있는 것보다 많은 작업을 한 번에 맡기지 않기 위해서입니다. 그래픽 드라이버가 확인을 준비하는 동안 몇 초간 창이 응답하지 않을 수 있습니다.
+# The check's result: the saved measurement was confirmed.
+speed-check-held = 완료: 저장된 카드 속도가 여전히 유효합니다.
+# The check's result: the card measured differently, and the new measurement replaced the saved one.
+speed-check-updated = 완료: 카드 측정값이 달라져 새 속도를 저장했습니다.
+
 ## File ▸ Gallery…
 
 dlg-gallery-title = 갤러리

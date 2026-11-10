@@ -6613,6 +6613,9 @@ struct DialogState {
     /// notices (e.g. a script that fails to load) that deserve a dialog rather than a fleeting
     /// toast, without borrowing an unrelated window's title.
     notice: Option<(String, String)>,
+    /// The speed check's notice, where its re-check stops the window (OpenGL,
+    /// `render::speed_probe::recheck`): what is happening, then the result.
+    speed_notice: Option<render::speed_probe::SpeedNotice>,
 }
 
 // ================================================================================================
@@ -7891,6 +7894,7 @@ impl FractadyneApp {
                 // silenced, because the state changed. Set once `app` is built (below), because
                 // the interface's language is chosen while it is.
                 notice: None,
+                speed_notice: None,
             },
             // The adapter facts (and the VRAM probe that needs the adapter's name) are filled in by
             // `attach_gpu`; no frame runs before it.
@@ -17808,7 +17812,7 @@ impl eframe::App for FractadyneApp {
             self.pre_switch_probe(dev, q);
             // A saved start-up speed reading in use is re-checked once the picture is up and the
             // view is still, on a thread of its own or on OpenGL here (`render::speed_probe::recheck`).
-            self.speed_recheck_step(dev, q);
+            self.speed_recheck_step(ctx, dev, q);
         }
 
         // Auto-zoom autopilot — dive toward detail (advance before drawing so this frame
@@ -18103,6 +18107,7 @@ impl eframe::App for FractadyneApp {
         self.draw_bench_progress_dialog(ctx);
         self.draw_bench_results_dialog(ctx);
         self.draw_notice_dialog(ctx);
+        self.draw_speed_notice(ctx);
         self.draw_backend_notice_dialog(ctx);
         self.poll_mpfr_recovery(ctx);
 

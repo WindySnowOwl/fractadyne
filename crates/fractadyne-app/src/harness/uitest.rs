@@ -115,6 +115,8 @@ enum Screen {
     /// names of Japanese and Chinese draw from the bundled names fonts in any interface language.
     Languages,
     Notice,
+    /// The speed check's notice, as it stands while its re-check stops the window (OpenGL).
+    SpeedNotice,
     PaletteEditor,
     /// The same editor in RING view. ⭐A palette is cycled, so the ring is the only place the
     /// SEAM is visible — and it is a whole second interaction geometry (hit-testing by arc
@@ -915,6 +917,7 @@ fn build_steps() -> Vec<Step> {
         screen("reference-cache", Screen::OrbitCache),
         screen("languages", Screen::Languages),
         screen("notice", Screen::Notice),
+        screen("speed-notice", Screen::SpeedNotice),
         screen("palette-editor", Screen::PaletteEditor),
         screen("palette-editor-ring", Screen::PaletteEditorRing),
         screen("color-picker", Screen::ColorPicker),
@@ -1367,6 +1370,7 @@ impl FractadyneApp {
         self.dialogs.orbit_cache_confirm = false;
         self.dialogs.script_export_open = false;
         self.dialogs.notice = None;
+        self.dialogs.speed_notice = None;
         self.gallery.open = false;
         self.goto.open = false;
         self.share.open = false;
@@ -1625,6 +1629,9 @@ impl FractadyneApp {
                     "UI-test notice".to_string(),
                     "This is the generic titled-message dialog, shown by the UI walk.".to_string(),
                 ));
+            }
+            Screen::SpeedNotice => {
+                self.dialogs.speed_notice = Some(crate::render::speed_probe::SpeedNotice::Checking);
             }
             // Dual view, first formula. `set_fractal` resets the view to that formula's own
             // default center, which is the state a user is in after picking from the dropdown.
@@ -2383,12 +2390,23 @@ impl FractadyneApp {
                 detail: format!("want key {want:x?}, showing {got:x?} ({:?}), pending {}", self.fractal, self.formula_dialog.pending.is_some()),
             });
             // ~0.8 s is what the compile costs on the render thread (design/custom-formulas.md §5.1);
-            // a frame anywhere near it means the window froze for it.
+            // a frame anywhere near it means the window froze for it. ⚠On OpenGL it does, on purpose:
+            // there the compile runs on the render thread (`compile_custom_async` returns `None`,
+            // as a worker holding the GL context lock for seconds crashed the app on Eris), so a
+            // long gap is reported, not failed.
             let gap = ut.max_gap_ms;
+            let gl = self.render_state.as_ref().is_some_and(|rs| rs.adapter.get_info().backend == eframe::wgpu::Backend::Gl);
             checks.push(Check {
                 name: "no frame froze for the compile".into(),
-                verdict: if gap < 300.0 { Verdict::Pass } else { Verdict::Fail },
-                detail: format!("longest frame gap {gap:.0} ms (a render-thread compile is ~800)"),
+                verdict: match (gap < 300.0, gl) {
+                    (true, _) => Verdict::Pass,
+                    (false, true) => Verdict::Warn,
+                    (false, false) => Verdict::Fail,
+                },
+                detail: format!(
+                    "longest frame gap {gap:.0} ms (a render-thread compile is ~800){}",
+                    if gl { "; OpenGL compiles on the render thread" } else { "" }
+                ),
             });
             // ⭐And the PICTURE is the new formula's. The two checks above passed on a frame that
             // still showed the `formula` step's z³ − 0.5z + c: the chunk walk's signature did not
