@@ -67,6 +67,16 @@ Changes after 0.3.0-beta.1:
   an RTX 3080); later launches take under a second. A driver that really cannot run it gets a
   message naming the card and what to update, instead of a crash, and the log now names the
   graphics card before anything can fail on it.
+- **A slow graphics card's first frames stay short (0.3.0-beta.27).** Before it had measured
+  anything, Fractadyne sized the first frame for a fast desktop card. On an Intel HD Graphics 4400,
+  the first frame of a deep zoom kept the GPU busy for 1.4 seconds, close to the 2 seconds after
+  which Windows resets the graphics driver. On a card it has no measurements for, Fractadyne now
+  times one small pass in each precision mode at start-up, and sizes the first frames, and the most
+  work it hands the GPU at once, from what the card measured. On that laptop the first frame now
+  asks for about 50 times less work. The check can only lower these limits, so a fast card keeps
+  them as they were; it takes about 0.2 s at start-up there, and about 7 s on the Intel laptop,
+  where most of that time is its driver compiling shaders the first time they draw.
+  `--set STARTUP_PROBE=0` turns it off.
 - **Fractadyne starts on older Intel graphics (0.3.0-beta.27).** On an Intel HD Graphics 4400 (a
   2014 laptop whose only graphics API is OpenGL), the graphics driver crashed every time while it
   compiled Fractadyne's main shader, on the newest driver the card has too. That driver's compiler
