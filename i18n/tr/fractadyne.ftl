@@ -766,6 +766,13 @@ export-gl-title = Dışa aktarılıyor
 # Shown just before the export renders, and on screen until it is done.
 export-gl-running = OpenGL'de Fractadyne dışa aktarmayı pencerenin kendi iş parçacığında işler; bu yüzden dışa aktarma bitene kadar pencere yanıt vermez. Yavaş bir ekran kartında bu birkaç dakika sürebilir.
 
+## The notice in a session that started again on OpenGL because Vulkan could not open the window
+## (gpu_choice.rs, fallback)
+
+gpu-fallback-title = OpenGL ile başlatıldı
+# $reason: the graphics library's error, in English, as it gave it.
+gpu-fallback-body = Vulkan bu ekran kartında Fractadyne'in penceresini açamadı ({ $reason }); bu yüzden Fractadyne OpenGL ile yeniden başladı ve bu bilgisayarda OpenGL kullanmaya devam edecek. Daha yeni bir grafik sürücüsü, daha yeni bir Vulkan yükleyicisi ya da Fractadyne'in yeni bir sürümü Vulkan'ı yeniden dener.
+
 ## File ▸ Gallery…
 
 dlg-gallery-title = Galeri

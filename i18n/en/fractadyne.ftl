@@ -828,6 +828,13 @@ export-gl-title = Exporting
 # Shown just before the export renders, and on screen until it is done.
 export-gl-running = On OpenGL, Fractadyne renders the export on the window's own thread, so the window will not respond until the export is finished. On a slow graphics card that can take several minutes.
 
+## The notice in a session that started again on OpenGL because Vulkan could not open the window
+## (gpu_choice.rs, fallback)
+
+gpu-fallback-title = Started on OpenGL
+# $reason: the graphics library's error, in English, as it gave it.
+gpu-fallback-body = Vulkan could not open Fractadyne's window on this graphics card ({ $reason }), so Fractadyne started again on OpenGL, and will keep using OpenGL on this computer. A newer graphics driver, a newer Vulkan loader or a new version of Fractadyne tries Vulkan again.
+
 ## File ▸ Gallery…
 
 dlg-gallery-title = Gallery

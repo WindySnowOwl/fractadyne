@@ -622,6 +622,11 @@ pub(crate) fn set_phase(p: advice::Phase) {
 
 /// The window's graphics card, as a fatal error's account names it. The first one only: that is
 /// the window's; an export's or a worker's device comes later.
+/// The graphics card start-up chose (`note_gpu`), once it has.
+pub(crate) fn gpu_seen() -> Option<&'static advice::Gpu> {
+    GPU_SEEN.get()
+}
+
 pub(crate) fn note_gpu(name: &str, backend: eframe::wgpu::Backend, vendor_id: u32, driver: &str, driver_info: &str) {
     let _ = GPU_SEEN.set(advice::Gpu {
         name: name.trim().to_string(),

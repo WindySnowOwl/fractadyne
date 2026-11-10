@@ -763,6 +763,13 @@ export-gl-title = 正在导出
 # Shown just before the export renders, and on screen until it is done.
 export-gl-running = 在 OpenGL 下，Fractadyne 在窗口自身的线程上渲染导出，因此在导出完成之前窗口不会响应。在较慢的显卡上，这可能需要几分钟。
 
+## The notice in a session that started again on OpenGL because Vulkan could not open the window
+## (gpu_choice.rs, fallback)
+
+gpu-fallback-title = 已使用 OpenGL 启动
+# $reason: the graphics library's error, in English, as it gave it.
+gpu-fallback-body = Vulkan 无法在这块显卡上打开 Fractadyne 的窗口（{ $reason }），因此 Fractadyne 已改用 OpenGL 重新启动，并会在这台电脑上继续使用 OpenGL。更新的显卡驱动程序、更新的 Vulkan 加载器或新版本的 Fractadyne 会再次尝试 Vulkan。
+
 ## File ▸ Gallery…
 
 dlg-gallery-title = 图库

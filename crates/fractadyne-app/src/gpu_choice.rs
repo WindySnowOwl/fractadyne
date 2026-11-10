@@ -13,7 +13,8 @@ pub(crate) const FLAG: &str = "--adapter";
 pub(crate) const LIST_FLAG: &str = "--list-adapters";
 
 /// The graphics APIs the app runs on: Vulkan and GL, unless `WGPU_BACKEND` names others, and GL
-/// alone where this machine's Vulkan loader is too old to list cards through ([`vulkan_left_out`]).
+/// alone where this machine's Vulkan loader is too old to list cards through, or Vulkan could not
+/// open the window here before ([`vulkan_left_out`]).
 /// One definition for the window's instance and for the listing, so their enumerations agree;
 /// decided once a run.
 pub(crate) fn backends() -> wgpu::Backends {
@@ -41,15 +42,30 @@ pub(crate) fn backends() -> wgpu::Backends {
 /// one without `vkEnumerateInstanceVersion` (Vulkan 1.1, loaders from 2018 on) is left out. That is
 /// the very test wgpu makes for the instance version it logs ("Instance version: 0x400000" = 1.0).
 ///
+/// **Vulkan could not open the window here before** ([`fallback`]): the same build, with the same
+/// loader, failed at start-up on Vulkan and started again on OpenGL; this run starts there.
+///
 /// `WGPU_BACKEND` set = nothing is left out (and the loader is not read): `WGPU_BACKEND=vulkan`
-/// tries Vulkan anyway. Windows only; elsewhere `None`.
+/// tries Vulkan anyway. The loader check is Windows only.
 pub(crate) fn vulkan_left_out() -> Option<&'static str> {
     static WHY: std::sync::OnceLock<Option<String>> = std::sync::OnceLock::new();
     WHY.get_or_init(|| {
         if wgpu::Backends::from_env().is_some() {
             return None;
         }
-        loader::this_machine().and_then(|l| l.too_old())
+        loader::this_machine().and_then(|l| l.too_old()).or_else(|| {
+            fallback::remembered().map(|f| {
+                format!(
+                    "Vulkan could not open the window on {} {} ({}), so this run uses OpenGL. A new \
+                     Fractadyne, a new Vulkan loader, or deleting {} in the settings folder tries Vulkan \
+                     again; WGPU_BACKEND=vulkan tries it anyway.",
+                    f.adapter,
+                    if f.when.is_empty() { "at an earlier launch".to_string() } else { format!("at {}", f.when) },
+                    f.reason,
+                    fallback::FILE
+                )
+            })
+        })
     })
     .as_deref()
 }
@@ -60,6 +76,308 @@ pub(crate) fn log_loader() {
         crate::diag::log_line("gpu", &format!("Vulkan is left out: {why}"));
     } else if let Some(l) = loader::this_machine() {
         crate::diag::log_line("gpu", &format!("Vulkan loader: {}", l.line()));
+    }
+}
+
+/// ⭐VULKAN THAT COULD NOT OPEN THE WINDOW, remembered (user, 2026-11-10: "look into supporting a
+/// fallback mode if a gpu can't be successfully initialized", then "yes" to this first part).
+///
+/// On Venus (GeForce GT 650M, NVIDIA 382.05, a Vulkan 1.4 loader from the LunarG SDK) Vulkan lists
+/// the card, then the window cannot open: wgpu 24 always builds its indirect-validation compute
+/// pipeline at device creation, and that driver loses the device on it ("Parent device is lost",
+/// 20261110-143726-kgso), while OpenGL runs there. So when the window cannot open on a Vulkan
+/// adapter that this run chose by itself (no `WGPU_BACKEND`), the failure is written to [`FILE`] in
+/// the settings folder, and a session the user started (not a task, which must fail visibly) starts
+/// again at once on OpenGL, where its window would have opened ([`start_again`]), saying so once
+/// ([`RELAUNCH_ENV`]). A later launch of the same version
+/// with the same Vulkan loader reads the file and leaves Vulkan out from the start
+/// ([`super::vulkan_left_out`]); a new version or a new loader tries Vulkan again, and deleting the
+/// file tries it now.
+pub(crate) mod fallback {
+    use serde::{Deserialize, Serialize};
+
+    pub(crate) const FILE: &str = "vulkan-failed.toml";
+    /// Set on the session started again on OpenGL: the failure's reason, for its one notice.
+    pub(crate) const RELAUNCH_ENV: &str = "FRACTADYNE_VULKAN_FELL_BACK";
+    /// A file larger than this is not read (one record is well under 1 KB).
+    const MAX_BYTES: u64 = 16 * 1024;
+
+    /// One Vulkan failure to open the window.
+    #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
+    pub(crate) struct Failure {
+        /// The build that failed (`sysinfo::version_string`).
+        pub app: String,
+        /// The Vulkan loader then (`loader_text`): a new one tries Vulkan again.
+        pub loader: String,
+        pub adapter: String,
+        pub reason: String,
+        /// When, local time, for a reader of the file.
+        #[serde(default)]
+        pub when: String,
+    }
+
+    /// This machine's Vulkan loader as the record names it: its path and version, or "none".
+    pub(crate) fn loader_text() -> String {
+        super::loader::this_machine().map_or_else(|| "none".to_string(), |l| l.line())
+    }
+
+    /// Whether `f` is about this build and this loader.
+    pub(crate) fn applies(f: &Failure, app: &str, loader: &str) -> bool {
+        f.app == app && f.loader == loader
+    }
+
+    pub(crate) fn parse(text: &str) -> Option<Failure> {
+        let f: Failure = toml::from_str(text).ok()?;
+        // Read as untrusted: bounded fields, or nothing.
+        let ok = [&f.app, &f.loader, &f.adapter, &f.reason, &f.when].iter().all(|s| s.len() <= 1024);
+        ok.then_some(f)
+    }
+
+    pub(crate) fn render(f: &Failure) -> Result<String, String> {
+        let body = toml::to_string(f).map_err(|e| e.to_string())?;
+        Ok(format!(
+            "# Vulkan could not open Fractadyne's window here, so it runs on OpenGL. Written by the app;\n\
+             # delete this file to try Vulkan again (a new version or a new Vulkan loader also does).\n\n{body}"
+        ))
+    }
+
+    /// The failure saved for this build and this loader, if any (read once a run).
+    pub(crate) fn remembered() -> Option<&'static Failure> {
+        static READ: std::sync::OnceLock<Option<Failure>> = std::sync::OnceLock::new();
+        READ.get_or_init(|| {
+            let path = fractadyne_state::config_dir()?.join(FILE);
+            if !std::fs::metadata(&path).is_ok_and(|m| m.len() <= MAX_BYTES) {
+                return None;
+            }
+            let f = parse(&std::fs::read_to_string(&path).ok()?)?;
+            applies(&f, &crate::sysinfo::version_string(), &loader_text()).then_some(f)
+        })
+        .as_ref()
+    }
+
+    /// Write `f` to the settings folder, whole or not at all.
+    fn record(f: &Failure) -> Result<(), String> {
+        let dir = fractadyne_state::config_dir().ok_or("no settings folder")?;
+        std::fs::create_dir_all(&dir).map_err(|e| e.to_string())?;
+        let path = dir.join(FILE);
+        let part = dir.join(format!("{FILE}.part"));
+        std::fs::write(&part, render(f)?).and_then(|()| std::fs::rename(&part, &path)).map_err(|e| {
+            let _ = std::fs::remove_file(&part);
+            e.to_string()
+        })
+    }
+
+    /// The window could not open (eframe's error, `reason`): when that was on a Vulkan adapter this
+    /// run chose by itself, remember it and, outside a task, start this program again on OpenGL.
+    /// `true` = started again (the caller shows no fatal dialog: the new session explains).
+    pub(crate) fn after_window_failure(reason: &str) -> bool {
+        if eframe::wgpu::Backends::from_env().is_some() || !super::backends().contains(eframe::wgpu::Backends::VULKAN) {
+            return false;
+        }
+        let Some(gpu) = crate::diag::gpu_seen().filter(|g| g.api == "Vulkan") else { return false };
+        let f = Failure {
+            app: crate::sysinfo::version_string(),
+            loader: loader_text(),
+            adapter: gpu.name.clone(),
+            reason: reason.chars().take(400).collect(),
+            when: crate::sysinfo::local_now()
+                .map_or_else(String::new, |(y, mo, d, h, mi, ..)| format!("{y}-{mo:02}-{d:02} {h:02}:{mi:02}")),
+        };
+        let saved = match record(&f) {
+            Ok(()) => format!("saved to {FILE}"),
+            Err(e) => format!("not saved ({e})"),
+        };
+        if crate::launched_as_task() {
+            crate::diag::log_line(
+                "gpu",
+                &format!("Vulkan could not open the window on {}; {saved}: the next run starts on OpenGL (a task is not started again)", gpu.name),
+            );
+            return false;
+        }
+        match start_again(&[("WGPU_BACKEND", "gl"), (RELAUNCH_ENV, &f.reason)]) {
+            Ok(pid) => {
+                crate::diag::log_line(
+                    "gpu",
+                    &format!("Vulkan could not open the window on {}; {saved}; started again on OpenGL (process {pid})", gpu.name),
+                );
+                true
+            }
+            Err(e) => {
+                crate::diag::log_line(
+                    "gpu",
+                    &format!("Vulkan could not open the window on {}; {saved}; could not start again on OpenGL: {e}", gpu.name),
+                );
+                false
+            }
+        }
+    }
+
+    /// In the session started again on OpenGL ([`RELAUNCH_ENV`]): the failure's reason, once.
+    pub(crate) fn fell_back() -> Option<String> {
+        std::env::var(RELAUNCH_ENV).ok().filter(|r| !r.is_empty()).map(|r| r.chars().take(400).collect())
+    }
+
+    /// Start this program again as it was started, with `vars` set; the new process's id.
+    ///
+    /// On Windows the new process gets this one's own command line and start-up information, so
+    /// its window opens where this one's would have: on the monitor Explorer or the Start menu
+    /// named, as a shortcut's "Run: Maximized" asks, at a test's chosen spot. A process started
+    /// with `std::process::Command` gets none of that, and its window opens on the main monitor.
+    fn start_again(vars: &[(&str, &str)]) -> Result<u32, String> {
+        let exe = std::env::current_exe().map_err(|e| format!("cannot find this executable: {e}"))?;
+        #[cfg(windows)]
+        {
+            same_start::spawn(&exe, vars)
+        }
+        #[cfg(not(windows))]
+        {
+            let mut cmd = std::process::Command::new(exe);
+            cmd.args(std::env::args_os().skip(1));
+            for (k, v) in vars {
+                cmd.env(k, v);
+            }
+            cmd.spawn().map(|c| c.id()).map_err(|e| e.to_string())
+        }
+    }
+
+    /// [`start_again`] on Windows: `CreateProcessW` with this process's own command line and
+    /// `STARTUPINFO`.
+    #[cfg(windows)]
+    pub(crate) mod same_start {
+        use std::ffi::{c_void, OsStr, OsString};
+        use std::os::windows::ffi::OsStrExt;
+
+        #[repr(C)]
+        struct StartupInfo {
+            cb: u32,
+            reserved: *mut u16,
+            desktop: *mut u16,
+            title: *mut u16,
+            x: u32,
+            y: u32,
+            x_size: u32,
+            y_size: u32,
+            x_chars: u32,
+            y_chars: u32,
+            fill: u32,
+            flags: u32,
+            show_window: u16,
+            reserved2_len: u16,
+            reserved2: *mut u8,
+            std_input: isize,
+            std_output: isize,
+            std_error: isize,
+        }
+
+        #[repr(C)]
+        struct ProcessInformation {
+            process: isize,
+            thread: isize,
+            process_id: u32,
+            thread_id: u32,
+        }
+
+        const STARTF_USESTDHANDLES: u32 = 0x100;
+        const CREATE_UNICODE_ENVIRONMENT: u32 = 0x400;
+
+        unsafe extern "system" {
+            fn GetStartupInfoW(si: *mut StartupInfo);
+            fn GetCommandLineW() -> *const u16;
+            #[allow(clippy::too_many_arguments)]
+            fn CreateProcessW(
+                application: *const u16,
+                command_line: *mut u16,
+                process_attributes: *const c_void,
+                thread_attributes: *const c_void,
+                inherit_handles: i32,
+                creation_flags: u32,
+                environment: *const c_void,
+                current_directory: *const u16,
+                startup_info: *const StartupInfo,
+                process_information: *mut ProcessInformation,
+            ) -> i32;
+            // Handles as `isize`, as the app's other declarations of these have them.
+            fn CloseHandle(h: isize) -> i32;
+        }
+
+        pub(crate) fn spawn(exe: &std::path::Path, vars: &[(&str, &str)]) -> Result<u32, String> {
+            let application: Vec<u16> = exe.as_os_str().encode_wide().chain([0]).collect();
+            // This process's command line as it was given: the same arguments, quoted as they were.
+            // SAFETY: the system's own string for this process, ended by a 0, valid while it runs.
+            let mut command_line: Vec<u16> = unsafe {
+                let p = GetCommandLineW();
+                let mut n = 0;
+                while *p.add(n) != 0 {
+                    n += 1;
+                }
+                std::slice::from_raw_parts(p, n).to_vec()
+            };
+            command_line.push(0);
+            let environment = block(std::env::vars_os(), vars);
+            // SAFETY: plain data, filled by the system; the strings it points to are this
+            // process's own, valid while it runs (`CreateProcessW` copies them).
+            let mut si: StartupInfo = unsafe { std::mem::zeroed() };
+            unsafe { GetStartupInfoW(&mut si) };
+            si.cb = std::mem::size_of::<StartupInfo>() as u32;
+            // Not passed on: the C runtime's private block, and this process's standard handles,
+            // which are not inherited and so would name nothing in the new one. (Without that
+            // flag the handle fields can carry the monitor or a hotkey, which are kept.)
+            si.reserved = std::ptr::null_mut();
+            si.reserved2 = std::ptr::null_mut();
+            si.reserved2_len = 0;
+            if si.flags & STARTF_USESTDHANDLES != 0 {
+                si.flags &= !STARTF_USESTDHANDLES;
+                si.std_input = 0;
+                si.std_output = 0;
+                si.std_error = 0;
+            }
+            // SAFETY: plain data, filled by the system.
+            let mut pi: ProcessInformation = unsafe { std::mem::zeroed() };
+            // SAFETY: every string is ended by a 0 and outlives the call; the environment block
+            // is UTF-16 as the flag says.
+            let ok = unsafe {
+                CreateProcessW(
+                    application.as_ptr(),
+                    command_line.as_mut_ptr(),
+                    std::ptr::null(),
+                    std::ptr::null(),
+                    0,
+                    CREATE_UNICODE_ENVIRONMENT,
+                    environment.as_ptr().cast(),
+                    std::ptr::null(),
+                    &si,
+                    &mut pi,
+                )
+            };
+            if ok == 0 {
+                return Err(std::io::Error::last_os_error().to_string());
+            }
+            // SAFETY: the handles `CreateProcessW` just returned, closed once.
+            unsafe {
+                CloseHandle(pi.thread);
+                CloseHandle(pi.process);
+            }
+            Ok(pi.process_id)
+        }
+
+        /// An environment block for `CreateProcessW`: `base` with `vars` set (a name in `base`
+        /// that differs from one of them only in case is replaced), as `NAME=value` strings each
+        /// ended by a 0, sorted by name ignoring case as the system asks, then a final 0.
+        pub(crate) fn block(base: impl IntoIterator<Item = (OsString, OsString)>, vars: &[(&str, &str)]) -> Vec<u16> {
+            let set = |name: &OsStr| vars.iter().any(|(k, _)| name.eq_ignore_ascii_case(k));
+            let mut all: Vec<(OsString, OsString)> = base.into_iter().filter(|(k, _)| !set(k)).collect();
+            all.extend(vars.iter().map(|(k, v)| (OsString::from(k), OsString::from(v))));
+            all.sort_by_cached_key(|(k, _)| k.to_string_lossy().to_uppercase());
+            let mut out = Vec::new();
+            for (k, v) in &all {
+                out.extend(k.encode_wide());
+                out.push(u16::from(b'='));
+                out.extend(v.encode_wide());
+                out.push(0);
+            }
+            out.push(0);
+            out
+        }
     }
 }
 

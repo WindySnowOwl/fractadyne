@@ -85,3 +85,53 @@ fn this_machine_s_loader_reads_without_crashing() {
         }
     }
 }
+
+#[test]
+fn a_vulkan_failure_reads_back_and_applies_only_to_its_build_and_loader() {
+    let f = fallback::Failure {
+        app: "0.3.0-beta.27 (build 1, gabc)".into(),
+        loader: r"C:\WINDOWS\SYSTEM32\vulkan-1.dll 1.4.363.1 (Vulkan 1.1 or later)".into(),
+        adapter: "GeForce GT 650M".into(),
+        reason: "WGPU error: Parent device is lost".into(),
+        when: "2026-11-10 14:40".into(),
+    };
+    let text = fallback::render(&f).expect("renders");
+    assert!(text.starts_with('#'), "the file says what it is");
+    assert_eq!(fallback::parse(&text), Some(f.clone()));
+    assert!(fallback::applies(&f, &f.app, &f.loader));
+    assert!(!fallback::applies(&f, "0.3.0-beta.28 (build 2, gdef)", &f.loader), "a new build tries Vulkan again");
+    assert!(!fallback::applies(&f, &f.app, r"C:\WINDOWS\SYSTEM32\vulkan-1.dll 1.4.400.0"), "a new loader too");
+}
+
+#[test]
+fn a_damaged_or_oversized_failure_file_is_ignored() {
+    assert_eq!(fallback::parse("not toml at all ["), None);
+    assert_eq!(fallback::parse("app = 1"), None);
+    let long = "x".repeat(2000);
+    let text = format!("app = \"{long}\"\nloader = \"l\"\nadapter = \"a\"\nreason = \"r\"\n");
+    assert_eq!(fallback::parse(&text), None);
+    // `when` may be missing (an older file): read as empty.
+    let f = fallback::parse("app = \"a\"\nloader = \"l\"\nadapter = \"c\"\nreason = \"r\"\n").expect("reads");
+    assert_eq!(f.when, "");
+}
+
+#[cfg(windows)]
+#[test]
+fn the_restarted_process_gets_its_names_once_and_the_rest_sorted() {
+    use std::ffi::OsString;
+    let base = vec![
+        (OsString::from("Path"), OsString::from(r"C:\bin")),
+        // A name differing only in case is the same name to Windows: replaced, not doubled.
+        (OsString::from("wgpu_backend"), OsString::from("vulkan")),
+        (OsString::from("=C:"), OsString::from(r"C:\work")),
+        (OsString::from("APPDATA"), OsString::from("x")),
+    ];
+    let b = fallback::same_start::block(base, &[("WGPU_BACKEND", "gl"), (fallback::RELAUNCH_ENV, "lost")]);
+    assert_eq!(&b[b.len() - 2..], &[0, 0], "the last string, then the empty one that ends the block");
+    let text = String::from_utf16(&b[..b.len() - 2]).expect("UTF-16");
+    let entries: Vec<&str> = text.split('\0').collect();
+    assert_eq!(
+        entries,
+        [r"=C:=C:\work", "APPDATA=x", "FRACTADYNE_VULKAN_FELL_BACK=lost", r"Path=C:\bin", "WGPU_BACKEND=gl"]
+    );
+}
