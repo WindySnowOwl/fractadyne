@@ -1661,6 +1661,9 @@ struct Perf {
     /// the lethal band and a blind frame budget (uitest's `formula` step, a cold driver cache) —
     /// the stall guards shed licenses and reset the budget for a GPU that was idle.
     ui_compile_ms: f64,
+    /// Milliseconds the start-up speed probe took (`render::speed_probe`), run this frame BEFORE its
+    /// interval is measured: handed to `ui_compile_ms` once it is, so the NEXT interval discounts it.
+    pub(crate) startup_probe_ms: f64,
     /// ⭐DIAGNOSTIC INSTRUMENT (`FRACTADYNE_BLA_DROP_FRAMES=N`, default off). Frames of BLA
     /// suppression remaining for this view after an arithmetic-mode switch.
     ///
@@ -2637,6 +2640,7 @@ impl Default for Perf {
             ],
             cap_sleep_ms: 0.0,
             ui_compile_ms: 0.0,
+            startup_probe_ms: 0.0,
             bla_suppress_until: [0, 0],
             tile_state: [None, None],
             tile_pending: [false, false],
@@ -17996,6 +18000,8 @@ impl eframe::App for FractadyneApp {
         self.perf.frame_idx += 1;
         crate::blinken::events::set_frame(self.perf.frame_idx);
         self.perf.last_frame = Some(frame_start);
+        // The speed probe ran this frame after `frame_start`: its time is in the next interval.
+        self.perf.ui_compile_ms += std::mem::take(&mut self.perf.startup_probe_ms);
 
         if !self.bench.auto && !self.bench.auto_std && !self.render_cli.run && !self.selftest.run && !self.profile.run && !self.harness.reusetest && self.render_cli.tour.is_none() && self.bench.std.is_none() && !self.uitest_active() {
             self.autosave(ctx); // don't let a CLI run (or a transient benchmark override) overwrite the saved session

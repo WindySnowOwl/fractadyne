@@ -46,11 +46,18 @@ pub(crate) const SIDE: u32 = 512;
 /// The first pass's iterations: ~29 ms of floatexp on Intel HD Graphics 4400, the slowest card
 /// measured, and a fraction of a millisecond on a discrete one.
 pub(crate) const ITERS_START: u32 = 16;
-/// The most iterations a probe pass asks (a fast card reads as [`Finding::Fast`] long before).
-pub(crate) const ITERS_MAX: u32 = 1 << 16;
-/// A pass this long is timed well enough to price: the per-pass fixed cost (~0.2 ms) and the wall
-/// clock's submission latency are a few percent of it, and both err slow, the safe side.
+/// The most iterations a probe pass asks, and the length of the probe's references. A card exactly
+/// at the lowest threshold that matters (direct's table default, 1.92e-8 ms/step) reaches
+/// [`PASS_TARGET_MS`] here (~21 ms); anything faster reads as [`Finding::Fast`] on the way. (It was
+/// 65,536: on Intel HD Graphics 4400 the floatexp reference alone was ~0.5 s of a 7.3 s probe.)
+pub(crate) const ITERS_MAX: u32 = 4096;
+/// A pass this long, by the GPU's own clock, is timed well enough to price: the per-pass fixed cost
+/// (~0.2 ms) is a few percent of it, and errs slow, the safe side.
 pub(crate) const PASS_TARGET_MS: f64 = 12.0;
+/// The ramp's guard against a GPU clock that reads low: the next pass, scaled from this one's WALL
+/// time (submission to completion), stays under this. A wall carries the submission's latency, so
+/// it over-predicts and the ramp only goes slower; where it cannot even double, the ramp stops.
+pub(crate) const PASS_WALL_MAX_MS: f64 = 50.0;
 /// Timed passes per ramp step (after one untimed warm-up, `render_iter_probe`); the slowest counts.
 pub(crate) const REPS: u32 = 2;
 
@@ -76,11 +83,13 @@ fn upp_log2(mode: RenderMode) -> i32 {
 /// What one mode's probe found.
 #[derive(Clone, Copy, Debug, PartialEq)]
 pub(crate) enum Finding {
-    /// The slowest timed pass at `iters` took `ms`, at least [`PASS_TARGET_MS`] (or at
-    /// [`ITERS_MAX`]): one nominal step costs `ms_per_step` here, at worst.
-    Measured { iters: u32, ms: f64, ms_per_step: f64 },
-    /// At `iters` the pass took `ms`, so a step costs at most `ms_per_step` (the pass's fixed cost
-    /// is in it): below every cost that would change an opening or a ceiling. Nothing is recorded.
+    /// The slowest timed pass at `iters` took `ms` on the GPU ([`gpu_ms`]; `wall_ms` submission to
+    /// completion), at least [`PASS_TARGET_MS`], or the ramp could go no further: one nominal step
+    /// costs `ms_per_step` here, at worst.
+    Measured { iters: u32, ms: f64, wall_ms: f64, ms_per_step: f64 },
+    /// At `iters` the pass took `ms` on the GPU, so a step costs at most `ms_per_step` (the pass's
+    /// fixed cost is in it): below every cost that would change an opening or a ceiling. Nothing is
+    /// recorded.
     Fast { iters: u32, ms: f64, ms_per_step: f64 },
 }
 
@@ -92,30 +101,36 @@ pub(crate) enum Step {
     Next(u32),
 }
 
-/// The ramp, after a pass of `px` pixels at `iters` iterations whose slowest timing was
-/// `slowest_ms`. `fast_below` is the cost per step under which nothing would change
-/// ([`fast_below`]). The next pass aims at twice [`PASS_TARGET_MS`] from this one's cost per
-/// iteration, which carries the pass's fixed cost and so over-estimates: it lands at or under
-/// ~2× the target, and never more than 16× the iterations or less than 2×. `None` = the timing is
-/// unusable (zero, negative or not finite).
-pub(crate) fn step(px: u64, iters: u32, slowest_ms: f64, fast_below: f64) -> Option<Step> {
-    if !(slowest_ms.is_finite() && slowest_ms > 0.0) || px == 0 || iters == 0 {
+/// The ramp, after a pass of `px` pixels at `iters` iterations whose slowest timing was `gpu_ms`
+/// by the GPU's clock ([`gpu_ms`]) and `wall_ms` submission to completion. `fast_below` is the cost
+/// per step under which nothing would change ([`fast_below`]).
+///
+/// The next pass aims at twice [`PASS_TARGET_MS`] of GPU time from this one's cost per iteration,
+/// which carries the pass's fixed cost and so over-estimates; at least 2× the iterations, at most
+/// 16×, and no more than [`PASS_WALL_MAX_MS`] scaled from this pass's wall. Where that wall bound
+/// cannot double the pass, the ramp stops and prices what it has. `None` = a timing is unusable.
+pub(crate) fn step(px: u64, iters: u32, gpu_ms: f64, wall_ms: f64, fast_below: f64) -> Option<Step> {
+    if !(gpu_ms.is_finite() && gpu_ms > 0.0 && wall_ms.is_finite() && wall_ms > 0.0) || px == 0 || iters == 0 {
         return None;
     }
-    let ms_per_step = slowest_ms / (px as f64 * f64::from(iters));
-    if slowest_ms >= PASS_TARGET_MS {
-        return Some(Step::Done(Finding::Measured { iters, ms: slowest_ms, ms_per_step }));
+    let ms_per_step = gpu_ms / (px as f64 * f64::from(iters));
+    let measured = Step::Done(Finding::Measured { iters, ms: gpu_ms, wall_ms, ms_per_step });
+    if gpu_ms >= PASS_TARGET_MS {
+        return Some(measured);
     }
     if ms_per_step < fast_below {
-        return Some(Step::Done(Finding::Fast { iters, ms: slowest_ms, ms_per_step }));
+        return Some(Step::Done(Finding::Fast { iters, ms: gpu_ms, ms_per_step }));
     }
     if iters >= ITERS_MAX {
-        return Some(Step::Done(Finding::Measured { iters, ms: slowest_ms, ms_per_step }));
+        return Some(measured);
     }
-    let lo = f64::from(iters) * 2.0;
-    let hi = f64::from(iters) * 16.0;
-    let aim = f64::from(iters) * 2.0 * PASS_TARGET_MS / slowest_ms;
-    Some(Step::Next(aim.clamp(lo, hi).min(f64::from(ITERS_MAX)) as u32))
+    let i = f64::from(iters);
+    let wall_cap = (i * PASS_WALL_MAX_MS / wall_ms).floor();
+    if wall_cap < i * 2.0 {
+        return Some(measured);
+    }
+    let aim = i * 2.0 * PASS_TARGET_MS / gpu_ms;
+    Some(Step::Next(aim.clamp(i * 2.0, i * 16.0).min(wall_cap).min(f64::from(ITERS_MAX)) as u32))
 }
 
 /// The cost per step below which a mode's measurement changes nothing: its opening is already the
@@ -126,11 +141,18 @@ pub(crate) fn fast_below(table_cost: f64, bootstrap_ms: f64, bootstrap_steps: u6
     if table_cost > 0.0 && table_cost.is_finite() { opening.min(table_cost) } else { opening }
 }
 
-/// A timed pass's time: the slower of its GPU timestamp and its wall clock. The wall carries the
-/// submission and the wait, so it errs slow, the safe side for a safety bound; and a card whose
-/// timestamps describe another dispatch (the RX 6800 XT's, `calibration`) cannot make it fast.
-pub(crate) fn pass_ms([ts, wall]: [f64; 2]) -> f64 {
-    if ts.is_finite() && ts > 0.0 { ts.max(wall) } else { wall }
+/// A timed pass's GPU time: its timestamp, where the card gave one that fits inside the pass's wall
+/// (submission to completion, plus 0.5 ms for the clocks' resolution), else the wall.
+///
+/// ⚠Not the slower of the two, which this was first: the wall carries the submission's latency,
+/// and PLUTO's RTX 3070 (2026-11-10, dev.8) waited ~12 ms per submission, so a pass of ~1 ms of
+/// GPU work read 13.9 ms and the card measured ~20× slower than it is (direct 9.7e-8 ms/step; the
+/// RTX 3080 here is 4.9e-9), lowering its ceiling 3–5× for nothing. A watchdog times the GPU's
+/// work, which is what the timestamp measures. A timestamp that reads LOW cannot make a long pass
+/// (the ramp's wall bound, [`PASS_WALL_MAX_MS`]); at worst it leaves a card on the defaults, as
+/// before the probe.
+pub(crate) fn gpu_ms([ts, wall]: [f64; 2]) -> f64 {
+    if ts.is_finite() && ts > 0.0 && ts <= wall + 0.5 { ts } else { wall }
 }
 
 /// The table's cost for `mode` (0 for floatexp, which has no ceiling).
@@ -169,8 +191,11 @@ impl FractadyneApp {
         let mut parts = Vec::new();
         for mode in MODES {
             let below = fast_below(table_cost(table.costs, mode), c.tdr_bootstrap_ms, c.tdr_bootstrap_steps);
-            match self.speed_probe_mode(rs, mode, below) {
-                Ok(Finding::Measured { iters, ms, ms_per_step }) => {
+            let tm = Instant::now();
+            let found = self.speed_probe_mode(rs, mode, below);
+            let took = format!("{:.0} ms", tm.elapsed().as_secs_f64() * 1000.0);
+            match found {
+                Ok(Finding::Measured { iters, ms, wall_ms, ms_per_step }) => {
                     // The opening, only where it would come down (a faster reading would mark the
                     // mode measured and change nothing else, e.g. stop the pre-switch probe).
                     let opens = ms_per_step > opening_floor;
@@ -185,7 +210,7 @@ impl FractadyneApp {
                         RenderMode::Floatexp => {}
                     }
                     parts.push(format!(
-                        "{} {ms_per_step:.3e} ms/step ({SIDE}² × {iters}: {ms:.1} ms){}",
+                        "{} {ms_per_step:.3e} ms/step ({SIDE}² × {iters}: {ms:.1} ms GPU, {wall_ms:.1} wall; {took}){}",
                         mode_name(mode),
                         if opens {
                             format!(", opens at {:.2e} steps", super::bootstrap_steps(1.0 / ms_per_step, 0.0) as f64)
@@ -195,20 +220,20 @@ impl FractadyneApp {
                     ));
                 }
                 Ok(Finding::Fast { iters, ms, ms_per_step }) => parts.push(format!(
-                    "{} under {ms_per_step:.2e} ms/step ({SIDE}² × {iters}: {ms:.2} ms), faster than the defaults",
+                    "{} under {ms_per_step:.2e} ms/step ({SIDE}² × {iters}: {ms:.2} ms GPU; {took}), faster than the defaults",
                     mode_name(mode)
                 )),
-                Err(e) => parts.push(format!("{} not measured ({e})", mode_name(mode))),
+                Err(e) => parts.push(format!("{} not measured ({e}; {took})", mode_name(mode))),
             }
         }
+        let ms = t0.elapsed().as_secs_f64() * 1000.0;
+        // Its time lies inside the next frame interval, and is no frame's dispatch: discounted from
+        // it like a pipeline compile (`Perf::startup_probe_ms`). Counted, it read as a 10 s frame
+        // the GPU timestamps could not see (`FRAME BUDGET IS BLIND`, Eris dev.8, 2026-11-10).
+        self.perf.startup_probe_ms = ms;
         crate::diag::log_line(
             "wgpu",
-            &format!(
-                "speed probe ({}): {} — {:.0} ms",
-                table.source,
-                parts.join("; "),
-                t0.elapsed().as_secs_f64() * 1000.0
-            ),
+            &format!("speed probe ({}): {} — {ms:.0} ms", table.source, parts.join("; ")),
         );
         Some(lowered)
     }
@@ -233,15 +258,16 @@ impl FractadyneApp {
             if !ok {
                 return Err(format!("{:.1}% of pixels ran every step at {iters} (need 98%)", running * 100.0));
             }
-            let slowest = reps.iter().map(|&t| pass_ms(t)).fold(f64::NAN, f64::max);
-            match step(px, iters, slowest, fast_below) {
+            let gpu = reps.iter().map(|&t| gpu_ms(t)).fold(f64::NAN, f64::max);
+            let wall = reps.iter().map(|&[_, w]| w).fold(f64::NAN, f64::max);
+            match step(px, iters, gpu, wall, fast_below) {
                 None => return Err(format!("unusable times {reps:?} ms at {iters}")),
                 Some(Step::Done(f)) => return Ok(f),
                 Some(Step::Next(n)) if n > iters && n <= iters_cap => iters = n,
                 Some(Step::Next(_)) => {
                     // The reference stopped short (`partial`): price what was timed.
-                    let ms_per_step = slowest / (px as f64 * f64::from(iters));
-                    return Ok(Finding::Measured { iters, ms: slowest, ms_per_step });
+                    let ms_per_step = gpu / (px as f64 * f64::from(iters));
+                    return Ok(Finding::Measured { iters, ms: gpu, wall_ms: wall, ms_per_step });
                 }
             }
         }
