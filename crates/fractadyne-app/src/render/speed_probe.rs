@@ -35,15 +35,15 @@
 //!
 //! **Saved, then re-checked** ([`saved`]): a reading is kept per card, driver, build and power
 //! state. A later launch in the same state uses it at once and measures the first frame's mode
-//! again IN THE BACKGROUND, at the iterations it was saved at, on a thread of its own once the
-//! picture is up and the view is still ([`recheck`]); a reading that no longer holds is measured
-//! again there and replaced. On Eris that takes the check off every launch but the first in a
+//! again LATER, at the iterations it was saved at, once the picture is up and the view is still:
+//! on a thread of its own, or on OpenGL on the UI thread ([`recheck`]); a reading that no longer
+//! holds is measured again there and replaced. On Eris that takes the check off every launch but the first in a
 //! build and power state.
 
 mod recheck;
 mod saved;
 
-pub(crate) use recheck::{overlap_ms, BusyClock, Recheck};
+pub(crate) use recheck::Recheck;
 
 use super::{assemble_ref_fields, pre_switch_probe_representative, recompute_worker, RecomputeInputs};
 use crate::calibration::Costs;
@@ -199,16 +199,13 @@ pub(crate) struct Plan {
     inputs: Option<RecomputeInputs>,
 }
 
-/// One timed probe pass through `live` (warm-up, then [`REPS`] timed: `render_iter_probe`), the
-/// time it holds the GPU marked on `busy` where one is given ([`BusyClock`]).
+/// One timed probe pass through `live` (warm-up, then [`REPS`] timed: `render_iter_probe`).
 fn timed_pass(
     dev: &eframe::wgpu::Device,
     q: &eframe::wgpu::Queue,
     req: &fractadyne_gpu::ExportRequest,
     live: &fractadyne_gpu::LiveIterPipeline,
-    busy: Option<&BusyClock>,
 ) -> Result<(fractadyne_gpu::ExportResult, Vec<[f64; 2]>), String> {
-    let _held = busy.map(BusyClock::hold);
     fractadyne_gpu::render_iter_probe(dev, q, req, REPS, live).map_err(|e| e.to_string())
 }
 
@@ -220,14 +217,13 @@ fn ramp(
     live: &fractadyne_gpu::LiveIterPipeline,
     (req, iters_cap): &mut (fractadyne_gpu::ExportRequest, u32),
     fast_below: f64,
-    busy: Option<&BusyClock>,
 ) -> Result<Finding, String> {
     let iters_cap = *iters_cap;
     let px = u64::from(SIDE) * u64::from(SIDE);
     let mut iters = ITERS_START.min(iters_cap);
     loop {
         req.max_iter = iters;
-        let (r, reps) = timed_pass(dev, q, req, live, busy)?;
+        let (r, reps) = timed_pass(dev, q, req, live)?;
         let (running, ok) = pre_switch_probe_representative(&r.pixels, SIDE, SIDE);
         if !ok {
             return Err(format!("{:.1}% of pixels ran every step at {iters} (need 98%)", running * 100.0));
@@ -255,7 +251,6 @@ fn remeasure_at(
     live: &fractadyne_gpu::LiveIterPipeline,
     (req, iters_cap): &mut (fractadyne_gpu::ExportRequest, u32),
     saved: Finding,
-    busy: Option<&BusyClock>,
 ) -> Result<f64, String> {
     let iters = match saved {
         Finding::Measured { iters, .. } | Finding::Fast { iters, .. } => iters,
@@ -264,7 +259,7 @@ fn remeasure_at(
         return Err(format!("the reference reaches {iters_cap} iterations, not the saved {iters}"));
     }
     req.max_iter = iters;
-    let (r, reps) = timed_pass(dev, q, req, live, busy)?;
+    let (r, reps) = timed_pass(dev, q, req, live)?;
     let (running, ok) = pre_switch_probe_representative(&r.pixels, SIDE, SIDE);
     if !ok {
         return Err(format!("{:.1}% of pixels ran every step at {iters} (need 98%)", running * 100.0));
@@ -468,7 +463,7 @@ impl FractadyneApp {
                     let found = match &live[k] {
                         Some(l) => {
                             let mut req = plan_request(self.speed_probe_plan(mode));
-                            ramp(&rs.device, &rs.queue, l, &mut req, below[k], None)
+                            ramp(&rs.device, &rs.queue, l, &mut req, below[k])
                         }
                         None => Err("the renderer is not installed".to_string()),
                     };

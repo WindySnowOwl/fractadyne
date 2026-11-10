@@ -1665,14 +1665,10 @@ struct Perf {
     /// the lethal band and a blind frame budget (uitest's `formula` step, a cold driver cache) —
     /// the stall guards shed licenses and reset the budget for a GPU that was idle.
     ui_compile_ms: f64,
-    /// Milliseconds the start-up speed probe took (`render::speed_probe`), run this frame BEFORE its
+    /// Milliseconds the start-up speed probe took (`render::speed_probe`), or its re-check where that
+    /// runs on this thread (OpenGL, `render::speed_probe::recheck`), run this frame BEFORE its
     /// interval is measured: handed to `ui_compile_ms` once it is, so the NEXT interval discounts it.
     pub(crate) startup_probe_ms: f64,
-    /// The background speed re-check's GPU time, and how much of it the frame intervals have taken
-    /// out so far (`render::speed_probe::overlap_ms`). OpenGL only: there its passes stop this
-    /// thread's GPU calls, and a multi-second first-draw compile would read as a frame the GPU
-    /// timestamps cannot see.
-    pub(crate) recheck_clock: Option<(std::sync::Arc<render::speed_probe::BusyClock>, f64)>,
     /// ⭐DIAGNOSTIC INSTRUMENT (`FRACTADYNE_BLA_DROP_FRAMES=N`, default off). Frames of BLA
     /// suppression remaining for this view after an arithmetic-mode switch.
     ///
@@ -2650,7 +2646,6 @@ impl Default for Perf {
             cap_sleep_ms: 0.0,
             ui_compile_ms: 0.0,
             startup_probe_ms: 0.0,
-            recheck_clock: None,
             bla_suppress_until: [0, 0],
             tile_state: [None, None],
             tile_pending: [false, false],
@@ -17811,8 +17806,8 @@ impl eframe::App for FractadyneApp {
             self.probe_pending_coarse(dev, q);
             // A dive about to reach floatexp measures it first (`PRE_SWITCH_PROBE`).
             self.pre_switch_probe(dev, q);
-            // A saved start-up speed reading in use is re-checked on a thread of its own once the
-            // picture is up and the view is still (`render::speed_probe::recheck`).
+            // A saved start-up speed reading in use is re-checked once the picture is up and the
+            // view is still, on a thread of its own or on OpenGL here (`render::speed_probe::recheck`).
             self.speed_recheck_step(dev, q);
         }
 
@@ -17937,12 +17932,10 @@ impl eframe::App for FractadyneApp {
             self.perf.frame_period_ms = ema(self.perf.frame_period_ms, raw_ms);
             // Discount the previous frame's deliberate cap sleep — it lies inside this interval and
             // is not work. See `Perf::cap_sleep_ms` for the mispricing that cost. Likewise its
-            // pipeline compile (`Perf::ui_compile_ms`, also after this point in a frame), and on
-            // OpenGL the background speed re-check's hold on the GPU (`Perf::recheck_clock`).
+            // pipeline compile (`Perf::ui_compile_ms`, also after this point in a frame).
             let dt = (frame_start.duration_since(prev).as_secs_f64() * 1000.0
                 - std::mem::take(&mut self.perf.cap_sleep_ms)
-                - std::mem::take(&mut self.perf.ui_compile_ms)
-                - render::speed_probe::overlap_ms(&mut self.perf.recheck_clock, Instant::now()))
+                - std::mem::take(&mut self.perf.ui_compile_ms))
                 .max(0.0);
             self.perf.last_dt_ms = dt; // the actual spike, with cap sleep removed
             // Observed zoom speed, octaves/s, for the rate-aware refresh sizing. A step of two
