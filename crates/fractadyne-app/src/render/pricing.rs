@@ -33,7 +33,39 @@ pub(crate) fn bootstrap_steps(rate_this_mode: f64, rate_other_mode: f64) -> u64 
     // NaN/inf cannot reach here (both inputs are finite and positive), but the cast still has to be
     // saturating: a very fast rate overflows u64 before the clamp would catch it.
     let steps = (rate * c.tdr_bootstrap_ms).max(0.0);
-    (steps as u64).clamp(c.tdr_min_steps, c.tdr_bootstrap_steps)
+    (steps as u64).clamp(tdr_min_steps().min(c.tdr_bootstrap_steps), c.tdr_bootstrap_steps)
+}
+
+/// The most a floor-sized dispatch may cost on a card the start-up speed check measured
+/// ([`card_floor`]), ms.
+pub(crate) const CARD_FLOOR_MS: f64 = 200.0;
+/// The lowest the card's floor goes, steps.
+pub(crate) const CARD_FLOOR_MIN_STEPS: u64 = 16_384;
+
+/// ⭐THE BUDGET FLOOR ON A CARD TOO SLOW FOR `TDR_MIN_STEPS` (2026-11-10). The floor was sized so
+/// that the worst regime measured on the cards then known took single-digit milliseconds at it. On
+/// Venus (GeForce GT 650M, OpenGL, NVIDIA 382.05) the speed check read floatexp at 1.17e-4 ms a step,
+/// so the 4e6-step floor alone was ~0.5-0.8 s, and its live frames ran at the floor and above it in
+/// the lethal band (up to 1,993 ms against a 2 s watchdog, `--zoomtest 3`, 20261110-134134-vqdb).
+/// Where the card's slowest measured mode (`fractadyne_gpu::card_step_ms`) would take more than
+/// [`CARD_FLOOR_MS`] at `base`, the floor is what takes that long, never below
+/// [`CARD_FLOOR_MIN_STEPS`]; otherwise `base`, so every card measured so far but Venus keeps 4e6.
+pub(crate) fn card_floor(base: u64, worst_ms_per_step: f64) -> u64 {
+    if !(worst_ms_per_step.is_finite() && worst_ms_per_step > 0.0) {
+        return base;
+    }
+    base.min(((CARD_FLOOR_MS / worst_ms_per_step) as u64).max(CARD_FLOOR_MIN_STEPS))
+}
+
+/// The floor the budget may fall to (`TDR_MIN_STEPS`), lowered on a card measured too slow for it
+/// ([`card_floor`]); a `--set TDR_MIN_STEPS` stands as given.
+pub(crate) fn tdr_min_steps() -> u64 {
+    let base = crate::tunables::cost().tdr_min_steps;
+    if crate::tunables::overridden("TDR_MIN_STEPS") {
+        return base;
+    }
+    let worst = (0..3u32).filter_map(fractadyne_gpu::card_step_ms).fold(0.0, f64::max);
+    card_floor(base, worst)
 }
 
 /// The budget a measurement or a dispatch should start from. Zero means "nothing measured yet in
@@ -48,12 +80,7 @@ pub(crate) fn bootstrap_steps(rate_this_mode: f64, rate_other_mode: f64) -> u64 
 ///
 /// `bootstrap` is what `bootstrap_steps` derived for this view and mode.
 pub(crate) fn budget_base(fe_budget: u64, bootstrap: u64) -> u64 {
-    budget_base_in(
-        fe_budget,
-        bootstrap,
-        crate::tunables::cost().tdr_min_steps,
-        crate::tunables::cost().tdr_steps_ceil,
-    )
+    budget_base_in(fe_budget, bootstrap, tdr_min_steps(), crate::tunables::cost().tdr_steps_ceil)
 }
 
 /// [`budget_base`] with its two overridable bounds (`TDR_MIN_STEPS`, `TDR_STEPS_CEIL`) passed in: the
@@ -236,7 +263,7 @@ pub(crate) fn budget_step(cur: u64, steps: u64, ms: f64, explicit: bool) -> Opti
         (target_ms / ms).clamp(crate::tunables::cost().tdr_shrink_max, crate::tunables::cost().tdr_grow_max)
     };
     let base = if slow { cur.min(steps.max(1)) } else { cur };
-    let next = ((base as f64 * factor) as u64).clamp(crate::tunables::cost().tdr_min_steps, ceil);
+    let next = ((base as f64 * factor) as u64).clamp(tdr_min_steps().min(ceil), ceil);
     // Converged when the factor sits in the dead band — or when the clamp pinned `next` at `cur`
     // (a ceiling-pinned explicit budget is as converged as it is allowed to get; this is what
     // lets `fe_budget_ok` arm the tiled settle without a special case).
