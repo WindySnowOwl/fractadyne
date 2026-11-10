@@ -127,7 +127,7 @@ fn probe_child(file: &Path) -> i32 {
     // whole search run on a machine whose driver links the shader fine.
     if let Ok(text) = std::env::var("FRACTADYNE_GL_PROBE_FAKE_CRASH") {
         if !text.is_empty() && wgsl.contains(&text) {
-            crate::diag::native_crash::raise_for_test(false);
+            crate::diag::native_crash::raise_for_test(false, false);
         }
     }
     println!("linked in {:.1} s", t0.elapsed().as_secs_f64());

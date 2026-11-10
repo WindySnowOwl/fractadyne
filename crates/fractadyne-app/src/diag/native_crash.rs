@@ -55,7 +55,19 @@ pub(crate) fn graphics_module(module: &str) -> bool {
 
 /// The report's one-line account of the crash: what, at which address, in which module. `params`
 /// are the exception's parameters, `module` the file name and offset of the faulting address.
-pub(crate) fn describe(code: u32, address: usize, params: &[usize], module: Option<(&str, usize)>, thread: &str) -> String {
+///
+/// For a fault in no module (a call through a null or stale function pointer), `caller` is the
+/// module that made the call: the file name and offset of the return address the call left on the
+/// stack. Venus (2026-11-10, NVIDIA GeForce GT 650M, a 2017 driver) crashed executing address 0x0
+/// while listing graphics adapters, and the report could not say whose call that was.
+pub(crate) fn describe_called(
+    code: u32,
+    address: usize,
+    params: &[usize],
+    module: Option<(&str, usize)>,
+    caller: Option<(&str, usize)>,
+    thread: &str,
+) -> String {
     let what = match exception_name(code) {
         Some(n) => format!("{n} (0x{code:08x})"),
         None => format!("exception 0x{code:08x}"),
@@ -77,7 +89,14 @@ pub(crate) fn describe(code: u32, address: usize, params: &[usize], module: Opti
     let place = match module {
         Some((m, off)) if graphics_module(m) => format!(", in the graphics driver: {m}+0x{off:x}"),
         Some((m, off)) => format!(", in {m}+0x{off:x}"),
-        None => format!(", at 0x{address:x} (in no loaded module)"),
+        None => {
+            let by = match caller {
+                Some((m, off)) if graphics_module(m) => format!(", called from the graphics driver: {m}+0x{off:x}"),
+                Some((m, off)) => format!(", called from {m}+0x{off:x}"),
+                None => String::new(),
+            };
+            format!(", at 0x{address:x} (in no loaded module){by}")
+        }
     };
     format!("a native crash: {what}{touched}{place}, on thread '{thread}'")
 }
@@ -97,7 +116,7 @@ pub(crate) fn install() {}
 pub(crate) fn reinstall(_after: &str) {}
 
 #[cfg(not(windows))]
-pub(crate) fn raise_for_test(_on_thread: bool) {}
+pub(crate) fn raise_for_test(_on_thread: bool, _null_call: bool) {}
 
 #[cfg(windows)]
 mod imp {
@@ -133,13 +152,17 @@ mod imp {
         fn GetModuleFileNameW(module: *mut c_void, name: *mut u16, size: u32) -> u32;
         fn GetCurrentThreadId() -> u32;
         fn RaiseException(code: u32, flags: u32, n_args: u32, args: *const usize);
+        fn GetCurrentThreadStackLimits(low: *mut usize, high: *mut usize);
     }
 
     const EXCEPTION_CONTINUE_SEARCH: i32 = 0;
     const FROM_ADDRESS: u32 = 0x4;
     const UNCHANGED_REFCOUNT: u32 = 0x2;
     const FRAMES: usize = 48;
-    const MODULES: usize = 16;
+    const MODULES: usize = 24;
+    /// Stack words scanned from the fault's stack pointer (4 KB), and the most kept.
+    const STACK_SCAN_WORDS: usize = 512;
+    const STACK_HITS: usize = 12;
     const NAME: usize = 260;
     const NO_MODULE: u8 = u8::MAX;
 
@@ -154,6 +177,14 @@ mod imp {
         frame_module: [u8; FRAMES],
         n_frames: usize,
         fault_module: u8,
+        /// The stack pointer at the fault (x64 `CONTEXT.Rsp`), 0 when unknown.
+        rsp: usize,
+        /// The first stack words from `rsp` that point into a loaded module: (offset from `rsp`,
+        /// value, module index). For a fault in no module, a call through a null pointer, the one at
+        /// offset 0 is the call's return address: the caller. The rest are candidates (a pointer to
+        /// a module's data reads the same as a return address).
+        stack_hits: [(usize, usize, u8); STACK_HITS],
+        n_stack_hits: usize,
         /// Each module seen: its base, and its path as UTF-16 (length, buffer).
         modules: [(usize, usize, [u16; NAME]); MODULES],
         n_modules: usize,
@@ -173,6 +204,9 @@ mod imp {
         frame_module: [NO_MODULE; FRAMES],
         n_frames: 0,
         fault_module: NO_MODULE,
+        rsp: 0,
+        stack_hits: [(0, 0, NO_MODULE); STACK_HITS],
+        n_stack_hits: 0,
         modules: [(0, 0, [0; NAME]); MODULES],
         n_modules: 0,
     }));
@@ -224,8 +258,17 @@ mod imp {
     /// A deliberate crash (`FRACTADYNE_NATIVE_CRASH_AT_START`): an access violation's code raised
     /// on this thread, or on a thread of its own, to see the report and the dialog on a machine
     /// that does not crash. Raised, not a wild write: the same dispatch, and no undefined behavior.
-    pub(crate) fn raise_for_test(on_thread: bool) {
-        let raise = || {
+    /// `null_call`: a real call to address 0 instead (x64), the crash Venus had, so the report's
+    /// caller can be checked: it must name this function's module, fractadyne.exe.
+    pub(crate) fn raise_for_test(on_thread: bool, null_call: bool) {
+        let raise = move || {
+            #[cfg(target_arch = "x86_64")]
+            if null_call {
+                // SAFETY: deliberately not: it executes address 0, which faults before anything
+                // runs there; the process ends in the crash handler.
+                unsafe { std::arch::asm!("call {f}", f = in(reg) 0usize, clobber_abi("system")) };
+            }
+            let _ = null_call;
             // Writing address 0x10, as a null struct pointer's field would.
             let args = [1usize, 0x10];
             // SAFETY: a documented Win32 call with a two-element argument array that outlives it.
@@ -285,7 +328,46 @@ mod imp {
         }
         let at = f.address;
         f.fault_module = module_index(f, at);
+        // SAFETY: the system's pointers, null-checked inside.
+        unsafe { scan_stack(f, p) };
     }
+
+    /// Read the fault's stack pointer from its CONTEXT and keep the stack words above it that point
+    /// into a loaded module ([`Facts::stack_hits`]). Reads only inside this thread's own stack
+    /// (`GetCurrentThreadStackLimits`; the filter runs on the crashed thread), word-aligned, so the
+    /// scan cannot fault. x64 only (the CONTEXT layout).
+    #[cfg(target_arch = "x86_64")]
+    unsafe fn scan_stack(f: &mut Facts, p: *const ExceptionPointers) {
+        // SAFETY: the caller's pointer, checked for null; the CONTEXT is the system's, valid for
+        // the duration of the filter, and `Rsp` is at 0x98 in the x64 layout.
+        let Some(ctx) = (unsafe { p.as_ref() }).map(|p| p.context as *const u8).filter(|c| !c.is_null()) else {
+            return;
+        };
+        // SAFETY: as above.
+        let rsp = unsafe { std::ptr::read_unaligned(ctx.add(0x98) as *const u64) } as usize;
+        f.rsp = rsp;
+        let (mut lo, mut hi) = (0usize, 0usize);
+        // SAFETY: two out-parameters.
+        unsafe { GetCurrentThreadStackLimits(&mut lo, &mut hi) };
+        if rsp < lo || rsp >= hi || rsp % 8 != 0 {
+            return;
+        }
+        let end = hi.min(rsp.saturating_add(STACK_SCAN_WORDS * 8));
+        let mut a = rsp;
+        while a + 8 <= end && f.n_stack_hits < STACK_HITS {
+            // SAFETY: an aligned word inside this thread's committed stack, [rsp, hi).
+            let v = unsafe { std::ptr::read_volatile(a as *const usize) };
+            let m = module_index(f, v);
+            if m != NO_MODULE {
+                f.stack_hits[f.n_stack_hits] = (a - rsp, v, m);
+                f.n_stack_hits += 1;
+            }
+            a += 8;
+        }
+    }
+
+    #[cfg(not(target_arch = "x86_64"))]
+    unsafe fn scan_stack(_f: &mut Facts, _p: *const ExceptionPointers) {}
 
     /// The index in `f.modules` of the module holding `addr`, adding it if new; `NO_MODULE` if none
     /// does or the table is full. Fixed buffers only: no allocation on the crashed thread.
@@ -372,7 +454,24 @@ mod imp {
         };
         let base = |i: u8| f.modules[i as usize].0;
         let fault = path(f.fault_module).map(|p| (super::file_name(&p).to_string(), f.address.wrapping_sub(base(f.fault_module))));
-        let reason = super::describe(f.code, f.address, &f.params[..f.n_params], fault.as_ref().map(|(m, o)| (m.as_str(), *o)), thread);
+        // A fault in no module: the word at the stack pointer, when it points into one, is the
+        // return address of the call that jumped there.
+        let hit = |k: usize| {
+            let (off, v, m) = f.stack_hits[k];
+            path(m).map(|p| (off, super::file_name(&p).to_string(), v.wrapping_sub(base(m))))
+        };
+        let caller = match (&fault, f.n_stack_hits) {
+            (None, n) if n > 0 => hit(0).filter(|(off, _, _)| *off == 0).map(|(_, m, o)| (m, o)),
+            _ => None,
+        };
+        let reason = super::describe_called(
+            f.code,
+            f.address,
+            &f.params[..f.n_params],
+            fault.as_ref().map(|(m, o)| (m.as_str(), *o)),
+            caller.as_ref().map(|(m, o)| (m.as_str(), *o)),
+            thread,
+        );
         let loc = match &fault {
             Some((m, off)) => format!("<native: {m}+0x{off:x}>"),
             None => format!("<native: 0x{:x}>", f.address),
@@ -385,10 +484,23 @@ mod imp {
             };
             stack.push_str(&line);
         }
+        if f.n_stack_hits > 0 {
+            stack.push_str(&format!(
+                "stack words from the fault's rsp 0x{:x} that point into a module (for a call to a null pointer, +0x0 is \
+                 its return address; the rest are candidates):\n",
+                f.rsp
+            ));
+            for k in 0..f.n_stack_hits {
+                if let Some((off, m, o)) = hit(k) {
+                    stack.push_str(&format!("  rsp+0x{off:03x}: {m}+0x{o:x}\n"));
+                }
+            }
+        }
         stack.push_str("modules:\n");
         for m in &f.modules[..f.n_modules] {
             stack.push_str(&format!("  0x{:x} {}\n", m.0, String::from_utf16_lossy(&m.2[..m.1])));
         }
-        (reason, loc, stack, fault.map(|(m, _)| m))
+        // The advice reads the module: the caller's, when the fault itself is in none.
+        (reason, loc, stack, fault.map(|(m, _)| m).or(caller.map(|(m, _)| m)))
     }
 }
