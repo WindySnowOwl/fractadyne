@@ -188,6 +188,16 @@ Changes after 0.3.0-beta.1:
   way. It now renders on a device of its own on the same graphics card, which takes about half a
   second to open, and eight exports in a row came out identical. If the card will not open a
   second device, the export uses the window's, as before, and the log says so.
+- **Deep zoom asks less of a very slow graphics card at once (0.3.0-beta.27).** On a 2012 MacBook
+  Pro's GeForce GT 650M with NVIDIA's 2017 driver, OpenGL computes a deep-zoom step about ten times
+  slower than even an Intel HD Graphics 4400, and the live view's smallest piece of work, sized for
+  faster cards, took up to 2 seconds of GPU time, the limit at which Windows resets the graphics
+  driver. On a card the start-up check measures that slow, the smallest piece is now sized from its
+  measured speed. Every other card measured keeps the sizes it had. ⚠**Known limitation:** on that
+  card a deep-zoom frame at full resolution still takes 1 to 1.3 seconds of GPU time, because each
+  pass over the frame costs it about 0.4 microseconds a pixel however little it computes; deep zoom
+  there is slow, and close to that limit. Vulkan cannot help there: with that driver, Vulkan stops
+  at start-up in the graphics library Fractadyne uses.
 - **A large export works on a slow graphics card (0.3.0-beta.27).** On an Intel HD Graphics 4400,
   exporting a view in dual view at 3840 pixels wide with 2× supersampling saved an all-black image,
   and then the window stopped responding for good. The export sized each pass of GPU work for a fast
