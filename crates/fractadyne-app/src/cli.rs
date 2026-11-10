@@ -261,7 +261,12 @@ pub(crate) fn run_headless(args: &[String]) -> bool {
     }
     // --list-adapters: the graphics adapters `--adapter` chooses among, numbered as it counts them.
     if args.iter().any(|a| a == crate::gpu_choice::LIST_FLAG) {
+        crate::gpu_choice::log_loader();
         print!("{}", crate::gpu_choice::listing(&crate::gpu_choice::list()));
+        // After the rows, so a reader of the listing (`cards_in_listing`) reads the same rows.
+        if let Some(why) = crate::gpu_choice::vulkan_left_out() {
+            println!("Vulkan is left out: {why}");
+        }
         crate::exit(0);
     }
     // --check-language FILE: load a language file as the program does; list what it would set aside.
