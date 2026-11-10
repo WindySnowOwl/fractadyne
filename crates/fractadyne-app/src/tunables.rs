@@ -147,7 +147,7 @@ pub(crate) struct Cost {
     /// Floatexp measured before a dive reaches it (`PRE_SWITCH_PROBE_DEFAULT`; 0 = off).
     pub pre_switch_probe: u64,
     /// The start-up speed probe (`STARTUP_PROBE_DEFAULT`; 0 = off, 1 = a card the calibration table
-    /// has no entry for, 2 = every card).
+    /// has no entry for, its reading saved per power state, 2 = every card, always measured).
     pub startup_probe: u64,
     /// The df32 perturbation band renders floatexp, BLA as configured (`BAND_FLOATEXP_DEFAULT`;
     /// 0 = df32, 1 = floatexp).
@@ -1604,8 +1604,12 @@ pub(crate) const PRE_SWITCH_PROBE_DEFAULT: u64 = 1;
 /// through the live renderer's pipelines and (a) opens each mode's budget at that rate
 /// (`Meter::opening_rate`, the opening only) and (b) lowers the dispatch ceiling to the card's
 /// measured worst cost per step where that is slower than the table default. It can only lower
-/// either, and changes nothing on a card faster than the defaults assume. 2 = on every card (an
-/// experiment: a calibrated card's own entry is the base it may lower). 0 = off, as before.
+/// either, and changes nothing on a card faster than the defaults assume. Its reading is saved per
+/// card, driver, build and power state (`speed-checks.toml`, `render::speed_probe::saved`), and a
+/// later launch in the same state uses it at once and re-checks one mode in the background
+/// (`render::speed_probe::recheck`) instead of measuring all three. 2 = on every
+/// card, measured at every launch and never saved (an experiment: a calibrated card's own entry is
+/// the base it may lower). 0 = off, as before.
 ///
 /// Why: Intel HD Graphics 4400 (Eris, 2026-11-10, `--zoomtest 3` at 2^103): nothing measured, the
 /// first frame opened at `TDR_BOOTSTRAP_STEPS` (4e8) and its 1.9e8 floatexp steps took **1354 ms**

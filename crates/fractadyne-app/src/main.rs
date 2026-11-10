@@ -98,6 +98,7 @@ mod scripting;
 mod session_outcome;
 mod machine;
 mod palette_preview;
+mod power_state;
 mod sysinfo;
 mod theme;
 mod tone;
@@ -1664,7 +1665,8 @@ struct Perf {
     /// the lethal band and a blind frame budget (uitest's `formula` step, a cold driver cache) —
     /// the stall guards shed licenses and reset the budget for a GPU that was idle.
     ui_compile_ms: f64,
-    /// Milliseconds the start-up speed probe took (`render::speed_probe`), run this frame BEFORE its
+    /// Milliseconds the start-up speed probe took (`render::speed_probe`), or its re-check where that
+    /// runs on this thread (OpenGL, `render::speed_probe::recheck`), run this frame BEFORE its
     /// interval is measured: handed to `ui_compile_ms` once it is, so the NEXT interval discounts it.
     pub(crate) startup_probe_ms: f64,
     /// ⭐DIAGNOSTIC INSTRUMENT (`FRACTADYNE_BLA_DROP_FRAMES=N`, default off). Frames of BLA
@@ -6659,6 +6661,9 @@ struct FractadyneApp {
     snap_solve: Option<SnapSolve>,
     /// The pre-switch floatexp probe running on its own thread, if one is (`pre_switch_probe`).
     pre_switch_job: Option<render::PreSwitchJob>,
+    /// The saved start-up speed reading in use, waiting for its background re-check or being
+    /// re-checked (`render::speed_probe::recheck`).
+    speed_recheck: Option<render::speed_probe::Recheck>,
     /// Dual view: if `Some`, the Julia `c` is pinned to this Mandelbrot point (a marker
     /// is drawn there) instead of following the cursor. Click to pin, click it to release.
     julia_pin: Option<(f64, f64)>,
@@ -7678,6 +7683,7 @@ impl FractadyneApp {
             click_zoom_snap: s.click_zoom_snap,
             snap_solve: None,
             pre_switch_job: None,
+            speed_recheck: None,
             julia_pin: None,
             dual: s.dual && fractal.supports_julia(),
             dual_split: s.dual_split.clamp(DUAL_SPLIT_MIN, DUAL_SPLIT_MAX),
@@ -17800,6 +17806,9 @@ impl eframe::App for FractadyneApp {
             self.probe_pending_coarse(dev, q);
             // A dive about to reach floatexp measures it first (`PRE_SWITCH_PROBE`).
             self.pre_switch_probe(dev, q);
+            // A saved start-up speed reading in use is re-checked once the picture is up and the
+            // view is still, on a thread of its own or on OpenGL here (`render::speed_probe::recheck`).
+            self.speed_recheck_step(dev, q);
         }
 
         // Auto-zoom autopilot — dive toward detail (advance before drawing so this frame

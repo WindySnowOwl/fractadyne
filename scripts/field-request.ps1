@@ -76,6 +76,10 @@ param(
     # harness (agent v33+): sample each run's threads 4 times a second (threads.csv: on a core,
     # waiting for one, CPU seconds, the system's processor queue).
     [switch]$SampleThreads,
+    # harness (agent v38+): each run after the first starts with the previous run's config folder
+    # (its logs left behind): what the app saved in one launch, the next one reads, e.g. the start-up
+    # speed check's speed-checks.toml with -Repeat 2.
+    [switch]$CarryConfig,
     [int]$Days = 30,
     # farm-client: the controller to dial (HOST:PORT) and the file holding the farm key (fdn1-...).
     # The key travels in the request on the share and is redacted from the results.
@@ -188,6 +192,7 @@ switch ($Action) {
         $req.repeat = $Repeat
         if ($RecordDecide) { $req.record_decide = $true }
         if ($SampleThreads) { $req.sample_threads = $true }
+        if ($CarryConfig) { $req.carry_config = $true }
         if ($Instrument) {
             $req.env = [ordered]@{}
             foreach ($pair in ($Instrument -split ',' | Where-Object { $_ })) {
