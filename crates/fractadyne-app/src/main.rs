@@ -6094,6 +6094,8 @@ struct ExportState {
     task: Option<std::sync::mpsc::Receiver<Result<String, String>>>,
     /// Deep single-view export whose reference orbit is building off-thread (before the render).
     prep: Option<crate::export::ExportPrep>,
+    /// An export waiting to render on the UI thread (OpenGL, `run_export_work`).
+    on_ui_thread: Option<crate::export::OnUiThread>,
     /// Progress in permille (0–1000) and a cooperative cancel flag.
     progress: std::sync::Arc<std::sync::atomic::AtomicU32>,
     cancel: std::sync::Arc<std::sync::atomic::AtomicBool>,
@@ -6616,6 +6618,8 @@ struct DialogState {
     /// The speed check's notice, where its re-check stops the window (OpenGL,
     /// `render::speed_probe::recheck`): what is happening, then the result.
     speed_notice: Option<render::speed_probe::SpeedNotice>,
+    /// An export is about to render, or rendering, on the UI thread (OpenGL, `run_export_work`).
+    export_notice: bool,
 }
 
 // ================================================================================================
@@ -7895,6 +7899,7 @@ impl FractadyneApp {
                 // the interface's language is chosen while it is.
                 notice: None,
                 speed_notice: None,
+                export_notice: false,
             },
             // The adapter facts (and the VRAM probe that needs the adapter's name) are filled in by
             // `attach_gpu`; no frame runs before it.
@@ -7928,6 +7933,7 @@ impl FractadyneApp {
                 status: None,
                 task: None,
                 prep: None,
+                on_ui_thread: None,
                 progress: std::sync::Arc::new(std::sync::atomic::AtomicU32::new(0)),
                 cancel: std::sync::Arc::new(std::sync::atomic::AtomicBool::new(false)),
                 last_dir: s.export_dir.clone().map(std::path::PathBuf::from),
@@ -17814,6 +17820,8 @@ impl eframe::App for FractadyneApp {
             // view is still, on a thread of its own or on OpenGL here (`render::speed_probe::recheck`).
             self.speed_recheck_step(ctx, dev, q);
         }
+        // An export waiting to render on the UI thread (OpenGL) runs once its notice is up.
+        self.export_on_ui_thread_step(ctx);
 
         // Auto-zoom autopilot — dive toward detail (advance before drawing so this frame
         // reflects the new view).
@@ -18108,6 +18116,7 @@ impl eframe::App for FractadyneApp {
         self.draw_bench_results_dialog(ctx);
         self.draw_notice_dialog(ctx);
         self.draw_speed_notice(ctx);
+        self.draw_export_notice(ctx);
         self.draw_backend_notice_dialog(ctx);
         self.poll_mpfr_recovery(ctx);
 

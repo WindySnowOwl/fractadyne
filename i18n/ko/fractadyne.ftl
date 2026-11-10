@@ -755,6 +755,13 @@ speed-check-held = 완료: 저장된 카드 속도가 여전히 유효합니다.
 # The check's result: the card measured differently, and the new measurement replaced the saved one.
 speed-check-updated = 완료: 카드 측정값이 달라져 새 속도를 저장했습니다.
 
+## The notice an export puts up on OpenGL, where it renders on the window's own thread and the
+## window cannot respond until it is done (export.rs, run_export_work)
+
+export-gl-title = 내보내는 중
+# Shown just before the export renders, and on screen until it is done.
+export-gl-running = OpenGL에서는 Fractadyne이 창 자체의 스레드에서 내보내기를 렌더링하므로, 내보내기가 끝날 때까지 창이 응답하지 않습니다. 느린 그래픽 카드에서는 몇 분이 걸릴 수 있습니다.
+
 ## File ▸ Gallery…
 
 dlg-gallery-title = 갤러리

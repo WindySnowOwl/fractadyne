@@ -187,7 +187,11 @@ Changes after 0.3.0-beta.1:
   the window draws with, from another thread, and the two did not always keep out of each other's
   way. It now renders on a device of its own on the same graphics card, which takes about half a
   second to open, and eight exports in a row came out identical. If the card will not open a
-  second device, the export uses the window's, as before, and the log says so.
+  second device, the export uses the window's, as before, and the log says so. On OpenGL the
+  export instead renders on the window's own device and thread: with a second OpenGL context busy
+  beside the window's, an Intel HD Graphics 4400's driver froze Fractadyne's window for good, even
+  after the export had been saved. There the window stops until the export is done, and a small
+  window says so first; Use all graphics cards does not apply.
 - **The Julia panel stays put while you export (0.3.0-beta.27).** In dual view, the Julia panel
   follows the cursor across the Mandelbrot panel until you pin it, and with click-to-zoom on a
   plain click zooms rather than pins (Ctrl+click pins). Moving the mouse to reach the Export dialog's

@@ -755,6 +755,13 @@ speed-check-held = Selesai: kecepatan kartu yang tersimpan masih berlaku.
 # The check's result: the card measured differently, and the new measurement replaced the saved one.
 speed-check-updated = Selesai: hasil pengukuran kartu berbeda, dan kecepatan barunya disimpan.
 
+## The notice an export puts up on OpenGL, where it renders on the window's own thread and the
+## window cannot respond until it is done (export.rs, run_export_work)
+
+export-gl-title = Mengekspor
+# Shown just before the export renders, and on screen until it is done.
+export-gl-running = Pada OpenGL, Fractadyne merender ekspor di thread jendela itu sendiri, sehingga jendela tidak akan merespons sampai ekspor selesai. Pada kartu grafis yang lambat, ini bisa memakan waktu beberapa menit.
+
 ## File ▸ Gallery…
 
 dlg-gallery-title = Galeri

@@ -117,6 +117,8 @@ enum Screen {
     Notice,
     /// The speed check's notice, as it stands while its re-check stops the window (OpenGL).
     SpeedNotice,
+    /// An export's notice, as it stands while the export renders on the UI thread (OpenGL).
+    ExportNotice,
     PaletteEditor,
     /// The same editor in RING view. ⭐A palette is cycled, so the ring is the only place the
     /// SEAM is visible — and it is a whole second interaction geometry (hit-testing by arc
@@ -918,6 +920,7 @@ fn build_steps() -> Vec<Step> {
         screen("languages", Screen::Languages),
         screen("notice", Screen::Notice),
         screen("speed-notice", Screen::SpeedNotice),
+        screen("export-notice", Screen::ExportNotice),
         screen("palette-editor", Screen::PaletteEditor),
         screen("palette-editor-ring", Screen::PaletteEditorRing),
         screen("color-picker", Screen::ColorPicker),
@@ -1371,6 +1374,7 @@ impl FractadyneApp {
         self.dialogs.script_export_open = false;
         self.dialogs.notice = None;
         self.dialogs.speed_notice = None;
+        self.dialogs.export_notice = false;
         self.gallery.open = false;
         self.goto.open = false;
         self.share.open = false;
@@ -1632,6 +1636,9 @@ impl FractadyneApp {
             }
             Screen::SpeedNotice => {
                 self.dialogs.speed_notice = Some(crate::render::speed_probe::SpeedNotice::Checking);
+            }
+            Screen::ExportNotice => {
+                self.dialogs.export_notice = true;
             }
             // Dual view, first formula. `set_fractal` resets the view to that formula's own
             // default center, which is the state a user is in after picking from the dropdown.

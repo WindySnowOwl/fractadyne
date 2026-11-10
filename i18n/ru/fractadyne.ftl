@@ -761,6 +761,13 @@ speed-check-held = Готово: сохранённая скорость кар�
 # The check's result: the card measured differently, and the new measurement replaced the saved one.
 speed-check-updated = Готово: карта показала другой результат, её новая скорость сохранена.
 
+## The notice an export puts up on OpenGL, where it renders on the window's own thread and the
+## window cannot respond until it is done (export.rs, run_export_work)
+
+export-gl-title = Экспорт
+# Shown just before the export renders, and on screen until it is done.
+export-gl-running = В OpenGL Fractadyne выполняет рендеринг экспорта в потоке самого окна, поэтому окно не будет отвечать, пока экспорт не завершится. На медленной видеокарте это может занять несколько минут.
+
 ## File ▸ Gallery…
 
 dlg-gallery-title = Галерея

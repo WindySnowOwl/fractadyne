@@ -760,6 +760,13 @@ speed-check-held = Terminé : la vitesse enregistrée de la carte est toujours v
 # The check's result: the card measured differently, and the new measurement replaced the saved one.
 speed-check-updated = Terminé : la carte a mesuré autrement, et sa nouvelle vitesse est enregistrée.
 
+## The notice an export puts up on OpenGL, where it renders on the window's own thread and the
+## window cannot respond until it is done (export.rs, run_export_work)
+
+export-gl-title = Exportation en cours
+# Shown just before the export renders, and on screen until it is done.
+export-gl-running = Sous OpenGL, Fractadyne effectue le rendu de l'exportation dans le fil d'exécution de la fenêtre elle-même : la fenêtre ne répondra plus jusqu'à la fin de l'exportation. Sur une carte graphique lente, cela peut prendre plusieurs minutes.
+
 ## File ▸ Gallery…
 
 dlg-gallery-title = Galerie
