@@ -7020,7 +7020,7 @@ impl FractadyneApp {
         // `FRACTADYNE_NATIVE_CRASH_AT_START=1` (or `=thread`): the same for a crash that is not a
         // panic (`diag::native_crash`), on this thread or on a thread of its own.
         if let Some(v) = std::env::var_os("FRACTADYNE_NATIVE_CRASH_AT_START") {
-            diag::native_crash::raise_for_test(v == "thread");
+            diag::native_crash::raise_for_test(v == "thread", v == "null");
         }
         // ⭐A device that cannot give the renderer its storage buffers would panic building it: say
         // so in words, with the card, and leave cleanly.
