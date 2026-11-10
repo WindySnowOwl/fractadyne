@@ -89,9 +89,17 @@ Changes after 0.3.0-beta.1:
   background, and if the result has moved, it measures every mode again and saves the new result.
   On OpenGL, where the graphics driver serves one thread at a time, that check runs on the
   window's own thread, so on the Intel laptop the window pauses once for a few seconds while the
-  driver compiles the check's shader. `--set STARTUP_PROBE=0` turns the
-  check off; deleting `speed-checks.toml` in the settings folder makes the next launch measure
-  again.
+  driver compiles the check's shader; a small window says so before the pause, and then shows the
+  result for a few seconds. `--set STARTUP_PROBE=0` turns the check off; deleting
+  `speed-checks.toml` in the settings folder makes the next launch measure again.
+- **Applying a custom formula no longer crashes on a slow OpenGL driver (0.3.0-beta.27).** On an
+  Intel HD Graphics 4400, applying a formula from the formula window crashed Fractadyne about a
+  second later. Its shaders were compiled on a background thread, and the OpenGL support
+  Fractadyne uses stops the program when one thread waits more than a second for the graphics
+  driver while another holds it. On OpenGL the formula's shaders are now compiled on the window's
+  own thread, so the window pauses while they compile (about 2.6 s on that laptop). A check that
+  timed the floatexp mode on a background thread just before a dive reached it is skipped on OpenGL
+  for the same reason.
 - **Fractadyne starts on older Intel graphics (0.3.0-beta.27).** On an Intel HD Graphics 4400 (a
   2014 laptop whose only graphics API is OpenGL), the graphics driver crashed every time while it
   compiled Fractadyne's main shader, on the newest driver the card has too. That driver's compiler

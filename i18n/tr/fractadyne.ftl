@@ -748,6 +748,17 @@ dlg-bench-results-saved = Kıyaslama kaydedildi.
 dlg-backend-title = Hızlandırılmış derleme — yerleşik aritmetik kullanılıyor
 dlg-backend-dont-show = Bunu bir daha gösterme
 
+## The graphics speed check's notice: shown on OpenGL while a saved speed measurement is confirmed on
+## the window's own thread, during which the window cannot respond (render/speed_probe/recheck.rs)
+
+speed-check-title = Grafik hızı denetleniyor
+# Shown just before the check runs, and on screen while the window cannot respond.
+speed-check-running = Fractadyne bu ekran kartının ne kadar hızlı olduğunu doğruluyor; böylece karta, zamanında bitirebileceğinden fazla işi asla bir kerede vermez. Grafik sürücüsü denetimi hazırlarken pencere birkaç saniye yanıt vermeyebilir.
+# The check's result: the saved measurement was confirmed.
+speed-check-held = Tamam: kartın kayıtlı hızı hâlâ geçerli.
+# The check's result: the card measured differently, and the new measurement replaced the saved one.
+speed-check-updated = Tamam: kart farklı ölçüldü ve yeni hızı kaydedildi.
+
 ## File ▸ Gallery…
 
 dlg-gallery-title = Galeri

@@ -43,7 +43,7 @@
 mod recheck;
 mod saved;
 
-pub(crate) use recheck::Recheck;
+pub(crate) use recheck::{Recheck, SpeedNotice};
 
 use super::{assemble_ref_fields, pre_switch_probe_representative, recompute_worker, RecomputeInputs};
 use crate::calibration::Costs;

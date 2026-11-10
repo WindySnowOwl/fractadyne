@@ -2804,7 +2804,13 @@ impl FractadyneApp {
             self.pre_switch_count(job, got);
             return;
         }
-        if crate::tunables::cost().pre_switch_probe != 1 || self.render_cli.run || self.dual {
+        // ⛔Not on OpenGL: the probe compiles its own pipelines on its worker thread
+        // (`render_iter_timed`, 12-26 s on Intel HD Graphics 4400), and wgpu's OpenGL backend
+        // PANICS when a thread waits more than a second for its context lock, which the worker
+        // holds through the compile (the background speed re-check died that way on Eris,
+        // 2026-11-10). The switch then opens as it did before the probe existed.
+        let gl = self.render_state.as_ref().is_some_and(|rs| rs.adapter.get_info().backend == eframe::wgpu::Backend::Gl);
+        if crate::tunables::cost().pre_switch_probe != 1 || self.render_cli.run || self.dual || gl {
             return;
         }
         let t0 = Instant::now();

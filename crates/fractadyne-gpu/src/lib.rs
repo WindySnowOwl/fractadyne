@@ -4769,12 +4769,21 @@ pub fn live_iter_pipeline(render_state: &egui_wgpu::RenderState, mode: u32) -> O
 /// the first frame that draws the formula — ~0.8 s on the RTX 3080 before mode 2 (`fs_iterate`,
 /// the chunk pass and its resolve; design/custom-formulas.md §5.1), more with the floatexp chunk
 /// pair, a frozen window on every Apply, and every
-/// parameter change is a new module. `None` when the renderer is not installed yet or the thread
-/// could not start (the render thread's own build still covers it).
+/// parameter change is a new module. `None` when the renderer is not installed yet, on OpenGL (see
+/// the body), or the thread could not start (the render thread's own build still covers it).
 pub fn compile_custom_async(
     render_state: &egui_wgpu::RenderState,
     shader: std::sync::Arc<custom::CustomShader>,
 ) -> Option<std::sync::mpsc::Receiver<PreparedCustom>> {
+    // ⛔Not on OpenGL. wgpu's OpenGL backend holds one context behind a lock for every call and
+    // PANICS when a thread waits more than a second for it (wgpu-hal 24, CONTEXT_LOCK_TIMEOUT_SECS),
+    // and a worker linking these pipelines holds it for seconds on a slow driver: on Intel HD
+    // Graphics 4400 the UI walk's formula-apply-async step died with "Could not lock adapter
+    // context" (2026-11-10). There the render thread compiles them, as with no renderer installed
+    // (the app's update, `prepare_custom_now`: 2.6 s on that card, a frozen window but no crash).
+    if render_state.adapter.get_info().backend == wgpu::Backend::Gl {
+        return None;
+    }
     let (iter_bgl, state_bgl, state_bgl4) = {
         let guard = render_state.renderer.read();
         let r = guard.callback_resources.get::<Renderer>()?;

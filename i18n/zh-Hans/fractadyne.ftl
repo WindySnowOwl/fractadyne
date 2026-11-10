@@ -745,6 +745,17 @@ dlg-bench-results-saved = 基准测试结果已保存。
 dlg-backend-title = 加速版本——正在使用内置算术
 dlg-backend-dont-show = 不再显示
 
+## The graphics speed check's notice: shown on OpenGL while a saved speed measurement is confirmed on
+## the window's own thread, during which the window cannot respond (render/speed_probe/recheck.rs)
+
+speed-check-title = 正在检查图形速度
+# Shown just before the check runs, and on screen while the window cannot respond.
+speed-check-running = Fractadyne 正在确认这块显卡的速度，以免一次交给它的工作超过它能及时完成的量。图形驱动程序准备检查期间，窗口可能会有几秒钟无响应。
+# The check's result: the saved measurement was confirmed.
+speed-check-held = 完成：显卡保存的速度仍然有效。
+# The check's result: the card measured differently, and the new measurement replaced the saved one.
+speed-check-updated = 完成：显卡的测量结果有变化，已保存新的速度。
+
 ## File ▸ Gallery…
 
 dlg-gallery-title = 图库

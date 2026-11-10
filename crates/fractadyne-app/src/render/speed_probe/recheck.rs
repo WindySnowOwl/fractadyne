@@ -23,6 +23,13 @@
 //! which is why the re-check waits for a still view, and its time is discounted from the frame
 //! interval it falls in like the start-up probe's (`Perf::startup_probe_ms`), or it would read as a
 //! multi-second frame the GPU timestamps cannot see (`FRAME BUDGET IS BLIND`).
+//!
+//! **The notice** ([`SpeedNotice`], user, 2026-11-10: "keep the check and show a dialog letting the
+//! user know what's happening"). Where the re-check stops the window, a small window says what is
+//! happening FIRST: it is put up, the re-check waits [`NOTICE_FRAMES`] frames so that it is on the
+//! screen (egui sizes a new window on its first frame, invisibly), and it stays there, drawn, while
+//! the window cannot respond. Then it shows the result for [`NOTICE_HOLD`] and closes. Off OpenGL
+//! the re-check stops nothing and shows nothing.
 
 use super::{lowered_costs, mode_name, plan_request, ramp, remeasure_at, saved, taken_now, Finding, Plan, MODES};
 use crate::power_state::PowerState;
@@ -38,6 +45,20 @@ pub(crate) const STILL_INPUT: Duration = Duration::from_secs(1);
 /// Frames after the reading was put to use that stand for "the picture is up" where no frame has
 /// been measured yet (a card whose frames are not priced in the view's mode).
 pub(crate) const SHOWN_FRAMES: u64 = 120;
+/// Frames the notice is up before the re-check stops the window: egui lays a new window out on its
+/// first frame without drawing it, and the next frames present it.
+pub(crate) const NOTICE_FRAMES: u64 = 3;
+/// How long the notice shows the re-check's result before it closes itself.
+pub(crate) const NOTICE_HOLD: Duration = Duration::from_secs(4);
+
+/// The notice the re-check shows where it stops the window (the module header).
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub(crate) enum SpeedNotice {
+    /// About to run, and running: the window cannot respond.
+    Checking,
+    /// Done at `at`: the saved reading `held`, or every mode was measured again.
+    Done { held: bool, at: Instant },
+}
 
 /// Whether the re-check may start: `shown_for` since the first frame was measured (`None`: not
 /// yet), the view `still` (settled, nothing in flight), and `input_idle` since the last mouse or
@@ -77,6 +98,9 @@ pub(crate) struct Recheck {
     /// When a frame of the view was first measured, or [`SHOWN_FRAMES`] passed.
     shown_at: Option<Instant>,
     running: Option<Running>,
+    /// The frame the notice went up on (OpenGL), and whether the view was still then: the re-check
+    /// runs [`NOTICE_FRAMES`] later.
+    announced: Option<(u64, bool)>,
 }
 
 struct Running {
@@ -95,7 +119,7 @@ struct Outcome {
 
 impl Recheck {
     pub(crate) fn new(saved: Saved) -> Recheck {
-        Recheck { saved, shown_at: None, running: None }
+        Recheck { saved, shown_at: None, running: None, announced: None }
     }
 }
 
@@ -140,7 +164,7 @@ fn run(dev: &eframe::wgpu::Device, q: &eframe::wgpu::Queue, (k, findings, below,
 impl FractadyneApp {
     /// Each frame, with the GPU handles: start the saved reading's re-check when it may
     /// ([`may_start`]), or take what it found.
-    pub(crate) fn speed_recheck_step(&mut self, dev: &eframe::wgpu::Device, q: &eframe::wgpu::Queue) {
+    pub(crate) fn speed_recheck_step(&mut self, ctx: &egui::Context, dev: &eframe::wgpu::Device, q: &eframe::wgpu::Queue) {
         let Some(r) = &self.speed_recheck else { return };
         if let Some(run) = &r.running {
             let out = match run.rx.try_recv() {
@@ -160,10 +184,30 @@ impl FractadyneApp {
         let shown = measured || self.perf.frame_idx >= r.saved.adopted_frame + SHOWN_FRAMES;
         let still = self.view_idle(0) && (!self.dual || self.view_idle(1));
         let shown_at = r.shown_at.or_else(|| shown.then(Instant::now));
-        if !may_start(shown_at.map(|t| t.elapsed()), still, crate::sysinfo::user_idle()) {
-            self.speed_recheck.as_mut().expect("checked above").shown_at = shown_at;
-            return;
+        // Once the notice is up, the re-check runs whatever happens next: a notice left up
+        // because someone moved the mouse would promise a pause that never comes.
+        match r.announced {
+            None if !may_start(shown_at.map(|t| t.elapsed()), still, crate::sysinfo::user_idle()) => {
+                self.speed_recheck.as_mut().expect("checked above").shown_at = shown_at;
+                return;
+            }
+            None if r.saved.gl => {
+                let frame = self.perf.frame_idx;
+                let r = self.speed_recheck.as_mut().expect("checked above");
+                r.shown_at = shown_at;
+                r.announced = Some((frame, still));
+                self.dialogs.speed_notice = Some(SpeedNotice::Checking);
+                ctx.request_repaint();
+                return;
+            }
+            Some((at, _)) if self.perf.frame_idx < at + NOTICE_FRAMES => {
+                ctx.request_repaint();
+                return;
+            }
+            _ => {}
         }
+        // Why it started: when the notice went up, where there was one.
+        let still = r.announced.map_or(still, |(_, s)| s);
         let plans = MODES.map(|m| self.speed_probe_plan(m));
         let s = &r.saved;
         let job = (s.k, s.findings, s.below, s.live.clone());
@@ -181,6 +225,8 @@ impl FractadyneApp {
             let ms = t.elapsed().as_secs_f64() * 1000.0;
             // In the next frame interval, and no frame's dispatch: discounted like the start-up probe.
             self.perf.startup_probe_ms += ms;
+            self.dialogs.speed_notice = Some(SpeedNotice::Done { held: out.again.is_none(), at: Instant::now() });
+            ctx.request_repaint();
             let r = self.speed_recheck.take().expect("checked above");
             self.speed_recheck_landed(r.saved, out, &format!("on the UI thread, which OpenGL needs, {ms:.0} ms"));
             return;
@@ -256,6 +302,41 @@ impl FractadyneApp {
                 parts.join("; ")
             ),
         );
+    }
+}
+
+impl FractadyneApp {
+    /// The speed check's notice ([`SpeedNotice`]), while there is one: what is happening, then the
+    /// result, closed [`NOTICE_HOLD`] after it (or by its title bar's ✕). It only presents, so it
+    /// has no Cancel (UI-DESIGN.md §8.2), and there would be nothing to cancel.
+    pub(crate) fn draw_speed_notice(&mut self, ctx: &egui::Context) {
+        let Some(notice) = self.dialogs.speed_notice else { return };
+        if let SpeedNotice::Done { at, .. } = notice {
+            let left = NOTICE_HOLD.saturating_sub(at.elapsed());
+            if left.is_zero() {
+                self.dialogs.speed_notice = None;
+                return;
+            }
+            ctx.request_repaint_after(left);
+        }
+        let mut open = true;
+        egui::Window::new(tr!(speed_check_title))
+            .id(egui::Id::new("fractadyne.speed_notice"))
+            .collapsible(false)
+            .resizable(false)
+            .anchor(egui::Align2::CENTER_CENTER, [0.0, 0.0])
+            .open(&mut open)
+            .show(ctx, |ui| {
+                ui.set_max_width(380.0);
+                ui.label(tr!(speed_check_running));
+                if let SpeedNotice::Done { held, .. } = notice {
+                    ui.add_space(6.0);
+                    ui.strong(if held { tr!(speed_check_held) } else { tr!(speed_check_updated) });
+                }
+            });
+        if !open {
+            self.dialogs.speed_notice = None;
+        }
     }
 }
 
