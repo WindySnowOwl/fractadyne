@@ -73,6 +73,15 @@ Changes after 0.3.0-beta.1:
   Vulkan loader before using it: one from before Vulkan 1.1 (2018) is left out, and Fractadyne runs
   on OpenGL instead. The log and `--list-adapters` say when this happens. A newer graphics driver
   brings a newer loader, and setting `WGPU_BACKEND=vulkan` still tries Vulkan.
+- **If Vulkan cannot open the window, Fractadyne starts again on OpenGL (0.3.0-beta.27).** On the
+  same MacBook Pro with a newer Vulkan loader, Vulkan lists the graphics card and then fails while
+  opening the window, and Fractadyne stopped there with an error. Now, when the window cannot open on
+  Vulkan, Fractadyne starts itself again at once on OpenGL, in the same place on the screen, and says
+  so in a short notice. It remembers this: later launches on that computer go straight to OpenGL until
+  a new version of Fractadyne or a new Vulkan loader is installed. The record is
+  `vulkan-failed.toml` in the settings folder; deleting it, or setting `WGPU_BACKEND=vulkan`, tries
+  Vulkan again. A command-line task does not start again: it fails as before, and the next run uses
+  OpenGL.
 - **A slow graphics card's first frames stay short (0.3.0-beta.27).** Before it had measured
   anything, Fractadyne sized the first frame for a fast desktop card. On an Intel HD Graphics 4400,
   the first frame of a deep zoom kept the GPU busy for 1.4 seconds, close to the 2 seconds after

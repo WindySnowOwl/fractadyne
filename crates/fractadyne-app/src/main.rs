@@ -433,6 +433,17 @@ fn main() -> eframe::Result<()> {
                         {
                             features |= eframe::wgpu::Features::TIMESTAMP_QUERY;
                         }
+                        // `FRACTADYNE_FAIL_VULKAN_START=1` (a test hook): on a Vulkan adapter, ask
+                        // for a feature it lacks, so the device is refused and the window cannot
+                        // open: the start-up fallback's path (`gpu_choice::fallback`) on a card
+                        // whose Vulkan works.
+                        if info.backend == eframe::wgpu::Backend::Vulkan
+                            && std::env::var("FRACTADYNE_FAIL_VULKAN_START").is_ok_and(|v| v == "1")
+                        {
+                            let missing = eframe::wgpu::Features::all().difference(adapter.features());
+                            let bits = missing.bits();
+                            features |= eframe::wgpu::Features::from_bits_truncate(bits & bits.wrapping_neg());
+                        }
                         // Reference-orbit headroom: the default 128 MB storage-binding limit caps
                         // the orbit+BLA buffer at ~928k samples — a wall the Misiurewicz spar
                         // family hits by ~1e82× (its reference needs >928k iterations to escape,
@@ -552,6 +563,12 @@ fn main() -> eframe::Result<()> {
     if let Err(e) = &r {
         let reason = e.to_string();
         diag::log_line("fatal", &format!("the window could not open: {reason}"));
+        // ⭐On a Vulkan adapter this run chose by itself: remembered, and (outside a task) started
+        // again at once on OpenGL, which explains itself (`gpu_choice::fallback`).
+        if gpu_choice::fallback::after_window_failure(&reason) {
+            diag::end_session();
+            crate::exit(0);
+        }
         let report = diag::write_crash_report_at(&format!("the window could not open: {reason}"), "<start-up: eframe>");
         diag::show_fatal_dialog(&diag::advice::Failure::WindowOpen, &crate::diag::crash_reason(&reason), report.as_deref());
     }
@@ -7030,6 +7047,12 @@ impl FractadyneApp {
                 crate::exit(1);
             }
         };
+        // A session started again on OpenGL because Vulkan could not open the window
+        // (`gpu_choice::fallback`) says so, once.
+        if let Some(reason) = gpu_choice::fallback::fell_back() {
+            diag::log_line("gpu", &format!("started again on OpenGL: Vulkan could not open the window ({reason})"));
+            self.dialogs.notice = Some((tr!(gpu_fallback_title), tr!(gpu_fallback_body, reason = reason)));
+        }
         // `FRACTADYNE_PANIC_AT_START=1`: a deliberate crash here, the only way to see the crash
         // dialog (`diag::show_fatal_dialog`) on a machine that does not crash.
         if std::env::var_os("FRACTADYNE_PANIC_AT_START").is_some() {
@@ -7129,6 +7152,9 @@ impl FractadyneApp {
                 diag::log_line("wgpu", &format!("device lost — restarting (generation {next})"));
                 let mut cmd = std::process::Command::new(exe);
                 cmd.args(std::env::args().skip(1)).env("FRACTADYNE_RESTARTED_AFTER_GPU_LOSS", next.to_string());
+                // A session that fell back to OpenGL at start-up said so once; the next one stays
+                // on OpenGL (`WGPU_BACKEND` is inherited) without saying it again.
+                cmd.env_remove(gpu_choice::fallback::RELAUNCH_ENV);
                 // The second device that was open beside the window, so the relaunched session can
                 // offer to turn it off; a later generation without one must not inherit the offer.
                 match diag::second_device() {

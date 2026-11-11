@@ -762,6 +762,13 @@ export-gl-title = 내보내는 중
 # Shown just before the export renders, and on screen until it is done.
 export-gl-running = OpenGL에서는 Fractadyne이 창 자체의 스레드에서 내보내기를 렌더링하므로, 내보내기가 끝날 때까지 창이 응답하지 않습니다. 느린 그래픽 카드에서는 몇 분이 걸릴 수 있습니다.
 
+## The notice in a session that started again on OpenGL because Vulkan could not open the window
+## (gpu_choice.rs, fallback)
+
+gpu-fallback-title = OpenGL로 시작함
+# $reason: the graphics library's error, in English, as it gave it.
+gpu-fallback-body = 이 그래픽 카드에서 Vulkan이 Fractadyne 창을 열지 못해 ({ $reason }) Fractadyne을 OpenGL로 다시 시작했으며, 이 컴퓨터에서는 계속 OpenGL을 사용합니다. 더 새로운 그래픽 드라이버, 더 새로운 Vulkan 로더 또는 Fractadyne의 새 버전에서는 Vulkan을 다시 시도합니다.
+
 ## File ▸ Gallery…
 
 dlg-gallery-title = 갤러리
