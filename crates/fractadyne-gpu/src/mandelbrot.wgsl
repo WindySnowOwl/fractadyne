@@ -870,7 +870,9 @@ struct IterU {
     formula: u32,
     julia: u32,            // 0 = Mandelbrot mode (z0=0, c=pixel), 1 = Julia (z0=pixel, c=const)
     delta_exp: i32,        // shared base-2 exponent of the δ mantissas (step / ref_offset)
-    color_method: u32,     // selected coloring method, a METHOD_* constant (drives whether aux is accumulated)
+    // The orbit statistics this frame accumulates: STAT_* bits (coloring plan B2). Not the method
+    // on screen, which only the color pass reads (`ColorU.color_method`). See lib.rs `iter_stats`.
+    orbit_stats: u32,
     stripe_freq: f32,      // stripe-average angular frequency
     trap_type: u32,        // orbit-trap shape: TRAP_POINT, TRAP_CROSS or TRAP_CIRCLE
     // Bitfield: bit 0 = accumulate orbit statistics into the aux target; bit 1 = stripe average
@@ -1018,12 +1020,14 @@ const CTR_NORM_HIST: u32 = 57u;
 // can sit inside two units while a pixel on a nucleus reaches 66, so a min/max window would leave
 // the picture as flat as no fitting at all. Counted on the 4x4 grid, interior pixels too (the trap
 // colors them), from the single-pass iterate only: orbit statistics never take the chunked walk.
+// Counted whenever the trap is ACCUMULATED, whatever is on screen: the app reads it only while the
+// trap is shown, and a switch to the trap that only recolors then finds it already counted.
 const CTR_TRAP_HIST: u32 = 473u;
 const TRAP_HIST_LO: f32 = -8.0;
 const TRAP_HIST_PER_UNIT: f32 = 16.0;
 const TRAP_HIST_BUCKETS: u32 = 1216u;
 fn trap_hist_commit(a: Aux, gx: f32, gy: f32) {
-    if ((iu.aux_on & 1u) == 1u && iu.color_method == METHOD_TRAP && (i32(gx) & 3) == 0 && (i32(gy) & 3) == 0) {
+    if ((iu.aux_on & 1u) == 1u && (iu.orbit_stats & STAT_TRAP) != 0u && (i32(gx) & 3) == 0 && (i32(gy) & 3) == 0) {
         let pv = -log2(max(a.trap, 1.0e-20));
         let k = u32(clamp((pv - TRAP_HIST_LO) * TRAP_HIST_PER_UNIT, 0.0, f32(TRAP_HIST_BUCKETS - 1u)));
         atomicAdd(&counters[CTR_TRAP_HIST + k], 1u);
@@ -1369,7 +1373,7 @@ struct Aux {
 // mean is recovered as α → 0. `sac_sum` holds the EMA and `sac_prev` the previous one, so the
 // `frac` blend in `aux_pack` works unchanged.
 fn stripe_tail_on() -> bool {
-    return (iu.aux_on & 2u) != 0u && iu.color_method == METHOD_STRIPE;
+    return (iu.aux_on & 2u) != 0u && (iu.orbit_stats & STAT_STRIPE) != 0u;
 }
 fn stripe_tail_alpha() -> f32 {
     return 1.0 / f32(max(iu.aux_on >> 2u, 1u));
@@ -1385,22 +1389,24 @@ fn aux_init(z0: vec2<f32>) -> Aux {
     a.n = 0.0; a.prev_abs = length(z0); a.trap = 1.0e30;
     return a;
 }
-// Fold one orbit point z into the running statistics — but only the sub-statistic the *selected*
-// color method actually samples (stripe→aux.x, TIA→aux.y, trap→aux.z; decomposition uses only the
-// final angle in aux_pack, so it accumulates nothing). The un-gated version computed all three every
-// iteration — atan2+sin AND pow AND a trap distance — even though a frame reads exactly one; the two
-// dead ones cost ~10-17× at depth (e.g. stripe at 1e30× carried a pointless per-iteration `pow`).
-// Each branch preserves its own method's exact accumulation order, so per-method output is bit-identical.
+// Fold one orbit point z into the running statistics — only those the frame ACCUMULATES (the
+// `orbit_stats` bits: stripe→aux.x, TIA→aux.y, trap→aux.z; the final angle, aux.w, is written by
+// aux_pack and accumulates nothing). Computing every statistic every iteration — atan2+sin AND pow AND a
+// trap distance — when a frame reads one cost ~10-17× at depth (stripe at 1e30× carried a pointless
+// per-iteration `pow`). The statistics touch disjoint fields (TIA alone reads and writes
+// `prev_abs`), so each keeps its own exact accumulation order with or without the others: a lane's
+// value does not depend on what else is accumulated.
 fn aux_step(a: ptr<function, Aux>, zf: vec2<f32>, cmag: f32, power_f: f32) {
-    let method = iu.color_method;
-    if (method == METHOD_TRAP) {
+    let st = iu.orbit_stats;
+    if ((st & STAT_TRAP) != 0u) {
         // Orbit trap: nearest approach to a shape (point / axes-cross / unit circle).
         var d: f32;
         if (iu.trap_type == TRAP_CROSS) { d = min(abs(zf.x), abs(zf.y)); }
         else if (iu.trap_type == TRAP_CIRCLE) { d = abs(length(zf) - 1.0); }
         else { d = length(zf); }
         (*a).trap = min((*a).trap, d);
-    } else if (method == METHOD_STRIPE) {
+    }
+    if ((st & STAT_STRIPE) != 0u) {
         // Stripe average: smooth orbit average of a sinusoid of the argument.
         let term = 0.5 + 0.5 * sin(iu.stripe_freq * atan2(zf.y, zf.x));
         (*a).sac_prev = (*a).sac_sum;
@@ -1409,7 +1415,8 @@ fn aux_step(a: ptr<function, Aux>, zf: vec2<f32>, cmag: f32, power_f: f32) {
         } else {
             (*a).sac_sum = (*a).sac_sum + term;
         }
-    } else if (method == METHOD_TRIANGLE) {
+    }
+    if ((st & STAT_TRIANGLE) != 0u) {
         // Triangle-inequality average: where |z_{n+1}| sits between ||z_n|^p − |c|| and
         // |z_n|^p + |c|. Needs a valid previous |z|.
         let cur_abs = length(zf);
@@ -1423,25 +1430,29 @@ fn aux_step(a: ptr<function, Aux>, zf: vec2<f32>, cmag: f32, power_f: f32) {
         }
         (*a).prev_abs = cur_abs;
     }
-    // METHOD_DECOMPOSITION: nothing to accumulate — aux_pack reads only the final angle.
+    // STAT_ANGLE: nothing to accumulate — aux_pack writes the final angle.
     (*a).n = (*a).n + 1.0;
 }
 // Fold a run of `span` reference iterates into the statistics, from its precomputed aggregate
 // `agg` = [span, trap_min, ΣTIA, Σstripe] (a BLA node's fourth vec4, built from the reference with
-// z ≈ Z): what a BLA skip folds, and what the series seed folds for the prefix it skips. The
-// caller sets `prev_abs` (|z| where the run lands).
+// z ≈ Z): what a BLA skip folds, and what the series seed folds for the prefix it skips — for the
+// statistics the frame accumulates, as `aux_step` does. The caller sets `prev_abs` (|z| where the
+// run lands).
 fn aux_fold_run(a: ptr<function, Aux>, agg: vec4<f32>, span: u32) {
-    (*a).trap = min((*a).trap, agg.y);
-    (*a).tia_sum = (*a).tia_sum + agg.z;
-    if (stripe_tail_on()) {
-        // Exponential tail window across the skipped span: the recurrence with
-        // the span's mean term `m` in closed form (see `stripe_tail_on`).
-        let m = agg.w / max(f32(span), 1.0);
-        let d = tail_decay(stripe_tail_alpha(), f32(span));
-        (*a).sac_prev = (*a).sac_sum;
-        (*a).sac_sum = m + ((*a).sac_sum - m) * d;
-    } else {
-        (*a).sac_sum = (*a).sac_sum + agg.w;
+    let st = iu.orbit_stats;
+    if ((st & STAT_TRAP) != 0u) { (*a).trap = min((*a).trap, agg.y); }
+    if ((st & STAT_TRIANGLE) != 0u) { (*a).tia_sum = (*a).tia_sum + agg.z; }
+    if ((st & STAT_STRIPE) != 0u) {
+        if (stripe_tail_on()) {
+            // Exponential tail window across the skipped span: the recurrence with
+            // the span's mean term `m` in closed form (see `stripe_tail_on`).
+            let m = agg.w / max(f32(span), 1.0);
+            let d = tail_decay(stripe_tail_alpha(), f32(span));
+            (*a).sac_prev = (*a).sac_sum;
+            (*a).sac_sum = m + ((*a).sac_sum - m) * d;
+        } else {
+            (*a).sac_sum = (*a).sac_sum + agg.w;
+        }
     }
     (*a).n = (*a).n + f32(span);
 }

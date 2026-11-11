@@ -249,6 +249,15 @@ enum Screen {
     StripeTailToggle,
     StripeTailAway,
     StripeTailOn,
+    /// Coloring plan B2: Smooth and Distance accumulate nothing, so a switch between them keeps
+    /// the iteration and only recolors. The four steps of the stripe tail's check: settle with
+    /// Smooth, switch to Distance exactly as the method box does, move away, come back. The
+    /// switched frame must match the honest Distance render that came back (a recolor that missed
+    /// a texel, or no recolor at all, would not), and the Smooth frame must differ from it.
+    DistanceRecolorSmooth,
+    DistanceRecolorSwitch,
+    DistanceRecolorAway,
+    DistanceRecolorOn,
     /// Coloring plan A3: Burning Ship, which keeps no derivative, with Distance chosen and relief
     /// lighting and the glow on, the Effects section open. The panel grays out relief and glow
     /// (and Distance in the method list), and says under the Method box and at the top of Effects
@@ -1028,6 +1037,10 @@ fn build_steps() -> Vec<Step> {
         screen("stripe-tail-toggle", Screen::StripeTailToggle),
         screen("stripe-tail-away", Screen::StripeTailAway),
         screen("stripe-tail-on", Screen::StripeTailOn),
+        screen("distance-recolor-smooth", Screen::DistanceRecolorSmooth),
+        screen("distance-recolor-switch", Screen::DistanceRecolorSwitch),
+        screen("distance-recolor-away", Screen::DistanceRecolorAway),
+        screen("distance-recolor-on", Screen::DistanceRecolorOn),
         screen("no-derivative", Screen::NoDerivative),
         screen("no-statistics", Screen::NoStatistics),
     ]
@@ -1742,6 +1755,27 @@ impl FractadyneApp {
             Screen::StripeTailToggle => self.coloring.stripe_tail = true,
             Screen::StripeTailAway => self.viewport.pan_complex(STRIPE_TAIL_PAN, 0.0),
             Screen::StripeTailOn => self.viewport.pan_complex(-STRIPE_TAIL_PAN, 0.0),
+            // The stripe tail's setup and view, with Smooth (anti-aliasing off for the same reason).
+            Screen::DistanceRecolorSmooth => {
+                self.set_show_mode(crate::ShowMode::Set);
+                self.set_fractal(crate::FractalKind::Mandelbrot);
+                self.render_cfg.aa = 1;
+                self.render_cfg.auto_iter = false;
+                self.render_cfg.max_iter = 1_000;
+                self.coloring.normalize_live = false;
+                self.coloring.normalize_fit = false;
+                self.coloring.color_method = crate::ColorMethod::Smooth;
+                self.viewport.set_center_mag(
+                    fractadyne_core::BigFloat::from_f64(STRIPE_TAIL_AT.0, 64),
+                    fractadyne_core::BigFloat::from_f64(STRIPE_TAIL_AT.1, 64),
+                    2.0e3,
+                );
+                self.pointer.settle_t = [-1.0e9, -1.0e9]; // settled, not interacting
+            }
+            // EXACTLY what the method box does (`ui/panels.rs`): set the method.
+            Screen::DistanceRecolorSwitch => self.coloring.color_method = crate::ColorMethod::Distance,
+            Screen::DistanceRecolorAway => self.viewport.pan_complex(STRIPE_TAIL_PAN, 0.0),
+            Screen::DistanceRecolorOn => self.viewport.pan_complex(-STRIPE_TAIL_PAN, 0.0),
             Screen::NoDerivative => {
                 self.dialogs.right_panel_open = true;
                 self.set_show_mode(crate::ShowMode::Set);
@@ -2846,6 +2880,54 @@ impl FractadyneApp {
                     name: "stripe-tail-redraws".into(),
                     verdict: Verdict::Warn,
                     detail: "no stripe-tail-off and stripe-tail-toggle steps to compare against".into(),
+                }),
+            }
+        }
+
+        // ---- Smooth to Distance recolors the settled view correctly (coloring plan B2) ----
+        if matches!(step.kind, StepKind::Screen(Screen::DistanceRecolorOn)) {
+            let find = |n: &str| ut.results.iter().rev().find(|r| r.name == n);
+            match (find("distance-recolor-smooth"), find("distance-recolor-switch")) {
+                (Some(smooth), Some(switched)) => {
+                    let stale = fp_distance(&switched.left_fp, &left_fp);
+                    let effect = fp_distance(&smooth.left_fp, &left_fp);
+                    let real = luma_stddev >= 3.0 && smooth.luma_stddev >= 3.0;
+                    let grid = if switched.tiled { "tiled" } else { "untiled" };
+                    // ⭐ANTI-VACUITY: Distance must look unlike Smooth here, or a frame left as it
+                    // was would pass.
+                    if effect < 8.0 || !real {
+                        checks.push(Check {
+                            name: "distance-recolors".into(),
+                            verdict: Verdict::Warn,
+                            detail: format!(
+                                "Distance and Smooth look too alike here to tell (meanD {effect:.1}, \
+                                 stddev {luma_stddev:.1}) — this run proves nothing"
+                            ),
+                        });
+                    } else if stale <= STRIPE_TAIL_STALE_MAX {
+                        checks.push(pass(
+                            "distance-recolors",
+                            format!(
+                                "the switched frame matches an honest Distance render (meanD {stale:.1}; \
+                                 Smooth differs by {effect:.1}, {grid})"
+                            ),
+                        ));
+                    } else {
+                        checks.push(Check {
+                            name: "distance-recolors".into(),
+                            verdict: Verdict::Fail,
+                            detail: format!(
+                                "switching Smooth to Distance left a wrong frame: meanD {stale:.1} \
+                                 against an honest Distance render of the SAME view (Smooth differs \
+                                 by {effect:.1}, {grid})"
+                            ),
+                        });
+                    }
+                }
+                _ => checks.push(Check {
+                    name: "distance-recolors".into(),
+                    verdict: Verdict::Warn,
+                    detail: "no distance-recolor-smooth and distance-recolor-switch steps to compare against".into(),
                 }),
             }
         }

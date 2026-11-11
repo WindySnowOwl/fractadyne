@@ -396,7 +396,7 @@ impl crate::FractadyneApp {
         let chunk_mode = self.live_render_mode(fractal, julia, magnification);
         let can_chunk = super::actuators::can_chunk(self.perf.actuators.as_ref(), chunk_mode)
             && self.resumable(fractal)
-            && !self.coloring.color_method.needs_aux();
+            && self.coloring.orbit_stats().is_empty();
         let c = crate::tunables::cost();
         // W5: every value the decision reads, gathered — the decision itself is the pure
         // `decide::decide_moving`, so a recording of these inputs replays it exactly.

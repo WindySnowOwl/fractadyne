@@ -223,7 +223,7 @@ pub fn render_iter_chunked_timed(
         formula: req.formula,
         julia: req.julia,
         delta_exp: req.delta_exp,
-        color_method: fractadyne_core::coloring::ColorMethod::Smooth.gpu_id(),
+        orbit_stats: fractadyne_core::coloring::StatSet::NONE.bits(),
         stripe_freq: 1.0,
         trap_type: fractadyne_core::coloring::TrapType::Point.gpu_id(),
         aux_on: 0,

@@ -1,6 +1,6 @@
 # Coloring methods: implementation plan
 
-Status: **plan (2026-11-08); phase A done (A1–A10), B1 done (the coloring matrix; its live tour is B1b), see §10.** Line references are to `main` at `9ab75357`; check
+Status: **plan (2026-11-08); phase A done (A1–A10), B1 done (the coloring matrix; its live tour is B1b), B2 done (what a frame accumulates is a `StatSet`, apart from the method shown), see §10.** Line references are to `main` at `9ab75357`; check
 them before editing, they drift. The research behind it (methods, prototypes, measured results,
 prior art) is the coloring-methods doc; its local copy is
 `local/research_notes/Fractal coloring methods/` (PDF, HTML, Markdown, prototype scripts).
@@ -75,15 +75,23 @@ These come from past bugs; each one has bitten before.
    is a new row, a new variant, a label in `ColoringLabel` (`main.rs`) and the shader branch;
    `coloring_ids_tests` (GPU crate) fails on a numeric comparison in the shader. Palette presets are
    still append-only (their indices are saved).
-2. **The method sets live in the table.** `ColorMethod::needs_aux` and the GPU crate's
-   `method_needs_aux` both read it (a missing trap entry gave flat trap frames on 2026-11-06, fixed
-   in `028d7204`), and core's unit test pins every set as established. Outside the table:
+2. **The method sets live in the table.** Since B2 a method row says which orbit statistic it
+   reads (`reads`, a `Stat`), and the iteration's rules ask a `StatSet`, the statistics a frame
+   accumulates (`ColoringConfig::orbit_stats`; the GPU crate's `iter_stats` adds what the method
+   reads, so a frame never shows a statistic it did not accumulate). A rule about the ITERATION
+   (series, BLA, the walk, the band's BLA, the corrector, the normalized export, the iteration
+   keys, the reference's aggregates, the twin's readback) asks the set; a rule about the PICTURE
+   (the color pass, strips, zoom video, the fit range, the menus) asks the method (`reads_aux`).
+   A missing trap entry gave flat trap frames on 2026-11-06 (fixed in `028d7204`), and core's unit
+   test pins every set as established. Outside the table:
    `WindowTexels::for_colour` (what a window keeps per method, by name) and `COLOR_METHODS` in
    `scripts/release_checklist.py:36` (the English labels, for the manual checklist).
 3. **Anything an iteration depends on goes in both keys**: the GPU `IterKey`
    (`gpu/src/lib.rs:422-457`, built at 3872-3893) and the app's `settings_hash`
-   (`render.rs:8585-8621`). Anything that colors a frame goes in `accum_color_sig`
-   (`main.rs:16163-16219`), or the progressive average and the palette browser go stale.
+   (`render.rs:8585-8621`; its coloring part is `iter_coloring_hash`). Since B2 both key the
+   statistics set and a statistic's parameters only while it is accumulated, never the method on
+   screen. Anything that colors a frame goes in `accum_color_sig` (`main.rs:16163-16219`), or the
+   progressive average and the palette browser go stale.
 4. **ColorU and ColorUniforms change together.** `ColorU` (`mandelbrot.wgsl:3601-3646`) and
    `ColorUniforms` (`gpu/src/lib.rs:340-387`, two pad words free at 385) are pinned by
    `gpu/tests/unit/uniform_layout_tests.rs` (size 69-90, offsets 112-125, naga 144-151); give
@@ -635,6 +643,42 @@ reproduced. Reproduce before fixing; never close on the mechanism argument alone
   a unit test per predicate; the needs_aux sync test becomes a mask test.
 - **Traps**: the trap histogram commit (`wgsl:1011-1017`) needs the trap bit and display = trap;
   the custom-formula code path (`gpu/src/custom.rs:1097-1110`) has its own `aux_step` copy.
+- **Done 2026-11-11** (branch `feat/color-b2-accum-mask`). Named for what it holds, since `accum`
+  already means the progressive average here (`AccumState`, `accum_color_sig`, `ACCUM_*`):
+  - `fractadyne_core::coloring`: a statistics table (`Stat`: stripe, triangle, trap, angle; each
+    with `blocks_iter_skip` and `bla_aggregate`) and `StatSet`, a set of them. A method row says
+    which one it `reads`; `ColorMethod::orbit_stats` is that one as a set. `needs_aux`,
+    `blocks_iter_skip` and `bla_aggregate` left the method rows, so the compiler found every caller
+    and each was decided: iteration rules ask the set, picture rules ask `reads_aux`.
+  - The shader: `IterU.color_method` became `orbit_stats` (`STAT_*` bits, generated like
+    `METHOD_*`); `aux_step` and `aux_fold_run` work per statistic (disjoint fields, so a lane's
+    value does not depend on what else is accumulated); the stripe tail tests the stripe bit. The
+    tail length kept its own field, so no shift needed masking. Custom formulas call the same
+    `aux_step` (the plan's "own copy" was out of date).
+  - ⭐**A floor, not in the plan**: the GPU crate's `iter_stats` (the uniform, `aux_on`, `IterKey`,
+    the export's walk, the twin's readback) takes the set asked for AND what `color_method` reads.
+    Two selftest checks set only `req.color_method` on a built request; with the floor no caller
+    can show a statistic it did not accumulate.
+  - The trap histogram counts whenever the trap is accumulated, not "and shown": the app drains it
+    only while the trap is shown, and a switch to the trap that only recolors (B3) finds it counted.
+  - `IterKey` and `settings_hash` (`iter_coloring_hash`) key the set, and the stripe frequency and
+    tail and the trap shape only while accumulated; the reference's lanes (`same_reference`, the
+    overtaken check, `aux_lanes_stale` for both staleness checks) compare only accumulated
+    statistics; `accum_color_sig` adds the set.
+  - **What it changes now**: Smooth and Distance accumulate nothing, so a switch between them only
+    recolors (uitest `distance-recolors`: settle Smooth, switch, pan away and back; the switched
+    frame must match the honest Distance render).
+  - **Proof of no change**: the full matrix on the RTX 3080 against main's exe (build 6537),
+    twice: 738 cells, every picture number equal (A/B shares, determinism, NaN counts, spreads)
+    and all 738 cell images equal pixel for pixel. Full self-test 563/563, goldens 31/31; uitest
+    `stripe-tail-redraws`, `distance-recolors` (meanD 0.0 against the honest render, Smooth 128.9
+    away), `no-derivative` and `no-statistics` pass, screenshots looked at.
+  - **Timing**, interleaved main/branch x3 on the eight views that looked slower against one main
+    run (the custom formula, Julia 1e10, Multibrot 3, the folds at 1e6): runs 12.9 s against
+    13.1 s, median cell ratio 1.014, per variant 1.00-1.05; the outliers (Tricorn 3 at 1.22) swing
+    between ~21 and ~26 ms in both builds. ⛔Compare like with like: a plain `cargo build` has no
+    MPFR, and the custom view's reference took 5 s more there than in the installed accelerated
+    exe; build the branch with `build-accelerated.ps1 -NoInstall -SkipVerify -OutDir <scratch>`.
 
 ### B3. The full G-buffer
 
@@ -962,8 +1006,10 @@ coloring in these places, so sequence the two with care:
 | A5a | done, merged | `05306f71` (merge `45c2e84d`) |
 | A7 | done, merged | `603275eb` (merge `1bfdc833`) |
 | A10 | done, merged | `aaffca7f` (merge `6ec2fc76`) |
-| B1 | done, branch `feat/color-b1-coloring-matrix` (agent v41, deployed) | |
+| B1 | done, merged (agent v41, deployed) | `312c54a8` (merge `4efdbbb3`) |
+| B1 fixes | Distance NaN; Newton's statistics methods | merges `91fa8f91`, `7722b660` |
 | B1b | not started: the live method tour | |
-| B2–B8 | not started | |
+| B2 | done, branch `feat/color-b2-accum-mask` | |
+| B3–B8 | not started | |
 | C1–C11 | not started | |
 | D, E, F, G | not started | |

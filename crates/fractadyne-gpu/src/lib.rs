@@ -71,7 +71,9 @@ pub(crate) struct IterUniforms {
     pub(crate) formula: u32, // escape-time formula id
     pub(crate) julia: u32,   // 0 = Mandelbrot mode, 1 = Julia mode
     pub(crate) delta_exp: i32, // shared base-2 exponent of the δ mantissas (step / ref_offset)
-    pub(crate) color_method: u32, // selected coloring method's GPU id (drives aux accumulation)
+    // The orbit statistics this frame accumulates: `StatSet::bits` (STAT_* in the shader), never
+    // the method on screen, which only the color pass reads (coloring plan B2). See `iter_stats`.
+    pub(crate) orbit_stats: u32,
     pub(crate) stripe_freq: f32,  // stripe-average angular frequency
     pub(crate) trap_type: u32,    // orbit-trap shape's GPU id (fractadyne_core::coloring::TrapType)
     // Bitfield: bit 0 = accumulate orbit statistics into the aux target; bit 1 = stripe average
@@ -451,7 +453,10 @@ struct IterKey {
     custom: u64,
     julia: u32,
     delta_exp: i32,
-    color_method: u32,
+    /// What the iteration accumulates (`iter_stats`), not the method on screen: two methods with
+    /// the same statistics (Smooth and Distance, none) recolor without re-iterating. The stripe
+    /// and trap parameters below count only while their statistic is accumulated (0 otherwise).
+    orbit_stats: u32,
     stripe_freq: f32,
     /// Stripe's tail window (`aux_on_word` bits 1 and up): it changes what the iteration
     /// accumulates, so a toggled tail must re-iterate. ⛔Missing until 2026-11-08: turning on
@@ -3234,9 +3239,13 @@ pub struct MandelbrotParams {
     pub de_strength: f32,
     pub de_width: f32,
     pub de_phase: f32,
-    /// The coloring method's GPU id (`fractadyne_core::coloring::ColorMethod::gpu_id`); the ones
-    /// with `needs_aux` accumulate orbit statistics.
+    /// The coloring method's GPU id (`fractadyne_core::coloring::ColorMethod::gpu_id`): what the
+    /// color pass shows.
     pub color_method: u32,
+    /// The orbit statistics the iteration accumulates (coloring plan B2). The iteration takes this
+    /// and whatever `color_method` reads ([`iter_stats`]), so a frame never shows a statistic it
+    /// did not accumulate.
+    pub orbit_stats: fractadyne_core::coloring::StatSet,
     pub stripe_freq: f32,
     /// Stripe average over the tail only: an exponentially-weighted mean over the last
     /// `stripe_tail_len` iterations (bias-corrected, so a short orbit reads exactly like the plain
@@ -3341,6 +3350,9 @@ impl MandelbrotParams {
     /// The key a frame re-iterates on: everything the iteration's output depends on. `size` is
     /// the texture's, `life` and `lsystem` the display keys of those renderers (0 otherwise).
     fn iter_key(&self, size: [u32; 2], life: u64, lsystem: u64) -> IterKey {
+        use fractadyne_core::coloring::Stat;
+        let orbit_stats = self.iter_stats();
+        let stripe = orbit_stats.has(Stat::Stripe);
         IterKey {
             ref_offset: self.ref_offset,
             center: self.center,
@@ -3354,11 +3366,11 @@ impl MandelbrotParams {
             custom: self.custom.as_ref().map_or(0, |c| c.key),
             julia: self.julia,
             delta_exp: self.delta_exp,
-            color_method: self.color_method,
-            stripe_freq: self.stripe_freq,
-            stripe_tail: self.stripe_tail,
-            stripe_tail_len: self.stripe_tail_len,
-            trap_type: self.trap_type,
+            orbit_stats: orbit_stats.bits(),
+            stripe_freq: if stripe { self.stripe_freq } else { 0.0 },
+            stripe_tail: stripe && self.stripe_tail,
+            stripe_tail_len: if stripe { self.stripe_tail_len } else { 0 },
+            trap_type: if orbit_stats.has(Stat::Trap) { self.trap_type } else { 0 },
             sa_skip: self.sa_skip,
             bla_on: self.bla_on,
             jitter: self.jitter,
@@ -3493,6 +3505,7 @@ impl Default for MandelbrotParams {
             de_width: 0.0,
             de_phase: 0.0,
             color_method: fractadyne_core::coloring::ColorMethod::Smooth.gpu_id(),
+            orbit_stats: fractadyne_core::coloring::StatSet::NONE,
             stripe_freq: 0.0,
             stripe_tail: false,
             stripe_tail_len: 1,
@@ -3529,11 +3542,20 @@ pub fn aux_on_word(aux: bool, stripe_tail: bool, stripe_tail_len: u32) -> u32 {
     (aux as u32) | ((stripe_tail as u32) << 1) | (stripe_tail_len.clamp(1, 1 << 20) << 2)
 }
 
-/// Whether the coloring method with GPU number `method` accumulates the per-iteration orbit
-/// statistics (the aux target): the table's `needs_aux` (`fractadyne_core::coloring`), so this and
-/// the app's `ColorMethod::needs_aux` are one answer.
-pub fn method_needs_aux(method: u32) -> bool {
-    fractadyne_core::coloring::ColorMethod::from_gpu_id(method).is_some_and(|m| m.needs_aux())
+/// What a frame's iteration accumulates: the statistics asked for (`orbit_stats`) and the one the
+/// method with GPU number `method` reads, so a frame never shows a statistic it did not accumulate,
+/// whichever of the two a caller set (coloring plan B2). Every iteration-side rule in this crate
+/// (the uniform, `aux_on`, the iteration key, the chunked walk, the twin's readback) asks this.
+pub fn iter_stats(orbit_stats: fractadyne_core::coloring::StatSet, method: u32) -> fractadyne_core::coloring::StatSet {
+    let shown = fractadyne_core::coloring::ColorMethod::from_gpu_id(method).map_or(fractadyne_core::coloring::StatSet::NONE, |m| m.orbit_stats());
+    orbit_stats.union(shown)
+}
+
+impl MandelbrotParams {
+    /// What this frame's iteration accumulates ([`iter_stats`]).
+    pub fn iter_stats(&self) -> fractadyne_core::coloring::StatSet {
+        iter_stats(self.orbit_stats, self.color_method)
+    }
 }
 
 impl CallbackTrait for MandelbrotParams {
@@ -4032,11 +4054,11 @@ impl CallbackTrait for MandelbrotParams {
                 formula: self.formula,
                 julia: self.julia,
                 delta_exp: self.delta_exp,
-                color_method: self.color_method,
+                orbit_stats: self.iter_stats().bits(),
                 stripe_freq: self.stripe_freq,
                 trap_type: self.trap_type,
                 aux_on: aux_on_word(
-                    method_needs_aux(self.color_method),
+                    !self.iter_stats().is_empty(),
                     self.stripe_tail,
                     self.stripe_tail_len,
                 ),

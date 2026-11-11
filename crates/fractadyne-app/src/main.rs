@@ -3115,16 +3115,21 @@ pub(crate) fn accum_jitter_seq(i: u32) -> [f32; 2] {
 
 // ---- coloring methods / orbit-trap shapes ----
 // One table each in `fractadyne_core::coloring` (coloring plan A10): the persisted key, the GPU
-// number for this build (`gpu_id`, never stored), and what each needs (`needs_aux`,
-// `blocks_iter_skip`, `bounded_value`, `needs_distance_estimate`, `bla_aggregate`). The GPU crate
-// and the shader read the same table.
+// number for this build (`gpu_id`, never stored), and what each needs (`reads`, `bounded_value`,
+// `needs_distance_estimate`). The GPU crate and the shader read the same table.
+//
+// ⭐**What a frame accumulates is not what it shows** (B2): every rule about the ITERATION (series
+// approximation, BLA, the chunked walk, the band's BLA, the corrector, the normalized export, the
+// reference's aggregates, the iteration keys) asks `ColoringConfig::orbit_stats` (a `StatSet`, a
+// set of orbit statistics); every rule about the PICTURE (the color pass, strips, zoom video, the
+// fit range, the menus) asks the method (`ColorMethod::reads_aux`).
 //
 // ⛔⭐**Why one table.** The sets used to be written out here, in the GPU crate and as numbers in
 // the shader. The orbit trap was missing from `needs_aux` until 2026-11-06, because that predicate
 // also chose the palette rate, where the trap belongs with the unbounded methods: the live view
 // handed trap frames to the chunked walk and the band's BLA, which compute no trap, and every pixel
 // read the "no statistics" value (one flat color). The rate now asks `bounded_value`.
-pub(crate) use fractadyne_core::coloring::{ColorMethod, TrapType};
+pub(crate) use fractadyne_core::coloring::{ColorMethod, Stat, StatSet, TrapType};
 
 /// A coloring method's or trap shape's name in the language in use. The words are the app's; the
 /// table (`fractadyne_core::coloring`) has only the keys.
@@ -6376,6 +6381,16 @@ struct ColoringConfig {
     log_palette: bool,
 }
 
+impl ColoringConfig {
+    /// The orbit statistics a frame's iteration accumulates, live and in exports: every rule about
+    /// the iteration asks this, never the method (see the note at [`ColorMethod`]'s import). For
+    /// now exactly what the method reads (`ColorMethod::orbit_stats`); the full G-buffer (coloring
+    /// plan B3) widens it so a switch between methods only recolors.
+    fn orbit_stats(&self) -> StatSet {
+        self.color_method.orbit_stats()
+    }
+}
+
 /// Time-varying visual overlays advanced per-frame: the orbit racing-dot (enable / normalize /
 /// speed + live phase & hue), `show_orbits` and the tour-scripted `tour_orbit` that feed the same
 /// overlay, and palette cycling (mode / speed / ping-pong dir) + the `RandomPalette` morphing
@@ -8652,7 +8667,7 @@ impl FractadyneApp {
         }
         // Newton records no orbit statistics (`FormulaCaps::orbit_statistics`): stripe, triangle,
         // the traps and decomposition color its whole picture one color.
-        if !self.fractal.caps().orbit_statistics && val("--method").is_some() && self.coloring.color_method.needs_aux() {
+        if !self.fractal.caps().orbit_statistics && val("--method").is_some() && self.coloring.color_method.reads_aux() {
             eprintln!(
                 "fractadyne: --method {}: {} records no orbit statistics (its pixels converge to a root), so the picture is one color.",
                 self.coloring.color_method.key(),
@@ -16348,6 +16363,8 @@ impl FractadyneApp {
         c.iter_div.hash(&mut h);
         c.offset.to_bits().hash(&mut h);
         c.color_method.gpu_id().hash(&mut h);
+        // What the frame accumulates (B2): a sample taken with other statistics is another frame.
+        c.orbit_stats().hash(&mut h);
         c.stripe_freq.to_bits().hash(&mut h);
         c.stripe_tail.hash(&mut h);
         c.stripe_tail_len.hash(&mut h);

@@ -5,7 +5,7 @@
 
 use crate::{
     color_bind_group_layout, fullscreen_pipeline, iter_bind_group_layout, make_color_bg,
-    make_iter_bg, make_iter_texture, make_orbit_buffer, method_needs_aux, shader_module,
+    make_iter_bg, make_iter_texture, make_orbit_buffer, shader_module,
     ColorUniforms, IterUniforms, RefOffset, Vignette, ITER_FORMAT,
 };
 use egui_wgpu::wgpu;
@@ -282,7 +282,11 @@ pub struct ExportRequest {
     pub de_strength: f32,
     pub de_width: f32,
     pub de_phase: f32,
+    /// The method the color pass shows (`ColorMethod::gpu_id`).
     pub color_method: u32,
+    /// The orbit statistics the iteration accumulates — see `MandelbrotParams::orbit_stats`; the
+    /// iteration takes this and what `color_method` reads ([`Self::iter_stats`]).
+    pub orbit_stats: fractadyne_core::coloring::StatSet,
     pub stripe_freq: f32,
     /// Stripe average over the tail only — see `MandelbrotParams::stripe_tail`.
     pub stripe_tail: bool,
@@ -317,6 +321,11 @@ pub struct ExportRequest {
 }
 
 impl ExportRequest {
+    /// What this frame's iteration accumulates ([`crate::iter_stats`]).
+    pub fn iter_stats(&self) -> fractadyne_core::coloring::StatSet {
+        crate::iter_stats(self.orbit_stats, self.color_method)
+    }
+
     /// The reference storage buffer: the orbit, its BLA tree from index `orbit.len()`, then the
     /// u-space tree ([`Self::rn_uniform`] points the shader at it).
     fn upload_reference(&self, device: &wgpu::Device, queue: &wgpu::Queue) -> Result<wgpu::Buffer, GpuError> {
@@ -1594,7 +1603,7 @@ fn export_plan(limits: &wgpu::Limits, req: &ExportRequest, allow_chunking: bool)
     let chunk_scope = allow_chunking
         && (req.mode == 1 || req.mode == 0 || req.mode == 2)
         && req.resumable()
-        && !method_needs_aux(req.color_method)
+        && req.iter_stats().is_empty()
         && limits.max_color_attachment_bytes_per_sample >= if fe { 64 } else { 48 };
     // A pass target (`ExportRequest::pass_ms`) prices chunk windows and step caps; where the
     // iterate cannot chunk, the tile is the pass, and only a smaller work budget shortens it.
@@ -1883,11 +1892,11 @@ impl<'a> TileRenderer<'a> {
             formula: req.formula,
             julia: req.julia,
             delta_exp: req.delta_exp,
-            color_method: req.color_method,
+            orbit_stats: req.iter_stats().bits(),
             stripe_freq: req.stripe_freq,
             trap_type: req.trap_type,
             aux_on: crate::aux_on_word(
-                method_needs_aux(req.color_method),
+                !req.iter_stats().is_empty(),
                 req.stripe_tail,
                 req.stripe_tail_len,
             ),
@@ -2843,7 +2852,7 @@ pub fn render_iter_tiled(
                 formula: req.formula,
                 julia: req.julia,
                 delta_exp: req.delta_exp,
-                color_method: fractadyne_core::coloring::ColorMethod::Smooth.gpu_id(),
+                orbit_stats: fractadyne_core::coloring::StatSet::NONE.bits(),
                 stripe_freq: 1.0,
                 trap_type: fractadyne_core::coloring::TrapType::Point.gpu_id(),
                 aux_on: 0,
@@ -3400,7 +3409,7 @@ impl GatherPass {
                 formula: req.formula,
                 julia: req.julia,
                 delta_exp: req.delta_exp,
-                color_method: fractadyne_core::coloring::ColorMethod::Smooth.gpu_id(),
+                orbit_stats: fractadyne_core::coloring::StatSet::NONE.bits(),
                 stripe_freq: 1.0,
                 trap_type: fractadyne_core::coloring::TrapType::Point.gpu_id(),
                 aux_on: 0,
@@ -3734,7 +3743,7 @@ fn render_iter_passes(
         formula: req.formula,
         julia: req.julia,
         delta_exp: req.delta_exp,
-        color_method: fractadyne_core::coloring::ColorMethod::Smooth.gpu_id(),
+        orbit_stats: fractadyne_core::coloring::StatSet::NONE.bits(),
         stripe_freq: 1.0,
         trap_type: fractadyne_core::coloring::TrapType::Point.gpu_id(),
         aux_on: 0,

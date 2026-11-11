@@ -309,7 +309,7 @@ impl FractadyneApp {
         let job = crate::gpu_worker::LiveJob {
             view: v,
             gen,
-            with_aux: fractadyne_gpu::method_needs_aux(params.color_method),
+            with_aux: !params.iter_stats().is_empty(),
             params: p,
             window,
             pass_ms: crate::tunables::cost().worker_pass_ms,

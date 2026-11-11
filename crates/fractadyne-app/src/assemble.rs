@@ -732,7 +732,7 @@ impl crate::FractadyneApp {
         let ss = self.render_cli.assemble_opts.ss.unwrap_or_else(|| (dive.oversample.round() as u32).clamp(1, 8));
         let (fw, fh) = (dive.frame.0 as u32, dive.frame.1 as u32);
         let colour = self.assembly_colour_request(dive);
-        if fractadyne_gpu::method_needs_aux(colour.color_method) {
+        if crate::ColorMethod::from_gpu_id(colour.color_method).is_some_and(|m| m.reads_aux()) {
             return Err("this coloring reads per-orbit statistics (stripe, TIA, trap or decomposition) that strips do not keep; \
                         assemble with smooth, distance, relief or glow"
                 .into());
