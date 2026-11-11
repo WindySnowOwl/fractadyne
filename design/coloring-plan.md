@@ -1,6 +1,6 @@
 # Coloring methods: implementation plan
 
-Status: **plan (2026-11-08); A9, A6, A2, A4, A8, A1, A3, A5b and A5a done, see §10.** Line references are to `main` at `9ab75357`; check
+Status: **plan (2026-11-08); A9, A6, A2, A4, A8, A1, A3, A5b, A5a and A7 done, see §10.** Line references are to `main` at `9ab75357`; check
 them before editing, they drift. The research behind it (methods, prototypes, measured results,
 prior art) is the coloring-methods doc; its local copy is
 `local/research_notes/Fractal coloring methods/` (PDF, HTML, Markdown, prototype scripts).
@@ -434,6 +434,16 @@ reproduced. Reproduce before fixing; never close on the mechanism argument alone
 - **Work**: extend `$Allowed` in `field-agent.ps1:275-327` with `--method`, `--fractal`,
   `--profile`, `--stripe-freq`, `--trap` and the A6 flags; bump the agent version; deploy per
   `scripts/field-request.ps1`.
+- **Done 2026-11-11** (agent v40, branch `feat/color-a7-field-agent`): for the modes that render,
+  `--method`, `--trap`, `--stripe-freq`, `--stripe-tail`, `--palette`, `--binary`, `--cycle`,
+  `--offset`, `--iter-div`, `--normalize`, `--log-palette`, `--light`, `--light-angle`,
+  `--light-height`, `--de`, `--glow-strength`, `--glow-width`, `--fractal`, `--julia`,
+  `--julia-c`; and `--profile` as a mode with `--reps` and `--regions` (a package TOML or
+  `field\locations\NAME.toml` in the share; its `profile-*.json` comes back with the logs). A
+  request's flags arrive split on whitespace, so a family name with a space is written with `_`
+  (`Burning_Ship`, `Multibrot_3`); the agent turns it back and quotes it. The agent checks only a
+  value's shape; the app refuses an unknown method, trap, palette or family. Windowed harnesses
+  still read the session's coloring, not these flags.
 
 ### A8. Palette browser: a named way out
 
@@ -887,8 +897,9 @@ coloring in these places, so sequence the two with care:
 | A1 | done, merged | `c15bd9c7` (merge `aa5b22e7`) |
 | A3 | done, merged | `3ee690d7` (merge `3c8a59e7`) |
 | A5b | done, merged | `fddc6ada` (merge `e11d1890`) |
-| A5a | done, branch `fix/color-a5a-series-aux` | |
-| A7, A10 | not started | |
+| A5a | done, merged | `05306f71` (merge `45c2e84d`) |
+| A7 | done, branch `feat/color-a7-field-agent` (agent v40) | |
+| A10 | not started | |
 | B1–B8 | not started | |
 | C1–C11 | not started | |
 | D, E, F, G | not started | |

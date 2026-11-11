@@ -30,6 +30,14 @@
 #                                                                 # a custom formula (agent v25): written WITHOUT
 #                                                                 # spaces (-Run splits on whitespace); a comma outside
 #                                                                 # parentheses separates statements
+#   .\scripts\field-request.ps1 -Action harness -Run "--render --fractal Burning_Ship --method stripe --stripe-freq 5 --cycle 0.4 --center -1.7609 -0.0276 --zoom 1e4 --size 640x400" -Build v0.3.0-beta.26.dev.19 -Wait
+#                                                                 # a coloring render (agent v40): a family name
+#                                                                 # with a space is written with _ ; the image
+#                                                                 # comes back with the logs
+#   .\scripts\field-request.ps1 -Action harness -Run "--profile --reps 3 --regions locations/coloring-a7.toml" -Build v0.3.0-beta.26.dev.19 -Wait
+#                                                                 # the profiler (v40): built-in regions, or a
+#                                                                 # [[region]] TOML in the share's field\locations;
+#                                                                 # its profile-*.json comes back with the logs
 #   .\scripts\field-request.ps1 -Machine ERIS -Action app-logs -Days 3 -Wait
 #                                                                 # that machine's own Fractadyne log folder
 #                                                                 # (agent v34): why the app died there
