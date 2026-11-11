@@ -38,6 +38,10 @@
 #                                                                 # the profiler (v40): built-in regions, or a
 #                                                                 # [[region]] TOML in the share's field\locations;
 #                                                                 # its profile-*.json comes back with the logs
+#   .\scripts\field-request.ps1 -Action harness -Run "--coloring-matrix --quick" -Build v0.3.0-beta.26.dev.20 -Wait
+#                                                                 # the coloring matrix (v41): --quick, or
+#                                                                 # --only view/variant; its coloring-matrix\
+#                                                                 # folder (sheets, JSON, summary) comes back
 #   .\scripts\field-request.ps1 -Machine ERIS -Action app-logs -Days 3 -Wait
 #                                                                 # that machine's own Fractadyne log folder
 #                                                                 # (agent v34): why the app died there

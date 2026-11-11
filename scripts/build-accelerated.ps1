@@ -333,9 +333,14 @@ Copy-Item (Join-Path $root "validation\catalog.toml") -Destination (Join-Path $d
 # The replay fixtures, for --selftest's replay group (as release.yml and publish-share.ps1).
 New-Item -ItemType Directory -Force (Join-Path $dir "validation\replays") | Out-Null
 Copy-Item (Join-Path $root "validation\replays\*.jsonl") -Destination (Join-Path $dir "validation\replays")
+# The coloring matrix's view set and the view files it names (`--coloring-matrix`).
+New-Item -ItemType Directory -Force (Join-Path $dir "validation\coloring") | Out-Null
+Copy-Item (Join-Path $root "validation\coloring\*.toml") -Destination (Join-Path $dir "validation\coloring")
+Copy-Item (Join-Path $root "validation\*.fdn") -Destination (Join-Path $dir "validation")
 New-Item -ItemType Directory -Force (Join-Path $dir "benchmarks") | Out-Null
 # Every card's bench-matrix baseline (the reference card's file and the per-card ones).
 Copy-Item (Join-Path $root "benchmarks\bench-matrix-baseline*.json") -Destination (Join-Path $dir "benchmarks")
+Copy-Item (Join-Path $root "benchmarks\coloring-matrix-baseline*.json") -Destination (Join-Path $dir "benchmarks") -ErrorAction SilentlyContinue
 
 # **Packaging gate.** A missing golden is invisible until a tester runs `--uitest` on the
 # download -- exactly how this was found. Fail the build if the user-facing payload is incomplete,

@@ -59,6 +59,22 @@ published as the pre-releases `v0.2.41-beta.1` to `v0.2.41-beta.150`, and a "bet
 
 Changes after 0.3.0-beta.1:
 
+- **A test that renders every coloring method (0.3.0-beta.27, for testing).** `--coloring-matrix`
+  renders each coloring method and its variants (each orbit-trap shape, the stripe tail) at the 82
+  views of `validation/coloring/views.toml`: every fractal family, two Julia sets and a custom formula,
+  from the overview to 7.4e143x. It checks each picture: not one flat color and no NaN pixels, not
+  Smooth's picture, the same twice, Distance unmoved by anti-aliasing, and BLA and the series
+  approximation drawing what the plain render draws. Two correct renders of a deep view's speckle
+  differ, so a pixel is judged where the picture is smooth and stable, and a render passes when it
+  changes no more pixels there than a nudge of a thousandth of a pixel does. It writes a contact
+  sheet per view and per method to look at, the evidence of each failed comparison, and a JSON and
+  a summary; GPU times are compared with the card's own baseline, as a warning only. The 738
+  pictures take about 5.5 minutes on an RTX 3080; `--quick` runs nine views, and the self-test runs
+  those (about 26 s). A red picture the view set lists as known, with its reason, is reported and
+  not counted. Its first runs found two bugs, now in TODO.md: Distance coloring draws NaN pixels where
+  the derivative overflows (most on Phoenix and Multibrot), and Newton offers the statistics methods
+  but draws each as one color.
+
 - **Fractadyne starts on computers that offer only OpenGL (0.3.0-beta.27).** On a machine without a
   Vulkan driver it crashed a third of a second after launch, every time, before showing anything:
   it asked the OpenGL driver for the limits of a web browser's graphics, which allow none of the

@@ -54,8 +54,9 @@ ALLOWED_ITEMS = {}
 HARNESS_HOOKS = {
     # logcheck at start and exit, --oomtest, FractadyneApp's harness fields (the four mode states and
     # the profiler's timings: type, doc, initializer), --render's --glitch-audit kind, the windowed
-    # harnesses' flags (one call to harness::modes::Windowed::from_args) and the banner's policy.
-    'crates/fractadyne-app/src/main.rs': 22,
+    # harnesses' flags (one call to harness::modes::Windowed::from_args), the banner's policy and
+    # --coloring-matrix's flags (harness::coloring_matrix::Cli::from_args).
+    'crates/fractadyne-app/src/main.rs': 23,
     # the headless dispatch: --torture, --logcheck, --gputest, --replay, one call per developer
     # mode (--truth, then --gl-link-bisect / --gl-link-probe the newest), and RenderCli's
     # --glitch-audit kind.

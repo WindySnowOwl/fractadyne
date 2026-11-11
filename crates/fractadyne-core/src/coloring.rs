@@ -165,6 +165,13 @@ impl ColorMethod {
     pub const fn bla_aggregate(self) -> bool {
         self.spec().bla_aggregate
     }
+    /// Whether a family with these capabilities offers this method: the one rule the method box,
+    /// the Color menu and the coloring matrix (`--coloring-matrix`) share. Only Distance asks for
+    /// something a family can lack, the distance estimate; every other method is offered on every
+    /// escape-time family.
+    pub const fn offered_for(self, caps: crate::formula::FormulaCaps) -> bool {
+        caps.distance_estimate || !self.needs_distance_estimate()
+    }
 }
 
 /// One orbit-trap shape's row of the table.

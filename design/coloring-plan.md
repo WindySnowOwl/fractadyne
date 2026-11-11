@@ -1,6 +1,6 @@
 # Coloring methods: implementation plan
 
-Status: **plan (2026-11-08); phase A done (A1–A10), see §10.** Line references are to `main` at `9ab75357`; check
+Status: **plan (2026-11-08); phase A done (A1–A10), B1 done (the coloring matrix; its live tour is B1b), see §10.** Line references are to `main` at `9ab75357`; check
 them before editing, they drift. The research behind it (methods, prototypes, measured results,
 prior art) is the coloring-methods doc; its local copy is
 `local/research_notes/Fractal coloring methods/` (PDF, HTML, Markdown, prototype scripts).
@@ -569,6 +569,44 @@ reproduced. Reproduce before fixing; never close on the mechanism argument alone
   at.
 - **Traps**: render with a scratch config; the `make()` span caveat (`selftest.rs:895-900`); keep
   timing runs one at a time.
+- **Done 2026-11-11** (branch `feat/color-b1-coloring-matrix`): `harness/coloring_matrix.rs`,
+  `validation/coloring/views.toml` (83 views, the spiral opt-in: the table above, the self-test's `FOLD_DEEP` and
+  `MULTIBROT_DEEP` copied in; Phoenix, the two Julia sets and `z^2.5 + c` at points found by
+  bisection and inverse iteration), the self-test group `coloring-matrix-quick` (9 views, 81 cells,
+  about 30 s), field agent v41 (`--coloring-matrix`, `--quick`, `--only`, `--views`; the agent names
+  the folder and delivers it), and every package ships the view set and its `.fdn` views. Cells are
+  `ColorMethod::ALL` with each trap shape and the stripe tail (9 a view), offered by
+  `ColorMethod::offered_for` (the rule the method box and the Color menu now share). How it judges,
+  where it differs from the text above:
+  - **Accelerators against the plain render** (no BLA, no series), not one toggled at a time: with
+    the series on in both, stripe with BLA on and off differed on 96% of the pixels at corpus 07 at
+    1e30x, and toggling cannot say which one is wrong. The check is named for what the request used
+    (`bla`, `series`, `bla+series`); a failing `bla+series` also measures BLA alone. (Not the series
+    alone: the app never runs it without BLA, and without the tree the series' prefix folds no
+    statistics.)
+  - **A chaotic picture differs between two correct renders**, so a difference is judged where the
+    picture is smooth and stable (not steep by count for a method colored by the count, the
+    self-test oracle's rule; smooth in the plain render; unchanged by a nudge of 1/1000 px), and by
+    rate: a render passes when it changes no more pixels there than the nudge itself changes.
+    aux-bla's channel tolerance alone failed Smooth at the seahorse at 1e6x (4.77% of channels, all
+    speckle). Sabotage: halving the BLA trap aggregate and taking 10% off the stripe sum turned all
+    12 BLA trap and stripe cells of the quick set red (49-100% of the judged pixels, against nudge
+    floors of 0-5%); triangle, untouched, stayed green.
+  - Distance at ss 1 and 2 is compared on the smooth pixels (`de-pixels`' median; speckle changes
+    with supersampling).
+  - A failed comparison writes its evidence (A, B, and where they differ) to `ab/`.
+  - `[[known]]` takes `*` patterns over `view/variant`.
+  - **Results**, RTX 3080, full set: 738 cells, 51 n/a (Distance without a distance estimate), 0
+    new red, 48 known, about 5.5 min. The known: Distance draws NaN where the derivative overflows
+    f32 (BUG, TODO.md); Newton draws every statistics method as one color (TODO.md); the stripe tail
+    through BLA and the series (the existing TODO); statistics flat at depth (the shared orbit
+    prefix); and, open, near the minibrot at 9.3e78x the point and cross traps through BLA and the
+    plain render disagree on every pixel (TODO.md; which is right needs the oracle). PLUTO (dev.20,
+    field agent v41): the RX 6800 XT in 288 s and the RTX 3070 in 859 s, each 0 new red and the same
+    48 known. Contact sheets looked at: every quick view, each failure's evidence, and the Smooth,
+    Distance, stripe and cross-trap sheets of the full set (the stripe one from the RX 6800 XT).
+  - **B1b, not done**: the live path (a `method` key in the tour `[render]` table, `--livetest` with
+    a method, `tours/coloring-methods.toml`). It drives the live pipeline, a separate step.
 
 ### B2. Decouple what is accumulated from how it is shown
 
@@ -919,8 +957,10 @@ coloring in these places, so sequence the two with care:
 | A3 | done, merged | `3ee690d7` (merge `3c8a59e7`) |
 | A5b | done, merged | `fddc6ada` (merge `e11d1890`) |
 | A5a | done, merged | `05306f71` (merge `45c2e84d`) |
-| A7 | done, branch `feat/color-a7-field-agent` (agent v40, deployed) | `603275eb` |
-| A10 | done, branch `feat/color-a10-method-table` (stacked on A7) | |
-| B1–B8 | not started | |
+| A7 | done, merged | `603275eb` (merge `1bfdc833`) |
+| A10 | done, merged | `aaffca7f` (merge `6ec2fc76`) |
+| B1 | done, branch `feat/color-b1-coloring-matrix` (agent v41, deployed) | |
+| B1b | not started: the live method tour | |
+| B2–B8 | not started | |
 | C1–C11 | not started | |
 | D, E, F, G | not started | |

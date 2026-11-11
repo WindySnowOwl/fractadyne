@@ -112,6 +112,10 @@ pub(crate) struct HarnessModes {
     /// compare against (or bless) the baseline, and exit.
     pub(crate) bench_matrix: bool,
     pub(crate) bench_matrix_done: bool,
+    /// CLI `--coloring-matrix [--quick] [--only TEXT] [--views F] [--bless] [--out DIR]`: every
+    /// coloring method across the families and depth bands of the view set, then exit. See
+    /// `mod coloring_matrix`.
+    pub(crate) coloring_matrix: Option<super::coloring_matrix::Cli>,
 }
 
 impl crate::FractadyneApp {
@@ -198,8 +202,12 @@ impl crate::FractadyneApp {
     }
 
     /// The harness branches of `cli_mode_ladder`, which runs them first: each runs its suite and
-    /// exits, or does nothing.
-    pub(crate) fn harness_ladder(&mut self, gpu: &Option<(eframe::wgpu::Device, eframe::wgpu::Queue)>) {
+    /// exits, or does nothing. `ctx` is for the harnesses that draw text into their images.
+    pub(crate) fn harness_ladder(
+        &mut self,
+        ctx: &eframe::egui::Context,
+        gpu: &Option<(eframe::wgpu::Device, eframe::wgpu::Queue)>,
+    ) {
         // CLI self-test: run the GPU validation suite, print the report, and exit with a
         // status code (0 = all passed).
         if self.selftest.run && !self.selftest.done {
@@ -250,6 +258,17 @@ impl crate::FractadyneApp {
                 let bless = self.selftest.bless; // shared `--bless` flag
                 let reps = self.profile.reps; // shared `--reps N` flag (default 5)
                 let code = self.run_bench_matrix(dev, q, bless, reps, false);
+                crate::exit(code);
+            }
+        }
+
+        // CLI coloring matrix: every coloring method across the view set's families and bands;
+        // contact sheets, JSON and a summary; exit 1 on a new red cell.
+        if self.harness.coloring_matrix.as_ref().is_some_and(|c| !c.done) {
+            if let (Some((dev, q)), Some(mut cli)) = (gpu, self.harness.coloring_matrix.take()) {
+                cli.done = true;
+                let code = self.run_coloring_matrix(Some(ctx), dev, q, &cli).code;
+                self.harness.coloring_matrix = Some(cli);
                 crate::exit(code);
             }
         }

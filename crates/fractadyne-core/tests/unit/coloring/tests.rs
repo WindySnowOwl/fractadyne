@@ -72,6 +72,21 @@ fn the_predicate_sets_are_the_established_ones() {
     }
 }
 
+/// A family offers every method but Distance, which only one with a distance estimate offers.
+#[test]
+fn a_family_offers_distance_only_with_a_distance_estimate() {
+    use crate::formula::{caps, BURNING_SHIP, CUSTOM, MANDELBROT, NEWTON, PHOENIX};
+    for f in [MANDELBROT, PHOENIX, BURNING_SHIP, NEWTON, CUSTOM] {
+        let c = caps(f);
+        for m in ColorMethod::ALL {
+            let want = m != ColorMethod::Distance || c.distance_estimate;
+            assert_eq!(m.offered_for(c), want, "formula {f}, {m:?}");
+        }
+    }
+    assert!(ColorMethod::Distance.offered_for(caps(MANDELBROT)));
+    assert!(!ColorMethod::Distance.offered_for(caps(BURNING_SHIP)));
+}
+
 /// The shader gets one constant per method and per trap, named as the table says, with the
 /// table's number.
 #[test]

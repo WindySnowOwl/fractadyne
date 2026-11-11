@@ -605,7 +605,7 @@ impl crate::FractadyneApp {
         ctx: &eframe::egui::Context,
         gpu: &Option<(eframe::wgpu::Device, eframe::wgpu::Queue)>,
     ) {
-        self.harness_ladder(gpu);
+        self.harness_ladder(ctx, gpu);
 
         // CLI standardized benchmark (`--benchmark-std [--res] [--burnin] [--depth]`): run all
         // passes synchronously, print + save the report, and quit.
