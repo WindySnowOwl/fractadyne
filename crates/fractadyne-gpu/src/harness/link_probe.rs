@@ -5,8 +5,10 @@
 
 use egui_wgpu::wgpu;
 
-/// The renderer's shader source, as `shader_module` compiles it.
-pub const RENDERER_WGSL: &str = include_str!("../mandelbrot.wgsl");
+/// The renderer's shader source, as `shader_module` compiles it ([`crate::renderer_wgsl`]).
+pub fn renderer_wgsl() -> &'static str {
+    crate::renderer_wgsl()
+}
 
 /// Build `fs_iterate`'s pipeline from `wgsl` as `Renderer::new` builds it from the shipped source:
 /// the same bind-group layout, vertex stage, targets and constants. The constants include the

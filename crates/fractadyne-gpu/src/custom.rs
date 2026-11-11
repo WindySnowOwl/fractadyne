@@ -27,7 +27,10 @@
 
 use fractadyne_core::ir::{Cmp, Formula, Func, Op, Program, Round, Val};
 
-const FIXED: &str = include_str!("mandelbrot.wgsl");
+/// The renderer's WGSL ([`crate::renderer_wgsl`]), which a custom formula's module is cut from.
+fn fixed() -> &'static str {
+    crate::renderer_wgsl()
+}
 // A `.frm`-style formula's init section and own bailout, on the direct path (the only path such a
 // formula renders on): empty, and the escape test as it was, for every other formula.
 const INIT_BEGIN: &str = "// @@CUSTOM_INIT_BEGIN";
@@ -998,19 +1001,20 @@ fn splice(step_fns: &str, power: f32, init: bool, bailout: bool) -> Result<Strin
         // fs_iterate's values for a formula without a derivative: no slope, no distance estimate.
         "    let nrm = vec2<f32>(0.0, 0.0);\n    let de = 1.0e30;\n".to_string(),
     ];
-    let mut out = String::with_capacity(FIXED.len() + step_fns.len());
+    let src = fixed();
+    let mut out = String::with_capacity(src.len() + step_fns.len());
     let mut at = 0;
     for ((begin, end), fill) in SLOTS.iter().zip(&fills) {
-        let (b0, _) = marker_line(FIXED, begin)?;
-        let (_, e1) = marker_line(FIXED, end)?;
+        let (b0, _) = marker_line(src, begin)?;
+        let (_, e1) = marker_line(src, end)?;
         if b0 < at || e1 <= b0 {
             return Err(CustomError::Marker(begin));
         }
-        out.push_str(&FIXED[at..b0]);
+        out.push_str(&src[at..b0]);
         out.push_str(fill);
         at = e1;
     }
-    out.push_str(&FIXED[at..]);
+    out.push_str(&src[at..]);
     out.push_str("\n// ---------------- generated: custom formula (custom.rs) ----------------\n");
     out.push_str(&format!("const CUSTOM_POWER: f32 = {};\n", lit(power)));
     out.push_str(&tame_source());

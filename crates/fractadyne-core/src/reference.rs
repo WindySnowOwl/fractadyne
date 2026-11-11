@@ -1930,24 +1930,25 @@ pub struct BlaNode {
 /// the tree geometry stays cached. `Default` yields inert values for callers that don't fold aux.
 #[derive(Clone, Copy)]
 pub struct AuxAggParams {
-    pub trap_type: u32, // 0 = point |z|, 1 = cross min(|x|,|y|), 2 = circle ||z|−1|
+    pub trap_type: crate::coloring::TrapType,
     pub stripe_freq: f64,
     pub cmag: f64, // |c| of the reference (triangle-inequality)
     pub power: f64, // formula degree (triangle-inequality)
 }
 impl Default for AuxAggParams {
     fn default() -> Self {
-        AuxAggParams { trap_type: 0, stripe_freq: 1.0, cmag: 0.0, power: 2.0 }
+        AuxAggParams { trap_type: crate::coloring::TrapType::Point, stripe_freq: 1.0, cmag: 0.0, power: 2.0 }
     }
 }
 
 // Per-iterate aux stat contributions, mirroring the GPU `aux_step` (used to seed the BLA
 // aggregates; the shader folds the same quantities on a skip).
-pub(crate) fn aux_trap_dist(zx: f64, zy: f64, trap_type: u32) -> f64 {
+pub(crate) fn aux_trap_dist(zx: f64, zy: f64, trap_type: crate::coloring::TrapType) -> f64 {
+    use crate::coloring::TrapType;
     match trap_type {
-        1 => zx.abs().min(zy.abs()),
-        2 => ((zx * zx + zy * zy).sqrt() - 1.0).abs(),
-        _ => (zx * zx + zy * zy).sqrt(),
+        TrapType::Cross => zx.abs().min(zy.abs()),
+        TrapType::Circle => ((zx * zx + zy * zy).sqrt() - 1.0).abs(),
+        TrapType::Point => (zx * zx + zy * zy).sqrt(),
     }
 }
 pub(crate) fn aux_stripe_term(zx: f64, zy: f64, freq: f64) -> f64 {

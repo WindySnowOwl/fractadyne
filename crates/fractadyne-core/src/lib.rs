@@ -49,6 +49,10 @@ pub mod worker_priority;
 
 mod fractal;
 
+/// The coloring methods and orbit-trap shapes: their persisted keys, their GPU numbers for this
+/// build, what each needs, and the shader constants (design/coloring-plan.md A10).
+pub mod coloring;
+
 /// The formula intermediate representation and its interpreters (design/custom-formulas.md).
 pub mod ir;
 

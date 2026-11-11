@@ -675,7 +675,7 @@ fn head_of(src: &str, bl: &Block, funcs: &[Func]) -> String {
 
 fn bisect(budget: Duration) -> i32 {
     let t0 = Instant::now();
-    let src = fractadyne_gpu::link_probe::RENDERER_WGSL;
+    let src = fractadyne_gpu::link_probe::renderer_wgsl();
     let Ok(exe) = std::env::current_exe() else {
         eprintln!("fractadyne: {BISECT_FLAG}: cannot find this program's own path");
         return 1;

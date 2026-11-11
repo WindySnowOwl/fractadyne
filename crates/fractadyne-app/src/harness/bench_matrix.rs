@@ -205,7 +205,7 @@ pub(crate) struct Segment {
     pub cy: String,
     pub zoom_log10: f64,
     pub iter: u32,
-    pub method: u32,
+    pub method: crate::ColorMethod,
     pub sa: bool,
     pub bla: bool,
     /// Fast + stable enough to assert as a rendering-pipeline sanity check in `--selftest`.
@@ -219,7 +219,7 @@ fn seg(
     c: (&str, &str),
     zoom_log10: f64,
     iter: u32,
-    method: u32,
+    method: crate::ColorMethod,
     sa: bool,
     bla: bool,
     deterministic: bool,
@@ -242,30 +242,31 @@ fn seg(
 /// The full path matrix: a banded Mandelbrot zoom sweep (each numeric regime + SA/BLA variants),
 /// a per-coloring set (the iteration-skip-blocking methods), and a per-fractal set (formula paths).
 pub(crate) fn matrix() -> Vec<Segment> {
+    use crate::ColorMethod as M;
     use FractalKind as F;
     let mut v = vec![
         // ── Zoom bands: f64 direct → df32 perturbation → floatexp (+ SA/BLA variants) ──
-        seg("zoom-band", "direct-1e2", F::Mandelbrot, SEAHORSE, 2.0, 512, 0, true, true, true),
-        seg("zoom-band", "df32-1e8", F::Mandelbrot, SEAHORSE, 8.0, 3_000, 0, true, true, true),
-        seg("zoom-band", "df32-1e20", F::Mandelbrot, SEAHORSE, 20.0, 15_000, 0, true, true, true),
-        seg("zoom-band", "floatexp-1e30-sa", F::Mandelbrot, SEAHORSE, 30.0, 30_000, 0, true, true, true),
+        seg("zoom-band", "direct-1e2", F::Mandelbrot, SEAHORSE, 2.0, 512, M::Smooth, true, true, true),
+        seg("zoom-band", "df32-1e8", F::Mandelbrot, SEAHORSE, 8.0, 3_000, M::Smooth, true, true, true),
+        seg("zoom-band", "df32-1e20", F::Mandelbrot, SEAHORSE, 20.0, 15_000, M::Smooth, true, true, true),
+        seg("zoom-band", "floatexp-1e30-sa", F::Mandelbrot, SEAHORSE, 30.0, 30_000, M::Smooth, true, true, true),
         // Same view, SA off then BLA off — isolate each accelerator's contribution.
-        seg("zoom-band", "floatexp-1e30-nosa", F::Mandelbrot, SEAHORSE, 30.0, 30_000, 0, false, true, true),
-        seg("zoom-band", "floatexp-1e30-nobla", F::Mandelbrot, SEAHORSE, 30.0, 30_000, 0, true, false, true),
+        seg("zoom-band", "floatexp-1e30-nosa", F::Mandelbrot, SEAHORSE, 30.0, 30_000, M::Smooth, false, true, true),
+        seg("zoom-band", "floatexp-1e30-nobla", F::Mandelbrot, SEAHORSE, 30.0, 30_000, M::Smooth, true, false, true),
         // Deep interior: extended-range samples + heavy Zhuoran rebasing (the pathology regime).
-        seg("zoom-band", "deep-interior-1e148", F::Mandelbrot, DEEP_INTERIOR, 148.077, 800_000, 0, true, true, false),
+        seg("zoom-band", "deep-interior-1e148", F::Mandelbrot, DEEP_INTERIOR, 148.077, 800_000, M::Smooth, true, true, false),
         // Extreme floatexp: a ~330-digit bignum reference — the cold reference-build lever.
-        seg("zoom-band", "floatexp-1e300", F::Mandelbrot, M41, 300.0, 200_000, 0, true, true, false),
+        seg("zoom-band", "floatexp-1e300", F::Mandelbrot, M41, 300.0, 200_000, M::Smooth, true, true, false),
         // ── λ-LADDER: exactly self-similar rungs straddling both arithmetic-mode boundaries ──
         // Same center, same iteration count, same scene (M(4,3) is self-similar under ×|λ|) — the
         // ONLY difference across each pair is which arithmetic the renderer selects. A cost ratio
         // here is the mode's price; anywhere else in this matrix it is confounded with the view.
         // ⚠Read the pairs, not the absolute numbers: n=7/8 is near the set where self-similarity
         // is still approximate, while n=51/52 is deep enough to be exact for this purpose.
-        seg("lambda-ladder", "m43-n7-direct-1e3.80", F::Mandelbrot, M43, 3.8027, 1_500, 0, true, true, true),
-        seg("lambda-ladder", "m43-n8-df32-1e4.35", F::Mandelbrot, M43, 4.3459, 1_500, 0, true, true, true),
-        seg("lambda-ladder", "m43-n51-df32-1e27.71", F::Mandelbrot, M43, 27.7051, 30_000, 0, true, true, true),
-        seg("lambda-ladder", "m43-n52-fe-1e28.25", F::Mandelbrot, M43, 28.2484, 30_000, 0, true, true, true),
+        seg("lambda-ladder", "m43-n7-direct-1e3.80", F::Mandelbrot, M43, 3.8027, 1_500, M::Smooth, true, true, true),
+        seg("lambda-ladder", "m43-n8-df32-1e4.35", F::Mandelbrot, M43, 4.3459, 1_500, M::Smooth, true, true, true),
+        seg("lambda-ladder", "m43-n51-df32-1e27.71", F::Mandelbrot, M43, 27.7051, 30_000, M::Smooth, true, true, true),
+        seg("lambda-ladder", "m43-n52-fe-1e28.25", F::Mandelbrot, M43, 28.2484, 30_000, M::Smooth, true, true, true),
         // ── COST REGIME at MATCHED DEPTH — the axis this matrix did not have ──
         // Same magnification and iteration count as the two `m43-n51/n52` segments above, same
         // neighborhood, different scene: a period-145/148 minibrot instead of the spar field.
@@ -278,13 +279,13 @@ pub(crate) fn matrix() -> Vec<Segment> {
         // interior-dominated than the segment it was meant to contrast with — and direct mode has
         // no BLA to collapse in the first place. The regime needs depth, which needs a deep
         // nucleus; that is what these two constants are.
-        seg("regime", "interior-n51-df32-1e27.71", F::Mandelbrot, NUC_M43_N51_P145, 27.7051, 30_000, 0, true, true, true),
-        seg("regime", "interior-n52-fe-1e28.25", F::Mandelbrot, NUC_M43_N52_P148, 28.2484, 30_000, 0, true, true, true),
+        seg("regime", "interior-n51-df32-1e27.71", F::Mandelbrot, NUC_M43_N51_P145, 27.7051, 30_000, M::Smooth, true, true, true),
+        seg("regime", "interior-n52-fe-1e28.25", F::Mandelbrot, NUC_M43_N52_P148, 28.2484, 30_000, M::Smooth, true, true, true),
         // ── Coloring paths (Mandelbrot @1e20×): smooth vs the iteration-skip-blocking methods ──
-        seg("coloring", "color-smooth", F::Mandelbrot, SEAHORSE, 20.0, 15_000, 0, true, true, true),
-        seg("coloring", "color-stripe", F::Mandelbrot, SEAHORSE, 20.0, 15_000, 1, true, true, true),
-        seg("coloring", "color-trap", F::Mandelbrot, SEAHORSE, 20.0, 15_000, 3, true, true, true),
-        seg("coloring", "color-decomposition", F::Mandelbrot, SEAHORSE, 20.0, 15_000, 5, true, true, true),
+        seg("coloring", "color-smooth", F::Mandelbrot, SEAHORSE, 20.0, 15_000, M::Smooth, true, true, true),
+        seg("coloring", "color-stripe", F::Mandelbrot, SEAHORSE, 20.0, 15_000, M::Stripe, true, true, true),
+        seg("coloring", "color-trap", F::Mandelbrot, SEAHORSE, 20.0, 15_000, M::OrbitTrap, true, true, true),
+        seg("coloring", "color-decomposition", F::Mandelbrot, SEAHORSE, 20.0, 15_000, M::Decomposition, true, true, true),
     ];
     // ── Per-fractal formula paths: each family's home view (direct path, mix of interior/exterior) ──
     for kind in FractalKind::ALL {
@@ -297,7 +298,7 @@ pub(crate) fn matrix() -> Vec<Segment> {
             cy: format!("{cy:.17e}"),
             zoom_log10: 0.9, // ~8× — whole set in frame: interior (max-iter) + boundary + exterior
             iter: 2_000,
-            method: 0,
+            method: M::Smooth,
             sa: true,
             bla: true,
             deterministic: true,
@@ -400,7 +401,7 @@ impl crate::FractadyneApp {
         self.set_fractal(s.fractal);
         self.julia_mode = false;
         self.dual = false;
-        self.coloring.color_method = crate::ColorMethod::from_u32(s.method);
+        self.coloring.color_method = s.method;
         self.coloring.use_binary = false;
         self.coloring.use_duotone = false;
         self.coloring.use_custom_palette = false;

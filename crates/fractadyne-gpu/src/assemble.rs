@@ -74,12 +74,13 @@ impl WindowTexels {
     /// What a frame colored with `method` (the color pass's `color_method`), relief lighting
     /// (`light`) and the distance glow (`glow`) reads. A method this does not know keeps everything.
     pub fn for_colour(method: u32, light: bool, glow: bool) -> Self {
-        if light || !matches!(method, 0 | 4) {
-            WindowTexels::All
-        } else if method == 4 || glow {
-            WindowTexels::CountDe
-        } else {
-            WindowTexels::Count
+        use fractadyne_core::coloring::ColorMethod;
+        match ColorMethod::from_gpu_id(method) {
+            _ if light => WindowTexels::All,
+            Some(ColorMethod::Distance) => WindowTexels::CountDe,
+            Some(ColorMethod::Smooth) if glow => WindowTexels::CountDe,
+            Some(ColorMethod::Smooth) => WindowTexels::Count,
+            _ => WindowTexels::All,
         }
     }
 

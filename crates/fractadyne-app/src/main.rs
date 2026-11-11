@@ -3113,47 +3113,27 @@ pub(crate) fn accum_jitter_seq(i: u32) -> [f32; 2] {
 // Branding (BRAND_ACCENT/BRAND_TEXT, apply_brand_theme, brand_wordmark, brand_icon) moved
 // to `theme.rs` (re-exported below).
 
-// ---- coloring-method / orbit-trap enums (Phase 4: typed dispatch) ----
-/// Coloring method — a typed replacement for the former bare `u32`. Discriminants match the GPU
-/// `color_method` ids in `mandelbrot.wgsl` `fs_color` (serialized via [`ColorMethod::to_u32`]); the
-/// `key` is the stable string persisted in the session / `.fdn`.
-#[derive(Clone, Copy, PartialEq, Eq, Debug, Default)]
-pub(crate) enum ColorMethod {
-    #[default]
-    Smooth = 0,
-    Stripe = 1,
-    TriangleIneq = 2,
-    OrbitTrap = 3,
-    Distance = 4,
-    Decomposition = 5,
+// ---- coloring methods / orbit-trap shapes ----
+// One table each in `fractadyne_core::coloring` (coloring plan A10): the persisted key, the GPU
+// number for this build (`gpu_id`, never stored), and what each needs (`needs_aux`,
+// `blocks_iter_skip`, `bounded_value`, `needs_distance_estimate`, `bla_aggregate`). The GPU crate
+// and the shader read the same table.
+//
+// ⛔⭐**Why one table.** The sets used to be written out here, in the GPU crate and as numbers in
+// the shader. The orbit trap was missing from `needs_aux` until 2026-11-06, because that predicate
+// also chose the palette rate, where the trap belongs with the unbounded methods: the live view
+// handed trap frames to the chunked walk and the band's BLA, which compute no trap, and every pixel
+// read the "no statistics" value (one flat color). The rate now asks `bounded_value`.
+pub(crate) use fractadyne_core::coloring::{ColorMethod, TrapType};
+
+/// A coloring method's or trap shape's name in the language in use. The words are the app's; the
+/// table (`fractadyne_core::coloring`) has only the keys.
+pub(crate) trait ColoringLabel {
+    fn label(self) -> String;
 }
 
-impl ColorMethod {
-    pub(crate) const ALL: [ColorMethod; 6] = [
-        ColorMethod::Smooth,
-        ColorMethod::Stripe,
-        ColorMethod::TriangleIneq,
-        ColorMethod::OrbitTrap,
-        ColorMethod::Distance,
-        ColorMethod::Decomposition,
-    ];
-    /// GPU dispatch id (matches the shader).
-    pub(crate) fn to_u32(self) -> u32 {
-        self as u32
-    }
-    /// Stable persisted key.
-    pub(crate) fn key(self) -> &'static str {
-        match self {
-            ColorMethod::Smooth => "smooth",
-            ColorMethod::Stripe => "stripe",
-            ColorMethod::TriangleIneq => "triangle",
-            ColorMethod::OrbitTrap => "trap",
-            ColorMethod::Distance => "distance",
-            ColorMethod::Decomposition => "decomposition",
-        }
-    }
-    /// Human label for the UI combo box, in the language in use.
-    pub(crate) fn label(self) -> String {
+impl ColoringLabel for ColorMethod {
+    fn label(self) -> String {
         match self {
             ColorMethod::Smooth => tr!(color_method_smooth),
             ColorMethod::Stripe => tr!(color_method_stripe),
@@ -3163,60 +3143,15 @@ impl ColorMethod {
             ColorMethod::Decomposition => tr!(color_method_decomposition),
         }
     }
-    pub(crate) fn from_key(s: &str) -> ColorMethod {
-        ColorMethod::ALL.into_iter().find(|m| m.key() == s).unwrap_or_default()
-    }
-    pub(crate) fn from_u32(v: u32) -> ColorMethod {
-        ColorMethod::ALL.into_iter().find(|m| m.to_u32() == v).unwrap_or_default()
-    }
-    /// Methods that accumulate the aux statistics texture (stripe / triangle-ineq / orbit trap /
-    /// decomposition): `fractadyne_gpu::method_needs_aux`, which decides what the shader computes.
-    /// Every path that cannot carry those statistics — the chunked walk, the floatexp band's BLA,
-    /// the reference corrector, the normalized export, zoom-video strips — is gated on this.
-    ///
-    /// ⛔⭐**The orbit trap was missing here until 2026-11-06**, because this predicate also chose
-    /// the coloring's palette rate, where the trap belongs with the unbounded methods. So the live
-    /// view handed trap frames to the chunked walk and the band's BLA, which compute no trap, and
-    /// every pixel read the "no statistics" value: one flat color (a Multibrot 7 Julia panel, every
-    /// pixel the same; its Mandelbrot panel 91%). The rate now asks [`Self::bounded_value`].
-    pub(crate) fn needs_aux(self) -> bool {
-        matches!(
-            self,
-            ColorMethod::Stripe | ColorMethod::TriangleIneq | ColorMethod::OrbitTrap | ColorMethod::Decomposition
-        )
-    }
-    /// Methods that read the distance estimate, which only a family with a derivative has
-    /// (`FormulaCaps::distance_estimate`): elsewhere they color the whole view one color, so the
-    /// panel and the Color menu gray them out there.
-    pub(crate) fn needs_distance_estimate(self) -> bool {
-        self == ColorMethod::Distance
-    }
-    /// Methods whose colored value lies in 0..1 (stripe / triangle-ineq / decomposition), which take
-    /// a few palette cycles across that range rather than the per-unit rate of the unbounded ones
-    /// (iteration count, orbit trap, distance). See `color_cycle`.
-    pub(crate) fn bounded_value(self) -> bool {
-        matches!(
-            self,
-            ColorMethod::Stripe | ColorMethod::TriangleIneq | ColorMethod::Decomposition
-        )
-    }
+}
 
-    /// Methods that CANNOT skip iterations — BLA and series approximation must stay off. Two reasons
-    /// a method blocks skipping: (1) it accumulates a **running per-iteration** statistic (stripe /
-    /// triangle-inequality average, orbit-trap min) that skipped iterations would silently drop; or
-    /// (2) it is a **discontinuous function of the exact final escape point** — decomposition tiles
-    /// the plane into angular cells, so SA/BLA's small trajectory approximation shifts every cell
-    /// edge (measured ~15% of pixels change with SA enabled), so it is NOT skip-safe despite reading
-    /// only the final z. This set adds orbit-trap versus [`Self::needs_aux`] — the deep-zoom bug
-    /// where trap was absent and thus wrongly kept BLA/SA on, silently dropping skipped-run minima.
-    pub(crate) fn blocks_iter_skip(self) -> bool {
-        matches!(
-            self,
-            ColorMethod::Stripe
-                | ColorMethod::TriangleIneq
-                | ColorMethod::OrbitTrap
-                | ColorMethod::Decomposition
-        )
+impl ColoringLabel for TrapType {
+    fn label(self) -> String {
+        match self {
+            TrapType::Point => tr!(trap_point),
+            TrapType::Cross => tr!(trap_cross),
+            TrapType::Circle => tr!(trap_circle),
+        }
     }
 }
 
@@ -3259,40 +3194,6 @@ pub(crate) fn smooth_color_rate(cycle: f32, div: u32) -> f32 {
 /// the "Divide iterations" readout. `None` for a rate that is not positive.
 pub(crate) fn iterations_per_palette(rate: f32) -> Option<f64> {
     (rate > 0.0 && rate.is_finite()).then(|| 1.0 / rate as f64)
-}
-
-/// Orbit-trap shape (only meaningful for [`ColorMethod::OrbitTrap`]). Discriminants match the shader.
-#[derive(Clone, Copy, PartialEq, Eq, Debug, Default)]
-pub(crate) enum TrapType {
-    #[default]
-    Point = 0,
-    Cross = 1,
-    Circle = 2,
-}
-
-impl TrapType {
-    pub(crate) const ALL: [TrapType; 3] = [TrapType::Point, TrapType::Cross, TrapType::Circle];
-    pub(crate) fn to_u32(self) -> u32 {
-        self as u32
-    }
-    pub(crate) fn key(self) -> &'static str {
-        match self {
-            TrapType::Point => "point",
-            TrapType::Cross => "cross",
-            TrapType::Circle => "circle",
-        }
-    }
-    /// The trap's name in the language in use.
-    pub(crate) fn label(self) -> String {
-        match self {
-            TrapType::Point => tr!(trap_point),
-            TrapType::Cross => tr!(trap_cross),
-            TrapType::Circle => tr!(trap_circle),
-        }
-    }
-    pub(crate) fn from_key(s: &str) -> TrapType {
-        TrapType::ALL.into_iter().find(|t| t.key() == s).unwrap_or_default()
-    }
 }
 
 /// Palette animation mode (continuously shifts the color offset).
@@ -5843,8 +5744,8 @@ struct RefCache {
     bla_stripe_freq: f64,
     /// Trap type the cached BLA tree's `agg_trap` lane was built with. The trap aggregate is
     /// trap-type-specific, so the tree is rebuilt when the live trap type changes (only while the
-    /// orbit-trap method is active). `u32::MAX` = never built / unknown.
-    bla_trap_type: u32,
+    /// orbit-trap method is active). `None` = never built / unknown.
+    bla_trap_type: Option<TrapType>,
     /// View (center + log2 magnification) the current iteration texture was rendered at. A freeze
     /// uses this to zoom-reproject the frozen frame — scaling/panning it to follow the dive until a
     /// fresh reference lands (see `build_params`). `None` until the first real render.
@@ -5904,7 +5805,7 @@ impl Default for RefCache {
             bla_id: u64::MAX,
             bla_dc_max_log2: f64::NEG_INFINITY,
             bla_stripe_freq: f64::NEG_INFINITY,
-            bla_trap_type: u32::MAX,
+            bla_trap_type: None,
             frozen_center: None,
             frozen_l2: 0.0,
             frozen_at: None,
@@ -14654,7 +14555,7 @@ impl FractadyneApp {
             self.fractal.formula_id(),
             self.custom_key_for(self.fractal),
             pal_idx,
-            self.coloring.color_method.to_u32(),
+            self.coloring.color_method.gpu_id(),
             pal_rev,
         );
         if self.minimap_key == Some(key) && self.minimap_tex.is_some() {
@@ -16434,11 +16335,11 @@ impl FractadyneApp {
         c.cycle.to_bits().hash(&mut h);
         c.iter_div.hash(&mut h);
         c.offset.to_bits().hash(&mut h);
-        c.color_method.to_u32().hash(&mut h);
+        c.color_method.gpu_id().hash(&mut h);
         c.stripe_freq.to_bits().hash(&mut h);
         c.stripe_tail.hash(&mut h);
         c.stripe_tail_len.hash(&mut h);
-        c.trap_type.to_u32().hash(&mut h);
+        c.trap_type.gpu_id().hash(&mut h);
         c.normalize_live.hash(&mut h);
         c.normalize_fit.hash(&mut h); // or ticking the box would change no pixel until something else did
         c.log_palette.hash(&mut h);

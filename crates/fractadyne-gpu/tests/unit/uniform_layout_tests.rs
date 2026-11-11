@@ -146,7 +146,8 @@ fn wgsl_field_offset(fields: &[(String, String)], field: &str) -> usize {
 #[test]
 fn the_built_in_shader_validates() {
     use egui_wgpu::wgpu::naga;
-    let src = include_str!(concat!(env!("CARGO_MANIFEST_DIR"), "/src/mandelbrot.wgsl"));
+    // As every pipeline builds it: the file with the coloring ids appended (`renderer_wgsl`).
+    let src = crate::renderer_wgsl();
     let module = naga::front::wgsl::parse_str(src).unwrap_or_else(|e| panic!("{}", e.emit_to_string(src)));
     naga::valid::Validator::new(naga::valid::ValidationFlags::all(), naga::valid::Capabilities::all())
         .validate(&module)

@@ -4,7 +4,7 @@
 //! `fractadyne-core` unit tests; this validates the visual/render pipeline.)
 
 use crate::{
-    gather_system_info, mandel_escapes, utc_string, version_string, FractadyneApp,
+    gather_system_info, mandel_escapes, utc_string, version_string, ColoringLabel, FractadyneApp,
     FractalKind,
 };
 use fractadyne_core::Viewport;
@@ -10687,7 +10687,7 @@ zoom = \"1e94\"
                     pass: worst.0 >= 1.0,
                 });
             }
-            self.coloring.color_method = crate::ColorMethod::from_u32(0);
+            self.coloring.color_method = crate::ColorMethod::Smooth;
 
             // --- palettes, step 54 ---
             // ⚠A breadcrumb per palette and per row of the comparison: the whole check runs 22-26 s,
@@ -11587,9 +11587,7 @@ zoom = \"1e94\"
             for round in 0..3 {
                 for (i, f) in order.iter().enumerate() {
                     self.fractal = *f;
-                    self.coloring.color_method = crate::ColorMethod::from_u32(
-                        ((i + round) % crate::ColorMethod::ALL.len()) as u32,
-                    );
+                    self.coloring.color_method = crate::ColorMethod::ALL[(i + round) % crate::ColorMethod::ALL.len()];
                     self.coloring.palette_idx = (i + round) % fractadyne_color::PRESETS.len();
                     self.invalidate_refs();
                     // Render only the last one; the point is the state left behind, and
@@ -11602,7 +11600,7 @@ zoom = \"1e94\"
             let (ff, fm, fp) = (self.fractal, self.coloring.color_method, self.coloring.palette_idx);
             // The control: the same final selection, arrived at without the storm.
             self.fractal = crate::FractalKind::Mandelbrot;
-            self.coloring.color_method = crate::ColorMethod::from_u32(0);
+            self.coloring.color_method = crate::ColorMethod::Smooth;
             self.coloring.palette_idx = 0;
             self.invalidate_refs();
             let control = shoot(self, device, queue, cw, ch).map(|(px, _)| px);
@@ -11669,7 +11667,7 @@ zoom = \"1e94\"
             self.fractal = saved_fractal;
             self.julia_mode = saved_julia;
             self.coloring.palette_idx = 0;
-            self.coloring.color_method = crate::ColorMethod::from_u32(0);
+            self.coloring.color_method = crate::ColorMethod::Smooth;
             self.invalidate_refs();
         }
 
@@ -11713,37 +11711,37 @@ zoom = \"1e94\"
         // these a non-Mandelbrot formula regression would render wrong yet pass — see fractal.rs.)
         // (name, fractal, center_x, center_y, zoom, max_iter, color_method, palette_idx, relief)
         type GoldenSpec =
-            (&'static str, FractalKind, &'static str, &'static str, f64, u32, u32, usize, bool);
+            (&'static str, FractalKind, &'static str, &'static str, f64, u32, crate::ColorMethod, usize, bool);
         let specs: &[GoldenSpec] = &[
-            ("home", FractalKind::Mandelbrot, "-0.5", "0.0", 1.0, 800, 0, 0, false),
-            ("seahorse", FractalKind::Mandelbrot, SX, SY, 2.0e3, 1500, 0, 1, false),
-            ("seahorse-stripe-1e6", FractalKind::Mandelbrot, SX, SY, 1.0e6, 4000, 1, 1, false),
+            ("home", FractalKind::Mandelbrot, "-0.5", "0.0", 1.0, 800, crate::ColorMethod::Smooth, 0, false),
+            ("seahorse", FractalKind::Mandelbrot, SX, SY, 2.0e3, 1500, crate::ColorMethod::Smooth, 1, false),
+            ("seahorse-stripe-1e6", FractalKind::Mandelbrot, SX, SY, 1.0e6, 4000, crate::ColorMethod::Stripe, 1, false),
             // ⭐⭐RELIEF LIGHTING — the ONLY golden that turns it on, added 2026-08-25 because
             // nothing covered it at all. A change to the shading math altered every relief-lit
             // image in the app and this suite stayed 17/17, which is the definition of an
             // uncovered feature. ⚠`light_anim` MUST be pinned off below: "Rotate light" advances
             // the angle with wall-clock time, so an animated light makes the golden
             // non-deterministic exactly the way `palette_anim` would.
-            ("seahorse-relief-1e6", FractalKind::Mandelbrot, SX, SY, 1.0e6, 4000, 0, 1, true),
-            ("elephant", FractalKind::Mandelbrot, "0.2925755", "-0.0149977", 1.5e3, 1500, 0, 2, false),
-            ("multibrot3", FractalKind::Multibrot3, "0.0", "0.0", 0.8, 800, 0, 0, false),
-            ("multibrot4", FractalKind::Multibrot4, "0.0", "0.0", 0.8, 800, 0, 0, false),
-            ("multibrot5", FractalKind::Multibrot5, "0.0", "0.0", 0.8, 800, 0, 0, false),
-            ("tricorn", FractalKind::Tricorn, "0.0", "0.0", 0.8, 800, 0, 0, false),
-            ("burning-ship", FractalKind::BurningShip, "-0.5", "-0.5", 0.7, 800, 0, 0, false),
-            ("celtic", FractalKind::Celtic, "-0.5", "0.0", 0.8, 800, 0, 0, false),
-            ("buffalo", FractalKind::Buffalo, "-0.5", "-0.5", 0.7, 800, 0, 0, false),
-            ("phoenix", FractalKind::Phoenix, "0.0", "0.0", 0.7, 800, 0, 0, false),
-            ("newton", FractalKind::Newton, "0.0", "0.0", 0.7, 400, 0, 0, false),
+            ("seahorse-relief-1e6", FractalKind::Mandelbrot, SX, SY, 1.0e6, 4000, crate::ColorMethod::Smooth, 1, true),
+            ("elephant", FractalKind::Mandelbrot, "0.2925755", "-0.0149977", 1.5e3, 1500, crate::ColorMethod::Smooth, 2, false),
+            ("multibrot3", FractalKind::Multibrot3, "0.0", "0.0", 0.8, 800, crate::ColorMethod::Smooth, 0, false),
+            ("multibrot4", FractalKind::Multibrot4, "0.0", "0.0", 0.8, 800, crate::ColorMethod::Smooth, 0, false),
+            ("multibrot5", FractalKind::Multibrot5, "0.0", "0.0", 0.8, 800, crate::ColorMethod::Smooth, 0, false),
+            ("tricorn", FractalKind::Tricorn, "0.0", "0.0", 0.8, 800, crate::ColorMethod::Smooth, 0, false),
+            ("burning-ship", FractalKind::BurningShip, "-0.5", "-0.5", 0.7, 800, crate::ColorMethod::Smooth, 0, false),
+            ("celtic", FractalKind::Celtic, "-0.5", "0.0", 0.8, 800, crate::ColorMethod::Smooth, 0, false),
+            ("buffalo", FractalKind::Buffalo, "-0.5", "-0.5", 0.7, 800, crate::ColorMethod::Smooth, 0, false),
+            ("phoenix", FractalKind::Phoenix, "0.0", "0.0", 0.7, 800, crate::ColorMethod::Smooth, 0, false),
+            ("newton", FractalKind::Newton, "0.0", "0.0", 0.7, 400, crate::ColorMethod::Smooth, 0, false),
             // The power families (design/power-families.md), one overview per shape: every power is
             // the same generic code with its own (shape, d), and each is held to its generated module
             // and the CPU by the custom-formula and abs-family groups, so a golden apiece would add
             // ~33 MB of history for no case those checks do not already make.
-            ("multibrot7", FractalKind::Multibrot7, "0.0", "0.0", 1.2, 800, 0, 0, false),
-            ("burning-ship3", FractalKind::BurningShip3, "0.0", "0.0", 1.2, 800, 0, 0, false),
-            ("tricorn4", FractalKind::Tricorn4, "0.0", "0.0", 1.2, 800, 0, 0, false),
-            ("celtic5", FractalKind::Celtic5, "0.0", "0.0", 1.2, 800, 0, 0, false),
-            ("buffalo3", FractalKind::Buffalo3, "0.0", "0.0", 1.2, 800, 0, 0, false),
+            ("multibrot7", FractalKind::Multibrot7, "0.0", "0.0", 1.2, 800, crate::ColorMethod::Smooth, 0, false),
+            ("burning-ship3", FractalKind::BurningShip3, "0.0", "0.0", 1.2, 800, crate::ColorMethod::Smooth, 0, false),
+            ("tricorn4", FractalKind::Tricorn4, "0.0", "0.0", 1.2, 800, crate::ColorMethod::Smooth, 0, false),
+            ("celtic5", FractalKind::Celtic5, "0.0", "0.0", 1.2, 800, crate::ColorMethod::Smooth, 0, false),
+            ("buffalo3", FractalKind::Buffalo3, "0.0", "0.0", 1.2, 800, crate::ColorMethod::Smooth, 0, false),
             // Deep mode-0 (df32 perturbation, 1e6×) views at a bisected boundary coordinate (see
             // core's dump_deep_boundary_coords). These exercise the bignum reference orbit (step_bf)
             // + series approximation + the df32-perturbation shader branch — the deep pipeline the
@@ -11751,10 +11749,10 @@ zoom = \"1e94\"
             // (Burning Ship / Celtic / Buffalo) show fold glitch-speckle at deep perturbation zoom
             // (awaiting multi-reference glitch correction), and Tricorn/Phoenix need better deep
             // coordinates — a clean deep tier for those (and a mode-2 / floatexp tier) is future work.
-            ("mandelbrot-1e6", FractalKind::Mandelbrot, "-7.219621882920463979621343199249635039400777157391994056859e-1", "2.406540627640154659873781066416545013133592385797331352286e-1", 1.0e6, 3000, 0, 0, false),
-            ("multibrot3-1e6", FractalKind::Multibrot3, "2.19533102209775940218788168856401426185991366731348781648e-1", "7.317770073659198278104833118192370226116695264984596408352e-1", 1.0e6, 3000, 0, 0, false),
-            ("multibrot4-1e6", FractalKind::Multibrot4, "2.28757960884408080137002307307431367850187620104115769219e-1", "7.625265362813602953424916065993043372187655480595946595141e-1", 1.0e6, 3000, 0, 0, false),
-            ("multibrot5-1e6", FractalKind::Multibrot5, "2.320768669674853369085651557338865001525750889159483426277e-1", "7.735895565582844849904484291320284693154748744446630197764e-1", 1.0e6, 3000, 0, 0, false),
+            ("mandelbrot-1e6", FractalKind::Mandelbrot, "-7.219621882920463979621343199249635039400777157391994056859e-1", "2.406540627640154659873781066416545013133592385797331352286e-1", 1.0e6, 3000, crate::ColorMethod::Smooth, 0, false),
+            ("multibrot3-1e6", FractalKind::Multibrot3, "2.19533102209775940218788168856401426185991366731348781648e-1", "7.317770073659198278104833118192370226116695264984596408352e-1", 1.0e6, 3000, crate::ColorMethod::Smooth, 0, false),
+            ("multibrot4-1e6", FractalKind::Multibrot4, "2.28757960884408080137002307307431367850187620104115769219e-1", "7.625265362813602953424916065993043372187655480595946595141e-1", 1.0e6, 3000, crate::ColorMethod::Smooth, 0, false),
+            ("multibrot5-1e6", FractalKind::Multibrot5, "2.320768669674853369085651557338865001525750889159483426277e-1", "7.735895565582844849904484291320284693154748744446630197764e-1", 1.0e6, 3000, crate::ColorMethod::Smooth, 0, false),
             // ⭐The first golden PAST 1e6× — the period-998 Seahorse minibrot at its own atom size
             // (~1.6e15×), the new "Seahorse minibrot ·998" Navigate-menu destination. Every other
             // deep golden stops at 1e6×, so nothing gated the perturbation pipeline at the depth the
@@ -11763,7 +11761,7 @@ zoom = \"1e94\"
             // (mode 0), well below the ~1e300× floatexp tier whose LIVE rendering is hardware-varying.
             // 25k iter: enough that the minibrot's exterior escapes and the body resolves rather than
             // flooding black (the adaptive appetite here is ~12k — see the black-minibrot arc).
-            ("seahorse-998", FractalKind::Mandelbrot, "-0.7436438870371588707780645434936425750476099623212550602141", "0.1318259042053122928210973548747672652629885996790429749374", 1.597e15, 25000, 0, 1, false),
+            ("seahorse-998", FractalKind::Mandelbrot, "-0.7436438870371588707780645434936425750476099623212550602141", "0.1318259042053122928210973548747672652629885996790429749374", 1.597e15, 25000, crate::ColorMethod::Smooth, 1, false),
         ];
         // ⭐CUSTOM FORMULAS (design/custom-formulas.md), one per path a generated module can take:
         // the direct step with f32 functions; the df32 perturbed step with functions, `log`
@@ -11795,7 +11793,7 @@ zoom = \"1e94\"
             .iter()
             .map(|s| (*s, None))
             .chain(custom_specs.iter().map(|&(name, src, params, cx, cy, zoom, iter, palette)| {
-                ((name, FractalKind::Custom, cx, cy, zoom, iter, 0, palette, false), Some((src, params)))
+                ((name, FractalKind::Custom, cx, cy, zoom, iter, crate::ColorMethod::Smooth, palette, false), Some((src, params)))
             }))
             .collect();
         // 1920x1080, raised from 320x240 (2026-08-22). 27x the pixels: a rendering
@@ -11867,7 +11865,7 @@ zoom = \"1e94\"
                 }
             }
             self.julia_mode = false;
-            self.coloring.color_method = crate::ColorMethod::from_u32(method);
+            self.coloring.color_method = method;
             self.coloring.palette_idx = palette;
             self.coloring.use_custom_palette = false;
             self.coloring.use_duotone = false;
@@ -11913,7 +11911,7 @@ zoom = \"1e94\"
                 "fractadyne --render --out {name}.png {family} --center {cx} {cy} \
                  --zoom {zoom} --size {gw} --iter {iter} --ss 1 --method {} --palette {palette} \
                  --no-watermark",
-                crate::ColorMethod::from_u32(method).key()
+                method.key()
             );
             let progress = std::sync::atomic::AtomicU32::new(0);
             let cancel = std::sync::atomic::AtomicBool::new(false);

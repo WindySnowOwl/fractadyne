@@ -35,7 +35,7 @@ pub struct ProfRegion {
     pub iter: u32,
     pub size: u32,
     pub ss: u32,
-    pub method: u32,
+    pub method: crate::ColorMethod,
     /// The orbit trap's shape and the stripe density: iteration parameters, so they change what
     /// a trap or stripe region costs. Set for every region, so one region's never carries into
     /// the next.
@@ -49,12 +49,13 @@ const LOG2_10: f64 = std::f64::consts::LOG2_10;
 /// (1e4–1e20×), and floatexp + series-approximation (1e30×, with a stripe variant that
 /// disables SA) — so a single run exercises every hot path.
 pub fn default_regions() -> Vec<ProfRegion> {
+    use crate::ColorMethod::{Smooth, Stripe};
     // A known infinitely-deep "seahorse" point: structured across all these scales.
     let (sx, sy) = (
         "-0.7436438870371587047521915061147707",
         "0.131825904205311970493132056385139",
     );
-    let m = |name: &str, cx: &str, cy: &str, zoom10: f64, iter: u32, method: u32| ProfRegion {
+    let m = |name: &str, cx: &str, cy: &str, zoom10: f64, iter: u32, method: crate::ColorMethod| ProfRegion {
         name: name.into(),
         fractal: FractalKind::Mandelbrot,
         cx: cx.into(),
@@ -68,13 +69,13 @@ pub fn default_regions() -> Vec<ProfRegion> {
         stripe_freq: fractadyne_state::SessionState::default().stripe_freq,
     };
     vec![
-        m("home", "-0.5", "0.0", 0.0, 512, 0),
-        m("seahorse-1e4", sx, sy, 4.0, 1_500, 0),
-        m("seahorse-1e6", sx, sy, 6.0, 2_500, 0),
-        m("deep-1e12", sx, sy, 12.0, 6_000, 0),
-        m("deep-1e20", sx, sy, 20.0, 12_000, 0),
-        m("deep-1e30-sa", sx, sy, 30.0, 25_000, 0), // floatexp + series approximation
-        m("deep-1e30-stripe", sx, sy, 30.0, 25_000, 1), // floatexp, SA off (aux needs every iter)
+        m("home", "-0.5", "0.0", 0.0, 512, Smooth),
+        m("seahorse-1e4", sx, sy, 4.0, 1_500, Smooth),
+        m("seahorse-1e6", sx, sy, 6.0, 2_500, Smooth),
+        m("deep-1e12", sx, sy, 12.0, 6_000, Smooth),
+        m("deep-1e20", sx, sy, 20.0, 12_000, Smooth),
+        m("deep-1e30-sa", sx, sy, 30.0, 25_000, Smooth), // floatexp + series approximation
+        m("deep-1e30-stripe", sx, sy, 30.0, 25_000, Stripe), // floatexp, SA off (aux needs every iter)
         // Deep-interior, dip-carrying orbit (validation corpus 14, ~1.2e148×): the regime of
         // every recent pathology — extended-range samples, heavy rebasing, latency-bound
         // dispatches, and the ~50× export-throughput gap — was previously not profiled at
@@ -85,7 +86,7 @@ pub fn default_regions() -> Vec<ProfRegion> {
             "0.6533553743954627788289923830392687875350977003260517837408108019649970888461393846103786781501651324966145060684808980380361143296058258024081840162818693511972",
             148.077,
             800_000,
-            0,
+            Smooth,
         ),
     ]
 }
@@ -202,7 +203,7 @@ pub fn load_regions(path: &std::path::Path) -> Result<Vec<ProfRegion>, String> {
             iter,
             size: s.size.unwrap_or(512).clamp(16, 4_096),
             ss: s.ss.unwrap_or(1).clamp(1, 8),
-            method: method.to_u32(),
+            method,
             trap,
             stripe_freq,
         });
@@ -291,7 +292,7 @@ impl FractadyneApp {
             self.set_fractal(r.fractal);
             self.julia_mode = false;
             self.dual = false;
-            self.coloring.color_method = crate::ColorMethod::from_u32(r.method);
+            self.coloring.color_method = r.method;
             self.coloring.trap_type = r.trap;
             self.coloring.stripe_freq = r.stripe_freq;
             self.render_cfg.auto_iter = false;
@@ -355,7 +356,7 @@ impl FractadyneApp {
             json.push_str(&format!("      \"zoom_log10\": {:.2},\n", r.zoom_log2 / LOG2_10));
             json.push_str(&format!("      \"size\": [{}, {}],\n", req.width, req.height));
             json.push_str(&format!("      \"ss\": {},\n", req.ss));
-            json.push_str(&format!("      \"method\": {},\n", req.color_method));
+            json.push_str(&format!("      \"method\": {},\n", js(r.method.key())));
             json.push_str(&format!("      \"trap\": {},\n", js(r.trap.key())));
             json.push_str(&format!("      \"stripe_freq\": {},\n", r.stripe_freq));
             json.push_str(&format!("      \"mode\": {},\n", req.mode));

@@ -145,7 +145,7 @@ fn a_crash_report_gives_its_faulting_place() {
 
 #[test]
 fn the_renderers_shader_reads_whole() {
-    let src = fractadyne_gpu::link_probe::RENDERER_WGSL;
+    let src = fractadyne_gpu::link_probe::renderer_wgsl();
     let f = functions(src);
     // Every `fn` that starts a line (after its attributes) is found.
     let written = src.lines().filter(|l| l.trim_start().starts_with("fn ")).count();
