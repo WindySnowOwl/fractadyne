@@ -1485,7 +1485,7 @@ fn the_coloring_slider_options_are_documented_with_their_ranges() {
 #[test]
 fn the_app_gates_every_method_the_shader_computes_statistics_for() {
     for m in ColorMethod::ALL {
-        assert_eq!(m.needs_aux(), fractadyne_gpu::method_needs_aux(m.to_u32()), "{}", m.key());
+        assert_eq!(m.needs_aux(), fractadyne_gpu::method_needs_aux(m.gpu_id()), "{}", m.key());
     }
     assert!(ColorMethod::OrbitTrap.needs_aux() && !ColorMethod::OrbitTrap.bounded_value());
 }

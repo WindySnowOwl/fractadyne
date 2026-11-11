@@ -223,9 +223,9 @@ pub fn render_iter_chunked_timed(
         formula: req.formula,
         julia: req.julia,
         delta_exp: req.delta_exp,
-        color_method: 0,
+        color_method: fractadyne_core::coloring::ColorMethod::Smooth.gpu_id(),
         stripe_freq: 1.0,
-        trap_type: 0,
+        trap_type: fractadyne_core::coloring::TrapType::Point.gpu_id(),
         aux_on: 0,
         sa_skip: req.sa_skip, // mode 0's SA seeding is replicated in the chunk init
         glitch_on: 0,

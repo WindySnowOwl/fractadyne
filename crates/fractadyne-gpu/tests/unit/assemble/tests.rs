@@ -93,16 +93,18 @@ fn a_strip_is_held_in_pieces_no_wider_than_asked_covering_it_once() {
 
 #[test]
 fn a_window_holds_what_the_colouring_reads() {
+    use fractadyne_core::coloring::ColorMethod;
+    let (smooth, distance) = (ColorMethod::Smooth.gpu_id(), ColorMethod::Distance.gpu_id());
     // Smooth: the count alone; distance coloring or glow: and the DE; relief: everything.
-    assert_eq!(WindowTexels::for_colour(0, false, false), WindowTexels::Count);
-    assert_eq!(WindowTexels::for_colour(0, false, true), WindowTexels::CountDe);
-    assert_eq!(WindowTexels::for_colour(4, false, false), WindowTexels::CountDe);
-    assert_eq!(WindowTexels::for_colour(4, false, true), WindowTexels::CountDe);
-    for (m, g) in [(0, false), (0, true), (4, false), (4, true)] {
+    assert_eq!(WindowTexels::for_colour(smooth, false, false), WindowTexels::Count);
+    assert_eq!(WindowTexels::for_colour(smooth, false, true), WindowTexels::CountDe);
+    assert_eq!(WindowTexels::for_colour(distance, false, false), WindowTexels::CountDe);
+    assert_eq!(WindowTexels::for_colour(distance, false, true), WindowTexels::CountDe);
+    for (m, g) in [(smooth, false), (smooth, true), (distance, false), (distance, true)] {
         assert_eq!(WindowTexels::for_colour(m, true, g), WindowTexels::All);
     }
-    // A method it does not know (the aux ones, or one added later) keeps everything.
-    for m in [1, 2, 3, 5, 6, 99] {
+    // The aux methods, and a number no method has, keep everything.
+    for m in ColorMethod::ALL.into_iter().filter(|m| m.needs_aux()).map(ColorMethod::gpu_id).chain([ColorMethod::ALL.len() as u32, 99]) {
         assert_eq!(WindowTexels::for_colour(m, false, false), WindowTexels::All);
     }
     let shape = StripShape { width: 27_683, rows: 3_059, rows_per_octave: 3_054.0, sample_offset: 0.5, row_step: 2.27e-4, strips: 130 };

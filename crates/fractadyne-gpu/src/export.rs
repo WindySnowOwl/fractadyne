@@ -1724,7 +1724,7 @@ impl<'a> TileRenderer<'a> {
         // tree — the single-pass control included, so the two agree as they do without one.
         // Split on OpenGL (`iter_split`); a custom formula's module keeps its own, leaner mode 2.
         let split = match req.custom {
-            None => crate::iter_split::SplitModules::new(device, crate::SHADER_SRC, "export.shader"),
+            None => crate::iter_split::SplitModules::new(device, crate::renderer_wgsl(), "export.shader"),
             Some(_) => None,
         };
         let iter_pipeline = crate::iter_split::SplitModules::build(split.as_ref(), &shader, |m, half| {
@@ -2599,7 +2599,7 @@ impl IterScaffold {
     /// For a custom formula's module (`None` = the fixed one).
     fn new_for(device: &wgpu::Device, custom: Option<&crate::custom::CustomShader>) -> Self {
         // Split on OpenGL (`iter_split`); a custom formula's module keeps its own, leaner mode 2.
-        let split = custom.is_none().then_some(crate::SHADER_SRC);
+        let split = custom.is_none().then_some(crate::renderer_wgsl());
         Self::from_shader(device, crate::shader_module_for(device, custom), split)
     }
 
@@ -2843,9 +2843,9 @@ pub fn render_iter_tiled(
                 formula: req.formula,
                 julia: req.julia,
                 delta_exp: req.delta_exp,
-                color_method: 0,
+                color_method: fractadyne_core::coloring::ColorMethod::Smooth.gpu_id(),
                 stripe_freq: 1.0,
-                trap_type: 0,
+                trap_type: fractadyne_core::coloring::TrapType::Point.gpu_id(),
                 aux_on: 0,
                 sa_skip: req.sa_skip,
                 glitch_on: req.glitch_on,
@@ -3242,7 +3242,7 @@ impl GatherPass {
             bind_group_layouts: &[&iter_bgl, &gather_bgl],
             push_constant_ranges: &[],
         });
-        let split = crate::iter_split::SplitModules::new(device, crate::SHADER_SRC, "gather.shader");
+        let split = crate::iter_split::SplitModules::new(device, crate::renderer_wgsl(), "gather.shader");
         let pipeline = crate::iter_split::SplitModules::build(split.as_ref(), &shader, |m, half| {
             fullscreen_pipeline(device, m, &layout, "fs_iterate_gather", &[ITER_FORMAT, ITER_FORMAT], &format!("gather.pipeline{half}"))
         });
@@ -3400,9 +3400,9 @@ impl GatherPass {
                 formula: req.formula,
                 julia: req.julia,
                 delta_exp: req.delta_exp,
-                color_method: 0,
+                color_method: fractadyne_core::coloring::ColorMethod::Smooth.gpu_id(),
                 stripe_freq: 1.0,
-                trap_type: 0,
+                trap_type: fractadyne_core::coloring::TrapType::Point.gpu_id(),
                 aux_on: 0,
                 sa_skip: req.sa_skip,
                 glitch_on: req.glitch_on,
@@ -3678,7 +3678,7 @@ fn render_iter_passes(
             });
             // Split on OpenGL (`iter_split`); a custom formula's module keeps its own, leaner mode 2.
             let split = match req.custom {
-                None => crate::iter_split::SplitModules::new(device, crate::SHADER_SRC, "selftest.shader"),
+                None => crate::iter_split::SplitModules::new(device, crate::renderer_wgsl(), "selftest.shader"),
                 Some(_) => None,
             };
             own = crate::iter_split::SplitModules::build(split.as_ref(), &shader, |m, half| {
@@ -3734,9 +3734,9 @@ fn render_iter_passes(
         formula: req.formula,
         julia: req.julia,
         delta_exp: req.delta_exp,
-        color_method: 0,
+        color_method: fractadyne_core::coloring::ColorMethod::Smooth.gpu_id(),
         stripe_freq: 1.0,
-        trap_type: 0,
+        trap_type: fractadyne_core::coloring::TrapType::Point.gpu_id(),
         aux_on: 0,
         sa_skip: req.sa_skip,
         glitch_on: req.glitch_on,

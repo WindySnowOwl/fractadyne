@@ -7,7 +7,7 @@ use super::*;
 #[test]
 fn the_stripe_tail_changes_the_iteration_key() {
     let params = |tail: bool, len: u32| MandelbrotParams {
-        color_method: 1,
+        color_method: fractadyne_core::coloring::ColorMethod::Stripe.gpu_id(),
         stripe_tail: tail,
         stripe_tail_len: len,
         ..MandelbrotParams::default()

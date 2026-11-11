@@ -354,7 +354,7 @@ impl FractadyneApp {
         let card = (self.max_texture_dim, self.sysinfo.vram_mb << 20);
         // The window holds what the session's coloring reads, which can change while this is open.
         self.zoom_video.texels =
-            fractadyne_gpu::WindowTexels::for_colour(self.coloring.color_method.to_u32(), self.effects.light, self.effects.de);
+            fractadyne_gpu::WindowTexels::for_colour(self.coloring.color_method.gpu_id(), self.effects.light, self.effects.de);
         let mut open = self.zoom_video.open;
         let (mut go, mut stop, mut browse, mut browse_keep, mut copy_cmd, mut close_dialog) = (false, false, false, false, false, false);
         let mut to_farm: Option<String> = None;

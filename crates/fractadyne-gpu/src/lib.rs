@@ -71,9 +71,9 @@ pub(crate) struct IterUniforms {
     pub(crate) formula: u32, // escape-time formula id
     pub(crate) julia: u32,   // 0 = Mandelbrot mode, 1 = Julia mode
     pub(crate) delta_exp: i32, // shared base-2 exponent of the δ mantissas (step / ref_offset)
-    pub(crate) color_method: u32, // selected coloring method (drives aux accumulation)
+    pub(crate) color_method: u32, // selected coloring method's GPU id (drives aux accumulation)
     pub(crate) stripe_freq: f32,  // stripe-average angular frequency
-    pub(crate) trap_type: u32,    // orbit-trap shape: 0 point, 1 cross, 2 circle
+    pub(crate) trap_type: u32,    // orbit-trap shape's GPU id (fractadyne_core::coloring::TrapType)
     // Bitfield: bit 0 = accumulate orbit statistics into the aux target; bit 1 = stripe average
     // over the TAIL only (an exponential window); bits 2.. = that window's length in iterations.
     // See `aux_on_word`.
@@ -481,6 +481,9 @@ mod de_gate_tests;
 #[cfg(test)]
 #[path = "../tests/unit/band_pos_tests.rs"]
 mod band_pos_tests;
+#[cfg(test)]
+#[path = "../tests/unit/coloring_ids_tests.rs"]
+mod coloring_ids_tests;
 
 /// GPU-timestamp capture around the LIVE `iterate_pass`, so the app can size deep frames against what
 /// the iterate ACTUALLY costs on this GPU at this view.
@@ -2097,13 +2100,22 @@ pub(crate) fn shader_module(device: &wgpu::Device) -> wgpu::ShaderModule {
     pipeline_compile::set_source(0);
     device.create_shader_module(wgpu::ShaderModuleDescriptor {
         label: Some("fractadyne.shader"),
-        source: wgpu::ShaderSource::Wgsl(SHADER_SRC.into()),
+        source: wgpu::ShaderSource::Wgsl(renderer_wgsl().into()),
     })
 }
 
-/// The fixed module's WGSL, which [`shader_module`] compiles and a split iterate pipeline is cut
-/// from ([`iter_split`]).
-pub(crate) const SHADER_SRC: &str = include_str!("mandelbrot.wgsl");
+/// The fixed module's WGSL, which [`shader_module`] compiles and a split iterate pipeline, a strip
+/// module ([`strip`]) and a custom formula's module ([`custom`]) are cut from: `mandelbrot.wgsl`
+/// with the coloring methods' and trap shapes' GPU numbers appended
+/// (`fractadyne_core::coloring::wgsl_ids`, design/coloring-plan.md A10). Appended, not prepended,
+/// so a compiler message's line numbers are the file's. The file alone does not compile: every
+/// module must start from this text.
+pub fn renderer_wgsl() -> &'static str {
+    static SRC: std::sync::LazyLock<String> = std::sync::LazyLock::new(|| {
+        format!("{}{}", include_str!("mandelbrot.wgsl"), fractadyne_core::coloring::wgsl_ids())
+    });
+    SRC.as_str()
+}
 
 /// [`shader_module`], or a custom formula's generated module ([`custom::build`]) when given. The
 /// generated module keeps every entry point but the perturbation paths, so the color and resolve
@@ -2481,7 +2493,7 @@ impl Renderer {
         });
 
         // On OpenGL, two pipelines per iterate entry point, one per half of the module (`iter_split`).
-        let split = iter_split::SplitModules::new(device, SHADER_SRC, "fractadyne.shader");
+        let split = iter_split::SplitModules::new(device, renderer_wgsl(), "fractadyne.shader");
         let iter_pipeline = iter_split::SplitModules::build(split.as_ref(), &shader, |m, half| {
             fullscreen_pipeline(
                 device, m, &iter_layout, "fs_iterate", &[ITER_FORMAT, ITER_FORMAT],
@@ -3222,8 +3234,8 @@ pub struct MandelbrotParams {
     pub de_strength: f32,
     pub de_width: f32,
     pub de_phase: f32,
-    /// Coloring method: 0 smooth, 1 stripe avg, 2 triangle-ineq, 3 orbit trap,
-    /// 4 distance, 5 decomposition. Methods 1/2/3/5 accumulate orbit statistics.
+    /// The coloring method's GPU id (`fractadyne_core::coloring::ColorMethod::gpu_id`); the ones
+    /// with `needs_aux` accumulate orbit statistics.
     pub color_method: u32,
     pub stripe_freq: f32,
     /// Stripe average over the tail only: an exponentially-weighted mean over the last
@@ -3480,11 +3492,11 @@ impl Default for MandelbrotParams {
             de_strength: 0.0,
             de_width: 0.0,
             de_phase: 0.0,
-            color_method: 0,
+            color_method: fractadyne_core::coloring::ColorMethod::Smooth.gpu_id(),
             stripe_freq: 0.0,
             stripe_tail: false,
             stripe_tail_len: 1,
-            trap_type: 0,
+            trap_type: fractadyne_core::coloring::TrapType::Point.gpu_id(),
             aa_filter: 1,
             interior_col: [0.0, 0.0, 0.0, 1.0],
             resolution: [1, 1],
@@ -3517,12 +3529,11 @@ pub fn aux_on_word(aux: bool, stripe_tail: bool, stripe_tail_len: u32) -> u32 {
     (aux as u32) | ((stripe_tail as u32) << 1) | (stripe_tail_len.clamp(1, 1 << 20) << 2)
 }
 
-/// Whether a coloring method needs the per-iteration orbit statistics (aux target).
-/// Coloring methods that accumulate per-orbit statistics into the aux target (stripe,
-/// triangle-inequality, orbit-trap, decomposition) — these need every iterate, so series
-/// approximation must be disabled for them.
+/// Whether the coloring method with GPU number `method` accumulates the per-iteration orbit
+/// statistics (the aux target): the table's `needs_aux` (`fractadyne_core::coloring`), so this and
+/// the app's `ColorMethod::needs_aux` are one answer.
 pub fn method_needs_aux(method: u32) -> bool {
-    matches!(method, 1 | 2 | 3 | 5)
+    fractadyne_core::coloring::ColorMethod::from_gpu_id(method).is_some_and(|m| m.needs_aux())
 }
 
 impl CallbackTrait for MandelbrotParams {

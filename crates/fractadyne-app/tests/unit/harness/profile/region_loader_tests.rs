@@ -75,11 +75,11 @@ fn unknown_names_and_keys_are_refused() {
 #[test]
 fn trap_and_stripe_density_are_read_and_default() {
     let r = load(&region("method = \"trap\"\ntrap = \"circle\"\nstripe_freq = 6.0\n")).expect("loads");
-    assert_eq!(r[0].method, crate::ColorMethod::OrbitTrap.to_u32());
+    assert_eq!(r[0].method, crate::ColorMethod::OrbitTrap);
     assert_eq!(r[0].trap, crate::TrapType::Circle);
     assert_eq!(r[0].stripe_freq, 6.0);
     let d = load(&region("")).expect("loads");
-    assert_eq!(d[0].method, crate::ColorMethod::Smooth.to_u32());
+    assert_eq!(d[0].method, crate::ColorMethod::Smooth);
     assert_eq!(d[0].trap, crate::TrapType::default());
     assert_eq!(d[0].stripe_freq, fractadyne_state::SessionState::default().stripe_freq);
 }

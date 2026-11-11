@@ -18,20 +18,20 @@ fn unary(op: fn(Val) -> Op) -> Formula {
 #[test]
 fn the_fixed_module_has_each_slot_marker_once_as_a_comment() {
     for m in SLOTS.iter().flat_map(|(b, e)| [*b, *e]) {
-        assert_eq!(FIXED.matches(m).count(), 1, "{m}");
-        let (s, e) = marker_line(FIXED, m).unwrap();
-        assert!(FIXED[s..e].trim_start().starts_with("//"), "{m} must sit on a comment line");
+        assert_eq!(fixed().matches(m).count(), 1, "{m}");
+        let (s, e) = marker_line(fixed(), m).unwrap();
+        assert!(fixed()[s..e].trim_start().starts_with("//"), "{m} must sit on a comment line");
     }
     // And the fixed module itself still validates (the markers are comments; nothing else moved).
-    validate(FIXED).unwrap();
+    validate(fixed()).unwrap();
 }
 
 #[test]
 fn every_built_in_step_generates_a_valid_module_with_its_own_floatexp_paths() {
     let region = |b, e| {
-        let (s0, _) = marker_line(FIXED, b).unwrap();
-        let (_, s1) = marker_line(FIXED, e).unwrap();
-        &FIXED[s0..s1]
+        let (s0, _) = marker_line(fixed(), b).unwrap();
+        let (_, s1) = marker_line(fixed(), e).unwrap();
+        &fixed()[s0..s1]
     };
     let fe = region(FE_BEGIN, FE_END);
     assert!(fe.len() > 10_000, "the replaced region should be the fixed floatexp path ({} bytes)", fe.len());

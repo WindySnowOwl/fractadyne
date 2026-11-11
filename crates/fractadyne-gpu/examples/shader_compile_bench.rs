@@ -20,7 +20,7 @@ fn block_on<F: std::future::Future>(fut: F) -> F::Output {
 
 fn main() {
     use egui_wgpu::wgpu;
-    let src = include_str!("../src/mandelbrot.wgsl");
+    let src = fractadyne_gpu::renderer_wgsl();
     let instance = wgpu::Instance::new(&wgpu::InstanceDescriptor {
         backends: wgpu::Backends::VULKAN,
         ..Default::default()

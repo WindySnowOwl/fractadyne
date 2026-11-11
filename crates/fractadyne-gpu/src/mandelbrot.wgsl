@@ -857,9 +857,9 @@ struct IterU {
     formula: u32,
     julia: u32,            // 0 = Mandelbrot mode (z0=0, c=pixel), 1 = Julia (z0=pixel, c=const)
     delta_exp: i32,        // shared base-2 exponent of the δ mantissas (step / ref_offset)
-    color_method: u32,     // selected coloring method (drives whether aux is accumulated)
+    color_method: u32,     // selected coloring method, a METHOD_* constant (drives whether aux is accumulated)
     stripe_freq: f32,      // stripe-average angular frequency
-    trap_type: u32,        // 0 = point, 1 = cross, 2 = unit circle
+    trap_type: u32,        // orbit-trap shape: TRAP_POINT, TRAP_CROSS or TRAP_CIRCLE
     // Bitfield: bit 0 = accumulate orbit statistics into the aux target; bit 1 = stripe average
     // over the TAIL only (an exponential window, see `stripe_tail_on`); bits 2.. = that window's
     // length in iterations. Mirrors `aux_on_word` in lib.rs.
@@ -1010,7 +1010,7 @@ const TRAP_HIST_LO: f32 = -8.0;
 const TRAP_HIST_PER_UNIT: f32 = 16.0;
 const TRAP_HIST_BUCKETS: u32 = 1216u;
 fn trap_hist_commit(a: Aux, gx: f32, gy: f32) {
-    if ((iu.aux_on & 1u) == 1u && iu.color_method == 3u && (i32(gx) & 3) == 0 && (i32(gy) & 3) == 0) {
+    if ((iu.aux_on & 1u) == 1u && iu.color_method == METHOD_TRAP && (i32(gx) & 3) == 0 && (i32(gy) & 3) == 0) {
         let pv = -log2(max(a.trap, 1.0e-20));
         let k = u32(clamp((pv - TRAP_HIST_LO) * TRAP_HIST_PER_UNIT, 0.0, f32(TRAP_HIST_BUCKETS - 1u)));
         atomicAdd(&counters[CTR_TRAP_HIST + k], 1u);
@@ -1356,7 +1356,7 @@ struct Aux {
 // mean is recovered as α → 0. `sac_sum` holds the EMA and `sac_prev` the previous one, so the
 // `frac` blend in `aux_pack` works unchanged.
 fn stripe_tail_on() -> bool {
-    return (iu.aux_on & 2u) != 0u && iu.color_method == 1u;
+    return (iu.aux_on & 2u) != 0u && iu.color_method == METHOD_STRIPE;
 }
 fn stripe_tail_alpha() -> f32 {
     return 1.0 / f32(max(iu.aux_on >> 2u, 1u));
@@ -1380,14 +1380,14 @@ fn aux_init(z0: vec2<f32>) -> Aux {
 // Each branch preserves its own method's exact accumulation order, so per-method output is bit-identical.
 fn aux_step(a: ptr<function, Aux>, zf: vec2<f32>, cmag: f32, power_f: f32) {
     let method = iu.color_method;
-    if (method == 3u) {
+    if (method == METHOD_TRAP) {
         // Orbit trap: nearest approach to a shape (point / axes-cross / unit circle).
         var d: f32;
-        if (iu.trap_type == 1u) { d = min(abs(zf.x), abs(zf.y)); }
-        else if (iu.trap_type == 2u) { d = abs(length(zf) - 1.0); }
+        if (iu.trap_type == TRAP_CROSS) { d = min(abs(zf.x), abs(zf.y)); }
+        else if (iu.trap_type == TRAP_CIRCLE) { d = abs(length(zf) - 1.0); }
         else { d = length(zf); }
         (*a).trap = min((*a).trap, d);
-    } else if (method == 1u) {
+    } else if (method == METHOD_STRIPE) {
         // Stripe average: smooth orbit average of a sinusoid of the argument.
         let term = 0.5 + 0.5 * sin(iu.stripe_freq * atan2(zf.y, zf.x));
         (*a).sac_prev = (*a).sac_sum;
@@ -1396,7 +1396,7 @@ fn aux_step(a: ptr<function, Aux>, zf: vec2<f32>, cmag: f32, power_f: f32) {
         } else {
             (*a).sac_sum = (*a).sac_sum + term;
         }
-    } else if (method == 2u) {
+    } else if (method == METHOD_TRIANGLE) {
         // Triangle-inequality average: where |z_{n+1}| sits between ||z_n|^p − |c|| and
         // |z_n|^p + |c|. Needs a valid previous |z|.
         let cur_abs = length(zf);
@@ -1410,7 +1410,7 @@ fn aux_step(a: ptr<function, Aux>, zf: vec2<f32>, cmag: f32, power_f: f32) {
         }
         (*a).prev_abs = cur_abs;
     }
-    // method == 5u (decomposition): nothing to accumulate — aux_pack reads only the final angle.
+    // METHOD_DECOMPOSITION: nothing to accumulate — aux_pack reads only the final angle.
     (*a).n = (*a).n + 1.0;
 }
 // Fold a run of `span` reference iterates into the statistics, from its precomputed aggregate
@@ -3670,7 +3670,7 @@ struct ColorU {
     de_strength: f32,  // glow blend amount (0..1)
     de_width: f32,     // distance-contour spacing (octaves per band)
     de_phase: f32,     // animated phase (cycles the glow bands)
-    color_method: u32, // 0 smooth, 1 stripe, 2 triangle-ineq, 3 orbit-trap, 4 distance, 5 decomposition
+    color_method: u32, // a METHOD_* constant (fractadyne_core::coloring)
     aa_filter: u32,    // color-pass box-filter taps per axis (≥1); >1 anti-aliases an upscaled iter texture
     reproject: u32,    // 1 = reprojection: sample the frozen texture scaled+translated (no re-iterate)
     uv_off: vec2<f32>, // uv translation for the reprojection (fraction of the screen panned)
@@ -3801,17 +3801,17 @@ fn coord_fade(m: vec4<f32>, a: vec4<f32>) -> f32 {
 fn coord_under(m: vec4<f32>, a: vec4<f32>, cycle: f32, offset: f32, mode: u32, lo: f32) -> f32 {
     var pv: f32;
     var interior: bool = (m.r < 0.0);
-    if (cu.color_method == 1u) {
+    if (cu.color_method == METHOD_STRIPE) {
         pv = a.r;                                  // stripe average (0..1)
-    } else if (cu.color_method == 2u) {
+    } else if (cu.color_method == METHOD_TRIANGLE) {
         pv = a.g;                                  // triangle-inequality average (0..1)
-    } else if (cu.color_method == 3u) {
+    } else if (cu.color_method == METHOD_TRAP) {
         interior = false;                          // orbit trap colors interior too
         pv = -log2(max(a.b, 1.0e-20));             // nearer approach → larger value
-    } else if (cu.color_method == 4u) {
+    } else if (cu.color_method == METHOD_DISTANCE) {
         interior = (m.a > 1.0e20);                 // DE unavailable → interior
         pv = m.a - de_px_shift;                    // distance estimate, log2 output pixels
-    } else if (cu.color_method == 5u) {
+    } else if (cu.color_method == METHOD_DECOMPOSITION) {
         pv = a.a;                                  // decomposition angle (0..1)
     } else {
         pv = m.r;                                  // smooth iteration count

@@ -1,6 +1,6 @@
 # Coloring methods: implementation plan
 
-Status: **plan (2026-11-08); A9, A6, A2, A4, A8, A1, A3, A5b, A5a and A7 done, see §10.** Line references are to `main` at `9ab75357`; check
+Status: **plan (2026-11-08); phase A done (A1–A10), see §10.** Line references are to `main` at `9ab75357`; check
 them before editing, they drift. The research behind it (methods, prototypes, measured results,
 prior art) is the coloring-methods doc; its local copy is
 `local/research_notes/Fractal coloring methods/` (PDF, HTML, Markdown, prototype scripts).
@@ -63,19 +63,23 @@ never kill the user's running app, and put windowed runs on the right monitor.
 
 These come from past bugs; each one has bitten before.
 
-1. **Method ids are append-only** until A10 generates them from one table. `ColorMethod`
-   discriminants 0–5 are GPU ids and appear as
-   numbers in the shader (`mandelbrot.wgsl:1012, 1358, 1381-1412, 3734-3747`), in
-   `method_needs_aux` (`gpu/src/lib.rs:3453`), `WindowTexels::for_colour`
-   (`gpu/src/assemble.rs:76-84`), `render.rs:3645-3648, 3693-3695, 9947-9950`, the bench matrix
-   (`harness/bench_matrix.rs:208`), the profiler (`harness/profile.rs:38, 314`) and the golden
-   spec (`harness/selftest.rs:11316`). Users' files store `key()` strings. The same holds for
-   `TrapType` (numbers also in `core/src/reference.rs:1946-1950`) and for palette presets.
-2. **Keep the duplicated method sets in step.** `ColorMethod::needs_aux` (`main.rs:3098`) ↔
-   `method_needs_aux` (`gpu/src/lib.rs:3452`), pinned by the unit test at
-   `app/tests/unit/tests.rs:1452-1457` (a missing entry gave flat trap frames on 2026-11-06,
-   fixed in `028d7204`); `WindowTexels::for_colour`; `COLOR_METHODS` in
-   `scripts/release_checklist.py:36`.
+1. **A method or trap is a row of one table** (since A10): `fractadyne_core::coloring`
+   (`ColorMethod`, `TrapType`, `MethodSpec`, `TrapSpec`). A row gives the persisted key, the
+   shader constant's name and what the method needs (`needs_aux`, `blocks_iter_skip`,
+   `bounded_value`, `needs_distance_estimate`, `bla_aggregate`). The GPU number is the row's
+   position, `gpu_id()`, for one build only: never store it, never write it as a literal. The
+   shader compares `color_method` and `trap_type` only with the generated `METHOD_*` / `TRAP_*`
+   constants, which `fractadyne_gpu::renderer_wgsl()` appends to `mandelbrot.wgsl` (the file alone
+   does not compile; every module starts from that function). Files, the farm, the CLI and the
+   harness outputs (bench matrix, profile JSON, goldens) use keys or the typed value. A new method
+   is a new row, a new variant, a label in `ColoringLabel` (`main.rs`) and the shader branch;
+   `coloring_ids_tests` (GPU crate) fails on a numeric comparison in the shader. Palette presets are
+   still append-only (their indices are saved).
+2. **The method sets live in the table.** `ColorMethod::needs_aux` and the GPU crate's
+   `method_needs_aux` both read it (a missing trap entry gave flat trap frames on 2026-11-06, fixed
+   in `028d7204`), and core's unit test pins every set as established. Outside the table:
+   `WindowTexels::for_colour` (what a window keeps per method, by name) and `COLOR_METHODS` in
+   `scripts/release_checklist.py:36` (the English labels, for the manual checklist).
 3. **Anything an iteration depends on goes in both keys**: the GPU `IterKey`
    (`gpu/src/lib.rs:422-457`, built at 3872-3893) and the app's `settings_hash`
    (`render.rs:8585-8621`). Anything that colors a frame goes in `accum_color_sig`
@@ -443,7 +447,9 @@ reproduced. Reproduce before fixing; never close on the mechanism argument alone
   request's flags arrive split on whitespace, so a family name with a space is written with `_`
   (`Burning_Ship`, `Multibrot_3`); the agent turns it back and quotes it. The agent checks only a
   value's shape; the app refuses an unknown method, trap, palette or family. Windowed harnesses
-  still read the session's coloring, not these flags.
+  still read the session's coloring, not these flags. Checked on PLUTO's RX 6800 XT with
+  `v0.3.0-beta.26.dev.19`: a Burning Ship stripe `--render` (the same picture as the RTX 3080's)
+  and `--profile` over a regions file in the share (Burning Ship stripe, Multibrot 3 cross trap).
 
 ### A8. Palette browser: a named way out
 
@@ -495,6 +501,21 @@ reproduced. Reproduce before fixing; never close on the mechanism argument alone
 - **Tests**: a unit test that every table row's shader constant matches the injected text; that no
   numeric method literal remains in the shader (grep the source); the needs_aux sync test reads the
   table; old bench baselines still load.
+- **Done 2026-11-11** (branch `feat/color-a10-method-table`, stacked on A7):
+  `fractadyne_core::coloring` holds both tables and `wgsl_ids()`; the app re-exports `ColorMethod`
+  and `TrapType` and keeps only the words (`ColoringLabel`); `fractadyne_gpu::renderer_wgsl()`
+  (the file plus the ids, appended so compiler line numbers stay the file's) replaces every
+  `include_str!` of the shader (the live and export modules, the split iterate modules, strip
+  modules, custom formulas, the GL link probe, the compile bench). The shader's 16 numeric
+  comparisons now name `METHOD_*` / `TRAP_*`; `method_needs_aux` and `for_colour` ask the table;
+  `render.rs`'s BLA checks name the method (`bla_aggregate`) and keep the trap shape typed (the
+  cache's `bla_trap_type` is `Option<TrapType>`, `None` = no tree yet); core's `AuxAggParams` takes a
+  `TrapType`. The bench matrix, profile regions, the benchmark snapshot and the golden specs hold
+  `ColorMethod`; the profile JSON writes `"method": "stripe"` (it wrote the number; nothing read
+  it). Bench baselines never stored a method (segments are named), so nothing to migrate. Tests:
+  core `coloring` (keys pinned, every set pinned, the generated text), GPU `coloring_ids_tests`
+  (no numeric comparison in the shader, sabotage red; the ids appended once; `method_needs_aux` =
+  the table), and every naga test now validates the built source.
 
 ---
 
@@ -898,8 +919,8 @@ coloring in these places, so sequence the two with care:
 | A3 | done, merged | `3ee690d7` (merge `3c8a59e7`) |
 | A5b | done, merged | `fddc6ada` (merge `e11d1890`) |
 | A5a | done, merged | `05306f71` (merge `45c2e84d`) |
-| A7 | done, branch `feat/color-a7-field-agent` (agent v40) | |
-| A10 | not started | |
+| A7 | done, branch `feat/color-a7-field-agent` (agent v40, deployed) | `603275eb` |
+| A10 | done, branch `feat/color-a10-method-table` (stacked on A7) | |
 | B1–B8 | not started | |
 | C1–C11 | not started | |
 | D, E, F, G | not started | |

@@ -272,7 +272,7 @@ fn analyze(label: &str, cx_str: &str, cy_str: &str, octaves: u64, dc_ext: f64) -
     let cmag = mag(to_f64(&cx), to_f64(&cy));
     let bailout2 = 1.0e10f64;
     let dc_max = FloatExp::from_f64(dc_ext * 1.5);
-    let aux_p = AuxAggParams { trap_type: 0, stripe_freq: FREQ, cmag, power: POWER };
+    let aux_p = AuxAggParams { trap_type: crate::coloring::TrapType::Point, stripe_freq: FREQ, cmag, power: POWER };
     let levels = build_bla_mandel(&orbit, dc_max, 1.0e-6, aux_p);
 
     // Phase-1 precompute check: every node's seeded+merged aggregate must equal a brute-force
@@ -371,7 +371,7 @@ fn build_bla_parallel_matches_serial() {
     );
     let dc_max = FloatExp::from_f64(1.0e-6);
     let aux_p = AuxAggParams {
-        trap_type: 0,
+        trap_type: crate::coloring::TrapType::Point,
         stripe_freq: FREQ,
         cmag: mag(to_f64(&cx), to_f64(&cy)),
         power: POWER,
@@ -409,10 +409,10 @@ fn apply_bla_aux_matches_full_rebuild() {
     let dc_max = FloatExp::from_f64(1.0e-6);
     let cmag = mag(to_f64(&cx), to_f64(&cy));
     // Coloring A: trap type 0 (|Z|), one stripe frequency.
-    let aux_a = AuxAggParams { trap_type: 0, stripe_freq: 5.0, cmag, power: POWER };
+    let aux_a = AuxAggParams { trap_type: crate::coloring::TrapType::Point, stripe_freq: 5.0, cmag, power: POWER };
     let mut buf = bla_to_gpu(&build_bla_mandel(&orbit, dc_max, 1.0e-6, aux_a));
     // Change to coloring B (trap type 2 + a different frequency) via the fast path.
-    let aux_b = AuxAggParams { trap_type: 2, stripe_freq: 12.5, cmag, power: POWER };
+    let aux_b = AuxAggParams { trap_type: crate::coloring::TrapType::Circle, stripe_freq: 12.5, cmag, power: POWER };
     apply_bla_aux(&mut buf, &orbit, aux_b);
     // Ground truth: a full rebuild with B.
     let full_b = bla_to_gpu(&build_bla_mandel(&orbit, dc_max, 1.0e-6, aux_b));
@@ -444,8 +444,8 @@ fn aux_regen_speedup() {
     let nstep = orbit.len().saturating_sub(1);
     let dc_max = FloatExp::from_f64(1.0e-6);
     let cmag = mag(to_f64(&cx), to_f64(&cy));
-    let aux_a = AuxAggParams { trap_type: 0, stripe_freq: 5.0, cmag, power: POWER };
-    let aux_b = AuxAggParams { trap_type: 2, stripe_freq: 12.5, cmag, power: POWER };
+    let aux_a = AuxAggParams { trap_type: crate::coloring::TrapType::Point, stripe_freq: 5.0, cmag, power: POWER };
+    let aux_b = AuxAggParams { trap_type: crate::coloring::TrapType::Circle, stripe_freq: 12.5, cmag, power: POWER };
     let mut base = bla_to_gpu(&build_bla_mandel(&orbit, dc_max, 1.0e-6, aux_a));
     let median = |mut v: Vec<f64>| {
         v.sort_by(|a, b| a.partial_cmp(b).unwrap());

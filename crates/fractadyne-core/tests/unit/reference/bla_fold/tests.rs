@@ -243,7 +243,7 @@ fn the_fold_tree_packs_as_the_complex_one() {
     let f = formula::BURNING_SHIP;
     let c = interior_point(f).unwrap();
     let (orbit, _) = reference_orbit(&bf(0.0, p), &bf(0.0, p), &bf(c.0, p), &bf(c.1, p), f, 300, p);
-    let aux = AuxAggParams { trap_type: 0, stripe_freq: 3.0, cmag: 0.5, power: 2.0 };
+    let aux = AuxAggParams { trap_type: crate::coloring::TrapType::Point, stripe_freq: 3.0, cmag: 0.5, power: 2.0 };
     let fold = bla_fold_to_gpu(&build_bla_fold(&orbit, fe(1e-9), 1e-6, aux, f));
     let complex = bla_to_gpu(&build_bla(&orbit, fe(1e-9), 1e-6, aux, 2));
     assert_eq!(fold.len(), complex.len(), "the same level layout");

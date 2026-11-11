@@ -14,7 +14,6 @@
 
 use egui_wgpu::wgpu;
 
-const FIXED: &str = include_str!("mandelbrot.wgsl");
 const STRIP_FNS: &str = include_str!("strip.wgsl");
 
 /// The slots, in source order, and what a strip's module puts in each.
@@ -55,21 +54,23 @@ fn marker_line(src: &str, marker: &str) -> Result<(usize, usize), String> {
     Ok((b, e))
 }
 
-/// The strip module's WGSL: `mandelbrot.wgsl` with its STRIP_* slots filled, and `strip.wgsl`.
+/// The strip module's WGSL: the renderer's ([`crate::renderer_wgsl`]) with its STRIP_* slots
+/// filled, and `strip.wgsl`.
 pub(crate) fn source() -> Result<String, String> {
-    let mut out = String::with_capacity(FIXED.len() + STRIP_FNS.len() + 1024);
+    let fixed = crate::renderer_wgsl();
+    let mut out = String::with_capacity(fixed.len() + STRIP_FNS.len() + 1024);
     let mut at = 0;
     for (begin, end, fill) in SLOTS {
-        let (b0, _) = marker_line(FIXED, begin)?;
-        let (_, e1) = marker_line(FIXED, end)?;
+        let (b0, _) = marker_line(fixed, begin)?;
+        let (_, e1) = marker_line(fixed, end)?;
         if b0 < at || e1 <= b0 {
             return Err(format!("the iterate module's `{begin}` slot is out of order"));
         }
-        out.push_str(&FIXED[at..b0]);
+        out.push_str(&fixed[at..b0]);
         out.push_str(fill);
         at = e1;
     }
-    out.push_str(&FIXED[at..]);
+    out.push_str(&fixed[at..]);
     out.push('\n');
     out.push_str(STRIP_FNS);
     Ok(out)

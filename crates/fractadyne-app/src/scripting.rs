@@ -4887,7 +4887,7 @@ pub(crate) struct BenchSnapshot {
     fractal: FractalKind,
     julia_mode: bool,
     dual: bool,
-    color_method: u32,
+    color_method: crate::ColorMethod,
     auto_iter: bool,
     aa: u32,
     series_approx: bool,
@@ -4979,7 +4979,7 @@ impl FractadyneApp {
             fractal: self.fractal,
             julia_mode: self.julia_mode,
             dual: self.dual,
-            color_method: self.coloring.color_method.to_u32(),
+            color_method: self.coloring.color_method,
             auto_iter: self.render_cfg.auto_iter,
             aa: self.render_cfg.aa,
             series_approx: self.render_cfg.series_approx,
@@ -5048,7 +5048,7 @@ impl FractadyneApp {
         self.set_fractal(s.fractal);
         self.julia_mode = s.julia_mode;
         self.dual = s.dual;
-        self.coloring.color_method = crate::ColorMethod::from_u32(s.color_method);
+        self.coloring.color_method = s.color_method;
         self.render_cfg.auto_iter = s.auto_iter;
         self.render_cfg.aa = s.aa;
         self.render_cfg.series_approx = s.series_approx;
