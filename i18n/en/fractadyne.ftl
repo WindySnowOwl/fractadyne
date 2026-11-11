@@ -527,6 +527,7 @@ crash-tip-driver-vendor = Install the newest graphics driver for this card from 
 crash-tip-driver = Install the newest graphics driver from the website of the company that made the graphics card, such as Intel, NVIDIA or AMD. If its installer refuses, as it often does on laptops and brand-name computers (Lenovo, Dell, HP and others) whose makers customize the driver, get it from the computer maker's support site instead. The driver a computer came with is often years old.
 crash-tip-other-card = If this computer has a second graphics card (many laptops do), start Fractadyne on it: fractadyne --list-adapters lists the cards, and fractadyne --adapter 2 starts on the second.
 crash-tip-again = Start Fractadyne again. If the error comes back, the crash report is what lets it be fixed.
+crash-tip-next-opengl = Start Fractadyne again: it will start on OpenGL instead of Vulkan, which may get past this crash, and keep using OpenGL on this computer.
 crash-tip-newer = Check for a newer Fractadyne (Help ▸ Check for updates): this may already be fixed there.
 # The error the crash dialog shows when the graphics driver lacks what Fractadyne needs. $card = the graphics card's name; $api = the graphics API (Vulkan, OpenGL); $have and $need = storage buffers per shader.
 gpu-unsupported-reason = { $card } through { $api } offers { $have } storage buffers per shader, and Fractadyne needs { $need }.
@@ -834,6 +835,8 @@ export-gl-running = On OpenGL, Fractadyne renders the export on the window's own
 gpu-fallback-title = Started on OpenGL
 # $reason: the graphics library's error, in English, as it gave it.
 gpu-fallback-body = Vulkan could not open Fractadyne's window on this graphics card ({ $reason }), so Fractadyne started again on OpenGL, and will keep using OpenGL on this computer. A newer graphics driver, a newer Vulkan loader or a new version of Fractadyne tries Vulkan again.
+# $reason: what ended that start-up, in English (such as a native crash in the graphics driver, at start-up, while preparing the graphics shaders).
+gpu-fallback-crash-body = Fractadyne's last start-up on Vulkan did not get through on this graphics card ({ $reason }), so Fractadyne now starts on OpenGL, and will keep using OpenGL on this computer. A newer graphics driver, a newer Vulkan loader or a new version of Fractadyne tries Vulkan again.
 
 ## File ▸ Gallery…
 

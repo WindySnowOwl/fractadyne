@@ -7,7 +7,7 @@ fn eris() -> Gpu {
 }
 
 fn at<'a>(failure: &'a Failure, phase: Phase, compiling: &'a [String], gpu: Option<&'a Gpu>) -> Situation<'a> {
-    Situation { failure, phase, compiling, gpu, activity: None, remote_session: false }
+    Situation { failure, phase, compiling, gpu, activity: None, remote_session: false, next_start_opengl: false }
 }
 
 /// The English phrases, as `ui::crash_dialog_text` prepares them.
@@ -128,6 +128,35 @@ fn a_crash_in_another_module_or_none_names_what_it_can() {
 }
 
 #[test]
+fn a_vulkan_start_up_crash_says_first_that_the_next_start_is_on_opengl() {
+    let f = Failure::Native { module: Some("nvoglv64.dll".into()) };
+    let g = Gpu { name: "NVIDIA GeForce GT 650M".into(), api: "Vulkan", driver: "382.05".into(), vendor: Some("NVIDIA") };
+    let mut s = at(&f, Phase::PreparingShaders, &[], Some(&g));
+    s.next_start_opengl = true;
+    assert_eq!(tips(&s), vec![Tip::NextStartOpenGl, Tip::UpdateDriver, Tip::OtherCard, Tip::NewerFractadyne]);
+    let a = compose(&s, &english());
+    assert!(a.tips.starts_with("• Start Fractadyne again: it will start on OpenGL instead of Vulkan"), "{}", a.tips);
+    // Whether it applies is `gpu_choice::fallback::next_start_on_opengl`'s call: Vulkan, at
+    // start-up, a crash the handler sees, on an API the person did not choose.
+    use crate::gpu_choice::fallback::next_start_on_opengl;
+    assert!(next_start_on_opengl(&f, Phase::PreparingShaders, Some(&g)) == std::env::var_os("WGPU_BACKEND").is_none());
+    assert!(next_start_on_opengl(&Failure::Panic("x".into()), Phase::StartingDevice, Some(&g)) == std::env::var_os("WGPU_BACKEND").is_none());
+    assert!(!next_start_on_opengl(&f, Phase::Running, Some(&g)), "mid-session: not start-up's fallback");
+    assert!(!next_start_on_opengl(&f, Phase::PreparingShaders, Some(&eris())), "already on OpenGL");
+    assert!(!next_start_on_opengl(&f, Phase::OpeningWindow, None), "no card yet: the API is not known");
+    assert!(!next_start_on_opengl(&Failure::WindowOpen, Phase::OpeningWindow, Some(&g)), "eframe's error is handled in the run");
+}
+
+#[test]
+fn a_phase_reads_back_from_the_name_the_marker_gives_it() {
+    for p in [Phase::Unknown, Phase::OpeningWindow, Phase::StartingDevice, Phase::PreparingShaders, Phase::Running] {
+        assert_eq!(Phase::from_key(p.key()), p);
+        assert_eq!(Phase::from_u8(p as u8), p);
+    }
+    assert_eq!(Phase::from_key("no such step"), Phase::Unknown);
+}
+
+#[test]
 fn a_pipeline_compiling_mid_session_counts_as_the_graphics_side() {
     // A custom formula's pipeline, compiled long after start-up.
     let f = Failure::Native { module: Some("igc64.dll".into()) };
@@ -184,6 +213,7 @@ fn every_phrase_is_there_and_keeps_its_placeholders() {
         ("phase_device", &p.phase_device, None),
         ("phase_shaders", &p.phase_shaders, None),
         ("phase_running", &p.phase_running, None),
+        ("tip_next_opengl", &p.tip_next_opengl, None),
         ("tip_remote", &p.tip_remote, None),
         ("tip_driver", &p.tip_driver, None),
         ("tip_other_card", &p.tip_other_card, None),

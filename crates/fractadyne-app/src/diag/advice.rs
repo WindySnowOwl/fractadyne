@@ -42,8 +42,37 @@ impl Phase {
         }
     }
 
-    fn at_start_up(self) -> bool {
+    pub(crate) fn at_start_up(self) -> bool {
         matches!(self, Phase::OpeningWindow | Phase::StartingDevice | Phase::PreparingShaders)
+    }
+
+    /// The phase's name in the session marker (`diag::marker_body`).
+    pub(crate) fn key(self) -> &'static str {
+        match self {
+            Phase::Unknown => "unknown",
+            Phase::OpeningWindow => "opening-window",
+            Phase::StartingDevice => "starting-device",
+            Phase::PreparingShaders => "preparing-shaders",
+            Phase::Running => "running",
+        }
+    }
+
+    pub(crate) fn from_key(key: &str) -> Phase {
+        [Phase::OpeningWindow, Phase::StartingDevice, Phase::PreparingShaders, Phase::Running]
+            .into_iter()
+            .find(|p| p.key() == key.trim())
+            .unwrap_or(Phase::Unknown)
+    }
+
+    /// When, in English, for the log and the saved failure (the dialog's own words are translated).
+    pub(crate) fn english(self) -> &'static str {
+        match self {
+            Phase::Unknown => "before start-up's first step",
+            Phase::OpeningWindow => "at start-up, while opening the window",
+            Phase::StartingDevice => "at start-up, while starting the graphics device",
+            Phase::PreparingShaders => "at start-up, while preparing the graphics shaders",
+            Phase::Running => "while Fractadyne was running",
+        }
     }
 }
 
@@ -129,6 +158,9 @@ pub(crate) struct Situation<'a> {
     pub(crate) activity: Option<&'a str>,
     /// Whether this is a Remote Desktop session (often without graphics acceleration).
     pub(crate) remote_session: bool,
+    /// Whether the next start leaves Vulkan out because of this crash
+    /// (`gpu_choice::fallback::next_start_on_opengl`).
+    pub(crate) next_start_opengl: bool,
 }
 
 /// The one-sentence account of what happened.
@@ -154,6 +186,8 @@ pub(crate) enum Summary {
 /// Something to check or try.
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]
 pub(crate) enum Tip {
+    /// Start Fractadyne again: it will start on OpenGL, Vulkan having crashed at start-up.
+    NextStartOpenGl,
     /// Remote Desktop often has no graphics acceleration: start Fractadyne at the computer.
     RemoteDesktop,
     /// Install the newest graphics driver from the card's maker.
@@ -205,6 +239,10 @@ pub(crate) fn tips(s: &Situation) -> Vec<Tip> {
     ) || s.phase.at_start_up()
         || !s.compiling.is_empty();
     let mut t = Vec::new();
+    // At start-up on Vulkan the next start is on OpenGL: the one step that may get past it at once.
+    if s.next_start_opengl {
+        t.push(Tip::NextStartOpenGl);
+    }
     if graphics {
         if s.remote_session {
             t.push(Tip::RemoteDesktop);
@@ -249,6 +287,7 @@ pub(crate) struct Phrases {
     pub(crate) graphics: String,
     /// "Graphics: {card} ({api})"
     pub(crate) graphics_no_driver: String,
+    pub(crate) tip_next_opengl: String,
     pub(crate) tip_remote: String,
     /// With `{vendor}`.
     pub(crate) tip_driver_vendor: String,
@@ -314,6 +353,7 @@ pub(crate) fn compose(s: &Situation, p: &Phrases) -> Account {
         .into_iter()
         .map(|t| {
             let text = match t {
+                Tip::NextStartOpenGl => fill(&p.tip_next_opengl),
                 Tip::RemoteDesktop => fill(&p.tip_remote),
                 Tip::UpdateDriver if s.gpu.and_then(|g| g.vendor).is_some() => fill(&p.tip_driver_vendor),
                 Tip::UpdateDriver => fill(&p.tip_driver),

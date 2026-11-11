@@ -775,6 +775,8 @@ export-gl-running = В OpenGL Fractadyne виконує рендеринг ек�
 gpu-fallback-title = Запущено через OpenGL
 # $reason: the graphics library's error, in English, as it gave it.
 gpu-fallback-body = Vulkan не зміг відкрити вікно Fractadyne на цій відеокарті ({ $reason }), тому Fractadyne перезапустився через OpenGL і на цьому комп'ютері й надалі використовуватиме OpenGL. Новіший графічний драйвер, новіший завантажувач Vulkan або нова версія Fractadyne знову спробують Vulkan.
+# $reason: what ended that start-up, in English (such as a native crash in the graphics driver, at start-up, while preparing the graphics shaders).
+gpu-fallback-crash-body = Останній запуск Fractadyne через Vulkan на цій відеокарті не завершився ({ $reason }), тому тепер Fractadyne запускається через OpenGL і на цьому комп'ютері й надалі використовуватиме OpenGL. Новіший графічний драйвер, новіший завантажувач Vulkan або нова версія Fractadyne знову спробують Vulkan.
 
 ## File ▸ Gallery…
 

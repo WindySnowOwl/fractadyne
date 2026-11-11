@@ -7052,6 +7052,9 @@ impl FractadyneApp {
         if let Some(reason) = gpu_choice::fallback::fell_back() {
             diag::log_line("gpu", &format!("started again on OpenGL: Vulkan could not open the window ({reason})"));
             self.dialogs.notice = Some((tr!(gpu_fallback_title), tr!(gpu_fallback_body, reason = reason)));
+        } else if let Some(reason) = gpu_choice::fallback::switched_after_crash() {
+            // So does a launch on OpenGL because the last start-up on Vulkan died.
+            self.dialogs.notice = Some((tr!(gpu_fallback_title), tr!(gpu_fallback_crash_body, reason = reason)));
         }
         // `FRACTADYNE_PANIC_AT_START=1`: a deliberate crash here, the only way to see the crash
         // dialog (`diag::show_fatal_dialog`) on a machine that does not crash.
@@ -7059,8 +7062,12 @@ impl FractadyneApp {
             panic!("a deliberate crash at start-up (FRACTADYNE_PANIC_AT_START)");
         }
         // `FRACTADYNE_NATIVE_CRASH_AT_START=1` (or `=thread`): the same for a crash that is not a
-        // panic (`diag::native_crash`), on this thread or on a thread of its own.
+        // panic (`diag::native_crash`), on this thread or on a thread of its own. `=abort`: an end
+        // no crash handler sees (a fail-fast), as a driver that replaced ours, or a kill, leaves.
         if let Some(v) = std::env::var_os("FRACTADYNE_NATIVE_CRASH_AT_START") {
+            if v == "abort" {
+                std::process::abort();
+            }
             diag::native_crash::raise_for_test(v == "thread", v == "null");
         }
         // ⭐A device that cannot give the renderer its storage buffers would panic building it: say
@@ -7094,6 +7101,7 @@ impl FractadyneApp {
         diag::native_crash::reinstall("the graphics driver's start-up");
         diag::breadcrumb("start-up: the renderer is ready".into());
         diag::set_phase(diag::advice::Phase::Running);
+        gpu_choice::fallback::start_up_done(diag::advice::api_name(render_state.adapter.get_info().backend));
         // Record the GPU's storage-buffer binding limit as the reference-orbit length ceiling, so
         // the off-thread live recompute can bound a deep-interior orbit to what the buffer holds
         // (a `.fdn` with auto-iter off + a very high max_iter at an interior view would otherwise
