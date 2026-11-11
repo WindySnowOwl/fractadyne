@@ -59,6 +59,13 @@ published as the pre-releases `v0.2.41-beta.1` to `v0.2.41-beta.150`, and a "bet
 
 Changes after 0.3.0-beta.1:
 
+- **Distance coloring no longer draws black dots near the boundary (0.3.0-beta.27).** Where a
+  pixel takes a long time to escape, the distance to the set is tiny, and the calculation squared a
+  number too large for the graphics card's precision: the distance came out as minus infinity and
+  the pixel black. It happened most on Phoenix (1,672 black pixels in one 320x200 view at 1e3x,
+  where 54 belong there), on Multibrot 3 to 8, and on Mandelbrot and Julia boundaries. The distance
+  glow skipped the same pixels, leaving them without its bands. Both now draw them; every other
+  pixel is exactly as before.
 - **A test that renders every coloring method (0.3.0-beta.27, for testing).** `--coloring-matrix`
   renders each coloring method and its variants (each orbit-trap shape, the stripe tail) at the 82
   views of `validation/coloring/views.toml`: every fractal family, two Julia sets and a custom formula,
