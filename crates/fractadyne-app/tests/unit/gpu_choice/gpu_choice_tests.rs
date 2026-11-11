@@ -94,6 +94,7 @@ fn a_vulkan_failure_reads_back_and_applies_only_to_its_build_and_loader() {
         adapter: "GeForce GT 650M".into(),
         reason: "WGPU error: Parent device is lost".into(),
         when: "2026-11-10 14:40".into(),
+        unexplained: String::new(),
     };
     let text = fallback::render(&f).expect("renders");
     assert!(text.starts_with('#'), "the file says what it is");
@@ -113,6 +114,109 @@ fn a_damaged_or_oversized_failure_file_is_ignored() {
     // `when` may be missing (an older file): read as empty.
     let f = fallback::parse("app = \"a\"\nloader = \"l\"\nadapter = \"c\"\nreason = \"r\"\n").expect("reads");
     assert_eq!(f.when, "");
+    assert_eq!(f.unexplained, "", "a file without it is in force, as part 1 wrote them");
+}
+
+/// A dead session's marker, as `diag::marker_body` writes it, then what `mark_panicked` appends.
+fn marker(phase: &str, api: Option<&str>, extra: &[&str]) -> String {
+    let mut m = format!("{APP}\nstarted 2026-11-10 21:00:00Z\npid 4242\nphase {phase}\n");
+    if let Some(a) = api {
+        m.push_str(&format!("api {a}\ncard NVIDIA GeForce GT 650M\n"));
+    }
+    for l in extra {
+        m.push_str(l);
+        m.push('\n');
+    }
+    m
+}
+
+const APP: &str = "fractadyne 0.3.0-beta.27 (build 7, gabc)";
+const LOADER: &str = r"C:\WINDOWS\SYSTEM32\vulkan-1.dll 1.4.363.1 (Vulkan 1.1 or later)";
+const CRASHED: [&str; 2] = [
+    "panicked crash-20261110-210001.txt",
+    "what a native crash: access violation (0xc0000005) reading address 0x10, in the graphics driver: nvoglv64.dll+0x1a2b, on thread 'main'",
+];
+
+fn judge(m: &str, saved: Option<&fallback::Failure>) -> fallback::Verdict {
+    fallback::judge(m, APP, LOADER, saved, "2026-11-10 21:01")
+}
+
+#[test]
+fn a_reported_crash_at_start_up_on_vulkan_moves_the_next_start_to_opengl() {
+    let fallback::Verdict::Switch(f) = judge(&marker("preparing-shaders", Some("Vulkan"), &CRASHED), None) else {
+        panic!("a reported crash switches at once")
+    };
+    assert_eq!((f.app.as_str(), f.loader.as_str(), f.adapter.as_str()), (APP, LOADER, "NVIDIA GeForce GT 650M"));
+    assert_eq!(f.unexplained, "", "in force");
+    assert!(f.reason.starts_with("a native crash: access violation") && f.reason.ends_with(", at start-up, while preparing the graphics shaders"), "{}", f.reason);
+    // The same while starting the device; a panic reads the same way.
+    let panicked = ["panicked crash-x.txt", "what a panic: Validation Error"];
+    assert!(matches!(judge(&marker("starting-device", Some("Vulkan"), &panicked), None), fallback::Verdict::Switch(_)));
+    // Written and read back, it is in force for this build and loader.
+    let back = fallback::parse(&fallback::render(&f).unwrap()).unwrap();
+    assert!(back.unexplained.is_empty() && fallback::applies(&back, APP, LOADER));
+}
+
+#[test]
+fn only_this_build_at_start_up_on_an_api_it_chose_by_itself_counts() {
+    use fallback::Verdict::Nothing;
+    // Start-up was over: a crash later is not start-up's.
+    assert_eq!(judge(&marker("running", Some("Vulkan"), &CRASHED), None), Nothing);
+    // Another build's start-up says nothing about this one.
+    let other = marker("preparing-shaders", Some("Vulkan"), &CRASHED).replacen(APP, "fractadyne 0.3.0-beta.26 (build 6, gdef)", 1);
+    assert_eq!(judge(&other, None), Nothing);
+    // The person chose the API (WGPU_BACKEND).
+    assert_eq!(judge(&marker("preparing-shaders", Some("Vulkan"), &["backend-env vulkan", CRASHED[0], CRASHED[1]]), None), Nothing);
+    // No card yet: the API is not known.
+    assert_eq!(judge(&marker("opening-window", None, &CRASHED), None), Nothing);
+    // OpenGL by choice of wgpu (no Vulkan here): nothing to fall back to.
+    assert_eq!(judge(&marker("preparing-shaders", Some("OpenGL"), &CRASHED), None), Nothing);
+    // A marker from before the phase lines, or a damaged one.
+    assert_eq!(judge(&format!("{APP}\nstarted x\npid 1\n"), None), Nothing);
+    assert_eq!(judge("", None), Nothing);
+}
+
+#[test]
+fn an_end_with_no_crash_report_needs_a_second_in_a_row_at_the_same_step() {
+    // ⚠A person ending a frozen window during a long compile looks the same from outside.
+    let m = marker("preparing-shaders", Some("Vulkan"), &[]);
+    let fallback::Verdict::Note(first) = judge(&m, None) else { panic!("noted, not in force") };
+    assert_eq!(first.unexplained, "preparing-shaders");
+    // Saved, a noted end is not in force: `remembered` leaves it out (it reads `unexplained`).
+    let text = fallback::render(&first).unwrap();
+    assert!(text.starts_with("# A start-up on Vulkan ended here with no crash report"), "its header says it is not in force: {text}");
+    let back = fallback::parse(&text).unwrap();
+    assert_eq!(back, first);
+    // The second, at the same step: in force.
+    let fallback::Verdict::Switch(f) = judge(&m, Some(&first)) else { panic!("twice in a row switches") };
+    assert_eq!(f.unexplained, "");
+    assert!(f.reason.contains("twice in a row") && f.reason.contains("no crash report"), "{}", f.reason);
+    // At another step: noted again, at that step.
+    let fallback::Verdict::Note(other) = judge(&marker("starting-device", Some("Vulkan"), &[]), Some(&first)) else {
+        panic!("a different step starts the count again")
+    };
+    assert_eq!(other.unexplained, "starting-device");
+    // A noted end from another build does not count.
+    let old = fallback::Failure { app: "fractadyne 0.3.0-beta.26 (build 6, gdef)".into(), ..first.clone() };
+    assert!(matches!(judge(&m, Some(&old)), fallback::Verdict::Note(_)));
+}
+
+#[test]
+fn opengl_put_in_vulkan_s_place_that_crashes_too_forgets_the_failure() {
+    let saved = fallback::Failure {
+        app: APP.into(),
+        loader: LOADER.into(),
+        adapter: "NVIDIA GeForce GT 650M".into(),
+        reason: "r".into(),
+        when: String::new(),
+        unexplained: String::new(),
+    };
+    let on_gl = |extra: &[&str]| marker("preparing-shaders", Some("OpenGL"), &[&["vulkan-left-out"][..], extra].concat());
+    assert_eq!(judge(&on_gl(&CRASHED), Some(&saved)), fallback::Verdict::Forget);
+    // With no crash report (perhaps the person ended a long compile), it stays: a reported crash only.
+    assert_eq!(judge(&on_gl(&[]), Some(&saved)), fallback::Verdict::Nothing);
+    // Nothing saved (a session started again whose failure could not be written): nothing to forget.
+    assert_eq!(judge(&on_gl(&CRASHED), None), fallback::Verdict::Nothing);
 }
 
 #[cfg(windows)]

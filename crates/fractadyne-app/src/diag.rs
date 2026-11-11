@@ -615,25 +615,39 @@ static PHASE: std::sync::atomic::AtomicU8 = std::sync::atomic::AtomicU8::new(0);
 /// The graphics card the window's device was opened on.
 static GPU_SEEN: OnceLock<advice::Gpu> = OnceLock::new();
 
-/// Start-up has reached `p` (also `Running`, when it is over).
+/// Start-up has reached `p` (also `Running`, when it is over). The session marker says so too: a
+/// driver that crashes the process at start-up leaves only that file behind, and the next launch
+/// reads how far start-up got, and on which card and API (`gpu_choice::fallback::after_unclean_start`).
 pub(crate) fn set_phase(p: advice::Phase) {
-    PHASE.store(p as u8, Ordering::Relaxed);
+    if PHASE.swap(p as u8, Ordering::Relaxed) != p as u8 {
+        rewrite_marker();
+    }
 }
 
-/// The window's graphics card, as a fatal error's account names it. The first one only: that is
-/// the window's; an export's or a worker's device comes later.
+/// How far start-up has got.
+pub(crate) fn phase() -> advice::Phase {
+    advice::Phase::from_u8(PHASE.load(Ordering::Relaxed))
+}
+
 /// The graphics card start-up chose (`note_gpu`), once it has.
 pub(crate) fn gpu_seen() -> Option<&'static advice::Gpu> {
     GPU_SEEN.get()
 }
 
+/// The window's graphics card, as a fatal error's account names it. The first one only: that is
+/// the window's; an export's or a worker's device comes later.
 pub(crate) fn note_gpu(name: &str, backend: eframe::wgpu::Backend, vendor_id: u32, driver: &str, driver_info: &str) {
-    let _ = GPU_SEEN.set(advice::Gpu {
-        name: name.trim().to_string(),
-        api: advice::api_name(backend),
-        driver: advice::driver_text(driver, driver_info),
-        vendor: advice::vendor_name(vendor_id, name),
-    });
+    let first = GPU_SEEN
+        .set(advice::Gpu {
+            name: name.trim().to_string(),
+            api: advice::api_name(backend),
+            driver: advice::driver_text(driver, driver_info),
+            vendor: advice::vendor_name(vendor_id, name),
+        })
+        .is_ok();
+    if first {
+        rewrite_marker();
+    }
 }
 
 /// Whether this is a Remote Desktop session (Windows: `SM_REMOTESESSION`).
@@ -1145,7 +1159,7 @@ fn compiling_line() -> String {
 pub(crate) fn native_crash_report(reason: &str, loc: &str, thread: &str, stack: &str) -> Option<PathBuf> {
     let _ = NATIVE_CRASH.set((thread.to_string(), stack.to_string()));
     let report = write_crash_report_at(reason, loc);
-    mark_panicked(report.as_deref());
+    mark_panicked(report.as_deref(), reason);
     frame_record::flush_jsonl_within(Duration::from_millis(250));
     let line = format!("{reason} at {loc} — activity: {}; compiling: {}", current_breadcrumb(), compiling_line());
     log_line("fatal", &line);
@@ -1297,10 +1311,21 @@ pub(crate) fn set_second_device(desc: Option<&str>) {
         _ => false,
     };
     if changed {
-        if let Some(p) = marker_path().filter(|_| MARKER_ARMED.load(Ordering::Relaxed)) {
-            let _ = std::fs::write(p, marker_body());
-        }
+        rewrite_marker();
     }
+}
+
+/// Write the marker again with what this session knows now. Only a marker this process armed.
+/// (A crash's lines, `mark_panicked`, are appended as the process dies, after the last rewrite.)
+fn rewrite_marker() {
+    if let Some(p) = marker_path().filter(|_| MARKER_ARMED.load(Ordering::Relaxed)) {
+        let _ = std::fs::write(p, marker_body());
+    }
+}
+
+/// `s` on one line: its words with single spaces (a marker line must not break).
+fn one_line(s: &str) -> String {
+    s.split_whitespace().collect::<Vec<_>>().join(" ")
 }
 
 /// The second device the live view has open, if any.
@@ -1326,6 +1351,19 @@ fn marker_body() -> String {
     );
     if let Some(d) = second_device() {
         body.push_str(&format!("second-device {d}\n"));
+    }
+    // ⭐How far start-up got, on which card and API, and whether that API was this run's own
+    // choice: all a driver that crashes the process at start-up leaves for the next launch to act on
+    // (`gpu_choice::fallback::judge`).
+    body.push_str(&format!("phase {}\n", phase().key()));
+    if let Some(g) = GPU_SEEN.get() {
+        body.push_str(&format!("api {}\ncard {}\n", g.api, one_line(&g.name)));
+    }
+    if let Some(v) = crate::gpu_choice::fallback::backend_chosen_by_person() {
+        body.push_str(&format!("backend-env {}\n", one_line(&v)));
+    }
+    if crate::gpu_choice::fallback::in_force() {
+        body.push_str("vulkan-left-out\n");
     }
     body
 }
@@ -1452,6 +1490,9 @@ fn report_unclean_previous_session() {
     if let Some(d) = prev.lines().find_map(|l| l.strip_prefix("second-device ")).map(str::trim).filter(|d| !d.is_empty()) {
         let _ = PREV_SECOND_DEVICE.set(d.to_string());
     }
+    // ⭐A session that died at start-up on Vulkan: this run may start on OpenGL. Decided here,
+    // before anything chooses the graphics APIs (`gpu_choice::backends`).
+    crate::gpu_choice::fallback::after_unclean_start(&prev);
     // ⭐A session that PANICKED wrote its own report, and said so in its marker (`mark_panicked`).
     // Filing a second one here said "no panic, no crash report" about a session that had both:
     // the 2026-11-08 laptop crash at start-up left one such duplicate per launch, beside each real
@@ -1578,7 +1619,7 @@ fn install_panic_hook() {
             .unwrap_or_else(|| "<unknown>".into());
         // Write the crash FILE first — see `write_crash_report_at`.
         let report = write_crash_report_at(&msg, &loc);
-        mark_panicked(report.as_deref());
+        mark_panicked(report.as_deref(), &format!("a panic: {msg}"));
         // Then let the `frames.jsonl` writer catch up (bounded: the panic may be ON that thread).
         frame_record::flush_jsonl_within(std::time::Duration::from_millis(250));
         // Then the log line (non-panicking stderr; also teed to the log file), and a bounded wait for
@@ -1603,12 +1644,14 @@ fn install_panic_hook() {
 
 /// Note in the session marker that this session panicked, and which report it wrote, so the next
 /// launch does not file a second report about it ([`marker_panicked`]). Only a marker this process
-/// armed; best-effort, as everything in a dying process is.
-fn mark_panicked(report: Option<&Path>) {
+/// armed; best-effort, as everything in a dying process is. `what` is the crash in one line ("a
+/// native crash: …", "a panic: …"): what a start-up crash's fallback names (`gpu_choice::fallback`).
+fn mark_panicked(report: Option<&Path>, what: &str) {
     let Some(p) = marker_path().filter(|_| MARKER_ARMED.load(Ordering::Relaxed)) else { return };
     let name = report.and_then(|r| r.file_name()).map(|n| n.to_string_lossy().into_owned()).unwrap_or_else(|| "(not written)".into());
+    let what: String = one_line(what).chars().take(300).collect();
     if let Ok(mut f) = std::fs::OpenOptions::new().append(true).open(&p) {
-        let _ = writeln!(f, "panicked {name}");
+        let _ = writeln!(f, "panicked {name}\nwhat {what}");
     }
 }
 
@@ -1698,13 +1741,17 @@ pub(crate) fn fatal_message(failure: &advice::Failure, reason: &str, report_show
     let t = g.as_ref()?;
     let compiling = fractadyne_gpu::pipeline_compile::compiling_now();
     let activity = activity_now();
+    let phase = phase();
     let situation = advice::Situation {
         failure,
-        phase: advice::Phase::from_u8(PHASE.load(Ordering::Relaxed)),
+        phase,
         compiling: &compiling,
         gpu: GPU_SEEN.get(),
         activity: activity.as_deref(),
         remote_session: remote_session(),
+        // The marker this process armed is what the next launch reads.
+        next_start_opengl: MARKER_ARMED.load(Ordering::Relaxed)
+            && crate::gpu_choice::fallback::next_start_on_opengl(failure, phase, GPU_SEEN.get()),
     };
     let account = advice::compose(&situation, &t.phrases);
     let body = t

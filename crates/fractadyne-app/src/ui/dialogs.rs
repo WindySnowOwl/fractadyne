@@ -86,6 +86,7 @@ pub(crate) fn crash_dialog_text() -> crate::diag::CrashText {
             activity: tr!(crash_detail_activity, activity = "{activity}"),
             graphics: tr!(crash_detail_graphics, card = "{card}", api = "{api}", driver = "{driver}"),
             graphics_no_driver: tr!(crash_detail_graphics_no_driver, card = "{card}", api = "{api}"),
+            tip_next_opengl: tr!(crash_tip_next_opengl),
             tip_remote: tr!(crash_tip_remote),
             tip_driver_vendor: tr!(crash_tip_driver_vendor, vendor = "{vendor}"),
             tip_driver: tr!(crash_tip_driver),

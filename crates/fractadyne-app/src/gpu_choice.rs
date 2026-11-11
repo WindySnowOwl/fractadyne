@@ -13,8 +13,8 @@ pub(crate) const FLAG: &str = "--adapter";
 pub(crate) const LIST_FLAG: &str = "--list-adapters";
 
 /// The graphics APIs the app runs on: Vulkan and GL, unless `WGPU_BACKEND` names others, and GL
-/// alone where this machine's Vulkan loader is too old to list cards through, or Vulkan could not
-/// open the window here before ([`vulkan_left_out`]).
+/// alone where this machine's Vulkan loader is too old to list cards through, or Vulkan failed at
+/// start-up here before ([`vulkan_left_out`]).
 /// One definition for the window's instance and for the listing, so their enumerations agree;
 /// decided once a run.
 pub(crate) fn backends() -> wgpu::Backends {
@@ -42,8 +42,8 @@ pub(crate) fn backends() -> wgpu::Backends {
 /// one without `vkEnumerateInstanceVersion` (Vulkan 1.1, loaders from 2018 on) is left out. That is
 /// the very test wgpu makes for the instance version it logs ("Instance version: 0x400000" = 1.0).
 ///
-/// **Vulkan could not open the window here before** ([`fallback`]): the same build, with the same
-/// loader, failed at start-up on Vulkan and started again on OpenGL; this run starts there.
+/// **Vulkan failed at start-up here before** ([`fallback`]): the same build, with the same loader,
+/// could not open the window on Vulkan, or crashed starting up on it; this run starts on OpenGL.
 ///
 /// `WGPU_BACKEND` set = nothing is left out (and the loader is not read): `WGPU_BACKEND=vulkan`
 /// tries Vulkan anyway. The loader check is Windows only.
@@ -56,7 +56,7 @@ pub(crate) fn vulkan_left_out() -> Option<&'static str> {
         loader::this_machine().and_then(|l| l.too_old()).or_else(|| {
             fallback::remembered().map(|f| {
                 format!(
-                    "Vulkan could not open the window on {} {} ({}), so this run uses OpenGL. A new \
+                    "Vulkan failed at start-up on {} {} ({}), so this run uses OpenGL. A new \
                      Fractadyne, a new Vulkan loader, or deleting {} in the settings folder tries Vulkan \
                      again; WGPU_BACKEND=vulkan tries it anyway.",
                     f.adapter,
@@ -93,7 +93,20 @@ pub(crate) fn log_loader() {
 /// with the same Vulkan loader reads the file and leaves Vulkan out from the start
 /// ([`super::vulkan_left_out`]); a new version or a new loader tries Vulkan again, and deleting the
 /// file tries it now.
+///
+/// ⭐**A DRIVER THAT CRASHES THE PROCESS AT START-UP** (user, 2026-11-10: "Vulkan part only", the
+/// second part). Eris's Intel driver crashed natively compiling the shaders: nothing in the dying
+/// process can switch APIs, so the NEXT launch does ([`after_unclean_start`]). The session marker
+/// (`diag::marker_body`, armed before the window opens) says how far start-up got, on which card and
+/// API, and what the crash handler saw; a session that died at start-up on a Vulkan adapter it chose
+/// by itself leaves Vulkan out from the next launch on, the same file and the same rules as above
+/// ([`judge`]). ⚠From outside, a person ending a frozen window during a long shader compile looks
+/// like a crash (Eris compiles for 26 s every launch), so one death is enough only when the crash
+/// handler wrote its report; a death with no report needs a second one in a row at the same step.
+/// And when OpenGL, put in Vulkan's place, crashes at start-up too, the saved failure is forgotten:
+/// a machine is never kept on the path that did not help.
 pub(crate) mod fallback {
+    use crate::diag::advice::Phase;
     use serde::{Deserialize, Serialize};
 
     pub(crate) const FILE: &str = "vulkan-failed.toml";
@@ -102,7 +115,7 @@ pub(crate) mod fallback {
     /// A file larger than this is not read (one record is well under 1 KB).
     const MAX_BYTES: u64 = 16 * 1024;
 
-    /// One Vulkan failure to open the window.
+    /// One Vulkan failure to open the window, or to get through start-up.
     #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
     pub(crate) struct Failure {
         /// The build that failed (`sysinfo::version_string`).
@@ -114,6 +127,11 @@ pub(crate) mod fallback {
         /// When, local time, for a reader of the file.
         #[serde(default)]
         pub when: String,
+        /// Not in force yet: one session ended at this start-up step (`Phase::key`) on Vulkan with
+        /// no crash report, and a second in a row at the same step is needed ([`judge`]). Empty for
+        /// a failure in force.
+        #[serde(default, skip_serializing_if = "String::is_empty")]
+        pub unexplained: String,
     }
 
     /// This machine's Vulkan loader as the record names it: its path and version, or "none".
@@ -129,30 +147,194 @@ pub(crate) mod fallback {
     pub(crate) fn parse(text: &str) -> Option<Failure> {
         let f: Failure = toml::from_str(text).ok()?;
         // Read as untrusted: bounded fields, or nothing.
-        let ok = [&f.app, &f.loader, &f.adapter, &f.reason, &f.when].iter().all(|s| s.len() <= 1024);
+        let ok = [&f.app, &f.loader, &f.adapter, &f.reason, &f.when, &f.unexplained].iter().all(|s| s.len() <= 1024);
         ok.then_some(f)
     }
 
     pub(crate) fn render(f: &Failure) -> Result<String, String> {
         let body = toml::to_string(f).map_err(|e| e.to_string())?;
-        Ok(format!(
-            "# Vulkan could not open Fractadyne's window here, so it runs on OpenGL. Written by the app;\n\
-             # delete this file to try Vulkan again (a new version or a new Vulkan loader also does).\n\n{body}"
-        ))
+        let header = if f.unexplained.is_empty() {
+            "# Vulkan failed at start-up here, so Fractadyne runs on OpenGL. Written by the app;\n\
+             # delete this file to try Vulkan again (a new version or a new Vulkan loader also does)."
+        } else {
+            "# A start-up on Vulkan ended here with no crash report. Written by the app; if the next\n\
+             # start-up ends the same way, Fractadyne runs on OpenGL. One that gets through removes this."
+        };
+        Ok(format!("{header}\n\n{body}"))
     }
 
-    /// The failure saved for this build and this loader, if any (read once a run).
+    /// The failure in force for this build and this loader, if any (read once a run).
     pub(crate) fn remembered() -> Option<&'static Failure> {
         static READ: std::sync::OnceLock<Option<Failure>> = std::sync::OnceLock::new();
         READ.get_or_init(|| {
-            let path = fractadyne_state::config_dir()?.join(FILE);
-            if !std::fs::metadata(&path).is_ok_and(|m| m.len() <= MAX_BYTES) {
-                return None;
-            }
-            let f = parse(&std::fs::read_to_string(&path).ok()?)?;
-            applies(&f, &crate::sysinfo::version_string(), &loader_text()).then_some(f)
+            read_saved().filter(|f| f.unexplained.is_empty() && applies(f, &crate::sysinfo::version_string(), &loader_text()))
         })
         .as_ref()
+    }
+
+    /// The file as it is now, whatever build or loader it names.
+    fn read_saved() -> Option<Failure> {
+        let path = fractadyne_state::config_dir()?.join(FILE);
+        if !std::fs::metadata(&path).is_ok_and(|m| m.len() <= MAX_BYTES) {
+            return None;
+        }
+        parse(&std::fs::read_to_string(&path).ok()?)
+    }
+
+    fn forget() -> Result<(), String> {
+        let path = fractadyne_state::config_dir().ok_or("no settings folder")?.join(FILE);
+        std::fs::remove_file(path).map_err(|e| e.to_string())
+    }
+
+    /// Now, local time, as the file names it.
+    fn now_text() -> String {
+        crate::sysinfo::local_now().map_or_else(String::new, |(y, mo, d, h, mi, ..)| format!("{y}-{mo:02}-{d:02} {h:02}:{mi:02}"))
+    }
+
+    /// `WGPU_BACKEND`, when the person set it: this run's API is their choice, not this module's to
+    /// change. (The session started again on OpenGL has it too, set by [`start_again`]: not theirs.)
+    pub(crate) fn backend_chosen_by_person() -> Option<String> {
+        eframe::wgpu::Backends::from_env()?;
+        if fell_back().is_some() {
+            return None;
+        }
+        std::env::var("WGPU_BACKEND").ok()
+    }
+
+    /// Whether this run is on OpenGL because Vulkan failed here before: a saved failure in force, or
+    /// the session [`after_window_failure`] started again.
+    pub(crate) fn in_force() -> bool {
+        fell_back().is_some()
+            || (super::vulkan_left_out().is_some() && super::loader::this_machine().and_then(|l| l.too_old()).is_none())
+    }
+
+    /// What a dead session's marker means for this launch ([`judge`]).
+    #[derive(Debug, PartialEq)]
+    pub(crate) enum Verdict {
+        Nothing,
+        /// Leave Vulkan out from now on: save this failure, in force.
+        Switch(Failure),
+        /// One end at start-up on Vulkan with no crash report: noted, not in force.
+        Note(Failure),
+        /// OpenGL, put in Vulkan's place, crashed at start-up too: forget the saved failure.
+        Forget,
+    }
+
+    /// What the marker a dead session left (`diag::marker_body`, then `mark_panicked`'s lines)
+    /// means for this launch of build `app` with Vulkan loader `loader`, given the failure `saved`
+    /// in the file now.
+    ///
+    /// Only a session of this same build that died during start-up counts, on an API it chose by
+    /// itself (no `backend-env` line). On Vulkan: a crash its handler reported (`panicked`) switches
+    /// at once; a death with no report is noted, and switches when the noted one was at the same
+    /// step. On OpenGL put there by a saved failure (`vulkan-left-out`): a reported crash forgets it.
+    pub(crate) fn judge(marker: &str, app: &str, loader: &str, saved: Option<&Failure>, when: &str) -> Verdict {
+        let field = |k: &str| marker.lines().find_map(|l| l.strip_prefix(k)).map(str::trim);
+        if marker.lines().next().map(str::trim) != Some(app) {
+            return Verdict::Nothing;
+        }
+        let phase = field("phase ").map_or(Phase::Unknown, Phase::from_key);
+        if !phase.at_start_up() || field("backend-env ").is_some() {
+            return Verdict::Nothing;
+        }
+        let api = field("api ");
+        let reported = field("panicked ").is_some();
+        if marker.lines().any(|l| l.trim() == "vulkan-left-out") {
+            return if api == Some("OpenGL") && reported && saved.is_some() { Verdict::Forget } else { Verdict::Nothing };
+        }
+        if api != Some("Vulkan") {
+            return Verdict::Nothing;
+        }
+        let failure = |reason: String, unexplained: &str| Failure {
+            app: app.to_string(),
+            loader: loader.to_string(),
+            adapter: field("card ").unwrap_or("").to_string(),
+            reason,
+            when: when.to_string(),
+            unexplained: unexplained.to_string(),
+        };
+        let step = phase.english();
+        if reported {
+            let what = field("what ").filter(|w| !w.is_empty()).unwrap_or("a crash");
+            return Verdict::Switch(failure(format!("{what}, {step}"), ""));
+        }
+        if saved.is_some_and(|f| applies(f, app, loader) && f.unexplained == phase.key()) {
+            Verdict::Switch(failure(format!("it ended twice in a row {step}, with no crash report"), ""))
+        } else {
+            Verdict::Note(failure(format!("it ended {step}, with no crash report"), phase.key()))
+        }
+    }
+
+    /// Set on a launch [`after_unclean_start`] moved to OpenGL: why, for its one notice.
+    static SWITCHED: std::sync::OnceLock<String> = std::sync::OnceLock::new();
+
+    /// The previous session left its marker behind (`marker`): if it died at start-up on Vulkan,
+    /// this launch may start on OpenGL ([`judge`]). Called before anything chooses the APIs.
+    pub(crate) fn after_unclean_start(marker: &str) {
+        let saved = read_saved();
+        let saved_text = |r: Result<(), String>| match r {
+            Ok(()) => format!("saved to {FILE}"),
+            Err(e) => format!("not saved ({e})"),
+        };
+        match judge(marker, &crate::sysinfo::version_string(), &loader_text(), saved.as_ref(), &now_text()) {
+            Verdict::Nothing => {}
+            Verdict::Switch(f) => {
+                let saved = saved_text(record(&f));
+                crate::diag::log_line(
+                    "gpu",
+                    &format!("the previous session's start-up on Vulkan failed on {} ({}); {saved}: this run starts on OpenGL", f.adapter, f.reason),
+                );
+                let _ = SWITCHED.set(f.reason);
+            }
+            Verdict::Note(f) => {
+                let saved = saved_text(record(&f));
+                crate::diag::log_line(
+                    "gpu",
+                    &format!(
+                        "the previous session ended at start-up on Vulkan on {} ({}); {saved}: if the next start-up ends the same way, Fractadyne starts on OpenGL",
+                        f.adapter, f.reason
+                    ),
+                );
+            }
+            Verdict::Forget => {
+                let removed = match forget() {
+                    Ok(()) => format!("{FILE} removed"),
+                    Err(e) => format!("{FILE} not removed ({e})"),
+                };
+                crate::diag::log_line(
+                    "gpu",
+                    &format!("the previous session crashed at start-up on OpenGL, which it used because Vulkan had failed here; {removed}: this run tries Vulkan again"),
+                );
+            }
+        }
+    }
+
+    /// On the launch [`after_unclean_start`] moved to OpenGL: why, once.
+    pub(crate) fn switched_after_crash() -> Option<&'static str> {
+        SWITCHED.get().map(String::as_str)
+    }
+
+    /// Start-up got through on `api`: on Vulkan, a noted end with no crash report is forgotten (the
+    /// second in a row it waited for will not come).
+    pub(crate) fn start_up_done(api: &str) {
+        if api != "Vulkan" || !read_saved().is_some_and(|f| !f.unexplained.is_empty()) {
+            return;
+        }
+        let removed = match forget() {
+            Ok(()) => format!("{FILE} removed"),
+            Err(e) => format!("{FILE} not removed ({e})"),
+        };
+        crate::diag::log_line("gpu", &format!("start-up got through on Vulkan: the earlier start-up that ended with no crash report is forgotten ({removed})"));
+    }
+
+    /// Whether a crash now (`failure`, at `phase`, on `gpu`) moves the next start to OpenGL, as
+    /// [`judge`] will read this session's marker. The crash dialog says so.
+    pub(crate) fn next_start_on_opengl(failure: &crate::diag::advice::Failure, phase: Phase, gpu: Option<&crate::diag::advice::Gpu>) -> bool {
+        use crate::diag::advice::Failure as F;
+        matches!(failure, F::Native { .. } | F::Panic(_))
+            && phase.at_start_up()
+            && gpu.is_some_and(|g| g.api == "Vulkan")
+            && backend_chosen_by_person().is_none()
     }
 
     /// Write `f` to the settings folder, whole or not at all.
@@ -171,6 +353,16 @@ pub(crate) mod fallback {
     /// run chose by itself, remember it and, outside a task, start this program again on OpenGL.
     /// `true` = started again (the caller shows no fatal dialog: the new session explains).
     pub(crate) fn after_window_failure(reason: &str) -> bool {
+        // OpenGL, put in Vulkan's place by a failure saved here, cannot open the window either: the
+        // failure is forgotten, and the next start tries Vulkan again.
+        if in_force() && crate::diag::gpu_seen().is_none_or(|g| g.api == "OpenGL") && read_saved().is_some() {
+            let removed = match forget() {
+                Ok(()) => format!("{FILE} removed"),
+                Err(e) => format!("{FILE} not removed ({e})"),
+            };
+            crate::diag::log_line("gpu", &format!("OpenGL could not open the window either; {removed}: the next run tries Vulkan again"));
+            return false;
+        }
         if eframe::wgpu::Backends::from_env().is_some() || !super::backends().contains(eframe::wgpu::Backends::VULKAN) {
             return false;
         }
@@ -180,8 +372,8 @@ pub(crate) mod fallback {
             loader: loader_text(),
             adapter: gpu.name.clone(),
             reason: reason.chars().take(400).collect(),
-            when: crate::sysinfo::local_now()
-                .map_or_else(String::new, |(y, mo, d, h, mi, ..)| format!("{y}-{mo:02}-{d:02} {h:02}:{mi:02}")),
+            when: now_text(),
+            unexplained: String::new(),
         };
         let saved = match record(&f) {
             Ok(()) => format!("saved to {FILE}"),

@@ -82,6 +82,15 @@ Changes after 0.3.0-beta.1:
   `vulkan-failed.toml` in the settings folder; deleting it, or setting `WGPU_BACKEND=vulkan`, tries
   Vulkan again. A command-line task does not start again: it fails as before, and the next run uses
   OpenGL.
+- **If the graphics driver crashes Fractadyne at start-up on Vulkan, the next start uses OpenGL
+  (0.3.0-beta.27).** A driver that crashes outright takes the program with it, so nothing could
+  switch in that launch, and every later launch crashed the same way. Now Fractadyne notes how far
+  each start-up got, and on which card and graphics API. When a start-up on Vulkan ends in a crash,
+  the crash dialog says the next start will use OpenGL, and the next start does, with the same
+  notice and the same `vulkan-failed.toml` record. A start-up that ended with no crash report (the
+  window was ended from Task Manager during a long shader compile, say) counts only when it happens
+  twice in a row at the same step. If OpenGL then crashes at start-up too, the record is removed and
+  the next start tries Vulkan again.
 - **A slow graphics card's first frames stay short (0.3.0-beta.27).** Before it had measured
   anything, Fractadyne sized the first frame for a fast desktop card. On an Intel HD Graphics 4400,
   the first frame of a deep zoom kept the GPU busy for 1.4 seconds, close to the 2 seconds after
