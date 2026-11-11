@@ -40,3 +40,27 @@ fn the_shader_writes_a_distance_exactly_where_the_caps_say() {
     let custom = include_str!(concat!(env!("CARGO_MANIFEST_DIR"), "/src/custom.rs"));
     assert!(custom.contains("let de = 1.0e30;"), "a custom formula now writes a distance: update caps(CUSTOM)");
 }
+
+/// `FormulaCaps::orbit_statistics` against the shader: Newton's converged pixel returns no
+/// statistics (`AUX_NONE`), which is why the panel does not offer the methods that read them there.
+#[test]
+fn the_shader_records_the_statistics_exactly_where_the_caps_say() {
+    let wgsl = include_str!(concat!(env!("CARGO_MANIFEST_DIR"), "/src/mandelbrot.wgsl"));
+    let at = wgsl.find("if (newton) {\n            // Color by convergence speed").or_else(|| wgsl.find("if (newton) {\r\n            // Color by convergence speed"));
+    let branch = &wgsl[at.expect("the direct path's Newton escape branch")..];
+    let branch = &branch[..branch.find("\n        }").expect("its end")];
+    assert!(
+        branch.contains("return FragOut(vec4<f32>(f32(iter), 0.0, 0.0, 1.0e30), AUX_NONE);"),
+        "Newton's converged pixel now returns statistics: update caps(NEWTON).orbit_statistics"
+    );
+    for id in 0..formula::COUNT {
+        assert_eq!(formula::caps(id).orbit_statistics, id != formula::NEWTON, "formula {id}");
+    }
+    // A custom formula's module keeps the statistics in its own copy of the step.
+    let custom = include_str!(concat!(env!("CARGO_MANIFEST_DIR"), "/src/custom.rs"));
+    assert!(
+        custom.contains("aux_step(&aux, zf, cmag, power_f); }}"),
+        "a custom module no longer records the statistics: update caps(CUSTOM)"
+    );
+    assert!(formula::caps(formula::CUSTOM).orbit_statistics);
+}

@@ -72,19 +72,24 @@ fn the_predicate_sets_are_the_established_ones() {
     }
 }
 
-/// A family offers every method but Distance, which only one with a distance estimate offers.
+/// A family offers what it computes: Distance only with a distance estimate, the methods that read
+/// the orbit's statistics only where the iteration records them (not Newton).
 #[test]
-fn a_family_offers_distance_only_with_a_distance_estimate() {
+fn a_family_offers_what_it_computes() {
     use crate::formula::{caps, BURNING_SHIP, CUSTOM, MANDELBROT, NEWTON, PHOENIX};
-    for f in [MANDELBROT, PHOENIX, BURNING_SHIP, NEWTON, CUSTOM] {
-        let c = caps(f);
-        for m in ColorMethod::ALL {
-            let want = m != ColorMethod::Distance || c.distance_estimate;
-            assert_eq!(m.offered_for(c), want, "formula {f}, {m:?}");
-        }
-    }
-    assert!(ColorMethod::Distance.offered_for(caps(MANDELBROT)));
-    assert!(!ColorMethod::Distance.offered_for(caps(BURNING_SHIP)));
+    use ColorMethod::*;
+    let offered = |f: u32| -> Vec<ColorMethod> { ColorMethod::ALL.into_iter().filter(|m| m.offered_for(caps(f))).collect() };
+    assert_eq!(offered(MANDELBROT), ColorMethod::ALL);
+    assert_eq!(offered(PHOENIX), ColorMethod::ALL);
+    assert_eq!(offered(BURNING_SHIP), [Smooth, Stripe, TriangleIneq, OrbitTrap, Decomposition]);
+    assert_eq!(offered(CUSTOM), [Smooth, Stripe, TriangleIneq, OrbitTrap, Decomposition]);
+    assert_eq!(offered(NEWTON), [Smooth]);
+    // Each with its own reason.
+    assert_eq!(Distance.lacks(caps(BURNING_SHIP)), Some(Lacks::DistanceEstimate));
+    assert_eq!(Stripe.lacks(caps(NEWTON)), Some(Lacks::OrbitStatistics));
+    assert_eq!(Decomposition.lacks(caps(NEWTON)), Some(Lacks::OrbitStatistics));
+    assert_eq!(Distance.lacks(caps(NEWTON)), Some(Lacks::DistanceEstimate));
+    assert_eq!(Smooth.lacks(caps(NEWTON)), None);
 }
 
 /// The shader gets one constant per method and per trap, named as the table says, with the

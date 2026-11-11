@@ -586,17 +586,26 @@ impl FractadyneApp {
                         ui.menu_button(tr!(menu_color_method), |ui| {
                             // Grayed out as in the panel: Distance needs a distance estimate.
                             let caps = self.fractal.caps();
-                            let no_de = tr!(coloring_needs_derivative, family = self.fractal.display_name());
                             for m in crate::ColorMethod::ALL {
+                                let lacks = m.lacks(caps);
                                 let r = ui.add_enabled(
-                                    m.offered_for(caps),
+                                    lacks.is_none(),
                                     egui::SelectableLabel::new(self.coloring.color_method == m, m.label()),
                                 );
                                 if r.clicked() {
                                     self.coloring.color_method = m;
                                     ui.close_menu();
                                 }
-                                r.on_disabled_hover_text(&no_de);
+                                if let Some(l) = lacks {
+                                    r.on_disabled_hover_text(match l {
+                                        fractadyne_core::coloring::Lacks::DistanceEstimate => {
+                                            tr!(coloring_needs_derivative, family = self.fractal.display_name())
+                                        }
+                                        fractadyne_core::coloring::Lacks::OrbitStatistics => {
+                                            tr!(coloring_needs_statistics, family = self.fractal.display_name())
+                                        }
+                                    });
+                                }
                             }
                         });
                         ui.menu_button(tr!(menu_color_palette), |ui| {

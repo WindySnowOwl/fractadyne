@@ -255,6 +255,10 @@ enum Screen {
     /// that they do nothing here. The view is one color, as the note says, and the step holds it to
     /// that.
     NoDerivative,
+    /// Newton, which records no orbit statistics, with Stripe chosen: the panel grays out the
+    /// statistics methods in the list and says under the Method box that this one colors the view
+    /// one color, which the step holds the canvas to (the 2026-11-11 coloring matrix finding).
+    NoStatistics,
 }
 
 /// The stripe-tail steps' view (the seahorse valley at 2e3x, direct), and how far they pan away
@@ -1025,6 +1029,7 @@ fn build_steps() -> Vec<Step> {
         screen("stripe-tail-away", Screen::StripeTailAway),
         screen("stripe-tail-on", Screen::StripeTailOn),
         screen("no-derivative", Screen::NoDerivative),
+        screen("no-statistics", Screen::NoStatistics),
     ]
 }
 
@@ -1746,6 +1751,14 @@ impl FractadyneApp {
                 self.effects.de = true;
                 self.dialogs.uitest_effects_open = Some(true);
             }
+            // The same restore as NoDerivative's (`uitest_effects_open`, in `uitest_close_all`).
+            Screen::NoStatistics => {
+                self.dialogs.right_panel_open = true;
+                self.set_show_mode(crate::ShowMode::Set);
+                self.set_fractal(crate::FractalKind::Newton);
+                self.coloring.color_method = crate::ColorMethod::Stripe;
+                self.dialogs.uitest_effects_open = Some(true);
+            }
             Screen::PaletteEditor => {
                 self.coloring.palette_editor_open = true;
                 // ⭐⭐**Seed a real custom gradient, or this step screenshots the EMPTY STATE.**
@@ -2202,14 +2215,19 @@ impl FractadyneApp {
         let deep_ambiguous =
             matches!(&step.kind, StepKind::Live(v) if v.expect == RenderMode::Floatexp);
         let blank = luma_stddev < 3.0 && buckets <= 2;
-        if matches!(step.kind, StepKind::Screen(Screen::NoDerivative)) {
-            // Flat by design: Distance on a family without a distance estimate colors the whole
-            // view one color. The note under the Method box says so, and this holds it to that,
-            // on the canvas alone (the panel stands inside the image's central 60% here).
+        if let StepKind::Screen(sc @ (Screen::NoDerivative | Screen::NoStatistics)) = step.kind {
+            // Flat by design: Distance on a family without a distance estimate, or a statistics
+            // method on one that records none, colors the whole view one color. The note under the
+            // Method box says so, and this holds it to that, on the canvas alone (the panel stands
+            // inside the image's central 60% here).
             let (_, sd, b) = canvas_stats(&image.pixels, w as usize, h as usize, self.central_rect_px);
             let one_color = sd < 3.0 && b <= 2;
             checks.push(Check {
-                name: "distance without a derivative is one color".into(),
+                name: if matches!(sc, Screen::NoDerivative) {
+                    "distance without a derivative is one color".into()
+                } else {
+                    "stripe without orbit statistics is one color".into()
+                },
                 verdict: if one_color { Verdict::Pass } else { Verdict::Fail },
                 detail: format!(
                     "canvas stddev {sd:.1}, {b} luma buckets{}",

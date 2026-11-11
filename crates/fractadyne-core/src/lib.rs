@@ -219,6 +219,13 @@ pub mod formula {
         /// (1e30) in its place, so Distance colors the whole view one color and relief and glow
         /// change nothing. Pinned to the shader's own test by `fractadyne-gpu`'s `de_gate_tests`.
         pub distance_estimate: bool,
+        /// The iteration records the orbit's statistics, which stripe, triangle, the orbit traps
+        /// and decomposition color by (`aux_step` / `aux_pack` in the shader): every escape-time
+        /// family but Newton, whose converged pixel returns none (`AUX_NONE`), so each of those
+        /// methods colored the whole Newton view one color (the coloring matrix, 2026-11-11). A
+        /// custom formula's module carries its own `aux_step`. Pinned to the shader by
+        /// `fractadyne-gpu`'s `de_gate_tests`.
+        pub orbit_statistics: bool,
     }
 
     /// The built-in families' capabilities. An unknown id gets none of them, and glitch correction
@@ -247,6 +254,7 @@ pub mod formula {
             export_glitch_correction: !polynomial && formula != CUSTOM && formula != LIFE && formula != LSYSTEM,
             convergent: formula == NEWTON,
             distance_estimate: polynomial || formula == PHOENIX,
+            orbit_statistics: (formula < COUNT && formula != NEWTON) || formula == CUSTOM,
         }
     }
 }

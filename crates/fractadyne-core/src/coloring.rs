@@ -165,13 +165,33 @@ impl ColorMethod {
     pub const fn bla_aggregate(self) -> bool {
         self.spec().bla_aggregate
     }
-    /// Whether a family with these capabilities offers this method: the one rule the method box,
-    /// the Color menu and the coloring matrix (`--coloring-matrix`) share. Only Distance asks for
-    /// something a family can lack, the distance estimate; every other method is offered on every
-    /// escape-time family.
-    pub const fn offered_for(self, caps: crate::formula::FormulaCaps) -> bool {
-        caps.distance_estimate || !self.needs_distance_estimate()
+    /// What a family with these capabilities lacks for this method, if anything: Distance needs the
+    /// distance estimate, the methods that read the aux lane need the orbit's statistics.
+    pub const fn lacks(self, caps: crate::formula::FormulaCaps) -> Option<Lacks> {
+        if self.needs_distance_estimate() && !caps.distance_estimate {
+            Some(Lacks::DistanceEstimate)
+        } else if self.needs_aux() && !caps.orbit_statistics {
+            Some(Lacks::OrbitStatistics)
+        } else {
+            None
+        }
     }
+    /// Whether a family with these capabilities offers this method: it lacks nothing the method
+    /// needs. The one rule the method box, the Color menu and the coloring matrix
+    /// (`--coloring-matrix`) share.
+    pub const fn offered_for(self, caps: crate::formula::FormulaCaps) -> bool {
+        self.lacks(caps).is_none()
+    }
+}
+
+/// What a family can lack that a coloring method needs ([`ColorMethod::lacks`]): each has its own
+/// reason in the method box and the Color menu.
+#[derive(Clone, Copy, PartialEq, Eq, Debug)]
+pub enum Lacks {
+    /// The derivative the distance estimate comes from (`FormulaCaps::distance_estimate`).
+    DistanceEstimate,
+    /// The orbit's statistics (`FormulaCaps::orbit_statistics`): Newton's pixels converge to a root.
+    OrbitStatistics,
 }
 
 /// One orbit-trap shape's row of the table.

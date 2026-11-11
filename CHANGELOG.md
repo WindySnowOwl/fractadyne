@@ -59,6 +59,12 @@ published as the pre-releases `v0.2.41-beta.1` to `v0.2.41-beta.150`, and a "bet
 
 Changes after 0.3.0-beta.1:
 
+- **Newton no longer offers coloring methods it cannot draw (0.3.0-beta.27).** Stripe average,
+  triangle inequality, the orbit traps and decomposition color by statistics of a pixel's escaping
+  orbit, and a Newton pixel converges to a root instead, so each of them colored the whole Newton
+  view one color. The method box and the Color menu now gray them out for Newton, saying why when
+  you point at one. A session that already uses one keeps it, with a note under the Method box, and
+  `--method` says so on the command line.
 - **Distance coloring no longer draws black dots near the boundary (0.3.0-beta.27).** Where a
   pixel takes a long time to escape, the distance to the set is tiny, and the calculation squared a
   number too large for the graphics card's precision: the distance came out as minus infinity and
