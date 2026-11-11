@@ -57,7 +57,7 @@ fn every_built_in_step_generates_a_valid_module_with_its_own_floatexp_paths() {
         assert_eq!(s.matches("let base = iter % CUSTOM_PHASES;").count(), 4, "all four rebases phase-aligned");
         assert!(s.contains("dz = cset(df_sub(z_full_re, r0.re), df_sub(z_full_im, r0.im));"), "the chunk rebase's names");
         assert!(s.contains("    let nrm = vec2<f32>(0.0, 0.0);\n    let de = 1.0e30;\n"), "the resolve's no-DE values");
-        assert!(!s.contains("let de = de_log2(mag2, d.x * d.x + d.y * d.y, sm.w);"), "the resolve's DE survived");
+        assert!(!s.contains("let de = de_log2(mag2, d, sm.w);"), "the resolve's DE survived");
         assert!(!s.contains(fe), "formula {id}: the fixed floatexp path is still present");
         assert!(!s.contains(chunk_fe), "formula {id}: the fixed floatexp chunk pass is still present");
         assert_eq!(s.matches("fn chunk_fe_at(").count(), 1, "formula {id}: one floatexp chunk body");

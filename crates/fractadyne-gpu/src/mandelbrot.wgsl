@@ -646,10 +646,23 @@ fn fe_mul_c(a: Fe, zr: f32, zi: f32) -> Fe {
 // log2 of the distance estimate in *pixels*: de = |z|·ln|z| / |dz/dc|, then / step.
 //   |D| = sqrt(dmag2)·2^dexp ;  pixel step = |iu.step.x|·2^iu.delta_exp.
 // Returned as a log so the color pass can build animated distance contours cheaply.
-fn de_log2(z2: f32, dmag2: f32, dexp: f32) -> f32 {
+fn de_log2(z2: f32, d: vec2<f32>, dexp: f32) -> f32 {
     let zm = sqrt(max(z2, 1.0));
     let num = zm * log(zm); // |z|·ln|z|
-    let dlog2 = 0.5 * log2(max(dmag2, 1.0e-30)) + dexp;
+    // log2|d|. ⭐Not from |d|² once that overflows f32 (|d| past about 1.8e19, which a slow escape's
+    // derivative reaches while it is still a number): the distance came out -inf and the color pass
+    // made NaN of it, on 2.5% of a Phoenix view at 1e3x and on Multibrot and Mandelbrot boundaries
+    // (the coloring matrix, 2026-11-11). Below that the square, exactly as before.
+    let dmag2 = d.x * d.x + d.y * d.y;
+    var dl = 0.5 * log2(max(dmag2, 1.0e-30));
+    if (dmag2 > 1.0e38) {
+        let ax = abs(d.x);
+        let ay = abs(d.y);
+        let big = max(ax, ay);
+        let r = min(ax, ay) / big;
+        dl = log2(big) + 0.5 * log2(1.0 + r * r);
+    }
+    let dlog2 = dl + dexp;
     // @@STRIP_STEPLOG_BEGIN — a strip's module puts each texel's own size here (`strip.rs`).
     let steplog = log2(max(abs(iu.step.x), 1.0e-30)) + f32(iu.delta_exp);
     // @@STRIP_STEPLOG_END
@@ -1689,7 +1702,7 @@ fn iterate_at(gx: f32, gy: f32) -> FragOut {
         var de = 1.0e30;
         if (iu.formula <= 3u || iu.formula == 8u || fam_holo(iu.formula)) {
             nrm = slope_normal(zf, vec2<f32>(dz.re.x, dz.im.x));
-            de = de_log2(mag2, dz.re.x * dz.re.x + dz.im.x * dz.im.x, 0.0);
+            de = de_log2(mag2, vec2<f32>(dz.re.x, dz.im.x), 0.0);
         }
         trap_hist_commit(aux, gx, gy);
         let aux_out = select(AUX_NONE, aux_pack(aux, band_pos(mag2, power_f, bail2_of(iu.formula)), zf), (iu.aux_on & 1u) == 1u);
@@ -2184,7 +2197,7 @@ fn iterate_at(gx: f32, gy: f32) -> FragOut {
         var de = 1.0e30;
         if (iu.formula <= 3u || iu.formula == 8u || fam_holo(iu.formula)) {
             nrm = slope_normal(zf, vec2<f32>(D.m.re.x, D.m.im.x));
-            de = de_log2(mag2, D.m.re.x * D.m.re.x + D.m.im.x * D.m.im.x, f32(D.e));
+            de = de_log2(mag2, vec2<f32>(D.m.re.x, D.m.im.x), f32(D.e));
         }
         trap_hist_commit(aux, gx, gy);
         let aux_out = select(AUX_NONE, aux_pack(aux, band_pos(mag2, power_f, bail2_of(iu.formula)), zf), (iu.aux_on & 1u) == 1u);
@@ -2414,7 +2427,7 @@ fn iterate_at(gx: f32, gy: f32) -> FragOut {
         var de = 1.0e30;
         if (iu.formula <= 3u || iu.formula == 8u || fam_holo(iu.formula)) {
             nrm = slope_normal(zf, vec2<f32>(D.m.re.x, D.m.im.x));
-            de = de_log2(mag2, D.m.re.x * D.m.re.x + D.m.im.x * D.m.im.x, f32(D.e));
+            de = de_log2(mag2, vec2<f32>(D.m.re.x, D.m.im.x), f32(D.e));
         }
         trap_hist_commit(aux, gx, gy);
         let aux_out = select(AUX_NONE, aux_pack(aux, band_pos(mag2, power_f, bail2_of(iu.formula)), zf), (iu.aux_on & 1u) == 1u);
@@ -3595,7 +3608,7 @@ fn fs_resolve(in: VsOut) -> FragOut {
     // @@CUSTOM_RESOLVE_DE_BEGIN — a custom module has no derivative (st_dz carries z_{n-1}), so
     // it writes fs_iterate's no-DE values here instead.
     let nrm = slope_normal(zf, d);
-    let de = de_log2(mag2, d.x * d.x + d.y * d.y, sm.w);
+    let de = de_log2(mag2, d, sm.w);
     // @@CUSTOM_RESOLVE_DE_END
     // ⭐⭐WHOLE-FRAME ESCAPE RANGE FOR LIVE AUTO-NORMALIZATION. The iterate passes commit the range
     // at each pixel's SETTLE TRANSITION, which on a chunked walk means only the pixels that

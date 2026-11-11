@@ -589,11 +589,6 @@ check = "flat"
 reason = "Newton writes no statistics: a converged pixel returns AUX_NONE (mandelbrot.wgsl), so stripe, triangle, the traps and decomposition draw one color. The method box and the Color menu still offer them (TODO: offer them only where the family computes them)."
 
 [[known]]
-cell = "*/distance"
-check = "nan"
-reason = "BUG (TODO): where the derivative overflows f32 (slow escapes on Multibrot 3-8 and Phoenix, deep filaments), de_log2 squares it to infinity, the distance is -inf, and the color pass makes NaN of it. The NaN pixels' iteration data reads DE -inf."
-
-[[known]]
 cell = "mandelbrot-minibrot-9.3e78/trap-point"
 check = "bla"
 reason = "OPEN BUG (TODO.md, 2026-11-11): near this minibrot the point and cross traps through BLA and the plain render (no BLA, no series) are each one flat color, a different one, on every pixel. Which is right is not known yet: it needs the CPU oracle's trap minimum. Listed so the matrix's other cells stay a gate."
