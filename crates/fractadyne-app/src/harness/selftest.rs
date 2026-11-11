@@ -72,7 +72,7 @@ pub(crate) const GROUPS: &[&str] = &[
     "display", "catalog", "goldens", "bench-matrix", "live-res", "appearance", "band-seams",
     "checklist", "replay", "settings-quarantine", "expmap", "assemble", "de-pixels",
     "colour-box", "cycle-check", "export-contain", "honest-step", "palette-fade", "retreat", "view-thumb",
-    "width-independence",
+    "width-independence", "coloring-matrix-quick",
 ];
 
 /// Groups that run ONLY when named. ⛔Kept out of `GROUPS` so a bare `--selftest` never pays for
@@ -208,8 +208,9 @@ fn img_diff(a: &[u8], b: &[u8]) -> (u32, f64) {
 ///
 /// ⚠A differential check ("A and B differ") is worthless on its own: it passes when one of them
 /// is a blank frame, which is the failure it was written to catch. `coherent` must be asserted on
-/// BOTH sides first, and every caller below does.
-mod frame {
+/// BOTH sides first, and every caller below does. The coloring matrix judges its cells by the same
+/// three (`coloring_matrix`).
+pub(crate) mod frame {
     /// Rec.709 luma of an RGBA8 buffer, one byte per pixel out.
     fn luma(px: &[u8]) -> Vec<f32> {
         px.chunks_exact(4)
@@ -219,7 +220,7 @@ mod frame {
 
     /// Tonal spread and how many 16-level buckets are occupied. A real fractal frame has both;
     /// all-black, all-white and uniform-flat frames have neither.
-    pub(super) fn coherence(px: &[u8]) -> (f32, usize) {
+    pub(crate) fn coherence(px: &[u8]) -> (f32, usize) {
         let l = luma(px);
         if l.is_empty() {
             return (0.0, 0);
@@ -250,14 +251,14 @@ mod frame {
     /// from the other, giving stddev 10.6 across a single bucket. Spread alone separates that
     /// cleanly from the flat control's 0.3 - a 30x margin - and does not punish an image for
     /// having few distinct tones, which is not what "flat" means.
-    pub(super) fn coherent(px: &[u8]) -> bool {
+    pub(crate) fn coherent(px: &[u8]) -> bool {
         let (sd, b) = coherence(px);
         let _ = b; // reported as diagnostics; the verdict is spread alone, see above
         sd >= 1.0
     }
 
     /// Mean absolute per-channel difference. Same-size buffers only.
-    pub(super) fn distance(a: &[u8], b: &[u8]) -> f64 {
+    pub(crate) fn distance(a: &[u8], b: &[u8]) -> f64 {
         if a.len() != b.len() || a.is_empty() {
             return f64::INFINITY;
         }
@@ -10606,6 +10607,38 @@ zoom = \"1e94\"
         // method and palette must produce a coherent image, and must not produce the SAME image as
         // its neighbors. A method silently falling back to another one looks perfectly fine in a
         // screenshot and is invisible to the goldens, which only ever render one method each.
+        // ---- coloring-matrix-quick: every coloring method on the quick views (coloring plan B1) ----
+        // `--coloring-matrix --quick` as one check: Mandelbrot, Multibrot 3 and Burning Ship at their
+        // overview, one df32 and one floatexp view, every method and variant, each cell's picture,
+        // accelerators against the plain render, determinism and supersampling. A red cell its view
+        // set lists under [[known]] is understood and does not fail it. Its JSON and summary land in
+        // logs/coloring-matrix-<stamp>/ (no contact sheets: they need the window's fonts).
+        if want("coloring-matrix-quick") {
+            let saved = self.coloring_matrix_saved();
+            let cli = super::coloring_matrix::Cli {
+                quick: true,
+                only: None,
+                views: anchored(super::coloring_matrix::VIEWS_FILE),
+                out: None,
+                bless: false,
+                done: true,
+            };
+            let v = self.run_coloring_matrix(None, device, queue, &cli);
+            self.coloring_matrix_restore(saved);
+            push_check(&mut checks, &mut last_check_t, SelfCheck {
+                category: "appearance",
+                name: "coloring matrix --quick: no new red cell".into(),
+                params: format!("{} (quick views)", super::coloring_matrix::VIEWS_FILE),
+                result: if v.red.is_empty() {
+                    format!("{} cells, {} known red, {} n/a", v.cells, v.known, v.not_offered)
+                } else {
+                    format!("{} cells, {} red: {}", v.cells, v.red.len(), v.red.join("; "))
+                },
+                threshold: "no red cell outside [[known]]",
+                pass: v.code == 0,
+            });
+        }
+
         if want("appearance") {
             let (aw, ah) = (480u32, 270u32);
             // One view with interior, exterior and filament in frame, so every method has

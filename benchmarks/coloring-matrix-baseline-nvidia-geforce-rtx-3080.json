@@ -1,0 +1,2756 @@
+{
+  "cells": {
+    "buffalo-3-deep-1e6/decomposition": {
+      "color_ms": 0.011264,
+      "iterate_ms": 2.791424
+    },
+    "buffalo-3-deep-1e6/smooth": {
+      "color_ms": 0.009216,
+      "iterate_ms": 2.6460160000000004
+    },
+    "buffalo-3-deep-1e6/stripe": {
+      "color_ms": 0.01024,
+      "iterate_ms": 3.16416
+    },
+    "buffalo-3-deep-1e6/stripe-tail": {
+      "color_ms": 0.010144,
+      "iterate_ms": 3.2102399999999998
+    },
+    "buffalo-3-deep-1e6/trap-circle": {
+      "color_ms": 0.011264,
+      "iterate_ms": 2.898944
+    },
+    "buffalo-3-deep-1e6/trap-cross": {
+      "color_ms": 0.011264,
+      "iterate_ms": 2.87232
+    },
+    "buffalo-3-deep-1e6/trap-point": {
+      "color_ms": 0.0112,
+      "iterate_ms": 2.896896
+    },
+    "buffalo-3-deep-1e6/triangle": {
+      "color_ms": 0.01024,
+      "iterate_ms": 2.965504
+    },
+    "buffalo-3-deep-2e28/decomposition": {
+      "color_ms": 0.012288,
+      "iterate_ms": 230.621184
+    },
+    "buffalo-3-deep-2e28/smooth": {
+      "color_ms": 0.041984,
+      "iterate_ms": 14.583808
+    },
+    "buffalo-3-deep-2e28/stripe": {
+      "color_ms": 0.009216,
+      "iterate_ms": 4.796416
+    },
+    "buffalo-3-deep-2e28/stripe-tail": {
+      "color_ms": 0.009216,
+      "iterate_ms": 4.825088
+    },
+    "buffalo-3-deep-2e28/trap-circle": {
+      "color_ms": 0.01024,
+      "iterate_ms": 4.723712
+    },
+    "buffalo-3-deep-2e28/trap-cross": {
+      "color_ms": 0.010144,
+      "iterate_ms": 4.739072
+    },
+    "buffalo-3-deep-2e28/trap-point": {
+      "color_ms": 0.01024,
+      "iterate_ms": 4.739072
+    },
+    "buffalo-3-deep-2e28/triangle": {
+      "color_ms": 0.010144,
+      "iterate_ms": 4.967423999999999
+    },
+    "buffalo-3-overview/decomposition": {
+      "color_ms": 0.011264,
+      "iterate_ms": 0.530432
+    },
+    "buffalo-3-overview/smooth": {
+      "color_ms": 0.011264,
+      "iterate_ms": 0.505856
+    },
+    "buffalo-3-overview/stripe": {
+      "color_ms": 0.009216,
+      "iterate_ms": 0.667648
+    },
+    "buffalo-3-overview/stripe-tail": {
+      "color_ms": 0.01024,
+      "iterate_ms": 0.6768639999999999
+    },
+    "buffalo-3-overview/trap-circle": {
+      "color_ms": 0.011168,
+      "iterate_ms": 0.5785600000000001
+    },
+    "buffalo-3-overview/trap-cross": {
+      "color_ms": 0.0112,
+      "iterate_ms": 0.55296
+    },
+    "buffalo-3-overview/trap-point": {
+      "color_ms": 0.010239999999999999,
+      "iterate_ms": 0.5642240000000001
+    },
+    "buffalo-3-overview/triangle": {
+      "color_ms": 0.01024,
+      "iterate_ms": 0.584704
+    },
+    "buffalo-4-deep-1e6/decomposition": {
+      "color_ms": 0.018432,
+      "iterate_ms": 20.941824
+    },
+    "buffalo-4-deep-1e6/smooth": {
+      "color_ms": 0.011264,
+      "iterate_ms": 12.307455999999998
+    },
+    "buffalo-4-deep-1e6/stripe": {
+      "color_ms": 0.01024,
+      "iterate_ms": 14.898176000000001
+    },
+    "buffalo-4-deep-1e6/stripe-tail": {
+      "color_ms": 0.012288,
+      "iterate_ms": 15.142911999999999
+    },
+    "buffalo-4-deep-1e6/trap-circle": {
+      "color_ms": 0.018432,
+      "iterate_ms": 21.02272
+    },
+    "buffalo-4-deep-1e6/trap-cross": {
+      "color_ms": 0.012256,
+      "iterate_ms": 13.244416
+    },
+    "buffalo-4-deep-1e6/trap-point": {
+      "color_ms": 0.011264,
+      "iterate_ms": 13.472767999999999
+    },
+    "buffalo-4-deep-1e6/triangle": {
+      "color_ms": 0.011264,
+      "iterate_ms": 13.728768
+    },
+    "buffalo-4-deep-2e28/decomposition": {
+      "color_ms": 0.014336,
+      "iterate_ms": 185.596928
+    },
+    "buffalo-4-deep-2e28/smooth": {
+      "color_ms": 0.013312000000000001,
+      "iterate_ms": 283.355136
+    },
+    "buffalo-4-deep-2e28/stripe": {
+      "color_ms": 0.011264,
+      "iterate_ms": 294.6816
+    },
+    "buffalo-4-deep-2e28/stripe-tail": {
+      "color_ms": 0.013312000000000001,
+      "iterate_ms": 291.15904
+    },
+    "buffalo-4-deep-2e28/trap-circle": {
+      "color_ms": 0.014336,
+      "iterate_ms": 299.298816
+    },
+    "buffalo-4-deep-2e28/trap-cross": {
+      "color_ms": 0.014336,
+      "iterate_ms": 284.67404799999997
+    },
+    "buffalo-4-deep-2e28/trap-point": {
+      "color_ms": 0.014336,
+      "iterate_ms": 289.445888
+    },
+    "buffalo-4-deep-2e28/triangle": {
+      "color_ms": 0.011264,
+      "iterate_ms": 290.128896
+    },
+    "buffalo-4-overview/decomposition": {
+      "color_ms": 0.011264,
+      "iterate_ms": 0.53248
+    },
+    "buffalo-4-overview/smooth": {
+      "color_ms": 0.011231999999999999,
+      "iterate_ms": 0.472064
+    },
+    "buffalo-4-overview/stripe": {
+      "color_ms": 0.009216,
+      "iterate_ms": 0.638976
+    },
+    "buffalo-4-overview/stripe-tail": {
+      "color_ms": 0.01024,
+      "iterate_ms": 0.6563840000000001
+    },
+    "buffalo-4-overview/trap-circle": {
+      "color_ms": 0.009216,
+      "iterate_ms": 0.545792
+    },
+    "buffalo-4-overview/trap-cross": {
+      "color_ms": 0.011264,
+      "iterate_ms": 0.539648
+    },
+    "buffalo-4-overview/trap-point": {
+      "color_ms": 0.01024,
+      "iterate_ms": 0.566272
+    },
+    "buffalo-4-overview/triangle": {
+      "color_ms": 0.009216,
+      "iterate_ms": 0.5662720000000001
+    },
+    "buffalo-5-deep-1e6/decomposition": {
+      "color_ms": 0.019456,
+      "iterate_ms": 20.050944
+    },
+    "buffalo-5-deep-1e6/smooth": {
+      "color_ms": 0.012288,
+      "iterate_ms": 12.214272000000001
+    },
+    "buffalo-5-deep-1e6/stripe": {
+      "color_ms": 0.011264,
+      "iterate_ms": 13.566976
+    },
+    "buffalo-5-deep-1e6/stripe-tail": {
+      "color_ms": 0.011264,
+      "iterate_ms": 13.83936
+    },
+    "buffalo-5-deep-1e6/trap-circle": {
+      "color_ms": 0.011264,
+      "iterate_ms": 12.606463999999999
+    },
+    "buffalo-5-deep-1e6/trap-cross": {
+      "color_ms": 0.012288,
+      "iterate_ms": 10.907648
+    },
+    "buffalo-5-deep-1e6/trap-point": {
+      "color_ms": 0.01024,
+      "iterate_ms": 11.753472
+    },
+    "buffalo-5-deep-1e6/triangle": {
+      "color_ms": 0.011264,
+      "iterate_ms": 11.936768
+    },
+    "buffalo-5-deep-2e28/decomposition": {
+      "color_ms": 0.013312000000000001,
+      "iterate_ms": 345.33273599999995
+    },
+    "buffalo-5-deep-2e28/smooth": {
+      "color_ms": 0.013312000000000001,
+      "iterate_ms": 389.248
+    },
+    "buffalo-5-deep-2e28/stripe": {
+      "color_ms": 0.012288,
+      "iterate_ms": 465.787904
+    },
+    "buffalo-5-deep-2e28/stripe-tail": {
+      "color_ms": 0.012288,
+      "iterate_ms": 463.430656
+    },
+    "buffalo-5-deep-2e28/trap-circle": {
+      "color_ms": 0.013216,
+      "iterate_ms": 459.557888
+    },
+    "buffalo-5-deep-2e28/trap-cross": {
+      "color_ms": 0.014272,
+      "iterate_ms": 455.53766400000006
+    },
+    "buffalo-5-deep-2e28/trap-point": {
+      "color_ms": 0.013312000000000001,
+      "iterate_ms": 456.242176
+    },
+    "buffalo-5-deep-2e28/triangle": {
+      "color_ms": 0.011264,
+      "iterate_ms": 457.714688
+    },
+    "buffalo-5-overview/decomposition": {
+      "color_ms": 0.012256,
+      "iterate_ms": 0.528384
+    },
+    "buffalo-5-overview/smooth": {
+      "color_ms": 0.011264,
+      "iterate_ms": 0.474112
+    },
+    "buffalo-5-overview/stripe": {
+      "color_ms": 0.009216,
+      "iterate_ms": 0.6246400000000001
+    },
+    "buffalo-5-overview/stripe-tail": {
+      "color_ms": 0.009216,
+      "iterate_ms": 0.6338560000000001
+    },
+    "buffalo-5-overview/trap-circle": {
+      "color_ms": 0.01024,
+      "iterate_ms": 0.549888
+    },
+    "buffalo-5-overview/trap-cross": {
+      "color_ms": 0.011264,
+      "iterate_ms": 0.559104
+    },
+    "buffalo-5-overview/trap-point": {
+      "color_ms": 0.011264,
+      "iterate_ms": 0.5744640000000001
+    },
+    "buffalo-5-overview/triangle": {
+      "color_ms": 0.01024,
+      "iterate_ms": 0.5693440000000001
+    },
+    "buffalo-deep-1e6/decomposition": {
+      "color_ms": 0.011264,
+      "iterate_ms": 7.506944000000001
+    },
+    "buffalo-deep-1e6/smooth": {
+      "color_ms": 0.011264,
+      "iterate_ms": 7.006208
+    },
+    "buffalo-deep-1e6/stripe": {
+      "color_ms": 0.01024,
+      "iterate_ms": 8.941568
+    },
+    "buffalo-deep-1e6/stripe-tail": {
+      "color_ms": 0.010144,
+      "iterate_ms": 9.08288
+    },
+    "buffalo-deep-1e6/trap-circle": {
+      "color_ms": 0.011264,
+      "iterate_ms": 7.916544
+    },
+    "buffalo-deep-1e6/trap-cross": {
+      "color_ms": 0.011264,
+      "iterate_ms": 7.72096
+    },
+    "buffalo-deep-1e6/trap-point": {
+      "color_ms": 0.011264,
+      "iterate_ms": 7.917568
+    },
+    "buffalo-deep-1e6/triangle": {
+      "color_ms": 0.010176000000000001,
+      "iterate_ms": 8.144896
+    },
+    "buffalo-deep-2e28/decomposition": {
+      "color_ms": 0.014336,
+      "iterate_ms": 217.66656
+    },
+    "buffalo-deep-2e28/smooth": {
+      "color_ms": 0.012288,
+      "iterate_ms": 369.56057599999997
+    },
+    "buffalo-deep-2e28/stripe": {
+      "color_ms": 0.011264,
+      "iterate_ms": 378.45504
+    },
+    "buffalo-deep-2e28/stripe-tail": {
+      "color_ms": 0.013312000000000001,
+      "iterate_ms": 380.368896
+    },
+    "buffalo-deep-2e28/trap-circle": {
+      "color_ms": 0.013312000000000001,
+      "iterate_ms": 383.450112
+    },
+    "buffalo-deep-2e28/trap-cross": {
+      "color_ms": 0.013312000000000001,
+      "iterate_ms": 373.276672
+    },
+    "buffalo-deep-2e28/trap-point": {
+      "color_ms": 0.013312000000000001,
+      "iterate_ms": 373.51424
+    },
+    "buffalo-deep-2e28/triangle": {
+      "color_ms": 0.011264,
+      "iterate_ms": 377.495552
+    },
+    "buffalo-overview/decomposition": {
+      "color_ms": 0.011264,
+      "iterate_ms": 0.710656
+    },
+    "buffalo-overview/smooth": {
+      "color_ms": 0.010208,
+      "iterate_ms": 0.607232
+    },
+    "buffalo-overview/stripe": {
+      "color_ms": 0.010208,
+      "iterate_ms": 0.9390080000000001
+    },
+    "buffalo-overview/stripe-tail": {
+      "color_ms": 0.009216,
+      "iterate_ms": 0.964608
+    },
+    "buffalo-overview/trap-circle": {
+      "color_ms": 0.011168,
+      "iterate_ms": 0.766976
+    },
+    "buffalo-overview/trap-cross": {
+      "color_ms": 0.01024,
+      "iterate_ms": 0.771072
+    },
+    "buffalo-overview/trap-point": {
+      "color_ms": 0.011264,
+      "iterate_ms": 0.7690239999999999
+    },
+    "buffalo-overview/triangle": {
+      "color_ms": 0.009216,
+      "iterate_ms": 0.822272
+    },
+    "burning-ship-3-deep-1e6/decomposition": {
+      "color_ms": 0.011264,
+      "iterate_ms": 7.76704
+    },
+    "burning-ship-3-deep-1e6/smooth": {
+      "color_ms": 0.011264,
+      "iterate_ms": 7.351296
+    },
+    "burning-ship-3-deep-1e6/stripe": {
+      "color_ms": 0.010239999999999999,
+      "iterate_ms": 9.075712
+    },
+    "burning-ship-3-deep-1e6/stripe-tail": {
+      "color_ms": 0.010239999999999999,
+      "iterate_ms": 9.225216
+    },
+    "burning-ship-3-deep-1e6/trap-circle": {
+      "color_ms": 0.011264,
+      "iterate_ms": 8.7296
+    },
+    "burning-ship-3-deep-1e6/trap-cross": {
+      "color_ms": 0.011264,
+      "iterate_ms": 7.9933440000000004
+    },
+    "burning-ship-3-deep-1e6/trap-point": {
+      "color_ms": 0.011264,
+      "iterate_ms": 8.15104
+    },
+    "burning-ship-3-deep-1e6/triangle": {
+      "color_ms": 0.010239999999999999,
+      "iterate_ms": 8.293375999999999
+    },
+    "burning-ship-3-deep-2e28/decomposition": {
+      "color_ms": 0.013312000000000001,
+      "iterate_ms": 248.86067200000002
+    },
+    "burning-ship-3-deep-2e28/smooth": {
+      "color_ms": 0.012288,
+      "iterate_ms": 360.810496
+    },
+    "burning-ship-3-deep-2e28/stripe": {
+      "color_ms": 0.011264,
+      "iterate_ms": 375.43116799999996
+    },
+    "burning-ship-3-deep-2e28/stripe-tail": {
+      "color_ms": 0.012256,
+      "iterate_ms": 376.50432
+    },
+    "burning-ship-3-deep-2e28/trap-circle": {
+      "color_ms": 0.013312000000000001,
+      "iterate_ms": 363.587584
+    },
+    "burning-ship-3-deep-2e28/trap-cross": {
+      "color_ms": 0.01328,
+      "iterate_ms": 364.326912
+    },
+    "burning-ship-3-deep-2e28/trap-point": {
+      "color_ms": 0.012288,
+      "iterate_ms": 367.653888
+    },
+    "burning-ship-3-deep-2e28/triangle": {
+      "color_ms": 0.011264,
+      "iterate_ms": 373.09952
+    },
+    "burning-ship-3-overview/decomposition": {
+      "color_ms": 0.011264,
+      "iterate_ms": 0.90112
+    },
+    "burning-ship-3-overview/smooth": {
+      "color_ms": 0.011168,
+      "iterate_ms": 0.809984
+    },
+    "burning-ship-3-overview/stripe": {
+      "color_ms": 0.009216,
+      "iterate_ms": 1.107968
+    },
+    "burning-ship-3-overview/stripe-tail": {
+      "color_ms": 0.010239999999999999,
+      "iterate_ms": 1.119232
+    },
+    "burning-ship-3-overview/trap-circle": {
+      "color_ms": 0.011264,
+      "iterate_ms": 0.986112
+    },
+    "burning-ship-3-overview/trap-cross": {
+      "color_ms": 0.011264,
+      "iterate_ms": 0.958464
+    },
+    "burning-ship-3-overview/trap-point": {
+      "color_ms": 0.011264,
+      "iterate_ms": 0.95744
+    },
+    "burning-ship-3-overview/triangle": {
+      "color_ms": 0.011168,
+      "iterate_ms": 1.002496
+    },
+    "burning-ship-4-deep-1e6/decomposition": {
+      "color_ms": 0.019456,
+      "iterate_ms": 14.527488
+    },
+    "burning-ship-4-deep-1e6/smooth": {
+      "color_ms": 0.011264,
+      "iterate_ms": 8.792064
+    },
+    "burning-ship-4-deep-1e6/stripe": {
+      "color_ms": 0.010239999999999999,
+      "iterate_ms": 10.980352
+    },
+    "burning-ship-4-deep-1e6/stripe-tail": {
+      "color_ms": 0.011264,
+      "iterate_ms": 10.985472000000001
+    },
+    "burning-ship-4-deep-1e6/trap-circle": {
+      "color_ms": 0.011264,
+      "iterate_ms": 9.678847999999999
+    },
+    "burning-ship-4-deep-1e6/trap-cross": {
+      "color_ms": 0.011264,
+      "iterate_ms": 9.508863999999999
+    },
+    "burning-ship-4-deep-1e6/trap-point": {
+      "color_ms": 0.011264,
+      "iterate_ms": 9.6768
+    },
+    "burning-ship-4-deep-1e6/triangle": {
+      "color_ms": 0.01024,
+      "iterate_ms": 9.811968
+    },
+    "burning-ship-4-deep-2e28/decomposition": {
+      "color_ms": 0.012288,
+      "iterate_ms": 219.10016000000002
+    },
+    "burning-ship-4-deep-2e28/smooth": {
+      "color_ms": 0.011264,
+      "iterate_ms": 365.569024
+    },
+    "burning-ship-4-deep-2e28/stripe": {
+      "color_ms": 0.012256,
+      "iterate_ms": 369.734656
+    },
+    "burning-ship-4-deep-2e28/stripe-tail": {
+      "color_ms": 0.012288,
+      "iterate_ms": 380.22553600000003
+    },
+    "burning-ship-4-deep-2e28/trap-circle": {
+      "color_ms": 0.012288,
+      "iterate_ms": 373.425152
+    },
+    "burning-ship-4-deep-2e28/trap-cross": {
+      "color_ms": 0.014272,
+      "iterate_ms": 367.55865600000004
+    },
+    "burning-ship-4-deep-2e28/trap-point": {
+      "color_ms": 0.012288,
+      "iterate_ms": 367.21151999999995
+    },
+    "burning-ship-4-deep-2e28/triangle": {
+      "color_ms": 0.012288,
+      "iterate_ms": 368.87552
+    },
+    "burning-ship-4-overview/decomposition": {
+      "color_ms": 0.011200000000000002,
+      "iterate_ms": 0.866304
+    },
+    "burning-ship-4-overview/smooth": {
+      "color_ms": 0.011264,
+      "iterate_ms": 0.7905279999999999
+    },
+    "burning-ship-4-overview/stripe": {
+      "color_ms": 0.009216,
+      "iterate_ms": 1.089536
+    },
+    "burning-ship-4-overview/stripe-tail": {
+      "color_ms": 0.009216,
+      "iterate_ms": 1.1028479999999998
+    },
+    "burning-ship-4-overview/trap-circle": {
+      "color_ms": 0.010239999999999999,
+      "iterate_ms": 0.941056
+    },
+    "burning-ship-4-overview/trap-cross": {
+      "color_ms": 0.011264,
+      "iterate_ms": 0.909312
+    },
+    "burning-ship-4-overview/trap-point": {
+      "color_ms": 0.011200000000000002,
+      "iterate_ms": 0.933888
+    },
+    "burning-ship-4-overview/triangle": {
+      "color_ms": 0.01024,
+      "iterate_ms": 0.975872
+    },
+    "burning-ship-5-deep-1e6/decomposition": {
+      "color_ms": 0.016384,
+      "iterate_ms": 21.789696
+    },
+    "burning-ship-5-deep-1e6/smooth": {
+      "color_ms": 0.011264,
+      "iterate_ms": 12.664832
+    },
+    "burning-ship-5-deep-1e6/stripe": {
+      "color_ms": 0.010239999999999999,
+      "iterate_ms": 15.894528000000001
+    },
+    "burning-ship-5-deep-1e6/stripe-tail": {
+      "color_ms": 0.01024,
+      "iterate_ms": 16.135168
+    },
+    "burning-ship-5-deep-1e6/trap-circle": {
+      "color_ms": 0.022528,
+      "iterate_ms": 21.891072
+    },
+    "burning-ship-5-deep-1e6/trap-cross": {
+      "color_ms": 0.011264,
+      "iterate_ms": 14.272511999999999
+    },
+    "burning-ship-5-deep-1e6/trap-point": {
+      "color_ms": 0.012288,
+      "iterate_ms": 14.44864
+    },
+    "burning-ship-5-deep-1e6/triangle": {
+      "color_ms": 0.01024,
+      "iterate_ms": 14.041087999999998
+    },
+    "burning-ship-5-deep-2e28/decomposition": {
+      "color_ms": 0.013312000000000001,
+      "iterate_ms": 169.834496
+    },
+    "burning-ship-5-deep-2e28/smooth": {
+      "color_ms": 0.012288,
+      "iterate_ms": 226.414592
+    },
+    "burning-ship-5-deep-2e28/stripe": {
+      "color_ms": 0.013216,
+      "iterate_ms": 235.390976
+    },
+    "burning-ship-5-deep-2e28/stripe-tail": {
+      "color_ms": 0.013216,
+      "iterate_ms": 233.110528
+    },
+    "burning-ship-5-deep-2e28/trap-circle": {
+      "color_ms": 0.013312000000000001,
+      "iterate_ms": 219.168768
+    },
+    "burning-ship-5-deep-2e28/trap-cross": {
+      "color_ms": 0.013312000000000001,
+      "iterate_ms": 222.83264
+    },
+    "burning-ship-5-deep-2e28/trap-point": {
+      "color_ms": 0.013312000000000001,
+      "iterate_ms": 229.87776
+    },
+    "burning-ship-5-deep-2e28/triangle": {
+      "color_ms": 0.012288,
+      "iterate_ms": 220.61056000000002
+    },
+    "burning-ship-5-overview/decomposition": {
+      "color_ms": 0.011264,
+      "iterate_ms": 0.899072
+    },
+    "burning-ship-5-overview/smooth": {
+      "color_ms": 0.010239999999999999,
+      "iterate_ms": 0.827392
+    },
+    "burning-ship-5-overview/stripe": {
+      "color_ms": 0.01024,
+      "iterate_ms": 1.122304
+    },
+    "burning-ship-5-overview/stripe-tail": {
+      "color_ms": 0.01024,
+      "iterate_ms": 1.14176
+    },
+    "burning-ship-5-overview/trap-circle": {
+      "color_ms": 0.010239999999999999,
+      "iterate_ms": 0.96768
+    },
+    "burning-ship-5-overview/trap-cross": {
+      "color_ms": 0.010239999999999999,
+      "iterate_ms": 0.96256
+    },
+    "burning-ship-5-overview/trap-point": {
+      "color_ms": 0.011264,
+      "iterate_ms": 0.98816
+    },
+    "burning-ship-5-overview/triangle": {
+      "color_ms": 0.009216,
+      "iterate_ms": 1.0127359999999999
+    },
+    "burning-ship-deep-1e6/decomposition": {
+      "color_ms": 0.011264,
+      "iterate_ms": 5.641216
+    },
+    "burning-ship-deep-1e6/smooth": {
+      "color_ms": 0.010239999999999999,
+      "iterate_ms": 5.204992000000001
+    },
+    "burning-ship-deep-1e6/stripe": {
+      "color_ms": 0.010144,
+      "iterate_ms": 7.179264
+    },
+    "burning-ship-deep-1e6/stripe-tail": {
+      "color_ms": 0.009216,
+      "iterate_ms": 7.341056
+    },
+    "burning-ship-deep-1e6/trap-circle": {
+      "color_ms": 0.011264,
+      "iterate_ms": 6.076416
+    },
+    "burning-ship-deep-1e6/trap-cross": {
+      "color_ms": 0.011264,
+      "iterate_ms": 5.8920960000000004
+    },
+    "burning-ship-deep-1e6/trap-point": {
+      "color_ms": 0.012224,
+      "iterate_ms": 6.0733440000000005
+    },
+    "burning-ship-deep-1e6/triangle": {
+      "color_ms": 0.009216,
+      "iterate_ms": 5.7088
+    },
+    "burning-ship-deep-2e28/decomposition": {
+      "color_ms": 0.014336,
+      "iterate_ms": 177.411072
+    },
+    "burning-ship-deep-2e28/smooth": {
+      "color_ms": 0.011264,
+      "iterate_ms": 305.540096
+    },
+    "burning-ship-deep-2e28/stripe": {
+      "color_ms": 0.011264,
+      "iterate_ms": 326.606848
+    },
+    "burning-ship-deep-2e28/stripe-tail": {
+      "color_ms": 0.012288,
+      "iterate_ms": 303.638528
+    },
+    "burning-ship-deep-2e28/trap-circle": {
+      "color_ms": 0.013312000000000001,
+      "iterate_ms": 312.624128
+    },
+    "burning-ship-deep-2e28/trap-cross": {
+      "color_ms": 0.013312000000000001,
+      "iterate_ms": 309.649408
+    },
+    "burning-ship-deep-2e28/trap-point": {
+      "color_ms": 0.014336,
+      "iterate_ms": 318.44864
+    },
+    "burning-ship-deep-2e28/triangle": {
+      "color_ms": 0.011264,
+      "iterate_ms": 315.42272
+    },
+    "burning-ship-overview/decomposition": {
+      "color_ms": 0.011264,
+      "iterate_ms": 0.689152
+    },
+    "burning-ship-overview/smooth": {
+      "color_ms": 0.011231999999999999,
+      "iterate_ms": 0.5744640000000001
+    },
+    "burning-ship-overview/stripe": {
+      "color_ms": 0.01024,
+      "iterate_ms": 0.93184
+    },
+    "burning-ship-overview/stripe-tail": {
+      "color_ms": 0.010239999999999999,
+      "iterate_ms": 0.9390080000000001
+    },
+    "burning-ship-overview/trap-circle": {
+      "color_ms": 0.011264,
+      "iterate_ms": 0.770048
+    },
+    "burning-ship-overview/trap-cross": {
+      "color_ms": 0.011264,
+      "iterate_ms": 0.74752
+    },
+    "burning-ship-overview/trap-point": {
+      "color_ms": 0.011264,
+      "iterate_ms": 0.765952
+    },
+    "burning-ship-overview/triangle": {
+      "color_ms": 0.010239999999999999,
+      "iterate_ms": 0.82944
+    },
+    "celtic-3-deep-1e6/decomposition": {
+      "color_ms": 0.018432,
+      "iterate_ms": 19.781632
+    },
+    "celtic-3-deep-1e6/smooth": {
+      "color_ms": 0.010239999999999999,
+      "iterate_ms": 11.416576
+    },
+    "celtic-3-deep-1e6/stripe": {
+      "color_ms": 0.01024,
+      "iterate_ms": 13.855743999999998
+    },
+    "celtic-3-deep-1e6/stripe-tail": {
+      "color_ms": 0.010239999999999999,
+      "iterate_ms": 14.071808
+    },
+    "celtic-3-deep-1e6/trap-circle": {
+      "color_ms": 0.021504,
+      "iterate_ms": 20.554752
+    },
+    "celtic-3-deep-1e6/trap-cross": {
+      "color_ms": 0.019456,
+      "iterate_ms": 17.074176
+    },
+    "celtic-3-deep-1e6/trap-point": {
+      "color_ms": 0.012192000000000001,
+      "iterate_ms": 12.531711999999999
+    },
+    "celtic-3-deep-1e6/triangle": {
+      "color_ms": 0.01024,
+      "iterate_ms": 12.790783999999999
+    },
+    "celtic-3-deep-2e28/decomposition": {
+      "color_ms": 0.013312000000000001,
+      "iterate_ms": 174.671872
+    },
+    "celtic-3-deep-2e28/smooth": {
+      "color_ms": 0.013312000000000001,
+      "iterate_ms": 235.06944
+    },
+    "celtic-3-deep-2e28/stripe": {
+      "color_ms": 0.012288,
+      "iterate_ms": 242.02342399999998
+    },
+    "celtic-3-deep-2e28/stripe-tail": {
+      "color_ms": 0.013248,
+      "iterate_ms": 251.55584
+    },
+    "celtic-3-deep-2e28/trap-circle": {
+      "color_ms": 0.012288,
+      "iterate_ms": 264.0896
+    },
+    "celtic-3-deep-2e28/trap-cross": {
+      "color_ms": 0.013312000000000001,
+      "iterate_ms": 247.110656
+    },
+    "celtic-3-deep-2e28/trap-point": {
+      "color_ms": 0.014336,
+      "iterate_ms": 238.1568
+    },
+    "celtic-3-deep-2e28/triangle": {
+      "color_ms": 0.012288,
+      "iterate_ms": 249.66656
+    },
+    "celtic-3-overview/decomposition": {
+      "color_ms": 0.011264,
+      "iterate_ms": 0.515072
+    },
+    "celtic-3-overview/smooth": {
+      "color_ms": 0.011264,
+      "iterate_ms": 0.46694399999999997
+    },
+    "celtic-3-overview/stripe": {
+      "color_ms": 0.01024,
+      "iterate_ms": 0.6195200000000001
+    },
+    "celtic-3-overview/stripe-tail": {
+      "color_ms": 0.01024,
+      "iterate_ms": 0.63488
+    },
+    "celtic-3-overview/trap-circle": {
+      "color_ms": 0.011264,
+      "iterate_ms": 0.54272
+    },
+    "celtic-3-overview/trap-cross": {
+      "color_ms": 0.010239999999999999,
+      "iterate_ms": 0.55296
+    },
+    "celtic-3-overview/trap-point": {
+      "color_ms": 0.011264,
+      "iterate_ms": 0.5601280000000001
+    },
+    "celtic-3-overview/triangle": {
+      "color_ms": 0.010144,
+      "iterate_ms": 0.566272
+    },
+    "celtic-4-deep-1e6/decomposition": {
+      "color_ms": 0.018432,
+      "iterate_ms": 19.499008
+    },
+    "celtic-4-deep-1e6/smooth": {
+      "color_ms": 0.010239999999999999,
+      "iterate_ms": 10.990592
+    },
+    "celtic-4-deep-1e6/stripe": {
+      "color_ms": 0.010239999999999999,
+      "iterate_ms": 13.134848000000002
+    },
+    "celtic-4-deep-1e6/stripe-tail": {
+      "color_ms": 0.011264,
+      "iterate_ms": 13.564927999999998
+    },
+    "celtic-4-deep-1e6/trap-circle": {
+      "color_ms": 0.011264,
+      "iterate_ms": 12.129280000000001
+    },
+    "celtic-4-deep-1e6/trap-cross": {
+      "color_ms": 0.012288,
+      "iterate_ms": 11.899904
+    },
+    "celtic-4-deep-1e6/trap-point": {
+      "color_ms": 0.012256,
+      "iterate_ms": 12.120064
+    },
+    "celtic-4-deep-1e6/triangle": {
+      "color_ms": 0.01024,
+      "iterate_ms": 12.310528
+    },
+    "celtic-4-deep-2e28/decomposition": {
+      "color_ms": 0.012288,
+      "iterate_ms": 142.95756799999998
+    },
+    "celtic-4-deep-2e28/smooth": {
+      "color_ms": 0.012192000000000001,
+      "iterate_ms": 201.45664
+    },
+    "celtic-4-deep-2e28/stripe": {
+      "color_ms": 0.012288,
+      "iterate_ms": 211.977216
+    },
+    "celtic-4-deep-2e28/stripe-tail": {
+      "color_ms": 0.012288,
+      "iterate_ms": 212.54656
+    },
+    "celtic-4-deep-2e28/trap-circle": {
+      "color_ms": 0.014336,
+      "iterate_ms": 208.903168
+    },
+    "celtic-4-deep-2e28/trap-cross": {
+      "color_ms": 0.012288,
+      "iterate_ms": 203.561984
+    },
+    "celtic-4-deep-2e28/trap-point": {
+      "color_ms": 0.013312000000000001,
+      "iterate_ms": 209.390592
+    },
+    "celtic-4-deep-2e28/triangle": {
+      "color_ms": 0.012288,
+      "iterate_ms": 201.42079999999999
+    },
+    "celtic-4-overview/decomposition": {
+      "color_ms": 0.011232,
+      "iterate_ms": 0.494592
+    },
+    "celtic-4-overview/smooth": {
+      "color_ms": 0.011200000000000002,
+      "iterate_ms": 0.45260799999999995
+    },
+    "celtic-4-overview/stripe": {
+      "color_ms": 0.010239999999999999,
+      "iterate_ms": 0.603136
+    },
+    "celtic-4-overview/stripe-tail": {
+      "color_ms": 0.009216,
+      "iterate_ms": 0.6154240000000001
+    },
+    "celtic-4-overview/trap-circle": {
+      "color_ms": 0.011231999999999999,
+      "iterate_ms": 0.526336
+    },
+    "celtic-4-overview/trap-cross": {
+      "color_ms": 0.010208,
+      "iterate_ms": 0.5140480000000001
+    },
+    "celtic-4-overview/trap-point": {
+      "color_ms": 0.011168,
+      "iterate_ms": 0.54784
+    },
+    "celtic-4-overview/triangle": {
+      "color_ms": 0.010239999999999999,
+      "iterate_ms": 0.55296
+    },
+    "celtic-5-deep-1e6/decomposition": {
+      "color_ms": 0.060416,
+      "iterate_ms": 18.503680000000003
+    },
+    "celtic-5-deep-1e6/smooth": {
+      "color_ms": 0.011264,
+      "iterate_ms": 7.8848
+    },
+    "celtic-5-deep-1e6/stripe": {
+      "color_ms": 0.011200000000000002,
+      "iterate_ms": 8.92928
+    },
+    "celtic-5-deep-1e6/stripe-tail": {
+      "color_ms": 0.012288,
+      "iterate_ms": 9.060352
+    },
+    "celtic-5-deep-1e6/trap-circle": {
+      "color_ms": 0.039936,
+      "iterate_ms": 18.628608
+    },
+    "celtic-5-deep-1e6/trap-cross": {
+      "color_ms": 0.011264,
+      "iterate_ms": 8.059904
+    },
+    "celtic-5-deep-1e6/trap-point": {
+      "color_ms": 0.011264,
+      "iterate_ms": 8.595455999999999
+    },
+    "celtic-5-deep-1e6/triangle": {
+      "color_ms": 0.010144,
+      "iterate_ms": 8.685568
+    },
+    "celtic-5-deep-2e28/decomposition": {
+      "color_ms": 0.013312000000000001,
+      "iterate_ms": 189.497344
+    },
+    "celtic-5-deep-2e28/smooth": {
+      "color_ms": 0.012224,
+      "iterate_ms": 273.31379200000003
+    },
+    "celtic-5-deep-2e28/stripe": {
+      "color_ms": 0.013312000000000001,
+      "iterate_ms": 294.857728
+    },
+    "celtic-5-deep-2e28/stripe-tail": {
+      "color_ms": 0.012288,
+      "iterate_ms": 321.17657599999995
+    },
+    "celtic-5-deep-2e28/trap-circle": {
+      "color_ms": 0.014336,
+      "iterate_ms": 308.25472
+    },
+    "celtic-5-deep-2e28/trap-cross": {
+      "color_ms": 0.013312000000000001,
+      "iterate_ms": 290.853888
+    },
+    "celtic-5-deep-2e28/trap-point": {
+      "color_ms": 0.013312000000000001,
+      "iterate_ms": 302.78144
+    },
+    "celtic-5-deep-2e28/triangle": {
+      "color_ms": 0.011264,
+      "iterate_ms": 299.172864
+    },
+    "celtic-5-overview/decomposition": {
+      "color_ms": 0.011264,
+      "iterate_ms": 0.509952
+    },
+    "celtic-5-overview/smooth": {
+      "color_ms": 0.010144,
+      "iterate_ms": 0.470016
+    },
+    "celtic-5-overview/stripe": {
+      "color_ms": 0.009216,
+      "iterate_ms": 0.6195200000000001
+    },
+    "celtic-5-overview/stripe-tail": {
+      "color_ms": 0.01024,
+      "iterate_ms": 0.672768
+    },
+    "celtic-5-overview/trap-circle": {
+      "color_ms": 0.011264,
+      "iterate_ms": 0.5632
+    },
+    "celtic-5-overview/trap-cross": {
+      "color_ms": 0.011264,
+      "iterate_ms": 0.567296
+    },
+    "celtic-5-overview/trap-point": {
+      "color_ms": 0.011231999999999999,
+      "iterate_ms": 0.5693440000000001
+    },
+    "celtic-5-overview/triangle": {
+      "color_ms": 0.01024,
+      "iterate_ms": 0.5918720000000001
+    },
+    "celtic-deep-1e6/decomposition": {
+      "color_ms": 0.01024,
+      "iterate_ms": 6.980608
+    },
+    "celtic-deep-1e6/smooth": {
+      "color_ms": 0.0112,
+      "iterate_ms": 6.516736
+    },
+    "celtic-deep-1e6/stripe": {
+      "color_ms": 0.009216,
+      "iterate_ms": 8.76032
+    },
+    "celtic-deep-1e6/stripe-tail": {
+      "color_ms": 0.010239999999999999,
+      "iterate_ms": 8.942592000000001
+    },
+    "celtic-deep-1e6/trap-circle": {
+      "color_ms": 0.011264,
+      "iterate_ms": 7.476224
+    },
+    "celtic-deep-1e6/trap-cross": {
+      "color_ms": 0.011264,
+      "iterate_ms": 7.269375999999999
+    },
+    "celtic-deep-1e6/trap-point": {
+      "color_ms": 0.012288,
+      "iterate_ms": 7.463936
+    },
+    "celtic-deep-1e6/triangle": {
+      "color_ms": 0.010239999999999999,
+      "iterate_ms": 7.605248
+    },
+    "celtic-deep-2e28/decomposition": {
+      "color_ms": 0.013312000000000001,
+      "iterate_ms": 234.093568
+    },
+    "celtic-deep-2e28/smooth": {
+      "color_ms": 0.011264,
+      "iterate_ms": 496.024576
+    },
+    "celtic-deep-2e28/stripe": {
+      "color_ms": 0.012288,
+      "iterate_ms": 511.478784
+    },
+    "celtic-deep-2e28/stripe-tail": {
+      "color_ms": 0.012288,
+      "iterate_ms": 512.5376
+    },
+    "celtic-deep-2e28/trap-circle": {
+      "color_ms": 0.012192000000000001,
+      "iterate_ms": 645.170176
+    },
+    "celtic-deep-2e28/trap-cross": {
+      "color_ms": 0.014336,
+      "iterate_ms": 521.551872
+    },
+    "celtic-deep-2e28/trap-point": {
+      "color_ms": 0.013312000000000001,
+      "iterate_ms": 520.025088
+    },
+    "celtic-deep-2e28/triangle": {
+      "color_ms": 0.013312000000000001,
+      "iterate_ms": 529.257472
+    },
+    "celtic-overview/decomposition": {
+      "color_ms": 0.011264,
+      "iterate_ms": 0.529408
+    },
+    "celtic-overview/smooth": {
+      "color_ms": 0.011264,
+      "iterate_ms": 0.447488
+    },
+    "celtic-overview/stripe": {
+      "color_ms": 0.009216,
+      "iterate_ms": 0.726016
+    },
+    "celtic-overview/stripe-tail": {
+      "color_ms": 0.009216,
+      "iterate_ms": 0.746496
+    },
+    "celtic-overview/trap-circle": {
+      "color_ms": 0.010239999999999999,
+      "iterate_ms": 0.591872
+    },
+    "celtic-overview/trap-cross": {
+      "color_ms": 0.011264,
+      "iterate_ms": 0.565248
+    },
+    "celtic-overview/trap-point": {
+      "color_ms": 0.011232,
+      "iterate_ms": 0.5826560000000001
+    },
+    "celtic-overview/triangle": {
+      "color_ms": 0.01024,
+      "iterate_ms": 0.635904
+    },
+    "custom-z2.5-1e20/decomposition": {
+      "color_ms": 0.108544,
+      "iterate_ms": 31.82592
+    },
+    "custom-z2.5-1e20/smooth": {
+      "color_ms": 0.068608,
+      "iterate_ms": 70.20188800000001
+    },
+    "custom-z2.5-1e20/stripe": {
+      "color_ms": 0.110592,
+      "iterate_ms": 41.546752
+    },
+    "custom-z2.5-1e20/stripe-tail": {
+      "color_ms": 0.135168,
+      "iterate_ms": 38.597632
+    },
+    "custom-z2.5-1e20/trap-circle": {
+      "color_ms": 0.136192,
+      "iterate_ms": 34.091008
+    },
+    "custom-z2.5-1e20/trap-cross": {
+      "color_ms": 0.059392,
+      "iterate_ms": 33.631232
+    },
+    "custom-z2.5-1e20/trap-point": {
+      "color_ms": 0.06144,
+      "iterate_ms": 33.953792
+    },
+    "custom-z2.5-1e20/triangle": {
+      "color_ms": 0.060416,
+      "iterate_ms": 35.771392
+    },
+    "custom-z2.5-overview/decomposition": {
+      "color_ms": 0.025599999999999998,
+      "iterate_ms": 1.14688
+    },
+    "custom-z2.5-overview/smooth": {
+      "color_ms": 0.029696,
+      "iterate_ms": 18.479464
+    },
+    "custom-z2.5-overview/stripe": {
+      "color_ms": 0.023552,
+      "iterate_ms": 1.6035840000000001
+    },
+    "custom-z2.5-overview/stripe-tail": {
+      "color_ms": 0.017408,
+      "iterate_ms": 1.6680959999999998
+    },
+    "custom-z2.5-overview/trap-circle": {
+      "color_ms": 0.025599999999999998,
+      "iterate_ms": 1.301504
+    },
+    "custom-z2.5-overview/trap-cross": {
+      "color_ms": 0.025599999999999998,
+      "iterate_ms": 1.230848
+    },
+    "custom-z2.5-overview/trap-point": {
+      "color_ms": 0.025599999999999998,
+      "iterate_ms": 1.3158400000000001
+    },
+    "custom-z2.5-overview/triangle": {
+      "color_ms": 0.017408,
+      "iterate_ms": 1.3629440000000002
+    },
+    "julia-seahorse-c-1e10/decomposition": {
+      "color_ms": 0.046079999999999996,
+      "iterate_ms": 2.699264
+    },
+    "julia-seahorse-c-1e10/distance": {
+      "color_ms": 0.034816,
+      "iterate_ms": 24.114596000000002
+    },
+    "julia-seahorse-c-1e10/smooth": {
+      "color_ms": 0.029696,
+      "iterate_ms": 24.17644
+    },
+    "julia-seahorse-c-1e10/stripe": {
+      "color_ms": 0.040959999999999996,
+      "iterate_ms": 3.05152
+    },
+    "julia-seahorse-c-1e10/stripe-tail": {
+      "color_ms": 0.040959999999999996,
+      "iterate_ms": 3.1201280000000002
+    },
+    "julia-seahorse-c-1e10/trap-circle": {
+      "color_ms": 0.047104,
+      "iterate_ms": 2.816
+    },
+    "julia-seahorse-c-1e10/trap-cross": {
+      "color_ms": 0.044032,
+      "iterate_ms": 2.7484159999999997
+    },
+    "julia-seahorse-c-1e10/trap-point": {
+      "color_ms": 0.045056,
+      "iterate_ms": 2.796544
+    },
+    "julia-seahorse-c-1e10/triangle": {
+      "color_ms": 0.041984,
+      "iterate_ms": 2.8887039999999997
+    },
+    "julia-seahorse-c-overview/decomposition": {
+      "color_ms": 0.043008,
+      "iterate_ms": 1.019904
+    },
+    "julia-seahorse-c-overview/distance": {
+      "color_ms": 0.032768,
+      "iterate_ms": 17.381804000000002
+    },
+    "julia-seahorse-c-overview/smooth": {
+      "color_ms": 0.031744,
+      "iterate_ms": 17.593852000000002
+    },
+    "julia-seahorse-c-overview/stripe": {
+      "color_ms": 0.038912,
+      "iterate_ms": 1.5779839999999998
+    },
+    "julia-seahorse-c-overview/stripe-tail": {
+      "color_ms": 0.037888000000000005,
+      "iterate_ms": 1.5114239999999999
+    },
+    "julia-seahorse-c-overview/trap-circle": {
+      "color_ms": 0.044032,
+      "iterate_ms": 1.337344
+    },
+    "julia-seahorse-c-overview/trap-cross": {
+      "color_ms": 0.047104,
+      "iterate_ms": 1.19296
+    },
+    "julia-seahorse-c-overview/trap-point": {
+      "color_ms": 0.044032,
+      "iterate_ms": 1.255424
+    },
+    "julia-seahorse-c-overview/triangle": {
+      "color_ms": 0.040959999999999996,
+      "iterate_ms": 1.368064
+    },
+    "julia-third-root-1e10/decomposition": {
+      "color_ms": 0.065536,
+      "iterate_ms": 10.256384
+    },
+    "julia-third-root-1e10/distance": {
+      "color_ms": 0.038912,
+      "iterate_ms": 41.982444
+    },
+    "julia-third-root-1e10/smooth": {
+      "color_ms": 0.036864,
+      "iterate_ms": 41.231108
+    },
+    "julia-third-root-1e10/stripe": {
+      "color_ms": 0.065536,
+      "iterate_ms": 18.075648
+    },
+    "julia-third-root-1e10/stripe-tail": {
+      "color_ms": 0.044032,
+      "iterate_ms": 18.778112
+    },
+    "julia-third-root-1e10/trap-circle": {
+      "color_ms": 0.050176,
+      "iterate_ms": 17.504255999999998
+    },
+    "julia-third-root-1e10/trap-cross": {
+      "color_ms": 0.050176,
+      "iterate_ms": 17.179648
+    },
+    "julia-third-root-1e10/trap-point": {
+      "color_ms": 0.051199999999999996,
+      "iterate_ms": 17.498112
+    },
+    "julia-third-root-1e10/triangle": {
+      "color_ms": 0.068608,
+      "iterate_ms": 17.899520000000003
+    },
+    "julia-third-root-overview/decomposition": {
+      "color_ms": 0.049152,
+      "iterate_ms": 5.030912000000001
+    },
+    "julia-third-root-overview/distance": {
+      "color_ms": 0.03584,
+      "iterate_ms": 31.790691999999996
+    },
+    "julia-third-root-overview/smooth": {
+      "color_ms": 0.031744,
+      "iterate_ms": 25.32908
+    },
+    "julia-third-root-overview/stripe": {
+      "color_ms": 0.038912,
+      "iterate_ms": 6.129664
+    },
+    "julia-third-root-overview/stripe-tail": {
+      "color_ms": 0.040959999999999996,
+      "iterate_ms": 6.52288
+    },
+    "julia-third-root-overview/trap-circle": {
+      "color_ms": 0.044032,
+      "iterate_ms": 4.760576
+    },
+    "julia-third-root-overview/trap-cross": {
+      "color_ms": 0.046079999999999996,
+      "iterate_ms": 4.557824
+    },
+    "julia-third-root-overview/trap-point": {
+      "color_ms": 0.046079999999999996,
+      "iterate_ms": 4.7616
+    },
+    "julia-third-root-overview/triangle": {
+      "color_ms": 0.040959999999999996,
+      "iterate_ms": 5.47328
+    },
+    "mandelbrot-corpus07-1e30/decomposition": {
+      "color_ms": 0.058368,
+      "iterate_ms": 6.785024
+    },
+    "mandelbrot-corpus07-1e30/distance": {
+      "color_ms": 0.011264,
+      "iterate_ms": 2.840616
+    },
+    "mandelbrot-corpus07-1e30/smooth": {
+      "color_ms": 0.006144,
+      "iterate_ms": 1.412532
+    },
+    "mandelbrot-corpus07-1e30/stripe": {
+      "color_ms": 0.009216,
+      "iterate_ms": 1.83808
+    },
+    "mandelbrot-corpus07-1e30/stripe-tail": {
+      "color_ms": 0.011264,
+      "iterate_ms": 1.8688
+    },
+    "mandelbrot-corpus07-1e30/trap-circle": {
+      "color_ms": 0.018432,
+      "iterate_ms": 2.9132800000000003
+    },
+    "mandelbrot-corpus07-1e30/trap-cross": {
+      "color_ms": 0.017408,
+      "iterate_ms": 2.692096
+    },
+    "mandelbrot-corpus07-1e30/trap-point": {
+      "color_ms": 0.01024,
+      "iterate_ms": 1.681408
+    },
+    "mandelbrot-corpus07-1e30/triangle": {
+      "color_ms": 0.010239999999999999,
+      "iterate_ms": 1.73568
+    },
+    "mandelbrot-minibrot-9.3e78/decomposition": {
+      "color_ms": 0.013312000000000001,
+      "iterate_ms": 1249.2032
+    },
+    "mandelbrot-minibrot-9.3e78/distance": {
+      "color_ms": 0.007168,
+      "iterate_ms": 18.898808
+    },
+    "mandelbrot-minibrot-9.3e78/smooth": {
+      "color_ms": 0.026624,
+      "iterate_ms": 64.300888
+    },
+    "mandelbrot-minibrot-9.3e78/stripe": {
+      "color_ms": 0.009216,
+      "iterate_ms": 25.26208
+    },
+    "mandelbrot-minibrot-9.3e78/stripe-tail": {
+      "color_ms": 0.011264,
+      "iterate_ms": 25.993216
+    },
+    "mandelbrot-minibrot-9.3e78/trap-circle": {
+      "color_ms": 0.012288,
+      "iterate_ms": 27.398144000000002
+    },
+    "mandelbrot-minibrot-9.3e78/trap-cross": {
+      "color_ms": 0.01024,
+      "iterate_ms": 27.296768
+    },
+    "mandelbrot-minibrot-9.3e78/trap-point": {
+      "color_ms": 0.011264,
+      "iterate_ms": 26.546176
+    },
+    "mandelbrot-minibrot-9.3e78/triangle": {
+      "color_ms": 0.01024,
+      "iterate_ms": 27.364352
+    },
+    "mandelbrot-misiurewicz-7.4e143/decomposition": {
+      "color_ms": 0.044032,
+      "iterate_ms": 22.166528
+    },
+    "mandelbrot-misiurewicz-7.4e143/distance": {
+      "color_ms": 0.007104,
+      "iterate_ms": 0.6920839999999999
+    },
+    "mandelbrot-misiurewicz-7.4e143/smooth": {
+      "color_ms": 0.006144,
+      "iterate_ms": 0.6981839999999999
+    },
+    "mandelbrot-misiurewicz-7.4e143/stripe": {
+      "color_ms": 0.009216,
+      "iterate_ms": 0.34816
+    },
+    "mandelbrot-misiurewicz-7.4e143/stripe-tail": {
+      "color_ms": 0.01024,
+      "iterate_ms": 0.355328
+    },
+    "mandelbrot-misiurewicz-7.4e143/trap-circle": {
+      "color_ms": 0.011264,
+      "iterate_ms": 0.336896
+    },
+    "mandelbrot-misiurewicz-7.4e143/trap-cross": {
+      "color_ms": 0.011264,
+      "iterate_ms": 0.315392
+    },
+    "mandelbrot-misiurewicz-7.4e143/trap-point": {
+      "color_ms": 0.010176000000000001,
+      "iterate_ms": 0.336896
+    },
+    "mandelbrot-misiurewicz-7.4e143/triangle": {
+      "color_ms": 0.01024,
+      "iterate_ms": 0.34099199999999996
+    },
+    "mandelbrot-overview/decomposition": {
+      "color_ms": 0.011264,
+      "iterate_ms": 0.515072
+    },
+    "mandelbrot-overview/distance": {
+      "color_ms": 0.009184000000000001,
+      "iterate_ms": 8.994532
+    },
+    "mandelbrot-overview/smooth": {
+      "color_ms": 0.009216,
+      "iterate_ms": 8.426432000000002
+    },
+    "mandelbrot-overview/stripe": {
+      "color_ms": 0.01024,
+      "iterate_ms": 0.8089599999999999
+    },
+    "mandelbrot-overview/stripe-tail": {
+      "color_ms": 0.010208,
+      "iterate_ms": 0.836608
+    },
+    "mandelbrot-overview/trap-circle": {
+      "color_ms": 0.011264,
+      "iterate_ms": 0.6144000000000001
+    },
+    "mandelbrot-overview/trap-cross": {
+      "color_ms": 0.011264,
+      "iterate_ms": 0.5877760000000001
+    },
+    "mandelbrot-overview/trap-point": {
+      "color_ms": 0.011264,
+      "iterate_ms": 0.60928
+    },
+    "mandelbrot-overview/triangle": {
+      "color_ms": 0.01024,
+      "iterate_ms": 0.67584
+    },
+    "mandelbrot-seahorse-1e20/decomposition": {
+      "color_ms": 0.012288,
+      "iterate_ms": 35.221504
+    },
+    "mandelbrot-seahorse-1e20/distance": {
+      "color_ms": 0.009216,
+      "iterate_ms": 14.661080000000002
+    },
+    "mandelbrot-seahorse-1e20/smooth": {
+      "color_ms": 0.017408,
+      "iterate_ms": 25.731212000000003
+    },
+    "mandelbrot-seahorse-1e20/stripe": {
+      "color_ms": 0.012288,
+      "iterate_ms": 40.552448
+    },
+    "mandelbrot-seahorse-1e20/stripe-tail": {
+      "color_ms": 0.011136,
+      "iterate_ms": 42.544096
+    },
+    "mandelbrot-seahorse-1e20/trap-circle": {
+      "color_ms": 0.011264,
+      "iterate_ms": 36.416512
+    },
+    "mandelbrot-seahorse-1e20/trap-cross": {
+      "color_ms": 0.012288,
+      "iterate_ms": 39.212032
+    },
+    "mandelbrot-seahorse-1e20/trap-point": {
+      "color_ms": 0.012288,
+      "iterate_ms": 35.945471999999995
+    },
+    "mandelbrot-seahorse-1e20/triangle": {
+      "color_ms": 0.012223999999999999,
+      "iterate_ms": 38.434816
+    },
+    "mandelbrot-seahorse-1e6/decomposition": {
+      "color_ms": 0.017408,
+      "iterate_ms": 14.086144
+    },
+    "mandelbrot-seahorse-1e6/distance": {
+      "color_ms": 0.015359999999999999,
+      "iterate_ms": 28.906996000000003
+    },
+    "mandelbrot-seahorse-1e6/smooth": {
+      "color_ms": 0.010239999999999999,
+      "iterate_ms": 18.481268
+    },
+    "mandelbrot-seahorse-1e6/stripe": {
+      "color_ms": 0.017408,
+      "iterate_ms": 15.959040000000002
+    },
+    "mandelbrot-seahorse-1e6/stripe-tail": {
+      "color_ms": 0.019456,
+      "iterate_ms": 16.613376
+    },
+    "mandelbrot-seahorse-1e6/trap-circle": {
+      "color_ms": 0.017408,
+      "iterate_ms": 15.634432
+    },
+    "mandelbrot-seahorse-1e6/trap-cross": {
+      "color_ms": 0.018432,
+      "iterate_ms": 15.29344
+    },
+    "mandelbrot-seahorse-1e6/trap-point": {
+      "color_ms": 0.017408,
+      "iterate_ms": 15.48288
+    },
+    "mandelbrot-seahorse-1e6/triangle": {
+      "color_ms": 0.016384,
+      "iterate_ms": 15.26784
+    },
+    "mandelbrot-seahorse-2e3/decomposition": {
+      "color_ms": 0.011264,
+      "iterate_ms": 0.557056
+    },
+    "mandelbrot-seahorse-2e3/distance": {
+      "color_ms": 0.009216,
+      "iterate_ms": 9.530804
+    },
+    "mandelbrot-seahorse-2e3/smooth": {
+      "color_ms": 0.010239999999999999,
+      "iterate_ms": 8.35498
+    },
+    "mandelbrot-seahorse-2e3/stripe": {
+      "color_ms": 0.01024,
+      "iterate_ms": 0.871424
+    },
+    "mandelbrot-seahorse-2e3/stripe-tail": {
+      "color_ms": 0.011232,
+      "iterate_ms": 0.905216
+    },
+    "mandelbrot-seahorse-2e3/trap-circle": {
+      "color_ms": 0.011264,
+      "iterate_ms": 0.66048
+    },
+    "mandelbrot-seahorse-2e3/trap-cross": {
+      "color_ms": 0.011264,
+      "iterate_ms": 0.6266879999999999
+    },
+    "mandelbrot-seahorse-2e3/trap-point": {
+      "color_ms": 0.0112,
+      "iterate_ms": 0.659456
+    },
+    "mandelbrot-seahorse-2e3/triangle": {
+      "color_ms": 0.011264,
+      "iterate_ms": 0.726016
+    },
+    "multibrot3-deep-1e30/decomposition": {
+      "color_ms": 0.011264,
+      "iterate_ms": 79.28217599999999
+    },
+    "multibrot3-deep-1e30/distance": {
+      "color_ms": 0.00512,
+      "iterate_ms": 62.709056
+    },
+    "multibrot3-deep-1e30/smooth": {
+      "color_ms": 0.006144,
+      "iterate_ms": 74.835904
+    },
+    "multibrot3-deep-1e30/stripe": {
+      "color_ms": 0.011264,
+      "iterate_ms": 70.01088
+    },
+    "multibrot3-deep-1e30/stripe-tail": {
+      "color_ms": 0.011264,
+      "iterate_ms": 70.938624
+    },
+    "multibrot3-deep-1e30/trap-circle": {
+      "color_ms": 0.012288,
+      "iterate_ms": 69.275648
+    },
+    "multibrot3-deep-1e30/trap-cross": {
+      "color_ms": 0.012288,
+      "iterate_ms": 69.06982400000001
+    },
+    "multibrot3-deep-1e30/trap-point": {
+      "color_ms": 0.012288,
+      "iterate_ms": 69.798912
+    },
+    "multibrot3-deep-1e30/triangle": {
+      "color_ms": 0.012288,
+      "iterate_ms": 70.798304
+    },
+    "multibrot3-deep-1e6/decomposition": {
+      "color_ms": 0.015359999999999999,
+      "iterate_ms": 20.005888
+    },
+    "multibrot3-deep-1e6/distance": {
+      "color_ms": 0.016384,
+      "iterate_ms": 35.677196
+    },
+    "multibrot3-deep-1e6/smooth": {
+      "color_ms": 0.032768,
+      "iterate_ms": 63.31332400000001
+    },
+    "multibrot3-deep-1e6/stripe": {
+      "color_ms": 0.016384,
+      "iterate_ms": 24.895488
+    },
+    "multibrot3-deep-1e6/stripe-tail": {
+      "color_ms": 0.016384,
+      "iterate_ms": 25.232384
+    },
+    "multibrot3-deep-1e6/trap-circle": {
+      "color_ms": 0.017408,
+      "iterate_ms": 22.775808
+    },
+    "multibrot3-deep-1e6/trap-cross": {
+      "color_ms": 0.019456,
+      "iterate_ms": 21.648384
+    },
+    "multibrot3-deep-1e6/trap-point": {
+      "color_ms": 0.018432,
+      "iterate_ms": 22.540288
+    },
+    "multibrot3-deep-1e6/triangle": {
+      "color_ms": 0.015359999999999999,
+      "iterate_ms": 22.853631999999998
+    },
+    "multibrot3-overview/decomposition": {
+      "color_ms": 0.047104,
+      "iterate_ms": 1.28512
+    },
+    "multibrot3-overview/distance": {
+      "color_ms": 0.036864,
+      "iterate_ms": 18.433768
+    },
+    "multibrot3-overview/smooth": {
+      "color_ms": 0.030719999999999997,
+      "iterate_ms": 17.54168
+    },
+    "multibrot3-overview/stripe": {
+      "color_ms": 0.038912,
+      "iterate_ms": 1.532928
+    },
+    "multibrot3-overview/stripe-tail": {
+      "color_ms": 0.041984,
+      "iterate_ms": 1.601536
+    },
+    "multibrot3-overview/trap-circle": {
+      "color_ms": 0.048128000000000004,
+      "iterate_ms": 1.482752
+    },
+    "multibrot3-overview/trap-cross": {
+      "color_ms": 0.048128000000000004,
+      "iterate_ms": 1.437696
+    },
+    "multibrot3-overview/trap-point": {
+      "color_ms": 0.048128000000000004,
+      "iterate_ms": 1.409024
+    },
+    "multibrot3-overview/triangle": {
+      "color_ms": 0.043008000000000005,
+      "iterate_ms": 1.472512
+    },
+    "multibrot4-deep-1e30/decomposition": {
+      "color_ms": 0.012288,
+      "iterate_ms": 189.925376
+    },
+    "multibrot4-deep-1e30/distance": {
+      "color_ms": 0.00512,
+      "iterate_ms": 161.17437999999999
+    },
+    "multibrot4-deep-1e30/smooth": {
+      "color_ms": 0.006112,
+      "iterate_ms": 161.66028
+    },
+    "multibrot4-deep-1e30/stripe": {
+      "color_ms": 0.013312000000000001,
+      "iterate_ms": 219.907072
+    },
+    "multibrot4-deep-1e30/stripe-tail": {
+      "color_ms": 0.012288,
+      "iterate_ms": 222.33088
+    },
+    "multibrot4-deep-1e30/trap-circle": {
+      "color_ms": 0.013312000000000001,
+      "iterate_ms": 218.9312
+    },
+    "multibrot4-deep-1e30/trap-cross": {
+      "color_ms": 0.012288,
+      "iterate_ms": 218.231808
+    },
+    "multibrot4-deep-1e30/trap-point": {
+      "color_ms": 0.013312000000000001,
+      "iterate_ms": 218.61273599999998
+    },
+    "multibrot4-deep-1e30/triangle": {
+      "color_ms": 0.012288,
+      "iterate_ms": 215.395328
+    },
+    "multibrot4-deep-1e6/decomposition": {
+      "color_ms": 0.015359999999999999,
+      "iterate_ms": 21.967872
+    },
+    "multibrot4-deep-1e6/distance": {
+      "color_ms": 0.013312000000000001,
+      "iterate_ms": 32.43602799999999
+    },
+    "multibrot4-deep-1e6/smooth": {
+      "color_ms": 0.010176000000000001,
+      "iterate_ms": 25.508008000000004
+    },
+    "multibrot4-deep-1e6/stripe": {
+      "color_ms": 0.01024,
+      "iterate_ms": 18.774016
+    },
+    "multibrot4-deep-1e6/stripe-tail": {
+      "color_ms": 0.011264,
+      "iterate_ms": 22.006784
+    },
+    "multibrot4-deep-1e6/trap-circle": {
+      "color_ms": 0.013312000000000001,
+      "iterate_ms": 20.48512
+    },
+    "multibrot4-deep-1e6/trap-cross": {
+      "color_ms": 0.013312000000000001,
+      "iterate_ms": 19.478528
+    },
+    "multibrot4-deep-1e6/trap-point": {
+      "color_ms": 0.013312000000000001,
+      "iterate_ms": 20.795392
+    },
+    "multibrot4-deep-1e6/triangle": {
+      "color_ms": 0.013312000000000001,
+      "iterate_ms": 20.877312
+    },
+    "multibrot4-overview/decomposition": {
+      "color_ms": 0.011264,
+      "iterate_ms": 0.523264
+    },
+    "multibrot4-overview/distance": {
+      "color_ms": 0.008192000000000001,
+      "iterate_ms": 7.942508
+    },
+    "multibrot4-overview/smooth": {
+      "color_ms": 0.008192000000000001,
+      "iterate_ms": 7.946732
+    },
+    "multibrot4-overview/stripe": {
+      "color_ms": 0.011264,
+      "iterate_ms": 0.638976
+    },
+    "multibrot4-overview/stripe-tail": {
+      "color_ms": 0.010239999999999999,
+      "iterate_ms": 0.6533119999999999
+    },
+    "multibrot4-overview/trap-circle": {
+      "color_ms": 0.01024,
+      "iterate_ms": 0.528384
+    },
+    "multibrot4-overview/trap-cross": {
+      "color_ms": 0.010239999999999999,
+      "iterate_ms": 0.544768
+    },
+    "multibrot4-overview/trap-point": {
+      "color_ms": 0.011264,
+      "iterate_ms": 0.5611520000000001
+    },
+    "multibrot4-overview/triangle": {
+      "color_ms": 0.011264,
+      "iterate_ms": 0.5765119999999999
+    },
+    "multibrot5-deep-1e30/decomposition": {
+      "color_ms": 0.014336,
+      "iterate_ms": 358.561792
+    },
+    "multibrot5-deep-1e30/distance": {
+      "color_ms": 0.00512,
+      "iterate_ms": 271.43838
+    },
+    "multibrot5-deep-1e30/smooth": {
+      "color_ms": 0.006144,
+      "iterate_ms": 270.498304
+    },
+    "multibrot5-deep-1e30/stripe": {
+      "color_ms": 0.012288,
+      "iterate_ms": 536.343552
+    },
+    "multibrot5-deep-1e30/stripe-tail": {
+      "color_ms": 0.013312000000000001,
+      "iterate_ms": 579.451904
+    },
+    "multibrot5-deep-1e30/trap-circle": {
+      "color_ms": 0.012288,
+      "iterate_ms": 545.87392
+    },
+    "multibrot5-deep-1e30/trap-cross": {
+      "color_ms": 0.013312000000000001,
+      "iterate_ms": 544.9031679999999
+    },
+    "multibrot5-deep-1e30/trap-point": {
+      "color_ms": 0.013312000000000001,
+      "iterate_ms": 545.63328
+    },
+    "multibrot5-deep-1e30/triangle": {
+      "color_ms": 0.013312000000000001,
+      "iterate_ms": 547.7457919999999
+    },
+    "multibrot5-deep-1e6/decomposition": {
+      "color_ms": 0.01104,
+      "iterate_ms": 18.925568
+    },
+    "multibrot5-deep-1e6/distance": {
+      "color_ms": 0.012288,
+      "iterate_ms": 36.57458
+    },
+    "multibrot5-deep-1e6/smooth": {
+      "color_ms": 0.01024,
+      "iterate_ms": 27.413835999999996
+    },
+    "multibrot5-deep-1e6/stripe": {
+      "color_ms": 0.01024,
+      "iterate_ms": 21.129216
+    },
+    "multibrot5-deep-1e6/stripe-tail": {
+      "color_ms": 0.011264,
+      "iterate_ms": 23.33184
+    },
+    "multibrot5-deep-1e6/trap-circle": {
+      "color_ms": 0.016384,
+      "iterate_ms": 24.541184
+    },
+    "multibrot5-deep-1e6/trap-cross": {
+      "color_ms": 0.014336,
+      "iterate_ms": 23.573504
+    },
+    "multibrot5-deep-1e6/trap-point": {
+      "color_ms": 0.012288,
+      "iterate_ms": 22.990848
+    },
+    "multibrot5-deep-1e6/triangle": {
+      "color_ms": 0.011264,
+      "iterate_ms": 23.110656
+    },
+    "multibrot5-overview/decomposition": {
+      "color_ms": 0.011264,
+      "iterate_ms": 0.868352
+    },
+    "multibrot5-overview/distance": {
+      "color_ms": 0.009216,
+      "iterate_ms": 8.608808
+    },
+    "multibrot5-overview/smooth": {
+      "color_ms": 0.009216,
+      "iterate_ms": 8.463784
+    },
+    "multibrot5-overview/stripe": {
+      "color_ms": 0.009216,
+      "iterate_ms": 1.0731519999999999
+    },
+    "multibrot5-overview/stripe-tail": {
+      "color_ms": 0.010239999999999999,
+      "iterate_ms": 1.1008
+    },
+    "multibrot5-overview/trap-circle": {
+      "color_ms": 0.011264,
+      "iterate_ms": 0.940032
+    },
+    "multibrot5-overview/trap-cross": {
+      "color_ms": 0.011264,
+      "iterate_ms": 0.904192
+    },
+    "multibrot5-overview/trap-point": {
+      "color_ms": 0.011264,
+      "iterate_ms": 0.933856
+    },
+    "multibrot5-overview/triangle": {
+      "color_ms": 0.011264,
+      "iterate_ms": 0.980992
+    },
+    "multibrot6-deep-1e30/decomposition": {
+      "color_ms": 0.015359999999999999,
+      "iterate_ms": 166.658048
+    },
+    "multibrot6-deep-1e30/distance": {
+      "color_ms": 0.006144,
+      "iterate_ms": 167.21507999999997
+    },
+    "multibrot6-deep-1e30/smooth": {
+      "color_ms": 0.00512,
+      "iterate_ms": 164.80380399999999
+    },
+    "multibrot6-deep-1e30/stripe": {
+      "color_ms": 0.012288,
+      "iterate_ms": 269.01606400000003
+    },
+    "multibrot6-deep-1e30/stripe-tail": {
+      "color_ms": 0.013216,
+      "iterate_ms": 264.74496
+    },
+    "multibrot6-deep-1e30/trap-circle": {
+      "color_ms": 0.014304,
+      "iterate_ms": 259.846144
+    },
+    "multibrot6-deep-1e30/trap-cross": {
+      "color_ms": 0.014304,
+      "iterate_ms": 266.06694400000003
+    },
+    "multibrot6-deep-1e30/trap-point": {
+      "color_ms": 0.014336,
+      "iterate_ms": 259.735552
+    },
+    "multibrot6-deep-1e30/triangle": {
+      "color_ms": 0.012288,
+      "iterate_ms": 261.277696
+    },
+    "multibrot6-deep-1e6/decomposition": {
+      "color_ms": 0.018432,
+      "iterate_ms": 26.642432
+    },
+    "multibrot6-deep-1e6/distance": {
+      "color_ms": 0.017408,
+      "iterate_ms": 44.442972
+    },
+    "multibrot6-deep-1e6/smooth": {
+      "color_ms": 0.009216,
+      "iterate_ms": 26.994059999999998
+    },
+    "multibrot6-deep-1e6/stripe": {
+      "color_ms": 0.014336,
+      "iterate_ms": 26.917888
+    },
+    "multibrot6-deep-1e6/stripe-tail": {
+      "color_ms": 0.016384,
+      "iterate_ms": 28.546048
+    },
+    "multibrot6-deep-1e6/trap-circle": {
+      "color_ms": 0.019456,
+      "iterate_ms": 29.420544
+    },
+    "multibrot6-deep-1e6/trap-cross": {
+      "color_ms": 0.019456,
+      "iterate_ms": 28.819456
+    },
+    "multibrot6-deep-1e6/trap-point": {
+      "color_ms": 0.019456,
+      "iterate_ms": 28.472320000000003
+    },
+    "multibrot6-deep-1e6/triangle": {
+      "color_ms": 0.016384,
+      "iterate_ms": 28.852224
+    },
+    "multibrot6-overview/decomposition": {
+      "color_ms": 0.011264,
+      "iterate_ms": 1.145856
+    },
+    "multibrot6-overview/distance": {
+      "color_ms": 0.00912,
+      "iterate_ms": 8.093447999999999
+    },
+    "multibrot6-overview/smooth": {
+      "color_ms": 0.008192000000000001,
+      "iterate_ms": 8.954207999999998
+    },
+    "multibrot6-overview/stripe": {
+      "color_ms": 0.011231999999999999,
+      "iterate_ms": 1.3465600000000002
+    },
+    "multibrot6-overview/stripe-tail": {
+      "color_ms": 0.011264,
+      "iterate_ms": 1.4172159999999998
+    },
+    "multibrot6-overview/trap-circle": {
+      "color_ms": 0.01024,
+      "iterate_ms": 1.2257280000000002
+    },
+    "multibrot6-overview/trap-cross": {
+      "color_ms": 0.011264,
+      "iterate_ms": 1.196032
+    },
+    "multibrot6-overview/trap-point": {
+      "color_ms": 0.01024,
+      "iterate_ms": 1.206272
+    },
+    "multibrot6-overview/triangle": {
+      "color_ms": 0.01024,
+      "iterate_ms": 1.252352
+    },
+    "multibrot7-deep-1e30/decomposition": {
+      "color_ms": 0.013312000000000001,
+      "iterate_ms": 128.720896
+    },
+    "multibrot7-deep-1e30/distance": {
+      "color_ms": 0.006048,
+      "iterate_ms": 91.90268
+    },
+    "multibrot7-deep-1e30/smooth": {
+      "color_ms": 0.006144,
+      "iterate_ms": 91.88148000000001
+    },
+    "multibrot7-deep-1e30/stripe": {
+      "color_ms": 0.013184000000000001,
+      "iterate_ms": 151.50592
+    },
+    "multibrot7-deep-1e30/stripe-tail": {
+      "color_ms": 0.013312000000000001,
+      "iterate_ms": 153.124864
+    },
+    "multibrot7-deep-1e30/trap-circle": {
+      "color_ms": 0.013312000000000001,
+      "iterate_ms": 151.60729600000002
+    },
+    "multibrot7-deep-1e30/trap-cross": {
+      "color_ms": 0.013312000000000001,
+      "iterate_ms": 151.58784
+    },
+    "multibrot7-deep-1e30/trap-point": {
+      "color_ms": 0.015359999999999999,
+      "iterate_ms": 152.853504
+    },
+    "multibrot7-deep-1e30/triangle": {
+      "color_ms": 0.01328,
+      "iterate_ms": 155.04281600000002
+    },
+    "multibrot7-deep-1e6/decomposition": {
+      "color_ms": 0.018432,
+      "iterate_ms": 21.9392
+    },
+    "multibrot7-deep-1e6/distance": {
+      "color_ms": 0.018432,
+      "iterate_ms": 46.04684399999999
+    },
+    "multibrot7-deep-1e6/smooth": {
+      "color_ms": 0.009216,
+      "iterate_ms": 26.155008000000002
+    },
+    "multibrot7-deep-1e6/stripe": {
+      "color_ms": 0.011264,
+      "iterate_ms": 18.523136
+    },
+    "multibrot7-deep-1e6/stripe-tail": {
+      "color_ms": 0.011264,
+      "iterate_ms": 18.451456
+    },
+    "multibrot7-deep-1e6/trap-circle": {
+      "color_ms": 0.018432,
+      "iterate_ms": 28.772351999999998
+    },
+    "multibrot7-deep-1e6/trap-cross": {
+      "color_ms": 0.019456,
+      "iterate_ms": 27.73504
+    },
+    "multibrot7-deep-1e6/trap-point": {
+      "color_ms": 0.017408,
+      "iterate_ms": 26.560512000000003
+    },
+    "multibrot7-deep-1e6/triangle": {
+      "color_ms": 0.018432,
+      "iterate_ms": 26.407936
+    },
+    "multibrot7-overview/decomposition": {
+      "color_ms": 0.011264,
+      "iterate_ms": 1.1755520000000002
+    },
+    "multibrot7-overview/distance": {
+      "color_ms": 0.007168,
+      "iterate_ms": 6.693884000000001
+    },
+    "multibrot7-overview/smooth": {
+      "color_ms": 0.009216,
+      "iterate_ms": 9.288908
+    },
+    "multibrot7-overview/stripe": {
+      "color_ms": 0.009216,
+      "iterate_ms": 1.380352
+    },
+    "multibrot7-overview/stripe-tail": {
+      "color_ms": 0.009216,
+      "iterate_ms": 1.412096
+    },
+    "multibrot7-overview/trap-circle": {
+      "color_ms": 0.011264,
+      "iterate_ms": 1.2390400000000001
+    },
+    "multibrot7-overview/trap-cross": {
+      "color_ms": 0.011264,
+      "iterate_ms": 1.214464
+    },
+    "multibrot7-overview/trap-point": {
+      "color_ms": 0.011264,
+      "iterate_ms": 1.246208
+    },
+    "multibrot7-overview/triangle": {
+      "color_ms": 0.009216,
+      "iterate_ms": 1.2789760000000001
+    },
+    "multibrot8-deep-1e30/decomposition": {
+      "color_ms": 0.012288,
+      "iterate_ms": 58.049536
+    },
+    "multibrot8-deep-1e30/distance": {
+      "color_ms": 0.00512,
+      "iterate_ms": 53.020208000000004
+    },
+    "multibrot8-deep-1e30/smooth": {
+      "color_ms": 0.00512,
+      "iterate_ms": 72.34534000000001
+    },
+    "multibrot8-deep-1e30/stripe": {
+      "color_ms": 0.012288,
+      "iterate_ms": 77.02732800000001
+    },
+    "multibrot8-deep-1e30/stripe-tail": {
+      "color_ms": 0.011264,
+      "iterate_ms": 79.028224
+    },
+    "multibrot8-deep-1e30/trap-circle": {
+      "color_ms": 0.01328,
+      "iterate_ms": 76.65664
+    },
+    "multibrot8-deep-1e30/trap-cross": {
+      "color_ms": 0.013312000000000001,
+      "iterate_ms": 76.557312
+    },
+    "multibrot8-deep-1e30/trap-point": {
+      "color_ms": 0.013312000000000001,
+      "iterate_ms": 75.884544
+    },
+    "multibrot8-deep-1e30/triangle": {
+      "color_ms": 0.012095999999999999,
+      "iterate_ms": 77.46355199999999
+    },
+    "multibrot8-deep-1e6/decomposition": {
+      "color_ms": 0.016384,
+      "iterate_ms": 15.023104
+    },
+    "multibrot8-deep-1e6/distance": {
+      "color_ms": 0.015359999999999999,
+      "iterate_ms": 29.636044
+    },
+    "multibrot8-deep-1e6/smooth": {
+      "color_ms": 0.009216,
+      "iterate_ms": 20.83144
+    },
+    "multibrot8-deep-1e6/stripe": {
+      "color_ms": 0.010239999999999999,
+      "iterate_ms": 12.707840000000001
+    },
+    "multibrot8-deep-1e6/stripe-tail": {
+      "color_ms": 0.01024,
+      "iterate_ms": 11.91936
+    },
+    "multibrot8-deep-1e6/trap-circle": {
+      "color_ms": 0.018432,
+      "iterate_ms": 15.698944000000001
+    },
+    "multibrot8-deep-1e6/trap-cross": {
+      "color_ms": 0.015359999999999999,
+      "iterate_ms": 15.506432
+    },
+    "multibrot8-deep-1e6/trap-point": {
+      "color_ms": 0.016384,
+      "iterate_ms": 15.046656
+    },
+    "multibrot8-deep-1e6/triangle": {
+      "color_ms": 0.012288,
+      "iterate_ms": 11.646975999999999
+    },
+    "multibrot8-overview/decomposition": {
+      "color_ms": 0.011168,
+      "iterate_ms": 1.124352
+    },
+    "multibrot8-overview/distance": {
+      "color_ms": 0.008192000000000001,
+      "iterate_ms": 8.881283999999999
+    },
+    "multibrot8-overview/smooth": {
+      "color_ms": 0.009216,
+      "iterate_ms": 8.719784
+    },
+    "multibrot8-overview/stripe": {
+      "color_ms": 0.010239999999999999,
+      "iterate_ms": 1.33632
+    },
+    "multibrot8-overview/stripe-tail": {
+      "color_ms": 0.009216,
+      "iterate_ms": 1.391616
+    },
+    "multibrot8-overview/trap-circle": {
+      "color_ms": 0.011264,
+      "iterate_ms": 1.209344
+    },
+    "multibrot8-overview/trap-cross": {
+      "color_ms": 0.011264,
+      "iterate_ms": 1.158144
+    },
+    "multibrot8-overview/trap-point": {
+      "color_ms": 0.011264,
+      "iterate_ms": 1.2103679999999999
+    },
+    "multibrot8-overview/triangle": {
+      "color_ms": 0.01024,
+      "iterate_ms": 1.2288000000000001
+    },
+    "newton-overview/decomposition": {
+      "color_ms": 0.045056,
+      "iterate_ms": 0.329728
+    },
+    "newton-overview/smooth": {
+      "color_ms": 0.011168,
+      "iterate_ms": 0.091136
+    },
+    "newton-overview/stripe": {
+      "color_ms": 0.009216,
+      "iterate_ms": 0.090112
+    },
+    "newton-overview/stripe-tail": {
+      "color_ms": 0.01024,
+      "iterate_ms": 0.089088
+    },
+    "newton-overview/trap-circle": {
+      "color_ms": 0.045056,
+      "iterate_ms": 0.323584
+    },
+    "newton-overview/trap-cross": {
+      "color_ms": 0.043008000000000005,
+      "iterate_ms": 0.288768
+    },
+    "newton-overview/trap-point": {
+      "color_ms": 0.040959999999999996,
+      "iterate_ms": 0.323584
+    },
+    "newton-overview/triangle": {
+      "color_ms": 0.010239999999999999,
+      "iterate_ms": 0.09215999999999999
+    },
+    "phoenix-1e3/decomposition": {
+      "color_ms": 0.011264,
+      "iterate_ms": 3.836928
+    },
+    "phoenix-1e3/distance": {
+      "color_ms": 0.011232,
+      "iterate_ms": 3.3280000000000003
+    },
+    "phoenix-1e3/smooth": {
+      "color_ms": 0.011264,
+      "iterate_ms": 3.323904
+    },
+    "phoenix-1e3/stripe": {
+      "color_ms": 0.01024,
+      "iterate_ms": 5.131264
+    },
+    "phoenix-1e3/stripe-tail": {
+      "color_ms": 0.01024,
+      "iterate_ms": 5.317632
+    },
+    "phoenix-1e3/trap-circle": {
+      "color_ms": 0.011264,
+      "iterate_ms": 4.169728
+    },
+    "phoenix-1e3/trap-cross": {
+      "color_ms": 0.011264,
+      "iterate_ms": 4.066304
+    },
+    "phoenix-1e3/trap-point": {
+      "color_ms": 0.012256,
+      "iterate_ms": 4.16768
+    },
+    "phoenix-1e3/triangle": {
+      "color_ms": 0.009216,
+      "iterate_ms": 4.40832
+    },
+    "phoenix-overview/decomposition": {
+      "color_ms": 0.011264,
+      "iterate_ms": 0.42496
+    },
+    "phoenix-overview/distance": {
+      "color_ms": 0.011232,
+      "iterate_ms": 0.364544
+    },
+    "phoenix-overview/smooth": {
+      "color_ms": 0.011264,
+      "iterate_ms": 0.38195199999999996
+    },
+    "phoenix-overview/stripe": {
+      "color_ms": 0.01024,
+      "iterate_ms": 0.54272
+    },
+    "phoenix-overview/stripe-tail": {
+      "color_ms": 0.009216,
+      "iterate_ms": 0.553984
+    },
+    "phoenix-overview/trap-circle": {
+      "color_ms": 0.011264,
+      "iterate_ms": 0.46592
+    },
+    "phoenix-overview/trap-cross": {
+      "color_ms": 0.011168,
+      "iterate_ms": 0.447488
+    },
+    "phoenix-overview/trap-point": {
+      "color_ms": 0.011264,
+      "iterate_ms": 0.464896
+    },
+    "phoenix-overview/triangle": {
+      "color_ms": 0.009216,
+      "iterate_ms": 0.48947199999999996
+    },
+    "tricorn-3-deep-1e6/decomposition": {
+      "color_ms": 0.020479999999999998,
+      "iterate_ms": 19.851264
+    },
+    "tricorn-3-deep-1e6/smooth": {
+      "color_ms": 0.0112,
+      "iterate_ms": 10.095616
+    },
+    "tricorn-3-deep-1e6/stripe": {
+      "color_ms": 0.009216,
+      "iterate_ms": 12.661760000000001
+    },
+    "tricorn-3-deep-1e6/stripe-tail": {
+      "color_ms": 0.010239999999999999,
+      "iterate_ms": 12.193792
+    },
+    "tricorn-3-deep-1e6/trap-circle": {
+      "color_ms": 0.023552,
+      "iterate_ms": 20.012031999999998
+    },
+    "tricorn-3-deep-1e6/trap-cross": {
+      "color_ms": 0.011264,
+      "iterate_ms": 10.750976
+    },
+    "tricorn-3-deep-1e6/trap-point": {
+      "color_ms": 0.011264,
+      "iterate_ms": 11.265024
+    },
+    "tricorn-3-deep-1e6/triangle": {
+      "color_ms": 0.009216,
+      "iterate_ms": 11.490304
+    },
+    "tricorn-3-deep-2e28/decomposition": {
+      "color_ms": 0.012256,
+      "iterate_ms": 100.955136
+    },
+    "tricorn-3-deep-2e28/smooth": {
+      "color_ms": 0.013312000000000001,
+      "iterate_ms": 140.394496
+    },
+    "tricorn-3-deep-2e28/stripe": {
+      "color_ms": 0.012224,
+      "iterate_ms": 137.424896
+    },
+    "tricorn-3-deep-2e28/stripe-tail": {
+      "color_ms": 0.014336,
+      "iterate_ms": 138.24614400000002
+    },
+    "tricorn-3-deep-2e28/trap-circle": {
+      "color_ms": 0.013312000000000001,
+      "iterate_ms": 143.819776
+    },
+    "tricorn-3-deep-2e28/trap-cross": {
+      "color_ms": 0.013312000000000001,
+      "iterate_ms": 133.18553599999998
+    },
+    "tricorn-3-deep-2e28/trap-point": {
+      "color_ms": 0.013312000000000001,
+      "iterate_ms": 135.58272
+    },
+    "tricorn-3-deep-2e28/triangle": {
+      "color_ms": 0.012288,
+      "iterate_ms": 138.228736
+    },
+    "tricorn-3-overview/decomposition": {
+      "color_ms": 0.011264,
+      "iterate_ms": 0.878592
+    },
+    "tricorn-3-overview/smooth": {
+      "color_ms": 0.010239999999999999,
+      "iterate_ms": 0.7936000000000001
+    },
+    "tricorn-3-overview/stripe": {
+      "color_ms": 0.010239999999999999,
+      "iterate_ms": 1.0895359999999998
+    },
+    "tricorn-3-overview/stripe-tail": {
+      "color_ms": 0.009216,
+      "iterate_ms": 1.110016
+    },
+    "tricorn-3-overview/trap-circle": {
+      "color_ms": 0.011264,
+      "iterate_ms": 0.944128
+    },
+    "tricorn-3-overview/trap-cross": {
+      "color_ms": 0.011264,
+      "iterate_ms": 0.913408
+    },
+    "tricorn-3-overview/trap-point": {
+      "color_ms": 0.011264,
+      "iterate_ms": 0.9441280000000001
+    },
+    "tricorn-3-overview/triangle": {
+      "color_ms": 0.010239999999999999,
+      "iterate_ms": 0.98304
+    },
+    "tricorn-4-deep-1e6/decomposition": {
+      "color_ms": 0.013312000000000001,
+      "iterate_ms": 11.049984
+    },
+    "tricorn-4-deep-1e6/smooth": {
+      "color_ms": 0.011264,
+      "iterate_ms": 10.109952
+    },
+    "tricorn-4-deep-1e6/stripe": {
+      "color_ms": 0.01024,
+      "iterate_ms": 12.669951999999999
+    },
+    "tricorn-4-deep-1e6/stripe-tail": {
+      "color_ms": 0.010176000000000001,
+      "iterate_ms": 12.822527999999998
+    },
+    "tricorn-4-deep-1e6/trap-circle": {
+      "color_ms": 0.011264,
+      "iterate_ms": 11.245567999999999
+    },
+    "tricorn-4-deep-1e6/trap-cross": {
+      "color_ms": 0.012224,
+      "iterate_ms": 11.0848
+    },
+    "tricorn-4-deep-1e6/trap-point": {
+      "color_ms": 0.011264,
+      "iterate_ms": 11.251712000000001
+    },
+    "tricorn-4-deep-1e6/triangle": {
+      "color_ms": 0.009216,
+      "iterate_ms": 11.542528
+    },
+    "tricorn-4-deep-2e28/decomposition": {
+      "color_ms": 0.012192000000000001,
+      "iterate_ms": 91.200512
+    },
+    "tricorn-4-deep-2e28/smooth": {
+      "color_ms": 0.012288,
+      "iterate_ms": 145.00351999999998
+    },
+    "tricorn-4-deep-2e28/stripe": {
+      "color_ms": 0.011264,
+      "iterate_ms": 150.249472
+    },
+    "tricorn-4-deep-2e28/stripe-tail": {
+      "color_ms": 0.01328,
+      "iterate_ms": 152.829952
+    },
+    "tricorn-4-deep-2e28/trap-circle": {
+      "color_ms": 0.014336,
+      "iterate_ms": 148.64793600000002
+    },
+    "tricorn-4-deep-2e28/trap-cross": {
+      "color_ms": 0.013312000000000001,
+      "iterate_ms": 148.278272
+    },
+    "tricorn-4-deep-2e28/trap-point": {
+      "color_ms": 0.013312000000000001,
+      "iterate_ms": 150.193152
+    },
+    "tricorn-4-deep-2e28/triangle": {
+      "color_ms": 0.012256,
+      "iterate_ms": 149.653504
+    },
+    "tricorn-4-overview/decomposition": {
+      "color_ms": 0.011264,
+      "iterate_ms": 0.899072
+    },
+    "tricorn-4-overview/smooth": {
+      "color_ms": 0.011264,
+      "iterate_ms": 0.80896
+    },
+    "tricorn-4-overview/stripe": {
+      "color_ms": 0.010208,
+      "iterate_ms": 1.082368
+    },
+    "tricorn-4-overview/stripe-tail": {
+      "color_ms": 0.009216,
+      "iterate_ms": 1.13664
+    },
+    "tricorn-4-overview/trap-circle": {
+      "color_ms": 0.011264,
+      "iterate_ms": 0.971776
+    },
+    "tricorn-4-overview/trap-cross": {
+      "color_ms": 0.011264,
+      "iterate_ms": 0.92672
+    },
+    "tricorn-4-overview/trap-point": {
+      "color_ms": 0.011200000000000002,
+      "iterate_ms": 0.941056
+    },
+    "tricorn-4-overview/triangle": {
+      "color_ms": 0.009216,
+      "iterate_ms": 0.992256
+    },
+    "tricorn-5-deep-1e6/decomposition": {
+      "color_ms": 0.039936,
+      "iterate_ms": 25.759744
+    },
+    "tricorn-5-deep-1e6/smooth": {
+      "color_ms": 0.011264,
+      "iterate_ms": 11.871232
+    },
+    "tricorn-5-deep-1e6/stripe": {
+      "color_ms": 0.010239999999999999,
+      "iterate_ms": 14.394368
+    },
+    "tricorn-5-deep-1e6/stripe-tail": {
+      "color_ms": 0.010239999999999999,
+      "iterate_ms": 13.899776
+    },
+    "tricorn-5-deep-1e6/trap-circle": {
+      "color_ms": 0.06656,
+      "iterate_ms": 25.21088
+    },
+    "tricorn-5-deep-1e6/trap-cross": {
+      "color_ms": 0.069632,
+      "iterate_ms": 24.025088
+    },
+    "tricorn-5-deep-1e6/trap-point": {
+      "color_ms": 0.012288,
+      "iterate_ms": 13.029376
+    },
+    "tricorn-5-deep-1e6/triangle": {
+      "color_ms": 0.011231999999999999,
+      "iterate_ms": 12.6208
+    },
+    "tricorn-5-deep-2e28/decomposition": {
+      "color_ms": 0.014336,
+      "iterate_ms": 161.508352
+    },
+    "tricorn-5-deep-2e28/smooth": {
+      "color_ms": 0.013312000000000001,
+      "iterate_ms": 238.246912
+    },
+    "tricorn-5-deep-2e28/stripe": {
+      "color_ms": 0.012288,
+      "iterate_ms": 257.528832
+    },
+    "tricorn-5-deep-2e28/stripe-tail": {
+      "color_ms": 0.012288,
+      "iterate_ms": 238.22848
+    },
+    "tricorn-5-deep-2e28/trap-circle": {
+      "color_ms": 0.012288,
+      "iterate_ms": 260.013056
+    },
+    "tricorn-5-deep-2e28/trap-cross": {
+      "color_ms": 0.014336,
+      "iterate_ms": 234.33113600000001
+    },
+    "tricorn-5-deep-2e28/trap-point": {
+      "color_ms": 0.013312000000000001,
+      "iterate_ms": 233.413632
+    },
+    "tricorn-5-deep-2e28/triangle": {
+      "color_ms": 0.012288,
+      "iterate_ms": 235.665408
+    },
+    "tricorn-5-overview/decomposition": {
+      "color_ms": 0.011264,
+      "iterate_ms": 0.932864
+    },
+    "tricorn-5-overview/smooth": {
+      "color_ms": 0.010239999999999999,
+      "iterate_ms": 0.8519680000000001
+    },
+    "tricorn-5-overview/stripe": {
+      "color_ms": 0.010239999999999999,
+      "iterate_ms": 1.1356160000000002
+    },
+    "tricorn-5-overview/stripe-tail": {
+      "color_ms": 0.010144,
+      "iterate_ms": 1.132544
+    },
+    "tricorn-5-overview/trap-circle": {
+      "color_ms": 0.011264,
+      "iterate_ms": 0.990208
+    },
+    "tricorn-5-overview/trap-cross": {
+      "color_ms": 0.011231999999999999,
+      "iterate_ms": 0.971776
+    },
+    "tricorn-5-overview/trap-point": {
+      "color_ms": 0.011264,
+      "iterate_ms": 0.963584
+    },
+    "tricorn-5-overview/triangle": {
+      "color_ms": 0.009216,
+      "iterate_ms": 1.02912
+    },
+    "tricorn-deep-1e6/decomposition": {
+      "color_ms": 0.011264,
+      "iterate_ms": 6.472704
+    },
+    "tricorn-deep-1e6/smooth": {
+      "color_ms": 0.011264,
+      "iterate_ms": 5.820416
+    },
+    "tricorn-deep-1e6/stripe": {
+      "color_ms": 0.011264,
+      "iterate_ms": 8.210432
+    },
+    "tricorn-deep-1e6/stripe-tail": {
+      "color_ms": 0.01024,
+      "iterate_ms": 8.501248
+    },
+    "tricorn-deep-1e6/trap-circle": {
+      "color_ms": 0.011264,
+      "iterate_ms": 6.974464
+    },
+    "tricorn-deep-1e6/trap-cross": {
+      "color_ms": 0.011264,
+      "iterate_ms": 6.610944
+    },
+    "tricorn-deep-1e6/trap-point": {
+      "color_ms": 0.011264,
+      "iterate_ms": 6.928383999999999
+    },
+    "tricorn-deep-1e6/triangle": {
+      "color_ms": 0.01024,
+      "iterate_ms": 6.989824
+    },
+    "tricorn-deep-2e28/decomposition": {
+      "color_ms": 0.011264,
+      "iterate_ms": 55.472128
+    },
+    "tricorn-deep-2e28/smooth": {
+      "color_ms": 0.017408,
+      "iterate_ms": 83.03308799999999
+    },
+    "tricorn-deep-2e28/stripe": {
+      "color_ms": 0.011264,
+      "iterate_ms": 68.087808
+    },
+    "tricorn-deep-2e28/stripe-tail": {
+      "color_ms": 0.012288,
+      "iterate_ms": 70.29657599999999
+    },
+    "tricorn-deep-2e28/trap-circle": {
+      "color_ms": 0.011264,
+      "iterate_ms": 67.321856
+    },
+    "tricorn-deep-2e28/trap-cross": {
+      "color_ms": 0.012288,
+      "iterate_ms": 66.604032
+    },
+    "tricorn-deep-2e28/trap-point": {
+      "color_ms": 0.011264,
+      "iterate_ms": 68.219904
+    },
+    "tricorn-deep-2e28/triangle": {
+      "color_ms": 0.011264,
+      "iterate_ms": 68.975616
+    },
+    "tricorn-overview/decomposition": {
+      "color_ms": 0.01024,
+      "iterate_ms": 0.38707199999999997
+    },
+    "tricorn-overview/smooth": {
+      "color_ms": 0.011168,
+      "iterate_ms": 0.32972799999999997
+    },
+    "tricorn-overview/stripe": {
+      "color_ms": 0.009216,
+      "iterate_ms": 0.500736
+    },
+    "tricorn-overview/stripe-tail": {
+      "color_ms": 0.01024,
+      "iterate_ms": 0.513024
+    },
+    "tricorn-overview/trap-circle": {
+      "color_ms": 0.011264,
+      "iterate_ms": 0.42496
+    },
+    "tricorn-overview/trap-cross": {
+      "color_ms": 0.011264,
+      "iterate_ms": 0.41164799999999996
+    },
+    "tricorn-overview/trap-point": {
+      "color_ms": 0.01024,
+      "iterate_ms": 0.429056
+    },
+    "tricorn-overview/triangle": {
+      "color_ms": 0.010239999999999999,
+      "iterate_ms": 0.44544
+    }
+  },
+  "gpu": "NVIDIA GeForce RTX 3080",
+  "tool": "fractadyne --coloring-matrix --bless",
+  "utc": "2026-11-11 16:51:36 UTC",
+  "version": "0.3.0-beta.26 (build 6525, g2e70adc-dirty)"
+}

@@ -1406,6 +1406,30 @@ fn every_package_ships_the_replay_fixtures() {
     }
 }
 
+#[test]
+fn every_package_ships_the_coloring_matrix_views() {
+    // `--coloring-matrix` reads `validation/coloring/views.toml` beside the binary (`anchored`), and
+    // the set's `fdn` views from `validation/`; a view it cannot read stops the whole run. The field
+    // agent runs it from the share package, so every recipe that builds a package carries both.
+    for (recipe, text, jobs) in [
+        (".github/workflows/release.yml", include_str!(concat!(env!("CARGO_MANIFEST_DIR"), "/../../.github/workflows/release.yml")), 2),
+        ("scripts/publish-share.ps1", include_str!(concat!(env!("CARGO_MANIFEST_DIR"), "/../../scripts/publish-share.ps1")), 1),
+        ("scripts/build-accelerated.ps1", include_str!(concat!(env!("CARGO_MANIFEST_DIR"), "/../../scripts/build-accelerated.ps1")), 1),
+        ("scripts/build-accelerated.sh", include_str!(concat!(env!("CARGO_MANIFEST_DIR"), "/../../scripts/build-accelerated.sh")), 1),
+    ] {
+        for pat in ["validation/coloring/*.toml", "validation/*.fdn", "benchmarks/coloring-matrix-baseline*.json"] {
+            let n = text.matches(pat).count() + text.matches(pat.replace('/', "\\").as_str()).count();
+            assert_eq!(n, jobs, "{recipe} copies {pat} {n} time(s), expected {jobs}");
+        }
+    }
+    let views = include_str!(concat!(env!("CARGO_MANIFEST_DIR"), "/../../validation/coloring/views.toml"));
+    for line in views.lines().filter(|l| l.trim_start().starts_with("fdn")) {
+        let path = line.split('"').nth(1).expect("fdn = \"path\"");
+        let rest = path.strip_prefix("validation/").unwrap_or("");
+        assert!(!rest.is_empty() && !rest.contains('/') && rest.ends_with(".fdn"), "{path} is not a shipped validation/*.fdn");
+    }
+}
+
 /// The pickers translate three size presets by their table label (`size_preset_label`): each must
 /// still be in the table, and in English every preset reads exactly as the table writes it.
 #[test]

@@ -881,7 +881,7 @@ pub(crate) fn is_task_invocation<S: AsRef<str>>(args: &[S]) -> bool {
 const TASK_FLAGS: &[&str] = &[
     "--selftest", "--livetest", "--divetest", "--uitest", "--juliadive", "--dualsettle",
     "--play-tour",
-    "--bench-matrix", "--benchmark", "--profile", "--reusetest", "--resizetest", "--frametest",
+    "--bench-matrix", "--coloring-matrix", "--benchmark", "--profile", "--reusetest", "--resizetest", "--frametest",
     "--render", "--render-tour", "--render-expmap", "--assemble", "--render-zoom-video", "--torture", "--gputest", "--oomtest", "--refdiag",
     "--find-minibrot", "--check-updates", "--crosscheck-f3", "--autodive", "--motiontest",
     "--zoomtest",
@@ -7237,6 +7237,7 @@ impl FractadyneApp {
         let selftest = args.iter().any(|a| a == "--selftest" || a == "--selftest-list");
         let profile = args.iter().any(|a| a == "--profile");
         let bench_matrix = args.iter().any(|a| a == "--bench-matrix");
+        let coloring_matrix = harness::coloring_matrix::Cli::from_args(args);
         let reusetest = args.iter().any(|a| a == "--reusetest");
         let resizetest = args.iter().any(|a| a == "--resizetest");
         let frametest = args.iter().any(|a| a == "--frametest");
@@ -7412,6 +7413,7 @@ impl FractadyneApp {
             || play_tour.is_some()
             || selftest
             || bench_matrix
+            || coloring_matrix.is_some()
             || profile
             || reusetest
             || resizetest
@@ -7756,6 +7758,7 @@ impl FractadyneApp {
             harness: harness::modes::HarnessModes {
                 bench_matrix,
                 bench_matrix_done: false,
+                coloring_matrix,
                 reusetest,
                 reusetest_done: false,
                 resizetest,

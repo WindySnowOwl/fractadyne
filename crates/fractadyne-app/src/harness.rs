@@ -20,6 +20,7 @@
 //! | `--chunk-sweep` | [`chunksweep`] | a chunked iterate's per-window cost |
 //! | `--deviceloss-repro` | [`deviceloss_repro`] | a safe reproduction of the deep-interior device loss |
 //! | `--bench-matrix` | [`bench_matrix`] | the path-coverage performance and regression suite |
+//! | `--coloring-matrix` | [`coloring_matrix`] | every coloring method across the families and depth bands: contact sheets, A/Bs, timings |
 //! | `--reusetest` | [`reusetest`] | reprojection staleness against from-scratch frames |
 //! | `--glitch-audit`, `--tail-audit`, `--renorm-audit` (with `--render`) | [`glitchaudit`] | the pixels a render path changes, against the bignum oracle |
 //! | `--torture` | [`torture`] | the escalating failure-hunting ladder, each rung a child process |
@@ -72,6 +73,7 @@ pub(crate) mod banner;
 pub(crate) mod bench_bignum;
 pub(crate) mod bench_matrix;
 pub(crate) mod chunksweep;
+pub(crate) mod coloring_matrix;
 pub(crate) mod compare;
 pub(crate) mod crosscheck_f3;
 pub(crate) mod deviceloss_repro;

@@ -98,7 +98,7 @@ cargo build --release --bin fractadyne \
 dir="$outdir/fractadyne-$tag-linux-x64-accelerated"
 step "Packaging into $dir"
 rm -rf "$dir"
-mkdir -p "$dir/tours" "$dir/scripts" "$dir/validation/golden" "$dir/benchmarks"
+mkdir -p "$dir/tours" "$dir/scripts" "$dir/validation/golden" "$dir/validation/coloring" "$dir/benchmarks"
 cp target/release/fractadyne "$dir/"
 cp README.md CHANGELOG.md TOURS.md DIAGNOSTICS.md THIRD-PARTY-NOTICES.md \
    LICENSE-APACHE LICENSE-MIT "$dir/"
@@ -115,8 +115,12 @@ for f in i18n/*/fractadyne.ftl; do t="$(basename "$(dirname "$f")")"; [ "$t" = e
 cp validation/golden/*.png "$dir/validation/golden/"
 cp validation/golden/BLESSED-GPU.txt "$dir/validation/golden/" 2>/dev/null || true
 cp validation/catalog.toml "$dir/validation/"
+# The coloring matrix's view set and the view files it names (`--coloring-matrix`).
+cp validation/coloring/*.toml "$dir/validation/coloring/"
+cp validation/*.fdn "$dir/validation/"
 # Every card's bench-matrix baseline (the reference card's file and the per-card ones).
 cp benchmarks/bench-matrix-baseline*.json "$dir/benchmarks/"
+cp benchmarks/coloring-matrix-baseline*.json "$dir/benchmarks/" 2>/dev/null || true
 
 # License texts for the LGPL code compiled INTO this binary. Section 4(b) requires the LGPL and
 # the GPL it refers to, so both ship or the package is not conveyable — fail rather than omit.

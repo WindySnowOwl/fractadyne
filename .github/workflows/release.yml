@@ -158,9 +158,14 @@ jobs:
           # on the machine it runs on (design/live-render-robustness.md 7.5); without them it is VACUOUS.
           New-Item -ItemType Directory -Force -Path "$dir/validation/replays" | Out-Null
           Copy-Item validation/replays/*.jsonl -Destination "$dir/validation/replays/"
+          # The coloring matrix's view set and the view files it names (`--coloring-matrix`).
+          New-Item -ItemType Directory -Force -Path "$dir/validation/coloring" | Out-Null
+          Copy-Item validation/coloring/*.toml -Destination "$dir/validation/coloring/"
+          Copy-Item validation/*.fdn -Destination "$dir/validation/"
           New-Item -ItemType Directory -Force -Path "$dir/benchmarks" | Out-Null
           # Every card's bench-matrix baseline (the reference card's file and the per-card ones).
           Copy-Item benchmarks/bench-matrix-baseline*.json -Destination "$dir/benchmarks/"
+          Copy-Item benchmarks/coloring-matrix-baseline*.json -Destination "$dir/benchmarks/" -ErrorAction SilentlyContinue
           Compress-Archive -Path $dir -DestinationPath "$dir.zip" -Force
           $hash = (Get-FileHash "$dir.zip" -Algorithm SHA256).Hash.ToLower()
           "$hash  $dir.zip" | Out-File -FilePath "$dir.zip.sha256" -Encoding ascii
@@ -225,7 +230,7 @@ jobs:
           tag="${tag//\//-}"
           [ -z "$tag" ] && tag="dev"
           dir="fractadyne-$tag-linux-x64"
-          mkdir -p "$dir/tours" "$dir/scripts" "$dir/validation/golden" "$dir/validation/replays" "$dir/benchmarks"
+          mkdir -p "$dir/tours" "$dir/scripts" "$dir/validation/golden" "$dir/validation/replays" "$dir/validation/coloring" "$dir/benchmarks"
           cp target/release/fractadyne "$dir/"
           cp README.md CHANGELOG.md TOURS.md DIAGNOSTICS.md THIRD-PARTY-NOTICES.md LICENSE-APACHE LICENSE-MIT "$dir/"
           cp tours/*.toml "$dir/tours/"
@@ -249,8 +254,12 @@ jobs:
           cp validation/catalog.toml "$dir/validation/"
           # The replay fixtures, for `--selftest`'s replay group (as the windows job).
           cp validation/replays/*.jsonl "$dir/validation/replays/"
+          # The coloring matrix's view set and the view files it names (as the windows job).
+          cp validation/coloring/*.toml "$dir/validation/coloring/"
+          cp validation/*.fdn "$dir/validation/"
           # Every card's bench-matrix baseline (as the windows job).
           cp benchmarks/bench-matrix-baseline*.json "$dir/benchmarks/"
+          cp benchmarks/coloring-matrix-baseline*.json "$dir/benchmarks/" 2>/dev/null || true
           tar czf "$dir.tar.gz" "$dir"
           sha256sum "$dir.tar.gz" > "$dir.tar.gz.sha256"
           echo "ASSET=$dir.tar.gz" >> "$GITHUB_ENV"

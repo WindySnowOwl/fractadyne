@@ -1,0 +1,634 @@
+# The coloring matrix's view set (`--coloring-matrix`, design/coloring-plan.md B1).
+#
+# Each [[view]] is rendered once per coloring method and variant (every method of the table, the
+# orbit trap once per shape, the stripe average once more over the tail only); a family that does
+# not offer a method (Distance without a distance estimate) records that cell as n/a.
+#
+# Keys: name (lowercase, digits, '-'; unique), fractal (as the app names it; default Mandelbrot),
+# formula (a custom formula's step; the family is then Custom), julia_c = [re, im] (Julia mode),
+# center = [re, im] (text, full precision; default the family's own center), zoom (magnification as
+# text, default 1), fdn (take the family, center and zoom from a view file instead), iter
+# (required), quick (part of --quick), opt_in (runs only when --only names it), note.
+#
+# The deep points of the power families are the self-test's FOLD_DEEP and MULTIBROT_DEEP (the
+# core's fixtures, good to about 2^-112), copied here so they are no longer self-test only.
+#
+# [[known]] records a red cell that is understood: cell = "view/variant" (or "*/variant" for
+# every view), check = the failed check's name, reason. A known red cell is reported, not counted.
+
+# ---- Mandelbrot: every band, a minibrot's interior and a Misiurewicz point ----
+
+[[view]]
+name = "mandelbrot-overview"
+iter = 1000
+quick = true
+
+[[view]]
+name = "mandelbrot-seahorse-2e3"
+center = ["-0.7436438870371587047521915061147707", "0.131825904205311970493132056385139"]
+zoom = "2e3"
+iter = 2000
+note = "direct"
+
+[[view]]
+name = "mandelbrot-seahorse-1e6"
+center = ["-0.7436438870371587047521915061147707", "0.131825904205311970493132056385139"]
+zoom = "1e6"
+iter = 4000
+quick = true
+note = "df32"
+
+[[view]]
+name = "mandelbrot-seahorse-1e20"
+center = ["-0.7436438870371587047521915061147707", "0.131825904205311970493132056385139"]
+zoom = "1e20"
+iter = 12000
+note = "df32"
+
+[[view]]
+name = "mandelbrot-corpus07-1e30"
+center = ["-1.178853950372678747911373866849720956148855", "0.1853420232408490265512092752061929308714979"]
+zoom = "1e30"
+iter = 25000
+quick = true
+note = "validation corpus location 07: escapes on every pixel, floatexp (the seahorse point is inside the set here)"
+
+[[view]]
+name = "mandelbrot-minibrot-9.3e78"
+fdn = "validation/minibrot-auto-iter-9.3e78.fdn"
+iter = 200000
+note = "a minibrot and its interior, floatexp"
+
+[[view]]
+name = "mandelbrot-misiurewicz-7.4e143"
+fdn = "validation/misiurewicz-4-1.fdn"
+iter = 100000
+note = "Misiurewicz (4,1), floatexp"
+
+[[view]]
+name = "mandelbrot-spiral-9.98e60205"
+fdn = "validation/spiral-9.98e60205.fdn"
+iter = 1200
+opt_in = true
+note = "the deepest tracked location; hours for its reference, so only when --only names it"
+
+# ---- Multibrot 3-8: overview, and the deep boundary points at 1e6x (df32) and 1e30x (floatexp) ----
+
+[[view]]
+name = "multibrot3-overview"
+fractal = "Multibrot 3"
+iter = 1000
+quick = true
+
+[[view]]
+name = "multibrot3-deep-1e6"
+fractal = "Multibrot 3"
+center = ["-7.542988421659047012682575462407727648742957195599927956575e-2", "1.150837642332408274574812674609472971463521952952769779238e+0"]
+zoom = "1e6"
+iter = 4000
+quick = true
+
+[[view]]
+name = "multibrot3-deep-1e30"
+fractal = "Multibrot 3"
+center = ["-7.542988421659047012682575462407727648742957195599927956575e-2", "1.150837642332408274574812674609472971463521952952769779238e+0"]
+zoom = "1e30"
+iter = 25000
+quick = true
+
+[[view]]
+name = "multibrot4-overview"
+fractal = "Multibrot 4"
+iter = 1000
+
+[[view]]
+name = "multibrot4-deep-1e6"
+fractal = "Multibrot 4"
+center = ["6.332712744727028788597360205303212675970690061507204539421e-1", "2.149666311355967986884147897121404542351347657064834463711e-1"]
+zoom = "1e6"
+iter = 4000
+
+[[view]]
+name = "multibrot4-deep-1e30"
+fractal = "Multibrot 4"
+center = ["6.332712744727028788597360205303212675970690061507204539421e-1", "2.149666311355967986884147897121404542351347657064834463711e-1"]
+zoom = "1e30"
+iter = 25000
+
+[[view]]
+name = "multibrot5-overview"
+fractal = "Multibrot 5"
+iter = 1000
+
+[[view]]
+name = "multibrot5-deep-1e6"
+fractal = "Multibrot 5"
+center = ["6.077504591516768732823798182613786336218861548355426472285e-1", "3.983406962035189108405800236915385332818636675353539031671e-2"]
+zoom = "1e6"
+iter = 4000
+
+[[view]]
+name = "multibrot5-deep-1e30"
+fractal = "Multibrot 5"
+center = ["6.077504591516768732823798182613786336218861548355426472285e-1", "3.983406962035189108405800236915385332818636675353539031671e-2"]
+zoom = "1e30"
+iter = 25000
+
+[[view]]
+name = "multibrot6-overview"
+fractal = "Multibrot 6"
+iter = 1000
+
+[[view]]
+name = "multibrot6-deep-1e6"
+fractal = "Multibrot 6"
+center = ["6.857394901829179081616429758180505352925479174432123629563e-1", "4.494574077574449791211463579695434838514006741731437234958e-2"]
+zoom = "1e6"
+iter = 4000
+
+[[view]]
+name = "multibrot6-deep-1e30"
+fractal = "Multibrot 6"
+center = ["6.857394901829179081616429758180505352925479174432123629563e-1", "4.494574077574449791211463579695434838514006741731437234958e-2"]
+zoom = "1e30"
+iter = 25000
+
+[[view]]
+name = "multibrot7-overview"
+fractal = "Multibrot 7"
+iter = 1000
+
+[[view]]
+name = "multibrot7-deep-1e6"
+fractal = "Multibrot 7"
+center = ["8.476326589810416770591545692023465481479590290010075317289e-1", "1.686046188662333201185254044899073603644196631087163205889e-1"]
+zoom = "1e6"
+iter = 4000
+
+[[view]]
+name = "multibrot7-deep-1e30"
+fractal = "Multibrot 7"
+center = ["8.476326589810416770591545692023465481479590290010075317289e-1", "1.686046188662333201185254044899073603644196631087163205889e-1"]
+zoom = "1e30"
+iter = 25000
+
+[[view]]
+name = "multibrot8-overview"
+fractal = "Multibrot 8"
+iter = 1000
+
+[[view]]
+name = "multibrot8-deep-1e6"
+fractal = "Multibrot 8"
+center = ["7.83482963062576633425633295165828974709342271037759608728e-1", "2.659566285584885991743283420348254644023437952052363285336e-1"]
+zoom = "1e6"
+iter = 4000
+
+[[view]]
+name = "multibrot8-deep-1e30"
+fractal = "Multibrot 8"
+center = ["7.83482963062576633425633295165828974709342271037759608728e-1", "2.659566285584885991743283420348254644023437952052363285336e-1"]
+zoom = "1e30"
+iter = 25000
+
+# ---- The folds at every power: overview, and the deep points at 1e6x (df32) and 2e28x
+# (floatexp, which starts at 1e28x; the points are good to about 1e30x) ----
+
+[[view]]
+name = "burning-ship-overview"
+fractal = "Burning Ship"
+iter = 1000
+quick = true
+
+[[view]]
+name = "burning-ship-deep-1e6"
+fractal = "Burning Ship"
+center = ["1.510426975372399155276004915912049480568178198670688953146e-1", "4.221360602684940155668847406639261668137033173647796363826e-1"]
+zoom = "1e6"
+iter = 4000
+quick = true
+
+[[view]]
+name = "burning-ship-deep-2e28"
+fractal = "Burning Ship"
+center = ["1.510426975372399155276004915912049480568178198670688953146e-1", "4.221360602684940155668847406639261668137033173647796363826e-1"]
+zoom = "2e28"
+iter = 20000
+quick = true
+
+[[view]]
+name = "burning-ship-3-overview"
+fractal = "Burning Ship 3"
+iter = 1000
+
+[[view]]
+name = "burning-ship-3-deep-1e6"
+fractal = "Burning Ship 3"
+center = ["-9.15383227746129862363246806792022038019889900108861939843e-1", "-1.665596356636845051404128728242821066413195064087217571441e-1"]
+zoom = "1e6"
+iter = 4000
+
+[[view]]
+name = "burning-ship-3-deep-2e28"
+fractal = "Burning Ship 3"
+center = ["-9.15383227746129862363246806792022038019889900108861939843e-1", "-1.665596356636845051404128728242821066413195064087217571441e-1"]
+zoom = "2e28"
+iter = 20000
+
+[[view]]
+name = "burning-ship-4-overview"
+fractal = "Burning Ship 4"
+iter = 1000
+
+[[view]]
+name = "burning-ship-4-deep-1e6"
+fractal = "Burning Ship 4"
+center = ["-1.059059912399875949806604684756823369616419345477182022818e+0", "-6.941445398749050928167618993678418040977879789587693625044e-2"]
+zoom = "1e6"
+iter = 4000
+
+[[view]]
+name = "burning-ship-4-deep-2e28"
+fractal = "Burning Ship 4"
+center = ["-1.059059912399875949806604684756823369616419345477182022818e+0", "-6.941445398749050928167618993678418040977879789587693625044e-2"]
+zoom = "2e28"
+iter = 20000
+
+[[view]]
+name = "burning-ship-5-overview"
+fractal = "Burning Ship 5"
+iter = 1000
+
+[[view]]
+name = "burning-ship-5-deep-1e6"
+fractal = "Burning Ship 5"
+center = ["-1.069304830077022750409631353845070556935692686852387744345e+0", "-7.008594136830775532707863552269324262159198773198077894119e-2"]
+zoom = "1e6"
+iter = 4000
+
+[[view]]
+name = "burning-ship-5-deep-2e28"
+fractal = "Burning Ship 5"
+center = ["-1.069304830077022750409631353845070556935692686852387744345e+0", "-7.008594136830775532707863552269324262159198773198077894119e-2"]
+zoom = "2e28"
+iter = 20000
+
+[[view]]
+name = "tricorn-overview"
+fractal = "Tricorn"
+iter = 1000
+
+[[view]]
+name = "tricorn-deep-1e6"
+fractal = "Tricorn"
+center = ["-1.245181750030167260019164378722004235435653851940847122794e+0", "-2.037605720180463320107795585296334647328774720528326395773e-2"]
+zoom = "1e6"
+iter = 4000
+
+[[view]]
+name = "tricorn-deep-2e28"
+fractal = "Tricorn"
+center = ["-1.245181750030167260019164378722004235435653851940847122794e+0", "-2.037605720180463320107795585296334647328774720528326395773e-2"]
+zoom = "2e28"
+iter = 20000
+
+[[view]]
+name = "tricorn-3-overview"
+fractal = "Tricorn 3"
+iter = 1000
+
+[[view]]
+name = "tricorn-3-deep-1e6"
+fractal = "Tricorn 3"
+center = ["-8.301165086600040786410117965340966101130685955529819862755e-1", "-7.279926396365465868944042532991377115141048551447173006979e-1"]
+zoom = "1e6"
+iter = 4000
+
+[[view]]
+name = "tricorn-3-deep-2e28"
+fractal = "Tricorn 3"
+center = ["-8.301165086600040786410117965340966101130685955529819862755e-1", "-7.279926396365465868944042532991377115141048551447173006979e-1"]
+zoom = "2e28"
+iter = 20000
+
+[[view]]
+name = "tricorn-4-overview"
+fractal = "Tricorn 4"
+iter = 1000
+
+[[view]]
+name = "tricorn-4-deep-1e6"
+fractal = "Tricorn 4"
+center = ["-2.596843675593252253654911553479302337079929899170186367197e-1", "-5.265878052427495866136872211038079448051950717593488419814e-1"]
+zoom = "1e6"
+iter = 4000
+
+[[view]]
+name = "tricorn-4-deep-2e28"
+fractal = "Tricorn 4"
+center = ["-2.596843675593252253654911553479302337079929899170186367197e-1", "-5.265878052427495866136872211038079448051950717593488419814e-1"]
+zoom = "2e28"
+iter = 20000
+
+[[view]]
+name = "tricorn-5-overview"
+fractal = "Tricorn 5"
+iter = 1000
+
+[[view]]
+name = "tricorn-5-deep-1e6"
+fractal = "Tricorn 5"
+center = ["-9.033536580960661097439171803785319140128294786602977017732e-1", "-4.272544604520101032739291828337394992900827230127916689602e-1"]
+zoom = "1e6"
+iter = 4000
+
+[[view]]
+name = "tricorn-5-deep-2e28"
+fractal = "Tricorn 5"
+center = ["-9.033536580960661097439171803785319140128294786602977017732e-1", "-4.272544604520101032739291828337394992900827230127916689602e-1"]
+zoom = "2e28"
+iter = 20000
+
+[[view]]
+name = "celtic-overview"
+fractal = "Celtic"
+iter = 1000
+
+[[view]]
+name = "celtic-deep-1e6"
+fractal = "Celtic"
+center = ["-7.523183301672266119158619702700220349889660622278404512203e-1", "-2.14835958763750446308384443362044395573177458962387293481e-1"]
+zoom = "1e6"
+iter = 4000
+
+[[view]]
+name = "celtic-deep-2e28"
+fractal = "Celtic"
+center = ["-7.523183301672266119158619702700220349889660622278404512203e-1", "-2.14835958763750446308384443362044395573177458962387293481e-1"]
+zoom = "2e28"
+iter = 20000
+
+[[view]]
+name = "celtic-3-overview"
+fractal = "Celtic 3"
+iter = 1000
+
+[[view]]
+name = "celtic-3-deep-1e6"
+fractal = "Celtic 3"
+center = ["-1.390111097603047035481381903268406231192188759277730469272e-1", "-1.208364211005726539769261155232087101766648293103934130593e+0"]
+zoom = "1e6"
+iter = 4000
+
+[[view]]
+name = "celtic-3-deep-2e28"
+fractal = "Celtic 3"
+center = ["-1.390111097603047035481381903268406231192188759277730469272e-1", "-1.208364211005726539769261155232087101766648293103934130593e+0"]
+zoom = "2e28"
+iter = 20000
+
+[[view]]
+name = "celtic-4-overview"
+fractal = "Celtic 4"
+iter = 1000
+
+[[view]]
+name = "celtic-4-deep-1e6"
+fractal = "Celtic 4"
+center = ["-4.234565860024477641147504048357300264219746679250861041278e-1", "-4.09820898134915444566944199392919060263917505185772053164e-1"]
+zoom = "1e6"
+iter = 4000
+
+[[view]]
+name = "celtic-4-deep-2e28"
+fractal = "Celtic 4"
+center = ["-4.234565860024477641147504048357300264219746679250861041278e-1", "-4.09820898134915444566944199392919060263917505185772053164e-1"]
+zoom = "2e28"
+iter = 20000
+
+[[view]]
+name = "celtic-5-overview"
+fractal = "Celtic 5"
+iter = 1000
+
+[[view]]
+name = "celtic-5-deep-1e6"
+fractal = "Celtic 5"
+center = ["-2.281553024011103909013555011760308970573078526808823516802e-1", "-5.773582579137733907699085669559048183803546885637493650668e-1"]
+zoom = "1e6"
+iter = 4000
+
+[[view]]
+name = "celtic-5-deep-2e28"
+fractal = "Celtic 5"
+center = ["-2.281553024011103909013555011760308970573078526808823516802e-1", "-5.773582579137733907699085669559048183803546885637493650668e-1"]
+zoom = "2e28"
+iter = 20000
+
+[[view]]
+name = "buffalo-overview"
+fractal = "Buffalo"
+iter = 1000
+
+[[view]]
+name = "buffalo-deep-1e6"
+fractal = "Buffalo"
+center = ["-1.510426975372401197787866671960570444323379772291351660331e-1", "4.221360602684941728921263977360891137815433991908003217154e-1"]
+zoom = "1e6"
+iter = 4000
+
+[[view]]
+name = "buffalo-deep-2e28"
+fractal = "Buffalo"
+center = ["-1.510426975372401197787866671960570444323379772291351660331e-1", "4.221360602684941728921263977360891137815433991908003217154e-1"]
+zoom = "2e28"
+iter = 20000
+
+[[view]]
+name = "buffalo-3-overview"
+fractal = "Buffalo 3"
+iter = 1000
+
+[[view]]
+name = "buffalo-3-deep-1e6"
+fractal = "Buffalo 3"
+center = ["4.608237148512231691928989032718950631004591668346324319821e-1", "1.154303315171477277006095095403463761887149114811342024179e-1"]
+zoom = "1e6"
+iter = 4000
+
+[[view]]
+name = "buffalo-3-deep-2e28"
+fractal = "Buffalo 3"
+center = ["4.608237148512231691928989032718950631004591668346324319821e-1", "1.154303315171477277006095095403463761887149114811342024179e-1"]
+zoom = "2e28"
+iter = 20000
+
+[[view]]
+name = "buffalo-4-overview"
+fractal = "Buffalo 4"
+iter = 1000
+
+[[view]]
+name = "buffalo-4-deep-1e6"
+fractal = "Buffalo 4"
+center = ["-3.071721506556603906348160925396570822822053282996192416967e-1", "4.14173699729186134054547251993249825273527878456300080967e-1"]
+zoom = "1e6"
+iter = 4000
+
+[[view]]
+name = "buffalo-4-deep-2e28"
+fractal = "Buffalo 4"
+center = ["-3.071721506556603906348160925396570822822053282996192416967e-1", "4.14173699729186134054547251993249825273527878456300080967e-1"]
+zoom = "2e28"
+iter = 20000
+
+[[view]]
+name = "buffalo-5-overview"
+fractal = "Buffalo 5"
+iter = 1000
+
+[[view]]
+name = "buffalo-5-deep-1e6"
+fractal = "Buffalo 5"
+center = ["4.029273516218120856749052413703955216672657505935849857889e-1", "-5.821723262584372350783097339293223693418500863674671803413e-1"]
+zoom = "1e6"
+iter = 4000
+
+[[view]]
+name = "buffalo-5-deep-2e28"
+fractal = "Buffalo 5"
+center = ["4.029273516218120856749052413703955216672657505935849857889e-1", "-5.821723262584372350783097339293223693418500863674671803413e-1"]
+zoom = "2e28"
+iter = 20000
+
+# ---- Phoenix, Newton ----
+
+[[view]]
+name = "phoenix-overview"
+fractal = "Phoenix"
+iter = 1000
+
+[[view]]
+name = "phoenix-1e3"
+fractal = "Phoenix"
+center = ["0.2594230001341541", "0.2958152368751734"]
+zoom = "1e3"
+iter = 3000
+note = "a boundary point found by bisection along a ray"
+
+[[view]]
+name = "newton-overview"
+fractal = "Newton"
+iter = 256
+
+# ---- Julia sets of the Mandelbrot set: c in seahorse valley (dust) and at the 1/3 bulb's root
+# (parabolic); overview and a point on the set at 1e10x (perturbation past 1e2x) ----
+
+[[view]]
+name = "julia-seahorse-c-overview"
+julia_c = ["-0.75", "0.1"]
+iter = 1000
+
+[[view]]
+name = "julia-seahorse-c-1e10"
+julia_c = ["-0.75", "0.1"]
+center = ["-0.05288760059046996", "-0.7725972962798592"]
+zoom = "1e10"
+iter = 2000
+note = "a point on the set by inverse iteration"
+
+[[view]]
+name = "julia-third-root-overview"
+julia_c = ["-0.125", "0.649519052838329"]
+iter = 3000
+
+[[view]]
+name = "julia-third-root-1e10"
+julia_c = ["-0.125", "0.649519052838329"]
+center = ["0.9797260357746478", "-0.8586937858925788"]
+zoom = "1e10"
+iter = 3000
+note = "a point on the set by inverse iteration"
+
+# ---- A custom formula with a fractional power ----
+
+[[view]]
+name = "custom-z2.5-overview"
+formula = "z = z^2.5 + c"
+center = ["-0.5", "0"]
+iter = 1000
+
+[[view]]
+name = "custom-z2.5-1e20"
+formula = "z = z^2.5 + c"
+center = ["-0.790174099913846016125532343164", "0.157175400855953531027506188744"]
+zoom = "1e20"
+iter = 2000
+note = "a boundary point found by bisection along a ray at 45 digits"
+
+# ---- Red cells that are understood (2026-11-11, the first full run on the RTX 3080) ----
+
+[[known]]
+cell = "*/stripe-tail"
+check = "bla"
+reason = "The stripe tail is approximate across a BLA skip and the series seed: a skipped span folds into the tail's moving average as if every term in it were the span's mean (aux_fold_run), and the seed folds the prefix where each pixel has already drifted from the reference (the A5a note in mandelbrot.wgsl). TODO."
+
+[[known]]
+cell = "*/stripe-tail"
+check = "series"
+reason = "The stripe tail is approximate across a BLA skip and the series seed: a skipped span folds into the tail's moving average as if every term in it were the span's mean (aux_fold_run), and the seed folds the prefix where each pixel has already drifted from the reference (the A5a note in mandelbrot.wgsl). TODO."
+
+[[known]]
+cell = "*/stripe-tail"
+check = "bla+series"
+reason = "The stripe tail is approximate across a BLA skip and the series seed: a skipped span folds into the tail's moving average as if every term in it were the span's mean (aux_fold_run), and the seed folds the prefix where each pixel has already drifted from the reference (the A5a note in mandelbrot.wgsl). TODO."
+
+[[known]]
+cell = "newton-overview/*"
+check = "flat"
+reason = "Newton writes no statistics: a converged pixel returns AUX_NONE (mandelbrot.wgsl), so stripe, triangle, the traps and decomposition draw one color. The method box and the Color menu still offer them (TODO: offer them only where the family computes them)."
+
+[[known]]
+cell = "*/distance"
+check = "nan"
+reason = "BUG (TODO): where the derivative overflows f32 (slow escapes on Multibrot 3-8 and Phoenix, deep filaments), de_log2 squares it to infinity, the distance is -inf, and the color pass makes NaN of it. The NaN pixels' iteration data reads DE -inf."
+
+[[known]]
+cell = "mandelbrot-minibrot-9.3e78/trap-point"
+check = "bla"
+reason = "OPEN BUG (TODO.md, 2026-11-11): near this minibrot the point and cross traps through BLA and the plain render (no BLA, no series) are each one flat color, a different one, on every pixel. Which is right is not known yet: it needs the CPU oracle's trap minimum. Listed so the matrix's other cells stay a gate."
+
+[[known]]
+cell = "mandelbrot-minibrot-9.3e78/trap-cross"
+check = "bla"
+reason = "OPEN BUG (TODO.md, 2026-11-11): near this minibrot the point and cross traps through BLA and the plain render (no BLA, no series) are each one flat color, a different one, on every pixel. Which is right is not known yet: it needs the CPU oracle's trap minimum. Listed so the matrix's other cells stay a gate."
+
+[[known]]
+cell = "*-deep-*/trap-*"
+check = "flat"
+reason = "At depth every pixel's orbit follows the reference for all but its last iterations, so a statistic of the whole orbit (a trap's nearest approach, the stripe and triangle averages) is nearly one value across the view. The plain render is as flat; the stripe tail is the remedy for stripe."
+
+[[known]]
+cell = "*-deep-*/stripe"
+check = "flat"
+reason = "At depth every pixel's orbit follows the reference for all but its last iterations, so a statistic of the whole orbit (a trap's nearest approach, the stripe and triangle averages) is nearly one value across the view. The plain render is as flat; the stripe tail is the remedy for stripe."
+
+[[known]]
+cell = "*-deep-*/triangle"
+check = "flat"
+reason = "At depth every pixel's orbit follows the reference for all but its last iterations, so a statistic of the whole orbit (a trap's nearest approach, the stripe and triangle averages) is nearly one value across the view. The plain render is as flat; the stripe tail is the remedy for stripe."
+
+[[known]]
+cell = "mandelbrot-seahorse-1e20/trap-*"
+check = "flat"
+reason = "At depth every pixel's orbit follows the reference for all but its last iterations, so a statistic of the whole orbit (a trap's nearest approach, the stripe and triangle averages) is nearly one value across the view. The plain render is as flat; the stripe tail is the remedy for stripe."
+
+[[known]]
+cell = "mandelbrot-minibrot-9.3e78/trap-*"
+check = "flat"
+reason = "At depth every pixel's orbit follows the reference for all but its last iterations, so a statistic of the whole orbit (a trap's nearest approach, the stripe and triangle averages) is nearly one value across the view. The plain render is as flat; the stripe tail is the remedy for stripe."
+
+[[known]]
+cell = "mandelbrot-misiurewicz-7.4e143/triangle"
+check = "flat"
+reason = "At depth every pixel's orbit follows the reference for all but its last iterations, so a statistic of the whole orbit (a trap's nearest approach, the stripe and triangle averages) is nearly one value across the view. The plain render is as flat; the stripe tail is the remedy for stripe."
