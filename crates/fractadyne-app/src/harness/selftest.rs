@@ -3348,10 +3348,12 @@ impl FractadyneApp {
             base.aa_palette = false;
             base.light = 0;
             base.vignette.on = 0;
-            for (label, method, glow) in [("the Distance method", 4u32, false), ("the distance glow", 0u32, true)] {
+            for (label, method, glow) in
+                [("the Distance method", crate::ColorMethod::Distance, false), ("the distance glow", crate::ColorMethod::Smooth, true)]
+            {
                 let mut req = base.clone();
-                req.color_method = method;
-                if method == 4 {
+                req.color_method = method.gpu_id();
+                if method == crate::ColorMethod::Distance {
                     // Half a palette an octave, so a misread octave is plain to see.
                     req.cycle = 0.5;
                 }
@@ -7039,21 +7041,22 @@ impl FractadyneApp {
             // Each case sets the live aux params BEFORE building the request, so the BLA aggregate is
             // baked for exactly the method / trap-type / frequency the render then reads (all three
             // trap types exercised; stripe at a non-default 5.0). Rebuilt per case for that reason.
+            use crate::{ColorMethod as M, TrapType as T};
             for (m, tt, freq, label) in [
-                (3u32, 0u32, 1.0f32, "orbit-trap-point"),
-                (3u32, 1u32, 1.0, "orbit-trap-cross"),
-                (3u32, 2u32, 1.0, "orbit-trap-circle"),
-                (2u32, 0u32, 1.0, "triangle-ineq"),
-                (1u32, 0u32, 5.0, "stripe"),
+                (M::OrbitTrap, T::Point, 1.0f32, "orbit-trap-point"),
+                (M::OrbitTrap, T::Cross, 1.0, "orbit-trap-cross"),
+                (M::OrbitTrap, T::Circle, 1.0, "orbit-trap-circle"),
+                (M::TriangleIneq, T::Point, 1.0, "triangle-ineq"),
+                (M::Stripe, T::Point, 5.0, "stripe"),
             ] {
-                self.coloring.trap_type = crate::TrapType::ALL[tt as usize];
+                self.coloring.trap_type = tt;
                 self.coloring.stripe_freq = freq;
                 let mut on = self.current_export_request_for(&vp, false);
                 on.width = N;
                 on.height = N;
                 on.ss = 1;
-                on.color_method = m;
-                on.trap_type = tt;
+                on.color_method = m.gpu_id();
+                on.trap_type = tt.gpu_id();
                 on.sa_skip = 0; // isolate BLA (no SA prefix yet)
                 let (bla_on, mode) = (on.bla_on, on.mode);
                 let mut off = on.clone();

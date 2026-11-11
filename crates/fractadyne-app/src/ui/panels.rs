@@ -168,7 +168,7 @@ impl FractadyneApp {
                 // (`FormulaCaps::distance_estimate`), so Distance would color the whole view one
                 // color: it is grayed out with the reason. A session that already holds it keeps it
                 // and says why under the box, rather than switching the method on its own.
-                let has_de = self.fractal.caps().distance_estimate;
+                let caps = self.fractal.caps();
                 let no_de = tr!(coloring_needs_derivative, family = self.fractal.display_name());
                 labelled(ui, &tr!(panel_method), |ui| {
                     egui::ComboBox::from_id_salt("panel_method")
@@ -176,7 +176,7 @@ impl FractadyneApp {
                         .show_ui(ui, |ui| {
                             for m in ColorMethod::ALL {
                                 let r = ui.add_enabled(
-                                    has_de || !m.needs_distance_estimate(),
+                                    m.offered_for(caps),
                                     egui::SelectableLabel::new(self.coloring.color_method == m, m.label()),
                                 );
                                 if r.clicked() {
@@ -188,7 +188,7 @@ impl FractadyneApp {
                         .response
                         .on_hover_text(tr!(panel_method_hover));
                 });
-                if !has_de && self.coloring.color_method.needs_distance_estimate() {
+                if !self.coloring.color_method.offered_for(caps) {
                     ui.label(
                         egui::RichText::new(tr!(panel_method_no_derivative, family = self.fractal.display_name()))
                             .small()
