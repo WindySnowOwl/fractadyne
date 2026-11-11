@@ -37,6 +37,8 @@ fn formula_caps_answer_as_the_id_ranges_they_replaced() {
         // Added with the capability rather than replacing a range: the `z^d + c` families and
         // Phoenix (id 8), as the shader's distance-estimate test reads (`de_gate_tests`).
         assert_eq!(c.distance_estimate, polynomial || id == 8, "distance estimate, id {id}");
+        // Every defined escape-time id but Newton, as the shader's Newton branch reads (`de_gate_tests`).
+        assert_eq!(c.orbit_statistics, id < formula::COUNT && id != 9, "orbit statistics, id {id}");
     }
     assert!(formula::caps(formula::MULTIBROT8).series_approximation);
     assert!(!formula::caps(formula::BURNING_SHIP3).resumable_passes);
@@ -50,8 +52,10 @@ fn formula_caps_answer_as_the_id_ranges_they_replaced() {
     assert!(custom.resumable_passes);
     assert!(!custom.series_approximation && !custom.bla && !custom.nucleus_finder);
     assert!(!custom.feature_solvers && !custom.export_glitch_correction && !custom.convergent);
-    // Its generated module writes no distance (`custom.rs`).
+    // Its generated module writes no distance (`custom.rs`), and records the statistics (its own
+    // `aux_step`).
     assert!(!custom.distance_estimate);
+    assert!(custom.orbit_statistics);
     // Life is not an escape-time formula: no capability at all — glitch correction included, which
     // would build references for a picture that has none.
     // Nor are L-systems.
@@ -59,6 +63,7 @@ fn formula_caps_answer_as_the_id_ranges_they_replaced() {
         let c = formula::caps(id);
         assert_eq!((c.series_approximation, c.bla, c.resumable_passes, c.nucleus_finder), (false, false, false, false));
         assert!(!c.feature_solvers && !c.export_glitch_correction && !c.convergent && !c.distance_estimate, "{id}");
+        assert!(!c.orbit_statistics, "{id}");
     }
 }
 

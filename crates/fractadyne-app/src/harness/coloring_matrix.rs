@@ -676,8 +676,8 @@ pub(crate) struct Measured {
 }
 
 pub(crate) enum Outcome {
-    /// The family does not offer the method ([`ColorMethod::offered_for`]).
-    NotOffered,
+    /// The family does not offer the method: it lacks what the method needs ([`ColorMethod::lacks`]).
+    NotOffered(fractadyne_core::coloring::Lacks),
     Ran(Box<Measured>),
 }
 
@@ -841,7 +841,14 @@ impl Sheet {
 /// (known, or a timing warning), green, or dim (n/a).
 fn verdict(cell: &Cell, view: &View, known: &[Known]) -> (String, [u8; 3]) {
     match &cell.outcome {
-        Outcome::NotOffered => ("n/a: no distance estimate".into(), DIM),
+        Outcome::NotOffered(l) => (
+            match l {
+                fractadyne_core::coloring::Lacks::DistanceEstimate => "n/a: no distance estimate",
+                fractadyne_core::coloring::Lacks::OrbitStatistics => "n/a: no orbit statistics",
+            }
+            .into(),
+            DIM,
+        ),
         Outcome::Ran(m) => {
             let key = cell.variant.key();
             let new: Vec<&str> =
@@ -1260,8 +1267,8 @@ impl crate::FractadyneApp {
             let mut smooth_px: Option<Vec<u8>> = None;
             let mut view_cells: Vec<(Cell, Vec<u8>)> = Vec::new();
             for &(_, var) in picked.iter().filter(|(v, _)| *v == vi) {
-                if !var.method.offered_for(caps) {
-                    view_cells.push((Cell { view: vi, variant: var, outcome: Outcome::NotOffered, thumb: Vec::new() }, Vec::new()));
+                if let Some(l) = var.method.lacks(caps) {
+                    view_cells.push((Cell { view: vi, variant: var, outcome: Outcome::NotOffered(l), thumb: Vec::new() }, Vec::new()));
                     continue;
                 }
                 let (mut m, px8) = self.coloring_matrix_cell(dev, q, &view, &vp, var, smooth_px.as_deref(), &iter, &steep, &out.join("ab"));
@@ -1387,9 +1394,10 @@ impl crate::FractadyneApp {
                 "stripe_tail": c.variant.tail,
             });
             match &c.outcome {
-                Outcome::NotOffered => {
+                Outcome::NotOffered(l) => {
                     not_offered += 1;
                     j["status"] = "n/a".into();
+                    j["lacks"] = format!("{l:?}").into();
                 }
                 Outcome::Ran(m) => {
                     for (check, detail) in &m.fails {
@@ -1446,7 +1454,7 @@ impl crate::FractadyneApp {
             .filter(|c| c.variant.method == ColorMethod::Smooth)
             .filter_map(|c| match &c.outcome {
                 Outcome::Ran(m) => m.iterate_ms.map(|t| (c.view, t)),
-                Outcome::NotOffered => None,
+                Outcome::NotOffered(_) => None,
             })
             .collect();
         for (j, c) in cells_json.iter_mut().zip(&cells) {

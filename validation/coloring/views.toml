@@ -584,11 +584,6 @@ check = "bla+series"
 reason = "The stripe tail is approximate across a BLA skip and the series seed: a skipped span folds into the tail's moving average as if every term in it were the span's mean (aux_fold_run), and the seed folds the prefix where each pixel has already drifted from the reference (the A5a note in mandelbrot.wgsl). TODO."
 
 [[known]]
-cell = "newton-overview/*"
-check = "flat"
-reason = "Newton writes no statistics: a converged pixel returns AUX_NONE (mandelbrot.wgsl), so stripe, triangle, the traps and decomposition draw one color. The method box and the Color menu still offer them (TODO: offer them only where the family computes them)."
-
-[[known]]
 cell = "mandelbrot-minibrot-9.3e78/trap-point"
 check = "bla"
 reason = "OPEN BUG (TODO.md, 2026-11-11): near this minibrot the point and cross traps through BLA and the plain render (no BLA, no series) are each one flat color, a different one, on every pixel. Which is right is not known yet: it needs the CPU oracle's trap minimum. Listed so the matrix's other cells stay a gate."

@@ -168,32 +168,48 @@ impl FractadyneApp {
                 // (`FormulaCaps::distance_estimate`), so Distance would color the whole view one
                 // color: it is grayed out with the reason. A session that already holds it keeps it
                 // and says why under the box, rather than switching the method on its own.
+                // ⭐Likewise Newton records no orbit statistics, so stripe, triangle, the traps and
+                // decomposition would color it one color: each method says what the family lacks.
                 let caps = self.fractal.caps();
-                let no_de = tr!(coloring_needs_derivative, family = self.fractal.display_name());
+                let why = |l: fractadyne_core::coloring::Lacks| match l {
+                    fractadyne_core::coloring::Lacks::DistanceEstimate => {
+                        tr!(coloring_needs_derivative, family = self.fractal.display_name())
+                    }
+                    fractadyne_core::coloring::Lacks::OrbitStatistics => {
+                        tr!(coloring_needs_statistics, family = self.fractal.display_name())
+                    }
+                };
                 labelled(ui, &tr!(panel_method), |ui| {
                     egui::ComboBox::from_id_salt("panel_method")
                         .selected_text(self.coloring.color_method.label())
                         .show_ui(ui, |ui| {
                             for m in ColorMethod::ALL {
+                                let lacks = m.lacks(caps);
                                 let r = ui.add_enabled(
-                                    m.offered_for(caps),
+                                    lacks.is_none(),
                                     egui::SelectableLabel::new(self.coloring.color_method == m, m.label()),
                                 );
                                 if r.clicked() {
                                     self.coloring.color_method = m;
                                 }
-                                r.on_disabled_hover_text(&no_de);
+                                if let Some(l) = lacks {
+                                    r.on_disabled_hover_text(why(l));
+                                }
                             }
                         })
                         .response
                         .on_hover_text(tr!(panel_method_hover));
                 });
-                if !self.coloring.color_method.offered_for(caps) {
-                    ui.label(
-                        egui::RichText::new(tr!(panel_method_no_derivative, family = self.fractal.display_name()))
-                            .small()
-                            .color(ui.visuals().warn_fg_color),
-                    );
+                if let Some(l) = self.coloring.color_method.lacks(caps) {
+                    let note = match l {
+                        fractadyne_core::coloring::Lacks::DistanceEstimate => {
+                            tr!(panel_method_no_derivative, family = self.fractal.display_name())
+                        }
+                        fractadyne_core::coloring::Lacks::OrbitStatistics => {
+                            tr!(panel_method_no_statistics, family = self.fractal.display_name())
+                        }
+                    };
+                    ui.label(egui::RichText::new(note).small().color(ui.visuals().warn_fg_color));
                 }
                 if self.coloring.color_method == ColorMethod::Stripe {
                     labelled(ui, &tr!(panel_stripe_density), |ui| {

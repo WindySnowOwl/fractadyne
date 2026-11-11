@@ -598,7 +598,10 @@ reproduced. Reproduce before fixing; never close on the mechanism argument alone
   - `[[known]]` takes `*` patterns over `view/variant`.
   - **Results**, RTX 3080, full set: 738 cells, 51 n/a (Distance without a distance estimate), 0
     new red, 48 known, about 5.5 min. The known: Distance draws NaN where the derivative overflows
-    f32 (BUG; fixed on `fix/color-de-overflow`, the square in `de_log2`); Newton draws every statistics method as one color (TODO.md); the stripe tail
+    f32 (BUG; fixed on `fix/color-de-overflow`, the square in `de_log2`); Newton drew every
+    statistics method as one color (fixed on `fix/color-newton-statistics`:
+    `FormulaCaps::orbit_statistics`, the menus no longer offer them, the matrix records n/a); the
+    stripe tail
     through BLA and the series (the existing TODO); statistics flat at depth (the shared orbit
     prefix); and, open, near the minibrot at 9.3e78x the point and cross traps through BLA and the
     plain render disagree on every pixel (TODO.md; which is right needs the oracle). PLUTO (dev.20,

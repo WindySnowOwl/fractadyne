@@ -8650,6 +8650,15 @@ impl FractadyneApp {
                 }
             }
         }
+        // Newton records no orbit statistics (`FormulaCaps::orbit_statistics`): stripe, triangle,
+        // the traps and decomposition color its whole picture one color.
+        if !self.fractal.caps().orbit_statistics && val("--method").is_some() && self.coloring.color_method.needs_aux() {
+            eprintln!(
+                "fractadyne: --method {}: {} records no orbit statistics (its pixels converge to a root), so the picture is one color.",
+                self.coloring.color_method.key(),
+                self.fractal.name()
+            );
+        }
         // `--iter-div N` ("Divide iterations"): fatal when unreadable or out of range, as every
         // option that steers a render is. After `--method`, so it can say when the method in force
         // ignores it — a supplied option that changes no pixel says so (`--log-palette` likewise).
