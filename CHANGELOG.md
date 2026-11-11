@@ -60,7 +60,7 @@ published as the pre-releases `v0.2.41-beta.1` to `v0.2.41-beta.150`, and a "bet
 Changes after 0.3.0-beta.1:
 
 - **A test that renders every coloring method (0.3.0-beta.27, for testing).** `--coloring-matrix`
-  renders each coloring method and its variants (each orbit-trap shape, the stripe tail) at the 83
+  renders each coloring method and its variants (each orbit-trap shape, the stripe tail) at the 82
   views of `validation/coloring/views.toml`: every fractal family, two Julia sets and a custom formula,
   from the overview to 7.4e143x. It checks each picture: not one flat color and no NaN pixels, not
   Smooth's picture, the same twice, Distance unmoved by anti-aliasing, and BLA and the series

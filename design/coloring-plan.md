@@ -570,7 +570,7 @@ reproduced. Reproduce before fixing; never close on the mechanism argument alone
 - **Traps**: render with a scratch config; the `make()` span caveat (`selftest.rs:895-900`); keep
   timing runs one at a time.
 - **Done 2026-11-11** (branch `feat/color-b1-coloring-matrix`): `harness/coloring_matrix.rs`,
-  `validation/coloring/views.toml` (84 views: the table above, the self-test's `FOLD_DEEP` and
+  `validation/coloring/views.toml` (83 views, the spiral opt-in: the table above, the self-test's `FOLD_DEEP` and
   `MULTIBROT_DEEP` copied in; Phoenix, the two Julia sets and `z^2.5 + c` at points found by
   bisection and inverse iteration), the self-test group `coloring-matrix-quick` (9 views, 81 cells,
   about 30 s), field agent v41 (`--coloring-matrix`, `--quick`, `--only`, `--views`; the agent names
@@ -601,8 +601,10 @@ reproduced. Reproduce before fixing; never close on the mechanism argument alone
     f32 (BUG, TODO.md); Newton draws every statistics method as one color (TODO.md); the stripe tail
     through BLA and the series (the existing TODO); statistics flat at depth (the shared orbit
     prefix); and, open, near the minibrot at 9.3e78x the point and cross traps through BLA and the
-    plain render disagree on every pixel (TODO.md; which is right needs the oracle). Contact sheets
-    looked at for every quick view and for each failure's evidence.
+    plain render disagree on every pixel (TODO.md; which is right needs the oracle). PLUTO (dev.20,
+    field agent v41): the RX 6800 XT in 288 s and the RTX 3070 in 859 s, each 0 new red and the same
+    48 known. Contact sheets looked at: every quick view, each failure's evidence, and the Smooth,
+    Distance, stripe and cross-trap sheets of the full set (the stripe one from the RX 6800 XT).
   - **B1b, not done**: the live path (a `method` key in the tour `[render]` table, `--livetest` with
     a method, `tours/coloring-methods.toml`). It drives the live pipeline, a separate step.
 

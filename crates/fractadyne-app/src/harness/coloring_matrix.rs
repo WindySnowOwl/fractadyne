@@ -1489,7 +1489,7 @@ impl crate::FractadyneApp {
         let mut md = String::new();
         md.push_str("# Coloring matrix\n\n");
         md.push_str(&format!(
-            "{} on {}, {} UTC. {} views, {} cells ({} n/a), {:.0} s. Sheets: `views/` (one per view, 1:1) and `variants/` (one per variant, half size); a failed comparison's evidence in `ab/` (A, B, and where they differ: gray |Δ| x 4, dark blue a steep pixel, red a difference that counts).\n\n",
+            "{} on {}, {}. {} views, {} cells ({} n/a), {:.0} s. Sheets: `views/` (one per view, 1:1) and `variants/` (one per variant, half size); a failed comparison's evidence in `ab/` (A, B, and where they differ: gray |Δ| x 4, dark blue a steep pixel, red a difference that counts).\n\n",
             crate::version_string(),
             self.gpu_name,
             crate::utc_string(secs),
