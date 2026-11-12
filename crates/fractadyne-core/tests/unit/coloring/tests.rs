@@ -214,3 +214,33 @@ fn the_shader_constants_are_the_table() {
         assert!(l.is_empty() || l.starts_with("//"), "{l:?}");
     }
 }
+
+/// The capability table as it stands (coloring plan B4): the methods colored from the main lane go
+/// everywhere; the statistics keep BLA but lose the series, the walk, glitch correction, the
+/// normalized export and strips; decomposition's final angle loses BLA too. A change here changes
+/// what a menu or a dialog offers, so it should be deliberate.
+#[test]
+fn the_capability_table_is_the_established_one() {
+    use Capability::*;
+    use ColorMethod::*;
+    for m in ColorMethod::ALL {
+        let can: Vec<Capability> = Capability::ALL.into_iter().filter(|c| m.can(*c)).collect();
+        let want: &[Capability] = match m {
+            Smooth | Distance => &Capability::ALL,
+            Stripe | TriangleIneq | OrbitTrap => &[Bla],
+            Decomposition => &[],
+        };
+        assert_eq!(can, want, "{m:?}");
+        // The deep G-buffer changes none of it: the iteration's answers read the same off the
+        // deep frame's statistics.
+        let deep = m.orbit_stats_at(true);
+        assert_eq!(m.can(Series), !deep.blocks_iter_skip(), "{m:?}");
+        assert_eq!(m.can(Bla), deep.bla_aggregate(), "{m:?}");
+        assert_eq!(m.can(LiveWalk), deep.is_empty(), "{m:?}");
+    }
+    let keys: Vec<&str> = Capability::ALL.iter().map(|c| c.key()).collect();
+    let mut unique = keys.clone();
+    unique.sort();
+    unique.dedup();
+    assert_eq!(unique.len(), keys.len(), "two capabilities share a key");
+}

@@ -3130,7 +3130,7 @@ pub(crate) fn accum_jitter_seq(i: u32) -> [f32; 2] {
 // also chose the palette rate, where the trap belongs with the unbounded methods: the live view
 // handed trap frames to the chunked walk and the band's BLA, which compute no trap, and every pixel
 // read the "no statistics" value (one flat color). The rate now asks `bounded_value`.
-pub(crate) use fractadyne_core::coloring::{ColorMethod, Stat, StatSet, TrapType};
+pub(crate) use fractadyne_core::coloring::{Capability, ColorMethod, Stat, StatSet, TrapType};
 
 /// A coloring method's or trap shape's name in the language in use. The words are the app's; the
 /// table (`fractadyne_core::coloring`) has only the keys.
