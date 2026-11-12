@@ -1040,6 +1040,20 @@ impl crate::FractadyneApp {
             }
         }
         crate::diag::breadcrumb(format!("coloring-matrix: {}/{} rendered", view.name, var.key()));
+        // The full G-buffer's request (B3, judged below), and its first render here: the two
+        // requests' renders alternate (cell, G-buffer, cell, G-buffer), so neither is timed only
+        // after the card has clocked up (run last, the G-buffer read 12-15% FASTER than the cell on
+        // the RX 6800 XT, dev.21).
+        let shown = req.orbit_stats;
+        let full = shown.union(crate::StatSet::GBUFFER);
+        let other = if full == shown { var.method.orbit_stats() } else { full };
+        let req_g = (other != shown).then(|| {
+            self.coloring.orbit_stats_override = Some(other);
+            let r = self.current_export_request_for(vp, view.julia_c.is_some());
+            self.coloring.orbit_stats_override = None;
+            r
+        });
+        let g1 = req_g.as_ref().map(|r| shoot(dev, q, r));
         // The same request again: the channels must not move.
         let (mut it, mut col) = (vec![a.iterate_ms], vec![a.color_ms]);
         match shoot(dev, q, &req) {
@@ -1056,6 +1070,7 @@ impl crate::FractadyneApp {
             }
             Err(e) => m.fails.push(("render", format!("second render: {e}"))),
         }
+        let g2 = req_g.as_ref().map(|r| shoot(dev, q, r));
         let least = |v: &[f64]| v.iter().copied().filter(|x| *x > 0.0).reduce(f64::min);
         m.iterate_ms = least(&it);
         m.color_ms = least(&col);
@@ -1159,15 +1174,9 @@ impl crate::FractadyneApp {
         // is judged against the plain render as the cell is, and its time is what carrying the
         // G-buffer always would cost. A cell that already carries it is compared with its method's
         // own statistic alone.
-        let shown = req.orbit_stats;
-        let full = shown.union(crate::StatSet::GBUFFER);
-        let other = if full == shown { var.method.orbit_stats() } else { full };
-        if other != shown {
-            self.coloring.orbit_stats_override = Some(other);
-            let req_g = self.current_export_request_for(vp, view.julia_c.is_some());
-            self.coloring.orbit_stats_override = None;
+        if let (Some(req_g), Some(g1), Some(g2)) = (&req_g, g1, g2) {
             m.gbuffer_set = Some(req_g.orbit_stats.to_string());
-            match shoot(dev, q, &req_g).and_then(|g| shoot(dev, q, &req_g).map(|g2| (g, g2))) {
+            match g1.and_then(|g| g2.map(|g2| (g, g2))) {
                 Ok((g, g2)) => {
                     m.gbuffer_iterate_ms = least(&[g.iterate_ms, g2.iterate_ms]);
                     let differ = |x: &[f32], y: &[f32]| {
