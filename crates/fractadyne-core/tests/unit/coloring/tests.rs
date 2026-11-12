@@ -89,6 +89,30 @@ fn a_set_of_statistics() {
     assert!(StatSet::of(Stripe).with(Triangle).with(Trap).bla_aggregate());
 }
 
+/// The full G-buffer (B3) is what BLA folds, and adding it to a frame that accumulates anything
+/// changes none of that frame's rules: the series stays off and BLA stays as it was. That is what
+/// makes the bundle cost only its operations, and the coloring matrix's `gbuffer` check rests on it
+/// (the two renders must then agree channel for channel).
+#[test]
+fn the_gbuffer_changes_no_rule_of_a_frame_that_accumulates() {
+    use Stat::*;
+    assert_eq!(StatSet::GBUFFER, StatSet::of(Stripe).with(Triangle).with(Trap));
+    for bits in 1u32..(1 << Stat::ALL.len()) {
+        let s = Stat::ALL.into_iter().filter(|x| bits & x.bit() != 0).fold(StatSet::NONE, StatSet::with);
+        let g = s.union(StatSet::GBUFFER);
+        assert_eq!(g.blocks_iter_skip(), s.blocks_iter_skip(), "{s}");
+        assert_eq!(g.bla_aggregate(), s.bla_aggregate(), "{s}");
+    }
+    // Every method that reads a statistic reads one in the G-buffer, or the angle.
+    for m in ColorMethod::ALL {
+        if let Some(r) = m.reads() {
+            assert!(StatSet::GBUFFER.has(r) || r == Angle, "{m:?}");
+        }
+    }
+    // For a frame that accumulates nothing it is not free: it turns the series off.
+    assert!(StatSet::GBUFFER.blocks_iter_skip() && !StatSet::NONE.blocks_iter_skip());
+}
+
 /// An unknown key is `None` to the strict reader and the default to the lenient one.
 #[test]
 fn an_unknown_key_is_none_or_the_default() {

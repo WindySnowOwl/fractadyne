@@ -6379,6 +6379,11 @@ struct ColoringConfig {
     /// `--normalize`): escape values crowd towards the high end at depth, so a linear map spends
     /// most of the palette on a thin shell. Persisted.
     log_palette: bool,
+    /// What a harness's comparison render accumulates instead of the session's own choice: the
+    /// coloring matrix's `gbuffer` check sets it around building ONE request and clears it at once.
+    /// The method's own statistic is added regardless ([`Self::orbit_stats`]). Transient: never
+    /// stored, never set by the UI.
+    orbit_stats_override: Option<StatSet>,
 }
 
 impl ColoringConfig {
@@ -6387,7 +6392,8 @@ impl ColoringConfig {
     /// now exactly what the method reads (`ColorMethod::orbit_stats`); the full G-buffer (coloring
     /// plan B3) widens it so a switch between methods only recolors.
     fn orbit_stats(&self) -> StatSet {
-        self.color_method.orbit_stats()
+        let own = self.color_method.orbit_stats();
+        self.orbit_stats_override.map_or(own, |s| s.union(own))
     }
 }
 
@@ -8028,6 +8034,7 @@ impl FractadyneApp {
                     }
                     s.log_palette || asked
                 },
+                orbit_stats_override: None,
             },
             perf: Perf {
                 // ⭐**Off unless the user has asked for it**, remembered in the session so the

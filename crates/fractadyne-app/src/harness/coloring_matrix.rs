@@ -9,6 +9,9 @@
 //!   series on and off (`aux-bla`'s tolerance);
 //! - determinism: the same request twice must give the same channels;
 //! - Distance at supersampling 1 and 2 (its width is in output pixels since A9);
+//! - the full G-buffer (B3): the same cell accumulating every statistic BLA folds as well. Channel
+//!   for channel where both renders accumulate something (their rules are then the same), against
+//!   the plain render where the cell accumulates nothing; and its iterate time against the cell's;
 //! - GPU iterate and color times (timestamp queries), against this card's baseline: a warning,
 //!   never a failure, as the bench matrix's.
 //!
@@ -55,7 +58,7 @@ const SAME_AS_SMOOTH: f64 = 1.0;
 
 /// The checks a cell can fail, by the name `[[known]]` uses.
 pub(crate) const CHECKS: &[&str] =
-    &["render", "nan", "flat", "same-as-smooth", "bla", "series", "bla+series", "determinism", "supersampling"];
+    &["render", "nan", "flat", "same-as-smooth", "bla", "series", "bla+series", "determinism", "supersampling", "gbuffer"];
 
 /// `--coloring-matrix` and its options.
 pub(crate) struct Cli {
@@ -671,6 +674,13 @@ pub(crate) struct Measured {
     pub(crate) wall_ms: f64,
     pub(crate) base_iterate_ms: Option<f64>,
     pub(crate) timing_warn: bool,
+    /// The G-buffer check (coloring plan B3): what the other render accumulated, its iterate time,
+    /// and how it compared, channel for channel when both accumulate something, else against the
+    /// plain render.
+    pub(crate) gbuffer_set: Option<String>,
+    pub(crate) gbuffer_iterate_ms: Option<f64>,
+    pub(crate) gbuffer_diff: Option<u64>,
+    pub(crate) gbuffer_ab: Option<Ab>,
     /// Failed checks: (name in [`CHECKS`], detail).
     pub(crate) fails: Vec<(&'static str, String)>,
 }
@@ -989,6 +999,10 @@ impl crate::FractadyneApp {
             wall_ms: 0.0,
             base_iterate_ms: None,
             timing_warn: false,
+            gbuffer_set: None,
+            gbuffer_iterate_ms: None,
+            gbuffer_diff: None,
+            gbuffer_ab: None,
             fails: Vec::new(),
         };
         let a = match shoot(dev, q, &req) {
@@ -1051,6 +1065,8 @@ impl crate::FractadyneApp {
         // is wrong (at corpus 07 at 1e30x, stripe with BLA on and off differed on 96% of the pixels
         // with the series on in both, 2026-11-11).
         let (bla, sa) = (req.bla_on == 1, req.sa_skip > 0);
+        // The plain render, its excused pixels and its nudge floor, for the G-buffer check below.
+        let mut plain_ref: Option<(Vec<f32>, Vec<bool>, f64)> = None;
         if bla || sa {
             let check = match (bla, sa) {
                 (true, false) => "bla",
@@ -1129,8 +1145,63 @@ impl crate::FractadyneApp {
                         m.fails.push((check, detail));
                         dump_ab(&evidence.join(format!("{}__{}__{check}.png", view.name, var.key())), &a.px, &p.px, CELL_W, steep);
                     }
+                    plain_ref = Some((p.px, excused, nudge));
                 }
                 Err(e) => m.fails.push(("render", format!("plain or nudged render: {e}"))),
+            }
+        }
+        // The full G-buffer (coloring plan B3): the same cell accumulating every statistic BLA
+        // folds as well, built as the session builds it (`current_export_request_for`, so the
+        // series, BLA and the walk follow the set by the app's own rules). Where both renders
+        // accumulate something, their rules are the same (`StatSet::GBUFFER`), so the channels must
+        // be too, and the time between them is the bundle's operations alone. Where the cell
+        // accumulates nothing (Smooth, Distance), the other runs without the series and the walk: it
+        // is judged against the plain render as the cell is, and its time is what carrying the
+        // G-buffer always would cost. A cell that already carries it is compared with its method's
+        // own statistic alone.
+        let shown = req.orbit_stats;
+        let full = shown.union(crate::StatSet::GBUFFER);
+        let other = if full == shown { var.method.orbit_stats() } else { full };
+        if other != shown {
+            self.coloring.orbit_stats_override = Some(other);
+            let req_g = self.current_export_request_for(vp, view.julia_c.is_some());
+            self.coloring.orbit_stats_override = None;
+            m.gbuffer_set = Some(req_g.orbit_stats.to_string());
+            match shoot(dev, q, &req_g).and_then(|g| shoot(dev, q, &req_g).map(|g2| (g, g2))) {
+                Ok((g, g2)) => {
+                    m.gbuffer_iterate_ms = least(&[g.iterate_ms, g2.iterate_ms]);
+                    let differ = |x: &[f32], y: &[f32]| {
+                        x.iter().zip(y).filter(|(p, q)| p.to_bits() != q.to_bits()).count() as u64 + x.len().abs_diff(y.len()) as u64
+                    };
+                    let d2 = differ(&g.px, &g2.px);
+                    if d2 > 0 {
+                        m.fails.push(("determinism", format!("the {} render: {d2} channels differ between two renders", req_g.orbit_stats)));
+                        dump("determinism", &g.px, &g2.px);
+                    }
+                    if !shown.is_empty() && !other.is_empty() {
+                        let d = differ(&a.px, &g.px);
+                        m.gbuffer_diff = Some(d);
+                        if d > 0 {
+                            m.fails.push(("gbuffer", format!("{d} channels differ from the {} render", req_g.orbit_stats)));
+                            dump("gbuffer", &a.px, &g.px);
+                        }
+                    } else {
+                        // One side accumulates nothing: the other is a different render, judged as
+                        // the cell is (against the plain one when the cell had any, else against
+                        // the cell itself, which then is plain too).
+                        let (truth, excused, floor) = match &plain_ref {
+                            Some((p, e, f)) => (p.as_slice(), e.as_slice(), *f),
+                            None => (a.px.as_slice(), steep, 0.0),
+                        };
+                        let ab = Ab::of(&g.px, truth, excused).with_floor(floor);
+                        m.gbuffer_ab = Some(ab);
+                        if !ab.ok() {
+                            m.fails.push(("gbuffer", format!("the {} render vs plain: {}", req_g.orbit_stats, ab.describe())));
+                            dump_ab(&evidence.join(format!("{}__{}__gbuffer.png", view.name, var.key())), &g.px, truth, CELL_W, excused);
+                        }
+                    }
+                }
+                Err(e) => m.fails.push(("render", format!("the {other} render: {e}"))),
             }
         }
         // A width in output pixels must not move with the supersampling (A9).
@@ -1290,13 +1361,17 @@ impl crate::FractadyneApp {
                 if let Outcome::Ran(m) = &cell.outcome {
                     let ms = |v: Option<f64>, p: usize| v.map_or_else(|| "   n/a".to_string(), |x| format!("{x:>7.p$}"));
                     println!(
-                        "    {:<14} {:<8} iterate {} ms  color {} ms{}{}  {}",
+                        "    {:<14} {:<8} iterate {} ms  color {} ms{}{}{}  {}",
                         var.key(),
                         band_name(m.mode),
                         ms(m.iterate_ms, 2),
                         ms(m.color_ms, 3),
                         if m.bla_on { "  BLA" } else { "" },
                         if m.sa_skip > 0 { format!("  SA {}", m.sa_skip) } else { String::new() },
+                        match (m.gbuffer_iterate_ms, m.iterate_ms) {
+                            (Some(g), Some(t)) if t > 0.0 => format!("  G-buffer x{:.2}", g / t),
+                            _ => String::new(),
+                        },
                         word
                     );
                     for (c, d) in &m.fails {
@@ -1443,6 +1518,16 @@ impl crate::FractadyneApp {
                     j["wall_ms"] = m.wall_ms.into();
                     j["baseline_iterate_ms"] = m.base_iterate_ms.into();
                     j["timing_warn"] = m.timing_warn.into();
+                    j["gbuffer"] = match &m.gbuffer_set {
+                        Some(set) => serde_json::json!({
+                            "set": set,
+                            "iterate_ms": m.gbuffer_iterate_ms,
+                            "vs_cell": m.gbuffer_iterate_ms.zip(m.iterate_ms).filter(|(_, t)| *t > 0.0).map(|(g, t)| g / t),
+                            "channels_differ": m.gbuffer_diff,
+                            "vs_plain": m.gbuffer_ab.as_ref().map(ab),
+                        }),
+                        None => serde_json::Value::Null,
+                    };
                     j["fails"] = m.fails.iter().map(|(c, d)| serde_json::json!({"check": c, "detail": d})).collect::<Vec<_>>().into();
                 }
             }
@@ -1529,6 +1614,42 @@ impl crate::FractadyneApp {
             for (id, now, base) in &slower {
                 md.push_str(&format!("| {id} | {now:.2} | {base:.2} |\n"));
             }
+            md.push('\n');
+        }
+        // B3: what the other render's iterate time is against the cell's, per variant and band.
+        let mut gb_rows = String::new();
+        for var in variants() {
+            let mut line = format!("| {} |", var.key());
+            let mut any = false;
+            for band in ["direct", "df32", "floatexp"] {
+                let mut r: Vec<f64> = cells
+                    .iter()
+                    .filter(|c| c.variant == var)
+                    .filter_map(|c| match &c.outcome {
+                        Outcome::Ran(m) if band_name(m.mode) == band => {
+                            m.gbuffer_iterate_ms.zip(m.iterate_ms).filter(|(_, t)| *t > 0.0).map(|(g, t)| g / t)
+                        }
+                        _ => None,
+                    })
+                    .collect();
+                if r.is_empty() {
+                    line.push_str(" |");
+                    continue;
+                }
+                any = true;
+                r.sort_by(f64::total_cmp);
+                line.push_str(&format!(" {:.2} ({}, max {:.2}) |", r[r.len() / 2], r.len(), r[r.len() - 1]));
+            }
+            if any {
+                gb_rows.push_str(&line);
+                gb_rows.push('\n');
+            }
+        }
+        if !gb_rows.is_empty() {
+            md.push_str(
+                "## The full G-buffer (coloring plan B3)\n\nEach cell rendered again accumulating every statistic BLA folds as well (`StatSet::GBUFFER`; a cell that already carries it, its method's own alone): that render's iterate time over the cell's, the median of the band's cells (how many, the largest). For a method that accumulates something it is the price of the added operations; for Smooth and Distance, of carrying the G-buffer always (no series, no walk).\n\n| variant | direct | df32 | floatexp |\n|---|---|---|---|\n",
+            );
+            md.push_str(&gb_rows);
             md.push('\n');
         }
         md.push_str("## Views\n\n| view | family | zoom | band | iter | interior |\n|---|---|---|---|---|---|\n");

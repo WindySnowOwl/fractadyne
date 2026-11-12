@@ -245,6 +245,24 @@ pub struct StatSet(u32);
 impl StatSet {
     /// Nothing: the iteration writes `AUX_NONE`.
     pub const NONE: StatSet = StatSet(0);
+    /// The full G-buffer (coloring plan B3): every statistic BLA folds (stripe, triangle
+    /// inequality, trap). Every one of them also blocks the series, so a frame that accumulates any
+    /// statistic at all runs under the same rules with these added: it pays only their operations,
+    /// and a switch between the methods that read them can recolor. The final angle is not in it:
+    /// it has no BLA aggregate, so it would turn BLA off for the others (B8 measures whether it can
+    /// join).
+    pub const GBUFFER: StatSet = StatSet::folded_by_bla();
+    const fn folded_by_bla() -> StatSet {
+        let mut set = StatSet::NONE;
+        let mut i = 0;
+        while i < Stat::ALL.len() {
+            if Stat::ALL[i].spec().bla_aggregate {
+                set = set.with(Stat::ALL[i]);
+            }
+            i += 1;
+        }
+        set
+    }
     /// One statistic.
     pub const fn of(s: Stat) -> StatSet {
         StatSet(s.bit())
