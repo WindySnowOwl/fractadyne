@@ -770,6 +770,28 @@ reproduced. Reproduce before fixing; never close on the mechanism argument alone
   (`farm/tests/unit/settings/tests.rs:26-102`); `RenderSettings` stays `deny_unknown_fields`, so a
   missing field fails its test, not a farm render.
 - **Traps**: `ColorU` has a size budget; group new fields into vec4s and update the layout tests.
+- **In progress 2026-11-12** (branch `feat/color-b4-coloring-spec`):
+  - **Step 1, the spec** (`2956066a`): `fractadyne_state::ColoringSpec` holds the session's 27
+    coloring fields (method by key, stripe, trap, light, glow, two-color, palette by id and number,
+    cycle, offset, divisor, normalization, custom gradient). The session flattens it, so the file's
+    keys did not move: a session written by main (542a5264) and by the branch parse to the same
+    table, each build reads the other's, and the older file is a fixture with a test. The farm's
+    `RenderSettings` nests it (protocol 9), so a job also carries the palette's id and the
+    normalization; serde cannot combine flatten with `deny_unknown_fields`, so the nested table is
+    read by `strict_coloring`, which refuses unknown keys. `App::coloring_spec()` is the app's one
+    way out.
+  - **Step 2, the view keys** (`073e8107`): A1's 17 keys are rows of `coloring_fields::FIELDS`
+    (key, kind and range, parents, when the picture depends on it); `view_lines` and `apply_view`
+    walk it on the spec with A1's rules unchanged (A1's nine round-trip tests pass through it).
+    `App::apply_coloring_spec()` is the one way in at run time (start-up still reads the session in
+    `new`, where `--log-palette` joins). A test fails when a spec field has neither a row nor a place
+    on the list of older keys `export.rs` carries (palette, cycle, offset, divisor, gradient).
+    `ViewColoring` remains a typed front for the harnesses.
+  - **Left**: the command line stays hand-written (its ranges are already `slider_range`'s, and
+    several flags mean more than one row: `--stripe-tail N` turns the tail on, `--binary` turns the
+    gradient off); tours (`[render.coloring]` by the table's keys, and `PlaybackRestore` holding a
+    spec); the capability table. Windowed checks not yet run (the self-test's new "the whole
+    coloring goes in and comes back out", `--farmtest` on protocol 9, the coloring matrix).
 
 ### B5. Second LUT and interior modes
 
@@ -1065,7 +1087,8 @@ coloring in these places, so sequence the two with care:
 | B1 fixes | Distance NaN; Newton's statistics methods | merges `91fa8f91`, `7722b660` |
 | B1b | not started: the live method tour | |
 | B2 | done, merged | `c017a577` (merge `dcfd776b`) |
-| B3 | done, branch `feat/color-b3-gbuffer` (dev.21-dev.24 on PLUTO) | |
-| B4–B8 | not started | |
+| B3 | done, merged | `412fafc6` (merge `542a5264`) |
+| B4 | in progress, branch `feat/color-b4-coloring-spec` (steps 1-2) | |
+| B5–B8 | not started | |
 | C1–C11 | not started | |
 | D, E, F, G | not started | |
