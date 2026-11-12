@@ -1474,10 +1474,12 @@ pub(crate) const CYCLE_CHECK_DEFAULT: u64 = 1;
 
 /// 1 = a floatexp frame colored by stripe, triangle or a trap carries the WHOLE G-BUFFER (all three
 /// statistics; `ColorMethod::orbit_stats_at`, coloring plan B3), so a switch among them recolors
-/// instead of iterating again. The user's choice (2026-11-11), knowing the price per deep frame:
-/// +2-4% of GPU iterate time on the RTX 3080 and 3070 (coloring matrix medians). 0 = each frame
-/// carries only what its method reads, for the before/after measurement: on the RX 6800 XT the
-/// matrix's paired renders could not price it (the later pair read slower whichever set it held).
+/// instead of iterating again. The user's choice (2026-11-11). The price per deep frame, GPU
+/// iterate time (coloring matrix medians over 25 views): +2-4% on the RTX 3080 and 3070; +2-7% on
+/// the RX 6800 XT (stripe +2%, triangle +4%, the traps +6-7%), measured with this switch over four
+/// alternated whole runs, the unaffected cells within 2%. The matrix's paired renders could not
+/// price it there: the later pair read 10-36% slower whichever set it held. 0 = each frame carries
+/// only what its method reads, for the before/after measurement.
 pub(crate) const GBUFFER_DEEP_DEFAULT: u64 = 1;
 
 /// How often the window redraws while it waits on a background export (its progress bar), ms,

@@ -63,9 +63,9 @@ Changes after 0.3.0-beta.1:
   longer recalculates it (0.3.0-beta.27).** Past 1e28× a view colored by any of them now
   calculates all three as it goes, so a switch to another of them recolors the picture at once
   instead of starting a calculation that can take minutes; changing the trap's shape still
-  recalculates. The price is in every such frame: about 3% more GPU time on the RTX 3080 and 3070
-  (the RX 6800 XT's is being measured). Shallower views, where a recalculation is quick, calculate only what
-  their method needs, as before. `--set GBUFFER_DEEP=0` turns it off for comparison.
+  recalculates. The price is in every such frame: 2–4% more GPU time on the RTX 3080 and 3070,
+  2–7% on the RX 6800 XT. Shallower views, where a recalculation is quick, calculate only what their
+  method needs, as before. `--set GBUFFER_DEEP=0` turns it off for comparison.
 - **Switching between Smooth and Distance coloring no longer recalculates the view
   (0.3.0-beta.27).** Neither needs anything from the calculation beyond what every view computes,
   so the picture on screen is recolored at once; on a deep view the recalculation took as long as

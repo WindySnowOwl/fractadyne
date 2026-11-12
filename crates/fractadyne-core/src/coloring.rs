@@ -151,10 +151,10 @@ impl ColorMethod {
     /// floatexp, when that is a statistic of the G-buffer, the whole G-buffer, so a switch among
     /// stripe, triangle and the traps recolors instead of iterating again: there an iteration can
     /// take minutes. The price, iterate time per frame (coloring matrix, median over 25 views,
-    /// 2026-11-11): +2-4% on the RTX 3080 and 3070; the user chose to pay it in every deep frame
-    /// (the app's `GBUFFER_DEEP` switch turns it off). In df32 and direct, where an iteration is
-    /// cheap anyway, it would cost the NVIDIA cards 10-35% per frame, so there a frame carries only
-    /// what its method reads.
+    /// 2026-11-11): +2-4% on the RTX 3080 and 3070, +2-7% on the RX 6800 XT; the user chose to pay
+    /// it in every deep frame (the app's `GBUFFER_DEEP` switch turns it off). In df32 and direct,
+    /// where an iteration is cheap anyway, it would cost the NVIDIA cards 10-35% per frame, so there
+    /// a frame carries only what its method reads.
     /// Decomposition is left as it is: its angle keeps BLA off, so no switch to or from it could
     /// recolor.
     pub const fn orbit_stats_at(self, floatexp: bool) -> StatSet {

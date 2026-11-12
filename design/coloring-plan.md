@@ -725,15 +725,23 @@ reproduced. Reproduce before fixing; never close on the mechanism argument alone
     |---|---|---|---|
     | RTX 3080 | +15-34% | +10-21% | +2-4% |
     | RTX 3070 | +15-33% | +9-21% | +2-4% |
-    | RX 6800 XT | +4-15% | +1-4% | +18-34% |
+    | RX 6800 XT | (not priced) | (not priced) | +2-7% |
 
+    ⛔On the RX 6800 XT the paired renders could not price it: whichever request rendered second
+    read 10-36% slower (dev.22, the G-buffer second: +18-34% in floatexp; dev.23, the method's own
+    second: the reverse by as much). Its floatexp figure is from `--set GBUFFER_DEEP=0` (dev.24),
+    four whole runs alternated on, off, on, off, each cell's median per setting: stripe +1.6%,
+    stripe tail +1.9%, triangle +4.3%, point, cross and circle traps +7.0%, +7.4%, +6.4%; every cell
+    the switch does not touch (direct, df32, and Smooth, Distance and decomposition in floatexp)
+    within -0.7% and +1.8%. The NVIDIA figures read the same in both pair orders.
     For Smooth and Distance (losing the series and the walk) the ratios scatter from 0.2 to 3.6 and
     are no case for carrying it always. Decomposition with it, floatexp without BLA: +5-10% median,
     +48% on the RTX 3070's heaviest view.
   - **The choice (user, 2026-11-11: "Always in deep views")**: `ColorMethod::orbit_stats_at`: in
     floatexp a frame colored by stripe, triangle or a trap carries the whole G-buffer, so a switch
     among them recolors; elsewhere, and for every other method, what the method reads. Asked
-    because the price depends on the card (the table). `ColoringConfig::orbit_stats` now takes the
+    because the price depends on the card; the user was given dev.22's +18-34% for the RX 6800 XT,
+    and the whole-run measurement found 2-7%. `--set GBUFFER_DEEP=0` turns it off. `ColoringConfig::orbit_stats` now takes the
     frame's band, and every key and every check of the reference's BLA lanes asks with it: the BLA
     lane checks (`same_reference`, `aux_lanes_stale`, the overtaken check) ask for floatexp, the
     only band that builds a tree; the rules that ask only whether anything is accumulated use
@@ -1057,7 +1065,7 @@ coloring in these places, so sequence the two with care:
 | B1 fixes | Distance NaN; Newton's statistics methods | merges `91fa8f91`, `7722b660` |
 | B1b | not started: the live method tour | |
 | B2 | done, merged | `c017a577` (merge `dcfd776b`) |
-| B3 | done, branch `feat/color-b3-gbuffer` (dev.21, dev.22 on PLUTO) | |
+| B3 | done, branch `feat/color-b3-gbuffer` (dev.21-dev.24 on PLUTO) | |
 | B4–B8 | not started | |
 | C1–C11 | not started | |
 | D, E, F, G | not started | |

@@ -8716,7 +8716,8 @@ descent and the Tan Lei self-checking test).
   ⭐**2026-11-11, B3** (`feat/color-b3-gbuffer`): `StatSet::GBUFFER` (stripe, triangle, trap: what
   BLA folds) is carried by every floatexp frame colored by one of them (user's choice). Cost per
   frame, coloring matrix medians: +2-4% on the RTX 3080 and 3070 in floatexp (10-35% in df32 and
-  direct, where it stays off), +18-34% on the RX 6800 XT in floatexp. Still open: the final angle
+  direct, where it stays off), +2-7% on the RX 6800 XT in floatexp (alternated whole runs with
+  `--set GBUFFER_DEEP=0`; its paired renders could not price it). Still open: the final angle
   (B8), |z| at escape and a period ID.
 - [ ] **Method switching without re-iterating** (P0, §1.2 partial) — palette, cycle, offset and
   lighting already recolor from the cached iterate texture; `color_method`, `stripe_freq` and
