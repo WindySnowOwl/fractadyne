@@ -244,6 +244,14 @@ menu-color-palette = 调色板
 menu-color-custom = 自定义
 menu-color-duotone = 双色调
 menu-color-holidays = 节日
+# Headings over the palette lists' collections, like Holidays above.
+menu-color-minerals = 岩石与矿物
+menu-color-plants = 植物与真菌
+menu-color-animals = 动物
+menu-color-food = 食物
+menu-color-painters = 画家
+menu-color-biomes = 生物群系
+menu-color-places = 城市与地标
 menu-color-binary = 二值（集合）
 menu-color-binary-hover = 纯双色：集合内与集合外，无渐变。
 menu-color-edit-gradient = 编辑渐变…
@@ -325,6 +333,12 @@ tag-art = 艺术
 tag-materials = 材质
 tag-science = 科学
 tag-food = 食物
+# Theme tags for the collections: rocks and minerals, plants and fungi, animals, biomes, and cities and landmarks.
+tag-minerals = 矿物
+tag-plants = 植物
+tag-animals = 动物
+tag-biomes = 生物群系
+tag-places = 地点
 tag-analytical = 分析用
 tag-aesthetic = 观赏用
 

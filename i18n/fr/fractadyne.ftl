@@ -248,6 +248,14 @@ menu-color-palette = Palette
 menu-color-custom = Personnalisée
 menu-color-duotone = Bichromie
 menu-color-holidays = Fêtes
+# Headings over the palette lists' collections, like Holidays above.
+menu-color-minerals = Roches et minéraux
+menu-color-plants = Plantes et champignons
+menu-color-animals = Animaux
+menu-color-food = Cuisine
+menu-color-painters = Peintres
+menu-color-biomes = Biomes
+menu-color-places = Villes et monuments
 menu-color-binary = Binaire (ensemble)
 menu-color-binary-hover = Deux couleurs unies : dans l’ensemble ou hors de l’ensemble, sans dégradé.
 menu-color-edit-gradient = Modifier le dégradé…
@@ -329,6 +337,12 @@ tag-art = Art
 tag-materials = Matières
 tag-science = Science
 tag-food = Cuisine
+# Theme tags for the collections: rocks and minerals, plants and fungi, animals, biomes, and cities and landmarks.
+tag-minerals = Minéraux
+tag-plants = Plantes
+tag-animals = Animaux
+tag-biomes = Biomes
+tag-places = Lieux
 tag-analytical = Analytique
 tag-aesthetic = Esthétique
 

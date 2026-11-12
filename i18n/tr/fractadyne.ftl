@@ -248,6 +248,14 @@ menu-color-palette = Palet
 menu-color-custom = Özel
 menu-color-duotone = İki ton
 menu-color-holidays = Kutlamalar
+# Headings over the palette lists' collections, like Holidays above.
+menu-color-minerals = Kayaçlar ve mineraller
+menu-color-plants = Bitkiler ve mantarlar
+menu-color-animals = Hayvanlar
+menu-color-food = Yiyecek
+menu-color-painters = Ressamlar
+menu-color-biomes = Biyomlar
+menu-color-places = Şehirler ve simge yapılar
 menu-color-binary = İkili (küme)
 menu-color-binary-hover = Düz iki renk: küme içi ve küme dışı, gradyan yok.
 menu-color-edit-gradient = Gradyanı düzenle…
@@ -329,6 +337,12 @@ tag-art = Sanat
 tag-materials = Malzemeler
 tag-science = Bilim
 tag-food = Yiyecek
+# Theme tags for the collections: rocks and minerals, plants and fungi, animals, biomes, and cities and landmarks.
+tag-minerals = Mineraller
+tag-plants = Bitkiler
+tag-animals = Hayvanlar
+tag-biomes = Biyomlar
+tag-places = Yerler
 tag-analytical = Analitik
 tag-aesthetic = Estetik
 

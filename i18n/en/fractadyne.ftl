@@ -253,6 +253,14 @@ menu-color-palette = Palette
 menu-color-custom = Custom
 menu-color-duotone = Duotone
 menu-color-holidays = Holidays
+# Headings over the palette lists' collections, like Holidays above.
+menu-color-minerals = Rocks and minerals
+menu-color-plants = Plants and fungi
+menu-color-animals = Animals
+menu-color-food = Food
+menu-color-painters = Painters
+menu-color-biomes = Biomes
+menu-color-places = Cities and landmarks
 menu-color-binary = Binary (set)
 menu-color-binary-hover = Flat two-color: in-set vs out-of-set, no gradient.
 menu-color-edit-gradient = Edit gradient…
@@ -334,6 +342,12 @@ tag-art = Art
 tag-materials = Materials
 tag-science = Science
 tag-food = Food
+# Theme tags for the collections: rocks and minerals, plants and fungi, animals, biomes, and cities and landmarks.
+tag-minerals = Minerals
+tag-plants = Plants
+tag-animals = Animals
+tag-biomes = Biomes
+tag-places = Places
 tag-analytical = Analytical
 tag-aesthetic = Aesthetic
 

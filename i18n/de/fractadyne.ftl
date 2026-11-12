@@ -248,6 +248,14 @@ menu-color-palette = Palette
 menu-color-custom = Eigene
 menu-color-duotone = Duoton
 menu-color-holidays = Feiertage
+# Headings over the palette lists' collections, like Holidays above.
+menu-color-minerals = Gesteine und Minerale
+menu-color-plants = Pflanzen und Pilze
+menu-color-animals = Tiere
+menu-color-food = Essen
+menu-color-painters = Maler
+menu-color-biomes = Biome
+menu-color-places = Städte und Wahrzeichen
 menu-color-binary = Binär (Menge)
 menu-color-binary-hover = Flach in zwei Farben: in der Menge oder außerhalb, ohne Farbverlauf.
 menu-color-edit-gradient = Farbverlauf bearbeiten…
@@ -329,6 +337,12 @@ tag-art = Kunst
 tag-materials = Materialien
 tag-science = Wissenschaft
 tag-food = Essen
+# Theme tags for the collections: rocks and minerals, plants and fungi, animals, biomes, and cities and landmarks.
+tag-minerals = Minerale
+tag-plants = Pflanzen
+tag-animals = Tiere
+tag-biomes = Biome
+tag-places = Orte
 tag-analytical = Analytisch
 tag-aesthetic = Ästhetisch
 

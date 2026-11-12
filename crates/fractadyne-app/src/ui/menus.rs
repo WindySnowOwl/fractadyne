@@ -60,6 +60,21 @@ pub(crate) fn paint_palette_box_swatch(ui: &egui::Ui, button: egui::Rect, lut: &
     crate::paint_gradient(&ui.painter_at(rect), rect, lut);
 }
 
+/// The heading over a collection of presets, in the language in use.
+pub(crate) fn preset_group_heading(g: fractadyne_color::PresetGroup) -> String {
+    use fractadyne_color::PresetGroup as G;
+    match g {
+        G::Holidays => tr!(menu_color_holidays),
+        G::Minerals => tr!(menu_color_minerals),
+        G::Plants => tr!(menu_color_plants),
+        G::Animals => tr!(menu_color_animals),
+        G::Food => tr!(menu_color_food),
+        G::Painters => tr!(menu_color_painters),
+        G::Biomes => tr!(menu_color_biomes),
+        G::Places => tr!(menu_color_places),
+    }
+}
+
 /// What one palette picker row reported this frame (`FractadyneApp::palette_menu_row`).
 pub(crate) struct PaletteRowHit {
     pub(crate) clicked: bool,
@@ -102,13 +117,13 @@ impl FractadyneApp {
         }
     }
 
-    /// The heading a list of presets shows before preset `i`, if a group starts there: the
-    /// holiday palettes sit under their own. Color ▸ Palette and the panel's Palette list both
-    /// call it, as they both call `palette_menu_row`.
+    /// The heading a list of presets shows before preset `i`, if a collection starts there
+    /// (`fractadyne_color::PRESET_GROUPS`: the holidays, minerals, plants and the rest). Color ▸
+    /// Palette and the panel's Palette list both call it, as they both call `palette_menu_row`.
     pub(crate) fn palette_preset_heading(ui: &mut egui::Ui, i: usize) {
-        if i == fractadyne_color::HOLIDAY_PRESETS.start {
+        if let Some(g) = fractadyne_color::preset_group_starting_at(i) {
             ui.separator();
-            ui.label(egui::RichText::new(tr!(menu_color_holidays)).weak());
+            ui.label(egui::RichText::new(preset_group_heading(g)).weak());
         }
     }
 

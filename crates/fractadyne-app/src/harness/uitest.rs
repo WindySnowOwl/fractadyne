@@ -205,6 +205,9 @@ enum Screen {
     /// The same list opened with Holi chosen, a holiday palette below the list's first screenful:
     /// it opens scrolled to Holi, with the "Holidays" heading above the holiday palettes.
     PaletteDropdownHolidays,
+    /// The same list opened with Amethyst chosen, the first of the collections after the holidays:
+    /// it opens scrolled down to it, with the "Rocks and minerals" heading just above.
+    PaletteDropdownCollections,
     /// The same list open on Mondrian with the pointer resting on Ice, through egui's own input
     /// (`UiPointer::OnPaletteRow`): the view shows Ice, the hover preview, while Mondrian stays the
     /// chosen palette.
@@ -985,6 +988,7 @@ fn build_steps() -> Vec<Step> {
         // After the preview steps: it leaves the list scrolled down, egui keeps a list's scroll, and
         // palette-preview's pointer, aimed at Ice near the top, would find Ice out of view.
         screen("palette-dropdown-holidays", Screen::PaletteDropdownHolidays),
+        screen("palette-dropdown-collections", Screen::PaletteDropdownCollections),
         screen("palette-browser", Screen::PaletteBrowser),
         screen("palette-browser-tags", Screen::PaletteBrowserTags),
         screen("life-draw", Screen::LifeDraw),
@@ -1105,6 +1109,7 @@ impl FractadyneApp {
                     StepKind::Screen(
                         Screen::PaletteDropdown
                             | Screen::PaletteDropdownHolidays
+                            | Screen::PaletteDropdownCollections
                             | Screen::PaletteBrowser
                             | Screen::PaletteBrowserTags
                             | Screen::PalettePreview
@@ -2107,12 +2112,12 @@ impl FractadyneApp {
                 }
                 self.palette_browser.open = true;
             }
-            Screen::PaletteDropdown | Screen::PaletteDropdownHolidays => {
+            Screen::PaletteDropdown | Screen::PaletteDropdownHolidays | Screen::PaletteDropdownCollections => {
                 self.dialogs.right_panel_open = true;
-                self.coloring.palette_idx = if matches!(s, Screen::PaletteDropdownHolidays) {
-                    fractadyne_color::HOLIDAY_PRESETS.start + 3 // Holi: past the first screenful
-                } else {
-                    10 // Mondrian: a banded swatch, part way down the list
+                self.coloring.palette_idx = match s {
+                    Screen::PaletteDropdownHolidays => fractadyne_color::HOLIDAY_PRESETS.start + 3, // Holi: past the first screenful
+                    Screen::PaletteDropdownCollections => fractadyne_color::preset_by_id("amethyst").unwrap_or(0),
+                    _ => 10, // Mondrian: a banded swatch, part way down the list
                 };
                 self.coloring.use_custom_palette = false;
                 self.coloring.use_duotone = false;

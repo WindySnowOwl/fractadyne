@@ -244,6 +244,14 @@ menu-color-palette = パレット
 menu-color-custom = カスタム
 menu-color-duotone = デュオトーン
 menu-color-holidays = 祝祭日
+# Headings over the palette lists' collections, like Holidays above.
+menu-color-minerals = 岩石と鉱物
+menu-color-plants = 植物と菌類
+menu-color-animals = 動物
+menu-color-food = 食べ物
+menu-color-painters = 画家
+menu-color-biomes = バイオーム
+menu-color-places = 都市と名所
 menu-color-binary = 二値（集合）
 menu-color-binary-hover = グラデーションのない2色表示：集合の内側と外側。
 menu-color-edit-gradient = グラデーションを編集…
@@ -325,6 +333,12 @@ tag-art = 芸術
 tag-materials = 素材
 tag-science = 科学
 tag-food = 食べ物
+# Theme tags for the collections: rocks and minerals, plants and fungi, animals, biomes, and cities and landmarks.
+tag-minerals = 鉱物
+tag-plants = 植物
+tag-animals = 動物
+tag-biomes = バイオーム
+tag-places = 場所
 tag-analytical = 分析向け
 tag-aesthetic = 鑑賞向け
 

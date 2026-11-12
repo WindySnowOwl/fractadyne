@@ -269,6 +269,30 @@ pub(crate) mod frame {
         sum as f64 / a.len() as f64
     }
 
+    /// A frame reduced to the means of `runs` equal runs of its leading bytes, to compare many
+    /// frames pair by pair: 190 palettes make 17,955 pairs, which frame against frame took minutes.
+    /// ⭐The distance of two signatures is at most the [`distance`] of the bytes they cover (a run's
+    /// mean moves no more than its bytes do, on average), so a pair the signatures call different
+    /// IS different; a check on signatures is the same check, made stricter.
+    pub(crate) fn signature(px: &[u8], runs: usize) -> Vec<f32> {
+        let run = px.len() / runs.max(1);
+        if run == 0 {
+            return px.iter().map(|&b| b as f32).collect();
+        }
+        px.chunks_exact(run)
+            .take(runs)
+            .map(|c| (c.iter().map(|&b| b as u64).sum::<u64>() as f64 / run as f64) as f32)
+            .collect()
+    }
+
+    /// Mean absolute difference of two [`signature`]s, on the byte scale of [`distance`].
+    pub(crate) fn signature_distance(a: &[f32], b: &[f32]) -> f64 {
+        if a.len() != b.len() || a.is_empty() {
+            return f64::INFINITY;
+        }
+        a.iter().zip(b).map(|(x, y)| (x - y).abs() as f64).sum::<f64>() / a.len() as f64
+    }
+
     /// Mean absolute luma step between horizontally adjacent pixels — the aliasing measure from
     /// the live-normalization work. High means salt-and-pepper speckle; low means smooth bands.
     /// Doubles as an edge-energy measure for the anti-aliasing rows.
@@ -10726,39 +10750,42 @@ zoom = \"1e94\"
             self.coloring.color_method = crate::ColorMethod::Smooth;
 
             // --- palettes, step 54 ---
-            // ⚠A breadcrumb per palette and per row of the comparison: the whole check runs 22-26 s,
-            // and with no activity for that long the watchdog may log a "possible hang" (it did on
-            // 2026-10-28, failing a run's logcheck with every check passing).
-            let mut pal: Vec<(String, Vec<u8>)> = Vec::new();
+            // ⚠A breadcrumb per palette and per row of the comparison: the whole check runs for
+            // tens of seconds, and with no activity for that long the watchdog may log a "possible
+            // hang" (it did on 2026-10-28, failing a run's logcheck with every check passing).
+            // Each frame is judged coherent as it renders and kept only as its signature: 190
+            // palettes make 17,955 pairs, and frame against frame that took minutes (and held
+            // every frame). A pair the signatures call different is different (`frame::signature`).
+            const SIGNATURE_RUNS: usize = 4800;
+            let presets = fractadyne_color::PRESETS.len();
+            let mut pal: Vec<(String, Vec<f32>)> = Vec::new();
+            let mut pcoherent = true;
             for (i, name) in fractadyne_color::PRESETS.iter().enumerate() {
                 self.coloring.palette_idx = i;
                 if let Some(px) = render(self, device, queue) {
-                    pal.push((name.name.to_string(), px));
+                    pcoherent &= frame::coherent(&px);
+                    pal.push((name.name.to_string(), frame::signature(&px, SIGNATURE_RUNS)));
                 }
-                crate::diag::breadcrumb(format!("selftest: palette {}/{} rendered", i + 1, fractadyne_color::PRESETS.len()));
+                crate::diag::breadcrumb(format!("selftest: palette {}/{presets} rendered", i + 1));
             }
             let mut pworst = (f64::INFINITY, String::new());
-            let mut pcoherent = true;
             for i in 0..pal.len() {
                 crate::diag::breadcrumb(format!("selftest: palette {}/{} compared", i + 1, pal.len()));
-                pcoherent &= frame::coherent(&pal[i].1);
                 for j in (i + 1)..pal.len() {
-                    let d = frame::distance(&pal[i].1, &pal[j].1);
+                    let d = frame::signature_distance(&pal[i].1, &pal[j].1);
                     if d < pworst.0 {
                         pworst = (d, format!("{} vs {}", pal[i].0, pal[j].0));
                     }
                 }
             }
-            if !pal.is_empty() {
-                push_check(&mut checks, &mut last_check_t, SelfCheck {
-                    category: "appearance",
-                    name: "palettes are all different and coherent".into(),
-                    params: format!("{} palettes", pal.len()),
-                    result: format!("closest pair {} at meanΔ {:.2}", pworst.1, pworst.0),
-                    threshold: "meanΔ ≥ 1.0 for every pair, all coherent",
-                    pass: pcoherent && pworst.0 >= 1.0,
-                });
-            }
+            push_check(&mut checks, &mut last_check_t, SelfCheck {
+                category: "appearance",
+                name: "palettes are all different and coherent".into(),
+                params: format!("{} of {presets} palettes rendered", pal.len()),
+                result: format!("closest pair {} at signature meanΔ {:.2}; all coherent: {pcoherent}", pworst.1, pworst.0),
+                threshold: "every palette renders, coherent; signature meanΔ ≥ 1.0 for every pair (at most the frames' meanΔ)",
+                pass: pal.len() == presets && pcoherent && pworst.0 >= 1.0,
+            });
             self.coloring.palette_idx = 0;
 
             // --- controls that must visibly do something, steps 55-57 and 60-62 ---
@@ -12341,3 +12368,7 @@ mod group_tally_tests;
 #[cfg(test)]
 #[path = "../../tests/unit/harness/selftest/wait_alive_tests.rs"]
 mod wait_alive_tests;
+
+#[cfg(test)]
+#[path = "../../tests/unit/harness/selftest/frame_signature_tests.rs"]
+mod frame_signature_tests;

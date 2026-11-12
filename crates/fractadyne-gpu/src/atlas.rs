@@ -2,8 +2,8 @@
 //! palette in turn, into one atlas texture that egui draws from.
 //!
 //! ⭐**Nothing is iterated.** Coloring is its own pass over the iteration texture the view already
-//! holds, so a thumbnail costs one small color pass, however deep the view: fifty palettes are
-//! fifty draws of `fs_color` into cells of one texture, in one submission. Each thumbnail uses the
+//! holds, so a thumbnail costs one small color pass, however deep the view: each palette is one
+//! draw of `fs_color` into a cell of one texture, all in one submission. Each thumbnail uses the
 //! coloring the view was last drawn with (`ViewResources::last_cu`) — method, cycle, offset,
 //! normalization, lighting — with only the palette swapped, so it shows what choosing that
 //! palette would show.

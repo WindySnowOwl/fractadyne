@@ -248,6 +248,14 @@ menu-color-palette = Tavolozza
 menu-color-custom = Personalizzata
 menu-color-duotone = Duotono
 menu-color-holidays = Festività
+# Headings over the palette lists' collections, like Holidays above.
+menu-color-minerals = Rocce e minerali
+menu-color-plants = Piante e funghi
+menu-color-animals = Animali
+menu-color-food = Cibo
+menu-color-painters = Pittori
+menu-color-biomes = Biomi
+menu-color-places = Città e monumenti
 menu-color-binary = Binario (insieme)
 menu-color-binary-hover = Due colori piatti: dentro o fuori dall’insieme, senza gradiente.
 menu-color-edit-gradient = Modifica gradiente…
@@ -329,6 +337,12 @@ tag-art = Arte
 tag-materials = Materiali
 tag-science = Scienza
 tag-food = Cibo
+# Theme tags for the collections: rocks and minerals, plants and fungi, animals, biomes, and cities and landmarks.
+tag-minerals = Minerali
+tag-plants = Piante
+tag-animals = Animali
+tag-biomes = Biomi
+tag-places = Luoghi
 tag-analytical = Analitica
 tag-aesthetic = Estetica
 
