@@ -1040,10 +1040,13 @@ impl crate::FractadyneApp {
             }
         }
         crate::diag::breadcrumb(format!("coloring-matrix: {}/{} rendered", view.name, var.key()));
-        // The full G-buffer's request (B3, judged below), and its first render here: the two
-        // requests' renders alternate (cell, G-buffer, cell, G-buffer), so neither is timed only
-        // after the card has clocked up (run last, the G-buffer read 12-15% FASTER than the cell on
-        // the RX 6800 XT, dev.21).
+        // The full G-buffer's request (B3, judged below). Its two renders follow the cell's two at
+        // once (cell, cell, G-buffer, G-buffer), so each time is a request rendered again, as a live
+        // frame is, and the two are taken moments apart. Timed after the cell's plain and nudged
+        // renders, the G-buffer read 12-15% FASTER than the cell on the RX 6800 XT (the card had
+        // clocked up, dev.21); alternated with the cell's (dev.22), the cell's second render lost
+        // what its first had left warm, and df32 cells of the statistics methods read 14-39% slower
+        // than the card's baseline.
         let shown = req.orbit_stats;
         let full = shown.union(crate::StatSet::GBUFFER);
         let other = if full == shown { var.method.orbit_stats() } else { full };
@@ -1053,7 +1056,6 @@ impl crate::FractadyneApp {
             self.coloring.orbit_stats_override = None;
             r
         });
-        let g1 = req_g.as_ref().map(|r| shoot(dev, q, r));
         // The same request again: the channels must not move.
         let (mut it, mut col) = (vec![a.iterate_ms], vec![a.color_ms]);
         match shoot(dev, q, &req) {
@@ -1070,6 +1072,7 @@ impl crate::FractadyneApp {
             }
             Err(e) => m.fails.push(("render", format!("second render: {e}"))),
         }
+        let g1 = req_g.as_ref().map(|r| shoot(dev, q, r));
         let g2 = req_g.as_ref().map(|r| shoot(dev, q, r));
         let least = |v: &[f64]| v.iter().copied().filter(|x| *x > 0.0).reduce(f64::min);
         m.iterate_ms = least(&it);
