@@ -710,9 +710,13 @@ reproduced. Reproduce before fixing; never close on the mechanism argument alone
     `current_export_request_for` with `ColoringConfig::orbit_stats_override`, so the series, BLA and
     the walk follow the app's rules. Both accumulate something: the channels must be identical
     (check `gbuffer`). The cell accumulates nothing (Smooth, Distance): judged against the plain
-    render. The two requests' renders alternate (cell, G-buffer, cell, G-buffer): timed after the
-    cell's other renders, the G-buffer read 12-15% faster than the cell on the RX 6800 XT (clocks).
-    `summary.md` gains a cost table per variant and band.
+    render. `summary.md` gains a cost table per variant and band.
+  - ⛔**Timing order**: cell, cell, G-buffer, G-buffer, each pair ADJACENT (a request rendered
+    again, as a live frame is). Timed after the cell's plain and nudged renders (dev.21), the
+    G-buffer read 12-15% FASTER than the cell on the RX 6800 XT: the card had clocked up.
+    Alternated with the cell's (dev.22), the cell's second render lost what its first left warm:
+    the df32 cells of the statistics methods read 14-39% over the RTX 3080's baseline (146 cells).
+    The table below is dev.22's alternated order; dev.23 has the adjacent one.
   - **Results**, 738 cells on each card, 0 red, no `gbuffer` or determinism failure: RTX 3080 (here),
     RTX 3070 and RX 6800 XT (PLUTO, dev.21 and dev.22). Iterate time with the G-buffer over without,
     median over the band's views, for stripe, triangle and the traps:

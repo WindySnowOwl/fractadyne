@@ -6397,7 +6397,7 @@ impl ColoringConfig {
     fn orbit_stats(&self, mode: RenderMode) -> StatSet {
         match self.orbit_stats_override {
             Some(s) => s.union(self.color_method.orbit_stats()),
-            None => self.color_method.orbit_stats_at(mode.is_floatexp()),
+            None => self.color_method.orbit_stats_at(mode.is_floatexp() && crate::tunables::cost().gbuffer_deep == 1),
         }
     }
     /// Whether a frame accumulates any statistic at all: the same answer in every band, since the
