@@ -106,6 +106,9 @@ pub(crate) struct Cost {
     pub tail_df32: u64,
     /// The direct loops' exact-repeat check (`CYCLE_CHECK_DEFAULT`; 0 = off, 1 = on).
     pub cycle_check: u64,
+    /// A deep stripe, triangle or trap frame carries the whole G-buffer (`GBUFFER_DEEP_DEFAULT`;
+    /// 0 = off, 1 = on).
+    pub gbuffer_deep: u64,
     /// The direct loops' honest step past the critical point (`HONEST_STEP_DEFAULT`; 0 = off, 1 = on).
     pub honest_step: u64,
     /// How often the window redraws while it waits on a background export, ms
@@ -229,6 +232,7 @@ impl Default for Cost {
             pin_timeout_scaled: PIN_TIMEOUT_SCALED_DEFAULT,
             tail_df32: TAIL_DF32_DEFAULT,
             cycle_check: CYCLE_CHECK_DEFAULT,
+            gbuffer_deep: GBUFFER_DEEP_DEFAULT,
             honest_step: HONEST_STEP_DEFAULT,
             export_poll_ms: EXPORT_POLL_MS_DEFAULT,
             ref_overlap: REF_OVERLAP_DEFAULT,
@@ -789,6 +793,15 @@ pub(crate) fn apply_overrides(pairs: &[(String, String)]) -> Result<(), String> 
                     "0" => 0,
                     "1" => 1,
                     _ => return Err(format!("--set CYCLE_CHECK: '{raw}' is not 0 (off) or 1 (on)")),
+                };
+                p.to_string()
+            }
+            "GBUFFER_DEEP" => {
+                let p = c.gbuffer_deep;
+                c.gbuffer_deep = match raw.as_str() {
+                    "0" => 0,
+                    "1" => 1,
+                    _ => return Err(format!("--set GBUFFER_DEEP: '{raw}' is not 0 (off) or 1 (on)")),
                 };
                 p.to_string()
             }
@@ -1458,6 +1471,16 @@ pub(crate) const TAIL_DF32_DEFAULT: u64 = 1;
 /// time off and 12.4 s on; bit for bit the same pictures. 0 = every interior pixel runs to
 /// `max_iter`, for the before/after measurement.
 pub(crate) const CYCLE_CHECK_DEFAULT: u64 = 1;
+
+/// 1 = a floatexp frame colored by stripe, triangle or a trap carries the WHOLE G-BUFFER (all three
+/// statistics; `ColorMethod::orbit_stats_at`, coloring plan B3), so a switch among them recolors
+/// instead of iterating again. The user's choice (2026-11-11). The price per deep frame, GPU
+/// iterate time (coloring matrix medians over 25 views): +2-4% on the RTX 3080 and 3070; +2-7% on
+/// the RX 6800 XT (stripe +2%, triangle +4%, the traps +6-7%), measured with this switch over four
+/// alternated whole runs, the unaffected cells within 2%. The matrix's paired renders could not
+/// price it there: the later pair read 10-36% slower whichever set it held. 0 = each frame carries
+/// only what its method reads, for the before/after measurement.
+pub(crate) const GBUFFER_DEEP_DEFAULT: u64 = 1;
 
 /// How often the window redraws while it waits on a background export (its progress bar), ms,
 /// rather than every frame (0).
