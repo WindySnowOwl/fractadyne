@@ -913,10 +913,10 @@ impl crate::FractadyneApp {
         self.render_cfg.glitch_correct = true;
         self.render_cfg.auto_iter = false;
         self.render_cfg.aa = 1;
-        self.coloring.palette_idx = s.palette_idx;
-        self.coloring.cycle = s.cycle;
-        self.coloring.offset = s.offset;
-        self.coloring.iter_div = s.iter_div;
+        self.coloring.palette_idx = s.coloring.palette_idx;
+        self.coloring.cycle = s.coloring.cycle;
+        self.coloring.offset = s.coloring.offset;
+        self.coloring.iter_div = s.coloring.iter_div;
         self.coloring.use_custom_palette = false;
         self.coloring.normalize = false;
         self.anim.palette_anim = crate::PaletteAnim::Off;

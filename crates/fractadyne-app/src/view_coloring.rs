@@ -109,29 +109,29 @@ impl Default for ViewColoring {
     fn default() -> Self {
         let s = fractadyne_state::SessionState::default();
         ViewColoring {
-            method: ColorMethod::from_key(&s.color_method),
-            stripe_freq: s.stripe_freq,
-            stripe_tail: s.stripe_tail,
-            stripe_tail_len: s.stripe_tail_len,
-            trap: TrapType::from_key(&s.trap_type),
-            light: s.light,
-            light_angle: s.light_angle,
-            light_height: s.light_height,
-            glow: s.de,
-            glow_strength: s.de_strength,
-            glow_width: s.de_width,
-            two_color: if s.use_binary {
+            method: ColorMethod::from_key(&s.coloring.color_method),
+            stripe_freq: s.coloring.stripe_freq,
+            stripe_tail: s.coloring.stripe_tail,
+            stripe_tail_len: s.coloring.stripe_tail_len,
+            trap: TrapType::from_key(&s.coloring.trap_type),
+            light: s.coloring.light,
+            light_angle: s.coloring.light_angle,
+            light_height: s.coloring.light_height,
+            glow: s.coloring.de,
+            glow_strength: s.coloring.de_strength,
+            glow_width: s.coloring.de_width,
+            two_color: if s.coloring.use_binary {
                 TwoColor::Binary
-            } else if s.use_duotone {
+            } else if s.coloring.use_duotone {
                 TwoColor::Duotone
             } else {
                 TwoColor::Off
             },
-            lo: s.duotone_lo,
-            hi: s.duotone_hi,
-            normalize_live: s.normalize_live,
-            normalize_fit: s.normalize_fit,
-            log_scale: s.log_palette,
+            lo: s.coloring.duotone_lo,
+            hi: s.coloring.duotone_hi,
+            normalize_live: s.coloring.normalize_live,
+            normalize_fit: s.coloring.normalize_fit,
+            log_scale: s.coloring.log_palette,
         }
     }
 }

@@ -3,15 +3,21 @@ use super::*;
 fn customised() -> SessionState {
     SessionState {
         max_iter: 123_456,
-        color_method: "stripe".into(),
-        stripe_freq: 7.5,
-        light: true,
-        de: true,
-        palette_idx: 3,
+        coloring: ColoringSpec {
+            color_method: "stripe".into(),
+            stripe_freq: 7.5,
+            light: true,
+            de: true,
+            palette_idx: 3,
+            palette_id: "lunar-new-year".into(),
+            normalize_live: false,
+            normalize_fit: true,
+            use_custom_palette: true,
+            custom_palette: vec![[1.0, 0.5, 0.0, 1.0], [0.0, 0.0, 1.0, 1.0]],
+            ..ColoringSpec::default()
+        },
         custom_formula: "z = z^3 + c".into(),
         custom_params: vec![[0.5, -0.25]],
-        use_custom_palette: true,
-        custom_palette: vec![[1.0, 0.5, 0.0, 1.0], [0.0, 0.0, 1.0, 1.0]],
         watermark: false,
         series_approx: false,
         // Things that are NOT render settings and must not travel:
@@ -34,12 +40,12 @@ fn listed_fields_travel_and_nothing_else_does() {
     rs.validate().expect("a real session's settings validate");
     let out = rs.to_session();
     assert_eq!(out.max_iter, 123_456);
-    assert_eq!(out.color_method, "stripe");
-    assert_eq!(out.stripe_freq, 7.5);
-    assert!(out.light && out.de && out.use_custom_palette);
+    assert_eq!(out.coloring.color_method, "stripe");
+    assert_eq!(out.coloring.stripe_freq, 7.5);
+    assert!(out.coloring.light && out.coloring.de && out.coloring.use_custom_palette);
     assert_eq!(out.custom_formula, src.custom_formula);
     assert_eq!(out.custom_params, src.custom_params);
-    assert_eq!(out.custom_palette, src.custom_palette);
+    assert_eq!(out.coloring.custom_palette, src.coloring.custom_palette);
     assert!(!out.watermark && !out.series_approx);
     let d = SessionState::default();
     assert_eq!(out.last_script, d.last_script, "a path traveled");
@@ -50,12 +56,26 @@ fn listed_fields_travel_and_nothing_else_does() {
     assert_eq!(RenderSettings::from_session(&out), rs);
 }
 
+/// ⭐The whole coloring travels (coloring plan B4): the settings this struct used to leave behind
+/// by listing its own copies, the palette's id and the live normalization, arrive with the rest.
+#[test]
+fn the_whole_coloring_travels() {
+    let src = customised();
+    let out = RenderSettings::from_session(&src).to_session();
+    assert_eq!(out.coloring, src.coloring, "a coloring setting did not travel");
+    assert_eq!(out.coloring.palette_id, "lunar-new-year");
+    assert!(!out.coloring.normalize_live && out.coloring.normalize_fit);
+}
+
 #[test]
 fn the_defaults_validate_and_survive_json() {
     let rs = RenderSettings::from_session(&SessionState::default());
     rs.validate().expect("defaults validate");
     let back: RenderSettings = serde_json::from_str(&serde_json::to_string(&rs).unwrap()).unwrap();
     assert_eq!(back, rs);
+    let custom = RenderSettings::from_session(&customised());
+    let back: RenderSettings = serde_json::from_str(&serde_json::to_string(&custom).unwrap()).unwrap();
+    assert_eq!(back, custom);
 }
 
 #[test]
@@ -64,13 +84,15 @@ fn out_of_range_settings_are_refused() {
     let cases: Vec<(&str, Mutation)> = vec![
         ("zero iterations", Box::new(|r| r.max_iter = 0)),
         ("huge iterations", Box::new(|r| r.max_iter = 4_000_000_000)),
-        ("NaN cycle", Box::new(|r| r.cycle = f32::NAN)),
+        ("NaN cycle", Box::new(|r| r.coloring.cycle = f32::NAN)),
         ("infinite Julia c", Box::new(|r| r.julia_c_re = f64::INFINITY)),
-        ("a path as a method", Box::new(|r| r.color_method = "C:\\x\ny".into())),
+        ("a path as a method", Box::new(|r| r.coloring.color_method = "C:\\x\ny".into())),
         ("enormous formula", Box::new(|r| r.custom_formula = "z".repeat(9000))),
         ("escape codes in a formula", Box::new(|r| r.custom_formula = "z\u{1b}[2J".into())),
         ("too many parameters", Box::new(|r| r.custom_params = vec![[0.0, 0.0]; 9])),
-        ("NaN palette", Box::new(|r| r.custom_palette = vec![[f32::NAN, 0.0, 0.0, 1.0]])),
+        ("NaN palette", Box::new(|r| r.coloring.custom_palette = vec![[f32::NAN, 0.0, 0.0, 1.0]])),
+        ("a divisor of 0", Box::new(|r| r.coloring.iter_div = 0)),
+        ("a divisor past the most", Box::new(|r| r.coloring.iter_div = fractadyne_state::ITER_DIV_MAX + 1)),
     ];
     for (what, f) in cases {
         let mut r = base.clone();
@@ -81,25 +103,28 @@ fn out_of_range_settings_are_refused() {
     assert!(serde_json::from_str::<RenderSettings>(&unknown).is_err(), "an unlisted field was accepted");
 }
 
-/// "Divide iterations" travels with a job. ⭐At 1 it is left out of the message, so a client built
-/// before the field (which refuses unknown fields) still takes every job that does not divide;
-/// one that does divide carries it, and a message without it reads as 1.
+/// The coloring table refuses an unknown key as the rest of the settings do, although the struct
+/// it reads into cannot (the session flattens it): `strict_coloring`.
 #[test]
-fn the_iteration_divisor_travels_and_is_absent_at_one() {
-    let plain = RenderSettings::from_session(&SessionState::default());
-    assert_eq!(plain.iter_div, 1);
-    let json = serde_json::to_string(&plain).unwrap();
-    assert!(!json.contains("iter_div"), "a job at 1 names the field: {json}");
-    let divided = RenderSettings::from_session(&SessionState { iter_div: 8, ..SessionState::default() });
+fn an_unknown_coloring_field_is_refused() {
+    let base = RenderSettings::from_session(&SessionState::default());
+    let json = serde_json::to_string(&base).unwrap();
+    assert!(json.contains("\"coloring\":{"), "{json}");
+    let bad = json.replacen("\"coloring\":{", "\"coloring\":{\"export_dir\":\"D:/x\",", 1);
+    let err = serde_json::from_str::<RenderSettings>(&bad).expect_err("an unknown coloring field was accepted");
+    assert!(err.to_string().contains("unknown coloring field `export_dir`"), "{err}");
+}
+
+/// "Divide iterations" travels with a job (always, since protocol 9 carries the whole coloring).
+#[test]
+fn the_iteration_divisor_travels() {
+    let divided = RenderSettings::from_session(&SessionState {
+        coloring: ColoringSpec { iter_div: 8, ..ColoringSpec::default() },
+        ..SessionState::default()
+    });
     divided.validate().expect("8 validates");
     let json8 = serde_json::to_string(&divided).unwrap();
     assert!(json8.contains("\"iter_div\":8"), "{json8}");
     let back: RenderSettings = serde_json::from_str(&json8).unwrap();
-    assert_eq!(back.to_session().iter_div, 8);
-    let old: RenderSettings = serde_json::from_str(&json).unwrap();
-    assert_eq!(old.iter_div, 1);
-    for bad in [0, fractadyne_state::ITER_DIV_MAX + 1] {
-        let r = RenderSettings { iter_div: bad, ..plain.clone() };
-        assert!(r.validate().is_err(), "accepted a divisor of {bad}");
-    }
+    assert_eq!(back.to_session().coloring.iter_div, 8);
 }

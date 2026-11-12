@@ -64,26 +64,17 @@ pub struct PaletteSegment {
     pub blend_params: [f32; 4],
 }
 
+/// How a picture is colored: every coloring setting that is saved or sent (coloring plan B4). One
+/// struct, so a setting added here travels everywhere it does: the session file (flattened into
+/// [`SessionState`], so the keys are the session's own), a render farm's job (nested in its
+/// `RenderSettings`) and, through the app, views and the command line.
+///
+/// The method and the trap are stored by key, as the session always stored them; the app reads
+/// them through its method table (`fractadyne_core::coloring`). The animations (palette, light
+/// and glow) are not here: they move a picture, they do not describe one, and a farm job turns
+/// them off.
 #[derive(Serialize, Deserialize, Clone, PartialEq, Debug)]
-pub struct SessionState {
-    /// Schema version this file was written with (see [`STATE_FORMAT_VERSION`]). Missing ⇒ v1.
-    #[serde(default = "default_state_version")]
-    pub state_version: u32,
-    pub center_x: f64,
-    pub center_y: f64,
-    /// Full-precision center (decimal). Empty ⇒ fall back to the `f64` fields.
-    #[serde(default)]
-    pub center_x_str: String,
-    #[serde(default)]
-    pub center_y_str: String,
-    /// Scale mantissa. Paired with `units_per_pixel_e` (a base-2 exponent) so deep-zoom
-    /// locations past `f64`'s ~1e308× range survive quit/restart. Old saves (no exponent
-    /// field) stored the full `f64` value here with an implicit exponent of 0 — still valid.
-    pub units_per_pixel: f64,
-    #[serde(default)]
-    pub units_per_pixel_e: i32,
-    pub max_iter: u32,
-    pub auto_iter: bool,
+pub struct ColoringSpec {
     /// The preset's number in an older build's list (`fractadyne_color::LEGACY_PRESET_ORDER`):
     /// written so an older build reopening this session keeps the palette, and read only when
     /// `palette_id` is absent (a session saved before ids).
@@ -121,6 +112,96 @@ pub struct SessionState {
     /// own switch.
     #[serde(default)]
     pub normalize_fit: bool,
+    /// Distance-estimate relief lighting: enabled, light angle (rad), relief strength.
+    #[serde(default)]
+    pub light: bool,
+    #[serde(default = "default_light_angle")]
+    pub light_angle: f32,
+    #[serde(default = "default_light_height")]
+    pub light_height: f32,
+    /// Distance-estimate glow: enabled, blend strength, contour width.
+    #[serde(default)]
+    pub de: bool,
+    #[serde(default = "default_de_strength")]
+    pub de_strength: f32,
+    #[serde(default = "default_de_width")]
+    pub de_width: f32,
+    /// Coloring method: "smooth" | "stripe" | "triangle" | "trap" | "distance" |
+    /// "decomposition".
+    #[serde(default = "default_color_method")]
+    pub color_method: String,
+    /// Stripe-average angular frequency (method = "stripe").
+    #[serde(default = "default_stripe_freq")]
+    pub stripe_freq: f32,
+    /// Stripe average over the TAIL only (method = "stripe"): an exponentially-weighted window
+    /// over the last `stripe_tail_len` iterations instead of the whole orbit, so a deep view —
+    /// where every orbit shadows the reference for all but its last few hundred iterates — keeps
+    /// its contrast. Off = the classic full-orbit average.
+    #[serde(default)]
+    pub stripe_tail: bool,
+    /// Window length in iterations for `stripe_tail`.
+    #[serde(default = "default_stripe_tail_len")]
+    pub stripe_tail_len: u32,
+    /// Orbit-trap shape: "point" | "cross" | "circle" (method = "trap").
+    #[serde(default = "default_trap_type")]
+    pub trap_type: String,
+    /// Custom gradient stops `[pos, r, g, b]` (DISPLAY-space RGB) from the gradient editor.
+    #[serde(default)]
+    pub custom_palette: Vec<[f32; 4]>,
+    /// Read `custom_palette` as **bands** (one flat color per entry, no interpolation) rather
+    /// than as gradient stops — Fractint `.map` semantics, set by importing one. `false` for
+    /// every session written before palette import existed, which is the right reading of an
+    /// editor-authored gradient.
+    #[serde(default)]
+    pub custom_palette_flat: bool,
+    /// A full SEGMENT gradient, when the palette is one a stop list cannot express.
+    ///
+    /// ⭐**This exists because `.ggr` is a superset of `custom_palette`.** A GIMP gradient carries a
+    /// per-segment midpoint, one of five blend curves and a color space (RGB or either way round
+    /// the hue wheel); a `[pos, r, g, b]` list holds none of those, so persisting an imported
+    /// `.ggr` as stops would have quietly flattened every curve and every hue sweep on the first
+    /// restart. When this is non-empty it WINS over `custom_palette`.
+    #[serde(default)]
+    pub custom_segments: Vec<PaletteSegment>,
+    /// Use the custom gradient instead of the selected preset.
+    #[serde(default)]
+    pub use_custom_palette: bool,
+    /// Duotone palette (two-color ramp) / binary palette (flat in-set vs out-of-set),
+    /// sharing the two colors (DISPLAY-space RGB).
+    #[serde(default)]
+    pub use_duotone: bool,
+    #[serde(default)]
+    pub use_binary: bool,
+    #[serde(default = "default_duotone_lo")]
+    pub duotone_lo: [f32; 3],
+    #[serde(default = "default_duotone_hi")]
+    pub duotone_hi: [f32; 3],
+}
+
+#[derive(Serialize, Deserialize, Clone, PartialEq, Debug)]
+pub struct SessionState {
+    /// Schema version this file was written with (see [`STATE_FORMAT_VERSION`]). Missing ⇒ v1.
+    #[serde(default = "default_state_version")]
+    pub state_version: u32,
+    pub center_x: f64,
+    pub center_y: f64,
+    /// Full-precision center (decimal). Empty ⇒ fall back to the `f64` fields.
+    #[serde(default)]
+    pub center_x_str: String,
+    #[serde(default)]
+    pub center_y_str: String,
+    /// Scale mantissa. Paired with `units_per_pixel_e` (a base-2 exponent) so deep-zoom
+    /// locations past `f64`'s ~1e308× range survive quit/restart. Old saves (no exponent
+    /// field) stored the full `f64` value here with an implicit exponent of 0 — still valid.
+    pub units_per_pixel: f64,
+    #[serde(default)]
+    pub units_per_pixel_e: i32,
+    pub max_iter: u32,
+    pub auto_iter: bool,
+    /// How the picture is colored ([`ColoringSpec`]), flattened: its fields are this file's
+    /// keys exactly as they were before it existed, so sessions read both ways.
+    #[serde(flatten)]
+    pub coloring: ColoringSpec,
     /// Continuous-zoom speed multiplier (1.0 = default ~2× per 1.5 s). `serde(default)`
     /// keeps older session files (written before this field) loadable.
     #[serde(default = "default_zoom_rate")]
@@ -287,78 +368,14 @@ pub struct SessionState {
     /// Palette animation speed (offset cycles per second).
     #[serde(default = "default_palette_anim_speed")]
     pub palette_anim_speed: f32,
-    /// Distance-estimate relief lighting: enabled, light angle (rad), relief strength.
-    #[serde(default)]
-    pub light: bool,
-    #[serde(default = "default_light_angle")]
-    pub light_angle: f32,
-    #[serde(default = "default_light_height")]
-    pub light_height: f32,
     /// Rotate the relief light direction over time.
     #[serde(default)]
     pub light_anim: bool,
-    /// Distance-estimate glow: enabled, blend strength, contour width, animate flag.
-    #[serde(default)]
-    pub de: bool,
-    #[serde(default = "default_de_strength")]
-    pub de_strength: f32,
-    #[serde(default = "default_de_width")]
-    pub de_width: f32,
     #[serde(default)]
     pub de_anim: bool,
-    /// Coloring method: "smooth" | "stripe" | "triangle" | "trap" | "distance" |
-    /// "decomposition".
-    #[serde(default = "default_color_method")]
-    pub color_method: String,
-    /// Stripe-average angular frequency (method = "stripe").
-    #[serde(default = "default_stripe_freq")]
-    pub stripe_freq: f32,
-    /// Stripe average over the TAIL only (method = "stripe"): an exponentially-weighted window
-    /// over the last `stripe_tail_len` iterations instead of the whole orbit, so a deep view —
-    /// where every orbit shadows the reference for all but its last few hundred iterates — keeps
-    /// its contrast. Off = the classic full-orbit average.
-    #[serde(default)]
-    pub stripe_tail: bool,
-    /// Window length in iterations for `stripe_tail`.
-    #[serde(default = "default_stripe_tail_len")]
-    pub stripe_tail_len: u32,
-    /// Orbit-trap shape: "point" | "cross" | "circle" (method = "trap").
-    #[serde(default = "default_trap_type")]
-    pub trap_type: String,
     /// Show the minimap overview ("you are here").
     #[serde(default)]
     pub minimap: bool,
-    /// Custom gradient stops `[pos, r, g, b]` (DISPLAY-space RGB) from the gradient editor.
-    #[serde(default)]
-    pub custom_palette: Vec<[f32; 4]>,
-    /// Read `custom_palette` as **bands** (one flat color per entry, no interpolation) rather
-    /// than as gradient stops — Fractint `.map` semantics, set by importing one. `false` for
-    /// every session written before palette import existed, which is the right reading of an
-    /// editor-authored gradient.
-    #[serde(default)]
-    pub custom_palette_flat: bool,
-    /// A full SEGMENT gradient, when the palette is one a stop list cannot express.
-    ///
-    /// ⭐**This exists because `.ggr` is a superset of `custom_palette`.** A GIMP gradient carries a
-    /// per-segment midpoint, one of five blend curves and a color space (RGB or either way round
-    /// the hue wheel); a `[pos, r, g, b]` list holds none of those, so persisting an imported
-    /// `.ggr` as stops would have quietly flattened every curve and every hue sweep on the first
-    /// restart. When this is non-empty it WINS over `custom_palette`.
-    #[serde(default)]
-    pub custom_segments: Vec<PaletteSegment>,
-    /// Use the custom gradient instead of the selected preset.
-    #[serde(default)]
-    pub use_custom_palette: bool,
-    /// Duotone palette (two-color ramp) / binary palette (flat in-set vs out-of-set),
-    /// sharing the two colors (DISPLAY-space RGB).
-    #[serde(default)]
-    pub use_duotone: bool,
-    #[serde(default)]
-    pub use_binary: bool,
-    #[serde(default = "default_duotone_lo")]
-    pub duotone_lo: [f32; 3],
-    #[serde(default = "default_duotone_hi")]
-    pub duotone_hi: [f32; 3],
     /// Whether the right-hand control panel is shown.
     #[serde(default = "default_true")]
     pub right_panel_open: bool,
@@ -638,6 +655,40 @@ fn default_trap_type() -> String {
     "point".to_string()
 }
 
+impl Default for ColoringSpec {
+    fn default() -> Self {
+        Self {
+            palette_idx: 0,
+            palette_id: String::new(),
+            cycle: 0.27,
+            iter_div: default_iter_div(),
+            offset: 0.1,
+            log_palette: false,
+            normalize_live: true,
+            normalize_fit: false,
+            light: false,
+            light_angle: default_light_angle(),
+            light_height: default_light_height(),
+            de: false,
+            de_strength: default_de_strength(),
+            de_width: default_de_width(),
+            color_method: default_color_method(),
+            stripe_freq: default_stripe_freq(),
+            stripe_tail: false,
+            stripe_tail_len: default_stripe_tail_len(),
+            trap_type: default_trap_type(),
+            custom_palette: Vec::new(),
+            custom_palette_flat: false,
+            custom_segments: Vec::new(),
+            use_custom_palette: false,
+            use_duotone: false,
+            use_binary: false,
+            duotone_lo: default_duotone_lo(),
+            duotone_hi: default_duotone_hi(),
+        }
+    }
+}
+
 impl Default for SessionState {
     fn default() -> Self {
         Self {
@@ -650,14 +701,7 @@ impl Default for SessionState {
             units_per_pixel_e: 0,
             max_iter: 256,
             auto_iter: true,
-            palette_idx: 0,
-            palette_id: String::new(),
-            cycle: 0.27,
-            iter_div: default_iter_div(),
-            log_palette: false,
-            normalize_live: true,
-            normalize_fit: false,
-            offset: 0.1,
+            coloring: ColoringSpec::default(),
             zoom_rate: default_zoom_rate(),
             click_zoom: false,
             click_zoom_factor: default_click_zoom_factor(),
@@ -697,28 +741,9 @@ impl Default for SessionState {
             show_location: false,
             palette_anim: default_palette_anim(),
             palette_anim_speed: default_palette_anim_speed(),
-            light: false,
-            light_angle: default_light_angle(),
-            light_height: default_light_height(),
             light_anim: false,
-            de: false,
-            de_strength: default_de_strength(),
-            de_width: default_de_width(),
             de_anim: false,
-            color_method: default_color_method(),
-            stripe_freq: default_stripe_freq(),
-            stripe_tail: false,
-            stripe_tail_len: default_stripe_tail_len(),
-            trap_type: default_trap_type(),
             minimap: false,
-            custom_palette: Vec::new(),
-            custom_palette_flat: false,
-            custom_segments: Vec::new(),
-            use_custom_palette: false,
-            use_duotone: false,
-            use_binary: false,
-            duotone_lo: default_duotone_lo(),
-            duotone_hi: default_duotone_hi(),
             right_panel_open: true,
             perf_panel: false,
             fractal: default_fractal(),

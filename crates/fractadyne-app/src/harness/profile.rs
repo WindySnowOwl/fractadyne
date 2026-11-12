@@ -66,7 +66,7 @@ pub fn default_regions() -> Vec<ProfRegion> {
         ss: 1,
         method,
         trap: crate::TrapType::default(),
-        stripe_freq: fractadyne_state::SessionState::default().stripe_freq,
+        stripe_freq: fractadyne_state::SessionState::default().coloring.stripe_freq,
     };
     vec![
         m("home", "-0.5", "0.0", 0.0, 512, Smooth),
@@ -190,7 +190,7 @@ pub fn load_regions(path: &std::path::Path) -> Result<Vec<ProfRegion>, String> {
                 .ok_or_else(|| format!("region \"{}\": unknown fractal \"{f}\"", s.name))?,
         };
         // The CLI's range for `--stripe-freq`.
-        let stripe_freq = s.stripe_freq.unwrap_or_else(|| fractadyne_state::SessionState::default().stripe_freq);
+        let stripe_freq = s.stripe_freq.unwrap_or_else(|| fractadyne_state::SessionState::default().coloring.stripe_freq);
         if !(1.0..=24.0).contains(&stripe_freq) {
             return Err(format!("region \"{}\": stripe_freq {stripe_freq} outside 1..=24", s.name));
         }

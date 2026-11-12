@@ -81,7 +81,7 @@ fn trap_and_stripe_density_are_read_and_default() {
     let d = load(&region("")).expect("loads");
     assert_eq!(d[0].method, crate::ColorMethod::Smooth);
     assert_eq!(d[0].trap, crate::TrapType::default());
-    assert_eq!(d[0].stripe_freq, fractadyne_state::SessionState::default().stripe_freq);
+    assert_eq!(d[0].stripe_freq, fractadyne_state::SessionState::default().coloring.stripe_freq);
 }
 
 /// The e21000 and e4000 region files in the repo/scratchpad load — guarding the shipped

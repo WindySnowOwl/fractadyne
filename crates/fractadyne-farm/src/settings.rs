@@ -10,7 +10,7 @@
 //! Typed and checked, never a session file: a controller can set what is listed here and nothing
 //! else — no path, no window state, no update channel.
 
-use fractadyne_state::{PaletteSegment, SessionState};
+use fractadyne_state::{ColoringSpec, SessionState};
 use serde::{Deserialize, Serialize};
 
 #[derive(Serialize, Deserialize, Debug, Clone, PartialEq)]
@@ -18,35 +18,13 @@ use serde::{Deserialize, Serialize};
 pub struct RenderSettings {
     pub max_iter: u32,
     pub auto_iter: bool,
-    pub palette_idx: usize,
-    pub cycle: f32,
-    /// "Divide iterations". ⭐Left out of the message when it is 1, so a job that does not divide
-    /// still reads on a client from before the field (this struct refuses unknown fields); a job
-    /// that does divide is refused by such a client, which cannot render it, instead of being
-    /// rendered at ÷1. A job without the field reads as 1.
-    #[serde(default = "fractadyne_state::default_iter_div", skip_serializing_if = "is_one")]
-    pub iter_div: u32,
-    pub offset: f32,
-    pub log_palette: bool,
-    pub light: bool,
-    pub light_angle: f32,
-    pub light_height: f32,
-    pub de: bool,
-    pub de_strength: f32,
-    pub de_width: f32,
-    pub color_method: String,
-    pub stripe_freq: f32,
-    pub stripe_tail: bool,
-    pub stripe_tail_len: u32,
-    pub trap_type: String,
-    pub custom_palette: Vec<[f32; 4]>,
-    pub custom_palette_flat: bool,
-    pub custom_segments: Vec<PaletteSegment>,
-    pub use_custom_palette: bool,
-    pub use_duotone: bool,
-    pub use_binary: bool,
-    pub duotone_lo: [f32; 3],
-    pub duotone_hi: [f32; 3],
+    /// How the picture is colored: the session's own struct, so every coloring setting the
+    /// session saves travels with the job (coloring plan B4; protocol 9). Before, this listed
+    /// its own copies and missed the palette's id and the live normalization.
+    /// ⚠The struct cannot refuse unknown keys itself (the session flattens it, and serde does not
+    /// combine the two), so this field is read through [`strict_coloring`], which does.
+    #[serde(deserialize_with = "strict_coloring")]
+    pub coloring: ColoringSpec,
     pub fractal: String,
     pub custom_formula: String,
     pub custom_params: Vec<[f64; 2]>,
@@ -69,30 +47,7 @@ impl RenderSettings {
         Self {
             max_iter: s.max_iter,
             auto_iter: s.auto_iter,
-            palette_idx: s.palette_idx,
-            cycle: s.cycle,
-            iter_div: s.iter_div,
-            offset: s.offset,
-            log_palette: s.log_palette,
-            light: s.light,
-            light_angle: s.light_angle,
-            light_height: s.light_height,
-            de: s.de,
-            de_strength: s.de_strength,
-            de_width: s.de_width,
-            color_method: s.color_method.clone(),
-            stripe_freq: s.stripe_freq,
-            stripe_tail: s.stripe_tail,
-            stripe_tail_len: s.stripe_tail_len,
-            trap_type: s.trap_type.clone(),
-            custom_palette: s.custom_palette.clone(),
-            custom_palette_flat: s.custom_palette_flat,
-            custom_segments: s.custom_segments.clone(),
-            use_custom_palette: s.use_custom_palette,
-            use_duotone: s.use_duotone,
-            use_binary: s.use_binary,
-            duotone_lo: s.duotone_lo,
-            duotone_hi: s.duotone_hi,
+            coloring: s.coloring.clone(),
             fractal: s.fractal.clone(),
             custom_formula: s.custom_formula.clone(),
             custom_params: s.custom_params.clone(),
@@ -116,30 +71,7 @@ impl RenderSettings {
         SessionState {
             max_iter: self.max_iter,
             auto_iter: self.auto_iter,
-            palette_idx: self.palette_idx,
-            cycle: self.cycle,
-            iter_div: self.iter_div,
-            offset: self.offset,
-            log_palette: self.log_palette,
-            light: self.light,
-            light_angle: self.light_angle,
-            light_height: self.light_height,
-            de: self.de,
-            de_strength: self.de_strength,
-            de_width: self.de_width,
-            color_method: self.color_method.clone(),
-            stripe_freq: self.stripe_freq,
-            stripe_tail: self.stripe_tail,
-            stripe_tail_len: self.stripe_tail_len,
-            trap_type: self.trap_type.clone(),
-            custom_palette: self.custom_palette.clone(),
-            custom_palette_flat: self.custom_palette_flat,
-            custom_segments: self.custom_segments.clone(),
-            use_custom_palette: self.use_custom_palette,
-            use_duotone: self.use_duotone,
-            use_binary: self.use_binary,
-            duotone_lo: self.duotone_lo,
-            duotone_hi: self.duotone_hi,
+            coloring: self.coloring.clone(),
             fractal: self.fractal.clone(),
             custom_formula: self.custom_formula.clone(),
             custom_params: self.custom_params.clone(),
@@ -181,39 +113,39 @@ impl RenderSettings {
         if self.max_iter == 0 || self.max_iter > 10_000_000 {
             return Err(format!("iteration base {} is out of range", self.max_iter));
         }
-        if self.palette_idx > 1024 || self.stripe_tail_len > 1 << 20 {
+        if self.coloring.palette_idx > 1024 || self.coloring.stripe_tail_len > 1 << 20 {
             return Err("palette index or stripe tail out of range".into());
         }
-        if !(1..=fractadyne_state::ITER_DIV_MAX).contains(&self.iter_div) {
-            return Err(format!("iteration divisor {} is out of range", self.iter_div));
+        if !(1..=fractadyne_state::ITER_DIV_MAX).contains(&self.coloring.iter_div) {
+            return Err(format!("iteration divisor {} is out of range", self.coloring.iter_div));
         }
         for (w, v) in [
-            ("cycle", self.cycle),
-            ("offset", self.offset),
-            ("light angle", self.light_angle),
-            ("light height", self.light_height),
-            ("glow strength", self.de_strength),
-            ("glow width", self.de_width),
-            ("stripe frequency", self.stripe_freq),
+            ("cycle", self.coloring.cycle),
+            ("offset", self.coloring.offset),
+            ("light angle", self.coloring.light_angle),
+            ("light height", self.coloring.light_height),
+            ("glow strength", self.coloring.de_strength),
+            ("glow width", self.coloring.de_width),
+            ("stripe frequency", self.coloring.stripe_freq),
         ] {
             finite32(w, v)?;
         }
         finite64("Julia c", self.julia_c_re)?;
         finite64("Julia c", self.julia_c_im)?;
-        word("coloring method", &self.color_method)?;
-        word("trap", &self.trap_type)?;
+        word("coloring method", &self.coloring.color_method)?;
+        word("trap", &self.coloring.trap_type)?;
         word("fractal", &self.fractal)?;
         textual("custom formula", &self.custom_formula, 8 * 1024)?;
         textual("L-system", &self.lsystem, 64 * 1024)?;
         if self.custom_params.len() > 8 || self.custom_params.iter().flatten().any(|v| !v.is_finite()) {
             return Err("custom formula parameters out of range".into());
         }
-        if self.custom_palette.len() > 256 || self.custom_segments.len() > 512 {
+        if self.coloring.custom_palette.len() > 256 || self.coloring.custom_segments.len() > 512 {
             return Err("custom palette too large".into());
         }
-        let colours_ok = self.custom_palette.iter().flatten().all(|v| v.is_finite())
-            && self.duotone_lo.iter().chain(&self.duotone_hi).all(|v| v.is_finite())
-            && self.custom_segments.iter().all(|g| {
+        let colours_ok = self.coloring.custom_palette.iter().flatten().all(|v| v.is_finite())
+            && self.coloring.duotone_lo.iter().chain(&self.coloring.duotone_hi).all(|v| v.is_finite())
+            && self.coloring.custom_segments.iter().all(|g| {
                 [g.left, g.mid, g.right].iter().chain(&g.left_color).chain(&g.right_color).chain(&g.blend_params).all(|v| v.is_finite())
             });
         if !colours_ok {
@@ -223,8 +155,17 @@ impl RenderSettings {
     }
 }
 
-fn is_one(v: &u32) -> bool {
-    *v == 1
+/// [`RenderSettings::coloring`], refusing a key [`ColoringSpec`] does not have, as the rest of the
+/// struct does (`deny_unknown_fields`): a job names exactly what it sets. The known keys are the
+/// spec's own, read off a serialized default, so a field added to it is known here at once.
+fn strict_coloring<'de, D: serde::Deserializer<'de>>(d: D) -> Result<ColoringSpec, D::Error> {
+    use serde::de::Error;
+    let map = serde_json::Map::<String, serde_json::Value>::deserialize(d)?;
+    let known = serde_json::to_value(ColoringSpec::default()).map_err(D::Error::custom)?;
+    if let Some(k) = map.keys().find(|k| known.get(k.as_str()).is_none()) {
+        return Err(D::Error::custom(format!("unknown coloring field `{k}`")));
+    }
+    serde_json::from_value(serde_json::Value::Object(map)).map_err(D::Error::custom)
 }
 
 #[cfg(test)]

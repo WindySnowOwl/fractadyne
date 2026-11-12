@@ -69,9 +69,12 @@ fn a_deep_view_and_its_colouring_survive_a_restart() {
         units_per_pixel_e: -1669,
         max_iter: 200_000,
         auto_iter: false,
-        palette_idx: 2,
-        cycle: 0.51,
-        offset: 0.10,
+        coloring: ColoringSpec {
+            palette_idx: 2,
+            cycle: 0.51,
+            offset: 0.10,
+            ..ColoringSpec::default()
+        },
         ..SessionState::default()
     };
     let r = roundtrip(&s);
@@ -82,9 +85,9 @@ fn a_deep_view_and_its_colouring_survive_a_restart() {
     assert_eq!(r.units_per_pixel_e, -1669, "the depth exponent was dropped");
     assert_eq!(r.max_iter, 200_000);
     assert!(!r.auto_iter);
-    assert_eq!(r.palette_idx, 2);
-    assert_eq!(r.cycle, 0.51);
-    assert_eq!(r.offset, 0.10);
+    assert_eq!(r.coloring.palette_idx, 2);
+    assert_eq!(r.coloring.cycle, 0.51);
+    assert_eq!(r.coloring.offset, 0.10);
 }
 
 /// A custom gradient is a user's own work, and it is the one setting they cannot recreate
@@ -97,15 +100,18 @@ fn a_custom_palette_survives_a_restart() {
         [1.0, 0.13, 0.42, 0.87],
     ];
     let s = SessionState {
-        custom_palette: stops.clone(),
-        use_custom_palette: true,
+        coloring: ColoringSpec {
+            custom_palette: stops.clone(),
+            use_custom_palette: true,
+            ..ColoringSpec::default()
+        },
         ..SessionState::default()
     };
     let r = roundtrip(&s);
-    assert!(r.use_custom_palette);
-    assert_eq!(r.custom_palette, stops, "the custom gradient did not round-trip");
+    assert!(r.coloring.use_custom_palette);
+    assert_eq!(r.coloring.custom_palette, stops, "the custom gradient did not round-trip");
     // An editor-authored gradient is stops, never bands.
-    assert!(!r.custom_palette_flat);
+    assert!(!r.coloring.custom_palette_flat);
 }
 
 /// ⭐An imported `.map` is the same `custom_palette` field read as BANDS, and losing that one flag
@@ -115,12 +121,15 @@ fn a_custom_palette_survives_a_restart() {
 #[test]
 fn an_imported_map_stays_banded_across_a_restart() {
     let s = SessionState {
-        custom_palette: vec![[0.0, 1.0, 0.0, 0.0], [0.5, 0.0, 1.0, 0.0], [1.0, 0.0, 0.0, 1.0]],
-        custom_palette_flat: true,
-        use_custom_palette: true,
+        coloring: ColoringSpec {
+            custom_palette: vec![[0.0, 1.0, 0.0, 0.0], [0.5, 0.0, 1.0, 0.0], [1.0, 0.0, 0.0, 1.0]],
+            custom_palette_flat: true,
+            use_custom_palette: true,
+            ..ColoringSpec::default()
+        },
         ..SessionState::default()
     };
-    assert!(roundtrip(&s).custom_palette_flat, "the .map banding flag did not round-trip");
+    assert!(roundtrip(&s).coloring.custom_palette_flat, "the .map banding flag did not round-trip");
 }
 
 // A legacy file (only the original required fields) must still load, filling new fields
@@ -230,20 +239,14 @@ fn a_setting_survives_save_and_reload() {
     let t = TempConfig::new("settings_test");
     let want = SessionState {
         // one of each shape: bool, float, int, string, enum-as-string, Option<String>
-        normalize_live: false,
-        normalize_fit: true,
-        log_palette: true,
         zoom_rate: 2.75,
         fps_cap: 0.0, // uncapped — the value that a naive Option round trip loses
         aa: 4,
         max_iter: 750_000,
         auto_iter: false,
-        palette_idx: 3,
-        palette_id: "four-seasons".to_string(),
         minimap: true,
         right_panel_open: false,
         finish_sound: false,
-        color_method: "stripe".to_string(),
         palette_anim: "pingpong".to_string(),
         palette_anim_speed: 0.42,
         export_width: 3840,
@@ -251,6 +254,15 @@ fn a_setting_survives_save_and_reload() {
         export_format: "exr".to_string(),
         export_dir: Some("D:/renders".to_string()),
         welcome_seen: true,
+        coloring: ColoringSpec {
+            normalize_live: false,
+            normalize_fit: true,
+            log_palette: true,
+            palette_idx: 3,
+            palette_id: "four-seasons".to_string(),
+            color_method: "stripe".to_string(),
+            ..ColoringSpec::default()
+        },
         ..SessionState::default()
     };
     save(&want);
@@ -258,22 +270,22 @@ fn a_setting_survives_save_and_reload() {
 
     let (got, status) = load_with_status();
     assert_eq!(status, StateLoad::Ok, "the session we just wrote did not read back cleanly");
-    assert!(!got.normalize_live, "normalize_live");
+    assert!(!got.coloring.normalize_live, "normalize_live");
     // The range-fit switch is the half users reach for after finding the aliasing guard declines;
     // losing it on reload would put them back where they started, silently.
-    assert!(got.normalize_fit, "normalize_fit");
-    assert!(got.log_palette, "log_palette");
+    assert!(got.coloring.normalize_fit, "normalize_fit");
+    assert!(got.coloring.log_palette, "log_palette");
     assert_eq!(got.zoom_rate, 2.75, "zoom_rate");
     assert_eq!(got.fps_cap, 0.0, "fps_cap (uncapped)");
     assert_eq!(got.aa, 4, "aa");
     assert_eq!(got.max_iter, 750_000, "max_iter");
     assert!(!got.auto_iter, "auto_iter");
-    assert_eq!(got.palette_idx, 3, "palette_idx");
-    assert_eq!(got.palette_id, "four-seasons", "palette_id");
+    assert_eq!(got.coloring.palette_idx, 3, "palette_idx");
+    assert_eq!(got.coloring.palette_id, "four-seasons", "palette_id");
     assert!(got.minimap, "minimap");
     assert!(!got.right_panel_open, "right_panel_open");
     assert!(!got.finish_sound, "finish_sound");
-    assert_eq!(got.color_method, "stripe", "color_method");
+    assert_eq!(got.coloring.color_method, "stripe", "color_method");
     assert_eq!(got.palette_anim, "pingpong", "palette_anim");
     assert_eq!(got.palette_anim_speed, 0.42, "palette_anim_speed");
     assert_eq!(got.export_width, 3840, "export_width");
@@ -286,10 +298,10 @@ fn a_setting_survives_save_and_reload() {
     // could be satisfied by a load that quietly returned `SessionState::default()`.
     let d = SessionState::default();
     assert_ne!(d.zoom_rate, want.zoom_rate);
-    assert_ne!(d.color_method, want.color_method);
+    assert_ne!(d.coloring.color_method, want.coloring.color_method);
     assert_ne!(d.aa, want.aa);
-    assert_ne!(d.normalize_live, want.normalize_live);
-    assert_ne!(d.normalize_fit, want.normalize_fit);
+    assert_ne!(d.coloring.normalize_live, want.coloring.normalize_live);
+    assert_ne!(d.coloring.normalize_fit, want.coloring.normalize_fit);
 }
 
 /// Checklist step 96, "settings live in the user profile, not beside the executable, so two
@@ -387,23 +399,26 @@ fn an_imported_segment_gradient_survives_a_restart() {
         },
     ];
     let s = SessionState {
-        custom_segments: segs.clone(),
-        use_custom_palette: true,
+        coloring: ColoringSpec {
+            custom_segments: segs.clone(),
+            use_custom_palette: true,
+            ..ColoringSpec::default()
+        },
         ..SessionState::default()
     };
     let r = roundtrip(&s);
-    assert_eq!(r.custom_segments, segs, "the segment gradient did not round-trip");
+    assert_eq!(r.coloring.custom_segments, segs, "the segment gradient did not round-trip");
     // The three things a stop list cannot hold, named individually so a partial loss is obvious.
-    assert_eq!(r.custom_segments[0].mid, 0.17, "the off-center midpoint was lost");
-    assert_eq!(r.custom_segments[0].blend, 2, "the blend curve was lost");
+    assert_eq!(r.coloring.custom_segments[0].mid, 0.17, "the off-center midpoint was lost");
+    assert_eq!(r.coloring.custom_segments[0].blend, 2, "the blend curve was lost");
     assert_eq!(
-        r.custom_segments[1].blend_params,
+        r.coloring.custom_segments[1].blend_params,
         [0.25, 0.9, 0.75, 0.1],
         "the Bezier control points were lost - a segment switched to kind 5 and back would come \
          back as a straight line"
     );
-    assert_eq!(r.custom_segments[0].space, 1, "the color space was lost");
-    assert_eq!(r.custom_segments[0].right_color[3], 0.5, "alpha was lost");
+    assert_eq!(r.coloring.custom_segments[0].space, 1, "the color space was lost");
+    assert_eq!(r.coloring.custom_segments[0].right_color[3], 0.5, "alpha was lost");
 }
 
 /// A session written before `.ggr` import existed has no segments, and must read as a plain stop
@@ -411,13 +426,16 @@ fn an_imported_segment_gradient_survives_a_restart() {
 #[test]
 fn a_session_without_segments_still_uses_its_stops() {
     let s = SessionState {
-        custom_palette: vec![[0.0, 1.0, 0.0, 0.0], [1.0, 0.0, 0.0, 1.0]],
-        use_custom_palette: true,
+        coloring: ColoringSpec {
+            custom_palette: vec![[0.0, 1.0, 0.0, 0.0], [1.0, 0.0, 0.0, 1.0]],
+            use_custom_palette: true,
+            ..ColoringSpec::default()
+        },
         ..SessionState::default()
     };
     let r = roundtrip(&s);
-    assert!(r.custom_segments.is_empty());
-    assert_eq!(r.custom_palette.len(), 2);
+    assert!(r.coloring.custom_segments.is_empty());
+    assert_eq!(r.coloring.custom_palette.len(), 2);
 }
 
 /// ⭐⭐**The Performance panel is OFF for a new user and remembered once turned on.**
@@ -492,13 +510,41 @@ fn a_session_from_before_the_open_after_field_still_loads() {
 /// still loads, at 1 (`serde(default)`): without it every older session would be unreadable.
 #[test]
 fn the_iteration_divisor_defaults_to_one_and_survives_a_restart() {
-    assert_eq!(SessionState::default().iter_div, 1);
-    let s = SessionState { iter_div: 8, ..SessionState::default() };
-    assert_eq!(roundtrip(&s).iter_div, 8);
+    assert_eq!(SessionState::default().coloring.iter_div, 1);
+    let s = SessionState { coloring: ColoringSpec { iter_div: 8, ..ColoringSpec::default() }, ..SessionState::default() };
+    assert_eq!(roundtrip(&s).coloring.iter_div, 8);
     let text = toml::to_string_pretty(&SessionState::default()).expect("serialize");
     let older: String =
         text.lines().filter(|l| !l.trim_start().starts_with("iter_div")).collect::<Vec<_>>().join("\n");
     assert!(!older.contains("iter_div"), "the guard: the field must really be absent");
     let back: SessionState = toml::from_str(&older).expect("an older session must still parse");
-    assert_eq!(back.iter_div, 1);
+    assert_eq!(back.coloring.iter_div, 1);
+}
+
+/// ⭐A session file written before [`ColoringSpec`] existed (coloring plan B4) reads every coloring
+/// setting, and this build writes each back under the same top-level key: the session flattens the
+/// spec, so the file's layout did not change and an older build reads a newer file too. The fixture
+/// was written by main at 542a5264 with every coloring field set away from its default (and checked
+/// both ways against that build: the two files parse to the same table).
+#[test]
+fn a_session_written_before_the_coloring_spec_reads_and_writes_the_same_keys() {
+    let old = include_str!("fixtures/session-pre-b4.toml");
+    let s: SessionState = toml::from_str(old).expect("the older session file reads");
+    let c = &s.coloring;
+    assert_eq!((c.color_method.as_str(), c.trap_type.as_str(), c.palette_id.as_str()), ("trap", "cross", "ember"));
+    assert_eq!((c.cycle, c.offset, c.iter_div, c.palette_idx, c.stripe_tail_len), (0.61, 0.33, 4, 7, 64));
+    assert!(c.light && c.de && c.use_duotone && c.log_palette && c.normalize_fit && !c.normalize_live);
+    assert_eq!((c.light_angle, c.light_height, c.de_strength, c.de_width, c.stripe_freq), (1.25, 0.4, 0.7, 2.5, 9.5));
+    assert_eq!((c.duotone_lo, c.duotone_hi), ([0.1, 0.2, 0.3], [0.9, 0.8, 0.7]));
+    assert!(c.use_custom_palette && c.custom_palette_flat && c.custom_palette.len() == 2);
+    assert_eq!(c.custom_segments.len(), 1);
+    assert_eq!(c.custom_segments[0].blend_params, [0.25, 0.9, 0.75, 0.1]);
+    let want: toml::Table = toml::from_str(old).unwrap();
+    let back: toml::Table = toml::from_str(&toml::to_string_pretty(&s).unwrap()).unwrap();
+    assert!(!back.contains_key("coloring"), "the coloring was written as a table of its own");
+    let keys = toml::Table::try_from(ColoringSpec::default()).unwrap();
+    assert_eq!(keys.len(), 27, "a coloring field was added: extend the fixture with it");
+    for k in keys.keys() {
+        assert_eq!(back.get(k), want.get(k), "the coloring key `{k}` changed or moved");
+    }
 }
