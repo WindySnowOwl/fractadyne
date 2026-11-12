@@ -93,6 +93,7 @@ mod refcache_persist;
 mod render;
 mod update;
 mod video_pipe;
+mod coloring_fields;
 mod view_coloring;
 mod scripting;
 mod session_outcome;
@@ -8874,6 +8875,51 @@ impl FractadyneApp {
             duotone_lo: self.coloring.duotone_lo,
             duotone_hi: self.coloring.duotone_hi,
         }
+    }
+
+    /// Put a [`fractadyne_state::ColoringSpec`] into the app's live settings: the inverse of
+    /// [`Self::coloring_spec`] (B4), what a view's coloring and the harnesses set through. The
+    /// palette resolves by its id, else by its older number; a changed custom gradient bumps
+    /// `palette_rev`, as every gradient edit does. (Start-up reads the same fields from the session
+    /// in `new`, where the command line's `--log-palette` joins in.)
+    pub(crate) fn apply_coloring_spec(&mut self, s: &fractadyne_state::ColoringSpec) {
+        let c = &mut self.coloring;
+        let gradient_changed = c.custom_palette != s.custom_palette
+            || c.custom_palette_flat != s.custom_palette_flat
+            || c.custom_segments != s.custom_segments
+            || c.use_custom_palette != s.use_custom_palette;
+        c.palette_idx = fractadyne_color::preset_by_id(&s.palette_id)
+            .or_else(|| fractadyne_color::preset_by_legacy_number(s.palette_idx))
+            .unwrap_or(0);
+        c.cycle = s.cycle;
+        c.iter_div = s.iter_div.clamp(1, fractadyne_state::ITER_DIV_MAX);
+        c.offset = s.offset;
+        c.log_palette = s.log_palette;
+        c.normalize_live = s.normalize_live;
+        c.normalize_fit = s.normalize_fit;
+        c.color_method = ColorMethod::from_key(&s.color_method);
+        c.stripe_freq = s.stripe_freq;
+        c.stripe_tail = s.stripe_tail;
+        c.stripe_tail_len = s.stripe_tail_len.clamp(4, 1 << 20);
+        c.trap_type = TrapType::from_key(&s.trap_type);
+        c.custom_palette = s.custom_palette.clone();
+        c.custom_palette_flat = s.custom_palette_flat;
+        c.custom_segments = s.custom_segments.clone();
+        c.use_custom_palette = s.use_custom_palette;
+        c.use_duotone = s.use_duotone;
+        c.use_binary = s.use_binary;
+        c.duotone_lo = s.duotone_lo;
+        c.duotone_hi = s.duotone_hi;
+        if gradient_changed {
+            c.palette_rev = c.palette_rev.wrapping_add(1);
+        }
+        let e = &mut self.effects;
+        e.light = s.light;
+        e.light_angle = s.light_angle;
+        e.light_height = s.light_height;
+        e.de = s.de;
+        e.de_strength = s.de_strength;
+        e.de_width = s.de_width;
     }
 
     fn autosave(&mut self, ctx: &egui::Context) {

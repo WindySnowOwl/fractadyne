@@ -953,10 +953,10 @@ impl FractadyneApp {
             self.coloring.offset,
             self.render_cfg.aa,
             // The method, the light, the glow, Duotone or Binary, the live normalization: only what
-            // differs from the default and changes this picture (`view_coloring`), so an ordinary
+            // differs from the default and changes this picture (`coloring_fields`), so an ordinary
             // view's metadata is byte-identical to what it was before these keys existed. Not for a
             // Life or L-system view, which these settings do not color.
-            if self.fractal.is_escape_time() { self.view_coloring().lines() } else { String::new() },
+            if self.fractal.is_escape_time() { crate::coloring_fields::view_lines(&self.coloring_spec()) } else { String::new() },
             // The custom gradient, when there is one. Empty otherwise, so a preset view's
             // metadata is byte-identical to what it was before this field existed.
             if self.coloring.use_custom_palette
@@ -1052,61 +1052,16 @@ impl FractadyneApp {
         )
     }
 
-    /// This session's coloring as a view carries it ([`crate::view_coloring`]).
+    /// This session's coloring as a view carries it, typed ([`crate::view_coloring`]).
     pub(crate) fn view_coloring(&self) -> crate::view_coloring::ViewColoring {
-        use crate::view_coloring::{TwoColor, ViewColoring};
-        let (c, e) = (&self.coloring, &self.effects);
-        ViewColoring {
-            method: c.color_method,
-            stripe_freq: c.stripe_freq,
-            stripe_tail: c.stripe_tail,
-            stripe_tail_len: c.stripe_tail_len,
-            trap: c.trap_type,
-            light: e.light,
-            light_angle: e.light_angle,
-            light_height: e.light_height,
-            glow: e.de,
-            glow_strength: e.de_strength,
-            glow_width: e.de_width,
-            // Binary first, as `chosen_gradient` reads the two flags.
-            two_color: if c.use_binary {
-                TwoColor::Binary
-            } else if c.use_duotone {
-                TwoColor::Duotone
-            } else {
-                TwoColor::Off
-            },
-            lo: c.duotone_lo,
-            hi: c.duotone_hi,
-            normalize_live: c.normalize_live,
-            normalize_fit: c.normalize_fit,
-            log_scale: c.log_palette,
-        }
+        crate::view_coloring::ViewColoring::from_spec(&self.coloring_spec())
     }
 
-    /// Put a view's coloring into this session: the inverse of [`Self::view_coloring`].
+    /// Put a view's coloring into this session: the inverse of [`Self::view_coloring`]. The rest
+    /// of the coloring (the palette, the cycle, the gradient) stays as it is.
     pub(crate) fn set_view_coloring(&mut self, v: &crate::view_coloring::ViewColoring) {
-        use crate::view_coloring::TwoColor;
-        let c = &mut self.coloring;
-        c.color_method = v.method;
-        c.stripe_freq = v.stripe_freq;
-        c.stripe_tail = v.stripe_tail;
-        c.stripe_tail_len = v.stripe_tail_len;
-        c.trap_type = v.trap;
-        c.use_binary = v.two_color == TwoColor::Binary;
-        c.use_duotone = v.two_color == TwoColor::Duotone;
-        c.duotone_lo = v.lo;
-        c.duotone_hi = v.hi;
-        c.normalize_live = v.normalize_live;
-        c.normalize_fit = v.normalize_fit;
-        c.log_palette = v.log_scale;
-        let e = &mut self.effects;
-        e.light = v.light;
-        e.light_angle = v.light_angle;
-        e.light_height = v.light_height;
-        e.de = v.glow;
-        e.de_strength = v.glow_strength;
-        e.de_width = v.glow_width;
+        let s = v.to_spec(&self.coloring_spec());
+        self.apply_coloring_spec(&s);
     }
 
     /// `formula=` and `formula_params=` for a Custom view; empty for a built-in family.
@@ -1285,15 +1240,15 @@ impl FractadyneApp {
             ViewPalette::Absent => {}
         }
         // ⭐The rest of the coloring: the method and its settings, the light, the glow, Duotone or
-        // Binary, the live normalization. `view_coloring` holds the rules: a key left out of a view
+        // Binary, the live normalization. `coloring_fields` holds the rules: a key left out of a view
         // that states its coloring (`cycle=`) goes back to its default, as `iter_div` below does,
         // and what the picture does not depend on is left alone. Not for a Life or L-system view,
         // which these settings do not color.
         if self.fractal.is_escape_time() {
             let states = get("cycle").is_some();
-            let mut vc = self.view_coloring();
-            vc.apply(&get, states, &mut report.clamped);
-            self.set_view_coloring(&vc);
+            let mut spec = self.coloring_spec();
+            crate::coloring_fields::apply_view(&mut spec, &get, states, &mut report.clamped);
+            self.apply_coloring_spec(&spec);
             // The palette's mode, as the Color menu sets it: naming Duotone or Binary turns the
             // custom gradient off, and a view that states its coloring with neither and no gradient
             // was saved on its preset.

@@ -10444,6 +10444,78 @@ zoom = \"1e94\"
                 pass: same <= 0.01 && apart >= 2.0 && coherent,
             });
 
+            // The whole coloring through the app's one way in and one way out (coloring plan B4):
+            // a spec with every field away from its default, the palette, the custom gradient and the
+            // two-color pair included, applied and read back, then the session put back.
+            let before = self.coloring_spec();
+            let custom = fractadyne_state::ColoringSpec {
+                palette_idx: 1,
+                palette_id: "ice".into(),
+                cycle: 0.61,
+                iter_div: 4,
+                offset: 0.33,
+                log_palette: true,
+                normalize_live: false,
+                normalize_fit: true,
+                light: true,
+                light_angle: 1.25,
+                light_height: 0.4,
+                de: true,
+                de_strength: 0.7,
+                de_width: 2.5,
+                color_method: ColorMethod::Stripe.key().into(),
+                stripe_freq: 9.5,
+                stripe_tail: true,
+                stripe_tail_len: 64,
+                trap_type: TrapType::Circle.key().into(),
+                custom_palette: vec![[0.0, 1.0, 0.0, 0.0], [1.0, 0.0, 0.0, 1.0]],
+                custom_palette_flat: true,
+                custom_segments: vec![fractadyne_state::PaletteSegment {
+                    left: 0.0,
+                    mid: 0.17,
+                    right: 1.0,
+                    left_color: [0.1, 0.2, 0.3, 1.0],
+                    right_color: [0.9, 0.8, 0.7, 0.5],
+                    blend: 2,
+                    space: 1,
+                    blend_params: [0.25, 0.9, 0.75, 0.1],
+                }],
+                use_custom_palette: true,
+                use_duotone: true,
+                use_binary: false,
+                duotone_lo: [0.1, 0.2, 0.3],
+                duotone_hi: [0.9, 0.8, 0.7],
+            };
+            let fields = |s: &fractadyne_state::ColoringSpec| match serde_json::to_value(s) {
+                Ok(serde_json::Value::Object(m)) => m,
+                _ => serde_json::Map::new(),
+            };
+            let away: Vec<String> = {
+                let (c, d) = (fields(&custom), fields(&fractadyne_state::ColoringSpec::default()));
+                d.keys().filter(|k| c.get(*k) == d.get(*k)).cloned().collect()
+            };
+            self.apply_coloring_spec(&custom);
+            let back = self.coloring_spec();
+            let lost: Vec<String> = {
+                let (c, b) = (fields(&custom), fields(&back));
+                c.keys().filter(|k| c.get(*k) != b.get(*k)).cloned().collect()
+            };
+            self.apply_coloring_spec(&before);
+            let restored = self.coloring_spec() == before;
+            push_check(&mut checks, &mut last_check_t, SelfCheck {
+                category: "View format",
+                name: "the whole coloring goes in and comes back out".into(),
+                params: "every ColoringSpec field away from its default → apply_coloring_spec → coloring_spec".into(),
+                result: format!(
+                    "{} fields; came back different: {}; left at the default by the test: {}; the session put back: {restored}",
+                    fields(&custom).len(),
+                    if lost.is_empty() { "none".to_string() } else { lost.join(", ") },
+                    if away.is_empty() { "none".to_string() } else { away.join(", ") }
+                ),
+                threshold: "every field back as it went in; none left at its default (else the check sees nothing)",
+                pass: lost.is_empty() && away.is_empty() && restored,
+            });
+
             self.set_view_coloring(&was.0);
             (
                 self.coloring.use_custom_palette,

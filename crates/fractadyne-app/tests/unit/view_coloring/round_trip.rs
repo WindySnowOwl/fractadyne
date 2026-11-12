@@ -15,7 +15,10 @@ fn load(text: &str, onto: &ViewColoring, states: bool) -> (ViewColoring, Vec<&'s
     let get = |k: &str| pairs.iter().find(|(key, _)| key == k).map(|(_, v)| v.clone());
     let mut out = onto.clone();
     let mut clamped = Vec::new();
-    out.apply(&get, states, &mut clamped);
+    // The reader's rules are the table's (`coloring_fields::apply_view`), on the spec.
+    let mut spec = out.to_spec(&fractadyne_state::ColoringSpec::default());
+    crate::coloring_fields::apply_view(&mut spec, &get, states, &mut clamped);
+    out = ViewColoring::from_spec(&spec);
     (out, clamped)
 }
 
