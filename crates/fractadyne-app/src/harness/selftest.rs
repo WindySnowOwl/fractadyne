@@ -10445,8 +10445,10 @@ zoom = \"1e94\"
             });
 
             // The whole coloring through the app's one way in and one way out (coloring plan B4):
-            // a spec with every field away from its default, the palette, the custom gradient and the
-            // two-color pair included, applied and read back, then the session put back.
+            // every field away from its default, the palette, the custom gradient and the two-color
+            // pair included, applied and read back, then the session put back. Duotone and Binary
+            // are one choice (the menu and the field table's `two_color`), so no one spec holds both
+            // on: a second spec, the same but for Binary in Duotone's place, covers `use_binary`.
             let before = self.coloring_spec();
             let custom = fractadyne_state::ColoringSpec {
                 palette_idx: 1,
@@ -10490,29 +10492,40 @@ zoom = \"1e94\"
                 Ok(serde_json::Value::Object(m)) => m,
                 _ => serde_json::Map::new(),
             };
+            let binary = fractadyne_state::ColoringSpec {
+                use_duotone: false,
+                use_binary: true,
+                ..custom.clone()
+            };
+            let specs = [&custom, &binary];
             let away: Vec<String> = {
-                let (c, d) = (fields(&custom), fields(&fractadyne_state::ColoringSpec::default()));
-                d.keys().filter(|k| c.get(*k) == d.get(*k)).cloned().collect()
+                let d = fields(&fractadyne_state::ColoringSpec::default());
+                let cs: Vec<_> = specs.iter().map(|s| fields(s)).collect();
+                d.keys().filter(|k| cs.iter().all(|c| c.get(*k) == d.get(*k))).cloned().collect()
             };
-            self.apply_coloring_spec(&custom);
-            let back = self.coloring_spec();
-            let lost: Vec<String> = {
-                let (c, b) = (fields(&custom), fields(&back));
-                c.keys().filter(|k| c.get(*k) != b.get(*k)).cloned().collect()
-            };
+            let mut lost: Vec<String> = Vec::new();
+            for spec in specs {
+                self.apply_coloring_spec(spec);
+                let (c, b) = (fields(spec), fields(&self.coloring_spec()));
+                for k in c.keys().filter(|k| c.get(*k) != b.get(*k)) {
+                    if !lost.contains(k) {
+                        lost.push(k.clone());
+                    }
+                }
+            }
             self.apply_coloring_spec(&before);
             let restored = self.coloring_spec() == before;
             push_check(&mut checks, &mut last_check_t, SelfCheck {
                 category: "View format",
                 name: "the whole coloring goes in and comes back out".into(),
-                params: "every ColoringSpec field away from its default → apply_coloring_spec → coloring_spec".into(),
+                params: "every ColoringSpec field away from its default (two specs: Duotone, then Binary) → apply_coloring_spec → coloring_spec".into(),
                 result: format!(
                     "{} fields; came back different: {}; left at the default by the test: {}; the session put back: {restored}",
                     fields(&custom).len(),
                     if lost.is_empty() { "none".to_string() } else { lost.join(", ") },
                     if away.is_empty() { "none".to_string() } else { away.join(", ") }
                 ),
-                threshold: "every field back as it went in; none left at its default (else the check sees nothing)",
+                threshold: "every field back as it went in, in both specs; none left at its default in both (else the check sees nothing)",
                 pass: lost.is_empty() && away.is_empty() && restored,
             });
 
