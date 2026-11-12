@@ -1505,13 +1505,50 @@ fn the_coloring_slider_options_are_documented_with_their_ranges() {
 /// ⛔Every method the shader accumulates orbit statistics for must be one the app keeps off the
 /// paths that cannot carry them (the chunked walk, the band's BLA, the corrector, strips). The orbit
 /// trap was left out until 2026-11-06 — its palette rate and its statistics were decided by one
-/// predicate — and the live view drew it as one flat color.
+/// predicate — and the live view drew it as one flat color. Since B2 the app gates on the set it
+/// asks for (`ColoringConfig::orbit_stats`, a method's own `orbit_stats`), and the GPU accumulates
+/// that set and what the method reads: for every method the two must be the same set.
 #[test]
 fn the_app_gates_every_method_the_shader_computes_statistics_for() {
     for m in ColorMethod::ALL {
-        assert_eq!(m.needs_aux(), fractadyne_gpu::method_needs_aux(m.gpu_id()), "{}", m.key());
+        assert_eq!(fractadyne_gpu::iter_stats(m.orbit_stats(), m.gpu_id()), m.orbit_stats(), "{}", m.key());
+        assert_eq!(m.reads_aux(), !m.orbit_stats().is_empty(), "{}", m.key());
     }
-    assert!(ColorMethod::OrbitTrap.needs_aux() && !ColorMethod::OrbitTrap.bounded_value());
+    assert!(!ColorMethod::OrbitTrap.orbit_stats().is_empty() && !ColorMethod::OrbitTrap.bounded_value());
+}
+
+/// The coloring's part of the app's iteration hash keys what the GPU's iteration key keys (B2):
+/// the set, and a statistic's parameters only while it is accumulated.
+#[test]
+fn the_iteration_hash_keys_what_is_accumulated() {
+    use std::hash::Hasher;
+    let hash = |orbit_stats: StatSet, freq: f32, tail: bool, trap: TrapType| {
+        let mut h = std::collections::hash_map::DefaultHasher::new();
+        crate::render::iter_coloring_hash(orbit_stats, freq, tail, 16, trap, &mut h);
+        h.finish()
+    };
+    let (none, stripe, trap) = (StatSet::NONE, StatSet::of(Stat::Stripe), StatSet::of(Stat::Trap));
+    assert_eq!(hash(none, 1.0, false, TrapType::Point), hash(none, 5.0, true, TrapType::Cross));
+    assert_ne!(hash(none, 1.0, false, TrapType::Point), hash(stripe, 1.0, false, TrapType::Point));
+    assert_ne!(hash(stripe, 1.0, false, TrapType::Point), hash(stripe, 5.0, false, TrapType::Point));
+    assert_ne!(hash(stripe, 1.0, false, TrapType::Point), hash(stripe, 1.0, true, TrapType::Point));
+    assert_eq!(hash(stripe, 1.0, false, TrapType::Point), hash(stripe, 1.0, false, TrapType::Circle));
+    assert_ne!(hash(trap, 1.0, false, TrapType::Point), hash(trap, 1.0, false, TrapType::Cross));
+    assert_eq!(hash(trap, 1.0, false, TrapType::Point), hash(trap, 5.0, true, TrapType::Point));
+}
+
+/// Two BLA trees' aggregate lanes, and a tree against the live parameters, are compared only for
+/// the statistics a frame accumulates (B2).
+#[test]
+fn a_tree_is_stale_only_for_what_is_accumulated() {
+    use crate::render::same_aux_lanes;
+    let (none, stripe, trap) = (StatSet::NONE, StatSet::of(Stat::Stripe), StatSet::of(Stat::Trap));
+    assert!(same_aux_lanes(none, 1.0, Some(TrapType::Point), 5.0, TrapType::Cross));
+    assert!(!same_aux_lanes(stripe, 1.0, Some(TrapType::Point), 5.0, TrapType::Point));
+    assert!(same_aux_lanes(stripe, 1.0, Some(TrapType::Point), 1.0, TrapType::Cross));
+    assert!(!same_aux_lanes(trap, 1.0, Some(TrapType::Point), 1.0, TrapType::Cross));
+    assert!(!same_aux_lanes(trap, 1.0, None, 1.0, TrapType::Point), "a tree built for no trap is not the trap's");
+    assert!(same_aux_lanes(trap, 1.0, Some(TrapType::Cross), 5.0, TrapType::Cross));
 }
 
 /// The exe's own icon (build.rs `link_windows_icon`, scripts/make_windows_icon.py): the icon and both

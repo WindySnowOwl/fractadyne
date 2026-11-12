@@ -13,9 +13,9 @@ use egui_wgpu::{CallbackResources, CallbackTrait, ScreenDescriptor};
 
 /// One view's G-buffer, read back: the iteration plane (`smooth_iter, normal.x, normal.y,
 /// DE_log2`; `r < 0` = interior or glitched) and the aux plane, `Rgba32Float`, row-major, at the
-/// texture's size (resolution × ss). `aux` is empty when it was not read: the color pass reads it
-/// only for the orbit-statistics methods (`method_needs_aux`), and a frame installed without it
-/// gets a zero plane.
+/// texture's size (resolution × ss). `aux` is empty when it was not read: it holds something only
+/// when the iteration accumulated orbit statistics (`MandelbrotParams::iter_stats`), and a frame
+/// installed without it gets a zero plane.
 #[derive(Clone, Debug, Default)]
 pub struct GBuffer {
     pub width: u32,

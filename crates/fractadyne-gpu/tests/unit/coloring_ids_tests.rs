@@ -51,11 +51,59 @@ fn the_renderer_source_carries_the_generated_ids_once() {
     assert!(strip.contains(&ids));
 }
 
-/// The GPU crate's aux test is the table's.
+/// The iteration accumulates what it is asked to and what the method on screen reads, so a caller
+/// that set only the method (as every caller did before B2) gets exactly what it got then, and
+/// one that set only the set gets no less.
 #[test]
-fn method_needs_aux_reads_the_table() {
+fn the_iteration_accumulates_the_set_and_what_the_method_reads() {
+    use fractadyne_core::coloring::{Stat, StatSet};
     for m in ColorMethod::ALL {
-        assert_eq!(crate::method_needs_aux(m.gpu_id()), m.needs_aux(), "{m:?}");
+        assert_eq!(crate::iter_stats(StatSet::NONE, m.gpu_id()), m.orbit_stats(), "{m:?}");
+        assert_eq!(crate::iter_stats(m.orbit_stats(), ColorMethod::Smooth.gpu_id()), m.orbit_stats(), "{m:?}");
+        let more = StatSet::of(Stat::Trap);
+        assert_eq!(crate::iter_stats(more, m.gpu_id()), more.union(m.orbit_stats()), "{m:?}");
     }
-    assert!(!crate::method_needs_aux(ColorMethod::ALL.len() as u32));
+    // A number that is no method reads nothing.
+    assert_eq!(crate::iter_stats(StatSet::NONE, ColorMethod::ALL.len() as u32), StatSet::NONE);
+    // The two structs ask the same rule.
+    let p = crate::MandelbrotParams {
+        color_method: ColorMethod::Stripe.gpu_id(),
+        orbit_stats: StatSet::of(Stat::Angle),
+        ..crate::MandelbrotParams::default()
+    };
+    assert_eq!(p.iter_stats(), StatSet::of(Stat::Stripe).with(Stat::Angle));
+}
+
+/// The shader masks `orbit_stats` only with the generated STAT_* names, and reads it where the
+/// statistics are accumulated: per statistic in `aux_step` and the BLA fold, the stripe tail, and
+/// the trap histogram.
+#[test]
+fn the_shader_masks_the_set_only_by_name() {
+    let wgsl = include_str!(concat!(env!("CARGO_MANIFEST_DIR"), "/src/mandelbrot.wgsl"));
+    let mut numeric = Vec::new();
+    for (i, line) in wgsl.lines().enumerate() {
+        let code = line.split("//").next().unwrap_or("");
+        for subject in ["orbit_stats & ", "(st & "] {
+            let mut rest = code;
+            while let Some(at) = rest.find(subject) {
+                let after = &rest[at + subject.len()..];
+                if after.starts_with(|c: char| c.is_ascii_digit()) {
+                    numeric.push(format!("line {}: {}", i + 1, line.trim()));
+                }
+                rest = after;
+            }
+        }
+    }
+    assert!(numeric.is_empty(), "mask with STAT_* instead:\n{}", numeric.join("\n"));
+    for s in fractadyne_core::coloring::Stat::ALL {
+        assert!(!wgsl.contains(&format!("const {}", s.spec().wgsl)), "{} defined by hand", s.spec().wgsl);
+    }
+    // aux_step and aux_fold_run each test the three running statistics; the tail and the
+    // histogram test theirs.
+    for (name, at_least) in [("STAT_STRIPE", 3), ("STAT_TRIANGLE", 2), ("STAT_TRAP", 3)] {
+        let n = wgsl.lines().filter(|l| l.split("//").next().unwrap_or("").contains(name)).count();
+        assert!(n >= at_least, "{name} read on {n} lines, expected at least {at_least}");
+    }
+    // The iteration no longer reads the method on screen.
+    assert!(!wgsl.contains("iu.color_method"), "the iteration reads the displayed method again");
 }

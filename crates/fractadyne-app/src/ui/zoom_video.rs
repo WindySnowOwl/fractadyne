@@ -260,7 +260,7 @@ impl FractadyneApp {
             F::Mandelbrot | F::Multibrot3 | F::Multibrot4 | F::Multibrot5 | F::Multibrot6 | F::Multibrot7 | F::Multibrot8
         ) {
             Some(tr!(zoom_video_no_fractal, fractal = self.fractal.name()))
-        } else if self.coloring.color_method.needs_aux() {
+        } else if self.coloring.color_method.reads_aux() {
             Some(tr!(zoom_video_no_method))
         } else if z.end_log2 < 1.0 {
             Some(tr!(zoom_video_too_shallow))

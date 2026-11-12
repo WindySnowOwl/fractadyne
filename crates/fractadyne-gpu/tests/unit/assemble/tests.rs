@@ -104,7 +104,7 @@ fn a_window_holds_what_the_colouring_reads() {
         assert_eq!(WindowTexels::for_colour(m, true, g), WindowTexels::All);
     }
     // The aux methods, and a number no method has, keep everything.
-    for m in ColorMethod::ALL.into_iter().filter(|m| m.needs_aux()).map(ColorMethod::gpu_id).chain([ColorMethod::ALL.len() as u32, 99]) {
+    for m in ColorMethod::ALL.into_iter().filter(|m| m.reads_aux()).map(ColorMethod::gpu_id).chain([ColorMethod::ALL.len() as u32, 99]) {
         assert_eq!(WindowTexels::for_colour(m, false, false), WindowTexels::All);
     }
     let shape = StripShape { width: 27_683, rows: 3_059, rows_per_octave: 3_054.0, sample_offset: 0.5, row_step: 2.27e-4, strips: 130 };

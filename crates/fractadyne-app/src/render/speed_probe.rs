@@ -409,6 +409,7 @@ fn plan_request(plan: Plan) -> (fractadyne_gpu::ExportRequest, u32) {
         de_width: 0.0,
         de_phase: 0.0,
         color_method: crate::ColorMethod::Smooth.gpu_id(),
+        orbit_stats: crate::StatSet::NONE,
         stripe_freq: 0.0,
         stripe_tail: false,
         stripe_tail_len: 0,

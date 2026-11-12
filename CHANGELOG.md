@@ -59,6 +59,11 @@ published as the pre-releases `v0.2.41-beta.1` to `v0.2.41-beta.150`, and a "bet
 
 Changes after 0.3.0-beta.1:
 
+- **Switching between Smooth and Distance coloring no longer recalculates the view
+  (0.3.0-beta.27).** Neither needs anything from the calculation beyond what every view computes,
+  so the picture on screen is recolored at once; on a deep view the recalculation took as long as
+  the view itself. Behind it, what a view calculates is now separate from the method it shows, the
+  groundwork for switching among the other methods just as fast.
 - **Newton no longer offers coloring methods it cannot draw (0.3.0-beta.27).** Stripe average,
   triangle inequality, the orbit traps and decomposition color by statistics of a pixel's escaping
   orbit, and a Newton pixel converges to a root instead, so each of them colored the whole Newton
