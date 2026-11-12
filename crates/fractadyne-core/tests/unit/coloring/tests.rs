@@ -113,6 +113,26 @@ fn the_gbuffer_changes_no_rule_of_a_frame_that_accumulates() {
     assert!(StatSet::GBUFFER.blocks_iter_skip() && !StatSet::NONE.blocks_iter_skip());
 }
 
+/// Where a frame carries the G-buffer: in floatexp, for the methods that read one of its
+/// statistics; everywhere else, and for every other method, what the method reads. A change here
+/// changes what every deep stripe, triangle or trap frame computes, so it should be deliberate.
+#[test]
+fn a_deep_frame_of_a_gbuffer_method_carries_the_gbuffer() {
+    use ColorMethod::*;
+    for m in ColorMethod::ALL {
+        assert_eq!(m.orbit_stats_at(false), m.orbit_stats(), "{m:?} outside floatexp");
+        let deep = m.orbit_stats_at(true);
+        match m {
+            Stripe | TriangleIneq | OrbitTrap => assert_eq!(deep, StatSet::GBUFFER, "{m:?}"),
+            _ => assert_eq!(deep, m.orbit_stats(), "{m:?}"),
+        }
+        // It changes none of the frame's rules (see the test above).
+        assert_eq!(deep.blocks_iter_skip(), m.orbit_stats().blocks_iter_skip(), "{m:?}");
+        assert_eq!(deep.bla_aggregate(), m.orbit_stats().bla_aggregate(), "{m:?}");
+        assert!(deep.has(m.reads().unwrap_or(Stat::Angle)) || m.reads().is_none(), "{m:?}");
+    }
+}
+
 /// An unknown key is `None` to the strict reader and the default to the lenient one.
 #[test]
 fn an_unknown_key_is_none_or_the_default() {

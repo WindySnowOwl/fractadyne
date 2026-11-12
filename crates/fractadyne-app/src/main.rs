@@ -6387,13 +6387,24 @@ struct ColoringConfig {
 }
 
 impl ColoringConfig {
-    /// The orbit statistics a frame's iteration accumulates, live and in exports: every rule about
-    /// the iteration asks this, never the method (see the note at [`ColorMethod`]'s import). For
-    /// now exactly what the method reads (`ColorMethod::orbit_stats`); the full G-buffer (coloring
-    /// plan B3) widens it so a switch between methods only recolors.
-    fn orbit_stats(&self) -> StatSet {
-        let own = self.color_method.orbit_stats();
-        self.orbit_stats_override.map_or(own, |s| s.union(own))
+    /// The orbit statistics a frame's iteration accumulates in a band, live and in exports: every
+    /// rule about the iteration asks this, never the method (see the note at [`ColorMethod`]'s
+    /// import). In floatexp a stripe, triangle or trap frame carries the whole G-buffer, so a switch
+    /// among them recolors (`ColorMethod::orbit_stats_at`, coloring plan B3); the bundle changes
+    /// none of the frame's rules, but every key and every check of the reference's BLA lanes must
+    /// ask with the frame's own band, or a trap-shape change under a stripe frame would leave a
+    /// stale trap lane for the switch to find.
+    fn orbit_stats(&self, mode: RenderMode) -> StatSet {
+        match self.orbit_stats_override {
+            Some(s) => s.union(self.color_method.orbit_stats()),
+            None => self.color_method.orbit_stats_at(mode.is_floatexp()),
+        }
+    }
+    /// Whether a frame accumulates any statistic at all: the same answer in every band, since the
+    /// G-buffer only joins a frame that already accumulates one. For the rules that ask only that
+    /// (the walks, band BLA, the corrector and the normalized export refuse such a frame).
+    fn accumulates_any(&self) -> bool {
+        !self.orbit_stats(RenderMode::Direct).is_empty()
     }
 }
 
@@ -16371,7 +16382,9 @@ impl FractadyneApp {
         c.offset.to_bits().hash(&mut h);
         c.color_method.gpu_id().hash(&mut h);
         // What the frame accumulates (B2): a sample taken with other statistics is another frame.
-        c.orbit_stats().hash(&mut h);
+        // It follows from the method and the band (B3); a change of band is a new view, which
+        // starts the average over anyway, so the method's own statistics stand for it.
+        c.color_method.orbit_stats().hash(&mut h);
         c.stripe_freq.to_bits().hash(&mut h);
         c.stripe_tail.hash(&mut h);
         c.stripe_tail_len.hash(&mut h);

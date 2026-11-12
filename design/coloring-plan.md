@@ -1,6 +1,6 @@
 # Coloring methods: implementation plan
 
-Status: **plan (2026-11-08); phase A done (A1–A10), B1 done (the coloring matrix; its live tour is B1b), B2 done (what a frame accumulates is a `StatSet`, apart from the method shown), see §10.** Line references are to `main` at `9ab75357`; check
+Status: **plan (2026-11-08); phase A done (A1–A10), B1 done (the coloring matrix; its live tour is B1b), B2 done (what a frame accumulates is a `StatSet`, apart from the method shown), B3 done (in floatexp a stripe, triangle or trap frame carries the whole G-buffer), see §10.** Line references are to `main` at `9ab75357`; check
 them before editing, they drift. The research behind it (methods, prototypes, measured results,
 prior art) is the coloring-methods doc; its local copy is
 `local/research_notes/Fractal coloring methods/` (PDF, HTML, Markdown, prototype scripts).
@@ -700,6 +700,49 @@ reproduced. Reproduce before fixing; never close on the mechanism argument alone
   A/B for all lanes on Mandelbrot, a fold and Multibrot 5.
 - **Traps**: an all-lanes view still pays every aux restriction (no SA, no walk, no band BLA): the
   cost is not just the operations; report both.
+- **Done 2026-11-11** (branch `feat/color-b3-gbuffer`):
+  - `StatSet::GBUFFER`: every statistic BLA folds (stripe, triangle, trap), derived from the table.
+    Each also blocks the series, so adding it to a frame that accumulates anything changes none of
+    that frame's rules (unit test over every non-empty set): it costs only its operations. The angle
+    stays out: it has no BLA aggregate and would turn BLA off for the others (B8).
+  - **The check**: `--coloring-matrix` renders every cell again with the G-buffer added (a cell that
+    already carries it, with its method's own statistic alone), built through
+    `current_export_request_for` with `ColoringConfig::orbit_stats_override`, so the series, BLA and
+    the walk follow the app's rules. Both accumulate something: the channels must be identical
+    (check `gbuffer`). The cell accumulates nothing (Smooth, Distance): judged against the plain
+    render. The two requests' renders alternate (cell, G-buffer, cell, G-buffer): timed after the
+    cell's other renders, the G-buffer read 12-15% faster than the cell on the RX 6800 XT (clocks).
+    `summary.md` gains a cost table per variant and band.
+  - **Results**, 738 cells on each card, 0 red, no `gbuffer` or determinism failure: RTX 3080 (here),
+    RTX 3070 and RX 6800 XT (PLUTO, dev.21 and dev.22). Iterate time with the G-buffer over without,
+    median over the band's views, for stripe, triangle and the traps:
+
+    | card | direct | df32 | floatexp |
+    |---|---|---|---|
+    | RTX 3080 | +15-34% | +10-21% | +2-4% |
+    | RTX 3070 | +15-33% | +9-21% | +2-4% |
+    | RX 6800 XT | +4-15% | +1-4% | +18-34% |
+
+    For Smooth and Distance (losing the series and the walk) the ratios scatter from 0.2 to 3.6 and
+    are no case for carrying it always. Decomposition with it, floatexp without BLA: +5-10% median,
+    +48% on the RTX 3070's heaviest view.
+  - **The choice (user, 2026-11-11: "Always in deep views")**: `ColorMethod::orbit_stats_at`: in
+    floatexp a frame colored by stripe, triangle or a trap carries the whole G-buffer, so a switch
+    among them recolors; elsewhere, and for every other method, what the method reads. Asked
+    because the price depends on the card (the table). `ColoringConfig::orbit_stats` now takes the
+    frame's band, and every key and every check of the reference's BLA lanes asks with it: the BLA
+    lane checks (`same_reference`, `aux_lanes_stale`, the overtaken check) ask for floatexp, the
+    only band that builds a tree; the rules that ask only whether anything is accumulated use
+    `accumulates_any`, the same in every band (and so no loop with the live band's floatexp-for-df32
+    choice, which asks it). `accum_color_sig` hashes the method's own set: a band change is a new
+    view anyway.
+  - uitest `trap-recolors` (corpus 07 at 1e30, floatexp): settle Stripe with the point trap, set the
+    cross trap under Stripe, switch to the trap, pan away and back, set the point trap. The switched
+    frame equals the honest cross render (meanD 0.0); Stripe is 79.0 away and the point trap, the
+    control a stale lane would look like, 39.6. Looked at.
+  - Found on the way (TODO.md): the RTX 3070 takes 27.7 s for the minibrot's decomposition cell
+    (RTX 3080 1.4 s, RX 6800 XT 0.45 s); a direct export of Smooth or Distance at 320x200 is up to
+    5x slower than the same request with statistics (the walk against one dispatch).
 
 ### B4. One coloring settings model
 
@@ -1009,7 +1052,8 @@ coloring in these places, so sequence the two with care:
 | B1 | done, merged (agent v41, deployed) | `312c54a8` (merge `4efdbbb3`) |
 | B1 fixes | Distance NaN; Newton's statistics methods | merges `91fa8f91`, `7722b660` |
 | B1b | not started: the live method tour | |
-| B2 | done, branch `feat/color-b2-accum-mask` | |
-| B3–B8 | not started | |
+| B2 | done, merged | `c017a577` (merge `dcfd776b`) |
+| B3 | done, branch `feat/color-b3-gbuffer` (dev.21, dev.22 on PLUTO) | |
+| B4–B8 | not started | |
 | C1–C11 | not started | |
 | D, E, F, G | not started | |

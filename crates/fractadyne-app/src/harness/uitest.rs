@@ -258,6 +258,19 @@ enum Screen {
     DistanceRecolorSwitch,
     DistanceRecolorAway,
     DistanceRecolorOn,
+    /// Coloring plan B3: in floatexp a stripe frame carries the whole G-buffer, so a switch to the
+    /// orbit trap only recolors, and the trap lane it finds must be for the trap shape set NOW.
+    /// Settle Stripe at a floatexp view with the point trap, change the shape to the cross while
+    /// Stripe is still shown (nothing on screen changes), switch to the trap, move away, come back,
+    /// and set the point trap again. The switched frame must match the honest cross render that came
+    /// back; Stripe must differ from it, and so must the honest point render (the CONTROL: a trap
+    /// lane left for the old shape would look like it).
+    TrapRecolorStripe,
+    TrapRecolorShape,
+    TrapRecolorSwitch,
+    TrapRecolorAway,
+    TrapRecolorOn,
+    TrapRecolorPoint,
     /// Coloring plan A3: Burning Ship, which keeps no derivative, with Distance chosen and relief
     /// lighting and the glow on, the Effects section open. The panel grays out relief and glow
     /// (and Distance in the method list), and says under the Method box and at the top of Effects
@@ -277,6 +290,13 @@ enum Screen {
 /// still taking its size.
 const STRIPE_TAIL_AT: (f64, f64) = (-0.743_643_887_037_158_7, 0.131_825_904_205_311_97);
 const STRIPE_TAIL_PAN: f64 = 0.004;
+/// The deep recolor steps' view: the coloring matrix's `mandelbrot-corpus07-1e30` (floatexp with
+/// BLA, every pixel escapes; the point and cross traps there are two different colors), and its
+/// pan, a few view heights as the stripe tail's is.
+const TRAP_RECOLOR_AT: (&str, &str) =
+    ("-1.178853950372678747911373866849720956148855", "0.1853420232408490265512092752061929308714979");
+const TRAP_RECOLOR_LOG2MAG: f64 = 99.657_842_846_620_87; // log2(1e30)
+const TRAP_RECOLOR_PAN: f64 = 7.5e-30;
 /// The largest fingerprint distance between the toggled frame and the honest re-render that still
 /// counts as the same picture. Calibrated 2026-11-08 on the RTX 3080, two runs each: fixed 0.0 and
 /// 0.0, broken (no tail in the GPU key) 72.7 and 72.7. The minimap check's 9.5 sits far from both.
@@ -1041,6 +1061,12 @@ fn build_steps() -> Vec<Step> {
         screen("distance-recolor-switch", Screen::DistanceRecolorSwitch),
         screen("distance-recolor-away", Screen::DistanceRecolorAway),
         screen("distance-recolor-on", Screen::DistanceRecolorOn),
+        screen("trap-recolor-stripe", Screen::TrapRecolorStripe),
+        screen("trap-recolor-shape", Screen::TrapRecolorShape),
+        screen("trap-recolor-switch", Screen::TrapRecolorSwitch),
+        screen("trap-recolor-away", Screen::TrapRecolorAway),
+        screen("trap-recolor-on", Screen::TrapRecolorOn),
+        screen("trap-recolor-point", Screen::TrapRecolorPoint),
         screen("no-derivative", Screen::NoDerivative),
         screen("no-statistics", Screen::NoStatistics),
     ]
@@ -1776,6 +1802,29 @@ impl FractadyneApp {
             Screen::DistanceRecolorSwitch => self.coloring.color_method = crate::ColorMethod::Distance,
             Screen::DistanceRecolorAway => self.viewport.pan_complex(STRIPE_TAIL_PAN, 0.0),
             Screen::DistanceRecolorOn => self.viewport.pan_complex(-STRIPE_TAIL_PAN, 0.0),
+            // The stripe tail's setup at the floatexp view (the count the matrix gives it), with the
+            // point trap.
+            Screen::TrapRecolorStripe => {
+                self.set_show_mode(crate::ShowMode::Set);
+                self.set_fractal(crate::FractalKind::Mandelbrot);
+                self.render_cfg.aa = 1;
+                self.render_cfg.auto_iter = false;
+                self.render_cfg.max_iter = 25_000;
+                self.coloring.normalize_live = false;
+                self.coloring.normalize_fit = false;
+                self.coloring.color_method = crate::ColorMethod::Stripe;
+                self.coloring.stripe_tail = false;
+                self.coloring.trap_type = crate::TrapType::Point;
+                let (cx, cy) = crate::arg_center("uitest", TRAP_RECOLOR_AT.0, TRAP_RECOLOR_AT.1, TRAP_RECOLOR_LOG2MAG);
+                self.viewport.set_center_log2mag(cx, cy, TRAP_RECOLOR_LOG2MAG);
+                self.pointer.settle_t = [-1.0e9, -1.0e9]; // settled, not interacting
+            }
+            // EXACTLY what the trap-shape box does (`ui/panels.rs`): set the shape.
+            Screen::TrapRecolorShape => self.coloring.trap_type = crate::TrapType::Cross,
+            Screen::TrapRecolorSwitch => self.coloring.color_method = crate::ColorMethod::OrbitTrap,
+            Screen::TrapRecolorAway => self.viewport.pan_complex(TRAP_RECOLOR_PAN, 0.0),
+            Screen::TrapRecolorOn => self.viewport.pan_complex(-TRAP_RECOLOR_PAN, 0.0),
+            Screen::TrapRecolorPoint => self.coloring.trap_type = crate::TrapType::Point,
             Screen::NoDerivative => {
                 self.dialogs.right_panel_open = true;
                 self.set_show_mode(crate::ShowMode::Set);
@@ -2928,6 +2977,56 @@ impl FractadyneApp {
                     name: "distance-recolors".into(),
                     verdict: Verdict::Warn,
                     detail: "no distance-recolor-smooth and distance-recolor-switch steps to compare against".into(),
+                }),
+            }
+        }
+
+        // ---- a deep switch to the trap recolors, with the trap shape set now (coloring plan B3) ----
+        if matches!(step.kind, StepKind::Screen(Screen::TrapRecolorPoint)) {
+            let find = |n: &str| ut.results.iter().rev().find(|r| r.name == n);
+            match (find("trap-recolor-stripe"), find("trap-recolor-switch"), find("trap-recolor-on")) {
+                (Some(stripe), Some(switched), Some(honest)) => {
+                    let stale = fp_distance(&switched.left_fp, &honest.left_fp);
+                    let effect = fp_distance(&stripe.left_fp, &honest.left_fp);
+                    // The control: the honest POINT render (this step) against the honest cross one.
+                    let control = fp_distance(&left_fp, &honest.left_fp);
+                    let grid = if switched.tiled { "tiled" } else { "untiled" };
+                    // ⭐ANTI-VACUITY: the trap must look unlike Stripe, and the old shape unlike the
+                    // new one, or a frame left as it was, or a lane left for the point, would pass.
+                    if effect < 8.0 || control < 8.0 {
+                        checks.push(Check {
+                            name: "trap-recolors".into(),
+                            verdict: Verdict::Warn,
+                            detail: format!(
+                                "too alike here to tell: Stripe vs the cross trap meanD {effect:.1}, the \
+                                 point trap vs the cross {control:.1} — this run proves nothing"
+                            ),
+                        });
+                    } else if stale <= STRIPE_TAIL_STALE_MAX {
+                        checks.push(pass(
+                            "trap-recolors",
+                            format!(
+                                "the switched frame matches an honest cross-trap render (meanD {stale:.1}; \
+                                 Stripe differs by {effect:.1}, the point trap by {control:.1}, {grid})"
+                            ),
+                        ));
+                    } else {
+                        checks.push(Check {
+                            name: "trap-recolors".into(),
+                            verdict: Verdict::Fail,
+                            detail: format!(
+                                "a deep switch from Stripe to the trap, after the shape changed under \
+                                 Stripe, left a wrong frame: meanD {stale:.1} against an honest cross-trap \
+                                 render of the SAME view (Stripe differs by {effect:.1}, the point trap by \
+                                 {control:.1}, {grid})"
+                            ),
+                        });
+                    }
+                }
+                _ => checks.push(Check {
+                    name: "trap-recolors".into(),
+                    verdict: Verdict::Warn,
+                    detail: "no trap-recolor-stripe, -switch and -on steps to compare against".into(),
                 }),
             }
         }

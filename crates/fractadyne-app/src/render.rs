@@ -2568,7 +2568,8 @@ impl FractadyneApp {
         // no refresh completed, the hand-over frame shown at 10×. Identity is the reference POINT
         // plus everything the shader reads off the build; a result that is not at least as
         // precise as what is installed is a downgrade and also dropped.
-        if same_reference(&self.ref_cache[vi], &res, self.coloring.orbit_stats()) {
+        // The lanes compared are a BLA tree's, which only floatexp builds: its statistics (B3).
+        if same_reference(&self.ref_cache[vi], &res, self.coloring.orbit_stats(RenderMode::Floatexp)) {
             // ...except its SERIES, when it was validated for a wider view than the installed one
             // (`series_fits`): a zoom-out's rebuild of the same orbit brings the series for the
             // radius the view asks now, and dropping it with the orbit left the view a series
@@ -3185,7 +3186,7 @@ impl FractadyneApp {
             let (span_mantissa, delta_exp) = (scale.span_mantissa, scale.delta_exp);
             let bla_will_build = self.bla_eligible(mode, false);
             let do_sa = self.fractal.caps().series_approximation
-                && !self.coloring.orbit_stats().blocks_iter_skip()
+                && !self.coloring.orbit_stats(mode).blocks_iter_skip()
                 && self.render_cfg.series_approx
                 && !bla_will_build;
             // Hand the worker the cached orbit for extend/as-is reuse — `try_reuse_reference`
@@ -3460,7 +3461,7 @@ impl FractadyneApp {
         let (span_mantissa, delta_exp) = (scale.span_mantissa, scale.delta_exp);
         let bla_will_build = self.bla_eligible(mode, false);
         let do_sa = self.fractal.caps().series_approximation
-            && !self.coloring.orbit_stats().blocks_iter_skip()
+            && !self.coloring.orbit_stats(mode).blocks_iter_skip()
             && self.render_cfg.series_approx
             && !bla_will_build;
         // Seed the extension from the LONGEST orbit available — a ready-but-uninstalled entry
@@ -3651,7 +3652,8 @@ impl FractadyneApp {
         let dx = fractadyne_core::ref_offset_mantissa(&vp.center_x, &rp[0], delta_exp, precision);
         let dy = fractadyne_core::ref_offset_mantissa(&vp.center_y, &rp[1], delta_exp, precision);
         // Keep the cached tree only while it is valid for THIS view; otherwise render without one.
-        let aux_stale = aux_lanes_stale(self.coloring.orbit_stats(), self.coloring.stripe_freq, self.coloring.trap_type, vc);
+        // The tree's lanes, which only floatexp builds: floatexp's statistics (B3).
+        let aux_stale = aux_lanes_stale(self.coloring.orbit_stats(RenderMode::Floatexp), self.coloring.stripe_freq, self.coloring.trap_type, vc);
         let need_log2 = Self::bla_dc_max(vp.gpu_scale().span_mantissa, delta_exp).log2();
         let bla_ok = !vc.bla.is_empty()
             && vc.bla_id == vc.orbit_id
@@ -3692,7 +3694,7 @@ impl FractadyneApp {
         // which ride BLA at full speed instead of paying full floatexp iterations. The final angle
         // isn't skip-safe (decomposition's cells shift under the approximation): a frame that
         // accumulates it stays gated.
-        let orbit_stats = self.coloring.orbit_stats();
+        let orbit_stats = self.coloring.orbit_stats(mode);
         // Statistics with a GPU-validated BLA-skip fold: orbit-trap (all trap types — the `agg_trap`
         // lane is built for the live trap_type), triangle-inequality (reference-intrinsic aggregate),
         // and stripe-average (Σ stripe terms — freq-specific). The trap-type/frequency the aggregate
@@ -3877,7 +3879,7 @@ impl FractadyneApp {
         let do_sa = (!mode.is_direct())
             && !julia
             && self.fractal.caps().series_approximation
-            && !self.coloring.orbit_stats().blocks_iter_skip()
+            && !self.coloring.orbit_stats(mode).blocks_iter_skip()
             && self.render_cfg.series_approx
             && bla_dc_max.is_none();
         RecomputeInputs {
@@ -4390,7 +4392,7 @@ impl FractadyneApp {
             de_width: self.effects.de_width,
             de_phase: self.effects.de_phase,
             color_method: self.coloring.color_method.gpu_id(),
-            orbit_stats: self.coloring.orbit_stats(),
+            orbit_stats: self.coloring.orbit_stats(mode),
             stripe_freq: self.coloring.stripe_freq,
             stripe_tail: self.coloring.stripe_tail,
             stripe_tail_len: self.coloring.stripe_tail_len,
@@ -4861,7 +4863,7 @@ impl FractadyneApp {
         let ss = req.map_or(1, |r| r.ss.max(1));
         let (iw, ih) = (width * ss, height * ss);
         let max_dim = device.limits().max_texture_dimension_2d;
-        if !self.coloring.orbit_stats().is_empty() {
+        if self.coloring.accumulates_any() {
             return None;
         }
         if iw > max_dim || ih > max_dim || (iw as u64) * (ih as u64) > MAX_CORRECT_PX {
@@ -4970,7 +4972,7 @@ impl FractadyneApp {
         if iw > max_dim
             || ih > max_dim
             || (iw as u64) * (ih as u64) > MAX_PX
-            || !self.coloring.orbit_stats().is_empty()
+            || self.coloring.accumulates_any()
         {
             return None;
         }
@@ -6764,7 +6766,7 @@ impl FractadyneApp {
             && caps.bla
             && self.resumable(fractal)
             && self.render_cfg.use_bla
-            && self.coloring.orbit_stats().is_empty()
+            && !self.coloring.accumulates_any()
             && actuators::can_chunk(self.perf.actuators.as_ref(), RenderMode::Floatexp)
     }
 
@@ -7244,7 +7246,7 @@ impl FractadyneApp {
             de_width: self.effects.de_width,
             de_phase: self.effects.de_phase,
             color_method: self.coloring.color_method.gpu_id(),
-            orbit_stats: self.coloring.orbit_stats(),
+            orbit_stats: self.coloring.orbit_stats(mode),
             stripe_freq: self.coloring.stripe_freq,
             stripe_tail: self.coloring.stripe_tail,
             stripe_tail_len: self.coloring.stripe_tail_len,
@@ -8589,9 +8591,10 @@ impl FractadyneApp {
         // `chunk_over` below). A frame that cannot — orbit statistics (stripe, triangle inequality,
         // orbit trap, decomposition), a formula without resumable passes, a device without the
         // state targets — reaches native resolution ONLY through tiles; see the arm below.
-        let walk_possible = actuators::can_chunk(self.perf.actuators.as_ref(), self.live_render_mode(fractal, julia, magnification))
+        let band = self.live_render_mode(fractal, julia, magnification);
+        let walk_possible = actuators::can_chunk(self.perf.actuators.as_ref(), band)
             && self.resumable(fractal)
-            && self.coloring.orbit_stats().is_empty();
+            && !self.coloring.accumulates_any();
         // Everything the ITERATE's output depends on that isn't covered by orbit_id / gen /
         // resolution, folded to one hash. The GPU re-renders whenever ITS IterKey changes
         // (color method, stripe frequency, trap type, SA/BLA toggles, Julia c, …) — but under a
@@ -8618,7 +8621,7 @@ impl FractadyneApp {
             // What the iteration accumulates, and only the parameters of what it accumulates: the
             // GPU `IterKey`'s rule (B2), so Smooth to Distance keeps a completed grid as it keeps
             // the GPU's texture.
-            iter_coloring_hash(self.coloring.orbit_stats(), self.coloring.stripe_freq, self.coloring.stripe_tail, self.coloring.stripe_tail_len, self.coloring.trap_type, &mut h);
+            iter_coloring_hash(self.coloring.orbit_stats(band), self.coloring.stripe_freq, self.coloring.stripe_tail, self.coloring.stripe_tail_len, self.coloring.trap_type, &mut h);
             self.render_cfg.series_approx.hash(&mut h);
             self.render_cfg.use_bla.hash(&mut h);
             eff_iter.hash(&mut h);
@@ -8766,7 +8769,7 @@ impl FractadyneApp {
         let chunk_mode = self.live_render_mode(fractal, julia, magnification);
         let chunk_over = actuators::can_chunk(self.perf.actuators.as_ref(), chunk_mode)
             && self.resumable(fractal)
-            && self.coloring.orbit_stats().is_empty()
+            && !self.coloring.accumulates_any()
             && !offscreen
             // ⚠ONE budget — `tdr_steps`, NOT the multi-tile allowance. This gate used the
             // allowance, which handed the settled compose to TILES whenever the converged
@@ -9127,7 +9130,7 @@ impl FractadyneApp {
                                     res.spawn_orbit_id < vc.orbit_id,
                                     vc.ref_pt.as_ref() == Some(&res.rp)
                                         && same_aux_lanes(
-                                            self.coloring.orbit_stats(),
+                                            self.coloring.orbit_stats(mode),
                                             vc.bla_stripe_freq,
                                             vc.bla_trap_type,
                                             res.bla_stripe_freq,
@@ -9301,7 +9304,7 @@ impl FractadyneApp {
             let do_sa = (!mode.is_direct())
                 && !julia
                 && fractal.caps().series_approximation
-                && !self.coloring.orbit_stats().blocks_iter_skip()
+                && !self.coloring.orbit_stats(mode).blocks_iter_skip()
                 && self.render_cfg.series_approx
                 && !bla_will_build;
             if recompute {
@@ -9960,7 +9963,7 @@ impl FractadyneApp {
                 // when an accumulated statistic's param drifts; cheap (~20 ms, off the deep-zoom hot
                 // path).
                 let aux_stale = aux_lanes_stale(
-                    self.coloring.orbit_stats(),
+                    self.coloring.orbit_stats(mode),
                     self.coloring.stripe_freq,
                     self.coloring.trap_type,
                     &self.ref_cache[vi],
