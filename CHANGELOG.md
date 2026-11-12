@@ -59,6 +59,16 @@ published as the pre-releases `v0.2.41-beta.1` to `v0.2.41-beta.150`, and a "bet
 
 Changes after 0.3.0-beta.1:
 
+- **A tour can set its coloring (0.3.0-beta.27).** A `[render.coloring]` table takes the keys a
+  saved view carries: the method, the stripe density and tail, the trap's shape, relief lighting,
+  the distance glow, Duotone or Binary with their two colors, and the normalization switches. Each
+  key it names replaces the viewer's setting while the tour plays, live or rendered, and the
+  viewer's own coloring comes back when it ends. A misspelled key or a value out of range stops the
+  tour with an error naming it. `TOURS.md` lists the keys.
+- **A tour's palette morph shows for anyone who has made a custom gradient (0.3.0-beta.27).** A
+  morph between two keyframes' palettes drew the viewer's own custom gradient instead of the morph,
+  in live playback and in a rendered tour, for anyone who had ever edited or imported one. The
+  morph now shows, and the viewer's gradient comes back when the tour ends.
 - **On a deep view, switching among stripe average, triangle inequality and the orbit traps no
   longer recalculates it (0.3.0-beta.27).** Past 1e28× a view colored by any of them now
   calculates all three as it goes, so a switch to another of them recolors the picture at once

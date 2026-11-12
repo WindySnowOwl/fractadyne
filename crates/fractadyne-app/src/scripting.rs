@@ -161,6 +161,12 @@ struct RenderFile {
     /// per-pixel confetti past ~1e50×.
     #[serde(default)]
     normalize: Option<bool>,
+    /// `[render.coloring]`: the tour's coloring, by the keys a view carries (`coloring_fields`):
+    /// the method, the stripe, the trap, the light, the glow, Duotone or Binary. Each key it names
+    /// replaces the viewer's setting for the tour; the rest are the viewer's. Unlike this table,
+    /// it refuses a key it does not know.
+    #[serde(default)]
+    coloring: Option<toml::Table>,
 }
 
 /// A named coordinate — kills the 120-digit duplication when several keyframes and annotations
@@ -899,6 +905,20 @@ pub(crate) fn tour_schema_markdown() -> String {
             s.push_str(&format!("| `{}` | {} | {} | {} |\n", f.name, f.ty, f.default, f.doc));
         }
         s.push('\n');
+        if t.toml == "[render]" {
+            // Generated from the coloring field table, so it lists exactly the keys a tour may set.
+            s.push_str("### `[render.coloring]`\n\n");
+            s.push_str(
+                "The tour's coloring, by the keys a saved view (`.fdn`) carries. Each key it names replaces \
+                 the viewer's setting for the tour, which hands the viewer's own coloring back when it \
+                 ends; the rest stay the viewer's. A key it does not know, or a value out of range, stops \
+                 the tour with an error.\n\n| Field | Type | Default | Description |\n|---|---|---|---|\n",
+            );
+            for f in &crate::coloring_fields::FIELDS {
+                s.push_str(&format!("| `{}` | {} | {} | {} |\n", f.key, f.tour_type(), f.tour_default(), f.doc));
+            }
+            s.push('\n');
+        }
     }
 
     s.push_str(
@@ -1067,6 +1087,8 @@ pub(crate) struct TourRender {
     pub(crate) auto_iter: Option<bool>,
     pub(crate) show_location: bool,
     pub(crate) normalize: bool,
+    /// `[render.coloring]`, checked: each `(key, value)` as a view writes it (`coloring_fields`).
+    pub(crate) coloring: Vec<(String, String)>,
 }
 
 /// The tour-render flags exactly as the CLI gave them. `None` means "not specified": the script's
@@ -1482,10 +1504,10 @@ impl TourRenderConfig {
 pub(crate) struct PlaybackRestore {
     pub(crate) max_iter: u32,
     pub(crate) auto_iter: bool,
-    pub(crate) palette_idx: usize,
-    pub(crate) use_custom_palette: bool,
-    pub(crate) use_binary: bool,
-    pub(crate) use_duotone: bool,
+    /// The viewer's whole coloring (coloring plan B4): the palette a keyframe chooses, the gradient
+    /// a palette morph installs (which clears the viewer's segments: `apply_script_palette`) and
+    /// `[render.coloring]` all go back with it.
+    pub(crate) coloring: fractadyne_state::ColoringSpec,
     /// Overlay toggles a script may drive (`minimap`, `orbits` keyframe fields) — the viewer's
     /// own settings, handed back when the tour ends like the budget and palette above.
     pub(crate) minimap: bool,
@@ -3074,7 +3096,33 @@ fn resolve_render(r: &RenderFile) -> Result<TourRender, String> {
         auto_iter: r.auto_iter,
         show_location: r.show_location.unwrap_or(false),
         normalize: r.normalize.unwrap_or(false),
+        coloring: resolve_coloring(r.coloring.as_ref())?,
     })
+}
+
+/// `[render.coloring]` checked against the field table (`coloring_fields`): a key it does not
+/// have, a value of the wrong shape, one it cannot read or one out of range is an error naming the
+/// key, so a misspelled coloring stops the tour instead of rendering in the viewer's.
+fn resolve_coloring(t: Option<&toml::Table>) -> Result<Vec<(String, String)>, String> {
+    let Some(t) = t else { return Ok(Vec::new()) };
+    let mut out = Vec::new();
+    for (k, v) in t {
+        let Some(f) = crate::coloring_fields::FIELDS.iter().find(|f| f.key == k.as_str()) else {
+            return Err(format!(
+                "[render.coloring] has no key `{k}`; its keys are {}",
+                crate::coloring_fields::KEYS.join(", ")
+            ));
+        };
+        let bad = || format!("[render.coloring] {k} = {v}: expected {}", f.tour_type());
+        let text = crate::coloring_fields::toml_text(v).ok_or_else(bad)?;
+        let mut scratch = fractadyne_state::ColoringSpec::default();
+        let mut clamped = Vec::new();
+        if crate::coloring_fields::read_key(&mut scratch, k, &text, &mut clamped) != Some(true) || !clamped.is_empty() {
+            return Err(bad());
+        }
+        out.push((k.clone(), text));
+    }
+    Ok(out)
 }
 
 /// Built-in benchmark tour: a steady zoom into a Seahorse-Valley spiral over a fixed
@@ -3124,6 +3172,12 @@ impl FractadyneApp {
             }
             PaletteApply::Stops(stops) => {
                 self.coloring.custom_palette = stops.clone();
+                // ⚠Clear the segments, as every path that sets stops must (`custom_segments`):
+                // since P1 a viewer's custom gradient has them, they win over the stops, and a tour
+                // drew the viewer's own gradient instead of its morph. They come back with the
+                // rest of the viewer's coloring when the tour ends (`PlaybackRestore::coloring`).
+                self.coloring.custom_segments.clear();
+                self.coloring.custom_palette_flat = false;
                 self.coloring.use_custom_palette = true;
             }
         }
@@ -3141,6 +3195,35 @@ impl FractadyneApp {
         self.playback.as_ref().is_some_and(|p| !p.finished)
     }
 
+    /// Start playing `pb` live: keep the viewer's own iteration budget, coloring and overlays to
+    /// hand back when it ends (`stop_playback`) — a script's settings are the script's, not a
+    /// permanent change to the session — and put on the tour's `[render.coloring]`.
+    pub(crate) fn begin_playback(&mut self, pb: Playback) {
+        self.playback_restore = Some(PlaybackRestore {
+            max_iter: self.render_cfg.max_iter,
+            auto_iter: self.render_cfg.auto_iter,
+            coloring: self.coloring_spec(),
+            minimap: self.dialogs.minimap,
+            show_orbits: self.anim.show_orbits,
+            dual_split: self.dual_split,
+        });
+        self.apply_tour_coloring(&pb.render);
+        self.playback = Some(pb);
+    }
+
+    /// Put on a tour's `[render.coloring]` (checked when the script was read): each key it names
+    /// replaces the setting, the rest stay as they are.
+    pub(crate) fn apply_tour_coloring(&mut self, render: &TourRender) {
+        if render.coloring.is_empty() {
+            return;
+        }
+        let mut spec = self.coloring_spec();
+        for (k, v) in &render.coloring {
+            crate::coloring_fields::read_key(&mut spec, k, v, &mut Vec::new());
+        }
+        self.apply_coloring_spec(&spec);
+    }
+
     /// Stop the active tour and hand the viewer their own iteration budget and coloring back.
     /// Every path that ends playback goes through here — Esc, Tools → Stop playback, autopilot,
     /// and the tour running out — or a script's settings would silently become the session's.
@@ -3154,10 +3237,7 @@ impl FractadyneApp {
         if let Some(r) = self.playback_restore.take() {
             self.render_cfg.max_iter = r.max_iter;
             self.render_cfg.auto_iter = r.auto_iter;
-            self.coloring.palette_idx = r.palette_idx;
-            self.coloring.use_custom_palette = r.use_custom_palette;
-            self.coloring.use_binary = r.use_binary;
-            self.coloring.use_duotone = r.use_duotone;
+            self.apply_coloring_spec(&r.coloring);
             self.dialogs.minimap = r.minimap;
             self.anim.show_orbits = r.show_orbits;
             self.dual_split = r.dual_split;
@@ -3235,20 +3315,7 @@ impl FractadyneApp {
             Ok(mut pb) => {
                 pb.source = Some(path.clone());
                 self.last_script = Some(path);
-                // Restore the viewer's own iteration/palette settings when the tour ends — a
-                // script's budget is the script's, not a permanent change to the session.
-                self.playback_restore = Some(PlaybackRestore {
-                    max_iter: self.render_cfg.max_iter,
-                    auto_iter: self.render_cfg.auto_iter,
-                    palette_idx: self.coloring.palette_idx,
-                    use_custom_palette: self.coloring.use_custom_palette,
-                    use_binary: self.coloring.use_binary,
-                    use_duotone: self.coloring.use_duotone,
-                    minimap: self.dialogs.minimap,
-                    show_orbits: self.anim.show_orbits,
-                    dual_split: self.dual_split,
-                });
-                self.playback = Some(pb);
+                self.begin_playback(pb);
             }
             Err(e) => {
                 self.dialogs.notice = Some((
@@ -3557,6 +3624,9 @@ impl FractadyneApp {
             parse_script_text(&script_text).map_err(|e| format!("{}: {e}", script_path.display()))?,
             None,
         )?;
+        // `[render.coloring]`: the offline render colors as the tour says. (The run exits when it is
+        // done, so there is nothing to hand back.)
+        self.apply_tour_coloring(&pb.render);
         let cfg = cli.resolve(&pb.render, script_path);
         let (width, height, fps, out_dir, prefix) =
             (cfg.width, cfg.height, cfg.fps, cfg.out.clone(), cfg.prefix.clone());
@@ -5311,6 +5381,10 @@ mod transition_tests;
 #[cfg(test)]
 #[path = "../tests/unit/scripting/formula_tests.rs"]
 mod formula_tests;
+
+#[cfg(test)]
+#[path = "../tests/unit/scripting/coloring_tests.rs"]
+mod coloring_tests;
 
 #[cfg(test)]
 #[path = "../tests/unit/scripting/lsystem_tests.rs"]

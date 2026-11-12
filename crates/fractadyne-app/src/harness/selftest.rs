@@ -10516,6 +10516,36 @@ zoom = \"1e94\"
                 pass: lost.is_empty() && away.is_empty() && restored,
             });
 
+            // A tour's palette morph shows over a viewer's custom gradient (found in B4): the morph
+            // sets the stop list, and the segments a custom gradient has had since P1 win over it
+            // (`custom_gradient`), so the tour drew the viewer's own gradient instead of its morph.
+            let before = self.coloring_spec();
+            let green = [0.0, 1.0, 0.0, 1.0];
+            self.coloring.custom_segments = vec![fractadyne_state::PaletteSegment {
+                left: 0.0,
+                mid: 0.5,
+                right: 1.0,
+                left_color: green,
+                right_color: green,
+                blend: 0,
+                space: 0,
+                blend_params: [0.0; 4],
+            }];
+            self.coloring.use_custom_palette = false;
+            let red = vec![[0.0, 1.0, 0.0, 0.0], [1.0, 1.0, 0.0, 0.0]];
+            self.apply_script_palette(&crate::scripting::PaletteApply::Stops(red));
+            let c = self.chosen_gradient().eval(0.5);
+            let shows = c[0] > 0.9 && c[1] < 0.1 && c[2] < 0.1;
+            self.apply_coloring_spec(&before);
+            push_check(&mut checks, &mut last_check_t, SelfCheck {
+                category: "View format",
+                name: "a tour's palette morph shows over a custom gradient".into(),
+                params: "a green custom gradient's segments; a tour morph to red stops".into(),
+                result: format!("the gradient shown at 0.5: [{:.2}, {:.2}, {:.2}]", c[0], c[1], c[2]),
+                threshold: "the morph's red, not the viewer's green",
+                pass: shows,
+            });
+
             self.set_view_coloring(&was.0);
             (
                 self.coloring.use_custom_palette,

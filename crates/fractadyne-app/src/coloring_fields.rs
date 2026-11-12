@@ -41,6 +41,8 @@ pub(crate) struct Field {
     pub(crate) key: &'static str,
     /// What a message calls it when its value had to be clamped.
     pub(crate) name: &'static str,
+    /// What it does, for the tour schema (`TOURS.md`, `[render.coloring]`).
+    pub(crate) doc: &'static str,
     pub(crate) access: Access,
     /// The rows it hangs off (earlier in the table): it is reset to its default only when they
     /// were read from the same file.
@@ -77,6 +79,7 @@ pub(crate) const FIELDS: [Field; 17] = [
     Field {
         key: "method",
         name: "coloring method",
+        doc: "The coloring method: smooth, stripe, triangle, trap, distance or decomposition.",
         access: Access::Choice(|s| &s.color_method, |s, v| s.color_method = v.to_string(), || {
             ColorMethod::ALL.iter().map(|m| m.key()).collect()
         }),
@@ -86,6 +89,7 @@ pub(crate) const FIELDS: [Field; 17] = [
     Field {
         key: "stripe_freq",
         name: "stripe density",
+        doc: "Stripe average: the stripes' density (method \"stripe\").",
         access: Access::Real(
             |s| s.stripe_freq,
             |s, v| s.stripe_freq = v,
@@ -98,6 +102,7 @@ pub(crate) const FIELDS: [Field; 17] = [
     Field {
         key: "stripe_tail",
         name: "stripe tail",
+        doc: "Stripe average over the last `stripe_tail_len` iterations only, which keeps its contrast at depth (method \"stripe\").",
         access: Access::Flag(|s| s.stripe_tail, |s, v| s.stripe_tail = v),
         parents: &["method"],
         shows: |s| method(s) == ColorMethod::Stripe,
@@ -105,6 +110,7 @@ pub(crate) const FIELDS: [Field; 17] = [
     Field {
         key: "stripe_tail_len",
         name: "tail length",
+        doc: "The tail's length in iterations (with `stripe_tail`).",
         access: Access::Count(
             |s| s.stripe_tail_len,
             |s, v| s.stripe_tail_len = v,
@@ -117,6 +123,7 @@ pub(crate) const FIELDS: [Field; 17] = [
     Field {
         key: "trap",
         name: "orbit trap",
+        doc: "The orbit trap's shape: point, cross or circle (method \"trap\").",
         access: Access::Choice(|s| &s.trap_type, |s, v| s.trap_type = v.to_string(), || {
             TrapType::ALL.iter().map(|t| t.key()).collect()
         }),
@@ -126,6 +133,7 @@ pub(crate) const FIELDS: [Field; 17] = [
     Field {
         key: "light",
         name: "relief light",
+        doc: "Relief lighting from the distance estimate.",
         access: Access::Flag(|s| s.light, |s, v| s.light = v),
         parents: &[],
         shows: always,
@@ -133,6 +141,7 @@ pub(crate) const FIELDS: [Field; 17] = [
     Field {
         key: "light_angle",
         name: "light angle",
+        doc: "The light's direction in radians (with `light`).",
         access: Access::Real(|s| s.light_angle, |s, v| s.light_angle = v, f32::MIN, f32::MAX),
         parents: &["light"],
         shows: |s| s.light,
@@ -140,6 +149,7 @@ pub(crate) const FIELDS: [Field; 17] = [
     Field {
         key: "light_height",
         name: "relief",
+        doc: "Relief strength: smaller is sharper (with `light`).",
         access: Access::Real(
             |s| s.light_height,
             |s, v| s.light_height = v,
@@ -152,6 +162,7 @@ pub(crate) const FIELDS: [Field; 17] = [
     Field {
         key: "glow",
         name: "distance glow",
+        doc: "Distance glow along the set's edge.",
         access: Access::Flag(|s| s.de, |s, v| s.de = v),
         parents: &[],
         shows: always,
@@ -159,6 +170,7 @@ pub(crate) const FIELDS: [Field; 17] = [
     Field {
         key: "glow_strength",
         name: "glow",
+        doc: "Glow strength (with `glow`).",
         access: Access::Real(
             |s| s.de_strength,
             |s, v| s.de_strength = v,
@@ -171,6 +183,7 @@ pub(crate) const FIELDS: [Field; 17] = [
     Field {
         key: "glow_width",
         name: "band width",
+        doc: "Glow band width (with `glow`).",
         access: Access::Real(
             |s| s.de_width,
             |s, v| s.de_width = v,
@@ -186,6 +199,7 @@ pub(crate) const FIELDS: [Field; 17] = [
     Field {
         key: "palette_mode",
         name: "palette mode",
+        doc: "Duotone or binary in place of the palette: \"duotone\" or \"binary\" (left out: the palette).",
         access: Access::Choice(
             |s| {
                 if s.use_binary {
@@ -208,6 +222,7 @@ pub(crate) const FIELDS: [Field; 17] = [
     Field {
         key: "palette_lo",
         name: "palette colors",
+        doc: "Duotone's shadow, Binary's color inside the set, as display-space [r, g, b] (with `palette_mode`).",
         access: Access::Rgb(|s| s.duotone_lo, |s, v| s.duotone_lo = v),
         parents: &["palette_mode"],
         shows: two_color_on,
@@ -215,6 +230,7 @@ pub(crate) const FIELDS: [Field; 17] = [
     Field {
         key: "palette_hi",
         name: "palette colors",
+        doc: "Duotone's highlight, Binary's color outside the set, as display-space [r, g, b] (with `palette_mode`).",
         access: Access::Rgb(|s| s.duotone_hi, |s, v| s.duotone_hi = v),
         parents: &["palette_mode"],
         shows: two_color_on,
@@ -222,6 +238,7 @@ pub(crate) const FIELDS: [Field; 17] = [
     Field {
         key: "normalize_live",
         name: "normalize deep colors",
+        doc: "Live view only: Normalize deep colors (method \"smooth\"). An offline render uses `[render]` `normalize`.",
         access: Access::Flag(|s| s.normalize_live, |s, v| s.normalize_live = v),
         parents: &["method"],
         shows: uses_normalize_live,
@@ -229,6 +246,7 @@ pub(crate) const FIELDS: [Field; 17] = [
     Field {
         key: "normalize_fit",
         name: "always fit range",
+        doc: "Live view only: always fit the palette to the escape range (method \"smooth\" or \"trap\").",
         access: Access::Flag(|s| s.normalize_fit, |s, v| s.normalize_fit = v),
         parents: &["method"],
         shows: uses_fit,
@@ -236,6 +254,7 @@ pub(crate) const FIELDS: [Field; 17] = [
     Field {
         key: "log_scale",
         name: "log color scale",
+        doc: "Log color scale wherever the palette is normalized (method \"smooth\" or \"trap\").",
         access: Access::Flag(|s| s.log_palette, |s, v| s.log_palette = v),
         parents: &["method"],
         shows: uses_fit,
@@ -359,6 +378,67 @@ impl Access {
                     _ => false,
                 }
             }
+        }
+    }
+}
+
+/// Read one key of the table into `spec`: `None` when the table has no such key, else whether the
+/// value was usable (clamped into range if it had to be, and named in `clamped` then).
+pub(crate) fn read_key(spec: &mut ColoringSpec, key: &str, text: &str, clamped: &mut Vec<&'static str>) -> Option<bool> {
+    FIELDS.iter().find(|f| f.key == key).map(|f| f.access.read(text, f.name, spec, clamped))
+}
+
+/// A TOML value as the text a row reads: a flag from `true`/`false`, a number as written, a choice
+/// from a string, three numbers `[r, g, b]` as `r,g,b`. `None` for any other shape.
+pub(crate) fn toml_text(v: &toml::Value) -> Option<String> {
+    match v {
+        toml::Value::Boolean(b) => Some(if *b { "1" } else { "0" }.to_string()),
+        toml::Value::Integer(i) => Some(i.to_string()),
+        toml::Value::Float(x) => Some(x.to_string()),
+        toml::Value::String(t) => Some(t.clone()),
+        toml::Value::Array(a) if a.len() == 3 => {
+            let n: Vec<String> = a
+                .iter()
+                .filter_map(|x| match x {
+                    toml::Value::Integer(i) => Some(i.to_string()),
+                    toml::Value::Float(f) => Some(f.to_string()),
+                    _ => None,
+                })
+                .collect();
+            (n.len() == 3).then(|| n.join(","))
+        }
+        _ => None,
+    }
+}
+
+impl Field {
+    /// Its type as a tour writes it, for the schema.
+    pub(crate) fn tour_type(&self) -> String {
+        match self.access {
+            Access::Flag(..) => "bool".to_string(),
+            Access::Real(_, _, lo, _) if lo == f32::MIN => "float".to_string(),
+            Access::Real(_, _, lo, hi) => format!("float, {lo} to {hi}"),
+            Access::Count(_, _, lo, hi) => format!("int, {lo} to {hi}"),
+            Access::Choice(_, _, choices) => format!("string: {}", choices().join(" \\| ")),
+            Access::Rgb(..) => "[r, g, b], 0 to 1".to_string(),
+        }
+    }
+
+    /// Its default as a tour writes it, for the schema.
+    pub(crate) fn tour_default(&self) -> String {
+        let d = ColoringSpec::default();
+        match self.access {
+            Access::Flag(get, _) => get(&d).to_string(),
+            // A default no file writes (Duotone or Binary's "off") is the key left out.
+            Access::Choice(get, _, choices) => {
+                let v = get(&d);
+                if choices().contains(&v) { format!("\"{v}\"") } else { "(left out)".to_string() }
+            }
+            Access::Rgb(get, _) => {
+                let c = get(&d);
+                format!("[{}, {}, {}]", c[0], c[1], c[2])
+            }
+            _ => self.access.text(&d),
         }
     }
 }
