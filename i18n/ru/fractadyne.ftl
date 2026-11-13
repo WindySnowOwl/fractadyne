@@ -274,6 +274,8 @@ menu-color-browse-hover = Все палитры на текущем виде, р
 # The palette browser window.
 palette-browser-title = Палитры
 palette-browser-clear = Сбросить фильтры
+palette-browser-both = Оба
+palette-browser-panes-hover = В двойном виде миниатюры могут показывать левую панель, правую или обе рядом.
 
 # Shown when the chosen filters leave no palette.
 palette-browser-none = Ни у одной палитры нет всех этих меток.

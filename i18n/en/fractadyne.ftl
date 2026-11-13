@@ -277,6 +277,8 @@ menu-color-browse-hover = Every palette over the current view, side by side: fil
 # The palette browser window.
 palette-browser-title = Palettes
 palette-browser-clear = Clear filters
+palette-browser-both = Both
+palette-browser-panes-hover = In the dual view, the thumbnails can show the left pane, the right pane, or both side by side.
 
 # Shown when the chosen filters leave no palette.
 palette-browser-none = No palette has all of these tags.
