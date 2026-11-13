@@ -2709,6 +2709,7 @@ panel-tail-length-hover = 窓の長さ（反復回数）です。短い窓（8�
 panel-trap-shape = トラップの形
 panel-inside = 内部
 panel-inside-hover = 集合の内部を何で着色するか。
+panel-inside-color-hover = 集合の内部の色。
 inside-solid = 単色
 inside-solid-desc = 集合の内部全体を一色で塗ります。
 inside-trap = 軌道トラップ

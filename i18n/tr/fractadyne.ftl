@@ -2780,6 +2780,7 @@ panel-tail-length-hover = Yineleme cinsinden pencere uzunluğu. Kısa pencereler
 panel-trap-shape = Tuzak şekli
 panel-inside = İç kısım
 panel-inside-hover = Kümenin içini neyin renklendirdiği.
+panel-inside-color-hover = Kümenin içinin rengi.
 inside-solid = Düz renk
 inside-solid-desc = Kümenin tüm içi için tek bir renk.
 inside-trap = Yörünge tuzağı

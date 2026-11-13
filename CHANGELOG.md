@@ -59,6 +59,12 @@ published as the pre-releases `v0.2.41-beta.1` to `v0.2.41-beta.150`, and a "bet
 
 Changes after 0.3.0-beta.1:
 
+- **A solid inside in any color (0.3.0-beta.27).** A color button beside the Inside row sets the
+  color of a solid inside under any palette, where it was always near-black; Duotone and Binary go on
+  using their dark color there. The command line sets the inside too: `--interior solid|trap`,
+  `--interior-palette ID` and `--interior-color R,G,B`. Duotone's and Binary's color swatches now
+  show their colors as the view does (they showed them lighter), and open the gradient editor's
+  color picker, with its hex field, Cancel and eyedropper.
 - **The inside of the set can be colored by the orbit trap (0.3.0-beta.27).** The panel's Coloring
   section has an Inside row: one solid color, or the orbit trap, which shows how near each orbit came
   to the trap, in the outside palette or in a palette of its own (Inside palette). The trap's shape is

@@ -327,7 +327,7 @@ pub(crate) const KNOWN_VIEW_KEYS: &[&str] = &[
     // default, so an ordinary view is byte-identical to one written before the keys existed.
     "method", "stripe_freq", "stripe_tail", "stripe_tail_len", "interior", "interior_palette", "trap",
     "light", "light_angle", "light_height", "glow", "glow_strength", "glow_width",
-    "palette_mode", "palette_lo", "palette_hi",
+    "palette_mode", "palette_lo", "palette_hi", "interior_color",
     "normalize_live", "normalize_fit", "log_scale",
 ];
 
@@ -403,6 +403,7 @@ const TYPED_VIEW_KEYS: &[(&str, ValueKind)] = &[
     ("palette_mode", ValueKind::PaletteMode),
     ("palette_lo", ValueKind::Rgb),
     ("palette_hi", ValueKind::Rgb),
+    ("interior_color", ValueKind::Rgb),
     ("normalize_live", ValueKind::Flag),
     ("normalize_fit", ValueKind::Flag),
     ("log_scale", ValueKind::Flag),

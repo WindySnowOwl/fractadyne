@@ -371,11 +371,17 @@ impl FractadyneApp {
                     // would wrap. It is a readout here, not a field — the gradient editor is where
                     // a color gets typed, and duplicating an editable field in two places would
                     // duplicate the "which one wins" question with it.
+                    // The app's swatch, which shows a display-space color as it renders (egui's took it
+                    // for linear light and drew it lighter).
                     ui.horizontal(|ui| {
-                        ui.color_edit_button_rgb(&mut self.coloring.duotone_lo);
-                        ui.label(lo_lbl);
-                        ui.color_edit_button_rgb(&mut self.coloring.duotone_hi);
-                        ui.label(hi_lbl);
+                        if let Some(c) = crate::color_swatch(ui, egui::Id::new("panel_duotone_lo"), self.coloring.duotone_lo, &lo_lbl) {
+                            self.coloring.duotone_lo = c;
+                        }
+                        ui.label(lo_lbl.as_str());
+                        if let Some(c) = crate::color_swatch(ui, egui::Id::new("panel_duotone_hi"), self.coloring.duotone_hi, &hi_lbl) {
+                            self.coloring.duotone_hi = c;
+                        }
+                        ui.label(hi_lbl.as_str());
                     });
                     ui.horizontal(|ui| {
                         for c in [self.coloring.duotone_lo, self.coloring.duotone_hi] {

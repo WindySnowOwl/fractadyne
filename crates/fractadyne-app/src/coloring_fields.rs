@@ -80,7 +80,7 @@ fn two_color_on(s: &ColoringSpec) -> bool {
 }
 
 /// The table, in the order a view writes its keys. A row's parents come before it.
-pub(crate) const FIELDS: [Field; 19] = [
+pub(crate) const FIELDS: [Field; 20] = [
     Field {
         key: "method",
         name: "coloring method",
@@ -259,6 +259,14 @@ pub(crate) const FIELDS: [Field; 19] = [
         access: Access::Rgb(|s| s.duotone_hi, |s, v| s.duotone_hi = v),
         parents: &["palette_mode"],
         shows: two_color_on,
+    },
+    Field {
+        key: "interior_color",
+        name: "inside color",
+        doc: "The color of a solid inside, as display-space [r, g, b] (when the inside is solid; Duotone and Binary use `palette_lo`).",
+        access: Access::Rgb(|s| s.interior_color, |s, v| s.interior_color = v),
+        parents: &["method", "interior", "palette_mode"],
+        shows: |s| !interior_trap(s) && !two_color_on(s),
     },
     Field {
         key: "normalize_live",

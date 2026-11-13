@@ -1011,6 +1011,21 @@ UI rows, `.fdn`/farm/CLI through B4, B1 cells, a selftest appearance check, uite
 
 Order: C1, C4, C8, C9, C11 (smallest), then C2, C3, C10, then C5, C6, C7.
 
+**C1, done 2026-11-13** (branch `feat/color-c1-inside-color`): `ColoringSpec.interior_color`
+(display space, default the old near-black), the app's `interior_color`, a color button beside the
+Inside row while the inside is solid and the palette is not Duotone or Binary (they keep their dark
+color there, which their own swatch sets). A Life universe and an L-system keep the near-black as
+their background (`family_interior_color`). View key `interior_color` (shows for a solid inside
+outside Duotone and Binary), the reader's lists, `ViewColoring`, `TOURS.md`; the command line's
+`--interior`, `--interior-palette` and `--interior-color` (B5's choices had none: A6's rule), each
+fatal when unreadable and said when it changes no pixel. Tests: the round trips (a variant where it
+shows and one under Duotone where it does not), the self-test's view case, the old session's
+fields-since list; uitest `inside-color` (every pixel of the inside's core exactly the color, the
+outside as it was, no pass). Found: egui's `color_edit_button_rgb` reads its floats as linear light,
+so its swatch showed a display-space color lighter than the view (0.2 drawn as 124, not 51); the
+inside color and Duotone's pair now use `color_swatch` (the gradient editor's swatch and picker,
+split out of `color_field`).
+
 **Tests specific to this phase**: CPU oracles for C2 transfers and C7 OKLab round trip
 (sRGB → OKLab → sRGB within 1e-5); C3 and C10 line widths measured as 2·area/perimeter in B1 at
 ss 1 and 2; C6 temporal stability over a zoom tour (frame-to-frame palette shift).
@@ -1229,8 +1244,9 @@ coloring in these places, so sequence the two with care:
 | B3 | done, merged | `412fafc6` (merge `542a5264`) |
 | B4 | done, merged | `a5d7d74b` (merge `ba452e9c`) |
 | B6 | done, merged | `c1e4bd61` (merge `35001f80`) |
-| B7 | done, branch `feat/color-b7-method-sheet` (steps 1-4), not merged | |
-| B5 | done, branch `feat/color-b5-interior` (on B7), not merged | |
+| B7 | done, merged | `9e1efa0e` (merge `97c91c32`; step 1 `17b6d60d` with the browser's dual view, `ef2acde7`) |
+| B5 | done, merged | `b2b927d6` (merge `e3e53257`) |
 | B8 | not started | |
-| C1–C11 | not started | |
+| C1 | done, branch `feat/color-c1-inside-color`, not merged | |
+| C2–C11 | not started | |
 | D, E, F, G | not started | |

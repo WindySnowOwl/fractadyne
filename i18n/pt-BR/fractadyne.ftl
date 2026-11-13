@@ -2780,6 +2780,7 @@ panel-tail-length-hover = Comprimento da janela em iterações. Janelas curtas (
 panel-trap-shape = Forma da armadilha
 panel-inside = Interior
 panel-inside-hover = O que colore o interior do conjunto.
+panel-inside-color-hover = A cor do interior do conjunto.
 inside-solid = Cor sólida
 inside-solid-desc = Uma só cor para todo o interior do conjunto.
 inside-trap = Armadilha de órbita

@@ -2834,6 +2834,7 @@ panel-tail-length-hover = Длина окна в итерациях. Корот�
 panel-trap-shape = Форма ловушки
 panel-inside = Внутри
 panel-inside-hover = Чем окрашена внутренность множества.
+panel-inside-color-hover = Цвет внутренности множества.
 inside-solid = Сплошной цвет
 inside-solid-desc = Один цвет для всей внутренности множества.
 inside-trap = Ловушка орбиты

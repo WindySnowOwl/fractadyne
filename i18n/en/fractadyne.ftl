@@ -2977,6 +2977,7 @@ panel-trap-shape = Trap shape
 # The panel's Inside rows (coloring plan B5): what colors the inside of the set.
 panel-inside = Inside
 panel-inside-hover = What colors the inside of the set.
+panel-inside-color-hover = The color of the inside of the set.
 inside-solid = Solid color
 inside-solid-desc = One color for the whole inside of the set.
 inside-trap = Orbit trap

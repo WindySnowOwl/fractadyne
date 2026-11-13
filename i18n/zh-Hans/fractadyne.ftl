@@ -2709,6 +2709,7 @@ panel-tail-length-hover = 以迭代次数计的窗口长度。短窗口（8–32
 panel-trap-shape = 陷阱形状
 panel-inside = 内部
 panel-inside-hover = 集合内部的着色方式。
+panel-inside-color-hover = 集合内部的颜色。
 inside-solid = 纯色
 inside-solid-desc = 整个集合内部使用同一种颜色。
 inside-trap = 轨道陷阱

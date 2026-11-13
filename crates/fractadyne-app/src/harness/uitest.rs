@@ -338,6 +338,9 @@ enum Screen {
     /// The home view in Smooth with the inside solid (coloring plan B5): the picture, and what the
     /// Inside list says choosing the trap would cost...
     InsideSolid,
+    /// ...the solid inside in a color of its own (C1): exactly that color inside, the outside as
+    /// it was, and no pass (a recolor)...
+    InsideColor,
     /// ...the trap colors the inside (the outside palette): the inside changes, the outside not,
     /// and the calculation the list said it would take ran...
     InsideTrap,
@@ -351,6 +354,9 @@ enum Screen {
 /// frame accumulates (B7 step 4).
 const UITEST_ASKED_CELL: crate::ui::method_sheet::SheetCell =
     crate::ui::method_sheet::SheetCell { method: crate::ColorMethod::Decomposition, trap: None, stripe_freq: None };
+
+/// The `inside-color` step's solid inside (C1).
+const UITEST_INSIDE_COLOR: [f32; 3] = [0.9, 0.2, 0.6];
 
 /// `sheet-calculated-cell-is-the-method`: the most two pictures of the same view in the same
 /// method, by two renderers, may differ as 8x8 block means (0-255 a channel).
@@ -1215,6 +1221,7 @@ fn build_steps() -> Vec<Step> {
         screen("method-sheet-deep-asked", Screen::MethodSheetDeepAsked),
         screen("method-sheet-deep-asked-done", Screen::MethodSheetDeepAskedDone),
         screen("inside-solid", Screen::InsideSolid),
+        screen("inside-color", Screen::InsideColor),
         screen("inside-trap", Screen::InsideTrap),
         screen("inside-palette", Screen::InsidePalette),
         screen("inside-solid-under-trap", Screen::InsideSolidUnderTrap),
@@ -1581,7 +1588,9 @@ impl FractadyneApp {
             return;
         };
         let (w, h) = (size[0] as usize, size[1] as usize);
-        let ic = self.interior_color();
+        // The color the solid step drew its inside with: the default, not this step's (`inside-color`
+        // changes it; read from the app, its mask found no inside at all).
+        let ic = fractadyne_state::default_interior_color();
         let ic8 = [0, 1, 2].map(|k| (ic[k].clamp(0.0, 1.0) * 255.0 + 0.5) as i32);
         let inside: Vec<bool> = solid_px.chunks_exact(4).map(|p| (0..3).all(|k| (p[k] as i32 - ic8[k]).abs() <= 2)).collect();
         let near: Vec<bool> = (0..w * h)
@@ -1619,7 +1628,27 @@ impl FractadyneApp {
         let is_out = |i: usize| !near[i];
         // Passes a change caused since `before` (KEY or FORCED; a probe's do not count).
         let caused = |before: &str| step(before).map(|r| (ran_why[0] - r.ran_why[0]) + (ran_why[1] - r.ran_why[1]));
+        // The inside's core: inside pixels two clear of its edge (an edge pixel blends, and a dark
+        // outside pixel can pass for the inside's near-black: 2 of 5,211 did, 2026-11-13).
+        let core = |i: usize| {
+            let (x, y) = ((i % w) as i64, (i / w) as i64);
+            (-2..=2).all(|dy| (-2..=2).all(|dx| {
+                let (u, v) = (x + dx, y + dy);
+                u >= 0 && v >= 0 && (u as usize) < w && (v as usize) < h && inside[v as usize * w + u as usize]
+            }))
+        };
         match sc {
+            Screen::InsideColor => {
+                // Every pixel of the inside's core the chosen color (display space: bytes ×255).
+                let want = UITEST_INSIDE_COLOR.map(|v| (v * 255.0 + 0.5) as i32);
+                let n_core = (0..w * h).filter(|i| core(*i)).count();
+                let off = (0..w * h).filter(|i| core(*i) && (0..3).any(|k| (px[i * 4 + k] as i32 - want[k]).abs() > 2)).count();
+                let (d_out, _) = diff(px, &solid_px, &is_out);
+                let ran = caused("inside-solid");
+                let detail = format!("{n_core} pixels of the inside's core ({n_in} inside), {off} not {want:?}; the outside changed by {d_out:.2}; passes caused {ran:?}");
+                let ok = n_core * 25 >= w * h && off == 0 && d_out <= 0.5 && ran == Some(0);
+                checks.push(if ok { pass("inside-color", detail) } else { fail("inside-color", detail) });
+            }
             Screen::InsideTrap => {
                 let (d_out, n_out) = diff(px, &solid_px, &is_out);
                 let (d_in, _) = diff(px, &solid_px, &is_in);
@@ -1654,13 +1683,6 @@ impl FractadyneApp {
                 // core (inside pixels two clear of its edge, where an export's one sample and the
                 // screen's two agree). CONTROL: the step before's inside, in the outside palette.
                 // (Over the whole picture, as block means, the inside's 7% read 0.27 against 2.95.)
-                let core = |i: usize| {
-                    let (x, y) = ((i % w) as i64, (i / w) as i64);
-                    (-2..=2).all(|dy| (-2..=2).all(|dx| {
-                        let (u, v) = (x + dx, y + dy);
-                        u >= 0 && v >= 0 && (u as usize) < w && (v as usize) < h && inside[v as usize * w + u as usize]
-                    }))
-                };
                 let export = self.uitest_export_view(size).filter(|e| e.len() == px.len());
                 let detail = match &export {
                     Some(e) => {
@@ -1931,6 +1953,7 @@ impl FractadyneApp {
         self.harness.uitest_sheet_hold = false;
         self.coloring.interior = None;
         self.coloring.interior_palette = None;
+        self.coloring.interior_color = fractadyne_state::default_interior_color();
         self.dialogs.minimap = false;
         // The Snapshot choice is a window too (found standing behind the snapshot-screen step).
         self.dialogs.snapshot_choice_open = false;
@@ -2371,6 +2394,11 @@ impl FractadyneApp {
                 self.dialogs.right_panel_open = true;
             }
             // The view as the step before left it.
+            Screen::InsideColor => {
+                self.coloring.interior = Some(crate::InteriorMode::Solid);
+                self.coloring.interior_color = UITEST_INSIDE_COLOR;
+                self.dialogs.right_panel_open = true;
+            }
             Screen::InsideTrap | Screen::InsidePalette => {
                 self.coloring.interior = Some(crate::InteriorMode::Trap);
                 if matches!(s, Screen::InsidePalette) {
@@ -2917,7 +2945,7 @@ impl FractadyneApp {
         let switch_costs: Vec<_> = crate::ColorMethod::ALL.iter().map(|m| (*m, self.switch_cost(*m))).collect();
         let inside_step = matches!(
             step.kind,
-            StepKind::Screen(Screen::InsideSolid | Screen::InsideTrap | Screen::InsidePalette | Screen::InsideSolidUnderTrap)
+            StepKind::Screen(Screen::InsideSolid | Screen::InsideColor | Screen::InsideTrap | Screen::InsidePalette | Screen::InsideSolidUnderTrap)
         );
         let inside_view = inside_step.then(|| self.uitest_inside_size()).and_then(|s| {
             self.uitest_atlas_read(&[None], s).and_then(|mut v| v.pop()).map(|b| (b, s))
@@ -3676,7 +3704,7 @@ impl FractadyneApp {
         }
 
         // ---- what colors the inside of the set (coloring plan B5) ----
-        if let StepKind::Screen(sc @ (Screen::InsideTrap | Screen::InsidePalette | Screen::InsideSolidUnderTrap)) = step.kind {
+        if let StepKind::Screen(sc @ (Screen::InsideColor | Screen::InsideTrap | Screen::InsidePalette | Screen::InsideSolidUnderTrap)) = step.kind {
             self.uitest_inside_checks(sc, ut, inside_view.as_ref(), ran_why, &mut checks);
         }
 
