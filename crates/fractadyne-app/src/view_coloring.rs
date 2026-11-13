@@ -27,7 +27,7 @@
 //! code that sets a coloring by hand: the harnesses and this module's tests.
 
 use crate::coloring_fields;
-use crate::{ColorMethod, TrapType};
+use crate::{ColorMethod, InteriorMode, TrapType};
 use fractadyne_state::ColoringSpec;
 
 /// Duotone or Binary: the two-color palettes, which win over the preset and the custom gradient
@@ -89,6 +89,10 @@ pub(crate) struct ViewColoring {
     pub(crate) normalize_live: bool,
     pub(crate) normalize_fit: bool,
     pub(crate) log_scale: bool,
+    /// What colors the inside (B5): `None`, the method's own. Its palette, a preset's id; empty for
+    /// the outside palette.
+    pub(crate) interior: Option<InteriorMode>,
+    pub(crate) interior_palette: String,
 }
 
 impl Default for ViewColoring {
@@ -126,6 +130,8 @@ impl ViewColoring {
             normalize_live: s.normalize_live,
             normalize_fit: s.normalize_fit,
             log_scale: s.log_palette,
+            interior: InteriorMode::parse_key(&s.interior),
+            interior_palette: s.interior_palette.clone(),
         }
     }
 
@@ -151,6 +157,8 @@ impl ViewColoring {
             normalize_live: self.normalize_live,
             normalize_fit: self.normalize_fit,
             log_palette: self.log_scale,
+            interior: self.interior.map(|m| m.key().to_string()).unwrap_or_default(),
+            interior_palette: self.interior_palette.clone(),
             ..base.clone()
         }
     }

@@ -4,7 +4,7 @@
 //! from `ViewColoring`, and a saved view rendering the same) is the selftest `view-coloring`.
 
 use super::{TwoColor, ViewColoring, KEYS};
-use crate::{ColorMethod, TrapType};
+use crate::{ColorMethod, InteriorMode, TrapType};
 
 /// Read `text` the way the view reader does and apply it to `onto`.
 fn load(text: &str, onto: &ViewColoring, states: bool) -> (ViewColoring, Vec<&'static str>) {
@@ -43,6 +43,8 @@ fn scrambled() -> ViewColoring {
         normalize_live: false,
         normalize_fit: true,
         log_scale: true,
+        interior: Some(InteriorMode::Solid),
+        interior_palette: "ice".into(),
     }
 }
 
@@ -69,6 +71,12 @@ fn variants() -> Vec<ViewColoring> {
         v.push(ViewColoring { two_color: tc, ..d.clone() });
         v.push(ViewColoring { two_color: tc, lo: [1.0, 0.5, 0.0], hi: [0.0, 0.25, 0.75], ..d.clone() });
     }
+    // The inside (B5): chosen one way or the other, with its palette, under Smooth and the trap.
+    v.push(ViewColoring { interior: Some(InteriorMode::Solid), ..d.clone() });
+    v.push(ViewColoring { interior: Some(InteriorMode::Trap), ..d.clone() });
+    v.push(ViewColoring { interior: Some(InteriorMode::Trap), trap: TrapType::Cross, interior_palette: "ember".into(), ..d.clone() });
+    v.push(ViewColoring { method: ColorMethod::OrbitTrap, interior: Some(InteriorMode::Solid), ..d.clone() });
+    v.push(ViewColoring { method: ColorMethod::OrbitTrap, interior_palette: "ember".into(), ..d.clone() });
     v.push(ViewColoring { normalize_live: false, ..d.clone() });
     v.push(ViewColoring { normalize_fit: true, log_scale: true, ..d.clone() });
     v.push(ViewColoring { method: ColorMethod::OrbitTrap, normalize_fit: true, log_scale: true, ..d.clone() });

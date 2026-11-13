@@ -466,7 +466,7 @@ impl crate::FractadyneApp {
     }
 
     /// The view on screen at `size` pixels: the same center, the same vertical span.
-    fn sheet_cell_viewport(&self, size: [u32; 2]) -> fractadyne_core::Viewport {
+    pub(crate) fn sheet_cell_viewport(&self, size: [u32; 2]) -> fractadyne_core::Viewport {
         let mut vp = self.viewport.clone();
         vp.set_size(size[0] as f64, size[1] as f64);
         vp.units_per_pixel = self.viewport.units_per_pixel * fractadyne_core::FloatExp::from_f64(self.viewport.height_px / size[1].max(1) as f64);

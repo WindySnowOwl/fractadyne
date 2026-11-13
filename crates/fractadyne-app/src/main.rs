@@ -3134,7 +3134,7 @@ pub(crate) fn accum_jitter_seq(i: u32) -> [f32; 2] {
 // also chose the palette rate, where the trap belongs with the unbounded methods: the live view
 // handed trap frames to the chunked walk and the band's BLA, which compute no trap, and every pixel
 // read the "no statistics" value (one flat color). The rate now asks `bounded_value`.
-pub(crate) use fractadyne_core::coloring::{Capability, ColorMethod, Stat, StatSet, TrapType};
+pub(crate) use fractadyne_core::coloring::{Capability, ColorMethod, InteriorMode, InteriorShading, Stat, StatSet, TrapType};
 
 /// A coloring method's or trap shape's name in the language in use. The words are the app's; the
 /// table (`fractadyne_core::coloring`) has only the keys.
@@ -6364,6 +6364,12 @@ struct ColoringConfig {
     stripe_tail: bool,
     stripe_tail_len: u32,
     trap_type: TrapType,
+    /// What colors the inside of the set (coloring plan B5); `None`: the method's own
+    /// (`InteriorMode::of_method`: the orbit trap its trap, every other method one color), so a view
+    /// that never chose keeps its look whichever method it takes. Persisted.
+    interior: Option<InteriorMode>,
+    /// The interior palette, a preset; `None`: the outside palette. Persisted by its id.
+    interior_palette: Option<usize>,
     /// Auto-normalize the palette cycle to the frame's escape-value range on export (`--normalize`).
     /// At extreme depth the smooth-iter counts are ~1e5–1e6 and a fixed `cycle` aliases a correct
     /// escape field into speckle; normalize maps the range to `cycle`-many palette sweeps. Export
@@ -6407,10 +6413,25 @@ impl ColoringConfig {
     /// calculates it again (coloring plan B6, `ui::method_list`). [`Self::orbit_stats`] is this for
     /// the method in use.
     pub(crate) fn orbit_stats_of(&self, method: ColorMethod, mode: RenderMode) -> StatSet {
-        match self.orbit_stats_override {
+        self.orbit_stats_with(method, mode, self.interior_of(method))
+    }
+    /// [`Self::orbit_stats_of`] with the inside colored by `inside` (B5: the Inside list asks it to
+    /// say which choice recolors the frame on screen).
+    pub(crate) fn orbit_stats_with(&self, method: ColorMethod, mode: RenderMode, inside: InteriorMode) -> StatSet {
+        let set = match self.orbit_stats_override {
             Some(s) => s.union(method.orbit_stats()),
             None => method.orbit_stats_at(mode.is_floatexp() && crate::tunables::cost().gbuffer_deep == 1),
+        };
+        // ...and what its inside is colored by: an interior colored by the trap needs the trap.
+        match inside.reads() {
+            Some(st) => set.with(st),
+            None => set,
         }
+    }
+    /// What colors the inside of a frame colored by `method` (B5): the view's choice, else the
+    /// method's own.
+    pub(crate) fn interior_of(&self, method: ColorMethod) -> InteriorMode {
+        self.interior.unwrap_or(InteriorMode::of_method(method))
     }
     /// Whether a frame accumulates any statistic at all: the same answer in every band, since the
     /// G-buffer only joins a frame that already accumulates one. For the rules that ask only that
@@ -8050,6 +8071,8 @@ impl FractadyneApp {
                 stripe_tail: s.coloring.stripe_tail,
                 stripe_tail_len: s.coloring.stripe_tail_len.clamp(4, 1 << 20),
                 trap_type: TrapType::from_key(&s.coloring.trap_type),
+                interior: InteriorMode::parse_key(&s.coloring.interior),
+                interior_palette: fractadyne_color::preset_by_id(&s.coloring.interior_palette),
                 normalize: args.iter().any(|a| a == "--normalize"),
                 normalize_live: s.coloring.normalize_live,
                 normalize_fit: s.coloring.normalize_fit,
@@ -8898,6 +8921,12 @@ impl FractadyneApp {
             use_binary: self.coloring.use_binary,
             duotone_lo: self.coloring.duotone_lo,
             duotone_hi: self.coloring.duotone_hi,
+            interior: self.coloring.interior.map(|m| m.key().to_string()).unwrap_or_default(),
+            interior_palette: self
+                .coloring
+                .interior_palette
+                .map(|i| fractadyne_color::PRESETS[i.min(fractadyne_color::PRESETS.len() - 1)].id.to_string())
+                .unwrap_or_default(),
         }
     }
 
@@ -8934,6 +8963,8 @@ impl FractadyneApp {
         c.use_binary = s.use_binary;
         c.duotone_lo = s.duotone_lo;
         c.duotone_hi = s.duotone_hi;
+        c.interior = InteriorMode::parse_key(&s.interior);
+        c.interior_palette = fractadyne_color::preset_by_id(&s.interior_palette);
         if gradient_changed {
             c.palette_rev = c.palette_rev.wrapping_add(1);
         }
@@ -11826,6 +11857,30 @@ impl FractadyneApp {
     fn active_lut(&self) -> (std::sync::Arc<Vec<[f32; 4]>>, bool) {
         let lut = self.active_gradient().bake(fractadyne_color::segment::LUT_SIZE);
         (std::sync::Arc::new(lut.entries), lut.smooth)
+    }
+
+    /// How the inside of a frame colored by `method` is shaded (coloring plan B5): the view's
+    /// interior for that method, and its palette baked whenever one is chosen, whatever the
+    /// shading, so an atlas cell of another method finds it in the view's LUT buffer
+    /// (`fractadyne_gpu::atlas`). The interior's rate is the orbit trap method's, its offset the
+    /// palette's: an interior in the outside palette is colored as the trap method colors it.
+    pub(crate) fn interior_shade_for(&self, method: ColorMethod) -> fractadyne_gpu::InteriorShade {
+        let lut = self.coloring.interior_palette.map(|i| {
+            let p = &fractadyne_color::PRESETS[i.min(fractadyne_color::PRESETS.len() - 1)];
+            fractadyne_color::segment::Gradient::from_stops(p.name, p.stops).bake(fractadyne_color::segment::LUT_SIZE)
+        });
+        fractadyne_gpu::InteriorShade {
+            shading: self.interior_shading_for(method),
+            lut_smooth: lut.as_ref().is_none_or(|l| l.smooth),
+            lut: lut.map(|l| std::sync::Arc::new(l.entries)),
+            cycle: self.color_cycle_for(ColorMethod::OrbitTrap),
+            offset: self.coloring.offset,
+        }
+    }
+
+    /// [`Self::interior_shade_for`]'s shading alone (an atlas cell's, which takes the view's palette).
+    pub(crate) fn interior_shading_for(&self, method: ColorMethod) -> InteriorShading {
+        InteriorShading::for_view(self.coloring.interior_of(method), method, self.coloring.interior_palette.is_some())
     }
 
     /// In-set (interior) color for the GPU. Binary/duotone use the chosen `lo` color so the

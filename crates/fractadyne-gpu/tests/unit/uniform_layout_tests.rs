@@ -122,6 +122,13 @@ fn the_palette_fade_fields_line_up() {
         // The output width the per-texel distance estimate is read per pixel against: swapped
         // with a pad word it would read 0 (the texture's base) and quietly undo the correction.
         ("display_w", std::mem::offset_of!(ColorUniforms, display_w)),
+        // The interior (coloring plan B5): swapped, the shader would read a palette length as a
+        // shading mode, or the interior's rate as its offset.
+        ("interior_mode", std::mem::offset_of!(ColorUniforms, interior_mode)),
+        ("lut2_len", std::mem::offset_of!(ColorUniforms, lut2_len)),
+        ("lut2_smooth", std::mem::offset_of!(ColorUniforms, lut2_smooth)),
+        ("interior_cycle", std::mem::offset_of!(ColorUniforms, interior_cycle)),
+        ("interior_offset", std::mem::offset_of!(ColorUniforms, interior_offset)),
     ] {
         assert_eq!(wgsl_field_offset(&fields, wgsl), rust, "`{wgsl}` is at another offset in ColorU than in ColorUniforms");
     }

@@ -2779,6 +2779,15 @@ panel-tail-length = Longitud de cola
 panel-tail-length-unit = it
 panel-tail-length-hover = Longitud de la ventana en iteraciones. Las ventanas cortas (8–32) dan las bandas marcadas clásicas a cualquier profundidad; las más largas vuelven a promediar hacia un color plano, ya que el término de franjas de una órbita caótica larga se compensa en promedio.
 panel-trap-shape = Forma de trampa
+panel-inside = Interior
+panel-inside-hover = Qué colorea el interior del conjunto.
+inside-solid = Color sólido
+inside-solid-desc = Un solo color para todo el interior del conjunto.
+inside-trap = Trampa de órbita
+inside-trap-desc = Cuánto se acercó cada órbita a la trampa de órbita, en la paleta interior. Su forma es el ajuste Forma de trampa.
+panel-inside-palette = Paleta interior
+panel-inside-palette-hover = La paleta con la que la trampa de órbita colorea el interior.
+panel-inside-palette-same = Igual que fuera
 panel-palette = Paleta
 # The two colors of the Binary palette, each beside its color swatch.
 panel-in-set = En el conjunto

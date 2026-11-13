@@ -294,6 +294,8 @@ pub struct ExportRequest {
     pub trap_type: u32,
     pub aa_filter: u32,
     pub interior_col: [f32; 4],
+    /// What else may color the inside (coloring plan B5); the default, the method's own interior.
+    pub interior: crate::InteriorShade,
     /// Per-tile nominal-work cap (`tile²·ss²·max_iter`) overriding the default `TILE_WORK_BUDGET`.
     /// `None` keeps the export default; a smaller value forces smaller tiles so no single GPU
     /// submission runs long enough to trip the OS watchdog. The offline tour path sets this
@@ -1799,6 +1801,7 @@ impl<'a> TileRenderer<'a> {
         // palette LUT beside it — one write, then every tile colors through the same table.
         let lut_buf = crate::make_lut_buffer(device);
         let (lut_len, lut_smooth) = crate::write_lut(queue, &lut_buf, &req.lut, req.lut_smooth);
+        let iw = req.interior.upload(queue, &lut_buf);
         let cu = ColorUniforms {
             lut_len,
             cycle: req.cycle,
@@ -1834,7 +1837,11 @@ impl<'a> TileRenderer<'a> {
             fade_offset: req.palette_fade.offset,
             // Each tile is the texture's own base (`w·ss` samples across `w` pixels).
             display_w: 0.0,
-            _pad_fade: 0,
+            interior_mode: iw.mode,
+            lut2_len: iw.lut2_len,
+            lut2_smooth: iw.lut2_smooth,
+            interior_cycle: iw.cycle,
+            interior_offset: iw.offset,
         };
         queue.write_buffer(&color_uniform, 0, bytemuck::bytes_of(&cu));
         let split = |v: f64| -> (f32, f32) {
@@ -4048,7 +4055,7 @@ fn render_iter_passes(
 /// with `req`'s coloring and an uploaded LUT of `lut_len` entries: no reprojection, the
 /// one-tap filter. [`color_iter_buffer_ss`]'s, and the zoom-video assembler's, so a frame
 /// assembled from strips is colored exactly as a buffer handed to it would be.
-pub(crate) fn color_uniforms_for(req: &ExportRequest, ss: u32, w: u32, h: u32, lut_len: u32, lut_smooth: u32) -> ColorUniforms {
+pub(crate) fn color_uniforms_for(req: &ExportRequest, ss: u32, w: u32, h: u32, lut_len: u32, lut_smooth: u32, iw: crate::InteriorWords) -> ColorUniforms {
     ColorUniforms {
         lut_len,
         cycle: req.cycle,
@@ -4084,7 +4091,11 @@ pub(crate) fn color_uniforms_for(req: &ExportRequest, ss: u32, w: u32, h: u32, l
         fade_offset: req.palette_fade.offset,
         // The image is the texture's own base (`w·ss` samples across `w` pixels).
         display_w: 0.0,
-        _pad_fade: 0,
+        interior_mode: iw.mode,
+        lut2_len: iw.lut2_len,
+        lut2_smooth: iw.lut2_smooth,
+        interior_cycle: iw.cycle,
+        interior_offset: iw.offset,
     }
 }
 
@@ -4144,7 +4155,8 @@ pub fn color_iter_buffer_ss(
     });
     let lut_buf = crate::make_lut_buffer(device);
     let (lut_len, lut_smooth) = crate::write_lut(queue, &lut_buf, &req.lut, req.lut_smooth);
-    let cu = color_uniforms_for(req, ss, w, h, lut_len, lut_smooth);
+    let interior = req.interior.upload(queue, &lut_buf);
+    let cu = color_uniforms_for(req, ss, w, h, lut_len, lut_smooth, interior);
     queue.write_buffer(&color_uniform, 0, bytemuck::bytes_of(&cu));
 
     // Upload the merged iteration buffer into a sampled texture; a zeroed aux (unused for the

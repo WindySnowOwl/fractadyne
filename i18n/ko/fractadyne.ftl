@@ -2706,6 +2706,15 @@ panel-tail-length = 꼬리 길이
 panel-tail-length-unit = 회
 panel-tail-length-hover = 반복 횟수로 나타낸 창 길이입니다. 짧은 창(8–32)은 어느 깊이에서나 고전적인 굵은 띠를 만들고, 긴 창은 다시 평평한 색으로 평균되는데, 길고 혼돈적인 궤도의 스트라이프 항은 평균하면 상쇄되기 때문입니다.
 panel-trap-shape = 트랩 모양
+panel-inside = 내부
+panel-inside-hover = 집합 내부를 무엇으로 칠할지.
+inside-solid = 단색
+inside-solid-desc = 집합 내부 전체를 한 가지 색으로 칠합니다.
+inside-trap = 궤도 트랩
+inside-trap-desc = 각 궤도가 궤도 트랩에 얼마나 가까이 왔는지를 내부 팔레트로 나타냅니다. 트랩 모양은 '트랩 모양' 설정을 따릅니다.
+panel-inside-palette = 내부 팔레트
+panel-inside-palette-hover = 궤도 트랩이 내부를 칠하는 팔레트.
+panel-inside-palette-same = 바깥과 같음
 panel-palette = 팔레트
 # The two colors of the Binary palette, each beside its color swatch.
 panel-in-set = 집합 안

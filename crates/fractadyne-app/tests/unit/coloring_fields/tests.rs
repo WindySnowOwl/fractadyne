@@ -31,6 +31,8 @@ fn other_value(f: &Field) -> &'static str {
             "method" => "stripe",
             "trap" => "circle",
             "palette_mode" => "binary",
+            "interior" => "trap",
+            "interior_palette" => "ember",
             k => panic!("no other value for the choice {k}"),
         },
         Access::Rgb(..) => "0.25,0.5,0.75",
@@ -107,7 +109,7 @@ fn the_default_writes_nothing_and_each_row_reads_back() {
     assert_eq!(view_lines(&ColoringSpec::default()), "");
     // Every row at once, with what each hangs off switched on.
     let mut s = ColoringSpec::default();
-    for k in ["method=stripe", "stripe_tail=1", "light=1", "glow=1", "palette_mode=duotone"] {
+    for k in ["method=stripe", "stripe_tail=1", "interior=trap", "light=1", "glow=1", "palette_mode=duotone"] {
         let (key, v) = k.split_once('=').unwrap();
         let f = FIELDS.iter().find(|f| f.key == key).unwrap();
         assert!(f.access.read(v, f.name, &mut s, &mut Vec::new()));

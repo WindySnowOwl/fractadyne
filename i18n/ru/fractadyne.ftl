@@ -2832,6 +2832,15 @@ panel-tail-length = Длина хвоста
 panel-tail-length-unit = ит
 panel-tail-length-hover = Длина окна в итерациях. Короткие окна (8–32) дают классические чёткие полосы на любой глубине; более длинные снова усредняются к ровному цвету, поскольку член полос длинной хаотической орбиты усредняется.
 panel-trap-shape = Форма ловушки
+panel-inside = Внутри
+panel-inside-hover = Чем окрашена внутренность множества.
+inside-solid = Сплошной цвет
+inside-solid-desc = Один цвет для всей внутренности множества.
+inside-trap = Ловушка орбиты
+inside-trap-desc = Насколько близко каждая орбита подошла к ловушке орбиты, в палитре внутренности. Её форму задаёт настройка «Форма ловушки».
+panel-inside-palette = Палитра внутри
+panel-inside-palette-hover = Палитра, которой ловушка орбиты окрашивает внутренность.
+panel-inside-palette-same = Как снаружи
 panel-palette = Палитра
 # The two colors of the Binary palette, each beside its color swatch.
 panel-in-set = Внутри

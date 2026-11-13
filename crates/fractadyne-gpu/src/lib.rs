@@ -395,7 +395,15 @@ pub(crate) struct ColorUniforms {
     /// per-texel distance estimate per output pixel (`de_px_shift` in `fs_color`). In what was the
     /// first `_pad_fade` word; `ColorU.display_w` mirrors it.
     pub(crate) display_w: f32,
-    pub(crate) _pad_fade: u32,
+    /// How an interior pixel is shaded ([`InteriorShade`], coloring plan B5): an
+    /// `InteriorShading` GPU id, in what was the second `_pad_fade` word. Then one more row: the
+    /// interior palette's length in the LUT buffer's second slot (0: the outside palette) and its
+    /// fetch mode, and the interior's own rate and offset. `ColorU` mirrors them.
+    pub(crate) interior_mode: u32,
+    pub(crate) lut2_len: u32,
+    pub(crate) lut2_smooth: u32,
+    pub(crate) interior_cycle: f32,
+    pub(crate) interior_offset: f32,
 }
 
 /// A dissolve between two palette maps: a frame drawn under its own map (`cycle`, `offset`,
@@ -1945,12 +1953,28 @@ pub(crate) fn make_color_bg(
 pub(crate) fn make_lut_buffer(device: &wgpu::Device) -> wgpu::Buffer {
     device.create_buffer(&wgpu::BufferDescriptor {
         label: Some("fractadyne.palette_lut"),
-        // The baked LUT, then its cyclic prefix sum (`LUT_SIZE + 1` entries) appended for the
-        // analytic palette anti-aliasing box filter — see `write_lut`. ~32 KB, still negligible.
-        size: ((fractadyne_color::segment::LUT_SIZE * 2 + 1) * 16) as u64,
-        usage: wgpu::BufferUsages::STORAGE | wgpu::BufferUsages::COPY_DST,
+        // Two slots of `LUT_SLOT` entries: the outside palette and the interior one (B5), each the
+        // baked LUT then its cyclic prefix sum (`LUT_SIZE + 1` entries) for the analytic palette
+        // anti-aliasing box filter — see `write_lut`. ~64 KB, still negligible. COPY_SRC: an atlas
+        // copies the view's interior slot into its own buffers (`atlas::render_atlas`).
+        size: (LUT_SLOT * 2 * 16) as u64,
+        usage: wgpu::BufferUsages::STORAGE | wgpu::BufferUsages::COPY_DST | wgpu::BufferUsages::COPY_SRC,
         mapped_at_creation: false,
     })
+}
+
+/// Entries in one slot of the LUT buffer: a baked palette and its prefix sum. The interior palette
+/// (coloring plan B5) is the second slot, at this offset (`LUT2_BASE` in the shader).
+pub(crate) const LUT_SLOT: usize = fractadyne_color::segment::LUT_SIZE * 2 + 1;
+
+/// Upload the interior palette into the LUT buffer's second slot ([`write_lut`]'s layout), or
+/// nothing for `None`. Returns `(len, smooth)` for the uniform: a length of 0 tells the shader to
+/// use the outside palette.
+pub(crate) fn write_lut2(queue: &wgpu::Queue, buf: &wgpu::Buffer, lut: Option<&[[f32; 4]]>, smooth: bool) -> (u32, u32) {
+    match lut {
+        Some(entries) if !entries.is_empty() => write_lut_at(queue, buf, LUT_SLOT, entries, smooth),
+        _ => (0, 0),
+    }
 }
 
 /// Upload a baked LUT, truncated to what the buffer holds, followed by its cyclic PREFIX SUM
@@ -1965,9 +1989,15 @@ pub(crate) fn write_lut(
     entries: &[[f32; 4]],
     smooth: bool,
 ) -> (u32, u32) {
+    write_lut_at(queue, buf, 0, entries, smooth)
+}
+
+/// [`write_lut`] into the slot starting at entry `base`.
+fn write_lut_at(queue: &wgpu::Queue, buf: &wgpu::Buffer, base: usize, entries: &[[f32; 4]], smooth: bool) -> (u32, u32) {
+    let base = (base * 16) as u64;
     let n = entries.len().min(fractadyne_color::segment::LUT_SIZE);
     if n > 0 {
-        queue.write_buffer(buf, 0, bytemuck::cast_slice(&entries[..n]));
+        queue.write_buffer(buf, base, bytemuck::cast_slice(&entries[..n]));
         // Cyclic running integral: psum[0]=0, psum[k]=Σ entries[0..k], psum[n]=total.
         let mut ps: Vec<[f32; 4]> = Vec::with_capacity(n + 1);
         let mut acc = [0.0f32; 4];
@@ -1978,7 +2008,7 @@ pub(crate) fn write_lut(
             }
             ps.push(acc);
         }
-        queue.write_buffer(buf, (n * 16) as u64, bytemuck::cast_slice(&ps));
+        queue.write_buffer(buf, base + (n * 16) as u64, bytemuck::cast_slice(&ps));
     }
     (n as u32, smooth as u32)
 }
@@ -2117,7 +2147,14 @@ pub(crate) fn shader_module(device: &wgpu::Device) -> wgpu::ShaderModule {
 /// module must start from this text.
 pub fn renderer_wgsl() -> &'static str {
     static SRC: std::sync::LazyLock<String> = std::sync::LazyLock::new(|| {
-        format!("{}{}", include_str!("mandelbrot.wgsl"), fractadyne_core::coloring::wgsl_ids())
+        // The interior palette's place in the LUT buffer (B5) between the file and the table's
+        // block, which stays last (`coloring_ids_tests`).
+        format!(
+            "{}\n// Where the interior palette starts in the LUT buffer (`LUT_SLOT`, coloring plan B5).\nconst LUT2_BASE: u32 = {}u;\n{}",
+            include_str!("mandelbrot.wgsl"),
+            LUT_SLOT,
+            fractadyne_core::coloring::wgsl_ids()
+        )
     });
     SRC.as_str()
 }
@@ -2998,6 +3035,46 @@ struct ExtSlot {
     bg: [wgpu::BindGroup; 2],
 }
 
+/// How the color pass shades the inside of the set (coloring plan B5): the GPU's side of the view's
+/// interior choice, on a live frame ([`MandelbrotParams`]) and an export ([`ExportRequest`]) alike.
+/// ⭐The default is the method's own interior (`InteriorShading::Method`): a request built without a
+/// choice renders as every request did before B5.
+#[derive(Clone, Debug, PartialEq)]
+pub struct InteriorShade {
+    pub shading: fractadyne_core::coloring::InteriorShading,
+    /// The interior palette, baked as the outside one is; `None`: the outside palette.
+    pub lut: Option<Arc<Vec<[f32; 4]>>>,
+    pub lut_smooth: bool,
+    /// The interior's palette rate and offset: the trap's value × `cycle` + `offset`.
+    pub cycle: f32,
+    pub offset: f32,
+}
+
+impl Default for InteriorShade {
+    fn default() -> Self {
+        Self { shading: Default::default(), lut: None, lut_smooth: true, cycle: 1.0, offset: 0.0 }
+    }
+}
+
+/// The color uniform's interior words ([`ColorUniforms::interior_mode`] and the row after it).
+#[derive(Clone, Copy)]
+pub(crate) struct InteriorWords {
+    pub(crate) mode: u32,
+    pub(crate) lut2_len: u32,
+    pub(crate) lut2_smooth: u32,
+    pub(crate) cycle: f32,
+    pub(crate) offset: f32,
+}
+
+impl InteriorShade {
+    /// Upload the interior palette into `buf`'s second slot (when there is one) and give the
+    /// uniform's interior words: every color pass that binds a LUT buffer goes through here.
+    pub(crate) fn upload(&self, queue: &wgpu::Queue, buf: &wgpu::Buffer) -> InteriorWords {
+        let (lut2_len, lut2_smooth) = write_lut2(queue, buf, self.lut.as_deref().map(|v| v.as_slice()), self.lut_smooth);
+        InteriorWords { mode: self.shading.gpu_id(), lut2_len, lut2_smooth, cycle: self.cycle, offset: self.offset }
+    }
+}
+
 /// Per-frame data the app hands to the paint callback. The reference orbit is
 /// precomputed (arbitrary precision) by the app and shared via `Arc`.
 #[derive(Clone)]
@@ -3261,6 +3338,8 @@ pub struct MandelbrotParams {
     /// Color for in-set (non-escaping) pixels (rgb + unused). Lets binary/duotone modes
     /// pick the interior color; defaults to near-black.
     pub interior_col: [f32; 4],
+    /// What else may color them (coloring plan B5); the default, the method's own interior.
+    pub interior: InteriorShade,
     pub resolution: [u32; 2],
     /// The panel this view fills, in physical pixels: `resolution` before a motion frame shrinks
     /// it. The color pass reads the stored per-texel distance estimate per PANEL pixel from it, so
@@ -3512,6 +3591,7 @@ impl Default for MandelbrotParams {
             trap_type: fractadyne_core::coloring::TrapType::Point.gpu_id(),
             aa_filter: 1,
             interior_col: [0.0, 0.0, 0.0, 1.0],
+            interior: InteriorShade::default(),
             resolution: [1, 1],
             display_res: [0, 0],
             ss: 1,
@@ -3875,6 +3955,7 @@ impl CallbackTrait for MandelbrotParams {
         // with it, and `write_lut` hands back the length it actually wrote so the count the shader
         // bounds its reads with can never disagree with the buffer's contents.
         let (lut_len, lut_smooth) = write_lut(queue, &view.lut_buf, &self.lut, self.lut_smooth);
+        let iw = self.interior.upload(queue, &view.lut_buf);
         let cu = ColorUniforms {
             lut_len,
             cycle: self.cycle,
@@ -3937,7 +4018,11 @@ impl CallbackTrait for MandelbrotParams {
             // The panel this view fills (`display_res`): a reduced motion frame's texels are larger
             // than its pixels, and a held frame's texture is not this frame's size.
             display_w: self.display_res[0] as f32,
-            _pad_fade: 0,
+            interior_mode: iw.mode,
+            lut2_len: iw.lut2_len,
+            lut2_smooth: iw.lut2_smooth,
+            interior_cycle: iw.cycle,
+            interior_offset: iw.offset,
         };
         queue.write_buffer(&view.color_uniform, 0, bytemuck::bytes_of(&cu));
         view.last_cu = Some(cu);

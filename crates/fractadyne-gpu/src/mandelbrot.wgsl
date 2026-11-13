@@ -3729,7 +3729,14 @@ struct ColorU {
     // (`width / ss`): what `fs_color` turns the stored per-TEXEL distance estimate into per-pixel
     // distance with (`de_px_shift`). In what was `_pad_fade0`; mirrors `ColorUniforms.display_w`.
     display_w: f32,
-    _pad_fade1: u32,
+    // How an interior texel is shaded (an INTERIOR_* constant, coloring plan B5), then the interior
+    // palette's length in the LUT buffer's second slot (0: the outside palette is used) and its
+    // fetch mode, and the interior's own rate and offset. Mirrors `ColorUniforms`.
+    interior_mode: u32,
+    lut2_len: u32,
+    lut2_smooth: u32,
+    interior_cycle: f32,
+    interior_offset: f32,
 };
 @group(0) @binding(0) var<uniform> cu: ColorU;
 @group(0) @binding(1) var iter_tex: texture_2d<f32>;
@@ -3778,20 +3785,45 @@ fn fs_seed(in: VsOut) -> SeedOut {
 // Indices WRAP rather than clamp: the palette is cycled by `fract`, so t = 1 and t = 0 are
 // neighbors on screen.
 fn palette(t_in: f32) -> vec3<f32> {
-    let n = i32(cu.lut_len);
+    return palette_in(t_in, 0u, cu.lut_len, cu.lut_smooth);
+}
+
+// [`palette`] over the LUT slot starting at entry `base`, of `len` entries: the outside palette at
+// 0, the interior one at `LUT2_BASE` (coloring plan B5; generated with the coloring ids).
+fn palette_in(t_in: f32, base: u32, len: u32, interp: u32) -> vec3<f32> {
+    let n = i32(len);
     if (n <= 0) {
         return vec3<f32>(0.0, 0.0, 0.0);
     }
+    let b0 = i32(base);
     let t = fract(t_in);
-    if (cu.lut_smooth == 0u) {
-        return lut[clamp(i32(t * f32(n)), 0, n - 1)].xyz;
+    // (`interp`, not `smooth`: that is a reserved word in WGSL, which naga's stricter front end, the
+    // custom formula module's, refuses.)
+    if (interp == 0u) {
+        return lut[b0 + clamp(i32(t * f32(n)), 0, n - 1)].xyz;
     }
     let x = t * f32(n) - 0.5;
     let i0 = i32(floor(x));
     let f = x - floor(x);
-    let a = lut[((i0 % n) + n) % n].xyz;
-    let b = lut[(((i0 + 1) % n) + n) % n].xyz;
+    let a = lut[b0 + ((i0 % n) + n) % n].xyz;
+    let b = lut[b0 + (((i0 + 1) % n) + n) % n].xyz;
     return mix(a, b, f);
+}
+
+// The color of an interior texel (`coord_of` said INTERIOR_COORD; `a` its aux lanes), as
+// `cu.interior_mode` says (coloring plan B5): under INTERIOR_TRAP the trap's value, nearer approach
+// larger as the trap method has it, under the interior's own rate through the interior palette
+// (the outside one when the request carries none); otherwise the one interior color. (The trap
+// method's own interior, INTERIOR_METHOD, never arrives here: `coord_under` colors it.)
+fn interior_shade(a: vec4<f32>) -> vec3<f32> {
+    if (cu.interior_mode == INTERIOR_TRAP) {
+        let t = -log2(max(a.b, 1.0e-20)) * cu.interior_cycle + cu.interior_offset;
+        if (cu.lut2_len > 0u) {
+            return palette_in(t, LUT2_BASE, cu.lut2_len, cu.lut2_smooth);
+        }
+        return palette(t);
+    }
+    return cu.interior_col.xyz;
 }
 
 // log2 of how many iteration texels span one OUTPUT pixel, set once at the top of `fs_color` (every
@@ -3830,7 +3862,9 @@ fn coord_under(m: vec4<f32>, a: vec4<f32>, cycle: f32, offset: f32, mode: u32, l
     } else if (cu.color_method == METHOD_TRIANGLE) {
         pv = a.g;                                  // triangle-inequality average (0..1)
     } else if (cu.color_method == METHOD_TRAP) {
-        interior = false;                          // orbit trap colors interior too
+        // The orbit trap colors the interior too, as its own (INTERIOR_METHOD, the default); a
+        // view that chose another interior (B5) leaves it to `interior_shade`.
+        interior = interior && cu.interior_mode != INTERIOR_METHOD;
         pv = -log2(max(a.b, 1.0e-20));             // nearer approach → larger value
     } else if (cu.color_method == METHOD_DISTANCE) {
         interior = (m.a > 1.0e20);                 // DE unavailable → interior
@@ -3890,7 +3924,7 @@ fn palette_box(coord: f32, width: f32) -> vec3<f32> {
 // `shade_aa` so it can band-limit the palette over the pixel footprint.
 fn shade(m: vec4<f32>, a: vec4<f32>) -> vec3<f32> {
     let coord = coord_of(m, a);
-    if (coord >= INTERIOR_COORD) { return cu.interior_col.xyz; }
+    if (coord >= INTERIOR_COORD) { return interior_shade(a); }
     return palette(coord);
 }
 
@@ -3901,7 +3935,7 @@ fn shade(m: vec4<f32>, a: vec4<f32>) -> vec3<f32> {
 // with that map's own footprint `width_fade`, and the two colors are blended.
 fn shade_aa(m: vec4<f32>, a: vec4<f32>, width: f32, width_fade: f32) -> vec3<f32> {
     let coord = coord_of(m, a);
-    if (coord >= INTERIOR_COORD) { return cu.interior_col.xyz; }
+    if (coord >= INTERIOR_COORD) { return interior_shade(a); }
     let col = palette_box(coord, width);
     if (cu.fade_weight <= 0.0) { return col; }
     return mix(col, palette_box(coord_fade(m, a), width_fade), cu.fade_weight);

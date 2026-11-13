@@ -25,7 +25,7 @@ fn row(m: &'static str, v: &str, s: CellSource) -> (&'static str, String, CellSo
 /// lane, which every frame has; every statistic needs a calculation of its own.
 #[test]
 fn a_frame_without_statistics_recolors_only_the_main_lane() {
-    let frame = FrameStats { set: StatSet::NONE, stripe_freq: 2.0, trap: TrapType::Point };
+    let frame = FrameStats { set: StatSet::NONE, stripe_freq: 2.0, trap: TrapType::Point, interior: None };
     assert_eq!(
         flat(&sheet_plan(FractalKind::Mandelbrot.caps(), frame)),
         [
@@ -48,7 +48,7 @@ fn a_frame_without_statistics_recolors_only_the_main_lane() {
 /// another density or shape, and the final angle, need their own.
 #[test]
 fn a_gbuffer_frame_recolors_what_it_holds_with_its_own_parameters() {
-    let frame = FrameStats { set: StatSet::GBUFFER, stripe_freq: 2.0, trap: TrapType::Cross };
+    let frame = FrameStats { set: StatSet::GBUFFER, stripe_freq: 2.0, trap: TrapType::Cross, interior: None };
     assert_eq!(
         flat(&sheet_plan(FractalKind::Mandelbrot.caps(), frame)),
         [
@@ -74,7 +74,7 @@ fn a_gbuffer_frame_recolors_what_it_holds_with_its_own_parameters() {
 /// on Newton, which records no orbit statistics, only the count.
 #[test]
 fn a_family_has_cells_only_for_what_it_can_color_by() {
-    let frame = FrameStats { set: StatSet::NONE, stripe_freq: 2.0, trap: TrapType::Point };
+    let frame = FrameStats { set: StatSet::NONE, stripe_freq: 2.0, trap: TrapType::Point, interior: None };
     let ship = flat(&sheet_plan(FractalKind::BurningShip.caps(), frame));
     assert!(!ship.iter().any(|(m, _, _)| *m == "distance"), "{ship:?}");
     assert!(ship.iter().any(|(m, _, _)| *m == "stripe"));
@@ -88,7 +88,7 @@ fn a_family_has_cells_only_for_what_it_can_color_by() {
 #[test]
 fn the_stripe_densities_are_the_one_in_use_and_three_and_six_once_each() {
     let freqs = |f: f32| -> Vec<f32> {
-        let frame = FrameStats { set: StatSet::NONE, stripe_freq: f, trap: TrapType::Point };
+        let frame = FrameStats { set: StatSet::NONE, stripe_freq: f, trap: TrapType::Point, interior: None };
         sheet_plan(FractalKind::Mandelbrot.caps(), frame)
             .iter()
             .flat_map(|(_, cs)| cs.iter())
@@ -104,7 +104,7 @@ fn the_stripe_densities_are_the_one_in_use_and_three_and_six_once_each() {
 /// heading on the first; a short group after it joins its last run's row when it fits.
 #[test]
 fn short_groups_share_a_row_and_long_ones_wrap() {
-    let frame = FrameStats { set: StatSet::NONE, stripe_freq: 2.0, trap: TrapType::Point };
+    let frame = FrameStats { set: StatSet::NONE, stripe_freq: 2.0, trap: TrapType::Point, interior: None };
     let plan = sheet_plan(FractalKind::Mandelbrot.caps(), frame);
     let shape = |cols: usize| -> Vec<Vec<(MethodGroup, bool, usize)>> {
         sheet_rows(&plan, cols).iter().map(|r| r.iter().map(|s| (s.group, s.first, s.cells.len())).collect()).collect()

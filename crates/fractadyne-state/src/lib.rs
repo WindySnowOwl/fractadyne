@@ -176,6 +176,13 @@ pub struct ColoringSpec {
     pub duotone_lo: [f32; 3],
     #[serde(default = "default_duotone_hi")]
     pub duotone_hi: [f32; 3],
+    /// What colors the inside of the set (coloring plan B5): `"solid"` or `"trap"`, or empty for the
+    /// method's own (the orbit trap colors it by its trap, every other method one color).
+    #[serde(default)]
+    pub interior: String,
+    /// The interior palette, a preset's id; empty for the outside palette.
+    #[serde(default)]
+    pub interior_palette: String,
 }
 
 #[derive(Serialize, Deserialize, Clone, PartialEq, Debug)]
@@ -685,6 +692,8 @@ impl Default for ColoringSpec {
             use_binary: false,
             duotone_lo: default_duotone_lo(),
             duotone_hi: default_duotone_hi(),
+            interior: String::new(),
+            interior_palette: String::new(),
         }
     }
 }

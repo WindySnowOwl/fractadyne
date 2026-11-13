@@ -10335,6 +10335,8 @@ zoom = \"1e94\"
                 normalize_live: false,
                 normalize_fit: true,
                 log_scale: true,
+                interior: Some(crate::InteriorMode::Solid),
+                interior_palette: "ice".into(),
             };
             // (coloring, lines its view must hold)
             let colorings = [
@@ -10372,6 +10374,11 @@ zoom = \"1e94\"
                 ),
                 (ViewColoring { normalize_live: false, log_scale: true, ..d.clone() }, &["normalize_live=0", "log_scale=1"][..]),
                 (ViewColoring { method: ColorMethod::Decomposition, ..d.clone() }, &["method=decomposition"][..]),
+                // The inside colored by the trap in a palette of its own, under Smooth (B5).
+                (
+                    ViewColoring { interior: Some(crate::InteriorMode::Trap), trap: TrapType::Cross, interior_palette: "ember".into(), ..d.clone() },
+                    &["interior=trap", "interior_palette=ember", "trap=cross"][..],
+                ),
             ];
             let mut bad: Vec<String> = Vec::new();
             for (v, want_lines) in &colorings {
@@ -10511,6 +10518,8 @@ zoom = \"1e94\"
                 use_binary: false,
                 duotone_lo: [0.1, 0.2, 0.3],
                 duotone_hi: [0.9, 0.8, 0.7],
+                interior: crate::InteriorMode::Trap.key().into(),
+                interior_palette: "ember".into(),
             };
             let fields = |s: &fractadyne_state::ColoringSpec| match serde_json::to_value(s) {
                 Ok(serde_json::Value::Object(m)) => m,

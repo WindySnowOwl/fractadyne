@@ -243,7 +243,9 @@ impl FractadyneApp {
                         });
                     }
                 }
-                if self.coloring.color_method == ColorMethod::OrbitTrap {
+                // The trap's shape, for the trap method and for an inside colored by the trap (B5).
+                let inside = self.coloring.interior_of(self.coloring.color_method);
+                if self.coloring.color_method == ColorMethod::OrbitTrap || inside == crate::InteriorMode::Trap {
                     labelled(ui, &tr!(panel_trap_shape), |ui| {
                         egui::ComboBox::from_id_salt("panel_trap_shape")
                             .selected_text(self.coloring.trap_type.label())
@@ -254,6 +256,7 @@ impl FractadyneApp {
                             });
                     });
                 }
+                self.inside_rows(ui);
                 // ⭐**The collapsed label NAMES a saved gradient rather than saying "Custom".** The
                 // whole reason to save one is to refer to it later; a control that can only report
                 // the slot it occupies makes the library invisible from here.

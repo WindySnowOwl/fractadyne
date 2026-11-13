@@ -543,8 +543,16 @@ fn a_session_written_before_the_coloring_spec_reads_and_writes_the_same_keys() {
     let back: toml::Table = toml::from_str(&toml::to_string_pretty(&s).unwrap()).unwrap();
     assert!(!back.contains_key("coloring"), "the coloring was written as a table of its own");
     let keys = toml::Table::try_from(ColoringSpec::default()).unwrap();
-    assert_eq!(keys.len(), 27, "a coloring field was added: extend the fixture with it");
+    // Fields added after the fixture was written (B5's interior): absent from it, so read as their
+    // defaults and written back as such. The file itself stays as that build wrote it.
+    const SINCE: &[&str] = &["interior", "interior_palette"];
+    assert_eq!(keys.len(), 27 + SINCE.len(), "a coloring field was added: list it in SINCE");
     for k in keys.keys() {
-        assert_eq!(back.get(k), want.get(k), "the coloring key `{k}` changed or moved");
+        if SINCE.contains(&k.as_str()) {
+            assert!(want.get(k).is_none(), "the fixture predates `{k}`");
+            assert_eq!(back.get(k), keys.get(k), "`{k}` absent from a file did not read as its default");
+        } else {
+            assert_eq!(back.get(k), want.get(k), "the coloring key `{k}` changed or moved");
+        }
     }
 }

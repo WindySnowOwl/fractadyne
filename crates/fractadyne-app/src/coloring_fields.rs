@@ -16,7 +16,7 @@
 //!   left alone. A file that states no coloring leaves every setting it does not name alone.
 //! - A value out of range is clamped and named; an unreadable one keeps the current setting.
 
-use crate::{slider_range, ColorMethod, TrapType};
+use crate::{slider_range, ColorMethod, InteriorMode, TrapType};
 use fractadyne_state::ColoringSpec;
 
 /// How a row reads and writes its setting on a [`ColoringSpec`], by kind.
@@ -70,12 +70,17 @@ fn uses_fit(s: &ColoringSpec) -> bool {
     matches!(method(s), ColorMethod::Smooth | ColorMethod::OrbitTrap)
 }
 
+/// The inside is colored by the trap (B5): chosen so, or the trap method's own.
+fn interior_trap(s: &ColoringSpec) -> bool {
+    InteriorMode::parse_key(&s.interior).unwrap_or(InteriorMode::of_method(method(s))) == InteriorMode::Trap
+}
+
 fn two_color_on(s: &ColoringSpec) -> bool {
     s.use_binary || s.use_duotone
 }
 
 /// The table, in the order a view writes its keys. A row's parents come before it.
-pub(crate) const FIELDS: [Field; 17] = [
+pub(crate) const FIELDS: [Field; 19] = [
     Field {
         key: "method",
         name: "coloring method",
@@ -121,14 +126,34 @@ pub(crate) const FIELDS: [Field; 17] = [
         shows: |s| method(s) == ColorMethod::Stripe && s.stripe_tail,
     },
     Field {
+        key: "interior",
+        name: "inside",
+        doc: "What colors the inside of the set: \"solid\" (one color) or \"trap\" (how near each orbit came to the orbit trap, through `interior_palette`). Left out: the method's own (method \"trap\" colors it by its trap, every other method one color).",
+        access: Access::Choice(|s| &s.interior, |s, v| s.interior = v.to_string(), || {
+            InteriorMode::ALL.iter().map(|m| m.key()).collect()
+        }),
+        parents: &[],
+        shows: always,
+    },
+    Field {
+        key: "interior_palette",
+        name: "inside palette",
+        doc: "The palette the trap colors the inside with, a preset's id (when the inside is colored by the trap). Left out: the outside palette.",
+        access: Access::Choice(|s| &s.interior_palette, |s, v| s.interior_palette = v.to_string(), || {
+            fractadyne_color::PRESETS.iter().map(|p| p.id).collect()
+        }),
+        parents: &["method", "interior"],
+        shows: interior_trap,
+    },
+    Field {
         key: "trap",
         name: "orbit trap",
-        doc: "The orbit trap's shape: point, cross or circle (method \"trap\").",
+        doc: "The orbit trap's shape: point, cross or circle (method \"trap\", or an inside colored by the trap).",
         access: Access::Choice(|s| &s.trap_type, |s, v| s.trap_type = v.to_string(), || {
             TrapType::ALL.iter().map(|t| t.key()).collect()
         }),
-        parents: &["method"],
-        shows: |s| method(s) == ColorMethod::OrbitTrap,
+        parents: &["method", "interior"],
+        shows: interior_trap,
     },
     Field {
         key: "light",
@@ -419,6 +444,10 @@ impl Field {
             Access::Real(_, _, lo, _) if lo == f32::MIN => "float".to_string(),
             Access::Real(_, _, lo, hi) => format!("float, {lo} to {hi}"),
             Access::Count(_, _, lo, hi) => format!("int, {lo} to {hi}"),
+            // The palettes' ids are too many to list in a table cell (the interior palette, B5).
+            Access::Choice(_, _, choices) if choices().iter().copied().eq(fractadyne_color::PRESETS.iter().map(|p| p.id)) => {
+                format!("string: a palette id, such as \"{}\"", fractadyne_color::PRESETS[0].id)
+            }
             Access::Choice(_, _, choices) => format!("string: {}", choices().join(" \\| ")),
             Access::Rgb(..) => "[r, g, b], 0 to 1".to_string(),
         }

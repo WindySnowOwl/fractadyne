@@ -210,8 +210,13 @@ fn the_shader_constants_are_the_table() {
         let line = format!("const {}: u32 = {}u;", s.spec().wgsl, s.bit());
         assert_eq!(ids.matches(&line).count(), 1, "{line}");
     }
+    // ...and one per interior shading (coloring plan B5).
+    for (i, name) in [(InteriorShading::Method, "INTERIOR_METHOD"), (InteriorShading::Solid, "INTERIOR_SOLID"), (InteriorShading::Trap, "INTERIOR_TRAP")] {
+        let line = format!("const {name}: u32 = {}u;", i.gpu_id());
+        assert_eq!(ids.matches(&line).count(), 1, "{line}");
+    }
     let consts = ids.lines().filter(|l| l.starts_with("const ")).count();
-    assert_eq!(consts, ColorMethod::ALL.len() + TrapType::ALL.len() + Stat::ALL.len());
+    assert_eq!(consts, ColorMethod::ALL.len() + TrapType::ALL.len() + Stat::ALL.len() + InteriorShading::ALL.len());
     // Every other line is a comment or blank, so the block can go anywhere at module scope.
     for l in ids.lines().filter(|l| !l.starts_with("const ")) {
         assert!(l.is_empty() || l.starts_with("//"), "{l:?}");

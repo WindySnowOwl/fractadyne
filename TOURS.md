@@ -59,7 +59,9 @@ The tour's coloring, by the keys a saved view (`.fdn`) carries. Each key it name
 | `stripe_freq` | float, 1 to 24 | 6 | Stripe average: the stripes' density (method "stripe"). |
 | `stripe_tail` | bool | false | Stripe average over the last `stripe_tail_len` iterations only, which keeps its contrast at depth (method "stripe"). |
 | `stripe_tail_len` | int, 4 to 1048576 | 16 | The tail's length in iterations (with `stripe_tail`). |
-| `trap` | string: point \| cross \| circle | "point" | The orbit trap's shape: point, cross or circle (method "trap"). |
+| `interior` | string: solid \| trap | (left out) | What colors the inside of the set: "solid" (one color) or "trap" (how near each orbit came to the orbit trap, through `interior_palette`). Left out: the method's own (method "trap" colors it by its trap, every other method one color). |
+| `interior_palette` | string: a palette id, such as "ember" | (left out) | The palette the trap colors the inside with, a preset's id (when the inside is colored by the trap). Left out: the outside palette. |
+| `trap` | string: point \| cross \| circle | "point" | The orbit trap's shape: point, cross or circle (method "trap", or an inside colored by the trap). |
 | `light` | bool | false | Relief lighting from the distance estimate. |
 | `light_angle` | float | 2.2 | The light's direction in radians (with `light`). |
 | `light_height` | float, 0.2 to 4 | 1.2 | Relief strength: smaller is sharper (with `light`). |

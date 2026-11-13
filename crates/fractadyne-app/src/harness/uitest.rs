@@ -335,6 +335,16 @@ enum Screen {
     MethodSheetDeepAsked,
     /// ...and once it is done: that cell, and no other.
     MethodSheetDeepAskedDone,
+    /// The home view in Smooth with the inside solid (coloring plan B5): the picture, and what the
+    /// Inside list says choosing the trap would cost...
+    InsideSolid,
+    /// ...the trap colors the inside (the outside palette): the inside changes, the outside not,
+    /// and the calculation the list said it would take ran...
+    InsideTrap,
+    /// ...in a palette of its own: a recolor, and an export of the view is the screen...
+    InsidePalette,
+    /// ...and the trap method with a solid inside: one color where its own inside varies.
+    InsideSolidUnderTrap,
 }
 
 /// The method sheet cell the `method-sheet-deep-asked` steps ask for: Decomposition, which no
@@ -513,6 +523,10 @@ struct StepResult {
     switch_costs: Vec<(crate::ColorMethod, crate::ui::method_list::SwitchCost)>,
     /// The method sheet's calculated cells at capture, with their texels (RGBA8) and size (B7).
     sheet_calculated: Vec<(crate::ui::method_sheet::SheetCell, Vec<u8>, [u32; 2])>,
+    /// The Inside steps (B5): the view as its own coloring draws it (RGBA8) and its size, and what
+    /// the Inside list said choosing the trap would do.
+    inside_view: Option<(Vec<u8>, [u32; 2])>,
+    inside_trap_cost: Option<crate::ui::method_list::SwitchCost>,
     /// View 0's passes so far by reason (`Perf::gpu_ran_why`), at capture.
     ran_why: [u64; 7],
 }
@@ -1200,6 +1214,10 @@ fn build_steps() -> Vec<Step> {
         screen("method-sheet-deep-priced", Screen::MethodSheetDeepPriced),
         screen("method-sheet-deep-asked", Screen::MethodSheetDeepAsked),
         screen("method-sheet-deep-asked-done", Screen::MethodSheetDeepAskedDone),
+        screen("inside-solid", Screen::InsideSolid),
+        screen("inside-trap", Screen::InsideTrap),
+        screen("inside-palette", Screen::InsidePalette),
+        screen("inside-solid-under-trap", Screen::InsideSolidUnderTrap),
     ]
 }
 
@@ -1512,12 +1530,180 @@ impl FractadyneApp {
         let palette = AtlasPalette { lut: lut.entries, smooth: lut.smooth };
         let cells: Vec<AtlasCell> = methods
             .iter()
-            .map(|m| AtlasCell { palette: &palette, coloring: m.map(|m| CellColoring { method: m, cycle: self.color_cycle_for(m) }) })
+            .map(|m| AtlasCell {
+                palette: &palette,
+                coloring: m.map(|m| CellColoring { method: m, cycle: self.color_cycle_for(m), interior: self.interior_shading_for(m) }),
+            })
             .collect();
         let a = atlas::render_atlas(rs, 0, &cells, size, methods.len() as u32, None).ok()?;
         let read: Vec<Option<Vec<u8>>> = (0..methods.len()).map(|k| atlas::read_cell(rs, &a, k)).collect();
         atlas::free_palette_atlas(rs, a);
         read.into_iter().collect()
+    }
+
+    /// The size the Inside steps read the view at.
+    fn uitest_inside_size(&self) -> [u32; 2] {
+        let aspect = (self.viewport.height_px / self.viewport.width_px.max(1.0)).clamp(0.2, 5.0);
+        [320, (320.0 * aspect).round().max(8.0) as u32]
+    }
+
+    /// An export of the view at `size`, one sample a pixel, on the window's device (as the
+    /// Misiurewicz thumbnails render), as RGBA8: the export path's coloring, held against the screen's.
+    fn uitest_export_view(&self, size: [u32; 2]) -> Option<Vec<u8>> {
+        let rs = self.render_state.as_ref()?;
+        let vp = self.sheet_cell_viewport(size);
+        let mut req = self.current_export_request_for(&vp, self.julia_mode && !self.dual);
+        req.width = size[0];
+        req.height = size[1];
+        req.ss = 1;
+        let (progress, cancel) = (std::sync::atomic::AtomicU32::new(0), std::sync::atomic::AtomicBool::new(false));
+        let r = fractadyne_gpu::render_export(&rs.device, &rs.queue, &req, &progress, &cancel).ok()?;
+        Some(fractadyne_export::to_srgb8(&r.pixels))
+    }
+
+    /// The Inside steps' checks (B5), each against the step before.
+    fn uitest_inside_checks(
+        &self,
+        sc: Screen,
+        ut: &UiTest,
+        view: Option<&(Vec<u8>, [u32; 2])>,
+        ran_why: [u64; 7],
+        checks: &mut Vec<Check>,
+    ) {
+        use crate::ui::method_list::SwitchCost;
+        let fail = |name: &str, detail: String| Check { name: name.into(), verdict: Verdict::Fail, detail };
+        let step = |n: &str| ut.results.iter().rev().find(|r| r.name == n);
+        let solid = step("inside-solid").and_then(|r| r.inside_view.clone());
+        // The inside, as the solid step drew it: the interior color exactly. The outside: what is
+        // more than two pixels from it (an edge pixel blends the two).
+        let Some((solid_px, size)) = solid else {
+            checks.push(fail("inside", "no picture from inside-solid".into()));
+            return;
+        };
+        let (w, h) = (size[0] as usize, size[1] as usize);
+        let ic = self.interior_color();
+        let ic8 = [0, 1, 2].map(|k| (ic[k].clamp(0.0, 1.0) * 255.0 + 0.5) as i32);
+        let inside: Vec<bool> = solid_px.chunks_exact(4).map(|p| (0..3).all(|k| (p[k] as i32 - ic8[k]).abs() <= 2)).collect();
+        let near: Vec<bool> = (0..w * h)
+            .map(|i| {
+                let (x, y) = ((i % w) as i64, (i / w) as i64);
+                (-2..=2).any(|dy| (-2..=2).any(|dx| {
+                    let (u, v) = (x + dx, y + dy);
+                    u >= 0 && v >= 0 && (u as usize) < w && (v as usize) < h && inside[v as usize * w + u as usize]
+                }))
+            })
+            .collect();
+        // Mean |difference| over the pixels `pick` keeps, and their count.
+        let diff = |a: &[u8], b: &[u8], pick: &dyn Fn(usize) -> bool| -> (f64, usize) {
+            let (mut s, mut n) = (0.0, 0usize);
+            for i in (0..w * h).filter(|i| pick(*i)) {
+                for k in 0..3 {
+                    s += (a[i * 4 + k] as f64 - b[i * 4 + k] as f64).abs();
+                }
+                n += 1;
+            }
+            (if n > 0 { s / (3 * n) as f64 } else { 0.0 }, n)
+        };
+        let spread = |a: &[u8], pick: &dyn Fn(usize) -> bool| -> f64 {
+            let l: Vec<f64> = (0..w * h).filter(|i| pick(*i)).map(|i| 0.299 * a[i * 4] as f64 + 0.587 * a[i * 4 + 1] as f64 + 0.114 * a[i * 4 + 2] as f64).collect();
+            let m = l.iter().sum::<f64>() / l.len().max(1) as f64;
+            (l.iter().map(|v| (v - m) * (v - m)).sum::<f64>() / l.len().max(1) as f64).sqrt()
+        };
+        let Some((px, _)) = view.filter(|v| v.1 == size && v.0.len() == solid_px.len()) else {
+            let got = view.map(|v| (v.1, v.0.len()));
+            checks.push(fail("inside", format!("no picture of this step at the solid step's size {size:?} ({} bytes): {got:?}", solid_px.len())));
+            return;
+        };
+        let n_in = inside.iter().filter(|b| **b).count();
+        let is_in = |i: usize| inside[i];
+        let is_out = |i: usize| !near[i];
+        // Passes a change caused since `before` (KEY or FORCED; a probe's do not count).
+        let caused = |before: &str| step(before).map(|r| (ran_why[0] - r.ran_why[0]) + (ran_why[1] - r.ran_why[1]));
+        match sc {
+            Screen::InsideTrap => {
+                let (d_out, n_out) = diff(px, &solid_px, &is_out);
+                let (d_in, _) = diff(px, &solid_px, &is_in);
+                let sp = spread(px, &is_in);
+                let claimed = step("inside-solid").and_then(|r| r.inside_trap_cost);
+                let ran = caused("inside-solid");
+                let detail = format!(
+                    "{n_in} inside pixels of {}: changed by {d_in:.1}, luma spread {sp:.1}; {n_out} outside pixels changed by {d_out:.2}; the list said {claimed:?}, passes caused {ran:?}",
+                    w * h
+                );
+                // A solid inside spreads 0; the trap's in Ember at home, 4.9 (2026-11-13).
+                let ok = n_in * 20 >= w * h && d_in >= 8.0 && sp >= 2.0 && d_out <= 1.0;
+                checks.push(if ok { pass("inside-trap-colors-the-inside", detail.clone()) } else { fail("inside-trap-colors-the-inside", detail.clone()) });
+                // The Inside list's claim, against the GPU's own record (B6's rule).
+                let honest = matches!((claimed, ran), (Some(SwitchCost::Recalculates), Some(n)) if n > 0)
+                    || matches!((claimed, ran), (Some(SwitchCost::Recolors), Some(0)));
+                checks.push(if honest { pass("inside-switch-cost", detail) } else { fail("inside-switch-cost", detail) });
+            }
+            Screen::InsidePalette => {
+                let before = step("inside-trap").and_then(|r| r.inside_view.clone());
+                let Some((prev, _)) = before.filter(|b| b.0.len() == px.len()) else {
+                    checks.push(fail("inside-palette-recolors", "no picture from inside-trap".into()));
+                    return;
+                };
+                let (d_out, _) = diff(px, &prev, &is_out);
+                let (d_in, _) = diff(px, &prev, &is_in);
+                let ran = caused("inside-trap");
+                let detail = format!("inside changed by {d_in:.1}, outside by {d_out:.2}; passes caused since inside-trap {ran:?}");
+                let ok = d_in >= 8.0 && d_out <= 0.5 && ran == Some(0);
+                checks.push(if ok { pass("inside-palette-recolors", detail) } else { fail("inside-palette-recolors", detail) });
+                // The export path's second LUT: an export of the view is the screen, over the inside's
+                // core (inside pixels two clear of its edge, where an export's one sample and the
+                // screen's two agree). CONTROL: the step before's inside, in the outside palette.
+                // (Over the whole picture, as block means, the inside's 7% read 0.27 against 2.95.)
+                let core = |i: usize| {
+                    let (x, y) = ((i % w) as i64, (i / w) as i64);
+                    (-2..=2).all(|dy| (-2..=2).all(|dx| {
+                        let (u, v) = (x + dx, y + dy);
+                        u >= 0 && v >= 0 && (u as usize) < w && (v as usize) < h && inside[v as usize * w + u as usize]
+                    }))
+                };
+                let export = self.uitest_export_view(size).filter(|e| e.len() == px.len());
+                let detail = match &export {
+                    Some(e) => {
+                        let ((same, n), (control, _)) = (diff(e, px, &core), diff(e, &prev, &core));
+                        let detail = format!("over {n} inside pixels: an export vs the view {same:.2}; vs the inside in the outside palette {control:.1}");
+                        checks.push(if n > 100 && same <= 3.0 && control >= 20.0 {
+                            pass("inside-export-is-the-view", detail.clone())
+                        } else {
+                            fail("inside-export-is-the-view", detail.clone())
+                        });
+                        detail
+                    }
+                    None => String::new(),
+                };
+                if export.is_none() {
+                    checks.push(fail("inside-export-is-the-view", format!("no export of the view {detail}")));
+                }
+            }
+            _ => {
+                // The trap method, the inside solid: the solid step's inside, one color again, where
+                // the trap method's own inside (CONTROL: the view's cell with the trap's own interior)
+                // varies.
+                let (d_in, _) = diff(px, &solid_px, &is_in);
+                let own = self.render_state.as_ref().and_then(|rs| {
+                    use fractadyne_gpu::atlas::{self, AtlasCell, AtlasPalette, CellColoring};
+                    let lut = self.active_gradient().bake(fractadyne_color::segment::LUT_SIZE);
+                    let palette = AtlasPalette { lut: lut.entries, smooth: lut.smooth };
+                    let m = crate::ColorMethod::OrbitTrap;
+                    let cell = AtlasCell {
+                        palette: &palette,
+                        coloring: Some(CellColoring { method: m, cycle: self.color_cycle_for(m), interior: crate::InteriorShading::Method }),
+                    };
+                    let a = atlas::render_atlas(rs, 0, &[cell], size, 1, None).ok()?;
+                    let b = atlas::read_cell(rs, &a, 0);
+                    atlas::free_palette_atlas(rs, a);
+                    b
+                });
+                let sp_own = own.as_ref().map(|o| spread(o, &is_in));
+                let detail = format!("inside vs the solid step's: {d_in:.2}; the trap's own inside spreads {sp_own:?}");
+                let ok = d_in <= 1.0 && sp_own.is_some_and(|s| s >= 2.0);
+                checks.push(if ok { pass("inside-solid-under-trap", detail) } else { fail("inside-solid-under-trap", detail) });
+            }
+        }
     }
 
     /// The method sheet's calculated cells (coloring plan B7, step 4), step by step.
@@ -1743,6 +1929,8 @@ impl FractadyneApp {
         self.method_sheet.open = false;
         self.harness.uitest_sheet_budget = None;
         self.harness.uitest_sheet_hold = false;
+        self.coloring.interior = None;
+        self.coloring.interior_palette = None;
         self.dialogs.minimap = false;
         // The Snapshot choice is a window too (found standing behind the snapshot-screen step).
         self.dialogs.snapshot_choice_open = false;
@@ -2170,6 +2358,31 @@ impl FractadyneApp {
             }
             // The deep view as the steps before left it, with a budget of 0; the Decomposition
             // cell's Render, through the function the button calls.
+            Screen::InsideSolid => {
+                self.set_show_mode(crate::ShowMode::Set);
+                self.set_fractal(crate::FractalKind::Mandelbrot);
+                self.reset_view();
+                self.render_cfg.auto_iter = true;
+                self.coloring.color_method = crate::ColorMethod::Smooth;
+                self.coloring.use_binary = false;
+                self.coloring.use_duotone = false;
+                self.coloring.trap_type = crate::TrapType::Point;
+                self.coloring.interior = Some(crate::InteriorMode::Solid);
+                self.dialogs.right_panel_open = true;
+            }
+            // The view as the step before left it.
+            Screen::InsideTrap | Screen::InsidePalette => {
+                self.coloring.interior = Some(crate::InteriorMode::Trap);
+                if matches!(s, Screen::InsidePalette) {
+                    self.coloring.interior_palette = fractadyne_color::preset_by_id("ice");
+                }
+                self.dialogs.right_panel_open = true;
+            }
+            Screen::InsideSolidUnderTrap => {
+                self.coloring.color_method = crate::ColorMethod::OrbitTrap;
+                self.coloring.interior = Some(crate::InteriorMode::Solid);
+                self.dialogs.right_panel_open = true;
+            }
             Screen::MethodSheetDeepAsked | Screen::MethodSheetDeepAskedDone => {
                 self.method_sheet.open = true;
                 self.harness.uitest_sheet_budget = Some(0.0);
@@ -2702,6 +2915,14 @@ impl FractadyneApp {
         let tiled = self.tile_state_present(0);
         let ran_why = self.perf.gpu_ran_why[0];
         let switch_costs: Vec<_> = crate::ColorMethod::ALL.iter().map(|m| (*m, self.switch_cost(*m))).collect();
+        let inside_step = matches!(
+            step.kind,
+            StepKind::Screen(Screen::InsideSolid | Screen::InsideTrap | Screen::InsidePalette | Screen::InsideSolidUnderTrap)
+        );
+        let inside_view = inside_step.then(|| self.uitest_inside_size()).and_then(|s| {
+            self.uitest_atlas_read(&[None], s).and_then(|mut v| v.pop()).map(|b| (b, s))
+        });
+        let inside_trap_cost = inside_step.then(|| self.inside_switch_cost(crate::InteriorMode::Trap));
         let sheet_calculated: Vec<_> = if matches!(step.kind, StepKind::Screen(Screen::MethodSheet)) {
             let plan = crate::ui::method_sheet::sheet_plan(self.fractal.caps(), self.sheet_frame());
             plan.iter()
@@ -3454,6 +3675,11 @@ impl FractadyneApp {
             }
         }
 
+        // ---- what colors the inside of the set (coloring plan B5) ----
+        if let StepKind::Screen(sc @ (Screen::InsideTrap | Screen::InsidePalette | Screen::InsideSolidUnderTrap)) = step.kind {
+            self.uitest_inside_checks(sc, ut, inside_view.as_ref(), ran_why, &mut checks);
+        }
+
         // ---- the method sheet's calculated cells (coloring plan B7, step 4) ----
         if let StepKind::Screen(sc @ (Screen::MethodSheet | Screen::MethodSheetCalculated | Screen::MethodSheetDeepPriced | Screen::MethodSheetDeepAsked | Screen::MethodSheetDeepAskedDone)) = step.kind {
             self.uitest_sheet_render_checks(sc, ut, &sheet_calculated, &mut checks);
@@ -3753,6 +3979,8 @@ impl FractadyneApp {
             untranslated,
             switch_costs,
             sheet_calculated,
+            inside_view,
+            inside_trap_cost,
             ran_why,
         }
     }
@@ -3860,6 +4088,8 @@ impl FractadyneApp {
             untranslated: Vec::new(),
             switch_costs: Vec::new(),
             sheet_calculated: Vec::new(),
+            inside_view: None,
+            inside_trap_cost: None,
             ran_why: [0; 7],
         }
     }
@@ -4015,6 +4245,8 @@ fn timeout_result(step: &Step) -> StepResult {
         untranslated: Vec::new(),
         switch_costs: Vec::new(),
         sheet_calculated: Vec::new(),
+        inside_view: None,
+        inside_trap_cost: None,
         ran_why: [0; 7],
     }
 }
