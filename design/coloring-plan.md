@@ -829,7 +829,7 @@ reproduced. Reproduce before fixing; never close on the mechanism argument alone
   settings below, cost badges from the B4 capability table, and a "Preview methods…" button for
   B7; mirror in the Color menu (`ui/menus.rs:586-596`).
 - **Tests**: uitest screens for each group and a disabled method; text layout in `en-XA`.
-- **In progress 2026-11-12** (branch `feat/color-b6-method-picker`):
+- **Done 2026-11-12** (branch `feat/color-b6-method-picker`, `c1e4bd61`):
   - `MethodGroup` is a column of the method table (`fractadyne_core::coloring`), so a new method
     names its heading where it names everything else; a core test pins the grouping and that no
     heading is empty. Layers waits for its first method (E).
@@ -842,7 +842,7 @@ reproduced. Reproduce before fixing; never close on the mechanism argument alone
     empty set). The uitest's `method-switch-cost` check holds the claim against the GPU's own
     record of the passes it ran (`gpu_ran_frames`): deep Stripe to the trap recolors, the trap to
     Smooth calculates again, Smooth to Distance recolors, and in df32 Stripe to the trap
-    calculates again.
+    calculates again. The complete walk (125 steps) warns on the same five steps as main's (115).
   - The notes come from `ColorMethod::can` (each `MethodNote` reads its capabilities, and a test
     fails on a capability no note reads unless it is left to another control: the normalized
     export, which "Normalize deep colors" explains) and appear only where the family, the view and
@@ -1129,7 +1129,7 @@ coloring in these places, so sequence the two with care:
 | B2 | done, merged | `c017a577` (merge `dcfd776b`) |
 | B3 | done, merged | `412fafc6` (merge `542a5264`) |
 | B4 | done, merged | `a5d7d74b` (merge `ba452e9c`) |
-| B6 | in progress, branch `feat/color-b6-method-picker` | |
+| B6 | done, merged | `c1e4bd61` (merge recorded with the next step) |
 | B5, B7, B8 | not started | |
 | C1–C11 | not started | |
 | D, E, F, G | not started | |
