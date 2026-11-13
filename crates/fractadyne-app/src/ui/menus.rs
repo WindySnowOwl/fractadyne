@@ -599,28 +599,10 @@ impl FractadyneApp {
                     // continuous adjustment belongs.
                     ui.menu_button(tr!(menu_color), |ui| {
                         ui.menu_button(tr!(menu_color_method), |ui| {
-                            // Grayed out as in the panel: Distance needs a distance estimate.
-                            let caps = self.fractal.caps();
-                            for m in crate::ColorMethod::ALL {
-                                let lacks = m.lacks(caps);
-                                let r = ui.add_enabled(
-                                    lacks.is_none(),
-                                    egui::SelectableLabel::new(self.coloring.color_method == m, m.label()),
-                                );
-                                if r.clicked() {
-                                    self.coloring.color_method = m;
-                                    ui.close_menu();
-                                }
-                                if let Some(l) = lacks {
-                                    r.on_disabled_hover_text(match l {
-                                        fractadyne_core::coloring::Lacks::DistanceEstimate => {
-                                            tr!(coloring_needs_derivative, family = self.fractal.display_name())
-                                        }
-                                        fractadyne_core::coloring::Lacks::OrbitStatistics => {
-                                            tr!(coloring_needs_statistics, family = self.fractal.display_name())
-                                        }
-                                    });
-                                }
+                            // The panel's list (`method_list`): headings, tooltips with the cost,
+                            // a method the family cannot color by grayed out with the reason.
+                            if self.method_list(ui) {
+                                ui.close_menu();
                             }
                         });
                         ui.menu_button(tr!(menu_color_palette), |ui| {

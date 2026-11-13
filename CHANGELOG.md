@@ -59,6 +59,13 @@ published as the pre-releases `v0.2.41-beta.1` to `v0.2.41-beta.150`, and a "bet
 
 Changes after 0.3.0-beta.1:
 
+- **The coloring method list says what each method shows and what it costs (0.3.0-beta.27).** The
+  panel's Method box and Color ▸ Method list the methods under headings: Escape count, Distance,
+  Orbit statistics and Angle. Resting the pointer on a method says what it shows, whether switching
+  to it recolors the view at once or calculates it again, and what it gives up on the view in front
+  of you: the deep-zoom speed-ups (series approximation and BLA) at the depths where it goes without
+  them, glitch correction in exports, and zoom videos. A method the fractal cannot color by is still
+  grayed out with the reason.
 - **140 new palettes in seven collections (0.3.0-beta.27).** Color ▸ Palette and the panel's
   Palette list gain seven groups of twenty after the holidays: Rocks and minerals (amethyst,
   malachite, lapis lazuli, labradorite's flash, a bismuth crystal's oxide rainbow), Plants and

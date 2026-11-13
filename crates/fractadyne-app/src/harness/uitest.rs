@@ -284,6 +284,26 @@ enum Screen {
     /// statistics methods in the list and says under the Method box that this one colors the view
     /// one color, which the step holds the canvas to (the 2026-11-11 coloring matrix finding).
     NoStatistics,
+    /// The panel's method list open on the home view (coloring plan B6): the headings.
+    MethodList,
+    /// The same on Burning Ship, which has no distance estimate: Distance grayed out.
+    MethodListNoDerivative,
+    /// The list open on the home view with Decomposition's tooltip shown: what it costs to switch
+    /// from Smooth (the view is calculated again) and what it gives up.
+    MethodTooltipRecalculates,
+    /// The list open at the deep recolor view under Stripe with the orbit trap's tooltip shown: a
+    /// switch there recolors.
+    MethodTooltipRecolors,
+    /// The `method-switch-cost` steps: the deep recolor view (floatexp) under Stripe, then the trap,
+    /// Smooth and Distance; then a df32 view under Stripe and the trap. Each step records what the
+    /// list claims a switch to each method would do and the last pass the GPU ran; the check holds
+    /// each claim against whether the next step's switch ran a pass.
+    MethodCostStripe,
+    MethodCostTrap,
+    MethodCostSmooth,
+    MethodCostDistance,
+    MethodCostDf32Stripe,
+    MethodCostDf32Trap,
 }
 
 /// The stripe-tail steps' view (the seahorse valley at 2e3x, direct), and how far they pan away
@@ -412,6 +432,11 @@ struct StepResult {
     /// In the pseudo-language: the text on screen that is not the English file's (no brackets),
     /// for `untranslated.txt`.
     untranslated: Vec<String>,
+    /// The frame of the last pass the GPU ran for view 0 when this step was captured
+    /// (`Perf::gpu_ran_frames`), so a step can tell whether the change it made ran one.
+    ran_frame: u64,
+    /// What the method list said, at capture, a switch to each method would do (coloring plan B6).
+    switch_costs: Vec<(crate::ColorMethod, crate::ui::method_list::SwitchCost)>,
 }
 
 /// A 16x16 luma thumbnail of the left ~45% of the frame, vertically inset past the toolbar and
@@ -1073,6 +1098,16 @@ fn build_steps() -> Vec<Step> {
         screen("trap-recolor-point", Screen::TrapRecolorPoint),
         screen("no-derivative", Screen::NoDerivative),
         screen("no-statistics", Screen::NoStatistics),
+        screen("method-list", Screen::MethodList),
+        screen("method-list-no-derivative", Screen::MethodListNoDerivative),
+        screen("method-tooltip-recalculates", Screen::MethodTooltipRecalculates),
+        screen("method-tooltip-recolors", Screen::MethodTooltipRecolors),
+        screen("method-cost-stripe", Screen::MethodCostStripe),
+        screen("method-cost-trap", Screen::MethodCostTrap),
+        screen("method-cost-smooth", Screen::MethodCostSmooth),
+        screen("method-cost-distance", Screen::MethodCostDistance),
+        screen("method-cost-df32-stripe", Screen::MethodCostDf32Stripe),
+        screen("method-cost-df32-trap", Screen::MethodCostDf32Trap),
     ]
 }
 
@@ -1468,6 +1503,7 @@ impl FractadyneApp {
         // window is invisible in review precisely when the window in front is wide enough.
         self.diagnostics.open = false;
         self.misi.open = false;
+        self.dialogs.uitest_method_tooltip = None;
         self.dialogs.minimap = false;
         // The Snapshot choice is a window too (found standing behind the snapshot-screen step).
         self.dialogs.snapshot_choice_open = false;
@@ -1846,6 +1882,66 @@ impl FractadyneApp {
                 self.set_fractal(crate::FractalKind::Newton);
                 self.coloring.color_method = crate::ColorMethod::Stripe;
                 self.dialogs.uitest_effects_open = Some(true);
+            }
+            Screen::MethodList | Screen::MethodListNoDerivative | Screen::MethodTooltipRecalculates => {
+                self.set_show_mode(crate::ShowMode::Set);
+                self.set_fractal(if matches!(s, Screen::MethodListNoDerivative) {
+                    crate::FractalKind::BurningShip
+                } else {
+                    crate::FractalKind::Mandelbrot
+                });
+                self.reset_view();
+                self.render_cfg.auto_iter = true;
+                self.coloring.color_method = crate::ColorMethod::Smooth;
+                self.dialogs.right_panel_open = true;
+                self.dialogs.open_method_list = true;
+                if matches!(s, Screen::MethodTooltipRecalculates) {
+                    self.dialogs.uitest_method_tooltip = Some(crate::ColorMethod::Decomposition);
+                }
+            }
+            // The trap-recolor steps' deep view (floatexp with BLA), under Stripe.
+            Screen::MethodTooltipRecolors | Screen::MethodCostStripe => {
+                self.set_show_mode(crate::ShowMode::Set);
+                self.set_fractal(crate::FractalKind::Mandelbrot);
+                self.render_cfg.aa = 1;
+                self.render_cfg.auto_iter = false;
+                self.render_cfg.max_iter = 25_000;
+                self.coloring.normalize_live = false;
+                self.coloring.normalize_fit = false;
+                self.coloring.color_method = crate::ColorMethod::Stripe;
+                self.coloring.stripe_tail = false;
+                self.coloring.trap_type = crate::TrapType::Point;
+                let (cx, cy) = crate::arg_center("uitest", TRAP_RECOLOR_AT.0, TRAP_RECOLOR_AT.1, TRAP_RECOLOR_LOG2MAG);
+                self.viewport.set_center_log2mag(cx, cy, TRAP_RECOLOR_LOG2MAG);
+                self.pointer.settle_t = [-1.0e9, -1.0e9]; // settled, not interacting
+                if matches!(s, Screen::MethodTooltipRecolors) {
+                    self.dialogs.right_panel_open = true;
+                    self.dialogs.open_method_list = true;
+                    self.dialogs.uitest_method_tooltip = Some(crate::ColorMethod::OrbitTrap);
+                }
+            }
+            // EXACTLY what the method list does (`ui::method_list`): set the method.
+            Screen::MethodCostTrap | Screen::MethodCostDf32Trap => self.coloring.color_method = crate::ColorMethod::OrbitTrap,
+            Screen::MethodCostSmooth => self.coloring.color_method = crate::ColorMethod::Smooth,
+            Screen::MethodCostDistance => self.coloring.color_method = crate::ColorMethod::Distance,
+            // The stripe tail's point at 1e8x: the df32 band, where a statistics frame takes neither
+            // series nor BLA and accumulates only what its method reads.
+            Screen::MethodCostDf32Stripe => {
+                self.set_show_mode(crate::ShowMode::Set);
+                self.set_fractal(crate::FractalKind::Mandelbrot);
+                self.render_cfg.aa = 1;
+                self.render_cfg.auto_iter = false;
+                self.render_cfg.max_iter = 5_000;
+                self.coloring.normalize_live = false;
+                self.coloring.normalize_fit = false;
+                self.coloring.color_method = crate::ColorMethod::Stripe;
+                self.coloring.stripe_tail = false;
+                self.viewport.set_center_mag(
+                    fractadyne_core::BigFloat::from_f64(STRIPE_TAIL_AT.0, 64),
+                    fractadyne_core::BigFloat::from_f64(STRIPE_TAIL_AT.1, 64),
+                    1.0e8,
+                );
+                self.pointer.settle_t = [-1.0e9, -1.0e9];
             }
             Screen::PaletteEditor => {
                 self.coloring.palette_editor_open = true;
@@ -2293,6 +2389,8 @@ impl FractadyneApp {
         let left_fp = left_pane_fingerprint(&image.pixels, w as usize, h as usize);
         let mid_fp = band_fingerprint(&image.pixels, w as usize, h as usize, (w as usize * 45) / 100, (w as usize * 75) / 100);
         let tiled = self.tile_state_present(0);
+        let ran_frame = self.perf.gpu_ran_frames[0].back().copied().unwrap_or(0);
+        let switch_costs: Vec<_> = crate::ColorMethod::ALL.iter().map(|m| (*m, self.switch_cost(*m))).collect();
 
         let is_live = matches!(step.kind, StepKind::Live(_));
         // "Not blank": a rendered UI or fractal has tonal spread. A flat frame is suspicious.
@@ -3036,6 +3134,71 @@ impl FractadyneApp {
             }
         }
 
+        // ---- what the method list says a switch costs, against the GPU (coloring plan B6) ----
+        // Each pair of steps changes only the method; the earlier step recorded what the list said
+        // a switch to the later step's method would do, and both recorded the last pass the GPU
+        // ran. "Recolors" must run no pass; "calculates again" must run one.
+        if matches!(step.kind, StepKind::Screen(Screen::MethodCostDf32Trap)) {
+            use crate::ui::method_list::SwitchCost;
+            let find = |n: &str| -> Option<(u64, &[(crate::ColorMethod, SwitchCost)])> {
+                if n == step.name {
+                    return Some((ran_frame, &switch_costs[..]));
+                }
+                ut.results.iter().rev().find(|r| r.name == n).map(|r| (r.ran_frame, &r.switch_costs[..]))
+            };
+            let pairs = [
+                ("method-cost-stripe", "method-cost-trap", crate::ColorMethod::OrbitTrap),
+                ("method-cost-trap", "method-cost-smooth", crate::ColorMethod::Smooth),
+                ("method-cost-smooth", "method-cost-distance", crate::ColorMethod::Distance),
+                ("method-cost-df32-stripe", "method-cost-df32-trap", crate::ColorMethod::OrbitTrap),
+            ];
+            let mut lines = Vec::new();
+            let (mut wrong, mut missing, mut saw_recolor, mut saw_pass) = (0, 0, false, false);
+            for (from, to, m) in pairs {
+                match (find(from), find(to)) {
+                    (Some((ran_a, costs)), Some((ran_b, _))) => {
+                        let claim = costs.iter().find(|(c, _)| *c == m).map(|(_, k)| *k);
+                        let ran = ran_b > ran_a;
+                        let right = match claim {
+                            Some(SwitchCost::Recolors) => !ran,
+                            Some(SwitchCost::Recalculates) => ran,
+                            _ => false,
+                        };
+                        saw_recolor |= right && claim == Some(SwitchCost::Recolors);
+                        saw_pass |= right && ran;
+                        if !right {
+                            wrong += 1;
+                        }
+                        lines.push(format!(
+                            "{from} -> {to}: said {claim:?}, a pass {} (frames {ran_a} -> {ran_b})",
+                            if ran { "ran" } else { "did not run" }
+                        ));
+                    }
+                    _ => missing += 1,
+                }
+            }
+            let detail = lines.join("; ");
+            checks.push(if missing > 0 {
+                Check {
+                    name: "method-switch-cost".into(),
+                    verdict: Verdict::Warn,
+                    detail: format!("{missing} of the four step pairs missing: {detail}"),
+                }
+            } else if wrong > 0 {
+                Check { name: "method-switch-cost".into(), verdict: Verdict::Fail, detail }
+            } else if !(saw_recolor && saw_pass) {
+                // ANTI-VACUITY: a run where every switch recolored (or every one ran a pass) cannot
+                // show that the record tells the two apart.
+                Check {
+                    name: "method-switch-cost".into(),
+                    verdict: Verdict::Warn,
+                    detail: format!("no recolor and a pass both seen, so this run proves nothing: {detail}"),
+                }
+            } else {
+                pass("method-switch-cost", detail)
+            });
+        }
+
         // ---- the Diagnostics dialog's system facts (checklist step 88) ----
         if matches!(step.kind, StepKind::Screen(Screen::Diagnostics)) {
             let si = &self.sysinfo;
@@ -3192,6 +3355,8 @@ impl FractadyneApp {
             mid_fp,
             tiled,
             untranslated,
+            ran_frame,
+            switch_costs,
         }
     }
 
@@ -3296,6 +3461,8 @@ impl FractadyneApp {
             mid_fp: Vec::new(),
             tiled: false,
             untranslated: Vec::new(),
+            ran_frame: 0,
+            switch_costs: Vec::new(),
         }
     }
 
@@ -3448,6 +3615,8 @@ fn timeout_result(step: &Step) -> StepResult {
         mid_fp: Vec::new(),
         tiled: false,
         untranslated: Vec::new(),
+        ran_frame: 0,
+        switch_costs: Vec::new(),
     }
 }
 
