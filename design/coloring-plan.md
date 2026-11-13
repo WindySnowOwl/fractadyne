@@ -770,7 +770,7 @@ reproduced. Reproduce before fixing; never close on the mechanism argument alone
   (`farm/tests/unit/settings/tests.rs:26-102`); `RenderSettings` stays `deny_unknown_fields`, so a
   missing field fails its test, not a farm render.
 - **Traps**: `ColorU` has a size budget; group new fields into vec4s and update the layout tests.
-- **In progress 2026-11-12** (branch `feat/color-b4-coloring-spec`):
+- **Done 2026-11-12** (branch `feat/color-b4-coloring-spec`):
   - **Step 1, the spec** (`2956066a`): `fractadyne_state::ColoringSpec` holds the session's 27
     coloring fields (method by key, stripe, trap, light, glow, two-color, palette by id and number,
     cycle, offset, divisor, normalization, custom gradient). The session flattens it, so the file's
@@ -795,17 +795,19 @@ reproduced. Reproduce before fixing; never close on the mechanism argument alone
     the way: a tour's palette morph set the stop list and left the viewer's segments, which win
     (`custom_gradient`), so it drew the viewer's own gradient instead of the morph, live and
     rendered; it now clears them (and the band flag), and they come back with the coloring.
-  - **Step 4, the capability table**: `Capability` (glitch correction, normalized export, strips,
+  - **Step 4, the capability table** (`8bbbbc0b`): `Capability` (glitch correction, normalized export, strips,
     the live walk, series, BLA) and `ColorMethod::can`, read off the method's statistics and
     `reads_aux`, so it cannot disagree with the renderer; the zoom-video dialog and the assembler
     ask it. The rules themselves still ask the frame's `StatSet` (B2). B6's picker will read it.
   - **Not done, by choice**: the command line stays hand-written (its ranges are already
     `slider_range`'s, and several flags mean more than one row: `--stripe-tail N` turns the tail
     on, `--binary` turns the gradient off).
-  - **Windowed checks pending** (the right monitor asleep): the self-test (with "the whole coloring
-    goes in and comes back out" and "a tour's palette morph shows over a custom gradient", the
-    latter run on a build without the fix first), `--farmtest` on protocol 9, a tour rendered with
-    and without `[render.coloring]`, the coloring matrix.
+  - **Windowed checks, 2026-11-12**: "a tour's palette morph shows over a custom gradient" fails on
+    a build without the fix and passes with it; the self-test 565/565 (with "the whole coloring
+    goes in and comes back out", which now also round-trips a Binary spec, `a5d7d74b`: its own
+    audit found `use_binary` untested); `--farmtest` passes on protocol 9; a tour rendered with and
+    without `[render.coloring]` draws each coloring; the coloring matrix has no failures and 101
+    timing warnings, not attributed (two runs of the same code gave 14 and 101).
 
 ### B5. Second LUT and interior modes
 
@@ -1102,7 +1104,7 @@ coloring in these places, so sequence the two with care:
 | B1b | not started: the live method tour | |
 | B2 | done, merged | `c017a577` (merge `dcfd776b`) |
 | B3 | done, merged | `412fafc6` (merge `542a5264`) |
-| B4 | in progress, branch `feat/color-b4-coloring-spec` (steps 1-4; windowed checks pending) | |
+| B4 | done, merged | `a5d7d74b` (merge recorded with the next step) |
 | B5–B8 | not started | |
 | C1–C11 | not started | |
 | D, E, F, G | not started | |
