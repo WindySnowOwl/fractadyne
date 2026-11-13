@@ -1,5 +1,6 @@
-//! The palette browser's thumbnails: the view's current iteration texture colored through each
-//! palette in turn, into one atlas texture that egui draws from.
+//! The palette browser's thumbnails, and the method sheet's (coloring plan B7): the view's current
+//! iteration texture colored through each palette, or each coloring method, in turn, into one atlas
+//! texture that egui draws from.
 //!
 //! ⭐**Nothing is iterated.** Coloring is its own pass over the iteration texture the view already
 //! holds, so a thumbnail costs one small color pass, however deep the view: each palette is one
@@ -22,6 +23,27 @@ use egui_wgpu::wgpu;
 pub struct AtlasPalette {
     pub lut: Vec<[f32; 4]>,
     pub smooth: bool,
+}
+
+/// What one cell of an atlas shows ([`render_atlas`]): the view's texture through a palette, with
+/// the view's own coloring or another method's.
+pub struct AtlasCell<'a> {
+    pub palette: &'a AtlasPalette,
+    /// `None`: the coloring the view was last drawn with, exactly (the palette browser's cells, and
+    /// the method sheet's cell for the method in use).
+    pub coloring: Option<CellColoring>,
+}
+
+/// Another coloring method for one cell, over the same iteration texture (the method sheet, B7).
+/// Everything else is the view's: offset, lighting, glow, interior color. ⚠The texture must hold
+/// what the method colors by (its orbit statistic, `ColorMethod::reads`), or the cell shows the
+/// "no statistics" value: the caller's cell plan decides which cells can be drawn this way.
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub struct CellColoring {
+    pub method: fractadyne_core::coloring::ColorMethod,
+    /// The palette rate for this method: the app's, which depends on the method (a bounded value
+    /// takes a few sweeps over 0..1, the count a rate per iteration).
+    pub cycle: f32,
 }
 
 /// A rendered atlas. Hold it to keep drawing it; hand it back to [`render_palette_atlas`] to redraw
@@ -62,12 +84,25 @@ pub enum AtlasError {
 }
 
 /// Draw `palettes` over view `view_id`'s current iteration texture into an atlas of `cols` columns
-/// of `cell`-sized thumbnails. `reuse` is the previous atlas: redrawn in place (keeping its egui id)
-/// when the size matches, freed otherwise.
+/// of `cell`-sized thumbnails, each with the view's own coloring. `reuse` is the previous atlas:
+/// redrawn in place (keeping its egui id) when the size matches, freed otherwise.
 pub fn render_palette_atlas(
     rs: &egui_wgpu::RenderState,
     view_id: u32,
     palettes: &[AtlasPalette],
+    cell: [u32; 2],
+    cols: u32,
+    reuse: Option<PaletteAtlas>,
+) -> Result<PaletteAtlas, AtlasError> {
+    let cells: Vec<AtlasCell> = palettes.iter().map(|p| AtlasCell { palette: p, coloring: None }).collect();
+    render_atlas(rs, view_id, &cells, cell, cols, reuse)
+}
+
+/// [`render_palette_atlas`] for cells that may each color the texture another way ([`AtlasCell`]).
+pub fn render_atlas(
+    rs: &egui_wgpu::RenderState,
+    view_id: u32,
+    palettes: &[AtlasCell],
     cell: [u32; 2],
     cols: u32,
     reuse: Option<PaletteAtlas>,
@@ -141,10 +176,11 @@ pub fn render_palette_atlas(
     // single buffer between draws of one submission would all land before any of them ran.
     let bind_groups: Vec<wgpu::BindGroup> = palettes
         .iter()
-        .map(|p| {
+        .map(|c| {
+            let p = c.palette;
             let lut_buf = make_lut_buffer(device);
             let (lut_len, lut_smooth) = write_lut(&rs.queue, &lut_buf, &p.lut, p.smooth);
-            let thumb = ColorUniforms {
+            let mut thumb = ColorUniforms {
                 lut_len,
                 lut_smooth,
                 ss,
@@ -160,6 +196,14 @@ pub fn render_palette_atlas(
                 // distance colors and glow bands sit where the panel shows them.
                 ..cu
             };
+            if let Some(k) = c.coloring {
+                // Another method over the same texture: its own rate, and no range mapping, whose
+                // window was measured for the view's method's values (`norm_mode`).
+                thumb.color_method = k.method.gpu_id();
+                thumb.cycle = k.cycle;
+                thumb.norm_mode = 0;
+                thumb.norm_lo = 0.0;
+            }
             let uniform = device.create_buffer(&wgpu::BufferDescriptor {
                 label: Some("fractadyne.palette_atlas_uniform"),
                 size: std::mem::size_of::<ColorUniforms>() as u64,
