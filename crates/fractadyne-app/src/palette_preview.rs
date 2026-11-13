@@ -1,4 +1,6 @@
-//! Hover preview for the palette pickers (Color ▸ Palette and the panel's Palette list).
+//! Hover preview for the palette pickers (Color ▸ Palette and the panel's Palette list), and, the
+//! same rules over another kind of row, for the method sheet's cells (coloring plan B7):
+//! [`HoverPreview`] is generic over what a row is.
 //!
 //! Rest the pointer on a gradient's row and, after a short pause, the view shows that gradient in
 //! place of the chosen one. Choose it and it becomes the palette; close the picker any other way
@@ -36,26 +38,35 @@ pub(crate) struct Settle {
     pub wake_in: Option<f64>,
 }
 
-#[derive(Debug, Default)]
-pub(crate) struct PalettePreview {
+/// The palette pickers' preview.
+pub(crate) type PalettePreview = HoverPreview<PaletteRow>;
+
+#[derive(Debug)]
+pub(crate) struct HoverPreview<R> {
     /// What the view shows in place of the chosen palette.
-    shown: Option<PaletteRow>,
+    shown: Option<R>,
     /// The row the pointer was last seen on (`None`: on no row), and when it got there.
-    target: Option<PaletteRow>,
+    target: Option<R>,
     since: f64,
     /// This frame's reports from the pickers, consumed by `end_frame`.
     open: bool,
-    hover: Option<PaletteRow>,
-    drawing: Vec<(PaletteRow, egui::Rect)>,
+    hover: Option<R>,
+    drawing: Vec<(R, egui::Rect)>,
     /// Where each row sat on the last frame: what `--uitest` aims its pointer at.
-    drawn: Vec<(PaletteRow, egui::Rect)>,
+    drawn: Vec<(R, egui::Rect)>,
     /// How many frames running a picker has been open, up to the frame before this one.
     open_frames: u32,
 }
 
-impl PalettePreview {
+impl<R> Default for HoverPreview<R> {
+    fn default() -> Self {
+        Self { shown: None, target: None, since: 0.0, open: false, hover: None, drawing: Vec::new(), drawn: Vec::new(), open_frames: 0 }
+    }
+}
+
+impl<R: Copy + PartialEq> HoverPreview<R> {
     /// The gradient to show in place of the chosen palette, if any.
-    pub(crate) fn shown(&self) -> Option<PaletteRow> {
+    pub(crate) fn shown(&self) -> Option<R> {
         self.shown
     }
 
@@ -78,7 +89,7 @@ impl PalettePreview {
     }
 
     /// A picker drew `row` at `rect` this frame, with the pointer on it or not.
-    pub(crate) fn row(&mut self, row: PaletteRow, rect: egui::Rect, hovered: bool) {
+    pub(crate) fn row(&mut self, row: R, rect: egui::Rect, hovered: bool) {
         self.drawing.push((row, rect));
         if hovered {
             self.hover = Some(row);
@@ -86,7 +97,7 @@ impl PalettePreview {
     }
 
     /// Where `row` was drawn on the last frame, if a picker drew it.
-    pub(crate) fn row_rect(&self, row: PaletteRow) -> Option<egui::Rect> {
+    pub(crate) fn row_rect(&self, row: R) -> Option<egui::Rect> {
         self.drawn.iter().find(|(r, _)| *r == row).map(|(_, rect)| *rect)
     }
 

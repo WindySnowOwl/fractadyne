@@ -165,7 +165,8 @@ pub fn render_atlas(
                 sample_count: 1,
                 dimension: wgpu::TextureDimension::D2,
                 format,
-                usage: wgpu::TextureUsages::RENDER_ATTACHMENT | wgpu::TextureUsages::TEXTURE_BINDING,
+                // COPY_SRC: `read_cell`, the UI test's look at one cell.
+                usage: wgpu::TextureUsages::RENDER_ATTACHMENT | wgpu::TextureUsages::TEXTURE_BINDING | wgpu::TextureUsages::COPY_SRC,
                 view_formats,
             });
             (texture, None)
@@ -253,6 +254,71 @@ pub fn render_atlas(
         None => renderer.register_native_texture(device, &sampled, wgpu::FilterMode::Linear),
     };
     Ok(PaletteAtlas { texture, id, cell, cols, count: palettes.len() })
+}
+
+/// Cell `k`'s texels as the atlas holds them, rows top to bottom, as display-space RGBA8 (a BGRA
+/// target's bytes put in that order), read back from the GPU: for the UI test, which holds a method
+/// sheet cell against the view's own coloring and against an export's `to_srgb8` bytes. Waits at
+/// most five seconds; `None` if the cell does not exist, the target is not an 8-bit RGBA or BGRA
+/// format, or the read fails.
+pub fn read_cell(rs: &egui_wgpu::RenderState, atlas: &PaletteAtlas, k: usize) -> Option<Vec<u8>> {
+    use wgpu::TextureFormat as F;
+    if k >= atlas.count {
+        return None;
+    }
+    let bgra = match atlas.texture.format() {
+        F::Rgba8Unorm | F::Rgba8UnormSrgb => false,
+        F::Bgra8Unorm | F::Bgra8UnormSrgb => true,
+        _ => return None,
+    };
+    let (device, queue) = (&rs.device, &rs.queue);
+    let [w, h] = atlas.cell;
+    let (col, row) = ((k as u32) % atlas.cols, (k as u32) / atlas.cols);
+    let texel = atlas.texture.format().block_copy_size(None)?;
+    let unpadded = w * texel;
+    let padded = unpadded.div_ceil(wgpu::COPY_BYTES_PER_ROW_ALIGNMENT) * wgpu::COPY_BYTES_PER_ROW_ALIGNMENT;
+    let buf = device.create_buffer(&wgpu::BufferDescriptor {
+        label: Some("fractadyne.atlas_cell_read"),
+        size: (padded * h) as u64,
+        usage: wgpu::BufferUsages::MAP_READ | wgpu::BufferUsages::COPY_DST,
+        mapped_at_creation: false,
+    });
+    let mut enc = device.create_command_encoder(&wgpu::CommandEncoderDescriptor { label: Some("fractadyne.atlas_cell_read") });
+    enc.copy_texture_to_buffer(
+        wgpu::TexelCopyTextureInfo {
+            texture: &atlas.texture,
+            mip_level: 0,
+            origin: wgpu::Origin3d { x: col * w, y: row * h, z: 0 },
+            aspect: wgpu::TextureAspect::All,
+        },
+        wgpu::TexelCopyBufferInfo {
+            buffer: &buf,
+            layout: wgpu::TexelCopyBufferLayout { offset: 0, bytes_per_row: Some(padded), rows_per_image: Some(h) },
+        },
+        wgpu::Extent3d { width: w, height: h, depth_or_array_layers: 1 },
+    );
+    queue.submit(std::iter::once(enc.finish()));
+    let slice = buf.slice(..);
+    let (tx, rx) = std::sync::mpsc::channel();
+    slice.map_async(wgpu::MapMode::Read, move |r| {
+        let _ = tx.send(r);
+    });
+    let deadline = std::time::Instant::now() + std::time::Duration::from_secs(5);
+    crate::export::await_readback(device, &rx, None, Some(deadline)).into_result().ok()?;
+    let data = slice.get_mapped_range();
+    let mut out = Vec::with_capacity((unpadded * h) as usize);
+    for r in 0..h as usize {
+        let src = r * padded as usize;
+        out.extend_from_slice(&data[src..src + unpadded as usize]);
+    }
+    drop(data);
+    buf.unmap();
+    if bgra {
+        for px in out.chunks_exact_mut(4) {
+            px.swap(0, 2);
+        }
+    }
+    Some(out)
 }
 
 /// Let egui forget an atlas; the texture goes with it.

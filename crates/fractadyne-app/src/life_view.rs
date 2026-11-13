@@ -33,6 +33,9 @@ pub(crate) enum UiPointer {
     /// The pointer moves onto the middle of this row of an open palette picker, where the last
     /// frame drew it (`PalettePreview::row_rect`). Nothing when no picker drew it.
     OnPaletteRow(crate::palette_preview::PaletteRow),
+    /// The pointer moves onto the middle of this cell of the open method sheet, where the last
+    /// frame drew it (coloring plan B7). Nothing when the sheet did not draw it.
+    OnSheetCell(crate::ui::method_sheet::SheetCell),
 }
 
 /// A change to the universe, waiting for a current copy to be made to.
@@ -439,6 +442,9 @@ impl FractadyneApp {
             UiPointer::OnPaletteRow(row) => {
                 return self.coloring.palette_preview.row_rect(row).map(|r| egui::Event::PointerMoved(r.center()));
             }
+            UiPointer::OnSheetCell(c) => {
+                return self.method_sheet.preview.row_rect(c).map(|r| egui::Event::PointerMoved(r.center()));
+            }
             UiPointer::Gone => return Some(egui::Event::PointerGone),
             _ => {}
         }
@@ -461,7 +467,7 @@ impl FractadyneApp {
             UiPointer::Press(x, y) => button(x, y, true),
             UiPointer::Release(x, y) => button(x, y, false),
             // Answered above.
-            UiPointer::Gone | UiPointer::OnPaletteRow(_) => return None,
+            UiPointer::Gone | UiPointer::OnPaletteRow(_) | UiPointer::OnSheetCell(_) => return None,
         })
     }
 

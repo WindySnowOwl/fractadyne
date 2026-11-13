@@ -1424,6 +1424,9 @@ struct Perf {
     /// and the `hold_verified` each view's params last carried, with its frame.
     prov: [render::ProvTally; 2],
     gpu_ran_frames: [std::collections::VecDeque<u64>; 2],
+    /// How many of those passes carried each reason bit (`fractadyne_gpu::ran_why`, bit `b` at
+    /// index `b`): the UI test tells a pass a change caused (KEY, FORCED) from a probe's or a walk's.
+    gpu_ran_why: [[u64; 7]; 2],
     hold_verified_sent: [(u64, bool); 2],
     hold_checked: [u64; 2],
     /// Whether the frame being built is a live-refresh pass (set in `build_params`, read where the
@@ -2582,6 +2585,7 @@ impl Default for Perf {
             reuse_refused: [false, false],
             prov: [Default::default(); 2],
             gpu_ran_frames: [std::collections::VecDeque::new(), std::collections::VecDeque::new()],
+            gpu_ran_why: [[0; 7]; 2],
             hold_verified_sent: [(0, false); 2],
             hold_checked: [0, 0],
             live_pass: [false, false],
@@ -6744,6 +6748,8 @@ struct FractadyneApp {
     render_state: Option<eframe::egui_wgpu::RenderState>,
     /// Color ▸ Browse palettes… (`ui::palette_browser`).
     palette_browser: crate::ui::palette_browser::PaletteBrowser,
+    /// Color ▸ Preview methods… (`ui::method_sheet`, coloring plan B7).
+    method_sheet: crate::ui::method_sheet::MethodSheet,
     /// A second graphics device for the live view (`--worker-gpu`, `design/multi-gpu-live.md`);
     /// `None` = one GPU, as always. Dropped (not fatal) when it is lost.
     gpu_worker: Option<gpu_worker::Worker>,
@@ -7817,6 +7823,8 @@ impl FractadyneApp {
                 uitest_panel_w: None,
                 uitest_async_key: None,
                 uitest_pointer: Default::default(),
+                uitest_sheet_budget: None,
+                uitest_sheet_hold: false,
                 soak,
                 recordtest,
                 juliadive,
@@ -7937,6 +7945,7 @@ impl FractadyneApp {
             gpu: None,
             render_state: None,
             palette_browser: Default::default(),
+            method_sheet: Default::default(),
             gpu_worker: None,
             export_extra: Vec::new(),
             worker_state: gpu_worker::WorkerState::Off,
@@ -11703,8 +11712,16 @@ impl FractadyneApp {
     /// the farm's renders through the session, the Misiurewicz thumbnails — and so does the
     /// normalization guard, which judges aliasing at this rate. So dividing here is dividing
     /// everywhere, and the shader is unchanged: it already multiplies by the rate.
+    /// The palette rate the view is colored at: the shown method's (a method sheet preview,
+    /// `shown_method`). An export asks [`Self::color_cycle_for`] the chosen method.
     fn color_cycle(&self) -> f32 {
-        match self.coloring.color_method {
+        self.color_cycle_for(self.shown_method())
+    }
+
+    /// [`Self::color_cycle`] for another method, with the Cycle slider as it is: the method sheet
+    /// colors each cell at the rate choosing that method would give it (coloring plan B7).
+    pub(crate) fn color_cycle_for(&self, method: ColorMethod) -> f32 {
+        match method {
             m if m.bounded_value() => 0.5 + self.coloring.cycle * 4.0,
             ColorMethod::Smooth => smooth_color_rate(self.coloring.cycle, self.coloring.iter_div),
             _ => 0.004 + self.coloring.cycle * 0.06,
@@ -15718,7 +15735,7 @@ impl FractadyneApp {
                 self.perf.accum_end_why[view] = Some(if stale {
                     if self.accum_norm_sig(view) != self.perf.accum_norm_sig[view] {
                         // The window that colors this frame: the trap's own under the orbit trap.
-                        let win = if self.coloring.color_method == ColorMethod::OrbitTrap {
+                        let win = if self.shown_method() == ColorMethod::OrbitTrap {
                             self.perf.trap_shown[view].or(self.perf.trap_pal[view])
                         } else {
                             self.perf.norm_shown[view].or(self.perf.norm_pal[view])
@@ -16450,7 +16467,8 @@ impl FractadyneApp {
         c.cycle.to_bits().hash(&mut h);
         c.iter_div.hash(&mut h);
         c.offset.to_bits().hash(&mut h);
-        c.color_method.gpu_id().hash(&mut h);
+        // The method the view is colored with: a method sheet preview restarts the average too.
+        self.shown_method().gpu_id().hash(&mut h);
         // What the frame accumulates (B2): a sample taken with other statistics is another frame.
         // It follows from the method and the band (B3); a change of band is a new view, which
         // starts the average over anyway, so the method's own statistics stand for it.
@@ -16496,7 +16514,7 @@ impl FractadyneApp {
     fn accum_windows(&self, view: usize) -> [Option<(f32, f32)>; 2] {
         let p = &self.perf;
         render::coloring_windows(
-            self.coloring.color_method == ColorMethod::OrbitTrap,
+            self.shown_method() == ColorMethod::OrbitTrap,
             self.coloring.normalize_fit,
             [p.norm_pal[view], p.norm_shown[view]],
             [p.trap_pal[view], p.trap_shown[view]],
@@ -17555,6 +17573,11 @@ impl eframe::App for FractadyneApp {
                 // this drain runs every frame, before the frame's own paint).
                 if ran > 0 && self.perf.gpu_ran_frames[v].back() != Some(&ran) {
                     self.perf.gpu_ran_frames[v].push_back(ran);
+                    for (b, n) in self.perf.gpu_ran_why[v].iter_mut().enumerate() {
+                        if word & (1 << b) != 0 {
+                            *n += 1;
+                        }
+                    }
                     if self.perf.gpu_ran_frames[v].len() > 256 {
                         self.perf.gpu_ran_frames[v].pop_front();
                     }
@@ -18123,6 +18146,7 @@ impl eframe::App for FractadyneApp {
         // After both palette pickers (the Color menu above, the panel just drawn) have reported,
         // before the view builds its frame from the palette.
         self.settle_palette_preview(ctx);
+        self.settle_method_preview(ctx);
 
         self.draw_central(ctx);
 
@@ -18154,6 +18178,7 @@ impl eframe::App for FractadyneApp {
         self.draw_script_export_dialog(ctx);
         self.draw_bookmarks_dialog(ctx);
         self.draw_palette_browser(ctx);
+        self.draw_method_sheet(ctx);
 
         // Render a just-added bookmark's thumbnail (deferred here for GPU access; the current
         // view still matches the bookmark, since adding it didn't move the view).
