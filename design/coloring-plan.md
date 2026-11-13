@@ -875,6 +875,36 @@ reproduced. Reproduce before fixing; never close on the mechanism argument alone
   a selftest that the sheet's recolor cell equals a full render of that method (channels).
 - **Traps**: the atlas uses view 0 only; `last_cu`'s cycle belongs to the current method, so each
   cell needs its own; invalidate on `accum_color_sig`, view writes and the mask.
+- **In progress 2026-11-13** (branch `feat/color-b7-method-sheet`):
+  - **Step 1, the atlas** (`17b6d60d`): `atlas::render_atlas` draws `AtlasCell`s, each a palette and
+    either the view's own coloring or another method (`CellColoring`: its rate, no range mapping).
+    `render_palette_atlas` is it with every cell's own coloring. `read_cell` reads a cell back.
+  - **Step 2, the sheet** (`ui::method_sheet`): `sheet_plan` (pure, tested) lists the cells under the
+    method list's headings (a method the family lacks has none; the trap in three shapes; the stripe
+    at the density in use and 3 and 6) and whether the frame on screen can serve each
+    (`cell_source`: the main lane always; a statistic when the frame accumulated it with the same
+    parameter). Recolor cells are one atlas over view 0; the cell in use is the view exactly; the
+    rest say they need their own calculation. Short groups share a row (`sheet_rows`). Opened from
+    Color ▸ Preview methods… and the button beside the panel's Method box; click chooses the cell.
+  - **Step 3, the hover preview**: the palette pickers' preview made generic (`HoverPreview<R>`);
+    the sheet reports only its recolor cells, and `shown_method` is what the live color pass,
+    its rate, the range windows and the average's signatures read, falling back to the chosen
+    method unless every view on screen can recolor the cell (the dual view's Julia pane may hold
+    other statistics). The GPU iterates its set plus what the shown method reads, so a recolor
+    cell's preview cannot start a calculation. Exports and files read the chosen method.
+  - **Tests**: unit (the plan, the rows); uitest `method-sheet`, `-deep`, `-deep-triangle` with
+    `sheet-cell-is-the-view` (one probe atlas: the view in Triangle and the Triangle cell meanD 0.0,
+    the Stripe cell 38.4), and three preview steps (shows Triangle, chooses nothing, no pass a
+    change caused; a calculation cell not previewed; closing puts the chosen method back).
+  - **Found on the way**: the sheet's button made the Method row's width follow the chosen name, and
+    "Distance estimate" widened the panel by 2 px, so the canvas shrank and a switch the list calls
+    a recolor calculated the view again: B6's `method-switch-cost` caught it (Smooth to Distance read
+    a forced pass and a new walk at 976 px instead of 978). The box is now as wide as the widest
+    method. That check now counts only passes a change caused (`ran_why` KEY or FORCED, from
+    `Perf::gpu_ran_why`), not the background speed check's probes, and its steps wait for reference
+    builds.
+  - **Next, step 4**: the cells that need their own calculation, rendered small in the background,
+    one at a time, with an estimate and a Render button past a budget at depth.
 
 ### B8. The final angle without aux
 
@@ -1129,7 +1159,8 @@ coloring in these places, so sequence the two with care:
 | B2 | done, merged | `c017a577` (merge `dcfd776b`) |
 | B3 | done, merged | `412fafc6` (merge `542a5264`) |
 | B4 | done, merged | `a5d7d74b` (merge `ba452e9c`) |
-| B6 | done, merged | `c1e4bd61` (merge recorded with the next step) |
-| B5, B7, B8 | not started | |
+| B6 | done, merged | `c1e4bd61` (merge `35001f80`) |
+| B7 | in progress, branch `feat/color-b7-method-sheet` (steps 1-3) | |
+| B5, B8 | not started | |
 | C1–C11 | not started | |
 | D, E, F, G | not started | |

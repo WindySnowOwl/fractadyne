@@ -125,7 +125,7 @@ fn note_text(n: MethodNote) -> String {
 
 impl FractadyneApp {
     /// The views on screen, each with whether it is a Julia view: what a method switch reaches.
-    fn method_views(&self) -> Vec<(f64, bool)> {
+    pub(crate) fn method_views(&self) -> Vec<(f64, bool)> {
         if self.dual {
             vec![(self.viewport.magnification(), false), (self.julia_viewport.magnification(), true)]
         } else {
@@ -210,7 +210,7 @@ impl FractadyneApp {
     }
 
     /// A method's tooltip: what it shows, what switching to it does now, what it gives up here.
-    fn method_tooltip(&self, ui: &mut egui::Ui, m: ColorMethod, offered: Offered) {
+    pub(crate) fn method_tooltip(&self, ui: &mut egui::Ui, m: ColorMethod, offered: Offered) {
         ui.set_max_width(340.0);
         ui.label(method_description(m));
         match self.switch_cost(m) {

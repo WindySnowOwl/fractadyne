@@ -3619,6 +3619,12 @@ method-note-no-skip = 1e4× ötesinde her adım hesaplanır, seri yaklaşımı y
 method-note-no-skip-shallow = 1e4× ile 1e28× arasında her adım hesaplanır, seri yaklaşımı ya da BLA olmadan: orada daha yavaş.
 method-note-no-glitch-correction = Bu yöntemle dışa aktarmalar bozulma düzeltmeyi atlar.
 method-note-no-zoom-video = Yakınlaştırma videoları bunu kullanamaz.
+method-sheet-title = Renklendirme yöntemleri
+method-sheet-open = Yöntemleri karşılaştır…
+method-sheet-open-hover = Bu görünümü her renklendirme yöntemiyle yan yana gösterir. Kullanmak için birine tıklayın.
+method-sheet-density = Yoğunluk { $density }
+method-sheet-needs-render = Kendi hesaplamasını gerektirir: henüz gösterilmedi.
+method-sheet-no-view = Görünüm henüz çizilmedi ya da başka bir yolla renklendirilemez.
 # The shape an orbit trap catches the orbit with.
 trap-point = Nokta
 trap-cross = Çarpı

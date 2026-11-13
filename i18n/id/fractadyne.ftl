@@ -3507,6 +3507,12 @@ method-note-no-skip = Di atas 1e4×, setiap langkah dihitung, tanpa aproksimasi 
 method-note-no-skip-shallow = Antara 1e4× dan 1e28×, setiap langkah dihitung, tanpa aproksimasi deret atau BLA: lebih lambat di sana.
 method-note-no-glitch-correction = Dengan metode ini, ekspor melewati koreksi glitch.
 method-note-no-zoom-video = Video zoom tidak dapat menggunakannya.
+method-sheet-title = Metode pewarnaan
+method-sheet-open = Bandingkan metode…
+method-sheet-open-hover = Tampilkan tampilan ini dengan setiap metode pewarnaan, berdampingan. Klik salah satu untuk memakainya.
+method-sheet-density = Kepadatan { $density }
+method-sheet-needs-render = Perlu perhitungan sendiri: belum ditampilkan.
+method-sheet-no-view = Tampilan belum digambar, atau tidak dapat diwarnai dengan cara lain.
 # The shape an orbit trap catches the orbit with.
 trap-point = Titik
 trap-cross = Silang

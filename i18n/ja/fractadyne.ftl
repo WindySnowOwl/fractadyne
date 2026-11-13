@@ -3513,6 +3513,12 @@ method-note-no-skip = 1e4× より深いと、級数近似も BLA も使わず�
 method-note-no-skip-shallow = 1e4× から 1e28× までは、級数近似も BLA も使わずにすべての反復を計算します。その範囲では遅くなります。
 method-note-no-glitch-correction = この方法では、エクスポートでグリッチ補正が行われません。
 method-note-no-zoom-video = ズーム動画ではこの方法を使えません。
+method-sheet-title = 着色方法
+method-sheet-open = 着色方法を比較…
+method-sheet-open-hover = このビューをすべての着色方法で並べて表示します。クリックするとその方法を使います。
+method-sheet-density = 密度 { $density }
+method-sheet-needs-render = 個別の計算が必要です。まだ表示されていません。
+method-sheet-no-view = ビューがまだ描画されていないか、別の方法で着色できません。
 # The shape an orbit trap catches the orbit with.
 trap-point = 点
 trap-cross = 十字

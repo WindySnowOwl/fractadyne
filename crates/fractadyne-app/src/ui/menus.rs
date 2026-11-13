@@ -605,6 +605,14 @@ impl FractadyneApp {
                                 ui.close_menu();
                             }
                         });
+                        if ui
+                            .button(format!("{} {}", crate::icons::GALLERY, tr!(method_sheet_open)))
+                            .on_hover_text(tr!(method_sheet_open_hover))
+                            .clicked()
+                        {
+                            self.method_sheet.open = true;
+                            ui.close_menu();
+                        }
                         ui.menu_button(tr!(menu_color_palette), |ui| {
                             let is_preset = !self.coloring.use_custom_palette
                                 && !self.coloring.use_duotone

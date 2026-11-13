@@ -2141,7 +2141,7 @@ impl FractadyneApp {
         c.cycle.to_bits().hash(&mut h);
         c.iter_div.hash(&mut h);
         c.offset.to_bits().hash(&mut h);
-        c.color_method.gpu_id().hash(&mut h);
+        self.shown_method().gpu_id().hash(&mut h);
         c.log_palette.hash(&mut h);
         c.normalize_live.hash(&mut h);
         c.normalize_fit.hash(&mut h);
@@ -2206,7 +2206,7 @@ impl FractadyneApp {
         // ⭐THE ORBIT TRAP fits its OWN values: "Always fit range" spreads the palette over the trap
         // values on screen (`trap_window_drain`); the aliasing guard below is Smooth's and stays
         // out of it. Off, the trap keeps its fixed scaling.
-        if self.coloring.color_method == crate::ColorMethod::OrbitTrap {
+        if self.shown_method() == crate::ColorMethod::OrbitTrap {
             return if self.coloring.normalize_fit {
                 self.perf.trap_shown[vi.min(1)].or(self.perf.trap_pal[vi.min(1)])
             } else {
@@ -2235,7 +2235,7 @@ impl FractadyneApp {
         match (window, self.perf.norm_grad[vi.min(1)]) {
             (Some((mn, mx)), Some(_))
                 if (self.coloring.normalize_live || self.coloring.normalize_fit)
-                    && self.coloring.color_method == crate::ColorMethod::Smooth
+                    && self.shown_method() == crate::ColorMethod::Smooth
                     // A degenerate range would divide by ~0 below; the step histogram decides the rest.
                     && mx - mn > 1.0
                     // ⭐**Two questions, two controls.** "Always fit range" asks for the remap
@@ -2282,7 +2282,7 @@ impl FractadyneApp {
     pub(crate) fn trap_window_drain(&mut self, vb: usize, at_rest: bool) {
         use std::sync::atomic::Ordering::SeqCst;
         let r = self.perf.trap_sink[vb].swap(u64::MAX, SeqCst);
-        if self.coloring.color_method != crate::ColorMethod::OrbitTrap {
+        if self.shown_method() != crate::ColorMethod::OrbitTrap {
             self.perf.trap_pal[vb] = None;
             self.perf.trap_shown[vb] = None;
             self.perf.trap_sig[vb] = 0;
@@ -4366,7 +4366,7 @@ impl FractadyneApp {
             // keeps its own exact two-pass path).
             cycle: {
                 let vi = (self.dual && julia) as usize;
-                self.live_norm_cycle_offset(vi).map_or_else(|| self.color_cycle(), |m| m.cycle)
+                self.live_norm_cycle_offset(vi).map_or_else(|| self.color_cycle_for(self.coloring.color_method), |m| m.cycle)
             },
             offset: {
                 let vi = (self.dual && julia) as usize;
@@ -7252,7 +7252,8 @@ impl FractadyneApp {
             de_strength: self.effects.de_strength,
             de_width: self.effects.de_width,
             de_phase: self.effects.de_phase,
-            color_method: self.coloring.color_method.gpu_id(),
+            // The shown method: a method sheet preview recolors the view (`shown_method`).
+            color_method: self.shown_method().gpu_id(),
             orbit_stats: self.coloring.orbit_stats(mode),
             stripe_freq: self.coloring.stripe_freq,
             stripe_tail: self.coloring.stripe_tail,

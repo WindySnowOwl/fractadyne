@@ -180,7 +180,21 @@ impl FractadyneApp {
                         let popup = ui.make_persistent_id(egui::Id::new("panel_method")).with("popup");
                         ui.memory_mut(|m| m.open_popup(popup));
                     }
+                    // ⚠**AS WIDE AS THE WIDEST METHOD, whichever is chosen.** A box that fits its
+                    // text grew with "Distance estimate", and with the sheet's button beside it the
+                    // row then outgrew the panel by 2 px: the panel widened, the canvas narrowed, and
+                    // a switch the list calls a recolor calculated the whole view again (the uitest's
+                    // method-switch-cost, 2026-11-13). Sized to the widest name, the row's width
+                    // does not depend on the choice.
+                    let font = egui::TextStyle::Button.resolve(ui.style());
+                    let widest = ColorMethod::ALL
+                        .iter()
+                        .map(|m| ui.fonts(|f| f.layout_no_wrap(m.label(), font.clone(), egui::Color32::WHITE).size().x))
+                        .fold(0.0_f32, f32::max);
+                    let sp = ui.spacing();
+                    let box_w = (widest + sp.icon_width + sp.icon_spacing + 2.0 * sp.button_padding.x).max(sp.combo_width);
                     let combo = egui::ComboBox::from_id_salt("panel_method")
+                        .width(box_w)
                         .selected_text(self.coloring.color_method.label())
                         .height(480.0)
                         .show_ui(ui, |ui| {
@@ -191,6 +205,10 @@ impl FractadyneApp {
                         self.dialogs.uitest_method_tooltip = None;
                     }
                     combo.response.on_hover_text(tr!(panel_method_hover));
+                    // The method sheet: this view in every method, side by side (B7).
+                    if ui.small_button(crate::icons::GALLERY).on_hover_text(tr!(method_sheet_open_hover)).clicked() {
+                        self.method_sheet.open = true;
+                    }
                 });
                 if let Some(l) = self.coloring.color_method.lacks(caps) {
                     let note = match l {

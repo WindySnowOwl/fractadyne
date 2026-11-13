@@ -3691,6 +3691,12 @@ method-note-no-skip = Глубже 1e4× рассчитывается кажды
 method-note-no-skip-shallow = От 1e4× до 1e28× рассчитывается каждый шаг, без аппроксимации рядами и BLA: в этом диапазоне медленнее.
 method-note-no-glitch-correction = С ним при экспорте исправление глитчей пропускается.
 method-note-no-zoom-video = Видео с зумом не могут его использовать.
+method-sheet-title = Методы окраски
+method-sheet-open = Сравнить методы…
+method-sheet-open-hover = Показывает этот вид во всех методах окраски рядом. Нажмите на один, чтобы выбрать его.
+method-sheet-density = Плотность { $density }
+method-sheet-needs-render = Нужен отдельный расчёт: пока не показано.
+method-sheet-no-view = Вид ещё не нарисован или не может быть окрашен иначе.
 # The shape an orbit trap catches the orbit with.
 trap-point = Точка
 trap-cross = Крест

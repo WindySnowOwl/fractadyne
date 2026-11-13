@@ -3617,6 +3617,12 @@ method-note-no-skip = Au-delà de 1e4×, chaque pas est calculé, sans approxima
 method-note-no-skip-shallow = Entre 1e4× et 1e28×, chaque pas est calculé, sans approximation par séries ni BLA : plus lent dans cette plage.
 method-note-no-glitch-correction = Avec elle, les exports se passent de la correction des glitches.
 method-note-no-zoom-video = Les vidéos de zoom ne peuvent pas l’utiliser.
+method-sheet-title = Méthodes de coloration
+method-sheet-open = Comparer les méthodes…
+method-sheet-open-hover = Montre cette vue avec chaque méthode de coloration, côte à côte. Cliquez sur l’une pour l’utiliser.
+method-sheet-density = Densité { $density }
+method-sheet-needs-render = Demande son propre calcul : pas encore montrée.
+method-sheet-no-view = La vue n’est pas encore dessinée, ou ne peut pas être colorée autrement.
 # The shape an orbit trap catches the orbit with.
 trap-point = Point
 trap-cross = Croix

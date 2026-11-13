@@ -3506,6 +3506,12 @@ method-note-no-skip = 1e4×보다 깊으면 급수 근사나 BLA 없이 모든 �
 method-note-no-skip-shallow = 1e4×에서 1e28×까지는 급수 근사나 BLA 없이 모든 반복을 계산합니다. 그 구간에서 더 느립니다.
 method-note-no-glitch-correction = 이 방법에서는 내보내기가 글리치 보정을 건너뜁니다.
 method-note-no-zoom-video = 줌 동영상에서는 이 방법을 쓸 수 없습니다.
+method-sheet-title = 색칠 방법
+method-sheet-open = 색칠 방법 비교…
+method-sheet-open-hover = 이 화면을 모든 색칠 방법으로 나란히 보여 줍니다. 하나를 클릭하면 그 방법을 씁니다.
+method-sheet-density = 밀도 { $density }
+method-sheet-needs-render = 별도 계산이 필요합니다. 아직 표시되지 않았습니다.
+method-sheet-no-view = 화면이 아직 그려지지 않았거나 다른 방법으로 색칠할 수 없습니다.
 # The shape an orbit trap catches the orbit with.
 trap-point = 점
 trap-cross = 십자

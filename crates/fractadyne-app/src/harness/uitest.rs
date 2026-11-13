@@ -304,6 +304,22 @@ enum Screen {
     MethodCostDistance,
     MethodCostDf32Stripe,
     MethodCostDf32Trap,
+    /// The method sheet (coloring plan B7) on the home view: the count and the distance recolor,
+    /// every statistic waits for a calculation of its own.
+    MethodSheet,
+    /// The sheet at the deep recolor view under Stripe (the G-buffer): most cells recolor. Reads
+    /// back the Triangle and Stripe cells...
+    MethodSheetDeep,
+    /// ...then switches the view to Triangle (a recolor) and reads the Triangle cell again, now the
+    /// view's own coloring: the `sheet-cell-is-the-view` check.
+    MethodSheetDeepTriangle,
+    /// Back under Stripe at the same view, the pointer rests on the Triangle cell: the view shows
+    /// Triangle and Stripe stays chosen, with no pass run (a recolor cell's preview)...
+    MethodSheetPreview,
+    /// ...on the Decomposition cell, which needs a calculation of its own: no preview, no pass...
+    MethodSheetPreviewRender,
+    /// ...and with the sheet closed, the chosen method is back.
+    MethodSheetPreviewRevert,
 }
 
 /// The stripe-tail steps' view (the seahorse valley at 2e3x, direct), and how far they pan away
@@ -432,11 +448,10 @@ struct StepResult {
     /// In the pseudo-language: the text on screen that is not the English file's (no brackets),
     /// for `untranslated.txt`.
     untranslated: Vec<String>,
-    /// The frame of the last pass the GPU ran for view 0 when this step was captured
-    /// (`Perf::gpu_ran_frames`), so a step can tell whether the change it made ran one.
-    ran_frame: u64,
     /// What the method list said, at capture, a switch to each method would do (coloring plan B6).
     switch_costs: Vec<(crate::ColorMethod, crate::ui::method_list::SwitchCost)>,
+    /// View 0's passes so far by reason (`Perf::gpu_ran_why`), at capture.
+    ran_why: [u64; 7],
 }
 
 /// A 16x16 luma thumbnail of the left ~45% of the frame, vertically inset past the toolbar and
@@ -1108,6 +1123,12 @@ fn build_steps() -> Vec<Step> {
         screen("method-cost-distance", Screen::MethodCostDistance),
         screen("method-cost-df32-stripe", Screen::MethodCostDf32Stripe),
         screen("method-cost-df32-trap", Screen::MethodCostDf32Trap),
+        screen("method-sheet", Screen::MethodSheet),
+        screen("method-sheet-deep", Screen::MethodSheetDeep),
+        screen("method-sheet-deep-triangle", Screen::MethodSheetDeepTriangle),
+        screen("method-sheet-preview", Screen::MethodSheetPreview),
+        screen("method-sheet-preview-render", Screen::MethodSheetPreviewRender),
+        screen("method-sheet-preview-revert", Screen::MethodSheetPreviewRevert),
     ]
 }
 
@@ -1311,7 +1332,24 @@ impl FractadyneApp {
                     || self.formula_dialog.pending.is_some()
                     || !self.harness.uitest_pointer.is_empty()
                     // An L-system walk still on its thread: the picture is the last walk's.
-                    || (self.fractal == crate::FractalKind::LSystem && self.lsystem.busy());
+                    || (self.fractal == crate::FractalKind::LSystem && self.lsystem.busy())
+                    // ⭐The switch-cost steps also wait for a reference build: a method switch that
+                    // changes the statistics set rebuilds the reference's tree in the background
+                    // (`same_reference` asks the set), and its pass, landing after the capture, was
+                    // counted against the NEXT step's switch (Smooth to Distance read "forced 1",
+                    // 2026-11-13).
+                    || (self.recompute_rx[0].is_some()
+                        && matches!(
+                            ut.steps[ut.idx].kind,
+                            StepKind::Screen(
+                                Screen::MethodCostStripe
+                                    | Screen::MethodCostTrap
+                                    | Screen::MethodCostSmooth
+                                    | Screen::MethodCostDistance
+                                    | Screen::MethodCostDf32Stripe
+                                    | Screen::MethodCostDf32Trap
+                            )
+                        ));
                 if busy {
                     ut.quiet_since = now;
                 }
@@ -1376,6 +1414,26 @@ impl FractadyneApp {
         }
 
         self.harness.uitest = Some(ut);
+    }
+
+    /// The `sheet-cell-is-the-view` probe: one atlas over view 0's texture at one size, three cells
+    /// (the view's own coloring; Triangle and Stripe as method sheet cells color it), read back.
+    fn uitest_sheet_probe(&self) -> Option<[Vec<u8>; 3]> {
+        use fractadyne_gpu::atlas::{self, AtlasCell, AtlasPalette, CellColoring};
+        let rs = self.render_state.as_ref()?;
+        let lut = self.active_gradient().bake(fractadyne_color::segment::LUT_SIZE);
+        let palette = AtlasPalette { lut: lut.entries, smooth: lut.smooth };
+        let cell = |m: crate::ColorMethod| AtlasCell { palette: &palette, coloring: Some(CellColoring { method: m, cycle: self.color_cycle_for(m) }) };
+        let cells = [
+            AtlasCell { palette: &palette, coloring: None },
+            cell(crate::ColorMethod::TriangleIneq),
+            cell(crate::ColorMethod::Stripe),
+        ];
+        let a = atlas::render_atlas(rs, 0, &cells, [256, 160], 3, None).ok()?;
+        let read = [atlas::read_cell(rs, &a, 0), atlas::read_cell(rs, &a, 1), atlas::read_cell(rs, &a, 2)];
+        atlas::free_palette_atlas(rs, a);
+        let [x, y, z] = read;
+        Some([x?, y?, z?])
     }
 
     /// Put the app into the state a step wants to capture.
@@ -1504,6 +1562,7 @@ impl FractadyneApp {
         self.diagnostics.open = false;
         self.misi.open = false;
         self.dialogs.uitest_method_tooltip = None;
+        self.method_sheet.open = false;
         self.dialogs.minimap = false;
         // The Snapshot choice is a window too (found standing behind the snapshot-screen step).
         self.dialogs.snapshot_choice_open = false;
@@ -1899,8 +1958,41 @@ impl FractadyneApp {
                     self.dialogs.uitest_method_tooltip = Some(crate::ColorMethod::Decomposition);
                 }
             }
+            Screen::MethodSheet => {
+                self.set_show_mode(crate::ShowMode::Set);
+                self.set_fractal(crate::FractalKind::Mandelbrot);
+                self.reset_view();
+                self.render_cfg.auto_iter = true;
+                self.coloring.color_method = crate::ColorMethod::Smooth;
+                self.method_sheet.open = true;
+            }
+            // The deep step's setup is the trap-recolor view's, below; the sheet stays open across
+            // the switch to Triangle.
+            Screen::MethodSheetDeepTriangle => {
+                self.coloring.color_method = crate::ColorMethod::TriangleIneq;
+                self.method_sheet.open = true;
+            }
+            // The view stays as the steps before left it (a move would calculate it again).
+            Screen::MethodSheetPreview | Screen::MethodSheetPreviewRender => {
+                use crate::ui::method_sheet::SheetCell;
+                self.coloring.color_method = crate::ColorMethod::Stripe;
+                self.method_sheet.open = true;
+                let on = if matches!(s, Screen::MethodSheetPreview) {
+                    crate::ColorMethod::TriangleIneq
+                } else {
+                    crate::ColorMethod::Decomposition
+                };
+                let cell = SheetCell { method: on, trap: None, stripe_freq: None };
+                // One event a frame, and the first land before the sheet has drawn (as the palette
+                // preview's): several, all to the same place.
+                self.harness.uitest_pointer = std::iter::repeat(crate::UiPointer::OnSheetCell(cell)).take(6).collect();
+            }
+            // Nothing open (`uitest_apply` closed the sheet): the pointer leaves as well.
+            Screen::MethodSheetPreviewRevert => {
+                self.harness.uitest_pointer = [crate::UiPointer::Gone].into_iter().collect();
+            }
             // The trap-recolor steps' deep view (floatexp with BLA), under Stripe.
-            Screen::MethodTooltipRecolors | Screen::MethodCostStripe => {
+            Screen::MethodTooltipRecolors | Screen::MethodCostStripe | Screen::MethodSheetDeep => {
                 self.set_show_mode(crate::ShowMode::Set);
                 self.set_fractal(crate::FractalKind::Mandelbrot);
                 self.render_cfg.aa = 1;
@@ -1918,6 +2010,9 @@ impl FractadyneApp {
                     self.dialogs.right_panel_open = true;
                     self.dialogs.open_method_list = true;
                     self.dialogs.uitest_method_tooltip = Some(crate::ColorMethod::OrbitTrap);
+                }
+                if matches!(s, Screen::MethodSheetDeep) {
+                    self.method_sheet.open = true;
                 }
             }
             // EXACTLY what the method list does (`ui::method_list`): set the method.
@@ -2389,7 +2484,7 @@ impl FractadyneApp {
         let left_fp = left_pane_fingerprint(&image.pixels, w as usize, h as usize);
         let mid_fp = band_fingerprint(&image.pixels, w as usize, h as usize, (w as usize * 45) / 100, (w as usize * 75) / 100);
         let tiled = self.tile_state_present(0);
-        let ran_frame = self.perf.gpu_ran_frames[0].back().copied().unwrap_or(0);
+        let ran_why = self.perf.gpu_ran_why[0];
         let switch_costs: Vec<_> = crate::ColorMethod::ALL.iter().map(|m| (*m, self.switch_cost(*m))).collect();
 
         let is_live = matches!(step.kind, StepKind::Live(_));
@@ -3134,17 +3229,72 @@ impl FractadyneApp {
             }
         }
 
+        // ---- the method sheet's hover preview (coloring plan B7) ----
+        // Each step against the one before: no pass may run (`ran_frame`), the chosen method stays
+        // Stripe, and the view shows Triangle only while the pointer rests on the Triangle cell.
+        if let StepKind::Screen(sc @ (Screen::MethodSheetPreview | Screen::MethodSheetPreviewRender | Screen::MethodSheetPreviewRevert)) = step.kind {
+            let (name, before, want) = match sc {
+                Screen::MethodSheetPreview => ("a recolor cell previews its method, chooses nothing, runs no pass", "method-sheet-deep-triangle", crate::ColorMethod::TriangleIneq),
+                Screen::MethodSheetPreviewRender => ("a cell that needs a calculation is not previewed", "method-sheet-preview", crate::ColorMethod::Stripe),
+                _ => ("closing the sheet puts the chosen method back", "method-sheet-preview-render", crate::ColorMethod::Stripe),
+            };
+            // Passes a change caused (the key changed, or there was none): a probe's do not count.
+            let prev = ut.results.iter().rev().find(|r| r.name == before).map(|r| r.ran_why);
+            let caused = prev.map(|a| (ran_why[0] - a[0]) + (ran_why[1] - a[1]));
+            let shown = self.shown_method();
+            let chosen = self.coloring.color_method;
+            let ok = caused == Some(0) && chosen == crate::ColorMethod::Stripe && shown == want;
+            checks.push(Check {
+                name: name.into(),
+                verdict: if ok { Verdict::Pass } else { Verdict::Fail },
+                detail: format!(
+                    "the view shows {shown:?} (wanted {want:?}); chosen {chosen:?}; passes a change caused since {before}: {caused:?}; {} pointer events left",
+                    self.harness.uitest_pointer.len()
+                ),
+            });
+        }
+
+        // ---- a method sheet cell is the view in that method (coloring plan B7) ----
+        // With the view in Triangle (a recolor of the Stripe frame: the G-buffer holds it), one
+        // probe atlas over its texture at one size: the view's own coloring, Triangle as a sheet
+        // cell colors it, and Stripe as a cell (ANTI-VACUITY: it must differ).
+        if matches!(step.kind, StepKind::Screen(Screen::MethodSheetDeepTriangle)) {
+            let mean_diff = |a: &[u8], b: &[u8]| -> Option<f64> {
+                (a.len() == b.len() && !a.is_empty()).then(|| a.iter().zip(b).map(|(x, y)| (*x as f64 - *y as f64).abs()).sum::<f64>() / a.len() as f64)
+            };
+            checks.push(match self.uitest_sheet_probe() {
+                Some([view, tri, stripe]) => {
+                    let (same, control) = (mean_diff(&view, &tri), mean_diff(&view, &stripe));
+                    let detail = format!("the view in Triangle vs the Triangle cell: meanD {same:?}; vs the Stripe cell {control:?}");
+                    match (same, control) {
+                        (Some(d), Some(c)) if d <= 0.5 && c >= 4.0 => pass("sheet-cell-is-the-view", detail),
+                        (Some(_), Some(c)) if c < 4.0 => Check { name: "sheet-cell-is-the-view".into(), verdict: Verdict::Warn, detail: format!("too alike to tell: {detail}") },
+                        _ => Check { name: "sheet-cell-is-the-view".into(), verdict: Verdict::Fail, detail },
+                    }
+                }
+                None => Check { name: "sheet-cell-is-the-view".into(), verdict: Verdict::Fail, detail: "the probe atlas was not drawn or read".into() },
+            });
+        }
+
         // ---- what the method list says a switch costs, against the GPU (coloring plan B6) ----
         // Each pair of steps changes only the method; the earlier step recorded what the list said
         // a switch to the later step's method would do, and both recorded the last pass the GPU
         // ran. "Recolors" must run no pass; "calculates again" must run one.
         if matches!(step.kind, StepKind::Screen(Screen::MethodCostDf32Trap)) {
             use crate::ui::method_list::SwitchCost;
-            let find = |n: &str| -> Option<(u64, &[(crate::ColorMethod, SwitchCost)])> {
+            let find = |n: &str| -> Option<([u64; 7], &[(crate::ColorMethod, SwitchCost)])> {
                 if n == step.name {
-                    return Some((ran_frame, &switch_costs[..]));
+                    return Some((ran_why, &switch_costs[..]));
                 }
-                ut.results.iter().rev().find(|r| r.name == n).map(|r| (r.ran_frame, &r.switch_costs[..]))
+                ut.results.iter().rev().find(|r| r.name == n).map(|r| (r.ran_why, &r.switch_costs[..]))
+            };
+            // A pass the switch caused: the iteration's key changed (KEY), or it had no key to
+            // compare with (FORCED). A probe's, a walk's next chunk or a tile's pass is not one.
+            const WHY: [&str; 7] = ["forced", "key", "tile", "chunk", "probe", "split", "empty"];
+            let caused = |a: &[u64; 7], b: &[u64; 7]| (b[0] - a[0]) + (b[1] - a[1]);
+            let reasons = |a: &[u64; 7], b: &[u64; 7]| -> String {
+                let r: Vec<String> = (0..7).filter(|i| b[*i] > a[*i]).map(|i| format!("{} {}", WHY[i], b[i] - a[i])).collect();
+                if r.is_empty() { "none".into() } else { r.join(", ") }
             };
             let pairs = [
                 ("method-cost-stripe", "method-cost-trap", crate::ColorMethod::OrbitTrap),
@@ -3156,9 +3306,9 @@ impl FractadyneApp {
             let (mut wrong, mut missing, mut saw_recolor, mut saw_pass) = (0, 0, false, false);
             for (from, to, m) in pairs {
                 match (find(from), find(to)) {
-                    (Some((ran_a, costs)), Some((ran_b, _))) => {
+                    (Some((why_a, costs)), Some((why_b, _))) => {
                         let claim = costs.iter().find(|(c, _)| *c == m).map(|(_, k)| *k);
-                        let ran = ran_b > ran_a;
+                        let ran = caused(&why_a, &why_b) > 0;
                         let right = match claim {
                             Some(SwitchCost::Recolors) => !ran,
                             Some(SwitchCost::Recalculates) => ran,
@@ -3170,8 +3320,9 @@ impl FractadyneApp {
                             wrong += 1;
                         }
                         lines.push(format!(
-                            "{from} -> {to}: said {claim:?}, a pass {} (frames {ran_a} -> {ran_b})",
-                            if ran { "ran" } else { "did not run" }
+                            "{from} -> {to}: said {claim:?}, the switch {} (passes: {})",
+                            if ran { "ran one" } else { "ran none" },
+                            reasons(&why_a, &why_b)
                         ));
                     }
                     _ => missing += 1,
@@ -3355,8 +3506,8 @@ impl FractadyneApp {
             mid_fp,
             tiled,
             untranslated,
-            ran_frame,
             switch_costs,
+            ran_why,
         }
     }
 
@@ -3461,8 +3612,8 @@ impl FractadyneApp {
             mid_fp: Vec::new(),
             tiled: false,
             untranslated: Vec::new(),
-            ran_frame: 0,
             switch_costs: Vec::new(),
+            ran_why: [0; 7],
         }
     }
 
@@ -3615,8 +3766,8 @@ fn timeout_result(step: &Step) -> StepResult {
         mid_fp: Vec::new(),
         tiled: false,
         untranslated: Vec::new(),
-        ran_frame: 0,
         switch_costs: Vec::new(),
+        ran_why: [0; 7],
     }
 }
 

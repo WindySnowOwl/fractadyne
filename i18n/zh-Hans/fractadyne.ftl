@@ -3506,6 +3506,12 @@ method-note-no-skip = 超过 1e4× 后会计算每一次迭代，不使用级数
 method-note-no-skip-shallow = 在 1e4× 到 1e28× 之间会计算每一次迭代，不使用级数近似或 BLA：在此范围内更慢。
 method-note-no-glitch-correction = 使用此方法时，导出会跳过失真校正。
 method-note-no-zoom-video = 缩放视频无法使用此方法。
+method-sheet-title = 着色方法
+method-sheet-open = 比较着色方法…
+method-sheet-open-hover = 把此视图以每种着色方法并排显示。点击其中一个即可使用。
+method-sheet-density = 密度 { $density }
+method-sheet-needs-render = 需要单独计算：尚未显示。
+method-sheet-no-view = 视图尚未绘制，或无法用其他方式着色。
 # The shape an orbit trap catches the orbit with.
 trap-point = 点
 trap-cross = 十字

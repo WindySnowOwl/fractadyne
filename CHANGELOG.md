@@ -59,6 +59,14 @@ published as the pre-releases `v0.2.41-beta.1` to `v0.2.41-beta.150`, and a "bet
 
 Changes after 0.3.0-beta.1:
 
+- **Every coloring method side by side on the view you are looking at (0.3.0-beta.27).** Color ▸
+  Preview methods…, or the button beside the panel's Method box, opens a sheet of the current view in
+  each method, under the method list's headings, with the orbit trap in its three shapes and the
+  stripe average at three densities. A method whose data the frame on screen already holds appears at
+  once, recolored rather than calculated again: the count and the distance always, and on a deep
+  stripe, triangle or trap view the other two of those as well. Resting the pointer on such a cell
+  shows that method on the view itself until the pointer moves off, and clicking a cell chooses it.
+  A cell that needs a calculation of its own says so.
 - **The coloring method list says what each method shows and what it costs (0.3.0-beta.27).** The
   panel's Method box and Color ▸ Method list the methods under headings: Escape count, Distance,
   Orbit statistics and Angle. Resting the pointer on a method says what it shows, whether switching
