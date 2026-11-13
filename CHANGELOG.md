@@ -59,6 +59,14 @@ published as the pre-releases `v0.2.41-beta.1` to `v0.2.41-beta.150`, and a "bet
 
 Changes after 0.3.0-beta.1:
 
+- **Dragging a slow view in the dual view no longer blurs it (0.3.0-beta.27).** When a view had
+  finished drawing in tiles (a high iteration count with a coloring such as Decomposition or the
+  orbit trap), dragging it or resizing the window in the dual view sent the graphics card frames
+  at full size with no limit on their work: about a second each at 250,000 iterations, close to
+  where Windows resets the card. The app's safety stops then cut the view to a few dozen pixels
+  across. Those frames now get the same limits as any moving frame. And a view whose work was cut
+  back now sharpens all the way again while it sits still, where it could stop at less than half
+  its resolution until you moved it.
 - **The inside's palette can fit its own range (0.3.0-beta.27).** With the orbit trap coloring the
   inside, "Fit to the inside's range" spreads the inside's palette over the trap values measured
   inside the set on screen, one and a half sweeps from their 1st to 99th percentile, so the inside

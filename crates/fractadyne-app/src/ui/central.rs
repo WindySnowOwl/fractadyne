@@ -1477,10 +1477,13 @@ impl FractadyneApp {
         // ---- precision reticle (Shift with click-to-zoom armed) ----
         self.draw_reticle(ctx);
 
+        // The central region's rect, for whatever asks where it was drawn (the layout checks, and the
+        // harness's pointer events, which land relative to it): shown watermark or not. It was
+        // recorded only with the watermark, so a harness pointer aimed at the view went nowhere.
+        self.perf.layout.central = Some(central.response.rect);
         // ---- brand watermark (lower-right of the fractal area) ----
         if self.watermark {
             if self.show_watermark {
-                self.perf.layout.central = Some(central.response.rect);
                 self.draw_watermark(ctx, central.response.rect);
             }
         }

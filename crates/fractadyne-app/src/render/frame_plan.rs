@@ -92,6 +92,28 @@ pub(crate) fn classify(f: FrameFacts) -> FrameKind {
     }
 }
 
+/// Whether a frame honors its CALLER'S reprojection (a pan drag's offset, a resize hold, the yield to
+/// a tour render): only a perturbation view with a reference re-samples a held texture for one; a
+/// direct view renders the frame. `build_params` asks this TWICE, and both must get the same answer:
+/// where it sizes the frame ([`will_reproject`]) and where it builds the color pass's transform.
+pub(crate) fn honors_caller_reprojection(is_pert: bool, has_ref: bool) -> bool {
+    is_pert && has_ref
+}
+
+/// Whether a frame re-samples a held texture instead of iterating, as `build_params` SIZES it: such a
+/// frame keeps native resolution and the held texture's budget (`frozen_budget`, unbounded after a
+/// tiled settle), since it dispatches nothing.
+///
+/// ⚠It was `caller.is_some() || …`, while the transform was built from the caller's reprojection
+/// only where [`honors_caller_reprojection`] — so a DIRECT view's pan drag was sized as a frame that
+/// iterates nothing and then iterated, at native resolution with no bound: after a tiled settle at
+/// 251,261 iterations, 2885×2060 passes of 1.0–1.8 s each, every few frames of the drag, with no
+/// motion-jam count or completion registration either (they key on this too). The dead-man and
+/// the emergency retreats then cut the view's budget 7,000× (the maintainer's log, 2026-11-13).
+pub(crate) fn will_reproject(caller: bool, reuse_hold: bool, is_pert: bool, has_ref: bool) -> bool {
+    (caller && honors_caller_reprojection(is_pert, has_ref)) || reuse_hold || (is_pert && !has_ref)
+}
+
 /// The iteration texture a live frame renders at.
 ///
 /// ⭐Constructed in ONE place — [`Resolution::panel`], at the top of `build_params`, from the panel

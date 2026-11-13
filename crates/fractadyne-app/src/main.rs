@@ -17051,6 +17051,7 @@ impl FractadyneApp {
                 cur,
                 self.perf.frame_idx,
                 self.perf.mode_switch_frame[v],
+                self.perf.view_gen[vb],
             ) {
                 pooled = render::budget_step(cur, ps, pms, explicit);
                 diag::budget_note(format!(

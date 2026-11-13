@@ -1270,6 +1270,6 @@ coloring in these places, so sequence the two with care:
 | B5 | done, merged | `b2b927d6` (merge `e3e53257`) |
 | B8 | not started | |
 | C1 | done, merged | `58d6dce3` (merge `84af4b0d`) |
-| C4 | done, branch `feat/color-c4-inside-fit`, not merged | |
+| C4 | done, merged | `e99bfafd` (merge `9a3f9ff9`) |
 | C2, C3, C5–C11 | not started | |
 | D, E, F, G | not started | |

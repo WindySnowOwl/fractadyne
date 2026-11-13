@@ -373,3 +373,37 @@ fn a_stepped_homes_stop_asks_only_what_its_depth_wants() {
     assert_eq!(home_stop_iter(fixed, 12.0, true, true), fixed);
     assert_eq!(home_stop_iter(fixed, 12.0, false, false), fixed);
 }
+
+/// The maintainer's log, 2026-11-13: a pan drag in a DIRECT view was sized as a frame that iterates
+/// nothing (native resolution, the tiled settle's unbounded `frozen_budget`) and then iterated,
+/// because the transform drops a caller's reprojection in direct mode. The sizing must ask what the
+/// transform does.
+#[test]
+fn a_direct_views_pan_is_sized_as_a_frame_that_iterates() {
+    // (caller, reuse_hold, is_pert, has_ref)
+    assert!(!will_reproject(true, false, false, false), "direct, a pan drag: it iterates");
+    assert!(!honors_caller_reprojection(false, false));
+    // The control: a perturbation view with its reference re-samples the held texture for a pan.
+    assert!(will_reproject(true, false, true, true));
+    assert!(honors_caller_reprojection(true, true));
+    // A perturbation view without its reference holds whatever the caller asked (it cannot iterate).
+    assert!(will_reproject(false, false, true, false));
+    assert!(will_reproject(true, false, true, false));
+    // The reuse hold is the frame's own decision, honored in every mode that makes it.
+    assert!(will_reproject(false, true, false, false));
+    // Nothing asked: a direct view iterates.
+    assert!(!will_reproject(false, false, false, false));
+}
+
+/// Both sites ask the one rule: for every input the sizing reprojects a caller's frame exactly where
+/// the transform honors it (a perturbation view without its reference reprojects either way).
+#[test]
+fn the_sizing_and_the_transform_agree_on_every_caller_reprojection() {
+    for is_pert in [false, true] {
+        for has_ref in [false, true] {
+            let honored = honors_caller_reprojection(is_pert, has_ref);
+            let forced = is_pert && !has_ref;
+            assert_eq!(will_reproject(true, false, is_pert, has_ref), honored || forced, "pert {is_pert} ref {has_ref}");
+        }
+    }
+}

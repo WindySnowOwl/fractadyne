@@ -8278,9 +8278,15 @@ impl FractadyneApp {
         // bilinear-smeared bullseye at the anchor, and it never re-iterated again (2026-08-13
         // dual-Julia report; reproduced deterministically by `--juliadive`: 375/375 frames
         // `reproj=true`, `iterates=false` from frame 3).
-        let will_reproject = reproject.is_some()
-            || reuse_hold
-            || (is_pert && self.ref_cache[view_id as usize].ref_pt.is_none());
+        // ⚠The caller's reprojection counts only where the frame will honor it (`bp` below builds
+        // the transform under the same rule): a direct view iterates its pan frames, so it sizes
+        // them as frames that iterate (`frame_plan::will_reproject`).
+        let will_reproject = crate::render::frame_plan::will_reproject(
+            reproject.is_some(),
+            reuse_hold,
+            is_pert,
+            self.ref_cache[view_id as usize].ref_pt.is_some(),
+        );
         let resolution = if res_scale < 1.0 && !will_reproject {
             resolution.scaled(res_scale)
         } else {
@@ -9177,8 +9183,10 @@ impl FractadyneApp {
         // Mutable: also set below to freeze the last good frame while an off-thread recompute is in
         // flight and the cached reference has drifted fully out of view (extreme depth), so the
         // view holds instead of flashing blank.
-        let mut reproject = reproject
-            .filter(|_| !mode.is_direct() && self.ref_cache[vi].ref_pt.is_some());
+        // The same rule `will_reproject` sized this frame by (`frame_plan::honors_caller_reprojection`).
+        let mut reproject = reproject.filter(|_| {
+            crate::render::frame_plan::honors_caller_reprojection(!mode.is_direct(), self.ref_cache[vi].ref_pt.is_some())
+        });
         // A pan drag's frame computes no reference offset: its params describe no real frame.
         let caller_pan = reproject.is_some();
         // Reprojection scale about the view center: 1.0 for a pan (drag) reprojection; set <1.0 by
