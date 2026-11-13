@@ -3745,8 +3745,15 @@ method-sheet-title = Metody kolorowania
 method-sheet-open = Porównaj metody…
 method-sheet-open-hover = Pokazuje ten widok w każdej metodzie kolorowania, obok siebie. Kliknij jedną, aby jej użyć.
 method-sheet-density = Gęstość { $density }
-method-sheet-needs-render = Wymaga własnych obliczeń: jeszcze nie pokazano.
+method-sheet-needs-render = Wymaga własnych obliczeń.
 method-sheet-no-view = Widok nie został jeszcze narysowany lub nie da się go pokolorować inaczej.
+method-sheet-estimating = Szacowanie czasu…
+method-sheet-estimate = Około { $eta }
+method-sheet-estimate-over = Ponad { $eta }
+method-sheet-render = Oblicz
+method-sheet-render-hover = Oblicz tę komórkę teraz, w tle. Przesunięcie widoku lub zamknięcie tego okna przerywa obliczenia.
+method-sheet-calculating = Obliczanie… { $elapsed }
+method-sheet-render-failed = Nie udało się tego tu obliczyć.
 # The shape an orbit trap catches the orbit with.
 trap-point = Punkt
 trap-cross = Krzyż

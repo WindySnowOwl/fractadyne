@@ -7823,6 +7823,8 @@ impl FractadyneApp {
                 uitest_panel_w: None,
                 uitest_async_key: None,
                 uitest_pointer: Default::default(),
+                uitest_sheet_budget: None,
+                uitest_sheet_hold: false,
                 soak,
                 recordtest,
                 juliadive,

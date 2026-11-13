@@ -256,14 +256,21 @@ pub fn render_atlas(
     Ok(PaletteAtlas { texture, id, cell, cols, count: palettes.len() })
 }
 
-/// Cell `k`'s texels as the atlas holds them (rows top to bottom, in the target's own format and byte
-/// order), read back from the GPU: for the UI test, which holds a method sheet cell against the
-/// view's own coloring. Waits at most five seconds; `None` if the cell does not exist or the read
-/// fails.
+/// Cell `k`'s texels as the atlas holds them, rows top to bottom, as display-space RGBA8 (a BGRA
+/// target's bytes put in that order), read back from the GPU: for the UI test, which holds a method
+/// sheet cell against the view's own coloring and against an export's `to_srgb8` bytes. Waits at
+/// most five seconds; `None` if the cell does not exist, the target is not an 8-bit RGBA or BGRA
+/// format, or the read fails.
 pub fn read_cell(rs: &egui_wgpu::RenderState, atlas: &PaletteAtlas, k: usize) -> Option<Vec<u8>> {
+    use wgpu::TextureFormat as F;
     if k >= atlas.count {
         return None;
     }
+    let bgra = match atlas.texture.format() {
+        F::Rgba8Unorm | F::Rgba8UnormSrgb => false,
+        F::Bgra8Unorm | F::Bgra8UnormSrgb => true,
+        _ => return None,
+    };
     let (device, queue) = (&rs.device, &rs.queue);
     let [w, h] = atlas.cell;
     let (col, row) = ((k as u32) % atlas.cols, (k as u32) / atlas.cols);
@@ -306,6 +313,11 @@ pub fn read_cell(rs: &egui_wgpu::RenderState, atlas: &PaletteAtlas, k: usize) ->
     }
     drop(data);
     buf.unmap();
+    if bgra {
+        for px in out.chunks_exact_mut(4) {
+            px.swap(0, 2);
+        }
+    }
     Some(out)
 }
 

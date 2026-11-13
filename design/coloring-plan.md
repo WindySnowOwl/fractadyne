@@ -875,7 +875,7 @@ reproduced. Reproduce before fixing; never close on the mechanism argument alone
   a selftest that the sheet's recolor cell equals a full render of that method (channels).
 - **Traps**: the atlas uses view 0 only; `last_cu`'s cycle belongs to the current method, so each
   cell needs its own; invalidate on `accum_color_sig`, view writes and the mask.
-- **In progress 2026-11-13** (branch `feat/color-b7-method-sheet`):
+- **Done 2026-11-13** (branch `feat/color-b7-method-sheet`; step 1 reached main with the palette browser's dual view, `ef2acde7`):
   - **Step 1, the atlas** (`17b6d60d`): `atlas::render_atlas` draws `AtlasCell`s, each a palette and
     either the view's own coloring or another method (`CellColoring`: its rate, no range mapping).
     `render_palette_atlas` is it with every cell's own coloring. `read_cell` reads a cell back.
@@ -903,8 +903,34 @@ reproduced. Reproduce before fixing; never close on the mechanism argument alone
     method. That check now counts only passes a change caused (`ran_why` KEY or FORCED, from
     `Perf::gpu_ran_why`), not the background speed check's probes, and its steps wait for reference
     builds.
-  - **Next, step 4**: the cells that need their own calculation, rendered small in the background,
-    one at a time, with an estimate and a Render button past a budget at depth.
+  - **Step 4, the calculated cells** (`ui::sheet_render`): each is an export of the view in the
+    cell's coloring at the cell's size (the builder reads the cell's method, shape and density as
+    the coloring's, so what it accumulates and whether the live tree's skipping still serves it
+    follow the cell), borrowing the live reference (`RefSource::Live`), on a device of its own on a
+    thread of its own (the Export dialog's route), one at a time. Asked for only when
+    `live_reference_serves` (the builder's own two questions: otherwise `Live` builds a reference
+    synchronously on the UI thread), the live view is at rest, and the key has held 0.5 s. The key
+    (`sheet_render_key`) is the view, its iterations, the borrowed orbit, the coloring but the
+    method, shape and density, and the size, so a hover preview restarts nothing. Each cell is
+    priced first by a probe at 1/8 per side (GPU time × pixels + the least fixed cost a probe
+    paid; stopped at 2 s, a floor): within 2 s it is calculated by itself, past it it shows the
+    estimate and a Render button; Cancel stops an asked one. Moving the view or closing the sheet
+    stops the one under way.
+  - **Tests (step 4)**: unit (`estimate`, `next_job` order: asked, then every probe, then within
+    the budget; `fmt_eta`; `probe_size`); uitest `method-sheet` (`sheet-calculates-cells`: 7 of 7
+    at home, Stripe 3 vs 6 differ 59, Stripe vs Triangle 76), `method-sheet-calculated` (the
+    calculated Triangle cell vs the live view switched to Triangle, 8x8 block means 0.61; CONTROL
+    the calculated Stripe cell 75.6), `-deep-priced` (budget 0: 4 of 4 priced, none calculated;
+    `sheet-cells-apart`), `-deep-asked` (held: the asked cell under way, the screenshot shows it
+    calculating), `-deep-asked-done` (that cell only; vs the view 44, luma spread 66).
+    `atlas::read_cell` returns RGBA whatever the target's byte order, to compare with an export.
+  - **Found on the way**: the Render button placed with `ui.put` moved the row's cursor back to the
+    button's edge and the next cell drew over this one (Stripe 3 under 6, Cross under Circle); now
+    in a child Ui that takes no room. `sheet-cells-apart` failed on a control build with `ui.put`,
+    and its own first version flagged every diagonal pair (`Rect::intersect` of two rects apart on
+    both axes has negative width and height, so a positive area).
+  - Not exercised by the UI test: a probe stopped at its limit (a floor, "Over m:ss"), which needs
+    a view heavier than the test's 1e30x at 25,000 iterations; the floor's arithmetic is unit-tested.
 
 ### B8. The final angle without aux
 
@@ -1159,8 +1185,8 @@ coloring in these places, so sequence the two with care:
 | B2 | done, merged | `c017a577` (merge `dcfd776b`) |
 | B3 | done, merged | `412fafc6` (merge `542a5264`) |
 | B4 | done, merged | `a5d7d74b` (merge `ba452e9c`) |
-| B6 | done, merged | `c1e4bd61` (merge `35001f80`) |
-| B7 | in progress, branch `feat/color-b7-method-sheet` (steps 1-3) | |
+| B6 | done, merged | `c1e4bd61` (merge `35001f80`) |
+| B7 | done, branch `feat/color-b7-method-sheet` (steps 1-4), not merged | |
 | B5, B8 | not started | |
 | C1–C11 | not started | |
 | D, E, F, G | not started | |

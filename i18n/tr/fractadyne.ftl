@@ -3625,8 +3625,15 @@ method-sheet-title = Renklendirme yöntemleri
 method-sheet-open = Yöntemleri karşılaştır…
 method-sheet-open-hover = Bu görünümü her renklendirme yöntemiyle yan yana gösterir. Kullanmak için birine tıklayın.
 method-sheet-density = Yoğunluk { $density }
-method-sheet-needs-render = Kendi hesaplamasını gerektirir: henüz gösterilmedi.
+method-sheet-needs-render = Kendi hesaplamasını gerektirir.
 method-sheet-no-view = Görünüm henüz çizilmedi ya da başka bir yolla renklendirilemez.
+method-sheet-estimating = Süre tahmin ediliyor…
+method-sheet-estimate = Yaklaşık { $eta }
+method-sheet-estimate-over = { $eta } üzeri
+method-sheet-render = Hesapla
+method-sheet-render-hover = Bu hücreyi şimdi arka planda hesapla. Görünümü hareket ettirmek veya bu pencereyi kapatmak hesaplamayı durdurur.
+method-sheet-calculating = Hesaplanıyor… { $elapsed }
+method-sheet-render-failed = Burada hesaplanamadı.
 # The shape an orbit trap catches the orbit with.
 trap-point = Nokta
 trap-cross = Çarpı

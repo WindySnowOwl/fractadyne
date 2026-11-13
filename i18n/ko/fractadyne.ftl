@@ -3512,8 +3512,15 @@ method-sheet-title = 색칠 방법
 method-sheet-open = 색칠 방법 비교…
 method-sheet-open-hover = 이 화면을 모든 색칠 방법으로 나란히 보여 줍니다. 하나를 클릭하면 그 방법을 씁니다.
 method-sheet-density = 밀도 { $density }
-method-sheet-needs-render = 별도 계산이 필요합니다. 아직 표시되지 않았습니다.
+method-sheet-needs-render = 별도 계산이 필요합니다.
 method-sheet-no-view = 화면이 아직 그려지지 않았거나 다른 방법으로 색칠할 수 없습니다.
+method-sheet-estimating = 시간을 추정하는 중…
+method-sheet-estimate = 약 { $eta }
+method-sheet-estimate-over = { $eta } 이상
+method-sheet-render = 계산
+method-sheet-render-hover = 이 칸을 지금 백그라운드에서 계산합니다. 화면을 움직이거나 이 창을 닫으면 멈춥니다.
+method-sheet-calculating = 계산 중… { $elapsed }
+method-sheet-render-failed = 여기서는 계산할 수 없었습니다.
 # The shape an orbit trap catches the orbit with.
 trap-point = 점
 trap-cross = 십자

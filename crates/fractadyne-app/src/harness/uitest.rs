@@ -324,6 +324,63 @@ enum Screen {
     MethodSheetPreviewRender,
     /// ...and with the sheet closed, the chosen method is back.
     MethodSheetPreviewRevert,
+    /// The home view's sheet calculated every cell that needs its own calculation (step 4) in
+    /// `method-sheet`; now the view itself is in Triangle (calculated again, live), and the Triangle
+    /// cell calculated then must be that picture: `sheet-calculated-cell-is-the-method`.
+    MethodSheetCalculated,
+    /// The deep view under Stripe with a budget of 0: every cell that needs its own calculation is
+    /// priced, none calculated, each shows its estimate and a Render button...
+    MethodSheetDeepPriced,
+    /// ...the Decomposition cell's Render, captured without waiting for it (a cell in progress)...
+    MethodSheetDeepAsked,
+    /// ...and once it is done: that cell, and no other.
+    MethodSheetDeepAskedDone,
+}
+
+/// The method sheet cell the `method-sheet-deep-asked` steps ask for: Decomposition, which no
+/// frame accumulates (B7 step 4).
+const UITEST_ASKED_CELL: crate::ui::method_sheet::SheetCell =
+    crate::ui::method_sheet::SheetCell { method: crate::ColorMethod::Decomposition, trap: None, stripe_freq: None };
+
+/// `sheet-calculated-cell-is-the-method`: the most two pictures of the same view in the same
+/// method, by two renderers, may differ as 8x8 block means (0-255 a channel).
+const UITEST_SAME_BLOCKS: f64 = 6.0;
+
+/// The mean absolute difference of two RGBA8 images' 8x8 block means, RGB only: what the two show,
+/// without the sampling's grain. `None` when the sizes disagree.
+fn block_mean_diff(a: &[u8], b: &[u8], size: [u32; 2]) -> Option<f64> {
+    let (w, h) = (size[0] as usize, size[1] as usize);
+    if a.len() != w * h * 4 || b.len() != a.len() || w < 8 || h < 8 {
+        return None;
+    }
+    let (mut sum, mut n) = (0.0, 0usize);
+    for by in 0..h / 8 {
+        for bx in 0..w / 8 {
+            for ch in 0..3 {
+                let (mut sa, mut sb) = (0.0, 0.0);
+                for y in by * 8..by * 8 + 8 {
+                    for x in bx * 8..bx * 8 + 8 {
+                        let i = (y * w + x) * 4 + ch;
+                        sa += a[i] as f64;
+                        sb += b[i] as f64;
+                    }
+                }
+                sum += ((sa - sb) / 64.0).abs();
+                n += 1;
+            }
+        }
+    }
+    (n > 0).then(|| sum / n as f64)
+}
+
+/// The standard deviation of an RGBA8 image's luma (0-255): 0 for a flat picture.
+fn luma_spread(px: &[u8]) -> f64 {
+    let l: Vec<f64> = px.chunks_exact(4).map(|p| 0.299 * p[0] as f64 + 0.587 * p[1] as f64 + 0.114 * p[2] as f64).collect();
+    if l.is_empty() {
+        return 0.0;
+    }
+    let m = l.iter().sum::<f64>() / l.len() as f64;
+    (l.iter().map(|v| (v - m) * (v - m)).sum::<f64>() / l.len() as f64).sqrt()
 }
 
 /// The stripe-tail steps' view (the seahorse valley at 2e3x, direct), and how far they pan away
@@ -454,6 +511,8 @@ struct StepResult {
     untranslated: Vec<String>,
     /// What the method list said, at capture, a switch to each method would do (coloring plan B6).
     switch_costs: Vec<(crate::ColorMethod, crate::ui::method_list::SwitchCost)>,
+    /// The method sheet's calculated cells at capture, with their texels (RGBA8) and size (B7).
+    sheet_calculated: Vec<(crate::ui::method_sheet::SheetCell, Vec<u8>, [u32; 2])>,
     /// View 0's passes so far by reason (`Perf::gpu_ran_why`), at capture.
     ran_why: [u64; 7],
 }
@@ -1132,11 +1191,15 @@ fn build_steps() -> Vec<Step> {
         screen("method-cost-df32-stripe", Screen::MethodCostDf32Stripe),
         screen("method-cost-df32-trap", Screen::MethodCostDf32Trap),
         screen("method-sheet", Screen::MethodSheet),
+        screen("method-sheet-calculated", Screen::MethodSheetCalculated),
         screen("method-sheet-deep", Screen::MethodSheetDeep),
         screen("method-sheet-deep-triangle", Screen::MethodSheetDeepTriangle),
         screen("method-sheet-preview", Screen::MethodSheetPreview),
         screen("method-sheet-preview-render", Screen::MethodSheetPreviewRender),
         screen("method-sheet-preview-revert", Screen::MethodSheetPreviewRevert),
+        screen("method-sheet-deep-priced", Screen::MethodSheetDeepPriced),
+        screen("method-sheet-deep-asked", Screen::MethodSheetDeepAsked),
+        screen("method-sheet-deep-asked-done", Screen::MethodSheetDeepAskedDone),
     ]
 }
 
@@ -1341,6 +1404,14 @@ impl FractadyneApp {
                     || !self.harness.uitest_pointer.is_empty()
                     // An L-system walk still on its thread: the picture is the last walk's.
                     || (self.fractal == crate::FractalKind::LSystem && self.lsystem.busy())
+                    // The method sheet's cells that calculate by themselves (B7 step 4), but in the
+                    // step that captures one in progress.
+                    || (self.method_sheet.open
+                        && !matches!(ut.steps[ut.idx].kind, StepKind::Screen(Screen::MethodSheetDeepAsked))
+                        && {
+                            let s = self.sheet_cell_size();
+                            self.method_sheet.render.busy(s[0] as u64 * s[1] as u64, self.sheet_budget_s())
+                        })
                     // ⭐The switch-cost steps also wait for a reference build: a method switch that
                     // changes the statistics set rebuilds the reference's tree in the background
                     // (`same_reference` asks the set), and its pass, landing after the capture, was
@@ -1427,21 +1498,120 @@ impl FractadyneApp {
     /// The `sheet-cell-is-the-view` probe: one atlas over view 0's texture at one size, three cells
     /// (the view's own coloring; Triangle and Stripe as method sheet cells color it), read back.
     fn uitest_sheet_probe(&self) -> Option<[Vec<u8>; 3]> {
+        let [x, y, z]: [Vec<u8>; 3] =
+            self.uitest_atlas_read(&[None, Some(crate::ColorMethod::TriangleIneq), Some(crate::ColorMethod::Stripe)], [256, 160])?.try_into().ok()?;
+        Some([x, y, z])
+    }
+
+    /// One atlas over view 0's texture, a cell per entry (`None`: the view's own coloring; a method:
+    /// that method as a method sheet cell colors it), each `size`, read back as RGBA8.
+    fn uitest_atlas_read(&self, methods: &[Option<crate::ColorMethod>], size: [u32; 2]) -> Option<Vec<Vec<u8>>> {
         use fractadyne_gpu::atlas::{self, AtlasCell, AtlasPalette, CellColoring};
         let rs = self.render_state.as_ref()?;
         let lut = self.active_gradient().bake(fractadyne_color::segment::LUT_SIZE);
         let palette = AtlasPalette { lut: lut.entries, smooth: lut.smooth };
-        let cell = |m: crate::ColorMethod| AtlasCell { palette: &palette, coloring: Some(CellColoring { method: m, cycle: self.color_cycle_for(m) }) };
-        let cells = [
-            AtlasCell { palette: &palette, coloring: None },
-            cell(crate::ColorMethod::TriangleIneq),
-            cell(crate::ColorMethod::Stripe),
-        ];
-        let a = atlas::render_atlas(rs, 0, &cells, [256, 160], 3, None).ok()?;
-        let read = [atlas::read_cell(rs, &a, 0), atlas::read_cell(rs, &a, 1), atlas::read_cell(rs, &a, 2)];
+        let cells: Vec<AtlasCell> = methods
+            .iter()
+            .map(|m| AtlasCell { palette: &palette, coloring: m.map(|m| CellColoring { method: m, cycle: self.color_cycle_for(m) }) })
+            .collect();
+        let a = atlas::render_atlas(rs, 0, &cells, size, methods.len() as u32, None).ok()?;
+        let read: Vec<Option<Vec<u8>>> = (0..methods.len()).map(|k| atlas::read_cell(rs, &a, k)).collect();
         atlas::free_palette_atlas(rs, a);
-        let [x, y, z] = read;
-        Some([x?, y?, z?])
+        read.into_iter().collect()
+    }
+
+    /// The method sheet's calculated cells (coloring plan B7, step 4), step by step.
+    fn uitest_sheet_render_checks(&self, sc: Screen, ut: &UiTest, calculated: &[(crate::ui::method_sheet::SheetCell, Vec<u8>, [u32; 2])], checks: &mut Vec<Check>) {
+        let r = &self.method_sheet.render;
+        let (done, priced) = r.counts();
+        let wanted = crate::ui::method_sheet::sheet_plan(self.fractal.caps(), self.sheet_frame())
+            .into_iter()
+            .flat_map(|(_, cs)| cs)
+            .filter(|(_, s)| *s == crate::ui::method_sheet::CellSource::Render)
+            .count();
+        let fail = |name: &str, detail: String| Check { name: name.into(), verdict: Verdict::Fail, detail };
+        match sc {
+            // Home: every such cell calculated by itself, and they differ (ANTI-VACUITY: a cell
+            // colored by the wrong method, or one picture for all, would not).
+            Screen::MethodSheet => {
+                let find = |m: crate::ColorMethod, f: Option<f32>| {
+                    calculated.iter().find(|(c, _, _)| c.method == m && (f.is_none() || c.stripe_freq == f)).map(|(_, b, s)| (b, *s))
+                };
+                let d = |a: Option<(&Vec<u8>, [u32; 2])>, b: Option<(&Vec<u8>, [u32; 2])>| {
+                    a.zip(b).filter(|(a, b)| a.1 == b.1).and_then(|(a, b)| block_mean_diff(a.0, b.0, a.1))
+                };
+                let s3 = find(crate::ColorMethod::Stripe, Some(3.0));
+                let s6 = find(crate::ColorMethod::Stripe, Some(6.0));
+                let tri = find(crate::ColorMethod::TriangleIneq, None);
+                let (d36, d3t) = (d(s3, s6), d(s3, tri));
+                let detail = format!("{done} of {wanted} calculated, {priced} priced; Stripe 3 vs 6 {d36:?}, Stripe 3 vs Triangle {d3t:?}");
+                checks.push(match (d36, d3t) {
+                    (Some(a), Some(b)) if done == wanted && wanted > 0 && r.all_rendered() && a >= 4.0 && b >= 4.0 => pass("sheet-calculates-cells", detail),
+                    _ => fail("sheet-calculates-cells", detail),
+                });
+            }
+            // The Triangle cell calculated on the export path against the live view now in
+            // Triangle, as the sheet's recolor colors it (same rate, no range mapping), compared as
+            // 8x8 block means (the two renderers sample a filament at different points). CONTROL:
+            // the Stripe cell calculated then, against the same picture.
+            Screen::MethodSheetCalculated => {
+                let before = ut.results.iter().rev().find(|x| x.name == "method-sheet");
+                let get = |m: crate::ColorMethod| {
+                    before.and_then(|x| x.sheet_calculated.iter().find(|(c, _, _)| c.method == m && c.stripe_freq.is_none_or(|f| f == self.coloring.stripe_freq)))
+                };
+                let (tri, stripe) = (get(crate::ColorMethod::TriangleIneq), get(crate::ColorMethod::Stripe));
+                let live = tri.and_then(|t| self.uitest_atlas_read(&[Some(crate::ColorMethod::TriangleIneq)], t.2)).and_then(|mut v| v.pop());
+                let same = tri.zip(live.as_ref()).and_then(|(t, l)| block_mean_diff(&t.1, l, t.2));
+                let control = stripe.zip(live.as_ref()).zip(tri).filter(|((s, _), t)| s.2 == t.2).and_then(|((s, l), t)| block_mean_diff(&s.1, l, t.2));
+                let detail = format!("the calculated Triangle cell vs the view in Triangle: {same:?}; the calculated Stripe cell vs it: {control:?}");
+                checks.push(match (same, control) {
+                    (Some(a), Some(c)) if a <= UITEST_SAME_BLOCKS && c >= 2.0 * a.max(2.0) => pass("sheet-calculated-cell-is-the-method", detail),
+                    _ => fail("sheet-calculated-cell-is-the-method", detail),
+                });
+            }
+            Screen::MethodSheetDeepPriced => {
+                let detail = format!("{priced} of {wanted} priced, {done} calculated, budget 0");
+                checks.push(if wanted > 0 && priced == wanted && done == 0 { pass("sheet-prices-cells", detail) } else { fail("sheet-prices-cells", detail) });
+                // Every cell where the last frame drew it, none over another: a widget placed
+                // inside a cell (its Render button) once moved the row's cursor back.
+                let plan = crate::ui::method_sheet::sheet_plan(self.fractal.caps(), self.sheet_frame());
+                let rects: Vec<_> = plan.iter().flat_map(|(_, cs)| cs.iter()).map(|(c, _)| (*c, self.method_sheet.preview.row_rect(*c))).collect();
+                let missing = rects.iter().filter(|(_, r)| r.is_none()).count();
+                let mut overlaps = Vec::new();
+                for (i, (a, ra)) in rects.iter().enumerate() {
+                    for (b, rb) in &rects[i + 1..] {
+                        if let (Some(ra), Some(rb)) = (ra, rb) {
+                            // ⚠Not `intersect(..).area() > 0`: two rects apart on both axes
+                            // "intersect" in a rect of negative width AND height, whose area is
+                            // positive (the first version of this check flagged every diagonal pair).
+                            let i = ra.intersect(*rb);
+                            if i.width() > 1.0 && i.height() > 1.0 {
+                                overlaps.push(format!("{a:?} at {ra:?} over {b:?} at {rb:?}"));
+                            }
+                        }
+                    }
+                }
+                let detail = format!("{} cells, {missing} not drawn, overlapping: {overlaps:?}", rects.len());
+                checks.push(if missing == 0 && overlaps.is_empty() { pass("sheet-cells-apart", detail) } else { fail("sheet-cells-apart", detail) });
+            }
+            // Held (`uitest_sheet_hold`): the cell must be under way, as the screenshot shows it.
+            Screen::MethodSheetDeepAsked => {
+                let going = r.asked_in_flight(UITEST_ASKED_CELL);
+                let detail = format!("the asked cell under way: {going}; {done} calculated");
+                checks.push(if going && done == 0 { pass("sheet-asked-cell-starts", detail) } else { fail("sheet-asked-cell-starts", detail) });
+            }
+            _ => {
+                // That cell, no other; and it is a picture of this view (ANTI-VACUITY: against the
+                // view's own coloring, Stripe, it must differ, and it must not be flat).
+                let mine = r.rgba(UITEST_ASKED_CELL);
+                let own = mine.and_then(|(_, s)| self.uitest_atlas_read(&[None], *s)).and_then(|mut v| v.pop());
+                let vs_view = mine.zip(own.as_ref()).and_then(|((b, s), o)| block_mean_diff(b, o, *s));
+                let spread = mine.map(|(b, _)| luma_spread(b));
+                let detail = format!("{done} calculated; the asked cell vs the view in Stripe {vs_view:?}, its luma spread {spread:?}");
+                let ok = done == 1 && vs_view.is_some_and(|d| d >= 4.0) && spread.is_some_and(|s| s >= 4.0);
+                checks.push(if ok { pass("sheet-asked-cell", detail) } else { fail("sheet-asked-cell", detail) });
+            }
+        }
     }
 
     /// Put the app into the state a step wants to capture.
@@ -1571,6 +1741,8 @@ impl FractadyneApp {
         self.misi.open = false;
         self.dialogs.uitest_method_tooltip = None;
         self.method_sheet.open = false;
+        self.harness.uitest_sheet_budget = None;
+        self.harness.uitest_sheet_hold = false;
         self.dialogs.minimap = false;
         // The Snapshot choice is a window too (found standing behind the snapshot-screen step).
         self.dialogs.snapshot_choice_open = false;
@@ -1991,6 +2163,22 @@ impl FractadyneApp {
                 self.coloring.color_method = crate::ColorMethod::Smooth;
                 self.method_sheet.open = true;
             }
+            // The home view as `method-sheet` left it, colored by Triangle: calculated again live.
+            Screen::MethodSheetCalculated => {
+                self.coloring.color_method = crate::ColorMethod::TriangleIneq;
+                self.method_sheet.open = true;
+            }
+            // The deep view as the steps before left it, with a budget of 0; the Decomposition
+            // cell's Render, through the function the button calls.
+            Screen::MethodSheetDeepAsked | Screen::MethodSheetDeepAskedDone => {
+                self.method_sheet.open = true;
+                self.harness.uitest_sheet_budget = Some(0.0);
+                if matches!(s, Screen::MethodSheetDeepAsked) {
+                    self.method_sheet.render.ask(UITEST_ASKED_CELL);
+                    // Its answer waits until the next step: this one captures it calculating.
+                    self.harness.uitest_sheet_hold = true;
+                }
+            }
             // The deep step's setup is the trap-recolor view's, below; the sheet stays open across
             // the switch to Triangle.
             Screen::MethodSheetDeepTriangle => {
@@ -2017,7 +2205,7 @@ impl FractadyneApp {
                 self.harness.uitest_pointer = [crate::UiPointer::Gone].into_iter().collect();
             }
             // The trap-recolor steps' deep view (floatexp with BLA), under Stripe.
-            Screen::MethodTooltipRecolors | Screen::MethodCostStripe | Screen::MethodSheetDeep => {
+            Screen::MethodTooltipRecolors | Screen::MethodCostStripe | Screen::MethodSheetDeep | Screen::MethodSheetDeepPriced => {
                 self.set_show_mode(crate::ShowMode::Set);
                 self.set_fractal(crate::FractalKind::Mandelbrot);
                 self.render_cfg.aa = 1;
@@ -2036,8 +2224,11 @@ impl FractadyneApp {
                     self.dialogs.open_method_list = true;
                     self.dialogs.uitest_method_tooltip = Some(crate::ColorMethod::OrbitTrap);
                 }
-                if matches!(s, Screen::MethodSheetDeep) {
+                if matches!(s, Screen::MethodSheetDeep | Screen::MethodSheetDeepPriced) {
                     self.method_sheet.open = true;
+                }
+                if matches!(s, Screen::MethodSheetDeepPriced) {
+                    self.harness.uitest_sheet_budget = Some(0.0);
                 }
             }
             // EXACTLY what the method list does (`ui::method_list`): set the method.
@@ -2511,6 +2702,15 @@ impl FractadyneApp {
         let tiled = self.tile_state_present(0);
         let ran_why = self.perf.gpu_ran_why[0];
         let switch_costs: Vec<_> = crate::ColorMethod::ALL.iter().map(|m| (*m, self.switch_cost(*m))).collect();
+        let sheet_calculated: Vec<_> = if matches!(step.kind, StepKind::Screen(Screen::MethodSheet)) {
+            let plan = crate::ui::method_sheet::sheet_plan(self.fractal.caps(), self.sheet_frame());
+            plan.iter()
+                .flat_map(|(_, cs)| cs.iter())
+                .filter_map(|(c, _)| self.method_sheet.render.rgba(*c).map(|(b, s)| (*c, b.clone(), *s)))
+                .collect()
+        } else {
+            Vec::new()
+        };
 
         let is_live = matches!(step.kind, StepKind::Live(_));
         // "Not blank": a rendered UI or fractal has tonal spread. A flat frame is suspicious.
@@ -3254,6 +3454,11 @@ impl FractadyneApp {
             }
         }
 
+        // ---- the method sheet's calculated cells (coloring plan B7, step 4) ----
+        if let StepKind::Screen(sc @ (Screen::MethodSheet | Screen::MethodSheetCalculated | Screen::MethodSheetDeepPriced | Screen::MethodSheetDeepAsked | Screen::MethodSheetDeepAskedDone)) = step.kind {
+            self.uitest_sheet_render_checks(sc, ut, &sheet_calculated, &mut checks);
+        }
+
         // ---- the method sheet's hover preview (coloring plan B7) ----
         // Each step against the one before: no pass may run (`ran_frame`), the chosen method stays
         // Stripe, and the view shows Triangle only while the pointer rests on the Triangle cell.
@@ -3547,6 +3752,7 @@ impl FractadyneApp {
             tiled,
             untranslated,
             switch_costs,
+            sheet_calculated,
             ran_why,
         }
     }
@@ -3653,6 +3859,7 @@ impl FractadyneApp {
             tiled: false,
             untranslated: Vec::new(),
             switch_costs: Vec::new(),
+            sheet_calculated: Vec::new(),
             ran_why: [0; 7],
         }
     }
@@ -3807,6 +4014,7 @@ fn timeout_result(step: &Step) -> StepResult {
         tiled: false,
         untranslated: Vec::new(),
         switch_costs: Vec::new(),
+        sheet_calculated: Vec::new(),
         ran_why: [0; 7],
     }
 }

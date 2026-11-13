@@ -3862,8 +3862,18 @@ method-sheet-title = Coloring methods
 method-sheet-open = Preview methods…
 method-sheet-open-hover = Show this view in every coloring method, side by side. Click one to use it.
 method-sheet-density = Density { $density }
-method-sheet-needs-render = Needs its own calculation: not yet shown.
+method-sheet-needs-render = Needs its own calculation.
 method-sheet-no-view = The view has not drawn yet, or cannot be colored another way.
+method-sheet-estimating = Estimating the time…
+# $eta: the estimated time, as m:ss (h:mm:ss from an hour).
+method-sheet-estimate = About { $eta }
+# $eta: the least it will take, as m:ss (h:mm:ss from an hour).
+method-sheet-estimate-over = Over { $eta }
+method-sheet-render = Render
+method-sheet-render-hover = Calculate this cell now, in the background. Moving the view or closing this window stops it.
+# $elapsed: how long it has been calculating, as m:ss.
+method-sheet-calculating = Calculating… { $elapsed }
+method-sheet-render-failed = It could not be calculated here.
 # The shape an orbit trap catches the orbit with.
 trap-point = Point
 trap-cross = Cross

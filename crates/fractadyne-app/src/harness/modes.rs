@@ -63,6 +63,12 @@ pub(crate) struct HarnessModes {
     /// Pointer events the `life-draw` step feeds the app, one a frame, at CELLS of the Life view
     /// (turned into positions as they are fed, so they land on the cell whatever the layout).
     pub(crate) uitest_pointer: std::collections::VecDeque<crate::UiPointer>,
+    /// `--uitest`: the budget a method sheet cell must fit to be calculated by itself, in place of
+    /// `ui::sheet_render::AUTO_BUDGET_S` (0: every cell waits for its Render button).
+    pub(crate) uitest_sheet_budget: Option<f64>,
+    /// `--uitest`: the method sheet leaves a finished cell's answer where it is, so a step can
+    /// capture the cell as it shows while it calculates.
+    pub(crate) uitest_sheet_hold: bool,
     pub(crate) soak: Option<crate::harness::soak::Soak>,
     /// `--recordtest [FRAMES]`: the frame record's own gate — does it record every frame, fill
     /// every required field, and survive an abort? See `mod recordtest`.

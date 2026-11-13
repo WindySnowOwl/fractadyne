@@ -1065,7 +1065,7 @@ impl FractadyneApp {
     }
 
     /// `formula=` and `formula_params=` for a Custom view; empty for a built-in family.
-    fn custom_formula_metadata(&self) -> String {
+    pub(crate) fn custom_formula_metadata(&self) -> String {
         match self.custom.as_ref().filter(|_| self.fractal == FractalKind::Custom) {
             Some(c) => format!("formula={}\nformula_params={}\n", c.source_line(), c.params_line()),
             None => String::new(),

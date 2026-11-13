@@ -3511,8 +3511,15 @@ method-sheet-title = 著色方法
 method-sheet-open = 比較著色方法…
 method-sheet-open-hover = 把此視圖以每種著色方法並排顯示。點擊其中一個即可使用。
 method-sheet-density = 密度 { $density }
-method-sheet-needs-render = 需要單獨計算：尚未顯示。
+method-sheet-needs-render = 需要單獨計算。
 method-sheet-no-view = 視圖尚未繪製，或無法用其他方式著色。
+method-sheet-estimating = 正在估算時間…
+method-sheet-estimate = 約 { $eta }
+method-sheet-estimate-over = 超過 { $eta }
+method-sheet-render = 計算
+method-sheet-render-hover = 立即在背景計算此格。移動視圖或關閉此視窗會停止計算。
+method-sheet-calculating = 正在計算… { $elapsed }
+method-sheet-render-failed = 無法在此計算。
 # The shape an orbit trap catches the orbit with.
 trap-point = 點
 trap-cross = 十字

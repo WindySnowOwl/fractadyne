@@ -3513,8 +3513,15 @@ method-sheet-title = Metode pewarnaan
 method-sheet-open = Bandingkan metode…
 method-sheet-open-hover = Tampilkan tampilan ini dengan setiap metode pewarnaan, berdampingan. Klik salah satu untuk memakainya.
 method-sheet-density = Kepadatan { $density }
-method-sheet-needs-render = Perlu perhitungan sendiri: belum ditampilkan.
+method-sheet-needs-render = Perlu perhitungan sendiri.
 method-sheet-no-view = Tampilan belum digambar, atau tidak dapat diwarnai dengan cara lain.
+method-sheet-estimating = Memperkirakan waktu…
+method-sheet-estimate = Sekitar { $eta }
+method-sheet-estimate-over = Lebih dari { $eta }
+method-sheet-render = Hitung
+method-sheet-render-hover = Hitung sel ini sekarang, di latar belakang. Menggeser tampilan atau menutup jendela ini menghentikannya.
+method-sheet-calculating = Menghitung… { $elapsed }
+method-sheet-render-failed = Tidak dapat dihitung di sini.
 # The shape an orbit trap catches the orbit with.
 trap-point = Titik
 trap-cross = Silang

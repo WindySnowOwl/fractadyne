@@ -4152,6 +4152,16 @@ impl FractadyneApp {
         self.build_export_request(vp, julia, RefSource::Live)
     }
 
+    /// Whether [`Self::autopilot_probe_request`] for `vp` is served without building a reference:
+    /// the view needs none, or the live view's resident one serves it. The builder's own two
+    /// questions (`render_mode`, `live_ref_fields`), so the answer cannot drift from what it does.
+    /// Asked first where its fallback would be wrong: a full-depth bignum build, synchronous, on
+    /// the calling thread (the method sheet's cells, `ui::sheet_render`).
+    pub(crate) fn live_reference_serves(&self, vp: &Viewport, julia: bool) -> bool {
+        self.render_mode(self.fractal, julia, vp.magnification()).is_direct()
+            || self.live_ref_fields(vp, julia, self.export_eff_iter(vp, julia), vp.gpu_scale().delta_exp, vp.precision).is_some()
+    }
+
     /// As [`current_export_request_for`], but reuse a `precomputed` reference recompute when it was
     /// built for this exact frame (matching iteration count + precision) — the tour pipeline
     /// computes frame N+1's reference on a worker while frame N renders. A stale/absent precompute

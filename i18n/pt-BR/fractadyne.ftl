@@ -3625,8 +3625,15 @@ method-sheet-title = Métodos de coloração
 method-sheet-open = Comparar métodos…
 method-sheet-open-hover = Mostra esta vista em cada método de coloração, lado a lado. Clique em um para usá-lo.
 method-sheet-density = Densidade { $density }
-method-sheet-needs-render = Precisa de um cálculo próprio: ainda não mostrado.
+method-sheet-needs-render = Precisa de um cálculo próprio.
 method-sheet-no-view = A vista ainda não foi desenhada ou não pode ser colorida de outro modo.
+method-sheet-estimating = Estimando o tempo…
+method-sheet-estimate = Cerca de { $eta }
+method-sheet-estimate-over = Mais de { $eta }
+method-sheet-render = Calcular
+method-sheet-render-hover = Calcular esta célula agora, em segundo plano. Mover a vista ou fechar esta janela interrompe o cálculo.
+method-sheet-calculating = Calculando… { $elapsed }
+method-sheet-render-failed = Não foi possível calcular aqui.
 # The shape an orbit trap catches the orbit with.
 trap-point = Ponto
 trap-cross = Cruz

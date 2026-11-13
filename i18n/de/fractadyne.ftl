@@ -3623,8 +3623,15 @@ method-sheet-title = Färbemethoden
 method-sheet-open = Methoden vergleichen…
 method-sheet-open-hover = Zeigt diese Ansicht in jeder Färbemethode nebeneinander. Ein Klick wählt eine aus.
 method-sheet-density = Dichte { $density }
-method-sheet-needs-render = Braucht eine eigene Berechnung: noch nicht gezeigt.
+method-sheet-needs-render = Braucht eine eigene Berechnung.
 method-sheet-no-view = Die Ansicht ist noch nicht gezeichnet oder lässt sich nicht anders färben.
+method-sheet-estimating = Zeit wird geschätzt…
+method-sheet-estimate = Etwa { $eta }
+method-sheet-estimate-over = Über { $eta }
+method-sheet-render = Berechnen
+method-sheet-render-hover = Diese Zelle jetzt im Hintergrund berechnen. Die Ansicht zu bewegen oder dieses Fenster zu schließen, hält sie an.
+method-sheet-calculating = Wird berechnet… { $elapsed }
+method-sheet-render-failed = Ließ sich hier nicht berechnen.
 # The shape an orbit trap catches the orbit with.
 trap-point = Punkt
 trap-cross = Kreuz

@@ -3805,8 +3805,15 @@ method-sheet-title = Методи забарвлення
 method-sheet-open = Порівняти методи…
 method-sheet-open-hover = Показує цей вигляд у кожному методі забарвлення поруч. Натисніть на один, щоб вибрати його.
 method-sheet-density = Щільність { $density }
-method-sheet-needs-render = Потрібен окремий розрахунок: ще не показано.
+method-sheet-needs-render = Потрібен окремий розрахунок.
 method-sheet-no-view = Вигляд ще не намальовано або його не можна забарвити інакше.
+method-sheet-estimating = Оцінювання часу…
+method-sheet-estimate = Близько { $eta }
+method-sheet-estimate-over = Понад { $eta }
+method-sheet-render = Розрахувати
+method-sheet-render-hover = Розрахувати цю клітинку зараз, у фоні. Переміщення вигляду або закриття цього вікна перериває розрахунок.
+method-sheet-calculating = Розрахунок… { $elapsed }
+method-sheet-render-failed = Тут розрахувати не вдалося.
 # The shape an orbit trap catches the orbit with.
 trap-point = Точка
 trap-cross = Хрест

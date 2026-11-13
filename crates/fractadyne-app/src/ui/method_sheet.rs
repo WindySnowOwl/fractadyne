@@ -17,10 +17,10 @@ use crate::{ColorMethod, ColoringLabel, Stat, StatSet, TrapType};
 use fractadyne_core::coloring::MethodGroup;
 use fractadyne_gpu::atlas::{self, AtlasCell, AtlasPalette, CellColoring, PaletteAtlas};
 
-/// Thumbnail width on screen, in points, and the atlas cell's width in texels (more, so egui's
-/// linear filter averages the color pass's point samples).
+/// Thumbnail width on screen, in points, and a cell's width in texels (more, so egui's linear
+/// filter averages the point samples), recolored or calculated.
 const THUMB_W: f32 = 220.0;
-const CELL_W: u32 = 440;
+pub(crate) const CELL_W: u32 = 440;
 /// Space between thumbnails, and the height of the two text lines under one (name, variant).
 const GAP: f32 = 10.0;
 const LABEL_H: f32 = 36.0;
@@ -144,6 +144,9 @@ pub(crate) struct MethodSheet {
     /// rules, `crate::palette_preview`); a cell that needs its own calculation is not previewed, which
     /// would start one.
     pub(crate) preview: crate::palette_preview::HoverPreview<SheetCell>,
+    /// The cells that need a calculation of their own, and the thread that calculates them
+    /// (`ui::sheet_render`, step 4).
+    pub(crate) render: crate::ui::sheet_render::SheetRender,
     atlas: Option<PaletteAtlas>,
     /// The recolor cells the atlas holds, in its order, and what it was drawn for, and when.
     atlas_cells: Vec<SheetCell>,
@@ -240,8 +243,7 @@ impl crate::FractadyneApp {
             }
             h.finish()
         };
-        let aspect = (self.viewport.height_px / self.viewport.width_px.max(1.0)).clamp(0.2, 5.0);
-        let cell = [CELL_W, ((CELL_W as f64) * aspect).round().max(8.0) as u32];
+        let cell = self.sheet_cell_size();
         let key = SheetKey { writes, colouring: self.accum_color_sig(0), cells: cells_sig, cell };
         if self.method_sheet.drawn_for == Some(key) {
             return;
@@ -300,10 +302,16 @@ impl crate::FractadyneApp {
             }
             self.method_sheet.atlas_cells.clear();
             self.method_sheet.drawn_for = None;
+            self.method_sheet.render.stop();
             return;
         }
         let plan = sheet_plan(self.fractal.caps(), self.sheet_frame());
         self.refresh_method_atlas(ctx, &plan);
+        if self.sheet_can_draw() {
+            self.sheet_render_step(ctx, &plan);
+        } else {
+            self.method_sheet.render.stop();
+        }
         let in_use = self.sheet_cell_in_use();
         let aspect = (self.viewport.height_px / self.viewport.width_px.max(1.0)).clamp(0.2, 5.0) as f32;
         let thumb = egui::vec2(THUMB_W, (THUMB_W * aspect).round());
@@ -369,22 +377,60 @@ impl crate::FractadyneApp {
         let img = egui::Rect::from_min_size(rect.min, size);
         let painter = ui.painter_at(rect.expand(4.0));
         let k = self.method_sheet.atlas_cells.iter().position(|x| *x == c);
+        let full_uv = egui::Rect::from_min_max(egui::pos2(0.0, 0.0), egui::pos2(1.0, 1.0));
         match (&self.method_sheet.atlas, k) {
             (Some(a), Some(k)) if src == CellSource::Recolor && k < a.count => {
                 painter.image(a.id, img, a.uv(k), egui::Color32::WHITE);
             }
+            _ if src == CellSource::Render => {
+                use crate::ui::sheet_render::{fmt_eta, CellView};
+                let size = self.sheet_cell_size();
+                let view = self.method_sheet.render.view(c, size[0] as u64 * size[1] as u64, self.sheet_budget_s());
+                // The status line, and the button that goes with it: Render past the budget, Cancel
+                // for a cell calculating because it was asked for.
+                let (status, button) = match view {
+                    CellView::Picture(id) => {
+                        painter.image(id, img, full_uv, egui::Color32::WHITE);
+                        (None, None)
+                    }
+                    CellView::Calculating(t) => (
+                        Some(tr!(method_sheet_calculating, elapsed = fmt_eta(t.as_secs_f64()))),
+                        self.method_sheet.render.asked_in_flight(c).then(|| (tr!(dlg_cancel), String::new(), false)),
+                    ),
+                    CellView::Estimating => (Some(tr!(method_sheet_estimating)), None),
+                    CellView::Priced { estimate, over } => {
+                        let eta = fmt_eta(estimate.secs);
+                        let line = if estimate.at_least { tr!(method_sheet_estimate_over, eta = eta) } else { tr!(method_sheet_estimate, eta = eta) };
+                        (Some(line), over.then(|| (tr!(method_sheet_render), tr!(method_sheet_render_hover), true)))
+                    }
+                    CellView::Failed => (Some(tr!(method_sheet_render_failed)), None),
+                };
+                if let Some(status) = status {
+                    let below = self.sheet_placeholder(ui, &painter, img, &status);
+                    if let Some((label, hover, render)) = button {
+                        let font = egui::TextStyle::Button.resolve(ui.style());
+                        let w = ui.fonts(|f| f.layout_no_wrap(label.clone(), font, egui::Color32::WHITE).size().x) + 2.0 * ui.spacing().button_padding.x + 4.0;
+                        let r = egui::Rect::from_center_size(egui::pos2(img.center().x, below + 14.0), egui::vec2(w.min(img.width() - 8.0), 22.0));
+                        // ⚠In a child that takes no room from the row: `ui.put` moved the row's
+                        // cursor back to the button's right edge, and the next cell drew over this
+                        // one (`--uitest` sheet-cells-apart).
+                        let mut child = ui.new_child(egui::UiBuilder::new().max_rect(r));
+                        let mut b = child.add_sized(r.size(), egui::Button::new(label));
+                        if !hover.is_empty() {
+                            b = b.on_hover_text(hover);
+                        }
+                        if b.clicked() {
+                            if render {
+                                self.method_sheet.render.ask(c);
+                            } else {
+                                self.method_sheet.render.stop_cell(c);
+                            }
+                        }
+                    }
+                }
+            }
             _ => {
-                painter.rect_filled(img, egui::CornerRadius::same(2), ui.visuals().extreme_bg_color);
-                let strip = egui::Rect::from_min_size(img.left_bottom() - egui::vec2(0.0, 10.0), egui::vec2(img.width(), 10.0));
-                crate::paint_gradient(&painter, strip, &self.active_gradient().bake(fractadyne_color::segment::LUT_SIZE));
-                let note = painter.layout(
-                    tr!(method_sheet_needs_render),
-                    egui::TextStyle::Small.resolve(ui.style()),
-                    ui.visuals().weak_text_color(),
-                    img.width() - 16.0,
-                );
-                let at = img.center() - egui::vec2(note.size().x / 2.0, note.size().y / 2.0 + 5.0);
-                painter.galley(at, note, ui.visuals().weak_text_color());
+                self.sheet_placeholder(ui, &painter, img, "");
             }
         }
         self.method_sheet.preview.row(c, rect, resp.hovered() && src == CellSource::Recolor);
@@ -418,6 +464,23 @@ impl crate::FractadyneApp {
         }
         let offered = self.offered();
         resp.on_hover_ui(|ui| self.method_tooltip(ui, c.method, offered)).clicked()
+    }
+
+    /// A cell with no picture: the palette under a note that it needs its own calculation, and
+    /// `status` under that. Returns the note's bottom edge, for a button below it.
+    fn sheet_placeholder(&self, ui: &egui::Ui, painter: &egui::Painter, img: egui::Rect, status: &str) -> f32 {
+        painter.rect_filled(img, egui::CornerRadius::same(2), ui.visuals().extreme_bg_color);
+        let strip = egui::Rect::from_min_size(img.left_bottom() - egui::vec2(0.0, 10.0), egui::vec2(img.width(), 10.0));
+        crate::paint_gradient(painter, strip, &self.active_gradient().bake(fractadyne_color::segment::LUT_SIZE));
+        let text = if status.is_empty() { tr!(method_sheet_needs_render) } else { format!("{}\n{status}", tr!(method_sheet_needs_render)) };
+        // Each line centered: a centered job lays its rows out around x = 0.
+        let mut job = egui::text::LayoutJob::simple(text, egui::TextStyle::Small.resolve(ui.style()), ui.visuals().weak_text_color(), img.width() - 16.0);
+        job.halign = egui::Align::Center;
+        let note = painter.layout_job(job);
+        let at = egui::pos2(img.center().x, img.center().y - note.size().y / 2.0 - 14.0);
+        let bottom = at.y + note.size().y;
+        painter.galley(at, note, ui.visuals().weak_text_color());
+        bottom
     }
 }
 

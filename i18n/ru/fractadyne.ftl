@@ -3697,8 +3697,15 @@ method-sheet-title = Методы окраски
 method-sheet-open = Сравнить методы…
 method-sheet-open-hover = Показывает этот вид во всех методах окраски рядом. Нажмите на один, чтобы выбрать его.
 method-sheet-density = Плотность { $density }
-method-sheet-needs-render = Нужен отдельный расчёт: пока не показано.
+method-sheet-needs-render = Нужен отдельный расчёт.
 method-sheet-no-view = Вид ещё не нарисован или не может быть окрашен иначе.
+method-sheet-estimating = Оценка времени…
+method-sheet-estimate = Около { $eta }
+method-sheet-estimate-over = Больше { $eta }
+method-sheet-render = Рассчитать
+method-sheet-render-hover = Рассчитать эту ячейку сейчас, в фоне. Перемещение вида или закрытие этого окна прерывает расчёт.
+method-sheet-calculating = Расчёт… { $elapsed }
+method-sheet-render-failed = Здесь рассчитать не удалось.
 # The shape an orbit trap catches the orbit with.
 trap-point = Точка
 trap-cross = Крест
