@@ -2708,6 +2708,7 @@ panel-tail-length-hover = 반복 횟수로 나타낸 창 길이입니다. 짧은
 panel-trap-shape = 트랩 모양
 panel-inside = 내부
 panel-inside-hover = 집합 내부를 무엇으로 칠할지.
+panel-inside-color-hover = 집합 내부의 색.
 inside-solid = 단색
 inside-solid-desc = 집합 내부 전체를 한 가지 색으로 칠합니다.
 inside-trap = 궤도 트랩

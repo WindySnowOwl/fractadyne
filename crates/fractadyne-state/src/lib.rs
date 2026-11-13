@@ -183,6 +183,15 @@ pub struct ColoringSpec {
     /// The interior palette, a preset's id; empty for the outside palette.
     #[serde(default)]
     pub interior_palette: String,
+    /// The color of a solid inside (coloring plan C1), display-space RGB. Duotone and Binary keep
+    /// their own (their dark color); this is every other palette's.
+    #[serde(default = "default_interior_color")]
+    pub interior_color: [f32; 3],
+}
+
+/// The near-black every solid inside had before C1.
+pub fn default_interior_color() -> [f32; 3] {
+    [0.02, 0.02, 0.03]
 }
 
 #[derive(Serialize, Deserialize, Clone, PartialEq, Debug)]
@@ -694,6 +703,7 @@ impl Default for ColoringSpec {
             duotone_hi: default_duotone_hi(),
             interior: String::new(),
             interior_palette: String::new(),
+            interior_color: default_interior_color(),
         }
     }
 }

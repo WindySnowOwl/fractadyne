@@ -2868,6 +2868,7 @@ panel-tail-length-hover = Długość okna w iteracjach. Krótkie okna (8–32) d
 panel-trap-shape = Kształt pułapki
 panel-inside = Wnętrze
 panel-inside-hover = Czym kolorowane jest wnętrze zbioru.
+panel-inside-color-hover = Kolor wnętrza zbioru.
 inside-solid = Jednolity kolor
 inside-solid-desc = Jeden kolor dla całego wnętrza zbioru.
 inside-trap = Pułapka orbity

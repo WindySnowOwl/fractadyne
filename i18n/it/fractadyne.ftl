@@ -2780,6 +2780,7 @@ panel-tail-length-hover = Lunghezza della finestra in iterazioni. Finestre corte
 panel-trap-shape = Forma trappola
 panel-inside = Interno
 panel-inside-hover = Che cosa colora l’interno dell’insieme.
+panel-inside-color-hover = Il colore dell’interno dell’insieme.
 inside-solid = Colore pieno
 inside-solid-desc = Un solo colore per tutto l’interno dell’insieme.
 inside-trap = Trappola orbitale

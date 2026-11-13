@@ -2925,6 +2925,7 @@ panel-tail-length-hover = Довжина вікна в ітераціях. Ко�
 panel-trap-shape = Форма пастки
 panel-inside = Усередині
 panel-inside-hover = Чим забарвлено внутрішність множини.
+panel-inside-color-hover = Колір внутрішності множини.
 inside-solid = Суцільний колір
 inside-solid-desc = Один колір для всієї внутрішності множини.
 inside-trap = Пастка орбіти

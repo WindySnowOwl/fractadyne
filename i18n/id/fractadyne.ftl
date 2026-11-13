@@ -2708,6 +2708,7 @@ panel-tail-length-hover = Panjang jendela dalam iterasi. Jendela pendek (8–32)
 panel-trap-shape = Bentuk perangkap
 panel-inside = Bagian dalam
 panel-inside-hover = Apa yang mewarnai bagian dalam himpunan.
+panel-inside-color-hover = Warna bagian dalam himpunan.
 inside-solid = Warna polos
 inside-solid-desc = Satu warna untuk seluruh bagian dalam himpunan.
 inside-trap = Perangkap orbit

@@ -2781,6 +2781,7 @@ panel-tail-length-hover = Fensterlänge in Iterationen. Kurze Fenster (8–32) e
 panel-trap-shape = Fallenform
 panel-inside = Innen
 panel-inside-hover = Was das Innere der Menge färbt.
+panel-inside-color-hover = Die Farbe des Inneren der Menge.
 inside-solid = Einfarbig
 inside-solid-desc = Eine Farbe für das ganze Innere der Menge.
 inside-trap = Orbitfalle

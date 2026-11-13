@@ -2708,6 +2708,7 @@ panel-tail-length-hover = 以疊代次數表示的區間長度。短區間（8�
 panel-trap-shape = 陷阱形狀
 panel-inside = 內部
 panel-inside-hover = 集合內部的著色方式。
+panel-inside-color-hover = 集合內部的顏色。
 inside-solid = 純色
 inside-solid-desc = 整個集合內部使用同一種顏色。
 inside-trap = 軌道陷阱

@@ -3627,6 +3627,35 @@ fn color_field(
     tip: &str,
     hex_width: f32,
 ) -> Option<[f32; 3]> {
+    let mut out = color_swatch(ui, id, rgb, tip);
+    let mut hex = ui.data_mut(|d| d.get_temp::<String>(id).unwrap_or_else(|| hex_of(rgb)));
+    let r = ui.add(
+        egui::TextEdit::singleline(&mut hex)
+            .desired_width(hex_width)
+            .font(egui::TextStyle::Monospace)
+            .hint_text("#rrggbb"),
+    );
+    if r.has_focus() || r.changed() {
+        ui.data_mut(|d| d.insert_temp(id, hex.clone()));
+    } else {
+        ui.data_mut(|d| d.remove_temp::<String>(id));
+    }
+    if r.changed() {
+        if let Some(p) = parse_hex_rgb(&hex) {
+            out = Some(p);
+        }
+    }
+    out
+}
+
+/// A swatch of a DISPLAY-space color that opens the app's picker (`color_picker.rs`): what
+/// [`color_field`] shows beside its hex field, and the Duotone, Binary and inside colors' button.
+/// Returns the new color when it changed.
+///
+/// ⚠**Not egui's `color_edit_button_rgb`**, which reads its floats as LINEAR light: the panel's
+/// Duotone colors and the inside color showed lighter on their swatch than on screen (0.2 drawn as
+/// 124 instead of 51, 2026-11-13), since every color here is the byte the monitor shows.
+pub(crate) fn color_swatch(ui: &mut egui::Ui, id: egui::Id, rgb: [f32; 3], tip: &str) -> Option<[f32; 3]> {
     let mut out = None;
     // ⭐**Our picker, not egui's swatch button.** egui's popup labels its numeric modes `U8` and
     // `F`, offers no hex, and has no way to back out — see `color_picker.rs`.
@@ -3683,23 +3712,6 @@ fn color_field(
         if let Some(c) = ui.data_mut(|d| d.get_temp::<[f32; 3]>(popup.with("picked"))) {
             ui.data_mut(|d| d.remove_temp::<[f32; 3]>(popup.with("picked")));
             out = Some(c);
-        }
-    }
-    let mut hex = ui.data_mut(|d| d.get_temp::<String>(id).unwrap_or_else(|| hex_of(rgb)));
-    let r = ui.add(
-        egui::TextEdit::singleline(&mut hex)
-            .desired_width(hex_width)
-            .font(egui::TextStyle::Monospace)
-            .hint_text("#rrggbb"),
-    );
-    if r.has_focus() || r.changed() {
-        ui.data_mut(|d| d.insert_temp(id, hex.clone()));
-    } else {
-        ui.data_mut(|d| d.remove_temp::<String>(id));
-    }
-    if r.changed() {
-        if let Some(p) = parse_hex_rgb(&hex) {
-            out = Some(p);
         }
     }
     out
@@ -6370,6 +6382,9 @@ struct ColoringConfig {
     interior: Option<InteriorMode>,
     /// The interior palette, a preset; `None`: the outside palette. Persisted by its id.
     interior_palette: Option<usize>,
+    /// The color of a solid inside, display-space RGB (C1): every palette's but Duotone's and
+    /// Binary's, which keep their dark color there. Persisted.
+    interior_color: [f32; 3],
     /// Auto-normalize the palette cycle to the frame's escape-value range on export (`--normalize`).
     /// At extreme depth the smooth-iter counts are ~1e5–1e6 and a fixed `cycle` aliases a correct
     /// escape field into speckle; normalize maps the range to `cycle`-many palette sweeps. Export
@@ -8073,6 +8088,7 @@ impl FractadyneApp {
                 trap_type: TrapType::from_key(&s.coloring.trap_type),
                 interior: InteriorMode::parse_key(&s.coloring.interior),
                 interior_palette: fractadyne_color::preset_by_id(&s.coloring.interior_palette),
+                interior_color: s.coloring.interior_color,
                 normalize: args.iter().any(|a| a == "--normalize"),
                 normalize_live: s.coloring.normalize_live,
                 normalize_fit: s.coloring.normalize_fit,
@@ -8714,6 +8730,46 @@ impl FractadyneApp {
             }
             self.coloring.trap_type = picked;
         }
+        // The inside (coloring plan B5, C1): what colors it, the trap's palette, a solid color.
+        if let Some(m) = val("--interior") {
+            match crate::InteriorMode::parse_key(m) {
+                Some(i) => self.coloring.interior = Some(i),
+                None => {
+                    eprintln!("fractadyne: --interior: unknown inside \"{m}\"; use solid or trap.");
+                    crate::exit(2)
+                }
+            }
+        }
+        if let Some(id) = val("--interior-palette") {
+            match fractadyne_color::preset_by_id(id) {
+                Some(i) => self.coloring.interior_palette = Some(i),
+                None => {
+                    eprintln!("fractadyne: --interior-palette: no palette \"{id}\" (a palette id, such as ember).");
+                    crate::exit(2)
+                }
+            }
+        }
+        if let Some(text) = val("--interior-color") {
+            let parts: Vec<Option<f32>> = text.split(',').map(|t| t.trim().parse::<f32>().ok().filter(|v| v.is_finite())).collect();
+            match parts.as_slice() {
+                [Some(r), Some(g), Some(b)] if [r, g, b].iter().all(|v| (0.0..=1.0).contains(*v)) => {
+                    self.coloring.interior_color = [*r, *g, *b];
+                }
+                _ => {
+                    eprintln!("fractadyne: --interior-color: \"{text}\" is not three numbers from 0 to 1, such as 0.9,0.2,0.6.");
+                    crate::exit(2)
+                }
+            }
+        }
+        let inside = self.coloring.interior_of(self.coloring.color_method);
+        if val("--interior-palette").is_some() && inside != crate::InteriorMode::Trap {
+            eprintln!("fractadyne: --interior-palette has no effect: the trap does not color the inside (add --interior trap).");
+        }
+        if val("--interior-color").is_some() && inside != crate::InteriorMode::Solid {
+            eprintln!("fractadyne: --interior-color has no effect: the inside is colored by the trap (add --interior solid).");
+        } else if val("--interior-color").is_some() && (self.coloring.use_binary || self.coloring.use_duotone) {
+            eprintln!("fractadyne: --interior-color has no effect: Duotone and Binary color the inside with their dark color.");
+        }
         // A family without a derivative has no distance estimate (`FormulaCaps::distance_estimate`):
         // Distance colors its whole picture one color, and relief lighting and the glow change no
         // pixel. Said, as every supplied option that changes nothing is; the render still runs.
@@ -8927,6 +8983,7 @@ impl FractadyneApp {
                 .interior_palette
                 .map(|i| fractadyne_color::PRESETS[i.min(fractadyne_color::PRESETS.len() - 1)].id.to_string())
                 .unwrap_or_default(),
+            interior_color: self.coloring.interior_color,
         }
     }
 
@@ -8965,6 +9022,7 @@ impl FractadyneApp {
         c.duotone_hi = s.duotone_hi;
         c.interior = InteriorMode::parse_key(&s.interior);
         c.interior_palette = fractadyne_color::preset_by_id(&s.interior_palette);
+        c.interior_color = s.interior_color.map(|v| if v.is_finite() { v.clamp(0.0, 1.0) } else { 0.0 });
         if gradient_changed {
             c.palette_rev = c.palette_rev.wrapping_add(1);
         }
@@ -11884,12 +11942,24 @@ impl FractadyneApp {
     }
 
     /// In-set (interior) color for the GPU. Binary/duotone use the chosen `lo` color so the
-    /// set reads as one solid color; otherwise the default near-black.
+    /// set reads as one solid color; otherwise the view's own (C1). ⚠A Life universe and an
+    /// L-system draw their background with it, so they keep the near-black they always had.
     fn interior_color(&self) -> [f32; 4] {
-        if self.coloring.use_binary || self.coloring.use_duotone {
-            [self.coloring.duotone_lo[0], self.coloring.duotone_lo[1], self.coloring.duotone_lo[2], 1.0]
+        let [r, g, b] = if self.coloring.use_binary || self.coloring.use_duotone {
+            self.coloring.duotone_lo
         } else {
-            [0.02, 0.02, 0.03, 1.0]
+            self.family_interior_color()
+        };
+        [r, g, b, 1.0]
+    }
+
+    /// The solid inside of a palette that is not Duotone or Binary: the view's chosen color for an
+    /// escape-time family, the old near-black for a Life universe or an L-system.
+    fn family_interior_color(&self) -> [f32; 3] {
+        if self.fractal.is_escape_time() {
+            self.coloring.interior_color
+        } else {
+            fractadyne_state::default_interior_color()
         }
     }
 
@@ -11915,7 +11985,8 @@ impl FractadyneApp {
     /// which leaves Binary/Duotone and their interior color too. See [`Self::view_lut`].
     pub(crate) fn view_interior_color(&self) -> [f32; 4] {
         if self.previewed_row().is_some() {
-            [0.02, 0.02, 0.03, 1.0]
+            let [r, g, b] = self.family_interior_color();
+            [r, g, b, 1.0]
         } else {
             self.interior_color()
         }

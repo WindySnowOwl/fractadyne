@@ -266,6 +266,13 @@ impl FractadyneApp {
                 })
                 .response
                 .on_hover_text(tr!(panel_inside_hover));
+            // A solid inside's color (C1), beside it. Duotone and Binary color the inside with
+            // their dark color, which their own swatch sets.
+            if inside == InteriorMode::Solid && !self.coloring.use_duotone && !self.coloring.use_binary {
+                if let Some(c) = crate::color_swatch(ui, egui::Id::new("panel_inside_color"), self.coloring.interior_color, &tr!(panel_inside_color_hover)) {
+                    self.coloring.interior_color = c;
+                }
+            }
         });
         if inside != InteriorMode::Trap {
             return;

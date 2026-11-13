@@ -71,6 +71,7 @@ The tour's coloring, by the keys a saved view (`.fdn`) carries. Each key it name
 | `palette_mode` | string: duotone \| binary | (left out) | Duotone or binary in place of the palette: "duotone" or "binary" (left out: the palette). |
 | `palette_lo` | [r, g, b], 0 to 1 | [0.04, 0.05, 0.12] | Duotone's shadow, Binary's color inside the set, as display-space [r, g, b] (with `palette_mode`). |
 | `palette_hi` | [r, g, b], 0 to 1 | [0.95, 0.8, 0.45] | Duotone's highlight, Binary's color outside the set, as display-space [r, g, b] (with `palette_mode`). |
+| `interior_color` | [r, g, b], 0 to 1 | [0.02, 0.02, 0.03] | The color of a solid inside, as display-space [r, g, b] (when the inside is solid; Duotone and Binary use `palette_lo`). |
 | `normalize_live` | bool | true | Live view only: Normalize deep colors (method "smooth"). An offline render uses `[render]` `normalize`. |
 | `normalize_fit` | bool | false | Live view only: always fit the palette to the escape range (method "smooth" or "trap"). |
 | `log_scale` | bool | false | Log color scale wherever the palette is normalized (method "smooth" or "trap"). |

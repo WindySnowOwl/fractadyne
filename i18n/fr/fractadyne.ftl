@@ -2781,6 +2781,7 @@ panel-tail-length-hover = Longueur de la fenêtre en itérations. Les fenêtres 
 panel-trap-shape = Forme du piège
 panel-inside = Intérieur
 panel-inside-hover = Ce qui colore l’intérieur de l’ensemble.
+panel-inside-color-hover = La couleur de l’intérieur de l’ensemble.
 inside-solid = Couleur unie
 inside-solid-desc = Une seule couleur pour tout l’intérieur de l’ensemble.
 inside-trap = Piège orbital

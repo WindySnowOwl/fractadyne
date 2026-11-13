@@ -2781,6 +2781,7 @@ panel-tail-length-hover = Longitud de la ventana en iteraciones. Las ventanas co
 panel-trap-shape = Forma de trampa
 panel-inside = Interior
 panel-inside-hover = Qué colorea el interior del conjunto.
+panel-inside-color-hover = El color del interior del conjunto.
 inside-solid = Color sólido
 inside-solid-desc = Un solo color para todo el interior del conjunto.
 inside-trap = Trampa de órbita
