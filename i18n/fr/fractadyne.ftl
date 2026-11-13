@@ -2789,6 +2789,8 @@ inside-trap-desc = À quel point chaque orbite s’est approchée du piège orbi
 panel-inside-palette = Palette intérieure
 panel-inside-palette-hover = La palette avec laquelle le piège orbital colore l’intérieur.
 panel-inside-palette-same = Comme à l’extérieur
+panel-inside-fit = Ajuster à la plage de l’intérieur
+panel-inside-fit-hover = Étale la palette intérieure sur les valeurs du piège mesurées dans l’ensemble à l’écran, pour que sa structure apparaisse. Les exports de cette vue utilisent le même ajustement.
 panel-palette = Palette
 # The two colors of the Binary palette, each beside its color swatch.
 panel-in-set = Dans l’ensemble

@@ -2122,6 +2122,12 @@ struct Perf {
     /// The view (`norm_sig`: center, depth and iteration ask) `trap_pal` was last taken at. At
     /// rest on that same view the window is held (`render::trap_window_feed`'s `at_rest`).
     trap_sig: [u64; 2],
+    /// The INSIDE's trap window per view (C4): its sink (`fractadyne_gpu::CTR_TRAP_HIST_IN`), the
+    /// window fed and the one shown, and the view it was taken at, exactly as the trap's above.
+    inside_sink: [std::sync::Arc<std::sync::atomic::AtomicU64>; 2],
+    inside_pal: [Option<(f32, f32)>; 2],
+    inside_shown: [Option<(f32, f32)>; 2],
+    inside_sig: [u64; 2],
     /// Live sink for the escape field's LOCAL GRADIENT — `(Σ|Δ|×16) << 32 | (samples + 1)`. The
     /// auto-normalization predicate keys on this rather than on the escape RANGE: aliasing is a
     /// local property (how far the palette moves between neighboring pixels), not a global one.
@@ -2819,6 +2825,13 @@ impl Default for Perf {
             trap_pal: [None, None],
             trap_shown: [None, None],
             trap_sig: [0, 0],
+            inside_sink: [
+                std::sync::Arc::new(std::sync::atomic::AtomicU64::new(u64::MAX)),
+                std::sync::Arc::new(std::sync::atomic::AtomicU64::new(u64::MAX)),
+            ],
+            inside_pal: [None, None],
+            inside_shown: [None, None],
+            inside_sig: [0, 0],
             grad_sink: [
                 std::sync::Arc::new(std::sync::atomic::AtomicU64::new(0)),
                 std::sync::Arc::new(std::sync::atomic::AtomicU64::new(0)),
@@ -6385,6 +6398,9 @@ struct ColoringConfig {
     /// The color of a solid inside, display-space RGB (C1): every palette's but Duotone's and
     /// Binary's, which keep their dark color there. Persisted.
     interior_color: [f32; 3],
+    /// Fit the inside's palette to the trap values measured inside the set (C4, "Fit to the
+    /// inside's range"): `Perf::inside_pal`. Persisted.
+    interior_fit: bool,
     /// Auto-normalize the palette cycle to the frame's escape-value range on export (`--normalize`).
     /// At extreme depth the smooth-iter counts are ~1e5–1e6 and a fixed `cycle` aliases a correct
     /// escape field into speckle; normalize maps the range to `cycle`-many palette sweeps. Export
@@ -8089,6 +8105,7 @@ impl FractadyneApp {
                 interior: InteriorMode::parse_key(&s.coloring.interior),
                 interior_palette: fractadyne_color::preset_by_id(&s.coloring.interior_palette),
                 interior_color: s.coloring.interior_color,
+                interior_fit: s.coloring.interior_fit,
                 normalize: args.iter().any(|a| a == "--normalize"),
                 normalize_live: s.coloring.normalize_live,
                 normalize_fit: s.coloring.normalize_fit,
@@ -8761,7 +8778,13 @@ impl FractadyneApp {
                 }
             }
         }
+        if args.iter().any(|a| a == "--interior-fit") {
+            self.coloring.interior_fit = true;
+        }
         let inside = self.coloring.interior_of(self.coloring.color_method);
+        if args.iter().any(|a| a == "--interior-fit") && inside != crate::InteriorMode::Trap {
+            eprintln!("fractadyne: --interior-fit has no effect: the trap does not color the inside (add --interior trap).");
+        }
         if val("--interior-palette").is_some() && inside != crate::InteriorMode::Trap {
             eprintln!("fractadyne: --interior-palette has no effect: the trap does not color the inside (add --interior trap).");
         }
@@ -8984,6 +9007,7 @@ impl FractadyneApp {
                 .map(|i| fractadyne_color::PRESETS[i.min(fractadyne_color::PRESETS.len() - 1)].id.to_string())
                 .unwrap_or_default(),
             interior_color: self.coloring.interior_color,
+            interior_fit: self.coloring.interior_fit,
         }
     }
 
@@ -9023,6 +9047,7 @@ impl FractadyneApp {
         c.interior = InteriorMode::parse_key(&s.interior);
         c.interior_palette = fractadyne_color::preset_by_id(&s.interior_palette);
         c.interior_color = s.interior_color.map(|v| if v.is_finite() { v.clamp(0.0, 1.0) } else { 0.0 });
+        c.interior_fit = s.interior_fit;
         if gradient_changed {
             c.palette_rev = c.palette_rev.wrapping_add(1);
         }
@@ -9689,6 +9714,9 @@ impl FractadyneApp {
         self.perf.trap_pal = [None, None];
         self.perf.trap_shown = [None, None];
         self.perf.trap_sig = [0, 0];
+        self.perf.inside_pal = [None, None];
+        self.perf.inside_shown = [None, None];
+        self.perf.inside_sig = [0, 0];
         self.perf.esc_hist = [None, None];
         self.perf.esc_top = [None, None];
         self.perf.reading_pool = [render::ReadingPool::default(); 2];
@@ -11922,23 +11950,42 @@ impl FractadyneApp {
     /// shading, so an atlas cell of another method finds it in the view's LUT buffer
     /// (`fractadyne_gpu::atlas`). The interior's rate is the orbit trap method's, its offset the
     /// palette's: an interior in the outside palette is colored as the trap method colors it.
-    pub(crate) fn interior_shade_for(&self, method: ColorMethod) -> fractadyne_gpu::InteriorShade {
+    pub(crate) fn interior_shade_for(&self, method: ColorMethod, view: usize) -> fractadyne_gpu::InteriorShade {
         let lut = self.coloring.interior_palette.map(|i| {
             let p = &fractadyne_color::PRESETS[i.min(fractadyne_color::PRESETS.len() - 1)];
             fractadyne_color::segment::Gradient::from_stops(p.name, p.stops).bake(fractadyne_color::segment::LUT_SIZE)
         });
+        // Fitted (C4): the view's measured inside window over `INSIDE_FIT_CYCLES` sweeps; until one
+        // is measured, and in a render with no live view, the fixed rate.
+        let shading = self.interior_shading_for(method);
+        let (cycle, offset) = match self.inside_window(view).filter(|_| self.coloring.interior_fit && shading == InteriorShading::Trap) {
+            Some((lo, hi)) => render::inside_fit_map(lo, hi, self.coloring.offset),
+            None => (self.color_cycle_for(ColorMethod::OrbitTrap), self.coloring.offset),
+        };
         fractadyne_gpu::InteriorShade {
-            shading: self.interior_shading_for(method),
+            shading,
             lut_smooth: lut.as_ref().is_none_or(|l| l.smooth),
             lut: lut.map(|l| std::sync::Arc::new(l.entries)),
-            cycle: self.color_cycle_for(ColorMethod::OrbitTrap),
-            offset: self.coloring.offset,
+            cycle,
+            offset,
         }
+    }
+
+    /// The inside's trap window view `view`'s fit spans (C4): the shown one, else the one fed.
+    pub(crate) fn inside_window(&self, view: usize) -> Option<(f32, f32)> {
+        self.perf.inside_shown[view.min(1)].or(self.perf.inside_pal[view.min(1)])
+    }
+
+    /// Whether the inside's fit colors the frame on screen: the fit is on and the trap colors the
+    /// inside of the shown method. Its windows then count as the frame's coloring.
+    pub(crate) fn inside_fit_active(&self) -> bool {
+        self.coloring.interior_fit && self.interior_shading_for(self.shown_method()) == InteriorShading::Trap
     }
 
     /// [`Self::interior_shade_for`]'s shading alone (an atlas cell's, which takes the view's palette).
     pub(crate) fn interior_shading_for(&self, method: ColorMethod) -> InteriorShading {
-        InteriorShading::for_view(self.coloring.interior_of(method), method, self.coloring.interior_palette.is_some())
+        let own_colors = self.coloring.interior_palette.is_some() || self.coloring.interior_fit;
+        InteriorShading::for_view(self.coloring.interior_of(method), method, own_colors)
     }
 
     /// In-set (interior) color for the GPU. Binary/duotone use the chosen `lo` color so the
@@ -15866,9 +15913,11 @@ impl FractadyneApp {
                         } else {
                             self.perf.norm_shown[view].or(self.perf.norm_pal[view])
                         };
+                        let inside = self.inside_windows(view)[1].or(self.inside_windows(view)[0]);
                         format!(
-                            "the normalization range moved (now {})",
-                            win.map_or("unset".to_string(), |(lo, hi)| format!("{lo:.2}..{hi:.2}"))
+                            "the normalization range moved (now {}{})",
+                            win.map_or("unset".to_string(), |(lo, hi)| format!("{lo:.2}..{hi:.2}")),
+                            inside.map_or(String::new(), |(lo, hi)| format!(", inside {lo:.2}..{hi:.2}"))
                         )
                     } else {
                         "the coloring changed (palette, its animation, effects or settings)".to_string()
@@ -16623,6 +16672,10 @@ impl FractadyneApp {
         for r in self.accum_windows(view) {
             r.map(|(lo, hi)| (lo.to_bits(), hi.to_bits())).hash(&mut h);
         }
+        // ...and the inside's (C4), while its fit colors the frame.
+        for r in self.inside_windows(view) {
+            r.map(|(lo, hi)| (lo.to_bits(), hi.to_bits())).hash(&mut h);
+        }
         // …and the window DRAWN, which glides to the shown one after a change of picture
         // (`render::drawn_norm_step`), and a dissolve from another kind of map still under way
         // (`render::palette_fade_step`): both land exactly, so this settles too.
@@ -16647,6 +16700,16 @@ impl FractadyneApp {
         )
     }
 
+    /// The inside's windows, fed and shown, while its fit colors view `view`'s frame (C4); none
+    /// otherwise, so a window that colors nothing restarts no average.
+    fn inside_windows(&self, view: usize) -> [Option<(f32, f32)>; 2] {
+        if self.inside_fit_active() {
+            [self.perf.inside_pal[view], self.perf.inside_shown[view]]
+        } else {
+            [None, None]
+        }
+    }
+
     /// The live-normalization part of [`accum_color_sig`](Self::accum_color_sig): the fed and the
     /// shown range and the lock. When the whole signature changed and this did not, the coloring
     /// itself did (palette, its animation, effects or settings), which `accum_end_why` says.
@@ -16655,7 +16718,8 @@ impl FractadyneApp {
         let mut h = std::collections::hash_map::DefaultHasher::new();
         // …and the window drawn: a palette still gliding to the view's own is not its colors yet.
         let [fed, shown] = self.accum_windows(view);
-        for r in [fed, shown, self.perf.norm_drawn[view].map(|d| d.win)] {
+        let [in_fed, in_shown] = self.inside_windows(view);
+        for r in [fed, shown, self.perf.norm_drawn[view].map(|d| d.win), in_fed, in_shown] {
             r.map(|(lo, hi)| (lo.to_bits(), hi.to_bits())).hash(&mut h);
         }
         self.perf.palette_fade[view].weight().to_bits().hash(&mut h);

@@ -1,4 +1,4 @@
-use super::{trap_window_feed, TRAP_WINDOW_BREAK, TRAP_WINDOW_HOLD};
+use super::{inside_fit_map, trap_window_feed, INSIDE_FIT_CYCLES, TRAP_WINDOW_BREAK, TRAP_WINDOW_HOLD};
 
 /// The first reading is taken as it is, held or not.
 #[test]
@@ -59,4 +59,18 @@ fn a_narrow_window_is_held_against_a_bucket_not_against_nothing() {
     let held = (1.0, 1.01);
     assert_eq!(trap_window_feed(Some(held), (1.001, 1.01), false), held);
     assert_eq!(trap_window_feed(Some(held), (1.5, 2.0), false), (1.5, 2.0));
+}
+
+/// C4: the inside's fitted map puts the window's floor at the palette's offset and its top
+/// `INSIDE_FIT_CYCLES` sweeps later, whatever the window.
+#[test]
+fn the_inside_fit_spans_its_window_in_one_and_a_half_sweeps() {
+    for (lo, hi, offset) in [(1.54_f32, 5.64_f32, 0.1_f32), (0.11, 9.52, 0.0), (-3.0, -1.0, 0.7)] {
+        let (cycle, off) = inside_fit_map(lo, hi, offset);
+        assert!((lo * cycle + off - offset).abs() < 1e-5, "the floor at the offset: ({lo}, {hi})");
+        assert!((hi * cycle + off - (offset + INSIDE_FIT_CYCLES)).abs() < 1e-4, "the top 1.5 sweeps on: ({lo}, {hi})");
+    }
+    // A window narrower than a histogram bucket is taken as one bucket: no division by ~0.
+    let (cycle, _) = inside_fit_map(2.0, 2.0, 0.0);
+    assert!(cycle.is_finite() && (cycle - INSIDE_FIT_CYCLES * 16.0).abs() < 1e-3);
 }

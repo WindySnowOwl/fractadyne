@@ -2716,6 +2716,8 @@ inside-trap-desc = 각 궤도가 궤도 트랩에 얼마나 가까이 왔는지�
 panel-inside-palette = 내부 팔레트
 panel-inside-palette-hover = 궤도 트랩이 내부를 칠하는 팔레트.
 panel-inside-palette-same = 바깥과 같음
+panel-inside-fit = 내부 범위에 맞추기
+panel-inside-fit-hover = 화면의 집합 내부에서 잰 트랩 값에 내부 팔레트를 펼쳐 구조가 보이게 합니다. 이 화면의 내보내기도 같은 맞춤을 씁니다.
 panel-palette = 팔레트
 # The two colors of the Binary palette, each beside its color swatch.
 panel-in-set = 집합 안

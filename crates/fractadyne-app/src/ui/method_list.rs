@@ -330,6 +330,8 @@ impl FractadyneApp {
             }
             combo.response.on_hover_text(tr!(panel_inside_palette_hover));
         });
+        // Its palette over the trap values measured inside the set (C4).
+        ui.checkbox(&mut self.coloring.interior_fit, tr!(panel_inside_fit)).on_hover_text(tr!(panel_inside_fit_hover));
     }
 
     /// An Inside choice's tooltip: what it shows, then what choosing it does to the frame on screen.

@@ -2788,6 +2788,8 @@ inside-trap-desc = O quanto cada órbita se aproximou da armadilha de órbita, n
 panel-inside-palette = Paleta interna
 panel-inside-palette-hover = A paleta com que a armadilha de órbita colore o interior.
 panel-inside-palette-same = Igual à de fora
+panel-inside-fit = Ajustar ao intervalo do interior
+panel-inside-fit-hover = Espalha a paleta interna pelos valores da armadilha medidos dentro do conjunto na tela, para que sua estrutura apareça. As exportações desta vista usam o mesmo ajuste.
 panel-palette = Paleta
 # The two colors of the Binary palette, each beside its color swatch.
 panel-in-set = Dentro

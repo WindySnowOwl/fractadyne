@@ -55,10 +55,11 @@ fn the_histogram_fits_the_counter_buffer() {
     // ...and the renormalized step's one-word count after it.
     assert_eq!(CTR_CHUNK_RUNNING + 1, CTR_RENORM);
     // ...and the fine escape histogram after that (norm_hist_tests), then the orbit trap's value
-    // histogram to the end of the buffer (trap_hist_tests).
+    // histogram, and the inside's, to the end of the buffer (trap_hist_tests).
     assert_eq!(CTR_RENORM + 1, CTR_NORM_HIST);
     assert_eq!(CTR_NORM_HIST + NORM_HIST_BUCKETS, CTR_TRAP_HIST);
-    assert_eq!(CTR_TRAP_HIST + TRAP_HIST_BUCKETS, COUNTER_SLOTS);
+    assert_eq!(CTR_TRAP_HIST + TRAP_HIST_BUCKETS, crate::CTR_TRAP_HIST_IN);
+    assert_eq!(crate::CTR_TRAP_HIST_IN + TRAP_HIST_BUCKETS, COUNTER_SLOTS);
     assert!(CTR_GRAD_HIST > CTR_GRAD_N, "the histogram must not overlap the gradient sum/count");
 }
 

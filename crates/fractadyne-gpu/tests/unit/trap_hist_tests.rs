@@ -39,12 +39,18 @@ fn nothing_to_fit_is_no_window() {
     assert_eq!(trap_window(&hist_of(&[(1.0, 5_000)]), TRAP_WINDOW_QUANTILES), None);
 }
 
-/// The slots sit after the escape histogram, and the shader's constants say the same.
+/// The slots sit after the escape histogram, the inside's after them (C4), and the shader's
+/// constants say the same.
 #[test]
 fn the_slots_agree_with_the_shader() {
-    assert_eq!(COUNTER_SLOTS, CTR_TRAP_HIST + TRAP_HIST_BUCKETS);
+    assert_eq!(CTR_TRAP_HIST_IN, CTR_TRAP_HIST + TRAP_HIST_BUCKETS);
+    assert_eq!(COUNTER_SLOTS, CTR_TRAP_HIST_IN + TRAP_HIST_BUCKETS);
     let wgsl = include_str!("../../src/mandelbrot.wgsl");
     assert!(wgsl.contains(&format!("const CTR_TRAP_HIST: u32 = {CTR_TRAP_HIST}u;")));
+    assert!(wgsl.contains(&format!("const CTR_TRAP_HIST_IN: u32 = {CTR_TRAP_HIST_IN}u;")));
+    // Every interior exit counts into the inside's histogram, every escape does not.
+    assert_eq!(wgsl.matches("trap_hist_commit(aux, gx, gy, true);").count(), 3);
+    assert_eq!(wgsl.matches("trap_hist_commit(aux, gx, gy, false);").count(), 3);
     assert!(wgsl.contains(&format!("const TRAP_HIST_BUCKETS: u32 = {TRAP_HIST_BUCKETS}u;")));
     assert!(wgsl.contains(&format!("const TRAP_HIST_LO: f32 = {TRAP_HIST_LO:.1};")));
     assert!(wgsl.contains(&format!("const TRAP_HIST_PER_UNIT: f32 = {TRAP_HIST_PER_UNIT:.1};")));

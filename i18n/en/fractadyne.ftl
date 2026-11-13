@@ -2985,6 +2985,8 @@ inside-trap-desc = How near each orbit came to the orbit trap, in the inside pal
 panel-inside-palette = Inside palette
 panel-inside-palette-hover = The palette the orbit trap colors the inside with.
 panel-inside-palette-same = Same as outside
+panel-inside-fit = Fit to the inside's range
+panel-inside-fit-hover = Spread the inside palette over the trap values measured inside the set on screen, so its structure shows. Exports of this view use the same fit.
 panel-palette = Palette
 # The two colors of the Binary palette, each beside its color swatch.
 panel-in-set = In-set

@@ -187,6 +187,11 @@ pub struct ColoringSpec {
     /// their own (their dark color); this is every other palette's.
     #[serde(default = "default_interior_color")]
     pub interior_color: [f32; 3],
+    /// Fit the inside's palette to the trap values measured inside the set on screen (C4): 1.5
+    /// sweeps over their 1st to 99th percentiles. Live views and exports of them; an offline render
+    /// has nothing measured and keeps the fixed rate.
+    #[serde(default)]
+    pub interior_fit: bool,
 }
 
 /// The near-black every solid inside had before C1.
@@ -704,6 +709,7 @@ impl Default for ColoringSpec {
             interior: String::new(),
             interior_palette: String::new(),
             interior_color: default_interior_color(),
+            interior_fit: false,
         }
     }
 }

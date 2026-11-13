@@ -80,7 +80,7 @@ fn two_color_on(s: &ColoringSpec) -> bool {
 }
 
 /// The table, in the order a view writes its keys. A row's parents come before it.
-pub(crate) const FIELDS: [Field; 20] = [
+pub(crate) const FIELDS: [Field; 21] = [
     Field {
         key: "method",
         name: "coloring method",
@@ -142,6 +142,14 @@ pub(crate) const FIELDS: [Field; 20] = [
         access: Access::Choice(|s| &s.interior_palette, |s, v| s.interior_palette = v.to_string(), || {
             fractadyne_color::PRESETS.iter().map(|p| p.id).collect()
         }),
+        parents: &["method", "interior"],
+        shows: interior_trap,
+    },
+    Field {
+        key: "interior_fit",
+        name: "inside fit",
+        doc: "Live view and its exports: fit the inside's palette to the trap values measured inside the set on screen (when the inside is colored by the trap). An offline render keeps the fixed rate.",
+        access: Access::Flag(|s| s.interior_fit, |s, v| s.interior_fit = v),
         parents: &["method", "interior"],
         shows: interior_trap,
     },
