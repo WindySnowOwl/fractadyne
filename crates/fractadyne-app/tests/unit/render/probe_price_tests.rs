@@ -59,7 +59,8 @@ fn discarded_readings_pool_until_representative() {
     let mut pool = ReadingPool::default();
     let mut emitted = None;
     for (i, (s, ms)) in passes.iter().cycle().take(12).enumerate() {
-        if let Some(out) = pool_step(&mut pool, *s, *ms, cur, 100 + i as u64, u64::MAX) {
+        // Moving: the view changed on the frame of every reading.
+        if let Some(out) = pool_step(&mut pool, *s, *ms, cur, 100 + i as u64, u64::MAX, 100 + i as u64) {
             emitted = Some(out);
             break;
         }
@@ -71,25 +72,52 @@ fn discarded_readings_pool_until_representative() {
     assert!(budget_step(cur, steps, ms, false).is_some(), "the pooled reading is priceable");
 }
 
-/// A pool never mixes regimes: one older than POOL_MAX_FRAMES, or begun before the view's last
-/// mode switch, starts over with the new reading.
+/// A pool never mixes regimes: one older than POOL_MAX_FRAMES while the view moves, or begun before
+/// the view's last mode switch, starts over with the new reading.
 #[test]
 fn a_stale_or_pre_switch_pool_starts_over() {
     use super::{pool_step, ReadingPool, POOL_MAX_FRAMES};
     let cur = 1_000_000_000u64;
     let mut pool = ReadingPool::default();
-    assert!(pool_step(&mut pool, 10_000_000, 1.0, cur, 100, u64::MAX).is_none());
+    assert!(pool_step(&mut pool, 10_000_000, 1.0, cur, 100, u64::MAX, 100).is_none());
     assert_eq!(pool.n, 1);
-    // Too old: restarts with only the new reading.
-    assert!(pool_step(&mut pool, 10_000_000, 1.0, cur, 100 + POOL_MAX_FRAMES + 1, u64::MAX).is_none());
+    // Too old, the view having moved since: restarts with only the new reading.
+    let late = 100 + POOL_MAX_FRAMES + 1;
+    assert!(pool_step(&mut pool, 10_000_000, 1.0, cur, late, u64::MAX, late).is_none());
     assert_eq!((pool.n, pool.steps, pool.since_frame), (1, 10_000_000, 100 + POOL_MAX_FRAMES + 1));
     // A mode switch after the pool began: restarts too.
     let mut pool = ReadingPool { steps: 5_000_000, ms: 0.5, n: 3, since_frame: 200 };
-    assert!(pool_step(&mut pool, 1_000_000, 0.1, cur, 210, 205).is_none());
+    assert!(pool_step(&mut pool, 1_000_000, 0.1, cur, 210, 205, 0).is_none());
     assert_eq!((pool.n, pool.since_frame), (1, 210));
     // A garbage reading is not pooled.
     let before = pool;
-    assert!(pool_step(&mut pool, 1_000, f64::NAN, cur, 211, 205).is_none());
-    assert!(pool_step(&mut pool, 0, 1.0, cur, 211, 205).is_none());
+    assert!(pool_step(&mut pool, 1_000, f64::NAN, cur, 211, 205, 0).is_none());
+    assert!(pool_step(&mut pool, 0, 1.0, cur, 211, 205, 0).is_none());
     assert_eq!(pool, before);
+}
+
+/// The maintainer's dual view (2026-11-13): after an emergency retreat the settle grid climbed back
+/// to a 1.79e10 budget and froze there, every 1.09e8-step tile (0.3 ms) discarded, one per four
+/// frames. A view that has not moved since the pool began keeps its readings over the grid, and they
+/// price the budget up; the CONTROL, the same readings while the view moves, never do.
+#[test]
+fn a_settled_grids_tiles_pool_until_they_price_the_budget() {
+    use super::{budget_step, pool_step, ReadingPool, POOL_MAX_FRAMES, POOL_SETTLED_MAX_FRAMES};
+    let cur = 17_941_568_958u64;
+    let (tile, ms) = (108_544_752u64, 0.3);
+    assert!(budget_step(cur, tile, ms, false).is_none(), "a tile alone is discarded");
+    let run = |moved: &dyn Fn(u64) -> u64| {
+        let mut pool = ReadingPool::default();
+        (0..POOL_SETTLED_MAX_FRAMES / 4).find_map(|k| {
+            let frame = 20_000 + 4 * k;
+            pool_step(&mut pool, tile, ms, cur, frame, u64::MAX, moved(frame))
+        })
+    };
+    // Settled: the view last moved at frame 15,000, before the pool began.
+    let (steps, pms, n) = run(&|_| 15_000).expect("the grid's tiles price the budget");
+    assert!(n as u64 * 4 > POOL_MAX_FRAMES, "more tiles than one moving pool holds: {n}");
+    let (next, _) = budget_step(cur, steps, pms, false).expect("priceable");
+    assert!(next > cur, "fast tiles grow the budget: {next}");
+    // The control: the view moving on every reading's frame keeps the 2 s pool, and it never fills.
+    assert!(run(&|f| f).is_none());
 }

@@ -22,7 +22,8 @@ pub(crate) enum LifeTool {
 }
 
 /// A pointer event a harness feeds the app (`--uitest`), at a CELL of the Life view (the
-/// life-draw step) or onto a palette picker's row (the palette-preview step).
+/// life-draw step), onto a palette picker's row (the palette-preview step), or at a point of the
+/// central view (the pan-drag step).
 #[derive(Clone, Copy, Debug)]
 pub(crate) enum UiPointer {
     Move(i64, i64),
@@ -36,6 +37,11 @@ pub(crate) enum UiPointer {
     /// The pointer moves onto the middle of this cell of the open method sheet, where the last
     /// frame drew it (coloring plan B7). Nothing when the sheet did not draw it.
     OnSheetCell(crate::ui::method_sheet::SheetCell),
+    /// The pointer at a point of the central view, as fractions of its rect from the last frame's
+    /// layout (the pan-drag step): moved there, the primary button pressed there, released there.
+    ViewMove(f32, f32),
+    ViewPress(f32, f32),
+    ViewRelease(f32, f32),
 }
 
 /// A change to the universe, waiting for a current copy to be made to.
@@ -446,6 +452,19 @@ impl FractadyneApp {
                 return self.method_sheet.preview.row_rect(c).map(|r| egui::Event::PointerMoved(r.center()));
             }
             UiPointer::Gone => return Some(egui::Event::PointerGone),
+            UiPointer::ViewMove(fx, fy) | UiPointer::ViewPress(fx, fy) | UiPointer::ViewRelease(fx, fy) => {
+                let r = self.perf.layout.central?;
+                let pos = r.min + egui::vec2(r.width() * fx, r.height() * fy);
+                return Some(match p {
+                    UiPointer::ViewMove(..) => egui::Event::PointerMoved(pos),
+                    _ => egui::Event::PointerButton {
+                        pos,
+                        button: egui::PointerButton::Primary,
+                        pressed: matches!(p, UiPointer::ViewPress(..)),
+                        modifiers: egui::Modifiers::NONE,
+                    },
+                });
+            }
             _ => {}
         }
         let rect = self.perf.layout.central?;
@@ -467,7 +486,12 @@ impl FractadyneApp {
             UiPointer::Press(x, y) => button(x, y, true),
             UiPointer::Release(x, y) => button(x, y, false),
             // Answered above.
-            UiPointer::Gone | UiPointer::OnPaletteRow(_) | UiPointer::OnSheetCell(_) => return None,
+            UiPointer::Gone
+            | UiPointer::OnPaletteRow(_)
+            | UiPointer::OnSheetCell(_)
+            | UiPointer::ViewMove(..)
+            | UiPointer::ViewPress(..)
+            | UiPointer::ViewRelease(..) => return None,
         })
     }
 

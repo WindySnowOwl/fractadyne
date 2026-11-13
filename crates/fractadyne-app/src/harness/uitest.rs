@@ -240,6 +240,18 @@ enum Screen {
     MinimapBase,
     MinimapPan,
     MinimapPanVerify,
+    /// The maintainer's dual view (2026-11-13): a pan drag over a DIRECT view that had settled in
+    /// tiles was sized as a frame that re-samples the held texture (native resolution, the grid's
+    /// unbounded budget) and then iterated, because the frame drops a caller's reprojection in
+    /// direct mode: 2885×2060 passes of 1.0–1.8 s at 251,261 iterations, and the dead-man and the
+    /// emergency retreats cut the view to 63×45. Two steps: settle a direct view in tiles (an
+    /// orbit-statistics coloring, so no chunked walk takes the grid's place), then drag it with
+    /// egui's own input and read the frame record: every drag frame that iterates was sized
+    /// against a finite budget and fits its admission. Auto iterations capped at 20,000, so a build
+    /// with the defect runs its unbounded drag passes (one sample a pixel) in a fraction of a
+    /// second, not seconds.
+    PanDragBase,
+    PanDrag,
     /// Coloring plan A4: turning on Stripe's "Tail only" over a settled view must re-iterate it.
     /// The tail changes what the iteration accumulates, but the GPU's `IterKey` did not carry it,
     /// so the view kept the statistics of the setting before the toggle: the toggled frame
@@ -661,6 +673,9 @@ pub(crate) struct UiTest {
     /// The palette the walk showed before the palette-dropdown step picked one to show selected:
     /// the next step's setup puts it back, so no later screenshot is in that step's colors.
     restore_palette: Option<usize>,
+    /// The frame record's next sequence number when the pan-drag step queued its drag: the check
+    /// reads the records from here (`frame_record::since`).
+    pan_rec_from: u64,
 }
 
 /// Where a walk records that it started, and then that it finished.
@@ -738,6 +753,7 @@ impl UiTest {
             },
             restore_language: None,
             restore_palette: None,
+            pan_rec_from: 0,
         }
     }
 }
@@ -1229,6 +1245,13 @@ fn build_steps() -> Vec<Step> {
         screen("inside-palette", Screen::InsidePalette),
         screen("inside-fit", Screen::InsideFit),
         screen("inside-solid-under-trap", Screen::InsideSolidUnderTrap),
+        // LAST, like the reporter-settings pairs before them: they train the Julia pane's budget on
+        // a cheap Julia (1.75e11), and placed after the minimap steps, palette-browser-dual turned
+        // the dual view back on at home over that budget — one 1-second frame and a dead-man, a
+        // `budget-blind` log-check failure in two walks of two (a pane keeps its budget across a
+        // dual-view off/on; the dead-man is what catches it).
+        screen("pan-drag-base", Screen::PanDragBase),
+        screen("pan-drag", Screen::PanDrag),
     ]
 }
 
@@ -1260,6 +1283,9 @@ impl FractadyneApp {
                 let step = ut.steps[ut.idx].clone();
                 let palette_before = self.coloring.palette_idx;
                 self.uitest_apply(ctx, &step);
+                if matches!(step.kind, StepKind::Screen(Screen::PanDrag)) {
+                    ut.pan_rec_from = crate::diag::frame_record::since(0).1;
+                }
                 if matches!(
                     step.kind,
                     StepKind::Screen(
@@ -1290,7 +1316,11 @@ impl FractadyneApp {
                     // The minimap trio renders an expensive view on purpose; give its grid time
                     // to finish, or the capture races the settle (see the `settling` gate below).
                     StepKind::Screen(
-                        Screen::MinimapBase | Screen::MinimapPan | Screen::MinimapPanVerify,
+                        Screen::MinimapBase
+                        | Screen::MinimapPan
+                        | Screen::MinimapPanVerify
+                        | Screen::PanDragBase
+                        | Screen::PanDrag,
                     ) => (500u64, 30_000u64),
                     // The explorer generates its gallery (a threaded Newton sweep) and then
                     // renders one thumbnail per frame; the capture waits for the populated
@@ -2280,6 +2310,57 @@ impl FractadyneApp {
             // re-render. Whatever this draws is what the step before it SHOULD have drawn.
             Screen::MinimapPanVerify => {
                 self.perf.view_gen = [self.perf.frame_idx + 1, self.perf.frame_idx + 1];
+            }
+            // The maintainer's settings: Decomposition (orbit statistics: no chunked walk), AUTO
+            // iterations; 8× AA where the maintainer had 4×. ⚠Auto, as the maintainer's were: an explicit count bounds every
+            // dispatch by its own ceiling (`EXPLICIT_STEPS_CEIL`), the held texture's too, and a
+            // build with the defect passed under it. ⚠Seahorse valley at the period-2 cusp, not the
+            // maintainer's spot: there the auto count settled near 3,300, the budget reached the
+            // dispatch ceiling (7.48e10 on the RTX 3080) in the full walk, the 16-sample settle fit
+            // one dispatch, the grid stepped aside, and the check had nothing to test. Here the
+            // cusp's slow pixels take the count to ~8,100, and at 64 samples a pixel the settle
+            // (~1.9e11) stays past the ceiling whatever the budget learned (at 16 it was ~4.6e10).
+            // A drag frame takes one sample, so the AA costs the drag nothing. The check asserts the
+            // grid at the press.
+            // ⚠The grid must STILL be in force at the drag: the held texture's budget is unbounded
+            // only while the settled frame exceeds the budget. At 2× AA the budget grew to cover
+            // the whole frame, the grid stepped aside, and a build with the defect passed. The
+            // maintainer's 4× keeps the settle (16 samples a pixel) far past the explicit ceiling;
+            // a drag frame takes one sample, so even the defect's unbounded drag passes stay small.
+            // ⚠IN THE DUAL VIEW, as the maintainer's was: a single view's first drag frame is not yet
+            // a reprojection (its `interacting` is the frame before's), so it renders, and its
+            // finite admission replaces the grid's unbounded `frozen_budget` before any drag frame
+            // reads it; the dual view's drag reprojects from its first frame (`nav_and_draw`).
+            Screen::PanDragBase => {
+                self.set_show_mode(crate::ShowMode::Both);
+                self.set_fractal(crate::FractalKind::Mandelbrot);
+                self.render_cfg.auto_iter = true;
+                self.render_cfg.max_iter = 20_000;
+                self.render_cfg.aa = 8;
+                self.coloring.color_method = crate::ColorMethod::Decomposition;
+                self.viewport.set_center_mag(
+                    fractadyne_core::BigFloat::from_f64(-0.75, 64),
+                    fractadyne_core::BigFloat::from_f64(0.02, 64),
+                    30.0,
+                );
+                self.pointer.settle_t = [-1.0e9, -1.0e9];
+            }
+            // A drag across the set's pane (the dual view's left) through egui's input, one event a
+            // frame: down, 30 moves left and down (the maintainer's dx -52, dy 138 a frame, scaled),
+            // up.
+            Screen::PanDrag => {
+                use crate::UiPointer::{ViewMove, ViewPress, ViewRelease};
+                let at = |k: usize| (0.25 - 0.004 * k as f32, 0.35 + 0.01 * k as f32);
+                let mut q = std::collections::VecDeque::new();
+                q.push_back(ViewMove(0.25, 0.35));
+                q.push_back(ViewPress(0.25, 0.35));
+                for k in 1..=30 {
+                    let (x, y) = at(k);
+                    q.push_back(ViewMove(x, y));
+                }
+                let (x, y) = at(30);
+                q.push_back(ViewRelease(x, y));
+                self.harness.uitest_pointer = q;
             }
             Screen::StripeTailOff => {
                 self.set_show_mode(crate::ShowMode::Set);
@@ -3590,6 +3671,58 @@ impl FractadyneApp {
                     detail: "no preceding minimap-pan step to compare against".into(),
                 }),
             }
+        }
+
+        // ---- a pan drag over a direct view's tiles iterates frames sized for it (2026-11-13) ----
+        if matches!(step.kind, StepKind::Screen(Screen::PanDrag)) {
+            let (recs, _, lost) = crate::diag::frame_record::since(ut.pan_rec_from);
+            // The precondition at the drag itself: view 0's last frame before the button went down
+            // was tiled (a grid in force), not just the base step's capture.
+            let base_tiled = recs
+                .iter()
+                .filter(|r| r.view == 0)
+                .take_while(|r| !r.in_primary_down)
+                .last()
+                .map(|r| r.tiled);
+            let motion = crate::render::frame_plan::FrameKind::Motion.code();
+            // ⚠The DRAG's frames: the button held, the view moving. Interacting alone counted the
+            // frames a view change leaves moving, and passed a run whose pointer never arrived.
+            let drag: Vec<_> = recs
+                .iter()
+                .filter(|r| r.view == 0 && r.in_primary_down && r.interacting && r.frame_kind == motion)
+                .collect();
+            // An iterating drag frame planned against the held texture's unbounded budget, or
+            // carrying more than its admission (past the 16-pixel floor every shrink keeps).
+            let unbounded = drag.iter().filter(|r| r.tdr_steps == u64::MAX).count();
+            let floor = |r: &crate::diag::frame_record::FrameRecord| {
+                16u64 * 16 * (r.ss.max(1) as u64).pow(2) * (r.gpu_iter.max(1) as u64)
+            };
+            let over = drag.iter().filter(|r| r.nominal_steps > (r.admitted + r.admitted / 20).max(floor(r))).count();
+            let worst = drag.iter().max_by_key(|r| r.nominal_steps);
+            let detail = format!(
+                "{} drag frames (records lost {lost}): {unbounded} planned unbounded, {over} over their admission; \
+                 the largest {} at {}x{} (admitted {:.3e}); a grid in force at the press: {base_tiled:?}",
+                drag.len(),
+                worst.map_or("none".into(), |r| format!("{:.3e} steps", r.nominal_steps as f64)),
+                worst.map_or(0, |r| r.res_w),
+                worst.map_or(0, |r| r.res_h),
+                worst.map_or(0.0, |r| r.admitted as f64),
+            );
+            checks.push(if base_tiled != Some(true) {
+                // ⭐ANTI-VACUITY: without a grid the held texture's budget is bounded, and the drag
+                // proves nothing (the minimap check's lesson).
+                Check {
+                    name: "pan-drag-bounded".into(),
+                    verdict: Verdict::Warn,
+                    detail: format!("no settle grid before the drag, so it did not exercise the defect: {detail}"),
+                }
+            } else if drag.len() < 3 {
+                Check { name: "pan-drag-bounded".into(), verdict: Verdict::Fail, detail: format!("the drag did not move the view: {detail}") }
+            } else if unbounded > 0 || over > 0 {
+                Check { name: "pan-drag-bounded".into(), verdict: Verdict::Fail, detail }
+            } else {
+                pass("pan-drag-bounded", detail)
+            });
         }
 
         // ---- turning on the stripe tail over a settled view redraws it (coloring plan A4) ----

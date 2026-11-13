@@ -143,8 +143,9 @@ pub(crate) struct ReadingPool {
     pub(crate) steps: u64,
     pub(crate) ms: f64,
     pub(crate) n: u32,
-    /// The frame of the pool's first reading: a pool older than [`POOL_MAX_FRAMES`], or begun
-    /// before the view's last mode switch, mixes regimes and is dropped.
+    /// The frame of the pool's first reading: a pool older than [`POOL_MAX_FRAMES`] (while the view
+    /// moves; [`POOL_SETTLED_MAX_FRAMES`] while it holds still), or begun before the view's last mode
+    /// switch, mixes regimes and is dropped.
     pub(crate) since_frame: u64,
 }
 
@@ -152,9 +153,27 @@ pub(crate) struct ReadingPool {
 /// views the zoom has left.
 pub(crate) const POOL_MAX_FRAMES: u64 = 120;
 
+/// …unless the view has not moved since the pool began: then its readings all describe the view on
+/// screen, and they may gather for this long (≈60 s at 60 Hz). Tiles came every 3–4 frames in the
+/// record below, so 3,600 frames hold ~1,000 of them: 0.7× a budget of 1.5e11 at its 1.09e8-step
+/// tiles, past the direct dispatch ceiling (7.48e10 on the RTX 3080) that bounds what it sizes.
+///
+/// ⭐**A SETTLE GRID PRICES THE BUDGET ONLY THROUGH THE POOL, AND 120 FRAMES CANNOT HOLD IT.** A
+/// grid's tiles go out one per completion, a few frames apart, each far under 0.7× the budget, so
+/// within [`POOL_MAX_FRAMES`] the pool holds ~30 tiles: it reaches 0.7× only while the budget is
+/// under ~40 tiles' worth. Past that the budget froze, the grid completed at the resolution it
+/// afforded, and nothing dispatched again to grow it: the maintainer's dual view (2026-11-13)
+/// climbed back from an emergency retreat to 1125×803 and stayed there for 20 minutes, its budget at
+/// 1.79e10 and every 1.09e8-step tile reading 0.3 ms discarded, where before the retreat it had
+/// settled at 2544×1816. Pooled over the grid, those readings grow the budget as the grid runs
+/// (pessimistically, as every pool does), and the grid's completion re-forms it sharper.
+pub(crate) const POOL_SETTLED_MAX_FRAMES: u64 = 3_600;
+
 /// Add one discarded reading to `pool`; `Some((Σsteps, Σms, n))` — and an emptied pool — once the
 /// pooled steps reach [`PRICE_REPRESENTATIVE_FRAC`] of `cur`. A pool begun before `switch_frame`
-/// (the view's last mode switch) or older than [`POOL_MAX_FRAMES`] starts over with this reading.
+/// (the view's last mode switch), or older than [`POOL_MAX_FRAMES`] — [`POOL_SETTLED_MAX_FRAMES`]
+/// when the view last moved (`moved_frame`, its `view_gen`) before the pool began — starts over with
+/// this reading.
 pub(crate) fn pool_step(
     pool: &mut ReadingPool,
     steps: u64,
@@ -162,12 +181,14 @@ pub(crate) fn pool_step(
     cur: u64,
     frame: u64,
     switch_frame: u64,
+    moved_frame: u64,
 ) -> Option<(u64, f64, u32)> {
     if !(ms > 0.0) || !ms.is_finite() || steps == 0 {
         return None;
     }
+    let max_age = if moved_frame < pool.since_frame { POOL_SETTLED_MAX_FRAMES } else { POOL_MAX_FRAMES };
     let stale = pool.n > 0
-        && (frame.saturating_sub(pool.since_frame) > POOL_MAX_FRAMES
+        && (frame.saturating_sub(pool.since_frame) > max_age
             || (switch_frame != u64::MAX && pool.since_frame < switch_frame));
     if pool.n == 0 || stale {
         *pool = ReadingPool { since_frame: frame, ..Default::default() };
