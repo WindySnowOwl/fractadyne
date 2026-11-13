@@ -15,7 +15,10 @@ fn every_variant_has_its_own_row_and_number() {
     assert_eq!(ColorMethod::ALL.len(), METHODS.len());
     for (i, m) in ColorMethod::ALL.into_iter().enumerate() {
         assert_eq!(m.gpu_id() as usize, i);
-        assert!(std::ptr::eq(m.spec(), &METHODS[i]));
+        // The row's contents, not its address: `METHODS` is a `const`, so `&METHODS[i]` points at a
+        // fresh copy, the same address as `spec()`'s only when the optimizer merges them (it does in
+        // release, not in a debug test build).
+        assert_eq!((m.spec().key, m.spec().wgsl), (METHODS[i].key, METHODS[i].wgsl));
         assert_eq!(ColorMethod::from_gpu_id(m.gpu_id()), Some(m));
         assert_eq!(ColorMethod::parse_key(m.key()), Some(m));
         assert!(m.spec().wgsl.starts_with("METHOD_"), "{}", m.spec().wgsl);
@@ -57,7 +60,7 @@ fn every_statistic_has_its_own_row_and_bit() {
     assert_eq!(Stat::ALL.len(), STATS.len());
     let mut all = 0u32;
     for (i, s) in Stat::ALL.into_iter().enumerate() {
-        assert!(std::ptr::eq(s.spec(), &STATS[i]));
+        assert_eq!((s.spec().key, s.spec().wgsl), (STATS[i].key, STATS[i].wgsl)); // contents: see above
         assert_eq!(s.bit(), 1 << i);
         assert_eq!(all & s.bit(), 0, "{s:?} shares a bit");
         all |= s.bit();
@@ -243,4 +246,24 @@ fn the_capability_table_is_the_established_one() {
     unique.sort();
     unique.dedup();
     assert_eq!(unique.len(), keys.len(), "two capabilities share a key");
+}
+
+/// The method list's headings (coloring plan B6, design 9.1): the grouping the plan settled, every
+/// method under exactly one heading, and no heading without a method (the list would show an empty
+/// title).
+#[test]
+fn every_method_is_under_one_heading_and_no_heading_is_empty() {
+    let listed: Vec<(MethodGroup, Vec<&str>)> =
+        MethodGroup::ALL.iter().map(|g| (*g, g.methods().map(|m| m.key()).collect())).collect();
+    assert_eq!(
+        listed,
+        [
+            (MethodGroup::EscapeCount, vec!["smooth"]),
+            (MethodGroup::Distance, vec!["distance"]),
+            (MethodGroup::OrbitStatistics, vec!["stripe", "triangle", "trap"]),
+            (MethodGroup::Angle, vec!["decomposition"]),
+        ]
+    );
+    let total: usize = listed.iter().map(|(_, ms)| ms.len()).sum();
+    assert_eq!(total, ColorMethod::ALL.len(), "a method is under no heading or under two");
 }

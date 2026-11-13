@@ -34,6 +34,32 @@ pub struct MethodSpec {
     /// takes a few cycles across that range instead of the per-unit rate of the unbounded values
     /// (iteration count, orbit trap, distance).
     pub bounded_value: bool,
+    /// The heading it is listed under in the method box and the Color menu (coloring plan B6).
+    pub group: MethodGroup,
+}
+
+/// The headings the method box and the Color menu list the methods under (coloring plan B6,
+/// design §9.1), by what a method colors by. The order is the list's.
+#[derive(Clone, Copy, PartialEq, Eq, Debug, Hash)]
+pub enum MethodGroup {
+    /// How fast a point escapes: the iteration count.
+    EscapeCount,
+    /// The distance estimate to the set.
+    Distance,
+    /// A statistic accumulated along the orbit (stripe, triangle inequality, the traps).
+    OrbitStatistics,
+    /// The orbit's final angle.
+    Angle,
+}
+
+impl MethodGroup {
+    /// Every heading, in the list's order.
+    pub const ALL: [MethodGroup; 4] =
+        [MethodGroup::EscapeCount, MethodGroup::Distance, MethodGroup::OrbitStatistics, MethodGroup::Angle];
+    /// Its methods, in the table's order.
+    pub fn methods(self) -> impl Iterator<Item = ColorMethod> {
+        ColorMethod::ALL.into_iter().filter(move |m| m.group() == self)
+    }
 }
 
 /// A coloring method. The variants' order is the table's order and gives the GPU numbers; the
@@ -57,6 +83,7 @@ const METHODS: [MethodSpec; 6] = [
         reads: None,
         needs_distance_estimate: false,
         bounded_value: false,
+        group: MethodGroup::EscapeCount,
     },
     MethodSpec {
         key: "stripe",
@@ -64,6 +91,7 @@ const METHODS: [MethodSpec; 6] = [
         reads: Some(Stat::Stripe),
         needs_distance_estimate: false,
         bounded_value: true,
+        group: MethodGroup::OrbitStatistics,
     },
     MethodSpec {
         key: "triangle",
@@ -71,6 +99,7 @@ const METHODS: [MethodSpec; 6] = [
         reads: Some(Stat::Triangle),
         needs_distance_estimate: false,
         bounded_value: true,
+        group: MethodGroup::OrbitStatistics,
     },
     MethodSpec {
         key: "trap",
@@ -78,6 +107,7 @@ const METHODS: [MethodSpec; 6] = [
         reads: Some(Stat::Trap),
         needs_distance_estimate: false,
         bounded_value: false,
+        group: MethodGroup::OrbitStatistics,
     },
     MethodSpec {
         key: "distance",
@@ -85,6 +115,7 @@ const METHODS: [MethodSpec; 6] = [
         reads: None,
         needs_distance_estimate: true,
         bounded_value: false,
+        group: MethodGroup::Distance,
     },
     MethodSpec {
         key: "decomposition",
@@ -92,6 +123,7 @@ const METHODS: [MethodSpec; 6] = [
         reads: Some(Stat::Angle),
         needs_distance_estimate: false,
         bounded_value: true,
+        group: MethodGroup::Angle,
     },
 ];
 
@@ -171,6 +203,10 @@ impl ColorMethod {
     /// See [`MethodSpec::bounded_value`].
     pub const fn bounded_value(self) -> bool {
         self.spec().bounded_value
+    }
+    /// See [`MethodSpec::group`].
+    pub const fn group(self) -> MethodGroup {
+        self.spec().group
     }
     /// Whether a frame colored with this method can be rendered through `c` ([`Capability`]): read
     /// off the rules the renderer follows, the statistics the method accumulates for the

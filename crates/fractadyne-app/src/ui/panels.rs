@@ -170,35 +170,27 @@ impl FractadyneApp {
                 // and says why under the box, rather than switching the method on its own.
                 // ⭐Likewise Newton records no orbit statistics, so stripe, triangle, the traps and
                 // decomposition would color it one color: each method says what the family lacks.
+                // ⭐The list is `method_list`'s, shared with Color ▸ Method (coloring plan B6): the
+                // methods under headings, each tooltip saying what it shows and what choosing it
+                // costs here.
                 let caps = self.fractal.caps();
-                let why = |l: fractadyne_core::coloring::Lacks| match l {
-                    fractadyne_core::coloring::Lacks::DistanceEstimate => {
-                        tr!(coloring_needs_derivative, family = self.fractal.display_name())
-                    }
-                    fractadyne_core::coloring::Lacks::OrbitStatistics => {
-                        tr!(coloring_needs_statistics, family = self.fractal.display_name())
-                    }
-                };
                 labelled(ui, &tr!(panel_method), |ui| {
-                    egui::ComboBox::from_id_salt("panel_method")
+                    if std::mem::take(&mut self.dialogs.open_method_list) {
+                        // The combo box's own id rule (see the fractal dropdown in menus.rs).
+                        let popup = ui.make_persistent_id(egui::Id::new("panel_method")).with("popup");
+                        ui.memory_mut(|m| m.open_popup(popup));
+                    }
+                    let combo = egui::ComboBox::from_id_salt("panel_method")
                         .selected_text(self.coloring.color_method.label())
+                        .height(480.0)
                         .show_ui(ui, |ui| {
-                            for m in ColorMethod::ALL {
-                                let lacks = m.lacks(caps);
-                                let r = ui.add_enabled(
-                                    lacks.is_none(),
-                                    egui::SelectableLabel::new(self.coloring.color_method == m, m.label()),
-                                );
-                                if r.clicked() {
-                                    self.coloring.color_method = m;
-                                }
-                                if let Some(l) = lacks {
-                                    r.on_disabled_hover_text(why(l));
-                                }
-                            }
-                        })
-                        .response
-                        .on_hover_text(tr!(panel_method_hover));
+                            self.method_list(ui);
+                        });
+                    if combo.inner.is_none() {
+                        // The list is closed: a forced tooltip ends with it.
+                        self.dialogs.uitest_method_tooltip = None;
+                    }
+                    combo.response.on_hover_text(tr!(panel_method_hover));
                 });
                 if let Some(l) = self.coloring.color_method.lacks(caps) {
                     let note = match l {

@@ -121,6 +121,13 @@ pub(crate) struct ZoomPlan {
     pub(crate) gpu: u64,
 }
 
+/// The families a zoom video can be made of (outside Julia mode): the dialog refuses the others, and
+/// the method list says a method no video can use only where a video could be made at all.
+pub(crate) fn zoom_video_family(f: crate::fractal::FractalKind) -> bool {
+    use crate::fractal::FractalKind as F;
+    matches!(f, F::Mandelbrot | F::Multibrot3 | F::Multibrot4 | F::Multibrot5 | F::Multibrot6 | F::Multibrot7 | F::Multibrot8)
+}
+
 /// [`ZoomPlan`] for the dialog's video on a card whose textures are `max_dim` texels (0 = unknown).
 pub(crate) fn zoom_video_plan(z: &ZoomVideoUi, max_dim: u32) -> ZoomPlan {
     let map = fractadyne_core::ExpMap::for_frames(z.width as f64, z.height as f64, z.ss as f64, z.start_log2);
@@ -244,7 +251,6 @@ impl FractadyneApp {
             self.zoom_video.open = true;
             return;
         }
-        use crate::fractal::FractalKind as F;
         let dir = self.dialog_dir_default();
         let z = &mut self.zoom_video;
         z.centre = (
@@ -255,10 +261,7 @@ impl FractadyneApp {
         z.fractal = self.fractal.name().to_string();
         z.unsupported = if self.julia_mode {
             Some(tr!(zoom_video_no_julia))
-        } else if !matches!(
-            self.fractal,
-            F::Mandelbrot | F::Multibrot3 | F::Multibrot4 | F::Multibrot5 | F::Multibrot6 | F::Multibrot7 | F::Multibrot8
-        ) {
+        } else if !zoom_video_family(self.fractal) {
             Some(tr!(zoom_video_no_fractal, fractal = self.fractal.name()))
         } else if !self.coloring.color_method.can(crate::Capability::Strips) {
             Some(tr!(zoom_video_no_method))

@@ -6396,9 +6396,16 @@ impl ColoringConfig {
     /// ask with the frame's own band, or a trap-shape change under a stripe frame would leave a
     /// stale trap lane for the switch to find.
     fn orbit_stats(&self, mode: RenderMode) -> StatSet {
+        self.orbit_stats_of(self.color_method, mode)
+    }
+    /// What a frame colored with `method` would accumulate in `mode`, everything else as it is: the
+    /// method list asks it of every method to say which switch recolors the frame on screen and which
+    /// calculates it again (coloring plan B6, `ui::method_list`). [`Self::orbit_stats`] is this for
+    /// the method in use.
+    pub(crate) fn orbit_stats_of(&self, method: ColorMethod, mode: RenderMode) -> StatSet {
         match self.orbit_stats_override {
-            Some(s) => s.union(self.color_method.orbit_stats()),
-            None => self.color_method.orbit_stats_at(mode.is_floatexp() && crate::tunables::cost().gbuffer_deep == 1),
+            Some(s) => s.union(method.orbit_stats()),
+            None => method.orbit_stats_at(mode.is_floatexp() && crate::tunables::cost().gbuffer_deep == 1),
         }
     }
     /// Whether a frame accumulates any statistic at all: the same answer in every band, since the
@@ -6526,6 +6533,12 @@ struct DialogState {
     /// Open the right panel's palette dropdown on its next draw (the UI test's `palette-dropdown`
     /// step), for the same reason.
     open_palette_dropdown: bool,
+    /// Open the right panel's method list on its next draw (the UI test's `method-list` steps), for
+    /// the same reason.
+    open_method_list: bool,
+    /// Show this method's tooltip in the open method list without a pointer on it (the UI test's
+    /// `method-tooltip` step: the walk never moves the pointer). Cleared when the list closes.
+    uitest_method_tooltip: Option<ColorMethod>,
     /// Keyboard/help overlay window open.
     help_open: bool,
     /// Selected Help section index.
@@ -7849,6 +7862,8 @@ impl FractadyneApp {
                 accelerated_open: false,
                 open_fractal_dropdown: false,
                 open_palette_dropdown: false,
+                open_method_list: false,
+                uitest_method_tooltip: None,
                 help_open: false,
                 help_section: 0,
                 help_scroll_to_end: false,

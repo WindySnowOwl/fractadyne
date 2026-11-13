@@ -6759,6 +6759,13 @@ impl FractadyneApp {
     /// that granted floatexp's fourth state target — without it a floatexp frame cannot be split, and
     /// a df32 one can.
     pub(crate) fn band_bla(&self, fractal: FractalKind, julia: bool) -> bool {
+        self.band_bla_if(fractal, julia, self.coloring.accumulates_any())
+    }
+
+    /// [`Self::band_bla`] for a frame that does or does not accumulate orbit statistics, whatever
+    /// the method in use: the method list asks what a method that carries none would get here
+    /// (coloring plan B6).
+    pub(crate) fn band_bla_if(&self, fractal: FractalKind, julia: bool, accumulates: bool) -> bool {
         let caps = fractal.caps();
         crate::tunables::cost().band_floatexp == 1
             && !julia
@@ -6766,7 +6773,7 @@ impl FractadyneApp {
             && caps.bla
             && self.resumable(fractal)
             && self.render_cfg.use_bla
-            && !self.coloring.accumulates_any()
+            && !accumulates
             && actuators::can_chunk(self.perf.actuators.as_ref(), RenderMode::Floatexp)
     }
 
