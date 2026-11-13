@@ -2778,6 +2778,15 @@ panel-tail-length = Kuyruk uzunluğu
 panel-tail-length-unit = yin.
 panel-tail-length-hover = Yineleme cinsinden pencere uzunluğu. Kısa pencereler (8–32) her derinlikte klasik kalın bantları verir; daha uzun olanlar yeniden düz bir renge doğru ortalanır, çünkü uzun, kaotik bir yörüngenin şerit terimi ortalamada birbirini götürür.
 panel-trap-shape = Tuzak şekli
+panel-inside = İç kısım
+panel-inside-hover = Kümenin içini neyin renklendirdiği.
+inside-solid = Düz renk
+inside-solid-desc = Kümenin tüm içi için tek bir renk.
+inside-trap = Yörünge tuzağı
+inside-trap-desc = Her yörüngenin yörünge tuzağına ne kadar yaklaştığı, iç paletle. Şekli Tuzak şekli ayarıdır.
+panel-inside-palette = İç palet
+panel-inside-palette-hover = Yörünge tuzağının içi renklendirdiği palet.
+panel-inside-palette-same = Dışla aynı
 panel-palette = Palet
 # The two colors of the Binary palette, each beside its color swatch.
 panel-in-set = Küme içi

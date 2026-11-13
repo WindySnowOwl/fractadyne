@@ -2866,6 +2866,15 @@ panel-tail-length = Długość ogona
 panel-tail-length-unit = it.
 panel-tail-length-hover = Długość okna w iteracjach. Krótkie okna (8–32) dają klasyczne wyraźne pasma na każdej głębokości; dłuższe znów uśredniają się do płaskiego koloru, bo człon pasków długiej chaotycznej orbity się uśrednia.
 panel-trap-shape = Kształt pułapki
+panel-inside = Wnętrze
+panel-inside-hover = Czym kolorowane jest wnętrze zbioru.
+inside-solid = Jednolity kolor
+inside-solid-desc = Jeden kolor dla całego wnętrza zbioru.
+inside-trap = Pułapka orbity
+inside-trap-desc = Jak blisko każda orbita podeszła do pułapki orbity, w palecie wnętrza. Jej kształt ustawia Kształt pułapki.
+panel-inside-palette = Paleta wnętrza
+panel-inside-palette-hover = Paleta, którą pułapka orbity koloruje wnętrze.
+panel-inside-palette-same = Jak na zewnątrz
 panel-palette = Paleta
 # The two colors of the Binary palette, each beside its color swatch.
 panel-in-set = W zbiorze

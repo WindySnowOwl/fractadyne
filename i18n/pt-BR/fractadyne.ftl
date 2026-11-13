@@ -2778,6 +2778,15 @@ panel-tail-length = Compr. da cauda
 panel-tail-length-unit = it
 panel-tail-length-hover = Comprimento da janela em iterações. Janelas curtas (8–32) dão as faixas fortes clássicas em qualquer profundidade; as mais longas voltam a tender a uma cor chapada, já que o termo de listras de uma órbita caótica longa se anula na média.
 panel-trap-shape = Forma da armadilha
+panel-inside = Interior
+panel-inside-hover = O que colore o interior do conjunto.
+inside-solid = Cor sólida
+inside-solid-desc = Uma só cor para todo o interior do conjunto.
+inside-trap = Armadilha de órbita
+inside-trap-desc = O quanto cada órbita se aproximou da armadilha de órbita, na paleta interna. A forma é o ajuste Forma da armadilha.
+panel-inside-palette = Paleta interna
+panel-inside-palette-hover = A paleta com que a armadilha de órbita colore o interior.
+panel-inside-palette-same = Igual à de fora
 panel-palette = Paleta
 # The two colors of the Binary palette, each beside its color swatch.
 panel-in-set = Dentro

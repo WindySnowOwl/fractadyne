@@ -647,7 +647,8 @@ impl Assembler {
         let u = self.uniforms(place)?;
         queue.write_buffer(&self.reproject_uniform, 0, bytemuck::bytes_of(&u));
         let (lut_len, lut_smooth) = crate::write_lut(queue, &self.lut_buf, &colour.lut, colour.lut_smooth);
-        let cu = color_uniforms_for(colour, self.ss, self.frame[0], self.frame[1], lut_len, lut_smooth);
+        let iw = colour.interior.upload(queue, &self.lut_buf);
+        let cu = color_uniforms_for(colour, self.ss, self.frame[0], self.frame[1], lut_len, lut_smooth, iw);
         queue.write_buffer(&self.color_uniform, 0, bytemuck::bytes_of(&cu));
         let mut enc = device.create_command_encoder(&wgpu::CommandEncoderDescriptor { label: Some("assemble.frame") });
         self.encode_reproject(&mut enc);

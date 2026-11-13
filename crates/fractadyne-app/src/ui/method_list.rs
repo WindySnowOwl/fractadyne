@@ -139,6 +139,24 @@ impl FractadyneApp {
     /// method only through `band_bla`, which turns on only for a frame that accumulates nothing.
     /// Two methods that accumulate the same set therefore share the mode too; and where the current
     /// frame accumulates nothing but `to` would, `to`'s set is not empty under either mode.
+    /// What choosing `to` for the inside does to the frames on screen (coloring plan B5): the
+    /// method list's rule, for the statistic the inside reads.
+    pub(crate) fn inside_switch_cost(&self, to: crate::InteriorMode) -> SwitchCost {
+        let m = self.coloring.color_method;
+        if to == self.coloring.interior_of(m) {
+            return SwitchCost::InUse;
+        }
+        let same = self.method_views().into_iter().all(|(mag, julia)| {
+            let mode = self.live_render_mode(self.fractal, julia, mag);
+            self.coloring.orbit_stats_with(m, mode, to) == self.coloring.orbit_stats(mode)
+        });
+        if same {
+            SwitchCost::Recolors
+        } else {
+            SwitchCost::Recalculates
+        }
+    }
+
     pub(crate) fn switch_cost(&self, to: ColorMethod) -> SwitchCost {
         if to == self.coloring.color_method {
             return SwitchCost::InUse;
@@ -225,6 +243,112 @@ impl FractadyneApp {
         for n in method_notes(m, offered) {
             ui.label(egui::RichText::new(note_text(n)).small().weak());
         }
+    }
+
+    /// The panel's Inside rows (coloring plan B5, design §9.1): what colors the inside of the set,
+    /// each choice saying what it shows and what choosing it costs, as the method list does; and,
+    /// while the trap colors it, the interior palette.
+    pub(crate) fn inside_rows(&mut self, ui: &mut egui::Ui) {
+        use crate::InteriorMode;
+        let inside = self.coloring.interior_of(self.coloring.color_method);
+        super::panels::labelled(ui, &tr!(panel_inside), |ui| {
+            egui::ComboBox::from_id_salt("panel_inside")
+                .selected_text(inside_label(inside))
+                .show_ui(ui, |ui| {
+                    for m in InteriorMode::ALL {
+                        let r = ui.selectable_label(inside == m, inside_label(m)).on_hover_ui(|ui| self.inside_tooltip(ui, m));
+                        // A choice only when it changes something: the method's own inside stays the
+                        // method's (`None`) until another is picked, so a later method keeps its own.
+                        if r.clicked() && inside != m {
+                            self.coloring.interior = Some(m);
+                        }
+                    }
+                })
+                .response
+                .on_hover_text(tr!(panel_inside_hover));
+        });
+        if inside != InteriorMode::Trap {
+            return;
+        }
+        let presets = fractadyne_color::PRESETS;
+        let name = match self.coloring.interior_palette {
+            Some(i) => presets[i.min(presets.len() - 1)].name.to_string(),
+            None => tr!(panel_inside_palette_same),
+        };
+        let swatch = self.coloring.interior_palette.map(|i| {
+            let p = &presets[i.min(presets.len() - 1)];
+            fractadyne_color::segment::Gradient::from_stops(p.name, p.stops).bake(fractadyne_color::segment::LUT_SIZE)
+        });
+        super::panels::labelled(ui, &tr!(panel_inside_palette), |ui| {
+            // ⚠**AS WIDE AS THE ROOM LEFT, the name shortened to fit**, never as wide as its text:
+            // "Same as outside" widened the panel by 15 px, the canvas narrowed, and choosing the
+            // inside's palette calculated the whole view again (`--uitest` inside-trap, 2026-11-13;
+            // the Method box's lesson, B7). ⚠In a child of that width: a combo box truncates its text
+            // at the width AVAILABLE to it (it overwrites a laid-out text's own wrapping), which in
+            // the row ran to the panel's edge, and its padding then spilled past it.
+            let sp = ui.spacing();
+            let box_w = (ui.available_width() - sp.item_spacing.x).max(60.0);
+            let inner_w = box_w - 2.0 * sp.button_padding.x;
+            let combo = ui
+                .allocate_ui(egui::vec2(inner_w, sp.interact_size.y), |ui| {
+                    egui::ComboBox::from_id_salt("panel_inside_palette")
+                        .width(inner_w)
+                        .truncate()
+                        // A chosen palette with its swatch, as the Palette box shows one; "Same as
+                        // outside" as words alone, which want the room.
+                        .selected_text(if self.coloring.interior_palette.is_some() {
+                            crate::ui::menus::palette_box_text(ui, &name)
+                        } else {
+                            name.clone().into()
+                        })
+                        .height(430.0)
+                        .show_ui(ui, |ui| {
+                    if ui.selectable_label(self.coloring.interior_palette.is_none(), tr!(panel_inside_palette_same)).clicked() {
+                        self.coloring.interior_palette = None;
+                    }
+                    for (i, p) in presets.iter().enumerate() {
+                        Self::palette_preset_heading(ui, i);
+                        let g = fractadyne_color::segment::Gradient::from_stops(p.name, p.stops);
+                        let chosen = self.coloring.interior_palette == Some(i);
+                        let row = Self::palette_menu_row(ui, &g, p.name, chosen);
+                        if row.clicked {
+                            self.coloring.interior_palette = Some(i);
+                        }
+                    }
+                        })
+                })
+                .inner;
+            if let Some(swatch) = &swatch {
+                crate::ui::menus::paint_palette_box_swatch(ui, combo.response.rect, swatch);
+            }
+            combo.response.on_hover_text(tr!(panel_inside_palette_hover));
+        });
+    }
+
+    /// An Inside choice's tooltip: what it shows, then what choosing it does to the frame on screen.
+    fn inside_tooltip(&self, ui: &mut egui::Ui, m: crate::InteriorMode) {
+        ui.set_max_width(340.0);
+        ui.label(match m {
+            crate::InteriorMode::Solid => tr!(inside_solid_desc),
+            crate::InteriorMode::Trap => tr!(inside_trap_desc),
+        });
+        match self.inside_switch_cost(m) {
+            SwitchCost::InUse => {}
+            SwitchCost::Recolors => {
+                ui.label(egui::RichText::new(tr!(method_cost_recolors)).small());
+            }
+            SwitchCost::Recalculates => {
+                ui.label(egui::RichText::new(tr!(method_cost_recalculates)).small());
+            }
+        }
+    }
+}
+
+/// An Inside choice's name in the panel.
+pub(crate) fn inside_label(m: crate::InteriorMode) -> String {
+    match m {
+        crate::InteriorMode::Solid => tr!(inside_solid),
+        crate::InteriorMode::Trap => tr!(inside_trap),
     }
 }
 

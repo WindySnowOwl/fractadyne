@@ -357,7 +357,7 @@ const SAMPLE_OPTIONAL_KEYS: &[&str] = &[
     "rule", "pattern", "pattern_origin", "pattern_generation", "generation", "pattern_name",
     "lsystem", "lsystem_order", "lsystem_angle", "lsystem_width", "lsystem_colour",
     "iter_div",
-    "method", "stripe_freq", "stripe_tail", "stripe_tail_len", "trap",
+    "method", "stripe_freq", "stripe_tail", "stripe_tail_len", "interior", "interior_palette", "trap",
     "light", "light_angle", "light_height", "glow", "glow_strength", "glow_width",
     "palette_mode", "palette_lo", "palette_hi",
     "normalize_live", "normalize_fit", "log_scale",

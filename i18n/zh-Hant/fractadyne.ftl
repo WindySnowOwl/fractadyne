@@ -2706,6 +2706,15 @@ panel-tail-length = 尾段長度
 panel-tail-length-unit = 次
 panel-tail-length-hover = 以疊代次數表示的區間長度。短區間（8–32）在任何深度都能呈現經典的粗色帶；較長的區間又會平均成一片平坦的顏色，因為長混沌軌道的條紋項會被平均掉。
 panel-trap-shape = 陷阱形狀
+panel-inside = 內部
+panel-inside-hover = 集合內部的著色方式。
+inside-solid = 純色
+inside-solid-desc = 整個集合內部使用同一種顏色。
+inside-trap = 軌道陷阱
+inside-trap-desc = 每條軌道離軌道陷阱有多近，用內部調色盤表示。陷阱形狀由「陷阱形狀」設定決定。
+panel-inside-palette = 內部調色盤
+panel-inside-palette-hover = 軌道陷阱為內部著色所用的調色盤。
+panel-inside-palette-same = 與外部相同
 panel-palette = 調色盤
 # The two colors of the Binary palette, each beside its color swatch.
 panel-in-set = 集合內

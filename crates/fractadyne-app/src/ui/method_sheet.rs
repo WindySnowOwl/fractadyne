@@ -13,7 +13,7 @@
 //! beside 3 and 6. A method the family cannot color by (`ColorMethod::lacks`) has no cell: it would
 //! be one flat color.
 
-use crate::{ColorMethod, ColoringLabel, Stat, StatSet, TrapType};
+use crate::{ColorMethod, ColoringLabel, InteriorMode, Stat, StatSet, TrapType};
 use fractadyne_core::coloring::MethodGroup;
 use fractadyne_gpu::atlas::{self, AtlasCell, AtlasPalette, CellColoring, PaletteAtlas};
 
@@ -55,19 +55,26 @@ pub(crate) struct FrameStats {
     pub(crate) set: StatSet,
     pub(crate) stripe_freq: f32,
     pub(crate) trap: TrapType,
+    /// The view's interior choice (B5): a cell's inside may need a statistic of its own (an
+    /// interior colored by the trap needs the trap), `InteriorMode::of_method` when `None`.
+    pub(crate) interior: Option<InteriorMode>,
 }
 
 /// Whether `cell` can be drawn from a frame that accumulated `frame`.
 pub(crate) fn cell_source(cell: SheetCell, frame: FrameStats) -> CellSource {
-    let Some(stat) = cell.method.reads() else {
-        return CellSource::Recolor; // the main lane: every frame has it
-    };
-    let same = match stat {
-        Stat::Stripe => cell.stripe_freq.is_some_and(|f| (f - frame.stripe_freq).abs() <= f32::EPSILON * f.abs().max(1.0)),
-        Stat::Trap => cell.trap == Some(frame.trap),
-        Stat::Triangle | Stat::Angle => true,
-    };
-    if frame.set.has(stat) && same {
+    // What the method colors by (the main lane needs nothing: every frame has it), and what its
+    // inside does, each held with the cell's parameter (a cell's own shape or density, else the
+    // frame's: an interior trap is the view's shape).
+    let inside = frame.interior.unwrap_or(InteriorMode::of_method(cell.method)).reads();
+    let held = cell.method.reads().into_iter().chain(inside).all(|stat| {
+        let same = match stat {
+            Stat::Stripe => cell.stripe_freq.is_none_or(|f| (f - frame.stripe_freq).abs() <= f32::EPSILON * f.abs().max(1.0)),
+            Stat::Trap => cell.trap.is_none_or(|t| t == frame.trap),
+            Stat::Triangle | Stat::Angle => true,
+        };
+        frame.set.has(stat) && same
+    });
+    if held {
         CellSource::Recolor
     } else {
         CellSource::Render
@@ -167,7 +174,12 @@ impl crate::FractadyneApp {
     /// What view 0's frame accumulated, and with which parameters.
     pub(crate) fn sheet_frame(&self) -> FrameStats {
         let mode = self.live_render_mode(self.fractal, self.julia_mode && !self.dual, self.viewport.magnification());
-        FrameStats { set: self.coloring.orbit_stats(mode), stripe_freq: self.coloring.stripe_freq, trap: self.coloring.trap_type }
+        FrameStats {
+            set: self.coloring.orbit_stats(mode),
+            stripe_freq: self.coloring.stripe_freq,
+            trap: self.coloring.trap_type,
+            interior: self.coloring.interior,
+        }
     }
 
     /// The method the view is colored with: the chosen one, or the sheet's previewed cell's while
@@ -181,7 +193,12 @@ impl crate::FractadyneApp {
         let Some(c) = self.method_sheet.preview.shown() else { return chosen };
         let all_recolor = self.method_views().into_iter().all(|(mag, julia)| {
             let mode = self.live_render_mode(self.fractal, julia, mag);
-            let frame = FrameStats { set: self.coloring.orbit_stats(mode), stripe_freq: self.coloring.stripe_freq, trap: self.coloring.trap_type };
+            let frame = FrameStats {
+                set: self.coloring.orbit_stats(mode),
+                stripe_freq: self.coloring.stripe_freq,
+                trap: self.coloring.trap_type,
+                interior: self.coloring.interior,
+            };
             cell_source(c, frame) == CellSource::Recolor
         });
         if all_recolor {
@@ -264,7 +281,11 @@ impl crate::FractadyneApp {
             .iter()
             .map(|c| AtlasCell {
                 palette: &palette,
-                coloring: (*c != in_use).then(|| CellColoring { method: c.method, cycle: self.color_cycle_for(c.method) }),
+                coloring: (*c != in_use).then(|| CellColoring {
+                    method: c.method,
+                    cycle: self.color_cycle_for(c.method),
+                    interior: self.interior_shading_for(c.method),
+                }),
             })
             .collect();
         let (cell, cols) = crate::ui::palette_browser::atlas_layout(cells.len() as u32, cell, rs.device.limits().max_texture_dimension_2d);

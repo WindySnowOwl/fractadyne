@@ -2778,6 +2778,15 @@ panel-tail-length = Lunghezza coda
 panel-tail-length-unit = it
 panel-tail-length-hover = Lunghezza della finestra in iterazioni. Finestre corte (8–32) danno le classiche bande marcate a qualsiasi profondità; quelle più lunghe tornano a mediare verso un colore piatto, perché nella media il termine delle strisce di un’orbita caotica lunga si annulla.
 panel-trap-shape = Forma trappola
+panel-inside = Interno
+panel-inside-hover = Che cosa colora l’interno dell’insieme.
+inside-solid = Colore pieno
+inside-solid-desc = Un solo colore per tutto l’interno dell’insieme.
+inside-trap = Trappola orbitale
+inside-trap-desc = Quanto ogni orbita si è avvicinata alla trappola orbitale, nella tavolozza interna. La sua forma è l’impostazione Forma trappola.
+panel-inside-palette = Tavolozza interna
+panel-inside-palette-hover = La tavolozza con cui la trappola orbitale colora l’interno.
+panel-inside-palette-same = Come all’esterno
 panel-palette = Tavolozza
 # The two colors of the Binary palette, each beside its color swatch.
 panel-in-set = Nell’insieme

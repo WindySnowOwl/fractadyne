@@ -2974,6 +2974,16 @@ panel-tail-length = Tail length
 panel-tail-length-unit = it
 panel-tail-length-hover = Window length in iterations. Short windows (8–32) give the classic bold banding at any depth; longer ones average toward a flat color again, since the stripe term of a long chaotic orbit averages out.
 panel-trap-shape = Trap shape
+# The panel's Inside rows (coloring plan B5): what colors the inside of the set.
+panel-inside = Inside
+panel-inside-hover = What colors the inside of the set.
+inside-solid = Solid color
+inside-solid-desc = One color for the whole inside of the set.
+inside-trap = Orbit trap
+inside-trap-desc = How near each orbit came to the orbit trap, in the inside palette. Its shape is the Trap shape setting.
+panel-inside-palette = Inside palette
+panel-inside-palette-hover = The palette the orbit trap colors the inside with.
+panel-inside-palette-same = Same as outside
 panel-palette = Palette
 # The two colors of the Binary palette, each beside its color swatch.
 panel-in-set = In-set

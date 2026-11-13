@@ -325,7 +325,7 @@ pub(crate) const KNOWN_VIEW_KEYS: &[&str] = &[
     // settings, the relief light, the distance glow, Duotone or Binary with their two colors, and
     // the live normalization. Each written only when the picture depends on it and it is not the
     // default, so an ordinary view is byte-identical to one written before the keys existed.
-    "method", "stripe_freq", "stripe_tail", "stripe_tail_len", "trap",
+    "method", "stripe_freq", "stripe_tail", "stripe_tail_len", "interior", "interior_palette", "trap",
     "light", "light_angle", "light_height", "glow", "glow_strength", "glow_width",
     "palette_mode", "palette_lo", "palette_hi",
     "normalize_live", "normalize_fit", "log_scale",
@@ -391,6 +391,8 @@ const TYPED_VIEW_KEYS: &[(&str, ValueKind)] = &[
     ("stripe_freq", ValueKind::Float),
     ("stripe_tail", ValueKind::Flag),
     ("stripe_tail_len", ValueKind::Uint),
+    ("interior", ValueKind::Interior),
+    ("interior_palette", ValueKind::Id),
     ("trap", ValueKind::Trap),
     ("light", ValueKind::Flag),
     ("light_angle", ValueKind::Float),
@@ -424,6 +426,8 @@ enum ValueKind {
     Method,
     /// An orbit trap's key (`TrapType::key`).
     Trap,
+    /// What colors the inside (`InteriorMode::key`).
+    Interior,
     /// `duotone` or `binary` (`view_coloring::TwoColor`).
     PaletteMode,
     /// A color: three numbers separated by commas.
@@ -444,6 +448,7 @@ impl ValueKind {
             }
             ValueKind::Method => crate::ColorMethod::ALL.iter().any(|m| m.key() == v),
             ValueKind::Trap => crate::TrapType::ALL.iter().any(|t| t.key() == v),
+            ValueKind::Interior => crate::InteriorMode::parse_key(v).is_some(),
             ValueKind::PaletteMode => crate::view_coloring::TwoColor::from_key(v).is_some(),
             ValueKind::Rgb => {
                 let parts: Vec<&str> = v.split(',').collect();
@@ -465,6 +470,7 @@ impl ValueKind {
             ValueKind::Id => "a palette name such as lunar-new-year".into(),
             ValueKind::Method => one_of(crate::ColorMethod::ALL.iter().map(|m| m.key()).collect()),
             ValueKind::Trap => one_of(crate::TrapType::ALL.iter().map(|t| t.key()).collect()),
+            ValueKind::Interior => one_of(crate::InteriorMode::ALL.iter().map(|m| m.key()).collect()),
             ValueKind::PaletteMode => {
                 one_of(crate::view_coloring::TwoColor::ON.iter().filter_map(|m| m.key()).collect())
             }

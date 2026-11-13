@@ -2779,6 +2779,15 @@ panel-tail-length = Endlänge
 panel-tail-length-unit = it
 panel-tail-length-hover = Fensterlänge in Iterationen. Kurze Fenster (8–32) ergeben in jeder Tiefe die klassischen kräftigen Bänder; längere mitteln wieder zu einer flachen Farbe hin, da sich der Streifenterm eines langen chaotischen Orbits herausmittelt.
 panel-trap-shape = Fallenform
+panel-inside = Innen
+panel-inside-hover = Was das Innere der Menge färbt.
+inside-solid = Einfarbig
+inside-solid-desc = Eine Farbe für das ganze Innere der Menge.
+inside-trap = Orbitfalle
+inside-trap-desc = Wie nah jeder Orbit der Orbitfalle kam, in der Innenpalette. Ihre Form ist die Einstellung Fallenform.
+panel-inside-palette = Innenpalette
+panel-inside-palette-hover = Die Palette, mit der die Orbitfalle das Innere färbt.
+panel-inside-palette-same = Wie außen
 panel-palette = Palette
 # The two colors of the Binary palette, each beside its color swatch.
 panel-in-set = In Menge

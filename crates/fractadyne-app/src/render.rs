@@ -4409,6 +4409,8 @@ impl FractadyneApp {
             trap_type: self.coloring.trap_type.gpu_id(),
             aa_filter: 1,
             interior_col: self.interior_color(),
+            // The chosen method's interior: an export never shows a preview.
+            interior: self.interior_shade_for(self.coloring.color_method),
         }
     }
 }
@@ -4476,6 +4478,7 @@ pub(crate) fn params_to_request(p: &fractadyne_gpu::MandelbrotParams) -> fractad
         trap_type: p.trap_type,
         aa_filter: p.aa_filter,
         interior_col: p.interior_col,
+        interior: p.interior.clone(),
     }
 }
 
@@ -7271,6 +7274,8 @@ impl FractadyneApp {
             trap_type: self.coloring.trap_type.gpu_id(),
             aa_filter,
             interior_col: self.view_interior_color(),
+            // The shown method's: a method sheet preview shows that method's interior too.
+            interior: self.interior_shade_for(self.shown_method()),
             resolution,
             // The panel, which `build_params` knows and sets after this returns.
             display_res: [0, 0],

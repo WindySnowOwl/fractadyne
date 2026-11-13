@@ -2707,6 +2707,15 @@ panel-tail-length = 尾部长度
 panel-tail-length-unit = 次
 panel-tail-length-hover = 以迭代次数计的窗口长度。短窗口（8–32）在任何深度下都能产生经典的粗犷色带；更长的窗口会再次趋向于平均成一种纯色，因为长混沌轨道的条纹项会被平均掉。
 panel-trap-shape = 陷阱形状
+panel-inside = 内部
+panel-inside-hover = 集合内部的着色方式。
+inside-solid = 纯色
+inside-solid-desc = 整个集合内部使用同一种颜色。
+inside-trap = 轨道陷阱
+inside-trap-desc = 每条轨道离轨道陷阱有多近，用内部调色板表示。陷阱形状由“陷阱形状”设置决定。
+panel-inside-palette = 内部调色板
+panel-inside-palette-hover = 轨道陷阱为内部着色所用的调色板。
+panel-inside-palette-same = 与外部相同
 panel-palette = 调色板
 # The two colors of the Binary palette, each beside its color swatch.
 panel-in-set = 集合内

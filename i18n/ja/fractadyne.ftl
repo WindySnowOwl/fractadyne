@@ -2707,6 +2707,15 @@ panel-tail-length = 末尾の長さ
 panel-tail-length-unit = 回
 panel-tail-length-hover = 窓の長さ（反復回数）です。短い窓（8～32）はどの深度でも古典的な太い帯を生みます。長い窓では、長いカオス的な軌道のストライプ項が平均されて打ち消し合うため、再び平坦な色に近づきます。
 panel-trap-shape = トラップの形
+panel-inside = 内部
+panel-inside-hover = 集合の内部を何で着色するか。
+inside-solid = 単色
+inside-solid-desc = 集合の内部全体を一色で塗ります。
+inside-trap = 軌道トラップ
+inside-trap-desc = 各軌道が軌道トラップにどれだけ近づいたかを、内部パレットで表します。トラップの形は「トラップの形」の設定です。
+panel-inside-palette = 内部パレット
+panel-inside-palette-hover = 軌道トラップが内部を着色するパレット。
+panel-inside-palette-same = 外側と同じ
 panel-palette = パレット
 # The two colors of the Binary palette, each beside its color swatch.
 panel-in-set = 集合内

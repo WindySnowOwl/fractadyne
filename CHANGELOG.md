@@ -59,6 +59,14 @@ published as the pre-releases `v0.2.41-beta.1` to `v0.2.41-beta.150`, and a "bet
 
 Changes after 0.3.0-beta.1:
 
+- **The inside of the set can be colored by the orbit trap (0.3.0-beta.27).** The panel's Coloring
+  section has an Inside row: one solid color, or the orbit trap, which shows how near each orbit came
+  to the trap, in the outside palette or in a palette of its own (Inside palette). The trap's shape is
+  the Trap shape setting, shown whenever the trap colors the inside. The orbit trap method goes on
+  coloring its inside by its trap until you choose otherwise, so a view saved before looks as it did,
+  and a solid inside is now possible under that method too. Choosing the trap for the inside under
+  another method calculates the view again once; changing the inside's palette only recolors it.
+  Views, bookmarks, sessions, tours and the render farm carry both choices.
 - **Every coloring method side by side on the view you are looking at (0.3.0-beta.27).** Color ▸
   Preview methods…, or the button beside the panel's Method box, opens a sheet of the current view in
   each method, under the method list's headings, with the orbit trap in its three shapes and the

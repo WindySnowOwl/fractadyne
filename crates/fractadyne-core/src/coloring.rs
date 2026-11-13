@@ -507,6 +507,84 @@ impl TrapType {
     }
 }
 
+/// What colors the inside of the set (coloring plan B5): a persisted choice, known by its key.
+/// A view that makes none takes its method's own ([`InteriorMode::of_method`]).
+#[derive(Clone, Copy, PartialEq, Eq, Debug, Hash)]
+pub enum InteriorMode {
+    /// One color.
+    Solid,
+    /// How near each orbit came to the orbit trap (its shape is the trap method's), through the
+    /// interior palette.
+    Trap,
+}
+
+const INTERIOR_KEYS: [&str; 2] = ["solid", "trap"];
+
+impl InteriorMode {
+    /// Every mode, in the table's order.
+    pub const ALL: [InteriorMode; 2] = [InteriorMode::Solid, InteriorMode::Trap];
+    /// The persisted key.
+    pub const fn key(self) -> &'static str {
+        INTERIOR_KEYS[self as usize]
+    }
+    /// The mode a key names, if any.
+    pub fn parse_key(s: &str) -> Option<InteriorMode> {
+        InteriorMode::ALL.into_iter().find(|m| m.key() == s)
+    }
+    /// What `method` colors the inside with when the view chose nothing: the orbit trap its trap
+    /// (it always has), every other method one color.
+    pub const fn of_method(method: ColorMethod) -> InteriorMode {
+        match method {
+            ColorMethod::OrbitTrap => InteriorMode::Trap,
+            _ => InteriorMode::Solid,
+        }
+    }
+    /// The statistic the inside needs the frame to hold, if any.
+    pub const fn reads(self) -> Option<Stat> {
+        match self {
+            InteriorMode::Trap => Some(Stat::Trap),
+            InteriorMode::Solid => None,
+        }
+    }
+}
+
+/// How the color pass shades an interior pixel: the GPU's side of [`InteriorMode`]. Known to the
+/// shader by the constants [`wgsl_ids`] generates (`INTERIOR_METHOD`, ...); its number holds for
+/// one build only.
+#[derive(Clone, Copy, PartialEq, Eq, Debug, Default, Hash)]
+pub enum InteriorShading {
+    /// As the method does: the orbit trap colors it by its own coordinate, palette and range
+    /// mapping (exactly as before B5); every other method, one color. A request built without a
+    /// choice gets this, so it renders as it always has.
+    #[default]
+    Method,
+    /// One color, whatever the method.
+    Solid,
+    /// The trap's value under the interior's own rate, through the interior palette (the second
+    /// LUT), or the outside one when the request carries none.
+    Trap,
+}
+
+const SHADING_WGSL: [&str; 3] = ["INTERIOR_METHOD", "INTERIOR_SOLID", "INTERIOR_TRAP"];
+
+impl InteriorShading {
+    pub const ALL: [InteriorShading; 3] = [InteriorShading::Method, InteriorShading::Solid, InteriorShading::Trap];
+    /// Its GPU number in this build. Never store it.
+    pub const fn gpu_id(self) -> u32 {
+        self as u32
+    }
+    /// How a frame colored by `method` shades its inside for the `mode` it shows, with or without
+    /// an interior palette of its own. The trap method's own interior, when the palette is its own,
+    /// keeps its exact path ([`InteriorShading::Method`]: its range mapping included).
+    pub const fn for_view(mode: InteriorMode, method: ColorMethod, own_palette: bool) -> InteriorShading {
+        match (mode, method) {
+            (InteriorMode::Solid, _) => InteriorShading::Solid,
+            (InteriorMode::Trap, ColorMethod::OrbitTrap) if !own_palette => InteriorShading::Method,
+            (InteriorMode::Trap, _) => InteriorShading::Trap,
+        }
+    }
+}
+
 /// The shader constants for this build's GPU numbers: `const METHOD_STRIPE: u32 = 1u;` for every
 /// method, `const TRAP_CROSS: u32 = 1u;` for every trap shape and `const STAT_TRAP: u32 = 4u;`
 /// for every statistic's bit. The GPU crate appends this to the renderer's shader source; the
@@ -526,6 +604,9 @@ pub fn wgsl_ids() -> String {
     }
     for st in Stat::ALL {
         let _ = writeln!(s, "const {}: u32 = {}u;", st.spec().wgsl, st.bit());
+    }
+    for i in InteriorShading::ALL {
+        let _ = writeln!(s, "const {}: u32 = {}u;", SHADING_WGSL[i as usize], i.gpu_id());
     }
     s
 }

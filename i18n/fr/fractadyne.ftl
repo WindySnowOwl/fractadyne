@@ -2779,6 +2779,15 @@ panel-tail-length = Longueur de queue
 panel-tail-length-unit = it
 panel-tail-length-hover = Longueur de la fenêtre en itérations. Les fenêtres courtes (8–32) donnent les bandes marquées classiques à toute profondeur ; les plus longues tendent de nouveau vers une couleur uniforme, car le terme de rayures d’une longue orbite chaotique se moyenne.
 panel-trap-shape = Forme du piège
+panel-inside = Intérieur
+panel-inside-hover = Ce qui colore l’intérieur de l’ensemble.
+inside-solid = Couleur unie
+inside-solid-desc = Une seule couleur pour tout l’intérieur de l’ensemble.
+inside-trap = Piège orbital
+inside-trap-desc = À quel point chaque orbite s’est approchée du piège orbital, dans la palette intérieure. Sa forme est le réglage Forme du piège.
+panel-inside-palette = Palette intérieure
+panel-inside-palette-hover = La palette avec laquelle le piège orbital colore l’intérieur.
+panel-inside-palette-same = Comme à l’extérieur
 panel-palette = Palette
 # The two colors of the Binary palette, each beside its color swatch.
 panel-in-set = Dans l’ensemble

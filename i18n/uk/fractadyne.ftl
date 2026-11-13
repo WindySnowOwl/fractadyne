@@ -2923,6 +2923,15 @@ panel-tail-length = Довжина хвоста
 panel-tail-length-unit = іт
 panel-tail-length-hover = Довжина вікна в ітераціях. Короткі вікна (8–32) дають класичні виразні смуги на будь-якій глибині; довші знову усереднюються до плаского кольору, бо член смуг довгої хаотичної орбіти усереднюється.
 panel-trap-shape = Форма пастки
+panel-inside = Усередині
+panel-inside-hover = Чим забарвлено внутрішність множини.
+inside-solid = Суцільний колір
+inside-solid-desc = Один колір для всієї внутрішності множини.
+inside-trap = Пастка орбіти
+inside-trap-desc = Наскільки близько кожна орбіта підійшла до пастки орбіти, у палітрі внутрішності. Її форму задає налаштування «Форма пастки».
+panel-inside-palette = Палітра всередині
+panel-inside-palette-hover = Палітра, якою пастка орбіти забарвлює внутрішність.
+panel-inside-palette-same = Як ззовні
 panel-palette = Палітра
 # The two colors of the Binary palette, each beside its color swatch.
 panel-in-set = У множині

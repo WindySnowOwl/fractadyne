@@ -44,6 +44,10 @@ pub struct CellColoring {
     /// The palette rate for this method: the app's, which depends on the method (a bounded value
     /// takes a few sweeps over 0..1, the count a rate per iteration).
     pub cycle: f32,
+    /// How this method shades the inside, which depends on the method when the view chose nothing
+    /// (the orbit trap colors it, the others do not; coloring plan B5). The interior palette is the
+    /// view's own.
+    pub interior: fractadyne_core::coloring::InteriorShading,
 }
 
 /// A rendered atlas. Hold it to keep drawing it; hand it back to [`render_palette_atlas`] to redraw
@@ -128,11 +132,12 @@ pub fn render_atlas(
                     v.last_ss.max(1),
                     cu,
                     r.target_format,
+                    v.lut_buf.clone(),
                 )
             })
         })
     };
-    let Some((pipeline, bgl, tex_view, aux_view, ss, cu, format)) = found else {
+    let Some((pipeline, bgl, tex_view, aux_view, ss, cu, format, view_lut)) = found else {
         if let Some(old) = reuse {
             free_palette_atlas(rs, old);
         }
@@ -174,12 +179,15 @@ pub fn render_atlas(
     };
 
     // One uniform and one LUT buffer per palette: every draw reads its own, since writes to a
-    // single buffer between draws of one submission would all land before any of them ran.
+    // single buffer between draws of one submission would all land before any of them ran. Each
+    // takes the view's interior palette (its LUT buffer's second slot) by a copy on the GPU below.
+    let mut lut_bufs = Vec::with_capacity(palettes.len());
     let bind_groups: Vec<wgpu::BindGroup> = palettes
         .iter()
         .map(|c| {
             let p = c.palette;
             let lut_buf = make_lut_buffer(device);
+            lut_bufs.push(lut_buf.clone());
             let (lut_len, lut_smooth) = write_lut(&rs.queue, &lut_buf, &p.lut, p.smooth);
             let mut thumb = ColorUniforms {
                 lut_len,
@@ -202,6 +210,7 @@ pub fn render_atlas(
                 // window was measured for the view's method's values (`norm_mode`).
                 thumb.color_method = k.method.gpu_id();
                 thumb.cycle = k.cycle;
+                thumb.interior_mode = k.interior.gpu_id();
                 thumb.norm_mode = 0;
                 thumb.norm_lo = 0.0;
             }
@@ -220,6 +229,12 @@ pub fn render_atlas(
     let mut encoder = device.create_command_encoder(&wgpu::CommandEncoderDescriptor {
         label: Some("fractadyne.palette_atlas"),
     });
+    if cu.lut2_len > 0 {
+        let slot = (crate::LUT_SLOT * 16) as u64;
+        for b in &lut_bufs {
+            encoder.copy_buffer_to_buffer(&view_lut, slot, b, slot, slot);
+        }
+    }
     {
         let mut pass = encoder.begin_render_pass(&wgpu::RenderPassDescriptor {
             label: Some("fractadyne.palette_atlas"),

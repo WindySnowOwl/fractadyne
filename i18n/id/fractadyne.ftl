@@ -2706,6 +2706,15 @@ panel-tail-length = Panjang ekor
 panel-tail-length-unit = it
 panel-tail-length-hover = Panjang jendela dalam iterasi. Jendela pendek (8–32) memberikan pita tebal klasik pada kedalaman berapa pun; jendela yang lebih panjang kembali merata-rata menjadi warna datar, karena suku garis dari orbit kacau yang panjang saling meniadakan.
 panel-trap-shape = Bentuk perangkap
+panel-inside = Bagian dalam
+panel-inside-hover = Apa yang mewarnai bagian dalam himpunan.
+inside-solid = Warna polos
+inside-solid-desc = Satu warna untuk seluruh bagian dalam himpunan.
+inside-trap = Perangkap orbit
+inside-trap-desc = Seberapa dekat setiap orbit ke perangkap orbit, dalam palet dalam. Bentuknya diatur oleh Bentuk perangkap.
+panel-inside-palette = Palet dalam
+panel-inside-palette-hover = Palet yang dipakai perangkap orbit untuk mewarnai bagian dalam.
+panel-inside-palette-same = Sama dengan luar
 panel-palette = Palet
 # The two colors of the Binary palette, each beside its color swatch.
 panel-in-set = Di dalam

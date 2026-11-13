@@ -819,6 +819,49 @@ reproduced. Reproduce before fixing; never close on the mechanism argument alone
   `InteriorMode` (solid, trap, period, later others) and an interior palette reference; generalize
   the interior branch of `coord_under`.
 - **Tests**: layout tests; a selftest rendering an interior with the second gradient.
+- **Done 2026-11-13** (branch `feat/color-b5-interior`, on B7):
+  - **Two notions.** `InteriorMode` (core, persisted by key: `solid`, `trap`) is the view's choice,
+    `None` in the app for the method's own (`InteriorMode::of_method`: the orbit trap colors its
+    inside by its trap, every other method one color), so a view that never chose keeps its look
+    whatever method it takes. `InteriorShading` is the GPU's side (`INTERIOR_METHOD`, `_SOLID`,
+    `_TRAP`, generated with the other ids): the default, Method, is exactly the old path, so every
+    request built without a choice (the speed probe, Life, L-systems, harness renders) renders as
+    before. `for_view` maps a choice: the trap method's own inside in its own palette stays Method
+    (its range mapping included); the trap in any other case is Trap.
+  - **The GPU.** `ColorU` gains `interior_mode` (the second `_pad_fade` word) and a row
+    (`lut2_len`, `lut2_smooth`, `interior_cycle`, `interior_offset`); the layout test pins the
+    offsets. The LUT buffer has two slots of `LUT_SLOT` entries (the palette and its prefix sum
+    each), `LUT2_BASE` appended to the module before the ids; `palette_in` reads a slot;
+    `interior_shade` colors an interior texel (the trap's value × the interior's rate + offset
+    through the second slot, or the first when it is empty). `InteriorShade` rides on
+    `MandelbrotParams` and `ExportRequest` and `upload`s itself; an atlas copies the view's second
+    slot on the GPU and takes a shading per cell (a method sheet cell's inside follows its method).
+  - **The app.** `ColoringConfig::interior`/`interior_palette`; `orbit_stats_with` adds the trap
+    when the inside reads it, so every rule about the iteration (and B6's costs, B7's cell plan)
+    sees it; `interior_shade_for(method)`, live for the shown method, in an export for the chosen
+    one, its palette baked whenever one is chosen (an atlas cell of another method copies it). The
+    interior's rate is the trap method's, its offset the palette's.
+  - **Persistence.** `ColoringSpec.interior`/`interior_palette` (empty: none), field rows
+    `interior` and `interior_palette` (the `trap` row now shows for an inside colored by the trap
+    too), the reader's key lists, `ViewColoring`, `TOURS.md` (a choice of every palette id reads
+    "a palette id"); the pre-B4 session fixture lists the fields added since.
+  - **The UI.** The panel's Inside row (Solid color, Orbit trap), each with what it shows and what
+    choosing it costs (`inside_switch_cost`, B6's rule), and the Inside palette (Same as outside,
+    then every preset with its swatch) while the trap colors the inside; the Trap shape row shows
+    for it as well.
+  - **Tests**: core (the generated constants), gpu (layout offsets; the ids still last), state (the
+    old session), app (field rows, round trips, sample keys, sheet plan); uitest `inside-solid`,
+    `-trap` (the inside changes, the outside by 0.00; the list said "calculates again" and two passes
+    ran), `-palette` (a recolor: no pass; an export over the inside's core matches the screen),
+    `-solid-under-trap` (the trap method's inside one color, its own spreads); the self-test's
+    coloring round trips carry the inside.
+  - **Found on the way**: the Inside palette box grew with "Same as outside", the panel widened by
+    15 px and the view was calculated again (caught by the steps' size check); a combo box truncates
+    at the width available to it, not a laid-out text's own wrap, so the box sits in a child of its
+    width now. And `smooth` is a reserved word in WGSL: the built-in module took it, the custom
+    formula module (naga's stricter front end) refused it.
+  - Not in this step: an interior color picker for every palette (C1), the period (D3), an inside
+    palette preview on hover, and the Color menu's mirror of the Inside row.
 
 ### B6. Method picker
 
@@ -1187,6 +1230,7 @@ coloring in these places, so sequence the two with care:
 | B4 | done, merged | `a5d7d74b` (merge `ba452e9c`) |
 | B6 | done, merged | `c1e4bd61` (merge `35001f80`) |
 | B7 | done, branch `feat/color-b7-method-sheet` (steps 1-4), not merged | |
-| B5, B8 | not started | |
+| B5 | done, branch `feat/color-b5-interior` (on B7), not merged | |
+| B8 | not started | |
 | C1–C11 | not started | |
 | D, E, F, G | not started | |
