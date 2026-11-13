@@ -59,6 +59,10 @@ published as the pre-releases `v0.2.41-beta.1` to `v0.2.41-beta.150`, and a "bet
 
 Changes after 0.3.0-beta.1:
 
+- **In the dual view, the palette browser shows either pane or both (0.3.0-beta.27).** A Show row
+  above the filters chooses what the thumbnails show: the set, the Julia set, or both side by side,
+  as the screen shows them (the default). Outside the dual view the browser shows the one view, as
+  before.
 - **The coloring method list says what each method shows and what it costs (0.3.0-beta.27).** The
   panel's Method box and Color ▸ Method list the methods under headings: Escape count, Distance,
   Orbit statistics and Angle. Resting the pointer on a method says what it shows, whether switching

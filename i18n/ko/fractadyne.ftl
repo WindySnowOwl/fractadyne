@@ -268,6 +268,8 @@ menu-color-browse-hover = 현재 보기에 모든 팔레트를 나란히 보여 
 # The palette browser window.
 palette-browser-title = 팔레트
 palette-browser-clear = 필터 지우기
+palette-browser-both = 둘 다
+palette-browser-panes-hover = 이중 보기에서는 미리 보기에 왼쪽 창, 오른쪽 창, 또는 둘 다를 나란히 표시할 수 있습니다.
 
 # Shown when the chosen filters leave no palette.
 palette-browser-none = 이 태그를 모두 가진 팔레트가 없습니다.

@@ -268,6 +268,8 @@ menu-color-browse-hover = 在目前檢視上並排顯示所有調色盤：可依
 # The palette browser window.
 palette-browser-title = 調色盤
 palette-browser-clear = 清除篩選
+palette-browser-both = 兩者
+palette-browser-panes-hover = 在雙視圖中，縮圖可以顯示左側窗格、右側窗格，或將兩者並排顯示。
 
 # Shown when the chosen filters leave no palette.
 palette-browser-none = 沒有調色盤同時具有這些標籤。

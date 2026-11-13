@@ -268,6 +268,8 @@ menu-color-browse-hover = 現在のビューにすべてのパレットを並べ
 # The palette browser window.
 palette-browser-title = パレット
 palette-browser-clear = 絞り込みを解除
+palette-browser-both = 両方
+palette-browser-panes-hover = デュアルビューでは、サムネイルに左のペイン、右のペイン、または両方を並べて表示できます。
 
 # Shown when the chosen filters leave no palette.
 palette-browser-none = これらのタグをすべて持つパレットはありません。

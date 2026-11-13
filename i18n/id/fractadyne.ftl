@@ -268,6 +268,8 @@ menu-color-browse-hover = Semua palet di atas tampilan saat ini, berdampingan: s
 # The palette browser window.
 palette-browser-title = Palet
 palette-browser-clear = Hapus saringan
+palette-browser-both = Keduanya
+palette-browser-panes-hover = Dalam tampilan ganda, gambar mini dapat menampilkan panel kiri, panel kanan, atau keduanya berdampingan.
 
 # Shown when the chosen filters leave no palette.
 palette-browser-none = Tidak ada palet yang memiliki semua tag ini.

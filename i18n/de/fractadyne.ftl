@@ -272,6 +272,8 @@ menu-color-browse-hover = Jede Palette über der aktuellen Ansicht, nebeneinande
 # The palette browser window.
 palette-browser-title = Paletten
 palette-browser-clear = Filter zurücksetzen
+palette-browser-both = Beide
+palette-browser-panes-hover = In der Doppelansicht können die Vorschaubilder den linken Bereich, den rechten Bereich oder beide nebeneinander zeigen.
 
 # Shown when the chosen filters leave no palette.
 palette-browser-none = Keine Palette hat alle diese Schlagwörter.
