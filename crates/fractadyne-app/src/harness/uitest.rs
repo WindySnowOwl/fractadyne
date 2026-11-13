@@ -284,6 +284,10 @@ enum Screen {
     /// statistics methods in the list and says under the Method box that this one colors the view
     /// one color, which the step holds the canvas to (the 2026-11-11 coloring matrix finding).
     NoStatistics,
+    /// The palette browser in the dual view, the thumbnails showing both panes side by side, then
+    /// only the Julia pane (`BrowserPanes`).
+    PaletteBrowserDual,
+    PaletteBrowserDualJulia,
     /// The panel's method list open on the home view (coloring plan B6): the headings.
     MethodList,
     /// The same on Burning Ship, which has no distance estimate: Distance grayed out.
@@ -1113,6 +1117,10 @@ fn build_steps() -> Vec<Step> {
         screen("trap-recolor-point", Screen::TrapRecolorPoint),
         screen("no-derivative", Screen::NoDerivative),
         screen("no-statistics", Screen::NoStatistics),
+        // Before method-list, which puts the single view back: the dual view would otherwise stay
+        // on for every step after.
+        screen("palette-browser-dual", Screen::PaletteBrowserDual),
+        screen("palette-browser-dual-julia", Screen::PaletteBrowserDualJulia),
         screen("method-list", Screen::MethodList),
         screen("method-list-no-derivative", Screen::MethodListNoDerivative),
         screen("method-tooltip-recalculates", Screen::MethodTooltipRecalculates),
@@ -1506,7 +1514,7 @@ impl FractadyneApp {
         self.dialogs.second_device_prompt = None;
         self.dialogs.iteration_quarantine = None;
         self.dialogs.bookmarks_open = false;
-        self.palette_browser.open = false;
+        self.palette_browser.close();
         self.palette_browser.filter.clear();
         self.dialogs.bench_open = false;
         self.dialogs.bench_dialog_open = false;
@@ -1941,6 +1949,23 @@ impl FractadyneApp {
                 self.set_fractal(crate::FractalKind::Newton);
                 self.coloring.color_method = crate::ColorMethod::Stripe;
                 self.dialogs.uitest_effects_open = Some(true);
+            }
+            Screen::PaletteBrowserDual | Screen::PaletteBrowserDualJulia => {
+                self.set_fractal(crate::FractalKind::Mandelbrot);
+                self.set_show_mode(crate::ShowMode::Both);
+                self.reset_view();
+                self.render_cfg.auto_iter = true;
+                self.coloring.color_method = crate::ColorMethod::Smooth;
+                self.coloring.use_custom_palette = false;
+                self.coloring.use_duotone = false;
+                self.coloring.use_binary = false;
+                self.coloring.palette_idx = fractadyne_color::preset_by_id("diwali").unwrap_or(0);
+                self.palette_browser.panes = if matches!(s, Screen::PaletteBrowserDualJulia) {
+                    crate::ui::palette_browser::BrowserPanes::Julia
+                } else {
+                    crate::ui::palette_browser::BrowserPanes::Both
+                };
+                self.palette_browser.open = true;
             }
             Screen::MethodList | Screen::MethodListNoDerivative | Screen::MethodTooltipRecalculates => {
                 self.set_show_mode(crate::ShowMode::Set);
@@ -3273,6 +3298,21 @@ impl FractadyneApp {
                     }
                 }
                 None => Check { name: "sheet-cell-is-the-view".into(), verdict: Verdict::Fail, detail: "the probe atlas was not drawn or read".into() },
+            });
+        }
+
+        // ---- the palette browser in the dual view: an atlas for each pane it shows ----
+        if let StepKind::Screen(sc @ (Screen::PaletteBrowserDual | Screen::PaletteBrowserDualJulia)) = step.kind {
+            let want: &[usize] = if matches!(sc, Screen::PaletteBrowserDual) { &[0, 1] } else { &[1] };
+            let drawn = self.browser_drawn_views();
+            checks.push(if self.dual && drawn == want {
+                pass("browser-panes", format!("thumbnails drawn for views {drawn:?}"))
+            } else {
+                Check {
+                    name: "browser-panes".into(),
+                    verdict: Verdict::Fail,
+                    detail: format!("dual {}: thumbnails drawn for views {drawn:?}, wanted {want:?}", self.dual),
+                }
             });
         }
 

@@ -272,6 +272,8 @@ menu-color-browse-hover = Tutte le tavolozze sulla vista attuale, una accanto al
 # The palette browser window.
 palette-browser-title = Tavolozze
 palette-browser-clear = Azzera i filtri
+palette-browser-both = Entrambi
+palette-browser-panes-hover = Nella vista doppia, le miniature possono mostrare il riquadro sinistro, quello destro o entrambi affiancati.
 
 # Shown when the chosen filters leave no palette.
 palette-browser-none = Nessuna tavolozza ha tutte queste etichette.

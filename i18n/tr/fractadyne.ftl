@@ -272,6 +272,8 @@ menu-color-browse-hover = Geçerli görünüm üzerinde tüm paletler yan yana: 
 # The palette browser window.
 palette-browser-title = Paletler
 palette-browser-clear = Süzgeçleri temizle
+palette-browser-both = İkisi de
+palette-browser-panes-hover = Çift görünümde küçük resimler sol bölmeyi, sağ bölmeyi ya da ikisini yan yana gösterebilir.
 
 # Shown when the chosen filters leave no palette.
 palette-browser-none = Bu etiketlerin hepsine sahip palet yok.

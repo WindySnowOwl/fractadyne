@@ -272,6 +272,8 @@ menu-color-browse-hover = Toutes les palettes sur la vue actuelle, côte à côt
 # The palette browser window.
 palette-browser-title = Palettes
 palette-browser-clear = Effacer les filtres
+palette-browser-both = Les deux
+palette-browser-panes-hover = En vue double, les vignettes peuvent montrer le panneau de gauche, celui de droite, ou les deux côte à côte.
 
 # Shown when the chosen filters leave no palette.
 palette-browser-none = Aucune palette n’a toutes ces étiquettes.

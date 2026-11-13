@@ -10,6 +10,9 @@
 //!
 //! Resting the pointer on a thumbnail previews it on the view, exactly as the palette lists do
 //! (`crate::palette_preview`): the browser reports itself as an open picker while it is shown.
+//!
+//! In the dual view the thumbnails can show either pane, or both side by side ([`BrowserPanes`]):
+//! each pane is its own view with its own iteration texture, so each gets its own atlas.
 
 use crate::palette_preview::PaletteRow;
 use fractadyne_color::tags::{self, TagGroup, TAGS};
@@ -50,21 +53,57 @@ const REDRAW_PACE: std::time::Duration = std::time::Duration::from_millis(400);
 /// The longest tag a user may type.
 const MAX_TAG_CHARS: usize = 32;
 
+/// Which panes of the dual view the thumbnails show. Outside the dual view there is one.
+#[derive(Clone, Copy, PartialEq, Eq, Debug, Default)]
+pub(crate) enum BrowserPanes {
+    /// The parameter plane (the left pane, view 0).
+    Set,
+    /// The Julia set (the right pane, view 1).
+    Julia,
+    /// Both, side by side, as the screen shows them.
+    #[default]
+    Both,
+}
+
+impl BrowserPanes {
+    /// The views a thumbnail shows, left to right: in the dual view as chosen, else the one view.
+    pub(crate) fn views(self, dual: bool) -> &'static [usize] {
+        match (dual, self) {
+            (false, _) | (true, BrowserPanes::Set) => &[0],
+            (true, BrowserPanes::Julia) => &[1],
+            (true, BrowserPanes::Both) => &[0, 1],
+        }
+    }
+}
+
 #[derive(Default)]
 pub(crate) struct PaletteBrowser {
     pub(crate) open: bool,
     /// Tag ids every palette shown must carry.
     pub(crate) filter: Vec<String>,
-    atlas: Option<PaletteAtlas>,
-    /// What the atlas was drawn for (`AtlasKey`), and when.
-    drawn_for: Option<AtlasKey>,
-    drawn_at: Option<std::time::Instant>,
+    /// Which panes of the dual view the thumbnails show.
+    pub(crate) panes: BrowserPanes,
+    /// One atlas per view (the dual view's two panes), what each was drawn for (`AtlasKey`), and
+    /// when.
+    atlas: [Option<PaletteAtlas>; 2],
+    drawn_for: [Option<AtlasKey>; 2],
+    drawn_at: [Option<std::time::Instant>; 2],
     /// The tag being typed for a saved gradient.
     new_tag: String,
     /// The measured tags of each saved gradient, and the library they were measured for.
     saved_measured: Option<(u64, Vec<Vec<&'static str>>)>,
     /// Frames the window has been open: in its first, the grid scrolls to the palette in use.
     open_frames: u32,
+}
+
+impl PaletteBrowser {
+    /// Close the window so that opening it again starts as a first opening (the grid scrolls to the
+    /// palette in use): the UI test closes and reopens it within one frame, which the window's own
+    /// close path never sees.
+    pub(crate) fn close(&mut self) {
+        self.open = false;
+        self.open_frames = 0;
+    }
 }
 
 /// Everything a drawn atlas depends on.
@@ -226,44 +265,81 @@ impl crate::FractadyneApp {
         !matches!(self.fractal, crate::FractalKind::Life | crate::FractalKind::LSystem)
     }
 
-    /// Redraw the atlas when what it shows has changed, at most every [`REDRAW_PACE`].
+    /// The views the thumbnails show now, left to right.
+    fn browser_views(&self) -> &'static [usize] {
+        self.palette_browser.panes.views(self.dual)
+    }
+
+    /// View `v`'s height over its width: each pane of the dual view has its own.
+    fn browser_aspect(&self, v: usize) -> f64 {
+        let vp = if v == 1 { &self.julia_viewport } else { &self.viewport };
+        (vp.height_px / vp.width_px.max(1.0)).clamp(0.2, 5.0)
+    }
+
+    /// The views whose thumbnails are drawn now, for the UI test.
+    pub(crate) fn browser_drawn_views(&self) -> Vec<usize> {
+        (0..2).filter(|v| self.palette_browser.atlas[*v].is_some()).collect()
+    }
+
+    /// Let go of every atlas.
+    fn free_browser_atlases(&mut self) {
+        let rs = self.render_state.clone();
+        for v in 0..2 {
+            if let (Some(a), Some(rs)) = (self.palette_browser.atlas[v].take(), rs.as_ref()) {
+                atlas::free_palette_atlas(rs, a);
+            }
+            self.palette_browser.drawn_for[v] = None;
+        }
+    }
+
+    /// Redraw each shown view's atlas when what it shows has changed, at most every
+    /// [`REDRAW_PACE`]; free the atlas of a view no longer shown.
     fn refresh_palette_atlas(&mut self, ctx: &egui::Context) {
         let Some(rs) = self.render_state.clone() else { return };
         if !self.browser_can_thumbnail() {
-            if let Some(a) = self.palette_browser.atlas.take() {
-                atlas::free_palette_atlas(&rs, a);
-            }
-            self.palette_browser.drawn_for = None;
+            self.free_browser_atlases();
             return;
         }
-        let Some(writes) = atlas::view_writes(&rs, 0) else { return };
-        let aspect = (self.viewport.height_px / self.viewport.width_px.max(1.0)).clamp(0.2, 5.0);
-        let cell = [CELL_W, ((CELL_W as f64) * aspect).round().max(8.0) as u32];
-        let key = AtlasKey { writes, colouring: self.accum_color_sig(0), library: self.library_sig(), cell };
-        if self.palette_browser.drawn_for == Some(key) {
-            return;
-        }
-        if let Some(at) = self.palette_browser.drawn_at {
-            let since = at.elapsed();
-            if since < REDRAW_PACE && self.palette_browser.atlas.is_some() {
-                ctx.request_repaint_after(REDRAW_PACE - since);
-                return;
+        let views = self.browser_views();
+        for v in 0..2 {
+            if !views.contains(&v) {
+                if let Some(a) = self.palette_browser.atlas[v].take() {
+                    atlas::free_palette_atlas(&rs, a);
+                }
+                self.palette_browser.drawn_for[v] = None;
             }
         }
-        let luts = self.browser_luts();
-        let (cell, cols) = atlas_layout(luts.len() as u32, cell, rs.device.limits().max_texture_dimension_2d);
-        let old = self.palette_browser.atlas.take();
-        match atlas::render_palette_atlas(&rs, 0, &luts, cell, cols, old) {
-            Ok(a) => {
-                self.palette_browser.atlas = Some(a);
-                self.palette_browser.drawn_for = Some(key);
+        let mut luts: Option<Vec<AtlasPalette>> = None;
+        for &v in views {
+            let Some(writes) = atlas::view_writes(&rs, v as u32) else { continue };
+            let aspect = self.browser_aspect(v);
+            let cell = [CELL_W, ((CELL_W as f64) * aspect).round().max(8.0) as u32];
+            let key = AtlasKey { writes, colouring: self.accum_color_sig(v), library: self.library_sig(), cell };
+            if self.palette_browser.drawn_for[v] == Some(key) {
+                continue;
             }
-            Err(e) => {
-                crate::diag::log_line("palette", &format!("browser thumbnails not drawn: {e:?}"));
-                self.palette_browser.drawn_for = None;
+            if let Some(at) = self.palette_browser.drawn_at[v] {
+                let since = at.elapsed();
+                if since < REDRAW_PACE && self.palette_browser.atlas[v].is_some() {
+                    ctx.request_repaint_after(REDRAW_PACE - since);
+                    continue;
+                }
             }
+            let luts = luts.get_or_insert_with(|| self.browser_luts());
+            let (cell, cols) = atlas_layout(luts.len() as u32, cell, rs.device.limits().max_texture_dimension_2d);
+            let old = self.palette_browser.atlas[v].take();
+            match atlas::render_palette_atlas(&rs, v as u32, luts, cell, cols, old) {
+                Ok(a) => {
+                    self.palette_browser.atlas[v] = Some(a);
+                    self.palette_browser.drawn_for[v] = Some(key);
+                }
+                Err(e) => {
+                    crate::diag::log_line("palette", &format!("browser thumbnails of view {v} not drawn: {e:?}"));
+                    self.palette_browser.drawn_for[v] = None;
+                }
+            }
+            self.palette_browser.drawn_at[v] = Some(std::time::Instant::now());
         }
-        self.palette_browser.drawn_at = Some(std::time::Instant::now());
     }
 
     /// Make `row` the palette in use, as choosing it from a list does.
@@ -290,18 +366,18 @@ impl crate::FractadyneApp {
 
     pub(crate) fn draw_palette_browser(&mut self, ctx: &egui::Context) {
         if !self.palette_browser.open {
-            if let (Some(a), Some(rs)) = (self.palette_browser.atlas.take(), self.render_state.clone()) {
-                atlas::free_palette_atlas(&rs, a);
-            }
-            self.palette_browser.drawn_for = None;
+            self.free_browser_atlases();
             self.palette_browser.open_frames = 0;
             return;
         }
         self.refresh_palette_atlas(ctx);
         let entries = self.browser_entries();
         let chosen = self.browser_chosen();
-        let aspect = (self.viewport.height_px / self.viewport.width_px.max(1.0)).clamp(0.2, 5.0) as f32;
-        let thumb = egui::vec2(THUMB_W, (THUMB_W * aspect).round());
+        // A thumbnail is one picture per shown view, side by side, each as tall as the tallest
+        // pane needs at the thumbnail width.
+        let views = self.browser_views();
+        let aspect = views.iter().map(|v| self.browser_aspect(*v)).fold(0.0_f64, f64::max) as f32;
+        let thumb = egui::vec2(THUMB_W * views.len() as f32 + 4.0 * (views.len() as f32 - 1.0), (THUMB_W * aspect).round());
         let mut open = true;
         let mut close = false;
         let mut pick: Option<PaletteRow> = None;
@@ -312,6 +388,9 @@ impl crate::FractadyneApp {
             .show(ctx, |ui| {
                 // A picker, for the hover preview: reported every frame the window draws.
                 self.coloring.palette_preview.picker_open();
+                if self.dual {
+                    self.browser_panes_row(ui);
+                }
                 self.browser_filters(ui, &entries);
                 ui.separator();
                 let shown: Vec<usize> =
@@ -326,7 +405,7 @@ impl crate::FractadyneApp {
                         if shown.is_empty() {
                             ui.label(egui::RichText::new(tr!(palette_browser_none)).weak());
                         }
-                        if self.palette_browser.atlas.is_none() {
+                        if views.iter().any(|v| self.palette_browser.atlas[*v].is_none()) {
                             ui.label(egui::RichText::new(tr!(palette_browser_no_view)).weak().small());
                         }
                         // A grid of fixed cells, so every row lines up whatever its names are.
@@ -358,6 +437,24 @@ impl crate::FractadyneApp {
         }
         self.palette_browser.open = open && !close;
         self.palette_browser.open_frames = self.palette_browser.open_frames.saturating_add(1);
+    }
+
+    /// In the dual view: which panes the thumbnails show.
+    fn browser_panes_row(&mut self, ui: &mut egui::Ui) {
+        let name = self.fractal.display_name();
+        ui.horizontal(|ui| {
+            ui.add_sized([92.0, 18.0], egui::Label::new(egui::RichText::new(tr!(menu_show)).weak()).truncate());
+            let before = self.palette_browser.panes;
+            let p = &mut self.palette_browser.panes;
+            let hover = tr!(palette_browser_panes_hover);
+            ui.selectable_value(p, BrowserPanes::Set, tr!(menu_show_set, name = name)).on_hover_text(&hover);
+            ui.selectable_value(p, BrowserPanes::Julia, tr!(menu_show_julia)).on_hover_text(&hover);
+            ui.selectable_value(p, BrowserPanes::Both, tr!(palette_browser_both)).on_hover_text(&hover);
+            if self.palette_browser.panes != before {
+                // The tiles change size, so the palette in use moves: bring it back into view.
+                self.palette_browser.open_frames = 0;
+            }
+        });
     }
 
     /// The filter rows: the tag groups in five rows, then the user's own tags on the last.
@@ -434,11 +531,20 @@ impl crate::FractadyneApp {
         let (cell, resp) = ui.allocate_exact_size(egui::vec2(size.x, size.y + NAME_H), egui::Sense::click());
         let img = egui::Rect::from_min_size(cell.min, size);
         let painter = ui.painter_at(cell.expand(4.0));
-        match &self.palette_browser.atlas {
-            Some(a) if k < a.count => {
-                painter.image(a.id, img, a.uv(k), egui::Color32::WHITE);
+        let views = self.browser_views();
+        let drawn: Vec<&PaletteAtlas> = views.iter().filter_map(|v| self.palette_browser.atlas[*v].as_ref()).filter(|a| k < a.count).collect();
+        match drawn.len() == views.len() {
+            true => {
+                // Each view's picture in its own part of the cell, at its own aspect, centered.
+                let part_w = (size.x - 4.0 * (views.len() as f32 - 1.0)) / views.len() as f32;
+                for (i, (a, v)) in drawn.iter().zip(views).enumerate() {
+                    let h = (part_w * self.browser_aspect(*v) as f32).round().min(size.y);
+                    let x = img.min.x + i as f32 * (part_w + 4.0);
+                    let part = egui::Rect::from_min_size(egui::pos2(x, img.min.y + (size.y - h) / 2.0), egui::vec2(part_w, h));
+                    painter.image(a.id, part, a.uv(k), egui::Color32::WHITE);
+                }
             }
-            _ => {
+            false => {
                 let g = match e.row {
                     PaletteRow::Preset(i) => {
                         let p = &fractadyne_color::PRESETS[i];

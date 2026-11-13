@@ -272,6 +272,8 @@ menu-color-browse-hover = Todas las paletas sobre la vista actual, una junto a o
 # The palette browser window.
 palette-browser-title = Paletas
 palette-browser-clear = Quitar filtros
+palette-browser-both = Ambos
+palette-browser-panes-hover = En la vista doble, las miniaturas pueden mostrar el panel izquierdo, el derecho o ambos lado a lado.
 
 # Shown when the chosen filters leave no palette.
 palette-browser-none = Ninguna paleta tiene todas estas etiquetas.

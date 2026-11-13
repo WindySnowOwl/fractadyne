@@ -61,3 +61,16 @@ fn the_atlas_fits_the_texture_limit_and_keeps_the_cell_when_it_can() {
         }
     }
 }
+
+/// Outside the dual view a thumbnail shows the one view, whatever was chosen; in it, the chosen
+/// panes, left to right as the screen has them.
+#[test]
+fn the_thumbnails_show_the_panes_chosen_in_the_dual_view() {
+    for p in [BrowserPanes::Set, BrowserPanes::Julia, BrowserPanes::Both] {
+        assert_eq!(p.views(false), [0], "{p:?} outside the dual view");
+    }
+    assert_eq!(BrowserPanes::Set.views(true), [0]);
+    assert_eq!(BrowserPanes::Julia.views(true), [1]);
+    assert_eq!(BrowserPanes::Both.views(true), [0, 1]);
+    assert_eq!(BrowserPanes::default(), BrowserPanes::Both, "the dual view opens on both, as the screen shows them");
+}
