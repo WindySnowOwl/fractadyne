@@ -803,18 +803,7 @@ impl crate::FractadyneApp {
                 match scripting::parse_tour_file(&script) {
                     Ok(pb) => {
                         println!("Playing \"{}\" ({:.0}s) in the live view…", pb.name, pb.total);
-                        self.playback_restore = Some(scripting::PlaybackRestore {
-                            max_iter: self.render_cfg.max_iter,
-                            auto_iter: self.render_cfg.auto_iter,
-                            palette_idx: self.coloring.palette_idx,
-                            use_custom_palette: self.coloring.use_custom_palette,
-                            use_binary: self.coloring.use_binary,
-                            use_duotone: self.coloring.use_duotone,
-                            minimap: self.dialogs.minimap,
-                            show_orbits: self.anim.show_orbits,
-                            dual_split: self.dual_split,
-                        });
-                        self.playback = Some(pb);
+                        self.begin_playback(pb);
                     }
                     Err(e) => {
                         eprintln!("Could not play {}: {e}", script.display());

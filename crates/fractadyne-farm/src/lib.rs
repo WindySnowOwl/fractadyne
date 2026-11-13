@@ -29,8 +29,10 @@ pub mod settings;
 /// cancel can cut a run at a frame (stealing). 5: a frame can arrive through a shared folder. 6: a
 /// frame says where its reference came from, and reference orbits travel (OrbitOffer, OrbitPush).
 /// 7: a job can be a zoom video's strips (the bundle's `strips`), and a unit may be up to 1 GiB.
-/// 8: a heartbeat says when the run's reference build last advanced (`reference_work_ms`).
-pub const PROTOCOL_VERSION: u32 = 8;
+/// 8: a heartbeat says when the run's reference build last advanced (`reference_work_ms`). 9: a
+/// job's settings carry the session's whole coloring as one table (`RenderSettings::coloring`,
+/// coloring plan B4), with the palette's id and the live normalization, which it lacked.
+pub const PROTOCOL_VERSION: u32 = 9;
 
 /// The controller's default listening port (design §13.9). Any unassigned high port works; this one
 /// is shown in the controller and typed into each client.

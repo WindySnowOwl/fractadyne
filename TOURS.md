@@ -49,6 +49,30 @@ Output settings, so `--render-tour x.toml` with no flags reproduces the intended
 | `show_location` | bool | false | Burn a zoom-level + coordinate HUD into every frame (same as the --show-location CLI flag). |
 | `normalize` | bool | false | Auto-normalize the palette cycle to the escape-value range. Deep tours need it — past ~1e50x a fixed cycle aliases the escape field into confetti. The range is TIME-KEYED: measured once at each keyframe's view (small fixed resolution, the keyframe's own iteration budget) and interpolated along the tour's time axis, so the mapping is identical in any render order, across --resume, across shards, and at any output size. (Colors up to ~40 Mpx/frame; above that the frame falls back to un-normalized with a logged warning, pending a tiled normalized color pass.) |
 
+### `[render.coloring]`
+
+The tour's coloring, by the keys a saved view (`.fdn`) carries. Each key it names replaces the viewer's setting for the tour, which hands the viewer's own coloring back when it ends; the rest stay the viewer's. A key it does not know, or a value out of range, stops the tour with an error.
+
+| Field | Type | Default | Description |
+|---|---|---|---|
+| `method` | string: smooth \| stripe \| triangle \| trap \| distance \| decomposition | "smooth" | The coloring method: smooth, stripe, triangle, trap, distance or decomposition. |
+| `stripe_freq` | float, 1 to 24 | 6 | Stripe average: the stripes' density (method "stripe"). |
+| `stripe_tail` | bool | false | Stripe average over the last `stripe_tail_len` iterations only, which keeps its contrast at depth (method "stripe"). |
+| `stripe_tail_len` | int, 4 to 1048576 | 16 | The tail's length in iterations (with `stripe_tail`). |
+| `trap` | string: point \| cross \| circle | "point" | The orbit trap's shape: point, cross or circle (method "trap"). |
+| `light` | bool | false | Relief lighting from the distance estimate. |
+| `light_angle` | float | 2.2 | The light's direction in radians (with `light`). |
+| `light_height` | float, 0.2 to 4 | 1.2 | Relief strength: smaller is sharper (with `light`). |
+| `glow` | bool | false | Distance glow along the set's edge. |
+| `glow_strength` | float, 0 to 1 | 0.6 | Glow strength (with `glow`). |
+| `glow_width` | float, 0.15 to 4 | 1 | Glow band width (with `glow`). |
+| `palette_mode` | string: duotone \| binary | (left out) | Duotone or binary in place of the palette: "duotone" or "binary" (left out: the palette). |
+| `palette_lo` | [r, g, b], 0 to 1 | [0.04, 0.05, 0.12] | Duotone's shadow, Binary's color inside the set, as display-space [r, g, b] (with `palette_mode`). |
+| `palette_hi` | [r, g, b], 0 to 1 | [0.95, 0.8, 0.45] | Duotone's highlight, Binary's color outside the set, as display-space [r, g, b] (with `palette_mode`). |
+| `normalize_live` | bool | true | Live view only: Normalize deep colors (method "smooth"). An offline render uses `[render]` `normalize`. |
+| `normalize_fit` | bool | false | Live view only: always fit the palette to the escape range (method "smooth" or "trap"). |
+| `log_scale` | bool | false | Log color scale wherever the palette is normalized (method "smooth" or "trap"). |
+
 ### `[playback]`
 
 How the tour behaves during LIVE playback (Tools -> Play tour). None of this affects an offline render, which always computes every frame to completion.

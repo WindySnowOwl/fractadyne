@@ -20,9 +20,15 @@
 //! ⚠A view saved before these keys existed states its coloring and carries none of them, so it
 //! opens in Smooth with the light, the glow and the two-color palettes off. It never recorded what
 //! it was saved with; the defaults are what most such views used.
+//!
+//! ⭐**Since B4 the rules live in a table** ([`crate::coloring_fields`]), which writes and reads
+//! these keys on the session's [`ColoringSpec`]; the app's views use it directly. [`ViewColoring`]
+//! is a typed front on it (the method and the trap as enums, Duotone or Binary as one choice) for
+//! code that sets a coloring by hand: the harnesses and this module's tests.
 
-use crate::slider_range;
+use crate::coloring_fields;
 use crate::{ColorMethod, TrapType};
+use fractadyne_state::ColoringSpec;
 
 /// Duotone or Binary: the two-color palettes, which win over the preset and the custom gradient
 /// (`chosen_gradient`).
@@ -51,27 +57,8 @@ impl TwoColor {
     }
 }
 
-/// Every key this module writes and reads. The reader's own list (`KNOWN_VIEW_KEYS`) names each
-/// one too, and a unit test holds the two lists and the writer's output together.
-pub(crate) const KEYS: &[&str] = &[
-    "method",
-    "stripe_freq",
-    "stripe_tail",
-    "stripe_tail_len",
-    "trap",
-    "light",
-    "light_angle",
-    "light_height",
-    "glow",
-    "glow_strength",
-    "glow_width",
-    "palette_mode",
-    "palette_lo",
-    "palette_hi",
-    "normalize_live",
-    "normalize_fit",
-    "log_scale",
-];
+/// Every key a view's coloring writes and reads: the table's ([`coloring_fields::KEYS`]).
+pub(crate) const KEYS: &[&str] = &coloring_fields::KEYS;
 
 /// The coloring settings a view carries, in one place, apart from the app (whose `ColoringConfig`
 /// and `EffectsConfig` hold them beside much else), so the writer and the reader can be tested on
@@ -105,9 +92,15 @@ pub(crate) struct ViewColoring {
 }
 
 impl Default for ViewColoring {
-    /// A new session's coloring (`SessionState::default`), so the defaults live in one place.
+    /// A new session's coloring (`ColoringSpec::default`), so the defaults live in one place.
     fn default() -> Self {
-        let s = fractadyne_state::SessionState::default();
+        ViewColoring::from_spec(&ColoringSpec::default())
+    }
+}
+
+impl ViewColoring {
+    /// The view's coloring held in a session's [`ColoringSpec`].
+    pub(crate) fn from_spec(s: &ColoringSpec) -> Self {
         ViewColoring {
             method: ColorMethod::from_key(&s.color_method),
             stripe_freq: s.stripe_freq,
@@ -120,6 +113,7 @@ impl Default for ViewColoring {
             glow: s.de,
             glow_strength: s.de_strength,
             glow_width: s.de_width,
+            // Binary first, as `chosen_gradient` reads the two switches.
             two_color: if s.use_binary {
                 TwoColor::Binary
             } else if s.use_duotone {
@@ -134,271 +128,38 @@ impl Default for ViewColoring {
             log_scale: s.log_palette,
         }
     }
-}
 
-/// What a field says: nothing, a usable value (already clamped into range), or something that
-/// cannot be used, which keeps the current setting.
-enum Said<T> {
-    Absent,
-    Value(T),
-    Unusable,
-}
-
-/// The new value for a setting, or `None` to keep the current one: the file's value when it has
-/// one, the default when the file leaves the key out of a picture that depends on it.
-fn resolve<T>(said: Said<T>, reset_when_absent: bool, default: T) -> Option<T> {
-    match said {
-        Said::Value(v) => Some(v),
-        Said::Absent if reset_when_absent => Some(default),
-        Said::Absent | Said::Unusable => None,
-    }
-}
-
-fn flag(b: bool) -> String {
-    if b { "1" } else { "0" }.to_string()
-}
-
-fn rgb(c: [f32; 3]) -> String {
-    format!("{},{},{}", c[0], c[1], c[2])
-}
-
-impl ViewColoring {
-    /// "Normalize deep colors" decides only for Smooth (`live_norm_window`).
-    fn uses_normalize_live(method: ColorMethod) -> bool {
-        method == ColorMethod::Smooth
+    /// `base` with this view's coloring in it: the inverse of [`Self::from_spec`] for every field
+    /// a view carries, the rest (the palette, the cycle, the gradient) as `base` has them.
+    pub(crate) fn to_spec(&self, base: &ColoringSpec) -> ColoringSpec {
+        ColoringSpec {
+            color_method: self.method.key().to_string(),
+            stripe_freq: self.stripe_freq,
+            stripe_tail: self.stripe_tail,
+            stripe_tail_len: self.stripe_tail_len,
+            trap_type: self.trap.key().to_string(),
+            light: self.light,
+            light_angle: self.light_angle,
+            light_height: self.light_height,
+            de: self.glow,
+            de_strength: self.glow_strength,
+            de_width: self.glow_width,
+            use_binary: self.two_color == TwoColor::Binary,
+            use_duotone: self.two_color == TwoColor::Duotone,
+            duotone_lo: self.lo,
+            duotone_hi: self.hi,
+            normalize_live: self.normalize_live,
+            normalize_fit: self.normalize_fit,
+            log_palette: self.log_scale,
+            ..base.clone()
+        }
     }
 
-    /// "Always fit range" and the log scale act on Smooth's escape range and on the orbit trap's
-    /// values (`live_norm_window`, `norm_map_for`).
-    fn uses_fit(method: ColorMethod) -> bool {
-        matches!(method, ColorMethod::Smooth | ColorMethod::OrbitTrap)
-    }
-
-    /// The view lines for this coloring: each setting the picture depends on that differs from the
-    /// default, one `key=value` per line, in a fixed order. Empty for the default coloring.
-    ///
-    /// ⭐Floats with plain `{}`: Rust prints the shortest decimal that reads back to the same bits,
-    /// so every value round-trips exactly (the custom gradient's encoding does the same).
+    /// The view lines for this coloring ([`coloring_fields::view_lines`]): each setting the
+    /// picture depends on that differs from the default, one `key=value` per line, in the table's
+    /// order. Empty for the default coloring.
     pub(crate) fn lines(&self) -> String {
-        let d = ViewColoring::default();
-        let mut out = String::new();
-        let mut put = |k: &str, v: String| {
-            out.push_str(k);
-            out.push('=');
-            out.push_str(&v);
-            out.push('\n');
-        };
-        if self.method != d.method {
-            put("method", self.method.key().to_string());
-        }
-        if self.method == ColorMethod::Stripe {
-            if self.stripe_freq != d.stripe_freq {
-                put("stripe_freq", self.stripe_freq.to_string());
-            }
-            if self.stripe_tail != d.stripe_tail {
-                put("stripe_tail", flag(self.stripe_tail));
-            }
-            if self.stripe_tail && self.stripe_tail_len != d.stripe_tail_len {
-                put("stripe_tail_len", self.stripe_tail_len.to_string());
-            }
-        }
-        if self.method == ColorMethod::OrbitTrap && self.trap != d.trap {
-            put("trap", self.trap.key().to_string());
-        }
-        if self.light != d.light {
-            put("light", flag(self.light));
-        }
-        if self.light {
-            if self.light_angle != d.light_angle {
-                put("light_angle", self.light_angle.to_string());
-            }
-            if self.light_height != d.light_height {
-                put("light_height", self.light_height.to_string());
-            }
-        }
-        if self.glow != d.glow {
-            put("glow", flag(self.glow));
-        }
-        if self.glow {
-            if self.glow_strength != d.glow_strength {
-                put("glow_strength", self.glow_strength.to_string());
-            }
-            if self.glow_width != d.glow_width {
-                put("glow_width", self.glow_width.to_string());
-            }
-        }
-        if let Some(k) = self.two_color.key() {
-            put("palette_mode", k.to_string());
-            if self.lo != d.lo {
-                put("palette_lo", rgb(self.lo));
-            }
-            if self.hi != d.hi {
-                put("palette_hi", rgb(self.hi));
-            }
-        }
-        if Self::uses_normalize_live(self.method) && self.normalize_live != d.normalize_live {
-            put("normalize_live", flag(self.normalize_live));
-        }
-        if Self::uses_fit(self.method) {
-            if self.normalize_fit != d.normalize_fit {
-                put("normalize_fit", flag(self.normalize_fit));
-            }
-            if self.log_scale != d.log_scale {
-                put("log_scale", flag(self.log_scale));
-            }
-        }
-        out
-    }
-
-    /// Apply a view's coloring fields to `self`, this session's coloring, by the rules at the top
-    /// of this module. `get` reads a field (`None` when the file does not have it); `states` says
-    /// the file states its coloring (it has `cycle=`). A value out of range is clamped and named in
-    /// `clamped`; an unreadable one keeps the current setting (the reader's type table reports it
-    /// with its line, and an unknown method also keeps the settings that hang off the method).
-    pub(crate) fn apply(&mut self, get: &dyn Fn(&str) -> Option<String>, states: bool, clamped: &mut Vec<&'static str>) {
-        let d = ViewColoring::default();
-        // A number, clamped into `range` (named in `clamped` when it had to be); not finite is
-        // unusable, and named too, as the cycle's reader does.
-        let mut real = |key: &str, range: std::ops::RangeInclusive<f32>, name: &'static str| -> Said<f32> {
-            match get(key) {
-                None => Said::Absent,
-                Some(v) => match v.parse::<f32>() {
-                    Ok(x) if x.is_finite() => {
-                        let c = x.clamp(*range.start(), *range.end());
-                        if c != x {
-                            clamped.push(name);
-                        }
-                        Said::Value(c)
-                    }
-                    Ok(_) => {
-                        clamped.push(name);
-                        Said::Unusable
-                    }
-                    Err(_) => Said::Unusable,
-                },
-            }
-        };
-        let stripe_freq = real("stripe_freq", slider_range::STRIPE_FREQ, "stripe density");
-        let light_angle = real("light_angle", f32::MIN..=f32::MAX, "light angle");
-        let light_height = real("light_height", slider_range::LIGHT_HEIGHT, "relief");
-        let glow_strength = real("glow_strength", slider_range::GLOW_STRENGTH, "glow");
-        let glow_width = real("glow_width", slider_range::GLOW_WIDTH, "band width");
-        let on_off = |key: &str| -> Said<bool> {
-            match get(key).as_deref() {
-                None => Said::Absent,
-                Some("1") => Said::Value(true),
-                Some("0") => Said::Value(false),
-                Some(_) => Said::Unusable,
-            }
-        };
-        let method = match get("method") {
-            None => Said::Absent,
-            Some(v) => ColorMethod::ALL.into_iter().find(|m| m.key() == v).map_or(Said::Unusable, Said::Value),
-        };
-        let trap = match get("trap") {
-            None => Said::Absent,
-            Some(v) => TrapType::ALL.into_iter().find(|t| t.key() == v).map_or(Said::Unusable, Said::Value),
-        };
-        let mode = match get("palette_mode") {
-            None => Said::Absent,
-            Some(v) => TwoColor::from_key(&v).map_or(Said::Unusable, Said::Value),
-        };
-        let tail_len = match get("stripe_tail_len") {
-            None => Said::Absent,
-            Some(v) => match v.parse::<u64>() {
-                Ok(n) => {
-                    let (lo, hi) = (*slider_range::STRIPE_TAIL_LEN.start(), *slider_range::STRIPE_TAIL_LEN.end());
-                    let c = n.clamp(lo as u64, hi as u64) as u32;
-                    if c as u64 != n {
-                        clamped.push("tail length");
-                    }
-                    Said::Value(c)
-                }
-                Err(_) => Said::Unusable,
-            },
-        };
-        let mut color = |key: &str| -> Said<[f32; 3]> {
-            let Some(v) = get(key) else { return Said::Absent };
-            let parts: Vec<Option<f32>> = v.split(',').map(|t| t.trim().parse::<f32>().ok().filter(|x| x.is_finite())).collect();
-            match parts.as_slice() {
-                [Some(r), Some(g), Some(b)] => {
-                    let c = [r.clamp(0.0, 1.0), g.clamp(0.0, 1.0), b.clamp(0.0, 1.0)];
-                    if c != [*r, *g, *b] {
-                        clamped.push("palette colors");
-                    }
-                    Said::Value(c)
-                }
-                _ => Said::Unusable,
-            }
-        };
-        let (lo, hi) = (color("palette_lo"), color("palette_hi"));
-
-        // The method, then what hangs off it. `method` is the file's method when the file says it
-        // (or says nothing while stating its coloring, which means Smooth); `None` when it names
-        // one this build does not have, or states no coloring.
-        let method = resolve(method, states, d.method);
-        if let Some(m) = method {
-            self.method = m;
-        }
-        let stripe = method == Some(ColorMethod::Stripe);
-        if let Some(v) = resolve(stripe_freq, stripe, d.stripe_freq) {
-            self.stripe_freq = v;
-        }
-        let tail = resolve(on_off("stripe_tail"), stripe, d.stripe_tail);
-        if let Some(t) = tail {
-            self.stripe_tail = t;
-        }
-        if let Some(n) = resolve(tail_len, stripe && tail == Some(true), d.stripe_tail_len) {
-            self.stripe_tail_len = n;
-        }
-        if let Some(t) = resolve(trap, method == Some(ColorMethod::OrbitTrap), d.trap) {
-            self.trap = t;
-        }
-
-        let light = resolve(on_off("light"), states, d.light);
-        if let Some(l) = light {
-            self.light = l;
-        }
-        if let Some(a) = resolve(light_angle, light == Some(true), d.light_angle) {
-            self.light_angle = a;
-        }
-        if let Some(h) = resolve(light_height, light == Some(true), d.light_height) {
-            self.light_height = h;
-        }
-        let glow = resolve(on_off("glow"), states, d.glow);
-        if let Some(g) = glow {
-            self.glow = g;
-        }
-        if let Some(s) = resolve(glow_strength, glow == Some(true), d.glow_strength) {
-            self.glow_strength = s;
-        }
-        if let Some(w) = resolve(glow_width, glow == Some(true), d.glow_width) {
-            self.glow_width = w;
-        }
-
-        let mode = resolve(mode, states, TwoColor::Off);
-        if let Some(m) = mode {
-            self.two_color = m;
-        }
-        let two = matches!(mode, Some(TwoColor::Duotone | TwoColor::Binary));
-        if let Some(c) = resolve(lo, two, d.lo) {
-            self.lo = c;
-        }
-        if let Some(c) = resolve(hi, two, d.hi) {
-            self.hi = c;
-        }
-
-        let live = method.is_some_and(Self::uses_normalize_live);
-        if let Some(b) = resolve(on_off("normalize_live"), live, d.normalize_live) {
-            self.normalize_live = b;
-        }
-        let fit = method.is_some_and(Self::uses_fit);
-        if let Some(b) = resolve(on_off("normalize_fit"), fit, d.normalize_fit) {
-            self.normalize_fit = b;
-        }
-        if let Some(b) = resolve(on_off("log_scale"), fit, d.log_scale) {
-            self.log_scale = b;
-        }
+        coloring_fields::view_lines(&self.to_spec(&ColoringSpec::default()))
     }
 }
 

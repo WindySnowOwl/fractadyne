@@ -1,0 +1,149 @@
+state_version = 1
+center_x = -0.5
+center_y = 0.0
+center_x_str = ""
+center_y_str = ""
+units_per_pixel = 0.004166666666666667
+units_per_pixel_e = 0
+max_iter = 4321
+auto_iter = true
+palette_idx = 7
+palette_id = "ember"
+cycle = 0.6100000143051147
+iter_div = 4
+offset = 0.33000001311302185
+log_palette = true
+normalize_live = false
+normalize_fit = true
+zoom_rate = 1.0
+click_zoom = false
+click_zoom_factor = 10.0
+click_zoom_snap = false
+snap_zoom = true
+autopilot_dive_log2 = 900.0
+autopilot_priority = "speed"
+autopilot_target = "detail"
+work_budget_scale = 1.0
+min_motion_res = 0.30000001192092896
+prefer_detail = false
+live_worker_gpu = ""
+show_timestamp = false
+show_zoom_target = false
+live_panel = ""
+live_panel_corner = ""
+live_panel_opacity = 0.949999988079071
+aa = 2
+finish_sound = true
+fps_cap = 60.0
+orbit_cache_mb = 1024
+export_width = 3840
+export_ss = 2
+export_format = "png"
+snapshot_mode = "ask"
+mpfr_warning_suppressed = false
+welcome_seen = false
+export_dual_mode = "side"
+export_aspect = "window"
+share_include_thumb = true
+export_open_after = false
+export_all_gpus = false
+show_location = false
+palette_anim = "off"
+palette_anim_speed = 0.15000000596046448
+light = true
+light_angle = 1.25
+light_height = 0.4000000059604645
+light_anim = true
+de = true
+de_strength = 0.699999988079071
+de_width = 2.5
+de_anim = false
+color_method = "trap"
+stripe_freq = 9.5
+stripe_tail = true
+stripe_tail_len = 64
+trap_type = "cross"
+minimap = true
+custom_palette = [
+    [
+    0.0,
+    1.0,
+    0.0,
+    0.0,
+],
+    [
+    1.0,
+    0.0,
+    0.0,
+    1.0,
+],
+]
+custom_palette_flat = true
+use_custom_palette = true
+use_duotone = true
+use_binary = false
+duotone_lo = [
+    0.10000000149011612,
+    0.20000000298023224,
+    0.30000001192092896,
+]
+duotone_hi = [
+    0.8999999761581421,
+    0.800000011920929,
+    0.699999988079071,
+]
+right_panel_open = true
+perf_panel = false
+fractal = "Mandelbrot"
+custom_formula = ""
+custom_params = []
+formula_textbook = false
+life = ""
+lsystem = ""
+julia_mode = false
+julia_c_re = -0.8
+julia_c_im = 0.156
+dual = false
+dual_split = 0.5
+series_approx = true
+glitch_correct = true
+use_bla = true
+watermark = true
+ui_scale = 1.0
+theme = "dark"
+update_track = "stable"
+update_check_on_launch = false
+language = ""
+language_system_seen = ""
+decimal_mark = ""
+show_watermark = true
+crash_prompt_disabled = false
+show_orbits = false
+orbit_normalize = false
+orbit_anim = false
+orbit_anim_speed = 10.0
+
+[[custom_segments]]
+left = 0.0
+mid = 0.17000000178813934
+right = 1.0
+left_color = [
+    0.10000000149011612,
+    0.20000000298023224,
+    0.30000001192092896,
+    1.0,
+]
+right_color = [
+    0.8999999761581421,
+    0.800000011920929,
+    0.699999988079071,
+    0.5,
+]
+blend = 2
+space = 1
+blend_params = [
+    0.25,
+    0.8999999761581421,
+    0.75,
+    0.10000000149011612,
+]

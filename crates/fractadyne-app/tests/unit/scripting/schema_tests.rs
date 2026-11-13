@@ -76,19 +76,19 @@ fn stopping_playback_restores_interaction() {
             "{f:?} is restored but is no longer a keyframe field"
         );
     }
-    // And the record itself carries a slot for each restored field (plus the palette's three
-    // companions, since choosing a preset overrides a custom gradient / binary / duotone).
+    // And the record itself carries a slot for each restored field. The palette is held as the
+    // viewer's whole coloring (coloring plan B4): a keyframe's palette, a palette morph's gradient
+    // and `[render.coloring]` all go back with it.
+    let coloring = fractadyne_state::ColoringSpec { palette_idx: 3, use_custom_palette: true, ..Default::default() };
     let r = crate::scripting::PlaybackRestore {
         max_iter: 12_345,
         auto_iter: false,
-        palette_idx: 3,
-        use_custom_palette: true,
-        use_binary: true,
-        use_duotone: true,
+        coloring: coloring.clone(),
         minimap: true,
         show_orbits: true,
         dual_split: 0.34,
     };
     assert_eq!(r.max_iter, 12_345);
+    assert_eq!(r.coloring, coloring);
     assert!((r.dual_split - 0.34).abs() < 1.0e-6);
 }

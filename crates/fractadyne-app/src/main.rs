@@ -93,6 +93,7 @@ mod refcache_persist;
 mod render;
 mod update;
 mod video_pipe;
+mod coloring_fields;
 mod view_coloring;
 mod scripting;
 mod session_outcome;
@@ -3129,7 +3130,7 @@ pub(crate) fn accum_jitter_seq(i: u32) -> [f32; 2] {
 // also chose the palette rate, where the trap belongs with the unbounded methods: the live view
 // handed trap frames to the chunked walk and the band's BLA, which compute no trap, and every pixel
 // read the "no statistics" value (one flat color). The rate now asks `bounded_value`.
-pub(crate) use fractadyne_core::coloring::{ColorMethod, Stat, StatSet, TrapType};
+pub(crate) use fractadyne_core::coloring::{Capability, ColorMethod, Stat, StatSet, TrapType};
 
 /// A coloring method's or trap shape's name in the language in use. The words are the app's; the
 /// table (`fractadyne_core::coloring`) has only the keys.
@@ -7985,18 +7986,18 @@ impl FractadyneApp {
             coloring: ColoringConfig {
                 // By id; a session saved before ids (or by a newer build, with a palette this one
                 // lacks) falls back to its number, read through the frozen table.
-                palette_idx: fractadyne_color::preset_by_id(&s.palette_id)
-                    .or_else(|| fractadyne_color::preset_by_legacy_number(s.palette_idx))
+                palette_idx: fractadyne_color::preset_by_id(&s.coloring.palette_id)
+                    .or_else(|| fractadyne_color::preset_by_legacy_number(s.coloring.palette_idx))
                     .unwrap_or(0),
-                cycle: s.cycle,
-                iter_div: s.iter_div.clamp(1, fractadyne_state::ITER_DIV_MAX),
-                offset: s.offset,
-                custom_palette: s.custom_palette.clone(),
-                custom_palette_flat: s.custom_palette_flat,
+                cycle: s.coloring.cycle,
+                iter_div: s.coloring.iter_div.clamp(1, fractadyne_state::ITER_DIV_MAX),
+                offset: s.coloring.offset,
+                custom_palette: s.coloring.custom_palette.clone(),
+                custom_palette_flat: s.coloring.custom_palette_flat,
                 // ⚠Migrated below by `rebuild_segments_from_palette` when a legacy session
                 // carries stops but no segments — see that method.
-                custom_segments: s.custom_segments.clone(),
-                use_custom_palette: s.use_custom_palette,
+                custom_segments: s.coloring.custom_segments.clone(),
+                use_custom_palette: s.coloring.use_custom_palette,
                 palette_editor_open: false,
                 sel_stop: 0,
                 sel_segment: 0,
@@ -8016,18 +8017,18 @@ impl FractadyneApp {
                 ugr_file: String::new(),
                 palette_rev: 0,
                 palette_preview: Default::default(),
-                use_duotone: s.use_duotone,
-                use_binary: s.use_binary,
-                duotone_lo: s.duotone_lo,
-                duotone_hi: s.duotone_hi,
-                color_method: ColorMethod::from_key(&s.color_method),
-                stripe_freq: s.stripe_freq,
-                stripe_tail: s.stripe_tail,
-                stripe_tail_len: s.stripe_tail_len.clamp(4, 1 << 20),
-                trap_type: TrapType::from_key(&s.trap_type),
+                use_duotone: s.coloring.use_duotone,
+                use_binary: s.coloring.use_binary,
+                duotone_lo: s.coloring.duotone_lo,
+                duotone_hi: s.coloring.duotone_hi,
+                color_method: ColorMethod::from_key(&s.coloring.color_method),
+                stripe_freq: s.coloring.stripe_freq,
+                stripe_tail: s.coloring.stripe_tail,
+                stripe_tail_len: s.coloring.stripe_tail_len.clamp(4, 1 << 20),
+                trap_type: TrapType::from_key(&s.coloring.trap_type),
                 normalize: args.iter().any(|a| a == "--normalize"),
-                normalize_live: s.normalize_live,
-                normalize_fit: s.normalize_fit,
+                normalize_live: s.coloring.normalize_live,
+                normalize_fit: s.coloring.normalize_fit,
                 log_palette: {
                     let asked = args.iter().any(|a| a == "--log-palette");
                     // ⚠`--log-palette` only chooses HOW the normalized mapping spreads the
@@ -8036,14 +8037,14 @@ impl FractadyneApp {
                     // rule the silent-CLI-defaults audit applied to every other option.
                     if asked
                         && !args.iter().any(|a| a == "--normalize")
-                        && !s.normalize_live
+                        && !s.coloring.normalize_live
                     {
                         eprintln!(
                             "fractadyne: --log-palette has no effect without normalization — \
                              add --normalize (or enable Color ▸ Normalize deep colors)."
                         );
                     }
-                    s.log_palette || asked
+                    s.coloring.log_palette || asked
                 },
                 orbit_stats_override: None,
             },
@@ -8083,13 +8084,13 @@ impl FractadyneApp {
                 aa: s.aa,
             },
             effects: EffectsConfig {
-                light: s.light,
-                light_angle: s.light_angle,
-                light_height: s.light_height,
+                light: s.coloring.light,
+                light_angle: s.coloring.light_angle,
+                light_height: s.coloring.light_height,
                 light_anim: s.light_anim,
-                de: s.de,
-                de_strength: s.de_strength,
-                de_width: s.de_width,
+                de: s.coloring.de,
+                de_strength: s.coloring.de_strength,
+                de_width: s.coloring.de_width,
                 de_anim: s.de_anim,
                 de_phase: 0.0,
             },
@@ -8837,6 +8838,90 @@ impl FractadyneApp {
         }
     }
 
+    /// The coloring as saved and sent ([`fractadyne_state::ColoringSpec`], coloring plan B4): the
+    /// one place the app's live settings (`ColoringConfig`, `EffectsConfig`) become it. The session
+    /// saves it, and a farm job carries it.
+    pub(crate) fn coloring_spec(&self) -> fractadyne_state::ColoringSpec {
+        fractadyne_state::ColoringSpec {
+            palette_idx: fractadyne_color::legacy_number_of(self.coloring.palette_idx)
+                .unwrap_or(self.coloring.palette_idx),
+            palette_id: fractadyne_color::PRESETS
+                [self.coloring.palette_idx.min(fractadyne_color::PRESETS.len() - 1)]
+            .id
+            .to_string(),
+            cycle: self.coloring.cycle,
+            iter_div: self.coloring.iter_div,
+            offset: self.coloring.offset,
+            log_palette: self.coloring.log_palette,
+            normalize_live: self.coloring.normalize_live,
+            normalize_fit: self.coloring.normalize_fit,
+            light: self.effects.light,
+            light_angle: self.effects.light_angle,
+            light_height: self.effects.light_height,
+            de: self.effects.de,
+            de_strength: self.effects.de_strength,
+            de_width: self.effects.de_width,
+            color_method: self.coloring.color_method.key().to_string(),
+            stripe_freq: self.coloring.stripe_freq,
+            stripe_tail: self.coloring.stripe_tail,
+            stripe_tail_len: self.coloring.stripe_tail_len,
+            trap_type: self.coloring.trap_type.key().to_string(),
+            custom_palette: self.coloring.custom_palette.clone(),
+            custom_palette_flat: self.coloring.custom_palette_flat,
+            custom_segments: self.coloring.custom_segments.clone(),
+            use_custom_palette: self.coloring.use_custom_palette,
+            use_duotone: self.coloring.use_duotone,
+            use_binary: self.coloring.use_binary,
+            duotone_lo: self.coloring.duotone_lo,
+            duotone_hi: self.coloring.duotone_hi,
+        }
+    }
+
+    /// Put a [`fractadyne_state::ColoringSpec`] into the app's live settings: the inverse of
+    /// [`Self::coloring_spec`] (B4), what a view's coloring and the harnesses set through. The
+    /// palette resolves by its id, else by its older number; a changed custom gradient bumps
+    /// `palette_rev`, as every gradient edit does. (Start-up reads the same fields from the session
+    /// in `new`, where the command line's `--log-palette` joins in.)
+    pub(crate) fn apply_coloring_spec(&mut self, s: &fractadyne_state::ColoringSpec) {
+        let c = &mut self.coloring;
+        let gradient_changed = c.custom_palette != s.custom_palette
+            || c.custom_palette_flat != s.custom_palette_flat
+            || c.custom_segments != s.custom_segments
+            || c.use_custom_palette != s.use_custom_palette;
+        c.palette_idx = fractadyne_color::preset_by_id(&s.palette_id)
+            .or_else(|| fractadyne_color::preset_by_legacy_number(s.palette_idx))
+            .unwrap_or(0);
+        c.cycle = s.cycle;
+        c.iter_div = s.iter_div.clamp(1, fractadyne_state::ITER_DIV_MAX);
+        c.offset = s.offset;
+        c.log_palette = s.log_palette;
+        c.normalize_live = s.normalize_live;
+        c.normalize_fit = s.normalize_fit;
+        c.color_method = ColorMethod::from_key(&s.color_method);
+        c.stripe_freq = s.stripe_freq;
+        c.stripe_tail = s.stripe_tail;
+        c.stripe_tail_len = s.stripe_tail_len.clamp(4, 1 << 20);
+        c.trap_type = TrapType::from_key(&s.trap_type);
+        c.custom_palette = s.custom_palette.clone();
+        c.custom_palette_flat = s.custom_palette_flat;
+        c.custom_segments = s.custom_segments.clone();
+        c.use_custom_palette = s.use_custom_palette;
+        c.use_duotone = s.use_duotone;
+        c.use_binary = s.use_binary;
+        c.duotone_lo = s.duotone_lo;
+        c.duotone_hi = s.duotone_hi;
+        if gradient_changed {
+            c.palette_rev = c.palette_rev.wrapping_add(1);
+        }
+        let e = &mut self.effects;
+        e.light = s.light;
+        e.light_angle = s.light_angle;
+        e.light_height = s.light_height;
+        e.de = s.de;
+        e.de_strength = s.de_strength;
+        e.de_width = s.de_width;
+    }
+
     fn autosave(&mut self, ctx: &egui::Context) {
         // After a state reset the user chose not to persist this session — don't recreate the
         // file we just deleted (on the idle timer or on close).
@@ -8883,18 +8968,7 @@ impl FractadyneApp {
             },
             max_iter: self.render_cfg.max_iter,
             auto_iter: self.render_cfg.auto_iter,
-            palette_idx: fractadyne_color::legacy_number_of(self.coloring.palette_idx)
-                .unwrap_or(self.coloring.palette_idx),
-            palette_id: fractadyne_color::PRESETS
-                [self.coloring.palette_idx.min(fractadyne_color::PRESETS.len() - 1)]
-            .id
-            .to_string(),
-            cycle: self.coloring.cycle,
-            iter_div: self.coloring.iter_div,
-            offset: self.coloring.offset,
-            normalize_live: self.coloring.normalize_live,
-            normalize_fit: self.coloring.normalize_fit,
-            log_palette: self.coloring.log_palette,
+            coloring: self.coloring_spec(),
             zoom_rate: self.render_cfg.zoom_rate,
             snap_zoom: self.render_cfg.snap_zoom,
             click_zoom: self.click_zoom,
@@ -8941,28 +9015,9 @@ impl FractadyneApp {
             show_location: self.show_location,
             palette_anim: self.anim.palette_anim.key().to_string(),
             palette_anim_speed: self.anim.palette_anim_speed,
-            light: self.effects.light,
-            light_angle: self.effects.light_angle,
-            light_height: self.effects.light_height,
             light_anim: self.effects.light_anim,
-            de: self.effects.de,
-            de_strength: self.effects.de_strength,
-            de_width: self.effects.de_width,
             de_anim: self.effects.de_anim,
-            color_method: self.coloring.color_method.key().to_string(),
-            stripe_freq: self.coloring.stripe_freq,
-            stripe_tail: self.coloring.stripe_tail,
-            stripe_tail_len: self.coloring.stripe_tail_len,
-            trap_type: self.coloring.trap_type.key().to_string(),
             minimap: self.dialogs.minimap,
-            custom_palette: self.coloring.custom_palette.clone(),
-            custom_palette_flat: self.coloring.custom_palette_flat,
-            custom_segments: self.coloring.custom_segments.clone(),
-            use_custom_palette: self.coloring.use_custom_palette,
-            use_duotone: self.coloring.use_duotone,
-            use_binary: self.coloring.use_binary,
-            duotone_lo: self.coloring.duotone_lo,
-            duotone_hi: self.coloring.duotone_hi,
             right_panel_open: self.dialogs.right_panel_open,
             perf_panel: self.perf.enabled,
             fractal: self.fractal.name().to_string(),

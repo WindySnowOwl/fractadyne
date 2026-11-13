@@ -172,6 +172,19 @@ impl ColorMethod {
     pub const fn bounded_value(self) -> bool {
         self.spec().bounded_value
     }
+    /// Whether a frame colored with this method can be rendered through `c` ([`Capability`]): read
+    /// off the rules the renderer follows, the statistics the method accumulates for the
+    /// iteration's and [`Self::reads_aux`] for the picture's.
+    pub const fn can(self, c: Capability) -> bool {
+        let stats = self.orbit_stats();
+        match c {
+            Capability::GlitchCorrection | Capability::NormalizedExport | Capability::LiveWalk => stats.is_empty(),
+            Capability::Strips => !self.reads_aux(),
+            Capability::Series => !stats.blocks_iter_skip(),
+            Capability::Bla => stats.bla_aggregate(),
+        }
+    }
+
     /// What a family with these capabilities lacks for this method, if anything: Distance needs the
     /// distance estimate, the methods that read the aux lane need the orbit's statistics.
     pub const fn lacks(self, caps: crate::formula::FormulaCaps) -> Option<Lacks> {
@@ -199,6 +212,57 @@ pub enum Lacks {
     DistanceEstimate,
     /// The orbit's statistics (`FormulaCaps::orbit_statistics`): Newton's pixels converge to a root.
     OrbitStatistics,
+}
+
+/// A way of rendering that not every method can be drawn through (coloring plan B4): the capability
+/// table, which the menus and dialogs read to gray a method out or say why ([`ColorMethod::can`]).
+/// What a FAMILY lacks for a method is [`ColorMethod::lacks`]'s.
+///
+/// ⭐Each answer is derived from the rules the renderer follows, not written down beside them: the
+/// iteration's from the method's statistics ([`StatSet`]), the picture's from [`ColorMethod::reads_aux`].
+/// So the table cannot say a method can do something the renderer then refuses. (The deep G-buffer,
+/// [`ColorMethod::orbit_stats_at`], changes none of these: it joins only a frame that already
+/// accumulates, and changes none of its rules.)
+#[derive(Clone, Copy, PartialEq, Eq, Debug, Hash)]
+pub enum Capability {
+    /// A glitch-corrected export (a second reference for the pixels the first one failed): the
+    /// corrector carries no orbit statistics.
+    GlitchCorrection,
+    /// The normalized export (`--normalize`, a tour's `normalize`): its range and color passes read
+    /// the main lane only.
+    NormalizedExport,
+    /// A picture assembled from strips (a zoom video, `--assemble`): strips keep the main lane only.
+    Strips,
+    /// The live view's walk in passes (the chunked walk, band BLA): it carries no statistics.
+    LiveWalk,
+    /// Series approximation: skipping iterations would drop the statistics' terms.
+    Series,
+    /// BLA: its nodes fold every statistic but the final angle.
+    Bla,
+}
+
+impl Capability {
+    /// Every capability, in the table's order.
+    pub const ALL: [Capability; 6] = [
+        Capability::GlitchCorrection,
+        Capability::NormalizedExport,
+        Capability::Strips,
+        Capability::LiveWalk,
+        Capability::Series,
+        Capability::Bla,
+    ];
+
+    /// A name for logs, tests and harness output.
+    pub const fn key(self) -> &'static str {
+        match self {
+            Capability::GlitchCorrection => "glitch-correction",
+            Capability::NormalizedExport => "normalized-export",
+            Capability::Strips => "strips",
+            Capability::LiveWalk => "live-walk",
+            Capability::Series => "series",
+            Capability::Bla => "bla",
+        }
+    }
 }
 
 /// One orbit statistic's row of the table: something the iteration can accumulate into the aux

@@ -770,6 +770,44 @@ reproduced. Reproduce before fixing; never close on the mechanism argument alone
   (`farm/tests/unit/settings/tests.rs:26-102`); `RenderSettings` stays `deny_unknown_fields`, so a
   missing field fails its test, not a farm render.
 - **Traps**: `ColorU` has a size budget; group new fields into vec4s and update the layout tests.
+- **Done 2026-11-12** (branch `feat/color-b4-coloring-spec`):
+  - **Step 1, the spec** (`2956066a`): `fractadyne_state::ColoringSpec` holds the session's 27
+    coloring fields (method by key, stripe, trap, light, glow, two-color, palette by id and number,
+    cycle, offset, divisor, normalization, custom gradient). The session flattens it, so the file's
+    keys did not move: a session written by main (542a5264) and by the branch parse to the same
+    table, each build reads the other's, and the older file is a fixture with a test. The farm's
+    `RenderSettings` nests it (protocol 9), so a job also carries the palette's id and the
+    normalization; serde cannot combine flatten with `deny_unknown_fields`, so the nested table is
+    read by `strict_coloring`, which refuses unknown keys. `App::coloring_spec()` is the app's one
+    way out.
+  - **Step 2, the view keys** (`073e8107`): A1's 17 keys are rows of `coloring_fields::FIELDS`
+    (key, kind and range, parents, when the picture depends on it); `view_lines` and `apply_view`
+    walk it on the spec with A1's rules unchanged (A1's nine round-trip tests pass through it).
+    `App::apply_coloring_spec()` is the one way in at run time (start-up still reads the session in
+    `new`, where `--log-palette` joins). A test fails when a spec field has neither a row nor a place
+    on the list of older keys `export.rs` carries (palette, cycle, offset, divisor, gradient).
+    `ViewColoring` remains a typed front for the harnesses.
+  - **Step 3, tours** (`740d2844`): a `[render.coloring]` table by the field table's keys, each in
+    its TOML shape, checked when the script is read (an unknown key, a wrong shape, an unreadable or
+    out-of-range value is an error naming the key); `begin_playback` keeps the viewer's settings
+    and puts it on, and `--render-tour` puts it on too. `PlaybackRestore` holds the viewer's whole
+    `ColoringSpec`. `TOURS.md`'s `[render.coloring]` section is generated from the table. Found on
+    the way: a tour's palette morph set the stop list and left the viewer's segments, which win
+    (`custom_gradient`), so it drew the viewer's own gradient instead of the morph, live and
+    rendered; it now clears them (and the band flag), and they come back with the coloring.
+  - **Step 4, the capability table** (`8bbbbc0b`): `Capability` (glitch correction, normalized export, strips,
+    the live walk, series, BLA) and `ColorMethod::can`, read off the method's statistics and
+    `reads_aux`, so it cannot disagree with the renderer; the zoom-video dialog and the assembler
+    ask it. The rules themselves still ask the frame's `StatSet` (B2). B6's picker will read it.
+  - **Not done, by choice**: the command line stays hand-written (its ranges are already
+    `slider_range`'s, and several flags mean more than one row: `--stripe-tail N` turns the tail
+    on, `--binary` turns the gradient off).
+  - **Windowed checks, 2026-11-12**: "a tour's palette morph shows over a custom gradient" fails on
+    a build without the fix and passes with it; the self-test 565/565 (with "the whole coloring
+    goes in and comes back out", which now also round-trips a Binary spec, `a5d7d74b`: its own
+    audit found `use_binary` untested); `--farmtest` passes on protocol 9; a tour rendered with and
+    without `[render.coloring]` draws each coloring; the coloring matrix has no failures and 101
+    timing warnings, not attributed (two runs of the same code gave 14 and 101).
 
 ### B5. Second LUT and interior modes
 
@@ -1065,7 +1103,8 @@ coloring in these places, so sequence the two with care:
 | B1 fixes | Distance NaN; Newton's statistics methods | merges `91fa8f91`, `7722b660` |
 | B1b | not started: the live method tour | |
 | B2 | done, merged | `c017a577` (merge `dcfd776b`) |
-| B3 | done, branch `feat/color-b3-gbuffer` (dev.21-dev.24 on PLUTO) | |
-| B4–B8 | not started | |
+| B3 | done, merged | `412fafc6` (merge `542a5264`) |
+| B4 | done, merged | `a5d7d74b` (merge recorded with the next step) |
+| B5–B8 | not started | |
 | C1–C11 | not started | |
 | D, E, F, G | not started | |
