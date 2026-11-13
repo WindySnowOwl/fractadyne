@@ -2716,6 +2716,8 @@ inside-trap-desc = Seberapa dekat setiap orbit ke perangkap orbit, dalam palet d
 panel-inside-palette = Palet dalam
 panel-inside-palette-hover = Palet yang dipakai perangkap orbit untuk mewarnai bagian dalam.
 panel-inside-palette-same = Sama dengan luar
+panel-inside-fit = Sesuaikan dengan rentang bagian dalam
+panel-inside-fit-hover = Sebarkan palet dalam ke nilai perangkap yang diukur di dalam himpunan di layar, agar strukturnya terlihat. Ekspor tampilan ini memakai penyesuaian yang sama.
 panel-palette = Palet
 # The two colors of the Binary palette, each beside its color swatch.
 panel-in-set = Di dalam

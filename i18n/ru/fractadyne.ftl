@@ -2842,6 +2842,8 @@ inside-trap-desc = Насколько близко каждая орбита п�
 panel-inside-palette = Палитра внутри
 panel-inside-palette-hover = Палитра, которой ловушка орбиты окрашивает внутренность.
 panel-inside-palette-same = Как снаружи
+panel-inside-fit = Подогнать под диапазон внутренности
+panel-inside-fit-hover = Растягивает палитру внутренности на значения ловушки, измеренные внутри множества на экране, чтобы была видна её структура. Экспорт этого вида использует ту же подгонку.
 panel-palette = Палитра
 # The two colors of the Binary palette, each beside its color swatch.
 panel-in-set = Внутри

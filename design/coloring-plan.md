@@ -1026,6 +1026,28 @@ so its swatch showed a display-space color lighter than the view (0.2 drawn as 1
 inside color and Duotone's pair now use `color_swatch` (the gradient editor's swatch and picker,
 split out of `color_field`).
 
+**C4, done 2026-11-13** (branch `feat/color-c4-inside-fit`). Smooth outside with the trap inside was
+already B5's (method Smooth, Inside: Orbit trap, an Inside palette, any shape). What the research
+prototype had besides was the inside's stretch, and that is this step: "Fit to the inside's range"
+(`interior_fit`) spreads the inside's palette over `INSIDE_FIT_CYCLES` (1.5) sweeps of the trap
+values measured INSIDE the set, their 1st to 99th percentiles. The GPU counts a second trap-value
+histogram over the interior exits only (`CTR_TRAP_HIST_IN`, `trap_hist_commit(.., inside)`) and
+publishes its window (`inside_window_out`, dropped by a twin's `headless`); the app feeds and glides
+it whenever the trap colors the inside, the fit on or not (`inside_window_drain`: a settled view runs
+no pass when the fit is ticked, so a window taken only with it on never came), hashes it into the
+average's signatures only while the fit colors the frame (`inside_windows`), and maps it
+(`inside_fit_map`). ⭐**Decided once at rest**: no reading moves it there (the key is the escape
+signature and the trap's shape). With the trap fit's 25% break, a `--shot` of a 1e30x view at 1,500
+iterations restarted the supersampling for 119 s without converging: the inside's 99th percentile
+read 8.24 and 9.36 by turns under the jitter. Decided once, it converges in 4.4 s. An export of the view takes the live window, so it matches the screen; an
+offline render has none and keeps the fixed rate. The trap method's own inside takes the Trap shading
+under a fit (`for_view`'s `own_colors`). View key `interior_fit`, `--interior-fit`. Tests: the map
+(unit), the layout and the shader's six commits (gpu), the round trips; uitest `inside-fit` at home
+(the core's spread 50.9 against 2.7, the window 1.53..5.80 as the prototype measured, no pass, an
+export over the core 1.26 from the screen against 41.0 unfitted). The supersampling runs only past
+2^33 and never under a harness, so `--shot` of the 1e30x view with an inside (700 iterations,
+4x AA) asks it: fit on and off each converge in one run (3.5 s), 1.49% of the panel differing.
+
 **Tests specific to this phase**: CPU oracles for C2 transfers and C7 OKLab round trip
 (sRGB → OKLab → sRGB within 1e-5); C3 and C10 line widths measured as 2·area/perimeter in B1 at
 ss 1 and 2; C6 temporal stability over a zoom tour (frame-to-frame palette shift).
@@ -1247,6 +1269,7 @@ coloring in these places, so sequence the two with care:
 | B7 | done, merged | `9e1efa0e` (merge `97c91c32`; step 1 `17b6d60d` with the browser's dual view, `ef2acde7`) |
 | B5 | done, merged | `b2b927d6` (merge `e3e53257`) |
 | B8 | not started | |
-| C1 | done, branch `feat/color-c1-inside-color`, not merged | |
-| C2–C11 | not started | |
+| C1 | done, merged | `58d6dce3` (merge `84af4b0d`) |
+| C4 | done, branch `feat/color-c4-inside-fit`, not merged | |
+| C2, C3, C5–C11 | not started | |
 | D, E, F, G | not started | |

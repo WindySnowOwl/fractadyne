@@ -2788,6 +2788,8 @@ inside-trap-desc = Quanto ogni orbita si è avvicinata alla trappola orbitale, n
 panel-inside-palette = Tavolozza interna
 panel-inside-palette-hover = La tavolozza con cui la trappola orbitale colora l’interno.
 panel-inside-palette-same = Come all’esterno
+panel-inside-fit = Adatta all’intervallo dell’interno
+panel-inside-fit-hover = Distribuisce la tavolozza interna sui valori della trappola misurati dentro l’insieme sullo schermo, così la sua struttura si vede. Le esportazioni di questa vista usano lo stesso adattamento.
 panel-palette = Tavolozza
 # The two colors of the Binary palette, each beside its color swatch.
 panel-in-set = Nell’insieme

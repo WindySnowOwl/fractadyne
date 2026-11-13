@@ -2717,6 +2717,8 @@ inside-trap-desc = 各軌道が軌道トラップにどれだけ近づいたか�
 panel-inside-palette = 内部パレット
 panel-inside-palette-hover = 軌道トラップが内部を着色するパレット。
 panel-inside-palette-same = 外側と同じ
+panel-inside-fit = 内部の範囲に合わせる
+panel-inside-fit-hover = 画面上の集合内部で測ったトラップの値に内部パレットを広げ、その構造が見えるようにします。このビューの書き出しも同じ調整を使います。
 panel-palette = パレット
 # The two colors of the Binary palette, each beside its color swatch.
 panel-in-set = 集合内

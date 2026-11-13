@@ -2313,6 +2313,66 @@ impl FractadyneApp {
             self.perf.trap_pal[vb].map(|target| norm_glide_step(self.perf.trap_shown[vb], target, false, self.norm_pace(vb)));
     }
 
+    /// Feed view `vb`'s INSIDE window (C4) from the GPU's latest reading (`Perf::inside_sink`) and
+    /// glide the shown one toward it: [`Self::trap_window_drain`]'s rules (held at rest on the view
+    /// it was taken for, unless [`TRAP_WINDOW_BREAK`] moves it).
+    ///
+    /// ⚠**Fed whenever the trap colors the inside, the fit on or not**, as the trap's own window is
+    /// fed whenever the trap is shown: a settled view runs no new pass when the fit is ticked, so a
+    /// window taken only while it was on never came (`--uitest` inside-fit, 2026-11-13: "window
+    /// None"). It colors the frame, and restarts the average, only with the fit on
+    /// (`inside_windows`). Cleared when the trap does not color the inside.
+    pub(crate) fn inside_window_drain(&mut self, vb: usize, at_rest: bool) {
+        use std::sync::atomic::Ordering::SeqCst;
+        let r = self.perf.inside_sink[vb].swap(u64::MAX, SeqCst);
+        if self.coloring.interior_of(self.shown_method()) != crate::InteriorMode::Trap {
+            self.perf.inside_pal[vb] = None;
+            self.perf.inside_shown[vb] = None;
+            self.perf.inside_sig[vb] = 0;
+            return;
+        }
+        if r != u64::MAX {
+            let (lo, hi) = (f32::from_bits((r >> 32) as u32), f32::from_bits(r as u32));
+            if lo.is_finite() && hi.is_finite() && hi > lo {
+                let before = self.perf.inside_pal[vb];
+                // ⭐⭐**DECIDED ONCE AT REST: no reading moves it there**, not even past the trap's
+                // 25% break. The inside is a small, heavy-tailed population, and its 99th percentile
+                // moves with the supersampling's jitter: at 1e30x with 1,500 iterations (2026-11-13)
+                // the top read 8.24 and 9.36 by turns (a third of the window), every reading broke
+                // the hold, each restarted the average, whose first samples gave the same two readings
+                // again: no convergence in 119 s (`--shot`), against 3 s without the fit. The trap
+                // fit's own lesson (2026-11-07): decide once at rest rather than size a hold for the
+                // wobble. "The same view" is the escape signature AND the trap's shape, which it does
+                // not hash and which changes every value.
+                let key = {
+                    use std::hash::{Hash, Hasher};
+                    let mut h = std::collections::hash_map::DefaultHasher::new();
+                    (self.perf.norm_sig[vb], self.coloring.trap_type.gpu_id()).hash(&mut h);
+                    h.finish()
+                };
+                let decided = at_rest && before.is_some() && self.perf.inside_sig[vb] == key;
+                if !decided {
+                    self.perf.inside_pal[vb] = Some(trap_window_feed(before, (lo, hi), false));
+                    self.perf.inside_sig[vb] = key;
+                }
+                let held = decided;
+                if crate::diag::trace_on("accum") {
+                    crate::diag::trace(
+                        "accum",
+                        format!(
+                            "inside reading v={vb} f={}: [{lo:.4},{hi:.4}] window {before:?} → {:?}{}",
+                            self.perf.frame_idx,
+                            self.perf.inside_pal[vb],
+                            if held { " (held: at rest on this view)" } else { "" }
+                        ),
+                    );
+                }
+            }
+        }
+        self.perf.inside_shown[vb] =
+            self.perf.inside_pal[vb].map(|target| norm_glide_step(self.perf.inside_shown[vb], target, false, self.norm_pace(vb)));
+    }
+
     /// How the palette windows of view `vb` may move this frame (`norm_glide_step`): the frame's
     /// time step, the user's coloring, and whether a cut may be taken (no dissolve under way).
     pub(crate) fn norm_pace(&self, vb: usize) -> NormPace {
@@ -4410,7 +4470,7 @@ impl FractadyneApp {
             aa_filter: 1,
             interior_col: self.interior_color(),
             // The chosen method's interior: an export never shows a preview.
-            interior: self.interior_shade_for(self.coloring.color_method),
+            interior: self.interior_shade_for(self.coloring.color_method, (self.dual && julia) as usize),
         }
     }
 }
@@ -5656,6 +5716,7 @@ impl FractadyneApp {
                 self.perf.grad_sink[vb].store(0, SeqCst);
                 self.perf.norm_sink[vb].store(u64::MAX, SeqCst);
                 self.perf.trap_sink[vb].store(u64::MAX, SeqCst);
+                self.perf.inside_sink[vb].store(u64::MAX, SeqCst);
                 if let Ok(mut h) = self.perf.hist_sink[vb].lock() {
                     *h = None; // same reading, same verdict: it was measured somewhere else
                 }
@@ -5958,6 +6019,8 @@ impl FractadyneApp {
                 .map(|target| norm_glide_step(self.perf.norm_shown[vb], target, norm_snap, self.norm_pace(vb)));
             // The orbit trap's window, every frame likewise: its own feed and glide.
             self.trap_window_drain(vb, !interacting);
+            // ...and the inside's (C4).
+            self.inside_window_drain(vb, !interacting);
         }
         for e in climb.events.iter().filter(|e| !e.before_drains()) {
             e.trace();
@@ -7212,6 +7275,7 @@ impl FractadyneApp {
             norm_base: self.perf.norm_base[vs.min(1)],
             norm_hist_out: Some(self.perf.norm_hist_sink[vs.min(1)].clone()),
             trap_window_out: Some(self.perf.trap_sink[vs.min(1)].clone()),
+            inside_window_out: Some(self.perf.inside_sink[vs.min(1)].clone()),
             content_tag,
             content_out: Some(self.perf.content_sink[vs.min(1)].clone()),
             chunk_walk: self.perf.chunk_count_walk[vs.min(1)],
@@ -7275,7 +7339,7 @@ impl FractadyneApp {
             aa_filter,
             interior_col: self.view_interior_color(),
             // The shown method's: a method sheet preview shows that method's interior too.
-            interior: self.interior_shade_for(self.shown_method()),
+            interior: self.interior_shade_for(self.shown_method(), vs.min(1)),
             resolution,
             // The panel, which `build_params` knows and sets after this returns.
             display_res: [0, 0],
@@ -12420,6 +12484,18 @@ pub(crate) fn trap_window_feed(old: Option<(f32, f32)>, new: (f32, f32), held: b
 /// How far either end of the orbit trap's window must move, as a share of the window, before a
 /// reading replaces it ([`trap_window_feed`]).
 pub(crate) const TRAP_WINDOW_HOLD: f32 = 0.05;
+
+/// The palette sweeps the inside's fitted window spans (C4): the research prototype's 1.5, which
+/// drew the point trap's concentric shading with its bright nuclei.
+pub(crate) const INSIDE_FIT_CYCLES: f32 = 1.5;
+
+/// The inside's palette map for its window `(lo, hi)` of trap values (C4): `(cycle, offset)` so
+/// that `lo` lands at the palette's offset and `hi` [`INSIDE_FIT_CYCLES`] sweeps later. A window
+/// narrower than one histogram bucket is taken as one bucket wide.
+pub(crate) fn inside_fit_map(lo: f32, hi: f32, offset: f32) -> (f32, f32) {
+    let cycle = INSIDE_FIT_CYCLES / (hi - lo).max(1.0 / fractadyne_gpu::TRAP_HIST_PER_UNIT);
+    (cycle, offset - lo * cycle)
+}
 
 /// The same, for a view at rest on the view its window was taken for ([`trap_window_feed`]'s
 /// `held`): a quarter of the window.

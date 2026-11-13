@@ -1025,6 +1025,7 @@ impl CounterRead {
         step_out: Option<&StepSink>,
         norm_hist_out: Option<&NormHistSink>,
         trap_out: Option<&Arc<std::sync::atomic::AtomicU64>>,
+        inside_out: Option<&Arc<std::sync::atomic::AtomicU64>>,
     ) {
         use std::sync::atomic::Ordering::SeqCst;
         match self.state {
@@ -1077,6 +1078,14 @@ impl CounterRead {
                             trap_window(&slots[CTR_TRAP_HIST..CTR_TRAP_HIST + TRAP_HIST_BUCKETS], TRAP_WINDOW_QUANTILES)
                         }) {
                             if let Some(o) = trap_out {
+                                o.store(((lo.to_bits() as u64) << 32) | hi.to_bits() as u64, SeqCst);
+                            }
+                        }
+                        // ...and the inside's own (C4), from the interior pixels' histogram.
+                        if let Some((lo, hi)) = inside_out.and_then(|_| {
+                            trap_window(&slots[CTR_TRAP_HIST_IN..CTR_TRAP_HIST_IN + TRAP_HIST_BUCKETS], INSIDE_WINDOW_QUANTILES)
+                        }) {
+                            if let Some(o) = inside_out {
                                 o.store(((lo.to_bits() as u64) << 32) | hi.to_bits() as u64, SeqCst);
                             }
                         }
@@ -1527,7 +1536,7 @@ pub(crate) fn make_iter_bg(
 /// atomics per pixel — negligible next to the iteration loop. This is the "did the code
 /// path actually execute?" detector (the F4 dead-NaN-marker lesson): a render that claims
 /// to exercise rebasing/extended samples/BLA must show nonzero counts.
-pub const COUNTER_SLOTS: usize = CTR_TRAP_HIST + TRAP_HIST_BUCKETS;
+pub const COUNTER_SLOTS: usize = CTR_TRAP_HIST_IN + TRAP_HIST_BUCKETS;
 /// Slot indices (keep in sync with mandelbrot.wgsl's `CTR_*` constants).
 pub const CTR_REBASE: usize = 0; // Zhuoran rebases taken (mode 2)
 pub const CTR_EXT_SAMPLE: usize = 1; // extended-range orbit samples decoded (mode 2)
@@ -1712,6 +1721,14 @@ pub const TRAP_HIST_PER_UNIT: f32 = 16.0;
 pub const TRAP_HIST_BUCKETS: usize = 1216;
 /// The quantiles of the trap's values the palette window spans ([`trap_window`]).
 pub const TRAP_WINDOW_QUANTILES: (f64, f64) = (0.005, 0.995);
+
+/// First of [`TRAP_HIST_BUCKETS`] slots holding the same histogram as [`CTR_TRAP_HIST`] over the
+/// INTERIOR pixels alone (coloring plan C4): the window "Fit to the inside's range" spreads the
+/// inside's palette over, which the whole frame's values would set by the outside's.
+pub const CTR_TRAP_HIST_IN: usize = CTR_TRAP_HIST + TRAP_HIST_BUCKETS;
+/// The quantiles of the inside's trap values its fitted palette spans: the research prototype's
+/// 1st and 99th percentiles (design/coloring-plan.md C4).
+pub const INSIDE_WINDOW_QUANTILES: (f64, f64) = (0.01, 0.99);
 
 /// The palette window `(lo, hi)` of a [`CTR_TRAP_HIST`] histogram: the values at quantiles `q.0`
 /// and `q.1` of its samples, interpolated inside the bucket each falls in. `None` for fewer than 16
@@ -3182,6 +3199,10 @@ pub struct MandelbrotParams {
     /// `(lo_bits << 32) | hi_bits`, published only by a frame that counted trap values. Drained with
     /// `swap(u64::MAX)`. `None` disables it.
     pub trap_window_out: Option<Arc<std::sync::atomic::AtomicU64>>,
+    /// Sink for the INSIDE's trap window ([`trap_window`] of [`CTR_TRAP_HIST_IN`] at
+    /// [`INSIDE_WINDOW_QUANTILES`], C4), packed and drained as `trap_window_out`; published only by a
+    /// frame that counted inside values. `None` disables it.
+    pub inside_window_out: Option<Arc<std::sync::atomic::AtomicU64>>,
     /// Opaque identity of the RENDER this frame's pixels belong to (a pinned refresh's passes all
     /// carry the pin's tag; any other frame its own). Handed back with the frame's
     /// [`ContentReading`] so the app can tell which render a reading describes, the way
@@ -3524,6 +3545,7 @@ impl Default for MandelbrotParams {
             norm_base: 0.0,
             norm_hist_out: None,
             trap_window_out: None,
+            inside_window_out: None,
             content_tag: 0,
             content_out: None,
             view_stamp: 0,
@@ -3773,6 +3795,7 @@ impl CallbackTrait for MandelbrotParams {
             self.step_out.as_ref(),
             self.norm_hist_out.as_ref(),
             self.trap_window_out.as_ref(),
+            self.inside_window_out.as_ref(),
         );
 
         // The offscreen iteration texture is (resolution × ss). It must not exceed

@@ -2717,6 +2717,8 @@ inside-trap-desc = 每条轨道离轨道陷阱有多近，用内部调色板表�
 panel-inside-palette = 内部调色板
 panel-inside-palette-hover = 轨道陷阱为内部着色所用的调色板。
 panel-inside-palette-same = 与外部相同
+panel-inside-fit = 适配内部范围
+panel-inside-fit-hover = 将内部调色板铺展到屏幕上集合内部测得的陷阱值上，使其结构可见。此视图的导出使用相同的适配。
 panel-palette = 调色板
 # The two colors of the Binary palette, each beside its color swatch.
 panel-in-set = 集合内

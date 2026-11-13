@@ -46,6 +46,7 @@ fn scrambled() -> ViewColoring {
         interior: Some(InteriorMode::Solid),
         interior_palette: "ice".into(),
         interior_color: [0.7, 0.1, 0.4],
+        interior_fit: true,
     }
 }
 
@@ -80,6 +81,9 @@ fn variants() -> Vec<ViewColoring> {
     v.push(ViewColoring { method: ColorMethod::OrbitTrap, interior_palette: "ember".into(), ..d.clone() });
     // A solid inside's own color (C1), and the same color under Duotone, where it does not show.
     v.push(ViewColoring { interior_color: [0.9, 0.2, 0.6], ..d.clone() });
+    // The inside fitted to its range (C4), under Smooth and the trap's own inside.
+    v.push(ViewColoring { interior: Some(InteriorMode::Trap), interior_fit: true, ..d.clone() });
+    v.push(ViewColoring { method: ColorMethod::OrbitTrap, interior_fit: true, ..d.clone() });
     v.push(ViewColoring { interior_color: [0.9, 0.2, 0.6], two_color: TwoColor::Duotone, ..d.clone() });
     v.push(ViewColoring { normalize_live: false, ..d.clone() });
     v.push(ViewColoring { normalize_fit: true, log_scale: true, ..d.clone() });

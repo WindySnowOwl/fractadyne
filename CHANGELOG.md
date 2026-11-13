@@ -59,6 +59,12 @@ published as the pre-releases `v0.2.41-beta.1` to `v0.2.41-beta.150`, and a "bet
 
 Changes after 0.3.0-beta.1:
 
+- **The inside's palette can fit its own range (0.3.0-beta.27).** With the orbit trap coloring the
+  inside, "Fit to the inside's range" spreads the inside's palette over the trap values measured
+  inside the set on screen, one and a half sweeps from their 1st to 99th percentile, so the inside
+  shows its structure where the fixed rate left it nearly one color. Exports of the view use the
+  same fit; a render from the command line, which has no view on screen to measure, keeps the fixed
+  rate. `--interior-fit` turns it on.
 - **A solid inside in any color (0.3.0-beta.27).** A color button beside the Inside row sets the
   color of a solid inside under any palette, where it was always near-black; Duotone and Binary go on
   using their dark color there. The command line sets the inside too: `--interior solid|trap`,

@@ -325,7 +325,7 @@ pub(crate) const KNOWN_VIEW_KEYS: &[&str] = &[
     // settings, the relief light, the distance glow, Duotone or Binary with their two colors, and
     // the live normalization. Each written only when the picture depends on it and it is not the
     // default, so an ordinary view is byte-identical to one written before the keys existed.
-    "method", "stripe_freq", "stripe_tail", "stripe_tail_len", "interior", "interior_palette", "trap",
+    "method", "stripe_freq", "stripe_tail", "stripe_tail_len", "interior", "interior_palette", "interior_fit", "trap",
     "light", "light_angle", "light_height", "glow", "glow_strength", "glow_width",
     "palette_mode", "palette_lo", "palette_hi", "interior_color",
     "normalize_live", "normalize_fit", "log_scale",
@@ -393,6 +393,7 @@ const TYPED_VIEW_KEYS: &[(&str, ValueKind)] = &[
     ("stripe_tail_len", ValueKind::Uint),
     ("interior", ValueKind::Interior),
     ("interior_palette", ValueKind::Id),
+    ("interior_fit", ValueKind::Flag),
     ("trap", ValueKind::Trap),
     ("light", ValueKind::Flag),
     ("light_angle", ValueKind::Float),

@@ -2789,6 +2789,8 @@ inside-trap-desc = Cuánto se acercó cada órbita a la trampa de órbita, en la
 panel-inside-palette = Paleta interior
 panel-inside-palette-hover = La paleta con la que la trampa de órbita colorea el interior.
 panel-inside-palette-same = Igual que fuera
+panel-inside-fit = Ajustar al rango del interior
+panel-inside-fit-hover = Extiende la paleta interior sobre los valores de la trampa medidos dentro del conjunto en pantalla, para que se vea su estructura. Las exportaciones de esta vista usan el mismo ajuste.
 panel-palette = Paleta
 # The two colors of the Binary palette, each beside its color swatch.
 panel-in-set = En el conjunto

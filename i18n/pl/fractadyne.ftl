@@ -2876,6 +2876,8 @@ inside-trap-desc = Jak blisko każda orbita podeszła do pułapki orbity, w pale
 panel-inside-palette = Paleta wnętrza
 panel-inside-palette-hover = Paleta, którą pułapka orbity koloruje wnętrze.
 panel-inside-palette-same = Jak na zewnątrz
+panel-inside-fit = Dopasuj do zakresu wnętrza
+panel-inside-fit-hover = Rozkłada paletę wnętrza na wartości pułapki zmierzone wewnątrz zbioru na ekranie, by było widać jej strukturę. Eksporty tego widoku używają tego samego dopasowania.
 panel-palette = Paleta
 # The two colors of the Binary palette, each beside its color swatch.
 panel-in-set = W zbiorze

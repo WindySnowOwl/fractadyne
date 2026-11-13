@@ -1026,11 +1026,15 @@ const CTR_TRAP_HIST: u32 = 473u;
 const TRAP_HIST_LO: f32 = -8.0;
 const TRAP_HIST_PER_UNIT: f32 = 16.0;
 const TRAP_HIST_BUCKETS: u32 = 1216u;
-fn trap_hist_commit(a: Aux, gx: f32, gy: f32) {
+// The same histogram over the INTERIOR pixels alone (`inside`), in the next 1216 slots (lib.rs
+// `CTR_TRAP_HIST_IN`, coloring plan C4): the window the inside's fitted palette spans.
+const CTR_TRAP_HIST_IN: u32 = 1689u;
+fn trap_hist_commit(a: Aux, gx: f32, gy: f32, inside: bool) {
     if ((iu.aux_on & 1u) == 1u && (iu.orbit_stats & STAT_TRAP) != 0u && (i32(gx) & 3) == 0 && (i32(gy) & 3) == 0) {
         let pv = -log2(max(a.trap, 1.0e-20));
         let k = u32(clamp((pv - TRAP_HIST_LO) * TRAP_HIST_PER_UNIT, 0.0, f32(TRAP_HIST_BUCKETS - 1u)));
         atomicAdd(&counters[CTR_TRAP_HIST + k], 1u);
+        if (inside) { atomicAdd(&counters[CTR_TRAP_HIST_IN + k], 1u); }
     }
 }
 // On the 4x4 grid of the escape-range commit; called where a whole frame's escapes are seen once
@@ -1693,7 +1697,7 @@ fn iterate_at(gx: f32, gy: f32) -> FragOut {
         }
         if (!escaped) {
             atomicAdd(&counters[CTR_MAXITER], 1u);
-            trap_hist_commit(aux, gx, gy);
+            trap_hist_commit(aux, gx, gy, true);
             let aux_out = select(AUX_NONE, aux_pack(aux, 0.0, zf), (iu.aux_on & 1u) == 1u);
             return FragOut(vec4<f32>(-1.0, 0.0, 0.0, 1.0e30), aux_out);
         }
@@ -1715,7 +1719,7 @@ fn iterate_at(gx: f32, gy: f32) -> FragOut {
             nrm = slope_normal(zf, vec2<f32>(dz.re.x, dz.im.x));
             de = de_log2(mag2, vec2<f32>(dz.re.x, dz.im.x), 0.0);
         }
-        trap_hist_commit(aux, gx, gy);
+        trap_hist_commit(aux, gx, gy, false);
         let aux_out = select(AUX_NONE, aux_pack(aux, band_pos(mag2, power_f, bail2_of(iu.formula)), zf), (iu.aux_on & 1u) == 1u);
         esc_range_commit(smit);
         esc_count_commit(vec2<i32>(i32(gx), i32(gy)));
@@ -2197,7 +2201,7 @@ fn iterate_at(gx: f32, gy: f32) -> FragOut {
         if (rn_px) { rn_commit(gx, gy); }
         if (!escaped) {
             atomicAdd(&counters[CTR_MAXITER], 1u);
-            trap_hist_commit(aux, gx, gy);
+            trap_hist_commit(aux, gx, gy, true);
             let aux_out = select(AUX_NONE, aux_pack(aux, 0.0, zf), (iu.aux_on & 1u) == 1u);
             return FragOut(vec4<f32>(-1.0, 0.0, 0.0, 1.0e30), aux_out);
         }
@@ -2210,7 +2214,7 @@ fn iterate_at(gx: f32, gy: f32) -> FragOut {
             nrm = slope_normal(zf, vec2<f32>(D.m.re.x, D.m.im.x));
             de = de_log2(mag2, vec2<f32>(D.m.re.x, D.m.im.x), f32(D.e));
         }
-        trap_hist_commit(aux, gx, gy);
+        trap_hist_commit(aux, gx, gy, false);
         let aux_out = select(AUX_NONE, aux_pack(aux, band_pos(mag2, power_f, bail2_of(iu.formula)), zf), (iu.aux_on & 1u) == 1u);
         esc_range_commit(smit);
         esc_count_commit(vec2<i32>(i32(gx), i32(gy)));
@@ -2425,7 +2429,7 @@ fn iterate_at(gx: f32, gy: f32) -> FragOut {
         step_commit(gx, gy, n_bla + n_full, n_full, n_big, iter);
         if (!escaped) {
             atomicAdd(&counters[CTR_MAXITER], 1u);
-            trap_hist_commit(aux, gx, gy);
+            trap_hist_commit(aux, gx, gy, true);
             let aux_out = select(AUX_NONE, aux_pack(aux, 0.0, zf), (iu.aux_on & 1u) == 1u);
             return FragOut(vec4<f32>(-1.0, 0.0, 0.0, 1.0e30), aux_out);
         }
@@ -2440,7 +2444,7 @@ fn iterate_at(gx: f32, gy: f32) -> FragOut {
             nrm = slope_normal(zf, vec2<f32>(D.m.re.x, D.m.im.x));
             de = de_log2(mag2, vec2<f32>(D.m.re.x, D.m.im.x), f32(D.e));
         }
-        trap_hist_commit(aux, gx, gy);
+        trap_hist_commit(aux, gx, gy, false);
         let aux_out = select(AUX_NONE, aux_pack(aux, band_pos(mag2, power_f, bail2_of(iu.formula)), zf), (iu.aux_on & 1u) == 1u);
         esc_range_commit(smit);
         esc_count_commit(vec2<i32>(i32(gx), i32(gy)));

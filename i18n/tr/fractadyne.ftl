@@ -2788,6 +2788,8 @@ inside-trap-desc = Her yörüngenin yörünge tuzağına ne kadar yaklaştığı
 panel-inside-palette = İç palet
 panel-inside-palette-hover = Yörünge tuzağının içi renklendirdiği palet.
 panel-inside-palette-same = Dışla aynı
+panel-inside-fit = İçin aralığına sığdır
+panel-inside-fit-hover = İç paleti, ekranda kümenin içinde ölçülen tuzak değerlerine yayar; böylece yapısı görünür. Bu görünümün dışa aktarımları aynı sığdırmayı kullanır.
 panel-palette = Palet
 # The two colors of the Binary palette, each beside its color swatch.
 panel-in-set = Küme içi

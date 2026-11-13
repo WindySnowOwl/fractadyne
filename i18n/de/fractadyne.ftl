@@ -2789,6 +2789,8 @@ inside-trap-desc = Wie nah jeder Orbit der Orbitfalle kam, in der Innenpalette. 
 panel-inside-palette = Innenpalette
 panel-inside-palette-hover = Die Palette, mit der die Orbitfalle das Innere färbt.
 panel-inside-palette-same = Wie außen
+panel-inside-fit = An den Innenbereich anpassen
+panel-inside-fit-hover = Die Innenpalette über die im Inneren der Menge gemessenen Fallenwerte verteilen, damit ihre Struktur sichtbar wird. Exporte dieser Ansicht nutzen dieselbe Anpassung.
 panel-palette = Palette
 # The two colors of the Binary palette, each beside its color swatch.
 panel-in-set = In Menge

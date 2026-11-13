@@ -574,12 +574,13 @@ impl InteriorShading {
         self as u32
     }
     /// How a frame colored by `method` shades its inside for the `mode` it shows, with or without
-    /// an interior palette of its own. The trap method's own interior, when the palette is its own,
-    /// keeps its exact path ([`InteriorShading::Method`]: its range mapping included).
-    pub const fn for_view(mode: InteriorMode, method: ColorMethod, own_palette: bool) -> InteriorShading {
+    /// colors of its own (a palette of its own, or its own fitted range, C4). The trap method's own
+    /// interior, in the method's colors, keeps its exact path ([`InteriorShading::Method`]: its
+    /// range mapping included).
+    pub const fn for_view(mode: InteriorMode, method: ColorMethod, own_colors: bool) -> InteriorShading {
         match (mode, method) {
             (InteriorMode::Solid, _) => InteriorShading::Solid,
-            (InteriorMode::Trap, ColorMethod::OrbitTrap) if !own_palette => InteriorShading::Method,
+            (InteriorMode::Trap, ColorMethod::OrbitTrap) if !own_colors => InteriorShading::Method,
             (InteriorMode::Trap, _) => InteriorShading::Trap,
         }
     }

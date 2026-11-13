@@ -95,6 +95,8 @@ pub(crate) struct ViewColoring {
     pub(crate) interior_palette: String,
     /// A solid inside's color (C1), display-space RGB.
     pub(crate) interior_color: [f32; 3],
+    /// The inside's palette fitted to its measured range (C4).
+    pub(crate) interior_fit: bool,
 }
 
 impl Default for ViewColoring {
@@ -135,6 +137,7 @@ impl ViewColoring {
             interior: InteriorMode::parse_key(&s.interior),
             interior_palette: s.interior_palette.clone(),
             interior_color: s.interior_color,
+            interior_fit: s.interior_fit,
         }
     }
 
@@ -163,6 +166,7 @@ impl ViewColoring {
             interior: self.interior.map(|m| m.key().to_string()).unwrap_or_default(),
             interior_palette: self.interior_palette.clone(),
             interior_color: self.interior_color,
+            interior_fit: self.interior_fit,
             ..base.clone()
         }
     }
