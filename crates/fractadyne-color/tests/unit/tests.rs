@@ -255,6 +255,38 @@ fn the_holiday_block_holds_the_holiday_palettes() {
     assert_eq!(r.len(), 20);
 }
 
+/// The collections the palette lists put under headings run back to back from the end of the
+/// first thirty presets to the end of [`PRESETS`], twenty palettes each, first and last pinned by
+/// name, and each is found where it starts (where a list puts its heading) and nowhere else.
+#[test]
+fn the_collections_run_back_to_back_to_the_end() {
+    const ENDS: &[(PresetGroup, &str, &str)] = &[
+        (PresetGroup::Holidays, "Lunar New Year", "New Year's Eve"),
+        (PresetGroup::Minerals, "Amethyst", "Pyrite"),
+        (PresetGroup::Plants, "Sunflower", "Lichen"),
+        (PresetGroup::Animals, "Peacock", "Scarab"),
+        (PresetGroup::Food, "Coffee", "Bubble Tea"),
+        (PresetGroup::Painters, "Botticelli", "Torres-García"),
+        (PresetGroup::Biomes, "Rainforest", "Cave"),
+        (PresetGroup::Places, "Paris", "St. Basil's"),
+    ];
+    assert_eq!(PRESET_GROUPS.len(), ENDS.len());
+    let mut next = 30;
+    for ((g, r), (want, first, last)) in PRESET_GROUPS.iter().zip(ENDS) {
+        assert_eq!(g, want);
+        assert_eq!(r.start, next, "{g:?} starts where the one before ends");
+        assert_eq!(r.len(), 20, "{g:?}");
+        assert_eq!(PRESETS[r.start].name, *first, "{g:?}");
+        assert_eq!(PRESETS[r.end - 1].name, *last, "{g:?}");
+        assert_eq!(preset_group_starting_at(r.start), Some(*want), "a heading before {first}");
+        next = r.end;
+    }
+    assert_eq!(next, PRESETS.len(), "the last collection ends the list");
+    let headings = (0..=PRESETS.len()).filter(|&i| preset_group_starting_at(i).is_some()).count();
+    assert_eq!(headings, ENDS.len(), "a heading at each collection's start and nowhere else");
+    assert_eq!(HOLIDAY_PRESETS, PRESET_GROUPS[0].1, "the holiday block is the first collection");
+}
+
 // ---------------------------------------------------------------- line-ending hygiene
 
 /// ⭐⭐**A palette file must parse the same whatever wrote its line endings.** `str::lines()` does

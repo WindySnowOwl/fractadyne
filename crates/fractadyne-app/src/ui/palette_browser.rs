@@ -31,8 +31,20 @@ const FILTER_ROWS: [&[TagGroup]; 5] = [
 /// A thumbnail's width in the atlas, in texels: more than it is shown at, so egui's linear filter
 /// averages the color pass's point samples instead of showing their aliasing.
 const CELL_W: u32 = 320;
-/// Atlas columns.
-const ATLAS_COLS: u32 = 8;
+
+/// Cell size and columns for an atlas of `n` thumbnails of `cell` texels within a `max`-texel
+/// texture. About as many columns as rows, so the atlas stays near square: eight fixed columns
+/// made 190 presets a strip 24 cells tall, past an 8192-texel limit once the view is tall. The
+/// cell shrinks, keeping its shape, only when even a square atlas would not fit.
+pub(crate) fn atlas_layout(n: u32, cell: [u32; 2], max: u32) -> ([u32; 2], u32) {
+    let n = n.max(1);
+    let (w, h) = (cell[0].max(1) as f64, cell[1].max(1) as f64);
+    let cols = ((n as f64 * h / w).sqrt().ceil() as u32).clamp(1, n);
+    let rows = n.div_ceil(cols);
+    let fit = (max as f64 / (cols as f64 * w)).min(max as f64 / (rows as f64 * h)).min(1.0);
+    let shrink = |v: f64| ((v * fit).floor() as u32).max(1);
+    ([shrink(w), shrink(h)], cols)
+}
 /// Shortest time between two redraws while the view keeps changing under the browser.
 const REDRAW_PACE: std::time::Duration = std::time::Duration::from_millis(400);
 /// The longest tag a user may type.
@@ -105,6 +117,11 @@ pub(crate) fn tag_label(id: &str) -> String {
         "materials" => tr!(tag_materials),
         "science" => tr!(tag_science),
         "food" => tr!(tag_food),
+        "minerals" => tr!(tag_minerals),
+        "plants" => tr!(tag_plants),
+        "animals" => tr!(tag_animals),
+        "biomes" => tr!(tag_biomes),
+        "places" => tr!(tag_places),
         "analytical" => tr!(tag_analytical),
         "aesthetic" => tr!(tag_aesthetic),
         own => own.to_string(),
@@ -234,8 +251,9 @@ impl crate::FractadyneApp {
             }
         }
         let luts = self.browser_luts();
+        let (cell, cols) = atlas_layout(luts.len() as u32, cell, rs.device.limits().max_texture_dimension_2d);
         let old = self.palette_browser.atlas.take();
-        match atlas::render_palette_atlas(&rs, 0, &luts, cell, ATLAS_COLS, old) {
+        match atlas::render_palette_atlas(&rs, 0, &luts, cell, cols, old) {
             Ok(a) => {
                 self.palette_browser.atlas = Some(a);
                 self.palette_browser.drawn_for = Some(key);

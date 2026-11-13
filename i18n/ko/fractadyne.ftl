@@ -244,6 +244,14 @@ menu-color-palette = 팔레트
 menu-color-custom = 사용자 정의
 menu-color-duotone = 듀오톤
 menu-color-holidays = 기념일
+# Headings over the palette lists' collections, like Holidays above.
+menu-color-minerals = 암석과 광물
+menu-color-plants = 식물과 균류
+menu-color-animals = 동물
+menu-color-food = 음식
+menu-color-painters = 화가
+menu-color-biomes = 생물군계
+menu-color-places = 도시와 명소
 menu-color-binary = 이진(집합)
 menu-color-binary-hover = 단순한 두 가지 색: 집합 안과 집합 밖, 그라데이션 없음.
 menu-color-edit-gradient = 그라데이션 편집…
@@ -325,6 +333,12 @@ tag-art = 예술
 tag-materials = 재질
 tag-science = 과학
 tag-food = 음식
+# Theme tags for the collections: rocks and minerals, plants and fungi, animals, biomes, and cities and landmarks.
+tag-minerals = 광물
+tag-plants = 식물
+tag-animals = 동물
+tag-biomes = 생물군계
+tag-places = 장소
 tag-analytical = 분석용
 tag-aesthetic = 감상용
 

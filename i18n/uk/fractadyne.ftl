@@ -250,6 +250,14 @@ menu-color-palette = Палітра
 menu-color-custom = Власна
 menu-color-duotone = Двотонна
 menu-color-holidays = Свята
+# Headings over the palette lists' collections, like Holidays above.
+menu-color-minerals = Гірські породи та мінерали
+menu-color-plants = Рослини та гриби
+menu-color-animals = Тварини
+menu-color-food = Їжа
+menu-color-painters = Художники
+menu-color-biomes = Біоми
+menu-color-places = Міста та визначні місця
 menu-color-binary = Двійкова (множина)
 menu-color-binary-hover = Пласке двоколірне розфарбування: у множині чи поза нею, без градієнта.
 menu-color-edit-gradient = Редагувати градієнт…
@@ -331,6 +339,12 @@ tag-art = Мистецтво
 tag-materials = Матеріали
 tag-science = Наука
 tag-food = Їжа
+# Theme tags for the collections: rocks and minerals, plants and fungi, animals, biomes, and cities and landmarks.
+tag-minerals = Мінерали
+tag-plants = Рослини
+tag-animals = Тварини
+tag-biomes = Біоми
+tag-places = Місця
 tag-analytical = Аналітична
 tag-aesthetic = Естетична
 

@@ -59,6 +59,20 @@ published as the pre-releases `v0.2.41-beta.1` to `v0.2.41-beta.150`, and a "bet
 
 Changes after 0.3.0-beta.1:
 
+- **140 new palettes in seven collections (0.3.0-beta.27).** Color ▸ Palette and the panel's
+  Palette list gain seven groups of twenty after the holidays: Rocks and minerals (amethyst,
+  malachite, lapis lazuli, labradorite's flash, a bismuth crystal's oxide rainbow), Plants and
+  fungi (sunflower, wisteria, fly agaric's spotted cap, tulip fields in rows, foxfire's glow),
+  Animals (peacock, tiger, zebra, monarch butterfly, kingfisher, honeybee), Food (coffee,
+  watermelon, sushi, Neapolitan ice cream, dragon fruit), Painters (Botticelli, Vermeer, Hokusai,
+  Van Gogh, Klimt, Munch, Kandinsky, Hilma af Klint, Amrita Sher-Gil, Torres-García), Biomes
+  (rainforest, tundra, kelp forest, deep sea, hydrothermal vent, salt flat) and Cities and
+  landmarks (Chefchaouen, Marrakech, Kyoto, Petra, Machu Picchu, Havana, Burano, Golden Gate).
+  Each is at least as far from every other palette as the first fifty are from each other. The
+  palette browser can filter by five new themes, Minerals, Plants, Animals, Biomes and Places,
+  which a few of the first fifty carry too (Black Opal, Coral Reef, Desert, Cherry Blossom,
+  Lavender Fields, Emerald Isle). The browser's thumbnails are laid out in a near-square atlas, so
+  they fit the graphics card's texture limit with every palette and saved gradient.
 - **A tour can set its coloring (0.3.0-beta.27).** A `[render.coloring]` table takes the keys a
   saved view carries: the method, the stripe density and tail, the trap's shape, relief lighting,
   the distance glow, Duotone or Binary with their two colors, and the normalization switches. Each

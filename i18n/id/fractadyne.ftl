@@ -244,6 +244,14 @@ menu-color-palette = Palet
 menu-color-custom = Kustom
 menu-color-duotone = Dua nada
 menu-color-holidays = Hari raya
+# Headings over the palette lists' collections, like Holidays above.
+menu-color-minerals = Batuan dan mineral
+menu-color-plants = Tumbuhan dan jamur
+menu-color-animals = Hewan
+menu-color-food = Makanan
+menu-color-painters = Pelukis
+menu-color-biomes = Bioma
+menu-color-places = Kota dan tengara
 menu-color-binary = Biner (himpunan)
 menu-color-binary-hover = Dua warna datar: di dalam himpunan vs di luar himpunan, tanpa gradien.
 menu-color-edit-gradient = Sunting gradien…
@@ -325,6 +333,12 @@ tag-art = Seni
 tag-materials = Material
 tag-science = Sains
 tag-food = Makanan
+# Theme tags for the collections: rocks and minerals, plants and fungi, animals, biomes, and cities and landmarks.
+tag-minerals = Mineral
+tag-plants = Tumbuhan
+tag-animals = Hewan
+tag-biomes = Bioma
+tag-places = Tempat
 tag-analytical = Analitis
 tag-aesthetic = Estetis
 
