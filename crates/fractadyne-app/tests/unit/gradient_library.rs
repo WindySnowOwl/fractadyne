@@ -107,11 +107,11 @@ fn a_saved_gradient_round_trips_through_toml_without_flattening() {
 #[test]
 fn a_saved_gradients_tags_round_trip_and_cost_an_older_build_nothing() {
     let mut tagged = as_saved(&rich(), "tagged");
-    tagged.tags = vec!["favourites".to_string(), "calm".to_string()];
+    tagged.tags = vec!["favorites".to_string(), "calm".to_string()];
     let plain = as_saved(&rich(), "plain");
     let text = toml::to_string_pretty(&GradientFile { gradient: vec![tagged, plain] }).expect("serialize");
     let back: GradientFile = toml::from_str(&text).expect("deserialize");
-    assert_eq!(back.gradient[0].tags, ["favourites", "calm"]);
+    assert_eq!(back.gradient[0].tags, ["favorites", "calm"]);
     assert!(back.gradient[1].tags.is_empty());
     assert_eq!(text.matches("tags").count(), 1, "only the tagged gradient writes the key:\n{text}");
 
