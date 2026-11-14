@@ -1074,6 +1074,26 @@ the jump to the view, and the background's change passed for the anti-aliasing's
 fix the map. Not done: a thumbnail (the method sheet, the palette browser) sizes the footprint for
 the panel's pixels, as it does its distance colors, so at its smaller size it keeps some aliasing.
 
+**C8 on by default, 2026-11-13** (user; branch `feat/color-c8-aa-default`). Measured first, every
+method and supersampling, against a reference of 32x32 samples a pixel (an 8x8 render at 4x the
+size, box-averaged in linear light: `--ss` stops at 8, and the 8x8 frame is itself 0.007 off by the
+seahorse valley). The other methods, which take the neighbors' footprint, gain or hold (Decomposition
+0.083 → 0.044) with no seam lines (the 99.9th percentile falls too). Supersampling did not: the
+footprint was the whole pixel's on every tap, so a 4x frame was filtered twice, 0.0133 against 0.0106
+point sampled. A tap now takes its own share (a texel, 2^-de_px_shift of an output pixel, and
+progressive supersampling's sample k 1/√(k+1) of that: `ColorU.aa_scale`, `MandelbrotParams` and
+`ExportRequest.aa_sample`, the worker's samples too). That was not enough: the linear footprint
+stayed near 0.013 from 1 sample a pixel to 16, because a tap whose center is near a filament spans
+many cycles and takes the palette's mean, flattening the decorations' beads, and in the decorations
+"near a filament" does not get rarer as the taps shrink. log_p(1 + s/d), what μ does across one
+boundary, fixed the high counts but lost the gain at one sample (0.040 against 0.014): a whole pixel
+there does hold many filaments. So the shader filters a tap only when it is at least half an output
+pixel across (`AA_MIN_TAP`): ss 1 and 2, and at ss 1 progressive supersampling's first four samples.
+Seahorse valley, point / anti-aliased: ss 1 0.047 / 0.014, ss 2 0.022 / 0.015, ss 3 and up identical;
+the overview and the 61x view the same pattern. `ColoringSpec.palette_aa` defaults to true (a
+session or tour from before it reads true; a view that states its coloring and leaves the key out
+resets to on; off writes `palette_aa=0`); `--no-palette-aa`.
+
 **Tests specific to this phase**: CPU oracles for C2 transfers and C7 OKLab round trip
 (sRGB → OKLab → sRGB within 1e-5); C3 and C10 line widths measured as 2·area/perimeter in B1 at
 ss 1 and 2; C6 temporal stability over a zoom tour (frame-to-frame palette shift).
@@ -1297,6 +1317,6 @@ coloring in these places, so sequence the two with care:
 | B8 | not started | |
 | C1 | done, merged | `58d6dce3` (merge `84af4b0d`) |
 | C4 | done, merged | `e99bfafd` (merge `9a3f9ff9`) |
-| C8 | done, on `feat/color-c8-palette-aa` | |
+| C8 | done, merged; on by default on `feat/color-c8-aa-default` | `5430aa2c` (merge `49153662`) |
 | C2, C3, C5–C7, C9–C11 | not started | |
 | D, E, F, G | not started | |

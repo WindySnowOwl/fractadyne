@@ -59,13 +59,16 @@ published as the pre-releases `v0.2.41-beta.1` to `v0.2.41-beta.150`, and a "bet
 
 Changes after 0.3.0-beta.1:
 
-- **The palette can be anti-aliased (0.3.0-beta.27).** "Anti-alias the palette", under Coloring,
-  shows the average color where the palette's bands are finer than a pixel, so a dense palette near
-  the set reads as its colors rather than speckle, without supersampling. With Smooth iteration the
-  width averaged over comes from the distance to the set, so the bands close to it stay as sharp as
-  the pixels allow; against an 8x8 supersampled picture by the seahorse valley it leaves about a
-  quarter of the plain frame's error. Exports of the view use it too. It is off by default, and
-  `--palette-aa` turns it on.
+- **The palette is anti-aliased (0.3.0-beta.27).** Where the palette's bands are finer than a
+  pixel, a pixel shows their average color, so a dense palette near the set reads as its colors
+  rather than speckle, without supersampling. With Smooth iteration the width averaged over comes
+  from the distance to the set, so the bands close to it stay as sharp as the pixels allow: by the
+  seahorse valley, a frame at one sample a pixel has about a third of the error it had, measured
+  against a picture of 32x32 samples a pixel. At 3x supersampling and above, and once the view's
+  own supersampling has taken a few samples, the average of the samples is already closer, and the
+  palette is sampled as before. It is on by default, for saved views too; "Anti-alias the palette"
+  under Coloring, or `--no-palette-aa`, turns it off, and a view saved with it off opens with it
+  off.
 - **Dragging a slow view in the dual view no longer blurs it (0.3.0-beta.27).** When a view had
   finished drawing in tiles (a high iteration count with a coloring such as Decomposition or the
   orbit trap), dragging it or resizing the window in the dual view sent the graphics card frames

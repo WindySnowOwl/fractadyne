@@ -334,13 +334,23 @@ impl crate::FractadyneApp {
             let base_colour = self.current_export_request_for(&Viewport::new(fw as f64, fh as f64), false);
             let mut c = WindowCheck { frames: 0, pixels: 0, differ: Vec::new(), pieces: 0, left_out_differ: 0, count_differ: 0, refused: false };
             let mut whole = make(WindowLayout::default())?;
-            // Smooth (0) and distance (4) coloring, with and without glow and relief.
-            for (method, light, glow) in [(0u32, false, false), (0, false, true), (0, true, false), (4, false, false), (4, false, true), (4, true, true)] {
+            // Smooth (0) and distance (4) coloring, with and without glow and relief, and Smooth with
+            // the palette point sampled (a count-only window) and anti-aliased by the distance (C8).
+            use fractadyne_gpu::PaletteAa::{Distance, Off};
+            for (method, light, glow, aa) in [
+                (0u32, false, false, Off),
+                (0, false, false, Distance),
+                (0, false, true, Distance),
+                (0, true, false, Distance),
+                (4, false, false, Distance),
+                (4, false, true, Distance),
+                (4, true, true, Distance),
+            ] {
                 let mut colour = base_colour.clone();
-                (colour.color_method, colour.light, colour.de_on) = (method, light as u32, glow as u32);
+                (colour.color_method, colour.light, colour.de_on, colour.aa_palette) = (method, light as u32, glow as u32, aa);
                 // A glow that shows, so a wrong distance estimate would.
                 colour.de_strength = 0.8;
-                let texels = WindowTexels::for_colour(method, light, glow);
+                let texels = WindowTexels::for_colour(method, light, glow, colour.aa_palette);
                 let mut held = make(WindowLayout { texels, piece_max: WINDOW_PIECE_MAX })?;
                 c.pieces = c.pieces.max(held.held().1);
                 let mut differ = 0usize;
@@ -354,7 +364,7 @@ impl crate::FractadyneApp {
                     c.pixels += a.len() / 4;
                 }
                 if differ > 0 {
-                    c.differ.push(format!("method {method}, relief {light}, glow {glow} ({texels:?}): {differ} pixels"));
+                    c.differ.push(format!("method {method}, relief {light}, glow {glow}, palette {aa:?} ({texels:?}): {differ} pixels"));
                 }
             }
             // The control: the count-only window really leaves the rest out, and a coloring that
@@ -401,7 +411,8 @@ pub(crate) struct WindowCheck {
 
 impl WindowCheck {
     pub(crate) fn pass(&self) -> bool {
-        self.frames == 24
+        // 7 colorings at 4 placements.
+        self.frames == 28
             && self.differ.is_empty()
             && self.pieces == 3
             && self.left_out_differ > 1_000

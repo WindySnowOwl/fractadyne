@@ -269,6 +269,9 @@ pub struct ExportRequest {
     /// Analytic palette anti-aliasing ([`crate::PaletteAa`]; `palette_box` in the shader). `Off` =
     /// point sample. Set identically to the live path so an export matches the view.
     pub aa_palette: crate::PaletteAa,
+    /// The progressive supersampling sample this render is, for a sample a second device renders
+    /// ([`crate::MandelbrotParams::aa_sample`]); 0 for an export.
+    pub aa_sample: u32,
     /// The baked palette LUT and its fetch mode — see [`crate::RenderParams::lut`].
     /// ⚠Both `ColorU` definitions consume this; an export that kept the old shape would silently
     /// render through a different palette than the live view.
@@ -1842,7 +1845,8 @@ impl<'a> TileRenderer<'a> {
             interior_cycle: iw.cycle,
             interior_offset: iw.offset,
             aa_ln_p: crate::aa_ln_p(req.formula),
-            _pad_aa: [0.0; 3],
+            aa_scale: crate::aa_scale(req.aa_sample),
+            _pad_aa: [0.0; 2],
         };
         queue.write_buffer(&color_uniform, 0, bytemuck::bytes_of(&cu));
         let split = |v: f64| -> (f32, f32) {
@@ -4098,7 +4102,8 @@ pub(crate) fn color_uniforms_for(req: &ExportRequest, ss: u32, w: u32, h: u32, l
         interior_cycle: iw.cycle,
         interior_offset: iw.offset,
         aa_ln_p: crate::aa_ln_p(req.formula),
-        _pad_aa: [0.0; 3],
+        aa_scale: crate::aa_scale(req.aa_sample),
+        _pad_aa: [0.0; 2],
     }
 }
 

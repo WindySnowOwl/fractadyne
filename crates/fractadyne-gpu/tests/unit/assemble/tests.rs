@@ -94,18 +94,23 @@ fn a_strip_is_held_in_pieces_no_wider_than_asked_covering_it_once() {
 #[test]
 fn a_window_holds_what_the_colouring_reads() {
     use fractadyne_core::coloring::ColorMethod;
+    use crate::PaletteAa::{Distance, Neighbors, Off};
     let (smooth, distance) = (ColorMethod::Smooth.gpu_id(), ColorMethod::Distance.gpu_id());
-    // Smooth: the count alone; distance coloring or glow: and the DE; relief: everything.
-    assert_eq!(WindowTexels::for_colour(smooth, false, false), WindowTexels::Count);
-    assert_eq!(WindowTexels::for_colour(smooth, false, true), WindowTexels::CountDe);
-    assert_eq!(WindowTexels::for_colour(distance, false, false), WindowTexels::CountDe);
-    assert_eq!(WindowTexels::for_colour(distance, false, true), WindowTexels::CountDe);
+    // Smooth: the count alone; distance coloring, glow or the palette anti-aliased by the distance
+    // (C8): and the DE; relief: everything.
+    for aa in [Off, Neighbors] {
+        assert_eq!(WindowTexels::for_colour(smooth, false, false, aa), WindowTexels::Count);
+    }
+    assert_eq!(WindowTexels::for_colour(smooth, false, false, Distance), WindowTexels::CountDe);
+    assert_eq!(WindowTexels::for_colour(smooth, false, true, Off), WindowTexels::CountDe);
+    assert_eq!(WindowTexels::for_colour(distance, false, false, Off), WindowTexels::CountDe);
+    assert_eq!(WindowTexels::for_colour(distance, false, true, Distance), WindowTexels::CountDe);
     for (m, g) in [(smooth, false), (smooth, true), (distance, false), (distance, true)] {
-        assert_eq!(WindowTexels::for_colour(m, true, g), WindowTexels::All);
+        assert_eq!(WindowTexels::for_colour(m, true, g, Distance), WindowTexels::All);
     }
     // The aux methods, and a number no method has, keep everything.
     for m in ColorMethod::ALL.into_iter().filter(|m| m.reads_aux()).map(ColorMethod::gpu_id).chain([ColorMethod::ALL.len() as u32, 99]) {
-        assert_eq!(WindowTexels::for_colour(m, false, false), WindowTexels::All);
+        assert_eq!(WindowTexels::for_colour(m, false, false, Off), WindowTexels::All);
     }
     let shape = StripShape { width: 27_683, rows: 3_059, rows_per_octave: 3_054.0, sample_offset: 0.5, row_step: 2.27e-4, strips: 130 };
     let whole = window_bytes(shape, 14, WindowLayout::default(), 32_768);

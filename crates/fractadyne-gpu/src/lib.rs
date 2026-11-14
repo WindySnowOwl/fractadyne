@@ -406,9 +406,12 @@ pub(crate) struct ColorUniforms {
     pub(crate) interior_cycle: f32,
     pub(crate) interior_offset: f32,
     /// ln of the formula's escape degree for the distance-sized footprint ([`aa_ln_p`]), 0 where the
-    /// formula has no distance estimate. A new 16-byte row with three pad words; `ColorU` mirrors it.
+    /// formula has no distance estimate. A new 16-byte row with two pad words; `ColorU` mirrors it.
     pub(crate) aa_ln_p: f32,
-    pub(crate) _pad_aa: [f32; 3],
+    /// The palette footprint's share for this frame's samples ([`aa_scale`]): 1 for a plain frame,
+    /// 1/√(k+1) for progressive supersampling's sample k.
+    pub(crate) aa_scale: f32,
+    pub(crate) _pad_aa: [f32; 2],
 }
 
 /// How the color pass band-limits the palette over each pixel's footprint (coloring plan C8): the
@@ -444,6 +447,15 @@ pub(crate) fn aa_ln_p(formula: u32) -> f32 {
     } else {
         0.0
     }
+}
+
+/// `ColorU.aa_scale` for progressive supersampling's sample `sample` (0 = a plain frame): 1/√(k+1).
+/// The samples are a Halton sequence over the pixel, so after k+1 of them each one stands for about
+/// 1/(k+1) of its area, a cell 1/√(k+1) of the pixel across, and its palette footprint is that
+/// cell's. A whole pixel's on every sample filtered the converged average twice, once by the
+/// footprint and once by the jitter, blurrier than the pixel's true mean (coloring plan C8).
+pub(crate) fn aa_scale(sample: u32) -> f32 {
+    1.0 / (sample as f32 + 1.0).sqrt()
 }
 
 /// A dissolve between two palette maps: a frame drawn under its own map (`cycle`, `offset`,
@@ -3364,6 +3376,9 @@ pub struct MandelbrotParams {
     /// phase footprint (`palette_box` in the shader) so a steep escape field stops aliasing into
     /// speckle. `Off` = point sample (the classic behavior).
     pub aa_palette: PaletteAa,
+    /// Which progressive supersampling sample this frame is (0 = a plain frame): its palette
+    /// footprint shrinks as more samples share the pixel ([`aa_scale`]).
+    pub aa_sample: u32,
     /// The baked palette: `LUT_SIZE` display-space RGBA entries, entry `i` holding the gradient at
     /// `(i + 0.5) / len`. Produced by `fractadyne_color::segment::Gradient::bake`, which is the
     /// only thing in the tree that knows what a stop, a blend function or a `.map` band is.
@@ -3639,6 +3654,7 @@ impl Default for MandelbrotParams {
             norm_lo: 0.0,
             palette_fade: PaletteFade::default(),
             aa_palette: PaletteAa::Off,
+            aa_sample: 0,
             lut: Arc::new(Vec::new()),
             lut_smooth: true,
             light: 0,
@@ -4090,7 +4106,8 @@ impl CallbackTrait for MandelbrotParams {
             interior_cycle: iw.cycle,
             interior_offset: iw.offset,
             aa_ln_p: aa_ln_p(self.formula),
-            _pad_aa: [0.0; 3],
+            aa_scale: aa_scale(self.aa_sample),
+            _pad_aa: [0.0; 2],
         };
         queue.write_buffer(&view.color_uniform, 0, bytemuck::bytes_of(&cu));
         view.last_cu = Some(cu);

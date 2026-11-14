@@ -2399,8 +2399,7 @@ impl FractadyneApp {
                 self.render_cfg.max_iter = 20_000;
                 self.render_cfg.aa = 8;
                 self.coloring.color_method = crate::ColorMethod::Decomposition;
-                // `palette-aa` left the palette anti-aliased and its map fixed (the default is live).
-                self.coloring.palette_aa = false;
+                // `palette-aa` left its map fixed (the default is live).
                 self.coloring.normalize_live = true;
                 self.viewport.set_center_mag(
                     fractadyne_core::BigFloat::from_f64(-0.75, 64),
