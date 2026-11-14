@@ -366,6 +366,11 @@ impl FractadyneApp {
             r.width = w;
             r.height = height;
             r.ss = 1;
+            // The palette point sampled: each pixel's color is then its own count's, which is what
+            // framing moves. Anti-aliased (the default since C8), it reads the distance estimate,
+            // whose last bits the two canvases' coordinates round apart on the RX 6800 XT: 593 and
+            // 5,048 of 20,480 texels, all below 0.0005 (2026-11-13), none of them a misframing.
+            r.aa_palette = fractadyne_gpu::PaletteAa::Off;
             r
         };
         let (req_n, req_w) = (build(narrow), build(wide));
