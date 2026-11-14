@@ -3718,9 +3718,9 @@ struct ColorU {
     // Occupies what used to be `_pad_out`, so the uniform's size and alignment are unchanged.
     norm_mode: u32,
     norm_lo: f32,   // range floor the log is measured from (the frame's minimum escape value)
-    // 1 = analytic palette anti-aliasing (box-filter the palette over each pixel's footprint via
-    // `palette_box`); 0 = point sample. The three pad words restore the 16-byte-multiple size and
-    // mirror `_pad_aa` in the Rust `ColorUniforms` (kept in step, per uniform_layout_tests).
+    // Analytic palette anti-aliasing, box-filtering the palette over each pixel's footprint via
+    // `palette_box`: 0 = point sample; 1 = the footprint from the next pixels' coordinates; 2 = from
+    // the distance estimate where the Smooth count has one (`de_footprint`, coloring plan C8).
     aa_palette: u32,
     // A dissolve from another palette map (`PaletteFade`): that map's color takes `fade_weight`
     // (0 = none). Mirrors the Rust `ColorUniforms` field for field.
@@ -3741,6 +3741,13 @@ struct ColorU {
     lut2_smooth: u32,
     interior_cycle: f32,
     interior_offset: f32,
+    // ln of the formula's escape degree for the distance-sized palette footprint (coloring plan
+    // C8, `aa_palette == 2`), 0 where the formula has no distance estimate. Three pad words.
+    // Mirrors `ColorUniforms.aa_ln_p`.
+    aa_ln_p: f32,
+    _pad_aa0: f32,
+    _pad_aa1: f32,
+    _pad_aa2: f32,
 };
 @group(0) @binding(0) var<uniform> cu: ColorU;
 @group(0) @binding(1) var iter_tex: texture_2d<f32>;
@@ -3924,6 +3931,22 @@ fn palette_box(coord: f32, width: f32) -> vec3<f32> {
     return (hi - lo) / w;
 }
 
+// The palette footprint of a Smooth texel from its distance estimate (coloring plan C8): how many
+// palette cycles one OUTPUT pixel spans there, |dt/dμ| · |∇μ| with |∇μ| = 1 / (d · ln p), d the
+// distance in output pixels (the stored DE, `|z|·ln|z| / |dz/dc|`, is exactly G/|∇G| for the
+// Green's function G, and μ = −log_p G + const). `cycle` and the map (`mode`, `lo`) are the
+// palette map's own, so a log map's dt/dμ = cycle / (μ − lo + 1). Negative where the texel has no
+// distance (no derivative, or `aa_ln_p` 0): the caller keeps the neighbor-difference footprint.
+// Unlike that one it does not reach across to the next pixel, which at a boundary may be a
+// different band of the escape field altogether.
+fn de_footprint(m: vec4<f32>, cycle: f32, mode: u32, lo: f32) -> f32 {
+    if (cu.aa_ln_p <= 0.0 || m.a > 1.0e20 || m.r < 0.0) { return -1.0; }
+    let d_px = exp2(m.a - de_px_shift);
+    var dtdmu = abs(cycle);
+    if (mode == 1u) { dtdmu = dtdmu / (max(m.r - lo, 0.0) + 1.0); }
+    return dtdmu / max(d_px * cu.aa_ln_p, 1.0e-12);
+}
+
 // Point-sample shade (interior → interior_col). Used by `view_average`; the main color pass uses
 // `shade_aa` so it can band-limit the palette over the pixel footprint.
 fn shade(m: vec4<f32>, a: vec4<f32>) -> vec3<f32> {
@@ -4010,7 +4033,7 @@ fn fs_color(in: VsOut) -> @location(0) vec4<f32> {
     // point sample identical to the old `shade`.
     var pal_w = 0.0;
     var pal_wf = 0.0; // the same footprint under the map a dissolve fades from
-    if (cu.aa_palette == 1u) {
+    if (cu.aa_palette != 0u) {
         let o0 = clamp(pix * i32(ss), vec2<i32>(0, 0), maxc);
         let ox = clamp((pix + vec2<i32>(1, 0)) * i32(ss), vec2<i32>(0, 0), maxc);
         let oy = clamp((pix + vec2<i32>(0, 1)) * i32(ss), vec2<i32>(0, 0), maxc);
@@ -4030,6 +4053,16 @@ fn fs_color(in: VsOut) -> @location(0) vec4<f32> {
                 let f0 = coord_fade(m0, a0);
                 if (cx < INTERIOR_COORD) { pal_wf = max(pal_wf, abs(coord_fade(mx, ax) - f0)); }
                 if (cy < INTERIOR_COORD) { pal_wf = max(pal_wf, abs(coord_fade(my, ay) - f0)); }
+            }
+            // Distance-sized (C8): the Smooth count's footprint from the pixel's own distance,
+            // where it has one; the neighbor differences above stay for everything else.
+            if (cu.aa_palette == 2u && cu.color_method == METHOD_SMOOTH) {
+                let wd = de_footprint(m0, cu.cycle, cu.norm_mode, cu.norm_lo);
+                if (wd >= 0.0) { pal_w = wd; }
+                if (cu.fade_weight > 0.0) {
+                    let wf = de_footprint(m0, cu.fade_cycle, cu.fade_mode, cu.fade_lo);
+                    if (wf >= 0.0) { pal_wf = wf; }
+                }
             }
         }
     }

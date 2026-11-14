@@ -410,7 +410,7 @@ impl FractadyneApp {
             cycle: 0.5,
             offset: self.coloring.offset,
             interior_col: self.view_interior_color(),
-            aa_palette: crate::palette_aa_enabled(),
+            aa_palette: self.palette_aa(),
             resolution,
             ss,
             view_id: 0,

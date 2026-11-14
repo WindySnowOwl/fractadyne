@@ -69,7 +69,7 @@ pub(crate) const GROUPS: &[&str] = &[
     "numeric", "symmetry", "abs-family", "custom-formula", "life", "lsystem", "multibrot-sa", "bla", "aux-bla", "aux-series",
     "consistency", "counters", "iter-budget", "iter-chunk", "renorm", "live-split", "worker", "nr-zoom", "coords",
     "curated-poi", "ref-pick", "ref-reuse", "ref-overlap", "orbit-cache", "script", "metadata", "view-coloring",
-    "display", "catalog", "goldens", "bench-matrix", "live-res", "appearance", "band-seams",
+    "display", "catalog", "goldens", "bench-matrix", "live-res", "appearance", "band-seams", "palette-aa",
     "checklist", "replay", "settings-quarantine", "expmap", "assemble", "de-pixels",
     "colour-box", "cycle-check", "export-contain", "honest-step", "palette-fade", "retreat", "view-thumb",
     "width-independence", "coloring-matrix-quick",
@@ -3312,7 +3312,7 @@ impl FractadyneApp {
             };
             let mut base = make(self, SX, SY, 1.0e2);
             base.aa_filter = 1;
-            base.aa_palette = false;
+            base.aa_palette = fractadyne_gpu::PaletteAa::Off;
             base.light = 0;
             base.de_on = 0;
             base.vignette.on = 0;
@@ -3370,7 +3370,7 @@ impl FractadyneApp {
             };
             let mut base = make(self, SX, SY, 1.0e2);
             base.aa_filter = 1;
-            base.aa_palette = false;
+            base.aa_palette = fractadyne_gpu::PaletteAa::Off;
             base.light = 0;
             base.vignette.on = 0;
             for (label, method, glow) in
@@ -3416,7 +3416,7 @@ impl FractadyneApp {
         if want("palette-fade") {
             let mut base = make(self, SX, SY, 1.0e2);
             base.aa_filter = 1;
-            base.aa_palette = false;
+            base.aa_palette = fractadyne_gpu::PaletteAa::Off;
             base.light = 0;
             base.de_on = 0;
             base.vignette.on = 0;
@@ -10339,6 +10339,7 @@ zoom = \"1e94\"
                 interior_palette: "ice".into(),
                 interior_color: [0.7, 0.1, 0.4],
                 interior_fit: true,
+                palette_aa: true,
             };
             // (coloring, lines its view must hold)
             let colorings = [
@@ -10388,6 +10389,8 @@ zoom = \"1e94\"
                 ),
                 // A solid inside in a color of its own (C1).
                 (ViewColoring { interior_color: [0.9, 0.2, 0.6], ..d.clone() }, &["interior_color=0.9,0.2,0.6"][..]),
+                // The palette anti-aliased (C8).
+                (ViewColoring { palette_aa: true, ..d.clone() }, &["palette_aa=1"][..]),
             ];
             let mut bad: Vec<String> = Vec::new();
             for (v, want_lines) in &colorings {
@@ -10531,6 +10534,7 @@ zoom = \"1e94\"
                 interior_palette: "ember".into(),
                 interior_color: [0.9, 0.2, 0.6],
                 interior_fit: true,
+                palette_aa: true,
             };
             let fields = |s: &fractadyne_state::ColoringSpec| match serde_json::to_value(s) {
                 Ok(serde_json::Value::Object(m)) => m,
@@ -10717,7 +10721,7 @@ zoom = \"1e94\"
                     let mut col = req.clone();
                     col.lut = ramp.clone();
                     col.lut_smooth = true;
-                    col.aa_palette = false;
+                    col.aa_palette = fractadyne_gpu::PaletteAa::Off;
                     col.cycle = 1.0;
                     col.offset = 0.0;
                     col.norm_mode = 0;
@@ -10759,6 +10763,89 @@ zoom = \"1e94\"
             self.julia_mode = was.1;
             self.set_view_coloring(&was.2);
             (self.render_cfg.max_iter, self.render_cfg.auto_iter, self.render_cfg.aa) = (was.3, was.4, was.5);
+        }
+
+        // ---- palette-aa: the palette anti-aliased over the distance-sized footprint (C8) ----
+        // A dense palette by the seahorse valley at one sample per pixel, against the same view at
+        // 8×8 samples with no anti-aliasing, in linear light. The footprint from the distance has to
+        // come well under the point-sampled frame's error, the CONTROL, which must alias at all for
+        // this to judge anything, and under the footprint from the next pixels' coordinates (the
+        // `FRACTADYNE_PALETTE_AA=neighbors` path). Measured in the scratch study at 800x500 on the
+        // RTX 3080: point sampled 0.052, neighbors 0.017, distance 0.011.
+        if want("palette-aa") {
+            const W: u32 = 400;
+            const H: u32 = 250;
+            let was = (
+                self.fractal,
+                self.julia_mode,
+                self.view_coloring(),
+                self.render_cfg.max_iter,
+                self.render_cfg.auto_iter,
+                self.render_cfg.aa,
+                (self.coloring.palette_idx, self.coloring.cycle, self.coloring.offset, self.coloring.use_custom_palette),
+            );
+            self.fractal = FractalKind::Mandelbrot;
+            self.julia_mode = false;
+            self.set_view_coloring(&crate::view_coloring::ViewColoring::default());
+            self.coloring.use_custom_palette = false;
+            self.coloring.palette_idx = fractadyne_color::preset_by_spec("ember").unwrap_or(0);
+            self.coloring.cycle = 1.0;
+            self.coloring.offset = 0.1;
+            self.render_cfg.auto_iter = false;
+            self.render_cfg.max_iter = 6000;
+            self.render_cfg.aa = 1;
+            let mut vp = Viewport::new(W as f64, H as f64);
+            vp.set_center_mag(
+                fractadyne_core::BigFloat::from_f64(-0.7435, 64),
+                fractadyne_core::BigFloat::from_f64(0.1315, 64),
+                800.0,
+            );
+            let prog = std::sync::atomic::AtomicU32::new(0);
+            let cancel = std::sync::atomic::AtomicBool::new(false);
+            let base = {
+                let mut r = self.current_export_request_for(&vp, false);
+                r.width = W;
+                r.height = H;
+                r
+            };
+            let render = |ss: u32, aa: fractadyne_gpu::PaletteAa| {
+                let mut r = base.clone();
+                r.ss = ss;
+                r.aa_palette = aa;
+                fractadyne_gpu::render_export(device, queue, &r, &prog, &cancel).ok().map(|t| t.pixels)
+            };
+            use fractadyne_gpu::PaletteAa as Aa;
+            let reference = render(8, Aa::Off);
+            let err = |px: &Option<Vec<f32>>| -> Option<f64> {
+                let (a, b) = (px.as_ref()?, reference.as_ref()?);
+                if a.len() != b.len() || a.is_empty() {
+                    return None;
+                }
+                let mut sum = 0.0f64;
+                for (p, q) in a.chunks(4).zip(b.chunks(4)) {
+                    sum += (0..3).map(|k| (p[k] - q[k]).abs() as f64).sum::<f64>() / 3.0;
+                }
+                Some(sum / (a.len() / 4) as f64)
+            };
+            let (off, nbr, de) = (err(&render(1, Aa::Off)), err(&render(1, Aa::Neighbors)), err(&render(1, Aa::Distance)));
+            let pass = match (off, nbr, de) {
+                (Some(o), Some(n), Some(d)) => o >= 0.02 && d <= 0.5 * o && d <= 0.9 * n,
+                _ => false,
+            };
+            let show = |e: Option<f64>| e.map_or("render failed".to_string(), |v| format!("{v:.4}"));
+            push_check(&mut checks, &mut last_check_t, SelfCheck {
+                category: "appearance",
+                name: "the distance-sized palette anti-aliasing comes closest to the supersampled picture".into(),
+                params: format!("{W}x{H}, Mandelbrot at -0.7435+0.1315i, 800x, 6000 iterations, Smooth, ember at Cycle 1.0; mean absolute linear error against 8x8 samples, point sampled"),
+                result: format!("point sampled (control) {}, neighbors {}, distance {}", show(off), show(nbr), show(de)),
+                threshold: "control ≥ 0.02; distance ≤ 0.5 × control and ≤ 0.9 × neighbors",
+                pass,
+            });
+            self.fractal = was.0;
+            self.julia_mode = was.1;
+            self.set_view_coloring(&was.2);
+            (self.render_cfg.max_iter, self.render_cfg.auto_iter, self.render_cfg.aa) = (was.3, was.4, was.5);
+            (self.coloring.palette_idx, self.coloring.cycle, self.coloring.offset, self.coloring.use_custom_palette) = was.6;
         }
 
         // ---- appearance: the image actually CHANGES when a control changes ----

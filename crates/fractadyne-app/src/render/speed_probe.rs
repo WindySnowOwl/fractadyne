@@ -398,7 +398,7 @@ fn plan_request(plan: Plan) -> (fractadyne_gpu::ExportRequest, u32) {
         norm_mode: 0,
         norm_lo: 0.0,
         palette_fade: fractadyne_gpu::PaletteFade::default(),
-        aa_palette: false,
+        aa_palette: fractadyne_gpu::PaletteAa::Off,
         lut: std::sync::Arc::new(Vec::new()),
         lut_smooth: false,
         light: 0,

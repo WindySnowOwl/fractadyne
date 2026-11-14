@@ -2878,6 +2878,8 @@ panel-inside-palette-hover = Paleta, którą pułapka orbity koloruje wnętrze.
 panel-inside-palette-same = Jak na zewnątrz
 panel-inside-fit = Dopasuj do zakresu wnętrza
 panel-inside-fit-hover = Rozkłada paletę wnętrza na wartości pułapki zmierzone wewnątrz zbioru na ekranie, by było widać jej strukturę. Eksporty tego widoku używają tego samego dopasowania.
+panel-palette-aa = Wygładzanie palety (antyaliasing)
+panel-palette-aa-hover = Tam, gdzie pasma palety są drobniejsze niż piksel, pokaż ich średni kolor zamiast szumu. Szerokość wynika z odległości od zbioru, więc pasma blisko niego pozostają tak ostre, jak pozwalają piksele. Eksporty tego widoku też go używają.
 panel-palette = Paleta
 # The two colors of the Binary palette, each beside its color swatch.
 panel-in-set = W zbiorze

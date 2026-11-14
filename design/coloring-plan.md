@@ -1,6 +1,6 @@
 # Coloring methods: implementation plan
 
-Status: **plan (2026-11-08); phase A done (A1–A10), B1 done (the coloring matrix; its live tour is B1b), B2 done (what a frame accumulates is a `StatSet`, apart from the method shown), B3 done (in floatexp a stripe, triangle or trap frame carries the whole G-buffer), B4 to B7 done (one settings model, the method list, the method sheet, the inside and a second LUT), C1 and C4 done (a solid inside in any color; the inside's palette fitted to its range); B1b and B8 not started; next C8, C9, C11; see §10 (2026-11-13).** Line references are to `main` at `9ab75357`; check
+Status: **plan (2026-11-08); phase A done (A1–A10), B1 done (the coloring matrix; its live tour is B1b), B2 done (what a frame accumulates is a `StatSet`, apart from the method shown), B3 done (in floatexp a stripe, triangle or trap frame carries the whole G-buffer), B4 to B7 done (one settings model, the method list, the method sheet, the inside and a second LUT), C1, C4 and C8 done (a solid inside in any color; the inside's palette fitted to its range; the palette anti-aliased over a footprint from the distance estimate); B1b and B8 not started; next C9, C11; see §10 (2026-11-13).** Line references are to `main` at `9ab75357`; check
 them before editing, they drift. The research behind it (methods, prototypes, measured results,
 prior art) is the coloring-methods doc; its local copy is
 `local/research_notes/Fractal coloring methods/` (PDF, HTML, Markdown, prototype scripts).
@@ -1048,6 +1048,32 @@ export over the core 1.26 from the screen against 41.0 unfitted). The supersampl
 2^33 and never under a harness, so `--shot` of the 1e30x view with an inside (700 iterations,
 4x AA) asks it: fit on and off each converge in one run (3.5 s), 1.49% of the panel differing.
 
+**C8, done 2026-11-13** (branch `feat/color-c8-palette-aa`). The box filter (`palette_box`) was there
+behind `FRACTADYNE_PALETTE_AA`, its footprint the palette coordinates of the next pixel right and
+below. C8 sizes it from the distance estimate where the Smooth count has one: the stored DE is
+G/|∇G|, so |∇μ| = 1/(d·ln p) with d in output pixels (`de_px_shift`), and the footprint is
+|dt/dμ|/(d·ln p), dt/dμ the map's cycle (cycle/(μ−lo+1) under the log map). In the shader that is
+`de_footprint`, for the dissolve's palette map too; `ColorU.aa_ln_p` is a new row (ln of
+`formula::power` where `caps().distance_estimate`, else 0, which keeps the neighbors' footprint).
+Unlike the neighbors' footprint it does not reach across to the next pixel, which at a boundary
+can be another band of the field. `PaletteAa { Off, Neighbors, Distance }`; the panel's "Anti-alias
+the palette" under Coloring (`ColoringSpec.palette_aa`, view key `palette_aa`, `--palette-aa`) is
+Distance, off by default (the classic look; no golden moves). `FRACTADYNE_PALETTE_AA` stays as a
+developer's override (`distance`, `neighbors`, `off`). The supersampling's signature hashes the mode.
+Measured in a scratch study (800x500, Ember, mean absolute linear error against 8x8 samples, at the
+default density and at Cycle 1.0): the overview at 2x, point sampled 0.0065 and 0.0081, neighbors
+0.0046 and 0.0042, distance 0.0033 and 0.0026; the seahorse valley at 800x, 0.0465 and 0.0523, 0.0204
+and 0.0166, 0.0141 and 0.0108; a view at 61x, 0.0253 and 0.0298, 0.0127 and 0.0102, 0.0086 and 0.0067.
+Distance is 2.0–4.8× under point sampling and about 1.5× under neighbors, and keeps filaments the
+neighbors' footprint flattens. Tests: the mode's word and the log base for every formula (gpu
+unit), the round trips, the self-test's view case; self-test `palette-aa` (400x250 at the seahorse
+valley: point sampled 0.065, neighbors 0.021, distance 0.014); uitest `palette-aa` (the view changes
+by 3.96 with no pass; an export of it is 4.52 from 8x8 samples, 14.02 point sampled). Found: with
+"Normalize deep colors" on, the uitest's control was captured while the window still glided after
+the jump to the view, and the background's change passed for the anti-aliasing's; the two steps
+fix the map. Not done: a thumbnail (the method sheet, the palette browser) sizes the footprint for
+the panel's pixels, as it does its distance colors, so at its smaller size it keeps some aliasing.
+
 **Tests specific to this phase**: CPU oracles for C2 transfers and C7 OKLab round trip
 (sRGB → OKLab → sRGB within 1e-5); C3 and C10 line widths measured as 2·area/perimeter in B1 at
 ss 1 and 2; C6 temporal stability over a zoom tour (frame-to-frame palette shift).
@@ -1271,5 +1297,6 @@ coloring in these places, so sequence the two with care:
 | B8 | not started | |
 | C1 | done, merged | `58d6dce3` (merge `84af4b0d`) |
 | C4 | done, merged | `e99bfafd` (merge `9a3f9ff9`) |
-| C2, C3, C5–C11 | not started | |
+| C8 | done, on `feat/color-c8-palette-aa` | |
+| C2, C3, C5–C7, C9–C11 | not started | |
 | D, E, F, G | not started | |

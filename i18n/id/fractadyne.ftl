@@ -2718,6 +2718,8 @@ panel-inside-palette-hover = Palet yang dipakai perangkap orbit untuk mewarnai b
 panel-inside-palette-same = Sama dengan luar
 panel-inside-fit = Sesuaikan dengan rentang bagian dalam
 panel-inside-fit-hover = Sebarkan palet dalam ke nilai perangkap yang diukur di dalam himpunan di layar, agar strukturnya terlihat. Ekspor tampilan ini memakai penyesuaian yang sama.
+panel-palette-aa = Haluskan palet (anti-aliasing)
+panel-palette-aa-hover = Di mana pita palet lebih halus dari satu piksel, tampilkan warna rata-ratanya alih-alih bintik. Lebarnya mengikuti jarak ke himpunan, sehingga pita di dekatnya tetap setajam yang dimungkinkan piksel. Ekspor tampilan ini juga memakainya.
 panel-palette = Palet
 # The two colors of the Binary palette, each beside its color swatch.
 panel-in-set = Di dalam

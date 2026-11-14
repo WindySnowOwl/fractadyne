@@ -2791,6 +2791,8 @@ panel-inside-palette-hover = La paleta con la que la trampa de órbita colorea e
 panel-inside-palette-same = Igual que fuera
 panel-inside-fit = Ajustar al rango del interior
 panel-inside-fit-hover = Extiende la paleta interior sobre los valores de la trampa medidos dentro del conjunto en pantalla, para que se vea su estructura. Las exportaciones de esta vista usan el mismo ajuste.
+panel-palette-aa = Suavizar la paleta (antialias)
+panel-palette-aa-hover = Donde las bandas de la paleta son más finas que un píxel, mostrar su color medio en lugar de ruido. El ancho depende de la distancia al conjunto, así que las bandas cercanas a él quedan tan nítidas como permiten los píxeles. Las exportaciones de esta vista también lo usan.
 panel-palette = Paleta
 # The two colors of the Binary palette, each beside its color swatch.
 panel-in-set = En el conjunto

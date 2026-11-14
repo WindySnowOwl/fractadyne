@@ -2790,6 +2790,8 @@ panel-inside-palette-hover = Yörünge tuzağının içi renklendirdiği palet.
 panel-inside-palette-same = Dışla aynı
 panel-inside-fit = İçin aralığına sığdır
 panel-inside-fit-hover = İç paleti, ekranda kümenin içinde ölçülen tuzak değerlerine yayar; böylece yapısı görünür. Bu görünümün dışa aktarımları aynı sığdırmayı kullanır.
+panel-palette-aa = Paleti yumuşat (kenar yumuşatma)
+panel-palette-aa-hover = Paletin bantlarının bir pikselden ince olduğu yerlerde, gürültü yerine ortalama renklerini göster. Genişlik kümeye olan uzaklıktan gelir; böylece ona yakın bantlar piksellerin izin verdiği kadar keskin kalır. Bu görünümün dışa aktarımları da bunu kullanır.
 panel-palette = Palet
 # The two colors of the Binary palette, each beside its color swatch.
 panel-in-set = Küme içi

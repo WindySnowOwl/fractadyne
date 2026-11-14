@@ -129,6 +129,9 @@ fn the_palette_fade_fields_line_up() {
         ("lut2_smooth", std::mem::offset_of!(ColorUniforms, lut2_smooth)),
         ("interior_cycle", std::mem::offset_of!(ColorUniforms, interior_cycle)),
         ("interior_offset", std::mem::offset_of!(ColorUniforms, interior_offset)),
+        // The distance-sized palette footprint (coloring plan C8): swapped with a pad word it would
+        // read 0 and quietly fall back to the neighbors' footprint everywhere.
+        ("aa_ln_p", std::mem::offset_of!(ColorUniforms, aa_ln_p)),
     ] {
         assert_eq!(wgsl_field_offset(&fields, wgsl), rust, "`{wgsl}` is at another offset in ColorU than in ColorUniforms");
     }

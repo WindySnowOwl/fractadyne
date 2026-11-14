@@ -2718,6 +2718,8 @@ panel-inside-palette-hover = 궤도 트랩이 내부를 칠하는 팔레트.
 panel-inside-palette-same = 바깥과 같음
 panel-inside-fit = 내부 범위에 맞추기
 panel-inside-fit-hover = 화면의 집합 내부에서 잰 트랩 값에 내부 팔레트를 펼쳐 구조가 보이게 합니다. 이 화면의 내보내기도 같은 맞춤을 씁니다.
+panel-palette-aa = 팔레트 앤티앨리어싱
+panel-palette-aa-hover = 팔레트의 띠가 한 픽셀보다 촘촘한 곳에서는 노이즈 대신 평균 색을 보여 줍니다. 폭은 집합까지의 거리로 정해지므로 집합 가까이의 띠는 픽셀이 허용하는 만큼 선명하게 유지됩니다. 이 보기의 내보내기에도 적용됩니다.
 panel-palette = 팔레트
 # The two colors of the Binary palette, each beside its color swatch.
 panel-in-set = 집합 안

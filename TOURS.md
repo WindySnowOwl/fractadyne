@@ -76,6 +76,7 @@ The tour's coloring, by the keys a saved view (`.fdn`) carries. Each key it name
 | `normalize_live` | bool | true | Live view only: Normalize deep colors (method "smooth"). An offline render uses `[render]` `normalize`. |
 | `normalize_fit` | bool | false | Live view only: always fit the palette to the escape range (method "smooth" or "trap"). |
 | `log_scale` | bool | false | Log color scale wherever the palette is normalized (method "smooth" or "trap"). |
+| `palette_aa` | bool | false | Anti-alias the palette: where its bands are finer than a pixel, the pixel shows their average color, over a footprint sized by the distance to the set (where the formula has none, by the next pixels' colors). |
 
 ### `[playback]`
 

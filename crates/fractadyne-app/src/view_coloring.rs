@@ -97,6 +97,8 @@ pub(crate) struct ViewColoring {
     pub(crate) interior_color: [f32; 3],
     /// The inside's palette fitted to its measured range (C4).
     pub(crate) interior_fit: bool,
+    /// The palette anti-aliased over each pixel's footprint (C8).
+    pub(crate) palette_aa: bool,
 }
 
 impl Default for ViewColoring {
@@ -138,6 +140,7 @@ impl ViewColoring {
             interior_palette: s.interior_palette.clone(),
             interior_color: s.interior_color,
             interior_fit: s.interior_fit,
+            palette_aa: s.palette_aa,
         }
     }
 
@@ -167,6 +170,7 @@ impl ViewColoring {
             interior_palette: self.interior_palette.clone(),
             interior_color: self.interior_color,
             interior_fit: self.interior_fit,
+            palette_aa: self.palette_aa,
             ..base.clone()
         }
     }

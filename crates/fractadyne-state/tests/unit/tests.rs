@@ -545,7 +545,7 @@ fn a_session_written_before_the_coloring_spec_reads_and_writes_the_same_keys() {
     let keys = toml::Table::try_from(ColoringSpec::default()).unwrap();
     // Fields added after the fixture was written (B5's interior): absent from it, so read as their
     // defaults and written back as such. The file itself stays as that build wrote it.
-    const SINCE: &[&str] = &["interior", "interior_palette", "interior_color", "interior_fit"];
+    const SINCE: &[&str] = &["interior", "interior_palette", "interior_color", "interior_fit", "palette_aa"];
     assert_eq!(keys.len(), 27 + SINCE.len(), "a coloring field was added: list it in SINCE");
     for k in keys.keys() {
         if SINCE.contains(&k.as_str()) {
