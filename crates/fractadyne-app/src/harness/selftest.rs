@@ -1444,16 +1444,23 @@ impl FractadyneApp {
             req.ss = 1;
             (self.fractal, self.julia_mode, self.julia_c, self.render_cfg.max_iter, self.render_cfg.auto_iter, self.coloring.color_method) = saved;
             // The GPU's own time for the iterate pass where the device has timestamps (the readback
-            // around it is the same either way and would swamp the difference), else the wall.
+            // around it is the same either way and would swamp the difference), else the wall: the
+            // median of three WARMED passes (`render_iter_timed`). ⛔Not `render_iter`'s, which times
+            // a cold pass, and the RX 6800 XT's timestamps read a cold pass far short: this check read
+            // 8.12 ms with it against 7.66 ms without there (2026-11-13), both artifacts, where the
+            // RTX 3080 read 1.80 against 32.51.
             let timed = |on: bool| {
                 fractadyne_gpu::set_cycle_check(on);
-                let t0 = std::time::Instant::now();
-                let r = fractadyne_gpu::render_iter(device, queue, &req).ok();
-                let wall = t0.elapsed().as_secs_f64() * 1000.0;
-                let ms = r.as_ref().map_or(wall, |r| if r.iterate_ms > 0.0 { r.iterate_ms } else { wall });
-                (r, ms)
+                match fractadyne_gpu::render_iter_timed(device, queue, &req, 3) {
+                    Ok((r, t)) => {
+                        let gpu: Vec<f64> = t.iter().map(|x| x[0]).filter(|g| g.is_finite() && *g > 0.0).collect();
+                        let mut v: Vec<f64> = if !gpu.is_empty() && gpu.len() == t.len() { gpu } else { t.iter().map(|x| x[1]).collect() };
+                        v.sort_by(|a, b| a.total_cmp(b));
+                        (Some(r), v.get(v.len() / 2).copied().unwrap_or(f64::NAN))
+                    }
+                    Err(_) => (None, f64::NAN),
+                }
             };
-            let _warm = timed(true);
             let (on, on_ms) = timed(true);
             let (off, off_ms) = timed(false);
             fractadyne_gpu::set_cycle_check(true);
