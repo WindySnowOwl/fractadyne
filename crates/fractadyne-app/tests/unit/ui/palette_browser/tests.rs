@@ -29,7 +29,7 @@ fn a_filter_keeps_only_palettes_with_every_tag() {
     assert!(passes(&t(&["blues", "calm"]), &t(&["blues"])));
     assert!(passes(&t(&["blues", "calm"]), &t(&["blues", "calm"])));
     assert!(!passes(&t(&["blues"]), &t(&["blues", "calm"])));
-    assert!(passes(&t(&["Favourites"]), &t(&["favourites"])));
+    assert!(passes(&t(&["Favorites"]), &t(&["favorites"])));
     assert!(passes(&t(&["blues"]), &t(&[])), "no filter keeps everything");
 }
 

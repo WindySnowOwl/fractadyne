@@ -2775,7 +2775,7 @@ impl FractadyneApp {
                 self.saved_gradients = vec![crate::SavedGradient {
                     name: "Ember rework".to_string(),
                     segment: self.coloring.custom_segments.clone(),
-                    tags: vec!["favourites".to_string(), "aesthetic".to_string()],
+                    tags: vec!["favorites".to_string(), "aesthetic".to_string()],
                 }];
             }
             // The same seeded gradient, shown as a ring. ⚠The paste box stays SHUT here so the
