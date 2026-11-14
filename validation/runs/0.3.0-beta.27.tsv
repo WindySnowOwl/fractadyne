@@ -1,0 +1,7 @@
+utc	version	identity	exit	verdict	config	command
+2026-11-14 14:15:44	0.3.0-beta.27	build 1, g6197404	0	selftest exit 0; logcheck PASS	fresh; window on DISPLAY3 at 100%	fractadyne --selftest --selftest-filter fe-df32-probe
+2026-11-14 14:22:00	0.3.0-beta.27	build 1, g6197404	0	livetest exit 0; logcheck PASS	fresh; window on DISPLAY3 at 100%	fractadyne --livetest tours/grand-tour.toml --size 480x270
+2026-11-14 14:29:08	0.3.0-beta.27	build 1, g6197404	0	selftest exit 0; logcheck PASS	fresh; window on DISPLAY3 at 100%	fractadyne --selftest --selftest-filter deep-location
+2026-11-14 14:29:36	0.3.0-beta.27	build 1, g6197404	0	motiontest exit 0; logcheck PASS	fresh; window on DISPLAY3 at 100%	fractadyne --motiontest --worker-gpu same
+2026-11-14 14:38:04	0.3.0-beta.27	build 1, g6197404	3	autodive exit 3; logcheck PASS	fresh; window on DISPLAY3 at 100%	fractadyne --autodive 32 --autodive-timeout 900 --autodive-home 3
+2026-11-14 14:39:00	0.3.0-beta.27	repo g61974048	0	-	-	python scripts/dive-capture/screengate.py D:/share/Fractadyne/field/results/20261114-081304-kcxp/validate-release-beta27-20261114-081317/screen/run1 D:/share/Fractadyne/field/results/20261114-081304-kcxp/validate-release-beta27-20261114-081317/screen/run2 D:/share/Fractadyne/field/results/20261114-081304-kcxp/validate-release-beta27-20261114-081317/screen/run3
