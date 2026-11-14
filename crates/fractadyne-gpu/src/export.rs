@@ -266,10 +266,9 @@ pub struct ExportRequest {
     pub norm_lo: f32,
     /// A dissolve from another palette map ([`crate::PaletteFade`]); none for an export.
     pub palette_fade: crate::PaletteFade,
-    /// Analytic palette anti-aliasing (box-filter the palette over the pixel footprint;
-    /// `palette_box` in the shader). `false` = point sample. Set identically to the live path so
-    /// an export matches the view.
-    pub aa_palette: bool,
+    /// Analytic palette anti-aliasing ([`crate::PaletteAa`]; `palette_box` in the shader). `Off` =
+    /// point sample. Set identically to the live path so an export matches the view.
+    pub aa_palette: crate::PaletteAa,
     /// The baked palette LUT and its fetch mode — see [`crate::RenderParams::lut`].
     /// ⚠Both `ColorU` definitions consume this; an export that kept the old shape would silently
     /// render through a different palette than the live view.
@@ -1829,7 +1828,7 @@ impl<'a> TileRenderer<'a> {
             out_res: [w as f32, h as f32],
             norm_mode: req.norm_mode,
             norm_lo: req.norm_lo,
-            aa_palette: req.aa_palette as u32,
+            aa_palette: req.aa_palette.gpu_word(),
             fade_weight: req.palette_fade.weight,
             fade_mode: req.palette_fade.mode,
             fade_lo: req.palette_fade.lo,
@@ -1842,6 +1841,8 @@ impl<'a> TileRenderer<'a> {
             lut2_smooth: iw.lut2_smooth,
             interior_cycle: iw.cycle,
             interior_offset: iw.offset,
+            aa_ln_p: crate::aa_ln_p(req.formula),
+            _pad_aa: [0.0; 3],
         };
         queue.write_buffer(&color_uniform, 0, bytemuck::bytes_of(&cu));
         let split = |v: f64| -> (f32, f32) {
@@ -4083,7 +4084,7 @@ pub(crate) fn color_uniforms_for(req: &ExportRequest, ss: u32, w: u32, h: u32, l
         out_res: [w as f32, h as f32],
         norm_mode: req.norm_mode,
         norm_lo: req.norm_lo,
-        aa_palette: req.aa_palette as u32,
+        aa_palette: req.aa_palette.gpu_word(),
         fade_weight: req.palette_fade.weight,
         fade_mode: req.palette_fade.mode,
         fade_lo: req.palette_fade.lo,
@@ -4096,6 +4097,8 @@ pub(crate) fn color_uniforms_for(req: &ExportRequest, ss: u32, w: u32, h: u32, l
         lut2_smooth: iw.lut2_smooth,
         interior_cycle: iw.cycle,
         interior_offset: iw.offset,
+        aa_ln_p: crate::aa_ln_p(req.formula),
+        _pad_aa: [0.0; 3],
     }
 }
 

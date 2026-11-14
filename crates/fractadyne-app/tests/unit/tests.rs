@@ -360,7 +360,7 @@ const SAMPLE_OPTIONAL_KEYS: &[&str] = &[
     "method", "stripe_freq", "stripe_tail", "stripe_tail_len", "interior", "interior_palette", "interior_fit", "trap",
     "light", "light_angle", "light_height", "glow", "glow_strength", "glow_width",
     "palette_mode", "palette_lo", "palette_hi", "interior_color",
-    "normalize_live", "normalize_fit", "log_scale",
+    "normalize_live", "normalize_fit", "log_scale", "palette_aa",
 ];
 
 #[test]

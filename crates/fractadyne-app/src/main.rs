@@ -918,17 +918,17 @@ pub(crate) fn launched_as_task() -> bool {
     *TASK.get_or_init(|| is_task_invocation(effective_args().get(1..).unwrap_or_default()))
 }
 
-/// Whether analytic palette anti-aliasing is on (box-filter the palette over each pixel's
-/// footprint). It band-limits palette-phase aliasing, but the footprint is high at the fractal
-/// BOUNDARY at every depth (the dwell packs densely there), so it also softens the crisp boundary
-/// shell on shallow views — a global look change. OFF by default for that reason; the real
-/// deep-zoom speckle fix is progressive on-settle supersampling (`drive_accumulation`).
-/// `FRACTADYNE_PALETTE_AA=1` (or `on`/`true`) opts in.
-pub(crate) fn palette_aa_enabled() -> bool {
-    matches!(
-        std::env::var("FRACTADYNE_PALETTE_AA").ok().as_deref().map(str::trim),
-        Some("1") | Some("on") | Some("true") | Some("yes")
-    )
+/// The `FRACTADYNE_PALETTE_AA` override of the palette anti-aliasing, a developer's A/B switch over
+/// the view's own setting ([`FractadyneApp::palette_aa`]): `distance` (or `de`) for the footprint
+/// from the distance estimate (coloring plan C8), `neighbors` (or `1`/`on`, its old meaning) for the
+/// one from the next pixels' coordinates, `off` for none. Unset or anything else: the setting.
+pub(crate) fn palette_aa_override() -> Option<fractadyne_gpu::PaletteAa> {
+    match std::env::var("FRACTADYNE_PALETTE_AA").ok().as_deref().map(str::trim) {
+        Some("distance") | Some("de") => Some(fractadyne_gpu::PaletteAa::Distance),
+        Some("1") | Some("on") | Some("true") | Some("yes") | Some("neighbors") => Some(fractadyne_gpu::PaletteAa::Neighbors),
+        Some("0") | Some("off") | Some("false") | Some("no") => Some(fractadyne_gpu::PaletteAa::Off),
+        _ => None,
+    }
 }
 
 #[cfg(test)]
@@ -6401,6 +6401,9 @@ struct ColoringConfig {
     /// Fit the inside's palette to the trap values measured inside the set (C4, "Fit to the
     /// inside's range"): `Perf::inside_pal`. Persisted.
     interior_fit: bool,
+    /// Anti-alias the palette (C8): the distance-sized footprint ([`FractadyneApp::palette_aa`]).
+    /// Persisted.
+    palette_aa: bool,
     /// Auto-normalize the palette cycle to the frame's escape-value range on export (`--normalize`).
     /// At extreme depth the smooth-iter counts are ~1e5–1e6 and a fixed `cycle` aliases a correct
     /// escape field into speckle; normalize maps the range to `cycle`-many palette sweeps. Export
@@ -8106,6 +8109,7 @@ impl FractadyneApp {
                 interior_palette: fractadyne_color::preset_by_id(&s.coloring.interior_palette),
                 interior_color: s.coloring.interior_color,
                 interior_fit: s.coloring.interior_fit,
+                palette_aa: s.coloring.palette_aa,
                 normalize: args.iter().any(|a| a == "--normalize"),
                 normalize_live: s.coloring.normalize_live,
                 normalize_fit: s.coloring.normalize_fit,
@@ -8781,6 +8785,9 @@ impl FractadyneApp {
         if args.iter().any(|a| a == "--interior-fit") {
             self.coloring.interior_fit = true;
         }
+        if args.iter().any(|a| a == "--palette-aa") {
+            self.coloring.palette_aa = true;
+        }
         let inside = self.coloring.interior_of(self.coloring.color_method);
         if args.iter().any(|a| a == "--interior-fit") && inside != crate::InteriorMode::Trap {
             eprintln!("fractadyne: --interior-fit has no effect: the trap does not color the inside (add --interior trap).");
@@ -9008,6 +9015,7 @@ impl FractadyneApp {
                 .unwrap_or_default(),
             interior_color: self.coloring.interior_color,
             interior_fit: self.coloring.interior_fit,
+            palette_aa: self.coloring.palette_aa,
         }
     }
 
@@ -9048,6 +9056,7 @@ impl FractadyneApp {
         c.interior_palette = fractadyne_color::preset_by_id(&s.interior_palette);
         c.interior_color = s.interior_color.map(|v| if v.is_finite() { v.clamp(0.0, 1.0) } else { 0.0 });
         c.interior_fit = s.interior_fit;
+        c.palette_aa = s.palette_aa;
         if gradient_changed {
             c.palette_rev = c.palette_rev.wrapping_add(1);
         }
@@ -11833,6 +11842,16 @@ impl FractadyneApp {
     /// `shown_method`). An export asks [`Self::color_cycle_for`] the chosen method.
     fn color_cycle(&self) -> f32 {
         self.color_cycle_for(self.shown_method())
+    }
+
+    /// The palette anti-aliasing a frame is colored with (coloring plan C8): the view's setting, the
+    /// footprint from the distance estimate, unless `FRACTADYNE_PALETTE_AA` overrides it.
+    pub(crate) fn palette_aa(&self) -> fractadyne_gpu::PaletteAa {
+        crate::palette_aa_override().unwrap_or(if self.coloring.palette_aa {
+            fractadyne_gpu::PaletteAa::Distance
+        } else {
+            fractadyne_gpu::PaletteAa::Off
+        })
     }
 
     /// [`Self::color_cycle`] for another method, with the Cycle slider as it is: the method sheet
@@ -16642,6 +16661,8 @@ impl FractadyneApp {
         c.cycle.to_bits().hash(&mut h);
         c.iter_div.hash(&mut h);
         c.offset.to_bits().hash(&mut h);
+        // The palette's anti-aliasing (C8): it changes every colored sample.
+        self.palette_aa().gpu_word().hash(&mut h);
         // The method the view is colored with: a method sheet preview restarts the average too.
         self.shown_method().gpu_id().hash(&mut h);
         // What the frame accumulates (B2): a sample taken with other statistics is another frame.

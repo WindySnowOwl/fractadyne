@@ -2790,6 +2790,8 @@ panel-inside-palette-hover = A paleta com que a armadilha de órbita colore o in
 panel-inside-palette-same = Igual à de fora
 panel-inside-fit = Ajustar ao intervalo do interior
 panel-inside-fit-hover = Espalha a paleta interna pelos valores da armadilha medidos dentro do conjunto na tela, para que sua estrutura apareça. As exportações desta vista usam o mesmo ajuste.
+panel-palette-aa = Suavizar a paleta (antialiasing)
+panel-palette-aa-hover = Onde as faixas da paleta são mais finas que um pixel, mostrar a cor média delas em vez de ruído. A largura segue a distância ao conjunto, então as faixas perto dele ficam tão nítidas quanto os pixels permitem. As exportações desta visualização também usam isso.
 panel-palette = Paleta
 # The two colors of the Binary palette, each beside its color swatch.
 panel-in-set = Dentro

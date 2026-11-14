@@ -2790,6 +2790,8 @@ panel-inside-palette-hover = La tavolozza con cui la trappola orbitale colora l�
 panel-inside-palette-same = Come all’esterno
 panel-inside-fit = Adatta all’intervallo dell’interno
 panel-inside-fit-hover = Distribuisce la tavolozza interna sui valori della trappola misurati dentro l’insieme sullo schermo, così la sua struttura si vede. Le esportazioni di questa vista usano lo stesso adattamento.
+panel-palette-aa = Antialiasing della tavolozza
+panel-palette-aa-hover = Dove le bande della tavolozza sono più sottili di un pixel, mostra il loro colore medio invece del rumore. L'ampiezza segue la distanza dall'insieme, così le bande vicine restano nitide quanto i pixel consentono. Anche le esportazioni di questa vista lo usano.
 panel-palette = Tavolozza
 # The two colors of the Binary palette, each beside its color swatch.
 panel-in-set = Nell’insieme

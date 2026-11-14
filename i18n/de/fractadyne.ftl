@@ -2791,6 +2791,8 @@ panel-inside-palette-hover = Die Palette, mit der die Orbitfalle das Innere fär
 panel-inside-palette-same = Wie außen
 panel-inside-fit = An den Innenbereich anpassen
 panel-inside-fit-hover = Die Innenpalette über die im Inneren der Menge gemessenen Fallenwerte verteilen, damit ihre Struktur sichtbar wird. Exporte dieser Ansicht nutzen dieselbe Anpassung.
+panel-palette-aa = Palette glätten (Antialiasing)
+panel-palette-aa-hover = Wo die Bänder der Palette feiner als ein Pixel sind, ihre mittlere Farbe statt Rauschen zeigen. Die Breite folgt dem Abstand zur Menge, sodass Bänder nahe an ihr so scharf bleiben, wie die Pixel es erlauben. Exporte dieser Ansicht nutzen es ebenfalls.
 panel-palette = Palette
 # The two colors of the Binary palette, each beside its color swatch.
 panel-in-set = In Menge

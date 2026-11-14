@@ -80,7 +80,7 @@ fn two_color_on(s: &ColoringSpec) -> bool {
 }
 
 /// The table, in the order a view writes its keys. A row's parents come before it.
-pub(crate) const FIELDS: [Field; 21] = [
+pub(crate) const FIELDS: [Field; 22] = [
     Field {
         key: "method",
         name: "coloring method",
@@ -299,6 +299,14 @@ pub(crate) const FIELDS: [Field; 21] = [
         access: Access::Flag(|s| s.log_palette, |s, v| s.log_palette = v),
         parents: &["method"],
         shows: uses_fit,
+    },
+    Field {
+        key: "palette_aa",
+        name: "palette anti-aliasing",
+        doc: "Anti-alias the palette: where its bands are finer than a pixel, the pixel shows their average color, over a footprint sized by the distance to the set (where the formula has none, by the next pixels' colors).",
+        access: Access::Flag(|s| s.palette_aa, |s, v| s.palette_aa = v),
+        parents: &[],
+        shows: always,
     },
 ];
 

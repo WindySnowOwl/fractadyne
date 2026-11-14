@@ -192,6 +192,11 @@ pub struct ColoringSpec {
     /// has nothing measured and keeps the fixed rate.
     #[serde(default)]
     pub interior_fit: bool,
+    /// Anti-alias the palette (coloring plan C8): where its bands are finer than a pixel, the pixel
+    /// shows their average, over a footprint sized from the distance estimate (the next pixels'
+    /// coordinates where there is none). Off by default, the classic look.
+    #[serde(default)]
+    pub palette_aa: bool,
 }
 
 /// The near-black every solid inside had before C1.
@@ -710,6 +715,7 @@ impl Default for ColoringSpec {
             interior_palette: String::new(),
             interior_color: default_interior_color(),
             interior_fit: false,
+            palette_aa: false,
         }
     }
 }

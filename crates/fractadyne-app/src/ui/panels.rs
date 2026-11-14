@@ -437,6 +437,8 @@ impl FractadyneApp {
                     .on_hover_text(tr!(panel_normalize_hover));
                 self.fit_range_checkbox(ui);
                 self.log_scale_checkbox(ui);
+                // The palette's anti-aliasing (coloring plan C8): a recolor, no pass.
+                ui.checkbox(&mut self.coloring.palette_aa, tr!(panel_palette_aa)).on_hover_text(tr!(panel_palette_aa_hover));
                 labelled(ui, &tr!(panel_animate), |ui| {
                     egui::ComboBox::from_id_salt("panel_animate")
                         .selected_text(self.anim.palette_anim.name())

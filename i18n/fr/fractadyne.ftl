@@ -2791,6 +2791,8 @@ panel-inside-palette-hover = La palette avec laquelle le piège orbital colore l
 panel-inside-palette-same = Comme à l’extérieur
 panel-inside-fit = Ajuster à la plage de l’intérieur
 panel-inside-fit-hover = Étale la palette intérieure sur les valeurs du piège mesurées dans l’ensemble à l’écran, pour que sa structure apparaisse. Les exports de cette vue utilisent le même ajustement.
+panel-palette-aa = Anticrénelage de la palette
+panel-palette-aa-hover = Là où les bandes de la palette sont plus fines qu'un pixel, afficher leur couleur moyenne au lieu du bruit. La largeur suit la distance à l'ensemble, de sorte que les bandes proches restent aussi nettes que les pixels le permettent. Les exportations de cette vue l'utilisent aussi.
 panel-palette = Palette
 # The two colors of the Binary palette, each beside its color swatch.
 panel-in-set = Dans l’ensemble

@@ -2719,6 +2719,8 @@ panel-inside-palette-hover = 轨道陷阱为内部着色所用的调色板。
 panel-inside-palette-same = 与外部相同
 panel-inside-fit = 适配内部范围
 panel-inside-fit-hover = 将内部调色板铺展到屏幕上集合内部测得的陷阱值上，使其结构可见。此视图的导出使用相同的适配。
+panel-palette-aa = 调色板抗锯齿
+panel-palette-aa-hover = 在调色板色带细于一个像素的地方，显示它们的平均颜色而不是噪点。宽度由到集合的距离决定，因此靠近集合的色带会在像素允许的范围内保持清晰。此视图的导出也会使用它。
 panel-palette = 调色板
 # The two colors of the Binary palette, each beside its color swatch.
 panel-in-set = 集合内

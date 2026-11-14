@@ -343,6 +343,7 @@ pub(crate) const CLI_REFERENCE: &[CliRef] = {
         Flag("--interior solid|trap", "What colors the inside of the set: one solid color, or how near each orbit came to the orbit trap (the Inside row). Left out: the method's own (the trap method colors it by its trap, every other method one color)."),
         Flag("--interior-palette ID", "The palette the trap colors the inside with, a palette id such as ember (the Inside palette; with an inside colored by the trap)."),
         Flag("--interior-fit", "Fit the inside's palette to the trap values measured inside the set (with an inside colored by the trap). It needs a view on screen to measure, so a --render keeps the fixed rate."),
+        Flag("--palette-aa", "Anti-alias the palette: where its bands are finer than a pixel, the pixel shows their average color, sized by the distance to the set (Anti-alias the palette, under Coloring). Off by default."),
         Flag("--interior-color R,G,B", "A solid inside's color, three numbers from 0 to 1 such as 0.9,0.2,0.6 (with a solid inside; Duotone and Binary use their dark color)."),
         Flag("--binary", "The Binary (set) palette: one flat color inside the set and another outside, no gradient (Color > Binary (set)). Not binary decomposition, which is --method decomposition."),
         Flag("--light [--light-angle R]", "Enable 3D relief lighting."),

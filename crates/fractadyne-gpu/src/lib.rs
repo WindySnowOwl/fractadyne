@@ -379,9 +379,10 @@ pub(crate) struct ColorUniforms {
     /// keep the two structs in the same order.
     pub(crate) norm_mode: u32,
     pub(crate) norm_lo: f32,
-    /// 1 = analytic palette anti-aliasing: box-filter the palette over each pixel's footprint
-    /// (`palette_box` in the shader) so a steep escape field at deep zoom stops aliasing into
-    /// speckle. 0 = point sample (the old behavior), for A/B and golden re-blessing.
+    /// Analytic palette anti-aliasing, box-filtering the palette over each pixel's footprint
+    /// (`palette_box` in the shader) so a steep escape field stops aliasing into speckle:
+    /// [`PaletteAa::gpu_word`], 0 = point sample, 1 = the footprint from the next pixels'
+    /// coordinates, 2 = from the distance estimate where the Smooth count has one (coloring plan C8).
     pub(crate) aa_palette: u32,
     /// A dissolve from another palette map ([`PaletteFade`]): its weight (0 = none) and that map,
     /// in the three words that padded `aa_palette` and one more 16-byte row. `ColorU` mirrors them.
@@ -404,6 +405,45 @@ pub(crate) struct ColorUniforms {
     pub(crate) lut2_smooth: u32,
     pub(crate) interior_cycle: f32,
     pub(crate) interior_offset: f32,
+    /// ln of the formula's escape degree for the distance-sized footprint ([`aa_ln_p`]), 0 where the
+    /// formula has no distance estimate. A new 16-byte row with three pad words; `ColorU` mirrors it.
+    pub(crate) aa_ln_p: f32,
+    pub(crate) _pad_aa: [f32; 3],
+}
+
+/// How the color pass band-limits the palette over each pixel's footprint (coloring plan C8): the
+/// box filter `palette_box` is the same; what differs is how wide a pixel's footprint is taken to be.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub enum PaletteAa {
+    /// Point-sample the palette: the classic look.
+    #[default]
+    Off,
+    /// The footprint from the palette coordinates of the next pixel right and below.
+    Neighbors,
+    /// The footprint the distance estimate gives the Smooth count, |dt/dμ| / (d·ln p) with d in
+    /// output pixels; the neighbors' where a texel has no distance or the method is not Smooth.
+    Distance,
+}
+
+impl PaletteAa {
+    /// The word `ColorU.aa_palette` carries.
+    pub fn gpu_word(self) -> u32 {
+        match self {
+            PaletteAa::Off => 0,
+            PaletteAa::Neighbors => 1,
+            PaletteAa::Distance => 2,
+        }
+    }
+}
+
+/// `ColorU.aa_ln_p` for `formula`: the log of its escape degree (the smooth count's log base, the
+/// shader's `power_f`) where it has a distance estimate, else 0, which keeps the neighbors' footprint.
+pub(crate) fn aa_ln_p(formula: u32) -> f32 {
+    if fractadyne_core::formula::caps(formula).distance_estimate {
+        (fractadyne_core::formula::power(formula) as f32).ln()
+    } else {
+        0.0
+    }
 }
 
 /// A dissolve between two palette maps: a frame drawn under its own map (`cycle`, `offset`,
@@ -497,6 +537,9 @@ mod band_pos_tests;
 #[cfg(test)]
 #[path = "../tests/unit/coloring_ids_tests.rs"]
 mod coloring_ids_tests;
+#[cfg(test)]
+#[path = "../tests/unit/palette_aa_tests.rs"]
+mod palette_aa_tests;
 
 /// GPU-timestamp capture around the LIVE `iterate_pass`, so the app can size deep frames against what
 /// the iterate ACTUALLY costs on this GPU at this view.
@@ -3317,10 +3360,10 @@ pub struct MandelbrotParams {
     pub norm_lo: f32,
     /// A dissolve from the map this frame's replaces ([`PaletteFade`]); none by default.
     pub palette_fade: PaletteFade,
-    /// Analytic palette anti-aliasing: box-filter the palette over each pixel's phase footprint
-    /// (`palette_box` in the shader) so a steep escape field at deep zoom stops aliasing into
-    /// speckle. `false` = point sample (the classic behavior).
-    pub aa_palette: bool,
+    /// Analytic palette anti-aliasing ([`PaletteAa`]): box-filter the palette over each pixel's
+    /// phase footprint (`palette_box` in the shader) so a steep escape field stops aliasing into
+    /// speckle. `Off` = point sample (the classic behavior).
+    pub aa_palette: PaletteAa,
     /// The baked palette: `LUT_SIZE` display-space RGBA entries, entry `i` holding the gradient at
     /// `(i + 0.5) / len`. Produced by `fractadyne_color::segment::Gradient::bake`, which is the
     /// only thing in the tree that knows what a stop, a blend function or a `.map` band is.
@@ -3595,7 +3638,7 @@ impl Default for MandelbrotParams {
             norm_mode: 0,
             norm_lo: 0.0,
             palette_fade: PaletteFade::default(),
-            aa_palette: false,
+            aa_palette: PaletteAa::Off,
             lut: Arc::new(Vec::new()),
             lut_smooth: true,
             light: 0,
@@ -4032,7 +4075,7 @@ impl CallbackTrait for MandelbrotParams {
             },
             norm_mode: self.norm_mode,
             norm_lo: self.norm_lo,
-            aa_palette: self.aa_palette as u32,
+            aa_palette: self.aa_palette.gpu_word(),
             fade_weight: self.palette_fade.weight,
             fade_mode: self.palette_fade.mode,
             fade_lo: self.palette_fade.lo,
@@ -4046,6 +4089,8 @@ impl CallbackTrait for MandelbrotParams {
             lut2_smooth: iw.lut2_smooth,
             interior_cycle: iw.cycle,
             interior_offset: iw.offset,
+            aa_ln_p: aa_ln_p(self.formula),
+            _pad_aa: [0.0; 3],
         };
         queue.write_buffer(&view.color_uniform, 0, bytemuck::bytes_of(&cu));
         view.last_cu = Some(cu);

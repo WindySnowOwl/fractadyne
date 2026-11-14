@@ -363,6 +363,12 @@ enum Screen {
     InsideFit,
     /// ...and the trap method with a solid inside: one color where its own inside varies.
     InsideSolidUnderTrap,
+    /// The palette anti-aliased (C8), on the same view: first the control, Smooth with a solid
+    /// inside and the anti-aliasing off...
+    PaletteAaBase,
+    /// ...then on: a recolor, the inside untouched, the outside changed, and an export of the view
+    /// is the screen.
+    PaletteAa,
 }
 
 /// The method sheet cell the `method-sheet-deep-asked` steps ask for: Decomposition, which no
@@ -372,6 +378,11 @@ const UITEST_ASKED_CELL: crate::ui::method_sheet::SheetCell =
 
 /// The `inside-color` step's solid inside (C1).
 const UITEST_INSIDE_COLOR: [f32; 3] = [0.9, 0.2, 0.6];
+
+/// `palette-aa`: the least the view's picture must change (mean |Δ| a channel, 0-255) when the
+/// palette is anti-aliased by the seahorse valley. Measured 3.65 on the RTX 3080 (2026-11-13); the
+/// home view changes by 0.05.
+const UITEST_PALETTE_AA_CHANGE: f64 = 1.5;
 
 /// `sheet-calculated-cell-is-the-method`: the most two pictures of the same view in the same
 /// method, by two renderers, may differ as 8x8 block means (0-255 a channel).
@@ -1245,6 +1256,8 @@ fn build_steps() -> Vec<Step> {
         screen("inside-palette", Screen::InsidePalette),
         screen("inside-fit", Screen::InsideFit),
         screen("inside-solid-under-trap", Screen::InsideSolidUnderTrap),
+        screen("palette-aa-base", Screen::PaletteAaBase),
+        screen("palette-aa", Screen::PaletteAa),
         // LAST, like the reporter-settings pairs before them: they train the Julia pane's budget on
         // a cheap Julia (1.75e11), and placed after the minimap steps, palette-browser-dual turned
         // the dual view back on at home over that budget — one 1-second frame and a dead-man, a
@@ -1591,15 +1604,63 @@ impl FractadyneApp {
     /// An export of the view at `size`, one sample a pixel, on the window's device (as the
     /// Misiurewicz thumbnails render), as RGBA8: the export path's coloring, held against the screen's.
     fn uitest_export_view(&self, size: [u32; 2]) -> Option<Vec<u8>> {
+        self.uitest_export_view_with(size, |_| {})
+    }
+
+    /// [`Self::uitest_export_view`] with the request changed by `edit` after it is built.
+    fn uitest_export_view_with(&self, size: [u32; 2], edit: impl FnOnce(&mut fractadyne_gpu::ExportRequest)) -> Option<Vec<u8>> {
         let rs = self.render_state.as_ref()?;
         let vp = self.sheet_cell_viewport(size);
         let mut req = self.current_export_request_for(&vp, self.julia_mode && !self.dual);
         req.width = size[0];
         req.height = size[1];
         req.ss = 1;
+        edit(&mut req);
         let (progress, cancel) = (std::sync::atomic::AtomicU32::new(0), std::sync::atomic::AtomicBool::new(false));
         let r = fractadyne_gpu::render_export(&rs.device, &rs.queue, &req, &progress, &cancel).ok()?;
         Some(fractadyne_export::to_srgb8(&r.pixels))
+    }
+
+    /// The `palette-aa` step's checks (C8), against `palette-aa-base`: ticking the box recolors the
+    /// view, and an export of it is anti-aliased too, nearer its own supersampled picture than one
+    /// point sampled (the CONTROL, which has to alias at this view for the check to judge anything).
+    fn uitest_palette_aa_checks(&self, ut: &UiTest, view: Option<&(Vec<u8>, [u32; 2])>, ran_why: [u64; 7], checks: &mut Vec<Check>) {
+        let fail = |name: &str, detail: String| Check { name: name.into(), verdict: Verdict::Fail, detail };
+        let base = ut.results.iter().rev().find(|r| r.name == "palette-aa-base");
+        let (Some((px, size)), Some(b)) = (view, base) else {
+            checks.push(fail("palette-aa", "no picture of this step or no palette-aa-base step".into()));
+            return;
+        };
+        let Some((prev, _)) = b.inside_view.as_ref().filter(|p| p.1 == *size && p.0.len() == px.len()) else {
+            checks.push(fail("palette-aa", "no picture from palette-aa-base at this step's size".into()));
+            return;
+        };
+        // Mean |difference| over every pixel, RGB, 0-255.
+        let diff = |a: &[u8], b: &[u8]| -> f64 {
+            let s: f64 = a.chunks_exact(4).zip(b.chunks_exact(4)).map(|(p, q)| (0..3).map(|k| (p[k] as f64 - q[k] as f64).abs()).sum::<f64>()).sum();
+            s / (3 * (a.len() / 4).max(1)) as f64
+        };
+        // Passes the box caused (KEY or FORCED; a probe's do not count).
+        let ran = (ran_why[0] - b.ran_why[0]) + (ran_why[1] - b.ran_why[1]);
+        let changed = diff(px, prev);
+        let detail = format!("the view changed by {changed:.2}; passes caused {ran}");
+        let ok = changed >= UITEST_PALETTE_AA_CHANGE && ran == 0;
+        checks.push(if ok { pass("palette-aa", detail) } else { fail("palette-aa", detail) });
+        // The export: as the app builds it (the box ticked), point sampled, and 8x8 supersampled.
+        let app = self.uitest_export_view(*size);
+        let off = self.uitest_export_view_with(*size, |r| r.aa_palette = fractadyne_gpu::PaletteAa::Off);
+        let truth = self.uitest_export_view_with(*size, |r| {
+            r.aa_palette = fractadyne_gpu::PaletteAa::Off;
+            r.ss = 8;
+        });
+        let (detail, ok) = match (&app, &off, &truth) {
+            (Some(a), Some(o), Some(t)) if a.len() == t.len() && o.len() == t.len() => {
+                let (ea, eo) = (diff(a, t), diff(o, t));
+                (format!("against 8x8 samples: an export of the view {ea:.2}, point sampled {eo:.2}"), eo >= 2.0 && ea <= 0.6 * eo)
+            }
+            _ => ("an export failed".into(), false),
+        };
+        checks.push(if ok { pass("palette-aa-export", detail) } else { fail("palette-aa-export", detail) });
     }
 
     /// The Inside steps' checks (B5), each against the step before.
@@ -2338,6 +2399,9 @@ impl FractadyneApp {
                 self.render_cfg.max_iter = 20_000;
                 self.render_cfg.aa = 8;
                 self.coloring.color_method = crate::ColorMethod::Decomposition;
+                // `palette-aa` left the palette anti-aliased and its map fixed (the default is live).
+                self.coloring.palette_aa = false;
+                self.coloring.normalize_live = true;
                 self.viewport.set_center_mag(
                     fractadyne_core::BigFloat::from_f64(-0.75, 64),
                     fractadyne_core::BigFloat::from_f64(0.02, 64),
@@ -2527,6 +2591,29 @@ impl FractadyneApp {
             Screen::InsideSolidUnderTrap => {
                 self.coloring.color_method = crate::ColorMethod::OrbitTrap;
                 self.coloring.interior = Some(crate::InteriorMode::Solid);
+                self.dialogs.right_panel_open = true;
+            }
+            // By the seahorse valley, where the palette aliases at the default density (the self-test
+            // `palette-aa`'s view): the control, then the palette anti-aliased.
+            Screen::PaletteAaBase | Screen::PaletteAa => {
+                if matches!(s, Screen::PaletteAaBase) {
+                    self.set_show_mode(crate::ShowMode::Set);
+                    self.set_fractal(crate::FractalKind::Mandelbrot);
+                    self.viewport.set_center_mag(
+                        fractadyne_core::BigFloat::from_f64(-0.7435, 64),
+                        fractadyne_core::BigFloat::from_f64(0.1315, 64),
+                        800.0,
+                    );
+                    self.render_cfg.auto_iter = false;
+                    self.render_cfg.max_iter = 6000;
+                }
+                self.coloring.color_method = crate::ColorMethod::Smooth;
+                self.coloring.interior = Some(crate::InteriorMode::Solid);
+                // A fixed palette map: with "Normalize deep colors" on, the window was still gliding
+                // after the jump here when the control was captured, and the background's change
+                // passed for the anti-aliasing's (2026-11-13).
+                self.coloring.normalize_live = false;
+                self.coloring.palette_aa = matches!(s, Screen::PaletteAa);
                 self.dialogs.right_panel_open = true;
             }
             Screen::MethodSheetDeepAsked | Screen::MethodSheetDeepAskedDone => {
@@ -3064,7 +3151,14 @@ impl FractadyneApp {
         let inside_step = matches!(
             step.kind,
             StepKind::Screen(
-                Screen::InsideSolid | Screen::InsideColor | Screen::InsideTrap | Screen::InsidePalette | Screen::InsideFit | Screen::InsideSolidUnderTrap
+                Screen::InsideSolid
+                    | Screen::InsideColor
+                    | Screen::InsideTrap
+                    | Screen::InsidePalette
+                    | Screen::InsideFit
+                    | Screen::InsideSolidUnderTrap
+                    | Screen::PaletteAaBase
+                    | Screen::PaletteAa
             )
         );
         let inside_view = inside_step.then(|| self.uitest_inside_size()).and_then(|s| {
@@ -3880,6 +3974,11 @@ impl FractadyneApp {
             step.kind
         {
             self.uitest_inside_checks(sc, ut, inside_view.as_ref(), ran_why, &mut checks);
+        }
+
+        // ---- the palette anti-aliased (coloring plan C8) ----
+        if let StepKind::Screen(Screen::PaletteAa) = step.kind {
+            self.uitest_palette_aa_checks(ut, inside_view.as_ref(), ran_why, &mut checks);
         }
 
         // ---- the method sheet's calculated cells (coloring plan B7, step 4) ----

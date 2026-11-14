@@ -2719,6 +2719,8 @@ panel-inside-palette-hover = 軌道トラップが内部を着色するパレッ
 panel-inside-palette-same = 外側と同じ
 panel-inside-fit = 内部の範囲に合わせる
 panel-inside-fit-hover = 画面上の集合内部で測ったトラップの値に内部パレットを広げ、その構造が見えるようにします。このビューの書き出しも同じ調整を使います。
+panel-palette-aa = パレットのアンチエイリアス
+panel-palette-aa-hover = パレットの帯が1ピクセルより細かい所では、ノイズの代わりに平均色を表示します。幅は集合までの距離から決まるため、集合に近い帯はピクセルが許す限りくっきり保たれます。このビューのエクスポートにも適用されます。
 panel-palette = パレット
 # The two colors of the Binary palette, each beside its color swatch.
 panel-in-set = 集合内
