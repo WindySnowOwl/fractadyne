@@ -1222,6 +1222,9 @@ struct AccumCmd {
     commit: bool,
     /// Restart the average before folding (sample 0 / view change).
     reset: bool,
+    /// Which sample of the run this frame is (`MandelbrotParams::aa_sample`, the palette
+    /// footprint's share; 0 outside a run).
+    sample: u32,
 }
 
 /// Which view a whole-refresh price describes: its render mode, the navigation epoch
@@ -1950,6 +1953,8 @@ struct Perf {
     /// re-iterates over `tex_view`.
     accum_committed: [bool; 2],
     accum_jitter: [[f32; 2]; 2],
+    /// The sample index `accum_jitter` was taken for (`AccumCmd::sample`).
+    accum_sample: [u32; 2],
     accum_cmd: [AccumCmd; 2],
     /// Supersampling on a SECOND GPU (`gpu_worker`, design/multi-gpu-live.md L2). `accum_run`: the
     /// run's id, bumped whenever a run starts or stops, so a late sample of an old run is dropped.
@@ -2690,6 +2695,7 @@ impl Default for Perf {
             accum_folds_checked: [false, false],
             accum_committed: [false, false],
             accum_jitter: [[0.0, 0.0], [0.0, 0.0]],
+            accum_sample: [0, 0],
             accum_run: [0, 0],
             accum_next: [0, 0],
             accum_free: [Vec::new(), Vec::new()],
@@ -8787,6 +8793,9 @@ impl FractadyneApp {
         }
         if args.iter().any(|a| a == "--palette-aa") {
             self.coloring.palette_aa = true;
+        }
+        if args.iter().any(|a| a == "--no-palette-aa") {
+            self.coloring.palette_aa = false;
         }
         let inside = self.coloring.interior_of(self.coloring.color_method);
         if args.iter().any(|a| a == "--interior-fit") && inside != crate::InteriorMode::Trap {
@@ -16085,6 +16094,7 @@ impl FractadyneApp {
             self.perf.accum_folds_checked[view] = false;
             self.perf.accum_committed[view] = false;
             self.perf.accum_jitter[view] = [0.0, 0.0];
+            self.perf.accum_sample[view] = 0;
             self.perf.accum_sig[view] = sig;
             self.perf.accum_norm_sig[view] = self.accum_norm_sig(view);
             // Every begin counts in the record; the LINE is rate-limited (it was ~65% of a crashing
@@ -16106,6 +16116,7 @@ impl FractadyneApp {
         }
         let count = self.perf.accum_count[view];
         cmd.jitter = self.perf.accum_jitter[view];
+        cmd.sample = self.perf.accum_sample[view];
         if count >= self.perf.accum_goal(view) {
             // Converged: keep presenting the average, request no repaint → the view quiesces. The
             // last fold ran in the previous frame's prepare, so the GPU's count is final here.
@@ -16140,8 +16151,10 @@ impl FractadyneApp {
             // (One GPU: `index == count`, the sequence it always took.)
             self.perf.accum_committed[view] = false;
             self.perf.accum_jitter[view] = accum_jitter_seq(index);
+            self.perf.accum_sample[view] = index;
             self.perf.view_gen[view] = self.perf.frame_idx;
             cmd.jitter = self.perf.accum_jitter[view];
+            cmd.sample = index;
             self.schedule_repaint(ctx);
         } else {
             // Every sample is handed out and this device's are folded: the rest are the worker's.
@@ -16256,6 +16269,7 @@ impl FractadyneApp {
             self.perf.accum_template[view].as_ref().expect("checked above"),
             accum_jitter_seq(index),
         );
+        req.aa_sample = index;
         // Short passes, as for its motion refreshes: the second device may share a card with the
         // window or the desktop, and one pass is one draw the GPU does not interrupt.
         req.pass_ms = Some(crate::tunables::cost().worker_pass_ms);

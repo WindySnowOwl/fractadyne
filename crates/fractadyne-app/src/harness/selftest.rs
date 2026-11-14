@@ -1719,23 +1719,41 @@ impl FractadyneApp {
                 use std::sync::atomic::{AtomicBool, AtomicU32};
                 let progress = AtomicU32::new(0);
                 let cancel = AtomicBool::new(false);
-                let a = fractadyne_gpu::render_export(device, queue, &req, &progress, &cancel)
-                    .map_err(|e| eprintln!("[selftest] GPU ERROR (render_export): {e}"))
-                    .ok();
-                let b =
-                    fractadyne_gpu::render_export_unchunked(device, queue, &req, &progress, &cancel)
+                let both = |r: &fractadyne_gpu::ExportRequest| {
+                    let a = fractadyne_gpu::render_export(device, queue, r, &progress, &cancel)
+                        .map_err(|e| eprintln!("[selftest] GPU ERROR (render_export): {e}"))
+                        .ok();
+                    let b = fractadyne_gpu::render_export_unchunked(device, queue, r, &progress, &cancel)
                         .map_err(|e| eprintln!("[selftest] GPU ERROR (render_export_unchunked): {e}"))
                         .ok();
-                let (pass, result) = match (&a, &b) {
-                    (Some(a), Some(b)) if a.pixels.len() == b.pixels.len() => {
+                    (a, b)
+                };
+                // ⭐The palette POINT SAMPLED for the bit-identity claim: anti-aliased (the default since
+                // C8), the Smooth color reads the distance estimate, whose last bits the chunked walk's
+                // resolve and the single dispatch round apart, and ~270 of 48,400 pixels came out up to
+                // 4e-6 apart (2026-11-13), well inside a tile, not at its edges. That is judged below.
+                let mut point = req.clone();
+                point.aa_palette = fractadyne_gpu::PaletteAa::Off;
+                let (a, b) = both(&point);
+                let (aa_a, aa_b) = both(&req);
+                let (pass, result) = match (&a, &b, &aa_a, &aa_b) {
+                    (Some(a), Some(b), Some(x), Some(y)) if a.pixels.len() == b.pixels.len() && x.pixels.len() == y.pixels.len() => {
                         let diffs = bit_exact(&a.pixels, &b.pixels);
+                        let aa_max = x.pixels.iter().zip(&y.pixels).map(|(p, q)| (p - q).abs()).fold(0.0f32, f32::max);
                         (
                             // The tile count is part of the claim: at one tile this case tests
                             // nothing it is named after (see `tile_px_max` above).
-                            diffs == 0 && a.max_dispatch_ms > 0.0 && a.tiles_total == 16,
+                            diffs == 0
+                                && a.max_dispatch_ms > 0.0
+                                && a.tiles_total == 16
+                                && req.aa_palette == fractadyne_gpu::PaletteAa::Distance
+                                && aa_max <= 1.0e-4,
                             format!(
-                                "{diffs} texels differ; {} tiles; max dispatch {:.0}ms vs control {:.0}ms",
-                                a.tiles_total, a.max_dispatch_ms, b.max_dispatch_ms
+                                "{diffs} texels differ; {} tiles; max dispatch {:.0}ms vs control {:.0}ms; the palette anti-aliased: {} texels differ, by {aa_max:.1e} at most",
+                                a.tiles_total,
+                                a.max_dispatch_ms,
+                                b.max_dispatch_ms,
+                                bit_exact(&x.pixels, &y.pixels)
                             ),
                         )
                     }
@@ -1744,9 +1762,9 @@ impl FractadyneApp {
                 push_check(&mut checks, &mut last_check_t, SelfCheck {
                     category: "IterChunk",
                     name: "tiled chunked export is bit-identical".into(),
-                    params: "corpus07 1e30x, 4M iter, 16 tiles, colored".into(),
+                    params: "corpus07 1e30x, 4M iter, 16 tiles, colored, the palette point sampled and anti-aliased".into(),
                     result,
-                    threshold: "0 texels differ",
+                    threshold: "0 texels differ point sampled; anti-aliased by the distance, within 1e-4 (a 255th is 3.9e-3)",
                     pass,
                 });
 
@@ -8575,9 +8593,9 @@ impl FractadyneApp {
             push_check(&mut checks, &mut last_check_t, SelfCheck {
                 category: "Zoom video",
                 name: "a window holding only what the colouring reads, in pieces, makes the same frames".into(),
-                params: format!("a dive into ({SX}, {SY}), 160x90 frames from 1x to 2^12, cap 2000; frames at 2^0, 2^3.3, 2^7.9 turned 0.21 and 2^12, smooth and distance coloring with and without glow and relief; strips in 3 pieces (193, 193, 191)"),
+                params: format!("a dive into ({SX}, {SY}), 160x90 frames from 1x to 2^12, cap 2000; frames at 2^0, 2^3.3, 2^7.9 turned 0.21 and 2^12, smooth and distance coloring with and without glow and relief, smooth with the palette point sampled and anti-aliased; strips in 3 pieces (193, 193, 191)"),
                 result,
-                threshold: "every pixel bit-identical to the whole window's for all 6 colorings; the control: over 1000 escaped samples differ in what the count-only window leaves out and none in the count, and a relief coloring is refused on it"
+                threshold: "every pixel bit-identical to the whole window's for all 7 colorings; the control: over 1000 escaped samples differ in what the count-only window leaves out and none in the count, and a relief coloring is refused on it"
                     .into(),
                 pass,
             });
@@ -10339,7 +10357,7 @@ zoom = \"1e94\"
                 interior_palette: "ice".into(),
                 interior_color: [0.7, 0.1, 0.4],
                 interior_fit: true,
-                palette_aa: true,
+                palette_aa: false,
             };
             // (coloring, lines its view must hold)
             let colorings = [
@@ -10389,8 +10407,8 @@ zoom = \"1e94\"
                 ),
                 // A solid inside in a color of its own (C1).
                 (ViewColoring { interior_color: [0.9, 0.2, 0.6], ..d.clone() }, &["interior_color=0.9,0.2,0.6"][..]),
-                // The palette anti-aliased (C8).
-                (ViewColoring { palette_aa: true, ..d.clone() }, &["palette_aa=1"][..]),
+                // The palette point sampled (C8: anti-aliased by default).
+                (ViewColoring { palette_aa: false, ..d.clone() }, &["palette_aa=0"][..]),
             ];
             let mut bad: Vec<String> = Vec::new();
             for (v, want_lines) in &colorings {
@@ -10534,7 +10552,7 @@ zoom = \"1e94\"
                 interior_palette: "ember".into(),
                 interior_color: [0.9, 0.2, 0.6],
                 interior_fit: true,
-                palette_aa: true,
+                palette_aa: false,
             };
             let fields = |s: &fractadyne_state::ColoringSpec| match serde_json::to_value(s) {
                 Ok(serde_json::Value::Object(m)) => m,
@@ -11539,9 +11557,15 @@ zoom = \"1e94\"
                 .collect();
             self.coloring.custom_segments.clear();
             self.coloring.custom_palette_flat = true;
+            // The palette point sampled: anti-aliased (the default since C8), a band finer than a
+            // pixel near the set shows its neighbors' average, which is that feature working; what
+            // this asks is the LUT the import made.
+            let aa_was = self.coloring.palette_aa;
+            self.coloring.palette_aa = false;
             let banded = shoot(self, device, queue, cw, ch).map(|(px, _)| px);
             self.coloring.custom_palette_flat = false; // the control: same colors, blended
             let smoothed = shoot(self, device, queue, cw, ch).map(|(px, _)| px);
+            self.coloring.palette_aa = aa_was;
             let (res, pass) = match (&banded, &smoothed) {
                 (Some(b), Some(sm)) => {
                     // Declared levels, as bytes. The in-set color is not gray, so filtering to

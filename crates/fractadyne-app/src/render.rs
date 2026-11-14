@@ -4452,6 +4452,7 @@ impl FractadyneApp {
             },
             palette_fade: fractadyne_gpu::PaletteFade::default(),
             aa_palette: self.palette_aa(),
+            aa_sample: 0,
             lut,
             lut_smooth,
             light: self.effects.light as u32,
@@ -4498,6 +4499,7 @@ pub(crate) fn params_to_request(p: &fractadyne_gpu::MandelbrotParams) -> fractad
         norm_lo: 0.0,
         palette_fade: fractadyne_gpu::PaletteFade::default(),
         aa_palette: fractadyne_gpu::PaletteAa::Off,
+        aa_sample: 0,
         glitch_on: 0,
         vignette: p.vignette,
         sa_a: p.sa_a,
@@ -4551,6 +4553,7 @@ pub(crate) fn params_to_request_exact(p: &fractadyne_gpu::MandelbrotParams, jitt
         norm_mode: p.norm_mode,
         norm_lo: p.norm_lo,
         aa_palette: p.aa_palette,
+        aa_sample: p.aa_sample,
         custom: p.custom.clone(),
         jitter,
         ..params_to_request(p)
@@ -7371,6 +7374,7 @@ impl FractadyneApp {
             // Progressive on-settle supersampling command for this view (computed in
             // `drive_accumulation`). All-off on a moving/shallow/harness frame → a classic frame.
             jitter: self.perf.accum_cmd[vsub].jitter,
+            aa_sample: self.perf.accum_cmd[vsub].sample,
             accum_present: self.perf.accum_cmd[vsub].present,
             accum_commit: self.perf.accum_cmd[vsub].commit,
             accum_reset: self.perf.accum_cmd[vsub].reset,

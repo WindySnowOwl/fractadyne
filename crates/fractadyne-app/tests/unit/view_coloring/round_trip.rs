@@ -47,7 +47,7 @@ fn scrambled() -> ViewColoring {
         interior_palette: "ice".into(),
         interior_color: [0.7, 0.1, 0.4],
         interior_fit: true,
-        palette_aa: true,
+        palette_aa: false,
     }
 }
 
@@ -86,10 +86,10 @@ fn variants() -> Vec<ViewColoring> {
     v.push(ViewColoring { interior: Some(InteriorMode::Trap), interior_fit: true, ..d.clone() });
     v.push(ViewColoring { method: ColorMethod::OrbitTrap, interior_fit: true, ..d.clone() });
     v.push(ViewColoring { interior_color: [0.9, 0.2, 0.6], two_color: TwoColor::Duotone, ..d.clone() });
-    // The palette anti-aliased (C8), under Smooth and under a method it does not size from the
-    // distance, which still carries it.
-    v.push(ViewColoring { palette_aa: true, ..d.clone() });
-    v.push(ViewColoring { method: ColorMethod::Stripe, palette_aa: true, ..d.clone() });
+    // The palette point sampled (C8 anti-aliases it by default), under Smooth and under a method it
+    // does not size from the distance, which still carries it.
+    v.push(ViewColoring { palette_aa: false, ..d.clone() });
+    v.push(ViewColoring { method: ColorMethod::Stripe, palette_aa: false, ..d.clone() });
     v.push(ViewColoring { normalize_live: false, ..d.clone() });
     v.push(ViewColoring { normalize_fit: true, log_scale: true, ..d.clone() });
     v.push(ViewColoring { method: ColorMethod::OrbitTrap, normalize_fit: true, log_scale: true, ..d.clone() });
@@ -147,7 +147,7 @@ fn what_the_picture_does_not_depend_on_is_left_alone() {
     assert!(!got.light && !got.glow);
     assert_eq!(got.two_color, TwoColor::Off);
     assert_eq!((got.normalize_live, got.normalize_fit, got.log_scale), (d.normalize_live, d.normalize_fit, d.log_scale));
-    assert!(!got.palette_aa, "a view that leaves the palette's anti-aliasing out has it off");
+    assert!(got.palette_aa, "a view that leaves the palette's anti-aliasing out has it on, the default");
     // What it does not depend on keeps this session's values.
     assert_eq!((got.stripe_freq, got.stripe_tail, got.stripe_tail_len), (17.0, true, 900));
     assert_eq!(got.trap, TrapType::Circle);

@@ -3742,10 +3742,12 @@ struct ColorU {
     interior_cycle: f32,
     interior_offset: f32,
     // ln of the formula's escape degree for the distance-sized palette footprint (coloring plan
-    // C8, `aa_palette == 2`), 0 where the formula has no distance estimate. Three pad words.
-    // Mirrors `ColorUniforms.aa_ln_p`.
+    // C8, `aa_palette == 2`), 0 where the formula has no distance estimate. Mirrors
+    // `ColorUniforms.aa_ln_p`.
     aa_ln_p: f32,
-    _pad_aa0: f32,
+    // The footprint's share for this frame's samples: 1, or 1/√(k+1) for progressive supersampling's
+    // sample k (`aa_scale` in the Rust). Two pad words.
+    aa_scale: f32,
     _pad_aa1: f32,
     _pad_aa2: f32,
 };
@@ -3931,21 +3933,34 @@ fn palette_box(coord: f32, width: f32) -> vec3<f32> {
     return (hi - lo) / w;
 }
 
-// The palette footprint of a Smooth texel from its distance estimate (coloring plan C8): how many
-// palette cycles one OUTPUT pixel spans there, |dt/dμ| · |∇μ| with |∇μ| = 1 / (d · ln p), d the
-// distance in output pixels (the stored DE, `|z|·ln|z| / |dz/dc|`, is exactly G/|∇G| for the
-// Green's function G, and μ = −log_p G + const). `cycle` and the map (`mode`, `lo`) are the
-// palette map's own, so a log map's dt/dμ = cycle / (μ − lo + 1). Negative where the texel has no
-// distance (no derivative, or `aa_ln_p` 0): the caller keeps the neighbor-difference footprint.
-// Unlike that one it does not reach across to the next pixel, which at a boundary may be a
-// different band of the escape field altogether.
-fn de_footprint(m: vec4<f32>, cycle: f32, mode: u32, lo: f32) -> f32 {
+// The palette footprint of a Smooth tap from its distance estimate (coloring plan C8): how many
+// palette cycles a tap `s` OUTPUT pixels across spans there, |dt/dμ| · s · |∇μ| with |∇μ| =
+// 1 / (d · ln p), d the distance in output pixels (the stored DE, `|z|·ln|z| / |dz/dc|`, is exactly
+// G/|∇G| for the Green's function G, and μ = −log_p G + const). `cycle` and the map (`mode`, `lo`)
+// are the palette map's own, so a log map's dt/dμ = cycle / (μ − lo + 1). Negative where the texel
+// has no distance (no derivative, or `aa_ln_p` 0): the caller keeps the neighbor-difference
+// footprint. Unlike that one it does not reach across to the next pixel, which at a boundary may be
+// a different band of the escape field altogether.
+// Near the set this runs to many cycles and the tap takes the palette's mean color: right for a
+// whole pixel in the decorations, which holds many filaments, and wrong for a small tap, which
+// resolves their beads (see `AA_MIN_TAP`). log_p(1 + s/d), what μ does across one boundary, was
+// measured and lost most of the gain at one sample a pixel (0.040 against 0.014, point 0.047).
+fn de_footprint(m: vec4<f32>, cycle: f32, mode: u32, lo: f32, s: f32) -> f32 {
     if (cu.aa_ln_p <= 0.0 || m.a > 1.0e20 || m.r < 0.0) { return -1.0; }
     let d_px = exp2(m.a - de_px_shift);
     var dtdmu = abs(cycle);
     if (mode == 1u) { dtdmu = dtdmu / (max(m.r - lo, 0.0) + 1.0); }
-    return dtdmu / max(d_px * cu.aa_ln_p, 1.0e-12);
+    return dtdmu * s / max(d_px * cu.aa_ln_p, 1.0e-12);
 }
+
+// The smallest tap, in output pixels, whose palette is anti-aliased (C8). Below it, at 4x
+// supersampling and up and after the first few samples of progressive supersampling, the taps are
+// point sampled: there the average of the samples is already closer to the true picture than the
+// filter, which takes a tap near a filament to the palette's mean and flattens the decorations'
+// beads. Measured against 32x32 samples a pixel by the seahorse valley (point / distance-sized):
+// 1 sample 0.047 / 0.014, 2x2 0.022 / 0.015, 4x4 0.011 / 0.013, 8x8 0.007 / ~0.012; at 61x and the
+// overview the same crossing.
+const AA_MIN_TAP: f32 = 0.499;
 
 // Point-sample shade (interior → interior_col). Used by `view_average`; the main color pass uses
 // `shade_aa` so it can band-limit the palette over the pixel footprint.
@@ -4027,16 +4042,25 @@ fn fs_color(in: VsOut) -> @location(0) vec4<f32> {
     // from the CONTINUOUS coord difference to the +1-pixel neighbors (one output pixel = ss
     // texels). Diffing the pre-`fract` coord (via `coord_of`) avoids wrap discontinuities;
     // interior neighbors (the INTERIOR_COORD sentinel) are skipped. It is computed ONCE per
-    // output pixel and applied to every tap, so the band-limited color is the SAME regardless of
-    // `ss` — which is what makes a low-AA live view and a high-AA export agree, and keeps a zoom
-    // free of pops (the footprint grows smoothly with depth). Zero when off ⇒ `shade_aa` is a
-    // point sample identical to the old `shade`.
+    // output pixel, then each tap takes its own share of it: a tap is one texel, 1/ss of the pixel
+    // across (and for progressive supersampling's sample k, 1/√(k+1) of that, `cu.aa_scale`).
+    // ⛔The whole pixel's footprint on every tap, as this was until the palette anti-aliasing went
+    // on by default (C8, 2026-11-13), filtered a supersampled frame twice, by the footprint and by
+    // the taps' own average: blurrier than the pixel's true mean, and the more so the more samples.
+    // Measured against 8x8 samples by the seahorse valley, ss 4: 0.0133 with it against 0.0106
+    // point sampled. Zero when off ⇒ `shade_aa` is a point sample identical to the old `shade`.
     var pal_w = 0.0;
     var pal_wf = 0.0; // the same footprint under the map a dissolve fades from
     if (cu.aa_palette != 0u) {
         let o0 = clamp(pix * i32(ss), vec2<i32>(0, 0), maxc);
-        let ox = clamp((pix + vec2<i32>(1, 0)) * i32(ss), vec2<i32>(0, 0), maxc);
-        let oy = clamp((pix + vec2<i32>(0, 1)) * i32(ss), vec2<i32>(0, 0), maxc);
+        // The next pixel right and below; at the texture's edge (the frame's, or an export tile's,
+        // which holds nothing past it) the one before. Clamped, the edge pixel was its own neighbor,
+        // its footprint 0, and an anti-aliased export had a point-sampled line at every tile seam.
+        let past = (pix + vec2<i32>(1, 1)) * i32(ss) > maxc;
+        let nx = select(pix.x + 1, pix.x - 1, past.x);
+        let ny = select(pix.y + 1, pix.y - 1, past.y);
+        let ox = clamp(vec2<i32>(nx, pix.y) * i32(ss), vec2<i32>(0, 0), maxc);
+        let oy = clamp(vec2<i32>(pix.x, ny) * i32(ss), vec2<i32>(0, 0), maxc);
         let m0 = textureLoad(iter_tex, o0, 0);
         let a0 = textureLoad(aux_tex, o0, 0);
         let mx = textureLoad(iter_tex, ox, 0);
@@ -4054,16 +4078,31 @@ fn fs_color(in: VsOut) -> @location(0) vec4<f32> {
                 if (cx < INTERIOR_COORD) { pal_wf = max(pal_wf, abs(coord_fade(mx, ax) - f0)); }
                 if (cy < INTERIOR_COORD) { pal_wf = max(pal_wf, abs(coord_fade(my, ay) - f0)); }
             }
-            // Distance-sized (C8): the Smooth count's footprint from the pixel's own distance,
-            // where it has one; the neighbor differences above stay for everything else.
-            if (cu.aa_palette == 2u && cu.color_method == METHOD_SMOOTH) {
-                let wd = de_footprint(m0, cu.cycle, cu.norm_mode, cu.norm_lo);
-                if (wd >= 0.0) { pal_w = wd; }
+        }
+        // Each tap's share: the differences span one pixel of ss texels, and a tap is one texel (and
+        // its supersampling sample's share of that, `aa_scale`).
+        let share = cu.aa_scale / f32(ss);
+        pal_w = pal_w * share;
+        pal_wf = pal_wf * share;
+        // Distance-sized (C8): the Smooth count's footprint from the pixel's own distance, where it
+        // has one; the neighbor differences above stay for everything else. Its tap is one texel,
+        // 2^-de_px_shift output pixels across (1/ss, more on a reduced frame or a reprojection's
+        // magnified one), and its sample's share of that.
+        let s = cu.aa_scale * exp2(-de_px_shift);
+        if (cu.aa_palette == 2u && cu.color_method == METHOD_SMOOTH && c0 < INTERIOR_COORD) {
+            let wd = de_footprint(m0, cu.cycle, cu.norm_mode, cu.norm_lo, s);
+            if (wd >= 0.0) {
+                pal_w = wd;
                 if (cu.fade_weight > 0.0) {
-                    let wf = de_footprint(m0, cu.fade_cycle, cu.fade_mode, cu.fade_lo);
-                    if (wf >= 0.0) { pal_wf = wf; }
+                    // The same texel, so the fade map has a distance whenever this one does.
+                    pal_wf = max(de_footprint(m0, cu.fade_cycle, cu.fade_mode, cu.fade_lo, s), 0.0);
                 }
             }
+        }
+        // Taps under half a pixel are point sampled (`AA_MIN_TAP`), by either footprint.
+        if (min(s, share) < AA_MIN_TAP) {
+            pal_w = 0.0;
+            pal_wf = 0.0;
         }
     }
 

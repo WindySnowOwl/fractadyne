@@ -53,9 +53,10 @@ pub(crate) struct AssembleUniforms {
 
 /// What a strip window holds of each texel: only what the frames' coloring reads. The color
 /// pass (`fs_color`) reads the smooth count always, the distance estimate for the distance
-/// coloring (method 4) and the glow, and the slope normal for relief lighting, and nothing else of
-/// the main target, so a frame comes out the same from a window that leaves the rest out: a smooth
-/// coloring's window is a quarter of the whole one.
+/// coloring (method 4), the glow and the palette anti-aliased by the distance (C8), and the slope
+/// normal for relief lighting, and nothing else of the main target, so a frame comes out the same
+/// from a window that leaves the rest out: a smooth coloring's window is a quarter of the whole one,
+/// or half with the palette anti-aliased (the default).
 ///
 /// ⛔A coloring that starts reading another channel must be added to [`Self::for_colour`]: the
 /// selftest's window check compares every coloring a strip allows, smooth and distance with and
@@ -72,13 +73,15 @@ pub enum WindowTexels {
 
 impl WindowTexels {
     /// What a frame colored with `method` (the color pass's `color_method`), relief lighting
-    /// (`light`) and the distance glow (`glow`) reads. A method this does not know keeps everything.
-    pub fn for_colour(method: u32, light: bool, glow: bool) -> Self {
+    /// (`light`), the distance glow (`glow`) and the palette anti-aliasing `aa` reads. A method
+    /// this does not know keeps everything. (The neighbors' footprint reads the next pixels'
+    /// counts, which every window holds.)
+    pub fn for_colour(method: u32, light: bool, glow: bool, aa: crate::PaletteAa) -> Self {
         use fractadyne_core::coloring::ColorMethod;
         match ColorMethod::from_gpu_id(method) {
             _ if light => WindowTexels::All,
             Some(ColorMethod::Distance) => WindowTexels::CountDe,
-            Some(ColorMethod::Smooth) if glow => WindowTexels::CountDe,
+            Some(ColorMethod::Smooth) if glow || aa == crate::PaletteAa::Distance => WindowTexels::CountDe,
             Some(ColorMethod::Smooth) => WindowTexels::Count,
             _ => WindowTexels::All,
         }
@@ -86,7 +89,7 @@ impl WindowTexels {
 
     /// What a frame colored as `req` is reads.
     pub fn for_request(req: &ExportRequest) -> Self {
-        Self::for_colour(req.color_method, req.light != 0, req.de_on != 0)
+        Self::for_colour(req.color_method, req.light != 0, req.de_on != 0, req.aa_palette)
     }
 
     /// Whether a window holding this holds everything `need` reads (each holds the one before it).

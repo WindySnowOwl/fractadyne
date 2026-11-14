@@ -194,8 +194,9 @@ pub struct ColoringSpec {
     pub interior_fit: bool,
     /// Anti-alias the palette (coloring plan C8): where its bands are finer than a pixel, the pixel
     /// shows their average, over a footprint sized from the distance estimate (the next pixels'
-    /// coordinates where there is none). Off by default, the classic look.
-    #[serde(default)]
+    /// coordinates where there is none). On by default, a session from before it included; a view
+    /// that turns it off says `palette_aa=0`.
+    #[serde(default = "default_true")]
     pub palette_aa: bool,
 }
 
@@ -715,7 +716,7 @@ impl Default for ColoringSpec {
             interior_palette: String::new(),
             interior_color: default_interior_color(),
             interior_fit: false,
-            palette_aa: false,
+            palette_aa: true,
         }
     }
 }
