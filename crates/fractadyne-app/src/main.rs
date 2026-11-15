@@ -65,6 +65,7 @@ mod blinken;
 mod cli;
 mod diag;
 mod color_picker;
+mod cpu_spread;
 mod error;
 mod exec_resolve;
 mod assemble;
@@ -167,6 +168,13 @@ fn main() -> eframe::Result<()> {
     // it (`fractadyne_core::worker_priority`): on an 8-thread CPU, two lookahead picks at once left
     // the frames at the end of a zoom waiting 20-57 ms to present.
     fractadyne_core::worker_priority::install(render::lower_this_thread_priority);
+    // A split reference walk's threads on separate physical cores (`fractadyne_core::cpu_spread`):
+    // left to the scheduler on a 3950X, they shared cores and the 1e30000 path's reference took
+    // 43 s instead of 37.
+    fractadyne_core::cpu_spread::install(fractadyne_core::cpu_spread::Hooks {
+        spread: cpu_spread::spread_this_thread,
+        restore: cpu_spread::restore_this_thread,
+    });
     // ⭐ARBITRARY-PRECISION BACKEND (`--bignum auto|astro|rug`, or FRACTADYNE_BIGNUM).
     //
     // Chosen here — after logging exists, before ANY mode runs — so a headless `--render`, a

@@ -59,6 +59,11 @@ published as the pre-releases `v0.2.41-beta.1` to `v0.2.41-beta.150`, and a "bet
 
 Changes after 0.3.0-beta.1:
 
+- **Very deep references are faster on many-core CPUs (after 0.3.0-beta.27).** The accelerated
+  build splits each step of a very deep reference orbit across nine threads that wait for each
+  other every step, and Windows often put two of them on one core. They now keep to separate cores:
+  the benchmark's 1e30000× path took 36–42 s instead of 43–46 s on a 16-core Ryzen, the same
+  picture. CPUs with efficiency cores are left as they were.
 - **`--render --normalize --gpus` uses every card (after 0.3.0-beta.27).** A normalized render
   from the command line opened the other graphics cards and then rendered on the first alone, and
   logged nothing about it. It now splits across them as other renders do, with the same picture
