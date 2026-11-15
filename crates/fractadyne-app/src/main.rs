@@ -3122,6 +3122,21 @@ pub(crate) fn accum_fold_clean(
         && (count == 0 || ss == ss0)
 }
 
+/// The supersampling factor a view's frame is built at while a supersampling run holds samples:
+/// sample 0's (`run_ss`), because `accum_fold_clean` folds only at the run's ss. Without this, a
+/// learned budget that grew during a run raised `ss` under it and every later fold was withheld for
+/// good: `--shot` of a 1e12× view (2026-11-14) folded sample 0 at ss=1, the budget went 1.49e9 →
+/// 2.24e9 after the second sample, every frame after was built at ss=2, and 1,497 folds were
+/// withheld in 28 s while the view repainted without end. The jittered samples already supersample,
+/// so the ramp's next stage would add cost, not quality. Only the watchdog's bound (`max_ss_tdr`)
+/// outranks the run: past it the budget's `ss` stands and `accum_confirm` restarts the run.
+pub(crate) fn accum_run_ss(ss: u32, run_ss: Option<u32>, max_ss_tdr: u32) -> u32 {
+    match run_ss {
+        Some(s0) if s0 >= 1 && s0 <= max_ss_tdr.max(1) => s0,
+        _ => ss,
+    }
+}
+
 #[cfg(test)]
 #[path = "../tests/unit/accum_fold_tests.rs"]
 mod accum_fold_tests;
@@ -16521,6 +16536,46 @@ impl FractadyneApp {
             params.ss,
             self.perf.accum_ss[view],
         );
+        // A frame that is complete but at another ss than sample 0's can never fold, and waiting for
+        // one that can would leave the run short of its goal for good (2026-11-14). `build_params`
+        // holds the run's ss (`accum_run_ss`) unless the watchdog's bound moved below it; then the
+        // run starts over at the ss the frame can afford.
+        let ss0 = self.perf.accum_ss[view];
+        let complete = accum_fold_clean(
+            params.reproject,
+            params.display_hold,
+            params.hold_copy,
+            self.perf.tile_pending[view],
+            self.perf.chunk_pending[view],
+            self.recompute_rx[view].is_some(),
+            0,
+            params.ss,
+            params.ss,
+        );
+        if !clean && complete && count > 0 && params.ss != ss0 {
+            if let Some(held) = self.perf.accum_abandon_line[view].admit(diag::elapsed_ms(), ACCUM_LINE_GAP_MS) {
+                crate::diag::log_line(
+                    "accum",
+                    &format!(
+                        "view {view}: restarting at sample {count} — the frame is built at ss {} and the \
+                         run's samples at ss {ss0}{}",
+                        params.ss,
+                        held_note(held)
+                    ),
+                );
+            }
+            self.accum_worker_reset(view);
+            self.perf.accum_end_why[view] = Some(format!("the supersampling factor moved (ss {ss0} → {})", params.ss));
+            self.perf.accum_active[view] = false;
+            self.perf.accum_due[view] = true;
+            self.perf.accum_committed[view] = false;
+            self.perf.accum_cmd[view] = AccumCmd::default();
+            params.accum_commit = false;
+            params.accum_reset = false;
+            params.accum_present = false; // this frame shows the live frame, not the old run's average
+            self.schedule_repaint(ctx);
+            return;
+        }
         if !clean {
             params.accum_commit = false;
             params.accum_reset = false;

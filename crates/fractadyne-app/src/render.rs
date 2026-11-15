@@ -9040,6 +9040,10 @@ impl FractadyneApp {
         // `aa_target` is 1 while moving and ramps up over settled frames (progressive settle); clamp
         // to what the per-frame budget affords (`max_ss`) and what the watchdog / UI thread allow.
         let ss = aa_target.min(max_ss).min(max_ss_tdr).max(1);
+        // A supersampling run that holds samples keeps sample 0's ss, or no later sample could fold
+        // (`accum_run_ss`).
+        let run_ss = (self.perf.accum_active[vs] && self.perf.accum_count[vs] > 0).then_some(self.perf.accum_ss[vs]);
+        let ss = crate::accum_run_ss(ss, run_ss, max_ss_tdr);
         // PIN the frame geometry to an existing grid's. Resolution and ss above are derived from the
         // LIVE budget, which jitters a few percent per measurement — recomputing them each frame
         // restarts the grid every few tiles (observed: every ~4) and it never finishes; worse, after
