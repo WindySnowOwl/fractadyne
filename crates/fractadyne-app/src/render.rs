@@ -5072,7 +5072,7 @@ impl FractadyneApp {
         // Pass 1 — supersampled iteration buffer (tiled → bounded dispatches, any size). The
         // caller-supplied `work_budget` keeps each tile's dispatch under the OS watchdog for a
         // shallow-view/high-iter tour frame (see `render_export`'s `work_budget`).
-        let iter = fractadyne_gpu::render_iter_tiled(device, queue, &req, work_budget, None, None, None).ok()?;
+        let iter = self.normalized_iterate(device, queue, &req, work_budget)?;
         let (clo, chi) = match norm {
             // A time-keyed range is applied EXACTLY — no measurement reduction, and no
             // all-interior fallback: a frame with nothing escaped keeps the sequence's mapping
@@ -5142,6 +5142,47 @@ impl FractadyneApp {
         res.chunk_passes = iter.chunk_passes;
         res.max_dispatch_work = iter.max_dispatch_work;
         Some((res, (clo, chi)))
+    }
+
+    /// Pass 1 of [`Self::render_export_normalized`]: the iteration buffer, split across the cards
+    /// `--render … --gpus` opened (`export_extra`) when the request splits, else on `device` alone.
+    /// ⭐Before this, a normalized export never split: 17 of the benchmark kit's 35 scenes
+    /// (2026-11-15, every one of them `--normalize`) opened the second card, rendered on the first
+    /// and logged neither "split across" nor "cannot be split". The split gives the single card's
+    /// iteration values (same tile grid; same-class cards compute them alike), so the range and
+    /// the colors that follow are the same.
+    fn normalized_iterate(
+        &self,
+        device: &eframe::wgpu::Device,
+        queue: &eframe::wgpu::Queue,
+        req: &fractadyne_gpu::ExportRequest,
+        work_budget: u64,
+    ) -> Option<fractadyne_gpu::ExportResult> {
+        if !self.export_extra.is_empty() {
+            let (devices, names, adapters) =
+                crate::export::split_devices((device, queue, &self.gpu_name), &self.export_extra);
+            let limits: Vec<eframe::wgpu::Limits> = devices.iter().map(|(d, _)| d.limits()).collect();
+            if devices.len() > 1 && req.ss == 1 && fractadyne_gpu::export_splits(&limits, req) {
+                let (progress, cancel) = (std::sync::atomic::AtomicU32::new(0), std::sync::atomic::AtomicBool::new(false));
+                let t = std::time::Instant::now();
+                match fractadyne_gpu::render_iter_multi(&devices, &adapters, req, &progress, &cancel) {
+                    Ok((r, shares)) => {
+                        crate::export::log_split(&names, &shares, t);
+                        return Some(r);
+                    }
+                    Err(e) => crate::diag::log_line(
+                        "render",
+                        &format!("--gpus: the normalized iterate could not split ({e}); the window's card renders it"),
+                    ),
+                }
+            } else {
+                crate::diag::log_line(
+                    "render",
+                    "--gpus: this normalized render cannot be split by tile (outside the chunked iterate): the window's card renders it",
+                );
+            }
+        }
+        fractadyne_gpu::render_iter_tiled(device, queue, req, work_budget, None, None, None).ok()
     }
 }
 

@@ -59,6 +59,15 @@ published as the pre-releases `v0.2.41-beta.1` to `v0.2.41-beta.150`, and a "bet
 
 Changes after 0.3.0-beta.1:
 
+- **`--render --normalize --gpus` uses every card (after 0.3.0-beta.27).** A normalized render
+  from the command line opened the other graphics cards and then rendered on the first alone, and
+  logged nothing about it. It now splits across them as other renders do, with the same picture
+  (measured on an RTX 3080 and an RTX 3070: 59-iter's GPU work took 4.0 s across both against 7.8 s
+  on one), and a render that cannot split says so. The Export dialog's "Use all graphics cards" was
+  not affected.
+- **The inside's palette is listed under the main palette (after 0.3.0-beta.27).** With the orbit
+  trap coloring the inside, its palette rows appeared above the main Palette and pushed it down the
+  panel; the main Palette now keeps its place.
 - **The palette is anti-aliased (0.3.0-beta.27).** Where the palette's bands are finer than a
   pixel, a pixel shows their average color, so a dense palette near the set reads as its colors
   rather than speckle, without supersampling. With Smooth iteration the width averaged over comes

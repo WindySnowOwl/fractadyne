@@ -1710,6 +1710,10 @@ impl FractadyneApp {
         if self.correction_wanted(julia) {
             let budget = crate::render::CorrectionBudget::standard();
             if let Some(res) = self.render_export_corrected(device, queue, vp, julia, req.width, req.height, Some(req), budget) {
+                // Said, not silent: `--gpus` opened other cards, and this render did not use them.
+                if !self.export_extra.is_empty() {
+                    crate::diag::log_line("render", "--gpus: multi-reference correction renders on the window's card only");
+                }
                 return Ok(res);
             }
         }
@@ -2546,6 +2550,24 @@ pub(crate) fn render_split(
     progress: &std::sync::atomic::AtomicU32,
     cancel: &std::sync::atomic::AtomicBool,
 ) -> Result<fractadyne_gpu::ExportResult, fractadyne_gpu::GpuError> {
+    let (devices, names, adapters) = split_devices(window, extra);
+    let limits: Vec<eframe::wgpu::Limits> = devices.iter().map(|(d, _)| d.limits()).collect();
+    if !fractadyne_gpu::export_splits(&limits, req) {
+        crate::diag::log_line("render", "this render cannot be split by tile (outside the chunked iterate): the window's card renders it");
+    }
+    let t = std::time::Instant::now();
+    let (r, shares) = fractadyne_gpu::render_export_multi(&devices, &adapters, req, progress, cancel)?;
+    log_split(&names, &shares, t);
+    Ok(r)
+}
+
+/// The devices a split render takes: the window's card first, then each `extra` card still alive,
+/// with their names and compile tags (`render_export_multi`'s `adapters`).
+#[allow(clippy::type_complexity)]
+pub(crate) fn split_devices<'a>(
+    window: (&'a eframe::wgpu::Device, &'a eframe::wgpu::Queue, &str),
+    extra: &'a [crate::gpu_worker::Headless],
+) -> (Vec<(&'a eframe::wgpu::Device, &'a eframe::wgpu::Queue)>, Vec<String>, Vec<u64>) {
     let (device, queue, name) = window;
     let mut devices: Vec<(&eframe::wgpu::Device, &eframe::wgpu::Queue)> = vec![(device, queue)];
     let mut names = vec![name.to_string()];
@@ -2555,15 +2577,14 @@ pub(crate) fn render_split(
         names.push(h.name.clone());
         adapters.push(h.compile_tag);
     }
-    let limits: Vec<eframe::wgpu::Limits> = devices.iter().map(|(d, _)| d.limits()).collect();
-    if !fractadyne_gpu::export_splits(&limits, req) {
-        crate::diag::log_line("render", "this render cannot be split by tile (outside the chunked iterate): the window's card renders it");
-    }
-    let t = std::time::Instant::now();
-    let (r, shares) = fractadyne_gpu::render_export_multi(&devices, &adapters, req, progress, cancel)?;
+    (devices, names, adapters)
+}
+
+/// The line a split render logs: who rendered what, and how long the split took.
+pub(crate) fn log_split(names: &[String], shares: &[fractadyne_gpu::DeviceShare], t: std::time::Instant) {
     let words: Vec<String> = shares
         .iter()
-        .zip(&names)
+        .zip(names)
         .map(|(s, n)| {
             format!(
                 "{n}: {} tiles, {:.1} Mpx, GPU {:.0} ms{}",
@@ -2578,5 +2599,4 @@ pub(crate) fn render_split(
         "render",
         &format!("split across {} card(s) in {:.0} ms — {}", shares.len(), t.elapsed().as_secs_f64() * 1000.0, words.join("; ")),
     );
-    Ok(r)
 }
