@@ -54,6 +54,18 @@ fn every_built_in_step_generates_a_valid_module_with_its_own_floatexp_paths() {
         // Mode 2: the generated floatexp step (and the df32 tail's df32 one), in both passes.
         assert_eq!(s.matches("dz = custom_tame_fe(custom_fstep(Z, dz, dc, iter));").count(), 2, "both mode-2 slots");
         assert_eq!(s.matches("custom_tame(custom_pstep(Z, fe_to_cdf(dz), tail_dc(dc), iter))").count(), 2, "both tails");
+        // A dip sample (stored extended-range) takes the all-floatexp step in both (GitHub #5).
+        assert_eq!(
+            s.matches("dz = custom_tame_fe(custom_fxstep(orbit_fe(r_ref), dz, dc, iter));").count(),
+            2,
+            "both mode-2 slots step a dip in floatexp"
+        );
+        assert_eq!(
+            s.matches("if (orbit_is_ext(r_ref) || (all(r_ref == vec4<f32>(0.0)) && dz.e < CUSTOM_FX_DZ_E)) {").count(),
+            2,
+            "both mode-2 slots test for a dip and for the reference's zero under a tiny δz"
+        );
+        assert_eq!(s.matches("const CUSTOM_FX_DZ_E: i32 = -100;").count(), 1);
         assert_eq!(s.matches("let base = iter % CUSTOM_PHASES;").count(), 4, "all four rebases phase-aligned");
         assert!(s.contains("dz = cset(df_sub(z_full_re, r0.re), df_sub(z_full_im, r0.im));"), "the chunk rebase's names");
         assert!(s.contains("    let nrm = vec2<f32>(0.0, 0.0);\n    let de = 1.0e30;\n"), "the resolve's no-DE values");
@@ -70,6 +82,7 @@ fn every_built_in_step_generates_a_valid_module_with_its_own_floatexp_paths() {
         assert_eq!(shader.perturbation.is_ok(), id != f::PHOENIX, "formula {id}: {:?}", shader.perturbation);
         assert_eq!(s.contains("fn custom_pphase0("), id != f::PHOENIX);
         assert_eq!(s.contains("fn custom_fphase0("), id != f::PHOENIX);
+        assert_eq!(s.contains("fn custom_fxphase0("), id != f::PHOENIX);
         built += 1;
     }
     // The ten older families and the fifteen power families (design/power-families.md).
@@ -276,6 +289,35 @@ fn the_floatexp_step_keeps_the_perturbations_in_floatexp() {
     // stub the mode-2 loop calls.
     let s = build(&parse("z^c + c"), &[]).unwrap().source;
     assert!(s.contains("fn custom_fstep(z: Cdf, dz: Fe, dc: Fe, iter: u32) -> Fe { return dz; }"));
+    assert!(s.contains("fn custom_fxstep(z: Fe, dz: Fe, dc: Fe, iter: u32) -> Fe { return dz; }"));
+}
+
+/// GitHub #5: the step a DIP sample takes (`custom_fxstep`, a reference value below f32's range)
+/// keeps every value in floatexp — the reference's own `Z` too, which the df32 forms read as 0 —
+/// and computes only what has no floatexp form (a function of a reference value) in df32.
+#[test]
+fn the_dip_step_keeps_the_reference_value_in_floatexp() {
+    let fxphase = |formula: &Formula| {
+        let s = build(formula, &[]).unwrap().source;
+        let at = s.find("fn custom_fxphase0(").expect("a dip step");
+        let end = at + s[at..].find("\n}\n").expect("its end");
+        s[at..end].to_string()
+    };
+    let parse = |src: &str| fractadyne_core::ir::parse::parse(src).unwrap();
+    // Mandelbrot: (2Z + δz)·δz + δc, all floatexp. No value is collapsed to df32 (that is what
+    // zeroed the 2Z·δz term), and the reference's c comes in widened.
+    let m = fxphase(&single(builtin_step(f::MANDELBROT).unwrap()));
+    assert!(m.starts_with("fn custom_fxphase0(z: Fe, c: Cdf, dz: Fe, dc: Fe) -> Fe {"), "{m}");
+    assert!(!m.contains("fe_to_cdf("), "a value collapsed to df32: {m}");
+    assert!(!m.contains("fe_mul_cdf("), "a df32 factor: {m}");
+    assert!(m.contains("fe_mul(") && m.contains("fe_add("), "{m}");
+    // The folds on their scalar-floatexp forms, with the reference side in floatexp too.
+    let b = fxphase(&single(builtin_step(f::BURNING_SHIP).unwrap()));
+    assert!(b.contains("sf_diffabs(sf_re(v") || b.contains("sf_diffabs(sf_im(v"), "{b}");
+    assert!(!b.contains("sf_from_df("), "{b}");
+    // A function of the reference value has no floatexp form: df32, widened back.
+    let s = fxphase(&parse("sin(z) + c"));
+    assert!(s.contains("fe_sin_small(") && s.contains("fe_from_cdf(cf_"), "{s}");
 }
 
 /// Fractint's sections generate valid modules: the init section before the loop, persistent

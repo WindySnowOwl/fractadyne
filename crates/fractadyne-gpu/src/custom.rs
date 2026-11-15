@@ -214,12 +214,14 @@ pub fn build(formula: &Formula, params: &[(f64, f64)]) -> Result<CustomShader, C
         Ok(p) => {
             step.push_str(&pstep_source(p, params)?);
             step.push_str(&fstep_source(p, params)?);
+            step.push_str(&fxstep_source(p, params)?);
         }
         // Never dispatched (the app renders a non-perturbable formula directly), but the
         // perturbation paths call them, so they must exist.
         Err(_) => step.push_str(
             "fn custom_pstep(z: Cdf, dz: Cdf, dc: Cdf, iter: u32) -> Cdf { return dz; }
 fn custom_fstep(z: Cdf, dz: Fe, dc: Fe, iter: u32) -> Fe { return dz; }
+fn custom_fxstep(z: Fe, dz: Fe, dc: Fe, iter: u32) -> Fe { return dz; }
 ",
         ),
     }
@@ -583,6 +585,85 @@ fn fphase_body(prog: &Program, params: &[(f64, f64)], out: &mut String) -> Resul
     } else {
         out.push_str(&format!("    return fe_from_cdf(v{o});\n"));
     }
+    Ok(())
+}
+
+/// The floatexp step for a reference sample stored EXTENDED-RANGE: `custom_fxstep(Z, δz, δc, iter)`
+/// with `Z` itself in floatexp. GitHub #5: a reference passing close to a minibrot's nucleus dips
+/// below f32's range once per period (|Z| ~ 1e-71 at the validation corpus's 1e141×), and
+/// [`fstep_source`]'s step reads `Z` as df32 — 0 at a dip — so the `2Z·δz` term vanished there,
+/// every pixel's δz collapsed to δc once per period, and the view rendered as solid interior where
+/// the built-in families (which decode the dip, `orbit_fe`) show the minibrot. Here EVERY value is
+/// floatexp: a reference-side value may be as small as the dip, and `B + P` is no longer full size.
+/// It runs only on a dip sample ([`fe_advance`]), so the cost of the wider arithmetic is paid about
+/// once per period. Same phases and `C` as [`fstep_source`].
+fn fxstep_source(perturbed: &Formula, params: &[(f64, f64)]) -> Result<String, CustomError> {
+    let mut out = String::new();
+    for (k, prog) in perturbed.phases().iter().enumerate() {
+        out.push_str(&format!("fn custom_fxphase{k}(z: Fe, c: Cdf, dz: Fe, dc: Fe) -> Fe {{\n"));
+        fxphase_body(prog, params, &mut out)?;
+        out.push_str("}\n");
+    }
+    out.push_str("fn custom_fxstep(z: Fe, dz: Fe, dc: Fe, iter: u32) -> Fe {\n    let c = custom_cref();\n");
+    phase_dispatch(&mut out, "custom_fxphase", "z, c, dz, dc", perturbed.phases().len());
+    out.push_str("}\n");
+    Ok(out)
+}
+
+/// One floatexp `let` per instruction of a perturbed program, for [`fxstep_source`]. The arithmetic
+/// and the folds have floatexp forms; anything else (a function of a reference value, a power, a
+/// comparison) is computed in df32 from its collapsed operands and widened back, which is what
+/// [`fphase_body`] computes for it on every other step.
+fn fxphase_body(prog: &Program, params: &[(f64, f64)], out: &mut String) -> Result<(), CustomError> {
+    let v = |x: Val| format!("v{}", x.index());
+    // An operand as df32 (the collapse the df32 forms need).
+    let d = |x: Val| format!("fe_to_cdf(v{})", x.index());
+    for (i, op) in prog.insts().iter().enumerate() {
+        let fe = match *op {
+            Op::Z => Some("z".to_string()),
+            Op::Delta => Some("dz".to_string()),
+            Op::DeltaC => Some("dc".to_string()),
+            Op::ZPrev => return Err(CustomError::Invalid("the previous iterate in a perturbed step".into())),
+            Op::Add(a, b) => Some(format!("fe_add({}, {})", v(a), v(b))),
+            Op::Sub(a, b) => Some(format!("fe_sub({}, {})", v(a), v(b))),
+            Op::Mul(a, b) => Some(format!("fe_mul({}, {})", v(a), v(b))),
+            Op::Div(a, b) => Some(format!("fe_div({}, {})", v(a), v(b))),
+            Op::Sqr(a) => Some(format!("fe_sqr({})", v(a))),
+            Op::PowI(a, n) => Some(power_chain(i, &v(a), n, "fe_sqr", "fe_mul", out)),
+            Op::Scale(a, k) => Some(if (k as f32) as f64 == k {
+                format!("fe_scale({}, {})", v(a), lit(k as f32))
+            } else {
+                let dk = df(k)?;
+                format!("fe_norm(cset(df_mul({a}.m.re, {dk}), df_mul({a}.m.im, {dk})), {a}.e)", a = v(a))
+            }),
+            Op::Neg(a) => Some(format!("fe_neg({})", v(a))),
+            Op::Conj(a) => Some(format!("fe_conj({})", v(a))),
+            Op::Re(a) => Some(format!("fe_re({})", v(a))),
+            Op::Im(a) => Some(format!("fe_im({})", v(a))),
+            Op::Norm(a) => Some(format!("fe_re(fe_mul({a}, fe_conj({a})))", a = v(a))),
+            Op::DiffAbsRe(b, p) => {
+                Some(format!("fe_from_sf(sf_diffabs(sf_re({b}), sf_re({p})), sf_im({p}))", b = v(b), p = v(p)))
+            }
+            Op::DiffAbsIm(b, p) => {
+                Some(format!("fe_from_sf(sf_re({p}), sf_diffabs(sf_im({b}), sf_im({p})))", b = v(b), p = v(p)))
+            }
+            Op::DiffTanh(b, p) => Some(format!("fe_tanh_diff({}, {})", d(b), v(p))),
+            Op::DiffTan(b, p) => Some(format!("fe_tan_diff({}, {})", d(b), v(p))),
+            Op::DiffLog(b, p) => Some(format!("fe_log_diff({}, {})", d(b), v(p))),
+            Op::DiffSqrt(b, p) => Some(format!("fe_sqrt_diff({}, {})", d(b), v(p))),
+            Op::DiffPow(b, p, k) => Some(format!("fe_pow_diff({}, {}, {})", d(b), v(p), d(k))),
+            Op::Func(f @ (Func::SinSmall | Func::SinhSmall | Func::Expm1), a) => {
+                Some(format!("fe_{}({})", func_name(f), v(a)))
+            }
+            _ => None,
+        };
+        let expr = match fe {
+            Some(e) => e,
+            None => format!("fe_from_cdf({})", cdf_expr(i, op, params, &d, out)?.0),
+        };
+        out.push_str(&format!("    let v{i} = {expr};\n"));
+    }
+    out.push_str(&format!("    return v{};\n", prog.out().index()));
     Ok(())
 }
 
@@ -1017,6 +1098,9 @@ fn splice(step_fns: &str, power: f32, init: bool, bailout: bool) -> Result<Strin
     out.push_str(&src[at..]);
     out.push_str("\n// ---------------- generated: custom formula (custom.rs) ----------------\n");
     out.push_str(&format!("const CUSTOM_POWER: f32 = {};\n", lit(power)));
+    // Below 2^-100 a floatexp δz no longer converts to df32 exactly (its low word, 2^-24 under the
+    // high one, leaves f32's normal range at 2^-126): the zero-reference case of `fe_advance`.
+    out.push_str("const CUSTOM_FX_DZ_E: i32 = -100;\n");
     out.push_str(&tame_source());
     out.push_str(step_fns);
     Ok(out)
@@ -1033,15 +1117,31 @@ fn splice(step_fns: &str, power: f32, init: bool, bailout: bool) -> Result<Strin
 /// (`tail_dc`), under 2^-70 relative. The rebase stays in floatexp ([`fe_rebase`]). Unlike the
 /// fixed module's tail it has no guard on a small NONZERO reference value (`TAIL_Z_MIN`): whether
 /// one flushes a term depends on the generated formula, and that has not been measured.
+///
+/// ⭐Two steps take the all-floatexp step instead ([`fxstep_source`], GitHub #5), where the df32
+/// forms lose a term:
+/// - a reference sample stored EXTENDED-RANGE (a dip below f32's range, `orbit_is_ext`): read as
+///   df32 it is 0, and the `2Z·δz` term it carries would vanish;
+/// - the reference's own ZERO (`Z₀` in Mandelbrot mode, where a rebase restarts a pixel) with δz
+///   below df32's range (`CUSTOM_FX_DZ_E`): `B + P` is then `P` alone, collapsed to df32 it is 0,
+///   and the `δz²` term would vanish. A pixel rebases there right after a dip, with δz the size of
+///   the dip.
+///
+/// Every other sample takes the steps above, bit for bit as before.
 fn fe_advance(ind: &str) -> String {
     format!(
         "{ind}n_full = n_full + 1u;
-{ind}let Z = orbit_cdf(reference[ref_n]);
-{ind}if ((iu.tail_on & 1u) == 1u && dz.e >= TAIL_DF32_MIN_E) {{
-{ind}    n_big = n_big + 1u;
-{ind}    dz = fe_from_cdf(custom_tame(custom_pstep(Z, fe_to_cdf(dz), tail_dc(dc), iter)));
+{ind}let r_ref = reference[ref_n];
+{ind}if (orbit_is_ext(r_ref) || (all(r_ref == vec4<f32>(0.0)) && dz.e < CUSTOM_FX_DZ_E)) {{
+{ind}    dz = custom_tame_fe(custom_fxstep(orbit_fe(r_ref), dz, dc, iter));
 {ind}}} else {{
-{ind}    dz = custom_tame_fe(custom_fstep(Z, dz, dc, iter));
+{ind}    let Z = orbit_cdf(r_ref);
+{ind}    if ((iu.tail_on & 1u) == 1u && dz.e >= TAIL_DF32_MIN_E) {{
+{ind}        n_big = n_big + 1u;
+{ind}        dz = fe_from_cdf(custom_tame(custom_pstep(Z, fe_to_cdf(dz), tail_dc(dc), iter)));
+{ind}    }} else {{
+{ind}        dz = custom_tame_fe(custom_fstep(Z, dz, dc, iter));
+{ind}    }}
 {ind}}}
 {ind}ref_n = ref_n + 1u;
 {ind}iter = iter + 1u;
