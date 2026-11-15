@@ -71,6 +71,13 @@ Changes after 0.3.0-beta.1:
   on one), and a render that cannot split says so. The Export dialog's "Use all graphics cards" was
   not affected. `--gpus` and `--worker-gpu` written inside an `@file` are now read too; they were
   ignored.
+- **Supersampling at deep views finishes (after 0.3.0-beta.27).** Past 2^33×, a settled view
+  averages 24 jittered samples. If the frame budget grew during that run, the frame moved to 2x
+  supersampling and no later sample could join the average: with the live view's second device
+  turned off the view kept two samples and redrew about 55 times a second without end, and with it
+  on (the default) the run stopped at four samples after 20 s. A run now keeps its first sample's
+  setting: at a 1e12× seahorse view it holds all 24 samples after about 5 s, and the view then goes
+  idle.
 - **The inside's palette is listed under the main palette (after 0.3.0-beta.27).** With the orbit
   trap coloring the inside, its palette rows appeared above the main Palette and pushed it down the
   panel; the main Palette now keeps its place.

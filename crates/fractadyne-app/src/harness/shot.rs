@@ -205,16 +205,31 @@ impl crate::FractadyneApp {
         // ---- wait for the picture to be worth capturing ---------------------------------------
         let now = Instant::now();
         let orbit = self.perf.last_orbit_len;
-        let building = self.recompute_rx[0].is_some()
-            || self.perf.tile_pending[0]
-            || self.perf.chunk_pending[0]
-            // Progressive on-settle supersampling: wait for the running average to converge before
-            // capturing, so the shot shows the de-speckled result, not the first (single) sample.
-            || (self.perf.accum_active[0] && self.perf.accum_count[0] < self.perf.accum_goal(0))
-            // ...and for a due run to BEGIN. Between the settle and `accum: begin` nothing is in
-            // flight and no run is active, and this gate once passed there: a shot at 9.3e78× was
-            // written 80 ms after `begin`, one unaveraged sample (2026-10-07).
-            || self.perf.accum_due[0];
+        // What the picture still waits for, named so a shot taken at the deadline can say which
+        // (2026-11-14: "work still in flight" alone took a trace to tell that supersampling had
+        // stalled at sample 2).
+        let mut waiting: Vec<String> = Vec::new();
+        if self.recompute_rx[0].is_some() {
+            waiting.push("a reference build".into());
+        }
+        if self.perf.tile_pending[0] {
+            waiting.push("a settle grid".into());
+        }
+        if self.perf.chunk_pending[0] {
+            waiting.push("a chunked walk".into());
+        }
+        // Progressive on-settle supersampling: wait for the running average to converge before
+        // capturing, so the shot shows the de-speckled result, not the first (single) sample.
+        if self.perf.accum_active[0] && self.perf.accum_count[0] < self.perf.accum_goal(0) {
+            waiting.push(format!("supersampling at {} of {} samples", self.perf.accum_count[0], self.perf.accum_goal(0)));
+        }
+        // ...and for a due run to BEGIN. Between the settle and `accum: begin` nothing is in
+        // flight and no run is active, and this gate once passed there: a shot at 9.3e78× was
+        // written 80 ms after `begin`, one unaveraged sample (2026-10-07).
+        if self.perf.accum_due[0] {
+            waiting.push("supersampling to begin".into());
+        }
+        let building = !waiting.is_empty();
         let s = self.harness.shot.as_mut().unwrap();
         if orbit != s.ref_len_seen {
             s.ref_len_seen = orbit;
@@ -229,8 +244,14 @@ impl crate::FractadyneApp {
         }
         if out_of_time {
             // Say so rather than quietly publishing whatever was on screen.
+            let what = if waiting.is_empty() {
+                // Only the reference-quiet / minimum-settle clocks were left to run.
+                "the view still settling".to_string()
+            } else {
+                waiting.join(", ")
+            };
             eprintln!(
-                "fractadyne: --shot: capturing after the {}s budget with work still in flight — \
+                "fractadyne: --shot: capturing after the {}s budget with work still in flight ({what}) — \
                  the image may be unresolved",
                 s.deadline.saturating_duration_since(s.start).as_secs()
             );

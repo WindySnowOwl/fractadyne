@@ -23,6 +23,24 @@ fn a_fold_needs_a_real_complete_frame_at_the_run_ss() {
     assert!(!accum_fold_clean(0, false, false, false, false, false, 3, 1, 2));
 }
 
+/// A run that holds samples keeps sample 0's ss, whatever the budget now affords, so its later
+/// samples can fold (2026-11-14: sample 0 at ss=1, the budget grew, ss=2 from then on, and every
+/// later fold was withheld for good). Only the watchdog's bound outranks the run.
+#[test]
+fn a_run_keeps_sample_0s_ss_unless_the_watchdog_bound_falls_below_it() {
+    // No run (or no sample in it yet): the budget's ss stands.
+    assert_eq!(accum_run_ss(2, None, 4), 2);
+    // The budget grew under an ss=1 run: the run's ss holds, and its next fold is clean.
+    assert_eq!(accum_run_ss(2, Some(1), 4), 1);
+    assert!(accum_fold_clean(0, false, false, false, false, false, 2, accum_run_ss(2, Some(1), 4), 1));
+    // The budget shrank under an ss=2 run that the watchdog still allows: still the run's.
+    assert_eq!(accum_run_ss(1, Some(2), 2), 2);
+    // The watchdog's bound fell below the run's ss: the budget's ss stands (the run restarts).
+    assert_eq!(accum_run_ss(1, Some(2), 1), 1);
+    // A zero ss0 (never set) is not a run's ss.
+    assert_eq!(accum_run_ss(2, Some(0), 4), 2);
+}
+
 /// The time cap ends a costly run (the 2^704 view at 5120×2054: 4–6 s a sample, 24 of them ~2
 /// minutes), but only on a run that already holds `ACCUM_MIN_SAMPLES`; 0 turns it off.
 #[test]
