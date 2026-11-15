@@ -245,9 +245,10 @@ impl FractadyneApp {
         }
     }
 
-    /// The panel's Inside rows (coloring plan B5, design §9.1): what colors the inside of the set,
-    /// each choice saying what it shows and what choosing it costs, as the method list does; and,
-    /// while the trap colors it, the interior palette.
+    /// The panel's Inside row (coloring plan B5, design §9.1): what colors the inside of the set,
+    /// each choice saying what it shows and what choosing it costs, as the method list does. The
+    /// interior palette that a trap-colored inside adds is [`Self::inside_palette_rows`], placed
+    /// under the main Palette.
     pub(crate) fn inside_rows(&mut self, ui: &mut egui::Ui) {
         use crate::InteriorMode;
         let inside = self.coloring.interior_of(self.coloring.color_method);
@@ -274,7 +275,15 @@ impl FractadyneApp {
                 }
             }
         });
-        if inside != InteriorMode::Trap {
+    }
+
+    /// While the trap colors the inside: the inside's own palette and its fit (B5, C4). ⭐UNDER the
+    /// main Palette and its Edit gradient button, never above them: placed with the Inside row,
+    /// these two rows appeared above the main Palette whenever the inside was set to Orbit trap, and
+    /// pushed it down the panel (user, 2026-11-15: "The main palette selection moved below the
+    /// interior palette selection").
+    pub(crate) fn inside_palette_rows(&mut self, ui: &mut egui::Ui) {
+        if self.coloring.interior_of(self.coloring.color_method) != crate::InteriorMode::Trap {
             return;
         }
         let presets = fractadyne_color::PRESETS;

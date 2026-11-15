@@ -399,6 +399,8 @@ impl FractadyneApp {
                     // Cancel point first (`palette_editor_window`).
                     self.coloring.palette_editor_open = true;
                 }
+                // The inside's own palette, when the trap colors it: after the main one.
+                self.inside_palette_rows(ui);
                 labelled(ui, &tr!(panel_cycle), |ui| {
                     ui.add(egui::Slider::new(&mut self.coloring.cycle, crate::slider_range::CYCLE))
                 });
