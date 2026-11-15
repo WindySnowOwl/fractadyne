@@ -3746,9 +3746,11 @@ struct ColorU {
     // `ColorUniforms.aa_ln_p`.
     aa_ln_p: f32,
     // The footprint's share for this frame's samples: 1, or 1/√(k+1) for progressive supersampling's
-    // sample k (`aa_scale` in the Rust). Two pad words.
+    // sample k (`aa_scale` in the Rust).
     aa_scale: f32,
-    _pad_aa1: f32,
+    // Every `tap_stride`-th texel of a pixel's block, each standing for that many (0 or 1 = every
+    // texel): the palette browser's thumbnails (`atlas_tap_stride` in the Rust). One pad word.
+    tap_stride: u32,
     _pad_aa2: f32,
 };
 @group(0) @binding(0) var<uniform> cu: ColorU;
@@ -4005,6 +4007,8 @@ fn view_average() -> vec3<f32> {
 fn fs_color(in: VsOut) -> @location(0) vec4<f32> {
     let tex_dim = textureDimensions(iter_tex); // = screen × ss
     let ss = max(cu.ss, 1u);
+    // Texels a tap stands for: 1 (every texel) but for a palette-browser thumbnail at ss > 2.
+    let stride = clamp(cu.tap_stride, 1u, ss);
     let screen_dim = tex_dim / ss;
     // ⭐The stored distance is per TEXEL; read it per OUTPUT pixel (`de_px_shift`). Texels across one
     // output pixel = the texture's width over the output's, times a reprojection's zoom since the
@@ -4080,15 +4084,15 @@ fn fs_color(in: VsOut) -> @location(0) vec4<f32> {
             }
         }
         // Each tap's share: the differences span one pixel of ss texels, and a tap is one texel (and
-        // its supersampling sample's share of that, `aa_scale`).
-        let share = cu.aa_scale / f32(ss);
+        // its supersampling sample's share of that, `aa_scale`), or `stride` of them.
+        let share = cu.aa_scale * f32(stride) / f32(ss);
         pal_w = pal_w * share;
         pal_wf = pal_wf * share;
         // Distance-sized (C8): the Smooth count's footprint from the pixel's own distance, where it
         // has one; the neighbor differences above stay for everything else. Its tap is one texel,
         // 2^-de_px_shift output pixels across (1/ss, more on a reduced frame or a reprojection's
         // magnified one), and its sample's share of that.
-        let s = cu.aa_scale * exp2(-de_px_shift);
+        let s = cu.aa_scale * exp2(-de_px_shift) * f32(stride);
         if (cu.aa_palette == 2u && cu.color_method == METHOD_SMOOTH && c0 < INTERIOR_COORD) {
             let wd = de_footprint(m0, cu.cycle, cu.norm_mode, cu.norm_lo, s);
             if (wd >= 0.0) {
@@ -4127,9 +4131,13 @@ fn fs_color(in: VsOut) -> @location(0) vec4<f32> {
     var nacc = vec2<f32>(0.0);
     var dacc = 0.0;
     var count = 0.0;
-    for (var dj: i32 = 0; dj < n; dj = dj + 1) {
+    // A stride above 1 reads every stride-th texel, the first half a stride in (ss 8, stride 4:
+    // texels 2 and 6 of each row of eight); 1 is every texel, from the first.
+    let tap_step = i32(stride);
+    let tap_first = tap_step / 2;
+    for (var dj: i32 = tap_first; dj < n; dj = dj + tap_step) {
         let wy = select(1.0, 0.5, half_ends && (dj == 0 || dj == n - 1));
-        for (var di: i32 = 0; di < n; di = di + 1) {
+        for (var di: i32 = tap_first; di < n; di = di + tap_step) {
             let w = wy * select(1.0, 0.5, half_ends && (di == 0 || di == n - 1));
             let texel = clamp(
                 pix * i32(ss) + vec2<i32>(di - lead, dj - lead),

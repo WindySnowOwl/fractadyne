@@ -330,6 +330,22 @@ impl crate::FractadyneApp {
             let old = self.palette_browser.atlas[v].take();
             match atlas::render_palette_atlas(&rs, v as u32, luts, cell, cols, old) {
                 Ok(a) => {
+                    if crate::diag::trace_on("palette") {
+                        crate::diag::trace(
+                            "palette",
+                            format!(
+                                "browser thumbnails of view {v}: {} cells of {}x{} from a {}x{} texture at ss {} \
+                                 (writes {writes}, frame {})",
+                                a.count,
+                                a.cell[0],
+                                a.cell[1],
+                                a.source_size[0],
+                                a.source_size[1],
+                                a.source_ss,
+                                self.perf.frame_idx
+                            ),
+                        );
+                    }
                     self.palette_browser.atlas[v] = Some(a);
                     self.palette_browser.drawn_for[v] = Some(key);
                 }

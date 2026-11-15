@@ -1210,6 +1210,13 @@ fn build_steps() -> Vec<Step> {
         screen("minimap-base", Screen::MinimapBase),
         screen("minimap-pan", Screen::MinimapPan),
         screen("minimap-pan-verify", Screen::MinimapPanVerify),
+        // Here, not last: they leave the Julia pane's last frame at 8x, and the single-view steps
+        // after them never redraw it, so palette-browser-dual turns the dual view back on and draws
+        // the pane's thumbnails from that 8x texture. Until the thumbnails read at most 2×2 samples a
+        // pixel (`atlas_tap_stride`) that was ~2e9 colorings, two ~1 s frames and a `budget-blind`
+        // log-check failure in every walk (4 of 4, 2026-11-13..15). The walk is what catches it.
+        screen("pan-drag-base", Screen::PanDragBase),
+        screen("pan-drag", Screen::PanDrag),
         screen("stripe-tail-off", Screen::StripeTailOff),
         screen("stripe-tail-toggle", Screen::StripeTailToggle),
         screen("stripe-tail-away", Screen::StripeTailAway),
@@ -1258,13 +1265,6 @@ fn build_steps() -> Vec<Step> {
         screen("inside-solid-under-trap", Screen::InsideSolidUnderTrap),
         screen("palette-aa-base", Screen::PaletteAaBase),
         screen("palette-aa", Screen::PaletteAa),
-        // LAST, like the reporter-settings pairs before them: they train the Julia pane's budget on
-        // a cheap Julia (1.75e11), and placed after the minimap steps, palette-browser-dual turned
-        // the dual view back on at home over that budget — one 1-second frame and a dead-man, a
-        // `budget-blind` log-check failure in two walks of two (a pane keeps its budget across a
-        // dual-view off/on; the dead-man is what catches it).
-        screen("pan-drag-base", Screen::PanDragBase),
-        screen("pan-drag", Screen::PanDrag),
     ]
 }
 

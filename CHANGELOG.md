@@ -78,6 +78,12 @@ Changes after 0.3.0-beta.1:
   on (the default) the run stopped at four samples after 20 s. A run now keeps its first sample's
   setting: at a 1e12× seahorse view it holds all 24 samples after about 5 s, and the view then goes
   idle.
+- **The palette browser stays quick at high anti-aliasing (after 0.3.0-beta.27).** Each thumbnail
+  pixel colored every supersampled sample under it, 16 at 4x and 64 at 8x, so with the browser open
+  in the dual view at 8x a redraw kept the graphics card busy for about half a second, and with the
+  browser open, turning the dual view back on over a Julia last drawn at 8x stalled the window for
+  about two seconds. A thumbnail now reads
+  at most four samples a pixel; at 2x and below it is unchanged.
 - **The inside's palette is listed under the main palette (after 0.3.0-beta.27).** With the orbit
   trap coloring the inside, its palette rows appeared above the main Palette and pushed it down the
   panel; the main Palette now keeps its place.

@@ -61,7 +61,15 @@ pub struct PaletteAtlas {
     pub cols: u32,
     /// How many thumbnails it holds, in the order the palettes were given.
     pub count: usize,
+    /// The view texture it was colored from: its size in texels and the supersampling factor its
+    /// pixels were built at (each thumbnail texel averages `source_ss`² of them).
+    pub source_size: [u32; 2],
+    pub source_ss: u32,
 }
+
+#[cfg(test)]
+#[path = "../tests/unit/atlas/atlas_tests.rs"]
+mod atlas_tests;
 
 impl PaletteAtlas {
     /// Where thumbnail `k` sits in the atlas, in uv (0..1).
@@ -133,11 +141,12 @@ pub fn render_atlas(
                     cu,
                     r.target_format,
                     v.lut_buf.clone(),
+                    v.size,
                 )
             })
         })
     };
-    let Some((pipeline, bgl, tex_view, aux_view, ss, cu, format, view_lut)) = found else {
+    let Some((pipeline, bgl, tex_view, aux_view, ss, cu, format, view_lut, source_size)) = found else {
         if let Some(old) = reuse {
             free_palette_atlas(rs, old);
         }
@@ -201,6 +210,9 @@ pub fn render_atlas(
                 vig_on: 0,
                 out_res: [cell[0] as f32, cell[1] as f32],
                 fade_weight: 0.0,
+                // At most 2×2 samples a thumbnail texel, whatever the view's supersampling: all 64
+                // at 8x were ~2e9 colorings an atlas, a second of GPU time (2026-11-15).
+                tap_stride: crate::atlas_tap_stride(ss),
                 // `display_w` stays the panel's: a thumbnail is the view in miniature, so its
                 // distance colors and glow bands sit where the panel shows them.
                 ..cu
@@ -268,7 +280,7 @@ pub fn render_atlas(
         }
         None => renderer.register_native_texture(device, &sampled, wgpu::FilterMode::Linear),
     };
-    Ok(PaletteAtlas { texture, id, cell, cols, count: palettes.len() })
+    Ok(PaletteAtlas { texture, id, cell, cols, count: palettes.len(), source_size, source_ss: ss })
 }
 
 /// Cell `k`'s texels as the atlas holds them, rows top to bottom, as display-space RGBA8 (a BGRA
