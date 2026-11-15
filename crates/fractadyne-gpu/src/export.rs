@@ -1851,7 +1851,8 @@ impl<'a> TileRenderer<'a> {
             interior_offset: iw.offset,
             aa_ln_p: crate::aa_ln_p(req.formula),
             aa_scale: crate::aa_scale(req.aa_sample),
-            _pad_aa: [0.0; 2],
+            tap_stride: 0,
+            _pad_aa: 0.0,
         };
         queue.write_buffer(&color_uniform, 0, bytemuck::bytes_of(&cu));
         let split = |v: f64| -> (f32, f32) {
@@ -4194,7 +4195,8 @@ pub(crate) fn color_uniforms_for(req: &ExportRequest, ss: u32, w: u32, h: u32, l
         interior_offset: iw.offset,
         aa_ln_p: crate::aa_ln_p(req.formula),
         aa_scale: crate::aa_scale(req.aa_sample),
-        _pad_aa: [0.0; 2],
+        tap_stride: 0,
+        _pad_aa: 0.0,
     }
 }
 

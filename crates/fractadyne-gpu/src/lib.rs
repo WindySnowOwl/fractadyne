@@ -411,7 +411,19 @@ pub(crate) struct ColorUniforms {
     /// The palette footprint's share for this frame's samples ([`aa_scale`]): 1 for a plain frame,
     /// 1/√(k+1) for progressive supersampling's sample k.
     pub(crate) aa_scale: f32,
-    pub(crate) _pad_aa: [f32; 2],
+    /// Read every `tap_stride`-th texel of a pixel's supersampled block, each standing for that
+    /// many (0 or 1 = every texel, as the view does). The palette browser's thumbnails
+    /// ([`atlas_tap_stride`]): at 8x a thumbnail texel averaged 64 samples, ~2e9 colorings for one
+    /// pane's atlas, a second of GPU time when the dual view came back on over a pane last drawn
+    /// at 8x (2026-11-15). In what was the first `_pad_aa` word; `ColorU.tap_stride` mirrors it.
+    pub(crate) tap_stride: u32,
+    pub(crate) _pad_aa: f32,
+}
+
+/// [`ColorUniforms::tap_stride`] for a palette-browser thumbnail colored from a texture built at
+/// `ss`: at most 2×2 samples a pixel, and every sample at `ss` ≤ 2 (the same bytes as before).
+pub fn atlas_tap_stride(ss: u32) -> u32 {
+    ss.max(1).div_ceil(2)
 }
 
 /// How the color pass band-limits the palette over each pixel's footprint (coloring plan C8): the
@@ -4107,7 +4119,8 @@ impl CallbackTrait for MandelbrotParams {
             interior_offset: iw.offset,
             aa_ln_p: aa_ln_p(self.formula),
             aa_scale: aa_scale(self.aa_sample),
-            _pad_aa: [0.0; 2],
+            tap_stride: 0,
+            _pad_aa: 0.0,
         };
         queue.write_buffer(&view.color_uniform, 0, bytemuck::bytes_of(&cu));
         view.last_cu = Some(cu);
