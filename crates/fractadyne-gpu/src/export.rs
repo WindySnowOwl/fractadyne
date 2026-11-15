@@ -1715,6 +1715,11 @@ struct TileRenderer<'a> {
     full: [f32; 2],
     /// [`ExportRequest::ref_fold`], scanned once for every tile.
     fold: [u32; 4],
+    /// Read back each tile's ITERATION values (the G-buffer `fs_iterate` writes) instead of its
+    /// colors: [`render_iter_multi`], whose caller colors the whole frame once it knows the frame's
+    /// escape range (a normalized export). Requires `ss = 1`, so a tile's iteration texture is the
+    /// tile's own size.
+    iter_only: bool,
 }
 
 impl<'a> TileRenderer<'a> {
@@ -1878,6 +1883,7 @@ impl<'a> TileRenderer<'a> {
             step: [sxh, sxl, syh, syl],
             full: [w as f32 * ss as f32, h as f32 * ss as f32],
             fold: req.ref_fold(),
+            iter_only: false,
         })
     }
 
@@ -1931,7 +1937,27 @@ impl<'a> TileRenderer<'a> {
         };
         queue.write_buffer(&self.iter_uniform, 0, bytemuck::bytes_of(&iu));
 
-        let iter_view = make_iter_texture(device, [iw, ih]);
+        // An iterate-only tile reads its iteration texture back, so that one can be copied from;
+        // every other tile keeps the plain one.
+        let iter_tex = self.iter_only.then(|| {
+            debug_assert_eq!((iw, ih), (tw, th), "an iterate-only tile needs ss = 1");
+            device.create_texture(&wgpu::TextureDescriptor {
+                label: Some("export.iter_tex_read"),
+                size: wgpu::Extent3d { width: iw.max(1), height: ih.max(1), depth_or_array_layers: 1 },
+                mip_level_count: 1,
+                sample_count: 1,
+                dimension: wgpu::TextureDimension::D2,
+                format: crate::ITER_FORMAT,
+                usage: wgpu::TextureUsages::RENDER_ATTACHMENT
+                    | wgpu::TextureUsages::TEXTURE_BINDING
+                    | wgpu::TextureUsages::COPY_SRC,
+                view_formats: &[],
+            })
+        });
+        let iter_view = match &iter_tex {
+            Some(t) => t.create_view(&wgpu::TextureViewDescriptor::default()),
+            None => make_iter_texture(device, [iw, ih]),
+        };
         let aux_view = make_iter_texture(device, [iw, ih]);
         let color_tex = device.create_texture(&wgpu::TextureDescriptor {
             label: Some("export.color_tex"),
@@ -2094,7 +2120,9 @@ impl<'a> TileRenderer<'a> {
         );
         enc.copy_texture_to_buffer(
             wgpu::TexelCopyTextureInfo {
-                texture: &color_tex,
+                // The colors, or for an iterate-only tile the iteration values (same format, same
+                // size at ss = 1). The color pass above still runs: it keeps the timestamp layout.
+                texture: iter_tex.as_ref().unwrap_or(&color_tex),
                 mip_level: 0,
                 origin: wgpu::Origin3d::ZERO,
                 aspect: wgpu::TextureAspect::All,
@@ -2431,11 +2459,74 @@ pub fn render_export_multi_with(
     lose_after: Option<(usize, u32)>,
     together: bool,
 ) -> Result<(ExportResult, Vec<DeviceShare>), GpuError> {
+    render_multi_impl(devices, adapters, req, progress, cancel, lose_after, together, false)
+}
+
+/// The ITERATION buffer of `req` across several devices, as [`render_export_multi`] splits an
+/// export: the same tile grid, the same balancing, each tile's G-buffer read back instead of its
+/// colors (channel 0 the smooth count, < 0 interior), assembled `width×height×4`. For a caller that
+/// colors the frame itself once it knows the whole frame's escape range (a normalized export):
+/// before this, such an export rendered on the window's card alone while `--gpus` had opened the
+/// others (2026-11-15: 17 of the benchmark kit's 35 scenes, every one of them `--normalize`).
+/// Requires `ss = 1` and [`export_splits`]; anything else is an error, for the caller to render on
+/// one device instead (`render_iter_tiled`).
+pub fn render_iter_multi(
+    devices: &[(&wgpu::Device, &wgpu::Queue)],
+    adapters: &[u64],
+    req: &ExportRequest,
+    progress: &std::sync::atomic::AtomicU32,
+    cancel: &std::sync::atomic::AtomicBool,
+) -> Result<(ExportResult, Vec<DeviceShare>), GpuError> {
+    render_multi_impl(devices, adapters, req, progress, cancel, None, false, true)
+}
+
+/// [`render_iter_multi`] with `together` as [`render_export_multi_with`] has it: every device set
+/// up before any takes a tile, so a selftest's "both devices rendered" is not a race.
+#[doc(hidden)]
+pub fn render_iter_multi_with(
+    devices: &[(&wgpu::Device, &wgpu::Queue)],
+    adapters: &[u64],
+    req: &ExportRequest,
+    progress: &std::sync::atomic::AtomicU32,
+    cancel: &std::sync::atomic::AtomicBool,
+    together: bool,
+) -> Result<(ExportResult, Vec<DeviceShare>), GpuError> {
+    render_multi_impl(devices, adapters, req, progress, cancel, None, together, true)
+}
+
+/// A device's [`TileRenderer`] for a multi-device render, reading back colors or (`iter_only`)
+/// iteration values.
+fn tile_renderer<'a>(
+    device: &'a wgpu::Device,
+    queue: &'a wgpu::Queue,
+    req: &'a ExportRequest,
+    plan: ExportPlan,
+    iter_only: bool,
+) -> Result<TileRenderer<'a>, GpuError> {
+    let mut r = TileRenderer::new(device, queue, req, plan)?;
+    r.iter_only = iter_only;
+    Ok(r)
+}
+
+#[allow(clippy::too_many_arguments)]
+fn render_multi_impl(
+    devices: &[(&wgpu::Device, &wgpu::Queue)],
+    adapters: &[u64],
+    req: &ExportRequest,
+    progress: &std::sync::atomic::AtomicU32,
+    cancel: &std::sync::atomic::AtomicBool,
+    lose_after: Option<(usize, u32)>,
+    together: bool,
+    iter_only: bool,
+) -> Result<(ExportResult, Vec<DeviceShare>), GpuError> {
     use std::sync::atomic::{AtomicUsize, Ordering::Relaxed};
     if devices.is_empty() {
         return Err(GpuError::Readback("no device to render on".into()));
     }
     let limits: Vec<wgpu::Limits> = devices.iter().map(|(d, _)| d.limits()).collect();
+    if iter_only && (req.ss != 1 || !export_splits(&limits, req)) {
+        return Err(GpuError::Readback("an iteration buffer splits across devices only at ss = 1, inside the chunked iterate".into()));
+    }
     if devices.len() == 1 || !export_splits(&limits, req) {
         let (d, q) = devices[0];
         let r = render_export_impl(d, q, req, progress, cancel, true)?;
@@ -2470,7 +2561,7 @@ pub fn render_export_multi_with(
             let adapter = adapters.get(di).copied().unwrap_or(0);
             sc.spawn(move || {
                 crate::pipeline_compile::set_adapter(adapter);
-                let renderer = TileRenderer::new(device, queue, req, plan);
+                let renderer = tile_renderer(device, queue, req, plan, iter_only);
                 if start_together {
                     together.wait();
                 }
@@ -2543,7 +2634,7 @@ pub fn render_export_multi_with(
             return Err(GpuError::Readback(format!("every device failed: {why}")));
         };
         let (d, q) = devices[di];
-        let mut renderer = TileRenderer::new(d, q, req, plan)?;
+        let mut renderer = tile_renderer(d, q, req, plan, iter_only)?;
         for k in missing {
             let [x, y, w, h] = rects[k];
             let t = renderer.tile(x, y, w, h, cancel)?;

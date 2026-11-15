@@ -2130,6 +2130,43 @@ impl FractadyneApp {
                 });
             }
 
+            // ⭐THE ITERATION BUFFER ACROSS DEVICES (`render_iter_multi`), which a normalized export
+            // (`--render --normalize --gpus`) colors once it has the whole frame's escape range.
+            // Before it, such an export never split (2026-11-15, 17 of the kit's 35 scenes). Split
+            // between this device and the twin, the buffer must be the one this device renders
+            // alone (`render_iter_tiled`, the single-card path), bit for bit; control: both devices
+            // rendered tiles.
+            {
+                let mut s1 = s.clone();
+                s1.ss = 1;
+                let alone = fractadyne_gpu::render_iter_tiled(device, queue, &s1, 20_000_000_000, None, None, None).ok();
+                let split = twin.as_ref().map_err(|e| e.clone()).and_then(|t| {
+                    fractadyne_gpu::render_iter_multi_with(&[(device, queue), (&t.device, &t.queue)], &[0, t.compile_tag], &s1, &progress, &cancel, true)
+                        .map_err(|e| e.to_string())
+                });
+                let (pass, result) = match (&alone, &split) {
+                    (Some(a), Ok((r, shares))) if a.pixels.len() == r.pixels.len() => {
+                        let diffs = bit_exact(&a.pixels, &r.pixels);
+                        let tiles: Vec<u32> = shares.iter().map(|x| x.tiles).collect();
+                        let escaped = a.pixels.chunks_exact(4).filter(|p| p[0] >= 0.0).count();
+                        (
+                            diffs == 0 && tiles.len() == 2 && tiles.iter().all(|&k| k > 0) && escaped > 0,
+                            format!("{diffs} of {} channels differ; tiles per device {tiles:?}; {escaped} escaped px", a.pixels.len()),
+                        )
+                    }
+                    (_, Err(e)) => (false, format!("the split did not render: {e}")),
+                    _ => (false, "render failed, or the sizes differ".into()),
+                };
+                push_check(&mut checks, &mut last_check_t, SelfCheck {
+                    category: "Worker",
+                    name: "an iteration buffer split across this device and a twin is bit-identical, both rendering".into(),
+                    params: format!("corpus07 1e30x, 20k iter, {WW}×{WH} ss 1, 48-px tiles, mode {}", s1.mode),
+                    result,
+                    threshold: "0 channels differ; both devices rendered tiles; some pixels escaped",
+                    pass,
+                });
+            }
+
             // ⭐THE SECOND DEVICE'S SHORT PASSES (`ExportRequest::pass_ms`, `WORKER_PASS_MS`). Its settle
             // samples run with a pass target so that, on a card it shares with the window or the
             // desktop, no pass holds up a present; where passes split never changes a pixel, so the
