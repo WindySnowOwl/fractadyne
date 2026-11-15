@@ -69,7 +69,8 @@ Changes after 0.3.0-beta.1:
   logged nothing about it. It now splits across them as other renders do, with the same picture
   (measured on an RTX 3080 and an RTX 3070: 59-iter's GPU work took 4.0 s across both against 7.8 s
   on one), and a render that cannot split says so. The Export dialog's "Use all graphics cards" was
-  not affected.
+  not affected. `--gpus` and `--worker-gpu` written inside an `@file` are now read too; they were
+  ignored.
 - **The inside's palette is listed under the main palette (after 0.3.0-beta.27).** With the orbit
   trap coloring the inside, its palette rows appeared above the main Palette and pushed it down the
   panel; the main Palette now keeps its place.
