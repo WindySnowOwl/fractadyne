@@ -363,10 +363,14 @@ impl ParProducts {
             }
         }
         let standing = crate::worker_priority::current();
+        // One logical CPU per core for the walk's threads, the calling one too (`cpu_spread`):
+        // they meet at a barrier every step, so a thread sharing a core sets every step's pace.
+        let _spread = crate::cpu_spread::spread();
         std::thread::scope(|s| {
             for w in 1..self.jobs.len() {
                 s.spawn(move || {
                     standing.adopt();
+                    let _spread = crate::cpu_spread::spread();
                     self.worker(w)
                 });
             }
@@ -712,10 +716,15 @@ impl ParSplit {
             }
         }
         let standing = crate::worker_priority::current();
+        // One logical CPU per core for the walk's threads, the calling one too (`cpu_spread`):
+        // a step runs at its slowest thread's pace, and the threads spin between stages, so two
+        // on one core's siblings cost every step (measured: 37 s against 43 s at 1e30000).
+        let _spread = crate::cpu_spread::spread();
         std::thread::scope(|s| {
             for w in 1..SPLIT_THREADS {
                 s.spawn(move || {
                     standing.adopt();
+                    let _spread = crate::cpu_spread::spread();
                     self.worker(w)
                 });
             }

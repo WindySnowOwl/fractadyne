@@ -47,6 +47,10 @@ pub use reference::*;
 /// passed on to every thread it spawns.
 pub mod worker_priority;
 
+/// A split walk's threads held to one logical CPU per physical core (platform hooks installed by
+/// the application).
+pub mod cpu_spread;
+
 mod fractal;
 
 /// The coloring methods and orbit-trap shapes: their persisted keys, their GPU numbers for this
