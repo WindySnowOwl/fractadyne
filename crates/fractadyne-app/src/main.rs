@@ -2972,7 +2972,8 @@ mod deep_jump_warning;
 
 /// `--render … --gpus SPEC` on this command line (`FractadyneApp::open_export_cards`).
 fn args_have_render_gpus() -> bool {
-    let args: Vec<String> = std::env::args().collect();
+    // The EXPANDED arguments (`effective_args`): `--gpus` in an `@file` was ignored without a word.
+    let args = effective_args();
     args.iter().any(|a| a == "--render") && args.iter().any(|a| a == crate::farm::local::FLAG)
 }
 
@@ -7258,7 +7259,7 @@ impl FractadyneApp {
             self.open_export_cards(&render_state.adapter.get_info());
         }
         // The flag overrides Advanced ▸ Second graphics card (`drive_worker_setting`).
-        let worker_spec = std::env::args().collect::<Vec<_>>().windows(2).find(|w| w[0] == "--worker-gpu").map(|w| w[1].clone());
+        let worker_spec = effective_args().windows(2).find(|w| w[0] == "--worker-gpu").map(|w| w[1].clone());
         if let Some(spec) = worker_spec {
             self.worker_pinned = true;
             match gpu_worker::Worker::spawn(&spec, &render_state.adapter.get_info()) {
@@ -7933,7 +7934,7 @@ impl FractadyneApp {
                 second_device_prompt: crate::diag::previous_session_second_device().filter(|_| {
                     !launched_for_a_task
                         && !gpu_worker::setting_spec(&s.live_worker_gpu).is_empty()
-                        && !std::env::args().any(|a| a == "--worker-gpu")
+                        && !effective_args().iter().any(|a| a == "--worker-gpu")
                 }),
                 iteration_quarantine: None, // `apply_session_outcome`, once the app is built
                 accelerated_open: false,
@@ -16402,7 +16403,7 @@ impl FractadyneApp {
     /// Open the cards `--render … --gpus SPEC` names beside the window's (`export_extra`). Vulkan
     /// only, as the setting opens them. A card that will not open is logged and left out.
     fn open_export_cards(&mut self, window: &eframe::wgpu::AdapterInfo) {
-        let args: Vec<String> = std::env::args().collect();
+        let args = effective_args();
         let Some(spec) = args.windows(2).find(|w| w[0] == crate::farm::local::FLAG).map(|w| w[1].clone()) else { return };
         let gpus = match crate::farm::local::parse_gpus(&spec) {
             Ok(g) => g,
