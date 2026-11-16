@@ -7480,6 +7480,18 @@ Mockups: [design/mockups/](design/mockups/).
   read through the same reader. Tests: 9 in `tests/unit/txt_location/` (the corpus `.fdn`/`.kfr` as
   CRLF, CR and UTF-16; neither/both; binary; bounds; bidi); uitest screen `txt-choice` looked at in
   en, de, ja and en-XA. The Imagina text importer (command line only) is unchanged.
+  ✅Round 2 the same day (user: "check for cr/lf handling and encoding formats. Try to handle
+  gracefully, but if it fails, try to give useful info about why and what format the app inferred"):
+  encodings UTF-8 / UTF-16 / UTF-32 with a BOM, UTF-16 without one (inferred from its zero bytes),
+  Windows-1252 when not UTF-8 (was a lossy replacement); binary signatures refused and named (PNG,
+  JPEG, GIF, OpenEXR, ZIP, PDF, gzip, 7-Zip, RAR, TIFF, WebP, Imagina .im; EXE/BMP only with a zero
+  byte), a zero character's byte offset reported; line endings counted (CRLF / LF / CR / mixed /
+  twice-converted CR+CRLF) and left to `clean`. `.fdn` opens through the same reader. Both formats:
+  the choice prompt; neither: "Not a location Fractadyne can read" listing the encoding and line
+  endings read, control characters removed, and each gate's verdict (`.fdn`: no app=/center_re=
+  line, empty, too large; `.kfr`: the Re/Im/Zoom lines missing, or the value that does not read,
+  quoted). The `.kfr` importer's failure gives the same verdict plus how the file was read.
+  2 changed + 13 new messages in 15 languages; uitest screens `txt-choice` and `txt-unreadable`.
 - [ ] **Find minibrot center (M) frames Multibrot 3-8 minibrots too** (found 2026-11-16 by me, while
   measuring). Deferred to after 0.3.0 stable (feature freeze). `nucleus_size` is quadratic only, so on
   a Multibrot the jump recenters but stays at the current zoom, and `--find-minibrot` prints no size or

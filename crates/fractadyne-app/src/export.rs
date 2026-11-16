@@ -1403,23 +1403,25 @@ impl FractadyneApp {
         }
     }
 
-    /// File ▸ Open on a `.txt`: read it through the sanitizing reader (`txt_location`), then load it
-    /// as the one format its content parses as. Neither, or both: park it and ask the user which
-    /// program wrote it (`draw_txt_choice_dialog`) — never a silent guess.
-    fn open_txt_location(&mut self, path: &std::path::Path, ctx: &egui::Context) {
-        use crate::txt_location::{location_kinds, read_location_text, shown_path, TxtError};
+    /// File ▸ Open on a `.fdn` or a `.txt`: read it through the sanitizing reader (`txt_location`:
+    /// bounded, encoding inferred, binary refused), then load it as the one format its content
+    /// parses as. Both: park it and ask which program wrote it. Neither: park it and say why, with
+    /// what was inferred — the encoding, the line endings, and each format's verdict
+    /// (`draw_txt_choice_dialog`). Never a silent guess, never a bare "not a location".
+    fn open_text_location(&mut self, path: &std::path::Path, ctx: &egui::Context) {
+        use crate::txt_location::{findings, read_error_message, read_location_text, shown_path};
         let source = shown_path(path);
-        let text = match read_location_text(path) {
-            Ok(t) => t,
-            Err(TxtError::TooLarge) => return self.set_toast(tr!(export_file_too_large), ctx),
-            Err(TxtError::Binary) => return self.set_toast(tr!(export_txt_not_text, path = source), ctx),
-            Err(TxtError::Io(e)) => {
-                return self.set_toast(tr!(export_read_failed, path = source, error = e.to_string()), ctx)
-            }
+        let d = match read_location_text(path) {
+            Ok(d) => d,
+            Err(e) => return self.set_toast(read_error_message(&e, &source), ctx),
         };
-        match location_kinds(&text)[..] {
-            [kind] => self.load_txt_as(kind, text, source, ctx),
-            _ => self.dialogs.pending_txt = Some(crate::PendingTxt { text, source }),
+        let f = findings(&d.text);
+        match f.kinds()[..] {
+            [kind] => self.load_txt_as(kind, d.text, source, ctx),
+            ref kinds => {
+                let ask = !kinds.is_empty();
+                self.dialogs.pending_txt = Some(crate::PendingTxt { text: d.text, source, info: d.info, findings: f, ask });
+            }
         }
     }
 
@@ -1468,22 +1470,10 @@ impl FractadyneApp {
             .unwrap_or("")
             .to_ascii_lowercase();
         match ext.as_str() {
-            // Shared location: a plain-text view-metadata blob (same format embedded in exports).
-            "fdn" => match std::fs::read(&path) {
-                Ok(bytes) if bytes.len() <= crate::SHARE_MAX => match String::from_utf8(bytes) {
-                    Ok(t) if crate::location_text_verdict(&t).is_ok() => {
-                        self.apply_location_text(&t, path.display().to_string(), ctx);
-                    }
-                    _ => self.set_toast(
-                        tr!(export_not_location, path = path.display().to_string()),
-                        ctx,
-                    ),
-                },
-                Ok(_) => self.set_toast(tr!(export_file_too_large), ctx),
-                Err(e) => self.set_toast(tr!(export_read_failed, path = path.display().to_string(), error = e.to_string()), ctx),
-            },
-            // A location saved as `.txt` (a forum attachment): its program is told by its content.
-            "txt" => self.open_txt_location(&path, ctx),
+            // Shared location: a plain-text view-metadata blob (same format embedded in exports), or
+            // a location saved as `.txt` (a forum attachment). Both are read the same way — the
+            // encoding inferred, the program told by the content, and a failure explained.
+            "fdn" | "txt" => self.open_text_location(&path, ctx),
             // Kalles Fraktaler location import.
             "kfr" => match self.load_kfr_file(&path) {
                 Ok(m) => self.set_toast(m, ctx),

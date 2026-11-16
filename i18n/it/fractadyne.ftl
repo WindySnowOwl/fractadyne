@@ -666,11 +666,33 @@ dlg-checksum-loaded = Caricata @ { $zoom }× nonostante la discrepanza del check
 dlg-checksum-loaded-note = Caricata @ { $zoom }× — { $note }
 dlg-checksum-not-loaded = Non caricata.
 
-## A location saved as .txt whose program could not be told from its contents
+## A location text file (.fdn or .txt) the app could not load on its own
 
 dlg-txt-title = Quale programma ha salvato questa posizione?
-# Above the file's path and three buttons: Fractadyne location, Kalles Fraktaler location, Cancel.
-dlg-txt-why = Fractadyne non riesce a capire dal contenuto di questo file di testo quale programma lo ha salvato. Scegli come leggerlo.
+# The window for a location text file that reads as BOTH programs' locations: above what was found, the file's path, and three buttons (Fractadyne location, Kalles Fraktaler location, Cancel).
+dlg-txt-why = Questo file di testo si legge sia come posizione di Fractadyne sia come posizione di Kalles Fraktaler. Scegli come leggerlo.
+# The same window when the file holds neither program's location: it explains, and has only Close.
+dlg-txt-unreadable-title = Non è una posizione che Fractadyne può leggere
+# Followed by a list of what was found: the lines below.
+dlg-txt-unreadable-why = Questo file di testo non è né una posizione di Fractadyne né una di Kalles Fraktaler. Ecco cosa ha trovato Fractadyne:
+# What the app inferred. $encoding: as written (UTF-8, UTF-16 LE + BOM, Windows-1252…); $endings: as written (CRLF, LF, CR, or several with counts such as CRLF 12 + CR 12).
+dlg-txt-read-as = Letto come testo { $encoding } con fine riga { $endings }.
+# The same for a file with no line breaks at all.
+dlg-txt-read-as-one-line = Letto come testo { $encoding }, tutto su una riga.
+# $count: control characters (other than tab and line breaks) taken out of the text.
+dlg-txt-removed = Caratteri di controllo rimossi: { $count }.
+# Each program's verdict, one line each. $app, $center: the .fdn line starts (app=Fractadyne, center_re=), filled in as written.
+dlg-txt-fdn-yes = Posizione di Fractadyne: sì.
+dlg-txt-fdn-no = Posizione di Fractadyne: no. Non ha né una riga «{ $app }» né una riga «{ $center }».
+dlg-txt-fdn-empty = Posizione di Fractadyne: no. Il file è vuoto.
+# $size and $limit: in bytes.
+dlg-txt-fdn-too-large = Posizione di Fractadyne: no. È lungo { $size } byte, e il limite è { $limit }.
+dlg-txt-kfr-yes = Posizione di Kalles Fraktaler: sì.
+# $keys: the missing line names, as written (Re, Im, Zoom), comma-separated.
+dlg-txt-kfr-missing = Posizione di Kalles Fraktaler: no. Mancano queste righe: { $keys }.
+# $key: Re, Im or Zoom, as written; $value: the value found (shortened).
+dlg-txt-kfr-unreadable = Posizione di Kalles Fraktaler: no. Il valore di { $key } non è leggibile: «{ $value }».
+dlg-txt-kfr-rejected = Posizione di Kalles Fraktaler: no. Uno dei suoi valori è troppo lungo da leggere.
 
 ## File ▸ Reset application state
 
@@ -3296,8 +3318,12 @@ export-loaded-location = Posizione caricata @ { $zoom }×
 export-loaded-location-note = Caricata @ { $zoom }× — { $note }
 # $path: the file.
 export-not-location = { $path } non è una posizione di Fractadyne.
-# $path: a file opened as a location that holds binary data (an image, say), not text.
-export-txt-not-text = { $path } non è un file di testo.
+# $path: a file opened as a location that holds binary data (an image, say), not text; $offset: where, in bytes.
+export-txt-not-text = { $path } non è un file di testo: contiene dati binari (un byte zero all’offset { $offset }).
+# Follows the message above when the file's first bytes are a known format's. $format: the format's name (PNG, PDF, ZIP, OpenEXR, Imagina .im…), as written.
+export-txt-looks-like = I suoi primi byte corrispondono al formato { $format }.
+# $path: the file; $size and $limit: its size and the most a location file may hold, in bytes.
+export-txt-too-large = { $path } è troppo grande per essere una posizione: { $size } byte, e il limite è { $limit }.
 export-file-too-large = File troppo grande (non è una posizione .fdn?).
 # $path: the file; $error: why (from the system, in English).
 export-read-failed = Impossibile leggere { $path }: { $error }

@@ -106,9 +106,12 @@ enum Screen {
     FarmControllerZoom,
     FarmControllerZoomAssembling,
     ResetConfirm,
-    /// File ▸ Open view or location on a `.txt` whose program its content did not tell: the
-    /// "which program saved this location?" prompt (seeded with text that is neither format).
+    /// File ▸ Open view or location on a `.txt` that parses as BOTH formats: the "which program
+    /// saved this location?" prompt (seeded through the real reader: UTF-16 with CRLF endings).
     TxtChoice,
+    /// The same on one that parses as NEITHER: "not a location Fractadyne can read", with what was
+    /// inferred (seeded: Windows-1252, converted twice to CR + CRLF, a `.kfr` missing its Zoom).
+    TxtUnreadable,
     /// File ▸ Settings ▸ Reference cache… — the on-disk orbit cache's controls. ⚠Seeded with
     /// one real entry first, so the usage bar, the rows and the Clear button all render
     /// populated: a screenshot of the empty state would photograph chrome around no data.
@@ -1109,6 +1112,7 @@ fn build_steps() -> Vec<Step> {
         screen("farm-controller-zoom-assembling", Screen::FarmControllerZoomAssembling),
         screen("reset-confirm", Screen::ResetConfirm),
         screen("txt-choice", Screen::TxtChoice),
+        screen("txt-unreadable", Screen::TxtUnreadable),
         screen("reference-cache", Screen::OrbitCache),
         screen("languages", Screen::Languages),
         screen("notice", Screen::Notice),
@@ -2269,12 +2273,8 @@ impl FractadyneApp {
             Screen::FarmControllerZoom => self.uitest_seed_farm_controller_zoom(false),
             Screen::FarmControllerZoomAssembling => self.uitest_seed_farm_controller_zoom(true),
             Screen::ResetConfirm => self.dialogs.reset_confirm_open = true,
-            Screen::TxtChoice => {
-                self.dialogs.pending_txt = Some(crate::PendingTxt {
-                    text: "Shopping list:\n- milk\n".into(),
-                    source: r"C:\Users\robin\Downloads\spiral-1e60.fdn.txt".into(),
-                })
-            }
+            Screen::TxtChoice => self.dialogs.pending_txt = Some(txt_seed(true)),
+            Screen::TxtUnreadable => self.dialogs.pending_txt = Some(txt_seed(false)),
             Screen::Languages => self.language.window_open = true,
             Screen::OrbitCache => {
                 // The walk runs as a task invocation, so the cache is OFF and empty. Point it at
@@ -4755,4 +4755,29 @@ fn render_json(ut: &UiTest, version: &str, plat: &str, gpu: &str) -> String {
     }
     s.push_str("  ]\n}\n");
     s
+}
+
+/// The `.txt` location window's state, made by the real reader and gates from bytes a forum
+/// download could hold: `both` = a text that parses as both formats, UTF-16 with CRLF endings;
+/// else a `.kfr` missing its Zoom line, in Windows-1252, converted twice (CR + CRLF endings).
+fn txt_seed(both: bool) -> crate::PendingTxt {
+    let bytes: Vec<u8> = if both {
+        let t = "app=Fractadyne\r\ncenter_re=-0.75\r\ncenter_im=0.1\r\nRe: -0.75\r\nIm: 0.1\r\nZoom: 1E10\r\n";
+        let mut b = vec![0xFF, 0xFE];
+        for u in t.encode_utf16() {
+            b.extend_from_slice(&u.to_le_bytes());
+        }
+        b
+    } else {
+        b"Comment: caf\xE9\r\r\nRe: -0.75\r\r\nIm: 0.1\r\r\nIterations: 50000\r\r\n".to_vec()
+    };
+    let d = crate::txt_location::decode_location_bytes(&bytes).expect("the seed is text");
+    let findings = crate::txt_location::findings(&d.text);
+    crate::PendingTxt {
+        text: d.text,
+        source: r"C:\Users\robin\Downloads\spiral-1e60.fdn.txt".into(),
+        info: d.info,
+        findings,
+        ask: both,
+    }
 }

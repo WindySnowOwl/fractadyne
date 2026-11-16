@@ -4742,24 +4742,28 @@ pub(crate) fn export_file_name(fractal: &str, secs: u64, ext: &str) -> String {
 }
 
 /// One exported image discovered by the gallery browser.
-/// A location file's text for the `.kfr` importer: the `.txt` reader (bounded, decoded, binary
-/// refused — `txt_location`), its failures as the importer has always reported them.
-pub(crate) fn read_location_file(path: &std::path::Path) -> Result<String, crate::error::AppError> {
-    use crate::error::AppError;
-    use crate::txt_location::TxtError;
-    crate::txt_location::read_location_text(path).map_err(|e| match e {
-        TxtError::TooLarge => AppError::Message("file too large (not a .kfr location?)".into()),
-        TxtError::Binary => AppError::Message(tr!(export_txt_not_text, path = crate::txt_location::shown_path(path))),
-        TxtError::Io(e) => AppError::from(e),
+/// A location file's text for the `.kfr` importer: the `.txt` reader (bounded, encoding inferred,
+/// binary refused — `txt_location`), a failure saying why (the size and the limit, where the binary
+/// data is and what it looks like, or the system's error).
+pub(crate) fn read_location_file(path: &std::path::Path) -> Result<crate::txt_location::Decoded, crate::error::AppError> {
+    crate::txt_location::read_location_text(path).map_err(|e| {
+        crate::error::AppError::Message(crate::txt_location::read_error_message(&e, &crate::txt_location::shown_path(path)))
     })
 }
 
-/// A `.txt` location whose program the app could not tell from its contents, waiting on the
-/// user's choice. Held unapplied, as [`PendingView`] is.
+/// A location text file the app could not load on its own, held unapplied (as [`PendingView`] is)
+/// for `draw_txt_choice_dialog`: it parses as both formats (`ask`: the user chooses), or as
+/// neither (the window says why, with what was inferred).
 pub(crate) struct PendingTxt {
     pub(crate) text: String,
-    /// The file's path, for the prompt and the messages after it.
+    /// The file's path as shown (`txt_location::shown_path`), for the window and the messages.
     pub(crate) source: String,
+    /// How the bytes were read: the encoding and the line endings inferred.
+    pub(crate) info: crate::txt_location::TextInfo,
+    /// Each format's verdict.
+    pub(crate) findings: crate::txt_location::Findings,
+    /// Both formats fit: offer the choice. Neither: explain, and only Close.
+    pub(crate) ask: bool,
 }
 
 /// A view text whose checksum failed, waiting on the user's answer.
@@ -11557,15 +11561,25 @@ impl FractadyneApp {
     /// linear magnification from the home view — close enough that the location lands at
     /// essentially the right place and scale.)
     fn load_kfr_file(&mut self, path: &std::path::Path) -> Result<String, crate::error::AppError> {
-        let text = read_location_file(path)?;
-        self.load_kfr_text(&text)
+        let d = read_location_file(path)?;
+        // A failure also says how the file was read: an encoding or line endings nobody expected
+        // are the usual reason a `.kfr` that looks fine in an editor does not parse.
+        self.load_kfr_text(&d.text).map_err(|e| {
+            let mut m = e.to_string();
+            for line in crate::txt_location::read_as_lines(&d.info) {
+                m.push(' ');
+                m.push_str(&line);
+            }
+            crate::error::AppError::Parse(m)
+        })
     }
 
     /// [`Self::load_kfr_file`] on text already read (a `.kfr`, or a `.txt` that holds one).
     pub(crate) fn load_kfr_text(&mut self, text: &str) -> Result<String, crate::error::AppError> {
         use crate::error::AppError;
         let v = fractadyne_core::parse_kfr(text)
-            .ok_or_else(|| AppError::Parse("not a valid .kfr location (need Re / Im / Zoom)".into()))?;
+            // Why not, in the user's language: the lines missing, or the value that does not read.
+            .ok_or_else(|| AppError::Parse(crate::txt_location::kfr_line(&crate::txt_location::findings(text).kfr)))?;
         let zoom = v.zoom;
         self.fractal = FractalKind::Mandelbrot;
         self.julia_mode = false;
@@ -11753,15 +11767,13 @@ impl FractadyneApp {
         };
         self.remember_dir(&path);
         // The `.txt` reader for both (bounded, decoded, binary refused): a `.fdn` is text too.
-        use crate::txt_location::{read_bounded, TxtError};
+        use crate::txt_location::{read_bounded, read_error_message, shown_path};
         self.share.msg = Some(match read_bounded(&path, SHARE_MAX as u64) {
-            Ok(t) => {
-                self.share.text = t;
+            Ok(d) => {
+                self.share.text = d.text;
                 tr!(app_share_loaded_into_box)
             }
-            Err(TxtError::TooLarge) => tr!(app_share_too_large),
-            Err(TxtError::Binary) => tr!(export_txt_not_text, path = crate::txt_location::shown_path(&path)),
-            Err(TxtError::Io(e)) => tr!(app_read_failed, error = e.to_string()),
+            Err(e) => read_error_message(&e, &shown_path(&path)),
         });
     }
 

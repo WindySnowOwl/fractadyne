@@ -668,11 +668,33 @@ dlg-checksum-loaded = Загружено @ { $zoom }×, несмотря на н
 dlg-checksum-loaded-note = Загружено @ { $zoom }× — { $note }
 dlg-checksum-not-loaded = Не загружено.
 
-## A location saved as .txt whose program could not be told from its contents
+## A location text file (.fdn or .txt) the app could not load on its own
 
 dlg-txt-title = Какая программа сохранила это местоположение?
-# Above the file's path and three buttons: Fractadyne location, Kalles Fraktaler location, Cancel.
-dlg-txt-why = По содержимому этого текстового файла Fractadyne не может определить, какая программа его сохранила. Выберите, как его прочитать.
+# The window for a location text file that reads as BOTH programs' locations: above what was found, the file's path, and three buttons (Fractadyne location, Kalles Fraktaler location, Cancel).
+dlg-txt-why = Этот текстовый файл читается и как местоположение Fractadyne, и как местоположение Kalles Fraktaler. Выберите, как его прочитать.
+# The same window when the file holds neither program's location: it explains, and has only Close.
+dlg-txt-unreadable-title = Это не местоположение, которое Fractadyne может прочитать
+# Followed by a list of what was found: the lines below.
+dlg-txt-unreadable-why = Этот текстовый файл не является ни местоположением Fractadyne, ни местоположением Kalles Fraktaler. Что нашёл Fractadyne:
+# What the app inferred. $encoding: as written (UTF-8, UTF-16 LE + BOM, Windows-1252…); $endings: as written (CRLF, LF, CR, or several with counts such as CRLF 12 + CR 12).
+dlg-txt-read-as = Прочитан как текст { $encoding } с окончаниями строк { $endings }.
+# The same for a file with no line breaks at all.
+dlg-txt-read-as-one-line = Прочитан как текст { $encoding }, всё в одной строке.
+# $count: control characters (other than tab and line breaks) taken out of the text.
+dlg-txt-removed = Удалено управляющих символов: { $count }.
+# Each program's verdict, one line each. $app, $center: the .fdn line starts (app=Fractadyne, center_re=), filled in as written.
+dlg-txt-fdn-yes = Местоположение Fractadyne: да.
+dlg-txt-fdn-no = Местоположение Fractadyne: нет. В нём нет ни строки «{ $app }», ни строки «{ $center }».
+dlg-txt-fdn-empty = Местоположение Fractadyne: нет. Файл пуст.
+# $size and $limit: in bytes.
+dlg-txt-fdn-too-large = Местоположение Fractadyne: нет. Его длина { $size } Б при ограничении { $limit } Б.
+dlg-txt-kfr-yes = Местоположение Kalles Fraktaler: да.
+# $keys: the missing line names, as written (Re, Im, Zoom), comma-separated.
+dlg-txt-kfr-missing = Местоположение Kalles Fraktaler: нет. Не хватает строк: { $keys }.
+# $key: Re, Im or Zoom, as written; $value: the value found (shortened).
+dlg-txt-kfr-unreadable = Местоположение Kalles Fraktaler: нет. Значение { $key } не читается: «{ $value }».
+dlg-txt-kfr-rejected = Местоположение Kalles Fraktaler: нет. Одно из значений слишком длинное, чтобы его прочитать.
 
 ## File ▸ Reset application state
 
@@ -3368,8 +3390,12 @@ export-loaded-location = Местоположение загружено @ { $zo
 export-loaded-location-note = Загружено @ { $zoom }× — { $note }
 # $path: the file.
 export-not-location = { $path } — не местоположение Fractadyne.
-# $path: a file opened as a location that holds binary data (an image, say), not text.
-export-txt-not-text = { $path } — не текстовый файл.
+# $path: a file opened as a location that holds binary data (an image, say), not text; $offset: where, in bytes.
+export-txt-not-text = { $path } — не текстовый файл: он содержит двоичные данные (нулевой байт по смещению { $offset }).
+# Follows the message above when the file's first bytes are a known format's. $format: the format's name (PNG, PDF, ZIP, OpenEXR, Imagina .im…), as written.
+export-txt-looks-like = Его первые байты соответствуют формату { $format }.
+# $path: the file; $size and $limit: its size and the most a location file may hold, in bytes.
+export-txt-too-large = { $path } слишком велик для местоположения: { $size } Б при ограничении { $limit } Б.
 export-file-too-large = Файл слишком большой (это не местоположение .fdn?).
 # $path: the file; $error: why (from the system, in English).
 export-read-failed = Не удалось прочитать { $path }: { $error }

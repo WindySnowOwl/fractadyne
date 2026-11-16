@@ -666,11 +666,33 @@ dlg-checksum-loaded = Yüklendi @ { $zoom }×, sağlama toplamı uyuşmazlığı
 dlg-checksum-loaded-note = Yüklendi @ { $zoom }× — { $note }
 dlg-checksum-not-loaded = Yüklenmedi.
 
-## A location saved as .txt whose program could not be told from its contents
+## A location text file (.fdn or .txt) the app could not load on its own
 
 dlg-txt-title = Bu konumu hangi program kaydetti?
-# Above the file's path and three buttons: Fractadyne location, Kalles Fraktaler location, Cancel.
-dlg-txt-why = Fractadyne, bu metin dosyasının içeriğinden onu hangi programın kaydettiğini anlayamadı. Nasıl okunacağını seçin.
+# The window for a location text file that reads as BOTH programs' locations: above what was found, the file's path, and three buttons (Fractadyne location, Kalles Fraktaler location, Cancel).
+dlg-txt-why = Bu metin dosyası hem Fractadyne konumu hem de Kalles Fraktaler konumu olarak okunabiliyor. Nasıl okunacağını seçin.
+# The same window when the file holds neither program's location: it explains, and has only Close.
+dlg-txt-unreadable-title = Fractadyne’ın okuyabileceği bir konum değil
+# Followed by a list of what was found: the lines below.
+dlg-txt-unreadable-why = Bu metin dosyası ne Fractadyne konumu ne de Kalles Fraktaler konumu. Fractadyne’ın bulduğu:
+# What the app inferred. $encoding: as written (UTF-8, UTF-16 LE + BOM, Windows-1252…); $endings: as written (CRLF, LF, CR, or several with counts such as CRLF 12 + CR 12).
+dlg-txt-read-as = { $encoding } metin olarak, { $endings } satır sonlarıyla okundu.
+# The same for a file with no line breaks at all.
+dlg-txt-read-as-one-line = { $encoding } metin olarak, tamamı tek satırda okundu.
+# $count: control characters (other than tab and line breaks) taken out of the text.
+dlg-txt-removed = Kaldırılan denetim karakterleri: { $count }.
+# Each program's verdict, one line each. $app, $center: the .fdn line starts (app=Fractadyne, center_re=), filled in as written.
+dlg-txt-fdn-yes = Fractadyne konumu: evet.
+dlg-txt-fdn-no = Fractadyne konumu: hayır. “{ $app }” satırı da “{ $center }” satırı da yok.
+dlg-txt-fdn-empty = Fractadyne konumu: hayır. Dosya boş.
+# $size and $limit: in bytes.
+dlg-txt-fdn-too-large = Fractadyne konumu: hayır. Uzunluğu { $size } bayt, sınır ise { $limit }.
+dlg-txt-kfr-yes = Kalles Fraktaler konumu: evet.
+# $keys: the missing line names, as written (Re, Im, Zoom), comma-separated.
+dlg-txt-kfr-missing = Kalles Fraktaler konumu: hayır. Şu satırlar eksik: { $keys }.
+# $key: Re, Im or Zoom, as written; $value: the value found (shortened).
+dlg-txt-kfr-unreadable = Kalles Fraktaler konumu: hayır. { $key } değeri okunamıyor: “{ $value }”.
+dlg-txt-kfr-rejected = Kalles Fraktaler konumu: hayır. Değerlerinden biri okunamayacak kadar uzun.
 
 ## File ▸ Reset application state
 
@@ -3296,8 +3318,12 @@ export-loaded-location = Konum yüklendi @ { $zoom }×
 export-loaded-location-note = Yüklendi @ { $zoom }× — { $note }
 # $path: the file.
 export-not-location = { $path } bir Fractadyne konumu değil.
-# $path: a file opened as a location that holds binary data (an image, say), not text.
-export-txt-not-text = { $path } bir metin dosyası değil.
+# $path: a file opened as a location that holds binary data (an image, say), not text; $offset: where, in bytes.
+export-txt-not-text = { $path } bir metin dosyası değil: ikili veri içeriyor ({ $offset } konumunda sıfır baytı).
+# Follows the message above when the file's first bytes are a known format's. $format: the format's name (PNG, PDF, ZIP, OpenEXR, Imagina .im…), as written.
+export-txt-looks-like = İlk baytları { $format } biçimiyle eşleşiyor.
+# $path: the file; $size and $limit: its size and the most a location file may hold, in bytes.
+export-txt-too-large = { $path } bir konum olmak için çok büyük: { $size } bayt, sınır ise { $limit }.
 export-file-too-large = Dosya çok büyük (bir .fdn konumu değil mi?).
 # $path: the file; $error: why (from the system, in English).
 export-read-failed = { $path } okunamadı: { $error }

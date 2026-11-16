@@ -662,11 +662,33 @@ dlg-checksum-loaded = 체크섬이 일치하지 않지만 @ { $zoom }×에서 �
 dlg-checksum-loaded-note = @ { $zoom }×에서 불러왔습니다 — { $note }
 dlg-checksum-not-loaded = 불러오지 않았습니다.
 
-## A location saved as .txt whose program could not be told from its contents
+## A location text file (.fdn or .txt) the app could not load on its own
 
 dlg-txt-title = 이 위치를 저장한 프로그램은 무엇입니까?
-# Above the file's path and three buttons: Fractadyne location, Kalles Fraktaler location, Cancel.
-dlg-txt-why = 이 텍스트 파일의 내용으로는 어떤 프로그램이 저장했는지 알 수 없습니다. 읽을 방식을 선택하세요.
+# The window for a location text file that reads as BOTH programs' locations: above what was found, the file's path, and three buttons (Fractadyne location, Kalles Fraktaler location, Cancel).
+dlg-txt-why = 이 텍스트 파일은 Fractadyne 위치로도, Kalles Fraktaler 위치로도 읽을 수 있습니다. 읽을 방식을 선택하세요.
+# The same window when the file holds neither program's location: it explains, and has only Close.
+dlg-txt-unreadable-title = Fractadyne에서 읽을 수 있는 위치가 아닙니다
+# Followed by a list of what was found: the lines below.
+dlg-txt-unreadable-why = 이 텍스트 파일은 Fractadyne 위치도 Kalles Fraktaler 위치도 아닙니다. Fractadyne이 찾은 내용:
+# What the app inferred. $encoding: as written (UTF-8, UTF-16 LE + BOM, Windows-1252…); $endings: as written (CRLF, LF, CR, or several with counts such as CRLF 12 + CR 12).
+dlg-txt-read-as = { $encoding } 텍스트로 읽었습니다(줄 끝: { $endings }).
+# The same for a file with no line breaks at all.
+dlg-txt-read-as-one-line = { $encoding } 텍스트로 읽었습니다(모두 한 줄).
+# $count: control characters (other than tab and line breaks) taken out of the text.
+dlg-txt-removed = 제거한 제어 문자: { $count }
+# Each program's verdict, one line each. $app, $center: the .fdn line starts (app=Fractadyne, center_re=), filled in as written.
+dlg-txt-fdn-yes = Fractadyne 위치: 예.
+dlg-txt-fdn-no = Fractadyne 위치: 아니요. “{ $app }” 줄도 “{ $center }” 줄도 없습니다.
+dlg-txt-fdn-empty = Fractadyne 위치: 아니요. 파일이 비어 있습니다.
+# $size and $limit: in bytes.
+dlg-txt-fdn-too-large = Fractadyne 위치: 아니요. 길이가 { $size }바이트이며 한도는 { $limit }입니다.
+dlg-txt-kfr-yes = Kalles Fraktaler 위치: 예.
+# $keys: the missing line names, as written (Re, Im, Zoom), comma-separated.
+dlg-txt-kfr-missing = Kalles Fraktaler 위치: 아니요. 다음 줄이 없습니다: { $keys }
+# $key: Re, Im or Zoom, as written; $value: the value found (shortened).
+dlg-txt-kfr-unreadable = Kalles Fraktaler 위치: 아니요. { $key } 값을 읽을 수 없습니다: “{ $value }”
+dlg-txt-kfr-rejected = Kalles Fraktaler 위치: 아니요. 값 하나가 너무 길어서 읽을 수 없습니다.
 
 ## File ▸ Reset application state
 
@@ -3189,8 +3211,12 @@ export-loaded-location = 위치를 불러왔습니다 @ { $zoom }×
 export-loaded-location-note = @ { $zoom }×에서 불러왔습니다 — { $note }
 # $path: the file.
 export-not-location = { $path }은(는) Fractadyne 위치가 아닙니다.
-# $path: a file opened as a location that holds binary data (an image, say), not text.
-export-txt-not-text = { $path }은(는) 텍스트 파일이 아닙니다.
+# $path: a file opened as a location that holds binary data (an image, say), not text; $offset: where, in bytes.
+export-txt-not-text = { $path }은(는) 텍스트 파일이 아닙니다. 이진 데이터가 들어 있습니다(오프셋 { $offset }에 0 바이트).
+# Follows the message above when the file's first bytes are a known format's. $format: the format's name (PNG, PDF, ZIP, OpenEXR, Imagina .im…), as written.
+export-txt-looks-like = 앞부분 바이트가 { $format } 형식과 일치합니다.
+# $path: the file; $size and $limit: its size and the most a location file may hold, in bytes.
+export-txt-too-large = { $path }은(는) 위치 파일로는 너무 큽니다. { $size }바이트이며 한도는 { $limit }입니다.
 export-file-too-large = 파일이 너무 큽니다(.fdn 위치가 아닐 수 있습니다).
 # $path: the file; $error: why (from the system, in English).
 export-read-failed = { $path }을(를) 읽을 수 없습니다: { $error }
