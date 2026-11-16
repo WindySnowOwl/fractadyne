@@ -663,11 +663,33 @@ dlg-checksum-loaded = チェックサムは一致しませんが、{ $zoom }×�
 dlg-checksum-loaded-note = { $zoom }×の位置を読み込みました：{ $note }
 dlg-checksum-not-loaded = 読み込みませんでした。
 
-## A location saved as .txt whose program could not be told from its contents
+## A location text file (.fdn or .txt) the app could not load on its own
 
 dlg-txt-title = この位置を保存したのはどのプログラムですか？
-# Above the file's path and three buttons: Fractadyne location, Kalles Fraktaler location, Cancel.
-dlg-txt-why = このテキストファイルの内容からは、どのプログラムで保存されたか判別できませんでした。読み込み方法を選んでください。
+# The window for a location text file that reads as BOTH programs' locations: above what was found, the file's path, and three buttons (Fractadyne location, Kalles Fraktaler location, Cancel).
+dlg-txt-why = このテキストファイルは、Fractadyneの位置としてもKalles Fraktalerの位置としても読めます。読み込み方法を選んでください。
+# The same window when the file holds neither program's location: it explains, and has only Close.
+dlg-txt-unreadable-title = Fractadyneが読める位置ではありません
+# Followed by a list of what was found: the lines below.
+dlg-txt-unreadable-why = このテキストファイルはFractadyneの位置でもKalles Fraktalerの位置でもありません。Fractadyneが見つけた内容：
+# What the app inferred. $encoding: as written (UTF-8, UTF-16 LE + BOM, Windows-1252…); $endings: as written (CRLF, LF, CR, or several with counts such as CRLF 12 + CR 12).
+dlg-txt-read-as = { $encoding }のテキストとして読み込みました（改行コード：{ $endings }）。
+# The same for a file with no line breaks at all.
+dlg-txt-read-as-one-line = { $encoding }のテキストとして読み込みました（すべて1行）。
+# $count: control characters (other than tab and line breaks) taken out of the text.
+dlg-txt-removed = 削除した制御文字：{ $count }
+# Each program's verdict, one line each. $app, $center: the .fdn line starts (app=Fractadyne, center_re=), filled in as written.
+dlg-txt-fdn-yes = Fractadyneの位置：はい。
+dlg-txt-fdn-no = Fractadyneの位置：いいえ。「{ $app }」の行も「{ $center }」の行もありません。
+dlg-txt-fdn-empty = Fractadyneの位置：いいえ。ファイルが空です。
+# $size and $limit: in bytes.
+dlg-txt-fdn-too-large = Fractadyneの位置：いいえ。長さは{ $size }バイトで、上限は{ $limit }です。
+dlg-txt-kfr-yes = Kalles Fraktalerの位置：はい。
+# $keys: the missing line names, as written (Re, Im, Zoom), comma-separated.
+dlg-txt-kfr-missing = Kalles Fraktalerの位置：いいえ。次の行がありません：{ $keys }
+# $key: Re, Im or Zoom, as written; $value: the value found (shortened).
+dlg-txt-kfr-unreadable = Kalles Fraktalerの位置：いいえ。{ $key }の値を読み取れません：「{ $value }」
+dlg-txt-kfr-rejected = Kalles Fraktalerの位置：いいえ。値が長すぎて読み取れません。
 
 ## File ▸ Reset application state
 
@@ -3190,8 +3212,12 @@ export-loaded-location = 位置を読み込みました（{ $zoom }×）
 export-loaded-location-note = { $zoom }×の位置を読み込みました：{ $note }
 # $path: the file.
 export-not-location = { $path }はFractadyneの位置ではありません。
-# $path: a file opened as a location that holds binary data (an image, say), not text.
-export-txt-not-text = { $path }はテキストファイルではありません。
+# $path: a file opened as a location that holds binary data (an image, say), not text; $offset: where, in bytes.
+export-txt-not-text = { $path }はテキストファイルではありません。バイナリデータを含んでいます（オフセット{ $offset }にゼロバイト）。
+# Follows the message above when the file's first bytes are a known format's. $format: the format's name (PNG, PDF, ZIP, OpenEXR, Imagina .im…), as written.
+export-txt-looks-like = 先頭のバイトは{ $format }形式と一致します。
+# $path: the file; $size and $limit: its size and the most a location file may hold, in bytes.
+export-txt-too-large = { $path }は位置としては大きすぎます：{ $size }バイト、上限は{ $limit }です。
 export-file-too-large = ファイルが大きすぎます（.fdnの位置ではない可能性があります）。
 # $path: the file; $error: why (from the system, in English).
 export-read-failed = { $path }を読み込めませんでした：{ $error }

@@ -667,11 +667,33 @@ dlg-checksum-loaded = Chargé @ { $zoom }× malgré la somme de contrôle discor
 dlg-checksum-loaded-note = Chargé @ { $zoom }× — { $note }
 dlg-checksum-not-loaded = Non chargé.
 
-## A location saved as .txt whose program could not be told from its contents
+## A location text file (.fdn or .txt) the app could not load on its own
 
 dlg-txt-title = Quel programme a enregistré cet emplacement ?
-# Above the file's path and three buttons: Fractadyne location, Kalles Fraktaler location, Cancel.
-dlg-txt-why = Fractadyne ne peut pas déterminer, d’après son contenu, quel programme a enregistré ce fichier texte. Choisissez comment le lire.
+# The window for a location text file that reads as BOTH programs' locations: above what was found, the file's path, and three buttons (Fractadyne location, Kalles Fraktaler location, Cancel).
+dlg-txt-why = Ce fichier texte se lit aussi bien comme un emplacement Fractadyne que comme un emplacement Kalles Fraktaler. Choisissez comment le lire.
+# The same window when the file holds neither program's location: it explains, and has only Close.
+dlg-txt-unreadable-title = Pas un emplacement que Fractadyne sait lire
+# Followed by a list of what was found: the lines below.
+dlg-txt-unreadable-why = Ce fichier texte n’est ni un emplacement Fractadyne ni un emplacement Kalles Fraktaler. Ce que Fractadyne a trouvé :
+# What the app inferred. $encoding: as written (UTF-8, UTF-16 LE + BOM, Windows-1252…); $endings: as written (CRLF, LF, CR, or several with counts such as CRLF 12 + CR 12).
+dlg-txt-read-as = Lu comme du texte { $encoding } avec des fins de ligne { $endings }.
+# The same for a file with no line breaks at all.
+dlg-txt-read-as-one-line = Lu comme du texte { $encoding }, tout sur une seule ligne.
+# $count: control characters (other than tab and line breaks) taken out of the text.
+dlg-txt-removed = Caractères de contrôle supprimés : { $count }.
+# Each program's verdict, one line each. $app, $center: the .fdn line starts (app=Fractadyne, center_re=), filled in as written.
+dlg-txt-fdn-yes = Emplacement Fractadyne : oui.
+dlg-txt-fdn-no = Emplacement Fractadyne : non. Il n’a ni ligne « { $app } » ni ligne « { $center } ».
+dlg-txt-fdn-empty = Emplacement Fractadyne : non. Le fichier est vide.
+# $size and $limit: in bytes.
+dlg-txt-fdn-too-large = Emplacement Fractadyne : non. Il fait { $size } octets, pour une limite de { $limit }.
+dlg-txt-kfr-yes = Emplacement Kalles Fraktaler : oui.
+# $keys: the missing line names, as written (Re, Im, Zoom), comma-separated.
+dlg-txt-kfr-missing = Emplacement Kalles Fraktaler : non. Ces lignes manquent : { $keys }.
+# $key: Re, Im or Zoom, as written; $value: the value found (shortened).
+dlg-txt-kfr-unreadable = Emplacement Kalles Fraktaler : non. La valeur de { $key } est illisible : « { $value } ».
+dlg-txt-kfr-rejected = Emplacement Kalles Fraktaler : non. L’une de ses valeurs est trop longue pour être lue.
 
 ## File ▸ Reset application state
 
@@ -3297,8 +3319,12 @@ export-loaded-location = Emplacement chargé @ { $zoom }×
 export-loaded-location-note = Chargé @ { $zoom }× — { $note }
 # $path: the file.
 export-not-location = { $path } n’est pas un emplacement Fractadyne.
-# $path: a file opened as a location that holds binary data (an image, say), not text.
-export-txt-not-text = { $path } n’est pas un fichier texte.
+# $path: a file opened as a location that holds binary data (an image, say), not text; $offset: where, in bytes.
+export-txt-not-text = { $path } n’est pas un fichier texte : il contient des données binaires (un octet nul à la position { $offset }).
+# Follows the message above when the file's first bytes are a known format's. $format: the format's name (PNG, PDF, ZIP, OpenEXR, Imagina .im…), as written.
+export-txt-looks-like = Ses premiers octets correspondent au format { $format }.
+# $path: the file; $size and $limit: its size and the most a location file may hold, in bytes.
+export-txt-too-large = { $path } est trop volumineux pour être un emplacement : { $size } octets, pour une limite de { $limit }.
 export-file-too-large = Fichier trop volumineux (ce n’est pas un emplacement .fdn ?).
 # $path: the file; $error: why (from the system, in English).
 export-read-failed = Impossible de lire { $path } : { $error }

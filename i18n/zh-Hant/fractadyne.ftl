@@ -662,11 +662,33 @@ dlg-checksum-loaded = 已載入 @ { $zoom }×，儘管檢查碼不符
 dlg-checksum-loaded-note = 已載入 @ { $zoom }×：{ $note }
 dlg-checksum-not-loaded = 未載入。
 
-## A location saved as .txt whose program could not be told from its contents
+## A location text file (.fdn or .txt) the app could not load on its own
 
 dlg-txt-title = 這個位置是由哪個程式儲存的？
-# Above the file's path and three buttons: Fractadyne location, Kalles Fraktaler location, Cancel.
-dlg-txt-why = Fractadyne 無法根據此文字檔的內容判斷是哪個程式儲存的。請選擇讀取方式。
+# The window for a location text file that reads as BOTH programs' locations: above what was found, the file's path, and three buttons (Fractadyne location, Kalles Fraktaler location, Cancel).
+dlg-txt-why = 這個文字檔既可讀作 Fractadyne 位置，也可讀作 Kalles Fraktaler 位置。請選擇讀取方式。
+# The same window when the file holds neither program's location: it explains, and has only Close.
+dlg-txt-unreadable-title = 不是 Fractadyne 能讀取的位置
+# Followed by a list of what was found: the lines below.
+dlg-txt-unreadable-why = 這個文字檔既不是 Fractadyne 位置，也不是 Kalles Fraktaler 位置。Fractadyne 找到的情況：
+# What the app inferred. $encoding: as written (UTF-8, UTF-16 LE + BOM, Windows-1252…); $endings: as written (CRLF, LF, CR, or several with counts such as CRLF 12 + CR 12).
+dlg-txt-read-as = 已按 { $encoding } 文字讀取，換行字元為 { $endings }。
+# The same for a file with no line breaks at all.
+dlg-txt-read-as-one-line = 已按 { $encoding } 文字讀取，全部在同一行。
+# $count: control characters (other than tab and line breaks) taken out of the text.
+dlg-txt-removed = 已移除的控制字元：{ $count }。
+# Each program's verdict, one line each. $app, $center: the .fdn line starts (app=Fractadyne, center_re=), filled in as written.
+dlg-txt-fdn-yes = Fractadyne 位置：是。
+dlg-txt-fdn-no = Fractadyne 位置：否。它沒有「{ $app }」行，也沒有「{ $center }」行。
+dlg-txt-fdn-empty = Fractadyne 位置：否。檔案是空的。
+# $size and $limit: in bytes.
+dlg-txt-fdn-too-large = Fractadyne 位置：否。它有 { $size } 位元組，上限為 { $limit }。
+dlg-txt-kfr-yes = Kalles Fraktaler 位置：是。
+# $keys: the missing line names, as written (Re, Im, Zoom), comma-separated.
+dlg-txt-kfr-missing = Kalles Fraktaler 位置：否。缺少這些行：{ $keys }。
+# $key: Re, Im or Zoom, as written; $value: the value found (shortened).
+dlg-txt-kfr-unreadable = Kalles Fraktaler 位置：否。無法讀取 { $key } 的值：「{ $value }」。
+dlg-txt-kfr-rejected = Kalles Fraktaler 位置：否。其中某個值太長，無法讀取。
 
 ## File ▸ Reset application state
 
@@ -3189,8 +3211,12 @@ export-loaded-location = 已載入位置 @ { $zoom }×
 export-loaded-location-note = 已載入 @ { $zoom }×：{ $note }
 # $path: the file.
 export-not-location = { $path } 不是 Fractadyne 位置。
-# $path: a file opened as a location that holds binary data (an image, say), not text.
-export-txt-not-text = { $path } 不是文字檔。
+# $path: a file opened as a location that holds binary data (an image, say), not text; $offset: where, in bytes.
+export-txt-not-text = { $path } 不是文字檔：它包含二進位資料（位移 { $offset } 處有一個零位元組）。
+# Follows the message above when the file's first bytes are a known format's. $format: the format's name (PNG, PDF, ZIP, OpenEXR, Imagina .im…), as written.
+export-txt-looks-like = 它的開頭位元組符合 { $format } 格式。
+# $path: the file; $size and $limit: its size and the most a location file may hold, in bytes.
+export-txt-too-large = { $path } 太大，不可能是位置檔：{ $size } 位元組，上限為 { $limit }。
 export-file-too-large = 檔案太大（不是 .fdn 位置？）。
 # $path: the file; $error: why (from the system, in English).
 export-read-failed = 無法讀取 { $path }：{ $error }

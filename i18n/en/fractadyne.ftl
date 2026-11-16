@@ -729,11 +729,33 @@ dlg-checksum-loaded = Loaded @ { $zoom }× despite the checksum mismatch
 dlg-checksum-loaded-note = Loaded @ { $zoom }× — { $note }
 dlg-checksum-not-loaded = Not loaded.
 
-## A location saved as .txt whose program could not be told from its contents
+## A location text file (.fdn or .txt) the app could not load on its own
 
 dlg-txt-title = Which program saved this location?
-# Above the file's path and three buttons: Fractadyne location, Kalles Fraktaler location, Cancel.
-dlg-txt-why = Fractadyne couldn't tell from this text file's contents which program saved it. Choose how to read it.
+# The window for a location text file that reads as BOTH programs' locations: above what was found, the file's path, and three buttons (Fractadyne location, Kalles Fraktaler location, Cancel).
+dlg-txt-why = This text file reads as both a Fractadyne location and a Kalles Fraktaler location. Choose how to read it.
+# The same window when the file holds neither program's location: it explains, and has only Close.
+dlg-txt-unreadable-title = Not a location Fractadyne can read
+# Followed by a list of what was found: the lines below.
+dlg-txt-unreadable-why = This text file isn't a Fractadyne location or a Kalles Fraktaler location. What Fractadyne found:
+# What the app inferred. $encoding: as written (UTF-8, UTF-16 LE + BOM, Windows-1252…); $endings: as written (CRLF, LF, CR, or several with counts such as CRLF 12 + CR 12).
+dlg-txt-read-as = Read as { $encoding } text with { $endings } line endings.
+# The same for a file with no line breaks at all.
+dlg-txt-read-as-one-line = Read as { $encoding } text, all on one line.
+# $count: control characters (other than tab and line breaks) taken out of the text.
+dlg-txt-removed = Control characters removed: { $count }.
+# Each program's verdict, one line each. $app, $center: the .fdn line starts (app=Fractadyne, center_re=), filled in as written.
+dlg-txt-fdn-yes = Fractadyne location: yes.
+dlg-txt-fdn-no = Fractadyne location: no. It has no “{ $app }” line and no “{ $center }” line.
+dlg-txt-fdn-empty = Fractadyne location: no. The file is empty.
+# $size and $limit: in bytes.
+dlg-txt-fdn-too-large = Fractadyne location: no. It is { $size } bytes long, and the limit is { $limit }.
+dlg-txt-kfr-yes = Kalles Fraktaler location: yes.
+# $keys: the missing line names, as written (Re, Im, Zoom), comma-separated.
+dlg-txt-kfr-missing = Kalles Fraktaler location: no. These lines are missing: { $keys }.
+# $key: Re, Im or Zoom, as written; $value: the value found (shortened).
+dlg-txt-kfr-unreadable = Kalles Fraktaler location: no. Its { $key } value can't be read: “{ $value }”.
+dlg-txt-kfr-rejected = Kalles Fraktaler location: no. One of its values is too long to read.
 
 ## File ▸ Reset application state
 
@@ -3513,8 +3535,12 @@ export-loaded-location = Loaded location @ { $zoom }×
 export-loaded-location-note = Loaded @ { $zoom }× — { $note }
 # $path: the file.
 export-not-location = { $path } isn't a Fractadyne location.
-# $path: a file opened as a location that holds binary data (an image, say), not text.
-export-txt-not-text = { $path } isn't a text file.
+# $path: a file opened as a location that holds binary data (an image, say), not text; $offset: where, in bytes.
+export-txt-not-text = { $path } isn't a text file: it holds binary data (a zero byte at offset { $offset }).
+# Follows the message above when the file's first bytes are a known format's. $format: the format's name (PNG, PDF, ZIP, OpenEXR, Imagina .im…), as written.
+export-txt-looks-like = Its first bytes match the { $format } format.
+# $path: the file; $size and $limit: its size and the most a location file may hold, in bytes.
+export-txt-too-large = { $path } is too large to be a location: { $size } bytes, and the limit is { $limit }.
 export-file-too-large = File too large (not a .fdn location?).
 # $path: the file; $error: why (from the system, in English).
 export-read-failed = Couldn't read { $path }: { $error }

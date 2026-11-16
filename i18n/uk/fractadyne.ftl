@@ -669,11 +669,33 @@ dlg-checksum-loaded = Завантажено @ { $zoom }× попри розбі
 dlg-checksum-loaded-note = Завантажено @ { $zoom }× — { $note }
 dlg-checksum-not-loaded = Не завантажено.
 
-## A location saved as .txt whose program could not be told from its contents
+## A location text file (.fdn or .txt) the app could not load on its own
 
 dlg-txt-title = Яка програма зберегла це розташування?
-# Above the file's path and three buttons: Fractadyne location, Kalles Fraktaler location, Cancel.
-dlg-txt-why = За вмістом цього текстового файлу Fractadyne не може визначити, яка програма його зберегла. Виберіть, як його прочитати.
+# The window for a location text file that reads as BOTH programs' locations: above what was found, the file's path, and three buttons (Fractadyne location, Kalles Fraktaler location, Cancel).
+dlg-txt-why = Цей текстовий файл читається і як розташування Fractadyne, і як розташування Kalles Fraktaler. Виберіть, як його прочитати.
+# The same window when the file holds neither program's location: it explains, and has only Close.
+dlg-txt-unreadable-title = Це не розташування, яке Fractadyne може прочитати
+# Followed by a list of what was found: the lines below.
+dlg-txt-unreadable-why = Цей текстовий файл не є ні розташуванням Fractadyne, ні розташуванням Kalles Fraktaler. Що знайшов Fractadyne:
+# What the app inferred. $encoding: as written (UTF-8, UTF-16 LE + BOM, Windows-1252…); $endings: as written (CRLF, LF, CR, or several with counts such as CRLF 12 + CR 12).
+dlg-txt-read-as = Прочитано як текст { $encoding } із закінченнями рядків { $endings }.
+# The same for a file with no line breaks at all.
+dlg-txt-read-as-one-line = Прочитано як текст { $encoding }, усе в одному рядку.
+# $count: control characters (other than tab and line breaks) taken out of the text.
+dlg-txt-removed = Вилучено керівних символів: { $count }.
+# Each program's verdict, one line each. $app, $center: the .fdn line starts (app=Fractadyne, center_re=), filled in as written.
+dlg-txt-fdn-yes = Розташування Fractadyne: так.
+dlg-txt-fdn-no = Розташування Fractadyne: ні. У ньому немає ні рядка «{ $app }», ні рядка «{ $center }».
+dlg-txt-fdn-empty = Розташування Fractadyne: ні. Файл порожній.
+# $size and $limit: in bytes.
+dlg-txt-fdn-too-large = Розташування Fractadyne: ні. Його довжина { $size } Б за обмеження { $limit } Б.
+dlg-txt-kfr-yes = Розташування Kalles Fraktaler: так.
+# $keys: the missing line names, as written (Re, Im, Zoom), comma-separated.
+dlg-txt-kfr-missing = Розташування Kalles Fraktaler: ні. Бракує рядків: { $keys }.
+# $key: Re, Im or Zoom, as written; $value: the value found (shortened).
+dlg-txt-kfr-unreadable = Розташування Kalles Fraktaler: ні. Значення { $key } не читається: «{ $value }».
+dlg-txt-kfr-rejected = Розташування Kalles Fraktaler: ні. Одне зі значень задовге, щоб його прочитати.
 
 ## File ▸ Reset application state
 
@@ -3471,8 +3493,12 @@ export-loaded-location = Розташування завантажено @ { $zo
 export-loaded-location-note = Завантажено @ { $zoom }× — { $note }
 # $path: the file.
 export-not-location = { $path } не є розташуванням Fractadyne.
-# $path: a file opened as a location that holds binary data (an image, say), not text.
-export-txt-not-text = { $path } — не текстовий файл.
+# $path: a file opened as a location that holds binary data (an image, say), not text; $offset: where, in bytes.
+export-txt-not-text = { $path } — не текстовий файл: він містить двійкові дані (нульовий байт за зміщенням { $offset }).
+# Follows the message above when the file's first bytes are a known format's. $format: the format's name (PNG, PDF, ZIP, OpenEXR, Imagina .im…), as written.
+export-txt-looks-like = Його перші байти відповідають формату { $format }.
+# $path: the file; $size and $limit: its size and the most a location file may hold, in bytes.
+export-txt-too-large = { $path } завеликий для розташування: { $size } Б за обмеження { $limit } Б.
 export-file-too-large = Файл завеликий (можливо, це не розташування .fdn?).
 # $path: the file; $error: why (from the system, in English).
 export-read-failed = Не вдалося прочитати { $path }: { $error }

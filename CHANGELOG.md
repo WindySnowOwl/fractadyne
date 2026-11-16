@@ -62,10 +62,16 @@ Changes after 0.3.0-beta.1:
 - **Open a location saved as .txt (after 0.3.0-beta.27).** Fractal Forums accepts .txt attachments
   but not .fdn, so locations shared there arrive as `name.fdn.txt`. File ▸ Open view or location,
   Load location and Import KF location now take .txt files too. Fractadyne reads the text and tells
-  from its contents whether it is a Fractadyne location or a Kalles Fraktaler one; when it cannot
-  tell, it asks which program saved it. A .txt is read with care: only up to 4 MB, as UTF-8 or as
-  UTF-16 when it starts with that mark (Notepad's "Unicode"), with stray control characters
-  removed, and a file holding binary data, such as a renamed image, is refused rather than read.
+  from its contents whether it is a Fractadyne location or a Kalles Fraktaler one; when it reads as
+  both, it asks which program saved it. A location file (.fdn too) is read with care: only up to
+  4 MB; in UTF-8, UTF-16 or UTF-32 whether or not it starts with a byte-order mark (UTF-16 without
+  one is recognized by its zero bytes), or as Windows-1252 when it is not UTF-8, so an old note's
+  "café" survives; with any line endings (Windows, Unix, old Mac, mixed, or converted twice); stray
+  control characters removed; and a file holding binary data, such as a renamed image, refused.
+  When a file is not a location it can read, Fractadyne says why and what it inferred: the encoding
+  and line endings it read, which of the lines each program's format needs are missing or which
+  value does not read, and for a binary file where the binary data starts and which format its
+  first bytes match (PNG, PDF, ZIP…).
 - **Multibrot 4 to 8 export deep minibrots right (after 0.3.0-beta.27).** An exported image of a
   view centered on a deep minibrot of Multibrot 4, 5, 6, 7 or 8 could come out entirely as
   interior, black, although the view on screen looked right (the live view does not use this

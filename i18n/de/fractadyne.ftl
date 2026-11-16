@@ -667,11 +667,33 @@ dlg-checksum-loaded = Geladen @ { $zoom }× trotz abweichender Prüfsumme
 dlg-checksum-loaded-note = Geladen @ { $zoom }× — { $note }
 dlg-checksum-not-loaded = Nicht geladen.
 
-## A location saved as .txt whose program could not be told from its contents
+## A location text file (.fdn or .txt) the app could not load on its own
 
 dlg-txt-title = Welches Programm hat diesen Ort gespeichert?
-# Above the file's path and three buttons: Fractadyne location, Kalles Fraktaler location, Cancel.
-dlg-txt-why = Fractadyne kann am Inhalt dieser Textdatei nicht erkennen, welches Programm sie gespeichert hat. Wählen Sie, wie sie gelesen werden soll.
+# The window for a location text file that reads as BOTH programs' locations: above what was found, the file's path, and three buttons (Fractadyne location, Kalles Fraktaler location, Cancel).
+dlg-txt-why = Diese Textdatei lässt sich sowohl als Fractadyne-Ort als auch als Kalles-Fraktaler-Ort lesen. Wählen Sie, wie sie gelesen werden soll.
+# The same window when the file holds neither program's location: it explains, and has only Close.
+dlg-txt-unreadable-title = Kein Ort, den Fractadyne lesen kann
+# Followed by a list of what was found: the lines below.
+dlg-txt-unreadable-why = Diese Textdatei ist weder ein Fractadyne-Ort noch ein Kalles-Fraktaler-Ort. Was Fractadyne gefunden hat:
+# What the app inferred. $encoding: as written (UTF-8, UTF-16 LE + BOM, Windows-1252…); $endings: as written (CRLF, LF, CR, or several with counts such as CRLF 12 + CR 12).
+dlg-txt-read-as = Gelesen als { $encoding }-Text mit den Zeilenenden { $endings }.
+# The same for a file with no line breaks at all.
+dlg-txt-read-as-one-line = Gelesen als { $encoding }-Text, alles in einer Zeile.
+# $count: control characters (other than tab and line breaks) taken out of the text.
+dlg-txt-removed = Entfernte Steuerzeichen: { $count }.
+# Each program's verdict, one line each. $app, $center: the .fdn line starts (app=Fractadyne, center_re=), filled in as written.
+dlg-txt-fdn-yes = Fractadyne-Ort: ja.
+dlg-txt-fdn-no = Fractadyne-Ort: nein. Es gibt keine Zeile „{ $app }“ und keine Zeile „{ $center }“.
+dlg-txt-fdn-empty = Fractadyne-Ort: nein. Die Datei ist leer.
+# $size and $limit: in bytes.
+dlg-txt-fdn-too-large = Fractadyne-Ort: nein. Sie ist { $size } Bytes lang, die Grenze liegt bei { $limit }.
+dlg-txt-kfr-yes = Kalles-Fraktaler-Ort: ja.
+# $keys: the missing line names, as written (Re, Im, Zoom), comma-separated.
+dlg-txt-kfr-missing = Kalles-Fraktaler-Ort: nein. Diese Zeilen fehlen: { $keys }.
+# $key: Re, Im or Zoom, as written; $value: the value found (shortened).
+dlg-txt-kfr-unreadable = Kalles-Fraktaler-Ort: nein. Der Wert von { $key } ist nicht lesbar: „{ $value }“.
+dlg-txt-kfr-rejected = Kalles-Fraktaler-Ort: nein. Einer ihrer Werte ist zu lang zum Lesen.
 
 ## File ▸ Reset application state
 
@@ -3297,8 +3319,12 @@ export-loaded-location = Ort geladen @ { $zoom }×
 export-loaded-location-note = Geladen @ { $zoom }× — { $note }
 # $path: the file.
 export-not-location = { $path } ist kein Fractadyne-Ort.
-# $path: a file opened as a location that holds binary data (an image, say), not text.
-export-txt-not-text = { $path } ist keine Textdatei.
+# $path: a file opened as a location that holds binary data (an image, say), not text; $offset: where, in bytes.
+export-txt-not-text = { $path } ist keine Textdatei: Sie enthält Binärdaten (ein Nullbyte bei Offset { $offset }).
+# Follows the message above when the file's first bytes are a known format's. $format: the format's name (PNG, PDF, ZIP, OpenEXR, Imagina .im…), as written.
+export-txt-looks-like = Ihre ersten Bytes entsprechen dem Format { $format }.
+# $path: the file; $size and $limit: its size and the most a location file may hold, in bytes.
+export-txt-too-large = { $path } ist zu groß für einen Ort: { $size } Bytes, die Grenze liegt bei { $limit }.
 export-file-too-large = Datei zu groß (kein .fdn-Ort?).
 # $path: the file; $error: why (from the system, in English).
 export-read-failed = { $path } konnte nicht gelesen werden: { $error }
