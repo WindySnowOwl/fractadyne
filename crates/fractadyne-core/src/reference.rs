@@ -1363,6 +1363,38 @@ pub(crate) const SA_EPS_LOG2: f64 = -16.0;
 /// Below this skip the bookkeeping isn't worth it (shared likewise).
 pub(crate) const SA_MIN_SKIP: u32 = 8;
 
+/// The terms the order-3 series drops, for `z^d + c` with `d ≥ 4`: whether each of
+/// `C(d,k)·Z^(d−k)·(A·δc)^k`, `k = 4..d` (the step's `δ^k` terms, δ ≈ A·δc), stays under
+/// `2^SA_EPS_LOG2` of the linear term `A'·δc`, the margin divided among the `d − 3` of them. `lz`
+/// = log2|Z| and `la_prev` = log2|A| of the step's inputs, `la` = log2|A'| of its output.
+///
+/// ⭐The cubic test alone (`lc + 2·log2|δc| < la + ε`) never sees these. Where the reference passes
+/// through zero, as it does every period at a minibrot's nucleus, `Z = 0` resets the recurrences
+/// to `A' = 1, B' = C' = 0` for `d ≥ 4` (every term feeding B and C carries a factor of Z), so the
+/// cubic test passes again, while the true step there is `δ^d + δc`, of order d. For `d = 2` and
+/// 3 the same pass puts `A²` into B or `A³` into C and the cubic test stops the walk. Multibrot 4
+/// at a period-914 nucleus (1.1e21×, 200,000 iterations) skipped 199,999 steps and every pixel
+/// read as interior; Multibrot 6 the same from 2^76.6× at a period-1242 one (found 2026-11-16).
+/// Away from such a pass the cubic test binds first (it holds |A·δc| near 2^-8, where these
+/// terms are far smaller), so the skips there are as before. `d < 4`: always true.
+pub(crate) fn sa_tail_valid(deg: u32, lz: f64, la_prev: f64, la: f64, log2_max_dc: f64) -> bool {
+    if deg < 4 {
+        return true;
+    }
+    let bound = la + log2_max_dc + SA_EPS_LOG2 - f64::from(deg - 3).log2();
+    let mut binom = 1.0f64; // C(d, k), built up to k = 4 and on
+    (1..=deg).all(|k| {
+        binom = binom * f64::from(deg - k + 1) / f64::from(k);
+        if k < 4 {
+            return true;
+        }
+        // Z^0 = 1 for k = d: no `0·log2|Z|` term (−∞ when Z = 0, which would make it NaN).
+        let z = if deg > k { f64::from(deg - k) * lz } else { 0.0 };
+        // NaN compares false, so an unreadable step counts as invalid.
+        binom.log2() + z + f64::from(k) * (la_prev + log2_max_dc) < bound
+    })
+}
+
 /// The largest |Z_n|² a series seed may start from, for `z^d + c`: 2^(120/d). The walk stops at
 /// the REFERENCE's escape (|Z|² > 1e12, or 1e9), far outside a pixel's 256, so a skip can land
 /// where every pixel has already escaped; the GPU tests a seeded pixel only after its next step,
@@ -1490,6 +1522,9 @@ pub(crate) fn series_skip_walk(
 pub struct SaStep {
     la: f64,
     lc: f64,
+    /// log2|Z| and log2|A| of the step's inputs, for [`sa_tail_valid`].
+    lz: f64,
+    la_prev: f64,
     seedable: bool,
     escaped: bool,
     skip: SeriesSkip,
@@ -1507,29 +1542,34 @@ pub(crate) fn skip_from_coeffs(n: u32, k: [&BigFloat; 6]) -> SeriesSkip {
 }
 
 impl SaStep {
-    pub(crate) fn new(la: f64, lc: f64, seedable: bool, escaped: bool, skip: SeriesSkip) -> SaStep {
-        SaStep { la, lc, seedable, escaped, skip }
+    pub(crate) fn new(la: f64, lc: f64, lz: f64, la_prev: f64, seedable: bool, escaped: bool, skip: SeriesSkip) -> SaStep {
+        SaStep { la, lc, lz, la_prev, seedable, escaped, skip }
+    }
+
+    /// The walk's validity test for this step under view size `log2_max_dc`, for `z^deg + c`.
+    fn valid(&self, log2_max_dc: f64, deg: u32) -> bool {
+        self.lc + 2.0 * log2_max_dc < self.la + SA_EPS_LOG2
+            && sa_tail_valid(deg, self.lz, self.la_prev, self.la, log2_max_dc)
     }
 
     /// Whether the walk stops at this step under view size `log2_max_dc` (`n` = its index).
-    fn stops(&self, n: u32, log2_max_dc: f64) -> bool {
+    fn stops(&self, n: u32, log2_max_dc: f64, deg: u32) -> bool {
         if !self.la.is_finite() {
             return false; // `continue`: no test, no escape check
         }
-        let valid = self.lc + 2.0 * log2_max_dc < self.la + SA_EPS_LOG2;
-        (n >= SA_MIN_SKIP && !(valid && self.seedable)) || self.escaped
+        (n >= SA_MIN_SKIP && !(self.valid(log2_max_dc, deg) && self.seedable)) || self.escaped
     }
 }
 
 /// The walk's stop rules over a record: the loop of `series_skip_astro_piped`, step for step.
-fn sa_replay(steps: &[SaStep], log2_max_dc: f64, limit: u32) -> SeriesSkip {
+pub(crate) fn sa_replay(steps: &[SaStep], log2_max_dc: f64, limit: u32, deg: u32) -> SeriesSkip {
     let mut best: Option<usize> = None;
     for (i, st) in steps.iter().take(limit as usize).enumerate() {
         let n = i as u32 + 1;
         if !st.la.is_finite() {
             continue;
         }
-        let valid = st.lc + 2.0 * log2_max_dc < st.la + SA_EPS_LOG2;
+        let valid = st.valid(log2_max_dc, deg);
         if n >= SA_MIN_SKIP {
             if valid && st.seedable {
                 best = Some(i);
@@ -1601,10 +1641,11 @@ impl SaTraces {
         cancel: Option<&std::sync::atomic::AtomicBool>,
     ) -> SeriesSkip {
         let limit = max_iter.min(orbit_len.saturating_sub(2)).min(sa_step_budget(p));
+        let deg = formula_power(formula).unwrap_or(2); // as the walk reads it
         {
             let traces = self.traces.lock().unwrap_or_else(|e| e.into_inner());
             if let Some(t) = traces.iter().find(|t| t.is_for(cx, cy, formula, p) && t.covers(limit)) {
-                return sa_replay(&t.steps, log2_max_dc, limit);
+                return sa_replay(&t.steps, log2_max_dc, limit, deg);
             }
         }
         // A record longer than the session allows (`set_sa_trace_cache_limited`) is not made: the
@@ -1626,7 +1667,7 @@ impl SaTraces {
         }
         let walked = record_len as usize;
         let ended = steps.len() < walked
-            || steps.last().is_some_and(|st| st.stops(steps.len() as u32, SA_TRACE_LOG2_DC));
+            || steps.last().is_some_and(|st| st.stops(steps.len() as u32, SA_TRACE_LOG2_DC, deg));
         let trace = SaTrace {
             cx: cx.clone(),
             cy: cy.clone(),
@@ -1636,7 +1677,7 @@ impl SaTraces {
             steps,
             ended,
         };
-        let out = sa_replay(&trace.steps, log2_max_dc, limit);
+        let out = sa_replay(&trace.steps, log2_max_dc, limit, deg);
         let mut traces = self.traces.lock().unwrap_or_else(|e| e.into_inner());
         traces.retain(|t| !t.is_for(cx, cy, formula, p));
         traces.push(trace);
@@ -1785,6 +1826,8 @@ pub(crate) fn series_skip_astro_piped(
             // `continue` past it needs a non-finite A, and a non-finite A stays so, `best` frozen.)
             let Some((zcx, zcy, z_escaped, z_seedable)) = next() else { break };
             let (zcx, zcy) = (&zcx, &zcy);
+            // The step's inputs, for the dropped-term test (`sa_tail_valid`).
+            let (lz, la_prev) = (log2_cmag(zcx, zcy), log2_cmag(&ax, &ay));
             // Advance the order-3 coefficients for z^d + c, using Z_{n-1} (current z):
             //   A' = d·Z^{d-1}·A + 1
             //   B' = d·Z^{d-1}·B + C(d,2)·Z^{d-2}·A²
@@ -1837,18 +1880,20 @@ pub(crate) fn series_skip_astro_piped(
             let lc = log2_cmag(&cxx, &cyy);
             if let Some(r) = rec.as_deref_mut() {
                 let k = skip_from_coeffs(n, [&ax, &ay, &bx, &by, &cxx, &cyy]);
-                r.push(SaStep::new(la, lc, z_seedable, z_escaped, k));
+                r.push(SaStep::new(la, lc, lz, la_prev, z_seedable, z_escaped, k));
             }
             if !la.is_finite() {
                 continue;
             }
-            let valid = lc + 2.0 * log2_max_dc < la + SA_EPS_LOG2;
+            let valid = lc + 2.0 * log2_max_dc < la + SA_EPS_LOG2 && sa_tail_valid(deg, lz, la_prev, la, log2_max_dc);
             if n >= SA_MIN_SKIP {
                 if valid && z_seedable {
                     best = Some((n, [ax.clone(), ay.clone(), bx.clone(), by.clone(), cxx.clone(), cyy.clone()]));
                 } else {
-                    // Coefficients only grow ⇒ once invalid, stays invalid; and a reference past
-                    // the seed bound is past the bailout, so it escapes from there on.
+                    // The first invalid step ends the walk; a reference past the seed bound is past
+                    // the bailout, so it escapes from there on. (The coefficients do NOT only grow:
+                    // for d ≥ 4 a pass of Z through zero resets them, and the cubic test passes again
+                    // where the series is wrong — `sa_tail_valid`. So never resume after a stop.)
                     break;
                 }
             }

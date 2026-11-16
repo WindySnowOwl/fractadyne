@@ -59,6 +59,15 @@ published as the pre-releases `v0.2.41-beta.1` to `v0.2.41-beta.150`, and a "bet
 
 Changes after 0.3.0-beta.1:
 
+- **Multibrot 4 to 8 draw deep minibrots right (after 0.3.0-beta.27).** A view centered on a deep
+  minibrot of Multibrot 4, 5, 6, 7 or 8 could render entirely as interior, a black image. The
+  series approximation, which lets every pixel skip the iterations they all share, checked only
+  the terms it keeps; where the reference passes through zero, as it does once a period at a
+  minibrot's center, those terms all vanish for powers 4 and up, and the check let the skip run
+  on to the iteration limit. At a Multibrot 4 minibrot at 1.1e21× it skipped 199,999 of 200,000
+  iterations, so no pixel could escape. The check now also bounds the terms the series leaves out,
+  and the skip stops at the minibrot's period: the same view renders as it does with the series
+  approximation off. The Mandelbrot set and Multibrot 3 are unchanged.
 - **Custom formulas draw deep minibrots right (after 0.3.0-beta.27, GitHub #5).** A custom
   formula at a view centered on a deep minibrot drew the whole view as interior: at the validation
   set's minibrot at 4.9e141×, a custom z² + c was solid where the built-in Mandelbrot shows the
