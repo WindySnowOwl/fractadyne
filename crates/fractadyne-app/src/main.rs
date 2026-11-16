@@ -5807,6 +5807,9 @@ struct RefCache {
     /// aggregate is frequency-specific, so the tree is rebuilt when the live frequency drifts from
     /// this (only while the stripe method is active). `NEG_INFINITY` = never built / unknown.
     bla_stripe_freq: f64,
+    /// Stripe tail's α the cached tree's `agg_stripe` lane was built with (0 = the plain sum, see
+    /// `fractadyne_core::merge_stripe`): rebuilt or patched when the tail or its length changes.
+    bla_stripe_tail: f64,
     /// Trap type the cached BLA tree's `agg_trap` lane was built with. The trap aggregate is
     /// trap-type-specific, so the tree is rebuilt when the live trap type changes (only while the
     /// orbit-trap method is active). `None` = never built / unknown.
@@ -5870,6 +5873,7 @@ impl Default for RefCache {
             bla_id: u64::MAX,
             bla_dc_max_log2: f64::NEG_INFINITY,
             bla_stripe_freq: f64::NEG_INFINITY,
+            bla_stripe_tail: f64::NEG_INFINITY,
             bla_trap_type: None,
             frozen_center: None,
             frozen_l2: 0.0,

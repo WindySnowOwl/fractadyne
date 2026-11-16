@@ -1923,6 +1923,10 @@ pub struct BlaNode {
     pub agg_trap: f64,
     pub agg_tia: f64,
     pub agg_stripe: f64,
+    /// The stripe TAIL's window-weighted sum over the same range ([`merge_stripe`] with
+    /// `AuxAggParams::stripe_tail_alpha`; the plain sum when that is 0): what a BLA skip folds
+    /// exactly with the tail on. GPU: the node's fifth vec4, `.x`.
+    pub agg_window: f64,
 }
 
 /// Coloring parameters the per-node aux aggregates depend on. Only the `agg_*` lanes depend on
@@ -1934,10 +1938,36 @@ pub struct AuxAggParams {
     pub stripe_freq: f64,
     pub cmag: f64, // |c| of the reference (triangle-inequality)
     pub power: f64, // formula degree (triangle-inequality)
+    /// The stripe TAIL's α (1 / its length), or 0 with the tail off: the stripe lane is then the
+    /// window-weighted sum (see [`merge_stripe`]) instead of the plain one.
+    pub stripe_tail_alpha: f64,
 }
 impl Default for AuxAggParams {
     fn default() -> Self {
-        AuxAggParams { trap_type: crate::coloring::TrapType::Point, stripe_freq: 1.0, cmag: 0.0, power: 2.0 }
+        AuxAggParams { trap_type: crate::coloring::TrapType::Point, stripe_freq: 1.0, cmag: 0.0, power: 2.0, stripe_tail_alpha: 0.0 }
+    }
+}
+
+/// The stripe lane of node `x` then node `y` (`y` covering `y_span` steps).
+///
+/// With the tail off (`alpha` 0) it is the plain sum of the terms. With the tail window on, whose
+/// step is `s ← (1−α)·s + α·t`, it is the window-weighted sum `W = Σ (1−α)^(span−1−i)·tᵢ`: a skip
+/// then folds EXACTLY, `s ← (1−α)^span·s + α·W` (the shader's `aux_fold_run`), and two runs merge
+/// as `W_xy = (1−α)^span_y·W_x + W_y`. The fold it replaces took the run's plain mean, which weighs
+/// every term alike where the window weighs the last ones most: 0.23 off every-iteration through
+/// BLA at the seahorse at 1e30× (tail 16), and every deep stripe-tail cell of the coloring matrix
+/// differing from its plain render (2026-11-15).
+/// [`AuxAggParams::stripe_tail_alpha`] for the stripe tail `on` with length `len`: the shader's
+/// `stripe_tail_alpha()` (1 / the length `aux_on_word` packs, clamped to 1..=2^20), or 0 when off.
+pub fn stripe_tail_alpha(on: bool, len: u32) -> f64 {
+    if on { 1.0 / f64::from(len.clamp(1, 1 << 20)) } else { 0.0 }
+}
+
+pub fn merge_stripe(x: f64, y: f64, y_span: u32, alpha: f64) -> f64 {
+    if alpha > 0.0 {
+        (1.0 - alpha).powi(y_span.min(i32::MAX as u32) as i32) * x + y
+    } else {
+        x + y
     }
 }
 
@@ -1963,7 +1993,7 @@ pub(crate) fn aux_tia_term(prev_abs: f64, cur_abs: f64, cmag: f64, power: f64) -
 
 /// Merge two consecutive BLA nodes (`x` then `y`). Composition `A=A_y·A_x`, `B=A_y·B_x+B_y`;
 /// validity `|δz|≤r_x` **and** `|A_x δz + B_x δc|≤r_y` ⇒ `r = min(r_x, (r_y − |B_x|·δc_max)/|A_x|)`.
-fn bla_merge(x: BlaNode, y: BlaNode, dc_max: FloatExp) -> BlaNode {
+fn bla_merge(x: BlaNode, y: BlaNode, dc_max: FloatExp, tail_alpha: f64) -> BlaNode {
     let a = y.a * x.a;
     let b = y.a * x.b + y.b;
     let a1 = x.a.abs();
@@ -1983,6 +2013,7 @@ fn bla_merge(x: BlaNode, y: BlaNode, dc_max: FloatExp) -> BlaNode {
         agg_trap: x.agg_trap.min(y.agg_trap),
         agg_tia: x.agg_tia + y.agg_tia,
         agg_stripe: x.agg_stripe + y.agg_stripe,
+        agg_window: merge_stripe(x.agg_window, y.agg_window, y.span, tail_alpha),
     }
 }
 
@@ -2079,7 +2110,7 @@ fn bla_level0_node(
             aux.power,
         )
     };
-    BlaNode { a, b: one, r, span: 1, agg_trap, agg_tia, agg_stripe }
+    BlaNode { a, b: one, r, span: 1, agg_trap, agg_tia, agg_stripe, agg_window: agg_stripe }
 }
 
 pub fn build_bla_mandel(
@@ -2121,6 +2152,7 @@ fn build_bla_mandel_impl(
         agg_trap: 0.0,
         agg_tia: 0.0,
         agg_stripe: 0.0,
+        agg_window: 0.0,
     };
     // Level 0 — every node is an independent pure function of the orbit + aux, so build them in
     // parallel over scoped threads (byte-identical to the serial loop; see `par_fill`).
@@ -2137,7 +2169,7 @@ fn build_bla_mandel_impl(
         par_fill(&mut next, par_threshold, |k| {
             let j = 2 * k;
             if j + 1 < prev.len() {
-                bla_merge(prev[j], prev[j + 1], dc_max)
+                bla_merge(prev[j], prev[j + 1], dc_max, aux.stripe_tail_alpha)
             } else {
                 prev[j] // odd tail carries up (smaller span, still aligned)
             }
@@ -2151,9 +2183,13 @@ fn build_bla_mandel_impl(
 /// (level 0 first). Per node: `[A mantissa]`, `[B mantissa]`, `[a_exp, b_exp, r_exp, r_mant]`,
 /// `[span, 0, 0, 0]` (exponents/span as exact f32; small enough). The shader reconstructs the
 /// per-level offsets from `orbit_len` (level 0 has `orbit_len−1` nodes, each level halves).
+/// vec4s a BLA node takes in the GPU buffer: A, B, the exponents and radius, `[span, trap, TIA,
+/// stripe]`, and `[window, 0, 0, 0]` (the shader's `BLA_NODE`).
+pub const BLA_NODE_VEC4S: usize = 5;
+
 pub fn bla_to_gpu(levels: &[Vec<BlaNode>]) -> Vec<[f32; 4]> {
     let total: usize = levels.iter().map(|l| l.len()).sum();
-    let mut out = Vec::with_capacity(total * 4);
+    let mut out = Vec::with_capacity(total * BLA_NODE_VEC4S);
     for level in levels {
         for node in level {
             let (am, ae) = node.a.to_mantissa_exp();
@@ -2170,6 +2206,8 @@ pub fn bla_to_gpu(levels: &[Vec<BlaNode>]) -> Vec<[f32; 4]> {
                 node.agg_tia as f32,
                 node.agg_stripe as f32,
             ]);
+            // 5th vec4: the stripe tail's window-weighted sum (`agg_window`); three lanes spare.
+            out.push([node.agg_window as f32, 0.0, 0.0, 0.0]);
         }
     }
     out
@@ -2202,11 +2240,12 @@ fn bla_level0_aux(n: usize, orbit: &[[f32; 4]], aux: AuxAggParams) -> [f64; 3] {
     [agg_trap, agg_tia, agg_stripe]
 }
 
-/// The aux-only counterpart of [`bla_merge`]: trap is a running min, TIA/stripe running sums —
-/// exactly what `bla_merge` does to `agg_*`, and (unlike the geometry) independent of `dc_max`.
+/// The aux-only counterpart of [`bla_merge`]: trap is a running min, TIA a running sum, stripe
+/// [`merge_stripe`] — exactly what `bla_merge` does to `agg_*`, and (unlike the geometry)
+/// independent of `dc_max`. `y_span` is the steps `y` covers.
 #[inline]
-fn merge_aux(x: [f64; 3], y: [f64; 3]) -> [f64; 3] {
-    [x[0].min(y[0]), x[1] + y[1], x[2] + y[2]]
+fn merge_aux(x: [f64; 4], y: [f64; 4], y_span: u32, tail_alpha: f64) -> [f64; 4] {
+    [x[0].min(y[0]), x[1] + y[1], x[2] + y[2], merge_stripe(x[3], y[3], y_span, tail_alpha)]
 }
 
 /// Recompute ONLY the BLA aux aggregate lanes for `orbit` under coloring params `aux`, in the
@@ -2218,22 +2257,27 @@ fn merge_aux(x: [f64; 3], y: [f64; 3]) -> [f64; 3] {
 /// a coloring parameter changed (stripe frequency / trap type) this reproduces bit-for-bit the
 /// `agg_*` a full `build_bla_mandel` would produce — at a fraction of the cost, since it skips
 /// every per-node `FloatExp` geometry op. Same level shape and `par_fill` as `build_bla_mandel`.
-pub fn bla_aux_lanes(orbit: &[[f32; 4]], aux: AuxAggParams) -> Vec<[f32; 3]> {
+pub fn bla_aux_lanes(orbit: &[[f32; 4]], aux: AuxAggParams) -> Vec<[f32; 4]> {
     let nstep = orbit.len().saturating_sub(1);
     if nstep == 0 {
         return Vec::new();
     }
-    let mut lvl0 = vec![[0.0f64; 3]; nstep];
-    par_fill(&mut lvl0, BLA_PAR_THRESHOLD, |n| bla_level0_aux(n, orbit, aux));
+    // Each entry carries its span: the stripe lane's window merge needs the later run's length.
+    let mut lvl0 = vec![([0.0f64; 4], 1u32); nstep];
+    par_fill(&mut lvl0, BLA_PAR_THRESHOLD, |n| {
+        let [t, x, s] = bla_level0_aux(n, orbit, aux);
+        ([t, x, s, s], 1)
+    });
     let mut levels = vec![lvl0];
     while levels.last().unwrap().len() > 1 {
         let prev = levels.last().unwrap();
         let out_len = prev.len().div_ceil(2);
-        let mut next = vec![[0.0f64; 3]; out_len];
+        let mut next = vec![([0.0f64; 4], 0u32); out_len];
         par_fill(&mut next, BLA_PAR_THRESHOLD, |k| {
             let j = 2 * k;
             if j + 1 < prev.len() {
-                merge_aux(prev[j], prev[j + 1])
+                let ((x, xs), (y, ys)) = (prev[j], prev[j + 1]);
+                (merge_aux(x, y, ys, aux.stripe_tail_alpha), xs + ys)
             } else {
                 prev[j]
             }
@@ -2243,8 +2287,8 @@ pub fn bla_aux_lanes(orbit: &[[f32; 4]], aux: AuxAggParams) -> Vec<[f32; 3]> {
     let total: usize = levels.iter().map(|l| l.len()).sum();
     let mut out = Vec::with_capacity(total);
     for level in &levels {
-        for a in level {
-            out.push([a[0] as f32, a[1] as f32, a[2] as f32]);
+        for (a, _) in level {
+            out.push([a[0] as f32, a[1] as f32, a[2] as f32, a[3] as f32]);
         }
     }
     out
@@ -2261,19 +2305,20 @@ pub fn apply_bla_aux(gpu: &mut [[f32; 4]], orbit: &[[f32; 4]], aux: AuxAggParams
     // out-of-bounds write. The debug assert makes a broken caller loud in tests.
     debug_assert_eq!(
         gpu.len(),
-        lanes.len() * 4,
+        lanes.len() * BLA_NODE_VEC4S,
         "BLA buffer node count {} does not match aux node count {}",
-        gpu.len() / 4,
+        gpu.len() / BLA_NODE_VEC4S,
         lanes.len()
     );
-    if gpu.len() != lanes.len() * 4 {
+    if gpu.len() != lanes.len() * BLA_NODE_VEC4S {
         return;
     }
     for (i, l) in lanes.iter().enumerate() {
-        let v = &mut gpu[4 * i + 3];
+        let v = &mut gpu[BLA_NODE_VEC4S * i + 3];
         v[1] = l[0];
         v[2] = l[1];
         v[3] = l[2];
+        gpu[BLA_NODE_VEC4S * i + 4][0] = l[3];
     }
 }
 

@@ -121,6 +121,8 @@ pub struct BlaFoldNode {
     pub agg_trap: f64,
     pub agg_tia: f64,
     pub agg_stripe: f64,
+    /// The stripe tail's window-weighted sum (see `BlaNode::agg_window`).
+    pub agg_window: f64,
 }
 
 fn cpow(w: CFloatExp, k: u32) -> CFloatExp {
@@ -169,7 +171,7 @@ fn fold_level0_node(n: usize, orbit: &[[f32; 4]], eps: f64, aux: AuxAggParams, s
         _ => r_power,
     };
     let [agg_trap, agg_tia, agg_stripe] = bla_level0_aux(n, orbit, aux);
-    BlaFoldNode { a, b: Mat2Fe::identity(), r, span: 1, agg_trap, agg_tia, agg_stripe }
+    BlaFoldNode { a, b: Mat2Fe::identity(), r, span: 1, agg_trap, agg_tia, agg_stripe, agg_window: agg_stripe }
 }
 
 trait MinFe {
@@ -183,7 +185,7 @@ impl MinFe for FloatExp {
 
 /// Merge two consecutive nodes (`x` then `y`), as [`bla_merge`] with matrices: validity `|δz| ≤ r_x`
 /// and `|A_x·δz + B_x·δc| ≤ r_y` ⇒ `r = min(r_x, (r_y − ‖B_x‖·δc_max)/‖A_x‖)`.
-fn fold_merge(x: BlaFoldNode, y: BlaFoldNode, dc_max: FloatExp) -> BlaFoldNode {
+fn fold_merge(x: BlaFoldNode, y: BlaFoldNode, dc_max: FloatExp, tail_alpha: f64) -> BlaFoldNode {
     let a = y.a.mul(x.a);
     let b = y.a.mul(x.b).add(y.b);
     let t = y.r - x.b.norm() * dc_max;
@@ -198,6 +200,7 @@ fn fold_merge(x: BlaFoldNode, y: BlaFoldNode, dc_max: FloatExp) -> BlaFoldNode {
         agg_trap: x.agg_trap.min(y.agg_trap),
         agg_tia: x.agg_tia + y.agg_tia,
         agg_stripe: x.agg_stripe + y.agg_stripe,
+        agg_window: super::merge_stripe(x.agg_window, y.agg_window, y.span, tail_alpha),
     }
 }
 
@@ -217,6 +220,7 @@ pub fn build_bla_fold(orbit: &[[f32; 4]], dc_max: FloatExp, eps: f64, aux: AuxAg
         agg_trap: 0.0,
         agg_tia: 0.0,
         agg_stripe: 0.0,
+        agg_window: 0.0,
     };
     let mut lvl0 = vec![placeholder; nstep];
     par_fill(&mut lvl0, BLA_PAR_THRESHOLD, |n| fold_level0_node(n, orbit, eps, aux, shape, d));
@@ -226,7 +230,7 @@ pub fn build_bla_fold(orbit: &[[f32; 4]], dc_max: FloatExp, eps: f64, aux: AuxAg
         let mut next = vec![placeholder; prev.len().div_ceil(2)];
         par_fill(&mut next, BLA_PAR_THRESHOLD, |k| {
             let j = 2 * k;
-            if j + 1 < prev.len() { fold_merge(prev[j], prev[j + 1], dc_max) } else { prev[j] }
+            if j + 1 < prev.len() { fold_merge(prev[j], prev[j + 1], dc_max, aux.stripe_tail_alpha) } else { prev[j] }
         });
         levels.push(next);
     }
@@ -236,7 +240,7 @@ pub fn build_bla_fold(orbit: &[[f32; 4]], dc_max: FloatExp, eps: f64, aux: AuxAg
 /// GPU packing, [`bla_to_gpu`]'s layout with each matrix as f32 mantissas under one exponent:
 /// `[A]`, `[B]`, `[a_exp, b_exp, r_exp, r_mant]`, `[span, trap, tia, stripe]`.
 pub fn bla_fold_to_gpu(levels: &[Vec<BlaFoldNode>]) -> Vec<[f32; 4]> {
-    let mut out = Vec::with_capacity(levels.iter().map(|l| l.len()).sum::<usize>() * 4);
+    let mut out = Vec::with_capacity(levels.iter().map(|l| l.len()).sum::<usize>() * super::BLA_NODE_VEC4S);
     for node in levels.iter().flatten() {
         let (am, ae) = node.a.to_gpu();
         let (bm, be) = node.b.to_gpu();
@@ -245,6 +249,7 @@ pub fn bla_fold_to_gpu(levels: &[Vec<BlaFoldNode>]) -> Vec<[f32; 4]> {
         out.push(bm);
         out.push([ae as f32, be as f32, re as f32, rm]);
         out.push([node.span as f32, node.agg_trap as f32, node.agg_tia as f32, node.agg_stripe as f32]);
+        out.push([node.agg_window as f32, 0.0, 0.0, 0.0]);
     }
     out
 }

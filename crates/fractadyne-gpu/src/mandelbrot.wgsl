@@ -974,6 +974,9 @@ struct IterU {
 const CTR_REBASE: u32 = 0u;      // Zhuoran rebases taken
 const CTR_EXT_SAMPLE: u32 = 1u;  // extended-range orbit samples decoded (recurrence)
 const CTR_GLITCH: u32 = 2u;      // Pauldelbrot glitch flags raised (glitch_on = 1)
+// vec4s a BLA node takes in `reference` (`BLA_NODE_VEC4S` in the Rust): A, B, the exponents and
+// radius, [span, trap, TIA, stripe], [window, 0, 0, 0].
+const BLA_NODE: u32 = 5u;
 const CTR_BLA_SKIP: u32 = 3u;    // BLA multi-step skips taken
 const CTR_MAXITER: u32 = 4u;     // fragments that exhausted max_iter
 const CTR_ESC_MIN: u32 = 5u;     // min escaped smooth-iter (f32 bits; positive floats sort as u32)
@@ -1207,7 +1210,7 @@ fn rn_steps(dcp: Fe, s0: RnState, k_end: u32, trip_max: u32) -> RnState {
         // 951,094 were such plain steps, each after a full failed search.
         var blocked = true;
         if (ub_levels > 0u && s.kr < kk) {
-            let r0 = reference[ub_base + s.kr * 4u + 2u];
+            let r0 = reference[ub_base + s.kr * BLA_NODE + 2u];
             blocked = !sf_lt(fe_abs_sf(s.du), sf_norm(vec2<f32>(r0.w, 0.0), i32(r0.z)));
         }
         if (!blocked) {
@@ -1220,7 +1223,7 @@ fn rn_steps(dcp: Fe, s0: RnState, k_end: u32, trip_max: u32) -> RnState {
             loop {
                 let j = s.kr >> l;
                 if (j < ((kk - 1u) >> l) + 1u) {
-                    let node = ub_base + (off + j) * 4u;
+                    let node = ub_base + (off + j) * BLA_NODE;
                     let v2 = reference[node + 2u];
                     let span = u32(reference[node + 3u].x);
                     if (span != 0u && s.kr + span <= kk && s.k + span <= k_max
@@ -1442,18 +1445,30 @@ fn aux_step(a: ptr<function, Aux>, zf: vec2<f32>, cmag: f32, power_f: f32) {
 // z ≈ Z): what a BLA skip folds, and what the series seed folds for the prefix it skips — for the
 // statistics the frame accumulates, as `aux_step` does. The caller sets `prev_abs` (|z| where the
 // run lands).
-fn aux_fold_run(a: ptr<function, Aux>, agg: vec4<f32>, span: u32) {
+fn aux_fold_run(a: ptr<function, Aux>, agg: vec4<f32>, span: u32, window: f32, exact: bool) {
     let st = iu.orbit_stats;
     if ((st & STAT_TRAP) != 0u) { (*a).trap = min((*a).trap, agg.y); }
     if ((st & STAT_TRIANGLE) != 0u) { (*a).tia_sum = (*a).tia_sum + agg.z; }
     if ((st & STAT_STRIPE) != 0u) {
         if (stripe_tail_on()) {
-            // Exponential tail window across the skipped span: the recurrence with
-            // the span's mean term `m` in closed form (see `stripe_tail_on`).
-            let m = agg.w / max(f32(span), 1.0);
-            let d = tail_decay(stripe_tail_alpha(), f32(span));
+            // Exponential tail window across the skipped span. The node's fifth vec4 holds the
+            // window-weighted sum W = Σ (1−α)^(span−1−i)·tᵢ (`merge_stripe` in the Rust), so
+            // `s ← (1−α)^span·s + α·W` is the recurrence run term by term. A skip took the span's
+            // plain mean before, which weighs every term alike where the window weighs the last
+            // ones most: 0.23 off every-iteration through BLA at 1e30× (tail 16).
+            // `exact` (a BLA skip): the node's window lane W, which reproduces the recurrence. The
+            // series prefix passes false and keeps the span's plain mean `m`: by the prefix's end each
+            // pixel has drifted from the reference, and folding the reference's own last terms
+            // exactly measured worse there (0.17 against 0.029 at the same view).
+            let al = stripe_tail_alpha();
+            let d = tail_decay(al, f32(span));
             (*a).sac_prev = (*a).sac_sum;
-            (*a).sac_sum = m + ((*a).sac_sum - m) * d;
+            if (exact) {
+                (*a).sac_sum = (*a).sac_sum * d + al * window;
+            } else {
+                let m = agg.w / max(f32(span), 1.0);
+                (*a).sac_sum = m + ((*a).sac_sum - m) * d;
+            }
         } else {
             (*a).sac_sum = (*a).sac_sum + agg.w;
         }
@@ -1809,8 +1824,9 @@ fn iterate_at(gx: f32, gy: f32) -> FragOut {
             // ⚠Stripe's TAIL window is approximate here, and no finer fold fixes it: the window
             // weighs the last iterations before the seed, where each pixel has already drifted from
             // the reference the aggregates were built from. Measured at 1e30× (tail 16): 0.029 off
-            // every-iteration with this fold, 0.17 folding the whole prefix term by term, and BLA
-            // alone (no series) 0.23 off (TODO).
+            // every-iteration with this fold (the span's plain mean), 0.17 folding the reference's
+            // terms exactly (the window lane, as a BLA skip does since 2026-11-15, which took BLA
+            // alone from 0.23 off to 0.0000: a skip stays inside its radius, the prefix does not).
             if ((iu.aux_on & 1u) == 1u && bla_levels > 0u) {
                 var p = 0u;
                 var l = bla_levels;
@@ -1821,10 +1837,10 @@ fn iterate_at(gx: f32, gy: f32) -> FragOut {
                     if (p + stepn > iu.sa_skip) { continue; }
                     let j = p >> l;
                     if (j >= bla_len[l]) { continue; }
-                    let agg = reference[iu.orbit_len + (bla_off[l] + j) * 4u + 3u];
+                    let agg = reference[iu.orbit_len + (bla_off[l] + j) * BLA_NODE + 3u];
                     let span = u32(agg.x);
                     if (span == 0u) { break; } // a corrupt node: fold no further, never spin
-                    aux_fold_run(&aux, agg, span);
+                    aux_fold_run(&aux, agg, span, 0.0, false); // the tail's plain-mean fold: see above
                     p = p + span;
                 }
                 let zs = orbit_cdf(reference[iu.sa_skip]);
@@ -1885,7 +1901,7 @@ fn iterate_at(gx: f32, gy: f32) -> FragOut {
             // the tail test reads |δz| ≥ 2^-50 the same in both forms.
             var no_skip = false;
             if (d_now && bla_levels > 0u && ref_n < bla_len[0]) {
-                let r0 = reference[iu.orbit_len + (bla_off[0] + ref_n) * 4u + 2u];
+                let r0 = reference[iu.orbit_len + (bla_off[0] + ref_n) * BLA_NODE + 2u];
                 no_skip = tail_no_skip(dzd, r0);
             }
             if (d_now && bla_levels > 0u && !no_skip) {
@@ -1909,7 +1925,7 @@ fn iterate_at(gx: f32, gy: f32) -> FragOut {
                     if ((ref_n & (stepn - 1u)) != 0u) { continue; } // ref_n not aligned to 2^l
                     let j = ref_n >> l;
                     if (j >= bla_len[l]) { continue; }
-                    let node = iu.orbit_len + (bla_off[l] + j) * 4u;
+                    let node = iu.orbit_len + (bla_off[l] + j) * BLA_NODE;
                     let v2 = reference[node + 2u];
                     let span = u32(reference[node + 3u].x);
                     // ⚠A ZERO span must never be applied. `iter += span` / `ref_n += span` is the
@@ -1951,7 +1967,9 @@ fn iterate_at(gx: f32, gy: f32) -> FragOut {
                     // stripe/TIA/trap coloring stays correct across the skip instead of dropping the
                     // skipped run. `zf` is the actual landing value → prev_abs restores exactly.
                     if ((iu.aux_on & 1u) == 1u) {
-                        aux_fold_run(&aux, reference[node + 3u], span); // [span, trap_min, ΣTIA, Σstripe]
+                        // [span, trap_min, ΣTIA, Σstripe] and [window, 0, 0, 0]: inside a skip each pixel
+                        // stays within the node's radius of the reference, so the window folds exactly.
+                        aux_fold_run(&aux, reference[node + 3u], span, reference[node + 4u].x, true);
                         aux.prev_abs = length(zf);
                     }
                     n_bla = n_bla + 1u;
@@ -3212,7 +3230,7 @@ fn chunk_fe_at(pos: vec2<f32>, p: vec2<i32>) -> ChunkOut4 {
         // the tail test reads |δz| ≥ 2^-50 the same in both forms.
         var no_skip = false;
         if (d_now && bla_levels > 0u && ref_n < bla_len[0]) {
-            let r0 = reference[iu.orbit_len + (bla_off[0] + ref_n) * 4u + 2u];
+            let r0 = reference[iu.orbit_len + (bla_off[0] + ref_n) * BLA_NODE + 2u];
             no_skip = tail_no_skip(dzd, r0);
         }
         if (d_now && bla_levels > 0u && !no_skip) {
@@ -3236,7 +3254,7 @@ fn chunk_fe_at(pos: vec2<f32>, p: vec2<i32>) -> ChunkOut4 {
                 if ((ref_n & (stepn - 1u)) != 0u) { continue; } // ref_n not aligned to 2^l
                 let j = ref_n >> l;
                 if (j >= bla_len[l]) { continue; }
-                let node = iu.orbit_len + (bla_off[l] + j) * 4u;
+                let node = iu.orbit_len + (bla_off[l] + j) * BLA_NODE;
                 let v2 = reference[node + 2u];
                 let span = u32(reference[node + 3u].x);
                 // A ZERO span must never be applied — it is the only forward progress in this

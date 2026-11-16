@@ -1543,12 +1543,12 @@ fn the_iteration_hash_keys_what_is_accumulated() {
 fn a_tree_is_stale_only_for_what_is_accumulated() {
     use crate::render::same_aux_lanes;
     let (none, stripe, trap) = (StatSet::NONE, StatSet::of(Stat::Stripe), StatSet::of(Stat::Trap));
-    assert!(same_aux_lanes(none, 1.0, Some(TrapType::Point), 5.0, TrapType::Cross));
-    assert!(!same_aux_lanes(stripe, 1.0, Some(TrapType::Point), 5.0, TrapType::Point));
-    assert!(same_aux_lanes(stripe, 1.0, Some(TrapType::Point), 1.0, TrapType::Cross));
-    assert!(!same_aux_lanes(trap, 1.0, Some(TrapType::Point), 1.0, TrapType::Cross));
-    assert!(!same_aux_lanes(trap, 1.0, None, 1.0, TrapType::Point), "a tree built for no trap is not the trap's");
-    assert!(same_aux_lanes(trap, 1.0, Some(TrapType::Cross), 5.0, TrapType::Cross));
+    assert!(same_aux_lanes(none, (1.0, 0.0), Some(TrapType::Point), (5.0, 0.0), TrapType::Cross));
+    assert!(!same_aux_lanes(stripe, (1.0, 0.0), Some(TrapType::Point), (5.0, 0.0), TrapType::Point));
+    assert!(same_aux_lanes(stripe, (1.0, 0.0), Some(TrapType::Point), (1.0, 0.0), TrapType::Cross));
+    assert!(!same_aux_lanes(trap, (1.0, 0.0), Some(TrapType::Point), (1.0, 0.0), TrapType::Cross));
+    assert!(!same_aux_lanes(trap, (1.0, 0.0), None, (1.0, 0.0), TrapType::Point), "a tree built for no trap is not the trap's");
+    assert!(same_aux_lanes(trap, (1.0, 0.0), Some(TrapType::Cross), (5.0, 0.0), TrapType::Cross));
 }
 
 /// The exe's own icon (build.rs `link_windows_icon`, scripts/make_windows_icon.py): the icon and both

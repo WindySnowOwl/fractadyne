@@ -232,7 +232,7 @@ pub struct Renorm {
     pub pad: [u32; 3],
 }
 
-/// The `K` of a u-space tree of `nodes4` `[f32; 4]`s for a step of `len` iterations over an orbit of
+/// The `K` of a u-space tree of `nodes4` `[f32; 4]`s (`BLA_NODE_VEC4S` a node) for a step of `len` iterations over an orbit of
 /// `orbit_len` samples, or 0 when the tree is absent or was not built for this orbit (its node
 /// count gives it away) — the shader then takes plain u-steps.
 pub(crate) fn rn_bla_k(len: u32, orbit_len: u32, nodes4: usize) -> u32 {
@@ -240,7 +240,7 @@ pub(crate) fn rn_bla_k(len: u32, orbit_len: u32, nodes4: usize) -> u32 {
         return 0;
     }
     let k = (orbit_len - 1) / len;
-    if k >= 2 && nodes4 == fractadyne_core::renorm_bla_nodes(k) * 4 { k } else { 0 }
+    if k >= 2 && nodes4 == fractadyne_core::renorm_bla_nodes(k) * fractadyne_core::BLA_NODE_VEC4S { k } else { 0 }
 }
 
 impl Renorm {

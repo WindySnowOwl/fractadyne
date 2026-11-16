@@ -570,18 +570,13 @@ note = "a boundary point found by bisection along a ray at 45 digits"
 
 [[known]]
 cell = "*/stripe-tail"
-check = "bla"
-reason = "The stripe tail is approximate across a BLA skip and the series seed: a skipped span folds into the tail's moving average as if every term in it were the span's mean (aux_fold_run), and the seed folds the prefix where each pixel has already drifted from the reference (the A5a note in mandelbrot.wgsl). TODO."
-
-[[known]]
-cell = "*/stripe-tail"
 check = "series"
-reason = "The stripe tail is approximate across a BLA skip and the series seed: a skipped span folds into the tail's moving average as if every term in it were the span's mean (aux_fold_run), and the seed folds the prefix where each pixel has already drifted from the reference (the A5a note in mandelbrot.wgsl). TODO."
+reason = "The stripe tail is approximate across the series seed: its prefix folds into the tail's window by each span's plain mean, because by the prefix's end each pixel has drifted from the reference the aggregates come from (measured at the seahorse at 1e30x, tail 16: 0.029 off this way, 0.17 folding the reference's own terms exactly). Across a BLA skip it is exact since 2026-11-15 (the nodes' window lane), so a stripe-tail cell's 'bla' check is a gate."
 
 [[known]]
 cell = "*/stripe-tail"
 check = "bla+series"
-reason = "The stripe tail is approximate across a BLA skip and the series seed: a skipped span folds into the tail's moving average as if every term in it were the span's mean (aux_fold_run), and the seed folds the prefix where each pixel has already drifted from the reference (the A5a note in mandelbrot.wgsl). TODO."
+reason = "The stripe tail is approximate across the series seed: its prefix folds into the tail's window by each span's plain mean, because by the prefix's end each pixel has drifted from the reference the aggregates come from (measured at the seahorse at 1e30x, tail 16: 0.029 off this way, 0.17 folding the reference's own terms exactly). Across a BLA skip it is exact since 2026-11-15 (the nodes' window lane), so a stripe-tail cell's 'bla' check is a gate."
 
 [[known]]
 cell = "*-deep-*/trap-*"
