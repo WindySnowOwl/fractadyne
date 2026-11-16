@@ -78,6 +78,12 @@ Changes after 0.3.0-beta.1:
   on (the default) the run stopped at four samples after 20 s. A run now keeps its first sample's
   setting: at a 1e12× seahorse view it holds all 24 samples after about 5 s, and the view then goes
   idle.
+- **Very long exports no longer crawl on some cards (after 0.3.0-beta.27).** An export whose
+  pixels each run a very long chain of iterations (a minibrot's interior at 200,000, with a
+  coloring such as Decomposition that turns the series and BLA off) split its tiles smaller and
+  smaller when a tile took over half a second, although a smaller tile took just as long: on an
+  RTX 3070 one such image took 30 s in 462 tiles. The tiles now stop shrinking once that is seen:
+  4.2 s, the same picture.
 - **The palette browser stays quick at high anti-aliasing (after 0.3.0-beta.27).** Each thumbnail
   pixel colored every supersampled sample under it, 16 at 4x and 64 at 8x, so with the browser open
   in the dual view at 8x a redraw kept the graphics card busy for about half a second, and with the
