@@ -59,6 +59,12 @@ published as the pre-releases `v0.2.41-beta.1` to `v0.2.41-beta.150`, and a "bet
 
 Changes after 0.3.0-beta.1:
 
+- **Slices of parameter space in the formula collection (after 0.3.0-beta.27).** A family with two
+  parameters has a four-dimensional parameter space, and a picture is a plane through it. Three
+  new entries, under Slices: the Mandelbrot set tilted toward its Julia sets, by a real slope and by
+  a complex one (a direction no real angle reaches), and a tilted plane through the cubic family's
+  two parameters. They are ordinary step formulas, so they zoom as deep as any other formula. The
+  Help's count of the collection is corrected to 56.
 - **Saved settings, bookmarks and locations survive damage and come back as saved (after
   0.3.0-beta.27).** A review of how Fractadyne saves and reopens its state found these, now fixed:
   - One value the app could not read in the saved session (a hand edit, a damaged file, or a file
