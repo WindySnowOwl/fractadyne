@@ -59,6 +59,10 @@ published as the pre-releases `v0.2.41-beta.1` to `v0.2.41-beta.150`, and a "bet
 
 Changes after 0.3.0-beta.1:
 
+- **Tour captions with no fade show on every frame (after 0.3.0-beta.27).** A caption with
+  `fade = 0` was left out of its first frame (and its last), so a label updated every few frames, as
+  a value counting up, flickered. It is now a cut: shown from its first frame, and replaced by the
+  next caption on the same frame.
 - **Slices of parameter space in the formula collection (after 0.3.0-beta.27).** A family with two
   parameters has a four-dimensional parameter space, and a picture is a plane through it. Three
   new entries, under Slices: the Mandelbrot set tilted toward its Julia sets, by a real slope and by
