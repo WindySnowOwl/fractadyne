@@ -584,16 +584,6 @@ check = "bla+series"
 reason = "The stripe tail is approximate across a BLA skip and the series seed: a skipped span folds into the tail's moving average as if every term in it were the span's mean (aux_fold_run), and the seed folds the prefix where each pixel has already drifted from the reference (the A5a note in mandelbrot.wgsl). TODO."
 
 [[known]]
-cell = "mandelbrot-minibrot-9.3e78/trap-point"
-check = "bla"
-reason = "OPEN BUG (TODO.md, 2026-11-11): near this minibrot the point and cross traps through BLA and the plain render (no BLA, no series) are each one flat color, a different one, on every pixel. Which is right is not known yet: it needs the CPU oracle's trap minimum. Listed so the matrix's other cells stay a gate."
-
-[[known]]
-cell = "mandelbrot-minibrot-9.3e78/trap-cross"
-check = "bla"
-reason = "OPEN BUG (TODO.md, 2026-11-11): near this minibrot the point and cross traps through BLA and the plain render (no BLA, no series) are each one flat color, a different one, on every pixel. Which is right is not known yet: it needs the CPU oracle's trap minimum. Listed so the matrix's other cells stay a gate."
-
-[[known]]
 cell = "*-deep-*/trap-*"
 check = "flat"
 reason = "At depth every pixel's orbit follows the reference for all but its last iterations, so a statistic of the whole orbit (a trap's nearest approach, the stripe and triangle averages) is nearly one value across the view. The plain render is as flat; the stripe tail is the remedy for stripe."
@@ -616,7 +606,7 @@ reason = "At depth every pixel's orbit follows the reference for all but its las
 [[known]]
 cell = "mandelbrot-minibrot-9.3e78/trap-*"
 check = "flat"
-reason = "At depth every pixel's orbit follows the reference for all but its last iterations, so a statistic of the whole orbit (a trap's nearest approach, the stripe and triangle averages) is nearly one value across the view. The plain render is as flat; the stripe tail is the remedy for stripe."
+reason = "The true picture is one color. Every pixel's orbit passes within ~1e-40 of the point and of the axes (CPU at 1,000 bits, 2026-11-15: 2.3e-40 to 1.7e-39 and 7e-41 to 2e-40 for three pixels), far under the 1e-20 floor of the trap's log map, so every pixel takes the floor's color, through BLA and in the plain render alike. (Through BLA it was another flat color until 2026-11-15: the BLA nodes read the orbit's extended-range dips as lane sums.)"
 
 [[known]]
 cell = "mandelbrot-misiurewicz-7.4e143/triangle"

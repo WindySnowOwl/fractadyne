@@ -500,3 +500,24 @@ fn misiurewicz_solver_snaps_to_known_points() {
         to_f64(&m.cy)
     );
 }
+
+/// A BLA node's trap aggregate over a step that LANDS on an orbit dip stored in extended range
+/// (`pack_sample`, under `EXT_SAMPLE_THRESHOLD`) is the dip's own distance, not its lane sums read
+/// as a point near (4, k): at the 9.3e78 minibrot every node over a dip dropped it, and the point
+/// and cross traps read ~1e-10 where the orbit comes within ~1e-40 (2026-11-15).
+#[test]
+fn a_node_landing_on_an_extended_dip_keeps_its_trap_distance() {
+    let dip = (3.0e-60, -4.0e-60);
+    let orbit = vec![pack_sample(0.25, 0.5), pack_sample(dip.0, dip.1), pack_sample(0.25, 0.5)];
+    assert!(orbit[1][0] == 0.0 && orbit[1][2].abs() >= 2.0, "the dip is stored extended");
+    let want = (dip.0 * dip.0 + dip.1 * dip.1).sqrt(); // 5e-60
+    let cross = dip.0.abs().min(dip.1.abs()); // 3e-60
+    for (trap, expect) in [(crate::coloring::TrapType::Point, want), (crate::coloring::TrapType::Cross, cross)] {
+        let aux = AuxAggParams { trap_type: trap, ..AuxAggParams::default() };
+        let [t, _, _] = bla_level0_aux(0, &orbit, aux);
+        assert!((t / expect - 1.0).abs() < 1e-6, "{trap:?}: aux lane {t:e}, the dip is {expect:e}");
+        let one = CFloatExp { re: FloatExp::from_f64(1.0), im: FloatExp::ZERO };
+        let node = bla_level0_node(0, &orbit, 1e-6, aux, one, 2);
+        assert!((node.agg_trap / expect - 1.0).abs() < 1e-6, "{trap:?}: node {:e}, the dip is {expect:e}", node.agg_trap);
+    }
+}

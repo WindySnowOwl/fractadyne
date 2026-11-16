@@ -2065,8 +2065,8 @@ fn bla_level0_node(
     // Aux aggregate for this node's single landing iterate Z_{n+1} (the shader accumulates the
     // POST-step value). TIA's `prev` is |Z_n|; node 0 lands on the global first iterate z_1,
     // whose TIA is skipped by the `n>=1` guard, so its TIA seed is 0.
-    let z1 = orbit[n + 1];
-    let (z1r, z1i) = (z1[0] as f64 + z1[2] as f64, z1[1] as f64 + z1[3] as f64);
+    // ⛔`sample_xy`, never the lane sums: a dip is stored in extended range (see `bla_level0_aux`).
+    let (z1r, z1i) = sample_xy(&orbit[n + 1]);
     let agg_trap = aux_trap_dist(z1r, z1i, aux.trap_type);
     let agg_stripe = aux_stripe_term(z1r, z1i, aux.stripe_freq);
     let agg_tia = if n == 0 {
@@ -2181,8 +2181,12 @@ pub fn bla_to_gpu(levels: &[Vec<BlaNode>]) -> Vec<[f32; 4]> {
 #[inline]
 fn bla_level0_aux(n: usize, orbit: &[[f32; 4]], aux: AuxAggParams) -> [f64; 3] {
     let (zr, zi) = sample_xy(&orbit[n]);
-    let z1 = orbit[n + 1];
-    let (z1r, z1i) = (z1[0] as f64 + z1[2] as f64, z1[1] as f64 + z1[3] as f64);
+    // ⛔`sample_xy`, never the lane sums `z[0] + z[2]`: where the orbit dips under f32's range the
+    // sample is stored extended ([0, k, m_re + 4, m_im], `pack_sample`), and its lane sums read as
+    // a point near (4, k) with k about -260, hundreds from the origin. Those dips are exactly a
+    // minibrot's nearest approaches: at the 9.3e78 minibrot every BLA node over one dropped it, and
+    // the point and cross traps read ~1e-10 where the orbit comes within ~1e-40 (2026-11-15).
+    let (z1r, z1i) = sample_xy(&orbit[n + 1]);
     let agg_trap = aux_trap_dist(z1r, z1i, aux.trap_type);
     let agg_stripe = aux_stripe_term(z1r, z1i, aux.stripe_freq);
     let agg_tia = if n == 0 {
@@ -2275,8 +2279,8 @@ pub fn apply_bla_aux(gpu: &mut [[f32; 4]], orbit: &[[f32; 4]], aux: AuxAggParams
 
 /// Full value `z = Zₘ + δz` (f64) for a df32 reference orbit — for bailout / escape tests.
 fn bla_full_z(orbit: &[[f32; 4]], m: u32, dz: &CFloatExp) -> (f64, f64) {
-    let z = orbit[m as usize];
-    (z[0] as f64 + z[2] as f64 + dz.re.to_f64(), z[1] as f64 + z[3] as f64 + dz.im.to_f64())
+    let (zr, zi) = sample_xy(&orbit[m as usize]);
+    (zr + dz.re.to_f64(), zi + dz.im.to_f64())
 }
 
 /// **Reference** BLA render of one pixel (the exact algorithm the GPU shader will mirror):
@@ -2342,18 +2346,18 @@ pub fn bla_iterate_power(
             continue;
         }
         // Full perturbation step at Zₘ: δz' = 2Zδz + δz² + δc (exact — used near the escape).
-        let z = orbit[m as usize];
+        let (zr, zi) = sample_xy(&orbit[m as usize]);
         if d == 2 {
             let two_z = CFloatExp {
-                re: FloatExp::from_f64(2.0 * (z[0] as f64 + z[2] as f64)),
-                im: FloatExp::from_f64(2.0 * (z[1] as f64 + z[3] as f64)),
+                re: FloatExp::from_f64(2.0 * zr),
+                im: FloatExp::from_f64(2.0 * zi),
             };
             dz = two_z * dz + dz * dz + dc_c;
         } else {
             // Σₖ C(d,k)·Z^(d−k)·δz^k, k = 1..d, by Horner in δz: ((C(d,d)·δz + C(d,d−1)·Z)·δz + …)
             let zc = CFloatExp {
-                re: FloatExp::from_f64(z[0] as f64 + z[2] as f64),
-                im: FloatExp::from_f64(z[1] as f64 + z[3] as f64),
+                re: FloatExp::from_f64(zr),
+                im: FloatExp::from_f64(zi),
             };
             let mut zpow = vec![CFloatExp { re: FloatExp::from_f64(1.0), im: FloatExp::ZERO }];
             for _ in 1..d {
