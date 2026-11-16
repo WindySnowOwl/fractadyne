@@ -668,6 +668,12 @@ dlg-checksum-loaded = Wczytano @ { $zoom }× mimo niezgodności sumy kontrolnej
 dlg-checksum-loaded-note = Wczytano @ { $zoom }× — { $note }
 dlg-checksum-not-loaded = Nie wczytano.
 
+## A location saved as .txt whose program could not be told from its contents
+
+dlg-txt-title = Który program zapisał tę lokalizację?
+# Above the file's path and three buttons: Fractadyne location, Kalles Fraktaler location, Cancel.
+dlg-txt-why = Fractadyne nie może ustalić na podstawie zawartości tego pliku tekstowego, który program go zapisał. Wybierz, jak go odczytać.
+
 ## File ▸ Reset application state
 
 dlg-reset-title = Resetuj stan aplikacji
@@ -3401,13 +3407,15 @@ lsys-entry-unreadable-hover = Tego wpisu nie da się odczytać.
 # File-dialog filter names.
 export-filter-view = Widok lub lokalizacja Fractadyne
 export-filter-image = Obraz (PNG / EXR)
-export-filter-location = Lokalizacja (.fdn / .kfr)
+export-filter-location = Lokalizacja (.fdn / .kfr / .txt)
 # $zoom: the magnification (1.2e148), followed by the magnification sign ×.
 export-loaded-location = Wczytano lokalizację @ { $zoom }×
 # $zoom: the magnification; $note: what was noteworthy in the file (in English).
 export-loaded-location-note = Wczytano @ { $zoom }× — { $note }
 # $path: the file.
 export-not-location = { $path } nie jest lokalizacją Fractadyne.
+# $path: a file opened as a location that holds binary data (an image, say), not text.
+export-txt-not-text = { $path } nie jest plikiem tekstowym.
 export-file-too-large = Plik jest za duży (to nie lokalizacja .fdn?).
 # $path: the file; $error: why (from the system, in English).
 export-read-failed = Nie udało się odczytać { $path }: { $error }

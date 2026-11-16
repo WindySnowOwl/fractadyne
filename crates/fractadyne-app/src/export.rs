@@ -1388,11 +1388,76 @@ impl FractadyneApp {
         Some(self.load_view_metadata(text))
     }
 
+    /// Load Fractadyne location text that passed [`crate::location_text_verdict`], and say how it went.
+    fn apply_location_text(&mut self, t: &str, source: String, ctx: &egui::Context) {
+        // `None` means the checksum failed and the prompt has it now.
+        if let Some(report) = self.load_view_checked(t, source) {
+            let zoom = crate::fmt_zoom_log2(self.viewport.log2_magnification());
+            self.set_toast(
+                match report.note() {
+                    None => tr!(export_loaded_location, zoom = zoom),
+                    Some(n) => tr!(export_loaded_location_note, zoom = zoom, note = n),
+                },
+                ctx,
+            );
+        }
+    }
+
+    /// File ▸ Open on a `.txt`: read it through the sanitizing reader (`txt_location`), then load it
+    /// as the one format its content parses as. Neither, or both: park it and ask the user which
+    /// program wrote it (`draw_txt_choice_dialog`) — never a silent guess.
+    fn open_txt_location(&mut self, path: &std::path::Path, ctx: &egui::Context) {
+        use crate::txt_location::{location_kinds, read_location_text, shown_path, TxtError};
+        let source = shown_path(path);
+        let text = match read_location_text(path) {
+            Ok(t) => t,
+            Err(TxtError::TooLarge) => return self.set_toast(tr!(export_file_too_large), ctx),
+            Err(TxtError::Binary) => return self.set_toast(tr!(export_txt_not_text, path = source), ctx),
+            Err(TxtError::Io(e)) => {
+                return self.set_toast(tr!(export_read_failed, path = source, error = e.to_string()), ctx)
+            }
+        };
+        match location_kinds(&text)[..] {
+            [kind] => self.load_txt_as(kind, text, source, ctx),
+            _ => self.dialogs.pending_txt = Some(crate::PendingTxt { text, source }),
+        }
+    }
+
+    /// Load `.txt` text as `kind`'s location: the content's verdict, or the user's choice in the
+    /// prompt. A choice the text does not parse as says so and changes nothing.
+    pub(crate) fn load_txt_as(
+        &mut self,
+        kind: crate::txt_location::TxtKind,
+        text: String,
+        source: String,
+        ctx: &egui::Context,
+    ) {
+        use crate::txt_location::TxtKind;
+        match kind {
+            TxtKind::Fractadyne => {
+                // The `.fdn` gate, on the text as its loader will read it (line endings and
+                // clipboard damage repaired by `clean`, as `load_view_metadata` repairs them).
+                let cleaned = fractadyne_text::clean(&text);
+                if cleaned.text.len() > crate::SHARE_MAX {
+                    self.set_toast(tr!(export_file_too_large), ctx);
+                } else if crate::location_text_verdict(&cleaned.text).is_ok() {
+                    self.apply_location_text(&text, source, ctx);
+                } else {
+                    self.set_toast(tr!(export_not_location, path = source), ctx);
+                }
+            }
+            TxtKind::KallesFraktaler => match self.load_kfr_text(&text) {
+                Ok(m) => self.set_toast(m, ctx),
+                Err(e) => self.set_toast(tr!(export_import_failed, error = e.to_string()), ctx),
+            },
+        }
+    }
+
     pub(crate) fn open_view(&mut self, ctx: &egui::Context) {
         let path = rfd::FileDialog::new()
-            .add_filter(tr!(export_filter_view), &["png", "exr", "fdn", "kfr"])
+            .add_filter(tr!(export_filter_view), &["png", "exr", "fdn", "kfr", "txt"])
             .add_filter(tr!(export_filter_image), &["png", "exr"])
-            .add_filter(tr!(export_filter_location), &["fdn", "kfr"])
+            .add_filter(tr!(export_filter_location), &["fdn", "kfr", "txt"])
             .set_directory(self.dialog_dir(Self::pictures_dir))
             .pick_file();
         let Some(path) = path else { return };
@@ -1407,20 +1472,7 @@ impl FractadyneApp {
             "fdn" => match std::fs::read(&path) {
                 Ok(bytes) if bytes.len() <= crate::SHARE_MAX => match String::from_utf8(bytes) {
                     Ok(t) if crate::location_text_verdict(&t).is_ok() => {
-                        // `None` means the checksum failed and the prompt has it now.
-                        if let Some(report) =
-                            self.load_view_checked(&t, path.display().to_string())
-                        {
-                            let zoom =
-                                crate::fmt_zoom_log2(self.viewport.log2_magnification());
-                            self.set_toast(
-                                match report.note() {
-                                    None => tr!(export_loaded_location, zoom = zoom),
-                                    Some(n) => tr!(export_loaded_location_note, zoom = zoom, note = n),
-                                },
-                                ctx,
-                            );
-                        }
+                        self.apply_location_text(&t, path.display().to_string(), ctx);
                     }
                     _ => self.set_toast(
                         tr!(export_not_location, path = path.display().to_string()),
@@ -1430,6 +1482,8 @@ impl FractadyneApp {
                 Ok(_) => self.set_toast(tr!(export_file_too_large), ctx),
                 Err(e) => self.set_toast(tr!(export_read_failed, path = path.display().to_string(), error = e.to_string()), ctx),
             },
+            // A location saved as `.txt` (a forum attachment): its program is told by its content.
+            "txt" => self.open_txt_location(&path, ctx),
             // Kalles Fraktaler location import.
             "kfr" => match self.load_kfr_file(&path) {
                 Ok(m) => self.set_toast(m, ctx),

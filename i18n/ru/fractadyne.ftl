@@ -668,6 +668,12 @@ dlg-checksum-loaded = Загружено @ { $zoom }×, несмотря на н
 dlg-checksum-loaded-note = Загружено @ { $zoom }× — { $note }
 dlg-checksum-not-loaded = Не загружено.
 
+## A location saved as .txt whose program could not be told from its contents
+
+dlg-txt-title = Какая программа сохранила это местоположение?
+# Above the file's path and three buttons: Fractadyne location, Kalles Fraktaler location, Cancel.
+dlg-txt-why = По содержимому этого текстового файла Fractadyne не может определить, какая программа его сохранила. Выберите, как его прочитать.
+
 ## File ▸ Reset application state
 
 dlg-reset-title = Сброс состояния программы
@@ -3355,13 +3361,15 @@ lsys-entry-unreadable-hover = Эта запись не читается.
 # File-dialog filter names.
 export-filter-view = Вид или местоположение Fractadyne
 export-filter-image = Изображение (PNG / EXR)
-export-filter-location = Местоположение (.fdn / .kfr)
+export-filter-location = Местоположение (.fdn / .kfr / .txt)
 # $zoom: the magnification (1.2e148), followed by the magnification sign ×.
 export-loaded-location = Местоположение загружено @ { $zoom }×
 # $zoom: the magnification; $note: what was noteworthy in the file (in English).
 export-loaded-location-note = Загружено @ { $zoom }× — { $note }
 # $path: the file.
 export-not-location = { $path } — не местоположение Fractadyne.
+# $path: a file opened as a location that holds binary data (an image, say), not text.
+export-txt-not-text = { $path } — не текстовый файл.
 export-file-too-large = Файл слишком большой (это не местоположение .fdn?).
 # $path: the file; $error: why (from the system, in English).
 export-read-failed = Не удалось прочитать { $path }: { $error }

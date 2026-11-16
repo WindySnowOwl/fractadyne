@@ -106,6 +106,9 @@ enum Screen {
     FarmControllerZoom,
     FarmControllerZoomAssembling,
     ResetConfirm,
+    /// File ▸ Open view or location on a `.txt` whose program its content did not tell: the
+    /// "which program saved this location?" prompt (seeded with text that is neither format).
+    TxtChoice,
     /// File ▸ Settings ▸ Reference cache… — the on-disk orbit cache's controls. ⚠Seeded with
     /// one real entry first, so the usage bar, the rows and the Clear button all render
     /// populated: a screenshot of the empty state would photograph chrome around no data.
@@ -1105,6 +1108,7 @@ fn build_steps() -> Vec<Step> {
         screen("farm-controller-zoom", Screen::FarmControllerZoom),
         screen("farm-controller-zoom-assembling", Screen::FarmControllerZoomAssembling),
         screen("reset-confirm", Screen::ResetConfirm),
+        screen("txt-choice", Screen::TxtChoice),
         screen("reference-cache", Screen::OrbitCache),
         screen("languages", Screen::Languages),
         screen("notice", Screen::Notice),
@@ -2024,6 +2028,7 @@ impl FractadyneApp {
         self.dialogs.bench_open = false;
         self.dialogs.bench_dialog_open = false;
         self.dialogs.reset_confirm_open = false;
+        self.dialogs.pending_txt = None;
         self.dialogs.orbit_cache_open = false;
         self.dialogs.orbit_cache_confirm = false;
         self.dialogs.script_export_open = false;
@@ -2264,6 +2269,12 @@ impl FractadyneApp {
             Screen::FarmControllerZoom => self.uitest_seed_farm_controller_zoom(false),
             Screen::FarmControllerZoomAssembling => self.uitest_seed_farm_controller_zoom(true),
             Screen::ResetConfirm => self.dialogs.reset_confirm_open = true,
+            Screen::TxtChoice => {
+                self.dialogs.pending_txt = Some(crate::PendingTxt {
+                    text: "Shopping list:\n- milk\n".into(),
+                    source: r"C:\Users\robin\Downloads\spiral-1e60.fdn.txt".into(),
+                })
+            }
             Screen::Languages => self.language.window_open = true,
             Screen::OrbitCache => {
                 // The walk runs as a task invocation, so the cache is OFF and empty. Point it at
