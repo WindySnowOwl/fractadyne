@@ -66,7 +66,7 @@ const GOLDEN_MEAN_CROSS_GPU: f64 = 24.0;
 /// The check groups `--selftest-list` prints: every `want("…")` tag in this file
 /// (`every_want_group_is_listed`), so a group can be found and run on its own.
 pub(crate) const GROUPS: &[&str] = &[
-    "numeric", "symmetry", "abs-family", "custom-formula", "life", "lsystem", "multibrot-sa", "bla", "aux-bla", "aux-series",
+    "numeric", "symmetry", "abs-family", "custom-formula", "custom-dip", "life", "lsystem", "multibrot-sa", "bla", "aux-bla", "aux-series",
     "consistency", "counters", "iter-budget", "iter-chunk", "renorm", "live-split", "worker", "nr-zoom", "coords",
     "curated-poi", "ref-pick", "ref-reuse", "ref-overlap", "orbit-cache", "script", "metadata", "view-coloring",
     "display", "catalog", "goldens", "bench-matrix", "live-res", "appearance", "band-seams", "palette-aa",
@@ -6199,6 +6199,7 @@ impl FractadyneApp {
                 threshold: "at least one formula tested where the app picks floatexp (≥1e28×)",
                 pass: !fe_depth_cases.is_empty(),
             });
+
             self.render_cfg.max_iter = max_iter;
 
             // (d) RESUMABLE PASSES: a custom module carries its own chunk pass (`fs_iterate_chunk`
@@ -6298,6 +6299,92 @@ impl FractadyneApp {
             }
             self.julia_mode = false;
             self.fractal = FractalKind::Mandelbrot;
+        }
+
+        // ---- Custom formula, a REFERENCE THAT DIPS BELOW f32 (GitHub #5). Centered on a minibrot,
+        // the reference passes its nucleus once per period closer than f32 can hold, and the orbit
+        // stores those samples extended-range (`pack_sample`). The custom floatexp step read them as
+        // 0: the 2Z·δz term vanished there, every pixel's δz collapsed to δc once per period, and the
+        // whole view rendered interior where the built-in shows the minibrot. The validation corpus's
+        // view 13 (4.9e141×), as custom z² + c and as the built-in Mandelbrot: their escape
+        // decisions must agree. A reference without a dip tests nothing, so that fails too. Its own
+        // group: the custom-formula group runs for minutes. ----
+        if want("custom-dip") {
+            let (prev_iter, prev_fractal, prev_julia) = (self.render_cfg.max_iter, self.fractal, self.julia_mode);
+            let prev_custom = self.custom.clone();
+            const DIP_CX: &str = "-3.1583546560906989081132519081459898427641049411365520112175337742666552024633279049105595017037620815319341767862179901134944187053079731632628952571873449e-1";
+            const DIP_CY: &str = "6.5335537439546277882899238303926878753509770032605178374081080196499708884613938461037867815016513249661450606848089803803611432960582580240800508148240689e-1";
+            const DIP_MAG: f64 = 4.9204105997133744e141;
+            const DIP_ITER: u32 = 600_000;
+            self.render_cfg.max_iter = DIP_ITER;
+            self.julia_mode = false;
+            let mut vp = Viewport::new(N as f64, N as f64);
+            vp.center_x = fractadyne_core::parse_bf(DIP_CX).unwrap();
+            vp.center_y = fractadyne_core::parse_bf(DIP_CY).unwrap();
+            vp.units_per_pixel = fractadyne_core::FloatExp::from_f64(3.0 / (N as f64 * DIP_MAG));
+            vp.precision = fractadyne_core::precision_for_magnification(DIP_MAG);
+            let render = |app: &mut Self, custom: bool| {
+                if custom {
+                    app.fractal = FractalKind::Custom;
+                    app.custom = Some(std::sync::Arc::new(
+                        crate::custom_formula::CustomFormula::compile("z = z^2 + c", &[]).expect("compiles"),
+                    ));
+                } else {
+                    app.fractal = FractalKind::Mandelbrot;
+                    app.custom = None;
+                }
+                let mut req = app.current_export_request_for(&vp, false);
+                req.width = N;
+                req.height = N;
+                req.ss = 1;
+                // A dip is a sample in the extended form [0, k, m_re + 4, m_im] (`pack_sample`).
+                let dips = req.orbit[..(req.orbit_len as usize).min(req.orbit.len())]
+                    .iter()
+                    .filter(|s| s[0] == 0.0 && s[2].abs() >= 2.0)
+                    .count();
+                let mode = req.mode;
+                (st_render_iter(device, queue, &req), dips, mode)
+            };
+            let t = std::time::Instant::now();
+            let (custom_px, dips, custom_mode) = render(self, true);
+            let (builtin_px, _, _) = render(self, false);
+            let ms = t.elapsed().as_secs_f64() * 1000.0;
+            let (result, pass) = match (custom_px, builtin_px) {
+                (Some(c), Some(b)) if c.len() == b.len() && !c.is_empty() => {
+                    // The escape decision is each texel's r channel (the smooth count, < 0 inside),
+                    // as the chunked check above reads `a[k * 4]`. The other three are the normal and
+                    // the DE: a normal component is negative on about half the escaped pixels, and a
+                    // custom formula computes no derivative, so counting negatives over all four
+                    // channels compared the normals, not escape (it read 10.1% against 24.9% where the
+                    // r channels agree).
+                    let r = |px: &[f32]| px.chunks_exact(4).map(|t| t[0]).collect::<Vec<f32>>();
+                    let (c, b) = (r(&c), r(&b));
+                    let interior = |px: &[f32]| px.iter().filter(|v| **v < 0.0).count() as f64 / px.len() as f64;
+                    let differ = c.iter().zip(&b).filter(|(x, y)| (**x < 0.0) != (**y < 0.0)).count() as f64 / c.len() as f64;
+                    let (ci, bi) = (interior(&c), interior(&b));
+                    (
+                        format!(
+                            "interior: custom {:.1}%, built-in {:.1}%; escape decision differs on {:.2}% of {} px; {dips} dip samples in the reference; mode {custom_mode}; {ms:.0} ms",
+                            ci * 100.0,
+                            bi * 100.0,
+                            differ * 100.0,
+                            c.len()
+                        ),
+                        dips > 0 && custom_mode == 2 && differ <= 0.01 && (ci - bi).abs() <= 0.01,
+                    )
+                }
+                _ => ("a render failed".to_string(), false),
+            };
+            push_check(&mut checks, &mut last_check_t, SelfCheck {
+                category: "Custom formula (GPU)",
+                name: "a reference that dips below f32: custom z² + c = built-in (GitHub #5)".into(),
+                params: "validation corpus view 13, 4.9e141×, 600,000 iterations".into(),
+                result,
+                threshold: "dips present, mode 2; escape decisions differ on ≤ 1% and interior shares within 1 point",
+                pass,
+            });
+            self.custom = prev_custom;
+            (self.render_cfg.max_iter, self.fractal, self.julia_mode) = (prev_iter, prev_fractal, prev_julia);
         }
 
         // ---- Life (design/automata.md): the GPU tile stepper equals the CPU one cell for cell

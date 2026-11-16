@@ -153,6 +153,24 @@ fn cset(r: vec2<f32>, i: vec2<f32>) -> Cdf {
 fn c_add(a: Cdf, b: Cdf) -> Cdf {
     return cset(df_add(a.re, b.re), df_add(a.im, b.im));
 }
+// ⭐B + P for a REFERENCE value B (its low word intact) and a perturbation P, as a product's operand
+// (GitHub #5, 2026-11-16). `df_add` rounds to f32 here (it drops its residual,
+// `EFT_ADD_RESIDUALS`), so the full-size W = 2Z + δz of a perturbed step lost Z's low word before it
+// multiplied δz; along a near-periodic reference that rounding repeats every cycle and the error
+// adds up (a custom z²+c at a 4.9e141× minibrot: 2.5e-8 of δz per step, linearly; its escape counts
+// a median 13 iterations off). While P is inside half an ulp of B's high word, which is every deep
+// view's case, P goes into the LOW word: B's digits kept at the cost of one f32 add, and the pair
+// still (nearly) normalized. A larger P takes the plain `df_add`, whose rounding then depends on P,
+// so it walks instead of adding up. ⛔Folding a larger P too left the low word far above an ulp of
+// the high one, and the chunked and single passes of a custom hybrid at 1e6× then differed on 894
+// texels: the two entry points' products contract to fma differently once that term is significant.
+fn df_add_lo(b: vec2<f32>, p: vec2<f32>) -> vec2<f32> {
+    if (abs(p.x) <= abs(b.x) * 5.9604645e-8) { return vec2<f32>(b.x, b.y + p.x); }
+    return df_add(b, p);
+}
+fn c_add_lo(b: Cdf, p: Cdf) -> Cdf {
+    return cset(df_add_lo(b.re, p.re), df_add_lo(b.im, p.im));
+}
 fn c_sub(a: Cdf, b: Cdf) -> Cdf {
     return cset(df_sub(a.re, b.re), df_sub(a.im, b.im));
 }
@@ -777,6 +795,13 @@ fn fam_deriv(f: u32, z: vec2<f32>) -> vec2<f32> {
 // term carries a P, so nothing cancels against Z^d, and the error grows with the chain's log₂ d
 // links: a table of Z's powers built by d − 2 sequential products (a binomial in Horner form) was
 // measured 1.6–2.3× further from the CPU for Multibrot 6–8.
+// ⛔The full-size 2·B + P and Z + δ here are a plain `c_add`, which rounds to f32 and drops Z's low
+// word: the rounding GitHub #5 removed from the generated module (`c_add_lo`, `custom.rs`
+// `wide_operand`). Both ways of keeping the word slowed THIS kernel for every power family, measured
+// warm on an RTX 3080 (Buffalo 5, 32x32, 30,000 iterations, 2026-11-16): `c_add_lo` 329 ms and the
+// distributed products 2·(B·P) + P² 517 ms, against 133 ms, though `c_add_lo` is the cheaper
+// arithmetic; the distributed build lost the device twice in the self-test, its passes priced for
+// the old cost. A low-word fold here needs its own measurement (TODO.md).
 fn fam_dpow_df(Z: Cdf, dz: Cdf, d: u32) -> Cdf {
     var B = Z;
     var P = dz;

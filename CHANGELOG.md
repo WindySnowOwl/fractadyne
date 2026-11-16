@@ -59,6 +59,17 @@ published as the pre-releases `v0.2.41-beta.1` to `v0.2.41-beta.150`, and a "bet
 
 Changes after 0.3.0-beta.1:
 
+- **Custom formulas draw deep minibrots right (after 0.3.0-beta.27, GitHub #5).** A custom
+  formula at a view centered on a deep minibrot drew the whole view as interior: at the validation
+  set's minibrot at 4.9e141×, a custom z² + c was solid where the built-in Mandelbrot shows the
+  minibrot. Three things were wrong in a custom formula's deep steps. The reference orbit's closest
+  approaches to zero, too small for ordinary floats, were read as zero; a step that restarted from
+  the orbit's beginning dropped a term; and every step rounded the reference to single precision
+  before multiplying by it, a small error that repeats with the minibrot's period and so adds up
+  over tens of thousands of iterations. At that view the custom z² + c now has the built-in's
+  interior, its escape counts differ from the built-in's by a median 0.2 iterations (they were 13
+  off), it is as close to an exact calculation as the built-in drawn without its shortcuts, and it
+  takes the same time.
 - **Very deep references are faster on many-core CPUs (after 0.3.0-beta.27).** The accelerated
   build splits each step of a very deep reference orbit across nine threads that wait for each
   other every step, and Windows often put two of them on one core. They now keep to separate cores:
