@@ -93,7 +93,9 @@ fn png_metadata_roundtrips_verbatim() {
 
 /// A view text past Latin-1 (a custom formula's `√` comment) FAILED the PNG export as a `tEXt`
 /// chunk and PANICKED the EXR one. The PNG now carries it as `iTXt` and reads it back verbatim;
-/// Latin-1 text stays in `tEXt`, the chunk every earlier build reads; the EXR refuses with an error.
+/// Latin-1 text stays in `tEXt`, the chunk every earlier build reads. The EXR carries it too since
+/// 2026-11-16 (review finding 12: notes in Cyrillic or Japanese were dropped for Latin-1's sake):
+/// as UTF-8 bytes, marked, and read back verbatim; Latin-1 text is stored as before, unmarked.
 #[test]
 fn view_text_past_latin1_never_costs_the_picture() {
     let (w, h) = (3u32, 3u32);
@@ -114,13 +116,21 @@ fn view_text_past_latin1_never_costs_the_picture() {
     assert_eq!(reader.info().uncompressed_latin1_text.len(), 1);
     assert!(reader.info().utf8_text.is_empty());
     assert_eq!(read_png_metadata(&r).unwrap().as_deref(), Some(latin));
-    // EXR: an error naming the character, not a panic inside the exr crate.
-    for writer in [write_exr, write_exr_raw] {
-        let e = writer(&t.path("wide.exr"), w, h, &sample(w, h), Some(wide)).unwrap_err();
-        assert!(matches!(e, ExportError::MetadataNotLatin1('√')), "{e}");
+    // EXR: written, and read back verbatim, by both writers.
+    for (i, writer) in [write_exr, write_exr_raw].into_iter().enumerate() {
+        let p = t.path(&format!("wide{i}.exr"));
+        writer(&p, w, h, &sample(w, h), Some(wide)).expect("an EXR is written whatever the text");
+        assert_eq!(read_exr_metadata(&p).unwrap().as_deref(), Some(wide));
     }
+    let notes = "notes=Мандельброт — マンデルブロ集合\ncenter_re=-0.75\n";
+    write_exr(&t.path("notes.exr"), w, h, &sample(w, h), Some(notes)).unwrap();
+    assert_eq!(read_exr_metadata(&t.path("notes.exr")).unwrap().as_deref(), Some(notes));
+    // Latin-1 text: stored as it always was, with no UTF-8 marker, so every build reads it alike.
     write_exr(&t.path("latin.exr"), w, h, &sample(w, h), Some(latin)).unwrap();
     assert_eq!(read_exr_metadata(&t.path("latin.exr")).unwrap().as_deref(), Some(latin));
+    let m = exr::meta::MetaData::read_from_file(t.path("latin.exr"), false).unwrap();
+    let marked = m.headers.iter().any(|h| h.shared_attributes.other.contains_key(&exr::prelude::Text::from("FractadyneUtf8")));
+    assert!(!marked, "a Latin-1 view text must not be marked UTF-8");
 }
 
 /// ⭐**The raw writer must not touch a single value.** `--render-iter` used the COLOR writer,

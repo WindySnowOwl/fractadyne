@@ -765,6 +765,8 @@ dlg-reset-warning = This permanently deletes all saved Fractadyne data:
 # The list's items, each after a bullet.
 dlg-reset-session = the saved session (current view, coloring, preferences)
 dlg-reset-bookmarks = all bookmarks and their thumbnails
+dlg-reset-gradients = all saved gradients
+dlg-reset-formulas = the formula library
 dlg-reset-refcache = the reference-orbit cache (rebuilt as you revisit locations)
 # A label over the folder that is deleted.
 dlg-reset-location = Location
@@ -964,6 +966,30 @@ dlg-export-export-hover = Render and save into the folder above (auto-named)
 
 # A notice shown once after starting, when the saved session comes from a newer version of the app. $saved and $handled: version numbers of the session file's format (1, 2…).
 app-state-newer = This session was saved by a newer Fractadyne (state v{ $saved }; this build handles v{ $handled }). Some settings may not apply, and saving will rewrite it in this build's format.
+# After starting, when the saved session could not be read at all.
+app-state-unreadable = The saved session could not be read, so Fractadyne started with its defaults.
+# After starting, when part of the saved session could not be read. $settings: the settings' names as the file writes them (English tokens such as "aa, theme").
+app-state-partial = Part of the saved session could not be read. These settings are back at their defaults: { $settings }.
+# After starting, when the saved session had characters that could not be read (they were replaced).
+app-state-repaired = The saved session had characters that could not be read; they were replaced.
+# After one of the notices above. $path: where the file, as it was, is kept.
+app-state-kept = The file as it was is kept as { $path }.
+# After starting, when some saved bookmarks could not be read. $count: how many.
+app-bookmarks-partial =
+    { $count ->
+        [one] One saved bookmark could not be read and was left out.
+       *[other] { $count } saved bookmarks could not be read and were left out.
+    }
+# After starting, when the bookmarks file could not be read at all.
+app-bookmarks-unreadable = The bookmarks file could not be read, so the bookmark list starts empty.
+# After starting, when some saved gradients could not be read. $count: how many.
+app-gradients-partial =
+    { $count ->
+        [one] One saved gradient could not be read and was left out.
+       *[other] { $count } saved gradients could not be read and were left out.
+    }
+# After starting, when the saved gradients file could not be read at all.
+app-gradients-unreadable = The saved gradients file could not be read, so the gradient library starts empty.
 # The title of the notice that says the accelerated build's arithmetic libraries are found again (its text comes from elsewhere).
 app-notice-mpfr-restored-title = Accelerated arithmetic restored
 # After Fractadyne restarted itself because the graphics driver reset the GPU.

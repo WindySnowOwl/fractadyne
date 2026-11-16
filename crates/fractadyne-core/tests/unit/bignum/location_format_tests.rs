@@ -117,6 +117,16 @@ Location:
     assert_eq!(v.iterations, Some(25_000));
     // Size is a half-height: mag = 2/Size = 1e30.
     assert!((v.zoom / 1.0e30 - 1.0).abs() < 1e-9, "zoom was {}", v.zoom);
+    assert!((v.zoom_log2 - 1.0e30f64.log2()).abs() < 1e-9, "zoom_log2 was {}", v.zoom_log2);
+}
+
+/// Review 2026-11-16 (finding 5): a Size past f64's range parsed as 0 and the location did not
+/// import at all. Its depth comes from the text now: mag = 2/Size = 1e1000.
+#[test]
+fn an_imagina_location_past_f64_range_imports_at_its_depth() {
+    let v = parse_imagina_text("Location:\n\tSize: 2e-1000\n\tRe: -0.75\n\tIm: 0.1\n").expect("deep Size must parse");
+    assert!((v.zoom_log2 - 1000.0 * std::f64::consts::LOG2_10).abs() < 1e-6, "zoom_log2 was {}", v.zoom_log2);
+    assert_eq!(v.zoom, 1.0e300, "the f64 saturates, the depth does not");
 }
 
 #[test]

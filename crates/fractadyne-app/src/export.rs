@@ -29,6 +29,24 @@ pub(crate) struct ExportPrep {
     pub size: (u32, u32, u32),
 }
 
+/// The view text an export embeds in its file(s), for the view it was STARTED on (review
+/// 2026-11-16, findings 4 and 8): `main` for the picture (a single view, or a dual view's
+/// side-by-side picture, or a Separate export's map file — with the Julia pane's camera, so a reload
+/// restores both panes), and `julia` for a Separate export's `_julia` file, which is a picture of the
+/// Julia set alone and reopens as one.
+#[derive(Clone)]
+pub(crate) struct ExportMeta {
+    pub main: String,
+    pub julia: Option<String>,
+}
+
+impl ExportMeta {
+    /// The text for a Separate export's `_julia` file (the main text when there is none).
+    pub(crate) fn julia_file(&self) -> &str {
+        self.julia.as_deref().unwrap_or(&self.main)
+    }
+}
+
 /// Pre-rasterized "Fd" brand mark for stamping into exports: premultiplied **linear** RGBA at a
 /// high resolution (downscaled per export). Built once on the main thread from the egui font atlas
 /// (same glyphs as the live-view watermark), then blended by the export worker — which has no egui
@@ -214,7 +232,7 @@ pub(crate) const VIEW_FORMAT_LIFE: u32 = 3;
 pub(crate) const VIEW_FORMAT_CUSTOM: u32 = 2;
 /// The format a view that is not a custom formula writes: nothing in it needs format 2.
 pub(crate) const VIEW_FORMAT_PLAIN: u32 = 1;
-/// The largest pattern a view file carries inline (RLE characters), inside the 256 KiB a location
+/// The largest pattern a view file carries inline (RLE characters), well inside what a location
 /// text may be (`SHARE_MAX`); a larger universe is saved as a pattern file instead.
 pub(crate) const MAX_VIEW_PATTERN: usize = 128 * 1024;
 
@@ -222,7 +240,7 @@ pub(crate) const MAX_VIEW_PATTERN: usize = 128 * 1024;
 /// file. Past this the bignum working precision (∝ octaves) would balloon into a memory
 /// DoS, so a hostile/garbage `upp_log2` is clamped here. ~10× the deepest validated zoom
 /// (`--validate-deep` reaches 1e1000000× ≈ 3.3e6 octaves), so no real location is affected.
-const MAX_LOAD_OCTAVES: f64 = 3.4e7;
+pub(crate) const MAX_LOAD_OCTAVES: f64 = 3.4e7;
 
 /// Upper bound on `max_iter` accepted from an untrusted view file (an absurd value would
 /// make an export grind for hours / exhaust the iteration budget). Well above any real use.
@@ -329,6 +347,9 @@ pub(crate) const KNOWN_VIEW_KEYS: &[&str] = &[
     "light", "light_angle", "light_height", "glow", "glow_strength", "glow_width",
     "palette_mode", "palette_lo", "palette_hi", "interior_color",
     "normalize_live", "normalize_fit", "log_scale", "palette_aa",
+    // The dual view (2026-11-16, review finding 8): the layout and the Julia pane's own camera,
+    // written only for a dual view, so a single view is byte-identical to one written before.
+    "dual", "dual_split", "julia_view_center_re", "julia_view_center_im", "julia_view_upp_log2",
 ];
 
 /// Without these a "view" is not a view. Their absence is reported by NAME, so a paste that
@@ -409,6 +430,11 @@ const TYPED_VIEW_KEYS: &[(&str, ValueKind)] = &[
     ("normalize_fit", ValueKind::Flag),
     ("log_scale", ValueKind::Flag),
     ("palette_aa", ValueKind::Flag),
+    ("dual", ValueKind::Flag),
+    ("dual_split", ValueKind::Float),
+    ("julia_view_center_re", ValueKind::BigFloat),
+    ("julia_view_center_im", ValueKind::BigFloat),
+    ("julia_view_upp_log2", ValueKind::Float),
 ];
 
 #[derive(Clone, Copy, PartialEq, Eq)]
@@ -793,8 +819,30 @@ pub(crate) fn inspect_view_text(meta: &str) -> (ViewLoad, Vec<(String, String, u
     (report, fields)
 }
 
+/// Whether two view texts describe the same view: the same fields with the same values, apart from
+/// when and by which build they were written (`saved`, `saved_unix`, `version`) and what is not the
+/// view (`checksum`, `thumb`). Each is repaired as the reader repairs it first. For the Share
+/// dialog's Save, which writes the box's location when it is another view than this one.
+pub(crate) fn same_view(a: &str, b: &str) -> bool {
+    let fields = |t: &str| {
+        let c = fractadyne_text::clean(t).text;
+        let mut v: Vec<(String, String)> = view_field_pairs(&c)
+            .into_iter()
+            .filter(|(k, _)| !matches!(*k, "saved" | "saved_unix" | "version" | "checksum" | "thumb"))
+            .map(|(k, v)| (k.to_string(), v.to_string()))
+            .collect();
+        v.sort();
+        v
+    };
+    fields(a) == fields(b)
+}
+
 pub(crate) fn wrap_view_text(bare: &str) -> String {
-    let digest = view_digest(view_field_pairs(bare).into_iter());
+    // ⭐The digest of the text AS THE READER WILL SEE IT, repaired (`fractadyne_text::clean`), as
+    // `view_checksum_state` computes it (review finding 7). Over the raw text, a no-break space in
+    // the notes or a curly quote in a Life pattern's name — which the reader straightens — made the
+    // app's own file report itself damaged.
+    let digest = view_digest(view_field_pairs(&fractadyne_text::clean(bare).text).into_iter());
     let mut out = String::with_capacity(bare.len() + 320);
     out.push_str("# Fractadyne view. Open it with File \u{25B8} Open view, or paste it into\n");
     out.push_str("# File \u{25B8} Share location. Copy the BEGIN and END lines too.\n");
@@ -903,23 +951,75 @@ impl FractadyneApp {
     /// name the complex plane's real/imaginary axes (the domain convention, matching Fraktaler-3
     /// and Kalles Fraktaler); they hold the viewport's geometric `center_x`/`center_y`.
     pub(crate) fn view_metadata(&self) -> String {
+        self.view_metadata_of(&self.viewport, self.julia_mode, self.dual.then_some(&self.julia_viewport), true)
+    }
+
+    /// The view text for the picture at `vp` (in Julia mode when `julia_mode`), with this session's
+    /// fractal, coloring and Julia constant; `dual_pane` = the Julia pane's camera when the picture is
+    /// the dual view, so a reload restores both panes. `main_view` is false for the Julia pane of a
+    /// dual view written as a picture of its own (a Separate export's `_julia` file), which the
+    /// center's expression does not describe.
+    ///
+    /// ⭐Takes the viewport rather than reading `self.viewport` because an export's pixels are the
+    /// view it was STARTED on (`ExportPrep`), and a deep one's reference builds for minutes while the
+    /// user keeps exploring: the embedded view was read from the live viewport when the reference
+    /// landed, so the PNG reopened wherever the user had wandered to (review 2026-11-16, finding 4).
+    pub(crate) fn view_metadata_of(
+        &self,
+        vp: &crate::Viewport,
+        julia_mode: bool,
+        dual_pane: Option<&crate::Viewport>,
+        main_view: bool,
+    ) -> String {
         let (jcx, jcy) = self.julia_c;
         let secs = std::time::SystemTime::now()
             .duration_since(std::time::UNIX_EPOCH)
             .map(|d| d.as_secs())
             .unwrap_or(0);
-        // Latin-1 / single-line safe notes (PNG tEXt), max 120 chars.
-        let notes: String = self
-            .export.notes
+        // Single-line notes, max 120 characters, in any script. ⭐Repaired as the READER repairs
+        // (`fractadyne_text::clean`), so a no-break space or a curly quote typed into them does not
+        // make the app's own file fail its checksum (review finding 7). ⭐No longer Latin-1 only
+        // (finding 12): PNG falls back to iTXt, `.fdn` is UTF-8 and EXR carries UTF-8 too
+        // (`fractadyne_export`), so Cyrillic or Japanese notes were dropped for nothing.
+        let notes: String = fractadyne_text::clean(&self.export.notes)
+            .text
             .chars()
-            .filter(|c| !c.is_control() && (*c as u32) <= 0xFF)
+            .filter(|c| !c.is_control())
             .take(120)
-            .collect();
+            .collect::<String>()
+            .trim()
+            .to_string();
+        // ⛔A number that is not finite is never written (finding 6): `upp_log2=NaN` read back as a
+        // NaN zoom, a black screen that reproduced itself through every bookmark and export of it.
+        // Left out, the reader keeps the zoom (or the constant) it has instead.
+        let upp_log2 = vp.units_per_pixel.log2();
+        let scale = if upp_log2.is_finite() {
+            format!("upp={:.17e}\nupp_log2={upp_log2:.17e}\nzoom={}\n", vp.units_per_pixel.to_f64(), crate::fmt_zoom_field(vp.log2_magnification()))
+        } else {
+            crate::diag::log_line("view", &format!("view text written WITHOUT its zoom: the viewport's scale is not a number ({upp_log2})"));
+            String::new()
+        };
+        let julia_c = if jcx.is_finite() && jcy.is_finite() {
+            format!("julia_c_re={jcx:.17e}\njulia_c_im={jcy:.17e}\n")
+        } else {
+            String::new()
+        };
+        // The dual view (finding 8): the layout and the Julia pane's own camera.
+        let dual = match dual_pane.filter(|_| self.fractal.supports_julia()) {
+            Some(j) if j.units_per_pixel.log2().is_finite() => format!(
+                "dual=1\ndual_split={}\njulia_view_center_re={}\njulia_view_center_im={}\njulia_view_upp_log2={:.17e}\n",
+                self.dual_split,
+                fractadyne_core::to_decimal_string(&j.center_x),
+                fractadyne_core::to_decimal_string(&j.center_y),
+                j.units_per_pixel.log2(),
+            ),
+            _ => String::new(),
+        };
         format!(
             "app=Fractadyne\nversion={}\nformat_version={}\nsaved_unix={}\nsaved={}\n\
-             notes={}\nfractal={}\njulia={}\njulia_c_re={:.17e}\njulia_c_im={:.17e}\n\
-             center_re={}\ncenter_im={}\nupp={:.17e}\nupp_log2={:.17e}\nzoom={}\nmax_iter={}\nauto_iter={}\n\
-             palette={}\npalette_id={}\ncycle={}\n{}offset={}\naa={}\n{}{}{}{}{}",
+             notes={}\nfractal={}\njulia={}\n{julia_c}\
+             center_re={}\ncenter_im={}\n{scale}max_iter={}\nauto_iter={}\n\
+             palette={}\npalette_id={}\ncycle={}\n{}offset={}\naa={}\n{dual}{}{}{}{}{}",
             version_string(),
             if self.fractal == FractalKind::LSystem {
                 VIEW_FORMAT_VERSION
@@ -934,19 +1034,12 @@ impl FractadyneApp {
             Self::utc_date_string(secs),
             notes,
             self.fractal.name(),
-            self.julia_mode as u32,
-            jcx,
-            jcy,
-            fractadyne_core::to_decimal_string(&self.viewport.center_x),
-            fractadyne_core::to_decimal_string(&self.viewport.center_y),
-            self.viewport.units_per_pixel.to_f64(),
-            // Extended-range scale (log2 of units_per_pixel) so deep (>1e308×) views reload
-            // exactly; `upp` above is the saturating f64 (back-compat + human-readable).
-            self.viewport.units_per_pixel.log2(),
-            // Scientific string valid past f64 range — `magnification()` saturates to `inf` past
-            // ~1e308×, which showed as `zoom=inf` in deep `.fdn`/bookmarks. Informational only
-            // (loads use `upp_log2`); readers get a real value like `4.84e838`.
-            crate::fmt_zoom_field(self.viewport.log2_magnification()),
+            (julia_mode && self.fractal.supports_julia()) as u32,
+            fractadyne_core::to_decimal_string(&vp.center_x),
+            fractadyne_core::to_decimal_string(&vp.center_y),
+            // (`scale` above: `upp` is the saturating f64, back-compat and human-readable;
+            // `upp_log2` the extended-range scale deep views reload from exactly; `zoom` a scientific
+            // string valid past f64's range, informational only — `zoom=inf` once showed there.)
             self.render_cfg.max_iter,
             self.render_cfg.auto_iter as u32,
             // ⭐The palette twice: `palette_id` is what this build and later ones read; `palette` is
@@ -986,13 +1079,44 @@ impl FractadyneApp {
                 String::new()
             },
             // The center's source expression + offset, when it was entered as one (empty otherwise,
-            // so an ordinary view's metadata is byte-identical to before this existed).
-            self.center_expr_metadata(),
+            // so an ordinary view's metadata is byte-identical to before this existed). Only for
+            // the main view: a Julia pane's picture is not centered on the expression.
+            if main_view { self.center_expr_metadata_for(vp) } else { String::new() },
             // The custom formula, for a Custom view (empty otherwise, likewise).
             self.custom_formula_metadata(),
             // The universe, for a Life view (empty otherwise, likewise).
             self.life_metadata(),
         )
+    }
+
+    /// What an export of the view at `map_vp` (in Julia mode when `julia_mode`) embeds; in a dual view
+    /// `julia_vp` is the Julia pane and `dual_mode` the layout. ⚠The Julia constant is read from
+    /// `self.julia_c`: a caller exporting the view as it was when Export was pressed sets it to that
+    /// first (`ExportPrep::julia_c`), as it does for the requests.
+    pub(crate) fn export_meta(
+        &self,
+        map_vp: &crate::Viewport,
+        julia_mode: bool,
+        julia_vp: Option<&crate::Viewport>,
+        dual_mode: crate::DualExport,
+    ) -> ExportMeta {
+        use crate::DualExport;
+        match julia_vp {
+            None => ExportMeta { main: self.view_metadata_of(map_vp, julia_mode, None, true), julia: None },
+            // "Active pane": the map pane alone, a single view.
+            Some(_) if dual_mode == DualExport::ActiveOnly => {
+                ExportMeta { main: self.view_metadata_of(map_vp, false, None, true), julia: None }
+            }
+            Some(j) => ExportMeta {
+                main: self.view_metadata_of(map_vp, false, Some(j), true),
+                julia: (dual_mode == DualExport::Separate).then(|| self.view_metadata_of(j, true, None, false)),
+            },
+        }
+    }
+
+    /// [`Self::export_meta`] for the view on screen now.
+    pub(crate) fn export_meta_live(&self) -> ExportMeta {
+        self.export_meta(&self.viewport, self.julia_mode, self.dual.then_some(&self.julia_viewport), self.export.dual_mode)
     }
 
     /// `rule=`, `pattern=` … for a Life view, `lsystem=` … for an L-system view; empty for every
@@ -1042,7 +1166,10 @@ impl FractadyneApp {
         let rle = fractadyne_core::life::write_rle(&cells, &u.rule().canonical(), u.rule().states() > 2, None, None);
         // The runs alone, on one line: everything after the header (`x = …`), without line breaks.
         let runs: String = rle.lines().skip_while(|l| !l.starts_with('x')).skip(1).collect();
-        let name: String = self.life.pattern_name.chars().filter(|c| !c.is_control()).take(120).collect();
+        // Repaired as the reader repairs it (review finding 7): a curly quote or a dash in a pattern's
+        // `#N` name is straightened on load, so written raw it failed the file's own checksum.
+        let name: String =
+            fractadyne_text::clean(&self.life.pattern_name).text.chars().filter(|c| !c.is_control()).take(120).collect();
         if runs.len() > MAX_VIEW_PATTERN {
             return format!(
                 "rule={}\ngeneration={}\npattern_name={name}\n",
@@ -1092,19 +1219,21 @@ impl FractadyneApp {
     /// The offset is zero while the center still sits on the point and small while exploring near it;
     /// past the set's own ~8-unit span it cannot be a meaningful offset from the anchor (a discrete
     /// jump we failed to clear), so the expression is dropped and only the plain decimal is written.
-    fn center_expr_metadata(&self) -> String {
+    /// [`Self::center_expr_metadata`] relative to `vp`'s center: the live view's for a view or the
+    /// session, the one an export was started on for its embedded view.
+    pub(crate) fn center_expr_metadata_for(&self, vp: &crate::Viewport) -> String {
         let Some(ce) = self.center_expr.as_ref() else {
             return String::new();
         };
-        let p = self.viewport.precision.max(ce.prec);
+        let p = vp.precision.max(ce.prec);
         let (Some(anchor_re), Some(anchor_im)) = (
             fractadyne_core::parse_bf_prec(&ce.re, p),
             fractadyne_core::parse_bf_prec(&ce.im, p),
         ) else {
             return String::new();
         };
-        let off_re = fractadyne_core::bf_sub(&self.viewport.center_x, &anchor_re, p);
-        let off_im = fractadyne_core::bf_sub(&self.viewport.center_y, &anchor_im, p);
+        let off_re = fractadyne_core::bf_sub(&vp.center_x, &anchor_re, p);
+        let off_im = fractadyne_core::bf_sub(&vp.center_y, &anchor_im, p);
         if fractadyne_core::to_f64(&off_re).abs() >= 8.0 || fractadyne_core::to_f64(&off_im).abs() >= 8.0 {
             return String::new();
         }
@@ -1117,6 +1246,50 @@ impl FractadyneApp {
             ));
         }
         s
+    }
+
+    /// The center's expression from a view's (or the session's) `center_re_expr` / `center_im_expr`
+    /// (+ offset) fields: re-derived at the viewport's precision and the offset re-applied, replacing
+    /// the decimal center. Clears the expression when the fields are absent or do not read.
+    pub(crate) fn apply_center_expr_fields(&mut self, get: &dyn Fn(&str) -> Option<String>) {
+        self.center_expr = None;
+        if let (Some(re_expr), Some(im_expr)) = (get("center_re_expr"), get("center_im_expr")) {
+            let target = self.viewport.precision + 64;
+            if let (Some(anchor_re), Some(anchor_im)) = (
+                fractadyne_core::parse_bf_prec(&re_expr, target),
+                fractadyne_core::parse_bf_prec(&im_expr, target),
+            ) {
+                let off_re = get("center_re_offset")
+                    .and_then(|s| fractadyne_core::parse_bf_prec(&s, target))
+                    .unwrap_or_else(|| fractadyne_core::BigFloat::from_f64(0.0, target));
+                let off_im = get("center_im_offset")
+                    .and_then(|s| fractadyne_core::parse_bf_prec(&s, target))
+                    .unwrap_or_else(|| fractadyne_core::BigFloat::from_f64(0.0, target));
+                self.viewport.center_x = fractadyne_core::bf_add(&anchor_re, &off_re, target);
+                self.viewport.center_y = fractadyne_core::bf_add(&anchor_im, &off_im, target);
+                self.center_expr =
+                    Some(crate::CenterExpr::loaded(re_expr, im_expr, anchor_re, anchor_im, target));
+            }
+        }
+    }
+
+    /// Put the Julia pane's camera at `center` and `upp_log2` (a view's or the session's): `true`
+    /// when they read. A center that does not read, or a scale that is not a finite number within
+    /// the deepest a file may open, leaves the pane as it is.
+    pub(crate) fn apply_julia_pane(&mut self, re: Option<&str>, im: Option<&str>, upp_log2: Option<f64>) -> bool {
+        let (Some(re), Some(im), Some(l)) = (re.and_then(fractadyne_core::parse_bf), im.and_then(fractadyne_core::parse_bf), upp_log2)
+        else {
+            return false;
+        };
+        if !l.is_finite() || l.abs() > MAX_LOAD_OCTAVES {
+            return false;
+        }
+        let vp = &mut self.julia_viewport;
+        vp.center_x = re;
+        vp.center_y = im;
+        vp.units_per_pixel = fractadyne_core::FloatExp::from_f64(1.0).mul_pow2(l);
+        vp.precision = fractadyne_core::precision_for_octaves(vp.log2_magnification().max(0.0).ceil() as u64);
+        true
     }
 
     /// Restore the view from view-state metadata (exported image, `.fdn`, or bookmark).
@@ -1173,10 +1346,16 @@ impl FractadyneApp {
         self.julia_mode =
             get("julia").map(|s| s == "1").unwrap_or(false) && self.fractal.supports_julia();
         if let (Some(re), Some(im)) = (
-            get("julia_c_re").and_then(|s| s.parse().ok()),
-            get("julia_c_im").and_then(|s| s.parse().ok()),
+            get("julia_c_re").and_then(|s| s.parse::<f64>().ok()),
+            get("julia_c_im").and_then(|s| s.parse::<f64>().ok()),
         ) {
-            self.julia_c = (re, im);
+            // ⛔`f64` reads "NaN" and "inf" (review finding 6): a constant that is not a number
+            // rendered garbage and was then saved into the session and restored on every launch.
+            if re.is_finite() && im.is_finite() {
+                self.julia_c = (re, im);
+            } else {
+                report.clamped.push("Julia constant");
+            }
         }
         if let Some(cx) = get("center_re").and_then(|s| fractadyne_core::parse_bf(&s)) {
             self.viewport.center_x = cx;
@@ -1188,11 +1367,18 @@ impl FractadyneApp {
         // `upp` for images saved before it existed. Clamp the depth so a hostile value
         // can't blow up the bignum working precision (memory DoS).
         if let Some(raw) = get("upp_log2").and_then(|s| s.parse::<f64>().ok()) {
-            let l = raw.clamp(-MAX_LOAD_OCTAVES, MAX_LOAD_OCTAVES);
-            if !raw.is_finite() || l != raw {
+            // ⛔`f64::clamp` passes NaN THROUGH (review finding 6): `upp_log2=NaN` became a NaN zoom
+            // and a black screen, and the writer then wrote it into every bookmark and export of
+            // that view. A NaN keeps the zoom the view has; ±inf clamps to the deepest/shallowest.
+            if raw.is_nan() {
                 report.clamped.push("zoom depth");
+            } else {
+                let l = raw.clamp(-MAX_LOAD_OCTAVES, MAX_LOAD_OCTAVES);
+                if l != raw {
+                    report.clamped.push("zoom depth");
+                }
+                self.viewport.units_per_pixel = fractadyne_core::FloatExp::from_f64(1.0).mul_pow2(l);
             }
-            self.viewport.units_per_pixel = fractadyne_core::FloatExp::from_f64(1.0).mul_pow2(l);
         } else if let Some(raw) = get("upp").and_then(|s| s.parse::<f64>().ok()) {
             if raw.is_finite() && raw > 0.0 {
                 let l = raw.log2().clamp(-MAX_LOAD_OCTAVES, MAX_LOAD_OCTAVES);
@@ -1322,6 +1508,24 @@ impl FractadyneApp {
         if let Some(n) = get("notes") {
             self.export.notes = n;
         }
+        // The dual view (review finding 8): `dual=1` brings the layout and the Julia pane's own
+        // camera back. A view without the key leaves the layout as it is, as it always did.
+        if get("dual").as_deref() == Some("1") && self.fractal.supports_julia() {
+            self.dual = true;
+            self.julia_mode = false;
+            if let Some(f) = get("dual_split").and_then(|s| s.parse::<f32>().ok()).filter(|f| f.is_finite()) {
+                self.dual_split = f.clamp(crate::DUAL_SPLIT_MIN, crate::DUAL_SPLIT_MAX);
+            }
+            let jl = get("julia_view_upp_log2").and_then(|s| s.parse::<f64>().ok());
+            if !self.apply_julia_pane(
+                get("julia_view_center_re").as_deref(),
+                get("julia_view_center_im").as_deref(),
+                jl,
+            ) && (jl.is_some() || get("julia_view_center_re").is_some())
+            {
+                report.clamped.push("Julia pane");
+            }
+        }
         // Match the viewport's working precision to the restored zoom; drop caches.
         self.viewport.precision = fractadyne_core::precision_for_octaves(
             self.viewport.log2_magnification().max(0.0).ceil() as u64,
@@ -1330,26 +1534,8 @@ impl FractadyneApp {
         // re-apply the saved offset — overriding the decimal `center_re`/`center_im` read above — so
         // the center is exact for THIS depth and for any deeper zoom from here, not frozen at the
         // digits the decimal was written with. Read after the depth so the precision is known; a
-        // file with no expression keys is unchanged. See `CenterExpr` / `center_expr_metadata`.
-        self.center_expr = None;
-        if let (Some(re_expr), Some(im_expr)) = (get("center_re_expr"), get("center_im_expr")) {
-            let target = self.viewport.precision + 64;
-            if let (Some(anchor_re), Some(anchor_im)) = (
-                fractadyne_core::parse_bf_prec(&re_expr, target),
-                fractadyne_core::parse_bf_prec(&im_expr, target),
-            ) {
-                let off_re = get("center_re_offset")
-                    .and_then(|s| fractadyne_core::parse_bf_prec(&s, target))
-                    .unwrap_or_else(|| fractadyne_core::BigFloat::from_f64(0.0, target));
-                let off_im = get("center_im_offset")
-                    .and_then(|s| fractadyne_core::parse_bf_prec(&s, target))
-                    .unwrap_or_else(|| fractadyne_core::BigFloat::from_f64(0.0, target));
-                self.viewport.center_x = fractadyne_core::bf_add(&anchor_re, &off_re, target);
-                self.viewport.center_y = fractadyne_core::bf_add(&anchor_im, &off_im, target);
-                self.center_expr =
-                    Some(crate::CenterExpr::loaded(re_expr, im_expr, anchor_re, anchor_im, target));
-            }
-        }
+        // file with no expression keys is unchanged. See `CenterExpr` / `center_expr_metadata_for`.
+        self.apply_center_expr_fields(&get);
         self.invalidate_refs();
         self.pointer.zoom_vel = 0.0;
         self.record_nav();
@@ -1940,14 +2126,14 @@ impl FractadyneApp {
         // (`&progress` deref-coerces to `&AtomicU32` at the call sites below.)
         let _pump = crate::diag::progress_pump("render", progress.clone());
         let cancel = AtomicBool::new(false);
-        let meta = self.view_metadata();
+        let meta = self.export_meta_live();
         let fmt = self.export.format;
-        let write = |p: &std::path::Path, w: u32, h: u32, mut px: Vec<f32>| {
+        let write = |p: &std::path::Path, w: u32, h: u32, mut px: Vec<f32>, meta: &str| {
             let t = std::time::Instant::now();
             self.apply_watermark(&mut px, w, h);
             let r = match fmt {
-                ExportFormat::Png => fractadyne_export::write_png(p, w, h, &px, Some(&meta)),
-                ExportFormat::Exr => fractadyne_export::write_exr(p, w, h, &px, Some(&meta)),
+                ExportFormat::Png => fractadyne_export::write_png(p, w, h, &px, Some(meta)),
+                ExportFormat::Exr => fractadyne_export::write_exr(p, w, h, &px, Some(meta)),
             };
             // The file phase, on its own line so a benchmark can split it from the GPU phases:
             // a 4K PNG's encode is a CPU cost every renderer pays, and the one the `[fd-perf]
@@ -1970,7 +2156,7 @@ impl FractadyneApp {
             if self.show_location {
                 crate::scripting::stamp_location(ctx, &mut r.pixels, r.width, r.height, &self.viewport);
             }
-            write(path, r.width, r.height, r.pixels)?;
+            write(path, r.width, r.height, r.pixels, &meta.main)?;
             return Ok(format!("Saved {}×{}{} → {}", r.width, r.height, lsystem_export_note(r.stopped), path.display()));
         }
         // Each view is glitch-corrected when enabled + applicable (single and both dual panels).
@@ -1984,7 +2170,7 @@ impl FractadyneApp {
                 if self.show_location {
                     crate::scripting::stamp_location(ctx, &mut r.pixels, r.width, r.height, &self.viewport);
                 }
-                write(path, r.width, r.height, r.pixels)?;
+                write(path, r.width, r.height, r.pixels, &meta.main)?;
                 Ok(format!("Saved {}×{} → {}", r.width, r.height, path.display()))
             }
             ExportJob::SideBySide(a, b) => {
@@ -1993,15 +2179,15 @@ impl FractadyneApp {
                 Self::log_export_perf("cli-render-map", &a, &ra);
                 Self::log_export_perf("cli-render-julia", &b, &rb);
                 let (w, h, px) = stitch_side_by_side(&ra, &rb);
-                write(path, w, h, px)?;
+                write(path, w, h, px, &meta.main)?;
                 Ok(format!("Saved {w}×{h} → {}", path.display()))
             }
             ExportJob::Separate(a, b) => {
                 let (pmap, pjul) = separate_paths(path);
                 let ra = view(&self.viewport, false, &a)?;
-                write(&pmap, ra.width, ra.height, ra.pixels)?;
+                write(&pmap, ra.width, ra.height, ra.pixels, &meta.main)?;
                 let rb = view(&self.julia_viewport, true, &b)?;
-                write(&pjul, rb.width, rb.height, rb.pixels)?;
+                write(&pjul, rb.width, rb.height, rb.pixels, meta.julia_file())?;
                 Ok(format!("Saved 2 files → {}", pmap.display()))
             }
         }
@@ -2089,7 +2275,7 @@ impl FractadyneApp {
         job: &ExportJob,
         hud: Option<&crate::scripting::HudOverlay>,
     ) -> Option<Result<String, String>> {
-        let meta = self.view_metadata();
+        let meta = self.export_meta_live();
         let correct = |vp: &fractadyne_core::Viewport, julia: bool, req: &fractadyne_gpu::ExportRequest| {
             let budget = crate::render::CorrectionBudget::standard();
             self.render_export_corrected(device, queue, vp, julia, req.width, req.height, Some(req), budget)
@@ -2097,15 +2283,16 @@ impl FractadyneApp {
         let write = |p: &std::path::Path,
                      w: u32,
                      h: u32,
-                     mut px: Vec<f32>|
+                     mut px: Vec<f32>,
+                     meta: &str|
          -> Result<(), fractadyne_export::ExportError> {
             self.apply_watermark(&mut px, w, h);
             if let Some(ov) = hud {
                 crate::scripting::blit_location_overlay(&mut px, w, h, ov);
             }
             match self.export.format {
-                ExportFormat::Png => fractadyne_export::write_png(p, w, h, &px, Some(&meta)),
-                ExportFormat::Exr => fractadyne_export::write_exr(p, w, h, &px, Some(&meta)),
+                ExportFormat::Png => fractadyne_export::write_png(p, w, h, &px, Some(meta)),
+                ExportFormat::Exr => fractadyne_export::write_exr(p, w, h, &px, Some(meta)),
             }
         };
         let status = |res: Result<(), fractadyne_export::ExportError>, ok: String| match res {
@@ -2117,7 +2304,7 @@ impl FractadyneApp {
                 let r = correct(&self.viewport, self.julia_mode, req)?;
                 let (w, h) = (r.width, r.height);
                 Some(status(
-                    write(path, w, h, r.pixels),
+                    write(path, w, h, r.pixels, &meta.main),
                     tr!(export_saved_corrected, size = format!("{w}×{h}"), path = path.display().to_string()),
                 ))
             }
@@ -2126,7 +2313,7 @@ impl FractadyneApp {
                 let rb = correct(&self.julia_viewport, true, b)?;
                 let (w, h, px) = stitch_side_by_side(&ra, &rb);
                 Some(status(
-                    write(path, w, h, px),
+                    write(path, w, h, px, &meta.main),
                     tr!(export_saved_corrected, size = format!("{w}×{h}"), path = path.display().to_string()),
                 ))
             }
@@ -2134,8 +2321,8 @@ impl FractadyneApp {
                 let ra = correct(&self.viewport, false, a)?;
                 let rb = correct(&self.julia_viewport, true, b)?;
                 let (pmap, pjul) = separate_paths(path);
-                let w1 = write(&pmap, ra.width, ra.height, ra.pixels);
-                let w2 = write(&pjul, rb.width, rb.height, rb.pixels);
+                let w1 = write(&pmap, ra.width, ra.height, ra.pixels, &meta.main);
+                let w2 = write(&pjul, rb.width, rb.height, rb.pixels, meta.julia_file());
                 Some(status(w1.and(w2), tr!(export_saved_two_corrected, path = pmap.display().to_string())))
             }
         }
@@ -2245,7 +2432,8 @@ impl FractadyneApp {
                 return;
             }
         }
-        self.spawn_export_worker(device, queue, job, path, hud);
+        let meta = self.export_meta_live();
+        self.spawn_export_worker(device, queue, job, path, hud, meta);
     }
 
     /// Whether the cursor must leave the Julia parameter alone: the Export dialog is open, or an
@@ -2363,9 +2551,11 @@ impl FractadyneApp {
         job: ExportJob,
         path: std::path::PathBuf,
         hud: Option<crate::scripting::HudOverlay>,
+        // ⭐Taken by the caller for the view the pixels are of (review finding 4), not read here:
+        // for a deep export this runs when the reference lands, minutes after Export was pressed.
+        meta: ExportMeta,
     ) {
         use std::sync::atomic::Ordering::Relaxed;
-        let meta = self.view_metadata();
         let format = self.export.format;
         self.export.progress.store(0, Relaxed);
         self.export.cancel.store(false, Relaxed);
@@ -2419,7 +2609,7 @@ impl FractadyneApp {
                     render_split((&device, &queue, &window_name), &extra, req, &progress, &cancel)
                 }
             };
-            let write = |p: &std::path::Path, w: u32, h: u32, mut px: Vec<f32>| {
+            let write = |p: &std::path::Path, w: u32, h: u32, mut px: Vec<f32>, meta: &str| {
                 if let Some(ov) = &wm {
                     stamp_watermark(&mut px, w, h, ov);
                 }
@@ -2427,8 +2617,8 @@ impl FractadyneApp {
                     crate::scripting::blit_location_overlay(&mut px, w, h, ov);
                 }
                 match format {
-                    ExportFormat::Png => fractadyne_export::write_png(p, w, h, &px, Some(&meta)),
-                    ExportFormat::Exr => fractadyne_export::write_exr(p, w, h, &px, Some(&meta)),
+                    ExportFormat::Png => fractadyne_export::write_png(p, w, h, &px, Some(meta)),
+                    ExportFormat::Exr => fractadyne_export::write_exr(p, w, h, &px, Some(meta)),
                 }
             };
             let msg = (|| -> Result<String, crate::error::AppError> {
@@ -2438,7 +2628,7 @@ impl FractadyneApp {
                         Self::log_export_perf("gui-export", &req, &r);
                         progress.store(2000, Relaxed);
                         let (rw, rh) = (r.width, r.height);
-                        write(&path, rw, rh, r.pixels)?;
+                        write(&path, rw, rh, r.pixels, &meta.main)?;
                         Ok(tr!(export_saved, size = format!("{rw}×{rh}"), path = path.display().to_string()))
                     }
                     ExportJob::SideBySide(a, b) => {
@@ -2451,18 +2641,18 @@ impl FractadyneApp {
                         Self::log_export_perf("gui-export-julia", &b, &rb);
                         progress.store(2000, Relaxed);
                         let (w, h, px) = stitch_side_by_side(&ra, &rb);
-                        write(&path, w, h, px)?;
+                        write(&path, w, h, px, &meta.main)?;
                         Ok(tr!(export_saved, size = format!("{w}×{h}"), path = path.display().to_string()))
                     }
                     ExportJob::Separate(a, b) => {
                         let (pmap, pjul) = separate_paths(&path);
                         let ra = render(&a)?;
                         Self::log_export_perf("gui-export-map", &a, &ra);
-                        write(&pmap, ra.width, ra.height, ra.pixels)?;
+                        write(&pmap, ra.width, ra.height, ra.pixels, &meta.main)?;
                         let rb = render(&b)?;
                         Self::log_export_perf("gui-export-julia", &b, &rb);
                         progress.store(2000, Relaxed);
-                        write(&pjul, rb.width, rb.height, rb.pixels)?;
+                        write(&pjul, rb.width, rb.height, rb.pixels, meta.julia_file())?;
                         Ok(tr!(export_saved_two, path = pmap.display().to_string()))
                     }
                 }

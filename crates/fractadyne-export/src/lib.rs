@@ -41,15 +41,11 @@ pub enum ExportError {
     /// any full-resolution allocation, so a crafted or corrupt file cannot drive an OOM (F-01).
     #[error("image too large: {what} {value} exceeds limit {limit}")]
     TooLarge { what: &'static str, value: u64, limit: u64 },
-    /// View text with a character past U+00FF, which an EXR text attribute cannot hold. Returned,
-    /// not panicked: `exr::Text::from` PANICS on one (a custom formula's `√` comment crashed the
-    /// app's EXR export). The app escapes its view text to ASCII, so this means a writer bug.
-    #[error("the view text has a character an EXR attribute cannot hold: {0:?}")]
-    MetadataNotLatin1(char),
 }
 
-/// A view text's first character past Latin-1 (U+00FF), if any: what PNG `tEXt` and EXR text
-/// attributes cannot store.
+/// A view text's first character past Latin-1 (U+00FF), if any: what PNG `tEXt` cannot store, and
+/// an EXR text attribute stores only as marked UTF-8 ([`exr_meta_text`]). ⚠`exr::Text::from`
+/// PANICS on one — a custom formula's `√` comment once crashed the app's EXR export.
 fn first_non_latin1(meta: &str) -> Option<char> {
     meta.chars().find(|&c| c as u32 > 0xFF)
 }
@@ -67,10 +63,30 @@ fn add_png_meta<W: std::io::Write>(encoder: &mut png::Encoder<'_, W>, meta: &str
     Ok(())
 }
 
-/// The EXR attribute for the view text, or [`ExportError::MetadataNotLatin1`] — never a panic.
-fn exr_meta_text(meta: &str) -> Result<exr::prelude::Text, ExportError> {
-    exr::prelude::Text::new_or_none(meta)
-        .ok_or_else(|| ExportError::MetadataNotLatin1(first_non_latin1(meta).unwrap_or('\u{fffd}')))
+/// The EXR attribute for the view text, and whether it holds UTF-8 rather than Latin-1. An EXR
+/// text attribute is bytes, which every reader takes as Latin-1: text within Latin-1 is stored so
+/// (as every build always has), and text past it — Cyrillic or Japanese notes, which the view text
+/// now carries (review 2026-11-16, finding 12) — as its UTF-8 bytes, with the
+/// [`META_UTF8_KEYWORD`] attribute set so [`read_exr_metadata`] decodes it as UTF-8. An older build
+/// still reads every key and number (they are ASCII); only those characters come out garbled.
+fn exr_meta_text(meta: &str) -> (exr::prelude::Text, bool) {
+    match exr::prelude::Text::new_or_none(meta) {
+        Some(t) => (t, false),
+        None => (exr::prelude::Text::from_slice_unchecked(meta.as_bytes()), true),
+    }
+}
+
+/// The EXR attribute that marks the view text attribute as UTF-8 ([`exr_meta_text`]).
+const META_UTF8_KEYWORD: &str = "FractadyneUtf8";
+
+/// Insert the view text (and, for UTF-8, its marker) into an EXR's attributes.
+fn insert_exr_meta(other: &mut std::collections::HashMap<exr::prelude::Text, exr::prelude::AttributeValue>, meta: &str) {
+    use exr::prelude::*;
+    let (text, utf8) = exr_meta_text(meta);
+    other.insert(Text::from(META_KEYWORD), AttributeValue::Text(text));
+    if utf8 {
+        other.insert(Text::from(META_UTF8_KEYWORD), AttributeValue::I32(1));
+    }
 }
 
 /// Resource limits applied from an image **header** before the decoders allocate full-resolution
@@ -926,7 +942,7 @@ pub fn write_exr(
     });
     let mut image = Image::from_channels((width as usize, height as usize), channels);
     if let Some(meta) = metadata {
-        image.attributes.other.insert(Text::from(META_KEYWORD), AttributeValue::Text(exr_meta_text(meta)?));
+        insert_exr_meta(&mut image.attributes.other, meta);
     }
     image.write().to_file(path)?;
     Ok(())
@@ -967,7 +983,7 @@ pub fn write_exr_raw(
     });
     let mut image = Image::from_channels((width as usize, height as usize), channels);
     if let Some(meta) = metadata {
-        image.attributes.other.insert(Text::from(META_KEYWORD), AttributeValue::Text(exr_meta_text(meta)?));
+        insert_exr_meta(&mut image.attributes.other, meta);
     }
     image.write().to_file(path)?;
     Ok(())
@@ -1036,7 +1052,7 @@ pub fn write_exr_channels_with(
     let layer = Layer::new((width as usize, height as usize), attributes, Encoding::SMALL_FAST_LOSSLESS, AnyChannels::sort(list));
     let mut image = Image::from_layer(layer);
     if let Some(meta) = metadata {
-        image.attributes.other.insert(Text::from(META_KEYWORD), AttributeValue::Text(exr_meta_text(meta)?));
+        insert_exr_meta(&mut image.attributes.other, meta);
     }
     let part = partial_path(path);
     let written = (|| -> std::result::Result<(), ExportError> {
@@ -1058,10 +1074,16 @@ pub fn read_exr_metadata(path: &Path) -> Result<Option<String>, ExportError> {
     use exr::prelude::*;
     let meta = exr::meta::MetaData::read_from_file(path, false)?;
     let key = Text::from(META_KEYWORD);
+    let utf8_key = Text::from(META_UTF8_KEYWORD);
     for h in &meta.headers {
         for other in [&h.shared_attributes.other, &h.own_attributes.other] {
             if let Some(AttributeValue::Text(t)) = other.get(&key) {
-                return Ok(Some(t.to_string()));
+                // UTF-8 when the writer said so (`exr_meta_text`); Latin-1, as always, otherwise.
+                let utf8 = matches!(other.get(&utf8_key), Some(AttributeValue::I32(1)));
+                return Ok(Some(match utf8 {
+                    true => String::from_utf8_lossy(t.bytes()).into_owned(),
+                    false => t.to_string(),
+                }));
             }
         }
     }

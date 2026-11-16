@@ -322,7 +322,8 @@ pub(crate) fn run_headless(args: &[String]) -> bool {
         let assume_yes = args.iter().any(|a| a == "-y" || a == "--yes");
         eprintln!("This will PERMANENTLY delete all Fractadyne application state:");
         eprintln!("  {}", fractadyne_state::state_location_display());
-        eprintln!("  (saved session, bookmarks, and bookmark thumbnails)");
+        eprintln!("  (saved session, bookmarks and their thumbnails, saved gradients, the formula library,");
+        eprintln!("  and the reference-orbit cache)");
         let confirmed = if assume_yes {
             true
         } else {

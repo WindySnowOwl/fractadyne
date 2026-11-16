@@ -699,6 +699,8 @@ dlg-reset-warning = 保存されているFractadyneのデータがすべて完�
 # The list's items, each after a bullet.
 dlg-reset-session = 保存されたセッション（現在のビュー、着色、環境設定）
 dlg-reset-bookmarks = すべてのブックマークとそのサムネイル
+dlg-reset-gradients = 保存されたすべてのグラデーション
+dlg-reset-formulas = 数式ライブラリ
 dlg-reset-refcache = 参照軌道キャッシュ（位置を再び訪れると再構築されます）
 # A label over the folder that is deleted.
 dlg-reset-location = 場所
@@ -898,6 +900,22 @@ dlg-export-export-hover = レンダリングして上のフォルダーに保存
 
 # A notice shown once after starting, when the saved session comes from a newer version of the app. $saved and $handled: version numbers of the session file's format (1, 2…).
 app-state-newer = このセッションは、より新しいFractadyneで保存されました（状態 v{ $saved }。このビルドが扱えるのは v{ $handled }）。一部の設定は適用されない可能性があり、保存するとこのビルドの形式で書き直されます。
+# After starting, when the saved session could not be read at all.
+app-state-unreadable = 保存されたセッションを読み込めなかったため、Fractadyneは既定の設定で起動しました。
+# After starting, when part of the saved session could not be read. $settings: the settings' names as the file writes them (English tokens such as "aa, theme").
+app-state-partial = 保存されたセッションの一部を読み込めませんでした。次の設定は既定値に戻りました：{ $settings }。
+# After starting, when the saved session had characters that could not be read (they were replaced).
+app-state-repaired = 保存されたセッションに読み込めない文字が含まれていたため、置き換えました。
+# After one of the notices above. $path: where the file, as it was, is kept.
+app-state-kept = 元のファイルは{ $path }として保管しました。
+# After starting, when some saved bookmarks could not be read. $count: how many.
+app-bookmarks-partial = 保存されたブックマークのうち{ $count }件を読み込めなかったため、除外しました。
+# After starting, when the bookmarks file could not be read at all.
+app-bookmarks-unreadable = ブックマークファイルを読み込めなかったため、ブックマークの一覧は空の状態から始まります。
+# After starting, when some saved gradients could not be read. $count: how many.
+app-gradients-partial = 保存されたグラデーションのうち{ $count }件を読み込めなかったため、除外しました。
+# After starting, when the saved gradients file could not be read at all.
+app-gradients-unreadable = 保存されたグラデーションのファイルを読み込めなかったため、グラデーションライブラリは空の状態から始まります。
 # The title of the notice that says the accelerated build's arithmetic libraries are found again (its text comes from elsewhere).
 app-notice-mpfr-restored-title = 高速演算が復帰しました
 # After Fractadyne restarted itself because the graphics driver reset the GPU.

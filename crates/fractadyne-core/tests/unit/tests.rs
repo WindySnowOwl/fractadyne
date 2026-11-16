@@ -1917,10 +1917,19 @@ fn parse_kfr_valid_and_robust() {
     assert!((to_f64(&v.cy) - 0.131825904205330).abs() < 1e-12);
     assert_eq!(v.zoom, 800.0);
     assert_eq!(v.iterations, Some(2000));
-    // Over-range zoom clamps; iterations clamp; case-insensitive keys.
+    // Past f64's range: the f64 `zoom` saturates, but the DEPTH is the file's (review 2026-11-16,
+    // finding 5: the importer used the saturated value, and a 1E1000 location opened at 1e300×).
+    // Iterations clamp; case-insensitive keys.
     let v = parse_kfr("re: -1\nIM: 0\nZOOM: 1E1000\niterations: 99999999999\n").unwrap();
     assert_eq!(v.zoom, 1.0e300);
+    assert!((v.zoom_log2 - 1000.0 * std::f64::consts::LOG2_10).abs() < 1e-9, "{}", v.zoom_log2);
     assert_eq!(v.iterations, Some(crate::LOCATION_MAX_ITERATIONS));
+    // KF writes a mantissa with its exponent; deeper still, and with a sign on the exponent.
+    let v = parse_kfr("Re: -1\nIm: 0\nZoom: 2.5E+30000\n").unwrap();
+    assert!((v.zoom_log2 - (2.5f64.log2() + 30000.0 * std::f64::consts::LOG2_10)).abs() < 1e-6, "{}", v.zoom_log2);
+    // An ordinary zoom: the two agree.
+    let v = parse_kfr("Re: -1\nIm: 0\nZoom: 800\n").unwrap();
+    assert!((v.zoom_log2 - 800f64.log2()).abs() < 1e-12);
     // A deep location's count is kept up to the app's ceiling: 5,000,000 was cut to 1,000,000.
     let v = parse_kfr("Re: -1\nIm: 0\nZoom: 1E100\nIterations: 5000000\n").unwrap();
     assert_eq!(v.iterations, Some(5_000_000));

@@ -702,6 +702,8 @@ dlg-reset-warning = Bu işlem kaydedilmiş tüm Fractadyne verilerini kalıcı o
 # The list's items, each after a bullet.
 dlg-reset-session = kaydedilmiş oturum (geçerli görünüm, renklendirme, tercihler)
 dlg-reset-bookmarks = tüm yer imleri ve küçük resimleri
+dlg-reset-gradients = kaydedilmiş tüm gradyanlar
+dlg-reset-formulas = formül kitaplığı
 dlg-reset-refcache = referans yörünge önbelleği (konumları yeniden ziyaret ettikçe yeniden oluşturulur)
 # A label over the folder that is deleted.
 dlg-reset-location = Klasör
@@ -901,6 +903,22 @@ dlg-export-export-hover = İşle ve yukarıdaki klasöre kaydet (ad otomatik ver
 
 # A notice shown once after starting, when the saved session comes from a newer version of the app. $saved and $handled: version numbers of the session file's format (1, 2…).
 app-state-newer = Bu oturum daha yeni bir Fractadyne sürümüyle kaydedilmiş (durum v{ $saved }; bu derleme v{ $handled } sürümünü işleyebiliyor). Bazı ayarlar uygulanmayabilir ve kaydetme, dosyayı bu derlemenin biçiminde yeniden yazar.
+# After starting, when the saved session could not be read at all.
+app-state-unreadable = Kaydedilmiş oturum okunamadı, bu yüzden Fractadyne varsayılan ayarlarla başladı.
+# After starting, when part of the saved session could not be read. $settings: the settings' names as the file writes them (English tokens such as "aa, theme").
+app-state-partial = Kaydedilmiş oturumun bir kısmı okunamadı. Şu ayarlar varsayılan değerlerine döndü: { $settings }.
+# After starting, when the saved session had characters that could not be read (they were replaced).
+app-state-repaired = Kaydedilmiş oturumda okunamayan karakterler vardı; bunlar değiştirildi.
+# After one of the notices above. $path: where the file, as it was, is kept.
+app-state-kept = Dosyanın özgün hâli şu adla saklandı: { $path }.
+# After starting, when some saved bookmarks could not be read. $count: how many.
+app-bookmarks-partial = Kaydedilmiş { $count } yer imi okunamadı ve dışarıda bırakıldı.
+# After starting, when the bookmarks file could not be read at all.
+app-bookmarks-unreadable = Yer imleri dosyası okunamadı, bu yüzden yer imi listesi boş başlıyor.
+# After starting, when some saved gradients could not be read. $count: how many.
+app-gradients-partial = Kaydedilmiş { $count } gradyan okunamadı ve dışarıda bırakıldı.
+# After starting, when the saved gradients file could not be read at all.
+app-gradients-unreadable = Kaydedilmiş gradyanlar dosyası okunamadı, bu yüzden gradyan kitaplığı boş başlıyor.
 # The title of the notice that says the accelerated build's arithmetic libraries are found again (its text comes from elsewhere).
 app-notice-mpfr-restored-title = Hızlandırılmış aritmetik yeniden etkin
 # After Fractadyne restarted itself because the graphics driver reset the GPU.

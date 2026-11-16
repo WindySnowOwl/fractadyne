@@ -98,6 +98,7 @@ mod coloring_fields;
 mod view_coloring;
 mod scripting;
 mod session_outcome;
+mod session_sanitize;
 mod machine;
 mod palette_preview;
 mod power_state;
@@ -1082,9 +1083,10 @@ pub(crate) fn restored_units_per_pixel(mantissa: f64, exp: i32) -> Option<fracta
     if !mantissa.is_finite() || mantissa <= 0.0 {
         return None;
     }
-    // Our deepest real views sit near a binary exponent of -7000 (about 1e2100x). Orders past that
-    // are corruption, not ambition.
-    if exp.unsigned_abs() > 1_000_000 {
+    // ⛔The deepest view a FILE may open (`MAX_LOAD_OCTAVES`, 3.4e7 octaves), not some smaller
+    // figure: this was 1,000,000, so a location opened at 2^-2,000,000 came back from a restart as
+    // the home view (review 2026-11-16, finding 14). Orders past it are corruption, not ambition.
+    if f64::from(exp.unsigned_abs()) > crate::export::MAX_LOAD_OCTAVES + 64.0 {
         return None;
     }
     let upp = fractadyne_core::FloatExp::new(mantissa, exp);
@@ -1101,6 +1103,28 @@ pub(crate) fn restored_units_per_pixel(mantissa: f64, exp: i32) -> Option<fracta
 #[cfg(test)]
 #[path = "../tests/unit/session_zoom.rs"]
 mod session_zoom;
+
+/// What the user is told on the first frame about a saved session this build did not take in whole
+/// (`fractadyne_state::load_for_app`), with where the file as it was is kept. `None` for a session
+/// that read cleanly, or none at all.
+pub(crate) fn session_load_notice(load: &fractadyne_state::StateLoad, kept: Option<&std::path::Path>) -> Option<String> {
+    use fractadyne_state::StateLoad;
+    let what = match load {
+        StateLoad::Ok | StateLoad::Fresh => return None,
+        StateLoad::Newer(v) => tr!(
+            app_state_newer,
+            saved = v.to_string(),
+            handled = fractadyne_state::STATE_FORMAT_VERSION.to_string()
+        ),
+        StateLoad::Unreadable => tr!(app_state_unreadable),
+        StateLoad::Partial(keys) if keys.is_empty() => tr!(app_state_repaired),
+        StateLoad::Partial(keys) => tr!(app_state_partial, settings = keys.join(", ")),
+    };
+    Some(match kept {
+        Some(p) => format!("{what} {}", tr!(app_state_kept, path = p.display().to_string())),
+        None => what,
+    })
+}
 
 /// Direct download URL for the accelerated package matching `version`.
 ///
@@ -4814,10 +4838,9 @@ pub(crate) fn scan_gallery_dir(dir: &std::path::Path) -> Vec<(std::path::PathBuf
             // ⚠Bounded read: `.fdn` is a text file and `SHARE_MAX` is what every other reader
             // of one already enforces. A folder scan must not be a way to make the app read a
             // gigabyte off disk because something with the wrong extension is sitting in it.
-            "fdn" => std::fs::read(&path)
-                .ok()
-                .filter(|b| b.len() <= SHARE_MAX)
-                .and_then(|b| String::from_utf8(b).ok()),
+            // Decoded as File ▸ Open decodes it (`txt_location`): a UTF-16 `.fdn` opened there and was
+            // missing here (review 2026-11-16, finding 18).
+            "fdn" => crate::txt_location::read_bounded(&path, SHARE_MAX as u64).ok().map(|d| d.text),
             _ => None,
         };
         let Some(m) = meta else { continue };
@@ -5917,7 +5940,7 @@ impl Default for RefCache {
 
 /// A saved view (bookmark). `meta` is the same key=value view-metadata blob used by
 /// exports, restorable via `load_view_metadata`.
-#[derive(Clone, serde::Serialize, serde::Deserialize)]
+#[derive(Clone, PartialEq, Debug, serde::Serialize, serde::Deserialize)]
 struct Bookmark {
     name: String,
     meta: String,
@@ -5954,6 +5977,101 @@ fn thumb_crop(rect: [u32; 4], iw: u32, ih: u32) -> (u32, u32, u32, u32) {
     (x0, y0, cw.min(iw - x0).max(1), chh.min(ih - y0).max(1))
 }
 
+/// What identifies a bookmark while a thumbnail capture is in flight: its name and its view. Its
+/// index moves when another bookmark is deleted or merged in (review finding 17).
+type BookmarkKey = (String, String);
+
+fn bookmark_key(b: &Bookmark) -> BookmarkKey {
+    (b.name.clone(), b.meta.clone())
+}
+
+/// Where the bookmark `k` is in `list` now.
+fn bookmark_index(list: &[Bookmark], k: &BookmarkKey) -> Option<usize> {
+    list.iter().position(|b| b.name == k.0 && b.meta == k.1)
+}
+
+/// Whether `id` can name a thumbnail file: the app's own ids are digits and a dash. Anything else —
+/// a hand-edited or damaged bookmarks file — must never become a path, or deleting the bookmark
+/// would delete `..\..\x.png` (review finding 19).
+fn sane_thumb_id(id: &str) -> bool {
+    !id.is_empty() && id.len() <= 64 && id.bytes().all(|b| b.is_ascii_alphanumeric() || b == b'-' || b == b'_')
+}
+
+/// A library file of `[[key]]` entries read at startup: every entry that reads, and — when the file
+/// did not read whole (an entry that does not, bytes that are not UTF-8, or not TOML at all) — a
+/// copy of it kept beside it (`<name>.unreadable.toml`) before any save can replace it, and the
+/// notice for the user: `partial(dropped)` or `unreadable()`, with where the copy is.
+///
+/// ⛔Review finding 1 (2026-11-16): bookmarks and gradients were read `.ok()…unwrap_or_default()`,
+/// so one entry missing a field, or one byte an editor saved in the system's code page, read as an
+/// EMPTY library — and the next bookmark added replaced the user's whole file with that one.
+///
+/// A file that exists but cannot be read at all right now (locked) reads as empty and is left
+/// alone: nothing is lost, because each save merges with the file as it is then, and refuses to
+/// write over a file it cannot read.
+fn load_library<T: serde::de::DeserializeOwned>(
+    path: Option<std::path::PathBuf>,
+    key: &str,
+    partial: impl Fn(usize) -> String,
+    unreadable: impl Fn() -> String,
+) -> (Vec<T>, Option<String>) {
+    let Some(path) = path else {
+        return (Vec::new(), None);
+    };
+    let bytes = match std::fs::read(&path) {
+        Ok(b) => b,
+        Err(e) if e.kind() == std::io::ErrorKind::NotFound => return (Vec::new(), None),
+        Err(e) => {
+            crate::diag::log_line("start", &format!("{} could not be read now ({e}); left as it is", path.display()));
+            return (Vec::new(), None);
+        }
+    };
+    let (text, lossy) = fractadyne_state::durable::text_of(&bytes);
+    let (entries, notice) = match fractadyne_state::durable::salvage_entries::<T>(&text, key) {
+        Some((entries, 0)) => (entries, None),
+        Some((entries, dropped)) => (entries, Some(partial(dropped))),
+        None => (Vec::new(), Some(unreadable())),
+    };
+    if notice.is_none() && !lossy {
+        return (entries, None);
+    }
+    let kept = fractadyne_state::durable::keep_copy(&path, "unreadable");
+    crate::diag::log_line(
+        "start",
+        &format!(
+            "{} did not read whole{}: {} entries kept; the file as it was {}",
+            path.display(),
+            if lossy { " (not UTF-8)" } else { "" },
+            entries.len(),
+            match &kept {
+                Ok(k) => format!("is kept as {}", k.display()),
+                Err(e) => format!("could NOT be copied aside ({e})"),
+            }
+        ),
+    );
+    let notice = match (notice, &kept) {
+        (Some(n), Ok(k)) => Some(format!("{n} {}", tr!(app_state_kept, path = k.display().to_string()))),
+        (n, _) => n,
+    };
+    (entries, notice)
+}
+
+/// What each library file held when this copy of the app last read or wrote it: the base of the
+/// three-way merge each save does with the file on disk (`fractadyne_state::durable::merge3`), so
+/// two running copies do not erase each other's bookmarks, gradients or formulas (finding 16).
+#[derive(Default)]
+pub(crate) struct LibraryBase {
+    bookmarks: Vec<Bookmark>,
+    gradients: Vec<SavedGradient>,
+    pub(crate) formulas: Vec<formula_library::SavedFormula>,
+}
+
+impl LibraryBase {
+    pub(crate) fn clear(&mut self) {
+        *self = LibraryBase::default();
+    }
+}
+
 pub(crate) fn take_bookmark(list: &mut Vec<Bookmark>, i: usize) -> Option<String> {
     if i >= list.len() {
         return None;
@@ -5975,7 +6093,7 @@ struct BookmarkFile {
 /// a hue sweep, so saving one would silently flatten exactly the gradients worth saving — the same
 /// trap `custom_segments` exists to avoid. `PaletteSegment` already round-trips through a session
 /// file, so the library inherits that guarantee rather than inventing a second encoding.
-#[derive(Clone, serde::Serialize, serde::Deserialize)]
+#[derive(Clone, PartialEq, Debug, serde::Serialize, serde::Deserialize)]
 struct SavedGradient {
     name: String,
     #[serde(default)]
@@ -6895,16 +7013,24 @@ struct FractadyneApp {
     bookmark_name: String,
     /// A just-added bookmark whose thumbnail still needs rendering (deferred to `update`,
     /// where the GPU is available and the current view still matches the bookmark).
-    pending_thumb: Option<usize>,
+    ///
+    /// ⭐These three hold the bookmark's KEY ([`BookmarkKey`]), not its index (review finding 17):
+    /// a delete, or a save that merges another running copy's bookmarks in, moves the indices
+    /// while a capture is in flight, and the picture then went to whichever bookmark had moved
+    /// into the slot.
+    pending_thumb: Option<BookmarkKey>,
     /// Heal-on-jump: a bookmark was jumped to that has no usable thumbnail (empty id, or the
     /// 1x1 chrome-pixel captures the dual-view rect bug wrote before 0.2.41-beta.3); once the
     /// view has SETTLED and is still exactly at the bookmark's coordinates, recapture it.
-    /// Holds (bookmark index, target center x/y, target log2 magnification); any interaction
+    /// Holds (bookmark, target center x/y, target log2 magnification); any interaction
     /// moves the viewport off the exact target and disarms it.
-    heal_thumb: Option<(usize, fractadyne_core::BigFloat, fractadyne_core::BigFloat, f64)>,
+    heal_thumb: Option<(BookmarkKey, fractadyne_core::BigFloat, fractadyne_core::BigFloat, f64)>,
     /// A bookmark-thumbnail SCREENSHOT is in flight (the reply lands next frame as
-    /// `egui::Event::Screenshot`); holds the bookmark index it belongs to.
-    thumb_shot: Option<usize>,
+    /// `egui::Event::Screenshot`); holds the bookmark it belongs to.
+    thumb_shot: Option<BookmarkKey>,
+    /// What each library file held when this copy last read or wrote it: the base of the merge
+    /// a save does with the file on disk (review finding 16).
+    library_base: LibraryBase,
     /// What the Snapshot button does (persisted; see [`SnapshotMode`]).
     snapshot_mode: SnapshotMode,
     /// A screen-capture snapshot was requested this frame; the shot is fired on the next
@@ -7090,6 +7216,8 @@ struct FractadyneApp {
     hold_prefetch: Vec<crate::render::HoldPrefetch>,
     /// Last snapshot used for change detection (debounced auto-save).
     last_state: fractadyne_state::SessionState,
+    /// The last session save error logged, so a failing save is logged once, not every second.
+    session_save_error: Option<String>,
     /// App-time (s) of the last change while unsaved; `None` when clean.
     dirty_since: Option<f64>,
 }
@@ -7645,7 +7773,10 @@ impl FractadyneApp {
         // Restore the last session (or defaults). The center comes from the
         // full-precision decimal strings when present (deep-zoom locations survive
         // restart); older session files without them fall back to the f64 fields.
-        let (mut s, state_load) = fractadyne_state::load_with_status();
+        // ⭐`load_for_app`, not `load_with_status`: a file this build does not take in whole is copied
+        // aside BEFORE the autosave can replace it (review 2026-11-16: one bad value cost a user every
+        // setting, and a newer build's session was overwritten by an older one).
+        let (mut s, state_load, state_kept) = fractadyne_state::load_for_app();
 
         // MPFR (accelerated build) startup state, and whether it CHANGED since the last run. A
         // change — the DLLs appearing or disappearing — is announced even when the recurring
@@ -7680,9 +7811,21 @@ impl FractadyneApp {
                     fractadyne_state::StateLoad::Unreadable =>
                         "UNREADABLE, ignored (defaults)".to_string(),
                     fractadyne_state::StateLoad::Newer(v) => format!("loaded, newer format v{v}"),
+                    fractadyne_state::StateLoad::Partial(keys) if keys.is_empty() =>
+                        "loaded, NOT UTF-8 (unreadable bytes replaced)".to_string(),
+                    fractadyne_state::StateLoad::Partial(keys) =>
+                        format!("loaded PARTLY, back to defaults: {}", keys.join(", ")),
                 }
             ),
         );
+        if let Some(k) = &state_kept {
+            crate::diag::log_line("start", &format!("session: the file as it was is kept as {}", k.display()));
+        }
+        // ⭐Held to the ranges the app can set before anything below reads it (review finding 9).
+        let fixed = session_sanitize::sanitize(&mut s);
+        if !fixed.is_empty() {
+            crate::diag::log_line("start", &format!("session: out of range or not a number, reset: {}", fixed.join(", ")));
+        }
         // ⭐A pre-release build with NO saved choice starts on the Beta update track. The first
         // public announcement points at a beta, and whoever downloads it should hear about the next
         // beta without first finding View ▸ Settings ▸ Updates. Only when the session came back as
@@ -7708,10 +7851,7 @@ impl FractadyneApp {
         // Surface a warning (once the UI is up) if the session file was written by a newer build
         // than this one can fully account for. Worded once `app` is built (below), because the
         // interface's language is chosen while it is.
-        let state_newer = match state_load {
-            fractadyne_state::StateLoad::Newer(v) => Some(v),
-            _ => None,
-        };
+        let state_load_note = state_load.clone();
         let theme = ThemeMode::from_key(&s.theme);
         // (Applied to the egui context by `attach_gpu`.)
         let mut viewport = Viewport::new(1280.0, 720.0);
@@ -7782,7 +7922,16 @@ impl FractadyneApp {
         // through the app).
         let life_text = s.life.clone();
         let lsystem_text = s.lsystem.clone();
+        // The center's expression and the dual view's Julia pane camera, put back once the app
+        // exists (review findings 11 and 8). Not after a GPU-loss relaunch, which opens at Home.
+        let center_expr_text = s.center_expr.clone();
+        let julia_pane = (s.julia_view_center_re.clone(), s.julia_view_center_im.clone(), s.julia_view_upp_log2);
+        let restarted_after_gpu_loss = std::env::var_os("FRACTADYNE_RESTARTED_AFTER_GPU_LOSS").is_some();
 
+        // The libraries, each with its notice when it did not read whole (review finding 1). What
+        // was read is also each one's merge base (finding 16).
+        let (bookmarks, bookmarks_note) = Self::load_bookmarks();
+        let (saved_gradients, gradients_note) = Self::load_saved_gradients();
         let mut app = Self {
             viewport,
             fractal,
@@ -7807,6 +7956,7 @@ impl FractadyneApp {
             fullscreen: false,
             menu_bar_id: None,
             test_banner,
+            // Home for now; the saved pane camera is put back once the app exists (review finding 8).
             julia_viewport: {
                 let mut v = Viewport::new(800.0, 800.0);
                 v.center_x = fractadyne_core::BigFloat::from_f64(0.0, 64);
@@ -8072,8 +8222,9 @@ impl FractadyneApp {
             worker_start_rx: None,
             worker_cards: None,
             worker_cards_rx: None,
-            bookmarks: Self::load_bookmarks(),
-            saved_gradients: Self::load_saved_gradients(),
+            bookmarks: bookmarks.clone(),
+            saved_gradients: saved_gradients.clone(),
+            library_base: LibraryBase { bookmarks, gradients: saved_gradients, formulas: Vec::new() },
             pending_thumb: None,
             heal_thumb: None,
             thumb_shot: None,
@@ -8276,6 +8427,7 @@ impl FractadyneApp {
             ref_prefetch_interactive: false,
             hold_prefetch: Vec::new(),
             last_state: s,
+            session_save_error: None,
             dirty_since: None,
         };
         // The notices worded at startup, now that `language` above has chosen the interface's
@@ -8283,13 +8435,7 @@ impl FractadyneApp {
         if std::env::var_os("FRACTADYNE_RESTARTED_AFTER_GPU_LOSS").is_some() {
             app.pending_toast = Some(tr!(app_toast_gpu_recovered));
         }
-        app.pending_state_warning = state_newer.map(|v| {
-            tr!(
-                app_state_newer,
-                saved = v.to_string(),
-                handled = fractadyne_state::STATE_FORMAT_VERSION.to_string()
-            )
-        });
+        app.pending_state_warning = session_load_notice(&state_load_note, state_kept.as_deref());
         if mpfr_changed_to_present && !launched_for_a_task {
             app.dialogs.notice =
                 Some((tr!(app_notice_mpfr_restored_title), fractadyne_core::mpfr_restored_message()));
@@ -8303,6 +8449,19 @@ impl FractadyneApp {
         if !lsystem_text.trim().is_empty() {
             if let Err(e) = app.apply_lsystem_lines(&lsystem_text, false) {
                 diag::log_line("start", &format!("saved L-system dropped: {e}"));
+            }
+        }
+        if !restarted_after_gpu_loss {
+            if !center_expr_text.trim().is_empty() {
+                let get = |k: &str| {
+                    let v = crate::meta_get(&center_expr_text, k);
+                    (!v.is_empty()).then_some(v)
+                };
+                app.apply_center_expr_fields(&get);
+            }
+            let (re, im, l) = &julia_pane;
+            if !re.is_empty() && !app.apply_julia_pane(Some(re), Some(im), *l) {
+                diag::log_line("start", "saved Julia pane camera unusable — the pane opens at its home view");
             }
         }
         // W7 (§5.7): how the previous session ended, and whether its iteration setting comes back.
@@ -8324,10 +8483,11 @@ impl FractadyneApp {
             });
         }
         let (formulas, unreadable) = formula_library::load();
+        app.library_base.formulas = formulas.clone();
         app.saved_formulas = formulas;
-        if let Some(note) = unreadable {
-            // After a toast already queued (a device-loss restart says why the view moved).
-            app.pending_toast.get_or_insert(note);
+        // After a toast already queued (a device-loss restart says why the view moved).
+        for note in [bookmarks_note, gradients_note, unreadable].into_iter().flatten() {
+            app.queue_toast(note);
         }
         // `--bla` / `--no-bla` force BLA on/off for any headless mode (profiling / benchmark /
         // render), so it can be compared without a session file. Applied unconditionally (not just
@@ -9147,6 +9307,8 @@ impl FractadyneApp {
             center_y: fractadyne_core::to_f64(&self.viewport.center_y),
             center_x_str: fractadyne_core::to_decimal_string(&self.viewport.center_x),
             center_y_str: fractadyne_core::to_decimal_string(&self.viewport.center_y),
+            // The center's expression, as a view carries it, so a restart keeps a deeper zoom exact.
+            center_expr: self.center_expr_metadata_for(&self.viewport),
             // ⚠NEVER PERSIST A NON-FINITE ZOOM, and shout when we nearly did. This is the other half
             // of `restored_units_per_pixel`: that guard stops a poisoned session from being LOADED,
             // this one stops it being WRITTEN, so a single bad frame cannot outlive the process.
@@ -9244,10 +9406,15 @@ impl FractadyneApp {
             life: self.life_lines(),
             lsystem: self.lsystem_lines(),
             julia_mode: self.julia_mode,
-            julia_c_re: self.julia_c.0,
-            julia_c_im: self.julia_c.1,
+            // Never a non-finite constant: it would come back on every launch (review finding 6).
+            julia_c_re: if self.julia_c.0.is_finite() && self.julia_c.1.is_finite() { self.julia_c.0 } else { -0.8 },
+            julia_c_im: if self.julia_c.0.is_finite() && self.julia_c.1.is_finite() { self.julia_c.1 } else { 0.156 },
             dual: self.dual,
             dual_split: self.dual_split,
+            // The dual view's Julia pane camera (review finding 8): its own center and scale.
+            julia_view_center_re: fractadyne_core::to_decimal_string(&self.julia_viewport.center_x),
+            julia_view_center_im: fractadyne_core::to_decimal_string(&self.julia_viewport.center_y),
+            julia_view_upp_log2: Some(self.julia_viewport.units_per_pixel.log2()).filter(|l| l.is_finite()),
             series_approx: self.render_cfg.series_approx,
             glitch_correct: self.render_cfg.glitch_correct,
             use_bla: self.render_cfg.use_bla,
@@ -9281,7 +9448,18 @@ impl FractadyneApp {
         let closing = ctx.input(|i| i.viewport().close_requested());
         if let Some(t) = self.dirty_since {
             if closing || now - t > 1.0 {
-                fractadyne_state::save(&self.last_state);
+                // Logged once per distinct error: a session that silently stops saving is a lost
+                // setting nobody can explain, but a full disk must not fill the log once a second.
+                match fractadyne_state::save(&self.last_state) {
+                    Ok(()) => self.session_save_error = None,
+                    Err(e) => {
+                        let e = e.to_string();
+                        if self.session_save_error.as_deref() != Some(e.as_str()) {
+                            diag::log_line("start", &format!("session NOT saved: {e}"));
+                            self.session_save_error = Some(e);
+                        }
+                    }
+                }
                 self.dirty_since = None;
             }
         }
@@ -9313,32 +9491,53 @@ impl FractadyneApp {
         fractadyne_state::config_dir().map(|d| d.join("gradients.toml"))
     }
 
-    /// Load the saved gradient library (empty if none / unreadable), same shape as the bookmarks.
-    fn load_saved_gradients() -> Vec<SavedGradient> {
-        Self::gradients_path()
-            .and_then(|p| std::fs::read_to_string(p).ok())
-            .and_then(|t| toml::from_str::<GradientFile>(&t).ok())
-            .map(|f| f.gradient)
-            .unwrap_or_default()
+    /// Load the saved gradient library, and the notice when it did not read whole
+    /// ([`load_library`]: a copy is kept first, review finding 1).
+    fn load_saved_gradients() -> (Vec<SavedGradient>, Option<String>) {
+        load_library(
+            Self::gradients_path(),
+            "gradient",
+            |n| tr!(app_gradients_partial, count = n),
+            || tr!(app_gradients_unreadable),
+        )
     }
 
-    /// Persist the gradient library. A write failure loses durable user data, so it is surfaced as
-    /// a toast rather than swallowed — the same contract `save_bookmarks` keeps.
-    fn save_gradient_library(&mut self) {
+    /// Persist the gradient library, merged with the file as it is on disk (another running copy
+    /// may have changed it, finding 16) and written atomically (finding 2). Returns whether it was
+    /// saved: a failure loses durable user data, so it is a toast, and the caller must not then
+    /// say it saved (finding 10).
+    fn save_gradient_library(&mut self) -> bool {
+        use fractadyne_state::durable::{merge3, read_entries_on_disk, write_atomic, OnDisk};
         let Some(path) = Self::gradients_path() else {
-            return;
+            return false;
         };
-        if let Some(parent) = path.parent() {
-            let _ = std::fs::create_dir_all(parent);
-        }
-        let file = GradientFile { gradient: self.saved_gradients.clone() };
-        match toml::to_string_pretty(&file).map(|t| std::fs::write(&path, t)) {
-            Ok(Ok(())) => {}
-            Ok(Err(e)) => {
-                self.pending_toast = Some(tr!(app_toast_gradients_save_failed, error = e.to_string()))
+        let theirs = match read_entries_on_disk::<SavedGradient>(&path, "gradient") {
+            Ok(OnDisk::Missing) => Vec::new(),
+            Ok(OnDisk::Entries(v)) => v,
+            Ok(OnDisk::NotReadable) => self.library_base.gradients.clone(),
+            Err(e) => {
+                self.queue_toast(tr!(app_toast_gradients_save_failed, error = e.to_string()));
+                return false;
+            }
+        };
+        let mut merged = merge3(&self.library_base.gradients, &self.saved_gradients, &theirs);
+        merged.sort_by(|a, b| a.name.to_lowercase().cmp(&b.name.to_lowercase()));
+        let text = match toml::to_string_pretty(&GradientFile { gradient: merged.clone() }) {
+            Ok(t) => t,
+            Err(e) => {
+                self.queue_toast(tr!(app_toast_gradients_serialize_failed, error = e.to_string()));
+                return false;
+            }
+        };
+        match write_atomic(&path, text.as_bytes()) {
+            Ok(()) => {
+                self.saved_gradients = merged.clone();
+                self.library_base.gradients = merged;
+                true
             }
             Err(e) => {
-                self.pending_toast = Some(tr!(app_toast_gradients_serialize_failed, error = e.to_string()))
+                self.queue_toast(tr!(app_toast_gradients_save_failed, error = e.to_string()));
+                false
             }
         }
     }
@@ -9361,8 +9560,10 @@ impl FractadyneApp {
             None => self.saved_gradients.push(entry),
         }
         self.saved_gradients.sort_by(|a, b| a.name.to_lowercase().cmp(&b.name.to_lowercase()));
-        self.save_gradient_library();
-        self.pending_toast = Some(tr!(app_toast_gradient_saved, name = name));
+        // ⚠Only when it saved: this toast used to replace the failure's (review finding 10).
+        if self.save_gradient_library() {
+            self.queue_toast(tr!(app_toast_gradient_saved, name = name));
+        }
     }
 
     /// Make saved gradient `i` the live palette.
@@ -9470,36 +9671,65 @@ impl FractadyneApp {
         fractadyne_state::config_dir().map(|d| d.join("bookmarks.toml"))
     }
 
-    /// Load saved bookmarks (empty list if none / unreadable).
-    fn load_bookmarks() -> Vec<Bookmark> {
-        Self::bookmarks_path()
-            .and_then(|p| std::fs::read_to_string(p).ok())
-            .and_then(|t| toml::from_str::<BookmarkFile>(&t).ok())
-            .map(|f| f.bookmark)
-            .unwrap_or_default()
+    /// Load saved bookmarks, and the notice when the file did not read whole ([`load_library`]: a
+    /// copy is kept first, review finding 1). A thumbnail id that could not have come from the
+    /// app is dropped (finding 19); the bookmark keeps its view and gets a new picture on its next
+    /// jump.
+    fn load_bookmarks() -> (Vec<Bookmark>, Option<String>) {
+        let (mut list, note) = load_library::<Bookmark>(
+            Self::bookmarks_path(),
+            "bookmark",
+            |n| tr!(app_bookmarks_partial, count = n),
+            || tr!(app_bookmarks_unreadable),
+        );
+        for b in &mut list {
+            if !b.thumb.is_empty() && !sane_thumb_id(&b.thumb) {
+                diag::log_line("start", &format!("bookmark {:?}: thumbnail id {:?} is not one the app writes, dropped", b.name, b.thumb));
+                b.thumb.clear();
+            }
+        }
+        (list, note)
     }
 
-    /// Persist bookmarks. A write failure loses durable user data, so it's surfaced as a toast
-    /// (queued in `pending_toast` since this runs from contexts without an `egui::Context`).
+    /// Persist bookmarks, merged with the file as it is on disk (another running copy may have
+    /// added or deleted some, review finding 16) and written atomically (finding 2). A failure loses
+    /// durable user data, so it's surfaced as a toast (queued, since this runs from contexts without
+    /// an `egui::Context`).
     fn save_bookmarks(&mut self) {
+        use fractadyne_state::durable::{merge3, read_entries_on_disk, write_atomic, OnDisk};
         let Some(path) = Self::bookmarks_path() else {
             return;
         };
-        if let Some(parent) = path.parent() {
-            let _ = std::fs::create_dir_all(parent);
-        }
-        let file = BookmarkFile {
-            bookmark: self.bookmarks.clone(),
-        };
-        let result = match toml::to_string_pretty(&file) {
-            Ok(text) => std::fs::write(&path, text),
+        let theirs = match read_entries_on_disk::<Bookmark>(&path, "bookmark") {
+            Ok(OnDisk::Missing) => Vec::new(),
+            Ok(OnDisk::Entries(v)) => v,
+            // Not TOML: it says nothing of what another copy did, so it changes nothing here.
+            Ok(OnDisk::NotReadable) => self.library_base.bookmarks.clone(),
+            // Unreadable right now (locked): saving would replace what we cannot see.
             Err(e) => {
-                self.pending_toast = Some(tr!(app_toast_bookmarks_serialize_failed, error = e.to_string()));
+                self.queue_toast(tr!(app_toast_bookmarks_save_failed, error = e.to_string()));
                 return;
             }
         };
-        if let Err(e) = result {
-            self.pending_toast = Some(tr!(app_toast_bookmarks_save_failed, error = e.to_string()));
+        let mut merged = merge3(&self.library_base.bookmarks, &self.bookmarks, &theirs);
+        for b in &mut merged {
+            if !b.thumb.is_empty() && !sane_thumb_id(&b.thumb) {
+                b.thumb.clear();
+            }
+        }
+        let text = match toml::to_string_pretty(&BookmarkFile { bookmark: merged.clone() }) {
+            Ok(text) => text,
+            Err(e) => {
+                self.queue_toast(tr!(app_toast_bookmarks_serialize_failed, error = e.to_string()));
+                return;
+            }
+        };
+        match write_atomic(&path, text.as_bytes()) {
+            Ok(()) => {
+                self.bookmarks = merged.clone();
+                self.library_base.bookmarks = merged;
+            }
+            Err(e) => self.queue_toast(tr!(app_toast_bookmarks_save_failed, error = e.to_string())),
         }
     }
 
@@ -9520,7 +9750,7 @@ impl FractadyneApp {
             thumb: String::new(),
         });
         // Render the preview later this frame (GPU available in `update`, view unchanged).
-        self.pending_thumb = Some(self.bookmarks.len() - 1);
+        self.pending_thumb = self.bookmarks.last().map(bookmark_key);
         self.save_bookmarks();
     }
 
@@ -9542,7 +9772,7 @@ impl FractadyneApp {
     /// (`ViewportCommand::Screenshot` replies as `egui::Event::Screenshot` — the uitest idiom).
     fn process_pending_thumb(&mut self, ctx: &egui::Context) {
         // Harvest first: a reply may be waiting from last frame's request.
-        if let Some(i) = self.thumb_shot {
+        if let Some(key) = self.thumb_shot.clone() {
             let shot = ctx.input(|inp| {
                 inp.events.iter().find_map(|e| match e {
                     egui::Event::Screenshot { image, .. } => Some(image.clone()),
@@ -9551,7 +9781,9 @@ impl FractadyneApp {
             });
             if let Some(img) = shot {
                 self.thumb_shot = None;
-                if i < self.bookmarks.len() {
+                // Where that bookmark is NOW: a delete or a merge may have moved it (finding 17),
+                // and one deleted meanwhile gets nothing.
+                if let Some(i) = bookmark_index(&self.bookmarks, &key) {
                     let (iw, ih) = (img.size[0] as u32, img.size[1] as u32);
                     // Crop the central panel (physical px), clamped to the shot's bounds.
                     let (x0, y0, cw, chh) = thumb_crop(self.central_rect_px, iw, ih);
@@ -9592,9 +9824,9 @@ impl FractadyneApp {
             return; // one round-trip at a time; the reply arrives on a later frame
         }
         // Request: fire the screenshot for a freshly added bookmark.
-        if let Some(i) = self.pending_thumb.take() {
-            if i < self.bookmarks.len() {
-                self.thumb_shot = Some(i);
+        if let Some(key) = self.pending_thumb.take() {
+            if bookmark_index(&self.bookmarks, &key).is_some() {
+                self.thumb_shot = Some(key);
                 ctx.send_viewport_cmd(egui::ViewportCommand::Screenshot(egui::UserData::default()));
             }
         }
@@ -9629,7 +9861,7 @@ impl FractadyneApp {
         self.load_view_metadata(&meta);
         self.heal_thumb = if heal {
             Some((
-                i,
+                bookmark_key(&self.bookmarks[i]),
                 self.viewport.center_x.clone(),
                 self.viewport.center_y.clone(),
                 self.viewport.log2_magnification(),
@@ -9644,8 +9876,12 @@ impl FractadyneApp {
     /// the bookmarked view, never wherever the user wandered next). Settled = the same
     /// [`Self::spinner_busy`] inputs the working cue uses, both panes in dual view.
     fn process_thumb_heal(&mut self, ctx: &egui::Context) {
-        let Some((i, ref tx, ref ty, tl2)) = self.heal_thumb else { return };
-        if i >= self.bookmarks.len() || !self.thumb_needs_capture(i) {
+        let Some((ref key, ref tx, ref ty, tl2)) = self.heal_thumb else { return };
+        let Some(i) = bookmark_index(&self.bookmarks, key) else {
+            self.heal_thumb = None;
+            return;
+        };
+        if !self.thumb_needs_capture(i) {
             self.heal_thumb = None;
             return;
         }
@@ -9674,8 +9910,7 @@ impl FractadyneApp {
             ctx.request_repaint_after(std::time::Duration::from_millis(250));
             return;
         }
-        self.heal_thumb = None;
-        self.pending_thumb = Some(i);
+        self.pending_thumb = self.heal_thumb.take().map(|(key, ..)| key);
     }
 
     /// Fetch (lazily loading + caching) the texture for a bookmark thumbnail id.
@@ -11580,7 +11815,9 @@ impl FractadyneApp {
         let v = fractadyne_core::parse_kfr(text)
             // Why not, in the user's language: the lines missing, or the value that does not read.
             .ok_or_else(|| AppError::Parse(crate::txt_location::kfr_line(&crate::txt_location::findings(text).kfr)))?;
-        let zoom = v.zoom;
+        // The file's DEPTH, not the f64 that saturates at 1e300 (review finding 5), held to the
+        // deepest a view file may open.
+        let l2 = v.zoom_log2.clamp(0.0, crate::export::MAX_LOAD_OCTAVES);
         self.fractal = FractalKind::Mandelbrot;
         self.julia_mode = false;
         // ⛔The count the file asks for, up to the app's own ceiling — as the Imagina importer does.
@@ -11592,13 +11829,13 @@ impl FractadyneApp {
             self.render_cfg.max_iter = it.clamp(64, MAX_ITER_LIMIT);
             self.render_cfg.auto_iter = false;
         }
-        self.viewport.set_center_mag(v.cx, v.cy, zoom.max(1.0));
-        self.viewport.precision = fractadyne_core::precision_for_magnification(zoom);
+        self.viewport.set_center_log2mag(v.cx, v.cy, l2);
+        self.viewport.precision = fractadyne_core::precision_for_octaves(l2.ceil() as u64);
         self.center_expr = None; // imported foreign file — a fixed decimal center, no expression
         self.pointer.zoom_vel = 0.0;
         self.invalidate_refs();
         self.record_nav();
-        Ok(format!("Imported .kfr location @ {}×", fmt_zoom(zoom)))
+        Ok(format!("Imported .kfr location @ {}×", fmt_zoom_log2(l2)))
     }
 
     /// Load an **Imagina TEXT location** (`--import-imagina`). Mirrors `load_kfr_file`.
@@ -11624,20 +11861,21 @@ impl FractadyneApp {
         let v = fractadyne_core::parse_imagina_text(&text).ok_or_else(|| {
             AppError::Parse("not a valid Imagina text location (need Location Size / Re / Im)".into())
         })?;
-        let zoom = v.zoom;
+        // The file's depth (review finding 5), as the `.kfr` importer takes it.
+        let l2 = v.zoom_log2.clamp(0.0, crate::export::MAX_LOAD_OCTAVES);
         self.fractal = FractalKind::Mandelbrot;
         self.julia_mode = false;
         if let Some(it) = v.iterations {
             self.render_cfg.max_iter = it.clamp(64, MAX_ITER_LIMIT);
             self.render_cfg.auto_iter = false;
         }
-        self.viewport.set_center_mag(v.cx, v.cy, zoom.max(1.0));
-        self.viewport.precision = fractadyne_core::precision_for_magnification(zoom);
+        self.viewport.set_center_log2mag(v.cx, v.cy, l2);
+        self.viewport.precision = fractadyne_core::precision_for_octaves(l2.ceil() as u64);
         self.center_expr = None; // imported foreign file — a fixed decimal center, no expression
         self.pointer.zoom_vel = 0.0;
         self.invalidate_refs();
         self.record_nav();
-        Ok(format!("Imported Imagina location @ {}×", fmt_zoom(zoom)))
+        Ok(format!("Imported Imagina location @ {}×", fmt_zoom_log2(l2)))
     }
 
     /// File-dialog import of a Kalles Fraktaler `.kfr` location.
@@ -11686,7 +11924,13 @@ impl FractadyneApp {
             return;
         }
         let t = t.to_string();
-        let report = self.load_view_metadata(&t); // performs the jump + records history
+        // ⭐Checked like File ▸ Open (review finding 7): a forum that changed one digit of a pasted
+        // location is exactly what the checksum is for, and this door skipped it. `None` = it did
+        // not match, and the prompt asks before anything moves.
+        let Some(report) = self.load_view_checked(&t, tr!(dlg_share_title)) else {
+            self.share.msg = None;
+            return;
+        };
         let zoom = fmt_zoom_log2(self.viewport.log2_magnification());
         match report.note() {
             None => {
@@ -11701,7 +11945,23 @@ impl FractadyneApp {
     }
 
     /// Save the Share dialog's text to a `.fdn` file.
+    ///
+    /// ⭐**The text in the box, which is what the button sits beside** (review finding 13): it
+    /// saved the live view whatever the box held, so a friend's pasted location saved as your own.
+    /// When the box holds this view (unchanged, or a copy of it) the view is written through the
+    /// writer, with its thumbnail; when it holds another location, that location is written as it
+    /// is, wrapped if it is bare; when it holds no location, nothing is written and the box's
+    /// problem is said.
     fn save_share_file(&mut self) {
+        let boxed = self.share.text.trim().to_string();
+        let other = if boxed.is_empty() || crate::export::same_view(&boxed, &self.view_metadata()) {
+            None
+        } else if let Err(why) = location_text_verdict(&boxed) {
+            self.share.msg = Some(why.into());
+            return;
+        } else {
+            Some(boxed)
+        };
         let Some(path) = rfd::FileDialog::new()
             .add_filter(tr!(app_filter_fdn), &["fdn"])
             .set_directory(self.dialog_dir_default())
@@ -11711,6 +11971,20 @@ impl FractadyneApp {
             return;
         };
         self.remember_dir(&path);
+        if let Some(text) = other {
+            // Wrapped when it is bare (the markers and checksum a copy is checked with); as it is
+            // when it already has them, so its checksum still speaks for the text it came with.
+            let text = if text.contains(crate::export::VIEW_BEGIN_MARKER) {
+                format!("{text}\n")
+            } else {
+                crate::export::wrap_view_text(&format!("{text}\n"))
+            };
+            self.share.msg = Some(match fractadyne_state::durable::write_atomic(&path, text.as_bytes()) {
+                Ok(()) => tr!(app_share_saved),
+                Err(e) => tr!(app_share_save_failed, error = e.to_string()),
+            });
+            return;
+        }
 
         // ⭐⭐**THE LOCATION LANDS FIRST, ALWAYS.** The thumbnail is an enhancement; the
         // coordinates are the thing the user asked to keep. Writing them before attempting any
@@ -11720,8 +11994,10 @@ impl FractadyneApp {
         // ⛔This ordering exists because the opposite shipped and was reported: the thumbnail
         // was generated INTO the bytes being written, so at 9.98e60205× the app went
         // "(Not Responding)" on Save and nothing reached disk at all.
+        // Both writes atomic (review findings 2, B8): the second replaces the first whole or not
+        // at all, so a failed thumbnail write leaves the location the first one saved.
         let located = crate::export::wrap_view_text(&self.view_metadata());
-        if let Err(e) = std::fs::write(&path, located.as_bytes()) {
+        if let Err(e) = fractadyne_state::durable::write_atomic(&path, located.as_bytes()) {
             self.share.msg = Some(tr!(app_share_save_failed, error = e.to_string()));
             return;
         }
@@ -11748,7 +12024,7 @@ impl FractadyneApp {
             "{}thumb={b64}\n",
             self.view_metadata()
         ));
-        self.share.msg = Some(match std::fs::write(&path, with_thumb.as_bytes()) {
+        self.share.msg = Some(match fractadyne_state::durable::write_atomic(&path, with_thumb.as_bytes()) {
             Ok(()) => tr!(app_share_saved_with_thumb),
             // The location is still on disk from the first write — say so, precisely.
             Err(e) => tr!(app_share_saved_thumb_failed, error = e.to_string()),
@@ -15210,6 +15486,17 @@ impl FractadyneApp {
         self.toast = Some((msg.into(), ctx.input(|i| i.time)));
     }
 
+    /// Queue a toast from a context without an `egui::Context`, after any already queued: both are
+    /// shown. (`pending_toast = Some(..)` replaced the first, and `get_or_insert` dropped the second —
+    /// a formula-library notice was lost behind a GPU-recovery one that way.)
+    pub(crate) fn queue_toast(&mut self, msg: impl Into<String>) {
+        let msg = msg.into();
+        self.pending_toast = Some(match self.pending_toast.take() {
+            Some(q) => format!("{q}\n{msg}"),
+            None => msg,
+        });
+    }
+
     /// Accelerated build only: if MPFR was missing at startup and we fell back to astro-float, keep
     /// checking (throttled, and only until it happens once) whether the DLLs have since appeared —
     /// the user dropping them in beside the exe. When they do, say so; the choice is fixed for the
@@ -17537,13 +17824,13 @@ impl eframe::App for FractadyneApp {
         }
         // Surface a deferred startup warning (e.g. a session saved by a newer build) as a toast,
         // once, on the first frame where the UI exists.
-        if let Some(msg) = self.pending_state_warning.take() {
-            self.set_toast(msg, ctx);
-        }
         // Surface a toast queued from a context without an `egui::Context` (e.g. a bookmark
         // auto-save failure in `save_bookmarks`).
-        if let Some(msg) = self.pending_toast.take() {
-            self.set_toast(msg, ctx);
+        // ⚠ONE toast, both texts: there is one toast slot, and setting it twice in a frame showed only
+        // the second — a session notice was lost behind a library notice (review 2026-11-16).
+        let queued: Vec<String> = [self.pending_state_warning.take(), self.pending_toast.take()].into_iter().flatten().collect();
+        if !queued.is_empty() {
+            self.set_toast(queued.join("\n"), ctx);
         }
         // ⭐**Record every real change in window size or scale**, unconditionally and cheaply.
         // The monitor-drag growth has now produced three crash reports, and every one of them named
@@ -18318,6 +18605,10 @@ impl eframe::App for FractadyneApp {
                     map_req.ss = ess;
                     // Keep per-texel step isotropic for the chosen aspect (see build_export_job).
                     map_req.span_mantissa.y = map_req.span_mantissa.x * (eh as f64 / ew as f64);
+                    // The embedded view: the one Export was pressed on, with the constant it had then
+                    // (`self.julia_c` holds it until just below) — not the live view, which the user
+                    // may have moved for the minutes the reference took (review finding 4).
+                    let meta = self.export_meta(&prep.map_vp, prep.julia_mode, prep.julia_vp.as_ref(), prep.dual_mode);
                     let job = if let Some(jvp) = &prep.julia_vp {
                         // Dual: build the Julia panel now (usually shallow → instant) and combine.
                         let mut jul = self.current_export_request_for(jvp, true);
@@ -18339,7 +18630,7 @@ impl eframe::App for FractadyneApp {
                         .then(|| crate::scripting::build_location_overlay(ctx, &prep.map_vp, eh))
                         .flatten();
                     if let Some((dev, q)) = &gpu {
-                        self.spawn_export_worker(dev.clone(), q.clone(), job, prep.path, hud);
+                        self.spawn_export_worker(dev.clone(), q.clone(), job, prep.path, hud, meta);
                     } else {
                         self.export.status = Some(tr!(app_export_gpu_unavailable));
                     }

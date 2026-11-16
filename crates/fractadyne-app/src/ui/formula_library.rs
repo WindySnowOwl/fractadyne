@@ -80,10 +80,15 @@ fn file_stem(name: &str) -> String {
 impl FractadyneApp {
     /// Write the library; a failure loses durable work, so it is a toast, not a log line.
     fn save_formula_library(&mut self) -> bool {
-        match lib::save(&self.saved_formulas) {
-            Ok(()) => true,
+        // Merged with the file on disk, so another running copy's formulas survive (review 16).
+        match lib::save_merged(&self.library_base.formulas, &self.saved_formulas) {
+            Ok(merged) => {
+                self.saved_formulas = merged.clone();
+                self.library_base.formulas = merged;
+                true
+            }
             Err(e) => {
-                self.pending_toast = Some(tr!(formula_library_save_failed, why = e));
+                self.queue_toast(tr!(formula_library_save_failed, why = e));
                 false
             }
         }

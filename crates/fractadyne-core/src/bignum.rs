@@ -998,8 +998,27 @@ impl Expr<'_> {
 pub struct KfrView {
     pub cx: BigFloat,
     pub cy: BigFloat,
+    /// The magnification as an `f64`, SATURATING at 1e300 past its range: for display and older
+    /// callers. ⛔Not for placing the view — [`KfrView::zoom_log2`] is.
     pub zoom: f64,
+    /// `log2` of the magnification, from the file's own digits and exponent, so a location deeper
+    /// than f64's ~1e308 lands at its depth. ⛔Review 2026-11-16 (finding 5): the importers used
+    /// `zoom`, so a `Zoom: 1E1000` location opened at 1e300×, and an Imagina one past 1e308 did not
+    /// import at all.
+    pub zoom_log2: f64,
     pub iterations: Option<u32>,
+}
+
+/// `log2` of a positive number written as text (`800`, `1.6E1012`, `2e-30000`), from its full
+/// exponent: past `f64`'s range the value keeps its magnitude instead of saturating to `inf` or
+/// `0`. `None` for text that is not a finite positive number.
+pub fn log2_of_positive_text(s: &str) -> Option<f64> {
+    let v = parse_bf(s.trim())?;
+    if v.is_zero() || v.is_nan() || v.is_inf() || matches!(v.sign(), Some(Sign::Neg)) {
+        return None;
+    }
+    let l = log2_abs(&v);
+    l.is_finite().then_some(l)
 }
 
 /// Parse a positive, finite zoom from a `.kfr` `Zoom:` value; an over-range value (e.g.
@@ -1050,16 +1069,19 @@ pub fn parse_kfr(text: &str) -> Option<KfrView> {
         } else if key.eq_ignore_ascii_case("Im") {
             im = Some(val);
         } else if key.eq_ignore_ascii_case("Zoom") {
-            zoom = parse_kfr_zoom(val);
+            // The f64 for `zoom`, and the depth from the digits themselves for `zoom_log2`.
+            zoom = parse_kfr_zoom(val).map(|z| (z, log2_of_positive_text(val).unwrap_or(z.log2())));
         } else if key.eq_ignore_ascii_case("Iterations") {
             iters = val.parse::<u64>().ok().map(|v| v.min(u64::from(LOCATION_MAX_ITERATIONS)) as u32);
         }
         // every other key is ignored by design
     }
+    let (zoom, zoom_log2) = zoom?;
     Some(KfrView {
         cx: parse_bf(re?)?,
         cy: parse_bf(im?)?,
-        zoom: zoom?,
+        zoom,
+        zoom_log2,
         iterations: iters,
     })
 }
@@ -1114,17 +1136,20 @@ pub fn parse_imagina_text(text: &str) -> Option<KfrView> {
         } else if leaf.eq_ignore_ascii_case("Im") {
             im = Some(val);
         } else if leaf.eq_ignore_ascii_case("Size") {
-            // HRReal prints as a plain decimal or with an exponent; both parse as f64 here, and a
-            // value past f64 range is out of our viewport's reach anyway.
-            size = val.parse::<f64>().ok().filter(|v| v.is_finite() && *v > 0.0);
+            // HRReal prints as a plain decimal or with an exponent. ⛔Read as its log2 from the text
+            // (review 2026-11-16, finding 5): parsed as an f64, a Size past its range (`1e-1000`)
+            // read as 0 and the location did not import at all — the "out of our viewport's reach"
+            // this assumed is not true, the viewport goes far deeper.
+            size = log2_of_positive_text(val);
         } else if leaf.eq_ignore_ascii_case("Iterations") {
             iters = val.parse::<u64>().ok().map(|v| v.min(u64::from(LOCATION_MAX_ITERATIONS)) as u32);
         }
         // every other key, `Formula` included, is ignored by design
     }
-    let size = size?;
-    let zoom = (2.0 / size).clamp(1.0, 1.0e300);
-    Some(KfrView { cx: parse_bf(re?)?, cy: parse_bf(im?)?, zoom, iterations: iters })
+    // Magnification 2/Size, at least 1 (as before): log2 = 1 - log2(Size).
+    let zoom_log2 = (1.0 - size?).max(0.0);
+    let zoom = zoom_log2.exp2().min(1.0e300);
+    Some(KfrView { cx: parse_bf(re?)?, cy: parse_bf(im?)?, zoom, zoom_log2, iterations: iters })
 }
 
 /// The Imagina BINARY signature, so callers can refuse a `.im` file with a useful message instead

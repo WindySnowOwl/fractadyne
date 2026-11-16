@@ -698,6 +698,8 @@ dlg-reset-warning = 這會永久刪除所有已儲存的 Fractadyne 資料：
 # The list's items, each after a bullet.
 dlg-reset-session = 已儲存的工作階段（目前畫面、著色、偏好設定）
 dlg-reset-bookmarks = 所有書籤及其縮圖
+dlg-reset-gradients = 所有已儲存的漸層
+dlg-reset-formulas = 公式庫
 dlg-reset-refcache = 參考軌道快取（重新造訪位置時會重建）
 # A label over the folder that is deleted.
 dlg-reset-location = 位置
@@ -897,6 +899,22 @@ dlg-export-export-hover = 算繪並儲存到上方的資料夾（自動命名）
 
 # A notice shown once after starting, when the saved session comes from a newer version of the app. $saved and $handled: version numbers of the session file's format (1, 2…).
 app-state-newer = 這個工作階段是由較新版的 Fractadyne 儲存的（狀態 v{ $saved }；此版本可處理 v{ $handled }）。有些設定可能不會套用，而儲存時會以此版本的格式改寫。
+# After starting, when the saved session could not be read at all.
+app-state-unreadable = 無法讀取已儲存的工作階段，因此 Fractadyne 以預設設定啟動。
+# After starting, when part of the saved session could not be read. $settings: the settings' names as the file writes them (English tokens such as "aa, theme").
+app-state-partial = 已儲存工作階段的一部分無法讀取，以下設定已恢復為預設值：{ $settings }。
+# After starting, when the saved session had characters that could not be read (they were replaced).
+app-state-repaired = 已儲存的工作階段含有無法讀取的字元，已將其取代。
+# After one of the notices above. $path: where the file, as it was, is kept.
+app-state-kept = 原始檔案已保留為 { $path }。
+# After starting, when some saved bookmarks could not be read. $count: how many.
+app-bookmarks-partial = 有 { $count } 個已儲存的書籤無法讀取，已略過。
+# After starting, when the bookmarks file could not be read at all.
+app-bookmarks-unreadable = 無法讀取書籤檔案，因此書籤清單從空白開始。
+# After starting, when some saved gradients could not be read. $count: how many.
+app-gradients-partial = 有 { $count } 個已儲存的漸層無法讀取，已略過。
+# After starting, when the saved gradients file could not be read at all.
+app-gradients-unreadable = 無法讀取已儲存的漸層檔案，因此漸層庫從空白開始。
 # The title of the notice that says the accelerated build's arithmetic libraries are found again (its text comes from elsewhere).
 app-notice-mpfr-restored-title = 已恢復加速算術運算
 # After Fractadyne restarted itself because the graphics driver reset the GPU.

@@ -31,8 +31,10 @@ const LOD_PX: f64 = 1.5;
 const DEFAULT_ORDER: u32 = 6;
 /// The system a new session opens with.
 const DEFAULT_SYSTEM: &str = "Heighway dragon";
-/// The largest system text a view file carries (one escaped line).
-pub(crate) const MAX_VIEW_SYSTEM: usize = 64 * 1024;
+/// The largest system text a view file carries (one escaped line). The WRITER keeps to it too
+/// (`lsystem_lines`): it wrote any size while the reader refused past 64 KiB, so a large system
+/// saved a view the app could not open (review 2026-11-16, finding 14). Inside `SHARE_MAX`.
+pub(crate) const MAX_VIEW_SYSTEM: usize = 512 * 1024;
 
 /// What a walk was for: when the view's key differs from the shown walk's, a new walk is due.
 #[derive(Clone, Debug, PartialEq)]
@@ -1114,7 +1116,15 @@ impl FractadyneApp {
     /// angle override, the line width, the coloring. Also the session's `lsystem`.
     pub(crate) fn lsystem_lines(&self) -> String {
         let l = &self.lsystem;
-        let mut s = format!("lsystem={}\n", crate::custom_formula::escape_line(&l.system.to_text()));
+        let system = crate::custom_formula::escape_line(&l.system.to_text());
+        // Past what a reader accepts, the system is left out — the reader then says the view
+        // carries none — rather than written into a file nothing can open.
+        let mut s = if system.len() <= MAX_VIEW_SYSTEM {
+            format!("lsystem={system}\n")
+        } else {
+            crate::diag::log_line("view", &format!("L-system of {} bytes left out of the view (over {MAX_VIEW_SYSTEM})", system.len()));
+            String::new()
+        };
         s.push_str(&format!("lsystem_order={}\n", l.fixed_order.map_or_else(|| "auto".to_string(), |n| n.to_string())));
         if let Some(a) = l.angle {
             s.push_str(&format!("lsystem_angle={a}\n"));

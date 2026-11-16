@@ -512,6 +512,28 @@ pub(crate) fn view_lines(spec: &ColoringSpec) -> String {
     out
 }
 
+/// Hold a coloring that did not come from a view — the session file — to the rules a view is read
+/// by: each setting the table has that would not be accepted from a view (not finite, out of its
+/// range, not one of its choices) is clamped into range, or put back to its default, and named in
+/// `fixed`. Review 2026-11-16 (finding 9): the session restore took these as written, so a value a
+/// view could never set (a NaN light angle) survived every restart.
+pub(crate) fn sanitize(spec: &mut ColoringSpec, fixed: &mut Vec<&'static str>) {
+    let d = ColoringSpec::default();
+    for f in &FIELDS {
+        let text = f.access.text(spec);
+        let mut clamped = Vec::new();
+        let read = f.access.read(&text, f.name, spec, &mut clamped);
+        // A choice whose default is no choice at all (`interior` empty = the method's own) is not
+        // "unreadable" when it holds that default.
+        if !read && f.access.differs(spec, &d) {
+            f.access.copy(&d, spec);
+            fixed.push(f.name);
+        } else if !clamped.is_empty() {
+            fixed.push(f.name);
+        }
+    }
+}
+
 /// Apply a view's coloring keys to `spec`, this session's coloring, by the rules at the top of this
 /// module. `get` reads a key (`None` when the file does not have it); `states` says the file states
 /// its coloring (it has `cycle=`). A value out of range is clamped and named in `clamped`; an

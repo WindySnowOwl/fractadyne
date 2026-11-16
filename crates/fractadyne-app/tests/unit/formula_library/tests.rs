@@ -432,3 +432,58 @@ fn every_collection_formula_shows_a_picture_at_its_view() {
     let m = judge(&render(&control("z = z^2 + c", ["-0.5", "0"], "1"), 64, 40, 300));
     assert!(m.ok(), "the Mandelbrot set failed the judge: {m:?}");
 }
+
+/// Review 2026-11-16 (finding 16): a save wrote this copy's list whole, so a second running copy's
+/// formulas, saved meanwhile, were erased. The save merges with the file on disk: both copies'
+/// additions survive, and so does a deletion.
+#[test]
+fn a_save_merges_with_what_another_copy_saved_meanwhile() {
+    let dir = std::env::temp_dir().join(format!("fractadyne_formula_merge_{}", std::process::id()));
+    let _ = std::fs::remove_dir_all(&dir);
+    let path = dir.join("formulas.toml");
+    let f = |name: &str, src: &str| SavedFormula { name: name.into(), source: src.into(), ..Default::default() }.tidy().unwrap();
+    let (a, b, c, d) = (f("A", "z = z^2 + c"), f("B", "z = z^3 + c"), f("C", "z = z^4 + c"), f("D", "z = z^5 + c"));
+    // Both copies started from [A, B].
+    let base = save_merged_to(&path, &[], &[a.clone(), b.clone()]).unwrap();
+    // The other copy adds C and saves.
+    let other = save_merged_to(&path, &base, &[a.clone(), b.clone(), c.clone()]).unwrap();
+    assert_eq!(other.len(), 3);
+    // This copy, which never saw C, deletes B and adds D, then saves: C survives, B stays deleted.
+    let ours = save_merged_to(&path, &base, &[a.clone(), d.clone()]).unwrap();
+    let names: Vec<&str> = ours.iter().map(|x| x.name.as_str()).collect();
+    assert_eq!(names, ["A", "C", "D"]);
+    let (on_disk, note) = load_from(&path);
+    assert!(note.is_none());
+    assert_eq!(on_disk, ours, "what is on disk is what the save returned");
+    let _ = std::fs::remove_dir_all(&dir);
+}
+
+/// A file with one entry that does not read still imports the entries that do: a library set aside
+/// for one bad entry could not be imported back at all.
+#[test]
+fn an_import_keeps_the_entries_that_read() {
+    let text = "format = \"fractadyne-formulas\"\nversion = 1\n\n[[formula]]\nname = \"good\"\nsource = \"z = z^2 + c\"\n\n\
+                [[formula]]\nname = \"bad\"\nsource = \"z = z^3 + c\"\nparams = 5\n";
+    let got = parse_file(text).expect("the good entry imports");
+    assert_eq!(got.len(), 1);
+    assert_eq!(got[0].name, "good");
+}
+
+/// Review 2026-11-16 (finding 15): a starting view's center was CUT at 20,000 characters, which
+/// dropped the exponent written at its end and moved a very deep view off the set. A long center is
+/// kept whole; one past the limit makes no view rather than a wrong one.
+#[test]
+fn a_deep_starting_view_keeps_its_whole_center() {
+    let digits = "1".repeat(30_000);
+    let center = format!("-7.{digits}e-1");
+    let v = StartView { center: [center.clone(), "1.0e-1".into()], zoom: "1e25000".into(), iterations: None, julia: None };
+    let kept = v.tidy().expect("a 30,000-digit center is a view");
+    assert_eq!(kept.center[0], center, "every digit and the exponent kept");
+    let huge = StartView {
+        center: [format!("-7.{}e-1", "1".repeat(CENTER_TEXT_MAX)), "0".into()],
+        zoom: "4".into(),
+        iterations: None,
+        julia: None,
+    };
+    assert!(huge.tidy().is_none(), "past the limit: no view, not a cut one");
+}

@@ -702,6 +702,8 @@ dlg-reset-warning = Isto exclui permanentemente todos os dados salvos do Fractad
 # The list's items, each after a bullet.
 dlg-reset-session = a sessão salva (vista atual, coloração, preferências)
 dlg-reset-bookmarks = todos os favoritos e suas miniaturas
+dlg-reset-gradients = todos os gradientes salvos
+dlg-reset-formulas = a biblioteca de fórmulas
 dlg-reset-refcache = o cache de órbitas de referência (reconstruído conforme você revisita os locais)
 # A label over the folder that is deleted.
 dlg-reset-location = Localização
@@ -901,6 +903,30 @@ dlg-export-export-hover = Renderizar e salvar na pasta acima (nome automático)
 
 # A notice shown once after starting, when the saved session comes from a newer version of the app. $saved and $handled: version numbers of the session file's format (1, 2…).
 app-state-newer = Esta sessão foi salva por um Fractadyne mais recente (estado v{ $saved }; esta build lida com v{ $handled }). Algumas configurações podem não se aplicar, e salvar vai regravá-la no formato desta build.
+# After starting, when the saved session could not be read at all.
+app-state-unreadable = Não foi possível ler a sessão salva, então o Fractadyne começou com as configurações padrão.
+# After starting, when part of the saved session could not be read. $settings: the settings' names as the file writes them (English tokens such as "aa, theme").
+app-state-partial = Não foi possível ler parte da sessão salva. Estas configurações voltaram ao padrão: { $settings }.
+# After starting, when the saved session had characters that could not be read (they were replaced).
+app-state-repaired = A sessão salva tinha caracteres que não puderam ser lidos; eles foram substituídos.
+# After one of the notices above. $path: where the file, as it was, is kept.
+app-state-kept = O arquivo, como estava, foi guardado como { $path }.
+# After starting, when some saved bookmarks could not be read. $count: how many.
+app-bookmarks-partial =
+    { $count ->
+        [one] Não foi possível ler um favorito salvo, e ele foi deixado de fora.
+       *[other] Não foi possível ler { $count } favoritos salvos, e eles foram deixados de fora.
+    }
+# After starting, when the bookmarks file could not be read at all.
+app-bookmarks-unreadable = Não foi possível ler o arquivo de favoritos, então a lista de favoritos começa vazia.
+# After starting, when some saved gradients could not be read. $count: how many.
+app-gradients-partial =
+    { $count ->
+        [one] Não foi possível ler um gradiente salvo, e ele foi deixado de fora.
+       *[other] Não foi possível ler { $count } gradientes salvos, e eles foram deixados de fora.
+    }
+# After starting, when the saved gradients file could not be read at all.
+app-gradients-unreadable = Não foi possível ler o arquivo de gradientes salvos, então a biblioteca de gradientes começa vazia.
 # The title of the notice that says the accelerated build's arithmetic libraries are found again (its text comes from elsewhere).
 app-notice-mpfr-restored-title = Aritmética acelerada restaurada
 # After Fractadyne restarted itself because the graphics driver reset the GPU.
