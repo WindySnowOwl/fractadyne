@@ -772,43 +772,42 @@ fn fam_deriv(f: u32, z: vec2<f32>) -> vec2<f32> {
     return f32(d) * r;
 }
 // (Z + δ)^d − Z^d along the power's own chain (square; multiply by the base on each set bit below
-// the top one), one perturbation rule per link — P(sqr f) = (2·B + P)·P, P(f·g) = P(f)·W(g) +
-// B(f)·P(g) with W = B + P — as the generated module's rule table (`ir::perturb`) derives it. Every
-// term carries a P, so nothing cancels against Z^d, and the error grows with the chain's log₂ d
-// links: a table of Z's powers built by d − 2 sequential products (a binomial in Horner form) was
-// measured 1.6–2.3× further from the CPU for Multibrot 6–8.
+// the top one), one perturbation rule per link — P(sqr f) = 2·(B·P) + P², P(f·g) = P(f)·B(g) +
+// B(f)·P(g) + P(f)·P(g) — as the generated module's rule table (`ir::perturb`) derives it, in its
+// order of operations, so the two compute alike. Every term carries a P, so nothing cancels against
+// Z^d, and the error grows with the chain's log₂ d links: a table of Z's powers built by d − 2
+// sequential products (a binomial in Horner form) was measured 1.6–2.3× further from the CPU for
+// Multibrot 6–8. ⭐Z ENTERS A PRODUCT AS IT IS (GitHub #5, 2026-11-16): the old links formed
+// 2·B + P and Z + δ first, and a df32 add rounds to f32 here (`EFT_ADD_RESIDUALS`), so Z lost its
+// low word every step, a bias that repeats along a near-periodic reference and adds up (`ir::perturb`).
 fn fam_dpow_df(Z: Cdf, dz: Cdf, d: u32) -> Cdf {
     var B = Z;
     var P = dz;
-    let W0 = c_add(Z, dz);
     var bit = 31u - countLeadingZeros(d);
     loop {
         if (bit == 0u) { break; }
         bit = bit - 1u;
-        P = c_mul(c_add(c_two(B), P), P);
+        P = c_add(c_scale(c_mul(B, P), 2.0), c_sqr(P));
         B = c_sqr(B);
         if (((d >> bit) & 1u) == 1u) {
-            P = c_add(c_mul(P, W0), c_mul(B, dz));
+            P = c_add(c_add(c_mul(P, Z), c_mul(B, dz)), c_mul(P, dz));
             B = c_mul(B, Z);
         }
     }
     return P;
 }
-// The same in floatexp (mode 2): every P in floatexp, so nothing underflows; B and the full-size
-// values (B + P, Z + δ) in df32, which holds them — a perturbation's digits below df32's reach are
-// negligible beside B (the generated module's `Class::Full`).
+// The same in floatexp (mode 2): every P in floatexp, so nothing underflows; B in df32.
 fn fam_dpow_fe(Z: Cdf, dz: Fe, d: u32) -> Fe {
     var B = Z;
     var P = dz;
-    let W0 = c_add(Z, fe_to_cdf(dz));
     var bit = 31u - countLeadingZeros(d);
     loop {
         if (bit == 0u) { break; }
         bit = bit - 1u;
-        P = fe_mul_cdf(P, c_add(c_two(B), fe_to_cdf(P)));
+        P = fe_add(fe_scale(fe_mul_cdf(P, B), 2.0), fe_sqr(P));
         B = c_sqr(B);
         if (((d >> bit) & 1u) == 1u) {
-            P = fe_add(fe_mul_cdf(P, W0), fe_mul_cdf(dz, B));
+            P = fe_add(fe_add(fe_mul_cdf(P, Z), fe_mul_cdf(dz, B)), fe_mul(P, dz));
             B = c_mul(B, Z);
         }
     }

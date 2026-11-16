@@ -6351,6 +6351,14 @@ impl FractadyneApp {
             let ms = t.elapsed().as_secs_f64() * 1000.0;
             let (result, pass) = match (custom_px, builtin_px) {
                 (Some(c), Some(b)) if c.len() == b.len() && !c.is_empty() => {
+                    // The escape decision is each texel's r channel (the smooth count, < 0 inside),
+                    // as the chunked check above reads `a[k * 4]`. The other three are the normal and
+                    // the DE: a normal component is negative on about half the escaped pixels, and a
+                    // custom formula computes no derivative, so counting negatives over all four
+                    // channels compared the normals, not escape (it read 10.1% against 24.9% where the
+                    // r channels agree).
+                    let r = |px: &[f32]| px.chunks_exact(4).map(|t| t[0]).collect::<Vec<f32>>();
+                    let (c, b) = (r(&c), r(&b));
                     let interior = |px: &[f32]| px.iter().filter(|v| **v < 0.0).count() as f64 / px.len() as f64;
                     let differ = c.iter().zip(&b).filter(|(x, y)| (**x < 0.0) != (**y < 0.0)).count() as f64 / c.len() as f64;
                     let (ci, bi) = (interior(&c), interior(&b));
