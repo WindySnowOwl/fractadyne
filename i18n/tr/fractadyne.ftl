@@ -666,6 +666,12 @@ dlg-checksum-loaded = Yüklendi @ { $zoom }×, sağlama toplamı uyuşmazlığı
 dlg-checksum-loaded-note = Yüklendi @ { $zoom }× — { $note }
 dlg-checksum-not-loaded = Yüklenmedi.
 
+## A location saved as .txt whose program could not be told from its contents
+
+dlg-txt-title = Bu konumu hangi program kaydetti?
+# Above the file's path and three buttons: Fractadyne location, Kalles Fraktaler location, Cancel.
+dlg-txt-why = Fractadyne, bu metin dosyasının içeriğinden onu hangi programın kaydettiğini anlayamadı. Nasıl okunacağını seçin.
+
 ## File ▸ Reset application state
 
 dlg-reset-title = Uygulama durumunu sıfırla
@@ -3283,13 +3289,15 @@ lsys-entry-unreadable-hover = Bu girdi okunamıyor.
 # File-dialog filter names.
 export-filter-view = Fractadyne görünümü ya da konumu
 export-filter-image = Görüntü (PNG / EXR)
-export-filter-location = Konum (.fdn / .kfr)
+export-filter-location = Konum (.fdn / .kfr / .txt)
 # $zoom: the magnification (1.2e148), followed by the magnification sign ×.
 export-loaded-location = Konum yüklendi @ { $zoom }×
 # $zoom: the magnification; $note: what was noteworthy in the file (in English).
 export-loaded-location-note = Yüklendi @ { $zoom }× — { $note }
 # $path: the file.
 export-not-location = { $path } bir Fractadyne konumu değil.
+# $path: a file opened as a location that holds binary data (an image, say), not text.
+export-txt-not-text = { $path } bir metin dosyası değil.
 export-file-too-large = Dosya çok büyük (bir .fdn konumu değil mi?).
 # $path: the file; $error: why (from the system, in English).
 export-read-failed = { $path } okunamadı: { $error }

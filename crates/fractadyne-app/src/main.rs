@@ -107,6 +107,7 @@ mod tone;
 mod calibration;
 mod timing_witness;
 mod tunables;
+mod txt_location;
 mod ui;
 mod zoom_snap;
 
@@ -4741,6 +4742,26 @@ pub(crate) fn export_file_name(fractal: &str, secs: u64, ext: &str) -> String {
 }
 
 /// One exported image discovered by the gallery browser.
+/// A location file's text for the `.kfr` importer: the `.txt` reader (bounded, decoded, binary
+/// refused — `txt_location`), its failures as the importer has always reported them.
+pub(crate) fn read_location_file(path: &std::path::Path) -> Result<String, crate::error::AppError> {
+    use crate::error::AppError;
+    use crate::txt_location::TxtError;
+    crate::txt_location::read_location_text(path).map_err(|e| match e {
+        TxtError::TooLarge => AppError::Message("file too large (not a .kfr location?)".into()),
+        TxtError::Binary => AppError::Message(tr!(export_txt_not_text, path = crate::txt_location::shown_path(path))),
+        TxtError::Io(e) => AppError::from(e),
+    })
+}
+
+/// A `.txt` location whose program the app could not tell from its contents, waiting on the
+/// user's choice. Held unapplied, as [`PendingView`] is.
+pub(crate) struct PendingTxt {
+    pub(crate) text: String,
+    /// The file's path, for the prompt and the messages after it.
+    pub(crate) source: String,
+}
+
 /// A view text whose checksum failed, waiting on the user's answer.
 pub(crate) struct PendingView {
     pub(crate) text: String,
@@ -6618,6 +6639,9 @@ struct DialogState {
     /// load it anyway. ⭐Parked rather than loaded-then-undone: a half-applied view would have
     /// already moved them, and "undo" is not a thing a jump has.
     pending_view: Option<PendingView>,
+    /// A `.txt` location the app could not place, held while the user is asked which program
+    /// wrote it (File ▸ Open view or location).
+    pending_txt: Option<PendingTxt>,
     /// "Accelerated build" dialog open (Help menu).
     accelerated_open: bool,
     /// Open the toolbar's family dropdown on its next draw (the UI test's `fractal-dropdown`
@@ -7947,6 +7971,7 @@ impl FractadyneApp {
                 // Never in front of a harness: a modal would block --uitest/--livetest exactly the
                 // way the welcome dialog once did.
                 pending_view: None,
+                pending_txt: None,
                 crash_prompt_open: crate::diag::previous_session_unclean()
                     && !s.crash_prompt_disabled
                     && !launched_for_a_task,
@@ -11532,13 +11557,14 @@ impl FractadyneApp {
     /// linear magnification from the home view — close enough that the location lands at
     /// essentially the right place and scale.)
     fn load_kfr_file(&mut self, path: &std::path::Path) -> Result<String, crate::error::AppError> {
+        let text = read_location_file(path)?;
+        self.load_kfr_text(&text)
+    }
+
+    /// [`Self::load_kfr_file`] on text already read (a `.kfr`, or a `.txt` that holds one).
+    pub(crate) fn load_kfr_text(&mut self, text: &str) -> Result<String, crate::error::AppError> {
         use crate::error::AppError;
-        let meta = std::fs::metadata(path)?;
-        if meta.len() > 4_000_000 {
-            return Err(AppError::Message("file too large (not a .kfr location?)".into()));
-        }
-        let text = std::fs::read_to_string(path)?;
-        let v = fractadyne_core::parse_kfr(&text)
+        let v = fractadyne_core::parse_kfr(text)
             .ok_or_else(|| AppError::Parse("not a valid .kfr location (need Re / Im / Zoom)".into()))?;
         let zoom = v.zoom;
         self.fractal = FractalKind::Mandelbrot;
@@ -11603,7 +11629,7 @@ impl FractadyneApp {
     /// File-dialog import of a Kalles Fraktaler `.kfr` location.
     fn import_kfr(&mut self, ctx: &egui::Context) {
         let Some(path) = rfd::FileDialog::new()
-            .add_filter(tr!(app_filter_kfr), &["kfr"])
+            .add_filter(tr!(app_filter_kfr), &["kfr", "txt"])
             .set_directory(self.dialog_dir_default())
             .pick_file()
         else {
@@ -11719,24 +11745,24 @@ impl FractadyneApp {
     /// so the user can review before jumping).
     fn load_share_file(&mut self) {
         let Some(path) = rfd::FileDialog::new()
-            .add_filter(tr!(app_filter_fdn), &["fdn"])
+            .add_filter(tr!(app_filter_fdn), &["fdn", "txt"])
             .set_directory(self.dialog_dir_default())
             .pick_file()
         else {
             return;
         };
         self.remember_dir(&path);
-        match std::fs::metadata(&path) {
-            Ok(m) if (m.len() as usize) <= SHARE_MAX => match std::fs::read_to_string(&path) {
-                Ok(t) => {
-                    self.share.text = t;
-                    self.share.msg = Some(tr!(app_share_loaded_into_box));
-                }
-                Err(e) => self.share.msg = Some(tr!(app_read_failed, error = e.to_string())),
-            },
-            Ok(_) => self.share.msg = Some(tr!(app_share_too_large)),
-            Err(e) => self.share.msg = Some(tr!(app_read_failed, error = e.to_string())),
-        }
+        // The `.txt` reader for both (bounded, decoded, binary refused): a `.fdn` is text too.
+        use crate::txt_location::{read_bounded, TxtError};
+        self.share.msg = Some(match read_bounded(&path, SHARE_MAX as u64) {
+            Ok(t) => {
+                self.share.text = t;
+                tr!(app_share_loaded_into_box)
+            }
+            Err(TxtError::TooLarge) => tr!(app_share_too_large),
+            Err(TxtError::Binary) => tr!(export_txt_not_text, path = crate::txt_location::shown_path(&path)),
+            Err(TxtError::Io(e)) => tr!(app_read_failed, error = e.to_string()),
+        });
     }
 
     /// Compact, PII-free system-info block for issue reports (version, OS, CPU, GPU, VRAM).
@@ -18500,6 +18526,7 @@ impl eframe::App for FractadyneApp {
         self.poll_mpfr_recovery(ctx);
 
         self.draw_gallery_dialog(ctx);
+        self.draw_txt_choice_dialog(ctx);
         self.draw_checksum_dialog(ctx);
 
         self.draw_export_dialog(ctx, &gpu);

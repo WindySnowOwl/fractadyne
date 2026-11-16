@@ -662,6 +662,12 @@ dlg-checksum-loaded = 체크섬이 일치하지 않지만 @ { $zoom }×에서 �
 dlg-checksum-loaded-note = @ { $zoom }×에서 불러왔습니다 — { $note }
 dlg-checksum-not-loaded = 불러오지 않았습니다.
 
+## A location saved as .txt whose program could not be told from its contents
+
+dlg-txt-title = 이 위치를 저장한 프로그램은 무엇입니까?
+# Above the file's path and three buttons: Fractadyne location, Kalles Fraktaler location, Cancel.
+dlg-txt-why = 이 텍스트 파일의 내용으로는 어떤 프로그램이 저장했는지 알 수 없습니다. 읽을 방식을 선택하세요.
+
 ## File ▸ Reset application state
 
 dlg-reset-title = 애플리케이션 상태 초기화
@@ -3176,13 +3182,15 @@ lsys-entry-unreadable-hover = 이 항목은 해석되지 않습니다.
 # File-dialog filter names.
 export-filter-view = Fractadyne 뷰 또는 위치
 export-filter-image = 이미지(PNG / EXR)
-export-filter-location = 위치(.fdn / .kfr)
+export-filter-location = 위치(.fdn / .kfr / .txt)
 # $zoom: the magnification (1.2e148), followed by the magnification sign ×.
 export-loaded-location = 위치를 불러왔습니다 @ { $zoom }×
 # $zoom: the magnification; $note: what was noteworthy in the file (in English).
 export-loaded-location-note = @ { $zoom }×에서 불러왔습니다 — { $note }
 # $path: the file.
 export-not-location = { $path }은(는) Fractadyne 위치가 아닙니다.
+# $path: a file opened as a location that holds binary data (an image, say), not text.
+export-txt-not-text = { $path }은(는) 텍스트 파일이 아닙니다.
 export-file-too-large = 파일이 너무 큽니다(.fdn 위치가 아닐 수 있습니다).
 # $path: the file; $error: why (from the system, in English).
 export-read-failed = { $path }을(를) 읽을 수 없습니다: { $error }

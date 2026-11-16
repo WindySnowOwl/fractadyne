@@ -663,6 +663,12 @@ dlg-checksum-loaded = 已加载 @ { $zoom }×，尽管校验和不匹配
 dlg-checksum-loaded-note = 已加载 @ { $zoom }×——{ $note }
 dlg-checksum-not-loaded = 未加载。
 
+## A location saved as .txt whose program could not be told from its contents
+
+dlg-txt-title = 这个位置是由哪个程序保存的？
+# Above the file's path and three buttons: Fractadyne location, Kalles Fraktaler location, Cancel.
+dlg-txt-why = Fractadyne 无法根据此文本文件的内容判断是哪个程序保存的。请选择读取方式。
+
 ## File ▸ Reset application state
 
 dlg-reset-title = 重置应用程序状态
@@ -3177,13 +3183,15 @@ lsys-entry-unreadable-hover = 此条目无法读取。
 # File-dialog filter names.
 export-filter-view = Fractadyne 视图或位置
 export-filter-image = 图像（PNG / EXR）
-export-filter-location = 位置（.fdn / .kfr）
+export-filter-location = 位置（.fdn / .kfr / .txt）
 # $zoom: the magnification (1.2e148), followed by the magnification sign ×.
 export-loaded-location = 已加载位置 @ { $zoom }×
 # $zoom: the magnification; $note: what was noteworthy in the file (in English).
 export-loaded-location-note = 已加载 @ { $zoom }×——{ $note }
 # $path: the file.
 export-not-location = { $path } 不是 Fractadyne 位置。
+# $path: a file opened as a location that holds binary data (an image, say), not text.
+export-txt-not-text = { $path } 不是文本文件。
 export-file-too-large = 文件过大（不是 .fdn 位置？）。
 # $path: the file; $error: why (from the system, in English).
 export-read-failed = 无法读取 { $path }：{ $error }

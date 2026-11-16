@@ -1203,6 +1203,53 @@ impl FractadyneApp {
         }
     }
 
+    /// "Which program saved this location?" — a `.txt` whose content parsed as neither format, or as
+    /// both (File ▸ Open view or location; `open_txt_location`). The user chooses how to read it;
+    /// a choice the text does not parse as says so (`load_txt_as`) and changes nothing. Cancel, or
+    /// closing the window, loads nothing.
+    pub(crate) fn draw_txt_choice_dialog(&mut self, ctx: &egui::Context) {
+        use crate::txt_location::TxtKind;
+        let Some(p) = &self.dialogs.pending_txt else {
+            return;
+        };
+        let source = p.source.clone();
+        let mut open = true;
+        let (mut choice, mut cancel) = (None, false);
+        egui::Window::new(tr!(dlg_txt_title))
+            .id(egui::Id::new("fractadyne.dlg.txt-choice"))
+            .open(&mut open)
+            .resizable(false)
+            .collapsible(false)
+            .default_width(480.0)
+            .anchor(egui::Align2::CENTER_CENTER, [0.0, 0.0])
+            .show(ctx, |ui| {
+                ui.label(tr!(dlg_txt_why));
+                ui.add_space(6.0);
+                ui.label(egui::RichText::new(tr!(dlg_checksum_source)).weak().small());
+                ui.label(egui::RichText::new(&source).monospace().small());
+                ui.add_space(8.0);
+                ui.separator();
+                // Added right-to-left: Cancel first so it lands rightmost.
+                crate::theme::action_row(ui, |ui| {
+                    cancel = crate::theme::cancel_button(ui, &tr!(dlg_cancel)).clicked();
+                    if ui.button(tr!(app_filter_kfr)).clicked() {
+                        choice = Some(TxtKind::KallesFraktaler);
+                    }
+                    if ui.button(tr!(app_filter_fdn)).clicked() {
+                        choice = Some(TxtKind::Fractadyne);
+                    }
+                });
+            });
+        if let Some(kind) = choice {
+            if let Some(p) = self.dialogs.pending_txt.take() {
+                self.load_txt_as(kind, p.text, p.source, ctx);
+            }
+        } else if cancel || !open {
+            self.dialogs.pending_txt = None;
+            self.set_toast(tr!(dlg_checksum_not_loaded), ctx);
+        }
+    }
+
     /// "Reset application state" confirmation dialog — permanently deletes all saved data.
     pub(crate) fn draw_reset_dialog(&mut self, ctx: &egui::Context) {
         if !self.dialogs.reset_confirm_open {
