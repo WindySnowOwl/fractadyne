@@ -116,7 +116,7 @@ fn the_u_space_tree_follows_the_u_steps_it_skips() {
     let view = (4.0f64 / 2.0e68).log2();
     let eps = 1e-6;
     let tree = renorm_bla_gpu(&orbit, &step, FloatExp::from_f64(1.0).mul_pow2(view), eps);
-    assert_eq!(tree.len(), renorm_bla_nodes(k) * 4);
+    assert_eq!(tree.len(), renorm_bla_nodes(k) * super::super::BLA_NODE_VEC4S);
     let decode = |m: [f32; 4], e: f32| -> (f64, f64) {
         let s = (e as f64).exp2();
         ((m[0] as f64 + m[1] as f64) * s, (m[2] as f64 + m[3] as f64) * s)
@@ -131,7 +131,8 @@ fn the_u_space_tree_follows_the_u_steps_it_skips() {
         .collect();
     // Level 0's A is 2·U_k (node 0: U_0 = 0, so it can never apply).
     for (j, u) in uref.iter().enumerate().take(k as usize) {
-        let (ax, ay) = decode(tree[j * 4], tree[j * 4 + 2][0]);
+        let n = super::super::BLA_NODE_VEC4S;
+        let (ax, ay) = decode(tree[j * n], tree[j * n + 2][0]);
         assert!((ax - 2.0 * u.0).hypot(ay - 2.0 * u.1) <= 1e-6 * (1.0 + u.0.hypot(u.1)), "node {j}");
     }
     let ab = cmul(a, cf(step.b));
@@ -153,7 +154,7 @@ fn the_u_space_tree_follows_the_u_steps_it_skips() {
         let span = 1usize << l;
         if span < k as usize && 1 < len {
             // The node at k = span (j = 1) covers steps span..2·span.
-            let node = (off + 1) * 4;
+            let node = (off + 1) * super::super::BLA_NODE_VEC4S;
             let du0 = plain((0.0, 0.0), 0, span);
             let (am, bm, ex, sp) = (tree[node], tree[node + 1], tree[node + 2], tree[node + 3]);
             assert_eq!(sp[0] as usize, span.min(k as usize - span), "level {l} span");

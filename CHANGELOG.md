@@ -78,6 +78,11 @@ Changes after 0.3.0-beta.1:
   on (the default) the run stopped at four samples after 20 s. A run now keeps its first sample's
   setting: at a 1e12× seahorse view it holds all 24 samples after about 5 s, and the view then goes
   idle.
+- **Stripe's tail window is right at depth (after 0.3.0-beta.27).** Past about 1e28×, where the
+  renderer skips runs of iterations (BLA), the stripe tail averaged each skipped run as if every
+  iteration in it counted alike, while the tail weighs the latest ones most: at the seahorse at
+  1e30× the stripes were up to 0.23 off. A skip now carries the tail's own weighting and lands
+  exactly where iterating every step does.
 - **Orbit traps are right near deep minibrots (after 0.3.0-beta.27).** Where the orbit passes
   closer to zero than ordinary floats reach (a minibrot's nearest approaches), the shortcut that
   skips iterations (BLA) misread those points, so a trap missed exactly the approaches it exists

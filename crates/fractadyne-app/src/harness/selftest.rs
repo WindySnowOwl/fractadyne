@@ -7229,8 +7229,9 @@ impl FractadyneApp {
             };
             // The stripe TAIL is a case of its own, and approximate: its window weighs the last
             // iterations before the seed, where each pixel has drifted from the reference the
-            // aggregates come from. Measured 0.029 off; BLA alone is 0.23 off (TODO), so it is held
-            // to maxΔ < 0.06 only, enough to catch a prefix that is dropped (0.70).
+            // aggregates come from. Measured 0.029 off, so it is held to maxΔ < 0.06 only, enough to
+            // catch a prefix that is dropped (0.70). BLA ALONE is exact for it since its nodes carry
+            // the window-weighted sum (2026-11-15: 0.23 → 0.0000), and held to < 0.01.
             for (m, tt, freq, tail, label) in [
                 (crate::ColorMethod::Stripe, crate::TrapType::Point, 5.0f32, false, "stripe"),
                 (crate::ColorMethod::Stripe, crate::TrapType::Point, 5.0, true, "stripe-tail-16"),
@@ -7267,21 +7268,30 @@ impl FractadyneApp {
                     }
                     (maxd, nd)
                 };
-                let bla_alone = match (rex(&bla_only), rex(&truth)) {
-                    (Some(x), Some(t)) => format!("; BLA alone vs truth maxΔ {:.4}", diff(&x, &t).0),
-                    _ => String::new(),
+                let bla_alone_d = match (rex(&bla_only), rex(&truth)) {
+                    (Some(x), Some(t)) => Some(diff(&x, &t).0),
+                    _ => None,
                 };
+                let bla_alone = bla_alone_d.map_or(String::new(), |d| format!("; BLA alone vs truth maxΔ {d:.4}"));
                 match (rex(&with), rex(&truth)) {
                     (Some(a), Some(b)) if engaged && a.len() == b.len() => {
                         let (maxd, nd) = diff(&a, &b);
                         let chans = (nn * nn * 4) as u64;
-                        let pass = if tail { maxd < 0.06 } else { maxd < 0.1 && nd < chans / 100 };
+                        let pass = if tail {
+                            maxd < 0.06 && bla_alone_d.is_some_and(|d| d < 0.01)
+                        } else {
+                            maxd < 0.1 && nd < chans / 100
+                        };
                         push_check(&mut checks, &mut last_check_t, SelfCheck {
                             category: "BLA",
                             name: format!("{label}: series prefix == every iteration @1e30×"),
                             params: format!("sa_skip {skip} of orbit {orbit_len}, max_iter 20000, maxΔ {maxd:.4}{bla_alone}"),
                             result: format!("{nd}/{chans} channels >2%"),
-                            threshold: if tail { "series engaged, maxΔ<0.06 (tail: approximate)" } else { "series engaged, maxΔ<0.1, <1% differ" },
+                            threshold: if tail {
+                                "series engaged, maxΔ<0.06 (the prefix: approximate); BLA alone maxΔ<0.01"
+                            } else {
+                                "series engaged, maxΔ<0.1, <1% differ"
+                            },
                             pass,
                         });
                     }

@@ -272,7 +272,7 @@ fn analyze(label: &str, cx_str: &str, cy_str: &str, octaves: u64, dc_ext: f64) -
     let cmag = mag(to_f64(&cx), to_f64(&cy));
     let bailout2 = 1.0e10f64;
     let dc_max = FloatExp::from_f64(dc_ext * 1.5);
-    let aux_p = AuxAggParams { trap_type: crate::coloring::TrapType::Point, stripe_freq: FREQ, cmag, power: POWER };
+    let aux_p = AuxAggParams { trap_type: crate::coloring::TrapType::Point, stripe_freq: FREQ, cmag, power: POWER, stripe_tail_alpha: 0.0 };
     let levels = build_bla_mandel(&orbit, dc_max, 1.0e-6, aux_p);
 
     // Phase-1 precompute check: every node's seeded+merged aggregate must equal a brute-force
@@ -375,6 +375,7 @@ fn build_bla_parallel_matches_serial() {
         stripe_freq: FREQ,
         cmag: mag(to_f64(&cx), to_f64(&cy)),
         power: POWER,
+        stripe_tail_alpha: 0.0,
     };
     let serial = build_bla_mandel_impl(&orbit, dc_max, 1.0e-6, aux_p, usize::MAX, 2);
     let parallel = build_bla_mandel_impl(&orbit, dc_max, 1.0e-6, aux_p, 0, 2);
@@ -409,10 +410,10 @@ fn apply_bla_aux_matches_full_rebuild() {
     let dc_max = FloatExp::from_f64(1.0e-6);
     let cmag = mag(to_f64(&cx), to_f64(&cy));
     // Coloring A: trap type 0 (|Z|), one stripe frequency.
-    let aux_a = AuxAggParams { trap_type: crate::coloring::TrapType::Point, stripe_freq: 5.0, cmag, power: POWER };
+    let aux_a = AuxAggParams { trap_type: crate::coloring::TrapType::Point, stripe_freq: 5.0, cmag, power: POWER, stripe_tail_alpha: 0.0 };
     let mut buf = bla_to_gpu(&build_bla_mandel(&orbit, dc_max, 1.0e-6, aux_a));
     // Change to coloring B (trap type 2 + a different frequency) via the fast path.
-    let aux_b = AuxAggParams { trap_type: crate::coloring::TrapType::Circle, stripe_freq: 12.5, cmag, power: POWER };
+    let aux_b = AuxAggParams { trap_type: crate::coloring::TrapType::Circle, stripe_freq: 12.5, cmag, power: POWER, stripe_tail_alpha: 0.0 };
     apply_bla_aux(&mut buf, &orbit, aux_b);
     // Ground truth: a full rebuild with B.
     let full_b = bla_to_gpu(&build_bla_mandel(&orbit, dc_max, 1.0e-6, aux_b));
@@ -444,8 +445,8 @@ fn aux_regen_speedup() {
     let nstep = orbit.len().saturating_sub(1);
     let dc_max = FloatExp::from_f64(1.0e-6);
     let cmag = mag(to_f64(&cx), to_f64(&cy));
-    let aux_a = AuxAggParams { trap_type: crate::coloring::TrapType::Point, stripe_freq: 5.0, cmag, power: POWER };
-    let aux_b = AuxAggParams { trap_type: crate::coloring::TrapType::Circle, stripe_freq: 12.5, cmag, power: POWER };
+    let aux_a = AuxAggParams { trap_type: crate::coloring::TrapType::Point, stripe_freq: 5.0, cmag, power: POWER, stripe_tail_alpha: 0.0 };
+    let aux_b = AuxAggParams { trap_type: crate::coloring::TrapType::Circle, stripe_freq: 12.5, cmag, power: POWER, stripe_tail_alpha: 0.0 };
     let mut base = bla_to_gpu(&build_bla_mandel(&orbit, dc_max, 1.0e-6, aux_a));
     let median = |mut v: Vec<f64>| {
         v.sort_by(|a, b| a.partial_cmp(b).unwrap());
@@ -520,4 +521,60 @@ fn a_node_landing_on_an_extended_dip_keeps_its_trap_distance() {
         let node = bla_level0_node(0, &orbit, 1e-6, aux, one, 2);
         assert!((node.agg_trap / expect - 1.0).abs() < 1e-6, "{trap:?}: node {:e}, the dip is {expect:e}", node.agg_trap);
     }
+}
+
+/// With the stripe TAIL on, a node's window lane (`agg_window`) is the window-weighted sum of its landing range,
+/// `W = Σ (1−α)^(span−1−i)·tᵢ`, and a skip folding it as `s ← (1−α)^span·s + α·W` lands exactly
+/// where the recurrence `s ← (1−α)·s + α·t` run term by term does. The fold before took the
+/// range's plain mean: 0.23 off every-iteration through BLA at 1e30× (tail 16, 2026-11-15). The
+/// plain sum stays in `agg_stripe` (the series prefix still folds it), and the aux-only lanes
+/// (`bla_aux_lanes`, the live patch) must agree with the full build.
+#[test]
+fn the_tail_lane_is_the_window_weighted_sum_and_folds_exactly() {
+    let p = crate::precision_for_octaves(40);
+    let cx = crate::parse_bf("-0.7436438870371587047521915061147707").unwrap();
+    let cy = crate::parse_bf("0.131825904205311970493132056385139").unwrap();
+    let z0 = BigFloat::from_f64(0.0, p);
+    let (orbit, _) = reference_orbit(&z0, &z0, &cx, &cy, formula::MANDELBROT, 3000, p);
+    let alpha = stripe_tail_alpha(true, 16);
+    assert_eq!(alpha, 1.0 / 16.0);
+    assert_eq!(stripe_tail_alpha(false, 16), 0.0);
+    let aux_p = AuxAggParams { stripe_freq: FREQ, stripe_tail_alpha: alpha, ..AuxAggParams::default() };
+    let levels = build_bla_mandel(&orbit, FloatExp::from_f64(1e-12), 1.0e-6, aux_p);
+    let close = |a: f64, b: f64| (a - b).abs() <= 1e-9 * a.abs().max(1.0) + 1e-12;
+    for (l, level) in levels.iter().enumerate() {
+        for (j, node) in level.iter().enumerate() {
+            let start = (j as u32) << l;
+            let (mut w, mut plain, mut s) = (0.0f64, 0.0f64, 0.3f64);
+            for k in (start + 1)..=(start + node.span) {
+                let (zx, zy) = zval(&orbit, k);
+                let t = stripe_term(zx, zy);
+                w = (1.0 - alpha) * w + t;
+                plain += t;
+                s = (1.0 - alpha) * s + alpha * t;
+            }
+            assert!(close(w, node.agg_window), "l{l} j{j}: window lane {} vs window sum {w}", node.agg_window);
+            assert!(close(plain, node.agg_stripe), "l{l} j{j}: stripe lane {} vs the plain sum {plain}", node.agg_stripe);
+            // The fold from s = 0.3 against the recurrence run term by term from 0.3.
+            let s0 = s;
+            let folded = 0.3 * (1.0 - alpha).powi(node.span as i32) + alpha * node.agg_window;
+            assert!(close(folded, s0), "l{l} j{j}: folded {folded} vs term by term {s0}");
+        }
+    }
+    // The live patch's lanes are the full build's.
+    let lanes = bla_aux_lanes(&orbit, aux_p);
+    let flat: Vec<(f32, f32)> = levels.iter().flat_map(|lv| lv.iter().map(|n| (n.agg_stripe as f32, n.agg_window as f32))).collect();
+    assert_eq!(lanes.len(), flat.len());
+    for (i, (a, b)) in lanes.iter().zip(&flat).enumerate() {
+        assert_eq!((a[2], a[3]), *b, "node {i}: patched stripe/window lanes differ from the build");
+    }
+    // And the GPU packing: five vec4s a node, the window in the fifth.
+    let gpu = bla_to_gpu(&levels);
+    assert_eq!(gpu.len(), flat.len() * BLA_NODE_VEC4S);
+    assert_eq!(gpu[BLA_NODE_VEC4S + 4][0], flat[1].1);
+    // Tail off: the plain sum, as before.
+    let plain = build_bla_mandel(&orbit, FloatExp::from_f64(1e-12), 1.0e-6, AuxAggParams { stripe_freq: FREQ, ..AuxAggParams::default() });
+    let top = plain.last().unwrap()[0];
+    let sum: f64 = (1..=top.span).map(|k| { let (x, y) = zval(&orbit, k); stripe_term(x, y) }).sum();
+    assert!(close(sum, top.agg_stripe), "tail off: {} vs the plain sum {sum}", top.agg_stripe);
 }
