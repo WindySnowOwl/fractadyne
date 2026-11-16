@@ -565,3 +565,44 @@ center = ["0", "0"]
 zoom = "1.3"
 iterations = 300
 julia = ["0.56667", "0"]
+
+# ---- Slices ----
+# A two-parameter family's parameter space has four real dimensions; a picture is a plane through it.
+# A plane that keeps the picture conformal is a complex line, and any complex line that moves c is the
+# c-plane picture with the other parameter an affine function of c (pauldelbrot, "Slicing parameter
+# spaces at arbitrary angles", Fractal Forums, 2026-11-16). Written so, a slice is a step formula,
+# and deep zoom works. A tilted start z0 = s(c) is written shifted, w = z - s:
+# w' = (w + s)^2 + c - s, w0 = 0, the same bounded orbits.
+
+[[formula]]
+name = "Mandelbrot, tilted toward its Julia sets"
+category = "Slices"
+about = "A plane through the four-dimensional space of z² + c: c is the pixel, and each orbit starts at p₂ + p₁·c instead of 0. p₁ = 0 is the Mandelbrot set, p₁ = 1 the same set again (that start is the orbit's first step), and other values tilt the plane toward the Julia sets."
+source = "z = z^2 + 2*(p2 + p1*c)*z + (p2 + p1*c)^2 + c - (p2 + p1*c)"
+params = [["0.5", "0"], ["0", "0"]]
+[formula.view]
+center = ["-0.4", "0"]
+zoom = "0.9"
+iterations = 400
+
+[[formula]]
+name = "Mandelbrot, tilted by a complex slope"
+category = "Slices"
+about = "The same tilt with p₁ = 0.35 + 0.35i: a complex slope turns the plane in a direction no real angle reaches, and the picture is no longer symmetric about the real axis."
+source = "z = z^2 + 2*(p2 + p1*c)*z + (p2 + p1*c)^2 + c - (p2 + p1*c)"
+params = [["0.35", "0.35"], ["0", "0"]]
+[formula.view]
+center = ["-0.35", "0.05"]
+zoom = "0.9"
+iterations = 400
+
+[[formula]]
+name = "Cubic family, tilted plane"
+category = "Slices"
+about = "z³ + 3a·z² + c, the cubic family with critical points 0 and −2a, whose two parameters span four dimensions. Here a = p₁ + p₂·c, so p₂ tilts the plane away from a = p₁; the orbit of the critical point 0 is drawn."
+source = "z = z^3 + 3*(p1 + p2*c)*z^2 + c"
+params = [["0.4", "0"], ["0", "0.25"]]
+[formula.view]
+center = ["0", "0"]
+zoom = "1.2"
+iterations = 400
