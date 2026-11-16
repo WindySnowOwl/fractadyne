@@ -350,7 +350,11 @@ palette_custom=0,0.25,0.5,0,0,0,1,1,0.2,0.1,1,0,0,0,0,0,0;\
 ///   when the picture depends on them and they are not the default, so the sample (a default Smooth
 ///   view) carries none; their round trip is `tests/unit/view_coloring/round_trip.rs` and the
 ///   selftest `view-coloring`.
+/// - `dual` … `julia_view_upp_log2` (the dual view's layout and Julia pane camera) appear ONLY in a
+///   dual view, which the sample is not; their round trip is the selftest `a dual view carries both
+///   panes` (review 2026-11-16, finding 8).
 const SAMPLE_OPTIONAL_KEYS: &[&str] = &[
+    "dual", "dual_split", "julia_view_center_re", "julia_view_center_im", "julia_view_upp_log2",
     "thumb", "checksum",
     "center_re_expr", "center_im_expr", "center_re_offset", "center_im_offset",
     "formula", "formula_params",
@@ -1561,4 +1565,53 @@ fn the_windows_icon_resources_are_in_the_tree() {
         let m = std::fs::metadata(dir.join(f)).unwrap_or_else(|_| panic!("{f} is missing: run scripts/make_windows_icon.py"));
         assert!(m.len() > 1000, "{f} is only {} bytes", m.len());
     }
+}
+
+/// Review 2026-11-16 (finding 1): a bookmarks file with ONE entry missing a field read as an empty
+/// list, and the next bookmark added replaced the whole file. The entries that read are kept, a
+/// copy of the file as it was is kept beside it, and the user is told; a clean file gives no notice.
+#[test]
+fn a_damaged_bookmarks_file_keeps_what_reads_and_a_copy() {
+    let dir = std::env::temp_dir().join(format!("fractadyne_load_library_{}", std::process::id()));
+    let _ = std::fs::remove_dir_all(&dir);
+    std::fs::create_dir_all(&dir).unwrap();
+    let path = dir.join("bookmarks.toml");
+    // TOML literal strings ('…'): the backslashes are the file's own, as a hand edit would leave them.
+    let text = r#"[[bookmark]]
+name = "good"
+meta = '''center_re=-0.75
+center_im=0.1
+'''
+
+[[bookmark]]
+name = "no view"
+
+[[bookmark]]
+name = "also good"
+meta = 'center_re=0.25'
+thumb = '..\..\evil'
+"#;
+    std::fs::write(&path, text).unwrap();
+    let (list, note) = load_library::<Bookmark>(Some(path.clone()), "bookmark", |n| format!("{n} left out."), || "unreadable.".into());
+    let names: Vec<&str> = list.iter().map(|b| b.name.as_str()).collect();
+    assert_eq!(names, ["good", "also good"]);
+    let note = note.expect("the user is told");
+    assert!(note.starts_with("1 left out."), "{note}");
+    let kept = dir.join("bookmarks.unreadable.toml");
+    assert_eq!(std::fs::read_to_string(&kept).unwrap(), text, "the file as it was is kept");
+    // A thumbnail id that could not have come from the app never becomes a path (finding 19).
+    assert!(!sane_thumb_id(r"..\..\evil") && !sane_thumb_id("") && sane_thumb_id("1731772800123456789-4"));
+    // …and `load_bookmarks` drops it (the entry keeps its view): what this file's reader does to it.
+    assert_eq!(list[1].thumb, r"..\..\evil", "load_library itself keeps entries as they read");
+    // Not TOML at all: nothing read, the copy kept, the "unreadable" notice.
+    std::fs::write(&path, b"\0\0 not toml [[[").unwrap();
+    let (list, note) = load_library::<Bookmark>(Some(path.clone()), "bookmark", |n| format!("{n} left out."), || "unreadable.".into());
+    assert!(list.is_empty() && note.as_deref().is_some_and(|n| n.starts_with("unreadable.")));
+    assert!(dir.join("bookmarks.unreadable-2.toml").is_file());
+    // A clean file: everything, no notice, no copy.
+    std::fs::write(&path, "[[bookmark]]\nname = \"a\"\nmeta = \"x\"\n").unwrap();
+    let (list, note) = load_library::<Bookmark>(Some(path.clone()), "bookmark", |n| format!("{n}"), || String::new());
+    assert_eq!((list.len(), note), (1, None));
+    assert!(!dir.join("bookmarks.unreadable-3.toml").exists());
+    let _ = std::fs::remove_dir_all(&dir);
 }

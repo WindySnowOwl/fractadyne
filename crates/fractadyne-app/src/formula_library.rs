@@ -64,6 +64,8 @@ pub(crate) struct StartView {
 const VIEW_ITER_MAX: u32 = 10_000_000;
 /// The deepest starting view, in octaves (a view file's limit).
 const VIEW_OCTAVES_MAX: f64 = 3.4e7;
+/// The longest center coordinate a starting view keeps, in characters (~1e1,000,000×).
+const CENTER_TEXT_MAX: usize = 1_000_000;
 
 impl StartView {
     /// `log2` of the magnification, if the zoom reads and is within the limit.
@@ -83,9 +85,15 @@ impl StartView {
     /// not read makes no view at all; the iteration count is clamped.
     fn tidy(self) -> Option<StartView> {
         let finite = |s: &str| fractadyne_core::parse_bf(s.trim()).is_some();
-        let short = |s: &str| s.trim().chars().take(20_000).collect::<String>();
+        // ⛔Never CUT a coordinate (review 2026-11-16, finding 15): the center is written mantissa
+        // first and exponent last (`4.2241…e-1`), so cutting it at 20,000 characters dropped the
+        // exponent of any view deeper than ~1e20000 and moved it off the set. A center longer than
+        // this (a view deeper than ~1e1,000,000) makes no view; the formula opens at home.
+        if self.center.iter().any(|c| c.trim().len() > CENTER_TEXT_MAX) {
+            return None;
+        }
         let v = StartView {
-            center: [short(&self.center[0]), short(&self.center[1])],
+            center: [self.center[0].trim().to_string(), self.center[1].trim().to_string()],
             zoom: self.zoom.trim().chars().take(64).collect(),
             iterations: self.iterations.map(|n| n.clamp(16, VIEW_ITER_MAX)),
             julia: self.julia.map(|[re, im]| [re.trim().to_string(), im.trim().to_string()]),
@@ -370,11 +378,21 @@ impl MergeReport {
 
 /// The formulas in a formula file, or why it is not one.
 pub(crate) fn parse_file(text: &str) -> Result<Vec<SavedFormula>, String> {
-    let file: FormulaFile = toml::from_str(text).map_err(|e| {
-        // The toml crate's message carries a source snippet over several lines; the first says it.
-        let e = e.to_string();
-        tr!(formula_file_not_formulas, why = e.lines().next().unwrap_or("unreadable").trim())
-    })?;
+    let file: FormulaFile = match toml::from_str(text) {
+        Ok(f) => f,
+        Err(e) => {
+            // ⭐A file with an entry that does not read still gives the entries that do (review
+            // 2026-11-16): a library set aside for one bad entry could not be imported back at all.
+            if let Some((formula, _)) = fractadyne_state::durable::salvage_entries::<SavedFormula>(text, "formula") {
+                if !formula.is_empty() {
+                    return Ok(formula);
+                }
+            }
+            // The toml crate's message carries a source snippet over several lines; the first says it.
+            let e = e.to_string();
+            return Err(tr!(formula_file_not_formulas, why = e.lines().next().unwrap_or("unreadable").trim()));
+        }
+    };
     if !file.format.is_empty() && file.format != FORMAT {
         return Err(tr!(formula_file_other_format, format = &file.format));
     }
@@ -407,19 +425,28 @@ pub(crate) fn load() -> (Vec<SavedFormula>, Option<String>) {
     }
 }
 
-/// [`load`] from `path`. A missing file is an empty library. A file that cannot be read or parsed
-/// is MOVED ASIDE (`formulas.unreadable.toml`, or `…-2`…) so the next save cannot destroy it.
+/// [`load`] from `path`. A missing file is an empty library. A file that does not parse is MOVED
+/// ASIDE (`formulas.unreadable.toml`, or `…-2`…) so the next save cannot destroy it; Import reads
+/// the entries of it that still read back ([`parse_file`]).
 pub(crate) fn load_from(path: &Path) -> (Vec<SavedFormula>, Option<String>) {
-    let problem = match std::fs::read_to_string(path) {
+    let problem = match std::fs::read(path) {
         Err(e) if e.kind() == std::io::ErrorKind::NotFound => return (Vec::new(), None),
-        Err(e) => e.to_string(),
-        Ok(text) => match toml::from_str::<FormulaFile>(&text) {
+        // ⚠A file that cannot be READ right now (locked by a scanner, say) is not a damaged one:
+        // it was moved aside like one, and its good content left the library (review 2026-11-16).
+        // It is left where it is; a save merges with it then, and refuses while it stays unreadable.
+        Err(e) => {
+            crate::diag::log_line("formula", &format!("The formula library could not be read now ({e}); left as it is."));
+            return (Vec::new(), None);
+        }
+        Ok(bytes) => match std::str::from_utf8(&bytes).map_err(|e| e.to_string()).and_then(|text| {
+            toml::from_str::<FormulaFile>(text).map_err(|e| e.to_string().lines().next().unwrap_or("unreadable").trim().to_string())
+        }) {
             Ok(file) => {
                 let mut list: Vec<SavedFormula> = file.formula.into_iter().filter_map(SavedFormula::tidy).collect();
                 sort(&mut list);
                 return (list, None);
             }
-            Err(e) => e.to_string().lines().next().unwrap_or("unreadable").trim().to_string(),
+            Err(e) => e,
         },
     };
     let aside = (1..100)
@@ -451,24 +478,36 @@ pub(crate) fn load_from(path: &Path) -> (Vec<SavedFormula>, Option<String>) {
     (Vec::new(), Some(note))
 }
 
-/// Write the library to [`library_path`].
-pub(crate) fn save(list: &[SavedFormula]) -> Result<(), String> {
+/// Write the library to [`library_path`], merged with the file as it is on disk: `base` is what
+/// this copy of the app last read or wrote, `ours` what it holds now. Returns the library written,
+/// which the caller keeps as both its list and its next base.
+///
+/// ⭐Review 2026-11-16 (finding 16): a save wrote this copy's list whole, so a second running copy's
+/// formulas, saved meanwhile, were erased by the first copy's next save.
+pub(crate) fn save_merged(base: &[SavedFormula], ours: &[SavedFormula]) -> Result<Vec<SavedFormula>, String> {
     let path = library_path().ok_or_else(|| tr!(formula_library_no_config_dir))?;
-    save_to(&path, list)
+    save_merged_to(&path, base, ours)
 }
 
-/// Write the library to `path`, atomically: a temp file beside it, then a rename over it, so a
-/// crash mid-write leaves the old library, not half of the new one.
+/// [`save_merged`] to `path`.
+pub(crate) fn save_merged_to(path: &Path, base: &[SavedFormula], ours: &[SavedFormula]) -> Result<Vec<SavedFormula>, String> {
+    use fractadyne_state::durable::{merge3, read_entries_on_disk, OnDisk};
+    let theirs: Vec<SavedFormula> = match read_entries_on_disk::<SavedFormula>(path, "formula").map_err(|e| e.to_string())? {
+        OnDisk::Missing => Vec::new(),
+        // Tidied as a load tidies, so an entry this copy holds compares equal to itself on disk.
+        OnDisk::Entries(v) => v.into_iter().filter_map(SavedFormula::tidy).collect(),
+        OnDisk::NotReadable => base.to_vec(),
+    };
+    let mut merged = merge3(base, ours, &theirs);
+    sort(&mut merged);
+    save_to(path, &merged)?;
+    Ok(merged)
+}
+
+/// Write the library to `path`, atomically ([`fractadyne_state::durable::write_atomic`]): a temp
+/// file beside it, flushed, then renamed over it, so a crash mid-write leaves the old library.
 pub(crate) fn save_to(path: &Path, list: &[SavedFormula]) -> Result<(), String> {
-    if let Some(parent) = path.parent() {
-        std::fs::create_dir_all(parent).map_err(|e| e.to_string())?;
-    }
-    let tmp = path.with_extension("toml.tmp");
-    std::fs::write(&tmp, file_text(list)).map_err(|e| e.to_string())?;
-    std::fs::rename(&tmp, path).map_err(|e| {
-        let _ = std::fs::remove_file(&tmp);
-        e.to_string()
-    })
+    fractadyne_state::durable::write_atomic(path, file_text(list).as_bytes()).map_err(|e| e.to_string())
 }
 
 #[cfg(test)]

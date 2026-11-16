@@ -698,6 +698,8 @@ dlg-reset-warning = Ini menghapus secara permanen semua data Fractadyne yang ter
 # The list's items, each after a bullet.
 dlg-reset-session = sesi yang tersimpan (tampilan saat ini, pewarnaan, preferensi)
 dlg-reset-bookmarks = semua markah beserta gambar mininya
+dlg-reset-gradients = semua gradien tersimpan
+dlg-reset-formulas = pustaka rumus
 dlg-reset-refcache = cache orbit referensi (dibangun ulang saat Anda mengunjungi kembali lokasi)
 # A label over the folder that is deleted.
 dlg-reset-location = Lokasi
@@ -897,6 +899,22 @@ dlg-export-export-hover = Render dan simpan ke folder di atas (nama otomatis)
 
 # A notice shown once after starting, when the saved session comes from a newer version of the app. $saved and $handled: version numbers of the session file's format (1, 2…).
 app-state-newer = Sesi ini disimpan oleh Fractadyne yang lebih baru (state v{ $saved }; build ini menangani v{ $handled }). Beberapa pengaturan mungkin tidak berlaku, dan saat disimpan, sesi ini akan ditulis ulang dalam format build ini.
+# After starting, when the saved session could not be read at all.
+app-state-unreadable = Sesi yang tersimpan tidak dapat dibaca, sehingga Fractadyne dimulai dengan pengaturan bawaannya.
+# After starting, when part of the saved session could not be read. $settings: the settings' names as the file writes them (English tokens such as "aa, theme").
+app-state-partial = Sebagian sesi yang tersimpan tidak dapat dibaca. Pengaturan berikut kembali ke nilai bawaannya: { $settings }.
+# After starting, when the saved session had characters that could not be read (they were replaced).
+app-state-repaired = Sesi yang tersimpan berisi karakter yang tidak dapat dibaca; karakter tersebut telah diganti.
+# After one of the notices above. $path: where the file, as it was, is kept.
+app-state-kept = Berkas aslinya disimpan sebagai { $path }.
+# After starting, when some saved bookmarks could not be read. $count: how many.
+app-bookmarks-partial = { $count } markah tersimpan tidak dapat dibaca dan dilewati.
+# After starting, when the bookmarks file could not be read at all.
+app-bookmarks-unreadable = Berkas markah tidak dapat dibaca, sehingga daftar markah dimulai kosong.
+# After starting, when some saved gradients could not be read. $count: how many.
+app-gradients-partial = { $count } gradien tersimpan tidak dapat dibaca dan dilewati.
+# After starting, when the saved gradients file could not be read at all.
+app-gradients-unreadable = Berkas gradien tersimpan tidak dapat dibaca, sehingga pustaka gradien dimulai kosong.
 # The title of the notice that says the accelerated build's arithmetic libraries are found again (its text comes from elsewhere).
 app-notice-mpfr-restored-title = Aritmetika terakselerasi dipulihkan
 # After Fractadyne restarted itself because the graphics driver reset the GPU.

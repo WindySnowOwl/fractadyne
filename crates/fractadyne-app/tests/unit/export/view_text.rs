@@ -249,3 +249,32 @@ fn a_view_palette_is_read_by_id_then_by_its_old_number() {
     assert_eq!(view_palette(None, None), ViewPalette::Absent);
     assert_eq!(view_palette(None, Some("ten")), ViewPalette::Absent);
 }
+
+/// Review 2026-11-16 (finding 7): the writer took its digest over the raw text and the reader over
+/// the text as `clean` repairs it, so a no-break space in the notes, or a curly quote or a dash in a
+/// Life pattern's name, made the app's own file report itself damaged.
+#[test]
+fn a_view_with_characters_the_reader_repairs_passes_its_own_checksum() {
+    let with = |extra: &str| format!("{}{extra}", bare());
+    for extra in [
+        "notes=a\u{a0}b\n",
+        "pattern_name=Bill\u{2019}s gun \u{2013} p30\n",
+        "notes=\u{201c}quoted\u{201d}\u{00ad}\n",
+    ] {
+        let w = wrap_view_text(&with(extra));
+        assert_eq!(view_checksum_state(&w), ChecksumState::Match, "own file failed its checksum with {extra:?}");
+    }
+}
+
+/// The Share dialog's Save writes the box's location when it is another view than this one: two
+/// texts of the same view differ only in when and by which build they were written.
+#[test]
+fn same_view_ignores_when_it_was_written_but_not_where() {
+    use crate::export::same_view;
+    let a = bare();
+    let later = format!("{a}saved_unix=1900000000\nsaved=2030-03-17\nversion=9.9.9\nthumb=AAAA\n");
+    assert!(same_view(&a, &later));
+    assert!(same_view(&a, &wrap_view_text(&a)), "the wrapped text is the same view");
+    let elsewhere = a.replace("center_im=0.13", "center_im=0.14");
+    assert!(!same_view(&a, &elsewhere));
+}

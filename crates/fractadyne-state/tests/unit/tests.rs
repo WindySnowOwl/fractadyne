@@ -186,12 +186,261 @@ fn corrupt_file_falls_back_to_defaults_and_says_so() {
     assert_eq!(status, StateLoad::Unreadable);
 }
 
-// A session missing a REQUIRED field (one without `serde(default)`) is the harness hazard:
-// it looks like a plausible file, parses as nothing, and renders with defaults.
+// A session missing a REQUIRED field (one without `serde(default)`) is the harness hazard: it
+// looks like a plausible file and renders with defaults. Since 2026-11-16 what it has is kept,
+// and the keys it lacks are NAMED, so the status still says the file was not all there.
 #[test]
-fn partial_session_is_unreadable_not_silently_default() {
-    let (_s, status) = parse_with_status("center_x = -0.5\ncenter_y = 0.0\n");
-    assert_eq!(status, StateLoad::Unreadable);
+fn partial_session_is_named_not_silently_default() {
+    let (s, status) = parse_with_status("center_x = -0.25\ncenter_y = 0.5\n");
+    let mut want: Vec<String> =
+        ["auto_iter", "cycle", "max_iter", "offset", "palette_idx", "units_per_pixel"].map(String::from).to_vec();
+    let StateLoad::Partial(mut got) = status else { panic!("{status:?}") };
+    got.sort();
+    want.sort();
+    assert_eq!(got, want, "the required keys the file lacks are named");
+    assert_eq!((s.center_x, s.center_y), (-0.25, 0.5), "what the file has is kept");
+}
+
+/// Review finding 1 (2026-11-16): ONE value of the wrong type made the whole session unreadable,
+/// the app started on defaults, and the first save replaced every setting the user had. Now that
+/// key alone goes back to its default and is named.
+#[test]
+fn one_bad_value_costs_that_setting_alone() {
+    let text = "state_version = 1\ncenter_x = -0.75\ncenter_y = 0.1\nunits_per_pixel = 0.001\n\
+                max_iter = 4321\nauto_iter = false\npalette_idx = 1\npalette_id = \"ice\"\ncycle = 0.37\n\
+                offset = 0.25\ntheme = \"light\"\nexport_width = 1234\nlanguage = \"de\"\naa = \"three\"\n";
+    let (s, status) = parse_with_status(text);
+    assert_eq!(status, StateLoad::Partial(vec!["aa".to_string()]));
+    assert_eq!(s.aa, SessionState::default().aa, "the bad key is back at its default");
+    assert_eq!((s.max_iter, s.theme.as_str(), s.export_width, s.language.as_str()), (4321, "light", 1234, "de"));
+    assert_eq!(s.coloring.palette_id, "ice", "a flattened coloring key is kept too");
+    assert!(!s.auto_iter);
+    // Anti-vacuity: none of those is the default.
+    let d = SessionState::default();
+    assert!(d.max_iter != 4321 && d.theme != "light" && d.export_width != 1234 && d.language != "de");
+}
+
+/// A gradient segment with a value out of its field's range (`blend` is a u8) costs the gradient,
+/// not the session.
+#[test]
+fn a_bad_gradient_segment_costs_the_gradient_alone() {
+    let text = "center_x = -0.5\ncenter_y = 0.0\nunits_per_pixel = 0.004\nmax_iter = 999\nauto_iter = true\n\
+                palette_idx = 0\ncycle = 0.27\noffset = 0.1\n\n[[custom_segments]]\nleft = 0.0\nmid = 0.5\n\
+                right = 1.0\nleft_color = [0.0, 0.0, 0.0, 1.0]\nright_color = [1.0, 1.0, 1.0, 1.0]\nblend = 300\n";
+    let (s, status) = parse_with_status(text);
+    assert_eq!(status, StateLoad::Partial(vec!["custom_segments".to_string()]));
+    assert_eq!(s.max_iter, 999);
+    assert!(s.coloring.custom_segments.is_empty());
+}
+
+/// A newer build's file that this build cannot read whole still says Newer (so the app warns), and
+/// still keeps what reads.
+#[test]
+fn a_newer_file_that_does_not_read_whole_keeps_what_reads() {
+    let text = format!(
+        "state_version = {}\ncenter_x = -0.5\ncenter_y = 0.0\nunits_per_pixel = 0.004\nmax_iter = 777\n\
+         auto_iter = true\npalette_idx = 0\ncycle = 0.27\noffset = 0.1\naa = \"three\"\n",
+        STATE_FORMAT_VERSION + 1
+    );
+    let (s, status) = parse_with_status(&text);
+    assert_eq!(status, StateLoad::Newer(STATE_FORMAT_VERSION + 1));
+    assert_eq!(s.max_iter, 777);
+}
+
+/// A file with a byte that is not UTF-8 (an edit in a program saving in the system's code page)
+/// read as NO file, and the next save replaced it. It now reads, says Partial, and a copy of it is
+/// kept before the app can save over it.
+#[test]
+fn a_session_that_is_not_utf8_is_read_and_kept() {
+    let t = TempConfig::new("not_utf8_test");
+    let mut bytes = b"center_x = -0.5\ncenter_y = 0.0\nunits_per_pixel = 0.004\nmax_iter = 888\nauto_iter = true\n\
+                      palette_idx = 0\ncycle = 0.27\noffset = 0.1\nexport_dir = 'D:\\caf"
+        .to_vec();
+    bytes.extend_from_slice(b"\xE9'\n");
+    let path = t.cfg.join("session.toml");
+    std::fs::write(&path, &bytes).unwrap();
+    let (s, status, kept) = load_for_app();
+    assert_eq!(status, StateLoad::Partial(Vec::new()));
+    assert_eq!(s.max_iter, 888);
+    let kept = kept.expect("a copy is kept");
+    assert_eq!(kept.file_name().unwrap(), "session.unreadable.toml");
+    assert_eq!(std::fs::read(&kept).unwrap(), bytes, "the copy is the file as it was");
+    // A second launch on the same file reuses the copy instead of making another.
+    let (_, _, again) = load_for_app();
+    assert_eq!(again.as_deref(), Some(kept.as_path()));
+    assert!(!t.cfg.join("session.unreadable-2.toml").exists());
+}
+
+/// The app's whole fix, through the real files: a damaged session is copied aside on load, so the
+/// save that follows cannot destroy it, and the save keeps every setting that read.
+#[test]
+fn a_damaged_session_is_kept_before_the_app_saves_over_it() {
+    let t = TempConfig::new("kept_test");
+    let path = t.cfg.join("session.toml");
+    let text = "center_x = -0.5\ncenter_y = 0.0\nunits_per_pixel = 0.004\nmax_iter = 4321\nauto_iter = true\n\
+                palette_idx = 0\ncycle = 0.27\noffset = 0.1\ntheme = \"light\"\naa = \"three\"\n";
+    std::fs::write(&path, text).unwrap();
+    let (s, status, kept) = load_for_app();
+    assert_eq!(status, StateLoad::Partial(vec!["aa".to_string()]));
+    save(&s).expect("save");
+    assert_eq!(std::fs::read_to_string(kept.expect("kept")).unwrap(), text, "the damaged file survives the save");
+    let (back, status) = load_with_status();
+    assert_eq!(status, StateLoad::Ok);
+    assert_eq!((back.max_iter, back.theme.as_str()), (4321, "light"));
+    // A readable session keeps no copy.
+    let (_, status, kept) = load_for_app();
+    assert_eq!((status, kept), (StateLoad::Ok, None));
+}
+
+/// Every field of the session, set to something other than its default, comes back through the
+/// real file. ⭐A struct literal with NO `..Default`: a field added to `SessionState` does not
+/// compile here until it is given a value, so no setting can be added without this test covering
+/// its round trip (review 2026-11-16: no test held every field at once).
+#[test]
+fn every_session_field_survives_save_and_reload() {
+    let _t = TempConfig::new("every_field_test");
+    let c = ColoringSpec {
+        palette_idx: 5,
+        palette_id: "ice".into(),
+        cycle: 0.123,
+        iter_div: 7,
+        offset: -0.5,
+        log_palette: true,
+        normalize_live: false,
+        normalize_fit: true,
+        light: true,
+        light_angle: 1.25,
+        light_height: 2.5,
+        de: true,
+        de_strength: 0.75,
+        de_width: 1.5,
+        color_method: "trap".into(),
+        stripe_freq: 3.5,
+        stripe_tail: true,
+        stripe_tail_len: 64,
+        trap_type: "cross".into(),
+        custom_palette: vec![[0.0, 0.1, 0.2, 0.3], [1.0, 0.4, 0.5, 0.6]],
+        custom_palette_flat: true,
+        custom_segments: vec![PaletteSegment {
+            left: 0.0,
+            mid: 0.25,
+            right: 1.0,
+            left_color: [0.1, 0.2, 0.3, 1.0],
+            right_color: [0.9, 0.8, 0.7, 0.5],
+            blend: 5,
+            space: 2,
+            blend_params: [0.1, 0.2, 0.3, 0.4],
+        }],
+        use_custom_palette: true,
+        use_duotone: true,
+        use_binary: true,
+        duotone_lo: [0.1, 0.2, 0.3],
+        duotone_hi: [0.7, 0.8, 0.9],
+        interior: "trap".into(),
+        interior_palette: "jellyfish".into(),
+        interior_color: [0.3, 0.2, 0.1],
+        interior_fit: true,
+        palette_aa: false,
+    };
+    let want = SessionState {
+        state_version: STATE_FORMAT_VERSION,
+        center_x: 0.25,
+        center_y: -0.125,
+        center_x_str: "2.5e-1".into(),
+        center_y_str: "-1.25e-1".into(),
+        center_expr: "center_re_expr=1/3\ncenter_im_expr=0\n".into(),
+        units_per_pixel: 1.5,
+        units_per_pixel_e: -4000,
+        max_iter: 123_456,
+        auto_iter: false,
+        coloring: c,
+        zoom_rate: 2.5,
+        click_zoom: true,
+        click_zoom_factor: 25.0,
+        click_zoom_snap: true,
+        snap_zoom: false,
+        autopilot_dive_log2: 1234.5,
+        autopilot_priority: "quality".into(),
+        autopilot_target: "misiurewicz".into(),
+        work_budget_scale: 3.0,
+        min_motion_res: 0.75,
+        prefer_detail: true,
+        live_worker_gpu: "off".into(),
+        show_timestamp: true,
+        show_zoom_target: true,
+        live_panel: "panel".into(),
+        live_panel_corner: "br".into(),
+        live_panel_opacity: 0.5,
+        aa: 8,
+        finish_sound: false,
+        fps_cap: 0.0,
+        orbit_cache_mb: 2048,
+        export_width: 7680,
+        export_ss: 3,
+        export_format: "exr".into(),
+        snapshot_mode: "render".into(),
+        mpfr_warning_suppressed: true,
+        mpfr_present_last: Some(false),
+        export_dir: Some("D:/out".into()),
+        last_dir: Some("D:/in".into()),
+        last_script: Some("D:/tour.toml".into()),
+        welcome_seen: true,
+        export_dual_mode: "separate".into(),
+        export_aspect: "16:9".into(),
+        share_include_thumb: false,
+        export_open_after: true,
+        export_all_gpus: true,
+        show_location: true,
+        palette_anim: "pingpong".into(),
+        palette_anim_speed: 0.5,
+        light_anim: true,
+        de_anim: true,
+        minimap: true,
+        right_panel_open: false,
+        perf_panel: true,
+        fractal: "Burning Ship".into(),
+        custom_formula: "z = z^2 + c\n; a comment".into(),
+        custom_params: vec![[0.5, -0.25]],
+        formula_textbook: true,
+        life: "rule=B3/S23\npattern=bo$2bo$3o!\n".into(),
+        lsystem: "lsystem=name x\\naxiom F\n".into(),
+        julia_mode: true,
+        julia_c_re: -0.4,
+        julia_c_im: 0.6,
+        dual: true,
+        dual_split: 0.4,
+        julia_view_center_re: "1.5e-1".into(),
+        julia_view_center_im: "-2.5e-1".into(),
+        julia_view_upp_log2: Some(-30.5),
+        series_approx: false,
+        glitch_correct: false,
+        use_bla: false,
+        watermark: false,
+        ui_scale: 1.25,
+        theme: "light".into(),
+        update_track: "beta".into(),
+        update_check_on_launch: true,
+        language: "ja".into(),
+        language_system_seen: "ja-JP".into(),
+        decimal_mark: ",".into(),
+        show_watermark: false,
+        crash_prompt_disabled: true,
+        show_orbits: true,
+        orbit_normalize: true,
+        orbit_anim: true,
+        orbit_anim_speed: 3.0,
+    };
+    save(&want).expect("save");
+    let (got, status) = load_with_status();
+    assert_eq!(status, StateLoad::Ok);
+    assert_eq!(got, want, "a field did not come back as it was saved");
+    // Anti-vacuity, field by field through the TOML: every key differs from the default's.
+    let d = toml::Value::try_from(SessionState::default()).unwrap();
+    let w = toml::Value::try_from(&want).unwrap();
+    let (toml::Value::Table(d), toml::Value::Table(w)) = (d, w) else { panic!() };
+    let same: Vec<&String> =
+        w.iter().filter(|(k, v)| *k != "state_version" && d.get(*k) == Some(*v)).map(|(k, _)| k).collect();
+    assert!(same.is_empty(), "these fields are at their default, so the test cannot see them: {same:?}");
 }
 
 /// `FRACTADYNE_CONFIG_DIR` is process-global and `cargo test` runs tests on parallel
@@ -265,7 +514,7 @@ fn a_setting_survives_save_and_reload() {
         },
         ..SessionState::default()
     };
-    save(&want);
+    save(&want).expect("save");
     assert!(t.cfg.join("session.toml").is_file(), "save() wrote no session file");
 
     let (got, status) = load_with_status();

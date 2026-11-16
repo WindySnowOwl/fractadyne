@@ -705,6 +705,8 @@ dlg-reset-warning = Це остаточно видалить усі збереж
 # The list's items, each after a bullet.
 dlg-reset-session = збережений сеанс (поточний вигляд, розфарбування, параметри)
 dlg-reset-bookmarks = усі закладки та їхні мініатюри
+dlg-reset-gradients = усі збережені градієнти
+dlg-reset-formulas = бібліотеку формул
 dlg-reset-refcache = кеш опорних орбіт (відбудовується, коли ви знову відвідуєте розташування)
 # A label over the folder that is deleted.
 dlg-reset-location = Розташування
@@ -904,6 +906,34 @@ dlg-export-export-hover = Рендерити та зберегти в теку �
 
 # A notice shown once after starting, when the saved session comes from a newer version of the app. $saved and $handled: version numbers of the session file's format (1, 2…).
 app-state-newer = Цей сеанс збережено новішою версією Fractadyne (стан v{ $saved }; ця збірка підтримує v{ $handled }). Деякі налаштування можуть не застосуватися, а під час збереження сеанс буде переписано у форматі цієї збірки.
+# After starting, when the saved session could not be read at all.
+app-state-unreadable = Не вдалося прочитати збережений сеанс, тому Fractadyne запущено з типовими налаштуваннями.
+# After starting, when part of the saved session could not be read. $settings: the settings' names as the file writes them (English tokens such as "aa, theme").
+app-state-partial = Частину збереженого сеансу не вдалося прочитати. Ці налаштування повернулися до типових значень: { $settings }.
+# After starting, when the saved session had characters that could not be read (they were replaced).
+app-state-repaired = У збереженому сеансі були символи, які не вдалося прочитати; їх замінено.
+# After one of the notices above. $path: where the file, as it was, is kept.
+app-state-kept = Вихідний файл збережено як { $path }.
+# After starting, when some saved bookmarks could not be read. $count: how many.
+app-bookmarks-partial =
+    { $count ->
+        [one] Не вдалося прочитати { $count } збережену закладку; її пропущено.
+        [few] Не вдалося прочитати { $count } збережені закладки; їх пропущено.
+        [many] Не вдалося прочитати { $count } збережених закладок; їх пропущено.
+       *[other] Не вдалося прочитати { $count } збереженої закладки; їх пропущено.
+    }
+# After starting, when the bookmarks file could not be read at all.
+app-bookmarks-unreadable = Не вдалося прочитати файл закладок, тому список закладок починається порожнім.
+# After starting, when some saved gradients could not be read. $count: how many.
+app-gradients-partial =
+    { $count ->
+        [one] Не вдалося прочитати { $count } збережений градієнт; його пропущено.
+        [few] Не вдалося прочитати { $count } збережені градієнти; їх пропущено.
+        [many] Не вдалося прочитати { $count } збережених градієнтів; їх пропущено.
+       *[other] Не вдалося прочитати { $count } збереженого градієнта; їх пропущено.
+    }
+# After starting, when the saved gradients file could not be read at all.
+app-gradients-unreadable = Не вдалося прочитати файл збережених градієнтів, тому бібліотека градієнтів починається порожньою.
 # The title of the notice that says the accelerated build's arithmetic libraries are found again (its text comes from elsewhere).
 app-notice-mpfr-restored-title = Прискорену арифметику відновлено
 # After Fractadyne restarted itself because the graphics driver reset the GPU.

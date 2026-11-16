@@ -2280,9 +2280,14 @@ pub(crate) const ORBIT_MAX: usize = 512;
 /// cursor; bounded for cost. Cached so it only recomputes when the cursor/view moves.
 pub(crate) const ORBIT_MAX_DEEP: u32 = 8192;
 
-/// Upper bound on a loaded/pasted `.fdn` location blob (untrusted input). A real one is
-/// well under 1 KB; this caps parse work without rejecting anything legitimate.
-pub(crate) const SHARE_MAX: usize = 256 * 1024;
+/// Upper bound on a loaded/pasted `.fdn` location blob (untrusted input). An ordinary one is well
+/// under 1 KB; this caps parse work without rejecting anything legitimate.
+///
+/// ⛔**It must hold everything the app itself writes** (review 2026-11-16, finding 14): at 256 KiB a
+/// Life view's inline pattern (`MAX_VIEW_PATTERN`, 128 KiB) plus a custom gradient (up to ~86 KB at
+/// 512 segments) plus a thumbnail (~66 KB) came to ~280 KB, and the app refused its own file and hid
+/// it from the gallery. 1 MiB holds the largest of each (an L-system's `MAX_VIEW_SYSTEM` included).
+pub(crate) const SHARE_MAX: usize = 1024 * 1024;
 
 
 // ----------------------------------------------------------------------------

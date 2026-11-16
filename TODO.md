@@ -7492,6 +7492,36 @@ Mockups: [design/mockups/](design/mockups/).
   line, empty, too large; `.kfr`: the Re/Im/Zoom lines missing, or the value that does not read,
   quoted). The `.kfr` importer's failure gives the same verdict plus how the file was read.
   2 changed + 13 new messages in 15 languages; uitest screens `txt-choice` and `txt-unreadable`.
+- [x] **Saving and reopening state: an adversarial review, and its 19 findings fixed** (user,
+  2026-11-16: "Perform an adversarial review of file and interactive parameters storage and
+  retrieval. Confirm parameters survive round trip, that all necessary states are saved and restored
+  properly", then "Fix these issues"). Live-confirmed before the fix: one wrong-type value in
+  `session.toml` (a plain launch + WM_CLOSE against a throwaway config dir; harness runs never
+  autosave) replaced every setting with defaults, as did a newer version's unreadable file. Fixed on
+  `fix/persistence-review`:
+  - `fractadyne_state::durable`: atomic writes (temp named for the process, `sync_all`, rename),
+    `keep_copy` of a file not taken in whole, `salvage_entries`, and a three-way `merge3` with the
+    file on disk at each library save (two running copies).
+  - Session: salvaged key by key (`StateLoad::Partial`, names the keys), read even when not UTF-8, a
+    copy kept (`session.unreadable.toml` / `session.newer.toml`) and a notice; `session_sanitize`
+    holds every number to the ranges the app sets (`aa`, export size, speeds, NaN Julia c…); new
+    fields `center_expr` and the Julia pane camera; the save error logged once.
+  - Bookmarks / gradients / formulas: salvage + kept copy + notice, atomic, merged with disk; a
+    locked file is left alone and a save refuses over it; thumbnail captures keyed by bookmark, not
+    index; thumbnail ids sanitized; Reset lists and clears gradients and formulas; a failed gradient
+    save no longer toasts "saved"; Import salvages a formula file's readable entries.
+  - Views: exports embed the view they were started on (`export_meta`, `ExportPrep`); `dual=` and
+    the Julia pane keys; a Separate export's `_julia` file is a Julia view; NaN zoom / constant
+    refused and never written; the checksum is taken over the `clean`ed text; paste and gallery doors
+    checked; Share Save writes the box, "Use current" wraps; notes in any script (EXR as marked
+    UTF-8); `SHARE_MAX` 1 MiB and the L-system writer capped at the reader's 512 KiB; session zoom
+    cap = `MAX_LOAD_OCTAVES`; a formula start view's center never cut.
+  - KF / Imagina: `KfrView::zoom_log2` from the text (`log2_of_positive_text`), so past 1e300× the
+    depth is the file's (Imagina past 1e308 imported at all).
+  Tests: every `SessionState` field round-trips through the real file (a struct literal with no
+  `..Default`, so a new field cannot skip it); salvage, kept copy, merge, atomic-write, loader,
+  formula-merge, checksum and KF/Imagina depth tests; selftest "a dual view carries both panes"
+  (dual round trip, `_julia` file, pressed view, NaN refused). 10 new messages in 15 languages.
 - [ ] **Find minibrot center (M) frames Multibrot 3-8 minibrots too** (found 2026-11-16 by me, while
   measuring). Deferred to after 0.3.0 stable (feature freeze). `nucleus_size` is quadratic only, so on
   a Multibrot the jump recenters but stays at the current zoom, and `--find-minibrot` prints no size or

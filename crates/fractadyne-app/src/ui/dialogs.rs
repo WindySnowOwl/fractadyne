@@ -870,7 +870,9 @@ impl FractadyneApp {
                 ui.horizontal(|ui| {
                     copy = ui.button(format!("{} {}", crate::icons::COPY, tr!(dlg_copy))).on_hover_text(tr!(dlg_share_copy_hover)).clicked();
                     if ui.button(tr!(dlg_use_current)).clicked() {
-                        self.share.text = self.view_metadata();
+                        // Wrapped, as the dialog opens with it: bare, a later Copy carried no
+                        // checksum, so damage on the way could not be noticed (review finding 13).
+                        self.rebuild_share_text();
                         self.share.msg = None;
                     }
                     save = ui.button(format!("{} {}", crate::icons::SAVE, tr!(dlg_share_save))).clicked();
@@ -1289,6 +1291,10 @@ impl FractadyneApp {
                 ui.add_space(2.0);
                 ui.label(format!("• {}", tr!(dlg_reset_session)));
                 ui.label(format!("• {}", tr!(dlg_reset_bookmarks)));
+                // The whole config folder goes, so these do too: the list said nothing of them
+                // (review finding 3).
+                ui.label(format!("• {}", tr!(dlg_reset_gradients)));
+                ui.label(format!("• {}", tr!(dlg_reset_formulas)));
                 ui.label(format!("• {}", tr!(dlg_reset_refcache)));
                 ui.add_space(6.0);
                 ui.label(egui::RichText::new(tr!(dlg_reset_location)).weak().small());
@@ -1327,6 +1333,11 @@ impl FractadyneApp {
                     // Don't recreate what we just deleted; reflect the cleared bookmarks in the UI.
                     self.suppress_autosave = true;
                     self.bookmarks.clear();
+                    // ⚠The libraries too: kept in memory, the next save of either brought every
+                    // deleted entry back (review finding 3).
+                    self.saved_gradients.clear();
+                    self.saved_formulas.clear();
+                    self.library_base.clear();
                     // The orbit cache lived in that directory too: drop its index so a later
                     // lookup does not hand out paths that no longer exist.
                     crate::refcache_persist::set_dir_override(None);
@@ -2130,8 +2141,14 @@ impl FractadyneApp {
             self.scan_gallery();
         }
         if let Some(meta) = to_open {
-            self.load_view_metadata(&meta);
-            self.export.status = Some(tr!(dlg_gallery_loaded));
+            // Checked, and its report said, like File ▸ Open (review finding 7): this door threw both
+            // away. `None` = the checksum did not match and the prompt has it.
+            if let Some(report) = self.load_view_checked(&meta, tr!(dlg_gallery_title)) {
+                self.export.status = Some(match report.note() {
+                    None => tr!(dlg_gallery_loaded),
+                    Some(n) => format!("{} {n}", tr!(dlg_gallery_loaded)),
+                });
+            }
         }
         // Lazily decode one thumbnail per frame so scanning a folder never freezes.
         if let Some(entry) = self.gallery.entries.iter_mut().find(|e| !e.thumb_tried) {

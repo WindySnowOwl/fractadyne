@@ -59,6 +59,38 @@ published as the pre-releases `v0.2.41-beta.1` to `v0.2.41-beta.150`, and a "bet
 
 Changes after 0.3.0-beta.1:
 
+- **Saved settings, bookmarks and locations survive damage and come back as saved (after
+  0.3.0-beta.27).** A review of how Fractadyne saves and reopens its state found these, now fixed:
+  - One value the app could not read in the saved session (a hand edit, a damaged file, or a file
+    from a newer version) reset every setting, and the next save made that permanent. Now only that
+    setting goes back to its default, the file as it was is kept beside it
+    (`session.unreadable.toml` or `session.newer.toml`), and a notice says which settings changed.
+  - The same for bookmarks and saved gradients: one damaged entry emptied the list, and the next
+    bookmark added replaced the whole file. The entries that read are kept, with a copy of the file.
+  - Bookmarks and gradients are saved the way the session is, so a crash or a full disk during a save
+    can no longer leave half a file; and two copies of Fractadyne open at once no longer erase each
+    other's bookmarks, gradients or formulas.
+  - "Reset everything" says it also deletes the saved gradients and the formula library, and they no
+    longer come back after it.
+  - An exported image of a deep view embeds the view it shows, even when you kept exploring while
+    its reference was built.
+  - The dual view's Julia pane keeps its own position across a restart and in a saved view, and a
+    dual export reopens as the dual view (a separate export's `_julia` image as the Julia set it
+    shows).
+  - A Kalles Fraktaler location deeper than 1e300× opens at its depth instead of at 1e300×, and an
+    Imagina one deeper than 1e308× imports instead of being refused.
+  - A location whose zoom or Julia constant is not a number no longer opens to a black screen, and
+    the session's settings are held to the ranges the app can set.
+  - Fractadyne's own location files no longer report themselves damaged when their notes, or a Life
+    pattern's name, hold a curly quote, a dash or a no-break space. A pasted location and a gallery
+    entry are checked for damage as an opened file is. In Share, Save writes the location in the box,
+    and "Use current" fills the box with a checksummed copy.
+  - Notes can be written in any script; they were limited to Western European letters.
+  - Also: a center entered as an expression stays exact after a restart; very large L-system and
+    Life locations open; a formula's very deep starting view keeps its exponent; the gallery lists
+    `.fdn` files saved in UTF-16; a bookmark's thumbnail always goes to that bookmark; a damaged
+    bookmarks file cannot make a delete reach outside the thumbnails folder; and a failed gradient
+    save no longer says it saved.
 - **Open a location saved as .txt (after 0.3.0-beta.27).** Fractal Forums accepts .txt attachments
   but not .fdn, so locations shared there arrive as `name.fdn.txt`. File ▸ Open view or location,
   Load location and Import KF location now take .txt files too. Fractadyne reads the text and tells

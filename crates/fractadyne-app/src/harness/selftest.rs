@@ -9996,6 +9996,88 @@ zoom = \"1e94\"
                 self.fractal = FractalKind::Mandelbrot;
             }
 
+            // Review 2026-11-16, findings 4, 6 and 8, through the real writer and reader:
+            // - a dual view carries its layout and the Julia pane's own camera, and a Separate
+            //   export's `_julia` file describes the Julia picture it holds;
+            // - an export embeds the view it was STARTED on, not the live one (a deep export's
+            //   reference builds for minutes while the user explores);
+            // - a zoom or a Julia constant that is not a number is refused, and never written.
+            {
+                let saved = (self.dual, self.julia_mode, self.julia_c, self.dual_split, self.viewport.clone(), self.julia_viewport.clone());
+                self.fractal = FractalKind::Mandelbrot;
+                self.dual = true;
+                self.julia_mode = false;
+                self.julia_c = (-0.4, 0.6);
+                self.dual_split = 0.4;
+                self.viewport.center_x = fractadyne_core::parse_bf("-0.75").unwrap();
+                self.viewport.center_y = fractadyne_core::parse_bf("0.1").unwrap();
+                self.viewport.units_per_pixel = fractadyne_core::FloatExp::from_f64(1.0).mul_pow2(-40.0);
+                self.julia_viewport.center_x = fractadyne_core::parse_bf("0.125").unwrap();
+                self.julia_viewport.center_y = fractadyne_core::parse_bf("-0.25").unwrap();
+                self.julia_viewport.units_per_pixel = fractadyne_core::FloatExp::from_f64(1.0).mul_pow2(-30.0);
+                let blob = self.view_metadata();
+                // Scramble: single view, the pane at home, another split.
+                self.dual = false;
+                self.dual_split = 0.5;
+                self.julia_viewport.reset_to(0.0, 0.0);
+                let rt = self.load_view_metadata(&blob);
+                let pane_ok = self.dual
+                    && !self.julia_mode
+                    && (self.dual_split - 0.4).abs() < 1e-6
+                    && (fractadyne_core::to_f64(&self.julia_viewport.center_x) - 0.125).abs() < 1e-15
+                    && (fractadyne_core::to_f64(&self.julia_viewport.center_y) + 0.25).abs() < 1e-15
+                    && (self.julia_viewport.units_per_pixel.log2() + 30.0).abs() < 1e-9;
+                let dual_ok = rt.note().is_none() && blob.contains("\ndual=1\n") && pane_ok;
+                // Separate export: the `_julia` file is the Julia picture, a single Julia view at the pane.
+                let meta = self.export_meta(&self.viewport.clone(), false, Some(&self.julia_viewport.clone()), crate::DualExport::Separate);
+                let jfile = meta.julia.clone().unwrap_or_default();
+                let separate_ok = meta.main.contains("\ndual=1\n")
+                    && jfile.contains("\njulia=1\n")
+                    && !jfile.contains("dual=")
+                    && crate::meta_get(&jfile, "center_re").starts_with("1.25");
+                // The view an export was started on: another viewport than the live one.
+                let mut pressed = self.viewport.clone();
+                pressed.center_x = fractadyne_core::parse_bf("-1.25").unwrap();
+                let pm = self.export_meta(&pressed, false, None, crate::DualExport::SideBySide);
+                let pressed_ok = crate::meta_get(&pm.main, "center_re").starts_with("-1.25")
+                    && fractadyne_core::to_f64(&self.viewport.center_x) == -0.75;
+                // Not a number: refused on reading (the zoom and the constant stay), never written.
+                let (upp_was, c_was) = (self.viewport.units_per_pixel, self.julia_c);
+                let nan = blob
+                    .lines()
+                    .map(|l| {
+                        if l.starts_with("upp_log2=") {
+                            "upp_log2=NaN"
+                        } else if l.starts_with("julia_c_re=") {
+                            "julia_c_re=inf"
+                        } else {
+                            l
+                        }
+                    })
+                    .collect::<Vec<_>>()
+                    .join("\n");
+                let nr = self.load_view_metadata(&nan);
+                let nan_refused = self.viewport.units_per_pixel.log2() == upp_was.log2()
+                    && self.julia_c == c_was
+                    && nr.clamped.contains(&"zoom depth")
+                    && nr.clamped.contains(&"Julia constant");
+                self.julia_c = (f64::NAN, 0.0);
+                let unwritten = !self.view_metadata().contains("julia_c_re=");
+                self.julia_c = c_was;
+                (self.dual, self.julia_mode, self.julia_c, self.dual_split, self.viewport, self.julia_viewport) = saved;
+                push_check(&mut checks, &mut last_check_t, SelfCheck {
+                    category: "View format",
+                    name: "a dual view carries both panes".into(),
+                    params: "dual view → scramble → load; Separate export; a pressed view; NaN zoom and inf constant".into(),
+                    result: format!(
+                        "dual round trip {dual_ok}, separate julia file {separate_ok}, pressed view {pressed_ok}, \
+                         not-a-number refused {nan_refused}, never written {unwritten}"
+                    ),
+                    threshold: "layout + pane camera restored; _julia file = the Julia view; export = pressed view; NaN/inf refused and not written",
+                    pass: dual_ok && separate_ok && pressed_ok && nan_refused && unwritten,
+                });
+            }
+
             // ⛔A location imported from another renderer keeps the iteration count it asks for. The
             // .kfr importer clamped it to 50,000 while the Imagina one did not, so the corpus's
             // 1.2e148 .kfr, which asks 800,000, rendered every pixel at the cap (near-black) — and

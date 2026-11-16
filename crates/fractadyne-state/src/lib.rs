@@ -7,6 +7,8 @@
 use serde::{Deserialize, Serialize};
 use std::path::PathBuf;
 
+pub mod durable;
+
 /// On-disk schema version of the persisted session. Bump this when a change could make an
 /// **older** build misread a **newer** file (e.g. a field's meaning changes). The schema is
 /// otherwise additive — new fields use `#[serde(default)]`, so a newer file still loads
@@ -217,6 +219,12 @@ pub struct SessionState {
     pub center_x_str: String,
     #[serde(default)]
     pub center_y_str: String,
+    /// The center's source expression, when it was entered as one: the `center_re_expr=` /
+    /// `center_im_expr=` (+ `center_re_offset=` / `center_im_offset=`) lines a view carries. Restored
+    /// so a deeper zoom after a restart stays exact, re-derived from the expression instead of
+    /// frozen at the digits `center_x_str` was written with. Empty for a plain decimal center.
+    #[serde(default)]
+    pub center_expr: String,
     /// Scale mantissa. Paired with `units_per_pixel_e` (a base-2 exponent) so deep-zoom
     /// locations past `f64`'s ~1e308× range survive quit/restart. Old saves (no exponent
     /// field) stored the full `f64` value here with an implicit exponent of 0 — still valid.
@@ -458,6 +466,15 @@ pub struct SessionState {
     /// Dual-view split position as a fraction of the width (draggable separator). Default 0.5.
     #[serde(default = "default_dual_split")]
     pub dual_split: f32,
+    /// The dual view's Julia pane camera, which pans and zooms on its own: its center at full
+    /// precision and its scale as `log2(units per pixel)`. Empty / `None` = the pane's home view, as
+    /// in a session from before it was kept (2026-11-16: a restart reset the pane, review finding 8).
+    #[serde(default)]
+    pub julia_view_center_re: String,
+    #[serde(default)]
+    pub julia_view_center_im: String,
+    #[serde(default)]
+    pub julia_view_upp_log2: Option<f64>,
     /// Series approximation (iteration-skipping) preference. Default on.
     #[serde(default = "default_true")]
     pub series_approx: bool,
@@ -729,6 +746,7 @@ impl Default for SessionState {
             center_y: 0.0,
             center_x_str: String::new(),
             center_y_str: String::new(),
+            center_expr: String::new(),
             units_per_pixel: 3.0 / 720.0,
             units_per_pixel_e: 0,
             max_iter: 256,
@@ -789,6 +807,9 @@ impl Default for SessionState {
             julia_c_im: default_julia_c_im(),
             dual: false,
             dual_split: default_dual_split(),
+            julia_view_center_re: String::new(),
+            julia_view_center_im: String::new(),
+            julia_view_upp_log2: None,
             series_approx: true,
             glitch_correct: true,
             use_bla: true,
@@ -866,16 +887,51 @@ pub enum StateLoad {
     /// (its `state_version`, which exceeds [`STATE_FORMAT_VERSION`]) — some settings may
     /// not apply, and re-saving will downgrade the file to this build's format.
     Newer(u32),
+    /// Loaded, but some of it did not read: these keys (as the file names them) went back to their
+    /// defaults, and every other setting in the file was kept. Empty when every key read but the
+    /// file was not UTF-8 (its unreadable bytes are replaced). Before 2026-11-16 one such value
+    /// made the whole file [`StateLoad::Unreadable`], and the next save replaced every setting.
+    Partial(Vec<String>),
+}
+
+impl StateLoad {
+    /// Whether the file on disk holds something this build did not take in, so it must be kept as
+    /// it was before a save replaces it ([`load_for_app`]).
+    pub fn file_needs_keeping(&self) -> bool {
+        matches!(self, StateLoad::Unreadable | StateLoad::Newer(_) | StateLoad::Partial(_))
+    }
 }
 
 /// Load the saved session together with a status describing whether this build can fully
-/// account for it. Missing/corrupt ⇒ defaults + `Fresh`; a newer-version file loads
-/// best-effort with `Newer(v)` so the app can warn.
+/// account for it. Missing ⇒ defaults + `Fresh`; a file that does not parse whole keeps every
+/// setting that reads (`Partial`); a newer-version file loads best-effort with `Newer(v)` so the
+/// app can warn. Reads only: [`load_for_app`] also keeps a copy of a file it could not take in.
 pub fn load_with_status() -> (SessionState, StateLoad) {
-    match state_path().and_then(|p| std::fs::read_to_string(p).ok()) {
-        Some(text) => parse_with_status(&text),
-        None => (SessionState::default(), StateLoad::Fresh),
+    let Some(bytes) = state_path().and_then(|p| std::fs::read(p).ok()) else {
+        return (SessionState::default(), StateLoad::Fresh);
+    };
+    // ⚠Not `read_to_string`: a file with one byte that is not UTF-8 (an edit in a program that
+    // saves in the system's code page) read as NO file, and the next save replaced it.
+    let (text, lossy) = durable::text_of(&bytes);
+    match parse_with_status(&text) {
+        (s, StateLoad::Ok) if lossy => (s, StateLoad::Partial(Vec::new())),
+        other => other,
     }
+}
+
+/// [`load_with_status`] for the app that will save over the file: when the file holds something
+/// this build did not take in (unreadable, partly read, or from a newer build), a copy of it is
+/// kept first (`session.unreadable.toml`, or `session.newer.toml`), and its path is returned so the
+/// user can be told where it is.
+pub fn load_for_app() -> (SessionState, StateLoad, Option<PathBuf>) {
+    let (s, status) = load_with_status();
+    let kept = if status.file_needs_keeping() {
+        let tag = if matches!(status, StateLoad::Newer(_)) { "newer" } else { "unreadable" };
+        state_path().and_then(|p| durable::keep_copy(&p, tag).ok())
+    } else {
+        None
+    };
+    (s, status, kept)
 }
 
 /// Parse persisted-session TOML into a state + status. Split out from [`load_with_status`] (which
@@ -897,11 +953,57 @@ fn parse_with_status(text: &str) -> (SessionState, StateLoad) {
             let v = s.state_version;
             (s, StateLoad::Newer(v))
         }
-        // Unparseable: if the version says it's from the future, warn; otherwise treat as a
-        // legacy/corrupt file and quietly fall back to defaults (no false alarm on old saves).
-        Err(_) if probed > STATE_FORMAT_VERSION => (SessionState::default(), StateLoad::Newer(probed)),
-        Err(_) => (SessionState::default(), StateLoad::Unreadable),
+        Err(_) => match salvage(text) {
+            // A TOML document with values that do not read: every key that reads is kept.
+            Some((s, _)) if s.state_version > STATE_FORMAT_VERSION || probed > STATE_FORMAT_VERSION => {
+                let v = s.state_version.max(probed);
+                (s, StateLoad::Newer(v))
+            }
+            Some((s, dropped)) => (s, StateLoad::Partial(dropped)),
+            // Not TOML at all: if the version says it's from the future, warn; otherwise defaults.
+            None if probed > STATE_FORMAT_VERSION => (SessionState::default(), StateLoad::Newer(probed)),
+            None => (SessionState::default(), StateLoad::Unreadable),
+        },
     }
+}
+
+/// The session in a TOML document that does not deserialize whole: starting from the defaults,
+/// each of the file's keys is taken if the session still reads with it, and named in the second
+/// value if not. `None` when the text is not a TOML document at all.
+///
+/// ⭐Key by key against the DEFAULTS, so a value of the wrong type (`aa = "three"`), a value out
+/// of a field's range (`blend = 300` in a gradient segment) or a missing required key costs that
+/// key alone. Before 2026-11-16 any of them cost the whole file (review finding 1).
+fn salvage(text: &str) -> Option<(SessionState, Vec<String>)> {
+    let file: toml::Table = text.parse().ok()?;
+    let toml::Value::Table(mut kept) = toml::Value::try_from(SessionState::default()).ok()? else {
+        return None;
+    };
+    let reads = |t: &toml::Table| toml::Value::Table(t.clone()).try_into::<SessionState>().is_ok();
+    // A key the session requires (one without `serde(default)`) that the file lacks is named too:
+    // it is as much a setting that did not come back as one that did not read, and a harness that
+    // stages a session must be able to tell (`partial_session_is_named_not_silently_default`).
+    let mut dropped: Vec<String> = kept
+        .keys()
+        .filter(|k| !file.contains_key(*k))
+        .filter(|k| {
+            let mut t = kept.clone();
+            t.remove(*k);
+            !reads(&t)
+        })
+        .cloned()
+        .collect();
+    for (key, value) in file {
+        let mut candidate = kept.clone();
+        candidate.insert(key.clone(), value);
+        if reads(&candidate) {
+            kept = candidate;
+        } else {
+            dropped.push(key);
+        }
+    }
+    let s = toml::Value::Table(kept).try_into::<SessionState>().ok()?;
+    Some((s, dropped))
 }
 
 /// Load the saved session, or [`SessionState::default`] if none/unreadable.
@@ -922,18 +1024,17 @@ pub fn reset_all() -> std::io::Result<bool> {
     }
 }
 
-/// Save the session atomically (write temp, then rename). Best-effort: ignores
-/// errors so persistence never disrupts the app.
-pub fn save(state: &SessionState) {
-    let Some(path) = state_path() else { return };
-    if let Some(parent) = path.parent() {
-        let _ = std::fs::create_dir_all(parent);
-    }
-    let Ok(text) = toml::to_string_pretty(state) else { return };
-    let tmp = path.with_extension("toml.tmp");
-    if std::fs::write(&tmp, text).is_ok() {
-        let _ = std::fs::rename(&tmp, &path);
-    }
+/// Save the session atomically ([`durable::write_atomic`]: a temp file named for this process,
+/// flushed, then renamed over the old one). The error is returned for the app to log: persistence
+/// must never disrupt the app, but a session that silently stops saving is a lost setting nobody
+/// can explain.
+///
+/// ⚠The temp file used to be `session.toml.tmp` for every running copy of the app, so two copies
+/// saving at once could write into each other's temp file and rename a mix of both into place.
+pub fn save(state: &SessionState) -> std::io::Result<()> {
+    let Some(path) = state_path() else { return Ok(()) };
+    let text = toml::to_string_pretty(state).map_err(std::io::Error::other)?;
+    durable::write_atomic(&path, text.as_bytes())
 }
 
 #[cfg(test)]

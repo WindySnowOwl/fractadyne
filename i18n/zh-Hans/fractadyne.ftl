@@ -699,6 +699,8 @@ dlg-reset-warning = 这将永久删除所有已保存的 Fractadyne 数据：
 # The list's items, each after a bullet.
 dlg-reset-session = 已保存的会话（当前视图、着色、偏好设置）
 dlg-reset-bookmarks = 所有书签及其缩略图
+dlg-reset-gradients = 所有已保存的渐变
+dlg-reset-formulas = 公式库
 dlg-reset-refcache = 参考轨道缓存（再次访问各个位置时会重建）
 # A label over the folder that is deleted.
 dlg-reset-location = 位置
@@ -898,6 +900,22 @@ dlg-export-export-hover = 渲染并保存到上方的文件夹（自动命名）
 
 # A notice shown once after starting, when the saved session comes from a newer version of the app. $saved and $handled: version numbers of the session file's format (1, 2…).
 app-state-newer = 此会话由更新版本的 Fractadyne 保存（状态 v{ $saved }；本版本支持 v{ $handled }）。部分设置可能不适用，保存时会以本版本的格式重写。
+# After starting, when the saved session could not be read at all.
+app-state-unreadable = 无法读取已保存的会话，因此 Fractadyne 以默认设置启动。
+# After starting, when part of the saved session could not be read. $settings: the settings' names as the file writes them (English tokens such as "aa, theme").
+app-state-partial = 已保存会话的一部分无法读取，以下设置已恢复为默认值：{ $settings }。
+# After starting, when the saved session had characters that could not be read (they were replaced).
+app-state-repaired = 已保存的会话中含有无法读取的字符，已将其替换。
+# After one of the notices above. $path: where the file, as it was, is kept.
+app-state-kept = 原文件已保留为 { $path }。
+# After starting, when some saved bookmarks could not be read. $count: how many.
+app-bookmarks-partial = 有 { $count } 个已保存的书签无法读取，已略去。
+# After starting, when the bookmarks file could not be read at all.
+app-bookmarks-unreadable = 无法读取书签文件，因此书签列表从空开始。
+# After starting, when some saved gradients could not be read. $count: how many.
+app-gradients-partial = 有 { $count } 个已保存的渐变无法读取，已略去。
+# After starting, when the saved gradients file could not be read at all.
+app-gradients-unreadable = 无法读取已保存的渐变文件，因此渐变库从空开始。
 # The title of the notice that says the accelerated build's arithmetic libraries are found again (its text comes from elsewhere).
 app-notice-mpfr-restored-title = 加速算术已恢复
 # After Fractadyne restarted itself because the graphics driver reset the GPU.
