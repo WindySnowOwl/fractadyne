@@ -153,6 +153,24 @@ fn cset(r: vec2<f32>, i: vec2<f32>) -> Cdf {
 fn c_add(a: Cdf, b: Cdf) -> Cdf {
     return cset(df_add(a.re, b.re), df_add(a.im, b.im));
 }
+// ⭐B + P for a REFERENCE value B (its low word intact) and a perturbation P, as a product's operand
+// (GitHub #5, 2026-11-16). `df_add` rounds to f32 here (it drops its residual,
+// `EFT_ADD_RESIDUALS`), so the full-size W = 2Z + δz of a perturbed step lost Z's low word before it
+// multiplied δz; along a near-periodic reference that rounding repeats every cycle and the error
+// adds up (a custom z²+c at a 4.9e141× minibrot: 2.5e-8 of δz per step, linearly; its escape counts
+// a median 13 iterations off). While P is inside half an ulp of B's high word, which is every deep
+// view's case, P goes into the LOW word: B's digits kept at the cost of one f32 add, and the pair
+// still (nearly) normalized. A larger P takes the plain `df_add`, whose rounding then depends on P,
+// so it walks instead of adding up. ⛔Folding a larger P too left the low word far above an ulp of
+// the high one, and the chunked and single passes of a custom hybrid at 1e6× then differed on 894
+// texels: the two entry points' products contract to fma differently once that term is significant.
+fn df_add_lo(b: vec2<f32>, p: vec2<f32>) -> vec2<f32> {
+    if (abs(p.x) <= abs(b.x) * 5.9604645e-8) { return vec2<f32>(b.x, b.y + p.x); }
+    return df_add(b, p);
+}
+fn c_add_lo(b: Cdf, p: Cdf) -> Cdf {
+    return cset(df_add_lo(b.re, p.re), df_add_lo(b.im, p.im));
+}
 fn c_sub(a: Cdf, b: Cdf) -> Cdf {
     return cset(df_sub(a.re, b.re), df_sub(a.im, b.im));
 }
@@ -772,42 +790,50 @@ fn fam_deriv(f: u32, z: vec2<f32>) -> vec2<f32> {
     return f32(d) * r;
 }
 // (Z + δ)^d − Z^d along the power's own chain (square; multiply by the base on each set bit below
-// the top one), one perturbation rule per link — P(sqr f) = 2·(B·P) + P², P(f·g) = P(f)·B(g) +
-// B(f)·P(g) + P(f)·P(g) — as the generated module's rule table (`ir::perturb`) derives it, in its
-// order of operations, so the two compute alike. Every term carries a P, so nothing cancels against
-// Z^d, and the error grows with the chain's log₂ d links: a table of Z's powers built by d − 2
-// sequential products (a binomial in Horner form) was measured 1.6–2.3× further from the CPU for
-// Multibrot 6–8. ⭐Z ENTERS A PRODUCT AS IT IS (GitHub #5, 2026-11-16): the old links formed
-// 2·B + P and Z + δ first, and a df32 add rounds to f32 here (`EFT_ADD_RESIDUALS`), so Z lost its
-// low word every step, a bias that repeats along a near-periodic reference and adds up (`ir::perturb`).
+// the top one), one perturbation rule per link — P(sqr f) = (2·B + P)·P, P(f·g) = P(f)·W(g) +
+// B(f)·P(g) with W = B + P — as the generated module's rule table (`ir::perturb`) derives it. Every
+// term carries a P, so nothing cancels against Z^d, and the error grows with the chain's log₂ d
+// links: a table of Z's powers built by d − 2 sequential products (a binomial in Horner form) was
+// measured 1.6–2.3× further from the CPU for Multibrot 6–8.
+// ⛔The full-size 2·B + P and Z + δ here are a plain `c_add`, which rounds to f32 and drops Z's low
+// word: the rounding GitHub #5 removed from the generated module (`c_add_lo`, `custom.rs`
+// `wide_operand`). Both ways of keeping the word slowed THIS kernel for every power family, measured
+// warm on an RTX 3080 (Buffalo 5, 32x32, 30,000 iterations, 2026-11-16): `c_add_lo` 329 ms and the
+// distributed products 2·(B·P) + P² 517 ms, against 133 ms, though `c_add_lo` is the cheaper
+// arithmetic; the distributed build lost the device twice in the self-test, its passes priced for
+// the old cost. A low-word fold here needs its own measurement (TODO.md).
 fn fam_dpow_df(Z: Cdf, dz: Cdf, d: u32) -> Cdf {
     var B = Z;
     var P = dz;
+    let W0 = c_add(Z, dz);
     var bit = 31u - countLeadingZeros(d);
     loop {
         if (bit == 0u) { break; }
         bit = bit - 1u;
-        P = c_add(c_scale(c_mul(B, P), 2.0), c_sqr(P));
+        P = c_mul(c_add(c_two(B), P), P);
         B = c_sqr(B);
         if (((d >> bit) & 1u) == 1u) {
-            P = c_add(c_add(c_mul(P, Z), c_mul(B, dz)), c_mul(P, dz));
+            P = c_add(c_mul(P, W0), c_mul(B, dz));
             B = c_mul(B, Z);
         }
     }
     return P;
 }
-// The same in floatexp (mode 2): every P in floatexp, so nothing underflows; B in df32.
+// The same in floatexp (mode 2): every P in floatexp, so nothing underflows; B and the full-size
+// values (B + P, Z + δ) in df32, which holds them — a perturbation's digits below df32's reach are
+// negligible beside B (the generated module's `Class::Full`).
 fn fam_dpow_fe(Z: Cdf, dz: Fe, d: u32) -> Fe {
     var B = Z;
     var P = dz;
+    let W0 = c_add(Z, fe_to_cdf(dz));
     var bit = 31u - countLeadingZeros(d);
     loop {
         if (bit == 0u) { break; }
         bit = bit - 1u;
-        P = fe_add(fe_scale(fe_mul_cdf(P, B), 2.0), fe_sqr(P));
+        P = fe_mul_cdf(P, c_add(c_two(B), fe_to_cdf(P)));
         B = c_sqr(B);
         if (((d >> bit) & 1u) == 1u) {
-            P = fe_add(fe_add(fe_mul_cdf(P, Z), fe_mul_cdf(dz, B)), fe_mul(P, dz));
+            P = fe_add(fe_mul_cdf(P, W0), fe_mul_cdf(dz, B));
             B = c_mul(B, Z);
         }
     }

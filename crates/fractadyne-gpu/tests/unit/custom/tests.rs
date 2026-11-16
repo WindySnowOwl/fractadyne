@@ -260,14 +260,13 @@ fn the_floatexp_step_keeps_the_perturbations_in_floatexp() {
         s[at..end].to_string()
     };
     let parse = |src: &str| fractadyne_core::ir::parse::parse(src).unwrap();
-    // Mandelbrot: P(z² + c) = 2·(Z·δz) + δz² + δc (`ir::perturb`'s `sqr`). Z multiplies δz AS IT
-    // IS (`fe_mul_cdf(v1, v0)`, v0 = z): the old full-size 2Z + δz was a df32 sum, which rounds to
-    // f32 on the GPU and took Z's low word with it (GitHub #5). So no perturbation is collapsed to
-    // df32 (no `fe_to_cdf`); the product, the square and the sums stay floatexp, and so does the
-    // result.
+    // Mandelbrot: P(z² + c) = (2Z + δz)·δz + δc. The full-size 2Z + δz is the one df32 value built
+    // from a perturbation; the product and the sum stay floatexp, and so does the result. The
+    // product takes it as `c_add_lo` forms it, with 2Z scaled limb by limb, so Z's low word is
+    // still in it (GitHub #5): `c_scale` and `c_add` round to f32 on the GPU.
     let m = fphase(&single(builtin_step(f::MANDELBROT).unwrap()));
-    assert_eq!(m.matches("fe_to_cdf(").count(), 0, "{m}");
-    assert!(m.contains("fe_mul_cdf(v1, v0)") && m.contains("fe_sqr(") && m.contains("fe_add("), "{m}");
+    assert!(m.contains("fe_mul_cdf(v1, c_add_lo(cset(v0.re * 2.0, v0.im * 2.0), fe_to_cdf(v1)))"), "{m}");
+    assert!(m.contains("fe_add("), "{m}");
     assert!(!m.contains("fe_from_cdf("), "a floatexp result, not a collapsed one: {m}");
     // Each fold and function on its floatexp form.
     for (formula, helper) in [

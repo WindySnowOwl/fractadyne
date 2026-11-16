@@ -114,36 +114,24 @@ impl Rewriter {
             (Some(a), Some(b)) => Some(self.push(if sub { Op::Sub(a, b) } else { Op::Add(a, b) })),
         }
     }
-    /// ⭐A REFERENCE VALUE ENTERS A PRODUCT AS IT IS (GitHub #5, 2026-11-16). The shorter forms
-    /// `P(x)·W(y)` and `(2·B + P)·P` add the reference to the perturbation FIRST, and on the GPU a
-    /// df32 add or scale rounds its result to `f32` (the add residuals are dropped,
-    /// `EFT_ADD_RESIDUALS`), so `B` lost its low word before it multiplied anything. Along a
-    /// near-periodic reference that rounding repeats every cycle, so the error ADDS UP instead of
-    /// walking: a custom z²+c at a deep minibrot (validation corpus 13, 4.9e141×) lost ~2.5e-8 of δz
-    /// per step, linearly, 25–50× the built-in's √N walk — enough to move escape counts by tens of
-    /// iterations (the per-pixel trace, `local/issue5`). Multiplying `P` by `B` itself is the
-    /// built-in's `2·Z·δz + δz²`, where the low word takes part in the product.
     fn mul(&mut self, x: Pair, y: Pair) -> Pair {
         let b = self.push(Op::Mul(x.b, y.b));
-        // P(x·y) = P(x)·B(y) + B(x)·P(y) + P(x)·P(y)
-        let left = x.p.map(|px| self.push(Op::Mul(px, y.b)));
+        // P(x·y) = P(x)·W(y) + B(x)·P(y)
+        let left = x.p.map(|px| {
+            let wy = self.full(y);
+            self.push(Op::Mul(px, wy))
+        });
         let right = y.p.map(|py| self.push(Op::Mul(x.b, py)));
-        let lin = self.add(left, right, false);
-        let cross = match (x.p, y.p) {
-            (Some(px), Some(py)) => Some(self.push(Op::Mul(px, py))),
-            _ => None,
-        };
-        let p = self.add(lin, cross, false);
+        let p = self.add(left, right, false);
         Pair { b, p }
     }
     fn sqr(&mut self, x: Pair) -> Pair {
         let b = self.push(Op::Sqr(x.b));
-        // P(x²) = 2·(B(x)·P(x)) + P(x)²: see `mul`.
+        // P(x²) = (2·B(x) + P(x))·P(x)
         let p = x.p.map(|px| {
-            let bp = self.push(Op::Mul(x.b, px));
-            let two = self.push(Op::Scale(bp, 2.0));
-            let pp = self.push(Op::Sqr(px));
-            self.push(Op::Add(two, pp))
+            let two_b = self.push(Op::Scale(x.b, 2.0));
+            let s = self.push(Op::Add(two_b, px));
+            self.push(Op::Mul(s, px))
         });
         Pair { b, p }
     }
@@ -273,14 +261,13 @@ pub fn perturbed(prog: &Program) -> Result<Program, NotPerturbable> {
             Op::Norm(a) => {
                 let x = v(a);
                 let b = r.push(Op::Norm(x.b));
-                // |W|² − |B|² = Re(2·B·conj P + P·conj P), with B in the product as it is (`mul`).
+                // |W|² − |B|² = Re((2B + P)·conj P)
                 let p = x.p.map(|p| {
+                    let two_b = r.push(Op::Scale(x.b, 2.0));
+                    let s = r.push(Op::Add(two_b, p));
                     let cp = r.push(Op::Conj(p));
-                    let bc = r.push(Op::Mul(x.b, cp));
-                    let two = r.push(Op::Scale(bc, 2.0));
-                    let pp = r.push(Op::Mul(p, cp));
-                    let s = r.push(Op::Add(two, pp));
-                    r.push(Op::Re(s))
+                    let m = r.push(Op::Mul(s, cp));
+                    r.push(Op::Re(m))
                 });
                 Pair { b, p }
             }
