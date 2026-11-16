@@ -290,6 +290,13 @@ fn fade_alpha(t: f64, start: f64, end: f64, fade: f64) -> f32 {
     if t < start || t > end {
         return 0.0;
     }
+    // ⭐A zero fade is a CUT: shown in full from its first frame, gone exactly at its end — half-open,
+    // so back-to-back captions [s, e) and [e, …) never both show and never both vanish. Through the
+    // 1e-3 floor below it was invisible ON its first frame (and its last), so a run of fade-0 labels
+    // refreshed every few frames flickered (the slices video, 2026-11-16: every third frame blank).
+    if fade <= 0.0 {
+        return if t < end { 1.0 } else { 0.0 };
+    }
     let f = fade.max(1.0e-3);
     let a = ((t - start) / f).min(1.0);
     let b = ((end - t) / f).min(1.0);
@@ -5377,6 +5384,10 @@ mod bench_depth_tests;
 #[cfg(test)]
 #[path = "../tests/unit/scripting/transition_tests.rs"]
 mod transition_tests;
+
+#[cfg(test)]
+#[path = "../tests/unit/scripting/caption_fade_tests.rs"]
+mod caption_fade_tests;
 
 #[cfg(test)]
 #[path = "../tests/unit/scripting/formula_tests.rs"]
