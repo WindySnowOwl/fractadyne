@@ -478,6 +478,59 @@ pub(crate) fn export_tile_cap(cap: u32, wall_ms: f64, ceiling: u32) -> u32 {
     next.clamp(16, ceiling.max(16))
 }
 
+/// [`export_tile_cap`] for a whole render, with a memory of what halving bought.
+///
+/// ⭐**A tile's wall is not always its area's.** Where every pixel runs a long chain of iterations
+/// (a minibrot's interior at 200,000), a tile takes as long as ONE pixel's chain, whatever its size,
+/// until the tile is big enough to fill the card. Halving such a tile does not shorten it; it only
+/// doubles how many the frame pays. The RTX 3070 at the coloring matrix's 9.3e78 minibrot with
+/// Decomposition (no BLA): a chain of ~550 ms, just past [`export_tile_cap`]'s 500 ms, so its tiles
+/// halved from 132 to 16 px, each still ~550 ms, 462 tiles where 2 would do: 28.7-30.2 s against the
+/// plain CLI render's 1.8 s on the same card (2026-11-15). The RTX 3080's chain sits under 500 ms, so
+/// it never halved: the "20x slower card" was this cliff. So when a hot tile's successor, at most
+/// half its area, is not even a quarter faster, the cap goes back to the larger tile and does not
+/// halve below it again: those tiles were no slower and no less safe. A tile in the lethal band
+/// ([`SERIAL_MAX_MS`]) still halves whatever the floor, as before.
+#[derive(Clone, Copy, Debug)]
+pub(crate) struct TileCap {
+    pub(crate) cap: u32,
+    ceiling: u32,
+    /// Halving below this was seen not to help (16 until then).
+    floor: u32,
+    /// The last tile, when it ran hot: its area (px), its wall (ms) and the cap it was cut at.
+    last_hot: Option<(u64, f64, u32)>,
+}
+
+/// Past this a tile halves whatever [`TileCap`] has learned: the lethal band's edge (the app's
+/// `TDR_LETHAL_MS`, 0.9 s), where no "it would be no faster" argument is worth the watchdog.
+pub(crate) const SERIAL_MAX_MS: f64 = 900.0;
+
+impl TileCap {
+    pub(crate) fn new(ceiling: u32) -> Self {
+        Self { cap: ceiling, ceiling, floor: 16, last_hot: None }
+    }
+
+    /// One tile of `area` px, cut at the current cap, took `wall_ms`: set the cap for the next.
+    pub(crate) fn observe(&mut self, area: u64, wall_ms: f64) {
+        const HOT_MS: f64 = 500.0;
+        let was = self.cap;
+        let hot = wall_ms.is_finite() && wall_ms > HOT_MS;
+        if hot && wall_ms < SERIAL_MAX_MS {
+            if let Some((pa, pw, pcap)) = self.last_hot {
+                if pcap > was && area.saturating_mul(2) <= pa && wall_ms >= 0.75 * pw {
+                    self.floor = self.floor.max(pcap.min(self.ceiling));
+                    self.cap = self.floor;
+                    self.last_hot = None;
+                    return;
+                }
+            }
+        }
+        let next = export_tile_cap(was, wall_ms, self.ceiling);
+        self.cap = if wall_ms >= SERIAL_MAX_MS { next } else { next.max(self.floor) };
+        self.last_hot = hot.then_some((area, wall_ms, was));
+    }
+}
+
 /// One-time gate for the export tile trace: `FRACTADYNE_TRACE` containing `tile` prints one
 /// stderr line per export tile (origin, size, wall, cap) — the offline counterpart of the app's
 /// live `tile` trace category, so a tile-cost curve can be captured without a debugger.
@@ -2323,20 +2376,21 @@ fn render_export_impl(
     let mut renderer = TileRenderer::new(device, queue, req, plan)?;
     let mut sum = TileSum::new(w, h);
 
-    // Wall-adaptive cap (see `export_tile_cap`): starts at the nominal bound, then prices every
-    // subsequent tile from the last one's measured wall time. Progress is by PIXELS because the
+    // Wall-adaptive cap (see `export_tile_cap`, `TileCap`): starts at the nominal bound, then prices
+    // every subsequent tile from the last one's measured wall time. Progress is by PIXELS because the
     // tile count is no longer fixed.
-    let mut cap = tile;
+    let mut tcap = TileCap::new(tile);
     let total_px = (w as u64).saturating_mul(h as u64).max(1);
 
     let mut ty0 = 0u32;
     while ty0 < h {
-        let th = if plan.occupancy { plan.row_h.min(h - ty0) } else { cap.min(h - ty0) };
+        let th = if plan.occupancy { plan.row_h.min(h - ty0) } else { tcap.cap.min(h - ty0) };
         let mut tx0 = 0u32;
         while tx0 < w {
             if cancel.load(Relaxed) {
                 return Err(GpuError::Canceled);
             }
+            let cap = tcap.cap;
             let tw = if plan.occupancy { plan.col_w.min(w - tx0) } else { cap.min(w - tx0).min(th.max(16)) };
             let out = renderer.tile(tx0, ty0, tw, th, cancel)?;
             sum.add(&out);
@@ -2351,7 +2405,7 @@ cap={cap} chunks={chunk_passes} steps={}", out.wall_ms, plan.occupancy
             // Step-bounded tiles keep their size: the step cap bounds each pass, and shrinking the
             // area would only give back the occupancy the tile exists for.
             if chunk_passes <= 1 && !plan.occupancy {
-                cap = export_tile_cap(cap, out.wall_ms, tile);
+                tcap.observe(tw as u64 * th as u64, out.wall_ms);
             }
             // else: serial regime — the wall is dwell-chain time, which shrinking the AREA cannot
             // reduce (it only multiplies how many chains the frame pays; the same wrong-actuator
@@ -2913,20 +2967,21 @@ pub fn render_iter_tiled(
 
     // Wall-adaptive cap, same rule as `render_export` (see `export_tile_cap`): the correction
     // loop's budget is nominal too, and its dark-core tiles are exactly where nominal != real.
-    let mut cap = tile;
+    let mut tcap = TileCap::new(tile);
     // Step-bounded tiles split the frame into EQUAL rows and columns (see `balanced_extent`), and
     // their state is allocated at that size; the others are at most `tile` square.
     let (row_h, col_w) = (balanced_extent(h, tile), balanced_extent(w, tile));
     let state_size = if occupancy { [col_w, row_h] } else { [tile, tile] };
     let mut ty0 = 0u32;
     while ty0 < h {
-        let th = if occupancy { row_h.min(h - ty0) } else { cap.min(h - ty0) };
+        let th = if occupancy { row_h.min(h - ty0) } else { tcap.cap.min(h - ty0) };
         let mut tx0 = 0u32;
         while tx0 < w {
             let t_tile = std::time::Instant::now();
             if deadline.is_some_and(|d| std::time::Instant::now() >= d) {
                 return Err(GpuError::Canceled);
             }
+            let cap = tcap.cap;
             let tw = if occupancy { col_w.min(w - tx0) } else { cap.min(w - tx0).min(th.max(16)) };
             roi_total += 1;
             // Region of interest: skip a tile the caller will not read from. The scan is O(tile
@@ -3233,7 +3288,7 @@ chunks={chunk_passes} steps={occupancy}"
             }
             // Step-bounded tiles keep their size (see `render_export`).
             if chunk_passes <= 1 && !occupancy {
-                cap = export_tile_cap(cap, wall_ms, tile);
+                tcap.observe(tw as u64 * th as u64, wall_ms);
             }
             // else: serial regime — hold the area cap (see `render_export`; same reasoning).
             tx0 += tw;
