@@ -1513,6 +1513,8 @@ pub(crate) fn try_series_skip_walk(
             }
             let Some((zcx, zcy, z_escaped, z_seedable)) = next() else { break };
             let (zcx, zcy) = (&zcx, &zcy);
+            // The step's inputs, as the astro walk records them (`sa_tail_valid`; vacuous for d = 2).
+            let (lz, la_prev) = (log2_cmag_rug(zcx, zcy), log2_cmag_rug(&ax, &ay));
             // For d = 2: Z^{d-1} = Z itself (astro's `cpow_bf(z, 1)` is an exact clone) and the
             // Z^{d-2} factor is the identity, so the recurrence collapses to the lines below.
             let (a2x, a2y) = cmul(&ax, &ay, &ax, &ay, ctx_c); // A²
@@ -1542,12 +1544,13 @@ pub(crate) fn try_series_skip_walk(
                 // The coefficients carried back exactly, as the walk's `best` is at its end.
                 let k = [&ax, &ay, &bx, &by, &cxx, &cyy].map(|v| v.to_carrier(ctx_c));
                 let skip = crate::reference::skip_from_coeffs(n, [&k[0], &k[1], &k[2], &k[3], &k[4], &k[5]]);
-                r.push(crate::reference::SaStep::new(la, lc, z_seedable, z_escaped, skip));
+                r.push(crate::reference::SaStep::new(la, lc, lz, la_prev, z_seedable, z_escaped, skip));
             }
             if !la.is_finite() {
                 continue;
             }
-            let valid = lc + 2.0 * log2_max_dc < la + crate::reference::SA_EPS_LOG2;
+            let valid = lc + 2.0 * log2_max_dc < la + crate::reference::SA_EPS_LOG2
+                && crate::reference::sa_tail_valid(2, lz, la_prev, la, log2_max_dc);
             if n >= crate::reference::SA_MIN_SKIP {
                 if valid && z_seedable {
                     best = Some((

@@ -957,6 +957,54 @@ fn the_sa_trace_replays_the_seed_bound() {
     }
 }
 
+// At a minibrot's nucleus the reference passes through zero once a period. For z^d with d ≥ 4 that
+// resets the order-3 coefficients (A' = 1, B' = C' = 0), so the cubic test alone let the walk run on
+// where the true step is δ^d + δc: Multibrot 4 at this period-914 nucleus (a 400x250 view at
+// 2^69.84×, 200,000 iterations) skipped 199,999 steps and every pixel read as interior, and
+// Multibrot 6 at the period-1242 one from 2^76.65× (found 2026-11-16). The walk must stop by the
+// first return. Control, from the same record: the cubic test alone (the rule for d < 4, which
+// `sa_tail_valid` leaves alone) runs past it, so these views do exercise the bug.
+#[test]
+fn the_sa_walk_stops_at_a_high_power_nucleus() {
+    let p = 320;
+    // (formula, degree, period, nucleus, log2 |δc| of the view's corner = log2(235.85 px · 4/250) − zoom_log2)
+    let cases: [(u32, u32, u32, &str, &str, f64); 2] = [
+        (
+            2, // z⁴ + c
+            4,
+            914,
+            "-0.526658322903628992140896028949043571983691764546672704509915395429047711528553090682231622831944",
+            "-0.4305381727158950028534700622531908915264623203549531103145140406531473668153411989138460822812",
+            1.916 - 69.84,
+        ),
+        (
+            10, // z⁶ + c
+            6,
+            1242,
+            "-0.430225281602002000003632361261660009419821120028201028017693287187464740111705926232729408",
+            "1.00594493116395499999700908917993868081207159218395091537434383888713724072720330961960422",
+            1.916 - 76.65,
+        ),
+    ];
+    for (f, deg, period, x, y, l2dc) in cases {
+        let (cx, cy) = (parse_bf_prec(x, p).unwrap(), parse_bf_prec(y, p).unwrap());
+        for backend in crate::available_backends() {
+            let s = crate::reference::series_skip_walk(backend, &cx, &cy, l2dc, 200_000, 200_002, f, p, None, None);
+            assert!(s.skip >= 8 && s.skip <= period, "{backend:?} z^{deg}: skip {} past the nucleus's period {period}", s.skip);
+            // Three periods recorded without stopping for validity, then both rules replayed on them.
+            let len = 3 * period + 2;
+            let mut steps = Vec::new();
+            crate::reference::series_skip_walk(backend, &cx, &cy, -1.0e300, u32::MAX, len, f, p, None, Some(&mut steps));
+            let limit = len - 2;
+            let old = crate::reference::sa_replay(&steps, l2dc, limit, 2);
+            let new = crate::reference::sa_replay(&steps, l2dc, limit, deg);
+            assert!(old.skip > period, "{backend:?} z^{deg}: the cubic test alone stopped at {} — the view no longer exercises the bug", old.skip);
+            assert_eq!(sa_bits(&new), sa_bits(&crate::reference::series_skip_walk(backend, &cx, &cy, l2dc, limit, len, f, p, None, None)));
+            assert!(new.skip <= period, "{backend:?} z^{deg}: replayed skip {} past the period {period}", new.skip);
+        }
+    }
+}
+
 // The trace cache keys on the precision in 64-bit WORDS: both arithmetics round a working precision
 // up to whole words, so every `p` in one word walks the same — which is what lets one record serve
 // a deep dive's frames as their precision creeps up a bit per octave. Control: the next word
