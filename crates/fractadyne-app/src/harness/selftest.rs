@@ -8689,19 +8689,30 @@ impl FractadyneApp {
             let whole = fractadyne_gpu::WindowLayout::default();
             let layers = (((2 * vram).div_ceil(fractadyne_gpu::window_bytes(shape, 1, whole, lim.max_texture_dimension_2d)) + 1) as u32)
                 .clamp(fractadyne_gpu::layers_for_frame(160, 90), lim.max_texture_array_layers);
+            // ⭐What the card can REACH is more than its own memory on Windows: WDDM lets it overflow
+            // into shared system memory, half of RAM. A driver that holds the ask there is right to,
+            // and the window is then simply slow, not a crash: the RTX 3080 here has held all 23.6 GB
+            // since 2026-11-14 (64 GB of RAM, driver 610.88; the installed 0.3.0-beta.27 the same),
+            // where it refused it before. Only an ask past the card's own memory plus that share must
+            // be refused, and the device must assemble after either answer.
+            let shared = if cfg!(windows) { crate::sysinfo::total_memory().unwrap_or(0) / 2 } else { 0 };
+            let asked = fractadyne_gpu::window_bytes(shape, layers, whole, lim.max_texture_dimension_2d);
             let (result, pass) = if vram == 0 {
                 ("not exercised: this card's memory is unknown".to_string(), true)
             } else {
                 let big = fractadyne_gpu::Assembler::new(device, shape, [160, 90], 1, layers).map(|_| ());
                 let after = self.assemble_geometry_check(device, queue).map(|c| c.pass());
                 let named = matches!(&big, Err(e) if e.to_string().contains("lower the size or the anti-aliasing"));
+                let reachable = big.is_ok() && asked <= vram + shared;
                 (
                     format!(
-                        "{:.1} GB asked of a {:.1} GB card: {}; then a 96x54 assembly {}",
-                        fractadyne_gpu::window_bytes(shape, layers, whole, lim.max_texture_dimension_2d) as f64 / 1e9,
+                        "{:.1} GB asked of a {:.1} GB card{}: {}; then a 96x54 assembly {}",
+                        asked as f64 / 1e9,
                         vram as f64 / 1e9,
+                        if shared > 0 { format!(" (+{:.1} GB shared system memory)", shared as f64 / 1e9) } else { String::new() },
                         match &big {
-                            Ok(()) => "ALLOCATED".to_string(),
+                            Ok(()) if reachable => "held, within what the card can reach".to_string(),
+                            Ok(()) => "ALLOCATED, past what the card can reach".to_string(),
                             Err(e) => e.to_string(),
                         },
                         match &after {
@@ -8710,7 +8721,7 @@ impl FractadyneApp {
                             Err(e) => format!("could not run: {e}"),
                         }
                     ),
-                    named && after == Ok(true),
+                    (named || reachable) && after == Ok(true),
                 )
             };
             push_check(&mut checks, &mut last_check_t, SelfCheck {
@@ -8718,7 +8729,9 @@ impl FractadyneApp {
                 name: "a strip window the card cannot hold is an error, not a crash".into(),
                 params: format!("{layers} strips of {w}x{rows} (twice the card's memory)"),
                 result,
-                threshold: "Assembler::new returns the error naming the remedy; the geometry check passes after it".into(),
+                threshold: "Assembler::new returns the error naming the remedy, or holds a window within the card's memory \
+                            plus its shared system memory; the geometry check passes after it"
+                    .into(),
                 pass,
             });
             (self.fractal, self.julia_mode) = saved;
