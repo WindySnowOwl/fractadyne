@@ -59,6 +59,11 @@ published as the pre-releases `v0.2.41-beta.1` to `v0.2.41-beta.150`, and a "bet
 
 Changes after 0.3.0-beta.1:
 
+- **Piping the command line's output into a program that stops reading is no longer a crash
+  (after 0.3.0-beta.27).** `fractadyne --help | Select-Object -First 5`, or `| head`, closes the
+  pipe early, and the next line Fractadyne printed made it crash: exit code 101 and a crash report
+  in your profile. It now ends quietly, as a Unix program does, with exit code 141 and one line in
+  the log. A window you opened yourself is unchanged.
 - **Tour captions with no fade show on every frame (after 0.3.0-beta.27).** A caption with
   `fade = 0` was left out of its first frame (and its last), so a label updated every few frames, as
   a value counting up, flickered. It is now a cut: shown from its first frame, and replaced by the

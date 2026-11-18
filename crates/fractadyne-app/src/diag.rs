@@ -1604,6 +1604,27 @@ fn install_console_ctrl_handler() {
 #[cfg(not(windows))]
 fn install_console_ctrl_handler() {}
 
+/// The exit code when stdout or stderr was closed by its reader: 128 + SIGPIPE, what a shell
+/// reports for a Unix program its pipe killed.
+pub(crate) const CLOSED_PIPE_EXIT: i32 = 141;
+
+/// Whether a panic is `println!`/`eprintln!` finding its reader gone: "failed printing to stdout:
+/// The pipe is being closed. (os error 232)" on Windows (109 is the other broken-pipe code),
+/// "… Broken pipe (os error 32)" elsewhere. `fractadyne --help | Select-Object -First 5`, or
+/// `| head`, closes the pipe after the lines it wants; the program has nothing left to say to
+/// anyone, which is not a crash.
+pub(crate) fn closed_pipe_panic(msg: &str) -> bool {
+    let Some(rest) = msg.strip_prefix("failed printing to stdout: ").or_else(|| msg.strip_prefix("failed printing to stderr: "))
+    else {
+        return false;
+    };
+    let code = rest
+        .rsplit_once("(os error ")
+        .and_then(|(_, tail)| tail.strip_suffix(')'))
+        .and_then(|n| n.parse::<i32>().ok());
+    matches!(code, Some(n) if if cfg!(windows) { n == 232 || n == 109 } else { n == 32 })
+}
+
 fn install_panic_hook() {
     let default = std::panic::take_hook();
     std::panic::set_hook(Box::new(move |info| {
@@ -1617,6 +1638,16 @@ fn install_panic_hook() {
             .location()
             .map(|l| format!("{}:{}:{}", l.file(), l.line(), l.column()))
             .unwrap_or_else(|| "<unknown>".into());
+        // A print whose reader has gone (`--help | head`): end as a Unix program does on SIGPIPE,
+        // quietly. It used to write a crash report into the profile (three of them, 2026-11-01 to
+        // 11-03, each a command line piped into a reader that stopped early) and exit 101. Only
+        // for a command line or a script: a person's own window keeps the crash path, where such a
+        // panic on a worker thread ends that thread and not the window.
+        if closed_pipe_panic(&msg) && !CRASH_DIALOG_ON.load(Ordering::Relaxed) {
+            log_line("exit", &format!("{msg} — the reader stopped reading; exiting {CLOSED_PIPE_EXIT} (not a crash)"));
+            end_session();
+            std::process::exit(CLOSED_PIPE_EXIT);
+        }
         // Write the crash FILE first — see `write_crash_report_at`.
         let report = write_crash_report_at(&msg, &loc);
         mark_panicked(report.as_deref(), &format!("a panic: {msg}"));
@@ -1981,6 +2012,9 @@ impl Drop for ProgressPump {
 #[cfg(test)]
 #[path = "../tests/unit/diag/crash_dialog_tests.rs"]
 mod crash_dialog_tests;
+#[cfg(test)]
+#[path = "../tests/unit/diag/closed_pipe_tests.rs"]
+mod closed_pipe_tests;
 #[cfg(test)]
 #[path = "../tests/unit/diag/session_marker_tests.rs"]
 mod session_marker_tests;
