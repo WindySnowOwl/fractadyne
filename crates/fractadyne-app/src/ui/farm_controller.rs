@@ -782,7 +782,7 @@ impl FractadyneApp {
         self.farm_controller.open = open && !close;
         if browse {
             let seed = Some(absolute(&self.farm_controller.out)).filter(|p| p.is_dir()).unwrap_or_else(|| self.dialog_dir_default());
-            if let Some(dir) = rfd::FileDialog::new().set_directory(seed).pick_folder() {
+            if let Some(dir) = crate::diag::modal(|| rfd::FileDialog::new().set_directory(seed).pick_folder()) {
                 self.remember_dir(&dir);
                 self.farm_controller.out = dir.display().to_string();
             }

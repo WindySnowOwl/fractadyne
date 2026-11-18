@@ -1834,6 +1834,46 @@ pub(crate) fn show_fatal_dialog(failure: &advice::Failure, reason: &str, report:
     }
 }
 
+// ---- native modal dialogs ---------------------------------------------------------------------
+
+/// Native modal dialogs open now: a file picker runs the system's own message loop on the UI thread.
+static MODAL_OPEN: AtomicU64 = AtomicU64::new(0);
+/// Microseconds spent in them since the frame loop last took the total ([`take_modal_ms`]).
+static MODAL_US: AtomicU64 = AtomicU64::new(0);
+
+/// Run a native modal dialog (a file picker) on the UI thread. `f` blocks until the person
+/// chooses, for as long as they take, and the window draws no frame meanwhile. Neither the watchdog
+/// nor the frame budget may read that as the app stalling: in the maintainer's own sessions
+/// (2026-11-14 to 11-16) a Save dialog left open 26 s and 38 s logged `possible hang` (the UI
+/// thread's stack in `comdlg32`) and reset BOTH views' learned budgets to the bootstrap through the
+/// dead-man, since the frame that held the dialog read as one 38 s GPU frame. While one is open
+/// the watchdog waits, and its time joins the frame's `offscreen_ms`, the app's own blocking work
+/// that `render::tripwire_dt` takes out of the interval it judges.
+pub(crate) fn modal<T>(f: impl FnOnce() -> T) -> T {
+    struct Open(Instant);
+    impl Drop for Open {
+        fn drop(&mut self) {
+            MODAL_US.fetch_add(self.0.elapsed().as_micros() as u64, Ordering::Relaxed);
+            MODAL_OPEN.fetch_sub(1, Ordering::Relaxed);
+            alive();
+        }
+    }
+    MODAL_OPEN.fetch_add(1, Ordering::Relaxed);
+    alive();
+    let _open = Open(Instant::now());
+    f()
+}
+
+/// Milliseconds spent in native modal dialogs since the last call (the frame loop's, once a frame).
+pub(crate) fn take_modal_ms() -> f64 {
+    MODAL_US.swap(0, Ordering::Relaxed) as f64 / 1000.0
+}
+
+/// Whether a native modal dialog is open now.
+pub(crate) fn modal_open() -> bool {
+    MODAL_OPEN.load(Ordering::Relaxed) > 0
+}
+
 /// Watchdog: logs `possible hang` with the breadcrumb when nothing stamped liveness for over
 /// 10 s, then re-warns every 30 s while the stall persists. It cannot distinguish a hang
 /// from a long uninstrumented compute — that ambiguity is the point: either way the log
@@ -1876,6 +1916,10 @@ pub(crate) fn start_watchdog() {
                 let alive_ms = ALIVE_MS.load(Ordering::Relaxed);
                 let stale_s = now_ms.saturating_sub(alive_ms) / 1000;
                 if compiling_ms.is_some_and(|ms| ms < COMPILE_GRACE_S * 1000) {
+                    continue;
+                }
+                // A file picker waits for a person, however long they take (`modal`).
+                if modal_open() {
                     continue;
                 }
                 let Some(between) = watch_verdict(stale_s, loop_state()) else { continue };
@@ -2015,6 +2059,12 @@ mod crash_dialog_tests;
 #[cfg(test)]
 #[path = "../tests/unit/diag/closed_pipe_tests.rs"]
 mod closed_pipe_tests;
+#[cfg(test)]
+#[path = "../tests/unit/diag/modal_tests.rs"]
+mod modal_tests;
+#[cfg(test)]
+#[path = "../tests/unit/diag/modal_sites_tests.rs"]
+mod modal_sites_tests;
 #[cfg(test)]
 #[path = "../tests/unit/diag/session_marker_tests.rs"]
 mod session_marker_tests;

@@ -216,13 +216,13 @@ impl FractadyneApp {
     /// in this version). Nothing already there is replaced (see [`lib::merge`]); the toast says what
     /// was added, skipped and renamed, and for a `.frm` how many did not read and why, most often.
     fn import_formula_file(&mut self) {
-        let Some(path) = rfd::FileDialog::new()
+        let Some(path) = crate::diag::modal(|| rfd::FileDialog::new()
             .add_filter(tr!(formula_filter_formula_files), &["toml", "frm"])
             .add_filter(tr!(formula_filter_fractadyne), &["toml"])
             .add_filter(tr!(formula_filter_fractint), &["frm"])
             .add_filter(tr!(formula_filter_all_files), &["*"])
             .set_directory(self.dialog_dir_default())
-            .pick_file()
+            .pick_file())
         else {
             return;
         };
@@ -279,11 +279,11 @@ impl FractadyneApp {
         if list.is_empty() {
             return;
         }
-        let Some(path) = rfd::FileDialog::new()
+        let Some(path) = crate::diag::modal(|| rfd::FileDialog::new()
             .add_filter(tr!(formula_filter_fractadyne), &["toml"])
             .set_file_name(format!("{}.toml", file_stem(suggested)))
             .set_directory(self.dialog_dir_default())
-            .save_file()
+            .save_file())
         else {
             return;
         };

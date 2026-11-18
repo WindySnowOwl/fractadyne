@@ -69,6 +69,11 @@ Changes after 0.3.0-beta.1:
   pipe early, and the next line Fractadyne printed made it crash: exit code 101 and a crash report
   in your profile. It now ends quietly, as a Unix program does, with exit code 141 and one line in
   the log. A window you opened yourself is unchanged.
+- **A file dialog left open no longer slows the view down afterward (after 0.3.0-beta.27).**
+  While a Save or Open dialog waited for you, the frame that held it read as a very slow frame
+  to the safety stop for slow graphics work. Once the dialog closed, the stop reset both views'
+  learned work size to the start, so the picture was coarser until it relearned. A dialog held
+  over 10 s also logged a false "possible hang". Time in a file dialog no longer counts.
 - **Tour captions with no fade show on every frame (after 0.3.0-beta.27).** A caption with
   `fade = 0` was left out of its first frame (and its last), so a label updated every few frames, as
   a value counting up, flickered. It is now a cut: shown from its first frame, and replaced by the

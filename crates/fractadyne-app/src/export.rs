@@ -1642,12 +1642,12 @@ impl FractadyneApp {
     }
 
     pub(crate) fn open_view(&mut self, ctx: &egui::Context) {
-        let path = rfd::FileDialog::new()
+        let path = crate::diag::modal(|| rfd::FileDialog::new()
             .add_filter(tr!(export_filter_view), &["png", "exr", "fdn", "kfr", "txt"])
             .add_filter(tr!(export_filter_image), &["png", "exr"])
             .add_filter(tr!(export_filter_location), &["fdn", "kfr", "txt"])
             .set_directory(self.dialog_dir(Self::pictures_dir))
-            .pick_file();
+            .pick_file());
         let Some(path) = path else { return };
         self.remember_dir(&path);
         let ext = path
@@ -1739,11 +1739,11 @@ impl FractadyneApp {
             .clone()
             .filter(|d| d.is_dir())
             .unwrap_or_else(|| self.dialog_dir(Self::pictures_dir));
-        let path = rfd::FileDialog::new()
+        let path = crate::diag::modal(|| rfd::FileDialog::new()
             .set_directory(start_dir)
             .set_file_name(self.export_default_name())
             .add_filter(ext.to_uppercase(), &[ext])
-            .save_file();
+            .save_file());
         let Some(path) = path else {
             self.export.status = Some(tr!(export_canceled));
             return;
