@@ -1,0 +1,9 @@
+utc	version	identity	exit	verdict	config	command
+2026-11-18 22:00:10	0.3.0	build 6889, g2bc9387	0	selftest exit 0; logcheck PASS	fresh; window on DISPLAY1 at 100%	fractadyne --selftest --selftest-filter fe-df32-probe --out logs/optin/report.md
+2026-11-18 23:25:13	0.3.0	build 6889, g2bc9387	0	selftest exit 0; logcheck PASS	fresh; window on DISPLAY1 at 100%	fractadyne --selftest --selftest-filter deep-location --out logs/optin/report.md
+2026-11-18 23:25:56	0.3.0	build 6889, g2bc9387	0	motiontest exit 0; logcheck PASS	fresh; window on DISPLAY1 at 100%	fractadyne --motiontest --worker-gpu same
+2026-11-18 23:30:04	0.3.0	build 6889, g2bc9387	143	no [fd-exit]	fresh; window on DISPLAY1 at 100%	fractadyne --autodive 32 --autodive-timeout 900 --autodive-home 3
+2026-11-18 23:39:47	0.3.0	build 6889, g2bc9387	3	autodive exit 3; logcheck PASS	fresh; window on DISPLAY1 at 100%	fractadyne --autodive 32 --autodive-timeout 900 --autodive-home 3
+2026-11-18 23:46:19	0.3.0	build 6889, g2bc9387	0	livetest exit 0; logcheck PASS	fresh; window on DISPLAY1 at 100%	fractadyne --livetest tours/grand-tour.toml --size 480x270
+2026-11-18 23:47:27	0.3.0	repo g8440a34a	0	-	-	python scripts/dive-capture/screengate.py D:/share/Fractadyne/field/results/20261118-155939-3yjc/validate-release-030-20261118-160009/screen/run1 D:/share/Fractadyne/field/results/20261118-155939-3yjc/validate-release-030-20261118-160009/screen/run2 D:/share/Fractadyne/field/results/20261118-155939-3yjc/validate-release-030-20261118-160009/screen/run3
+2026-11-18 23:52:22	0.3.0	build 6889, g2bc9387	0	selftest exit 0; logcheck PASS	fresh; window on DISPLAY1 at 100%	fractadyne --selftest
