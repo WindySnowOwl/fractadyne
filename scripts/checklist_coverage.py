@@ -146,7 +146,8 @@ def doc_rows(doc, start):
         end = start + nxt.start()
         break
     rows = []
-    for mo in re.finditer(r"^\| (\d+)(?:[–-](\d+))? \|", doc[start:end], re.M):
+    # ` +\|`: the tables are aligned in the source (user rule), so the number cell is padded.
+    for mo in re.finditer(r"^\| (\d+)(?:[–-](\d+))? +\|", doc[start:end], re.M):
         a = int(mo.group(1))
         rows.append((a, int(mo.group(2)) if mo.group(2) else a))
     return rows
