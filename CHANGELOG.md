@@ -12,10 +12,60 @@ detail is in the git history.
 
 ## 0.3.0 (unreleased)
 
-0.3.0 is the milestone for the 0.2.41 series. Everything under the 0.2.41 heading below was
-published as the pre-releases `v0.2.41-beta.1` to `v0.2.41-beta.150`, and a "beta.N" there means
-0.2.41-beta.N. `0.3.0-beta.1` is the first build under the new number, with the same code as
-0.2.41-beta.150. The themes, newest first:
+0.3.0 rolls up two runs of pre-releases. The 0.2.41 series, `v0.2.41-beta.1` to
+`v0.2.41-beta.150`, is listed under the 0.2.41 heading below, where a "beta.N" means
+0.2.41-beta.N. `0.3.0-beta.1` has the same code as 0.2.41-beta.150, and `v0.3.0-beta.2` to
+`v0.3.0-beta.27`, with the fixes made after beta.27, are listed under "Changes after
+0.3.0-beta.1" below. The themes, newest first:
+
+- **Coloring.** A palette browser shows the view you are looking at in every palette at once,
+  and 186 new palettes arrive: seven collections of twenty (rocks and minerals, plants and fungi,
+  animals, food, painters, biomes, cities and landmarks), twenty holidays in the order of the
+  year, and 26 others. The palette is anti-aliased, so bands finer than a pixel read as their
+  colors rather than speckle. The inside of the set can be any solid color or colored by the
+  orbit trap; a sheet shows every coloring method side by side on the current view; the method
+  list says what each method shows and what it costs; and Divide iterations slows the palette for
+  views whose escape counts climb too fast for it. A saved view keeps its coloring method and
+  effects, palettes are saved by name, and switching between methods recolors at once wherever
+  the view already holds what the new method needs.
+- **Starts on more computers.** Fractadyne now runs on computers that offer only OpenGL, on older
+  Intel graphics and with an old Vulkan loader. When Vulkan cannot open the window, or the driver
+  crashes at start-up, the next start uses OpenGL. On a card it has no measurements for, a check
+  at start-up sizes the first frames and the export passes to what the card can do. When the app
+  has to close because of an error, a message says what happened and where the report is.
+- **Zoom videos.** Tools ▸ Render zoom video… renders a dive from the whole set into the current
+  view. Each part of the plane is computed once, in strips an octave deep, instead of once for
+  every frame it appears in (about 23 times less work at 60 frames a second and an octave a
+  second), and the strips are assembled into the video with ffmpeg. They can also be written in
+  zoomasm's format, rendered on several graphics cards or machines, and held in pieces for larger
+  sizes such as 5K at 2× anti-aliasing.
+- **More than one graphics card, and more than one machine.** A second graphics card can help the
+  live view by rendering moving frames and some of a still view's anti-aliasing samples. Still
+  images and tours can render on every card at once (`--gpus all`), and a render farm splits a
+  tour or a zoom video across several machines over an encrypted, authenticated connection. Tours
+  can render deepest first, and build the deepest frame's reference once for every frame it can
+  serve.
+- **New kinds of fractals.** Custom formulas, written as Fractint-style expressions, deep-zoom
+  with the same arithmetic as the built-in fractals (all but those with a power that varies with z
+  or c). Fifteen more families: Multibrot 6 to 8, and Burning Ship, Tricorn, Celtic and Buffalo
+  at powers 3 to 5. L-systems, whose detail never runs out as you zoom; Conway's Game of Life and
+  its relatives; and, in the formula collection, slices of parameter space at an angle.
+- **Faster.** Deep views between 10,000× and 1e28× finish two to three times faster. AMD graphics
+  cards render up to 2.7× faster. Julia sets and shallow views with black interior render many
+  times faster: a Multibrot 8 Julia set at 267,346 iterations went from 6.9 s to 0.01 s on an RTX
+  3080. Exports from the Export dialog are several times faster (99.8 s to 17.3 s in one case),
+  and reference orbits at extreme depth build faster (17 to 33% off the deepest benchmark scenes).
+- **Live view.** Zooms keep their detail without stuttering, the mouse wheel zooms faster,
+  zooming in snaps to a nearby minibrot, deep zooms no longer shake, and Home from extreme depth
+  shows pictures on the way out. Press B for a live-render panel, styled after a 1970s lab rack,
+  that shows the renderer at work. The interface is available in fifteen languages; all but
+  English are machine-translated drafts until native speakers review them.
+- **Steadier.** Saved settings, bookmarks and locations survive damage and come back as saved.
+  Many fixes keep the graphics card from being overrun (gliding Home from extreme depth, zooming
+  out of a deep exterior view, settling a deep view), and the safety checks no longer mistake an
+  idle app, a planned pause, an open file dialog or a quick zoom at shallow depth for trouble.
+
+From the 0.2.41 series:
 
 - **Deep zoom is much faster.** At the benchmark's deepest scene, 4.6e1105× at 4K, a render
   took 27.8 s at 0.2.41-beta.112 and takes 1.7 s at beta.148 with the accelerated (MPFR) build.
