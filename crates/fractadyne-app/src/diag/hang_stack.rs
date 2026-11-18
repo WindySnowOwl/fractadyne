@@ -24,7 +24,7 @@ pub(crate) fn note_ui_thread() {
 /// The UI thread's stack as `module+0xoffset` frames, innermost first, or why it could not be
 /// read. `None` where this is not supported (not Windows x64) or no UI thread was noted.
 pub(crate) fn ui_thread_stack() -> Option<Result<Vec<String>, String>> {
-    imp::ui_thread_stack()
+    imp::ui_thread().and_then(thread_stack)
 }
 
 /// `thread_id`'s stack as [`ui_thread_stack`] gives it (the unit tests walk a thread of their own).
@@ -96,10 +96,10 @@ mod imp {
         UI_THREAD.store(unsafe { GetCurrentThreadId() }, Ordering::Relaxed);
     }
 
-    pub(super) fn ui_thread_stack() -> Option<Result<Vec<String>, String>> {
+    pub(super) fn ui_thread() -> Option<u32> {
         match UI_THREAD.load(Ordering::Relaxed) {
             0 => None,
-            id => thread_stack(id),
+            id => Some(id),
         }
     }
 
@@ -193,7 +193,7 @@ mod imp {
 #[cfg(not(all(windows, target_arch = "x86_64")))]
 mod imp {
     pub(super) fn note_ui_thread() {}
-    pub(super) fn ui_thread_stack() -> Option<Result<Vec<String>, String>> {
+    pub(super) fn ui_thread() -> Option<u32> {
         None
     }
     pub(super) fn thread_stack(_thread_id: u32) -> Option<Result<Vec<String>, String>> {

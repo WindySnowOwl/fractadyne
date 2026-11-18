@@ -16,6 +16,7 @@ import datetime
 import io
 import re
 import sys
+import unicodedata
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parent.parent
@@ -80,6 +81,28 @@ def parse_items():
     return items
 
 
+def cell(text) -> str:
+    """A table cell's text: a `|` in an item (`|2Z_n|`) would end the cell, so it is escaped."""
+    return str(text).replace("|", "\\|")
+
+
+def width(s: str) -> int:
+    """Display width in the editor: wide characters (⭐, CJK) take two columns."""
+    return sum(2 if unicodedata.east_asian_width(ch) in "WF" else 1 for ch in s)
+
+
+def table(header, rows) -> list:
+    """A Markdown table with its pipes in a grid (TODO.md is read as source in an editor), each
+    column padded to its widest cell's display width."""
+    grid = [[cell(c) for c in header]] + [[cell(c) for c in r] for r in rows]
+    w = [max(3, *(width(r[i]) for r in grid)) for i in range(len(header))]
+
+    def line(r):
+        return "| " + " | ".join(c + " " * (w[i] - width(c)) for i, c in enumerate(r)) + " |"
+
+    return [line(grid[0]), "| " + " | ".join("-" * n for n in w) + " |"] + [line(r) for r in grid[1:]]
+
+
 def render_index(items) -> str:
     today = datetime.date.today().isoformat()
     flagged = [x for x in items if x["prio"] < 4 or x["stars"] >= 1]
@@ -95,26 +118,27 @@ def render_index(items) -> str:
     out.append("")
     out.append("### Flagged (priority mark or ⭐)")
     out.append("")
-    out.append("| Pri | ⭐ | Item | Section | Line |")
-    out.append("|-----|----|------|---------|------|")
-    for x in flagged:
-        out.append(
-            f"| {PRIORITY_NAME[x['prio']]} | {x['stars'] or ''} | {x['title']} "
-            f"| {x['section']} | {x['line']} |"
-        )
+    out += table(
+        ["Pri", "⭐", "Item", "Section", "Line"],
+        [[PRIORITY_NAME[x["prio"]], x["stars"] or "", x["title"], x["section"], x["line"]] for x in flagged],
+    )
     out.append("")
     out.append(f"### Unflagged backlog ({len(tail)})")
     out.append("")
-    out.append("| Item | Section | Line |")
-    out.append("|------|---------|------|")
-    for x in sorted(tail, key=lambda x: x["line"]):
-        out.append(f"| {x['title']} | {x['section']} | {x['line']} |")
+    out += table(
+        ["Item", "Section", "Line"],
+        [[x["title"], x["section"], x["line"]] for x in sorted(tail, key=lambda x: x["line"])],
+    )
     out.append(END)
     return "\n".join(out)
 
 
 def rewrite_todo(items):
     text = TODO.read_text(encoding="utf-8")
+    # Keep the file's own line endings: a Windows checkout has CRLF (core.autocrlf), text mode
+    # drops the CRs on reading, and writing back with "\n" made every line of TODO.md a change in
+    # the working tree.
+    eol = "\r\n" if b"\r\n" in TODO.read_bytes() else "\n"
     block = render_index(items)
     if BEGIN in text and END in text:
         pre = text[: text.index(BEGIN)]
@@ -125,7 +149,7 @@ def rewrite_todo(items):
         lines = text.splitlines(keepends=True)
         assert lines[0].startswith("# ")
         text = lines[0] + "\n" + block + "\n" + "".join(lines[1:])
-    with io.open(TODO, "w", encoding="utf-8", newline="\n") as f:
+    with io.open(TODO, "w", encoding="utf-8", newline=eol) as f:
         f.write(text)
     # Line numbers shift when the index itself changes size, so parse-and-render twice:
     # the second pass sees the final layout and its numbers are exact.
@@ -134,7 +158,7 @@ def rewrite_todo(items):
     text = TODO.read_text(encoding="utf-8")
     pre = text[: text.index(BEGIN)]
     post = text[text.index(END) + len(END) :]
-    with io.open(TODO, "w", encoding="utf-8", newline="\n") as f:
+    with io.open(TODO, "w", encoding="utf-8", newline=eol) as f:
         f.write(pre + block2 + post)
     return items2
 

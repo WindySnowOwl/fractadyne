@@ -1623,8 +1623,16 @@ pub(crate) enum PlaybackTick {
 /// (on stderr) about a version from a newer build. Shared by every entry point so the diagnosis
 /// is identical whether the script came from the CLI, the file dialog, or a test harness.
 fn read_script(path: &std::path::Path) -> Result<ScriptFile, String> {
+    crumb_reading_script(path);
     let text = std::fs::read_to_string(path).map_err(|e| format!("read {}: {e}", path.display()))?;
     parse_script_text(&text).map_err(|e| format!("{}: {e}", path.display()))
+}
+
+/// The breadcrumb for reading a tour script, so a watchdog warning while one is read and its
+/// formulas compiled names that, not the phase before it. The file name only: no folder in the log.
+fn crumb_reading_script(path: &std::path::Path) {
+    let name = path.file_name().map_or_else(|| "?".into(), |n| n.to_string_lossy());
+    crate::diag::breadcrumb(format!("tour: reading the script {name}"));
 }
 
 /// Parse script TOML from memory — the path-free half of [`read_script`], so the selftest can
@@ -2801,6 +2809,12 @@ fn resolve_script(sf: ScriptFile, bench: Option<Bench>) -> Result<Playback, Stri
                             .map_err(|e| format!("keyframe {id}: the formula does not compile: {e}"))?,
                     );
                     compiled.push(c.clone());
+                    // A finished compile is work: a tour that sweeps a parameter compiles one per
+                    // keyframe, ~10 ms each, and the slices video's 1098 held the UI thread for
+                    // 10-13 s with nothing stamped, so the watchdog logged "possible hang" and the
+                    // log check failed a render that was fine. A compile that never returns still
+                    // lets the stall clock run out.
+                    crate::diag::alive();
                     c
                 }
             };
@@ -3625,6 +3639,7 @@ impl FractadyneApp {
     ) -> Result<String, String> {
         // The text is kept (not just parsed, as `read_script` does) because the normalize-anchor
         // file is keyed on it: anchors measured for one script must never color another.
+        crumb_reading_script(script_path);
         let script_text = std::fs::read_to_string(script_path)
             .map_err(|e| format!("read {}: {e}", script_path.display()))?;
         let pb = resolve_script(
