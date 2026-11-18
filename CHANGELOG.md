@@ -59,6 +59,13 @@ published as the pre-releases `v0.2.41-beta.1` to `v0.2.41-beta.150`, and a "bet
 
 Changes after 0.3.0-beta.1:
 
+- **A view left alone no longer resets its rendering speed when it wakes (after 0.3.0-beta.27).**
+  While a view finishes settling, Fractadyne redraws it on a slow beat, up to once a second, to
+  spare the graphics card. The safety stop for stalled graphics work read each of those planned
+  one-second waits as a frame that came a second late, and reset both views' learned work size to
+  the start, so the next picture rendered coarse and the view relearned from scratch. After a
+  pause this happened on the first beat, and on a large view it could repeat every few seconds.
+  The stop now judges how late a frame is, not how long the app chose to wait for it.
 - **Zooming at a shallow depth no longer drops the picture to a few big blocks (after
   0.3.0-beta.27).** Around 10,000× to 100,000×, where the view changes the arithmetic it uses, and
   on the dual view's Julia panel while the cursor moves c, a new reference orbit could cut the

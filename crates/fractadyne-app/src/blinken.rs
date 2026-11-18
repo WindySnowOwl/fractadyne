@@ -353,7 +353,7 @@ impl Overlay {
         // While anything on the panel moves, keep frames coming; once it is still, only the clock's
         // seconds need a frame, so an idle app still idles (design/blinkenlights.md, "Cost").
         let next = if self.model.active() { 50 } else { 1000 };
-        ctx.request_repaint_after(std::time::Duration::from_millis(next));
+        crate::diag::repaint_after(ctx, std::time::Duration::from_millis(next));
     }
 
     fn show_help(&mut self, ctx: &egui::Context, hits: &[panel::Hit], hovered: bool) {
@@ -380,7 +380,7 @@ impl Overlay {
         }
         let Some((key, rect, since)) = self.hover else { return };
         if now - since < HELP_DELAY_S {
-            ctx.request_repaint_after(std::time::Duration::from_millis(60));
+            crate::diag::repaint_after(ctx, std::time::Duration::from_millis(60));
             return;
         }
         // Only a key the panel draws has a card (the lists the help tests hold to the cards).

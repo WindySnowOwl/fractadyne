@@ -318,7 +318,7 @@ impl FractadyneApp {
                 self.dialogs.speed_notice = None;
                 return;
             }
-            ctx.request_repaint_after(left);
+            crate::diag::repaint_after(ctx, left);
         }
         let mut open = true;
         egui::Window::new(tr!(speed_check_title))

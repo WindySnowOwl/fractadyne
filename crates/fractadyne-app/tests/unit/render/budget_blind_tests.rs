@@ -98,14 +98,35 @@ fn the_dead_man_drops_a_high_budget_to_the_bootstrap_and_leaves_a_low_one_alone(
 fn a_synchronous_offscreen_render_is_not_a_lethal_band_frame() {
     // The CLI render that failed its own log check (2026-09-27, beta.134): a 6,313 ms interval of
     // which ~6,200 ms was the blocking render itself. What is left is an ordinary frame.
-    let dt = tripwire_dt(6313.0, 6200.0);
+    let dt = tripwire_dt(6313.0, 6200.0, 0.0);
     assert!((dt - 113.0).abs() < 1e-9, "{dt}");
     assert!(!budget_blind_lethal(dt, true, 0, false));
     // The same interval with NO offscreen render in it is exactly what the trigger exists for.
-    assert!(budget_blind_lethal(tripwire_dt(6313.0, 0.0), true, 0, false));
+    assert!(budget_blind_lethal(tripwire_dt(6313.0, 0.0, 0.0), true, 0, false));
     // `--recordtest`'s injected frames sleep in the body, not in an offscreen render: they count.
-    assert_eq!(tripwire_dt(450.0, 0.0), 450.0);
+    assert_eq!(tripwire_dt(450.0, 0.0, 0.0), 450.0);
     // Never negative, whatever the two clocks say.
-    assert_eq!(tripwire_dt(100.0, 250.0), 0.0);
-    assert_eq!(tripwire_dt(100.0, -5.0), 100.0);
+    assert_eq!(tripwire_dt(100.0, 250.0, 0.0), 0.0);
+    assert_eq!(tripwire_dt(100.0, -5.0, 0.0), 100.0);
+}
+
+#[test]
+fn a_frame_that_comes_when_it_was_asked_to_is_not_late() {
+    // The maintainer's log (beta.27, 2026-11-16 +135.5 s) and the repro on b6880: a settled view's
+    // beat asked 984 ms after a long idle, and the frame that came 984-985 ms later tripped the
+    // lethal band (0.9 s) and reset both budgets. Judged by its lateness it is a quick frame.
+    assert!(budget_blind_lethal(tripwire_dt(985.0, 0.0, 0.0), true, 0, false), "the old reading");
+    let dt = tripwire_dt(985.0, 0.0, 984.0);
+    assert!((dt - 1.0).abs() < 1e-9, "{dt}");
+    assert!(!budget_blind_lethal(dt, true, 0, false));
+    // The 1,000 ms cap of the beat, a frame 40 ms late: still nothing like a stall.
+    assert!(!budget_blind_lethal(tripwire_dt(1_040.0, 0.0, 1_000.0), true, 0, false));
+    // A real stall behind a beat is still caught: asked for 1 s, came 2.1 s later.
+    assert!(budget_blind_lethal(tripwire_dt(2_100.0, 0.0, 1_000.0), true, 0, false));
+    // An immediate ask plans no sleep, so the old rule stands (`--recordtest`'s injected frames).
+    assert_eq!(tripwire_dt(450.0, 0.0, 0.0), 450.0);
+    // Both discounts add, and nothing goes negative.
+    assert_eq!(tripwire_dt(1_000.0, 300.0, 250.0), 450.0);
+    assert_eq!(tripwire_dt(100.0, 0.0, 1_000.0), 0.0);
+    assert_eq!(tripwire_dt(100.0, 0.0, -5.0), 100.0);
 }

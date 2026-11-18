@@ -961,7 +961,7 @@ impl FractadyneApp {
         // Keep the clock observable even if nothing else repaints — the defect under test is
         // precisely "the settle stops being driven", so the harness must not mask it by
         // repainting every frame: request only at shot boundaries plus a slow heartbeat.
-        ctx.request_repaint_after(std::time::Duration::from_millis(250));
+        crate::diag::repaint_after(ctx, std::time::Duration::from_millis(250));
     }
 
     pub(crate) fn juliadive_frame(&mut self, ctx: &egui::Context) {

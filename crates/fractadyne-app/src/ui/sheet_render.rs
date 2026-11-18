@@ -559,7 +559,7 @@ impl crate::FractadyneApp {
             }
         }
         if self.method_sheet.render.busy(cell_px, budget) {
-            ctx.request_repaint_after(POLL);
+            crate::diag::repaint_after(ctx, POLL);
         }
     }
 }

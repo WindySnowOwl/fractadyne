@@ -182,7 +182,7 @@ impl FractadyneApp {
         let Some(p) = self.formula_dialog.pending.as_ref() else { return };
         match p.rx.try_recv() {
             Err(std::sync::mpsc::TryRecvError::Empty) => {
-                ctx.request_repaint_after(std::time::Duration::from_millis(30));
+                crate::diag::repaint_after(ctx, std::time::Duration::from_millis(30));
             }
             got => {
                 let p = self.formula_dialog.pending.take().expect("checked above");

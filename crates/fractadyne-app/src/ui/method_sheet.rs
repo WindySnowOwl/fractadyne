@@ -216,7 +216,7 @@ impl crate::FractadyneApp {
             ctx.request_repaint();
         }
         if let Some(t) = s.wake_in {
-            ctx.request_repaint_after(std::time::Duration::from_secs_f64(t.max(0.0)));
+            crate::diag::repaint_after(ctx, std::time::Duration::from_secs_f64(t.max(0.0)));
         }
     }
 
@@ -268,7 +268,7 @@ impl crate::FractadyneApp {
         if let Some(at) = self.method_sheet.drawn_at {
             let since = at.elapsed();
             if since < REDRAW_PACE && self.method_sheet.atlas.is_some() {
-                ctx.request_repaint_after(REDRAW_PACE - since);
+                crate::diag::repaint_after(ctx, REDRAW_PACE - since);
                 return;
             }
         }

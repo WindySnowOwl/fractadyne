@@ -3016,7 +3016,7 @@ pub(crate) fn aa_ramp(frame: u32, target: u32) -> u32 {
 pub(crate) fn request_export_poll(ctx: &egui::Context) {
     match crate::tunables::cost().export_poll_ms {
         0 => ctx.request_repaint(),
-        ms => ctx.request_repaint_after(std::time::Duration::from_millis(ms)),
+        ms => crate::diag::repaint_after(ctx, std::time::Duration::from_millis(ms)),
     }
 }
 
@@ -9908,7 +9908,7 @@ impl FractadyneApp {
         if busy || self.pending_thumb.is_some() || self.thumb_shot.is_some() {
             // Not settled yet (or a capture is already in flight): keep the frame clock ticking
             // so the busy-to-idle transition is observed even on an otherwise idle UI.
-            ctx.request_repaint_after(std::time::Duration::from_millis(250));
+            crate::diag::repaint_after(ctx, std::time::Duration::from_millis(250));
             return;
         }
         self.pending_thumb = self.heal_thumb.take().map(|(key, ..)| key);
@@ -12301,7 +12301,7 @@ impl FractadyneApp {
             ctx.request_repaint();
         }
         if let Some(t) = s.wake_in {
-            ctx.request_repaint_after(std::time::Duration::from_secs_f64(t.max(0.0)));
+            crate::diag::repaint_after(ctx, std::time::Duration::from_secs_f64(t.max(0.0)));
         }
     }
 
@@ -15525,7 +15525,7 @@ impl FractadyneApp {
             self.set_toast(fractadyne_core::mpfr_found_message(), ctx);
         } else if matches!(&self.mpfr_recovery, Some(rec) if !rec.announced) {
             // Keep the loop alive at an idle window so the probe still fires without user input.
-            ctx.request_repaint_after(std::time::Duration::from_secs(3));
+            crate::diag::repaint_after(ctx, std::time::Duration::from_secs(3));
         }
     }
 
@@ -18931,7 +18931,7 @@ impl eframe::App for FractadyneApp {
                 // window to 2 iterations (2026-09-11).
                 let in_flight = self.perf.chunk_inflight.iter().any(|c| c.is_some());
                 let refresh_ms = render::walk_repaint_ms(in_flight, self.perf.frame_ms);
-                ctx.request_repaint_after(std::time::Duration::from_millis(refresh_ms as u64));
+                crate::diag::repaint_after(ctx, std::time::Duration::from_millis(refresh_ms as u64));
             }
         }
         // Keep repainting while an off-thread reference recompute is in flight, so its result is
@@ -18948,7 +18948,7 @@ impl eframe::App for FractadyneApp {
             if interacting {
                 ctx.request_repaint();
             } else {
-                ctx.request_repaint_after(std::time::Duration::from_millis(50));
+                crate::diag::repaint_after(ctx, std::time::Duration::from_millis(50));
             }
         }
         let body_ms = frame_start.elapsed().as_secs_f64() * 1000.0;
@@ -18965,9 +18965,11 @@ impl eframe::App for FractadyneApp {
         {
             let target = crate::tunables::cost().tdr_budget_ms;
             let busy = self.perf.gap_due && ctx.has_requested_repaint();
-            // The interval less any synchronous offscreen render inside it: that render is the
-            // app's own blocking work, not a live dispatch (see `render::tripwire_dt`).
-            let dt_ms = render::tripwire_dt(self.perf.last_dt_ms, self.perf.prev_offscreen_ms);
+            // The interval less any synchronous offscreen render inside it (the app's own blocking
+            // work, not a live dispatch) and less the sleep the last frame asked for (the settled
+            // beat): see `render::tripwire_dt` and `diag::planned_sleep_ms`.
+            let planned_ms = diag::planned_sleep_ms(ctx.requested_repaint_last_pass());
+            let dt_ms = render::tripwire_dt(self.perf.last_dt_ms, self.perf.prev_offscreen_ms, planned_ms);
             // PER VIEW (finding U15): the wall interval is the window's, so a slow frame counts
             // for every live view; but each view's warning is judged against ITS OWN readings and
             // reports ITS OWN state — one panel's healthy reading must not silence the other's.

@@ -443,7 +443,7 @@ impl FractadyneApp {
                 self.farm_client.error = tail.first().map(|t| t.trim_start_matches("! ").to_string());
             }
         } else {
-            ctx.request_repaint_after(std::time::Duration::from_millis(250));
+            crate::diag::repaint_after(ctx, std::time::Duration::from_millis(250));
         }
     }
 
@@ -504,7 +504,7 @@ impl FractadyneApp {
                     self.farm_client.cards = Some(v);
                     self.farm_client.cards_rx = None;
                 }
-                Err(std::sync::mpsc::TryRecvError::Empty) => ctx.request_repaint_after(std::time::Duration::from_millis(200)),
+                Err(std::sync::mpsc::TryRecvError::Empty) => crate::diag::repaint_after(ctx, std::time::Duration::from_millis(200)),
                 Err(std::sync::mpsc::TryRecvError::Disconnected) => self.farm_client.cards_rx = None,
             }
         }
@@ -514,7 +514,7 @@ impl FractadyneApp {
                     self.farm_client.found = Some(v);
                     self.farm_client.found_rx = None;
                 }
-                Err(std::sync::mpsc::TryRecvError::Empty) => ctx.request_repaint_after(std::time::Duration::from_millis(200)),
+                Err(std::sync::mpsc::TryRecvError::Empty) => crate::diag::repaint_after(ctx, std::time::Duration::from_millis(200)),
                 Err(std::sync::mpsc::TryRecvError::Disconnected) => self.farm_client.found_rx = None,
             }
         }

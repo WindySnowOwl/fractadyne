@@ -498,8 +498,14 @@ pub(crate) fn budget_blind_lethal(dt_ms: f64, busy: bool, slow_readings: u32, wa
 /// 2026-09-27: beta.131 exit 0, beta.134 exit 1 on the same 7.7 s benchmark render; the trigger
 /// arrived in beta.132). Only the offscreen part is discounted: anything else in the frame body
 /// still counts, which is how `--recordtest` injects its blind and wedged frames.
-pub(crate) fn tripwire_dt(last_dt_ms: f64, offscreen_ms: f64) -> f64 {
-    (last_dt_ms - offscreen_ms.max(0.0)).max(0.0)
+///
+/// …and less `planned_ms`, the sleep the frame before asked for (`diag::planned_sleep_ms`: the
+/// settled beat's up to 1 s, or nothing when it asked for an immediate repaint). A frame that comes
+/// when it was asked to is on time, however long the wait; what the tripwire judges is the lateness.
+/// (Where egui asked a shorter delay of its own in the same frame, the sleep was shorter than
+/// this, and a stall inside that frame is understated by at most the difference.)
+pub(crate) fn tripwire_dt(last_dt_ms: f64, offscreen_ms: f64, planned_ms: f64) -> f64 {
+    (last_dt_ms - offscreen_ms.max(0.0) - planned_ms.max(0.0)).max(0.0)
 }
 
 /// ⭐⭐THE WALL-CLOCK DEAD-MAN's budget (design §5.1, §8): when [`budget_blind`] latches, the view's
