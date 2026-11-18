@@ -3298,7 +3298,7 @@ impl FractadyneApp {
             .map(|d| d.to_path_buf())
             .unwrap_or_else(|| self.dialog_dir_default());
         dialog = dialog.set_directory(seed);
-        let Some(path) = dialog.pick_file() else {
+        let Some(path) = crate::diag::modal(|| dialog.pick_file()) else {
             return;
         };
         self.remember_dir(&path);

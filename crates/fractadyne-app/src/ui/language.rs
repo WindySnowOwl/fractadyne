@@ -310,7 +310,7 @@ impl FractadyneApp {
             }
         }
         if install {
-            if let Some(path) = rfd::FileDialog::new().add_filter(tr!(language_file_filter), &["ftl"]).pick_file() {
+            if let Some(path) = crate::diag::modal(|| rfd::FileDialog::new().add_filter(tr!(language_file_filter), &["ftl"]).pick_file()) {
                 let msg = self.install_language_file(&path);
                 self.set_toast(msg, ctx);
             }

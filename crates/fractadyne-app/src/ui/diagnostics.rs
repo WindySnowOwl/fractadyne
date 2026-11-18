@@ -594,11 +594,11 @@ impl FractadyneApp {
     fn save_diagnostics_bundle(&mut self, ctx: &egui::Context) {
         let (y, mo, d, h, mi, s, _) = crate::sysinfo::local_now().unwrap_or((1980, 1, 1, 0, 0, 0, 0));
         let name = format!("fractadyne-diagnostics-{y:04}{mo:02}{d:02}-{h:02}{mi:02}{s:02}.zip");
-        let Some(path) = rfd::FileDialog::new()
+        let Some(path) = crate::diag::modal(|| rfd::FileDialog::new()
             .set_directory(self.dialog_dir_default())
             .set_file_name(&name)
             .add_filter("zip", &["zip"])
-            .save_file()
+            .save_file())
         else {
             return;
         };

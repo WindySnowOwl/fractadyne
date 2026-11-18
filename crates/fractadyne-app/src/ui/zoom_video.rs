@@ -597,11 +597,11 @@ impl FractadyneApp {
                 .filter(|p| p.is_dir())
                 .map(|p| p.to_path_buf())
                 .unwrap_or_else(|| self.dialog_dir_default());
-            if let Some(f) = rfd::FileDialog::new()
+            if let Some(f) = crate::diag::modal(|| rfd::FileDialog::new()
                 .set_directory(seed)
                 .set_file_name("zoom-video.mp4")
                 .add_filter(tr!(zoom_video_filter), &["mp4", "mkv", "mov"])
-                .save_file()
+                .save_file())
             {
                 if let Some(d) = f.parent() {
                     self.remember_dir(d);
@@ -610,7 +610,7 @@ impl FractadyneApp {
             }
         }
         if browse_keep {
-            if let Some(dir) = rfd::FileDialog::new().set_directory(self.dialog_dir_default()).pick_folder() {
+            if let Some(dir) = crate::diag::modal(|| rfd::FileDialog::new().set_directory(self.dialog_dir_default()).pick_folder()) {
                 self.remember_dir(&dir);
                 self.zoom_video.keep_dir = dir.display().to_string();
             }

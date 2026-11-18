@@ -1088,11 +1088,11 @@ impl FractadyneApp {
             self.report.msg = Some(tr!(dlg_report_copied));
         }
         if save {
-            if let Some(path) = rfd::FileDialog::new()
+            if let Some(path) = crate::diag::modal(|| rfd::FileDialog::new()
                 .set_directory(self.dialog_dir_default())
                 .set_file_name("fractadyne-report.txt")
                 .add_filter(tr!(dlg_filter_text), &["txt"])
-                .save_file()
+                .save_file())
             {
                 self.remember_dir(&path);
                 match std::fs::write(&path, self.build_report().as_bytes()) {
@@ -1458,11 +1458,11 @@ impl FractadyneApp {
         let secs = self.dialogs.script_export_secs.clamp(1.0, 7200.0);
         let note = self.dialogs.script_export_note.trim().to_string();
         let toml = self.build_dive_script(&note, secs);
-        if let Some(path) = rfd::FileDialog::new()
+        if let Some(path) = crate::diag::modal(|| rfd::FileDialog::new()
             .add_filter(tr!(dlg_tour_filter), &["toml"])
             .set_directory(self.dialog_dir_default())
             .set_file_name("dive-to-view.toml")
-            .save_file()
+            .save_file())
         {
             self.remember_dir(&path);
             let ctx_msg = match std::fs::write(&path, toml.as_bytes()) {
@@ -2009,11 +2009,11 @@ impl FractadyneApp {
                         }
                         // ⭐SAVE, not CONFIRM: §8.1 gives an established task verb its own glyph.
                         if ui.button(format!("{} {}", crate::icons::SAVE, tr!(dlg_bench_results_save))).clicked() {
-                            if let Some(path) = rfd::FileDialog::new()
+                            if let Some(path) = crate::diag::modal(|| rfd::FileDialog::new()
                                 .add_filter(tr!(dlg_filter_text), &["txt"])
                                 .set_directory(&start_dir)
                                 .set_file_name("fractadyne_benchmark.txt")
-                                .save_file()
+                                .save_file())
                             {
                                 bench_save_dir = path.parent().map(|p| p.to_path_buf());
                                 bench_save = Some(std::fs::write(path, &r));
@@ -2069,9 +2069,9 @@ impl FractadyneApp {
             .show(ctx, |ui| {
                 ui.horizontal(|ui| {
                     if ui.button(tr!(dlg_gallery_folder)).clicked() {
-                        if let Some(d) = rfd::FileDialog::new()
+                        if let Some(d) = crate::diag::modal(|| rfd::FileDialog::new()
                             .set_directory(&self.gallery.dir)
-                            .pick_folder()
+                            .pick_folder())
                         {
                             self.remember_dir(&d);
                             self.gallery.dir = d;
@@ -2367,7 +2367,7 @@ impl FractadyneApp {
                         .on_hover_text(tr!(dlg_export_choose_hover))
                         .clicked()
                     {
-                        if let Some(d) = rfd::FileDialog::new().set_directory(&target_dir).pick_folder() {
+                        if let Some(d) = crate::diag::modal(|| rfd::FileDialog::new().set_directory(&target_dir).pick_folder()) {
                             self.remember_dir(&d);
                             self.export.last_dir = Some(d);
                         }

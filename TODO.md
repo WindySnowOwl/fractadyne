@@ -816,6 +816,20 @@ Mockups: [design/mockups/](design/mockups/).
 
 ## Open bugs
 
+- [x] **A file dialog left open read as a stalled GPU frame** (found 2026-11-18 in the maintainer's
+  log of 2026-11-14 to 11-16, beta.27): Save dialogs held 26 s and 38 s each logged "possible
+  hang" (the UI thread's stack in `comdlg32`/`DUser`), then `⚠FRAME BUDGET IS BLIND` and a
+  `DEAD-MAN` reset of BOTH views' budgets to the 4e8 bootstrap (from 5.2e10 / 3.5e10), the
+  dispatch ceiling released too: the frame that held the dialog read as one 38 s GPU frame.
+  ✅**FIXED 2026-11-18 (`fix/modal-dialog-not-a-stall`).** `diag::modal(|| …)` runs a native
+  picker: the watchdog waits while one is open, and its time joins the frame's `offscreen_ms`,
+  which `render::tripwire_dt` already takes out of the interval it judges (as for a synchronous
+  export). All 29 pickers wrapped; `modal_sites_tests` fails on a bare one (mutation-checked: one
+  unwrapped site names its line). Reproduced with a scratch hook (not committed) that opens a
+  picker 8 s in, held 15 s and closed by WM_CLOSE to the picker's own window: unwrapped,
+  "possible hang" at +18.6 s, BLIND and DEAD-MAN 9.0e8 → 4.0e8; wrapped, none of the three and
+  the budget kept at 9.0e8. Unit test `modal_tests` (open only while running, time handed over
+  once, closed by a panic).
 - [x] **GitHub #5, custom formulas at deep minibrot views** (2026-11-15/16, `fix/custom-deep-dip-2`).
   Three causes in the generated steps (`custom.rs`), all fixed: a reference dip (stored
   extended-range) was read as df32 0, dropping 2Z·δz; after a rebase onto Z₀ = 0 the df32

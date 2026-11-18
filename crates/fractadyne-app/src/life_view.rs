@@ -580,10 +580,10 @@ impl FractadyneApp {
 
     /// File > Open pattern…: RLE, plaintext, Life 1.05 / 1.06.
     pub(crate) fn life_open_file(&mut self) {
-        let Some(path) = rfd::FileDialog::new()
+        let Some(path) = crate::diag::modal(|| rfd::FileDialog::new()
             .add_filter(tr!(life_filter_patterns), &["rle", "cells", "lif", "life", "txt"])
             .set_directory(self.dialog_dir_default())
-            .pick_file()
+            .pick_file())
         else {
             return;
         };
@@ -615,11 +615,11 @@ impl FractadyneApp {
 
     /// File > Save pattern…: the universe as it is now, as RLE.
     pub(crate) fn life_save_file(&mut self) {
-        let Some(path) = rfd::FileDialog::new()
+        let Some(path) = crate::diag::modal(|| rfd::FileDialog::new()
             .add_filter(tr!(life_filter_rle), &["rle"])
             .set_directory(self.dialog_dir_default())
             .set_file_name(format!("{}.rle", self.life.pattern_name))
-            .save_file()
+            .save_file())
         else {
             return;
         };

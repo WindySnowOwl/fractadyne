@@ -755,10 +755,10 @@ impl FractadyneApp {
 
     /// File > Open L-system…: a Fractint `.l` file or the native format.
     pub(crate) fn lsystem_open_file(&mut self) {
-        let Some(path) = rfd::FileDialog::new()
+        let Some(path) = crate::diag::modal(|| rfd::FileDialog::new()
             .add_filter(tr!(lsys_filter_systems), &["l", "lsys", "txt"])
             .set_directory(self.dialog_dir_default())
-            .pick_file()
+            .pick_file())
         else {
             return;
         };
@@ -779,11 +779,11 @@ impl FractadyneApp {
     pub(crate) fn lsystem_save_file(&mut self) {
         let s = self.lsystem.system.clone();
         let stem: String = s.name.chars().map(|c| if c.is_alphanumeric() || c == ' ' || c == '-' { c } else { '_' }).collect();
-        let Some(path) = rfd::FileDialog::new()
+        let Some(path) = crate::diag::modal(|| rfd::FileDialog::new()
             .add_filter(tr!(lsys_filter_system), &["lsys"])
             .set_directory(self.dialog_dir_default())
             .set_file_name(format!("{}.lsys", if stem.trim().is_empty() { "L-system" } else { stem.trim() }))
-            .save_file()
+            .save_file())
         else {
             return;
         };
@@ -800,11 +800,11 @@ impl FractadyneApp {
         let svg = self.lsystem_svg_of_view();
         let name = self.lsystem.system.name.clone();
         let stem: String = name.chars().map(|c| if c.is_alphanumeric() || c == ' ' || c == '-' { c } else { '_' }).collect();
-        let Some(path) = rfd::FileDialog::new()
+        let Some(path) = crate::diag::modal(|| rfd::FileDialog::new()
             .add_filter("SVG", &["svg"])
             .set_directory(self.dialog_dir_default())
             .set_file_name(format!("{}.svg", if stem.trim().is_empty() { "L-system" } else { stem.trim() }))
-            .save_file()
+            .save_file())
         else {
             return;
         };

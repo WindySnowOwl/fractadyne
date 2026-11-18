@@ -11880,10 +11880,10 @@ impl FractadyneApp {
 
     /// File-dialog import of a Kalles Fraktaler `.kfr` location.
     fn import_kfr(&mut self, ctx: &egui::Context) {
-        let Some(path) = rfd::FileDialog::new()
+        let Some(path) = crate::diag::modal(|| rfd::FileDialog::new()
             .add_filter(tr!(app_filter_kfr), &["kfr", "txt"])
             .set_directory(self.dialog_dir_default())
-            .pick_file()
+            .pick_file())
         else {
             return;
         };
@@ -11962,11 +11962,11 @@ impl FractadyneApp {
         } else {
             Some(boxed)
         };
-        let Some(path) = rfd::FileDialog::new()
+        let Some(path) = crate::diag::modal(|| rfd::FileDialog::new()
             .add_filter(tr!(app_filter_fdn), &["fdn"])
             .set_directory(self.dialog_dir_default())
             .set_file_name("location.fdn")
-            .save_file()
+            .save_file())
         else {
             return;
         };
@@ -12034,10 +12034,10 @@ impl FractadyneApp {
     /// Load a `.fdn` file into the Share dialog's text box (size-bounded; not auto-applied,
     /// so the user can review before jumping).
     fn load_share_file(&mut self) {
-        let Some(path) = rfd::FileDialog::new()
+        let Some(path) = crate::diag::modal(|| rfd::FileDialog::new()
             .add_filter(tr!(app_filter_fdn), &["fdn", "txt"])
             .set_directory(self.dialog_dir_default())
-            .pick_file()
+            .pick_file())
         else {
             return;
         };
@@ -12423,11 +12423,11 @@ impl FractadyneApp {
     /// 0-63 written out x4, so their white is 252, and Fractint's own images carry the same 252.
     /// See `fractadyne_color::import::MapPalette`.
     fn import_map_palette(&mut self) -> bool {
-        let Some(path) = rfd::FileDialog::new()
+        let Some(path) = crate::diag::modal(|| rfd::FileDialog::new()
             .add_filter(tr!(app_filter_map), &["map"])
             .add_filter(tr!(app_filter_all), &["*"])
             .set_directory(self.dialog_dir_default())
-            .pick_file()
+            .pick_file())
         else {
             return false;
         };
@@ -12489,11 +12489,11 @@ impl FractadyneApp {
     /// one gradient applies immediately, several open a picker. Loading "the" gradient would
     /// silently choose one of dozens.
     fn import_ugr_palette(&mut self) -> bool {
-        let Some(path) = rfd::FileDialog::new()
+        let Some(path) = crate::diag::modal(|| rfd::FileDialog::new()
             .add_filter(tr!(app_filter_ugr), &["ugr"])
             .add_filter(tr!(app_filter_all), &["*"])
             .set_directory(self.dialog_dir_default())
-            .pick_file()
+            .pick_file())
         else {
             return false;
         };
@@ -12569,11 +12569,11 @@ impl FractadyneApp {
     ///
     /// ⚠Binary, and read as bytes: `read_to_string` would reject it as invalid UTF-8.
     fn import_ase_palette(&mut self) -> bool {
-        let Some(path) = rfd::FileDialog::new()
+        let Some(path) = crate::diag::modal(|| rfd::FileDialog::new()
             .add_filter(tr!(app_filter_ase), &["ase"])
             .add_filter(tr!(app_filter_all), &["*"])
             .set_directory(self.dialog_dir_default())
-            .pick_file()
+            .pick_file())
         else {
             return false;
         };
@@ -12646,11 +12646,11 @@ impl FractadyneApp {
                 .map(|c| if c.is_alphanumeric() || c == '-' || c == '_' || c == ' ' { c } else { '_' })
                 .collect()
         };
-        let Some(path) = rfd::FileDialog::new()
+        let Some(path) = crate::diag::modal(|| rfd::FileDialog::new()
             .add_filter(tr!(app_filter_ggr), &["ggr"])
             .set_file_name(format!("{stem}.ggr"))
             .set_directory(self.dialog_dir_default())
-            .save_file()
+            .save_file())
         else {
             return false;
         };
@@ -12692,11 +12692,11 @@ impl FractadyneApp {
     /// stores into `custom_segments` rather than `custom_palette` — a stop list cannot hold any of
     /// the three, and persisting it as stops would flatten every one on the first restart.
     fn import_ggr_palette(&mut self) -> bool {
-        let Some(path) = rfd::FileDialog::new()
+        let Some(path) = crate::diag::modal(|| rfd::FileDialog::new()
             .add_filter(tr!(app_filter_ggr), &["ggr"])
             .add_filter(tr!(app_filter_all), &["*"])
             .set_directory(self.dialog_dir_default())
-            .pick_file()
+            .pick_file())
         else {
             return false;
         };
@@ -19137,6 +19137,8 @@ impl eframe::App for FractadyneApp {
         self.uitest_note_text(ctx);
         self.emit_frame_records(ctx, body_ms);
         self.perf.prev_body_ms = body_ms;
+        // A file picker this frame held open is a person choosing, not a dispatch (`diag::modal`).
+        self.perf.offscreen_ms += diag::take_modal_ms();
         self.perf.prev_offscreen_ms = self.perf.offscreen_ms;
         self.perf.offscreen_ms = 0.0;
 
