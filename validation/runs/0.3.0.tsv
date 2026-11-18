@@ -1,0 +1,7 @@
+utc	version	identity	exit	verdict	config	command
+2026-11-18 22:00:10	0.3.0	build 6889, g2bc9387	0	selftest exit 0; logcheck PASS	fresh; window on DISPLAY1 at 100%	fractadyne --selftest --selftest-filter fe-df32-probe --out logs/optin/report.md
+2026-11-18 23:25:13	0.3.0	build 6889, g2bc9387	0	selftest exit 0; logcheck PASS	fresh; window on DISPLAY1 at 100%	fractadyne --selftest --selftest-filter deep-location --out logs/optin/report.md
+2026-11-18 23:25:56	0.3.0	build 6889, g2bc9387	0	motiontest exit 0; logcheck PASS	fresh; window on DISPLAY1 at 100%	fractadyne --motiontest --worker-gpu same
+2026-11-18 23:30:04	0.3.0	build 6889, g2bc9387	143	no [fd-exit]	fresh; window on DISPLAY1 at 100%	fractadyne --autodive 32 --autodive-timeout 900 --autodive-home 3
+2026-11-18 23:39:47	0.3.0	build 6889, g2bc9387	3	autodive exit 3; logcheck PASS	fresh; window on DISPLAY1 at 100%	fractadyne --autodive 32 --autodive-timeout 900 --autodive-home 3
+2026-11-18 23:46:19	0.3.0	build 6889, g2bc9387	0	livetest exit 0; logcheck PASS	fresh; window on DISPLAY1 at 100%	fractadyne --livetest tours/grand-tour.toml --size 480x270
