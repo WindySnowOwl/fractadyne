@@ -815,6 +815,19 @@ Mockups: [design/mockups/](design/mockups/).
 
 ## Open bugs
 
+- [x] **A print to a closed pipe crashed the command line** (found 2026-11-18 in the maintainer's
+  profile: three crash reports, 2026-11-01 to 11-03, released beta.23-25 builds, uptime 0.1 s, all
+  "failed printing to stdout: The pipe is being closed. (os error 232)"). `fractadyne --help | :`
+  (or `--version`, `--list-adapters`; any reader that stops before the output ends) panicked in
+  `println!`: exit 101 and a crash report in the profile. ✅**FIXED 2026-11-18
+  (`fix/closed-stdout-quiet-exit`).** The panic hook recognizes the print macros' broken-pipe panic
+  (`diag::closed_pipe_panic`: stdout or stderr, os error 232/109 on Windows, 32 elsewhere), logs
+  `[fd-exit] … exiting 141 (not a crash)`, ends the session and exits 141 (128 + SIGPIPE), with no
+  report. Only where the crash dialog is off (a command line or script); a person's own window
+  keeps the crash path. Checked: the three commands `| :` exit 141 with no crash file (were 101 with
+  one); output to a reader that reads all is unchanged; unit tests `closed_pipe_tests` (the
+  Windows and Unix messages; a failed print for another reason, a misplaced or non-numeric code,
+  and other panics stay crashes).
 - [x] **GitHub #5, custom formulas at deep minibrot views** (2026-11-15/16, `fix/custom-deep-dip-2`).
   Three causes in the generated steps (`custom.rs`), all fixed: a reference dip (stored
   extended-range) was read as df32 0, dropping 2Z·δz; after a rebase onto Z₀ = 0 the df32
