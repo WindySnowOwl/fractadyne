@@ -2757,39 +2757,47 @@ impl FractadyneApp {
             // `install_collapse` — a scripted glide can't reproduce the interactive wheel-jump
             // that trips it, so the unit checks are its regression net.)
             let big_collapse = install_collapse(old.orbit_len, res.orbit_len, res.partial);
+            // (The two length triggers are mutually exclusive, and a clamp lift is growth.)
+            let trigger = if big_collapse {
+                Some(DerateTrigger::LengthCollapse)
+            } else if clamp_lifted {
+                Some(DerateTrigger::ClampLifted)
+            } else if big_jump && !growth_only {
+                Some(DerateTrigger::LengthJump)
+            } else {
+                None
+            };
+            // Did the outgoing reference let pixels skip iterations? (See `install_derate`.)
+            let old_skipped = old.sa.skip > 0 || !old.bla.is_empty() || old.rn.is_some();
             // An instrument truncation derates nothing (see `instrument_truncated` above).
-            if !instrument_truncated && (clamp_lifted || (big_jump && !growth_only) || big_collapse) {
+            if let Some(trigger) = trigger.filter(|_| !instrument_truncated) {
                 let cur = self.perf.fe_budget[vb];
                 // A collapse invalidates the measured cost model WHOLESALE (the beta.47 precedent:
                 // "mode switch ⇒ budget unmeasured"), so it caps at the bootstrap opening guess,
                 // not merely ÷8 — the mispricing scales with the collapse ratio (3,333× here),
                 // and the budget re-climbs within a few measured frames if the frame is cheap.
-                let derated = if big_collapse {
-                    (cur / 8).min(crate::tunables::cost().tdr_bootstrap_steps).max(pricing::tdr_min_steps())
-                } else {
-                    (cur / 8).max(pricing::tdr_min_steps())
-                };
-                if cur == 0 || derated < cur {
+                let derated = install_derate(
+                    cur,
+                    trigger,
+                    old_skipped,
+                    crate::tunables::cost().tdr_bootstrap_steps,
+                    pricing::tdr_min_steps(),
+                );
+                if let Some(derated) = derated {
                     self.perf.fe_budget[vb] = derated;
                     self.perf.fe_budget_ok[vb] = false; // tiling re-arms once re-converged
-                    crate::diag::trace(
-                        "gpu",
-                        format!(
-                            "install derate: orbit {}→{} ({}) — budget {:.2e}→{:.2e}, re-converging",
-                            old.orbit_len,
-                            res.orbit_len,
-                            if clamp_lifted {
-                                "clamp lifted"
-                            } else if big_collapse {
-                                "length collapse"
-                            } else {
-                                "length jump"
-                            },
-                            cur as f64,
-                            derated as f64
-                        ),
-                    );
                 }
+                crate::diag::trace(
+                    "gpu",
+                    format!(
+                        "install derate: orbit {}→{} ({}, skipped={old_skipped}) — budget {:.2e}→{}",
+                        old.orbit_len,
+                        res.orbit_len,
+                        trigger.label(),
+                        cur as f64,
+                        derated.map_or_else(|| "unchanged".to_string(), |d| format!("{:.2e}, re-converging", d as f64)),
+                    ),
+                );
             }
         }
         // A different reference POINT is a different orbit with its own cost structure along
@@ -3880,20 +3888,21 @@ impl FractadyneApp {
     /// next readings measure. Always logged: a collapse is a near miss of the lethal band.
     fn series_collapse_reset(&mut self, vi: usize, share: f32, skip: u32) {
         let vb = vi.min(1);
-        let (cur, was, skip_was) = (self.perf.fe_budget[vb], self.perf.series_share[vb], self.perf.last_sa_skip_v[vb]);
+        let (cur, was) = (self.perf.fe_budget[vb], self.perf.series_share[vb]);
+        let skip_was = was.map_or(self.perf.last_sa_skip_v[vb], |(_, s)| s);
         self.perf.fe_budget[vb] = 0;
         self.perf.fe_budget_ok[vb] = false; // tiling re-arms once re-converged
         self.perf.motion_step_last[vb] = 0;
         self.perf.motion_work_last[vb] = 0;
         self.reset_moving_scale(vb);
         self.perf.pin_frames_last[vb] = 0;
-        self.perf.series_share[vb] = Some(share);
+        self.perf.series_share[vb] = Some((share, skip));
         crate::diag::log_line(
             "render",
             &format!(
                 "series collapse v{vi}: skip {skip_was} → {skip}, the pixels' share of the iterations {:.2e} → {share:.2e} \
                  — budget {:.3e} → unmeasured (bootstrap {:.3e}); this frame holds",
-                was.unwrap_or(0.0),
+                was.map_or(0.0, |(s, _)| s),
                 cur as f64,
                 self.perf.bootstrap_steps(vb) as f64,
             ),
@@ -7053,7 +7062,7 @@ impl FractadyneApp {
             if reproject.is_none() {
                 let rc = &self.ref_cache[vi];
                 self.perf.series_share[vs.min(1)] = (!mode.is_direct() && rc.ref_pt.is_some())
-                    .then(|| series_share(shader_iter, rc.orbit_len, sa_skip_eff));
+                    .then(|| (series_share(shader_iter, rc.orbit_len, sa_skip_eff), sa_skip_eff));
             }
             // The ask this view was planned at, for the complete-walk test at the reading drain.
             self.perf.planned_ask[vs.min(1)] = gpu_iter;
@@ -12800,9 +12809,18 @@ pub(crate) const SERIES_COLLAPSE_SLACK: f32 = 0.02;
 /// 2^248 rendered with a 298,404-iteration skip on a 298,416-sample escaped reference (share
 /// 2e-5): every pixel escaped ~70 iterations later, readings said 0.2 ms for 2e11 steps, and the
 /// budget sat at its 3e11 ceiling. The skip then went (share 0.61) and one 1.5e11-step pass sized
-/// on that budget lost the device. `prev` is the last real frame's share (`None`: none to compare).
-pub(crate) fn series_collapse(prev: Option<f32>, now: f32) -> bool {
-    prev.is_some_and(|p| now > 2.0 * p + SERIES_COLLAPSE_SLACK)
+/// on that budget lost the device. `prev` is the last real frame's share and the skip it applied
+/// (`None`: none to compare).
+///
+/// ⭐**NO SKIP ON THE MEASURED FRAMES, NO COLLAPSE.** Without a skip the share is only the escaped
+/// reference's length over the ask (`min(ask, len) / ask`), and a pixel runs to its own escape
+/// whatever the length, rebasing past the end, so a longer short reference costs no more per
+/// nominal step. The shallow references of a zoom or of the dual view's Julia panel change length
+/// from frame to frame (200 → 483 at a 5,000 ask: 4% → 11%), and each such "collapse" reset a
+/// converged budget to the bootstrap and held a frame: 14 of the 55 in the user's log were "skip
+/// 0 → 0" (2026-11-18).
+pub(crate) fn series_collapse(prev: Option<(f32, u32)>, now: f32) -> bool {
+    prev.is_some_and(|(p, skip)| skip > 0 && now > 2.0 * p + SERIES_COLLAPSE_SLACK)
 }
 
 #[cfg(test)]
@@ -13020,6 +13038,74 @@ mod wall_shed;
 /// the interactive wheel-jump that trips it has no scripted repro.
 pub(crate) fn install_collapse(old_len: u32, new_len: u32, new_partial: bool) -> bool {
     old_len > 0 && !new_partial && (new_len as u64) * 3 < (old_len as u64) * 2
+}
+
+#[cfg(test)]
+#[path = "../tests/unit/render/install_derate_tests.rs"]
+mod install_derate_tests;
+
+/// Which discontinuity a reference install is (`install_recompute`'s three triggers).
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(crate) enum DerateTrigger {
+    /// A partial orbit replaced by a longer COMPLETE one: the pixel clamp lifts.
+    ClampLifted,
+    /// A ×1.5 length jump that is not pure partial growth.
+    LengthJump,
+    /// [`install_collapse`].
+    LengthCollapse,
+}
+
+impl DerateTrigger {
+    pub(crate) fn label(self) -> &'static str {
+        match self {
+            Self::ClampLifted => "clamp lifted",
+            Self::LengthJump => "length jump",
+            Self::LengthCollapse => "length collapse",
+        }
+    }
+}
+
+/// What a reference install does to the view's frame budget `cur`: `Some(budget)` to derate it to,
+/// `None` to leave it. `old_skipped` = the outgoing reference gave its pixels skipped iterations (a
+/// series skip, a BLA tree, a renormalized step); `bootstrap_cap` is `TDR_BOOTSTRAP_STEPS`, `floor`
+/// the budget floor.
+///
+/// ⛔⭐**AN UNMEASURED BUDGET (0) IS LEFT UNMEASURED.** Zero is "nothing measured in this mode yet",
+/// and the next dispatch is sized by the opening guess (`pricing::bootstrap_steps`, never above
+/// `bootstrap_cap`), which is already as far as a collapse caps a measured budget. The guard was
+/// `cur == 0 || derated < cur`, and since beta.48 lowered the derate's floor from the bootstrap to
+/// `TDR_MIN_STEPS` it turned 0 into `(0 / 8).max(floor)` = the FLOOR, 100× under the opening guess.
+/// A mode switch leaves the budget at 0 and the new mode's first reference installs a frame later,
+/// so every direct ↔ perturbation crossing whose new orbit differed in length by ×1.5 dropped the
+/// view to 32×22 px of a 2941×1988 panel for seconds (user's log 2026-11-18 +51.1 s: "dispatch
+/// ceiling released on v0: budget 4.000e6", five seconds to climb back).
+///
+/// ⭐**A JUMP OR A COLLAPSE PRICES A LOST SKIP, SO ONE FROM A REFERENCE THAT SKIPPED NOTHING DERATES
+/// NOTHING.** The two length triggers exist because a budget measured while the reference let pixels
+/// skip most of their iterations misprices the next frame when the new reference cannot
+/// (crash-1786506241: millions → 90 samples, BLA coverage lost, a 3e11 budget at rebase-grind
+/// cost). Where the outgoing reference skipped nothing, every pixel already ran each iteration it
+/// counted, a different orbit cannot make a nominal step dearer beyond the cost of a rebase, and the
+/// ceiling (`calibration`) still bounds the dispatch. Shallow references are short escaped orbits
+/// whose length jitters by more than ×1.5 from one center to the next (134 → 222 → 153), and the
+/// dual view's Julia panel re-picks one every frame while the cursor drives c: in the user's log
+/// that took its budget from 7.4e10 to 5e7 in half a second (+38.7 s), and the panel to 98×115 px.
+/// The clamp lift keeps its derate regardless (the 2.6e72× spar crash).
+pub(crate) fn install_derate(
+    cur: u64,
+    trigger: DerateTrigger,
+    old_skipped: bool,
+    bootstrap_cap: u64,
+    floor: u64,
+) -> Option<u64> {
+    if cur == 0 || (trigger != DerateTrigger::ClampLifted && !old_skipped) {
+        return None;
+    }
+    let derated = match trigger {
+        DerateTrigger::LengthCollapse => (cur / 8).min(bootstrap_cap).max(floor),
+        DerateTrigger::ClampLifted | DerateTrigger::LengthJump => (cur / 8).max(floor),
+    };
+    (derated < cur).then_some(derated)
 }
 
 /// What the `FRACTADYNE_REF_ESCAPE_AT=n` instrument does to a reference of `orbit_len` samples

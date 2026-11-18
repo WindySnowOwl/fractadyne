@@ -59,6 +59,14 @@ published as the pre-releases `v0.2.41-beta.1` to `v0.2.41-beta.150`, and a "bet
 
 Changes after 0.3.0-beta.1:
 
+- **Zooming at a shallow depth no longer drops the picture to a few big blocks (after
+  0.3.0-beta.27).** Around 10,000× to 100,000×, where the view changes the arithmetic it uses, and
+  on the dual view's Julia panel while the cursor moves c, a new reference orbit could cut the
+  view's learned work size to its minimum, 100 times below where it normally starts over. The view
+  then rendered a few dozen pixels across, stretched over the whole panel, which flashes as a
+  nearly blank frame and took up to 5 s to sharpen. Those cuts guard against an orbit that stops
+  letting pixels skip iterations. They now apply only when the orbit being replaced did skip, and
+  a work size not yet learned keeps its normal starting value.
 - **A long tour no longer fails its render while it loads (after 0.3.0-beta.27).** A tour that
   steps a custom formula's parameters compiles the formula once per value as it is read, about
   10 ms each. A tour with a thousand such keyframes took over 10 s to read, the app's hang watchdog

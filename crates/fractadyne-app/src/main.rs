@@ -1357,9 +1357,10 @@ struct Perf {
     /// not — it advances every frame — which is why it is deliberately not recorded here.
     last_sa_skip_v: [u32; 2],
     /// The [`render::series_share`] of the last frame that dispatched a perturbation iterate with a
-    /// reference, per view (`None`: none since a direct frame or the session's start). A frame whose
-    /// share is a [`render::series_collapse`] from it holds and leaves the budget unmeasured.
-    series_share: [Option<f32>; 2],
+    /// reference, and the series skip that frame applied, per view (`None`: none since a direct
+    /// frame or the session's start). A frame whose share is a [`render::series_collapse`] from it
+    /// holds and leaves the budget unmeasured.
+    series_share: [Option<(f32, u32)>; 2],
     /// Series dropped past their radius (`render::series_fits`), per view, this session: the log
     /// line goes out on the 1st, 2nd, 4th, 8th... (a long zoom-out drops one per landing reference).
     series_drops: [u64; 2],

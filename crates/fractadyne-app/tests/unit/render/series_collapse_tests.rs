@@ -31,10 +31,10 @@ fn the_crash_frames_skip_collapse_is_caught() {
     let (_, it, skip) = shader_series(false, true, false, 490_875, LEN, 0);
     let after = series_share(it, LEN, skip);
     assert!((after - 298_416.0 / 490_875.0).abs() < 1.0e-6);
-    assert!(series_collapse(Some(before), after), "{before} → {after}");
+    assert!(series_collapse(Some((before, SKIP)), after), "{before} → {after}");
     // With the skip kept, the same frame is the same regime.
     let (_, it, skip) = shader_series(false, true, false, 490_875, LEN, SKIP);
-    assert!(!series_collapse(Some(before), series_share(it, LEN, skip)));
+    assert!(!series_collapse(Some((before, SKIP)), series_share(it, LEN, skip)));
 }
 
 #[test]
@@ -45,7 +45,7 @@ fn an_ask_below_the_skip_keeps_it_through_the_rescue() {
     assert_eq!(base, 250_000);
     assert_eq!((it, skip), (LEN - 1, SKIP), "raised past the skip, the skip kept");
     let prev = series_share(592_562, LEN, SKIP);
-    assert!(!series_collapse(Some(prev), series_share(it, LEN, skip)));
+    assert!(!series_collapse(Some((prev, SKIP)), series_share(it, LEN, skip)));
 }
 
 #[test]
@@ -56,15 +56,32 @@ fn ordinary_changes_are_not_a_collapse() {
     // lookahead installs, ×2.3 length jumps) stays at a share of 1.
     let (_, a, s) = shader_series(false, true, true, 600_000, 256_001, 0);
     let (_, b, t) = shader_series(false, true, true, 900_000, 508_193, 0);
-    assert!(!series_collapse(Some(series_share(a, 256_001, s)), series_share(b, 508_193, t)));
+    assert!(!series_collapse(Some((series_share(a, 256_001, s), s)), series_share(b, 508_193, t)));
     // A skip shrinking a little (a reference for a slightly wider view).
     let prev = series_share(700_000, 650_000, 200_000);
-    assert!(!series_collapse(Some(prev), series_share(700_000, 650_000, 180_000)));
+    assert!(!series_collapse(Some((prev, 200_000)), series_share(700_000, 650_000, 180_000)));
     // The skip GROWING is cheaper, never a collapse.
-    assert!(!series_collapse(Some(series_share(600_000, LEN, 0)), series_share(600_000, LEN, SKIP)));
+    assert!(!series_collapse(Some((series_share(600_000, LEN, 0), 0)), series_share(600_000, LEN, SKIP)));
     // Within the slack of a tiny share.
-    assert!(!series_collapse(Some(0.0), SERIES_COLLAPSE_SLACK));
-    assert!(series_collapse(Some(0.0), SERIES_COLLAPSE_SLACK * 1.5));
+    assert!(!series_collapse(Some((0.0, SKIP)), SERIES_COLLAPSE_SLACK));
+    assert!(series_collapse(Some((0.0, SKIP)), SERIES_COLLAPSE_SLACK * 1.5));
+}
+
+#[test]
+fn short_escaped_references_without_a_series_are_not_a_collapse() {
+    // 2026-11-18, the dual view's Julia panel at 2^9.3 with c moving: every frame a new escaped
+    // reference, no series on either side, and "series collapse v1: skip 0 → 0, share 4.29e-2 →
+    // 1.10e-1" reset a 1.538e10 budget. Without a skip the share is only len/ask.
+    let (_, a, s) = shader_series(false, true, false, 4_663, 200, 0);
+    let (_, b, t) = shader_series(false, true, false, 4_663, 520, 0);
+    assert_eq!((s, t), (0, 0));
+    let (before, after) = (series_share(a, 200, s), series_share(b, 520, t));
+    assert!(after > 2.0 * before + SERIES_COLLAPSE_SLACK, "the old rule fired: {before} → {after}");
+    assert!(!series_collapse(Some((before, s)), after));
+    // Any rise at all, with no skip behind the measured frames, is not one.
+    assert!(!series_collapse(Some((0.0, 0)), 1.0));
+    // The same rise from a frame that DID skip still is (the crash's shape).
+    assert!(series_collapse(Some((before, 1)), after));
 }
 
 #[test]
