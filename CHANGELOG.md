@@ -59,6 +59,11 @@ published as the pre-releases `v0.2.41-beta.1` to `v0.2.41-beta.150`, and a "bet
 
 Changes after 0.3.0-beta.1:
 
+- **A long tour no longer fails its render while it loads (after 0.3.0-beta.27).** A tour that
+  steps a custom formula's parameters compiles the formula once per value as it is read, about
+  10 ms each. A tour with a thousand such keyframes took over 10 s to read, the app's hang watchdog
+  saw no progress in that time, and `--render-tour` then exited with 1 although every frame had
+  rendered. Each finished compile now counts as progress.
 - **Tour captions with no fade show on every frame (after 0.3.0-beta.27).** A caption with
   `fade = 0` was left out of its first frame (and its last), so a label updated every few frames, as
   a value counting up, flickered. It is now a cut: shown from its first frame, and replaced by the

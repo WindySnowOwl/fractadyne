@@ -7556,13 +7556,22 @@ Mockups: [design/mockups/](design/mockups/).
   the collection's step-formula slices cover it — but only as custom formulas: the built-in
   Mandelbrot, Multibrot and fold families, their hand-written kernels and the zoom-video strips
   (which take no custom formula) cannot be tilted at all.
-- [ ] **`--render-tour` of a long script fails its own log check: "possible hang" at load** (found
+- [x] **`--render-tour` of a long script fails its own log check: "possible hang" at load** (found
   2026-11-16, the slices video). Reading the 1003-keyframe `slices-tour.toml` held the UI thread for
   13 s before the first frame, with no liveness stamp, so the watchdog logged "possible hang: no
   activity for 11s" and logcheck turned the finished render's exit 0 into 1 (rule `possible-hang`,
   which allows `mode.render` five lines but has no `render-tour` entry). Nothing was wrong: all 3121
   frames rendered. Stamp the watchdog while the script is read and its keyframes prepared (that is
   the real fix), rather than only adding a `mode.render-tour` allowance.
+  ✅**FIXED 2026-11-18 (`fix/tour-load-liveness`).** The time is `resolve_script` compiling the
+  formula once per distinct parameter set (`CustomFormula::compile`, ~10 ms each on a Ryzen 9
+  5950X). Each finished compile now stamps liveness (`diag::alive`), and reading a script leaves a
+  breadcrumb, "tour: reading the script NAME" (file name only), so a real stall names the phase.
+  Reproduced with the 1098-keyframe `slices-tour4.toml`, `--render-tour … --frames 0..1`: before,
+  "possible hang: no activity for 10s" at +10.6 s and exit 1; after, no warning, exit 0, the frame
+  identical (0/2073600 px). The 1003-keyframe `slices-tour.toml` loads in ~10 s on the 5950X, so
+  it passed there even before the fix (it took 13 s on the 3950X). Left as is: File ▸ Open tour
+  still holds the window for those seconds; the cure is the parameters-as-uniforms item below.
 - [ ] **Tours glide formula parameters, and a parameter value stops costing a shader** (user,
   2026-11-16, from the slices video). Deferred to after 0.3.0 stable (feature freeze). A tour steps
   `formula_params` at keyframes (TOURS.md) because each value is a shader of its own: the custom shader
