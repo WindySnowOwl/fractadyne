@@ -92,6 +92,10 @@ static WATCHDOG_ON: AtomicBool = AtomicBool::new(false);
 static LOOP: AtomicU8 = AtomicU8::new(Loop::InFrame as u8);
 /// Whether the last frame to end asked for another (`egui::Context::has_requested_repaint`).
 static LAST_FRAME_ASKED: AtomicBool = AtomicBool::new(true);
+/// The shortest delay the frame now running asked for through [`repaint_after`], µs (`u64::MAX`:
+/// none), and the same for the last frame to end.
+static FRAME_DELAY_US: AtomicU64 = AtomicU64::new(u64::MAX);
+static LAST_FRAME_DELAY_US: AtomicU64 = AtomicU64::new(u64::MAX);
 /// Monotonic suffix for crash-report filenames (collision-proofs same-second panics).
 static CRASH_SEQ: AtomicU64 = AtomicU64::new(0);
 /// Set once an allocation failure has been reported — the reporting path itself allocates, so a
@@ -903,14 +907,49 @@ pub(crate) struct Frame {
 
 pub(crate) fn frame_begin(ctx: &eframe::egui::Context) -> Frame {
     LOOP.store(Loop::InFrame as u8, Ordering::Relaxed);
+    FRAME_DELAY_US.store(u64::MAX, Ordering::Relaxed);
     alive();
     Frame { ctx: ctx.clone() }
+}
+
+/// `ctx.request_repaint_after(delay)`, recording the delay as part of what this frame asked for:
+/// the interval to the next frame then includes a sleep the app chose, which the budget tripwire
+/// must not read as a stalled GPU ([`planned_sleep_ms`]). Every delayed repaint goes through here
+/// (`repaint_after_sites_tests` fails on a bare one).
+pub(crate) fn repaint_after(ctx: &eframe::egui::Context, delay: std::time::Duration) {
+    ctx.request_repaint_after(delay);
+    let us = u64::try_from(delay.as_micros()).unwrap_or(u64::MAX - 1);
+    FRAME_DELAY_US.fetch_min(us, Ordering::Relaxed);
+}
+
+/// How much of the interval up to the frame now running was a sleep the app ASKED for, ms: 0 when
+/// the last frame asked for an immediate repaint (`egui::Context::requested_repaint_last_pass`, its
+/// final delay 0) or asked no delay through [`repaint_after`] (an ask of egui's own, of unknown
+/// length, is judged as owed, as before); otherwise the shortest delay it asked.
+///
+/// ⭐⭐**THE SETTLED BEAT IS A PLANNED SLEEP, NOT A STALL.** A view that is not yet quiescent redraws
+/// on `render::walk_repaint_ms`'s beat, 4× the frame EMA held to 250–1000 ms, and the EMA counts
+/// the beat itself and any idle wait, so after a pause the beat is 1 s at once (and it climbs there
+/// on its own: 234 → 300 → 387 → … ms). `has_requested_repaint` is true for a delayed ask too, so
+/// the tripwire took each ~985–1,040 ms beat frame for a frame due that came a second late, past
+/// the 0.9 s lethal band: BLIND and a DEAD-MAN reset of both views' budgets to the bootstrap, 36 of
+/// the 54 BLIND events in the maintainer's log of 2026-11-01..18, up to 24 a session, each one
+/// re-rendering a settled view from the opening budget.
+pub(crate) fn planned_sleep_ms(last_ask_was_immediate: bool) -> f64 {
+    if last_ask_was_immediate {
+        return 0.0;
+    }
+    match LAST_FRAME_DELAY_US.load(Ordering::Relaxed) {
+        u64::MAX => 0.0,
+        us => us as f64 / 1000.0,
+    }
 }
 
 impl Drop for Frame {
     fn drop(&mut self) {
         let asked = self.ctx.has_requested_repaint();
         LAST_FRAME_ASKED.store(asked, Ordering::Relaxed);
+        LAST_FRAME_DELAY_US.store(FRAME_DELAY_US.swap(u64::MAX, Ordering::Relaxed), Ordering::Relaxed);
         LOOP.store(if asked { Loop::Due } else { Loop::Idle } as u8, Ordering::Relaxed);
         alive();
     }
@@ -2065,6 +2104,9 @@ mod modal_tests;
 #[cfg(test)]
 #[path = "../tests/unit/diag/modal_sites_tests.rs"]
 mod modal_sites_tests;
+#[cfg(test)]
+#[path = "../tests/unit/diag/repaint_after_tests.rs"]
+mod repaint_after_tests;
 #[cfg(test)]
 #[path = "../tests/unit/diag/session_marker_tests.rs"]
 mod session_marker_tests;

@@ -321,7 +321,7 @@ impl crate::FractadyneApp {
             if let Some(at) = self.palette_browser.drawn_at[v] {
                 let since = at.elapsed();
                 if since < REDRAW_PACE && self.palette_browser.atlas[v].is_some() {
-                    ctx.request_repaint_after(REDRAW_PACE - since);
+                    crate::diag::repaint_after(ctx, REDRAW_PACE - since);
                     continue;
                 }
             }

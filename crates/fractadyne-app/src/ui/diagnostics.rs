@@ -423,7 +423,7 @@ impl FractadyneApp {
         } else {
             // Keep the UI ticking while the child works, otherwise the progress line only
             // advances when the mouse moves.
-            ctx.request_repaint_after(std::time::Duration::from_millis(150));
+            crate::diag::repaint_after(ctx, std::time::Duration::from_millis(150));
         }
     }
 

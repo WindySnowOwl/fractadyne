@@ -366,7 +366,7 @@ impl FractadyneApp {
                 crate::tone::play_finish_sound(false);
             }
         } else {
-            ctx.request_repaint_after(Duration::from_millis(250));
+            crate::diag::repaint_after(ctx, Duration::from_millis(250));
         }
     }
 
