@@ -19,8 +19,6 @@ enum Op {
     AbsX,
     /// Im Z = |Im Z|.
     AbsY,
-    /// Re Z = −Re Z.
-    NegX,
     /// Im Z = −Im Z.
     NegY,
 }
@@ -36,7 +34,6 @@ fn step(ops: &[Op], z: (f64, f64), c: (f64, f64)) -> (f64, f64) {
             Op::Mul => (x, y) = (x * sx - y * sy, x * sy + y * sx),
             Op::AbsX => x = x.abs(),
             Op::AbsY => y = y.abs(),
-            Op::NegX => x = -x,
             Op::NegY => y = -y,
         }
     }
