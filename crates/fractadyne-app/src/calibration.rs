@@ -312,6 +312,38 @@ pub(crate) fn ceiling_for(mode: RenderMode, formula: FractalKind, px: u64) -> Op
     ceiling(cost, factor_of(&a.factors, formula, mode), a.cal.knee_px, px)
 }
 
+/// ⭐THE CALIBRATED OPENING (2026-11-18): the most an UNPRICED dispatch may carry so that it costs
+/// at most `share × TARGET_MS` (`TDR_BOOTSTRAP_MS`, 40 ms) at the adapter's worst measured per-step
+/// cost — the bound the live-refresh probe already sizes its unpriced passes by (`render.rs`, "An
+/// unpriced probe fits a `TDR_BOOTSTRAP_MS` share of the ceiling at the probe's own size").
+///
+/// `cap` is the ceiling at the frame's own pixels and `ceiling_at` the ceiling at any other count.
+/// The share of `cap` is converted to pixels at `gpu_iter` and the ceiling re-taken THERE: below the
+/// occupancy knee a dispatch costs its iteration window over the knee's pixels, so a small opening
+/// frame gets the knee-reduced share, never the saturated one.
+pub(crate) fn opening(cap: u64, share: f64, gpu_iter: u32, ceiling_at: impl Fn(u64) -> Option<u64>) -> Option<u64> {
+    if !(share > 0.0) || !share.is_finite() {
+        return None;
+    }
+    let share = share.min(1.0);
+    let px = (cap as f64 * share / gpu_iter.max(1) as f64) as u64;
+    ceiling_at(px.max(1)).map(|c| (c as f64 * share) as u64)
+}
+
+/// [`opening`] for `formula` in `mode` at `px` pixels and `gpu_iter` iterations on the running
+/// adapter. `None` where the calibration cannot vouch for one: an adapter WITHOUT its own entry (the
+/// table default is not a measurement of this card, and a card slower than it would turn 40 ms into
+/// more — there the rate-derived guess stays the only opening), floatexp (no ceiling: BLA decides
+/// its cost), before the adapter is known, or with `DISPATCH_CEILING=0`.
+pub(crate) fn opening_for(mode: RenderMode, formula: FractalKind, px: u64, gpu_iter: u32) -> Option<u64> {
+    if !own_entry() {
+        return None;
+    }
+    let share = crate::tunables::cost().tdr_bootstrap_ms / TARGET_MS;
+    let cap = ceiling_for(mode, formula, px)?;
+    opening(cap, share, gpu_iter, |p| ceiling_for(mode, formula, p))
+}
+
 /// The per-pass fixed GPU cost the pacing subtracts from a pass's time, ms (design §5.2;
 /// `render::variable_pass_ms`, `render::motion_pass_steps`): `--set PASS_FIXED_MS` when given (the
 /// A/B arm, and the way to try a value), else this adapter's calibrated `pass_fixed_ms`, else the

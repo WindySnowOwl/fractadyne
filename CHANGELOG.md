@@ -109,6 +109,17 @@ From the 0.2.41 series:
 
 Changes after 0.3.0-beta.1:
 
+- **Zooming past the depth where the arithmetic changes no longer blurs the picture for seconds
+  (after 0.3.0-beta.27).** At about 10,000×, where the view switches between direct and
+  perturbation arithmetic, its learned work size starts over, because a step of one costs
+  differently from a step of the other. The first frames after the switch rendered about 2% of the
+  pixels shown just before it, and a moving view in perturbation arithmetic measures its speed only
+  every 0.3 to 3 s, so the picture flashed coarse and took up to 6.5 s to sharpen. On a graphics
+  card whose worst case Fractadyne has measured (the RTX 3080 and the RX 6800 XT), the first frame
+  after the switch is now sized to take at most 40 ms even at that worst case, about half the
+  pixels in the same test, and while the card has plenty of room the work size climbs up to four
+  times per measurement instead of one and a half. Every frame stays under the card's measured
+  ceiling. Other cards, and the extended-range arithmetic of the deepest zooms, keep the old rule.
 - **A view left alone no longer resets its rendering speed when it wakes (after 0.3.0-beta.27).**
   While a view finishes settling, Fractadyne redraws it on a slow beat, up to once a second, to
   spare the graphics card. The safety stop for stalled graphics work read each of those planned
