@@ -13,3 +13,4 @@ utc	version	identity	exit	verdict	config	command
 2026-11-19 21:11:53	0.3.0	build 6968, g10ca4dc	0	livetest exit 0; logcheck PASS	fresh; window on DISPLAY1 at 100%	fractadyne --livetest tours/grand-tour.toml --size 480x270
 2026-11-19 22:43:44	0.3.0	build 6968, g10ca4dc	0	selftest exit 0; logcheck PASS	fresh; window on DISPLAY1 at 100%	fractadyne --selftest --selftest-filter deep-location --out logs/optin/report.md
 2026-11-19 22:48:47	0.3.0	build 6968, g10ca4dc	0	selftest exit 0; logcheck PASS	fresh; window on DISPLAY1 at 100%	fractadyne --selftest
+2026-11-19 22:49:57	0.3.0	repo gef6b4a94	0	-	-	python scripts/dive-capture/screengate.py D:/share/Fractadyne/field/results/20261119-145532-zlug/validate-release-030-final-20261119-145536/screen/run1 D:/share/Fractadyne/field/results/20261119-145532-zlug/validate-release-030-final-20261119-145536/screen/run2 D:/share/Fractadyne/field/results/20261119-145532-zlug/validate-release-030-final-20261119-145536/screen/run3
