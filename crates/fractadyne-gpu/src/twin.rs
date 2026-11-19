@@ -187,6 +187,21 @@ impl AdoptFrame {
     }
 }
 
+/// ⭐Whether [`LiveTwin::walk`] may spread `base` over chunked passes (`chunk_ok`: the device has the
+/// resumable pipelines for its mode). A custom formula only with resumable passes, and ⭐(2026-11-19)
+/// NO frame that accumulates orbit statistics (stripe, triangle inequality, orbit trap,
+/// decomposition): the chunk state carries no aux, so a walk's `fs_resolve` writes `AUX_NONE`
+/// (`(0, 0, 1e30, 0)`) into every pixel of the aux plane. The window never chunks such a frame
+/// (`!coloring.accumulates_any()` at `walk_possible` / `chunk_over`) and nor does an export
+/// (`chunk_scope`'s `iter_stats().is_empty()`); the twin did, and the window adopted its frames —
+/// under the maintainer's stripe-average coloring a deep zoom with the default same-card worker
+/// showed ONE FLAT COLOR for most of its frames, the real picture only between adoptions
+/// (2026-11-18, screen captures at 2^60–2^70). Such a frame renders in one pass where it fits, and
+/// otherwise is not the twin's to render.
+pub fn walkable(base: &MandelbrotParams, chunk_ok: bool) -> bool {
+    chunk_ok && base.custom.as_ref().is_none_or(|c| c.resumable) && base.iter_stats().is_empty()
+}
+
 /// The live renderer on a device of its own, driven without a window: each [`Self::frame`] is one
 /// frame's `prepare` (the iterate and resolve passes the params ask for), submitted and waited for.
 pub struct LiveTwin {
@@ -284,8 +299,8 @@ impl LiveTwin {
         let ss = base.ss.max(1) as u64;
         let area = base.resolution[0].max(1) as u64 * base.resolution[1].max(1) as u64 * ss * ss;
         let max_iter = base.max_iter.max(1);
-        let walks = if base.mode == 2 { crate::chunking_mode2_available(device) } else { crate::chunking_available(device) }
-            && base.custom.as_ref().is_none_or(|c| c.resumable);
+        let chunk_ok = if base.mode == 2 { crate::chunking_mode2_available(device) } else { crate::chunking_available(device) };
+        let walks = walkable(base, chunk_ok);
         let mut stats = WalkStats::default();
         if !walks {
             if area as f64 * max_iter as f64 > pricer.open_px_steps() {

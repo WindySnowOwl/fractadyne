@@ -132,3 +132,24 @@ fn a_gbuffers_escaped_share_counts_only_escaped_texels() {
     assert_eq!(g(&[-1.0, 1_778.5, -2.0, 0.0, f32::NAN, 2_001.0, -1.0, 5.0]).escaped_share(), 3.0 / 8.0);
     assert_eq!(g(&[]).escaped_share(), 0.0);
 }
+
+/// ⭐A frame that accumulates orbit statistics never walks on the twin (2026-11-19): a walk's resolve
+/// writes `AUX_NONE` into the aux plane, and the window adopted the result — stripe-average coloring
+/// of an empty aux plane is one flat color, which a deep zoom showed for most of its frames with the
+/// default same-card worker. Smooth coloring walks wherever the device can; nothing walks without
+/// the resumable pipelines; a statistic asked for directly counts as much as the method's own.
+#[test]
+fn a_frame_that_accumulates_orbit_statistics_does_not_walk() {
+    use fractadyne_core::coloring::{ColorMethod, Stat, StatSet};
+    let smooth = MandelbrotParams { color_method: ColorMethod::Smooth.gpu_id(), ..MandelbrotParams::default() };
+    assert!(walkable(&smooth, true), "smooth coloring walks");
+    assert!(!walkable(&smooth, false), "no resumable pipelines, no walk");
+    for m in [ColorMethod::Stripe, ColorMethod::TriangleIneq, ColorMethod::OrbitTrap, ColorMethod::Decomposition] {
+        let p = MandelbrotParams { color_method: m.gpu_id(), ..MandelbrotParams::default() };
+        assert!(!p.iter_stats().is_empty(), "{m:?} accumulates statistics");
+        assert!(!walkable(&p, true), "{m:?} must not walk");
+    }
+    // A statistic asked for apart from the method (an interior coloring, say) stops the walk too.
+    let trap_inside = MandelbrotParams { orbit_stats: StatSet::of(Stat::Trap), ..smooth.clone() };
+    assert!(!walkable(&trap_inside, true));
+}
