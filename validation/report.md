@@ -1,9 +1,9 @@
 # Fractadyne validation report
 
-- **Version:** 0.3.0 (build 6889, g2bc9387)
-- **Generated:** 2026-11-18 23:47:52 UTC (unix 1795045672)
+- **Version:** 0.3.0 (build 6968, g10ca4dc)
+- **Generated:** 2026-11-19 22:44:05 UTC (unix 1795128245)
 - **GPU:** NVIDIA GeForce RTX 3080
-- **GPU speed:** 6.005e-11 ms per direct step (an all-interior 1024x768 pass of 8192 iterations took 0.4 ms), 0.00x the slowest card the suite is sized for; every pass runs (passes are priced, not refused)
+- **GPU speed:** 6.445e-11 ms per direct step (an all-interior 1024x768 pass of 8192 iterations took 0.4 ms), 0.00x the slowest card the suite is sized for; every pass runs (passes are priced, not refused)
 - **CPU:** AMD Ryzen 9 5950X 16-Core Processor (16 cores / 32 threads, L2 8192 KB, L3 65536 KB)
 - **OS:** Windows 11 Pro 26H2 (build 26300.9974), x86_64
 - **Config:** fractal=Mandelbrot julia=false auto_iter=true max_iter=4000 sa=true bla=true glitch=true color=Smooth
@@ -53,13 +53,14 @@ All checks use exact mathematics (arbitrary-precision dwell, closed-form propert
 | LiveSplit | one split set writes only its own tiles (df32 1e8x) | 220×220, set 1 of 4 | 12288 texels written of 12288 in set 1 of 4; 0 misplaced | its tiles' texels, equal to one pass; nothing else | ✅ PASS |
 | LiveSplit | split passes compose the frame bit for bit (direct 3e3x) | 220×220 (not a multiple of 16), 20,000 iter, mode 1 | texels differing from one pass — k=2: 0, k=3: 0, k=4: 0, k=8: 0 | 0 at every k, in the named mode | ✅ PASS |
 | LiveSplit | one split set writes only its own tiles (direct 3e3x) | 220×220, set 1 of 4 | 12288 texels written of 12288 in set 1 of 4; 0 misplaced | its tiles' texels, equal to one pass; nothing else | ✅ PASS |
-| LiveSplit | one split set costs about its share of the pass | 1024×1024 df32 1e8x, set 1 of 4, wall, best of 3 | one set 34.64 ms against every tile 74.10 ms = 0.47 | < 0.6 of every tile (0.25 = exactly its share) | ✅ PASS |
-| LiveSplit | GPU timestamps describe their own pass (full-screen triangle) | 1024×1024 df32 1e8x, one pass, median of 3 | timestamp 75.57 ms against wall 75.70 ms = 1.00 | timestamp 0.5–1.05 of the wall | ✅ PASS |
-| LiveSplit | GPU timestamps describe their own pass (split tile geometry) | 1024×1024 df32 1e8x, one pass, median of 3 | timestamp 75.42 ms against wall 75.81 ms = 0.99 | timestamp 0.5–1.05 of the wall | ✅ PASS |
-| LiveSplit | the split tile geometry costs what the full-screen pass does | 1024×1024 df32 1e8x, every tile, wall, median of 7 back-to-back pairs | tiles over the triangle 1.21 (pairs 0.95..1.35; blocks of three: tiles 75.81 ms, triangle 75.70 ms) | ≤ 1.3 | ✅ PASS |
-| IterChunk | exact-repeat check: the same picture, sooner | Multibrot 4 Julia c 0.32295+0.98330i, 256x358, 20k iter, check on/off + 3k windows | mode 1; 0 texels differ from the check off, 0 from a walk in 3,000-iteration windows; 6160 interior px; 1.55 ms against 26.29 ms | direct; 0 texels differ either way; interior px > 0; on < off / 4 | ✅ PASS |
-| IterChunk | exact-repeat check in perturbation: the same trap picture, sooner | Multibrot 7 minibrot at 0.7740990+0.2441822i, 7.2e7x, 256x160, 20k iter, trap | mode 0; 0 colored px differ from the check off; 5107 interior px; reference period 136 from sample 273; 580851 loop trips against 1780195 (1 px in 64); 27.98 ms against 37.92 ms | mode 0; 0 px differ; interior px > 0; reference folded; trips on < off / 2 | ✅ PASS |
+| LiveSplit | one split set costs about its share of the pass | 1024×1024 df32 1e8x, set 1 of 4, wall, best of 3 | one set 35.98 ms against every tile 76.77 ms = 0.47 | < 0.6 of every tile (0.25 = exactly its share) | ✅ PASS |
+| LiveSplit | GPU timestamps describe their own pass (full-screen triangle) | 1024×1024 df32 1e8x, one pass, median of 3 | timestamp 74.46 ms against wall 74.64 ms = 1.00 | timestamp 0.5–1.05 of the wall | ✅ PASS |
+| LiveSplit | GPU timestamps describe their own pass (split tile geometry) | 1024×1024 df32 1e8x, one pass, median of 3 | timestamp 75.20 ms against wall 75.35 ms = 1.00 | timestamp 0.5–1.05 of the wall | ✅ PASS |
+| LiveSplit | the split tile geometry costs what the full-screen pass does | 1024×1024 df32 1e8x, every tile, wall, median of 7 back-to-back pairs | tiles over the triangle 1.02 (pairs 0.90..1.10; blocks of three: tiles 75.35 ms, triangle 74.64 ms) | ≤ 1.3 | ✅ PASS |
+| IterChunk | exact-repeat check: the same picture, sooner | Multibrot 4 Julia c 0.32295+0.98330i, 256x358, 20k iter, check on/off + 3k windows | mode 1; 0 texels differ from the check off, 0 from a walk in 3,000-iteration windows; 6160 interior px; 1.56 ms against 26.06 ms | direct; 0 texels differ either way; interior px > 0; on < off / 4 | ✅ PASS |
+| IterChunk | exact-repeat check in perturbation: the same trap picture, sooner | Multibrot 7 minibrot at 0.7740990+0.2441822i, 7.2e7x, 256x160, 20k iter, trap | mode 0; 0 colored px differ from the check off; 5107 interior px; reference period 136 from sample 273; 580851 loop trips against 1780195 (1 px in 64); 33.92 ms against 33.46 ms | mode 0; 0 px differ; interior px > 0; reference folded; trips on < off / 2 | ✅ PASS |
 | IterChunk | honest step: a Julia set's orbits past the critical point do not stall | Multibrot 8 Julia c 0.32295+0.98330i, 256x358, 2k iter, step off/on + 300-it windows | mode 1; off: 80 interior px, 80 of them escape in double precision; on: 0 interior px, 0 false; 0 texels differ from a walk in 300-iteration windows | direct; off shows false interior (≥90% escape in f64); on: none false; 0 texels differ | ✅ PASS |
+| Glitch | critical orbit: a Julia view's rebases keep their pixels | Julia c 0.42414+0.20713i at 2^33.9 (the 2026-11-19 report's panel), 284x349, 2k iter, df32 + floatexp (tail on, off), with/without, 64-it walks | mode 0, critical orbit 307 samples; 60989 of 99116 px graded (not steep); wrong vs f64 without / with it: df32 10473 (17.2%) / 0 (0.00%); floatexp 10473 (17.2%) / 0 (0.00%); floatexp, tail off 10473 (17.2%) / 0 (0.00%); 64-it walk differs from the pass: df32 0, floatexp 0, tail off 0 | Julia, df32, critical orbit present; without it ≥10% of graded px wrong in all three (shows the defect); with it ≤1% and ≤ a fifth of without; walks: 0 counts differ | ✅ PASS |
 | IterChunk | tiled chunked export is bit-identical | corpus07 1e30x, 4M iter, 16 tiles, colored, the palette point sampled and anti-aliased | 0 texels differ; 16 tiles; max dispatch 1ms vs control 2ms; the palette anti-aliased: 773 texels differ, by 3.8e-6 at most | 0 texels differ point sampled; anti-aliased by the distance, within 1e-3 (a 255th is 3.9e-3) | ✅ PASS |
 | IterChunk | tiled chunked iter buffer is bit-identical | corpus07 1e30x, 4M iter, 16 tiles, raw | 0 texels differ | 0 texels differ | ✅ PASS |
 | IterChunk | occupancy tile: step-bounded passes resume bit-identically | corpus07 1e30x, 4M iter, 512px in one tile | 0 texels differ; 1 tile(s), 3 passes; largest pass 133169152 pixel-steps (ceiling 600000000) | 0 texels differ, 1 tile, passes > tiles, pass <= ceiling | ✅ PASS |
@@ -68,27 +69,27 @@ All checks use exact mathematics (arbitrary-precision dwell, closed-form propert
 | Worker | the jitter changes the sample (control) | the case above, jitter (0, 0) | 55774 of 92160 channels differ from the unjittered frame | some channels differ | ✅ PASS |
 | Worker | a whole-pixel jitter is a whole-pixel shift (control) | corpus07 1e30x, 192×120 ss 1, jitter (1, 0) vs (0, 0) | 0 texels differ from the frame shifted one pixel (58293 from the unshifted) | 0 differ shifted, some differ unshifted | ✅ PASS |
 | Worker | a cancelled run's job answers without a sample; the next run's renders | the twin above, cancel(view 0, run 2) before run 2's job is sent | canceled run's job: no sample; next run's job: a sample | no sample, then a sample | ✅ PASS |
-| Worker | a still split across this device and a twin is bit-identical, both rendering | corpus07 1e30x, 20k iter, 192×120 ss 2, 48-px tiles, mode 2 | 0 of 92160 channels differ; tiles per device [9, 3] of 12 | 0 channels differ; both devices rendered tiles | ✅ PASS |
+| Worker | a still split across this device and a twin is bit-identical, both rendering | corpus07 1e30x, 20k iter, 192×120 ss 2, 48-px tiles, mode 2 | 0 of 92160 channels differ; tiles per device [11, 1] of 12 | 0 channels differ; both devices rendered tiles | ✅ PASS |
 | Worker | a split whose twin fails at its first tile hands it back, bit-identical | corpus07 1e30x, 20k iter, 192×120 ss 2, 48-px tiles, mode 2 | 0 of 92160 channels differ; tiles per device [12, 0] of 12; the twin stopped: GPU device lost or wedged during readback | 0 channels differ; the twin stopped, every tile rendered | ✅ PASS |
 | Worker | an iteration buffer split across this device and a twin is bit-identical, both rendering | corpus07 1e30x, 20k iter, 192×120 ss 1, 48-px tiles, mode 2 | 0 of 92160 channels differ; tiles per device [7, 5]; 23040 escaped px | 0 channels differ; both devices rendered tiles; some pixels escaped | ✅ PASS |
-| Worker | a pass target changes no pixel, and shortens the passes (floatexp 1e30x, step-bounded) | 192×120 ss 2, mode 2, pass_ms 1 against the export's own sizing | 0 of 92160 channels differ; 9 passes against 1 (longest 0.9 ms against 2.0) | 0 channels differ; more passes | ✅ PASS |
-| Worker | a pass target changes no pixel, and shortens the passes (df32 1e8x, chunk windows) | 192×120 ss 2, mode 0, pass_ms 1 against the export's own sizing | 0 of 92160 channels differ; 303 passes against 4 (longest 2.1 ms against 127.6) | 0 channels differ; more passes | ✅ PASS |
+| Worker | a pass target changes no pixel, and shortens the passes (floatexp 1e30x, step-bounded) | 192×120 ss 2, mode 2, pass_ms 1 against the export's own sizing | 0 of 92160 channels differ; 9 passes against 1 (longest 1.0 ms against 2.1) | 0 channels differ; more passes | ✅ PASS |
+| Worker | a pass target changes no pixel, and shortens the passes (df32 1e8x, chunk windows) | 192×120 ss 2, mode 0, pass_ms 1 against the export's own sizing | 0 of 92160 channels differ; 282 passes against 4 (longest 3.8 ms against 129.8) | 0 channels differ; more passes | ✅ PASS |
 | Worker | a live frame on a twin device is bit-identical (one pass) | corpus07 1.3e30x, 20000 iter, 192×120, mode 2, the app's params; walk [280, 282, 287, 347, 20000] + tail | 0 of 184320 channels differ; 23040 of 23040 texels escaped | 0 channels differ (iter + aux planes), mode 2; a walk pauses pixels | ✅ PASS |
 | Worker | a live chunked walk on a twin device is bit-identical | corpus07 1.3e30x, 20000 iter, 192×120, mode 2, the app's params; walk [280, 282, 287, 347, 20000] + tail | 0 of 184320 channels differ; 23040 of 23040 texels escaped; 19681 escaped after the first window; the walk and the one pass differ in 0 channels here | 0 channels differ (iter + aux planes), mode 2; a walk pauses pixels | ✅ PASS |
-| Worker | a worker's step-bounded walk is the chunked walk's frame, bit-identical | corpus07 1.3e30x, 20000 iter, 192×120, mode 2; LiveTwin::walk at a 1 ms pass target | 0 of 184320 channels differ from the chunked walk; 8 passes, longest 1.4 ms; 23040 of 23040 texels escaped | 0 channels differ (iter + aux planes), mode 2; at least 3 passes | ✅ PASS |
+| Worker | a worker's step-bounded walk is the chunked walk's frame, bit-identical | corpus07 1.3e30x, 20000 iter, 192×120, mode 2; LiveTwin::walk at a 1 ms pass target | 0 of 184320 channels differ from the chunked walk; 7 passes, longest 1.2 ms; 23040 of 23040 texels escaped | 0 channels differ (iter + aux planes), mode 2; at least 3 passes | ✅ PASS |
 | Worker | the twins drew this view (control) | the one-pass frame above, and it at jitter (1, 0) | 23040 texels escaped; 92158 channels differ from the frame jittered one pixel | some escaped; some differ | ✅ PASS |
 | Worker | a twin's frame adopted here reads back unchanged and is not re-iterated | the twin's walk above; the jittered frame adopted under the unjittered params | adopted walk: 0 channels differ; adopted jittered frame after a frame at its key: 0 | 0 channels differ, both | ✅ PASS |
 | Renorm | renormalized step: chunked export matches its single dispatch | ladder p15248 2.1e57x, 457,440 iter, 192px | 0 texels differ; step 953 its, 576 sampled px took it | step engaged; 0 texels differ | ✅ PASS |
 | Renorm | renormalized step: pixels paused inside it resume bit-identically | ladder p15248 2.1e57x, 40,000-iteration windows, raw | 0 texels differ; 12 windows | 0 texels differ, more than one window | ✅ PASS |
 | Renorm | u-space BLA: chunked export matches its single dispatch, and skips | ladder p121984 1.7e66x, 3,659,520 iter, 1024px in one tile | 0 texels differ; 3 passes; 318 nodes; sampled steps 8514151 with the tree, 23130554 without | 0 texels differ, passes > tiles, steps under half without the tree | ✅ PASS |
-| RefReuse | a reused reference renders the same as a fresh pick | corpus07 1e30x, 200k iter, extend vs fresh pick | extended 20001 to 200001 (fresh 200001); 0 of 193600 texels differ; reference 219ms fresh vs 141ms extend | reuse engaged AND 0 texels differ | ✅ PASS |
-| RefOverlap | overlapped pick + build is byte-identical: bench-10 center @2^150 (center, short escaper) | 250000 iter, sequential vs overlapped fresh build | identical; len=9736 sa_skip=4158 sa=walk/overlap center build=centre pick's center walk=from the build (120 ms sequential, 19 ms overlapped) | point, orbit, series skip, BLA, precision, tail all identical | ✅ PASS |
-| RefOverlap | overlapped pick + build is byte-identical: bench 6.6e43 (short escaper) | 60000 iter, sequential vs overlapped fresh build | identical; len=1429 sa_skip=1221 sa=walk/walk center build=discarded pick's center walk=walked (44 ms sequential, 32 ms overlapped) | point, orbit, series skip, BLA, precision, tail all identical | ✅ PASS |
-| RefOverlap | overlapped pick + build is byte-identical: corpus07 1e30 (survivor) | 200000 iter, sequential vs overlapped fresh build | identical; len=200001 sa_skip=0 sa=none/none center build=centre pick's center walk=from the build (379 ms sequential, 270 ms overlapped) | point, orbit, series skip, BLA, precision, tail all identical | ✅ PASS |
+| RefReuse | a reused reference renders the same as a fresh pick | corpus07 1e30x, 200k iter, extend vs fresh pick | extended 20001 to 200001 (fresh 200001); 0 of 193600 texels differ; reference 197ms fresh vs 162ms extend | reuse engaged AND 0 texels differ | ✅ PASS |
+| RefOverlap | overlapped pick + build is byte-identical: bench-10 center @2^150 (center, short escaper) | 250000 iter, sequential vs overlapped fresh build | identical; len=9736 sa_skip=4158 sa=walk/overlap center build=centre pick's center walk=from the build (134 ms sequential, 22 ms overlapped) | point, orbit, series skip, BLA, precision, tail all identical | ✅ PASS |
+| RefOverlap | overlapped pick + build is byte-identical: bench 6.6e43 (short escaper) | 60000 iter, sequential vs overlapped fresh build | identical; len=1429 sa_skip=1221 sa=walk/walk center build=discarded pick's center walk=walked (46 ms sequential, 32 ms overlapped) | point, orbit, series skip, BLA, precision, tail all identical | ✅ PASS |
+| RefOverlap | overlapped pick + build is byte-identical: corpus07 1e30 (survivor) | 200000 iter, sequential vs overlapped fresh build | identical; len=200001 sa_skip=0 sa=none/none center build=centre pick's center walk=from the build (393 ms sequential, 293 ms overlapped) | point, orbit, series skip, BLA, precision, tail all identical | ✅ PASS |
 | RefOverlap | the overlap engaged (centre build + parallel series skip used) | across the views above | engaged=true | at least one view took both from the overlap | ✅ PASS |
 | RefOverlap | the pick took its walk of the centre from the centre build | across the views above | taken=true | at least one view's phase 2 read the center (and its samples) off the build | ✅ PASS |
-| OrbitCache | an orbit from the disk cache renders the same as a fresh pick | corpus07 1e30x, 200k iter; written, found, loaded, extended; then unaided | extended 20001 to 200001 (fresh 200001); 0 of 193600 texels differ; reference 211ms fresh vs 132ms extend; unaided, the worker served len=200001 from disk in 46ms (1 entries, 3.1 MB) | found AND reuse engaged AND 0 texels differ AND the unaided worker hit | ✅ PASS |
-| View format | a thumbnail borrows the live reference, never builds one | 1e30x, 128x96, ss=2; refused with none resident, then borrowed | refused in 0.0ms; borrowed and rendered 128x96 in 120ms; 31.9 KB of base64 | None when nothing is resident; a real 128x96 when it is | ✅ PASS |
+| OrbitCache | an orbit from the disk cache renders the same as a fresh pick | corpus07 1e30x, 200k iter; written, found, loaded, extended; then unaided | extended 20001 to 200001 (fresh 200001); 0 of 193600 texels differ; reference 239ms fresh vs 161ms extend; unaided, the worker served len=200001 from disk in 56ms (1 entries, 3.1 MB) | found AND reuse engaged AND 0 texels differ AND the unaided worker hit | ✅ PASS |
+| View format | a thumbnail borrows the live reference, never builds one | 1e30x, 128x96, ss=2; refused with none resident, then borrowed | refused in 1.6ms; borrowed and rendered 128x96 in 135ms; 31.9 KB of base64 | None when nothing is resident; a real 128x96 when it is | ✅ PASS |
 | Framing | an export CONTAINS the window view at any aspect | window 1200x900 (aspect 1.333), 6 aspects | 6 aspects (3 wider, 2 narrower than the window): contained, tight, isotropic; window = identity | no axis shrinks; binding axis exact; isotropic; BOTH branches tried | ✅ PASS |
 | Framing | a wider canvas contains the narrower one — direct f64 (1e2x) | 160px vs 240px at h=128, 2000 iter, 20480 texels compared | 160px inside 240px at h=128: identical over 20480 texels | 0 texels differ | ✅ PASS |
 | Framing | a wider canvas contains the narrower one — perturbation (1e30x) | 160px vs 240px at h=128, 60000 iter, 20480 texels compared | 160px inside 240px at h=128: identical over 20480 texels | <= 64 texels differ (measured glitch noise; a misframing differs in 10,000s) | ✅ PASS |
@@ -305,7 +306,7 @@ All checks use exact mathematics (arbitrary-precision dwell, closed-form propert
 | Custom formula (GPU) | Phoenix step, Julia, direct: chunked = single pass | 1e0×, 2000 iter, window 137 | mode 1, ref 0→0, 15 passes — 0 texels differ; 46598 of 48400 px escaped, rebase 0 | 0 texels differ, ≥2 passes, >10% escaped, some interior | ✅ PASS |
 | Custom formula (GPU) | hybrid Mandelbrot/Burning Ship, perturbed 1e6×: chunked = single pass | 1e6×, 3000 iter, window 517 | mode 0, ref 3001→3001, 6 passes — 0 texels differ; 25699 of 48400 px escaped, rebase 14916255 | 0 texels differ, ≥2 passes, >10% escaped, some interior | ✅ PASS |
 | Custom formula (GPU) | hybrid Mandelbrot/Burning Ship, 7-sample reference (rebase storm): chunked = single pass | 1e6×, 3000 iter, window 517 | mode 0, ref 3001→7, 6 passes — 0 texels differ; 25692 of 48400 px escaped, rebase 17953656 | 0 texels differ, ≥2 passes, >10% escaped, some interior | ✅ PASS |
-| Custom formula (GPU) | a reference that dips below f32: custom z² + c = built-in (GitHub #5) | validation corpus view 13, 4.9e141×, 600,000 iterations | interior: custom 36.0%, built-in 36.0%; escape decision differs on 0.09% of 48400 px; 136 dip samples in the reference; mode 2; 3015 ms | dips present, mode 2; escape decisions differ on ≤ 1% and interior shares within 1 point | ✅ PASS |
+| Custom formula (GPU) | a reference that dips below f32: custom z² + c = built-in (GitHub #5) | validation corpus view 13, 4.9e141×, 600,000 iterations | interior: custom 36.0%, built-in 36.0%; escape decision differs on 0.09% of 48400 px; 136 dip samples in the reference; mode 2; 3004 ms | dips present, mode 2; escape decisions differ on ≤ 1% and interior shares within 1 point | ✅ PASS |
 | Life | GPU stepper = CPU tile stepper | B3/S23: soups on plane / torus / bounded, 200 generations | equal at 21 checkpoints (8186 cells compared), 0 breaches | exact | ✅ PASS |
 | Life | GPU stepper = CPU tile stepper | B36/S23: soups on plane / torus / bounded, 200 generations | equal at 21 checkpoints (8369 cells compared), 0 breaches | exact | ✅ PASS |
 | Life | GPU stepper = CPU tile stepper | B2/S: soups on plane / torus / bounded, 200 generations | equal at 21 checkpoints (44951 cells compared), 0 breaches | exact | ✅ PASS |
@@ -585,9 +586,9 @@ All checks use exact mathematics (arbitrary-precision dwell, closed-form propert
 | bench-matrix | fractal-buffalo4 | path signature vs baseline | mode 1 eff-it 2000 sa-skip 0 counters ok | exact | ✅ PASS |
 | bench-matrix | fractal-buffalo5 | path signature vs baseline | mode 1 eff-it 2000 sa-skip 0 counters ok | exact | ✅ PASS |
 
-**569/569 checks passed.**
+**570/570 checks passed.**
 
-slow-GPU guard: 0 pass(es) refused; the dearest pass priced was 16153 ms (tiled chunked iter buffer is bit-identical), against a 500 ms limit.
+slow-GPU guard: 0 pass(es) refused; the dearest pass priced was 13871 ms (tiled chunked iter buffer is bit-identical), against a 500 ms limit.
 
 ## Coverage & scope
 
@@ -653,7 +654,7 @@ Opt-in groups NOT run: deep-location, fe-df32-probe (each runs only when named: 
 ```text
 OS: Windows 11 Pro 26H2 (build 26300.9974), x86_64
 CPU: AMD Ryzen 9 5950X 16-Core Processor (16 cores / 32 threads, L3 64 MB), 3400 MHz, AVX2 FMA BMI2 ADX
-Memory: 63.9 GB, 28.0 GB free
+Memory: 63.9 GB, 26.8 GB free
 GPU in use: NVIDIA GeForce RTX 3080 [10de:2206] DiscreteGpu, Vulkan, driver NVIDIA 610.88, 10240 MB
   driver package: NVIDIA 32.0.16.1088, dated 7-22-2026
   limits: texture 2D 32768 px, buffer 1024 MB, storage binding 1024 MB, workgroup 256 invocations, bind groups 4
@@ -661,7 +662,7 @@ GPU in use: NVIDIA GeForce RTX 3080 [10de:2206] DiscreteGpu, Vulkan, driver NVID
 Other GPU: NVIDIA GeForce RTX 3070 [10de:2484] DiscreteGpu, Vulkan, driver NVIDIA 610.88
 Other GPU: NVIDIA GeForce RTX 3080/PCIe/SSE2 [10de:0000] Other, Gl, driver  4.6.0 NVIDIA 610.88
 GPU settings: TdrDelay 2 s (default), TdrDdiDelay 5 s (default), TdrLevel 3 (default) = recover; hardware-accelerated GPU scheduling not set
-CPU reference speed: 0.56 µs per iteration at 164 bits, 5.90 µs per iteration at 3064 bits (astro-float, one core)
+CPU reference speed: 1.01 µs per iteration at 164 bits, 7.67 µs per iteration at 3064 bits (astro-float, one core)
 Power plan: AMD RyzenT Balanced
 Driver resets (30 days): 16 event(s) in the event log, newest first
   2026-11-17T20:48:52.8450000Z Microsoft-Windows-Kernel-Power 41 Critical - Windows restarted without shutting down cleanly | The system has rebooted without cleanly shutting down first. This error could be caused if the system stopped responding, crashed, or lost power unexpectedly.
@@ -685,30 +686,30 @@ Driver resets (30 days): 16 event(s) in the event log, newest first
 ## GPU speed by mode
 
 ```text
-  direct: 6.005e-11 ms per step by the wall (8192 iterations, 0.4 ms), GPU clock 4.752e-11 (0.3 ms); a 2-iteration pass 0.39 ms
-  df32: 1.418e-10 ms per step by the wall (8192 iterations, 0.9 ms), GPU clock 1.268e-10 (0.8 ms), 2.36x direct; a 2-iteration pass 0.39 ms
-  floatexp: 8.344e-8 ms per step by the wall (1024 iterations, 67.2 ms), GPU clock 8.299e-8 (66.8 ms), 1389.35x direct; a 2-iteration pass 0.51 ms
+  direct: 6.445e-11 ms per step by the wall (8192 iterations, 0.4 ms), GPU clock 5.134e-11 (0.3 ms); a 2-iteration pass 0.42 ms
+  df32: 1.457e-10 ms per step by the wall (8192 iterations, 0.9 ms), GPU clock 1.303e-10 (0.8 ms), 2.26x direct; a 2-iteration pass 0.43 ms
+  floatexp: 7.165e-8 ms per step by the wall (1024 iterations, 57.7 ms), GPU clock 7.151e-8 (57.6 ms), 1111.72x direct; a 2-iteration pass 0.54 ms
   calibration table for this card (its own entry): direct 5.350e-9, df32 2.760e-8 ms per step
   as a calibration entry (wall clock, all-interior 1024x768, BLA and series off):
     [[adapter]]
     slug = "nvidia-geforce-rtx-3080"
-    df32_pert_ms_per_step = 1.418e-10
-    direct_ms_per_step = 6.005e-11
+    df32_pert_ms_per_step = 1.457e-10
+    direct_ms_per_step = 6.445e-11
 ```
 
 ## Slowest checks
 
-569 checks took 268.8 s in all; the ten slowest:
+570 checks took 280.7 s in all; the ten slowest:
 
 | Check | Parameters | Time |
 |---|---|---|
-| palettes are all different and coherent | 190 of 190 palettes rendered | 69.8 s |
-| coloring matrix --quick: no new red cell | validation/coloring/views.toml (quick views) | 35.9 s |
-| direct-1e2 | path signature vs baseline | 12.7 s |
-| sin z + c, iterated (f32 tier): overflow guard | direct, span 6, F32, 32520 escaped px | 6.4 s |
-| a strip window the card cannot hold is an error, not a crash | 11 strips of 32768x4096 (twice the card's memory) | 5.8 s |
-| Magnet I (escape or converge): GPU = CPU interpreter | direct, span 4.4, Df32, 38288 escaped px | 4.4 s |
-| the split tile geometry costs what the full-screen pass does | 1024×1024 df32 1e8x, every tile, wall, median of 7 back-to-back pairs | 4.0 s |
-| Barnsley M1 (if block): GPU = CPU interpreter | direct, span 4, Df32, 35740 escaped px | 3.9 s |
-| a reference that dips below f32: custom z² + c = built-in (GitHub #5) | validation corpus view 13, 4.9e141×, 600,000 iterations | 3.0 s |
-| sin z + cos z·cos z + c: deep app pipeline = bignum at 1e12× | boundary toward 0.9+0.7i, 60 iter, mode 0, ref 61, 855 of 1024 sampled px decidable in f32, 428 of them escaped | 3.0 s |
+| palettes are all different and coherent | 190 of 190 palettes rendered | 72.7 s |
+| coloring matrix --quick: no new red cell | validation/coloring/views.toml (quick views) | 37.8 s |
+| direct-1e2 | path signature vs baseline | 13.9 s |
+| sin z + c, iterated (f32 tier): overflow guard | direct, span 6, F32, 32520 escaped px | 6.7 s |
+| a strip window the card cannot hold is an error, not a crash | 11 strips of 32768x4096 (twice the card's memory) | 6.3 s |
+| Magnet I (escape or converge): GPU = CPU interpreter | direct, span 4.4, Df32, 38288 escaped px | 4.5 s |
+| Barnsley M1 (if block): GPU = CPU interpreter | direct, span 4, Df32, 35740 escaped px | 3.8 s |
+| the split tile geometry costs what the full-screen pass does | 1024×1024 df32 1e8x, every tile, wall, median of 7 back-to-back pairs | 3.7 s |
+| z^2.5 + c: deep app pipeline = bignum at 1e12× | boundary toward -0.9-0.7i, 60 iter, mode 0, ref 61, 930 of 1024 sampled px decidable in f32, 466 of them escaped | 3.4 s |
+| sin z + cos z·cos z + c: deep app pipeline = bignum at 1e12× | boundary toward 0.9+0.7i, 60 iter, mode 0, ref 61, 855 of 1024 sampled px decidable in f32, 428 of them escaped | 3.3 s |
