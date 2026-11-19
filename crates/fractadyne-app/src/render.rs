@@ -2028,6 +2028,20 @@ pub(crate) fn pre_switch_window(l2: f64, switch_l2: f64, oct: f64) -> bool {
     l2.is_finite() && l2 < switch_l2 && switch_l2 - l2 <= oct
 }
 
+/// One frame interval of a view's observed zoom speed (`Perf::zoom_oct_s`, and the dual view's
+/// Julia panel's `julia_zoom_oct_s`), octaves per second: an EMA of |Δlog2mag| per interval of
+/// `dt_ms`, from `cur`. A step of two octaves or more in ONE interval is a jump (a load, a
+/// click-zoom, Home, a harness teleport), not a glide speed: it resets the estimate.
+pub(crate) fn zoom_rate_step(cur: f64, last_l2: f64, l2: f64, dt_ms: f64) -> f64 {
+    let d = (l2 - last_l2).abs();
+    if d >= 2.0 || dt_ms <= 0.0 {
+        0.0
+    } else {
+        let inst = d / dt_ms * 1000.0;
+        cur + (inst - cur) * 0.3
+    }
+}
+
 /// The pre-switch probe's square side and iteration count: the occupancy knee's pixels (below it a
 /// pass costs its iteration window, so a smaller probe would price floatexp up to knee/px too
 /// dear and gain nothing), and as many iterations as `steps` buys there, at least 8 so the fixed
@@ -2080,6 +2094,8 @@ pub(crate) struct PreSwitchJob {
     /// The timed passes (`[GPU ms, wall ms]`) and the final pass's running fraction and verdict
     /// (`pre_switch_probe_representative`), or why there are none.
     rx: std::sync::mpsc::Receiver<Result<(Vec<[f64; 2]>, f64, bool), String>>,
+    /// The view it measures (0, or a dual view's Julia panel 1), whose meter it opens.
+    view: usize,
     l2: f64,
     side: u32,
     iters: u32,
@@ -2927,6 +2943,17 @@ impl FractadyneApp {
         }
     }
 
+    /// The viewport view `v` renders and whether it is a Julia plane, as the live frame draws it:
+    /// a dual view's Julia panel (1), or the main viewport (0) — the Mandelbrot plane in a dual
+    /// view (its left panel, `nav_and_draw`), else whatever the single view shows.
+    fn view_and_plane(&self, v: usize) -> (&Viewport, bool) {
+        if v == 1 {
+            (&self.julia_viewport, true)
+        } else {
+            (&self.viewport, self.julia_mode && !self.dual)
+        }
+    }
+
     /// ⭐BEFORE A DIVE REACHES FLOATEXP, MEASURE IT (`PRE_SWITCH_PROBE`, 2026-10-18). At the 2^93
     /// switch the frame budget is unmeasured in the new mode and opens at df32's rate ÷
     /// `MODE_RATE_UNKNOWN_MARGIN` (256): ~4e6 steps on the RTX 3080, 8 iterations a pass at 813×606,
@@ -2969,23 +2996,40 @@ impl FractadyneApp {
         // holds through the compile (the background speed re-check died that way on Eris,
         // 2026-11-10). The switch then opens as it did before the probe existed.
         let gl = self.render_state.as_ref().is_some_and(|rs| rs.adapter.get_info().backend == eframe::wgpu::Backend::Gl);
-        if crate::tunables::cost().pre_switch_probe != 1 || self.render_cli.run || self.dual || gl {
+        if crate::tunables::cost().pre_switch_probe != 1 || self.render_cli.run || gl {
+            return;
+        }
+        if self.perf.frame_idx < self.perf.pre_switch_probe_next {
             return;
         }
         let t0 = Instant::now();
         let floatexp = RenderMode::Floatexp.to_u32();
-        let (vp, julia) = (self.viewport.clone(), self.julia_mode);
-        if self.live_render_mode(self.fractal, julia, vp.magnification()) != RenderMode::Df32Pert
-            || !pre_switch_window(vp.log2_magnification(), PERT_FE_THRESHOLD.log2(), crate::tunables::PRE_SWITCH_OCT)
-            || self.perf.zoom_oct_s <= 0.0
-            || self.perf.mode_rate_known(0, floatexp)
-            || self.perf.frame_idx < self.perf.pre_switch_probe_next
-        {
+        // ⭐EITHER PANEL OF A DUAL VIEW (2026-11-19). As first written the probe skipped a dual view
+        // and watched the main viewport's zoom alone, so the panels that cross at 2^93 there opened
+        // unmeasured: the Julia panel always (a Julia view never takes the band's floatexp +
+        // BLA, `band_bla`), and the main view under a coloring that keeps it in df32 (orbit
+        // statistics). The maintainer's Julia panel (b6953, a stripe-average dual view) opened its
+        // floatexp at 5.77e6 steps — 16x16 on a 1679x2060 panel — and its first readings, of passes
+        // that small, priced floatexp ~100x too dear (the occupancy knee): live 16x16 frames for
+        // 2.7 s of motion, then a ×1.5 climb, ~15 s before the panel was sharp. Each panel is now
+        // probed as the single view is, at its own depth and zoom speed, into its own meter: the
+        // first that qualifies, one probe at a time.
+        let views: &[usize] = if self.dual { &[0, 1] } else { &[0] };
+        let Some(v) = views.iter().copied().find(|&v| {
+            let (vp, julia) = self.view_and_plane(v);
+            let zooming = if v == 1 { self.perf.julia_zoom_oct_s } else { self.perf.zoom_oct_s } > 0.0;
+            self.live_render_mode(self.fractal, julia, vp.magnification()) == RenderMode::Df32Pert
+                && pre_switch_window(vp.log2_magnification(), PERT_FE_THRESHOLD.log2(), crate::tunables::PRE_SWITCH_OCT)
+                && zooming
+                && !self.perf.mode_rate_known(v, floatexp)
+        }) else {
             return;
-        }
+        };
+        let (vp, julia) = self.view_and_plane(v);
+        let vp = vp.clone();
         self.perf.pre_switch_probe_next = self.perf.frame_idx + crate::tunables::PRE_SWITCH_PROBE_RETRY_FRAMES;
         // Its cap is this view's df32 rate, so it waits for one.
-        let Some(df32) = self.perf.worst_rate_steps_per_ms(0) else { return };
+        let Some(df32) = self.perf.worst_rate_steps_per_ms(v) else { return };
         let scale = vp.gpu_scale();
         let eff_iter = self.export_eff_iter(&vp, julia);
         if self.live_ref_fields(&vp, julia, eff_iter, scale.delta_exp, vp.precision).is_none() {
@@ -3023,6 +3067,7 @@ impl FractadyneApp {
         });
         self.pre_switch_job = Some(PreSwitchJob {
             rx,
+            view: v,
             l2: vp.log2_magnification(),
             side,
             iters,
@@ -3036,12 +3081,12 @@ impl FractadyneApp {
     /// floatexp rate if it is usable and floatexp is still unmeasured, and log what it read.
     fn pre_switch_count(&mut self, job: PreSwitchJob, got: Result<(Vec<[f64; 2]>, f64, bool), String>) {
         let floatexp = RenderMode::Floatexp.to_u32();
-        let PreSwitchJob { l2, side, iters, df32, setup_ms, started, .. } = job;
+        let PreSwitchJob { view, l2, side, iters, df32, setup_ms, started, .. } = job;
         let took_ms = started.elapsed().as_secs_f64() * 1000.0;
         let px = u64::from(side) * u64::from(side);
         let steps = px * u64::from(iters);
         let head = format!(
-            "pre-switch floatexp probe at 2^{l2:.1}: {side}x{side} x {iters} iterations, BLA off \
+            "pre-switch floatexp probe at 2^{l2:.1} (view {view}): {side}x{side} x {iters} iterations, BLA off \
              ({setup_ms:.1} ms on the UI thread, {took_ms:.0} ms on its own)"
         );
         let line = match got {
@@ -3056,13 +3101,13 @@ impl FractadyneApp {
                     .map(|&[ts, wall]| format!("{ts:.2} ({wall:.2} wall)"))
                     .collect::<Vec<_>>()
                     .join(" / ");
-                if self.perf.mode_rate_known(0, floatexp) {
+                if self.perf.mode_rate_known(view, floatexp) {
                     format!("{head}, {shown} ms NOT counted: floatexp was measured before it landed")
                 } else {
                     let ratio = crate::tunables::PRE_SWITCH_FLOATEXP_RATIO_MIN;
                     match pre_switch_probe_rate(steps, &times, df32, ratio) {
                         Some(rate) => {
-                            self.perf.record_opening_rate(0, floatexp, rate);
+                            self.perf.record_opening_rate(view, floatexp, rate);
                             format!(
                                 "{head}, {shown} ms ⇒ {:.2e} steps/ms (df32 {df32:.2e}, cap 1/{ratio}) ⇒ {rate:.2e}; \
                                  the switch will open at {:.2e} steps",
@@ -8510,6 +8555,7 @@ impl FractadyneApp {
             // opening its log line reports is the one its first frame is sized by. `resolution`
             // is a lower bound on the dispatch's pixels, as for the ceiling below, so the knee term
             // errs low.
+            self.perf.julia_plane[vidx] = julia;
             self.perf.calibrated_open[vidx] = (
                 m,
                 crate::calibration::opening_for(

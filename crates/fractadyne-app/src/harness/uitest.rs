@@ -792,6 +792,15 @@ pub(crate) struct JuliaDive {
     /// Set when the target depth is reached: the settle clock for the final two shots.
     stopped_at: Option<Instant>,
     settled_shot_done: bool,
+    /// `--juliadive-keep`: dive the LOADED session's Julia panel (its c, center, depth and
+    /// settings) instead of the reporter's boundary setup — a crossing where a user met it.
+    keep: bool,
+    /// `--juliadive-to-l2`: the depth the dive stops at (default 15, ≈ 32,000×).
+    to_l2: f64,
+    /// `--juliadive-rate`: octaves per second (default 2).
+    rate: f64,
+    /// `--juliadive-settle-s`: seconds from the stop to the settled shot and the exit (default 3).
+    settle_s: f64,
 }
 
 impl JuliaDive {
@@ -812,7 +821,20 @@ impl JuliaDive {
             pending: None,
             stopped_at: None,
             settled_shot_done: false,
+            keep: false,
+            to_l2: 15.0,
+            rate: 2.0,
+            settle_s: 3.0,
         }
+    }
+
+    /// The dive's options (`--juliadive-keep`, `-to-l2`, `-rate`, `-settle-s`); `None` keeps a default.
+    pub(crate) fn with_opts(mut self, keep: bool, to_l2: Option<f64>, rate: Option<f64>, settle_s: Option<f64>) -> Self {
+        self.keep = keep;
+        self.to_l2 = to_l2.filter(|v| v.is_finite()).unwrap_or(self.to_l2);
+        self.rate = rate.filter(|v| v.is_finite() && *v > 0.0).unwrap_or(self.rate);
+        self.settle_s = settle_s.filter(|v| v.is_finite() && *v >= 0.0).unwrap_or(self.settle_s);
+        self
     }
 }
 
@@ -965,10 +987,19 @@ impl FractadyneApp {
     }
 
     pub(crate) fn juliadive_frame(&mut self, ctx: &egui::Context) {
-        const TARGET_L2: f64 = 15.0; // ≈ 32,000× — crosses PERT_JULIA_THRESHOLD (1e2) and 1e4
-        const OCTAVES_PER_S: f64 = 2.0;
+        // Default ≈ 32,000× — crosses PERT_JULIA_THRESHOLD (1e2) and 1e4.
         let Some(jd) = self.harness.juliadive.as_mut() else { return };
+        let (target_l2, octaves_per_s) = (jd.to_l2, jd.rate);
         jd.frame += 1;
+        if jd.frame == 1 && jd.keep {
+            // The loaded session's dual view as it was, its c pinned so the cursor cannot move it;
+            // in-motion shots from the next whole octave.
+            jd.next_shot_l2 = self.julia_viewport.log2_magnification().floor() + 1.0;
+            self.dual = true;
+            self.julia_pin = Some(self.julia_c);
+            ctx.request_repaint();
+            return;
+        }
         if jd.frame == 1 {
             // The reporter's setup: dual view, a BOUNDARY Julia c (dense structure at every
             // depth — a bulb-interior c goes smooth by ~1000× and hides resolution artifacts),
@@ -1021,11 +1052,11 @@ impl FractadyneApp {
         let l2 = self.julia_viewport.log2_magnification();
         let jd = self.harness.juliadive.as_mut().unwrap();
         if jd.stopped_at.is_none() {
-            if l2 < TARGET_L2 {
+            if l2 < target_l2 {
                 // Zoom about the Julia panel center, with the same interaction stamp the real
                 // wheel/Space path applies (settle_t[1] ⇒ view 1 is "interacting").
                 let dt = (ctx.input(|i| i.stable_dt) as f64).clamp(0.0, 0.1);
-                let factor = (-(OCTAVES_PER_S * std::f64::consts::LN_2) * dt).exp();
+                let factor = (-(octaves_per_s * std::f64::consts::LN_2) * dt).exp();
                 let (w, h) = (self.julia_viewport.width_px, self.julia_viewport.height_px);
                 self.julia_viewport.zoom_at(w * 0.5, h * 0.5, factor);
                 self.pointer.settle_t[1] = ctx.input(|i| i.time);
@@ -1045,7 +1076,7 @@ impl FractadyneApp {
             }
         } else if !jd.settled_shot_done
             && jd.pending.is_none()
-            && jd.stopped_at.unwrap().elapsed().as_secs_f64() > 3.0
+            && jd.stopped_at.unwrap().elapsed().as_secs_f64() > jd.settle_s
         {
             jd.settled_shot_done = true;
             jd.pending = Some("settled.png".into());

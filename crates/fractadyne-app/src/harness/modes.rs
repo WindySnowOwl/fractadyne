@@ -542,7 +542,21 @@ impl Windowed {
         let juliadive = if args.iter().any(|a| a == "--juliadive") {
             let out =
                 val("--juliadive").filter(|s| !s.starts_with('-')).map(std::path::PathBuf::from);
-            Some(super::uitest::JuliaDive::new(out))
+            // An unreadable value is said, not taken for an absent one (the silent-default trap).
+            let num = |k: &str| {
+                let v = val(k)?;
+                let n = v.parse::<f64>().ok();
+                if n.is_none() {
+                    eprintln!("--juliadive: {k} {v:?} is not a number; using the default");
+                }
+                n
+            };
+            Some(super::uitest::JuliaDive::new(out).with_opts(
+                args.iter().any(|a| a == "--juliadive-keep"),
+                num("--juliadive-to-l2"),
+                num("--juliadive-rate"),
+                num("--juliadive-settle-s"),
+            ))
         } else {
             None
         };

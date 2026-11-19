@@ -1609,6 +1609,10 @@ struct Perf {
     /// before its mode-switch check, read by `bootstrap_steps` (the opening guess) and by the
     /// calibrated climb's licence (`calibrated_mode`). 0 where the calibration vouches for none.
     calibrated_open: [(u32, u64); 2],
+    /// Each view's last frame drew a JULIA plane (`build_params` stamps it with `calibrated_open`).
+    /// Its nominal steps are real ones — a Julia view takes no BLA, series skip or renormalized step
+    /// — so a paired reading prices it honestly in any mode (`paired_reading_prices`).
+    julia_plane: [bool; 2],
     /// ⭐The CROSS-MODE OPENING stamped at each view's last mode switch, with the mode it is for
     /// (`calibration::cross_opening_for`; `(u32::MAX, 0)` = none): read by `bootstrap_steps` ONLY
     /// while the new mode's budget is unmeasured (`fe_budget == 0`), so it sizes the first frames
@@ -1623,6 +1627,11 @@ struct Perf {
     zoom_oct_s: f64,
     /// `log2_magnification()` at the previous frame-interval capture, for `zoom_oct_s`.
     last_l2: f64,
+    /// `zoom_oct_s` of the dual view's JULIA panel (view 1), measured the same way from its own
+    /// viewport — what the floatexp pre-switch probe asks of that panel (`pre_switch_probe`).
+    julia_zoom_oct_s: f64,
+    /// `julia_viewport.log2_magnification()` at the previous capture, for `julia_zoom_oct_s`.
+    julia_last_l2: f64,
     /// Iteration step of the last motion / pin chunk pass sized per view — the growth limiter's
     /// memory (`MOTION_STEP_OPEN`): the next pass may at most double it, a wall-clock cut halves
     /// it, a mode switch clears it.
@@ -2600,6 +2609,15 @@ impl Perf {
         self.meter.bootstrap_steps(v, self.budget_mode[v])
     }
 
+    /// May a PAIRED reading (its own `iterate_steps`) of view `v` price the budget on a frame that
+    /// reprojected? Where the calibration bounds the mode (`calibrated_mode`), and on a Julia plane in
+    /// any mode, whose nominal steps are real (`julia_plane`). The maintainer's Julia panel crossed
+    /// into floatexp (uncalibrated) at 2^93.1 and kept its 16x16 opening for the whole of the motion
+    /// that followed, every reading turned away (b6953, 2026-11-19).
+    fn paired_reading_prices(&self, v: usize) -> bool {
+        self.calibrated_mode(v) || self.julia_plane[v.min(1)]
+    }
+
     /// Whether view `v`'s current mode is one the calibration bounds (`calibrated_open` stamped for
     /// it, non-zero): the licence for `render::calibrated_climb`.
     fn calibrated_mode(&self, v: usize) -> bool {
@@ -2715,10 +2733,13 @@ impl Default for Perf {
             budget_mode: [u32::MAX, u32::MAX],
             mode_switch_frame: [u64::MAX, u64::MAX],
             calibrated_open: [(u32::MAX, 0); 2],
+            julia_plane: [false; 2],
             cross_open: [(u32::MAX, 0); 2],
             meter: render::Meter::default(),
             zoom_oct_s: 0.0,
             last_l2: 0.0,
+            julia_zoom_oct_s: 0.0,
+            julia_last_l2: 0.0,
             motion_step_last: [0, 0],
             motion_work_last: [0, 0],
             pin_inflight: [0, 0],
@@ -18326,9 +18347,10 @@ impl eframe::App for FractadyneApp {
             // reading carries its OWN paired count (`iterate_steps`, which the budget path below
             // already prefers to `fe_steps_last`), so where the calibration bounds every dispatch of
             // the mode (`Perf::calibrated_mode`: direct and df32 on a measured card) it prices the
-            // budget. Floatexp keeps the old gate.
+            // budget — as it does on a Julia plane in any mode, whose nominal steps are real
+            // (`Perf::paired_reading_prices`, 2026-11-19). Mandelbrot's floatexp keeps the old gate.
             let paired_ok = self.perf.iterate_steps[v].load(std::sync::atomic::Ordering::SeqCst) > 0
-                && self.perf.calibrated_mode(v);
+                && self.perf.paired_reading_prices(v);
             if bits == 0 || !(ms > 0.01) || (self.perf.fe_steps_last[v] == 0 && !paired_ok) {
                 // A real timing the budget cannot use (no app-side count to price it against) still
                 // carries its OWN paired count and frame, which is all the live-refresh gate needs.
@@ -18756,14 +18778,13 @@ impl eframe::App for FractadyneApp {
             // teleport), not a glide speed: it resets the estimate rather than feeding it.
             {
                 let l2 = self.viewport.log2_magnification();
-                let d = (l2 - self.perf.last_l2).abs();
-                self.perf.zoom_oct_s = if d >= 2.0 || dt <= 0.0 {
-                    0.0
-                } else {
-                    let inst = d / dt * 1000.0;
-                    self.perf.zoom_oct_s + (inst - self.perf.zoom_oct_s) * 0.3
-                };
+                self.perf.zoom_oct_s = render::zoom_rate_step(self.perf.zoom_oct_s, self.perf.last_l2, l2, dt);
                 self.perf.last_l2 = l2;
+                // The dual view's Julia panel, the same way (the floatexp pre-switch probe's ask).
+                let jl2 = self.julia_viewport.log2_magnification();
+                self.perf.julia_zoom_oct_s =
+                    render::zoom_rate_step(self.perf.julia_zoom_oct_s, self.perf.julia_last_l2, jl2, dt);
+                self.perf.julia_last_l2 = jl2;
             }
             for v in 0..2 {
                 self.perf.motion_wall_cut(v, dt);

@@ -137,3 +137,27 @@ fn the_cross_mode_opening_counts_only_until_the_new_mode_measures() {
     assert_eq!(p.bootstrap_steps(0), base, "stamped for another mode");
     assert_eq!(p.bootstrap_steps_measured(0), p.meter.bootstrap_steps(0, 0), "the dead-man's guess never moves");
 }
+
+/// A paired reading prices a reprojecting frame's budget where the calibration bounds the mode, and
+/// on a Julia plane in ANY mode: its nominal steps are real (no BLA, series skip or renormalized
+/// step). The maintainer's Julia panel crossed into floatexp at 2^93.1 and kept its 16x16 opening
+/// for the whole motion after it, every reading turned away (b6953, 2026-11-19).
+#[test]
+fn a_julia_planes_paired_readings_price_its_budget_in_any_mode() {
+    let floatexp = crate::RenderMode::Floatexp.to_u32();
+    let mut p = crate::Perf::default();
+    // A Mandelbrot view in floatexp (no calibration): the old gate.
+    p.budget_mode[0] = floatexp;
+    p.calibrated_open[0] = (floatexp, 0);
+    assert!(!p.paired_reading_prices(0));
+    // The same frame of a Julia plane: priced.
+    p.julia_plane[0] = true;
+    assert!(p.paired_reading_prices(0));
+    // The other view keeps its own answer.
+    assert!(!p.paired_reading_prices(1));
+    // A calibrated mode, Mandelbrot: priced, as before.
+    p.julia_plane[0] = false;
+    p.budget_mode[0] = 0;
+    p.calibrated_open[0] = (0, 4_000_000);
+    assert!(p.paired_reading_prices(0));
+}
