@@ -17549,7 +17549,9 @@ impl FractadyneApp {
         // ⭐THE CALIBRATED CLIMB (`render::calibrated_climb`): growth from a reading of THIS
         // dispatch far under the target goes up to ×4 where the calibration bounds every dispatch
         // of the mode. Before the gates below, so a rebuild, the dead-man and a short witness still
-        // refuse it; a pooled price (discarded readings summed) keeps the ×1.5 walk.
+        // refuse it; a pooled price (discarded readings summed) keeps the ×1.5 walk (measured
+        // 2026-11-18 at the maintainer's window size: letting it climb too changed nothing once a
+        // reprojecting view's own readings reach the budget).
         let next = if direct.is_some() && self.perf.calibrated_mode(v) {
             render::calibrated_climb(cur, next, ms, explicit)
         } else {
@@ -18301,7 +18303,18 @@ impl eframe::App for FractadyneApp {
                 let frame = self.perf.iterate_frame[v].load(std::sync::atomic::Ordering::SeqCst);
                 crate::blinken::events::emit(v, crate::blinken::events::Kind::PassTimed, crate::blinken::events::PASS_OF_FRAME, frame as u32, ms as f32);
             }
-            if bits == 0 || !(ms > 0.01) || self.perf.fe_steps_last[v] == 0 {
+            // ⭐A REPROJECTING VIEW'S READINGS PRICE THE BUDGET (2026-11-18). `fe_steps_last` is 0 on a
+            // frame that reprojected, and a moving perturbation view mostly does (`reuse_hold`), so the
+            // reading of its last refresh — published two or three frames later — nearly always lands
+            // on one and was turned away below: the maintainer's df32 entry (b6914) got 3 budget
+            // readings in 4 s, each a ×4 climb, and stayed at 4–13% of the panel meanwhile. The
+            // reading carries its OWN paired count (`iterate_steps`, which the budget path below
+            // already prefers to `fe_steps_last`), so where the calibration bounds every dispatch of
+            // the mode (`Perf::calibrated_mode`: direct and df32 on a measured card) it prices the
+            // budget. Floatexp keeps the old gate.
+            let paired_ok = self.perf.iterate_steps[v].load(std::sync::atomic::Ordering::SeqCst) > 0
+                && self.perf.calibrated_mode(v);
+            if bits == 0 || !(ms > 0.01) || (self.perf.fe_steps_last[v] == 0 && !paired_ok) {
                 // A real timing the budget cannot use (no app-side count to price it against) still
                 // carries its OWN paired count and frame, which is all the live-refresh gate needs.
                 // Peek, don't take: the budget path below has always left these for the next
@@ -18442,7 +18455,32 @@ impl eframe::App for FractadyneApp {
             self.perf.witness_pending[v] = verdict;
             // A whole single-pass refresh's own reading prices the live-refresh gate.
             self.perf.note_refresh_reading(v, ms, steps, frame);
-            if self.apply_iterate_measurement(v, ms, steps, Self::SRC_GPU_ITERATE, shape) {
+            // ⭐A reading of a pass dispatched BEFORE this view's last mode switch timed the OLD mode
+            // (2026-11-18): the maintainer's df32 entry (b6914, frame 712) took its first budget
+            // reading from direct's last pass (frame 711: 5.03e10 steps, 20 ms) and climbed ×2.5 on
+            // it; b6907's did the same. `straddles_switch` (3 frames) is the meter's guess at this;
+            // the reading's own pass frame is the fact. It prices nothing of the new mode.
+            if render::reading_before_switch(frame, self.perf.mode_switch_frame[v]) {
+                let cur = render::budget_base(self.perf.fe_budget[v], self.perf.bootstrap_steps(v));
+                diag::budget_note(format!(
+                    "v{v} {}={ms:.1}ms steps={:.3e} budget={cur:.3e} DISCARDED (its pass, frame {frame}, \
+                     ran before the mode switch at frame {})",
+                    Self::SRC_GPU_ITERATE,
+                    steps as f64,
+                    self.perf.mode_switch_frame[v]
+                ));
+                self.note_reading(
+                    v,
+                    Self::SRC_GPU_ITERATE,
+                    ms,
+                    steps,
+                    cur,
+                    cur,
+                    diag::frame_record::verdict::DISCARDED,
+                    false,
+                    0,
+                );
+            } else if self.apply_iterate_measurement(v, ms, steps, Self::SRC_GPU_ITERATE, shape) {
                 ctx.request_repaint();
             }
             self.perf.witness_pending[v] = None;
