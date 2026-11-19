@@ -407,3 +407,28 @@ fn the_sizing_and_the_transform_agree_on_every_caller_reprojection() {
         }
     }
 }
+
+/// ⭐A frame sized as a reprojection for want of a reference HOLDS when its reference installs in the
+/// same frame (2026-11-18: the df32 entry's 5.15e10-step pass, sized by direct's held budget) — and
+/// nothing else does: a cold start (no held budget), a frame that had its reference all along (sized
+/// by the budget), a direct view, a frame whose reference is still missing (it reprojects anyway),
+/// or one that was never planned as a reprojection.
+#[test]
+fn a_frame_sized_for_want_of_a_reference_holds_when_the_reference_lands() {
+    const HELD: u64 = 74_766_355_140;
+    // (will_reproject, frozen_budget, is_pert, had_ref, has_ref_now)
+    assert!(hold_unreferenced(true, HELD, true, false, true), "the df32 entry: holds");
+    assert!(!hold_unreferenced(true, 0, true, false, true), "a cold start iterates as planned");
+    assert!(!hold_unreferenced(true, HELD, true, true, true), "it had its reference: sized by the budget");
+    assert!(!hold_unreferenced(true, HELD, false, false, true), "a direct view needs no reference");
+    assert!(!hold_unreferenced(true, HELD, true, false, false), "still none: it reprojects anyway");
+    assert!(!hold_unreferenced(false, HELD, true, false, true), "never planned as a reprojection");
+    // Every frame the rule holds is one `will_reproject` sized as a reprojection for want of a reference.
+    for caller in [false, true] {
+        for reuse in [false, true] {
+            let w = will_reproject(caller, reuse, true, false);
+            assert_eq!(hold_unreferenced(w, HELD, true, false, true), w);
+            assert!(w, "a perturbation view without its reference is always sized as a reprojection");
+        }
+    }
+}

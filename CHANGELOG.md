@@ -109,6 +109,14 @@ From the 0.2.41 series:
 
 Changes after 0.3.0-beta.1:
 
+- **Zooming in past about 10,000× no longer freezes the picture for a moment (after
+  0.3.0-beta.27).** Where the view switches to perturbation arithmetic, its first frame waits for a
+  reference orbit, and until one arrives it is planned to show the last picture again, at that
+  picture's size. When the orbit arrived during that same frame, the frame rendered instead, at a
+  size the previous arithmetic had allowed and the new one does not: on a large window about
+  0.4 s of graphics work, which froze the picture, and its timing then held the view coarse for
+  several seconds more. That frame now shows the last picture once more, and the next one is
+  sized by the new arithmetic.
 - **Zooming past the depth where the arithmetic changes no longer blurs the picture for seconds
   (after 0.3.0-beta.27).** At about 10,000×, where the view switches between direct and
   perturbation arithmetic, its learned work size starts over, because a step of one costs

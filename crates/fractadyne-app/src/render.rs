@@ -8587,6 +8587,12 @@ impl FractadyneApp {
                 }
             }
         }
+        // ⭐What this frame is SIZED by, kept for the reprojection decision below
+        // (`frame_plan::hold_unreferenced`): a frame planned as a reprojection only because its
+        // perturbation view has no reference yet is sized from the FROZEN budget, and its reference
+        // can install later in this same frame (the off-thread build lands at the install below).
+        let (planned_frozen, planned_had_ref) =
+            (self.perf.frozen_budget[vidx], self.ref_cache[vidx].ref_pt.is_some());
         // A reproject frame re-samples the frozen texture, so it must land on the SAME resolution as
         // the frame that produced it; recomputing from a moving budget would drift `fit` off 1.
         let tdr_steps = if offscreen {
@@ -9677,6 +9683,26 @@ impl FractadyneApp {
                     self.series_collapse_reset(vi, share, skip);
                     too_stale = true;
                 }
+            }
+            // ⭐A FRAME SIZED AS A REPROJECTION HOLDS (2026-11-18; `frame_plan::hold_unreferenced`).
+            // Planned as a reprojection because the view had no reference, this frame's size is the
+            // frozen budget — the OLD mode's, at a mode switch. If the reference installed above,
+            // nothing here was stale and the frame used to ITERATE at that size, past the new mode's
+            // ceiling: the maintainer's session (b6907, 2941×1988 panel) entered df32 at 2^13.5 and
+            // dispatched 5.15e10 steps sized by direct's 7.48e10 (df32's ceiling: 1.449e10) — a 400.6 ms
+            // pass, a 416 ms freeze, and the reading, priced against the 9.19e8 opening, marked the
+            // budget CONVERGED at it, so it sat at 1.7% of the panel for 6 s. The same in b6890
+            // (5.07e10). Hold it as the series collapse does; the next frame is sized by this mode.
+            if !offscreen
+                && crate::render::frame_plan::hold_unreferenced(
+                    will_reproject,
+                    planned_frozen,
+                    is_pert,
+                    planned_had_ref,
+                    self.ref_cache[vi].ref_pt.is_some(),
+                )
+            {
+                too_stale = true;
             }
             // ⚠"Prefer detail" does NOT add a freeze here. Its first cut did — every interacting
             // frame froze — which disabled the reuse-hold's REFRESH_OCTAVES cadence entirely, so a
