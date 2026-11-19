@@ -152,6 +152,8 @@ pub(crate) mod selfcheck;
 pub(crate) struct RecomputeResult {
     orbit: std::sync::Arc<Vec<[f32; 4]>>,
     pub(crate) orbit_len: u32,
+    /// A Julia view's CRITICAL ORBIT ([`critical_orbit`]); empty for every other build.
+    crit: std::sync::Arc<Vec<[f32; 4]>>,
     rp: [fractadyne_core::BigFloat; 2],
     sa: fractadyne_core::SeriesSkip,
     /// The worst-case log₂ |δc| `sa` was validated for (`NEG_INFINITY` without one): see
@@ -1533,6 +1535,61 @@ fn build_orbit(rp: &[fractadyne_core::BigFloat; 2], orbit_iter: u32, inp: &Recom
     BuiltOrbit { o, len, tail, orbit_prec, ref_ms: t.elapsed().as_secs_f64() * 1000.0, fe }
 }
 
+/// THE CRITICAL ORBIT of a Julia view: the same map's orbit of the critical point,
+/// `W_0 = 0, W_{k+1} = W_k² + c` (the family's own step), to the reference's own cap and at its
+/// precision. The shader rebases a pixel onto it when that leaves a smaller δz than the reference's
+/// start does (`crit_on` in mandelbrot.wgsl): `Z_0` is the reference pixel, and a δz of its size
+/// lost the pixel in df32 — the straight-edged smooth patch in a dual-view Julia panel (2026-11-19).
+///
+/// Built by the Julia builder from `Z_0 = 0`, so it is the main reference's map by construction
+/// (its `c`, and Phoenix's previous term — though Phoenix is left out, below). Its schedule then
+/// keeps full precision throughout (`dZ/dZ_0` is 0 past the first step), as it must: nothing
+/// shrinks a rounding error on its way back to a start that is exactly 0.
+///
+/// Empty — the rule before — for a Mandelbrot view, a custom formula (its module rebases in its
+/// own code, `@@CUSTOM_REBASE`), Phoenix (a rebased δz_{n-1} is the full previous value onto either
+/// start, so nothing is gained), and a build with a BLA tree (none for a Julia view, but the shader's
+/// buffer layout has no room for both, `fractadyne_gpu::crit_span`). It depends only on the formula,
+/// `c`, the cap and the precision, so the last few are kept: the Julia view's reference is rebuilt on
+/// every pan, its `c` only when the main view moves.
+fn critical_orbit(inp: &RecomputeInputs, orbit_iter: u32, orbit_prec: usize) -> std::sync::Arc<Vec<[f32; 4]>> {
+    use fractadyne_core as fc;
+    type Key = (u32, u64, u64, u32, usize);
+    static KEPT: std::sync::Mutex<Vec<(Key, std::sync::Arc<Vec<[f32; 4]>>)>> = std::sync::Mutex::new(Vec::new());
+    const KEEP: usize = 4;
+    if !inp.julia || inp.custom.is_some() || inp.formula == fc::formula::PHOENIX || inp.bla_dc_max.is_some() {
+        return std::sync::Arc::new(Vec::new());
+    }
+    let cap = build_cap(orbit_iter, inp);
+    let key: Key = (inp.formula, inp.julia_c.0.to_bits(), inp.julia_c.1.to_bits(), cap, orbit_prec);
+    if let Some((_, o)) = KEPT.lock().unwrap_or_else(|e| e.into_inner()).iter().find(|(k, _)| *k == key) {
+        return o.clone();
+    }
+    let t = Instant::now();
+    let zero = fc::BigFloat::from_f64(0.0, orbit_prec);
+    let cx = fc::BigFloat::from_f64(inp.julia_c.0, orbit_prec);
+    let cy = fc::BigFloat::from_f64(inp.julia_c.1, orbit_prec);
+    let (o, len, tail) = fc::reference_orbit_julia_t(&zero, &zero, &cx, &cy, inp.formula, cap, orbit_prec);
+    if crate::diag::trace_on("ref") {
+        crate::diag::trace(
+            "ref",
+            format!(
+                "[{}] critical orbit: len={len} escaped={} cap={cap} prec={orbit_prec} | {:.1}ms",
+                inp.origin,
+                tail.escaped,
+                t.elapsed().as_secs_f64() * 1000.0
+            ),
+        );
+    }
+    let o = std::sync::Arc::new(o);
+    let mut kept = KEPT.lock().unwrap_or_else(|e| e.into_inner());
+    if kept.len() >= KEEP {
+        kept.remove(0);
+    }
+    kept.push((key, o.clone()));
+    o
+}
+
 /// A series skip walked BEFORE the orbit length was known (beside the build, in
 /// [`pick_and_build`]), against an upper bound on it. `finish_reference` keeps it only under
 /// `series_skip_holds_for` and the same iteration budget.
@@ -1707,6 +1764,12 @@ fn finish_reference(
         _ => std::sync::Arc::new(Vec::new()),
     };
     let rn_ms = t_rn.elapsed().as_secs_f64() * 1000.0;
+    // A Julia view's critical orbit, for the shader's rebase (`critical_orbit`); empty otherwise.
+    let crit = if bla.is_empty() && rn_bla.is_empty() {
+        critical_orbit(inp, orbit_iter, orbit_prec)
+    } else {
+        std::sync::Arc::new(Vec::new())
+    };
     crate::diag::build_crumb_done(format!(
         "reference built [{}]: len={len} iter={orbit_iter} prec={orbit_prec}",
         inp.origin
@@ -1743,6 +1806,7 @@ fn finish_reference(
     RecomputeResult {
         orbit,
         orbit_len: len,
+        crit,
         rp,
         sa,
         sa_log2_dc,
@@ -2106,6 +2170,7 @@ struct RefFields {
     ref_offset: RefOffset,
     orbit: std::sync::Arc<Vec<[f32; 4]>>,
     orbit_len: u32,
+    crit: std::sync::Arc<Vec<[f32; 4]>>,
     sa: fractadyne_core::SeriesSkip,
     rn: Option<fractadyne_core::RenormStep>,
     rn_bla: std::sync::Arc<Vec<[f32; 4]>>,
@@ -2119,6 +2184,7 @@ impl Default for RefFields {
             ref_offset: RefOffset::ZERO,
             orbit: std::sync::Arc::new(Vec::new()),
             orbit_len: 0,
+            crit: std::sync::Arc::new(Vec::new()),
             sa: fractadyne_core::SeriesSkip::NONE,
             rn: None,
             rn_bla: std::sync::Arc::new(Vec::new()),
@@ -2144,6 +2210,7 @@ fn assemble_ref_fields(vp: &Viewport, precision: usize, delta_exp: i32, res: Rec
         ref_offset: RefOffset::from_df32(dx, dy),
         orbit: res.orbit,
         orbit_len: res.orbit_len,
+        crit: res.crit,
         sa: res.sa,
         rn: res.rn,
         rn_bla: res.rn_bla,
@@ -2833,6 +2900,7 @@ impl FractadyneApp {
         vc.ref_pt = Some(res.rp);
         vc.orbit = res.orbit;
         vc.orbit_len = res.orbit_len;
+        vc.crit = res.crit;
         vc.orbit_prec = res.prec;
         vc.orbit_iter = res.iter;
         vc.partial = res.partial; // always written, so the full stage clears a prior coarse's flag
@@ -3771,6 +3839,7 @@ impl FractadyneApp {
                 ref_offset: RefOffset::from_df32(dx, dy),
                 orbit: vc.orbit.clone(),
                 orbit_len: vc.orbit_len,
+                crit: vc.crit.clone(),
                 sa: if sa_fits { vc.sa } else { fractadyne_core::SeriesSkip::NONE },
                 rn: vc.rn,
                 rn_bla: std::sync::Arc::new(Vec::new()),
@@ -4338,7 +4407,7 @@ impl FractadyneApp {
         // by `live_ref_fields` for a borrowed reference and below for a built one.
         let mut req_max_iter = eff_iter;
         let probe = matches!(src, RefSource::ProbeOnly(_));
-        let RefFields { ref_offset, orbit, orbit_len, sa, rn, rn_bla, bla, bla_on } = if !mode.is_direct() {
+        let RefFields { ref_offset, orbit, orbit_len, crit, sa, rn, rn_bla, bla, bla_on } = if !mode.is_direct() {
             // ⭐Borrowed live reference: no bignum, and no `prof.set` (the probe fires many times a
             // second and would otherwise clobber the `--profile` breakdown of the real render).
             // `None` = the cache cannot serve this view, so fall through to a fresh build.
@@ -4464,6 +4533,7 @@ impl FractadyneApp {
             julia_c,
             orbit,
             orbit_len,
+            crit,
             bla,
             bla_on,
             max_iter: req_max_iter,
@@ -4554,6 +4624,7 @@ pub(crate) fn params_to_request(p: &fractadyne_gpu::MandelbrotParams) -> fractad
         julia_c: p.julia_c,
         orbit: p.orbit.clone(),
         orbit_len: p.orbit_len,
+        crit: p.crit.clone(),
         bla: p.bla.clone(),
         bla_on: p.bla_on,
         max_iter: p.max_iter,
@@ -7372,6 +7443,8 @@ impl FractadyneApp {
             chunk_idx,
             probe_nonce: self.perf.probe_nonce[vs],
             orbit: self.ref_cache[vi].orbit.clone(),
+            // A Julia view's critical orbit, for its rebases (`render::critical_orbit`).
+            crit: self.ref_cache[vi].crit.clone(),
             rn: renorm_uniform(self.ref_cache[vi].rn.as_ref()),
             // The live view takes plain u-steps: its tree upload is keyed on `orbit_id` alone, and
             // a u-space tree is rebuilt with the BLA's `dc_max`, which that key does not see.

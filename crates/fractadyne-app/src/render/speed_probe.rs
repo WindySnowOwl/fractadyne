@@ -386,6 +386,7 @@ fn plan_request(plan: Plan) -> (fractadyne_gpu::ExportRequest, u32) {
         julia_c: [0.0; 4],
         orbit: fields.orbit,
         orbit_len: fields.orbit_len,
+        crit: fields.crit, // a Mandelbrot probe (`julia: 0`): empty
         bla: std::sync::Arc::new(Vec::new()),
         bla_on: 0,
         max_iter: ITERS_START,

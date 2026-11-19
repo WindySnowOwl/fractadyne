@@ -109,6 +109,16 @@ From the 0.2.41 series:
 
 Changes after 0.3.0-beta.1:
 
+- **A deep Julia view no longer settles with a smooth, streaked patch behind a straight edge
+  (after 0.3.0-beta.27).** Past about 100× a Julia view (the dual view's Julia panel, or Julia
+  mode) is rendered against one reference orbit, and a pixel whose orbit passes close to 0 is moved
+  back to the start of that orbit. A Julia orbit starts at its own pixel, not at 0, and a pixel moved
+  there kept too little of its position for the graphics card's arithmetic, so on one side of a
+  straight line its neighbors came out as one smeared blur: at the reported view, about a quarter
+  of the panel. A Julia view now also carries the orbit of 0 and moves such a pixel onto whichever
+  start keeps more of its position. The reported view now matches a high-precision render across
+  the panel. The fix covers the built-in formulas except Phoenix; a custom formula's Julia view is
+  unchanged for now. The fault was present since 0.2.6.
 - **Zooming with a coloring that reads the orbit's statistics no longer flashes one flat color
   (after 0.3.0-beta.27).** With the second graphics device in use (Advanced ▸ *Second graphics
   card*, *Same card* by default), the other device renders frames of the moving view and the

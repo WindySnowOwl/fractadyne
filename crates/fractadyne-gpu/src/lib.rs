@@ -243,6 +243,32 @@ pub(crate) fn rn_bla_k(len: u32, orbit_len: u32, nodes4: usize) -> u32 {
     if k >= 2 && nodes4 == fractadyne_core::renorm_bla_nodes(k) * fractadyne_core::BLA_NODE_VEC4S { k } else { 0 }
 }
 
+/// The largest reference index a resumable pass can store: its state keeps `ref_n` in an f32
+/// lane (`info_pack`), exact for integers up to 2^24.
+const CRIT_INDEX_MAX: u64 = 1 << 24;
+
+/// THE CRITICAL ORBIT's place in the reference buffer (`crit_on` in mandelbrot.wgsl): `[crit_at,
+/// crit_len]`, the shader's two fold-row words, or `[0, 0]` (the rule before, every Mandelbrot
+/// view). A Julia view rebases onto whichever of its reference's start and the critical orbit's
+/// leaves the smaller δz — see the shader's note for why Z_0 alone loses the pixel. The orbit
+/// goes right after the reference samples (`orbit_samples`); only where nothing else follows
+/// them (no BLA tree, no u-space tree: neither exists for a Julia view), where every index of it
+/// fits a resumable pass's state, and where the buffer can hold it (`limit_slots`, the device's
+/// binding size in samples). Every upload and uniform asks this one function, so the words always
+/// describe what the buffer holds.
+pub(crate) fn crit_span(julia: u32, orbit_samples: usize, tables: usize, crit: usize, limit_slots: u64) -> [u32; 2] {
+    let at = orbit_samples as u64;
+    let n = crit as u64;
+    if julia != 1 || n == 0 || tables != 0 || at + n >= CRIT_INDEX_MAX || at + n > limit_slots {
+        return [0, 0];
+    }
+    [at as u32, n as u32]
+}
+
+#[cfg(test)]
+#[path = "../tests/unit/crit_span_tests.rs"]
+mod crit_span_tests;
+
 impl Renorm {
     /// The uniform for `step`.
     pub fn from_step(step: &fractadyne_core::RenormStep) -> Renorm {
@@ -1318,6 +1344,8 @@ struct ViewResources {
     fold_cache: Option<((u64, u32, u32), [u32; 4])>,
     /// The BLA tree in `orbit_buf` (its `Arc` address; 0 = none) — see the upload in `prepare`.
     last_bla_ptr: usize,
+    /// The critical orbit in `orbit_buf` (its `Arc` address; 0 = none), as `last_bla_ptr`.
+    last_crit_ptr: usize,
     last_iter_key: Option<IterKey>,
     /// Iteration-range tiling: ping-pong per-pixel state (z / dz / info ×2) + bind groups, created
     /// lazily on the first chunked frame and dropped when a normal frame renders (they are ~96
@@ -2810,6 +2838,7 @@ impl ViewResources {
             last_orbit_id: u64::MAX,
             fold_cache: None,
             last_bla_ptr: 0,
+            last_crit_ptr: 0,
             last_iter_key: None,
             chunk_state: None,
             last_chunk: None,
@@ -3332,6 +3361,10 @@ pub struct MandelbrotParams {
     /// Changes whenever `orbit` changes — triggers a GPU re-upload.
     pub orbit_id: u64,
     pub orbit_len: u32,
+    /// A Julia view's CRITICAL ORBIT (`W_0 = 0, W_{k+1} = W_k² + c` of the same map, packed as
+    /// `orbit`), uploaded after the reference; empty = none, every Mandelbrot view (see
+    /// [`crit_span`]). Built with the reference, so it changes with `orbit_id`.
+    pub crit: Arc<Vec<[f32; 4]>>,
     /// BLA tree (flattened, 4 `[f32;4]` per node), uploaded right after the orbit. Empty when
     /// BLA is off. `bla_on = 1` activates the shader's BLA traversal (Mandelbrot mode 2).
     pub bla: Arc<Vec<[f32; 4]>>,
@@ -3554,6 +3587,13 @@ impl MandelbrotParams {
         rn_bla_k(self.rn.len, self.orbit_len, self.rn_bla.len())
     }
 
+    /// Where this frame's critical orbit sits in its view's reference buffer ([`crit_span`]), for a
+    /// buffer of at most `limit_slots` samples.
+    fn crit_span(&self, limit_slots: u64) -> [u32; 2] {
+        let rn_bla = if self.rn_bla_k() > 0 { self.rn_bla.len() } else { 0 };
+        crit_span(self.julia, self.orbit.len(), self.bla.len() + rn_bla, self.crit.len(), limit_slots)
+    }
+
     /// The renormalized step's uniform, pointing at the u-space tree uploaded after the BLA tree
     /// (as `ExportRequest::rn_uniform` does).
     fn rn_uniform(&self) -> Renorm {
@@ -3637,6 +3677,7 @@ impl Default for MandelbrotParams {
             orbit: Arc::new(Vec::new()),
             orbit_id: 0,
             orbit_len: 0,
+            crit: Arc::new(Vec::new()),
             bla: Arc::new(Vec::new()),
             bla_on: 0,
             rn_bla: Arc::new(Vec::new()),
@@ -4136,11 +4177,17 @@ impl CallbackTrait for MandelbrotParams {
         // a smaller view than the one it drew (seen in `--zoomtest 10 --zoomtest-then-log2 100`:
         // every frame of the second leg ran on the tree uploaded before the 13-octave jump out).
         let bla_ptr = if self.bla.is_empty() { 0 } else { std::sync::Arc::as_ptr(&self.bla) as usize };
+        // A Julia view's critical orbit goes in after the reference (`crit_span`): with it, or
+        // whenever it changes under the same orbit (it is built with the reference, so it should not).
+        let crit_ptr = if self.crit.is_empty() { 0 } else { std::sync::Arc::as_ptr(&self.crit) as usize };
+        let limit_slots = (device.limits().max_storage_buffer_binding_size as u64 / 16).max(1);
+        let crit = self.crit_span(limit_slots);
         let new_orbit = self.orbit_id != view.last_orbit_id;
         let new_tree = self.bla_on == 1 && bla_ptr != 0 && bla_ptr != view.last_bla_ptr;
-        if (new_orbit || new_tree) && !self.orbit.is_empty() {
+        let new_crit = crit_ptr != view.last_crit_ptr;
+        if (new_orbit || new_tree || new_crit) && !self.orbit.is_empty() {
             let rn_bla: &[[f32; 4]] = if self.rn_bla_k() > 0 { self.rn_bla.as_slice() } else { &[] };
-            let total = self.orbit.len() + self.bla.len() + rn_bla.len();
+            let total = self.orbit.len() + self.bla.len() + rn_bla.len() + crit[1] as usize;
             // A grown buffer is a new, empty one: the orbit goes in again too.
             let grows = total as u32 > view.orbit_cap;
             view.ensure_orbit_capacity(device, iter_bgl, total as u32);
@@ -4155,8 +4202,13 @@ impl CallbackTrait for MandelbrotParams {
                 let off = ((self.orbit.len() + self.bla.len()) * 16) as u64;
                 queue.write_buffer(&view.orbit_buf, off, bytemuck::cast_slice(rn_bla));
             }
+            if crit[1] > 0 {
+                let off = crit[0] as u64 * 16;
+                queue.write_buffer(&view.orbit_buf, off, bytemuck::cast_slice(&self.crit[..crit[1] as usize]));
+            }
             view.last_orbit_id = self.orbit_id;
             view.last_bla_ptr = bla_ptr;
+            view.last_crit_ptr = crit_ptr;
             view.last_iter_key = None; // force re-iterate against the new orbit / tree
         }
 
@@ -4220,6 +4272,8 @@ impl CallbackTrait for MandelbrotParams {
                     }
                 }
             };
+            // The fold row's last two words: the critical orbit uploaded above (`crit_span`), any mode.
+            let fold = [fold[0], fold[1], crit[0], crit[1]];
             let mut iu = IterUniforms {
                 step: [sxh, sxl, syh, syl],
                 ref_offset: self.ref_offset.to_array(),
