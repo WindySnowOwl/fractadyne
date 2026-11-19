@@ -10,7 +10,7 @@ new functional enhancement; a **minor** bump (e.g. 0.2.0) marks a milestone that
 run of patch releases. The `0.2.0` entry summarizes **0.1.29 – 0.1.68** by theme — per-version
 detail is in the git history.
 
-## 0.3.0 (unreleased)
+## 0.3.0 (2026-11-19)
 
 0.3.0 rolls up two runs of pre-releases. The 0.2.41 series, `v0.2.41-beta.1` to
 `v0.2.41-beta.150`, is listed under the 0.2.41 heading below, where a "beta.N" means
@@ -55,11 +55,14 @@ detail is in the git history.
   times faster: a Multibrot 8 Julia set at 267,346 iterations went from 6.9 s to 0.01 s on an RTX
   3080. Exports from the Export dialog are several times faster (99.8 s to 17.3 s in one case),
   and reference orbits at extreme depth build faster (17 to 33% off the deepest benchmark scenes).
-- **Live view.** Zooms keep their detail without stuttering, the mouse wheel zooms faster,
-  zooming in snaps to a nearby minibrot, deep zooms no longer shake, and Home from extreme depth
-  shows pictures on the way out. Press B for a live-render panel, styled after a 1970s lab rack,
-  that shows the renderer at work. The interface is available in fifteen languages; all but
-  English are machine-translated drafts until native speakers review them.
+- **Live view.** Zooms keep their detail without stuttering or flashing, also where the view
+  changes its arithmetic on the way in; the mouse wheel zooms faster, zooming in snaps to a nearby
+  minibrot, deep zooms no longer shake, and Home from extreme depth shows pictures on the way out.
+  A deep Julia view no longer settles with a smeared patch, a fault since 0.2.6, and a dual view's
+  Julia panel no longer goes blurry for seconds past about 1e28×. Press B for a live-render panel,
+  styled after a 1970s lab rack, that shows the renderer at work. The interface is available in
+  fifteen languages; all but English are machine-translated drafts until native speakers review
+  them.
 - **Steadier.** Saved settings, bookmarks and locations survive damage and come back as saved.
   Many fixes keep the graphics card from being overrun (gliding Home from extreme depth, zooming
   out of a deep exterior view, settling a deep view), and the safety checks no longer mistake an
