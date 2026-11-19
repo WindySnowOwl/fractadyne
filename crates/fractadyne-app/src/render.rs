@@ -8451,6 +8451,30 @@ impl FractadyneApp {
                 let prev = self.perf.budget_mode[vidx];
                 self.perf.budget_mode[vidx] = m;
                 self.perf.mode_switch_frame[vidx] = self.perf.frame_idx;
+                // ⭐THE CROSS-MODE OPENING (`calibration::cross_opening_for`, 2026-11-18): the rate
+                // this view measured in the mode it is leaving — on these pixels, at this ask, a frame
+                // ago — at the calibrated ratio between the two modes. Its motion rate (the recent
+                // one, slow readings adopted at once), else its pessimistic running minimum. Read by
+                // `bootstrap_steps` until the new mode's budget measures anything.
+                let cross = if prev == u32::MAX {
+                    0
+                } else {
+                    let now = self.perf.meter.motion_rate_now(vidx, prev);
+                    let rate = if now > 0.0 {
+                        now
+                    } else {
+                        self.perf.meter.worst_rate_steps_per_ms(vidx, prev).unwrap_or(0.0)
+                    };
+                    crate::calibration::cross_opening_for(
+                        crate::RenderMode::from_u32(prev),
+                        sel,
+                        fractal,
+                        (resolution[0] as u64) * (resolution[1] as u64),
+                        rate,
+                    )
+                    .unwrap_or(0)
+                };
+                self.perf.cross_open[vidx] = (m, cross);
                 // The pacer's growth memory belongs to the mode being left; the new mode
                 // re-opens at `MOTION_STEP_OPEN`.
                 self.perf.motion_step_last[vidx.min(1)] = 0;

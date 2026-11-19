@@ -295,3 +295,33 @@ fn the_opening_needs_a_share_and_never_passes_the_ceiling() {
     }
     assert!(opening(cap, 4.0, 5_400, at).unwrap() <= cap);
 }
+
+/// ⭐The cross-mode opening (2026-11-18): the maintainer's df32 entry, from direct's last pass on the
+/// same pixels (20 ms for 5.03e10 steps), at the RTX 3080's calibrated ratio, opens at df32's ceiling
+/// — the size the mode then runs at — where the calibrated 40 ms opening was 1.449e9.
+#[test]
+fn the_cross_mode_opening_carries_the_leaving_modes_rate_at_the_calibrated_ratio() {
+    let c = lookup(&table(), "NVIDIA GeForce RTX 3080");
+    let px = 1500 * 1635;
+    let ceil_direct = ceiling(c.costs.direct, 1.0, c.knee_px, px).unwrap();
+    let ceil_df32 = ceiling(c.costs.df32_pert, 1.0, c.knee_px, px).unwrap();
+    let ms = crate::tunables::TDR_BOOTSTRAP_MS_DEFAULT;
+    assert_eq!(cross_opening(5.03e10 / 20.0, ceil_direct, ceil_df32, ms), ceil_df32, "past the ceiling: held to it");
+    // A heavy direct view prices a smaller df32 opening, in proportion.
+    let open = cross_opening(1.0e8, ceil_direct, ceil_df32, ms);
+    let want = 1.0e8 * ceil_df32 as f64 / ceil_direct as f64 * ms;
+    assert!((open as f64 / want - 1.0).abs() < 1e-6, "{open} vs {want}");
+    // Out of df32 into direct, the cheaper mode: the rate grows by the ratio, held to direct's ceiling.
+    assert_eq!(cross_opening(1.0e8, ceil_df32, ceil_direct, ms), (1.0e8 * ceil_direct as f64 / ceil_df32 as f64 * ms) as u64);
+    assert_eq!(cross_opening(1.0e12, ceil_df32, ceil_direct, ms), ceil_direct);
+}
+
+/// No rate, a nonsense one, or no ceiling to take a ratio from is no cross-mode opening.
+#[test]
+fn the_cross_mode_opening_needs_a_rate_and_both_ceilings() {
+    for bad in [0.0, -1.0, f64::NAN, f64::INFINITY] {
+        assert_eq!(cross_opening(bad, 7_476_000_000, 1_449_000_000, 40.0), 0, "{bad}");
+    }
+    assert_eq!(cross_opening(1.0e9, 0, 1_449_000_000, 40.0), 0);
+    assert_eq!(cross_opening(1.0e9, 7_476_000_000, 1_449_000_000, 0.0), 0);
+}

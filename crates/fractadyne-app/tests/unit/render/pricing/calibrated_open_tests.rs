@@ -119,3 +119,21 @@ fn a_reading_of_the_old_modes_pass_is_before_the_switch() {
     assert!(!reading_before_switch(0, 712), "a reading that names no frame");
     assert!(!reading_before_switch(711, u64::MAX), "no switch yet");
 }
+
+/// The cross-mode opening raises the guess only for the mode it was stamped for and only while that
+/// mode's budget is unmeasured: once a reading lands it sizes nothing, the admission and jam bounds
+/// included.
+#[test]
+fn the_cross_mode_opening_counts_only_until_the_new_mode_measures() {
+    let mut p = crate::Perf::default();
+    p.budget_mode[0] = 0;
+    let base = p.bootstrap_steps(0);
+    p.cross_open[0] = (0, base * 10);
+    assert_eq!(p.bootstrap_steps(0), base * 10, "unmeasured: the cross-mode opening");
+    p.fe_budget[0] = 123_456_789;
+    assert_eq!(p.bootstrap_steps(0), base, "measured: it no longer counts");
+    p.fe_budget[0] = 0;
+    p.cross_open[0] = (1, base * 10);
+    assert_eq!(p.bootstrap_steps(0), base, "stamped for another mode");
+    assert_eq!(p.bootstrap_steps_measured(0), p.meter.bootstrap_steps(0, 0), "the dead-man's guess never moves");
+}
