@@ -114,6 +114,24 @@ pub(crate) fn will_reproject(caller: bool, reuse_hold: bool, is_pert: bool, has_
     (caller && honors_caller_reprojection(is_pert, has_ref)) || reuse_hold || (is_pert && !has_ref)
 }
 
+/// ⭐Whether a frame [`will_reproject`] sized for want of a reference must HOLD (2026-11-18): planned
+/// as a reprojection because its perturbation view had no reference (`had_ref` false) — so sized
+/// from the held texture's budget (`frozen_budget`), which no ceiling of the current mode bounds —
+/// and the reference then installed in the same frame (`has_ref_now`), which let it ITERATE at that
+/// size. The same planned-versus-done mismatch as the direct pan drag above, by `will_reproject`'s
+/// third term: at a mode switch into df32 the held budget is direct's, and the maintainer's session
+/// (2026-11-18, 2941×1988 panel) dispatched 5.15e10 steps against df32's 1.449e10 ceiling — 400 ms.
+/// A cold start (no held budget) is not one: it is sized by the budget and iterates as planned.
+pub(crate) fn hold_unreferenced(
+    will_reproject: bool,
+    frozen_budget: u64,
+    is_pert: bool,
+    had_ref: bool,
+    has_ref_now: bool,
+) -> bool {
+    will_reproject && frozen_budget != 0 && is_pert && !had_ref && has_ref_now
+}
+
 /// The iteration texture a live frame renders at.
 ///
 /// ⭐Constructed in ONE place — [`Resolution::panel`], at the top of `build_params`, from the panel
