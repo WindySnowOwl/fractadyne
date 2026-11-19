@@ -211,3 +211,87 @@ fn the_table_entry_says_whether_a_card_was_measured() {
     assert!(unlisted.source.starts_with("default"));
     assert!(unlisted.costs.direct > 0.0 && unlisted.costs.df32_pert > 0.0);
 }
+
+/// ⭐The calibrated opening (2026-11-18) costs at most `TDR_BOOTSTRAP_MS` at the card's worst
+/// per-step cost — or, where the iteration ask alone costs more, that LATENCY FLOOR (below the knee a
+/// full-window dispatch costs its window over the knee's pixels however few pixels it has, and so
+/// did the old 4e8 opening; only iteration chunking goes lower) — and never more than the ceiling at
+/// its own size. Every frame size and iteration ask, both calibrated cards, both modes.
+#[test]
+fn the_opening_costs_at_most_its_share_of_the_target_or_the_latency_floor() {
+    let t = table();
+    let share = crate::tunables::TDR_BOOTSTRAP_MS_DEFAULT / TARGET_MS;
+    for name in ["NVIDIA GeForce RTX 3080", "AMD Radeon RX 6800 XT"] {
+        let c = lookup(&t, name);
+        for cost in [c.costs.df32_pert, c.costs.direct] {
+            let at = |px: u64| ceiling(cost, 1.0, c.knee_px, px);
+            for px in [16_384_u64, 200_000, 262_144, 1_000_000, 5_846_708] {
+                for iter in [256_u32, 5_400, 50_000, 1_000_000] {
+                    let cap = at(px).unwrap();
+                    let open = opening(cap, share, iter, at).unwrap();
+                    let open_px = (open as f64 / iter as f64).max(1.0);
+                    let worst_ms = open_px.max(c.knee_px as f64) * iter as f64 * cost;
+                    let floor_ms = c.knee_px as f64 * iter as f64 * cost;
+                    assert!(
+                        worst_ms <= (share * TARGET_MS).max(floor_ms) * 1.001,
+                        "{name} cost {cost:e} px {px} iter {iter}: opening {open} costs {worst_ms:.1} ms \
+                         (latency floor {floor_ms:.1} ms)"
+                    );
+                    // Where one knee-wide pass of the window fits the target at all; past that no
+                    // pixel count bounds the cost and only the iteration chunking does (the module's
+                    // own "What this cannot bound").
+                    if floor_ms <= TARGET_MS {
+                        assert!(open <= at(open_px as u64).unwrap(), "{name} {px} {iter}: past its own ceiling");
+                    }
+                }
+            }
+        }
+    }
+}
+
+/// On the RTX 3080 at the maintainer's 2^13.3 crossing (2941×1988 px, ~5,400 iterations) the df32
+/// opening is the ceiling's 40 ms share, 1.449e9 — 3.6× the old 4e8 cap — and direct's is 7.48e9.
+#[test]
+fn the_rtx_3080_opens_df32_and_direct_at_their_40_ms_share() {
+    let c = lookup(&table(), "NVIDIA GeForce RTX 3080");
+    let share = crate::tunables::TDR_BOOTSTRAP_MS_DEFAULT / TARGET_MS;
+    let px = 2941 * 1988;
+    for (cost, want) in [(c.costs.df32_pert, 1.449e9), (c.costs.direct, 7.476e9)] {
+        let at = |p: u64| ceiling(cost, 1.0, c.knee_px, p);
+        let open = opening(at(px).unwrap(), share, 5_400, at).unwrap() as f64;
+        assert!((open / want - 1.0).abs() < 0.002, "{open:e} vs {want:e}");
+        assert!(open > 3.5 * crate::tunables::TDR_BOOTSTRAP_STEPS_DEFAULT as f64);
+    }
+}
+
+/// The probe's rule: where the share of the frame's ceiling, at this iteration ask, is fewer pixels
+/// than the knee, the opening is the share of the ceiling at THOSE pixels — so at a deep ask it
+/// shrinks with the knee and the old 4e8 guess stays the larger (deep views open as before); at or
+/// past the knee it is the saturated share.
+#[test]
+fn below_the_knee_the_opening_shrinks_with_the_ceiling_as_the_probes_does() {
+    let (cost, knee) = (2.76e-8, 262_144_u64);
+    let at = |px: u64| ceiling(cost, 1.0, knee, px);
+    let share = 0.1;
+    let sat = at(u64::MAX).unwrap();
+    let cap = at(2941 * 1988).unwrap();
+    assert_eq!(cap, sat);
+    // 5,400 iterations: the share is 268k px, past the knee — the saturated share.
+    assert_eq!(opening(cap, share, 5_400, at).unwrap(), (sat as f64 * share) as u64);
+    // 50,000 iterations: 28,980 px, under the knee — the share of the ceiling there.
+    let px = (sat as f64 * share / 50_000.0) as u64;
+    let open = opening(cap, share, 50_000, at).unwrap();
+    assert_eq!(open, (at(px).unwrap() as f64 * share) as u64);
+    assert!(open < crate::tunables::TDR_BOOTSTRAP_STEPS_DEFAULT, "{open:e}: the old guess stays the larger");
+}
+
+/// No share (or a nonsense one) is no opening; a share past the whole ceiling is held to it.
+#[test]
+fn the_opening_needs_a_share_and_never_passes_the_ceiling() {
+    let at = |px: u64| ceiling(2.76e-8, 1.0, 262_144, px);
+    let cap = at(5_000_000).unwrap();
+    for bad in [0.0, -0.1, f64::NAN, f64::INFINITY] {
+        assert_eq!(opening(cap, bad, 5_400, at), None, "{bad}");
+    }
+    assert!(opening(cap, 4.0, 5_400, at).unwrap() <= cap);
+}

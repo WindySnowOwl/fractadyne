@@ -8206,8 +8206,9 @@ impl FractadyneApp {
                     let frame = self.perf.frame_idx;
                     // An unpriced probe fits a `TDR_BOOTSTRAP_MS` share of the ceiling at the
                     // probe's own size, which the calibration bounds at that many ms even
-                    // all-interior — NOT the learned budget, which a mode switch resets to the 4e6
-                    // bootstrap (a 29×22 probe). Only a CONVERGED budget of this mode can lower it,
+                    // all-interior — NOT the learned budget, which a mode switch resets to the opening
+                    // guess (once the 4e6 floor: a 29×22 probe; `calibration::opening` now sizes that
+                    // guess by this same share). Only a CONVERGED budget of this mode can lower it,
                     // on a card slower than its calibration: its share of the same target.
                     let share = crate::tunables::cost().tdr_bootstrap_ms / crate::calibration::TARGET_MS;
                     let boot_px = (cap as f64 * share / gpu_iter.max(1) as f64) as u64;
@@ -8431,6 +8432,21 @@ impl FractadyneApp {
             // `mode` itself is selected further down; it is a pure function of these two.
             let sel = self.live_render_mode(fractal, julia, magnification);
             let m = sel.to_u32();
+            // ⭐THE CALIBRATED OPENING for this frame's mode, size and iteration ask
+            // (`calibration::opening_for`; 2026-11-18), stamped BEFORE the switch below so the
+            // opening its log line reports is the one its first frame is sized by. `resolution`
+            // is a lower bound on the dispatch's pixels, as for the ceiling below, so the knee term
+            // errs low.
+            self.perf.calibrated_open[vidx] = (
+                m,
+                crate::calibration::opening_for(
+                    sel,
+                    fractal,
+                    (resolution[0] as u64) * (resolution[1] as u64),
+                    gpu_iter,
+                )
+                .unwrap_or(0),
+            );
             if self.perf.budget_mode[vidx] != m {
                 let prev = self.perf.budget_mode[vidx];
                 self.perf.budget_mode[vidx] = m;
@@ -8517,6 +8533,14 @@ impl FractadyneApp {
                 // and must not do more than that. The first floatexp frames then cost ~40 ms
                 // instead of ~460 ms and the controller re-climbs at ×1.5 per reading — a few
                 // coarse frames during a dive, where the motion resolution is already reduced.
+                //
+                // ⭐In direct and df32 on a calibrated card (2026-11-18) the first dispatch is the
+                // CALIBRATED OPENING (`Perf::bootstrap_steps`) — 40 ms at the card's worst measured
+                // per-step cost, not the 4e8 cap — and the climb goes up to ×4 a reading while
+                // readings sit far under the target (`calibrated_climb`). Both are bounded by the
+                // per-adapter ceiling; floatexp has none and keeps exactly the rule above. The cap
+                // had cost the maintainer's session 6.5 s at 2% of the panel after a df32 entry,
+                // where a moving view refreshes (and so prices) only every 0.3–3 s.
                 let cur = self.perf.fe_budget[vidx];
                 if cur != 0 {
                     self.perf.fe_budget[vidx] = 0;

@@ -1074,6 +1074,11 @@ pub(crate) const REUSE_MAX_WRAPS_DEFAULT: f64 = 0.0;
 /// starts lower. See `TDR_BOOTSTRAP_MS` for why, and note that this is the fix the paragraph above
 /// asks for by name — "no constant expressed in steps can be 'a few ms' everywhere" is a statement
 /// that the guess must be denominated in TIME and converted with a rate.
+/// ⭐As of 2026-11-18 it caps only the RATE-DERIVED guess: on a card with its own calibration entry,
+/// in direct and df32, the opening is raised to `TDR_BOOTSTRAP_MS` at the card's WORST measured
+/// per-step cost (`calibration::opening_for`) — the time-denominated guess this paragraph asks for,
+/// converted with the one rate that is an upper bound on cost rather than an average of it. The
+/// dead-man still retreats to the capped guess (`Perf::bootstrap_steps_measured`).
 pub(crate) const TDR_BOOTSTRAP_STEPS_DEFAULT: u64 = 400_000_000;
 
 /// ⭐Wall-clock the OPENING GUESS aims at, in ms. `bootstrap_steps` converts it to a nominal step

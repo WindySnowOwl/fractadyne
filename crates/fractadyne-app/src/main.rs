@@ -1604,6 +1604,11 @@ struct Perf {
     /// crossover from the death is the difference between a coincidence and a cause, and it
     /// costs one `u64` to answer.
     mode_switch_frame: [u64; 2],
+    /// ⭐The CALIBRATED OPENING each view's last frame was sized against, with the mode it is for
+    /// (`calibration::opening_for`; `(u32::MAX, 0)` = none): stamped by `build_params` every frame
+    /// before its mode-switch check, read by `bootstrap_steps` (the opening guess) and by the
+    /// calibrated climb's licence (`calibrated_mode`). 0 where the calibration vouches for none.
+    calibrated_open: [(u32, u64); 2],
     /// The measured per-mode rates, pessimistic and smoothness (`render::Meter`).
     meter: render::Meter,
     /// Observed zoom speed of the main view, octaves per second (EMA of |Δlog2mag| per frame
@@ -2560,9 +2565,35 @@ impl Perf {
         self.meter.worst_rate_steps_per_ms(v, mode).is_some() || self.meter.has_opening_rate(v, mode)
     }
 
-    /// See `render::Meter::bootstrap_steps`.
+    /// The OPENING GUESS for view `v` in its current mode: the rate-derived guess
+    /// (`render::Meter::bootstrap_steps`, at most `TDR_BOOTSTRAP_STEPS`), raised to the CALIBRATED
+    /// OPENING where the adapter's calibration vouches for one in this mode
+    /// (`calibration::opening_for`: `TDR_BOOTSTRAP_MS` at the card's worst measured per-step cost).
+    ///
+    /// ⭐The 4e8 cap on the rate-derived guess was the only bound on an unpriced dispatch when it was
+    /// set; on a calibrated card in direct and df32 the ceiling now is one, so the cap only cost
+    /// resolution: the maintainer's 0.3.0 session (2026-11-18) opened df32 at 4e8 = 258×174 px of a
+    /// 2941×1988 panel at the 2^13.3 crossing — the "flash" — where the calibration allows 1.45e9.
     fn bootstrap_steps(&self, v: usize) -> u64 {
+        let guess = self.meter.bootstrap_steps(v, self.budget_mode[v]);
+        match self.calibrated_open[v.min(1)] {
+            (m, open) if m == self.budget_mode[v] => guess.max(open),
+            _ => guess,
+        }
+    }
+
+    /// The rate-derived guess alone, never raised by the calibration: the DEAD-MAN's retreat target
+    /// (`render::dead_man_budget`), which fires when the readings have stopped explaining the wall
+    /// clock and so wants the most conservative size this view has.
+    fn bootstrap_steps_measured(&self, v: usize) -> u64 {
         self.meter.bootstrap_steps(v, self.budget_mode[v])
+    }
+
+    /// Whether view `v`'s current mode is one the calibration bounds (`calibrated_open` stamped for
+    /// it, non-zero): the licence for `render::calibrated_climb`.
+    fn calibrated_mode(&self, v: usize) -> bool {
+        let (m, open) = self.calibrated_open[v.min(1)];
+        m == self.budget_mode[v] && open > 0
     }
 }
 
@@ -2672,6 +2703,7 @@ impl Default for Perf {
             ts_supported: false,
             budget_mode: [u32::MAX, u32::MAX],
             mode_switch_frame: [u64::MAX, u64::MAX],
+            calibrated_open: [(u32::MAX, 0); 2],
             meter: render::Meter::default(),
             zoom_oct_s: 0.0,
             last_l2: 0.0,
@@ -17514,6 +17546,15 @@ impl FractadyneApp {
             }
             return false;
         };
+        // ⭐THE CALIBRATED CLIMB (`render::calibrated_climb`): growth from a reading of THIS
+        // dispatch far under the target goes up to ×4 where the calibration bounds every dispatch
+        // of the mode. Before the gates below, so a rebuild, the dead-man and a short witness still
+        // refuse it; a pooled price (discarded readings summed) keeps the ×1.5 walk.
+        let next = if direct.is_some() && self.perf.calibrated_mode(v) {
+            render::calibrated_climb(cur, next, ms, explicit)
+        } else {
+            next
+        };
         // Refuse to bank growth measured while this view's reference is being REBUILT — the frame
         // was priced against an orbit that is about to be replaced. See `budget_after_build_gate`.
         let building = self.recompute_rx[v].is_some();
@@ -19045,7 +19086,7 @@ impl eframe::App for FractadyneApp {
                 // the old budget describes nothing now, so it goes too.
                 if crate::tunables::cost().dead_man == 1 {
                     let cur = self.perf.fe_budget[v];
-                    let next = render::dead_man_budget(cur, self.perf.bootstrap_steps(v));
+                    let next = render::dead_man_budget(cur, self.perf.bootstrap_steps_measured(v));
                     self.perf.fe_budget[v] = next;
                     self.perf.fe_budget_ok[v] = false;
                     self.perf.reading_pool[v] = render::ReadingPool::default();

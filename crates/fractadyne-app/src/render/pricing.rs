@@ -291,6 +291,50 @@ pub(crate) fn budget_step(cur: u64, steps: u64, ms: f64, explicit: bool) -> Opti
     Some((next, next == cur || (0.8..=1.25).contains(&factor)))
 }
 
+/// How far under the target a reading must sit, after the climb, for [`calibrated_climb`] to apply:
+/// the grown budget is predicted at no more than `target / CLIMB_HEADROOM` (50 ms of the 400 ms
+/// target), so the ratio search still walks the last part of the way at `TDR_GROW_MAX`.
+pub(crate) const CLIMB_HEADROOM: f64 = 8.0;
+/// The most [`calibrated_climb`] grows the budget on one reading.
+pub(crate) const CLIMB_MAX: f64 = 4.0;
+
+/// ⭐THE CALIBRATED CLIMB (2026-11-18): where the adapter's calibration bounds every dispatch of the
+/// view's mode (`calibration::opening_for` is `Some`: a measured card, direct or df32), a reading far
+/// under the target may grow the budget by up to [`CLIMB_MAX`] instead of `TDR_GROW_MAX` (×1.5).
+///
+/// **Why it is safe there and only there.** `TDR_GROW_MAX` keeps the ratio search from leaping
+/// "from the target into the watchdog"; in direct and df32 on a calibrated card the watchdog is not
+/// reachable by the budget at all — the per-adapter ceiling caps every dispatch at its worst
+/// measured (all-interior) per-step cost × 400 ms — so near the target the ×1.5 walk is kept for
+/// its own reason (no overshoot), and far under it the climb only shortens the walk. Floatexp has
+/// no ceiling (BLA decides its cost: the 2026-08-15 and 08-16 device losses were ×1.5 steps there)
+/// and keeps the ×1.5 walk everywhere.
+///
+/// **Why it is needed.** A mode switch re-opens the budget (unmeasured), and the maintainer's
+/// 0.3.0 session (2026-11-18, RTX 3080, a held zoom through the 2^13.3 direct→df32 crossing) spent
+/// 6.5 s at 2% of the panel's pixels: a df32 view in motion reprojects and refreshes only every
+/// 0.3–3 s (`reuse_hold`), so it got four readings in those 6.5 s — 0.6 to 2.4 ms each against
+/// the 400 ms target — and climbed ×1.5 on each.
+///
+/// Grows only: `next` is `budget_step`'s decision for this reading, and anything but growth
+/// (a shrink, a hold, a discard) is returned unchanged; so is growth from a reading that is not far
+/// under the target. Never past `TDR_STEPS_CEIL` (or `EXPLICIT_STEPS_CEIL`), like `budget_step`.
+pub(crate) fn calibrated_climb(cur: u64, next: u64, ms: f64, explicit: bool) -> u64 {
+    if next <= cur || !(ms > 0.0) || !ms.is_finite() {
+        return next;
+    }
+    let (target_ms, ceil) = if explicit {
+        (crate::tunables::cost().tdr_explicit_budget_ms, crate::tunables::cost().explicit_steps_ceil)
+    } else {
+        (crate::tunables::cost().tdr_budget_ms, crate::tunables::cost().tdr_steps_ceil)
+    };
+    let f = (target_ms / (ms * CLIMB_HEADROOM)).min(CLIMB_MAX);
+    if !(f > 1.0) {
+        return next;
+    }
+    next.max(((cur as f64 * f) as u64).min(ceil))
+}
+
 /// Gate a budget step on whether a REPLACEMENT REFERENCE is currently being built for this view.
 ///
 /// Returns the budget to install and whether it may be treated as converged.
@@ -1449,3 +1493,6 @@ mod pin_gate_timeout_tests;
 #[cfg(test)]
 #[path = "../../tests/unit/render/pricing/retreat_tests.rs"]
 mod retreat_tests;
+#[cfg(test)]
+#[path = "../../tests/unit/render/pricing/calibrated_open_tests.rs"]
+mod calibrated_open_tests;
