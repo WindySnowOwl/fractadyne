@@ -249,6 +249,8 @@ pub struct ExportRequest {
     pub julia_c: [f32; 4],
     pub orbit: Arc<Vec<[f32; 4]>>,
     pub orbit_len: u32,
+    /// A Julia view's critical orbit ([`crate::MandelbrotParams::crit`]); empty = none.
+    pub crit: Arc<Vec<[f32; 4]>>,
     /// BLA tree (flattened) appended after the orbit; `bla_on = 1` enables the traversal.
     pub bla: Arc<Vec<[f32; 4]>>,
     pub bla_on: u32,
@@ -331,10 +333,12 @@ impl ExportRequest {
     }
 
     /// The reference storage buffer: the orbit, its BLA tree from index `orbit.len()`, then the
-    /// u-space tree ([`Self::rn_uniform`] points the shader at it).
+    /// u-space tree ([`Self::rn_uniform`] points the shader at it), then a Julia view's critical
+    /// orbit ([`Self::crit_span`]; neither tree exists for one).
     fn upload_reference(&self, device: &wgpu::Device, queue: &wgpu::Queue) -> Result<wgpu::Buffer, GpuError> {
         let rn_bla: &[[f32; 4]] = if self.rn_bla_k() > 0 { self.rn_bla.as_slice() } else { &[] };
-        let tail = self.bla.len() + rn_bla.len();
+        let crit = self.crit_span();
+        let tail = self.bla.len() + rn_bla.len() + crit[1] as usize;
         check_orbit_binding(device, self.orbit.len(), tail)?;
         let orbit_buf = make_orbit_buffer(device, (self.orbit.len() + tail).max(1) as u32);
         if !self.orbit.is_empty() {
@@ -348,16 +352,28 @@ impl ExportRequest {
             let off = ((self.orbit.len() + self.bla.len()) * 16) as u64;
             queue.write_buffer(&orbit_buf, off, bytemuck::cast_slice(rn_bla));
         }
+        if crit[1] > 0 {
+            let off = crit[0] as u64 * 16;
+            queue.write_buffer(&orbit_buf, off, bytemuck::cast_slice(&self.crit[..crit[1] as usize]));
+        }
         Ok(orbit_buf)
     }
 
-    /// Mode 0's fold of this request's reference, `[fold_end, period, 0, 0]` (`ref_fold` in the
-    /// crate root); zeros in any other mode, or when the reference does not repeat.
+    /// Where the critical orbit goes in this request's reference buffer ([`crate::crit_span`]). No
+    /// device limit here: `upload_reference` checks the whole buffer against the binding
+    /// (`check_orbit_binding`), and the uniform's words must not depend on the device.
+    fn crit_span(&self) -> [u32; 2] {
+        let rn_bla = if self.rn_bla_k() > 0 { self.rn_bla.len() } else { 0 };
+        crate::crit_span(self.julia, self.orbit.len(), self.bla.len() + rn_bla, self.crit.len(), u64::MAX)
+    }
+
+    /// The uniform's fold row: mode 0's fold of this request's reference, `[fold_end, period]`
+    /// (`ref_fold` in the crate root; zeros in any other mode, or when the reference does not
+    /// repeat), then the critical orbit's `[crit_at, crit_len]` in any mode ([`Self::crit_span`]).
     pub fn ref_fold(&self) -> [u32; 4] {
-        if self.mode != 0 {
-            return [0; 4];
-        }
-        crate::ref_fold(&self.orbit, self.orbit_len, self.max_iter)
+        let fold = if self.mode != 0 { [0; 4] } else { crate::ref_fold(&self.orbit, self.orbit_len, self.max_iter) };
+        let crit = self.crit_span();
+        [fold[0], fold[1], crit[0], crit[1]]
     }
 
     /// `K` of the u-space tree, or 0 when there is none for this orbit (see [`crate::rn_bla_k`]).

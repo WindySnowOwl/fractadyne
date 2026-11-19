@@ -446,10 +446,11 @@ pub(crate) fn second_card_choices(cards: &[(usize, String)], window_name: &str) 
     cards.iter().filter(|(_, n)| !(same == 1 && n == window_name)).cloned().collect()
 }
 
-/// The bytes of the reference a frame's params carry to a device: the orbit, the BLA tree and the
-/// u-space tree, each `[f32; 4]`. A second device holds its own copy while it renders.
+/// The bytes of the reference a frame's params carry to a device: the orbit, the BLA tree, the
+/// u-space tree and a Julia view's critical orbit, each `[f32; 4]`. A second device holds its own
+/// copy while it renders.
 pub(crate) fn reference_bytes(p: &fractadyne_gpu::MandelbrotParams) -> u64 {
-    16 * (p.orbit.len() + p.bla.len() + p.rn_bla.len()) as u64
+    16 * (p.orbit.len() + p.bla.len() + p.rn_bla.len() + p.crit.len()) as u64
 }
 
 /// The reference budget when the card's memory cannot be read.

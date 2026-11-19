@@ -71,7 +71,7 @@ pub(crate) const GROUPS: &[&str] = &[
     "curated-poi", "ref-pick", "ref-reuse", "ref-overlap", "orbit-cache", "script", "metadata", "view-coloring",
     "display", "catalog", "goldens", "bench-matrix", "live-res", "appearance", "band-seams", "palette-aa",
     "checklist", "replay", "settings-quarantine", "expmap", "assemble", "de-pixels",
-    "colour-box", "cycle-check", "export-contain", "honest-step", "palette-fade", "retreat", "view-thumb",
+    "colour-box", "cycle-check", "export-contain", "honest-step", "julia-critical", "palette-fade", "retreat", "view-thumb",
     "width-independence", "coloring-matrix-quick",
 ];
 
@@ -1668,6 +1668,137 @@ impl FractadyneApp {
                 params: "Multibrot 8 Julia c 0.32295+0.98330i, 256x358, 2k iter, step off/on + 300-it windows".into(),
                 result,
                 threshold: "direct; off shows false interior (≥90% escape in f64); on: none false; 0 texels differ",
+                pass,
+            });
+        }
+
+        // ⭐THE CRITICAL ORBIT (`crit_on` in mandelbrot.wgsl, `render::critical_orbit`; 2026-11-19). A
+        // Julia rebase onto the reference's own start leaves a δz the size of the reference pixel,
+        // which df32 (and floatexp's df32 mantissa) cannot carry past the rebase: the user's dual-view
+        // panel at 2^33.9 (its view and c, here at a quarter of its pixels) settled with a smooth
+        // half-plane behind a straight edge. Graded against z² + c in double precision, which matched
+        // a 240-bit evaluation of this view on every pixel that is not steep (0.016 iterations at
+        // most); steep pixels, whose count a sub-ulp change legitimately moves, are left out as the
+        // coloring matrix leaves them out. With the critical orbit taken away the case must SHOW the
+        // defect (else it tests nothing); with it there must be next to none, in both arithmetic
+        // modes; and a walk in short windows must match the single pass bit for bit, its state
+        // carrying a reference index on the critical orbit from one pass to the next.
+        if want("julia-critical") {
+            let saved = (self.fractal, self.julia_mode, self.julia_c, self.render_cfg.max_iter, self.render_cfg.auto_iter, self.coloring.color_method);
+            let c = (0.4241382088944005f64, 0.20713374212742805f64);
+            const JX: &str = "-3.59906554837427809479100663004663289806e-2";
+            const JY: &str = "-3.41133942273864319510644268233560010941e-3";
+            let (w, h) = (284u32, 349u32);
+            let upp = 2f64.powf(-42.299553135303114) * 1137.0 / w as f64;
+            self.fractal = FractalKind::Mandelbrot;
+            self.julia_mode = true;
+            self.julia_c = c;
+            self.render_cfg.max_iter = 2_000;
+            self.render_cfg.auto_iter = false;
+            self.coloring.color_method = crate::ColorMethod::Smooth;
+            let mut vp = Viewport::new(w as f64, h as f64);
+            vp.center_x = fractadyne_core::parse_bf(JX).unwrap();
+            vp.center_y = fractadyne_core::parse_bf(JY).unwrap();
+            vp.units_per_pixel = fractadyne_core::FloatExp::from_f64(upp);
+            vp.precision = fractadyne_core::precision_for_magnification(4.0 / (upp * h as f64));
+            let mut req = self.current_export_request_for(&vp, true);
+            req.width = w;
+            req.height = h;
+            req.ss = 1;
+            (self.fractal, self.julia_mode, self.julia_c, self.render_cfg.max_iter, self.render_cfg.auto_iter, self.coloring.color_method) = saved;
+            let without = |q: &fractadyne_gpu::ExportRequest| fractadyne_gpu::ExportRequest { crit: std::sync::Arc::new(Vec::new()), ..q.clone() };
+            let fe = fractadyne_gpu::ExportRequest { mode: 2, ..req.clone() };
+            let render = |q: &fractadyne_gpu::ExportRequest| fractadyne_gpu::render_iter(device, queue, q).ok();
+            let (on0, off0, on2, off2) = (render(&req), render(&without(&req)), render(&fe), render(&without(&fe)));
+            let walk0 = fractadyne_gpu::render_iter_chunked(device, queue, &req, 64).ok();
+            let walk2 = fractadyne_gpu::render_iter_chunked(device, queue, &fe, 64).ok();
+            // Floatexp's OWN steps: at this depth every mode-2 step runs in the df32 tail (|δz| ≥
+            // 2^-50), so its rebase sites run only with the tail off — as they do at the depths a
+            // deep Julia view reaches (mutant J2 survived the tail-on cases alone).
+            fractadyne_gpu::set_tail_df32(false);
+            let (on2t, off2t) = (render(&fe), render(&without(&fe)));
+            let walk2t = fractadyne_gpu::render_iter_chunked(device, queue, &fe, 64).ok();
+            fractadyne_gpu::set_tail_df32(crate::tunables::cost().tail_df32 == 1);
+            // z² + c in double precision from the pixel's center, as the shader maps it, to the
+            // shader's escape (|z| > 256) and smooth count (N + 1 − log2 log2 |z|).
+            let (cx, cy) = (JX.parse::<f64>().unwrap_or(0.0), JY.parse::<f64>().unwrap_or(0.0));
+            let n = (w * h) as usize;
+            let oracle: Vec<f32> = (0..n)
+                .flat_map(|i| {
+                    let (x, y) = ((i % w as usize) as f64, (i / w as usize) as f64);
+                    let (mut zr, mut zi) = (cx + (x + 0.5 - w as f64 / 2.0) * upp, cy + (h as f64 / 2.0 - y - 0.5) * upp);
+                    let mut count = -1.0f64;
+                    for k in 1..=2_000u32 {
+                        (zr, zi) = (zr * zr - zi * zi + c.0, 2.0 * zr * zi + c.1);
+                        let m2 = zr * zr + zi * zi;
+                        if m2 > 65536.0 {
+                            count = k as f64 + 1.0 - (0.5 * m2.log2()).log2();
+                            break;
+                        }
+                    }
+                    [count as f32, 0.0, 0.0, 0.0]
+                })
+                .collect();
+            let steep = crate::harness::coloring_matrix::steep_pixels(&oracle, w as usize);
+            let graded = steep.iter().filter(|s| !**s).count().max(1);
+            let wrong = |r: &fractadyne_gpu::ExportResult| -> usize {
+                (0..n)
+                    .filter(|&i| !steep[i])
+                    .filter(|&i| {
+                        let (g, o) = (r.pixels[i * 4], oracle[i * 4]);
+                        (g < 0.0) != (o < 0.0) || (o >= 0.0 && !((g - o).abs() <= 0.5))
+                    })
+                    .count()
+            };
+            let differ = |a: &fractadyne_gpu::ExportResult, b: &fractadyne_gpu::ExportResult| -> usize {
+                a.pixels.chunks(4).zip(b.pixels.chunks(4)).filter(|(x, y)| x[0].to_bits() != y[0].to_bits()).count()
+            };
+            let pct = |k: usize| 100.0 * k as f64 / graded as f64;
+            let (pass, result) = match (&on0, &off0, &on2, &off2, &on2t, &off2t, &walk0, &walk2, &walk2t) {
+                (Some(a), Some(b), Some(d), Some(e), Some(f), Some(g), Some(k0), Some(k2), Some(k2t))
+                    if [b, d, e, f, g, k0, k2, k2t].iter().all(|r| r.pixels.len() == a.pixels.len()) && a.pixels.len() == n * 4 =>
+                {
+                    let (w_on0, w_off0, w_on2, w_off2, w_on2t, w_off2t) = (wrong(a), wrong(b), wrong(d), wrong(e), wrong(f), wrong(g));
+                    let (d0, d2, d2t) = (differ(a, k0), differ(d, k2), differ(f, k2t));
+                    let shows = |off: usize| off * 10 >= graded;
+                    let clean = |on: usize, off: usize| on * 100 <= graded && on * 5 <= off;
+                    (
+                        req.julia == 1
+                            && req.mode == 0
+                            && req.crit.len() > 1
+                            && shows(w_off0)
+                            && shows(w_off2)
+                            && shows(w_off2t)
+                            && clean(w_on0, w_off0)
+                            && clean(w_on2, w_off2)
+                            && clean(w_on2t, w_off2t)
+                            && d0 == 0
+                            && d2 == 0
+                            && d2t == 0,
+                        format!(
+                            "mode {}, critical orbit {} samples; {graded} of {n} px graded (not steep); wrong vs f64 \
+                             without / with it: df32 {w_off0} ({:.1}%) / {w_on0} ({:.2}%); floatexp {w_off2} ({:.1}%) / \
+                             {w_on2} ({:.2}%); floatexp, tail off {w_off2t} ({:.1}%) / {w_on2t} ({:.2}%); 64-it walk \
+                             differs from the pass: df32 {d0}, floatexp {d2}, tail off {d2t}",
+                            req.mode,
+                            req.crit.len(),
+                            pct(w_off0),
+                            pct(w_on0),
+                            pct(w_off2),
+                            pct(w_on2),
+                            pct(w_off2t),
+                            pct(w_on2t),
+                        ),
+                    )
+                }
+                _ => (false, format!("render failed (mode {}, julia {}, critical orbit {} samples)", req.mode, req.julia, req.crit.len())),
+            };
+            push_check(&mut checks, &mut last_check_t, SelfCheck {
+                category: "Glitch",
+                name: "critical orbit: a Julia view's rebases keep their pixels".into(),
+                params: "Julia c 0.42414+0.20713i at 2^33.9 (the 2026-11-19 report's panel), 284x349, 2k iter, df32 + floatexp (tail on, off), with/without, 64-it walks".into(),
+                result,
+                threshold: "Julia, df32, critical orbit present; without it ≥10% of graded px wrong in all three (shows the defect); with it ≤1% and ≤ a fifth of without; walks: 0 counts differ",
                 pass,
             });
         }

@@ -5862,6 +5862,8 @@ struct RefCache {
     ref_pt: Option<[fractadyne_core::BigFloat; 2]>,
     orbit: std::sync::Arc<Vec<[f32; 4]>>,
     orbit_len: u32,
+    /// A Julia view's critical orbit, built with `orbit` (`render::critical_orbit`); empty otherwise.
+    crit: std::sync::Arc<Vec<[f32; 4]>>,
     /// Bumped whenever `orbit` changes (tells the GPU to re-upload).
     orbit_id: u64,
     /// Precision / iteration count the cached orbit was computed at.
@@ -5952,6 +5954,7 @@ impl Default for RefCache {
             ref_pt: None,
             orbit: std::sync::Arc::new(Vec::new()),
             orbit_len: 0,
+            crit: std::sync::Arc::new(Vec::new()),
             orbit_id: 0,
             orbit_prec: 0,
             orbit_iter: 0,

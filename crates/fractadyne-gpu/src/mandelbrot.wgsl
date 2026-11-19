@@ -588,6 +588,44 @@ fn rebase_df32(z2: f32, zf: vec2<f32>, dz: Cdf) -> bool {
     }
     return rebase_now;
 }
+
+// ---------------- THE CRITICAL ORBIT (Julia views, 2026-11-19) ----------------------------
+// ⭐⭐WHY. Zhuoran's rebase folds a pixel back onto reference index 0. For Mandelbrot Z_0 = 0, so the
+// new δz is the full value z, small (|z| < |δz| is what triggered it), and keeps its relative
+// precision. A Julia reference starts at its own pixel, Z_0 ≠ 0, so the new δz = z − Z_0 is about
+// |Z_0| — and from there every step adds ~2^-24 of it in absolute error (the df32 adds run as plain
+// f32 on the shipping stacks; floatexp's mantissa is the same df32), more than the pixel spacing at
+// the rebase. Neighbors merge, and the pixels one near-zero pass sends back — a half-plane, since
+// |Z + δz| < |δz| is linear in δz — go smooth behind a straight edge (the user's dual-view Julia
+// panel at 2^33.9, b6933: in an f32 emulation of this loop 95.8% of that half-plane was wrong).
+// So a Julia view carries a second orbit of the same map, the CRITICAL orbit W_0 = 0,
+// W_{k+1} = W_k² + c, at `crit_at`, and a rebase lands on whichever start leaves the smaller δz:
+// W_0 (δz = z, as in Mandelbrot mode) or Z_0 (δz = z − Z_0). In the emulation the half-plane fell
+// to 2.4% wrong, the single-pixel filament noise the rest of the view has (1.7%).
+// A segment ends at its own last sample: an orbit-end rebase on the critical orbit is tested
+// against its length, not the reference's. `crit_len` 0 = the rule before (Mandelbrot views, custom
+// formulas, Phoenix — whose rebased δz_{n-1} is the full previous value either way).
+fn crit_on() -> bool {
+    return iu.julia == 1u && iu.crit_len > 0u;
+}
+// One past the last sample of the segment `ref_n` is on.
+fn seg_end(ref_n: u32) -> u32 {
+    if (crit_on() && ref_n >= iu.crit_at) { return iu.crit_at + iu.crit_len; }
+    return iu.orbit_len;
+}
+// df32 paths: does the rebase of full value `z` land on the critical orbit, |z| <= |z − Z_0| (`d0`)?
+// Compared as `tail_rebase` compares (square roots of the hi limbs' squared sums), so mode 2's tail
+// and its floatexp steps (`rebase_crit_fe`) decide alike.
+fn rebase_crit_df(z: Cdf, d0: Cdf) -> bool {
+    if (!crit_on()) { return false; }
+    let a = vec2<f32>(z.re.x, z.im.x);
+    let b = vec2<f32>(d0.re.x, d0.im.x);
+    return sqrt(dot(a, a)) <= sqrt(dot(b, b));
+}
+// floatexp paths: the same decision in scalar floatexp, as the rebase test itself is made there.
+fn rebase_crit_fe(z: Fe, d0: Fe) -> bool {
+    return crit_on() && !sf_lt(fe_abs_sf(d0), fe_abs_sf(z));
+}
 // Must the df32 tail keep this step from BLA? True when the level-0 node at this step has no
 // validity radius, or δz is past it by more than 0.01 in log2. Both mode-2 kernels call it, and
 // `--gputest` grades it per backend (row 17): `log2` is the GPU's own approximation, so a near-tie
@@ -981,8 +1019,11 @@ struct IterU {
     // its own after the strip map's, so no field moved.
     fold_end: u32,
     fold_by: u32,
-    fold_pad0: u32,
-    fold_pad1: u32,
+    // THE CRITICAL ORBIT of a Julia view (`crit_on`): its first sample's index in `reference` and
+    // its sample count; 0 = none (every Mandelbrot view, and the old rule). The fold row's two
+    // spare words, so no field moved.
+    crit_at: u32,
+    crit_len: u32,
 };
 @group(0) @binding(0) var<uniform> iu: IterU;
 // Reference orbit as double-single: each Z_n = (re.hi, im.hi, re.lo, im.lo). When BLA is on,
@@ -2048,10 +2089,17 @@ fn iterate_at(gx: f32, gy: f32) -> FragOut {
                 zf = vec2<f32>(zfull_d.re.x, zfull_d.im.x);
                 if ((iu.aux_on & 1u) == 1u) { aux_step(&aux, zf, cmag, power_f); }
                 if (dot(zf, zf) > bail2) { escaped = true; break; }
-                if (tail_rebase(zfull_d, dzd) || ref_n + 1u >= iu.orbit_len) {
+                if (tail_rebase(zfull_d, dzd) || ref_n + 1u >= seg_end(ref_n)) {
                     n_rebase = n_rebase + 1u;
-                    dzd = c_sub(zfull_d, orbit_cdf(reference[0]));
-                    ref_n = 0u;
+                    // Onto Z_0, or a Julia view's critical orbit (`rebase_crit_df`).
+                    let d0 = c_sub(zfull_d, orbit_cdf(reference[0]));
+                    if (rebase_crit_df(zfull_d, d0)) {
+                        dzd = zfull_d;
+                        ref_n = iu.crit_at;
+                    } else {
+                        dzd = d0;
+                        ref_n = 0u;
+                    }
                 }
                 continue;
             }
@@ -2225,18 +2273,26 @@ fn iterate_at(gx: f32, gy: f32) -> FragOut {
             }
             if (z2 > bail2) { escaped = true; break; }
 
-            if (sf_lt(fe_abs_sf(zfull), fe_abs_sf(dz)) || ref_n + 1u >= iu.orbit_len) {
+            if (sf_lt(fe_abs_sf(zfull), fe_abs_sf(dz)) || ref_n + 1u >= seg_end(ref_n)) {
                 n_rebase = n_rebase + 1u;
                 // Rebase onto reference index 0: δz = (Z_{n+1} + δz) − Z₀. Z₀ = 0 for
-                // Mandelbrot, the reference point for Julia (subtraction required).
-                dz = fe_sub(zfull, orbit_fe(reference[0]));
+                // Mandelbrot, the reference point for Julia (subtraction required) — or, for a
+                // Julia view, onto its critical orbit (δz = z) when that leaves the smaller δz
+                // (`rebase_crit_fe`).
+                let d0 = fe_sub(zfull, orbit_fe(reference[0]));
                 // Phoenix (two-term): also rebase δz_{n-1}. After rebasing to index 0 the "previous"
                 // reference is Z_{-1}=0 (the orbit's initial z_prev), so δz_{n-1} → the full previous
                 // value z_{n-1} = Z_{ref_n-1} + δz_{n-1}. Uses reference[ref_n-1] before ref_n resets.
                 if (iu.formula == 8u) {
                     dz_prev = fe_add(orbit_fe(reference[ref_n - 1u]), dz_prev);
                 }
-                ref_n = 0u;
+                if (rebase_crit_fe(zfull, d0)) {
+                    dz = zfull;
+                    ref_n = iu.crit_at;
+                } else {
+                    dz = d0;
+                    ref_n = 0u;
+                }
             }
         }
         ctr_commit(n_rebase, n_ext, n_bla);
@@ -2435,7 +2491,7 @@ fn iterate_at(gx: f32, gy: f32) -> FragOut {
             let rebase_now = rebase_df32(z2, zf, dz);
             // @@CUSTOM_REBASE_BEGIN — a custom formula's module rebases PHASE-ALIGNED from here to
             // the matching END marker (a hybrid's reference index must stay ≡ iter mod phases).
-            if (rebase_now || ref_n + 1u >= iu.orbit_len) {
+            if (rebase_now || ref_n + 1u >= seg_end(ref_n)) {
                 n_rebase = n_rebase + 1u;
                 let r0 = orbit_cdf(reference[0]);
                 // Phoenix (two-term): rebase δz_{n-1} to Z_{-1}=0 → the full previous value
@@ -2447,18 +2503,30 @@ fn iterate_at(gx: f32, gy: f32) -> FragOut {
                         df_add(rp.im, dz_prev.im),
                     );
                 }
-                dz = cset(
+                let d0 = cset(
                     df_sub(zr_full, r0.re),
                     df_sub(zi_full, r0.im),
                 );
-                ref_n = 0u;
+                // Onto Z_0, or a Julia view's critical orbit (`rebase_crit_df`).
+                let zfull = cset(zr_full, zi_full);
+                if (rebase_crit_df(zfull, d0)) {
+                    dz = zfull;
+                    ref_n = iu.crit_at;
+                } else {
+                    dz = d0;
+                    ref_n = 0u;
+                }
             }
             // @@CUSTOM_REBASE_END
             if (cyc_on) {
-                // `cyc_n` follows `ref_n`: 0 after a rebase (the only way `ref_n` is 0 here), else one
-                // on, folded back a period at `fold_end` (with no fold, `fold_end` is 0 and the
-                // subtraction takes 0 from a rebased 0).
-                cyc_n = select(cyc_n + 1u, 0u, ref_n == 0u);
+                // `cyc_n` follows `ref_n`: the index itself after a rebase (0, or a Julia view's
+                // `crit_at` — the only ways `ref_n` is either here: both are segment starts it only
+                // lands on by a rebase), else one on, folded back a period at `fold_end` (with no
+                // fold, `fold_end` is 0 and the subtraction takes 0 from a rebased 0). The fold is
+                // the reference's own, under `orbit_len <= crit_at`: a critical-orbit index never
+                // meets it.
+                let rebased = ref_n == 0u || (crit_on() && ref_n == iu.crit_at);
+                cyc_n = select(cyc_n + 1u, ref_n, rebased);
                 if (cyc_n == iu.fold_end) { cyc_n = cyc_n - iu.fold_by; }
                 // The same index and δz, bit for bit: the next steps are the ones already taken
                 // (escape and glitch tests included), so the pixel ends as the interior it would be
@@ -2936,14 +3004,22 @@ fn fs_iterate_chunk(in: VsOut) -> ChunkOut {
             // function both call (`rebase_df32`).
             let rebase_now = rebase_df32(z2m, zf, dz);
             // @@CUSTOM_CHUNK_REBASE_BEGIN — rebased PHASE-ALIGNED in a custom module, as fs_iterate's.
-            if (rebase_now || ref_n + 1u >= iu.orbit_len) {
+            if (rebase_now || ref_n + 1u >= seg_end(ref_n)) {
                 n_rebase = n_rebase + 1u;
                 let r0 = orbit_cdf(reference[0]);
-                dz = cset(
+                let d0 = cset(
                     df_sub(z_full_re, r0.re),
                     df_sub(z_full_im, r0.im),
                 );
-                ref_n = 0u;
+                // Onto Z_0, or a Julia view's critical orbit — fs_iterate's own decision.
+                let zfull = cset(z_full_re, z_full_im);
+                if (rebase_crit_df(zfull, d0)) {
+                    dz = zfull;
+                    ref_n = iu.crit_at;
+                } else {
+                    dz = d0;
+                    ref_n = 0u;
+                }
             }
             // @@CUSTOM_CHUNK_REBASE_END
         }
@@ -3347,10 +3423,17 @@ fn chunk_fe_at(pos: vec2<f32>, p: vec2<i32>) -> ChunkOut4 {
                 escaped = true;
                 break;
             }
-            if (tail_rebase(zfull_d, dzd) || ref_n + 1u >= iu.orbit_len) {
+            if (tail_rebase(zfull_d, dzd) || ref_n + 1u >= seg_end(ref_n)) {
                 n_rebase = n_rebase + 1u;
-                dzd = c_sub(zfull_d, orbit_cdf(reference[0]));
-                ref_n = 0u;
+                // Onto Z_0, or a Julia view's critical orbit — fs_iterate's own decision.
+                let d0 = c_sub(zfull_d, orbit_cdf(reference[0]));
+                if (rebase_crit_df(zfull_d, d0)) {
+                    dzd = zfull_d;
+                    ref_n = iu.crit_at;
+                } else {
+                    dzd = d0;
+                    ref_n = 0u;
+                }
             }
             continue;
         }
@@ -3443,13 +3526,20 @@ fn chunk_fe_at(pos: vec2<f32>, p: vec2<i32>) -> ChunkOut4 {
         }
         if (z2 > bail2) { escaped = true; break; }
 
-        if (sf_lt(fe_abs_sf(z_full), fe_abs_sf(dz)) || ref_n + 1u >= iu.orbit_len) {
+        if (sf_lt(fe_abs_sf(z_full), fe_abs_sf(dz)) || ref_n + 1u >= seg_end(ref_n)) {
             n_rebase = n_rebase + 1u;
             // Rebase onto reference index 0: δz = (Z_{n+1} + δz) − Z₀ (Z₀ = 0 for Mandelbrot,
-            // the reference point for Julia). A pass ending one iteration either side of this
-            // must produce the same pixel — that is what the chunk-boundary gates assert.
-            dz = fe_sub(z_full, orbit_fe(reference[0]));
-            ref_n = 0u;
+            // the reference point for Julia), or a Julia view's critical orbit — fs_iterate's own
+            // decision. A pass ending one iteration either side of this must produce the same
+            // pixel — that is what the chunk-boundary gates assert.
+            let d0 = fe_sub(z_full, orbit_fe(reference[0]));
+            if (rebase_crit_fe(z_full, d0)) {
+                dz = z_full;
+                ref_n = iu.crit_at;
+            } else {
+                dz = d0;
+                ref_n = 0u;
+            }
         }
     }
     ctr_commit(n_rebase, n_ext, n_bla);
