@@ -109,6 +109,15 @@ From the 0.2.41 series:
 
 Changes after 0.3.0-beta.1:
 
+- **A dual view's Julia panel no longer goes blurry for seconds when a zoom passes about 10^28×
+  (after 0.3.0-beta.27).** There the panel switches to its deepest arithmetic, and its first frames
+  were sized as if that arithmetic were 256 times slower than the one before it: 16 by 16 pixels on
+  the reported panel, kept for the rest of the zoom and then sharpening over about 10 seconds after
+  it stopped. The measurement a single view takes just before that switch now runs in a dual view
+  too, for either panel, and a Julia panel's frame timings now size its next frames while it moves.
+  In the same zoom the panel is sharp again about 3 seconds after the switch, while still moving.
+  The main view of a dual view gets the same measurement where its coloring keeps it in the
+  shallower arithmetic until then (stripe average, for one).
 - **A deep Julia view no longer settles with a smooth, streaked patch behind a straight edge
   (after 0.3.0-beta.27).** Past about 100× a Julia view (the dual view's Julia panel, or Julia
   mode) is rendered against one reference orbit, and a pixel whose orbit passes close to 0 is moved

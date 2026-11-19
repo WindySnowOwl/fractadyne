@@ -66,3 +66,22 @@ fn a_pass_is_timed_by_the_gpu_when_it_can_be_and_by_the_wall_when_not() {
     assert_eq!(pre_switch_pass_ms([f64::NAN, 3.4]), 3.4);
     assert_eq!(pre_switch_pass_ms([0.0, 3.4]), 3.4);
 }
+
+#[test]
+fn a_panel_zoom_rate_follows_its_glide_and_resets_on_a_jump() {
+    // A steady glide of 2 octaves a second, 16 ms frames: the EMA climbs toward 2.0.
+    let (mut rate, mut l2) = (0.0, 90.0);
+    for _ in 0..60 {
+        let next = l2 + 2.0 * 0.016;
+        rate = zoom_rate_step(rate, l2, next, 16.0);
+        l2 = next;
+    }
+    assert!((rate - 2.0).abs() < 1.0e-3, "glide rate {rate}");
+    // Zooming OUT reads as speed too (the probe asks only that the panel moves).
+    assert!(zoom_rate_step(0.0, 91.0, 90.9, 16.0) > 0.0);
+    // A still panel decays toward 0, and a jump of two octaves in one interval resets it.
+    assert!(zoom_rate_step(rate, l2, l2, 16.0) < rate);
+    assert_eq!(zoom_rate_step(rate, 80.0, 82.0, 16.0), 0.0);
+    // No interval, no reading.
+    assert_eq!(zoom_rate_step(rate, 80.0, 80.1, 0.0), 0.0);
+}
