@@ -107,3 +107,15 @@ fn the_opening_is_raised_only_for_the_mode_it_was_stamped_for() {
     p.calibrated_open[0] = (0, 0);
     assert!(!p.calibrated_mode(0));
 }
+
+/// A reading of a pass dispatched before the view's last mode switch prices nothing of the new mode
+/// (the maintainer's df32 entry at frame 712 took direct's frame-711 reading); the switch frame's own
+/// pass, and every later one, do; no pass frame, or no switch yet, is never "before".
+#[test]
+fn a_reading_of_the_old_modes_pass_is_before_the_switch() {
+    assert!(reading_before_switch(711, 712), "direct's last pass, read after the switch");
+    assert!(!reading_before_switch(712, 712), "the switch frame's pass is the new mode's");
+    assert!(!reading_before_switch(715, 712));
+    assert!(!reading_before_switch(0, 712), "a reading that names no frame");
+    assert!(!reading_before_switch(711, u64::MAX), "no switch yet");
+}

@@ -335,6 +335,14 @@ pub(crate) fn calibrated_climb(cur: u64, next: u64, ms: f64, explicit: bool) -> 
     next.max(((cur as f64 * f) as u64).min(ceil))
 }
 
+/// Whether a GPU reading timed a pass dispatched BEFORE the view's last arithmetic-mode switch
+/// (2026-11-18): `pass_frame` is the frame the reading names (0 = none), `switch_frame` the view's
+/// `mode_switch_frame` (`u64::MAX` = never). The switch frame's own dispatch is built in the new
+/// mode, so it is not before. Such a reading prices the OLD mode and nothing of the new one.
+pub(crate) fn reading_before_switch(pass_frame: u64, switch_frame: u64) -> bool {
+    pass_frame != 0 && switch_frame != u64::MAX && pass_frame < switch_frame
+}
+
 /// Gate a budget step on whether a REPLACEMENT REFERENCE is currently being built for this view.
 ///
 /// Returns the budget to install and whether it may be treated as converged.
