@@ -261,6 +261,15 @@ impl FractadyneApp {
         if !real || self.perf.live_job[v].is_some() || self.perf.worker_job.is_some() {
             return;
         }
+        // ⭐A frame that accumulates ORBIT STATISTICS is not offered (2026-11-19): the twin cannot
+        // walk it (`fractadyne_gpu::walkable` — a walk's aux plane comes back `AUX_NONE`, which
+        // stripe-average coloring showed as one flat color on most frames of a deep zoom), and in one
+        // pass it fits only where the window is quick anyway (≤ 1e9 pixel-steps against the
+        // maintainer's 294,202 px × 17,185 iterations); offered, every such frame failed on the
+        // worker. The settled samples (L2, the export renderer) still go to the worker.
+        if !params.iter_stats().is_empty() {
+            return;
+        }
         // Within the second device's reference budget (`gpu_worker::reference_budget`): a moving
         // reference is small, but a frame may still carry a settled one.
         if crate::gpu_worker::reference_bytes(params) > self.worker_ref_budget {

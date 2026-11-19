@@ -109,6 +109,15 @@ From the 0.2.41 series:
 
 Changes after 0.3.0-beta.1:
 
+- **Zooming with a coloring that reads the orbit's statistics no longer flashes one flat color
+  (after 0.3.0-beta.27).** With the second graphics device in use (Advanced ▸ *Second graphics
+  card*, *Same card* by default), the other device renders frames of the moving view and the
+  window shows them. Under stripe average, triangle inequality, orbit trap and decomposition
+  coloring, and an orbit-trap interior, those frames came back without the statistics the coloring
+  reads, so most frames of a deep zoom showed a single flat color with the real picture only in
+  between. The second device now leaves such frames to the window, which renders them as it always
+  has; it still helps a still view's anti-aliasing, and still renders moving frames for the other
+  colorings.
 - **Zooming in past about 10,000× no longer freezes the picture for a moment (after
   0.3.0-beta.27).** Where the view switches to perturbation arithmetic, its first frame waits for a
   reference orbit, and until one arrives it is planned to show the last picture again, at that
