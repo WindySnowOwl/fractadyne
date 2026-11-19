@@ -125,10 +125,12 @@ Changes after 0.3.0-beta.1:
   its last picture moved into place, set aside the measurements that arrived on those frames and
   so learned its speed only every 0.3 to 3 s: the picture flashed coarse and took up to 6.5 s to
   sharpen. On a graphics card whose worst case Fractadyne has measured (the RTX 3080 and the RX
-  6800 XT), the first frame after the switch is now sized to take at most 40 ms even at that worst
-  case, a moving view's measurements all count, and while the card has plenty of room the work size
-  climbs up to four times per measurement instead of one and a half. In a 5120-pixel-wide window
-  the picture is back to half its pixels in about half a second. A measurement of the last frame
+  6800 XT), the first frame after the switch is now sized from what the frame before it measured
+  in the other arithmetic, on the same pixels, at the card's measured cost ratio between the two
+  (and at least to take 40 ms at its worst case); a moving view's measurements all count; and while
+  the card has plenty of room the work size climbs up to four times per measurement instead of one
+  and a half. In a 5120-pixel-wide window the first frame after the switch keeps about half the
+  pixels shown before it, where it kept 2%, and is back to nine tenths of them in half a second. A measurement of the last frame
   before the switch no longer counts for the new arithmetic, on any card. Every frame stays under
   the card's measured ceiling. Other cards, and the extended-range arithmetic of the deepest zooms,
   keep the old rules.

@@ -1609,6 +1609,11 @@ struct Perf {
     /// before its mode-switch check, read by `bootstrap_steps` (the opening guess) and by the
     /// calibrated climb's licence (`calibrated_mode`). 0 where the calibration vouches for none.
     calibrated_open: [(u32, u64); 2],
+    /// ⭐The CROSS-MODE OPENING stamped at each view's last mode switch, with the mode it is for
+    /// (`calibration::cross_opening_for`; `(u32::MAX, 0)` = none): read by `bootstrap_steps` ONLY
+    /// while the new mode's budget is unmeasured (`fe_budget == 0`), so it sizes the first frames
+    /// after a switch and never the admission or jam bounds of a measured budget.
+    cross_open: [(u32, u64); 2],
     /// The measured per-mode rates, pessimistic and smoothness (`render::Meter`).
     meter: render::Meter,
     /// Observed zoom speed of the main view, octaves per second (EMA of |Δlog2mag| per frame
@@ -2576,8 +2581,14 @@ impl Perf {
     /// 2941×1988 panel at the 2^13.3 crossing — the "flash" — where the calibration allows 1.45e9.
     fn bootstrap_steps(&self, v: usize) -> u64 {
         let guess = self.meter.bootstrap_steps(v, self.budget_mode[v]);
-        match self.calibrated_open[v.min(1)] {
+        let guess = match self.calibrated_open[v.min(1)] {
             (m, open) if m == self.budget_mode[v] => guess.max(open),
+            _ => guess,
+        };
+        // …and, until the new mode's budget measures anything, to the CROSS-MODE OPENING
+        // (`cross_open`): the leaving mode's rate on these very pixels, at the calibrated ratio.
+        match self.cross_open[v.min(1)] {
+            (m, open) if m == self.budget_mode[v] && self.fe_budget[v] == 0 => guess.max(open),
             _ => guess,
         }
     }
@@ -2704,6 +2715,7 @@ impl Default for Perf {
             budget_mode: [u32::MAX, u32::MAX],
             mode_switch_frame: [u64::MAX, u64::MAX],
             calibrated_open: [(u32::MAX, 0); 2],
+            cross_open: [(u32::MAX, 0); 2],
             meter: render::Meter::default(),
             zoom_oct_s: 0.0,
             last_l2: 0.0,

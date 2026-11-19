@@ -344,6 +344,45 @@ pub(crate) fn opening_for(mode: RenderMode, formula: FractalKind, px: u64, gpu_i
     opening(cap, share, gpu_iter, |p| ceiling_for(mode, formula, p))
 }
 
+/// ⭐THE CROSS-MODE OPENING (2026-11-18): the opening of a switch between two calibrated modes, from
+/// the rate (`prev_rate`, nominal steps per ms) this view measured in the mode it is LEAVING, on the
+/// same pixels at the same iteration ask a frame ago. The worst-case per-step costs the two ceilings
+/// are sized from give the ratio between the modes (`ceil_prev / ceil_new`: df32 costs 5.2× direct on
+/// the RTX 3080), so `prev_rate × ceil_new / ceil_prev` is the new mode's rate at no better than the
+/// calibrated ratio, and `bootstrap_ms` of it is the opening — never past `ceil_new`, which bounds it
+/// at its 400 ms worst case whatever the content. 0 when there is no rate.
+///
+/// Why: the maintainer saw the df32 entry flash (2026-11-18, b6921): the calibrated opening is 40 ms
+/// at the WORST cost, ~4% of a 1500×1635 panel at ~13.6k iterations, and the view climbed through
+/// several sizes to the ceiling within ~0.36 s — after a direct picture at full size. Direct's last
+/// pass there (21:06 session) took 20 ms for 5.03e10 steps: ×0.194, ×40 ms ≈ 1.9e10, past the
+/// ceiling (1.449e10), so the first df32 frame opens at the size the mode then runs at.
+pub(crate) fn cross_opening(prev_rate: f64, ceil_prev: u64, ceil_new: u64, bootstrap_ms: f64) -> u64 {
+    if !(prev_rate > 0.0 && prev_rate.is_finite()) || ceil_prev == 0 || !(bootstrap_ms > 0.0) {
+        return 0;
+    }
+    let rate_new = prev_rate * ceil_new as f64 / ceil_prev as f64;
+    ((rate_new * bootstrap_ms) as u64).min(ceil_new)
+}
+
+/// [`cross_opening`] for a switch from `prev` to `new` on the running adapter at `px` pixels: `None`
+/// unless the adapter has its own entry and both modes have a ceiling (direct and df32; floatexp has
+/// none, so a switch into or out of it keeps the old rules).
+pub(crate) fn cross_opening_for(
+    prev: RenderMode,
+    new: RenderMode,
+    formula: FractalKind,
+    px: u64,
+    prev_rate: f64,
+) -> Option<u64> {
+    if !own_entry() {
+        return None;
+    }
+    let ceil_prev = ceiling_for(prev, formula, px)?;
+    let ceil_new = ceiling_for(new, formula, px)?;
+    Some(cross_opening(prev_rate, ceil_prev, ceil_new, crate::tunables::cost().tdr_bootstrap_ms))
+}
+
 /// The per-pass fixed GPU cost the pacing subtracts from a pass's time, ms (design §5.2;
 /// `render::variable_pass_ms`, `render::motion_pass_steps`): `--set PASS_FIXED_MS` when given (the
 /// A/B arm, and the way to try a value), else this adapter's calibrated `pass_fixed_ms`, else the
