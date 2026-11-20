@@ -44,20 +44,20 @@ Run every exe test with a scratch config and no sound:
 `FRACTADYNE_CONFIG_DIR=<scratch> FRACTADYNE_NO_SOUND=1`. Never run against the real config dir,
 never kill the user's running app, and put windowed runs on the right monitor.
 
-| What | Command |
-|---|---|
-| Build | `CARGO_BUILD_JOBS=1 cargo build --release -p fractadyne-app` |
-| Unit tests | `CARGO_BUILD_JOBS=1 cargo test --release -p fractadyne-app -p fractadyne-gpu -p fractadyne-core -p fractadyne-color -p fractadyne-state -p fractadyne-farm` |
-| One selftest group | `target/release/fractadyne.exe --selftest --selftest-filter <tag> --out <scratch>/report.md` |
-| Full selftest | `target/release/fractadyne.exe --selftest --out <scratch>/report.md` (about 3.5 min on the RTX 3080); if it ran with the default `--out`, `git restore validation/report.md` |
-| Bless one golden | `--selftest --bless --selftest-filter <golden-name>` (only on the RTX 3080, the reference card) |
-| One render | `--render --out F.png --fractal "NAME" --center X Y --zoom M --size WxH --iter N --ss 1 --method KEY --palette N --no-watermark` |
-| Compare two renders | `--compare A.png B.png --out heat.png` (report only) |
-| GPU timings | `--profile --regions F.toml --reps 3` (iterate and color-pass ms from timestamp queries) |
-| Bench matrix | `--bench-matrix --reps 5`; timing comparisons between builds: interleave ABABAB, median of 3 |
-| UI screens | `python scripts/on_monitor.py right -- target/release/fractadyne.exe --uitest <dir>`; then LOOK at the screenshots (physical pixels) |
-| Text layout | the uitest text-layout check, also with `--language en-XA` |
-| Second machine | `scripts/field-request.ps1 -Action harness -Run "..." -Build v...dev.N` (PLUTO: RTX 3070 + RX 6800 XT) |
+| What                | Command                                                                                                                                                                      |
+| ------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| Build               | `CARGO_BUILD_JOBS=1 cargo build --release -p fractadyne-app`                                                                                                                 |
+| Unit tests          | `CARGO_BUILD_JOBS=1 cargo test --release -p fractadyne-app -p fractadyne-gpu -p fractadyne-core -p fractadyne-color -p fractadyne-state -p fractadyne-farm`                  |
+| One selftest group  | `target/release/fractadyne.exe --selftest --selftest-filter <tag> --out <scratch>/report.md`                                                                                 |
+| Full selftest       | `target/release/fractadyne.exe --selftest --out <scratch>/report.md` (about 3.5 min on the RTX 3080); if it ran with the default `--out`, `git restore validation/report.md` |
+| Bless one golden    | `--selftest --bless --selftest-filter <golden-name>` (only on the RTX 3080, the reference card)                                                                              |
+| One render          | `--render --out F.png --fractal "NAME" --center X Y --zoom M --size WxH --iter N --ss 1 --method KEY --palette N --no-watermark`                                             |
+| Compare two renders | `--compare A.png B.png --out heat.png` (report only)                                                                                                                         |
+| GPU timings         | `--profile --regions F.toml --reps 3` (iterate and color-pass ms from timestamp queries)                                                                                     |
+| Bench matrix        | `--bench-matrix --reps 5`; timing comparisons between builds: interleave ABABAB, median of 3                                                                                 |
+| UI screens          | `python scripts/on_monitor.py right -- target/release/fractadyne.exe --uitest <dir>`; then LOOK at the screenshots (physical pixels)                                         |
+| Text layout         | the uitest text-layout check, also with `--language en-XA`                                                                                                                   |
+| Second machine      | `scripts/field-request.ps1 -Action harness -Run "..." -Build v...dev.N` (PLUTO: RTX 3070 + RX 6800 XT)                                                                       |
 
 ### 0.4 Standing rules for every coloring change
 
@@ -155,10 +155,10 @@ These come from past bugs; each one has bitten before.
 
 Two `Rgba32Float` targets per iteration sample (`mandelbrot.wgsl:1328-1335`):
 
-| Target | Lanes | Written when |
-|---|---|---|
-| `main` | smooth count `smit`, normal x, normal y, log2 DE | always; interior `(-1, 0, 0, 1e30)`, Newton `(iter, 0, 0, 1e30)`, glitch −2; normal and DE only for formulas 0–3, Phoenix and Multibrot 6–8 (`wgsl:1653-1658`), 1e30 otherwise |
-| `aux` | stripe, TIA, trap minimum, final angle | only under an aux method (`aux_on` bit 0); `aux_step` fills only the selected statistic (`wgsl:1374-1414`), `aux_pack` writes the angle for every aux method (`wgsl:1417-1435`); otherwise `AUX_NONE` = (0, 0, 1e30, 0) |
+| Target | Lanes                                            | Written when                                                                                                                                                                                                            |
+| ------ | ------------------------------------------------ | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `main` | smooth count `smit`, normal x, normal y, log2 DE | always; interior `(-1, 0, 0, 1e30)`, Newton `(iter, 0, 0, 1e30)`, glitch −2; normal and DE only for formulas 0–3, Phoenix and Multibrot 6–8 (`wgsl:1653-1658`), 1e30 otherwise                                          |
+| `aux`  | stripe, TIA, trap minimum, final angle           | only under an aux method (`aux_on` bit 0); `aux_step` fills only the selected statistic (`wgsl:1374-1414`), `aux_pack` writes the angle for every aux method (`wgsl:1417-1435`); otherwise `AUX_NONE` = (0, 0, 1e30, 0) |
 
 The color pass (`fs_color`, `wgsl:3835-4001`) reads both targets at every tap. `coord_under`
 (`wgsl:3731-3761`) picks the value by `cu.color_method`: 1 `a.r`, 2 `a.g`, 3 `−log2(a.b)`
@@ -187,16 +187,16 @@ Decomposition 5. One value drives both sides:
 
 ### 1.3 Where coloring settings travel
 
-| Place | Carries today | Gap |
-|---|---|---|
-| Session (`fractadyne-state/src/lib.rs:291-361`) | everything | none |
-| `.fdn` view, bookmarks, Share location, PNG/EXR text | palette, cycle, iter_div, offset, aa, custom gradient; since A1 also method, stripe, trap, effects, duotone/binary, normalize, log scale | none since A1 (interior color when C1 adds it) |
-| Farm `RenderSettings` | method, stripe, trap, light, glow, log, cycle, offset, iter_div, palette, custom | `palette_id`, normalize live/fit |
-| CLI (`main.rs:8452-8520`) | method, stripe, trap, binary, light, light angle, de, iter_div | cycle, offset, light height, glow strength and width, normalize live/fit, interior color |
-| Tours (`scripting.rs:576-688`) | palette only | method, cycle, offset, effects |
-| GPU export (`gpu/src/export.rs:278-290, 1710, 1789-1796`) | all | aux methods export on one device, without glitch correction |
-| Zoom video | Smooth and Distance only | every aux method refused |
-| Multi-GPU live twin (`motion_worker.rs:312`) | with aux when needed | none |
+| Place                                                     | Carries today                                                                                                                            | Gap                                                                                      |
+| --------------------------------------------------------- | ---------------------------------------------------------------------------------------------------------------------------------------- | ---------------------------------------------------------------------------------------- |
+| Session (`fractadyne-state/src/lib.rs:291-361`)           | everything                                                                                                                               | none                                                                                     |
+| `.fdn` view, bookmarks, Share location, PNG/EXR text      | palette, cycle, iter_div, offset, aa, custom gradient; since A1 also method, stripe, trap, effects, duotone/binary, normalize, log scale | none since A1 (interior color when C1 adds it)                                           |
+| Farm `RenderSettings`                                     | method, stripe, trap, light, glow, log, cycle, offset, iter_div, palette, custom                                                         | `palette_id`, normalize live/fit                                                         |
+| CLI (`main.rs:8452-8520`)                                 | method, stripe, trap, binary, light, light angle, de, iter_div                                                                           | cycle, offset, light height, glow strength and width, normalize live/fit, interior color |
+| Tours (`scripting.rs:576-688`)                            | palette only                                                                                                                             | method, cycle, offset, effects                                                           |
+| GPU export (`gpu/src/export.rs:278-290, 1710, 1789-1796`) | all                                                                                                                                      | aux methods export on one device, without glitch correction                              |
+| Zoom video                                                | Smooth and Distance only                                                                                                                 | every aux method refused                                                                 |
+| Multi-GPU live twin (`motion_worker.rs:312`)              | with aux when needed                                                                                                                     | none                                                                                     |
 
 ### 1.4 Tests that exist
 
@@ -220,15 +220,15 @@ constants, `selftest.rs:517-577`); `GROUPS` is not checked against the `want` ta
 
 ## 2. Overview
 
-| Phase | Steps | Needs | Gives |
-|---|---|---|---|
-| A. Independent fixes | A1–A10 | nothing | correct baseline, persistence, reproducible CLI |
-| B. Plumbing | B1–B8 | A1, A6 | test matrix, accumulate mask, full G-buffer, settings model, method picker and preview sheet, second LUT and interior modes, stored angle |
-| C. Color-pass methods | C1–C11 | B4 (B5 for C4) | interior color, transfers, DE shading, lighting, histogram, OKLab, palette AA, fringe, grid, linked Julia palettes |
-| D. Escape-data methods | D1–D3 | B8 | angle colorings, exact count past 8.4M, interior period |
-| E. Statistic combinations | E1–E5 | B3, B5 | warped bands, statistic near filaments, two-layer blend, bump, specular by statistic |
-| F. New per-iteration statistics | F1–F6 | B2, F2 | exponential smoothing, second aux target, curvature, parametric traps, atom domains, pixel-width traps |
-| G. Research methods | G1–G8 | as listed | interior DE, interior coordinates, second derivative, fold DE, two-plane, multi-degree, texture effects, user scripts |
+| Phase                           | Steps  | Needs          | Gives                                                                                                                                     |
+| ------------------------------- | ------ | -------------- | ----------------------------------------------------------------------------------------------------------------------------------------- |
+| A. Independent fixes            | A1–A10 | nothing        | correct baseline, persistence, reproducible CLI                                                                                           |
+| B. Plumbing                     | B1–B8  | A1, A6         | test matrix, accumulate mask, full G-buffer, settings model, method picker and preview sheet, second LUT and interior modes, stored angle |
+| C. Color-pass methods           | C1–C11 | B4 (B5 for C4) | interior color, transfers, DE shading, lighting, histogram, OKLab, palette AA, fringe, grid, linked Julia palettes                        |
+| D. Escape-data methods          | D1–D3  | B8             | angle colorings, exact count past 8.4M, interior period                                                                                   |
+| E. Statistic combinations       | E1–E5  | B3, B5         | warped bands, statistic near filaments, two-layer blend, bump, specular by statistic                                                      |
+| F. New per-iteration statistics | F1–F6  | B2, F2         | exponential smoothing, second aux target, curvature, parametric traps, atom domains, pixel-width traps                                    |
+| G. Research methods             | G1–G8  | as listed      | interior DE, interior coordinates, second derivative, fold DE, two-plane, multi-degree, texture effects, user scripts                     |
 
 Critical path: **A6 → B1 → B2 → B3 → B7**, with **A1 → B4 → B6 → B7** beside it. Everything in
 C needs B4 (C4 also B5); E needs B3 and B5; F needs B2. Phase A steps are independent of each
@@ -540,15 +540,15 @@ reproduced. Reproduce before fixing; never close on the mechanism argument alone
 - **View set** (`validation/coloring/views.toml`), each with family, center, zoom, iterations and
   the bands it covers:
 
-  | Family | Views |
-  |---|---|
-  | Mandelbrot | overview; seahorse 2e3× (direct); seahorse 1e6× and 1e20× (df32); seahorse 1e30× (floatexp); minibrot interior `minibrot-auto-iter-9.3e78`; Misiurewicz `misiurewicz-4-1` 7.4e143×; extreme opt-in `spiral-9.98e60205` |
-  | Multibrot 3–8 | overview and the `MULTIBROT_DEEP` points (`selftest.rs:540-577`) at 1e6× and 1e30× |
-  | Folds (Burning Ship, Tricorn, Celtic, Buffalo, and powers 3–5) | overview and `FOLD_DEEP` (`selftest.rs:517-538`) at 1e6× and 1e28× (accurate to about 1e30×) |
-  | Phoenix | overview and 1e3× |
-  | Newton | overview |
-  | Julia | Mandelbrot Julia at c = −0.75 + 0.1i and the triple point; overview and 1e10× |
-  | Custom | `z^2.5 + c` overview and 1e20× |
+  | Family                                                         | Views                                                                                                                                                                                                                  |
+  | -------------------------------------------------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+  | Mandelbrot                                                     | overview; seahorse 2e3× (direct); seahorse 1e6× and 1e20× (df32); seahorse 1e30× (floatexp); minibrot interior `minibrot-auto-iter-9.3e78`; Misiurewicz `misiurewicz-4-1` 7.4e143×; extreme opt-in `spiral-9.98e60205` |
+  | Multibrot 3–8                                                  | overview and the `MULTIBROT_DEEP` points (`selftest.rs:540-577`) at 1e6× and 1e30×                                                                                                                                     |
+  | Folds (Burning Ship, Tricorn, Celtic, Buffalo, and powers 3–5) | overview and `FOLD_DEEP` (`selftest.rs:517-538`) at 1e6× and 1e28× (accurate to about 1e30×)                                                                                                                           |
+  | Phoenix                                                        | overview and 1e3×                                                                                                                                                                                                      |
+  | Newton                                                         | overview                                                                                                                                                                                                               |
+  | Julia                                                          | Mandelbrot Julia at c = −0.75 + 0.1i and the triple point; overview and 1e10×                                                                                                                                          |
+  | Custom                                                         | `z^2.5 + c` overview and 1e20×                                                                                                                                                                                         |
 
   Copy the constants into the TOML so they are no longer selftest-only.
 - **Cells**: every view × every method (and each method's parameter variants, e.g. the three trap
@@ -721,11 +721,11 @@ reproduced. Reproduce before fixing; never close on the mechanism argument alone
     RTX 3070 and RX 6800 XT (PLUTO, dev.21 and dev.22). Iterate time with the G-buffer over without,
     median over the band's views, for stripe, triangle and the traps:
 
-    | card | direct | df32 | floatexp |
-    |---|---|---|---|
-    | RTX 3080 | +15-34% | +10-21% | +2-4% |
-    | RTX 3070 | +15-33% | +9-21% | +2-4% |
-    | RX 6800 XT | (not priced) | (not priced) | +2-7% |
+    | card       | direct       | df32         | floatexp |
+    | ---------- | ------------ | ------------ | -------- |
+    | RTX 3080   | +15-34%      | +10-21%      | +2-4%    |
+    | RTX 3070   | +15-33%      | +9-21%       | +2-4%    |
+    | RX 6800 XT | (not priced) | (not priced) | +2-7%    |
 
     ⛔On the RX 6800 XT the paired renders could not price it: whichever request rendered second
     read 10-36% slower (dev.22, the G-buffer second: +18-34% in floatexp; dev.23, the method's own
@@ -995,19 +995,19 @@ reproduced. Reproduce before fixing; never close on the mechanism argument alone
 All need B4 for persistence; their data already exists. Each: shader branch or `ColorU` fields,
 UI rows, `.fdn`/farm/CLI through B4, B1 cells, a selftest appearance check, uitest screen.
 
-| Id | Method | Notes | Size |
-|---|---|---|---|
-| C1 | Interior color for every palette | `interior_col` exists in `ColorU`; Binary/Duotone already have a picker (`ui/panels.rs:313-330`) | S |
-| C2 | Transfer functions, wrap modes, banding step | sqrt, cbrt, fourth root, square, log, log-log, atan; repeat, clamp, mirror; step count. Match KF/Mandel Machine names. Live normalization and fit range must apply before the transfer | M |
-| C3 | DE darkening, DE transfer curves, edge anti-aliasing | Chéritat's blend `t = d/(thickness·px)`; needs A9 for pixel units | M |
-| C4 | Smooth outside, trap inside | under the trap method color escaped pixels by μ; interior palette from B5; prototype worked | S |
-| C5 | Lighting: specular, light color, strength, DE-scaled steepness | Relief is already the elevation; add Blinn-Phong on the stored normal with a steepness from the DE | M |
-| C6 | Histogram and rank-order coloring with a held CDF | the live fine histogram exists (`wgsl:994-999`); the offline `--normalize` path and tours still use min/max | M |
-| C7 | OKLab blending | `tags.rs` has only sRGB→OKLab (362-381): add the inverse; a new blend-space id outside GIMP's `.ggr` set, so `.ggr` export must convert or refuse | M |
-| C8 | Palette anti-aliasing in the UI, DE-sized | exists behind `FRACTADYNE_PALETTE_AA`; prototype 2.9× less aliasing at the default density | S |
-| C9 | Rainbow fringe and DE-lightness OKLCh mapping | hue from the normal's azimuth, lightness from the DE; prior art zoomasm | S |
-| C10 | Level-of-detail equipotential grid | equipotentials only (rays wait for D1); width from \|∇μ\| = 1/(d·ln p); needs A9; prototype held 1.1–1.5 px at eight depths | M |
-| C11 | Linked dual-view palettes | the Julia count at z = c is the Mandelbrot count minus 1: a +1 offset and a shared normalization window | S |
+| Id  | Method                                                         | Notes                                                                                                                                                                                  | Size |
+| --- | -------------------------------------------------------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | ---- |
+| C1  | Interior color for every palette                               | `interior_col` exists in `ColorU`; Binary/Duotone already have a picker (`ui/panels.rs:313-330`)                                                                                       | S    |
+| C2  | Transfer functions, wrap modes, banding step                   | sqrt, cbrt, fourth root, square, log, log-log, atan; repeat, clamp, mirror; step count. Match KF/Mandel Machine names. Live normalization and fit range must apply before the transfer | M    |
+| C3  | DE darkening, DE transfer curves, edge anti-aliasing           | Chéritat's blend `t = d/(thickness·px)`; needs A9 for pixel units                                                                                                                      | M    |
+| C4  | Smooth outside, trap inside                                    | under the trap method color escaped pixels by μ; interior palette from B5; prototype worked                                                                                            | S    |
+| C5  | Lighting: specular, light color, strength, DE-scaled steepness | Relief is already the elevation; add Blinn-Phong on the stored normal with a steepness from the DE                                                                                     | M    |
+| C6  | Histogram and rank-order coloring with a held CDF              | the live fine histogram exists (`wgsl:994-999`); the offline `--normalize` path and tours still use min/max                                                                            | M    |
+| C7  | OKLab blending                                                 | `tags.rs` has only sRGB→OKLab (362-381): add the inverse; a new blend-space id outside GIMP's `.ggr` set, so `.ggr` export must convert or refuse                                      | M    |
+| C8  | Palette anti-aliasing in the UI, DE-sized                      | exists behind `FRACTADYNE_PALETTE_AA`; prototype 2.9× less aliasing at the default density                                                                                             | S    |
+| C9  | Rainbow fringe and DE-lightness OKLCh mapping                  | hue from the normal's azimuth, lightness from the DE; prior art zoomasm                                                                                                                | S    |
+| C10 | Level-of-detail equipotential grid                             | equipotentials only (rays wait for D1); width from \|∇μ\| = 1/(d·ln p); needs A9; prototype held 1.1–1.5 px at eight depths                                                            | M    |
+| C11 | Linked dual-view palettes                                      | the Julia count at z = c is the Mandelbrot count minus 1: a +1 offset and a shared normalization window                                                                                | S    |
 
 Order: C1, C4, C8, C9, C11 (smallest), then C2, C3, C10, then C5, C6, C7.
 
@@ -1104,50 +1104,85 @@ ss 1 and 2; C6 temporal stability over a zoom tour (frame-to-frame palette shift
 
 ### D. Escape-data methods (tier 2)
 
-| Id | Method | Needs | Size |
-|---|---|---|---|
-| D1 | Angle colorings for every method: phase strength (KF), one-step hard binary decomposition, rays for the C10 grid, distance + dwell + decomposition | B8 verdict; hard decomposition today is reachable only with Cycle 0.125, Offset 0 and a two-color "Hard bands" gradient (derived, not run) | M |
-| D2 | Exact iteration count past 8.4M | store N and the fraction separately in `main` as the zoom-video strips already do (`strip.wgsl:66-75`); the f32 count loses its fraction at 2^23 | M |
-| D3 | Interior period tint, optionally trap-shaded | the exact-repeat check's cycle length into the free interior lanes of `main`; direct and df32 loops only; a Newton pass for deep perturbed interiors later | M |
+| Id  | Method                                                                                                                                             | Needs                                                                                                                                                      | Size                                         |
+| --- | -------------------------------------------------------------------------------------------------------------------------------------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------- | -------------------------------------------- |
+| D1  | Angle colorings for every method: phase strength (KF), one-step hard binary decomposition, rays for the C10 grid, distance + dwell + decomposition | B8 verdict; hard decomposition today is reachable only with Cycle 0.125, Offset 0 and a two-color "Hard bands" gradient (derived, not run)                 | M                                            |
+| D2  | Exact iteration count past 8.4M                                                                                                                    | store N and the fraction separately in `main` as the zoom-video strips already do (`strip.wgsl:66-75`); the f32 count loses its fraction at 2^23           | M                                            |
+| D3  | Interior period tint, optionally trap-shaded                                                                                                       | the exact-repeat check's cycle length into the free interior lanes of `main`; direct and df32 loops only; a Newton pass for deep perturbed interiors later | M                                            |
+| D4  | Smooth convergence inside attracting basins (pauldelbrot's method, Fractal Forums, 2026-11-18)                                                     | Julia views first, a new Inside choice through the second LUT; see the notes below; prototype first                                                        | M for Julia views, L for the parameter plane |
+
+**D4 notes (2026-11-19).** pauldelbrot posted how he colors the basin of an attracting cycle
+smoothly: the integer part is the iterations until the orbit first lands within ε of a cycle point,
+over the period p; the fraction is (log\|z − a\| − log r)/(log ε − log r), where r = ε·\|λ\| is
+that disk's image p steps later and λ the cycle's multiplier. He finds p by Brent's method with a
+tolerance μ much smaller than ε, keeps the whole orbit in an array, finds the first entry by binary
+search, and against banding fixes one cycle member as the target: the farthest from the cycle's
+barycenter, or better the one with the largest immediate basin. What it could be here:
+
+1. **Julia views.** Every interior pixel of a Julia set with c inside the set converges to the same
+   cycle, and the GPU already holds the view's critical orbit (`crit_at`, `crit_len`, since 0.3.0),
+   which converges to it. The CPU finds the cycle once per view: p from the critical orbit's tail,
+   the points by Newton on f^p(z) − z, the multiplier at each. The GPU then needs no array, no
+   back-walk and no binary search: at the end of an interior pixel's loop, the count over p plus
+   the log-ratio fraction from the known multiplier, into the interior lanes, colored by the
+   inside's palette. The dual view's Julia panel gets it too.
+2. **A seam-free variant of his consistency fix (untested).** With the derivative known at every
+   cycle point, a distance measured near any member can be carried to one chosen member exactly,
+   multiplying by the derivatives between them: the same as a disk around each member scaled to
+   its own petal. The choice of member then shifts the value by a constant only, and since it is
+   evaluated once, at the end, it holds where BLA skipped the iteration of first entry.
+3. **An early stop.** Interior pixels in the floatexp loops run to the iteration limit (the
+   exact-repeat check covers the direct and df32 loops only). Stopping within μ of the known cycle
+   could cut deep Julia views' interior work; measure before claiming it, and only where the inside
+   needs no statistic from the rest of the orbit.
+4. **The parameter plane, later.** Each pixel has its own cycle: Brent with a tolerance per pixel,
+   then Newton for the cycle and its multiplier (log\|λ\| as a sum of log\|f'\|, since periods near
+   deep minibrots run to thousands). With D3 and G2.
+
+Edges: at a component's center λ = 0 and the superattracting log-log formula applies; near its
+boundary \|λ\| → 1 and convergence is too slow, so those pixels keep the plain inside color; a
+parabolic c has no attracting cycle. Prototype in NumPy first, his array method against the
+variant in 2, on Julia sets with c near the main cardioid's edge and in the period-3 and period-5
+bulbs, looking for seams. A new GPU regime: a capped first run, PLUTO first.
 
 ### E. Statistic combinations (tier 1 after B3)
 
-| Id | Combination | Notes | Size |
-|---|---|---|---|
-| E1 | Statistic-warped bands | position = rate·μ + offset + λ·(s − center); center fixed at first (no stripe/TIA histogram exists) | S |
-| E2 | Statistic near filaments | weight exp(−d_px/k); needs A9 | S |
-| E3 | Two-layer blend | statistic over smooth with multiply, screen, overlay, hard light and soft light; second LUT from B5 | M |
-| E4 | Statistic bump map | screen-space differences of the statistic (analytic gradients measured as noise), reusing the palette-AA neighbor fetch and the relief low-pass | M |
-| E5 | Specular strength from a statistic | after C5 | S |
+| Id  | Combination                        | Notes                                                                                                                                           | Size |
+| --- | ---------------------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------- | ---- |
+| E1  | Statistic-warped bands             | position = rate·μ + offset + λ·(s − center); center fixed at first (no stripe/TIA histogram exists)                                             | S    |
+| E2  | Statistic near filaments           | weight exp(−d_px/k); needs A9                                                                                                                   | S    |
+| E3  | Two-layer blend                    | statistic over smooth with multiply, screen, overlay, hard light and soft light; second LUT from B5                                             | M    |
+| E4  | Statistic bump map                 | screen-space differences of the statistic (analytic gradients measured as noise), reusing the palette-AA neighbor fetch and the relief low-pass | M    |
+| E5  | Specular strength from a statistic | after C5                                                                                                                                        | S    |
 
 Every E step shows "slower at depth" in the picker: it needs the statistic, so it pays the aux
 restrictions under Smooth.
 
 ### F. New per-iteration statistics (tier 3)
 
-| Id | Statistic | Notes | Size |
-|---|---|---|---|
-| F1 | Exponential smoothing for Newton and convergent formulas | direct loop only, no BLA; can borrow an unused aux lane under Newton | S |
-| F2 | Second aux target and a fifth BLA vec4 | all four aux lanes and the node's fourth vec4 are full; touches the seed pass (`wgsl:3668-3681`), the color binding (3649), the G-buffer, strips, bytes per sample, `reference.rs` node stride and `bla_fold.rs` | L |
-| F3 | Curvature average | after F2; BLA aggregate like TIA's | M |
-| F4 | Trap position, placement on the cycle, new shapes, tail window | In this order, from the trap-shape study (2026-11-13, research doc "Trap shapes and placement"; prototype `local/research_notes/Fractal coloring methods/prototype/traps/`). Inside a component the look depends on whether the trap passes near the attracting cycle: at the maintainer's period-2 view the inside's spread was 0.4–0.9 far from it and 9–15 on or through it, whatever the shape. So: (1) center, rotation, scale; (2) "place on the cycle": the trap on the attracting cycle of the component at the view's center (the exact-repeat check or the nucleus finder already finds it); (3) shapes, mainly for the outside, where each makes its own picture (rank correlation 0.22–0.67 with the closest existing shape in the seahorse valley): sine wave, star, polygon, S curve, line, ring with radius; (4) custom outlines from SVG: a heart prototype showed its outline at the overview and arcs at depth; a 2048² distance texture left 9% of the seahorse view off by more than 0.05 cycle, so exact segment distances through a coarse grid of per-cell segment lists, the path stored in the view, the file treated as untrusted; text in a chosen font is a second source of outlines (user, 2026-11-14; TODO.md "Orbit trap shape from text in a chosen font"): glyph contours flatten to the same segments; (5) tail window (Fractal Zoomer and Fracturing Fog have one). Lanes rebuilt per slider change. Not now: the fractal as its own trap (clean at the overview, blocks at depth from stored fields; the exact form costs an iteration per orbit point and has no BLA fold) | M, L with SVG |
-| F5 | Atom domains and a gated period tint for the exterior | record minimum index and z_p; the hard tint failed on seams, so only the near-filament version | L |
-| F6 | Pixel-width traps | save \|dz/dc\| at the trap's best iteration; no derivative inside BLA skips | M |
+| Id  | Statistic                                                      | Notes                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                            | Size          |
+| --- | -------------------------------------------------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | ------------- |
+| F1  | Exponential smoothing for Newton and convergent formulas       | direct loop only, no BLA; can borrow an unused aux lane under Newton                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                             | S             |
+| F2  | Second aux target and a fifth BLA vec4                         | all four aux lanes and the node's fourth vec4 are full; touches the seed pass (`wgsl:3668-3681`), the color binding (3649), the G-buffer, strips, bytes per sample, `reference.rs` node stride and `bla_fold.rs`                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                 | L             |
+| F3  | Curvature average                                              | after F2; BLA aggregate like TIA's                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                               | M             |
+| F4  | Trap position, placement on the cycle, new shapes, tail window | In this order, from the trap-shape study (2026-11-13, research doc "Trap shapes and placement"; prototype `local/research_notes/Fractal coloring methods/prototype/traps/`). Inside a component the look depends on whether the trap passes near the attracting cycle: at the maintainer's period-2 view the inside's spread was 0.4–0.9 far from it and 9–15 on or through it, whatever the shape. So: (1) center, rotation, scale; (2) "place on the cycle": the trap on the attracting cycle of the component at the view's center (the exact-repeat check or the nucleus finder already finds it); (3) shapes, mainly for the outside, where each makes its own picture (rank correlation 0.22–0.67 with the closest existing shape in the seahorse valley): sine wave, star, polygon, S curve, line, ring with radius; (4) custom outlines from SVG: a heart prototype showed its outline at the overview and arcs at depth; a 2048² distance texture left 9% of the seahorse view off by more than 0.05 cycle, so exact segment distances through a coarse grid of per-cell segment lists, the path stored in the view, the file treated as untrusted; text in a chosen font is a second source of outlines (user, 2026-11-14; TODO.md "Orbit trap shape from text in a chosen font"): glyph contours flatten to the same segments; (5) tail window (Fractal Zoomer and Fracturing Fog have one). Lanes rebuilt per slider change. Not now: the fractal as its own trap (clean at the overview, blocks at depth from stored fields; the exact form costs an iteration per orbit point and has no BLA fold) | M, L with SVG |
+| F5  | Atom domains and a gated period tint for the exterior          | record minimum index and z_p; the hard tint failed on seams, so only the near-filament version                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                   | L             |
+| F6  | Pixel-width traps                                              | save \|dz/dc\| at the trap's best iteration; no derivative inside BLA skips                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                      | M             |
 
 Every F step is a new GPU regime: rule 11 (capped first run, PLUTO first).
 
 ### G. Research methods (tier 4, unproven)
 
-| Id | Method | Notes |
-|---|---|---|
-| G1 | Interior DE and two-sided glow | read the TODO.md entry first: the math worked and was reverted because the chunked direct render stopped being bit-identical; carry c through the chunk→resolve handoff before re-applying. Also fix the glow's mixed-tap DE average |
-| G2 | Interior coordinates (multiplier rings and rays), Lyapunov interior | after G1's period and cycle machinery |
-| G3 | Second-derivative shading | under BLA z'' needs A·z'' + C·z'² + E·z' + F, three more coefficients per node (derived, checked numerically) |
-| G4 | DE for fold families | Jacobian (2×2) derivatives, as KF did in 2.13.2 |
-| G5 | Mandelbrot + Julia ideas | Tan Lei texture transfer (median defect 0.01–0.06 iterations, about 10% of pixels off by more than one), derivative-ratio deviation, post-critical trap for the Julia view |
-| G6 | Multi-degree ideas | auto light angle at arg σ + 180°, crossing-point navigator, degree channels |
-| G7 | Texture effects | supersample variance, LIC, thin film, material shading, zoom-anchored phase, rebase-event sampling |
-| G8 | User-scriptable coloring | a WGSL snippet over the G-buffer; shares the custom-formula codegen |
+| Id  | Method                                                              | Notes                                                                                                                                                                                                                                |
+| --- | ------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
+| G1  | Interior DE and two-sided glow                                      | read the TODO.md entry first: the math worked and was reverted because the chunked direct render stopped being bit-identical; carry c through the chunk→resolve handoff before re-applying. Also fix the glow's mixed-tap DE average |
+| G2  | Interior coordinates (multiplier rings and rays), Lyapunov interior | after G1's period and cycle machinery                                                                                                                                                                                                |
+| G3  | Second-derivative shading                                           | under BLA z'' needs A·z'' + C·z'² + E·z' + F, three more coefficients per node (derived, checked numerically)                                                                                                                        |
+| G4  | DE for fold families                                                | Jacobian (2×2) derivatives, as KF did in 2.13.2                                                                                                                                                                                      |
+| G5  | Mandelbrot + Julia ideas                                            | Tan Lei texture transfer (median defect 0.01–0.06 iterations, about 10% of pixels off by more than one), derivative-ratio deviation, post-critical trap for the Julia view                                                           |
+| G6  | Multi-degree ideas                                                  | auto light angle at arg σ + 180°, crossing-point navigator, degree channels                                                                                                                                                          |
+| G7  | Texture effects                                                     | supersample variance, LIC, thin film, material shading, zoom-anchored phase, rebase-event sampling                                                                                                                                   |
+| G8  | User-scriptable coloring                                            | a WGSL snippet over the G-buffer; shares the custom-formula codegen                                                                                                                                                                  |
 
 Each G item starts with a prototype on the B1 view set and a written verdict before any shader
 work. The period-locked palette is not listed: its prototype failed.
@@ -1158,15 +1193,15 @@ work. The period-locked palette is not listed: its prototype failed.
 
 ### 7.1 Layers
 
-| Layer | What | Where |
-|---|---|---|
-| CPU oracles | transfers, OKLab, blend weights, LOD level choice, line-width math, period detection | `crates/*/tests/unit/` |
-| Layout | every `ColorU`, `IterUniforms` and BLA node change | `gpu/tests/unit/uniform_layout_tests.rs` |
-| Selftest | per method: coherent, differs from Smooth, BLA and SA A/B where claimed, determinism, `.fdn` round trip; one golden per method at 1e6× once stable | `harness/selftest.rs`, new tags in `GROUPS` |
-| Coloring matrix | families × depth bands × methods: pictures, A/Bs, timings | `--coloring-matrix` (B1) |
-| Live | a method tour through the bands; motion and settle with each method | `--livetest tours/coloring-methods.toml` |
-| UI | picker, preview sheet, disabled states, `en-XA` | `--uitest` |
-| Second machine | the matrix and the live tour on the RTX 3070 and RX 6800 XT | field agent |
+| Layer           | What                                                                                                                                               | Where                                       |
+| --------------- | -------------------------------------------------------------------------------------------------------------------------------------------------- | ------------------------------------------- |
+| CPU oracles     | transfers, OKLab, blend weights, LOD level choice, line-width math, period detection                                                               | `crates/*/tests/unit/`                      |
+| Layout          | every `ColorU`, `IterUniforms` and BLA node change                                                                                                 | `gpu/tests/unit/uniform_layout_tests.rs`    |
+| Selftest        | per method: coherent, differs from Smooth, BLA and SA A/B where claimed, determinism, `.fdn` round trip; one golden per method at 1e6× once stable | `harness/selftest.rs`, new tags in `GROUPS` |
+| Coloring matrix | families × depth bands × methods: pictures, A/Bs, timings                                                                                          | `--coloring-matrix` (B1)                    |
+| Live            | a method tour through the bands; motion and settle with each method                                                                                | `--livetest tours/coloring-methods.toml`    |
+| UI              | picker, preview sheet, disabled states, `en-XA`                                                                                                    | `--uitest`                                  |
+| Second machine  | the matrix and the live tour on the RTX 3070 and RX 6800 XT                                                                                        | field agent                                 |
 
 ### 7.2 Performance budget
 
@@ -1189,26 +1224,26 @@ do not prove a picture is right.
 
 ## 8. The accumulate mask: every switch
 
-| Switch | Location | Today | With the mask |
-|---|---|---|---|
-| `method_needs_aux` | `gpu/src/lib.rs:3448-3454` | method ∈ {1,2,3,5} | two predicates: accumulates (mask ≠ 0) and display reads aux |
-| `aux_on_word` | `gpu/src/lib.rs:3440-3446`; `wgsl:863-866` | bit 0 aux, bit 1 tail, bits 2.. length | bit 0 from the mask; tail gated on the stripe bit (`wgsl:1357-1359`); mask the shift at 1361 |
-| `IterUniforms.color_method` | `gpu/src/lib.rs:69`; `wgsl:860` | read at 1012, 1358, 1381 | becomes the mask; setters `lib.rs:3969-3976`, `export.rs:1789-1796` and the three aux-off paths (`export.rs:2728-2731, 3288-3291, 3581-3584`) |
-| `aux_step` / `aux_pack` | `wgsl:1374-1436`; `gpu/src/custom.rs:1097-1110` | selected statistic only | per bit |
-| `IterKey` | `gpu/src/lib.rs:422-457` | method, stripe freq, trap type | mask plus enabled parameters (plus A4's tail fields) |
-| `settings_hash` | `render.rs:8585-8621`; walk signature `render/decide.rs:1956-1977` | method and parameters | mask plus enabled parameters |
-| `bla_eligible` / `aux_bla_ok` | `render.rs:3683-3701` | method ∈ {1,2,3} | per-bit fold table |
-| SA (`do_sa`) | `render.rs:3177-3181, 3452-3456, 3873-3878, 9286-9292` | `!blocks_iter_skip` | from the mask |
-| Aux staleness | `render.rs:9939-9988`; `live_ref_fields` 3644-3653 | method 1 + freq, method 3 + trap | stripe bit + freq, trap bit + trap |
-| Chunked walk | `render/frame_plan.rs:396-399`; `build_params` 8582-8584, 8757-8760 | `!needs_aux` | mask = 0 (or angle-only after B8) |
-| Band BLA | `render.rs:6752-6762` | `!needs_aux` | from the mask |
-| Corrector, normalized export | `render.rs:4858, 4967` | refuse aux methods | refuse mask ≠ 0 |
-| Renormalized step | `wgsl:1077-1080` | off when aux | off when mask ≠ 0 |
-| Trap histogram / fit | `wgsl:1011-1017`; `render.rs:2202-2212, 2279-2287` | method 3 | trap bit and display = trap |
-| Multi-GPU twin | `motion_worker.rs:312` | `method_needs_aux` | accumulates predicate |
-| Strips and assembler | `assemble.rs:735-739`; `gpu/src/assemble.rs:60-89` | refuse aux | display predicate |
-| Reference cache | `main.rs:5728-5735`; `render.rs:434-441, 10279-10287, 9120` | stripe freq and trap type always compared | only enabled bits |
-| Accumulation signature | `main.rs:16163-16219` | method and parameters | add the mask |
+| Switch                        | Location                                                            | Today                                     | With the mask                                                                                                                                 |
+| ----------------------------- | ------------------------------------------------------------------- | ----------------------------------------- | --------------------------------------------------------------------------------------------------------------------------------------------- |
+| `method_needs_aux`            | `gpu/src/lib.rs:3448-3454`                                          | method ∈ {1,2,3,5}                        | two predicates: accumulates (mask ≠ 0) and display reads aux                                                                                  |
+| `aux_on_word`                 | `gpu/src/lib.rs:3440-3446`; `wgsl:863-866`                          | bit 0 aux, bit 1 tail, bits 2.. length    | bit 0 from the mask; tail gated on the stripe bit (`wgsl:1357-1359`); mask the shift at 1361                                                  |
+| `IterUniforms.color_method`   | `gpu/src/lib.rs:69`; `wgsl:860`                                     | read at 1012, 1358, 1381                  | becomes the mask; setters `lib.rs:3969-3976`, `export.rs:1789-1796` and the three aux-off paths (`export.rs:2728-2731, 3288-3291, 3581-3584`) |
+| `aux_step` / `aux_pack`       | `wgsl:1374-1436`; `gpu/src/custom.rs:1097-1110`                     | selected statistic only                   | per bit                                                                                                                                       |
+| `IterKey`                     | `gpu/src/lib.rs:422-457`                                            | method, stripe freq, trap type            | mask plus enabled parameters (plus A4's tail fields)                                                                                          |
+| `settings_hash`               | `render.rs:8585-8621`; walk signature `render/decide.rs:1956-1977`  | method and parameters                     | mask plus enabled parameters                                                                                                                  |
+| `bla_eligible` / `aux_bla_ok` | `render.rs:3683-3701`                                               | method ∈ {1,2,3}                          | per-bit fold table                                                                                                                            |
+| SA (`do_sa`)                  | `render.rs:3177-3181, 3452-3456, 3873-3878, 9286-9292`              | `!blocks_iter_skip`                       | from the mask                                                                                                                                 |
+| Aux staleness                 | `render.rs:9939-9988`; `live_ref_fields` 3644-3653                  | method 1 + freq, method 3 + trap          | stripe bit + freq, trap bit + trap                                                                                                            |
+| Chunked walk                  | `render/frame_plan.rs:396-399`; `build_params` 8582-8584, 8757-8760 | `!needs_aux`                              | mask = 0 (or angle-only after B8)                                                                                                             |
+| Band BLA                      | `render.rs:6752-6762`                                               | `!needs_aux`                              | from the mask                                                                                                                                 |
+| Corrector, normalized export  | `render.rs:4858, 4967`                                              | refuse aux methods                        | refuse mask ≠ 0                                                                                                                               |
+| Renormalized step             | `wgsl:1077-1080`                                                    | off when aux                              | off when mask ≠ 0                                                                                                                             |
+| Trap histogram / fit          | `wgsl:1011-1017`; `render.rs:2202-2212, 2279-2287`                  | method 3                                  | trap bit and display = trap                                                                                                                   |
+| Multi-GPU twin                | `motion_worker.rs:312`                                              | `method_needs_aux`                        | accumulates predicate                                                                                                                         |
+| Strips and assembler          | `assemble.rs:735-739`; `gpu/src/assemble.rs:60-89`                  | refuse aux                                | display predicate                                                                                                                             |
+| Reference cache               | `main.rs:5728-5735`; `render.rs:434-441, 10279-10287, 9120`         | stripe freq and trap type always compared | only enabled bits                                                                                                                             |
+| Accumulation signature        | `main.rs:16163-16219`                                               | method and parameters                     | add the mask                                                                                                                                  |
 
 ---
 
@@ -1292,31 +1327,31 @@ coloring in these places, so sequence the two with care:
 
 ## 10. Status
 
-| Step | State | Commit |
-|---|---|---|
-| A9 | done, merged | `33c6527e` (merge `3d202f30`) |
-| A6 | done, merged | `2c898852` (merge `38d93def`) |
-| A2 | done, merged | `3e5aa578` (merge `2a14e005`) |
-| A4 | done, merged | `475e2190` (merge `b9812c74`) |
-| A8 | done, merged | `095a7131` (merge `1db50a24`) |
-| A1 | done, merged | `c15bd9c7` (merge `aa5b22e7`) |
-| A3 | done, merged | `3ee690d7` (merge `3c8a59e7`) |
-| A5b | done, merged | `fddc6ada` (merge `e11d1890`) |
-| A5a | done, merged | `05306f71` (merge `45c2e84d`) |
-| A7 | done, merged | `603275eb` (merge `1bfdc833`) |
-| A10 | done, merged | `aaffca7f` (merge `6ec2fc76`) |
-| B1 | done, merged (agent v41, deployed) | `312c54a8` (merge `4efdbbb3`) |
-| B1 fixes | Distance NaN; Newton's statistics methods | merges `91fa8f91`, `7722b660` |
-| B1b | not started: the live method tour | |
-| B2 | done, merged | `c017a577` (merge `dcfd776b`) |
-| B3 | done, merged | `412fafc6` (merge `542a5264`) |
-| B4 | done, merged | `a5d7d74b` (merge `ba452e9c`) |
-| B6 | done, merged | `c1e4bd61` (merge `35001f80`) |
-| B7 | done, merged | `9e1efa0e` (merge `97c91c32`; step 1 `17b6d60d` with the browser's dual view, `ef2acde7`) |
-| B5 | done, merged | `b2b927d6` (merge `e3e53257`) |
-| B8 | not started | |
-| C1 | done, merged | `58d6dce3` (merge `84af4b0d`) |
-| C4 | done, merged | `e99bfafd` (merge `9a3f9ff9`) |
-| C8 | done, merged; on by default on `feat/color-c8-aa-default` | `5430aa2c` (merge `49153662`) |
-| C2, C3, C5–C7, C9–C11 | not started | |
-| D, E, F, G | not started | |
+| Step                  | State                                                     | Commit                                                                                    |
+| --------------------- | --------------------------------------------------------- | ----------------------------------------------------------------------------------------- |
+| A9                    | done, merged                                              | `33c6527e` (merge `3d202f30`)                                                             |
+| A6                    | done, merged                                              | `2c898852` (merge `38d93def`)                                                             |
+| A2                    | done, merged                                              | `3e5aa578` (merge `2a14e005`)                                                             |
+| A4                    | done, merged                                              | `475e2190` (merge `b9812c74`)                                                             |
+| A8                    | done, merged                                              | `095a7131` (merge `1db50a24`)                                                             |
+| A1                    | done, merged                                              | `c15bd9c7` (merge `aa5b22e7`)                                                             |
+| A3                    | done, merged                                              | `3ee690d7` (merge `3c8a59e7`)                                                             |
+| A5b                   | done, merged                                              | `fddc6ada` (merge `e11d1890`)                                                             |
+| A5a                   | done, merged                                              | `05306f71` (merge `45c2e84d`)                                                             |
+| A7                    | done, merged                                              | `603275eb` (merge `1bfdc833`)                                                             |
+| A10                   | done, merged                                              | `aaffca7f` (merge `6ec2fc76`)                                                             |
+| B1                    | done, merged (agent v41, deployed)                        | `312c54a8` (merge `4efdbbb3`)                                                             |
+| B1 fixes              | Distance NaN; Newton's statistics methods                 | merges `91fa8f91`, `7722b660`                                                             |
+| B1b                   | not started: the live method tour                         |                                                                                           |
+| B2                    | done, merged                                              | `c017a577` (merge `dcfd776b`)                                                             |
+| B3                    | done, merged                                              | `412fafc6` (merge `542a5264`)                                                             |
+| B4                    | done, merged                                              | `a5d7d74b` (merge `ba452e9c`)                                                             |
+| B6                    | done, merged                                              | `c1e4bd61` (merge `35001f80`)                                                             |
+| B7                    | done, merged                                              | `9e1efa0e` (merge `97c91c32`; step 1 `17b6d60d` with the browser's dual view, `ef2acde7`) |
+| B5                    | done, merged                                              | `b2b927d6` (merge `e3e53257`)                                                             |
+| B8                    | not started                                               |                                                                                           |
+| C1                    | done, merged                                              | `58d6dce3` (merge `84af4b0d`)                                                             |
+| C4                    | done, merged                                              | `e99bfafd` (merge `9a3f9ff9`)                                                             |
+| C8                    | done, merged; on by default on `feat/color-c8-aa-default` | `5430aa2c` (merge `49153662`)                                                             |
+| C2, C3, C5–C7, C9–C11 | not started                                               |                                                                                           |
+| D, E, F, G            | not started                                               |                                                                                           |
