@@ -200,6 +200,19 @@ pub struct ColoringSpec {
     /// that turns it off says `palette_aa=0`.
     #[serde(default = "default_true")]
     pub palette_aa: bool,
+    /// The palette's brightness, contrast and saturation (user request 2026-11-15;
+    /// `fractadyne_color::adjust`): -1..1, -1..1 and 0..2, neutral at 0, 0 and 1. Applied to the
+    /// baked palette, the inside's own included. A session or view from before them reads neutral.
+    #[serde(default)]
+    pub palette_brightness: f32,
+    #[serde(default)]
+    pub palette_contrast: f32,
+    #[serde(default = "default_palette_saturation")]
+    pub palette_saturation: f32,
+}
+
+fn default_palette_saturation() -> f32 {
+    1.0
 }
 
 /// The near-black every solid inside had before C1.
@@ -734,6 +747,9 @@ impl Default for ColoringSpec {
             interior_color: default_interior_color(),
             interior_fit: false,
             palette_aa: true,
+            palette_brightness: 0.0,
+            palette_contrast: 0.0,
+            palette_saturation: 1.0,
         }
     }
 }

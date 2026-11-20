@@ -80,7 +80,7 @@ fn two_color_on(s: &ColoringSpec) -> bool {
 }
 
 /// The table, in the order a view writes its keys. A row's parents come before it.
-pub(crate) const FIELDS: [Field; 22] = [
+pub(crate) const FIELDS: [Field; 25] = [
     Field {
         key: "method",
         name: "coloring method",
@@ -305,6 +305,45 @@ pub(crate) const FIELDS: [Field; 22] = [
         name: "palette anti-aliasing",
         doc: "Anti-alias the palette: where its bands are finer than a pixel, the pixel shows their average color, over a footprint sized by the distance to the set (where the formula has none, by the next pixels' colors).",
         access: Access::Flag(|s| s.palette_aa, |s, v| s.palette_aa = v),
+        parents: &[],
+        shows: always,
+    },
+    Field {
+        key: "palette_brightness",
+        name: "palette brightness",
+        doc: "The palette's brightness, -1 to 1 (0: as the palette is): its midtones lighter or darker, black and white kept.",
+        access: Access::Real(
+            |s| s.palette_brightness,
+            |s, v| s.palette_brightness = v,
+            *slider_range::PALETTE_BRIGHTNESS.start(),
+            *slider_range::PALETTE_BRIGHTNESS.end(),
+        ),
+        parents: &[],
+        shows: always,
+    },
+    Field {
+        key: "palette_contrast",
+        name: "palette contrast",
+        doc: "The palette's contrast, -1 to 1 (0: as the palette is): its lightness spread from the middle or drawn toward it, black and white kept.",
+        access: Access::Real(
+            |s| s.palette_contrast,
+            |s, v| s.palette_contrast = v,
+            *slider_range::PALETTE_CONTRAST.start(),
+            *slider_range::PALETTE_CONTRAST.end(),
+        ),
+        parents: &[],
+        shows: always,
+    },
+    Field {
+        key: "palette_saturation",
+        name: "palette saturation",
+        doc: "The palette's saturation, 0 to 2 (1: as the palette is; 0: gray), hue and lightness kept.",
+        access: Access::Real(
+            |s| s.palette_saturation,
+            |s, v| s.palette_saturation = v,
+            *slider_range::PALETTE_SATURATION.start(),
+            *slider_range::PALETTE_SATURATION.end(),
+        ),
         parents: &[],
         shows: always,
     },

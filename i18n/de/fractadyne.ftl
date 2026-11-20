@@ -2861,6 +2861,12 @@ panel-shadow = Schatten
 panel-highlight = Lichter
 panel-cycle = Zyklus
 panel-offset = Versatz
+panel-palette-brightness = Helligkeit
+panel-palette-brightness-hover = Die Mitteltöne der Palette heller oder dunkler, Schwarz und Weiß bleiben. Doppelklick setzt zurück.
+panel-palette-contrast = Kontrast
+panel-palette-contrast-hover = Die Helligkeit der Palette von der Mitte weg gespreizt oder zu ihr hin gezogen, Schwarz und Weiß bleiben. Doppelklick setzt zurück.
+panel-palette-saturation = Sättigung
+panel-palette-saturation-hover = Die Farben der Palette kräftiger oder blasser, bei 0 grau, Farbton und Helligkeit bleiben. Doppelklick setzt zurück.
 panel-normalize-hover = In extremer Tiefe umfassen die Fluchtzahlen Hunderttausende, und ein fester Zyklus bricht die Palette tausendfach zwischen benachbarten Pixeln um — ein korrektes dichtes Feld erscheint als Gesprenkel. Dies bildet die Palette auf den gemessenen Fluchtbereich der Ansicht ab (Zyklus legt dann fest, wie viele Palettendurchläufe ihn überspannen), WENN die Ansicht tatsächlich Aliasing zeigt — eine glatte Ansicht bleibt unverändert, denn eine Umrechnung würde das Bild umsonst verändern. „Bereich immer anpassen“ unten ankreuzen, um trotzdem umzurechnen. Nur bei der Methode „Glatte Iteration“; entspricht --normalize.
 # A checkbox indented under "Normalize deep colors" (also in the Color menu).
 panel-fit-range = Bereich immer anpassen

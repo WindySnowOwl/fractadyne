@@ -2860,6 +2860,12 @@ panel-shadow = Ombra
 panel-highlight = Luce
 panel-cycle = Ciclo
 panel-offset = Offset
+panel-palette-brightness = Luminosità
+panel-palette-brightness-hover = I mezzitoni della tavolozza più chiari o più scuri, nero e bianco invariati. Doppio clic per ripristinare.
+panel-palette-contrast = Contrasto
+panel-palette-contrast-hover = La luminosità della tavolozza allontanata dal centro o avvicinata a esso, nero e bianco invariati. Doppio clic per ripristinare.
+panel-palette-saturation = Saturazione
+panel-palette-saturation-hover = I colori della tavolozza più intensi o più spenti, grigi a 0, tinta e luminosità invariate. Doppio clic per ripristinare.
 panel-normalize-hover = A profondità estreme i conteggi di fuga coprono centinaia di migliaia di valori e un Ciclo fisso fa girare la tavolozza migliaia di volte tra pixel vicini — un campo denso corretto appare come rumore puntiforme. Questa opzione rimappa la tavolozza sull’intervallo di fuga misurato della vista (Ciclo imposta allora quante ripetizioni della tavolozza lo coprono) QUANDO la vista ha effettivamente aliasing — una vista uniforme resta invariata, perché rimapparla cambierebbe l’immagine per niente. Spuntare «Adatta sempre l’intervallo» qui sotto per rimappare comunque. Solo con il metodo Iterazione continua; corrisponde a --normalize.
 # A checkbox indented under "Normalize deep colors" (also in the Color menu).
 panel-fit-range = Adatta sempre l’intervallo

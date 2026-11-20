@@ -2780,6 +2780,12 @@ panel-shadow = 그림자
 panel-highlight = 하이라이트
 panel-cycle = 순환
 panel-offset = 오프셋
+panel-palette-brightness = 밝기
+panel-palette-brightness-hover = 팔레트의 중간 톤을 밝게 또는 어둡게 합니다. 검정과 흰색은 그대로입니다. 두 번 클릭하면 되돌립니다.
+panel-palette-contrast = 대비
+panel-palette-contrast-hover = 팔레트의 밝기를 가운데에서 벌리거나 가운데로 모읍니다. 검정과 흰색은 그대로입니다. 두 번 클릭하면 되돌립니다.
+panel-palette-saturation = 채도
+panel-palette-saturation-hover = 팔레트의 색을 진하게 또는 흐리게 합니다(0이면 회색). 색조와 밝기는 그대로입니다. 두 번 클릭하면 되돌립니다.
 panel-normalize-hover = 극한 깊이에서는 탈출 횟수가 수십만에 걸쳐 있어서, 고정된 순환은 이웃한 픽셀 사이에서 팔레트를 수천 번 감습니다 — 올바르고 조밀한 필드가 반점 노이즈처럼 보입니다. 이 옵션은 뷰가 실제로 앨리어싱될 때에만 팔레트를 뷰에서 측정한 탈출 범위에 다시 매핑합니다(그러면 순환은 그 범위에 팔레트가 몇 번 펼쳐질지를 정합니다) — 부드러운 뷰는 그대로 두는데, 다시 매핑하면 아무 이유 없이 그림이 바뀌기 때문입니다. 상관없이 다시 매핑하려면 아래의 ‘항상 범위에 맞춤’을 선택하십시오. 부드러운 반복 방식에만 해당하며, --normalize와 같습니다.
 # A checkbox indented under "Normalize deep colors" (also in the Color menu).
 panel-fit-range = 항상 범위에 맞춤

@@ -14,6 +14,7 @@
 //! Presets are chosen to loop seamlessly (first and last colors match), because the palette is
 //! cycled by the smooth iteration value and a mismatched pair shows as a hard seam.
 
+pub mod adjust;
 pub mod import;
 pub mod segment;
 pub mod tags;

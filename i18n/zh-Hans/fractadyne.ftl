@@ -2781,6 +2781,12 @@ panel-shadow = 阴影
 panel-highlight = 高光
 panel-cycle = 循环
 panel-offset = 偏移
+panel-palette-brightness = 亮度
+panel-palette-brightness-hover = 调亮或调暗调色板的中间调，黑色和白色保持不变。双击可还原。
+panel-palette-contrast = 对比度
+panel-palette-contrast-hover = 让调色板的明度从中间向两端拉开或向中间收拢，黑色和白色保持不变。双击可还原。
+panel-palette-saturation = 饱和度
+panel-palette-saturation-hover = 让调色板的颜色更浓或更淡，0 时为灰色，色相和明度保持不变。双击可还原。
 panel-normalize-hover = 在极深处，逃逸次数跨越数十万，固定的“循环”会在相邻像素之间让调色板回绕数千次——正确的密集区域看起来就像噪点。这会把调色板重新映射到视图实测的逃逸范围（之后由“循环”设置跨越该范围的调色板循环次数），但“仅当”视图确实出现混叠时才这样做——平滑的视图保持不变，因为重新映射它只会白白改变画面。勾选下方的“始终适配范围”可无条件重新映射。仅适用于“平滑迭代”方法；与 --normalize 一致。
 # A checkbox indented under "Normalize deep colors" (also in the Color menu).
 panel-fit-range = 始终适配范围

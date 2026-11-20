@@ -2780,6 +2780,12 @@ panel-shadow = Bayangan
 panel-highlight = Sorotan
 panel-cycle = Siklus
 panel-offset = Pergeseran
+panel-palette-brightness = Kecerahan
+panel-palette-brightness-hover = Nada tengah palet lebih terang atau lebih gelap; hitam dan putih tetap. Klik ganda untuk mengatur ulang.
+panel-palette-contrast = Kontras
+panel-palette-contrast-hover = Kecerahan palet direntangkan dari tengah atau ditarik ke arahnya; hitam dan putih tetap. Klik ganda untuk mengatur ulang.
+panel-palette-saturation = Saturasi
+panel-palette-saturation-hover = Warna palet lebih kuat atau lebih pudar, abu-abu di 0; rona dan kecerahan tetap. Klik ganda untuk mengatur ulang.
 panel-normalize-hover = Pada kedalaman ekstrem, jumlah iterasi lolos mencakup ratusan ribu, dan Siklus yang tetap membungkus palet ribuan kali di antara piksel yang bersebelahan — medan padat yang benar tampak seperti derau bintik-bintik. Ini memetakan ulang palet ke rentang lolos terukur dari tampilan (Siklus kemudian mengatur berapa sapuan palet yang mencakupnya) KETIKA tampilan benar-benar mengalami aliasing — tampilan yang halus dibiarkan, karena memetakannya ulang akan mengubah gambar tanpa alasan. Centang “Selalu sesuaikan rentang” di bawah untuk memetakan ulang dalam keadaan apa pun. Hanya metode Iterasi halus; sama dengan --normalize.
 # A checkbox indented under "Normalize deep colors" (also in the Color menu).
 panel-fit-range = Selalu sesuaikan rentang

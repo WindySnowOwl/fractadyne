@@ -272,7 +272,7 @@ impl crate::FractadyneApp {
                 return;
             }
         }
-        let lut = self.active_gradient().bake(fractadyne_color::segment::LUT_SIZE);
+        let lut = self.bake_palette(&self.active_gradient());
         let palette = AtlasPalette { lut: lut.entries, smooth: lut.smooth };
         let in_use = self.sheet_cell_in_use();
         // The cell in use is the view exactly (its own rate, its normalization); every other cell

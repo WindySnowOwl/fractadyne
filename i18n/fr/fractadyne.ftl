@@ -2861,6 +2861,12 @@ panel-shadow = Ombre
 panel-highlight = Lumière
 panel-cycle = Cycle
 panel-offset = Décalage
+panel-palette-brightness = Luminosité
+panel-palette-brightness-hover = Les tons moyens de la palette plus clairs ou plus sombres, le noir et le blanc conservés. Double-clic pour réinitialiser.
+panel-palette-contrast = Contraste
+panel-palette-contrast-hover = La clarté de la palette écartée du milieu ou ramenée vers lui, le noir et le blanc conservés. Double-clic pour réinitialiser.
+panel-palette-saturation = Saturation
+panel-palette-saturation-hover = Les couleurs de la palette plus vives ou plus ternes, grises à 0, la teinte et la clarté conservées. Double-clic pour réinitialiser.
 panel-normalize-hover = À profondeur extrême, les nombres d’échappement couvrent des centaines de milliers d’itérations et un Cycle fixe fait boucler la palette des milliers de fois entre pixels voisins — un champ dense correct apparaît comme un bruit moucheté. Ceci recale la palette sur la plage d’échappement mesurée de la vue (Cycle règle alors combien de balayages de la palette la couvrent) LORSQUE la vue présente réellement du crénelage — une vue lisse est laissée telle quelle, car la recaler changerait l’image pour rien. Cochez « Toujours ajuster la plage » ci-dessous pour recaler dans tous les cas. Méthode « Itération lissée » uniquement ; correspond à --normalize.
 # A checkbox indented under "Normalize deep colors" (also in the Color menu).
 panel-fit-range = Toujours ajuster la plage

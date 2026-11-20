@@ -77,6 +77,9 @@ The tour's coloring, by the keys a saved view (`.fdn`) carries. Each key it name
 | `normalize_fit` | bool | false | Live view only: always fit the palette to the escape range (method "smooth" or "trap"). |
 | `log_scale` | bool | false | Log color scale wherever the palette is normalized (method "smooth" or "trap"). |
 | `palette_aa` | bool | true | Anti-alias the palette: where its bands are finer than a pixel, the pixel shows their average color, over a footprint sized by the distance to the set (where the formula has none, by the next pixels' colors). |
+| `palette_brightness` | float, -1 to 1 | 0 | The palette's brightness, -1 to 1 (0: as the palette is): its midtones lighter or darker, black and white kept. |
+| `palette_contrast` | float, -1 to 1 | 0 | The palette's contrast, -1 to 1 (0: as the palette is): its lightness spread from the middle or drawn toward it, black and white kept. |
+| `palette_saturation` | float, 0 to 2 | 1 | The palette's saturation, 0 to 2 (1: as the palette is; 0: gray), hue and lightness kept. |
 
 ### `[playback]`
 

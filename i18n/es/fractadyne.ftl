@@ -2861,6 +2861,12 @@ panel-shadow = Sombra
 panel-highlight = Luz
 panel-cycle = Ciclo
 panel-offset = Desplazamiento
+panel-palette-brightness = Brillo
+panel-palette-brightness-hover = Los tonos medios de la paleta más claros u oscuros; el negro y el blanco se mantienen. Doble clic para restablecer.
+panel-palette-contrast = Contraste
+panel-palette-contrast-hover = La luminosidad de la paleta separada del centro o acercada a él; el negro y el blanco se mantienen. Doble clic para restablecer.
+panel-palette-saturation = Saturación
+panel-palette-saturation-hover = Los colores de la paleta más intensos o más apagados, grises en 0; el tono y la luminosidad se mantienen. Doble clic para restablecer.
 panel-normalize-hover = A profundidad extrema, los recuentos de escape abarcan cientos de miles y un Ciclo fijo da miles de vueltas a la paleta entre píxeles vecinos: un campo denso correcto se ve como ruido moteado. Esto reasigna la paleta al rango de escape medido en la vista (Ciclo fija entonces cuántos barridos de la paleta lo abarcan) CUANDO la vista realmente sufre aliasing; una vista suave se deja tal cual, porque reasignarla cambiaría la imagen para nada. Marca «Ajustar siempre el rango», abajo, para reasignarla de todos modos. Solo con el método suave; equivale a --normalize.
 # A checkbox indented under "Normalize deep colors" (also in the Color menu).
 panel-fit-range = Ajustar siempre el rango

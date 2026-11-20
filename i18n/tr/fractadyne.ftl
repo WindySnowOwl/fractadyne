@@ -2852,6 +2852,12 @@ panel-shadow = Gölge
 panel-highlight = Vurgu
 panel-cycle = Döngü
 panel-offset = Kaydırma
+panel-palette-brightness = Parlaklık
+panel-palette-brightness-hover = Paletin orta tonları daha açık ya da daha koyu; siyah ve beyaz korunur. Sıfırlamak için çift tıklayın.
+panel-palette-contrast = Kontrast
+panel-palette-contrast-hover = Paletin açıklığı ortadan uzaklaştırılır ya da ortaya çekilir; siyah ve beyaz korunur. Sıfırlamak için çift tıklayın.
+panel-palette-saturation = Doygunluk
+panel-palette-saturation-hover = Paletin renkleri daha canlı ya da daha soluk, 0'da gri; renk tonu ve açıklık korunur. Sıfırlamak için çift tıklayın.
 panel-normalize-hover = Aşırı derinlikte kaçış sayıları yüz binlerce değere yayılır ve sabit bir Döngü paleti komşu pikseller arasında binlerce kez başa sarar — doğru, yoğun bir alan benekli gürültü gibi görünür. Bu seçenek, görünüm gerçekten örtüştüğü (aliasing) ZAMAN paleti görünümün ölçülen kaçış aralığına yeniden eşler (Döngü bu durumda aralığı kaç palet geçişinin kaplayacağını belirler) — yumuşak bir görünüme dokunulmaz, çünkü onu yeniden eşlemek resmi boş yere değiştirirdi. Her durumda yeniden eşlemek için aşağıdaki “Her zaman aralığa sığdır” kutusunu işaretleyin. Yalnızca yumuşak yineleme yöntemi; --normalize ile aynıdır.
 # A checkbox indented under "Normalize deep colors" (also in the Color menu).
 panel-fit-range = Her zaman aralığa sığdır
