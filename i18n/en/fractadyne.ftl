@@ -273,6 +273,8 @@ menu-color-more = Cycle, offset, animation and effects: Controls panel ▸ Color
 # Color ▸ Browse palettes…, and its tooltip.
 menu-color-browse = Browse palettes…
 menu-color-browse-hover = Every palette over the current view, side by side: filter them by tag, and tag your own.
+menu-color-reset-settings = Reset coloring settings
+menu-color-reset-settings-hover = Cycle, Divide iterations, Offset, Brightness, Contrast, Saturation, the normalization switches, the palette's anti-aliasing and its animation, back to their defaults. The method, the palettes and the inside stay as they are.
 
 # The palette browser window.
 palette-browser-title = Palettes
@@ -3070,6 +3072,7 @@ panel-iter-div-method-hover = Only the Smooth method colors the iteration count,
 # Its tooltip while grayed out because 'Always fit range' is ticked.
 panel-iter-div-fit-hover = Changes nothing while 'Always fit range' is ticked: the palette is fitted to the view's escape range however the count is divided.
 panel-offset = Offset
+panel-double-click-reset = Double-click to reset.
 panel-palette-brightness = Brightness
 panel-palette-brightness-hover = The palette's midtones lighter or darker, black and white kept. Double-click to reset.
 panel-palette-contrast = Contrast

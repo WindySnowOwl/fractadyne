@@ -264,6 +264,8 @@ menu-color-more = 순환, 오프셋, 애니메이션, 효과: 컨트롤 패널 �
 # Color ▸ Browse palettes…, and its tooltip.
 menu-color-browse = 팔레트 둘러보기…
 menu-color-browse-hover = 현재 보기에 모든 팔레트를 나란히 보여 줍니다. 태그로 걸러 보고 내 팔레트에 태그를 붙일 수 있습니다.
+menu-color-reset-settings = 색칠 설정 초기화
+menu-color-reset-settings-hover = 주기, 반복 나누기, 오프셋, 밝기, 대비, 채도, 정규화 스위치, 팔레트 앤티에일리어싱과 애니메이션을 기본값으로 되돌립니다. 방법, 팔레트, 내부는 그대로입니다.
 
 # The palette browser window.
 palette-browser-title = 팔레트
@@ -2780,6 +2782,7 @@ panel-shadow = 그림자
 panel-highlight = 하이라이트
 panel-cycle = 순환
 panel-offset = 오프셋
+panel-double-click-reset = 두 번 클릭하면 되돌립니다.
 panel-palette-brightness = 밝기
 panel-palette-brightness-hover = 팔레트의 중간 톤을 밝게 또는 어둡게 합니다. 검정과 흰색은 그대로입니다. 두 번 클릭하면 되돌립니다.
 panel-palette-contrast = 대비

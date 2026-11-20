@@ -268,6 +268,8 @@ menu-color-more = Döngü, kaydırma, animasyon ve efektler: Denetimler paneli �
 # Color ▸ Browse palettes…, and its tooltip.
 menu-color-browse = Paletlere göz at…
 menu-color-browse-hover = Geçerli görünüm üzerinde tüm paletler yan yana: onları etikete göre süzün ve kendi paletlerinizi etiketleyin.
+menu-color-reset-settings = Renklendirme ayarlarını sıfırla
+menu-color-reset-settings-hover = Döngü, Yinelemeleri böl, Kaydırma, Parlaklık, Kontrast, Doygunluk, normalleştirme anahtarları, paletin kenar yumuşatması ve animasyonu varsayılan değerlerine döner. Yöntem, paletler ve iç kısım olduğu gibi kalır.
 
 # The palette browser window.
 palette-browser-title = Paletler
@@ -2852,6 +2854,7 @@ panel-shadow = Gölge
 panel-highlight = Vurgu
 panel-cycle = Döngü
 panel-offset = Kaydırma
+panel-double-click-reset = Sıfırlamak için çift tıklayın.
 panel-palette-brightness = Parlaklık
 panel-palette-brightness-hover = Paletin orta tonları daha açık ya da daha koyu; siyah ve beyaz korunur. Sıfırlamak için çift tıklayın.
 panel-palette-contrast = Kontrast

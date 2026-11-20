@@ -12434,6 +12434,26 @@ impl FractadyneApp {
         lut
     }
 
+    /// Color ▸ Reset coloring settings (user, 2026-11-20): the numbers and switches one tunes, back
+    /// to a new session's values: Cycle, Divide iterations, Offset, Brightness, Contrast, Saturation,
+    /// "Normalize deep colors" with its two switches, the palette's anti-aliasing, and its animation
+    /// and speed. The choices stay as they are: the method, the palettes (a custom gradient
+    /// included), the inside and the trap's shape, and the Effects section's settings.
+    pub(crate) fn reset_coloring_settings(&mut self) {
+        let d = fractadyne_state::ColoringSpec::default();
+        let c = &mut self.coloring;
+        c.cycle = d.cycle;
+        c.iter_div = d.iter_div;
+        c.offset = d.offset;
+        c.palette_adjust = fractadyne_color::adjust::PaletteAdjust::NEUTRAL;
+        c.normalize_live = d.normalize_live;
+        c.normalize_fit = d.normalize_fit;
+        c.log_palette = d.log_palette;
+        c.palette_aa = d.palette_aa;
+        self.anim.palette_anim = PaletteAnim::Off;
+        self.anim.palette_anim_speed = fractadyne_state::SessionState::default().palette_anim_speed;
+    }
+
     /// The palette's adjustment, hashed: zero bits for neutral values keep a signature what it was.
     pub(crate) fn palette_adjust_sig(&self) -> u64 {
         use std::hash::{Hash, Hasher};

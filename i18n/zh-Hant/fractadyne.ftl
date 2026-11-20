@@ -264,6 +264,8 @@ menu-color-more = 循環、位移、動畫與效果：控制面板 ▸ 著色
 # Color ▸ Browse palettes…, and its tooltip.
 menu-color-browse = 瀏覽調色盤…
 menu-color-browse-hover = 在目前檢視上並排顯示所有調色盤：可依標籤篩選，並為自己的調色盤加上標籤。
+menu-color-reset-settings = 重設配色設定
+menu-color-reset-settings-hover = 將週期、迭代除數、偏移、亮度、對比、飽和度、正規化開關、調色盤反鋸齒及其動畫恢復為預設值。方法、調色盤與內部保持不變。
 
 # The palette browser window.
 palette-browser-title = 調色盤
@@ -2780,6 +2782,7 @@ panel-shadow = 陰影
 panel-highlight = 亮部
 panel-cycle = 循環
 panel-offset = 位移
+panel-double-click-reset = 按兩下可還原。
 panel-palette-brightness = 亮度
 panel-palette-brightness-hover = 調亮或調暗調色盤的中間調，黑色與白色保持不變。按兩下可還原。
 panel-palette-contrast = 對比

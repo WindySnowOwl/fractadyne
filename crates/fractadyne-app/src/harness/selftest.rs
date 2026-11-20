@@ -72,7 +72,7 @@ pub(crate) const GROUPS: &[&str] = &[
     "display", "catalog", "goldens", "bench-matrix", "live-res", "appearance", "band-seams", "palette-aa",
     "checklist", "replay", "settings-quarantine", "expmap", "assemble", "de-pixels",
     "colour-box", "cycle-check", "export-contain", "honest-step", "julia-critical", "palette-fade", "retreat", "view-thumb",
-    "width-independence", "coloring-matrix-quick", "color-sig",
+    "width-independence", "coloring-matrix-quick", "color-sig", "coloring-reset",
 ];
 
 /// Groups that run ONLY when named. ⛔Kept out of `GROUPS` so a bare `--selftest` never pays for
@@ -11319,6 +11319,100 @@ zoom = \"1e94\"
                 self.coloring.use_binary,
                 self.coloring.palette_adjust,
             ) = was;
+        }
+
+        // ---- Color > Reset coloring settings puts the tuned values back and keeps the choices ----
+        // No render: every value it resets is set away from a new session's, every choice it keeps is
+        // set to something not the default too, then the reset runs and both lists are read back.
+        if want("coloring-reset") {
+            use fractadyne_color::adjust::PaletteAdjust;
+            let c0 = (
+                self.coloring.cycle,
+                self.coloring.iter_div,
+                self.coloring.offset,
+                self.coloring.palette_adjust,
+                self.coloring.normalize_live,
+                self.coloring.normalize_fit,
+                self.coloring.log_palette,
+                self.coloring.palette_aa,
+            );
+            let k0 = (
+                self.coloring.color_method,
+                self.coloring.palette_idx,
+                self.coloring.interior,
+                self.coloring.interior_palette,
+                self.coloring.trap_type,
+                self.anim.palette_anim,
+                self.anim.palette_anim_speed,
+            );
+            let d = fractadyne_state::ColoringSpec::default();
+            let speed0 = fractadyne_state::SessionState::default().palette_anim_speed;
+            // Away from the defaults.
+            self.coloring.cycle = 0.9;
+            self.coloring.iter_div = 8;
+            self.coloring.offset = 0.7;
+            self.coloring.palette_adjust = PaletteAdjust { brightness: 0.4, contrast: -0.3, saturation: 1.6 };
+            self.coloring.normalize_live = !d.normalize_live;
+            self.coloring.normalize_fit = !d.normalize_fit;
+            self.coloring.log_palette = !d.log_palette;
+            self.coloring.palette_aa = !d.palette_aa;
+            self.anim.palette_anim = crate::PaletteAnim::ALL[1];
+            self.anim.palette_anim_speed = 1.5;
+            // The choices, not their defaults.
+            let method = crate::ColorMethod::Stripe;
+            let palette = fractadyne_color::preset_by_id("ice").unwrap_or(1);
+            let inside = Some(crate::InteriorMode::Trap);
+            let inside_palette = fractadyne_color::preset_by_id("ember");
+            let trap = crate::TrapType::Cross;
+            self.coloring.color_method = method;
+            self.coloring.palette_idx = palette;
+            self.coloring.interior = inside;
+            self.coloring.interior_palette = inside_palette;
+            self.coloring.trap_type = trap;
+            self.reset_coloring_settings();
+            let c = &self.coloring;
+            let reset = c.cycle == d.cycle
+                && c.iter_div == d.iter_div
+                && c.offset == d.offset
+                && c.palette_adjust.is_neutral()
+                && c.normalize_live == d.normalize_live
+                && c.normalize_fit == d.normalize_fit
+                && c.log_palette == d.log_palette
+                && c.palette_aa == d.palette_aa
+                && self.anim.palette_anim == crate::PaletteAnim::Off
+                && self.anim.palette_anim_speed == speed0;
+            let kept = c.color_method == method
+                && c.palette_idx == palette
+                && c.interior == inside
+                && c.interior_palette == inside_palette
+                && c.trap_type == trap;
+            push_check(&mut checks, &mut last_check_t, SelfCheck {
+                category: "consistency",
+                name: "Reset coloring settings puts the tuned values back and keeps the choices".into(),
+                params: "Cycle, Divide iterations, Offset, the palette's adjustment, the normalization switches, anti-aliasing and animation set away from their defaults; method stripe, palette ice, the inside by the trap in ember, trap cross".into(),
+                result: format!("tuned values back to a new session's: {reset}; choices kept: {kept}"),
+                threshold: "both",
+                pass: reset && kept,
+            });
+            (
+                self.coloring.cycle,
+                self.coloring.iter_div,
+                self.coloring.offset,
+                self.coloring.palette_adjust,
+                self.coloring.normalize_live,
+                self.coloring.normalize_fit,
+                self.coloring.log_palette,
+                self.coloring.palette_aa,
+            ) = c0;
+            (
+                self.coloring.color_method,
+                self.coloring.palette_idx,
+                self.coloring.interior,
+                self.coloring.interior_palette,
+                self.coloring.trap_type,
+                self.anim.palette_anim,
+                self.anim.palette_anim_speed,
+            ) = k0;
         }
 
         // ---- appearance: the image actually CHANGES when a control changes ----

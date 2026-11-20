@@ -264,6 +264,8 @@ menu-color-more = 循环、偏移、动画和效果：控制面板 ▸ 着色
 # Color ▸ Browse palettes…, and its tooltip.
 menu-color-browse = 浏览调色板…
 menu-color-browse-hover = 在当前视图上并排显示所有调色板：可按标签筛选，并为自己的调色板添加标签。
+menu-color-reset-settings = 重置配色设置
+menu-color-reset-settings-hover = 将周期、迭代除数、偏移、亮度、对比度、饱和度、归一化开关、调色板抗锯齿及其动画恢复为默认值。方法、调色板和内部保持不变。
 
 # The palette browser window.
 palette-browser-title = 调色板
@@ -2781,6 +2783,7 @@ panel-shadow = 阴影
 panel-highlight = 高光
 panel-cycle = 循环
 panel-offset = 偏移
+panel-double-click-reset = 双击可还原。
 panel-palette-brightness = 亮度
 panel-palette-brightness-hover = 调亮或调暗调色板的中间调，黑色和白色保持不变。双击可还原。
 panel-palette-contrast = 对比度

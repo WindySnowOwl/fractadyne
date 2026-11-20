@@ -268,6 +268,8 @@ menu-color-more = Ciclo, offset, animazione ed effetti: pannello Controlli ▸ C
 # Color ▸ Browse palettes…, and its tooltip.
 menu-color-browse = Sfoglia le tavolozze…
 menu-color-browse-hover = Tutte le tavolozze sulla vista attuale, una accanto all’altra: filtrale per etichetta ed etichetta le tue.
+menu-color-reset-settings = Ripristina le impostazioni del colore
+menu-color-reset-settings-hover = Ciclo, Dividi iterazioni, Spostamento, Luminosità, Contrasto, Saturazione, gli interruttori di normalizzazione, l’antialiasing della tavolozza e la sua animazione tornano ai valori predefiniti. Il metodo, le tavolozze e l’interno restano come sono.
 
 # The palette browser window.
 palette-browser-title = Tavolozze
@@ -2860,6 +2862,7 @@ panel-shadow = Ombra
 panel-highlight = Luce
 panel-cycle = Ciclo
 panel-offset = Offset
+panel-double-click-reset = Doppio clic per ripristinare.
 panel-palette-brightness = Luminosità
 panel-palette-brightness-hover = I mezzitoni della tavolozza più chiari o più scuri, nero e bianco invariati. Doppio clic per ripristinare.
 panel-palette-contrast = Contrasto

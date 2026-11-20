@@ -12,6 +12,11 @@ detail is in the git history.
 
 ## 0.3.1 (unreleased)
 
+- **Ways back to the defaults for the coloring.** Every slider in the Coloring and Effects sections
+  goes back to its default on a double-click, as its tooltip says. Color ▸ Reset coloring settings
+  puts the values you tune back at once (Cycle, Divide iterations, Offset, Brightness, Contrast,
+  Saturation, the normalization switches, the palette's anti-aliasing and its animation) and keeps
+  your choices: the method, the palettes, the inside and the trap's shape.
 - **The Coloring controls in a clearer order.** The panel's Coloring section is in four groups now,
   with a thin line between them: the method (with the trap's shape when the method is the orbit
   trap); the palette and how it looks (Edit gradient, Brightness, Contrast, Saturation and the

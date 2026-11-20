@@ -268,6 +268,8 @@ menu-color-more = Zyklus, Versatz, Animation und Effekte: Bedienfeld ▸ Färbun
 # Color ▸ Browse palettes…, and its tooltip.
 menu-color-browse = Paletten durchsuchen…
 menu-color-browse-hover = Jede Palette über der aktuellen Ansicht, nebeneinander: nach Schlagwort filtern und eigene verschlagworten.
+menu-color-reset-settings = Farbeinstellungen zurücksetzen
+menu-color-reset-settings-hover = Zyklus, Iterationen teilen, Versatz, Helligkeit, Kontrast, Sättigung, die Normalisierungsschalter, die Kantenglättung der Palette und ihre Animation auf die Standardwerte. Methode, Paletten und das Innere bleiben, wie sie sind.
 
 # The palette browser window.
 palette-browser-title = Paletten
@@ -2861,6 +2863,7 @@ panel-shadow = Schatten
 panel-highlight = Lichter
 panel-cycle = Zyklus
 panel-offset = Versatz
+panel-double-click-reset = Doppelklick setzt zurück.
 panel-palette-brightness = Helligkeit
 panel-palette-brightness-hover = Die Mitteltöne der Palette heller oder dunkler, Schwarz und Weiß bleiben. Doppelklick setzt zurück.
 panel-palette-contrast = Kontrast

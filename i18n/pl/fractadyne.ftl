@@ -270,6 +270,8 @@ menu-color-more = Cykl, przesunięcie, animacja i efekty: panel Sterowanie ▸ K
 # Color ▸ Browse palettes…, and its tooltip.
 menu-color-browse = Przeglądaj palety…
 menu-color-browse-hover = Wszystkie palety na bieżącym widoku, obok siebie: filtruj je według tagów i taguj własne.
+menu-color-reset-settings = Przywróć ustawienia kolorowania
+menu-color-reset-settings-hover = Cykl, Dziel iteracje, Przesunięcie, Jasność, Kontrast, Nasycenie, przełączniki normalizacji, wygładzanie palety i jej animacja wracają do wartości domyślnych. Metoda, palety i wnętrze pozostają bez zmian.
 
 # The palette browser window.
 palette-browser-title = Palety
@@ -2952,6 +2954,7 @@ panel-shadow = Cień
 panel-highlight = Światło
 panel-cycle = Cykl
 panel-offset = Przesunięcie
+panel-double-click-reset = Kliknij dwukrotnie, aby przywrócić.
 panel-palette-brightness = Jasność
 panel-palette-brightness-hover = Półtony palety jaśniejsze lub ciemniejsze, czerń i biel bez zmian. Kliknij dwukrotnie, aby przywrócić.
 panel-palette-contrast = Kontrast
