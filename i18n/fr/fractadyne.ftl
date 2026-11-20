@@ -268,6 +268,8 @@ menu-color-more = Cycle, décalage, animation et effets : panneau de contrôle 
 # Color ▸ Browse palettes…, and its tooltip.
 menu-color-browse = Parcourir les palettes…
 menu-color-browse-hover = Toutes les palettes sur la vue actuelle, côte à côte : filtrez-les par étiquette et étiquetez les vôtres.
+menu-color-reset-settings = Réinitialiser les réglages de couleur
+menu-color-reset-settings-hover = Cycle, Diviser les itérations, Décalage, Luminosité, Contraste, Saturation, les options de normalisation, l’anticrénelage de la palette et son animation reviennent à leurs valeurs par défaut. La méthode, les palettes et l’intérieur restent tels quels.
 
 # The palette browser window.
 palette-browser-title = Palettes
@@ -2861,6 +2863,7 @@ panel-shadow = Ombre
 panel-highlight = Lumière
 panel-cycle = Cycle
 panel-offset = Décalage
+panel-double-click-reset = Double-clic pour réinitialiser.
 panel-palette-brightness = Luminosité
 panel-palette-brightness-hover = Les tons moyens de la palette plus clairs ou plus sombres, le noir et le blanc conservés. Double-clic pour réinitialiser.
 panel-palette-contrast = Contraste

@@ -270,6 +270,8 @@ menu-color-more = Цикл, зсув, анімація й ефекти: Керу
 # Color ▸ Browse palettes…, and its tooltip.
 menu-color-browse = Огляд палітр…
 menu-color-browse-hover = Усі палітри на поточному вигляді, поруч одна з одною: фільтруйте їх за мітками й додавайте мітки своїм.
+menu-color-reset-settings = Скинути налаштування забарвлення
+menu-color-reset-settings-hover = Цикл, поділ ітерацій, зсув, яскравість, контраст, насиченість, перемикачі нормалізації, згладжування палітри та її анімація повертаються до типових значень. Метод, палітри й внутрішня частина лишаються як є.
 
 # The palette browser window.
 palette-browser-title = Палітри
@@ -3009,6 +3011,7 @@ panel-shadow = Тінь
 panel-highlight = Світло
 panel-cycle = Цикл
 panel-offset = Зсув
+panel-double-click-reset = Подвійне клацання — скидання.
 panel-palette-brightness = Яскравість
 panel-palette-brightness-hover = Середні тони палітри світліші або темніші, чорний і білий зберігаються. Подвійне клацання — скидання.
 panel-palette-contrast = Контраст

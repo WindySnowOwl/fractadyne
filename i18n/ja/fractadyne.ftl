@@ -264,6 +264,8 @@ menu-color-more = サイクル、オフセット、アニメーション、エ�
 # Color ▸ Browse palettes…, and its tooltip.
 menu-color-browse = パレットを一覧…
 menu-color-browse-hover = 現在のビューにすべてのパレットを並べて表示します。タグで絞り込み、自分のパレットにタグを付けられます。
+menu-color-reset-settings = 配色の設定をリセット
+menu-color-reset-settings-hover = サイクル、反復の除数、オフセット、明るさ、コントラスト、彩度、正規化のスイッチ、パレットのアンチエイリアスとアニメーションを既定値に戻します。手法、パレット、内部はそのままです。
 
 # The palette browser window.
 palette-browser-title = パレット
@@ -2781,6 +2783,7 @@ panel-shadow = シャドウ
 panel-highlight = ハイライト
 panel-cycle = サイクル
 panel-offset = オフセット
+panel-double-click-reset = ダブルクリックで元に戻します。
 panel-palette-brightness = 明るさ
 panel-palette-brightness-hover = パレットの中間調を明るく、または暗くします。黒と白はそのままです。ダブルクリックで元に戻します。
 panel-palette-contrast = コントラスト

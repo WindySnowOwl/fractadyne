@@ -257,16 +257,20 @@ impl FractadyneApp {
                     ui.label(egui::RichText::new(note).small().color(ui.visuals().warn_fg_color));
                 }
                 if self.coloring.color_method == ColorMethod::Stripe {
-                    labelled(ui, &tr!(panel_stripe_density), |ui| {
+                    let r = labelled(ui, &tr!(panel_stripe_density), |ui| {
                         ui.add(
                             egui::Slider::new(&mut self.coloring.stripe_freq, crate::slider_range::STRIPE_FREQ)
                                 .logarithmic(true),
                         )
                     });
+                    if r.double_clicked() {
+                        self.coloring.stripe_freq = fractadyne_state::ColoringSpec::default().stripe_freq;
+                    }
+                    r.on_hover_text(tr!(panel_double_click_reset));
                     ui.checkbox(&mut self.coloring.stripe_tail, tr!(panel_stripe_tail))
                         .on_hover_text(tr!(panel_stripe_tail_hover));
                     if self.coloring.stripe_tail {
-                        labelled(ui, &tr!(panel_tail_length), |ui| {
+                        let r = labelled(ui, &tr!(panel_tail_length), |ui| {
                             ui.add(
                                 egui::Slider::new(&mut self.coloring.stripe_tail_len, 4..=1024)
                                     .logarithmic(true)
@@ -274,8 +278,11 @@ impl FractadyneApp {
                                     .custom_formatter(|n, _| crate::grouped_count(n))
                                     .custom_parser(crate::parse_grouped_number),
                             )
-                            .on_hover_text(tr!(panel_tail_length_hover))
                         });
+                        if r.double_clicked() {
+                            self.coloring.stripe_tail_len = fractadyne_state::ColoringSpec::default().stripe_tail_len;
+                        }
+                        r.on_hover_text(format!("{}\n\n{}", tr!(panel_tail_length_hover), tr!(panel_double_click_reset)));
                     }
                 }
                 // The trap's shape beside the method that uses it. When only the inside uses the
@@ -436,9 +443,16 @@ impl FractadyneApp {
                 // Where a pixel's value lands on the palette: rate, divisor, offset, the fitted
                 // range, and the animation that moves the offset.
                 ui.separator();
-                labelled(ui, &tr!(panel_cycle), |ui| {
+                // Every slider here resets on a double-click, to a new session's value (user,
+                // 2026-11-20); Color ▸ Reset coloring settings puts the section's numbers back at once.
+                let d = fractadyne_state::ColoringSpec::default();
+                let r = labelled(ui, &tr!(panel_cycle), |ui| {
                     ui.add(egui::Slider::new(&mut self.coloring.cycle, crate::slider_range::CYCLE))
                 });
+                if r.double_clicked() {
+                    self.coloring.cycle = d.cycle;
+                }
+                r.on_hover_text(tr!(panel_double_click_reset));
                 // "Divide iterations": under Cycle, because it scales what Cycle chose. ⭐Grayed out
                 // where it would change no pixel (another method, or a range fit), with a tooltip
                 // that says why — a live control that does nothing reads as a broken one.
@@ -451,22 +465,30 @@ impl FractadyneApp {
                 if (0..=self.dual as usize).any(|vi| self.live_norm_window(vi).is_some()) {
                     hover = format!("{hover}\n\n{}", tr!(panel_iter_div_normalized_note));
                 }
-                labelled(ui, &tr!(panel_iter_div), |ui| {
+                hover = format!("{hover}\n\n{}", tr!(panel_double_click_reset));
+                let r = labelled(ui, &tr!(panel_iter_div), |ui| {
                     ui.add_enabled(
                         applies,
                         egui::Slider::new(&mut self.coloring.iter_div, 1..=fractadyne_state::ITER_DIV_MAX)
                             .logarithmic(true),
                     )
-                })
-                .on_hover_text(hover)
+                });
+                if r.double_clicked() {
+                    self.coloring.iter_div = d.iter_div;
+                }
+                r.on_hover_text(hover)
                 .on_disabled_hover_text(if self.coloring.color_method == crate::ColorMethod::Smooth {
                     tr!(panel_iter_div_fit_hover)
                 } else {
                     tr!(panel_iter_div_method_hover)
                 });
-                labelled(ui, &tr!(panel_offset), |ui| {
+                let r = labelled(ui, &tr!(panel_offset), |ui| {
                     ui.add(egui::Slider::new(&mut self.coloring.offset, crate::slider_range::OFFSET))
                 });
+                if r.double_clicked() {
+                    self.coloring.offset = d.offset;
+                }
+                r.on_hover_text(tr!(panel_double_click_reset));
                 // ⭐Normalization FIRST, then the mapping it selects. `log_palette` is read only
                 // inside the normalized path, so with normalization off it changed nothing — and
                 // it sat ABOVE the switch that gives it meaning.
@@ -483,15 +505,18 @@ impl FractadyneApp {
                             }
                         });
                 });
-                labelled(ui, &tr!(panel_anim_speed), |ui| {
+                let r = labelled(ui, &tr!(panel_anim_speed), |ui| {
                     ui.add_enabled(
                         self.anim.palette_anim != PaletteAnim::Off,
                         egui::Slider::new(&mut self.anim.palette_anim_speed, 0.01..=2.0)
                             .suffix("/s")
                             .logarithmic(true),
                     )
-                })
-                .on_hover_text(tr!(panel_anim_speed_hover));
+                });
+                if r.double_clicked() {
+                    self.anim.palette_anim_speed = fractadyne_state::SessionState::default().palette_anim_speed;
+                }
+                r.on_hover_text(format!("{}\n\n{}", tr!(panel_anim_speed_hover), tr!(panel_double_click_reset)));
                 if self.anim.palette_anim == PaletteAnim::Random && ui.button(tr!(panel_shuffle_gradient)).clicked()
                 {
                     self.anim.random_palette.reshuffle();
@@ -599,19 +624,27 @@ impl FractadyneApp {
                     .on_hover_text(tr!(panel_relief_lighting_hover))
                     .on_disabled_hover_text(&no_de);
                 ui.add_enabled_ui(has_de && self.effects.light, |ui| {
-                    labelled(ui, &tr!(panel_light_angle), |ui| {
+                    let d = fractadyne_state::ColoringSpec::default();
+                    let r = labelled(ui, &tr!(panel_light_angle), |ui| {
                         ui.add(
                             egui::Slider::new(&mut self.effects.light_angle, 0.0..=std::f32::consts::TAU)
                                 .suffix(" rad"),
                         )
                     });
-                    labelled(ui, &tr!(panel_relief), |ui| {
+                    if r.double_clicked() {
+                        self.effects.light_angle = d.light_angle;
+                    }
+                    r.on_hover_text(tr!(panel_double_click_reset));
+                    let r = labelled(ui, &tr!(panel_relief), |ui| {
                         ui.add(
                             egui::Slider::new(&mut self.effects.light_height, crate::slider_range::LIGHT_HEIGHT)
                                 .logarithmic(true),
                         )
-                    })
-                    .on_hover_text(tr!(panel_relief_hover));
+                    });
+                    if r.double_clicked() {
+                        self.effects.light_height = d.light_height;
+                    }
+                    r.on_hover_text(format!("{}\n\n{}", tr!(panel_relief_hover), tr!(panel_double_click_reset)));
                     ui.checkbox(&mut self.effects.light_anim, tr!(panel_rotate_light))
                         .on_hover_text(tr!(panel_rotate_light_hover));
                 });
@@ -619,16 +652,24 @@ impl FractadyneApp {
                     .on_hover_text(tr!(panel_distance_glow_hover))
                     .on_disabled_hover_text(&no_de);
                 ui.add_enabled_ui(has_de && self.effects.de, |ui| {
-                    labelled(ui, &tr!(panel_glow), |ui| {
+                    let d = fractadyne_state::ColoringSpec::default();
+                    let r = labelled(ui, &tr!(panel_glow), |ui| {
                         ui.add(egui::Slider::new(&mut self.effects.de_strength, crate::slider_range::GLOW_STRENGTH))
                     });
-                    labelled(ui, &tr!(panel_band_width), |ui| {
+                    if r.double_clicked() {
+                        self.effects.de_strength = d.de_strength;
+                    }
+                    r.on_hover_text(tr!(panel_double_click_reset));
+                    let r = labelled(ui, &tr!(panel_band_width), |ui| {
                         ui.add(
                             egui::Slider::new(&mut self.effects.de_width, crate::slider_range::GLOW_WIDTH)
                                 .logarithmic(true),
                         )
-                    })
-                    .on_hover_text(tr!(panel_band_width_hover));
+                    });
+                    if r.double_clicked() {
+                        self.effects.de_width = d.de_width;
+                    }
+                    r.on_hover_text(format!("{}\n\n{}", tr!(panel_band_width_hover), tr!(panel_double_click_reset)));
                     ui.checkbox(&mut self.effects.de_anim, tr!(panel_animate_glow))
                         .on_hover_text(tr!(panel_animate_glow_hover));
                 });

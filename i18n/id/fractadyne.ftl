@@ -264,6 +264,8 @@ menu-color-more = Siklus, pergeseran, animasi, dan efek: panel Kontrol ▸ Pewar
 # Color ▸ Browse palettes…, and its tooltip.
 menu-color-browse = Jelajahi palet…
 menu-color-browse-hover = Semua palet di atas tampilan saat ini, berdampingan: saring menurut tag dan beri tag pada milik Anda.
+menu-color-reset-settings = Atur ulang pengaturan warna
+menu-color-reset-settings-hover = Siklus, Bagi iterasi, Geser, Kecerahan, Kontras, Saturasi, sakelar normalisasi, anti-alias palet, dan animasinya kembali ke nilai bawaan. Metode, palet, dan bagian dalam tetap seperti semula.
 
 # The palette browser window.
 palette-browser-title = Palet
@@ -2780,6 +2782,7 @@ panel-shadow = Bayangan
 panel-highlight = Sorotan
 panel-cycle = Siklus
 panel-offset = Pergeseran
+panel-double-click-reset = Klik ganda untuk mengatur ulang.
 panel-palette-brightness = Kecerahan
 panel-palette-brightness-hover = Nada tengah palet lebih terang atau lebih gelap; hitam dan putih tetap. Klik ganda untuk mengatur ulang.
 panel-palette-contrast = Kontras
