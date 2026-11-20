@@ -7972,7 +7972,7 @@ Mockups: [design/mockups/](design/mockups/).
   browser's and the method sheet's thumbnails); the interface's swatches stay as authored. Settings:
   `ColoringSpec.palette_brightness/_contrast/_saturation` (session, farm), view keys of the same
   names, `--palette-brightness`/`-contrast`/`-saturation`; in `accum_color_sig` and the overview
-  map's key. Panel rows under Offset, a double-click resets one (no reset button: the narrow panel).
+  map's key. Panel rows under the palette (the section's order, 2026-11-20), a double-click resets one (no reset button: the narrow panel).
   Tests: color unit tests (OKLab round trip, neutral bit-exact, each slider's direction, hue at the
   gamut's edge, clamping); self-test `color-sig` rows; view-coloring round trips with non-default
   values; uitest `palette-adjust` (saturation 0: the view and an export gray, the control colored,
