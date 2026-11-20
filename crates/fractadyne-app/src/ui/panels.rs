@@ -15,6 +15,27 @@ const PANEL_LABEL_W: f32 = 104.0;
 ///
 /// Checkboxes deliberately do NOT use this: a trailing label is the convention for a checkbox,
 /// and the panel's seventeen already read correctly.
+impl crate::FractadyneApp {
+    /// The panel's Brightness, Contrast and Saturation rows (`fractadyne_color::adjust`).
+    fn palette_adjust_rows(&mut self, ui: &mut egui::Ui) {
+        use fractadyne_color::adjust::PaletteAdjust;
+        let neutral = PaletteAdjust::NEUTRAL;
+        let adj = &mut self.coloring.palette_adjust;
+        let rows: [(String, String, &mut f32, std::ops::RangeInclusive<f32>, f32); 3] = [
+            (tr!(panel_palette_brightness), tr!(panel_palette_brightness_hover), &mut adj.brightness, crate::slider_range::PALETTE_BRIGHTNESS, neutral.brightness),
+            (tr!(panel_palette_contrast), tr!(panel_palette_contrast_hover), &mut adj.contrast, crate::slider_range::PALETTE_CONTRAST, neutral.contrast),
+            (tr!(panel_palette_saturation), tr!(panel_palette_saturation_hover), &mut adj.saturation, crate::slider_range::PALETTE_SATURATION, neutral.saturation),
+        ];
+        for (label, hover, value, range, reset) in rows {
+            let r = labelled(ui, &label, |ui| ui.add(egui::Slider::new(value, range)));
+            if r.double_clicked() {
+                *value = reset;
+            }
+            r.on_hover_text(hover);
+        }
+    }
+}
+
 pub(crate) fn labelled<R>(ui: &mut egui::Ui, label: &str, add: impl FnOnce(&mut egui::Ui) -> R) -> R {
     ui.horizontal(|ui| {
         // PAD to the column rather than laying the label out inside a fixed-size child: a
@@ -432,6 +453,10 @@ impl FractadyneApp {
                 labelled(ui, &tr!(panel_offset), |ui| {
                     ui.add(egui::Slider::new(&mut self.coloring.offset, crate::slider_range::OFFSET))
                 });
+                // The palette's brightness, contrast and saturation (user request 2026-11-15): the
+                // palette as it colors the view, its stops untouched; a recolor, never a pass. A
+                // double-click puts one back (no reset button: the rows stay as wide as the others).
+                self.palette_adjust_rows(ui);
                 // ⭐Normalization FIRST, then the mapping it selects. `log_palette` is read only
                 // inside the normalized path, so with normalization off it changed nothing — and
                 // it sat ABOVE the switch that gives it meaning.

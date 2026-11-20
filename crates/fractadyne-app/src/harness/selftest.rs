@@ -10728,6 +10728,9 @@ zoom = \"1e94\"
                 interior_color: [0.7, 0.1, 0.4],
                 interior_fit: true,
                 palette_aa: false,
+                palette_brightness: 0.25,
+                palette_contrast: -0.4,
+                palette_saturation: 1.5,
             };
             // (coloring, lines its view must hold)
             let colorings = [
@@ -10923,6 +10926,9 @@ zoom = \"1e94\"
                 interior_color: [0.9, 0.2, 0.6],
                 interior_fit: true,
                 palette_aa: false,
+                palette_brightness: -0.3,
+                palette_contrast: 0.6,
+                palette_saturation: 0.5,
             };
             let fields = |s: &fractadyne_state::ColoringSpec| match serde_json::to_value(s) {
                 Ok(serde_json::Value::Object(m)) => m,
@@ -11253,7 +11259,9 @@ zoom = \"1e94\"
                 self.coloring.interior_fit,
                 self.coloring.use_duotone,
                 self.coloring.use_binary,
+                self.coloring.palette_adjust,
             );
+            self.coloring.palette_adjust = fractadyne_color::adjust::PaletteAdjust::NEUTRAL;
             self.coloring.color_method = crate::ColorMethod::Smooth;
             self.coloring.interior = Some(InteriorMode::Trap);
             self.coloring.interior_palette = None;
@@ -11279,12 +11287,20 @@ zoom = \"1e94\"
             self.coloring.interior_color = other;
             let k = keys(self);
             rows.push(("a solid inside's color", k.0 != solid.0, k.1 != solid.1));
+            // The palette's brightness, contrast and saturation recolor every sample too.
+            let before = keys(self);
+            self.coloring.palette_adjust.saturation = 0.5;
+            let k = keys(self);
+            rows.push(("the palette's saturation", k.0 != before.0, k.1 != before.1));
+            self.coloring.palette_adjust = fractadyne_color::adjust::PaletteAdjust { brightness: 0.3, ..fractadyne_color::adjust::PaletteAdjust::NEUTRAL };
+            let k = keys(self);
+            rows.push(("the palette's brightness", k.0 != before.0, k.1 != before.1));
             let pass = stable && rows.iter().all(|(_, a, m)| *a && *m);
             let yn = |b: bool| if b { "yes" } else { "NO" };
             push_check(&mut checks, &mut last_check_t, SelfCheck {
                 category: "consistency",
                 name: "a change to the inside's coloring restarts a deep view's average and redraws the overview map".into(),
-                params: "Smooth, the inside by the orbit trap; then its palette (ice), its fit, solid, and a solid inside's color".into(),
+                params: "Smooth, the inside by the orbit trap; then its palette (ice), its fit, solid, a solid inside's color, and the palette's saturation and brightness".into(),
                 result: format!(
                     "unchanged keys stable: {}; {}",
                     yn(stable),
@@ -11301,6 +11317,7 @@ zoom = \"1e94\"
                 self.coloring.interior_fit,
                 self.coloring.use_duotone,
                 self.coloring.use_binary,
+                self.coloring.palette_adjust,
             ) = was;
         }
 

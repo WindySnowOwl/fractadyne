@@ -379,6 +379,9 @@ enum Screen {
     /// ...then on: a recolor, the inside untouched, the outside changed, and an export of the view
     /// is the screen.
     PaletteAa,
+    /// The palette's saturation at 0 on the same view (`fractadyne_color::adjust`): every pixel
+    /// gray, the step before's colored (the control), an export gray too, and no pass.
+    PaletteAdjust,
 }
 
 /// The method sheet cell the `method-sheet-deep-asked` steps ask for: Decomposition, which no
@@ -1309,6 +1312,7 @@ fn build_steps() -> Vec<Step> {
         screen("inside-palette-browser", Screen::InsidePaletteBrowser),
         screen("palette-aa-base", Screen::PaletteAaBase),
         screen("palette-aa", Screen::PaletteAa),
+        screen("palette-adjust", Screen::PaletteAdjust),
     ]
 }
 
@@ -1624,7 +1628,7 @@ impl FractadyneApp {
     fn uitest_atlas_read(&self, methods: &[Option<crate::ColorMethod>], size: [u32; 2]) -> Option<Vec<Vec<u8>>> {
         use fractadyne_gpu::atlas::{self, AtlasCell, AtlasPalette, CellColoring};
         let rs = self.render_state.as_ref()?;
-        let lut = self.active_gradient().bake(fractadyne_color::segment::LUT_SIZE);
+        let lut = self.bake_palette(&self.active_gradient());
         let palette = AtlasPalette { lut: lut.entries, smooth: lut.smooth };
         let cells: Vec<AtlasCell> = methods
             .iter()
@@ -1650,7 +1654,7 @@ impl FractadyneApp {
             .iter()
             .map(|i| {
                 let p = &fractadyne_color::PRESETS[*i];
-                let l = fractadyne_color::segment::Gradient::from_stops(p.name, p.stops).bake(fractadyne_color::segment::LUT_SIZE);
+                let l = self.bake_palette(&fractadyne_color::segment::Gradient::from_stops(p.name, p.stops));
                 AtlasPalette { lut: l.entries, smooth: l.smooth }
             })
             .collect();
@@ -1668,7 +1672,7 @@ impl FractadyneApp {
         use fractadyne_gpu::atlas::{self, AtlasPalette};
         let rs = self.render_state.as_ref()?;
         let p = &fractadyne_color::PRESETS[preset];
-        let l = fractadyne_color::segment::Gradient::from_stops(p.name, p.stops).bake(fractadyne_color::segment::LUT_SIZE);
+        let l = self.bake_palette(&fractadyne_color::segment::Gradient::from_stops(p.name, p.stops));
         let a = atlas::render_palette_atlas(rs, 0, &[AtlasPalette { lut: l.entries, smooth: l.smooth }], size, 1, None).ok()?;
         let cell = atlas::read_cell(rs, &a, 0);
         atlas::free_palette_atlas(rs, a);
@@ -1703,6 +1707,29 @@ impl FractadyneApp {
     /// The `palette-aa` step's checks (C8), against `palette-aa-base`: ticking the box recolors the
     /// view, and an export of it is anti-aliased too, nearer its own supersampled picture than one
     /// point sampled (the CONTROL, which has to alias at this view for the check to judge anything).
+    /// The palette's saturation at 0 (`palette-adjust`): the view gray, the step before's view
+    /// colored (the control), an export of the view gray too, and no pass (a recolor).
+    fn uitest_palette_adjust_checks(&self, ut: &UiTest, view: Option<&(Vec<u8>, [u32; 2])>, ran_why: [u64; 7], checks: &mut Vec<Check>) {
+        let before = ut.results.iter().rev().find(|r| r.name == "palette-aa");
+        let (Some((px, size)), Some(b)) = (view, before) else {
+            checks.push(Check { name: "palette-adjust".into(), verdict: Verdict::Fail, detail: "no picture of this step or no palette-aa step".into() });
+            return;
+        };
+        // The share of pixels whose channels are within 4 levels of each other (the solid inside's
+        // near-black is 3 apart).
+        let gray = |a: &[u8]| {
+            let n = a.chunks_exact(4).filter(|p| p[0].max(p[1]).max(p[2]) - p[0].min(p[1]).min(p[2]) <= 4).count();
+            n as f64 / (a.len() / 4).max(1) as f64
+        };
+        let control = b.inside_view.as_ref().map(|v| gray(&v.0));
+        let ran = (ran_why[0] - b.ran_why[0]) + (ran_why[1] - b.ran_why[1]);
+        let export = self.uitest_export_view(*size).map(|e| gray(&e));
+        let g = gray(px);
+        let detail = format!("gray pixels: the view {g:.3}, an export of it {export:?}; the step before (control) {control:?}; passes caused {ran}");
+        let ok = g >= 0.99 && export.is_some_and(|e| e >= 0.99) && control.is_some_and(|c| c <= 0.5) && ran == 0;
+        checks.push(Check { name: "palette-adjust".into(), verdict: if ok { Verdict::Pass } else { Verdict::Fail }, detail });
+    }
+
     fn uitest_palette_aa_checks(&self, ut: &UiTest, view: Option<&(Vec<u8>, [u32; 2])>, ran_why: [u64; 7], checks: &mut Vec<Check>) {
         let fail = |name: &str, detail: String| Check { name: name.into(), verdict: Verdict::Fail, detail };
         let base = ut.results.iter().rev().find(|r| r.name == "palette-aa-base");
@@ -1968,7 +1995,7 @@ impl FractadyneApp {
                 let (d_in, _) = diff(px, &solid_px, &is_in);
                 let own = self.render_state.as_ref().and_then(|rs| {
                     use fractadyne_gpu::atlas::{self, AtlasCell, AtlasPalette, CellColoring};
-                    let lut = self.active_gradient().bake(fractadyne_color::segment::LUT_SIZE);
+                    let lut = self.bake_palette(&self.active_gradient());
                     let palette = AtlasPalette { lut: lut.entries, smooth: lut.smooth };
                     let m = crate::ColorMethod::OrbitTrap;
                     let cell = AtlasCell {
@@ -2146,6 +2173,8 @@ impl FractadyneApp {
 
     /// Close every dialog/overlay so each screenshot shows one screen only.
     fn uitest_close_all(&mut self) {
+        // No step inherits the palette-adjust step's gray palette.
+        self.coloring.palette_adjust = fractadyne_color::adjust::PaletteAdjust::NEUTRAL;
         self.blinken.size = crate::blinken::Size::Off;
         self.blinken.pinned_help = None;
         self.dialogs.help_open = false;
@@ -2772,6 +2801,16 @@ impl FractadyneApp {
                 self.coloring.palette_aa = matches!(s, Screen::PaletteAa);
                 self.dialogs.right_panel_open = true;
             }
+            // The view as palette-aa left it, the palette's saturation at 0.
+            Screen::PaletteAdjust => {
+                self.coloring.color_method = crate::ColorMethod::Smooth;
+                self.coloring.interior = Some(crate::InteriorMode::Solid);
+                self.coloring.normalize_live = false;
+                self.coloring.palette_aa = true;
+                self.coloring.palette_adjust =
+                    fractadyne_color::adjust::PaletteAdjust { saturation: 0.0, ..fractadyne_color::adjust::PaletteAdjust::NEUTRAL };
+                self.dialogs.right_panel_open = true;
+            }
             Screen::MethodSheetDeepAsked | Screen::MethodSheetDeepAskedDone => {
                 self.method_sheet.open = true;
                 self.harness.uitest_sheet_budget = Some(0.0);
@@ -3316,6 +3355,7 @@ impl FractadyneApp {
                     | Screen::InsidePaletteBrowser
                     | Screen::PaletteAaBase
                     | Screen::PaletteAa
+                    | Screen::PaletteAdjust
             )
         );
         let inside_view = inside_step.then(|| self.uitest_inside_size()).and_then(|s| {
@@ -4140,6 +4180,9 @@ impl FractadyneApp {
         }
 
         // ---- the palette anti-aliased (coloring plan C8) ----
+        if let StepKind::Screen(Screen::PaletteAdjust) = step.kind {
+            self.uitest_palette_adjust_checks(ut, inside_view.as_ref(), ran_why, &mut checks);
+        }
         if let StepKind::Screen(Screen::PaletteAa) = step.kind {
             self.uitest_palette_aa_checks(ut, inside_view.as_ref(), ran_why, &mut checks);
         }

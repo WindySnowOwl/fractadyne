@@ -2781,6 +2781,12 @@ panel-shadow = シャドウ
 panel-highlight = ハイライト
 panel-cycle = サイクル
 panel-offset = オフセット
+panel-palette-brightness = 明るさ
+panel-palette-brightness-hover = パレットの中間調を明るく、または暗くします。黒と白はそのままです。ダブルクリックで元に戻します。
+panel-palette-contrast = コントラスト
+panel-palette-contrast-hover = パレットの明るさを中央から広げる、または中央へ寄せます。黒と白はそのままです。ダブルクリックで元に戻します。
+panel-palette-saturation = 彩度
+panel-palette-saturation-hover = パレットの色を鮮やかに、またはくすませます（0 で灰色）。色相と明るさはそのままです。ダブルクリックで元に戻します。
 panel-normalize-hover = 極端な深度では脱出回数が数十万にわたり、固定のサイクルでは隣り合うピクセルの間でパレットが何千回も折り返すため、正しい密な模様が斑点状のノイズに見えてしまいます。これは、ビューで実際にエイリアシングが起きているときに限り、パレットをビューで測定した脱出値の範囲に割り当て直します（そのとき「サイクル」は、その範囲にわたってパレットを何回繰り返すかを決めます）。なめらかなビューはそのままにします。割り当て直すと、意味もなく画像が変わってしまうからです。それでも割り当て直すには、下の「常に範囲に合わせる」をオンにします。着色方法が「スムーズ反復」のときのみ。--normalizeと同じです。
 # A checkbox indented under "Normalize deep colors" (also in the Color menu).
 panel-fit-range = 常に範囲に合わせる

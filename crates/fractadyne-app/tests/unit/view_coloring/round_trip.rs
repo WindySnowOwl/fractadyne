@@ -48,6 +48,9 @@ fn scrambled() -> ViewColoring {
         interior_color: [0.7, 0.1, 0.4],
         interior_fit: true,
         palette_aa: false,
+        palette_brightness: -0.6,
+        palette_contrast: 0.8,
+        palette_saturation: 0.3,
     }
 }
 
@@ -90,6 +93,11 @@ fn variants() -> Vec<ViewColoring> {
     // does not size from the distance, which still carries it.
     v.push(ViewColoring { palette_aa: false, ..d.clone() });
     v.push(ViewColoring { method: ColorMethod::Stripe, palette_aa: false, ..d.clone() });
+    // The palette's brightness, contrast and saturation, each alone and all three.
+    v.push(ViewColoring { palette_brightness: 0.5, ..d.clone() });
+    v.push(ViewColoring { palette_contrast: -0.25, ..d.clone() });
+    v.push(ViewColoring { palette_saturation: 0.0, ..d.clone() });
+    v.push(ViewColoring { palette_brightness: -1.0, palette_contrast: 1.0, palette_saturation: 2.0, ..d.clone() });
     v.push(ViewColoring { normalize_live: false, ..d.clone() });
     v.push(ViewColoring { normalize_fit: true, log_scale: true, ..d.clone() });
     v.push(ViewColoring { method: ColorMethod::OrbitTrap, normalize_fit: true, log_scale: true, ..d.clone() });

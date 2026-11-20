@@ -280,8 +280,10 @@ impl crate::FractadyneApp {
 
     /// The baked table of every listed palette, in the browser's order.
     fn browser_luts(&self) -> Vec<AtlasPalette> {
+        // As choosing each would color the view: with the palette's brightness, contrast and
+        // saturation (`bake_palette`).
         let lut = |g: fractadyne_color::segment::Gradient| {
-            let l = g.bake(fractadyne_color::segment::LUT_SIZE);
+            let l = self.bake_palette(&g);
             AtlasPalette { lut: l.entries, smooth: l.smooth }
         };
         // In the order `browser_entries` lists them: the presets, then (for the outside) the saved.

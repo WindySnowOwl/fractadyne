@@ -3070,6 +3070,12 @@ panel-iter-div-method-hover = Only the Smooth method colors the iteration count,
 # Its tooltip while grayed out because 'Always fit range' is ticked.
 panel-iter-div-fit-hover = Changes nothing while 'Always fit range' is ticked: the palette is fitted to the view's escape range however the count is divided.
 panel-offset = Offset
+panel-palette-brightness = Brightness
+panel-palette-brightness-hover = The palette's midtones lighter or darker, black and white kept. Double-click to reset.
+panel-palette-contrast = Contrast
+panel-palette-contrast-hover = The palette's lightness spread from the middle, or drawn toward it, black and white kept. Double-click to reset.
+panel-palette-saturation = Saturation
+panel-palette-saturation-hover = The palette's colors stronger, or grayer down to gray at 0, hue and lightness kept. Double-click to reset.
 panel-normalize-hover = At extreme depth, escape counts span hundreds of thousands and a fixed Cycle wraps the palette thousands of times between neighboring pixels — a correct dense field reads as speckle noise. This remaps the palette to the view's measured escape range (Cycle then sets how many palette sweeps span it) WHEN the view actually aliases — a smooth view is left alone, because remapping it would change the picture for nothing. Tick 'Always fit range' below to remap regardless. Smooth method only; matches --normalize.
 # A checkbox indented under "Normalize deep colors" (also in the Color menu).
 panel-fit-range = Always fit range

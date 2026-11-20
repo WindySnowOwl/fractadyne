@@ -12,6 +12,16 @@ detail is in the git history.
 
 ## 0.3.1 (unreleased)
 
+- **Brightness, contrast and saturation for the palette.** Three sliders under Offset change how a
+  palette colors the view without editing its stops, so you can tune a palette to the view you
+  are on, for built-in palettes, saved gradients and imported ones alike. Brightness lightens or
+  darkens the midtones, contrast spreads lightness from the middle or draws it in, and saturation
+  makes the colors stronger or grayer, down to gray at 0; black and white stay as they are, and a
+  stronger color keeps its hue. They apply to the inside's own palette, exports and the palette
+  browser's thumbnails too, and a change recolors the view without calculating it again. A
+  double-click puts a slider back. A view file and the command line carry them
+  (`palette_brightness`, `palette_contrast`, `palette_saturation`; `--palette-brightness` and so
+  on).
 - **Copy a custom formula as text.** The Custom formula dialog has a Copy button, in Text and
   Textbook mode alike, that puts the formula on the clipboard as text, so you can share it in a
   post or a message: the formula as written, then each parameter it uses as a comment

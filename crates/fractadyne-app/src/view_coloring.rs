@@ -99,6 +99,10 @@ pub(crate) struct ViewColoring {
     pub(crate) interior_fit: bool,
     /// The palette anti-aliased over each pixel's footprint (C8).
     pub(crate) palette_aa: bool,
+    /// The palette's brightness, contrast and saturation (`fractadyne_color::adjust`).
+    pub(crate) palette_brightness: f32,
+    pub(crate) palette_contrast: f32,
+    pub(crate) palette_saturation: f32,
 }
 
 impl Default for ViewColoring {
@@ -141,6 +145,9 @@ impl ViewColoring {
             interior_color: s.interior_color,
             interior_fit: s.interior_fit,
             palette_aa: s.palette_aa,
+            palette_brightness: s.palette_brightness,
+            palette_contrast: s.palette_contrast,
+            palette_saturation: s.palette_saturation,
         }
     }
 
@@ -171,6 +178,9 @@ impl ViewColoring {
             interior_color: self.interior_color,
             interior_fit: self.interior_fit,
             palette_aa: self.palette_aa,
+            palette_brightness: self.palette_brightness,
+            palette_contrast: self.palette_contrast,
+            palette_saturation: self.palette_saturation,
             ..base.clone()
         }
     }

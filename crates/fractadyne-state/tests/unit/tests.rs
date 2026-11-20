@@ -341,6 +341,9 @@ fn every_session_field_survives_save_and_reload() {
         interior_color: [0.3, 0.2, 0.1],
         interior_fit: true,
         palette_aa: false,
+        palette_brightness: 0.35,
+        palette_contrast: -0.45,
+        palette_saturation: 1.25,
     };
     let want = SessionState {
         state_version: STATE_FORMAT_VERSION,
@@ -794,7 +797,10 @@ fn a_session_written_before_the_coloring_spec_reads_and_writes_the_same_keys() {
     let keys = toml::Table::try_from(ColoringSpec::default()).unwrap();
     // Fields added after the fixture was written (B5's interior): absent from it, so read as their
     // defaults and written back as such. The file itself stays as that build wrote it.
-    const SINCE: &[&str] = &["interior", "interior_palette", "interior_color", "interior_fit", "palette_aa"];
+    const SINCE: &[&str] = &[
+        "interior", "interior_palette", "interior_color", "interior_fit", "palette_aa",
+        "palette_brightness", "palette_contrast", "palette_saturation",
+    ];
     assert_eq!(keys.len(), 27 + SINCE.len(), "a coloring field was added: list it in SINCE");
     for k in keys.keys() {
         if SINCE.contains(&k.as_str()) {

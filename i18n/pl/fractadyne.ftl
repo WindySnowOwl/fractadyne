@@ -2952,6 +2952,12 @@ panel-shadow = Cień
 panel-highlight = Światło
 panel-cycle = Cykl
 panel-offset = Przesunięcie
+panel-palette-brightness = Jasność
+panel-palette-brightness-hover = Półtony palety jaśniejsze lub ciemniejsze, czerń i biel bez zmian. Kliknij dwukrotnie, aby przywrócić.
+panel-palette-contrast = Kontrast
+panel-palette-contrast-hover = Jasność palety rozsunięta od środka lub ściągnięta ku niemu, czerń i biel bez zmian. Kliknij dwukrotnie, aby przywrócić.
+panel-palette-saturation = Nasycenie
+panel-palette-saturation-hover = Kolory palety mocniejsze lub bledsze, szare przy 0, odcień i jasność bez zmian. Kliknij dwukrotnie, aby przywrócić.
 panel-normalize-hover = Na ekstremalnej głębokości liczby iteracji do ucieczki sięgają setek tysięcy, a stały Cykl zawija paletę tysiące razy między sąsiednimi pikselami — poprawne gęste pole wygląda jak szum plamek. To ustawienie przemapowuje paletę na zmierzony zakres ucieczki widoku (Cykl ustala wtedy, ile obiegów palety go obejmuje) TYLKO WTEDY, gdy widok rzeczywiście ma aliasing — gładki widok pozostaje bez zmian, bo przemapowanie zmieniłoby obraz bez powodu. Zaznacz poniżej „Zawsze dopasuj zakres”, aby przemapować mimo to. Tylko metoda gładka; odpowiada --normalize.
 # A checkbox indented under "Normalize deep colors" (also in the Color menu).
 panel-fit-range = Zawsze dopasuj zakres

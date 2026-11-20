@@ -3316,6 +3316,11 @@ pub(crate) mod slider_range {
     pub(crate) const GLOW_WIDTH: RangeInclusive<f32> = 0.15..=4.0;
     /// Stripe density (`--stripe-freq`).
     pub(crate) const STRIPE_FREQ: RangeInclusive<f32> = 1.0..=24.0;
+    /// The palette's brightness, contrast and saturation (`--palette-brightness`, ...;
+    /// `fractadyne_color::adjust`).
+    pub(crate) const PALETTE_BRIGHTNESS: RangeInclusive<f32> = fractadyne_color::adjust::BRIGHTNESS_RANGE;
+    pub(crate) const PALETTE_CONTRAST: RangeInclusive<f32> = fractadyne_color::adjust::CONTRAST_RANGE;
+    pub(crate) const PALETTE_SATURATION: RangeInclusive<f32> = fractadyne_color::adjust::SATURATION_RANGE;
     /// The stripe tail's length in iterations: what `--stripe-tail` and a view file accept. The
     /// panel's slider stops at 1024; past that only the command line goes.
     pub(crate) const STRIPE_TAIL_LEN: RangeInclusive<u32> = 4..=1 << 20;
@@ -6653,6 +6658,9 @@ struct ColoringConfig {
     /// Anti-alias the palette (C8): the distance-sized footprint ([`FractadyneApp::palette_aa`]).
     /// Persisted.
     palette_aa: bool,
+    /// The palette's brightness, contrast and saturation, applied to every baked palette that
+    /// colors a picture ([`FractadyneApp::bake_palette`]). Persisted.
+    palette_adjust: fractadyne_color::adjust::PaletteAdjust,
     /// Auto-normalize the palette cycle to the frame's escape-value range on export (`--normalize`).
     /// At extreme depth the smooth-iter counts are ~1e5–1e6 and a fixed `cycle` aliases a correct
     /// escape field into speckle; normalize maps the range to `cycle`-many palette sweeps. Export
@@ -6900,7 +6908,7 @@ struct DialogState {
 /// What the overview map was drawn for: the formula id, the custom formula's key (every custom
 /// formula is id 1000), the palette (an index or a sentinel), the method, the palette's revision,
 /// and the inside's coloring (`inside_coloring_sig`). See `FractadyneApp::minimap_key_now`.
-type MinimapKey = (u32, u64, usize, u32, u32, u64);
+type MinimapKey = (u32, u64, usize, u32, u32, u64, u64);
 
 // ================================================================================================
 // FractadyneApp - all application state
@@ -8402,6 +8410,12 @@ impl FractadyneApp {
                 interior_color: s.coloring.interior_color,
                 interior_fit: s.coloring.interior_fit,
                 palette_aa: s.coloring.palette_aa,
+                palette_adjust: fractadyne_color::adjust::PaletteAdjust {
+                    brightness: s.coloring.palette_brightness,
+                    contrast: s.coloring.palette_contrast,
+                    saturation: s.coloring.palette_saturation,
+                }
+                .clamped(),
                 normalize: args.iter().any(|a| a == "--normalize"),
                 normalize_live: s.coloring.normalize_live,
                 normalize_fit: s.coloring.normalize_fit,
@@ -9092,6 +9106,15 @@ impl FractadyneApp {
         if args.iter().any(|a| a == "--no-palette-aa") {
             self.coloring.palette_aa = false;
         }
+        if let Some(v) = ranged("--palette-brightness", slider_range::PALETTE_BRIGHTNESS) {
+            self.coloring.palette_adjust.brightness = v;
+        }
+        if let Some(v) = ranged("--palette-contrast", slider_range::PALETTE_CONTRAST) {
+            self.coloring.palette_adjust.contrast = v;
+        }
+        if let Some(v) = ranged("--palette-saturation", slider_range::PALETTE_SATURATION) {
+            self.coloring.palette_adjust.saturation = v;
+        }
         let inside = self.coloring.interior_of(self.coloring.color_method);
         if args.iter().any(|a| a == "--interior-fit") && inside != crate::InteriorMode::Trap {
             eprintln!("fractadyne: --interior-fit has no effect: the trap does not color the inside (add --interior trap).");
@@ -9320,6 +9343,9 @@ impl FractadyneApp {
             interior_color: self.coloring.interior_color,
             interior_fit: self.coloring.interior_fit,
             palette_aa: self.coloring.palette_aa,
+            palette_brightness: self.coloring.palette_adjust.brightness,
+            palette_contrast: self.coloring.palette_adjust.contrast,
+            palette_saturation: self.coloring.palette_adjust.saturation,
         }
     }
 
@@ -9361,6 +9387,12 @@ impl FractadyneApp {
         c.interior_color = s.interior_color.map(|v| if v.is_finite() { v.clamp(0.0, 1.0) } else { 0.0 });
         c.interior_fit = s.interior_fit;
         c.palette_aa = s.palette_aa;
+        c.palette_adjust = fractadyne_color::adjust::PaletteAdjust {
+            brightness: s.palette_brightness,
+            contrast: s.palette_contrast,
+            saturation: s.palette_saturation,
+        }
+        .clamped();
         if gradient_changed {
             c.palette_rev = c.palette_rev.wrapping_add(1);
         }
@@ -12391,6 +12423,26 @@ impl FractadyneApp {
         }
     }
 
+    /// `g` baked into the table the GPU colors with, with the palette's brightness, contrast and
+    /// saturation applied (`fractadyne_color::adjust`; neutral leaves the table as baked). Every
+    /// bake that colors a picture goes through here: the view, the inside's palette, exports, the
+    /// overview map, the palette browser's and the method sheet's thumbnails. The interface's
+    /// swatches show a palette as it is.
+    pub(crate) fn bake_palette(&self, g: &fractadyne_color::segment::Gradient) -> fractadyne_color::segment::Lut {
+        let mut lut = g.bake(fractadyne_color::segment::LUT_SIZE);
+        self.coloring.palette_adjust.apply(&mut lut);
+        lut
+    }
+
+    /// The palette's adjustment, hashed: zero bits for neutral values keep a signature what it was.
+    pub(crate) fn palette_adjust_sig(&self) -> u64 {
+        use std::hash::{Hash, Hasher};
+        let a = self.coloring.palette_adjust;
+        let mut h = std::collections::hash_map::DefaultHasher::new();
+        (a.brightness.to_bits(), a.contrast.to_bits(), a.saturation.to_bits()).hash(&mut h);
+        h.finish()
+    }
+
     /// The baked palette handed to the GPU: `(entries, smooth)`.
     ///
     /// Baked on demand rather than cached — 1024 evaluations of a handful of segments is a few
@@ -12398,7 +12450,7 @@ impl FractadyneApp {
     /// editor, every preset swap and every duotone toggle. A stale palette cache is exactly the
     /// class of bug that is invisible until someone reports "the colors don't change".
     fn active_lut(&self) -> (std::sync::Arc<Vec<[f32; 4]>>, bool) {
-        let lut = self.active_gradient().bake(fractadyne_color::segment::LUT_SIZE);
+        let lut = self.bake_palette(&self.active_gradient());
         (std::sync::Arc::new(lut.entries), lut.smooth)
     }
 
@@ -12433,7 +12485,7 @@ impl FractadyneApp {
     fn interior_shade_with(&self, method: ColorMethod, view: usize, palette: Option<usize>) -> fractadyne_gpu::InteriorShade {
         let lut = palette.map(|i| {
             let p = &fractadyne_color::PRESETS[i.min(fractadyne_color::PRESETS.len() - 1)];
-            fractadyne_color::segment::Gradient::from_stops(p.name, p.stops).bake(fractadyne_color::segment::LUT_SIZE)
+            self.bake_palette(&fractadyne_color::segment::Gradient::from_stops(p.name, p.stops))
         });
         // Fitted (C4): the view's measured inside window over `INSIDE_FIT_CYCLES` sweeps; until one
         // is measured, and in a render with no live view, the fixed rate.
@@ -12513,7 +12565,7 @@ impl FractadyneApp {
     pub(crate) fn view_lut(&self) -> (std::sync::Arc<Vec<[f32; 4]>>, bool) {
         match self.previewed_gradient() {
             Some(g) if self.anim.palette_anim != PaletteAnim::Random => {
-                let lut = g.bake(fractadyne_color::segment::LUT_SIZE);
+                let lut = self.bake_palette(&g);
                 (std::sync::Arc::new(lut.entries), lut.smooth)
             }
             _ => self.active_lut(),
@@ -15375,6 +15427,8 @@ impl FractadyneApp {
             // `view_interior_color`): it stayed in the old inside palette after a change until
             // 2026-11-19 (`--shot-then interior_palette=ice`, the map in the shot's corner).
             self.inside_coloring_sig(self.coloring.color_method, self.shown_interior_palette()),
+            // The palette's brightness, contrast and saturation (the map is drawn with them).
+            self.palette_adjust_sig(),
         )
     }
 
@@ -17216,6 +17270,8 @@ impl FractadyneApp {
         c.cycle.to_bits().hash(&mut h);
         c.iter_div.hash(&mut h);
         c.offset.to_bits().hash(&mut h);
+        // The palette's brightness, contrast and saturation: they change every colored sample.
+        self.palette_adjust_sig().hash(&mut h);
         // The inside as the screen shows it under the method on screen. ⛔Left out until
         // 2026-11-19: past 2^33 a settled view went on showing its average in the old inside
         // palette (`--shot-then interior_palette=ice`: the minibrot stayed orange). A palette
