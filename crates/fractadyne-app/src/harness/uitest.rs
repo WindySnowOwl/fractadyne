@@ -1917,8 +1917,10 @@ impl FractadyneApp {
                     && shown == mondrian.map(InsideRow::Preset)
                     && self.shown_interior_palette() == mondrian
                     && self.coloring.interior_palette == ice;
+                let tile = mondrian.and_then(|m| self.coloring.interior_preview.row_rect(InsideRow::Preset(m)));
                 let detail = format!(
-                    "target {:?}, thumbnails of views {:?}; previewing {shown:?}, the screen's inside {:?}, chosen {:?}; {} pointer events left",
+                    "target {:?}, thumbnails of views {:?}; previewing {shown:?}, the screen's inside {:?}, chosen {:?}; {} pointer events left; \
+                     Mondrian's tile drawn at {tile:?}",
                     self.palette_browser.target,
                     self.browser_drawn_views(),
                     self.shown_interior_palette(),
@@ -2744,7 +2746,7 @@ impl FractadyneApp {
                 // first land before the tiles have drawn.
                 if let Some(m) = fractadyne_color::preset_by_id("mondrian") {
                     use crate::palette_preview::InsideRow;
-                    self.harness.uitest_pointer = std::iter::repeat(crate::UiPointer::OnInsideRow(InsideRow::Preset(m))).take(8).collect();
+                    self.harness.uitest_pointer = std::iter::repeat(crate::UiPointer::OnInsideRow(InsideRow::Preset(m))).take(30).collect();
                 }
             }
             // By the seahorse valley, where the palette aliases at the default density (the self-test
