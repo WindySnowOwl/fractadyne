@@ -12,9 +12,16 @@ detail is in the git history.
 
 ## 0.3.1 (unreleased)
 
-- **Brightness, contrast and saturation for the palette.** Three sliders under Offset change how a
-  palette colors the view without editing its stops, so you can tune a palette to the view you
-  are on, for built-in palettes, saved gradients and imported ones alike. Brightness lightens or
+- **The Coloring controls in a clearer order.** The panel's Coloring section is in four groups now,
+  with a thin line between them: the method (with the trap's shape when the method is the orbit
+  trap); the palette and how it looks (Edit gradient, Brightness, Contrast, Saturation and the
+  palette's anti-aliasing); where a pixel's value lands on the palette (Cycle, Divide iterations,
+  Offset, the normalization switches and the palette's animation); and the inside (what colors it,
+  the trap's shape when only the inside uses the trap, its palette and its fit). The main palette
+  no longer moves down when the inside is switched to the orbit trap.
+- **Brightness, contrast and saturation for the palette.** Three sliders under the palette change
+  how it colors the view without editing its stops, so you can tune a palette to the view you are
+  on, for built-in palettes, saved gradients and imported ones alike. Brightness lightens or
   darkens the midtones, contrast spreads lightness from the middle or draws it in, and saturation
   makes the colors stronger or grayer, down to gray at 0; black and white stay as they are, and a
   stronger color keeps its hue. They apply to the inside's own palette, exports and the palette

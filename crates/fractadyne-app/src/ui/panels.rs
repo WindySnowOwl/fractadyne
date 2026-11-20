@@ -16,6 +16,20 @@ const PANEL_LABEL_W: f32 = 104.0;
 /// Checkboxes deliberately do NOT use this: a trailing label is the convention for a checkbox,
 /// and the panel's seventeen already read correctly.
 impl crate::FractadyneApp {
+    /// The trap's shape (the orbit trap method's, or the inside's when the trap colors it, B5):
+    /// one row, drawn with whichever uses it.
+    fn trap_shape_row(&mut self, ui: &mut egui::Ui) {
+        labelled(ui, &tr!(panel_trap_shape), |ui| {
+            egui::ComboBox::from_id_salt("panel_trap_shape")
+                .selected_text(self.coloring.trap_type.label())
+                .show_ui(ui, |ui| {
+                    for t in TrapType::ALL {
+                        ui.selectable_value(&mut self.coloring.trap_type, t, t.label());
+                    }
+                });
+        });
+    }
+
     /// The panel's Brightness, Contrast and Saturation rows (`fractadyne_color::adjust`).
     fn palette_adjust_rows(&mut self, ui: &mut egui::Ui) {
         use fractadyne_color::adjust::PaletteAdjust;
@@ -264,20 +278,13 @@ impl FractadyneApp {
                         });
                     }
                 }
-                // The trap's shape, for the trap method and for an inside colored by the trap (B5).
-                let inside = self.coloring.interior_of(self.coloring.color_method);
-                if self.coloring.color_method == ColorMethod::OrbitTrap || inside == crate::InteriorMode::Trap {
-                    labelled(ui, &tr!(panel_trap_shape), |ui| {
-                        egui::ComboBox::from_id_salt("panel_trap_shape")
-                            .selected_text(self.coloring.trap_type.label())
-                            .show_ui(ui, |ui| {
-                                for t in TrapType::ALL {
-                                    ui.selectable_value(&mut self.coloring.trap_type, t, t.label());
-                                }
-                            });
-                    });
+                // The trap's shape beside the method that uses it. When only the inside uses the
+                // trap, it is with the inside's rows at the end of the section.
+                if self.coloring.color_method == ColorMethod::OrbitTrap {
+                    self.trap_shape_row(ui);
                 }
-                self.inside_rows(ui);
+                // The palette, and how it looks.
+                ui.separator();
                 // ⭐**The collapsed label NAMES a saved gradient rather than saying "Custom".** The
                 // whole reason to save one is to refer to it later; a control that can only report
                 // the slot it occupies makes the library invisible from here.
@@ -420,8 +427,15 @@ impl FractadyneApp {
                     // Cancel point first (`palette_editor_window`).
                     self.coloring.palette_editor_open = true;
                 }
-                // The inside's own palette, when the trap colors it: after the main one.
-                self.inside_palette_rows(ui);
+                // The palette's brightness, contrast and saturation (user request 2026-11-15): the
+                // palette as it colors the view, its stops untouched; a recolor, never a pass. A
+                // double-click puts one back (no reset button: the rows stay as wide as the others).
+                self.palette_adjust_rows(ui);
+                // The palette's anti-aliasing (coloring plan C8): a recolor, no pass.
+                ui.checkbox(&mut self.coloring.palette_aa, tr!(panel_palette_aa)).on_hover_text(tr!(panel_palette_aa_hover));
+                // Where a pixel's value lands on the palette: rate, divisor, offset, the fitted
+                // range, and the animation that moves the offset.
+                ui.separator();
                 labelled(ui, &tr!(panel_cycle), |ui| {
                     ui.add(egui::Slider::new(&mut self.coloring.cycle, crate::slider_range::CYCLE))
                 });
@@ -453,10 +467,6 @@ impl FractadyneApp {
                 labelled(ui, &tr!(panel_offset), |ui| {
                     ui.add(egui::Slider::new(&mut self.coloring.offset, crate::slider_range::OFFSET))
                 });
-                // The palette's brightness, contrast and saturation (user request 2026-11-15): the
-                // palette as it colors the view, its stops untouched; a recolor, never a pass. A
-                // double-click puts one back (no reset button: the rows stay as wide as the others).
-                self.palette_adjust_rows(ui);
                 // ⭐Normalization FIRST, then the mapping it selects. `log_palette` is read only
                 // inside the normalized path, so with normalization off it changed nothing — and
                 // it sat ABOVE the switch that gives it meaning.
@@ -464,8 +474,6 @@ impl FractadyneApp {
                     .on_hover_text(tr!(panel_normalize_hover));
                 self.fit_range_checkbox(ui);
                 self.log_scale_checkbox(ui);
-                // The palette's anti-aliasing (coloring plan C8): a recolor, no pass.
-                ui.checkbox(&mut self.coloring.palette_aa, tr!(panel_palette_aa)).on_hover_text(tr!(panel_palette_aa_hover));
                 labelled(ui, &tr!(panel_animate), |ui| {
                     egui::ComboBox::from_id_salt("panel_animate")
                         .selected_text(self.anim.palette_anim.name())
@@ -488,6 +496,17 @@ impl FractadyneApp {
                 {
                     self.anim.random_palette.reshuffle();
                 }
+                // The inside: what colors it, the trap's shape when only the inside uses the trap,
+                // its palette and fit. Last, so the main palette never moves when the inside
+                // changes (user, 2026-11-15 and 2026-11-20).
+                ui.separator();
+                self.inside_rows(ui);
+                if self.coloring.color_method != ColorMethod::OrbitTrap
+                    && self.coloring.interior_of(self.coloring.color_method) == crate::InteriorMode::Trap
+                {
+                    self.trap_shape_row(ui);
+                }
+                self.inside_palette_rows(ui);
                 });
                 // Iterations, supersampling, relief and glow are escape-time settings: a Life
                 // universe has none of them.
