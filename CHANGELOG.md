@@ -18,7 +18,7 @@ detail is in the git history.
   (`; p1 = 0.5, 0`). Pasted back into the dialog it reads as the same formula, since comments are
   skipped. "Copied to clipboard" shows beside Apply until the formula changes.
 - **The palette browser chooses the inside's palette too.** While the orbit trap colors the inside
-  of the set, a button beside the panel's Inside choice opens the browser for the inside's palette,
+  of the set, a button beside the panel's Inside palette opens the browser for the inside's palette,
   so you can see how each palette looks inside the set before choosing one: every thumbnail shows
   the view with that palette inside and the outside as it is, resting the pointer on one previews
   it on the view, and "Same as outside" is a choice of its own. The inside's palette is one of the
