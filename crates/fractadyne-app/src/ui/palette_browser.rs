@@ -5,7 +5,7 @@
 //! ⭐**The thumbnails are the view, recolored, not re-rendered.** `fractadyne_gpu::atlas` colors
 //! the main view's iteration texture through each palette into one atlas, so a thumbnail shows what
 //! choosing that palette would show, at any depth, for one small color pass each. It is redrawn
-//! when the view's texture or its coloring changes (`view_writes`, `accum_color_sig`), paced while
+//! when the view's texture or its coloring changes (`view_writes`, `chosen_color_sig`), paced while
 //! a view refines, and not at all once it has settled.
 //!
 //! Resting the pointer on a thumbnail previews it on the view, exactly as the palette lists do
@@ -314,7 +314,7 @@ impl crate::FractadyneApp {
             let Some(writes) = atlas::view_writes(&rs, v as u32) else { continue };
             let aspect = self.browser_aspect(v);
             let cell = [CELL_W, ((CELL_W as f64) * aspect).round().max(8.0) as u32];
-            let key = AtlasKey { writes, colouring: self.accum_color_sig(v), library: self.library_sig(), cell };
+            let key = AtlasKey { writes, colouring: self.chosen_color_sig(v), library: self.library_sig(), cell };
             if self.palette_browser.drawn_for[v] == Some(key) {
                 continue;
             }

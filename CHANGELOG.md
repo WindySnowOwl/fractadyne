@@ -17,6 +17,12 @@ detail is in the git history.
   post or a message: the formula as written, then each parameter it uses as a comment
   (`; p1 = 0.5, 0`). Pasted back into the dialog it reads as the same formula, since comments are
   skipped. "Copied to clipboard" shows beside Apply until the formula changes.
+- **Changing the inside's coloring updates a deep view and the overview map.** Past about 10^10×,
+  a settled view shows the average of many jittered samples, which starts over when its coloring
+  changes. A change to the inside (its palette, its fit, solid or orbit trap, or a solid inside's
+  color) did not start it over, so the view kept the old inside until something else changed, and
+  the overview map kept it too. At a minibrot at 9.3e78× whose inside was switched to the Ice
+  palette, the inside stayed orange; it now turns blue, as it does when the view opens with Ice.
 
 ## 0.3.0 (2026-11-19)
 
