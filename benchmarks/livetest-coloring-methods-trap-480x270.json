@@ -1,0 +1,84 @@
+{
+  "version": "0.3.0 (build 7040, g9515f06-dirty)",
+  "gpu": "NVIDIA GeForce RTX 3080",
+  "utc": "2026-11-20 19:48:37 UTC",
+  "tour": "tours/coloring-methods.toml",
+  "size": [
+    480,
+    270
+  ],
+  "checkpoints": {
+    "df32": {
+      "verdict": "ok",
+      "gpu_iter": 8000,
+      "eff_iter": 8000,
+      "boost": 1.0,
+      "orbit_len": 728,
+      "partial": false,
+      "res": [
+        480,
+        270
+      ],
+      "live_black": 0.0,
+      "truth_black": 0.0
+    },
+    "df32-deep": {
+      "verdict": "ok",
+      "gpu_iter": 15000,
+      "eff_iter": 15000,
+      "boost": 1.0,
+      "orbit_len": 888,
+      "partial": false,
+      "res": [
+        480,
+        270
+      ],
+      "live_black": 0.0,
+      "truth_black": 0.0
+    },
+    "direct": {
+      "verdict": "ok",
+      "gpu_iter": 3000,
+      "eff_iter": 3000,
+      "boost": 1.0,
+      "orbit_len": 0,
+      "partial": false,
+      "res": [
+        480,
+        270
+      ],
+      "live_black": 0.09608024691358025,
+      "truth_black": 0.09608024691358025,
+      "truth4_black": 0.0910108024691358
+    },
+    "floatexp": {
+      "verdict": "ok",
+      "gpu_iter": 25000,
+      "eff_iter": 25000,
+      "boost": 1.0,
+      "orbit_len": 888,
+      "partial": false,
+      "res": [
+        480,
+        270
+      ],
+      "live_black": 0.0,
+      "truth_black": 0.0
+    },
+    "open": {
+      "verdict": "ok",
+      "gpu_iter": 1000,
+      "eff_iter": 1000,
+      "boost": 1.0,
+      "orbit_len": 0,
+      "partial": false,
+      "res": [
+        480,
+        270
+      ],
+      "live_black": 0.21181327160493826,
+      "truth_black": 0.21181327160493826,
+      "truth4_black": 0.21142746913580246
+    }
+  }
+}

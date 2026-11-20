@@ -8200,6 +8200,7 @@ impl FractadyneApp {
                 livetest,
                 livetest_quick,
                 livetest_method,
+                livetest_dump: args.iter().any(|a| a == "--dump-images"),
                 shot,
                 uitest,
                 uitest_central_w: None,

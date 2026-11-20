@@ -115,6 +115,9 @@ pub(crate) struct HarnessModes {
     /// `--method KEY` with `--livetest`: the coloring method the tour plays under, over the tour's
     /// own `[render.coloring]` (coloring plan B1b: one tour, every method).
     pub(crate) livetest_method: Option<crate::ColorMethod>,
+    /// `--dump-images` with `--livetest`: every checkpoint's live and truth images, not only a
+    /// failing one's (looking at what a number says, B1b).
+    pub(crate) livetest_dump: bool,
     /// CLI `--reusetest`: measure reuse-first-zoom reprojection staleness vs Δ-octaves, exit.
     pub(crate) reusetest: bool,
     pub(crate) reusetest_done: bool,

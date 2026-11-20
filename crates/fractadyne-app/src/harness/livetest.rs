@@ -88,6 +88,28 @@ struct Checkpoint {
     /// even where the black fractions agree.
     live_range: f64,
     truth_range: f64,
+    /// The render mode of the live frame and of the oracle (`RenderMode::to_u32`: 0 df32
+    /// perturbation, 1 direct, 2 floatexp), and the 99th percentile of |count live − count oracle|
+    /// over the pixels both escaped (`None` without an oracle). Context for a colored difference: a
+    /// coloring that amplifies the count's last digits (the final angle, B1b) differs wherever the
+    /// two frames' arithmetic does, at the same picture.
+    modes: [u32; 2],
+    count_p99: Option<f64>,
+}
+
+/// The 99th percentile of |count a − count b| over the pixels both iteration buffers escaped.
+fn count_diff_p99(a: &[f32], b: &[f32]) -> Option<f64> {
+    let mut d: Vec<f64> = a
+        .chunks_exact(4)
+        .zip(b.chunks_exact(4))
+        .filter(|(x, y)| x[0] >= 0.0 && y[0] >= 0.0)
+        .map(|(x, y)| (x[0] as f64 - y[0] as f64).abs())
+        .collect();
+    if d.is_empty() || a.len() != b.len() {
+        return None;
+    }
+    d.sort_by(|p, q| p.total_cmp(q));
+    d.get(((d.len() - 1) as f64 * 0.99) as usize).copied()
 }
 
 /// Points of excess blackness that fail a checkpoint, and that warn.
@@ -613,6 +635,7 @@ impl FractadyneApp {
                 let (mut truth_black, mut srgb_mean, mut srgb_max, mut truth_ran) =
                     (0.0, 0.0, 0u32, false);
                 let (mut ask, mut ask4, mut truth4_black, mut truth_range) = (0u32, 0u32, 0.0, 0.0);
+                let (mut truth_mode, mut count_p99) = (live_req.mode, None);
                 if !quick {
                     let saved_w = self.export.width;
                     let saved_ss = self.export.ss;
@@ -634,6 +657,8 @@ impl FractadyneApp {
                     if let Ok(t) = fractadyne_gpu::render_iter(device, queue, &req) {
                         truth_black = interior_frac(&t.pixels);
                         truth_range = escape_range(&t.pixels).map_or(0.0, |(lo, hi)| hi - lo);
+                        truth_mode = req.mode;
+                        count_p99 = count_diff_p99(&live_px, &t.pixels);
                         truth_ran = true;
                         // Perceptual diff through the REAL color pass, so the number is what a
                         // viewer would see rather than a raw escape-count distance.
@@ -643,18 +668,22 @@ impl FractadyneApp {
                         // requests — the live frame's (`params_to_request`: the whole frame, the
                         // live path's statistics, series and BLA) under the oracle's palette map,
                         // so the colors differ only where the iterations do.
+                        let colored = |r: &fractadyne_gpu::ExportRequest| {
+                            let (p, c) = (std::sync::atomic::AtomicU32::new(0), std::sync::atomic::AtomicBool::new(false));
+                            fractadyne_gpu::render_export(device, queue, r, &p, &c)
+                                .ok()
+                                .filter(|x| [x.width, x.height] == live_res)
+                                .map(|x| fractadyne_export::to_srgb8(&x.pixels))
+                        };
                         let (lc, tc) = if method.reads_aux() {
                             let mut lr = live_req.clone();
                             (lr.cycle, lr.offset, lr.norm_mode, lr.norm_lo) = (req.cycle, req.offset, req.norm_mode, req.norm_lo);
                             lr.palette_fade = req.palette_fade;
                             lr.aa_palette = req.aa_palette;
-                            let colored = |r: &fractadyne_gpu::ExportRequest| {
-                                let (p, c) = (std::sync::atomic::AtomicU32::new(0), std::sync::atomic::AtomicBool::new(false));
-                                fractadyne_gpu::render_export(device, queue, r, &p, &c)
-                                    .ok()
-                                    .filter(|x| [x.width, x.height] == live_res)
-                                    .map(|x| fractadyne_export::to_srgb8(&x.pixels))
-                            };
+                            // ⚠…and its color box: the live frame's own (`aa_filter` 2 at these holds)
+                            // averaged the final angle's speckle where the oracle point-sampled it, and
+                            // decomposition read 13 levels apart at 1e3x with identical counts (2026-11-20).
+                            lr.aa_filter = req.aa_filter;
                             (colored(&lr), colored(&req))
                         } else {
                             (
@@ -694,7 +723,8 @@ impl FractadyneApp {
                             }
                         }
                         // Dump the images whenever the checkpoint fails — a number says a frame
-                        // is wrong, an image says how.
+                        // is wrong, an image says how — and at every checkpoint with
+                        // `--dump-images`.
                         let starve_pt = (ask4 > 0).then(|| (live_black - truth4_black) * 100.0);
                         let g = grade(
                             true,
@@ -703,21 +733,38 @@ impl FractadyneApp {
                             srgb_mean,
                             reports_the_limit(app_says),
                         );
-                        if g.fails() {
+                        if g.fails() || self.harness.livetest_dump {
                             let _ = std::fs::create_dir_all(out_dir);
                             let stem = format!("livetest_{:03}_{id}", results.len());
-                            let mut dumps: Vec<(&str, &[f32], &fractadyne_gpu::ExportRequest)> =
-                                vec![("live", live_px.as_slice(), &req), ("truth", t.pixels.as_slice(), &req)];
-                            if let Some((px4, r4)) = &truth4 {
-                                dumps.push(("truth4x", px4.as_slice(), r4));
-                            }
-                            for (tag, buf, r) in dumps {
-                                if let Ok(c) = fractadyne_gpu::color_iter_buffer(device, queue, r, buf) {
-                                    let p = out_dir.join(format!("{stem}_{tag}.png"));
-                                    let _ = fractadyne_export::write_png(&p, c.width, c.height, &c.pixels, None);
+                            if method.reads_aux() {
+                                // The colored renders compared above: the main lane alone colors
+                                // these methods wrong.
+                                let mut shots = vec![("live", lc.clone()), ("truth", tc.clone())];
+                                if let Some((_, r4)) = &truth4 {
+                                    shots.push(("truth4x", colored(r4)));
+                                }
+                                for (tag, px) in shots {
+                                    if let Some(px) = px {
+                                        let p = out_dir.join(format!("{stem}_{tag}.png"));
+                                        let _ = fractadyne_export::write_png_rgba8(&p, live_res[0], live_res[1], &px, None);
+                                    }
+                                }
+                            } else {
+                                let mut dumps: Vec<(&str, &[f32], &fractadyne_gpu::ExportRequest)> =
+                                    vec![("live", live_px.as_slice(), &req), ("truth", t.pixels.as_slice(), &req)];
+                                if let Some((px4, r4)) = &truth4 {
+                                    dumps.push(("truth4x", px4.as_slice(), r4));
+                                }
+                                for (tag, buf, r) in dumps {
+                                    if let Ok(c) = fractadyne_gpu::color_iter_buffer(device, queue, r, buf) {
+                                        let p = out_dir.join(format!("{stem}_{tag}.png"));
+                                        let _ = fractadyne_export::write_png(&p, c.width, c.height, &c.pixels, None);
+                                    }
                                 }
                             }
-                            fail_dumps += 1;
+                            if g.fails() {
+                                fail_dumps += 1;
+                            }
                         }
                     }
                     self.export.width = saved_w;
@@ -757,6 +804,8 @@ impl FractadyneApp {
                     app_says,
                     live_range: live_esc.map_or(0.0, |(lo, hi)| hi - lo),
                     truth_range,
+                    modes: [live_req.mode, truth_mode],
+                    count_p99,
                 };
                 println!(
                     "  {:>6.1}s {:<16} {:>9} {:>8.1}% {:>8.1}% {:>8} {:>+6.1}pt {:>7.1} {:>8} {:>6.0}ms  {}",
@@ -854,6 +903,7 @@ impl FractadyneApp {
                         "\"ask\":{},\"ask4\":{},\"truth4_black\":{},\"starve_pt\":{},",
                         "\"capped_frac\":{},\"iter_exhausted\":{},\"iter_plateau\":{},\"budget_maxed\":{},",
                         "\"app_says\":{},\"false_alarm\":{},\"live_range\":{:.1},\"truth_range\":{:.1},",
+                        "\"modes\":[{},{}],\"count_p99\":{},",
                         "\"verdict\":\"{}\"}}"
                     ),
                     c.t, c.id, c.log10mag, c.live_black, c.truth_black, c.excess_black(),
@@ -863,6 +913,7 @@ impl FractadyneApp {
                     opt(c.capped_frac), c.iter_exhausted, c.iter_plateau, c.budget_maxed,
                     c.app_says.map_or("null".to_string(), |s| format!("{s:?}")), c.false_alarm(),
                     c.live_range, c.truth_range,
+                    c.modes[0], c.modes[1], opt(c.count_p99),
                     c.verdict(),
                 )
             })
