@@ -28,6 +28,19 @@ pub(crate) enum PaletteRow {
     Saved(usize),
 }
 
+/// A row of the inside's palette picker (the palette browser choosing the inside's palette): the
+/// outside's palette ("Same as outside"), or a built-in preset by index. The inside's palette is a
+/// preset or none, so a saved gradient is not a row here.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
+pub(crate) enum InsideRow {
+    Same,
+    Preset(usize),
+}
+
+/// The inside's palette picker's preview: shown on the view in place of the chosen inside palette
+/// (`FractadyneApp::shown_interior_palette`), by the same rules as [`PalettePreview`].
+pub(crate) type InsidePreview = HoverPreview<InsideRow>;
+
 /// What [`PalettePreview::end_frame`] asks of the caller.
 #[derive(Clone, Copy, Debug, PartialEq)]
 pub(crate) struct Settle {

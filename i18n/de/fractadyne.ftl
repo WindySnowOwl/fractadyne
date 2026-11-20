@@ -271,6 +271,8 @@ menu-color-browse-hover = Jede Palette über der aktuellen Ansicht, nebeneinande
 
 # The palette browser window.
 palette-browser-title = Paletten
+palette-browser-title-inside = Innenpaletten
+palette-browser-inside-hint = Jedes Vorschaubild zeigt die Ansicht mit dieser Palette im Inneren der Menge; das Äußere bleibt, wie es ist.
 palette-browser-clear = Filter zurücksetzen
 palette-browser-both = Beide
 palette-browser-panes-hover = In der Doppelansicht können die Vorschaubilder den linken Bereich, den rechten Bereich oder beide nebeneinander zeigen.
@@ -2845,6 +2847,7 @@ inside-trap-desc = Wie nah jeder Orbit der Orbitfalle kam, in der Innenpalette. 
 panel-inside-palette = Innenpalette
 panel-inside-palette-hover = Die Palette, mit der die Orbitfalle das Innere färbt.
 panel-inside-palette-same = Wie außen
+panel-inside-palette-browse-hover = Jede Palette im Inneren der Menge über der aktuellen Ansicht, nebeneinander.
 panel-inside-fit = An den Innenbereich anpassen
 panel-inside-fit-hover = Die Innenpalette über die im Inneren der Menge gemessenen Fallenwerte verteilen, damit ihre Struktur sichtbar wird. Exporte dieser Ansicht nutzen dieselbe Anpassung.
 panel-palette-aa = Palette glätten (Antialiasing)

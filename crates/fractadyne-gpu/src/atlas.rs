@@ -15,7 +15,7 @@
 //! to linear and egui's encode puts them back, unchanged. Registered through the plain view, every
 //! thumbnail would come out pale.
 
-use crate::{make_color_bg, make_lut_buffer, write_lut, ColorUniforms, Renderer};
+use crate::{make_color_bg, make_lut_buffer, write_lut, write_lut2, ColorUniforms, Renderer};
 use egui_wgpu::wgpu;
 
 /// One palette for [`render_palette_atlas`]: its baked table, as `Lut::entries`, and whether to
@@ -32,6 +32,10 @@ pub struct AtlasCell<'a> {
     /// `None`: the coloring the view was last drawn with, exactly (the palette browser's cells, and
     /// the method sheet's cell for the method in use).
     pub coloring: Option<CellColoring>,
+    /// `Some`: `palette` is the INSIDE's, shaded this way, and the outside keeps the view's palette
+    /// (the palette browser choosing the inside's palette). `None`: `palette` is the outside's and
+    /// the inside keeps the view's.
+    pub inside: Option<fractadyne_core::coloring::InteriorShading>,
 }
 
 /// Another coloring method for one cell, over the same iteration texture (the method sheet, B7).
@@ -106,7 +110,24 @@ pub fn render_palette_atlas(
     cols: u32,
     reuse: Option<PaletteAtlas>,
 ) -> Result<PaletteAtlas, AtlasError> {
-    let cells: Vec<AtlasCell> = palettes.iter().map(|p| AtlasCell { palette: p, coloring: None }).collect();
+    let cells: Vec<AtlasCell> = palettes.iter().map(|p| AtlasCell { palette: p, coloring: None, inside: None }).collect();
+    render_atlas(rs, view_id, &cells, cell, cols, reuse)
+}
+
+/// [`render_palette_atlas`] for the inside: each thumbnail is the view with `palettes[k]` as the
+/// inside's palette, shaded `shading` (the view's inside with a palette of its own), and the
+/// outside as the view has it.
+pub fn render_inside_palette_atlas(
+    rs: &egui_wgpu::RenderState,
+    view_id: u32,
+    palettes: &[AtlasPalette],
+    shading: fractadyne_core::coloring::InteriorShading,
+    cell: [u32; 2],
+    cols: u32,
+    reuse: Option<PaletteAtlas>,
+) -> Result<PaletteAtlas, AtlasError> {
+    let cells: Vec<AtlasCell> =
+        palettes.iter().map(|p| AtlasCell { palette: p, coloring: None, inside: Some(shading) }).collect();
     render_atlas(rs, view_id, &cells, cell, cols, reuse)
 }
 
@@ -188,16 +209,22 @@ pub fn render_atlas(
     };
 
     // One uniform and one LUT buffer per palette: every draw reads its own, since writes to a
-    // single buffer between draws of one submission would all land before any of them ran. Each
-    // takes the view's interior palette (its LUT buffer's second slot) by a copy on the GPU below.
+    // single buffer between draws of one submission would all land before any of them ran. A cell
+    // takes the slot of the view's LUT buffer it does not replace by a copy on the GPU below: the
+    // interior palette (its second slot) under an outside palette, the outside palette (its first)
+    // under an inside one.
     let mut lut_bufs = Vec::with_capacity(palettes.len());
     let bind_groups: Vec<wgpu::BindGroup> = palettes
         .iter()
         .map(|c| {
             let p = c.palette;
             let lut_buf = make_lut_buffer(device);
-            lut_bufs.push(lut_buf.clone());
-            let (lut_len, lut_smooth) = write_lut(&rs.queue, &lut_buf, &p.lut, p.smooth);
+            lut_bufs.push((lut_buf.clone(), c.inside.is_some()));
+            // An inside cell keeps the view's outside palette, copied into its first slot below.
+            let (lut_len, lut_smooth) = match c.inside {
+                None => write_lut(&rs.queue, &lut_buf, &p.lut, p.smooth),
+                Some(_) => (cu.lut_len, cu.lut_smooth),
+            };
             let mut thumb = ColorUniforms {
                 lut_len,
                 lut_smooth,
@@ -217,6 +244,13 @@ pub fn render_atlas(
                 // distance colors and glow bands sit where the panel shows them.
                 ..cu
             };
+            if let Some(shading) = c.inside {
+                // The candidate is the inside's palette, in the second slot.
+                let (lut2_len, lut2_smooth) = write_lut2(&rs.queue, &lut_buf, Some(&p.lut), p.smooth);
+                thumb.lut2_len = lut2_len;
+                thumb.lut2_smooth = lut2_smooth;
+                thumb.interior_mode = shading.gpu_id();
+            }
             if let Some(k) = c.coloring {
                 // Another method over the same texture: its own rate, and no range mapping, whose
                 // window was measured for the view's method's values (`norm_mode`).
@@ -241,9 +275,12 @@ pub fn render_atlas(
     let mut encoder = device.create_command_encoder(&wgpu::CommandEncoderDescriptor {
         label: Some("fractadyne.palette_atlas"),
     });
-    if cu.lut2_len > 0 {
-        let slot = (crate::LUT_SLOT * 16) as u64;
-        for b in &lut_bufs {
+    let slot = (crate::LUT_SLOT * 16) as u64;
+    for (b, inside) in &lut_bufs {
+        if *inside {
+            // The view's outside palette, under this cell's inside one.
+            encoder.copy_buffer_to_buffer(&view_lut, 0, b, 0, slot);
+        } else if cu.lut2_len > 0 {
             encoder.copy_buffer_to_buffer(&view_lut, slot, b, slot, slot);
         }
     }

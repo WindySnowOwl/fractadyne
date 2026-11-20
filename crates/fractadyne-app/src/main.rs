@@ -6620,6 +6620,9 @@ struct ColoringConfig {
     /// The gradient a palette picker is previewing, shown in place of the chosen palette while the
     /// pointer rests on its row (transient). See [`crate::palette_preview`].
     palette_preview: crate::palette_preview::PalettePreview,
+    /// The inside's palette the palette browser is previewing while it chooses for the inside
+    /// (transient): the screen shows it in place of `interior_palette`, exports never do.
+    interior_preview: crate::palette_preview::InsidePreview,
     /// Two-color palette modes sharing the `lo`/`hi` colors (DISPLAY-space RGB), overriding preset/custom:
     /// **duotone** maps the value to a smooth `lo → hi → lo` ramp; **binary** paints a flat `hi`
     /// exterior with a flat `lo` interior (just in-set vs out-of-set).
@@ -8384,6 +8387,7 @@ impl FractadyneApp {
                 ugr_file: String::new(),
                 palette_rev: 0,
                 palette_preview: Default::default(),
+                interior_preview: Default::default(),
                 use_duotone: s.coloring.use_duotone,
                 use_binary: s.coloring.use_binary,
                 duotone_lo: s.coloring.duotone_lo,
@@ -12367,6 +12371,15 @@ impl FractadyneApp {
     fn settle_palette_preview(&mut self, ctx: &egui::Context) {
         let now = ctx.input(|i| i.time);
         let s = self.coloring.palette_preview.end_frame(now);
+        // The inside's picker (the palette browser choosing for the inside), by the same rules.
+        let inside = self.coloring.interior_preview.end_frame(now);
+        let s = crate::palette_preview::Settle {
+            changed: s.changed || inside.changed,
+            wake_in: match (s.wake_in, inside.wake_in) {
+                (Some(a), Some(b)) => Some(a.min(b)),
+                (a, b) => a.or(b),
+            },
+        };
         if s.changed {
             // The view below draws the change this frame (its LUT is baked every frame). The
             // overview map was refreshed earlier in the frame, so it catches up on the next one
@@ -12394,14 +12407,37 @@ impl FractadyneApp {
     /// shading, so an atlas cell of another method finds it in the view's LUT buffer
     /// (`fractadyne_gpu::atlas`). The interior's rate is the orbit trap method's, its offset the
     /// palette's: an interior in the outside palette is colored as the trap method colors it.
+    /// This is the CHOSEN inside, for exports; the screen reads [`Self::view_interior_shade`].
     pub(crate) fn interior_shade_for(&self, method: ColorMethod, view: usize) -> fractadyne_gpu::InteriorShade {
-        let lut = self.coloring.interior_palette.map(|i| {
+        self.interior_shade_with(method, view, self.coloring.interior_palette)
+    }
+
+    /// [`Self::interior_shade_for`] as the SCREEN shows it: with the inside's palette a picker is
+    /// previewing ([`Self::shown_interior_palette`]). The live views and the overview map read this.
+    pub(crate) fn view_interior_shade(&self, method: ColorMethod, view: usize) -> fractadyne_gpu::InteriorShade {
+        self.interior_shade_with(method, view, self.shown_interior_palette())
+    }
+
+    /// The inside's palette the screen shows: the one a picker previews while it chooses for the
+    /// inside, else the chosen one. ⭐A preview is never a choice (`crate::palette_preview`): exports,
+    /// saved views and the session read `interior_palette`.
+    pub(crate) fn shown_interior_palette(&self) -> Option<usize> {
+        use crate::palette_preview::InsideRow;
+        match self.coloring.interior_preview.shown() {
+            Some(InsideRow::Same) => None,
+            Some(InsideRow::Preset(i)) if i < fractadyne_color::PRESETS.len() => Some(i),
+            _ => self.coloring.interior_palette,
+        }
+    }
+
+    fn interior_shade_with(&self, method: ColorMethod, view: usize, palette: Option<usize>) -> fractadyne_gpu::InteriorShade {
+        let lut = palette.map(|i| {
             let p = &fractadyne_color::PRESETS[i.min(fractadyne_color::PRESETS.len() - 1)];
             fractadyne_color::segment::Gradient::from_stops(p.name, p.stops).bake(fractadyne_color::segment::LUT_SIZE)
         });
         // Fitted (C4): the view's measured inside window over `INSIDE_FIT_CYCLES` sweeps; until one
         // is measured, and in a render with no live view, the fixed rate.
-        let shading = self.interior_shading_for(method);
+        let shading = self.interior_shading_with(method, palette);
         let (cycle, offset) = match self.inside_window(view).filter(|_| self.coloring.interior_fit && shading == InteriorShading::Trap) {
             Some((lo, hi)) => render::inside_fit_map(lo, hi, self.coloring.offset),
             None => (self.color_cycle_for(ColorMethod::OrbitTrap), self.coloring.offset),
@@ -12423,12 +12459,24 @@ impl FractadyneApp {
     /// Whether the inside's fit colors the frame on screen: the fit is on and the trap colors the
     /// inside of the shown method. Its windows then count as the frame's coloring.
     pub(crate) fn inside_fit_active(&self) -> bool {
-        self.coloring.interior_fit && self.interior_shading_for(self.shown_method()) == InteriorShading::Trap
+        self.coloring.interior_fit && self.interior_shading_shown(self.shown_method()) == InteriorShading::Trap
     }
 
-    /// [`Self::interior_shade_for`]'s shading alone (an atlas cell's, which takes the view's palette).
+    /// [`Self::interior_shade_for`]'s shading alone, as chosen.
     pub(crate) fn interior_shading_for(&self, method: ColorMethod) -> InteriorShading {
-        let own_colors = self.coloring.interior_palette.is_some() || self.coloring.interior_fit;
+        self.interior_shading_with(method, self.coloring.interior_palette)
+    }
+
+    /// The shading as the screen shows it ([`Self::shown_interior_palette`]): an atlas cell's, which
+    /// takes the view's palette.
+    pub(crate) fn interior_shading_shown(&self, method: ColorMethod) -> InteriorShading {
+        self.interior_shading_with(method, self.shown_interior_palette())
+    }
+
+    /// The shading for `method` with the inside palette `palette`: the trap method's own inside
+    /// keeps its exact path unless the inside has colors of its own (a palette, or its fit).
+    pub(crate) fn interior_shading_with(&self, method: ColorMethod, palette: Option<usize>) -> InteriorShading {
+        let own_colors = palette.is_some() || self.coloring.interior_fit;
         InteriorShading::for_view(self.coloring.interior_of(method), method, own_colors)
     }
 
@@ -15244,6 +15292,7 @@ impl FractadyneApp {
         // does; the export request it borrows deliberately does not (`view_lut`).
         (req.lut, req.lut_smooth) = self.view_lut();
         req.interior_col = self.view_interior_color();
+        req.interior = self.view_interior_shade(self.coloring.color_method, 0);
         let progress = std::sync::atomic::AtomicU32::new(0);
         let cancel = std::sync::atomic::AtomicBool::new(false);
         let res = fractadyne_gpu::render_export(device, queue, &req, &progress, &cancel).ok()?;
@@ -15325,7 +15374,7 @@ impl FractadyneApp {
             // The inside, as the map draws it (`current_export_request_for`'s interior shade and
             // `view_interior_color`): it stayed in the old inside palette after a change until
             // 2026-11-19 (`--shot-then interior_palette=ice`, the map in the shot's corner).
-            self.inside_coloring_sig(self.coloring.color_method),
+            self.inside_coloring_sig(self.coloring.color_method, self.shown_interior_palette()),
         )
     }
 
@@ -17141,10 +17190,12 @@ impl FractadyneApp {
         let mut h = std::collections::hash_map::DefaultHasher::new();
         self.chosen_color_sig(view).hash(&mut h);
         self.previewed_row().hash(&mut h);
+        // ...and the inside's palette a picker previews (the palette browser choosing the inside).
+        self.coloring.interior_preview.shown().hash(&mut h);
         h.finish()
     }
 
-    /// [`accum_color_sig`](Self::accum_color_sig) without the hover preview: the coloring as
+    /// [`accum_color_sig`](Self::accum_color_sig) without the hover previews: the coloring as
     /// chosen. The palette browser keys its thumbnails on it, since each sets its own palette and
     /// a preview would only redraw them all to the same pictures.
     pub(crate) fn chosen_color_sig(&self, view: usize) -> u64 {
@@ -17169,7 +17220,7 @@ impl FractadyneApp {
         // 2026-11-19: past 2^33 a settled view went on showing its average in the old inside
         // palette (`--shot-then interior_palette=ice`: the minibrot stayed orange). A palette
         // picker's hover preview joins in `accum_color_sig`.
-        self.inside_coloring_sig(self.shown_method()).hash(&mut h);
+        self.inside_coloring_sig(self.shown_method(), self.coloring.interior_palette).hash(&mut h);
         // The palette's anti-aliasing (C8): it changes every colored sample.
         self.palette_aa().gpu_word().hash(&mut h);
         // The method the view is colored with: a method sheet preview restarts the average too.
@@ -17230,15 +17281,15 @@ impl FractadyneApp {
         )
     }
 
-    /// Everything that colors the inside of a frame colored by `method`, hashed: how it is shaded
-    /// (B5), its palette, whether its fit is on (C4), and its color as the screen shows it (C1;
-    /// `view_interior_color`). The inside's fitted windows are hashed by the caller that needs them
-    /// (`inside_windows`).
-    pub(crate) fn inside_coloring_sig(&self, method: ColorMethod) -> u64 {
+    /// Everything that colors the inside of a frame colored by `method` with the inside palette
+    /// `palette`, hashed: how it is shaded (B5), the palette, whether its fit is on (C4), and its
+    /// color as the screen shows it (C1; `view_interior_color`). The inside's fitted windows are
+    /// hashed by the caller that needs them (`inside_windows`).
+    pub(crate) fn inside_coloring_sig(&self, method: ColorMethod, palette: Option<usize>) -> u64 {
         use std::hash::{Hash, Hasher};
         let mut h = std::collections::hash_map::DefaultHasher::new();
-        self.interior_shading_for(method).gpu_id().hash(&mut h);
-        self.coloring.interior_palette.hash(&mut h);
+        self.interior_shading_with(method, palette).gpu_id().hash(&mut h);
+        palette.hash(&mut h);
         self.coloring.interior_fit.hash(&mut h);
         for v in self.view_interior_color() {
             v.to_bits().hash(&mut h);

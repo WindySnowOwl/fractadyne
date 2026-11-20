@@ -271,6 +271,8 @@ menu-color-browse-hover = Todas las paletas sobre la vista actual, una junto a o
 
 # The palette browser window.
 palette-browser-title = Paletas
+palette-browser-title-inside = Paletas interiores
+palette-browser-inside-hint = Cada miniatura muestra la vista con esa paleta dentro del conjunto; el exterior queda como está.
 palette-browser-clear = Quitar filtros
 palette-browser-both = Ambos
 palette-browser-panes-hover = En la vista doble, las miniaturas pueden mostrar el panel izquierdo, el derecho o ambos lado a lado.
@@ -2845,6 +2847,7 @@ inside-trap-desc = Cuánto se acercó cada órbita a la trampa de órbita, en la
 panel-inside-palette = Paleta interior
 panel-inside-palette-hover = La paleta con la que la trampa de órbita colorea el interior.
 panel-inside-palette-same = Igual que fuera
+panel-inside-palette-browse-hover = Todas las paletas dentro del conjunto sobre la vista actual, una junto a otra.
 panel-inside-fit = Ajustar al rango del interior
 panel-inside-fit-hover = Extiende la paleta interior sobre los valores de la trampa medidos dentro del conjunto en pantalla, para que se vea su estructura. Las exportaciones de esta vista usan el mismo ajuste.
 panel-palette-aa = Suavizar la paleta (antialias)

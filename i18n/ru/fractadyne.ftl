@@ -273,6 +273,8 @@ menu-color-browse-hover = Все палитры на текущем виде, р
 
 # The palette browser window.
 palette-browser-title = Палитры
+palette-browser-title-inside = Палитры внутри
+palette-browser-inside-hint = Каждая миниатюра показывает вид с этой палитрой внутри множества; снаружи всё остаётся как есть.
 palette-browser-clear = Сбросить фильтры
 palette-browser-both = Оба
 palette-browser-panes-hover = В двойном виде миниатюры могут показывать левую панель, правую или обе рядом.
@@ -2902,6 +2904,7 @@ inside-trap-desc = Насколько близко каждая орбита п�
 panel-inside-palette = Палитра внутри
 panel-inside-palette-hover = Палитра, которой ловушка орбиты окрашивает внутренность.
 panel-inside-palette-same = Как снаружи
+panel-inside-palette-browse-hover = Все палитры внутри множества на текущем виде, рядом друг с другом.
 panel-inside-fit = Подогнать под диапазон внутренности
 panel-inside-fit-hover = Растягивает палитру внутренности на значения ловушки, измеренные внутри множества на экране, чтобы была видна её структура. Экспорт этого вида использует ту же подгонку.
 panel-palette-aa = Сглаживание палитры

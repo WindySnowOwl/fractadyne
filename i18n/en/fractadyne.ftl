@@ -276,6 +276,8 @@ menu-color-browse-hover = Every palette over the current view, side by side: fil
 
 # The palette browser window.
 palette-browser-title = Palettes
+palette-browser-title-inside = Inside palettes
+palette-browser-inside-hint = Each thumbnail shows the view with that palette inside the set; the outside stays as it is.
 palette-browser-clear = Clear filters
 palette-browser-both = Both
 palette-browser-panes-hover = In the dual view, the thumbnails can show the left pane, the right pane, or both side by side.
@@ -3041,6 +3043,7 @@ inside-trap-desc = How near each orbit came to the orbit trap, in the inside pal
 panel-inside-palette = Inside palette
 panel-inside-palette-hover = The palette the orbit trap colors the inside with.
 panel-inside-palette-same = Same as outside
+panel-inside-palette-browse-hover = Every palette inside the set over the current view, side by side.
 panel-inside-fit = Fit to the inside's range
 panel-inside-fit-hover = Spread the inside palette over the trap values measured inside the set on screen, so its structure shows. Exports of this view use the same fit.
 panel-palette-aa = Anti-alias the palette

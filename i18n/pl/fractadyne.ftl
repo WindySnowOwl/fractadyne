@@ -273,6 +273,8 @@ menu-color-browse-hover = Wszystkie palety na bieżącym widoku, obok siebie: fi
 
 # The palette browser window.
 palette-browser-title = Palety
+palette-browser-title-inside = Palety wnętrza
+palette-browser-inside-hint = Każda miniatura pokazuje widok z tą paletą wewnątrz zbioru; zewnętrze pozostaje bez zmian.
 palette-browser-clear = Wyczyść filtry
 palette-browser-both = Oba
 palette-browser-panes-hover = W widoku podwójnym miniatury mogą pokazywać lewy panel, prawy panel lub oba obok siebie.
@@ -2936,6 +2938,7 @@ inside-trap-desc = Jak blisko każda orbita podeszła do pułapki orbity, w pale
 panel-inside-palette = Paleta wnętrza
 panel-inside-palette-hover = Paleta, którą pułapka orbity koloruje wnętrze.
 panel-inside-palette-same = Jak na zewnątrz
+panel-inside-palette-browse-hover = Wszystkie palety wewnątrz zbioru na bieżącym widoku, obok siebie.
 panel-inside-fit = Dopasuj do zakresu wnętrza
 panel-inside-fit-hover = Rozkłada paletę wnętrza na wartości pułapki zmierzone wewnątrz zbioru na ekranie, by było widać jej strukturę. Eksporty tego widoku używają tego samego dopasowania.
 panel-palette-aa = Wygładzanie palety (antyaliasing)

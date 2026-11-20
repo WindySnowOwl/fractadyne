@@ -267,6 +267,8 @@ menu-color-browse-hover = 在当前视图上并排显示所有调色板：可按
 
 # The palette browser window.
 palette-browser-title = 调色板
+palette-browser-title-inside = 内部调色板
+palette-browser-inside-hint = 每个缩略图显示在集合内部使用该调色板的视图；外部保持不变。
 palette-browser-clear = 清除筛选
 palette-browser-both = 两者
 palette-browser-panes-hover = 在双视图中，缩略图可以显示左侧窗格、右侧窗格，或将两者并排显示。
@@ -2765,6 +2767,7 @@ inside-trap-desc = 每条轨道离轨道陷阱有多近，用内部调色板表�
 panel-inside-palette = 内部调色板
 panel-inside-palette-hover = 轨道陷阱为内部着色所用的调色板。
 panel-inside-palette-same = 与外部相同
+panel-inside-palette-browse-hover = 在当前视图上，于集合内部并排显示所有调色板。
 panel-inside-fit = 适配内部范围
 panel-inside-fit-hover = 将内部调色板铺展到屏幕上集合内部测得的陷阱值上，使其结构可见。此视图的导出使用相同的适配。
 panel-palette-aa = 调色板抗锯齿

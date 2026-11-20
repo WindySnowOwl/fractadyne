@@ -720,7 +720,7 @@ impl FractadyneApp {
                             .on_hover_text(tr!(menu_color_browse_hover))
                             .clicked()
                         {
-                            self.palette_browser.open = true;
+                            self.palette_browser.open_for(crate::ui::palette_browser::BrowserTarget::Outside);
                             ui.close_menu();
                         }
                         if ui.button(tr!(menu_color_edit_gradient)).clicked() {

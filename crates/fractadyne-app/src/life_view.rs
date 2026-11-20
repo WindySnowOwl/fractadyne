@@ -34,6 +34,9 @@ pub(crate) enum UiPointer {
     /// The pointer moves onto the middle of this row of an open palette picker, where the last
     /// frame drew it (`PalettePreview::row_rect`). Nothing when no picker drew it.
     OnPaletteRow(crate::palette_preview::PaletteRow),
+    /// The same for a row of the inside's palette picker (the palette browser choosing the inside's
+    /// palette: `InsidePreview::row_rect`).
+    OnInsideRow(crate::palette_preview::InsideRow),
     /// The pointer moves onto the middle of this cell of the open method sheet, where the last
     /// frame drew it (coloring plan B7). Nothing when the sheet did not draw it.
     OnSheetCell(crate::ui::method_sheet::SheetCell),
@@ -448,6 +451,9 @@ impl FractadyneApp {
             UiPointer::OnPaletteRow(row) => {
                 return self.coloring.palette_preview.row_rect(row).map(|r| egui::Event::PointerMoved(r.center()));
             }
+            UiPointer::OnInsideRow(row) => {
+                return self.coloring.interior_preview.row_rect(row).map(|r| egui::Event::PointerMoved(r.center()));
+            }
             UiPointer::OnSheetCell(c) => {
                 return self.method_sheet.preview.row_rect(c).map(|r| egui::Event::PointerMoved(r.center()));
             }
@@ -488,6 +494,7 @@ impl FractadyneApp {
             // Answered above.
             UiPointer::Gone
             | UiPointer::OnPaletteRow(_)
+            | UiPointer::OnInsideRow(_)
             | UiPointer::OnSheetCell(_)
             | UiPointer::ViewMove(..)
             | UiPointer::ViewPress(..)

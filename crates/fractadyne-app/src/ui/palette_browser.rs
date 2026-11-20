@@ -13,8 +13,14 @@
 //!
 //! In the dual view the thumbnails can show either pane, or both side by side ([`BrowserPanes`]):
 //! each pane is its own view with its own iteration texture, so each gets its own atlas.
+//!
+//! It chooses the outside's palette, or, opened from the panel's Inside palette row while the
+//! orbit trap colors the inside, the INSIDE's ([`BrowserTarget`]): each thumbnail then keeps the
+//! view's outside and puts the palette inside the set (`atlas::render_inside_palette_atlas`). The
+//! inside's palette is a built-in preset or the outside's own, so it lists the presets and a "Same
+//! as outside" choice, and previews through the inside's own picker preview.
 
-use crate::palette_preview::PaletteRow;
+use crate::palette_preview::{InsideRow, PaletteRow};
 use fractadyne_color::tags::{self, TagGroup, TAGS};
 use fractadyne_gpu::atlas::{self, AtlasPalette, PaletteAtlas};
 
@@ -53,6 +59,15 @@ const REDRAW_PACE: std::time::Duration = std::time::Duration::from_millis(400);
 /// The longest tag a user may type.
 const MAX_TAG_CHARS: usize = 32;
 
+/// What the browser chooses: the outside's palette, or the inside's.
+#[derive(Clone, Copy, PartialEq, Eq, Debug, Default)]
+pub(crate) enum BrowserTarget {
+    #[default]
+    Outside,
+    /// The inside's palette, while the orbit trap colors the inside (`interior_palette`).
+    Inside,
+}
+
 /// Which panes of the dual view the thumbnails show. Outside the dual view there is one.
 #[derive(Clone, Copy, PartialEq, Eq, Debug, Default)]
 pub(crate) enum BrowserPanes {
@@ -83,6 +98,8 @@ pub(crate) struct PaletteBrowser {
     pub(crate) filter: Vec<String>,
     /// Which panes of the dual view the thumbnails show.
     pub(crate) panes: BrowserPanes,
+    /// Whether it chooses the outside's palette or the inside's ([`PaletteBrowser::open_for`]).
+    pub(crate) target: BrowserTarget,
     /// One atlas per view (the dual view's two panes), what each was drawn for (`AtlasKey`), and
     /// when.
     atlas: [Option<PaletteAtlas>; 2],
@@ -104,6 +121,16 @@ impl PaletteBrowser {
         self.open = false;
         self.open_frames = 0;
     }
+
+    /// Open it to choose `target`'s palette. A change of target starts as a first opening, so the
+    /// grid scrolls to the palette in use for it.
+    pub(crate) fn open_for(&mut self, target: BrowserTarget) {
+        if self.target != target {
+            self.open_frames = 0;
+        }
+        self.target = target;
+        self.open = true;
+    }
 }
 
 /// Everything a drawn atlas depends on.
@@ -113,6 +140,7 @@ struct AtlasKey {
     colouring: u64,
     library: u64,
     cell: [u32; 2],
+    target: BrowserTarget,
 }
 
 /// One palette in the browser: its row (what the preview and the lists call it), its name, its
@@ -243,6 +271,10 @@ impl crate::FractadyneApp {
             }
             out.push(Entry { row: PaletteRow::Saved(j), name: g.name.clone(), tags: t });
         }
+        // The inside's palette is a preset: the user's saved gradients are not choices for it.
+        if self.palette_browser.target == BrowserTarget::Inside {
+            out.retain(|e| matches!(e.row, PaletteRow::Preset(_)));
+        }
         out
     }
 
@@ -252,11 +284,18 @@ impl crate::FractadyneApp {
             let l = g.bake(fractadyne_color::segment::LUT_SIZE);
             AtlasPalette { lut: l.entries, smooth: l.smooth }
         };
+        // In the order `browser_entries` lists them: the presets, then (for the outside) the saved.
+        let saved = if self.palette_browser.target == BrowserTarget::Outside { &self.saved_gradients[..] } else { &[] };
         fractadyne_color::PRESETS
             .iter()
             .map(|p| lut(fractadyne_color::segment::Gradient::from_stops(p.name, p.stops)))
-            .chain(self.saved_gradients.iter().map(|g| lut(crate::segments_to_gradient(&g.name, &g.segment))))
+            .chain(saved.iter().map(|g| lut(crate::segments_to_gradient(&g.name, &g.segment))))
             .collect()
+    }
+
+    /// Whether the orbit trap colors the inside, so the browser can choose the inside's palette.
+    pub(crate) fn browser_inside_available(&self) -> bool {
+        self.coloring.interior_of(self.coloring.color_method) == crate::InteriorMode::Trap
     }
 
     /// Can the thumbnails show this view? Not a Game of Life or an L-system, which draw through
@@ -314,7 +353,8 @@ impl crate::FractadyneApp {
             let Some(writes) = atlas::view_writes(&rs, v as u32) else { continue };
             let aspect = self.browser_aspect(v);
             let cell = [CELL_W, ((CELL_W as f64) * aspect).round().max(8.0) as u32];
-            let key = AtlasKey { writes, colouring: self.chosen_color_sig(v), library: self.library_sig(), cell };
+            let target = self.palette_browser.target;
+            let key = AtlasKey { writes, colouring: self.chosen_color_sig(v), library: self.library_sig(), cell, target };
             if self.palette_browser.drawn_for[v] == Some(key) {
                 continue;
             }
@@ -328,7 +368,16 @@ impl crate::FractadyneApp {
             let luts = luts.get_or_insert_with(|| self.browser_luts());
             let (cell, cols) = atlas_layout(luts.len() as u32, cell, rs.device.limits().max_texture_dimension_2d);
             let old = self.palette_browser.atlas[v].take();
-            match atlas::render_palette_atlas(&rs, v as u32, luts, cell, cols, old) {
+            let drawn = match target {
+                BrowserTarget::Outside => atlas::render_palette_atlas(&rs, v as u32, luts, cell, cols, old),
+                BrowserTarget::Inside => {
+                    // The view's inside with a palette of its own, as choosing one would shade it.
+                    let m = self.shown_method();
+                    let shading = fractadyne_core::coloring::InteriorShading::for_view(self.coloring.interior_of(m), m, true);
+                    atlas::render_inside_palette_atlas(&rs, v as u32, luts, shading, cell, cols, old)
+                }
+            };
+            match drawn {
                 Ok(a) => {
                     if crate::diag::trace_on("palette") {
                         crate::diag::trace(
@@ -358,8 +407,15 @@ impl crate::FractadyneApp {
         }
     }
 
-    /// Make `row` the palette in use, as choosing it from a list does.
+    /// Make `row` the palette in use, as choosing it from a list does (the inside's, while the
+    /// browser chooses for the inside).
     fn browser_choose(&mut self, row: PaletteRow) {
+        if self.palette_browser.target == BrowserTarget::Inside {
+            if let PaletteRow::Preset(i) = row {
+                self.coloring.interior_palette = Some(i);
+            }
+            return;
+        }
         match row {
             PaletteRow::Preset(i) => {
                 self.coloring.palette_idx = i;
@@ -373,6 +429,10 @@ impl crate::FractadyneApp {
 
     /// The palette in use as a browser row, if it is one of them.
     fn browser_chosen(&self) -> Option<PaletteRow> {
+        if self.palette_browser.target == BrowserTarget::Inside {
+            // "Same as outside" is no tile: its button shows it.
+            return self.coloring.interior_palette.map(PaletteRow::Preset);
+        }
         if let Some(j) = self.live_saved_gradient() {
             return Some(PaletteRow::Saved(j));
         }
@@ -386,6 +446,13 @@ impl crate::FractadyneApp {
             self.palette_browser.open_frames = 0;
             return;
         }
+        // The inside can be chosen only while the orbit trap colors it: once it no longer does,
+        // the browser goes back to choosing the outside's palette.
+        if self.palette_browser.target == BrowserTarget::Inside && !self.browser_inside_available() {
+            self.palette_browser.target = BrowserTarget::Outside;
+            self.palette_browser.open_frames = 0;
+        }
+        let inside = self.palette_browser.target == BrowserTarget::Inside;
         self.refresh_palette_atlas(ctx);
         let entries = self.browser_entries();
         let chosen = self.browser_chosen();
@@ -397,15 +464,24 @@ impl crate::FractadyneApp {
         let mut open = true;
         let mut close = false;
         let mut pick: Option<PaletteRow> = None;
-        egui::Window::new(tr!(palette_browser_title))
+        let title = if inside { tr!(palette_browser_title_inside) } else { tr!(palette_browser_title) };
+        egui::Window::new(title)
             .id(egui::Id::new("fractadyne.palette-browser"))
             .open(&mut open)
             .default_size([6.0 * (THUMB_W + GAP) + 30.0, 720.0])
             .show(ctx, |ui| {
-                // A picker, for the hover preview: reported every frame the window draws.
-                self.coloring.palette_preview.picker_open();
+                // A picker, for the hover preview: reported every frame the window draws (the
+                // inside's own preview while it chooses for the inside).
+                if inside {
+                    self.coloring.interior_preview.picker_open();
+                } else {
+                    self.coloring.palette_preview.picker_open();
+                }
                 if self.dual {
                     self.browser_panes_row(ui);
+                }
+                if inside {
+                    self.browser_inside_row(ui);
                 }
                 self.browser_filters(ui, &entries);
                 ui.separator();
@@ -470,6 +546,20 @@ impl crate::FractadyneApp {
                 // The tiles change size, so the palette in use moves: bring it back into view.
                 self.palette_browser.open_frames = 0;
             }
+        });
+    }
+
+    /// While choosing for the inside: what the thumbnails show, and the choice that is not a
+    /// thumbnail, "Same as outside" (the inside in the outside's palette).
+    fn browser_inside_row(&mut self, ui: &mut egui::Ui) {
+        ui.horizontal_wrapped(|ui| {
+            let same = self.coloring.interior_palette.is_none();
+            let r = ui.selectable_label(same, tr!(panel_inside_palette_same)).on_hover_text(tr!(panel_inside_palette_hover));
+            self.coloring.interior_preview.row(InsideRow::Same, r.rect, r.hovered());
+            if r.clicked() {
+                self.coloring.interior_palette = None;
+            }
+            ui.label(egui::RichText::new(tr!(palette_browser_inside_hint)).weak().small());
         });
     }
 
@@ -594,7 +684,11 @@ impl crate::FractadyneApp {
             egui::TextStyle::Body.resolve(ui.style()),
             colour,
         );
-        self.coloring.palette_preview.row(e.row, cell, resp.hovered());
+        match (self.palette_browser.target, e.row) {
+            (BrowserTarget::Inside, PaletteRow::Preset(i)) => self.coloring.interior_preview.row(InsideRow::Preset(i), cell, resp.hovered()),
+            (BrowserTarget::Inside, PaletteRow::Saved(_)) => {}
+            (BrowserTarget::Outside, row) => self.coloring.palette_preview.row(row, cell, resp.hovered()),
+        }
         let tags: Vec<String> = e.tags.iter().map(|t| tag_label(t)).collect();
         let clicked = resp.clicked();
         resp.on_hover_text(format!("{}\n{}", e.name, tags.join(" · ")));
@@ -628,9 +722,11 @@ impl crate::FractadyneApp {
             }
         });
         match row {
-            PaletteRow::Preset(_) => {
+            // Only the outside can take a saved gradient, whose tags this says how to edit.
+            PaletteRow::Preset(_) if self.palette_browser.target == BrowserTarget::Outside => {
                 ui.label(egui::RichText::new(tr!(palette_browser_tags_builtin)).weak().small());
             }
+            PaletteRow::Preset(_) => {}
             PaletteRow::Saved(_) => {
                 ui.horizontal_wrapped(|ui| {
                     let field = ui.add(

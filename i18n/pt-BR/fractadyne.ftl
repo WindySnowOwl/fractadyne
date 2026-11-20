@@ -271,6 +271,8 @@ menu-color-browse-hover = Todas as paletas sobre a vista atual, lado a lado: fil
 
 # The palette browser window.
 palette-browser-title = Paletas
+palette-browser-title-inside = Paletas internas
+palette-browser-inside-hint = Cada miniatura mostra a vista com essa paleta dentro do conjunto; o lado de fora fica como está.
 palette-browser-clear = Limpar filtros
 palette-browser-both = Ambos
 palette-browser-panes-hover = Na visão dupla, as miniaturas podem mostrar o painel esquerdo, o direito ou os dois lado a lado.
@@ -2844,6 +2846,7 @@ inside-trap-desc = O quanto cada órbita se aproximou da armadilha de órbita, n
 panel-inside-palette = Paleta interna
 panel-inside-palette-hover = A paleta com que a armadilha de órbita colore o interior.
 panel-inside-palette-same = Igual à de fora
+panel-inside-palette-browse-hover = Todas as paletas dentro do conjunto sobre a vista atual, lado a lado.
 panel-inside-fit = Ajustar ao intervalo do interior
 panel-inside-fit-hover = Espalha a paleta interna pelos valores da armadilha medidos dentro do conjunto na tela, para que sua estrutura apareça. As exportações desta vista usam o mesmo ajuste.
 panel-palette-aa = Suavizar a paleta (antialiasing)

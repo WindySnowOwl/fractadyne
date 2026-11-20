@@ -267,6 +267,8 @@ menu-color-browse-hover = 在目前檢視上並排顯示所有調色盤：可依
 
 # The palette browser window.
 palette-browser-title = 調色盤
+palette-browser-title-inside = 內部調色盤
+palette-browser-inside-hint = 每個縮圖顯示在集合內部使用該調色盤的檢視；外部保持不變。
 palette-browser-clear = 清除篩選
 palette-browser-both = 兩者
 palette-browser-panes-hover = 在雙視圖中，縮圖可以顯示左側窗格、右側窗格，或將兩者並排顯示。
@@ -2764,6 +2766,7 @@ inside-trap-desc = 每條軌道離軌道陷阱有多近，用內部調色盤表�
 panel-inside-palette = 內部調色盤
 panel-inside-palette-hover = 軌道陷阱為內部著色所用的調色盤。
 panel-inside-palette-same = 與外部相同
+panel-inside-palette-browse-hover = 在目前檢視上，於集合內部並排顯示所有調色盤。
 panel-inside-fit = 適配內部範圍
 panel-inside-fit-hover = 將內部調色盤鋪展到螢幕上集合內部測得的陷阱值上，使其結構可見。此視圖的匯出使用相同的適配。
 panel-palette-aa = 調色盤抗鋸齒
