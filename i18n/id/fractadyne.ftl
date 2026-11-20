@@ -2807,6 +2807,17 @@ panel-log-scale-off-hover =
     Memerlukan normalisasi: ini memilih BAGAIMANA palet dipetakan ke rentang lolos terukur, jadi jika “Normalkan warna dalam” mati (dan tidak ada ekspor --normalize), tidak ada pemetaan yang dapat diubahnya dan tidak satu piksel pun akan berubah.
 
     Aktifkan “Normalkan warna dalam” untuk menggunakannya.
+# The dual view's Julia pane on the set's palette map, one iteration on (coloring plan C11): the
+# checkbox, its tooltip, and its tooltip while grayed (another method than the escape count).
+panel-julia-linked = Tautkan warna Julia ke himpunan
+panel-julia-linked-hover =
+    Mewarnai tampilan Julia dengan pemetaan palet himpunan, bergeser satu iterasi, sehingga kedua tampilan terbaca sebagai satu gambar: warna di bawah penunjuk pada himpunan muncul lagi di titik c pada tampilan Julia, tempat orbit Julia melanjutkan orbit himpunan.
+
+    Dengan 'Normalkan warna dalam' atau 'Selalu sesuaikan rentang', tampilan Julia juga memakai rentang terukur milik himpunan, jadi bila satu tampilan jauh lebih dalam daripada yang lain, yang lain bisa tampak satu warna.
+panel-julia-linked-method-hover =
+    Hanya hitungan lolos yang menautkan kedua tampilan. Dengan metode ini setiap tampilan mewarnai nilainya sendiri (garis, perangkap, jarak, atau sudutnya), dan nilai itu berbeda di antara kedua tampilan.
+
+    Pilih Iterasi halus untuk memakainya.
 # The palette animation: its kind, then its speed.
 panel-animate = Animasi
 panel-anim-speed = Kecepatan

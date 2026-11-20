@@ -12,6 +12,14 @@ detail is in the git history.
 
 ## 0.3.1 (unreleased)
 
+- **Linked Julia colors in the dual view.** "Link Julia colors to the set", a new box in the
+  Coloring section of the dual view, colors the Julia pane with the set's palette mapping one
+  iteration on, so the two panes read as one picture: the color under the pointer in the set
+  reappears at the point c in the Julia pane, where the Julia orbit continues the set's. With
+  "Normalize deep colors" or "Always fit range" the Julia pane takes the set's measured range too.
+  Exports and tours of the dual view color it the same way. It works with Smooth iteration, the
+  escape count, and is off by default. A view file and the command line carry it (`julia_linked`,
+  `--julia-linked`).
 - **Ways back to the defaults for the coloring.** Every slider in the Coloring and Effects sections
   goes back to its default on a double-click, on its handle or track as well as on its number, as
   its tooltip says. Color ▸ Reset coloring settings

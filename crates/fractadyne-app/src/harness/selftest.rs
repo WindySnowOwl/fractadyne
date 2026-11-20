@@ -72,7 +72,7 @@ pub(crate) const GROUPS: &[&str] = &[
     "display", "catalog", "goldens", "bench-matrix", "live-res", "appearance", "band-seams", "palette-aa",
     "checklist", "replay", "settings-quarantine", "expmap", "assemble", "de-pixels",
     "colour-box", "cycle-check", "export-contain", "honest-step", "julia-critical", "palette-fade", "retreat", "view-thumb",
-    "width-independence", "coloring-matrix-quick", "color-sig", "coloring-reset",
+    "width-independence", "coloring-matrix-quick", "color-sig", "coloring-reset", "julia-link",
 ];
 
 /// Groups that run ONLY when named. ⛔Kept out of `GROUPS` so a bare `--selftest` never pays for
@@ -10731,6 +10731,7 @@ zoom = \"1e94\"
                 palette_brightness: 0.25,
                 palette_contrast: -0.4,
                 palette_saturation: 1.5,
+                julia_linked: true,
             };
             // (coloring, lines its view must hold)
             let colorings = [
@@ -10782,6 +10783,8 @@ zoom = \"1e94\"
                 (ViewColoring { interior_color: [0.9, 0.2, 0.6], ..d.clone() }, &["interior_color=0.9,0.2,0.6"][..]),
                 // The palette point sampled (C8: anti-aliased by default).
                 (ViewColoring { palette_aa: false, ..d.clone() }, &["palette_aa=0"][..]),
+                // The dual view's Julia pane on the set's map (C11).
+                (ViewColoring { julia_linked: true, ..d.clone() }, &["julia_linked=1"][..]),
             ];
             let mut bad: Vec<String> = Vec::new();
             for (v, want_lines) in &colorings {
@@ -10929,6 +10932,7 @@ zoom = \"1e94\"
                 palette_brightness: -0.3,
                 palette_contrast: 0.6,
                 palette_saturation: 0.5,
+                julia_linked: true,
             };
             let fields = |s: &fractadyne_state::ColoringSpec| match serde_json::to_value(s) {
                 Ok(serde_json::Value::Object(m)) => m,
@@ -11344,6 +11348,7 @@ zoom = \"1e94\"
                 self.coloring.trap_type,
                 self.anim.palette_anim,
                 self.anim.palette_anim_speed,
+                self.coloring.julia_linked,
             );
             let d = fractadyne_state::ColoringSpec::default();
             let speed0 = fractadyne_state::SessionState::default().palette_anim_speed;
@@ -11369,6 +11374,7 @@ zoom = \"1e94\"
             self.coloring.interior = inside;
             self.coloring.interior_palette = inside_palette;
             self.coloring.trap_type = trap;
+            self.coloring.julia_linked = !d.julia_linked;
             self.reset_coloring_settings();
             let c = &self.coloring;
             let reset = c.cycle == d.cycle
@@ -11385,11 +11391,12 @@ zoom = \"1e94\"
                 && c.palette_idx == palette
                 && c.interior == inside
                 && c.interior_palette == inside_palette
-                && c.trap_type == trap;
+                && c.trap_type == trap
+                && c.julia_linked == !d.julia_linked;
             push_check(&mut checks, &mut last_check_t, SelfCheck {
                 category: "consistency",
                 name: "Reset coloring settings puts the tuned values back and keeps the choices".into(),
-                params: "Cycle, Divide iterations, Offset, the palette's adjustment, the normalization switches, anti-aliasing and animation set away from their defaults; method stripe, palette ice, the inside by the trap in ember, trap cross".into(),
+                params: "Cycle, Divide iterations, Offset, the palette's adjustment, the normalization switches, anti-aliasing and animation set away from their defaults; method stripe, palette ice, the inside by the trap in ember, trap cross, the Julia link on".into(),
                 result: format!("tuned values back to a new session's: {reset}; choices kept: {kept}"),
                 threshold: "both",
                 pass: reset && kept,
@@ -11412,7 +11419,90 @@ zoom = \"1e94\"
                 self.coloring.trap_type,
                 self.anim.palette_anim,
                 self.anim.palette_anim_speed,
+                self.coloring.julia_linked,
             ) = k0;
+        }
+
+        // ---- The dual view's Julia pane on the set's palette map (coloring plan C11) ----
+        // An export of each pane, both centered on c at 1e5x (so each center pixel is c in its own
+        // plane): the set's pixel at c and the Julia pixel at z = c, whose orbit is the set's one
+        // step on. Linked, the two centers are one color; unlinked (the CONTROL) they are a step of
+        // the palette apart. Under the classic map, and under a fitted range, the set's and the
+        // Julia pane's windows set unlike so that only the link can make the colors agree.
+        if want("julia-link") {
+            let saved_spec = self.coloring_spec();
+            let saved = (self.fractal, self.julia_mode, self.julia_c, self.dual, self.render_cfg.max_iter, self.render_cfg.auto_iter);
+            let saved_norm = (self.perf.norm_pal, self.perf.norm_shown, self.perf.norm_grad);
+            self.fractal = FractalKind::Mandelbrot;
+            self.julia_mode = false;
+            self.dual = true;
+            // Outside the set: its critical orbit escapes after 17 iterations (`--render-iter`: the
+            // set's count at c 16.90, the Julia count at z = c 15.90).
+            self.julia_c = (-0.75, 0.2);
+            self.render_cfg.max_iter = 2_000;
+            self.render_cfg.auto_iter = false;
+            self.coloring.color_method = crate::ColorMethod::Smooth;
+            self.coloring.use_custom_palette = false;
+            self.coloring.use_duotone = false;
+            self.coloring.use_binary = false;
+            self.coloring.palette_idx = fractadyne_color::preset_by_id("ember").unwrap_or(0);
+            self.coloring.palette_adjust = fractadyne_color::adjust::PaletteAdjust::NEUTRAL;
+            // A whole palette in 16 iterations: one iteration is a clear step of it.
+            self.coloring.cycle = 1.0;
+            self.coloring.iter_div = 1;
+            self.coloring.offset = 0.1;
+            self.coloring.normalize_live = false;
+            self.coloring.normalize_fit = false;
+            self.coloring.log_palette = false;
+            self.coloring.palette_aa = false;
+            let (w, h) = (33u32, 33u32);
+            let center = |app: &Self, julia: bool| -> Option<[u8; 3]> {
+                let mut vp = Viewport::new(w as f64, h as f64);
+                vp.center_x = fractadyne_core::BigFloat::from_f64(-0.75, 64);
+                vp.center_y = fractadyne_core::BigFloat::from_f64(0.2, 64);
+                vp.units_per_pixel = fractadyne_core::FloatExp::from_f64(3.0e-5 / h as f64);
+                let mut req = app.current_export_request_for(&vp, julia);
+                req.width = w;
+                req.height = h;
+                req.ss = 1;
+                let (progress, cancel) = (std::sync::atomic::AtomicU32::new(0), std::sync::atomic::AtomicBool::new(false));
+                let r = fractadyne_gpu::render_export(device, queue, &req, &progress, &cancel).ok()?;
+                let px = fractadyne_export::to_srgb8(&r.pixels);
+                let i = ((h / 2 * w + w / 2) * 4) as usize;
+                px.get(i..i + 3).map(|p| [p[0], p[1], p[2]])
+            };
+            // The largest channel difference between the two centers.
+            let apart = |app: &mut Self, linked: bool| -> Option<u8> {
+                app.coloring.julia_linked = linked;
+                let (a, b) = (center(app, false)?, center(app, true)?);
+                Some((0..3).map(|k| a[k].abs_diff(b[k])).max().unwrap_or(0))
+            };
+            let classic = (apart(self, true), apart(self, false));
+            // A fitted range on each pane, unlike: the set's 10..40, the Julia pane's 0..400.
+            self.coloring.normalize_fit = true;
+            self.perf.norm_pal = [Some((10.0, 40.0)), Some((0.0, 400.0))];
+            self.perf.norm_shown = self.perf.norm_pal;
+            self.perf.norm_grad = [Some(1.0), Some(1.0)];
+            let fitted = (apart(self, true), apart(self, false));
+            let maps = (self.export_map(false), {
+                self.coloring.julia_linked = true;
+                self.export_map(true)
+            });
+            (self.perf.norm_pal, self.perf.norm_shown, self.perf.norm_grad) = saved_norm;
+            (self.fractal, self.julia_mode, self.julia_c, self.dual, self.render_cfg.max_iter, self.render_cfg.auto_iter) = saved;
+            self.apply_coloring_spec(&saved_spec);
+            let ok = |(linked, unlinked): (Option<u8>, Option<u8>)| linked.is_some_and(|l| l <= 3) && unlinked.is_some_and(|u| u >= 12);
+            push_check(&mut checks, &mut last_check_t, SelfCheck {
+                category: "consistency",
+                name: "a linked Julia pane colors z = c as the set colors c".into(),
+                params: "dual view, Julia c = -0.75+0.2i, both panes centered on c at 1e5x, 33x33, ember, Cycle 1; the classic map, then fitted ranges 10..40 (set) and 0..400 (Julia)".into(),
+                result: format!(
+                    "largest channel difference between the centers, linked / unlinked: classic {:?} / {:?}, fitted {:?} / {:?}; fitted maps set {:?}, Julia {:?}",
+                    classic.0, classic.1, fitted.0, fitted.1, maps.0, maps.1
+                ),
+                threshold: "linked <= 3 and unlinked >= 12 (the control), both maps",
+                pass: ok(classic) && ok(fitted),
+            });
         }
 
         // ---- appearance: the image actually CHANGES when a control changes ----

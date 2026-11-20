@@ -2807,6 +2807,17 @@ panel-log-scale-off-hover =
     需要正規化：這個選項決定調色盤「如何」對應到量測到的逃逸範圍，因此在「正規化深層色彩」關閉時（且沒有使用 --normalize 匯出），就沒有可以讓它改變的對應，也不會改變任何一個像素。
 
     請開啟「正規化深層色彩」來使用它。
+# The dual view's Julia pane on the set's palette map, one iteration on (coloring plan C11): the
+# checkbox, its tooltip, and its tooltip while grayed (another method than the escape count).
+panel-julia-linked = 將 Julia 色彩與集合連動
+panel-julia-linked-hover =
+    用集合的調色盤對應為 Julia 檢視著色，並前移一次疊代，讓兩個檢視讀起來像一幅畫：集合中指標下的顏色會在 Julia 檢視的點 c 再次出現，Julia 軌道在那裡延續集合的軌道。
+
+    開啟「正規化深層色彩」或「一律貼合範圍」時，Julia 檢視也採用集合測得的範圍；若一個檢視比另一個深得多，另一個可能顯示為單一顏色。
+panel-julia-linked-method-hover =
+    只有逃逸次數能把兩個檢視連在一起。在此方法下，每個檢視依自己的值著色（條紋、陷阱、距離或角度），這些值在兩個檢視間各不相同。
+
+    選擇「平滑疊代」即可使用。
 # The palette animation: its kind, then its speed.
 panel-animate = 動畫
 panel-anim-speed = 速度

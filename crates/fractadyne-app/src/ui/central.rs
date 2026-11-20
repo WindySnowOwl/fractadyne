@@ -138,6 +138,7 @@ impl FractadyneApp {
         // Split position from the persisted fraction; a small gap between the panels holds the
         // draggable separator (handled at the end of this fn, so it draws on top).
         let (left, right) = dual_panel_rects(full, self.dual_split);
+        self.perf.layout.dual_panes = Some([left, right]);
         let scroll = self.wheel_points(ctx.input(|i| i.smooth_scroll_delta.y) as f64);
 
         // Continuous zoom (hold Space / Shift+Space) toward the cursor, on the panel

@@ -2879,6 +2879,17 @@ panel-log-scale-off-hover =
     Normalleştirme gerektirir: bu seçenek paletin ölçülen kaçış aralığına NASIL eşleneceğini belirler; bu yüzden “Derin renkleri normalleştir” kapalıyken (ve --normalize ile dışa aktarma yokken) değiştireceği bir eşleme yoktur ve tek bir pikseli bile değiştirmez.
 
     Kullanmak için “Derin renkleri normalleştir” seçeneğini açın.
+# The dual view's Julia pane on the set's palette map, one iteration on (coloring plan C11): the
+# checkbox, its tooltip, and its tooltip while grayed (another method than the escape count).
+panel-julia-linked = Julia renklerini kümeye bağla
+panel-julia-linked-hover =
+    Julia görünümünü kümenin palet eşlemesiyle, bir yineleme ileriden boyar; böylece iki görünüm tek bir resim gibi okunur: kümede işaretçinin altındaki renk, Julia görünümünde c noktasında yeniden belirir; orada Julia yörüngesi kümenin yörüngesini sürdürür.
+
+    'Derin renkleri normalleştir' veya 'Her zaman aralığa sığdır' açıkken Julia görünümü kümenin ölçülen aralığını da alır; bu yüzden bir görünüm diğerinden çok daha derinse diğeri tek renk görünebilir.
+panel-julia-linked-method-hover =
+    İki görünümü yalnızca kaçış sayısı bağlar. Bu yöntemde her görünüm kendi değerleriyle boyar (şeritleri, tuzağı, uzaklığı ya da açısı) ve bunlar görünümler arasında farklıdır.
+
+    Kullanmak için Yumuşak yinelemeyi seçin.
 # The palette animation: its kind, then its speed.
 panel-animate = Animasyon
 panel-anim-speed = Hız

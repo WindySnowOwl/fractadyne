@@ -1,6 +1,6 @@
 # Coloring methods: implementation plan
 
-Status: **plan (2026-11-08); phase A done (A1–A10), B1 done (the coloring matrix; its live tour is B1b), B2 done (what a frame accumulates is a `StatSet`, apart from the method shown), B3 done (in floatexp a stripe, triangle or trap frame carries the whole G-buffer), B4 to B7 done (one settings model, the method list, the method sheet, the inside and a second LUT), C1, C4 and C8 done (a solid inside in any color; the inside's palette fitted to its range; the palette anti-aliased over a footprint from the distance estimate); B1b and B8 not started; next C9, C11; see §10 (2026-11-13).** Line references are to `main` at `9ab75357`; check
+Status: **plan (2026-11-08); phase A done (A1–A10), B1 done (the coloring matrix; its live tour is B1b), B2 done (what a frame accumulates is a `StatSet`, apart from the method shown), B3 done (in floatexp a stripe, triangle or trap frame carries the whole G-buffer), B4 to B7 done (one settings model, the method list, the method sheet, the inside and a second LUT), C1, C4, C8 and C11 done (a solid inside in any color; the inside's palette fitted to its range; the palette anti-aliased over a footprint from the distance estimate; the dual view's Julia pane on the set's palette map); B1b and B8 not started; next C9; see §10 (2026-11-20).** Line references are to `main` at `9ab75357`; check
 them before editing, they drift. The research behind it (methods, prototypes, measured results,
 prior art) is the coloring-methods doc; its local copy is
 `local/research_notes/Fractal coloring methods/` (PDF, HTML, Markdown, prototype scripts).
@@ -1094,6 +1094,29 @@ the overview and the 61x view the same pattern. `ColoringSpec.palette_aa` defaul
 session or tour from before it reads true; a view that states its coloring and leaves the key out
 resets to on; off writes `palette_aa=0`); `--no-palette-aa`.
 
+**C11, done 2026-11-20** (branch `feat/color-c11-linked-julia`). The Julia count at z = c is the
+set's count at c minus 1, exactly, in the app as in the prototype: `--render-iter`'s smooth count
+read 16.902029 against 15.902029 at c = −0.75+0.2i and 24.1249 against 23.1249 at −0.1+0.9i, the
+same at 1e3, 1e10 and 1e30 (direct, df32 and floatexp). So the link is the set's palette map one
+iteration on (`NormMap::one_iteration_on`: linear, the offset gains a cycle; log, the floor drops by
+one), in the color pass's uniforms alone: no shader change, no iteration, a recolor. Live, the Julia
+pane takes the set's final map of the same frame (the set's pane draws first; `Perf::view_map`), its
+window, glide and carried phase with it, and dissolves to it as to any map; an export, and a tour's
+dual frame, takes the set's export map shifted (`export_map`). Smooth only (`julia_linked_for`): a
+stripe, a trap, a distance or an angle is each plane's own. The average's signatures carry the link
+and, linked, the set's window (`accum_norm_sig`); `palette_moving(1)` follows the set's.
+`ColoringSpec.julia_linked`, view key `julia_linked` (shown under Smooth), `--julia-linked`; the
+panel's "Link Julia colors to the set" under the log scale, in the dual view only, grayed off Smooth.
+Color ▸ Reset coloring settings keeps it (a choice). Tests: `NormMap` unit tests (both modes, a value
+v colors as v + 1 did; anti-vacuity); self-test `julia-link` (exports of both panes centered on c at
+1e5x: linked 0 levels apart under the classic map and under fitted ranges 10..40 / 0..400, unlinked
+39 and 102, the control); `coloring-reset` keeps the link; the view round trips; uitest
+`julia-linked-off` (control, 39.3 levels), `julia-linked` (0.3) and `julia-linked-fit` (0.2; the
+Julia map exactly the set's one iteration on), read off the screenshot at each pane's center, also in
+`en-XA`. Not done: the research's relative-potential bands (log2(G_c(z)/G_c(c)), its Q9 (b)), which
+need the critical value's potential as a uniform; and a pixel-level match away from z = c, which the
+planes' different gradients (about 2.8× at the prototype's c) do not give.
+
 **Tests specific to this phase**: CPU oracles for C2 transfers and C7 OKLab round trip
 (sRGB → OKLab → sRGB within 1e-5); C3 and C10 line widths measured as 2·area/perimeter in B1 at
 ss 1 and 2; C6 temporal stability over a zoom tour (frame-to-frame palette shift).
@@ -1353,5 +1376,6 @@ coloring in these places, so sequence the two with care:
 | C1                    | done, merged                                              | `58d6dce3` (merge `84af4b0d`)                                                             |
 | C4                    | done, merged                                              | `e99bfafd` (merge `9a3f9ff9`)                                                             |
 | C8                    | done, merged; on by default on `feat/color-c8-aa-default` | `5430aa2c` (merge `49153662`)                                                             |
-| C2, C3, C5–C7, C9–C11 | not started                                               |                                                                                           |
+| C11                   | done, not merged (branch `feat/color-c11-linked-julia`)   | (filled in at the merge)                                                                  |
+| C2, C3, C5–C7, C9–C10 | not started                                               |                                                                                           |
 | D, E, F, G            | not started                                               |                                                                                           |

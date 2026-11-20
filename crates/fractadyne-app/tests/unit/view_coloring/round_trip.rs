@@ -51,6 +51,7 @@ fn scrambled() -> ViewColoring {
         palette_brightness: -0.6,
         palette_contrast: 0.8,
         palette_saturation: 0.3,
+        julia_linked: true,
     }
 }
 
@@ -98,6 +99,8 @@ fn variants() -> Vec<ViewColoring> {
     v.push(ViewColoring { palette_contrast: -0.25, ..d.clone() });
     v.push(ViewColoring { palette_saturation: 0.0, ..d.clone() });
     v.push(ViewColoring { palette_brightness: -1.0, palette_contrast: 1.0, palette_saturation: 2.0, ..d.clone() });
+    // The dual view's Julia pane on the set's map (C11).
+    v.push(ViewColoring { julia_linked: true, ..d.clone() });
     v.push(ViewColoring { normalize_live: false, ..d.clone() });
     v.push(ViewColoring { normalize_fit: true, log_scale: true, ..d.clone() });
     v.push(ViewColoring { method: ColorMethod::OrbitTrap, normalize_fit: true, log_scale: true, ..d.clone() });
@@ -156,6 +159,7 @@ fn what_the_picture_does_not_depend_on_is_left_alone() {
     assert_eq!(got.two_color, TwoColor::Off);
     assert_eq!((got.normalize_live, got.normalize_fit, got.log_scale), (d.normalize_live, d.normalize_fit, d.log_scale));
     assert!(got.palette_aa, "a view that leaves the palette's anti-aliasing out has it on, the default");
+    assert!(!got.julia_linked, "a Smooth view that leaves the Julia link out has it off, the default");
     // What it does not depend on keeps this session's values.
     assert_eq!((got.stripe_freq, got.stripe_tail, got.stripe_tail_len), (17.0, true, 900));
     assert_eq!(got.trap, TrapType::Circle);

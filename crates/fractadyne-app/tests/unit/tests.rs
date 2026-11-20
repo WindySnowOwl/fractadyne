@@ -365,7 +365,7 @@ const SAMPLE_OPTIONAL_KEYS: &[&str] = &[
     "light", "light_angle", "light_height", "glow", "glow_strength", "glow_width",
     "palette_mode", "palette_lo", "palette_hi", "interior_color",
     "normalize_live", "normalize_fit", "log_scale", "palette_aa",
-    "palette_brightness", "palette_contrast", "palette_saturation",
+    "palette_brightness", "palette_contrast", "palette_saturation", "julia_linked",
 ];
 
 #[test]

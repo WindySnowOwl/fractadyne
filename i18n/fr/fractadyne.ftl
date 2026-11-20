@@ -2888,6 +2888,17 @@ panel-log-scale-off-hover =
     Nécessite la normalisation : ceci choisit COMMENT la palette est projetée sur la plage d’échappement mesurée ; avec « Normaliser les couleurs profondes » désactivé (et sans exportation --normalize), il n’y a aucune correspondance à modifier et cela ne changerait pas un seul pixel.
 
     Activez « Normaliser les couleurs profondes » pour l’utiliser.
+# The dual view's Julia pane on the set's palette map, one iteration on (coloring plan C11): the
+# checkbox, its tooltip, and its tooltip while grayed (another method than the escape count).
+panel-julia-linked = Lier les couleurs de Julia à l’ensemble
+panel-julia-linked-hover =
+    Colore la vue de Julia avec la correspondance de palette de l’ensemble, décalée d’une itération, pour que les deux vues se lisent comme une seule image : la couleur sous le pointeur dans l’ensemble réapparaît au point c de la vue de Julia, là où l’orbite de Julia prolonge celle de l’ensemble.
+
+    Avec « Normaliser les couleurs profondes » ou « Toujours ajuster la plage », la vue de Julia reprend aussi la plage mesurée de l’ensemble ; si une vue est bien plus profonde que l’autre, l’autre peut apparaître d’une seule couleur.
+panel-julia-linked-method-hover =
+    Seul le nombre d’itérations d’échappement relie les deux vues. Avec cette méthode, chaque vue colore ses propres valeurs (ses bandes, son piège, sa distance ou son angle), qui diffèrent d’une vue à l’autre.
+
+    Choisissez Itération lissée pour l’utiliser.
 # The palette animation: its kind, then its speed.
 panel-animate = Animer
 panel-anim-speed = Vitesse

@@ -2249,6 +2249,10 @@ struct Perf {
     /// EMA-smoothed MEAN |Δ smooth-iter| between neighboring escaped pixels, per view. Kept for the
     /// trace and the harness fields; the guard no longer DECIDES on it (see `norm_hist`).
     norm_grad: [Option<f32>; 2],
+    /// The palette map each view was last drawn under, and the window it came from (`bp_finish_params`):
+    /// the dual view's Julia pane takes the set's when linked (coloring plan C11), and the uitest's
+    /// `julia-linked` steps read both.
+    view_map: [Option<(crate::render::NormMap, Option<(f32, f32)>)>; 2],
     /// EMA-smoothed step histogram per view, as fractions of the sampled pairs — what the
     /// live-normalization guard decides on, through `render::alias_fraction`. Held as the
     /// distribution rather than as a verdict so that moving the cycle slider re-decides at once,
@@ -2972,6 +2976,7 @@ impl Default for Perf {
             norm_sig: [0, 0],
             norm_locked: [false, false],
             norm_grad: [None, None],
+            view_map: [None, None],
             norm_hist: [None, None],
             esc_hist: [None, None],
             esc_top: [None, None],
@@ -5119,6 +5124,9 @@ pub(crate) struct LayoutRects {
     /// The Coloring section's Cycle slider (its track and number), when it drew wholly inside the
     /// panel's visible area: `--uitest`'s `slider-*` steps click and double-click its track.
     pub(crate) cycle_slider: Option<egui::Rect>,
+    /// The dual view's two panes, the set's then the Julia pane, as the last dual frame laid them
+    /// out: `--uitest`'s `julia-linked*` steps read the color at each one's center.
+    pub(crate) dual_panes: Option<[egui::Rect; 2]>,
 }
 
 impl LayoutRects {
@@ -6664,6 +6672,9 @@ struct ColoringConfig {
     /// The palette's brightness, contrast and saturation, applied to every baked palette that
     /// colors a picture ([`FractadyneApp::bake_palette`]). Persisted.
     palette_adjust: fractadyne_color::adjust::PaletteAdjust,
+    /// The dual view's Julia pane on the Mandelbrot pane's palette map, one iteration on (C11,
+    /// [`FractadyneApp::julia_linked`]). Persisted.
+    julia_linked: bool,
     /// Auto-normalize the palette cycle to the frame's escape-value range on export (`--normalize`).
     /// At extreme depth the smooth-iter counts are ~1e5–1e6 and a fixed `cycle` aliases a correct
     /// escape field into speckle; normalize maps the range to `cycle`-many palette sweeps. Export
@@ -8420,6 +8431,7 @@ impl FractadyneApp {
                     saturation: s.coloring.palette_saturation,
                 }
                 .clamped(),
+                julia_linked: s.coloring.julia_linked,
                 normalize: args.iter().any(|a| a == "--normalize"),
                 normalize_live: s.coloring.normalize_live,
                 normalize_fit: s.coloring.normalize_fit,
@@ -9119,6 +9131,12 @@ impl FractadyneApp {
         if let Some(v) = ranged("--palette-saturation", slider_range::PALETTE_SATURATION) {
             self.coloring.palette_adjust.saturation = v;
         }
+        if args.iter().any(|a| a == "--julia-linked") {
+            self.coloring.julia_linked = true;
+            if self.coloring.color_method != ColorMethod::Smooth {
+                eprintln!("fractadyne: --julia-linked has no effect: only the escape count (--method smooth) links the two views.");
+            }
+        }
         let inside = self.coloring.interior_of(self.coloring.color_method);
         if args.iter().any(|a| a == "--interior-fit") && inside != crate::InteriorMode::Trap {
             eprintln!("fractadyne: --interior-fit has no effect: the trap does not color the inside (add --interior trap).");
@@ -9350,6 +9368,7 @@ impl FractadyneApp {
             palette_brightness: self.coloring.palette_adjust.brightness,
             palette_contrast: self.coloring.palette_adjust.contrast,
             palette_saturation: self.coloring.palette_adjust.saturation,
+            julia_linked: self.coloring.julia_linked,
         }
     }
 
@@ -9397,6 +9416,7 @@ impl FractadyneApp {
             saturation: s.palette_saturation,
         }
         .clamped();
+        c.julia_linked = s.julia_linked;
         if gradient_changed {
             c.palette_rev = c.palette_rev.wrapping_add(1);
         }
@@ -12442,7 +12462,8 @@ impl FractadyneApp {
     /// to a new session's values: Cycle, Divide iterations, Offset, Brightness, Contrast, Saturation,
     /// "Normalize deep colors" with its two switches, the palette's anti-aliasing, and its animation
     /// and speed. The choices stay as they are: the method, the palettes (a custom gradient
-    /// included), the inside and the trap's shape, and the Effects section's settings.
+    /// included), the inside and the trap's shape, the dual view's Julia link (C11), and the Effects
+    /// section's settings.
     pub(crate) fn reset_coloring_settings(&mut self) {
         let d = fractadyne_state::ColoringSpec::default();
         let c = &mut self.coloring;
@@ -15958,6 +15979,8 @@ impl FractadyneApp {
             || p.palette_phase[v].debt() != 0.0
             || p.norm_drawn[v].is_some_and(|d| !d.arrived())
             || (p.norm_shown[v].is_some() && p.norm_shown[v] != p.norm_pal[v])
+            // A linked Julia pane moves with the set's map (C11).
+            || (v == 1 && self.julia_linked() && self.palette_moving(0))
     }
 
     /// Nothing rendering, refining, building or animating in EITHER view — see
@@ -17303,6 +17326,8 @@ impl FractadyneApp {
         self.inside_coloring_sig(self.shown_method(), self.coloring.interior_palette).hash(&mut h);
         // The palette's anti-aliasing (C8): it changes every colored sample.
         self.palette_aa().gpu_word().hash(&mut h);
+        // The Julia pane on the set's map (C11).
+        (view == 1 && self.julia_linked()).hash(&mut h);
         // The method the view is colored with: a method sheet preview restarts the average too.
         self.shown_method().gpu_id().hash(&mut h);
         // What the frame accumulates (B2): a sample taken with other statistics is another frame.
@@ -17403,6 +17428,10 @@ impl FractadyneApp {
         self.perf.palette_phase[view].debt().to_bits().hash(&mut h);
         self.perf.norm_sig[view].hash(&mut h);
         self.perf.norm_locked[view].hash(&mut h);
+        // A linked Julia pane is drawn under the set's map (C11): the set's window moving is its too.
+        if view == 1 && self.julia_linked() {
+            self.accum_norm_sig(0).hash(&mut h);
+        }
         h.finish()
     }
 

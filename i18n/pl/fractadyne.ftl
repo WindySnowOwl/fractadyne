@@ -2979,6 +2979,17 @@ panel-log-scale-off-hover =
     Wymaga normalizacji: to ustawienie wybiera, JAK paleta jest odwzorowywana na zmierzony zakres ucieczki, więc gdy „Normalizuj głębokie kolory” jest wyłączone (i nie ma eksportu z --normalize), nie ma odwzorowania, które mogłoby zmienić, i nie zmieniłoby ani jednego piksela.
 
     Włącz „Normalizuj głębokie kolory”, aby z niego korzystać.
+# The dual view's Julia pane on the set's palette map, one iteration on (coloring plan C11): the
+# checkbox, its tooltip, and its tooltip while grayed (another method than the escape count).
+panel-julia-linked = Połącz kolory Julii ze zbiorem
+panel-julia-linked-hover =
+    Koloruje widok Julii odwzorowaniem palety zbioru, przesuniętym o jedną iterację, tak by oba widoki czytały się jak jeden obraz: kolor pod wskaźnikiem w zbiorze pojawia się znowu w punkcie c widoku Julii, gdzie orbita Julii kontynuuje orbitę zbioru.
+
+    Przy włączonym „Normalizuj głębokie kolory” lub „Zawsze dopasuj zakres” widok Julii przejmuje też zmierzony zakres zbioru, więc gdy jeden widok jest dużo głębszy od drugiego, drugi może wyglądać na jednolity kolor.
+panel-julia-linked-method-hover =
+    Oba widoki łączy tylko liczba iteracji ucieczki. W tej metodzie każdy widok koloruje własne wartości (paski, pułapkę, odległość lub kąt), a te różnią się między widokami.
+
+    Wybierz Gładką iterację, aby z tego skorzystać.
 # The palette animation: its kind, then its speed.
 panel-animate = Animacja
 panel-anim-speed = Szybkość

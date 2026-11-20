@@ -2888,6 +2888,17 @@ panel-log-scale-off-hover =
     Requiere normalización: esto elige CÓMO se asigna la paleta al rango de escape medido, así que con «Normalizar colores profundos» desactivado (y sin exportación con --normalize) no hay ninguna asignación que cambiar y no alteraría ni un solo píxel.
 
     Activa «Normalizar colores profundos» para usarla.
+# The dual view's Julia pane on the set's palette map, one iteration on (coloring plan C11): the
+# checkbox, its tooltip, and its tooltip while grayed (another method than the escape count).
+panel-julia-linked = Vincular los colores de Julia al conjunto
+panel-julia-linked-hover =
+    Colorea la vista de Julia con la asignación de la paleta del conjunto, una iteración más adelante, para que las dos vistas se lean como una sola imagen: el color bajo el puntero en el conjunto reaparece en el punto c de la vista de Julia, donde la órbita de Julia continúa la del conjunto.
+
+    Con «Normalizar colores profundos» o «Ajustar siempre el rango», la vista de Julia toma también el rango medido del conjunto, así que si una vista es mucho más profunda que la otra, la otra puede verse de un solo color.
+panel-julia-linked-method-hover =
+    Solo el número de escape vincula las dos vistas. Con este método cada vista colorea sus propios valores (sus franjas, trampa, distancia o ángulo), y estos difieren entre las vistas.
+
+    Elige Iteración suave para usarlo.
 # The palette animation: its kind, then its speed.
 panel-animate = Animar
 panel-anim-speed = Velocidad

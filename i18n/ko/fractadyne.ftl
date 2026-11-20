@@ -2807,6 +2807,17 @@ panel-log-scale-off-hover =
     정규화가 필요합니다: 이 옵션은 측정된 탈출 범위에 팔레트를 어떻게 매핑할지 정하므로, ‘깊은 색상 정규화’가 꺼져 있으면(그리고 --normalize 내보내기가 아니면) 바꿀 매핑이 없어 픽셀 하나도 바뀌지 않습니다.
 
     사용하려면 ‘깊은 색상 정규화’를 켜십시오.
+# The dual view's Julia pane on the set's palette map, one iteration on (coloring plan C11): the
+# checkbox, its tooltip, and its tooltip while grayed (another method than the escape count).
+panel-julia-linked = 줄리아 색을 집합에 연결
+panel-julia-linked-hover =
+    줄리아 보기를 집합의 팔레트 매핑으로 한 반복 앞서 칠해 두 보기를 한 장의 그림처럼 보이게 합니다. 집합에서 포인터 아래의 색이 줄리아 보기의 점 c에 다시 나타나며, 그곳에서 줄리아 궤도가 집합의 궤도를 이어 갑니다.
+
+    '깊은 색상 정규화'나 '항상 범위에 맞춤'이 켜져 있으면 줄리아 보기도 집합의 측정 범위를 사용하므로, 한 보기가 다른 보기보다 훨씬 깊으면 다른 보기가 한 가지 색으로 보일 수 있습니다.
+panel-julia-linked-method-hover =
+    두 보기를 잇는 것은 탈출 횟수뿐입니다. 이 방법에서는 각 보기가 자기 값(줄무늬, 트랩, 거리 또는 각도)으로 칠하며, 그 값은 보기마다 다릅니다.
+
+    사용하려면 '부드러운 반복'을 선택하세요.
 # The palette animation: its kind, then its speed.
 panel-animate = 애니메이션
 panel-anim-speed = 속도

@@ -64,6 +64,11 @@ fn uses_normalize_live(s: &ColoringSpec) -> bool {
     method(s) == ColorMethod::Smooth
 }
 
+/// The escape count colors the view: what the dual view's Julia link shifts (C11).
+fn escape_count(s: &ColoringSpec) -> bool {
+    method(s) == ColorMethod::Smooth
+}
+
 /// "Always fit range" and the log scale act on Smooth's escape range and on the orbit trap's values
 /// (`live_norm_window`, `norm_map_for`).
 fn uses_fit(s: &ColoringSpec) -> bool {
@@ -80,7 +85,7 @@ fn two_color_on(s: &ColoringSpec) -> bool {
 }
 
 /// The table, in the order a view writes its keys. A row's parents come before it.
-pub(crate) const FIELDS: [Field; 25] = [
+pub(crate) const FIELDS: [Field; 26] = [
     Field {
         key: "method",
         name: "coloring method",
@@ -346,6 +351,14 @@ pub(crate) const FIELDS: [Field; 25] = [
         ),
         parents: &[],
         shows: always,
+    },
+    Field {
+        key: "julia_linked",
+        name: "linked Julia colors",
+        doc: "Dual view: color the Julia pane with the set's palette map, one iteration on, so the Julia point z = c shows the color of the set's point c (method \"smooth\").",
+        access: Access::Flag(|s| s.julia_linked, |s, v| s.julia_linked = v),
+        parents: &["method"],
+        shows: escape_count,
     },
 ];
 

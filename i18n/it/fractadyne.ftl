@@ -2887,6 +2887,17 @@ panel-log-scale-off-hover =
     Richiede la normalizzazione: questa opzione sceglie COME la tavolozza viene mappata sull’intervallo di fuga misurato, quindi con «Normalizza colori profondi» disattivato (e nessuna esportazione --normalize) non c’è alcuna mappatura da cambiare e non modificherebbe un solo pixel.
 
     Attiva «Normalizza colori profondi» per usarla.
+# The dual view's Julia pane on the set's palette map, one iteration on (coloring plan C11): the
+# checkbox, its tooltip, and its tooltip while grayed (another method than the escape count).
+panel-julia-linked = Collega i colori di Julia all’insieme
+panel-julia-linked-hover =
+    Colora la vista di Julia con la mappatura della tavolozza dell’insieme, spostata di un’iterazione, così le due viste si leggono come un’unica immagine: il colore sotto il puntatore nell’insieme ricompare nel punto c della vista di Julia, dove l’orbita di Julia prosegue quella dell’insieme.
+
+    Con «Normalizza colori profondi» o «Adatta sempre l’intervallo» la vista di Julia prende anche l’intervallo misurato dell’insieme, quindi se una vista è molto più profonda dell’altra, l’altra può apparire di un solo colore.
+panel-julia-linked-method-hover =
+    Solo il conteggio di fuga collega le due viste. Con questo metodo ogni vista colora i propri valori (strisce, trappola, distanza o angolo), che differiscono tra le viste.
+
+    Scegli Iterazione continua per usarlo.
 # The palette animation: its kind, then its speed.
 panel-animate = Anima
 panel-anim-speed = Velocità

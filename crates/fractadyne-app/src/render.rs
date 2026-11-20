@@ -2264,6 +2264,25 @@ pub(crate) struct NormMap {
     pub(crate) lo: f32,
 }
 
+impl NormMap {
+    /// This map one iteration on: a value `v` colors as `v + 1` does under `self` (coloring plan
+    /// C11). The Julia count at z = c is the Mandelbrot count at c minus 1, exactly: measured in the
+    /// app (`--render-iter`), 16.902029 against 15.902029 at c = -0.75+0.2i and 24.1249 against
+    /// 23.1249 at -0.1+0.9i. Linear (`v·cycle + offset`): the offset gains one cycle. Log
+    /// (`log(max(v − lo, 0) + 1)·cycle + offset`): the floor drops by one.
+    pub(crate) fn one_iteration_on(self) -> NormMap {
+        if self.mode == 1 {
+            NormMap { lo: self.lo - 1.0, ..self }
+        } else {
+            NormMap { offset: self.offset + self.cycle, ..self }
+        }
+    }
+}
+
+#[cfg(test)]
+#[path = "../tests/unit/render/norm_map_tests.rs"]
+mod norm_map_tests;
+
 // ================================================================================================
 // impl FractadyneApp - live palette auto-normalization
 // ================================================================================================
@@ -2302,6 +2321,40 @@ impl FractadyneApp {
 
     pub(crate) fn live_norm_cycle_offset(&self, vi: usize) -> Option<NormMap> {
         self.live_norm_window(vi).map(|(mn, mx)| self.norm_map_for(mn, mx))
+    }
+
+    /// Whether the dual view's Julia pane is colored with the set's palette map, one iteration on
+    /// (coloring plan C11): asked for, the dual view on, and the view colored by `method` the
+    /// escape count. Only Smooth's value is the orbit's count; a stripe, a trap, a distance or an
+    /// angle is each plane's own, and the two planes' differ.
+    pub(crate) fn julia_linked_for(&self, method: crate::ColorMethod) -> bool {
+        self.coloring.julia_linked && self.dual && method == crate::ColorMethod::Smooth
+    }
+
+    /// [`Self::julia_linked_for`] the method on screen (a method sheet preview included).
+    pub(crate) fn julia_linked(&self) -> bool {
+        self.julia_linked_for(self.shown_method())
+    }
+
+    /// The palette map an export colors with, `julia` its pane (WYSIWYG): the live view's
+    /// normalized map while one is active (a headless run has no live range, so the classic map;
+    /// `--normalize` keeps its own two-pass path), and a linked Julia pane the set's, one iteration
+    /// on (C11). A tour's dual frames come here too.
+    pub(crate) fn export_map(&self, julia: bool) -> NormMap {
+        let own = |vi: usize| {
+            self.live_norm_cycle_offset(vi).unwrap_or(NormMap {
+                cycle: self.color_cycle_for(self.coloring.color_method),
+                offset: self.coloring.offset,
+                mode: 0,
+                lo: 0.0,
+            })
+        };
+        let vi = (self.dual && julia) as usize;
+        if vi == 1 && self.julia_linked_for(self.coloring.color_method) {
+            own(0).one_iteration_on()
+        } else {
+            own(vi)
+        }
     }
 
     /// The escape window the live color map is built from ([`Self::live_norm_cycle_offset`]), or
@@ -4589,22 +4642,10 @@ impl FractadyneApp {
             // WYSIWYG: a GUI export bakes in the live view's auto-normalized palette mapping when
             // it's active (headless CLI runs have no live range → always classic; `--normalize`
             // keeps its own exact two-pass path).
-            cycle: {
-                let vi = (self.dual && julia) as usize;
-                self.live_norm_cycle_offset(vi).map_or_else(|| self.color_cycle_for(self.coloring.color_method), |m| m.cycle)
-            },
-            offset: {
-                let vi = (self.dual && julia) as usize;
-                self.live_norm_cycle_offset(vi).map_or(self.coloring.offset, |m| m.offset)
-            },
-            norm_mode: {
-                let vi = (self.dual && julia) as usize;
-                self.live_norm_cycle_offset(vi).map_or(0, |m| m.mode)
-            },
-            norm_lo: {
-                let vi = (self.dual && julia) as usize;
-                self.live_norm_cycle_offset(vi).map_or(0.0, |m| m.lo)
-            },
+            cycle: self.export_map(julia).cycle,
+            offset: self.export_map(julia).offset,
+            norm_mode: self.export_map(julia).mode,
+            norm_lo: self.export_map(julia).lo,
             palette_fade: fractadyne_gpu::PaletteFade::default(),
             aa_palette: self.palette_aa(),
             aa_sample: 0,
@@ -7341,6 +7382,15 @@ impl FractadyneApp {
             phase_carry_step(self.perf.palette_phase[vs], nm, drawn, user_sig, !interacting, (self.perf.last_dt_ms / 1000.0) as f32);
         self.perf.palette_phase[vs] = carry;
         let nm = NormMap { offset: nm.offset + phase, ..nm };
+        // ⭐C11: a linked Julia pane is drawn under the set's map of this frame (the set's pane draws
+        // first, `ui/central.rs`), one iteration on, so the Julia point z = c shows the color of the
+        // set's point c. The set's window and phase come with it, and the dissolve below fades to it
+        // as to any other map.
+        let (nm, drawn) = match self.perf.view_map[0] {
+            Some((set_map, set_drawn)) if vs == 1 && self.julia_linked() => (set_map.one_iteration_on(), set_drawn),
+            _ => (nm, drawn),
+        };
+        self.perf.view_map[vs.min(1)] = Some((nm, drawn));
         // ⭐…and a change of map KIND (the normalization on or off, linear or log) DISSOLVES from the
         // last frame's map: no window glides from one kind to the other (`palette_fade_step`).
         let (fade_state, palette_fade) =

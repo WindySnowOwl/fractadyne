@@ -2808,6 +2808,17 @@ panel-log-scale-off-hover =
     正規化が必要です：これは測定した脱出値の範囲にパレットを「どのように」割り当てるかを選ぶものなので、「深い色を正規化」がオフ（かつ--normalizeのエクスポートでもない）のときは変える割り当てがなく、1ピクセルも変わりません。
 
     使うには「深い色を正規化」をオンにしてください。
+# The dual view's Julia pane on the set's palette map, one iteration on (coloring plan C11): the
+# checkbox, its tooltip, and its tooltip while grayed (another method than the escape count).
+panel-julia-linked = ジュリアの色を集合に連動
+panel-julia-linked-hover =
+    ジュリア表示を集合のパレット対応で 1 反復ずらして塗り、二つの表示を一枚の絵として読めるようにします。集合でポインターの下にある色が、ジュリア表示の点 c に再び現れます。そこではジュリアの軌道が集合の軌道の続きになっています。
+
+    「深い色を正規化」または「常に範囲に合わせる」がオンのときは、ジュリア表示も集合の測定範囲を使います。一方の表示がもう一方よりはるかに深いと、もう一方が単色に見えることがあります。
+panel-julia-linked-method-hover =
+    二つの表示を結び付けるのは脱出回数だけです。この方法では各表示がそれぞれ自分の値(縞、トラップ、距離、角度)で塗り、その値は表示ごとに異なります。
+
+    使うには「スムーズ反復」を選んでください。
 # The palette animation: its kind, then its speed.
 panel-animate = アニメーション
 panel-anim-speed = 速度
