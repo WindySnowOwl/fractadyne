@@ -42,13 +42,30 @@ impl crate::FractadyneApp {
         ];
         for (label, hover, value, range, reset) in rows {
             let r = labelled(ui, &label, |ui| ui.add(egui::Slider::new(value, range)));
-            if r.double_clicked() {
+            if slider_double_clicked(&r) {
                 *value = reset;
             }
             r.on_hover_text(hover);
         }
     }
 }
+
+/// Whether `r`, a slider's response, was double-clicked: on its value box, or on its handle or track.
+/// ⚠egui's slider senses only DRAGS on the track (`Sense::drag()`, egui 0.31 `slider.rs`), so
+/// `Response::double_clicked` saw a double-click on the value box alone and the handle did nothing
+/// (user, 2026-11-20). A double-click of the button with the pointer over the slider counts too.
+/// ⚠So does a TRIPLE: egui counts a third click within 0.6 s of the first, so a double-click soon
+/// after a click on the slider (setting it, then resetting it) is a triple to egui, and was missed
+/// (the uitest's `slider-double-click-reset`, 0.58 s after its control's click). A triple-click
+/// means nothing else on a slider.
+pub(crate) fn slider_double_clicked(r: &egui::Response) -> bool {
+    let b = egui::PointerButton::Primary;
+    r.double_clicked() || (r.hovered() && r.ctx.input(|i| i.pointer.button_double_clicked(b) || i.pointer.button_triple_clicked(b)))
+}
+
+#[cfg(test)]
+#[path = "../../tests/unit/ui/panels/slider_reset_tests.rs"]
+mod slider_reset_tests;
 
 pub(crate) fn labelled<R>(ui: &mut egui::Ui, label: &str, add: impl FnOnce(&mut egui::Ui) -> R) -> R {
     ui.horizontal(|ui| {
@@ -127,6 +144,8 @@ impl FractadyneApp {
     /// Right-side control panel (Coloring + Navigation sections) plus the reopen handle shown
     /// when it's hidden. No-op in fullscreen.
     pub(crate) fn draw_right_panel(&mut self, ctx: &egui::Context) {
+        // Set again below where the Cycle slider draws this frame.
+        self.perf.layout.cycle_slider = None;
         if !self.fullscreen && self.dialogs.right_panel_open {
         let panel = egui::SidePanel::right("coloring_panel")
             .default_width(280.0)
@@ -263,7 +282,7 @@ impl FractadyneApp {
                                 .logarithmic(true),
                         )
                     });
-                    if r.double_clicked() {
+                    if slider_double_clicked(&r) {
                         self.coloring.stripe_freq = fractadyne_state::ColoringSpec::default().stripe_freq;
                     }
                     r.on_hover_text(tr!(panel_double_click_reset));
@@ -279,7 +298,7 @@ impl FractadyneApp {
                                     .custom_parser(crate::parse_grouped_number),
                             )
                         });
-                        if r.double_clicked() {
+                        if slider_double_clicked(&r) {
                             self.coloring.stripe_tail_len = fractadyne_state::ColoringSpec::default().stripe_tail_len;
                         }
                         r.on_hover_text(format!("{}\n\n{}", tr!(panel_tail_length_hover), tr!(panel_double_click_reset)));
@@ -449,7 +468,8 @@ impl FractadyneApp {
                 let r = labelled(ui, &tr!(panel_cycle), |ui| {
                     ui.add(egui::Slider::new(&mut self.coloring.cycle, crate::slider_range::CYCLE))
                 });
-                if r.double_clicked() {
+                self.perf.layout.cycle_slider = ui.clip_rect().contains_rect(r.rect).then_some(r.rect);
+                if slider_double_clicked(&r) {
                     self.coloring.cycle = d.cycle;
                 }
                 r.on_hover_text(tr!(panel_double_click_reset));
@@ -473,7 +493,7 @@ impl FractadyneApp {
                             .logarithmic(true),
                     )
                 });
-                if r.double_clicked() {
+                if slider_double_clicked(&r) {
                     self.coloring.iter_div = d.iter_div;
                 }
                 r.on_hover_text(hover)
@@ -485,7 +505,7 @@ impl FractadyneApp {
                 let r = labelled(ui, &tr!(panel_offset), |ui| {
                     ui.add(egui::Slider::new(&mut self.coloring.offset, crate::slider_range::OFFSET))
                 });
-                if r.double_clicked() {
+                if slider_double_clicked(&r) {
                     self.coloring.offset = d.offset;
                 }
                 r.on_hover_text(tr!(panel_double_click_reset));
@@ -513,7 +533,7 @@ impl FractadyneApp {
                             .logarithmic(true),
                     )
                 });
-                if r.double_clicked() {
+                if slider_double_clicked(&r) {
                     self.anim.palette_anim_speed = fractadyne_state::SessionState::default().palette_anim_speed;
                 }
                 r.on_hover_text(format!("{}\n\n{}", tr!(panel_anim_speed_hover), tr!(panel_double_click_reset)));
@@ -631,7 +651,7 @@ impl FractadyneApp {
                                 .suffix(" rad"),
                         )
                     });
-                    if r.double_clicked() {
+                    if slider_double_clicked(&r) {
                         self.effects.light_angle = d.light_angle;
                     }
                     r.on_hover_text(tr!(panel_double_click_reset));
@@ -641,7 +661,7 @@ impl FractadyneApp {
                                 .logarithmic(true),
                         )
                     });
-                    if r.double_clicked() {
+                    if slider_double_clicked(&r) {
                         self.effects.light_height = d.light_height;
                     }
                     r.on_hover_text(format!("{}\n\n{}", tr!(panel_relief_hover), tr!(panel_double_click_reset)));
@@ -656,7 +676,7 @@ impl FractadyneApp {
                     let r = labelled(ui, &tr!(panel_glow), |ui| {
                         ui.add(egui::Slider::new(&mut self.effects.de_strength, crate::slider_range::GLOW_STRENGTH))
                     });
-                    if r.double_clicked() {
+                    if slider_double_clicked(&r) {
                         self.effects.de_strength = d.de_strength;
                     }
                     r.on_hover_text(tr!(panel_double_click_reset));
@@ -666,7 +686,7 @@ impl FractadyneApp {
                                 .logarithmic(true),
                         )
                     });
-                    if r.double_clicked() {
+                    if slider_double_clicked(&r) {
                         self.effects.de_width = d.de_width;
                     }
                     r.on_hover_text(format!("{}\n\n{}", tr!(panel_band_width_hover), tr!(panel_double_click_reset)));

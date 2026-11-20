@@ -63,6 +63,9 @@ pub(crate) struct HarnessModes {
     /// Pointer events the `life-draw` step feeds the app, one a frame, at CELLS of the Life view
     /// (turned into positions as they are fed, so they land on the cell whatever the layout).
     pub(crate) uitest_pointer: std::collections::VecDeque<crate::UiPointer>,
+    /// `--uitest`'s `slider-*` steps: each press (`true`) and release on the Cycle slider's track as
+    /// fed, with the input time of its frame (egui times a double-click between frames).
+    pub(crate) uitest_slider_times: Vec<(bool, f64)>,
     /// `--uitest`: the budget a method sheet cell must fit to be calculated by itself, in place of
     /// `ui::sheet_render::AUTO_BUDGET_S` (0: every cell waits for its Render button).
     pub(crate) uitest_sheet_budget: Option<f64>,
