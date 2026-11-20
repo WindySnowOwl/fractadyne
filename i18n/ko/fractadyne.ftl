@@ -2462,6 +2462,8 @@ formula-dialog-text = 텍스트
 formula-dialog-text-hover = 수식을 텍스트로 편집
 # The tooltip of the "LaTeX" button (the button's own text stays LaTeX).
 formula-dialog-latex-hover = 여기에 조판된 모양 그대로 수식을 LaTeX로 복사
+formula-dialog-copy = 복사
+formula-dialog-copy-hover = 매개변수를 주석으로 붙여 수식을 텍스트로 복사합니다. 게시물에 붙여 넣거나 이 편집기에 다시 붙여 넣을 수 있습니다
 # The drop-down list of example formulas (the collection).
 formula-dialog-examples = 예제
 # Help under the formula in Textbook mode. The characters / ^ ( are what the user types: keep them.

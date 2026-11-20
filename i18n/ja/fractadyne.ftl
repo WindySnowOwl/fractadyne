@@ -2463,6 +2463,8 @@ formula-dialog-text = テキスト
 formula-dialog-text-hover = 数式をテキストとして編集します
 # The tooltip of the "LaTeX" button (the button's own text stays LaTeX).
 formula-dialog-latex-hover = 数式を、ここで組版されているとおりにLaTeXとしてコピーします
+formula-dialog-copy = コピー
+formula-dialog-copy-hover = 数式をテキストとしてコピーします。パラメータはコメントとして付きます。投稿に貼り付けたり、このエディタに戻したりできます
 # The drop-down list of example formulas (the collection).
 formula-dialog-examples = 例
 # Help under the formula in Textbook mode. The characters / ^ ( are what the user types: keep them.
