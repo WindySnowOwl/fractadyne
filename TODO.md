@@ -908,7 +908,7 @@ Mockups: [design/mockups/](design/mockups/).
   regions (custom.rs), phase-aligned for hybrids, and `render::critical_orbit` builds nothing for a
   custom formula, so a deep custom Julia view can show the same straight-edged smooth patch. Give
   the generated rebase the critical-orbit rule (a critical orbit built by `ir::reference_orbit` from
-  0, phase-aligned like the module's own), and a `julia-critical` case for one. 0.3.1.
+  0, phase-aligned like the module's own), and a `julia-critical` case for one. 0.4.0.
 - [x] **Deep zooms flashed ONE FLAT COLOR with the default same-card worker** (maintainer, 2026-11-18,
   b6928 22:40: "I see some flashing at the end of the last session's zoom"; the flashing reported
   all evening). Stripe-average coloring (and any coloring or interior that accumulates orbit
@@ -930,7 +930,7 @@ Mockups: [design/mockups/](design/mockups/).
   trap interior ×1), as one device; the worker still converges the settled anti-aliasing (L2, the
   export path) and `--motiontest --worker-gpu same` still adopts its motion frames under smooth
   coloring (126 into the hold). Test `a_frame_that_accumulates_orbit_statistics_does_not_walk`
-  (mutant killed). Next (0.3.1): carry the aux through the chunk state, so the worker can help these
+  (mutant killed). Next (0.4.0): carry the aux through the chunk state, so the worker can help these
   colorings too.
 - [x] **Zoom flashes at the 2^13.3 direct↔df32 crossing on the installed 0.3.0** (maintainer, 2026-11-18,
   build 6890: "during zoom, I saw the screen flashes"; dual view, 2941×1988 panel, held zoom at
