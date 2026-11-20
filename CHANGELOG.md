@@ -27,6 +27,15 @@ detail is in the git history.
   Exports and tours of the dual view color it the same way. It works with Smooth iteration, the
   escape count, and is off by default. A view file and the command line carry it (`julia_linked`,
   `--julia-linked`).
+- **Every lane of a view as NumPy arrays, for trying a coloring idea.** `--render-lanes DIR` writes
+  the numbers a view's colors are made of, exactly as the GPU computed them at any depth, as `.npy`
+  files Python's NumPy loads with `np.load`: the smooth count, the slope's direction, the distance
+  estimate, and the orbit statistics the stripe, triangle, trap and decomposition methods read,
+  with the baked palette, the view itself (`view.fdn`) and a `view.json` that says what each file
+  holds. A coloring idea can be tried on a deep view in a few lines of Python, on the app's own
+  arithmetic, before it is written for the GPU. `--lanes` adds statistics the method does not
+  read. In the source repository, `scripts/lanes.py` loads a folder and colors it two ways as
+  worked examples.
 - **Ways back to the defaults for the coloring.** Every slider in the Coloring and Effects sections
   goes back to its default on a double-click, on its handle or track as well as on its number, as
   its tooltip says. Color ▸ Reset coloring settings

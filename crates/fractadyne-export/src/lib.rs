@@ -7,6 +7,9 @@
 
 use std::path::Path;
 
+pub mod npy;
+pub use npy::{read_npy_f32, write_npy_f32};
+
 /// Failure modes of the export encoders / decoders. The library-error variants (`Io`,
 /// `PngDecode`, `PngEncode`, `Exr`) are `#[from]` sources so `?` threads them through and their
 /// `Display` is transparent (a `{e}` status line reads exactly as before); the hand-written
@@ -41,6 +44,10 @@ pub enum ExportError {
     /// any full-resolution allocation, so a crafted or corrupt file cannot drive an OOM (F-01).
     #[error("image too large: {what} {value} exceeds limit {limit}")]
     TooLarge { what: &'static str, value: u64, limit: u64 },
+    /// A `.npy` file [`npy::read_npy_f32`] does not read (another type, Fortran order, a bad
+    /// header), or a header [`npy::write_npy_f32`] cannot write.
+    #[error("not a .npy file of 32-bit floats: {0}")]
+    Npy(String),
 }
 
 /// A view text's first character past Latin-1 (U+00FF), if any: what PNG `tEXt` cannot store, and

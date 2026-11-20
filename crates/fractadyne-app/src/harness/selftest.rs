@@ -73,6 +73,7 @@ pub(crate) const GROUPS: &[&str] = &[
     "checklist", "replay", "settings-quarantine", "expmap", "assemble", "de-pixels",
     "colour-box", "cycle-check", "export-contain", "honest-step", "julia-critical", "palette-fade", "retreat", "view-thumb",
     "width-independence", "coloring-matrix-quick", "color-sig", "coloring-reset", "julia-link", "fringe",
+    "lanes",
 ];
 
 /// Groups that run ONLY when named. ⛔Kept out of `GROUPS` so a bare `--selftest` never pays for
@@ -11538,6 +11539,215 @@ zoom = \"1e94\"
                 params: "seahorse valley 800x, 160x100, ss 1, Unity, Cycle 0.27, point sampled, no relief or glow".into(),
                 result,
                 threshold: "> 1,000 escaped px; 99th percentile <= 1.5 levels, max <= 4; > 50 px dark and > 1,000 light; >= 8/10 of a turn; > 10 levels from Distance",
+                pass,
+            });
+        }
+
+        // ---- Every lane as NumPy arrays (coloring plan B9) ----
+        // `--render-lanes` writes a view's G-buffer for a prototype to load, and three things make
+        // the files worth loading: with no statistic the main plane IS `--render-iter`'s, bit for
+        // bit; with statistics the planes ARE what the export colors (the color pass over them gives
+        // the export pixel for pixel, which an aux lane read from the wrong channel, or accumulated
+        // under other rules than the export's, cannot); and the files hold exactly those planes. At
+        // the coloring-method tour's point, 160x90, in df32 (1e10x) and floatexp (1e32x).
+        if want("lanes") {
+            use fractadyne_core::coloring::{Stat, StatSet};
+            let saved_spec = self.coloring_spec();
+            let saved = (self.fractal, self.julia_mode, self.dual, self.render_cfg.max_iter, self.render_cfg.auto_iter, self.effects.light, self.effects.de);
+            self.fractal = FractalKind::Mandelbrot;
+            self.julia_mode = false;
+            self.dual = false;
+            self.render_cfg.auto_iter = false;
+            self.effects.light = false;
+            self.effects.de = false;
+            self.coloring.use_custom_palette = false;
+            self.coloring.use_duotone = false;
+            self.coloring.use_binary = false;
+            self.coloring.palette_idx = fractadyne_color::preset_by_id("unity").unwrap_or(0);
+            self.coloring.palette_adjust = fractadyne_color::adjust::PaletteAdjust::NEUTRAL;
+            self.coloring.normalize_live = false;
+            self.coloring.normalize_fit = false;
+            let (w, h) = (160u32, 90u32);
+            let at = |s: &str| fractadyne_core::parse_bf_prec(s, 256).expect("the tour point's coordinate");
+            let (re, im) = (at("-1.178853950372678747911373866849720956148855"), at("0.1853420232408490265512092752061929308714979"));
+            // (name, method, magnification, iterations, statistics asked for besides the method's)
+            let cases: [(&str, crate::ColorMethod, f64, u32, Option<StatSet>); 5] = [
+                ("smooth 1e10x", crate::ColorMethod::Smooth, 1e10, 8_000, None),
+                ("smooth 1e32x", crate::ColorMethod::Smooth, 1e32, 25_000, None),
+                ("stripe 1e10x + gbuffer", crate::ColorMethod::Stripe, 1e10, 8_000, Some(StatSet::GBUFFER)),
+                ("stripe 1e32x", crate::ColorMethod::Stripe, 1e32, 25_000, None),
+                ("decomposition 1e32x + gbuffer", crate::ColorMethod::Decomposition, 1e32, 25_000, Some(StatSet::GBUFFER)),
+            ];
+            let mut reqs = Vec::new();
+            for (name, method, mag, iters, extra) in cases {
+                self.coloring.color_method = method;
+                self.render_cfg.max_iter = iters;
+                let mut vp = Viewport::new(w as f64, h as f64);
+                vp.set_center_mag(re.clone(), im.clone(), mag);
+                let mut req = self.lanes_request_for(&vp, false, extra);
+                req.width = w;
+                req.height = h;
+                req.aa_palette = fractadyne_gpu::PaletteAa::Off;
+                reqs.push((name, vp, req));
+            }
+            (self.fractal, self.julia_mode, self.dual, self.render_cfg.max_iter, self.render_cfg.auto_iter, self.effects.light, self.effects.de) = saved;
+            self.apply_coloring_spec(&saved_spec);
+            let budget = crate::tunables::CORRECT_WORK_BUDGET;
+            let same = |a: &[f32], b: &[f32]| a.len() == b.len() && a.iter().zip(b).all(|(x, y)| x.to_bits() == y.to_bits());
+            let band = |r: &fractadyne_gpu::ExportRequest| format!("{} BLA {}", crate::export::lanes_band(r.mode), if r.bla_on != 0 { "on" } else { "off" });
+            let mut written: Option<(Viewport, fractadyne_gpu::ExportRequest, fractadyne_gpu::ExportResult)> = None;
+            for (name, vp, req) in reqs {
+                let stats = req.iter_stats();
+                let lanes = fractadyne_gpu::render_lanes(device, queue, &req, budget).ok();
+                if stats.is_empty() {
+                    let plain = fractadyne_gpu::render_iter_tiled(device, queue, &req, budget, None, None, None).ok();
+                    let (pass, result) = match (&lanes, &plain) {
+                        (Some(l), Some(p)) => {
+                            let escaped = l.pixels.chunks_exact(4).filter(|t| t[0] > 0.0).count();
+                            (
+                                same(&l.pixels, &p.pixels) && l.aux.is_empty() && escaped > 1000,
+                                format!(
+                                    "main plane {} --render-iter's; aux {}; {escaped} escaped px",
+                                    if same(&l.pixels, &p.pixels) { "bit for bit" } else { "DIFFERS from" },
+                                    if l.aux.is_empty() { "not read (no statistic)" } else { "READ" }
+                                ),
+                            )
+                        }
+                        _ => (false, "a render failed".into()),
+                    };
+                    push_check(&mut checks, &mut last_check_t, SelfCheck {
+                        category: "export",
+                        name: format!("lanes with no statistic are --render-iter's ({name})"),
+                        params: format!("the coloring-method tour's point, {w}x{h}, {}", band(&req)),
+                        result,
+                        threshold: "every main-plane value bit for bit; no aux plane; > 1,000 escaped px",
+                        pass,
+                    });
+                    continue;
+                }
+                let colored = lanes.as_ref().and_then(|l| fractadyne_gpu::color_lanes(device, queue, &req, &l.pixels, &l.aux).ok());
+                // The CONTROL: the same main plane with an empty aux plane must color differently, or
+                // the comparison above could not tell the lanes from nothing.
+                let control = lanes.as_ref().and_then(|l| fractadyne_gpu::color_lanes(device, queue, &req, &l.pixels, &vec![0.0; l.aux.len()]).ok());
+                let export = {
+                    let (progress, cancel) = (std::sync::atomic::AtomicU32::new(0), std::sync::atomic::AtomicBool::new(false));
+                    fractadyne_gpu::render_export(device, queue, &req, &progress, &cancel).ok()
+                };
+                let (pass, result) = match (&lanes, &colored, &export, &control) {
+                    (Some(l), Some(c), Some(e), Some(k)) if c.pixels.len() == e.pixels.len() && l.aux.len() == l.pixels.len() => {
+                        let differ = c.pixels.iter().zip(&e.pixels).filter(|(a, b)| a.to_bits() != b.to_bits()).count();
+                        let control_differ = k.pixels.iter().zip(&e.pixels).filter(|(a, b)| a.to_bits() != b.to_bits()).count();
+                        let max = c.pixels.iter().zip(&e.pixels).map(|(a, b)| (a - b).abs() * 255.0).fold(0.0f32, f32::max);
+                        // Not vacuous: every accumulated lane varies over the escaped pixels.
+                        let spread = |ch: usize| {
+                            let v: Vec<f32> = l.pixels.chunks_exact(4).zip(l.aux.chunks_exact(4)).filter(|(m, _)| m[0] > 0.0).map(|(_, a)| a[ch]).collect();
+                            let (lo, hi) = v.iter().fold((f32::MAX, f32::MIN), |(lo, hi), x| (lo.min(*x), hi.max(*x)));
+                            (v.len(), hi - lo)
+                        };
+                        let lanes_seen: Vec<String> = stats
+                            .iter()
+                            .map(|s| {
+                                let ch = match s {
+                                    Stat::Stripe => 0,
+                                    Stat::Triangle => 1,
+                                    Stat::Trap => 2,
+                                    Stat::Angle => 3,
+                                };
+                                let (n, d) = spread(ch);
+                                format!("{} spans {d:.3} over {n} px", s.spec().key)
+                            })
+                            .collect();
+                        let varied = stats.iter().all(|s| {
+                            let ch = match s {
+                                Stat::Stripe => 0,
+                                Stat::Triangle => 1,
+                                Stat::Trap => 2,
+                                Stat::Angle => 3,
+                            };
+                            let (n, d) = spread(ch);
+                            n > 1000 && d > 0.01
+                        });
+                        (
+                            differ == 0 && varied && control_differ > c.pixels.len() / 4,
+                            format!(
+                                "the color pass over the lanes against the export: {differ} of {} channels differ (max {max:.2} levels); with an empty aux plane (the control) {control_differ}; statistics {stats}: {}",
+                                c.pixels.len(),
+                                lanes_seen.join(", ")
+                            ),
+                        )
+                    }
+                    _ => (false, "a render failed, or the aux plane was not read".into()),
+                };
+                push_check(&mut checks, &mut last_check_t, SelfCheck {
+                    category: "export",
+                    name: format!("lanes colored are the export ({name})"),
+                    params: format!("the coloring-method tour's point, {w}x{h}, ss 1, point sampled, {}", band(&req)),
+                    result,
+                    threshold: "every channel bit for bit; an empty aux plane differs on > 1/4 of them; each accumulated lane spans > 0.01 over > 1,000 escaped px",
+                    pass,
+                });
+                if written.is_none() && name.starts_with("stripe 1e10x") {
+                    written = lanes.map(|l| (vp, req, l));
+                }
+            }
+            // The files: what `write_lanes` writes reads back as the planes it was given.
+            let (pass, result) = match written {
+                Some((vp, req, r)) => {
+                    let dir = std::env::temp_dir().join(format!("fd-selftest-lanes-{}", std::process::id()));
+                    let _ = std::fs::remove_dir_all(&dir);
+                    let outcome = self.write_lanes(&dir, &vp, &req, &r).map_err(|e| e.to_string()).and_then(|(files, stats)| {
+                        let read = |name: &str| fractadyne_export::read_npy_f32(&dir.join(format!("{name}.npy"))).map_err(|e| format!("{name}.npy: {e}"));
+                        let plane = |px: &[f32], ch: usize| px.chunks_exact(4).map(|t| t[ch]).collect::<Vec<f32>>();
+                        let mut bad = Vec::new();
+                        for (ch, name) in ["count", "normal_x", "normal_y", "de_log2"].into_iter().enumerate() {
+                            let (shape, v) = read(name)?;
+                            if shape != [h as usize, w as usize] || !same(&v, &plane(&r.pixels, ch)) {
+                                bad.push(name.to_string());
+                            }
+                        }
+                        for (ch, s) in Stat::ALL.into_iter().enumerate() {
+                            let path = dir.join(format!("{}.npy", s.spec().key));
+                            if stats.has(s) {
+                                let (_, v) = read(s.spec().key)?;
+                                if !same(&v, &plane(&r.aux, ch)) {
+                                    bad.push(s.spec().key.to_string());
+                                }
+                            } else if path.exists() {
+                                bad.push(format!("{} (not accumulated, but written)", s.spec().key));
+                            }
+                        }
+                        let (pshape, pal) = read("palette")?;
+                        let lut: Vec<f32> = req.lut.iter().flatten().copied().collect();
+                        if pshape != [req.lut.len(), 4] || !same(&pal, &lut) {
+                            bad.push("palette".into());
+                        }
+                        let json: serde_json::Value = std::fs::read_to_string(dir.join("view.json"))
+                            .map_err(|e| e.to_string())
+                            .and_then(|t| serde_json::from_str(&t).map_err(|e| e.to_string()))?;
+                        let listed: Vec<String> = json["files"].as_array().map(|a| a.iter().filter_map(|f| f.as_str().map(String::from)).collect()).unwrap_or_default();
+                        if listed != files || json["stats"] != stats.to_string() || json["band"] != crate::export::lanes_band(req.mode) {
+                            bad.push("view.json".into());
+                        }
+                        let fdn = std::fs::read_to_string(dir.join("view.fdn")).map_err(|e| e.to_string())?;
+                        if crate::location_text_verdict(&fdn).is_err() {
+                            bad.push("view.fdn".into());
+                        }
+                        Ok((files.len(), bad))
+                    });
+                    let _ = std::fs::remove_dir_all(&dir);
+                    match outcome {
+                        Ok((n, bad)) => (bad.is_empty() && n >= 9, format!("{n} files; {}", if bad.is_empty() { "every one as given".to_string() } else { format!("WRONG: {}", bad.join(", ")) })),
+                        Err(e) => (false, format!("not written or not read: {e}")),
+                    }
+                }
+                None => (false, "the stripe render failed, nothing to write".into()),
+            };
+            push_check(&mut checks, &mut last_check_t, SelfCheck {
+                category: "export",
+                name: "the lanes files hold the planes they were given".into(),
+                params: "the stripe 1e10x + gbuffer render's lanes, written and read back".into(),
+                result,
+                threshold: "each .npy bit for bit (main 4, stripe/triangle/trap, palette), no lane not accumulated, view.json's list, a view.fdn that opens",
                 pass,
             });
         }

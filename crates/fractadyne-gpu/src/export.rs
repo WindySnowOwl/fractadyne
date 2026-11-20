@@ -2812,6 +2812,10 @@ impl IterScaffold {
     }
 }
 
+/// The raw iteration plane of `req`, tiled by `work_budget` (`--render-iter`, the corrector's
+/// passes, the audits, the exponential-map strips): `pixels` = (smooth iteration, normal.x,
+/// normal.y, log2 distance), one sample a pixel. It accumulates NO orbit statistics, whatever the
+/// method (a strip's own aux excepted): see [`render_lanes`] for the frame an aux method colors.
 #[allow(clippy::too_many_arguments)]
 pub fn render_iter_tiled(
     device: &wgpu::Device,
@@ -2821,6 +2825,38 @@ pub fn render_iter_tiled(
     deadline: Option<std::time::Instant>,
     roi: Option<&[bool]>,
     scaffold: Option<&IterScaffold>,
+) -> Result<ExportResult, GpuError> {
+    render_iter_tiled_impl(device, queue, req, work_budget, deadline, roi, scaffold, false)
+}
+
+/// Every lane of `req`'s G-buffer (`--render-lanes`, coloring plan B9): the main plane as
+/// [`render_iter_tiled`] has it, and with the orbit statistics the frame accumulates
+/// ([`ExportRequest::iter_stats`]: the method's own and any asked for) accumulated as the colored
+/// export accumulates them (the same uniforms and entry point, never chunked: the chunk state
+/// carries no statistics) and the aux plane read back into `aux` (stripe, triangle, trap, angle;
+/// `AUX_NONE`'s values in a lane nothing accumulated). With no statistic it is
+/// [`render_iter_tiled`]'s frame bit for bit and `aux` is empty. With one, the main plane can
+/// differ from [`render_iter_tiled`]'s on pixels whose count is unstable, as a stripe export's
+/// does: the statistics block the series and change BLA's walk (coloring plan B1b).
+pub fn render_lanes(
+    device: &wgpu::Device,
+    queue: &wgpu::Queue,
+    req: &ExportRequest,
+    work_budget: u64,
+) -> Result<ExportResult, GpuError> {
+    render_iter_tiled_impl(device, queue, req, work_budget, None, None, None, true)
+}
+
+#[allow(clippy::too_many_arguments)]
+fn render_iter_tiled_impl(
+    device: &wgpu::Device,
+    queue: &wgpu::Queue,
+    req: &ExportRequest,
+    work_budget: u64,
+    deadline: Option<std::time::Instant>,
+    roi: Option<&[bool]>,
+    scaffold: Option<&IterScaffold>,
+    lanes: bool,
 ) -> Result<ExportResult, GpuError> {
     let max_dim = device.limits().max_texture_dimension_2d;
     let max_buf = device.limits().max_buffer_size;
@@ -2849,8 +2885,15 @@ pub fn render_iter_tiled(
     // reference corrector's own base pass, whose BLA-less dark-core tiles are the most
     // latency-bound dispatches the app issues, and its 120 s deadline is only checked BETWEEN
     // tiles — so before chunking, one such tile could still overrun the watchdog inside it.
+    // What the frame accumulates: nothing, unless it is a lanes render (`render_lanes`) of a frame
+    // whose method or request asks for a statistic. A strip's aux is its own (`StripMap`), never this.
+    let strip = req.map.mode != 0;
+    let stats = if lanes && !strip { req.iter_stats() } else { fractadyne_core::coloring::StatSet::NONE };
+    let accum = !stats.is_empty();
+    // Not with statistics, as `render_export`: the chunk state carries none of them.
     let chunk_scope = (req.mode == 1 || req.mode == 0 || req.mode == 2)
         && req.resumable()
+        && !accum
         && device.limits().max_color_attachment_bytes_per_sample
             >= if req.mode == 2 { 64 } else { 48 };
     // Occupancy-sized, step-bounded tiles (see `OCC_TILE_SAMPLES`), mode 2 only as in
@@ -2863,7 +2906,6 @@ pub fn render_iter_tiled(
     // its FIRST tile: the lazy chunker below could otherwise leave a strip's first tiles on
     // `fs_iterate`, whose arithmetic is not the chunk path's bit for bit (`tiles_chunked`), and
     // only the chunked resolve writes a strip's count, fraction and angle.
-    let strip = req.map.mode != 0;
     let tile_work = if occupancy { occupancy_tile(by_work, 1) } else { by_work };
     // The card's own bound, as in `export_plan` (`CARD_STEP_MS`).
     let by_card = card_step_ms(req.mode).map_or(u32::MAX, |c| {
@@ -2978,7 +3020,8 @@ pub fn render_iter_tiled(
     let bpp = 16u32;
     let align = wgpu::COPY_BYTES_PER_ROW_ALIGNMENT;
     let mut pixels = vec![0.0_f32; (w as usize) * (h as usize) * 4];
-    let mut aux_pixels = if strip { vec![0.0_f32; (w as usize) * (h as usize) * 4] } else { Vec::new() };
+    let read_aux = strip || accum;
+    let mut aux_pixels = if read_aux { vec![0.0_f32; (w as usize) * (h as usize) * 4] } else { Vec::new() };
     let mut ctr_sum = [0u64; crate::COUNTER_SLOTS];
 
     // Wall-adaptive cap, same rule as `render_export` (see `export_tile_cap`): the correction
@@ -3027,10 +3070,10 @@ pub fn render_iter_tiled(
                 formula: req.formula,
                 julia: req.julia,
                 delta_exp: req.delta_exp,
-                orbit_stats: fractadyne_core::coloring::StatSet::NONE.bits(),
-                stripe_freq: 1.0,
-                trap_type: fractadyne_core::coloring::TrapType::Point.gpu_id(),
-                aux_on: 0,
+                orbit_stats: stats.bits(),
+                stripe_freq: if accum { req.stripe_freq } else { 1.0 },
+                trap_type: if accum { req.trap_type } else { fractadyne_core::coloring::TrapType::Point.gpu_id() },
+                aux_on: if accum { crate::aux_on_word(true, req.stripe_tail, req.stripe_tail_len) } else { 0 },
                 sa_skip: req.sa_skip,
                 glitch_on: req.glitch_on,
                 sa_a: req.sa_a,
@@ -3075,7 +3118,7 @@ pub fn render_iter_tiled(
                 usage: wgpu::BufferUsages::MAP_READ | wgpu::BufferUsages::COPY_DST,
                 mapped_at_creation: false,
             });
-            let aux_buf = strip.then(|| {
+            let aux_buf = read_aux.then(|| {
                 device.create_buffer(&wgpu::BufferDescriptor {
                     label: Some("itertiled.readback_aux"),
                     size: (padded_bpr * th) as u64,
@@ -3277,7 +3320,7 @@ pub fn render_iter_tiled(
             // The aux copy shares the submission the main readback just awaited.
             if let (Some(ab), Some(arx)) = (&aux_buf, &aux_rx) {
                 if !arx.recv().map(|r| r.is_ok()).unwrap_or(false) {
-                    return Err(GpuError::Readback("the strip's aux target".into()));
+                    return Err(GpuError::Readback("the aux target".into()));
                 }
                 let adata = ab.slice(..).get_mapped_range();
                 for r in 0..th {
@@ -4302,12 +4345,37 @@ pub fn color_iter_buffer_ss(
     iter_pixels: &[f32],
     ss: u32,
 ) -> Result<ExportResult, GpuError> {
+    color_planes(device, queue, req, iter_pixels, None, ss)
+}
+
+/// [`color_iter_buffer`] with the aux plane too (`aux_pixels`, as [`render_lanes`] reads it back):
+/// what an aux method colors, so a frame's lanes colored here are its export (coloring plan B9's
+/// check that the lanes are the numbers the picture is made of).
+pub fn color_lanes(
+    device: &wgpu::Device,
+    queue: &wgpu::Queue,
+    req: &ExportRequest,
+    iter_pixels: &[f32],
+    aux_pixels: &[f32],
+) -> Result<ExportResult, GpuError> {
+    color_planes(device, queue, req, iter_pixels, Some(aux_pixels), 1)
+}
+
+fn color_planes(
+    device: &wgpu::Device,
+    queue: &wgpu::Queue,
+    req: &ExportRequest,
+    iter_pixels: &[f32],
+    aux_pixels: Option<&[f32]>,
+    ss: u32,
+) -> Result<ExportResult, GpuError> {
     let w = req.width.max(1);
     let h = req.height.max(1);
     let ss = ss.max(1);
     // The iteration input, `ss` texels to an output pixel along each axis.
     let (iw, ih) = (w * ss, h * ss);
     assert_eq!(iter_pixels.len(), (iw as usize) * (ih as usize) * 4, "iteration buffer is not (w·ss)×(h·ss)");
+    assert!(aux_pixels.is_none_or(|a| a.len() == iter_pixels.len()), "the aux plane is not the iteration plane's size");
     let shader = shader_module(device);
     let color_bgl = color_bind_group_layout(device);
     let color_layout = device.create_pipeline_layout(&wgpu::PipelineLayoutDescriptor {
@@ -4331,8 +4399,8 @@ pub fn color_iter_buffer_ss(
     let cu = color_uniforms_for(req, ss, w, h, lut_len, lut_smooth, interior);
     queue.write_buffer(&color_uniform, 0, bytemuck::bytes_of(&cu));
 
-    // Upload the merged iteration buffer into a sampled texture; a zeroed aux (unused for the
-    // supported non-aux methods) satisfies the color bind group.
+    // Upload the merged iteration buffer into a sampled texture, and the aux plane when one is given;
+    // otherwise a zeroed aux (unused for the supported non-aux methods) satisfies the color bind group.
     let make_input = |label| device.create_texture(&wgpu::TextureDescriptor {
         label: Some(label),
         size: wgpu::Extent3d { width: iw, height: ih, depth_or_array_layers: 1 },
@@ -4363,7 +4431,10 @@ pub fn color_iter_buffer_ss(
     let iter_tex = make_input("coloriter.iter");
     write(&iter_tex, iter_pixels);
     let aux_tex = make_input("coloriter.aux");
-    write(&aux_tex, &vec![0.0_f32; (iw as usize) * (ih as usize) * 4]);
+    match aux_pixels {
+        Some(a) => write(&aux_tex, a),
+        None => write(&aux_tex, &vec![0.0_f32; (iw as usize) * (ih as usize) * 4]),
+    }
     let iter_view = iter_tex.create_view(&wgpu::TextureViewDescriptor::default());
     let aux_view = aux_tex.create_view(&wgpu::TextureViewDescriptor::default());
     let color_bg =

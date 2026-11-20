@@ -376,6 +376,7 @@ pub(crate) const CLI_REFERENCE: &[CliRef] = {
         Flag("--no-perf / --perf", "Hide / show the performance panel."),
         Section("Validation & diagnostics"),
         Flag("--render-iter -o F.exr", "Export raw iteration data (EXR) instead of a colored image."),
+        Flag("--render-lanes DIR [--lanes LIST]", "Write every lane of the view's G-buffer to DIR as NumPy .npy files of 32-bit floats, exactly as the GPU computed them, for a Python prototype to load with np.load at any depth: count, normal_x, normal_y, de_log2 (the --render-iter channels), one file per orbit statistic the coloring method accumulates (stripe, triangle, trap, angle), palette.npy (the baked palette), view.fdn and view.json (what each lane holds, the band, the palette map). --lanes adds statistics to the method's own: keys joined by commas, gbuffer (stripe, triangle and trap), or all. scripts/lanes.py loads the folder. One sample a pixel."),
         Flag("--compare A B", "Diff two renders/EXRs: max/mean delta + difference heatmap."),
         Flag("--import-kfr F.kfr", "Load a Kalles Fraktaler (.kfr) location."),
         Flag("--import-imagina FILE", "Load an Imagina TEXT location (Formula / Location Size, Re, Im, Iterations). A second independent implementation to cross-check the validation corpus against. Binary .im files are refused by their magic — re-save from Imagina as a text location. NB Imagina's Size is a HALF-HEIGHT, so magnification = 2/Size."),

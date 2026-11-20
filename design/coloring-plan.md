@@ -1,6 +1,6 @@
 # Coloring methods: implementation plan
 
-Status: **plan (2026-11-08); phase A done (A1–A10), B1 and B1b done (the coloring matrix and its live method tour), B2 done (what a frame accumulates is a `StatSet`, apart from the method shown), B3 done (in floatexp a stripe, triangle or trap frame carries the whole G-buffer), B4 to B7 done (one settings model, the method list, the method sheet, the inside and a second LUT), C1, C4, C8, C9 and C11 done (a solid inside in any color; the inside's palette fitted to its range; the palette anti-aliased over a footprint from the distance estimate; the fringe method; the dual view's Julia pane on the set's palette map); B8 not started; next B9 and B10 (prototyping aids), then C2; see §10 (2026-11-20).** Line references are to `main` at `9ab75357`; check
+Status: **plan (2026-11-08); phase A done (A1–A10), B1, B1b and B9 done (the coloring matrix, its live method tour, every lane as NumPy arrays), B2 done (what a frame accumulates is a `StatSet`, apart from the method shown), B3 done (in floatexp a stripe, triangle or trap frame carries the whole G-buffer), B4 to B7 done (one settings model, the method list, the method sheet, the inside and a second LUT), C1, C4, C8, C9 and C11 done (a solid inside in any color; the inside's palette fitted to its range; the palette anti-aliased over a footprint from the distance estimate; the fringe method; the dual view's Julia pane on the set's palette map); B8 not started; next B10 (a custom coloring hook), then C2; see §10 (2026-11-20).** Line references are to `main` at `9ab75357`; check
 them before editing, they drift. The research behind it (methods, prototypes, measured results,
 prior art) is the coloring-methods doc; its local copy is
 `local/research_notes/Fractal coloring methods/` (PDF, HTML, Markdown, prototype scripts).
@@ -1026,6 +1026,27 @@ the app's own data.
 - **Tests**: the lanes against `--render-iter`'s EXR channels (exact), and an aux lane against the
   coloring matrix's G-buffer render of the same view.
 - **Done when**: a phase C idea can be tried in NumPy on a deep view without writing an iteration.
+- **Done 2026-11-20** (branch `feat/color-b9-lanes`): `--render-lanes DIR [--lanes LIST]` writes
+  `count`, `normal_x`, `normal_y`, `de_log2`, one `.npy` per statistic the frame accumulated
+  (`stripe`, `triangle`, `trap`, `angle`: the method's own, plus `--lanes`' keys, `gbuffer` or
+  `all`), `palette.npy` (N×4 display RGBA; `inside_palette.npy` when the inside has its own),
+  `view.fdn` (opens the view) and `view.json` (band, BLA, series skip, statistics, what each lane
+  holds, the palette map). NumPy reads the files with no other library (`fractadyne_export::npy`,
+  format 1.0). On the GPU, `render_lanes` is `render_iter_tiled` with the request's statistics
+  accumulated under the colored export's uniforms (never chunked: the chunk state carries no
+  statistics, as `render_export`) and the aux plane read back; `color_lanes` colors given main and
+  aux planes. ⚠`--render-iter` itself accumulates NO statistic whatever the method, so an aux
+  method's counts there are not its export's on unstable pixels (B1b); the lanes are. Self-test
+  group `lanes` (the coloring-method tour's point, 160x90): with no statistic the main plane is
+  `--render-iter`'s bit for bit (df32 1e10x, floatexp 1e32x); with statistics the color pass over
+  the lanes is the export bit for bit (stripe 1e10x with the G-buffer, stripe 1e32x, decomposition
+  1e32x with all four), against a CONTROL (an empty aux plane differs on every color channel); and
+  the files read back as the planes. `scripts/lanes.py`: the loader (`load`, `palette_at`,
+  `palette_coord`, OKLab and `with_lightness`) and two worked examples, Smooth and C9's fringe,
+  written from the WGSL: at the tour point at 1e30x (floatexp, BLA on, 480x270) each matches the
+  app's own render (`--render --ss 1 --no-palette-aa`) to the PNG's dither, max 1.00 level, mean
+  0.46. A render of 480x270 at 1e30x takes 0.1 s. `--render-iter` and `--render-lanes` are task
+  invocations now (no orbit cache, no relaunch); `--render-iter` was missing from the list.
 
 ### B10. A custom coloring hook (a prototyping aid and a power-user feature)
 
@@ -1449,7 +1470,7 @@ coloring in these places, so sequence the two with care:
 | A10                | done, merged                                              | `aaffca7f` (merge `6ec2fc76`)                                                             |
 | B1                 | done, merged (agent v41, deployed)                        | `312c54a8` (merge `4efdbbb3`)                                                             |
 | B1 fixes           | Distance NaN; Newton's statistics methods                 | merges `91fa8f91`, `7722b660`                                                             |
-| B1b                | done, not merged (branch `feat/color-b1b-method-tour`)    | (filled in at the merge)                                                                  |
+| B1b                | done, merged                                              | `dc457c3f` (merge `2c51a6be`)                                                             |
 | B2                 | done, merged                                              | `c017a577` (merge `dcfd776b`)                                                             |
 | B3                 | done, merged                                              | `412fafc6` (merge `542a5264`)                                                             |
 | B4                 | done, merged                                              | `a5d7d74b` (merge `ba452e9c`)                                                             |
@@ -1457,7 +1478,8 @@ coloring in these places, so sequence the two with care:
 | B7                 | done, merged                                              | `9e1efa0e` (merge `97c91c32`; step 1 `17b6d60d` with the browser's dual view, `ef2acde7`) |
 | B5                 | done, merged                                              | `b2b927d6` (merge `e3e53257`)                                                             |
 | B8                 | not started                                               |                                                                                           |
-| B9, B10            | not started: prototyping aids (user, 2026-11-20)          |                                                                                           |
+| B9                 | done, not merged (branch `feat/color-b9-lanes`)           | (filled in at the merge)                                                                  |
+| B10                | not started: a prototyping aid (user, 2026-11-20)         |                                                                                           |
 | C1                 | done, merged                                              | `58d6dce3` (merge `84af4b0d`)                                                             |
 | C4                 | done, merged                                              | `e99bfafd` (merge `9a3f9ff9`)                                                             |
 | C8                 | done, merged; on by default on `feat/color-c8-aa-default` | `5430aa2c` (merge `49153662`)                                                             |

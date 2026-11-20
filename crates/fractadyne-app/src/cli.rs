@@ -116,6 +116,40 @@ pub(crate) fn missing_tour_flag(args: &[String]) -> Option<&'static str> {
 #[path = "../tests/unit/cli/missing_tour_flag_tests.rs"]
 mod missing_tour_flag_tests;
 
+/// `--lanes LIST` (with `--render-lanes`): the orbit statistics to accumulate besides the method's
+/// own, as their keys joined by `,` or `+` (`stripe,trap`), `gbuffer` (every statistic BLA folds),
+/// `all` (the angle too, which turns BLA off for the frame), or `none`. An unknown key is an error
+/// that lists the keys.
+pub(crate) fn lanes_stat_set(list: &str) -> Result<fractadyne_core::coloring::StatSet, String> {
+    use fractadyne_core::coloring::{Stat, StatSet};
+    let choices = || {
+        let keys: Vec<&str> = Stat::ALL.iter().map(|s| s.spec().key).collect();
+        format!("one of {}, gbuffer, all, none", keys.join(", "))
+    };
+    let keys: Vec<&str> = list.split([',', '+']).map(str::trim).filter(|k| !k.is_empty()).collect();
+    // A list with no key in it (`""`, `" , "`) is a mistake, never a quiet `none`.
+    if keys.is_empty() {
+        return Err(format!("no statistic named ({})", choices()));
+    }
+    let mut set = StatSet::NONE;
+    for key in keys {
+        set = match key {
+            "none" => set,
+            "gbuffer" => set.union(StatSet::GBUFFER),
+            "all" => Stat::ALL.into_iter().fold(set, StatSet::with),
+            _ => match Stat::ALL.into_iter().find(|s| s.spec().key == key) {
+                Some(s) => set.with(s),
+                None => return Err(format!("unknown statistic \"{key}\" ({})", choices())),
+            },
+        };
+    }
+    Ok(set)
+}
+
+#[cfg(test)]
+#[path = "../tests/unit/cli/lanes_stats.rs"]
+mod lanes_stats;
+
 /// Dispatch the headless CLI modes. Returns true if one ran (caller should exit).
 pub(crate) fn run_headless(args: &[String]) -> bool {
     // A tour-harness flag with no tour file would otherwise fall through to a bare GUI launch (see
@@ -565,6 +599,11 @@ pub(crate) struct RenderCli {
     pub(crate) done: bool,
     /// `--render-iter`: write the raw iteration texture as EXR instead of a colored image.
     pub(crate) iter_mode: bool,
+    /// `--render-lanes DIR`: write every lane of the view's G-buffer to DIR as `.npy` files
+    /// (`render_lanes_to_dir`, coloring plan B9).
+    pub(crate) lanes: Option<std::path::PathBuf>,
+    /// `--lanes LIST`: the orbit statistics a lanes render accumulates besides the method's own.
+    pub(crate) lanes_stats: Option<fractadyne_core::coloring::StatSet>,
     /// `--render-expmap DIR`: render the dive into the view as exponential-map strips in DIR
     /// (`expmap_render`, `design/zoom-video.md` phase E0).
     pub(crate) expmap: Option<std::path::PathBuf>,
@@ -676,7 +715,7 @@ impl crate::FractadyneApp {
         if self.render_cli.run && !self.render_cli.done {
             if let Some((dev, q)) = gpu {
                 self.render_cli.done = true;
-                if !self.watermark && !self.render_cli.iter_mode && self.render_cli.expmap.is_none() {
+                if !self.watermark && !self.render_cli.iter_mode && self.render_cli.lanes.is_none() && self.render_cli.expmap.is_none() {
                     println!("Note: Fd watermark is off (saved preference) — pass --watermark to include it.");
                 }
                 let t0 = std::time::Instant::now();
@@ -688,6 +727,8 @@ impl crate::FractadyneApp {
                     self.assemble_from_dir(ctx, dev, q, &dir).map_err(crate::error::AppError::Message)
                 } else if let Some(out) = self.render_cli.zoom_video.clone() {
                     self.render_zoom_video(ctx, dev, q, &out).map_err(crate::error::AppError::Message)
+                } else if let Some(dir) = self.render_cli.lanes.clone() {
+                    self.render_lanes_to_dir(dev, q, &dir)
                 } else if self.render_cli.iter_mode {
                     let out = self
                         .render_cli.out

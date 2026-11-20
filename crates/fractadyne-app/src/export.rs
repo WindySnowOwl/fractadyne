@@ -950,6 +950,15 @@ fn decode_palette_segments(v: &str) -> Option<Vec<fractadyne_state::PaletteSegme
     Some(out)
 }
 
+/// The precision band a request's `mode` is, as `view.json` names it (`--render-lanes`).
+pub(crate) fn lanes_band(mode: u32) -> &'static str {
+    match crate::RenderMode::from_u32(mode) {
+        crate::RenderMode::Direct => "direct",
+        crate::RenderMode::Df32Pert => "df32",
+        crate::RenderMode::Floatexp => "floatexp",
+    }
+}
+
 impl FractadyneApp {
     /// Reloadable view-state metadata embedded in exports. The center is stored as
     /// full-precision decimal so deep-zoom positions round-trip exactly. `center_re`/`center_im`
@@ -2232,6 +2241,153 @@ impl FractadyneApp {
         // channel a constant 1.0 — see `write_exr_raw`.
         fractadyne_export::write_exr_raw(path, r.width, r.height, &r.pixels, Some(&meta))?;
         Ok(format!("Saved iteration EXR {}×{} → {}", r.width, r.height, path.display()))
+    }
+
+    /// `--render-lanes DIR` (coloring plan B9): every lane of the view's G-buffer, exactly as the GPU
+    /// computed it, as `.npy` files of 32-bit floats a Python prototype loads with `np.load`, at any
+    /// depth: `count`, `normal_x`, `normal_y`, `de_log2` (the main plane, as `--render-iter` has it),
+    /// one file per orbit statistic the frame accumulated (`stripe`, `triangle`, `trap`, `angle`: the
+    /// method's own and any `--lanes` asks for), the baked palette (`palette.npy`, N×4 display RGBA)
+    /// and the inside's when it has one, the view (`view.fdn`, which File ▸ Open view reopens) and
+    /// `view.json`, which says what each lane holds and the palette map the method colors by.
+    /// `scripts/lanes.py` loads the folder. One sample a pixel, as `--render-iter`.
+    pub(crate) fn render_lanes_to_dir(
+        &mut self,
+        device: &eframe::wgpu::Device,
+        queue: &eframe::wgpu::Queue,
+        dir: &std::path::Path,
+    ) -> Result<String, crate::error::AppError> {
+        crate::diag::log_line("render", &self.cli_render_manifest(self.export.width, self.export_height(), dir));
+        crate::diag::breadcrumb(format!("CLI lanes render → {}", dir.display()));
+        let vp = self.viewport.clone();
+        let req = self.lanes_request_for(&vp, self.julia_mode, self.render_cli.lanes_stats);
+        let r = fractadyne_gpu::render_lanes(device, queue, &req, crate::tunables::CORRECT_WORK_BUDGET)?;
+        let (files, stats) = self.write_lanes(dir, &vp, &req, &r)?;
+        Ok(format!(
+            "Saved {} lanes {}×{} ({}, statistics: {stats}) → {}",
+            files.iter().filter(|f| f.ends_with(".npy")).count(),
+            r.width,
+            r.height,
+            lanes_band(req.mode),
+            dir.display()
+        ))
+    }
+
+    /// The request a lanes render of `vp` makes: the export's own, one sample a pixel, with the
+    /// statistics `extra` names joined to the method's for this ONE request, as the coloring matrix's
+    /// G-buffer check asks it (`orbit_stats_override`): every rule of the request (the series, BLA's
+    /// lanes) then sees the set the frame accumulates.
+    pub(crate) fn lanes_request_for(
+        &mut self,
+        vp: &crate::Viewport,
+        julia: bool,
+        extra: Option<fractadyne_core::coloring::StatSet>,
+    ) -> fractadyne_gpu::ExportRequest {
+        self.coloring.orbit_stats_override = extra;
+        let mut req = self.current_export_request_for(vp, julia);
+        self.coloring.orbit_stats_override = None;
+        req.ss = 1;
+        req
+    }
+
+    /// Write a lanes render `r` of `req` (the view `vp`) to `dir` ([`Self::render_lanes_to_dir`]'s
+    /// files): the names written, and the statistics the frame accumulated.
+    pub(crate) fn write_lanes(
+        &self,
+        dir: &std::path::Path,
+        vp: &crate::Viewport,
+        req: &fractadyne_gpu::ExportRequest,
+        r: &fractadyne_gpu::ExportResult,
+    ) -> Result<(Vec<String>, fractadyne_core::coloring::StatSet), crate::error::AppError> {
+        use fractadyne_core::coloring::Stat;
+        std::fs::create_dir_all(dir)?;
+        let (w, h) = (r.width as usize, r.height as usize);
+        let plane = |px: &[f32], ch: usize| px.chunks_exact(4).map(|t| t[ch]).collect::<Vec<f32>>();
+        let mut files: Vec<String> = Vec::new();
+        let mut save = |name: &str, shape: &[usize], data: &[f32]| -> Result<(), crate::error::AppError> {
+            let file = format!("{name}.npy");
+            fractadyne_export::write_npy_f32(&dir.join(&file), shape, data)?;
+            files.push(file);
+            Ok(())
+        };
+        for (ch, name) in ["count", "normal_x", "normal_y", "de_log2"].into_iter().enumerate() {
+            save(name, &[h, w], &plane(&r.pixels, ch))?;
+        }
+        // Only the lanes the frame accumulated: the others hold `AUX_NONE`'s constants (the angle's
+        // lane is written whenever any statistic is, but it is a lane only when asked for).
+        let stats = req.iter_stats();
+        for s in stats.iter() {
+            let ch = match s {
+                Stat::Stripe => 0,
+                Stat::Triangle => 1,
+                Stat::Trap => 2,
+                Stat::Angle => 3,
+            };
+            save(s.spec().key, &[h, w], &plane(&r.aux, ch))?;
+        }
+        let flat = |lut: &[[f32; 4]]| lut.iter().flatten().copied().collect::<Vec<f32>>();
+        save("palette", &[req.lut.len(), 4], &flat(&req.lut))?;
+        if let Some(lut) = req.interior.lut.as_ref() {
+            save("inside_palette", &[lut.len(), 4], &flat(lut))?;
+        }
+        let julia = req.julia != 0;
+        let view = self.view_metadata_of(vp, julia, None, true);
+        fractadyne_state::durable::write_atomic(&dir.join("view.fdn"), crate::export::wrap_view_text(&format!("{view}\n")).as_bytes())?;
+        files.push("view.fdn".into());
+        let band = lanes_band(req.mode);
+        let method = fractadyne_core::coloring::ColorMethod::from_gpu_id(req.color_method).unwrap_or_default();
+        let trap = fractadyne_core::coloring::TrapType::from_gpu_id(req.trap_type).unwrap_or_default();
+        let json = serde_json::json!({
+            "format": "fractadyne-lanes",
+            "format_version": 1,
+            "app": crate::sysinfo::version_string(),
+            "width": w,
+            "height": h,
+            "fractal": self.fractal.name(),
+            "julia": julia,
+            "center_re": fractadyne_core::to_decimal_string(&vp.center_x),
+            "center_im": fractadyne_core::to_decimal_string(&vp.center_y),
+            "log2_zoom": vp.log2_magnification(),
+            "zoom": crate::fmt_zoom_field(vp.log2_magnification()),
+            "max_iter": req.max_iter,
+            "band": band,
+            "bla": req.bla_on != 0,
+            "series_skip": req.sa_skip,
+            "stats": stats.to_string(),
+            "files": files,
+            "lanes": {
+                "count": "smooth iteration count: N + 1 - log_p(log2|z_N|); -1 inside the set (or not escaped by max_iter), -2 a glitched pixel",
+                "normal_x": "slope normal u = z/(dz/dc), normalized, x; 0 inside",
+                "normal_y": "slope normal, y; 0 inside",
+                "de_log2": "log2 of the distance estimate in pixels; 1e30 inside or where there is none",
+                "stripe": "stripe average, 0..1, blended between the last two averages by the band position",
+                "triangle": "triangle-inequality average, 0..1, blended as stripe",
+                "trap": "the orbit's nearest approach to the trap shape (1e30 if never)",
+                "angle": "the final z's angle, 0..1 (atan2/2pi + 0.5)",
+            },
+            "coloring": {
+                "method": method.key(),
+                "cycle": req.cycle,
+                "offset": req.offset,
+                "norm_mode": if req.norm_mode == 1 { "log" } else { "linear" },
+                "norm_lo": req.norm_lo,
+                "palette_entries": req.lut.len(),
+                "palette_smooth": req.lut_smooth,
+                "palette_aa": req.aa_palette.gpu_word(),
+                "stripe_freq": req.stripe_freq,
+                "stripe_tail": req.stripe_tail,
+                "stripe_tail_len": req.stripe_tail_len,
+                "trap": trap.key(),
+                "interior_color": req.interior_col,
+                "inside_palette_smooth": req.interior.lut_smooth,
+                "inside_cycle": req.interior.cycle,
+                "inside_offset": req.interior.offset,
+            },
+            "palette_map": "t = mapped(v) * cycle + offset, mapped(v) = v (linear) or ln(max(v - norm_lo, 0) + 1) (log), v the method's lane; the color is the palette at fract(t), linearly interpolated between entry centers when palette_smooth",
+        });
+        let text = serde_json::to_string_pretty(&json).map_err(|e| crate::error::AppError::Message(e.to_string()))?;
+        fractadyne_state::durable::write_atomic(&dir.join("view.json"), format!("{text}\n").as_bytes())?;
+        Ok((files, stats))
     }
 
 

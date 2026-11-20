@@ -893,7 +893,7 @@ const TASK_FLAGS: &[&str] = &[
     "--selftest", "--livetest", "--divetest", "--uitest", "--juliadive", "--dualsettle",
     "--play-tour",
     "--bench-matrix", "--coloring-matrix", "--benchmark", "--profile", "--reusetest", "--resizetest", "--frametest",
-    "--render", "--render-tour", "--render-expmap", "--assemble", "--render-zoom-video", "--torture", "--gputest", "--oomtest", "--refdiag",
+    "--render", "--render-iter", "--render-lanes", "--render-tour", "--render-expmap", "--assemble", "--render-zoom-video", "--torture", "--gputest", "--oomtest", "--refdiag",
     "--find-minibrot", "--check-updates", "--crosscheck-f3", "--autodive", "--motiontest",
     "--zoomtest",
     "--chunk-sweep", "--deviceloss-repro", "--bench-bignum", "--truth", "--shot", "--soak", "--pickcheck",
@@ -7612,6 +7612,30 @@ impl FractadyneApp {
             Some(&(n, k)) => (Some(n), k),
             None => (None, AuditKind::Correction),
         };
+        // `--render-lanes DIR`: every lane of the view's G-buffer as `.npy` files (coloring plan B9),
+        // with `--lanes LIST` the statistics it accumulates besides the method's own. It takes the
+        // view options `--render` does, so it rides on `run` as the strips below do.
+        let render_lanes = args
+            .iter()
+            .position(|a| a == "--render-lanes")
+            .map(|i| match args.get(i + 1).filter(|s| !s.starts_with('-')) {
+                Some(d) => std::path::PathBuf::from(d),
+                None => {
+                    eprintln!("fractadyne: --render-lanes needs a folder to write the lanes to");
+                    crate::exit(2)
+                }
+            });
+        let lanes_stats = args.iter().position(|a| a == "--lanes").map(|i| {
+            let list = args.get(i + 1).map(String::as_str).unwrap_or("");
+            cli::lanes_stat_set(list).unwrap_or_else(|why| {
+                eprintln!("fractadyne: --lanes {list:?}: {why}");
+                crate::exit(2)
+            })
+        });
+        if lanes_stats.is_some() && render_lanes.is_none() {
+            eprintln!("fractadyne: --lanes only says what --render-lanes writes; pass --render-lanes DIR too");
+            crate::exit(2)
+        }
         // `--render-expmap DIR`: a dive as exponential-map strips (`expmap_render`). It takes the
         // same view options as `--render`, read by `apply_cli_render`, so it rides on `run`.
         let render_expmap = args
@@ -7633,6 +7657,7 @@ impl FractadyneApp {
             .map(std::path::PathBuf::from);
         let auto_render = args.iter().any(|a| a == "--render")
             || render_iter_mode
+            || render_lanes.is_some()
             || glitch_audit.is_some()
             || render_expmap.is_some()
             || assemble_dir.is_some()
@@ -8168,6 +8193,8 @@ impl FractadyneApp {
                 out: auto_render_out,
                 done: false,
                 iter_mode: render_iter_mode,
+                lanes: render_lanes,
+                lanes_stats,
                 expmap_opts: if render_expmap.is_some() || zoom_video.is_some() {
                     expmap_render::ExpmapCli::from_args(args)
                 } else {
