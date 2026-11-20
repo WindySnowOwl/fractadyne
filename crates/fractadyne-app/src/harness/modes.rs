@@ -394,6 +394,13 @@ impl Windowed {
             s.svg = val("--svg").map(std::path::PathBuf::from);
             s.image = val("--image").map(std::path::PathBuf::from);
             s.export_live = val("--export-live").map(std::path::PathBuf::from);
+            s.then = val("--shot-then").map(|kv| match kv.split_once('=') {
+                Some((k, v)) if !k.trim().is_empty() => (k.trim().to_string(), v.trim().to_string()),
+                _ => {
+                    eprintln!("fractadyne: --shot-then wants KEY=VALUE, a coloring key of a view (as in a .fdn file)");
+                    crate::exit(2)
+                }
+            });
             Some(s)
         } else {
             None

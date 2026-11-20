@@ -10,6 +10,15 @@ new functional enhancement; a **minor** bump (e.g. 0.2.0) marks a milestone that
 run of patch releases. The `0.2.0` entry summarizes **0.1.29 – 0.1.68** by theme — per-version
 detail is in the git history.
 
+## 0.3.1 (unreleased)
+
+- **Changing the inside's coloring updates a deep view and the overview map.** Past about 10^10×,
+  a settled view shows the average of many jittered samples, which starts over when its coloring
+  changes. A change to the inside (its palette, its fit, solid or orbit trap, or a solid inside's
+  color) did not start it over, so the view kept the old inside until something else changed, and
+  the overview map kept it too. At a minibrot at 9.3e78× whose inside was switched to the Ice
+  palette, the inside stayed orange; it now turns blue, as it does when the view opens with Ice.
+
 ## 0.3.0 (2026-11-19)
 
 0.3.0 rolls up two runs of pre-releases. The 0.2.41 series, `v0.2.41-beta.1` to

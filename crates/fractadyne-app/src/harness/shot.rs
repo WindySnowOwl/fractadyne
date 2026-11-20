@@ -50,6 +50,11 @@ pub(crate) struct Shot {
     pub(crate) export_live: Option<PathBuf>,
     /// When the `--export-live` export was started (`None` before, and after it finished).
     live_t0: Option<Instant>,
+    /// `--shot-then KEY=VALUE`: once the shot is written, set one coloring key of the view (as a
+    /// `.fdn` line would), wait for the picture again by the same gate, and write a second shot
+    /// beside the first (`<name>-then.png`). Whether a coloring change restarts the progressive
+    /// average is visible only this way: the average runs under no other harness.
+    pub(crate) then: Option<(String, String)>,
 }
 
 impl Shot {
@@ -69,8 +74,16 @@ impl Shot {
             image: None,
             export_live: None,
             live_t0: None,
+            then: None,
         }
     }
+}
+
+/// `<dir>/<stem>-then.<ext>` for `--shot-then`'s second shot.
+pub(crate) fn then_path(out: &std::path::Path) -> PathBuf {
+    let stem = out.file_stem().map(|s| s.to_string_lossy().into_owned()).unwrap_or_else(|| "shot".into());
+    let ext = out.extension().map(|s| s.to_string_lossy().into_owned()).unwrap_or_else(|| "png".into());
+    out.with_file_name(format!("{stem}-then.{ext}"))
 }
 
 impl crate::FractadyneApp {
@@ -174,6 +187,35 @@ impl crate::FractadyneApp {
             match fractadyne_export::write_png_rgba8(&out, w, h, &bytes, None) {
                 Ok(()) => {
                     println!("--shot: wrote {} ({w}x{h})", out.display());
+                    // `--shot-then`: one coloring change, then the same wait and a second shot.
+                    if let Some((key, value)) = self.harness.shot.as_mut().and_then(|s| s.then.take()) {
+                        let mut spec = self.coloring_spec();
+                        let mut clamped = Vec::new();
+                        match crate::coloring_fields::read_key(&mut spec, &key, &value, &mut clamped) {
+                            Some(true) => {}
+                            Some(false) => {
+                                eprintln!("fractadyne: --shot-then: {key}={value}: the value does not read");
+                                crate::exit(2);
+                            }
+                            None => {
+                                eprintln!("fractadyne: --shot-then: {key} is not a coloring key of a view");
+                                crate::exit(2);
+                            }
+                        }
+                        self.apply_coloring_spec(&spec);
+                        let msg = format!("then: set {key}={value}");
+                        println!("--shot: {msg}");
+                        crate::diag::log_line("harness", &msg);
+                        let now = Instant::now();
+                        let s = self.harness.shot.as_mut().unwrap();
+                        s.out = then_path(&out);
+                        s.pending = false;
+                        s.start = now;
+                        s.ref_changed_at = now;
+                        s.svg = None;
+                        s.image = None;
+                        return;
+                    }
                     crate::exit(0);
                 }
                 Err(e) => {

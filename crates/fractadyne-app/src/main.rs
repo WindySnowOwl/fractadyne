@@ -6894,6 +6894,11 @@ struct DialogState {
     export_notice: bool,
 }
 
+/// What the overview map was drawn for: the formula id, the custom formula's key (every custom
+/// formula is id 1000), the palette (an index or a sentinel), the method, the palette's revision,
+/// and the inside's coloring (`inside_coloring_sig`). See `FractadyneApp::minimap_key_now`.
+type MinimapKey = (u32, u64, usize, u32, u32, u64);
+
 // ================================================================================================
 // FractadyneApp - all application state
 // ================================================================================================
@@ -7229,8 +7234,8 @@ struct FractadyneApp {
     /// Minimap overview cache: home-view thumbnail + the key (formula, palette, method) it was
     /// rendered for (re-render on change). The enable *toggle* lives in [`DialogState`].
     minimap_tex: Option<egui::TextureHandle>,
-    /// (formula id, custom-formula key — every custom formula is id 1000, palette, method, rev).
-    minimap_key: Option<(u32, u64, usize, u32, u32)>,
+    /// What the map was drawn for ([`MinimapKey`], `minimap_key_now`).
+    minimap_key: Option<MinimapKey>,
     /// Precision reticle (hold Shift with click-to-zoom armed): what the DRAW phase saw under the
     /// cursor, handed to the UPDATE phase, which is the only place with a GPU device to render
     /// with. One frame of latency, which a magnifier can afford.
@@ -15271,6 +15276,22 @@ impl FractadyneApp {
         if !self.dialogs.minimap || (self.julia_mode && !self.dual) || !self.fractal.is_escape_time() {
             return;
         }
+        let key = self.minimap_key_now();
+        if self.minimap_key == Some(key) && self.minimap_tex.is_some() {
+            return;
+        }
+        if let Some((dev, q)) = gpu {
+            if let Some(img) = self.render_minimap_image(dev, q) {
+                let tex = ctx.load_texture("fractadyne.minimap", img, egui::TextureOptions::LINEAR);
+                self.minimap_tex = Some(tex);
+                self.minimap_key = Some(key);
+            }
+        }
+    }
+
+    /// The overview map's key as things stand ([`MinimapKey`]): when it differs from the one the
+    /// map was drawn for, the map is drawn again.
+    pub(crate) fn minimap_key_now(&self) -> MinimapKey {
         // Key includes the palette identity (preset index or a sentinel) and a revision so
         // the thumbnail refreshes when the gradient / duotone colors change.
         let duo_hash = self
@@ -15295,23 +15316,17 @@ impl FractadyneApp {
         } else {
             (self.coloring.palette_idx, 0)
         };
-        let key = (
+        (
             self.fractal.formula_id(),
             self.custom_key_for(self.fractal),
             pal_idx,
             self.coloring.color_method.gpu_id(),
             pal_rev,
-        );
-        if self.minimap_key == Some(key) && self.minimap_tex.is_some() {
-            return;
-        }
-        if let Some((dev, q)) = gpu {
-            if let Some(img) = self.render_minimap_image(dev, q) {
-                let tex = ctx.load_texture("fractadyne.minimap", img, egui::TextureOptions::LINEAR);
-                self.minimap_tex = Some(tex);
-                self.minimap_key = Some(key);
-            }
-        }
+            // The inside, as the map draws it (`current_export_request_for`'s interior shade and
+            // `view_interior_color`): it stayed in the old inside palette after a change until
+            // 2026-11-19 (`--shot-then interior_palette=ice`, the map in the shot's corner).
+            self.inside_coloring_sig(self.coloring.color_method),
+        )
     }
 
     /// The Help window: a left-hand table of contents + a scrollable content pane.
@@ -17118,8 +17133,21 @@ impl FractadyneApp {
     /// Everything that decides how a frame is COLORED, hashed: the palette (index, revision,
     /// custom/duotone/binary state), cycle/offset, method + its parameters, live normalization
     /// (the setting AND the decided map, which `norm_feed_decision` may change on its own),
-    /// the effects, and the AA level. See `Perf::accum_sig`.
+    /// the effects, and the AA level — and a palette picker's hover preview, which the screen shows
+    /// in place of the chosen palette (`view_lut`; left out until 2026-11-19, the same stale
+    /// average as the inside's). See `Perf::accum_sig`.
     fn accum_color_sig(&self, view: usize) -> u64 {
+        use std::hash::{Hash, Hasher};
+        let mut h = std::collections::hash_map::DefaultHasher::new();
+        self.chosen_color_sig(view).hash(&mut h);
+        self.previewed_row().hash(&mut h);
+        h.finish()
+    }
+
+    /// [`accum_color_sig`](Self::accum_color_sig) without the hover preview: the coloring as
+    /// chosen. The palette browser keys its thumbnails on it, since each sets its own palette and
+    /// a preview would only redraw them all to the same pictures.
+    pub(crate) fn chosen_color_sig(&self, view: usize) -> u64 {
         use std::hash::{Hash, Hasher};
         let mut h = std::collections::hash_map::DefaultHasher::new();
         let c = &self.coloring;
@@ -17137,6 +17165,11 @@ impl FractadyneApp {
         c.cycle.to_bits().hash(&mut h);
         c.iter_div.hash(&mut h);
         c.offset.to_bits().hash(&mut h);
+        // The inside as the screen shows it under the method on screen. ⛔Left out until
+        // 2026-11-19: past 2^33 a settled view went on showing its average in the old inside
+        // palette (`--shot-then interior_palette=ice`: the minibrot stayed orange). A palette
+        // picker's hover preview joins in `accum_color_sig`.
+        self.inside_coloring_sig(self.shown_method()).hash(&mut h);
         // The palette's anti-aliasing (C8): it changes every colored sample.
         self.palette_aa().gpu_word().hash(&mut h);
         // The method the view is colored with: a method sheet preview restarts the average too.
@@ -17195,6 +17228,22 @@ impl FractadyneApp {
             [p.norm_pal[view], p.norm_shown[view]],
             [p.trap_pal[view], p.trap_shown[view]],
         )
+    }
+
+    /// Everything that colors the inside of a frame colored by `method`, hashed: how it is shaded
+    /// (B5), its palette, whether its fit is on (C4), and its color as the screen shows it (C1;
+    /// `view_interior_color`). The inside's fitted windows are hashed by the caller that needs them
+    /// (`inside_windows`).
+    pub(crate) fn inside_coloring_sig(&self, method: ColorMethod) -> u64 {
+        use std::hash::{Hash, Hasher};
+        let mut h = std::collections::hash_map::DefaultHasher::new();
+        self.interior_shading_for(method).gpu_id().hash(&mut h);
+        self.coloring.interior_palette.hash(&mut h);
+        self.coloring.interior_fit.hash(&mut h);
+        for v in self.view_interior_color() {
+            v.to_bits().hash(&mut h);
+        }
+        h.finish()
     }
 
     /// The inside's windows, fed and shown, while its fit colors view `view`'s frame (C4); none

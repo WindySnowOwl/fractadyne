@@ -72,7 +72,7 @@ pub(crate) const GROUPS: &[&str] = &[
     "display", "catalog", "goldens", "bench-matrix", "live-res", "appearance", "band-seams", "palette-aa",
     "checklist", "replay", "settings-quarantine", "expmap", "assemble", "de-pixels",
     "colour-box", "cycle-check", "export-contain", "honest-step", "julia-critical", "palette-fade", "retreat", "view-thumb",
-    "width-independence", "coloring-matrix-quick",
+    "width-independence", "coloring-matrix-quick", "color-sig",
 ];
 
 /// Groups that run ONLY when named. ⛔Kept out of `GROUPS` so a bare `--selftest` never pays for
@@ -11234,6 +11234,74 @@ zoom = \"1e94\"
             self.set_view_coloring(&was.2);
             (self.render_cfg.max_iter, self.render_cfg.auto_iter, self.render_cfg.aa) = (was.3, was.4, was.5);
             (self.coloring.palette_idx, self.coloring.cycle, self.coloring.offset, self.coloring.use_custom_palette) = was.6;
+        }
+
+        // ---- the inside's coloring restarts the average and redraws the overview map ----
+        // Past 2^33 a settled view shows the progressive average of its samples, a COLOR image that
+        // restarts only when `accum_color_sig` changes, and the overview map is drawn again only
+        // when its key does. Neither covered the inside until 2026-11-19: `--shot-then
+        // interior_palette=ice` on a 9.3e78 minibrot left it orange in both. No render: the two
+        // keys are asked directly, before and after each change, and the control is that asking
+        // twice with nothing changed gives the same keys (or every frame would restart the run).
+        if want("color-sig") {
+            use crate::InteriorMode;
+            let was = (
+                self.coloring.color_method,
+                self.coloring.interior,
+                self.coloring.interior_palette,
+                self.coloring.interior_color,
+                self.coloring.interior_fit,
+                self.coloring.use_duotone,
+                self.coloring.use_binary,
+            );
+            self.coloring.color_method = crate::ColorMethod::Smooth;
+            self.coloring.interior = Some(InteriorMode::Trap);
+            self.coloring.interior_palette = None;
+            self.coloring.interior_fit = false;
+            self.coloring.use_duotone = false;
+            self.coloring.use_binary = false;
+            let keys = |app: &Self| (app.accum_color_sig(0), app.minimap_key_now());
+            let base = keys(self);
+            let stable = keys(self) == base;
+            let mut rows: Vec<(&str, bool, bool)> = Vec::new();
+            self.coloring.interior_palette = fractadyne_color::preset_by_id("ice");
+            let k = keys(self);
+            rows.push(("its palette", k.0 != base.0, k.1 != base.1));
+            self.coloring.interior_palette = None;
+            self.coloring.interior_fit = true;
+            let k = keys(self);
+            rows.push(("its fit", k.0 != base.0, k.1 != base.1));
+            self.coloring.interior_fit = false;
+            self.coloring.interior = Some(InteriorMode::Solid);
+            let solid = keys(self);
+            rows.push(("solid", solid.0 != base.0, solid.1 != base.1));
+            let other = if self.coloring.interior_color == [0.2, 0.4, 0.8] { [0.8, 0.4, 0.2] } else { [0.2, 0.4, 0.8] };
+            self.coloring.interior_color = other;
+            let k = keys(self);
+            rows.push(("a solid inside's color", k.0 != solid.0, k.1 != solid.1));
+            let pass = stable && rows.iter().all(|(_, a, m)| *a && *m);
+            let yn = |b: bool| if b { "yes" } else { "NO" };
+            push_check(&mut checks, &mut last_check_t, SelfCheck {
+                category: "consistency",
+                name: "a change to the inside's coloring restarts a deep view's average and redraws the overview map".into(),
+                params: "Smooth, the inside by the orbit trap; then its palette (ice), its fit, solid, and a solid inside's color".into(),
+                result: format!(
+                    "unchanged keys stable: {}; {}",
+                    yn(stable),
+                    rows.iter().map(|(w, a, m)| format!("{w}: average {}, map {}", yn(*a), yn(*m))).collect::<Vec<_>>().join("; ")
+                ),
+                threshold: "both keys unchanged when nothing changed, and both changed by each change",
+                pass,
+            });
+            (
+                self.coloring.color_method,
+                self.coloring.interior,
+                self.coloring.interior_palette,
+                self.coloring.interior_color,
+                self.coloring.interior_fit,
+                self.coloring.use_duotone,
+                self.coloring.use_binary,
+            ) = was;
         }
 
         // ---- appearance: the image actually CHANGES when a control changes ----
