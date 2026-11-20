@@ -15,7 +15,7 @@ fn the_variants_walk_the_tables() {
     let keys: Vec<String> = variants().into_iter().map(Variant::key).collect();
     assert_eq!(
         keys,
-        ["smooth", "stripe", "stripe-tail", "triangle", "trap-point", "trap-cross", "trap-circle", "distance", "decomposition"]
+        ["smooth", "stripe", "stripe-tail", "triangle", "trap-point", "trap-cross", "trap-circle", "distance", "fringe", "decomposition"]
     );
     for m in ColorMethod::ALL {
         assert!(variants().iter().any(|v| v.method == m), "{m:?} has no cell");

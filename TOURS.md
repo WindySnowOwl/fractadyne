@@ -55,7 +55,7 @@ The tour's coloring, by the keys a saved view (`.fdn`) carries. Each key it name
 
 | Field | Type | Default | Description |
 |---|---|---|---|
-| `method` | string: smooth \| stripe \| triangle \| trap \| distance \| decomposition | "smooth" | The coloring method: smooth, stripe, triangle, trap, distance or decomposition. |
+| `method` | string: smooth \| stripe \| triangle \| trap \| distance \| fringe \| decomposition | "smooth" | The coloring method: smooth, stripe, triangle, trap, distance, fringe or decomposition. |
 | `stripe_freq` | float, 1 to 24 | 6 | Stripe average: the stripes' density (method "stripe"). |
 | `stripe_tail` | bool | false | Stripe average over the last `stripe_tail_len` iterations only, which keeps its contrast at depth (method "stripe"). |
 | `stripe_tail_len` | int, 4 to 1048576 | 16 | The tail's length in iterations (with `stripe_tail`). |

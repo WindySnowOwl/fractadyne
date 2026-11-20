@@ -1,6 +1,6 @@
 # Coloring methods: implementation plan
 
-Status: **plan (2026-11-08); phase A done (A1–A10), B1 done (the coloring matrix; its live tour is B1b), B2 done (what a frame accumulates is a `StatSet`, apart from the method shown), B3 done (in floatexp a stripe, triangle or trap frame carries the whole G-buffer), B4 to B7 done (one settings model, the method list, the method sheet, the inside and a second LUT), C1, C4, C8 and C11 done (a solid inside in any color; the inside's palette fitted to its range; the palette anti-aliased over a footprint from the distance estimate; the dual view's Julia pane on the set's palette map); B1b and B8 not started; next C9; see §10 (2026-11-20).** Line references are to `main` at `9ab75357`; check
+Status: **plan (2026-11-08); phase A done (A1–A10), B1 done (the coloring matrix; its live tour is B1b), B2 done (what a frame accumulates is a `StatSet`, apart from the method shown), B3 done (in floatexp a stripe, triangle or trap frame carries the whole G-buffer), B4 to B7 done (one settings model, the method list, the method sheet, the inside and a second LUT), C1, C4, C8, C9 and C11 done (a solid inside in any color; the inside's palette fitted to its range; the palette anti-aliased over a footprint from the distance estimate; the fringe method; the dual view's Julia pane on the set's palette map); B1b and B8 not started; next B1b or C2; see §10 (2026-11-20).** Line references are to `main` at `9ab75357`; check
 them before editing, they drift. The research behind it (methods, prototypes, measured results,
 prior art) is the coloring-methods doc; its local copy is
 `local/research_notes/Fractal coloring methods/` (PDF, HTML, Markdown, prototype scripts).
@@ -1094,6 +1094,28 @@ the overview and the 61x view the same pattern. `ColoringSpec.palette_aa` defaul
 session or tour from before it reads true; a view that states its coloring and leaves the key out
 resets to on; off writes `palette_aa=0`); `--no-palette-aa`.
 
+**C9, done 2026-11-20** (branch `feat/color-c9-fringe`). A method of its own, "Fringe" under the
+Distance heading (`ColorMethod::Fringe`, key `fringe`; the main lane only, a recolor wherever there
+is a distance estimate). Its palette coordinate is the slope normal's direction in turns,
+atan2(n.y, n.x)/2π, times a WHOLE number of sweeps (`fringe_sweeps`: Cycle·4 rounded, 1 to 4, so a
+turn closes with no seam) plus Offset; the palette color there is then set to the OKLab lightness
+0.12 + 0.78·√clamp(d / 1 px) (d the distance in output pixels), its hue and chroma kept and the
+chroma bisected down until it fits the gamut (`with_lightness` in the shader; its CPU twin
+`fractadyne_color::adjust::with_lightness`). The prototype's rainbow fringe fixed the hues; here the
+palette gives them, so a palette of many hues gives the rainbow (the browser's `rainbow` tag: Unity,
+Candy, Holi, ...) and every other palette, the browser's thumbnails and Brightness, Contrast and
+Saturation apply as to any method. The palette anti-aliasing's neighbor footprint takes the step the
+short way round the turn's seam (`coord_step`); without it every seam pixel averaged whole sweeps
+into a gray ray. Prior art: zoomasm's `rainbow-fringe.glsl` (AGPL; written from its one-line
+description, never read). Tests: `with_lightness` unit tests (the lightness exact and the hue kept,
+the chroma given way out of gamut; black and white gray); the core table's pins; self-test `fringe`
+(the seahorse valley at 800x, Unity: every escaped pixel recomputed on the CPU from the raw lanes,
+16,000 px, 99th percentile 0.09 levels, max 1.22; anti-vacuity: dark and light pixels, the whole
+turn, 74 levels from Distance); the coloring matrix's new `fringe` cells (its supersampling check, as
+Distance's); uitest `fringe-recolors` (the settled Distance view switched: no pass, a different
+picture). Not done: the fringe's line width (1 px) and its lightness curve as settings; the
+research's chroma from a third statistic.
+
 **C11, done 2026-11-20** (branch `feat/color-c11-linked-julia`). The Julia count at z = c is the
 set's count at c minus 1, exactly, in the app as in the prototype: `--render-iter`'s smooth count
 read 16.902029 against 15.902029 at c = −0.75+0.2i and 24.1249 against 23.1249 at −0.1+0.9i, the
@@ -1350,32 +1372,33 @@ coloring in these places, so sequence the two with care:
 
 ## 10. Status
 
-| Step                  | State                                                     | Commit                                                                                    |
-| --------------------- | --------------------------------------------------------- | ----------------------------------------------------------------------------------------- |
-| A9                    | done, merged                                              | `33c6527e` (merge `3d202f30`)                                                             |
-| A6                    | done, merged                                              | `2c898852` (merge `38d93def`)                                                             |
-| A2                    | done, merged                                              | `3e5aa578` (merge `2a14e005`)                                                             |
-| A4                    | done, merged                                              | `475e2190` (merge `b9812c74`)                                                             |
-| A8                    | done, merged                                              | `095a7131` (merge `1db50a24`)                                                             |
-| A1                    | done, merged                                              | `c15bd9c7` (merge `aa5b22e7`)                                                             |
-| A3                    | done, merged                                              | `3ee690d7` (merge `3c8a59e7`)                                                             |
-| A5b                   | done, merged                                              | `fddc6ada` (merge `e11d1890`)                                                             |
-| A5a                   | done, merged                                              | `05306f71` (merge `45c2e84d`)                                                             |
-| A7                    | done, merged                                              | `603275eb` (merge `1bfdc833`)                                                             |
-| A10                   | done, merged                                              | `aaffca7f` (merge `6ec2fc76`)                                                             |
-| B1                    | done, merged (agent v41, deployed)                        | `312c54a8` (merge `4efdbbb3`)                                                             |
-| B1 fixes              | Distance NaN; Newton's statistics methods                 | merges `91fa8f91`, `7722b660`                                                             |
-| B1b                   | not started: the live method tour                         |                                                                                           |
-| B2                    | done, merged                                              | `c017a577` (merge `dcfd776b`)                                                             |
-| B3                    | done, merged                                              | `412fafc6` (merge `542a5264`)                                                             |
-| B4                    | done, merged                                              | `a5d7d74b` (merge `ba452e9c`)                                                             |
-| B6                    | done, merged                                              | `c1e4bd61` (merge `35001f80`)                                                             |
-| B7                    | done, merged                                              | `9e1efa0e` (merge `97c91c32`; step 1 `17b6d60d` with the browser's dual view, `ef2acde7`) |
-| B5                    | done, merged                                              | `b2b927d6` (merge `e3e53257`)                                                             |
-| B8                    | not started                                               |                                                                                           |
-| C1                    | done, merged                                              | `58d6dce3` (merge `84af4b0d`)                                                             |
-| C4                    | done, merged                                              | `e99bfafd` (merge `9a3f9ff9`)                                                             |
-| C8                    | done, merged; on by default on `feat/color-c8-aa-default` | `5430aa2c` (merge `49153662`)                                                             |
-| C11                   | done, not merged (branch `feat/color-c11-linked-julia`)   | (filled in at the merge)                                                                  |
-| C2, C3, C5–C7, C9–C10 | not started                                               |                                                                                           |
-| D, E, F, G            | not started                                               |                                                                                           |
+| Step               | State                                                     | Commit                                                                                    |
+| ------------------ | --------------------------------------------------------- | ----------------------------------------------------------------------------------------- |
+| A9                 | done, merged                                              | `33c6527e` (merge `3d202f30`)                                                             |
+| A6                 | done, merged                                              | `2c898852` (merge `38d93def`)                                                             |
+| A2                 | done, merged                                              | `3e5aa578` (merge `2a14e005`)                                                             |
+| A4                 | done, merged                                              | `475e2190` (merge `b9812c74`)                                                             |
+| A8                 | done, merged                                              | `095a7131` (merge `1db50a24`)                                                             |
+| A1                 | done, merged                                              | `c15bd9c7` (merge `aa5b22e7`)                                                             |
+| A3                 | done, merged                                              | `3ee690d7` (merge `3c8a59e7`)                                                             |
+| A5b                | done, merged                                              | `fddc6ada` (merge `e11d1890`)                                                             |
+| A5a                | done, merged                                              | `05306f71` (merge `45c2e84d`)                                                             |
+| A7                 | done, merged                                              | `603275eb` (merge `1bfdc833`)                                                             |
+| A10                | done, merged                                              | `aaffca7f` (merge `6ec2fc76`)                                                             |
+| B1                 | done, merged (agent v41, deployed)                        | `312c54a8` (merge `4efdbbb3`)                                                             |
+| B1 fixes           | Distance NaN; Newton's statistics methods                 | merges `91fa8f91`, `7722b660`                                                             |
+| B1b                | not started: the live method tour                         |                                                                                           |
+| B2                 | done, merged                                              | `c017a577` (merge `dcfd776b`)                                                             |
+| B3                 | done, merged                                              | `412fafc6` (merge `542a5264`)                                                             |
+| B4                 | done, merged                                              | `a5d7d74b` (merge `ba452e9c`)                                                             |
+| B6                 | done, merged                                              | `c1e4bd61` (merge `35001f80`)                                                             |
+| B7                 | done, merged                                              | `9e1efa0e` (merge `97c91c32`; step 1 `17b6d60d` with the browser's dual view, `ef2acde7`) |
+| B5                 | done, merged                                              | `b2b927d6` (merge `e3e53257`)                                                             |
+| B8                 | not started                                               |                                                                                           |
+| C1                 | done, merged                                              | `58d6dce3` (merge `84af4b0d`)                                                             |
+| C4                 | done, merged                                              | `e99bfafd` (merge `9a3f9ff9`)                                                             |
+| C8                 | done, merged; on by default on `feat/color-c8-aa-default` | `5430aa2c` (merge `49153662`)                                                             |
+| C11                | done, merged                                              | `b8a24c8f` (merge `a14b2296`)                                                             |
+| C9                 | done, not merged (branch `feat/color-c9-fringe`)          | (filled in at the merge)                                                                  |
+| C2, C3, C5–C7, C10 | not started                                               |                                                                                           |
+| D, E, F, G         | not started                                               |                                                                                           |

@@ -4,7 +4,7 @@ use super::*;
 #[test]
 fn the_keys_are_the_persisted_ones() {
     let keys: Vec<_> = ColorMethod::ALL.iter().map(|m| m.key()).collect();
-    assert_eq!(keys, ["smooth", "stripe", "triangle", "trap", "distance", "decomposition"]);
+    assert_eq!(keys, ["smooth", "stripe", "triangle", "trap", "distance", "fringe", "decomposition"]);
     let traps: Vec<_> = TrapType::ALL.iter().map(|t| t.key()).collect();
     assert_eq!(traps, ["point", "cross", "circle"]);
 }
@@ -159,8 +159,8 @@ fn the_predicate_sets_are_the_established_ones() {
     assert_eq!(set(|m| !m.orbit_stats().is_empty()), [Stripe, TriangleIneq, OrbitTrap, Decomposition]);
     // blocks_iter_skip
     assert_eq!(set(|m| m.orbit_stats().blocks_iter_skip()), [Stripe, TriangleIneq, OrbitTrap, Decomposition]);
-    assert_eq!(set(ColorMethod::bounded_value), [Stripe, TriangleIneq, Decomposition]);
-    assert_eq!(set(ColorMethod::needs_distance_estimate), [Distance]);
+    assert_eq!(set(ColorMethod::bounded_value), [Stripe, TriangleIneq, Fringe, Decomposition]);
+    assert_eq!(set(ColorMethod::needs_distance_estimate), [Distance, Fringe]);
     // bla_aggregate (only ever asked of a method that reads the aux lane)
     assert_eq!(set(|m| m.reads_aux() && m.orbit_stats().bla_aggregate()), [Stripe, TriangleIneq, OrbitTrap]);
     // Each reads its own statistic, and accumulates exactly it.
@@ -190,6 +190,7 @@ fn a_family_offers_what_it_computes() {
     assert_eq!(Stripe.lacks(caps(NEWTON)), Some(Lacks::OrbitStatistics));
     assert_eq!(Decomposition.lacks(caps(NEWTON)), Some(Lacks::OrbitStatistics));
     assert_eq!(Distance.lacks(caps(NEWTON)), Some(Lacks::DistanceEstimate));
+    assert_eq!(Fringe.lacks(caps(BURNING_SHIP)), Some(Lacks::DistanceEstimate));
     assert_eq!(Smooth.lacks(caps(NEWTON)), None);
 }
 
@@ -234,7 +235,7 @@ fn the_capability_table_is_the_established_one() {
     for m in ColorMethod::ALL {
         let can: Vec<Capability> = Capability::ALL.into_iter().filter(|c| m.can(*c)).collect();
         let want: &[Capability] = match m {
-            Smooth | Distance => &Capability::ALL,
+            Smooth | Distance | Fringe => &Capability::ALL,
             Stripe | TriangleIneq | OrbitTrap => &[Bla],
             Decomposition => &[],
         };
@@ -264,7 +265,7 @@ fn every_method_is_under_one_heading_and_no_heading_is_empty() {
         listed,
         [
             (MethodGroup::EscapeCount, vec!["smooth"]),
-            (MethodGroup::Distance, vec!["distance"]),
+            (MethodGroup::Distance, vec!["distance", "fringe"]),
             (MethodGroup::OrbitStatistics, vec!["stripe", "triangle", "trap"]),
             (MethodGroup::Angle, vec!["decomposition"]),
         ]

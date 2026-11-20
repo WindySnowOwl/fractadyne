@@ -225,7 +225,7 @@ fn an_unknown_method_keeps_the_session_and_says_where() {
     let (report, _) = crate::export::inspect_view_text("center_re=0\ncenter_im=0\ncycle=0.2\nmethod=angle\n");
     let said = report.problems.join("; ");
     assert!(
-        said.contains("line 4") && said.contains("method needs one of smooth, stripe, triangle, trap, distance, decomposition"),
+        said.contains("line 4") && said.contains("method needs one of smooth, stripe, triangle, trap, distance, fringe, decomposition"),
         "{said}"
     );
 }

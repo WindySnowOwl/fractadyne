@@ -12,6 +12,13 @@ detail is in the git history.
 
 ## 0.3.1 (unreleased)
 
+- **A new coloring method, Fringe.** Listed under Distance in the method box, it draws dark lines
+  along the set on a light field whose colors turn once around every feature, the look known as the
+  rainbow fringe. The colors come from your palette, taken by the direction of the slope, at a
+  lightness set by the distance to the set: a palette of many hues (Unity, Candy, Holi) gives the
+  rainbow, and any other palette its own version. Cycle sets how many times the colors go round,
+  one to four, and Offset turns them. Switching to it recolors the view at once, with no
+  recalculation. Like Distance, it needs a formula with a distance estimate. `--method fringe`.
 - **Linked Julia colors in the dual view.** "Link Julia colors to the set", a new box in the
   Coloring section of the dual view, colors the Julia pane with the set's palette mapping one
   iteration on, so the two panes read as one picture: the color under the pointer in the set

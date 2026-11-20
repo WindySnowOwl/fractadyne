@@ -1,4 +1,4 @@
-use super::{oklab_to_srgb, srgb_to_oklab, PaletteAdjust};
+use super::{oklab_to_linear, oklab_to_srgb, srgb_to_oklab, with_lightness, PaletteAdjust};
 use crate::segment::Lut;
 
 fn grid() -> Vec<[f32; 3]> {
@@ -16,6 +16,48 @@ fn grid() -> Vec<[f32; 3]> {
 
 fn lab(c: [f32; 3]) -> [f64; 3] {
     srgb_to_oklab([c[0] as f64, c[1] as f64, c[2] as f64])
+}
+
+/// The fringe's step (C9): a color that fits the gamut at the new lightness keeps its hue and
+/// chroma exactly, at exactly that lightness.
+#[test]
+fn with_lightness_sets_the_lightness_and_keeps_a_color_that_fits() {
+    // A grayish teal, from dark to light: its chroma fits the gamut at every one of these. (A
+    // stronger teal does not at 0.3: dark cyans are few, and its chroma gives way there, as the next
+    // test asks.)
+    let c = [0.45f64, 0.52, 0.52];
+    let [_, a0, b0] = srgb_to_oklab(c);
+    for l in [0.3, 0.45, 0.6, 0.75] {
+        let [l1, a1, b1] = srgb_to_oklab(with_lightness(c, l));
+        assert!((l1 - l).abs() < 1e-4, "lightness {l1} for {l}");
+        assert!((a1 - a0).abs() < 1e-4 && (b1 - b0).abs() < 1e-4, "hue and chroma moved at {l}: ({a1}, {b1}) for ({a0}, {b0})");
+    }
+}
+
+/// A vivid color asked to be very light: the chroma gives way, the lightness and the hue do not, and
+/// the result is in the gamut. Black and white keep no hue: gray at the asked lightness.
+#[test]
+fn with_lightness_reduces_the_chroma_to_fit_and_keeps_the_hue() {
+    for c in [[1.0f64, 0.0, 0.0], [0.0, 0.3, 1.0], [0.1, 0.9, 0.1]] {
+        let [_, a0, b0] = srgb_to_oklab(c);
+        for l in [0.12, 0.9, 0.97] {
+            let out = with_lightness(c, l);
+            let [l1, a1, b1] = srgb_to_oklab(out);
+            let lin = oklab_to_linear([l1, a1, b1]);
+            assert!(lin.iter().all(|v| (-1e-6..=1.0 + 1e-6).contains(v)), "{c:?} at {l} out of gamut: {lin:?}");
+            assert!((l1 - l).abs() < 2e-3, "{c:?} at {l}: lightness {l1}");
+            let (c0, c1) = (a0.hypot(b0), a1.hypot(b1));
+            assert!(c1 <= c0 + 1e-6, "{c:?} at {l}: chroma grew from {c0} to {c1}");
+            if c1 > 0.01 {
+                let dh = (b1.atan2(a1) - b0.atan2(a0)).abs();
+                assert!(dh.min(std::f64::consts::TAU - dh) < 1e-3, "{c:?} at {l}: hue moved by {dh}");
+            }
+        }
+    }
+    for c in [[0.0f64, 0.0, 0.0], [1.0, 1.0, 1.0]] {
+        let [l1, a1, b1] = srgb_to_oklab(with_lightness(c, 0.5));
+        assert!((l1 - 0.5).abs() < 1e-4 && a1.hypot(b1) < 1e-4, "{c:?}: ({l1}, {a1}, {b1})");
+    }
 }
 
 #[test]

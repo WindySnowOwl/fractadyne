@@ -279,6 +279,9 @@ enum Screen {
     DistanceRecolorSwitch,
     DistanceRecolorAway,
     DistanceRecolorOn,
+    /// The settled Distance view switched to the fringe (coloring plan C9), as the method box does:
+    /// a recolor from the main lane (no pass), and a picture unlike Distance's.
+    FringeRecolors,
     /// Coloring plan B3: in floatexp a stripe frame carries the whole G-buffer, so a switch to the
     /// orbit trap only recolors, and the trap lane it finds must be for the trap shape set NOW.
     /// Settle Stripe at a floatexp view with the point trap, change the shape to the cross while
@@ -1295,6 +1298,7 @@ fn build_steps() -> Vec<Step> {
         screen("distance-recolor-switch", Screen::DistanceRecolorSwitch),
         screen("distance-recolor-away", Screen::DistanceRecolorAway),
         screen("distance-recolor-on", Screen::DistanceRecolorOn),
+        screen("fringe-recolors", Screen::FringeRecolors),
         screen("trap-recolor-stripe", Screen::TrapRecolorStripe),
         screen("trap-recolor-shape", Screen::TrapRecolorShape),
         screen("trap-recolor-switch", Screen::TrapRecolorSwitch),
@@ -2728,6 +2732,7 @@ impl FractadyneApp {
             Screen::DistanceRecolorSwitch => self.coloring.color_method = crate::ColorMethod::Distance,
             Screen::DistanceRecolorAway => self.viewport.pan_complex(STRIPE_TAIL_PAN, 0.0),
             Screen::DistanceRecolorOn => self.viewport.pan_complex(-STRIPE_TAIL_PAN, 0.0),
+            Screen::FringeRecolors => self.coloring.color_method = crate::ColorMethod::Fringe,
             // The stripe tail's setup at the floatexp view (the count the matrix gives it), with the
             // point trap.
             Screen::TrapRecolorStripe => {
@@ -4255,6 +4260,33 @@ impl FractadyneApp {
                     detail: "no distance-recolor-smooth and distance-recolor-switch steps to compare against".into(),
                 }),
             }
+        }
+
+        // ---- Distance to the fringe recolors (coloring plan C9) ----
+        if matches!(step.kind, StepKind::Screen(Screen::FringeRecolors)) {
+            checks.push(match ut.results.iter().rev().find(|r| r.name == "distance-recolor-on") {
+                Some(before) => {
+                    // Passes the switch caused: none, both methods color from the main lane.
+                    let ran = (ran_why[0] - before.ran_why[0]) + (ran_why[1] - before.ran_why[1]);
+                    // ANTI-VACUITY: the fringe must look unlike Distance here.
+                    let effect = fp_distance(&before.left_fp, &left_fp);
+                    let ok = ran == 0 && effect >= 8.0 && luma_stddev >= 3.0;
+                    Check {
+                        name: "fringe-recolors".into(),
+                        verdict: if ok { Verdict::Pass } else { Verdict::Fail },
+                        detail: format!(
+                            "passes the switch caused {ran}; the frame {effect:.1} from Distance's (meanD), stddev {luma_stddev:.1}; \
+                             the method on screen {:?}",
+                            self.shown_method()
+                        ),
+                    }
+                }
+                None => Check {
+                    name: "fringe-recolors".into(),
+                    verdict: Verdict::Warn,
+                    detail: "no distance-recolor-on step to compare against".into(),
+                },
+            });
         }
 
         // ---- a deep switch to the trap recolors, with the trap shape set now (coloring plan B3) ----

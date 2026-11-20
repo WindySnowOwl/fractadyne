@@ -110,6 +110,7 @@ fn method_description(m: ColorMethod) -> String {
         ColorMethod::TriangleIneq => tr!(method_desc_triangle),
         ColorMethod::OrbitTrap => tr!(method_desc_trap),
         ColorMethod::Distance => tr!(method_desc_distance),
+        ColorMethod::Fringe => tr!(method_desc_fringe),
         ColorMethod::Decomposition => tr!(method_desc_decomposition),
     }
 }

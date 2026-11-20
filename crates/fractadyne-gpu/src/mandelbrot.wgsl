@@ -4017,6 +4017,9 @@ fn coord_under(m: vec4<f32>, a: vec4<f32>, cycle: f32, offset: f32, mode: u32, l
     } else if (cu.color_method == METHOD_DISTANCE) {
         interior = (m.a > 1.0e20);                 // DE unavailable → interior
         pv = m.a - de_px_shift;                    // distance estimate, log2 output pixels
+    } else if (cu.color_method == METHOD_FRINGE) {
+        interior = interior || (m.a > 1.0e20);     // in the set, or no distance estimate
+        pv = fringe_turn(m);                       // the slope's direction, in turns (0..1)
     } else if (cu.color_method == METHOD_DECOMPOSITION) {
         pv = a.a;                                  // decomposition angle (0..1)
     } else {
@@ -4102,7 +4105,105 @@ const AA_MIN_TAP: f32 = 0.499;
 fn shade(m: vec4<f32>, a: vec4<f32>) -> vec3<f32> {
     let coord = coord_of(m, a);
     if (coord >= INTERIOR_COORD) { return interior_shade(a); }
-    return palette(coord);
+    return fringed(palette(coord), m);
+}
+
+// ---- The fringe (coloring plan C9) ----
+// Dark lines along the set on a light field whose colors turn once around every feature: the
+// palette at the slope's direction (`fringe_turn`), at a lightness from the distance estimate
+// (`fringe_lightness`), its hue and chroma kept in OKLab. The prototype's look (the coloring
+// research, after zoomasm's rainbow-fringe preset, written from its description); a palette of many
+// hues gives the rainbow, any other its own colors.
+
+// The fringe's palette position: the direction of the slope normal u = z / (dz/dc), in turns.
+fn fringe_turn(m: vec4<f32>) -> f32 {
+    return fract(atan2(m.b, m.g) * 0.15915494309 + 1.0);
+}
+
+// Dark at the set, light from FRINGE_WIDTH_PX output pixels away: 0.12 + 0.78·√clamp(d / width).
+const FRINGE_L0: f32 = 0.12;
+const FRINGE_LS: f32 = 0.78;
+const FRINGE_WIDTH_PX: f32 = 1.0;
+fn fringe_lightness(de: f32) -> f32 {
+    let d = exp2(min(de - de_px_shift, 60.0));     // the distance in output pixels
+    return FRINGE_L0 + FRINGE_LS * sqrt(clamp(d / FRINGE_WIDTH_PX, 0.0, 1.0));
+}
+
+// `c` under the fringe when it is the method (`m` the texel's main lane); `c` otherwise.
+fn fringed(c: vec3<f32>, m: vec4<f32>) -> vec3<f32> {
+    if (cu.color_method != METHOD_FRINGE) { return c; }
+    return with_lightness(c, fringe_lightness(m.a));
+}
+
+fn srgb_decode(c: vec3<f32>) -> vec3<f32> {
+    let v = clamp(c, vec3<f32>(0.0), vec3<f32>(1.0));
+    return select(pow((v + 0.055) / 1.055, vec3<f32>(2.4)), v / 12.92, v <= vec3<f32>(0.04045));
+}
+
+fn srgb_encode(c: vec3<f32>) -> vec3<f32> {
+    let v = clamp(c, vec3<f32>(0.0), vec3<f32>(1.0));
+    return select(1.055 * pow(v, vec3<f32>(1.0 / 2.4)) - 0.055, 12.92 * v, v <= vec3<f32>(0.0031308));
+}
+
+// A display (sRGB-encoded) color to OKLab (Björn Ottosson's matrices, as `fractadyne_color::adjust`).
+fn oklab_of(c: vec3<f32>) -> vec3<f32> {
+    let r = srgb_decode(c);
+    let lms = vec3<f32>(
+        0.4122214708 * r.x + 0.5363325363 * r.y + 0.0514459929 * r.z,
+        0.2119034982 * r.x + 0.6806995451 * r.y + 0.1073969566 * r.z,
+        0.0883024619 * r.x + 0.2817188376 * r.y + 0.6299787005 * r.z,
+    );
+    let q = pow(max(lms, vec3<f32>(0.0)), vec3<f32>(1.0 / 3.0));
+    return vec3<f32>(
+        0.2104542553 * q.x + 0.7936177850 * q.y - 0.0040720468 * q.z,
+        1.9779984951 * q.x - 2.4285922050 * q.y + 0.4505937099 * q.z,
+        0.0259040371 * q.x + 0.7827717662 * q.y - 0.8086757660 * q.z,
+    );
+}
+
+// OKLab to linear-light sRGB, not clamped (a channel outside 0..1 is out of gamut).
+fn oklab_linear(lab: vec3<f32>) -> vec3<f32> {
+    let l_ = lab.x + 0.3963377774 * lab.y + 0.2158037573 * lab.z;
+    let m_ = lab.x - 0.1055613458 * lab.y - 0.0638541728 * lab.z;
+    let s_ = lab.x - 0.0894841775 * lab.y - 1.2914855480 * lab.z;
+    let l3 = l_ * l_ * l_;
+    let m3 = m_ * m_ * m_;
+    let s3 = s_ * s_ * s_;
+    return vec3<f32>(
+        4.0767416621 * l3 - 3.3077115913 * m3 + 0.2309699292 * s3,
+        -1.2684380046 * l3 + 2.6097574011 * m3 - 0.3413193965 * s3,
+        -0.0041960863 * l3 - 0.7034186147 * m3 + 1.7076147010 * s3,
+    );
+}
+
+fn in_gamut(v: vec3<f32>) -> bool {
+    return all(v >= vec3<f32>(-1.0e-5)) && all(v <= vec3<f32>(1.0 + 1.0e-5));
+}
+
+// `c` (display color) at OKLab lightness `l`, hue and chroma kept, the chroma reduced by bisection
+// until the color fits the gamut (0, gray at that lightness, always does). The CPU twin is
+// `fractadyne_color::adjust::with_lightness`.
+fn with_lightness(c: vec3<f32>, l: f32) -> vec3<f32> {
+    let lab = oklab_of(c);
+    let full = oklab_linear(vec3<f32>(l, lab.y, lab.z));
+    if (in_gamut(full)) { return srgb_encode(full); }
+    var lo = 0.0;
+    var hi = 1.0;
+    for (var k = 0; k < 12; k = k + 1) {
+        let mid = 0.5 * (lo + hi);
+        if (in_gamut(oklab_linear(vec3<f32>(l, lab.y * mid, lab.z * mid)))) { lo = mid; } else { hi = mid; }
+    }
+    return srgb_encode(oklab_linear(vec3<f32>(l, lab.y * lo, lab.z * lo)));
+}
+
+// A palette-coordinate step between neighboring pixels (the anti-aliasing footprint). The fringe's
+// coordinate turns with the slope's direction, a whole `cycle` a turn, so across the turn's seam the
+// step is the shorter way round: otherwise every seam pixel averaged whole palette sweeps into a
+// gray ray out of every feature.
+fn coord_step(d: f32, cycle: f32) -> f32 {
+    let s = abs(d);
+    if (cu.color_method != METHOD_FRINGE) { return s; }
+    return min(s, abs(abs(cycle) - s));
 }
 
 // Band-limited shade: color one texel with the palette box-averaged over `width` cycles (the
@@ -4113,9 +4214,11 @@ fn shade(m: vec4<f32>, a: vec4<f32>) -> vec3<f32> {
 fn shade_aa(m: vec4<f32>, a: vec4<f32>, width: f32, width_fade: f32) -> vec3<f32> {
     let coord = coord_of(m, a);
     if (coord >= INTERIOR_COORD) { return interior_shade(a); }
-    let col = palette_box(coord, width);
-    if (cu.fade_weight <= 0.0) { return col; }
-    return mix(col, palette_box(coord_fade(m, a), width_fade), cu.fade_weight);
+    var col = palette_box(coord, width);
+    if (cu.fade_weight > 0.0) {
+        col = mix(col, palette_box(coord_fade(m, a), width_fade), cu.fade_weight);
+    }
+    return fringed(col, m);
 }
 
 // Average color of the frozen frame, from a coarse grid over the iteration texture. Used to
@@ -4208,12 +4311,12 @@ fn fs_color(in: VsOut) -> @location(0) vec4<f32> {
         if (c0 < INTERIOR_COORD) {
             let cx = coord_of(mx, ax);
             let cy = coord_of(my, ay);
-            if (cx < INTERIOR_COORD) { pal_w = max(pal_w, abs(cx - c0)); }
-            if (cy < INTERIOR_COORD) { pal_w = max(pal_w, abs(cy - c0)); }
+            if (cx < INTERIOR_COORD) { pal_w = max(pal_w, coord_step(cx - c0, cu.cycle)); }
+            if (cy < INTERIOR_COORD) { pal_w = max(pal_w, coord_step(cy - c0, cu.cycle)); }
             if (cu.fade_weight > 0.0) {
                 let f0 = coord_fade(m0, a0);
-                if (cx < INTERIOR_COORD) { pal_wf = max(pal_wf, abs(coord_fade(mx, ax) - f0)); }
-                if (cy < INTERIOR_COORD) { pal_wf = max(pal_wf, abs(coord_fade(my, ay) - f0)); }
+                if (cx < INTERIOR_COORD) { pal_wf = max(pal_wf, coord_step(coord_fade(mx, ax) - f0, cu.fade_cycle)); }
+                if (cy < INTERIOR_COORD) { pal_wf = max(pal_wf, coord_step(coord_fade(my, ay) - f0, cu.fade_cycle)); }
             }
         }
         // Each tap's share: the differences span one pixel of ss texels, and a tap is one texel (and

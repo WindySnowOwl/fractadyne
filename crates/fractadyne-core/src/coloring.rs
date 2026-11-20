@@ -72,11 +72,14 @@ pub enum ColorMethod {
     TriangleIneq,
     OrbitTrap,
     Distance,
+    /// The fringe (coloring plan C9): the palette at the slope's direction, at the distance's
+    /// lightness.
+    Fringe,
     Decomposition,
 }
 
 /// The table, in [`ColorMethod`]'s order.
-const METHODS: [MethodSpec; 6] = [
+const METHODS: [MethodSpec; 7] = [
     MethodSpec {
         key: "smooth",
         wgsl: "METHOD_SMOOTH",
@@ -118,6 +121,16 @@ const METHODS: [MethodSpec; 6] = [
         group: MethodGroup::Distance,
     },
     MethodSpec {
+        key: "fringe",
+        wgsl: "METHOD_FRINGE",
+        // The main lane: the slope normal and the distance estimate, as relief lighting reads them.
+        reads: None,
+        needs_distance_estimate: true,
+        // The slope's direction in turns, 0..1.
+        bounded_value: true,
+        group: MethodGroup::Distance,
+    },
+    MethodSpec {
         key: "decomposition",
         wgsl: "METHOD_DECOMPOSITION",
         reads: Some(Stat::Angle),
@@ -129,12 +142,13 @@ const METHODS: [MethodSpec; 6] = [
 
 impl ColorMethod {
     /// Every method, in the table's order.
-    pub const ALL: [ColorMethod; 6] = [
+    pub const ALL: [ColorMethod; 7] = [
         ColorMethod::Smooth,
         ColorMethod::Stripe,
         ColorMethod::TriangleIneq,
         ColorMethod::OrbitTrap,
         ColorMethod::Distance,
+        ColorMethod::Fringe,
         ColorMethod::Decomposition,
     ];
     /// This method's row of the table.

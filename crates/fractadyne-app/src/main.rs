@@ -3289,6 +3289,7 @@ impl ColoringLabel for ColorMethod {
             ColorMethod::TriangleIneq => tr!(color_method_triangle),
             ColorMethod::OrbitTrap => tr!(color_method_trap),
             ColorMethod::Distance => tr!(color_method_distance),
+            ColorMethod::Fringe => tr!(color_method_fringe),
             ColorMethod::Decomposition => tr!(color_method_decomposition),
         }
     }
@@ -3340,6 +3341,12 @@ pub(crate) mod slider_range {
 /// neighboring pixels (kaludix's Dinkydau's Flake, escapes 29,000–34,000, at the default ~50
 /// iterations per palette) is moiré at every slider position. Dividing scales the rate the slider
 /// chose, by any factor, without changing what the slider means.
+/// The fringe's palette sweeps a turn of the slope's direction (coloring plan C9): a whole number,
+/// so a turn closes on itself with no seam, one at the default Cycle and up to four.
+pub(crate) fn fringe_sweeps(cycle: f32) -> f32 {
+    (cycle * 4.0).round().clamp(1.0, 4.0)
+}
+
 pub(crate) fn smooth_color_rate(cycle: f32, div: u32) -> f32 {
     (0.004 + cycle * 0.06) / div.max(1) as f32
 }
@@ -12343,6 +12350,7 @@ impl FractadyneApp {
     /// colors each cell at the rate choosing that method would give it (coloring plan B7).
     pub(crate) fn color_cycle_for(&self, method: ColorMethod) -> f32 {
         match method {
+            ColorMethod::Fringe => fringe_sweeps(self.coloring.cycle),
             m if m.bounded_value() => 0.5 + self.coloring.cycle * 4.0,
             ColorMethod::Smooth => smooth_color_rate(self.coloring.cycle, self.coloring.iter_div),
             _ => 0.004 + self.coloring.cycle * 0.06,
