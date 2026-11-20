@@ -89,7 +89,7 @@ pub(crate) const FIELDS: [Field; 26] = [
     Field {
         key: "method",
         name: "coloring method",
-        doc: "The coloring method: smooth, stripe, triangle, trap, distance or decomposition.",
+        doc: "The coloring method: smooth, stripe, triangle, trap, distance, fringe or decomposition.",
         access: Access::Choice(|s| &s.color_method, |s, v| s.color_method = v.to_string(), || {
             ColorMethod::ALL.iter().map(|m| m.key()).collect()
         }),

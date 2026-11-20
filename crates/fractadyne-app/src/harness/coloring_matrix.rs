@@ -403,7 +403,7 @@ pub(crate) fn steep_pixels(iter: &[f32], w: usize) -> Vec<bool> {
 /// iterations, every pixel's count is steep while the traps draw one flat color (2026-11-11), so
 /// the count would have excused every pixel of a trap A/B.
 pub(crate) fn reads_the_count(m: ColorMethod) -> bool {
-    matches!(m, ColorMethod::Smooth | ColorMethod::Distance | ColorMethod::Decomposition)
+    matches!(m, ColorMethod::Smooth | ColorMethod::Distance | ColorMethod::Fringe | ColorMethod::Decomposition)
 }
 
 /// The first few non-finite pixels of `px` (`CELL_W` wide) as "(x, y)", with the view's iteration
@@ -1216,8 +1216,9 @@ impl crate::FractadyneApp {
                 Err(e) => m.fails.push(("render", format!("the {other} render: {e}"))),
             }
         }
-        // A width in output pixels must not move with the supersampling (A9).
-        if var.method == ColorMethod::Distance {
+        // A width in output pixels must not move with the supersampling (A9): the Distance colors
+        // and the fringe's lines (C9).
+        if matches!(var.method, ColorMethod::Distance | ColorMethod::Fringe) {
             let mut ss2 = req.clone();
             ss2.ss = 2;
             match shoot(dev, q, &ss2) {

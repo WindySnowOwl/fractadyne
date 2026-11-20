@@ -72,7 +72,7 @@ pub(crate) const GROUPS: &[&str] = &[
     "display", "catalog", "goldens", "bench-matrix", "live-res", "appearance", "band-seams", "palette-aa",
     "checklist", "replay", "settings-quarantine", "expmap", "assemble", "de-pixels",
     "colour-box", "cycle-check", "export-contain", "honest-step", "julia-critical", "palette-fade", "retreat", "view-thumb",
-    "width-independence", "coloring-matrix-quick", "color-sig", "coloring-reset", "julia-link",
+    "width-independence", "coloring-matrix-quick", "color-sig", "coloring-reset", "julia-link", "fringe",
 ];
 
 /// Groups that run ONLY when named. ⛔Kept out of `GROUPS` so a bare `--selftest` never pays for
@@ -11421,6 +11421,123 @@ zoom = \"1e94\"
                 self.anim.palette_anim_speed,
                 self.coloring.julia_linked,
             ) = k0;
+        }
+
+        // ---- The fringe (coloring plan C9): the GPU's colors are the CPU twin's ----
+        // The seahorse valley at 800x, 160x100, the Unity palette (many hues), point sampled, no
+        // relief or glow: the raw lanes (`render_iter`: count, slope normal, log2 distance) and the
+        // colored export of the same request. Every escaped pixel's color is recomputed on the CPU:
+        // the palette at the slope's direction (in turns, times the request's sweeps, plus its
+        // offset; the LUT's own interpolation), at the lightness 0.12 + 0.78·√clamp(distance in px),
+        // through `fractadyne_color::adjust::with_lightness`. ANTI-VACUITY: the lightness and the
+        // direction must both span a range, and the fringe must differ from Distance on the view.
+        if want("fringe") {
+            let saved_spec = self.coloring_spec();
+            let saved = (self.fractal, self.julia_mode, self.dual, self.render_cfg.max_iter, self.render_cfg.auto_iter, self.effects.light, self.effects.de);
+            self.fractal = FractalKind::Mandelbrot;
+            self.julia_mode = false;
+            self.dual = false;
+            self.render_cfg.max_iter = 4_000;
+            self.render_cfg.auto_iter = false;
+            self.effects.light = false;
+            self.effects.de = false;
+            self.coloring.use_custom_palette = false;
+            self.coloring.use_duotone = false;
+            self.coloring.use_binary = false;
+            self.coloring.palette_idx = fractadyne_color::preset_by_id("unity").unwrap_or(0);
+            self.coloring.palette_adjust = fractadyne_color::adjust::PaletteAdjust::NEUTRAL;
+            self.coloring.palette_aa = false;
+            self.coloring.cycle = 0.27;
+            self.coloring.offset = 0.1;
+            self.coloring.normalize_live = false;
+            self.coloring.normalize_fit = false;
+            let (w, h) = (160u32, 100u32);
+            let mut vp = Viewport::new(w as f64, h as f64);
+            vp.set_center_mag(
+                fractadyne_core::BigFloat::from_f64(-0.7435, 64),
+                fractadyne_core::BigFloat::from_f64(0.1315, 64),
+                800.0,
+            );
+            let request = |app: &mut Self, method: crate::ColorMethod| {
+                app.coloring.color_method = method;
+                let mut req = app.current_export_request_for(&vp, false);
+                req.width = w;
+                req.height = h;
+                req.ss = 1;
+                req.aa_palette = fractadyne_gpu::PaletteAa::Off;
+                req
+            };
+            let req = request(self, crate::ColorMethod::Fringe);
+            let distance = request(self, crate::ColorMethod::Distance);
+            (self.fractal, self.julia_mode, self.dual, self.render_cfg.max_iter, self.render_cfg.auto_iter, self.effects.light, self.effects.de) = saved;
+            self.apply_coloring_spec(&saved_spec);
+            let export = |r: &fractadyne_gpu::ExportRequest| {
+                let (progress, cancel) = (std::sync::atomic::AtomicU32::new(0), std::sync::atomic::AtomicBool::new(false));
+                fractadyne_gpu::render_export(device, queue, r, &progress, &cancel).ok()
+            };
+            let lanes = fractadyne_gpu::render_iter(device, queue, &req).ok();
+            let (colored, dist) = (export(&req), export(&distance));
+            let (pass, result) = match (&lanes, &colored, &dist) {
+                (Some(m), Some(c), Some(d)) if m.pixels.len() == c.pixels.len() && c.pixels.len() == d.pixels.len() => {
+                    let lut = &req.lut;
+                    let n = lut.len();
+                    // The LUT's own fetch (`palette_in`): interpolated between entries, or nearest.
+                    let pal = |t_in: f64| -> [f64; 3] {
+                        let t = t_in - t_in.floor();
+                        if !req.lut_smooth {
+                            let i = ((t * n as f64) as usize).min(n - 1);
+                            return [lut[i][0] as f64, lut[i][1] as f64, lut[i][2] as f64];
+                        }
+                        let x = t * n as f64 - 0.5;
+                        let i0 = x.floor();
+                        let f = x - i0;
+                        let a = lut[(i0 as i64).rem_euclid(n as i64) as usize];
+                        let b = lut[((i0 as i64) + 1).rem_euclid(n as i64) as usize];
+                        [0, 1, 2].map(|k| a[k] as f64 + (b[k] as f64 - a[k] as f64) * f)
+                    };
+                    let (mut diffs, mut ls, mut turns) = (Vec::new(), Vec::new(), Vec::new());
+                    for (k, px) in m.pixels.chunks_exact(4).enumerate() {
+                        let (mu, nx, ny, de) = (px[0], px[1], px[2], px[3]);
+                        if mu < 0.0 || de > 1.0e20 {
+                            continue;
+                        }
+                        let turn = ((ny as f64).atan2(nx as f64) / std::f64::consts::TAU + 1.0).fract();
+                        let coord = turn * req.cycle as f64 + req.offset as f64;
+                        let l = 0.12 + 0.78 * (2f64.powf(de as f64).clamp(0.0, 1.0)).sqrt();
+                        let want = fractadyne_color::adjust::with_lightness(pal(coord), l);
+                        let got = &c.pixels[k * 4..k * 4 + 3];
+                        diffs.push((0..3).map(|i| (got[i] as f64 - want[i]).abs() * 255.0).fold(0.0, f64::max));
+                        ls.push(l);
+                        turns.push(turn);
+                    }
+                    diffs.sort_by(|a, b| a.total_cmp(b));
+                    let pct = |v: &[f64], p: f64| v.get(((v.len() as f64 - 1.0) * p).round() as usize).copied().unwrap_or(f64::NAN);
+                    let (p99, max) = (pct(&diffs, 0.99), diffs.last().copied().unwrap_or(f64::NAN));
+                    let dark = ls.iter().filter(|l| **l < 0.4).count();
+                    let light = ls.iter().filter(|l| **l > 0.85).count();
+                    // The direction's spread: how many of ten tenths of a turn it reaches.
+                    let tenths = (0..10).filter(|i| turns.iter().any(|t| (*t * 10.0) as usize == *i)).count();
+                    let apart = c.pixels.iter().zip(&d.pixels).map(|(a, b)| (a - b).abs() as f64).sum::<f64>() / c.pixels.len() as f64 * 255.0;
+                    (
+                        diffs.len() > 1000 && p99 <= 1.5 && max <= 4.0 && dark > 50 && light > 1000 && tenths >= 8 && apart > 10.0,
+                        format!(
+                            "{} escaped px: the GPU's color against the CPU twin's, 99th percentile {p99:.2} levels, max {max:.2}; \
+                             {dark} px darker than L 0.4, {light} lighter than 0.85; the direction reaches {tenths}/10 tenths of a turn; \
+                             {apart:.1} levels on average from the Distance method",
+                            diffs.len()
+                        ),
+                    )
+                }
+                _ => (false, "a render failed".into()),
+            };
+            push_check(&mut checks, &mut last_check_t, SelfCheck {
+                category: "appearance",
+                name: "the fringe colors each pixel as the CPU twin does".into(),
+                params: "seahorse valley 800x, 160x100, ss 1, Unity, Cycle 0.27, point sampled, no relief or glow".into(),
+                result,
+                threshold: "> 1,000 escaped px; 99th percentile <= 1.5 levels, max <= 4; > 50 px dark and > 1,000 light; >= 8/10 of a turn; > 10 levels from Distance",
+                pass,
+            });
         }
 
         // ---- The dual view's Julia pane on the set's palette map (coloring plan C11) ----

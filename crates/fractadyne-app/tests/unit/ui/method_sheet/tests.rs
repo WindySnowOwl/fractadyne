@@ -31,6 +31,7 @@ fn a_frame_without_statistics_recolors_only_the_main_lane() {
         [
             row("smooth", "", Recolor),
             row("distance", "", Recolor),
+            row("fringe", "", Recolor),
             row("stripe", "2", Render),
             row("stripe", "3", Render),
             row("stripe", "6", Render),
@@ -54,6 +55,7 @@ fn a_gbuffer_frame_recolors_what_it_holds_with_its_own_parameters() {
         [
             row("smooth", "", Recolor),
             row("distance", "", Recolor),
+            row("fringe", "", Recolor),
             row("stripe", "2", Recolor),
             row("stripe", "3", Render),
             row("stripe", "6", Render),
@@ -76,7 +78,7 @@ fn a_gbuffer_frame_recolors_what_it_holds_with_its_own_parameters() {
 fn a_family_has_cells_only_for_what_it_can_color_by() {
     let frame = FrameStats { set: StatSet::NONE, stripe_freq: 2.0, trap: TrapType::Point, interior: None };
     let ship = flat(&sheet_plan(FractalKind::BurningShip.caps(), frame));
-    assert!(!ship.iter().any(|(m, _, _)| *m == "distance"), "{ship:?}");
+    assert!(!ship.iter().any(|(m, _, _)| *m == "distance" || *m == "fringe"), "{ship:?}");
     assert!(ship.iter().any(|(m, _, _)| *m == "stripe"));
     let newton = sheet_plan(FractalKind::Newton.caps(), frame);
     let methods: Vec<_> = flat(&newton).into_iter().map(|(m, _, _)| m).collect();
@@ -113,12 +115,12 @@ fn short_groups_share_a_row_and_long_ones_wrap() {
     assert_eq!(
         shape(4),
         [
-            vec![(EscapeCount, true, 1), (Distance, true, 1)],
+            vec![(EscapeCount, true, 1), (Distance, true, 2)],
             vec![(OrbitStatistics, true, 4)],
             vec![(OrbitStatistics, false, 3), (Angle, true, 1)],
         ]
     );
-    assert_eq!(shape(1).len(), 10, "one cell a row");
+    assert_eq!(shape(1).len(), 11, "one cell a row");
     let all: usize = sheet_rows(&plan, 3).iter().flatten().map(|s| s.cells.len()).sum();
-    assert_eq!(all, 10, "every cell placed once");
+    assert_eq!(all, 11, "every cell placed once");
 }

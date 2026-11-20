@@ -336,7 +336,7 @@ pub(crate) const CLI_REFERENCE: &[CliRef] = {
         Flag("--palette-ugr-name NAME", "With --palette-ugr: which gradient to use, by block name or title. An unknown name lists what the file actually contains."),
         Flag("--palette-ggr FILE", "Color through a GIMP .ggr gradient. This is the richest of the palette formats and the only one imported without loss: each segment keeps its own midpoint, blend curve (linear / curved / sine / spherical) and color space (RGB, or either way round the hue wheel)."),
         Flag("--palette-ase FILE", "Color through an Adobe swatch list (.ase). Swatches carry no positions, so they are spread evenly and blended linearly. RGB, Gray and (naively converted) CMYK swatches are read; LAB is refused rather than converted with a guessed color profile."),
-        Flag("--method NAME", "smooth | stripe | triangle | trap | distance | decomposition."),
+        Flag("--method NAME", "smooth | stripe | triangle | trap | distance | fringe | decomposition."),
         Flag("--stripe-freq N", "Stripe density (stripe method)."),
         Flag("--stripe-tail N", "Stripe average over the tail only (stripe method): an exponential window over the last N iterations of each orbit instead of the whole orbit, so extreme-depth views keep their stripe contrast (4..=1048576, 16 is the classic look; the Tail only option in Coloring)."),
         Flag("--trap SHAPE", "point | cross | circle (orbit-trap method)."),

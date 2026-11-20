@@ -33,7 +33,7 @@ FRACTALS = [
     "Mandelbrot", "Multibrot3", "Multibrot4", "Multibrot5", "Tricorn",
     "Burning Ship", "Celtic", "Buffalo", "Phoenix", "Newton",
 ]
-COLOR_METHODS = ["Smooth", "Stripe", "Triangle inequality", "Orbit trap", "Distance", "Decomposition"]
+COLOR_METHODS = ["Smooth", "Stripe", "Triangle inequality", "Orbit trap", "Distance", "Fringe", "Decomposition"]
 PALETTES = ["Ember", "Ice", "Nebula", "Grayscale"]
 
 # (Area, Action, Expected)

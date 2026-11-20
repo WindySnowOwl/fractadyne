@@ -128,6 +128,15 @@ fn encode(lin: [f64; 3]) -> [f64; 3] {
     })
 }
 
+/// The display color `rgb` (sRGB-encoded, 0..1) with its OKLab lightness set to `l` (0..1), its
+/// hue and chroma kept, the chroma reduced at that lightness and hue until the color fits the
+/// gamut. The fringe's step (coloring plan C9): the shader's `with_lightness` in
+/// `mandelbrot.wgsl` does the same in f32, and the self-test's `fringe` check holds it to this.
+pub fn with_lightness(rgb: [f64; 3], l: f64) -> [f64; 3] {
+    let [_, a, b] = srgb_to_oklab(rgb);
+    in_gamut(l.clamp(0.0, 1.0), a, b)
+}
+
 /// sRGB-encoded display color (0..1) to OKLab (Björn Ottosson's matrices; the same as the tag
 /// measurer's in `tags.rs`).
 pub fn srgb_to_oklab(rgb: [f64; 3]) -> [f64; 3] {
