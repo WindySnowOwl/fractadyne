@@ -10,7 +10,7 @@ new functional enhancement; a **minor** bump (e.g. 0.2.0) marks a milestone that
 run of patch releases. The `0.2.0` entry summarizes **0.1.29 – 0.1.68** by theme — per-version
 detail is in the git history.
 
-## 0.3.1 (unreleased)
+## 0.4.0 (unreleased)
 
 - **A new coloring method, Fringe.** Listed under Distance in the method box, it draws dark lines
   along the set on a light field whose colors turn once around every feature, the look known as the

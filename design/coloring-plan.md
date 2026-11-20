@@ -1,6 +1,6 @@
 # Coloring methods: implementation plan
 
-Status: **plan (2026-11-08); phase A done (A1–A10), B1 done (the coloring matrix; its live tour is B1b), B2 done (what a frame accumulates is a `StatSet`, apart from the method shown), B3 done (in floatexp a stripe, triangle or trap frame carries the whole G-buffer), B4 to B7 done (one settings model, the method list, the method sheet, the inside and a second LUT), C1, C4, C8, C9 and C11 done (a solid inside in any color; the inside's palette fitted to its range; the palette anti-aliased over a footprint from the distance estimate; the fringe method; the dual view's Julia pane on the set's palette map); B1b and B8 not started; next B1b or C2; see §10 (2026-11-20).** Line references are to `main` at `9ab75357`; check
+Status: **plan (2026-11-08); phase A done (A1–A10), B1 and B1b done (the coloring matrix and its live method tour), B2 done (what a frame accumulates is a `StatSet`, apart from the method shown), B3 done (in floatexp a stripe, triangle or trap frame carries the whole G-buffer), B4 to B7 done (one settings model, the method list, the method sheet, the inside and a second LUT), C1, C4, C8, C9 and C11 done (a solid inside in any color; the inside's palette fitted to its range; the palette anti-aliased over a footprint from the distance estimate; the fringe method; the dual view's Julia pane on the set's palette map); B8 not started; next B9 and B10 (prototyping aids), then C2; see §10 (2026-11-20).** Line references are to `main` at `9ab75357`; check
 them before editing, they drift. The research behind it (methods, prototypes, measured results,
 prior art) is the coloring-methods doc; its local copy is
 `local/research_notes/Fractal coloring methods/` (PDF, HTML, Markdown, prototype scripts).
@@ -220,15 +220,15 @@ constants, `selftest.rs:517-577`); `GROUPS` is not checked against the `want` ta
 
 ## 2. Overview
 
-| Phase                           | Steps  | Needs          | Gives                                                                                                                                     |
-| ------------------------------- | ------ | -------------- | ----------------------------------------------------------------------------------------------------------------------------------------- |
-| A. Independent fixes            | A1–A10 | nothing        | correct baseline, persistence, reproducible CLI                                                                                           |
-| B. Plumbing                     | B1–B8  | A1, A6         | test matrix, accumulate mask, full G-buffer, settings model, method picker and preview sheet, second LUT and interior modes, stored angle |
-| C. Color-pass methods           | C1–C11 | B4 (B5 for C4) | interior color, transfers, DE shading, lighting, histogram, OKLab, palette AA, fringe, grid, linked Julia palettes                        |
-| D. Escape-data methods          | D1–D3  | B8             | angle colorings, exact count past 8.4M, interior period                                                                                   |
-| E. Statistic combinations       | E1–E5  | B3, B5         | warped bands, statistic near filaments, two-layer blend, bump, specular by statistic                                                      |
-| F. New per-iteration statistics | F1–F6  | B2, F2         | exponential smoothing, second aux target, curvature, parametric traps, atom domains, pixel-width traps                                    |
-| G. Research methods             | G1–G8  | as listed      | interior DE, interior coordinates, second derivative, fold DE, two-plane, multi-degree, texture effects, user scripts                     |
+| Phase                           | Steps  | Needs          | Gives                                                                                                                                                       |
+| ------------------------------- | ------ | -------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| A. Independent fixes            | A1–A10 | nothing        | correct baseline, persistence, reproducible CLI                                                                                                             |
+| B. Plumbing                     | B1–B10 | A1, A6         | test matrix, accumulate mask, full G-buffer, settings model, method picker and preview sheet, second LUT and interior modes, stored angle, prototyping aids |
+| C. Color-pass methods           | C1–C11 | B4 (B5 for C4) | interior color, transfers, DE shading, lighting, histogram, OKLab, palette AA, fringe, grid, linked Julia palettes                                          |
+| D. Escape-data methods          | D1–D3  | B8             | angle colorings, exact count past 8.4M, interior period                                                                                                     |
+| E. Statistic combinations       | E1–E5  | B3, B5         | warped bands, statistic near filaments, two-layer blend, bump, specular by statistic                                                                        |
+| F. New per-iteration statistics | F1–F6  | B2, F2         | exponential smoothing, second aux target, curvature, parametric traps, atom domains, pixel-width traps                                                      |
+| G. Research methods             | G1–G8  | as listed      | interior DE, interior coordinates, second derivative, fold DE, two-plane, multi-degree, texture effects, user scripts                                       |
 
 Critical path: **A6 → B1 → B2 → B3 → B7**, with **A1 → B4 → B6 → B7** beside it. Everything in
 C needs B4 (C4 also B5); E needs B3 and B5; F needs B2. Phase A steps are independent of each
@@ -616,8 +616,24 @@ reproduced. Reproduce before fixing; never close on the mechanism argument alone
     field agent v41): the RX 6800 XT in 288 s and the RTX 3070 in 859 s, each 0 new red and the same
     48 known. Contact sheets looked at: every quick view, each failure's evidence, and the Smooth,
     Distance, stripe and cross-trap sheets of the full set (the stripe one from the RX 6800 XT).
-  - **B1b, not done**: the live path (a `method` key in the tour `[render]` table, `--livetest` with
-    a method, `tours/coloring-methods.toml`). It drives the live pipeline, a separate step.
+  - **B1b, done 2026-11-20** (branch `feat/color-b1b-method-tour`): `--livetest TOUR --method KEY`
+    (over the tour's `[render.coloring]`, which the harness now puts on; it forced Smooth), a
+    baseline per method (Smooth's keeps its old name), `tours/coloring-methods.toml` (one point with
+    detail to 1e30x: holds at 2x and 1e3x direct, 1e10x and 1e22x df32, 1e32x floatexp),
+    `scripts/coloring_method_tour.py`, `--dump-images`, and each checkpoint's live and oracle render
+    modes and count difference (`count_p99`) in its JSON. ⚠`render_iter` returns the main lane only,
+    so the colored comparison of a method that reads the aux lane colored it wrong: those frames are
+    now rendered colored from their own requests under the oracle's palette map AND color box (the
+    live frame's `aa_filter` 2 averaged decomposition's speckle where the oracle point-sampled it:
+    13 levels apart at 1e3x with identical counts). Results, all seven methods: PLUTO's RX 6800 XT
+    (dev build `v0.3.1-beta.0.dev.1`) and the RTX 3080 both 5/5 holds ok per method, live as black
+    as the oracle everywhere. ⭐The aux methods' counts differ from Smooth's on ~15% of pixels in df32
+    (p99 ~215 iterations, the same offline as live), which looked like a defect and is not: against
+    `--truth --truth-stencil` at the 1e10x hold, every method matches the CPU truth on EVERY stable
+    pixel (24,895 of 32,400, none off by more than an iteration); every difference is on an unstable
+    pixel (its true count changes within 0.001 px), where the BLA and no-BLA arithmetic land
+    differently and neither is wrong. Decomposition's final angle amplifies those pixels into its
+    remaining ~10 levels.
 
 ### B2. Decouple what is accumulated from how it is shown
 
@@ -988,6 +1004,51 @@ reproduced. Reproduce before fixing; never close on the mechanism argument alone
 - **Tests**: B1 A/Bs for Decomposition with BLA on, at 1e30× and 1e60×, three families.
 - **Done when**: a measured verdict on BLA and SA for angle colorings, recorded here.
 
+### B9. Every lane as NumPy arrays (a prototyping aid)
+
+User, 2026-11-20: is NumPy the most efficient way to prototype, or could Fractadyne help? A NumPy
+prototype reimplements the iteration in double precision: it cannot go deep, its numbers are not
+the app's (perturbation, BLA, the precision bands), and the idea is written a second time in WGSL
+afterwards. Most of phase C colors data the app already computes, so a prototype should start from
+the app's own data.
+
+- **Goal**: one command writes a view's whole G-buffer as `.npy` files a Python prototype loads with
+  `np.load`, at any depth, exactly as the GPU computed it.
+- **Depends on**: B3 (the full G-buffer). **Size**: S.
+- **Work**: `--render-iter` writes the main lane only (count, slope normal, log2 distance) and only
+  as EXR, which Python here cannot read without a library (C11's check needed a scratch Rust
+  reader). Add `--render-lanes DIR` (or a `.npy` form of `--render-iter`): `count`, `normal_x`,
+  `normal_y`, `de_log2` and the aux lane's `stripe`, `triangle`, `trap`, `angle` (accumulated as
+  the method and `--orbit-stats` ask), each a float32 `.npy`, plus `view.json` (center, scale,
+  iterations, the family, the band, the coloring as a view writes it) and the baked palette LUT.
+  A short `scripts/lanes.py` loader and one worked example (C9's fringe recolored in NumPy from a
+  1e30x view's lanes).
+- **Tests**: the lanes against `--render-iter`'s EXR channels (exact), and an aux lane against the
+  coloring matrix's G-buffer render of the same view.
+- **Done when**: a phase C idea can be tried in NumPy on a deep view without writing an iteration.
+
+### B10. A custom coloring hook (a prototyping aid and a power-user feature)
+
+- **Goal**: a short WGSL function, loaded from a file and reloaded when it is saved, colors the
+  view in place of the method's: an idea runs live on the GPU at any depth and recolors instantly,
+  with no rebuild; promoting it to a built-in method is mostly copying it in.
+- **Depends on**: B3, B9 (the same lanes, named the same). **Size**: M.
+- **Work**: the color pass calls `custom_color(count, normal, de_px, aux, coord, params) -> vec3`
+  when a hook is loaded (as Kalles Fraktaler's and zoomasm's GLSL colorings do; their code is
+  AGPL, so from their documented interface only). Splice it into the color pass module as the
+  custom formula module is spliced (`custom.rs`), compiled off the UI thread, naga errors shown
+  with their line; parameters `p1`..`p4` as sliders; the palette and the inside palette readable
+  (`palette(t)`, `palette_in`). File watched (`Color ▸ Custom coloring…`, `--coloring-hook FILE`);
+  a view file names it and carries its text. No loops without a fixed bound (the color pass runs
+  per output pixel and must stay inside the watchdog: refuse an unbounded loop at compile time).
+- **Tests**: a hook that reproduces Smooth matches the built-in bit for bit; one that reproduces
+  C9's fringe matches the method within 1 level; a syntax error is reported, not fatal; the
+  coloring matrix runs with a hook; uitest screens for the dialog.
+- **Done when**: C2's transfer functions can be tried as a hook before they are built in.
+- **Order**: B9 soon (small); B10 before the remaining phase C items (C2, C3, C5, C10), which it
+  speeds. Ideas that change the iteration itself (D4's basins: a cycle found while iterating)
+  still start in NumPy or the CPU reference.
+
 ---
 
 ## 5. Phase C: color-pass methods
@@ -1009,7 +1070,8 @@ UI rows, `.fdn`/farm/CLI through B4, B1 cells, a selftest appearance check, uite
 | C10 | Level-of-detail equipotential grid                             | equipotentials only (rays wait for D1); width from \|∇μ\| = 1/(d·ln p); needs A9; prototype held 1.1–1.5 px at eight depths                                                                                        | M    |
 | C11 | Linked dual-view palettes                                      | the Julia count at z = c is the Mandelbrot count minus 1: a +1 offset and a shared normalization window                                                                                                            | S    |
 
-Order: C1, C4, C8, C9, C11 (smallest), then C2, C3, C10, then C5, C6, C7.
+Order: C1, C4, C8, C9, C11 (smallest), then C2, C3, C10, then C5, C6, C7. (2026-11-20: B9 and B10,
+the prototyping aids, come before C2.)
 
 **C1, done 2026-11-13** (branch `feat/color-c1-inside-color`): `ColoringSpec.interior_color`
 (display space, default the old near-black), the app's `interior_color`, a color button beside the
@@ -1094,7 +1156,7 @@ the overview and the 61x view the same pattern. `ColoringSpec.palette_aa` defaul
 session or tour from before it reads true; a view that states its coloring and leaves the key out
 resets to on; off writes `palette_aa=0`); `--no-palette-aa`.
 
-**C9, done 2026-11-20** (branch `feat/color-c9-fringe`). A method of its own, "Fringe" under the
+**C9, done 2026-11-20** (branch `feat/color-c9-fringe`, merged `20e2fff5`). A method of its own, "Fringe" under the
 Distance heading (`ColorMethod::Fringe`, key `fringe`; the main lane only, a recolor wherever there
 is a distance estimate). Its palette coordinate is the slope normal's direction in turns,
 atan2(n.y, n.x)/2π, times a WHOLE number of sweeps (`fringe_sweeps`: Cycle·4 rounded, 1 to 4, so a
@@ -1387,7 +1449,7 @@ coloring in these places, so sequence the two with care:
 | A10                | done, merged                                              | `aaffca7f` (merge `6ec2fc76`)                                                             |
 | B1                 | done, merged (agent v41, deployed)                        | `312c54a8` (merge `4efdbbb3`)                                                             |
 | B1 fixes           | Distance NaN; Newton's statistics methods                 | merges `91fa8f91`, `7722b660`                                                             |
-| B1b                | not started: the live method tour                         |                                                                                           |
+| B1b                | done, not merged (branch `feat/color-b1b-method-tour`)    | (filled in at the merge)                                                                  |
 | B2                 | done, merged                                              | `c017a577` (merge `dcfd776b`)                                                             |
 | B3                 | done, merged                                              | `412fafc6` (merge `542a5264`)                                                             |
 | B4                 | done, merged                                              | `a5d7d74b` (merge `ba452e9c`)                                                             |
@@ -1395,10 +1457,11 @@ coloring in these places, so sequence the two with care:
 | B7                 | done, merged                                              | `9e1efa0e` (merge `97c91c32`; step 1 `17b6d60d` with the browser's dual view, `ef2acde7`) |
 | B5                 | done, merged                                              | `b2b927d6` (merge `e3e53257`)                                                             |
 | B8                 | not started                                               |                                                                                           |
+| B9, B10            | not started: prototyping aids (user, 2026-11-20)          |                                                                                           |
 | C1                 | done, merged                                              | `58d6dce3` (merge `84af4b0d`)                                                             |
 | C4                 | done, merged                                              | `e99bfafd` (merge `9a3f9ff9`)                                                             |
 | C8                 | done, merged; on by default on `feat/color-c8-aa-default` | `5430aa2c` (merge `49153662`)                                                             |
 | C11                | done, merged                                              | `b8a24c8f` (merge `a14b2296`)                                                             |
-| C9                 | done, not merged (branch `feat/color-c9-fringe`)          | (filled in at the merge)                                                                  |
+| C9                 | done, merged                                              | `0b0c5f03` (merge `20e2fff5`)                                                             |
 | C2, C3, C5–C7, C10 | not started                                               |                                                                                           |
 | D, E, F, G         | not started                                               |                                                                                           |
