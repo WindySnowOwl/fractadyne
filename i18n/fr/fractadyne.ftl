@@ -271,6 +271,8 @@ menu-color-browse-hover = Toutes les palettes sur la vue actuelle, côte à côt
 
 # The palette browser window.
 palette-browser-title = Palettes
+palette-browser-title-inside = Palettes intérieures
+palette-browser-inside-hint = Chaque vignette montre la vue avec cette palette à l’intérieur de l’ensemble ; l’extérieur reste tel quel.
 palette-browser-clear = Effacer les filtres
 palette-browser-both = Les deux
 palette-browser-panes-hover = En vue double, les vignettes peuvent montrer le panneau de gauche, celui de droite, ou les deux côte à côte.
@@ -2843,6 +2845,7 @@ inside-trap-desc = À quel point chaque orbite s’est approchée du piège orbi
 panel-inside-palette = Palette intérieure
 panel-inside-palette-hover = La palette avec laquelle le piège orbital colore l’intérieur.
 panel-inside-palette-same = Comme à l’extérieur
+panel-inside-palette-browse-hover = Toutes les palettes à l’intérieur de l’ensemble sur la vue actuelle, côte à côte.
 panel-inside-fit = Ajuster à la plage de l’intérieur
 panel-inside-fit-hover = Étale la palette intérieure sur les valeurs du piège mesurées dans l’ensemble à l’écran, pour que sa structure apparaisse. Les exports de cette vue utilisent le même ajustement.
 panel-palette-aa = Anticrénelage de la palette

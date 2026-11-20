@@ -267,6 +267,8 @@ menu-color-browse-hover = 현재 보기에 모든 팔레트를 나란히 보여 
 
 # The palette browser window.
 palette-browser-title = 팔레트
+palette-browser-title-inside = 내부 팔레트
+palette-browser-inside-hint = 각 썸네일은 집합 내부에 그 팔레트를 쓴 보기를 보여 줍니다. 바깥은 그대로입니다.
 palette-browser-clear = 필터 지우기
 palette-browser-both = 둘 다
 palette-browser-panes-hover = 이중 보기에서는 미리 보기에 왼쪽 창, 오른쪽 창, 또는 둘 다를 나란히 표시할 수 있습니다.
@@ -2762,6 +2764,7 @@ inside-trap-desc = 각 궤도가 궤도 트랩에 얼마나 가까이 왔는지�
 panel-inside-palette = 내부 팔레트
 panel-inside-palette-hover = 궤도 트랩이 내부를 칠하는 팔레트.
 panel-inside-palette-same = 바깥과 같음
+panel-inside-palette-browse-hover = 현재 보기에서 집합 내부에 모든 팔레트를 나란히 보여 줍니다.
 panel-inside-fit = 내부 범위에 맞추기
 panel-inside-fit-hover = 화면의 집합 내부에서 잰 트랩 값에 내부 팔레트를 펼쳐 구조가 보이게 합니다. 이 화면의 내보내기도 같은 맞춤을 씁니다.
 panel-palette-aa = 팔레트 앤티앨리어싱

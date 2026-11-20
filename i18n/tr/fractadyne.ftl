@@ -271,6 +271,8 @@ menu-color-browse-hover = Geçerli görünüm üzerinde tüm paletler yan yana: 
 
 # The palette browser window.
 palette-browser-title = Paletler
+palette-browser-title-inside = İç paletler
+palette-browser-inside-hint = Her küçük resim, kümenin içinde o paletle görünümü gösterir; dışı olduğu gibi kalır.
 palette-browser-clear = Süzgeçleri temizle
 palette-browser-both = İkisi de
 palette-browser-panes-hover = Çift görünümde küçük resimler sol bölmeyi, sağ bölmeyi ya da ikisini yan yana gösterebilir.
@@ -2834,6 +2836,7 @@ inside-trap-desc = Her yörüngenin yörünge tuzağına ne kadar yaklaştığı
 panel-inside-palette = İç palet
 panel-inside-palette-hover = Yörünge tuzağının içi renklendirdiği palet.
 panel-inside-palette-same = Dışla aynı
+panel-inside-palette-browse-hover = Geçerli görünümde kümenin içinde tüm paletler yan yana.
 panel-inside-fit = İçin aralığına sığdır
 panel-inside-fit-hover = İç paleti, ekranda kümenin içinde ölçülen tuzak değerlerine yayar; böylece yapısı görünür. Bu görünümün dışa aktarımları aynı sığdırmayı kullanır.
 panel-palette-aa = Paleti yumuşat (kenar yumuşatma)

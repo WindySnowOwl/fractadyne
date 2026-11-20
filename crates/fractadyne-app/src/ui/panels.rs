@@ -356,7 +356,7 @@ impl FractadyneApp {
                     crate::ui::menus::paint_palette_box_swatch(ui, combo.response.rect, &pal_swatch);
                     // The palette browser: every palette over this view, side by side, by tag.
                     if ui.small_button(crate::icons::GALLERY).on_hover_text(tr!(menu_color_browse_hover)).clicked() {
-                        self.palette_browser.open = true;
+                        self.palette_browser.open_for(crate::ui::palette_browser::BrowserTarget::Outside);
                     }
                 });
                 if self.coloring.use_duotone || self.coloring.use_binary {

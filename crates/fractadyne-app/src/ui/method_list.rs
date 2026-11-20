@@ -274,6 +274,15 @@ impl FractadyneApp {
                     self.coloring.interior_color = c;
                 }
             }
+            // A trap-colored inside's palettes in the palette browser, in the same place (as the
+            // Palette row's button opens it for the outside's). Here rather than on the Inside
+            // palette row, whose box needs all its width: with the button beside it, "Same as
+            // outside" was shortened to fit (uitest inside-trap, 2026-11-19).
+            if inside == InteriorMode::Trap
+                && ui.small_button(crate::icons::GALLERY).on_hover_text(tr!(panel_inside_palette_browse_hover)).clicked()
+            {
+                self.palette_browser.open_for(crate::ui::palette_browser::BrowserTarget::Inside);
+            }
         });
     }
 

@@ -12,6 +12,12 @@ detail is in the git history.
 
 ## 0.3.1 (unreleased)
 
+- **The palette browser chooses the inside's palette too.** While the orbit trap colors the inside
+  of the set, a button beside the panel's Inside choice opens the browser for the inside's palette,
+  so you can see how each palette looks inside the set before choosing one: every thumbnail shows
+  the view with that palette inside and the outside as it is, resting the pointer on one previews
+  it on the view, and "Same as outside" is a choice of its own. The inside's palette is one of the
+  built-in palettes, so saved gradients are not offered there.
 - **Changing the inside's coloring updates a deep view and the overview map.** Past about 10^10×,
   a settled view shows the average of many jittered samples, which starts over when its coloring
   changes. A change to the inside (its palette, its fit, solid or orbit trap, or a solid inside's

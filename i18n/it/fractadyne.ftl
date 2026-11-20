@@ -271,6 +271,8 @@ menu-color-browse-hover = Tutte le tavolozze sulla vista attuale, una accanto al
 
 # The palette browser window.
 palette-browser-title = Tavolozze
+palette-browser-title-inside = Tavolozze interne
+palette-browser-inside-hint = Ogni miniatura mostra la vista con quella tavolozza all’interno dell’insieme; l’esterno resta com’è.
 palette-browser-clear = Azzera i filtri
 palette-browser-both = Entrambi
 palette-browser-panes-hover = Nella vista doppia, le miniature possono mostrare il riquadro sinistro, quello destro o entrambi affiancati.
@@ -2842,6 +2844,7 @@ inside-trap-desc = Quanto ogni orbita si è avvicinata alla trappola orbitale, n
 panel-inside-palette = Tavolozza interna
 panel-inside-palette-hover = La tavolozza con cui la trappola orbitale colora l’interno.
 panel-inside-palette-same = Come all’esterno
+panel-inside-palette-browse-hover = Tutte le tavolozze all’interno dell’insieme sulla vista attuale, una accanto all’altra.
 panel-inside-fit = Adatta all’intervallo dell’interno
 panel-inside-fit-hover = Distribuisce la tavolozza interna sui valori della trappola misurati dentro l’insieme sullo schermo, così la sua struttura si vede. Le esportazioni di questa vista usano lo stesso adattamento.
 panel-palette-aa = Antialiasing della tavolozza

@@ -267,6 +267,8 @@ menu-color-browse-hover = 現在のビューにすべてのパレットを並べ
 
 # The palette browser window.
 palette-browser-title = パレット
+palette-browser-title-inside = 内部パレット
+palette-browser-inside-hint = 各サムネイルは、そのパレットを集合の内部に使ったビューを表示します。外側はそのままです。
 palette-browser-clear = 絞り込みを解除
 palette-browser-both = 両方
 palette-browser-panes-hover = デュアルビューでは、サムネイルに左のペイン、右のペイン、または両方を並べて表示できます。
@@ -2763,6 +2765,7 @@ inside-trap-desc = 各軌道が軌道トラップにどれだけ近づいたか�
 panel-inside-palette = 内部パレット
 panel-inside-palette-hover = 軌道トラップが内部を着色するパレット。
 panel-inside-palette-same = 外側と同じ
+panel-inside-palette-browse-hover = 現在のビューで、集合の内部にすべてのパレットを並べて表示します。
 panel-inside-fit = 内部の範囲に合わせる
 panel-inside-fit-hover = 画面上の集合内部で測ったトラップの値に内部パレットを広げ、その構造が見えるようにします。このビューの書き出しも同じ調整を使います。
 panel-palette-aa = パレットのアンチエイリアス

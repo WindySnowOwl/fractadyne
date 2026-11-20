@@ -284,8 +284,9 @@ impl crate::FractadyneApp {
                 coloring: (*c != in_use).then(|| CellColoring {
                     method: c.method,
                     cycle: self.color_cycle_for(c.method),
-                    interior: self.interior_shading_for(c.method),
+                    interior: self.interior_shading_shown(c.method),
                 }),
+                inside: None,
             })
             .collect();
         let (cell, cols) = crate::ui::palette_browser::atlas_layout(cells.len() as u32, cell, rs.device.limits().max_texture_dimension_2d);

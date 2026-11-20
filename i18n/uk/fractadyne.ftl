@@ -273,6 +273,8 @@ menu-color-browse-hover = Усі палітри на поточному вигл
 
 # The palette browser window.
 palette-browser-title = Палітри
+palette-browser-title-inside = Палітри всередині
+palette-browser-inside-hint = Кожна мініатюра показує вигляд із цією палітрою всередині множини; ззовні все лишається як є.
 palette-browser-clear = Скинути фільтри
 palette-browser-both = Обидва
 palette-browser-panes-hover = У подвійному вигляді мініатюри можуть показувати ліву панель, праву або обидві поруч.
@@ -2991,6 +2993,7 @@ inside-trap-desc = Наскільки близько кожна орбіта п�
 panel-inside-palette = Палітра всередині
 panel-inside-palette-hover = Палітра, якою пастка орбіти забарвлює внутрішність.
 panel-inside-palette-same = Як ззовні
+panel-inside-palette-browse-hover = Усі палітри всередині множини на поточному вигляді, поруч одна з одною.
 panel-inside-fit = Підігнати під діапазон внутрішності
 panel-inside-fit-hover = Розтягує палітру внутрішності на значення пастки, виміряні всередині множини на екрані, щоб було видно її структуру. Експорт цього вигляду використовує ту саму підгонку.
 panel-palette-aa = Згладжування палітри

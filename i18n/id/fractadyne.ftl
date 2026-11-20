@@ -267,6 +267,8 @@ menu-color-browse-hover = Semua palet di atas tampilan saat ini, berdampingan: s
 
 # The palette browser window.
 palette-browser-title = Palet
+palette-browser-title-inside = Palet dalam
+palette-browser-inside-hint = Setiap gambar mini menampilkan tampilan dengan palet itu di dalam himpunan; bagian luar tetap seperti semula.
 palette-browser-clear = Hapus saringan
 palette-browser-both = Keduanya
 palette-browser-panes-hover = Dalam tampilan ganda, gambar mini dapat menampilkan panel kiri, panel kanan, atau keduanya berdampingan.
@@ -2762,6 +2764,7 @@ inside-trap-desc = Seberapa dekat setiap orbit ke perangkap orbit, dalam palet d
 panel-inside-palette = Palet dalam
 panel-inside-palette-hover = Palet yang dipakai perangkap orbit untuk mewarnai bagian dalam.
 panel-inside-palette-same = Sama dengan luar
+panel-inside-palette-browse-hover = Semua palet di dalam himpunan di atas tampilan saat ini, berdampingan.
 panel-inside-fit = Sesuaikan dengan rentang bagian dalam
 panel-inside-fit-hover = Sebarkan palet dalam ke nilai perangkap yang diukur di dalam himpunan di layar, agar strukturnya terlihat. Ekspor tampilan ini memakai penyesuaian yang sama.
 panel-palette-aa = Haluskan palet (anti-aliasing)

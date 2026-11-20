@@ -367,6 +367,10 @@ enum Screen {
     /// ...fitted to its measured range (C4): wider in the palette, still a recolor, the export the
     /// screen...
     InsideFit,
+    /// The palette browser choosing the INSIDE's palette, the pointer resting on Mondrian's tile:
+    /// each tile keeps the view's outside and changes its inside, and the view previews Mondrian
+    /// inside while Ice stays chosen.
+    InsidePaletteBrowser,
     /// ...and the trap method with a solid inside: one color where its own inside varies.
     InsideSolidUnderTrap,
     /// The palette anti-aliased (C8), on the same view: first the control, Smooth with a solid
@@ -1302,6 +1306,7 @@ fn build_steps() -> Vec<Step> {
         screen("inside-palette", Screen::InsidePalette),
         screen("inside-fit", Screen::InsideFit),
         screen("inside-solid-under-trap", Screen::InsideSolidUnderTrap),
+        screen("inside-palette-browser", Screen::InsidePaletteBrowser),
         screen("palette-aa-base", Screen::PaletteAaBase),
         screen("palette-aa", Screen::PaletteAa),
     ]
@@ -1626,6 +1631,7 @@ impl FractadyneApp {
             .map(|m| AtlasCell {
                 palette: &palette,
                 coloring: m.map(|m| CellColoring { method: m, cycle: self.color_cycle_for(m), interior: self.interior_shading_for(m) }),
+                inside: None,
             })
             .collect();
         let a = atlas::render_atlas(rs, 0, &cells, size, methods.len() as u32, None).ok()?;
@@ -1635,6 +1641,40 @@ impl FractadyneApp {
     }
 
     /// The size the Inside steps read the view at.
+    /// The view as inside tiles of the palette browser at `size`: each of `presets` as the inside's
+    /// palette, the outside as the view has it (`atlas::render_inside_palette_atlas`), as RGBA8.
+    fn uitest_inside_atlas_read(&self, presets: &[usize], size: [u32; 2]) -> Option<Vec<Vec<u8>>> {
+        use fractadyne_gpu::atlas::{self, AtlasPalette};
+        let rs = self.render_state.as_ref()?;
+        let palettes: Vec<AtlasPalette> = presets
+            .iter()
+            .map(|i| {
+                let p = &fractadyne_color::PRESETS[*i];
+                let l = fractadyne_color::segment::Gradient::from_stops(p.name, p.stops).bake(fractadyne_color::segment::LUT_SIZE);
+                AtlasPalette { lut: l.entries, smooth: l.smooth }
+            })
+            .collect();
+        let m = self.shown_method();
+        let shading = fractadyne_core::coloring::InteriorShading::for_view(self.coloring.interior_of(m), m, true);
+        let a = atlas::render_inside_palette_atlas(rs, 0, &palettes, shading, size, presets.len() as u32, None).ok()?;
+        let cells: Option<Vec<Vec<u8>>> = (0..presets.len()).map(|k| atlas::read_cell(rs, &a, k)).collect();
+        atlas::free_palette_atlas(rs, a);
+        cells
+    }
+
+    /// The view as an outside tile of the palette browser at `size`, preset `preset` as the
+    /// outside's palette, as RGBA8.
+    fn uitest_outside_atlas_read(&self, preset: usize, size: [u32; 2]) -> Option<Vec<u8>> {
+        use fractadyne_gpu::atlas::{self, AtlasPalette};
+        let rs = self.render_state.as_ref()?;
+        let p = &fractadyne_color::PRESETS[preset];
+        let l = fractadyne_color::segment::Gradient::from_stops(p.name, p.stops).bake(fractadyne_color::segment::LUT_SIZE);
+        let a = atlas::render_palette_atlas(rs, 0, &[AtlasPalette { lut: l.entries, smooth: l.smooth }], size, 1, None).ok()?;
+        let cell = atlas::read_cell(rs, &a, 0);
+        atlas::free_palette_atlas(rs, a);
+        cell
+    }
+
     fn uitest_inside_size(&self) -> [u32; 2] {
         let aspect = (self.viewport.height_px / self.viewport.width_px.max(1.0)).clamp(0.2, 5.0);
         [320, (320.0 * aspect).round().max(8.0) as u32]
@@ -1867,6 +1907,58 @@ impl FractadyneApp {
                     checks.push(fail("inside-export-is-the-view", format!("no export of the view {detail}")));
                 }
             }
+            Screen::InsidePaletteBrowser => {
+                use crate::palette_preview::InsideRow;
+                let (ice, mondrian) = (fractadyne_color::preset_by_id("ice"), fractadyne_color::preset_by_id("mondrian"));
+                // The preview: shown on the view, chosen nowhere.
+                let shown = self.coloring.interior_preview.shown();
+                let ok = self.palette_browser.target == crate::ui::palette_browser::BrowserTarget::Inside
+                    && self.browser_drawn_views().contains(&0)
+                    && shown == mondrian.map(InsideRow::Preset)
+                    && self.shown_interior_palette() == mondrian
+                    && self.coloring.interior_palette == ice;
+                let detail = format!(
+                    "target {:?}, thumbnails of views {:?}; previewing {shown:?}, the screen's inside {:?}, chosen {:?}; {} pointer events left",
+                    self.palette_browser.target,
+                    self.browser_drawn_views(),
+                    self.shown_interior_palette(),
+                    self.coloring.interior_palette,
+                    self.harness.uitest_pointer.len()
+                );
+                checks.push(if ok {
+                    pass("inside-browser-previews-and-chooses-nothing", detail)
+                } else {
+                    fail("inside-browser-previews-and-chooses-nothing", detail)
+                });
+                // The tiles: Mondrian's is the screen (previewing it) inside and out; Ice's differs
+                // inside only. CONTROL: an OUTSIDE tile in Ice, which changes the outside.
+                let (Some(ice), Some(mondrian)) = (ice, mondrian) else {
+                    checks.push(fail("inside-browser-tiles", "no Ice or Mondrian preset".into()));
+                    return;
+                };
+                let cells = self.uitest_inside_atlas_read(&[mondrian, ice], size);
+                let outside_ice = self.uitest_outside_atlas_read(ice, size);
+                let detail = match (cells.as_deref(), outside_ice.as_ref()) {
+                    (Some([m, i]), Some(o)) if m.len() == px.len() && i.len() == px.len() && o.len() == px.len() => {
+                        let ((m_in, _), (m_out, _)) = (diff(m, px, &is_in), diff(m, px, &is_out));
+                        let ((i_in, _), (i_out, _)) = (diff(i, px, &is_in), diff(i, px, &is_out));
+                        let (o_out, _) = diff(o, px, &is_out);
+                        let ok = m_in <= 1.0 && m_out <= 0.5 && i_in >= 8.0 && i_out <= 0.5 && o_out >= 8.0;
+                        let detail = format!(
+                            "Mondrian's tile vs the screen: inside {m_in:.2}, outside {m_out:.2}; Ice's: inside {i_in:.1}, outside {i_out:.2}; \
+                             control, an outside tile in Ice: outside {o_out:.1}"
+                        );
+                        checks.push(if ok { pass("inside-browser-tiles", detail.clone()) } else { fail("inside-browser-tiles", detail.clone()) });
+                        detail
+                    }
+                    _ => {
+                        let detail = "the tiles did not render at the view's size".to_string();
+                        checks.push(fail("inside-browser-tiles", detail.clone()));
+                        detail
+                    }
+                };
+                let _ = detail;
+            }
             _ => {
                 // The trap method, the inside solid: the solid step's inside, one color again, where
                 // the trap method's own inside (CONTROL: the view's cell with the trap's own interior)
@@ -1880,6 +1972,7 @@ impl FractadyneApp {
                     let cell = AtlasCell {
                         palette: &palette,
                         coloring: Some(CellColoring { method: m, cycle: self.color_cycle_for(m), interior: crate::InteriorShading::Method }),
+                        inside: None,
                     };
                     let a = atlas::render_atlas(rs, 0, &[cell], size, 1, None).ok()?;
                     let b = atlas::read_cell(rs, &a, 0);
@@ -2570,7 +2663,7 @@ impl FractadyneApp {
                 } else {
                     crate::ui::palette_browser::BrowserPanes::Both
                 };
-                self.palette_browser.open = true;
+                self.palette_browser.open_for(crate::ui::palette_browser::BrowserTarget::Outside);
             }
             Screen::MethodList | Screen::MethodListNoDerivative | Screen::MethodTooltipRecalculates => {
                 self.set_show_mode(crate::ShowMode::Set);
@@ -2633,6 +2726,26 @@ impl FractadyneApp {
                 self.coloring.color_method = crate::ColorMethod::OrbitTrap;
                 self.coloring.interior = Some(crate::InteriorMode::Solid);
                 self.dialogs.right_panel_open = true;
+            }
+            // The view as the steps before left it, as inside-palette colored it (Smooth, the trap
+            // inside in Ice), with the browser choosing the inside's palette.
+            Screen::InsidePaletteBrowser => {
+                self.coloring.color_method = crate::ColorMethod::Smooth;
+                self.coloring.interior = Some(crate::InteriorMode::Trap);
+                self.coloring.interior_palette = fractadyne_color::preset_by_id("ice");
+                self.coloring.interior_fit = false;
+                self.dialogs.right_panel_open = true;
+                // No tag filter (palette-browser-tags leaves "warm" on, which hides Mondrian's tile:
+                // the pointer then had nothing to rest on in the full walk), on the set's pane.
+                self.palette_browser.filter.clear();
+                self.palette_browser.panes = crate::ui::palette_browser::BrowserPanes::Set;
+                self.palette_browser.open_for(crate::ui::palette_browser::BrowserTarget::Inside);
+                // Onto Mondrian's tile, as palette-preview does onto Ice's row: several events, the
+                // first land before the tiles have drawn.
+                if let Some(m) = fractadyne_color::preset_by_id("mondrian") {
+                    use crate::palette_preview::InsideRow;
+                    self.harness.uitest_pointer = std::iter::repeat(crate::UiPointer::OnInsideRow(InsideRow::Preset(m))).take(8).collect();
+                }
             }
             // By the seahorse valley, where the palette aliases at the default density (the self-test
             // `palette-aa`'s view): the control, then the palette anti-aliased.
@@ -2990,7 +3103,7 @@ impl FractadyneApp {
                 self.dialogs.open_fractal_dropdown = true;
             }
             // The view stays as the live step before left it: only the browser opens.
-            Screen::PaletteBrowserDeep => self.palette_browser.open = true,
+            Screen::PaletteBrowserDeep => self.palette_browser.open_for(crate::ui::palette_browser::BrowserTarget::Outside),
             Screen::PaletteBrowser | Screen::PaletteBrowserTags => {
                 self.coloring.use_custom_palette = false;
                 self.coloring.use_duotone = false;
@@ -3004,7 +3117,7 @@ impl FractadyneApp {
                         self.apply_saved_gradient(0);
                     }
                 }
-                self.palette_browser.open = true;
+                self.palette_browser.open_for(crate::ui::palette_browser::BrowserTarget::Outside);
             }
             Screen::PaletteDropdown | Screen::PaletteDropdownHolidays | Screen::PaletteDropdownCollections => {
                 self.dialogs.right_panel_open = true;
@@ -3198,6 +3311,7 @@ impl FractadyneApp {
                     | Screen::InsidePalette
                     | Screen::InsideFit
                     | Screen::InsideSolidUnderTrap
+                    | Screen::InsidePaletteBrowser
                     | Screen::PaletteAaBase
                     | Screen::PaletteAa
             )
@@ -4011,8 +4125,14 @@ impl FractadyneApp {
         }
 
         // ---- what colors the inside of the set (coloring plan B5) ----
-        if let StepKind::Screen(sc @ (Screen::InsideColor | Screen::InsideTrap | Screen::InsidePalette | Screen::InsideFit | Screen::InsideSolidUnderTrap)) =
-            step.kind
+        if let StepKind::Screen(
+            sc @ (Screen::InsideColor
+            | Screen::InsideTrap
+            | Screen::InsidePalette
+            | Screen::InsideFit
+            | Screen::InsideSolidUnderTrap
+            | Screen::InsidePaletteBrowser),
+        ) = step.kind
         {
             self.uitest_inside_checks(sc, ut, inside_view.as_ref(), ran_why, &mut checks);
         }

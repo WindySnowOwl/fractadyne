@@ -7541,8 +7541,9 @@ impl FractadyneApp {
             trap_type: self.coloring.trap_type.gpu_id(),
             aa_filter,
             interior_col: self.view_interior_color(),
-            // The shown method's: a method sheet preview shows that method's interior too.
-            interior: self.interior_shade_for(self.shown_method(), vs.min(1)),
+            // As shown: a method sheet preview shows that method's interior, and the palette
+            // browser choosing the inside shows the inside palette it previews.
+            interior: self.view_interior_shade(self.shown_method(), vs.min(1)),
             resolution,
             // The panel, which `build_params` knows and sets after this returns.
             display_res: [0, 0],
