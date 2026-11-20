@@ -274,15 +274,6 @@ impl FractadyneApp {
                     self.coloring.interior_color = c;
                 }
             }
-            // A trap-colored inside's palettes in the palette browser, in the same place (as the
-            // Palette row's button opens it for the outside's). Here rather than on the Inside
-            // palette row, whose box needs all its width: with the button beside it, "Same as
-            // outside" was shortened to fit (uitest inside-trap, 2026-11-19).
-            if inside == InteriorMode::Trap
-                && ui.small_button(crate::icons::GALLERY).on_hover_text(tr!(panel_inside_palette_browse_hover)).clicked()
-            {
-                self.palette_browser.open_for(crate::ui::palette_browser::BrowserTarget::Inside);
-            }
         });
     }
 
@@ -311,8 +302,17 @@ impl FractadyneApp {
             // the Method box's lesson, B7). ⚠In a child of that width: a combo box truncates its text
             // at the width AVAILABLE to it (it overwrites a laid-out text's own wrapping), which in
             // the row ran to the panel's edge, and its padding then spilled past it.
-            let sp = ui.spacing();
-            let box_w = (ui.available_width() - sp.item_spacing.x).max(60.0);
+            // ...less the browser button beside it (user, 2026-11-20: the button belongs with the
+            // palette it chooses, as the Palette row's does), measured, at a tighter gap.
+            ui.spacing_mut().item_spacing.x = 4.0;
+            let sp = ui.spacing().clone();
+            let icon_w = ui.fonts(|f| {
+                f.layout_no_wrap(crate::icons::GALLERY.to_string(), egui::TextStyle::Button.resolve(ui.style()), egui::Color32::WHITE)
+                    .size()
+                    .x
+            });
+            let browse_w = icon_w + 2.0 * sp.button_padding.x;
+            let box_w = (ui.available_width() - browse_w - 2.0 * sp.item_spacing.x).max(60.0);
             let inner_w = box_w - 2.0 * sp.button_padding.x;
             let combo = ui
                 .allocate_ui(egui::vec2(inner_w, sp.interact_size.y), |ui| {
@@ -347,6 +347,11 @@ impl FractadyneApp {
                 crate::ui::menus::paint_palette_box_swatch(ui, combo.response.rect, swatch);
             }
             combo.response.on_hover_text(tr!(panel_inside_palette_hover));
+            // The palette browser, choosing the inside's palette (as the Palette row's button does
+            // the outside's).
+            if ui.small_button(crate::icons::GALLERY).on_hover_text(tr!(panel_inside_palette_browse_hover)).clicked() {
+                self.palette_browser.open_for(crate::ui::palette_browser::BrowserTarget::Inside);
+            }
         });
         // Its palette over the trap values measured inside the set (C4).
         ui.checkbox(&mut self.coloring.interior_fit, tr!(panel_inside_fit)).on_hover_text(tr!(panel_inside_fit_hover));
