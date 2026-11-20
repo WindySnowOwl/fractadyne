@@ -389,6 +389,15 @@ enum Screen {
     /// egui's slider senses only drags on its track, so its own `double_clicked` never fired there
     /// and only the number reset (`panels::slider_double_clicked`, user 2026-11-20).
     SliderDoubleClick,
+    /// The dual view at c = -0.75+0.2i, each pane centered on c in its own plane at 100x, the
+    /// classic map, the Julia pane on its own map: its center a step of the palette from the set's
+    /// (the CONTROL)...
+    JuliaLinkedOff,
+    /// ...linked (coloring plan C11): the Julia pane on the set's map, one iteration on, its center
+    /// the set's color...
+    JuliaLinked,
+    /// ...and under a fitted range, the set's window coloring both.
+    JuliaLinkedFit,
 }
 
 /// The method sheet cell the `method-sheet-deep-asked` steps ask for: Decomposition, which no
@@ -399,6 +408,10 @@ const UITEST_ASKED_CELL: crate::ui::method_sheet::SheetCell =
 /// Cycle as the `slider-*` steps set it before they click: away from the default and from where a
 /// click near the track's left end puts it.
 const UITEST_SLIDER_FROM: f32 = 0.6;
+
+/// The `julia-linked*` steps' c: outside the set, its critical orbit escaping after 17 iterations
+/// (`--render-iter`: the set's count at c 16.90, the Julia count at z = c 15.90).
+const UITEST_JULIA_LINK_C: (f64, f64) = (-0.75, 0.2);
 
 /// The `inside-color` step's solid inside (C1).
 const UITEST_INSIDE_COLOR: [f32; 3] = [0.9, 0.2, 0.6];
@@ -1326,6 +1339,9 @@ fn build_steps() -> Vec<Step> {
         screen("palette-adjust", Screen::PaletteAdjust),
         screen("slider-click", Screen::SliderClick),
         screen("slider-double-click-reset", Screen::SliderDoubleClick),
+        screen("julia-linked-off", Screen::JuliaLinkedOff),
+        screen("julia-linked", Screen::JuliaLinked),
+        screen("julia-linked-fit", Screen::JuliaLinkedFit),
     ]
 }
 
@@ -1741,6 +1757,64 @@ impl FractadyneApp {
         let detail = format!("gray pixels: the view {g:.3}, an export of it {export:?}; the step before (control) {control:?}; passes caused {ran}");
         let ok = g >= 0.99 && export.is_some_and(|e| e >= 0.99) && control.is_some_and(|c| c <= 0.5) && ran == 0;
         checks.push(Check { name: "palette-adjust".into(), verdict: if ok { Verdict::Pass } else { Verdict::Fail }, detail });
+    }
+
+    /// The `julia-linked*` steps (C11): the color at the center of each dual pane in the screenshot,
+    /// where each pane's center is c in its own plane, and the map each pane was drawn under
+    /// (`Perf::view_map`).
+    fn uitest_julia_link_checks(&self, sc: Screen, image: &egui::ColorImage, checks: &mut Vec<Check>) {
+        let [w, h] = image.size;
+        // The mean of a 5x5 block at each pane's center, in the screenshot's physical pixels.
+        let centers = self.perf.layout.dual_panes.zip(self.perf.layout.window).map(|(panes, win)| {
+            let ppp = w as f32 / win.width().max(1.0);
+            panes.map(|r| {
+                let c = r.center();
+                let (cx, cy) = ((c.x * ppp) as i64, (c.y * ppp) as i64);
+                let (mut sum, mut n) = ([0.0f64; 3], 0.0f64);
+                for y in cy - 2..=cy + 2 {
+                    for x in cx - 2..=cx + 2 {
+                        if x >= 0 && y >= 0 && (x as usize) < w && (y as usize) < h {
+                            let p = image.pixels[y as usize * w + x as usize];
+                            sum[0] += p.r() as f64;
+                            sum[1] += p.g() as f64;
+                            sum[2] += p.b() as f64;
+                            n += 1.0;
+                        }
+                    }
+                }
+                sum.map(|s| (s / n.max(1.0) * 10.0).round() / 10.0)
+            })
+        });
+        let apart = centers.map(|[a, b]| (0..3).map(|k| (a[k] - b[k]).abs()).fold(0.0, f64::max));
+        let maps = self.perf.view_map;
+        let follows = match maps {
+            [Some((set, _)), Some((julia, _))] => Some(julia == set.one_iteration_on()),
+            _ => None,
+        };
+        let fitted = maps[0].is_some_and(|(_, window)| window.is_some());
+        let (name, ok) = match sc {
+            Screen::JuliaLinkedOff => (
+                "unlinked, the Julia pane on its own map: z = c a step of the palette from c (control)",
+                apart.is_some_and(|a| a >= 12.0) && follows == Some(false),
+            ),
+            Screen::JuliaLinked => (
+                "linked: the Julia pane colors z = c as the set colors c",
+                apart.is_some_and(|a| a <= 6.0) && follows == Some(true) && !fitted,
+            ),
+            _ => (
+                "linked under a fitted range: the Julia pane takes the set's",
+                apart.is_some_and(|a| a <= 6.0) && follows == Some(true) && fitted,
+            ),
+        };
+        checks.push(Check {
+            name: name.into(),
+            verdict: if ok { Verdict::Pass } else { Verdict::Fail },
+            detail: format!(
+                "pane centers (set, Julia) {centers:?}, largest channel difference {apart:?}; the Julia map is the set's one iteration on: {follows:?}; \
+                 maps: set {:?}, Julia {:?}",
+                maps[0], maps[1]
+            ),
+        });
     }
 
     fn uitest_palette_aa_checks(&self, ut: &UiTest, view: Option<&(Vec<u8>, [u32; 2])>, ran_why: [u64; 7], checks: &mut Vec<Check>) {
@@ -2186,8 +2260,10 @@ impl FractadyneApp {
 
     /// Close every dialog/overlay so each screenshot shows one screen only.
     fn uitest_close_all(&mut self) {
-        // No step inherits the palette-adjust step's gray palette.
+        // No step inherits the palette-adjust step's gray palette...
         self.coloring.palette_adjust = fractadyne_color::adjust::PaletteAdjust::NEUTRAL;
+        // ...or a Julia link (each `julia-linked*` step sets its own).
+        self.coloring.julia_linked = false;
         self.blinken.size = crate::blinken::Size::Off;
         self.blinken.pinned_help = None;
         self.dialogs.help_open = false;
@@ -2826,6 +2902,44 @@ impl FractadyneApp {
             }
             // One event a frame. The moves first: the slider's rect is the last frame's, and a
             // press sent before the panel drew is dropped (so the check fails rather than passes).
+            // Each step changes one thing from the one before: the view and the classic map, then the
+            // link, then the fitted range.
+            Screen::JuliaLinkedOff | Screen::JuliaLinked | Screen::JuliaLinkedFit => {
+                if matches!(s, Screen::JuliaLinkedOff) {
+                    let (cx, cy) = UITEST_JULIA_LINK_C;
+                    self.set_fractal(crate::FractalKind::Mandelbrot);
+                    self.set_show_mode(crate::ShowMode::Both);
+                    self.julia_pin = None;
+                    self.julia_c = UITEST_JULIA_LINK_C;
+                    self.ref_cache[1].ref_pt = None;
+                    let at = |v: f64| fractadyne_core::BigFloat::from_f64(v, 64);
+                    self.viewport.set_center_mag(at(cx), at(cy), 100.0);
+                    self.julia_viewport.set_center_mag(at(cx), at(cy), 100.0);
+                    self.render_cfg.auto_iter = false;
+                    self.render_cfg.max_iter = 2_000;
+                    self.render_cfg.aa = 1;
+                    self.coloring.color_method = crate::ColorMethod::Smooth;
+                    self.coloring.use_custom_palette = false;
+                    self.coloring.use_duotone = false;
+                    self.coloring.use_binary = false;
+                    self.coloring.palette_idx = fractadyne_color::preset_by_id("ember").unwrap_or(0);
+                    // A whole palette in 16 iterations: one iteration is a clear step of it.
+                    self.coloring.cycle = 1.0;
+                    self.coloring.iter_div = 1;
+                    self.coloring.offset = 0.1;
+                    self.coloring.normalize_live = false;
+                    self.coloring.normalize_fit = false;
+                    self.coloring.log_palette = false;
+                    self.coloring.palette_aa = false;
+                    self.anim.palette_anim = crate::PaletteAnim::Off;
+                    self.pointer.settle_t = [-1.0e9, -1.0e9];
+                }
+                self.coloring.julia_linked = !matches!(s, Screen::JuliaLinkedOff);
+                if matches!(s, Screen::JuliaLinkedFit) {
+                    self.coloring.normalize_fit = true;
+                }
+                self.harness.uitest_pointer = [crate::UiPointer::Gone].into_iter().collect();
+            }
             Screen::SliderClick | Screen::SliderDoubleClick => {
                 use crate::UiPointer::{CycleTrackMove, CycleTrackPress, CycleTrackRelease};
                 self.dialogs.right_panel_open = true;
@@ -4204,6 +4318,11 @@ impl FractadyneApp {
         ) = step.kind
         {
             self.uitest_inside_checks(sc, ut, inside_view.as_ref(), ran_why, &mut checks);
+        }
+
+        // ---- the dual view's Julia pane on the set's map (coloring plan C11) ----
+        if let StepKind::Screen(sc @ (Screen::JuliaLinkedOff | Screen::JuliaLinked | Screen::JuliaLinkedFit)) = step.kind {
+            self.uitest_julia_link_checks(sc, image, &mut checks);
         }
 
         // ---- a double-click on a slider's track resets it (user, 2026-11-20) ----

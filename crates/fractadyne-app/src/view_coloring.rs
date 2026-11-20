@@ -103,6 +103,8 @@ pub(crate) struct ViewColoring {
     pub(crate) palette_brightness: f32,
     pub(crate) palette_contrast: f32,
     pub(crate) palette_saturation: f32,
+    /// The dual view's Julia pane on the set's palette map, one iteration on (C11).
+    pub(crate) julia_linked: bool,
 }
 
 impl Default for ViewColoring {
@@ -148,6 +150,7 @@ impl ViewColoring {
             palette_brightness: s.palette_brightness,
             palette_contrast: s.palette_contrast,
             palette_saturation: s.palette_saturation,
+            julia_linked: s.julia_linked,
         }
     }
 
@@ -181,6 +184,7 @@ impl ViewColoring {
             palette_brightness: self.palette_brightness,
             palette_contrast: self.palette_contrast,
             palette_saturation: self.palette_saturation,
+            julia_linked: self.julia_linked,
             ..base.clone()
         }
     }

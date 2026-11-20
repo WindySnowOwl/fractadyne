@@ -209,6 +209,11 @@ pub struct ColoringSpec {
     pub palette_contrast: f32,
     #[serde(default = "default_palette_saturation")]
     pub palette_saturation: f32,
+    /// The dual view's Julia pane colored with the Mandelbrot pane's palette map, one iteration on
+    /// (coloring plan C11): the Julia point z = c then shows the color of the Mandelbrot point c,
+    /// whose orbit it continues. Escape-count coloring only. Off: each pane its own map.
+    #[serde(default)]
+    pub julia_linked: bool,
 }
 
 fn default_palette_saturation() -> f32 {
@@ -750,6 +755,7 @@ impl Default for ColoringSpec {
             palette_brightness: 0.0,
             palette_contrast: 0.0,
             palette_saturation: 1.0,
+            julia_linked: false,
         }
     }
 }

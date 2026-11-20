@@ -516,6 +516,16 @@ impl FractadyneApp {
                     .on_hover_text(tr!(panel_normalize_hover));
                 self.fit_range_checkbox(ui);
                 self.log_scale_checkbox(ui);
+                // C11: the Julia pane on the set's map. Only where there is a Julia pane, and grayed
+                // where it would change no pixel (another method: each plane colors its own values).
+                if self.dual {
+                    ui.add_enabled(
+                        self.coloring.color_method == ColorMethod::Smooth,
+                        egui::Checkbox::new(&mut self.coloring.julia_linked, tr!(panel_julia_linked)),
+                    )
+                    .on_hover_text(tr!(panel_julia_linked_hover))
+                    .on_disabled_hover_text(tr!(panel_julia_linked_method_hover));
+                }
                 labelled(ui, &tr!(panel_animate), |ui| {
                     egui::ComboBox::from_id_salt("panel_animate")
                         .selected_text(self.anim.palette_anim.name())

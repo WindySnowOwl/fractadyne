@@ -347,7 +347,7 @@ pub(crate) const KNOWN_VIEW_KEYS: &[&str] = &[
     "light", "light_angle", "light_height", "glow", "glow_strength", "glow_width",
     "palette_mode", "palette_lo", "palette_hi", "interior_color",
     "normalize_live", "normalize_fit", "log_scale", "palette_aa",
-    "palette_brightness", "palette_contrast", "palette_saturation",
+    "palette_brightness", "palette_contrast", "palette_saturation", "julia_linked",
     // The dual view (2026-11-16, review finding 8): the layout and the Julia pane's own camera,
     // written only for a dual view, so a single view is byte-identical to one written before.
     "dual", "dual_split", "julia_view_center_re", "julia_view_center_im", "julia_view_upp_log2",
@@ -434,6 +434,7 @@ const TYPED_VIEW_KEYS: &[(&str, ValueKind)] = &[
     ("palette_brightness", ValueKind::Float),
     ("palette_contrast", ValueKind::Float),
     ("palette_saturation", ValueKind::Float),
+    ("julia_linked", ValueKind::Flag),
     ("dual", ValueKind::Flag),
     ("dual_split", ValueKind::Float),
     ("julia_view_center_re", ValueKind::BigFloat),

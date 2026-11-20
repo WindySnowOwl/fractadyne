@@ -2888,6 +2888,17 @@ panel-log-scale-off-hover =
     Erfordert Normalisierung: Dies wählt, WIE die Palette auf den gemessenen Fluchtbereich abgebildet wird; bei ausgeschaltetem „Tiefe Farben normalisieren“ (und ohne Export mit --normalize) gibt es also keine Abbildung, die es ändern könnte, und es würde kein einziges Pixel verändern.
 
     „Tiefe Farben normalisieren“ einschalten, um es zu verwenden.
+# The dual view's Julia pane on the set's palette map, one iteration on (coloring plan C11): the
+# checkbox, its tooltip, and its tooltip while grayed (another method than the escape count).
+panel-julia-linked = Julia-Farben an die Menge koppeln
+panel-julia-linked-hover =
+    Die Julia-Ansicht mit der Paletten-Abbildung der Menge färben, um eine Iteration versetzt, sodass beide Ansichten wie ein Bild wirken: Die Farbe unter dem Zeiger in der Menge erscheint im Punkt c der Julia-Ansicht wieder, wo der Julia-Orbit den der Menge fortsetzt.
+
+    Mit „Tiefe Farben normalisieren“ oder „Bereich immer anpassen“ übernimmt die Julia-Ansicht auch den gemessenen Bereich der Menge; ist eine Ansicht viel tiefer als die andere, kann die andere einfarbig erscheinen.
+panel-julia-linked-method-hover =
+    Nur die Fluchtzahl verbindet die beiden Ansichten. Mit dieser Methode färbt jede Ansicht ihre eigenen Werte (Streifen, Falle, Abstand oder Winkel), und die unterscheiden sich zwischen den Ansichten.
+
+    „Glatte Iteration“ wählen, um es zu verwenden.
 # The palette animation: its kind, then its speed.
 panel-animate = Animieren
 panel-anim-speed = Tempo

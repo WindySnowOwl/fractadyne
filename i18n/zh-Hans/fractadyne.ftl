@@ -2808,6 +2808,17 @@ panel-log-scale-off-hover =
     需要先归一化：此选项决定调色板“如何”映射到实测的逃逸范围，因此在关闭“归一化深层颜色”（且没有 --normalize 导出）时，它没有可以改变的映射，不会改变任何一个像素。
 
     开启“归一化深层颜色”即可使用它。
+# The dual view's Julia pane on the set's palette map, one iteration on (coloring plan C11): the
+# checkbox, its tooltip, and its tooltip while grayed (another method than the escape count).
+panel-julia-linked = 将 Julia 颜色与集合关联
+panel-julia-linked-hover =
+    用集合的调色板映射为 Julia 视图着色，并前移一次迭代，使两个视图读起来像一幅画：集合中指针下的颜色会在 Julia 视图的点 c 处再次出现，Julia 轨道在那里延续集合的轨道。
+
+    开启“归一化深层颜色”或“始终适配范围”时，Julia 视图也采用集合测得的范围；若一个视图比另一个深得多，另一个可能显示为单一颜色。
+panel-julia-linked-method-hover =
+    只有逃逸次数能把两个视图关联起来。在此方法下，每个视图按自己的值着色（条纹、陷阱、距离或角度），这些值在两个视图间各不相同。
+
+    选择“平滑迭代”即可使用。
 # The palette animation: its kind, then its speed.
 panel-animate = 动画
 panel-anim-speed = 速度

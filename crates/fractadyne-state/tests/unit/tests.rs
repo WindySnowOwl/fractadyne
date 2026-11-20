@@ -344,6 +344,7 @@ fn every_session_field_survives_save_and_reload() {
         palette_brightness: 0.35,
         palette_contrast: -0.45,
         palette_saturation: 1.25,
+        julia_linked: true,
     };
     let want = SessionState {
         state_version: STATE_FORMAT_VERSION,
@@ -799,7 +800,7 @@ fn a_session_written_before_the_coloring_spec_reads_and_writes_the_same_keys() {
     // defaults and written back as such. The file itself stays as that build wrote it.
     const SINCE: &[&str] = &[
         "interior", "interior_palette", "interior_color", "interior_fit", "palette_aa",
-        "palette_brightness", "palette_contrast", "palette_saturation",
+        "palette_brightness", "palette_contrast", "palette_saturation", "julia_linked",
     ];
     assert_eq!(keys.len(), 27 + SINCE.len(), "a coloring field was added: list it in SINCE");
     for k in keys.keys() {

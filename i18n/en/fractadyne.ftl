@@ -3099,6 +3099,17 @@ panel-log-scale-off-hover =
     Requires normalization: this chooses HOW the palette is mapped to the measured escape range, so with 'Normalize deep colors' off (and no --normalize export) there is no mapping for it to change and it would not alter a single pixel.
 
     Turn on 'Normalize deep colors' to use it.
+# The dual view's Julia pane on the set's palette map, one iteration on (coloring plan C11): the
+# checkbox, its tooltip, and its tooltip while grayed (another method than the escape count).
+panel-julia-linked = Link Julia colors to the set
+panel-julia-linked-hover =
+    Color the Julia view with the set's palette mapping, one iteration on, so the two views read as one picture: the color under the pointer in the set reappears at the point c in the Julia view, where the Julia orbit continues the set's.
+
+    With 'Normalize deep colors' or 'Always fit range' the Julia view takes the set's measured range too, so when one view is far deeper than the other, the other can show as a single color.
+panel-julia-linked-method-hover =
+    Only the escape count links the two views. Under this method each view colors its own values (its stripes, trap, distance or angle), and those differ between the views.
+
+    Choose Smooth iteration to use it.
 # The palette animation: its kind, then its speed.
 panel-animate = Animate
 panel-anim-speed = Speed
