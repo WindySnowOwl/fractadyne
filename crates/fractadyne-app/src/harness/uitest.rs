@@ -382,12 +382,23 @@ enum Screen {
     /// The palette's saturation at 0 on the same view (`fractadyne_color::adjust`): every pixel
     /// gray, the step before's colored (the control), an export gray too, and no pass.
     PaletteAdjust,
+    /// Cycle at 0.6, then one click on the Cycle slider's track near its left end, through egui's
+    /// input: the value follows the click (the CONTROL: the pointer reaches the slider)...
+    SliderClick,
+    /// ...and Cycle at 0.6 again, then a double-click there: Cycle back at a new session's value.
+    /// egui's slider senses only drags on its track, so its own `double_clicked` never fired there
+    /// and only the number reset (`panels::slider_double_clicked`, user 2026-11-20).
+    SliderDoubleClick,
 }
 
 /// The method sheet cell the `method-sheet-deep-asked` steps ask for: Decomposition, which no
 /// frame accumulates (B7 step 4).
 const UITEST_ASKED_CELL: crate::ui::method_sheet::SheetCell =
     crate::ui::method_sheet::SheetCell { method: crate::ColorMethod::Decomposition, trap: None, stripe_freq: None };
+
+/// Cycle as the `slider-*` steps set it before they click: away from the default and from where a
+/// click near the track's left end puts it.
+const UITEST_SLIDER_FROM: f32 = 0.6;
 
 /// The `inside-color` step's solid inside (C1).
 const UITEST_INSIDE_COLOR: [f32; 3] = [0.9, 0.2, 0.6];
@@ -1313,6 +1324,8 @@ fn build_steps() -> Vec<Step> {
         screen("palette-aa-base", Screen::PaletteAaBase),
         screen("palette-aa", Screen::PaletteAa),
         screen("palette-adjust", Screen::PaletteAdjust),
+        screen("slider-click", Screen::SliderClick),
+        screen("slider-double-click-reset", Screen::SliderDoubleClick),
     ]
 }
 
@@ -2811,6 +2824,20 @@ impl FractadyneApp {
                     fractadyne_color::adjust::PaletteAdjust { saturation: 0.0, ..fractadyne_color::adjust::PaletteAdjust::NEUTRAL };
                 self.dialogs.right_panel_open = true;
             }
+            // One event a frame. The moves first: the slider's rect is the last frame's, and a
+            // press sent before the panel drew is dropped (so the check fails rather than passes).
+            Screen::SliderClick | Screen::SliderDoubleClick => {
+                use crate::UiPointer::{CycleTrackMove, CycleTrackPress, CycleTrackRelease};
+                self.dialogs.right_panel_open = true;
+                self.coloring.cycle = UITEST_SLIDER_FROM;
+                let clicks = if matches!(s, Screen::SliderClick) { 1 } else { 2 };
+                let mut q: std::collections::VecDeque<_> = std::iter::repeat(CycleTrackMove).take(6).collect();
+                for _ in 0..clicks {
+                    q.push_back(CycleTrackPress);
+                    q.push_back(CycleTrackRelease);
+                }
+                self.harness.uitest_pointer = q;
+            }
             Screen::MethodSheetDeepAsked | Screen::MethodSheetDeepAskedDone => {
                 self.method_sheet.open = true;
                 self.harness.uitest_sheet_budget = Some(0.0);
@@ -4177,6 +4204,33 @@ impl FractadyneApp {
         ) = step.kind
         {
             self.uitest_inside_checks(sc, ut, inside_view.as_ref(), ran_why, &mut checks);
+        }
+
+        // ---- a double-click on a slider's track resets it (user, 2026-11-20) ----
+        if let StepKind::Screen(sc @ (Screen::SliderClick | Screen::SliderDoubleClick)) = step.kind {
+            let v = self.coloring.cycle;
+            let d = fractadyne_state::ColoringSpec::default().cycle;
+            let (name, ok) = if matches!(sc, Screen::SliderClick) {
+                // Near the track's left end: well below both the 0.6 it started at and the default.
+                ("a click on the Cycle slider's track sets it there (control)", v < 0.15)
+            } else {
+                ("a double-click on the Cycle slider's track resets it", v == d)
+            };
+            checks.push(Check {
+                name: name.into(),
+                verdict: if ok { Verdict::Pass } else { Verdict::Fail },
+                detail: format!(
+                    "Cycle {v} (it was {UITEST_SLIDER_FROM}; a new session's {d}); the slider at {:?}; {} pointer events left; presses (P) and releases (R) fed at {}",
+                    self.perf.layout.cycle_slider,
+                    self.harness.uitest_pointer.len(),
+                    self.harness
+                        .uitest_slider_times
+                        .iter()
+                        .map(|(down, t)| format!("{}{t:.3}", if *down { "P" } else { "R" }))
+                        .collect::<Vec<_>>()
+                        .join(" ")
+                ),
+            });
         }
 
         // ---- the palette anti-aliased (coloring plan C8) ----

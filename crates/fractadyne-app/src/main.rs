@@ -5116,6 +5116,9 @@ pub(crate) struct LayoutRects {
     pub(crate) central: Option<egui::Rect>,
     pub(crate) right_panel: Option<egui::Rect>,
     pub(crate) status_bar: Option<egui::Rect>,
+    /// The Coloring section's Cycle slider (its track and number), when it drew wholly inside the
+    /// panel's visible area: `--uitest`'s `slider-*` steps click and double-click its track.
+    pub(crate) cycle_slider: Option<egui::Rect>,
 }
 
 impl LayoutRects {
@@ -8175,6 +8178,7 @@ impl FractadyneApp {
                 uitest_panel_w: None,
                 uitest_async_key: None,
                 uitest_pointer: Default::default(),
+                uitest_slider_times: Vec::new(),
                 uitest_sheet_budget: None,
                 uitest_sheet_hold: false,
                 soak,
@@ -18019,6 +18023,9 @@ impl eframe::App for FractadyneApp {
     fn raw_input_hook(&mut self, ctx: &egui::Context, raw_input: &mut egui::RawInput) {
         if let Some(p) = self.harness.uitest_pointer.pop_front() {
             if let Some(e) = self.life_pointer_event(ctx, p) {
+                if let (crate::UiPointer::CycleTrackPress | crate::UiPointer::CycleTrackRelease, Some(t)) = (p, raw_input.time) {
+                    self.harness.uitest_slider_times.push((matches!(p, crate::UiPointer::CycleTrackPress), t));
+                }
                 raw_input.events.push(e);
             }
         }

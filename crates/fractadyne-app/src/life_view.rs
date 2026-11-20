@@ -45,6 +45,12 @@ pub(crate) enum UiPointer {
     ViewMove(f32, f32),
     ViewPress(f32, f32),
     ViewRelease(f32, f32),
+    /// The pointer on the Coloring section's Cycle slider, on its track 12 points in from the left
+    /// end, where the last frame drew it (`LayoutRects::cycle_slider`): moved there, the primary
+    /// button pressed there, released there. Nothing when it did not draw on screen.
+    CycleTrackMove,
+    CycleTrackPress,
+    CycleTrackRelease,
 }
 
 /// A change to the universe, waiting for a current copy to be made to.
@@ -458,6 +464,19 @@ impl FractadyneApp {
                 return self.method_sheet.preview.row_rect(c).map(|r| egui::Event::PointerMoved(r.center()));
             }
             UiPointer::Gone => return Some(egui::Event::PointerGone),
+            UiPointer::CycleTrackMove | UiPointer::CycleTrackPress | UiPointer::CycleTrackRelease => {
+                let r = self.perf.layout.cycle_slider?;
+                let pos = egui::pos2(r.left() + 12.0, r.center().y);
+                return Some(match p {
+                    UiPointer::CycleTrackMove => egui::Event::PointerMoved(pos),
+                    _ => egui::Event::PointerButton {
+                        pos,
+                        button: egui::PointerButton::Primary,
+                        pressed: matches!(p, UiPointer::CycleTrackPress),
+                        modifiers: egui::Modifiers::NONE,
+                    },
+                });
+            }
             UiPointer::ViewMove(fx, fy) | UiPointer::ViewPress(fx, fy) | UiPointer::ViewRelease(fx, fy) => {
                 let r = self.perf.layout.central?;
                 let pos = r.min + egui::vec2(r.width() * fx, r.height() * fy);
@@ -498,7 +517,10 @@ impl FractadyneApp {
             | UiPointer::OnSheetCell(_)
             | UiPointer::ViewMove(..)
             | UiPointer::ViewPress(..)
-            | UiPointer::ViewRelease(..) => return None,
+            | UiPointer::ViewRelease(..)
+            | UiPointer::CycleTrackMove
+            | UiPointer::CycleTrackPress
+            | UiPointer::CycleTrackRelease => return None,
         })
     }
 
