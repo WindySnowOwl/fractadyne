@@ -1,0 +1,68 @@
+# Fractadyne livetest tour: one dive through the precision bands (direct, df32, floatexp) at a point
+# with detail all the way down, for the coloring plan's live method tour (B1b). Run it once per
+# coloring method:
+#
+#   fractadyne --livetest tours/coloring-methods.toml --method stripe --size 480x270
+#
+# `--method` colors the tour by that method (it overrides [render.coloring]); what a frame
+# accumulates follows the method, and with it the series, BLA and the walk the live path may take.
+# Each hold sits in one band, so the live view of every method is checked there against an offline
+# render of the same view. Each method has its own baseline (benchmarks/livetest-coloring-methods-
+# <method>-WxH.json; Smooth's has no method in its name). scripts/coloring_method_tour.py runs them all.
+format_version = 2
+name = "Coloring methods through the bands"
+
+[render]
+size = "960x540"
+fps = 30
+ss = 1
+
+# `settled` stops the tour clock at each hold until the view resolves, up to the timeout.
+[playback]
+pace = "settled"
+settle_timeout = 15
+
+[[location]]
+id = "dendrite"
+re = "-1.178853950372678747911373866849720956148855"
+im = "0.1853420232408490265512092752061929308714979"
+note = "The coloring matrix's corpus07 view: dendrites at every depth to 1e30x and past."
+
+# --- direct: the overview, then 1e3x ---
+[[keyframe]]
+id = "open"
+t = 0
+location = "dendrite"
+zoom = 2
+max_iter = 1000
+hold = 3
+
+[[keyframe]]
+id = "direct"
+t = 6
+zoom = 1000
+max_iter = 3000
+hold = 3
+
+# --- df32 (1e4x to 1e28x) ---
+[[keyframe]]
+id = "df32"
+t = 12
+zoom = "1e10"
+max_iter = 8000
+hold = 3
+
+[[keyframe]]
+id = "df32-deep"
+t = 18
+zoom = "1e22"
+max_iter = 15000
+hold = 3
+
+# --- floatexp (past 1e28x) ---
+[[keyframe]]
+id = "floatexp"
+t = 25
+zoom = "1e32"
+max_iter = 25000
+hold = 4

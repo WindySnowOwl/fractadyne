@@ -309,13 +309,24 @@ struct LivetestBaseline {
     checkpoints: std::collections::BTreeMap<String, BaseCp>,
 }
 
-/// Per (tour, size) — a `--segment` run reaches a subset of the same checkpoint ids and compares
-/// only those, but a different SIZE is a different live path and deserves its own baseline.
-fn baseline_path(tour: &std::path::Path, size: [u32; 2]) -> std::path::PathBuf {
-    let stem = tour.file_stem().and_then(|s| s.to_str()).unwrap_or("tour");
-    crate::harness::selftest::anchored(LIVETEST_BASELINE_DIR)
-        .join(format!("livetest-{stem}-{}x{}.json", size[0], size[1]))
+/// Per (tour, size, method) — a `--segment` run reaches a subset of the same checkpoint ids and
+/// compares only those, but a different SIZE is a different live path and deserves its own
+/// baseline, and so does another coloring METHOD (coloring plan B1b: what a frame accumulates, and
+/// so the series, BLA and the walk it may take, follows the method). Smooth keeps the name the
+/// baselines had before methods, so those stay valid.
+fn baseline_path(tour: &std::path::Path, size: [u32; 2], method: crate::ColorMethod) -> std::path::PathBuf {
+    crate::harness::selftest::anchored(LIVETEST_BASELINE_DIR).join(baseline_name(tour, size, method))
 }
+
+fn baseline_name(tour: &std::path::Path, size: [u32; 2], method: crate::ColorMethod) -> String {
+    let stem = tour.file_stem().and_then(|s| s.to_str()).unwrap_or("tour");
+    let m = if method == crate::ColorMethod::Smooth { String::new() } else { format!("-{}", method.key()) };
+    format!("livetest-{stem}{m}-{}x{}.json", size[0], size[1])
+}
+
+#[cfg(test)]
+#[path = "../../tests/unit/harness/livetest/baseline_tests.rs"]
+mod baseline_tests;
 
 impl FractadyneApp {
     /// What the status bar would say about view 0 now (`limit_status`'s label), with the escape
@@ -372,6 +383,20 @@ impl FractadyneApp {
                 crate::exit(2);
             }
         };
+        // ⭐THE COLORING UNDER TEST (coloring plan B1b): Smooth unless the tour's `[render.coloring]`
+        // says otherwise, and `--method` over both, so one tour runs every method. What the frame
+        // accumulates follows the method, and with it the series, BLA and the walk the live path
+        // may take, which is what a method tour exercises. A method the family cannot draw is
+        // refused: a run that colored something else would pass on a method it never ran.
+        self.apply_tour_coloring(&pb.render);
+        if let Some(m) = self.harness.livetest_method {
+            self.coloring.color_method = m;
+        }
+        let method = self.coloring.color_method;
+        if !method.offered_for(self.fractal.caps()) {
+            eprintln!("livetest: {} cannot be colored by method {}", self.fractal.display_name(), method.key());
+            crate::exit(2);
+        }
         // Optional chapter window (reuses the script's own [[segment]] definitions).
         let (t_from, t_to) = match segment {
             Some(name) => match pb.find_segment(name) {
@@ -401,10 +426,11 @@ impl FractadyneApp {
         pending.reverse(); // pop() takes the earliest
 
         println!(
-            "Fractadyne livetest — {} · {}×{} · {} checkpoint(s) over {:.0}s{}",
+            "Fractadyne livetest — {} · {}×{} · method {} · {} checkpoint(s) over {:.0}s{}",
             tour.display(),
             resolution[0],
             resolution[1],
+            method.key(),
             pending.len(),
             t_to - t_from,
             if quick { " · oracle OFF (--quick)" } else { "" },
@@ -425,7 +451,8 @@ impl FractadyneApp {
         let mut results: Vec<Checkpoint> = Vec::new();
         // The last frame that really re-iterated: its pixels ARE what the screen shows until the
         // next one (everything between is a reprojection of it).
-        let mut last_real: Option<(Vec<f32>, [u32; 2], f64)> = None; // (pixels, res, wall time)
+        // (pixels, res, wall time, the request that rendered them)
+        let mut last_real: Option<(Vec<f32>, [u32; 2], f64, fractadyne_gpu::ExportRequest)> = None;
         let mut fail_dumps = 0usize;
 
         loop {
@@ -489,7 +516,7 @@ impl FractadyneApp {
                     let packed = ((frac.to_bits() as u64) << 32) | params.max_iter as u64;
                     self.perf.maxiter_sink[0]
                         .store(packed, std::sync::atomic::Ordering::SeqCst);
-                    last_real = Some((r.pixels, [r.width, r.height], t_base.elapsed().as_secs_f64()));
+                    last_real = Some((r.pixels, [r.width, r.height], t_base.elapsed().as_secs_f64(), req.clone()));
                 }
                 gpu_ms = t_gpu.elapsed().as_secs_f64() * 1000.0;
                 // `render_iter` read the frame back, so every dispatch it encoded has completed —
@@ -568,7 +595,7 @@ impl FractadyneApp {
                         ),
                     );
                 }
-                let Some((live_px, live_res, real_at)) = last_real.clone() else { continue };
+                let Some((live_px, live_res, real_at, live_req)) = last_real.clone() else { continue };
                 let stale_ms = (t_base.elapsed().as_secs_f64() - real_at) * 1000.0;
                 let live_black = interior_frac(&live_px);
                 let live_esc = escape_range(&live_px);
@@ -610,12 +637,35 @@ impl FractadyneApp {
                         truth_ran = true;
                         // Perceptual diff through the REAL color pass, so the number is what a
                         // viewer would see rather than a raw escape-count distance.
-                        let lc = fractadyne_gpu::color_iter_buffer(device, queue, &req, &live_px)
-                            .ok()
-                            .map(|r| fractadyne_export::to_srgb8(&r.pixels));
-                        let tc = fractadyne_gpu::color_iter_buffer(device, queue, &req, &t.pixels)
-                            .ok()
-                            .map(|r| fractadyne_export::to_srgb8(&r.pixels));
+                        // ⭐A method that colors by an orbit statistic reads the AUX lane, which
+                        // `render_iter` does not return, so the main lane alone would color it
+                        // wrong (B1b): both frames are rendered again, colored, from their own
+                        // requests — the live frame's (`params_to_request`: the whole frame, the
+                        // live path's statistics, series and BLA) under the oracle's palette map,
+                        // so the colors differ only where the iterations do.
+                        let (lc, tc) = if method.reads_aux() {
+                            let mut lr = live_req.clone();
+                            (lr.cycle, lr.offset, lr.norm_mode, lr.norm_lo) = (req.cycle, req.offset, req.norm_mode, req.norm_lo);
+                            lr.palette_fade = req.palette_fade;
+                            lr.aa_palette = req.aa_palette;
+                            let colored = |r: &fractadyne_gpu::ExportRequest| {
+                                let (p, c) = (std::sync::atomic::AtomicU32::new(0), std::sync::atomic::AtomicBool::new(false));
+                                fractadyne_gpu::render_export(device, queue, r, &p, &c)
+                                    .ok()
+                                    .filter(|x| [x.width, x.height] == live_res)
+                                    .map(|x| fractadyne_export::to_srgb8(&x.pixels))
+                            };
+                            (colored(&lr), colored(&req))
+                        } else {
+                            (
+                                fractadyne_gpu::color_iter_buffer(device, queue, &req, &live_px)
+                                    .ok()
+                                    .map(|r| fractadyne_export::to_srgb8(&r.pixels)),
+                                fractadyne_gpu::color_iter_buffer(device, queue, &req, &t.pixels)
+                                    .ok()
+                                    .map(|r| fractadyne_export::to_srgb8(&r.pixels)),
+                            )
+                        };
                         if let (Some(l), Some(tt)) = (&lc, &tc) {
                             let (mx, mean) = img_diff(l, tt);
                             srgb_max = mx;
@@ -882,9 +932,9 @@ impl FractadyneApp {
             println!("\n--quick: the oracle is off, so nothing was judged (not compared, not blessed).");
             crate::harness::verdict::VACUOUS
         } else if self.selftest.bless {
-            if self.bless_livetest(&results, tour, resolution) == 0 { crate::harness::verdict::PASS } else { crate::harness::verdict::RED }
+            if self.bless_livetest(&results, tour, resolution, method) == 0 { crate::harness::verdict::PASS } else { crate::harness::verdict::RED }
         } else {
-            let drift = self.compare_livetest(&results, tour, resolution, fails);
+            let drift = self.compare_livetest(&results, tour, resolution, method, fails);
             crate::harness::verdict::code(drift > 0, vacuous)
         };
         println!("--livetest: VERDICT {}", crate::harness::verdict::word(code));
@@ -896,6 +946,7 @@ impl FractadyneApp {
         results: &[Checkpoint],
         tour: &std::path::Path,
         size: [u32; 2],
+        method: crate::ColorMethod,
     ) -> usize {
         let baseline = LivetestBaseline {
             version: crate::version_string(),
@@ -929,7 +980,7 @@ impl FractadyneApp {
                 })
                 .collect(),
         };
-        let path = baseline_path(tour, size);
+        let path = baseline_path(tour, size, method);
         if let Some(d) = path.parent() {
             let _ = std::fs::create_dir_all(d);
         }
@@ -960,9 +1011,10 @@ impl FractadyneApp {
         results: &[Checkpoint],
         tour: &std::path::Path,
         size: [u32; 2],
+        method: crate::ColorMethod,
         fails: usize,
     ) -> usize {
-        let path = baseline_path(tour, size);
+        let path = baseline_path(tour, size, method);
         let baseline: LivetestBaseline = match std::fs::read_to_string(&path)
             .ok()
             .and_then(|t| serde_json::from_str(&t).ok())

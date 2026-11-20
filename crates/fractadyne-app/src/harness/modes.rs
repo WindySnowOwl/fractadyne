@@ -112,6 +112,9 @@ pub(crate) struct HarnessModes {
     pub(crate) livetest: Option<std::path::PathBuf>,
     /// `--quick` with `--livetest`: skip the offline oracle (context/black metrics only).
     pub(crate) livetest_quick: bool,
+    /// `--method KEY` with `--livetest`: the coloring method the tour plays under, over the tour's
+    /// own `[render.coloring]` (coloring plan B1b: one tour, every method).
+    pub(crate) livetest_method: Option<crate::ColorMethod>,
     /// CLI `--reusetest`: measure reuse-first-zoom reprojection staleness vs Δ-octaves, exit.
     pub(crate) reusetest: bool,
     pub(crate) reusetest_done: bool,

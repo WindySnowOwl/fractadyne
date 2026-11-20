@@ -7824,6 +7824,15 @@ impl FractadyneApp {
             || auto_render
             || auto_benchmark;
         let livetest_quick = args.iter().any(|a| a == "--quick");
+        // `--livetest TOUR --method KEY` (coloring plan B1b). An unknown key is fatal: a silent
+        // Smooth would pass a method tour that never ran the method.
+        let livetest_method = livetest.as_ref().and(val("--method")).map(|m| match ColorMethod::parse_key(m) {
+            Some(k) => k,
+            None => {
+                eprintln!("fractadyne: --method: unknown coloring \"{m}\".");
+                crate::exit(2)
+            }
+        });
         let frametest_steps = val("--steps").and_then(|s| s.parse().ok()).unwrap_or(40u32);
         let frametest_hold = val("--hold").and_then(|s| s.parse().ok()).unwrap_or(4u32);
         let frametest_dive = val("--dive").and_then(|s| s.parse::<f64>().ok()).unwrap_or(30.0);
@@ -8190,6 +8199,7 @@ impl FractadyneApp {
                 divetest,
                 livetest,
                 livetest_quick,
+                livetest_method,
                 shot,
                 uitest,
                 uitest_central_w: None,
