@@ -2462,6 +2462,8 @@ formula-dialog-text = Teks
 formula-dialog-text-hover = Sunting rumus sebagai teks
 # The tooltip of the "LaTeX" button (the button's own text stays LaTeX).
 formula-dialog-latex-hover = Salin rumus sebagai LaTeX, sesuai tata letaknya di sini
+formula-dialog-copy = Salin
+formula-dialog-copy-hover = Salin rumus sebagai teks, dengan parameternya sebagai komentar, untuk ditempel di sebuah kiriman atau kembali ke editor ini
 # The drop-down list of example formulas (the collection).
 formula-dialog-examples = Contoh
 # Help under the formula in Textbook mode. The characters / ^ ( are what the user types: keep them.

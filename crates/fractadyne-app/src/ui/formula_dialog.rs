@@ -35,6 +35,8 @@ pub(crate) struct FormulaDialog {
     /// The starting view of the entry last loaded (from the collection or the library), and the
     /// text it came with: Apply goes there while the text is still that entry's.
     pub(crate) loaded_view: Option<(String, StartView)>,
+    /// The text Copy last put on the clipboard: "Copied" shows while the formula is still that.
+    pub(crate) copied: Option<String>,
 }
 
 /// A formula waiting for its pipelines (`fractadyne_gpu::compile_custom_async`).
@@ -61,9 +63,27 @@ impl Default for FormulaDialog {
             pending: None,
             save_name: String::new(),
             loaded_view: None,
+            copied: None,
         }
     }
 }
+
+/// The formula as text for the clipboard: the source as written, then each parameter it reads as a
+/// comment (`; p1 = 0.5, -0.25`). The parser skips comments, so the text pastes back into the
+/// editor as the same formula, and whoever reads it, in a post or a message, has the values it was
+/// drawn with. An empty part of a parameter reads 0, as Apply reads it.
+pub(crate) fn clipboard_text(source: &str, params: &[(String, String)]) -> String {
+    let mut s = source.trim_end().to_string();
+    let part = |v: &str| if v.trim().is_empty() { "0".to_string() } else { v.trim().to_string() };
+    for (i, (re, im)) in params.iter().enumerate() {
+        s.push_str(&format!("\n; p{} = {}, {}", i + 1, part(re), part(im)));
+    }
+    s
+}
+
+#[cfg(test)]
+#[path = "../../tests/unit/ui/formula_dialog/tests.rs"]
+mod tests;
 
 impl FormulaDialog {
     fn set_params(&mut self, params: &[(f64, f64)]) {
@@ -214,7 +234,7 @@ impl FractadyneApp {
         }
         let mut open = true;
         let mut apply = false;
-        let (mut save, mut library) = (false, false);
+        let (mut save, mut library, mut copy) = (false, false, false);
         let mut example: Option<usize> = None;
         // The syntax check runs on every frame the dialog is open: parsing is microseconds, and a
         // message that describes the text on screen can never be stale.
@@ -245,6 +265,11 @@ impl FractadyneApp {
                         {
                             ui.ctx().copy_text(crate::ui::textbook::latex::latex(&self.formula_dialog.source));
                         }
+                        // The formula as text, in either mode: to paste into a post, or back here.
+                        copy = ui
+                            .small_button(format!("{} {}", crate::icons::COPY, tr!(formula_dialog_copy)))
+                            .on_hover_text(tr!(formula_dialog_copy_hover))
+                            .clicked();
                         // The collection, by category: picking one loads it (and its view, which
                         // Apply goes to while the text is unchanged).
                         egui::ComboBox::from_id_salt("formula_examples")
@@ -405,8 +430,15 @@ impl FractadyneApp {
                         .on_hover_text(tr!(formula_dialog_apply_hover))
                         .clicked();
                     // Always laid out, blank when idle, so the row does not reflow as it comes and
-                    // goes.
-                    let note = if compiling { tr!(formula_dialog_compiling) } else { String::new() };
+                    // goes. "Copied" while the formula is still the text Copy took.
+                    let copied = self.formula_dialog.copied.as_deref() == Some(self.formula_dialog.source.as_str());
+                    let note = if compiling {
+                        tr!(formula_dialog_compiling)
+                    } else if copied {
+                        tr!(dlg_share_copied)
+                    } else {
+                        String::new()
+                    };
                     ui.label(egui::RichText::new(note).weak().small());
                 });
                 ui.separator();
@@ -434,6 +466,10 @@ impl FractadyneApp {
                         .clicked();
                 });
             });
+        if copy {
+            ctx.copy_text(clipboard_text(&self.formula_dialog.source, &self.formula_dialog.params[..used]));
+            self.formula_dialog.copied = Some(self.formula_dialog.source.clone());
+        }
         if let Some(e) = example.and_then(|i| crate::formula_library::collection().get(i)) {
             // Its name, not the entry last loaded's: saving an example must not update that entry.
             self.formula_dialog.load_entry(e);

@@ -2510,6 +2510,8 @@ formula-dialog-text = Metin
 formula-dialog-text-hover = Formülü metin olarak düzenle
 # The tooltip of the "LaTeX" button (the button's own text stays LaTeX).
 formula-dialog-latex-hover = Formülü burada dizildiği gibi LaTeX olarak kopyala
+formula-dialog-copy = Kopyala
+formula-dialog-copy-hover = Formülü, parametreleri yorum olarak, metin halinde kopyala: bir gönderiye ya da yeniden bu düzenleyiciye yapıştırmak için
 # The drop-down list of example formulas (the collection).
 formula-dialog-examples = Örnekler
 # Help under the formula in Textbook mode. The characters / ^ ( are what the user types: keep them.

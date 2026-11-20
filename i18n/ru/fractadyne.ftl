@@ -2564,6 +2564,8 @@ formula-dialog-text = Текст
 formula-dialog-text-hover = Править формулу как текст
 # The tooltip of the "LaTeX" button (the button's own text stays LaTeX).
 formula-dialog-latex-hover = Скопировать формулу как LaTeX — в том виде, как она набрана здесь
+formula-dialog-copy = Копировать
+formula-dialog-copy-hover = Скопировать формулу как текст, с параметрами в комментариях, чтобы вставить её в сообщение или обратно в этот редактор
 # The drop-down list of example formulas (the collection).
 formula-dialog-examples = Примеры
 # Help under the formula in Textbook mode. The characters / ^ ( are what the user types: keep them.

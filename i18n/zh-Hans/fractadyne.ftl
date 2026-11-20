@@ -2463,6 +2463,8 @@ formula-dialog-text = 文本
 formula-dialog-text-hover = 以文本形式编辑公式
 # The tooltip of the "LaTeX" button (the button's own text stays LaTeX).
 formula-dialog-latex-hover = 按此处的排版样子，将公式复制为 LaTeX
+formula-dialog-copy = 复制
+formula-dialog-copy-hover = 将公式复制为文本，参数以注释形式附上，可粘贴到帖子中或贴回此编辑器
 # The drop-down list of example formulas (the collection).
 formula-dialog-examples = 示例
 # Help under the formula in Textbook mode. The characters / ^ ( are what the user types: keep them.

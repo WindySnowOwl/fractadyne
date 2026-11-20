@@ -10,6 +10,14 @@ new functional enhancement; a **minor** bump (e.g. 0.2.0) marks a milestone that
 run of patch releases. The `0.2.0` entry summarizes **0.1.29 – 0.1.68** by theme — per-version
 detail is in the git history.
 
+## 0.3.1 (unreleased)
+
+- **Copy a custom formula as text.** The Custom formula dialog has a Copy button, in Text and
+  Textbook mode alike, that puts the formula on the clipboard as text, so you can share it in a
+  post or a message: the formula as written, then each parameter it uses as a comment
+  (`; p1 = 0.5, 0`). Pasted back into the dialog it reads as the same formula, since comments are
+  skipped. "Copied to clipboard" shows beside Apply until the formula changes.
+
 ## 0.3.0 (2026-11-19)
 
 0.3.0 rolls up two runs of pre-releases. The 0.2.41 series, `v0.2.41-beta.1` to
