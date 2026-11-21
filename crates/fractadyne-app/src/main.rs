@@ -3330,6 +3330,9 @@ pub(crate) mod slider_range {
     pub(crate) const GLOW_STRENGTH: RangeInclusive<f32> = 0.0..=1.0;
     /// Band width (`--glow-width`).
     pub(crate) const GLOW_WIDTH: RangeInclusive<f32> = 0.15..=4.0;
+    /// Edge shading's width in output pixels and its strength (`--edge-width`, `--edge-strength`).
+    pub(crate) const EDGE_WIDTH: RangeInclusive<f32> = 0.25..=32.0;
+    pub(crate) const EDGE_STRENGTH: RangeInclusive<f32> = 0.0..=1.0;
     /// Stripe density (`--stripe-freq`).
     pub(crate) const STRIPE_FREQ: RangeInclusive<f32> = 1.0..=24.0;
     /// The palette's brightness, contrast and saturation (`--palette-brightness`, ...;
@@ -6375,6 +6378,31 @@ struct EffectsConfig {
     de_width: f32,
     de_anim: bool,
     de_phase: f32, // runtime (animated)
+    /// Edge shading (coloring plan C3): on; toward the inside's color instead of `edge_color`;
+    /// its width in output pixels, strength and curve.
+    edge: bool,
+    edge_inside: bool,
+    edge_width: f32,
+    edge_strength: f32,
+    edge_curve: fractadyne_core::coloring::EdgeCurve,
+    edge_color: [f32; 3],
+}
+
+impl EffectsConfig {
+    /// The edge shading the color pass draws (coloring plan C3).
+    fn edge_shade(&self) -> fractadyne_gpu::EdgeShade {
+        fractadyne_gpu::EdgeShade {
+            mode: match (self.edge, self.edge_inside) {
+                (false, _) => fractadyne_gpu::EDGE_OFF,
+                (true, false) => fractadyne_gpu::EDGE_COLOR,
+                (true, true) => fractadyne_gpu::EDGE_INSIDE,
+            },
+            curve: self.edge_curve.gpu_id(),
+            width: self.edge_width,
+            strength: self.edge_strength,
+            color: self.edge_color,
+        }
+    }
 }
 
 /// Auto-zoom autopilot state (transient except `dive_log2`, which is persisted). Grouped from the
@@ -6937,6 +6965,9 @@ struct DialogState {
     /// `--uitest` only: holds the panel's Effects section open (`Some(true)`, the `no-derivative`
     /// screen), and closes it once as the walk leaves (`Some(false)`), as `uitest_advanced_open`.
     uitest_effects_open: Option<bool>,
+    /// `--uitest` only: scroll the panel to the Effects header while it is held open (the
+    /// `edge-shade-panel` screen, whose rows are below the fold otherwise).
+    uitest_effects_scroll: bool,
     /// Minimap overview enabled (persisted).
     minimap: bool,
     /// "Script to current view" export dialog open, plus its inputs (a notation caption and the
@@ -8336,6 +8367,7 @@ impl FractadyneApp {
                 right_panel_open: s.right_panel_open,
                 uitest_advanced_open: None,
                 uitest_effects_open: None,
+                uitest_effects_scroll: false,
                 minimap: s.minimap,
                 script_export_open: false,
                 script_export_note: String::new(),
@@ -8586,6 +8618,12 @@ impl FractadyneApp {
                 de_width: s.coloring.de_width,
                 de_anim: s.de_anim,
                 de_phase: 0.0,
+                edge: s.coloring.edge,
+                edge_inside: s.coloring.edge_inside,
+                edge_width: s.coloring.edge_width.clamp(*slider_range::EDGE_WIDTH.start(), *slider_range::EDGE_WIDTH.end()),
+                edge_strength: s.coloring.edge_strength.clamp(0.0, 1.0),
+                edge_curve: fractadyne_core::coloring::EdgeCurve::parse_key(&s.coloring.edge_curve).unwrap_or_default(),
+                edge_color: s.coloring.edge_color,
             },
             watermark: s.watermark,
             show_location: s.show_location
@@ -9182,6 +9220,56 @@ impl FractadyneApp {
                 glow_off("--glow-width");
             }
         }
+        // Edge shading (coloring plan C3).
+        if args.iter().any(|a| a == "--edge") {
+            self.effects.edge = true;
+        }
+        if args.iter().any(|a| a == "--edge-inside") {
+            self.effects.edge = true;
+            self.effects.edge_inside = true;
+        }
+        let edge_off = |flag: &str| eprintln!("fractadyne: {flag} has no effect without --edge (edge shading is off).");
+        if let Some(w) = ranged("--edge-width", slider_range::EDGE_WIDTH) {
+            self.effects.edge_width = w;
+            if !self.effects.edge {
+                edge_off("--edge-width");
+            }
+        }
+        if let Some(s) = ranged("--edge-strength", slider_range::EDGE_STRENGTH) {
+            self.effects.edge_strength = s;
+            if !self.effects.edge {
+                edge_off("--edge-strength");
+            }
+        }
+        if let Some(c) = val("--edge-curve") {
+            match fractadyne_core::coloring::EdgeCurve::parse_key(c) {
+                Some(x) => self.effects.edge_curve = x,
+                None => {
+                    eprintln!("fractadyne: --edge-curve: unknown curve \"{c}\"; use linear, sqrt, square, smooth or hard.");
+                    crate::exit(2)
+                }
+            }
+            if !self.effects.edge {
+                edge_off("--edge-curve");
+            }
+        }
+        if let Some(text) = val("--edge-color") {
+            let parts: Vec<Option<f32>> = text.split(',').map(|t| t.trim().parse::<f32>().ok().filter(|v| v.is_finite())).collect();
+            match parts.as_slice() {
+                [Some(r), Some(g), Some(b)] if [r, g, b].iter().all(|v| (0.0..=1.0).contains(*v)) => {
+                    self.effects.edge_color = [*r, *g, *b];
+                }
+                _ => {
+                    eprintln!("fractadyne: --edge-color: \"{text}\" is not three numbers from 0 to 1, such as 0.1,0.05,0.2.");
+                    crate::exit(2)
+                }
+            }
+            if !self.effects.edge {
+                edge_off("--edge-color");
+            } else if self.effects.edge_inside {
+                eprintln!("fractadyne: --edge-color has no effect with --edge-inside (the edges take the inside's color).");
+            }
+        }
         // `from_key` ends in `unwrap_or_default()`, so an unknown key silently colors Smooth.
         // Round-trip the key to tell "you asked for smooth" from "we could not read that".
         if let Some(m) = val("--method") {
@@ -9316,7 +9404,7 @@ impl FractadyneApp {
             if val("--method").is_some() && self.coloring.color_method.needs_distance_estimate() {
                 eprintln!("fractadyne: --method distance: {why}, so the picture is one color.");
             }
-            for flag in ["--light", "--de"] {
+            for flag in ["--light", "--de", "--edge", "--edge-inside"] {
                 if args.iter().any(|a| a == flag) {
                     eprintln!("fractadyne: {flag} has no effect: {why}.");
                 }
@@ -9504,6 +9592,12 @@ impl FractadyneApp {
             de: self.effects.de,
             de_strength: self.effects.de_strength,
             de_width: self.effects.de_width,
+            edge: self.effects.edge,
+            edge_inside: self.effects.edge_inside,
+            edge_width: self.effects.edge_width,
+            edge_strength: self.effects.edge_strength,
+            edge_curve: self.effects.edge_curve.key().to_string(),
+            edge_color: self.effects.edge_color,
             color_method: self.coloring.color_method.key().to_string(),
             stripe_freq: self.coloring.stripe_freq,
             stripe_tail: self.coloring.stripe_tail,
@@ -9607,6 +9701,12 @@ impl FractadyneApp {
         e.de = s.de;
         e.de_strength = s.de_strength;
         e.de_width = s.de_width;
+        e.edge = s.edge;
+        e.edge_inside = s.edge_inside;
+        e.edge_width = s.edge_width;
+        e.edge_strength = s.edge_strength;
+        e.edge_curve = fractadyne_core::coloring::EdgeCurve::parse_key(&s.edge_curve).unwrap_or_default();
+        e.edge_color = s.edge_color;
     }
 
     fn autosave(&mut self, ctx: &egui::Context) {
@@ -17535,6 +17635,11 @@ impl FractadyneApp {
         e.de_strength.to_bits().hash(&mut h);
         e.de_width.to_bits().hash(&mut h);
         e.de_phase.to_bits().hash(&mut h);
+        e.edge_shade().mode.hash(&mut h);
+        e.edge_curve.hash(&mut h);
+        e.edge_width.to_bits().hash(&mut h);
+        e.edge_strength.to_bits().hash(&mut h);
+        e.edge_color.map(f32::to_bits).hash(&mut h);
         self.render_cfg.aa.hash(&mut h);
         // The fed window and, ⭐W6 (U58), the window actually MAPPED — the shown one, which glides
         // toward the fed one over many frames. Without it an average begun mid-glide went on

@@ -317,6 +317,12 @@ fn every_session_field_survives_save_and_reload() {
         de: true,
         de_strength: 0.75,
         de_width: 1.5,
+        edge: true,
+        edge_inside: true,
+        edge_width: 3.5,
+        edge_strength: 0.4,
+        edge_curve: "smooth".into(),
+        edge_color: [0.1, 0.2, 0.9],
         color_method: "trap".into(),
         stripe_freq: 3.5,
         stripe_tail: true,
@@ -809,6 +815,7 @@ fn a_session_written_before_the_coloring_spec_reads_and_writes_the_same_keys() {
         "interior", "interior_palette", "interior_color", "interior_fit", "palette_aa",
         "palette_brightness", "palette_contrast", "palette_saturation", "julia_linked",
         "coloring_hook", "coloring_hook_params", "transfer", "wrap", "steps",
+        "edge", "edge_inside", "edge_width", "edge_strength", "edge_curve", "edge_color",
     ];
     assert_eq!(keys.len(), 27 + SINCE.len(), "a coloring field was added: list it in SINCE");
     for k in keys.keys() {

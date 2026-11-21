@@ -136,6 +136,16 @@ fn the_palette_fade_fields_line_up() {
         // The thumbnails' sample stride: swapped with the pad word it would read 0 (every texel)
         // and the palette browser would cost 16x more at 8x again.
         ("tap_stride", std::mem::offset_of!(ColorUniforms, tap_stride)),
+        // The palette's wrap and steps (C2), and the edge shading (C3): swapped, the shader would
+        // read a curve as a mode, the strength as the width, or the color from a pad row.
+        ("hook_p", std::mem::offset_of!(ColorUniforms, hook_p)),
+        ("wrap", std::mem::offset_of!(ColorUniforms, wrap)),
+        ("steps", std::mem::offset_of!(ColorUniforms, steps)),
+        ("edge_mode", std::mem::offset_of!(ColorUniforms, edge_mode)),
+        ("edge_curve", std::mem::offset_of!(ColorUniforms, edge_curve)),
+        ("edge_px", std::mem::offset_of!(ColorUniforms, edge_px)),
+        ("edge_strength", std::mem::offset_of!(ColorUniforms, edge_strength)),
+        ("edge_col", std::mem::offset_of!(ColorUniforms, edge_col)),
     ] {
         assert_eq!(wgsl_field_offset(&fields, wgsl), rust, "`{wgsl}` is at another offset in ColorU than in ColorUniforms");
     }

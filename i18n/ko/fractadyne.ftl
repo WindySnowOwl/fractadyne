@@ -2868,6 +2868,26 @@ panel-band-width = 띠 너비
 panel-band-width-hover = 거리 등고선의 간격(띠당 옥타브).
 panel-animate-glow = 글로우 애니메이션
 panel-animate-glow-hover = 시간에 따라 글로우 띠를 흐르게 합니다(속도 슬라이더 사용).
+# Edge shading (coloring plan C3), in Effects: a color laid along the set's edge that fades out with the distance from it. The checkbox and its tooltip, then its rows: Width (in screen pixels), Strength, Curve (a list), Color (a swatch) and the "Inside color" checkbox beside it.
+panel-edge-shading = 가장자리 음영
+panel-edge-shading-hover = 집합 가까이의 색을 집합에서 멀어질수록 옅어지는 한 색 쪽으로 물들입니다. 펜화처럼 모든 가는 실을 따라 어두운 선이 그려집니다. (망델브로, 멀티브로, 피닉스)
+panel-edge-width = 너비
+panel-edge-width-hover = 음영이 집합에서 얼마나 멀리까지 닿는지(화면 픽셀 단위). 어떤 확대에서도, 어떤 안티에일리어싱에서도 같습니다.
+panel-edge-strength = 강도
+panel-edge-curve = 곡선
+panel-edge-curve-hover = 집합과 너비 사이에서 음영이 옅어지는 방식. 제곱근은 부드러운 꼬리가 있는 가는 선, 제곱은 굵은 선, 부드럽게는 양 끝을 완만하게, 단단하게는 너비만큼 꽉 찬 선입니다.
+# The edge shading's curves (C3).
+edge-curve-linear = 선형
+edge-curve-sqrt = 제곱근
+edge-curve-square = 제곱
+edge-curve-smooth = 부드럽게
+edge-curve-hard = 단단하게
+panel-edge-color = 색
+panel-edge-color-hover = 가장자리를 물들일 색.
+panel-edge-inside = 내부 색
+panel-edge-inside-hover = 대신 내부 색 쪽으로 물들입니다. 그러면 집합의 경계가 집합에 녹아들어 안티에일리어싱 없이도 매끄러워집니다(너비 1, 선형으로 해 보세요).
+# At the top of Effects when relief lighting, the glow or edge shading is on for a fractal without a distance estimate (they stay on). $family = the fractal's name.
+panel-effects-no-de = { $family }에는 거리 추정이 없어 여기서는 입체 조명, 글로우, 가장자리 음영이 아무것도 바꾸지 않습니다.
 
 ## The control panel: Overlays
 

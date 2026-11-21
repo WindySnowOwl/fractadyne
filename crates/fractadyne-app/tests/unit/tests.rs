@@ -370,6 +370,8 @@ const SAMPLE_OPTIONAL_KEYS: &[&str] = &[
     "coloring_hook", "coloring_hook_params",
     // Written only away from their defaults (C2).
     "transfer", "wrap", "steps",
+    // Written only with the edge shading on (C3).
+    "edge", "edge_inside", "edge_width", "edge_strength", "edge_curve", "edge_color",
 ];
 
 #[test]
@@ -1497,6 +1499,8 @@ fn the_coloring_slider_options_are_documented_with_their_ranges() {
         ("--light-height", r::LIGHT_HEIGHT),
         ("--glow-strength", r::GLOW_STRENGTH),
         ("--glow-width", r::GLOW_WIDTH),
+        ("--edge-width", r::EDGE_WIDTH),
+        ("--edge-strength", r::EDGE_STRENGTH),
     ] {
         assert!(known.contains(flag), "{flag} is not a known option");
         let entry = crate::help::CLI_REFERENCE

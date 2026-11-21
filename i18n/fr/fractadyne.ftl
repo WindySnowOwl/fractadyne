@@ -2949,6 +2949,26 @@ panel-band-width = Largeur de bande
 panel-band-width-hover = Espacement des contours de distance (octaves par bande).
 panel-animate-glow = Animer la lueur
 panel-animate-glow-hover = Faire s’écouler les bandes de lueur dans le temps (utilise le curseur Vitesse).
+# Edge shading (coloring plan C3), in Effects: a color laid along the set's edge that fades out with the distance from it. The checkbox and its tooltip, then its rows: Width (in screen pixels), Strength, Curve (a list), Color (a swatch) and the "Inside color" checkbox beside it.
+panel-edge-shading = Ombrage des bords
+panel-edge-shading-hover = Teinte les couleurs proches de l’ensemble vers une couleur qui s’estompe avec la distance : des traits sombres le long de chaque filament, comme un dessin à la plume. (Mandelbrot, Multibrot et Phoenix.)
+panel-edge-width = Largeur
+panel-edge-width-hover = Jusqu’où l’ombrage s’étend depuis l’ensemble, en pixels d’écran : la même à tout zoom et à tout niveau d’anticrénelage.
+panel-edge-strength = Intensité
+panel-edge-curve = Courbe
+panel-edge-curve-hover = Comment l’ombrage s’estompe entre l’ensemble et sa largeur. Racine carrée trace un trait fin à la traîne douce, Carré un trait épais ; Douce adoucit les deux bouts ; Nette est un trait plein aussi large que la largeur.
+# The edge shading's curves (C3).
+edge-curve-linear = Linéaire
+edge-curve-sqrt = Racine carrée
+edge-curve-square = Carré
+edge-curve-smooth = Douce
+edge-curve-hard = Nette
+panel-edge-color = Couleur
+panel-edge-color-hover = La couleur vers laquelle les bords sont ombrés.
+panel-edge-inside = Couleur intérieure
+panel-edge-inside-hover = Ombrer plutôt vers la couleur de l’intérieur : le bord de l’ensemble se fond alors dans l’ensemble, ce qui le lisse même sans anticrénelage (essayez Largeur 1 et Linéaire).
+# At the top of Effects when relief lighting, the glow or edge shading is on for a fractal without a distance estimate (they stay on). $family = the fractal's name.
+panel-effects-no-de = { $family } n’a pas d’estimation de distance : l’éclairage en relief, la lueur et l’ombrage des bords ne changent rien ici.
 
 ## The control panel: Overlays
 

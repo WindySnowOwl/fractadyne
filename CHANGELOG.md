@@ -50,6 +50,17 @@ detail is in the git history.
   command-line flags (`--transfer`, `--wrap`, `--steps`); a view or session saved with the log scale
   on opens with Scale on Log. Reset coloring settings puts the Scale back with the normalization
   switches and keeps Wrap and Steps, as it keeps the palette.
+- **Edge shading: lines drawn along the set's edge.** A new switch in Effects shades the colors
+  near the set toward a color that fades out with the distance from it, so every filament gets a
+  dark outline, like a pen drawing, over any coloring method and palette. Width (in screen pixels,
+  the same at every zoom and anti-aliasing level), Strength, a Curve for how it fades (linear,
+  square root for a thin line with a soft tail, square for a bold one, smooth, or hard for a solid
+  line) and the Color set its look; "Inside color" shades toward the set's own color instead, which
+  smooths the set's edge even with anti-aliasing off. It reads the distance estimate, so it works
+  for Mandelbrot, Multibrot 3–8 and Phoenix. It recolors the view at once, works under a custom
+  coloring, in exports, zoom videos and render-farm jobs, travels with views, bookmarks and Share
+  text, and has command-line flags (`--edge`, `--edge-inside`, `--edge-width`, `--edge-strength`,
+  `--edge-curve`, `--edge-color`).
 - **Custom coloring: a coloring of your own, written as a short program.** Color ▸ Custom
   coloring… colors the view with a function of your own, `custom_color`, written in WGSL (the
   language Fractadyne's shaders are written in), in place of the coloring method: a way to try a

@@ -61,6 +61,11 @@ fn wrap_keys() -> Vec<&'static str> {
     fractadyne_core::coloring::Wrap::ALL.iter().map(|w| w.key()).collect()
 }
 
+/// The edge shading's curves' keys (C3).
+fn edge_curve_keys() -> Vec<&'static str> {
+    fractadyne_core::coloring::EdgeCurve::ALL.iter().map(|c| c.key()).collect()
+}
+
 fn method(s: &ColoringSpec) -> ColorMethod {
     ColorMethod::from_key(&s.color_method)
 }
@@ -95,7 +100,7 @@ fn two_color_on(s: &ColoringSpec) -> bool {
 }
 
 /// The table, in the order a view writes its keys. A row's parents come before it.
-pub(crate) const FIELDS: [Field; 29] = [
+pub(crate) const FIELDS: [Field; 35] = [
     Field {
         key: "method",
         name: "coloring method",
@@ -240,6 +245,64 @@ pub(crate) const FIELDS: [Field; 29] = [
         ),
         parents: &["glow"],
         shows: |s| s.de,
+    },
+    Field {
+        key: "edge",
+        name: "edge shading",
+        doc: "Edge shading: the colors near the set shaded toward `edge_color` (or the inside's color, `edge_inside`), fading out `edge_width` pixels from it.",
+        access: Access::Flag(|s| s.edge, |s, v| s.edge = v),
+        parents: &[],
+        shows: always,
+    },
+    Field {
+        key: "edge_inside",
+        name: "edge inside color",
+        doc: "Shade the edges toward the inside's color instead of `edge_color`: the set's edge smoothed by the distance (with `edge`).",
+        access: Access::Flag(|s| s.edge_inside, |s, v| s.edge_inside = v),
+        parents: &["edge"],
+        shows: |s| s.edge,
+    },
+    Field {
+        key: "edge_width",
+        name: "edge width",
+        doc: "How far from the set the edge shading reaches, in output pixels, 0.25 to 32 (with `edge`).",
+        access: Access::Real(
+            |s| s.edge_width,
+            |s, v| s.edge_width = v,
+            *slider_range::EDGE_WIDTH.start(),
+            *slider_range::EDGE_WIDTH.end(),
+        ),
+        parents: &["edge"],
+        shows: |s| s.edge,
+    },
+    Field {
+        key: "edge_strength",
+        name: "edge strength",
+        doc: "The edge color's share at the set, 0 to 1 (with `edge`).",
+        access: Access::Real(
+            |s| s.edge_strength,
+            |s, v| s.edge_strength = v,
+            *slider_range::EDGE_STRENGTH.start(),
+            *slider_range::EDGE_STRENGTH.end(),
+        ),
+        parents: &["edge"],
+        shows: |s| s.edge,
+    },
+    Field {
+        key: "edge_curve",
+        name: "edge curve",
+        doc: "How the edge shading fades out from the set: linear, sqrt (a thin line with a soft tail), square (a bold one), smooth or hard (a solid line `edge_width` wide) (with `edge`).",
+        access: Access::Choice(|s| s.edge_curve.as_str(), |s, v| s.edge_curve = v.to_string(), edge_curve_keys),
+        parents: &["edge"],
+        shows: |s| s.edge,
+    },
+    Field {
+        key: "edge_color",
+        name: "edge color",
+        doc: "The color the edges are shaded toward, as display-space [r, g, b] (with `edge`, unless `edge_inside`).",
+        access: Access::Rgb(|s| s.edge_color, |s, v| s.edge_color = v),
+        parents: &["edge", "edge_inside"],
+        shows: |s| s.edge && !s.edge_inside,
     },
     // Duotone or Binary: one choice (`palette_mode`), held in the session as two switches. Off is
     // the absence of the key, and never written; Binary wins when both are set, as

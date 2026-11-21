@@ -73,7 +73,7 @@ pub(crate) const GROUPS: &[&str] = &[
     "checklist", "replay", "settings-quarantine", "expmap", "assemble", "de-pixels",
     "colour-box", "cycle-check", "export-contain", "honest-step", "julia-critical", "palette-fade", "retreat", "view-thumb",
     "width-independence", "coloring-matrix-quick", "color-sig", "coloring-reset", "julia-link", "fringe",
-    "lanes", "hook", "transfer",
+    "lanes", "hook", "transfer", "edges",
 ];
 
 /// Groups that run ONLY when named. ⛔Kept out of `GROUPS` so a bare `--selftest` never pays for
@@ -8869,9 +8869,9 @@ impl FractadyneApp {
             push_check(&mut checks, &mut last_check_t, SelfCheck {
                 category: "Zoom video",
                 name: "a window holding only what the colouring reads, in pieces, makes the same frames".into(),
-                params: format!("a dive into ({SX}, {SY}), 160x90 frames from 1x to 2^12, cap 2000; frames at 2^0, 2^3.3, 2^7.9 turned 0.21 and 2^12, smooth and distance coloring with and without glow and relief, smooth with the palette point sampled and anti-aliased; strips in 3 pieces (193, 193, 191)"),
+                params: format!("a dive into ({SX}, {SY}), 160x90 frames from 1x to 2^12, cap 2000; frames at 2^0, 2^3.3, 2^7.9 turned 0.21 and 2^12, smooth and distance coloring with and without glow and relief, smooth with the palette point sampled and anti-aliased, edge shading under a point-sampled smooth and under distance; each in the window `WindowTexels::for_request` gives it; strips in 3 pieces (193, 193, 191)"),
                 result,
-                threshold: "every pixel bit-identical to the whole window's for all 7 colorings; the control: over 1000 escaped samples differ in what the count-only window leaves out and none in the count, and a relief coloring is refused on it"
+                threshold: "every pixel bit-identical to the whole window's for all 9 colorings; the control: over 1000 escaped samples differ in what the count-only window leaves out and none in the count, and a relief coloring is refused on it"
                     .into(),
                 pass,
             });
@@ -10720,6 +10720,12 @@ zoom = \"1e94\"
                 glow: true,
                 glow_strength: 0.15,
                 glow_width: 3.25,
+                edge: true,
+                edge_inside: true,
+                edge_width: 5.5,
+                edge_strength: 0.35,
+                edge_curve: fractadyne_core::coloring::EdgeCurve::Hard,
+                edge_color: [0.2, 0.3, 0.4],
                 two_color: TwoColor::Binary,
                 lo: [0.9, 0.1, 0.1],
                 hi: [0.1, 0.9, 0.1],
@@ -10913,6 +10919,12 @@ zoom = \"1e94\"
                 de: true,
                 de_strength: 0.7,
                 de_width: 2.5,
+                edge: true,
+                edge_inside: true,
+                edge_width: 6.5,
+                edge_strength: 0.45,
+                edge_curve: "sqrt".into(),
+                edge_color: [0.3, 0.2, 0.6],
                 color_method: ColorMethod::Stripe.key().into(),
                 stripe_freq: 9.5,
                 stripe_tail: true,
@@ -12139,6 +12151,184 @@ zoom = \"1e94\"
                 result: wraps.1.join("; "),
                 threshold: "at most 0.5% of the escaped pixels more than 1 level apart; the control 5% or more",
                 pass: wraps.0,
+            });
+        }
+
+        // ---- Edge shading (coloring plan C3) ----
+        // Each case against its CPU definition: `edge_weight` of the view's distance lane, mixed into
+        // the same export's colors without the shading. The tour's point at 1e10x, point sampled,
+        // ss 1, so a pixel is one texel. A CONTROL each (the next curve; the black color for the
+        // inside's; another width for a strength) must differ, so the comparison cannot pass on a
+        // shading that never ran. Then the width is in output pixels: the frame's mean shading at
+        // ss 2 is the one at ss 1, and twice the width (the control) is not.
+        if want("edges") {
+            use fractadyne_core::coloring::{edge_weight, EdgeCurve};
+            let saved_spec = self.coloring_spec();
+            let saved = (self.fractal, self.julia_mode, self.dual, self.render_cfg.max_iter, self.render_cfg.auto_iter);
+            self.fractal = FractalKind::Mandelbrot;
+            self.julia_mode = false;
+            self.dual = false;
+            self.render_cfg.auto_iter = false;
+            self.render_cfg.max_iter = 8_000;
+            self.effects.light = false;
+            self.effects.de = false;
+            self.effects.edge = false;
+            self.coloring.hook.turn_off();
+            self.coloring.color_method = crate::ColorMethod::Smooth;
+            self.coloring.use_custom_palette = false;
+            self.coloring.use_duotone = false;
+            self.coloring.use_binary = false;
+            self.coloring.palette_idx = fractadyne_color::preset_by_id("unity").unwrap_or(0);
+            self.coloring.palette_adjust = fractadyne_color::adjust::PaletteAdjust::NEUTRAL;
+            self.coloring.normalize_live = false;
+            self.coloring.normalize_fit = false;
+            self.coloring.transfer = fractadyne_core::coloring::Transfer::Linear;
+            self.coloring.wrap = fractadyne_core::coloring::Wrap::Repeat;
+            self.coloring.steps = 0;
+            self.coloring.interior = Some(crate::InteriorMode::Solid);
+            self.coloring.interior_color = [0.9, 0.85, 0.2];
+            let (w, h) = (160u32, 90u32);
+            let at = |s: &str| fractadyne_core::parse_bf_prec(s, 256).expect("the tour point's coordinate");
+            let mut vp = Viewport::new(w as f64, h as f64);
+            vp.set_center_mag(
+                at("-1.178853950372678747911373866849720956148855"),
+                at("0.1853420232408490265512092752061929308714979"),
+                1e10,
+            );
+            let mut req = self.lanes_request_for(&vp, false, None);
+            req.width = w;
+            req.height = h;
+            req.aa_palette = fractadyne_gpu::PaletteAa::Off;
+            (self.fractal, self.julia_mode, self.dual, self.render_cfg.max_iter, self.render_cfg.auto_iter) = saved;
+            self.apply_coloring_spec(&saved_spec);
+            // The main lane: (count, normal, normal, log2 of the distance in texels; a texel is a
+            // pixel at ss 1). An escaped texel with a distance takes the shading.
+            let lane: Option<Vec<[f32; 4]>> = fractadyne_gpu::render_lanes(device, queue, &req, crate::tunables::CORRECT_WORK_BUDGET)
+                .ok()
+                .map(|r| r.pixels.chunks_exact(4).map(|t| [t[0], t[1], t[2], t[3]]).collect());
+            let lane = lane.unwrap_or_default();
+            let shaded_px = |t: &[f32; 4]| t[0] >= 0.0 && t[3] <= 1.0e20;
+            let export = |edge: fractadyne_gpu::EdgeShade, ss: u32| -> Option<Vec<f32>> {
+                let mut r = req.clone();
+                r.edge = edge;
+                r.ss = ss;
+                let (progress, cancel) = (std::sync::atomic::AtomicU32::new(0), std::sync::atomic::AtomicBool::new(false));
+                fractadyne_gpu::render_export(device, queue, &r, &progress, &cancel).ok().map(|x| x.pixels)
+            };
+            let plain = export(fractadyne_gpu::EdgeShade::default(), 1).unwrap_or_default();
+            let inside = [req.interior_col[0], req.interior_col[1], req.interior_col[2]];
+            let edge = |mode: u32, curve: EdgeCurve, width: f32, strength: f32, color: [f32; 3]| fractadyne_gpu::EdgeShade {
+                mode,
+                curve: curve.gpu_id(),
+                width,
+                strength,
+                color,
+            };
+            // The CPU's colors under `e`: each pixel's color without it, mixed toward the edge's
+            // color by `edge_weight` of its distance.
+            let cpu = |e: &fractadyne_gpu::EdgeShade| -> Vec<[f64; 3]> {
+                let target = if e.mode == fractadyne_gpu::EDGE_INSIDE { inside } else { e.color };
+                let curve = EdgeCurve::from_gpu_id(e.curve).unwrap_or_default();
+                plain
+                    .chunks_exact(4)
+                    .zip(&lane)
+                    .map(|(px, t)| {
+                        let k = if e.mode != fractadyne_gpu::EDGE_OFF && shaded_px(t) {
+                            edge_weight((t[3] as f64).min(60.0).exp2(), e.width as f64, e.strength as f64, curve)
+                        } else {
+                            0.0
+                        };
+                        std::array::from_fn(|c| px[c] as f64 + (target[c] as f64 - px[c] as f64) * k)
+                    })
+                    .collect()
+            };
+            // The share of pixels more than one 8-bit level apart, and the largest gap.
+            let apart = |g: &[f32], c: &[[f64; 3]]| -> (f64, f64) {
+                let (mut n, mut bad, mut worst) = (0usize, 0usize, 0.0f64);
+                for (px, want) in g.chunks_exact(4).zip(c) {
+                    let d = (0..3).map(|k| (px[k] as f64 - want[k]).abs() * 255.0).fold(0.0, f64::max);
+                    n += 1;
+                    worst = worst.max(d);
+                    bad += (d > 1.0) as usize;
+                }
+                (bad as f64 / n.max(1) as f64, worst)
+            };
+            let near = lane.iter().filter(|t| shaded_px(t) && (t[3] as f64) < 2.0).count();
+            let black = [0.0f32; 3];
+            let cases: Vec<(String, fractadyne_gpu::EdgeShade, fractadyne_gpu::EdgeShade)> = EdgeCurve::ALL
+                .iter()
+                .enumerate()
+                .map(|(i, &c)| {
+                    let next = EdgeCurve::ALL[(i + 1) % EdgeCurve::ALL.len()];
+                    (c.key().to_string(), edge(fractadyne_gpu::EDGE_COLOR, c, 4.0, 1.0, black), edge(fractadyne_gpu::EDGE_COLOR, next, 4.0, 1.0, black))
+                })
+                .chain([
+                    (
+                        "linear, strength 0.5, a blue".to_string(),
+                        edge(fractadyne_gpu::EDGE_COLOR, EdgeCurve::Linear, 3.0, 0.5, [0.1, 0.2, 0.9]),
+                        edge(fractadyne_gpu::EDGE_COLOR, EdgeCurve::Linear, 6.0, 0.5, [0.1, 0.2, 0.9]),
+                    ),
+                    (
+                        "the inside's color, width 1".to_string(),
+                        edge(fractadyne_gpu::EDGE_INSIDE, EdgeCurve::Linear, 1.0, 1.0, black),
+                        edge(fractadyne_gpu::EDGE_COLOR, EdgeCurve::Linear, 1.0, 1.0, black),
+                    ),
+                ])
+                .collect();
+            let mut ok_all = !plain.is_empty() && lane.len() == (w * h) as usize && near > 200;
+            let mut lines = Vec::new();
+            for (name, e, control) in &cases {
+                let (ok, line) = match export(*e, 1) {
+                    Some(g) if ok_all => {
+                        let (bad, worst) = apart(&g, &cpu(e));
+                        let (ctl, _) = apart(&g, &cpu(control));
+                        (bad <= 0.005 && ctl >= 0.01, format!("{name}: {:.2}% apart (max {worst:.2} levels), control {:.1}%", bad * 100.0, ctl * 100.0))
+                    }
+                    _ => (false, format!("{name}: no render, or {near} pixels within 4 px of the set")),
+                };
+                ok_all &= ok;
+                lines.push(line);
+            }
+            push_check(&mut checks, &mut last_check_t, SelfCheck {
+                category: "export",
+                name: "edge shading is its definition".into(),
+                params: format!("the coloring-method tour's point at 1e10x, {w}x{h}, ss 1, point sampled, unity, a yellow inside; every curve at width 4 px toward black, a half-strength blue, the inside's color at 1 px; each against `edge_weight` of the distance lane mixed into the export without it ({near} escaped pixels within 4 px of the set); the next curve, another width or black as the control"),
+                result: lines.join("; "),
+                threshold: "at most 0.5% of the pixels more than 1 level apart; the control 1% or more",
+                pass: ok_all,
+            });
+            // The width is in output pixels: the frame's mean shading (how much darker than the
+            // plain frame, toward black) at ss 1 and ss 2 agree; twice the width does not.
+            let mean_dark = |g: &[f32], base: &[f32]| -> f64 {
+                let lum = |p: &[f32]| 0.2126 * p[0] as f64 + 0.7152 * p[1] as f64 + 0.0722 * p[2] as f64;
+                let (mut s, mut n) = (0.0, 0usize);
+                for (a, b) in g.chunks_exact(4).zip(base.chunks_exact(4)) {
+                    s += (lum(b) - lum(a)).max(0.0);
+                    n += 1;
+                }
+                s / n.max(1) as f64
+            };
+            let e2 = edge(fractadyne_gpu::EDGE_COLOR, EdgeCurve::Linear, 2.0, 1.0, black);
+            let e4 = edge(fractadyne_gpu::EDGE_COLOR, EdgeCurve::Linear, 4.0, 1.0, black);
+            let widths = match (export(e2, 1), export(fractadyne_gpu::EdgeShade::default(), 2), export(e2, 2), export(e4, 1)) {
+                (Some(g1), Some(p2), Some(g2), Some(g4)) => Some((mean_dark(&g1, &plain), mean_dark(&g2, &p2), mean_dark(&g4, &plain))),
+                _ => None,
+            };
+            let (pass, result) = match widths {
+                Some((d1, d2, d4)) => {
+                    let same = (d2 - d1).abs() / d1.max(1e-9);
+                    let ctl = (d4 - d1).abs() / d1.max(1e-9);
+                    (d1 > 0.005 && same <= 0.05 && ctl >= 0.1, format!("mean shading {d1:.4} at ss 1, {d2:.4} at ss 2 ({:.1}% apart); twice the width {d4:.4} ({:.0}% apart, the control)", same * 100.0, ctl * 100.0))
+                }
+                None => (false, "no render".into()),
+            };
+            push_check(&mut checks, &mut last_check_t, SelfCheck {
+                category: "export",
+                name: "edge shading's width is in output pixels".into(),
+                params: format!("as above, linear toward black at 2 px: the frame's mean darkening against the plain frame of the same supersampling, ss 1 and ss 2; 4 px at ss 1 as the control"),
+                result,
+                threshold: "ss 1 and ss 2 within 5%; the control 10% or more apart (first run: 0.1% and 18%; filaments are dense here, so twice the width shades only 18% more)",
+                pass,
             });
         }
 

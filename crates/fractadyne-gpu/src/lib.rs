@@ -453,7 +453,15 @@ pub(crate) struct ColorUniforms {
     /// flat bands a palette cycle is cut into (0: none), coloring plan C2. `ColorU.wrap`, `.steps`.
     pub(crate) wrap: u32,
     pub(crate) steps: f32,
-    pub(crate) _pad_wrap: [u32; 2],
+    /// Edge shading ([`EdgeShade`], coloring plan C3): the mode and the curve in what were this
+    /// row's two pad words, then a row of the width and the strength, and a row of the color.
+    /// `ColorU.edge_*` mirror them.
+    pub(crate) edge_mode: u32,
+    pub(crate) edge_curve: u32,
+    pub(crate) edge_px: f32,
+    pub(crate) edge_strength: f32,
+    pub(crate) _pad_edge: [u32; 2],
+    pub(crate) edge_col: [f32; 4],
 }
 
 /// [`ColorUniforms::tap_stride`] for a palette-browser thumbnail colored from a texture built at
@@ -518,6 +526,38 @@ pub struct PaletteFade {
     pub offset: f32,
     pub mode: u32,
     pub lo: f32,
+}
+
+/// Edge shading (coloring plan C3): an escaped texel near the set takes a color by its distance from
+/// the set, `fractadyne_core::coloring::edge_weight` of it, before a pixel's texels are averaged
+/// (the color pass's `edge_shaded`). `Default` is off.
+#[derive(Clone, Copy, Debug, Default, PartialEq)]
+pub struct EdgeShade {
+    /// [`EDGE_OFF`], [`EDGE_COLOR`] or [`EDGE_INSIDE`].
+    pub mode: u32,
+    /// The fade's curve, `fractadyne_core::coloring::EdgeCurve::gpu_id`.
+    pub curve: u32,
+    /// Output pixels from the set where the shading ends.
+    pub width: f32,
+    /// The edge color's share at the set, 0 to 1.
+    pub strength: f32,
+    /// Display-space RGB, for [`EDGE_COLOR`].
+    pub color: [f32; 3],
+}
+
+/// [`EdgeShade::mode`]: no edge shading.
+pub const EDGE_OFF: u32 = 0;
+/// [`EdgeShade::mode`]: toward [`EdgeShade::color`].
+pub const EDGE_COLOR: u32 = 1;
+/// [`EdgeShade::mode`]: toward the inside's color (`interior_col`): the set's edge anti-aliased by
+/// its distance.
+pub const EDGE_INSIDE: u32 = 2;
+
+impl EdgeShade {
+    /// Whether it shades anything (it reads the distance estimate then).
+    pub fn on(&self) -> bool {
+        self.mode != EDGE_OFF && self.strength > 0.0
+    }
 }
 
 /// Uniform for the progressive-SSAA accumulate pass (`fs_accum`): the running-mean step
@@ -3520,6 +3560,8 @@ pub struct MandelbrotParams {
     /// The palette's Wrap (`Wrap::gpu_id`) and Steps (0: none), coloring plan C2.
     pub wrap: u32,
     pub steps: f32,
+    /// Edge shading (coloring plan C3); off by default.
+    pub edge: EdgeShade,
     /// A Life frame (design/automata.md): `Some` replaces the iterate pass with the Life universe's
     /// step and display passes, which write the same iteration texture the color pass reads.
     pub life: Option<Arc<life::LifeFrame>>,
@@ -3825,6 +3867,7 @@ impl Default for MandelbrotParams {
             hook_params: [0.0; 4],
             wrap: 0,
             steps: 0.0,
+            edge: EdgeShade::default(),
             life: None,
             lsystem: None,
             julia: 0,
@@ -4306,7 +4349,12 @@ impl CallbackTrait for MandelbrotParams {
             hook_p: self.hook_params,
             wrap: self.wrap,
             steps: self.steps,
-            _pad_wrap: [0; 2],
+            edge_mode: self.edge.mode,
+            edge_curve: self.edge.curve,
+            edge_px: self.edge.width,
+            edge_strength: self.edge.strength,
+            _pad_edge: [0; 2],
+            edge_col: [self.edge.color[0], self.edge.color[1], self.edge.color[2], 1.0],
         };
         queue.write_buffer(&view.color_uniform, 0, bytemuck::bytes_of(&cu));
         view.last_cu = Some(cu);

@@ -126,6 +126,8 @@ impl RenderSettings {
             ("light height", self.coloring.light_height),
             ("glow strength", self.coloring.de_strength),
             ("glow width", self.coloring.de_width),
+            ("edge width", self.coloring.edge_width),
+            ("edge strength", self.coloring.edge_strength),
             ("stripe frequency", self.coloring.stripe_freq),
         ] {
             finite32(w, v)?;
@@ -134,6 +136,7 @@ impl RenderSettings {
         finite64("Julia c", self.julia_c_im)?;
         word("coloring method", &self.coloring.color_method)?;
         word("trap", &self.coloring.trap_type)?;
+        word("edge curve", &self.coloring.edge_curve)?;
         word("fractal", &self.fractal)?;
         textual("custom formula", &self.custom_formula, 8 * 1024)?;
         textual("L-system", &self.lsystem, 64 * 1024)?;
@@ -144,7 +147,7 @@ impl RenderSettings {
             return Err("custom palette too large".into());
         }
         let colours_ok = self.coloring.custom_palette.iter().flatten().all(|v| v.is_finite())
-            && self.coloring.duotone_lo.iter().chain(&self.coloring.duotone_hi).all(|v| v.is_finite())
+            && self.coloring.duotone_lo.iter().chain(&self.coloring.duotone_hi).chain(&self.coloring.edge_color).all(|v| v.is_finite())
             && self.coloring.custom_segments.iter().all(|g| {
                 [g.left, g.mid, g.right].iter().chain(&g.left_color).chain(&g.right_color).chain(&g.blend_params).all(|v| v.is_finite())
             });

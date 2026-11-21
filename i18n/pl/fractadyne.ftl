@@ -3040,6 +3040,26 @@ panel-band-width = Szerokość pasm
 panel-band-width-hover = Odstęp konturów odległości (oktawy na pasmo).
 panel-animate-glow = Animuj poświatę
 panel-animate-glow-hover = Przesuwa pasma poświaty w czasie (używa suwaka Szybkość).
+# Edge shading (coloring plan C3), in Effects: a color laid along the set's edge that fades out with the distance from it. The checkbox and its tooltip, then its rows: Width (in screen pixels), Strength, Curve (a list), Color (a swatch) and the "Inside color" checkbox beside it.
+panel-edge-shading = Cieniowanie krawędzi
+panel-edge-shading-hover = Barwi kolory blisko zbioru w stronę koloru, który zanika wraz z odległością od niego: ciemne linie wzdłuż każdego włókna, jak rysunek piórkiem. (Mandelbrot, Multibrot i Phoenix.)
+panel-edge-width = Szerokość
+panel-edge-width-hover = Jak daleko od zbioru sięga cieniowanie, w pikselach ekranu: tak samo przy każdym powiększeniu i każdym wygładzaniu krawędzi.
+panel-edge-strength = Siła
+panel-edge-curve = Krzywa
+panel-edge-curve-hover = Jak cieniowanie zanika między zbiorem a swoją szerokością. Pierwiastek kwadratowy rysuje cienką linię z miękkim ogonem, Kwadrat grubą; Łagodna wygładza oba końce; Twarda to pełna linia szeroka na całą szerokość.
+# The edge shading's curves (C3).
+edge-curve-linear = Liniowa
+edge-curve-sqrt = Pierwiastek kwadratowy
+edge-curve-square = Kwadrat
+edge-curve-smooth = Łagodna
+edge-curve-hard = Twarda
+panel-edge-color = Kolor
+panel-edge-color-hover = Kolor, w stronę którego cieniowane są krawędzie.
+panel-edge-inside = Kolor wnętrza
+panel-edge-inside-hover = Cieniuj zamiast tego w stronę koloru wnętrza: brzeg zbioru zlewa się wtedy ze zbiorem, co wygładza go nawet bez wygładzania krawędzi (wypróbuj Szerokość 1 i Liniowa).
+# At the top of Effects when relief lighting, the glow or edge shading is on for a fractal without a distance estimate (they stay on). $family = the fractal's name.
+panel-effects-no-de = { $family } nie ma estymacji odległości, więc oświetlenie reliefu, poświata i cieniowanie krawędzi nic tu nie zmieniają.
 
 ## The control panel: Overlays
 

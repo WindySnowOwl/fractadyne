@@ -2868,6 +2868,26 @@ panel-band-width = 條帶寬度
 panel-band-width-hover = 距離等高線的間距（每條帶的八度數）。
 panel-animate-glow = 光暈動畫
 panel-animate-glow-hover = 讓光暈色帶隨時間流動（使用「速度」滑桿）。
+# Edge shading (coloring plan C3), in Effects: a color laid along the set's edge that fades out with the distance from it. The checkbox and its tooltip, then its rows: Width (in screen pixels), Strength, Curve (a list), Color (a swatch) and the "Inside color" checkbox beside it.
+panel-edge-shading = 邊緣著色
+panel-edge-shading-hover = 把集合附近的顏色染向一種隨距離淡去的顏色：沿每根細絲畫出暗線，像鋼筆畫。（曼德博、多重曼德博和鳳凰。）
+panel-edge-width = 寬度
+panel-edge-width-hover = 著色從集合延伸多遠，以螢幕像素計：在任何縮放、任何抗鋸齒級別下都相同。
+panel-edge-strength = 強度
+panel-edge-curve = 曲線
+panel-edge-curve-hover = 著色在集合與寬度之間如何淡去。平方根畫出帶柔和尾跡的細線，平方畫出粗線；平滑讓兩端都變緩；硬是與寬度同寬的實線。
+# The edge shading's curves (C3).
+edge-curve-linear = 線性
+edge-curve-sqrt = 平方根
+edge-curve-square = 平方
+edge-curve-smooth = 平滑
+edge-curve-hard = 硬
+panel-edge-color = 顏色
+panel-edge-color-hover = 邊緣被染向的顏色。
+panel-edge-inside = 內部顏色
+panel-edge-inside-hover = 改為染向內部的顏色：集合的邊緣隨之融入集合，即使不開抗鋸齒也會變得平滑（試試寬度 1 和線性）。
+# At the top of Effects when relief lighting, the glow or edge shading is on for a fractal without a distance estimate (they stay on). $family = the fractal's name.
+panel-effects-no-de = { $family } 沒有距離估計，因此浮雕光影、光暈和邊緣著色在這裡不起作用。
 
 ## The control panel: Overlays
 

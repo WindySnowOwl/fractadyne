@@ -2949,6 +2949,26 @@ panel-band-width = Bandbreite
 panel-band-width-hover = Abstand der Distanzkonturen (Oktaven pro Band).
 panel-animate-glow = Leuchten animieren
 panel-animate-glow-hover = Die Leuchtbänder mit der Zeit fließen lassen (verwendet den Tempo-Regler).
+# Edge shading (coloring plan C3), in Effects: a color laid along the set's edge that fades out with the distance from it. The checkbox and its tooltip, then its rows: Width (in screen pixels), Strength, Curve (a list), Color (a swatch) and the "Inside color" checkbox beside it.
+panel-edge-shading = Randschattierung
+panel-edge-shading-hover = Tönt die Farben nahe der Menge zu einer Farbe hin, die mit dem Abstand von ihr ausklingt: dunkle Linien entlang jedes Filaments, wie eine Federzeichnung. (Mandelbrot, Multibrot und Phoenix.)
+panel-edge-width = Breite
+panel-edge-width-hover = Wie weit die Schattierung von der Menge reicht, in Bildschirmpixeln: gleich bei jedem Zoom und jedem Antialiasing.
+panel-edge-strength = Stärke
+panel-edge-curve = Kurve
+panel-edge-curve-hover = Wie die Schattierung zwischen der Menge und ihrer Breite ausklingt. Quadratwurzel zeichnet eine dünne Linie mit weichem Auslauf, Quadrat eine kräftige; Weich glättet beide Enden; Hart ist eine volle Linie, so breit wie die Breite.
+# The edge shading's curves (C3).
+edge-curve-linear = Linear
+edge-curve-sqrt = Quadratwurzel
+edge-curve-square = Quadrat
+edge-curve-smooth = Weich
+edge-curve-hard = Hart
+panel-edge-color = Farbe
+panel-edge-color-hover = Die Farbe, zu der die Ränder hin schattiert werden.
+panel-edge-inside = Innenfarbe
+panel-edge-inside-hover = Stattdessen zur Farbe des Inneren hin schattieren: Der Rand der Menge geht dann in die Menge über, was ihn auch ohne Antialiasing glättet (Breite 1 und Linear probieren).
+# At the top of Effects when relief lighting, the glow or edge shading is on for a fractal without a distance estimate (they stay on). $family = the fractal's name.
+panel-effects-no-de = { $family } hat keine Distanzschätzung, daher ändern Reliefbeleuchtung, Leuchten und Randschattierung hier nichts.
 
 ## The control panel: Overlays
 

@@ -358,6 +358,8 @@ pub(crate) const KNOWN_VIEW_KEYS: &[&str] = &[
     "palette_brightness", "palette_contrast", "palette_saturation", "julia_linked",
     // The palette map's curve, its wrap and its steps (coloring plan C2).
     "transfer", "wrap", "steps",
+    // Edge shading (coloring plan C3).
+    "edge", "edge_inside", "edge_width", "edge_strength", "edge_curve", "edge_color",
     // The dual view (2026-11-16, review finding 8): the layout and the Julia pane's own camera,
     // written only for a dual view, so a single view is byte-identical to one written before.
     "dual", "dual_split", "julia_view_center_re", "julia_view_center_im", "julia_view_upp_log2",
@@ -451,6 +453,12 @@ const TYPED_VIEW_KEYS: &[(&str, ValueKind)] = &[
     ("transfer", ValueKind::Transfer),
     ("wrap", ValueKind::Wrap),
     ("steps", ValueKind::Uint),
+    ("edge", ValueKind::Flag),
+    ("edge_inside", ValueKind::Flag),
+    ("edge_width", ValueKind::Float),
+    ("edge_strength", ValueKind::Float),
+    ("edge_curve", ValueKind::EdgeCurve),
+    ("edge_color", ValueKind::Rgb),
     ("dual", ValueKind::Flag),
     ("dual_split", ValueKind::Float),
     ("julia_view_center_re", ValueKind::BigFloat),
@@ -486,6 +494,8 @@ enum ValueKind {
     Transfer,
     /// A wrap's key (`Wrap::key`, C2).
     Wrap,
+    /// An edge shading curve's key (`EdgeCurve::key`, C3).
+    EdgeCurve,
 }
 
 impl ValueKind {
@@ -506,6 +516,7 @@ impl ValueKind {
             ValueKind::PaletteMode => crate::view_coloring::TwoColor::from_key(v).is_some(),
             ValueKind::Transfer => fractadyne_core::coloring::Transfer::parse_key(v).is_some(),
             ValueKind::Wrap => fractadyne_core::coloring::Wrap::parse_key(v).is_some(),
+            ValueKind::EdgeCurve => fractadyne_core::coloring::EdgeCurve::parse_key(v).is_some(),
             ValueKind::Rgb => {
                 let parts: Vec<&str> = v.split(',').collect();
                 parts.len() == 3 && parts.iter().all(|p| p.trim().parse::<f32>().is_ok())
@@ -528,6 +539,7 @@ impl ValueKind {
             ValueKind::Trap => one_of(crate::TrapType::ALL.iter().map(|t| t.key()).collect()),
             ValueKind::Transfer => one_of(fractadyne_core::coloring::Transfer::ALL.iter().map(|t| t.key()).collect()),
             ValueKind::Wrap => one_of(fractadyne_core::coloring::Wrap::ALL.iter().map(|w| w.key()).collect()),
+            ValueKind::EdgeCurve => one_of(fractadyne_core::coloring::EdgeCurve::ALL.iter().map(|c| c.key()).collect()),
             ValueKind::Interior => one_of(crate::InteriorMode::ALL.iter().map(|m| m.key()).collect()),
             ValueKind::PaletteMode => {
                 one_of(crate::view_coloring::TwoColor::ON.iter().filter_map(|m| m.key()).collect())
