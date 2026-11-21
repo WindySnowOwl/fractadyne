@@ -260,6 +260,10 @@ pub struct ExportRequest {
     /// A custom formula's generated shader module ([`crate::custom::build`]), rendered with
     /// `formula == fractadyne_core::formula::CUSTOM` in direct mode (1). `None` for the built-ins.
     pub custom: Option<Arc<crate::custom::CustomShader>>,
+    /// A coloring hook ([`crate::color_hook`], coloring plan B10) the color pass colors through,
+    /// and its parameters `p1`..`p4`. `None` for the method's own colors.
+    pub color_hook: Option<Arc<crate::color_hook::ColorHook>>,
+    pub hook_params: [f32; 4],
     pub julia: u32,
     pub cycle: f32,
     pub offset: f32,
@@ -1820,8 +1824,8 @@ impl<'a> TileRenderer<'a> {
                 &format!("export.iter_pipeline{half}"), crate::iter_constants(plan.rn_bla),
             )
         });
-        let color_pipeline = fullscreen_pipeline(
-            device, &shader, &color_layout, "fs_color", &[EXPORT_FORMAT], "export.color_pipeline",
+        let color_pipeline = crate::color_hook::color_pipeline(
+            device, &shader, &color_layout, EXPORT_FORMAT, "export.color_pipeline", req.color_hook.as_deref(),
         );
 
         // ⚠BUILT UP FRONT WHEN IN SCOPE, NOT LAZILY — and that is a CORRECTNESS requirement, not a
@@ -1922,6 +1926,7 @@ impl<'a> TileRenderer<'a> {
             aa_scale: crate::aa_scale(req.aa_sample),
             tap_stride: 0,
             _pad_aa: 0.0,
+            hook_p: req.hook_params,
         };
         queue.write_buffer(&color_uniform, 0, bytemuck::bytes_of(&cu));
         let split = |v: f64| -> (f32, f32) {
@@ -4311,6 +4316,7 @@ pub(crate) fn color_uniforms_for(req: &ExportRequest, ss: u32, w: u32, h: u32, l
         aa_scale: crate::aa_scale(req.aa_sample),
         tap_stride: 0,
         _pad_aa: 0.0,
+        hook_p: req.hook_params,
     }
 }
 
@@ -4383,8 +4389,8 @@ fn color_planes(
         bind_group_layouts: &[&color_bgl],
         push_constant_ranges: &[],
     });
-    let color_pipeline = fullscreen_pipeline(
-        device, &shader, &color_layout, "fs_color", &[EXPORT_FORMAT], "coloriter.pipeline",
+    let color_pipeline = crate::color_hook::color_pipeline(
+        device, &shader, &color_layout, EXPORT_FORMAT, "coloriter.pipeline", req.color_hook.as_deref(),
     );
 
     let color_uniform = device.create_buffer(&wgpu::BufferDescriptor {

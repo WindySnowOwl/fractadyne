@@ -100,7 +100,7 @@ step "Packaging into $dir"
 rm -rf "$dir"
 mkdir -p "$dir/tours" "$dir/scripts" "$dir/validation/golden" "$dir/validation/coloring" "$dir/benchmarks"
 cp target/release/fractadyne "$dir/"
-cp README.md CHANGELOG.md TOURS.md DIAGNOSTICS.md THIRD-PARTY-NOTICES.md \
+cp README.md CHANGELOG.md TOURS.md COLORING-HOOKS.md DIAGNOSTICS.md THIRD-PARTY-NOTICES.md \
    LICENSE-APACHE LICENSE-MIT "$dir/"
 cp tours/*.toml "$dir/tours/"
 cp scripts/*.example.toml "$dir/scripts/"

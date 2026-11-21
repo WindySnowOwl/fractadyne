@@ -401,6 +401,19 @@ enum Screen {
     JuliaLinked,
     /// ...and under a fitted range, the set's window coloring both.
     JuliaLinkedFit,
+    /// Custom coloring (coloring plan B10): the home view in Smooth, point sampled, the dialog open
+    /// with no hook (the base)...
+    ColorHookOff,
+    /// ...the Smooth example: the method's own Smooth to the level, and no pass (a recolor)...
+    ColorHookSmooth,
+    /// ...the fringe example: another picture (the CONTROL that the hook runs), still no pass, and
+    /// its two sliders...
+    ColorHookFringe,
+    /// ...a save that does not build: the error in the dialog and the panel, the fringe still on
+    /// screen...
+    ColorHookError,
+    /// ...and Turn off: the base picture again.
+    ColorHookTurnedOff,
 }
 
 /// The method sheet cell the `method-sheet-deep-asked` steps ask for: Decomposition, which no
@@ -418,6 +431,9 @@ const UITEST_JULIA_LINK_C: (f64, f64) = (-0.75, 0.2);
 
 /// The `inside-color` step's solid inside (C1).
 const UITEST_INSIDE_COLOR: [f32; 3] = [0.9, 0.2, 0.6];
+/// The `color-hook-error` step's save with a typo (`colour`): it does not build, and the hook before
+/// it stays in use.
+const UITEST_BROKEN_HOOK: &str = "fn custom_color(l: Lanes) -> vec3<f32> {\n    return l.colour;\n}\n";
 
 /// `palette-aa`: the least the view's picture must change (mean |Δ| a channel, 0-255) when the
 /// palette is anti-aliased by the seahorse valley. Measured 3.65 on the RTX 3080 (2026-11-13); the
@@ -1346,6 +1362,11 @@ fn build_steps() -> Vec<Step> {
         screen("julia-linked-off", Screen::JuliaLinkedOff),
         screen("julia-linked", Screen::JuliaLinked),
         screen("julia-linked-fit", Screen::JuliaLinkedFit),
+        screen("color-hook-off", Screen::ColorHookOff),
+        screen("color-hook-smooth", Screen::ColorHookSmooth),
+        screen("color-hook-fringe", Screen::ColorHookFringe),
+        screen("color-hook-error", Screen::ColorHookError),
+        screen("color-hook-turned-off", Screen::ColorHookTurnedOff),
     ]
 }
 
@@ -1742,6 +1763,69 @@ impl FractadyneApp {
     /// point sampled (the CONTROL, which has to alias at this view for the check to judge anything).
     /// The palette's saturation at 0 (`palette-adjust`): the view gray, the step before's view
     /// colored (the control), an export of the view gray too, and no pass (a recolor).
+    /// The custom coloring steps (B10), each against a step before: the Smooth example is the view's
+    /// own Smooth, the fringe example another picture (the CONTROL), a save that does not build
+    /// keeps the fringe on screen and says so, and Turn off gives back the method's colors. None of
+    /// them calculates anything (the examples read no statistic): passes caused, 0.
+    fn uitest_color_hook_checks(&self, sc: Screen, ut: &UiTest, view: Option<&(Vec<u8>, [u32; 2])>, ran_why: [u64; 7], checks: &mut Vec<Check>) {
+        let step = |n: &str| ut.results.iter().rev().find(|r| r.name == n);
+        // Mean |difference| in 8-bit levels over the color channels.
+        let mean = |a: &[u8], b: &[u8]| -> f64 {
+            let s: f64 = a.chunks_exact(4).zip(b.chunks_exact(4)).map(|(p, q)| (0..3).map(|k| (p[k] as f64 - q[k] as f64).abs()).sum::<f64>()).sum();
+            s / (3 * (a.len() / 4)).max(1) as f64
+        };
+        // Against the step `name`: (mean difference, passes caused since).
+        let against = |name: &str| -> Option<(f64, u64)> {
+            let (px, _) = view?;
+            let b = step(name)?;
+            let (prev, _) = b.inside_view.as_ref().filter(|p| p.0.len() == px.len())?;
+            Some((mean(px, prev), (ran_why[0] - b.ran_why[0]) + (ran_why[1] - b.ran_why[1])))
+        };
+        let hook = &self.coloring.hook;
+        let sliders = hook.active.as_ref().map(|h| (0..fractadyne_gpu::color_hook::MAX_PARAMS).filter(|&i| h.used[i] || h.named(i)).count());
+        let (name, detail, ok) = match sc {
+            Screen::ColorHookOff => (
+                "color-hook-off",
+                format!("a picture of the view: {}; a hook in use: {}", view.is_some(), hook.active.is_some()),
+                view.is_some() && hook.active.is_none(),
+            ),
+            Screen::ColorHookSmooth => {
+                let r = against("color-hook-off");
+                (
+                    "color-hook-smooth-is-smooth",
+                    format!("against the method's own Smooth (mean difference in levels, passes caused): {r:?}; sliders {sliders:?}"),
+                    hook.active.is_some() && sliders == Some(0) && r.is_some_and(|(d, ran)| d <= 0.5 && ran == 0),
+                )
+            }
+            Screen::ColorHookFringe => {
+                let r = against("color-hook-smooth");
+                (
+                    "color-hook-fringe-recolors",
+                    format!("against the Smooth example (the CONTROL: another picture, nothing calculated): {r:?}; sliders {sliders:?}"),
+                    sliders == Some(2) && r.is_some_and(|(d, ran)| d >= 8.0 && ran == 0),
+                )
+            }
+            Screen::ColorHookError => {
+                let r = against("color-hook-fringe");
+                (
+                    "color-hook-error-keeps-the-last",
+                    format!("against the fringe step: {r:?}; the error: {:?}; the fringe still in use: {:?}", hook.error, sliders),
+                    hook.error.is_some() && sliders == Some(2) && r.is_some_and(|(d, ran)| d <= 0.5 && ran == 0),
+                )
+            }
+            Screen::ColorHookTurnedOff => {
+                let r = against("color-hook-off");
+                (
+                    "color-hook-turned-off",
+                    format!("against the first step, which had none: {r:?}; a hook in use: {}", hook.active.is_some()),
+                    hook.active.is_none() && r.is_some_and(|(d, ran)| d <= 0.5 && ran == 0),
+                )
+            }
+            _ => return,
+        };
+        checks.push(Check { name: name.into(), verdict: if ok { Verdict::Pass } else { Verdict::Fail }, detail });
+    }
+
     fn uitest_palette_adjust_checks(&self, ut: &UiTest, view: Option<&(Vec<u8>, [u32; 2])>, ran_why: [u64; 7], checks: &mut Vec<Check>) {
         let before = ut.results.iter().rev().find(|r| r.name == "palette-aa");
         let (Some((px, size)), Some(b)) = (view, before) else {
@@ -2333,6 +2417,9 @@ impl FractadyneApp {
         self.misi.open = false;
         self.dialogs.uitest_method_tooltip = None;
         self.method_sheet.open = false;
+        // The Custom coloring window, and its hook: each `color-hook-*` step sets its own.
+        self.color_hook_dialog.open = false;
+        self.coloring.hook.turn_off();
         self.harness.uitest_sheet_budget = None;
         self.harness.uitest_sheet_hold = false;
         self.coloring.interior = None;
@@ -2894,6 +2981,36 @@ impl FractadyneApp {
                 self.coloring.normalize_live = false;
                 self.coloring.palette_aa = matches!(s, Screen::PaletteAa);
                 self.dialogs.right_panel_open = true;
+            }
+            // Custom coloring (B10). Point sampled: a hook's `palette()` is not anti-aliased, so with
+            // the palette's anti-aliasing on the Smooth example would not be the method's Smooth.
+            Screen::ColorHookOff | Screen::ColorHookSmooth | Screen::ColorHookFringe | Screen::ColorHookError | Screen::ColorHookTurnedOff => {
+                if matches!(s, Screen::ColorHookOff) {
+                    self.set_show_mode(crate::ShowMode::Set);
+                    self.set_fractal(crate::FractalKind::Mandelbrot);
+                    self.reset_view();
+                    self.render_cfg.auto_iter = true;
+                }
+                self.coloring.color_method = crate::ColorMethod::Smooth;
+                self.coloring.interior = Some(crate::InteriorMode::Solid);
+                self.coloring.normalize_live = false;
+                self.coloring.palette_aa = false;
+                self.dialogs.right_panel_open = true;
+                self.color_hook_dialog.open = true;
+                let example = |n: &str| fractadyne_gpu::color_hook::EXAMPLES.iter().find(|(f, _)| *f == n).map_or("", |(_, t)| *t);
+                match s {
+                    Screen::ColorHookSmooth => {
+                        let _ = self.coloring.hook.set_text(example("smooth.wgsl"), None, None);
+                    }
+                    Screen::ColorHookFringe => {
+                        let _ = self.coloring.hook.set_text(example("fringe.wgsl"), None, None);
+                    }
+                    Screen::ColorHookError => {
+                        let _ = self.coloring.hook.set_text(example("fringe.wgsl"), None, None);
+                        let _ = self.coloring.hook.set_text(UITEST_BROKEN_HOOK, None, None);
+                    }
+                    _ => self.coloring.hook.turn_off(),
+                }
             }
             // The view as palette-aa left it, the palette's saturation at 0.
             Screen::PaletteAdjust => {
@@ -3502,6 +3619,11 @@ impl FractadyneApp {
                     | Screen::PaletteAaBase
                     | Screen::PaletteAa
                     | Screen::PaletteAdjust
+                    | Screen::ColorHookOff
+                    | Screen::ColorHookSmooth
+                    | Screen::ColorHookFringe
+                    | Screen::ColorHookError
+                    | Screen::ColorHookTurnedOff
             )
         );
         let inside_view = inside_step.then(|| self.uitest_inside_size()).and_then(|s| {
@@ -4390,6 +4512,14 @@ impl FractadyneApp {
         }
         if let StepKind::Screen(Screen::PaletteAa) = step.kind {
             self.uitest_palette_aa_checks(ut, inside_view.as_ref(), ran_why, &mut checks);
+        }
+
+        // ---- custom coloring (coloring plan B10) ----
+        if let StepKind::Screen(
+            sc @ (Screen::ColorHookOff | Screen::ColorHookSmooth | Screen::ColorHookFringe | Screen::ColorHookError | Screen::ColorHookTurnedOff),
+        ) = step.kind
+        {
+            self.uitest_color_hook_checks(sc, ut, inside_view.as_ref(), ran_why, &mut checks);
         }
 
         // ---- the method sheet's calculated cells (coloring plan B7, step 4) ----

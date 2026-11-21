@@ -162,6 +162,7 @@ if (-not $SkipWindows) {
     New-Item -ItemType Directory -Force -Path $stage | Out-Null
     Copy-Item $exe -Destination $stage
     Copy-Item (Join-Path $root "README.md"), (Join-Path $root "CHANGELOG.md"), (Join-Path $root "TOURS.md"), `
+              (Join-Path $root "COLORING-HOOKS.md"), `
               (Join-Path $root "DIAGNOSTICS.md"), (Join-Path $root "THIRD-PARTY-NOTICES.md"), `
               (Join-Path $root "LICENSE-APACHE"), (Join-Path $root "LICENSE-MIT") -Destination $stage
     New-Item -ItemType Directory -Force -Path (Join-Path $stage "tours") | Out-Null

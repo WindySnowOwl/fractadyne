@@ -3816,3 +3816,44 @@ status-limit-exhausted-detail = Bu görünüme verilebilecek en büyük bütçed
 status-limit-capped-max = Piksellerin %{ $percent } kadarının yinelemesi { $budget } bütçesinde tükendi ve kaçanlar tam o tavanda bitiyor — görünüm yetersiz çözümlenmiş. Yineleme zaten en yüksek değerde, bu yüzden bu görünüm uygulamanın şu an verebileceğinden fazlasını gerektiriyor.
 # $percent: the share of pixels, a whole number; $budget: the iteration budget. "Iterations", "Controls" and "Quality" are the names of a setting, the control panel and its section.
 status-limit-capped-raise = Piksellerin %{ $percent } kadarının yinelemesi { $budget } bütçesinde tükendi ve kaçanlar tam o tavanda bitiyor — görünüm yetersiz çözümlenmiş. Çözümlemek için Yineleme değerini yükseltin (Denetimler ▸ Kalite).
+
+## Custom coloring (Color ▸ Custom coloring…): a short program in WGSL, the graphics language, that colors the view in place of the coloring method, loaded from a file the user edits. WGSL, custom_color and file names stay as written; the compiler's own messages ($error) are in English.
+
+color-hook-open = Özel renklendirme…
+color-hook-open-hover = Görünümü, WGSL ile yazılmış ve bir dosyadan yüklenen kendi kısa programınızla renklendirin. Dosyayı kaydedin, görünüm yeniden renklenir.
+color-hook-title = Özel renklendirme
+color-hook-intro = WGSL ile yazılmış custom_color adlı bir işlev, renklendirme yönteminin yerine görünümün her noktasını renklendirir. Dosyasını herhangi bir metin düzenleyicide düzenleyin: her kaydettiğinizde görünüm yeniden renklenir.
+color-hook-off = Kapalı: görünüm kendi yöntemiyle renklendirilir.
+# $file: the file's name.
+color-hook-from-file = Kullanımda: { $file }. Dosyayı kaydetmek görünümü yeniden renklendirir.
+color-hook-from-view = Kullanımda: görünümün ya da bir örneğin getirdiği, dosyası olmayan bir renklendirme. Düzenlemek için dosya olarak kaydedin.
+# $error: why it does not build, in the shader compiler's words (English), often with a line and a column.
+color-hook-error = Derlenmiyor: { $error }
+color-hook-error-kept = Derlenen son sürüm kullanılmaya devam ediyor.
+color-hook-params = Parametreler
+color-hook-load = Dosya aç…
+color-hook-load-hover = Bir .wgsl dosyasından renklendirme yükler ve dosyayı izler: her kayıt görünümü yeniden renklendirir.
+color-hook-examples = Örnekler
+color-hook-examples-hover = Bir örnekle başlayın. Düzenlemek için dosya olarak kaydedin.
+# The examples: the first two are coloring methods (color-method-smooth, color-method-fringe) written out as code.
+color-hook-example-smooth = Yumuşak yineleme, kodla yazılmış
+color-hook-example-fringe = Saçak, kodla yazılmış
+color-hook-example-transfer = Aktarım eğrileri
+color-hook-example-darken = Kümenin yakınını koyulaştır
+color-hook-save-as = Farklı kaydet…
+color-hook-save-as-hover = Kullanımdaki renklendirmeyi bir dosyaya yazar ve bundan sonra o dosyayı izler.
+color-hook-turn-off = Kapat
+color-hook-turn-off-hover = Renklendirme yönteminin kendi renklerine döner.
+color-hook-guide = Kılavuz
+color-hook-guide-hover = Nasıl yazılır: her noktanın taşıdıkları, çağrılabilecek işlevler ve örneklerin açıklaması.
+# The kind of file, in the Open and Save as dialogs.
+color-hook-filter = Renklendirme (WGSL)
+# $path: where the file was written.
+color-hook-saved = { $path } konumuna kaydedildi.
+# $error: the system's message.
+color-hook-save-failed = Kaydedilemedi: { $error }
+# The line under the coloring method in the control panel while a custom coloring colors the view. $name: its file's name, or color-hook-panel-unnamed.
+color-hook-panel = Özel renklendirme: { $name }
+color-hook-panel-unnamed = görünümden
+color-hook-panel-hover = Özel bir renklendirme bu görünümü yöntemin yerine renklendiriyor. Penceresini açmak için tıklayın.
+color-hook-panel-error = Son kayıt derlenmiyor.

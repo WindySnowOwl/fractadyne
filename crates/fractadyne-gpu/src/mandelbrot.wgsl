@@ -3885,6 +3885,9 @@ struct ColorU {
     // texel): the palette browser's thumbnails (`atlas_tap_stride` in the Rust). One pad word.
     tap_stride: u32,
     _pad_aa2: f32,
+    // A coloring hook's parameters `p1()`..`p4()` (coloring plan B10; read only by a hook's module,
+    // `color_hook.wgsl`). Mirrors `ColorUniforms.hook_p`.
+    hook_p: vec4<f32>,
 };
 @group(0) @binding(0) var<uniform> cu: ColorU;
 @group(0) @binding(1) var iter_tex: texture_2d<f32>;

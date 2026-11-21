@@ -393,6 +393,8 @@ fn plan_request(plan: Plan) -> (fractadyne_gpu::ExportRequest, u32) {
         mode: mode.to_u32(),
         formula: FractalKind::Mandelbrot.formula_id(),
         custom: None,
+        color_hook: None,
+        hook_params: [0.0; 4],
         julia: 0,
         cycle: 1.0,
         offset: 0.0,

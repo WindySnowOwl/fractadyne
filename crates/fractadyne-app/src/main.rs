@@ -95,6 +95,7 @@ mod render;
 mod update;
 mod video_pipe;
 mod coloring_fields;
+mod coloring_hook;
 mod view_coloring;
 mod scripting;
 mod session_outcome;
@@ -6716,6 +6717,9 @@ struct ColoringConfig {
     /// The method's own statistic is added regardless ([`Self::orbit_stats`]). Transient: never
     /// stored, never set by the UI.
     orbit_stats_override: Option<StatSet>,
+    /// The coloring hook (coloring plan B10): a WGSL `custom_color` colors the view in place of the
+    /// method, and the statistics it reads are accumulated whatever the method.
+    hook: coloring_hook::HookState,
 }
 
 impl ColoringConfig {
@@ -6743,6 +6747,8 @@ impl ColoringConfig {
             Some(s) => s.union(method.orbit_stats()),
             None => method.orbit_stats_at(mode.is_floatexp() && crate::tunables::cost().gbuffer_deep == 1),
         };
+        // ...and what a coloring hook reads (B10), whatever the method...
+        let set = set.union(self.hook.stats());
         // ...and what its inside is colored by: an interior colored by the trap needs the trap.
         match inside.reads() {
             Some(st) => set.with(st),
@@ -7096,10 +7102,15 @@ struct FractadyneApp {
     /// the renderer from outside the paint callback — compiling a custom formula's pipelines off
     /// the render thread (`fractadyne_gpu::compile_custom_async`).
     render_state: Option<eframe::egui_wgpu::RenderState>,
+    /// The coloring hook revision (`HookState::rev`) the live renderer's hook pipeline was last
+    /// prepared for (`poll_coloring_hook`).
+    hook_prepared: u64,
     /// Color ▸ Browse palettes… (`ui::palette_browser`).
     palette_browser: crate::ui::palette_browser::PaletteBrowser,
     /// Color ▸ Preview methods… (`ui::method_sheet`, coloring plan B7).
     method_sheet: crate::ui::method_sheet::MethodSheet,
+    /// Color ▸ Custom coloring… (`ui::color_hook_dialog`, coloring plan B10).
+    color_hook_dialog: crate::ui::color_hook_dialog::ColorHookDialog,
     /// A second graphics device for the live view (`--worker-gpu`, `design/multi-gpu-live.md`);
     /// `None` = one GPU, as always. Dropped (not fatal) when it is lost.
     gpu_worker: Option<gpu_worker::Worker>,
@@ -8366,8 +8377,10 @@ impl FractadyneApp {
             gallery: GalleryState { dir: Self::pictures_dir(), ..Default::default() },
             gpu: None,
             render_state: None,
+            hook_prepared: 0,
             palette_browser: Default::default(),
             method_sheet: Default::default(),
+            color_hook_dialog: Default::default(),
             gpu_worker: None,
             export_extra: Vec::new(),
             worker_state: gpu_worker::WorkerState::Off,
@@ -8507,6 +8520,7 @@ impl FractadyneApp {
                     s.coloring.log_palette || asked
                 },
                 orbit_stats_override: None,
+                hook: Default::default(),
             },
             perf: Perf {
                 // ⭐**Off unless the user has asked for it**, remembered in the session so the
@@ -8746,6 +8760,48 @@ impl FractadyneApp {
         }
         if app.bench.auto {
             app.start_benchmark();
+        }
+        // The coloring hook (B10): the session's, from its file when that still reads (it may have
+        // been edited since) and builds, else the text the session kept; `--coloring-hook FILE`
+        // outranks both, and a file that does not build there ends the run (a render would silently
+        // be the method's colors).
+        let saved = &app.last_state;
+        if !saved.coloring.coloring_hook.is_empty() {
+            let (text, params) = (saved.coloring.coloring_hook.clone(), saved.coloring.coloring_hook_params.clone());
+            let from_file = (!saved.coloring_hook_path.is_empty())
+                .then(|| std::path::PathBuf::from(&saved.coloring_hook_path))
+                .and_then(|p| coloring_hook::read_hook_file(&p).ok().map(|t| (t, p)));
+            let restored = match from_file {
+                Some((file_text, path)) => app.coloring.hook.set_text(&file_text, Some(&params), Some(path)),
+                None => app.coloring.hook.set_text(&text, Some(&params), None),
+            };
+            if let Err(e) = restored {
+                diag::log_line("hook", &format!("the session's coloring hook does not build, so it is off: {e}"));
+                app.coloring.hook.turn_off();
+            }
+        }
+        if let Some(i) = args.iter().position(|a| a == "--coloring-hook") {
+            let Some(p) = args.get(i + 1).filter(|p| !p.starts_with("--")) else {
+                eprintln!("fractadyne: --coloring-hook needs a .wgsl file");
+                crate::exit(2);
+            };
+            if let Err(e) = app.coloring.hook.load_file(std::path::Path::new(p)) {
+                eprintln!("fractadyne: --coloring-hook {p}: {e}");
+                crate::exit(2);
+            }
+        }
+        if let Some(i) = args.iter().position(|a| a == "--hook-params") {
+            match args.get(i + 1).and_then(|v| coloring_hook::parse_params(v)) {
+                Some(v) if app.coloring.hook.active.is_some() => app.coloring.hook.params.copy_from_slice(&v),
+                Some(_) => {
+                    eprintln!("fractadyne: --hook-params without a coloring hook (--coloring-hook FILE)");
+                    crate::exit(2);
+                }
+                None => {
+                    eprintln!("fractadyne: --hook-params takes four numbers, p1,p2,p3,p4");
+                    crate::exit(2);
+                }
+            }
         }
         if app.render_cli.run {
             app.apply_cli_render(args);
@@ -9423,6 +9479,11 @@ impl FractadyneApp {
             palette_contrast: self.coloring.palette_adjust.contrast,
             palette_saturation: self.coloring.palette_adjust.saturation,
             julia_linked: self.coloring.julia_linked,
+            coloring_hook: self.coloring.hook.active.as_ref().map(|h| h.text.clone()).unwrap_or_default(),
+            coloring_hook_params: match self.coloring.hook.active {
+                Some(_) => self.coloring.hook.params.to_vec(),
+                None => Vec::new(),
+            },
         }
     }
 
@@ -9471,6 +9532,18 @@ impl FractadyneApp {
         }
         .clamped();
         c.julia_linked = s.julia_linked;
+        // The coloring hook (B10): another text replaces the hook in use (a view's or a job's hook
+        // is not watched: it has no file); none turns it off; the same text keeps it, and its file.
+        if s.coloring_hook.is_empty() {
+            c.hook.turn_off();
+        } else if c.hook.active.as_ref().is_some_and(|h| h.text == s.coloring_hook) {
+            if s.coloring_hook_params.len() == c.hook.params.len() && s.coloring_hook_params.iter().all(|v| v.is_finite()) {
+                c.hook.params.copy_from_slice(&s.coloring_hook_params);
+            }
+        } else if let Err(e) = c.hook.set_text(&s.coloring_hook, Some(&s.coloring_hook_params), None) {
+            diag::log_line("hook", &format!("the coloring hook does not build, so it is off: {e}"));
+            c.hook.turn_off();
+        }
         if gradient_changed {
             c.palette_rev = c.palette_rev.wrapping_add(1);
         }
@@ -9532,6 +9605,7 @@ impl FractadyneApp {
             max_iter: self.render_cfg.max_iter,
             auto_iter: self.render_cfg.auto_iter,
             coloring: self.coloring_spec(),
+            coloring_hook_path: self.coloring.hook.path.as_ref().map(|p| p.display().to_string()).unwrap_or_default(),
             zoom_rate: self.render_cfg.zoom_rate,
             snap_zoom: self.render_cfg.snap_zoom,
             click_zoom: self.click_zoom,
@@ -18300,6 +18374,8 @@ impl eframe::App for FractadyneApp {
         self.render_state = frame.wgpu_render_state().cloned();
         // A custom formula compiling off the render thread: switch to it once its pipelines exist.
         self.poll_formula_compile(ctx);
+        // The coloring hook: a saved file rebuilt, and its color pipeline made before a frame needs it.
+        self.poll_coloring_hook(ctx);
         // Motion-jam bookkeeping: retire completed full-size dispatches (the callbacks fired
         // since last frame), then arm registrations owed from LAST frame's dispatches — eframe
         // has submitted that work by now, so `on_submitted_work_done` covers it and nothing
@@ -19185,6 +19261,7 @@ impl eframe::App for FractadyneApp {
         self.draw_bookmarks_dialog(ctx);
         self.draw_palette_browser(ctx);
         self.draw_method_sheet(ctx);
+        self.draw_color_hook_dialog(ctx);
 
         // Render a just-added bookmark's thumbnail (deferred here for GPU access; the current
         // view still matches the bookmark, since adding it didn't move the view).

@@ -275,6 +275,33 @@ impl FractadyneApp {
                     };
                     ui.label(egui::RichText::new(note).small().color(ui.visuals().warn_fg_color));
                 }
+                // ⭐A coloring hook colors the view in place of the method (B10): said here, under
+                // the method, so a method that seems to change little is explained, and a save of the
+                // hook's file that does not build is seen without the window open. Truncated, so a
+                // long file name never widens the panel (the method row's own rule above).
+                if self.color_hook_for(self.fractal).is_some() {
+                    let name = self
+                        .coloring
+                        .hook
+                        .path
+                        .as_deref()
+                        .and_then(|p| p.file_name())
+                        .map_or_else(|| tr!(color_hook_panel_unnamed), |s| s.to_string_lossy().into_owned());
+                    let accent = ui.visuals().selection.stroke.color;
+                    let line = egui::Label::new(egui::RichText::new(tr!(color_hook_panel, name = name)).small().color(accent))
+                        .truncate()
+                        .sense(egui::Sense::click());
+                    if ui.add(line).on_hover_text(tr!(color_hook_panel_hover)).clicked() {
+                        self.color_hook_dialog.open = true;
+                    }
+                    if self.coloring.hook.error.is_some() {
+                        let warn = egui::RichText::new(tr!(color_hook_panel_error)).small().color(ui.visuals().warn_fg_color);
+                        let hover = format!("{}\n\n{}", tr!(color_hook_error_kept), tr!(color_hook_panel_hover));
+                        if ui.add(egui::Label::new(warn).truncate().sense(egui::Sense::click())).on_hover_text(hover).clicked() {
+                            self.color_hook_dialog.open = true;
+                        }
+                    }
+                }
                 if self.coloring.color_method == ColorMethod::Stripe {
                     let r = labelled(ui, &tr!(panel_stripe_density), |ui| {
                         ui.add(

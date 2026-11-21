@@ -234,8 +234,17 @@ ramps. Design and the measured acceptance evidence: `design/palette-import.md`.
 **Relief lighting** (distance-estimate slope normal) and **distance glow** re-shade in the color pass
 so they don't re-iterate; both hold at any depth via the floatexp derivative.
 
-*Not built:* histogram/equalized coloring (needs new GPU compute infra) and programmable/custom
-coloring algorithms (`DESIGN.md` §6.4/§8).
+**Custom coloring** (a coloring hook, `design/coloring-plan.md` B10; the user's guide is
+`COLORING-HOOKS.md`): the user's WGSL `custom_color(l: Lanes) -> vec3<f32>`, from a watched file,
+is spliced into the color pass in place of the method's shading (`fractadyne_gpu::color_hook`
+cuts the pass out of `mandelbrot.wgsl`, renames its `shade_aa`/`shade` to `builtin_*` and appends
+the interface, `color_hook.wgsl`, and the text). It gets the G-buffer lanes `--render-lanes` writes
+and the method's own color, so it runs at any depth and on top of any method; the statistics it
+reads join what the frame accumulates. Its pipeline is built off the paint callback, keyed by its
+module, and every color path (live, atlas, export, assembler, farm) picks it by that key. A view
+carries its text (format 5), never its file.
+
+*Not built:* histogram/equalized coloring (needs new GPU compute infra) (`DESIGN.md` §6.4/§8).
 
 ---
 
@@ -306,7 +315,7 @@ confirm) removes the whole config dir.
 `fractadyne --help` prints the always-current reference (generated from `CLI_REFERENCE` in
 `help.rs`). Headless modes include: `--render` (one image), `--render-tour` (movie frames),
 `--benchmark` / `--benchmark-std`, `--selftest`, `--validate-deep`, `--crosscheck-f3`, `--compare`,
-`--render-iter`, `--render-lanes` (every G-buffer lane as `.npy`), `--find-minibrot`, `--import-kfr`, `--check-updates`, `--reset-state`,
+`--render-iter`, `--render-lanes` (every G-buffer lane as `.npy`), `--coloring-hook FILE` (a custom coloring), `--find-minibrot`, `--import-kfr`, `--check-updates`, `--reset-state`,
 `--gputest` (WGSL primitives vs CPU oracles, every backend — headless, no display needed),
 `@args-file`; dev harnesses: `--profile`, `--bench-matrix` (path-coverage perf/regression suite vs
 a blessed baseline), `--frametest`, `--divetest` (headless live-dive windows per depth band),

@@ -36,6 +36,20 @@ detail is in the git history.
   arithmetic, before it is written for the GPU. `--lanes` adds statistics the method does not
   read. In the source repository, `scripts/lanes.py` loads a folder and colors it two ways as
   worked examples.
+- **Custom coloring: a coloring of your own, written as a short program.** Color ▸ Custom
+  coloring… colors the view with a function of your own, `custom_color`, written in WGSL (the
+  language Fractadyne's shaders are written in), in place of the coloring method: a way to try a
+  coloring idea, or keep one, without building Fractadyne. It runs on the graphics card for every
+  sample at any depth, gets the numbers `--render-lanes` writes (the smooth count, the slope's
+  direction, the distance to the set, the orbit statistics) and the method's own color, and can use
+  the view's palette. Its file is watched: each save recolors the view at once, and a save that does
+  not build says why, with the line, while the last version that built stays on screen. Up to four
+  parameters, named in the file, become sliders. Four examples start you off (Smooth and Fringe
+  written out, transfer curves, darkening near the set), and `COLORING-HOOKS.md`, beside the
+  program, explains how to write one. A custom coloring colors the live view, both panes of the dual
+  view, exports and render-farm jobs; a view file, a bookmark or a Share text carries its text and
+  its parameters (view format 5), never your file's path. From the command line, `--coloring-hook
+  FILE` and `--hook-params`.
 - **Ways back to the defaults for the coloring.** Every slider in the Coloring and Effects sections
   goes back to its default on a double-click, on its handle or track as well as on its number, as
   its tooltip says. Color ▸ Reset coloring settings

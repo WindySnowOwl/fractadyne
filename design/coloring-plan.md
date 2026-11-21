@@ -1,6 +1,6 @@
 # Coloring methods: implementation plan
 
-Status: **plan (2026-11-08); phase A done (A1–A10), B1, B1b and B9 done (the coloring matrix, its live method tour, every lane as NumPy arrays), B2 done (what a frame accumulates is a `StatSet`, apart from the method shown), B3 done (in floatexp a stripe, triangle or trap frame carries the whole G-buffer), B4 to B7 done (one settings model, the method list, the method sheet, the inside and a second LUT), C1, C4, C8, C9 and C11 done (a solid inside in any color; the inside's palette fitted to its range; the palette anti-aliased over a footprint from the distance estimate; the fringe method; the dual view's Julia pane on the set's palette map); B8 not started; next B10 (a custom coloring hook), then C2; see §10 (2026-11-20).** Line references are to `main` at `9ab75357`; check
+Status: **plan (2026-11-08); phase A done (A1–A10), B1, B1b, B9 and B10 done (the coloring matrix, its live method tour, every lane as NumPy arrays, a custom coloring hook), B2 done (what a frame accumulates is a `StatSet`, apart from the method shown), B3 done (in floatexp a stripe, triangle or trap frame carries the whole G-buffer), B4 to B7 done (one settings model, the method list, the method sheet, the inside and a second LUT), C1, C4, C8, C9 and C11 done (a solid inside in any color; the inside's palette fitted to its range; the palette anti-aliased over a footprint from the distance estimate; the fringe method; the dual view's Julia pane on the set's palette map); B8 not started; next C2; see §10 (2026-11-21).** Line references are to `main` at `9ab75357`; check
 them before editing, they drift. The research behind it (methods, prototypes, measured results,
 prior art) is the coloring-methods doc; its local copy is
 `local/research_notes/Fractal coloring methods/` (PDF, HTML, Markdown, prototype scripts).
@@ -1069,6 +1069,40 @@ the app's own data.
 - **Order**: B9 soon (small); B10 before the remaining phase C items (C2, C3, C5, C10), which it
   speeds. Ideas that change the iteration itself (D4's basins: a cycle found while iterating)
   still start in NumPy or the CPU reference.
+- **Done 2026-11-21** (branch `feat/color-b10-hook`): `fractadyne_gpu::color_hook` cuts the color
+  pass out of `mandelbrot.wgsl` with `shade_aa`/`shade` renamed `builtin_*`, appends the interface
+  (`color_hook.wgsl`: `Lanes`, `p1()`..`p4()`, `palette_map`, `palette_offset`, `palette_inside`)
+  and the user's text, and validates the module with naga; refused with their line: loops, a
+  module-scope `var`, an `override`, an entry point, a taken name. `Lanes` are B9's lanes by the
+  same names plus `inside`, `coord` and `color` (the method's own color, anti-aliased), so a hook
+  can work on top of any method. A hook's key is FNV-1a of its module; its text is CRLF-normalized
+  (the examples are CRLF on a Windows checkout, and a view's escaping keeps only `\n`: found by
+  the self-test's view round trip). The statistics a hook reads (`l.stripe` …) join what the frame
+  accumulates whatever the method (`orbit_stats_with`); a zoom video refuses a hook that reads one
+  (its strips keep none). The live view, the atlas (thumbnails, the method sheet), exports, the
+  assembler and the farm (the session's `ColoringSpec`) color through it; the kept colored picture
+  (2026-11-21's idle fix) adds the hook's key to its signature. The app: `HookState` (load, a
+  watcher thread on the file's time and length, the last hook that built kept on an error),
+  `--coloring-hook FILE` / `--hook-params`, view format 5 (`coloring_hook=`, one escaped line, and
+  `coloring_hook_params=`), the session keeps the file's path (a farm job never does), Color ▸
+  Custom coloring… (`ui::color_hook_dialog`: the status, the error, sliders for the parameters a
+  hook names or calls, Open, Examples, Save as, Turn off, the guide), a line under the method in
+  the panel, 31 strings in 15 languages, `COLORING-HOOKS.md` (shipped beside the program).
+  ⭐`palette_map` maps by the METHOD's rate: under Smooth, palettes per iteration, so a value from
+  0 to 1 hardly moves; `palette_offset()` lets a hook map such a value at a rate of its own (found
+  by the self-test's fringe and stripe checks, which compared a hook under Smooth with the method
+  at its own rate). Tests: self-test group `hook` (160x90 at the tour's point: the Smooth example
+  is the Smooth method bit for bit at 1e10x df32 and 1e32x floatexp, against a CONTROL that differs
+  on over a third of the channels; the fringe example is the Fringe method bit for bit; a hook
+  reading `l.stripe` under Smooth is the Stripe method bit for bit; a view carries the hook, a
+  broken one is refused and said, a view naming none turns it off); `--coloring-matrix --quick`
+  with an identity hook (`return l.color;`) draws every cell of all 9 views as without one, pixel
+  for pixel (two runs without a hook differ only in the "slower" flags); `--uitest` steps
+  `color-hook-*` (the Smooth example is the view's Smooth to the level with no pass; the fringe
+  example another picture, no pass, two sliders; a broken save keeps the fringe and says so; Turn
+  off gives back the first picture); unit tests for the module, parameters, statistics, the calls
+  a hook makes and line ends. **Done when** is met: C2's transfer functions run as the
+  `transfer-curves.wgsl` example.
 
 ---
 
@@ -1478,8 +1512,8 @@ coloring in these places, so sequence the two with care:
 | B7                 | done, merged                                              | `9e1efa0e` (merge `97c91c32`; step 1 `17b6d60d` with the browser's dual view, `ef2acde7`) |
 | B5                 | done, merged                                              | `b2b927d6` (merge `e3e53257`)                                                             |
 | B8                 | not started                                               |                                                                                           |
-| B9                 | done, not merged (branch `feat/color-b9-lanes`)           | (filled in at the merge)                                                                  |
-| B10                | not started: a prototyping aid (user, 2026-11-20)         |                                                                                           |
+| B9                 | done, merged                                              | `6d18af38` (merge `23d32dc5`)                                                             |
+| B10                | done, not merged (branch `feat/color-b10-hook`)           | (filled in at the merge)                                                                  |
 | C1                 | done, merged                                              | `58d6dce3` (merge `84af4b0d`)                                                             |
 | C4                 | done, merged                                              | `e99bfafd` (merge `9a3f9ff9`)                                                             |
 | C8                 | done, merged; on by default on `feat/color-c8-aa-default` | `5430aa2c` (merge `49153662`)                                                             |

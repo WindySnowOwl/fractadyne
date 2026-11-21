@@ -3948,3 +3948,44 @@ status-limit-exhausted-detail = Każdy piksel nadal wyczerpał iteracje przy naj
 status-limit-capped-max = { $percent }% pikseli wyczerpało iteracje przy budżecie { $budget }, a te, które uciekają, kończą tuż przy tym pułapie — widok jest niedostatecznie rozdzielony. Iteracje są już na maksimum, więc ten widok potrzebuje więcej, niż aplikacja może obecnie dać.
 # $percent: the share of pixels, a whole number; $budget: the iteration budget. "Iterations", "Controls" and "Quality" are the names of a setting, the control panel and its section.
 status-limit-capped-raise = { $percent }% pikseli wyczerpało iteracje przy budżecie { $budget }, a te, które uciekają, kończą tuż przy tym pułapie — widok jest niedostatecznie rozdzielony. Zwiększ Iteracje (Sterowanie ▸ Jakość), aby to rozwiązać.
+
+## Custom coloring (Color ▸ Custom coloring…): a short program in WGSL, the graphics language, that colors the view in place of the coloring method, loaded from a file the user edits. WGSL, custom_color and file names stay as written; the compiler's own messages ($error) are in English.
+
+color-hook-open = Własne kolorowanie…
+color-hook-open-hover = Koloruj widok krótkim własnym programem napisanym w WGSL i wczytanym z pliku. Zapisz plik, a widok zostanie pokolorowany od nowa.
+color-hook-title = Własne kolorowanie
+color-hook-intro = Funkcja o nazwie custom_color, napisana w WGSL, koloruje każdy punkt widoku zamiast metody kolorowania. Edytuj jej plik w dowolnym edytorze tekstu: po każdym zapisie widok zostaje pokolorowany od nowa.
+color-hook-off = Wyłączone: widok koloruje jego metoda.
+# $file: the file's name.
+color-hook-from-file = W użyciu: { $file }. Zapisanie pliku koloruje widok od nowa.
+color-hook-from-view = W użyciu: kolorowanie przyniesione przez widok lub przykład, bez pliku. Zapisz je jako plik, aby je edytować.
+# $error: why it does not build, in the shader compiler's words (English), often with a line and a column.
+color-hook-error = Nie kompiluje się: { $error }
+color-hook-error-kept = Nadal używana jest ostatnia wersja, która się skompilowała.
+color-hook-params = Parametry
+color-hook-load = Otwórz plik…
+color-hook-load-hover = Wczytaj kolorowanie z pliku .wgsl i obserwuj plik: każdy zapis koloruje widok od nowa.
+color-hook-examples = Przykłady
+color-hook-examples-hover = Zacznij od przykładu. Zapisz go jako plik, aby go edytować.
+# The examples: the first two are coloring methods (color-method-smooth, color-method-fringe) written out as code.
+color-hook-example-smooth = Gładka iteracja, rozpisana w kodzie
+color-hook-example-fringe = Obwódka, rozpisana w kodzie
+color-hook-example-transfer = Krzywe przejścia
+color-hook-example-darken = Przyciemnij przy zbiorze
+color-hook-save-as = Zapisz jako…
+color-hook-save-as-hover = Zapisz używane kolorowanie do pliku i od tej pory obserwuj ten plik.
+color-hook-turn-off = Wyłącz
+color-hook-turn-off-hover = Wróć do kolorów samej metody kolorowania.
+color-hook-guide = Przewodnik
+color-hook-guide-hover = Jak je napisać: co niesie każdy punkt, jakie funkcje można wywołać, i omówienie przykładów.
+# The kind of file, in the Open and Save as dialogs.
+color-hook-filter = Kolorowanie (WGSL)
+# $path: where the file was written.
+color-hook-saved = Zapisano w { $path }.
+# $error: the system's message.
+color-hook-save-failed = Nie udało się zapisać: { $error }
+# The line under the coloring method in the control panel while a custom coloring colors the view. $name: its file's name, or color-hook-panel-unnamed.
+color-hook-panel = Własne kolorowanie: { $name }
+color-hook-panel-unnamed = z widoku
+color-hook-panel-hover = Własne kolorowanie koloruje ten widok zamiast metody. Kliknij, aby otworzyć jego okno.
+color-hook-panel-error = Ostatni zapis się nie kompiluje.

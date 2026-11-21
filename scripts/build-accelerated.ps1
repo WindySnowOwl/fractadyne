@@ -312,6 +312,7 @@ Copy-Item (Join-Path $root "LICENSE-MIT"), (Join-Path $root "LICENSE-APACHE") -D
 # green PACKAGE: the presence check below is the packaging gate that would have caught this, and the
 # three copy sites (here, the standard windows job, build-accelerated.sh) must stay in step.
 Copy-Item (Join-Path $root "README.md"), (Join-Path $root "CHANGELOG.md"), (Join-Path $root "TOURS.md"), `
+          (Join-Path $root "COLORING-HOOKS.md"), `
           (Join-Path $root "DIAGNOSTICS.md"), (Join-Path $root "THIRD-PARTY-NOTICES.md") -Destination $dir
 New-Item -ItemType Directory -Force (Join-Path $dir "tours") | Out-Null
 Copy-Item (Join-Path $root "tours\*.toml") -Destination (Join-Path $dir "tours")
@@ -348,7 +349,7 @@ Copy-Item (Join-Path $root "benchmarks\coloring-matrix-baseline*.json") -Destina
 # count (adding one must not break the release).
 $goldenCount = @(Get-ChildItem (Join-Path $dir "validation\golden") -Filter *.png -ErrorAction SilentlyContinue).Count
 if ($goldenCount -lt 15) { Fail "package staged only $goldenCount golden PNGs (< 15) - validation data is incomplete" }
-foreach ($req in @("validation\catalog.toml", "benchmarks\bench-matrix-baseline.json", "DIAGNOSTICS.md",
+foreach ($req in @("validation\catalog.toml", "benchmarks\bench-matrix-baseline.json", "DIAGNOSTICS.md", "COLORING-HOOKS.md",
                    "tours", "scripts\deep-sample.fdn", "languages")) {
     if (-not (Test-Path (Join-Path $dir $req))) { Fail "package is missing '$req' - the accelerated payload is incomplete" }
 }

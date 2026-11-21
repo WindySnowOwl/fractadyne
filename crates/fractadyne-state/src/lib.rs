@@ -214,6 +214,14 @@ pub struct ColoringSpec {
     /// whose orbit it continues. Escape-count coloring only. Off: each pane its own map.
     #[serde(default)]
     pub julia_linked: bool,
+    /// A custom coloring hook's text (coloring plan B10, `fractadyne_gpu::color_hook`): a WGSL
+    /// `custom_color` that colors the view in place of the method. Empty: none. The text, never a
+    /// path, so a farm job and a shared view carry the hook itself.
+    #[serde(default)]
+    pub coloring_hook: String,
+    /// The hook's parameters `p1`..`p4`; empty for the hook's own defaults.
+    #[serde(default)]
+    pub coloring_hook_params: Vec<f32>,
 }
 
 fn default_palette_saturation() -> f32 {
@@ -255,6 +263,11 @@ pub struct SessionState {
     /// keys exactly as they were before it existed, so sessions read both ways.
     #[serde(flatten)]
     pub coloring: ColoringSpec,
+    /// The file the coloring hook was loaded from, watched while the app runs (B10). The session's
+    /// alone: a farm job and a view carry the hook's text (`ColoringSpec::coloring_hook`), never
+    /// the user's folders.
+    #[serde(default)]
+    pub coloring_hook_path: String,
     /// Continuous-zoom speed multiplier (1.0 = default ~2× per 1.5 s). `serde(default)`
     /// keeps older session files (written before this field) loadable.
     #[serde(default = "default_zoom_rate")]
@@ -756,6 +769,8 @@ impl Default for ColoringSpec {
             palette_contrast: 0.0,
             palette_saturation: 1.0,
             julia_linked: false,
+            coloring_hook: String::new(),
+            coloring_hook_params: Vec::new(),
         }
     }
 }
@@ -774,6 +789,7 @@ impl Default for SessionState {
             max_iter: 256,
             auto_iter: true,
             coloring: ColoringSpec::default(),
+            coloring_hook_path: String::new(),
             zoom_rate: default_zoom_rate(),
             click_zoom: false,
             click_zoom_factor: default_click_zoom_factor(),

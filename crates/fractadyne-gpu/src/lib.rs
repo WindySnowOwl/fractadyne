@@ -32,6 +32,8 @@ pub mod link_probe;
 pub mod pass_sink;
 /// Custom formulas: WGSL generated from the formula IR and spliced into the fixed shader.
 pub mod custom;
+// A custom coloring hook: the user's WGSL coloring, spliced into the coloring pass (coloring plan B10).
+pub mod color_hook;
 /// Life-like automata: the tile stepper, the app's first compute pipeline (design/automata.md).
 pub mod life;
 /// L-systems: the segment pass (design/lsystems.md).
@@ -444,6 +446,9 @@ pub(crate) struct ColorUniforms {
     /// at 8x (2026-11-15). In what was the first `_pad_aa` word; `ColorU.tap_stride` mirrors it.
     pub(crate) tap_stride: u32,
     pub(crate) _pad_aa: f32,
+    /// A coloring hook's parameters `p1`..`p4` ([`color_hook`], coloring plan B10), a new 16-byte
+    /// row; 0 without a hook, whose module is the only one that reads them. `ColorU.hook_p`.
+    pub(crate) hook_p: [f32; 4],
 }
 
 /// [`ColorUniforms::tap_stride`] for a palette-browser thumbnail colored from a texture built at
@@ -1330,6 +1335,9 @@ struct ViewResources {
     /// thumbnails color the same iteration texture with (`atlas::render_palette_atlas`), so a
     /// thumbnail differs from the view only in its palette.
     last_cu: Option<ColorUniforms>,
+    /// The coloring hook ([`color_hook`]) that frame was colored through, by its key, if any: the
+    /// thumbnails color through it too.
+    last_hook: Option<u64>,
     /// How many times a pass has written this view's iteration texture: what tells the palette
     /// browser its thumbnails are out of date (`atlas::view_writes`).
     writes: u64,
@@ -1504,6 +1512,12 @@ struct Renderer {
     /// `MandelbrotParams::split`).
     iter_split_pipeline: iter_split::ModePipelines,
     color_pipeline: wgpu::RenderPipeline,
+    /// The color pass's pipeline layout, kept to build a coloring hook's pipeline against.
+    color_layout: wgpu::PipelineLayout,
+    /// The coloring hook's color pipeline ([`color_hook`], `MandelbrotParams::color_hook`): the app
+    /// prepares it when the hook changes ([`prepare_color_hook_now`]); a frame whose hook it is not
+    /// builds it itself.
+    hook: Option<HookPipeline>,
     /// Nearest-neighbor upscale of the old iteration/aux textures into a resized pair — runs once
     /// when a tiled settle grows the texture, so the display never drops to black mid-refine.
     seed_pipeline: wgpu::RenderPipeline,
@@ -1545,6 +1559,29 @@ struct Renderer {
     life: Option<life::LifeRenderer>,
     /// The L-system segment pass, created on the first L-system frame.
     lsystem: Option<lsystem::LSystemRenderer>,
+}
+
+/// A coloring hook's color pipeline, for the surface's format.
+struct HookPipeline {
+    key: u64,
+    pipeline: wgpu::RenderPipeline,
+}
+
+impl HookPipeline {
+    fn new(device: &wgpu::Device, layout: &wgpu::PipelineLayout, format: wgpu::TextureFormat, hook: &color_hook::ColorHook) -> Self {
+        HookPipeline { key: hook.key, pipeline: hook.pipeline(device, layout, format, "fractadyne.color_hook_pipeline") }
+    }
+}
+
+impl Renderer {
+    /// The color pipeline for a frame colored through the hook `key` (`None`: no hook): the hook's
+    /// when it is the one built, else the fixed one.
+    fn color_pipeline_for(&self, key: Option<u64>) -> &wgpu::RenderPipeline {
+        match (&self.hook, key) {
+            (Some(h), Some(k)) if h.key == k => &h.pipeline,
+            _ => &self.color_pipeline,
+        }
+    }
 }
 
 /// A custom formula's iterate pipelines, from its generated module (`custom::build`) and the fixed
@@ -2825,6 +2862,8 @@ impl Renderer {
             iter_pipeline,
             iter_split_pipeline,
             color_pipeline,
+            color_layout,
+            hook: None,
             seed_pipeline,
             iter_bgl,
             color_bgl,
@@ -2898,6 +2937,7 @@ impl ViewResources {
             size,
             last_ss: 1,
             last_cu: None,
+            last_hook: None,
             writes: 0,
             rendered: false,
             last_orbit_id: u64::MAX,
@@ -3467,6 +3507,11 @@ pub struct MandelbrotParams {
     /// A custom formula's generated module (`formula` = `fractadyne_core::formula::CUSTOM`, direct
     /// mode only); `None` for the built-ins. Its `key` joins the iterate key.
     pub custom: Option<Arc<custom::CustomShader>>,
+    /// A coloring hook ([`color_hook`], coloring plan B10): the color pass colors every sample
+    /// through it. `None` for the method's own colors.
+    pub color_hook: Option<Arc<color_hook::ColorHook>>,
+    /// The hook's parameters `p1`..`p4` (`ColorU.hook_p`); unread without a hook.
+    pub hook_params: [f32; 4],
     /// A Life frame (design/automata.md): `Some` replaces the iterate pass with the Life universe's
     /// step and display passes, which write the same iteration texture the color pass reads.
     pub life: Option<Arc<life::LifeFrame>>,
@@ -3768,6 +3813,8 @@ impl Default for MandelbrotParams {
             mode: 1,
             formula: 0,
             custom: None,
+            color_hook: None,
+            hook_params: [0.0; 4],
             life: None,
             lsystem: None,
             julia: 0,
@@ -3871,6 +3918,13 @@ impl CallbackTrait for MandelbrotParams {
                 r.custom = Some(CustomPipelines::new(device, &r.iter_bgl, &r.state_bgl, &r.state_bgl4, c));
             }
         }
+        // A coloring hook colors through its own pipeline (the app normally prepared it already).
+        if let Some(h) = self.color_hook.as_deref() {
+            if r.hook.as_ref().map(|p| p.key) != Some(h.key) {
+                r.hook = Some(HookPipeline::new(device, &r.color_layout, r.target_format, h));
+            }
+        }
+        let hook_key = self.color_hook.as_ref().map(|h| h.key);
         // A Life frame steps and draws through the Life renderer, built on first use — where the
         // device runs compute shaders; elsewhere the frame says so and draws nothing new.
         if let Some(f) = self.life.as_deref() {
@@ -3918,7 +3972,11 @@ impl CallbackTrait for MandelbrotParams {
         };
         let esc_min_seed = &r.esc_min_seed;
         // Progressive-SSAA passes (disjoint fields, borrowed alongside the per-view resources).
-        let color_pipeline = &r.color_pipeline;
+        // Field by field (not `color_pipeline_for`): `r` is borrowed in parts here.
+        let color_pipeline = match (&r.hook, hook_key) {
+            (Some(h), Some(k)) if h.key == k => &h.pipeline,
+            _ => &r.color_pipeline,
+        };
         let accum_pipeline = &r.accum_pipeline;
         let present_pipeline = &r.present_pipeline;
         let accum_bgl = &r.accum_bgl;
@@ -4235,9 +4293,11 @@ impl CallbackTrait for MandelbrotParams {
             aa_scale: aa_scale(self.aa_sample),
             tap_stride: 0,
             _pad_aa: 0.0,
+            hook_p: self.hook_params,
         };
         queue.write_buffer(&view.color_uniform, 0, bytemuck::bytes_of(&cu));
         view.last_cu = Some(cu);
+        view.last_hook = hook_key;
 
         // Upload the reference orbit when it changed (app caches it). The BLA tree (if any) is
         // appended right after it in the same buffer, starting at index `orbit_len`.
@@ -5008,7 +5068,10 @@ impl CallbackTrait for MandelbrotParams {
             let mut h = std::collections::hash_map::DefaultHasher::new();
             color_inputs_sig(&cu, self.lut.as_slice(), self.lut_smooth, &self.interior, view.writes, px).hash(&mut h);
             shown_bg.hash(&mut h);
+            // The pipeline is the coloring hook's when there is one; its key says which hook, its
+            // parameters are in `cu`, and it reads nothing else that moves (no time).
             color_pipeline.hash(&mut h);
+            hook_key.hash(&mut h);
             h.finish()
         };
         // One frame unchanged arms it: a view that changes every frame (a move, palette cycling)
@@ -5107,7 +5170,7 @@ impl CallbackTrait for MandelbrotParams {
                     (Some(h), true) => &h.bg,
                     _ => &view.color_bg,
                 };
-                render_pass.set_pipeline(&r.color_pipeline);
+                render_pass.set_pipeline(r.color_pipeline_for(self.color_hook.as_ref().map(|h| h.key)));
                 render_pass.set_bind_group(0, bg, &[]);
                 render_pass.draw(0..3, 0..1);
             }
@@ -5232,6 +5295,26 @@ pub fn prepare_custom_now(render_state: &egui_wgpu::RenderState, shader: &custom
     let built = CustomPipelines::new(&render_state.device, &layouts.0, &layouts.1, &layouts.2, shader);
     if let Some(r) = render_state.renderer.write().callback_resources.get_mut::<Renderer>() {
         r.custom = Some(built);
+    }
+    true
+}
+
+/// Make sure the live renderer holds `hook`'s color pipeline, building it HERE, on the caller's
+/// thread, if it does not: `true` when it built. The app calls this in its update when the hook
+/// changes (a load, a save of the file), so the paint callback never compiles. A color-only module:
+/// milliseconds, not the iterate pipelines' seconds.
+pub fn prepare_color_hook_now(render_state: &egui_wgpu::RenderState, hook: &color_hook::ColorHook) -> bool {
+    let (layout, format) = {
+        let guard = render_state.renderer.read();
+        let Some(r) = guard.callback_resources.get::<Renderer>() else { return false };
+        if r.hook.as_ref().map(|p| p.key) == Some(hook.key) {
+            return false;
+        }
+        (r.color_layout.clone(), r.target_format)
+    };
+    let built = HookPipeline::new(&render_state.device, &layout, format, hook);
+    if let Some(r) = render_state.renderer.write().callback_resources.get_mut::<Renderer>() {
+        r.hook = Some(built);
     }
     true
 }

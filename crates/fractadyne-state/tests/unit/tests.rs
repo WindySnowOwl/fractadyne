@@ -345,6 +345,8 @@ fn every_session_field_survives_save_and_reload() {
         palette_contrast: -0.45,
         palette_saturation: 1.25,
         julia_linked: true,
+        coloring_hook: "// @param p1 gain 0 2 1\nfn custom_color(l: Lanes) -> vec3<f32> {\n    return l.color * p1();\n}\n".into(),
+        coloring_hook_params: vec![0.5, 1.0, -2.0, 0.25],
     };
     let want = SessionState {
         state_version: STATE_FORMAT_VERSION,
@@ -358,6 +360,7 @@ fn every_session_field_survives_save_and_reload() {
         max_iter: 123_456,
         auto_iter: false,
         coloring: c,
+        coloring_hook_path: "D:/hooks/gain.wgsl".into(),
         zoom_rate: 2.5,
         click_zoom: true,
         click_zoom_factor: 25.0,
@@ -796,11 +799,13 @@ fn a_session_written_before_the_coloring_spec_reads_and_writes_the_same_keys() {
     let back: toml::Table = toml::from_str(&toml::to_string_pretty(&s).unwrap()).unwrap();
     assert!(!back.contains_key("coloring"), "the coloring was written as a table of its own");
     let keys = toml::Table::try_from(ColoringSpec::default()).unwrap();
-    // Fields added after the fixture was written (B5's interior): absent from it, so read as their
-    // defaults and written back as such. The file itself stays as that build wrote it.
+    // Fields added after the fixture was written (B5's interior and later, B10's coloring hook):
+    // absent from it, so read as their defaults and written back as such. The file itself stays as
+    // that build wrote it.
     const SINCE: &[&str] = &[
         "interior", "interior_palette", "interior_color", "interior_fit", "palette_aa",
         "palette_brightness", "palette_contrast", "palette_saturation", "julia_linked",
+        "coloring_hook", "coloring_hook_params",
     ];
     assert_eq!(keys.len(), 27 + SINCE.len(), "a coloring field was added: list it in SINCE");
     for k in keys.keys() {

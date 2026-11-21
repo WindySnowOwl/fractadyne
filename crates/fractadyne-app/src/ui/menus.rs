@@ -613,6 +613,15 @@ impl FractadyneApp {
                             self.method_sheet.open = true;
                             ui.close_menu();
                         }
+                        // A coloring hook: the user's own WGSL coloring, from a file (B10).
+                        if ui
+                            .button(format!("{} {}", crate::icons::EDIT, tr!(color_hook_open)))
+                            .on_hover_text(tr!(color_hook_open_hover))
+                            .clicked()
+                        {
+                            self.color_hook_dialog.open = true;
+                            ui.close_menu();
+                        }
                         ui.menu_button(tr!(menu_color_palette), |ui| {
                             let is_preset = !self.coloring.use_custom_palette
                                 && !self.coloring.use_duotone
