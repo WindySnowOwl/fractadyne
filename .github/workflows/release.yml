@@ -130,7 +130,7 @@ jobs:
           # The binary (self-contained: shaders + window icon are embedded).
           Copy-Item target/release/fractadyne.exe -Destination $dir/
           # Docs + licenses (incl. third-party dependency notices).
-          Copy-Item README.md, CHANGELOG.md, TOURS.md, DIAGNOSTICS.md, THIRD-PARTY-NOTICES.md, LICENSE-APACHE, LICENSE-MIT -Destination $dir/
+          Copy-Item README.md, CHANGELOG.md, TOURS.md, COLORING-HOOKS.md, DIAGNOSTICS.md, THIRD-PARTY-NOTICES.md, LICENSE-APACHE, LICENSE-MIT -Destination $dir/
           # Example guided-tour scripts (play in-app, or render headless with --render-tour).
           New-Item -ItemType Directory -Force -Path "$dir/tours" | Out-Null
           Copy-Item tours/*.toml -Destination "$dir/tours/"
@@ -232,7 +232,7 @@ jobs:
           dir="fractadyne-$tag-linux-x64"
           mkdir -p "$dir/tours" "$dir/scripts" "$dir/validation/golden" "$dir/validation/replays" "$dir/validation/coloring" "$dir/benchmarks"
           cp target/release/fractadyne "$dir/"
-          cp README.md CHANGELOG.md TOURS.md DIAGNOSTICS.md THIRD-PARTY-NOTICES.md LICENSE-APACHE LICENSE-MIT "$dir/"
+          cp README.md CHANGELOG.md TOURS.md COLORING-HOOKS.md DIAGNOSTICS.md THIRD-PARTY-NOTICES.md LICENSE-APACHE LICENSE-MIT "$dir/"
           cp tours/*.toml "$dir/tours/"
           cp scripts/*.example.toml "$dir/scripts/"
           cp scripts/deep-sample.fdn "$dir/scripts/"

@@ -3710,3 +3710,44 @@ status-limit-exhausted-detail = このビューに与えられる最大の予算
 status-limit-capped-max = { $budget }の予算でピクセルの{ $percent }%が反復を使い切り、脱出するピクセルもちょうどその上限で終わっています：ビューの解像が不足しています。「反復回数」はすでに最大なので、このビューにはアプリが現在提供できる以上のものが必要です。
 # $percent: the share of pixels, a whole number; $budget: the iteration budget. "Iterations" and "Rendering" are the names of a setting and a panel section.
 status-limit-capped-raise = { $budget }の予算でピクセルの{ $percent }%が反復を使い切り、脱出するピクセルもちょうどその上限で終わっています：ビューの解像が不足しています。解像するには、「反復回数」（コントロール ▸ 品質）を上げてください。
+
+## Custom coloring (Color ▸ Custom coloring…): a short program in WGSL, the graphics language, that colors the view in place of the coloring method, loaded from a file the user edits. WGSL, custom_color and file names stay as written; the compiler's own messages ($error) are in English.
+
+color-hook-open = カスタム着色…
+color-hook-open-hover = WGSL で書いた短い自作プログラムをファイルから読み込み、ビューを着色します。ファイルを保存するとビューが再着色されます。
+color-hook-title = カスタム着色
+color-hook-intro = WGSL で書かれた custom_color という関数が、着色方法の代わりにビューの各点を着色します。ファイルは任意のテキストエディターで編集でき、保存するたびにビューが再着色されます。
+color-hook-off = オフ：ビューは着色方法で着色されます。
+# $file: the file's name.
+color-hook-from-file = 使用中：{ $file }。ファイルを保存するとビューが再着色されます。
+color-hook-from-view = 使用中：ビューまたは例から読み込まれた着色（ファイルなし）。編集するにはファイルとして保存してください。
+# $error: why it does not build, in the shader compiler's words (English), often with a line and a column.
+color-hook-error = コンパイルできません：{ $error }
+color-hook-error-kept = 最後にコンパイルできた版を使い続けます。
+color-hook-params = パラメーター
+color-hook-load = ファイルを開く…
+color-hook-load-hover = .wgsl ファイルから着色を読み込み、ファイルを監視します。保存するたびにビューが再着色されます。
+color-hook-examples = 例
+color-hook-examples-hover = 例から始めます。編集するにはファイルとして保存してください。
+# The examples: the first two are coloring methods (color-method-smooth, color-method-fringe) written out as code.
+color-hook-example-smooth = スムーズ反復（コードで記述）
+color-hook-example-fringe = フリンジ（コードで記述）
+color-hook-example-transfer = 伝達曲線
+color-hook-example-darken = 集合の近くを暗く
+color-hook-save-as = 名前を付けて保存…
+color-hook-save-as-hover = 使用中の着色をファイルに書き出し、以後そのファイルを監視します。
+color-hook-turn-off = オフにする
+color-hook-turn-off-hover = 着色方法そのものの色に戻します。
+color-hook-guide = ガイド
+color-hook-guide-hover = 書き方：各点が持つ値、呼び出せる関数、例の解説。
+# The kind of file, in the Open and Save as dialogs.
+color-hook-filter = 着色（WGSL）
+# $path: where the file was written.
+color-hook-saved = { $path } に保存しました。
+# $error: the system's message.
+color-hook-save-failed = 保存できませんでした：{ $error }
+# The line under the coloring method in the control panel while a custom coloring colors the view. $name: its file's name, or color-hook-panel-unnamed.
+color-hook-panel = カスタム着色：{ $name }
+color-hook-panel-unnamed = ビューから
+color-hook-panel-hover = カスタム着色が着色方法の代わりにこのビューを着色しています。クリックでウィンドウを開きます。
+color-hook-panel-error = 最後の保存はコンパイルできません。

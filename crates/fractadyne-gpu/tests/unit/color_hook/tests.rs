@@ -12,7 +12,8 @@ fn every_example_builds() {
         let h = build(text).unwrap_or_else(|e| panic!("{name}: {e}"));
         assert_eq!(h.params.len(), MAX_PARAMS, "{name}");
         assert!(h.stats.is_empty(), "{name} reads no statistic");
-        assert!(h.source.ends_with(&format!("{text}\n")), "{name}: the text is last, as written");
+        // As written, line ends aside (a Windows checkout gives the examples CRLF).
+        assert!(h.source.ends_with(&format!("{}\n", text.replace("\r\n", "\n"))), "{name}: the text is last, as written");
     }
 }
 
@@ -20,8 +21,9 @@ fn every_example_builds() {
 fn the_examples_params_are_their_lines() {
     let fringe = build(EXAMPLES.iter().find(|(n, _)| *n == "fringe.wgsl").unwrap().1).unwrap();
     assert_eq!(fringe.params[0], HookParam { name: "Line width (pixels)".into(), min: 0.25, max: 4.0, default: 1.0 });
-    assert_eq!(fringe.params[1], HookParam::unnamed(1));
-    assert_eq!(fringe.defaults(), [1.0, 0.5, 0.5, 0.5]);
+    assert_eq!(fringe.params[1], HookParam { name: "Sweeps (palettes a turn)".into(), min: 1.0, max: 4.0, default: 1.0 });
+    assert_eq!(fringe.params[2], HookParam::unnamed(2));
+    assert_eq!(fringe.defaults(), [1.0, 1.0, 0.5, 0.5]);
 }
 
 #[test]
@@ -177,4 +179,29 @@ fn comments_are_blanked_with_their_offsets_kept() {
 fn text_that_is_not_a_hook_is_refused_before_parsing() {
     assert!(build(&"x".repeat(MAX_TEXT + 1)).unwrap_err().message.contains("at most"));
     assert!(build("fn custom_color(l: Lanes) -> vec3<f32> { return l.color; }\0").unwrap_err().message.contains("NUL"));
+}
+
+/// A text with Windows line ends is the same hook as with Unix ones: the same text, the same key,
+/// errors on the same lines.
+#[test]
+fn line_ends_do_not_make_another_hook() {
+    let crlf = SMOOTH.replace('\n', "\r\n");
+    let (a, b) = (build(SMOOTH).unwrap(), build(&crlf).unwrap());
+    assert_eq!((a.text.as_str(), a.key), (b.text.as_str(), b.key));
+    let bad = "// one\n// two\nfn custom_color(l: Lanes) -> vec3<f32> { return nope; }\n";
+    assert_eq!(line_of_error(bad).line, line_of_error(&bad.replace('\n', "\r\n")).line);
+}
+
+/// The sliders a hook gets: the parameters its code calls and the ones its lines name. A call in a
+/// comment, or a longer name that starts with one, is not a call.
+#[test]
+fn a_hook_says_which_parameters_it_uses() {
+    let by = |name: &str| build(EXAMPLES.iter().find(|(n, _)| *n == name).unwrap().1).unwrap();
+    assert_eq!(by("smooth.wgsl").used, [false; 4], "the example only mentions p1() to p4() in a comment");
+    let fringe = by("fringe.wgsl");
+    assert_eq!(fringe.used, [true, true, false, false]);
+    assert!(fringe.named(0) && fringe.named(1) && !fringe.named(2));
+    let h = build("fn p2x() -> f32 { return 1.0; }\nfn custom_color(l: Lanes) -> vec3<f32> {\n    return l.color * p2x() * p3 ();\n}\n").unwrap();
+    assert_eq!(h.used, [false, false, true, false]);
+    assert!(!h.named(2));
 }

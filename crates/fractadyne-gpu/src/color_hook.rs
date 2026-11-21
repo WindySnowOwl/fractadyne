@@ -81,6 +81,9 @@ pub struct ColorHook {
     pub stats: StatSet,
     /// `p1`..`p4`, always [`MAX_PARAMS`] long.
     pub params: Vec<HookParam>,
+    /// Which of `p1()`..`p4()` the code calls (comments aside): with the ones a `// @param` line
+    /// names, the sliders the dialog shows.
+    pub used: [bool; MAX_PARAMS],
 }
 
 /// Why a hook does not build: where in the text, when it is in the text, and what.
@@ -165,6 +168,15 @@ fn code_only(text: &str) -> String {
 
 fn is_ident(c: char) -> bool {
     c.is_ascii_alphanumeric() || c == '_'
+}
+
+/// Whether `code` (comments blanked) calls the function `name`: the name as a whole word, then `(`.
+fn calls(code: &str, name: &str) -> bool {
+    code.match_indices(name).any(|(at, _)| {
+        let before_ok = !code[..at].ends_with(is_ident);
+        let after = &code[at + name.len()..];
+        before_ok && !after.starts_with(is_ident) && after.trim_start().starts_with('(')
+    })
 }
 
 /// The statistics `code` reads: `.stripe`, `.triangle`, `.trap`, `.angle` as whole field names.
@@ -329,6 +341,15 @@ fn first_loop(block: &naga::Block) -> Option<naga::Span> {
 
 /// Build and check the hook `text`: its module, its statistics and its parameters, or why not.
 pub fn build(text: &str) -> Result<ColorHook, HookError> {
+    // One text, one hook: a file saved with Windows line ends is the same hook as the same text with
+    // Unix ones (its key, the text a view or a farm job carries, whose escaping keeps only `\n`).
+    let normalized;
+    let text = if text.contains('\r') {
+        normalized = text.replace("\r\n", "\n").replace('\r', "\n");
+        normalized.as_str()
+    } else {
+        text
+    };
     if text.len() > MAX_TEXT {
         return Err(err(format!("a hook of {} KB (at most {} KB)", text.len() / 1024, MAX_TEXT / 1024)));
     }
@@ -411,10 +432,16 @@ pub fn build(text: &str) -> Result<ColorHook, HookError> {
         }
     }
     let key = crate::custom::fnv1a(source.as_bytes());
-    Ok(ColorHook { text: text.to_string(), source, key, stats: stats_read(&code), params })
+    let used = std::array::from_fn(|i| calls(&code, &format!("p{}", i + 1)));
+    Ok(ColorHook { text: text.to_string(), source, key, stats: stats_read(&code), params, used })
 }
 
 impl ColorHook {
+    /// Whether a `// @param` line describes parameter `i` (0 for `p1`).
+    pub fn named(&self, i: usize) -> bool {
+        self.params.get(i).is_some_and(|p| *p != HookParam::unnamed(i))
+    }
+
     /// The default value of each parameter, `p1`..`p4`.
     pub fn defaults(&self) -> [f32; MAX_PARAMS] {
         std::array::from_fn(|i| self.params[i].default)

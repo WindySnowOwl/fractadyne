@@ -10936,7 +10936,9 @@ zoom = \"1e94\"
                 palette_contrast: 0.6,
                 palette_saturation: 0.5,
                 julia_linked: true,
-                coloring_hook: fractadyne_gpu::color_hook::EXAMPLES[1].1.to_string(),
+                // As the app keeps a hook's text: Unix line ends (`color_hook::build`), which a
+                // Windows checkout's example does not have.
+                coloring_hook: fractadyne_gpu::color_hook::EXAMPLES[1].1.replace("\r\n", "\n"),
                 coloring_hook_params: vec![0.75, 0.25, 0.5, 1.0],
             };
             let fields = |s: &fractadyne_state::ColoringSpec| match serde_json::to_value(s) {
@@ -11764,7 +11766,9 @@ zoom = \"1e94\"
         if want("hook") {
             use fractadyne_gpu::color_hook::EXAMPLES;
             let example = |name: &str| EXAMPLES.iter().find(|(n, _)| *n == name).map(|(_, t)| t.to_string()).unwrap_or_default();
-            let stripe_hook = "fn custom_color(l: Lanes) -> vec3<f32> {\n    if (l.inside) { return l.color; }\n    return palette(palette_map(l.stripe));\n}\n".to_string();
+            // The stripe statistic at a rate of its own (p1), as the Stripe method maps it: under
+            // Smooth, `palette_map` would apply Smooth's rate, palettes per iteration.
+            let stripe_hook = "// @param p1 \"Rate\" 0 8 1.5\nfn custom_color(l: Lanes) -> vec3<f32> {\n    if (l.inside) { return l.color; }\n    return palette(l.stripe * p1() + palette_offset());\n}\n".to_string();
             let saved_spec = self.coloring_spec();
             let saved_hook = std::mem::take(&mut self.coloring.hook);
             let saved = (self.fractal, self.julia_mode, self.dual, self.render_cfg.max_iter, self.render_cfg.auto_iter, self.effects.light, self.effects.de);
@@ -11785,11 +11789,11 @@ zoom = \"1e94\"
             let at = |s: &str| fractadyne_core::parse_bf_prec(s, 256).expect("the tour point's coordinate");
             let (re, im) = (at("-1.178853950372678747911373866849720956148855"), at("0.1853420232408490265512092752061929308714979"));
             // One request: `method` colored, through `hook` when given.
-            let request = |app: &mut Self, method: crate::ColorMethod, mag: f64, iters: u32, hook: Option<&str>| -> Option<fractadyne_gpu::ExportRequest> {
+            let request = |app: &mut Self, method: crate::ColorMethod, mag: f64, iters: u32, hook: Option<(&str, Option<&[f32]>)>| -> Option<fractadyne_gpu::ExportRequest> {
                 app.coloring.color_method = method;
                 app.render_cfg.max_iter = iters;
                 match hook {
-                    Some(t) => app.coloring.hook.set_text(t, None, None).ok()?,
+                    Some((t, params)) => app.coloring.hook.set_text(t, params, None).ok()?,
                     None => app.coloring.hook.turn_off(),
                 }
                 let mut vp = Viewport::new(w as f64, h as f64);
@@ -11814,13 +11818,22 @@ zoom = \"1e94\"
             let band = |r: &Option<fractadyne_gpu::ExportRequest>| {
                 r.as_ref().map_or("no request".to_string(), |r| format!("{} BLA {}", crate::export::lanes_band(r.mode), if r.bla_on != 0 { "on" } else { "off" }))
             };
+            // Pinned, as the checks assume: Cycle 0.25 gives the Fringe method one sweep a turn (the
+            // fringe hook's default) and the bounded methods a rate of 0.5 + 0.25 * 4 = 1.5 (the
+            // stripe hook's p1); an Offset that is not 0, so `palette_offset` is seen to work; a
+            // linear map, no divisor.
+            self.coloring.cycle = 0.25;
+            self.coloring.offset = 0.125;
+            self.coloring.log_palette = false;
+            self.coloring.iter_div = 1;
+            debug_assert_eq!((crate::fringe_sweeps(0.25), self.color_cycle_for(crate::ColorMethod::Stripe)), (1.0, 1.5));
             let smooth_text = example("smooth.wgsl");
             let darken_text = example("darken-near-set.wgsl");
             let fringe_text = example("fringe.wgsl");
             for (mag, iters) in [(1e10, 8_000u32), (1e32, 25_000)] {
                 let plain = request(self, crate::ColorMethod::Smooth, mag, iters, None);
-                let hooked = request(self, crate::ColorMethod::Smooth, mag, iters, Some(&smooth_text));
-                let control = request(self, crate::ColorMethod::Smooth, mag, iters, Some(&darken_text));
+                let hooked = request(self, crate::ColorMethod::Smooth, mag, iters, Some((smooth_text.as_str(), None)));
+                let control = request(self, crate::ColorMethod::Smooth, mag, iters, Some((darken_text.as_str(), None)));
                 let carried = hooked.as_ref().is_some_and(|r| r.color_hook.is_some()) && plain.as_ref().is_some_and(|r| r.color_hook.is_none());
                 let (pass, result) = match (render(&plain), render(&hooked), render(&control)) {
                     (Some(a), Some(b), Some(c)) if a.len() == b.len() && a.len() == c.len() => {
@@ -11848,7 +11861,7 @@ zoom = \"1e94\"
             }
             {
                 let method = request(self, crate::ColorMethod::Fringe, 1e32, 25_000, None);
-                let hooked = request(self, crate::ColorMethod::Smooth, 1e32, 25_000, Some(&fringe_text));
+                let hooked = request(self, crate::ColorMethod::Smooth, 1e32, 25_000, Some((fringe_text.as_str(), None)));
                 let (pass, result) = match (render(&method), render(&hooked)) {
                     (Some(a), Some(b)) if a.len() == b.len() => {
                         let (n, max) = diff(&a, &b);
@@ -11867,7 +11880,7 @@ zoom = \"1e94\"
             }
             {
                 let method = request(self, crate::ColorMethod::Stripe, 1e10, 8_000, None);
-                let hooked = request(self, crate::ColorMethod::Smooth, 1e10, 8_000, Some(&stripe_hook));
+                let hooked = request(self, crate::ColorMethod::Smooth, 1e10, 8_000, Some((stripe_hook.as_str(), Some(&[1.5, 0.0, 0.0, 0.0][..]))));
                 let stats = hooked.as_ref().map(|r| r.iter_stats().to_string()).unwrap_or_default();
                 let (pass, result) = match (render(&method), render(&hooked)) {
                     (Some(a), Some(b)) if a.len() == b.len() => {
@@ -11879,7 +11892,7 @@ zoom = \"1e94\"
                 push_check(&mut checks, &mut last_check_t, SelfCheck {
                     category: "export",
                     name: "a hook that reads the stripe statistic gets it, whatever the method".into(),
-                    params: format!("the tour's point at 1e10x, {w}x{h}, ss 1, point sampled, {}; palette(palette_map(l.stripe)) under Smooth against the Stripe method", band(&method)),
+                    params: format!("the tour's point at 1e10x, {w}x{h}, ss 1, point sampled, {}; palette(l.stripe * 1.5 + palette_offset()) under Smooth against the Stripe method at Cycle 0.25", band(&method)),
                     result,
                     threshold: "every channel bit for bit",
                     pass,
@@ -11889,12 +11902,33 @@ zoom = \"1e94\"
             {
                 let mut notes = Vec::new();
                 let ok_set = self.coloring.hook.set_text(&darken_text, Some(&[3.0, 0.25, 0.5, 0.5]), None).is_ok();
+                // The hook's own text (line ends normalized), which is what a view must give back.
+                let want_text = self.coloring.hook.active.as_ref().map(|h| h.text.clone()).unwrap_or_default();
                 let text = self.view_metadata();
                 let format5 = text.lines().any(|l| l == "format_version=5");
                 let carried = text.lines().any(|l| l.starts_with("coloring_hook=") && l.len() > 20) && text.lines().any(|l| l == "coloring_hook_params=3,0.25,0.5,0.5");
                 self.coloring.hook.turn_off();
                 let report = self.load_view_metadata(&text);
-                let back = self.coloring.hook.active.as_ref().is_some_and(|h| h.text == darken_text) && self.coloring.hook.params == [3.0, 0.25, 0.5, 0.5];
+                let back = self.coloring.hook.active.as_ref().is_some_and(|h| h.text == want_text) && self.coloring.hook.params == [3.0, 0.25, 0.5, 0.5];
+                // What came back instead, when it is not the hook as written.
+                match self.coloring.hook.active.as_ref() {
+                    None => notes.push("no hook after reading the view back".into()),
+                    Some(h) if h.text != want_text => {
+                        let at = h.text.chars().zip(want_text.chars()).take_while(|(a, b)| a == b).count();
+                        let near = |s: &str| s.chars().skip(at.saturating_sub(12)).take(32).collect::<String>().escape_debug().to_string();
+                        notes.push(format!(
+                            "the text read back differs at character {at} ({} chars, written {}): read {:?}, written {:?}",
+                            h.text.chars().count(),
+                            want_text.chars().count(),
+                            near(&h.text),
+                            near(&want_text)
+                        ));
+                    }
+                    Some(_) if self.coloring.hook.params != [3.0, 0.25, 0.5, 0.5] => {
+                        notes.push(format!("the parameters read back as {:?}", self.coloring.hook.params));
+                    }
+                    Some(_) => {}
+                }
                 if !report.problems.is_empty() {
                     notes.push(format!("problems: {}", report.problems.join("; ")));
                 }

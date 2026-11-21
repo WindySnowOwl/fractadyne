@@ -3703,3 +3703,44 @@ status-limit-exhausted-detail = 이 뷰에 줄 수 있는 가장 큰 예산({ $b
 status-limit-capped-max = 픽셀의 { $percent }%가 { $budget } 예산에서 반복을 다 써 버렸고, 탈출하는 픽셀도 바로 그 상한에서 끝나고 있습니다 — 뷰가 충분히 그려지지 않았습니다. 반복 횟수가 이미 최대이므로, 이 뷰에는 앱이 현재 제공할 수 있는 것보다 많은 반복이 필요합니다.
 # $percent: the share of pixels, a whole number; $budget: the iteration budget. "Iterations", "Controls" and "Quality" are the names of a setting, the control panel and its section.
 status-limit-capped-raise = 픽셀의 { $percent }%가 { $budget } 예산에서 반복을 다 써 버렸고, 탈출하는 픽셀도 바로 그 상한에서 끝나고 있습니다 — 뷰가 충분히 그려지지 않았습니다. 반복 횟수(컨트롤 ▸ 품질)를 올려 해결하십시오.
+
+## Custom coloring (Color ▸ Custom coloring…): a short program in WGSL, the graphics language, that colors the view in place of the coloring method, loaded from a file the user edits. WGSL, custom_color and file names stay as written; the compiler's own messages ($error) are in English.
+
+color-hook-open = 사용자 채색…
+color-hook-open-hover = WGSL로 직접 쓴 짧은 프로그램을 파일에서 불러와 화면을 채색합니다. 파일을 저장하면 화면이 다시 채색됩니다.
+color-hook-title = 사용자 채색
+color-hook-intro = WGSL로 쓴 custom_color라는 함수가 색칠 방법 대신 화면의 모든 점을 채색합니다. 파일은 아무 텍스트 편집기에서나 고칠 수 있으며, 저장할 때마다 화면이 다시 채색됩니다.
+color-hook-off = 꺼짐: 화면은 색칠 방법으로 채색됩니다.
+# $file: the file's name.
+color-hook-from-file = 사용 중: { $file }. 파일을 저장하면 화면이 다시 채색됩니다.
+color-hook-from-view = 사용 중: 화면이나 예제에서 가져온 채색(파일 없음). 고치려면 파일로 저장하세요.
+# $error: why it does not build, in the shader compiler's words (English), often with a line and a column.
+color-hook-error = 컴파일되지 않습니다: { $error }
+color-hook-error-kept = 마지막으로 컴파일된 버전을 계속 씁니다.
+color-hook-params = 매개변수
+color-hook-load = 파일 열기…
+color-hook-load-hover = .wgsl 파일에서 채색을 불러오고 파일을 지켜봅니다. 저장할 때마다 화면이 다시 채색됩니다.
+color-hook-examples = 예제
+color-hook-examples-hover = 예제에서 시작합니다. 고치려면 파일로 저장하세요.
+# The examples: the first two are coloring methods (color-method-smooth, color-method-fringe) written out as code.
+color-hook-example-smooth = 부드러운 반복, 코드로 작성
+color-hook-example-fringe = 프린지, 코드로 작성
+color-hook-example-transfer = 전달 곡선
+color-hook-example-darken = 집합 근처를 어둡게
+color-hook-save-as = 다른 이름으로 저장…
+color-hook-save-as-hover = 사용 중인 채색을 파일로 쓰고, 그때부터 그 파일을 지켜봅니다.
+color-hook-turn-off = 끄기
+color-hook-turn-off-hover = 색칠 방법 자체의 색으로 돌아갑니다.
+color-hook-guide = 안내서
+color-hook-guide-hover = 작성 방법: 각 점이 가진 값, 부를 수 있는 함수, 예제 설명.
+# The kind of file, in the Open and Save as dialogs.
+color-hook-filter = 채색 (WGSL)
+# $path: where the file was written.
+color-hook-saved = { $path }에 저장했습니다.
+# $error: the system's message.
+color-hook-save-failed = 저장할 수 없습니다: { $error }
+# The line under the coloring method in the control panel while a custom coloring colors the view. $name: its file's name, or color-hook-panel-unnamed.
+color-hook-panel = 사용자 채색: { $name }
+color-hook-panel-unnamed = 화면에서
+color-hook-panel-hover = 사용자 채색이 방식 대신 이 화면을 채색하고 있습니다. 클릭하면 창을 엽니다.
+color-hook-panel-error = 마지막 저장본이 컴파일되지 않습니다.

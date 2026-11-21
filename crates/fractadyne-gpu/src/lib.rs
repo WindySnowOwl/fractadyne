@@ -5068,7 +5068,10 @@ impl CallbackTrait for MandelbrotParams {
             let mut h = std::collections::hash_map::DefaultHasher::new();
             color_inputs_sig(&cu, self.lut.as_slice(), self.lut_smooth, &self.interior, view.writes, px).hash(&mut h);
             shown_bg.hash(&mut h);
+            // The pipeline is the coloring hook's when there is one; its key says which hook, its
+            // parameters are in `cu`, and it reads nothing else that moves (no time).
             color_pipeline.hash(&mut h);
+            hook_key.hash(&mut h);
             h.finish()
         };
         // One frame unchanged arms it: a view that changes every frame (a move, palette cycling)

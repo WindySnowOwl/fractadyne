@@ -40,7 +40,9 @@ fn other_value(f: &Field) -> &'static str {
 }
 
 /// The spec fields a view does not carry through the table: `export.rs` writes and reads them under
-/// its older keys (`palette`/`palette_id`, `cycle`, `iter_div`, `offset`, `palette_custom`).
+/// its older keys (`palette`/`palette_id`, `cycle`, `iter_div`, `offset`, `palette_custom`) and, for
+/// a coloring hook, under `coloring_hook=` and `coloring_hook_params=` (format 5: the hook's text
+/// is built before it is accepted, which a table row cannot do).
 const CARRIED_ELSEWHERE: &[&str] = &[
     "palette_idx",
     "palette_id",
@@ -51,6 +53,8 @@ const CARRIED_ELSEWHERE: &[&str] = &[
     "custom_palette_flat",
     "custom_segments",
     "use_custom_palette",
+    "coloring_hook",
+    "coloring_hook_params",
 ];
 
 /// ⭐**Every coloring setting the session saves is accounted for in a view** (coloring plan B4): it

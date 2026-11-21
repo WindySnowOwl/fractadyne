@@ -7109,6 +7109,8 @@ struct FractadyneApp {
     palette_browser: crate::ui::palette_browser::PaletteBrowser,
     /// Color ▸ Preview methods… (`ui::method_sheet`, coloring plan B7).
     method_sheet: crate::ui::method_sheet::MethodSheet,
+    /// Color ▸ Custom coloring… (`ui::color_hook_dialog`, coloring plan B10).
+    color_hook_dialog: crate::ui::color_hook_dialog::ColorHookDialog,
     /// A second graphics device for the live view (`--worker-gpu`, `design/multi-gpu-live.md`);
     /// `None` = one GPU, as always. Dropped (not fatal) when it is lost.
     gpu_worker: Option<gpu_worker::Worker>,
@@ -8378,6 +8380,7 @@ impl FractadyneApp {
             hook_prepared: 0,
             palette_browser: Default::default(),
             method_sheet: Default::default(),
+            color_hook_dialog: Default::default(),
             gpu_worker: None,
             export_extra: Vec::new(),
             worker_state: gpu_worker::WorkerState::Off,
@@ -19258,6 +19261,7 @@ impl eframe::App for FractadyneApp {
         self.draw_bookmarks_dialog(ctx);
         self.draw_palette_browser(ctx);
         self.draw_method_sheet(ctx);
+        self.draw_color_hook_dialog(ctx);
 
         // Render a just-added bookmark's thumbnail (deferred here for GPU access; the current
         // view still matches the bookmark, since adding it didn't move the view).

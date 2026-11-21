@@ -366,6 +366,8 @@ const SAMPLE_OPTIONAL_KEYS: &[&str] = &[
     "palette_mode", "palette_lo", "palette_hi", "interior_color",
     "normalize_live", "normalize_fit", "log_scale", "palette_aa",
     "palette_brightness", "palette_contrast", "palette_saturation", "julia_linked",
+    // Written only for a view colored through a coloring hook (format 5).
+    "coloring_hook", "coloring_hook_params",
 ];
 
 #[test]

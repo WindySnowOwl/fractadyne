@@ -61,7 +61,9 @@ pub(crate) fn read_hook_file(path: &Path) -> Result<String, String> {
     }
     let bytes = std::fs::read(path).map_err(|e| e.to_string())?;
     let text = String::from_utf8(bytes).map_err(|_| "the file is not UTF-8 text".to_string())?;
-    Ok(text.strip_prefix('\u{feff}').unwrap_or(&text).to_string())
+    // Unix line ends, as `color_hook::build` keeps the text: a save that changed nothing but how
+    // an editor ends its lines is not a new hook.
+    Ok(text.strip_prefix('\u{feff}').unwrap_or(&text).replace("\r\n", "\n"))
 }
 
 fn stamp(path: &Path) -> Option<(SystemTime, u64)> {
@@ -76,10 +78,12 @@ impl Watcher {
         let flag = stop.clone();
         let ctx = Arc::new(std::sync::OnceLock::<egui::Context>::new());
         let wake = ctx.clone();
+        // The file as it was loaded, taken HERE: taken on the thread's first line, a save landing
+        // before the thread ran was its starting point and never seen (the unit test, under load).
+        let mut seen = stamp(&path);
         std::thread::Builder::new()
             .name("fd-hook-watch".into())
             .spawn(move || {
-                let mut seen = stamp(&path);
                 while !flag.load(Ordering::Relaxed) {
                     std::thread::sleep(WATCH_EVERY);
                     let now = stamp(&path);
@@ -174,6 +178,7 @@ impl HookState {
         match latest {
             None => false,
             Some(Err(e)) => {
+                crate::diag::log_line("hook", &format!("the coloring hook's file could not be read, so the hook in use stays: {e}"));
                 self.error = Some(e);
                 false
             }
@@ -185,7 +190,11 @@ impl HookState {
                 let kept = self.params;
                 // The same path: `set_text` keeps the watcher running.
                 let path = self.path.clone();
-                let ok = self.set_text(&text, Some(&kept), path).is_ok();
+                let built = self.set_text(&text, Some(&kept), path);
+                if let Err(e) = &built {
+                    crate::diag::log_line("hook", &format!("the coloring hook's file was saved but does not build, so the last hook that built stays: {e}"));
+                }
+                let ok = built.is_ok();
                 if ok {
                     if let Some(h) = &self.active {
                         for (v, p) in self.params.iter_mut().zip(&h.params) {

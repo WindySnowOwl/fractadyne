@@ -3704,3 +3704,44 @@ status-limit-exhausted-detail = Setiap piksel tetap kehabisan iterasi pada angga
 status-limit-capped-max = { $percent }% piksel kehabisan iterasi pada anggaran { $budget }, dan piksel yang lolos selesai tepat di batas atas itu — tampilan kurang terselesaikan. Iterasi sudah pada nilai maksimum, jadi tampilan ini memerlukan lebih dari yang saat ini dapat diberikan aplikasi.
 # $percent: the share of pixels, a whole number; $budget: the iteration budget. "Iterations", "Controls" and "Quality" are the names of a setting, the control panel and its section.
 status-limit-capped-raise = { $percent }% piksel kehabisan iterasi pada anggaran { $budget }, dan piksel yang lolos selesai tepat di batas atas itu — tampilan kurang terselesaikan. Naikkan Iterasi (Kontrol ▸ Kualitas) untuk menyelesaikannya.
+
+## Custom coloring (Color ▸ Custom coloring…): a short program in WGSL, the graphics language, that colors the view in place of the coloring method, loaded from a file the user edits. WGSL, custom_color and file names stay as written; the compiler's own messages ($error) are in English.
+
+color-hook-open = Pewarnaan sendiri…
+color-hook-open-hover = Warnai tampilan dengan program pendek buatan Anda, ditulis dalam WGSL dan dimuat dari file. Simpan file-nya dan tampilan diwarnai ulang.
+color-hook-title = Pewarnaan sendiri
+color-hook-intro = Fungsi bernama custom_color, ditulis dalam WGSL, mewarnai setiap titik tampilan menggantikan metode pewarnaan. Sunting file-nya di penyunting teks apa pun: setiap kali Anda menyimpannya, tampilan diwarnai ulang.
+color-hook-off = Mati: tampilan diwarnai oleh metodenya.
+# $file: the file's name.
+color-hook-from-file = Dipakai: { $file }. Menyimpan file mewarnai ulang tampilan.
+color-hook-from-view = Dipakai: pewarnaan yang dibawa tampilan atau contoh, tanpa file. Simpan sebagai file untuk menyuntingnya.
+# $error: why it does not build, in the shader compiler's words (English), often with a line and a column.
+color-hook-error = Tidak dapat dikompilasi: { $error }
+color-hook-error-kept = Versi terakhir yang berhasil dikompilasi tetap dipakai.
+color-hook-params = Parameter
+color-hook-load = Buka file…
+color-hook-load-hover = Muat pewarnaan dari file .wgsl dan pantau file-nya: setiap penyimpanan mewarnai ulang tampilan.
+color-hook-examples = Contoh
+color-hook-examples-hover = Mulai dari sebuah contoh. Simpan sebagai file untuk menyuntingnya.
+# The examples: the first two are coloring methods (color-method-smooth, color-method-fringe) written out as code.
+color-hook-example-smooth = Iterasi halus, ditulis sebagai kode
+color-hook-example-fringe = Pinggiran, ditulis sebagai kode
+color-hook-example-transfer = Kurva transfer
+color-hook-example-darken = Gelapkan di dekat himpunan
+color-hook-save-as = Simpan sebagai…
+color-hook-save-as-hover = Tulis pewarnaan yang dipakai ke sebuah file, lalu pantau file itu.
+color-hook-turn-off = Matikan
+color-hook-turn-off-hover = Kembali ke warna metode pewarnaan itu sendiri.
+color-hook-guide = Panduan
+color-hook-guide-hover = Cara menulisnya: apa yang dibawa setiap titik, fungsi yang dapat dipanggil, dan penjelasan contoh-contohnya.
+# The kind of file, in the Open and Save as dialogs.
+color-hook-filter = Pewarnaan (WGSL)
+# $path: where the file was written.
+color-hook-saved = Disimpan ke { $path }.
+# $error: the system's message.
+color-hook-save-failed = Tidak dapat disimpan: { $error }
+# The line under the coloring method in the control panel while a custom coloring colors the view. $name: its file's name, or color-hook-panel-unnamed.
+color-hook-panel = Pewarnaan sendiri: { $name }
+color-hook-panel-unnamed = dari tampilan
+color-hook-panel-hover = Pewarnaan sendiri mewarnai tampilan ini menggantikan metodenya. Klik untuk membuka jendelanya.
+color-hook-panel-error = Simpanan terakhir tidak dapat dikompilasi.

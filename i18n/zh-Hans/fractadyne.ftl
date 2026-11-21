@@ -3703,3 +3703,44 @@ status-limit-exhausted-detail = 在此视图所能获得的最大预算（{ $bud
 status-limit-capped-max = { $percent }% 的像素在 { $budget } 的预算下用尽了迭代次数，而逃逸的像素恰好在这个上限处才完成——视图的解析不足。“迭代次数”已是最大值，因此此视图需要的超出了程序目前所能提供的。
 # $percent: the share of pixels, a whole number; $budget: the iteration budget. "Iterations" and "Rendering" are the names of a setting and a panel section.
 status-limit-capped-raise = { $percent }% 的像素在 { $budget } 的预算下用尽了迭代次数，而逃逸的像素恰好在这个上限处才完成——视图的解析不足。请提高“迭代次数”（控制面板 ▸ 质量）来解决。
+
+## Custom coloring (Color ▸ Custom coloring…): a short program in WGSL, the graphics language, that colors the view in place of the coloring method, loaded from a file the user edits. WGSL, custom_color and file names stay as written; the compiler's own messages ($error) are in English.
+
+color-hook-open = 自定义着色…
+color-hook-open-hover = 用你自己写的一段 WGSL 短程序（从文件载入）为视图着色。保存文件后视图会重新着色。
+color-hook-title = 自定义着色
+color-hook-intro = 一个用 WGSL 编写、名为 custom_color 的函数，代替着色方法为视图的每个点着色。可在任何文本编辑器中编辑它的文件：每次保存，视图都会重新着色。
+color-hook-off = 关闭：视图由其着色方法着色。
+# $file: the file's name.
+color-hook-from-file = 使用中：{ $file }。保存该文件会让视图重新着色。
+color-hook-from-view = 使用中：来自视图或示例的着色（没有文件）。要编辑它，请先另存为文件。
+# $error: why it does not build, in the shader compiler's words (English), often with a line and a column.
+color-hook-error = 无法编译：{ $error }
+color-hook-error-kept = 继续使用最后一个能编译的版本。
+color-hook-params = 参数
+color-hook-load = 打开文件…
+color-hook-load-hover = 从 .wgsl 文件载入着色并监视该文件：每次保存都会让视图重新着色。
+color-hook-examples = 示例
+color-hook-examples-hover = 从示例开始。要编辑它，请另存为文件。
+# The examples: the first two are coloring methods (color-method-smooth, color-method-fringe) written out as code.
+color-hook-example-smooth = 平滑迭代（写成代码）
+color-hook-example-fringe = 彩边（写成代码）
+color-hook-example-transfer = 传递曲线
+color-hook-example-darken = 在集合附近加暗
+color-hook-save-as = 另存为…
+color-hook-save-as-hover = 把正在使用的着色写入文件，并从此监视该文件。
+color-hook-turn-off = 关闭
+color-hook-turn-off-hover = 回到着色方法本身的颜色。
+color-hook-guide = 指南
+color-hook-guide-hover = 如何编写：每个点带有哪些值、可以调用的函数，以及示例讲解。
+# The kind of file, in the Open and Save as dialogs.
+color-hook-filter = 着色（WGSL）
+# $path: where the file was written.
+color-hook-saved = 已保存到 { $path }。
+# $error: the system's message.
+color-hook-save-failed = 无法保存：{ $error }
+# The line under the coloring method in the control panel while a custom coloring colors the view. $name: its file's name, or color-hook-panel-unnamed.
+color-hook-panel = 自定义着色：{ $name }
+color-hook-panel-unnamed = 来自视图
+color-hook-panel-hover = 自定义着色正在代替着色方法为此视图着色。点击打开它的窗口。
+color-hook-panel-error = 最近一次保存无法编译。
