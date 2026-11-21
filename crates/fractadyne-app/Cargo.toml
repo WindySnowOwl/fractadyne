@@ -19,6 +19,10 @@ fractadyne-export.workspace = true
 fractadyne-farm.workspace = true
 eframe.workspace = true
 egui.workspace = true
+# wgpu's internal counters (live buffers, textures, views, bind groups and their memory), read once a
+# minute by the memory timeline (`diag::mem_timeline`, 2026-11-21). The same wgpu eframe uses: the
+# feature joins its build. An atomic add per resource created or freed.
+wgpu = { version = "24", default-features = false, features = ["counters"] }
 log.workspace = true
 env_logger.workspace = true
 directories.workspace = true

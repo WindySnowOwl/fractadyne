@@ -111,6 +111,10 @@ detail is in the git history.
 - **A crash gives back its memory at once.** The crash dialog now comes from a second, small launch
   of the program, so the one that crashed ends at once instead of holding all of its memory and
   graphics memory until the dialog is answered.
+- **The log follows Fractadyne's memory.** Once a minute the log records how much memory
+  Fractadyne holds, how much the system has free, and how many graphics objects it keeps on the
+  card and how large they are; a crash report shows that history. A session whose memory grows
+  can then say from when, and whether it is the program's or the graphics card's.
 
 ## 0.3.0 (2026-11-19)
 
