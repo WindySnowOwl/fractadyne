@@ -3006,6 +3006,26 @@ panel-band-width = Ширина полос
 panel-band-width-hover = Интервал между контурами расстояния (октав на полосу).
 panel-animate-glow = Анимировать свечение
 panel-animate-glow-hover = Заставить полосы свечения течь со временем (использует ползунок «Скорость»).
+# Edge shading (coloring plan C3), in Effects: a color laid along the set's edge that fades out with the distance from it. The checkbox and its tooltip, then its rows: Width (in screen pixels), Strength, Curve (a list), Color (a swatch) and the "Inside color" checkbox beside it.
+panel-edge-shading = Тени у края
+panel-edge-shading-hover = Окрашивает цвета у множества в сторону одного цвета, который гаснет с расстоянием от него: тёмные линии вдоль каждой нити, как рисунок пером. (Мандельброт, Мультиброт и Феникс.)
+panel-edge-width = Ширина
+panel-edge-width-hover = Как далеко от множества доходит тень, в пикселях экрана: одинаково при любом масштабе и любом сглаживании.
+panel-edge-strength = Сила
+panel-edge-curve = Кривая
+panel-edge-curve-hover = Как тень гаснет между множеством и своей шириной. Квадратный корень рисует тонкую линию с мягким хвостом, Квадрат — толстую; Плавная смягчает оба конца; Жёсткая — сплошная линия во всю ширину.
+# The edge shading's curves (C3).
+edge-curve-linear = Линейная
+edge-curve-sqrt = Квадратный корень
+edge-curve-square = Квадрат
+edge-curve-smooth = Плавная
+edge-curve-hard = Жёсткая
+panel-edge-color = Цвет
+panel-edge-color-hover = Цвет, к которому затеняются края.
+panel-edge-inside = Цвет внутри
+panel-edge-inside-hover = Затенять вместо этого к цвету внутренности: край множества тогда сливается с множеством, что сглаживает его даже без сглаживания (попробуйте ширину 1 и линейную).
+# At the top of Effects when relief lighting, the glow or edge shading is on for a fractal without a distance estimate (they stay on). $family = the fractal's name.
+panel-effects-no-de = У { $family } нет оценки расстояния, поэтому рельефное освещение, свечение и тени у края здесь ничего не меняют.
 
 ## The control panel: Overlays
 

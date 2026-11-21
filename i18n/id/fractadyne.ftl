@@ -2868,6 +2868,26 @@ panel-band-width = Lebar pita
 panel-band-width-hover = Jarak antarkontur jarak (oktaf per pita).
 panel-animate-glow = Animasikan pendaran
 panel-animate-glow-hover = Alirkan pita pendaran seiring waktu (menggunakan penggeser Kecepatan).
+# Edge shading (coloring plan C3), in Effects: a color laid along the set's edge that fades out with the distance from it. The checkbox and its tooltip, then its rows: Width (in screen pixels), Strength, Curve (a list), Color (a swatch) and the "Inside color" checkbox beside it.
+panel-edge-shading = Bayangan tepi
+panel-edge-shading-hover = Mewarnai warna di dekat himpunan ke arah satu warna yang memudar seiring jarak darinya: garis gelap di sepanjang setiap filamen, seperti gambar pena. (Mandelbrot, Multibrot, dan Phoenix.)
+panel-edge-width = Lebar
+panel-edge-width-hover = Seberapa jauh bayangan menjangkau dari himpunan, dalam piksel layar: sama di setiap zoom dan setiap tingkat anti-aliasing.
+panel-edge-strength = Kekuatan
+panel-edge-curve = Kurva
+panel-edge-curve-hover = Cara bayangan memudar antara himpunan dan lebarnya. Akar kuadrat menggambar garis tipis dengan ekor lembut, Kuadrat garis tebal; Halus melunakkan kedua ujung; Tegas adalah garis penuh selebar lebarnya.
+# The edge shading's curves (C3).
+edge-curve-linear = Linear
+edge-curve-sqrt = Akar kuadrat
+edge-curve-square = Kuadrat
+edge-curve-smooth = Halus
+edge-curve-hard = Tegas
+panel-edge-color = Warna
+panel-edge-color-hover = Warna tujuan bayangan tepi.
+panel-edge-inside = Warna bagian dalam
+panel-edge-inside-hover = Bayangi ke arah warna bagian dalam: tepi himpunan lalu menyatu dengan himpunan, yang menghaluskannya bahkan tanpa anti-aliasing (coba Lebar 1 dan Linear).
+# At the top of Effects when relief lighting, the glow or edge shading is on for a fractal without a distance estimate (they stay on). $family = the fractal's name.
+panel-effects-no-de = { $family } tidak punya estimasi jarak, jadi pencahayaan relief, pendaran, dan bayangan tepi tidak mengubah apa pun di sini.
 
 ## The control panel: Overlays
 

@@ -267,6 +267,8 @@ pub struct ExportRequest {
     /// The palette's Wrap (`Wrap::gpu_id`) and Steps (0: none), coloring plan C2.
     pub wrap: u32,
     pub steps: f32,
+    /// Edge shading (coloring plan C3).
+    pub edge: crate::EdgeShade,
     pub julia: u32,
     pub cycle: f32,
     pub offset: f32,
@@ -1932,7 +1934,12 @@ impl<'a> TileRenderer<'a> {
             hook_p: req.hook_params,
             wrap: req.wrap,
             steps: req.steps,
-            _pad_wrap: [0; 2],
+            edge_mode: req.edge.mode,
+            edge_curve: req.edge.curve,
+            edge_px: req.edge.width,
+            edge_strength: req.edge.strength,
+            _pad_edge: [0; 2],
+            edge_col: [req.edge.color[0], req.edge.color[1], req.edge.color[2], 1.0],
         };
         queue.write_buffer(&color_uniform, 0, bytemuck::bytes_of(&cu));
         let split = |v: f64| -> (f32, f32) {
@@ -4325,7 +4332,12 @@ pub(crate) fn color_uniforms_for(req: &ExportRequest, ss: u32, w: u32, h: u32, l
         hook_p: req.hook_params,
         wrap: req.wrap,
         steps: req.steps,
-        _pad_wrap: [0; 2],
+        edge_mode: req.edge.mode,
+        edge_curve: req.edge.curve,
+        edge_px: req.edge.width,
+        edge_strength: req.edge.strength,
+        _pad_edge: [0; 2],
+        edge_col: [req.edge.color[0], req.edge.color[1], req.edge.color[2], 1.0],
     }
 }
 

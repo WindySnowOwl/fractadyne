@@ -408,6 +408,17 @@ enum Screen {
     PaletteScale,
     /// ...then Mirror and 6 steps: another picture again, still no pass.
     PaletteWrapSteps,
+    /// Edge shading (coloring plan C3): the Julia-link point in Smooth, point sampled, the shading
+    /// off (the base)...
+    EdgeShadeOff,
+    /// ...on, toward white at 2 px: another picture, and no pass (a recolor)...
+    EdgeShade,
+    /// ...toward the inside's near-black: another picture again (the control that the inside's
+    /// color, not the edge color, is mixed in), still no pass...
+    EdgeShadeInside,
+    /// ...then the same with the Effects section open, for its rows (no comparison: opening the
+    /// section can widen the panel, and the picture with it).
+    EdgeShadePanel,
     /// Custom coloring (coloring plan B10): the home view in Smooth, point sampled, the dialog open
     /// with no hook (the base)...
     ColorHookOff,
@@ -1367,6 +1378,10 @@ fn build_steps() -> Vec<Step> {
         screen("palette-scale-linear", Screen::PaletteScaleLinear),
         screen("palette-scale", Screen::PaletteScale),
         screen("palette-wrap-steps", Screen::PaletteWrapSteps),
+        screen("edge-shade-off", Screen::EdgeShadeOff),
+        screen("edge-shade", Screen::EdgeShade),
+        screen("edge-shade-inside", Screen::EdgeShadeInside),
+        screen("edge-shade-panel", Screen::EdgeShadePanel),
         screen("slider-click", Screen::SliderClick),
         screen("slider-double-click-reset", Screen::SliderDoubleClick),
         screen("julia-linked-off", Screen::JuliaLinkedOff),
@@ -1789,6 +1804,25 @@ impl FractadyneApp {
             name: name.into(),
             verdict: if ok { Verdict::Pass } else { Verdict::Fail },
             detail: format!("against {before} (mean difference in levels, passes caused): {r:?}; curve {:?}, wrap {:?}, steps {}", self.coloring.transfer, self.coloring.wrap, self.coloring.steps),
+        });
+    }
+
+    /// The edge shading steps (C3), each against the step before: another picture (mean difference
+    /// 1 level or more), and no pass (they recolor).
+    fn uitest_edge_shade_checks(&self, sc: Screen, ut: &UiTest, view: Option<&(Vec<u8>, [u32; 2])>, ran_why: [u64; 7], checks: &mut Vec<Check>) {
+        let before = if matches!(sc, Screen::EdgeShade) { "edge-shade-off" } else { "edge-shade" };
+        let b = ut.results.iter().rev().find(|r| r.name == before);
+        let r = view.zip(b).and_then(|((px, _), b)| {
+            let (prev, _) = b.inside_view.as_ref().filter(|p| p.0.len() == px.len())?;
+            let s: f64 = px.chunks_exact(4).zip(prev.chunks_exact(4)).map(|(p, q)| (0..3).map(|k| (p[k] as f64 - q[k] as f64).abs()).sum::<f64>()).sum();
+            Some((s / (3 * (px.len() / 4)).max(1) as f64, (ran_why[0] - b.ran_why[0]) + (ran_why[1] - b.ran_why[1])))
+        });
+        let name = if matches!(sc, Screen::EdgeShade) { "edge-shade-recolors" } else { "edge-shade-inside-recolors" };
+        let ok = r.is_some_and(|(d, ran)| d >= 1.0 && ran == 0);
+        checks.push(Check {
+            name: name.into(),
+            verdict: if ok { Verdict::Pass } else { Verdict::Fail },
+            detail: format!("against {before} (mean difference in levels, passes caused): {r:?}; edge {:?}", self.effects.edge_shade()),
         });
     }
 
@@ -2383,8 +2417,11 @@ impl FractadyneApp {
         self.coloring.transfer = fractadyne_core::coloring::Transfer::Linear;
         self.coloring.wrap = fractadyne_core::coloring::Wrap::Repeat;
         self.coloring.steps = 0;
-        // ...or a Julia link (each `julia-linked*` step sets its own).
+        // ...or a Julia link (each `julia-linked*` step sets its own)...
         self.coloring.julia_linked = false;
+        // ...or the edge shading (each `edge-shade*` step sets its own, C3).
+        self.effects.edge = false;
+        self.effects.edge_inside = false;
         self.blinken.size = crate::blinken::Size::Off;
         self.blinken.pinned_help = None;
         self.dialogs.help_open = false;
@@ -2423,6 +2460,7 @@ impl FractadyneApp {
         }
         // The no-derivative screen's Effects section and the coloring it set, ONCE as the walk
         // leaves it: a later step pair carries its coloring from one step to the next.
+        self.dialogs.uitest_effects_scroll = false;
         if self.dialogs.uitest_effects_open == Some(true) {
             self.dialogs.uitest_effects_open = Some(false);
             self.coloring.color_method = crate::ColorMethod::Smooth;
@@ -3027,6 +3065,11 @@ impl FractadyneApp {
                 self.coloring.color_method = crate::ColorMethod::Smooth;
                 self.coloring.interior = Some(crate::InteriorMode::Solid);
                 self.coloring.normalize_live = false;
+                // ⛔The classic map, set here: inherited from julia-linked-fit, "Always fit range"
+                // engaged at the home view or not by timing (C2), and color-hook-off could show a
+                // carried fit that the later steps had lost (2026-11-21: 4.2 levels in a full walk,
+                // 39.8 in a subset), failing a comparison of two identical colorings.
+                self.coloring.normalize_fit = false;
                 self.coloring.palette_aa = false;
                 self.dialogs.right_panel_open = true;
                 self.color_hook_dialog.open = true;
@@ -3073,6 +3116,39 @@ impl FractadyneApp {
                 if matches!(s, Screen::PaletteWrapSteps) {
                     self.coloring.wrap = fractadyne_core::coloring::Wrap::Mirror;
                     self.coloring.steps = 6;
+                }
+            }
+            // C3: the Julia-link point again (filaments enough to shade), Smooth, point sampled; the
+            // shading off, on toward white, then toward the inside's near-black, one change a step.
+            Screen::EdgeShadeOff | Screen::EdgeShade | Screen::EdgeShadeInside | Screen::EdgeShadePanel => {
+                if matches!(s, Screen::EdgeShadeOff) {
+                    let (cx, cy) = UITEST_JULIA_LINK_C;
+                    self.set_show_mode(crate::ShowMode::Set);
+                    self.set_fractal(crate::FractalKind::Mandelbrot);
+                    let at = |v: f64| fractadyne_core::BigFloat::from_f64(v, 64);
+                    self.viewport.set_center_mag(at(cx), at(cy), 100.0);
+                    self.render_cfg.auto_iter = false;
+                    self.render_cfg.max_iter = 2_000;
+                    self.coloring.use_custom_palette = false;
+                    self.coloring.use_duotone = false;
+                    self.coloring.use_binary = false;
+                    self.coloring.palette_idx = fractadyne_color::preset_by_id("ember").unwrap_or(0);
+                    self.effects.edge_width = 2.0;
+                    self.effects.edge_strength = 1.0;
+                    self.effects.edge_curve = fractadyne_core::coloring::EdgeCurve::Linear;
+                    self.effects.edge_color = [1.0, 1.0, 1.0];
+                }
+                self.coloring.color_method = crate::ColorMethod::Smooth;
+                self.coloring.interior = Some(crate::InteriorMode::Solid);
+                self.coloring.normalize_live = false;
+                self.coloring.normalize_fit = false;
+                self.coloring.palette_aa = false;
+                self.dialogs.right_panel_open = true;
+                self.effects.edge = !matches!(s, Screen::EdgeShadeOff);
+                self.effects.edge_inside = matches!(s, Screen::EdgeShadeInside | Screen::EdgeShadePanel);
+                if matches!(s, Screen::EdgeShadePanel) {
+                    self.dialogs.uitest_effects_open = Some(true);
+                    self.dialogs.uitest_effects_scroll = true;
                 }
             }
             // The view as palette-aa left it, the palette's saturation at 0.
@@ -3685,6 +3761,10 @@ impl FractadyneApp {
                     | Screen::PaletteScaleLinear
                     | Screen::PaletteScale
                     | Screen::PaletteWrapSteps
+                    | Screen::EdgeShadeOff
+                    | Screen::EdgeShade
+                    | Screen::EdgeShadeInside
+                    | Screen::EdgeShadePanel
                     | Screen::ColorHookOff
                     | Screen::ColorHookSmooth
                     | Screen::ColorHookFringe
@@ -4583,6 +4663,11 @@ impl FractadyneApp {
         // ---- the palette map's curve, wrap and steps (coloring plan C2) ----
         if let StepKind::Screen(sc @ (Screen::PaletteScale | Screen::PaletteWrapSteps)) = step.kind {
             self.uitest_palette_scale_checks(sc, ut, inside_view.as_ref(), ran_why, &mut checks);
+        }
+
+        // ---- edge shading (coloring plan C3) ----
+        if let StepKind::Screen(sc @ (Screen::EdgeShade | Screen::EdgeShadeInside)) = step.kind {
+            self.uitest_edge_shade_checks(sc, ut, inside_view.as_ref(), ran_why, &mut checks);
         }
 
         // ---- custom coloring (coloring plan B10) ----

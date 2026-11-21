@@ -776,9 +776,88 @@ pub fn wrap_coord(t: f64, wrap: Wrap, steps: u32) -> f64 {
     }
 }
 
+/// How edge shading (coloring plan C3) fades out with the distance to the set. A texel `d` output
+/// pixels from the set takes the edge color at the weight [`edge_weight`], `strength · (1 − f(x))`
+/// with x = min(d / width, 1): all of it at the set, none `width` pixels out. Linear is Chéritat's
+/// blend (t = d / (thickness · pixel)); Square root keeps the line thin with a long soft tail;
+/// Square widens it; Smooth eases both ends; Hard is Chéritat's thickness test, every texel nearer
+/// than `width` fully shaded (a supersampled pixel averages its texels, so even that line is
+/// anti-aliased). The GPU numbers are the list's order (`ColorU.edge_curve`).
+#[derive(Clone, Copy, PartialEq, Eq, Debug, Default, Hash)]
+pub enum EdgeCurve {
+    #[default]
+    Linear,
+    Sqrt,
+    Square,
+    Smooth,
+    Hard,
+}
+
+impl EdgeCurve {
+    /// Every curve, in the order a list shows them.
+    pub const ALL: [EdgeCurve; 5] = [EdgeCurve::Linear, EdgeCurve::Sqrt, EdgeCurve::Square, EdgeCurve::Smooth, EdgeCurve::Hard];
+    /// The persisted key.
+    pub const fn key(self) -> &'static str {
+        match self {
+            EdgeCurve::Linear => "linear",
+            EdgeCurve::Sqrt => "sqrt",
+            EdgeCurve::Square => "square",
+            EdgeCurve::Smooth => "smooth",
+            EdgeCurve::Hard => "hard",
+        }
+    }
+    /// The curve a key names, if any.
+    pub fn parse_key(s: &str) -> Option<EdgeCurve> {
+        EdgeCurve::ALL.into_iter().find(|c| c.key() == s)
+    }
+    /// Its GPU number (`ColorU.edge_curve`, the shader's `edge_curve_of`).
+    pub const fn gpu_id(self) -> u32 {
+        match self {
+            EdgeCurve::Linear => 0,
+            EdgeCurve::Sqrt => 1,
+            EdgeCurve::Square => 2,
+            EdgeCurve::Smooth => 3,
+            EdgeCurve::Hard => 4,
+        }
+    }
+    pub fn from_gpu_id(id: u32) -> Option<EdgeCurve> {
+        EdgeCurve::ALL.into_iter().find(|c| c.gpu_id() == id)
+    }
+    /// f(x) for x in 0..=1 (clamped into it): 0 at the set, 1 at the shading's width.
+    pub fn apply(self, x: f64) -> f64 {
+        let x = x.clamp(0.0, 1.0);
+        match self {
+            EdgeCurve::Linear => x,
+            EdgeCurve::Sqrt => x.sqrt(),
+            EdgeCurve::Square => x * x,
+            EdgeCurve::Smooth => x * x * (3.0 - 2.0 * x),
+            EdgeCurve::Hard => {
+                if x >= 1.0 {
+                    1.0
+                } else {
+                    0.0
+                }
+            }
+        }
+    }
+}
+
+/// The narrowest edge shading, in output pixels (the shader divides by the width).
+pub const EDGE_WIDTH_MIN: f32 = 0.05;
+
+/// The share of the edge color in a texel `d_px` output pixels from the set (coloring plan C3), as
+/// the color pass's `edge_shaded` mixes it: `strength · (1 − curve(min(d_px / width, 1)))`, 0 to 1.
+pub fn edge_weight(d_px: f64, width: f64, strength: f64, curve: EdgeCurve) -> f64 {
+    let x = (d_px / width.max(EDGE_WIDTH_MIN as f64)).clamp(0.0, 1.0);
+    (strength * (1.0 - curve.apply(x))).clamp(0.0, 1.0)
+}
+
 #[cfg(test)]
 #[path = "../tests/unit/coloring/tests.rs"]
 mod tests;
 #[cfg(test)]
 #[path = "../tests/unit/coloring/transfer_tests.rs"]
 mod transfer_tests;
+#[cfg(test)]
+#[path = "../tests/unit/coloring/edge_tests.rs"]
+mod edge_tests;

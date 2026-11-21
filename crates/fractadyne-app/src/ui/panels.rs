@@ -50,14 +50,6 @@ impl crate::FractadyneApp {
     }
 }
 
-/// Whether `r`, a slider's response, was double-clicked: on its value box, or on its handle or track.
-/// ⚠egui's slider senses only DRAGS on the track (`Sense::drag()`, egui 0.31 `slider.rs`), so
-/// `Response::double_clicked` saw a double-click on the value box alone and the handle did nothing
-/// (user, 2026-11-20). A double-click of the button with the pointer over the slider counts too.
-/// ⚠So does a TRIPLE: egui counts a third click within 0.6 s of the first, so a double-click soon
-/// after a click on the slider (setting it, then resetting it) is a triple to egui, and was missed
-/// (the uitest's `slider-double-click-reset`, 0.58 s after its control's click). A triple-click
-/// means nothing else on a slider.
 /// A palette map curve's name (C2).
 pub(crate) fn transfer_label(t: fractadyne_core::coloring::Transfer) -> String {
     match t {
@@ -80,6 +72,26 @@ pub(crate) fn wrap_label(w: fractadyne_core::coloring::Wrap) -> String {
     }
 }
 
+/// An edge shading curve's name (C3).
+pub(crate) fn edge_curve_label(c: fractadyne_core::coloring::EdgeCurve) -> String {
+    use fractadyne_core::coloring::EdgeCurve as E;
+    match c {
+        E::Linear => tr!(edge_curve_linear),
+        E::Sqrt => tr!(edge_curve_sqrt),
+        E::Square => tr!(edge_curve_square),
+        E::Smooth => tr!(edge_curve_smooth),
+        E::Hard => tr!(edge_curve_hard),
+    }
+}
+
+/// Whether `r`, a slider's response, was double-clicked: on its value box, or on its handle or track.
+/// ⚠egui's slider senses only DRAGS on the track (`Sense::drag()`, egui 0.31 `slider.rs`), so
+/// `Response::double_clicked` saw a double-click on the value box alone and the handle did nothing
+/// (user, 2026-11-20). A double-click of the button with the pointer over the slider counts too.
+/// ⚠So does a TRIPLE: egui counts a third click within 0.6 s of the first, so a double-click soon
+/// after a click on the slider (setting it, then resetting it) is a triple to egui, and was missed
+/// (the uitest's `slider-double-click-reset`, 0.58 s after its control's click). A triple-click
+/// means nothing else on a slider.
 pub(crate) fn slider_double_clicked(r: &egui::Response) -> bool {
     let b = egui::PointerButton::Primary;
     r.double_clicked() || (r.hovered() && r.ctx.input(|i| i.pointer.button_double_clicked(b) || i.pointer.button_triple_clicked(b)))
@@ -739,7 +751,7 @@ impl FractadyneApp {
                 });
 
                 });
-                egui::CollapsingHeader::new(tr!(panel_section_effects))
+                let effects = egui::CollapsingHeader::new(tr!(panel_section_effects))
                     .id_salt("fractadyne.panel.effects")
                     .default_open(false)
                     .open(self.dialogs.uitest_effects_open)
@@ -750,9 +762,9 @@ impl FractadyneApp {
                 // and the note says it does nothing here.
                 let has_de = self.fractal.caps().distance_estimate;
                 let no_de = tr!(coloring_needs_derivative, family = self.fractal.display_name());
-                if !has_de && (self.effects.light || self.effects.de) {
+                if !has_de && (self.effects.light || self.effects.de || self.effects.edge) {
                     ui.label(
-                        egui::RichText::new(tr!(panel_effects_no_derivative, family = self.fractal.display_name()))
+                        egui::RichText::new(tr!(panel_effects_no_de, family = self.fractal.display_name()))
                             .small()
                             .color(ui.visuals().warn_fg_color),
                     );
@@ -810,7 +822,57 @@ impl FractadyneApp {
                     ui.checkbox(&mut self.effects.de_anim, tr!(panel_animate_glow))
                         .on_hover_text(tr!(panel_animate_glow_hover));
                 });
+                // Edge shading (coloring plan C3): it reads the distance estimate, as the glow does.
+                ui.add_enabled(has_de, egui::Checkbox::new(&mut self.effects.edge, tr!(panel_edge_shading)))
+                    .on_hover_text(tr!(panel_edge_shading_hover))
+                    .on_disabled_hover_text(&no_de);
+                ui.add_enabled_ui(has_de && self.effects.edge, |ui| {
+                    let d = fractadyne_state::ColoringSpec::default();
+                    let r = labelled(ui, &tr!(panel_edge_width), |ui| {
+                        ui.add(
+                            egui::Slider::new(&mut self.effects.edge_width, crate::slider_range::EDGE_WIDTH)
+                                .logarithmic(true)
+                                .suffix(" px"),
+                        )
+                    });
+                    if slider_double_clicked(&r) {
+                        self.effects.edge_width = d.edge_width;
+                    }
+                    r.on_hover_text(format!("{}\n\n{}", tr!(panel_edge_width_hover), tr!(panel_double_click_reset)));
+                    let r = labelled(ui, &tr!(panel_edge_strength), |ui| {
+                        ui.add(egui::Slider::new(&mut self.effects.edge_strength, crate::slider_range::EDGE_STRENGTH))
+                    });
+                    if slider_double_clicked(&r) {
+                        self.effects.edge_strength = d.edge_strength;
+                    }
+                    r.on_hover_text(tr!(panel_double_click_reset));
+                    labelled(ui, &tr!(panel_edge_curve), |ui| {
+                        egui::ComboBox::from_id_salt("panel_edge_curve")
+                            .selected_text(edge_curve_label(self.effects.edge_curve))
+                            .show_ui(ui, |ui| {
+                                for c in fractadyne_core::coloring::EdgeCurve::ALL {
+                                    ui.selectable_value(&mut self.effects.edge_curve, c, edge_curve_label(c));
+                                }
+                            })
+                            .response
+                            .on_hover_text(tr!(panel_edge_curve_hover));
+                    });
+                    // The color, or the inside's: the set's edge smoothed by the distance.
+                    labelled(ui, &tr!(panel_edge_color), |ui| {
+                        let inside = self.effects.edge_inside;
+                        ui.add_enabled_ui(!inside, |ui| {
+                            if let Some(c) = crate::color_swatch(ui, egui::Id::new("panel_edge_color"), self.effects.edge_color, &tr!(panel_edge_color_hover)) {
+                                self.effects.edge_color = c;
+                            }
+                        });
+                        ui.checkbox(&mut self.effects.edge_inside, tr!(panel_edge_inside))
+                            .on_hover_text(tr!(panel_edge_inside_hover));
+                    });
                 });
+                });
+                if self.dialogs.uitest_effects_scroll && self.dialogs.uitest_effects_open == Some(true) {
+                    effects.header_response.scroll_to_me(Some(egui::Align::Min));
+                }
                 } // escape-time sections
                 // The orbit overlay's options lived as an indented block inside the View MENU
                 // until 2026-08-13 (UI review: a panel's worth of controls in a dropdown). The

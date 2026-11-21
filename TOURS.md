@@ -69,6 +69,12 @@ The tour's coloring, by the keys a saved view (`.fdn`) carries. Each key it name
 | `glow` | bool | false | Distance glow along the set's edge. |
 | `glow_strength` | float, 0 to 1 | 0.6 | Glow strength (with `glow`). |
 | `glow_width` | float, 0.15 to 4 | 1 | Glow band width (with `glow`). |
+| `edge` | bool | false | Edge shading: the colors near the set shaded toward `edge_color` (or the inside's color, `edge_inside`), fading out `edge_width` pixels from it. |
+| `edge_inside` | bool | false | Shade the edges toward the inside's color instead of `edge_color`: the set's edge smoothed by the distance (with `edge`). |
+| `edge_width` | float, 0.25 to 32 | 2 | How far from the set the edge shading reaches, in output pixels, 0.25 to 32 (with `edge`). |
+| `edge_strength` | float, 0 to 1 | 1 | The edge color's share at the set, 0 to 1 (with `edge`). |
+| `edge_curve` | string: linear \| sqrt \| square \| smooth \| hard | "linear" | How the edge shading fades out from the set: linear, sqrt (a thin line with a soft tail), square (a bold one), smooth or hard (a solid line `edge_width` wide) (with `edge`). |
+| `edge_color` | [r, g, b], 0 to 1 | [0, 0, 0] | The color the edges are shaded toward, as display-space [r, g, b] (with `edge`, unless `edge_inside`). |
 | `palette_mode` | string: duotone \| binary | (left out) | Duotone or binary in place of the palette: "duotone" or "binary" (left out: the palette). |
 | `palette_lo` | [r, g, b], 0 to 1 | [0.04, 0.05, 0.12] | Duotone's shadow, Binary's color inside the set, as display-space [r, g, b] (with `palette_mode`). |
 | `palette_hi` | [r, g, b], 0 to 1 | [0.95, 0.8, 0.45] | Duotone's highlight, Binary's color outside the set, as display-space [r, g, b] (with `palette_mode`). |

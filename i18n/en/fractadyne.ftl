@@ -3024,8 +3024,8 @@ coloring-needs-derivative = { $family } has no distance estimate: only Mandelbro
 panel-method-no-derivative = { $family } has no distance estimate, so this method colors the whole view one color. Choose another method.
 coloring-needs-statistics = { $family } records no orbit statistics: its pixels converge to a root instead of escaping, and this method colors by statistics of the orbit.
 panel-method-no-statistics = { $family } records no orbit statistics, so this method colors the whole view one color. Choose another method.
-# At the top of Effects when relief lighting or the glow is on for a fractal without a distance estimate (they stay on). $family = the fractal's name.
-panel-effects-no-derivative = { $family } has no distance estimate, so relief lighting and the glow change nothing here.
+# At the top of Effects when relief lighting, the glow or edge shading is on for a fractal without a distance estimate (they stay on). $family = the fractal's name.
+panel-effects-no-de = { $family } has no distance estimate, so relief lighting, the glow and edge shading change nothing here.
 panel-stripe-density = Stripe density
 panel-stripe-tail = Tail only (deep zoom)
 panel-stripe-tail-hover = Average the stripe term over the last N iterations of each orbit (an exponential window) instead of the whole orbit. At extreme depth every orbit shadows the reference for all but its last few hundred iterations, so the full-orbit average is one color for the whole view; the tail keeps the contrast. Orbits shorter than the window are unaffected. Also --stripe-tail N for --render.
@@ -3160,6 +3160,25 @@ panel-band-width = Band width
 panel-band-width-hover = Spacing of the distance contours (octaves per band).
 panel-animate-glow = Animate glow
 panel-animate-glow-hover = Flow the glow bands over time (uses the Speed slider).
+
+# Edge shading (coloring plan C3), in Effects: a color laid along the set's edge that fades out with the distance from it. The checkbox and its tooltip, then its rows: Width (in screen pixels), Strength, Curve (a list), Color (a swatch) and the "Inside color" checkbox beside it.
+panel-edge-shading = Edge shading
+panel-edge-shading-hover = Shade the colors near the set toward a color that fades out with the distance from it: dark lines along every filament, like a pen drawing. (Mandelbrot, Multibrot and Phoenix.)
+panel-edge-width = Width
+panel-edge-width-hover = How far from the set the shading reaches, in screen pixels: the same at every zoom and every anti-aliasing level.
+panel-edge-strength = Strength
+panel-edge-curve = Curve
+panel-edge-curve-hover = How the shading fades out between the set and its width. Square root draws a thin line with a soft tail, Square a bold one; Smooth eases both ends; Hard is a solid line as wide as the width.
+# The edge shading's curves (C3).
+edge-curve-linear = Linear
+edge-curve-sqrt = Square root
+edge-curve-square = Square
+edge-curve-smooth = Smooth
+edge-curve-hard = Hard
+panel-edge-color = Color
+panel-edge-color-hover = The color the edges are shaded toward.
+panel-edge-inside = Inside color
+panel-edge-inside-hover = Shade toward the inside's color instead: the set's edge then blends into the set, which smooths it even without anti-aliasing (try Width 1 and Linear).
 
 ## The control panel: Overlays
 

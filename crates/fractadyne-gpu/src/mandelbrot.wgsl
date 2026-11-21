@@ -3892,8 +3892,17 @@ struct ColorU {
     // 0 repeat, 1 mirror, 2 clamp; and the flat bands a palette cycle is cut into (0: none).
     wrap: u32,
     steps: f32,
-    _pad_wrap0: u32,
-    _pad_wrap1: u32,
+    // Edge shading (coloring plan C3, `edge_shaded`): 0 off, 1 toward `edge_col`, 2 toward the
+    // inside's color (`interior_col`); its curve (`EdgeCurve::gpu_id`), in what were this row's pad
+    // words. Then the width in output pixels and the strength, and the color. Mirrors
+    // `ColorUniforms`.
+    edge_mode: u32,
+    edge_curve: u32,
+    edge_px: f32,
+    edge_strength: f32,
+    _pad_edge0: u32,
+    _pad_edge1: u32,
+    edge_col: vec4<f32>,
 };
 @group(0) @binding(0) var<uniform> cu: ColorU;
 @group(0) @binding(1) var iter_tex: texture_2d<f32>;
@@ -4356,6 +4365,36 @@ fn view_average() -> vec3<f32> {
     return acc / f32(n * n);
 }
 
+// ---- Edge shading (coloring plan C3) ----
+// An escaped texel near the set takes the edge color by its distance d from the set in output
+// pixels, at the weight `edge_strength · (1 − f(min(d / edge_px, 1)))` (`fractadyne_core::coloring::
+// edge_weight`): all of it at the set, none `edge_px` pixels out. Each texel is shaded before a
+// pixel's texels are averaged, so the line is anti-aliased as the rest of the picture is. Toward
+// the inside's color (mode 2) it is Chéritat's blend: the set's edge smoothed by the distance, on a
+// frame of one sample a pixel too. Interior texels, and those with no distance estimate (a formula
+// without a derivative), keep their color.
+
+// f(x), x in 0..1 (`EdgeCurve::apply`): linear, square root, square, smoothstep, a hard step.
+fn edge_curve_of(x: f32) -> f32 {
+    switch (cu.edge_curve) {
+        case 1u: { return sqrt(x); }
+        case 2u: { return x * x; }
+        case 3u: { return x * x * (3.0 - 2.0 * x); }
+        case 4u: { return select(0.0, 1.0, x >= 1.0); }
+        default: { return x; }
+    }
+}
+
+// `c`, the color of the texel `m`, under the edge shading.
+fn edge_shaded(c: vec3<f32>, m: vec4<f32>) -> vec3<f32> {
+    if (cu.edge_mode == 0u || m.r < 0.0 || m.a > 1.0e20) { return c; }
+    let d = exp2(min(m.a - de_px_shift, 60.0));   // the distance in output pixels
+    let x = clamp(d / max(cu.edge_px, 0.05), 0.0, 1.0);
+    let w = clamp(cu.edge_strength * (1.0 - edge_curve_of(x)), 0.0, 1.0);
+    let e = select(cu.edge_col.xyz, cu.interior_col.xyz, cu.edge_mode == 2u);
+    return mix(c, e, w);
+}
+
 @fragment
 fn fs_color(in: VsOut) -> @location(0) vec4<f32> {
     let tex_dim = textureDimensions(iter_tex); // = screen × ss
@@ -4499,7 +4538,7 @@ fn fs_color(in: VsOut) -> @location(0) vec4<f32> {
             );
             let t = textureLoad(iter_tex, texel, 0);
             let ta = textureLoad(aux_tex, texel, 0);
-            acc = acc + shade_aa(t, ta, pal_w, pal_wf) * w;
+            acc = acc + edge_shaded(shade_aa(t, ta, pal_w, pal_wf), t) * w;
             nacc = nacc + vec2<f32>(t.g, t.b) * w;
             dacc = dacc + t.a * w;
             count = count + w;

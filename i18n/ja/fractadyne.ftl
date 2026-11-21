@@ -2869,6 +2869,26 @@ panel-band-width = 帯の幅
 panel-band-width-hover = 距離の等高線の間隔（帯あたりのオクターブ数）。
 panel-animate-glow = グローをアニメーション
 panel-animate-glow-hover = 時間とともにグローの帯を流します（「速度」スライダーを使います）。
+# Edge shading (coloring plan C3), in Effects: a color laid along the set's edge that fades out with the distance from it. The checkbox and its tooltip, then its rows: Width (in screen pixels), Strength, Curve (a list), Color (a swatch) and the "Inside color" checkbox beside it.
+panel-edge-shading = エッジの陰影
+panel-edge-shading-hover = 集合に近い色を、集合からの距離とともに薄れる一つの色へ寄せます。ペン画のように、すべての糸に沿って暗い線が引かれます。（マンデルブロ、マルチブロ、フェニックス）
+panel-edge-width = 幅
+panel-edge-width-hover = 陰影が集合からどこまで届くか（画面のピクセル単位）。どのズームでも、どのアンチエイリアス設定でも同じです。
+panel-edge-strength = 強さ
+panel-edge-curve = カーブ
+panel-edge-curve-hover = 集合から幅までの間で陰影がどう薄れるか。平方根は柔らかく尾を引く細い線、二乗は太い線、スムーズは両端をなめらかにし、ハードは幅いっぱいの塗りつぶしの線です。
+# The edge shading's curves (C3).
+edge-curve-linear = 線形
+edge-curve-sqrt = 平方根
+edge-curve-square = 二乗
+edge-curve-smooth = スムーズ
+edge-curve-hard = ハード
+panel-edge-color = 色
+panel-edge-color-hover = エッジを寄せる先の色。
+panel-edge-inside = 内部の色
+panel-edge-inside-hover = 代わりに内部の色へ寄せます。集合の縁が集合に溶け込み、アンチエイリアスなしでもなめらかになります（幅 1、線形で試してください）。
+# At the top of Effects when relief lighting, the glow or edge shading is on for a fractal without a distance estimate (they stay on). $family = the fractal's name.
+panel-effects-no-de = { $family } には距離推定がないため、ここではレリーフ照明、グロー、エッジの陰影は何も変えません。
 
 ## The control panel: Overlays
 

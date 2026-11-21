@@ -25,6 +25,8 @@ fn other_value(f: &Field) -> &'static str {
                 "1"
             }
         }
+        // 2.5 clamps to the edge strength's default, 1.
+        Access::Real(..) if f.key == "edge_strength" => "0.5",
         Access::Real(..) => "2.5",
         Access::Count(..) => "77",
         Access::Choice(..) => match f.key {
@@ -35,6 +37,7 @@ fn other_value(f: &Field) -> &'static str {
             "interior_palette" => "ember",
             "transfer" => "sqrt",
             "wrap" => "mirror",
+            "edge_curve" => "smooth",
             k => panic!("no other value for the choice {k}"),
         },
         Access::Rgb(..) => "0.25,0.5,0.75",

@@ -2948,6 +2948,26 @@ panel-band-width = Largura da faixa
 panel-band-width-hover = Espaçamento dos contornos de distância (oitavas por faixa).
 panel-animate-glow = Animar o brilho
 panel-animate-glow-hover = Fazer as faixas de brilho fluírem com o tempo (usa o controle Velocidade).
+# Edge shading (coloring plan C3), in Effects: a color laid along the set's edge that fades out with the distance from it. The checkbox and its tooltip, then its rows: Width (in screen pixels), Strength, Curve (a list), Color (a swatch) and the "Inside color" checkbox beside it.
+panel-edge-shading = Sombreamento das bordas
+panel-edge-shading-hover = Tinge as cores perto do conjunto rumo a uma cor que se desfaz com a distância dele: linhas escuras ao longo de cada filamento, como um desenho a bico de pena. (Mandelbrot, Multibrot e Phoenix.)
+panel-edge-width = Largura
+panel-edge-width-hover = Até onde o sombreamento chega a partir do conjunto, em pixels de tela: o mesmo em qualquer zoom e qualquer nível de anti-aliasing.
+panel-edge-strength = Intensidade
+panel-edge-curve = Curva
+panel-edge-curve-hover = Como o sombreamento se desfaz entre o conjunto e a sua largura. Raiz quadrada traça uma linha fina com cauda suave, Quadrado uma grossa; Suave atenua as duas pontas; Dura é uma linha cheia tão larga quanto a largura.
+# The edge shading's curves (C3).
+edge-curve-linear = Linear
+edge-curve-sqrt = Raiz quadrada
+edge-curve-square = Quadrado
+edge-curve-smooth = Suave
+edge-curve-hard = Dura
+panel-edge-color = Cor
+panel-edge-color-hover = A cor para a qual as bordas são sombreadas.
+panel-edge-inside = Cor interior
+panel-edge-inside-hover = Sombrear em vez disso rumo à cor do interior: a borda do conjunto então se funde ao conjunto, o que a suaviza mesmo sem anti-aliasing (experimente Largura 1 e Linear).
+# At the top of Effects when relief lighting, the glow or edge shading is on for a fractal without a distance estimate (they stay on). $family = the fractal's name.
+panel-effects-no-de = { $family } não tem estimativa de distância, então a iluminação de relevo, o brilho e o sombreamento das bordas não mudam nada aqui.
 
 ## The control panel: Overlays
 

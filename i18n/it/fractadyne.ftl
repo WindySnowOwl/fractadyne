@@ -2948,6 +2948,26 @@ panel-band-width = Larghezza banda
 panel-band-width-hover = Spaziatura dei contorni di distanza (ottave per banda).
 panel-animate-glow = Anima bagliore
 panel-animate-glow-hover = Far scorrere le fasce del bagliore nel tempo (usa il cursore Velocità).
+# Edge shading (coloring plan C3), in Effects: a color laid along the set's edge that fades out with the distance from it. The checkbox and its tooltip, then its rows: Width (in screen pixels), Strength, Curve (a list), Color (a swatch) and the "Inside color" checkbox beside it.
+panel-edge-shading = Ombreggiatura dei bordi
+panel-edge-shading-hover = Tinge i colori vicino all’insieme verso un colore che sfuma con la distanza: linee scure lungo ogni filamento, come un disegno a penna. (Mandelbrot, Multibrot e Phoenix.)
+panel-edge-width = Larghezza
+panel-edge-width-hover = Fin dove arriva l’ombreggiatura dall’insieme, in pixel dello schermo: la stessa a ogni zoom e a ogni livello di antialiasing.
+panel-edge-strength = Intensità
+panel-edge-curve = Curva
+panel-edge-curve-hover = Come sfuma l’ombreggiatura tra l’insieme e la sua larghezza. Radice quadrata traccia una linea sottile con una coda morbida, Quadrato una marcata; Morbida addolcisce entrambi gli estremi; Netta è una linea piena larga quanto la larghezza.
+# The edge shading's curves (C3).
+edge-curve-linear = Lineare
+edge-curve-sqrt = Radice quadrata
+edge-curve-square = Quadrato
+edge-curve-smooth = Morbida
+edge-curve-hard = Netta
+panel-edge-color = Colore
+panel-edge-color-hover = Il colore verso cui vengono ombreggiati i bordi.
+panel-edge-inside = Colore interno
+panel-edge-inside-hover = Ombreggia invece verso il colore dell’interno: il bordo dell’insieme si fonde allora con l’insieme, il che lo ammorbidisce anche senza antialiasing (prova Larghezza 1 e Lineare).
+# At the top of Effects when relief lighting, the glow or edge shading is on for a fractal without a distance estimate (they stay on). $family = the fractal's name.
+panel-effects-no-de = { $family } non ha una stima della distanza, quindi l’illuminazione a rilievo, il bagliore e l’ombreggiatura dei bordi qui non cambiano nulla.
 
 ## The control panel: Overlays
 

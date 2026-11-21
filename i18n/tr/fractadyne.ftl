@@ -2940,6 +2940,26 @@ panel-band-width = Bant genişliği
 panel-band-width-hover = Uzaklık konturlarının aralığı (bant başına oktav).
 panel-animate-glow = Parıltıyı canlandır
 panel-animate-glow-hover = Parıltı bantlarını zamanla akıtır (Hız kaydırıcısını kullanır).
+# Edge shading (coloring plan C3), in Effects: a color laid along the set's edge that fades out with the distance from it. The checkbox and its tooltip, then its rows: Width (in screen pixels), Strength, Curve (a list), Color (a swatch) and the "Inside color" checkbox beside it.
+panel-edge-shading = Kenar gölgelemesi
+panel-edge-shading-hover = Kümeye yakın renkleri, ondan uzaklaştıkça sönen bir renge doğru boyar: her ipliğin boyunca, kalem çizimi gibi koyu çizgiler. (Mandelbrot, Multibrot ve Phoenix.)
+panel-edge-width = Genişlik
+panel-edge-width-hover = Gölgelemenin kümeden ne kadar uzağa ulaştığı, ekran pikseli olarak: her yakınlaştırmada ve her kenar yumuşatma düzeyinde aynı.
+panel-edge-strength = Güç
+panel-edge-curve = Eğri
+panel-edge-curve-hover = Gölgelemenin küme ile genişliği arasında nasıl söndüğü. Karekök yumuşak kuyruklu ince bir çizgi, Kare kalın bir çizgi çizer; Yumuşak iki ucu da yumuşatır; Sert, genişlik kadar geniş dolu bir çizgidir.
+# The edge shading's curves (C3).
+edge-curve-linear = Doğrusal
+edge-curve-sqrt = Karekök
+edge-curve-square = Kare
+edge-curve-smooth = Yumuşak
+edge-curve-hard = Sert
+panel-edge-color = Renk
+panel-edge-color-hover = Kenarların gölgelendiği renk.
+panel-edge-inside = İç rengi
+panel-edge-inside-hover = Bunun yerine iç kısmın rengine doğru gölgele: kümenin kenarı kümeye karışır ve kenar yumuşatma olmadan da pürüzsüzleşir (Genişlik 1 ve Doğrusal deneyin).
+# At the top of Effects when relief lighting, the glow or edge shading is on for a fractal without a distance estimate (they stay on). $family = the fractal's name.
+panel-effects-no-de = { $family } için uzaklık tahmini yok, bu yüzden kabartma aydınlatması, parıltı ve kenar gölgelemesi burada hiçbir şeyi değiştirmez.
 
 ## The control panel: Overlays
 

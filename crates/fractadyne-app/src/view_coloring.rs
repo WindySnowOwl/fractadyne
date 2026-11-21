@@ -80,6 +80,13 @@ pub(crate) struct ViewColoring {
     pub(crate) glow: bool,
     pub(crate) glow_strength: f32,
     pub(crate) glow_width: f32,
+    /// Edge shading (C3): on, toward the inside's color, its width, strength, curve and color.
+    pub(crate) edge: bool,
+    pub(crate) edge_inside: bool,
+    pub(crate) edge_width: f32,
+    pub(crate) edge_strength: f32,
+    pub(crate) edge_curve: fractadyne_core::coloring::EdgeCurve,
+    pub(crate) edge_color: [f32; 3],
     /// Duotone or Binary, and the two colors they share (display-space RGB): Duotone's shadow and
     /// highlight, Binary's in-set and out-of-set colors.
     pub(crate) two_color: TwoColor,
@@ -134,6 +141,12 @@ impl ViewColoring {
             glow: s.de,
             glow_strength: s.de_strength,
             glow_width: s.de_width,
+            edge: s.edge,
+            edge_inside: s.edge_inside,
+            edge_width: s.edge_width,
+            edge_strength: s.edge_strength,
+            edge_curve: fractadyne_core::coloring::EdgeCurve::parse_key(&s.edge_curve).unwrap_or_default(),
+            edge_color: s.edge_color,
             // Binary first, as `chosen_gradient` reads the two switches.
             two_color: if s.use_binary {
                 TwoColor::Binary
@@ -177,6 +190,12 @@ impl ViewColoring {
             de: self.glow,
             de_strength: self.glow_strength,
             de_width: self.glow_width,
+            edge: self.edge,
+            edge_inside: self.edge_inside,
+            edge_width: self.edge_width,
+            edge_strength: self.edge_strength,
+            edge_curve: self.edge_curve.key().to_string(),
+            edge_color: self.edge_color,
             use_binary: self.two_color == TwoColor::Binary,
             use_duotone: self.two_color == TwoColor::Duotone,
             duotone_lo: self.lo,

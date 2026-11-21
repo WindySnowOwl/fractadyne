@@ -140,6 +140,23 @@ pub struct ColoringSpec {
     pub de_strength: f32,
     #[serde(default = "default_de_width")]
     pub de_width: f32,
+    /// Edge shading (coloring plan C3): escaped pixels near the set shaded toward `edge_color`, or
+    /// toward the inside's color with `edge_inside` (the set's edge smoothed by its distance), by
+    /// `edge_strength` at the set, fading out `edge_width` output pixels from it along `edge_curve`
+    /// (`fractadyne_core::coloring::EdgeCurve` by key: linear, sqrt, square, smooth, hard).
+    #[serde(default)]
+    pub edge: bool,
+    #[serde(default)]
+    pub edge_inside: bool,
+    #[serde(default = "default_edge_width")]
+    pub edge_width: f32,
+    #[serde(default = "default_edge_strength")]
+    pub edge_strength: f32,
+    #[serde(default = "default_edge_curve")]
+    pub edge_curve: String,
+    /// Display-space RGB.
+    #[serde(default)]
+    pub edge_color: [f32; 3],
     /// Coloring method: "smooth" | "stripe" | "triangle" | "trap" | "distance" |
     /// "decomposition".
     #[serde(default = "default_color_method")]
@@ -731,6 +748,18 @@ fn default_de_width() -> f32 {
     1.0
 }
 
+fn default_edge_width() -> f32 {
+    2.0
+}
+
+fn default_edge_strength() -> f32 {
+    1.0
+}
+
+fn default_edge_curve() -> String {
+    "linear".to_string()
+}
+
 fn default_color_method() -> String {
     "smooth".to_string()
 }
@@ -770,6 +799,12 @@ impl Default for ColoringSpec {
             de: false,
             de_strength: default_de_strength(),
             de_width: default_de_width(),
+            edge: false,
+            edge_inside: false,
+            edge_width: default_edge_width(),
+            edge_strength: default_edge_strength(),
+            edge_curve: default_edge_curve(),
+            edge_color: [0.0; 3],
             color_method: default_color_method(),
             stripe_freq: default_stripe_freq(),
             stripe_tail: false,

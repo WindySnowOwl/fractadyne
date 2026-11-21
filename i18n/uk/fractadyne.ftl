@@ -3103,6 +3103,26 @@ panel-band-width = Ширина смуг
 panel-band-width-hover = Проміжок між контурами відстані (октав на смугу).
 panel-animate-glow = Анімувати світіння
 panel-animate-glow-hover = Змушувати смуги світіння текти з часом (використовує повзунок «Швидкість»).
+# Edge shading (coloring plan C3), in Effects: a color laid along the set's edge that fades out with the distance from it. The checkbox and its tooltip, then its rows: Width (in screen pixels), Strength, Curve (a list), Color (a swatch) and the "Inside color" checkbox beside it.
+panel-edge-shading = Тіні біля краю
+panel-edge-shading-hover = Забарвлює кольори біля множини в бік одного кольору, що згасає з відстанню від неї: темні лінії вздовж кожної нитки, як малюнок пером. (Мандельброт, Мультиброт і Фенікс.)
+panel-edge-width = Ширина
+panel-edge-width-hover = Як далеко від множини сягає тінь, у пікселях екрана: однаково за будь-якого масштабу й будь-якого згладжування.
+panel-edge-strength = Сила
+panel-edge-curve = Крива
+panel-edge-curve-hover = Як тінь згасає між множиною та своєю шириною. Квадратний корінь малює тонку лінію з м’яким хвостом, Квадрат — товсту; Плавна пом’якшує обидва кінці; Жорстка — суцільна лінія на всю ширину.
+# The edge shading's curves (C3).
+edge-curve-linear = Лінійна
+edge-curve-sqrt = Квадратний корінь
+edge-curve-square = Квадрат
+edge-curve-smooth = Плавна
+edge-curve-hard = Жорстка
+panel-edge-color = Колір
+panel-edge-color-hover = Колір, до якого затінюються краї.
+panel-edge-inside = Колір усередині
+panel-edge-inside-hover = Затінювати натомість до кольору внутрішності: край множини тоді зливається з множиною, що згладжує його навіть без згладжування (спробуйте ширину 1 і лінійну).
+# At the top of Effects when relief lighting, the glow or edge shading is on for a fractal without a distance estimate (they stay on). $family = the fractal's name.
+panel-effects-no-de = { $family } не має оцінки відстані, тож рельєфне освітлення, світіння й тіні біля краю тут нічого не змінюють.
 
 ## The control panel: Overlays
 
