@@ -401,6 +401,13 @@ enum Screen {
     JuliaLinked,
     /// ...and under a fitted range, the set's window coloring both.
     JuliaLinkedFit,
+    /// The palette map's curve (coloring plan C2): the home view in Smooth, its range fitted, Linear
+    /// (the base)...
+    PaletteScaleLinear,
+    /// ...Square root: another picture (the control that the curve ran), and no pass (a recolor)...
+    PaletteScale,
+    /// ...then Mirror and 6 steps: another picture again, still no pass.
+    PaletteWrapSteps,
     /// Custom coloring (coloring plan B10): the home view in Smooth, point sampled, the dialog open
     /// with no hook (the base)...
     ColorHookOff,
@@ -1357,6 +1364,9 @@ fn build_steps() -> Vec<Step> {
         screen("palette-aa-base", Screen::PaletteAaBase),
         screen("palette-aa", Screen::PaletteAa),
         screen("palette-adjust", Screen::PaletteAdjust),
+        screen("palette-scale-linear", Screen::PaletteScaleLinear),
+        screen("palette-scale", Screen::PaletteScale),
+        screen("palette-wrap-steps", Screen::PaletteWrapSteps),
         screen("slider-click", Screen::SliderClick),
         screen("slider-double-click-reset", Screen::SliderDoubleClick),
         screen("julia-linked-off", Screen::JuliaLinkedOff),
@@ -1763,6 +1773,25 @@ impl FractadyneApp {
     /// point sampled (the CONTROL, which has to alias at this view for the check to judge anything).
     /// The palette's saturation at 0 (`palette-adjust`): the view gray, the step before's view
     /// colored (the control), an export of the view gray too, and no pass (a recolor).
+    /// The C2 steps, each against the step before: another picture (mean difference 4 levels or more,
+    /// the control that the curve, the wrap and the steps ran), and no pass (they recolor).
+    fn uitest_palette_scale_checks(&self, sc: Screen, ut: &UiTest, view: Option<&(Vec<u8>, [u32; 2])>, ran_why: [u64; 7], checks: &mut Vec<Check>) {
+        let before = if matches!(sc, Screen::PaletteScale) { "palette-scale-linear" } else { "palette-scale" };
+        let b = ut.results.iter().rev().find(|r| r.name == before);
+        let r = view.zip(b).and_then(|((px, _), b)| {
+            let (prev, _) = b.inside_view.as_ref().filter(|p| p.0.len() == px.len())?;
+            let s: f64 = px.chunks_exact(4).zip(prev.chunks_exact(4)).map(|(p, q)| (0..3).map(|k| (p[k] as f64 - q[k] as f64).abs()).sum::<f64>()).sum();
+            Some((s / (3 * (px.len() / 4)).max(1) as f64, (ran_why[0] - b.ran_why[0]) + (ran_why[1] - b.ran_why[1])))
+        });
+        let name = if matches!(sc, Screen::PaletteScale) { "palette-scale-recolors" } else { "palette-wrap-steps-recolor" };
+        let ok = r.is_some_and(|(d, ran)| d >= 4.0 && ran == 0);
+        checks.push(Check {
+            name: name.into(),
+            verdict: if ok { Verdict::Pass } else { Verdict::Fail },
+            detail: format!("against {before} (mean difference in levels, passes caused): {r:?}; curve {:?}, wrap {:?}, steps {}", self.coloring.transfer, self.coloring.wrap, self.coloring.steps),
+        });
+    }
+
     /// The custom coloring steps (B10), each against a step before: the Smooth example is the view's
     /// own Smooth, the fringe example another picture (the CONTROL), a save that does not build
     /// keeps the fringe on screen and says so, and Turn off gives back the method's colors. None of
@@ -2350,6 +2379,10 @@ impl FractadyneApp {
     fn uitest_close_all(&mut self) {
         // No step inherits the palette-adjust step's gray palette...
         self.coloring.palette_adjust = fractadyne_color::adjust::PaletteAdjust::NEUTRAL;
+        // ...or the palette-scale steps' curve, wrap and steps (C2)...
+        self.coloring.transfer = fractadyne_core::coloring::Transfer::Linear;
+        self.coloring.wrap = fractadyne_core::coloring::Wrap::Repeat;
+        self.coloring.steps = 0;
         // ...or a Julia link (each `julia-linked*` step sets its own).
         self.coloring.julia_linked = false;
         self.blinken.size = crate::blinken::Size::Off;
@@ -2661,7 +2694,7 @@ impl FractadyneApp {
                 self.render_cfg.max_iter = 30_000;
                 self.render_cfg.aa = 2;
                 self.coloring.normalize_live = true;
-                self.coloring.log_palette = true;
+                self.coloring.transfer = fractadyne_core::coloring::Transfer::Log;
                 self.set_fractal(crate::FractalKind::BurningShip);
                 self.set_show_mode(crate::ShowMode::Both);
                 // Regression probe (field report 2026-09-01): a bookmark added IN DUAL VIEW must
@@ -3012,6 +3045,36 @@ impl FractadyneApp {
                     _ => self.coloring.hook.turn_off(),
                 }
             }
+            // C2: the Julia-link steps' point as a single view (at the home view no gradient reading
+            // lands in a step's time, so "Always fit range" never engages: `[fd-palette]` drawn=None),
+            // its range always fitted so the curve applies; then the curve, then the wrap and steps,
+            // each step one change from the one before.
+            Screen::PaletteScaleLinear | Screen::PaletteScale | Screen::PaletteWrapSteps => {
+                if matches!(s, Screen::PaletteScaleLinear) {
+                    let (cx, cy) = UITEST_JULIA_LINK_C;
+                    self.set_show_mode(crate::ShowMode::Set);
+                    self.set_fractal(crate::FractalKind::Mandelbrot);
+                    let at = |v: f64| fractadyne_core::BigFloat::from_f64(v, 64);
+                    self.viewport.set_center_mag(at(cx), at(cy), 100.0);
+                    self.render_cfg.auto_iter = false;
+                    self.render_cfg.max_iter = 2_000;
+                    self.coloring.use_custom_palette = false;
+                    self.coloring.use_duotone = false;
+                    self.coloring.use_binary = false;
+                    self.coloring.palette_idx = fractadyne_color::preset_by_id("ember").unwrap_or(0);
+                }
+                self.coloring.color_method = crate::ColorMethod::Smooth;
+                self.coloring.interior = Some(crate::InteriorMode::Solid);
+                self.coloring.normalize_live = false;
+                self.coloring.normalize_fit = true;
+                self.coloring.palette_aa = false;
+                self.dialogs.right_panel_open = true;
+                self.coloring.transfer = if matches!(s, Screen::PaletteScaleLinear) { fractadyne_core::coloring::Transfer::Linear } else { fractadyne_core::coloring::Transfer::Sqrt };
+                if matches!(s, Screen::PaletteWrapSteps) {
+                    self.coloring.wrap = fractadyne_core::coloring::Wrap::Mirror;
+                    self.coloring.steps = 6;
+                }
+            }
             // The view as palette-aa left it, the palette's saturation at 0.
             Screen::PaletteAdjust => {
                 self.coloring.color_method = crate::ColorMethod::Smooth;
@@ -3051,7 +3114,7 @@ impl FractadyneApp {
                     self.coloring.offset = 0.1;
                     self.coloring.normalize_live = false;
                     self.coloring.normalize_fit = false;
-                    self.coloring.log_palette = false;
+                    self.coloring.transfer = fractadyne_core::coloring::Transfer::Linear;
                     self.coloring.palette_aa = false;
                     self.anim.palette_anim = crate::PaletteAnim::Off;
                     self.pointer.settle_t = [-1.0e9, -1.0e9];
@@ -3619,6 +3682,9 @@ impl FractadyneApp {
                     | Screen::PaletteAaBase
                     | Screen::PaletteAa
                     | Screen::PaletteAdjust
+                    | Screen::PaletteScaleLinear
+                    | Screen::PaletteScale
+                    | Screen::PaletteWrapSteps
                     | Screen::ColorHookOff
                     | Screen::ColorHookSmooth
                     | Screen::ColorHookFringe
@@ -4512,6 +4578,11 @@ impl FractadyneApp {
         }
         if let StepKind::Screen(Screen::PaletteAa) = step.kind {
             self.uitest_palette_aa_checks(ut, inside_view.as_ref(), ran_why, &mut checks);
+        }
+
+        // ---- the palette map's curve, wrap and steps (coloring plan C2) ----
+        if let StepKind::Screen(sc @ (Screen::PaletteScale | Screen::PaletteWrapSteps)) = step.kind {
+            self.uitest_palette_scale_checks(sc, ut, inside_view.as_ref(), ran_why, &mut checks);
         }
 
         // ---- custom coloring (coloring plan B10) ----

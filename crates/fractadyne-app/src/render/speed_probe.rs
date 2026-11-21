@@ -395,6 +395,8 @@ fn plan_request(plan: Plan) -> (fractadyne_gpu::ExportRequest, u32) {
         custom: None,
         color_hook: None,
         hook_params: [0.0; 4],
+        wrap: 0,
+        steps: 0.0,
         julia: 0,
         cycle: 1.0,
         offset: 0.0,

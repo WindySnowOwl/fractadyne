@@ -679,7 +679,7 @@ impl FractadyneApp {
                     self.render_cfg.aa = 2;
                     self.render_cfg.min_motion_res = 0.83;
                     self.coloring.normalize_live = true;
-                    self.coloring.log_palette = true; // "Log color scale", as the report's screenshots show
+                    self.coloring.transfer = fractadyne_core::coloring::Transfer::Log; // "Log color scale", as the report's screenshots show
                     self.dual = self.fractal.supports_julia();
                     self.dual_split = 0.588;
                     crate::diag::log_line(

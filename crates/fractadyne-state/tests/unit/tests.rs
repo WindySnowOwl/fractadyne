@@ -306,6 +306,9 @@ fn every_session_field_survives_save_and_reload() {
         iter_div: 7,
         offset: -0.5,
         log_palette: true,
+        transfer: "log".into(),
+        wrap: "mirror".into(),
+        steps: 12,
         normalize_live: false,
         normalize_fit: true,
         light: true,
@@ -805,7 +808,7 @@ fn a_session_written_before_the_coloring_spec_reads_and_writes_the_same_keys() {
     const SINCE: &[&str] = &[
         "interior", "interior_palette", "interior_color", "interior_fit", "palette_aa",
         "palette_brightness", "palette_contrast", "palette_saturation", "julia_linked",
-        "coloring_hook", "coloring_hook_params",
+        "coloring_hook", "coloring_hook_params", "transfer", "wrap", "steps",
     ];
     assert_eq!(keys.len(), 27 + SINCE.len(), "a coloring field was added: list it in SINCE");
     for k in keys.keys() {

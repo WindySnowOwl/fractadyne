@@ -1,6 +1,6 @@
 # Coloring methods: implementation plan
 
-Status: **plan (2026-11-08); phase A done (A1–A10), B1, B1b, B9 and B10 done (the coloring matrix, its live method tour, every lane as NumPy arrays, a custom coloring hook), B2 done (what a frame accumulates is a `StatSet`, apart from the method shown), B3 done (in floatexp a stripe, triangle or trap frame carries the whole G-buffer), B4 to B7 done (one settings model, the method list, the method sheet, the inside and a second LUT), C1, C4, C8, C9 and C11 done (a solid inside in any color; the inside's palette fitted to its range; the palette anti-aliased over a footprint from the distance estimate; the fringe method; the dual view's Julia pane on the set's palette map); B8 not started; next C2; see §10 (2026-11-21).** Line references are to `main` at `9ab75357`; check
+Status: **plan (2026-11-08); phase A done (A1–A10), B1, B1b, B9 and B10 done (the coloring matrix, its live method tour, every lane as NumPy arrays, a custom coloring hook), B2 done (what a frame accumulates is a `StatSet`, apart from the method shown), B3 done (in floatexp a stripe, triangle or trap frame carries the whole G-buffer), B4 to B7 done (one settings model, the method list, the method sheet, the inside and a second LUT), C1, C2, C4, C8, C9 and C11 done (a solid inside in any color; the palette map's curves, wraps and steps; the inside's palette fitted to its range; the palette anti-aliased over a footprint from the distance estimate; the fringe method; the dual view's Julia pane on the set's palette map); B8 not started; next C3; see §10 (2026-11-21).** Line references are to `main` at `9ab75357`; check
 them before editing, they drift. The research behind it (methods, prototypes, measured results,
 prior art) is the coloring-methods doc; its local copy is
 `local/research_notes/Fractal coloring methods/` (PDF, HTML, Markdown, prototype scripts).
@@ -1128,6 +1128,39 @@ UI rows, `.fdn`/farm/CLI through B4, B1 cells, a selftest appearance check, uite
 Order: C1, C4, C8, C9, C11 (smallest), then C2, C3, C10, then C5, C6, C7. (2026-11-20: B9 and B10,
 the prototyping aids, come before C2.)
 
+**C2, done 2026-11-21** (branch `feat/color-c2-transfers`): `fractadyne_core::coloring::Transfer`
+(linear, sqrt, cbrt, root4, log, loglog, square; `apply` and `slope` are the CPU definitions) and
+`Wrap` (repeat, mirror, clamp) with `wrap_coord`. The map's curve rides the existing `norm_mode`
+(fixed GPU numbers: 0 linear and 1 log as before, 2–6 the others): the color pass takes v to
+T(max(v − lo, 0)) (`transfer_of`), the palette anti-aliasing's footprint multiplies the rate by
+`transfer_slope`, and the hook's `palette_map` follows it. Linear and log keep their expressions
+bit for bit (goldens unchanged). A normalized map's rate is sweeps / T(span) (`curve_span`; log's
+in f32 as it always was), so the window holds the same sweeps under every curve; a linear map
+still takes the log form past `NORM_LOG_AUTO_RATIO`, a chosen curve never switches; the live map,
+the export's `--normalize` and zoom-video assembly (whose dissolve goes to the chosen curve) all
+build it the same way. Wrap and Steps are a new `ColorU` row: `stepped` cuts a cycle into
+`steps` bands (each the color at its start); Mirror and Clamp read the palette held at its ends
+(`palette_held`: a turn or an end is the last color, not the first) and box-filter over the
+folded palette (`palette_psum_folded`: Mirror's period 2n holds the palette twice, Clamp extends
+the end colors), so the anti-aliasing stays exact. The app: `ColoringConfig` holds the curve,
+wrap and steps; log has ONE form in a spec and a view, the one older builds write and read (`log_palette` /
+`log_scale=1`, `transfer` linear), the other curves `transfer=key` (`transfer_of_spec` reads
+either; the full self-test's view round trip caught a first version that wrote log both ways); view keys
+`transfer`, `wrap`, `steps`; `--transfer`, `--wrap`, `--steps` (`--log-palette` is `--transfer
+log`); the panel's Scale list where the log checkbox was (a submenu in the Color menu), Wrap and
+Steps under Offset; 18 strings in 15 languages (the log checkbox's 3 gone). Reset coloring
+settings resets the Scale (a normalization switch) and keeps Wrap and Steps (choices). Tests: CPU
+definitions (0 at 0, rising, slopes against differences, the fold of every wrap); the normalized
+window spans the same sweeps under every curve; self-test group `transfer` (the tour point at
+1e10x, the frame's range fitted to 2.5 sweeps, every escaped pixel colored on the CPU from the
+count lane through `Transfer::apply`, `wrap_coord` and the LUT as the shader reads it: all seven
+curves and four wrap/steps cases 0.00% apart, max 0.00 levels, against controls 17–100% apart);
+`--uitest` `palette-scale-linear`, `palette-scale` (square root recolors, 62 levels, no pass) and
+`palette-wrap-steps` (mirror and 6 steps, 30 levels, no pass) at the Julia-link point (at the home
+view no gradient reading lands in a step's time, so "Always fit range" never engaged: `drawn=None`
+in the `palette` trace, and the first try read 0.0 levels). Not done: atan (a bounded curve needs
+a scale of its own); curves without normalization (the Scale is grayed then, as the log was).
+
 **C1, done 2026-11-13** (branch `feat/color-c1-inside-color`): `ColoringSpec.interior_color`
 (display space, default the old near-black), the app's `interior_color`, a color button beside the
 Inside row while the inside is solid and the palette is not Duotone or Binary (they keep their dark
@@ -1489,35 +1522,36 @@ coloring in these places, so sequence the two with care:
 
 ## 10. Status
 
-| Step               | State                                                     | Commit                                                                                    |
-| ------------------ | --------------------------------------------------------- | ----------------------------------------------------------------------------------------- |
-| A9                 | done, merged                                              | `33c6527e` (merge `3d202f30`)                                                             |
-| A6                 | done, merged                                              | `2c898852` (merge `38d93def`)                                                             |
-| A2                 | done, merged                                              | `3e5aa578` (merge `2a14e005`)                                                             |
-| A4                 | done, merged                                              | `475e2190` (merge `b9812c74`)                                                             |
-| A8                 | done, merged                                              | `095a7131` (merge `1db50a24`)                                                             |
-| A1                 | done, merged                                              | `c15bd9c7` (merge `aa5b22e7`)                                                             |
-| A3                 | done, merged                                              | `3ee690d7` (merge `3c8a59e7`)                                                             |
-| A5b                | done, merged                                              | `fddc6ada` (merge `e11d1890`)                                                             |
-| A5a                | done, merged                                              | `05306f71` (merge `45c2e84d`)                                                             |
-| A7                 | done, merged                                              | `603275eb` (merge `1bfdc833`)                                                             |
-| A10                | done, merged                                              | `aaffca7f` (merge `6ec2fc76`)                                                             |
-| B1                 | done, merged (agent v41, deployed)                        | `312c54a8` (merge `4efdbbb3`)                                                             |
-| B1 fixes           | Distance NaN; Newton's statistics methods                 | merges `91fa8f91`, `7722b660`                                                             |
-| B1b                | done, merged                                              | `dc457c3f` (merge `2c51a6be`)                                                             |
-| B2                 | done, merged                                              | `c017a577` (merge `dcfd776b`)                                                             |
-| B3                 | done, merged                                              | `412fafc6` (merge `542a5264`)                                                             |
-| B4                 | done, merged                                              | `a5d7d74b` (merge `ba452e9c`)                                                             |
-| B6                 | done, merged                                              | `c1e4bd61` (merge `35001f80`)                                                             |
-| B7                 | done, merged                                              | `9e1efa0e` (merge `97c91c32`; step 1 `17b6d60d` with the browser's dual view, `ef2acde7`) |
-| B5                 | done, merged                                              | `b2b927d6` (merge `e3e53257`)                                                             |
-| B8                 | not started                                               |                                                                                           |
-| B9                 | done, merged                                              | `6d18af38` (merge `23d32dc5`)                                                             |
-| B10                | done, not merged (branch `feat/color-b10-hook`)           | (filled in at the merge)                                                                  |
-| C1                 | done, merged                                              | `58d6dce3` (merge `84af4b0d`)                                                             |
-| C4                 | done, merged                                              | `e99bfafd` (merge `9a3f9ff9`)                                                             |
-| C8                 | done, merged; on by default on `feat/color-c8-aa-default` | `5430aa2c` (merge `49153662`)                                                             |
-| C11                | done, merged                                              | `b8a24c8f` (merge `a14b2296`)                                                             |
-| C9                 | done, merged                                              | `0b0c5f03` (merge `20e2fff5`)                                                             |
-| C2, C3, C5–C7, C10 | not started                                               |                                                                                           |
-| D, E, F, G         | not started                                               |                                                                                           |
+| Step           | State                                                     | Commit                                                                                    |
+| -------------- | --------------------------------------------------------- | ----------------------------------------------------------------------------------------- |
+| A9             | done, merged                                              | `33c6527e` (merge `3d202f30`)                                                             |
+| A6             | done, merged                                              | `2c898852` (merge `38d93def`)                                                             |
+| A2             | done, merged                                              | `3e5aa578` (merge `2a14e005`)                                                             |
+| A4             | done, merged                                              | `475e2190` (merge `b9812c74`)                                                             |
+| A8             | done, merged                                              | `095a7131` (merge `1db50a24`)                                                             |
+| A1             | done, merged                                              | `c15bd9c7` (merge `aa5b22e7`)                                                             |
+| A3             | done, merged                                              | `3ee690d7` (merge `3c8a59e7`)                                                             |
+| A5b            | done, merged                                              | `fddc6ada` (merge `e11d1890`)                                                             |
+| A5a            | done, merged                                              | `05306f71` (merge `45c2e84d`)                                                             |
+| A7             | done, merged                                              | `603275eb` (merge `1bfdc833`)                                                             |
+| A10            | done, merged                                              | `aaffca7f` (merge `6ec2fc76`)                                                             |
+| B1             | done, merged (agent v41, deployed)                        | `312c54a8` (merge `4efdbbb3`)                                                             |
+| B1 fixes       | Distance NaN; Newton's statistics methods                 | merges `91fa8f91`, `7722b660`                                                             |
+| B1b            | done, merged                                              | `dc457c3f` (merge `2c51a6be`)                                                             |
+| B2             | done, merged                                              | `c017a577` (merge `dcfd776b`)                                                             |
+| B3             | done, merged                                              | `412fafc6` (merge `542a5264`)                                                             |
+| B4             | done, merged                                              | `a5d7d74b` (merge `ba452e9c`)                                                             |
+| B6             | done, merged                                              | `c1e4bd61` (merge `35001f80`)                                                             |
+| B7             | done, merged                                              | `9e1efa0e` (merge `97c91c32`; step 1 `17b6d60d` with the browser's dual view, `ef2acde7`) |
+| B5             | done, merged                                              | `b2b927d6` (merge `e3e53257`)                                                             |
+| B8             | not started                                               |                                                                                           |
+| B9             | done, merged                                              | `6d18af38` (merge `23d32dc5`)                                                             |
+| B10            | done, merged                                              | `2f9648d2` (merge `2f5db211`)                                                             |
+| C1             | done, merged                                              | `58d6dce3` (merge `84af4b0d`)                                                             |
+| C4             | done, merged                                              | `e99bfafd` (merge `9a3f9ff9`)                                                             |
+| C8             | done, merged; on by default on `feat/color-c8-aa-default` | `5430aa2c` (merge `49153662`)                                                             |
+| C11            | done, merged                                              | `b8a24c8f` (merge `a14b2296`)                                                             |
+| C9             | done, merged                                              | `0b0c5f03` (merge `20e2fff5`)                                                             |
+| C2             | done, not merged (branch `feat/color-c2-transfers`)       | (filled in at the merge)                                                                  |
+| C3, C5–C7, C10 | not started                                               |                                                                                           |
+| D, E, F, G     | not started                                               |                                                                                           |

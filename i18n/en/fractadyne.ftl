@@ -3088,17 +3088,31 @@ panel-fit-range-hover =
     Use this when you want the palette to span what is on screen rather than to fix noise. It still needs a measurement, so it does nothing for the moment or two before the view settles, and nothing at all on a view with no escaped pixels.
 
     With the Orbit trap method it spreads the palette over the trap's own values instead, from the orbits that come closest to the trap to those that stay farthest (leaving out the extreme 0.5% at each end). That brings out a view whose orbits all keep about the same distance from the trap, which otherwise shows as one flat color.
-# A checkbox indented under "Always fit range" (also in the Color menu).
-panel-log-scale = Log color scale
-panel-log-scale-hover =
-    Spread the palette by the LOGARITHM of the escape value rather than linearly. Escape counts crowd towards the high end at depth, so a linear map spends most of the palette on a thin shell near the boundary and flattens everything else.
+# The palette map's curve (coloring plan C2): a list indented under "Always fit range" (in the Color menu, a submenu), its tooltip, and its tooltip while grayed (no normalization). Log is what the former "Log color scale" checkbox did.
+panel-scale = Scale
+panel-scale-hover =
+    The curve the values are taken through once the palette is fitted to the view's range. The range holds the same number of palette sweeps under each curve; only where the bands fall changes. The roots and the logs widen the bands far from the set and narrow them near it, where the counts crowd; Square does the opposite.
 
-    Applies to the normalized mapping — which is what 'Normalize deep colors' (or --normalize on an export) turns on. A heavily skewed range takes the log mapping anyway, whether or not this is ticked.
-# The same checkbox's tooltip while it is grayed out (normalization is off).
-panel-log-scale-off-hover =
-    Requires normalization: this chooses HOW the palette is mapped to the measured escape range, so with 'Normalize deep colors' off (and no --normalize export) there is no mapping for it to change and it would not alter a single pixel.
-
-    Turn on 'Normalize deep colors' to use it.
+    A heavily skewed range takes Log even under Linear.
+panel-scale-off-hover = Applies once the palette is fitted to the view's range: turn on 'Normalize deep colors' or 'Always fit range'.
+# The curves the Scale list offers.
+transfer-linear = Linear
+transfer-sqrt = Square root
+transfer-cbrt = Cube root
+transfer-root4 = Fourth root
+transfer-log = Log
+transfer-loglog = Log-log
+transfer-square = Square
+# How the palette continues past its end (C2): the row's label, its tooltip, and its choices.
+panel-wrap = Wrap
+panel-wrap-hover = How the palette continues past its end. Repeat starts it again; Mirror runs it back the other way, so a palette whose two ends differ shows no seam; Clamp holds the last color, so each color is used once across the range.
+wrap-repeat = Repeat
+wrap-mirror = Mirror
+wrap-clamp = Clamp
+# Flat bands (C2): the slider's label, its tooltip, and what it shows at 0.
+panel-steps = Steps
+panel-steps-hover = Cut each trip through the palette into this many flat bands, each the color at its start, for a banded look. Off is smooth.
+panel-steps-off = Off
 # The dual view's Julia pane on the set's palette map, one iteration on (coloring plan C11): the
 # checkbox, its tooltip, and its tooltip while grayed (another method than the escape count).
 panel-julia-linked = Link Julia colors to the set

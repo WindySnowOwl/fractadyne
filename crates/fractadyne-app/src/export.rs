@@ -356,6 +356,8 @@ pub(crate) const KNOWN_VIEW_KEYS: &[&str] = &[
     "palette_mode", "palette_lo", "palette_hi", "interior_color",
     "normalize_live", "normalize_fit", "log_scale", "palette_aa",
     "palette_brightness", "palette_contrast", "palette_saturation", "julia_linked",
+    // The palette map's curve, its wrap and its steps (coloring plan C2).
+    "transfer", "wrap", "steps",
     // The dual view (2026-11-16, review finding 8): the layout and the Julia pane's own camera,
     // written only for a dual view, so a single view is byte-identical to one written before.
     "dual", "dual_split", "julia_view_center_re", "julia_view_center_im", "julia_view_upp_log2",
@@ -446,6 +448,9 @@ const TYPED_VIEW_KEYS: &[(&str, ValueKind)] = &[
     ("palette_contrast", ValueKind::Float),
     ("palette_saturation", ValueKind::Float),
     ("julia_linked", ValueKind::Flag),
+    ("transfer", ValueKind::Transfer),
+    ("wrap", ValueKind::Wrap),
+    ("steps", ValueKind::Uint),
     ("dual", ValueKind::Flag),
     ("dual_split", ValueKind::Float),
     ("julia_view_center_re", ValueKind::BigFloat),
@@ -477,6 +482,10 @@ enum ValueKind {
     PaletteMode,
     /// A color: three numbers separated by commas.
     Rgb,
+    /// A palette map curve's key (`Transfer::key`, C2).
+    Transfer,
+    /// A wrap's key (`Wrap::key`, C2).
+    Wrap,
 }
 
 impl ValueKind {
@@ -495,6 +504,8 @@ impl ValueKind {
             ValueKind::Trap => crate::TrapType::ALL.iter().any(|t| t.key() == v),
             ValueKind::Interior => crate::InteriorMode::parse_key(v).is_some(),
             ValueKind::PaletteMode => crate::view_coloring::TwoColor::from_key(v).is_some(),
+            ValueKind::Transfer => fractadyne_core::coloring::Transfer::parse_key(v).is_some(),
+            ValueKind::Wrap => fractadyne_core::coloring::Wrap::parse_key(v).is_some(),
             ValueKind::Rgb => {
                 let parts: Vec<&str> = v.split(',').collect();
                 parts.len() == 3 && parts.iter().all(|p| p.trim().parse::<f32>().is_ok())
@@ -515,6 +526,8 @@ impl ValueKind {
             ValueKind::Id => "a palette name such as lunar-new-year".into(),
             ValueKind::Method => one_of(crate::ColorMethod::ALL.iter().map(|m| m.key()).collect()),
             ValueKind::Trap => one_of(crate::TrapType::ALL.iter().map(|t| t.key()).collect()),
+            ValueKind::Transfer => one_of(fractadyne_core::coloring::Transfer::ALL.iter().map(|t| t.key()).collect()),
+            ValueKind::Wrap => one_of(fractadyne_core::coloring::Wrap::ALL.iter().map(|w| w.key()).collect()),
             ValueKind::Interior => one_of(crate::InteriorMode::ALL.iter().map(|m| m.key()).collect()),
             ValueKind::PaletteMode => {
                 one_of(crate::view_coloring::TwoColor::ON.iter().filter_map(|m| m.key()).collect())

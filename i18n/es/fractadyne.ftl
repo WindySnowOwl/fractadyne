@@ -2877,17 +2877,31 @@ panel-fit-range-hover =
     Reasignar la paleta al rango de escape medido en la vista incluso cuando la vista no sufre aliasing; la casilla de arriba solo reasigna cuando un campo denso se vería, si no, como un moteado.
 
     Usa esto cuando quieras que la paleta abarque lo que hay en pantalla, más que corregir ruido. Sigue necesitando una medición, así que no hace nada durante el momento o dos antes de que la vista se asiente, y nada en absoluto en una vista sin píxeles que escapen.
-# A checkbox indented under "Always fit range" (also in the Color menu).
-panel-log-scale = Escala de color logarítmica
-panel-log-scale-hover =
-    Repartir la paleta según el LOGARITMO del valor de escape en lugar de linealmente. Los recuentos de escape se amontonan hacia el extremo alto en profundidad, así que una asignación lineal gasta la mayor parte de la paleta en una fina capa cerca de la frontera y aplana todo lo demás.
+# The palette map's curve (coloring plan C2): a list indented under "Always fit range" (in the Color menu, a submenu), its tooltip, and its tooltip while grayed (no normalization). Log is what the former "Log color scale" checkbox did.
+panel-scale = Escala
+panel-scale-hover =
+    La curva por la que pasan los valores una vez que la paleta se ajusta al rango de la vista. El rango contiene el mismo número de recorridos de la paleta con cada curva; solo cambia dónde caen las bandas. Las raíces y los logaritmos ensanchan las bandas lejos del conjunto y las estrechan cerca de él, donde los valores se amontonan; Cuadrado hace lo contrario.
 
-    Se aplica a la asignación normalizada, que es lo que activa «Normalizar colores profundos» (o --normalize en una exportación). Un rango muy sesgado usa la asignación logarítmica de todos modos, esté marcada o no esta casilla.
-# The same checkbox's tooltip while it is grayed out (normalization is off).
-panel-log-scale-off-hover =
-    Requiere normalización: esto elige CÓMO se asigna la paleta al rango de escape medido, así que con «Normalizar colores profundos» desactivado (y sin exportación con --normalize) no hay ninguna asignación que cambiar y no alteraría ni un solo píxel.
-
-    Activa «Normalizar colores profundos» para usarla.
+    Un rango muy sesgado toma el logaritmo incluso con Lineal.
+panel-scale-off-hover = Se aplica una vez que la paleta se ajusta al rango de la vista: activa «Normalizar colores profundos» o «Ajustar siempre el rango».
+# The curves the Scale list offers.
+transfer-linear = Lineal
+transfer-sqrt = Raíz cuadrada
+transfer-cbrt = Raíz cúbica
+transfer-root4 = Raíz cuarta
+transfer-log = Logarítmica
+transfer-loglog = Doble logarítmica
+transfer-square = Cuadrado
+# How the palette continues past its end (C2): the row's label, its tooltip, and its choices.
+panel-wrap = Continuación
+panel-wrap-hover = Cómo sigue la paleta después de su final. Repetir la empieza de nuevo; Reflejar la recorre al revés, de modo que una paleta cuyos extremos difieren no muestra costura; Limitar mantiene el último color, de modo que cada color se usa una sola vez en el rango.
+wrap-repeat = Repetir
+wrap-mirror = Reflejar
+wrap-clamp = Limitar
+# Flat bands (C2): the slider's label, its tooltip, and what it shows at 0.
+panel-steps = Escalones
+panel-steps-hover = Divide cada recorrido de la paleta en tantas bandas planas, cada una del color de su inicio, para un aspecto escalonado. Desactivado es continuo.
+panel-steps-off = Desactivado
 # The dual view's Julia pane on the set's palette map, one iteration on (coloring plan C11): the
 # checkbox, its tooltip, and its tooltip while grayed (another method than the escape count).
 panel-julia-linked = Vincular los colores de Julia al conjunto

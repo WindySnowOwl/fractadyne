@@ -264,6 +264,9 @@ pub struct ExportRequest {
     /// and its parameters `p1`..`p4`. `None` for the method's own colors.
     pub color_hook: Option<Arc<crate::color_hook::ColorHook>>,
     pub hook_params: [f32; 4],
+    /// The palette's Wrap (`Wrap::gpu_id`) and Steps (0: none), coloring plan C2.
+    pub wrap: u32,
+    pub steps: f32,
     pub julia: u32,
     pub cycle: f32,
     pub offset: f32,
@@ -1927,6 +1930,9 @@ impl<'a> TileRenderer<'a> {
             tap_stride: 0,
             _pad_aa: 0.0,
             hook_p: req.hook_params,
+            wrap: req.wrap,
+            steps: req.steps,
+            _pad_wrap: [0; 2],
         };
         queue.write_buffer(&color_uniform, 0, bytemuck::bytes_of(&cu));
         let split = |v: f64| -> (f32, f32) {
@@ -4317,6 +4323,9 @@ pub(crate) fn color_uniforms_for(req: &ExportRequest, ss: u32, w: u32, h: u32, l
         tap_stride: 0,
         _pad_aa: 0.0,
         hook_p: req.hook_params,
+        wrap: req.wrap,
+        steps: req.steps,
+        _pad_wrap: [0; 2],
     }
 }
 

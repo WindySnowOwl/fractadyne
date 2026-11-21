@@ -36,6 +36,20 @@ detail is in the git history.
   arithmetic, before it is written for the GPU. `--lanes` adds statistics the method does not
   read. In the source repository, `scripts/lanes.py` loads a folder and colors it two ways as
   worked examples.
+- **Scale, Wrap and Steps: where the palette's colors fall.** "Log color scale" is now Scale, a
+  list under the normalization switches with more curves than the log: square root, cube root,
+  fourth root, log, log-log and square, beside linear. Once the palette is fitted to the view's
+  range (Normalize deep colors, Always fit range, or `--normalize` on an export), the range holds
+  the same number of palette sweeps under every curve and only where the bands fall changes: the
+  roots and the logs widen the bands far from the set and narrow them near it, where a deep view's
+  counts crowd; Square does the opposite. Two rows under Offset change the palette itself: Wrap,
+  how it continues past its end (Repeat; Mirror, back the other way, so a palette whose two ends
+  differ shows no seam; Clamp, the last color held, so each color is used once), and Steps, which
+  cuts each trip through the palette into flat bands for a posterized look. All three recolor the
+  view at once, travel with views, bookmarks, Share text and render-farm jobs, and have
+  command-line flags (`--transfer`, `--wrap`, `--steps`); a view or session saved with the log scale
+  on opens with Scale on Log. Reset coloring settings puts the Scale back with the normalization
+  switches and keeps Wrap and Steps, as it keeps the palette.
 - **Custom coloring: a coloring of your own, written as a short program.** Color ▸ Custom
   coloring… colors the view with a function of your own, `custom_color`, written in WGSL (the
   language Fractadyne's shaders are written in), in place of the coloring method: a way to try a

@@ -2868,17 +2868,31 @@ panel-fit-range-hover =
     Görünüm örtüşmediğinde bile paleti görünümün ölçülen kaçış aralığına yeniden eşler — yukarıdaki kutu yalnızca yoğun bir alan aksi hâlde benek gibi görünecekse yeniden eşler.
 
     Paletin gürültüyü gidermek yerine ekranda olanı kapsamasını istediğinizde bunu kullanın. Yine de bir ölçüm gerektirir; bu yüzden görünüm durulmadan önceki bir iki anda hiçbir şey yapmaz, kaçan pikseli olmayan bir görünümde ise hiç etkisi olmaz.
-# A checkbox indented under "Always fit range" (also in the Color menu).
-panel-log-scale = Logaritmik renk ölçeği
-panel-log-scale-hover =
-    Paleti doğrusal yerine kaçış değerinin LOGARİTMASINA göre yayar. Derinde kaçış sayıları üst uçta yığılır, bu yüzden doğrusal bir eşleme paletin çoğunu sınırın yakınındaki ince bir kabuğa harcar ve geri kalan her şeyi düzleştirir.
+# The palette map's curve (coloring plan C2): a list indented under "Always fit range" (in the Color menu, a submenu), its tooltip, and its tooltip while grayed (no normalization). Log is what the former "Log color scale" checkbox did.
+panel-scale = Ölçek
+panel-scale-hover =
+    Palet görünümün aralığına sığdırıldığında değerlerin geçtiği eğri. Her eğride aralık aynı sayıda palet turu içerir; yalnızca bantların düştüğü yer değişir. Kökler ve logaritmalar kümeden uzak bantları genişletir, değerlerin yığıldığı kümenin yakınındakileri daraltır; Kare tersini yapar.
 
-    Normalleştirilmiş eşlemeye uygulanır — bunu “Derin renkleri normalleştir” (ya da bir dışa aktarmada --normalize) açar. Çok çarpık bir aralık, bu kutu işaretli olsun ya da olmasın zaten logaritmik eşlemeyi kullanır.
-# The same checkbox's tooltip while it is grayed out (normalization is off).
-panel-log-scale-off-hover =
-    Normalleştirme gerektirir: bu seçenek paletin ölçülen kaçış aralığına NASIL eşleneceğini belirler; bu yüzden “Derin renkleri normalleştir” kapalıyken (ve --normalize ile dışa aktarma yokken) değiştireceği bir eşleme yoktur ve tek bir pikseli bile değiştirmez.
-
-    Kullanmak için “Derin renkleri normalleştir” seçeneğini açın.
+    Çok çarpık bir aralık Doğrusal'da bile logaritmayı alır.
+panel-scale-off-hover = Palet görünümün aralığına sığdırıldığında geçerlidir: "Derin renkleri normalleştir" veya "Her zaman aralığa sığdır" seçeneğini açın.
+# The curves the Scale list offers.
+transfer-linear = Doğrusal
+transfer-sqrt = Karekök
+transfer-cbrt = Küpkök
+transfer-root4 = Dördüncü kök
+transfer-log = Logaritmik
+transfer-loglog = Çift logaritmik
+transfer-square = Kare
+# How the palette continues past its end (C2): the row's label, its tooltip, and its choices.
+panel-wrap = Devam
+panel-wrap-hover = Paletin sonundan sonra nasıl sürdüğü. Tekrarla onu baştan başlatır; Ayna onu geri yürütür, böylece iki ucu farklı bir palette dikiş görünmez; Sabitle son rengi tutar, böylece her renk aralık boyunca bir kez kullanılır.
+wrap-repeat = Tekrarla
+wrap-mirror = Ayna
+wrap-clamp = Sabitle
+# Flat bands (C2): the slider's label, its tooltip, and what it shows at 0.
+panel-steps = Basamak
+panel-steps-hover = Paletin her turunu bu kadar düz banda böler, her bant başlangıcının renginde olur; basamaklı bir görünüm verir. Kapalı pürüzsüzdür.
+panel-steps-off = Kapalı
 # The dual view's Julia pane on the set's palette map, one iteration on (coloring plan C11): the
 # checkbox, its tooltip, and its tooltip while grayed (another method than the escape count).
 panel-julia-linked = Julia renklerini kümeye bağla

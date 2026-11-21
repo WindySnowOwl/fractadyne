@@ -1,6 +1,6 @@
 use super::*;
 
-const SHAPE: NormShape = NormShape { sweeps: 0.5 + 0.52 * 6.0, log_palette: false };
+const SHAPE: NormShape = NormShape { sweeps: 0.5 + 0.52 * 6.0, transfer: fractadyne_core::coloring::Transfer::Linear };
 const PACE: NormPace = NormPace { dt_s: 1.0 / 60.0, shape: SHAPE, can_cut: true };
 
 /// The fastest one-frame change of color (palette cycles) over `frames` frames.

@@ -73,7 +73,7 @@ pub(crate) const GROUPS: &[&str] = &[
     "checklist", "replay", "settings-quarantine", "expmap", "assemble", "de-pixels",
     "colour-box", "cycle-check", "export-contain", "honest-step", "julia-critical", "palette-fade", "retreat", "view-thumb",
     "width-independence", "coloring-matrix-quick", "color-sig", "coloring-reset", "julia-link", "fringe",
-    "lanes", "hook",
+    "lanes", "hook", "transfer",
 ];
 
 /// Groups that run ONLY when named. ⛔Kept out of `GROUPS` so a bare `--selftest` never pays for
@@ -10726,6 +10726,9 @@ zoom = \"1e94\"
                 normalize_live: false,
                 normalize_fit: true,
                 log_scale: true,
+                transfer: fractadyne_core::coloring::Transfer::Linear,
+                wrap: fractadyne_core::coloring::Wrap::Clamp,
+                steps: 5,
                 interior: Some(crate::InteriorMode::Solid),
                 interior_palette: "ice".into(),
                 interior_color: [0.7, 0.1, 0.4],
@@ -10896,7 +10899,12 @@ zoom = \"1e94\"
                 cycle: 0.61,
                 iter_div: 4,
                 offset: 0.33,
+                // Log, in its one form (`log_palette`); the Binary spec below takes another curve,
+                // so `transfer` is away from its default there.
                 log_palette: true,
+                transfer: "linear".into(),
+                wrap: "mirror".into(),
+                steps: 6,
                 normalize_live: false,
                 normalize_fit: true,
                 light: true,
@@ -10948,6 +10956,8 @@ zoom = \"1e94\"
             let binary = fractadyne_state::ColoringSpec {
                 use_duotone: false,
                 use_binary: true,
+                log_palette: false,
+                transfer: "sqrt".into(),
                 ..custom.clone()
             };
             let specs = [&custom, &binary];
@@ -11344,7 +11354,7 @@ zoom = \"1e94\"
                 self.coloring.palette_adjust,
                 self.coloring.normalize_live,
                 self.coloring.normalize_fit,
-                self.coloring.log_palette,
+                (self.coloring.transfer, self.coloring.wrap, self.coloring.steps),
                 self.coloring.palette_aa,
             );
             let k0 = (
@@ -11366,7 +11376,9 @@ zoom = \"1e94\"
             self.coloring.palette_adjust = PaletteAdjust { brightness: 0.4, contrast: -0.3, saturation: 1.6 };
             self.coloring.normalize_live = !d.normalize_live;
             self.coloring.normalize_fit = !d.normalize_fit;
-            self.coloring.log_palette = !d.log_palette;
+            self.coloring.transfer = fractadyne_core::coloring::Transfer::Sqrt;
+            self.coloring.wrap = fractadyne_core::coloring::Wrap::Mirror;
+            self.coloring.steps = 8;
             self.coloring.palette_aa = !d.palette_aa;
             self.anim.palette_anim = crate::PaletteAnim::ALL[1];
             self.anim.palette_anim_speed = 1.5;
@@ -11390,7 +11402,7 @@ zoom = \"1e94\"
                 && c.palette_adjust.is_neutral()
                 && c.normalize_live == d.normalize_live
                 && c.normalize_fit == d.normalize_fit
-                && c.log_palette == d.log_palette
+                && c.transfer == crate::transfer_of_spec(&d)
                 && c.palette_aa == d.palette_aa
                 && self.anim.palette_anim == crate::PaletteAnim::Off
                 && self.anim.palette_anim_speed == speed0;
@@ -11399,11 +11411,13 @@ zoom = \"1e94\"
                 && c.interior == inside
                 && c.interior_palette == inside_palette
                 && c.trap_type == trap
-                && c.julia_linked == !d.julia_linked;
+                && c.julia_linked == !d.julia_linked
+                && c.wrap == fractadyne_core::coloring::Wrap::Mirror
+                && c.steps == 8;
             push_check(&mut checks, &mut last_check_t, SelfCheck {
                 category: "consistency",
                 name: "Reset coloring settings puts the tuned values back and keeps the choices".into(),
-                params: "Cycle, Divide iterations, Offset, the palette's adjustment, the normalization switches, anti-aliasing and animation set away from their defaults; method stripe, palette ice, the inside by the trap in ember, trap cross, the Julia link on".into(),
+                params: "Cycle, Divide iterations, Offset, the palette's adjustment, the normalization switches and the Scale (square root), anti-aliasing and animation set away from their defaults; method stripe, palette ice, the inside by the trap in ember, trap cross, the Julia link on, Wrap mirror, 8 Steps".into(),
                 result: format!("tuned values back to a new session's: {reset}; choices kept: {kept}"),
                 threshold: "both",
                 pass: reset && kept,
@@ -11415,7 +11429,7 @@ zoom = \"1e94\"
                 self.coloring.palette_adjust,
                 self.coloring.normalize_live,
                 self.coloring.normalize_fit,
-                self.coloring.log_palette,
+                (self.coloring.transfer, self.coloring.wrap, self.coloring.steps),
                 self.coloring.palette_aa,
             ) = c0;
             (
@@ -11824,7 +11838,7 @@ zoom = \"1e94\"
             // linear map, no divisor.
             self.coloring.cycle = 0.25;
             self.coloring.offset = 0.125;
-            self.coloring.log_palette = false;
+            self.coloring.transfer = fractadyne_core::coloring::Transfer::Linear;
             self.coloring.iter_div = 1;
             debug_assert_eq!((crate::fringe_sweeps(0.25), self.color_cycle_for(crate::ColorMethod::Stripe)), (1.0, 1.5));
             let smooth_text = example("smooth.wgsl");
@@ -11964,6 +11978,170 @@ zoom = \"1e94\"
             self.coloring.hook = saved_hook;
         }
 
+        // ---- The palette map's curves, its wraps and steps (coloring plan C2) ----
+        // Each against its CPU definition (`Transfer::apply`, `wrap_coord`, the LUT read as the
+        // color pass reads it) over the count lane of the same view: the export's colors at the
+        // tour's point at 1e10x, point sampled, under a map that fits the frame's escape range to
+        // 2.5 sweeps. A CONTROL each (the next curve's definition; Repeat for a wrap; no steps for
+        // steps) must differ, so the comparison cannot pass on a curve that never ran.
+        if want("transfer") {
+            use fractadyne_core::coloring::{wrap_coord, Transfer, Wrap};
+            let saved_spec = self.coloring_spec();
+            let saved = (self.fractal, self.julia_mode, self.dual, self.render_cfg.max_iter, self.render_cfg.auto_iter, self.effects.light, self.effects.de);
+            self.fractal = FractalKind::Mandelbrot;
+            self.julia_mode = false;
+            self.dual = false;
+            self.render_cfg.auto_iter = false;
+            self.render_cfg.max_iter = 8_000;
+            self.effects.light = false;
+            self.effects.de = false;
+            self.coloring.hook.turn_off();
+            self.coloring.color_method = crate::ColorMethod::Smooth;
+            self.coloring.use_custom_palette = false;
+            self.coloring.use_duotone = false;
+            self.coloring.use_binary = false;
+            self.coloring.palette_idx = fractadyne_color::preset_by_id("unity").unwrap_or(0);
+            self.coloring.palette_adjust = fractadyne_color::adjust::PaletteAdjust::NEUTRAL;
+            self.coloring.normalize_live = false;
+            self.coloring.normalize_fit = false;
+            self.coloring.transfer = Transfer::Linear;
+            self.coloring.wrap = Wrap::Repeat;
+            self.coloring.steps = 0;
+            let (w, h) = (160u32, 90u32);
+            let at = |s: &str| fractadyne_core::parse_bf_prec(s, 256).expect("the tour point's coordinate");
+            let mut vp = Viewport::new(w as f64, h as f64);
+            vp.set_center_mag(
+                at("-1.178853950372678747911373866849720956148855"),
+                at("0.1853420232408490265512092752061929308714979"),
+                1e10,
+            );
+            let mut req = self.lanes_request_for(&vp, false, None);
+            req.width = w;
+            req.height = h;
+            req.aa_palette = fractadyne_gpu::PaletteAa::Off;
+            (self.fractal, self.julia_mode, self.dual, self.render_cfg.max_iter, self.render_cfg.auto_iter, self.effects.light, self.effects.de) = saved;
+            self.apply_coloring_spec(&saved_spec);
+            let counts: Option<Vec<f32>> = fractadyne_gpu::render_lanes(device, queue, &req, crate::tunables::CORRECT_WORK_BUDGET)
+                .ok()
+                .map(|r| r.pixels.chunks_exact(4).map(|t| t[0]).collect());
+            let escaped: Vec<f32> = counts.as_deref().unwrap_or(&[]).iter().copied().filter(|c| *c >= 0.0).collect();
+            let lo = escaped.iter().copied().fold(f32::INFINITY, f32::min);
+            let hi = escaped.iter().copied().fold(f32::NEG_INFINITY, f32::max);
+            let (sweeps, user_offset) = (2.5_f32, 0.125_f32);
+            // The fitted map of [lo, hi] under a curve: (mode, floor, rate, offset), as the app's.
+            let map = |t: Transfer| -> (u32, f32, f32, f32) {
+                match t {
+                    Transfer::Linear => {
+                        let c = sweeps / (hi - lo).max(1.0e-6);
+                        (0, 0.0, c, user_offset - lo * c)
+                    }
+                    t => (t.gpu_id(), lo, sweeps / crate::render::curve_span(hi - lo, t), user_offset),
+                }
+            };
+            // The LUT read at a folded position, as `palette` (wrapping) or `palette_held` reads it.
+            let lut = req.lut.clone();
+            let smooth = req.lut_smooth;
+            let read = |t: f64, held: bool| -> [f64; 3] {
+                let n = lut.len();
+                let rgb = |e: [f32; 4]| [e[0] as f64, e[1] as f64, e[2] as f64];
+                let mix = |a: [f64; 3], b: [f64; 3], f: f64| [a[0] + (b[0] - a[0]) * f, a[1] + (b[1] - a[1]) * f, a[2] + (b[2] - a[2]) * f];
+                if n == 0 {
+                    return [0.0; 3];
+                }
+                let tt = if held { t.clamp(0.0, 1.0) } else { t - t.floor() };
+                if !smooth {
+                    return rgb(lut[((tt * n as f64) as usize).min(n - 1)]);
+                }
+                if held {
+                    let x = (tt * n as f64 - 0.5).clamp(0.0, (n - 1) as f64);
+                    let i0 = x.floor() as usize;
+                    return mix(rgb(lut[i0]), rgb(lut[(i0 + 1).min(n - 1)]), x - x.floor());
+                }
+                let x = tt * n as f64 - 0.5;
+                let i0 = x.floor() as i64;
+                mix(rgb(lut[i0.rem_euclid(n as i64) as usize]), rgb(lut[(i0 + 1).rem_euclid(n as i64) as usize]), x - x.floor())
+            };
+            // The CPU's colors of the escaped pixels under (curve, wrap, steps), in pixel order.
+            let cpu = |t: Transfer, wrap: Wrap, steps: u32| -> Vec<Option<[f64; 3]>> {
+                let (mode, floor, rate, off) = map(t);
+                counts
+                    .as_deref()
+                    .unwrap_or(&[])
+                    .iter()
+                    .map(|&c| {
+                        (c >= 0.0).then(|| {
+                            let x = if mode == 0 { c as f64 } else { t.apply((c - floor).max(0.0) as f64) };
+                            read(wrap_coord(x * rate as f64 + off as f64, wrap, steps), wrap != Wrap::Repeat)
+                        })
+                    })
+                    .collect()
+            };
+            // The GPU's colors under (curve, wrap, steps).
+            let gpu = |t: Transfer, wrap: Wrap, steps: u32| -> Option<Vec<f32>> {
+                let (mode, floor, rate, off) = map(t);
+                let mut r = req.clone();
+                (r.norm_mode, r.norm_lo, r.cycle, r.offset) = (mode, floor, rate, off);
+                (r.wrap, r.steps) = (wrap.gpu_id(), steps as f32);
+                let (progress, cancel) = (std::sync::atomic::AtomicU32::new(0), std::sync::atomic::AtomicBool::new(false));
+                fractadyne_gpu::render_export(device, queue, &r, &progress, &cancel).ok().map(|x| x.pixels)
+            };
+            // The share of escaped pixels more than one 8-bit level apart, and the largest gap.
+            let apart = |g: &[f32], c: &[Option<[f64; 3]>]| -> (f64, f64) {
+                let (mut n, mut bad, mut worst) = (0usize, 0usize, 0.0f64);
+                for (px, want) in g.chunks_exact(4).zip(c) {
+                    let Some(want) = want else { continue };
+                    let d = (0..3).map(|k| (px[k] as f64 - want[k]).abs() * 255.0).fold(0.0, f64::max);
+                    n += 1;
+                    worst = worst.max(d);
+                    bad += (d > 1.0) as usize;
+                }
+                (bad as f64 / n.max(1) as f64, worst)
+            };
+            let cases: Vec<(Transfer, Wrap, u32, (Transfer, Wrap, u32))> = Transfer::ALL
+                .iter()
+                .enumerate()
+                .map(|(i, &t)| (t, Wrap::Repeat, 0, (Transfer::ALL[(i + 1) % Transfer::ALL.len()], Wrap::Repeat, 0)))
+                .chain([
+                    (Transfer::Sqrt, Wrap::Mirror, 0, (Transfer::Sqrt, Wrap::Repeat, 0)),
+                    (Transfer::Sqrt, Wrap::Clamp, 0, (Transfer::Sqrt, Wrap::Repeat, 0)),
+                    (Transfer::Linear, Wrap::Repeat, 6, (Transfer::Linear, Wrap::Repeat, 0)),
+                    (Transfer::Log, Wrap::Mirror, 4, (Transfer::Log, Wrap::Mirror, 0)),
+                ])
+                .collect();
+            let mut curves = (true, Vec::new());
+            let mut wraps = (true, Vec::new());
+            for (t, wrap, steps, (ct, cw, cs)) in cases {
+                let name = format!("{}{}{}", t.key(), if wrap == Wrap::Repeat { String::new() } else { format!(" {}", wrap.key()) }, if steps > 0 { format!(" {steps} steps") } else { String::new() });
+                let (ok, line) = match gpu(t, wrap, steps) {
+                    Some(g) if escaped.len() > 1000 => {
+                        let (bad, worst) = apart(&g, &cpu(t, wrap, steps));
+                        let (control, _) = apart(&g, &cpu(ct, cw, cs));
+                        (bad <= 0.005 && control >= 0.05, format!("{name}: {:.2}% apart (max {worst:.2} levels), control {:.0}%", bad * 100.0, control * 100.0))
+                    }
+                    _ => (false, format!("{name}: no render, or {} escaped px", escaped.len())),
+                };
+                let slot = if wrap == Wrap::Repeat && steps == 0 { &mut curves } else { &mut wraps };
+                slot.0 &= ok;
+                slot.1.push(line);
+            }
+            push_check(&mut checks, &mut last_check_t, SelfCheck {
+                category: "export",
+                name: "every palette map curve is its definition".into(),
+                params: format!("the coloring-method tour's point at 1e10x, {w}x{h}, ss 1, point sampled, unity; the frame's escape range [{lo:.1}, {hi:.1}] fitted to {sweeps} sweeps; each against `Transfer::apply` over the count lane, the next curve's as the control"),
+                result: curves.1.join("; "),
+                threshold: "at most 0.5% of the escaped pixels more than 1 level apart; the control 5% or more",
+                pass: curves.0,
+            });
+            push_check(&mut checks, &mut last_check_t, SelfCheck {
+                category: "export",
+                name: "the palette's wraps and steps are their definitions".into(),
+                params: format!("as above; mirror and clamp under sqrt, 6 steps under linear, 4 steps of a mirrored log map; `wrap_coord` over the count lane, Repeat or no steps as the control"),
+                result: wraps.1.join("; "),
+                threshold: "at most 0.5% of the escaped pixels more than 1 level apart; the control 5% or more",
+                pass: wraps.0,
+            });
+        }
+
         // ---- The dual view's Julia pane on the set's palette map (coloring plan C11) ----
         // An export of each pane, both centered on c at 1e5x (so each center pixel is c in its own
         // plane): the set's pixel at c and the Julia pixel at z = c, whose orbit is the set's one
@@ -11994,7 +12172,7 @@ zoom = \"1e94\"
             self.coloring.offset = 0.1;
             self.coloring.normalize_live = false;
             self.coloring.normalize_fit = false;
-            self.coloring.log_palette = false;
+            self.coloring.transfer = fractadyne_core::coloring::Transfer::Linear;
             self.coloring.palette_aa = false;
             let (w, h) = (33u32, 33u32);
             let center = |app: &Self, julia: bool| -> Option<[u8; 3]> {
@@ -12216,7 +12394,7 @@ zoom = \"1e94\"
             // byte-identical frame - measured, meanΔ 0.00 - and a check built on it would
             // be green and vacuous. Checklist steps 29, 30 and 57 need the live path; see
             // design/checklist-automation.md.
-            self.coloring.log_palette = false;
+            self.coloring.transfer = fractadyne_core::coloring::Transfer::Linear;
             self.coloring.normalize_live = false;
             let base = render(self, device, queue);
             let mut toggles: Vec<(&str, Box<dyn Fn(&mut Self)>, Box<dyn Fn(&mut Self)>)> = Vec::new();
@@ -12434,7 +12612,7 @@ zoom = \"1e94\"
             self.coloring.use_custom_palette = false;
             self.coloring.use_binary = false;
             self.coloring.use_duotone = false;
-            self.coloring.log_palette = false;
+            self.coloring.transfer = fractadyne_core::coloring::Transfer::Linear;
             self.coloring.normalize_live = false;
             self.coloring.cycle = 0.27;
             self.coloring.offset = 0.1;
@@ -12637,9 +12815,9 @@ zoom = \"1e94\"
 
             // Log color scale, on the same view and the same path.
             let lin = normed(self, device, queue);
-            self.coloring.log_palette = true;
+            self.coloring.transfer = fractadyne_core::coloring::Transfer::Log;
             let logd = normed(self, device, queue);
-            self.coloring.log_palette = false;
+            self.coloring.transfer = fractadyne_core::coloring::Transfer::Linear;
             let (res, pass) = match (&lin, &logd) {
                 (Some(a), Some(b)) => {
                     let d = frame::distance(a, b);

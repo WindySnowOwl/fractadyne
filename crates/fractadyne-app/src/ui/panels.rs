@@ -58,6 +58,28 @@ impl crate::FractadyneApp {
 /// after a click on the slider (setting it, then resetting it) is a triple to egui, and was missed
 /// (the uitest's `slider-double-click-reset`, 0.58 s after its control's click). A triple-click
 /// means nothing else on a slider.
+/// A palette map curve's name (C2).
+pub(crate) fn transfer_label(t: fractadyne_core::coloring::Transfer) -> String {
+    match t {
+        fractadyne_core::coloring::Transfer::Linear => tr!(transfer_linear),
+        fractadyne_core::coloring::Transfer::Sqrt => tr!(transfer_sqrt),
+        fractadyne_core::coloring::Transfer::Cbrt => tr!(transfer_cbrt),
+        fractadyne_core::coloring::Transfer::Root4 => tr!(transfer_root4),
+        fractadyne_core::coloring::Transfer::Log => tr!(transfer_log),
+        fractadyne_core::coloring::Transfer::LogLog => tr!(transfer_loglog),
+        fractadyne_core::coloring::Transfer::Square => tr!(transfer_square),
+    }
+}
+
+/// A wrap's name (C2).
+pub(crate) fn wrap_label(w: fractadyne_core::coloring::Wrap) -> String {
+    match w {
+        fractadyne_core::coloring::Wrap::Repeat => tr!(wrap_repeat),
+        fractadyne_core::coloring::Wrap::Mirror => tr!(wrap_mirror),
+        fractadyne_core::coloring::Wrap::Clamp => tr!(wrap_clamp),
+    }
+}
+
 pub(crate) fn slider_double_clicked(r: &egui::Response) -> bool {
     let b = egui::PointerButton::Primary;
     r.double_clicked() || (r.hovered() && r.ctx.input(|i| i.pointer.button_double_clicked(b) || i.pointer.button_triple_clicked(b)))
@@ -98,7 +120,7 @@ impl FractadyneApp {
     /// EXPORT-side switch (`--normalize`), and someone who launched with it still needs this
     /// checkbox to steer their exports even with the live view un-normalized.
     /// "Always fit range" — the range-fit half of normalization, drawn identically in the panel and
-    /// the Color menu so the two can never disagree, exactly like [`Self::log_scale_checkbox`].
+    /// the Color menu so the two can never disagree, as the Scale ([`Self::scale_row`]).
     ///
     /// ⭐**Why this is a separate control and not a looser threshold.** "Normalize deep colors" is a
     /// Nyquist ALIASING guard (`mean|Δ smooth-iter| × cycle > 0.5`): on a smooth view it declines by
@@ -119,11 +141,18 @@ impl FractadyneApp {
         });
     }
 
-    pub(crate) fn log_scale_checkbox(&mut self, ui: &mut egui::Ui) {
+    /// Whether the palette is fitted to a range, so that the Scale's curve applies (C2).
+    fn scale_applies(&self) -> bool {
         // "Always fit range" makes a mapping on its own (for the orbit trap it is the only one), so
         // it enables this as the guard does.
-        let live = self.coloring.normalize_live || self.coloring.normalize || self.coloring.normalize_fit;
-        // INDENTED, because it is a sub-option of the checkbox above it — the same idiom the
+        self.coloring.normalize_live || self.coloring.normalize || self.coloring.normalize_fit
+    }
+
+    /// Scale (coloring plan C2, what "Log color scale" was): the curve the fitted palette takes the
+    /// values through. A list in the panel.
+    pub(crate) fn scale_row(&mut self, ui: &mut egui::Ui) {
+        let live = self.scale_applies();
+        // INDENTED, because it is a sub-option of the checkboxes above it — the same idiom the
         // "Click to zoom" / "Factor" pair already uses in this panel. The two marks say different
         // things and both are wanted: graying says "you cannot use this right now", the indent
         // says "this belongs to the line above" — which is the half that tells you WHY, and it
@@ -131,13 +160,42 @@ impl FractadyneApp {
         ui.add_enabled_ui(live, |ui| {
             ui.horizontal(|ui| {
                 ui.add_space(ui.spacing().indent * 0.5);
-                ui.checkbox(&mut self.coloring.log_palette, tr!(panel_log_scale))
-                    .on_hover_text(if live {
-                        tr!(panel_log_scale_hover)
-                    } else {
-                        tr!(panel_log_scale_off_hover)
+                ui.label(tr!(panel_scale));
+                // As wide as the widest name, whichever is chosen, so the row never widens the panel.
+                let font = egui::TextStyle::Button.resolve(ui.style());
+                let widest = fractadyne_core::coloring::Transfer::ALL
+                    .iter()
+                    .map(|t| ui.fonts(|f| f.layout_no_wrap(transfer_label(*t), font.clone(), egui::Color32::WHITE).size().x))
+                    .fold(0.0_f32, f32::max);
+                let sp = ui.spacing();
+                let box_w = widest + sp.icon_width + sp.icon_spacing + 2.0 * sp.button_padding.x;
+                let r = egui::ComboBox::from_id_salt("panel_scale")
+                    .width(box_w)
+                    .selected_text(transfer_label(self.coloring.transfer))
+                    .show_ui(ui, |ui| {
+                        for t in fractadyne_core::coloring::Transfer::ALL {
+                            ui.selectable_value(&mut self.coloring.transfer, t, transfer_label(t));
+                        }
                     });
+                r.response.on_hover_text(if live { tr!(panel_scale_hover) } else { tr!(panel_scale_off_hover) });
             });
+        });
+    }
+
+    /// Scale in the Color menu: a submenu of choices (a list inside a menu would close it).
+    pub(crate) fn scale_menu(&mut self, ui: &mut egui::Ui) {
+        let live = self.scale_applies();
+        ui.add_enabled_ui(live, |ui| {
+            ui.menu_button(format!("{}: {}", tr!(panel_scale), transfer_label(self.coloring.transfer)), |ui| {
+                for t in fractadyne_core::coloring::Transfer::ALL {
+                    if ui.radio(self.coloring.transfer == t, transfer_label(t)).clicked() {
+                        self.coloring.transfer = t;
+                        ui.close_menu();
+                    }
+                }
+            })
+            .response
+            .on_hover_text(if live { tr!(panel_scale_hover) } else { tr!(panel_scale_off_hover) });
         });
     }
 
@@ -536,13 +594,35 @@ impl FractadyneApp {
                     self.coloring.offset = d.offset;
                 }
                 r.on_hover_text(tr!(panel_double_click_reset));
-                // ⭐Normalization FIRST, then the mapping it selects. `log_palette` is read only
+                // How the palette continues past its end, and the bands a cycle is cut into (C2).
+                labelled(ui, &tr!(panel_wrap), |ui| {
+                    egui::ComboBox::from_id_salt("panel_wrap")
+                        .selected_text(wrap_label(self.coloring.wrap))
+                        .show_ui(ui, |ui| {
+                            for w in fractadyne_core::coloring::Wrap::ALL {
+                                ui.selectable_value(&mut self.coloring.wrap, w, wrap_label(w));
+                            }
+                        })
+                        .response
+                        .on_hover_text(tr!(panel_wrap_hover));
+                });
+                let r = labelled(ui, &tr!(panel_steps), |ui| {
+                    ui.add(
+                        egui::Slider::new(&mut self.coloring.steps, 0..=fractadyne_core::coloring::MAX_STEPS)
+                            .custom_formatter(|n, _| if n < 0.5 { tr!(panel_steps_off) } else { format!("{n:.0}") }),
+                    )
+                });
+                if slider_double_clicked(&r) {
+                    self.coloring.steps = d.steps;
+                }
+                r.on_hover_text(format!("{}\n\n{}", tr!(panel_steps_hover), tr!(panel_double_click_reset)));
+                // ⭐Normalization FIRST, then the mapping it selects. The Scale is read only
                 // inside the normalized path, so with normalization off it changed nothing — and
                 // it sat ABOVE the switch that gives it meaning.
                 ui.checkbox(&mut self.coloring.normalize_live, tr!(menu_color_normalize))
                     .on_hover_text(tr!(panel_normalize_hover));
                 self.fit_range_checkbox(ui);
-                self.log_scale_checkbox(ui);
+                self.scale_row(ui);
                 // C11: the Julia pane on the set's map. Only where there is a Julia pane, and grayed
                 // where it would change no pixel (another method: each plane colors its own values).
                 if self.dual {

@@ -2797,17 +2797,31 @@ panel-fit-range-hover =
     即使视图没有混叠，也将调色板重新映射到视图实测的逃逸范围——上面的复选框只在密集区域原本会显得像噪点时才重新映射。
 
     当你希望调色板覆盖屏幕上的内容、而不是为了消除噪点时，使用此选项。它仍然需要一次测量，因此在视图稳定之前的一两个瞬间不起作用，而在没有逃逸像素的视图上完全不起作用。
-# A checkbox indented under "Always fit range" (also in the Color menu).
-panel-log-scale = 对数颜色刻度
-panel-log-scale-hover =
-    按逃逸值的“对数”而不是线性方式分布调色板。在深处，逃逸次数向高端聚集，因此线性映射会把大部分调色板花在边界附近的一层薄壳上，而把其他一切压平。
+# The palette map's curve (coloring plan C2): a list indented under "Always fit range" (in the Color menu, a submenu), its tooltip, and its tooltip while grayed (no normalization). Log is what the former "Log color scale" checkbox did.
+panel-scale = 刻度
+panel-scale-hover =
+    调色板适配视图范围后，数值所经过的曲线。每种曲线下范围内的调色板循环次数相同，只改变色带落在哪里。各种根和对数会加宽远离集合的色带、收窄数值拥挤的集合附近的色带；平方则相反。
 
-    适用于归一化映射——也就是“归一化深层颜色”（或导出时的 --normalize）所开启的映射。范围严重偏斜时，无论是否勾选此项，都会采用对数映射。
-# The same checkbox's tooltip while it is grayed out (normalization is off).
-panel-log-scale-off-hover =
-    需要先归一化：此选项决定调色板“如何”映射到实测的逃逸范围，因此在关闭“归一化深层颜色”（且没有 --normalize 导出）时，它没有可以改变的映射，不会改变任何一个像素。
-
-    开启“归一化深层颜色”即可使用它。
+    范围严重偏斜时，即使选线性也会采用对数。
+panel-scale-off-hover = 调色板适配视图范围后生效：请打开“归一化深层颜色”或“始终适配范围”。
+# The curves the Scale list offers.
+transfer-linear = 线性
+transfer-sqrt = 平方根
+transfer-cbrt = 立方根
+transfer-root4 = 四次方根
+transfer-log = 对数
+transfer-loglog = 双对数
+transfer-square = 平方
+# How the palette continues past its end (C2): the row's label, its tooltip, and its choices.
+panel-wrap = 延续方式
+panel-wrap-hover = 调色板到尽头后如何延续。重复从头再来；镜像反向折回，因此两端颜色不同的调色板也不会出现接缝；钳制保持最后一种颜色，因此每种颜色在范围内只用一次。
+wrap-repeat = 重复
+wrap-mirror = 镜像
+wrap-clamp = 钳制
+# Flat bands (C2): the slider's label, its tooltip, and what it shows at 0.
+panel-steps = 分级
+panel-steps-hover = 把调色板的每一轮切成这么多条平坦色带，每条取其起点的颜色，形成阶梯状效果。关闭即为平滑。
+panel-steps-off = 关闭
 # The dual view's Julia pane on the set's palette map, one iteration on (coloring plan C11): the
 # checkbox, its tooltip, and its tooltip while grayed (another method than the escape count).
 panel-julia-linked = 将 Julia 颜色与集合关联

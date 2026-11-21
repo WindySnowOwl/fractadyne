@@ -742,7 +742,7 @@ impl FractadyneApp {
                         ui.checkbox(&mut self.coloring.normalize_live, tr!(menu_color_normalize))
                             .on_hover_text(tr!(menu_color_normalize_hover));
                         self.fit_range_checkbox(ui);
-                        self.log_scale_checkbox(ui);
+                        self.scale_menu(ui);
                         ui.separator();
                         // The numbers and switches one tunes, back to a new session's values; the
                         // choices (method, palettes, inside, trap) stay (user, 2026-11-20).

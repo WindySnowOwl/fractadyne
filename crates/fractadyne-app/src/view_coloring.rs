@@ -89,6 +89,11 @@ pub(crate) struct ViewColoring {
     pub(crate) normalize_live: bool,
     pub(crate) normalize_fit: bool,
     pub(crate) log_scale: bool,
+    /// The palette map's curve, how the palette continues past its end, and its steps (C2). The
+    /// curve as the view's `transfer` key says it (`log_scale` is its own key: older files').
+    pub(crate) transfer: fractadyne_core::coloring::Transfer,
+    pub(crate) wrap: fractadyne_core::coloring::Wrap,
+    pub(crate) steps: u32,
     /// What colors the inside (B5): `None`, the method's own. Its palette, a preset's id; empty for
     /// the outside palette.
     pub(crate) interior: Option<InteriorMode>,
@@ -142,6 +147,9 @@ impl ViewColoring {
             normalize_live: s.normalize_live,
             normalize_fit: s.normalize_fit,
             log_scale: s.log_palette,
+            transfer: fractadyne_core::coloring::Transfer::parse_key(&s.transfer).unwrap_or_default(),
+            wrap: fractadyne_core::coloring::Wrap::parse_key(&s.wrap).unwrap_or_default(),
+            steps: s.steps,
             interior: InteriorMode::parse_key(&s.interior),
             interior_palette: s.interior_palette.clone(),
             interior_color: s.interior_color,
@@ -176,6 +184,9 @@ impl ViewColoring {
             normalize_live: self.normalize_live,
             normalize_fit: self.normalize_fit,
             log_palette: self.log_scale,
+            transfer: self.transfer.key().to_string(),
+            wrap: self.wrap.key().to_string(),
+            steps: self.steps,
             interior: self.interior.map(|m| m.key().to_string()).unwrap_or_default(),
             interior_palette: self.interior_palette.clone(),
             interior_color: self.interior_color,

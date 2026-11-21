@@ -693,8 +693,10 @@ impl crate::FractadyneApp {
     /// (`norm_map_for`), with its linear-to-log switch made a dissolve ([`log_weight`]) through the
     /// color pass's palette fade.
     pub(crate) fn apply_video_norm(&self, req: &mut fractadyne_gpu::ExportRequest, lo: f32, top: f32) {
-        let w = log_weight(lo, top, self.coloring.log_palette);
-        let (lin, log) = (self.norm_map_linear(lo, top), self.norm_map_log(lo, top));
+        let w = log_weight(lo, top, self.coloring.transfer != fractadyne_core::coloring::Transfer::Linear);
+        // The curve the video dissolves to: the user's, or log for a linear map past the ratio.
+        let curve = if self.coloring.transfer == fractadyne_core::coloring::Transfer::Linear { fractadyne_core::coloring::Transfer::Log } else { self.coloring.transfer };
+        let (lin, log) = (self.norm_map_linear(lo, top), self.norm_map_curve(lo, top, curve));
         let main = if w >= 1.0 { &log } else { &lin };
         req.cycle = main.cycle;
         req.offset = main.offset;
@@ -1021,7 +1023,7 @@ impl crate::FractadyneApp {
             self.fill_window(asm, src, device, queue, &place, 2)?;
             let mut c = colour.clone();
             if normalize {
-                let log_palette = self.coloring.log_palette;
+                let log_palette = self.coloring.transfer != fractadyne_core::coloring::Transfer::Linear;
                 let r = anchors.range(l, |la| {
                     let r = self.measured_range(dive, src, device, queue, la)?;
                     crate::diag::log_line(

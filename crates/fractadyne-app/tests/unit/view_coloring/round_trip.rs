@@ -43,6 +43,9 @@ fn scrambled() -> ViewColoring {
         normalize_live: false,
         normalize_fit: true,
         log_scale: true,
+        transfer: fractadyne_core::coloring::Transfer::Linear,
+        wrap: fractadyne_core::coloring::Wrap::Clamp,
+        steps: 5,
         interior: Some(InteriorMode::Solid),
         interior_palette: "ice".into(),
         interior_color: [0.7, 0.1, 0.4],
@@ -94,6 +97,10 @@ fn variants() -> Vec<ViewColoring> {
     // does not size from the distance, which still carries it.
     v.push(ViewColoring { palette_aa: false, ..d.clone() });
     v.push(ViewColoring { method: ColorMethod::Stripe, palette_aa: false, ..d.clone() });
+    // The palette map's curve (under a fitted range, where it shows), the wrap and the steps (C2).
+    v.push(ViewColoring { normalize_fit: true, transfer: fractadyne_core::coloring::Transfer::Sqrt, ..d.clone() });
+    v.push(ViewColoring { wrap: fractadyne_core::coloring::Wrap::Mirror, ..d.clone() });
+    v.push(ViewColoring { steps: 8, ..d.clone() });
     // The palette's brightness, contrast and saturation, each alone and all three.
     v.push(ViewColoring { palette_brightness: 0.5, ..d.clone() });
     v.push(ViewColoring { palette_contrast: -0.25, ..d.clone() });

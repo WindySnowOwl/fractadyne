@@ -2877,17 +2877,31 @@ panel-fit-range-hover =
     Die Palette auf den gemessenen Fluchtbereich der Ansicht umrechnen, auch wenn die Ansicht kein Aliasing zeigt — das Kästchen darüber rechnet nur um, wenn ein dichtes Feld sonst als Gesprenkel erscheinen würde.
 
     Dies verwenden, wenn die Palette das auf dem Bildschirm Sichtbare überspannen soll, statt Rauschen zu beheben. Es braucht trotzdem eine Messung, wirkt also in den ein, zwei Momenten, bevor die Ansicht zur Ruhe kommt, noch nicht, und bei einer Ansicht ohne entkommene Pixel gar nicht.
-# A checkbox indented under "Always fit range" (also in the Color menu).
-panel-log-scale = Log. Farbskala
-panel-log-scale-hover =
-    Die Palette nach dem LOGARITHMUS des Fluchtwerts statt linear verteilen. Fluchtzahlen drängen sich in der Tiefe am oberen Ende, sodass eine lineare Abbildung den Großteil der Palette auf eine dünne Schale nahe dem Rand verwendet und alles andere flach macht.
+# The palette map's curve (coloring plan C2): a list indented under "Always fit range" (in the Color menu, a submenu), its tooltip, and its tooltip while grayed (no normalization). Log is what the former "Log color scale" checkbox did.
+panel-scale = Skala
+panel-scale-hover =
+    Die Kurve, durch die die Werte laufen, sobald die Palette an den Bereich der Ansicht angepasst ist. Der Bereich umfasst bei jeder Kurve gleich viele Palettendurchläufe; nur wo die Bänder liegen, ändert sich. Wurzeln und Logarithmen verbreitern die Bänder fern der Menge und verengen sie nahe daran, wo sich die Werte drängen; Quadrat bewirkt das Gegenteil.
 
-    Gilt für die normalisierte Abbildung — die „Tiefe Farben normalisieren“ (oder --normalize bei einem Export) einschaltet. Ein stark schiefer Bereich verwendet die logarithmische Abbildung ohnehin, ob dies angekreuzt ist oder nicht.
-# The same checkbox's tooltip while it is grayed out (normalization is off).
-panel-log-scale-off-hover =
-    Erfordert Normalisierung: Dies wählt, WIE die Palette auf den gemessenen Fluchtbereich abgebildet wird; bei ausgeschaltetem „Tiefe Farben normalisieren“ (und ohne Export mit --normalize) gibt es also keine Abbildung, die es ändern könnte, und es würde kein einziges Pixel verändern.
-
-    „Tiefe Farben normalisieren“ einschalten, um es zu verwenden.
+    Ein stark schiefer Bereich nimmt auch unter Linear den Logarithmus.
+panel-scale-off-hover = Wirkt, sobald die Palette an den Bereich der Ansicht angepasst ist: „Tiefe Farben normalisieren“ oder „Bereich immer anpassen“ einschalten.
+# The curves the Scale list offers.
+transfer-linear = Linear
+transfer-sqrt = Quadratwurzel
+transfer-cbrt = Kubikwurzel
+transfer-root4 = Vierte Wurzel
+transfer-log = Logarithmisch
+transfer-loglog = Doppelt logarithmisch
+transfer-square = Quadrat
+# How the palette continues past its end (C2): the row's label, its tooltip, and its choices.
+panel-wrap = Fortsetzung
+panel-wrap-hover = Wie die Palette nach ihrem Ende weitergeht. Wiederholen beginnt sie von vorn; Spiegeln läuft sie rückwärts zurück, sodass eine Palette mit verschiedenen Enden keine Naht zeigt; Begrenzen hält die letzte Farbe, sodass jede Farbe über den Bereich nur einmal vorkommt.
+wrap-repeat = Wiederholen
+wrap-mirror = Spiegeln
+wrap-clamp = Begrenzen
+# Flat bands (C2): the slider's label, its tooltip, and what it shows at 0.
+panel-steps = Stufen
+panel-steps-hover = Jeden Durchlauf durch die Palette in so viele flache Bänder teilen, jedes in der Farbe an seinem Anfang, für ein gestuftes Aussehen. Aus ist stufenlos.
+panel-steps-off = Aus
 # The dual view's Julia pane on the set's palette map, one iteration on (coloring plan C11): the
 # checkbox, its tooltip, and its tooltip while grayed (another method than the escape count).
 panel-julia-linked = Julia-Farben an die Menge koppeln

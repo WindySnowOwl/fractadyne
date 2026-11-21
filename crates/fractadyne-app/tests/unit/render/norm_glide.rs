@@ -1,7 +1,7 @@
 use super::*;
 
 /// The user's coloring in the 2026-10-25 report: cycle 0.52, linear.
-const SHAPE: NormShape = NormShape { sweeps: 0.5 + 0.52 * 6.0, log_palette: false };
+const SHAPE: NormShape = NormShape { sweeps: 0.5 + 0.52 * 6.0, transfer: fractadyne_core::coloring::Transfer::Linear };
 const FRAME: f32 = 1.0 / 60.0;
 
 fn pace(dt_s: f32, can_cut: bool) -> NormPace {
@@ -126,7 +126,7 @@ fn a_change_of_window_is_measured_in_palette_cycles_as_the_screen_shows_it() {
     assert!((c - at_ends).abs() < 0.01, "{c} vs {at_ends}");
     // Log (a heavy-tailed range): moving the floor moves the colors just above it most, and the
     // measure sees that.
-    let log = NormShape { sweeps: SHAPE.sweeps, log_palette: true };
+    let log = NormShape { sweeps: SHAPE.sweeps, transfer: fractadyne_core::coloring::Transfer::Log };
     let floor_moved = window_change((10.0, 50_000.0), (20.0, 50_000.0), log);
     assert!(floor_moved > 0.5, "{floor_moved}");
 }

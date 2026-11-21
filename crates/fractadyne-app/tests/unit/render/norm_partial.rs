@@ -1,7 +1,7 @@
 use super::{norm_glide_step, norm_reading_bound, norm_window_feed, NormPace, NormShape};
 
 /// 60 fps, the cycle slider at its default, glide cuts allowed.
-const PACE: NormPace = NormPace { dt_s: 1.0 / 60.0, shape: NormShape { sweeps: 0.5 + 0.27 * 6.0, log_palette: false }, can_cut: true };
+const PACE: NormPace = NormPace { dt_s: 1.0 / 60.0, shape: NormShape { sweeps: 0.5 + 0.27 * 6.0, transfer: fractadyne_core::coloring::Transfer::Linear }, can_cut: true };
 
 /// The readings of one field walk, as measured on the 2026-09-19 2e13 autopilot dive: every pass
 /// reports the floor exactly and a top no higher than the walk has reached, and only the last pass

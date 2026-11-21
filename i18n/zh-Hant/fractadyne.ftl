@@ -2796,17 +2796,31 @@ panel-fit-range-hover =
     即使畫面沒有混疊，也將調色盤重新對應到畫面量測到的逃逸範圍；上方的核取方塊只有在密集區域原本會看起來像斑點雜訊時，才會重新對應。
 
     當你希望調色盤涵蓋螢幕上的內容，而不是為了修正雜訊時，請使用這個選項。它仍然需要量測，因此在畫面穩定下來之前的一兩刻不會有作用，在完全沒有逃逸像素的畫面上也完全沒有作用。
-# A checkbox indented under "Always fit range" (also in the Color menu).
-panel-log-scale = 對數色階
-panel-log-scale-hover =
-    依逃逸值的「對數」而非線性地分配調色盤。在深處，逃逸次數會集中在高端，因此線性對應會把大部分調色盤花在邊界附近的一層薄殼上，並讓其他部分變得平坦。
+# The palette map's curve (coloring plan C2): a list indented under "Always fit range" (in the Color menu, a submenu), its tooltip, and its tooltip while grayed (no normalization). Log is what the former "Log color scale" checkbox did.
+panel-scale = 刻度
+panel-scale-hover =
+    調色盤貼合視圖範圍後，數值所經過的曲線。每種曲線下範圍內的調色盤循環次數相同，只改變色帶落在哪裡。各種根與對數會加寬遠離集合的色帶、收窄數值擁擠的集合附近的色帶；平方則相反。
 
-    這適用於正規化對應，也就是「正規化深層色彩」（或匯出時的 --normalize）所開啟的功能。範圍嚴重偏斜時，無論是否勾選此項，都會採用對數對應。
-# The same checkbox's tooltip while it is grayed out (normalization is off).
-panel-log-scale-off-hover =
-    需要正規化：這個選項決定調色盤「如何」對應到量測到的逃逸範圍，因此在「正規化深層色彩」關閉時（且沒有使用 --normalize 匯出），就沒有可以讓它改變的對應，也不會改變任何一個像素。
-
-    請開啟「正規化深層色彩」來使用它。
+    範圍嚴重偏斜時，即使選線性也會採用對數。
+panel-scale-off-hover = 調色盤貼合視圖範圍後生效：請開啟「正規化深層色彩」或「一律貼合範圍」。
+# The curves the Scale list offers.
+transfer-linear = 線性
+transfer-sqrt = 平方根
+transfer-cbrt = 立方根
+transfer-root4 = 四次方根
+transfer-log = 對數
+transfer-loglog = 雙對數
+transfer-square = 平方
+# How the palette continues past its end (C2): the row's label, its tooltip, and its choices.
+panel-wrap = 延續方式
+panel-wrap-hover = 調色盤到盡頭後如何延續。重複從頭再來；鏡像反向折回，因此兩端顏色不同的調色盤也不會出現接縫；箝制保持最後一種顏色，因此每種顏色在範圍內只用一次。
+wrap-repeat = 重複
+wrap-mirror = 鏡像
+wrap-clamp = 箝制
+# Flat bands (C2): the slider's label, its tooltip, and what it shows at 0.
+panel-steps = 分級
+panel-steps-hover = 把調色盤的每一輪切成這麼多條平坦色帶，每條取其起點的顏色，形成階梯狀效果。關閉即為平滑。
+panel-steps-off = 關閉
 # The dual view's Julia pane on the set's palette map, one iteration on (coloring plan C11): the
 # checkbox, its tooltip, and its tooltip while grayed (another method than the escape count).
 panel-julia-linked = 將 Julia 色彩與集合連動
