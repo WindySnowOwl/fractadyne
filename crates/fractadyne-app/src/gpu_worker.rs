@@ -134,6 +134,9 @@ impl Worker {
             std::thread::Builder::new()
                 .name("fd-gpu-worker".into())
                 .spawn(move || {
+                    // Counted in the memory timeline while this thread runs: the guard lets the
+                    // device go when the thread ends, a panic included.
+                    let _counted = crate::diag::mem_timeline::DeviceGuard::register("worker", &device);
                     // This card's compiles are its own driver's (`Headless::compile_tag`).
                     fractadyne_gpu::pipeline_compile::set_adapter(compile_tag);
                     let mut answered = 0u32;

@@ -7419,6 +7419,9 @@ impl FractadyneApp {
         let fusion = fractadyne_gpu::detect_product_fusion(&render_state.device, &render_state.queue);
         diag::breadcrumb("start-up: building the renderer's pipelines".into());
         install_renderer(render_state);
+        // The memory timeline: this device counted for the whole run, a reading a minute.
+        diag::mem_timeline::register_device("main", &render_state.device);
+        diag::mem_timeline::start();
         log_product_fusion("main", &fusion);
         log_iter_split("main", &render_state.device);
         // A driver may have put its own crash handler in place of ours as it loaded.

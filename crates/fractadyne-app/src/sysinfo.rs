@@ -65,8 +65,15 @@ pub(crate) fn now_utc_string() -> String {
 }
 
 /// Current + peak process working-set bytes (for the benchmark RAM metric).
-#[cfg(windows)]
 pub(crate) fn process_memory() -> (u64, u64) {
+    let (ws, peak, _, _) = process_memory_detail();
+    (ws, peak)
+}
+
+/// The working set and its peak, and committed (private) memory and its peak: (ws, peak ws,
+/// commit, peak commit). Commit is 0 where the platform does not say (off Windows).
+#[cfg(windows)]
+pub(crate) fn process_memory_detail() -> (u64, u64, u64, u64) {
     #[repr(C)]
     struct Pmc {
         cb: u32,
@@ -91,17 +98,17 @@ pub(crate) fn process_memory() -> (u64, u64) {
         let mut pmc: Pmc = std::mem::zeroed();
         pmc.cb = std::mem::size_of::<Pmc>() as u32;
         if K32GetProcessMemoryInfo(GetCurrentProcess(), &mut pmc, pmc.cb) != 0 {
-            (pmc.working_set as u64, pmc.peak_working_set as u64)
+            (pmc.working_set as u64, pmc.peak_working_set as u64, pmc.pagefile as u64, pmc.peak_pagefile as u64)
         } else {
-            (0, 0)
+            (0, 0, 0, 0)
         }
     }
 }
 #[cfg(target_os = "linux")]
-pub(crate) fn process_memory() -> (u64, u64) {
+pub(crate) fn process_memory_detail() -> (u64, u64, u64, u64) {
     // `/proc/self/status`: `VmRSS` (resident now) and `VmHWM` (peak resident), both in kB.
     let Ok(st) = std::fs::read_to_string("/proc/self/status") else {
-        return (0, 0);
+        return (0, 0, 0, 0);
     };
     let grab = |key: &str| -> u64 {
         st.lines()
@@ -111,11 +118,11 @@ pub(crate) fn process_memory() -> (u64, u64) {
             .map(|kb| kb * 1024)
             .unwrap_or(0)
     };
-    (grab("VmRSS:"), grab("VmHWM:"))
+    (grab("VmRSS:"), grab("VmHWM:"), 0, 0)
 }
 #[cfg(not(any(windows, target_os = "linux")))]
-pub(crate) fn process_memory() -> (u64, u64) {
-    (0, 0)
+pub(crate) fn process_memory_detail() -> (u64, u64, u64, u64) {
+    (0, 0, 0, 0)
 }
 
 /// Bytes free on the volume holding `path` (for the caller's user quota), or `None` when it can't

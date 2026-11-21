@@ -116,11 +116,16 @@ pub(crate) fn memory_summary() -> String {
     memory_line()
 }
 
-/// Process working set / peak, formatted for a report line. `(0, 0)` off Windows → "unavailable".
+/// Process working set / peak, and committed memory where the platform says (what runs a machine
+/// out: 2026-11-21's report read "rss 2 MB" at a 31 GB peak, Windows having trimmed the working set
+/// of a process that still held its memory), formatted for a report line.
 fn memory_line() -> String {
-    match crate::sysinfo::process_memory() {
-        (0, 0) => "unavailable".to_string(),
-        (ws, peak) => format!("rss {} MB, peak {} MB", ws >> 20, peak >> 20),
+    match crate::sysinfo::process_memory_detail() {
+        (0, 0, _, _) => "unavailable".to_string(),
+        (ws, peak, 0, _) => format!("rss {} MB, peak {} MB", ws >> 20, peak >> 20),
+        (ws, peak, commit, peak_commit) => {
+            format!("rss {} MB, peak {} MB, commit {} MB (peak {} MB)", ws >> 20, peak >> 20, commit >> 20, peak_commit >> 20)
+        }
     }
 }
 
@@ -609,6 +614,11 @@ mod native_crash_tests;
 /// What a fatal error tells the person beyond the error itself: what happened, when, on which
 /// graphics card, and what to check or try.
 pub(crate) mod advice;
+/// The memory timeline: a reading a minute, logged and kept for the crash report (2026-11-21).
+pub(crate) mod mem_timeline;
+#[cfg(test)]
+#[path = "../tests/unit/diag/mem_timeline_tests.rs"]
+mod mem_timeline_tests;
 
 #[cfg(test)]
 #[path = "../tests/unit/diag/advice_tests.rs"]
@@ -1238,7 +1248,7 @@ fn compose_crash_report(msg: &str, loc: &str, frames: &str) -> String {
          thread  : {thread}\n\
          worker  : {}\n\
          compiling: {}\n\
-         {}{frames}{}\n\
+         {}{}{frames}{}\n\
          {backtrace}\n",
         crate::sysinfo::version_string(),
         frame_record::session_id(),
@@ -1264,6 +1274,8 @@ fn compose_crash_report(msg: &str, loc: &str, frames: &str) -> String {
             || "budget  : no frame-budget decision was recorded before the crash\n".to_string(),
             |h| format!("budget  : the last frame-budget decisions (oldest first)\n{h}\n"),
         ),
+        // How the memory went, a reading a minute: whether it grew, how fast, and in what.
+        mem_timeline::report_section(&mem_timeline::history()),
         gpu_hint,
     )
 }
