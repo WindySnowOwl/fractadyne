@@ -14,6 +14,7 @@ fn every_harness_and_offline_job_is_a_task() {
     // resurrect itself on a lost device.
     for flag in [
         "--selftest", "--livetest", "--uitest", "--juliadive", "--torture", "--render",
+        "--render-iter", "--render-lanes",
         "--render-tour", "--bench-matrix", "--gputest", "--resizetest", "--motiontest",
         "--zoomtest", "--shot", "--soak", "--recordtest",
     ] {
