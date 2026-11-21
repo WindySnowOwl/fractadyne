@@ -1860,6 +1860,14 @@ pub(crate) fn show_fatal_dialog(failure: &advice::Failure, reason: &str, report:
     if !CRASH_DIALOG_ON.load(Ordering::Relaxed) {
         return;
     }
+    // ⭐⭐**FROM A LAUNCH OF ITS OWN, so this one can end** (2026-11-21). Shown here, the dialog held
+    // the crashed process, and everything it had, until someone answered: the user's session of
+    // 2026-11-20 ran out of memory at a 33 GB peak and then sat on all of it behind the dialog until
+    // the machine was reset. A second launch of the program shows it and this process goes on to
+    // exit. Only if that launch cannot be made is it shown here, as before.
+    if show_in_helper(&title, &body, folder.as_deref()) {
+        return;
+    }
     let answer = rfd::MessageDialog::new()
         .set_level(rfd::MessageLevel::Error)
         .set_title(title)
@@ -1871,6 +1879,60 @@ pub(crate) fn show_fatal_dialog(failure: &advice::Failure, reason: &str, report:
             let _ = crate::ui::open_in_file_manager(&f);
         }
     }
+}
+
+/// The environment of a launch that shows a crash dialog and nothing else ([`crash_dialog_helper`]).
+const HELPER_TITLE_ENV: &str = "FRACTADYNE_CRASH_DIALOG_TITLE";
+const HELPER_BODY_ENV: &str = "FRACTADYNE_CRASH_DIALOG_BODY";
+const HELPER_FOLDER_ENV: &str = "FRACTADYNE_CRASH_DIALOG_FOLDER";
+
+/// Launch this program to show a crash dialog (see [`show_fatal_dialog`]): `true` when it started.
+fn show_in_helper(title: &str, body: &str, folder: Option<&Path>) -> bool {
+    let Ok(exe) = std::env::current_exe() else { return false };
+    let mut cmd = std::process::Command::new(exe);
+    cmd.env(HELPER_TITLE_ENV, title)
+        .env(HELPER_BODY_ENV, body)
+        .stdin(std::process::Stdio::null())
+        .stdout(std::process::Stdio::null())
+        .stderr(std::process::Stdio::null());
+    match folder {
+        Some(f) => {
+            cmd.env(HELPER_FOLDER_ENV, f);
+        }
+        None => {
+            cmd.env_remove(HELPER_FOLDER_ENV);
+        }
+    }
+    cmd.spawn().is_ok()
+}
+
+/// A launch [`show_in_helper`] made: show the dialog it was handed, open the report's folder on Yes,
+/// and say to end (`Some(exit code)`). `None` for every other launch. `main` asks first thing, before
+/// the log, the session marker or the window exist, so the helper touches nothing of any session.
+pub(crate) fn crash_dialog_helper() -> Option<i32> {
+    let body = std::env::var(HELPER_BODY_ENV).ok()?;
+    let title = std::env::var(HELPER_TITLE_ENV).unwrap_or_else(|_| "Fractadyne".into());
+    let folder = std::env::var_os(HELPER_FOLDER_ENV).map(PathBuf::from);
+    // `FRACTADYNE_CRASH_DIALOG_TO=FILE` (with `FRACTADYNE_PANIC_AT_START`): write what the dialog
+    // would say to FILE instead of showing it, so the hand-over can be tested without a dialog on
+    // anyone's screen (an ownerless dialog opens on the primary monitor).
+    if let Some(to) = std::env::var_os("FRACTADYNE_CRASH_DIALOG_TO") {
+        let shown = folder.as_ref().map(|f| f.display().to_string()).unwrap_or_default();
+        let _ = std::fs::write(PathBuf::from(to), format!("{title}\n\n{body}\n\nfolder: {shown}\n"));
+        return Some(0);
+    }
+    let answer = rfd::MessageDialog::new()
+        .set_level(rfd::MessageLevel::Error)
+        .set_title(title)
+        .set_description(body)
+        .set_buttons(rfd::MessageButtons::YesNo)
+        .show();
+    if answer == rfd::MessageDialogResult::Yes {
+        if let Some(f) = folder {
+            let _ = crate::ui::open_in_file_manager(&f);
+        }
+    }
+    Some(0)
 }
 
 // ---- native modal dialogs ---------------------------------------------------------------------

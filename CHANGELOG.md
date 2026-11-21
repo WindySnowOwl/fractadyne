@@ -76,6 +76,27 @@ detail is in the git history.
   color) did not start it over, so the view kept the old inside until something else changed, and
   the overview map kept it too. At a minibrot at 9.3e78× whose inside was switched to the Ice
   palette, the inside stayed orange; it now turns blue, as it does when the view opens with Ice.
+- **A still view no longer keeps the graphics card busy.** With the orbits shown and animating, the
+  window redraws about 90 times a second, and every redraw colored the whole view again from all
+  of its supersamples, so a finished view kept the card working as hard as a render: about 80% of an
+  RTX 3080 for a dual view at 4x on a 5048-pixel-wide window, for as long as the window was open.
+  A view whose picture has not changed is now colored once and only redrawn after that; the same
+  view uses about 8%.
+- **A stall elsewhere on the machine no longer redraws finished views.** The guard that keeps one
+  overlong pass from losing the graphics card cut every view's work allowance after a single frame
+  of nearly a second, even when the app had sent the card nothing for minutes. The cut lowered the
+  supersampling of the finished views, so they were drawn again, coarse, then again at each step
+  back up, allocating new buffers each time. It now judges only a view whose own work could have
+  made the frame slow.
+- **Supersampling held to what the graphics card's memory can take.** The live views' supersampled
+  buffers now take at most a third of the card's memory, shared by the two panes of the dual view.
+  A dual view at 4x on a 5048-pixel-wide window held 4.5 GB of them on a 10 GB card, as much again
+  while it composed a new picture, and with other programs open the machine ran out of memory; it
+  is now drawn at 3x (2.7 GB). An ordinary window keeps its 4x, and the log says when the limit
+  applies.
+- **A crash gives back its memory at once.** The crash dialog now comes from a second, small launch
+  of the program, so the one that crashed ends at once instead of holding all of its memory and
+  graphics memory until the dialog is answered.
 
 ## 0.3.0 (2026-11-19)
 

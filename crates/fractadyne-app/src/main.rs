@@ -147,6 +147,11 @@ struct MpfrRecovery {
 }
 
 fn main() -> eframe::Result<()> {
+    // A launch that only shows the crash dialog of a session that has ended (`diag::show_fatal_dialog`
+    // hands it over so the crashed process can exit and give its memory back).
+    if let Some(code) = diag::crash_dialog_helper() {
+        std::process::exit(code);
+    }
     env_logger::init();
     // Expand `@response-file` args and `--args-file FILE` so the whole command line can live in a
     // text file (see `expand_arg_files`). Do it once, up front, so every consumer sees the result.
@@ -1522,6 +1527,9 @@ struct Perf {
     /// other view's busy check in `next_settle_tile` — would starve the second panel's grid if it
     /// were stamped every frame.)
     fe_dispatch_frame: [u64; 2],
+    /// The supersampling the card's memory last held each view to (0: never), so the log says so
+    /// once per value rather than at every settle (`render::live_ss_cap`).
+    mem_ss_cap: [u32; 2],
     /// Sticky, global: measurement never arrived, so frames are priced by WALL CLOCK instead.
     /// Deliberately tripped by observation rather than by the `TIMESTAMP_QUERY` capability bit —
     /// the capability is only one of the ways a reading fails to show up, and the other ways are
@@ -2711,6 +2719,7 @@ impl Default for Perf {
             ts_reading_frame: [0, 0],
             last_dpi: crate::render::DpiState::default(),
             fe_dispatch_frame: [0, 0],
+            mem_ss_cap: [0, 0],
             wall_fallback: false,
             full_inflight: [0, 0],
             full_reg_pending: [0, 0],
@@ -19347,8 +19356,15 @@ impl eframe::App for FractadyneApp {
             // for every live view; but each view's warning is judged against ITS OWN readings and
             // reports ITS OWN state — one panel's healthy reading must not silence the other's.
             let views = if self.dual { 2 } else { 1 };
+            // …and only a view whose OWN work could be what was slow (`render::own_work_in_flight`):
+            // a finished view that has sent the GPU nothing is not judged by a stall it had no part
+            // in, so neither is its budget cut. A slow frame without its work neither counts nor
+            // resets its run.
+            let own: [bool; 2] = std::array::from_fn(|v| {
+                render::own_work_in_flight(self.perf.frame_idx, self.perf.fe_dispatch_frame[v], self.perf.view_outstanding(v))
+            });
             if busy && dt_ms > target {
-                for v in 0..views {
+                for v in (0..views).filter(|&v| own[v]) {
                     self.perf.blind_slow_frames[v] = self.perf.blind_slow_frames[v].saturating_add(1);
                 }
             } else if dt_ms < target * 0.5 {
@@ -19384,7 +19400,7 @@ impl eframe::App for FractadyneApp {
                     self.perf.blind_warned[v],
                 ) && !render::budget_blind_lethal(
                     dt_ms,
-                    busy,
+                    busy && own[v],
                     self.perf.blind_slow_readings[v],
                     self.perf.blind_warned[v],
                 ) {

@@ -7629,6 +7629,10 @@ impl FractadyneApp {
             accum_present: self.perf.accum_cmd[vsub].present,
             accum_commit: self.perf.accum_cmd[vsub].commit,
             accum_reset: self.perf.accum_cmd[vsub].reset,
+            // A still frame's colored picture is kept and blitted rather than colored again
+            // (`fractadyne_gpu::ViewResources::color_keep`): the orbit overlay's animation repaints
+            // a finished view ~90 times a second, and each repaint recolored every supersample.
+            color_keep: crate::tunables::instrument("FRACTADYNE_NO_COLOR_KEEP") == 0,
             accum_external: self.perf.accum_ext_attach[vsub].take(),
             accum_folds: Some(self.perf.accum_gpu_folds[vsub].clone()),
             // The view the GPU stamps this frame's pixels with, and where it reports back which
@@ -9302,13 +9306,29 @@ impl FractadyneApp {
             self.perf.aa_measured[vs] = None;
             self.perf.aa_probe[vs] = None;
         }
+        // …and what the card's memory holds (`live_ss_cap`): the G-buffer is `spx·ss²` texels of
+        // 32 bytes, which nothing else bounds short of the largest texture side.
+        let max_ss_mem = live_ss_cap(self.sysinfo.vram_mb, spx, if self.dual { 2 } else { 1 });
+        if aa_target > max_ss_mem && self.perf.mem_ss_cap[vs] != max_ss_mem {
+            self.perf.mem_ss_cap[vs] = max_ss_mem;
+            crate::diag::log_line(
+                "render",
+                &format!(
+                    "view {vs}: supersampling held to {max_ss_mem}x (asked {aa_target}x) so the live view's \
+                     G-buffer ({}x{} px) stays in its share of the card's memory ({})",
+                    resolution[0],
+                    resolution[1],
+                    if self.sysinfo.vram_mb > 0 { format!("{} MB", self.sysinfo.vram_mb) } else { "unknown, taken as 4 GB".into() },
+                ),
+            );
+        }
         // `aa_target` is 1 while moving and ramps up over settled frames (progressive settle); clamp
         // to what the per-frame budget affords (`max_ss`) and what the watchdog / UI thread allow.
-        let ss = aa_target.min(max_ss).min(max_ss_tdr).max(1);
+        let ss = aa_target.min(max_ss).min(max_ss_tdr).min(max_ss_mem).max(1);
         // A supersampling run that holds samples keeps sample 0's ss, or no later sample could fold
-        // (`accum_run_ss`).
+        // (`accum_run_ss`), within the same bounds.
         let run_ss = (self.perf.accum_active[vs] && self.perf.accum_count[vs] > 0).then_some(self.perf.accum_ss[vs]);
-        let ss = crate::accum_run_ss(ss, run_ss, max_ss_tdr);
+        let ss = crate::accum_run_ss(ss, run_ss, max_ss_tdr.min(max_ss_mem));
         // PIN the frame geometry to an existing grid's. Resolution and ss above are derived from the
         // LIVE budget, which jitters a few percent per measurement — recomputing them each frame
         // restarts the grid every few tiles (observed: every ~4) and it never finishes; worse, after
