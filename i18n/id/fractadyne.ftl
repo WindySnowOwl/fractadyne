@@ -2796,17 +2796,31 @@ panel-fit-range-hover =
     Petakan ulang palet ke rentang lolos terukur dari tampilan bahkan ketika tampilan tidak mengalami aliasing — kotak centang di atas hanya memetakan ulang ketika medan yang padat akan tampak seperti bintik-bintik.
 
     Gunakan ini jika Anda ingin palet mencakup apa yang ada di layar, bukan untuk mengatasi derau. Fitur ini tetap memerlukan pengukuran, jadi tidak melakukan apa pun selama sesaat sebelum tampilan stabil, dan sama sekali tidak berpengaruh pada tampilan tanpa piksel yang lolos.
-# A checkbox indented under "Always fit range" (also in the Color menu).
-panel-log-scale = Skala warna log
-panel-log-scale-hover =
-    Sebarkan palet berdasarkan LOGARITMA nilai lolos, bukan secara linear. Jumlah iterasi lolos menumpuk ke arah ujung atas pada kedalaman, sehingga pemetaan linear menghabiskan sebagian besar palet pada lapisan tipis di dekat batas dan meratakan semua yang lain.
+# The palette map's curve (coloring plan C2): a list indented under "Always fit range" (in the Color menu, a submenu), its tooltip, and its tooltip while grayed (no normalization). Log is what the former "Log color scale" checkbox did.
+panel-scale = Skala
+panel-scale-hover =
+    Kurva yang dilalui nilai setelah palet disesuaikan dengan rentang tampilan. Rentang memuat jumlah putaran palet yang sama pada setiap kurva; hanya letak pitanya yang berubah. Akar dan logaritma melebarkan pita jauh dari himpunan dan menyempitkannya di dekatnya, tempat nilai berdesakan; Kuadrat sebaliknya.
 
-    Berlaku untuk pemetaan yang dinormalisasi — yang diaktifkan oleh “Normalkan warna dalam” (atau --normalize pada ekspor). Rentang yang sangat miring tetap memakai pemetaan log, dicentang atau tidak.
-# The same checkbox's tooltip while it is grayed out (normalization is off).
-panel-log-scale-off-hover =
-    Memerlukan normalisasi: ini memilih BAGAIMANA palet dipetakan ke rentang lolos terukur, jadi jika “Normalkan warna dalam” mati (dan tidak ada ekspor --normalize), tidak ada pemetaan yang dapat diubahnya dan tidak satu piksel pun akan berubah.
-
-    Aktifkan “Normalkan warna dalam” untuk menggunakannya.
+    Rentang yang sangat miring tetap memakai logaritma walau dengan Linear.
+panel-scale-off-hover = Berlaku setelah palet disesuaikan dengan rentang tampilan: nyalakan "Normalkan warna dalam" atau "Selalu sesuaikan rentang".
+# The curves the Scale list offers.
+transfer-linear = Linear
+transfer-sqrt = Akar kuadrat
+transfer-cbrt = Akar pangkat tiga
+transfer-root4 = Akar pangkat empat
+transfer-log = Logaritma
+transfer-loglog = Log-log
+transfer-square = Kuadrat
+# How the palette continues past its end (C2): the row's label, its tooltip, and its choices.
+panel-wrap = Lanjutan
+panel-wrap-hover = Cara palet berlanjut setelah ujungnya. Ulangi memulainya lagi; Cermin menjalankannya balik, sehingga palet yang kedua ujungnya berbeda tidak menampakkan sambungan; Tahan mempertahankan warna terakhir, sehingga setiap warna dipakai sekali di sepanjang rentang.
+wrap-repeat = Ulangi
+wrap-mirror = Cermin
+wrap-clamp = Tahan
+# Flat bands (C2): the slider's label, its tooltip, and what it shows at 0.
+panel-steps = Langkah
+panel-steps-hover = Potong setiap putaran palet menjadi sebanyak ini pita datar, masing-masing berwarna awalnya, untuk tampilan berundak. Mati berarti halus.
+panel-steps-off = Mati
 # The dual view's Julia pane on the set's palette map, one iteration on (coloring plan C11): the
 # checkbox, its tooltip, and its tooltip while grayed (another method than the escape count).
 panel-julia-linked = Tautkan warna Julia ke himpunan

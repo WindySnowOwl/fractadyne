@@ -98,6 +98,18 @@ pub struct ColoringSpec {
     /// `serde(default)` keeps older session files loadable.
     #[serde(default)]
     pub log_palette: bool,
+    /// The curve the palette map takes a value through wherever the palette is normalized (coloring
+    /// plan C2, `fractadyne_core::coloring::Transfer` by key: linear, sqrt, cbrt, root4, log,
+    /// loglog, square). Log is written as older builds write it, `log_palette` on with `transfer`
+    /// linear, so a log view reads whole in either; `transfer = "log"` reads as log too.
+    #[serde(default = "default_transfer")]
+    pub transfer: String,
+    /// How the palette continues past its end (`Wrap` by key: repeat, mirror, clamp).
+    #[serde(default = "default_wrap")]
+    pub wrap: String,
+    /// The flat bands a palette cycle is cut into; 0 for none.
+    #[serde(default)]
+    pub steps: u32,
     /// Live deep-palette auto-normalization (default on). `serde(default)` keeps older files loadable.
     #[serde(default = "default_true")]
     pub normalize_live: bool,
@@ -222,6 +234,14 @@ pub struct ColoringSpec {
     /// The hook's parameters `p1`..`p4`; empty for the hook's own defaults.
     #[serde(default)]
     pub coloring_hook_params: Vec<f32>,
+}
+
+fn default_transfer() -> String {
+    "linear".to_string()
+}
+
+fn default_wrap() -> String {
+    "repeat".to_string()
 }
 
 fn default_palette_saturation() -> f32 {
@@ -739,6 +759,9 @@ impl Default for ColoringSpec {
             iter_div: default_iter_div(),
             offset: 0.1,
             log_palette: false,
+            transfer: default_transfer(),
+            wrap: default_wrap(),
+            steps: 0,
             normalize_live: true,
             normalize_fit: false,
             light: false,

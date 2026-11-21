@@ -449,6 +449,11 @@ pub(crate) struct ColorUniforms {
     /// A coloring hook's parameters `p1`..`p4` ([`color_hook`], coloring plan B10), a new 16-byte
     /// row; 0 without a hook, whose module is the only one that reads them. `ColorU.hook_p`.
     pub(crate) hook_p: [f32; 4],
+    /// How the palette continues past its end, `fractadyne_core::coloring::Wrap::gpu_id`, and the
+    /// flat bands a palette cycle is cut into (0: none), coloring plan C2. `ColorU.wrap`, `.steps`.
+    pub(crate) wrap: u32,
+    pub(crate) steps: f32,
+    pub(crate) _pad_wrap: [u32; 2],
 }
 
 /// [`ColorUniforms::tap_stride`] for a palette-browser thumbnail colored from a texture built at
@@ -3512,6 +3517,9 @@ pub struct MandelbrotParams {
     pub color_hook: Option<Arc<color_hook::ColorHook>>,
     /// The hook's parameters `p1`..`p4` (`ColorU.hook_p`); unread without a hook.
     pub hook_params: [f32; 4],
+    /// The palette's Wrap (`Wrap::gpu_id`) and Steps (0: none), coloring plan C2.
+    pub wrap: u32,
+    pub steps: f32,
     /// A Life frame (design/automata.md): `Some` replaces the iterate pass with the Life universe's
     /// step and display passes, which write the same iteration texture the color pass reads.
     pub life: Option<Arc<life::LifeFrame>>,
@@ -3815,6 +3823,8 @@ impl Default for MandelbrotParams {
             custom: None,
             color_hook: None,
             hook_params: [0.0; 4],
+            wrap: 0,
+            steps: 0.0,
             life: None,
             lsystem: None,
             julia: 0,
@@ -4294,6 +4304,9 @@ impl CallbackTrait for MandelbrotParams {
             tap_stride: 0,
             _pad_aa: 0.0,
             hook_p: self.hook_params,
+            wrap: self.wrap,
+            steps: self.steps,
+            _pad_wrap: [0; 2],
         };
         queue.write_buffer(&view.color_uniform, 0, bytemuck::bytes_of(&cu));
         view.last_cu = Some(cu);

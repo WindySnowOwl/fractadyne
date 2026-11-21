@@ -2796,17 +2796,31 @@ panel-fit-range-hover =
     뷰가 앨리어싱되지 않을 때에도 팔레트를 뷰에서 측정한 탈출 범위에 다시 매핑합니다 — 위의 확인란은 조밀한 필드가 반점처럼 보일 때만 다시 매핑합니다.
 
     노이즈를 고치기보다 화면에 있는 것에 팔레트를 펼치고 싶을 때 사용하십시오. 측정값이 필요하므로, 뷰가 안정되기 전 잠깐 동안은 아무 효과가 없고, 탈출한 픽셀이 없는 뷰에서는 전혀 효과가 없습니다.
-# A checkbox indented under "Always fit range" (also in the Color menu).
-panel-log-scale = 로그 색상 척도
-panel-log-scale-hover =
-    탈출 값을 선형이 아니라 로그로 팔레트에 펼칩니다. 깊은 곳에서는 탈출 횟수가 높은 쪽으로 몰리므로, 선형 매핑은 팔레트의 대부분을 경계 근처의 얇은 껍질에 쓰고 나머지를 모두 평평하게 만듭니다.
+# The palette map's curve (coloring plan C2): a list indented under "Always fit range" (in the Color menu, a submenu), its tooltip, and its tooltip while grayed (no normalization). Log is what the former "Log color scale" checkbox did.
+panel-scale = 척도
+panel-scale-hover =
+    팔레트를 화면의 범위에 맞췄을 때 값이 거치는 곡선입니다. 어떤 곡선이든 범위에 담기는 팔레트 순환 수는 같고, 띠가 놓이는 자리만 바뀝니다. 제곱근과 로그는 집합에서 먼 띠를 넓히고 값이 몰리는 집합 근처의 띠를 좁힙니다. 제곱은 그 반대입니다.
 
-    정규화된 매핑에 적용됩니다 — ‘깊은 색상 정규화’(또는 내보내기의 --normalize)가 켜는 매핑입니다. 범위가 심하게 치우치면 이 확인란과 상관없이 로그 매핑을 사용합니다.
-# The same checkbox's tooltip while it is grayed out (normalization is off).
-panel-log-scale-off-hover =
-    정규화가 필요합니다: 이 옵션은 측정된 탈출 범위에 팔레트를 어떻게 매핑할지 정하므로, ‘깊은 색상 정규화’가 꺼져 있으면(그리고 --normalize 내보내기가 아니면) 바꿀 매핑이 없어 픽셀 하나도 바뀌지 않습니다.
-
-    사용하려면 ‘깊은 색상 정규화’를 켜십시오.
+    크게 치우친 범위는 선형이어도 로그를 씁니다.
+panel-scale-off-hover = 팔레트를 화면의 범위에 맞추면 적용됩니다: '깊은 색상 정규화'나 '항상 범위에 맞춤'을 켜세요.
+# The curves the Scale list offers.
+transfer-linear = 선형
+transfer-sqrt = 제곱근
+transfer-cbrt = 세제곱근
+transfer-root4 = 네제곱근
+transfer-log = 로그
+transfer-loglog = 이중 로그
+transfer-square = 제곱
+# How the palette continues past its end (C2): the row's label, its tooltip, and its choices.
+panel-wrap = 끝 처리
+panel-wrap-hover = 팔레트가 끝난 뒤 어떻게 이어지는지입니다. 반복은 처음부터 다시 시작하고, 거울은 거꾸로 되돌아가므로 양 끝 색이 다른 팔레트도 이음매가 보이지 않습니다. 고정은 마지막 색을 유지하므로 각 색이 범위 전체에서 한 번만 쓰입니다.
+wrap-repeat = 반복
+wrap-mirror = 거울
+wrap-clamp = 고정
+# Flat bands (C2): the slider's label, its tooltip, and what it shows at 0.
+panel-steps = 단계
+panel-steps-hover = 팔레트 한 바퀴를 이 수만큼의 평평한 띠로 나누고, 각 띠를 시작 지점의 색으로 칠해 계단 같은 모습을 만듭니다. 끄면 부드럽습니다.
+panel-steps-off = 끄기
 # The dual view's Julia pane on the set's palette map, one iteration on (coloring plan C11): the
 # checkbox, its tooltip, and its tooltip while grayed (another method than the escape count).
 panel-julia-linked = 줄리아 색을 집합에 연결

@@ -2876,17 +2876,31 @@ panel-fit-range-hover =
     Rimappare la tavolozza sull’intervallo di fuga misurato della vista anche quando la vista non ha aliasing — la casella qui sopra rimappa solo quando un campo denso apparirebbe altrimenti come puntinatura.
 
     Da usare quando si vuole che la tavolozza copra ciò che è sullo schermo piuttosto che correggere il rumore. Richiede comunque una misura, quindi non fa nulla per un attimo o due prima che la vista si assesti, e niente del tutto su una vista senza pixel fuggiti.
-# A checkbox indented under "Always fit range" (also in the Color menu).
-panel-log-scale = Scala colori logaritmica
-panel-log-scale-hover =
-    Distribuire la tavolozza secondo il LOGARITMO del valore di fuga anziché linearmente. In profondità i conteggi di fuga si affollano verso l’estremo alto, quindi una mappatura lineare spende la maggior parte della tavolozza su un sottile guscio vicino al bordo e appiattisce tutto il resto.
+# The palette map's curve (coloring plan C2): a list indented under "Always fit range" (in the Color menu, a submenu), its tooltip, and its tooltip while grayed (no normalization). Log is what the former "Log color scale" checkbox did.
+panel-scale = Scala
+panel-scale-hover =
+    La curva attraverso cui passano i valori una volta che la tavolozza è adattata all’intervallo della vista. L’intervallo contiene lo stesso numero di passaggi della tavolozza con ogni curva; cambia solo dove cadono le bande. Le radici e i logaritmi allargano le bande lontano dall’insieme e le stringono vicino, dove i valori si affollano; Quadrato fa il contrario.
 
-    Si applica alla mappatura normalizzata — quella che «Normalizza colori profondi» (o --normalize in un’esportazione) attiva. Un intervallo molto asimmetrico usa comunque la mappatura logaritmica, che questa casella sia spuntata o no.
-# The same checkbox's tooltip while it is grayed out (normalization is off).
-panel-log-scale-off-hover =
-    Richiede la normalizzazione: questa opzione sceglie COME la tavolozza viene mappata sull’intervallo di fuga misurato, quindi con «Normalizza colori profondi» disattivato (e nessuna esportazione --normalize) non c’è alcuna mappatura da cambiare e non modificherebbe un solo pixel.
-
-    Attiva «Normalizza colori profondi» per usarla.
+    Un intervallo molto sbilanciato prende il logaritmo anche con Lineare.
+panel-scale-off-hover = Si applica una volta che la tavolozza è adattata all’intervallo della vista: attiva «Normalizza colori profondi» o «Adatta sempre l’intervallo».
+# The curves the Scale list offers.
+transfer-linear = Lineare
+transfer-sqrt = Radice quadrata
+transfer-cbrt = Radice cubica
+transfer-root4 = Radice quarta
+transfer-log = Logaritmica
+transfer-loglog = Doppio logaritmo
+transfer-square = Quadrato
+# How the palette continues past its end (C2): the row's label, its tooltip, and its choices.
+panel-wrap = Continuazione
+panel-wrap-hover = Come prosegue la tavolozza dopo la fine. Ripeti la ricomincia; Specchio la ripercorre al contrario, così una tavolozza con estremi diversi non mostra cuciture; Blocca tiene l’ultimo colore, così ogni colore è usato una volta sola nell’intervallo.
+wrap-repeat = Ripeti
+wrap-mirror = Specchio
+wrap-clamp = Blocca
+# Flat bands (C2): the slider's label, its tooltip, and what it shows at 0.
+panel-steps = Gradini
+panel-steps-hover = Taglia ogni passaggio della tavolozza in tante bande piatte, ognuna del colore del suo inizio, per un aspetto a gradini. Disattivato è continuo.
+panel-steps-off = Disattivato
 # The dual view's Julia pane on the set's palette map, one iteration on (coloring plan C11): the
 # checkbox, its tooltip, and its tooltip while grayed (another method than the escape count).
 panel-julia-linked = Collega i colori di Julia all’insieme

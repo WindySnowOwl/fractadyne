@@ -2876,17 +2876,31 @@ panel-fit-range-hover =
     Remapear a paleta para a faixa de escape medida na vista mesmo quando a vista não tem aliasing — a caixa de seleção acima só remapeia quando um campo denso pareceria granulação.
 
     Use isto quando você quiser que a paleta abranja o que está na tela, e não para corrigir ruído. Ainda é preciso uma medição, então isto não faz nada durante o instante ou dois antes de a vista se estabilizar, e nada mesmo numa vista sem pixels que escaparam.
-# A checkbox indented under "Always fit range" (also in the Color menu).
-panel-log-scale = Escala de cor logarítmica
-panel-log-scale-hover =
-    Distribuir a paleta pelo LOGARITMO do valor de escape em vez de linearmente. As contagens de escape se acumulam no extremo alto em profundidade, então um mapeamento linear gasta a maior parte da paleta numa casca fina perto da borda e achata todo o resto.
+# The palette map's curve (coloring plan C2): a list indented under "Always fit range" (in the Color menu, a submenu), its tooltip, and its tooltip while grayed (no normalization). Log is what the former "Log color scale" checkbox did.
+panel-scale = Escala
+panel-scale-hover =
+    A curva pela qual os valores passam depois que a paleta é ajustada à faixa da vista. A faixa contém o mesmo número de voltas da paleta em cada curva; só muda onde as faixas de cor caem. As raízes e os logaritmos alargam as faixas longe do conjunto e as estreitam perto dele, onde os valores se amontoam; Quadrado faz o contrário.
 
-    Aplica-se ao mapeamento normalizado — que é o que “Normalizar cores profundas” (ou --normalize numa exportação) liga. Uma faixa muito assimétrica recebe o mapeamento logarítmico de qualquer forma, esteja isto marcado ou não.
-# The same checkbox's tooltip while it is grayed out (normalization is off).
-panel-log-scale-off-hover =
-    Requer normalização: isto escolhe COMO a paleta é mapeada para a faixa de escape medida, então com “Normalizar cores profundas” desligado (e sem exportação com --normalize) não há mapeamento para mudar, e isto não alteraria um único pixel.
-
-    Ligue “Normalizar cores profundas” para usá-lo.
+    Uma faixa muito assimétrica usa o logaritmo mesmo em Linear.
+panel-scale-off-hover = Vale depois que a paleta é ajustada à faixa da vista: ative "Normalizar cores profundas" ou "Sempre ajustar a faixa".
+# The curves the Scale list offers.
+transfer-linear = Linear
+transfer-sqrt = Raiz quadrada
+transfer-cbrt = Raiz cúbica
+transfer-root4 = Raiz quarta
+transfer-log = Logarítmica
+transfer-loglog = Log-log
+transfer-square = Quadrado
+# How the palette continues past its end (C2): the row's label, its tooltip, and its choices.
+panel-wrap = Continuação
+panel-wrap-hover = Como a paleta continua depois do fim. Repetir a recomeça; Espelhar a percorre de volta, de modo que uma paleta com pontas diferentes não mostra emenda; Limitar mantém a última cor, de modo que cada cor é usada uma só vez na faixa.
+wrap-repeat = Repetir
+wrap-mirror = Espelhar
+wrap-clamp = Limitar
+# Flat bands (C2): the slider's label, its tooltip, and what it shows at 0.
+panel-steps = Degraus
+panel-steps-hover = Corta cada volta da paleta em tantas faixas lisas, cada uma da cor do seu início, para um visual em degraus. Desligado é contínuo.
+panel-steps-off = Desligado
 # The dual view's Julia pane on the set's palette map, one iteration on (coloring plan C11): the
 # checkbox, its tooltip, and its tooltip while grayed (another method than the escape count).
 panel-julia-linked = Vincular as cores de Julia ao conjunto

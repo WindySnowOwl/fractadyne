@@ -626,6 +626,159 @@ pub fn wgsl_ids() -> String {
     s
 }
 
+/// How a palette map shapes a value before the palette (coloring plan C2): the value's height above
+/// the map's floor `lo`, d = max(v − lo, 0), becomes T(d), which the map's rate and Offset then place
+/// on the palette. Every T is 0 at 0, so the floor keeps its color whatever the curve. A normalized
+/// map (Normalize deep colors, Always fit range) takes its rate from T over the window's span, so
+/// the window holds the same number of palette sweeps under every curve and only where the bands
+/// fall changes: the roots and the logs widen the bands far from the set and narrow them near it,
+/// where the counts crowd; Square does the opposite. Linear keeps v itself (`v·rate + offset`), as
+/// the map always has.
+///
+/// ⚠The GPU numbers are fixed, not the table's order: 0 and 1 (linear, log) are what every frame
+/// and video map was drawn with before the others existed (`ColorU.norm_mode`).
+#[derive(Clone, Copy, PartialEq, Eq, Debug, Default, Hash)]
+pub enum Transfer {
+    #[default]
+    Linear,
+    Sqrt,
+    Cbrt,
+    Root4,
+    Log,
+    LogLog,
+    Square,
+}
+
+impl Transfer {
+    /// Every curve, in the order a list shows them.
+    pub const ALL: [Transfer; 7] =
+        [Transfer::Linear, Transfer::Sqrt, Transfer::Cbrt, Transfer::Root4, Transfer::Log, Transfer::LogLog, Transfer::Square];
+    /// The persisted key.
+    pub const fn key(self) -> &'static str {
+        match self {
+            Transfer::Linear => "linear",
+            Transfer::Sqrt => "sqrt",
+            Transfer::Cbrt => "cbrt",
+            Transfer::Root4 => "root4",
+            Transfer::Log => "log",
+            Transfer::LogLog => "loglog",
+            Transfer::Square => "square",
+        }
+    }
+    /// The curve a key names, if any.
+    pub fn parse_key(s: &str) -> Option<Transfer> {
+        Transfer::ALL.into_iter().find(|t| t.key() == s)
+    }
+    /// Its GPU number (`norm_mode`): fixed, see the type.
+    pub const fn gpu_id(self) -> u32 {
+        match self {
+            Transfer::Linear => 0,
+            Transfer::Log => 1,
+            Transfer::Sqrt => 2,
+            Transfer::Cbrt => 3,
+            Transfer::Root4 => 4,
+            Transfer::LogLog => 5,
+            Transfer::Square => 6,
+        }
+    }
+    /// The curve a GPU number stands for.
+    pub fn from_gpu_id(id: u32) -> Option<Transfer> {
+        Transfer::ALL.into_iter().find(|t| t.gpu_id() == id)
+    }
+    /// T(d) for a height d ≥ 0 above the floor, as the color pass's `transfer_of` computes it
+    /// (Linear: d itself; a map that is linear does not subtract its floor, see the type).
+    pub fn apply(self, d: f64) -> f64 {
+        let d = d.max(0.0);
+        match self {
+            Transfer::Linear => d,
+            Transfer::Sqrt => d.sqrt(),
+            Transfer::Cbrt => d.cbrt(),
+            Transfer::Root4 => d.sqrt().sqrt(),
+            Transfer::Log => (d + 1.0).ln(),
+            Transfer::LogLog => ((d + 1.0).ln() + 1.0).ln(),
+            Transfer::Square => d * d,
+        }
+    }
+    /// dT/dd at d ≥ 0, as the color pass's `transfer_slope` (the palette anti-aliasing's footprint
+    /// is the map's rate times it). The roots' slopes are taken at d ≥ 1e-6: unbounded at 0.
+    pub fn slope(self, d: f64) -> f64 {
+        let d = d.max(0.0);
+        let r = d.max(1.0e-6);
+        match self {
+            Transfer::Linear => 1.0,
+            Transfer::Sqrt => 0.5 / r.sqrt(),
+            Transfer::Cbrt => r.powf(-2.0 / 3.0) / 3.0,
+            Transfer::Root4 => 0.25 * r.powf(-0.75),
+            Transfer::Log => 1.0 / (d + 1.0),
+            Transfer::LogLog => 1.0 / ((d + 1.0) * ((d + 1.0).ln() + 1.0)),
+            Transfer::Square => 2.0 * d,
+        }
+    }
+}
+
+/// How the palette continues past its end (coloring plan C2). Repeat starts it again; Mirror runs
+/// it back the other way, so a palette whose two ends differ has no seam; Clamp holds the last
+/// color (and the first below 0), so every color is used once across the map's range.
+#[derive(Clone, Copy, PartialEq, Eq, Debug, Default, Hash)]
+pub enum Wrap {
+    #[default]
+    Repeat,
+    Mirror,
+    Clamp,
+}
+
+impl Wrap {
+    pub const ALL: [Wrap; 3] = [Wrap::Repeat, Wrap::Mirror, Wrap::Clamp];
+    pub const fn key(self) -> &'static str {
+        match self {
+            Wrap::Repeat => "repeat",
+            Wrap::Mirror => "mirror",
+            Wrap::Clamp => "clamp",
+        }
+    }
+    pub fn parse_key(s: &str) -> Option<Wrap> {
+        Wrap::ALL.into_iter().find(|w| w.key() == s)
+    }
+    /// Its GPU number (`ColorU.wrap`).
+    pub const fn gpu_id(self) -> u32 {
+        match self {
+            Wrap::Repeat => 0,
+            Wrap::Mirror => 1,
+            Wrap::Clamp => 2,
+        }
+    }
+    pub fn from_gpu_id(id: u32) -> Option<Wrap> {
+        Wrap::ALL.into_iter().find(|w| w.gpu_id() == id)
+    }
+}
+
+/// The most steps a palette cycle may be cut into (`steps`; 0 is none).
+pub const MAX_STEPS: u32 = 64;
+
+/// A palette position `t` as the color pass looks it up under `steps` and `wrap` (its
+/// `wrap_coord`): `steps` > 0 cuts each palette cycle into that many flat bands, each the color at
+/// its start; then the position is folded into the palette, 0 to 1: Repeat by its fraction, Mirror
+/// back and forth (period 2), Clamp held at the ends. The palette is then read at the result
+/// (`fractadyne_color`'s LUT sample: wrapping for Repeat, clamped to the end texels otherwise).
+pub fn wrap_coord(t: f64, wrap: Wrap, steps: u32) -> f64 {
+    let t = if steps > 0 { (t * steps as f64).floor() / steps as f64 } else { t };
+    match wrap {
+        Wrap::Repeat => t - t.floor(),
+        Wrap::Mirror => {
+            let p = t - 2.0 * (t / 2.0).floor();
+            if p > 1.0 {
+                2.0 - p
+            } else {
+                p
+            }
+        }
+        Wrap::Clamp => t.clamp(0.0, 1.0),
+    }
+}
+
 #[cfg(test)]
 #[path = "../tests/unit/coloring/tests.rs"]
 mod tests;
+#[cfg(test)]
+#[path = "../tests/unit/coloring/transfer_tests.rs"]
+mod transfer_tests;

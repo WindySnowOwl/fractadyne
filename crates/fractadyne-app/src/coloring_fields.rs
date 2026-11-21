@@ -51,6 +51,16 @@ pub(crate) struct Field {
     pub(crate) shows: fn(&ColoringSpec) -> bool,
 }
 
+/// The palette map curves' keys (C2).
+fn transfer_keys() -> Vec<&'static str> {
+    fractadyne_core::coloring::Transfer::ALL.iter().map(|t| t.key()).collect()
+}
+
+/// The wraps' keys (C2).
+fn wrap_keys() -> Vec<&'static str> {
+    fractadyne_core::coloring::Wrap::ALL.iter().map(|w| w.key()).collect()
+}
+
 fn method(s: &ColoringSpec) -> ColorMethod {
     ColorMethod::from_key(&s.color_method)
 }
@@ -85,7 +95,7 @@ fn two_color_on(s: &ColoringSpec) -> bool {
 }
 
 /// The table, in the order a view writes its keys. A row's parents come before it.
-pub(crate) const FIELDS: [Field; 26] = [
+pub(crate) const FIELDS: [Field; 29] = [
     Field {
         key: "method",
         name: "coloring method",
@@ -304,6 +314,30 @@ pub(crate) const FIELDS: [Field; 26] = [
         access: Access::Flag(|s| s.log_palette, |s, v| s.log_palette = v),
         parents: &["method"],
         shows: uses_fit,
+    },
+    Field {
+        key: "transfer",
+        name: "color scale",
+        doc: "The curve the palette is spread through wherever it is normalized (method \"smooth\" or \"trap\"): linear, sqrt, cbrt, root4, loglog or square; log is written `log_scale = true`, as older files have it (and `transfer = \"log\"` reads as log).",
+        access: Access::Choice(|s| s.transfer.as_str(), |s, v| s.transfer = v.to_string(), transfer_keys),
+        parents: &["method"],
+        shows: uses_fit,
+    },
+    Field {
+        key: "wrap",
+        name: "palette wrap",
+        doc: "How the palette continues past its end: repeat, mirror (run back the other way) or clamp (the last color held).",
+        access: Access::Choice(|s| s.wrap.as_str(), |s, v| s.wrap = v.to_string(), wrap_keys),
+        parents: &[],
+        shows: always,
+    },
+    Field {
+        key: "steps",
+        name: "palette steps",
+        doc: "Flat bands each palette cycle is cut into, each the color at its start (0: smooth; at most 64).",
+        access: Access::Count(|s| s.steps, |s, v| s.steps = v, 0, fractadyne_core::coloring::MAX_STEPS),
+        parents: &[],
+        shows: always,
     },
     Field {
         key: "palette_aa",

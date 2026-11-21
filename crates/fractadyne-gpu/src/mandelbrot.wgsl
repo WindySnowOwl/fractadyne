@@ -3888,6 +3888,12 @@ struct ColorU {
     // A coloring hook's parameters `p1()`..`p4()` (coloring plan B10; read only by a hook's module,
     // `color_hook.wgsl`). Mirrors `ColorUniforms.hook_p`.
     hook_p: vec4<f32>,
+    // How the palette continues past its end (coloring plan C2, `fractadyne_core::coloring::Wrap`):
+    // 0 repeat, 1 mirror, 2 clamp; and the flat bands a palette cycle is cut into (0: none).
+    wrap: u32,
+    steps: f32,
+    _pad_wrap0: u32,
+    _pad_wrap1: u32,
 };
 @group(0) @binding(0) var<uniform> cu: ColorU;
 @group(0) @binding(1) var iter_tex: texture_2d<f32>;
@@ -4036,10 +4042,41 @@ fn coord_under(m: vec4<f32>, a: vec4<f32>, cycle: f32, offset: f32, mode: u32, l
     // zoom video rather than washing out as the range grows.
     // `+ 1` keeps the argument ≥ 1 (log ≥ 0) so the floor of the range maps to 0 exactly.
     var pv_mapped = pv;
-    if (mode == 1u) {
-        pv_mapped = log(max(pv - lo, 0.0) + 1.0);
+    if (mode != 0u) {
+        pv_mapped = transfer_of(max(pv - lo, 0.0), mode);
     }
     return pv_mapped * cycle + offset;
+}
+
+// A palette map's curve (coloring plan C2) at a height `d` ≥ 0 above its floor: `mode` is
+// `fractadyne_core::coloring::Transfer::gpu_id` (whose `apply` is the CPU twin): 1 log (the only
+// one before C2, its expression unchanged), 2 square root, 3 cube root, 4 fourth root, 5 log-log,
+// 6 square. Each is 0 at 0.
+fn transfer_of(d: f32, mode: u32) -> f32 {
+    switch (mode) {
+        case 1u: { return log(d + 1.0); }
+        case 2u: { return sqrt(d); }
+        case 3u: { return select(0.0, pow(d, 1.0 / 3.0), d > 0.0); }
+        case 4u: { return sqrt(sqrt(d)); }
+        case 5u: { return log(log(d + 1.0) + 1.0); }
+        case 6u: { return d * d; }
+        default: { return d; }
+    }
+}
+
+// The curve's slope dT/dd at `d` (`Transfer::slope`): the palette anti-aliasing's footprint is the
+// map's rate times it. The roots' slopes are taken at d ≥ 1e-6 (unbounded at the floor).
+fn transfer_slope(d: f32, mode: u32) -> f32 {
+    let r = max(d, 1.0e-6);
+    switch (mode) {
+        case 1u: { return 1.0 / (d + 1.0); }
+        case 2u: { return 0.5 / sqrt(r); }
+        case 3u: { return pow(r, -2.0 / 3.0) / 3.0; }
+        case 4u: { return 0.25 * pow(r, -0.75); }
+        case 5u: { return 1.0 / ((d + 1.0) * (log(d + 1.0) + 1.0)); }
+        case 6u: { return 2.0 * d; }
+        default: { return 1.0; }
+    }
 }
 
 // Cyclic antiderivative of the palette at texel coordinate `x` (may be < 0 or > n), from the
@@ -4074,6 +4111,79 @@ fn palette_box(coord: f32, width: f32) -> vec3<f32> {
     return (hi - lo) / w;
 }
 
+// ---- Steps and the wraps (coloring plan C2; the CPU twin is `fractadyne_core::coloring::wrap_coord`) ----
+
+// The position cut into `cu.steps` flat bands a palette cycle, each the color at its start; as it
+// is with no steps.
+fn stepped(t: f32) -> f32 {
+    if (cu.steps > 0.0) {
+        return floor(t * cu.steps) / cu.steps;
+    }
+    return t;
+}
+
+// A position folded into the palette as Mirror (back and forth, period 2) or Clamp (held at the
+// ends) takes it.
+fn folded(t: f32) -> f32 {
+    if (cu.wrap == 1u) {
+        let p = t - 2.0 * floor(t * 0.5);
+        return select(p, 2.0 - p, p > 1.0);
+    }
+    return clamp(t, 0.0, 1.0);
+}
+
+// The palette at a position 0..1 read WITHOUT wrapping (Mirror's turn and Clamp's end are the last
+// color, which `palette`'s `fract` would make the first): the end texels hold.
+fn palette_held(t: f32) -> vec3<f32> {
+    let n = i32(cu.lut_len);
+    if (n <= 0) { return vec3<f32>(0.0, 0.0, 0.0); }
+    let tt = clamp(t, 0.0, 1.0);
+    if (cu.lut_smooth == 0u) {
+        return lut[clamp(i32(tt * f32(n)), 0, n - 1)].xyz;
+    }
+    let x = clamp(tt * f32(n) - 0.5, 0.0, f32(n - 1));
+    let i0 = i32(floor(x));
+    let i1 = min(i0 + 1, n - 1);
+    return mix(lut[i0].xyz, lut[i1].xyz, x - floor(x));
+}
+
+// The palette's antiderivative along the UNFOLDED position `x` (texels), as Mirror or Clamp folds
+// it: Mirror's period is 2n (forward, then back: the back half integrates the palette again, so a
+// period holds it twice); Clamp extends the first color below 0 and the last above n.
+fn palette_psum_folded(x: f32, n: i32, nf: f32, total: vec3<f32>) -> vec3<f32> {
+    if (cu.wrap == 1u) {
+        let per = 2.0 * nf;
+        let k = floor(x / per);
+        let r = x - k * per;
+        var g: vec3<f32>;
+        if (r <= nf) {
+            g = palette_psum_at(r, n, nf, total);
+        } else {
+            g = 2.0 * total - palette_psum_at(per - r, n, nf, total);
+        }
+        return k * 2.0 * total + g;
+    }
+    if (x <= 0.0) { return x * lut[0].xyz; }
+    if (x >= nf) { return total + (x - nf) * lut[n - 1].xyz; }
+    return palette_psum_at(x, n, nf, total);
+}
+
+// The color at palette position `coord` under the view's Steps and Wrap, box-averaged over `width`
+// cycles as `palette_box` (which it is, for Repeat): for Mirror and Clamp the box is taken over the
+// folded palette, so a footprint across a turn or an end averages what the screen shows there.
+fn palette_shaded(coord: f32, width: f32) -> vec3<f32> {
+    let t = stepped(coord);
+    if (cu.wrap == 0u) { return palette_box(t, width); }
+    let n = i32(cu.lut_len);
+    if (n <= 0) { return vec3<f32>(0.0, 0.0, 0.0); }
+    let nf = f32(n);
+    let w = clamp(width * nf, 0.0, nf);
+    if (w <= 1.0) { return palette_held(folded(t)); }
+    let total = lut[n + n].xyz;
+    let c = t * nf;
+    return (palette_psum_folded(c + w * 0.5, n, nf, total) - palette_psum_folded(c - w * 0.5, n, nf, total)) / w;
+}
+
 // The palette footprint of a Smooth tap from its distance estimate (coloring plan C8): how many
 // palette cycles a tap `s` OUTPUT pixels across spans there, |dt/dμ| · s · |∇μ| with |∇μ| =
 // 1 / (d · ln p), d the distance in output pixels (the stored DE, `|z|·ln|z| / |dz/dc|`, is exactly
@@ -4090,7 +4200,11 @@ fn de_footprint(m: vec4<f32>, cycle: f32, mode: u32, lo: f32, s: f32) -> f32 {
     if (cu.aa_ln_p <= 0.0 || m.a > 1.0e20 || m.r < 0.0) { return -1.0; }
     let d_px = exp2(m.a - de_px_shift);
     var dtdmu = abs(cycle);
-    if (mode == 1u) { dtdmu = dtdmu / (max(m.r - lo, 0.0) + 1.0); }
+    if (mode == 1u) {
+        dtdmu = dtdmu / (max(m.r - lo, 0.0) + 1.0);
+    } else if (mode != 0u) {
+        dtdmu = dtdmu * transfer_slope(max(m.r - lo, 0.0), mode);
+    }
     return dtdmu * s / max(d_px * cu.aa_ln_p, 1.0e-12);
 }
 
@@ -4108,7 +4222,7 @@ const AA_MIN_TAP: f32 = 0.499;
 fn shade(m: vec4<f32>, a: vec4<f32>) -> vec3<f32> {
     let coord = coord_of(m, a);
     if (coord >= INTERIOR_COORD) { return interior_shade(a); }
-    return fringed(palette(coord), m);
+    return fringed(palette_shaded(coord, 0.0), m);
 }
 
 // ---- The fringe (coloring plan C9) ----
@@ -4217,9 +4331,9 @@ fn coord_step(d: f32, cycle: f32) -> f32 {
 fn shade_aa(m: vec4<f32>, a: vec4<f32>, width: f32, width_fade: f32) -> vec3<f32> {
     let coord = coord_of(m, a);
     if (coord >= INTERIOR_COORD) { return interior_shade(a); }
-    var col = palette_box(coord, width);
+    var col = palette_shaded(coord, width);
     if (cu.fade_weight > 0.0) {
-        col = mix(col, palette_box(coord_fade(m, a), width_fade), cu.fade_weight);
+        col = mix(col, palette_shaded(coord_fade(m, a), width_fade), cu.fade_weight);
     }
     return fringed(col, m);
 }

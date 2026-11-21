@@ -61,14 +61,14 @@ videos cannot use a hook that reads a statistic.
 
 ### What you can call
 
-| Function                       | What it does                                                                                                                                                 |
-| ------------------------------ | ------------------------------------------------------------------------------------------------------------------------------------------------------------ |
-| `palette(t)`                   | The view's palette at position `t`; it wraps every 1. A point sample: no anti-aliasing.                                                                      |
-| `palette_map(v)`               | `v` mapped as the view's method maps its own value: its rate (from Cycle), Offset, and the log map when it is on. `palette(palette_map(l.count))` is Smooth. |
-| `palette_offset()`             | The Offset alone, for a value you map at a rate of your own: `palette(l.stripe * 2.0 + palette_offset())`.                                                   |
-| `palette_inside(t)`            | The inside palette at `t`, when the view has one; the palette otherwise.                                                                                     |
-| `with_lightness(c, lightness)` | `c` at that OKLab lightness (0 dark to 1 light), its hue and chroma kept.                                                                                    |
-| `p1()`, `p2()`, `p3()`, `p4()` | The hook's four parameters (below).                                                                                                                          |
+| Function                       | What it does                                                                                                                                                                                        |
+| ------------------------------ | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `palette(t)`                   | The view's palette at position `t`; it wraps every 1. A point sample: no anti-aliasing.                                                                                                             |
+| `palette_map(v)`               | `v` mapped as the view's method maps its own value: its rate (from Cycle), Offset, and the Scale's curve when the palette is fitted to the view's range. `palette(palette_map(l.count))` is Smooth. |
+| `palette_offset()`             | The Offset alone, for a value you map at a rate of your own: `palette(l.stripe * 2.0 + palette_offset())`.                                                                                          |
+| `palette_inside(t)`            | The inside palette at `t`, when the view has one; the palette otherwise.                                                                                                                            |
+| `with_lightness(c, lightness)` | `c` at that OKLab lightness (0 dark to 1 light), its hue and chroma kept.                                                                                                                           |
+| `p1()`, `p2()`, `p3()`, `p4()` | The hook's four parameters (below).                                                                                                                                                                 |
 
 ⚠`palette_map` uses the rate of the view's method. Under Smooth that rate is in palettes per
 iteration, a few hundredths, so a value from 0 to 1 (a statistic, a direction) hardly moves

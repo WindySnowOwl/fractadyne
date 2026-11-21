@@ -3342,6 +3342,16 @@ pub(crate) mod slider_range {
     pub(crate) const STRIPE_TAIL_LEN: RangeInclusive<u32> = 4..=1 << 20;
 }
 
+/// The palette map's curve a spec names (coloring plan C2): its `transfer`, or, for a file written
+/// before it existed (`transfer` absent, so linear), log when `log_palette` is on.
+pub(crate) fn transfer_of_spec(s: &fractadyne_state::ColoringSpec) -> fractadyne_core::coloring::Transfer {
+    match fractadyne_core::coloring::Transfer::parse_key(&s.transfer) {
+        Some(t) if t != fractadyne_core::coloring::Transfer::Linear => t,
+        _ if s.log_palette => fractadyne_core::coloring::Transfer::Log,
+        _ => fractadyne_core::coloring::Transfer::Linear,
+    }
+}
+
 /// The Smooth method's palette rate — palettes per iteration, what the shader multiplies the
 /// smooth iteration count by — for Cycle slider `cycle` and "Divide iterations" `div`.
 ///
@@ -6708,10 +6718,14 @@ struct ColoringConfig {
     /// aliasing guard and declines on a smooth view by design; this asks for the remap outright.
     /// Still needs a valid measured range, so it does nothing until a reading lands. Persisted.
     normalize_fit: bool,
-    /// Log-scaled palette mapping. Applies wherever normalization is active (live or
+    /// The palette map's curve (coloring plan C2), wherever normalization is active (live or
     /// `--normalize`): escape values crowd towards the high end at depth, so a linear map spends
-    /// most of the palette on a thin shell. Persisted.
-    log_palette: bool,
+    /// most of the palette on a thin shell. Log is what "Log color scale" was. Persisted.
+    transfer: fractadyne_core::coloring::Transfer,
+    /// How the palette continues past its end, and the flat bands a palette cycle is cut into (0:
+    /// none), coloring plan C2. Persisted.
+    wrap: fractadyne_core::coloring::Wrap,
+    steps: u32,
     /// What a harness's comparison render accumulates instead of the session's own choice: the
     /// coloring matrix's `gbuffer` check sets it around building ONE request and clears it at once.
     /// The method's own statistic is added regardless ([`Self::orbit_stats`]). Transient: never
@@ -8505,7 +8519,7 @@ impl FractadyneApp {
                 normalize: args.iter().any(|a| a == "--normalize"),
                 normalize_live: s.coloring.normalize_live,
                 normalize_fit: s.coloring.normalize_fit,
-                log_palette: {
+                transfer: {
                     let asked = args.iter().any(|a| a == "--log-palette");
                     // ⚠`--log-palette` only chooses HOW the normalized mapping spreads the
                     // palette; with no normalization there is no mapping and it changes nothing.
@@ -8520,8 +8534,10 @@ impl FractadyneApp {
                              add --normalize (or enable Color ▸ Normalize deep colors)."
                         );
                     }
-                    s.coloring.log_palette || asked
+                    if asked { fractadyne_core::coloring::Transfer::Log } else { transfer_of_spec(&s.coloring) }
                 },
+                wrap: fractadyne_core::coloring::Wrap::parse_key(&s.coloring.wrap).unwrap_or_default(),
+                steps: s.coloring.steps.min(fractadyne_core::coloring::MAX_STEPS),
                 orbit_stats_override: None,
                 hook: Default::default(),
             },
@@ -9244,6 +9260,33 @@ impl FractadyneApp {
         if let Some(v) = ranged("--palette-saturation", slider_range::PALETTE_SATURATION) {
             self.coloring.palette_adjust.saturation = v;
         }
+        // The palette map's curve, how the palette continues past its end, and its steps (C2).
+        if let Some(t) = val("--transfer") {
+            match fractadyne_core::coloring::Transfer::parse_key(t) {
+                Some(x) => self.coloring.transfer = x,
+                None => {
+                    eprintln!("fractadyne: --transfer: unknown curve \"{t}\"; use linear, sqrt, cbrt, root4, log, loglog or square.");
+                    crate::exit(2)
+                }
+            }
+            if self.coloring.transfer != fractadyne_core::coloring::Transfer::Linear
+                && !(self.coloring.normalize || self.coloring.normalize_live || self.coloring.normalize_fit)
+            {
+                eprintln!("fractadyne: --transfer has no effect without normalization — add --normalize (or enable Color ▸ Normalize deep colors).");
+            }
+        }
+        if let Some(w) = val("--wrap") {
+            match fractadyne_core::coloring::Wrap::parse_key(w) {
+                Some(x) => self.coloring.wrap = x,
+                None => {
+                    eprintln!("fractadyne: --wrap: unknown wrap \"{w}\"; use repeat, mirror or clamp.");
+                    crate::exit(2)
+                }
+            }
+        }
+        if let Some(n) = val("--steps").map(|s| arg_parse::<u32>("--steps", s, "a whole number")) {
+            self.coloring.steps = n.min(fractadyne_core::coloring::MAX_STEPS);
+        }
         if args.iter().any(|a| a == "--julia-linked") {
             self.coloring.julia_linked = true;
             if self.coloring.color_method != ColorMethod::Smooth {
@@ -9447,7 +9490,12 @@ impl FractadyneApp {
             cycle: self.coloring.cycle,
             iter_div: self.coloring.iter_div,
             offset: self.coloring.offset,
-            log_palette: self.coloring.log_palette,
+            // One form a curve (C2): log as older builds write and read it, `log_palette` (with
+            // `transfer` linear); the others by key. A view never states the curve twice.
+            log_palette: self.coloring.transfer == fractadyne_core::coloring::Transfer::Log,
+            transfer: if self.coloring.transfer == fractadyne_core::coloring::Transfer::Log { fractadyne_core::coloring::Transfer::Linear.key() } else { self.coloring.transfer.key() }.to_string(),
+            wrap: self.coloring.wrap.key().to_string(),
+            steps: self.coloring.steps,
             normalize_live: self.coloring.normalize_live,
             normalize_fit: self.coloring.normalize_fit,
             light: self.effects.light,
@@ -9507,7 +9555,9 @@ impl FractadyneApp {
         c.cycle = s.cycle;
         c.iter_div = s.iter_div.clamp(1, fractadyne_state::ITER_DIV_MAX);
         c.offset = s.offset;
-        c.log_palette = s.log_palette;
+        c.transfer = transfer_of_spec(s);
+        c.wrap = fractadyne_core::coloring::Wrap::parse_key(&s.wrap).unwrap_or_default();
+        c.steps = s.steps.min(fractadyne_core::coloring::MAX_STEPS);
         c.normalize_live = s.normalize_live;
         c.normalize_fit = s.normalize_fit;
         c.color_method = ColorMethod::from_key(&s.color_method);
@@ -12605,7 +12655,9 @@ impl FractadyneApp {
         c.palette_adjust = fractadyne_color::adjust::PaletteAdjust::NEUTRAL;
         c.normalize_live = d.normalize_live;
         c.normalize_fit = d.normalize_fit;
-        c.log_palette = d.log_palette;
+        // The Scale with the normalization switches it belongs to (C2; what the log checkbox was).
+        // Wrap and Steps are choices, as the palette is: they stay.
+        c.transfer = transfer_of_spec(&d);
         c.palette_aa = d.palette_aa;
         self.anim.palette_anim = PaletteAnim::Off;
         self.anim.palette_anim_speed = fractadyne_state::SessionState::default().palette_anim_speed;
@@ -17472,7 +17524,9 @@ impl FractadyneApp {
         c.trap_type.gpu_id().hash(&mut h);
         c.normalize_live.hash(&mut h);
         c.normalize_fit.hash(&mut h); // or ticking the box would change no pixel until something else did
-        c.log_palette.hash(&mut h);
+        c.transfer.hash(&mut h);
+        c.wrap.hash(&mut h);
+        c.steps.hash(&mut h);
         let e = &self.effects;
         e.light.hash(&mut h);
         e.light_angle.to_bits().hash(&mut h);

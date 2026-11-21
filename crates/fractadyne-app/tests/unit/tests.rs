@@ -368,6 +368,8 @@ const SAMPLE_OPTIONAL_KEYS: &[&str] = &[
     "palette_brightness", "palette_contrast", "palette_saturation", "julia_linked",
     // Written only for a view colored through a coloring hook (format 5).
     "coloring_hook", "coloring_hook_params",
+    // Written only away from their defaults (C2).
+    "transfer", "wrap", "steps",
 ];
 
 #[test]

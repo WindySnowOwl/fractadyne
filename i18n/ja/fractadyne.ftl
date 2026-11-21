@@ -2797,17 +2797,31 @@ panel-fit-range-hover =
     ビューでエイリアシングが起きていなくても、パレットをビューで測定した脱出値の範囲に割り当て直します。上のチェックボックスは、密な模様が斑点のように見えてしまう場合にだけ割り当て直します。
 
     ノイズを直すためではなく、画面上にあるものの範囲にパレットを広げたいときに使います。測定値が必要なので、ビューが仕上がるまでの一瞬は何もせず、脱出したピクセルがないビューではまったく何もしません。
-# A checkbox indented under "Always fit range" (also in the Color menu).
-panel-log-scale = 対数カラースケール
-panel-log-scale-hover =
-    パレットを脱出値に比例させず、その「対数」に従って広げます。深いところでは脱出回数が大きい側に偏るため、線形の割り当てではパレットの大部分が境界付近の薄い層に費やされ、ほかのすべてが平坦になります。
+# The palette map's curve (coloring plan C2): a list indented under "Always fit range" (in the Color menu, a submenu), its tooltip, and its tooltip while grayed (no normalization). Log is what the former "Log color scale" checkbox did.
+panel-scale = スケール
+panel-scale-hover =
+    パレットをビューの範囲に合わせたとき、値を通す曲線です。どの曲線でも範囲に入るパレットの周回数は同じで、帯の位置だけが変わります。根と対数は集合から離れた帯を広げ、値が密集する集合の近くの帯を狭めます。二乗はその逆です。
 
-    正規化された割り当てに適用されます。これは「深い色を正規化」（エクスポートでは--normalize）でオンになるものです。範囲が大きく偏っている場合は、これがオンかどうかに関係なく、対数の割り当てが使われます。
-# The same checkbox's tooltip while it is grayed out (normalization is off).
-panel-log-scale-off-hover =
-    正規化が必要です：これは測定した脱出値の範囲にパレットを「どのように」割り当てるかを選ぶものなので、「深い色を正規化」がオフ（かつ--normalizeのエクスポートでもない）のときは変える割り当てがなく、1ピクセルも変わりません。
-
-    使うには「深い色を正規化」をオンにしてください。
+    大きく偏った範囲では、線形でも対数になります。
+panel-scale-off-hover = パレットをビューの範囲に合わせると有効になります：「深い色を正規化」または「常に範囲に合わせる」をオンにしてください。
+# The curves the Scale list offers.
+transfer-linear = 線形
+transfer-sqrt = 平方根
+transfer-cbrt = 立方根
+transfer-root4 = 四乗根
+transfer-log = 対数
+transfer-loglog = 二重対数
+transfer-square = 二乗
+# How the palette continues past its end (C2): the row's label, its tooltip, and its choices.
+panel-wrap = 折り返し
+panel-wrap-hover = パレットの終わりの先をどう続けるか。繰り返しは最初からやり直し、ミラーは逆向きに戻るので、両端の色が違うパレットでも継ぎ目が出ません。固定は最後の色を保つので、各色は範囲全体で一度だけ使われます。
+wrap-repeat = 繰り返し
+wrap-mirror = ミラー
+wrap-clamp = 固定
+# Flat bands (C2): the slider's label, its tooltip, and what it shows at 0.
+panel-steps = 段階
+panel-steps-hover = パレットの1周をこの数の平らな帯に分け、各帯をその始まりの色にして、段のある見た目にします。オフは滑らかです。
+panel-steps-off = オフ
 # The dual view's Julia pane on the set's palette map, one iteration on (coloring plan C11): the
 # checkbox, its tooltip, and its tooltip while grayed (another method than the escape count).
 panel-julia-linked = ジュリアの色を集合に連動

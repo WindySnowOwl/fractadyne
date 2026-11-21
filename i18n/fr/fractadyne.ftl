@@ -2877,17 +2877,31 @@ panel-fit-range-hover =
     Recaler la palette sur la plage d’échappement mesurée de la vue même quand la vue ne présente pas de crénelage — la case du dessus ne recale que lorsqu’un champ dense apparaîtrait sinon comme des mouchetures.
 
     Utilisez-la quand vous voulez que la palette couvre ce qui est à l’écran plutôt que de corriger du bruit. Elle a tout de même besoin d’une mesure : elle ne fait donc rien pendant le court instant qui précède la stabilisation de la vue, et rien du tout sur une vue sans pixels échappés.
-# A checkbox indented under "Always fit range" (also in the Color menu).
-panel-log-scale = Échelle de couleur logarithmique
-panel-log-scale-hover =
-    Répartir la palette selon le LOGARITHME de la valeur d’échappement plutôt que linéairement. En profondeur, les nombres d’échappement se concentrent vers le haut : une correspondance linéaire consacre alors l’essentiel de la palette à une mince couche près de la frontière et aplatit tout le reste.
+# The palette map's curve (coloring plan C2): a list indented under "Always fit range" (in the Color menu, a submenu), its tooltip, and its tooltip while grayed (no normalization). Log is what the former "Log color scale" checkbox did.
+panel-scale = Échelle
+panel-scale-hover =
+    La courbe par laquelle passent les valeurs une fois la palette ajustée à la plage de la vue. La plage contient le même nombre de parcours de la palette pour chaque courbe ; seul l’emplacement des bandes change. Les racines et les logarithmes élargissent les bandes loin de l’ensemble et les resserrent près de lui, là où les valeurs se pressent ; Carré fait l’inverse.
 
-    S’applique à la correspondance normalisée — celle qu’active « Normaliser les couleurs profondes » (ou --normalize pour une exportation). Une plage très asymétrique prend de toute façon la correspondance logarithmique, que cette case soit cochée ou non.
-# The same checkbox's tooltip while it is grayed out (normalization is off).
-panel-log-scale-off-hover =
-    Nécessite la normalisation : ceci choisit COMMENT la palette est projetée sur la plage d’échappement mesurée ; avec « Normaliser les couleurs profondes » désactivé (et sans exportation --normalize), il n’y a aucune correspondance à modifier et cela ne changerait pas un seul pixel.
-
-    Activez « Normaliser les couleurs profondes » pour l’utiliser.
+    Une plage très asymétrique prend le logarithme même en Linéaire.
+panel-scale-off-hover = S’applique une fois la palette ajustée à la plage de la vue : activez « Normaliser les couleurs profondes » ou « Toujours ajuster la plage ».
+# The curves the Scale list offers.
+transfer-linear = Linéaire
+transfer-sqrt = Racine carrée
+transfer-cbrt = Racine cubique
+transfer-root4 = Racine quatrième
+transfer-log = Logarithmique
+transfer-loglog = Log-log
+transfer-square = Carré
+# How the palette continues past its end (C2): the row's label, its tooltip, and its choices.
+panel-wrap = Bouclage
+panel-wrap-hover = Comment la palette continue après sa fin. Répéter la recommence ; Miroir la parcourt à rebours, si bien qu’une palette dont les deux bouts diffèrent ne montre pas de raccord ; Borner garde la dernière couleur, si bien que chaque couleur n’est utilisée qu’une fois sur la plage.
+wrap-repeat = Répéter
+wrap-mirror = Miroir
+wrap-clamp = Borner
+# Flat bands (C2): the slider's label, its tooltip, and what it shows at 0.
+panel-steps = Paliers
+panel-steps-hover = Découpe chaque parcours de la palette en autant de bandes unies, chacune de la couleur de son début, pour un rendu en paliers. Désactivé est continu.
+panel-steps-off = Désactivé
 # The dual view's Julia pane on the set's palette map, one iteration on (coloring plan C11): the
 # checkbox, its tooltip, and its tooltip while grayed (another method than the escape count).
 panel-julia-linked = Lier les couleurs de Julia à l’ensemble

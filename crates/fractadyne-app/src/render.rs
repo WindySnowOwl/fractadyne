@@ -2246,7 +2246,7 @@ impl FractadyneApp {
         c.iter_div.hash(&mut h);
         c.offset.to_bits().hash(&mut h);
         self.shown_method().gpu_id().hash(&mut h);
-        c.log_palette.hash(&mut h);
+        c.transfer.hash(&mut h);
         c.normalize_live.hash(&mut h);
         c.normalize_fit.hash(&mut h);
         self.color_cycle().to_bits().hash(&mut h);
@@ -2535,7 +2535,7 @@ impl FractadyneApp {
     pub(crate) fn norm_pace(&self, vb: usize) -> NormPace {
         NormPace {
             dt_s: (self.perf.last_dt_ms / 1000.0) as f32,
-            shape: NormShape { sweeps: 0.5 + self.coloring.cycle * 6.0, log_palette: self.coloring.log_palette },
+            shape: NormShape { sweeps: 0.5 + self.coloring.cycle * 6.0, transfer: self.coloring.transfer },
             can_cut: self.perf.palette_fade[vb.min(1)].weight() == 0.0,
         }
     }
@@ -2544,21 +2544,23 @@ impl FractadyneApp {
     /// mapping half of [`Self::live_norm_cycle_offset`], whose predicate decides whether to map at
     /// all): log for a heavy-tailed range or when asked, linear otherwise.
     pub(crate) fn norm_map_for(&self, mn: f32, mx: f32) -> NormMap {
-        if norm_map_is_log(mn, mx, self.coloring.log_palette) {
-            self.norm_map_log(mn, mx)
-        } else {
-            self.norm_map_linear(mn, mx)
+        match norm_map_transfer(mn, mx, self.coloring.transfer) {
+            fractadyne_core::coloring::Transfer::Linear => self.norm_map_linear(mn, mx),
+            t => self.norm_map_curve(mn, mx, t),
         }
     }
 
-    /// [`Self::norm_map_for`]'s LOG mapping of `[mn, mx]`: the shader compresses to
-    /// log(v − mn + 1), so the range spans log(mx − mn + 1) and the palette is spread over the
-    /// values as the eye reads them. The shader subtracts `mn` itself, so the offset here is the
-    /// user's phase alone — no `−mn·cycle` term as in the linear case.
-    pub(crate) fn norm_map_log(&self, mn: f32, mx: f32) -> NormMap {
+    /// (The LOG mapping, the only curve before C2, is [`Self::norm_map_curve`] with `Transfer::Log`:
+    /// the shader compresses to log(v − mn + 1), so the range spans log(mx − mn + 1). The shader
+    /// subtracts `mn` itself, so the offset is the user's phase alone — no `−mn·cycle` term as in
+    /// the linear case.)
+    /// [`Self::norm_map_for`]'s mapping of `[mn, mx]` through the curve `t` (coloring plan C2): the
+    /// shader takes v to T(v − mn), so the range spans T(mx − mn) and the window holds the same
+    /// sweeps under every curve. Log's span is computed as it always was, bit for bit.
+    pub(crate) fn norm_map_curve(&self, mn: f32, mx: f32, t: fractadyne_core::coloring::Transfer) -> NormMap {
         let sweeps = 0.5 + self.coloring.cycle * 6.0;
-        let span = ((mx - mn) + 1.0).ln().max(1.0e-6);
-        NormMap { cycle: sweeps / span, offset: self.coloring.offset, mode: 1, lo: mn }
+        let span = curve_span(mx - mn, t);
+        NormMap { cycle: sweeps / span, offset: self.coloring.offset, mode: t.gpu_id(), lo: mn }
     }
 
     /// [`Self::norm_map_for`]'s LINEAR mapping of `[mn, mx]`.
@@ -4640,6 +4642,8 @@ impl FractadyneApp {
             custom: self.custom_shader_for(self.fractal),
             color_hook: self.color_hook_for(self.fractal),
             hook_params: self.coloring.hook.gpu_params(),
+            wrap: self.coloring.wrap.gpu_id(),
+            steps: self.coloring.steps as f32,
             julia: julia as u32,
             // WYSIWYG: a GUI export bakes in the live view's auto-normalized palette mapping when
             // it's active (headless CLI runs have no live range → always classic; `--normalize`
@@ -4722,6 +4726,8 @@ pub(crate) fn params_to_request(p: &fractadyne_gpu::MandelbrotParams) -> fractad
         // Profiling colors as the method does; `params_to_request_exact` carries the hook.
         color_hook: None,
         hook_params: [0.0; 4],
+        wrap: p.wrap,
+        steps: p.steps,
         julia: p.julia,
         cycle: p.cycle,
         offset: p.offset,
@@ -4759,6 +4765,8 @@ pub(crate) fn params_to_request_exact(p: &fractadyne_gpu::MandelbrotParams, jitt
         custom: p.custom.clone(),
         color_hook: p.color_hook.clone(),
         hook_params: p.hook_params,
+        wrap: p.wrap,
+        steps: p.steps,
         jitter,
         ..params_to_request(p)
     }
@@ -5206,12 +5214,12 @@ impl FractadyneApp {
     pub(crate) fn apply_norm_range(&self, req: &mut fractadyne_gpu::ExportRequest, clo: f32, chi: f32) {
         let range = (chi - clo).max(1.0);
         let sweeps = 0.5 + self.coloring.cycle * 6.0;
-        if self.coloring.log_palette {
-            // Log mapping — the shader compresses to log(v − lo + 1), so the span is measured in
-            // log space and it subtracts `lo` itself (hence no −clo·cycle term here).
-            req.norm_mode = 1;
+        if self.coloring.transfer != fractadyne_core::coloring::Transfer::Linear {
+            // A curve (log, the roots, square: C2) — the shader takes v to T(v − lo), so the span is
+            // measured through the curve and it subtracts `lo` itself (hence no −clo·cycle term).
+            req.norm_mode = self.coloring.transfer.gpu_id();
             req.norm_lo = clo;
-            req.cycle = sweeps / (range + 1.0).ln().max(1.0e-6);
+            req.cycle = sweeps / curve_span(range, self.coloring.transfer);
             req.offset = self.coloring.offset;
         } else {
             req.cycle = sweeps / range;
@@ -7577,6 +7585,8 @@ impl FractadyneApp {
             custom: self.custom_shader_for(fractal),
             color_hook: self.color_hook_for(fractal),
             hook_params: self.coloring.hook.gpu_params(),
+            wrap: self.coloring.wrap.gpu_id(),
+            steps: self.coloring.steps as f32,
             life: None, // Life frames are built by `build_life_params`, not here
             lsystem: None, // nor L-system frames (`build_lsystem_params`)
             julia: julia as u32,
@@ -12324,7 +12334,8 @@ pub(crate) const GLIDE_CUT: f32 = 1.0;
 #[derive(Clone, Copy, Debug, PartialEq)]
 pub(crate) struct NormShape {
     pub(crate) sweeps: f32,
-    pub(crate) log_palette: bool,
+    /// The user's curve (C2); a linear one takes the log form past `NORM_LOG_AUTO_RATIO`.
+    pub(crate) transfer: fractadyne_core::coloring::Transfer,
 }
 
 /// How one frame may move a palette window: its time step, the coloring, and whether it may cut
@@ -12341,9 +12352,11 @@ pub(crate) struct NormPace {
 pub(crate) fn window_phase(w: (f32, f32), v: f32, s: NormShape) -> f32 {
     let (mn, mx) = (w.0 as f64, w.1 as f64);
     let v = v as f64;
-    let p = if norm_map_is_log(w.0, w.1, s.log_palette) {
-        let span = ((mx - mn) + 1.0).ln().max(1.0e-6);
-        s.sweeps as f64 / span * ((v - mn).max(0.0) + 1.0).ln()
+    let p = if let t @ (fractadyne_core::coloring::Transfer::Sqrt | fractadyne_core::coloring::Transfer::Cbrt | fractadyne_core::coloring::Transfer::Root4 | fractadyne_core::coloring::Transfer::Log | fractadyne_core::coloring::Transfer::LogLog | fractadyne_core::coloring::Transfer::Square) =
+        norm_map_transfer(w.0, w.1, s.transfer)
+    {
+        let span = t.apply(mx - mn).max(1.0e-6);
+        s.sweeps as f64 / span * t.apply(v - mn)
     } else {
         s.sweeps as f64 * (v - mn) / (mx - mn).max(1.0e-6)
     };
@@ -12928,8 +12941,24 @@ pub(crate) fn coloring_windows(
 #[path = "../tests/unit/render/coloring_windows_tests.rs"]
 mod coloring_windows_tests;
 
-pub(crate) fn norm_map_is_log(mn: f32, mx: f32, log_palette: bool) -> bool {
-    log_palette || mx > mn.max(1.0) * NORM_LOG_AUTO_RATIO
+/// The curve a normalized map of `[mn, mx]` takes under the user's `t`: theirs, but for Linear
+/// over a heavy-tailed range (past [`NORM_LOG_AUTO_RATIO`]), which takes the log form (it always
+/// has: a linear map there spends the palette on a thin shell).
+pub(crate) fn norm_map_transfer(mn: f32, mx: f32, t: fractadyne_core::coloring::Transfer) -> fractadyne_core::coloring::Transfer {
+    if t == fractadyne_core::coloring::Transfer::Linear && mx > mn.max(1.0) * NORM_LOG_AUTO_RATIO {
+        fractadyne_core::coloring::Transfer::Log
+    } else {
+        t
+    }
+}
+
+/// The span of a normalized window `range` wide through the curve `t`, as its map divides the
+/// sweeps by: log's as it always was (in f32), the others through `Transfer::apply`.
+pub(crate) fn curve_span(range: f32, t: fractadyne_core::coloring::Transfer) -> f32 {
+    match t {
+        fractadyne_core::coloring::Transfer::Log => (range + 1.0).ln().max(1.0e-6),
+        t => (t.apply(range as f64) as f32).max(1.0e-6),
+    }
 }
 
 /// The window ratio (`mx / max(mn, 1)`) past which the normalized map takes the LOG form

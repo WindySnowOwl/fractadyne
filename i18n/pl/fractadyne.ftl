@@ -2968,17 +2968,31 @@ panel-fit-range-hover =
     Przemapowuje paletę na zmierzony zakres ucieczki widoku, nawet gdy widok nie ma aliasingu — pole wyboru powyżej przemapowuje tylko wtedy, gdy gęste pole wyglądałoby inaczej jak drobne plamki.
 
     Użyj tego, gdy paleta ma obejmować to, co jest na ekranie, a nie usuwać szum. Nadal potrzebny jest pomiar, więc przez chwilę lub dwie przed ustaleniem się widoku nic nie robi, a w widoku bez pikseli, które uciekły, nie robi nic.
-# A checkbox indented under "Always fit range" (also in the Color menu).
-panel-log-scale = Logarytmiczna skala kolorów
-panel-log-scale-hover =
-    Rozkłada paletę według LOGARYTMU wartości ucieczki zamiast liniowo. Liczby iteracji do ucieczki skupiają się w głębi przy górnym końcu, więc odwzorowanie liniowe zużywa większość palety na cienką warstwę przy brzegu i spłaszcza całą resztę.
+# The palette map's curve (coloring plan C2): a list indented under "Always fit range" (in the Color menu, a submenu), its tooltip, and its tooltip while grayed (no normalization). Log is what the former "Log color scale" checkbox did.
+panel-scale = Skala
+panel-scale-hover =
+    Krzywa, przez którą przechodzą wartości, gdy paleta jest dopasowana do zakresu widoku. Zakres mieści tyle samo przebiegów palety przy każdej krzywej; zmienia się tylko, gdzie wypadają pasma. Pierwiastki i logarytmy poszerzają pasma z dala od zbioru i zwężają je przy nim, gdzie wartości się tłoczą; Kwadrat działa odwrotnie.
 
-    Dotyczy odwzorowania znormalizowanego — tego, które włącza „Normalizuj głębokie kolory” (lub --normalize przy eksporcie). Mocno skośny zakres i tak dostaje odwzorowanie logarytmiczne, niezależnie od tego, czy to pole jest zaznaczone.
-# The same checkbox's tooltip while it is grayed out (normalization is off).
-panel-log-scale-off-hover =
-    Wymaga normalizacji: to ustawienie wybiera, JAK paleta jest odwzorowywana na zmierzony zakres ucieczki, więc gdy „Normalizuj głębokie kolory” jest wyłączone (i nie ma eksportu z --normalize), nie ma odwzorowania, które mogłoby zmienić, i nie zmieniłoby ani jednego piksela.
-
-    Włącz „Normalizuj głębokie kolory”, aby z niego korzystać.
+    Mocno skośny zakres bierze logarytm nawet przy Liniowej.
+panel-scale-off-hover = Działa, gdy paleta jest dopasowana do zakresu widoku: włącz „Normalizuj głębokie kolory” lub „Zawsze dopasuj zakres”.
+# The curves the Scale list offers.
+transfer-linear = Liniowa
+transfer-sqrt = Pierwiastek kwadratowy
+transfer-cbrt = Pierwiastek sześcienny
+transfer-root4 = Pierwiastek czwartego stopnia
+transfer-log = Logarytmiczna
+transfer-loglog = Podwójnie logarytmiczna
+transfer-square = Kwadrat
+# How the palette continues past its end (C2): the row's label, its tooltip, and its choices.
+panel-wrap = Zawijanie
+panel-wrap-hover = Jak paleta ciągnie się za swoim końcem. Powtarzaj zaczyna ją od nowa; Odbicie prowadzi ją z powrotem, więc paleta o różnych końcach nie ma szwu; Zatrzymaj trzyma ostatni kolor, więc każdy kolor występuje w zakresie tylko raz.
+wrap-repeat = Powtarzaj
+wrap-mirror = Odbicie
+wrap-clamp = Zatrzymaj
+# Flat bands (C2): the slider's label, its tooltip, and what it shows at 0.
+panel-steps = Stopnie
+panel-steps-hover = Dziel każdy przebieg palety na tyle płaskich pasm, każde w kolorze swojego początku, dla schodkowego wyglądu. Wyłączone to płynnie.
+panel-steps-off = Wyłączone
 # The dual view's Julia pane on the set's palette map, one iteration on (coloring plan C11): the
 # checkbox, its tooltip, and its tooltip while grayed (another method than the escape count).
 panel-julia-linked = Połącz kolory Julii ze zbiorem
