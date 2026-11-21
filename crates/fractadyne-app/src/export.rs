@@ -225,7 +225,15 @@ pub(crate) fn stamp_watermark(pixels: &mut [f32], w: u32, h: u32, ov: &WmOverlay
 /// 4 — `fractal=L-system` (design/lsystems.md), with `lsystem=` (the system's text, one escaped
 /// line), `lsystem_order=`, `lsystem_angle=`, `lsystem_width=`, `lsystem_colour=`. Written only by
 /// an L-system view, for the same reason again.
-pub(crate) const VIEW_FORMAT_VERSION: u32 = 4;
+///
+/// 5 — a coloring hook (coloring plan B10): `coloring_hook=` (its WGSL text, one escaped line) and
+/// `coloring_hook_params=` (p1..p4). Written only by a view colored through one, for the same reason:
+/// an older build would show the method's colors and say only "unknown key".
+pub(crate) const VIEW_FORMAT_VERSION: u32 = 5;
+/// What an L-system view writes (format 4, unchanged by format 5).
+pub(crate) const VIEW_FORMAT_LSYSTEM: u32 = 4;
+/// What a view colored through a coloring hook writes (format 5), whatever its family.
+pub(crate) const VIEW_FORMAT_HOOK: u32 = 5;
 /// What a Life view writes (format 3, unchanged by format 4).
 pub(crate) const VIEW_FORMAT_LIFE: u32 = 3;
 /// What a custom-formula or power-family view writes (format 2, unchanged by format 3).
@@ -351,6 +359,9 @@ pub(crate) const KNOWN_VIEW_KEYS: &[&str] = &[
     // The dual view (2026-11-16, review finding 8): the layout and the Julia pane's own camera,
     // written only for a dual view, so a single view is byte-identical to one written before.
     "dual", "dual_split", "julia_view_center_re", "julia_view_center_im", "julia_view_upp_log2",
+    // A coloring hook (format 5): its WGSL text (one line, `\n`/`\\` escaped) and its parameters
+    // p1..p4. Written only for a view colored through one.
+    "coloring_hook", "coloring_hook_params",
 ];
 
 /// Without these a "view" is not a view. Their absence is reported by NAME, so a paste that
@@ -1036,9 +1047,11 @@ impl FractadyneApp {
              palette={}\npalette_id={}\ncycle={}\n{}offset={}\naa={}\n{dual}{}{}{}{}{}",
             version_string(),
             if self.fractal == FractalKind::LSystem {
-                VIEW_FORMAT_VERSION
+                VIEW_FORMAT_LSYSTEM
             } else if self.fractal == FractalKind::Life {
                 VIEW_FORMAT_LIFE
+            } else if !self.coloring_hook_metadata().is_empty() {
+                VIEW_FORMAT_HOOK
             } else if self.custom_formula_metadata().is_empty() && self.fractal.power_family().is_none() {
                 VIEW_FORMAT_PLAIN
             } else {
@@ -1096,8 +1109,9 @@ impl FractadyneApp {
             // so an ordinary view's metadata is byte-identical to before this existed). Only for
             // the main view: a Julia pane's picture is not centered on the expression.
             if main_view { self.center_expr_metadata_for(vp) } else { String::new() },
-            // The custom formula, for a Custom view (empty otherwise, likewise).
-            self.custom_formula_metadata(),
+            // The custom formula, for a Custom view, and the coloring hook, for a view colored
+            // through one (each empty otherwise, likewise).
+            format!("{}{}", self.custom_formula_metadata(), self.coloring_hook_metadata()),
             // The universe, for a Life view (empty otherwise, likewise).
             self.life_metadata(),
         )
@@ -1212,6 +1226,19 @@ impl FractadyneApp {
     pub(crate) fn set_view_coloring(&mut self, v: &crate::view_coloring::ViewColoring) {
         let s = v.to_spec(&self.coloring_spec());
         self.apply_coloring_spec(&s);
+    }
+
+    /// `coloring_hook=` and `coloring_hook_params=` for a view colored through a coloring hook (B10);
+    /// empty otherwise. The text, never the file: a view is shared.
+    pub(crate) fn coloring_hook_metadata(&self) -> String {
+        match self.color_hook_for(self.fractal) {
+            Some(h) => format!(
+                "coloring_hook={}\ncoloring_hook_params={}\n",
+                crate::custom_formula::escape_line(&h.text),
+                crate::coloring_hook::params_line(&self.coloring.hook.params),
+            ),
+            None => String::new(),
+        }
     }
 
     /// `formula=` and `formula_params=` for a Custom view; empty for a built-in family.
@@ -1457,6 +1484,31 @@ impl FractadyneApp {
             let states = get("cycle").is_some();
             let mut spec = self.coloring_spec();
             crate::coloring_fields::apply_view(&mut spec, &get, states, &mut report.clamped);
+            // The coloring hook (B10): a view that states its coloring and names none was colored
+            // without one. One that does not build is said, and the view shows the method's colors.
+            match get("coloring_hook").filter(|t| !t.trim().is_empty()) {
+                Some(line) => {
+                    let text = crate::custom_formula::unescape_line(&line);
+                    match fractadyne_gpu::color_hook::build(&text) {
+                        Ok(_) => {
+                            spec.coloring_hook = text;
+                            spec.coloring_hook_params = match get("coloring_hook_params") {
+                                None => Vec::new(),
+                                Some(p) => crate::coloring_hook::parse_params(&p).unwrap_or_else(|| {
+                                    report.problems.push("coloring_hook_params is not four numbers".into());
+                                    Vec::new()
+                                }),
+                            };
+                        }
+                        Err(e) => {
+                            report.problems.push(format!("the coloring hook does not build ({e}), so the view shows its method's colors"));
+                            spec.coloring_hook.clear();
+                        }
+                    }
+                }
+                None if states => spec.coloring_hook.clear(),
+                None => {}
+            }
             self.apply_coloring_spec(&spec);
             // The palette's mode, as the Color menu sets it: naming Duotone or Binary turns the
             // custom gradient off, and a view that states its coloring with neither and no gradient

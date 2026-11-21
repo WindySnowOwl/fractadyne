@@ -154,7 +154,9 @@ pub fn render_atlas(
             let cu = v.last_cu?;
             v.rendered.then(|| {
                 (
-                    r.color_pipeline.clone(),
+                    // Through the view's coloring hook when its frame was: a thumbnail is the view
+                    // with another palette.
+                    r.color_pipeline_for(v.last_hook).clone(),
                     r.color_bgl.clone(),
                     v.tex_view.clone(),
                     v.aux_view.clone(),

@@ -89,6 +89,10 @@ impl WindowTexels {
 
     /// What a frame colored as `req` is reads.
     pub fn for_request(req: &ExportRequest) -> Self {
+        // A coloring hook may read any lane of the main target.
+        if req.color_hook.is_some() {
+            return WindowTexels::All;
+        }
         Self::for_colour(req.color_method, req.light != 0, req.de_on != 0, req.aa_palette)
     }
 
@@ -289,6 +293,10 @@ pub struct Assembler {
     main_tex: wgpu::Texture,
     main_view: wgpu::TextureView,
     color_pipeline: wgpu::RenderPipeline,
+    /// The color pass's layout, and a coloring hook's pipeline built against it on the first frame
+    /// colored through that hook (by its key).
+    color_layout: wgpu::PipelineLayout,
+    hook: Option<(u64, wgpu::RenderPipeline)>,
     color_bg: wgpu::BindGroup,
     color_uniform: wgpu::Buffer,
     lut_buf: wgpu::Buffer,
@@ -517,6 +525,8 @@ impl Assembler {
             main_tex,
             main_view,
             color_pipeline,
+            color_layout,
+            hook: None,
             color_bg,
             color_uniform,
             lut_buf,
@@ -647,6 +657,16 @@ impl Assembler {
                 self.texels.describe()
             )));
         }
+        if let Some(h) = colour.color_hook.as_deref() {
+            if !h.stats.is_empty() {
+                return Err(GpuError::Assembly(
+                    "the coloring hook reads orbit statistics, which a zoom video's strips do not keep".into(),
+                ));
+            }
+            if self.hook.as_ref().map(|p| p.0) != Some(h.key) {
+                self.hook = Some((h.key, h.pipeline(device, &self.color_layout, OUT_FORMAT, "assemble.color_hook.pipeline")));
+            }
+        }
         let u = self.uniforms(place)?;
         queue.write_buffer(&self.reproject_uniform, 0, bytemuck::bytes_of(&u));
         let (lut_len, lut_smooth) = crate::write_lut(queue, &self.lut_buf, &colour.lut, colour.lut_smooth);
@@ -667,7 +687,11 @@ impl Assembler {
                 timestamp_writes: None,
                 occlusion_query_set: None,
             });
-            pass.set_pipeline(&self.color_pipeline);
+            let pipeline = match (colour.color_hook.as_deref(), &self.hook) {
+                (Some(h), Some((key, p))) if *key == h.key => p,
+                _ => &self.color_pipeline,
+            };
+            pass.set_pipeline(pipeline);
             pass.set_bind_group(0, &self.color_bg, &[]);
             pass.draw(0..3, 0..1);
         }

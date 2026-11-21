@@ -4638,6 +4638,8 @@ impl FractadyneApp {
             mode: mode.to_u32(),
             formula: self.fractal.formula_id(),
             custom: self.custom_shader_for(self.fractal),
+            color_hook: self.color_hook_for(self.fractal),
+            hook_params: self.coloring.hook.gpu_params(),
             julia: julia as u32,
             // WYSIWYG: a GUI export bakes in the live view's auto-normalized palette mapping when
             // it's active (headless CLI runs have no live range → always classic; `--normalize`
@@ -4717,6 +4719,9 @@ pub(crate) fn params_to_request(p: &fractadyne_gpu::MandelbrotParams) -> fractad
         mode: p.mode,
         formula: p.formula,
         custom: None,
+        // Profiling colors as the method does; `params_to_request_exact` carries the hook.
+        color_hook: None,
+        hook_params: [0.0; 4],
         julia: p.julia,
         cycle: p.cycle,
         offset: p.offset,
@@ -4752,6 +4757,8 @@ pub(crate) fn params_to_request_exact(p: &fractadyne_gpu::MandelbrotParams, jitt
         aa_palette: p.aa_palette,
         aa_sample: p.aa_sample,
         custom: p.custom.clone(),
+        color_hook: p.color_hook.clone(),
+        hook_params: p.hook_params,
         jitter,
         ..params_to_request(p)
     }
@@ -7007,6 +7014,12 @@ impl FractadyneApp {
 
     /// The generated shader module `fractal` renders with: the custom formula's for
     /// `FractalKind::Custom`, none for a built-in.
+    /// The coloring hook a frame of `fractal` colors through (coloring plan B10): the session's, for
+    /// an escape-time family (a Life universe or an L-system colors its own way).
+    pub(crate) fn color_hook_for(&self, fractal: FractalKind) -> Option<std::sync::Arc<fractadyne_gpu::color_hook::ColorHook>> {
+        self.coloring.hook.active.clone().filter(|_| fractal.is_escape_time())
+    }
+
     pub(crate) fn custom_shader_for(
         &self,
         fractal: FractalKind,
@@ -7562,6 +7575,8 @@ impl FractadyneApp {
             mode: mode.to_u32(),
             formula: fractal.formula_id(),
             custom: self.custom_shader_for(fractal),
+            color_hook: self.color_hook_for(fractal),
+            hook_params: self.coloring.hook.gpu_params(),
             life: None, // Life frames are built by `build_life_params`, not here
             lsystem: None, // nor L-system frames (`build_lsystem_params`)
             julia: julia as u32,
