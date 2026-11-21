@@ -1386,7 +1386,72 @@ struct ViewResources {
     /// snapshot is shown only when the two agree (`HoldState::stamp_ok`); the app reads it back
     /// (`pixels_stamp_out`) for the reuse-hold, which reprojects them directly (U20, U42).
     pixels_stamp: Option<u64>,
+    /// ⭐⭐**THE COLORED PICTURE, KEPT while nothing it is made from changes** (2026-11-21). The
+    /// color pass reads every supersample of the G-buffer for every output pixel: two panes at ss 4
+    /// on a 5048-pixel-wide window are ~5 GB of reads a frame, and the orbit overlay's animation
+    /// repaints ~90 times a second, so a finished, still view kept the card ~80% busy for as long as
+    /// the overlay ran (the user's 2026-11-20 session, 21 minutes of it). A frame whose color inputs
+    /// ([`color_inputs_sig`] with the bound textures and the pipeline) match the frame before's is
+    /// colored ONCE into this texture and then only blitted; egui's overlay draws over either.
+    /// `FRACTADYNE_NO_COLOR_KEEP` turns it off ([`MandelbrotParams::color_keep`]).
+    color_keep: Option<ColorKeep>,
+    /// The color inputs' signature last frame: a frame that repeats it may show the kept picture.
+    color_sig_last: Option<u64>,
+    /// This frame's `paint` blits `color_keep` (set by `prepare`).
+    keep_shown: bool,
+    /// The viewport the last `paint` drew into, physical pixels, `w << 32 | h` (0: none yet). The
+    /// kept picture is made at exactly this size, so its blit is 1:1; at any other it is not shown.
+    paint_px: std::sync::atomic::AtomicU64,
 }
+
+/// A view's kept colored picture (see `ViewResources::color_keep`).
+struct ColorKeep {
+    view: wgpu::TextureView,
+    /// `view` bound for the present pipeline (binding 2).
+    bg: wgpu::BindGroup,
+    size: [u32; 2],
+    /// The signature it was colored at; `None` until it has been.
+    sig: Option<u64>,
+}
+
+/// What the live color pass makes its picture from, hashed, but for WHICH textures and pipeline it
+/// binds (`prepare` adds those: wgpu hashes them by identity, so a resize, a seed, a hold snapshot
+/// or an adopted frame, each of which binds new textures, changes the signature): the uniforms,
+/// both palettes' entries (the LUT buffer is rewritten every frame from them), the number of passes
+/// that have written the G-buffer, and the size the picture is drawn at. Two frames with the same
+/// signature color every pixel the same, so the second may show the first's picture.
+///
+/// ⛔**Anything the color pass comes to read must join this**, or a kept picture goes stale: a
+/// palette that changes on screen only when the view moves.
+pub(crate) fn color_inputs_sig(
+    cu: &ColorUniforms,
+    lut: &[[f32; 4]],
+    lut_smooth: bool,
+    interior: &InteriorShade,
+    writes: u64,
+    size: [u32; 2],
+) -> u64 {
+    use std::hash::{Hash, Hasher};
+    let mut h = std::collections::hash_map::DefaultHasher::new();
+    h.write(bytemuck::bytes_of(cu));
+    h.write(bytemuck::cast_slice(lut));
+    lut_smooth.hash(&mut h);
+    match interior.lut.as_deref() {
+        Some(v) => {
+            1u8.hash(&mut h);
+            h.write(bytemuck::cast_slice(v.as_slice()));
+        }
+        None => 0u8.hash(&mut h),
+    }
+    interior.lut_smooth.hash(&mut h);
+    writes.hash(&mut h);
+    size.hash(&mut h);
+    h.finish()
+}
+
+#[cfg(test)]
+#[path = "../tests/unit/color_keep_tests.rs"]
+mod color_keep_tests;
 
 /// Snapshot bind group for present-gated composition (see `MandelbrotParams::hold_copy`).
 /// The bind group owns the snapshot textures (wgpu keeps bound resources alive).
@@ -2849,6 +2914,10 @@ impl ViewResources {
             content_stamp: None,
             content_foreign: false,
             pixels_stamp: None,
+            color_keep: None,
+            color_sig_last: None,
+            keep_shown: false,
+            paint_px: std::sync::atomic::AtomicU64::new(0),
         }
     }
 
@@ -3495,6 +3564,9 @@ pub struct MandelbrotParams {
     pub accum_present: bool,
     pub accum_commit: bool,
     pub accum_reset: bool,
+    /// Keep the colored picture while its inputs hold still (`ViewResources::color_keep`). The live
+    /// view sets it; `false` (the default) colors every frame, as every frame was before.
+    pub color_keep: bool,
     /// A sample rendered on another device, to fold into the running average this frame (it is
     /// complete by construction: no tile, chunk or reprojection state of this frame applies). The
     /// app attaches one only on a frame that does not also `accum_commit` — the two folds would
@@ -3738,6 +3810,7 @@ impl Default for MandelbrotParams {
             accum_present: false,
             accum_commit: false,
             accum_reset: false,
+            color_keep: false,
             accum_external: None,
             accum_folds: None,
             chunk_walk: 0,
@@ -4921,6 +4994,64 @@ impl CallbackTrait for MandelbrotParams {
             view.accum = None; // accumulation fully off → release the accumulator's textures
         }
 
+        // ---- the colored picture, kept (see `ViewResources::color_keep`) ----
+        // The inputs as `paint` will color them: the hold snapshot's textures when it serves the
+        // display (the same choice `paint` makes), else the live ones.
+        let packed = view.paint_px.load(std::sync::atomic::Ordering::Relaxed);
+        let px = [(packed >> 32) as u32, packed as u32];
+        let shown_bg = match (&view.hold, self.display_hold) {
+            (Some(h), true) => &h.bg,
+            _ => &view.color_bg,
+        };
+        let sig = {
+            use std::hash::{Hash, Hasher};
+            let mut h = std::collections::hash_map::DefaultHasher::new();
+            color_inputs_sig(&cu, self.lut.as_slice(), self.lut_smooth, &self.interior, view.writes, px).hash(&mut h);
+            shown_bg.hash(&mut h);
+            color_pipeline.hash(&mut h);
+            h.finish()
+        };
+        // One frame unchanged arms it: a view that changes every frame (a move, palette cycling)
+        // colors straight to the screen as it always did, and pays nothing extra.
+        let steady = view.color_sig_last == Some(sig);
+        view.color_sig_last = Some(sig);
+        let accum_shown = self.accum_present && view.accum.is_some();
+        view.keep_shown = false;
+        if self.color_keep && steady && !accum_shown && px[0] > 0 && px[1] > 0 {
+            if view.color_keep.as_ref().is_none_or(|k| k.size != px) {
+                let tv = make_target_texture(device, px, accum_format);
+                let bg = device.create_bind_group(&wgpu::BindGroupDescriptor {
+                    label: Some("fractadyne.color_keep_bg"),
+                    layout: present_bgl,
+                    entries: &[wgpu::BindGroupEntry { binding: 2, resource: wgpu::BindingResource::TextureView(&tv) }],
+                });
+                view.color_keep = Some(ColorKeep { view: tv, bg, size: px, sig: None });
+            }
+            let k = view.color_keep.as_mut().unwrap();
+            if k.sig != Some(sig) {
+                let mut pass = encoder.begin_render_pass(&wgpu::RenderPassDescriptor {
+                    label: Some("fractadyne.color_keep"),
+                    color_attachments: &[Some(wgpu::RenderPassColorAttachment {
+                        view: &k.view,
+                        resolve_target: None,
+                        ops: wgpu::Operations { load: wgpu::LoadOp::Clear(wgpu::Color::TRANSPARENT), store: wgpu::StoreOp::Store },
+                    })],
+                    depth_stencil_attachment: None,
+                    timestamp_writes: None,
+                    occlusion_query_set: None,
+                });
+                pass.set_pipeline(color_pipeline);
+                pass.set_bind_group(0, shown_bg, &[]);
+                pass.draw(0..3, 0..1);
+                drop(pass);
+                k.sig = Some(sig);
+            }
+            view.keep_shown = true;
+        } else if !self.color_keep || view.color_keep.as_ref().is_some_and(|k| k.size != px) {
+            // Off, or the panel changed size: the old picture is of no use.
+            view.color_keep = None;
+        }
+
         // The timer ring's states, for the app's live-render panel (two bits a slot).
         if let Some(o) = &self.timer_states_out {
             let packed = view.timing.iter().take(16).enumerate().fold(0u32, |acc, (k, t)| {
@@ -4939,12 +5070,16 @@ impl CallbackTrait for MandelbrotParams {
 
     fn paint(
         &self,
-        _info: egui::PaintCallbackInfo,
+        info: egui::PaintCallbackInfo,
         render_pass: &mut wgpu::RenderPass<'static>,
         resources: &CallbackResources,
     ) {
         if let Some(r) = resources.get::<Renderer>() {
             if let Some(view) = r.views.get(&self.view_id) {
+                // The size this panel is drawn at: what the next frame's kept picture is made at.
+                let vp = info.viewport_in_pixels();
+                let px = [vp.width_px.max(0) as u32, vp.height_px.max(0) as u32];
+                view.paint_px.store(((px[0] as u64) << 32) | px[1] as u64, std::sync::atomic::Ordering::Relaxed);
                 // Progressive on-settle supersampling: present the running AVERAGE instead of a
                 // single frame's color (see `MandelbrotParams::accum_present`). A plain blit of the
                 // accumulator to the surface.
@@ -4952,6 +5087,16 @@ impl CallbackTrait for MandelbrotParams {
                     if let Some(a) = &view.accum {
                         render_pass.set_pipeline(&r.present_pipeline);
                         render_pass.set_bind_group(0, &a.present_bg[a.latest], &[]);
+                        render_pass.draw(0..3, 0..1);
+                        return;
+                    }
+                }
+                // The kept picture (`ViewResources::color_keep`), when this frame's inputs are the
+                // ones it was colored at and the panel is the size it was made at.
+                if view.keep_shown {
+                    if let Some(k) = view.color_keep.as_ref().filter(|k| k.size == px && k.sig.is_some()) {
+                        render_pass.set_pipeline(&r.present_pipeline);
+                        render_pass.set_bind_group(0, &k.bg, &[]);
                         render_pass.draw(0..3, 0..1);
                         return;
                     }

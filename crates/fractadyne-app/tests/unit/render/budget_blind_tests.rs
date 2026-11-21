@@ -130,3 +130,18 @@ fn a_frame_that_comes_when_it_was_asked_to_is_not_late() {
     assert_eq!(tripwire_dt(100.0, 0.0, 1_000.0), 0.0);
     assert_eq!(tripwire_dt(100.0, 0.0, -5.0), 100.0);
 }
+
+#[test]
+fn a_view_is_judged_only_while_its_own_work_could_be_in_the_frame() {
+    // Just encoded, or within the frame latency after: its pass may be what delayed the acquire.
+    assert!(own_work_in_flight(1_000, 1_000, 0));
+    assert!(own_work_in_flight(1_000, 1_000 - OWN_WORK_FRAMES, 0));
+    // Long finished and nothing outstanding: a finished view, as both panes of the 2026-11-20
+    // session were (92,000 frames since a dispatch) when one 949 ms frame cut both budgets.
+    assert!(!own_work_in_flight(96_935, 4_904, 0));
+    assert!(!own_work_in_flight(1_000, 1_000 - OWN_WORK_FRAMES - 1, 0));
+    // Encoded long ago but not yet completed: a long pass still running is the case it is for.
+    assert!(own_work_in_flight(96_935, 4_904, 1));
+    // The start of a session errs toward judging.
+    assert!(own_work_in_flight(2, 0, 0));
+}

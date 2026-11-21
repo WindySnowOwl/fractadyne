@@ -24,7 +24,8 @@
 //!   * **heartbeat** — the harness wedges its own UI thread for [`WEDGE`] and the watchdog thread
 //!     writes no STALL row of at least 10 s naming the last frame recorded;
 //!   * **blind tripwire** — [`BLIND_FRAMES`] frames made slow on the wall while the GPU work stays
-//!     short do not trip `⚠FRAME BUDGET IS BLIND` for view 0, in the log and in the record;
+//!     short (a pass of the view in each: [`NUDGE`]) do not trip `⚠FRAME BUDGET IS BLIND` for view
+//!     0, in the log and in the record;
 //!   * **frames.jsonl** — no header for this session, a row with the wrong keys, fewer summary
 //!     rows than elapsed seconds, summaries counting frames that were never recorded, or no event
 //!     row at all (the wedge guarantees a slow frame and a stall); its writer thread not answering
@@ -67,6 +68,13 @@ const WEDGE: Duration = Duration::from_secs(13);
 /// fire for view 0 — the live wiring the pure `budget_blind` tests cannot see (finding U15).
 const BLIND_FRAMES: u64 = 10;
 const BLIND_SLEEP: Duration = Duration::from_millis(450);
+/// The zoom step each injected slow frame (the blind phase's and the wedge) takes first, so the
+/// view has a pass of its own in flight, short, as the field cases had. ⭐Since 2026-11-21 the
+/// tripwire judges a view only while its own work could be what was slow
+/// (`render::own_work_in_flight`): a finished view is not judged by a stall it had no part in. The
+/// harness used to inject its slow frames into a settled view, which is now exactly the case the
+/// tripwire must stay quiet in.
+const NUDGE: f64 = 1.02;
 
 pub(crate) struct RecordTest {
     frames: u64,
@@ -203,6 +211,7 @@ impl crate::FractadyneApp {
         if t.abort_after.is_none() && t.seen >= t.frames / 4 {
             let from = *t.blind_from.get_or_insert(this_frame);
             if this_frame < from + BLIND_FRAMES {
+                self.viewport.zoom_by(NUDGE);
                 std::thread::sleep(BLIND_SLEEP);
             }
         }
@@ -213,6 +222,7 @@ impl crate::FractadyneApp {
         if t.abort_after.is_none() && t.wedged_at.is_none() && t.seen >= t.frames * 3 / 4 {
             t.wedged_at = Some(this_frame);
             eprintln!("[recordtest] wedging the UI thread for {}s at frame {this_frame} (the watchdog must record it)", WEDGE.as_secs());
+            self.viewport.zoom_by(NUDGE);
             std::thread::sleep(WEDGE);
         }
 

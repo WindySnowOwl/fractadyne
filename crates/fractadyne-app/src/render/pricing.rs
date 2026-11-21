@@ -540,6 +540,28 @@ pub(crate) fn budget_blind_lethal(dt_ms: f64, busy: bool, slow_readings: u32, wa
     !warned && busy && slow_readings == 0 && dt_ms >= crate::tunables::cost().tdr_lethal_ms
 }
 
+/// Frames after a view's last encoded pass in which a slow frame may still be that pass's doing:
+/// with a frame latency of 1–2 a heavy pass delays the acquire one or two intervals later.
+pub(crate) const OWN_WORK_FRAMES: u64 = 3;
+
+/// ⭐⭐**COULD THIS VIEW'S OWN WORK BE WHAT MADE THE FRAME SLOW?** It encoded a pass within the last
+/// [`OWN_WORK_FRAMES`] frames, or work it submitted has not completed (`outstanding`, the completion
+/// callbacks' count). The budget-blind tripwire and the dead-man judge a view only then.
+///
+/// Without it the wall's verdict landed on views that had sent the GPU nothing. The user's session
+/// of 2026-11-20 (dual view, ss 4, both panes finished): 92,000 frames without a dispatch, then ONE
+/// 949 ms frame (the desktop stalled under memory pressure and a saturated card) fired the lethal
+/// band on BOTH views, the dead-man cut their budgets from ~1.2e11 to the 4.0e8 bootstrap, and the
+/// cut lowered the supersampling both finished pictures were drawn at, so both were drawn again:
+/// ss 1, then 2, 3 and 4 as the budget climbed back, ~1 GB of new textures at each step on a machine
+/// already short of memory. It ran out 66 s later. The dead-man bounds the NEXT dispatch; a stall
+/// with none of ours in it says nothing about how large that may be.
+///
+/// The start of a session counts as recent (`dispatch_frame` 0), which errs toward judging.
+pub(crate) fn own_work_in_flight(frame: u64, dispatch_frame: u64, outstanding: u64) -> bool {
+    outstanding > 0 || frame.saturating_sub(dispatch_frame) <= OWN_WORK_FRAMES
+}
+
 /// The part of a frame interval the budget-blind tripwire may judge: the wall interval less the
 /// time the frame spent in a SYNCHRONOUS OFFSCREEN render on the UI thread (a CLI `--render`, a
 /// `--render-tour`, a glitch-corrected export). That render is the app's own blocking work, not a
@@ -1477,6 +1499,28 @@ pub(crate) fn wall_cap_step(cap: u64, steps: u64, ms: f64, explicit: bool) -> u6
     }
 }
 
+/// The largest supersampling a live view of `px` pixels may be drawn at so its G-buffer stays in its
+/// share of the card's memory (`LIVE_GBUFFER_VRAM_DIVISOR`; `views` panes share it evenly). At
+/// least 1: below that only the resolution could give, and the budget's shrink already owns that.
+pub(crate) fn live_ss_cap(vram_mb: u64, px: u64, views: u64) -> u32 {
+    use crate::tunables::{LIVE_GBUFFER_TEXEL_BYTES, LIVE_GBUFFER_UNKNOWN_VRAM_MB, LIVE_GBUFFER_VRAM_DIVISOR};
+    let mb = if vram_mb == 0 { LIVE_GBUFFER_UNKNOWN_VRAM_MB } else { vram_mb };
+    let texels = (mb << 20) / LIVE_GBUFFER_VRAM_DIVISOR / views.max(1) / LIVE_GBUFFER_TEXEL_BYTES;
+    // ss² ≤ texels / px, in integers: the float root, corrected to the exact floor.
+    let q = texels / px.max(1);
+    let mut s = (q as f64).sqrt() as u64;
+    while s * s > q {
+        s -= 1;
+    }
+    while (s + 1) * (s + 1) <= q {
+        s += 1;
+    }
+    s.clamp(1, u32::MAX as u64) as u32
+}
+
+#[cfg(test)]
+#[path = "../../tests/unit/render/pricing/live_ss_cap_tests.rs"]
+mod live_ss_cap_tests;
 #[cfg(test)]
 #[path = "../../tests/unit/render/pricing/admission_tests.rs"]
 mod admission_tests;

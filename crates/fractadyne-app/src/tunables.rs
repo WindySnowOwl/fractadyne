@@ -315,6 +315,31 @@ pub(crate) fn is_stock() -> bool {
     APPLIED.get().is_none_or(|v| v.is_empty()) && instruments().is_empty()
 }
 
+// ----------------------------------------------------------------------------
+// The live G-buffer's share of the card's memory
+// ----------------------------------------------------------------------------
+
+/// ⭐⭐**THE LIVE VIEWS' G-BUFFERS MAY HOLD AT MOST 1/`LIVE_GBUFFER_VRAM_DIVISOR` OF THE CARD'S
+/// MEMORY AT REST** (`render::live_ss_cap`), split evenly between the panes of a dual view.
+///
+/// A live view's iteration and statistics targets are `LIVE_GBUFFER_TEXEL_BYTES` a texel, and a
+/// texel is a pixel times ss². Nothing bounded that but the device's largest texture side, so the
+/// user's dual view on a 5048-pixel-wide window (2026-11-20, a 10 GB RTX 3080, AA 4×) held
+/// 2638×2060 and 1937×2060 panes at ss 4: 4.5 GiB of G-buffer at rest, and as much again whenever
+/// a present-gated compose snapshots it (`hold_copy`) or a resize seeds a new pair from the old.
+/// Beside the desktop, Photoshop and a second device on the same card, that spilled into system
+/// memory, and the session ran out of it (peak 33 GB) as a budget cut redrew both panes.
+///
+/// A third keeps the resting G-buffer at a third of the card, so a snapshot or a seed on top of it
+/// still fits beside everything else the card is drawing. On that 3080 it gives the dual view ss 3
+/// (2.7 GB), a single 4K view ss 3 and a single 1920×1200 view its full ss 4. The quality a lower ss
+/// gives up, the settle's progressive supersampling recovers at the panel's own resolution.
+pub(crate) const LIVE_GBUFFER_VRAM_DIVISOR: u64 = 3;
+/// Bytes a live G-buffer texel holds: the iteration and statistics targets, `Rgba32Float` each.
+pub(crate) const LIVE_GBUFFER_TEXEL_BYTES: u64 = 32;
+/// The memory a card whose size cannot be read is taken to have (`sysinfo::gpu_vram_bytes` 0).
+pub(crate) const LIVE_GBUFFER_UNKNOWN_VRAM_MB: u64 = 4096;
+
 /// The diagnostic instruments, each armed by an environment variable (design §6.7). Every one
 /// deliberately perturbs the live path to put it in a regime that has killed devices, so a run
 /// with one armed has — like an override — measured a build nobody ships, and says so in
@@ -338,6 +363,9 @@ pub(crate) const INSTRUMENTS: &[&str] = &[
     // The autopilot's staged Misiurewicz solve fails stage N, so the dive's handling of a failed
     // refinement can be run (`autopilot::run_misi_stages`).
     "FRACTADYNE_MISI_FAIL_STAGE",
+    // Any value > 0: the live view colors every frame again instead of keeping a still frame's
+    // colored picture (`MandelbrotParams::color_keep`), for an A/B of the GPU load on a still view.
+    "FRACTADYNE_NO_COLOR_KEEP",
 ];
 
 /// The armed instruments and their values: set, parseable and non-zero. Read once — they are
