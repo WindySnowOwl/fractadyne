@@ -2939,6 +2939,7 @@ panel-anti-alias-hover = Suréchantillonnage des images fixes (appliqué quand l
 panel-relief-lighting = Éclairage en relief 3D
 panel-relief-lighting-hover = Ombrer la surface d’après la pente de l’estimation de distance — un aspect embossé et éclairé. (Familles holomorphes : Mandelbrot / Multibrot.)
 panel-light-angle = Angle de la lumière
+panel-light-angle-dial-hover = Le soleil indique d’où vient la lumière, et la flèche, dans quel sens elle éclaire. Cliquez ou faites glisser sur le cadran pour déplacer la lumière.
 panel-relief = Relief
 panel-relief-hover = Plus bas = relief plus net ; plus haut = plus doux/plus plat.
 panel-relief-steep = Pente selon la distance

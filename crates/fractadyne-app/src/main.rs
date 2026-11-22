@@ -5165,6 +5165,9 @@ pub(crate) struct LayoutRects {
     /// The Coloring section's Cycle slider (its track and number), when it drew wholly inside the
     /// panel's visible area: `--uitest`'s `slider-*` steps click and double-click its track.
     pub(crate) cycle_slider: Option<egui::Rect>,
+    /// The Effects section's light dial, when it drew wholly inside the panel's visible area:
+    /// `--uitest`'s `light-dial-*` steps press, drag and double-click on it.
+    pub(crate) light_dial: Option<egui::Rect>,
     /// The dual view's two panes, the set's then the Julia pane, as the last dual frame laid them
     /// out: `--uitest`'s `julia-linked*` steps read the color at each one's center.
     pub(crate) dual_panes: Option<[egui::Rect; 2]>,
@@ -8354,6 +8357,8 @@ impl FractadyneApp {
                 uitest_async_key: None,
                 uitest_pointer: Default::default(),
                 uitest_slider_times: Vec::new(),
+                uitest_dial_seen: None,
+                uitest_dial_waits: 0,
                 uitest_sheet_budget: None,
                 uitest_sheet_hold: false,
                 soak,
@@ -18512,6 +18517,22 @@ impl eframe::App for FractadyneApp {
     /// `--uitest`'s life-draw step: one queued pointer event a frame, into the app's OWN input —
     /// egui then handles it exactly as a real mouse. Nothing is sent to the desktop.
     fn raw_input_hook(&mut self, ctx: &egui::Context, raw_input: &mut egui::RawInput) {
+        // ⚠An event aimed at the light dial waits until the dial has stayed put a frame: the step
+        // opens the Effects section and scrolls it into view, both animated, and an event placed
+        // by the last frame's rect landed where the dial had been (the full walk, 2026-11-22: a
+        // drag to the dial's top came out below its middle, 3pi/2). At most 120 frames a step:
+        // a dial that never draws still lets the step end, and its check says where it was.
+        use crate::UiPointer::{LightDialMove, LightDialPress, LightDialRelease};
+        if matches!(self.harness.uitest_pointer.front(), Some(LightDialMove(..) | LightDialPress(..) | LightDialRelease(..))) {
+            let now = self.perf.layout.light_dial;
+            let still = now.is_some() && now == self.harness.uitest_dial_seen;
+            self.harness.uitest_dial_seen = now;
+            if !still && self.harness.uitest_dial_waits < 120 {
+                self.harness.uitest_dial_waits += 1;
+                ctx.request_repaint();
+                return;
+            }
+        }
         if let Some(p) = self.harness.uitest_pointer.pop_front() {
             if let Some(e) = self.life_pointer_event(ctx, p) {
                 if let (crate::UiPointer::CycleTrackPress | crate::UiPointer::CycleTrackRelease, Some(t)) = (p, raw_input.time) {

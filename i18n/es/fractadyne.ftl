@@ -2939,6 +2939,7 @@ panel-anti-alias-hover = Supermuestreo para imágenes fijas (se aplica cuando la
 panel-relief-lighting = Iluminación de relieve 3D
 panel-relief-lighting-hover = Sombrear la superficie con la pendiente de la estimación de distancia: un aspecto en relieve e iluminado. (Familias holomorfas: Mandelbrot / Multibrot.)
 panel-light-angle = Ángulo de la luz
+panel-light-angle-dial-hover = El sol indica de dónde viene la luz, y la flecha, hacia dónde ilumina. Haz clic o arrastra en el dial para mover la luz.
 panel-relief = Relieve
 panel-relief-hover = Menor = relieve más nítido; mayor = más suave/plano.
 panel-relief-steep = Pendiente según la distancia

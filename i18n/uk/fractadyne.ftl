@@ -3093,6 +3093,7 @@ panel-anti-alias-hover = Суперсемплінг для нерухомих з
 panel-relief-lighting = Рельєфне 3D-освітлення
 panel-relief-lighting-hover = Затінювати поверхню за нахилом оцінки відстані — тиснений, освітлений вигляд. (Голоморфні родини: Mandelbrot / Multibrot.)
 panel-light-angle = Кут світла
+panel-light-angle-dial-hover = Сонце показує, звідки падає світло, а стрілка — куди воно світить. Клацніть або проведіть мишею по колу, щоб пересунути світло.
 panel-relief = Рельєф
 panel-relief-hover = Менше = різкіший рельєф; більше = мʼякший/пласкіший.
 panel-relief-steep = Нахил за відстанню

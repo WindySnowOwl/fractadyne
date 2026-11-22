@@ -2939,6 +2939,7 @@ panel-anti-alias-hover = Supersampling für Standbilder (angewandt, sobald die A
 panel-relief-lighting = 3D-Reliefbeleuchtung
 panel-relief-lighting-hover = Die Oberfläche anhand der Steigung der Distanzschätzung schattieren — ein geprägter, beleuchteter Look. (Holomorphe Familien: Mandelbrot / Multibrot.)
 panel-light-angle = Lichtwinkel
+panel-light-angle-dial-hover = Die Sonne zeigt, woher das Licht kommt, der Pfeil, wohin es scheint. Zum Verschieben des Lichts auf die Scheibe klicken oder darauf ziehen.
 panel-relief = Relief
 panel-relief-hover = Niedriger = schärferes Relief; höher = weicher/flacher.
 panel-relief-steep = Neigung aus dem Abstand

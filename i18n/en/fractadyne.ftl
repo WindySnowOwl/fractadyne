@@ -3151,6 +3151,8 @@ panel-anti-alias-hover = Supersampling for still images (applied when the view s
 panel-relief-lighting = 3D relief lighting
 panel-relief-lighting-hover = Shade the surface using the distance-estimate slope — an embossed, lit look. (Mandelbrot, Multibrot and Phoenix.)
 panel-light-angle = Light angle
+# The dial at the start of the Light angle row: a sun on its rim where the light comes from, an arrow across it the way the light shines. Shown when the pointer rests on the dial.
+panel-light-angle-dial-hover = The sun is where the light comes from; the arrow, the way it shines. Click or drag on the dial to move the light.
 panel-relief = Relief
 panel-relief-hover = Lower = sharper relief; higher = softer/flatter.
 # The relief light's surface and highlight (coloring plan C5): rows under "Relief lighting" in Effects. "Slope from the distance" is a checkbox; "Steep within" (in screen pixels), "Highlight" (a strength from 0 to 1), "Shininess" and "Highlight color" (a swatch) are its rows. The two "-off" texts show when the pointer rests on a grayed-out row.

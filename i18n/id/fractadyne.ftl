@@ -2858,6 +2858,7 @@ panel-anti-alias-hover = Supersampling untuk gambar diam (diterapkan saat tampil
 panel-relief-lighting = Pencahayaan relief 3D
 panel-relief-lighting-hover = Beri bayangan pada permukaan menggunakan kemiringan estimasi jarak — tampilan timbul yang tersinari. (Keluarga holomorfik: Mandelbrot / Multibrot.)
 panel-light-angle = Sudut cahaya
+panel-light-angle-dial-hover = Matahari menunjukkan asal cahaya, dan panah arah sinarnya. Klik atau seret pada lingkaran untuk memindahkan cahaya.
 panel-relief = Relief
 panel-relief-hover = Lebih rendah = relief lebih tajam; lebih tinggi = lebih lembut/datar.
 panel-relief-steep = Kemiringan dari jarak

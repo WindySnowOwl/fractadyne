@@ -437,6 +437,12 @@ enum Screen {
     ReliefSteep,
     /// ...then the same with the Effects section open, for its rows (no comparison).
     ReliefPanel,
+    /// The relief light's dial (user, 2026-11-22), the Effects section open: the light at 0 (from
+    /// the right), a press at the dial's bottom left and a drag to its top: the light from the top
+    /// (π/2; a press alone leaves 5π/4, a dial upside down 3π/2)...
+    LightDialDrag,
+    /// ...then a double-click on its right edge: a new session's light angle (a press alone, 0).
+    LightDialDoubleClick,
     /// Custom coloring (coloring plan B10): the home view in Smooth, point sampled, the dialog open
     /// with no hook (the base)...
     ColorHookOff,
@@ -1409,6 +1415,11 @@ fn build_steps() -> Vec<Step> {
         screen("relief-panel", Screen::ReliefPanel),
         screen("slider-click", Screen::SliderClick),
         screen("slider-double-click-reset", Screen::SliderDoubleClick),
+        // ⚠After the slider steps, not before: egui counts a click within 0.6 s of the click before
+        // last as a triple, which resets a slider, so slider-click's one click half a second after
+        // the dial's double-click reset Cycle (the full walk, 2026-11-22). The dial's drag is no click.
+        screen("light-dial-drag", Screen::LightDialDrag),
+        screen("light-dial-double-click", Screen::LightDialDoubleClick),
         screen("julia-linked-off", Screen::JuliaLinkedOff),
         screen("julia-linked", Screen::JuliaLinked),
         screen("julia-linked-fit", Screen::JuliaLinkedFit),
@@ -3298,6 +3309,28 @@ impl FractadyneApp {
                     self.dialogs.uitest_effects_scroll = true;
                 }
             }
+            // The light's dial: the view as relief-panel left it (the slider steps change only Cycle),
+            // the Effects section open again.
+            Screen::LightDialDrag | Screen::LightDialDoubleClick => {
+                use crate::UiPointer::{LightDialMove as M, LightDialPress as P, LightDialRelease as R};
+                self.dialogs.right_panel_open = true;
+                self.dialogs.uitest_effects_open = Some(true);
+                self.dialogs.uitest_effects_scroll = true;
+                self.effects.light = true;
+                self.effects.light_anim = false;
+                let mut q = Vec::new();
+                if matches!(s, Screen::LightDialDrag) {
+                    self.effects.light_angle = 0.0;
+                    q.extend([M(0.1, 0.9); 6]);
+                    q.extend([P(0.1, 0.9), M(0.3, 0.5), M(0.5, 0.1), M(0.5, 0.1), R(0.5, 0.1)]);
+                } else {
+                    q.extend([M(0.9, 0.5); 6]);
+                    q.extend([P(0.9, 0.5), R(0.9, 0.5), P(0.9, 0.5), R(0.9, 0.5)]);
+                }
+                self.harness.uitest_pointer = q.into_iter().collect();
+                self.harness.uitest_dial_seen = None;
+                self.harness.uitest_dial_waits = 0;
+            }
             // The view as palette-aa left it, the palette's saturation at 0.
             Screen::PaletteAdjust => {
                 self.coloring.color_method = crate::ColorMethod::Smooth;
@@ -4801,6 +4834,26 @@ impl FractadyneApp {
                         .map(|(down, t)| format!("{}{t:.3}", if *down { "P" } else { "R" }))
                         .collect::<Vec<_>>()
                         .join(" ")
+                ),
+            });
+        }
+
+        // ---- the relief light's dial (user, 2026-11-22) ----
+        if let StepKind::Screen(sc @ (Screen::LightDialDrag | Screen::LightDialDoubleClick)) = step.kind {
+            let a = self.effects.light_angle;
+            let (name, want) = if matches!(sc, Screen::LightDialDrag) {
+                ("a press on the light's dial and a drag to its top light the picture from the top (pi/2)", std::f32::consts::FRAC_PI_2)
+            } else {
+                ("a double-click on the light's dial resets the light angle", fractadyne_state::ColoringSpec::default().light_angle)
+            };
+            checks.push(Check {
+                name: name.into(),
+                verdict: if (a - want).abs() < 1.0e-3 { Verdict::Pass } else { Verdict::Fail },
+                detail: format!(
+                    "light angle {a:.4} rad (want {want:.4}); the dial at {:?}; {} pointer events left; {} frames waited for the dial to stay put",
+                    self.perf.layout.light_dial,
+                    self.harness.uitest_pointer.len(),
+                    self.harness.uitest_dial_waits
                 ),
             });
         }

@@ -66,6 +66,11 @@ pub(crate) struct HarnessModes {
     /// `--uitest`'s `slider-*` steps: each press (`true`) and release on the Cycle slider's track as
     /// fed, with the input time of its frame (egui times a double-click between frames).
     pub(crate) uitest_slider_times: Vec<(bool, f64)>,
+    /// `--uitest`'s `light-dial-*` steps: where the light dial was on the frame before, and the
+    /// frames this step has held an event for it, so an event aimed at it waits until it stays put
+    /// (see `raw_input_hook`).
+    pub(crate) uitest_dial_seen: Option<egui::Rect>,
+    pub(crate) uitest_dial_waits: u32,
     /// `--uitest`: the budget a method sheet cell must fit to be calculated by itself, in place of
     /// `ui::sheet_render::AUTO_BUDGET_S` (0: every cell waits for its Render button).
     pub(crate) uitest_sheet_budget: Option<f64>,

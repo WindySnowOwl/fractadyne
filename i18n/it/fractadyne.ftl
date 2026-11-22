@@ -2938,6 +2938,7 @@ panel-anti-alias-hover = Supersampling per le immagini ferme (applicato quando l
 panel-relief-lighting = Illuminazione a rilievo 3D
 panel-relief-lighting-hover = Ombreggiare la superficie usando la pendenza della stima della distanza — un aspetto in rilievo e illuminato. (Famiglie olomorfe: Mandelbrot / Multibrot.)
 panel-light-angle = Angolo luce
+panel-light-angle-dial-hover = Il sole indica da dove arriva la luce, la freccia in che direzione illumina. Fai clic o trascina sul quadrante per spostare la luce.
 panel-relief = Rilievo
 panel-relief-hover = Più basso = rilievo più netto; più alto = più morbido/piatto.
 panel-relief-steep = Pendenza dalla distanza

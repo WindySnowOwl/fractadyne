@@ -2930,6 +2930,7 @@ panel-anti-alias-hover = Durağan görüntüler için süper örnekleme (görün
 panel-relief-lighting = 3B kabartma aydınlatması
 panel-relief-lighting-hover = Yüzeyi uzaklık tahmininin eğimiyle gölgelendirir — kabartmalı, ışıklı bir görünüm. (Holomorf aileler: Mandelbrot / Multibrot.)
 panel-light-angle = Işık açısı
+panel-light-angle-dial-hover = Güneş ışığın nereden geldiğini, ok ise nereye vurduğunu gösterir. Işığı taşımak için kadrana tıklayın ya da üzerinde sürükleyin.
 panel-relief = Kabartma
 panel-relief-hover = Düşük = daha keskin kabartma; yüksek = daha yumuşak/düz.
 panel-relief-steep = Uzaklıktan eğim

@@ -2858,6 +2858,7 @@ panel-anti-alias-hover = 靜態影像的超取樣（在畫面穩定下來後套�
 panel-relief-lighting = 3D 浮雕光影
 panel-relief-lighting-hover = 利用距離估計的斜率為表面著色，呈現浮雕、受光的效果。（全純族：Mandelbrot / Multibrot。）
 panel-light-angle = 光線角度
+panel-light-angle-dial-hover = 太陽表示光從哪裡來，箭頭表示光照的方向。在圓盤上按一下或拖曳即可移動光源。
 panel-relief = 浮雕
 panel-relief-hover = 越低浮雕越銳利；越高越柔和／平坦。
 panel-relief-steep = 依距離的坡度
