@@ -1158,19 +1158,36 @@ if ($have.fractalzoomer) {
 # differ from every other lane, each measured against the Fractadyne render (README "Fracturing
 # Fog"): its zoom fixes the image's WIDTH, its imaginary axis points down, and a deep center goes in
 # as up to eight double limbs. tools/ff-view.py converts each scene once, before any timing.
-# ONE SAMPLE PER PIXEL: --quality Standard. Its High preset takes 4 samples per pixel and Ultra and
-# Extreme 16, with temporal AA on top (off here: --no-taa). Batch mode does not raise the preset
-# with depth, and its precision (double-double, quad-double, octuple-double) follows the zoom alone.
-# Its batch renders run on the CPU: that path attaches no GPU kernel.
-# ITS CEILING is 1e100, its Extreme preset's limit (octuple-double). Past it 0.7.1 still exits 0,
-# with one flat color in a fraction of a second (measured at 1.6e148, 5.5e275 and 2.3e296), and a
-# flat frame of a scene with almost no interior even passes the view check's magnification test.
-# So the lane refuses those scenes up front, and the structure guard stands behind it.
+# ONE SAMPLE PER PIXEL to 1e100: --quality Standard. Its High preset takes 4 samples per pixel and
+# Ultra and Extreme 16, with temporal AA on top (off here: --no-taa). To 1e100 batch mode does not
+# raise the preset with depth, and its precision (double-double, quad-double, octuple-double)
+# follows the zoom alone.
+# ITS CEILING. 0.7.1 stops at 1e100, its Extreme preset's limit (octuple-double). Past it, it still
+# exits 0, with one flat color in a fraction of a second (measured at 1.6e148, 5.5e275 and 2.3e296),
+# and a flat frame of a scene with almost no interior even passes the view check's magnification
+# test. So for 0.7.1 and earlier the lane refuses those scenes up front, and the structure guard
+# stands behind it. From 0.7.2 (the exe's FileVersion) its batch renders past 1e100 in its Unbounded
+# tier, which it picks there BY ITSELF, whatever --quality says: 2x2 anti-aliasing, 4 samples per
+# pixel, and no switch turns that off. Those rows' notes say so.
+# PAST 1e100 THE VIEW GOES IN AS A .kfr (--kfr, from 0.7.2). A center there takes hundreds to 30,000
+# digits, and two of 30,000 overflow Windows' 32,767-character command line. Its import follows
+# Kalles Fraktaler's convention, imaginary axis DOWN the image, so the copy the lane writes beside
+# the image adds "ImagPointsUp: 1", and the import takes the conjugate, as tools/ff-view.py's -Im does.
+# WHERE IT COMPUTES. 0.7.1's batch attaches no GPU kernel. 0.7.2's opens the GPU (--gpu auto, its
+# default) and says on stderr, in "batch: ..." lines, where each image went: the lane keeps those
+# lines in the row's note and the run record.
 $ffMaxZoomLog10 = 100
+$ffOdZoomLog10 = 100
+$ffVersion = ''
+if ($have.fracturingfog) {
+    try { $ffVersion = [string](Get-Item -LiteralPath $FracturingFogExe).VersionInfo.FileVersion } catch { $ffVersion = '' }
+    $ffV = $null
+    if ([version]::TryParse($ffVersion, [ref]$ffV) -and $ffV -ge [version]'0.7.2') { $ffMaxZoomLog10 = [double]::PositiveInfinity }
+}
 if ($have.fracturingfog) {
     $wh = $Size -split 'x'
     $ffTool = Join-Path $kit 'tools\ff-view.py'
-    Write-Host ('Fracturing Fog: its batch command line, a fresh process per image (' + $FracturingFogExe + ')')
+    Write-Host ('Fracturing Fog ' + $ffVersion + ': its batch command line, a fresh process per image (' + $FracturingFogExe + ')')
     $ffViews = @{}
     $ffViewErr = @{}
     if ($PythonExe -and (Test-Path $ffTool)) {
@@ -1192,7 +1209,10 @@ if ($have.fracturingfog) {
             $argLine = ''
             $r = @{ status = ''; wall_s = ''; wall_ms = ''; stdout = ''; stderr = '' }
             $reported = ''
-            $note = 'Fracturing Fog batch, a fresh process; quality Standard (1 sample per pixel), no temporal AA; CPU; reported = its own render time, without the PNG write'
+            $route = ''
+            $ffQuality = 'Standard (1 sample per pixel)'
+            $ffKfr = ''
+            $note = 'Fracturing Fog batch, a fresh process; quality Standard (1 sample per pixel), no temporal AA; reported = its own render time, without the PNG write'
             if (-not $v -and $ffViewErr.ContainsKey($s.slug)) {
                 $status = 'NA-view-not-converted'
                 $note = ('tools/ff-view.py could not convert this view: ' + $ffViewErr[$s.slug])
@@ -1205,10 +1225,29 @@ if ($have.fracturingfog) {
                          $ffMaxZoomLog10 + ' (octuple-double) and past it writes a flat frame')
             } else {
                 Remove-Item -LiteralPath $png -ErrorAction SilentlyContinue
-                $argLine = ('--batch --x "{0}" --y "{1}" --zoom {2} --iter {3} --width {4} --height {5} --quality Standard --no-taa --no-watermark --out "{6}"' -f
-                            $v.x, $v.y, $v.zoom, $s.iterations, $wh[0], $wh[1], $png)
+                if ([double]$v.zoom_log10 -gt $ffOdZoomLog10) {
+                    $ffKfr = Join-Path $outDir ('ff-' + $s.slug + '.kfr')
+                    if (-not (Test-Path -LiteralPath $ffKfr)) {
+                        $kfrLines = @(Get-Content -LiteralPath (Join-Path $kit ('scenes\' + $s.slug + '.kfr')) |
+                                      Where-Object { $_ -notmatch '^\s*ImagPointsUp\s*:' })
+                        Set-Content -LiteralPath $ffKfr -Value ($kfrLines + 'ImagPointsUp: 1') -Encoding ascii
+                    }
+                    $argLine = ('--batch --kfr "{0}" --iter {1} --width {2} --height {3} --quality Standard --no-taa --no-watermark --out "{4}"' -f
+                                $ffKfr, $s.iterations, $wh[0], $wh[1], $png)
+                    $ffQuality = 'Unbounded (its batch picks it past 1e100: 2x2 anti-aliasing, 4 samples per pixel)'
+                    $note = 'Fracturing Fog batch, a fresh process; past 1e100 it renders in its Unbounded tier by itself (2x2 anti-aliasing, 4 samples per pixel; no switch turns it off), no temporal AA; the view from a .kfr (--kfr, ImagPointsUp: 1); reported = its own render time, without the PNG write'
+                } else {
+                    $argLine = ('--batch --x "{0}" --y "{1}" --zoom {2} --iter {3} --width {4} --height {5} --quality Standard --no-taa --no-watermark --out "{6}"' -f
+                                $v.x, $v.y, $v.zoom, $s.iterations, $wh[0], $wh[1], $png)
+                }
                 $r = Invoke-TimedRender $FracturingFogExe $argLine $TimeoutS $outDir
                 $status = $r.status
+                # Where it computed: 0.7.2's "batch: ..." stderr lines; 0.7.1 prints none and runs
+                # on the CPU.
+                $route = ((([string]$r.stderr) -split "`r?`n") | Where-Object { $_ -match '^batch: ' } |
+                          ForEach-Object { $_.Substring(7).Trim() }) -join ' / '
+                if ($route) { $note += ('; ' + $route) }
+                elseif ($ffMaxZoomLog10 -le $ffOdZoomLog10) { $note += '; CPU (its batch attaches no GPU kernel)' }
                 # "saved ff-....png (3840x2160, 1234 ms)": the render, from start to the finished
                 # buffer, before the PNG is written. Carried beside the wall, never instead of it.
                 $m = [regex]::Match([string]$r.stdout, '\((\d+)x(\d+), (\d+) ms\)')
@@ -1229,10 +1268,12 @@ if ($have.fracturingfog) {
                 renderer = 'fracturingfog'; scene = $s.slug; rep = $rep
                 exe = $FracturingFogExe; args = $argLine; cwd = $outDir
                 source = ('scenes\' + $s.slug + '.kfr')
-                inputs = @{ size = $Size; iterations = $s.iterations; quality = 'Standard (1 sample per pixel)'
-                            temporal_aa = 'off'; center_x = $(if ($v) { $v.x } else { '' })
-                            center_y = $(if ($v) { $v.y + ' (Im negated: its imaginary axis points down)' } else { '' })
-                            zoom = $(if ($v) { [string]$v.zoom + ' (the scene''s x 3.5 x (h / max(w, h)) / 4: its zoom fixes the width)' } else { '' }) }
+                version = $ffVersion; route = $route
+                inputs = @{ size = $Size; iterations = $s.iterations; quality = $ffQuality
+                            temporal_aa = 'off'
+                            center_x = $(if ($ffKfr) { 'the .kfr''s Re (' + (Split-Path -Leaf $ffKfr) + ')' } elseif ($v) { $v.x } else { '' })
+                            center_y = $(if ($ffKfr) { 'the .kfr''s Im, conjugated by its import (ImagPointsUp: 1)' } elseif ($v) { $v.y + ' (Im negated: its imaginary axis points down)' } else { '' })
+                            zoom = $(if ($ffKfr) { 'converted by its import: the .kfr''s x 3.5 x (h / max(w, h)) / 4' } elseif ($v) { [string]$v.zoom + ' (the scene''s x 3.5 x (h / max(w, h)) / 4: its zoom fixes the width)' } else { '' }) }
                 output = $(if ($argLine) { 'ff-' + $s.slug + '.png' } else { '' })
                 status = $status; wall_s = $r.wall_s; reported_s = $reported; note = $note
             }
@@ -1517,7 +1558,11 @@ $md = @(('# Benchmark summary - ' + $env:COMPUTERNAME + ' - ' + $stamp), '',
         'The rendering method its author asked for, Successive Refinement, guesses flat regions',
         'instead of iterating every pixel; Fractadyne iterates every pixel.', '',
         'Fracturing Fog is a wall column: its batch process, start to exit, which writes the PNG and',
-        'exits. It renders to 1e100 (NA-past-its-ceiling beyond), on the CPU, at one sample per pixel.', '',
+        $(if ($ffMaxZoomLog10 -gt $ffOdZoomLog10) {
+            ('exits. ' + $ffVersion + ' renders to 1e100 at one sample per pixel and past it in its Unbounded tier, which its batch picks there by itself: 2x2 anti-aliasing, 4 samples per pixel. Each row''s note says where it computed.')
+        } else {
+            'exits. It renders to 1e100 (NA-past-its-ceiling beyond), on the CPU, at one sample per pixel.'
+        }), '',
         '| Scene | Magnification | fractadyne wall | fraktaler3 wall | fractalshark wall | imagina wall | fracturingfog wall | fractalzoomer reported | fd reported |',
         '|---|---|---|---|---|---|---|---|---|')
 # Slug is the tiebreak, not decoration: the corpus has two scenes at exactly 5.1e27, PowerShell's

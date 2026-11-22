@@ -2,31 +2,31 @@
 
 A reproducible head-to-head of deep-zoom Mandelbrot renderers on **your** hardware:
 
-| Renderer | Lane | Engine | Notes |
-|---|---|---|---|
-| **Fractadyne** | automated | GPU (wgpu: Vulkan/DX12/Metal/GL) | the app this kit ships with |
-| **Fraktaler-3** | automated | GPU (OpenCL), plus the CPU unless `-F3GpuOnly` (BLA + rebasing) | binary + source included (AGPL-3.0) |
-| **Imagina** | automated (`-ImaginaCliExe`) | CPU (MipLA) | upstream is GUI-only; a small headless `imagina-cli` fork enables the automated lane - see "Imagina" below |
-| **FractalShark** | automated (GPU, 0.541+) | GPU (CUDA) | GPU lane works from 0.541 (adds sm_75; runs on RTX 20/30/40/50); earlier releases were CPU-only here - see below |
-| **Fractal Zoomer** | automated (`-FractalZoomerJar`, `-FzsWriterPath`, a JDK) | CPU (Java; perturbation + BLA) | its own command line (1.0.9.6), one batch per round; a small GPL-3.0 writer, FzsWriter, makes its `.fzs` inputs, and the lane competes on Fractal Zoomer's OWN time - see "Fractal Zoomer" below |
-| **Fracturing Fog** | automated (`-FracturingFogExe`) | CPU (.NET; perturbation + series approximation + BLA; double-, quad- or octuple-double reference by depth) | its own batch command line (0.7.1); renders to 1e100, so the deeper scenes are `NA-past-its-ceiling` - see "Fracturing Fog" below |
+| Renderer           | Lane                                                     | Engine                                                                                                                                                                                     | Notes                                                                                                                                                                                                         |
+| ------------------ | -------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| **Fractadyne**     | automated                                                | GPU (wgpu: Vulkan/DX12/Metal/GL)                                                                                                                                                           | the app this kit ships with                                                                                                                                                                                   |
+| **Fraktaler-3**    | automated                                                | GPU (OpenCL), plus the CPU unless `-F3GpuOnly` (BLA + rebasing)                                                                                                                            | binary + source included (AGPL-3.0)                                                                                                                                                                           |
+| **Imagina**        | automated (`-ImaginaCliExe`)                             | CPU (MipLA)                                                                                                                                                                                | upstream is GUI-only; a small headless `imagina-cli` fork enables the automated lane - see "Imagina" below                                                                                                    |
+| **FractalShark**   | automated (GPU, 0.541+)                                  | GPU (CUDA)                                                                                                                                                                                 | GPU lane works from 0.541 (adds sm_75; runs on RTX 20/30/40/50); earlier releases were CPU-only here - see below                                                                                              |
+| **Fractal Zoomer** | automated (`-FractalZoomerJar`, `-FzsWriterPath`, a JDK) | CPU (Java; perturbation + BLA)                                                                                                                                                             | its own command line (1.0.9.6), one batch per round; a small GPL-3.0 writer, FzsWriter, makes its `.fzs` inputs, and the lane competes on Fractal Zoomer's OWN time - see "Fractal Zoomer" below              |
+| **Fracturing Fog** | automated (`-FracturingFogExe`)                          | CPU in this kit (.NET; perturbation + series approximation + BLA, and LA from 1e30 in 0.7.2; double-, quad- or octuple-double reference by depth, arbitrary precision past 1e100 in 0.7.2) | its own batch command line (0.7.1, 0.7.2); 0.7.1 renders to 1e100, so its deeper scenes are `NA-past-its-ceiling`; 0.7.2 renders at any depth, past 1e100 at 4 samples per pixel - see "Fracturing Fog" below |
 
 Ten single-frame scenes from Fractadyne's cross-validated corpus (each verified pixel-for-pixel
 against Fraktaler-3), spanning 1e6× to 4.6e1105× magnification, plus a **zoom sequence** lane
 (below) that measures what no single frame can:
 
-| Scene | Magnification | Iterations | Regime |
-|---|---|---|---|
-| 03-seahorse-1e6 | 1.3e6 | 3,000 | shallow (direct/df32) |
-| 04-seahorse-1e12 | 3.9e12 | 60,000 | perturbation |
-| 08-deep-6.6e43 | 8.9e43 | 60,000 | deep floatexp |
-| 14-deep-1.2e148 | 1.6e148 | 800,000 | deep, dense field |
-| 17-deep-4.2e275 | 5.5e275 | 600,008 | very deep |
-| 10-deep-4.6e1105 | 6.1e1105 | 250,000 | extreme |
-| 21-m43-spar-1e27.7 | 5.1e27 | 30,000 | Misiurewicz spar |
-| 23-nucleus-p145-1e27.7 | 5.1e27 | 30,000 | period-145 nucleus (setup-dominated) |
-| 24-nucleus-p148-1e28.2 | 1.8e28 | 30,000 | period-148 nucleus |
-| 35-field-dive-1p47e77 | 1.5e77 | 300,000 | dense field, normalized |
+| Scene                  | Magnification | Iterations | Regime                               |
+| ---------------------- | ------------- | ---------- | ------------------------------------ |
+| 03-seahorse-1e6        | 1.3e6         | 3,000      | shallow (direct/df32)                |
+| 04-seahorse-1e12       | 3.9e12        | 60,000     | perturbation                         |
+| 08-deep-6.6e43         | 8.9e43        | 60,000     | deep floatexp                        |
+| 14-deep-1.2e148        | 1.6e148       | 800,000    | deep, dense field                    |
+| 17-deep-4.2e275        | 5.5e275       | 600,008    | very deep                            |
+| 10-deep-4.6e1105       | 6.1e1105      | 250,000    | extreme                              |
+| 21-m43-spar-1e27.7     | 5.1e27        | 30,000     | Misiurewicz spar                     |
+| 23-nucleus-p145-1e27.7 | 5.1e27        | 30,000     | period-145 nucleus (setup-dominated) |
+| 24-nucleus-p148-1e28.2 | 1.8e28        | 30,000     | period-148 nucleus                   |
+| 35-field-dive-1p47e77  | 1.5e77        | 300,000    | dense field, normalized              |
 
 Every scene ships in three formats with the **same** center, magnification and iteration cap:
 `.kfr` (Kalles Fraktaler text format — Imagina and FractalShark import it), `.f3.toml`
@@ -57,29 +57,29 @@ minibrot (`c_A + s_A·c_B`, period `p_A·p_B`). The files live in `ladder\`, not
 correctness fixtures. Run them with `-SceneSet ladder` (or `all`); expect hours, not minutes, of
 which the two 1e30000x scenes take several minutes per render in every lane.
 
-| Scene | Magnification | Iterations | Rung |
-|---|---|---|---|
-| 40-mini-p128-1e13 | 1.3e13 | 3,840 | minibrot, period 128 |
-| 41-mini-p448-1e34 | 5.2e33 | 13,440 | minibrot, period 448 |
-| 42-mini-p2066-1e97 | 3.4e96 | 61,980 | minibrot, period 2,066 |
-| 43-mini-p4796-1e296 | 2.3e296 | 143,880 | minibrot, period 4,796 |
-| 44-mini-p14416-1e1001 | 3.4e1000 | 432,480 | minibrot, period 14,416 |
-| 45-mini-p41722-1e3000 | 1.0e3000 | 1,251,660 | minibrot, period 41,722 |
-| 46-mini-p137396-1e10003 | 3.4e10002 | 4,121,880 | minibrot, period 137,396 |
-| 47-path-1e13 | 1.0e13 | 2,859 | spiral-path view |
-| 48-path-1e33 | 1.0e33 | 2,859 | spiral-path view |
-| 49-path-1e100 | 1.0e100 | 10,293 | spiral-path view |
-| 50-path-1e300 | 1.0e300 | 26,673 | spiral-path view |
-| 51-path-1e320 | 1.0e320 | 28,311 | spiral-path view |
-| 52-path-1e1000 | 1.0e1000 | 84,003 | spiral-path view |
-| 53-path-1e3000 | 1.0e3000 | 247,803 | spiral-path view |
-| 54-path-1e10000 | 1.0e10000 | 821,103 | spiral-path view |
-| 55-path-1e30000 | 1.0e30000 | 2,459,103 | spiral-path view |
-| 56-iter-p953-1e53 | 1.3e53 | 28,590 | minibrot, period 953 (iteration ladder) |
-| 57-iter-p15248-1e57 | 2.1e57 | 457,440 | minibrot, period 15,248 (iteration ladder) |
-| 58-iter-p121984-1e66 | 1.7e66 | 3,659,520 | minibrot, period 121,984 (iteration ladder) |
-| 59-iter-p951094-1e68 | 2.1e68 | 28,532,820 | minibrot, period 951,094 (iteration ladder) |
-| 60-mini-p410594-1e30000 | 1.5e30000 | 12,317,820 | minibrot, period 410,594 |
+| Scene                   | Magnification | Iterations | Rung                                        |
+| ----------------------- | ------------- | ---------- | ------------------------------------------- |
+| 40-mini-p128-1e13       | 1.3e13        | 3,840      | minibrot, period 128                        |
+| 41-mini-p448-1e34       | 5.2e33        | 13,440     | minibrot, period 448                        |
+| 42-mini-p2066-1e97      | 3.4e96        | 61,980     | minibrot, period 2,066                      |
+| 43-mini-p4796-1e296     | 2.3e296       | 143,880    | minibrot, period 4,796                      |
+| 44-mini-p14416-1e1001   | 3.4e1000      | 432,480    | minibrot, period 14,416                     |
+| 45-mini-p41722-1e3000   | 1.0e3000      | 1,251,660  | minibrot, period 41,722                     |
+| 46-mini-p137396-1e10003 | 3.4e10002     | 4,121,880  | minibrot, period 137,396                    |
+| 47-path-1e13            | 1.0e13        | 2,859      | spiral-path view                            |
+| 48-path-1e33            | 1.0e33        | 2,859      | spiral-path view                            |
+| 49-path-1e100           | 1.0e100       | 10,293     | spiral-path view                            |
+| 50-path-1e300           | 1.0e300       | 26,673     | spiral-path view                            |
+| 51-path-1e320           | 1.0e320       | 28,311     | spiral-path view                            |
+| 52-path-1e1000          | 1.0e1000      | 84,003     | spiral-path view                            |
+| 53-path-1e3000          | 1.0e3000      | 247,803    | spiral-path view                            |
+| 54-path-1e10000         | 1.0e10000     | 821,103    | spiral-path view                            |
+| 55-path-1e30000         | 1.0e30000     | 2,459,103  | spiral-path view                            |
+| 56-iter-p953-1e53       | 1.3e53        | 28,590     | minibrot, period 953 (iteration ladder)     |
+| 57-iter-p15248-1e57     | 2.1e57        | 457,440    | minibrot, period 15,248 (iteration ladder)  |
+| 58-iter-p121984-1e66    | 1.7e66        | 3,659,520  | minibrot, period 121,984 (iteration ladder) |
+| 59-iter-p951094-1e68    | 2.1e68        | 28,532,820 | minibrot, period 951,094 (iteration ladder) |
+| 60-mini-p410594-1e30000 | 1.5e30000     | 12,317,820 | minibrot, period 410,594                    |
 
 The twelve minibrot scenes give Fractadyne `--normalize --log-palette` (`normalize` = `log` in
 `scenes-ladder.csv`; `1` is `--normalize` alone). Without it their field is palette noise: escape
@@ -107,12 +107,12 @@ Locations other people proposed for what they stress, in `suggested\` and `scene
 Like the ladder, they are benchmark scenes, not cross-checked correctness fixtures. Run them with
 `-SceneSet suggested` (or `all`; `--scene-set suggested` on Linux).
 
-| Scene | Magnification | Iterations | What it stresses | Source |
-|---|---|---|---|---|
-| 61-flake-2.5e157 | 2.5e157 | 60,000 | perturbation without rebasing needs many reference points to resolve it | Dinkydau's "Flake", suggested by kaludix |
-| 62-fraqcel-4.5e31 | 4.5e31 | 2,000 | without rebasing, glitch correction is likely to recurse into the regions it corrected | the Fraqcel test location, suggested by kaludix |
-| 63-cerebral-spin-6.7e152 | 6.7e152 | 2,000,000 | BLA far ahead of series approximation (36x in Very Plotter) | a deeper "Cerebral Spin", from [Phil Thompson's BLA article](https://philthompson.me/2023/Faster-Mandelbrot-Set-Rendering-with-BLA-Bivariate-Linear-Approximation.html) |
-| 64-ssss-1.3e694 | 1.3e694 | 350,000 | series approximation ahead of BLA (1.66x in Very Plotter) | Dinkydau's "SSSSSSSSSSSSSSSS", from the same article |
+| Scene                    | Magnification | Iterations | What it stresses                                                                       | Source                                                                                                                                                                  |
+| ------------------------ | ------------- | ---------- | -------------------------------------------------------------------------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| 61-flake-2.5e157         | 2.5e157       | 60,000     | perturbation without rebasing needs many reference points to resolve it                | Dinkydau's "Flake", suggested by kaludix                                                                                                                                |
+| 62-fraqcel-4.5e31        | 4.5e31        | 2,000      | without rebasing, glitch correction is likely to recurse into the regions it corrected | the Fraqcel test location, suggested by kaludix                                                                                                                         |
+| 63-cerebral-spin-6.7e152 | 6.7e152       | 2,000,000  | BLA far ahead of series approximation (36x in Very Plotter)                            | a deeper "Cerebral Spin", from [Phil Thompson's BLA article](https://philthompson.me/2023/Faster-Mandelbrot-Set-Rendering-with-BLA-Bivariate-Linear-Approximation.html) |
+| 64-ssss-1.3e694          | 1.3e694       | 350,000    | series approximation ahead of BLA (1.66x in Very Plotter)                              | Dinkydau's "SSSSSSSSSSSSSSSS", from the same article                                                                                                                    |
 
 kaludix suggested these in the fractalforums.org thread "Benchmarking deep zoom renderers": the
 first two directly, and one location each from Phil Thompson's article where BLA or series
@@ -143,11 +143,11 @@ repository's validation scripts define (`scripts/tip_ladder.py`, `scripts/pi_poi
 `all`. Run with `-Inspect`, then score every renderer's raw counts with
 `python tools/points-score.py results\<run> --exe <a fractadyne.exe with --truth>`.
 
-| Scene | Magnification | Iterations | What is known |
-|---|---|---|---|
-| 71-tip-1e12 to 76-tip-1e10000 | 1.1e12 to 1.6e10000 | 1,080 to 67,440 | the antenna tip c = -2, offset by a fixed fraction of the frame: each 4x of zoom about it adds exactly one iteration to every count (radius 256 and 4096), so one reference at 1e12x judges every depth. 72 sits where Fractadyne's arithmetic changes (1e28x), 74 at the edge of a double's range |
-| 81-pi-neck-1e-3 to 83-pi-neck-1e-6 | 1.1e7 to 1.1e13 | 7,283 to 6,284,185 | beside the neck c = -3/4 + i eps the count is pi/eps plus about 1 (3,143 to 3,141,593) |
-| 84-pi-cusp-1e-6 to 86-pi-cusp-1e-12 | 4.0e9 to 4.0e18 | 7,283 to 6,284,185 | beside the cusp c = 1/4 + eps the count is pi/sqrt(eps) less about 2 |
+| Scene                               | Magnification       | Iterations         | What is known                                                                                                                                                                                                                                                                                      |
+| ----------------------------------- | ------------------- | ------------------ | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| 71-tip-1e12 to 76-tip-1e10000       | 1.1e12 to 1.6e10000 | 1,080 to 67,440    | the antenna tip c = -2, offset by a fixed fraction of the frame: each 4x of zoom about it adds exactly one iteration to every count (radius 256 and 4096), so one reference at 1e12x judges every depth. 72 sits where Fractadyne's arithmetic changes (1e28x), 74 at the edge of a double's range |
+| 81-pi-neck-1e-3 to 83-pi-neck-1e-6  | 1.1e7 to 1.1e13     | 7,283 to 6,284,185 | beside the neck c = -3/4 + i eps the count is pi/eps plus about 1 (3,143 to 3,141,593)                                                                                                                                                                                                             |
+| 84-pi-cusp-1e-6 to 86-pi-cusp-1e-12 | 4.0e9 to 4.0e18     | 7,283 to 6,284,185 | beside the cusp c = 1/4 + eps the count is pi/sqrt(eps) less about 2                                                                                                                                                                                                                               |
 
 The pi scenes are 17x17 frames inside the escaping gap: run them with `-Size 17x17 -InspectSize
 17x17` (`-InspectSize` sets the size of the raw counts, 640x360 otherwise). The tip view is
@@ -563,11 +563,11 @@ than papering over it:
   point, so it is a convention difference rather than a per-scene fudge.
   Measured on the period-148 nucleus, correlation against the Fractadyne render:
 
-  | palette | RGB correlation |
-  |---|---|
-  | each renderer's own | 0.067 |
-  | a neutral shared `.map` | 0.496 |
-  | Ember, matched cycle and offset | **0.949** |
+  | palette                         | RGB correlation |
+  | ------------------------------- | --------------- |
+  | each renderer's own             | 0.067           |
+  | a neutral shared `.map`         | 0.496           |
+  | Ember, matched cycle and offset | **0.949**       |
 
   `-SharedPalette <file>` is the other option: it puts *both* Fractadyne and Imagina on one file.
   It is off by default, because switching Fractadyne off its preset changes every reference image.
@@ -742,6 +742,9 @@ Fracturing Fog (from 0.7.1; .NET, AGPL-3.0) renders a view headlessly:
     FracturingFog.App.exe --batch --x "<limbs>" --y "<limbs>" --zoom <z> --iter <cap>
         --width 3840 --height 2160 --quality Standard --no-taa --no-watermark --out ff-<scene>.png
 
+Past 1e100 (0.7.2 and later) the view goes in as a file instead: `--kfr ff-<scene>.kfr` in place
+of `--x`, `--y` and `--zoom`. The lane tells the versions apart by the exe's file version.
+
 The lane runs it once per image, a fresh process each, like every other lane. `tools/ff-view.py`
 converts each scene's view once, before any timing. Each conversion was measured against the
 Fractadyne render of the same scene:
@@ -755,22 +758,40 @@ Fractadyne render of the same scene:
   real axis, so the lane passes −Im: the conjugate center drawn downward is the scene drawn upward.
 - **A deep center goes in as limbs.** `--x` and `--y` take up to eight doubles, `hi|lo|...`, whose
   sum is the center (about 124 digits). The `.kfr` decimal is split exactly, with rational
-  arithmetic, never through a float.
+  arithmetic, never through a float. That covers every scene to 1e100.
+- **Past 1e100 it goes in as a `.kfr`.** A center there takes hundreds to 30,000 digits, and two of
+  30,000 overflow Windows' 32,767-character command line. Version 0.7.2 reads a Kalles Fraktaler
+  location (`--kfr`) exactly at any depth and converts its zoom for the image size itself. Its
+  import follows Kalles Fraktaler's own convention, with the imaginary axis pointing down the image,
+  so the lane writes a copy of the scene's `.kfr` beside the image with `ImagPointsUp: 1` added, and
+  the import takes the conjugate, as above. On scene 03 that path renders the same image as the
+  limbs path, pixel for pixel.
 
-**One sample per pixel.** Its quality presets set the sampling: Draft and Standard take one
-sample per pixel, High 4, Ultra and Extreme 16, plus temporal anti-aliasing on top. The lane
-passes `--quality Standard --no-taa`. In batch mode the preset does not rise with depth, and the
-arithmetic (double-double, quad-double, octuple-double) follows the zoom alone, so Standard
+**One sample per pixel to 1e100.** Its quality presets set the sampling: Draft and Standard take
+one sample per pixel, High 4, Ultra and Extreme 16, plus temporal anti-aliasing on top. The lane
+passes `--quality Standard --no-taa`. To 1e100 the preset does not rise with depth in batch mode,
+and the arithmetic (double-double, quad-double, octuple-double) follows the zoom alone, so Standard
 renders deep views at full precision. `--no-watermark` leaves its caption off the image.
 
-**It runs on the CPU.** Its batch renderer attaches no GPU kernel, whatever the interactive app
-uses, so this is a CPU lane like Imagina's.
+**Past 1e100, four samples per pixel (0.7.2).** There its batch moves the view to its Unbounded
+tier by itself, whatever `--quality` says ("zoom 1e148 is past the Standard tier; rendering in
+Unbounded"): an arbitrary-precision reference orbit, and 2x2 anti-aliasing, four samples per pixel.
+`--no-taa` still drops its temporal samples, but no switch turns the 2x2 off. So past 1e100 its
+times are for four times the samples of every other lane's, and each of those rows says so.
 
-**It renders to 1e100.** That is its Extreme preset's limit, octuple-double. Version 0.7.1 still
-exits 0 past it, with one flat color in a fraction of a second, measured at 1.6e148, 5.5e275 and
-2.3e296. A flat frame of a scene with almost no interior gives the view check's magnification
-test nothing to contradict. So the lane refuses those scenes up front (`NA-past-its-ceiling`), and the
-structure guard stands behind it. Of the kit's 31 scenes, 17 are in range.
+**It runs on the CPU.** Version 0.7.1's batch renderer attaches no GPU kernel. Version 0.7.2's
+opens the GPU, at its default `--gpu auto`, only to zoom 1e4, its FP32 limit; deep zoom goes to the
+GPU only with `--gpu-deep on` or `FF_GPU_PERTURB=1`. The kit's scenes start at 1.3e6, so at its
+defaults every one renders on the CPU, as its own lines on stderr say ("batch: GPU not opened,
+rendering on the CPU: ..."). The lane keeps those lines in each row's note and in the run manifest,
+and leaves the setting at its default, so this is a CPU lane like Imagina's.
+
+**Its ceiling.** Version 0.7.1 renders to 1e100, its Extreme preset's limit, octuple-double. It
+still exits 0 past it, with one flat color in a fraction of a second, measured at 1.6e148, 5.5e275
+and 2.3e296. A flat frame of a scene with almost no interior gives the view check's magnification
+test nothing to contradict. So for 0.7.1 and earlier the lane refuses those scenes up front
+(`NA-past-its-ceiling`), and the structure guard stands behind it. Of the kit's 31 scenes, 17 are in
+range. Version 0.7.2 has no ceiling, and the lane runs every scene.
 
 **Two clocks, as for every lane.** `wall_s` is its process, from start to exit after writing the
 PNG, and is the column it competes in. `reported_s` is the time it prints, "saved ...
@@ -783,7 +804,9 @@ magnification agrees; the shapes match when you look. Its interior is black, so 
 magnification test applies as it stands.
 
 Batch mode left Fracturing Fog's own settings folder (`%APPDATA%\FracturingFog`) unchanged on
-the test machine.
+the test machine, in 0.7.1 and in 0.7.2. Version 0.7.2 keeps a per-device deep-zoom calibration
+there, but its batch only reads it, and writes one only when told to (`--deep-route-calibration
+force`); with none stored, as here, deep zoom stays on the CPU.
 
 ## Licenses
 
