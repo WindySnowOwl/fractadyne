@@ -271,6 +271,8 @@ pub struct ExportRequest {
     pub edge: crate::EdgeShade,
     /// Equipotential lines (coloring plan C10).
     pub grid: crate::GridLines,
+    /// The relief light's surface and highlight (coloring plan C5).
+    pub relief: crate::ReliefLight,
     pub julia: u32,
     pub cycle: f32,
     pub offset: f32,
@@ -1947,6 +1949,11 @@ impl<'a> TileRenderer<'a> {
             grid_width: req.grid.width,
             grid_strength: req.grid.strength,
             grid_col: req.grid.gpu_color(),
+            relief_steep_px: req.relief.gpu_steep_px(),
+            relief_highlight: req.relief.gpu_highlight(),
+            relief_shininess: req.relief.shininess,
+            _pad_relief: 0,
+            relief_hl_col: req.relief.gpu_color(),
         };
         queue.write_buffer(&color_uniform, 0, bytemuck::bytes_of(&cu));
         let split = |v: f64| -> (f32, f32) {
@@ -4350,6 +4357,11 @@ pub(crate) fn color_uniforms_for(req: &ExportRequest, ss: u32, w: u32, h: u32, l
         grid_width: req.grid.width,
         grid_strength: req.grid.strength,
         grid_col: req.grid.gpu_color(),
+        relief_steep_px: req.relief.gpu_steep_px(),
+        relief_highlight: req.relief.gpu_highlight(),
+        relief_shininess: req.relief.shininess,
+        _pad_relief: 0,
+        relief_hl_col: req.relief.gpu_color(),
     }
 }
 

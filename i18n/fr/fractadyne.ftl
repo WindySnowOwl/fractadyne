@@ -2941,6 +2941,18 @@ panel-relief-lighting-hover = Ombrer la surface d’après la pente de l’estim
 panel-light-angle = Angle de la lumière
 panel-relief = Relief
 panel-relief-hover = Plus bas = relief plus net ; plus haut = plus doux/plus plat.
+panel-relief-steep = Pente selon la distance
+panel-relief-steep-hover = Rend la surface éclairée plus raide près de l’ensemble et plus plate loin de lui, selon la distance à l’ensemble, au lieu d’une seule pente partout. L’ombrage se rassemble alors sur les bords de l’ensemble, le fond reste éclairé uniformément, l’image a le même aspect à toute profondeur, et un reflet a de la place.
+panel-relief-steep-px = Raide jusqu’à
+panel-relief-steep-px-hover = À quelle distance de l’ensemble la surface est plus raide que 45°, en pixels d’écran. Une valeur plus grande étend le relief et le reflet plus loin des bords de l’ensemble.
+panel-relief-steep-off = Activez « Pente selon la distance » pour choisir la raideur de la surface près de l’ensemble.
+panel-relief-highlight = Reflet
+panel-relief-highlight-hover = Un reflet brillant là où la surface se tourne vers la lumière : un liseré clair le long des bords de l’ensemble, du côté tourné vers la lumière. 0 = aucun.
+panel-relief-highlight-off = Le reflet a besoin de « Pente selon la distance » : sur une surface d’une seule pente partout, il n’a pas de place.
+panel-relief-shininess = Brillance
+panel-relief-shininess-hover = La finesse du reflet : plus haut donne un éclat petit et net ; plus bas, un lustre large qui éclaircit aussi le fond plat.
+panel-relief-highlight-color = Couleur du reflet
+panel-relief-highlight-color-hover = La couleur du reflet.
 panel-rotate-light = Faire tourner la lumière
 panel-rotate-light-hover = Faire tourner la direction de la lumière dans le temps (utilise le curseur Vitesse).
 panel-distance-glow = Lueur de distance

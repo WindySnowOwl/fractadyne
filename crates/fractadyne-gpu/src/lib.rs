@@ -469,6 +469,15 @@ pub(crate) struct ColorUniforms {
     pub(crate) grid_width: f32,
     pub(crate) grid_strength: f32,
     pub(crate) grid_col: [f32; 4],
+    /// The relief light's surface and highlight ([`ReliefLight`], coloring plan C5): a row of the
+    /// slope from the distance (45 degrees this many output pixels from the set; 0 = 45 degrees
+    /// everywhere, the classic relief), the highlight's strength (0 = none) and shininess and a pad
+    /// word, then a row of the highlight's color. `ColorU.relief_*` mirror them.
+    pub(crate) relief_steep_px: f32,
+    pub(crate) relief_highlight: f32,
+    pub(crate) relief_shininess: f32,
+    pub(crate) _pad_relief: u32,
+    pub(crate) relief_hl_col: [f32; 4],
 }
 
 /// [`ColorUniforms::tap_stride`] for a palette-browser thumbnail colored from a texture built at
@@ -597,6 +606,47 @@ impl GridLines {
     }
 
     /// `ColorUniforms.grid_col`.
+    pub(crate) fn gpu_color(&self) -> [f32; 4] {
+        [self.color[0], self.color[1], self.color[2], 1.0]
+    }
+}
+
+/// The relief light's surface and highlight (coloring plan C5), beside `light`, `light_angle` and
+/// `light_height`. The surface's slope comes from the distance: 45 degrees `steep_px` output pixels
+/// from the set, steeper nearer and flat far away (`fractadyne_core::coloring::relief_slope`), so the
+/// shading gathers at the set's edges and looks the same at every depth; 0 keeps 45 degrees
+/// everywhere, the classic relief. On that surface, a Blinn-Phong highlight of `highlight` strength,
+/// `shininess` and display-space `color` (`relief_highlight`), drawn only with the slope from the
+/// distance: a surface of one slope has nowhere for it to sit. `Default` is the classic relief.
+#[derive(Clone, Copy, Debug, Default, PartialEq)]
+pub struct ReliefLight {
+    pub steep_px: f32,
+    pub highlight: f32,
+    pub shininess: f32,
+    pub color: [f32; 3],
+}
+
+impl ReliefLight {
+    /// Whether the relief reads the distance estimate (its slope comes from it).
+    pub fn reads_distance(&self) -> bool {
+        self.steep_px > 0.0
+    }
+
+    /// `ColorUniforms.relief_steep_px`.
+    pub(crate) fn gpu_steep_px(&self) -> f32 {
+        self.steep_px.max(0.0)
+    }
+
+    /// `ColorUniforms.relief_highlight`: none without the slope from the distance.
+    pub(crate) fn gpu_highlight(&self) -> f32 {
+        if self.reads_distance() {
+            self.highlight.clamp(0.0, 1.0)
+        } else {
+            0.0
+        }
+    }
+
+    /// `ColorUniforms.relief_hl_col`.
     pub(crate) fn gpu_color(&self) -> [f32; 4] {
         [self.color[0], self.color[1], self.color[2], 1.0]
     }
@@ -3606,6 +3656,8 @@ pub struct MandelbrotParams {
     pub edge: EdgeShade,
     /// Equipotential lines (coloring plan C10); off by default.
     pub grid: GridLines,
+    /// The relief light's surface and highlight (coloring plan C5); the classic relief by default.
+    pub relief: ReliefLight,
     /// A Life frame (design/automata.md): `Some` replaces the iterate pass with the Life universe's
     /// step and display passes, which write the same iteration texture the color pass reads.
     pub life: Option<Arc<life::LifeFrame>>,
@@ -3913,6 +3965,7 @@ impl Default for MandelbrotParams {
             steps: 0.0,
             edge: EdgeShade::default(),
             grid: GridLines::default(),
+            relief: ReliefLight::default(),
             life: None,
             lsystem: None,
             julia: 0,
@@ -4405,6 +4458,11 @@ impl CallbackTrait for MandelbrotParams {
             grid_width: self.grid.width,
             grid_strength: self.grid.strength,
             grid_col: self.grid.gpu_color(),
+            relief_steep_px: self.relief.gpu_steep_px(),
+            relief_highlight: self.relief.gpu_highlight(),
+            relief_shininess: self.relief.shininess,
+            _pad_relief: 0,
+            relief_hl_col: self.relief.gpu_color(),
         };
         queue.write_buffer(&view.color_uniform, 0, bytemuck::bytes_of(&cu));
         view.last_cu = Some(cu);

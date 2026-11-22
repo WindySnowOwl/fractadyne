@@ -100,7 +100,7 @@ fn two_color_on(s: &ColoringSpec) -> bool {
 }
 
 /// The table, in the order a view writes its keys. A row's parents come before it.
-pub(crate) const FIELDS: [Field; 40] = [
+pub(crate) const FIELDS: [Field; 45] = [
     Field {
         key: "method",
         name: "coloring method",
@@ -211,6 +211,61 @@ pub(crate) const FIELDS: [Field; 40] = [
         ),
         parents: &["light"],
         shows: |s| s.light,
+    },
+    Field {
+        key: "light_steep",
+        name: "relief slope from the distance",
+        doc: "The relief's slope from the distance: steeper near the set and flat far from it, 45 degrees `light_steep_px` pixels from the set, instead of 45 degrees everywhere (with `light`).",
+        access: Access::Flag(|s| s.light_steep, |s, v| s.light_steep = v),
+        parents: &["light"],
+        shows: |s| s.light,
+    },
+    Field {
+        key: "light_steep_px",
+        name: "relief steep within",
+        doc: "How many output pixels from the set the relief's surface is at 45 degrees, 1 to 256 (with `light_steep`).",
+        access: Access::Real(
+            |s| s.light_steep_px,
+            |s, v| s.light_steep_px = v,
+            *slider_range::RELIEF_STEEP_PX.start(),
+            *slider_range::RELIEF_STEEP_PX.end(),
+        ),
+        parents: &["light", "light_steep"],
+        shows: |s| s.light && s.light_steep,
+    },
+    Field {
+        key: "light_highlight",
+        name: "relief highlight",
+        doc: "The relief's highlight, 0 to 1: a glossy rim where the surface turns toward the light (with `light_steep`).",
+        access: Access::Real(
+            |s| s.light_highlight,
+            |s, v| s.light_highlight = v,
+            *slider_range::RELIEF_HIGHLIGHT.start(),
+            *slider_range::RELIEF_HIGHLIGHT.end(),
+        ),
+        parents: &["light", "light_steep"],
+        shows: |s| s.light && s.light_steep,
+    },
+    Field {
+        key: "light_shininess",
+        name: "relief shininess",
+        doc: "The relief highlight's shininess, 4 to 512: higher is a smaller, sharper gleam (with `light_steep`).",
+        access: Access::Real(
+            |s| s.light_shininess,
+            |s, v| s.light_shininess = v,
+            *slider_range::RELIEF_SHININESS.start(),
+            *slider_range::RELIEF_SHININESS.end(),
+        ),
+        parents: &["light", "light_steep"],
+        shows: |s| s.light && s.light_steep,
+    },
+    Field {
+        key: "light_highlight_color",
+        name: "relief highlight color",
+        doc: "The relief highlight's color, as display-space [r, g, b] (with `light_steep`).",
+        access: Access::Rgb(|s| s.light_highlight_color, |s, v| s.light_highlight_color = v),
+        parents: &["light", "light_steep"],
+        shows: |s| s.light && s.light_steep,
     },
     Field {
         key: "glow",

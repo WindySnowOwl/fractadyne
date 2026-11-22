@@ -363,6 +363,8 @@ const SAMPLE_OPTIONAL_KEYS: &[&str] = &[
     "iter_div",
     "method", "stripe_freq", "stripe_tail", "stripe_tail_len", "interior", "interior_palette", "interior_fit", "trap",
     "light", "light_angle", "light_height", "glow", "glow_strength", "glow_width",
+    // Written only with the relief light on, and its slope from the distance (C5).
+    "light_steep", "light_steep_px", "light_highlight", "light_shininess", "light_highlight_color",
     "palette_mode", "palette_lo", "palette_hi", "interior_color",
     "normalize_live", "normalize_fit", "log_scale", "palette_aa",
     "palette_brightness", "palette_contrast", "palette_saturation", "julia_linked",
@@ -1506,6 +1508,9 @@ fn the_coloring_slider_options_are_documented_with_their_ranges() {
         ("--equipotential-spacing", r::GRID_SPACING),
         ("--equipotential-width", r::GRID_WIDTH),
         ("--equipotential-strength", r::GRID_STRENGTH),
+        ("--light-steep-px", r::RELIEF_STEEP_PX),
+        ("--light-highlight", r::RELIEF_HIGHLIGHT),
+        ("--light-shininess", r::RELIEF_SHININESS),
     ] {
         assert!(known.contains(flag), "{flag} is not a known option");
         let entry = crate::help::CLI_REFERENCE

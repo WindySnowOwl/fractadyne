@@ -314,6 +314,11 @@ fn every_session_field_survives_save_and_reload() {
         light: true,
         light_angle: 1.25,
         light_height: 2.5,
+        light_steep: true,
+        light_steep_px: 20.0,
+        light_highlight: 0.75,
+        light_shininess: 32.0,
+        light_highlight_color: [0.9, 0.7, 0.3],
         de: true,
         de_strength: 0.75,
         de_width: 1.5,
@@ -822,6 +827,7 @@ fn a_session_written_before_the_coloring_spec_reads_and_writes_the_same_keys() {
         "coloring_hook", "coloring_hook_params", "transfer", "wrap", "steps",
         "edge", "edge_inside", "edge_width", "edge_strength", "edge_curve", "edge_color",
         "equipotentials", "equipotential_spacing", "equipotential_width", "equipotential_strength", "equipotential_color",
+        "light_steep", "light_steep_px", "light_highlight", "light_shininess", "light_highlight_color",
     ];
     assert_eq!(keys.len(), 27 + SINCE.len(), "a coloring field was added: list it in SINCE");
     for k in keys.keys() {

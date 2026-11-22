@@ -794,6 +794,68 @@ impl FractadyneApp {
                         self.effects.light_height = d.light_height;
                     }
                     r.on_hover_text(format!("{}\n\n{}", tr!(panel_relief_hover), tr!(panel_double_click_reset)));
+                    // The surface (coloring plan C5): its slope from the distance, and a highlight on
+                    // it. Each row grayed out without the slope says why.
+                    ui.checkbox(&mut self.effects.light_steep, tr!(panel_relief_steep))
+                        .on_hover_text(tr!(panel_relief_steep_hover));
+                    let steep = self.effects.light_steep;
+                    let r = ui
+                        .add_enabled_ui(steep, |ui| {
+                            labelled(ui, &tr!(panel_relief_steep_px), |ui| {
+                                ui.add(
+                                    egui::Slider::new(&mut self.effects.light_steep_px, crate::slider_range::RELIEF_STEEP_PX)
+                                        .logarithmic(true)
+                                        .suffix(" px"),
+                                )
+                            })
+                        })
+                        .inner;
+                    if slider_double_clicked(&r) {
+                        self.effects.light_steep_px = d.light_steep_px;
+                    }
+                    r.on_hover_text(format!("{}\n\n{}", tr!(panel_relief_steep_px_hover), tr!(panel_double_click_reset)))
+                        .on_disabled_hover_text(tr!(panel_relief_steep_off));
+                    let r = ui
+                        .add_enabled_ui(steep, |ui| {
+                            labelled(ui, &tr!(panel_relief_highlight), |ui| {
+                                ui.add(egui::Slider::new(&mut self.effects.light_highlight, crate::slider_range::RELIEF_HIGHLIGHT))
+                            })
+                        })
+                        .inner;
+                    if slider_double_clicked(&r) {
+                        self.effects.light_highlight = d.light_highlight;
+                    }
+                    r.on_hover_text(format!("{}\n\n{}", tr!(panel_relief_highlight_hover), tr!(panel_double_click_reset)))
+                        .on_disabled_hover_text(tr!(panel_relief_highlight_off));
+                    let r = ui
+                        .add_enabled_ui(steep, |ui| {
+                            labelled(ui, &tr!(panel_relief_shininess), |ui| {
+                                ui.add(
+                                    egui::Slider::new(&mut self.effects.light_shininess, crate::slider_range::RELIEF_SHININESS)
+                                        .logarithmic(true),
+                                )
+                            })
+                        })
+                        .inner;
+                    if slider_double_clicked(&r) {
+                        self.effects.light_shininess = d.light_shininess;
+                    }
+                    r.on_hover_text(format!("{}\n\n{}", tr!(panel_relief_shininess_hover), tr!(panel_double_click_reset)))
+                        .on_disabled_hover_text(tr!(panel_relief_highlight_off));
+                    ui.add_enabled_ui(steep, |ui| {
+                        labelled(ui, &tr!(panel_relief_highlight_color), |ui| {
+                            if let Some(c) = crate::color_swatch(
+                                ui,
+                                egui::Id::new("panel_relief_highlight_color"),
+                                self.effects.light_highlight_color,
+                                &tr!(panel_relief_highlight_color_hover),
+                            ) {
+                                self.effects.light_highlight_color = c;
+                            }
+                        })
+                    })
+                    .response
+                    .on_disabled_hover_text(tr!(panel_relief_highlight_off));
                     ui.checkbox(&mut self.effects.light_anim, tr!(panel_rotate_light))
                         .on_hover_text(tr!(panel_rotate_light_hover));
                 });

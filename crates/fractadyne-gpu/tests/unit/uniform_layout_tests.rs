@@ -152,6 +152,11 @@ fn the_palette_fade_fields_line_up() {
         ("grid_width", std::mem::offset_of!(ColorUniforms, grid_width)),
         ("grid_strength", std::mem::offset_of!(ColorUniforms, grid_strength)),
         ("grid_col", std::mem::offset_of!(ColorUniforms, grid_col)),
+        // The relief light (C5): swapped, the highlight would be read as the slope.
+        ("relief_steep_px", std::mem::offset_of!(ColorUniforms, relief_steep_px)),
+        ("relief_highlight", std::mem::offset_of!(ColorUniforms, relief_highlight)),
+        ("relief_shininess", std::mem::offset_of!(ColorUniforms, relief_shininess)),
+        ("relief_hl_col", std::mem::offset_of!(ColorUniforms, relief_hl_col)),
     ] {
         assert_eq!(wgsl_field_offset(&fields, wgsl), rust, "`{wgsl}` is at another offset in ColorU than in ColorUniforms");
     }

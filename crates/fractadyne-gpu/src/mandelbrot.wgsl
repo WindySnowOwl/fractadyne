@@ -3952,6 +3952,15 @@ struct ColorU {
     grid_width: f32,
     grid_strength: f32,
     grid_col: vec4<f32>,
+    // The relief light's surface and highlight (coloring plan C5, `relief_highlight`): the slope from
+    // the distance (45 degrees this many output pixels from the set; 0 = 45 degrees everywhere, the
+    // classic relief), the highlight's strength (0 = none) and shininess, then its color. Mirrors
+    // `ColorUniforms`.
+    relief_steep_px: f32,
+    relief_highlight: f32,
+    relief_shininess: f32,
+    _pad_relief: u32,
+    relief_hl_col: vec4<f32>,
 };
 @group(0) @binding(0) var<uniform> cu: ColorU;
 @group(0) @binding(1) var iter_tex: texture_2d<f32>;
@@ -4495,6 +4504,19 @@ fn grid_shaded(c: vec3<f32>, m: vec4<f32>) -> vec3<f32> {
     return mix(c, cu.grid_col.xyz, clamp(cu.grid_strength * cov * near * fine, 0.0, 1.0));
 }
 
+// ---- The relief light's highlight (coloring plan C5) ----
+// Blinn-Phong on the relief's surface (`fractadyne_core::coloring::relief_highlight`, the CPU twin):
+// the surface normal (k·n, 1) for the unit slope direction `nu` and the slope `k`, the light `ld`
+// round and `light_height` up, the eye straight above; (N·H)^shininess, H halfway between the light
+// and the eye. It peaks where the surface tilts halfway toward the light.
+fn relief_highlight(nu: vec2<f32>, k: f32, ld: vec2<f32>) -> f32 {
+    let h = cu.light_height;
+    let l = vec3<f32>(ld, h) / sqrt(1.0 + h * h);
+    let hv = normalize(l + vec3<f32>(0.0, 0.0, 1.0));
+    let nn = normalize(vec3<f32>(nu * k, 1.0));
+    return pow(max(dot(nn, hv), 0.0), cu.relief_shininess);
+}
+
 @fragment
 fn fs_color(in: VsOut) -> @location(0) vec4<f32> {
     let tex_dim = textureDimensions(iter_tex); // = screen × ss
@@ -4624,6 +4646,10 @@ fn fs_color(in: VsOut) -> @location(0) vec4<f32> {
     var nacc = vec2<f32>(0.0);
     var dacc = 0.0;
     var count = 0.0;
+    // The relief's slope from the distance (C5): the summed log distance, and weight, of the texels
+    // that have one (escaped, a distance known).
+    var kacc = 0.0;
+    var kw = 0.0;
     // A stride above 1 reads every stride-th texel, the first half a stride in (ss 8, stride 4:
     // texels 2 and 6 of each row of eight); 1 is every texel, from the first.
     let tap_step = i32(stride);
@@ -4643,6 +4669,10 @@ fn fs_color(in: VsOut) -> @location(0) vec4<f32> {
             nacc = nacc + vec2<f32>(t.g, t.b) * w;
             dacc = dacc + t.a * w;
             count = count + w;
+            if (cu.relief_steep_px > 0.0 && t.r >= 0.0 && t.a < 1.0e20) {
+                kacc = kacc + t.a * w;
+                kw = kw + w;
+            }
         }
     }
     var col = acc / count;
@@ -4687,9 +4717,29 @@ fn fs_color(in: VsOut) -> @location(0) vec4<f32> {
         let n = mix(nacc / count, nsm / nn, 0.75);
         let conf = length(n);
         if (conf > 1.0e-6) {
-            let diff = dot(n / conf, ld);
-            let lam = clamp((diff + cu.light_height) / (1.0 + cu.light_height), 0.0, 1.0);
-            col = col * mix(1.0, lam, clamp(conf, 0.0, 1.0));
+            let nu = n / conf;
+            let diff = dot(nu, ld);
+            // The surface's slope (C5, `fractadyne_core::coloring::relief_slope`): 1 everywhere, the
+            // classic relief, whose shade is then (n·l + h) / (1 + h) as it always was; or from the
+            // distance, 45 degrees `relief_steep_px` output pixels from the set, from this pixel's
+            // mean log distance, flat (0) where none of its texels has one.
+            var k = 1.0;
+            if (cu.relief_steep_px > 0.0) {
+                k = 0.0;
+                if (kw > 0.0) {
+                    k = clamp(cu.relief_steep_px * exp2(de_px_shift - kacc / kw), 0.0, 1.0e6);
+                }
+            }
+            let lam = clamp((k * diff + cu.light_height) / (k + cu.light_height), 0.0, 1.0);
+            let cf = clamp(conf, 0.0, 1.0);
+            col = col * mix(1.0, lam, cf);
+            // The highlight on that surface, as sure of itself as the shade (`cf`), and only where the
+            // pixel has a distance: the set's inside, and a pixel with none, are flat and stay matte
+            // (the 3x3 normal lights the inside's edge pixels too).
+            if (cu.relief_highlight > 0.0 && kw > 0.0) {
+                let hl = relief_highlight(nu, k, ld) * cu.relief_highlight * cf;
+                col = min(col + hl * cu.relief_hl_col.xyz, vec3<f32>(1.0));
+            }
         }
     }
     // Distance-estimate glow: bright contour bands at log-distance intervals from the
