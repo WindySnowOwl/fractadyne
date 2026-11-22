@@ -157,6 +157,20 @@ pub struct ColoringSpec {
     /// Display-space RGB.
     #[serde(default)]
     pub edge_color: [f32; 3],
+    /// Equipotential lines (coloring plan C10): lines along the levels of the smooth count,
+    /// `equipotential_width` output pixels wide and at least `equipotential_spacing` apart at every
+    /// depth (finer levels fade in as the lines spread), mixed toward `equipotential_color` (display
+    /// RGB) by `equipotential_strength` on a line.
+    #[serde(default)]
+    pub equipotentials: bool,
+    #[serde(default = "default_equipotential_spacing")]
+    pub equipotential_spacing: f32,
+    #[serde(default = "default_equipotential_width")]
+    pub equipotential_width: f32,
+    #[serde(default = "default_equipotential_strength")]
+    pub equipotential_strength: f32,
+    #[serde(default)]
+    pub equipotential_color: [f32; 3],
     /// Coloring method: "smooth" | "stripe" | "triangle" | "trap" | "distance" |
     /// "decomposition".
     #[serde(default = "default_color_method")]
@@ -760,6 +774,18 @@ fn default_edge_curve() -> String {
     "linear".to_string()
 }
 
+fn default_equipotential_spacing() -> f32 {
+    16.0
+}
+
+fn default_equipotential_width() -> f32 {
+    1.5
+}
+
+fn default_equipotential_strength() -> f32 {
+    0.6
+}
+
 fn default_color_method() -> String {
     "smooth".to_string()
 }
@@ -805,6 +831,11 @@ impl Default for ColoringSpec {
             edge_strength: default_edge_strength(),
             edge_curve: default_edge_curve(),
             edge_color: [0.0; 3],
+            equipotentials: false,
+            equipotential_spacing: default_equipotential_spacing(),
+            equipotential_width: default_equipotential_width(),
+            equipotential_strength: default_equipotential_strength(),
+            equipotential_color: [0.0; 3],
             color_method: default_color_method(),
             stripe_freq: default_stripe_freq(),
             stripe_tail: false,

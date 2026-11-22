@@ -100,7 +100,7 @@ fn two_color_on(s: &ColoringSpec) -> bool {
 }
 
 /// The table, in the order a view writes its keys. A row's parents come before it.
-pub(crate) const FIELDS: [Field; 35] = [
+pub(crate) const FIELDS: [Field; 40] = [
     Field {
         key: "method",
         name: "coloring method",
@@ -303,6 +303,61 @@ pub(crate) const FIELDS: [Field; 35] = [
         access: Access::Rgb(|s| s.edge_color, |s, v| s.edge_color = v),
         parents: &["edge", "edge_inside"],
         shows: |s| s.edge && !s.edge_inside,
+    },
+    Field {
+        key: "equipotentials",
+        name: "equipotential lines",
+        doc: "Equipotential lines: lines along the levels of the escape count, `equipotential_width` pixels wide and at least `equipotential_spacing` apart at every depth, in `equipotential_color`.",
+        access: Access::Flag(|s| s.equipotentials, |s, v| s.equipotentials = v),
+        parents: &[],
+        shows: always,
+    },
+    Field {
+        key: "equipotential_spacing",
+        name: "equipotential spacing",
+        doc: "The least distance between neighboring equipotential lines, in output pixels, 4 to 64; finer lines fade in as the gaps widen toward twice this (with `equipotentials`).",
+        access: Access::Real(
+            |s| s.equipotential_spacing,
+            |s, v| s.equipotential_spacing = v,
+            *slider_range::GRID_SPACING.start(),
+            *slider_range::GRID_SPACING.end(),
+        ),
+        parents: &["equipotentials"],
+        shows: |s| s.equipotentials,
+    },
+    Field {
+        key: "equipotential_width",
+        name: "equipotential width",
+        doc: "The equipotential lines' width in output pixels, 0.5 to 8 (with `equipotentials`).",
+        access: Access::Real(
+            |s| s.equipotential_width,
+            |s, v| s.equipotential_width = v,
+            *slider_range::GRID_WIDTH.start(),
+            *slider_range::GRID_WIDTH.end(),
+        ),
+        parents: &["equipotentials"],
+        shows: |s| s.equipotentials,
+    },
+    Field {
+        key: "equipotential_strength",
+        name: "equipotential strength",
+        doc: "The line color's share on an equipotential line, 0 to 1 (with `equipotentials`).",
+        access: Access::Real(
+            |s| s.equipotential_strength,
+            |s, v| s.equipotential_strength = v,
+            *slider_range::GRID_STRENGTH.start(),
+            *slider_range::GRID_STRENGTH.end(),
+        ),
+        parents: &["equipotentials"],
+        shows: |s| s.equipotentials,
+    },
+    Field {
+        key: "equipotential_color",
+        name: "equipotential color",
+        doc: "The equipotential lines' color, as display-space [r, g, b] (with `equipotentials`).",
+        access: Access::Rgb(|s| s.equipotential_color, |s, v| s.equipotential_color = v),
+        parents: &["equipotentials"],
+        shows: |s| s.equipotentials,
     },
     // Duotone or Binary: one choice (`palette_mode`), held in the session as two switches. Off is
     // the absence of the key, and never written; Binary wins when both are set, as

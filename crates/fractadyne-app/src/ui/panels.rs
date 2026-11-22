@@ -762,7 +762,7 @@ impl FractadyneApp {
                 // and the note says it does nothing here.
                 let has_de = self.fractal.caps().distance_estimate;
                 let no_de = tr!(coloring_needs_derivative, family = self.fractal.display_name());
-                if !has_de && (self.effects.light || self.effects.de || self.effects.edge) {
+                if !has_de && (self.effects.light || self.effects.de || self.effects.edge || self.effects.grid) {
                     ui.label(
                         egui::RichText::new(tr!(panel_effects_no_de, family = self.fractal.display_name()))
                             .small()
@@ -867,6 +867,47 @@ impl FractadyneApp {
                         });
                         ui.checkbox(&mut self.effects.edge_inside, tr!(panel_edge_inside))
                             .on_hover_text(tr!(panel_edge_inside_hover));
+                    });
+                });
+                // Equipotential lines (coloring plan C10): they read the distance estimate too.
+                ui.add_enabled(has_de, egui::Checkbox::new(&mut self.effects.grid, tr!(panel_equipotentials)))
+                    .on_hover_text(tr!(panel_equipotentials_hover))
+                    .on_disabled_hover_text(&no_de);
+                ui.add_enabled_ui(has_de && self.effects.grid, |ui| {
+                    let d = fractadyne_state::ColoringSpec::default();
+                    let r = labelled(ui, &tr!(panel_equipotential_spacing), |ui| {
+                        ui.add(
+                            egui::Slider::new(&mut self.effects.grid_spacing, crate::slider_range::GRID_SPACING)
+                                .logarithmic(true)
+                                .suffix(" px"),
+                        )
+                    });
+                    if slider_double_clicked(&r) {
+                        self.effects.grid_spacing = d.equipotential_spacing;
+                    }
+                    r.on_hover_text(format!("{}\n\n{}", tr!(panel_equipotential_spacing_hover), tr!(panel_double_click_reset)));
+                    let r = labelled(ui, &tr!(panel_equipotential_width), |ui| {
+                        ui.add(
+                            egui::Slider::new(&mut self.effects.grid_width, crate::slider_range::GRID_WIDTH)
+                                .logarithmic(true)
+                                .suffix(" px"),
+                        )
+                    });
+                    if slider_double_clicked(&r) {
+                        self.effects.grid_width = d.equipotential_width;
+                    }
+                    r.on_hover_text(format!("{}\n\n{}", tr!(panel_equipotential_width_hover), tr!(panel_double_click_reset)));
+                    let r = labelled(ui, &tr!(panel_equipotential_strength), |ui| {
+                        ui.add(egui::Slider::new(&mut self.effects.grid_strength, crate::slider_range::GRID_STRENGTH))
+                    });
+                    if slider_double_clicked(&r) {
+                        self.effects.grid_strength = d.equipotential_strength;
+                    }
+                    r.on_hover_text(tr!(panel_double_click_reset));
+                    labelled(ui, &tr!(panel_equipotential_color), |ui| {
+                        if let Some(c) = crate::color_swatch(ui, egui::Id::new("panel_equipotential_color"), self.effects.grid_color, &tr!(panel_equipotential_color_hover)) {
+                            self.effects.grid_color = c;
+                        }
                     });
                 });
                 });

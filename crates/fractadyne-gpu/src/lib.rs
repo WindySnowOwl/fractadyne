@@ -462,6 +462,13 @@ pub(crate) struct ColorUniforms {
     pub(crate) edge_strength: f32,
     pub(crate) _pad_edge: [u32; 2],
     pub(crate) edge_col: [f32; 4],
+    /// Equipotential lines ([`GridLines`], coloring plan C10): a row of on, the spacing, the width
+    /// and the strength, then a row of the color. `ColorU.grid_*` mirror them.
+    pub(crate) grid_on: u32,
+    pub(crate) grid_spacing: f32,
+    pub(crate) grid_width: f32,
+    pub(crate) grid_strength: f32,
+    pub(crate) grid_col: [f32; 4],
 }
 
 /// [`ColorUniforms::tap_stride`] for a palette-browser thumbnail colored from a texture built at
@@ -557,6 +564,41 @@ impl EdgeShade {
     /// Whether it shades anything (it reads the distance estimate then).
     pub fn on(&self) -> bool {
         self.mode != EDGE_OFF && self.strength > 0.0
+    }
+}
+
+/// Equipotential lines (coloring plan C10): lines along the levels of the smooth count, `width`
+/// output pixels wide and about `spacing` apart at every depth, an escaped texel mixed toward `color`
+/// by `fractadyne_core::coloring::grid_weight` before a pixel's texels are averaged (the color
+/// pass's `grid_shaded`). `Default` is off.
+#[derive(Clone, Copy, Debug, Default, PartialEq)]
+pub struct GridLines {
+    pub on: bool,
+    /// Output pixels between neighboring lines, at least: the next level's lines fade in as the
+    /// spacing widens toward twice this.
+    pub spacing: f32,
+    /// The lines' width in output pixels.
+    pub width: f32,
+    /// The line color's share on a line, 0 to 1.
+    pub strength: f32,
+    /// Display-space RGB.
+    pub color: [f32; 3],
+}
+
+impl GridLines {
+    /// Whether it draws anything (it reads the distance estimate then).
+    pub fn draws(&self) -> bool {
+        self.on && self.strength > 0.0 && self.width > 0.0
+    }
+
+    /// `ColorUniforms.grid_on`.
+    pub(crate) fn gpu_on(&self) -> u32 {
+        self.draws() as u32
+    }
+
+    /// `ColorUniforms.grid_col`.
+    pub(crate) fn gpu_color(&self) -> [f32; 4] {
+        [self.color[0], self.color[1], self.color[2], 1.0]
     }
 }
 
@@ -3562,6 +3604,8 @@ pub struct MandelbrotParams {
     pub steps: f32,
     /// Edge shading (coloring plan C3); off by default.
     pub edge: EdgeShade,
+    /// Equipotential lines (coloring plan C10); off by default.
+    pub grid: GridLines,
     /// A Life frame (design/automata.md): `Some` replaces the iterate pass with the Life universe's
     /// step and display passes, which write the same iteration texture the color pass reads.
     pub life: Option<Arc<life::LifeFrame>>,
@@ -3868,6 +3912,7 @@ impl Default for MandelbrotParams {
             wrap: 0,
             steps: 0.0,
             edge: EdgeShade::default(),
+            grid: GridLines::default(),
             life: None,
             lsystem: None,
             julia: 0,
@@ -4355,6 +4400,11 @@ impl CallbackTrait for MandelbrotParams {
             edge_strength: self.edge.strength,
             _pad_edge: [0; 2],
             edge_col: [self.edge.color[0], self.edge.color[1], self.edge.color[2], 1.0],
+            grid_on: self.grid.gpu_on(),
+            grid_spacing: self.grid.spacing,
+            grid_width: self.grid.width,
+            grid_strength: self.grid.strength,
+            grid_col: self.grid.gpu_color(),
         };
         queue.write_buffer(&view.color_uniform, 0, bytemuck::bytes_of(&cu));
         view.last_cu = Some(cu);

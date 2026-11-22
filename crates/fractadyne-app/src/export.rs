@@ -360,6 +360,8 @@ pub(crate) const KNOWN_VIEW_KEYS: &[&str] = &[
     "transfer", "wrap", "steps",
     // Edge shading (coloring plan C3).
     "edge", "edge_inside", "edge_width", "edge_strength", "edge_curve", "edge_color",
+    // Equipotential lines (coloring plan C10).
+    "equipotentials", "equipotential_spacing", "equipotential_width", "equipotential_strength", "equipotential_color",
     // The dual view (2026-11-16, review finding 8): the layout and the Julia pane's own camera,
     // written only for a dual view, so a single view is byte-identical to one written before.
     "dual", "dual_split", "julia_view_center_re", "julia_view_center_im", "julia_view_upp_log2",
@@ -459,6 +461,11 @@ const TYPED_VIEW_KEYS: &[(&str, ValueKind)] = &[
     ("edge_strength", ValueKind::Float),
     ("edge_curve", ValueKind::EdgeCurve),
     ("edge_color", ValueKind::Rgb),
+    ("equipotentials", ValueKind::Flag),
+    ("equipotential_spacing", ValueKind::Float),
+    ("equipotential_width", ValueKind::Float),
+    ("equipotential_strength", ValueKind::Float),
+    ("equipotential_color", ValueKind::Rgb),
     ("dual", ValueKind::Flag),
     ("dual_split", ValueKind::Float),
     ("julia_view_center_re", ValueKind::BigFloat),

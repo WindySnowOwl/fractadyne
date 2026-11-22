@@ -2887,8 +2887,18 @@ panel-edge-color = 色
 panel-edge-color-hover = エッジを寄せる先の色。
 panel-edge-inside = 内部の色
 panel-edge-inside-hover = 代わりに内部の色へ寄せます。集合の縁が集合に溶け込み、アンチエイリアスなしでもなめらかになります（幅 1、線形で試してください）。
+
+panel-equipotentials = 等ポテンシャル線
+panel-equipotentials-hover = 地図の等高線のように、脱出回数の等しいところに沿って線を引きます。値の間隔が広がるところには細かい線が加わるので、どの深度でも線は画面上でほぼ同じ間隔に保たれます。（マンデルブロ、マルチブロ、フェニックス）
+panel-equipotential-spacing = 間隔
+panel-equipotential-spacing-hover = 隣り合う線の最小の間隔（画面のピクセル単位）。間隔がその2倍まで広がるにつれて、細かい線がフェードインします。
+panel-equipotential-width = 幅
+panel-equipotential-width-hover = 各線の幅（画面のピクセル単位）。どのズームでも、どのアンチエイリアス設定でも同じです。
+panel-equipotential-strength = 強さ
+panel-equipotential-color = 色
+panel-equipotential-color-hover = 線の色。
 # At the top of Effects when relief lighting, the glow or edge shading is on for a fractal without a distance estimate (they stay on). $family = the fractal's name.
-panel-effects-no-de = { $family } には距離推定がないため、ここではレリーフ照明、グロー、エッジの陰影は何も変えません。
+panel-effects-no-de = { $family } には距離推定がないため、ここではレリーフ照明、グロー、エッジの陰影、等ポテンシャル線は何も変えません。
 
 ## The control panel: Overlays
 

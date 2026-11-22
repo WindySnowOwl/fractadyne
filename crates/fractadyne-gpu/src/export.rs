@@ -269,6 +269,8 @@ pub struct ExportRequest {
     pub steps: f32,
     /// Edge shading (coloring plan C3).
     pub edge: crate::EdgeShade,
+    /// Equipotential lines (coloring plan C10).
+    pub grid: crate::GridLines,
     pub julia: u32,
     pub cycle: f32,
     pub offset: f32,
@@ -1940,6 +1942,11 @@ impl<'a> TileRenderer<'a> {
             edge_strength: req.edge.strength,
             _pad_edge: [0; 2],
             edge_col: [req.edge.color[0], req.edge.color[1], req.edge.color[2], 1.0],
+            grid_on: req.grid.gpu_on(),
+            grid_spacing: req.grid.spacing,
+            grid_width: req.grid.width,
+            grid_strength: req.grid.strength,
+            grid_col: req.grid.gpu_color(),
         };
         queue.write_buffer(&color_uniform, 0, bytemuck::bytes_of(&cu));
         let split = |v: f64| -> (f32, f32) {
@@ -4338,6 +4345,11 @@ pub(crate) fn color_uniforms_for(req: &ExportRequest, ss: u32, w: u32, h: u32, l
         edge_strength: req.edge.strength,
         _pad_edge: [0; 2],
         edge_col: [req.edge.color[0], req.edge.color[1], req.edge.color[2], 1.0],
+        grid_on: req.grid.gpu_on(),
+        grid_spacing: req.grid.spacing,
+        grid_width: req.grid.width,
+        grid_strength: req.grid.strength,
+        grid_col: req.grid.gpu_color(),
     }
 }
 

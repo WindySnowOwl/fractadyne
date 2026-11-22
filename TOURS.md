@@ -75,6 +75,11 @@ The tour's coloring, by the keys a saved view (`.fdn`) carries. Each key it name
 | `edge_strength` | float, 0 to 1 | 1 | The edge color's share at the set, 0 to 1 (with `edge`). |
 | `edge_curve` | string: linear \| sqrt \| square \| smooth \| hard | "linear" | How the edge shading fades out from the set: linear, sqrt (a thin line with a soft tail), square (a bold one), smooth or hard (a solid line `edge_width` wide) (with `edge`). |
 | `edge_color` | [r, g, b], 0 to 1 | [0, 0, 0] | The color the edges are shaded toward, as display-space [r, g, b] (with `edge`, unless `edge_inside`). |
+| `equipotentials` | bool | false | Equipotential lines: lines along the levels of the escape count, `equipotential_width` pixels wide and at least `equipotential_spacing` apart at every depth, in `equipotential_color`. |
+| `equipotential_spacing` | float, 4 to 64 | 16 | The least distance between neighboring equipotential lines, in output pixels, 4 to 64; finer lines fade in as the gaps widen toward twice this (with `equipotentials`). |
+| `equipotential_width` | float, 0.5 to 8 | 1.5 | The equipotential lines' width in output pixels, 0.5 to 8 (with `equipotentials`). |
+| `equipotential_strength` | float, 0 to 1 | 0.6 | The line color's share on an equipotential line, 0 to 1 (with `equipotentials`). |
+| `equipotential_color` | [r, g, b], 0 to 1 | [0, 0, 0] | The equipotential lines' color, as display-space [r, g, b] (with `equipotentials`). |
 | `palette_mode` | string: duotone \| binary | (left out) | Duotone or binary in place of the palette: "duotone" or "binary" (left out: the palette). |
 | `palette_lo` | [r, g, b], 0 to 1 | [0.04, 0.05, 0.12] | Duotone's shadow, Binary's color inside the set, as display-space [r, g, b] (with `palette_mode`). |
 | `palette_hi` | [r, g, b], 0 to 1 | [0.95, 0.8, 0.45] | Duotone's highlight, Binary's color outside the set, as display-space [r, g, b] (with `palette_mode`). |

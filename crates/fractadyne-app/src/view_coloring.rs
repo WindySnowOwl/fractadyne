@@ -87,6 +87,12 @@ pub(crate) struct ViewColoring {
     pub(crate) edge_strength: f32,
     pub(crate) edge_curve: fractadyne_core::coloring::EdgeCurve,
     pub(crate) edge_color: [f32; 3],
+    /// Equipotential lines (C10): on, their spacing, width, strength and color.
+    pub(crate) equipotentials: bool,
+    pub(crate) equipotential_spacing: f32,
+    pub(crate) equipotential_width: f32,
+    pub(crate) equipotential_strength: f32,
+    pub(crate) equipotential_color: [f32; 3],
     /// Duotone or Binary, and the two colors they share (display-space RGB): Duotone's shadow and
     /// highlight, Binary's in-set and out-of-set colors.
     pub(crate) two_color: TwoColor,
@@ -147,6 +153,11 @@ impl ViewColoring {
             edge_strength: s.edge_strength,
             edge_curve: fractadyne_core::coloring::EdgeCurve::parse_key(&s.edge_curve).unwrap_or_default(),
             edge_color: s.edge_color,
+            equipotentials: s.equipotentials,
+            equipotential_spacing: s.equipotential_spacing,
+            equipotential_width: s.equipotential_width,
+            equipotential_strength: s.equipotential_strength,
+            equipotential_color: s.equipotential_color,
             // Binary first, as `chosen_gradient` reads the two switches.
             two_color: if s.use_binary {
                 TwoColor::Binary
@@ -196,6 +207,11 @@ impl ViewColoring {
             edge_strength: self.edge_strength,
             edge_curve: self.edge_curve.key().to_string(),
             edge_color: self.edge_color,
+            equipotentials: self.equipotentials,
+            equipotential_spacing: self.equipotential_spacing,
+            equipotential_width: self.equipotential_width,
+            equipotential_strength: self.equipotential_strength,
+            equipotential_color: self.equipotential_color,
             use_binary: self.two_color == TwoColor::Binary,
             use_duotone: self.two_color == TwoColor::Duotone,
             duotone_lo: self.lo,

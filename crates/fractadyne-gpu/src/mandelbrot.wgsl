@@ -3903,6 +3903,13 @@ struct ColorU {
     _pad_edge0: u32,
     _pad_edge1: u32,
     edge_col: vec4<f32>,
+    // Equipotential lines (coloring plan C10, `grid_shaded`): on, the spacing, width and strength
+    // in output pixels, then the color. Mirrors `ColorUniforms`.
+    grid_on: u32,
+    grid_spacing: f32,
+    grid_width: f32,
+    grid_strength: f32,
+    grid_col: vec4<f32>,
 };
 @group(0) @binding(0) var<uniform> cu: ColorU;
 @group(0) @binding(1) var iter_tex: texture_2d<f32>;
@@ -3998,6 +4005,11 @@ fn interior_shade(a: vec4<f32>) -> vec3<f32> {
 // motion frame, and changes size while a reprojection follows a zoom; the Distance method and the
 // glow are specified in output pixels, so they subtract this.
 var<private> de_px_shift: f32;
+
+// The size of one tap of `fs_color`'s average in output pixels, set beside `de_px_shift`: a texel
+// (2^-de_px_shift), `tap_stride` of them for a thumbnail, and progressive supersampling's sample's
+// share of that (`aa_scale`). What the equipotential lines' coverage is filtered over.
+var<private> tap_px: f32;
 
 // Interior pixels have no palette coordinate; `coord_of` returns this sentinel so callers color
 // them with `interior_col` and the footprint estimate skips them. Far above any real coordinate
@@ -4395,6 +4407,52 @@ fn edge_shaded(c: vec3<f32>, m: vec4<f32>) -> vec3<f32> {
     return mix(c, e, w);
 }
 
+// ---- Equipotential lines (coloring plan C10) ----
+// Lines along the levels of the smooth count μ, `grid_width` output pixels wide and about
+// `grid_spacing` apart wherever they are (`fractadyne_core::coloring::grid_weight`, the CPU twin):
+// a texel d output pixels from the set is d · ln p pixels from the level one count away (|∇μ| =
+// 1 / (d · ln p)), so it draws the lines at the multiples of 1/L, L the power of two that puts them
+// spacing to twice that apart there, and fades in the next level's extra ones as the spacing widens.
+// Each texel is shaded before a pixel's texels are averaged, its line coverage box-filtered over the
+// tap (`tap_px`), so a line keeps its width at every anti-aliasing level. Faded out within 2 px of the
+// set, and where μ's own f32 step (|μ| · 2^-23 of a count) reaches a pixel: there a line would move in
+// whole-pixel steps (`GRID_PRECISION_FADE`). Interior texels, and those with no distance estimate,
+// keep their color.
+
+// The share of a tap `tap_px` across, centered `dist` output pixels from a line's center, that the
+// line covers (`grid_cover`).
+fn grid_cover(dist: f32) -> f32 {
+    let r = tap_px;
+    let lo = max(dist - 0.5 * r, -0.5 * cu.grid_width);
+    let hi = min(dist + 0.5 * r, 0.5 * cu.grid_width);
+    return clamp((hi - lo) / r, 0.0, 1.0);
+}
+
+// The coverage of the lines at the multiples of 1/`lines` (a power of two) for the count `mu`, `s`
+// output pixels a count.
+fn grid_level(mu: f32, s: f32, lines: f32) -> f32 {
+    let f = abs(fract(lines * mu + 0.5) - 0.5) / lines;
+    return grid_cover(f * s);
+}
+
+// `c`, the color of the texel `m`, under the equipotential lines.
+fn grid_shaded(c: vec3<f32>, m: vec4<f32>) -> vec3<f32> {
+    if (cu.grid_on == 0u || cu.aa_ln_p <= 0.0 || m.r < 0.0 || m.a > 1.0e20) { return c; }
+    let d = exp2(min(m.a - de_px_shift, 60.0));   // the distance in output pixels
+    let s = d * cu.aa_ln_p;                        // output pixels a count
+    let lev = log2(max(s / max(cu.grid_spacing, 1.0), 1.0e-30));
+    let l0 = clamp(floor(lev), -60.0, 60.0);
+    let fr = clamp(lev - l0, 0.0, 1.0);
+    // 2^l0 exactly (`ldexp` of a whole power), so `lines * mu` only shifts μ's exponent.
+    let lines = ldexp(1.0, i32(l0));
+    let cov = max(grid_level(m.r, s, lines), smoothstep(0.0, 1.0, fr) * grid_level(m.r, s, 2.0 * lines));
+    let near = smoothstep(0.5, 2.0, d);
+    let q = abs(m.r) * 1.1920929e-7 * s;           // μ's f32 step in output pixels
+    // (`fine`, not `precise`: that is a reserved word in WGSL.)
+    let fine = 1.0 - smoothstep(0.25, 1.0, q);
+    return mix(c, cu.grid_col.xyz, clamp(cu.grid_strength * cov * near * fine, 0.0, 1.0));
+}
+
 @fragment
 fn fs_color(in: VsOut) -> @location(0) vec4<f32> {
     let tex_dim = textureDimensions(iter_tex); // = screen × ss
@@ -4411,6 +4469,7 @@ fn fs_color(in: VsOut) -> @location(0) vec4<f32> {
     let out_w = select(f32(screen_dim.x), cu.display_w, cu.display_w > 0.0);
     let zoomed = select(1.0, cu.uv_scale, cu.reproject == 1u);
     de_px_shift = log2(max(f32(tex_dim.x) * zoomed, 1.0e-6) / max(out_w, 1.0));
+    tap_px = max(cu.aa_scale * exp2(-de_px_shift) * f32(stride), 1.0e-3);
     // Pan reprojection: sample the frozen texture shifted by the panned offset, so the detailed
     // image slides with the cursor. Anything the pan drags in from outside the frozen frame
     // isn't rendered yet — fill it with the frame's average color (nicer than black) until the
@@ -4538,7 +4597,7 @@ fn fs_color(in: VsOut) -> @location(0) vec4<f32> {
             );
             let t = textureLoad(iter_tex, texel, 0);
             let ta = textureLoad(aux_tex, texel, 0);
-            acc = acc + edge_shaded(shade_aa(t, ta, pal_w, pal_wf), t) * w;
+            acc = acc + edge_shaded(grid_shaded(shade_aa(t, ta, pal_w, pal_wf), t), t) * w;
             nacc = nacc + vec2<f32>(t.g, t.b) * w;
             dacc = dacc + t.a * w;
             count = count + w;

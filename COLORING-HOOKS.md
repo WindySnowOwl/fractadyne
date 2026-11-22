@@ -112,9 +112,9 @@ within the graphics driver's time limit, so a hook:
 - Your session keeps the hook and the file it came from: the next start watches that file again
   (and uses its newest text, if you saved it while Fractadyne was closed).
 - Not Life or L-systems, which color their own way.
-- The Effects (relief lighting, the distance glow, edge shading) draw over your colors as they
-  draw over a method's: edge shading on each sample your function returns, the others on the
-  finished pixel.
+- The Effects (relief lighting, the distance glow, edge shading, equipotential lines) draw over
+  your colors as they draw over a method's: edge shading and the equipotential lines on each sample
+  your function returns, the others on the finished pixel.
 
 A hook's text is its identity: the same text with Windows or Unix line ends is the same hook.
 

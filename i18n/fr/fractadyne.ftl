@@ -2967,8 +2967,18 @@ panel-edge-color = Couleur
 panel-edge-color-hover = La couleur vers laquelle les bords sont ombrés.
 panel-edge-inside = Couleur intérieure
 panel-edge-inside-hover = Ombrer plutôt vers la couleur de l’intérieur : le bord de l’ensemble se fond alors dans l’ensemble, ce qui le lisse même sans anticrénelage (essayez Largeur 1 et Linéaire).
+
+panel-equipotentials = Lignes équipotentielles
+panel-equipotentials-hover = Trace des lignes le long des niveaux du nombre d’échappement, comme les courbes de niveau d’une carte. Là où les niveaux s’écartent, des lignes plus fines apparaissent, si bien que les lignes restent à peu près à la même distance à l’écran à toute profondeur. (Mandelbrot, Multibrot et Phoenix.)
+panel-equipotential-spacing = Espacement
+panel-equipotential-spacing-hover = La plus petite distance entre deux lignes voisines, en pixels d’écran ; des lignes plus fines apparaissent en fondu à mesure que les écarts s’élargissent jusqu’au double.
+panel-equipotential-width = Largeur
+panel-equipotential-width-hover = La largeur de chaque ligne, en pixels d’écran : la même à tout zoom et à tout niveau d’anticrénelage.
+panel-equipotential-strength = Intensité
+panel-equipotential-color = Couleur
+panel-equipotential-color-hover = La couleur des lignes.
 # At the top of Effects when relief lighting, the glow or edge shading is on for a fractal without a distance estimate (they stay on). $family = the fractal's name.
-panel-effects-no-de = { $family } n’a pas d’estimation de distance : l’éclairage en relief, la lueur et l’ombrage des bords ne changent rien ici.
+panel-effects-no-de = { $family } n’a pas d’estimation de distance : l’éclairage en relief, la lueur, l’ombrage des bords et les lignes équipotentielles ne changent rien ici.
 
 ## The control panel: Overlays
 

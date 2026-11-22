@@ -2886,8 +2886,18 @@ panel-edge-color = Warna
 panel-edge-color-hover = Warna tujuan bayangan tepi.
 panel-edge-inside = Warna bagian dalam
 panel-edge-inside-hover = Bayangi ke arah warna bagian dalam: tepi himpunan lalu menyatu dengan himpunan, yang menghaluskannya bahkan tanpa anti-aliasing (coba Lebar 1 dan Linear).
+
+panel-equipotentials = Garis ekuipotensial
+panel-equipotentials-hover = Menggambar garis di sepanjang tingkat jumlah iterasi lolos, seperti garis kontur pada peta. Di tempat tingkat-tingkat itu merenggang muncul garis yang lebih halus, sehingga garis tetap berjarak kira-kira sama di layar pada setiap kedalaman. (Mandelbrot, Multibrot, dan Phoenix.)
+panel-equipotential-spacing = Jarak
+panel-equipotential-spacing-hover = Jarak terkecil antara garis yang bersebelahan, dalam piksel layar; garis yang lebih halus muncul perlahan saat celahnya melebar hingga dua kali lipat.
+panel-equipotential-width = Lebar
+panel-equipotential-width-hover = Seberapa lebar setiap garis, dalam piksel layar: sama di setiap zoom dan setiap tingkat anti-aliasing.
+panel-equipotential-strength = Kekuatan
+panel-equipotential-color = Warna
+panel-equipotential-color-hover = Warna garis.
 # At the top of Effects when relief lighting, the glow or edge shading is on for a fractal without a distance estimate (they stay on). $family = the fractal's name.
-panel-effects-no-de = { $family } tidak punya estimasi jarak, jadi pencahayaan relief, pendaran, dan bayangan tepi tidak mengubah apa pun di sini.
+panel-effects-no-de = { $family } tidak punya estimasi jarak, jadi pencahayaan relief, pendaran, bayangan tepi, dan garis ekuipotensial tidak mengubah apa pun di sini.
 
 ## The control panel: Overlays
 

@@ -146,6 +146,12 @@ fn the_palette_fade_fields_line_up() {
         ("edge_px", std::mem::offset_of!(ColorUniforms, edge_px)),
         ("edge_strength", std::mem::offset_of!(ColorUniforms, edge_strength)),
         ("edge_col", std::mem::offset_of!(ColorUniforms, edge_col)),
+        // The equipotential lines (C10): swapped, the width would be read as the spacing.
+        ("grid_on", std::mem::offset_of!(ColorUniforms, grid_on)),
+        ("grid_spacing", std::mem::offset_of!(ColorUniforms, grid_spacing)),
+        ("grid_width", std::mem::offset_of!(ColorUniforms, grid_width)),
+        ("grid_strength", std::mem::offset_of!(ColorUniforms, grid_strength)),
+        ("grid_col", std::mem::offset_of!(ColorUniforms, grid_col)),
     ] {
         assert_eq!(wgsl_field_offset(&fields, wgsl), rust, "`{wgsl}` is at another offset in ColorU than in ColorUniforms");
     }

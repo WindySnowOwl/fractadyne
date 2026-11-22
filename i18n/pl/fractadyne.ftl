@@ -3058,8 +3058,18 @@ panel-edge-color = Kolor
 panel-edge-color-hover = Kolor, w stronę którego cieniowane są krawędzie.
 panel-edge-inside = Kolor wnętrza
 panel-edge-inside-hover = Cieniuj zamiast tego w stronę koloru wnętrza: brzeg zbioru zlewa się wtedy ze zbiorem, co wygładza go nawet bez wygładzania krawędzi (wypróbuj Szerokość 1 i Liniowa).
+
+panel-equipotentials = Linie ekwipotencjalne
+panel-equipotentials-hover = Rysuje linie wzdłuż poziomów liczby iteracji do ucieczki, jak poziomice na mapie. Tam, gdzie poziomy się rozchodzą, pojawiają się drobniejsze linie, więc na każdej głębokości linie pozostają na ekranie mniej więcej w tej samej odległości od siebie. (Mandelbrot, Multibrot i Phoenix.)
+panel-equipotential-spacing = Odstęp
+panel-equipotential-spacing-hover = Najmniejsza odległość między sąsiednimi liniami, w pikselach ekranu; drobniejsze linie pojawiają się stopniowo, gdy odstępy rosną do dwukrotności tej wartości.
+panel-equipotential-width = Szerokość
+panel-equipotential-width-hover = Szerokość każdej linii, w pikselach ekranu: taka sama przy każdym powiększeniu i każdym wygładzaniu krawędzi.
+panel-equipotential-strength = Siła
+panel-equipotential-color = Kolor
+panel-equipotential-color-hover = Kolor linii.
 # At the top of Effects when relief lighting, the glow or edge shading is on for a fractal without a distance estimate (they stay on). $family = the fractal's name.
-panel-effects-no-de = { $family } nie ma estymacji odległości, więc oświetlenie reliefu, poświata i cieniowanie krawędzi nic tu nie zmieniają.
+panel-effects-no-de = { $family } nie ma estymacji odległości, więc oświetlenie reliefu, poświata, cieniowanie krawędzi i linie ekwipotencjalne nic tu nie zmieniają.
 
 ## The control panel: Overlays
 

@@ -852,6 +852,72 @@ pub fn edge_weight(d_px: f64, width: f64, strength: f64, curve: EdgeCurve) -> f6
     (strength * (1.0 - curve.apply(x))).clamp(0.0, 1.0)
 }
 
+// ---- Equipotential lines (coloring plan C10) ----
+// Lines along the levels of the smooth count μ, drawn `width` output pixels wide and kept about
+// `spacing` output pixels apart wherever they are: a texel's distance from the set d (output pixels)
+// gives μ's gradient, |∇μ| = 1 / (d · ln p) (the stored distance, |z|·ln|z| / |dz/dc|, is G / |∇G| for
+// the Green's function G, and μ = −log_p G + const), so a texel is d · ln p pixels from the level one
+// count away. Each texel draws the lines at the multiples of 1/L, L the power of two that puts them
+// `spacing` to twice that apart there, and fades in the next level's extra lines (2L) as the spacing
+// widens toward 2 · spacing: the finer set holds the coarser one, so nothing pops as the view zooms,
+// and the lines stay visible at every depth (the coloring research's level-of-detail grid: 1.1 to
+// 1.5 px lines at eight depths in its prototype). The color pass's `grid_shaded` is this.
+
+/// The narrowest spacing of the equipotential lines, in output pixels.
+pub const GRID_SPACING_MIN: f32 = 1.0;
+/// The smallest tap a line's coverage is filtered over, in output pixels (the shader divides by it).
+pub const GRID_TAP_MIN: f64 = 1.0e-3;
+/// The lines fade in from `GRID_SET_FADE.0` to `GRID_SET_FADE.1` output pixels from the set: nearer,
+/// μ's levels crowd into the filaments' dust.
+pub const GRID_SET_FADE: (f64, f64) = (0.5, 2.0);
+/// The lines fade out as μ's own f32 step, in output pixels, grows from `GRID_PRECISION_FADE.0` to
+/// `GRID_PRECISION_FADE.1`: the count is stored as an f32 (`iter + 1 − ν`), whose step is about
+/// |μ| · 2^-23, so far from the set at a high count (a million iterations: 1/16 of one) a line's
+/// position moves in steps of whole pixels, and it would be drawn as a staircase of blocks.
+pub const GRID_PRECISION_FADE: (f64, f64) = (0.25, 1.0);
+
+/// WGSL's `smoothstep`.
+fn smoothstep(e0: f64, e1: f64, x: f64) -> f64 {
+    let t = ((x - e0) / (e1 - e0)).clamp(0.0, 1.0);
+    t * t * (3.0 - 2.0 * t)
+}
+
+/// How much of a tap `tap` output pixels across, centered `dist` output pixels from a line's
+/// center, the line `width` pixels wide covers: the exact box-filtered line, so over any one line the
+/// coverage adds up to its width whatever the tap (a supersampled pixel's texels, a progressive
+/// sample's share), and the line keeps its width at every anti-aliasing level.
+pub fn grid_cover(dist: f64, width: f64, tap: f64) -> f64 {
+    let r = tap.max(GRID_TAP_MIN);
+    let lo = (dist - 0.5 * r).max(-0.5 * width);
+    let hi = (dist + 0.5 * r).min(0.5 * width);
+    ((hi - lo) / r).clamp(0.0, 1.0)
+}
+
+/// The line color's share in a texel (coloring plan C10), as the color pass's `grid_shaded` mixes it:
+/// `mu` its smooth count, `d_px` its distance from the set and `tap` its size, in output pixels;
+/// `ln_p` the log of the formula's escape degree; the lines `spacing` and `width` output pixels, at
+/// `strength`. 0 to 1.
+pub fn grid_weight(mu: f64, d_px: f64, ln_p: f64, spacing: f64, width: f64, strength: f64, tap: f64) -> f64 {
+    if ln_p <= 0.0 {
+        return 0.0;
+    }
+    // Output pixels per count.
+    let s = d_px * ln_p;
+    let lev = (s / spacing.max(GRID_SPACING_MIN as f64)).max(1.0e-30).log2();
+    let l0 = lev.floor().clamp(-60.0, 60.0);
+    let fr = (lev - l0).clamp(0.0, 1.0);
+    let lines = l0.exp2();
+    let cover = |n: f64| {
+        let f = ((n * mu + 0.5).rem_euclid(1.0) - 0.5).abs() / n;
+        grid_cover(f * s, width, tap)
+    };
+    let c = cover(lines).max(smoothstep(0.0, 1.0, fr) * cover(2.0 * lines));
+    let near = smoothstep(GRID_SET_FADE.0, GRID_SET_FADE.1, d_px);
+    let q = mu.abs() * (-23.0f64).exp2() * s;
+    let precise = 1.0 - smoothstep(GRID_PRECISION_FADE.0, GRID_PRECISION_FADE.1, q);
+    (strength * c * near * precise).clamp(0.0, 1.0)
+}
+
 #[cfg(test)]
 #[path = "../tests/unit/coloring/tests.rs"]
 mod tests;
@@ -861,3 +927,6 @@ mod transfer_tests;
 #[cfg(test)]
 #[path = "../tests/unit/coloring/edge_tests.rs"]
 mod edge_tests;
+#[cfg(test)]
+#[path = "../tests/unit/coloring/grid_tests.rs"]
+mod grid_tests;

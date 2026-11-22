@@ -3024,8 +3024,18 @@ panel-edge-color = Цвет
 panel-edge-color-hover = Цвет, к которому затеняются края.
 panel-edge-inside = Цвет внутри
 panel-edge-inside-hover = Затенять вместо этого к цвету внутренности: край множества тогда сливается с множеством, что сглаживает его даже без сглаживания (попробуйте ширину 1 и линейную).
+
+panel-equipotentials = Эквипотенциальные линии
+panel-equipotentials-hover = Рисует линии вдоль уровней числа итераций до убегания, как горизонтали на карте. Там, где уровни расходятся, добавляются более тонкие линии, поэтому на любой глубине линии остаются на экране примерно на одном расстоянии друг от друга. (Мандельброт, Мультиброт и Феникс.)
+panel-equipotential-spacing = Интервал
+panel-equipotential-spacing-hover = Наименьшее расстояние между соседними линиями, в пикселях экрана; более тонкие линии плавно появляются, пока промежутки растут до двойного.
+panel-equipotential-width = Ширина
+panel-equipotential-width-hover = Ширина каждой линии, в пикселях экрана: одинакова при любом масштабе и любом сглаживании.
+panel-equipotential-strength = Сила
+panel-equipotential-color = Цвет
+panel-equipotential-color-hover = Цвет линий.
 # At the top of Effects when relief lighting, the glow or edge shading is on for a fractal without a distance estimate (they stay on). $family = the fractal's name.
-panel-effects-no-de = У { $family } нет оценки расстояния, поэтому рельефное освещение, свечение и тени у края здесь ничего не меняют.
+panel-effects-no-de = У { $family } нет оценки расстояния, поэтому рельефное освещение, свечение, тени у края и эквипотенциальные линии здесь ничего не меняют.
 
 ## The control panel: Overlays
 
