@@ -3030,6 +3030,7 @@ panel-anti-alias-hover = Supersampling dla nieruchomych obrazów (stosowany, gdy
 panel-relief-lighting = Oświetlenie reliefu 3D
 panel-relief-lighting-hover = Cieniuje powierzchnię na podstawie nachylenia estymacji odległości — wytłoczony, oświetlony wygląd. (Rodziny holomorficzne: Mandelbrot / Multibrot.)
 panel-light-angle = Kąt światła
+panel-light-angle-dial-hover = Słońce pokazuje, skąd pada światło, a strzałka – w którą stronę świeci. Kliknij tarczę lub przeciągnij po niej, aby przesunąć światło.
 panel-relief = Relief
 panel-relief-hover = Mniej = ostrzejszy relief; więcej = łagodniejszy/bardziej płaski.
 panel-relief-steep = Nachylenie z odległości

@@ -1677,6 +1677,6 @@ coloring in these places, so sequence the two with care:
 | C2         | done, merged                                              | `ca8acfe6` (merge `1694d7e4`)                                                             |
 | C3         | done, merged                                              | `b0bd9259` (merge `550139a7`)                                                             |
 | C10        | done, merged                                              | `43368601` (merge `cc471188`)                                                             |
-| C5         | done, not merged (branch `feat/color-c5-lighting`)        | (filled in at the merge)                                                                  |
+| C5         | done, merged                                              | `ed36a532` (merge `2eb22119`)                                                             |
 | C6–C7      | not started                                               |                                                                                           |
 | D, E, F, G | not started                                               |                                                                                           |

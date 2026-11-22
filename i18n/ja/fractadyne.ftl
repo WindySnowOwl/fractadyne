@@ -2859,6 +2859,7 @@ panel-anti-alias-hover = 静止画のためのスーパーサンプリングで�
 panel-relief-lighting = 3Dレリーフ照明
 panel-relief-lighting-hover = 距離推定の傾きを使って表面に陰影を付け、浮き彫りに光を当てたような見た目にします。（正則な族：Mandelbrot / Multibrot）
 panel-light-angle = 光の角度
+panel-light-angle-dial-hover = 太陽は光が来る方向、矢印は光が当たる向きです。ダイヤルをクリックまたはドラッグすると光を動かせます。
 panel-relief = レリーフ
 panel-relief-hover = 低い = シャープなレリーフ、高い = 柔らかく平坦。
 panel-relief-steep = 距離による傾斜

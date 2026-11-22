@@ -51,6 +51,12 @@ pub(crate) enum UiPointer {
     CycleTrackMove,
     CycleTrackPress,
     CycleTrackRelease,
+    /// The pointer on the Effects section's light dial, at a point given as fractions of the rect
+    /// the last frame drew it in (`LayoutRects::light_dial`): moved there, the primary button
+    /// pressed there, released there. Nothing when it did not draw on screen.
+    LightDialMove(f32, f32),
+    LightDialPress(f32, f32),
+    LightDialRelease(f32, f32),
 }
 
 /// A change to the universe, waiting for a current copy to be made to.
@@ -477,6 +483,19 @@ impl FractadyneApp {
                     },
                 });
             }
+            UiPointer::LightDialMove(fx, fy) | UiPointer::LightDialPress(fx, fy) | UiPointer::LightDialRelease(fx, fy) => {
+                let r = self.perf.layout.light_dial?;
+                let pos = r.min + egui::vec2(r.width() * fx, r.height() * fy);
+                return Some(match p {
+                    UiPointer::LightDialMove(..) => egui::Event::PointerMoved(pos),
+                    _ => egui::Event::PointerButton {
+                        pos,
+                        button: egui::PointerButton::Primary,
+                        pressed: matches!(p, UiPointer::LightDialPress(..)),
+                        modifiers: egui::Modifiers::NONE,
+                    },
+                });
+            }
             UiPointer::ViewMove(fx, fy) | UiPointer::ViewPress(fx, fy) | UiPointer::ViewRelease(fx, fy) => {
                 let r = self.perf.layout.central?;
                 let pos = r.min + egui::vec2(r.width() * fx, r.height() * fy);
@@ -520,7 +539,10 @@ impl FractadyneApp {
             | UiPointer::ViewRelease(..)
             | UiPointer::CycleTrackMove
             | UiPointer::CycleTrackPress
-            | UiPointer::CycleTrackRelease => return None,
+            | UiPointer::CycleTrackRelease
+            | UiPointer::LightDialMove(..)
+            | UiPointer::LightDialPress(..)
+            | UiPointer::LightDialRelease(..) => return None,
         })
     }
 

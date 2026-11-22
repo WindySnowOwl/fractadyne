@@ -2938,6 +2938,7 @@ panel-anti-alias-hover = Superamostragem para imagens paradas (aplicada quando a
 panel-relief-lighting = Iluminação de relevo 3D
 panel-relief-lighting-hover = Sombrear a superfície usando a inclinação da estimativa de distância — um visual em alto-relevo, iluminado. (Famílias holomorfas: Mandelbrot / Multibrot.)
 panel-light-angle = Ângulo da luz
+panel-light-angle-dial-hover = O sol mostra de onde vem a luz, e a seta, para onde ela ilumina. Clique ou arraste no mostrador para mover a luz.
 panel-relief = Relevo
 panel-relief-hover = Menor = relevo mais nítido; maior = mais suave/plano.
 panel-relief-steep = Inclinação pela distância

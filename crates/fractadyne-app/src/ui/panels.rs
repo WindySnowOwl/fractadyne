@@ -97,6 +97,72 @@ pub(crate) fn slider_double_clicked(r: &egui::Response) -> bool {
     r.double_clicked() || (r.hovered() && r.ctx.input(|i| i.pointer.button_double_clicked(b) || i.pointer.button_triple_clicked(b)))
 }
 
+/// The light's direction as a picture (user, 2026-11-22: "2.2 rad is hard for most people to
+/// read"): a dial at the start of the Light angle row, a sun on its rim where the light comes from
+/// and an arrow from it across the dial the way the light shines.
+/// ⭐The angle turns counterclockwise from the right, up a quarter turn, ON SCREEN: measured
+/// 2026-11-22 on the overview, the light at 0 left the right half at 0.84 of its unlit shade and
+/// the left at 0.34; at π/2 the top half at 0.88 and the bottom at 0.31. A screen point's y grows
+/// DOWN, hence the minus in [`dial_point`] and [`dial_angle_at`].
+/// A press or a drag on it points the light at the pointer (on round, past the dial's edge); a
+/// double-click puts `reset` back, as the row's slider does.
+pub(crate) fn light_dial(ui: &mut egui::Ui, angle: &mut f32, reset: f32) -> egui::Response {
+    let side = ui.spacing().interact_size.y;
+    let (rect, mut r) = ui.allocate_exact_size(egui::vec2(side, side), egui::Sense::click_and_drag());
+    let c = rect.center();
+    if r.is_pointer_button_down_on() {
+        if let Some(a) = r.interact_pointer_pos().and_then(|p| dial_angle_at(c, p)) {
+            if a != *angle {
+                *angle = a;
+                r.mark_changed();
+            }
+        }
+    }
+    // After the press above, which a double-click's second press is too: the reset wins.
+    if slider_double_clicked(&r) && *angle != reset {
+        *angle = reset;
+        r.mark_changed();
+    }
+    if ui.is_rect_visible(rect) {
+        let w = ui.style().interact(&r);
+        let ring = if w.bg_stroke.width > 0.0 { w.bg_stroke } else { ui.visuals().widgets.noninteractive.bg_stroke };
+        let painter = ui.painter();
+        let rad = side * 0.5 - 0.5;
+        painter.circle(c, rad, ui.visuals().extreme_bg_color, ring);
+        let ink = egui::Stroke::new(1.5_f32, w.fg_stroke.color);
+        let sun = dial_point(c, rad - 3.0, *angle);
+        let tip = dial_point(c, rad - 1.5, *angle + std::f32::consts::PI);
+        painter.line_segment([sun, tip], ink);
+        // The arrowhead: two strokes back from the tip, about 35 degrees either side of the shaft.
+        let back = (sun - tip).normalized() * (side * 0.25);
+        for turn in [-0.6f32, 0.6] {
+            let (s, co) = turn.sin_cos();
+            painter.line_segment([tip, tip + egui::vec2(back.x * co - back.y * s, back.x * s + back.y * co)], ink);
+        }
+        painter.circle(sun, 2.75, DIAL_SUN, egui::Stroke::new(1.0_f32, w.fg_stroke.color));
+    }
+    r
+}
+
+/// The sun on the light's dial: one warm yellow in either theme, ringed in the text's color.
+const DIAL_SUN: egui::Color32 = egui::Color32::from_rgb(255, 200, 40);
+
+/// The point `r` from `c` in the direction `angle`: radians counterclockwise from the right, on
+/// screen, where a point's y grows down.
+pub(crate) fn dial_point(c: egui::Pos2, r: f32, angle: f32) -> egui::Pos2 {
+    c + egui::vec2(r * angle.cos(), -r * angle.sin())
+}
+
+/// The direction from `c` to `p` in [0, 2π], as [`dial_point`] turns it; `None` at `c` itself.
+pub(crate) fn dial_angle_at(c: egui::Pos2, p: egui::Pos2) -> Option<f32> {
+    let (dx, dy) = (p.x - c.x, c.y - p.y);
+    (dx * dx + dy * dy > 1.0e-6).then(|| dy.atan2(dx).rem_euclid(std::f32::consts::TAU))
+}
+
+#[cfg(test)]
+#[path = "../../tests/unit/ui/panels/light_dial_tests.rs"]
+mod light_dial_tests;
+
 #[cfg(test)]
 #[path = "../../tests/unit/ui/panels/slider_reset_tests.rs"]
 mod slider_reset_tests;
@@ -214,8 +280,9 @@ impl FractadyneApp {
     /// Right-side control panel (Coloring + Navigation sections) plus the reopen handle shown
     /// when it's hidden. No-op in fullscreen.
     pub(crate) fn draw_right_panel(&mut self, ctx: &egui::Context) {
-        // Set again below where the Cycle slider draws this frame.
+        // Set again below where the Cycle slider and the light's dial draw this frame.
         self.perf.layout.cycle_slider = None;
+        self.perf.layout.light_dial = None;
         if !self.fullscreen && self.dialogs.right_panel_open {
         let panel = egui::SidePanel::right("coloring_panel")
             .default_width(280.0)
@@ -774,12 +841,20 @@ impl FractadyneApp {
                     .on_disabled_hover_text(&no_de);
                 ui.add_enabled_ui(has_de && self.effects.light, |ui| {
                     let d = fractadyne_state::ColoringSpec::default();
-                    let r = labelled(ui, &tr!(panel_light_angle), |ui| {
-                        ui.add(
+                    // The dial first, the slider shortened by its width: the number stays in line
+                    // with the rows below.
+                    let (dial, r) = labelled(ui, &tr!(panel_light_angle), |ui| {
+                        let dial = light_dial(ui, &mut self.effects.light_angle, d.light_angle);
+                        let spacing = ui.spacing_mut();
+                        spacing.slider_width = (spacing.slider_width - dial.rect.width() - spacing.item_spacing.x).max(40.0);
+                        let r = ui.add(
                             egui::Slider::new(&mut self.effects.light_angle, 0.0..=std::f32::consts::TAU)
                                 .suffix(" rad"),
-                        )
+                        );
+                        (dial, r)
                     });
+                    self.perf.layout.light_dial = ui.clip_rect().contains_rect(dial.rect).then_some(dial.rect);
+                    dial.on_hover_text(format!("{}\n\n{}", tr!(panel_light_angle_dial_hover), tr!(panel_double_click_reset)));
                     if slider_double_clicked(&r) {
                         self.effects.light_angle = d.light_angle;
                     }

@@ -2858,6 +2858,7 @@ panel-anti-alias-hover = 정지 이미지용 슈퍼샘플링입니다(뷰가 안
 panel-relief-lighting = 3D 입체 조명
 panel-relief-lighting-hover = 거리 추정의 기울기로 표면에 음영을 줍니다 — 돋을새김에 빛을 비춘 모습. (정칙 계열: Mandelbrot / Multibrot.)
 panel-light-angle = 조명 각도
+panel-light-angle-dial-hover = 해는 빛이 오는 곳, 화살표는 빛이 비추는 방향입니다. 다이얼을 클릭하거나 끌어서 빛을 옮기세요.
 panel-relief = 입체감
 panel-relief-hover = 낮을수록 날카로운 입체감, 높을수록 부드럽고 평평함.
 panel-relief-steep = 거리에 따른 경사

@@ -60,6 +60,10 @@ detail is in the git history.
   looks as it did until the new box is ticked. A view file and the command line carry them
   (`light_steep`, `light_steep_px`, `light_highlight`, `light_shininess`, `light_highlight_color`;
   `--light-steep` and so on).
+- **The light's direction on a dial.** The Light angle row in Effects starts with a small dial: a
+  sun on its rim where the light comes from, and an arrow across it the way the light shines, so
+  the direction no longer has to be read from a number in radians. Click or drag on the dial to
+  move the light; a double-click resets it, as on the slider.
 - **Equipotential lines: contour lines that hold at every depth.** A new switch in Effects draws
   lines along the levels of the escape count, like the contour lines of a map, over any coloring
   method and palette. Finer lines appear wherever the levels spread apart, so the lines stay about
