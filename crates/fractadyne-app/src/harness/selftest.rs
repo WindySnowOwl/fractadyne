@@ -70,7 +70,7 @@ pub(crate) const GROUPS: &[&str] = &[
     "consistency", "counters", "iter-budget", "iter-chunk", "renorm", "live-split", "worker", "nr-zoom", "coords",
     "curated-poi", "ref-pick", "ref-reuse", "ref-overlap", "orbit-cache", "script", "metadata", "view-coloring",
     "display", "catalog", "goldens", "bench-matrix", "live-res", "appearance", "band-seams", "palette-aa",
-    "checklist", "replay", "settings-quarantine", "expmap", "assemble", "de-pixels",
+    "checklist", "replay", "settings-quarantine", "expmap", "assemble", "de-pixels", "de-dip",
     "colour-box", "cycle-check", "export-contain", "honest-step", "julia-critical", "palette-fade", "retreat", "view-thumb",
     "width-independence", "coloring-matrix-quick", "color-sig", "coloring-reset", "julia-link", "fringe",
     "lanes", "hook", "transfer", "edges", "equipotentials",
@@ -3603,6 +3603,86 @@ impl FractadyneApp {
                     pass: p50 < 0.01,
                 });
             }
+        }
+
+        // ⭐⭐THE DISTANCE PAST AN ORBIT DIP (2026-11-21). Near a deep minibrot the orbit passes nearer 0
+        // than f32 can hold once a period; the derivative step formed its factor in f32 there, read 0,
+        // and D restarted at 1 (`deriv_dip` in the shader), so past about 1e77x on the 9.3e78
+        // minibrot's path every distance read 2^16 too far: 4.04 px against a true 4.6e-5 px (mpmath),
+        // exact at 1e70x, whose reference is periodic and renormalizes the dip. The center pixel of an
+        // odd frame is the view's center at every depth, so its distance in output pixels grows exactly
+        // as the magnification: 1e70x and 1e77x must be log2(1e7) octaves apart. And over the 1e77x
+        // frame, the count's step between neighbors against the step the distance predicts,
+        // 1/(d·ln 2), must be under 1 at the median (the gradient's projection, and pixels finer than
+        // the field; 12.6 before the fix, and 0.2 to 0.6 at 1e70x to 1e76x).
+        if want("de-dip") {
+            let saved = (self.fractal, self.julia_mode, self.dual, self.render_cfg.max_iter, self.render_cfg.auto_iter);
+            self.fractal = FractalKind::Mandelbrot;
+            self.julia_mode = false;
+            self.dual = false;
+            self.render_cfg.auto_iter = false;
+            self.render_cfg.max_iter = 2_000_000;
+            let (w, h) = (321u32, 201u32);
+            let at = |s: &str| fractadyne_core::parse_bf_prec(s, 512).expect("the minibrot's coordinate");
+            // `validation/minibrot-auto-iter-9.3e78.fdn`'s center.
+            let re = "-9.5615882490732676063982994499490578147935343195074805633443741253353130261608583401177598055702619474609439701446982e-2";
+            let im = "9.2407201125877521262558092669605306283394020346180079142271967031202190501107148187554958943606565429410592657638281e-1";
+            let mut reqs = Vec::new();
+            for mag in [1e70, 1e77] {
+                let mut vp = Viewport::new(w as f64, h as f64);
+                vp.set_center_mag(at(re), at(im), mag);
+                let mut req = self.lanes_request_for(&vp, false, None);
+                req.width = w;
+                req.height = h;
+                reqs.push(req);
+            }
+            (self.fractal, self.julia_mode, self.dual, self.render_cfg.max_iter, self.render_cfg.auto_iter) = saved;
+            let lanes: Vec<Vec<[f32; 4]>> = reqs
+                .iter()
+                .map(|req| {
+                    fractadyne_gpu::render_lanes(device, queue, req, crate::tunables::CORRECT_WORK_BUDGET)
+                        .ok()
+                        .map(|r| r.pixels.chunks_exact(4).map(|t| [t[0], t[1], t[2], t[3]]).collect())
+                        .unwrap_or_default()
+                })
+                .collect();
+            let center = |l: &[[f32; 4]]| l.get((h / 2 * w + w / 2) as usize).filter(|t| t[0] >= 0.0 && t[3] <= 1.0e20).map(|t| t[3] as f64);
+            // The median, over horizontal neighbors with a distance, of |Δμ| · d · ln 2.
+            let ratio = |l: &[[f32; 4]]| -> Option<f64> {
+                if l.len() != (w * h) as usize {
+                    return None;
+                }
+                let mut r: Vec<f64> = Vec::new();
+                for y in 0..h as usize {
+                    for x in 0..w as usize - 1 {
+                        let (a, b) = (l[y * w as usize + x], l[y * w as usize + x + 1]);
+                        if a[0] >= 0.0 && b[0] >= 0.0 && a[3] <= 1.0e20 {
+                            r.push((b[0] as f64 - a[0] as f64).abs() * (a[3] as f64).min(60.0).exp2() * std::f64::consts::LN_2);
+                        }
+                    }
+                }
+                r.sort_by(|x, y| x.total_cmp(y));
+                r.get(r.len() / 2).copied()
+            };
+            let want_gap = 1e7f64.log2();
+            let (pass, result) = match (center(&lanes[0]), center(&lanes[1]), ratio(&lanes[1])) {
+                (Some(d70), Some(d77), Some(r77)) => {
+                    let gap = d77 - d70;
+                    (
+                        (gap - want_gap).abs() <= 0.25 && r77 < 1.0,
+                        format!("the center's distance 2^{d70:.3} px at 1e70x, 2^{d77:.3} px at 1e77x: {gap:.3} octaves apart (want {want_gap:.3}); the 1e77x frame's median count step against the distance's {r77:.3}"),
+                    )
+                }
+                (a, b, c) => (false, format!("no distance at the center or no lanes: {a:?}, {b:?}, {c:?}")),
+            };
+            push_check(&mut checks, &mut last_check_t, SelfCheck {
+                category: "appearance",
+                name: "the distance estimate holds past an orbit dip".into(),
+                params: format!("the 9.3e78 minibrot's center (validation/minibrot-auto-iter-9.3e78.fdn) at 1e70x and 1e77x, {w}x{h} (the center pixel is the view's center), 2,000,000 iterations, the lanes"),
+                result,
+                threshold: "the center's distance log2(1e7) apart within 0.25 octave (2026-11-21: 23.231 fixed, 39.666 before); the median ratio under 1 (0.138 fixed, 12.6 before)",
+                pass,
+            });
         }
 
         // ⭐THE PALETTE DISSOLVE BLENDS TWO MAPS OF ONE PICTURE (2026-10-21). When the palette map

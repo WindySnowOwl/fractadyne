@@ -1632,6 +1632,6 @@ coloring in these places, so sequence the two with care:
 | C9         | done, merged                                              | `0b0c5f03` (merge `20e2fff5`)                                                             |
 | C2         | done, merged                                              | `ca8acfe6` (merge `1694d7e4`)                                                             |
 | C3         | done, merged                                              | `b0bd9259` (merge `550139a7`)                                                             |
-| C10        | done, not merged (branch `feat/color-c10-grid`)           | (filled in at the merge)                                                                  |
+| C10        | done, merged                                              | `43368601` (merge `cc471188`)                                                             |
 | C5–C7      | not started                                               |                                                                                           |
 | D, E, F, G | not started                                               |                                                                                           |
