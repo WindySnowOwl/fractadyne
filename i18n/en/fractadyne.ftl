@@ -465,6 +465,8 @@ menu-toolbar-click-zoom-hover = Click-to-zoom ({ $factor }×): left-click dives 
 menu-toolbar-click-zoom-dual = Pin the Julia c with Ctrl+click while this is on.
 menu-toolbar-autopilot-running-hover = Auto-zoom is running — click to stop
 menu-toolbar-autopilot-hover = Auto-zoom: dive toward detail (A)
+# The tooltip of the grayed-out auto-zoom (the Tools menu's item and options, and the toolbar's button) while "Both, linked" is shown. The quoted name, the menu path Fractal ▸ Show and the toolbar's "Both, linked" button are written as this language's menus name them.
+menu-autopilot-dual-hover = Auto-zoom steers a single view, so it is unavailable in "Both, linked". To use it, show one picture: choose it under Fractal ▸ Show, or turn off the "Both, linked" button on the toolbar.
 menu-toolbar-reset-hover = Reset view (instant)
 menu-toolbar-home-hover = Zoom out to the home view (animated)
 menu-toolbar-bookmarks-hover = Bookmarks: save this view, or jump to a saved one

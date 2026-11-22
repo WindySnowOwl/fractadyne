@@ -779,11 +779,14 @@ impl FractadyneApp {
                                 ui.close_menu();
                             }
                         });
+                        // Grayed out in "Both, linked"; each control says why when hovered there
+                        // (user, 2026-11-21: a disabled control needs its reason on hover).
                         ui.add_enabled_ui(!self.dual, |ui| {
                             let label = if self.autopilot.active { tr!(menu_tools_autopilot_stop) } else { tr!(menu_tools_autopilot) };
                             if ui
                                 .button(format!("{label}  (A)"))
                                 .on_hover_text(tr!(menu_tools_autopilot_hover))
+                                .on_disabled_hover_text(tr!(menu_autopilot_dual_hover))
                                 .clicked()
                             {
                                 self.toggle_autopilot(&ctx);
@@ -794,18 +797,22 @@ impl FractadyneApp {
                                 ui.add_space(12.0);
                                 ui.label(tr!(menu_tools_priority));
                                 ui.radio_value(&mut self.autopilot.priority, P::Speed, tr!(menu_tools_priority_speed))
-                                    .on_hover_text(tr!(menu_tools_priority_speed_hover));
+                                    .on_hover_text(tr!(menu_tools_priority_speed_hover))
+                                    .on_disabled_hover_text(tr!(menu_autopilot_dual_hover));
                                 ui.radio_value(&mut self.autopilot.priority, P::Quality, tr!(menu_tools_priority_quality))
-                                    .on_hover_text(tr!(menu_tools_priority_quality_hover));
+                                    .on_hover_text(tr!(menu_tools_priority_quality_hover))
+                                    .on_disabled_hover_text(tr!(menu_autopilot_dual_hover));
                             });
                             ui.horizontal(|ui| {
                                 use crate::autopilot::AutopilotTarget as T;
                                 ui.add_space(12.0);
                                 ui.label(tr!(menu_tools_target));
                                 ui.radio_value(&mut self.autopilot.target, T::Detail, tr!(menu_tools_target_detail))
-                                    .on_hover_text(tr!(menu_tools_target_detail_hover));
+                                    .on_hover_text(tr!(menu_tools_target_detail_hover))
+                                    .on_disabled_hover_text(tr!(menu_autopilot_dual_hover));
                                 ui.radio_value(&mut self.autopilot.target, T::Misiurewicz, tr!(menu_tools_target_misiurewicz))
-                                    .on_hover_text(tr!(menu_tools_target_misiurewicz_hover));
+                                    .on_hover_text(tr!(menu_tools_target_misiurewicz_hover))
+                                    .on_disabled_hover_text(tr!(menu_autopilot_dual_hover));
                             });
                         });
                         ui.checkbox(&mut self.anim.show_orbits, tr!(menu_tools_orbits))
@@ -1247,16 +1254,20 @@ impl FractadyneApp {
                 {
                     self.click_zoom = !self.click_zoom;
                 }
-                // Auto-zoom (autopilot): highlighted while running; click to start/stop. Single view only.
+                // Auto-zoom (autopilot): highlighted while running; click to start/stop. Single view
+                // only: grayed out in "Both, linked", with the reason and the way back on hover.
                 let running = self.autopilot.active;
-                if ui
+                let autopilot = ui
                     .add_enabled(
                         !self.dual,
                         egui::SelectableLabel::new(running, crate::icons::AUTOPILOT),
                     )
                     .on_hover_text(if running { tr!(menu_toolbar_autopilot_running_hover) } else { tr!(menu_toolbar_autopilot_hover) })
-                    .clicked()
-                {
+                    .on_disabled_hover_text(tr!(menu_autopilot_dual_hover));
+                if self.dual && self.dialogs.uitest_autopilot_tooltip {
+                    autopilot.show_tooltip_text(tr!(menu_autopilot_dual_hover)); // the UI test's screenshot
+                }
+                if autopilot.clicked() {
                     self.toggle_autopilot(ctx);
                 }
                 if ui.button(crate::icons::RESET_VIEW).on_hover_text(tr!(menu_toolbar_reset_hover)).clicked() {

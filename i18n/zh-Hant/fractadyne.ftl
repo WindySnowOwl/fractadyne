@@ -454,6 +454,7 @@ menu-toolbar-click-zoom-hover = 點按縮放（{ $factor }×）：按左鍵深�
 menu-toolbar-click-zoom-dual = 開啟此功能時，以 Ctrl+按一下來釘選 Julia c。
 menu-toolbar-autopilot-running-hover = 自動縮放執行中，按一下即可停止
 menu-toolbar-autopilot-hover = 自動縮放：朝細節下潛（A）
+menu-autopilot-dual-hover = 自動縮放只能駕馭單一檢視，所以在「並列（連動）」中無法使用。要使用它，請只顯示一幅圖：在 碎形 ▸ 顯示 中選擇，或關閉工具列上的「並列（連動）」按鈕。
 menu-toolbar-reset-hover = 重設畫面（立即）
 menu-toolbar-home-hover = 縮小至初始畫面（有動畫）
 menu-toolbar-bookmarks-hover = 書籤：儲存此畫面，或跳到已儲存的畫面

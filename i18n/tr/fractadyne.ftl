@@ -458,6 +458,7 @@ menu-toolbar-click-zoom-hover = Tıklayarak yakınlaştırma ({ $factor }×): so
 menu-toolbar-click-zoom-dual = Bu açıkken Julia c’yi Ctrl+tık ile sabitleyin.
 menu-toolbar-autopilot-running-hover = Otomatik yakınlaştırma çalışıyor — durdurmak için tıklayın
 menu-toolbar-autopilot-hover = Otomatik yakınlaştırma: ayrıntıya doğru dal (A)
+menu-autopilot-dual-hover = Otomatik yakınlaştırma tek bir görünümü yönlendirir, bu yüzden “İkisi, bağlantılı” modunda kullanılamaz. Kullanmak için tek bir resim gösterin: Fraktal ▸ Göster altından seçin ya da araç çubuğundaki “İkisi, bağlantılı” düğmesini kapatın.
 menu-toolbar-reset-hover = Görünümü sıfırla (anında)
 menu-toolbar-home-hover = Başlangıç görünümüne uzaklaş (animasyonlu)
 menu-toolbar-bookmarks-hover = Yer imleri: bu görünümü kaydedin ya da kayıtlı bir görünüme atlayın

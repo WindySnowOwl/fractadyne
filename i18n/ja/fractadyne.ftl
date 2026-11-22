@@ -455,6 +455,7 @@ menu-toolbar-click-zoom-hover = クリックでズーム（{ $factor }×）：�
 menu-toolbar-click-zoom-dual = これがオンの間は、Ctrl+クリックでJulia cをピン留めします。
 menu-toolbar-autopilot-running-hover = 自動ズームの実行中：クリックで停止
 menu-toolbar-autopilot-hover = 自動ズーム：細部に向かってダイブ（A）
+menu-autopilot-dual-hover = 自動ズームは1つのビューを操縦するため、「両方（連動）」では使えません。使うには1つの画像だけを表示します：フラクタル ▸ 表示対象で選ぶか、ツールバーの「両方（連動）」ボタンをオフにします。
 menu-toolbar-reset-hover = ビューをリセット（即時）
 menu-toolbar-home-hover = ホームビューまでズームアウト（アニメーション）
 menu-toolbar-bookmarks-hover = ブックマーク：このビューを保存、または保存したビューへジャンプ
