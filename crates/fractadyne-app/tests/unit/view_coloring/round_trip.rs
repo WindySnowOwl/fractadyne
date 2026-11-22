@@ -34,6 +34,11 @@ fn scrambled() -> ViewColoring {
         light: true,
         light_angle: -1.25,
         light_height: 3.5,
+        light_steep: true,
+        light_steep_px: 40.0,
+        light_highlight: 0.3,
+        light_shininess: 200.0,
+        light_highlight_color: [0.8, 0.6, 0.4],
         glow: true,
         glow_strength: 0.15,
         glow_width: 3.25,
@@ -86,6 +91,16 @@ fn variants() -> Vec<ViewColoring> {
     }
     v.push(ViewColoring { light: true, ..d.clone() });
     v.push(ViewColoring { light: true, light_angle: 0.3, light_height: 0.2, ..d.clone() });
+    v.push(ViewColoring { light: true, light_steep: true, ..d.clone() });
+    v.push(ViewColoring {
+        light: true,
+        light_steep: true,
+        light_steep_px: 3.0,
+        light_highlight: 0.0,
+        light_shininess: 8.0,
+        light_highlight_color: [0.2, 0.4, 1.0],
+        ..d.clone()
+    });
     v.push(ViewColoring { glow: true, ..d.clone() });
     v.push(ViewColoring { glow: true, glow_strength: 1.0, glow_width: 0.15, ..d.clone() });
     v.push(ViewColoring { edge: true, ..d.clone() });

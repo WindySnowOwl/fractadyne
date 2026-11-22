@@ -66,6 +66,11 @@ The tour's coloring, by the keys a saved view (`.fdn`) carries. Each key it name
 | `light` | bool | false | Relief lighting from the distance estimate. |
 | `light_angle` | float | 2.2 | The light's direction in radians (with `light`). |
 | `light_height` | float, 0.2 to 4 | 1.2 | Relief strength: smaller is sharper (with `light`). |
+| `light_steep` | bool | false | The relief's slope from the distance: steeper near the set and flat far from it, 45 degrees `light_steep_px` pixels from the set, instead of 45 degrees everywhere (with `light`). |
+| `light_steep_px` | float, 1 to 256 | 8 | How many output pixels from the set the relief's surface is at 45 degrees, 1 to 256 (with `light_steep`). |
+| `light_highlight` | float, 0 to 1 | 0.5 | The relief's highlight, 0 to 1: a glossy rim where the surface turns toward the light (with `light_steep`). |
+| `light_shininess` | float, 4 to 512 | 64 | The relief highlight's shininess, 4 to 512: higher is a smaller, sharper gleam (with `light_steep`). |
+| `light_highlight_color` | [r, g, b], 0 to 1 | [1, 1, 1] | The relief highlight's color, as display-space [r, g, b] (with `light_steep`). |
 | `glow` | bool | false | Distance glow along the set's edge. |
 | `glow_strength` | float, 0 to 1 | 0.6 | Glow strength (with `glow`). |
 | `glow_width` | float, 0.15 to 4 | 1 | Glow band width (with `glow`). |

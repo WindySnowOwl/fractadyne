@@ -133,6 +133,20 @@ pub struct ColoringSpec {
     pub light_angle: f32,
     #[serde(default = "default_light_height")]
     pub light_height: f32,
+    /// The relief's surface and highlight (coloring plan C5): its slope from the distance (45
+    /// degrees `light_steep_px` output pixels from the set, steeper nearer, flat far away) instead
+    /// of 45 degrees everywhere; on it, a highlight of `light_highlight` strength, `light_shininess`
+    /// and `light_highlight_color` (display RGB), drawn only with the slope from the distance.
+    #[serde(default)]
+    pub light_steep: bool,
+    #[serde(default = "default_light_steep_px")]
+    pub light_steep_px: f32,
+    #[serde(default = "default_light_highlight")]
+    pub light_highlight: f32,
+    #[serde(default = "default_light_shininess")]
+    pub light_shininess: f32,
+    #[serde(default = "default_light_highlight_color")]
+    pub light_highlight_color: [f32; 3],
     /// Distance-estimate glow: enabled, blend strength, contour width.
     #[serde(default)]
     pub de: bool,
@@ -754,6 +768,22 @@ fn default_light_height() -> f32 {
     1.2
 }
 
+fn default_light_steep_px() -> f32 {
+    8.0
+}
+
+fn default_light_highlight() -> f32 {
+    0.5
+}
+
+fn default_light_shininess() -> f32 {
+    64.0
+}
+
+fn default_light_highlight_color() -> [f32; 3] {
+    [1.0; 3]
+}
+
 fn default_de_strength() -> f32 {
     0.6
 }
@@ -822,6 +852,11 @@ impl Default for ColoringSpec {
             light: false,
             light_angle: default_light_angle(),
             light_height: default_light_height(),
+            light_steep: false,
+            light_steep_px: default_light_steep_px(),
+            light_highlight: default_light_highlight(),
+            light_shininess: default_light_shininess(),
+            light_highlight_color: default_light_highlight_color(),
             de: false,
             de_strength: default_de_strength(),
             de_width: default_de_width(),

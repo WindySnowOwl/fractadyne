@@ -429,6 +429,14 @@ enum Screen {
     Equipotentials,
     /// ...then the same with the Effects section open, for its rows (no comparison).
     EquipotentialsPanel,
+    /// The relief light's surface and highlight (coloring plan C5): the Julia-link point in Smooth,
+    /// point sampled, the classic relief (the base)...
+    ReliefClassic,
+    /// ...its slope from the distance with the default highlight: another picture, and no pass (a
+    /// recolor)...
+    ReliefSteep,
+    /// ...then the same with the Effects section open, for its rows (no comparison).
+    ReliefPanel,
     /// Custom coloring (coloring plan B10): the home view in Smooth, point sampled, the dialog open
     /// with no hook (the base)...
     ColorHookOff,
@@ -1396,6 +1404,9 @@ fn build_steps() -> Vec<Step> {
         screen("equipotentials-off", Screen::EquipotentialsOff),
         screen("equipotentials", Screen::Equipotentials),
         screen("equipotentials-panel", Screen::EquipotentialsPanel),
+        screen("relief-classic", Screen::ReliefClassic),
+        screen("relief-steep", Screen::ReliefSteep),
+        screen("relief-panel", Screen::ReliefPanel),
         screen("slider-click", Screen::SliderClick),
         screen("slider-double-click-reset", Screen::SliderDoubleClick),
         screen("julia-linked-off", Screen::JuliaLinkedOff),
@@ -1855,6 +1866,24 @@ impl FractadyneApp {
             name: "equipotentials-recolor".into(),
             verdict: if ok { Verdict::Pass } else { Verdict::Fail },
             detail: format!("against {before} (mean difference in levels, passes caused): {r:?}; lines {:?}", self.effects.grid_lines()),
+        });
+    }
+
+    /// The relief step (C5) against the classic relief: another picture (mean difference 1 level or
+    /// more), and no pass (a recolor).
+    fn uitest_relief_checks(&self, ut: &UiTest, view: Option<&(Vec<u8>, [u32; 2])>, ran_why: [u64; 7], checks: &mut Vec<Check>) {
+        let before = "relief-classic";
+        let b = ut.results.iter().rev().find(|r| r.name == before);
+        let r = view.zip(b).and_then(|((px, _), b)| {
+            let (prev, _) = b.inside_view.as_ref().filter(|p| p.0.len() == px.len())?;
+            let s: f64 = px.chunks_exact(4).zip(prev.chunks_exact(4)).map(|(p, q)| (0..3).map(|k| (p[k] as f64 - q[k] as f64).abs()).sum::<f64>()).sum();
+            Some((s / (3 * (px.len() / 4)).max(1) as f64, (ran_why[0] - b.ran_why[0]) + (ran_why[1] - b.ran_why[1])))
+        });
+        let ok = r.is_some_and(|(d, ran)| d >= 1.0 && ran == 0);
+        checks.push(Check {
+            name: "relief-steep-recolor".into(),
+            verdict: if ok { Verdict::Pass } else { Verdict::Fail },
+            detail: format!("against {before} (mean difference in levels, passes caused): {r:?}; relief {:?}", self.effects.relief_light()),
         });
     }
 
@@ -2454,8 +2483,10 @@ impl FractadyneApp {
         // ...or the edge shading (each `edge-shade*` step sets its own, C3)...
         self.effects.edge = false;
         self.effects.edge_inside = false;
-        // ...or the equipotential lines (each `equipotentials*` step sets its own, C10).
+        // ...or the equipotential lines (each `equipotentials*` step sets its own, C10)...
         self.effects.grid = false;
+        // ...or the relief's slope from the distance (each `relief-*` step sets its own, C5).
+        self.effects.light_steep = false;
         self.blinken.size = crate::blinken::Size::Off;
         self.blinken.pinned_help = None;
         self.dialogs.help_open = false;
@@ -3227,6 +3258,46 @@ impl FractadyneApp {
                     self.dialogs.uitest_effects_scroll = true;
                 }
             }
+            // C5: the Julia-link point again, Smooth, point sampled; the classic relief, then its slope
+            // from the distance with the default highlight, then the Effects section open for the rows.
+            Screen::ReliefClassic | Screen::ReliefSteep | Screen::ReliefPanel => {
+                if matches!(s, Screen::ReliefClassic) {
+                    let (cx, cy) = UITEST_JULIA_LINK_C;
+                    self.set_show_mode(crate::ShowMode::Set);
+                    self.set_fractal(crate::FractalKind::Mandelbrot);
+                    let at = |v: f64| fractadyne_core::BigFloat::from_f64(v, 64);
+                    self.viewport.set_center_mag(at(cx), at(cy), 100.0);
+                    self.render_cfg.auto_iter = false;
+                    self.render_cfg.max_iter = 2_000;
+                    self.coloring.use_custom_palette = false;
+                    self.coloring.use_duotone = false;
+                    self.coloring.use_binary = false;
+                    self.coloring.palette_idx = fractadyne_color::preset_by_id("ember").unwrap_or(0);
+                    let d = fractadyne_state::ColoringSpec::default();
+                    self.effects.light_angle = d.light_angle;
+                    self.effects.light_height = d.light_height;
+                    self.effects.light_steep_px = d.light_steep_px;
+                    self.effects.light_highlight = d.light_highlight;
+                    self.effects.light_shininess = d.light_shininess;
+                    self.effects.light_highlight_color = d.light_highlight_color;
+                }
+                self.coloring.color_method = crate::ColorMethod::Smooth;
+                self.coloring.interior = Some(crate::InteriorMode::Solid);
+                self.coloring.normalize_live = false;
+                self.coloring.normalize_fit = false;
+                self.coloring.palette_aa = false;
+                self.dialogs.right_panel_open = true;
+                self.effects.edge = false;
+                self.effects.grid = false;
+                self.effects.de = false;
+                self.effects.light = true;
+                self.effects.light_anim = false;
+                self.effects.light_steep = !matches!(s, Screen::ReliefClassic);
+                if matches!(s, Screen::ReliefPanel) {
+                    self.dialogs.uitest_effects_open = Some(true);
+                    self.dialogs.uitest_effects_scroll = true;
+                }
+            }
             // The view as palette-aa left it, the palette's saturation at 0.
             Screen::PaletteAdjust => {
                 self.coloring.color_method = crate::ColorMethod::Smooth;
@@ -3844,6 +3915,9 @@ impl FractadyneApp {
                     | Screen::EquipotentialsOff
                     | Screen::Equipotentials
                     | Screen::EquipotentialsPanel
+                    | Screen::ReliefClassic
+                    | Screen::ReliefSteep
+                    | Screen::ReliefPanel
                     | Screen::ColorHookOff
                     | Screen::ColorHookSmooth
                     | Screen::ColorHookFringe
@@ -4752,6 +4826,11 @@ impl FractadyneApp {
         // ---- equipotential lines (coloring plan C10) ----
         if let StepKind::Screen(Screen::Equipotentials) = step.kind {
             self.uitest_equipotential_checks(ut, inside_view.as_ref(), ran_why, &mut checks);
+        }
+
+        // ---- the relief's surface and highlight (coloring plan C5) ----
+        if let StepKind::Screen(Screen::ReliefSteep) = step.kind {
+            self.uitest_relief_checks(ut, inside_view.as_ref(), ran_why, &mut checks);
         }
 
         // ---- custom coloring (coloring plan B10) ----

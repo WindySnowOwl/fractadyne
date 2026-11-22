@@ -336,20 +336,22 @@ impl crate::FractadyneApp {
             let mut whole = make(WindowLayout::default())?;
             // Smooth (0) and distance (4) coloring, with and without glow and relief, and Smooth with
             // the palette point sampled (a count-only window) and anti-aliased by the distance (C8);
-            // and the edge shading (C3) and the equipotential lines (C10), which read the distance
-            // under a point-sampled Smooth too.
+            // and the edge shading (C3) and the equipotential lines (C10), which read the distance under a
+            // point-sampled Smooth too; and the relief's slope from the distance with its highlight (C5),
+            // which reads it in the whole window every lit coloring keeps.
             use fractadyne_gpu::PaletteAa::{Distance, Off};
-            for (method, light, glow, aa, edge, lines) in [
-                (0u32, false, false, Off, false, false),
-                (0, false, false, Distance, false, false),
-                (0, false, true, Distance, false, false),
-                (0, true, false, Distance, false, false),
-                (4, false, false, Distance, false, false),
-                (4, false, true, Distance, false, false),
-                (4, true, true, Distance, false, false),
-                (0, false, false, Off, true, false),
-                (4, false, false, Distance, true, false),
-                (0, false, false, Off, false, true),
+            for (method, light, glow, aa, edge, lines, steep) in [
+                (0u32, false, false, Off, false, false, false),
+                (0, false, false, Distance, false, false, false),
+                (0, false, true, Distance, false, false, false),
+                (0, true, false, Distance, false, false, false),
+                (4, false, false, Distance, false, false, false),
+                (4, false, true, Distance, false, false, false),
+                (4, true, true, Distance, false, false, false),
+                (0, false, false, Off, true, false, false),
+                (4, false, false, Distance, true, false, false),
+                (0, false, false, Off, false, true, false),
+                (0, true, false, Off, false, false, true),
             ] {
                 let mut colour = base_colour.clone();
                 (colour.color_method, colour.light, colour.de_on, colour.aa_palette) = (method, light as u32, glow as u32, aa);
@@ -366,6 +368,13 @@ impl crate::FractadyneApp {
                 } else {
                     fractadyne_gpu::GridLines::default()
                 };
+                // The relief's slope from the distance, steep and with a full highlight, so a wrong
+                // distance would move the shading and the rim.
+                colour.relief = if steep {
+                    fractadyne_gpu::ReliefLight { steep_px: 4.0, highlight: 1.0, shininess: 32.0, color: [1.0; 3] }
+                } else {
+                    fractadyne_gpu::ReliefLight::default()
+                };
                 // The window a zoom video keeps for this coloring (`for_request`, as `assemble` asks).
                 let texels = WindowTexels::for_request(&colour);
                 let mut held = make(WindowLayout { texels, piece_max: WINDOW_PIECE_MAX })?;
@@ -381,7 +390,7 @@ impl crate::FractadyneApp {
                     c.pixels += a.len() / 4;
                 }
                 if differ > 0 {
-                    c.differ.push(format!("method {method}, relief {light}, glow {glow}, palette {aa:?}, edge {edge}, lines {lines} ({texels:?}): {differ} pixels"));
+                    c.differ.push(format!("method {method}, relief {light}, glow {glow}, palette {aa:?}, edge {edge}, lines {lines}, relief slope {steep} ({texels:?}): {differ} pixels"));
                 }
             }
             // The control: the count-only window really leaves the rest out, and a coloring that
@@ -428,8 +437,8 @@ pub(crate) struct WindowCheck {
 
 impl WindowCheck {
     pub(crate) fn pass(&self) -> bool {
-        // 10 colorings at 4 placements.
-        self.frames == 40
+        // 11 colorings at 4 placements.
+        self.frames == 44
             && self.differ.is_empty()
             && self.pieces == 3
             && self.left_out_differ > 1_000

@@ -74,8 +74,9 @@ pub enum WindowTexels {
 
 impl WindowTexels {
     /// What a frame colored with `method` (the color pass's `color_method`), relief lighting
-    /// (`light`), the distance glow, the edge shading or the equipotential lines (`glow`: all read
-    /// the distance) and the palette anti-aliasing `aa` reads. A method
+    /// (`light`, which keeps every lane: its slope from the distance, C5, reads the distance too), the
+    /// distance glow, the edge shading or the equipotential lines (`glow`: all read the distance) and
+    /// the palette anti-aliasing `aa` reads. A method
     /// this does not know keeps everything. (The neighbors' footprint reads the next pixels'
     /// counts, which every window holds.)
     pub fn for_colour(method: u32, light: bool, glow: bool, aa: crate::PaletteAa) -> Self {

@@ -4646,6 +4646,7 @@ impl FractadyneApp {
             steps: self.coloring.steps as f32,
             edge: self.effects.edge_shade(),
             grid: self.effects.grid_lines(),
+            relief: self.effects.relief_light(),
             julia: julia as u32,
             // WYSIWYG: a GUI export bakes in the live view's auto-normalized palette mapping when
             // it's active (headless CLI runs have no live range → always classic; `--normalize`
@@ -4732,6 +4733,7 @@ pub(crate) fn params_to_request(p: &fractadyne_gpu::MandelbrotParams) -> fractad
         steps: p.steps,
         edge: p.edge,
         grid: p.grid,
+        relief: p.relief,
         julia: p.julia,
         cycle: p.cycle,
         offset: p.offset,
@@ -7593,6 +7595,7 @@ impl FractadyneApp {
             steps: self.coloring.steps as f32,
             edge: self.effects.edge_shade(),
             grid: self.effects.grid_lines(),
+            relief: self.effects.relief_light(),
             life: None, // Life frames are built by `build_life_params`, not here
             lsystem: None, // nor L-system frames (`build_lsystem_params`)
             julia: julia as u32,

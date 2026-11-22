@@ -918,6 +918,67 @@ pub fn grid_weight(mu: f64, d_px: f64, ln_p: f64, spacing: f64, width: f64, stre
     (strength * c * near * precise).clamp(0.0, 1.0)
 }
 
+// ---- Relief lighting: the slope from the distance and the highlight (coloring plan C5) ----
+//
+// The relief light shades the surface whose horizontal direction of steepest ascent is the stored
+// slope normal `n` (a unit 2-vector, the direction of z / (dz/dc)). With a slope `k` (rise over
+// run) the surface normal is (k·n, 1), and the light, `light_angle` round and `h` up (the Relief
+// setting: h = tan of the light's elevation), is (l, h). The diffuse shade is their dot product,
+// scaled so a face turned to the light is 1: (k·(n·l) + h) / (k + h). At k = 1 that is the classic
+// relief, (n·l + h) / (1 + h), exactly. From the distance, the slope is `steep_px / d` with d the
+// distance from the set in output pixels: 45 degrees `steep_px` pixels from the set, steeper nearer
+// and flat far away, so the shading gathers at the set's edges, the background stays evenly lit, and
+// it looks the same at every depth. The highlight is Blinn-Phong on that surface, viewed from
+// straight above: (N·H)^shininess, H halfway between the light and the eye. It sits where the
+// surface tilts halfway toward the light, (90 degrees - the light's elevation) / 2, which a surface
+// of one slope at 45 degrees never does at the default light; so the highlight goes with the slope
+// from the distance.
+
+/// The steepest slope the relief takes from the distance (a texel a millionth of `steep_px` from the
+/// set): enough that the shade is the light's horizontal part alone.
+pub const RELIEF_SLOPE_MAX: f64 = 1.0e6;
+
+/// The relief's slope (rise over run) at `d_px` output pixels from the set: `steep_px / d_px`, or 1
+/// everywhere (the classic relief) when `steep_px` is 0 or less. 0 where the distance is unknown
+/// (`d_px` not finite: a flat, evenly lit surface).
+pub fn relief_slope(d_px: f64, steep_px: f64) -> f64 {
+    if steep_px <= 0.0 {
+        return 1.0;
+    }
+    if !d_px.is_finite() {
+        return 0.0;
+    }
+    (steep_px / d_px.max(1.0e-30)).clamp(0.0, RELIEF_SLOPE_MAX)
+}
+
+/// The diffuse shade, 0 to 1, of a slope `k` whose direction is at cosine `dn` to the light's, the
+/// light `h` up (`light_height`): (k·dn + h) / (k + h), 1 on a face turned to the light.
+pub fn relief_diffuse(dn: f64, k: f64, h: f64) -> f64 {
+    ((k * dn + h) / (k + h)).clamp(0.0, 1.0)
+}
+
+/// The highlight, 0 to 1: Blinn-Phong (N·H)^shininess on the surface of slope `k` along the unit
+/// direction `n`, the light at `light_angle` radians and `h` up, the eye straight above.
+pub fn relief_highlight(n: [f64; 2], k: f64, light_angle: f64, h: f64, shininess: f64) -> f64 {
+    let norm = |v: [f64; 3]| {
+        let m = (v[0] * v[0] + v[1] * v[1] + v[2] * v[2]).sqrt();
+        [v[0] / m, v[1] / m, v[2] / m]
+    };
+    let l = norm([light_angle.cos(), light_angle.sin(), h]);
+    let half = norm([l[0], l[1], l[2] + 1.0]);
+    let nn = norm([n[0] * k, n[1] * k, 1.0]);
+    let c = (nn[0] * half[0] + nn[1] * half[1] + nn[2] * half[2]).max(0.0);
+    c.powf(shininess)
+}
+
+/// Where the highlight peaks, in output pixels from the set, on a slope facing the light: the
+/// distance at which the slope from the distance tilts halfway toward the light, `steep_px` /
+/// tan((90 degrees - elevation) / 2), the elevation atan(`h`).
+pub fn relief_highlight_at(steep_px: f64, h: f64) -> f64 {
+    let tilt = 0.5 * (std::f64::consts::FRAC_PI_2 - h.atan());
+    steep_px / tilt.tan()
+}
+
 #[cfg(test)]
 #[path = "../tests/unit/coloring/tests.rs"]
 mod tests;
@@ -930,3 +991,6 @@ mod edge_tests;
 #[cfg(test)]
 #[path = "../tests/unit/coloring/grid_tests.rs"]
 mod grid_tests;
+#[cfg(test)]
+#[path = "../tests/unit/coloring/relief_tests.rs"]
+mod relief_tests;

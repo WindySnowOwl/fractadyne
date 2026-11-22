@@ -3153,6 +3153,19 @@ panel-relief-lighting-hover = Shade the surface using the distance-estimate slop
 panel-light-angle = Light angle
 panel-relief = Relief
 panel-relief-hover = Lower = sharper relief; higher = softer/flatter.
+# The relief light's surface and highlight (coloring plan C5): rows under "Relief lighting" in Effects. "Slope from the distance" is a checkbox; "Steep within" (in screen pixels), "Highlight" (a strength from 0 to 1), "Shininess" and "Highlight color" (a swatch) are its rows. The two "-off" texts show when the pointer rests on a grayed-out row.
+panel-relief-steep = Slope from the distance
+panel-relief-steep-hover = Make the lit surface steeper near the set and flatter away from it, as the distance to the set says, instead of one slope everywhere. The shading then gathers at the set's edges, the background stays evenly lit, it looks the same at every depth, and a highlight has somewhere to sit.
+panel-relief-steep-px = Steep within
+panel-relief-steep-px-hover = How near the set the surface is steeper than 45°, in screen pixels. A larger value spreads the relief and the highlight farther out from the set's edges.
+panel-relief-steep-off = Turn on "Slope from the distance" to choose how steep the surface is near the set.
+panel-relief-highlight = Highlight
+panel-relief-highlight-hover = A glossy highlight where the surface turns toward the light: a bright rim beside the set's edges, on the side facing the light. 0 is none.
+panel-relief-highlight-off = The highlight needs "Slope from the distance": on a surface of one slope everywhere it has nowhere to sit.
+panel-relief-shininess = Shininess
+panel-relief-shininess-hover = How tight the highlight is: higher gives a small, sharp gleam; lower a broad sheen that also lightens the flat background.
+panel-relief-highlight-color = Highlight color
+panel-relief-highlight-color-hover = The highlight's color.
 panel-rotate-light = Rotate light
 panel-rotate-light-hover = Spin the light direction over time (uses the Speed slider).
 panel-distance-glow = Distance glow

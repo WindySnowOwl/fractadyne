@@ -73,7 +73,7 @@ pub(crate) const GROUPS: &[&str] = &[
     "checklist", "replay", "settings-quarantine", "expmap", "assemble", "de-pixels", "de-dip",
     "colour-box", "cycle-check", "export-contain", "honest-step", "julia-critical", "palette-fade", "retreat", "view-thumb",
     "width-independence", "coloring-matrix-quick", "color-sig", "coloring-reset", "julia-link", "fringe",
-    "lanes", "hook", "transfer", "edges", "equipotentials",
+    "lanes", "hook", "transfer", "edges", "equipotentials", "relief",
 ];
 
 /// Groups that run ONLY when named. ⛔Kept out of `GROUPS` so a bare `--selftest` never pays for
@@ -8949,9 +8949,9 @@ impl FractadyneApp {
             push_check(&mut checks, &mut last_check_t, SelfCheck {
                 category: "Zoom video",
                 name: "a window holding only what the colouring reads, in pieces, makes the same frames".into(),
-                params: format!("a dive into ({SX}, {SY}), 160x90 frames from 1x to 2^12, cap 2000; frames at 2^0, 2^3.3, 2^7.9 turned 0.21 and 2^12, smooth and distance coloring with and without glow and relief, smooth with the palette point sampled and anti-aliased, edge shading under a point-sampled smooth and under distance, equipotential lines under a point-sampled smooth; each in the window `WindowTexels::for_request` gives it; strips in 3 pieces (193, 193, 191)"),
+                params: format!("a dive into ({SX}, {SY}), 160x90 frames from 1x to 2^12, cap 2000; frames at 2^0, 2^3.3, 2^7.9 turned 0.21 and 2^12, smooth and distance coloring with and without glow and relief, smooth with the palette point sampled and anti-aliased, edge shading under a point-sampled smooth and under distance, equipotential lines under a point-sampled smooth, the relief's slope from the distance with a highlight under a point-sampled smooth; each in the window `WindowTexels::for_request` gives it; strips in 3 pieces (193, 193, 191)"),
                 result,
-                threshold: "every pixel bit-identical to the whole window's for all 10 colorings; the control: over 1000 escaped samples differ in what the count-only window leaves out and none in the count, and a relief coloring is refused on it"
+                threshold: "every pixel bit-identical to the whole window's for all 11 colorings; the control: over 1000 escaped samples differ in what the count-only window leaves out and none in the count, and a relief coloring is refused on it"
                     .into(),
                 pass,
             });
@@ -10797,6 +10797,11 @@ zoom = \"1e94\"
                 light: true,
                 light_angle: -1.25,
                 light_height: 3.5,
+                light_steep: true,
+                light_steep_px: 40.0,
+                light_highlight: 0.3,
+                light_shininess: 200.0,
+                light_highlight_color: [0.8, 0.6, 0.4],
                 glow: true,
                 glow_strength: 0.15,
                 glow_width: 3.25,
@@ -11001,6 +11006,11 @@ zoom = \"1e94\"
                 light: true,
                 light_angle: 1.25,
                 light_height: 0.4,
+                light_steep: true,
+                light_steep_px: 12.0,
+                light_highlight: 0.7,
+                light_shininess: 96.0,
+                light_highlight_color: [0.9, 0.85, 0.6],
                 de: true,
                 de_strength: 0.7,
                 de_width: 2.5,
@@ -12641,6 +12651,254 @@ zoom = \"1e94\"
                 result: lines.join("; "),
                 threshold: "1,000 pixels or more, and a share of 0.4 to 1.25 at each depth; the control outside it at one depth or more",
                 pass: ok_all && control_off,
+            });
+        }
+
+        // ---- Relief lighting's surface and highlight (coloring plan C5) ----
+        // Each case against its CPU definition (`relief_slope`, `relief_diffuse`, `relief_highlight`)
+        // applied to the same export without the light: the tour's point at 1e10x, ss 1, point
+        // sampled, so a pixel is one texel. The normal is the shader's: the pixel's own mixed 1:3 with
+        // its 3x3 neighborhood's mean, from the normal lanes. The classic relief (one slope) is a case
+        // too. A CONTROL each (another slope, highlight or shininess) must differ. The export is cut into
+        // 16-px tiles (the least any card's tile can be, so the same on every card) and the pixels
+        // beside a tile's edge are left out: the color pass clamps the 3x3 neighborhood to its tile,
+        // so there it is not the frame's (a seam, TODO.md). Then the slope is in output pixels: the
+        // frame's mean brightening by the highlight at ss 1 and ss 2 agree, and twice the steepness
+        // (the control) does not.
+        if want("relief") {
+            use fractadyne_core::coloring::{relief_diffuse, relief_highlight, relief_slope};
+            let saved_spec = self.coloring_spec();
+            let saved = (self.fractal, self.julia_mode, self.dual, self.render_cfg.max_iter, self.render_cfg.auto_iter);
+            let defaults = fractadyne_state::ColoringSpec::default();
+            self.fractal = FractalKind::Mandelbrot;
+            self.julia_mode = false;
+            self.dual = false;
+            self.render_cfg.auto_iter = false;
+            self.render_cfg.max_iter = 8_000;
+            self.effects.light = true;
+            self.effects.light_angle = defaults.light_angle;
+            self.effects.light_height = defaults.light_height;
+            self.effects.light_steep = false;
+            self.effects.de = false;
+            self.effects.edge = false;
+            self.effects.grid = false;
+            self.coloring.hook.turn_off();
+            self.coloring.color_method = crate::ColorMethod::Smooth;
+            self.coloring.use_custom_palette = false;
+            self.coloring.use_duotone = false;
+            self.coloring.use_binary = false;
+            self.coloring.palette_idx = fractadyne_color::preset_by_id("unity").unwrap_or(0);
+            self.coloring.palette_adjust = fractadyne_color::adjust::PaletteAdjust::NEUTRAL;
+            self.coloring.normalize_live = false;
+            self.coloring.normalize_fit = false;
+            self.coloring.transfer = fractadyne_core::coloring::Transfer::Linear;
+            self.coloring.wrap = fractadyne_core::coloring::Wrap::Repeat;
+            self.coloring.steps = 0;
+            self.coloring.interior = Some(crate::InteriorMode::Solid);
+            self.coloring.interior_color = [0.9, 0.85, 0.2];
+            let (w, h) = (160u32, 96u32);
+            const TILE: u32 = 16;
+            let at = |s: &str| fractadyne_core::parse_bf_prec(s, 256).expect("a view's coordinate");
+            let mut vp = Viewport::new(w as f64, h as f64);
+            vp.set_center_mag(
+                at("-1.178853950372678747911373866849720956148855"),
+                at("0.1853420232408490265512092752061929308714979"),
+                1e10,
+            );
+            let mut req = self.lanes_request_for(&vp, false, None);
+            req.width = w;
+            req.height = h;
+            req.aa_palette = fractadyne_gpu::PaletteAa::Off;
+            // The overview, for the slope's scale: open space around the set for the highlight's rim.
+            self.render_cfg.max_iter = 1_000;
+            let mut vo = Viewport::new(w as f64, h as f64);
+            vo.set_center_mag(at("-0.75"), at("0"), 1.0);
+            let mut req_far = self.lanes_request_for(&vo, false, None);
+            req_far.width = w;
+            req_far.height = h;
+            req_far.aa_palette = fractadyne_gpu::PaletteAa::Off;
+            req_far.light = 1;
+            (self.fractal, self.julia_mode, self.dual, self.render_cfg.max_iter, self.render_cfg.auto_iter) = saved;
+            self.apply_coloring_spec(&saved_spec);
+            let lane: Vec<[f32; 4]> = fractadyne_gpu::render_lanes(device, queue, &req, crate::tunables::CORRECT_WORK_BUDGET)
+                .ok()
+                .map(|r| r.pixels.chunks_exact(4).map(|t| [t[0], t[1], t[2], t[3]]).collect())
+                .unwrap_or_default();
+            let export = |light: bool, relief: fractadyne_gpu::ReliefLight, ss: u32| -> Option<Vec<f32>> {
+                let mut r = req.clone();
+                r.light = light as u32;
+                r.relief = relief;
+                r.ss = ss;
+                let (progress, cancel) = (std::sync::atomic::AtomicU32::new(0), std::sync::atomic::AtomicBool::new(false));
+                fractadyne_gpu::render_export(device, queue, &r, &progress, &cancel).ok().map(|x| x.pixels)
+            };
+            let relief = |steep_px: f32, highlight: f32, shininess: f32, color: [f32; 3]| fractadyne_gpu::ReliefLight { steep_px, highlight, shininess, color };
+            let plain = export(false, fractadyne_gpu::ReliefLight::default(), 1).unwrap_or_default();
+            let (angle, height) = (req.light_angle as f64, req.light_height as f64);
+            let (ww, hh) = (w as i64, h as i64);
+            let normal_at = |x: i64, y: i64| -> [f64; 2] {
+                let t = &lane[(y.clamp(0, hh - 1) * ww + x.clamp(0, ww - 1)) as usize];
+                [t[1] as f64, t[2] as f64]
+            };
+            let has_distance = |t: &[f32; 4]| t[0] >= 0.0 && t[3] < 1.0e20;
+            // The CPU's colors under `rl`: each pixel's color without the light, shaded and given the
+            // highlight as the color pass does.
+            let cpu = |rl: &fractadyne_gpu::ReliefLight| -> Vec<[f64; 3]> {
+                let steep = rl.steep_px as f64;
+                plain
+                    .chunks_exact(4)
+                    .enumerate()
+                    .map(|(i, px)| {
+                        let base: [f64; 3] = std::array::from_fn(|c| px[c] as f64);
+                        let (x, y) = (i as i64 % ww, i as i64 / ww);
+                        let own = normal_at(x, y);
+                        let mut nsm = [0.0f64; 2];
+                        for oy in -1..=1 {
+                            for ox in -1..=1 {
+                                let q = normal_at(x + ox, y + oy);
+                                nsm = [nsm[0] + q[0], nsm[1] + q[1]];
+                            }
+                        }
+                        let n = [own[0] + (nsm[0] / 9.0 - own[0]) * 0.75, own[1] + (nsm[1] / 9.0 - own[1]) * 0.75];
+                        let conf = n[0].hypot(n[1]);
+                        if conf <= 1.0e-6 {
+                            return base;
+                        }
+                        let nu = [n[0] / conf, n[1] / conf];
+                        let dn = nu[0] * angle.cos() + nu[1] * angle.sin();
+                        let t = &lane[i];
+                        let k = if steep > 0.0 {
+                            if has_distance(t) { relief_slope((t[3] as f64).min(60.0).exp2(), steep) } else { 0.0 }
+                        } else {
+                            1.0
+                        };
+                        let lam = relief_diffuse(dn, k, height);
+                        let cf = conf.min(1.0);
+                        let shade = 1.0 + (lam - 1.0) * cf;
+                        let hl = if steep > 0.0 && rl.highlight > 0.0 && has_distance(t) {
+                            relief_highlight(nu, k, angle, height, rl.shininess as f64) * rl.highlight as f64 * cf
+                        } else {
+                            0.0
+                        };
+                        std::array::from_fn(|c| (base[c] * shade + hl * rl.color[c] as f64).min(1.0))
+                    })
+                    .collect()
+            };
+            // The share of pixels more than one 8-bit level apart, and the largest gap, over the
+            // pixels whose 3x3 neighborhood lies inside their tile.
+            let inside_tile = |i: usize| {
+                let (x, y) = (i as u32 % w, i as u32 / w);
+                ![0, TILE - 1].contains(&(x % TILE)) && ![0, TILE - 1].contains(&(y % TILE))
+            };
+            let apart = |g: &[f32], c: &[[f64; 3]]| -> (f64, f64) {
+                let (mut n, mut bad, mut worst) = (0usize, 0usize, 0.0f64);
+                for (i, (px, want)) in g.chunks_exact(4).zip(c).enumerate() {
+                    if !inside_tile(i) {
+                        continue;
+                    }
+                    let d = (0..3).map(|k| (px[k] as f64 - want[k]).abs() * 255.0).fold(0.0, f64::max);
+                    n += 1;
+                    worst = worst.max(d);
+                    bad += (d > 1.0) as usize;
+                }
+                (bad as f64 / n.max(1) as f64, worst)
+            };
+            let white = [1.0f32; 3];
+            let cases = [
+                ("the classic relief (one slope)", relief(0.0, 0.0, 64.0, white), relief(8.0, 0.0, 64.0, white)),
+                ("the slope from the distance, 8 px, no highlight", relief(8.0, 0.0, 64.0, white), relief(16.0, 0.0, 64.0, white)),
+                ("8 px with the default highlight (0.5, shininess 64, white)", relief(8.0, 0.5, 64.0, white), relief(8.0, 0.5, 16.0, white)),
+                ("16 px, full highlight, shininess 24, a warm color", relief(16.0, 1.0, 24.0, [1.0, 0.8, 0.4]), relief(16.0, 1.0, 24.0, [0.2, 0.4, 1.0])),
+            ];
+            let near = lane.iter().filter(|t| has_distance(t) && (t[3] as f64) < 6.0).count();
+            // The precondition apart from the verdict, as the edge shading's check has it.
+            let ready = !plain.is_empty() && lane.len() == (w * h) as usize && near > 1_000;
+            let mut ok_all = ready;
+            let mut lines = Vec::new();
+            let tiled = |rl: fractadyne_gpu::ReliefLight| -> Option<Vec<f32>> {
+                let mut r = req.clone();
+                r.light = 1;
+                r.relief = rl;
+                r.ss = 1;
+                r.tile_px_max = Some(TILE);
+                let (progress, cancel) = (std::sync::atomic::AtomicU32::new(0), std::sync::atomic::AtomicBool::new(false));
+                fractadyne_gpu::render_export(device, queue, &r, &progress, &cancel).ok().map(|x| x.pixels)
+            };
+            for (name, rl, control) in &cases {
+                let (ok, line) = match tiled(*rl) {
+                    Some(px) if ready => {
+                        let (bad, worst) = apart(&px, &cpu(rl));
+                        let (ctl, _) = apart(&px, &cpu(control));
+                        (bad <= 0.005 && ctl >= 0.01, format!("{name}: {:.2}% apart (max {worst:.2} levels), control {:.1}%", bad * 100.0, ctl * 100.0))
+                    }
+                    _ => (false, format!("{name}: no render, or {near} escaped pixels within 64 px of the set")),
+                };
+                ok_all &= ok;
+                lines.push(line);
+            }
+            push_check(&mut checks, &mut last_check_t, SelfCheck {
+                category: "export",
+                name: "relief lighting is its definition".into(),
+                params: format!("the coloring-method tour's point at 1e10x, {w}x{h}, ss 1, point sampled, unity, the default light (angle, Relief); the classic relief and three slopes and highlights, each against `relief_slope`, `relief_diffuse` and `relief_highlight` of the normal lanes (the pixel's own mixed 1:3 with its 3x3 neighborhood's mean, as the shader does) and the distance lane, applied to the export without the light ({near} escaped pixels within 64 px of the set); {TILE}-px tiles, the pixels beside a tile's edge left out; another slope, shininess or color as the control"),
+                result: lines.join("; "),
+                threshold: "at most 0.5% of the pixels more than 1 level apart; the control 1% or more",
+                pass: ok_all,
+            });
+            // The slope is in output pixels: where the highlight sits, its brightening (against the
+            // same slope without it) weighted mean distance from the set, in output pixels from the
+            // overview's ss 1 distance lane, agrees at ss 1 and ss 2 and is near `relief_highlight_at`;
+            // twice the steepness (the control) puts it about twice as far out.
+            let lane_far: Vec<[f32; 4]> = fractadyne_gpu::render_lanes(device, queue, &req_far, crate::tunables::CORRECT_WORK_BUDGET)
+                .ok()
+                .map(|r| r.pixels.chunks_exact(4).map(|t| [t[0], t[1], t[2], t[3]]).collect())
+                .unwrap_or_default();
+            let sits_at = |g: &[f32], base: &[f32]| -> f64 {
+                let lum = |p: &[f32]| 0.2126 * p[0] as f64 + 0.7152 * p[1] as f64 + 0.0722 * p[2] as f64;
+                let (mut s, mut sd) = (0.0, 0.0);
+                for ((a, b), t) in g.chunks_exact(4).zip(base.chunks_exact(4)).zip(&lane_far) {
+                    if !has_distance(t) {
+                        continue;
+                    }
+                    // The rim itself: brightening above 0.1 (the flat background's sheen is about 0.02).
+                    let up = (lum(a) - lum(b) - 0.1).max(0.0);
+                    s += up;
+                    sd += up * (t[3] as f64).min(60.0).exp2();
+                }
+                if s > 0.0 { sd / s } else { 0.0 }
+            };
+            let far = |rl: fractadyne_gpu::ReliefLight, ss: u32| -> Option<Vec<f32>> {
+                let mut r = req_far.clone();
+                r.relief = rl;
+                r.ss = ss;
+                let (progress, cancel) = (std::sync::atomic::AtomicU32::new(0), std::sync::atomic::AtomicBool::new(false));
+                fractadyne_gpu::render_export(device, queue, &r, &progress, &cancel).ok().map(|x| x.pixels)
+            };
+            let (m8, s8, m16, s16) = (relief(8.0, 0.0, 64.0, white), relief(8.0, 1.0, 64.0, white), relief(16.0, 0.0, 64.0, white), relief(16.0, 1.0, 64.0, white));
+            let want = fractadyne_core::coloring::relief_highlight_at(8.0, req_far.light_height as f64);
+            let at = match (far(m8, 1), far(s8, 1), far(m8, 2), far(s8, 2), far(m16, 1), far(s16, 1)) {
+                (Some(a1), Some(b1), Some(a2), Some(b2), Some(c1), Some(d1)) if lane_far.len() == (w * h) as usize => {
+                    Some((sits_at(&b1, &a1), sits_at(&b2, &a2), sits_at(&d1, &c1)))
+                }
+                _ => None,
+            };
+            let (pass, result) = match at {
+                Some((d1, d2, d16)) => {
+                    let same = (d2 - d1).abs() / d1.max(1e-9);
+                    let ratio = d16 / d1.max(1e-9);
+                    (
+                        (0.6..=1.6).contains(&(d1 / want)) && same <= 0.1 && (1.6..=2.4).contains(&ratio),
+                        format!("the highlight sits {d1:.1} px from the set at ss 1, {d2:.1} px at ss 2 ({:.1}% apart; its peak by the definition {want:.1} px); 16 px puts it at {d16:.1} px ({ratio:.2} times, the control)", same * 100.0),
+                    )
+                }
+                None => (false, "no render".into()),
+            };
+            push_check(&mut checks, &mut last_check_t, SelfCheck {
+                category: "export",
+                name: "relief slope from the distance is in output pixels".into(),
+                params: format!("the overview (1,000 iterations), {w}x{h}, the slope from the distance at 8 px with a full white highlight, shininess 64: where the highlight sits, its brightening against the same slope without it, above 0.1 (the rim, not the flat background's sheen), weighting each pixel's distance from the set (the ss 1 distance lane), at ss 1 and ss 2; 16 px at ss 1 as the control"),
+                result,
+                threshold: "ss 1 and ss 2 within 10%, 0.6 to 1.6 times `relief_highlight_at`; the control 1.6 to 2.4 times as far",
+                pass,
             });
         }
 

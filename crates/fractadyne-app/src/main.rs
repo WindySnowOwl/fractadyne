@@ -3338,6 +3338,12 @@ pub(crate) mod slider_range {
     pub(crate) const GRID_SPACING: RangeInclusive<f32> = 4.0..=64.0;
     pub(crate) const GRID_WIDTH: RangeInclusive<f32> = 0.5..=8.0;
     pub(crate) const GRID_STRENGTH: RangeInclusive<f32> = 0.0..=1.0;
+    /// The relief's surface (coloring plan C5): how many output pixels from the set it is at 45
+    /// degrees, the highlight's strength and its shininess (`--light-steep-px`, `--light-highlight`,
+    /// `--light-shininess`).
+    pub(crate) const RELIEF_STEEP_PX: RangeInclusive<f32> = 1.0..=256.0;
+    pub(crate) const RELIEF_HIGHLIGHT: RangeInclusive<f32> = 0.0..=1.0;
+    pub(crate) const RELIEF_SHININESS: RangeInclusive<f32> = 4.0..=512.0;
     /// Stripe density (`--stripe-freq`).
     pub(crate) const STRIPE_FREQ: RangeInclusive<f32> = 1.0..=24.0;
     /// The palette's brightness, contrast and saturation (`--palette-brightness`, ...;
@@ -6377,6 +6383,14 @@ struct EffectsConfig {
     light_angle: f32,  // radians
     light_height: f32, // relief strength (smaller = sharper)
     light_anim: bool,  // rotate the light direction over time
+    /// The relief's surface and highlight (coloring plan C5): the slope from the distance, 45
+    /// degrees `light_steep_px` output pixels from the set; the highlight's strength, shininess and
+    /// color (drawn only with the slope from the distance).
+    light_steep: bool,
+    light_steep_px: f32,
+    light_highlight: f32,
+    light_shininess: f32,
+    light_highlight_color: [f32; 3],
     /// Distance-estimate glow (contour bands near the boundary), + animation.
     de: bool,
     de_strength: f32,
@@ -6424,6 +6438,17 @@ impl EffectsConfig {
             width: self.grid_width,
             strength: self.grid_strength,
             color: self.grid_color,
+        }
+    }
+
+    /// The relief light's surface and highlight (coloring plan C5): the classic relief (45 degrees
+    /// everywhere, no highlight) unless the slope comes from the distance.
+    fn relief_light(&self) -> fractadyne_gpu::ReliefLight {
+        fractadyne_gpu::ReliefLight {
+            steep_px: if self.light_steep { self.light_steep_px } else { 0.0 },
+            highlight: self.light_highlight,
+            shininess: self.light_shininess,
+            color: self.light_highlight_color,
         }
     }
 }
@@ -8640,6 +8665,11 @@ impl FractadyneApp {
                 light_angle: s.coloring.light_angle,
                 light_height: s.coloring.light_height,
                 light_anim: s.light_anim,
+                light_steep: s.coloring.light_steep,
+                light_steep_px: s.coloring.light_steep_px.clamp(*slider_range::RELIEF_STEEP_PX.start(), *slider_range::RELIEF_STEEP_PX.end()),
+                light_highlight: s.coloring.light_highlight.clamp(*slider_range::RELIEF_HIGHLIGHT.start(), *slider_range::RELIEF_HIGHLIGHT.end()),
+                light_shininess: s.coloring.light_shininess.clamp(*slider_range::RELIEF_SHININESS.start(), *slider_range::RELIEF_SHININESS.end()),
+                light_highlight_color: s.coloring.light_highlight_color,
                 de: s.coloring.de,
                 de_strength: s.coloring.de_strength,
                 de_width: s.coloring.de_width,
@@ -9240,6 +9270,47 @@ impl FractadyneApp {
                 light_off("--light-height");
             }
         }
+        // The relief's surface and highlight (coloring plan C5).
+        if args.iter().any(|a| a == "--light-steep") {
+            self.effects.light_steep = true;
+            if !self.effects.light {
+                light_off("--light-steep");
+            }
+        }
+        let steep_off = |flag: &str| eprintln!("fractadyne: {flag} has no effect without --light-steep (the relief has one slope everywhere).");
+        if let Some(v) = ranged("--light-steep-px", slider_range::RELIEF_STEEP_PX) {
+            self.effects.light_steep_px = v;
+            if !self.effects.light_steep {
+                steep_off("--light-steep-px");
+            }
+        }
+        if let Some(v) = ranged("--light-highlight", slider_range::RELIEF_HIGHLIGHT) {
+            self.effects.light_highlight = v;
+            if !self.effects.light_steep {
+                steep_off("--light-highlight");
+            }
+        }
+        if let Some(v) = ranged("--light-shininess", slider_range::RELIEF_SHININESS) {
+            self.effects.light_shininess = v;
+            if !self.effects.light_steep {
+                steep_off("--light-shininess");
+            }
+        }
+        if let Some(text) = val("--light-highlight-color") {
+            let parts: Vec<Option<f32>> = text.split(',').map(|t| t.trim().parse::<f32>().ok().filter(|v| v.is_finite())).collect();
+            match parts.as_slice() {
+                [Some(r), Some(g), Some(b)] if [r, g, b].iter().all(|v| (0.0..=1.0).contains(*v)) => {
+                    self.effects.light_highlight_color = [*r, *g, *b];
+                }
+                _ => {
+                    eprintln!("fractadyne: --light-highlight-color: \"{text}\" is not three numbers from 0 to 1, such as 1,0.9,0.7.");
+                    crate::exit(2)
+                }
+            }
+            if !self.effects.light_steep {
+                steep_off("--light-highlight-color");
+            }
+        }
         if let Some(s) = ranged("--glow-strength", slider_range::GLOW_STRENGTH) {
             self.effects.de_strength = s;
             if !self.effects.de {
@@ -9659,6 +9730,11 @@ impl FractadyneApp {
             light: self.effects.light,
             light_angle: self.effects.light_angle,
             light_height: self.effects.light_height,
+            light_steep: self.effects.light_steep,
+            light_steep_px: self.effects.light_steep_px,
+            light_highlight: self.effects.light_highlight,
+            light_shininess: self.effects.light_shininess,
+            light_highlight_color: self.effects.light_highlight_color,
             de: self.effects.de,
             de_strength: self.effects.de_strength,
             de_width: self.effects.de_width,
@@ -9773,6 +9849,11 @@ impl FractadyneApp {
         e.light = s.light;
         e.light_angle = s.light_angle;
         e.light_height = s.light_height;
+        e.light_steep = s.light_steep;
+        e.light_steep_px = s.light_steep_px;
+        e.light_highlight = s.light_highlight;
+        e.light_shininess = s.light_shininess;
+        e.light_highlight_color = s.light_highlight_color;
         e.de = s.de;
         e.de_strength = s.de_strength;
         e.de_width = s.de_width;
@@ -17711,6 +17792,11 @@ impl FractadyneApp {
         e.light.hash(&mut h);
         e.light_angle.to_bits().hash(&mut h);
         e.light_height.to_bits().hash(&mut h);
+        let relief = e.relief_light();
+        relief.steep_px.to_bits().hash(&mut h);
+        relief.highlight.to_bits().hash(&mut h);
+        relief.shininess.to_bits().hash(&mut h);
+        relief.color.map(f32::to_bits).hash(&mut h);
         e.de.hash(&mut h);
         e.de_strength.to_bits().hash(&mut h);
         e.de_width.to_bits().hash(&mut h);

@@ -50,6 +50,16 @@ detail is in the git history.
   command-line flags (`--transfer`, `--wrap`, `--steps`); a view or session saved with the log scale
   on opens with Scale on Log. Reset coloring settings puts the Scale back with the normalization
   switches and keeps Wrap and Steps, as it keeps the palette.
+- **Relief lighting with a highlight, steeper near the set.** Relief lighting in Effects has new
+  rows. "Slope from the distance" makes the lit surface steeper near the set and flat far from it, as
+  the distance to the set says, instead of one slope everywhere: the shading gathers at the set's
+  edges, the background stays evenly lit, and the picture looks the same at every depth; Steep
+  within sets how near the set the surface is steeper than 45°, in screen pixels. On that surface,
+  Highlight adds a glossy rim beside the set's edges on the side facing the light, for views that
+  look like polished metal or glazed clay, with Shininess and a Highlight color. Relief lighting
+  looks as it did until the new box is ticked. A view file and the command line carry them
+  (`light_steep`, `light_steep_px`, `light_highlight`, `light_shininess`, `light_highlight_color`;
+  `--light-steep` and so on).
 - **Equipotential lines: contour lines that hold at every depth.** A new switch in Effects draws
   lines along the levels of the escape count, like the contour lines of a map, over any coloring
   method and palette. Finer lines appear wherever the levels spread apart, so the lines stay about

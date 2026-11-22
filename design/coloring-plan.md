@@ -1,6 +1,6 @@
 # Coloring methods: implementation plan
 
-Status: **plan (2026-11-08); phase A done (A1–A10), B1, B1b, B9 and B10 done (the coloring matrix, its live method tour, every lane as NumPy arrays, a custom coloring hook), B2 done (what a frame accumulates is a `StatSet`, apart from the method shown), B3 done (in floatexp a stripe, triangle or trap frame carries the whole G-buffer), B4 to B7 done (one settings model, the method list, the method sheet, the inside and a second LUT), C1, C2, C3, C4, C8, C9, C10 and C11 done (a solid inside in any color; the palette map's curves, wraps and steps; edge shading by the distance; the inside's palette fitted to its range; the palette anti-aliased over a footprint from the distance estimate; the fringe method; equipotential lines at an even spacing at every depth; the dual view's Julia pane on the set's palette map); B8 not started; next C5; see §10 (2026-11-21).** Line references are to `main` at `9ab75357`; check
+Status: **plan (2026-11-08); phase A done (A1–A10), B1, B1b, B9 and B10 done (the coloring matrix, its live method tour, every lane as NumPy arrays, a custom coloring hook), B2 done (what a frame accumulates is a `StatSet`, apart from the method shown), B3 done (in floatexp a stripe, triangle or trap frame carries the whole G-buffer), B4 to B7 done (one settings model, the method list, the method sheet, the inside and a second LUT), C1, C2, C3, C4, C5, C8, C9, C10 and C11 done (a solid inside in any color; the palette map's curves, wraps and steps; edge shading by the distance; the relief light's slope from the distance and a highlight; the inside's palette fitted to its range; the palette anti-aliased over a footprint from the distance estimate; the fringe method; equipotential lines at an even spacing at every depth; the dual view's Julia pane on the set's palette map); B8 not started; next C6; see §10 (2026-11-21).** Line references are to `main` at `9ab75357`; check
 them before editing, they drift. The research behind it (methods, prototypes, measured results,
 prior art) is the coloring-methods doc; its local copy is
 `local/research_notes/Fractal coloring methods/` (PDF, HTML, Markdown, prototype scripts).
@@ -1128,6 +1128,50 @@ UI rows, `.fdn`/farm/CLI through B4, B1 cells, a selftest appearance check, uite
 Order: C1, C4, C8, C9, C11 (smallest), then C2, C3, C10, then C5, C6, C7. (2026-11-20: B9 and B10,
 the prototyping aids, come before C2.)
 
+**C5, done 2026-11-21** (branch `feat/color-c5-lighting`): the relief light's surface and a
+highlight, Effects ▸ Relief lighting ▸ Slope from the distance, Steep within, Highlight, Shininess,
+Highlight color. The relief shades the surface whose horizontal direction of steepest ascent is the
+stored slope normal n (the direction of z / (dz/dc)); with a slope k the surface normal is (k·n, 1),
+and the light, `light_angle` round and h = `light_height` up (the Relief slider read as the tan of
+the light's elevation), is (l, h). The diffuse shade is their dot product scaled so a face turned to
+the light is 1, (k·(n·l) + h) / (k + h); at k = 1 that is the classic relief (n·l + h) / (1 + h)
+exactly, so the classic is one case of the model, bit-identical (goldens 31/31). From the distance
+the slope is `steep_px` / d, d the pixel's distance from the set in output pixels (the mean log over
+its texels that have one; flat where none does): 45 degrees `steep_px` from the set, steeper nearer
+and flat far away, so the shading gathers at the set's edges, the background stays evenly lit and it
+looks the same at every depth. On that surface a Blinn-Phong highlight, (N·H)^shininess with the eye
+straight above, added in the highlight's color and clamped; it peaks where the surface tilts halfway
+toward the light, (90 degrees − elevation) / 2, at `relief_highlight_at` = `steep_px` / tan of that
+from the set (22 px at 8 px and the default light). A surface of one slope at 45 degrees never tilts
+that little at the default light (at most 0.2% at shininess 64), so the highlight is drawn only with
+the slope from the distance, and its rows are grayed out without it, each with its reason on hover;
+and only where a pixel has a distance (the inside and a pixel without one stay matte: the 3x3
+normal lights the inside's edge pixels too). Prototyped first in NumPy on the lanes (B9): a low
+shininess washed the flat background with the lobe's tail (0.94^24 = 0.22 at the default light), so
+the default is 64 (about 2%); today's fixed-slope diffuse with the distance's highlight looked like
+two different surfaces, so both use the one slope. `fractadyne_core::coloring::relief_slope`,
+`relief_diffuse`, `relief_highlight`, `relief_highlight_at` are the CPU definitions. `ColorU`: a row
+of the steepness (0 = the classic), the highlight's strength (0 without the steepness) and shininess,
+a row of color; `ReliefLight` on `MandelbrotParams` and `ExportRequest`; a zoom video's window already
+keeps every lane under relief lighting (`WindowTexels::All`, the distance with it). The app: `EffectsConfig.light_steep*`,
+`light_highlight*`, `light_shininess`; `ColoringSpec` and view keys `light_steep`, `light_steep_px`
+(8 px), `light_highlight` (0.5), `light_shininess` (64), `light_highlight_color` (white), five
+field-table rows; `--light-steep`, `--light-steep-px`, `--light-highlight`, `--light-shininess`,
+`--light-highlight-color`; 12 strings in 15 languages. Tests: core `relief_tests` (k = 1 is the
+classic relief; the background is evenly lit from the distance; the highlight peaks at
+`relief_highlight_at` and is 1 there, 2% on the flat, none facing away, at most 0.2% on a 45-degree
+surface); self-test group `relief`: the classic relief and three slopes and highlights against the
+CPU definitions applied to the export without the light, 0.00% apart (max 0.00 levels), controls
+6.7-93.8% (on 16-px tiles, the pixels beside a tile's edge left out: the 3x3 normal is clamped to
+its tile there, an export seam that predates this, TODO.md); where the highlight sits on the
+overview at ss 1 and ss 2, 31.9 and 31.9 px (the brightening-weighted rim, beyond the 22.1-px peak
+as the lobe trails outward), 16 px 1.74 times as far (the control); the zoom video window check
+gains the slope from the distance (11 colorings, bit-identical); `--uitest` relief-classic,
+relief-steep (11.7 levels, no pass), relief-panel. Sabotaged (the light vector unnormalized; the slope
+read per texel, not per output pixel): the highlight cases 5.6% apart, the rim at 22.5 px at ss 1 and
+11.3 at ss 2, both red. The color pass costs the same: 0.9 ms for a 1920x1080 ss 2 export on the RTX
+3080, main and the branch, classic or with the slope and highlight (5 rounds interleaved).
+
 **C10, done 2026-11-21** (branch `feat/color-c10-grid`): equipotential lines, Effects ▸
 Equipotential lines; the equipotentials only, the rays waiting for D1 (an angle under every
 method). `fractadyne_core::coloring::grid_weight` and `grid_cover` are the CPU definitions: a texel
@@ -1633,5 +1677,6 @@ coloring in these places, so sequence the two with care:
 | C2         | done, merged                                              | `ca8acfe6` (merge `1694d7e4`)                                                             |
 | C3         | done, merged                                              | `b0bd9259` (merge `550139a7`)                                                             |
 | C10        | done, merged                                              | `43368601` (merge `cc471188`)                                                             |
-| C5–C7      | not started                                               |                                                                                           |
+| C5         | done, not merged (branch `feat/color-c5-lighting`)        | (filled in at the merge)                                                                  |
+| C6–C7      | not started                                               |                                                                                           |
 | D, E, F, G | not started                                               |                                                                                           |
