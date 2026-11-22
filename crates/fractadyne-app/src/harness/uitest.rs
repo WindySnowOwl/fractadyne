@@ -309,6 +309,9 @@ enum Screen {
     /// only the Julia pane (`BrowserPanes`).
     PaletteBrowserDual,
     PaletteBrowserDualJulia,
+    /// "Both, linked" with the grayed-out auto-zoom button's tooltip shown: why it is off there,
+    /// and how to get it back.
+    AutopilotDualTooltip,
     /// The panel's method list open on the home view (coloring plan B6): the headings.
     MethodList,
     /// The same on Burning Ship, which has no distance estimate: Distance grayed out.
@@ -1352,6 +1355,7 @@ fn build_steps() -> Vec<Step> {
         // on for every step after.
         screen("palette-browser-dual", Screen::PaletteBrowserDual),
         screen("palette-browser-dual-julia", Screen::PaletteBrowserDualJulia),
+        screen("autopilot-dual-tooltip", Screen::AutopilotDualTooltip),
         screen("method-list", Screen::MethodList),
         screen("method-list-no-derivative", Screen::MethodListNoDerivative),
         screen("method-tooltip-recalculates", Screen::MethodTooltipRecalculates),
@@ -2517,6 +2521,7 @@ impl FractadyneApp {
         self.diagnostics.open = false;
         self.misi.open = false;
         self.dialogs.uitest_method_tooltip = None;
+        self.dialogs.uitest_autopilot_tooltip = false;
         self.method_sheet.open = false;
         // The Custom coloring window, and its hook: each `color-hook-*` step sets its own.
         self.color_hook_dialog.open = false;
@@ -2960,6 +2965,13 @@ impl FractadyneApp {
                 self.set_fractal(crate::FractalKind::Newton);
                 self.coloring.color_method = crate::ColorMethod::Stripe;
                 self.dialogs.uitest_effects_open = Some(true);
+            }
+            Screen::AutopilotDualTooltip => {
+                self.set_fractal(crate::FractalKind::Mandelbrot);
+                self.set_show_mode(crate::ShowMode::Both);
+                self.reset_view();
+                self.render_cfg.auto_iter = true;
+                self.dialogs.uitest_autopilot_tooltip = true;
             }
             Screen::PaletteBrowserDual | Screen::PaletteBrowserDualJulia => {
                 self.set_fractal(crate::FractalKind::Mandelbrot);

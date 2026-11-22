@@ -121,6 +121,10 @@ detail is in the git history.
   the view with that palette inside and the outside as it is, resting the pointer on one previews
   it on the view, and "Same as outside" is a choice of its own. The inside's palette is one of the
   built-in palettes, so saved gradients are not offered there.
+- **The grayed-out auto-zoom says why.** The auto-zoom steers a single view, so in "Both, linked"
+  its toolbar button and its Tools menu item are grayed out, and resting the pointer on them showed
+  nothing. They now say why, and how to get it back: show one picture under Fractal ▸ Show, or turn
+  off the "Both, linked" button on the toolbar.
 - **The distance to the set is right near deep minibrots.** Past about 10^77× near a minibrot,
   where an orbit passes closer to zero once a period than ordinary floating point can hold, the
   distance to the set came out far too large (a true 0.00005 pixels read as 4). Everything that reads

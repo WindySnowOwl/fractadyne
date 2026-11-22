@@ -460,6 +460,7 @@ menu-toolbar-click-zoom-hover = Zoom kliknięciem ({ $factor }×): lewy przycisk
 menu-toolbar-click-zoom-dual = Gdy ta opcja jest włączona, c zbioru Julii przypina się Ctrl+kliknięciem.
 menu-toolbar-autopilot-running-hover = Autozoom działa — kliknij, aby zatrzymać
 menu-toolbar-autopilot-hover = Autozoom: zanurzanie w stronę szczegółów (A)
+menu-autopilot-dual-hover = Autozoom steruje jednym widokiem, więc w trybie „Oba, połączone” jest niedostępny. Aby go użyć, pokaż jeden obraz: wybierz go w menu Fraktal ▸ Pokaż albo wyłącz przycisk „Oba, połączone” na pasku narzędzi.
 menu-toolbar-reset-hover = Resetuj widok (natychmiast)
 menu-toolbar-home-hover = Oddal do widoku początkowego (z animacją)
 menu-toolbar-bookmarks-hover = Zakładki: zapisz ten widok lub skocz do zapisanego

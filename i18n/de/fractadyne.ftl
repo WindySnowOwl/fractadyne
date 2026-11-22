@@ -459,6 +459,7 @@ menu-toolbar-click-zoom-hover = Klick-Zoom ({ $factor }×): Linksklick taucht in
 menu-toolbar-click-zoom-dual = Solange dies aktiv ist, das Julia-c mit Ctrl+Klick festsetzen.
 menu-toolbar-autopilot-running-hover = Auto-Zoom läuft — zum Anhalten klicken
 menu-toolbar-autopilot-hover = Auto-Zoom: in Richtung Details tauchen (A)
+menu-autopilot-dual-hover = Der Auto-Zoom steuert eine einzelne Ansicht und ist darum in „Beide, verknüpft“ nicht verfügbar. Um ihn zu nutzen, ein einzelnes Bild anzeigen: unter Fraktal ▸ Anzeigen auswählen oder die Schaltfläche „Beide, verknüpft“ in der Symbolleiste ausschalten.
 menu-toolbar-reset-hover = Ansicht zurücksetzen (sofort)
 menu-toolbar-home-hover = Zur Startansicht herauszoomen (animiert)
 menu-toolbar-bookmarks-hover = Lesezeichen: diese Ansicht speichern oder zu einer gespeicherten springen

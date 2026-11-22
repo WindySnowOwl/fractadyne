@@ -6959,6 +6959,9 @@ struct DialogState {
     /// Show this method's tooltip in the open method list without a pointer on it (the UI test's
     /// `method-tooltip` step: the walk never moves the pointer). Cleared when the list closes.
     uitest_method_tooltip: Option<ColorMethod>,
+    /// Show the grayed-out auto-zoom button's tooltip in "Both, linked" without a pointer on it
+    /// (the UI test's `autopilot-dual-tooltip` step). Cleared by `uitest_close_all`.
+    uitest_autopilot_tooltip: bool,
     /// Keyboard/help overlay window open.
     help_open: bool,
     /// Selected Help section index.
@@ -8376,6 +8379,7 @@ impl FractadyneApp {
                 open_palette_dropdown: false,
                 open_method_list: false,
                 uitest_method_tooltip: None,
+                uitest_autopilot_tooltip: false,
                 help_open: false,
                 help_section: 0,
                 help_scroll_to_end: false,

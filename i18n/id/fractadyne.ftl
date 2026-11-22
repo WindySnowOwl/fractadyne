@@ -454,6 +454,7 @@ menu-toolbar-click-zoom-hover = Klik untuk zoom ({ $factor }×): klik kiri menye
 menu-toolbar-click-zoom-dual = Kunci Julia c dengan Ctrl+klik selama ini aktif.
 menu-toolbar-autopilot-running-hover = Zoom otomatis sedang berjalan — klik untuk menghentikan
 menu-toolbar-autopilot-hover = Zoom otomatis: menyelam ke arah detail (A)
+menu-autopilot-dual-hover = Zoom otomatis mengemudikan satu tampilan, jadi tidak tersedia dalam “Keduanya, tertaut”. Untuk memakainya, tampilkan satu gambar saja: pilih di Fraktal ▸ Tampilkan, atau matikan tombol “Keduanya, tertaut” di bilah alat.
 menu-toolbar-reset-hover = Atur ulang tampilan (instan)
 menu-toolbar-home-hover = Perkecil ke tampilan awal (beranimasi)
 menu-toolbar-bookmarks-hover = Markah: simpan tampilan ini, atau lompat ke tampilan yang tersimpan

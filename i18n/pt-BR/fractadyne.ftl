@@ -458,6 +458,7 @@ menu-toolbar-click-zoom-hover = Clicar para dar zoom ({ $factor }×): o clique e
 menu-toolbar-click-zoom-dual = Com isto ligado, fixe o c da Julia com Ctrl+clique.
 menu-toolbar-autopilot-running-hover = O zoom automático está rodando — clique para parar
 menu-toolbar-autopilot-hover = Zoom automático: mergulhar em direção aos detalhes (A)
+menu-autopilot-dual-hover = O zoom automático conduz uma única visualização, por isso não está disponível em “Ambos, vinculados”. Para usá-lo, mostre uma imagem só: escolha-a em Fractal ▸ Mostrar ou desative o botão “Ambos, vinculados” na barra de ferramentas.
 menu-toolbar-reset-hover = Redefinir a vista (instantâneo)
 menu-toolbar-home-hover = Afastar até a vista inicial (animado)
 menu-toolbar-bookmarks-hover = Favoritos: salvar esta vista ou saltar para uma vista salva

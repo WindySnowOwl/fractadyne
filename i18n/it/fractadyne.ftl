@@ -458,6 +458,7 @@ menu-toolbar-click-zoom-hover = Clic per zoom ({ $factor }×): il clic sinistro 
 menu-toolbar-click-zoom-dual = Con questa opzione attiva, il c di Julia si fissa con Ctrl+clic.
 menu-toolbar-autopilot-running-hover = Auto-zoom in corso — clic per fermarlo
 menu-toolbar-autopilot-hover = Auto-zoom: tuffo verso i dettagli (A)
+menu-autopilot-dual-hover = L’auto-zoom guida una sola vista, quindi non è disponibile in «Entrambi, collegati». Per usarlo, mostra una sola immagine: sceglila in Frattale ▸ Mostra, oppure disattiva il pulsante «Entrambi, collegati» nella barra degli strumenti.
 menu-toolbar-reset-hover = Ripristina vista (istantaneo)
 menu-toolbar-home-hover = Rimpicciolisci fino alla vista iniziale (animato)
 menu-toolbar-bookmarks-hover = Segnalibri: salvare questa vista o saltare a una salvata

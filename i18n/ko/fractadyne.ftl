@@ -454,6 +454,7 @@ menu-toolbar-click-zoom-hover = 클릭하여 줌({ $factor }×): 왼쪽 클릭�
 menu-toolbar-click-zoom-dual = 이 기능이 켜져 있는 동안에는 Ctrl+클릭으로 Julia c를 고정합니다.
 menu-toolbar-autopilot-running-hover = 자동 줌 실행 중 — 클릭하면 중지
 menu-toolbar-autopilot-hover = 자동 줌: 디테일을 향해 다이브(A)
+menu-autopilot-dual-hover = 자동 줌은 하나의 보기를 조종하므로 “둘 다, 연결”에서는 사용할 수 없습니다. 사용하려면 그림 하나만 표시하세요: 프랙털 ▸ 표시에서 고르거나, 도구 모음의 “둘 다, 연결” 버튼을 끄세요.
 menu-toolbar-reset-hover = 뷰 초기화(즉시)
 menu-toolbar-home-hover = 홈 뷰로 축소(애니메이션)
 menu-toolbar-bookmarks-hover = 북마크: 이 뷰를 저장하거나 저장된 뷰로 이동
