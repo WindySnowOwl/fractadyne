@@ -121,6 +121,13 @@ detail is in the git history.
   the view with that palette inside and the outside as it is, resting the pointer on one previews
   it on the view, and "Same as outside" is a choice of its own. The inside's palette is one of the
   built-in palettes, so saved gradients are not offered there.
+- **The distance to the set is right near deep minibrots.** Past about 10^77× near a minibrot,
+  where an orbit passes closer to zero once a period than ordinary floating point can hold, the
+  distance to the set came out far too large (a true 0.00005 pixels read as 4). Everything that reads
+  the distance was off there: the Distance and Fringe methods, the glow, edge shading, the
+  equipotential lines, the palette's anti-aliasing and relief lighting. Those passes are now
+  computed in extended range, at no measurable cost. Such views can look different: detail finer
+  than a pixel now takes the palette's average color where it showed as noise.
 - **Changing the inside's coloring updates a deep view and the overview map.** Past about 10^10×,
   a settled view shows the average of many jittered samples, which starts over when its coloring
   changes. A change to the inside (its palette, its fit, solid or orbit trap, or a solid inside's

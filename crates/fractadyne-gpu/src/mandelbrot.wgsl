@@ -827,6 +827,29 @@ fn fam_deriv(f: u32, z: vec2<f32>) -> vec2<f32> {
     }
     return f32(d) * r;
 }
+
+// ⭐⭐THE DERIVATIVE AT AN ORBIT DIP (2026-11-21). The step D ← f'(z_n)·D takes z_n = Z_n + δz_n in
+// plain f32 (`deriv_factor`, `fam_deriv`), which cannot hold it at a deep dip of the orbit: an
+// extended-range sample reads Z as 0 (`orbit_cdf`), `fe_lo_f32` flushes a δz under f32's range, and
+// a power's product underflows (5z⁴ from |z| < 2^-31). The factor came out 0 there and D restarted at
+// 1 at every such dip, so past about 1e77x on a minibrot's path every distance read far too large:
+// 4.04 px against a true 4.6e-5 px (mpmath) at the 9.3e78 minibrot's center, 1e77x, where it was exact
+// at 1e70x (a periodic reference there, the dip renormalized). The δz step was given this handling for
+// the same dips (the "LOAD-BEARING dip handling" below); the derivative was left on `orbit_cdf`. Where
+// either test holds, the factor is formed in floatexp from the extended-range z; every other step
+// keeps its f32 path, so a view whose orbits never dip that far is bit-identical.
+fn deriv_dip(r: vec4<f32>, fp: vec2<f32>) -> bool {
+    return orbit_is_ext(r) || max(abs(fp.x), abs(fp.y)) < 7.888609e-31; // 2^-100
+}
+// f'(z) = d·z^(d−1) in floatexp, d the escape degree: Mandelbrot and Multibrot 3–5 (formulas 0..3),
+// Multibrot 6–8 (`fam_holo`); Phoenix's 2z is the default.
+fn fe_deriv_factor(formula: u32, z: Fe) -> Fe {
+    var d = 2u;
+    if (formula <= 3u) { d = formula + 2u; } else if (fam_holo(formula)) { d = fam_power(formula); }
+    var w = z;
+    for (var k = 2u; k < d; k = k + 1u) { w = fe_mul(w, z); }
+    return fe_scale(w, f32(d));
+}
 // (Z + δ)^d − Z^d along the power's own chain (square; multiply by the base on each set bit below
 // the top one), one perturbation rule per link — P(sqr f) = (2·B + P)·P, P(f·g) = P(f)·W(g) +
 // B(f)·P(g) with W = B + P — as the generated module's rule table (`ir::perturb`) derives it. Every
@@ -2108,18 +2131,28 @@ fn iterate_at(gx: f32, gy: f32) -> FragOut {
                 d_now = false;
             }
 
-            // Derivative update D ← f'(z_n)·D (+1 Mandelbrot) using full z_n = Z_n + δz_n.
+            // Derivative update D ← f'(z_n)·D (+1 Mandelbrot) using full z_n = Z_n + δz_n; in floatexp
+            // at a dip f32 cannot hold (`deriv_dip`).
             if (iu.formula <= 3u) {
                 let dzc = fe_lo_f32(dz);
                 let zfn = vec2<f32>(Z.re.x + dzc.x, Z.im.x + dzc.y);
                 let fp = deriv_factor(iu.formula, zfn);
-                D = fe_mul_c(D, fp.x, fp.y);
+                if (deriv_dip(r, fp)) {
+                    D = fe_mul(D, fe_deriv_factor(iu.formula, fe_add(orbit_fe(r), dz)));
+                } else {
+                    D = fe_mul_c(D, fp.x, fp.y);
+                }
                 if (iu.julia == 0u) { D = fe_add(D, fe_one()); }
             } else if (iu.formula == 8u) {
                 // Phoenix derivative: D' = 2·z_n·D + [1 if Mandelbrot] − 0.5·D_{n-1}.
                 let dzc = fe_lo_f32(dz);
                 let zfn = vec2<f32>(Z.re.x + dzc.x, Z.im.x + dzc.y);
-                var dn = fe_mul_c(D, 2.0 * zfn.x, 2.0 * zfn.y);
+                var dn: Fe;
+                if (deriv_dip(r, 2.0 * zfn)) {
+                    dn = fe_mul(D, fe_two(fe_add(orbit_fe(r), dz)));
+                } else {
+                    dn = fe_mul_c(D, 2.0 * zfn.x, 2.0 * zfn.y);
+                }
                 if (iu.julia == 0u) { dn = fe_add(dn, fe_one()); }
                 dn = fe_sub(dn, fe_scale(Dprev, 0.5));
                 Dprev = D;
@@ -2127,7 +2160,11 @@ fn iterate_at(gx: f32, gy: f32) -> FragOut {
             } else if (fam_holo(iu.formula)) {
                 let dzc = fe_lo_f32(dz);
                 let fp = fam_deriv(iu.formula, vec2<f32>(Z.re.x + dzc.x, Z.im.x + dzc.y));
-                D = fe_mul_c(D, fp.x, fp.y);
+                if (deriv_dip(r, fp)) {
+                    D = fe_mul(D, fe_deriv_factor(iu.formula, fe_add(orbit_fe(r), dz)));
+                } else {
+                    D = fe_mul_c(D, fp.x, fp.y);
+                }
                 if (iu.julia == 0u) { D = fe_add(D, fe_one()); }
             }
 
@@ -3448,7 +3485,12 @@ fn chunk_fe_at(pos: vec2<f32>, p: vec2<i32>) -> ChunkOut4 {
         let zfn = vec2<f32>(Z.re.x + dzc.x, Z.im.x + dzc.y);
         var fp: vec2<f32>;
         if (fam_holo(iu.formula)) { fp = fam_deriv(iu.formula, zfn); } else { fp = deriv_factor(iu.formula, zfn); }
-        D = fe_mul_c(D, fp.x, fp.y);
+        // In floatexp at a dip f32 cannot hold (`deriv_dip`), as the single-pass loop.
+        if ((iu.formula <= 3u || fam_holo(iu.formula)) && deriv_dip(r, fp)) {
+            D = fe_mul(D, fe_deriv_factor(iu.formula, fe_add(orbit_fe(r), dz)));
+        } else {
+            D = fe_mul_c(D, fp.x, fp.y);
+        }
         if (iu.julia == 0u) { D = fe_add(D, fe_one()); }
 
         if (fam_holo(iu.formula)) {
