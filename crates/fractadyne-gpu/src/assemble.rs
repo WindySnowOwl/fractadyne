@@ -53,8 +53,8 @@ pub(crate) struct AssembleUniforms {
 
 /// What a strip window holds of each texel: only what the frames' coloring reads. The color
 /// pass (`fs_color`) reads the smooth count always, the distance estimate for the distance
-/// coloring (method 4), the glow, the edge shading (C3) and the palette anti-aliased by the
-/// distance (C8), and the slope
+/// coloring (method 4), the glow, the edge shading (C3), the equipotential lines (C10) and the
+/// palette anti-aliased by the distance (C8), and the slope
 /// normal for relief lighting, and nothing else of the main target, so a frame comes out the same
 /// from a window that leaves the rest out: a smooth coloring's window is a quarter of the whole one,
 /// or half with the palette anti-aliased (the default).
@@ -74,8 +74,8 @@ pub enum WindowTexels {
 
 impl WindowTexels {
     /// What a frame colored with `method` (the color pass's `color_method`), relief lighting
-    /// (`light`), the distance glow or the edge shading (`glow`: both read the distance) and the
-    /// palette anti-aliasing `aa` reads. A method
+    /// (`light`), the distance glow, the edge shading or the equipotential lines (`glow`: all read
+    /// the distance) and the palette anti-aliasing `aa` reads. A method
     /// this does not know keeps everything. (The neighbors' footprint reads the next pixels'
     /// counts, which every window holds.)
     pub fn for_colour(method: u32, light: bool, glow: bool, aa: crate::PaletteAa) -> Self {
@@ -95,7 +95,7 @@ impl WindowTexels {
         if req.color_hook.is_some() {
             return WindowTexels::All;
         }
-        Self::for_colour(req.color_method, req.light != 0, req.de_on != 0 || req.edge.on(), req.aa_palette)
+        Self::for_colour(req.color_method, req.light != 0, req.de_on != 0 || req.edge.on() || req.grid.draws(), req.aa_palette)
     }
 
     /// Whether a window holding this holds everything `need` reads (each holds the one before it).

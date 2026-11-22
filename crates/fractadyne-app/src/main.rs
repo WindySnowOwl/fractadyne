@@ -3333,6 +3333,11 @@ pub(crate) mod slider_range {
     /// Edge shading's width in output pixels and its strength (`--edge-width`, `--edge-strength`).
     pub(crate) const EDGE_WIDTH: RangeInclusive<f32> = 0.25..=32.0;
     pub(crate) const EDGE_STRENGTH: RangeInclusive<f32> = 0.0..=1.0;
+    /// The equipotential lines' spacing and width in output pixels, and their strength
+    /// (`--equipotential-spacing`, `--equipotential-width`, `--equipotential-strength`).
+    pub(crate) const GRID_SPACING: RangeInclusive<f32> = 4.0..=64.0;
+    pub(crate) const GRID_WIDTH: RangeInclusive<f32> = 0.5..=8.0;
+    pub(crate) const GRID_STRENGTH: RangeInclusive<f32> = 0.0..=1.0;
     /// Stripe density (`--stripe-freq`).
     pub(crate) const STRIPE_FREQ: RangeInclusive<f32> = 1.0..=24.0;
     /// The palette's brightness, contrast and saturation (`--palette-brightness`, ...;
@@ -6386,6 +6391,13 @@ struct EffectsConfig {
     edge_strength: f32,
     edge_curve: fractadyne_core::coloring::EdgeCurve,
     edge_color: [f32; 3],
+    /// Equipotential lines (coloring plan C10): on; their spacing and width in output pixels, their
+    /// strength and color.
+    grid: bool,
+    grid_spacing: f32,
+    grid_width: f32,
+    grid_strength: f32,
+    grid_color: [f32; 3],
 }
 
 impl EffectsConfig {
@@ -6401,6 +6413,17 @@ impl EffectsConfig {
             width: self.edge_width,
             strength: self.edge_strength,
             color: self.edge_color,
+        }
+    }
+
+    /// The equipotential lines the color pass draws (coloring plan C10).
+    fn grid_lines(&self) -> fractadyne_gpu::GridLines {
+        fractadyne_gpu::GridLines {
+            on: self.grid,
+            spacing: self.grid_spacing,
+            width: self.grid_width,
+            strength: self.grid_strength,
+            color: self.grid_color,
         }
     }
 }
@@ -8624,6 +8647,11 @@ impl FractadyneApp {
                 edge_strength: s.coloring.edge_strength.clamp(0.0, 1.0),
                 edge_curve: fractadyne_core::coloring::EdgeCurve::parse_key(&s.coloring.edge_curve).unwrap_or_default(),
                 edge_color: s.coloring.edge_color,
+                grid: s.coloring.equipotentials,
+                grid_spacing: s.coloring.equipotential_spacing.clamp(*slider_range::GRID_SPACING.start(), *slider_range::GRID_SPACING.end()),
+                grid_width: s.coloring.equipotential_width.clamp(*slider_range::GRID_WIDTH.start(), *slider_range::GRID_WIDTH.end()),
+                grid_strength: s.coloring.equipotential_strength.clamp(0.0, 1.0),
+                grid_color: s.coloring.equipotential_color,
             },
             watermark: s.watermark,
             show_location: s.show_location
@@ -9270,6 +9298,44 @@ impl FractadyneApp {
                 eprintln!("fractadyne: --edge-color has no effect with --edge-inside (the edges take the inside's color).");
             }
         }
+        // Equipotential lines (coloring plan C10).
+        if args.iter().any(|a| a == "--equipotentials") {
+            self.effects.grid = true;
+        }
+        let grid_off = |flag: &str| eprintln!("fractadyne: {flag} has no effect without --equipotentials (the equipotential lines are off).");
+        if let Some(v) = ranged("--equipotential-spacing", slider_range::GRID_SPACING) {
+            self.effects.grid_spacing = v;
+            if !self.effects.grid {
+                grid_off("--equipotential-spacing");
+            }
+        }
+        if let Some(v) = ranged("--equipotential-width", slider_range::GRID_WIDTH) {
+            self.effects.grid_width = v;
+            if !self.effects.grid {
+                grid_off("--equipotential-width");
+            }
+        }
+        if let Some(v) = ranged("--equipotential-strength", slider_range::GRID_STRENGTH) {
+            self.effects.grid_strength = v;
+            if !self.effects.grid {
+                grid_off("--equipotential-strength");
+            }
+        }
+        if let Some(text) = val("--equipotential-color") {
+            let parts: Vec<Option<f32>> = text.split(',').map(|t| t.trim().parse::<f32>().ok().filter(|v| v.is_finite())).collect();
+            match parts.as_slice() {
+                [Some(r), Some(g), Some(b)] if [r, g, b].iter().all(|v| (0.0..=1.0).contains(*v)) => {
+                    self.effects.grid_color = [*r, *g, *b];
+                }
+                _ => {
+                    eprintln!("fractadyne: --equipotential-color: \"{text}\" is not three numbers from 0 to 1, such as 0.1,0.05,0.2.");
+                    crate::exit(2)
+                }
+            }
+            if !self.effects.grid {
+                grid_off("--equipotential-color");
+            }
+        }
         // `from_key` ends in `unwrap_or_default()`, so an unknown key silently colors Smooth.
         // Round-trip the key to tell "you asked for smooth" from "we could not read that".
         if let Some(m) = val("--method") {
@@ -9404,7 +9470,7 @@ impl FractadyneApp {
             if val("--method").is_some() && self.coloring.color_method.needs_distance_estimate() {
                 eprintln!("fractadyne: --method distance: {why}, so the picture is one color.");
             }
-            for flag in ["--light", "--de", "--edge", "--edge-inside"] {
+            for flag in ["--light", "--de", "--edge", "--edge-inside", "--equipotentials"] {
                 if args.iter().any(|a| a == flag) {
                     eprintln!("fractadyne: {flag} has no effect: {why}.");
                 }
@@ -9598,6 +9664,11 @@ impl FractadyneApp {
             edge_strength: self.effects.edge_strength,
             edge_curve: self.effects.edge_curve.key().to_string(),
             edge_color: self.effects.edge_color,
+            equipotentials: self.effects.grid,
+            equipotential_spacing: self.effects.grid_spacing,
+            equipotential_width: self.effects.grid_width,
+            equipotential_strength: self.effects.grid_strength,
+            equipotential_color: self.effects.grid_color,
             color_method: self.coloring.color_method.key().to_string(),
             stripe_freq: self.coloring.stripe_freq,
             stripe_tail: self.coloring.stripe_tail,
@@ -9707,6 +9778,11 @@ impl FractadyneApp {
         e.edge_strength = s.edge_strength;
         e.edge_curve = fractadyne_core::coloring::EdgeCurve::parse_key(&s.edge_curve).unwrap_or_default();
         e.edge_color = s.edge_color;
+        e.grid = s.equipotentials;
+        e.grid_spacing = s.equipotential_spacing;
+        e.grid_width = s.equipotential_width;
+        e.grid_strength = s.equipotential_strength;
+        e.grid_color = s.equipotential_color;
     }
 
     fn autosave(&mut self, ctx: &egui::Context) {
@@ -17640,6 +17716,11 @@ impl FractadyneApp {
         e.edge_width.to_bits().hash(&mut h);
         e.edge_strength.to_bits().hash(&mut h);
         e.edge_color.map(f32::to_bits).hash(&mut h);
+        e.grid_lines().draws().hash(&mut h);
+        e.grid_spacing.to_bits().hash(&mut h);
+        e.grid_width.to_bits().hash(&mut h);
+        e.grid_strength.to_bits().hash(&mut h);
+        e.grid_color.map(f32::to_bits).hash(&mut h);
         self.render_cfg.aa.hash(&mut h);
         // The fed window and, ⭐W6 (U58), the window actually MAPPED — the shown one, which glides
         // toward the fed one over many frames. Without it an average begun mid-glide went on

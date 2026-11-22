@@ -419,6 +419,13 @@ enum Screen {
     /// ...then the same with the Effects section open, for its rows (no comparison: opening the
     /// section can widen the panel, and the picture with it).
     EdgeShadePanel,
+    /// Equipotential lines (coloring plan C10): the Julia-link point in Smooth, point sampled, the
+    /// lines off (the base)...
+    EquipotentialsOff,
+    /// ...on at their defaults: another picture, and no pass (a recolor)...
+    Equipotentials,
+    /// ...then the same with the Effects section open, for its rows (no comparison).
+    EquipotentialsPanel,
     /// Custom coloring (coloring plan B10): the home view in Smooth, point sampled, the dialog open
     /// with no hook (the base)...
     ColorHookOff,
@@ -1382,6 +1389,9 @@ fn build_steps() -> Vec<Step> {
         screen("edge-shade", Screen::EdgeShade),
         screen("edge-shade-inside", Screen::EdgeShadeInside),
         screen("edge-shade-panel", Screen::EdgeShadePanel),
+        screen("equipotentials-off", Screen::EquipotentialsOff),
+        screen("equipotentials", Screen::Equipotentials),
+        screen("equipotentials-panel", Screen::EquipotentialsPanel),
         screen("slider-click", Screen::SliderClick),
         screen("slider-double-click-reset", Screen::SliderDoubleClick),
         screen("julia-linked-off", Screen::JuliaLinkedOff),
@@ -1823,6 +1833,24 @@ impl FractadyneApp {
             name: name.into(),
             verdict: if ok { Verdict::Pass } else { Verdict::Fail },
             detail: format!("against {before} (mean difference in levels, passes caused): {r:?}; edge {:?}", self.effects.edge_shade()),
+        });
+    }
+
+    /// The equipotential lines step (C10) against the step before: another picture (mean difference
+    /// 1 level or more), and no pass (a recolor).
+    fn uitest_equipotential_checks(&self, ut: &UiTest, view: Option<&(Vec<u8>, [u32; 2])>, ran_why: [u64; 7], checks: &mut Vec<Check>) {
+        let before = "equipotentials-off";
+        let b = ut.results.iter().rev().find(|r| r.name == before);
+        let r = view.zip(b).and_then(|((px, _), b)| {
+            let (prev, _) = b.inside_view.as_ref().filter(|p| p.0.len() == px.len())?;
+            let s: f64 = px.chunks_exact(4).zip(prev.chunks_exact(4)).map(|(p, q)| (0..3).map(|k| (p[k] as f64 - q[k] as f64).abs()).sum::<f64>()).sum();
+            Some((s / (3 * (px.len() / 4)).max(1) as f64, (ran_why[0] - b.ran_why[0]) + (ran_why[1] - b.ran_why[1])))
+        });
+        let ok = r.is_some_and(|(d, ran)| d >= 1.0 && ran == 0);
+        checks.push(Check {
+            name: "equipotentials-recolor".into(),
+            verdict: if ok { Verdict::Pass } else { Verdict::Fail },
+            detail: format!("against {before} (mean difference in levels, passes caused): {r:?}; lines {:?}", self.effects.grid_lines()),
         });
     }
 
@@ -2419,9 +2447,11 @@ impl FractadyneApp {
         self.coloring.steps = 0;
         // ...or a Julia link (each `julia-linked*` step sets its own)...
         self.coloring.julia_linked = false;
-        // ...or the edge shading (each `edge-shade*` step sets its own, C3).
+        // ...or the edge shading (each `edge-shade*` step sets its own, C3)...
         self.effects.edge = false;
         self.effects.edge_inside = false;
+        // ...or the equipotential lines (each `equipotentials*` step sets its own, C10).
+        self.effects.grid = false;
         self.blinken.size = crate::blinken::Size::Off;
         self.blinken.pinned_help = None;
         self.dialogs.help_open = false;
@@ -3151,6 +3181,40 @@ impl FractadyneApp {
                     self.dialogs.uitest_effects_scroll = true;
                 }
             }
+            // C10: the Julia-link point again, Smooth, point sampled; the lines off, then on at their
+            // defaults, then the Effects section open for the rows.
+            Screen::EquipotentialsOff | Screen::Equipotentials | Screen::EquipotentialsPanel => {
+                if matches!(s, Screen::EquipotentialsOff) {
+                    let (cx, cy) = UITEST_JULIA_LINK_C;
+                    self.set_show_mode(crate::ShowMode::Set);
+                    self.set_fractal(crate::FractalKind::Mandelbrot);
+                    let at = |v: f64| fractadyne_core::BigFloat::from_f64(v, 64);
+                    self.viewport.set_center_mag(at(cx), at(cy), 100.0);
+                    self.render_cfg.auto_iter = false;
+                    self.render_cfg.max_iter = 2_000;
+                    self.coloring.use_custom_palette = false;
+                    self.coloring.use_duotone = false;
+                    self.coloring.use_binary = false;
+                    self.coloring.palette_idx = fractadyne_color::preset_by_id("ember").unwrap_or(0);
+                    let d = fractadyne_state::ColoringSpec::default();
+                    self.effects.grid_spacing = d.equipotential_spacing;
+                    self.effects.grid_width = d.equipotential_width;
+                    self.effects.grid_strength = d.equipotential_strength;
+                    self.effects.grid_color = d.equipotential_color;
+                }
+                self.coloring.color_method = crate::ColorMethod::Smooth;
+                self.coloring.interior = Some(crate::InteriorMode::Solid);
+                self.coloring.normalize_live = false;
+                self.coloring.normalize_fit = false;
+                self.coloring.palette_aa = false;
+                self.dialogs.right_panel_open = true;
+                self.effects.edge = false;
+                self.effects.grid = !matches!(s, Screen::EquipotentialsOff);
+                if matches!(s, Screen::EquipotentialsPanel) {
+                    self.dialogs.uitest_effects_open = Some(true);
+                    self.dialogs.uitest_effects_scroll = true;
+                }
+            }
             // The view as palette-aa left it, the palette's saturation at 0.
             Screen::PaletteAdjust => {
                 self.coloring.color_method = crate::ColorMethod::Smooth;
@@ -3765,6 +3829,9 @@ impl FractadyneApp {
                     | Screen::EdgeShade
                     | Screen::EdgeShadeInside
                     | Screen::EdgeShadePanel
+                    | Screen::EquipotentialsOff
+                    | Screen::Equipotentials
+                    | Screen::EquipotentialsPanel
                     | Screen::ColorHookOff
                     | Screen::ColorHookSmooth
                     | Screen::ColorHookFringe
@@ -4668,6 +4735,11 @@ impl FractadyneApp {
         // ---- edge shading (coloring plan C3) ----
         if let StepKind::Screen(sc @ (Screen::EdgeShade | Screen::EdgeShadeInside)) = step.kind {
             self.uitest_edge_shade_checks(sc, ut, inside_view.as_ref(), ran_why, &mut checks);
+        }
+
+        // ---- equipotential lines (coloring plan C10) ----
+        if let StepKind::Screen(Screen::Equipotentials) = step.kind {
+            self.uitest_equipotential_checks(ut, inside_view.as_ref(), ran_why, &mut checks);
         }
 
         // ---- custom coloring (coloring plan B10) ----

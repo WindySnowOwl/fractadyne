@@ -372,6 +372,8 @@ const SAMPLE_OPTIONAL_KEYS: &[&str] = &[
     "transfer", "wrap", "steps",
     // Written only with the edge shading on (C3).
     "edge", "edge_inside", "edge_width", "edge_strength", "edge_curve", "edge_color",
+    // Written only with the equipotential lines on (C10).
+    "equipotentials", "equipotential_spacing", "equipotential_width", "equipotential_strength", "equipotential_color",
 ];
 
 #[test]
@@ -1501,6 +1503,9 @@ fn the_coloring_slider_options_are_documented_with_their_ranges() {
         ("--glow-width", r::GLOW_WIDTH),
         ("--edge-width", r::EDGE_WIDTH),
         ("--edge-strength", r::EDGE_STRENGTH),
+        ("--equipotential-spacing", r::GRID_SPACING),
+        ("--equipotential-width", r::GRID_WIDTH),
+        ("--equipotential-strength", r::GRID_STRENGTH),
     ] {
         assert!(known.contains(flag), "{flag} is not a known option");
         let entry = crate::help::CLI_REFERENCE

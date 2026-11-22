@@ -336,18 +336,20 @@ impl crate::FractadyneApp {
             let mut whole = make(WindowLayout::default())?;
             // Smooth (0) and distance (4) coloring, with and without glow and relief, and Smooth with
             // the palette point sampled (a count-only window) and anti-aliased by the distance (C8);
-            // and the edge shading (C3), which reads the distance under a point-sampled Smooth too.
+            // and the edge shading (C3) and the equipotential lines (C10), which read the distance
+            // under a point-sampled Smooth too.
             use fractadyne_gpu::PaletteAa::{Distance, Off};
-            for (method, light, glow, aa, edge) in [
-                (0u32, false, false, Off, false),
-                (0, false, false, Distance, false),
-                (0, false, true, Distance, false),
-                (0, true, false, Distance, false),
-                (4, false, false, Distance, false),
-                (4, false, true, Distance, false),
-                (4, true, true, Distance, false),
-                (0, false, false, Off, true),
-                (4, false, false, Distance, true),
+            for (method, light, glow, aa, edge, lines) in [
+                (0u32, false, false, Off, false, false),
+                (0, false, false, Distance, false, false),
+                (0, false, true, Distance, false, false),
+                (0, true, false, Distance, false, false),
+                (4, false, false, Distance, false, false),
+                (4, false, true, Distance, false, false),
+                (4, true, true, Distance, false, false),
+                (0, false, false, Off, true, false),
+                (4, false, false, Distance, true, false),
+                (0, false, false, Off, false, true),
             ] {
                 let mut colour = base_colour.clone();
                 (colour.color_method, colour.light, colour.de_on, colour.aa_palette) = (method, light as u32, glow as u32, aa);
@@ -357,6 +359,12 @@ impl crate::FractadyneApp {
                     fractadyne_gpu::EdgeShade { mode: fractadyne_gpu::EDGE_COLOR, curve: 0, width: 4.0, strength: 1.0, color: [0.0; 3] }
                 } else {
                     fractadyne_gpu::EdgeShade::default()
+                };
+                // Dense lines at full strength, so a wrong distance would move them.
+                colour.grid = if lines {
+                    fractadyne_gpu::GridLines { on: true, spacing: 6.0, width: 1.5, strength: 1.0, color: [0.0; 3] }
+                } else {
+                    fractadyne_gpu::GridLines::default()
                 };
                 // The window a zoom video keeps for this coloring (`for_request`, as `assemble` asks).
                 let texels = WindowTexels::for_request(&colour);
@@ -373,7 +381,7 @@ impl crate::FractadyneApp {
                     c.pixels += a.len() / 4;
                 }
                 if differ > 0 {
-                    c.differ.push(format!("method {method}, relief {light}, glow {glow}, palette {aa:?}, edge {edge} ({texels:?}): {differ} pixels"));
+                    c.differ.push(format!("method {method}, relief {light}, glow {glow}, palette {aa:?}, edge {edge}, lines {lines} ({texels:?}): {differ} pixels"));
                 }
             }
             // The control: the count-only window really leaves the rest out, and a coloring that
@@ -420,8 +428,8 @@ pub(crate) struct WindowCheck {
 
 impl WindowCheck {
     pub(crate) fn pass(&self) -> bool {
-        // 9 colorings at 4 placements.
-        self.frames == 36
+        // 10 colorings at 4 placements.
+        self.frames == 40
             && self.differ.is_empty()
             && self.pieces == 3
             && self.left_out_differ > 1_000

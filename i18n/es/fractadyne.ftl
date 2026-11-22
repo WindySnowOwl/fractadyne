@@ -2967,8 +2967,18 @@ panel-edge-color = Color
 panel-edge-color-hover = El color hacia el que se sombrean los bordes.
 panel-edge-inside = Color interior
 panel-edge-inside-hover = Sombrear hacia el color del interior: el borde del conjunto se funde entonces con el conjunto, lo que lo suaviza incluso sin antialiasing (prueba Ancho 1 y Lineal).
+
+panel-equipotentials = Líneas equipotenciales
+panel-equipotentials-hover = Dibuja líneas a lo largo de los niveles del recuento de escape, como las curvas de nivel de un mapa. Donde los niveles se separan aparecen líneas más finas, así que las líneas quedan más o menos a la misma distancia en pantalla a cualquier profundidad. (Mandelbrot, Multibrot y Phoenix.)
+panel-equipotential-spacing = Separación
+panel-equipotential-spacing-hover = La distancia mínima entre líneas vecinas, en píxeles de pantalla; las líneas más finas aparecen gradualmente a medida que los huecos crecen hasta el doble.
+panel-equipotential-width = Ancho
+panel-equipotential-width-hover = El ancho de cada línea, en píxeles de pantalla: igual con cualquier zoom y cualquier nivel de antialiasing.
+panel-equipotential-strength = Intensidad
+panel-equipotential-color = Color
+panel-equipotential-color-hover = El color de las líneas.
 # At the top of Effects when relief lighting, the glow or edge shading is on for a fractal without a distance estimate (they stay on). $family = the fractal's name.
-panel-effects-no-de = { $family } no tiene estimación de distancia, así que la iluminación de relieve, el brillo y el sombreado de bordes no cambian nada aquí.
+panel-effects-no-de = { $family } no tiene estimación de distancia, así que la iluminación de relieve, el brillo, el sombreado de bordes y las líneas equipotenciales no cambian nada aquí.
 
 ## The control panel: Overlays
 

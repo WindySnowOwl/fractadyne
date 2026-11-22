@@ -2887,8 +2887,18 @@ panel-edge-color = 颜色
 panel-edge-color-hover = 边缘被染向的颜色。
 panel-edge-inside = 内部颜色
 panel-edge-inside-hover = 改为染向内部的颜色：集合的边缘随之融入集合，即使不开抗锯齿也会变得平滑（试试宽度 1 和线性）。
+
+panel-equipotentials = 等势线
+panel-equipotentials-hover = 像地图上的等高线一样，沿逃逸次数相等的位置画线。在数值间隔拉开的地方会加入更细的线，因此在任何深度下，线条在屏幕上的间距都大致相同。（曼德博、多重曼德博和凤凰。）
+panel-equipotential-spacing = 间距
+panel-equipotential-spacing-hover = 相邻线条之间的最小距离，以屏幕像素计；间隙扩大到两倍的过程中，更细的线会逐渐淡入。
+panel-equipotential-width = 宽度
+panel-equipotential-width-hover = 每条线的宽度，以屏幕像素计：在任何缩放、任何抗锯齿级别下都相同。
+panel-equipotential-strength = 强度
+panel-equipotential-color = 颜色
+panel-equipotential-color-hover = 线条的颜色。
 # At the top of Effects when relief lighting, the glow or edge shading is on for a fractal without a distance estimate (they stay on). $family = the fractal's name.
-panel-effects-no-de = { $family } 没有距离估计，因此浮雕光照、辉光和边缘着色在这里不起作用。
+panel-effects-no-de = { $family } 没有距离估计，因此浮雕光照、辉光、边缘着色和等势线在这里不起作用。
 
 ## The control panel: Overlays
 

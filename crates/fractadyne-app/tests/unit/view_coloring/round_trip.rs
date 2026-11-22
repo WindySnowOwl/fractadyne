@@ -43,6 +43,11 @@ fn scrambled() -> ViewColoring {
         edge_strength: 0.35,
         edge_curve: fractadyne_core::coloring::EdgeCurve::Hard,
         edge_color: [0.2, 0.3, 0.4],
+        equipotentials: true,
+        equipotential_spacing: 40.0,
+        equipotential_width: 4.5,
+        equipotential_strength: 0.3,
+        equipotential_color: [0.7, 0.6, 0.5],
         two_color: TwoColor::Binary,
         lo: [0.9, 0.1, 0.1],
         hi: [0.1, 0.9, 0.1],
@@ -93,6 +98,15 @@ fn variants() -> Vec<ViewColoring> {
         ..d.clone()
     });
     v.push(ViewColoring { edge: true, edge_inside: true, ..d.clone() });
+    v.push(ViewColoring { equipotentials: true, ..d.clone() });
+    v.push(ViewColoring {
+        equipotentials: true,
+        equipotential_spacing: 6.0,
+        equipotential_width: 0.75,
+        equipotential_strength: 0.25,
+        equipotential_color: [1.0, 1.0, 1.0],
+        ..d.clone()
+    });
     for tc in TwoColor::ON {
         v.push(ViewColoring { two_color: tc, ..d.clone() });
         v.push(ViewColoring { two_color: tc, lo: [1.0, 0.5, 0.0], hi: [0.0, 0.25, 0.75], ..d.clone() });

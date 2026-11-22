@@ -2958,8 +2958,18 @@ panel-edge-color = Renk
 panel-edge-color-hover = Kenarların gölgelendiği renk.
 panel-edge-inside = İç rengi
 panel-edge-inside-hover = Bunun yerine iç kısmın rengine doğru gölgele: kümenin kenarı kümeye karışır ve kenar yumuşatma olmadan da pürüzsüzleşir (Genişlik 1 ve Doğrusal deneyin).
+
+panel-equipotentials = Eşpotansiyel çizgiler
+panel-equipotentials-hover = Bir haritanın eş yükselti eğrileri gibi, kaçış sayısının düzeyleri boyunca çizgiler çizer. Düzeylerin aralandığı yerlerde daha ince çizgiler eklenir; böylece çizgiler her derinlikte ekranda aşağı yukarı aynı aralıkta kalır. (Mandelbrot, Multibrot ve Phoenix.)
+panel-equipotential-spacing = Aralık
+panel-equipotential-spacing-hover = Komşu çizgiler arasındaki en küçük uzaklık, ekran pikseli olarak; boşluklar bunun iki katına doğru açıldıkça daha ince çizgiler yavaşça belirir.
+panel-equipotential-width = Genişlik
+panel-equipotential-width-hover = Her çizginin genişliği, ekran pikseli olarak: her yakınlaştırmada ve her kenar yumuşatma düzeyinde aynı.
+panel-equipotential-strength = Güç
+panel-equipotential-color = Renk
+panel-equipotential-color-hover = Çizgilerin rengi.
 # At the top of Effects when relief lighting, the glow or edge shading is on for a fractal without a distance estimate (they stay on). $family = the fractal's name.
-panel-effects-no-de = { $family } için uzaklık tahmini yok, bu yüzden kabartma aydınlatması, parıltı ve kenar gölgelemesi burada hiçbir şeyi değiştirmez.
+panel-effects-no-de = { $family } için uzaklık tahmini yok, bu yüzden kabartma aydınlatması, parıltı, kenar gölgelemesi ve eşpotansiyel çizgiler burada hiçbir şeyi değiştirmez.
 
 ## The control panel: Overlays
 

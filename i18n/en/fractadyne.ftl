@@ -3024,8 +3024,8 @@ coloring-needs-derivative = { $family } has no distance estimate: only Mandelbro
 panel-method-no-derivative = { $family } has no distance estimate, so this method colors the whole view one color. Choose another method.
 coloring-needs-statistics = { $family } records no orbit statistics: its pixels converge to a root instead of escaping, and this method colors by statistics of the orbit.
 panel-method-no-statistics = { $family } records no orbit statistics, so this method colors the whole view one color. Choose another method.
-# At the top of Effects when relief lighting, the glow or edge shading is on for a fractal without a distance estimate (they stay on). $family = the fractal's name.
-panel-effects-no-de = { $family } has no distance estimate, so relief lighting, the glow and edge shading change nothing here.
+# At the top of Effects when relief lighting, the glow, edge shading or the equipotential lines are on for a fractal without a distance estimate (they stay on). $family = the fractal's name.
+panel-effects-no-de = { $family } has no distance estimate, so relief lighting, the glow, edge shading and equipotential lines change nothing here.
 panel-stripe-density = Stripe density
 panel-stripe-tail = Tail only (deep zoom)
 panel-stripe-tail-hover = Average the stripe term over the last N iterations of each orbit (an exponential window) instead of the whole orbit. At extreme depth every orbit shadows the reference for all but its last few hundred iterations, so the full-orbit average is one color for the whole view; the tail keeps the contrast. Orbits shorter than the window are unaffected. Also --stripe-tail N for --render.
@@ -3179,6 +3179,17 @@ panel-edge-color = Color
 panel-edge-color-hover = The color the edges are shaded toward.
 panel-edge-inside = Inside color
 panel-edge-inside-hover = Shade toward the inside's color instead: the set's edge then blends into the set, which smooths it even without anti-aliasing (try Width 1 and Linear).
+
+# Equipotential lines (coloring plan C10), in Effects: lines along the levels of the escape count, like a map's contour lines, kept about the same distance apart on screen at every depth. The checkbox and its tooltip, then its rows: Spacing and Width (in screen pixels), Strength, Color (a swatch).
+panel-equipotentials = Equipotential lines
+panel-equipotentials-hover = Draw lines along the levels of the escape count, like the contour lines of a map. Finer lines appear wherever the levels spread apart, so the lines stay about the same distance apart on screen at every depth. (Mandelbrot, Multibrot and Phoenix.)
+panel-equipotential-spacing = Spacing
+panel-equipotential-spacing-hover = The least distance between neighboring lines, in screen pixels; finer lines fade in as the gaps widen toward twice this.
+panel-equipotential-width = Width
+panel-equipotential-width-hover = How wide each line is, in screen pixels: the same at every zoom and every anti-aliasing level.
+panel-equipotential-strength = Strength
+panel-equipotential-color = Color
+panel-equipotential-color-hover = The color of the lines.
 
 ## The control panel: Overlays
 

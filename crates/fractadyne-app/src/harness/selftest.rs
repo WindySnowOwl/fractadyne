@@ -73,7 +73,7 @@ pub(crate) const GROUPS: &[&str] = &[
     "checklist", "replay", "settings-quarantine", "expmap", "assemble", "de-pixels",
     "colour-box", "cycle-check", "export-contain", "honest-step", "julia-critical", "palette-fade", "retreat", "view-thumb",
     "width-independence", "coloring-matrix-quick", "color-sig", "coloring-reset", "julia-link", "fringe",
-    "lanes", "hook", "transfer", "edges",
+    "lanes", "hook", "transfer", "edges", "equipotentials",
 ];
 
 /// Groups that run ONLY when named. ⛔Kept out of `GROUPS` so a bare `--selftest` never pays for
@@ -8869,9 +8869,9 @@ impl FractadyneApp {
             push_check(&mut checks, &mut last_check_t, SelfCheck {
                 category: "Zoom video",
                 name: "a window holding only what the colouring reads, in pieces, makes the same frames".into(),
-                params: format!("a dive into ({SX}, {SY}), 160x90 frames from 1x to 2^12, cap 2000; frames at 2^0, 2^3.3, 2^7.9 turned 0.21 and 2^12, smooth and distance coloring with and without glow and relief, smooth with the palette point sampled and anti-aliased, edge shading under a point-sampled smooth and under distance; each in the window `WindowTexels::for_request` gives it; strips in 3 pieces (193, 193, 191)"),
+                params: format!("a dive into ({SX}, {SY}), 160x90 frames from 1x to 2^12, cap 2000; frames at 2^0, 2^3.3, 2^7.9 turned 0.21 and 2^12, smooth and distance coloring with and without glow and relief, smooth with the palette point sampled and anti-aliased, edge shading under a point-sampled smooth and under distance, equipotential lines under a point-sampled smooth; each in the window `WindowTexels::for_request` gives it; strips in 3 pieces (193, 193, 191)"),
                 result,
-                threshold: "every pixel bit-identical to the whole window's for all 9 colorings; the control: over 1000 escaped samples differ in what the count-only window leaves out and none in the count, and a relief coloring is refused on it"
+                threshold: "every pixel bit-identical to the whole window's for all 10 colorings; the control: over 1000 escaped samples differ in what the count-only window leaves out and none in the count, and a relief coloring is refused on it"
                     .into(),
                 pass,
             });
@@ -10726,6 +10726,11 @@ zoom = \"1e94\"
                 edge_strength: 0.35,
                 edge_curve: fractadyne_core::coloring::EdgeCurve::Hard,
                 edge_color: [0.2, 0.3, 0.4],
+                equipotentials: true,
+                equipotential_spacing: 28.0,
+                equipotential_width: 3.5,
+                equipotential_strength: 0.45,
+                equipotential_color: [0.6, 0.5, 0.4],
                 two_color: TwoColor::Binary,
                 lo: [0.9, 0.1, 0.1],
                 hi: [0.1, 0.9, 0.1],
@@ -10925,6 +10930,11 @@ zoom = \"1e94\"
                 edge_strength: 0.45,
                 edge_curve: "sqrt".into(),
                 edge_color: [0.3, 0.2, 0.6],
+                equipotentials: true,
+                equipotential_spacing: 9.0,
+                equipotential_width: 2.25,
+                equipotential_strength: 0.8,
+                equipotential_color: [0.95, 0.9, 0.2],
                 color_method: ColorMethod::Stripe.key().into(),
                 stripe_freq: 9.5,
                 stripe_tail: true,
@@ -12275,11 +12285,14 @@ zoom = \"1e94\"
                     ),
                 ])
                 .collect();
-            let mut ok_all = !plain.is_empty() && lane.len() == (w * h) as usize && near > 200;
+            // The precondition apart from the verdict: a failed case must not read as "no render" in
+            // the cases after it.
+            let ready = !plain.is_empty() && lane.len() == (w * h) as usize && near > 200;
+            let mut ok_all = ready;
             let mut lines = Vec::new();
             for (name, e, control) in &cases {
                 let (ok, line) = match export(*e, 1) {
-                    Some(g) if ok_all => {
+                    Some(g) if ready => {
                         let (bad, worst) = apart(&g, &cpu(e));
                         let (ctl, _) = apart(&g, &cpu(control));
                         (bad <= 0.005 && ctl >= 0.01, format!("{name}: {:.2}% apart (max {worst:.2} levels), control {:.1}%", bad * 100.0, ctl * 100.0))
@@ -12329,6 +12342,225 @@ zoom = \"1e94\"
                 result,
                 threshold: "ss 1 and ss 2 within 5%; the control 10% or more apart (first run: 0.1% and 18%; filaments are dense here, so twice the width shades only 18% more)",
                 pass,
+            });
+        }
+
+        // ---- Equipotential lines (coloring plan C10) ----
+        // Each case against its CPU definition: `grid_weight` of the view's count and distance lanes,
+        // mixed into the same export's colors without the lines (the tour's point at 1e10x, point
+        // sampled, ss 1, so a pixel is one texel and one tap). A CONTROL each (another spacing, width
+        // or color) must differ. Then the width is in output pixels: the frame's mean darkening at
+        // ss 1 and ss 2 agree, twice the width (the control) does not. Then the lines keep their
+        // spacing at three depths (the overview, the tour's point at 1e10x and 1e30x): the GPU
+        // picture's own coverage, read back as 1 − picture / plain toward black at full strength, over
+        // the pixels the lines may cover, is half to all of width / spacing; lines at whole counts
+        // (the CONTROL, from the same lanes) are not, somewhere.
+        if want("equipotentials") {
+            use fractadyne_core::coloring::{grid_cover, grid_weight};
+            let saved_spec = self.coloring_spec();
+            let saved = (self.fractal, self.julia_mode, self.dual, self.render_cfg.max_iter, self.render_cfg.auto_iter);
+            self.fractal = FractalKind::Mandelbrot;
+            self.julia_mode = false;
+            self.dual = false;
+            self.render_cfg.auto_iter = false;
+            self.effects.light = false;
+            self.effects.de = false;
+            self.effects.edge = false;
+            self.effects.grid = false;
+            self.coloring.hook.turn_off();
+            self.coloring.color_method = crate::ColorMethod::Smooth;
+            self.coloring.use_custom_palette = false;
+            self.coloring.use_duotone = false;
+            self.coloring.use_binary = false;
+            self.coloring.palette_idx = fractadyne_color::preset_by_id("unity").unwrap_or(0);
+            self.coloring.palette_adjust = fractadyne_color::adjust::PaletteAdjust::NEUTRAL;
+            self.coloring.normalize_live = false;
+            self.coloring.normalize_fit = false;
+            self.coloring.transfer = fractadyne_core::coloring::Transfer::Linear;
+            self.coloring.wrap = fractadyne_core::coloring::Wrap::Repeat;
+            self.coloring.steps = 0;
+            self.coloring.interior = Some(crate::InteriorMode::Solid);
+            self.coloring.interior_color = [0.9, 0.85, 0.2];
+            let (w, h) = (160u32, 90u32);
+            let at = |s: &str| fractadyne_core::parse_bf_prec(s, 256).expect("a view's coordinate");
+            let tour = ("-1.178853950372678747911373866849720956148855", "0.1853420232408490265512092752061929308714979");
+            // (name, center, magnification, iterations)
+            let views = [
+                ("the overview", ("-0.75", "0"), 1.0, 1_000u32),
+                ("1e10x", tour, 1e10, 8_000),
+                ("1e30x", tour, 1e30, 40_000),
+            ];
+            let mut reqs = Vec::new();
+            for (name, (re, im), mag, iter) in views {
+                self.render_cfg.max_iter = iter;
+                let mut vp = Viewport::new(w as f64, h as f64);
+                vp.set_center_mag(at(re), at(im), mag);
+                let mut req = self.lanes_request_for(&vp, false, None);
+                req.width = w;
+                req.height = h;
+                req.aa_palette = fractadyne_gpu::PaletteAa::Off;
+                reqs.push((name, req));
+            }
+            (self.fractal, self.julia_mode, self.dual, self.render_cfg.max_iter, self.render_cfg.auto_iter) = saved;
+            self.apply_coloring_spec(&saved_spec);
+            let ln2 = std::f64::consts::LN_2;
+            // The main lane: (count, normal, normal, log2 of the distance in texels = pixels at ss 1).
+            let lanes_of = |req: &fractadyne_gpu::ExportRequest| -> Vec<[f32; 4]> {
+                fractadyne_gpu::render_lanes(device, queue, req, crate::tunables::CORRECT_WORK_BUDGET)
+                    .ok()
+                    .map(|r| r.pixels.chunks_exact(4).map(|t| [t[0], t[1], t[2], t[3]]).collect())
+                    .unwrap_or_default()
+            };
+            let export = |req: &fractadyne_gpu::ExportRequest, grid: fractadyne_gpu::GridLines, ss: u32| -> Option<Vec<f32>> {
+                let mut r = req.clone();
+                r.grid = grid;
+                r.ss = ss;
+                let (progress, cancel) = (std::sync::atomic::AtomicU32::new(0), std::sync::atomic::AtomicBool::new(false));
+                fractadyne_gpu::render_export(device, queue, &r, &progress, &cancel).ok().map(|x| x.pixels)
+            };
+            let grid = |spacing: f32, width: f32, strength: f32, color: [f32; 3]| fractadyne_gpu::GridLines { on: true, spacing, width, strength, color };
+            let lined_px = |t: &[f32; 4]| t[0] >= 0.0 && t[3] <= 1.0e20;
+            // The share of pixels more than one 8-bit level apart, and the largest gap.
+            let apart = |g: &[f32], c: &[[f64; 3]]| -> (f64, f64) {
+                let (mut n, mut bad, mut worst) = (0usize, 0usize, 0.0f64);
+                for (px, want) in g.chunks_exact(4).zip(c) {
+                    let d = (0..3).map(|k| (px[k] as f64 - want[k]).abs() * 255.0).fold(0.0, f64::max);
+                    n += 1;
+                    worst = worst.max(d);
+                    bad += (d > 1.0) as usize;
+                }
+                (bad as f64 / n.max(1) as f64, worst)
+            };
+            let req10 = reqs[1].1.clone();
+            let lane = lanes_of(&req10);
+            let plain = export(&req10, fractadyne_gpu::GridLines::default(), 1).unwrap_or_default();
+            // The CPU's colors under `g`: each pixel's color without the lines, mixed toward the
+            // lines' color by `grid_weight` of its count and distance (a tap of one pixel).
+            let cpu = |g: &fractadyne_gpu::GridLines| -> Vec<[f64; 3]> {
+                plain
+                    .chunks_exact(4)
+                    .zip(&lane)
+                    .map(|(px, t)| {
+                        let k = if g.draws() && lined_px(t) {
+                            grid_weight(t[0] as f64, (t[3] as f64).min(60.0).exp2(), ln2, g.spacing as f64, g.width as f64, g.strength as f64, 1.0)
+                        } else {
+                            0.0
+                        };
+                        std::array::from_fn(|c| px[c] as f64 + (g.color[c] as f64 - px[c] as f64) * k)
+                    })
+                    .collect()
+            };
+            let black = [0.0f32; 3];
+            let cases = [
+                ("the defaults (16 px, 1.5 px, 0.6, black)", grid(16.0, 1.5, 0.6, black), grid(32.0, 1.5, 0.6, black)),
+                ("8 px apart, 3 px wide, full strength, white", grid(8.0, 3.0, 1.0, [1.0; 3]), grid(8.0, 1.5, 1.0, [1.0; 3])),
+                ("24 px apart, 1 px wide, half strength, a blue", grid(24.0, 1.0, 0.5, [0.1, 0.2, 0.9]), grid(24.0, 1.0, 0.5, black)),
+            ];
+            let far = lane.iter().filter(|t| lined_px(t) && (t[3] as f64) >= 2.0).count();
+            // The precondition apart from the verdict, as the edge shading's check has it.
+            let ready = !plain.is_empty() && lane.len() == (w * h) as usize && far > 2_000;
+            let mut ok_all = ready;
+            let mut lines = Vec::new();
+            for (name, g, control) in &cases {
+                let (ok, line) = match export(&req10, *g, 1) {
+                    Some(px) if ready => {
+                        let (bad, worst) = apart(&px, &cpu(g));
+                        let (ctl, _) = apart(&px, &cpu(control));
+                        (bad <= 0.005 && ctl >= 0.01, format!("{name}: {:.2}% apart (max {worst:.2} levels), control {:.1}%", bad * 100.0, ctl * 100.0))
+                    }
+                    _ => (false, format!("{name}: no render, or {far} escaped pixels 4 px or more from the set")),
+                };
+                ok_all &= ok;
+                lines.push(line);
+            }
+            push_check(&mut checks, &mut last_check_t, SelfCheck {
+                category: "export",
+                name: "equipotential lines are their definition".into(),
+                params: format!("the coloring-method tour's point at 1e10x, {w}x{h}, ss 1, point sampled, unity, a yellow inside; three spacings, widths, strengths and colors, each against `grid_weight` of the count and distance lanes mixed into the export without them ({far} escaped pixels 4 px or more from the set); twice the spacing, half the width or black as the control"),
+                result: lines.join("; "),
+                threshold: "at most 0.5% of the pixels more than 1 level apart; the control 1% or more",
+                pass: ok_all,
+            });
+            // The width is in output pixels: the frame's mean darkening (toward black at full
+            // strength) against the plain frame of the same supersampling, at ss 1 and ss 2.
+            let mean_dark = |g: &[f32], base: &[f32]| -> f64 {
+                let lum = |p: &[f32]| 0.2126 * p[0] as f64 + 0.7152 * p[1] as f64 + 0.0722 * p[2] as f64;
+                let (mut s, mut n) = (0.0, 0usize);
+                for (a, b) in g.chunks_exact(4).zip(base.chunks_exact(4)) {
+                    s += (lum(b) - lum(a)).max(0.0);
+                    n += 1;
+                }
+                s / n.max(1) as f64
+            };
+            let g15 = grid(16.0, 1.5, 1.0, black);
+            let g30 = grid(16.0, 3.0, 1.0, black);
+            let widths = match (export(&req10, g15, 1), export(&req10, fractadyne_gpu::GridLines::default(), 2), export(&req10, g15, 2), export(&req10, g30, 1)) {
+                (Some(a1), Some(p2), Some(a2), Some(b1)) => Some((mean_dark(&a1, &plain), mean_dark(&a2, &p2), mean_dark(&b1, &plain))),
+                _ => None,
+            };
+            let (pass, result) = match widths {
+                Some((d1, d2, d3)) => {
+                    let same = (d2 - d1).abs() / d1.max(1e-9);
+                    let ctl = (d3 - d1).abs() / d1.max(1e-9);
+                    (d1 > 0.002 && same <= 0.05 && ctl >= 0.3, format!("mean darkening {d1:.4} at ss 1, {d2:.4} at ss 2 ({:.1}% apart); twice the width {d3:.4} ({:.0}% apart, the control)", same * 100.0, ctl * 100.0))
+                }
+                None => (false, "no render".into()),
+            };
+            push_check(&mut checks, &mut last_check_t, SelfCheck {
+                category: "export",
+                name: "equipotential lines' width is in output pixels".into(),
+                params: format!("as above, 16 px apart and 1.5 px wide toward black at full strength: the frame's mean darkening against the plain frame of the same supersampling, ss 1 and ss 2; 3 px wide at ss 1 as the control"),
+                result,
+                threshold: "ss 1 and ss 2 within 5%; the control 30% or more apart",
+                pass,
+            });
+            // The spacing at every depth: the GPU picture's coverage over the pixels the lines may
+            // cover (escaped, 4 px or more from the set, the count's f32 step under a tenth of a
+            // pixel, a plain color bright enough to read a darkening from), as a share of width /
+            // spacing. The control: lines at whole counts, from the same lanes.
+            let (spacing, width) = (16.0f64, 1.5f64);
+            let full = grid(spacing as f32, width as f32, 1.0, black);
+            let mut ok_all = true;
+            let mut control_off = false;
+            let mut lines = Vec::new();
+            for (name, req) in &reqs {
+                let lane = lanes_of(req);
+                let (Some(p), Some(g)) = (export(req, fractadyne_gpu::GridLines::default(), 1), export(req, full, 1)) else {
+                    ok_all = false;
+                    lines.push(format!("{name}: no render"));
+                    continue;
+                };
+                let (mut sum, mut fixed, mut n) = (0.0f64, 0.0f64, 0usize);
+                for ((t, pp), gg) in lane.iter().zip(p.chunks_exact(4)).zip(g.chunks_exact(4)) {
+                    if !lined_px(t) {
+                        continue;
+                    }
+                    let d = (t[3] as f64).min(60.0).exp2();
+                    let s = d * ln2;
+                    let q = (t[0] as f64).abs() * (-23.0f64).exp2() * s;
+                    let (c, pv) = (0..3).map(|k| (k, pp[k] as f64)).fold((0, 0.0), |a, b| if b.1 > a.1 { b } else { a });
+                    if d < 4.0 || q > 0.1 || pv < 0.15 {
+                        continue;
+                    }
+                    sum += (1.0 - gg[c] as f64 / pv).clamp(0.0, 1.0);
+                    let f = ((t[0] as f64 + 0.5).rem_euclid(1.0) - 0.5).abs();
+                    fixed += grid_cover(f * s, width, 1.0);
+                    n += 1;
+                }
+                let share = sum / n.max(1) as f64 / (width / spacing);
+                let fixed_share = fixed / n.max(1) as f64 / (width / spacing);
+                let ok = n >= 1_000 && (0.4..=1.25).contains(&share);
+                control_off |= !(0.4..=1.25).contains(&fixed_share);
+                ok_all &= ok;
+                lines.push(format!("{name}: {share:.3} of width / spacing over {n} pixels (whole counts {fixed_share:.3})"));
+            }
+            push_check(&mut checks, &mut last_check_t, SelfCheck {
+                category: "export",
+                name: "equipotential lines keep their spacing at every depth".into(),
+                params: format!("the overview (1,000 iterations), the tour's point at 1e10x (8,000) and 1e30x (40,000), {w}x{h}, ss 1; 16 px apart and 1.5 px wide toward black at full strength; the picture's coverage 1 − lined / plain on the brightest channel, over escaped pixels 4 px or more from the set whose count's f32 step is under 0.1 px; lines at whole counts from the same lanes as the control"),
+                result: lines.join("; "),
+                threshold: "1,000 pixels or more, and a share of 0.4 to 1.25 at each depth; the control outside it at one depth or more",
+                pass: ok_all && control_off,
             });
         }
 

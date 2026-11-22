@@ -323,6 +323,11 @@ fn every_session_field_survives_save_and_reload() {
         edge_strength: 0.4,
         edge_curve: "smooth".into(),
         edge_color: [0.1, 0.2, 0.9],
+        equipotentials: true,
+        equipotential_spacing: 24.0,
+        equipotential_width: 2.5,
+        equipotential_strength: 0.35,
+        equipotential_color: [0.9, 0.8, 0.1],
         color_method: "trap".into(),
         stripe_freq: 3.5,
         stripe_tail: true,
@@ -816,6 +821,7 @@ fn a_session_written_before_the_coloring_spec_reads_and_writes_the_same_keys() {
         "palette_brightness", "palette_contrast", "palette_saturation", "julia_linked",
         "coloring_hook", "coloring_hook_params", "transfer", "wrap", "steps",
         "edge", "edge_inside", "edge_width", "edge_strength", "edge_curve", "edge_color",
+        "equipotentials", "equipotential_spacing", "equipotential_width", "equipotential_strength", "equipotential_color",
     ];
     assert_eq!(keys.len(), 27 + SINCE.len(), "a coloring field was added: list it in SINCE");
     for k in keys.keys() {

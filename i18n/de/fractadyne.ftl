@@ -2967,8 +2967,18 @@ panel-edge-color = Farbe
 panel-edge-color-hover = Die Farbe, zu der die Ränder hin schattiert werden.
 panel-edge-inside = Innenfarbe
 panel-edge-inside-hover = Stattdessen zur Farbe des Inneren hin schattieren: Der Rand der Menge geht dann in die Menge über, was ihn auch ohne Antialiasing glättet (Breite 1 und Linear probieren).
+
+panel-equipotentials = Äquipotentiallinien
+panel-equipotentials-hover = Zeichnet Linien entlang der Niveaus der Fluchtzahl, wie die Höhenlinien einer Karte. Wo die Niveaus auseinanderrücken, kommen feinere Linien hinzu, sodass die Linien auf dem Bildschirm in jeder Tiefe etwa gleich weit auseinander bleiben. (Mandelbrot, Multibrot und Phoenix.)
+panel-equipotential-spacing = Abstand
+panel-equipotential-spacing-hover = Der kleinste Abstand zwischen benachbarten Linien, in Bildschirmpixeln; feinere Linien blenden sich ein, während die Lücken auf das Doppelte wachsen.
+panel-equipotential-width = Breite
+panel-equipotential-width-hover = Wie breit jede Linie ist, in Bildschirmpixeln: gleich bei jedem Zoom und jedem Antialiasing.
+panel-equipotential-strength = Stärke
+panel-equipotential-color = Farbe
+panel-equipotential-color-hover = Die Farbe der Linien.
 # At the top of Effects when relief lighting, the glow or edge shading is on for a fractal without a distance estimate (they stay on). $family = the fractal's name.
-panel-effects-no-de = { $family } hat keine Distanzschätzung, daher ändern Reliefbeleuchtung, Leuchten und Randschattierung hier nichts.
+panel-effects-no-de = { $family } hat keine Distanzschätzung, daher ändern Reliefbeleuchtung, Leuchten, Randschattierung und Äquipotentiallinien hier nichts.
 
 ## The control panel: Overlays
 

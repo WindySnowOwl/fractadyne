@@ -1,6 +1,6 @@
 # Coloring methods: implementation plan
 
-Status: **plan (2026-11-08); phase A done (A1–A10), B1, B1b, B9 and B10 done (the coloring matrix, its live method tour, every lane as NumPy arrays, a custom coloring hook), B2 done (what a frame accumulates is a `StatSet`, apart from the method shown), B3 done (in floatexp a stripe, triangle or trap frame carries the whole G-buffer), B4 to B7 done (one settings model, the method list, the method sheet, the inside and a second LUT), C1, C2, C3, C4, C8, C9 and C11 done (a solid inside in any color; the palette map's curves, wraps and steps; edge shading by the distance; the inside's palette fitted to its range; the palette anti-aliased over a footprint from the distance estimate; the fringe method; the dual view's Julia pane on the set's palette map); B8 not started; next C10; see §10 (2026-11-21).** Line references are to `main` at `9ab75357`; check
+Status: **plan (2026-11-08); phase A done (A1–A10), B1, B1b, B9 and B10 done (the coloring matrix, its live method tour, every lane as NumPy arrays, a custom coloring hook), B2 done (what a frame accumulates is a `StatSet`, apart from the method shown), B3 done (in floatexp a stripe, triangle or trap frame carries the whole G-buffer), B4 to B7 done (one settings model, the method list, the method sheet, the inside and a second LUT), C1, C2, C3, C4, C8, C9, C10 and C11 done (a solid inside in any color; the palette map's curves, wraps and steps; edge shading by the distance; the inside's palette fitted to its range; the palette anti-aliased over a footprint from the distance estimate; the fringe method; equipotential lines at an even spacing at every depth; the dual view's Julia pane on the set's palette map); B8 not started; next C5; see §10 (2026-11-21).** Line references are to `main` at `9ab75357`; check
 them before editing, they drift. The research behind it (methods, prototypes, measured results,
 prior art) is the coloring-methods doc; its local copy is
 `local/research_notes/Fractal coloring methods/` (PDF, HTML, Markdown, prototype scripts).
@@ -1128,6 +1128,49 @@ UI rows, `.fdn`/farm/CLI through B4, B1 cells, a selftest appearance check, uite
 Order: C1, C4, C8, C9, C11 (smallest), then C2, C3, C10, then C5, C6, C7. (2026-11-20: B9 and B10,
 the prototyping aids, come before C2.)
 
+**C10, done 2026-11-21** (branch `feat/color-c10-grid`): equipotential lines, Effects ▸
+Equipotential lines; the equipotentials only, the rays waiting for D1 (an angle under every
+method). `fractadyne_core::coloring::grid_weight` and `grid_cover` are the CPU definitions: a texel
+d output pixels from the set is d · ln p pixels from the level one count away (|∇μ| = 1/(d · ln p),
+the stored distance being G/|∇G|), so it draws the lines at the multiples of 1/L, L the power of two
+that puts them `spacing` to twice that apart there, and fades in the next level's extra lines with
+the fraction of the level (the finer set holds the coarser one, so nothing pops). A line's coverage
+is the exact box filter of the line over the tap (`grid_cover`: over one line it adds up to the
+width whatever the tap), each texel shaded before a pixel's texels are averaged (`grid_shaded`
+around `shade_aa`, inside `edge_shaded`), the tap `tap_px` = a texel in output pixels × the
+thumbnail stride × progressive supersampling's share (`aa_scale`); so a line keeps its width at
+every anti-aliasing level, and a coloring hook's colors take the lines too. Faded out within 2 px of
+the set (`GRID_SET_FADE`), and where μ's own f32 step, |μ| · 2^-23 of a count, reaches a quarter to
+one output pixel (`GRID_PRECISION_FADE`): the count is stored as an f32 `iter + 1 − ν`, so far from
+the set at a high count a line would move in whole-pixel steps (measured: past 2^17 counts with a
+distance of hundreds of pixels; a deep minibrot's smooth surroundings lose their lines there). `ColorU`:
+a row of on, spacing, width and strength, a row of color; `GridLines` on `MandelbrotParams` and
+`ExportRequest`; a zoom video's window keeps the distance while they are on
+(`WindowTexels::for_request`). The app: `EffectsConfig.grid*`; `ColoringSpec` `equipotentials`,
+`equipotential_spacing` (16 px), `equipotential_width` (1.5 px), `equipotential_strength` (0.6),
+`equipotential_color` (black); view keys of the same names (five field-table rows);
+`--equipotentials`, `--equipotential-spacing`, `--equipotential-width`, `--equipotential-strength`,
+`--equipotential-color`; the Effects rows (Spacing 4–64 px and Width 0.5–8 px, log sliders;
+Strength; Color), 9 strings in 15 languages, and the Effects note for a family without a distance
+estimate names them. The farm checks the new values. Tests: core `grid_tests` (a line's coverage
+adds up to its width at every tap; the lines cover half to all of width/spacing at every scale from
+a tenth of the spacing to ten thousand times it, whole-count lines from 0.1 to 5 times it as the
+control; the fades); self-test group `equipotentials`: three cases against `grid_weight` of the
+count and distance lanes mixed into the export without the lines, 0.00% apart (max 0.00 levels)
+against controls 6–33% apart; the width in output pixels, the mean darkening 0.0290 at ss 1 and
+ss 2 (0.1% apart), twice the width 0.0582 (the control); the spacing at three depths from the GPU
+picture's own coverage, 1.08, 0.91 and 0.98 of width/spacing at the overview, 1e10x and 1e30x,
+whole-count lines 0.86, 2.50 and 2.00 (the control); the zoom video window check gains the lines
+(10 colorings, bit-identical). SABOTAGED (the window not told; the shader a level too fine): the
+definition 16.9% apart (max 148 levels), the spacing 2.18/2.04/2.10, the window 35,312 pixels, all
+red, the width green (it reads the mean, which a level does not move). `--uitest`
+`equipotentials-off`, `equipotentials` (5.1 levels, no pass), `equipotentials-panel` (the rows).
+⛔FOUND while building it (TODO.md, open bugs): the distance estimate is far too large near deep
+minibrots past about 1e77x (4.04 px against a true 4.6e-5 px at the 9.3e78 minibrot's path, exact
+at 1e70), so every distance coloring is wrong there; not fixed here. Not done: the rays (D1), a
+frame-relative count to keep μ's fraction past 2^20 counts, and the plan's 2·area/perimeter width
+measure (the mean darkening stands in for it).
+
 **C3, done 2026-11-21** (branch `feat/color-c3-edges`): edge shading, Effects ▸ Edge shading.
 `fractadyne_core::coloring::EdgeCurve` (linear, sqrt, square, smooth, hard; GPU numbers the list's
 order) and `edge_weight`, `strength · (1 − f(min(d / width, 1)))`, are the CPU definitions. The
@@ -1588,6 +1631,7 @@ coloring in these places, so sequence the two with care:
 | C11        | done, merged                                              | `b8a24c8f` (merge `a14b2296`)                                                             |
 | C9         | done, merged                                              | `0b0c5f03` (merge `20e2fff5`)                                                             |
 | C2         | done, merged                                              | `ca8acfe6` (merge `1694d7e4`)                                                             |
-| C3         | done, not merged (branch `feat/color-c3-edges`)           | (filled in at the merge)                                                                  |
-| C5–C7, C10 | not started                                               |                                                                                           |
+| C3         | done, merged                                              | `b0bd9259` (merge `550139a7`)                                                             |
+| C10        | done, not merged (branch `feat/color-c10-grid`)           | (filled in at the merge)                                                                  |
+| C5–C7      | not started                                               |                                                                                           |
 | D, E, F, G | not started                                               |                                                                                           |

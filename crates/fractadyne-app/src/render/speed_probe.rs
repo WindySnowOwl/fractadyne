@@ -398,6 +398,7 @@ fn plan_request(plan: Plan) -> (fractadyne_gpu::ExportRequest, u32) {
         wrap: 0,
         steps: 0.0,
         edge: fractadyne_gpu::EdgeShade::default(),
+        grid: fractadyne_gpu::GridLines::default(),
         julia: 0,
         cycle: 1.0,
         offset: 0.0,

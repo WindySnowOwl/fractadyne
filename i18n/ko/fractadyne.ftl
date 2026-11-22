@@ -2886,8 +2886,18 @@ panel-edge-color = 색
 panel-edge-color-hover = 가장자리를 물들일 색.
 panel-edge-inside = 내부 색
 panel-edge-inside-hover = 대신 내부 색 쪽으로 물들입니다. 그러면 집합의 경계가 집합에 녹아들어 안티에일리어싱 없이도 매끄러워집니다(너비 1, 선형으로 해 보세요).
+
+panel-equipotentials = 등전위선
+panel-equipotentials-hover = 지도의 등고선처럼 탈출 횟수가 같은 곳을 따라 선을 그립니다. 값의 간격이 벌어지는 곳에는 더 가는 선이 더해지므로, 어떤 깊이에서도 선이 화면에서 거의 같은 간격을 유지합니다. (망델브로, 멀티브로, 피닉스)
+panel-equipotential-spacing = 간격
+panel-equipotential-spacing-hover = 이웃한 선 사이의 최소 간격(화면 픽셀 단위). 틈이 그 두 배까지 벌어지면서 더 가는 선이 서서히 나타납니다.
+panel-equipotential-width = 너비
+panel-equipotential-width-hover = 각 선의 너비(화면 픽셀 단위). 어떤 확대에서도, 어떤 안티에일리어싱에서도 같습니다.
+panel-equipotential-strength = 강도
+panel-equipotential-color = 색
+panel-equipotential-color-hover = 선의 색.
 # At the top of Effects when relief lighting, the glow or edge shading is on for a fractal without a distance estimate (they stay on). $family = the fractal's name.
-panel-effects-no-de = { $family }에는 거리 추정이 없어 여기서는 입체 조명, 글로우, 가장자리 음영이 아무것도 바꾸지 않습니다.
+panel-effects-no-de = { $family }에는 거리 추정이 없어 여기서는 입체 조명, 글로우, 가장자리 음영, 등전위선이 아무것도 바꾸지 않습니다.
 
 ## The control panel: Overlays
 

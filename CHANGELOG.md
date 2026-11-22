@@ -50,6 +50,18 @@ detail is in the git history.
   command-line flags (`--transfer`, `--wrap`, `--steps`); a view or session saved with the log scale
   on opens with Scale on Log. Reset coloring settings puts the Scale back with the normalization
   switches and keeps Wrap and Steps, as it keeps the palette.
+- **Equipotential lines: contour lines that hold at every depth.** A new switch in Effects draws
+  lines along the levels of the escape count, like the contour lines of a map, over any coloring
+  method and palette. Finer lines appear wherever the levels spread apart, so the lines stay about
+  the same distance apart on screen however deep you zoom: a fine mesh near the set, an even one
+  far from it. Spacing and Width (in screen pixels, the same at every zoom and anti-aliasing
+  level), Strength and Color set their look. They read the distance estimate, so they work for
+  Mandelbrot, Multibrot 3–8 and Phoenix; they fade out right at the set, and far from it at very
+  high iteration counts (past about a million), where the count is not stored finely enough to
+  place a line within a pixel. They recolor the view at once, work under a custom coloring, in
+  exports, zoom videos and render-farm jobs, travel with views, bookmarks and Share text, and have
+  command-line flags (`--equipotentials`, `--equipotential-spacing`, `--equipotential-width`,
+  `--equipotential-strength`, `--equipotential-color`).
 - **Edge shading: lines drawn along the set's edge.** A new switch in Effects shades the colors
   near the set toward a color that fades out with the distance from it, so every filament gets a
   dark outline, like a pen drawing, over any coloring method and palette. Width (in screen pixels,
