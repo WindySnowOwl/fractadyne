@@ -121,3 +121,20 @@ fn the_users_own_colouring_changes_at_once() {
     let (_, f) = palette_fade_step(s, NormMap { cycle: 0.0044, ..LINEAR }, true, 10, FRAME, WIN);
     assert_eq!(f.weight, 0.0);
 }
+
+#[test]
+fn a_jump_under_a_curve_dissolves_and_a_glide_under_it_does_not() {
+    // C2's curves: `map_change` must measure the change as the shader colors it. A square-root map
+    // whose window is cut (another picture's floor) recolors by cycles; one gliding a little does
+    // not. Read as linear maps (v · cycle + offset, the floor ignored) the cut moved nothing.
+    let w = (150_000.0_f32, 170_000.0_f32);
+    let span = (w.1 - w.0).sqrt();
+    let a = NormMap { cycle: 2.12 / span, offset: 0.8, mode: 2, lo: w.0 };
+    let cut = NormMap { lo: w.0 + 5_000.0, ..a };
+    let glide = NormMap { lo: w.0 + 0.5, ..a };
+    assert!(map_change(&a, &cut, w) > PALETTE_JUMP, "{}", map_change(&a, &cut, w));
+    assert!(map_change(&a, &glide, w) < PALETTE_JUMP, "{}", map_change(&a, &glide, w));
+    let (s, _) = palette_fade_step(PaletteFadeState::default(), a, true, 7, FRAME, Some(w));
+    let (_, f) = palette_fade_step(s, cut, true, 7, FRAME, Some(w));
+    assert_eq!((f.weight, f.lo), (1.0, a.lo), "the cut dissolves from the map before it");
+}

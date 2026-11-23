@@ -101,3 +101,42 @@ fn classic_colours_a_change_of_kind_or_of_the_users_colouring_carry_nothing() {
     let (_, p) = phase_carry_step(moved, log, Some(w), 7, false, FRAME);
     assert_eq!(p, 0.0);
 }
+
+/// The palette coordinate the SHADER gives `v` under `m` with `phase` added (`coord_under`: a curve
+/// map takes v to T(max(v − lo, 0)), a linear one leaves it), under every curve (C2).
+fn shader_coord(m: &NormMap, phase: f32, v: f32) -> f64 {
+    let t = fractadyne_core::coloring::Transfer::from_gpu_id(m.mode).expect("a curve");
+    let pv = if m.mode == 0 { v as f64 } else { t.apply((v - m.lo) as f64) };
+    pv * m.cycle as f64 + m.offset as f64 + phase as f64
+}
+
+#[test]
+fn a_widening_deep_window_keeps_its_middles_color_under_every_curve() {
+    // A dive's window at depth slides up and widens a little every frame (the 2026-10-25 path grew
+    // ~8% a second). Under each curve the carried phase keeps the middle value's color where the
+    // last frame drew it, as it does for linear and log: the carry must evaluate the map as the
+    // shader does, curve and all.
+    for t in fractadyne_core::coloring::Transfer::ALL {
+        let mut st = PhaseCarry::default();
+        let mut prev: Option<(NormMap, f32)> = None;
+        for k in 0..120 {
+            let lo = 150_000.0 + 40.0 * k as f32;
+            let w = (lo, lo + 20_000.0 * (1.0 + 0.002 * k as f32));
+            let span = t.apply((w.1 - w.0) as f64) as f32;
+            let m = if t == fractadyne_core::coloring::Transfer::Linear {
+                let c = SWEEPS / (w.1 - w.0);
+                NormMap { cycle: c, offset: 0.0286 - w.0 * c, mode: 0, lo: 0.0 }
+            } else {
+                NormMap { cycle: SWEEPS / span, offset: 0.0286, mode: t.gpu_id(), lo: w.0 }
+            };
+            let (s, phase) = phase_carry_step(st, m, Some(w), 7, false, FRAME);
+            st = s;
+            if let Some((pm, pp)) = prev {
+                let mid = (w.0 + w.1) * 0.5;
+                let d = wrapped(shader_coord(&m, phase, mid), shader_coord(&pm, pp, mid));
+                assert!(d < 1e-3, "{t:?} frame {k}: the middle value {mid} moved {d} cycles");
+            }
+            prev = Some((m, phase));
+        }
+    }
+}

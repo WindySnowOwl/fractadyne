@@ -12967,6 +12967,11 @@ zoom = \"1e94\"
                 self.coloring.julia_linked = true;
                 self.export_map(true)
             });
+            // …and under a curve (C2): every curve measures from its floor, which the link lowers
+            // by one (a square-root map once shifted by a cycle instead: z = c 0.15 of a cycle off).
+            self.coloring.transfer = fractadyne_core::coloring::Transfer::Sqrt;
+            let curved = (apart(self, true), apart(self, false));
+            self.coloring.transfer = fractadyne_core::coloring::Transfer::Linear;
             (self.perf.norm_pal, self.perf.norm_shown, self.perf.norm_grad) = saved_norm;
             (self.fractal, self.julia_mode, self.julia_c, self.dual, self.render_cfg.max_iter, self.render_cfg.auto_iter) = saved;
             self.apply_coloring_spec(&saved_spec);
@@ -12974,13 +12979,13 @@ zoom = \"1e94\"
             push_check(&mut checks, &mut last_check_t, SelfCheck {
                 category: "consistency",
                 name: "a linked Julia pane colors z = c as the set colors c".into(),
-                params: "dual view, Julia c = -0.75+0.2i, both panes centered on c at 1e5x, 33x33, ember, Cycle 1; the classic map, then fitted ranges 10..40 (set) and 0..400 (Julia)".into(),
+                params: "dual view, Julia c = -0.75+0.2i, both panes centered on c at 1e5x, 33x33, ember, Cycle 1; the classic map, then fitted ranges 10..40 (set) and 0..400 (Julia), linear and square root".into(),
                 result: format!(
-                    "largest channel difference between the centers, linked / unlinked: classic {:?} / {:?}, fitted {:?} / {:?}; fitted maps set {:?}, Julia {:?}",
-                    classic.0, classic.1, fitted.0, fitted.1, maps.0, maps.1
+                    "largest channel difference between the centers, linked / unlinked: classic {:?} / {:?}, fitted {:?} / {:?}, square root {:?} / {:?}; fitted maps set {:?}, Julia {:?}",
+                    classic.0, classic.1, fitted.0, fitted.1, curved.0, curved.1, maps.0, maps.1
                 ),
-                threshold: "linked <= 3 and unlinked >= 12 (the control), both maps",
-                pass: ok(classic) && ok(fitted),
+                threshold: "linked <= 3 and unlinked >= 12 (the control), all three maps",
+                pass: ok(classic) && ok(fitted) && ok(curved),
             });
         }
 

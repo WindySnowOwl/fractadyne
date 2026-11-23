@@ -83,13 +83,24 @@ def palette_at(v, t, palette=None, smooth=None):
     return pal[i0 % n, :3] * (1.0 - f) + pal[(i0 + 1) % n, :3] * f
 
 
+CURVES = {
+    "log": lambda d: np.log(d + 1.0),
+    "sqrt": np.sqrt,
+    "cbrt": np.cbrt,
+    "root4": lambda d: np.sqrt(np.sqrt(d)),
+    "loglog": lambda d: np.log(np.log(d + 1.0) + 1.0),
+    "square": lambda d: d * d,
+}
+
+
 def palette_coord(v, value):
-    """A lane's value under the view's palette map (`coord_under`): linear, or log about norm_lo,
-    then times cycle plus offset."""
+    """A lane's value under the view's palette map (`coord_under`): linear, or a curve (norm_mode:
+    log, sqrt, cbrt, root4, loglog, square) of the height above norm_lo, then times cycle plus
+    offset."""
     c = v.coloring
     value = np.asarray(value, dtype=np.float64)
-    if c["norm_mode"] == "log":
-        value = np.log(np.maximum(value - c["norm_lo"], 0.0) + 1.0)
+    if c["norm_mode"] in CURVES:
+        value = CURVES[c["norm_mode"]](np.maximum(value - c["norm_lo"], 0.0))
     return value * c["cycle"] + c["offset"]
 
 
