@@ -2265,13 +2265,28 @@ pub(crate) struct NormMap {
 }
 
 impl NormMap {
+    /// The palette coordinate of escape value `v` under this map, before the wrap: the color pass's
+    /// `coord_under` for the Smooth count, the CPU twin every frame-to-frame judgment of a map
+    /// evaluates it with (the carried phase, the dissolve's jump test). A curve map (coloring plan
+    /// C2) takes `v` to T(max(v − lo, 0)) (`Transfer::apply`, the shader's `transfer_of`); a linear
+    /// one leaves it as it is.
+    pub(crate) fn coord(&self, v: f64) -> f64 {
+        let x = match fractadyne_core::coloring::Transfer::from_gpu_id(self.mode) {
+            Some(t) if self.mode != 0 => t.apply(v - self.lo as f64),
+            _ => v,
+        };
+        x * self.cycle as f64 + self.offset as f64
+    }
+
     /// This map one iteration on: a value `v` colors as `v + 1` does under `self` (coloring plan
     /// C11). The Julia count at z = c is the Mandelbrot count at c minus 1, exactly: measured in the
     /// app (`--render-iter`), 16.902029 against 15.902029 at c = -0.75+0.2i and 24.1249 against
-    /// 23.1249 at -0.1+0.9i. Linear (`v·cycle + offset`): the offset gains one cycle. Log
-    /// (`log(max(v − lo, 0) + 1)·cycle + offset`): the floor drops by one.
+    /// 23.1249 at -0.1+0.9i. Linear (`v·cycle + offset`): the offset gains one cycle. A curve, log
+    /// or any other (`T(max(v − lo, 0))·cycle + offset`): the floor drops by one.
     pub(crate) fn one_iteration_on(self) -> NormMap {
-        if self.mode == 1 {
+        // ⚠Every curve measures from its floor (C2), not only log: a square-root map shifted by a
+        // cycle colored z = c 0.15 of a cycle off the set's c (2026-11-23).
+        if self.mode != 0 {
             NormMap { lo: self.lo - 1.0, ..self }
         } else {
             NormMap { offset: self.offset + self.cycle, ..self }
@@ -12564,10 +12579,10 @@ pub(crate) fn phase_carry_step(
     dt_s: f32,
 ) -> (PhaseCarry, f32) {
     let Some(w) = win else { return (PhaseCarry::default(), 0.0) };
-    let coord = |m: &NormMap, v: f64| {
-        let x = if m.mode == 1 { ((v - m.lo as f64).max(0.0) + 1.0).ln() } else { v };
-        x * m.cycle as f64 + m.offset as f64
-    };
+    // ⚠The map as the shader colors it, curve and all (`NormMap::coord`): read as linear, a
+    // square-root map's middle value moved 0.08 of a cycle in one frame of a widening deep window
+    // (2026-11-23, C2's curves).
+    let coord = |m: &NormMap, v: f64| m.coord(v);
     let mut debt = match st.last {
         Some((prev, _, sig)) if sig == user_sig && prev.mode == map.mode => {
             let mid = (w.0 as f64 + w.1 as f64) * 0.5;
@@ -12593,10 +12608,9 @@ mod phase_carry;
 /// wraps by exactly one — so the change at the window's middle counts only to its nearest whole
 /// cycle's distance.
 pub(crate) fn map_change(a: &NormMap, b: &NormMap, w: (f32, f32)) -> f32 {
-    let coord = |m: &NormMap, v: f64| {
-        let x = if m.mode == 1 { ((v - m.lo as f64).max(0.0) + 1.0).ln() } else { v };
-        x * m.cycle as f64 + m.offset as f64
-    };
+    // As the shader colors it (`NormMap::coord`): read as linear, a square-root map cut to another
+    // floor changed by nothing and was drawn as a snap (2026-11-23).
+    let coord = |m: &NormMap, v: f64| m.coord(v);
     let (lo, hi) = (w.0 as f64, w.1 as f64);
     let mid = (lo + hi) * 0.5;
     let whole = (coord(b, mid) - coord(a, mid)).round();

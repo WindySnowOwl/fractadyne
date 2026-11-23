@@ -2459,7 +2459,8 @@ impl FractadyneApp {
                 "method": method.key(),
                 "cycle": req.cycle,
                 "offset": req.offset,
-                "norm_mode": if req.norm_mode == 1 { "log" } else { "linear" },
+                // The curve's key (C2): linear, log, sqrt, cbrt, root4, loglog or square.
+                "norm_mode": fractadyne_core::coloring::Transfer::from_gpu_id(req.norm_mode).unwrap_or_default().key(),
                 "norm_lo": req.norm_lo,
                 "palette_entries": req.lut.len(),
                 "palette_smooth": req.lut_smooth,
@@ -2473,7 +2474,7 @@ impl FractadyneApp {
                 "inside_cycle": req.interior.cycle,
                 "inside_offset": req.interior.offset,
             },
-            "palette_map": "t = mapped(v) * cycle + offset, mapped(v) = v (linear) or ln(max(v - norm_lo, 0) + 1) (log), v the method's lane; the color is the palette at fract(t), linearly interpolated between entry centers when palette_smooth",
+            "palette_map": "t = mapped(v) * cycle + offset, mapped(v) = v (linear) or T(max(v - norm_lo, 0)) for the curve norm_mode names (log: ln(d + 1), sqrt, cbrt, root4: d^(1/4), loglog: ln(ln(d + 1) + 1), square: d^2), v the method's lane; the color is the palette at fract(t), linearly interpolated between entry centers when palette_smooth",
         });
         let text = serde_json::to_string_pretty(&json).map_err(|e| crate::error::AppError::Message(e.to_string()))?;
         fractadyne_state::durable::write_atomic(&dir.join("view.json"), format!("{text}\n").as_bytes())?;
