@@ -12,13 +12,23 @@
 //! field checked, and it must describe THIS tour — same script text, frame rate, frame count and
 //! iteration base — or it is refused with both values named. A mismatch means the anchors were
 //! measured for a different render, and using them would be a silently wrong palette.
+//!
+//! Version 2 (coloring plan C6b) also carries each anchor's DISTRIBUTION, the quantile function of
+//! its escape values that Equalize colors maps by, exactly (each knot an `f32`'s bits in hex), so a
+//! farm's machines equalize alike too. A version-1 file still reads, without them; a render that
+//! equalizes refuses it (`scripting::render_tour_to_dir`).
 
-/// Largest file accepted. A tour has at most a few hundred keyframes; an anchor is ~80 bytes.
-const MAX_FILE_BYTES: u64 = 1 << 20;
+/// Largest file accepted. A tour has at most a few hundred keyframes; an anchor is ~2.4 KB with its
+/// distribution (~80 bytes without), so this holds over 3,000 (a farm's job carries it whole, under
+/// `fractadyne_farm::proto::MAX_BUNDLE_BYTES`).
+pub(crate) const MAX_FILE_BYTES: u64 = 8 << 20;
 /// Most anchors accepted — far above any real tour, far below anything that costs memory.
 const MAX_ANCHORS: usize = 10_000;
 const FORMAT: &str = "fractadyne-norm-anchors";
-const VERSION: i64 = 1;
+/// Written when every anchor carries its distribution; [`VERSION_RANGES`] otherwise.
+const VERSION: i64 = 2;
+/// The first version: ranges only.
+const VERSION_RANGES: i64 = 1;
 
 /// What the anchors were measured FOR. Every field must match the render that reads them.
 #[derive(Clone, Debug, PartialEq)]
@@ -34,12 +44,40 @@ pub(crate) struct AnchorContext {
     pub(crate) total: f64,
 }
 
-/// One measured anchor, as the renderer uses it: the keyframe's frame index, its time, the range.
+/// One measured anchor, as the renderer uses it: the keyframe's frame index, its time, the range,
+/// and the distribution of its escape values (coloring plan C6b; `None` from a version-1 file).
 #[derive(Clone, Copy, Debug, PartialEq)]
 pub(crate) struct Anchor {
     pub(crate) frame: u64,
     pub(crate) t: f64,
     pub(crate) range: (f32, f32),
+    pub(crate) eq: Option<fractadyne_core::coloring::Quantiles>,
+}
+
+/// A distribution's knots as text: each `f32`'s bits, 8 hex digits, space-separated. Exact, and a
+/// third the size of the shortest decimals that would be.
+fn quantiles_text(q: &fractadyne_core::coloring::Quantiles) -> String {
+    q.iter().map(|k| format!("{:08x}", k.to_bits())).collect::<Vec<_>>().join(" ")
+}
+
+/// [`quantiles_text`] read back: every knot present, finite and never decreasing, or why not.
+fn quantiles_from_text(s: &str) -> Result<fractadyne_core::coloring::Quantiles, String> {
+    use fractadyne_core::coloring::EQ_QUANTILES;
+    let mut q = [0.0f32; EQ_QUANTILES + 1];
+    let mut words = s.split(' ');
+    for i in 0..=EQ_QUANTILES {
+        let w = words.next().ok_or_else(|| format!("{i} of its {} knots", EQ_QUANTILES + 1))?;
+        let bits = (w.len() == 8).then(|| u32::from_str_radix(w, 16).ok()).flatten().ok_or_else(|| format!("knot {i} as \"{w}\""))?;
+        let k = f32::from_bits(bits);
+        if !k.is_finite() || (i > 0 && k < q[i - 1]) {
+            return Err(format!("knot {i} ({k}) out of order or not finite"));
+        }
+        q[i] = k;
+    }
+    if words.next().is_some() {
+        return Err(format!("more than its {} knots", EQ_QUANTILES + 1));
+    }
+    Ok(q)
 }
 
 /// The time a frame index stands for — the SAME formula the tour renderer uses for every frame,
@@ -89,7 +127,8 @@ pub(crate) fn encode(ctx: &AnchorContext, app_version: &str, git: &str, anchors:
     let plain = |v: &str| -> String {
         v.chars().filter(|c| c.is_ascii_graphic() && *c != '"' && *c != '\\' || *c == ' ').collect()
     };
-    s.push_str(&format!("format = \"{FORMAT}\"\nversion = {VERSION}\n"));
+    let with_eq = anchors.iter().all(|a| a.eq.is_some());
+    s.push_str(&format!("format = \"{FORMAT}\"\nversion = {}\n", if with_eq { VERSION } else { VERSION_RANGES }));
     s.push_str(&format!("app_version = \"{}\"\ngit = \"{}\"\n", plain(app_version), plain(git)));
     s.push_str(&format!("script = \"fnv1a64:{:016x}\"\n", ctx.script_digest));
     s.push_str(&format!("fps = {:?}\nframes = {}\n", ctx.fps, ctx.frames));
@@ -99,6 +138,9 @@ pub(crate) fn encode(ctx: &AnchorContext, app_version: &str, git: &str, anchors:
             "\n[[anchor]]\nframe = {}\nt = {:?}\nlo = {:?}\nhi = {:?}\n",
             a.frame, a.t, a.range.0 as f64, a.range.1 as f64
         ));
+        if let Some(q) = a.eq.as_ref().filter(|_| with_eq) {
+            s.push_str(&format!("quantiles = \"{}\"\n", quantiles_text(q)));
+        }
     }
     s
 }
@@ -126,6 +168,9 @@ struct FileAnchor {
     t: f64,
     lo: f64,
     hi: f64,
+    /// Version 2: the distribution ([`quantiles_text`]).
+    #[serde(default)]
+    quantiles: Option<String>,
 }
 
 /// What a file said beyond the anchors: the build that measured them, for a warning when it is
@@ -153,8 +198,8 @@ pub(crate) fn decode(text: &str, want: &AnchorContext) -> Result<Decoded, String
     if doc.format != FORMAT {
         return Err(format!("format is \"{}\", expected \"{FORMAT}\"", doc.format));
     }
-    if doc.version != VERSION {
-        return Err(format!("version {} is not one this build reads ({VERSION})", doc.version));
+    if doc.version != VERSION && doc.version != VERSION_RANGES {
+        return Err(format!("version {} is not one this build reads ({VERSION_RANGES} or {VERSION})", doc.version));
     }
     let want_script = format!("fnv1a64:{:016x}", want.script_digest);
     if doc.script != want_script {
@@ -199,7 +244,14 @@ pub(crate) fn decode(text: &str, want: &AnchorContext) -> Result<Decoded, String
         if !exact_f32(a.lo) || !exact_f32(a.hi) || a.lo > a.hi {
             return Err(format!("anchor {n}: range [{}, {}] was not written by --dump-norm-anchors", a.lo, a.hi));
         }
-        anchors.push(Anchor { frame: a.frame, t, range: (a.lo as f32, a.hi as f32) });
+        // Version 2 carries every anchor's distribution, version 1 none.
+        let eq = match (doc.version, &a.quantiles) {
+            (VERSION, Some(s)) => Some(quantiles_from_text(s).map_err(|e| format!("anchor {n}: its distribution has {e}"))?),
+            (VERSION, None) => return Err(format!("anchor {n}: a version {VERSION} anchor without its distribution")),
+            (_, Some(_)) => return Err(format!("anchor {n}: a distribution in a version {VERSION_RANGES} file")),
+            (_, None) => None,
+        };
+        anchors.push(Anchor { frame: a.frame, t, range: (a.lo as f32, a.hi as f32), eq });
     }
     Ok(Decoded { anchors, app_version: doc.app_version, git: doc.git })
 }

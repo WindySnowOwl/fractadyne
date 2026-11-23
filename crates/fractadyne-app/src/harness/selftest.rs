@@ -74,6 +74,7 @@ pub(crate) const GROUPS: &[&str] = &[
     "colour-box", "cycle-check", "export-contain", "honest-step", "julia-critical", "palette-fade", "retreat", "view-thumb",
     "width-independence", "coloring-matrix-quick", "color-sig", "coloring-reset", "julia-link", "fringe",
     "lanes", "hook", "transfer", "edges", "equipotentials", "relief", "equalize", "palette-oklab",
+    "tour-equalize", "video-equalize",
 ];
 
 /// Groups that run ONLY when named. ⛔Kept out of `GROUPS` so a bare `--selftest` never pays for
@@ -12434,6 +12435,160 @@ zoom = \"1e94\"
                     && areas.iter().all(|(_, eq, _)| *eq <= 1.25 / 16.0)
                     && areas.iter().any(|(t, _, fit)| *t == Transfer::Linear && *fit > 1.5 / 16.0),
             });
+        }
+
+        // ---- Equalize colors in tours and zoom videos (coloring plan C6b) ----
+        // The coloring both run under: smooth, point sampled, unity, no effects, 2 whole sweeps,
+        // Equalize colors at 100%; the session's restored after.
+        let c6b_setup = |app: &mut Self| {
+            app.coloring.hook.turn_off();
+            app.coloring.color_method = crate::ColorMethod::Smooth;
+            app.coloring.interior = Some(crate::InteriorMode::Solid);
+            app.coloring.use_custom_palette = false;
+            app.coloring.use_duotone = false;
+            app.coloring.use_binary = false;
+            app.coloring.palette_idx = fractadyne_color::preset_by_id("unity").unwrap_or(0);
+            app.coloring.palette_adjust = fractadyne_color::adjust::PaletteAdjust::NEUTRAL;
+            app.coloring.palette_oklab = false;
+            app.coloring.palette_aa = false;
+            app.coloring.iter_div = 1;
+            app.coloring.normalize_fit = false;
+            app.coloring.transfer = fractadyne_core::coloring::Transfer::Linear;
+            app.coloring.wrap = fractadyne_core::coloring::Wrap::Repeat;
+            app.coloring.steps = 0;
+            app.coloring.cycle = 0.25;
+            app.coloring.offset = 0.0;
+            app.coloring.equalize = 1.0;
+            app.effects.light = false;
+            app.effects.de = false;
+        };
+        if want("tour-equalize") {
+            let saved_spec = self.coloring_spec();
+            let saved = (self.fractal, self.julia_mode, self.dual, self.julia_c, self.viewport.clone(), self.render_cfg.max_iter, self.render_cfg.auto_iter);
+            let saved_more = (self.export.ss, self.export.width, self.watermark, self.show_location, self.effects.light, self.effects.de);
+            c6b_setup(self);
+            // The frame rebuilt from it must be the loop's: no mark on it, no location stamp.
+            (self.watermark, self.show_location) = (false, false);
+            let r = self.tour_equalize_check(device, queue);
+            (self.fractal, self.julia_mode, self.dual, self.julia_c, self.viewport, self.render_cfg.max_iter, self.render_cfg.auto_iter) = saved;
+            (self.export.ss, self.export.width, self.watermark, self.show_location, self.effects.light, self.effects.de) = saved_more;
+            self.apply_coloring_spec(&saved_spec);
+            let (result, pass) = match &r {
+                Ok(c) => (
+                    format!(
+                        "{} frames; the anchor file version {:?} with {} distributions; from it {} of 7 frames identical, frames 2..5 alone {} of 3; \
+                         the middle frame rebuilt with the anchors' blend {} bytes apart, with the first keyframe's distribution {:.0}% of its pixels apart, \
+                         the second's {:.0}%, none {:.0}%; Equalize colors off {:.1} levels from it",
+                        c.frames,
+                        c.file_version,
+                        c.file_distributions,
+                        c.from_file_same,
+                        c.shard_same,
+                        c.blend_bytes_apart,
+                        c.first_apart * 100.0,
+                        c.second_apart * 100.0,
+                        c.none_apart * 100.0,
+                        c.control_mean
+                    ),
+                    c.pass(),
+                ),
+                Err(e) => (format!("could not render the tour: {e}"), false),
+            };
+            push_check(&mut checks, &mut last_check_t, SelfCheck {
+                category: "Script",
+                name: "a tour's frames are equalized by their keyframes' distributions, blended at their time".into(),
+                params: "Seahorse Valley 2x to 200x in 2 s, 7 frames at 160x90, normalized, Equalize colors 100%, 2 sweeps, unity, point sampled; \
+                         rendered here, from --dump-norm-anchors' file, as frames 2..5 alone, and with Equalize colors off; frame 3 (halfway) rebuilt \
+                         through the frame loop's setup with the blend, either keyframe's distribution and none"
+                    .into(),
+                result,
+                threshold: "7 frames; the file version 2 with both distributions; every frame from the file and of the run identical; the blend's \
+                            rebuild identical (0 bytes), each other rebuild 5% or more of its pixels apart; off 2 levels or more apart"
+                    .into(),
+                pass,
+            });
+        }
+        if want("video-equalize") {
+            use fractadyne_core::coloring::Transfer;
+            let saved_spec = self.coloring_spec();
+            let saved = (self.fractal, self.julia_mode, self.dual, self.effects.light, self.effects.de);
+            self.fractal = FractalKind::Mandelbrot;
+            self.julia_mode = false;
+            self.dual = false;
+            c6b_setup(self);
+            let depths: Vec<f64> = (0..=40).map(|i| i as f64 * 0.5).collect();
+            // Halfway between distribution anchors (the furthest from either), and on one.
+            let mids = [10.125, 10.5, 15.375, 15.5];
+            let r = self.video_equalize_check(device, queue, (SX, SY), (640, 360), 20.0, 3_000, &depths, &mids, &[Transfer::Linear, Transfer::Log]);
+            (self.fractal, self.julia_mode, self.dual, self.effects.light, self.effects.de) = saved;
+            self.apply_coloring_spec(&saved_spec);
+            match r {
+                Ok((readings, colors)) => {
+                    let worst = readings.iter().map(|x| x.max).fold(0.0f64, f64::max);
+                    let worst_mean = readings.iter().map(|x| x.mean).fold(0.0f64, f64::max);
+                    let control = readings.iter().map(|x| x.control_max).fold(0.0f64, f64::max);
+                    let at = readings.iter().max_by(|a, b| a.max.total_cmp(&b.max)).map_or(0.0, |x| x.log2mag);
+                    let cat = readings.iter().max_by(|a, b| a.control_max.total_cmp(&b.control_max)).map_or(0.0, |x| x.log2mag);
+                    let ms = readings.iter().map(|x| x.ms).fold(0.0f64, f64::max);
+                    push_check(&mut checks, &mut last_check_t, SelfCheck {
+                        category: "Zoom video",
+                        name: "a frame's distribution read from its strips is the frame's own".into(),
+                        params: format!(
+                            "a dive into ({SX}, {SY}), 640x360 frames from 1x to 2^20, cap 3000; {} depths every half octave; each strip summarized as a video \
+                             summarizes it (8 values a block, by area); Equalize colors' remap over the frame's window from it against the assembled frame's \
+                             every escaped sample, linear and log, 2 sweeps; the blocks' means alone as the control",
+                            readings.len()
+                        ),
+                        result: format!(
+                            "the remap at most {worst:.3} of a sweep from the frame's own (at 2^{at}), {worst_mean:.4} on average over its samples at the \
+                             most; the control's {control:.3} (at 2^{cat}); a reading took {ms:.1} ms at most"
+                        ),
+                        threshold: "at most 0.04 of a sweep anywhere, 0.01 on average at every depth (the live view's own histogram: 0.013 to 0.056); \
+                                    the control 0.1 or more somewhere"
+                            .into(),
+                        pass: readings.len() == depths.len() && worst <= 0.04 && worst_mean <= 0.01 && control >= 0.1,
+                    });
+                    let line = |c: &crate::harness::video_eq_check::ColorsAt| {
+                        format!(
+                            "{} at 2^{}: {:.2}% apart (max {:.2} levels), control {:.0}%, the fullest of 16 colors {:.1}% equalized, {:.1}% by the frame's own distribution, {:.1}% fitted (log weight {})",
+                            c.transfer.key(),
+                            c.log2mag,
+                            c.apart * 100.0,
+                            c.worst,
+                            c.control * 100.0,
+                            c.fullest_eq * 100.0,
+                            c.fullest_own * 100.0,
+                            c.fullest_fit * 100.0,
+                            c.log_weight
+                        )
+                    };
+                    push_check(&mut checks, &mut last_check_t, SelfCheck {
+                        category: "Zoom video",
+                        name: "an equalized video frame between two octaves is its definition".into(),
+                        params: format!(
+                            "the same dive; frames at 2^{:?} (halfway between distribution anchors, a quarter octave apart, and on one), linear and log; \
+                             the assembler's colors with the video's map and the anchors' blended distribution against the CPU's reading of the palette at \
+                             each escaped sample's equalized position; the share at 0 as the control; equal areas over the window's samples",
+                            mids
+                        ),
+                        result: colors.iter().map(line).collect::<Vec<_>>().join("; "),
+                        threshold: "the dissolve's weight 0 or 1 (the CPU's reading applies); at most 0.5% of the escaped samples more than 1 level apart, \
+                                    the control 5% or more; equalized, the fullest color at most 1.25/16 (7.8%); fitted, above 1.5/16 (9.4%) somewhere"
+                            .into(),
+                        pass: colors.len() == 2 * mids.len()
+                            && colors.iter().all(|c| (c.log_weight == 0.0 || c.log_weight == 1.0) && c.apart <= 0.005 && c.control >= 0.05 && c.fullest_eq <= 1.25 / 16.0)
+                            && colors.iter().any(|c| c.fullest_fit > 1.5 / 16.0),
+                    });
+                }
+                Err(e) => push_check(&mut checks, &mut last_check_t, SelfCheck {
+                    category: "Zoom video",
+                    name: "a frame's distribution read from its strips is the frame's own".into(),
+                    params: format!("a dive into ({SX}, {SY}), 640x360 frames from 1x to 2^20"),
+                    result: format!("could not assemble: {e}"),
+                    threshold: "assembles".into(),
+                    pass: false,
+                }),
+            }
         }
 
         // ---- Blend in OKLab (coloring plan C7) ----

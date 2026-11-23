@@ -5337,8 +5337,11 @@ impl FractadyneApp {
         precomputed: Option<RecomputeResult>,
         base: Option<&fractadyne_gpu::ExportRequest>,
         work_budget: u64,
-    ) -> Option<(fractadyne_gpu::ExportResult, (f32, f32))> {
+    ) -> Option<(fractadyne_gpu::ExportResult, NormReading)> {
         const MAX_PX: u64 = 40_000_000; // single-texture color pass (~6K·6K); above → fall back
+        // Legacy render-order smoothing (see [`NormRange::Ema`]): α = 0.2 lags a range that only
+        // grows, and the distribution with it.
+        const NORM_EMA_ALPHA: f32 = 0.2;
         let ss = ss.max(1);
         let (iw, ih) = (width * ss, height * ss);
         let max_dim = device.limits().max_texture_dimension_2d;
@@ -5375,8 +5378,8 @@ impl FractadyneApp {
             // all-interior fallback: a frame with nothing escaped keeps the sequence's mapping
             // (the interior color is range-independent anyway) instead of silently flipping to
             // the un-normalized path for one frame, which was itself a mapping discontinuity.
-            NormRange::Fixed(r) => r,
-            NormRange::OwnFrame | NormRange::Ema(_) => {
+            NormRange::Fixed(r, _) => r,
+            NormRange::OwnFrame | NormRange::Anchor | NormRange::Ema(_) => {
                 // Escape-value range over escaped pixels (channel 0 = smooth iter; < 0 = interior).
                 let (mut lo, mut hi) = (f32::MAX, f32::MIN);
                 for px in iter.pixels.chunks_exact(4) {
@@ -5389,12 +5392,10 @@ impl FractadyneApp {
                 if hi < lo {
                     return None; // all-interior frame: nothing to normalize → normal path
                 }
-                // Legacy render-order smoothing (see [`NormRange::Ema`]): α = 0.2 lags a range
-                // that only grows. A single export (`OwnFrame`, and `Ema(None)`) uses the
-                // frame's own range, byte-identical to the original behavior.
-                const NORM_EMA_ALPHA: f32 = 0.2;
+                // A single export (`OwnFrame`, and `Ema(None)`) uses the frame's own range,
+                // byte-identical to the original behavior.
                 match norm {
-                    NormRange::Ema(Some((plo, phi))) => (
+                    NormRange::Ema(Some(((plo, phi), _))) => (
                         plo + NORM_EMA_ALPHA * (lo - plo),
                         phi + NORM_EMA_ALPHA * (hi - phi),
                     ),
@@ -5403,13 +5404,23 @@ impl FractadyneApp {
             }
         };
         self.apply_norm_range(&mut req, clo, chi);
-        // Equalize colors (C6) from this frame's own escape values, for a single export. A tour's
-        // frames keep their time-keyed or eased ranges and are not equalized here: a distribution
-        // measured frame by frame would flicker.
-        if self.coloring.equalize > 0.0 && matches!(norm, NormRange::OwnFrame | NormRange::Ema(None)) {
-            if let Some(q) = buffer_quantiles(&iter.pixels) {
-                self.apply_norm_eq(&mut req, clo, chi, &q);
-            }
+        // Equalize colors (C6): the distribution the map is equalized by. A single export's is the
+        // frame's own; a tour frame's the blend of its keyframes' (C6b: time-keyed like its range,
+        // so its colors do not flicker as a distribution measured frame by frame would); the legacy
+        // fallback's eased as its range is. A keyframe's measurement always takes it, for the frames
+        // around it to blend; the others only when the map is equalized.
+        let equalizing = self.coloring.equalize > 0.0;
+        let eq = match norm {
+            NormRange::Fixed(_, q) => q,
+            NormRange::Anchor => buffer_quantiles(&iter.pixels),
+            NormRange::OwnFrame => equalizing.then(|| buffer_quantiles(&iter.pixels)).flatten(),
+            NormRange::Ema(prev) => equalizing.then(|| buffer_quantiles(&iter.pixels)).flatten().map(|own| match prev.and_then(|p| p.1) {
+                Some(p) => fractadyne_core::coloring::quantiles_zip(&p, &own, |a, b| a + NORM_EMA_ALPHA * (b - a)),
+                None => own,
+            }),
+        };
+        if let Some(q) = &eq {
+            self.apply_norm_eq(&mut req, clo, chi, q);
         }
         // Pass 2 — color the buffer with the normalized cycle.
         let mut res = fractadyne_gpu::color_iter_buffer(device, queue, &req, &iter.pixels).ok()?;
@@ -5446,7 +5457,7 @@ impl FractadyneApp {
         res.tiles_chunked = iter.tiles_chunked;
         res.chunk_passes = iter.chunk_passes;
         res.max_dispatch_work = iter.max_dispatch_work;
-        Some((res, (clo, chi)))
+        Some((res, ((clo, chi), eq)))
     }
 
     /// Pass 1 of [`Self::render_export_normalized`]: the iteration buffer, split across the cards
@@ -5763,21 +5774,29 @@ impl FractadyneApp {
 // impl FractadyneApp - build_params - the live frame request, staged
 // ================================================================================================
 
+/// What a normalized render mapped its palette by: the escape-value range, and the distribution
+/// Equalize colors used (coloring plan C6), when it took one.
+pub(crate) type NormReading = ((f32, f32), Option<fractadyne_core::coloring::Quantiles>);
+
 /// How a normalized render decides the escape-value range the palette maps onto.
 #[derive(Clone, Copy)]
 pub(crate) enum NormRange {
     /// Measure this frame and use its own range — single exports (byte-identical to the
-    /// pre-enum behavior) and the tour's canonical keyframe-anchor measurements.
+    /// pre-enum behavior) — and, when the map is equalized, its own distribution.
     OwnFrame,
-    /// Measure, then EMA against the previous smoothed range (α = 0.2). The legacy tour
+    /// A tour's canonical keyframe-anchor measurement: as `OwnFrame`, and the frame's distribution
+    /// always (coloring plan C6b), for the frames around it to blend whatever they equalize by.
+    Anchor,
+    /// Measure, then EMA against the previous smoothed range (α = 0.2), and the distribution knot
+    /// by knot the same. The legacy tour
     /// behavior, kept ONLY as the fallback when no time-keyed anchor could be measured
     /// (an all-interior tour): it makes the mapping a function of RENDER HISTORY, which is
     /// exactly the order/resume/shard shimmer the anchors exist to remove.
-    Ema(Option<(f32, f32)>),
-    /// Apply exactly this range — the tour's time-keyed anchor interpolation
-    /// (`norm_anchor_range`), identical for a frame no matter when, where, or in what
-    /// order it renders.
-    Fixed((f32, f32)),
+    Ema(Option<NormReading>),
+    /// Apply exactly this range, and equalize by exactly this distribution — the tour's time-keyed
+    /// anchor interpolation (`norm_anchor_range`, `norm_anchor_eq`), identical for a frame no
+    /// matter when, where, or in what order it renders.
+    Fixed((f32, f32), Option<fractadyne_core::coloring::Quantiles>),
 }
 
 /// Deterministic work budget for one glitch-corrected render — the replacement for the

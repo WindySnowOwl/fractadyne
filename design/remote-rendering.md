@@ -26,20 +26,20 @@ decided and spends its effort on **bounding the tax** the earlier analysis feare
 
 Everything the farm needs that is *already built* — reuse it, do not sit beside it:
 
-| exists | where | what the farm does with it |
-|---|---|---|
-| frame ranges that tile exactly | `segment_range` `scripting.rs:1091`, `--segments N --segment-index K --dry-run` | the seed partition across clients (§5) |
-| `--resume` with structural vetting of the newest frames | `prepare_resume` `scripting.rs:3012`, `png_frame_size` `:364` | the per-folder truth; the farm adds a manifest over it (§6) |
-| order-independent palette normalization | time-keyed anchors `scripting.rs:3349–3414`, `norm_anchor_range` `:1069` | measured ONCE and shipped in the bundle (§9) |
-| child-process render with stdout progress | `start_tour_render` `ui/tour_render.rs:573`, `parse_frame_progress` `:34` | the client's worker is this, plus a per-frame line (§10) |
-| `render-status.txt` in the output folder | `write_render_status` `scripting.rs:459` | kept; the farm's status lives next to it |
-| versioned, digest-checked reference-orbit blob | `render/orbit_blob.rs` (`FDNORBIT` v2), `refcache_persist.rs` | the unit of shared computation, unchanged (§8) |
-| retry policy for a vanished destination | `write_retry_policy` `fractadyne-export/src/lib.rs:469` | both output modes write through it |
-| task invocations: no relaunch, no autosave, cache off | `TASK_FLAGS` `main.rs:715`, `is_task_invocation` `:710` | farm children are task invocations with `--orbit-cache` |
-| build identity | `version_string()` `sysinfo.rs`: version, build seq, `FRACT_GIT` (+`-dirty`) | the version gate (§9) |
-| free disk space per path | `sysinfo::free_disk_bytes` (Windows `GetDiskFreeSpaceExW`, Unix `statvfs`) | the storage monitor (§11.1) |
-| TLS stack already linked | `ureq` → `rustls` + `ring` + `webpki-roots` (update check) | SHA-256 and the Noise primitives without new crypto crates |
-| a remote job runner with the right security instincts | `scripts/field-agent.ps1`: parameters not commands, allow-listed flags, hash-verified builds, per-run config dir, idle-only, never kills what it did not start | the client's policy model, in Rust (§3, §10) |
+| exists                                                  | where                                                                                                                                                          | what the farm does with it                                  |
+| ------------------------------------------------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------- | ----------------------------------------------------------- |
+| frame ranges that tile exactly                          | `segment_range` `scripting.rs:1091`, `--segments N --segment-index K --dry-run`                                                                                | the seed partition across clients (§5)                      |
+| `--resume` with structural vetting of the newest frames | `prepare_resume` `scripting.rs:3012`, `png_frame_size` `:364`                                                                                                  | the per-folder truth; the farm adds a manifest over it (§6) |
+| order-independent palette normalization                 | time-keyed anchors `scripting.rs:3349–3414`, `norm_anchor_range` `:1069`                                                                                       | measured ONCE and shipped in the bundle (§9)                |
+| child-process render with stdout progress               | `start_tour_render` `ui/tour_render.rs:573`, `parse_frame_progress` `:34`                                                                                      | the client's worker is this, plus a per-frame line (§10)    |
+| `render-status.txt` in the output folder                | `write_render_status` `scripting.rs:459`                                                                                                                       | kept; the farm's status lives next to it                    |
+| versioned, digest-checked reference-orbit blob          | `render/orbit_blob.rs` (`FDNORBIT` v2), `refcache_persist.rs`                                                                                                  | the unit of shared computation, unchanged (§8)              |
+| retry policy for a vanished destination                 | `write_retry_policy` `fractadyne-export/src/lib.rs:469`                                                                                                        | both output modes write through it                          |
+| task invocations: no relaunch, no autosave, cache off   | `TASK_FLAGS` `main.rs:715`, `is_task_invocation` `:710`                                                                                                        | farm children are task invocations with `--orbit-cache`     |
+| build identity                                          | `version_string()` `sysinfo.rs`: version, build seq, `FRACT_GIT` (+`-dirty`)                                                                                   | the version gate (§9)                                       |
+| free disk space per path                                | `sysinfo::free_disk_bytes` (Windows `GetDiskFreeSpaceExW`, Unix `statvfs`)                                                                                     | the storage monitor (§11.1)                                 |
+| TLS stack already linked                                | `ureq` → `rustls` + `ring` + `webpki-roots` (update check)                                                                                                     | SHA-256 and the Noise primitives without new crypto crates  |
+| a remote job runner with the right security instincts   | `scripts/field-agent.ps1`: parameters not commands, allow-listed flags, hash-verified builds, per-run config dir, idle-only, never kills what it did not start | the client's policy model, in Rust (§3, §10)                |
 
 Not reused, deliberately: tiling one image across machines (TODO's recorded anti-pattern — FP32 is
 not bit-compatible across GPUs, seams land on filaments). The unit of work is a **frame**.
@@ -227,25 +227,25 @@ silent for 10 s). Protocol 8 (2026-10-29): a heartbeat says how long ago the run
 last advanced (`reference_work_ms`, from the render's `reference-work steps=N` lines), which the
 stall rule counts as progress (§5):
 
-| direction | kind | payload (all fields validated) | cap |
-|---|---|---|---|
-| K→C | `Hello` | `app_version`, `git`, `protocol`, client name, fingerprint, `gpu {adapter, backend, driver, max_storage_binding, max_texture_dim}`, `gputest` class, `policy` caps, `tunables` status line, `slots`, `clock` | 16 KiB |
-| C→K | `HelloAck` | controller identity, verdict (`admitted` / `waiting for approval` / refused + reason), which self-check items to run | 8 KiB |
-| K→C | `SelfCheck` | §9.1: per-item pass/fail + detail — device, child launch, output root, free space, built-in probe digest, link sample | 16 KiB |
-| C→K | `JobOpen` | `job_id`, bundle digest, bundle length (the bundle follows as a blob: script text, `RenderSettings`, normalize anchors, `--set` list) | 64 KiB + blob ≤ 16 MiB |
-| C→K | `Assign` | `job_id`, `run: [start, end)`, `size`, `fps`, `ss`, `prefix`, output mode, `stall_timeout_s`, `deadline_s` | 4 KiB |
-| C→K | `Cancel` | `job_id`, `run` or `*`, reason (`Reassigned`, `Paused`, `Stopped`) | 1 KiB |
-| C→K | `JobClose` | `job_id` | 1 KiB |
-| C→K | `OrbitPush` | *(Phase 3)* `job_id` + blob announcement: an orbit from the farm's verified pool, for the client's job cache | 4 KiB + blob ≤ 256 MiB |
-| K→C | `Heartbeat` | every 2 s: state, `job_id`, `run`, frames done in run, current frame index, frame started at, child pid alive, load, free bytes at output root / temp | 2 KiB |
-| K→C | `FrameDone` | `job_id`, `run_id`, `index`, blob announcement (`bytes`, `sha256`), `on_share` (no chunks follow; the controller reads it on the share), `render_ms`, `reference` (`fresh` / `cache` / `reused` / `none`) | 1 KiB |
-| K→C | `FrameFailed` | `job_id`, `index`, class (`Encode`, `Storage`, `Deadline`, `Gpu`), message (≤ 1 KiB) | 2 KiB |
-| K→C | `RunAborted` | `job_id`, `run`, done-up-to, reason (`UserCancel`, `Paused`, `DeviceLost`, `ChildCrash{exit}`, `Policy{what}`, `Version`) | 2 KiB |
-| K→C | `OrbitOffer` | *(Phase 3)* `job_id` + blob announcement: an orbit the client's renders built and cached (≥ 1 s to build) | 4 KiB + blob ≤ 256 MiB |
-| C→K | `DiagRequest` | items from a fixed list (`child_log_tail`, `handshake`, `heartbeats`) | 1 KiB |
-| K→C | `DiagReport` | the requested items, each truncated to its stated cap | 64 KiB |
-| C→K | `Keepalive` | every 5 s; a client whose read times out (30 s) knows the controller is gone, not quiet | — |
-| either | `Bye` | the sender is closing on purpose, and why (a removal, a refusal, a client leaving) — a client told `Bye` stops; one whose connection merely drops redials | 1 KiB |
+| direction | kind          | payload (all fields validated)                                                                                                                                                                               | cap                    |
+| --------- | ------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ | ---------------------- |
+| K→C       | `Hello`       | `app_version`, `git`, `protocol`, client name, fingerprint, `gpu {adapter, backend, driver, max_storage_binding, max_texture_dim}`, `gputest` class, `policy` caps, `tunables` status line, `slots`, `clock` | 16 KiB                 |
+| C→K       | `HelloAck`    | controller identity, verdict (`admitted` / `waiting for approval` / refused + reason), which self-check items to run                                                                                         | 8 KiB                  |
+| K→C       | `SelfCheck`   | §9.1: per-item pass/fail + detail — device, child launch, output root, free space, built-in probe digest, link sample                                                                                        | 16 KiB                 |
+| C→K       | `JobOpen`     | `job_id`, bundle digest, bundle length (the bundle follows as a blob: script text, `RenderSettings`, normalize anchors, `--set` list)                                                                        | 64 KiB + blob ≤ 16 MiB |
+| C→K       | `Assign`      | `job_id`, `run: [start, end)`, `size`, `fps`, `ss`, `prefix`, output mode, `stall_timeout_s`, `deadline_s`                                                                                                   | 4 KiB                  |
+| C→K       | `Cancel`      | `job_id`, `run` or `*`, reason (`Reassigned`, `Paused`, `Stopped`)                                                                                                                                           | 1 KiB                  |
+| C→K       | `JobClose`    | `job_id`                                                                                                                                                                                                     | 1 KiB                  |
+| C→K       | `OrbitPush`   | *(Phase 3)* `job_id` + blob announcement: an orbit from the farm's verified pool, for the client's job cache                                                                                                 | 4 KiB + blob ≤ 256 MiB |
+| K→C       | `Heartbeat`   | every 2 s: state, `job_id`, `run`, frames done in run, current frame index, frame started at, child pid alive, load, free bytes at output root / temp                                                        | 2 KiB                  |
+| K→C       | `FrameDone`   | `job_id`, `run_id`, `index`, blob announcement (`bytes`, `sha256`), `on_share` (no chunks follow; the controller reads it on the share), `render_ms`, `reference` (`fresh` / `cache` / `reused` / `none`)    | 1 KiB                  |
+| K→C       | `FrameFailed` | `job_id`, `index`, class (`Encode`, `Storage`, `Deadline`, `Gpu`), message (≤ 1 KiB)                                                                                                                         | 2 KiB                  |
+| K→C       | `RunAborted`  | `job_id`, `run`, done-up-to, reason (`UserCancel`, `Paused`, `DeviceLost`, `ChildCrash{exit}`, `Policy{what}`, `Version`)                                                                                    | 2 KiB                  |
+| K→C       | `OrbitOffer`  | *(Phase 3)* `job_id` + blob announcement: an orbit the client's renders built and cached (≥ 1 s to build)                                                                                                    | 4 KiB + blob ≤ 256 MiB |
+| C→K       | `DiagRequest` | items from a fixed list (`child_log_tail`, `handshake`, `heartbeats`)                                                                                                                                        | 1 KiB                  |
+| K→C       | `DiagReport`  | the requested items, each truncated to its stated cap                                                                                                                                                        | 64 KiB                 |
+| C→K       | `Keepalive`   | every 5 s; a client whose read times out (30 s) knows the controller is gone, not quiet                                                                                                                      | —                      |
+| either    | `Bye`         | the sender is closing on purpose, and why (a removal, a refusal, a client leaving) — a client told `Bye` stops; one whose connection merely drops redials                                                    | 1 KiB                  |
 
 Blobs (bundle, frames, orbits) are the only large payloads and all go through the chunk kind with
 an announced length and digest.
@@ -434,11 +434,11 @@ Orbit blobs in share mode live in `<root>/<job_id>/orbits/` and are indexed, not
 (`reference.rs:54–69`): 1 M iterations = 16 MB, the 7.4 M-sample cap of a large adapter = 118 MB.
 On gigabit that is 0.15 s and 1.1 s. What it costs to build:
 
-| view | precision | build | of which | source |
-|---|---|---|---|---|
-| 4.6e1105× | 3 738 bits | 6.2 s | pick 2.8 s, orbit 1.3 s, SA 2.1 s | `render.rs:651–654` |
-| 2.37e4000× | 13 353 bits | 405 s | SA 258 s, pick 114 s, orbit 33 s, BLA 0.4 s | `reference.rs:1730–1735` |
-| 9.98e60205× | 200 193 bits | 8 h 52 min cold, **3 s cached** | pick 5.93 h, orbit 2.93 h, BLA 1.5 s | design/orbit-cache.md |
+| view        | precision    | build                           | of which                                    | source                   |
+| ----------- | ------------ | ------------------------------- | ------------------------------------------- | ------------------------ |
+| 4.6e1105×   | 3 738 bits   | 6.2 s                           | pick 2.8 s, orbit 1.3 s, SA 2.1 s           | `render.rs:651–654`      |
+| 2.37e4000×  | 13 353 bits  | 405 s                           | SA 258 s, pick 114 s, orbit 33 s, BLA 0.4 s | `reference.rs:1730–1735` |
+| 9.98e60205× | 200 193 bits | 8 h 52 min cold, **3 s cached** | pick 5.93 h, orbit 2.93 h, BLA 1.5 s        | design/orbit-cache.md    |
 
 ⭐**The pick, not the orbit, dominates at depth — and the blob carries the pick's result** (the
 point it chose, its exact mantissa words, the precision, the tail for extension). BLA is O(n) and
@@ -493,12 +493,12 @@ Facts first. For `--render-tour`, precision is a pure function of the view (`pre
 octaves + 64, orbit at +128 headroom) and `max_iter` is a pure function of script + base. But
 four inputs are **not** carried by the script, and a farm turns each into a frame-to-frame flicker:
 
-| hazard | where | closure |
-|---|---|---|
-| **Version skew** | `version_string()`; `publish-share.ps1` refuses dirty builds | `Hello`/`HelloAck`: `APP_VERSION`, `FRACT_GIT` and `protocol` must be equal and `git` must not end in `-dirty` (decided, §13.4). Build sequence number is per machine and is *not* compared. Mismatch → client shown *version mismatch: has 0.3.0-beta.17 g3201b74, farm needs 0.3.0-beta.18 gabcdef0*, no work assigned. Dev override `--farm-allow-dirty`: both sides must pass it, it is logged, written to `job.toml`, and the panel shows *non-reproducible build*. |
-| **Tunables** | `--set`, `status_line()`; `--selftest` fails under any override | both sides `stock`, or the job carries the overrides explicitly and every client runs them. Instrument env vars (`FRACTADYNE_REF_ESCAPE_AT` …) count as off-stock and are refused. |
-| **Session-derived settings** | color method, stripe/trap, light, DE, normalize/log palette, interior, SA/BLA/glitch toggles, watermark, animations — `session.toml` (`main.rs:6487–6493`); and `[render].max_iter` falls back to the *session's* `max_iter.max(500000)` when the script omits it (`scripting.rs:3167–3170`) | the controller resolves all of them into **`RenderSettings`** (typed, allow-listed) in the bundle; the client writes a fresh session from `SessionState::default()` + those fields into the job's config dir. Palette and light animation are pinned off (as `--shot` pins them, `shot.rs:120`). |
-| **GPU-dependent inputs** | (a) orbit length cap from the adapter's storage-binding limit — ~7.4 M vs ~928 k samples (`init_orbit_len_cap`, `render.rs:471`): a deep non-escaping reference truncates differently per GPU; (b) normalize anchors measured at 480×270 on the local GPU (`scripting.rs:3349–3414`): "cross-GPU escape values differ"; (c) the burned-in watermark, rasterized at 40 points × the display's `pixels_per_point` (measured in Phase 0: captions, callouts and the HUD are NOT scale-dependent — they lay out at `size / ppp`, and a 1.5× and a pinned render were pixel-identical there); (d) FP32 itself: NVIDIA folds the df32 error-free transforms, AMD keeps them (`gputest.rs`, `design/bench-matrix.md:25–45`) | (a) the job's cap = the minimum over connected clients' `HelloAck.gpu.max_storage_binding`, passed to children (`--set ORBIT_LEN_CAP`, built in Phase 0) — ⚠which means the weakest card sets it for everyone: at corpus location 15 (918,520-sample reference) a 100,000 cap changed every pixel, so the panel must show the job's cap and which client set it; (b) anchors measured **once** by the controller (`--dump-norm-anchors`) and shipped in the bundle (`--norm-anchors FILE`) — this also closes TODO.md:9086 "distributed normalize coherence"; (c) farm children pin `pixels_per_point` = 2 (`cli::FARM_PIXELS_PER_POINT`; 2 keeps the mark a downscale up to 8K frames) and rebuild the mark at it; (d) **cannot be closed**, see below. |
+| hazard                       | where                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                | closure                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                  |
+| ---------------------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| **Version skew**             | `version_string()`; `publish-share.ps1` refuses dirty builds                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                         | `Hello`/`HelloAck`: `APP_VERSION`, `FRACT_GIT` and `protocol` must be equal and `git` must not end in `-dirty` (decided, §13.4). Build sequence number is per machine and is *not* compared. Mismatch → client shown *version mismatch: has 0.3.0-beta.17 g3201b74, farm needs 0.3.0-beta.18 gabcdef0*, no work assigned. Dev override `--farm-allow-dirty`: both sides must pass it, it is logged, written to `job.toml`, and the panel shows *non-reproducible build*.                                                                                                                                                                                                                                                                                 |
+| **Tunables**                 | `--set`, `status_line()`; `--selftest` fails under any override                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                      | both sides `stock`, or the job carries the overrides explicitly and every client runs them. Instrument env vars (`FRACTADYNE_REF_ESCAPE_AT` …) count as off-stock and are refused.                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                       |
+| **Session-derived settings** | color method, stripe/trap, light, DE, normalize/log palette, interior, SA/BLA/glitch toggles, watermark, animations — `session.toml` (`main.rs:6487–6493`); and `[render].max_iter` falls back to the *session's* `max_iter.max(500000)` when the script omits it (`scripting.rs:3167–3170`)                                                                                                                                                                                                                                                                                                                                                                                                                         | the controller resolves all of them into **`RenderSettings`** (typed, allow-listed) in the bundle; the client writes a fresh session from `SessionState::default()` + those fields into the job's config dir. Palette and light animation are pinned off (as `--shot` pins them, `shot.rs:120`).                                                                                                                                                                                                                                                                                                                                                                                                                                                         |
+| **GPU-dependent inputs**     | (a) orbit length cap from the adapter's storage-binding limit — ~7.4 M vs ~928 k samples (`init_orbit_len_cap`, `render.rs:471`): a deep non-escaping reference truncates differently per GPU; (b) normalize anchors measured at 480×270 on the local GPU (`scripting.rs:3349–3414`): "cross-GPU escape values differ"; (c) the burned-in watermark, rasterized at 40 points × the display's `pixels_per_point` (measured in Phase 0: captions, callouts and the HUD are NOT scale-dependent — they lay out at `size / ppp`, and a 1.5× and a pinned render were pixel-identical there); (d) FP32 itself: NVIDIA folds the df32 error-free transforms, AMD keeps them (`gputest.rs`, `design/bench-matrix.md:25–45`) | (a) the job's cap = the minimum over connected clients' `HelloAck.gpu.max_storage_binding`, passed to children (`--set ORBIT_LEN_CAP`, built in Phase 0) — ⚠which means the weakest card sets it for everyone: at corpus location 15 (918,520-sample reference) a 100,000 cap changed every pixel, so the panel must show the job's cap and which client set it; (b) anchors measured **once** by the controller (`--dump-norm-anchors`) and shipped in the bundle (`--norm-anchors FILE`) — this also closes TODO.md:9086 "distributed normalize coherence"; (c) farm children pin `pixels_per_point` = 2 (`cli::FARM_PIXELS_PER_POINT`; 2 keeps the mark a downscale up to 8K frames) and rebuild the mark at it; (d) **cannot be closed**, see below. |
 
 **FP32 across vendors.** Byte-identical goldens hold per GPU, not across GPUs (`selftest.rs:42–64`:
 strict on the blessing GPU, `GOLDEN_MEAN_CROSS_GPU` informational elsewhere; the "3080 all-black
@@ -530,17 +530,17 @@ Runs on every connect and reconnect, takes a few seconds, and is shown live in b
 Hard items refuse admission with the failing item named; soft items are recorded in the client row
 and in the diagnostics.
 
-| item | what runs | hard / soft |
-|---|---|---|
-| version | `APP_VERSION`, `FRACT_GIT` (no `-dirty`), `protocol` equal to the controller's | hard (§9) |
-| tunables | `status_line()` is `stock`, no instrument env vars — or exactly the job's overrides | hard |
-| device | a wgpu device on the client's chosen adapter (the `run_gputest_sweep` path, windowless); the `--gputest` primitives verdict → GPU class | hard if no device; class is soft |
-| child | `fractadyne --version` as a child from `current_exe()` must answer with the same identity | hard (a client whose exe moved or was replaced fails here, not mid-run) |
-| output root | share mode: a temp file written, read back and removed under `<root>/` | hard in share mode |
-| free space | `free_disk_bytes` at the output root (share) or the temp dir (stream); reported in `Hello` and every `Heartbeat` | soft here; the storage monitor (§11.1) acts on it |
-| probe | the built-in probe render, digest + image | soft; differing pixels shown; hard under `homogeneous` |
-| link | a 4 MiB blob each way, timed → the link rate §8's cost model uses | soft; a client under 50 Mb/s is flagged |
-| clock | skew between `Hello.clock` and the controller's; for log alignment only | soft; shown if > 5 s |
+| item        | what runs                                                                                                                               | hard / soft                                                             |
+| ----------- | --------------------------------------------------------------------------------------------------------------------------------------- | ----------------------------------------------------------------------- |
+| version     | `APP_VERSION`, `FRACT_GIT` (no `-dirty`), `protocol` equal to the controller's                                                          | hard (§9)                                                               |
+| tunables    | `status_line()` is `stock`, no instrument env vars — or exactly the job's overrides                                                     | hard                                                                    |
+| device      | a wgpu device on the client's chosen adapter (the `run_gputest_sweep` path, windowless); the `--gputest` primitives verdict → GPU class | hard if no device; class is soft                                        |
+| child       | `fractadyne --version` as a child from `current_exe()` must answer with the same identity                                               | hard (a client whose exe moved or was replaced fails here, not mid-run) |
+| output root | share mode: a temp file written, read back and removed under `<root>/`                                                                  | hard in share mode                                                      |
+| free space  | `free_disk_bytes` at the output root (share) or the temp dir (stream); reported in `Hello` and every `Heartbeat`                        | soft here; the storage monitor (§11.1) acts on it                       |
+| probe       | the built-in probe render, digest + image                                                                                               | soft; differing pixels shown; hard under `homogeneous`                  |
+| link        | a 4 MiB blob each way, timed → the link rate §8's cost model uses                                                                       | soft; a client under 50 Mb/s is flagged                                 |
+| clock       | skew between `Hello.clock` and the controller's; for log alignment only                                                                 | soft; shown if > 5 s                                                    |
 
 ## 10. The client (requirements 1, 11)
 
@@ -639,16 +639,16 @@ admitted, then starts); `fractadyne --farm-status DIR` prints `status.toml`. Fla
 rather than asks. Kept as EWMA + totals, shown in a metrics strip in the panel, sampled every 10 s
 into `farm/metrics.jsonl` (the `perf.jsonl` precedent) and summarized at the end in `status.toml`:
 
-| metric | how |
-|---|---|
-| frames/s, job and per client | verified `FrameDone` timestamps |
-| KB/s in / out, per connection and total | byte counters on each connection's reader and writer |
-| frame time per client: mean, median, last | `FrameDone.render_ms`, and wall time between assignment and arrival |
-| references fresh vs reused, per client | the `ref:` field of the `frame-done` line |
-| client idle % | time a client spent connected with no run assigned — the scheduler's own efficiency |
-| reassignments, stalls, deadlines, bad frames, strikes | event counters |
-| queue depth, ETA | pending frames / job frames/s |
-| disk: bytes written, free space at the output folder (and the share), per-client free space | `free_disk_bytes` every 10 s; `Heartbeat` fields |
+| metric                                                                                      | how                                                                                 |
+| ------------------------------------------------------------------------------------------- | ----------------------------------------------------------------------------------- |
+| frames/s, job and per client                                                                | verified `FrameDone` timestamps                                                     |
+| KB/s in / out, per connection and total                                                     | byte counters on each connection's reader and writer                                |
+| frame time per client: mean, median, last                                                   | `FrameDone.render_ms`, and wall time between assignment and arrival                 |
+| references fresh vs reused, per client                                                      | the `ref:` field of the `frame-done` line                                           |
+| client idle %                                                                               | time a client spent connected with no run assigned — the scheduler's own efficiency |
+| reassignments, stalls, deadlines, bad frames, strikes                                       | event counters                                                                      |
+| queue depth, ETA                                                                            | pending frames / job frames/s                                                       |
+| disk: bytes written, free space at the output folder (and the share), per-client free space | `free_disk_bytes` every 10 s; `Heartbeat` fields                                    |
 
 **Storage monitor.** Free space at the output folder is sampled every 10 s with
 `sysinfo::free_disk_bytes` — "if possible", as asked: the function returns `None` where the
@@ -700,6 +700,9 @@ the target → 1e30×, a caption, a palette blend) against the pre-change build 
 - an anchor file written once, applied to the full render and to the shards: pixel-identical;
   a different fps, an edited script, an edited value, both flags, a non-normalized tour and a
   missing file were each refused naming the difference; the same script with CRLF endings accepted;
+  (2026-11-23, coloring plan C6b: the file is version 2, each anchor's Equalize colors distribution
+  beside its range, exactly, ~2.4 KB an anchor; its cap and a bundle's anchors 8 MiB; a version-1
+  file still reads, and a tour that equalizes refuses it)
 - `--farm-child`: hidden for the whole run (window-class probe, 3 runs), exits by itself,
   `pixels_per_point 2` in its log, 19 `frame-done` lines whose sizes and SHA-256 matched the files
   (checked independently); against a plain render the only differing pixels are the 21×18 mark;
@@ -857,13 +860,13 @@ cheap below ~1e1000×, under the cache's 1 s threshold, so a shallower tour meas
 frames at 160×90 from 1e3990× to 2.37e4000× on the e4000 Misiurewicz spiral, max_iter 2,008,192;
 each reference 443,144 iterations at 13,481 bits, 7.1 MB.
 
-| run | machines | wall | job start → done | references | orbits shared | pixels vs the other run |
-|---|---|---|---|---|---|---|
-| sharing off | one local client (RTX 3080) | 321 s | — | 5 fresh | 0 | — |
-| sharing on | same, and the pre-build beside it | 130 s | — | 1 fresh, 4 cache | 2 | 0 differing, all 5 frames |
-| sharing off | local client + PLUTO (RX 6800 XT, LAN) | 203.2 s | 185.2 s | 5 fresh | 0 | — |
-| sharing on | same | 112.2 s | 100.0 s | 2 fresh, 3 cache | 1 | 0 differing, all 5 frames |
-| sharing on, repeat (`83876fb`) | same | 130.1 s | 101.6 s | 2 fresh, 3 cache | 1 | — |
+| run                            | machines                               | wall    | job start → done | references       | orbits shared | pixels vs the other run   |
+| ------------------------------ | -------------------------------------- | ------- | ---------------- | ---------------- | ------------- | ------------------------- |
+| sharing off                    | one local client (RTX 3080)            | 321 s   | —                | 5 fresh          | 0             | —                         |
+| sharing on                     | same, and the pre-build beside it      | 130 s   | —                | 1 fresh, 4 cache | 2             | 0 differing, all 5 frames |
+| sharing off                    | local client + PLUTO (RX 6800 XT, LAN) | 203.2 s | 185.2 s          | 5 fresh          | 0             | —                         |
+| sharing on                     | same                                   | 112.2 s | 100.0 s          | 2 fresh, 3 cache | 1             | 0 differing, all 5 frames |
+| sharing on, repeat (`83876fb`) | same                                   | 130.1 s | 101.6 s          | 2 fresh, 3 cache | 1             | —                         |
 
 *Wall* includes waiting for every client (`--min-clients`): 12–28 s for PLUTO, whose field agent
 picks the request up on its next poll — so compare the job's own time: 1.8× with sharing.

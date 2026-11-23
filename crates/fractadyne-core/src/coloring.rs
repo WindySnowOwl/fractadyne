@@ -765,6 +765,68 @@ pub fn quantiles_of_sorted(sorted: &[f32]) -> Option<Quantiles> {
     Some(q)
 }
 
+/// The [`Quantiles`] of weighted values (coloring plan C6b): `atoms` are `(value, weight)` pairs
+/// (reordered by value here), each standing for `weight` of the picture at its value. Knot i is
+/// the value by which share i / [`EQ_QUANTILES`] of the weight lies, each atom's weight centered on
+/// its value (the midpoint rule) and linear between atoms; the first knot is `lo` and the last
+/// `hi`, the lowest and highest values the atoms summarize. A zoom video reads a frame's
+/// distribution this way from its strips' block summaries, a block's values weighted by the area
+/// its texels cover in the frame. `None` when the atoms weigh nothing.
+pub fn quantiles_of_weighted(atoms: &mut [(f32, f64)], lo: f32, hi: f32) -> Option<Quantiles> {
+    atoms.sort_by(|a, b| a.0.total_cmp(&b.0));
+    let total: f64 = atoms.iter().map(|a| a.1).sum();
+    if !(total > 0.0) || !(hi >= lo) {
+        return None;
+    }
+    // Each atom's weight centered on it: the share below its middle.
+    let mut mid = Vec::with_capacity(atoms.len());
+    let mut acc = 0.0;
+    for a in atoms.iter() {
+        mid.push((acc + a.1 / 2.0) / total);
+        acc += a.1;
+    }
+    let mut q = [0.0f32; EQ_QUANTILES + 1];
+    q[0] = lo;
+    q[EQ_QUANTILES] = hi;
+    let (first, last) = (0, atoms.len() - 1);
+    let mut j = 0usize;
+    for (i, k) in q.iter_mut().enumerate().take(EQ_QUANTILES).skip(1) {
+        let s = i as f64 / EQ_QUANTILES as f64;
+        while j < mid.len() && mid[j] < s {
+            j += 1;
+        }
+        let between = |a: f64, b: f64, sa: f64, sb: f64| a + (b - a) * ((s - sa) / (sb - sa).max(1.0e-300)).clamp(0.0, 1.0);
+        *k = if j == first {
+            between(lo as f64, atoms[first].0 as f64, 0.0, mid[first])
+        } else if j > last {
+            between(atoms[last].0 as f64, hi as f64, mid[last], 1.0)
+        } else {
+            between(atoms[j - 1].0 as f64, atoms[j].0 as f64, mid[j - 1], mid[j])
+        } as f32;
+    }
+    // Never decreasing and inside [lo, hi], whatever rounding did.
+    let mut floor = lo;
+    for k in q.iter_mut() {
+        *k = k.clamp(floor, hi);
+        floor = *k;
+    }
+    Some(q)
+}
+
+/// Two held distributions combined knot by knot (coloring plan C6b): knot i of the result is
+/// `f(a[i], b[i])`, kept never decreasing. With `f` a blend, each share of the picture moves from
+/// its value in one to its value in the other, as the live view eases one reading into the next: a
+/// tour blends its keyframes' distributions so, and a zoom video its octaves'.
+pub fn quantiles_zip(a: &Quantiles, b: &Quantiles, f: impl Fn(f32, f32) -> f32) -> Quantiles {
+    let mut q = [0.0f32; EQ_QUANTILES + 1];
+    let mut floor = f32::NEG_INFINITY;
+    for (i, k) in q.iter_mut().enumerate() {
+        *k = f(a[i], b[i]).max(floor);
+        floor = *k;
+    }
+    q
+}
+
 /// The share of the escaped pixels at or below `v` under the held distribution `q`: the quantile
 /// function inverted, linear between its knots; 0 below the lowest value, 1 from the highest. A run
 /// of equal knots (many pixels at one value) counts whole once `v` reaches it.

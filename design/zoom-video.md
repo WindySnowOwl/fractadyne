@@ -96,16 +96,16 @@ integer texels back through `iterate_at` (`mandelbrot.wgsl:2094-2108`).
 
 What a strip needs:
 
-| Piece | Today | For a strip |
-|---|---|---|
-| Pixel offset | affine `step × (gx − w/2, h/2 − gy)` | `exp(−s·(gy + ½))·(cos, sin)(s·(gx + ½))`, `s = 2π/W`, scaled by the strip's outer radius. A strip spans ×2 in radius, so its `delta_exp` is the outer radius's exponent and the mantissa offset stays in [½, 1] — df32 holds it. Sample positions carry f32 angle error (~1e-7 of the radius ≈ 1e-4 texel), which moves a sample, never a result. A uniform `map_mode` selects it once per pixel, outside the loop. |
-| DE | the escape distance over one per-frame step (`de_log2`, `mandelbrot.wgsl:486-496`) | over the texel's own size `r·2π/W` (one log2 per pixel) |
-| Slope normals (relief) | screen frame | the c-plane frame (the same thing on an unrotated affine frame), so assembly can rotate them |
-| SA / BLA radius, reference pick span | from the view rectangle (`render.rs:1409-1419`, `3434-3443`; `core/src/reference.rs:2967`) | the strip's outer radius |
-| Reference | picked per view | the dive's center, once; deep strips extend it (`REUSE_MAX_DRIFT` path) |
-| Iteration cap | per view | per strip, **non-decreasing with depth**; a cap that changes between neighboring strips makes a capped/escaped seam along their shared row, so steps in the cap happen where the coloring hides them (or the dive uses one cap) |
-| Tiles, step-bounded passes, packing, SSAA | rectangular tiles of the output | unchanged: a strip is a rectangle of texels; SSAA jitters `(gx, gy)` before the mapping |
-| Glitch correction | gather list of texels | unchanged (texel coordinates) |
+| Piece                                     | Today                                                                                      | For a strip                                                                                                                                                                                                                                                                                                                                                                                                          |
+| ----------------------------------------- | ------------------------------------------------------------------------------------------ | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| Pixel offset                              | affine `step × (gx − w/2, h/2 − gy)`                                                       | `exp(−s·(gy + ½))·(cos, sin)(s·(gx + ½))`, `s = 2π/W`, scaled by the strip's outer radius. A strip spans ×2 in radius, so its `delta_exp` is the outer radius's exponent and the mantissa offset stays in [½, 1] — df32 holds it. Sample positions carry f32 angle error (~1e-7 of the radius ≈ 1e-4 texel), which moves a sample, never a result. A uniform `map_mode` selects it once per pixel, outside the loop. |
+| DE                                        | the escape distance over one per-frame step (`de_log2`, `mandelbrot.wgsl:486-496`)         | over the texel's own size `r·2π/W` (one log2 per pixel)                                                                                                                                                                                                                                                                                                                                                              |
+| Slope normals (relief)                    | screen frame                                                                               | the c-plane frame (the same thing on an unrotated affine frame), so assembly can rotate them                                                                                                                                                                                                                                                                                                                         |
+| SA / BLA radius, reference pick span      | from the view rectangle (`render.rs:1409-1419`, `3434-3443`; `core/src/reference.rs:2967`) | the strip's outer radius                                                                                                                                                                                                                                                                                                                                                                                             |
+| Reference                                 | picked per view                                                                            | the dive's center, once; deep strips extend it (`REUSE_MAX_DRIFT` path)                                                                                                                                                                                                                                                                                                                                              |
+| Iteration cap                             | per view                                                                                   | per strip, **non-decreasing with depth**; a cap that changes between neighboring strips makes a capped/escaped seam along their shared row, so steps in the cap happen where the coloring hides them (or the dive uses one cap)                                                                                                                                                                                      |
+| Tiles, step-bounded passes, packing, SSAA | rectangular tiles of the output                                                            | unchanged: a strip is a rectangle of texels; SSAA jitters `(gx, gy)` before the mapping                                                                                                                                                                                                                                                                                                                              |
+| Glitch correction                         | gather list of texels                                                                      | unchanged (texel coordinates)                                                                                                                                                                                                                                                                                                                                                                                        |
 
 Nothing in the iteration loop changes, so a strip texel computes exactly what a flat render
 computes at the same `c` — the property the validation in §5.3 leans on.
@@ -122,14 +122,14 @@ item for TODO.
 
 From KF's manual (https://mathr.co.uk/kf/manual.html):
 
-| Channel | Type | Meaning | Ours |
-|---|---|---|---|
-| `N` | uint32 | escape count + `IterationsBias`; `0xFFFFFFFF` = never escaped, 0 = not computed / glitch | integer part of the count, interior, glitch |
-| `N0`, `N1` | uint32 | low / high words when counts pass `0xFFFFFFFE` | same, for caps past 4.29e9 |
-| `NF` | float | fraction in [0, 1) | smooth fraction |
-| `T` | float | phase of the first escaped `z`, in turns | the final `arg z` the decomposition method keeps (aux.a) |
-| `DEX`, `DEY` | float | directional DE, magnitude ≈ 1 at a neighboring boundary pixel, pointing away from it | DE vector over the texel size, rotated into the strip frame (a c-plane vector `v` at offset `δc` is `v/δc·W/2π` in strip texels: the exponential map is `log`) |
-| `R`, `G`, `B` | half | linear color (optional) | our coloring, baked |
+| Channel       | Type   | Meaning                                                                                  | Ours                                                                                                                                                           |
+| ------------- | ------ | ---------------------------------------------------------------------------------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `N`           | uint32 | escape count + `IterationsBias`; `0xFFFFFFFF` = never escaped, 0 = not computed / glitch | integer part of the count, interior, glitch                                                                                                                    |
+| `N0`, `N1`    | uint32 | low / high words when counts pass `0xFFFFFFFE`                                           | same, for caps past 4.29e9                                                                                                                                     |
+| `NF`          | float  | fraction in [0, 1)                                                                       | smooth fraction                                                                                                                                                |
+| `T`           | float  | phase of the first escaped `z`, in turns                                                 | the final `arg z` the decomposition method keeps (aux.a)                                                                                                       |
+| `DEX`, `DEY`  | float  | directional DE, magnitude ≈ 1 at a neighboring boundary pixel, pointing away from it     | DE vector over the texel size, rotated into the strip frame (a c-plane vector `v` at offset `δc` is `v/δc·W/2π` in strip texels: the exponential map is `log`) |
+| `R`, `G`, `B` | half   | linear color (optional)                                                                  | our coloring, baked                                                                                                                                            |
 
 Header attributes `Iterations` and `IterationsBias`; KF also stores its location and settings.
 The `exr` crate (already used by `fractadyne-export`, `lib.rs:884-907`) writes uint and half
@@ -261,13 +261,13 @@ colored strip. Two things need care:
 
 ## 8. Phases
 
-| Phase | Builds | Gate |
-|---|---|---|
-| **E0** | Strip geometry, `map_mode` in `iterate_at` and `chunk_fe_at`, per-texel DE size, strip radius for SA/BLA/pick; `--render-expmap DIR` writing our raw strips (integer count + fraction, DE, normals, T) with a manifest | geometry unit test; strip = gather render; selftest/goldens unchanged; cost of the switched-off branch measured |
-| **E1** | KF-compatible EXR writer (N/N0/N1/NF/T/DEX/DEY, optional RGB, header) | F3 exp-map comparison; zoomasm 3.4 assembles our strips with no seams, right orientation |
-| **E2** | `--assemble`: reprojection, multi-sample, color pass over strips, rotation, timeline from a tour, ffmpeg pipe, audio mux, sliding strip window | assembled vs flat frames (§7); a 1e100 dive at 1080p60 end to end, timed against `--render-tour` of the same dive |
-| **E3** | App dialog, preview/scrub of the assembled video in the view, recolor from kept strips, farm and `--gpus` distribution by strips | uitest screens; a farm run with two GPUs |
-| **E4** (optional) | Tours that pan then dive: flat frames for the pan, strips for the dive, a crossfade where they meet | a "Script to current view" tour rendered both ways, compared |
+| Phase             | Builds                                                                                                                                                                                                                 | Gate                                                                                                              |
+| ----------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | ----------------------------------------------------------------------------------------------------------------- |
+| **E0**            | Strip geometry, `map_mode` in `iterate_at` and `chunk_fe_at`, per-texel DE size, strip radius for SA/BLA/pick; `--render-expmap DIR` writing our raw strips (integer count + fraction, DE, normals, T) with a manifest | geometry unit test; strip = gather render; selftest/goldens unchanged; cost of the switched-off branch measured   |
+| **E1**            | KF-compatible EXR writer (N/N0/N1/NF/T/DEX/DEY, optional RGB, header)                                                                                                                                                  | F3 exp-map comparison; zoomasm 3.4 assembles our strips with no seams, right orientation                          |
+| **E2**            | `--assemble`: reprojection, multi-sample, color pass over strips, rotation, timeline from a tour, ffmpeg pipe, audio mux, sliding strip window                                                                         | assembled vs flat frames (§7); a 1e100 dive at 1080p60 end to end, timed against `--render-tour` of the same dive |
+| **E3**            | App dialog, preview/scrub of the assembled video in the view, recolor from kept strips, farm and `--gpus` distribution by strips                                                                                       | uitest screens; a farm run with two GPUs                                                                          |
+| **E4** (optional) | Tours that pan then dive: flat frames for the pan, strips for the dive, a crossfade where they meet                                                                                                                    | a "Script to current view" tour rendered both ways, compared                                                      |
 
 E0 + E1 alone deliver the zoomasm workflow; E2 is where Fractadyne stops needing zoomasm.
 
@@ -323,18 +323,18 @@ E0 + E1 alone deliver the zoomasm workflow; E2 is where Fractadyne stops needing
 measured** from KF 2.15.5.2's own EXRs (flat and exponential-map, powers 2, 3 and 8) against a
 double-precision orbit — each rule below fits KF's every texel to f32 rounding:
 
-| | KF 2.15.5.2 | Our strips (§3) |
-|---|---|---|
-| Rows | exactly one octave in `H` rows (KF's "zoom size 2"); `H` free | conformal + 1 overlap row |
-| Texel `(x, y)` | `θ = 2πx/W`, `r = top·2^(−y/H)`: sampled at its CORNER; row 0 outermost; angle anticlockwise from +re (`ImagPointsUp: 0`, its default) | `θ = 2π(x+½)/W`, center |
-| Orientation | `ImagPointsUp: 1` writes the same strip mirrored in angle (texel `x` = default texel `(W − x) mod W`, so clockwise) with `DEY` negated, every other value equal (99.9% of texels identical after the mirror). **We write this one**: zoomasm then shows the dive the right way up | imaginary up |
-| `top` | the half diagonal of a flat `W×H` image at KF's zoom (`2/zoom·hypot(W,H)/H`; zoom = our magnification) | `R₀·2^-k` |
-| Escape | `\|zₙ\| > 10^(4/p)` (100, 21.5 … 3.16), `z₁ = c` | `\|z\| > 256` |
-| `N` | `n + 1024` (`IterationsBias`); interior `0xFFFFFFFF`, every other channel 0 | — |
-| `NF` | `1 − log_p(ln\|zₙ\| / ln ER)` | `1 − log_p(log2\|z\|)` |
-| `T` | `fract(p·arg zₙ / 2π)` — p times the angle, not the angle | `atan2/2π + ½` |
-| `DEX, DEY` | `\|z\|ln\|z\|/\|dz/dc\|` over a pixel, along `(Re u, −Im u)`, `u = z/(dz/dc)`: the plane's vector, imaginary DOWN (KF's default `ImagPointsUp: 0`), NOT rotated into the strip; a strip's pixel is `r·2/hypot(W,H)` | log2 DE over the texel, unit normal (plane, imaginary up) |
-| Header | layer attributes `Iterations`, `IterationsBias` (i32) | — |
+|                | KF 2.15.5.2                                                                                                                                                                                                                                                                       | Our strips (§3)                                           |
+| -------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | --------------------------------------------------------- |
+| Rows           | exactly one octave in `H` rows (KF's "zoom size 2"); `H` free                                                                                                                                                                                                                     | conformal + 1 overlap row                                 |
+| Texel `(x, y)` | `θ = 2πx/W`, `r = top·2^(−y/H)`: sampled at its CORNER; row 0 outermost; angle anticlockwise from +re (`ImagPointsUp: 0`, its default)                                                                                                                                            | `θ = 2π(x+½)/W`, center                                   |
+| Orientation    | `ImagPointsUp: 1` writes the same strip mirrored in angle (texel `x` = default texel `(W − x) mod W`, so clockwise) with `DEY` negated, every other value equal (99.9% of texels identical after the mirror). **We write this one**: zoomasm then shows the dive the right way up | imaginary up                                              |
+| `top`          | the half diagonal of a flat `W×H` image at KF's zoom (`2/zoom·hypot(W,H)/H`; zoom = our magnification)                                                                                                                                                                            | `R₀·2^-k`                                                 |
+| Escape         | `\|zₙ\| > 10^(4/p)` (100, 21.5 … 3.16), `z₁ = c`                                                                                                                                                                                                                                  | `\|z\| > 256`                                             |
+| `N`            | `n + 1024` (`IterationsBias`); interior `0xFFFFFFFF`, every other channel 0                                                                                                                                                                                                       | —                                                         |
+| `NF`           | `1 − log_p(ln\|zₙ\| / ln ER)`                                                                                                                                                                                                                                                     | `1 − log_p(log2\|z\|)`                                    |
+| `T`            | `fract(p·arg zₙ / 2π)` — p times the angle, not the angle                                                                                                                                                                                                                         | `atan2/2π + ½`                                            |
+| `DEX, DEY`     | `\|z\|ln\|z\|/\|dz/dc\|` over a pixel, along `(Re u, −Im u)`, `u = z/(dz/dc)`: the plane's vector, imaginary DOWN (KF's default `ImagPointsUp: 0`), NOT rotated into the strip; a strip's pixel is `r·2/hypot(W,H)`                                                               | log2 DE over the texel, unit normal (plane, imaginary up) |
+| Header         | layer attributes `Iterations`, `IterationsBias` (i32)                                                                                                                                                                                                                             | —                                                         |
 
 Because `ER^p = 10^4 > 256` at every power, the renderer's escape iterate is KF's or the one after;
 `zₙ₋₁^p = zₙ − c` makes the step back EXACT (carrying the smooth count across instead was off by
@@ -437,6 +437,19 @@ unchanged) and its row step as `map_s`.
   window ratio of 1000; a video DISSOLVES between the two across a factor of 2 either side
   (`log_weight`, through the color pass's palette fade), so a dive across it never jumps. Each
   anchor is logged (`[fd-assemble] palette anchor at 2^L: window LO to TOP (W% log)`).
+- **Equalize colors over a dive** (`--equalize`, coloring plan C6b, 2026-11-23): when the video
+  equalizes, each strip's 8×8 blocks also keep 8 values (`BLOCK_RANKS`, at mid-ranks by area), and
+  a strip its whole distribution (`WholeStrip`). A frame's distribution (`frame_quantiles`) is the
+  blocks the window reads, each weighted by its area in the frame, a strip the frame holds whole read
+  from its own; it is within 0.016 of a palette sweep of the assembled frame's exact one (the
+  seahorse dive to 2^20 at 640x360; the blocks' means alone 0.28), in under 5 ms. Distributions are
+  anchored every quarter octave (`EQ_ANCHOR_STEP`; an octave apart, frames halfway between drifted
+  from even) and blended knot by knot, geometrically, as the windows are; `apply_video_eq` equalizes
+  the map and the dissolve's form. The log's summary line counts them (`equalized by N
+  distributions every 0.25 octave`). ⚠An equalized video assembled again from its kept strips
+  matches the one-step render within 3 levels on under 0.1% of a frame's pixels, not exactly: a strip
+  file holds a count as whole iterations plus a fraction (`N`, `NF`), whose sum can differ from the
+  render's count in the last bit, and the equalized map's steep stretches show it.
 - **One step, no strips on disk** (`--render-zoom-video F`, §6.1's sliding window): the dive is
   planned as `--render-expmap` plans it (`plan_dive`, shared), its one reference built for the
   deepest strip, and each strip rendered (`render_strip`, the same path) just before the first frame
@@ -516,13 +529,13 @@ their session's 150,000 base iterations (caps 150,220 to 179,040), 2x anti-alias
   a 3.1 s dispatch on the desktop's card. The floatexp path's occupancy-sized, step-bounded tiles do
   it in 7 tiles at ≤240 ms a dispatch, and its full steps are df32 too:
 
-  | strip (cap) | mode 0, today | floatexp, BLA off | floatexp + BLA |
-  |---|---|---|---|
-  | 13 (153,080) | 3.1 s | — | 2.0 s |
-  | 34 (157,700) | 81 s | 26 s | 64 s |
-  | 45 (160,120) | 110 s | 29 s | 17 s |
-  | 53 (161,880) | 209 s | 41 s | 27 s |
-  | 70 (165,620) | 195 s | 45 s | 17 s |
+  | strip (cap)  | mode 0, today | floatexp, BLA off | floatexp + BLA |
+  | ------------ | ------------- | ----------------- | -------------- |
+  | 13 (153,080) | 3.1 s         | —                 | 2.0 s          |
+  | 34 (157,700) | 81 s          | 26 s              | 64 s           |
+  | 45 (160,120) | 110 s         | 29 s              | 17 s           |
+  | 53 (161,880) | 209 s         | 41 s              | 27 s           |
+  | 70 (165,620) | 195 s         | 45 s              | 17 s           |
 
   Judged against the bignum oracle (`naive_dwell_bf`, 237-294 bits, 300 texels a strip, the
   selftest's exact / sensitive / wrong; 75-80% of texels at 2^45-2^70 are SENSITIVE — the oracle's
@@ -645,14 +658,14 @@ ASSEMBLY (§8.4's first render hit both):
 Graphics memory for assembly (the window and the frame, 10^9 bytes), before → after, smooth
 coloring (the window's strips: 12 at 720p, 13-15 above):
 
-| video | strip | before | now | |
-|---|---|---|---|---|
-| 720p, 1x | 4614 × 511 | 0.5 GB | 0.2 GB | (measured: 113 MB window + 44 MB frame) |
-| 1080p, 2x | 13842 × 1529 | 4.7 GB | 1.3 GB | |
-| 4K, 2x | 27683 × 3055 | 20.3 GB (crashed, then refused) | 5.5 GB | fits the 10 GB 3080 |
-| 8K, 1x | 27683 × 3055 | 21.1 GB | 6.3 GB | |
-| 5K, 2x | 36911 × 4073 | refused: strip too wide | 10.4 GB, 2 pieces | needs a ~12 GB card |
-| 8K, 2x | 55366 × 6109 | refused: strip too wide | 23.5 GB, 2 pieces | |
+| video     | strip        | before                          | now               |                                         |
+| --------- | ------------ | ------------------------------- | ----------------- | --------------------------------------- |
+| 720p, 1x  | 4614 × 511   | 0.5 GB                          | 0.2 GB            | (measured: 113 MB window + 44 MB frame) |
+| 1080p, 2x | 13842 × 1529 | 4.7 GB                          | 1.3 GB            |                                         |
+| 4K, 2x    | 27683 × 3055 | 20.3 GB (crashed, then refused) | 5.5 GB            | fits the 10 GB 3080                     |
+| 8K, 1x    | 27683 × 3055 | 21.1 GB                         | 6.3 GB            |                                         |
+| 5K, 2x    | 36911 × 4073 | refused: strip too wide         | 10.4 GB, 2 pieces | needs a ~12 GB card                     |
+| 8K, 2x    | 55366 × 6109 | refused: strip too wide         | 23.5 GB, 2 pieces |                                         |
 
 With relief the window is as before (it reads everything); with distance coloring or glow, half.
 The dialog now counts the frame too and warns or refuses on the total.
