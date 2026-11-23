@@ -2247,6 +2247,7 @@ impl FractadyneApp {
         c.offset.to_bits().hash(&mut h);
         self.shown_method().gpu_id().hash(&mut h);
         c.transfer.hash(&mut h);
+        c.equalize.to_bits().hash(&mut h);
         c.normalize_live.hash(&mut h);
         c.normalize_fit.hash(&mut h);
         self.color_cycle().to_bits().hash(&mut h);
@@ -2255,13 +2256,16 @@ impl FractadyneApp {
 }
 
 /// A resolved palette-range mapping: the affine `cycle`/`offset` the shader applies, plus which
-/// transform to apply first (`mode` 0 = linear, 1 = log about `lo`).
+/// transform to apply first (`mode` 0 = linear, 1 = log about `lo`, the other curves of C2), and the
+/// histogram equalization mixed in after it (`eq`, coloring plan C6). A map with an `eq` measures
+/// from `lo` in every mode, a linear one too, its offset the user's alone.
 #[derive(Clone, Copy, Debug, PartialEq)]
 pub(crate) struct NormMap {
     pub(crate) cycle: f32,
     pub(crate) offset: f32,
     pub(crate) mode: u32,
     pub(crate) lo: f32,
+    pub(crate) eq: Option<fractadyne_gpu::Equalize>,
 }
 
 impl NormMap {
@@ -2271,9 +2275,16 @@ impl NormMap {
     /// C2) takes `v` to T(max(v − lo, 0)) (`Transfer::apply`, the shader's `transfer_of`); a linear
     /// one leaves it as it is.
     pub(crate) fn coord(&self, v: f64) -> f64 {
-        let x = match fractadyne_core::coloring::Transfer::from_gpu_id(self.mode) {
-            Some(t) if self.mode != 0 => t.apply(v - self.lo as f64),
-            _ => v,
+        let curve = fractadyne_core::coloring::Transfer::from_gpu_id(self.mode).filter(|_| self.mode != 0);
+        if let Some(e) = self.eq.filter(|e| e.share > 0.0 && e.sweeps > 0.0) {
+            // An equalized map (C6, the shader's `map_value`): from its floor, the remap mixed in.
+            let d = v - self.lo as f64;
+            let x = curve.map_or(d, |t| t.apply(d)) * self.cycle as f64;
+            return fractadyne_core::coloring::equalized(x, e.share as f64, e.sweeps as f64, &e.knots) + self.offset as f64;
+        }
+        let x = match curve {
+            Some(t) => t.apply(v - self.lo as f64),
+            None => v,
         };
         x * self.cycle as f64 + self.offset as f64
     }
@@ -2286,7 +2297,7 @@ impl NormMap {
     pub(crate) fn one_iteration_on(self) -> NormMap {
         // ⚠Every curve measures from its floor (C2), not only log: a square-root map shifted by a
         // cycle colored z = c 0.15 of a cycle off the set's c (2026-11-23).
-        if self.mode != 0 {
+        if self.mode != 0 || self.eq.is_some() {
             NormMap { lo: self.lo - 1.0, ..self }
         } else {
             NormMap { offset: self.offset + self.cycle, ..self }
@@ -2335,7 +2346,7 @@ impl FractadyneApp {
     }
 
     pub(crate) fn live_norm_cycle_offset(&self, vi: usize) -> Option<NormMap> {
-        self.live_norm_window(vi).map(|(mn, mx)| self.norm_map_for(mn, mx))
+        self.live_norm_window(vi).map(|(mn, mx)| self.norm_map_view(vi, mn, mx))
     }
 
     /// Whether the dual view's Julia pane is colored with the set's palette map, one iteration on
@@ -2362,6 +2373,7 @@ impl FractadyneApp {
                 offset: self.coloring.offset,
                 mode: 0,
                 lo: 0.0,
+                eq: None,
             })
         };
         let vi = (self.dual && julia) as usize;
@@ -2575,14 +2587,41 @@ impl FractadyneApp {
     pub(crate) fn norm_map_curve(&self, mn: f32, mx: f32, t: fractadyne_core::coloring::Transfer) -> NormMap {
         let sweeps = 0.5 + self.coloring.cycle * 6.0;
         let span = curve_span(mx - mn, t);
-        NormMap { cycle: sweeps / span, offset: self.coloring.offset, mode: t.gpu_id(), lo: mn }
+        NormMap { cycle: sweeps / span, offset: self.coloring.offset, mode: t.gpu_id(), lo: mn, eq: None }
     }
 
     /// [`Self::norm_map_for`]'s LINEAR mapping of `[mn, mx]`.
     pub(crate) fn norm_map_linear(&self, mn: f32, mx: f32) -> NormMap {
         let sweeps = 0.5 + self.coloring.cycle * 6.0;
         let c = sweeps / (mx - mn).max(1.0e-6);
-        NormMap { cycle: c, offset: self.coloring.offset - mn * c, mode: 0, lo: 0.0 }
+        NormMap { cycle: c, offset: self.coloring.offset - mn * c, mode: 0, lo: 0.0, eq: None }
+    }
+
+    /// [`Self::norm_map_for`] with view `vi`'s Equalize colors (coloring plan C6): its held
+    /// distribution (`Perf::eq_shown`) remapped over the window, when one is held.
+    pub(crate) fn norm_map_view(&self, vi: usize, mn: f32, mx: f32) -> NormMap {
+        self.equalized_map(self.norm_map_for(mn, mx), mn, mx, self.perf.eq_shown[vi.min(1)].as_deref())
+    }
+
+    /// `m`, the normalized map of the window `[mn, mx]`, with Equalize colors mixed in (coloring
+    /// plan C6): the share asked for, of the remap of the escape values' distribution `q` over the
+    /// window's fitted coordinate (`fractadyne_core::coloring::eq_knots`). As it is for a share of
+    /// 0, a method other than Smooth (the trap's fit has its own window), or no distribution. A
+    /// linear map is rewritten about its floor (the same colors), which an equalized map needs.
+    pub(crate) fn equalized_map(&self, m: NormMap, mn: f32, mx: f32, q: Option<&fractadyne_core::coloring::Quantiles>) -> NormMap {
+        let share = self.coloring.equalize;
+        let Some(q) = q.filter(|_| share > 0.0 && mx > mn && self.shown_method() == crate::ColorMethod::Smooth) else {
+            return m;
+        };
+        let t = norm_map_transfer(mn, mx, self.coloring.transfer);
+        let sweeps = 0.5 + self.coloring.cycle * 6.0;
+        let base = if m.mode == 0 {
+            NormMap { cycle: sweeps / (mx - mn).max(1.0e-6), offset: self.coloring.offset, mode: 0, lo: mn, eq: None }
+        } else {
+            m
+        };
+        let knots = fractadyne_core::coloring::eq_knots(q, mn as f64, mx as f64, t);
+        NormMap { eq: Some(fractadyne_gpu::Equalize { share, sweeps, knots }), ..base }
     }
 }
 
@@ -4670,6 +4709,7 @@ impl FractadyneApp {
             offset: self.export_map(julia).offset,
             norm_mode: self.export_map(julia).mode,
             norm_lo: self.export_map(julia).lo,
+            equalize: self.export_map(julia).eq,
             palette_fade: fractadyne_gpu::PaletteFade::default(),
             aa_palette: self.palette_aa(),
             aa_sample: 0,
@@ -4717,6 +4757,7 @@ pub(crate) fn params_to_request(p: &fractadyne_gpu::MandelbrotParams) -> fractad
         // path stays on the classic linear map regardless of the session's setting.
         norm_mode: 0,
         norm_lo: 0.0,
+        equalize: None,
         palette_fade: fractadyne_gpu::PaletteFade::default(),
         aa_palette: fractadyne_gpu::PaletteAa::Off,
         aa_sample: 0,
@@ -4781,6 +4822,7 @@ pub(crate) fn params_to_request_exact(p: &fractadyne_gpu::MandelbrotParams, jitt
     fractadyne_gpu::ExportRequest {
         norm_mode: p.norm_mode,
         norm_lo: p.norm_lo,
+        equalize: p.equalize,
         aa_palette: p.aa_palette,
         aa_sample: p.aa_sample,
         custom: p.custom.clone(),
@@ -5248,6 +5290,27 @@ impl FractadyneApp {
         }
     }
 
+    /// Equalize colors on a normalized export's map ([`Self::apply_norm_range`]'s, coloring plan C6):
+    /// the share asked for, of the remap of `q`, the frame's own escape values, over the window
+    /// `[clo, chi]` and its curve (the user's, as the export's map: never switched by the range). A
+    /// linear map is rewritten about its floor, the same colors. Smooth only.
+    pub(crate) fn apply_norm_eq(&self, req: &mut fractadyne_gpu::ExportRequest, clo: f32, chi: f32, q: &fractadyne_core::coloring::Quantiles) {
+        let share = self.coloring.equalize;
+        if !(share > 0.0) || self.coloring.color_method != crate::ColorMethod::Smooth || !(chi > clo) {
+            return;
+        }
+        let t = self.coloring.transfer;
+        let sweeps = 0.5 + self.coloring.cycle * 6.0;
+        if t == fractadyne_core::coloring::Transfer::Linear {
+            req.norm_mode = 0;
+            req.norm_lo = clo;
+            req.cycle = sweeps / (chi - clo).max(1.0);
+            req.offset = self.coloring.offset;
+        }
+        let knots = fractadyne_core::coloring::eq_knots(q, clo as f64, chi as f64, t);
+        req.equalize = Some(fractadyne_gpu::Equalize { share, sweeps, knots });
+    }
+
     /// **Auto-normalized** export: color the smooth-iter field with the palette CYCLE mapped to the
     /// frame's actual escape-value range, instead of the fixed `cycle`. At extreme depth the
     /// smooth-iter counts are ~1e5–1e6 and vary steeply, so a fixed cycle aliases a correct escape
@@ -5340,6 +5403,14 @@ impl FractadyneApp {
             }
         };
         self.apply_norm_range(&mut req, clo, chi);
+        // Equalize colors (C6) from this frame's own escape values, for a single export. A tour's
+        // frames keep their time-keyed or eased ranges and are not equalized here: a distribution
+        // measured frame by frame would flicker.
+        if self.coloring.equalize > 0.0 && matches!(norm, NormRange::OwnFrame | NormRange::Ema(None)) {
+            if let Some(q) = buffer_quantiles(&iter.pixels) {
+                self.apply_norm_eq(&mut req, clo, chi, &q);
+            }
+        }
         // Pass 2 — color the buffer with the normalized cycle.
         let mut res = fractadyne_gpu::color_iter_buffer(device, queue, &req, &iter.pixels).ok()?;
         // Box-downsample the supersampled colored buffer to the output resolution.
@@ -6258,6 +6329,14 @@ impl FractadyneApp {
                             same_view,
                             hold_broken,
                         );
+                        // Equalize colors (C6): the distribution, under the same decision as the
+                        // window. A reading of part of a walk is taken only while nothing is held:
+                        // its escapes so far are the lowest, not the picture's.
+                        if read_complete || self.perf.eq_fed[vb].is_none() {
+                            if let Some(q) = nhist.as_ref().and_then(|h| h.quantiles(mn, mx)) {
+                                self.perf.eq_fed[vb] = eq_feed(self.perf.eq_fed[vb].take(), q, nfeed, hold_broken);
+                            }
+                        }
                         // The next frame's fine histogram is measured from this reading's floor.
                         self.perf.norm_base[vb] = mn.max(0.0);
                         if let Some((lo, hi)) = self.perf.norm_pal[vb].filter(|_| self.perf.norm_pal[vb] != fed_before) {
@@ -6291,6 +6370,9 @@ impl FractadyneApp {
             // lands every few frames then reaches the screen as a drift rather than a snap
             // (`norm_glide_step`). This runs every frame, not only on reading frames, so the step
             // is one frame's worth however sparsely the readings arrive.
+            // …and the distribution Equalize colors shows, gliding to the fed one as the window does.
+            self.perf.eq_shown[vb] =
+                eq_glide(self.perf.eq_shown[vb].take(), self.perf.eq_fed[vb].as_deref(), norm_snap, (self.perf.last_dt_ms / 1000.0) as f32);
             self.perf.norm_shown[vb] = self
                 .perf
                 .norm_pal[vb]
@@ -7415,8 +7497,8 @@ impl FractadyneApp {
             self.norm_pace(vs),
         );
         let drawn = self.perf.norm_drawn[vs].map(|d| d.win);
-        let nm = drawn.map_or(NormMap { cycle: self.color_cycle(), offset: self.coloring.offset, mode: 0, lo: 0.0 }, |(mn, mx)| {
-            self.norm_map_for(mn, mx)
+        let nm = drawn.map_or(NormMap { cycle: self.color_cycle(), offset: self.coloring.offset, mode: 0, lo: 0.0, eq: None }, |(mn, mx)| {
+            self.norm_map_view(vs, mn, mx)
         });
         // ⭐…with its PHASE CARRIED: a window that slides with the zoom keeps every color where it
         // was, and a view at rest gives the carried phase back (`phase_carry_step`).
@@ -7620,6 +7702,7 @@ impl FractadyneApp {
             offset: offset_eff,
             norm_mode: nm.mode,
             norm_lo: nm.lo,
+            equalize: nm.eq,
             palette_fade,
             aa_palette: self.palette_aa(),
             lut,
@@ -12342,6 +12425,61 @@ pub(crate) fn norm_glide_step(shown: Option<(f32, f32)>, target: (f32, f32), sna
     next
 }
 
+/// One reading's distribution fed to Equalize colors' held one (coloring plan C6), under the window's
+/// decision ([`NormFeed`]): adopted outright at rest or when a hold is broken, eased in knot by knot
+/// while moving (the window's 0.3), left alone on a hold.
+pub(crate) fn eq_feed(
+    held: Option<Box<fractadyne_core::coloring::Quantiles>>,
+    reading: fractadyne_core::coloring::Quantiles,
+    nfeed: NormFeed,
+    hold_broken: bool,
+) -> Option<Box<fractadyne_core::coloring::Quantiles>> {
+    match (nfeed, held) {
+        (NormFeed::Hold, Some(h)) if !hold_broken => Some(h),
+        (NormFeed::Chase, Some(mut h)) => {
+            for (a, b) in h.iter_mut().zip(reading.iter()) {
+                *a += 0.3 * (*b - *a);
+            }
+            Some(h)
+        }
+        _ => Some(Box::new(reading)),
+    }
+}
+
+/// One frame of the distribution Equalize colors SHOWS (coloring plan C6), toward the fed one: each
+/// knot closes on its target with the window's time constant ([`GLIDE_TAU_S`]), so a reading's step
+/// reaches the screen as a drift; taken outright on a snap (the window's own), when nothing was
+/// shown, and once within half a percent of the distribution's width, so it lands. `None` with
+/// nothing fed, as the window is.
+pub(crate) fn eq_glide(
+    shown: Option<Box<fractadyne_core::coloring::Quantiles>>,
+    fed: Option<&fractadyne_core::coloring::Quantiles>,
+    snap: bool,
+    dt_s: f32,
+) -> Option<Box<fractadyne_core::coloring::Quantiles>> {
+    let fed = fed?;
+    let Some(mut q) = shown.filter(|_| !snap) else { return Some(Box::new(*fed)) };
+    let width = (fed[fed.len() - 1] - fed[0]).abs().max(1.0);
+    let a = 1.0 - (-dt_s.clamp(0.0, 0.1) / GLIDE_TAU_S).exp();
+    let mut far = 0.0f32;
+    for (s, t) in q.iter_mut().zip(fed.iter()) {
+        *s += (*t - *s) * a;
+        far = far.max((*t - *s).abs());
+    }
+    if far <= width * 0.005 {
+        return Some(Box::new(*fed));
+    }
+    // Never decreasing, whatever rounding did.
+    for i in 1..q.len() {
+        q[i] = q[i].max(q[i - 1]);
+    }
+    Some(q)
+}
+
+#[cfg(test)]
+#[path = "../tests/unit/render/eq_feed_tests.rs"]
+mod eq_feed_tests;
+
 /// Time constant of the palette window's glide, seconds: a reading's step is two-thirds closed in
 /// this long. Short enough to track a zoom's own drift within a few percent of the window (the
 /// user's 2026-10-25 dive grew its window ~8% a second), long enough that a step reads as a drift.
@@ -12503,7 +12641,7 @@ pub(crate) fn palette_fade_step(
     if let Some((prev, was_normalized, sig)) = st.last {
         if sig != user_sig {
             fade = None;
-        } else if was_normalized != normalized || prev.mode != map.mode {
+        } else if was_normalized != normalized || prev.mode != map.mode || prev.eq.is_some() != map.eq.is_some() {
             fade = Some((prev, 1.0));
         } else if normalized
             && fade.is_none_or(|(_, w)| w < 0.5)
@@ -12518,6 +12656,7 @@ pub(crate) fn palette_fade_step(
         offset: m.offset,
         mode: m.mode,
         lo: m.lo,
+        equalize: m.eq,
     });
     (PaletteFadeState { last: Some((map, normalized, user_sig)), fade }, out)
 }
@@ -12584,7 +12723,7 @@ pub(crate) fn phase_carry_step(
     // (2026-11-23, C2's curves).
     let coord = |m: &NormMap, v: f64| m.coord(v);
     let mut debt = match st.last {
-        Some((prev, _, sig)) if sig == user_sig && prev.mode == map.mode => {
+        Some((prev, _, sig)) if sig == user_sig && prev.mode == map.mode && prev.eq.is_some() == map.eq.is_some() => {
             let mid = (w.0 as f64 + w.1 as f64) * 0.5;
             let d = coord(&prev, mid) + st.debt as f64 - coord(&map, mid);
             (d - d.round()) as f32
@@ -12721,6 +12860,17 @@ pub(crate) fn norm_window_feed(
 #[cfg(test)]
 #[path = "../tests/unit/render/norm_window.rs"]
 mod norm_window;
+
+/// The escaped values' quantile function in an iteration buffer (channel 0 = smooth count, < 0 the
+/// inside; coloring plan C6), from every pixel up to 2M of them and an even stride past that.
+pub(crate) fn buffer_quantiles(pixels: &[f32]) -> Option<fractadyne_core::coloring::Quantiles> {
+    const MAX_SAMPLES: usize = 2_000_000;
+    let n = pixels.len() / 4;
+    let stride = n.div_ceil(MAX_SAMPLES).max(1);
+    let mut v: Vec<f32> = pixels.chunks_exact(4).step_by(stride).map(|p| p[0]).filter(|x| *x >= 0.0 && x.is_finite()).collect();
+    v.sort_unstable_by(f32::total_cmp);
+    fractadyne_core::coloring::quantiles_of_sorted(&v)
+}
 
 /// The escape range a reading may feed to the palette window.
 ///

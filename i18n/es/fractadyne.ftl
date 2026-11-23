@@ -2885,6 +2885,12 @@ panel-scale-hover =
 
     Un rango muy sesgado toma el logaritmo incluso con Lineal.
 panel-scale-off-hover = Se aplica una vez que la paleta se ajusta al rango de la vista: activa «Normalizar colores profundos» o «Ajustar siempre el rango».
+panel-equalize = Ecualizar
+panel-equalize-hover =
+    Reparte la paleta para que cada color cubra más o menos la misma parte de la imagen, según cuánto de la imagen llena cada intervalo de recuentos de escape (coloreado por histograma). Úsalo cuando un color inunda la vista y el detalle queda apretado en una franja estrecha de los demás.
+
+    Al 0 % la curva de Escala coloca los colores sola. Al 100 % los filamentos finos junto al conjunto, que cubren pocos píxeles, pueden quedar de un solo color; algo menos los conserva.
+panel-equalize-method-hover = Ecualizar reparte el recuento de escape, así que se aplica con Iteración suave.
 # The curves the Scale list offers.
 transfer-linear = Lineal
 transfer-sqrt = Raíz cuadrada

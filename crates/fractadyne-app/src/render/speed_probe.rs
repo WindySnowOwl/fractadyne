@@ -405,6 +405,7 @@ fn plan_request(plan: Plan) -> (fractadyne_gpu::ExportRequest, u32) {
         offset: 0.0,
         norm_mode: 0,
         norm_lo: 0.0,
+        equalize: None,
         palette_fade: fractadyne_gpu::PaletteFade::default(),
         aa_palette: fractadyne_gpu::PaletteAa::Off,
         aa_sample: 0,

@@ -2976,6 +2976,12 @@ panel-scale-hover =
 
     Mocno skośny zakres bierze logarytm nawet przy Liniowej.
 panel-scale-off-hover = Działa, gdy paleta jest dopasowana do zakresu widoku: włącz „Normalizuj głębokie kolory” lub „Zawsze dopasuj zakres”.
+panel-equalize = Wyrównaj
+panel-equalize-hover =
+    Rozkłada paletę tak, by każdy kolor pokrywał mniej więcej tę samą część obrazu, zależnie od tego, ile obrazu wypełnia każdy zakres liczby ucieczek (barwienie histogramem). Przydaje się, gdy jeden kolor zalewa widok, a szczegóły są ściśnięte w wąskim pasie pozostałych.
+
+    Przy 0% kolory rozmieszcza sama krzywa Skali. Przy 100% cienkie włókna przy zbiorze, które pokrywa niewiele pikseli, mogą przybrać jeden kolor; nieco mniej je zachowuje.
+panel-equalize-method-hover = Wyrównanie rozkłada liczbę ucieczek, więc działa z Gładką iteracją.
 # The curves the Scale list offers.
 transfer-linear = Liniowa
 transfer-sqrt = Pierwiastek kwadratowy

@@ -2804,6 +2804,12 @@ panel-scale-hover =
 
     範圍嚴重偏斜時，即使選線性也會採用對數。
 panel-scale-off-hover = 調色盤貼合視圖範圍後生效：請開啟「正規化深層色彩」或「一律貼合範圍」。
+panel-equalize = 均衡
+panel-equalize-hover =
+    依逃逸次數的各個區間佔畫面的多少來鋪開調色盤，使每種顏色涵蓋畫面中大致相同的份額（直方圖著色）。當一種顏色淹沒畫面、細節擠在其他顏色的一條窄帶裡時使用。
+
+    0% 時只由刻度曲線安放顏色。100% 時，集合旁像素很少的細絲可能變成同一種顏色；稍低一些可保留它們。
+panel-equalize-method-hover = 均衡鋪開的是逃逸次數，因此適用於平滑疊代。
 # The curves the Scale list offers.
 transfer-linear = 線性
 transfer-sqrt = 平方根

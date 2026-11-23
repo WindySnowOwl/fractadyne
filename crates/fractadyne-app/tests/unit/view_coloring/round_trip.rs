@@ -71,6 +71,7 @@ fn scrambled() -> ViewColoring {
         palette_contrast: 0.8,
         palette_saturation: 0.3,
         julia_linked: true,
+        equalize: 0.6,
     }
 }
 
@@ -144,6 +145,8 @@ fn variants() -> Vec<ViewColoring> {
     v.push(ViewColoring { method: ColorMethod::Stripe, palette_aa: false, ..d.clone() });
     // The palette map's curve (under a fitted range, where it shows), the wrap and the steps (C2).
     v.push(ViewColoring { normalize_fit: true, transfer: fractadyne_core::coloring::Transfer::Sqrt, ..d.clone() });
+    // Equalize colors (C6): written under Smooth, away from 0.
+    v.push(ViewColoring { normalize_fit: true, equalize: 0.75, ..d.clone() });
     v.push(ViewColoring { wrap: fractadyne_core::coloring::Wrap::Mirror, ..d.clone() });
     v.push(ViewColoring { steps: 8, ..d.clone() });
     // The palette's brightness, contrast and saturation, each alone and all three.

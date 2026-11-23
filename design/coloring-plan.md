@@ -1,6 +1,6 @@
 # Coloring methods: implementation plan
 
-Status: **plan (2026-11-08); phase A done (A1–A10), B1, B1b, B9 and B10 done (the coloring matrix, its live method tour, every lane as NumPy arrays, a custom coloring hook), B2 done (what a frame accumulates is a `StatSet`, apart from the method shown), B3 done (in floatexp a stripe, triangle or trap frame carries the whole G-buffer), B4 to B7 done (one settings model, the method list, the method sheet, the inside and a second LUT), C1, C2, C3, C4, C5, C8, C9, C10 and C11 done (a solid inside in any color; the palette map's curves, wraps and steps; edge shading by the distance; the relief light's slope from the distance and a highlight; the inside's palette fitted to its range; the palette anti-aliased over a footprint from the distance estimate; the fringe method; equipotential lines at an even spacing at every depth; the dual view's Julia pane on the set's palette map); B8 not started; next C6; see §10 (2026-11-21).** Line references are to `main` at `9ab75357`; check
+Status: **plan (2026-11-08); phase A done (A1–A10), B1, B1b, B9 and B10 done (the coloring matrix, its live method tour, every lane as NumPy arrays, a custom coloring hook), B2 done (what a frame accumulates is a `StatSet`, apart from the method shown), B3 done (in floatexp a stripe, triangle or trap frame carries the whole G-buffer), B4 to B7 done (one settings model, the method list, the method sheet, the inside and a second LUT), C1, C2, C3, C4, C5, C6, C8, C9, C10 and C11 done (a solid inside in any color; the palette map's curves, wraps and steps; edge shading by the distance; the relief light's slope from the distance and a highlight; the inside's palette fitted to its range; Equalize, histogram coloring mixed into the fitted map; the palette anti-aliased over a footprint from the distance estimate; the fringe method; equipotential lines at an even spacing at every depth; the dual view's Julia pane on the set's palette map); B8 not started; next C7 (C6b, tours, after); see §10 (2026-11-23).** Line references are to `main` at `9ab75357`; check
 them before editing, they drift. The research behind it (methods, prototypes, measured results,
 prior art) is the coloring-methods doc; its local copy is
 `local/research_notes/Fractal coloring methods/` (PDF, HTML, Markdown, prototype scripts).
@@ -1128,6 +1128,48 @@ UI rows, `.fdn`/farm/CLI through B4, B1 cells, a selftest appearance check, uite
 Order: C1, C4, C8, C9, C11 (smallest), then C2, C3, C10, then C5, C6, C7. (2026-11-20: B9 and B10,
 the prototyping aids, come before C2.)
 
+**C6, done 2026-11-23** (branch `feat/color-c6-equalize`): Equalize, a slider under Scale, 0% to
+100%: histogram coloring mixed into the fitted map. Prototype first (scratchpad `c6/`, six views
+from 1x to 9.3e78x, `--render-lanes`): the CDF from the GPU's existing fine histogram
+(`CTR_NORM_HIST`, 16 buckets a doubling on the 4x4 grid) is the exact rank-order CDF within 0.013 of
+a sweep on five views and 0.056 at the 9.3e78 minibrot, so rank order needs no sort; the pure
+histogram spreads the palette evenly and speckles least (neighbor step p95 0.07–0.34 against the
+fit's 0.14–1.0), and flattens the filaments by the set to one color, which a mix with the fitted
+map keeps (75% looked best). So the share is the user's: the coordinate before the offset, x =
+sweeps·u (u from 0 at the window's floor to 1 at its top under the Scale's curve), becomes
+(1 − share)·x + share·sweeps·R(u), R(u) the share of the picture at or below the value at u, over
+the share at or below the top (`fractadyne_core::coloring::eq_knots`), held as 257 knots at fixed u
+(256 put it within 0.07 of a sweep of the exact map on all six views; 128 left 0.25), slope 1
+outside [0, 1] so values past the window cycle at the fitted rate as before. The table lives in the
+color uniform (`ColorU.eq`, `.eq_knots`, `.fade_eq_knots`: 64 rows a table, knot 256 is 1), one for
+the frame and one for a dissolve; the shader's `map_equalized` is an early branch of both
+`coord_under` and the hook's `palette_map`, each of which keeps its old expression (one shared
+function broke B10's bit-for-bit Smooth-hook check on 159 of 57,600 channels, under 0.005 levels:
+last-bit codegen), and an equalized map measures from its floor in every mode (a linear one is
+rewritten about it, the same colors). The palette AA's footprint
+takes the remap's slope (`equalized_rate`). Live, the distribution is held as a QUANTILE FUNCTION
+(`Quantiles`, 257 knots, from `NormHist::quantiles`), which needs no base, so readings blend knot by
+knot: fed under the window's own decision (`eq_feed`: adopted at rest, eased 0.3 while moving, held,
+taken again when a hold breaks; a partial walk's reading only while nothing is held) and shown
+through a glide with the window's time constant (`eq_glide`); `NormMap.eq` carries the table, so
+the carried phase, the dissolve's jump test and the linked Julia pane (lo − 1) see it through
+`NormMap::coord`. The average's map signature hashes the held distribution, `palette_moving` its
+glide, `norm_user_sig` the share. A single `--normalize` export takes the frame's own exact
+distribution (`buffer_quantiles`, up to 2M samples). `ColoringSpec.equalize`, view key `equalize`
+(Smooth), `--equalize`, Reset coloring settings resets it. Tests: core `equalize_tests` (inverses,
+quantiles, CDF, the table, the remap's slope, equal areas: the fullest of 16 colors under 1.25/16
+equalized, above 1.5/16 fitted); `eq_feed_tests`; the GPU's knot packing and `NormHist::quantiles`;
+self-test `equalize` (every escaped pixel of a 1e10x export against `equalized` over the count lane,
+linear, sqrt and log at shares 0.5 and 1: 0.00% apart, max 0.00 levels, controls 99–100%; equal
+areas on the GPU's own counts: 7.4% linear and 6.4% log equalized against 68.1% and 10.6% fitted);
+uitest `equalize` (the palette-scale-linear view at 75%: 60.1 levels, no pass, a table on the drawn
+map). Found on the way and fixed first (`fix/color-c2-map-twins`, 3533614b): C2's curves were read as
+linear by the carried phase, the dissolve's jump test and the Julia link. Not done (C6b): tours and
+the zoom video (a held distribution per time-keyed anchor, blended between anchors as quantile
+functions, so a dive's colors do not flicker), equalizing the orbit trap's fitted values (its own
+histogram, `CTR_TRAP_HIST`), and the research's rank-order "detail at the high end" beyond what the
+mix gives.
+
 **C5, done 2026-11-21** (branch `feat/color-c5-lighting`): the relief light's surface and a
 highlight, Effects ▸ Relief lighting ▸ Slope from the distance, Steep within, Highlight, Shininess,
 Highlight color. The relief shades the surface whose horizontal direction of steepest ascent is the
@@ -1678,5 +1720,7 @@ coloring in these places, so sequence the two with care:
 | C3         | done, merged                                              | `b0bd9259` (merge `550139a7`)                                                             |
 | C10        | done, merged                                              | `43368601` (merge `cc471188`)                                                             |
 | C5         | done, merged                                              | `ed36a532` (merge `2eb22119`)                                                             |
-| C6–C7      | not started                                               |                                                                                           |
+| C6         | done, on `feat/color-c6-equalize` (after the C2 map fix)  | merge recorded with the next step                                                         |
+| C6b        | not started (tours, zoom video, the trap's fit)           |                                                                                           |
+| C7         | not started                                               |                                                                                           |
 | D, E, F, G | not started                                               |                                                                                           |

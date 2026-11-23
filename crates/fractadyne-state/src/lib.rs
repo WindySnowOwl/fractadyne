@@ -110,6 +110,11 @@ pub struct ColoringSpec {
     /// The flat bands a palette cycle is cut into; 0 for none.
     #[serde(default)]
     pub steps: u32,
+    /// Equalize colors (coloring plan C6): the share, 0 to 1, of histogram coloring mixed into the
+    /// fitted palette map, so each color takes about the same area of the picture (Smooth, wherever
+    /// the palette is normalized). 0, the default: the fitted map alone.
+    #[serde(default)]
+    pub equalize: f32,
     /// Live deep-palette auto-normalization (default on). `serde(default)` keeps older files loadable.
     #[serde(default = "default_true")]
     pub normalize_live: bool,
@@ -893,6 +898,7 @@ impl Default for ColoringSpec {
             palette_contrast: 0.0,
             palette_saturation: 1.0,
             julia_linked: false,
+            equalize: 0.0,
             coloring_hook: String::new(),
             coloring_hook_params: Vec::new(),
         }

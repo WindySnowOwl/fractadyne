@@ -24,18 +24,18 @@ fn coord(m: NormMap, v: f32) -> f32 {
 
 const MAPS: [NormMap; 8] = [
     // The classic map: Cycle's rate, the offset.
-    NormMap { cycle: 0.0202, offset: 0.35, mode: 0, lo: 0.0 },
+    NormMap { cycle: 0.0202, offset: 0.35, mode: 0, lo: 0.0, eq: None },
     // A normalized linear map over a deep window.
-    NormMap { cycle: 2.0e-4, offset: 0.1 - 45_075.0 * 2.0e-4, mode: 0, lo: 0.0 },
+    NormMap { cycle: 2.0e-4, offset: 0.1 - 45_075.0 * 2.0e-4, mode: 0, lo: 0.0, eq: None },
     // A normalized log map from a floor of 12.
-    NormMap { cycle: 0.31, offset: 0.6, mode: 1, lo: 12.0 },
+    NormMap { cycle: 0.31, offset: 0.6, mode: 1, lo: 12.0, eq: None },
     // The other curves (C2) from the same floor: square root, cube root, fourth root, log-log,
     // square, each at the rate that spreads 2.12 sweeps over a window 200 wide.
-    NormMap { cycle: 2.12 / 14.142, offset: 0.6, mode: 2, lo: 12.0 },
-    NormMap { cycle: 2.12 / 5.848, offset: 0.6, mode: 3, lo: 12.0 },
-    NormMap { cycle: 2.12 / 3.761, offset: 0.6, mode: 4, lo: 12.0 },
-    NormMap { cycle: 2.12 / 1.857, offset: 0.6, mode: 5, lo: 12.0 },
-    NormMap { cycle: 2.12 / 40_000.0, offset: 0.6, mode: 6, lo: 12.0 },
+    NormMap { cycle: 2.12 / 14.142, offset: 0.6, mode: 2, lo: 12.0, eq: None },
+    NormMap { cycle: 2.12 / 5.848, offset: 0.6, mode: 3, lo: 12.0, eq: None },
+    NormMap { cycle: 2.12 / 3.761, offset: 0.6, mode: 4, lo: 12.0, eq: None },
+    NormMap { cycle: 2.12 / 1.857, offset: 0.6, mode: 5, lo: 12.0, eq: None },
+    NormMap { cycle: 2.12 / 40_000.0, offset: 0.6, mode: 6, lo: 12.0, eq: None },
 ];
 
 #[test]

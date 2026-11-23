@@ -370,8 +370,8 @@ const SAMPLE_OPTIONAL_KEYS: &[&str] = &[
     "palette_brightness", "palette_contrast", "palette_saturation", "julia_linked",
     // Written only for a view colored through a coloring hook (format 5).
     "coloring_hook", "coloring_hook_params",
-    // Written only away from their defaults (C2).
-    "transfer", "wrap", "steps",
+    // Written only away from their defaults (C2), and Equalize colors (C6).
+    "transfer", "wrap", "steps", "equalize",
     // Written only with the edge shading on (C3).
     "edge", "edge_inside", "edge_width", "edge_strength", "edge_curve", "edge_color",
     // Written only with the equipotential lines on (C10).

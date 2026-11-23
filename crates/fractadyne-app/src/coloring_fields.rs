@@ -100,7 +100,7 @@ fn two_color_on(s: &ColoringSpec) -> bool {
 }
 
 /// The table, in the order a view writes its keys. A row's parents come before it.
-pub(crate) const FIELDS: [Field; 45] = [
+pub(crate) const FIELDS: [Field; 46] = [
     Field {
         key: "method",
         name: "coloring method",
@@ -495,6 +495,19 @@ pub(crate) const FIELDS: [Field; 45] = [
         access: Access::Choice(|s| s.transfer.as_str(), |s, v| s.transfer = v.to_string(), transfer_keys),
         parents: &["method"],
         shows: uses_fit,
+    },
+    Field {
+        key: "equalize",
+        name: "equalize colors",
+        doc: "Equalize colors, 0 to 1: the share of histogram coloring mixed into the palette map wherever it is normalized, so each color takes about the same area of the picture (method \"smooth\"; 0: the fitted map alone).",
+        access: Access::Real(
+            |s| s.equalize,
+            |s, v| s.equalize = v,
+            *slider_range::EQUALIZE.start(),
+            *slider_range::EQUALIZE.end(),
+        ),
+        parents: &["method"],
+        shows: escape_count,
     },
     Field {
         key: "wrap",

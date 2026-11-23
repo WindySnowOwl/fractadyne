@@ -2885,6 +2885,12 @@ panel-scale-hover =
 
     Ein stark schiefer Bereich nimmt auch unter Linear den Logarithmus.
 panel-scale-off-hover = Wirkt, sobald die Palette an den Bereich der Ansicht angepasst ist: „Tiefe Farben normalisieren“ oder „Bereich immer anpassen“ einschalten.
+panel-equalize = Ausgleichen
+panel-equalize-hover =
+    Verteilt die Palette so, dass jede Farbe etwa den gleichen Anteil des Bildes bedeckt, je nachdem, wie viel des Bildes jeder Bereich der Fluchtzahlen füllt (Histogramm-Färbung). Nützlich, wenn eine Farbe die Ansicht flutet und die Details in einen schmalen Streifen der anderen gedrängt sind.
+
+    Bei 0 % setzt allein die Kurve der Skala die Farben. Bei 100 % können die feinen Filamente an der Menge, die wenige Pixel bedecken, eine einzige Farbe annehmen; etwas weniger erhält sie.
+panel-equalize-method-hover = Ausgleichen verteilt die Fluchtzahl und wirkt daher mit Glatte Iteration.
 # The curves the Scale list offers.
 transfer-linear = Linear
 transfer-sqrt = Quadratwurzel

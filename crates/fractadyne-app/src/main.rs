@@ -2294,6 +2294,12 @@ struct Perf {
     /// around"; gliding turns the same information into a continuous drift. See
     /// `render::norm_glide_step`.
     norm_shown: [Option<(f32, f32)>; 2],
+    /// Equalize colors (coloring plan C6): the escape values' distribution as the palette window's
+    /// feed took it, a quantile function fed under the window's own decision (adopted at rest,
+    /// eased in while moving, held; `render::eq_feed`), and the one SHOWN, gliding to it as the
+    /// window does (`render::eq_glide`). Boxed: a kilobyte each.
+    eq_fed: [Option<Box<fractadyne_core::coloring::Quantiles>>; 2],
+    eq_shown: [Option<Box<fractadyne_core::coloring::Quantiles>>; 2],
     /// W6 (U43): the palette window a hold snapshot keeps while it is served — the live window when
     /// it was copied, or a worker frame's own — with the user's coloring then (`norm_user_sig`).
     /// `None` inside: drawn in the classic coloring.
@@ -2994,6 +3000,8 @@ impl Default for Perf {
             vis_sizing: [[0.0; 3]; 2],
             reading_pool: [render::ReadingPool::default(); 2],
             norm_shown: [None, None],
+            eq_fed: [None, None],
+            eq_shown: [None, None],
             hold_norm: [None, None],
             norm_drawn: [None, None],
             shown_aa: [None, None],
@@ -3354,6 +3362,14 @@ pub(crate) mod slider_range {
     /// The stripe tail's length in iterations: what `--stripe-tail` and a view file accept. The
     /// panel's slider stops at 1024; past that only the command line goes.
     pub(crate) const STRIPE_TAIL_LEN: RangeInclusive<u32> = 4..=1 << 20;
+    /// Equalize colors' share of histogram coloring (`--equalize`, coloring plan C6).
+    pub(crate) const EQUALIZE: RangeInclusive<f32> = 0.0..=1.0;
+}
+
+/// Equalize colors' share as a spec or a file states it (C6): inside 0..=1, and 0 for a value that
+/// is not a number.
+pub(crate) fn equalize_of(v: f32) -> f32 {
+    if v.is_finite() { v.clamp(*slider_range::EQUALIZE.start(), *slider_range::EQUALIZE.end()) } else { 0.0 }
 }
 
 /// The palette map's curve a spec names (coloring plan C2): its `transfer`, or, for a file written
@@ -6805,6 +6821,10 @@ struct ColoringConfig {
     /// none), coloring plan C2. Persisted.
     wrap: fractadyne_core::coloring::Wrap,
     steps: u32,
+    /// Equalize colors (coloring plan C6): the share of histogram coloring, 0 to 1, mixed into the
+    /// fitted map wherever the Smooth palette is normalized ([`FractadyneApp::norm_map_for`]): each
+    /// color then takes about the same area of the picture. 0 is the fitted map alone. Persisted.
+    equalize: f32,
     /// What a harness's comparison render accumulates instead of the session's own choice: the
     /// coloring matrix's `gbuffer` check sets it around building ONE request and clears it at once.
     /// The method's own statistic is added regardless ([`Self::orbit_stats`]). Transient: never
@@ -8627,6 +8647,7 @@ impl FractadyneApp {
                 },
                 wrap: fractadyne_core::coloring::Wrap::parse_key(&s.coloring.wrap).unwrap_or_default(),
                 steps: s.coloring.steps.min(fractadyne_core::coloring::MAX_STEPS),
+                equalize: equalize_of(s.coloring.equalize),
                 orbit_stats_override: None,
                 hook: Default::default(),
             },
@@ -9494,6 +9515,13 @@ impl FractadyneApp {
         if let Some(v) = ranged("--palette-saturation", slider_range::PALETTE_SATURATION) {
             self.coloring.palette_adjust.saturation = v;
         }
+        // Equalize colors (C6): the share of histogram coloring in the fitted map.
+        if let Some(v) = ranged("--equalize", slider_range::EQUALIZE) {
+            self.coloring.equalize = v;
+            if v > 0.0 && !(self.coloring.normalize || self.coloring.normalize_live || self.coloring.normalize_fit) {
+                eprintln!("fractadyne: --equalize has no effect without normalization — add --normalize (or enable Color ▸ Normalize deep colors).");
+            }
+        }
         // The palette map's curve, how the palette continues past its end, and its steps (C2).
         if let Some(t) = val("--transfer") {
             match fractadyne_core::coloring::Transfer::parse_key(t) {
@@ -9780,6 +9808,7 @@ impl FractadyneApp {
             palette_contrast: self.coloring.palette_adjust.contrast,
             palette_saturation: self.coloring.palette_adjust.saturation,
             julia_linked: self.coloring.julia_linked,
+            equalize: self.coloring.equalize,
             coloring_hook: self.coloring.hook.active.as_ref().map(|h| h.text.clone()).unwrap_or_default(),
             coloring_hook_params: match self.coloring.hook.active {
                 Some(_) => self.coloring.hook.params.to_vec(),
@@ -9808,6 +9837,7 @@ impl FractadyneApp {
         c.transfer = transfer_of_spec(s);
         c.wrap = fractadyne_core::coloring::Wrap::parse_key(&s.wrap).unwrap_or_default();
         c.steps = s.steps.min(fractadyne_core::coloring::MAX_STEPS);
+        c.equalize = equalize_of(s.equalize);
         c.normalize_live = s.normalize_live;
         c.normalize_fit = s.normalize_fit;
         c.color_method = ColorMethod::from_key(&s.color_method);
@@ -10602,6 +10632,7 @@ impl FractadyneApp {
         self.perf.iter_exhausted = [false, false];
         self.perf.norm_range = [None, None];
         self.perf.norm_pal = [None, None];
+        self.perf.eq_fed = [None, None];
         self.perf.trap_pal = [None, None];
         self.perf.trap_shown = [None, None];
         self.perf.trap_sig = [0, 0];
@@ -12924,6 +12955,8 @@ impl FractadyneApp {
         // The Scale with the normalization switches it belongs to (C2; what the log checkbox was).
         // Wrap and Steps are choices, as the palette is: they stay.
         c.transfer = transfer_of_spec(&d);
+        // Equalize colors with the Scale it mixes into (C6): a tuned value.
+        c.equalize = d.equalize;
         c.palette_aa = d.palette_aa;
         self.anim.palette_anim = PaletteAnim::Off;
         self.anim.palette_anim_speed = fractadyne_state::SessionState::default().palette_anim_speed;
@@ -16429,6 +16462,8 @@ impl FractadyneApp {
             || p.palette_phase[v].debt() != 0.0
             || p.norm_drawn[v].is_some_and(|d| !d.arrived())
             || (p.norm_shown[v].is_some() && p.norm_shown[v] != p.norm_pal[v])
+            // Equalize colors' distribution gliding to the fed one (C6).
+            || (self.coloring.equalize > 0.0 && p.eq_shown[v] != p.eq_fed[v])
             // A linked Julia pane moves with the set's map (C11).
             || (v == 1 && self.julia_linked() && self.palette_moving(0))
     }
@@ -17890,6 +17925,12 @@ impl FractadyneApp {
         let [in_fed, in_shown] = self.inside_windows(view);
         for r in [fed, shown, self.perf.norm_drawn[view].map(|d| d.win), in_fed, in_shown] {
             r.map(|(lo, hi)| (lo.to_bits(), hi.to_bits())).hash(&mut h);
+        }
+        // Equalize colors (C6): the distribution the remap is built from, fed and shown.
+        if self.coloring.equalize > 0.0 {
+            for q in [&self.perf.eq_fed[view], &self.perf.eq_shown[view]] {
+                q.as_ref().map(|q| q.iter().map(|k| k.to_bits()).collect::<Vec<u32>>()).hash(&mut h);
+            }
         }
         self.perf.palette_fade[view].weight().to_bits().hash(&mut h);
         self.perf.palette_phase[view].debt().to_bits().hash(&mut h);

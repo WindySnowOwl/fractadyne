@@ -2805,6 +2805,12 @@ panel-scale-hover =
 
     范围严重偏斜时，即使选线性也会采用对数。
 panel-scale-off-hover = 调色板适配视图范围后生效：请打开“归一化深层颜色”或“始终适配范围”。
+panel-equalize = 均衡
+panel-equalize-hover =
+    按逃逸次数的各个区间占画面的多少来铺开调色板，使每种颜色覆盖画面中大致相同的份额（直方图着色）。当一种颜色淹没画面、细节挤在其他颜色的一条窄带里时使用。
+
+    0% 时只由刻度曲线安放颜色。100% 时，集合旁像素很少的细丝可能变成同一种颜色；稍低一些可保留它们。
+panel-equalize-method-hover = 均衡铺开的是逃逸次数，因此适用于平滑迭代。
 # The curves the Scale list offers.
 transfer-linear = 线性
 transfer-sqrt = 平方根

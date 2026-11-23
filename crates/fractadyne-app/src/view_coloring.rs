@@ -130,6 +130,8 @@ pub(crate) struct ViewColoring {
     pub(crate) palette_saturation: f32,
     /// The dual view's Julia pane on the set's palette map, one iteration on (C11).
     pub(crate) julia_linked: bool,
+    /// Equalize colors: the share of histogram coloring in the fitted map (C6).
+    pub(crate) equalize: f32,
 }
 
 impl Default for ViewColoring {
@@ -195,6 +197,7 @@ impl ViewColoring {
             palette_contrast: s.palette_contrast,
             palette_saturation: s.palette_saturation,
             julia_linked: s.julia_linked,
+            equalize: s.equalize,
         }
     }
 
@@ -248,6 +251,7 @@ impl ViewColoring {
             palette_contrast: self.palette_contrast,
             palette_saturation: self.palette_saturation,
             julia_linked: self.julia_linked,
+            equalize: self.equalize,
             ..base.clone()
         }
     }

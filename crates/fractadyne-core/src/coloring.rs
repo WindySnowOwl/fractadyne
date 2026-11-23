@@ -714,6 +714,138 @@ impl Transfer {
             Transfer::Square => 2.0 * d,
         }
     }
+    /// The height d ≥ 0 whose T(d) is `y` ≥ 0: [`Self::apply`]'s inverse, for a fitted window's
+    /// coordinate back to its escape value (the equalizing table, C6).
+    pub fn inverse(self, y: f64) -> f64 {
+        let y = y.max(0.0);
+        match self {
+            Transfer::Linear => y,
+            Transfer::Sqrt => y * y,
+            Transfer::Cbrt => y * y * y,
+            Transfer::Root4 => (y * y) * (y * y),
+            Transfer::Log => y.exp_m1(),
+            Transfer::LogLog => y.exp_m1().exp_m1(),
+            Transfer::Square => y.sqrt(),
+        }
+    }
+}
+
+/// Intervals of the equalizing remap's table (coloring plan C6): `R(u)` is held at
+/// u = j / `EQ_KNOTS`, j = 0..=`EQ_KNOTS`. 256 put the remap within 0.07 of a palette sweep of the
+/// exact rank-order map on six views from 1x to 9.3e78x (the prototype, 2026-11-23); 128 left 0.25
+/// at a shallow view whose fitted window is linear and most of whose pixels sit near its floor.
+pub const EQ_KNOTS: usize = 256;
+
+/// Intervals of the quantile function a view's escape values are held as ([`Quantiles`]).
+pub const EQ_QUANTILES: usize = 256;
+
+/// A view's escaped values held as their QUANTILE FUNCTION (coloring plan C6): `q[i]` is the value
+/// by which share i / [`EQ_QUANTILES`] of the escaped pixels had escaped, `q[0]` the lowest and the
+/// last the highest; never decreasing. Unlike a histogram it needs no base, so two can be blended
+/// knot by knot, and a blend moves each share of the picture rather than each value: the live view
+/// eases one reading into the next this way.
+pub type Quantiles = [f32; EQ_QUANTILES + 1];
+
+/// The [`Quantiles`] of `sorted` (ascending, finite), exactly: knot i at rank i / [`EQ_QUANTILES`]
+/// of the way from the first value to the last, interpolated between the two values it falls
+/// between. `None` for no values.
+pub fn quantiles_of_sorted(sorted: &[f32]) -> Option<Quantiles> {
+    let n = sorted.len();
+    if n == 0 {
+        return None;
+    }
+    let mut q = [0.0f32; EQ_QUANTILES + 1];
+    for (i, k) in q.iter_mut().enumerate() {
+        let r = (n - 1) as f64 * i as f64 / EQ_QUANTILES as f64;
+        let j = (r.floor() as usize).min(n - 1);
+        let f = r - j as f64;
+        let hi = sorted[(j + 1).min(n - 1)] as f64;
+        *k = (sorted[j] as f64 + (hi - sorted[j] as f64) * f) as f32;
+    }
+    Some(q)
+}
+
+/// The share of the escaped pixels at or below `v` under the held distribution `q`: the quantile
+/// function inverted, linear between its knots; 0 below the lowest value, 1 from the highest. A run
+/// of equal knots (many pixels at one value) counts whole once `v` reaches it.
+pub fn cdf_at(q: &Quantiles, v: f64) -> f64 {
+    let hi = q.partition_point(|&x| (x as f64) <= v);
+    if hi == 0 {
+        return 0.0;
+    }
+    if hi > EQ_QUANTILES {
+        return 1.0;
+    }
+    let (a, b) = (q[hi - 1] as f64, q[hi] as f64);
+    ((hi - 1) as f64 + (v - a) / (b - a)) / EQ_QUANTILES as f64
+}
+
+/// The equalizing remap of a fitted palette window (coloring plan C6), as its [`EQ_KNOTS`] + 1
+/// knots: the fitted map puts value v at u in [0, 1] across the window `[lo, top]` (u = (v − lo) /
+/// (top − lo) for `Transfer::Linear`, T(v − lo) / T(top − lo) for a curve); the knot at u is the
+/// share of the picture at or below that v, as a share of what lies at or below `top`. So R(0) is 0
+/// when the window starts at the lowest value, R(1) = 1, and R climbs fastest where the pixels
+/// crowd: a palette laid on R gives each color about the same area of the picture.
+/// An empty share at `top` (nothing measured below it) gives the identity, R(u) = u.
+pub fn eq_knots(q: &Quantiles, lo: f64, top: f64, t: Transfer) -> [f32; EQ_KNOTS + 1] {
+    let mut k = [0.0f32; EQ_KNOTS + 1];
+    let span = top - lo;
+    let c_top = cdf_at(q, top);
+    if !(span > 0.0) || !(c_top > 0.0) {
+        for (j, x) in k.iter_mut().enumerate() {
+            *x = j as f32 / EQ_KNOTS as f32;
+        }
+        return k;
+    }
+    let t_span = t.apply(span);
+    let mut last = 0.0f32;
+    for (j, x) in k.iter_mut().enumerate() {
+        let u = j as f64 / EQ_KNOTS as f64;
+        let v = match t {
+            Transfer::Linear => lo + u * span,
+            t => lo + t.inverse(u * t_span),
+        };
+        // Never decreasing and inside [0, 1], whatever rounding did.
+        last = ((cdf_at(q, v) / c_top) as f32).clamp(last, 1.0);
+        *x = last;
+    }
+    k[EQ_KNOTS] = 1.0;
+    k
+}
+
+/// R(u) from its knots ([`eq_knots`]): linear between them; outside [0, 1] it goes on at slope 1
+/// from its ends, so values past the window keep cycling at the fitted rate, as they always have.
+pub fn eq_remap(k: &[f32; EQ_KNOTS + 1], u: f64) -> f64 {
+    if u <= 0.0 {
+        return k[0] as f64 + u;
+    }
+    if u >= 1.0 {
+        return k[EQ_KNOTS] as f64 + (u - 1.0);
+    }
+    let x = u * EQ_KNOTS as f64;
+    let i = (x.floor() as usize).min(EQ_KNOTS - 1);
+    let f = x - i as f64;
+    k[i] as f64 + (k[i + 1] as f64 - k[i] as f64) * f
+}
+
+/// dR/du ([`eq_remap`]'s slope): the interval's, 1 outside [0, 1].
+pub fn eq_slope(k: &[f32; EQ_KNOTS + 1], u: f64) -> f64 {
+    if !(0.0..1.0).contains(&u) {
+        return 1.0;
+    }
+    let i = ((u * EQ_KNOTS as f64).floor() as usize).min(EQ_KNOTS - 1);
+    (k[i + 1] as f64 - k[i] as f64) * EQ_KNOTS as f64
+}
+
+/// The equalized coordinate (coloring plan C6, the color pass's `equalized`): `x` is the fitted
+/// map's coordinate before its offset, `sweeps · u`; the result mixes it with the remap,
+/// (1 − `share`) · x + `share` · sweeps · R(u). `share` 0 is the fitted map itself, 1 histogram
+/// coloring.
+pub fn equalized(x: f64, share: f64, sweeps: f64, k: &[f32; EQ_KNOTS + 1]) -> f64 {
+    if !(sweeps > 0.0) {
+        return x;
+    }
+    (1.0 - share) * x + share * sweeps * eq_remap(k, x / sweeps)
 }
 
 /// How the palette continues past its end (coloring plan C2). Repeat starts it again; Mirror runs
@@ -982,6 +1114,9 @@ pub fn relief_highlight_at(steep_px: f64, h: f64) -> f64 {
 #[cfg(test)]
 #[path = "../tests/unit/coloring/tests.rs"]
 mod tests;
+#[cfg(test)]
+#[path = "../tests/unit/coloring/equalize_tests.rs"]
+mod equalize_tests;
 #[cfg(test)]
 #[path = "../tests/unit/coloring/transfer_tests.rs"]
 mod transfer_tests;

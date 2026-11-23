@@ -2885,6 +2885,12 @@ panel-scale-hover =
 
     Une plage très asymétrique prend le logarithme même en Linéaire.
 panel-scale-off-hover = S’applique une fois la palette ajustée à la plage de la vue : activez « Normaliser les couleurs profondes » ou « Toujours ajuster la plage ».
+panel-equalize = Égaliser
+panel-equalize-hover =
+    Répartit la palette pour que chaque couleur couvre à peu près la même part de l'image, selon la part de l'image qu'occupe chaque plage de comptes d'échappement (coloration par histogramme). Utile quand une couleur envahit la vue et que le détail est serré dans une mince bande des autres.
+
+    À 0 % la courbe de l'Échelle place seule les couleurs. À 100 % les filaments fins près de l'ensemble, que peu de pixels couvrent, peuvent prendre une seule couleur ; un peu moins les conserve.
+panel-equalize-method-hover = Égaliser répartit le compte d'échappement : il s'applique avec Itération lissée.
 # The curves the Scale list offers.
 transfer-linear = Linéaire
 transfer-sqrt = Racine carrée
