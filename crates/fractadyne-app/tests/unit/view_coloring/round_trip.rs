@@ -70,6 +70,7 @@ fn scrambled() -> ViewColoring {
         palette_brightness: -0.6,
         palette_contrast: 0.8,
         palette_saturation: 0.3,
+        palette_oklab: true,
         julia_linked: true,
         equalize: 0.6,
     }
@@ -156,6 +157,8 @@ fn variants() -> Vec<ViewColoring> {
     v.push(ViewColoring { palette_brightness: -1.0, palette_contrast: 1.0, palette_saturation: 2.0, ..d.clone() });
     // The dual view's Julia pane on the set's map (C11).
     v.push(ViewColoring { julia_linked: true, ..d.clone() });
+    // Blend in OKLab (C7).
+    v.push(ViewColoring { palette_oklab: true, ..d.clone() });
     v.push(ViewColoring { normalize_live: false, ..d.clone() });
     v.push(ViewColoring { normalize_fit: true, log_scale: true, ..d.clone() });
     v.push(ViewColoring { method: ColorMethod::OrbitTrap, normalize_fit: true, log_scale: true, ..d.clone() });

@@ -115,6 +115,10 @@ pub struct ColoringSpec {
     /// the palette is normalized). 0, the default: the fitted map alone.
     #[serde(default)]
     pub equalize: f32,
+    /// Blend in OKLab (coloring plan C7): a palette's RGB segments blended in OKLab, a perceptual
+    /// space, rather than between their display (sRGB-encoded) values. Off by default.
+    #[serde(default)]
+    pub palette_oklab: bool,
     /// Live deep-palette auto-normalization (default on). `serde(default)` keeps older files loadable.
     #[serde(default = "default_true")]
     pub normalize_live: bool,
@@ -899,6 +903,7 @@ impl Default for ColoringSpec {
             palette_saturation: 1.0,
             julia_linked: false,
             equalize: 0.0,
+            palette_oklab: false,
             coloring_hook: String::new(),
             coloring_hook_params: Vec::new(),
         }

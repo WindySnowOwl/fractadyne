@@ -269,7 +269,7 @@ menu-color-more = Cycle, décalage, animation et effets : panneau de contrôle 
 menu-color-browse = Parcourir les palettes…
 menu-color-browse-hover = Toutes les palettes sur la vue actuelle, côte à côte : filtrez-les par étiquette et étiquetez les vôtres.
 menu-color-reset-settings = Réinitialiser les réglages de couleur
-menu-color-reset-settings-hover = Cycle, Diviser les itérations, Décalage, Luminosité, Contraste, Saturation, les options de normalisation, l’anticrénelage de la palette et son animation reviennent à leurs valeurs par défaut. La méthode, les palettes et l’intérieur restent tels quels.
+menu-color-reset-settings-hover = Cycle, Diviser les itérations, Décalage, Luminosité, Contraste, Saturation, Fondu en OKLab, Égaliser, les options de normalisation, l’anticrénelage de la palette et son animation reviennent à leurs valeurs par défaut. La méthode, les palettes et l’intérieur restent tels quels.
 
 # The palette browser window.
 palette-browser-title = Palettes
@@ -2855,6 +2855,8 @@ panel-inside-fit = Ajuster à la plage de l’intérieur
 panel-inside-fit-hover = Étale la palette intérieure sur les valeurs du piège mesurées dans l’ensemble à l’écran, pour que sa structure apparaisse. Les exports de cette vue utilisent le même ajustement.
 panel-palette-aa = Anticrénelage de la palette
 panel-palette-aa-hover = Là où les bandes de la palette sont plus fines qu'un pixel, afficher leur couleur moyenne au lieu du bruit. La largeur suit la distance à l'ensemble, de sorte que les bandes proches restent aussi nettes que les pixels le permettent. Les exportations de cette vue l'utilisent aussi.
+panel-palette-oklab = Fondu en OKLab
+panel-palette-oklab-hover = Fond les couleurs de la palette dans OKLab, un espace colorimétrique fondé sur la vision, plutôt qu'entre leurs valeurs d'écran : chaque transition s'éclaircit ou s'assombrit régulièrement, et une transition entre deux couleurs éloignées garde un milieu net au lieu de passer par un milieu sombre ou terne. La plupart des palettes changent un peu, quelques-unes beaucoup. Les exportations de cette vue l'utilisent aussi.
 panel-palette = Palette
 # The two colors of the Binary palette, each beside its color swatch.
 panel-in-set = Dans l’ensemble

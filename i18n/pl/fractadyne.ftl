@@ -271,7 +271,7 @@ menu-color-more = Cykl, przesunięcie, animacja i efekty: panel Sterowanie ▸ K
 menu-color-browse = Przeglądaj palety…
 menu-color-browse-hover = Wszystkie palety na bieżącym widoku, obok siebie: filtruj je według tagów i taguj własne.
 menu-color-reset-settings = Przywróć ustawienia kolorowania
-menu-color-reset-settings-hover = Cykl, Dziel iteracje, Przesunięcie, Jasność, Kontrast, Nasycenie, przełączniki normalizacji, wygładzanie palety i jej animacja wracają do wartości domyślnych. Metoda, palety i wnętrze pozostają bez zmian.
+menu-color-reset-settings-hover = Cykl, Dziel iteracje, Przesunięcie, Jasność, Kontrast, Nasycenie, Mieszaj w OKLab, Wyrównaj, przełączniki normalizacji, wygładzanie palety i jej animacja wracają do wartości domyślnych. Metoda, palety i wnętrze pozostają bez zmian.
 
 # The palette browser window.
 palette-browser-title = Palety
@@ -2946,6 +2946,8 @@ panel-inside-fit = Dopasuj do zakresu wnętrza
 panel-inside-fit-hover = Rozkłada paletę wnętrza na wartości pułapki zmierzone wewnątrz zbioru na ekranie, by było widać jej strukturę. Eksporty tego widoku używają tego samego dopasowania.
 panel-palette-aa = Wygładzanie palety (antyaliasing)
 panel-palette-aa-hover = Tam, gdzie pasma palety są drobniejsze niż piksel, pokaż ich średni kolor zamiast szumu. Szerokość wynika z odległości od zbioru, więc pasma blisko niego pozostają tak ostre, jak pozwalają piksele. Eksporty tego widoku też go używają.
+panel-palette-oklab = Mieszaj w OKLab
+panel-palette-oklab-hover = Miesza kolory palety w OKLab, przestrzeni barw opartej na tym, jak widzi oko, a nie między ich wartościami na ekranie: każde przejście jaśnieje lub ciemnieje równomiernie, a przejście między dwoma odległymi kolorami zachowuje czysty środek zamiast przechodzić przez ciemny lub mętny. Większość palet zmienia się trochę, niektóre bardzo. Eksporty tego widoku też tego używają.
 panel-palette = Paleta
 # The two colors of the Binary palette, each beside its color swatch.
 panel-in-set = W zbiorze

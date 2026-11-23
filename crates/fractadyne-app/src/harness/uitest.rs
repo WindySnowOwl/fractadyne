@@ -388,6 +388,9 @@ enum Screen {
     /// The palette's saturation at 0 on the same view (`fractadyne_color::adjust`): every pixel
     /// gray, the step before's colored (the control), an export gray too, and no pass.
     PaletteAdjust,
+    /// Blend in OKLab (coloring plan C7) on the palette-aa view, the adjustment neutral again:
+    /// another picture than palette-aa's, no pass (a recolor), and an export follows the switch.
+    PaletteOklab,
     /// Cycle at 0.6, then one click on the Cycle slider's track near its left end, through egui's
     /// input: the value follows the click (the CONTROL: the pointer reaches the slider)...
     SliderClick,
@@ -1403,6 +1406,7 @@ fn build_steps() -> Vec<Step> {
         screen("palette-aa-base", Screen::PaletteAaBase),
         screen("palette-aa", Screen::PaletteAa),
         screen("palette-adjust", Screen::PaletteAdjust),
+        screen("palette-oklab", Screen::PaletteOklab),
         screen("palette-scale-linear", Screen::PaletteScaleLinear),
         screen("palette-scale", Screen::PaletteScale),
         screen("palette-wrap-steps", Screen::PaletteWrapSteps),
@@ -1985,6 +1989,38 @@ impl FractadyneApp {
         checks.push(Check { name: name.into(), verdict: if ok { Verdict::Pass } else { Verdict::Fail }, detail });
     }
 
+    /// The `palette-oklab` step (C7) against `palette-aa`, the same view and settings with the
+    /// palettes blended between their display values: another picture (mean difference 1 level or
+    /// more, the control that the blend ran), no pass (a recolor), and an export of the view follows
+    /// the switch (its picture apart from the same export with the plain bake's table).
+    fn uitest_palette_oklab_checks(&self, ut: &UiTest, view: Option<&(Vec<u8>, [u32; 2])>, ran_why: [u64; 7], checks: &mut Vec<Check>) {
+        let before = "palette-aa";
+        let b = ut.results.iter().rev().find(|r| r.name == before);
+        let mean = |p: &[u8], q: &[u8]| -> f64 {
+            let s: f64 = p.chunks_exact(4).zip(q.chunks_exact(4)).map(|(p, q)| (0..3).map(|k| (p[k] as f64 - q[k] as f64).abs()).sum::<f64>()).sum();
+            s / (3 * (p.len() / 4)).max(1) as f64
+        };
+        let r = view.zip(b).and_then(|((px, _), b)| {
+            let (prev, _) = b.inside_view.as_ref().filter(|p| p.0.len() == px.len())?;
+            Some((mean(px, prev), (ran_why[0] - b.ran_why[0]) + (ran_why[1] - b.ran_why[1])))
+        });
+        let export = view.and_then(|(_, size)| {
+            let on = self.uitest_export_view(*size)?;
+            let plain = self.bake_palette_plain(&self.active_gradient());
+            let off = self.uitest_export_view_with(*size, |req| req.lut = std::sync::Arc::new(plain))?;
+            (on.len() == off.len()).then(|| mean(&on, &off))
+        });
+        let ok = self.coloring.palette_oklab && r.is_some_and(|(d, ran)| d >= 1.0 && ran == 0) && export.is_some_and(|d| d >= 1.0);
+        checks.push(Check {
+            name: "palette-oklab-recolors".into(),
+            verdict: if ok { Verdict::Pass } else { Verdict::Fail },
+            detail: format!(
+                "against {before} (mean difference in levels, passes caused): {r:?}; an export of the view against it with the plain bake: {export:?}; the switch on: {}",
+                self.coloring.palette_oklab
+            ),
+        });
+    }
+
     fn uitest_palette_adjust_checks(&self, ut: &UiTest, view: Option<&(Vec<u8>, [u32; 2])>, ran_why: [u64; 7], checks: &mut Vec<Check>) {
         let before = ut.results.iter().rev().find(|r| r.name == "palette-aa");
         let (Some((px, size)), Some(b)) = (view, before) else {
@@ -2509,6 +2545,8 @@ impl FractadyneApp {
     fn uitest_close_all(&mut self) {
         // No step inherits the palette-adjust step's gray palette...
         self.coloring.palette_adjust = fractadyne_color::adjust::PaletteAdjust::NEUTRAL;
+        // ...or the palette-oklab step's blend (C7)...
+        self.coloring.palette_oklab = false;
         // ...or the palette-scale steps' curve, wrap and steps (C2)...
         self.coloring.transfer = fractadyne_core::coloring::Transfer::Linear;
         self.coloring.wrap = fractadyne_core::coloring::Wrap::Repeat;
@@ -3369,6 +3407,16 @@ impl FractadyneApp {
                     fractadyne_color::adjust::PaletteAdjust { saturation: 0.0, ..fractadyne_color::adjust::PaletteAdjust::NEUTRAL };
                 self.dialogs.right_panel_open = true;
             }
+            // The view as palette-aa left it (the adjustment neutral again), Blend in OKLab on (C7).
+            Screen::PaletteOklab => {
+                self.coloring.color_method = crate::ColorMethod::Smooth;
+                self.coloring.interior = Some(crate::InteriorMode::Solid);
+                self.coloring.normalize_live = false;
+                self.coloring.palette_aa = true;
+                self.coloring.palette_adjust = fractadyne_color::adjust::PaletteAdjust::NEUTRAL;
+                self.coloring.palette_oklab = true;
+                self.dialogs.right_panel_open = true;
+            }
             // One event a frame. The moves first: the slider's rect is the last frame's, and a
             // press sent before the panel drew is dropped (so the check fails rather than passes).
             // Each step changes one thing from the one before: the view and the classic map, then the
@@ -3966,6 +4014,7 @@ impl FractadyneApp {
                     | Screen::PaletteAaBase
                     | Screen::PaletteAa
                     | Screen::PaletteAdjust
+                    | Screen::PaletteOklab
                     | Screen::PaletteScaleLinear
                     | Screen::PaletteScale
                     | Screen::PaletteWrapSteps
@@ -4890,6 +4939,10 @@ impl FractadyneApp {
         // ---- the palette anti-aliased (coloring plan C8) ----
         if let StepKind::Screen(Screen::PaletteAdjust) = step.kind {
             self.uitest_palette_adjust_checks(ut, inside_view.as_ref(), ran_why, &mut checks);
+        }
+        // ---- Blend in OKLab (coloring plan C7) ----
+        if let StepKind::Screen(Screen::PaletteOklab) = step.kind {
+            self.uitest_palette_oklab_checks(ut, inside_view.as_ref(), ran_why, &mut checks);
         }
         if let StepKind::Screen(Screen::PaletteAa) = step.kind {
             self.uitest_palette_aa_checks(ut, inside_view.as_ref(), ran_why, &mut checks);

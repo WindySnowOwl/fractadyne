@@ -265,7 +265,7 @@ menu-color-more = Siklus, pergeseran, animasi, dan efek: panel Kontrol ▸ Pewar
 menu-color-browse = Jelajahi palet…
 menu-color-browse-hover = Semua palet di atas tampilan saat ini, berdampingan: saring menurut tag dan beri tag pada milik Anda.
 menu-color-reset-settings = Atur ulang pengaturan warna
-menu-color-reset-settings-hover = Siklus, Bagi iterasi, Geser, Kecerahan, Kontras, Saturasi, sakelar normalisasi, anti-alias palet, dan animasinya kembali ke nilai bawaan. Metode, palet, dan bagian dalam tetap seperti semula.
+menu-color-reset-settings-hover = Siklus, Bagi iterasi, Geser, Kecerahan, Kontras, Saturasi, Campur di OKLab, Ratakan, sakelar normalisasi, anti-alias palet, dan animasinya kembali ke nilai bawaan. Metode, palet, dan bagian dalam tetap seperti semula.
 
 # The palette browser window.
 palette-browser-title = Palet
@@ -2774,6 +2774,8 @@ panel-inside-fit = Sesuaikan dengan rentang bagian dalam
 panel-inside-fit-hover = Sebarkan palet dalam ke nilai perangkap yang diukur di dalam himpunan di layar, agar strukturnya terlihat. Ekspor tampilan ini memakai penyesuaian yang sama.
 panel-palette-aa = Haluskan palet (anti-aliasing)
 panel-palette-aa-hover = Di mana pita palet lebih halus dari satu piksel, tampilkan warna rata-ratanya alih-alih bintik. Lebarnya mengikuti jarak ke himpunan, sehingga pita di dekatnya tetap setajam yang dimungkinkan piksel. Ekspor tampilan ini juga memakainya.
+panel-palette-oklab = Campur di OKLab
+panel-palette-oklab-hover = Mencampur warna-warna palet di OKLab, ruang warna yang mengikuti cara mata melihat, bukan di antara nilai layarnya: setiap peralihan menjadi terang atau gelap secara merata, dan peralihan antara dua warna yang berjauhan mempertahankan bagian tengah yang bersih alih-alih melewati bagian yang gelap atau keruh. Sebagian besar palet berubah sedikit, beberapa banyak. Ekspor tampilan ini juga memakainya.
 panel-palette = Palet
 # The two colors of the Binary palette, each beside its color swatch.
 panel-in-set = Di dalam

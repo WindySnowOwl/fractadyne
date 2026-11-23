@@ -62,6 +62,18 @@ detail is in the git history.
   with no recalculation. Views, bookmarks, Share text and render-farm jobs carry it, and it has a
   command-line flag (`--equalize`); Reset coloring settings puts it back to 0%. Tours and zoom
   videos don't equalize their frames yet.
+- **Blend in OKLab: cleaner blends between a palette's colors.** A new checkbox under the palette's
+  Saturation blends between each pair of the palette's colors in OKLab, a color space built on how
+  the eye sees, instead of between their screen values. Each blend then brightens or darkens
+  evenly, and one between two distant colors (blue to tan, pink to teal) keeps a clean middle
+  instead of passing through a grayish or muddy one. It works on every palette, the built-in ones,
+  saved gradients and your own, and its look shows in the view, exports, the inside's palette and
+  the palette browser's thumbnails. Most palettes change a little and a few a lot: ramps out of
+  black stay dark a little longer, and a gray ramp's middle comes out darker. A custom gradient's
+  HSV segments and flat bands stay as they are, and so does the gradient itself, so it saves to a
+  `.ggr` file unchanged. Ticking it recolors the view at once, with no recalculation. Views,
+  bookmarks, Share text and render-farm jobs carry it, and it has a command-line flag
+  (`--palette-oklab`); Reset coloring settings turns it off.
 - **Relief lighting with a highlight, steeper near the set.** Relief lighting in Effects has new
   rows. "Slope from the distance" makes the lit surface steeper near the set and flat far from it, as
   the distance to the set says, instead of one slope everywhere: the shading gathers at the set's

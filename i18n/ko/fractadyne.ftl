@@ -265,7 +265,7 @@ menu-color-more = 순환, 오프셋, 애니메이션, 효과: 컨트롤 패널 �
 menu-color-browse = 팔레트 둘러보기…
 menu-color-browse-hover = 현재 보기에 모든 팔레트를 나란히 보여 줍니다. 태그로 걸러 보고 내 팔레트에 태그를 붙일 수 있습니다.
 menu-color-reset-settings = 색칠 설정 초기화
-menu-color-reset-settings-hover = 주기, 반복 나누기, 오프셋, 밝기, 대비, 채도, 정규화 스위치, 팔레트 앤티에일리어싱과 애니메이션을 기본값으로 되돌립니다. 방법, 팔레트, 내부는 그대로입니다.
+menu-color-reset-settings-hover = 주기, 반복 나누기, 오프셋, 밝기, 대비, 채도, OKLab으로 혼합, 균등화, 정규화 스위치, 팔레트 앤티에일리어싱과 애니메이션을 기본값으로 되돌립니다. 방법, 팔레트, 내부는 그대로입니다.
 
 # The palette browser window.
 palette-browser-title = 팔레트
@@ -2774,6 +2774,8 @@ panel-inside-fit = 내부 범위에 맞추기
 panel-inside-fit-hover = 화면의 집합 내부에서 잰 트랩 값에 내부 팔레트를 펼쳐 구조가 보이게 합니다. 이 화면의 내보내기도 같은 맞춤을 씁니다.
 panel-palette-aa = 팔레트 앤티앨리어싱
 panel-palette-aa-hover = 팔레트의 띠가 한 픽셀보다 촘촘한 곳에서는 노이즈 대신 평균 색을 보여 줍니다. 폭은 집합까지의 거리로 정해지므로 집합 가까이의 띠는 픽셀이 허용하는 만큼 선명하게 유지됩니다. 이 보기의 내보내기에도 적용됩니다.
+panel-palette-oklab = OKLab으로 혼합
+panel-palette-oklab-hover = 팔레트의 색 사이를 화면 값이 아니라 눈이 보는 방식에 기반한 색 공간 OKLab에서 혼합합니다. 각 전환의 밝기가 고르게 변하고, 멀리 떨어진 두 색 사이도 가운데가 어둡거나 탁해지지 않고 깨끗하게 유지됩니다. 대부분의 팔레트는 조금, 일부는 크게 바뀝니다. 이 보기의 내보내기에도 쓰입니다.
 panel-palette = 팔레트
 # The two colors of the Binary palette, each beside its color swatch.
 panel-in-set = 집합 안

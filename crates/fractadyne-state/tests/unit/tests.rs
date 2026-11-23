@@ -365,6 +365,7 @@ fn every_session_field_survives_save_and_reload() {
         palette_saturation: 1.25,
         julia_linked: true,
         equalize: 0.75,
+        palette_oklab: true,
         coloring_hook: "// @param p1 gain 0 2 1\nfn custom_color(l: Lanes) -> vec3<f32> {\n    return l.color * p1();\n}\n".into(),
         coloring_hook_params: vec![0.5, 1.0, -2.0, 0.25],
     };
@@ -829,7 +830,7 @@ fn a_session_written_before_the_coloring_spec_reads_and_writes_the_same_keys() {
         "edge", "edge_inside", "edge_width", "edge_strength", "edge_curve", "edge_color",
         "equipotentials", "equipotential_spacing", "equipotential_width", "equipotential_strength", "equipotential_color",
         "light_steep", "light_steep_px", "light_highlight", "light_shininess", "light_highlight_color",
-        "equalize",
+        "equalize", "palette_oklab",
     ];
     assert_eq!(keys.len(), 27 + SINCE.len(), "a coloring field was added: list it in SINCE");
     for k in keys.keys() {

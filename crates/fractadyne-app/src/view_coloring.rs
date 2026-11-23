@@ -128,6 +128,8 @@ pub(crate) struct ViewColoring {
     pub(crate) palette_brightness: f32,
     pub(crate) palette_contrast: f32,
     pub(crate) palette_saturation: f32,
+    /// The palette blended in OKLab (C7).
+    pub(crate) palette_oklab: bool,
     /// The dual view's Julia pane on the set's palette map, one iteration on (C11).
     pub(crate) julia_linked: bool,
     /// Equalize colors: the share of histogram coloring in the fitted map (C6).
@@ -196,6 +198,7 @@ impl ViewColoring {
             palette_brightness: s.palette_brightness,
             palette_contrast: s.palette_contrast,
             palette_saturation: s.palette_saturation,
+            palette_oklab: s.palette_oklab,
             julia_linked: s.julia_linked,
             equalize: s.equalize,
         }
@@ -250,6 +253,7 @@ impl ViewColoring {
             palette_brightness: self.palette_brightness,
             palette_contrast: self.palette_contrast,
             palette_saturation: self.palette_saturation,
+            palette_oklab: self.palette_oklab,
             julia_linked: self.julia_linked,
             equalize: self.equalize,
             ..base.clone()

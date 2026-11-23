@@ -356,7 +356,7 @@ pub(crate) const KNOWN_VIEW_KEYS: &[&str] = &[
     "glow", "glow_strength", "glow_width",
     "palette_mode", "palette_lo", "palette_hi", "interior_color",
     "normalize_live", "normalize_fit", "log_scale", "palette_aa",
-    "palette_brightness", "palette_contrast", "palette_saturation", "julia_linked",
+    "palette_brightness", "palette_contrast", "palette_saturation", "palette_oklab", "julia_linked",
     // The palette map's curve, its wrap and its steps (coloring plan C2); Equalize colors (C6).
     "transfer", "wrap", "steps", "equalize",
     // Edge shading (coloring plan C3).
@@ -457,6 +457,7 @@ const TYPED_VIEW_KEYS: &[(&str, ValueKind)] = &[
     ("palette_brightness", ValueKind::Float),
     ("palette_contrast", ValueKind::Float),
     ("palette_saturation", ValueKind::Float),
+    ("palette_oklab", ValueKind::Flag),
     ("julia_linked", ValueKind::Flag),
     ("transfer", ValueKind::Transfer),
     ("wrap", ValueKind::Wrap),

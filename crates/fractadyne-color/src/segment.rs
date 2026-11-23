@@ -1021,6 +1021,72 @@ impl Gradient {
             .collect();
         Lut { entries, smooth: !self.is_flat() }
     }
+
+    /// [`Self::bake`] with every RGB segment blended in OKLab (coloring plan C7, "Blend in OKLab").
+    ///
+    /// ⭐**Between the same endpoints, at the same blend curve, through a perceptual space.** A
+    /// segment's two colors are taken to OKLab and the blend's factor moves along the straight line
+    /// between them there, so its lightness steps evenly and its middle keeps the chroma of its
+    /// ends, where a blend of the display (sRGB-encoded) values passes through gray between two
+    /// distant hues (blue to tan, pink to teal). A color on that line outside the sRGB gamut keeps
+    /// its lightness and hue and gives up chroma until it fits ([`crate::adjust`]'s fit), so no
+    /// channel clips into another hue.
+    ///
+    /// What it leaves alone: an HSV segment (its sweep round the hue wheel is the point of it), a
+    /// flat segment (a band has nothing to blend), the alpha (a straight lerp, as in
+    /// [`Self::bake`]), the stops' own colors (within the round trip's 1e-6) and the fetch mode.
+    pub fn bake_oklab(&self, n: usize) -> Lut {
+        let n = n.max(1);
+        // Each blended segment's endpoints in OKLab, once for the whole table.
+        let ends: Vec<Option<([f64; 3], [f64; 3])>> = self
+            .segments
+            .iter()
+            .map(|s| (s.space == Space::Rgb && !s.is_flat()).then(|| (oklab_of(s.left_color), oklab_of(s.right_color))))
+            .collect();
+        let entries = (0..n)
+            .map(|i| {
+                let t = (i as f32 + 0.5) / n as f32;
+                match self.segment_at(t).and_then(|k| ends[k].map(|e| (k, e))) {
+                    Some((k, (a, b))) => self.segments[k].eval_oklab(t, a, b),
+                    None => self.eval(t),
+                }
+            })
+            .collect();
+        Lut { entries, smooth: !self.is_flat() }
+    }
+
+    /// The segment [`Self::eval`] blends `t` in, or `None` where it returns an endpoint color
+    /// (before the first segment, in a gap, past the last). The same walk, so the two cannot differ
+    /// on which segment a position belongs to.
+    fn segment_at(&self, t: f32) -> Option<usize> {
+        let first = self.segments.first()?;
+        let t = if t.is_finite() { t.clamp(0.0, 1.0) } else { 0.0 };
+        if t <= first.left {
+            return None;
+        }
+        let k = self.segments.iter().position(|s| t <= s.right)?;
+        (t >= self.segments[k].left).then_some(k)
+    }
+}
+
+/// A gradient color's OKLab coordinates (its alpha set aside).
+fn oklab_of(c: [f32; 4]) -> [f64; 3] {
+    crate::adjust::srgb_to_oklab([c[0] as f64, c[1] as f64, c[2] as f64])
+}
+
+impl Segment {
+    /// Color at `t` blended in OKLab between `a` and `b`, the endpoints' OKLab coordinates (see
+    /// [`Gradient::bake_oklab`]). The blend's factor is [`Self::factor`], so a curve, a midpoint or
+    /// a Bézier shapes it as in RGB. A Bézier's overshoot extrapolates past an end: its lightness is
+    /// held in `0..1` and its chroma fitted into the gamut, as an RGB blend's channels are clamped.
+    fn eval_oklab(&self, t: f32, a: [f64; 3], b: [f64; 3]) -> [f32; 4] {
+        let f = self.factor(t);
+        let alpha = self.left_color[3] + (self.right_color[3] - self.left_color[3]) * f;
+        let f = f as f64;
+        let lab = [0, 1, 2].map(|k| a[k] + (b[k] - a[k]) * f);
+        let rgb = crate::adjust::in_gamut(lab[0].clamp(0.0, 1.0), lab[1], lab[2]);
+        [rgb[0] as f32, rgb[1] as f32, rgb[2] as f32, alpha.clamp(0.0, 1.0)]
+    }
 }
 
 /// Where the midpoint sits inside a segment, as a fraction of its span. `0.5` is centered, which is
@@ -1242,3 +1308,6 @@ mod edit_tests;
 #[cfg(test)]
 #[path = "../tests/unit/segment/segment_tests.rs"]
 mod segment_tests;
+#[cfg(test)]
+#[path = "../tests/unit/segment/oklab_tests.rs"]
+mod oklab_tests;

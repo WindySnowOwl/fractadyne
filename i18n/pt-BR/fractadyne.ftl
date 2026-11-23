@@ -269,7 +269,7 @@ menu-color-more = Ciclo, deslocamento, animação e efeitos: painel Controles �
 menu-color-browse = Explorar paletas…
 menu-color-browse-hover = Todas as paletas sobre a vista atual, lado a lado: filtre-as por etiqueta e etiquete as suas.
 menu-color-reset-settings = Restaurar ajustes de cor
-menu-color-reset-settings-hover = Ciclo, Dividir iterações, Deslocamento, Brilho, Contraste, Saturação, as opções de normalização, a suavização da paleta e sua animação voltam aos valores padrão. O método, as paletas e o interior ficam como estão.
+menu-color-reset-settings-hover = Ciclo, Dividir iterações, Deslocamento, Brilho, Contraste, Saturação, Misturar em OKLab, Equalizar, as opções de normalização, a suavização da paleta e sua animação voltam aos valores padrão. O método, as paletas e o interior ficam como estão.
 
 # The palette browser window.
 palette-browser-title = Paletas
@@ -2854,6 +2854,8 @@ panel-inside-fit = Ajustar ao intervalo do interior
 panel-inside-fit-hover = Espalha a paleta interna pelos valores da armadilha medidos dentro do conjunto na tela, para que sua estrutura apareça. As exportações desta vista usam o mesmo ajuste.
 panel-palette-aa = Suavizar a paleta (antialiasing)
 panel-palette-aa-hover = Onde as faixas da paleta são mais finas que um pixel, mostrar a cor média delas em vez de ruído. A largura segue a distância ao conjunto, então as faixas perto dele ficam tão nítidas quanto os pixels permitem. As exportações desta visualização também usam isso.
+panel-palette-oklab = Misturar em OKLab
+panel-palette-oklab-hover = Mistura as cores da paleta em OKLab, um espaço de cor baseado em como o olho enxerga, em vez de entre seus valores de tela: cada transição clareia ou escurece por igual, e uma entre duas cores distantes mantém um meio limpo em vez de passar por um escuro ou turvo. A maioria das paletas muda um pouco, algumas bastante. As exportações desta vista também usam isso.
 panel-palette = Paleta
 # The two colors of the Binary palette, each beside its color swatch.
 panel-in-set = Dentro

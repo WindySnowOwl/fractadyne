@@ -6794,6 +6794,9 @@ struct ColoringConfig {
     /// The palette's brightness, contrast and saturation, applied to every baked palette that
     /// colors a picture ([`FractadyneApp::bake_palette`]). Persisted.
     palette_adjust: fractadyne_color::adjust::PaletteAdjust,
+    /// Blend in OKLab (coloring plan C7): every palette that colors a picture baked with its RGB
+    /// segments blended in OKLab ([`FractadyneApp::bake_palette`]). Persisted.
+    palette_oklab: bool,
     /// The dual view's Julia pane on the Mandelbrot pane's palette map, one iteration on (C11,
     /// [`FractadyneApp::julia_linked`]). Persisted.
     julia_linked: bool,
@@ -8624,6 +8627,7 @@ impl FractadyneApp {
                     saturation: s.coloring.palette_saturation,
                 }
                 .clamped(),
+                palette_oklab: s.coloring.palette_oklab,
                 julia_linked: s.coloring.julia_linked,
                 normalize: args.iter().any(|a| a == "--normalize"),
                 normalize_live: s.coloring.normalize_live,
@@ -9515,6 +9519,10 @@ impl FractadyneApp {
         if let Some(v) = ranged("--palette-saturation", slider_range::PALETTE_SATURATION) {
             self.coloring.palette_adjust.saturation = v;
         }
+        // Blend in OKLab (C7).
+        if args.iter().any(|a| a == "--palette-oklab") {
+            self.coloring.palette_oklab = true;
+        }
         // Equalize colors (C6): the share of histogram coloring in the fitted map.
         if let Some(v) = ranged("--equalize", slider_range::EQUALIZE) {
             self.coloring.equalize = v;
@@ -9809,6 +9817,7 @@ impl FractadyneApp {
             palette_saturation: self.coloring.palette_adjust.saturation,
             julia_linked: self.coloring.julia_linked,
             equalize: self.coloring.equalize,
+            palette_oklab: self.coloring.palette_oklab,
             coloring_hook: self.coloring.hook.active.as_ref().map(|h| h.text.clone()).unwrap_or_default(),
             coloring_hook_params: match self.coloring.hook.active {
                 Some(_) => self.coloring.hook.params.to_vec(),
@@ -9864,6 +9873,7 @@ impl FractadyneApp {
             saturation: s.palette_saturation,
         }
         .clamped();
+        c.palette_oklab = s.palette_oklab;
         c.julia_linked = s.julia_linked;
         // The coloring hook (B10): another text replaces the hook in use (a view's or a job's hook
         // is not watched: it has no file); none turns it off; the same text keeps it, and its file.
@@ -12926,20 +12936,33 @@ impl FractadyneApp {
         }
     }
 
-    /// `g` baked into the table the GPU colors with, with the palette's brightness, contrast and
-    /// saturation applied (`fractadyne_color::adjust`; neutral leaves the table as baked). Every
-    /// bake that colors a picture goes through here: the view, the inside's palette, exports, the
-    /// overview map, the palette browser's and the method sheet's thumbnails. The interface's
-    /// swatches show a palette as it is.
+    /// `g` baked into the table the GPU colors with: blended in OKLab under Blend in OKLab (C7,
+    /// `Gradient::bake_oklab`), then the palette's brightness, contrast and saturation applied
+    /// (`fractadyne_color::adjust`; neutral leaves the table as baked). Every bake that colors a
+    /// picture goes through here: the view, the inside's palette, exports, the overview map, the
+    /// palette browser's and the method sheet's thumbnails. The interface's swatches show a palette
+    /// as it is.
     pub(crate) fn bake_palette(&self, g: &fractadyne_color::segment::Gradient) -> fractadyne_color::segment::Lut {
-        let mut lut = g.bake(fractadyne_color::segment::LUT_SIZE);
+        let mut lut = if self.coloring.palette_oklab {
+            g.bake_oklab(fractadyne_color::segment::LUT_SIZE)
+        } else {
+            g.bake(fractadyne_color::segment::LUT_SIZE)
+        };
         self.coloring.palette_adjust.apply(&mut lut);
         lut
     }
 
+    /// [`Self::bake_palette`]'s table with the blend between the display values whatever Blend in
+    /// OKLab says: the uitest's control for that switch (C7).
+    pub(crate) fn bake_palette_plain(&self, g: &fractadyne_color::segment::Gradient) -> Vec<[f32; 4]> {
+        let mut lut = g.bake(fractadyne_color::segment::LUT_SIZE);
+        self.coloring.palette_adjust.apply(&mut lut);
+        lut.entries
+    }
+
     /// Color ▸ Reset coloring settings (user, 2026-11-20): the numbers and switches one tunes, back
     /// to a new session's values: Cycle, Divide iterations, Offset, Brightness, Contrast, Saturation,
-    /// "Normalize deep colors" with its two switches, the palette's anti-aliasing, and its animation
+    /// Blend in OKLab (C7), Equalize (C6), "Normalize deep colors" with its two switches, the palette's anti-aliasing, and its animation
     /// and speed. The choices stay as they are: the method, the palettes (a custom gradient
     /// included), the inside and the trap's shape, the dual view's Julia link (C11), and the Effects
     /// section's settings.
@@ -12950,6 +12973,7 @@ impl FractadyneApp {
         c.iter_div = d.iter_div;
         c.offset = d.offset;
         c.palette_adjust = fractadyne_color::adjust::PaletteAdjust::NEUTRAL;
+        c.palette_oklab = d.palette_oklab;
         c.normalize_live = d.normalize_live;
         c.normalize_fit = d.normalize_fit;
         // The Scale with the normalization switches it belongs to (C2; what the log checkbox was).
@@ -12962,12 +12986,16 @@ impl FractadyneApp {
         self.anim.palette_anim_speed = fractadyne_state::SessionState::default().palette_anim_speed;
     }
 
-    /// The palette's adjustment, hashed: zero bits for neutral values keep a signature what it was.
+    /// The palette's adjustment and its blend, hashed: zero bits for neutral values keep a signature
+    /// what it was, and Blend in OKLab (C7) joins only when it is on.
     pub(crate) fn palette_adjust_sig(&self) -> u64 {
         use std::hash::{Hash, Hasher};
         let a = self.coloring.palette_adjust;
         let mut h = std::collections::hash_map::DefaultHasher::new();
         (a.brightness.to_bits(), a.contrast.to_bits(), a.saturation.to_bits()).hash(&mut h);
+        if self.coloring.palette_oklab {
+            "oklab".hash(&mut h);
+        }
         h.finish()
     }
 

@@ -100,6 +100,7 @@ The tour's coloring, by the keys a saved view (`.fdn`) carries. Each key it name
 | `palette_brightness` | float, -1 to 1 | 0 | The palette's brightness, -1 to 1 (0: as the palette is): its midtones lighter or darker, black and white kept. |
 | `palette_contrast` | float, -1 to 1 | 0 | The palette's contrast, -1 to 1 (0: as the palette is): its lightness spread from the middle or drawn toward it, black and white kept. |
 | `palette_saturation` | float, 0 to 2 | 1 | The palette's saturation, 0 to 2 (1: as the palette is; 0: gray), hue and lightness kept. |
+| `palette_oklab` | bool | false | Blend in OKLab: the palette's colors blended in OKLab, a perceptual space, rather than between their display (sRGB) values, so each blend steps evenly in lightness and one between two distant colors does not darken or gray in the middle (HSV segments and flat bands as they are). |
 | `julia_linked` | bool | false | Dual view: color the Julia pane with the set's palette map, one iteration on, so the Julia point z = c shows the color of the set's point c (method "smooth"). |
 
 ### `[playback]`

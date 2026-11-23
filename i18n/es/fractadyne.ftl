@@ -269,7 +269,7 @@ menu-color-more = Ciclo, desplazamiento, animación y efectos: panel Controles �
 menu-color-browse = Explorar paletas…
 menu-color-browse-hover = Todas las paletas sobre la vista actual, una junto a otra: fíltralas por etiqueta y etiqueta las tuyas.
 menu-color-reset-settings = Restablecer ajustes de color
-menu-color-reset-settings-hover = Ciclo, Dividir iteraciones, Desplazamiento, Brillo, Contraste, Saturación, los interruptores de normalización, el suavizado de la paleta y su animación vuelven a sus valores por defecto. El método, las paletas y el interior se quedan como están.
+menu-color-reset-settings-hover = Ciclo, Dividir iteraciones, Desplazamiento, Brillo, Contraste, Saturación, Mezclar en OKLab, Ecualizar, los interruptores de normalización, el suavizado de la paleta y su animación vuelven a sus valores por defecto. El método, las paletas y el interior se quedan como están.
 
 # The palette browser window.
 palette-browser-title = Paletas
@@ -2855,6 +2855,8 @@ panel-inside-fit = Ajustar al rango del interior
 panel-inside-fit-hover = Extiende la paleta interior sobre los valores de la trampa medidos dentro del conjunto en pantalla, para que se vea su estructura. Las exportaciones de esta vista usan el mismo ajuste.
 panel-palette-aa = Suavizar la paleta (antialias)
 panel-palette-aa-hover = Donde las bandas de la paleta son más finas que un píxel, mostrar su color medio en lugar de ruido. El ancho depende de la distancia al conjunto, así que las bandas cercanas a él quedan tan nítidas como permiten los píxeles. Las exportaciones de esta vista también lo usan.
+panel-palette-oklab = Mezclar en OKLab
+panel-palette-oklab-hover = Mezcla entre los colores de la paleta en OKLab, un espacio de color basado en cómo ve el ojo, en lugar de entre sus valores de pantalla: cada transición aclara u oscurece de forma uniforme, y una entre dos colores lejanos conserva un centro limpio en vez de pasar por uno oscuro o turbio. La mayoría de las paletas cambian un poco, algunas mucho. Las exportaciones de esta vista también lo usan.
 panel-palette = Paleta
 # The two colors of the Binary palette, each beside its color swatch.
 panel-in-set = En el conjunto

@@ -269,7 +269,7 @@ menu-color-more = Ciclo, offset, animazione ed effetti: pannello Controlli ▸ C
 menu-color-browse = Sfoglia le tavolozze…
 menu-color-browse-hover = Tutte le tavolozze sulla vista attuale, una accanto all’altra: filtrale per etichetta ed etichetta le tue.
 menu-color-reset-settings = Ripristina le impostazioni del colore
-menu-color-reset-settings-hover = Ciclo, Dividi iterazioni, Spostamento, Luminosità, Contrasto, Saturazione, gli interruttori di normalizzazione, l’antialiasing della tavolozza e la sua animazione tornano ai valori predefiniti. Il metodo, le tavolozze e l’interno restano come sono.
+menu-color-reset-settings-hover = Ciclo, Dividi iterazioni, Spostamento, Luminosità, Contrasto, Saturazione, Sfuma in OKLab, Equalizza, gli interruttori di normalizzazione, l’antialiasing della tavolozza e la sua animazione tornano ai valori predefiniti. Il metodo, le tavolozze e l’interno restano come sono.
 
 # The palette browser window.
 palette-browser-title = Tavolozze
@@ -2854,6 +2854,8 @@ panel-inside-fit = Adatta all’intervallo dell’interno
 panel-inside-fit-hover = Distribuisce la tavolozza interna sui valori della trappola misurati dentro l’insieme sullo schermo, così la sua struttura si vede. Le esportazioni di questa vista usano lo stesso adattamento.
 panel-palette-aa = Antialiasing della tavolozza
 panel-palette-aa-hover = Dove le bande della tavolozza sono più sottili di un pixel, mostra il loro colore medio invece del rumore. L'ampiezza segue la distanza dall'insieme, così le bande vicine restano nitide quanto i pixel consentono. Anche le esportazioni di questa vista lo usano.
+panel-palette-oklab = Sfuma in OKLab
+panel-palette-oklab-hover = Sfuma tra i colori della tavolozza in OKLab, uno spazio colore basato su come vede l'occhio, invece che tra i loro valori sullo schermo: ogni passaggio schiarisce o scurisce in modo uniforme, e uno tra due colori lontani mantiene un centro pulito invece di passare per uno scuro o torbido. La maggior parte delle tavolozze cambia poco, alcune molto. Anche le esportazioni di questa vista lo usano.
 panel-palette = Tavolozza
 # The two colors of the Binary palette, each beside its color swatch.
 panel-in-set = Nell’insieme

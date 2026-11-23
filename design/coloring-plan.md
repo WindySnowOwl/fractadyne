@@ -1,6 +1,6 @@
 # Coloring methods: implementation plan
 
-Status: **plan (2026-11-08); phase A done (A1–A10), B1, B1b, B9 and B10 done (the coloring matrix, its live method tour, every lane as NumPy arrays, a custom coloring hook), B2 done (what a frame accumulates is a `StatSet`, apart from the method shown), B3 done (in floatexp a stripe, triangle or trap frame carries the whole G-buffer), B4 to B7 done (one settings model, the method list, the method sheet, the inside and a second LUT), C1, C2, C3, C4, C5, C6, C8, C9, C10 and C11 done (a solid inside in any color; the palette map's curves, wraps and steps; edge shading by the distance; the relief light's slope from the distance and a highlight; the inside's palette fitted to its range; Equalize, histogram coloring mixed into the fitted map; the palette anti-aliased over a footprint from the distance estimate; the fringe method; equipotential lines at an even spacing at every depth; the dual view's Julia pane on the set's palette map); B8 not started; next C7 (C6b, tours, after); see §10 (2026-11-23).** Line references are to `main` at `9ab75357`; check
+Status: **plan (2026-11-08); phase A done (A1–A10), B1, B1b, B9 and B10 done (the coloring matrix, its live method tour, every lane as NumPy arrays, a custom coloring hook), B2 done (what a frame accumulates is a `StatSet`, apart from the method shown), B3 done (in floatexp a stripe, triangle or trap frame carries the whole G-buffer), B4 to B7 done (one settings model, the method list, the method sheet, the inside and a second LUT), C1 to C11 done (a solid inside in any color; the palette map's curves, wraps and steps; edge shading by the distance; the relief light's slope from the distance and a highlight; the inside's palette fitted to its range; Equalize, histogram coloring mixed into the fitted map; palettes blended in OKLab; the palette anti-aliased over a footprint from the distance estimate; the fringe method; equipotential lines at an even spacing at every depth; the dual view's Julia pane on the set's palette map); B8 not started; next C6b (tours and zoom videos equalized); see §10 (2026-11-23).** Line references are to `main` at `9ab75357`; check
 them before editing, they drift. The research behind it (methods, prototypes, measured results,
 prior art) is the coloring-methods doc; its local copy is
 `local/research_notes/Fractal coloring methods/` (PDF, HTML, Markdown, prototype scripts).
@@ -1128,6 +1128,36 @@ UI rows, `.fdn`/farm/CLI through B4, B1 cells, a selftest appearance check, uite
 Order: C1, C4, C8, C9, C11 (smallest), then C2, C3, C10, then C5, C6, C7. (2026-11-20: B9 and B10,
 the prototyping aids, come before C2.)
 
+**C7, done 2026-11-23** (branch `feat/color-c7-oklab`): Blend in OKLab, a checkbox under the
+palette's Saturation: every palette that colors a picture is baked with its RGB segments blended in
+OKLab (`Gradient::bake_oklab`, through `bake_palette`), lightness, chroma and hue moving along the
+straight line between a segment's ends there; a color on that line outside the sRGB gamut keeps its
+lightness and hue and gives up chroma (`adjust::in_gamut`, the palette adjustment's fit). A
+palette-wide switch rather than the row's new per-segment `Space`: it reaches all 190 presets and
+the saved gradients, not only a custom one, and leaves the gradient model GIMP's, so `.ggr` export
+converts and refuses nothing (a per-segment OKLab space stays possible later). HSV segments, flat
+bands, the alpha and the fetch mode stay as `bake` has them. Prototype first (scratchpad `c7/`,
+every preset baked both ways): the change is small on most presets (median mean ΔE_OK 0.004; the
+dense-stop ones 0) and large on a few (Grayscale 0.083, Rave 0.030, Ember 0.026), where the sRGB
+blend's lightness strays up to 0.12 from the line; 39 presets have entries outside the gamut, their
+chroma kept at 0.82 or more. ⚠Plain OKLab, as CSS `color-mix(in oklab)` and Photoshop's perceptual
+gradients use: its lightness runs darker than CIELAB's near black, so a ramp out of black stays dark
+longer and a gray ramp's middle is darker (renders at the seahorse valley, off against on: Grayscale
+22.7 levels apart, Rave 12.4, Behzad 5.9, Nebula 3.4); Ottosson's toe-corrected lightness (Lr) is
+the variant if that is unwanted. No GPU change: the table is baked on the CPU, and off it is the old
+table bit for bit. `ColoringSpec.palette_oklab`, view key `palette_oklab`, `--palette-oklab`; Reset
+coloring settings turns it off (its hover now lists it, and Equalize, which C6 left out, in all 15
+languages); `palette_adjust_sig` hashes it (only when on), so a deep view's average restarts and the
+overview map redraws. Tests: color `oklab_tests` (every preset on the OKLab line: lightness within
+2e-3, hue within 0.02 rad, no more chroma than the line, the sRGB bake's lightness 0.12 off as the
+control; red to green's middle at the ends' mean lightness, the sRGB one 0.08 or more darker; HSV,
+bands and alpha untouched; the ends at the stops; an overshooting Bézier in range; a bake with the
+blend sabotaged fails three of them); self-test `palette-oklab` (the request the app builds carries
+`bake_oklab`'s table on and `bake`'s off, bit for bit; every escaped pixel of a 1e10x nebula export
+0.00% from the OKLab table read at its count, the sRGB table 98% apart, max 29.8 levels);
+`coloring-reset` and `color-sig` cover it; uitest `palette-oklab` (the palette-aa view: 5.9 levels,
+no pass, an export follows the switch; en-XA 6.1, the text fits).
+
 **C6, done 2026-11-23** (branch `feat/color-c6-equalize`): Equalize, a slider under Scale, 0% to
 100%: histogram coloring mixed into the fitted map. Prototype first (scratchpad `c6/`, six views
 from 1x to 9.3e78x, `--render-lanes`): the CDF from the GPU's existing fine histogram
@@ -1720,7 +1750,7 @@ coloring in these places, so sequence the two with care:
 | C3         | done, merged                                              | `b0bd9259` (merge `550139a7`)                                                             |
 | C10        | done, merged                                              | `43368601` (merge `cc471188`)                                                             |
 | C5         | done, merged                                              | `ed36a532` (merge `2eb22119`)                                                             |
-| C6         | done, on `feat/color-c6-equalize` (after the C2 map fix)  | merge recorded with the next step                                                         |
+| C6         | done, merged (after the C2 map fix, merge `c44d9d35`)     | `2674cffe` (merge `61325df2`)                                                             |
 | C6b        | not started (tours, zoom video, the trap's fit)           |                                                                                           |
-| C7         | not started                                               |                                                                                           |
+| C7         | done, on `feat/color-c7-oklab`                            | merge recorded with the next step                                                         |
 | D, E, F, G | not started                                               |                                                                                           |

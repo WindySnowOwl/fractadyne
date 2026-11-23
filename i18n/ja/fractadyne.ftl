@@ -265,7 +265,7 @@ menu-color-more = サイクル、オフセット、アニメーション、エ�
 menu-color-browse = パレットを一覧…
 menu-color-browse-hover = 現在のビューにすべてのパレットを並べて表示します。タグで絞り込み、自分のパレットにタグを付けられます。
 menu-color-reset-settings = 配色の設定をリセット
-menu-color-reset-settings-hover = サイクル、反復の除数、オフセット、明るさ、コントラスト、彩度、正規化のスイッチ、パレットのアンチエイリアスとアニメーションを既定値に戻します。手法、パレット、内部はそのままです。
+menu-color-reset-settings-hover = サイクル、反復の除数、オフセット、明るさ、コントラスト、彩度、OKLab で補間、均等化、正規化のスイッチ、パレットのアンチエイリアスとアニメーションを既定値に戻します。手法、パレット、内部はそのままです。
 
 # The palette browser window.
 palette-browser-title = パレット
@@ -2775,6 +2775,8 @@ panel-inside-fit = 内部の範囲に合わせる
 panel-inside-fit-hover = 画面上の集合内部で測ったトラップの値に内部パレットを広げ、その構造が見えるようにします。このビューの書き出しも同じ調整を使います。
 panel-palette-aa = パレットのアンチエイリアス
 panel-palette-aa-hover = パレットの帯が1ピクセルより細かい所では、ノイズの代わりに平均色を表示します。幅は集合までの距離から決まるため、集合に近い帯はピクセルが許す限りくっきり保たれます。このビューのエクスポートにも適用されます。
+panel-palette-oklab = OKLab で補間
+panel-palette-oklab-hover = パレットの色の間を、画面の値ではなく、目の見え方に基づく色空間 OKLab で補間します。各グラデーションの明るさが均等に変わり、離れた2色の間も中間が暗く濁らず、きれいに保たれます。ほとんどのパレットは少し、一部は大きく変わります。このビューの書き出しにも使われます。
 panel-palette = パレット
 # The two colors of the Binary palette, each beside its color swatch.
 panel-in-set = 集合内

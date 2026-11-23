@@ -265,7 +265,7 @@ menu-color-more = 循環、位移、動畫與效果：控制面板 ▸ 著色
 menu-color-browse = 瀏覽調色盤…
 menu-color-browse-hover = 在目前檢視上並排顯示所有調色盤：可依標籤篩選，並為自己的調色盤加上標籤。
 menu-color-reset-settings = 重設配色設定
-menu-color-reset-settings-hover = 將週期、迭代除數、偏移、亮度、對比、飽和度、正規化開關、調色盤反鋸齒及其動畫恢復為預設值。方法、調色盤與內部保持不變。
+menu-color-reset-settings-hover = 將週期、迭代除數、偏移、亮度、對比、飽和度、在 OKLab 中混合、均衡、正規化開關、調色盤反鋸齒及其動畫恢復為預設值。方法、調色盤與內部保持不變。
 
 # The palette browser window.
 palette-browser-title = 調色盤
@@ -2774,6 +2774,8 @@ panel-inside-fit = 適配內部範圍
 panel-inside-fit-hover = 將內部調色盤鋪展到螢幕上集合內部測得的陷阱值上，使其結構可見。此視圖的匯出使用相同的適配。
 panel-palette-aa = 調色盤抗鋸齒
 panel-palette-aa-hover = 在調色盤色帶細於一個像素的地方，顯示它們的平均顏色而不是雜點。寬度由到集合的距離決定，因此靠近集合的色帶會在像素允許的範圍內保持清晰。此檢視的匯出也會使用它。
+panel-palette-oklab = 在 OKLab 中混合
+panel-palette-oklab-hover = 在 OKLab（一種依據人眼感知建立的色彩空間）中混合調色盤的顏色，而不是在螢幕數值之間混合：每段漸層的明暗變化均勻，兩種相距很遠的顏色之間的中段也保持乾淨，不會經過發暗或發濁的顏色。多數調色盤變化很小，少數變化較大。此檢視的匯出也會使用它。
 panel-palette = 調色盤
 # The two colors of the Binary palette, each beside its color swatch.
 panel-in-set = 集合內
